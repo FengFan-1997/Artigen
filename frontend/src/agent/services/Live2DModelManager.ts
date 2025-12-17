@@ -89,7 +89,7 @@ export class ModelManager {
     this.cdnPath = cdnPath || '';
     this.assetsPath = assetsPath || this.cdnPath;
     this.cubism2Path = cubism2Path || '';
-    this.modelDirectory = 'model_backup';
+    this.modelDirectory = 'model';
     this._modelId = modelId;
     this._modelTexturesId = modelTexturesId;
     this.currentModelVersion = 0;
@@ -290,8 +290,14 @@ export class ModelManager {
 
       // Fallback or legacy loading if index not found or empty
       if (model.modelIndex.length === 0) {
-        const response = await fetch(`${model.cdnPath}model_list.json`);
-        model.modelList = await response.json();
+        try {
+          const response = await fetch(`${model.cdnPath}model_list.json`);
+          if (response.ok) {
+            model.modelList = await response.json();
+          }
+        } catch (e) {
+          logger.warn('Failed to load model_list.json', e);
+        }
       }
 
       if (model.modelIndex.length > 0) {
@@ -299,66 +305,62 @@ export class ModelManager {
           model.modelId = 0;
         }
         // Load using Index
-        const tryPrimeFromIndex = async () => {
-          const item = model.modelIndex[model.modelId];
+        const primeIndexAt = async (id: number) => {
+          const item = model.modelIndex[id];
           const loaded = await model.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`);
           if (!loaded?.json) return false;
+          model.modelId = id;
           model.currentModelVersion = model.checkModelVersion(loaded.json);
-          if (model.currentModelVersion === 2) {
-            model.modelTexturesId = 0;
-          }
+          model.modelTexturesId = 0;
           return true;
         };
 
-        const primed = await tryPrimeFromIndex();
+        let primed = await primeIndexAt(model.modelId);
         if (!primed) {
-          model.modelId = 0;
-          const primedAfterReset = await tryPrimeFromIndex();
-          if (!primedAfterReset) {
-            try {
-              const response = await fetch(`${model.cdnPath}model_list.json`);
-              if (response.ok) {
-                model.modelList = await response.json();
-                model.modelIndex = [];
-              }
-            } catch (e) {
-              logger.warn('Failed to recover via model_list.json', e);
+          for (let i = 0; i < model.modelIndex.length; i++) {
+            if (i === model.modelId) continue;
+            primed = await primeIndexAt(i);
+            if (primed) break;
+          }
+        }
+
+        if (!primed) {
+          try {
+            const response = await fetch(`${model.cdnPath}model_list.json`);
+            if (response.ok) {
+              model.modelList = await response.json();
+              model.modelIndex = [];
             }
+          } catch (e) {
+            logger.warn('Failed to recover via model_list.json', e);
           }
         }
       } else if (model.modelList) {
         if (model.modelId >= model.modelList.models.length) {
           model.modelId = 0;
         }
-        const modelName = model.modelList?.models[model.modelId];
-        if (Array.isArray(modelName)) {
-          if (model.modelTexturesId >= modelName.length) {
-            model.modelTexturesId = 0;
-          }
-        } else {
-          const configPath =
-            typeof modelName === 'string' && modelName.trim().toLowerCase().endsWith('.json')
-              ? modelName
-              : `${modelName}/model.json`;
-          let loaded = await model.fetchModelJsonWithFallback(configPath);
-          if (!loaded?.json) {
-            model.modelId = 0;
-            const fallbackModelName = model.modelList?.models[model.modelId];
-            const fallbackConfigPath =
-              typeof fallbackModelName === 'string' &&
-              fallbackModelName.trim().toLowerCase().endsWith('.json')
-                ? fallbackModelName
-                : `${fallbackModelName}/model.json`;
-            loaded = await model.fetchModelJsonWithFallback(fallbackConfigPath);
-          }
+        const primeListAt = async (id: number) => {
+          const entry = model.modelList?.models[id];
+          let modelName = entry;
 
-          const version = model.checkModelVersion(loaded?.json);
+          if (Array.isArray(modelName)) {
+            modelName = modelName[0];
+          }
+          if (typeof modelName !== 'string') return false;
+
+          const configPath = modelName.trim().toLowerCase().endsWith('.json')
+            ? modelName
+            : `${modelName}/model.json`;
+          const loaded = await model.fetchModelJsonWithFallback(configPath);
+          if (!loaded?.json) return false;
+
+          model.modelId = id;
+          model.modelTexturesId = 0;
+
+          const version = model.checkModelVersion(loaded.json);
           if (version === 2) {
             model.currentModelVersion = 2;
-            if (
-              typeof modelName === 'string' &&
-              !modelName.trim().toLowerCase().endsWith('.json')
-            ) {
+            if (!modelName.trim().toLowerCase().endsWith('.json')) {
               const textureCache = await model.loadTextureCache(modelName as string);
               if (model.modelTexturesId >= textureCache.length) {
                 model.modelTexturesId = 0;
@@ -366,7 +368,16 @@ export class ModelManager {
             }
           } else if (version === 3) {
             model.currentModelVersion = 3;
-            model.modelTexturesId = 0;
+          }
+          return true;
+        };
+
+        let primed = await primeListAt(model.modelId);
+        if (!primed) {
+          for (let i = 0; i < model.modelList.models.length; i++) {
+            if (i === model.modelId) continue;
+            primed = await primeListAt(i);
+            if (primed) break;
           }
         }
       }

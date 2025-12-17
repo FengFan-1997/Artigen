@@ -128,7 +128,12 @@ class ModelSettingJson {
     )
       return null;
 
-    return this.json[this.MOTION_GROUPS][name][n][this.SOUND];
+    const sound = this.json[this.MOTION_GROUPS][name][n][this.SOUND];
+    if (typeof sound !== 'string') return null;
+    const trimmed = sound.trim();
+    if (!trimmed) return null;
+    if (!/\.(mp3|wav|ogg|m4a)$/i.test(trimmed)) return null;
+    return trimmed;
   }
 
   getMotionFadeIn(name, n) {
