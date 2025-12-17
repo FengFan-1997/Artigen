@@ -1,0 +1,27 @@
+{
+  "models": [
+    {
+      "name": "xier",
+      "path": "live2d/model/BengHuai/xier/model.json"
+    }
+  ],
+  "message": {
+    "default": ["Hello! I am your AI Agent."],
+    "console": "Dev tools opened!",
+    "copy": "Copied to clipboard!",
+    "visibilitychange": "Welcome back!",
+    "changeSuccess": "Model changed successfully!",
+    "changeFail": "Failed to change model.",
+    "photo": "Snapshot taken!",
+    "goodbye": "Goodbye!",
+    "hitokoto": "Random Quote",
+    "welcome": "Welcome!",
+    "referrer": "Referrer",
+    "hoverBody": ["Don't touch me there!", "Hey!"],
+    "tapBody": ["Ouch!", "Stop poking me!"]
+  },
+  "time": [],
+  "mouseover": [],
+  "click": [],
+  "seasons": []
+}

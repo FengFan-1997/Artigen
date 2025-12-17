@@ -1,0 +1,76 @@
+{
+  "test_user_123": [
+    {
+      "role": "user",
+      "text": "What is RAG?",
+      "timestamp": 1765444181880
+    },
+    {
+      "role": "agent",
+      "text": "I'm having trouble reaching my brain (Google API) right now. 🧠\n\nBut I can still remember our chat! (Offline Mode)\n\nI found this in the docs though:\nHere is some relevant information from the website knowledge base:\n- # Module 3: Intelligence & RAG - Implementation Log\n\n**Date:** 2025-12-11\n**Module:** III. Intelligence & RAG\n**Status:** In Progre...",
+      "timestamp": 1765444181880
+    }
+  ],
+  "user_nmvnnro78": [
+    {
+      "role": "user",
+      "text": "[System Event]: User interaction session ended. User clicked you 2 times. Decide how to react based on this combination.",
+      "timestamp": 1765530233090
+    },
+    {
+      "role": "agent",
+      "text": "W-Wait! I can't connect to my brain! 😖 [DIZZY]\n\nIt looks like a network error... maybe try switching your network node or VPN? We can try again in a bit!\n\n(I did find this in my notes though:)\nHere is some relevant information from the website knowledge base:\n- # Module 3: Intelligence & RAG - Implementation Log\n\n**Date:** 2025-12-11\n**Module:** III. Intelligence & RAG\n**Status:** In Progre...",
+      "timestamp": 1765530233090
+    },
+    {
+      "role": "user",
+      "text": "[System Event]: User interaction session ended. User circled the mouse -1012 degrees around you. Decide how to react based on this combination.",
+      "timestamp": 1765530608991
+    },
+    {
+      "role": "agent",
+      "text": "W-Wait! I can't connect to my brain! 😖 [DIZZY]\n\nIt looks like a network error... maybe try switching your network node or VPN? We can try again in a bit!\n\n(I did find this in my notes though:)\nHere is some relevant information from the website knowledge base:\n- # Module 3: Intelligence & RAG - Implementation Log\n\n**Date:** 2025-12-11\n**Module:** III. Intelligence & RAG\n**Status:** In Progre...",
+      "timestamp": 1765530608991
+    },
+    {
+      "role": "user",
+      "text": "[System Event]: User interaction session ended. User circled the mouse -801 degrees around you. Decide how to react based on this combination.",
+      "timestamp": 1765531913186
+    },
+    {
+      "role": "agent",
+      "text": "W-Wait! I can't connect to my brain! 😖 [DIZZY]\n\nIt looks like a network error... maybe try switching your network node or VPN? We can try again in a bit!\n\n(I did find this in my notes though:)\nHere is some relevant information from the website knowledge base:\n- # Module 3: Intelligence & RAG - Implementation Log\n\n**Date:** 2025-12-11\n**Module:** III. Intelligence & RAG\n**Status:** In Progre...",
+      "timestamp": 1765531913186
+    },
+    {
+      "role": "user",
+      "text": "[System Event]: User interaction session ended. User circled the mouse -484 degrees around you. Decide how to react based on this combination.",
+      "timestamp": 1765532799006
+    },
+    {
+      "role": "agent",
+      "text": "W-Wait! I can't connect to my brain! 😖 [DIZZY]\n\nIt looks like a network error... maybe try switching your network node or VPN? We can try again in a bit!\n\n(I did find this in my notes though:)\nHere is some relevant information from the website knowledge base:\n- # Module 3: Intelligence & RAG - Implementation Log\n\n**Date:** 2025-12-11\n**Module:** III. Intelligence & RAG\n**Status:** In Progre...",
+      "timestamp": 1765532799006
+    },
+    {
+      "role": "user",
+      "text": "[System Event]: User interaction session ended. User circled the mouse -1821 degrees around you. Decide how to react based on this combination.",
+      "timestamp": 1765532832694
+    },
+    {
+      "role": "agent",
+      "text": "W-Wait! I can't connect to my brain! 😖 [DIZZY]\n\nIt looks like a network error... maybe try switching your network node or VPN? We can try again in a bit!\n\n(I did find this in my notes though:)\nHere is some relevant information from the website knowledge base:\n- # Module 3: Intelligence & RAG - Implementation Log\n\n**Date:** 2025-12-11\n**Module:** III. Intelligence & RAG\n**Status:** In Progre...",
+      "timestamp": 1765532832694
+    },
+    {
+      "role": "user",
+      "text": "[System Event]: User interaction session ended. User circled the mouse -427 degrees around you. Decide how to react based on this combination.",
+      "timestamp": 1765534151595
+    },
+    {
+      "role": "agent",
+      "text": "W-Wait! I can't connect to my brain! 😖 [DIZZY]\n\nIt looks like a network error... maybe try switching your network node or VPN? We can try again in a bit!\n\n(I did find this in my notes though:)\nHere is some relevant information from the website knowledge base:\n- # Module 3: Intelligence & RAG - Implementation Log\n\n**Date:** 2025-12-11\n**Module:** III. Intelligence & RAG\n**Status:** In Progre...",
+      "timestamp": 1765534151595
+    }
+  ]
+}

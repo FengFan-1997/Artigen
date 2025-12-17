@@ -1,0 +1,19 @@
+Live2D Cubism SDK Core Version 5.1.0
+index.ts:55 [Live2D] Failed to load Cubism3 model: TypeError: Cannot read properties of undefined (reading 'remove')
+    at set autoUpdate (pixi-live2d-display_cubism4.js?v=af5a8e33:4874:53)
+    at Live2DModel.init (pixi-live2d-display_cubism4.js?v=af5a8e33:4888:21)
+    at Live2DModel.<anonymous> (pixi-live2d-display_cubism4.js?v=af5a8e33:4844:41)
+    at Live2DModel.emit (chunk-LLRQYCCV.js?v=af5a8e33:101:31)
+    at pixi-live2d-display_cubism4.js?v=af5a8e33:4606:19
+    at Generator.next (<anonymous>)
+    at fulfilled (pixi-live2d-display_cubism4.js?v=af5a8e33:19:24)
+loadCubism3Model @ index.ts:55
+await in loadCubism3Model
+loadLive2D @ Live2DModelManager.ts:204
+loadSpecificModel @ Live2DModelManager.ts:356
+await in loadSpecificModel
+callback @ tools.ts:90
+(anonymous) @ tools.ts:143
+logger.ts:42 [Live2D Widget][INFO] Model /live2d/model/ZiYuXin/ots14_4501/normal/normal.model3.json (Cubism version 3) loaded
+目前问题，切换ziyuxin 模型不出现，一致存在这个问题，为什么还不解决，一次性解决好呀！
+
