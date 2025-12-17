@@ -87,7 +87,7 @@ class ToolsManager {
         callback: () => {
           showMessage('切换到紫雨心模型（Cubism3/4 引擎开发中）', 4000, 9);
           if ((model as any).loadSpecificModel) {
-            (model as any).loadSpecificModel('bilan/aijier_2/aijier_2.model3.json', {
+            (model as any).loadSpecificModel('ZiYuXin/ots14_3001/normal/normal.model3.json', {
               message: '紫雨心模型加载中（实验功能）...'
             });
           }

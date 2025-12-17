@@ -177,7 +177,13 @@ export class ModelManager {
     return result;
   }
 
-  private async fetchModelJsonWithFallback(modelRelativePath: string) {
+  private async fetchModelJsonWithFallback(
+    modelRelativePath: string,
+    options?: {
+      silent?: boolean;
+    }
+  ) {
+    const silent = Boolean(options?.silent);
     const primaryCandidates = this.getModelAssetUrlCandidates(
       modelRelativePath,
       this.modelDirectory
@@ -202,7 +208,9 @@ export class ModelManager {
       alternateCandidates[alternateCandidates.length - 1] ||
       primaryCandidates[primaryCandidates.length - 1] ||
       modelRelativePath;
-    logger.error(`Model setting is invalid for path ${lastErrorUrl}`);
+    if (!silent) {
+      logger.error(`Model setting is invalid for path ${lastErrorUrl}`);
+    }
     return null;
   }
 
@@ -307,7 +315,9 @@ export class ModelManager {
         // Load using Index
         const primeIndexAt = async (id: number) => {
           const item = model.modelIndex[id];
-          const loaded = await model.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`);
+          const loaded = await model.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`, {
+            silent: true
+          });
           if (!loaded?.json) return false;
           model.modelId = id;
           model.currentModelVersion = model.checkModelVersion(loaded.json);
@@ -351,7 +361,7 @@ export class ModelManager {
           const configPath = modelName.trim().toLowerCase().endsWith('.json')
             ? modelName
             : `${modelName}/model.json`;
-          const loaded = await model.fetchModelJsonWithFallback(configPath);
+          const loaded = await model.fetchModelJsonWithFallback(configPath, { silent: true });
           if (!loaded?.json) return false;
 
           model.modelId = id;
@@ -631,21 +641,32 @@ export class ModelManager {
     let modelSettingPath: string | undefined;
     let modelSetting: any;
     if (this.useCDN && this.modelIndex.length > 0) {
-      let item = this.modelIndex[this.modelId];
-      let loaded = await this.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`);
+      const tryLoadIndexAt = async (id: number) => {
+        const item = this.modelIndex[id];
+        const loaded = await this.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`, {
+          silent: true
+        });
+        if (!loaded?.json) return null;
+        this.modelId = id;
+        this.modelTexturesId = 0;
+        this.currentModelVersion = this.checkModelVersion(loaded.json);
+        return loaded;
+      };
+
+      let loaded = await tryLoadIndexAt(this.modelId);
       if (!loaded) {
-        const originalId = this.modelId;
-        this.modelId = 0;
-        item = this.modelIndex[this.modelId];
-        loaded = await this.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`);
-        if (!loaded) {
-          this.modelId = originalId;
+        for (let i = 0; i < this.modelIndex.length; i++) {
+          if (i === this.modelId) continue;
+          loaded = await tryLoadIndexAt(i);
+          if (loaded) break;
         }
       }
+
       if (!loaded) {
         showMessage('Failed to load model configuration.', 4000, 10);
         return;
       }
+
       modelSettingPath = loaded.url;
       modelSetting = loaded.json;
 
@@ -666,29 +687,38 @@ export class ModelManager {
       if (Array.isArray(modelName)) {
         modelName = modelName[this.modelTexturesId];
       }
-      const configPath =
-        typeof modelName === 'string' && modelName.trim().toLowerCase().endsWith('.json')
-          ? modelName
-          : `${modelName}/model.json`;
-      let loaded = await this.fetchModelJsonWithFallback(configPath);
-      if (!loaded) {
-        const originalId = this.modelId;
-        this.modelId = 0;
-        let fallbackName = this.modelList.models[this.modelId];
-        if (Array.isArray(fallbackName)) fallbackName = fallbackName[0];
-        const fallbackConfigPath =
-          typeof fallbackName === 'string' && fallbackName.trim().toLowerCase().endsWith('.json')
-            ? fallbackName
-            : `${fallbackName}/model.json`;
-        loaded = await this.fetchModelJsonWithFallback(fallbackConfigPath);
-        if (!loaded) {
-          this.modelId = originalId;
+
+      const tryLoadListAt = async (id: number) => {
+        let name: any = this.modelList?.models[id];
+        if (Array.isArray(name)) name = name[this.modelTexturesId] ?? name[0];
+        const candidate =
+          typeof name === 'string' && name.trim().toLowerCase().endsWith('.json')
+            ? name
+            : `${name}/model.json`;
+        const loaded = await this.fetchModelJsonWithFallback(candidate, { silent: true });
+        if (!loaded?.json) return null;
+        this.modelId = id;
+        this.modelTexturesId = 0;
+        this.currentModelVersion = this.checkModelVersion(loaded.json);
+        return { loaded, name };
+      };
+
+      let tried = await tryLoadListAt(this.modelId);
+      if (!tried) {
+        for (let i = 0; i < this.modelList.models.length; i++) {
+          if (i === this.modelId) continue;
+          tried = await tryLoadListAt(i);
+          if (tried) break;
         }
       }
-      if (!loaded) {
+
+      if (!tried) {
         showMessage('Failed to load model configuration.', 4000, 10);
         return;
       }
+
+      const { loaded } = tried;
+      modelName = tried.name;
       modelSettingPath = loaded.url;
       modelSetting = loaded.json;
       const version = this.checkModelVersion(modelSetting);
@@ -724,7 +754,7 @@ export class ModelManager {
   }
 
   async loadSpecificModel(modelRelativePath: string, options?: { message?: string }) {
-    const loaded = await this.fetchModelJsonWithFallback(modelRelativePath);
+    const loaded = await this.fetchModelJsonWithFallback(modelRelativePath, { silent: true });
     if (!loaded) {
       showMessage('Failed to load specified model configuration.', 4000, 10);
       return;
@@ -755,7 +785,9 @@ export class ModelManager {
       if (Array.isArray(modelName)) {
         this.modelTexturesId = randomOtherOption(modelName.length, this.modelTexturesId);
       } else {
-        const loaded = await this.fetchModelJsonWithFallback(`${modelName}/model.json`);
+        const loaded = await this.fetchModelJsonWithFallback(`${modelName}/model.json`, {
+          silent: true
+        });
         const modelSetting = loaded?.json;
         const version = this.checkModelVersion(modelSetting);
         if (version === 0) {
@@ -801,7 +833,9 @@ export class ModelManager {
         const next = this.modelIndex[nextIndex];
         if (lockVersion && next.version !== lockVersion) continue;
 
-        const loaded = await this.fetchModelJsonWithFallback(`${next.path}/${next.configFile}`);
+        const loaded = await this.fetchModelJsonWithFallback(`${next.path}/${next.configFile}`, {
+          silent: true
+        });
         if (!loaded) continue;
 
         this.modelId = nextIndex;

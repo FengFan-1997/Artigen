@@ -18,6 +18,10 @@ let poiLastUpdateAt = 0;
 let talkingActive = false;
 let talkingPhase = 0;
 
+let lastRendererWidth = 0;
+let lastRendererHeight = 0;
+let currentModelPath = '';
+
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -238,43 +242,137 @@ const getSpecialScale = (modelJsonPath: string): number | undefined => {
   return specialScale;
 };
 
-const computeModelScale = (
+type SizeBucket = 'large' | 'medium' | 'small';
+
+const computeCubism3Layout = (
   live2dModel: any,
   rendererWidth: number,
   rendererHeight: number,
   modelJsonPath: string
 ) => {
-  const targetWidth = rendererWidth * 0.6;
-  const targetHeight = rendererHeight * 0.9;
+  const marginLeft = Math.max(16, Math.round(rendererWidth * 0.04));
+  const marginRight = Math.max(16, Math.round(rendererWidth * 0.04));
+  const marginTop = Math.max(16, Math.round(rendererHeight * 0.04));
+  const marginBottom = Math.max(10, Math.round(rendererHeight * 0.02));
 
-  let scale = 0.25;
-  if (live2dModel && live2dModel.width > 0 && live2dModel.height > 0) {
-    const scaleX = targetWidth / live2dModel.width;
-    const scaleY = targetHeight / live2dModel.height;
-    scale = Math.min(scaleX, scaleY);
+  const fitWidth = Math.max(1, rendererWidth - marginLeft - marginRight);
+  const fitHeight = Math.max(1, rendererHeight - marginTop - marginBottom);
+
+  let boundsW = 0;
+  let boundsH = 0;
+  try {
+    const localBounds = live2dModel?.getLocalBounds?.();
+    boundsW = Number(localBounds?.width) || 0;
+    boundsH = Number(localBounds?.height) || 0;
+  } catch {}
+
+  if (!(boundsW > 0 && boundsH > 0)) {
+    boundsW = Number(live2dModel?.width) || 0;
+    boundsH = Number(live2dModel?.height) || 0;
   }
 
-  if (!Number.isFinite(scale) || scale <= 0) {
-    scale = 0.4;
+  let fitScale = 0.25;
+  if (boundsW > 0 && boundsH > 0) {
+    fitScale = Math.min(fitWidth / boundsW, fitHeight / boundsH);
   }
 
-  if (scale < 0.15) {
-    scale = 0.15;
-  } else if (scale > 4) {
-    scale = 4;
+  if (!Number.isFinite(fitScale) || fitScale <= 0) {
+    fitScale = 0.25;
   }
+
+  const safeFitScale = fitScale * 0.98;
+
+  const bucket: SizeBucket =
+    safeFitScale < 0.24 ? 'large' : safeFitScale < 0.34 ? 'medium' : 'small';
+  const bucketMaxScale: Record<SizeBucket, number> = {
+    large: 0.24,
+    medium: 0.31,
+    small: 0.38
+  };
 
   const specialScale = getSpecialScale(modelJsonPath);
-  if (specialScale) {
-    scale *= specialScale;
-  }
+  const scale = clamp(
+    Math.min(safeFitScale, bucketMaxScale[bucket]) * (specialScale || 1),
+    0.12,
+    3
+  );
+
+  const targetX = Math.round(rendererWidth * 0.32);
+  const targetY = rendererHeight - marginBottom;
 
   return {
     scale,
+    bucket,
     specialScale,
-    targetWidth,
-    targetHeight
+    targetX,
+    targetY,
+    marginLeft,
+    marginRight,
+    marginTop,
+    marginBottom,
+    fitWidth,
+    fitHeight,
+    boundsW,
+    boundsH
   };
+};
+
+const applyCubism3Layout = (appInstance: any, modelJsonPath: string) => {
+  if (!appInstance || !model) return;
+
+  const rendererWidth = appInstance.renderer.width || 800;
+  const rendererHeight = appInstance.renderer.height || 800;
+
+  const layout = computeCubism3Layout(model, rendererWidth, rendererHeight, modelJsonPath);
+  model.scale.set(layout.scale, layout.scale);
+  model.position.set(layout.targetX, layout.targetY);
+
+  let bounds: any | null = null;
+  try {
+    bounds = model.getBounds?.();
+  } catch {}
+
+  if (bounds) {
+    const targetBottom = rendererHeight - layout.marginBottom;
+    const dyBottom = targetBottom - bounds.bottom;
+    if (Number.isFinite(dyBottom) && Math.abs(dyBottom) > 0.5) {
+      model.y += dyBottom;
+    }
+
+    const leftLimit = layout.marginLeft;
+    const rightLimit = rendererWidth - layout.marginRight;
+    const topLimit = layout.marginTop;
+    const bottomLimit = rendererHeight - layout.marginBottom;
+
+    try {
+      bounds = model.getBounds?.();
+    } catch {}
+
+    if (bounds) {
+      if (bounds.left < leftLimit) {
+        model.x += leftLimit - bounds.left;
+      } else if (bounds.right > rightLimit) {
+        model.x -= bounds.right - rightLimit;
+      }
+
+      if (bounds.top < topLimit) {
+        model.y += topLimit - bounds.top;
+      } else if (bounds.bottom > bottomLimit) {
+        model.y -= bounds.bottom - bottomLimit;
+      }
+    }
+  }
+
+  console.log('[Live2D] Cubism3 Layout Applied:', {
+    modelJsonPath,
+    rendererWidth,
+    rendererHeight,
+    bucket: layout.bucket,
+    specialScale: layout.specialScale,
+    finalScale: layout.scale,
+    boundsW: layout.boundsW,
+    boundsH: layout.boundsH
+  });
 };
 
 export const loadCubism3Model = async (modelJsonPath: string) => {
@@ -295,7 +393,11 @@ export const loadCubism3Model = async (modelJsonPath: string) => {
     return;
   }
 
-  model.anchor.set(0.5, 1.0);
+  currentModelPath = modelJsonPath;
+
+  if (model.anchor && typeof model.anchor.set === 'function') {
+    model.anchor.set(0.5, 1.0);
+  }
   const container = getContainer();
   if (container) {
     const w = container.clientWidth || 800;
@@ -303,33 +405,11 @@ export const loadCubism3Model = async (modelJsonPath: string) => {
     appInstance.renderer.resize(w, h);
   }
 
-  const rendererWidth = appInstance.renderer.width || 800;
-  const rendererHeight = appInstance.renderer.height || 800;
-  model.position.set(rendererWidth / 2, rendererHeight);
-
-  const { scale, specialScale, targetWidth, targetHeight } = computeModelScale(
-    model,
-    rendererWidth,
-    rendererHeight,
-    modelJsonPath
-  );
-
-  console.log('[Live2D] Loading Cubism3 Model:', {
-    modelJsonPath,
-    specialScale,
-    targetWidth,
-    targetHeight,
-    modelWidth: model.width,
-    modelHeight: model.height,
-    rendererWidth,
-    rendererHeight,
-    finalScale: scale
-  });
-
-  model.scale.set(scale, scale);
-  model.position.set(rendererWidth / 2, rendererHeight);
-
   appInstance.stage.addChild(model);
+  applyCubism3Layout(appInstance, modelJsonPath);
+
+  lastRendererWidth = appInstance.renderer.width || 0;
+  lastRendererHeight = appInstance.renderer.height || 0;
 
   // model.autoUpdate = true causes crash if Ticker is not registered correctly with the class.
   // We use manual update in the app ticker below, so we don't need autoUpdate.
@@ -347,6 +427,18 @@ export const loadCubism3Model = async (modelJsonPath: string) => {
     tickerAdded = true;
     appInstance.ticker.add((delta: number) => {
       if (model && typeof model.update === 'function') {
+        const w = appInstance.renderer.width || 0;
+        const h = appInstance.renderer.height || 0;
+        if (
+          currentModelPath &&
+          w > 0 &&
+          h > 0 &&
+          (w !== lastRendererWidth || h !== lastRendererHeight)
+        ) {
+          lastRendererWidth = w;
+          lastRendererHeight = h;
+          applyCubism3Layout(appInstance, currentModelPath);
+        }
         applyAgentDrivenParams(delta);
         model.update(delta);
       }
