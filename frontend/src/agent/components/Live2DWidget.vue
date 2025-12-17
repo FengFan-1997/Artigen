@@ -281,10 +281,33 @@ export default defineComponent({
         cleanup();
         await loadScript('/live2d/core/live2d.min.js');
 
+        const normalizeHfBase = (raw: string) => {
+          const trimmed = (raw || '').trim();
+          if (!trimmed) return '';
+          const hasProtocol = /^https?:\/\//i.test(trimmed);
+          if (!hasProtocol) return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
+
+          const normalized = trimmed.replace(/\/+$/, '');
+          const isHf = /(^https?:\/\/(www\.)?huggingface\.co\/)|(^https?:\/\/hf\.co\/)/i.test(
+            normalized
+          );
+          if (!isHf) return `${normalized}/`;
+
+          const withResolve = normalized
+            .replace(/\/blob\//i, '/resolve/')
+            .replace(/\/raw\//i, '/resolve/');
+
+          if (/\/resolve\/[^/]+\//i.test(withResolve)) {
+            return withResolve.endsWith('/') ? withResolve : `${withResolve}/`;
+          }
+          return `${withResolve}/resolve/main/`;
+        };
+
         const configBaseRaw = import.meta.env.VITE_LIVE2D_CONFIG_BASE || '/live2d/';
         const configBase = configBaseRaw.endsWith('/') ? configBaseRaw : `${configBaseRaw}/`;
         const assetsBaseRaw = import.meta.env.VITE_LIVE2D_ASSETS_BASE || configBase;
-        const assetsBase = assetsBaseRaw.endsWith('/') ? assetsBaseRaw : `${assetsBaseRaw}/`;
+        const hfNormalized = normalizeHfBase(assetsBaseRaw);
+        const assetsBase = hfNormalized.endsWith('/') ? hfNormalized : `${hfNormalized}/`;
 
         if (container.value) {
           modelMgr.value = await initWidget(

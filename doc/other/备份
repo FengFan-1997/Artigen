@@ -1,0 +1,692 @@
+<template>
+  <div 
+    class="agent-container" 
+    :style="containerStyle"
+    @mouseenter="handleMouseEnter"
+    @mouseleave="handleMouseLeave"
+    @click="handleClick"
+  >
+    <!-- Simple CSS/SVG Character: A floating robot/ghost -->
+    <div 
+      class="agent-body" 
+      :class="{ 
+        'is-moving': isMoving, 
+        'is-hovered': isHovered,
+        'is-dizzy': isDizzy 
+      }"
+    >
+      <div class="agent-head">
+        <!-- Eyes with tracking logic -->
+        <div class="agent-eye left" :style="eyeStyle"></div>
+        <div class="agent-eye right" :style="eyeStyle"></div>
+        
+        <!-- Dizzy Effect (Stars/Swirls) -->
+        <div v-if="isDizzy" class="dizzy-stars">
+          <span>⭐</span><span>⭐</span><span>⭐</span>
+        </div>
+
+        <div class="agent-antenna">
+          <div class="agent-antenna-ball"></div>
+        </div>
+      </div>
+      <div class="agent-shadow"></div>
+      
+      <!-- Speech Bubble -->
+      <transition name="fade">
+        <div v-if="message" class="speech-bubble">
+          {{ message }}
+        </div>
+      </transition>
+    </div>
+
+    <!-- Chat Window -->
+    <transition name="pop">
+      <div v-if="chatOpen" class="chat-window" @click.stop>
+        <div class="chat-header">
+          <span>AI Assistant</span>
+          <button class="close-btn" @click="toggleChat">×</button>
+        </div>
+        <div class="chat-messages">
+          <div 
+            v-for="(msg, index) in messages" 
+            :key="index" 
+            class="chat-message"
+            :class="msg.role"
+          >
+            {{ msg.text }}
+          </div>
+          <div v-if="isLoading" class="chat-message agent loading">
+            <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+          </div>
+        </div>
+        <div class="chat-input-area">
+          <input 
+            v-model="inputMessage" 
+            @keyup.enter="sendMessage"
+            placeholder="Ask me anything..." 
+          />
+          <button @click="sendMessage" :disabled="isLoading">Send</button>
+        </div>
+      </div>
+    </transition>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+
+// --- State ---
+const x = ref(window.innerWidth - 100);
+const y = ref(window.innerHeight - 100);
+const targetX = ref(x.value);
+const targetY = ref(y.value);
+
+const isMoving = ref(false);
+const isHovered = ref(false);
+const isDizzy = ref(false);
+const message = ref('Hi! I am your AI Agent.');
+
+// Eye Tracking State
+const mouseX = ref(0);
+const mouseY = ref(0);
+
+// Dizziness Logic State
+const MOUSE_HISTORY_LIMIT = 20; // Points to track
+const mouseHistory: { x: number, y: number, time: number }[] = [];
+let dizzyTimeout: number | null = null;
+
+// --- Config ---
+const AGENT_SIZE = 80; // px
+const MOVE_INTERVAL = 5000; // ms (for idle roaming)
+const LERP_FACTOR = 0.08; // Smoothness factor (0.05 - 0.1 is good)
+const MOUSE_FOLLOW_OFFSET = { x: 40, y: 40 }; // Offset from cursor to center agent
+
+// --- Computed ---
+const containerStyle = computed(() => ({
+  transform: `translate(${x.value}px, ${y.value}px)`,
+  width: `${AGENT_SIZE}px`,
+  height: `${AGENT_SIZE}px`,
+  // Use CSS transition ONLY when roaming (random movement), otherwise use JS Lerp loop
+  transition: isHovered.value ? 'none' : 'transform 2s cubic-bezier(0.4, 0.0, 0.2, 1)'
+}));
+
+const eyeStyle = computed(() => {
+  if (isDizzy.value) return {}; // Default or dizzy animation handles it
+  
+  // Calculate angle from agent center to mouse
+  const agentCenterX = x.value + AGENT_SIZE / 2;
+  const agentCenterY = y.value + AGENT_SIZE / 2;
+  
+  const dx = mouseX.value - agentCenterX;
+  const dy = mouseY.value - agentCenterY;
+  const angle = Math.atan2(dy, dx);
+  
+  // Limit eye movement radius
+  const distance = Math.min(3, Math.sqrt(dx * dx + dy * dy) / 20);
+  
+  const eyeX = Math.cos(angle) * distance;
+  const eyeY = Math.sin(angle) * distance;
+  
+  return {
+    transform: `translate(${eyeX}px, ${eyeY}px)`
+  };
+});
+
+// --- Logic: Movement & Animation Loop ---
+let animationFrameId: number;
+let roamTimer: number | null = null;
+
+const startLoop = () => {
+  const loop = () => {
+    if (isDizzy.value) {
+      // If dizzy, do nothing or drift slightly?
+    } else if (isHovered.value) {
+      // --- Mouse Follow Mode (Lerp) ---
+      // Target is mouse position minus offset (to center)
+      targetX.value = mouseX.value - MOUSE_FOLLOW_OFFSET.x;
+      targetY.value = mouseY.value - MOUSE_FOLLOW_OFFSET.y;
+      
+      // Lerp: current = current + (target - current) * factor
+      x.value += (targetX.value - x.value) * LERP_FACTOR;
+      y.value += (targetY.value - y.value) * LERP_FACTOR;
+    } 
+    // If NOT hovered, we use CSS transitions for roaming, so no JS update needed per frame for position
+    
+    animationFrameId = requestAnimationFrame(loop);
+  };
+  animationFrameId = requestAnimationFrame(loop);
+};
+
+// --- Logic: Random Roaming (Idle Mode) ---
+const getRandomPosition = () => {
+  const padding = 20;
+  const maxX = window.innerWidth - AGENT_SIZE - padding;
+  const maxY = window.innerHeight - AGENT_SIZE - padding;
+  const minX = padding;
+  const minY = padding;
+
+  return {
+    x: Math.random() * (maxX - minX) + minX,
+    y: Math.random() * (maxY - minY) + minY
+  };
+};
+
+const startRoaming = () => {
+  moveRandomly();
+  roamTimer = window.setInterval(() => {
+    if (!isHovered.value && !isDizzy.value) {
+      moveRandomly();
+    }
+  }, MOVE_INTERVAL);
+};
+
+const moveRandomly = () => {
+  const newPos = getRandomPosition();
+  isMoving.value = true;
+  x.value = newPos.x;
+  y.value = newPos.y;
+
+  // Stop "moving" state after animation finishes
+  setTimeout(() => {
+    isMoving.value = false;
+  }, 2000);
+};
+
+// --- Logic: Dizziness Detection ---
+const checkDizziness = (newX: number, newY: number) => {
+  const now = Date.now();
+  mouseHistory.push({ x: newX, y: newY, time: now });
+  
+  // Keep only recent history (last 500ms)
+  while (mouseHistory.length > 0 && now - mouseHistory[0].time > 500) {
+    mouseHistory.shift();
+  }
+  
+  // Prune history if too long to prevent memory issues, though time check usually handles it
+  if (mouseHistory.length > MOUSE_HISTORY_LIMIT) {
+    mouseHistory.shift();
+  }
+
+  if (mouseHistory.length < 10) return;
+
+  // Calculate total angle change
+  let totalAngle = 0;
+  for (let i = 1; i < mouseHistory.length; i++) {
+    const p1 = mouseHistory[i - 1];
+    const p2 = mouseHistory[i];
+    
+    // Relative to agent center
+    const cx = x.value + AGENT_SIZE / 2;
+    const cy = y.value + AGENT_SIZE / 2;
+    
+    const angle1 = Math.atan2(p1.y - cy, p1.x - cx);
+    const angle2 = Math.atan2(p2.y - cy, p2.x - cx);
+    
+    let diff = angle2 - angle1;
+    // Normalize angle diff to [-PI, PI]
+    if (diff > Math.PI) diff -= 2 * Math.PI;
+    if (diff < -Math.PI) diff += 2 * Math.PI;
+    
+    totalAngle += diff;
+  }
+
+  // Threshold: > 270 degrees (approx 4.7 radians) in 500ms
+  if (Math.abs(totalAngle) > 4.7) {
+    triggerDizzy();
+    // Clear history to prevent continuous triggering
+    mouseHistory.length = 0;
+  }
+};
+
+const triggerDizzy = () => {
+  if (isDizzy.value) return;
+  
+  isDizzy.value = true;
+  message.value = "Whoa! I'm dizzy...";
+  
+  if (dizzyTimeout) clearTimeout(dizzyTimeout);
+  
+  dizzyTimeout = window.setTimeout(() => {
+    isDizzy.value = false;
+    message.value = "I'm okay now.";
+    setTimeout(() => message.value = "", 2000);
+  }, 3000); // Dizzy for 3 seconds
+};
+
+// --- Interactions ---
+const handleMouseEnter = () => {
+  isHovered.value = true;
+  message.value = "I'm following you!";
+  // Clear roaming interval to prevent conflict
+  if (roamTimer) clearInterval(roamTimer);
+};
+
+const handleMouseLeave = () => {
+  isHovered.value = false;
+  message.value = "Bye!";
+  setTimeout(() => message.value = "", 1000);
+  // Resume roaming
+  startRoaming();
+};
+
+// --- Module 3: Chat & Intelligence ---
+const chatOpen = ref(false);
+const inputMessage = ref('');
+const isLoading = ref(false);
+const messages = ref<{ role: 'user' | 'agent', text: string }[]>([
+  { role: 'agent', text: 'Hello! I am your AI Agent. Ask me about "ppt" or "agent"!' }
+]);
+
+// Simple Knowledge Base for RAG (Context Injection)
+const KNOWLEDGE_BASE: Record<string, string> = {
+  'ppt': 'This website features an AI PPT Generator that creates outlines and slides based on your topic.',
+  'agent': 'I am a Q-version intelligent agent with visual interactions and chat capabilities.',
+  'about': 'This is a demo project showcasing AI integration with Vue 3.',
+  'contact': 'You can contact the developer at fengfan@example.com.',
+  'help': 'I can answer questions about this website or general topics.'
+};
+
+const toggleChat = () => {
+  if (isDizzy.value) {
+    message.value = "Can't... chat... dizzy...";
+    return;
+  }
+  chatOpen.value = !chatOpen.value;
+  if (chatOpen.value) {
+    message.value = "Let's chat!";
+    // Stop roaming when chatting
+    if (roamTimer) clearInterval(roamTimer);
+  } else {
+    message.value = "";
+    // Resume roaming if not hovered
+    if (!isHovered.value) startRoaming();
+  }
+};
+
+const handleClick = () => {
+  toggleChat();
+};
+
+const sendMessage = async () => {
+  if (!inputMessage.value.trim() || isLoading.value) return;
+
+  const userText = inputMessage.value.trim();
+  messages.value.push({ role: 'user', text: userText });
+  inputMessage.value = '';
+  isLoading.value = true;
+
+  // 1. RAG: Check Knowledge Base
+  let context = "";
+  const lowerText = userText.toLowerCase();
+  for (const [key, value] of Object.entries(KNOWLEDGE_BASE)) {
+    if (lowerText.includes(key)) {
+      context += `${value}\n`;
+    }
+  }
+
+  // 2. Construct Prompt
+  // We include a system instruction and the context
+  const systemPrompt = `You are a helpful Q-version AI agent on a website. 
+  Be concise and friendly. 
+  If provided, use the following Website Context to answer:
+  ${context ? "WEBSITE CONTEXT:\n" + context : ""}
+  
+  User Question: ${userText}`;
+
+  try {
+    const response = await fetch('http://localhost:8080/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: systemPrompt })
+    });
+
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    // Gemini API response structure might vary, assuming backend returns direct text or standard Gemini structure
+    // Backend returns: { candidates: [ { content: { parts: [ { text: "..." } ] } } ] }
+    // Or if backend simplified it? Let's check backend again. 
+    // Backend sends `res.json(data)` where `data` is from Gemini API.
+    // Standard Gemini response: data.candidates[0].content.parts[0].text
+    
+    let aiText = "I couldn't understand that.";
+    if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+      aiText = data.candidates[0].content.parts[0].text;
+    } else if (data.error) {
+        aiText = "Error: " + data.error;
+    }
+
+    messages.value.push({ role: 'agent', text: aiText });
+
+  } catch (error) {
+    console.error("Chat Error:", error);
+    messages.value.push({ role: 'agent', text: "Sorry, I'm having trouble connecting to my brain right now." });
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+
+// --- Global Mouse Listener ---
+const handleGlobalMouseMove = (e: MouseEvent) => {
+  mouseX.value = e.clientX;
+  mouseY.value = e.clientY;
+  
+  // Check for dizzy gestures only when hovering (following)
+  if (isHovered.value) {
+    checkDizziness(e.clientX, e.clientY);
+  }
+};
+
+// --- Lifecycle ---
+onMounted(() => {
+  startLoop();
+  startRoaming();
+  window.addEventListener('mousemove', handleGlobalMouseMove);
+  
+  window.addEventListener('resize', () => {
+    x.value = Math.min(x.value, window.innerWidth - AGENT_SIZE);
+    y.value = Math.min(y.value, window.innerHeight - AGENT_SIZE);
+  });
+});
+
+onBeforeUnmount(() => {
+  cancelAnimationFrame(animationFrameId);
+  if (roamTimer) clearInterval(roamTimer);
+  if (dizzyTimeout) clearTimeout(dizzyTimeout);
+  window.removeEventListener('mousemove', handleGlobalMouseMove);
+  window.removeEventListener('resize', () => {});
+});
+</script>
+
+<style scoped>
+.agent-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 9999;
+  pointer-events: auto;
+  cursor: pointer;
+  will-change: transform;
+}
+
+.agent-body {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  animation: float 3s ease-in-out infinite;
+  transition: transform 0.3s;
+}
+
+/* Chat Window Styles */
+.chat-window {
+  position: absolute;
+  bottom: 90px;
+  left: 0;
+  width: 300px;
+  height: 400px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 10000;
+  transform-origin: bottom left;
+  cursor: default;
+}
+
+.chat-header {
+  background: #6200ea;
+  color: white;
+  padding: 10px 15px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: bold;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.chat-messages {
+  flex: 1;
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-message {
+  padding: 8px 12px;
+  border-radius: 10px;
+  max-width: 80%;
+  font-size: 14px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.chat-message.agent {
+  background: #f0f0f0;
+  align-self: flex-start;
+  border-bottom-left-radius: 2px;
+  color: #333;
+}
+
+.chat-message.user {
+  background: #6200ea;
+  color: white;
+  align-self: flex-end;
+  border-bottom-right-radius: 2px;
+}
+
+.chat-input-area {
+  padding: 10px;
+  border-top: 1px solid #eee;
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input-area input {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 20px;
+  outline: none;
+  color: #333;
+}
+
+.chat-input-area button {
+  padding: 8px 16px;
+  background: #6200ea;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.chat-input-area button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Animations */
+.pop-enter-active,
+.pop-leave-active {
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.pop-enter-from,
+.pop-leave-to {
+  opacity: 0;
+  transform: scale(0.5) translateY(20px);
+}
+
+.dot {
+  display: inline-block;
+  animation: bounce 1.4s infinite ease-in-out both;
+  font-size: 20px;
+  line-height: 10px;
+}
+
+.dot:nth-child(1) { animation-delay: -0.32s; }
+.dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
+}
+
+
+.agent-body.is-dizzy {
+  animation: dizzy-spin 0.5s linear infinite;
+}
+
+.agent-head {
+  width: 60px;
+  height: 50px;
+  background: linear-gradient(135deg, #6366f1, #38bdf8);
+  border-radius: 25px 25px 20px 20px;
+  position: relative;
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-eye {
+  width: 10px;
+  height: 10px;
+  background: white;
+  border-radius: 50%;
+  /* Blink animation is handled via CSS when not tracking, but JS overrides transform */
+  /* We can keep blinking by using a wrapper or keyframes that don't conflict with translate */
+}
+
+/* Override blink when tracking to avoid conflict with JS transform */
+.agent-body:not(.is-dizzy) .agent-eye {
+  animation: blink 4s infinite;
+}
+
+.agent-antenna {
+  position: absolute;
+  top: -15px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 15px;
+  background: #cbd5e1;
+}
+
+.agent-antenna-ball {
+  position: absolute;
+  top: -6px;
+  left: -3px;
+  width: 8px;
+  height: 8px;
+  background: #ef4444;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
+.agent-shadow {
+  position: absolute;
+  bottom: 0px;
+  width: 40px;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
+  filter: blur(2px);
+  animation: shadow-scale 3s ease-in-out infinite;
+}
+
+.speech-bubble {
+  position: absolute;
+  top: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  color: #0f172a;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+  pointer-events: none;
+  z-index: 10000;
+}
+
+.speech-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid white;
+}
+
+.dizzy-stars {
+  position: absolute;
+  top: -20px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+  animation: fade-in 0.2s;
+}
+
+/* Animations */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes dizzy-spin {
+  0% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(-10deg) scale(0.9); }
+  50% { transform: rotate(0deg) scale(1); }
+  75% { transform: rotate(10deg) scale(1.1); }
+  100% { transform: rotate(0deg) scale(1); }
+}
+
+@keyframes shadow-scale {
+  0%, 100% { transform: scale(1); opacity: 0.2; }
+  50% { transform: scale(0.8); opacity: 0.1; }
+}
+
+@keyframes blink {
+  0%, 45%, 55%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.1); }
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { box-shadow: 0 0 0 5px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</style>

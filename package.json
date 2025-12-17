@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "concurrently \"pnpm run --filter backend dev\" \"pnpm run --filter personal dev\"",
-    "build": "pnpm run --filter personal build",
+    "dev": "concurrently \"pnpm --dir backend run dev\" \"pnpm --dir frontend run dev\"",
+    "build": "pnpm --dir frontend run build",
     "prepare": "husky"
   },
   "keywords": [],

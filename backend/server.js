@@ -14,6 +14,22 @@ const API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_GENERATE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 const GEMINI_EMBED_URL = 'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent';
 
+const DEFAULT_PROJECT_KNOWLEDGE = `
+System: Feng Fan's AI Portfolio (Vue 3 + TypeScript)
+
+Key routes:
+- /ai-ppt: AI PPT generator
+- /gemini-chat: chat page
+- /translator: translator
+- /resume-forge: resume optimizer
+- /travel-planner: travel planner
+
+Tasking rules:
+- Prefer selectors from pageContext. If none, use text:VisibleText.
+- If user asks to go somewhere, output navigate: /path.
+- If user asks where a UI element is, output highlight: selector.
+`;
+
 // --- Helpers ---
 
 // Calculate Cosine Similarity
@@ -306,9 +322,10 @@ app.post('/api/chat', async (req, res) => {
     const userName = userProfile.name || 'Friend';
 
     // A. RAG: Retrieve relevant context
-    const queryEmbedding = await getEmbedding(message);
     let contextText = "";
     const vectors = readJson(VECTORS_FILE, []);
+    const hasEmbeddings = vectors.some(v => Array.isArray(v.embedding) && v.embedding.length > 0);
+    const queryEmbedding = hasEmbeddings ? await getEmbedding(message) : null;
     let topDocs = [];
     
     if (queryEmbedding) {
@@ -326,7 +343,7 @@ app.post('/api/chat', async (req, res) => {
     }
     
     // Fallback: Keyword Search (if vector search failed or returned nothing)
-    if (topDocs.length === 0) {
+    if (topDocs.length === 0 && vectors.length > 0) {
       console.log("Vector search yielded no results or failed. Using keyword search.");
       const keywords = message.toLowerCase().split(/\s+/).filter(w => w.length > 2);
       
@@ -354,11 +371,11 @@ app.post('/api/chat', async (req, res) => {
 
     // --- INFINITE MEMORY: Summarization ---
     // If history is too long (> 20 messages), summarize the oldest 10
-    if (allChats[user].length > 20) {
+    if (allChats[user].length > 60) {
       console.log(`History for ${user} is too long (${allChats[user].length}). Summarizing...`);
       const oldSummary = userProfile.summary || "";
-      const toSummarize = allChats[user].slice(0, 10);
-      const remaining = allChats[user].slice(10);
+      const toSummarize = allChats[user].slice(0, 20);
+      const remaining = allChats[user].slice(20);
       
       // Perform summarization (fire and forget to not block response? No, we need it for context)
       // Actually, for speed, we might want to do it *after* responding, but then the *next* request benefits.
@@ -381,6 +398,10 @@ app.post('/api/chat', async (req, res) => {
 
     // Construct Prompt
     const recentHistory = allChats[user].slice(-20); // Keep last 20 exchanges for immediate context
+    const effectiveProjectKnowledge =
+      typeof projectKnowledge === 'string' && projectKnowledge.trim()
+        ? projectKnowledge
+        : DEFAULT_PROJECT_KNOWLEDGE;
     
     const systemPrompt = `
       You are **ZiYuXin (紫雨心)**, a gentle, elegant Anime Girl AI Assistant living on this website.
@@ -531,7 +552,7 @@ app.post('/api/chat', async (req, res) => {
       The user's name is ${userName}.
 
       **Project Knowledge (CRITICAL REFERENCE):**
-      ${projectKnowledge || "No project knowledge provided."}
+      ${effectiveProjectKnowledge || "No project knowledge provided."}
 
       **Operational Guidance & Tools:**
       You have access to the following tools to control the website interface. 

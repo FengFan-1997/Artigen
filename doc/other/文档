@@ -1,0 +1,285 @@
+报错：
+
+
+
+
+aiService.ts:51  GET http://localhost:8080/api/user/user_nmvnnro78 net::ERR_CONNECTION_REFUSED
+getUserProfile @ aiService.ts:51
+initAuth @ useAuth.ts:24
+(anonymous) @ Agent.vue:1048
+(anonymous) @ chunk-7PWJH7UX.js?v=796793b5:5049
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2349
+hook.__weh.hook.__weh @ chunk-7PWJH7UX.js?v=796793b5:5029
+flushPostFlushCbs @ chunk-7PWJH7UX.js?v=796793b5:2527
+flushJobs @ chunk-7PWJH7UX.js?v=796793b5:2569
+Promise.then
+queueFlush @ chunk-7PWJH7UX.js?v=796793b5:2464
+queuePostFlushCb @ chunk-7PWJH7UX.js?v=796793b5:2478
+queueEffectWithSuspense @ chunk-7PWJH7UX.js?v=796793b5:9588
+baseWatchOptions.scheduler @ chunk-7PWJH7UX.js?v=796793b5:6345
+effect2.scheduler @ chunk-7PWJH7UX.js?v=796793b5:2088
+trigger @ chunk-7PWJH7UX.js?v=796793b5:533
+endBatch @ chunk-7PWJH7UX.js?v=796793b5:591
+notify @ chunk-7PWJH7UX.js?v=796793b5:853
+trigger @ chunk-7PWJH7UX.js?v=796793b5:827
+set value @ chunk-7PWJH7UX.js?v=796793b5:1734
+finalizeNavigation @ vue-router.js?v=1f506cfe:2058
+(anonymous) @ vue-router.js?v=1f506cfe:1996
+Promise.then
+pushWithRedirect @ vue-router.js?v=1f506cfe:1983
+push @ vue-router.js?v=1f506cfe:1934
+install @ vue-router.js?v=1f506cfe:2166
+use @ chunk-7PWJH7UX.js?v=796793b5:6087
+(anonymous) @ main.ts:12
+aiService.ts:55 Error fetching profile: TypeError: Failed to fetch
+    at getUserProfile (aiService.ts:51:28)
+    at initAuth (useAuth.ts:24:31)
+    at Agent.vue:1048:9
+    at chunk-7PWJH7UX.js?v=796793b5:5049:40
+    at callWithErrorHandling (chunk-7PWJH7UX.js?v=796793b5:2342:19)
+    at callWithAsyncErrorHandling (chunk-7PWJH7UX.js?v=796793b5:2349:17)
+    at hook.__weh.hook.__weh (chunk-7PWJH7UX.js?v=796793b5:5029:19)
+    at flushPostFlushCbs (chunk-7PWJH7UX.js?v=796793b5:2527:28)
+    at flushJobs (chunk-7PWJH7UX.js?v=796793b5:2569:5)
+getUserProfile @ aiService.ts:55
+await in getUserProfile
+initAuth @ useAuth.ts:24
+(anonymous) @ Agent.vue:1048
+(anonymous) @ chunk-7PWJH7UX.js?v=796793b5:5049
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2349
+hook.__weh.hook.__weh @ chunk-7PWJH7UX.js?v=796793b5:5029
+flushPostFlushCbs @ chunk-7PWJH7UX.js?v=796793b5:2527
+flushJobs @ chunk-7PWJH7UX.js?v=796793b5:2569
+Promise.then
+queueFlush @ chunk-7PWJH7UX.js?v=796793b5:2464
+queuePostFlushCb @ chunk-7PWJH7UX.js?v=796793b5:2478
+queueEffectWithSuspense @ chunk-7PWJH7UX.js?v=796793b5:9588
+baseWatchOptions.scheduler @ chunk-7PWJH7UX.js?v=796793b5:6345
+effect2.scheduler @ chunk-7PWJH7UX.js?v=796793b5:2088
+trigger @ chunk-7PWJH7UX.js?v=796793b5:533
+endBatch @ chunk-7PWJH7UX.js?v=796793b5:591
+notify @ chunk-7PWJH7UX.js?v=796793b5:853
+trigger @ chunk-7PWJH7UX.js?v=796793b5:827
+set value @ chunk-7PWJH7UX.js?v=796793b5:1734
+finalizeNavigation @ vue-router.js?v=1f506cfe:2058
+(anonymous) @ vue-router.js?v=1f506cfe:1996
+Promise.then
+pushWithRedirect @ vue-router.js?v=1f506cfe:1983
+push @ vue-router.js?v=1f506cfe:1934
+install @ vue-router.js?v=1f506cfe:2166
+use @ chunk-7PWJH7UX.js?v=796793b5:6087
+(anonymous) @ main.ts:12
+live2d.min.js:5605 Live2D 2.1.00_1
+live2d.min.js:5594 profile : Desktop
+live2d.min.js:5599   [PROFILE_NAME] = Desktop
+live2d.min.js:5599   [USE_ADJUST_TRANSLATION] = false
+live2d.min.js:5599   [USE_CACHED_POLYGON_IMAGE] = false
+live2d.min.js:5599   [EXPAND_W] = 2
+widget.ts:84 
+LAppModel.js:287 Uncaught (in promise) NotAllowedError: play() failed because the user didn't interact with the document first. https://goo.gl/xX8pDD
+setFadeInFadeOut @ LAppModel.js:287
+(anonymous) @ LAppModel.js:259
+(anonymous) @ Live2DFramework.js:211
+(anonymous) @ PlatformManager.js:31
+Promise.then
+loadBytes @ PlatformManager.js:29
+loadMotion @ Live2DFramework.js:206
+startMotion @ LAppModel.js:256
+startRandomMotion @ LAppModel.js:234
+update @ LAppModel.js:164
+draw @ index.js:225
+tick @ index.js:198
+startDraw @ index.js:201
+init @ index.js:138
+await in init
+loadLive2D @ Live2DModelManager.ts:177
+await in loadLive2D
+loadModel @ Live2DModelManager.ts:234
+await in loadModel
+initWidget @ widget.ts:140
+await in initWidget
+initLive2D @ Live2DWidget.vue:158
+await in initLive2D
+(anonymous) @ Live2DWidget.vue:187
+setTimeout
+(anonymous) @ Live2DWidget.vue:186
+(anonymous) @ chunk-7PWJH7UX.js?v=796793b5:5049
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2349
+hook.__weh.hook.__weh @ chunk-7PWJH7UX.js?v=796793b5:5029
+flushPostFlushCbs @ chunk-7PWJH7UX.js?v=796793b5:2527
+flushJobs @ chunk-7PWJH7UX.js?v=796793b5:2569
+Promise.then
+queueFlush @ chunk-7PWJH7UX.js?v=796793b5:2464
+queuePostFlushCb @ chunk-7PWJH7UX.js?v=796793b5:2478
+queueEffectWithSuspense @ chunk-7PWJH7UX.js?v=796793b5:9588
+baseWatchOptions.scheduler @ chunk-7PWJH7UX.js?v=796793b5:6345
+effect2.scheduler @ chunk-7PWJH7UX.js?v=796793b5:2088
+trigger @ chunk-7PWJH7UX.js?v=796793b5:533
+endBatch @ chunk-7PWJH7UX.js?v=796793b5:591
+notify @ chunk-7PWJH7UX.js?v=796793b5:853
+trigger @ chunk-7PWJH7UX.js?v=796793b5:827
+set value @ chunk-7PWJH7UX.js?v=796793b5:1734
+finalizeNavigation @ vue-router.js?v=1f506cfe:2058
+(anonymous) @ vue-router.js?v=1f506cfe:1996
+Promise.then
+pushWithRedirect @ vue-router.js?v=1f506cfe:1983
+push @ vue-router.js?v=1f506cfe:1934
+install @ vue-router.js?v=1f506cfe:2166
+use @ chunk-7PWJH7UX.js?v=796793b5:6087
+(anonymous) @ main.ts:12
+Agent.vue:472 Agent: toggleChat received, new state: true
+Agent.vue:472 Agent: toggleChat received, new state: false
+aiService.ts:51  GET http://localhost:8080/api/user/user_nmvnnro78 net::ERR_CONNECTION_REFUSED
+getUserProfile @ aiService.ts:51
+initAuth @ useAuth.ts:24
+(anonymous) @ Agent.vue:1048
+(anonymous) @ chunk-7PWJH7UX.js?v=796793b5:5049
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2349
+hook.__weh.hook.__weh @ chunk-7PWJH7UX.js?v=796793b5:5029
+flushPostFlushCbs @ chunk-7PWJH7UX.js?v=796793b5:2527
+flushJobs @ chunk-7PWJH7UX.js?v=796793b5:2569
+Promise.then
+queueFlush @ chunk-7PWJH7UX.js?v=796793b5:2464
+queuePostFlushCb @ chunk-7PWJH7UX.js?v=796793b5:2478
+queueEffectWithSuspense @ chunk-7PWJH7UX.js?v=796793b5:9588
+baseWatchOptions.scheduler @ chunk-7PWJH7UX.js?v=796793b5:6345
+effect2.scheduler @ chunk-7PWJH7UX.js?v=796793b5:2088
+trigger @ chunk-7PWJH7UX.js?v=796793b5:533
+endBatch @ chunk-7PWJH7UX.js?v=796793b5:591
+notify @ chunk-7PWJH7UX.js?v=796793b5:853
+trigger @ chunk-7PWJH7UX.js?v=796793b5:827
+set value @ chunk-7PWJH7UX.js?v=796793b5:1734
+finalizeNavigation @ vue-router.js?v=1f506cfe:2058
+(anonymous) @ vue-router.js?v=1f506cfe:1996
+Promise.then
+pushWithRedirect @ vue-router.js?v=1f506cfe:1983
+push @ vue-router.js?v=1f506cfe:1934
+$setup.isMobile._createElementVNode.onClick._cache.<computed>._cache.<computed> @ index.vue:500
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2349
+invoker @ chunk-7PWJH7UX.js?v=796793b5:11399
+aiService.ts:55 Error fetching profile: TypeError: Failed to fetch
+    at getUserProfile (aiService.ts:51:28)
+    at initAuth (useAuth.ts:24:31)
+    at Agent.vue:1048:9
+    at chunk-7PWJH7UX.js?v=796793b5:5049:40
+    at callWithErrorHandling (chunk-7PWJH7UX.js?v=796793b5:2342:19)
+    at callWithAsyncErrorHandling (chunk-7PWJH7UX.js?v=796793b5:2349:17)
+    at hook.__weh.hook.__weh (chunk-7PWJH7UX.js?v=796793b5:5029:19)
+    at flushPostFlushCbs (chunk-7PWJH7UX.js?v=796793b5:2527:28)
+    at flushJobs (chunk-7PWJH7UX.js?v=796793b5:2569:5)
+getUserProfile @ aiService.ts:55
+await in getUserProfile
+initAuth @ useAuth.ts:24
+(anonymous) @ Agent.vue:1048
+(anonymous) @ chunk-7PWJH7UX.js?v=796793b5:5049
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2349
+hook.__weh.hook.__weh @ chunk-7PWJH7UX.js?v=796793b5:5029
+flushPostFlushCbs @ chunk-7PWJH7UX.js?v=796793b5:2527
+flushJobs @ chunk-7PWJH7UX.js?v=796793b5:2569
+Promise.then
+queueFlush @ chunk-7PWJH7UX.js?v=796793b5:2464
+queuePostFlushCb @ chunk-7PWJH7UX.js?v=796793b5:2478
+queueEffectWithSuspense @ chunk-7PWJH7UX.js?v=796793b5:9588
+baseWatchOptions.scheduler @ chunk-7PWJH7UX.js?v=796793b5:6345
+effect2.scheduler @ chunk-7PWJH7UX.js?v=796793b5:2088
+trigger @ chunk-7PWJH7UX.js?v=796793b5:533
+endBatch @ chunk-7PWJH7UX.js?v=796793b5:591
+notify @ chunk-7PWJH7UX.js?v=796793b5:853
+trigger @ chunk-7PWJH7UX.js?v=796793b5:827
+set value @ chunk-7PWJH7UX.js?v=796793b5:1734
+finalizeNavigation @ vue-router.js?v=1f506cfe:2058
+(anonymous) @ vue-router.js?v=1f506cfe:1996
+Promise.then
+pushWithRedirect @ vue-router.js?v=1f506cfe:1983
+push @ vue-router.js?v=1f506cfe:1934
+$setup.isMobile._createElementVNode.onClick._cache.<computed>._cache.<computed> @ index.vue:500
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2349
+invoker @ chunk-7PWJH7UX.js?v=796793b5:11399
+widget.ts:84 
+2index.js:317 Uncaught TypeError: Cannot read properties of null (reading 'hitTest')
+    at Cubism2Model.followPointer (index.js:317:30)
+    at Cubism2Model.mouseEvent (index.js:335:12)
+followPointer @ index.js:317
+mouseEvent @ index.js:335
+11WebGL: INVALID_OPERATION: bindFramebuffer: object does not belong to this context
+123WebGL: INVALID_OPERATION: bindTexture: object does not belong to this context
+122WebGL: INVALID_OPERATION: texParameter: no texture bound to target
+portfolio-home:1 Uncaught (in promise) NotSupportedError: Failed to load because no supported source was found.
+live2d.min.js:6516 WebGL: too many errors, no more errors will be reported to the console for this context.
+C._$Uo @ live2d.min.js:6516
+b.draw @ live2d.min.js:5881
+y.draw @ live2d.min.js:3358
+l.draw @ live2d.min.js:5989
+draw @ LAppModel.js:312
+draw @ index.js:226
+tick @ index.js:198
+requestAnimationFrame
+tick @ index.js:199
+requestAnimationFrame
+tick @ index.js:199
+requestAnimationFrame
+tick @ index.js:199
+requestAnimationFrame
+tick @ index.js:199
+requestAnimationFrame
+tick @ index.js:199
+requestAnimationFrame
+tick @ index.js:199
+requestAnimationFrame
+tick @ index.js:199
+requestAnimationFrame
+tick @ index.js:199
+requestAnimationFrame
+tick @ index.js:199
+requestAnimationFrame
+tick @ index.js:199
+startDraw @ index.js:201
+init @ index.js:138
+await in init
+loadLive2D @ Live2DModelManager.ts:177
+await in loadLive2D
+loadModel @ Live2DModelManager.ts:234
+await in loadModel
+initWidget @ widget.ts:140
+await in initWidget
+initLive2D @ Live2DWidget.vue:158
+await in initLive2D
+(anonymous) @ Live2DWidget.vue:187
+setTimeout
+(anonymous) @ Live2DWidget.vue:186
+(anonymous) @ chunk-7PWJH7UX.js?v=796793b5:5049
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2349
+hook.__weh.hook.__weh @ chunk-7PWJH7UX.js?v=796793b5:5029
+flushPostFlushCbs @ chunk-7PWJH7UX.js?v=796793b5:2527
+flushJobs @ chunk-7PWJH7UX.js?v=796793b5:2569
+Promise.then
+queueFlush @ chunk-7PWJH7UX.js?v=796793b5:2464
+queuePostFlushCb @ chunk-7PWJH7UX.js?v=796793b5:2478
+queueEffectWithSuspense @ chunk-7PWJH7UX.js?v=796793b5:9588
+baseWatchOptions.scheduler @ chunk-7PWJH7UX.js?v=796793b5:6345
+effect2.scheduler @ chunk-7PWJH7UX.js?v=796793b5:2088
+trigger @ chunk-7PWJH7UX.js?v=796793b5:533
+endBatch @ chunk-7PWJH7UX.js?v=796793b5:591
+notify @ chunk-7PWJH7UX.js?v=796793b5:853
+trigger @ chunk-7PWJH7UX.js?v=796793b5:827
+set value @ chunk-7PWJH7UX.js?v=796793b5:1734
+finalizeNavigation @ vue-router.js?v=1f506cfe:2058
+(anonymous) @ vue-router.js?v=1f506cfe:1996
+Promise.then
+pushWithRedirect @ vue-router.js?v=1f506cfe:1983
+push @ vue-router.js?v=1f506cfe:1934
+$setup.isMobile._createElementVNode.onClick._cache.<computed>._cache.<computed> @ index.vue:500
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=796793b5:2349
+invoker @ chunk-7PWJH7UX.js?v=796793b5:11399
+portfolio-home:1 Uncaught (in promise) NotSupportedError: Failed to load because no supported source was found.
+
+

@@ -42,6 +42,7 @@ export class ModelManager {
   private readonly cdnPath: string;
   private readonly assetsPath: string;
   private readonly cubism2Path: string;
+  private modelDirectory: 'model' | 'model_backup';
   private _modelId: number;
   private _modelTexturesId: number;
   private modelList: ModelListCDN | null = null;
@@ -88,6 +89,7 @@ export class ModelManager {
     this.cdnPath = cdnPath || '';
     this.assetsPath = assetsPath || this.cdnPath;
     this.cubism2Path = cubism2Path || '';
+    this.modelDirectory = 'model_backup';
     this._modelId = modelId;
     this._modelTexturesId = modelTexturesId;
     this.currentModelVersion = 0;
@@ -95,6 +97,113 @@ export class ModelManager {
     this.modelJSONCache = {};
     this.models = models;
     this.lastMotionAt = {};
+  }
+
+  private getModelAssetUrlCandidates(
+    modelRelativePath: string,
+    overrideDir?: 'model' | 'model_backup'
+  ): string[] {
+    const dir = overrideDir ?? this.modelDirectory;
+    const raw = (modelRelativePath || '').replace(/^\/+/, '');
+    const assetsBase = this.assetsPath || '';
+    const base = assetsBase.endsWith('/') ? assetsBase : `${assetsBase}/`;
+
+    const candidates: string[] = [];
+    const includesDirPrefix = /^model_backup\/|^model\//i.test(raw);
+    const pathWithDir = includesDirPrefix ? raw : `${dir}/${raw}`;
+
+    if (raw) {
+      candidates.push(`${base}${pathWithDir}`);
+    }
+
+    const isHttp = /^https?:\/\//i.test(base);
+    const hasLive2dSegment = /\/live2d\/$/i.test(base) || /\/live2d\//i.test(base);
+    if (isHttp && !hasLive2dSegment && pathWithDir) {
+      candidates.push(`${base}live2d/${pathWithDir}`);
+    }
+
+    return Array.from(new Set(candidates));
+  }
+
+  private getModelAssetUrl(modelRelativePath: string, overrideDir?: 'model' | 'model_backup') {
+    const candidates = this.getModelAssetUrlCandidates(modelRelativePath, overrideDir);
+    return candidates[0] || '';
+  }
+
+  private async fetchJson(url: string, silent = false) {
+    if (url in this.modelJSONCache) return this.modelJSONCache[url];
+    let result: any = null;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        if (!silent) {
+          logger.error(`Failed to fetch model json: ${url}, status ${response.status}`);
+        }
+        result = null;
+      } else {
+        const contentType = response.headers.get('content-type') || '';
+        const isJson = contentType.includes('application/json') || contentType.includes('+json');
+        const urlLooksJson = url.toLowerCase().includes('.json');
+        if (!isJson && !urlLooksJson) {
+          if (!silent) {
+            logger.error(
+              `Failed to fetch model json: ${url}, content-type ${contentType || 'unknown'}`
+            );
+          }
+          result = null;
+        } else {
+          try {
+            if (isJson) {
+              result = await response.json();
+            } else {
+              const text = await response.text();
+              result = JSON.parse(text);
+            }
+          } catch (e) {
+            if (!silent) {
+              logger.error(`Failed to parse model json: ${url}`, e);
+            }
+            result = null;
+          }
+        }
+      }
+    } catch (e) {
+      if (!silent) {
+        logger.error('Failed to fetch model json: ' + url, e);
+      }
+      result = null;
+    }
+    this.modelJSONCache[url] = result;
+    return result;
+  }
+
+  private async fetchModelJsonWithFallback(modelRelativePath: string) {
+    const primaryCandidates = this.getModelAssetUrlCandidates(
+      modelRelativePath,
+      this.modelDirectory
+    );
+    for (const url of primaryCandidates) {
+      const json = await this.fetchJson(url, true);
+      if (json) return { url, json };
+    }
+
+    const alternateDir: 'model' | 'model_backup' =
+      this.modelDirectory === 'model' ? 'model_backup' : 'model';
+    const alternateCandidates = this.getModelAssetUrlCandidates(modelRelativePath, alternateDir);
+    for (const url of alternateCandidates) {
+      const json = await this.fetchJson(url, true);
+      if (json) {
+        this.modelDirectory = alternateDir;
+        return { url, json };
+      }
+    }
+
+    const lastErrorUrl =
+      alternateCandidates[alternateCandidates.length - 1] ||
+      primaryCandidates[primaryCandidates.length - 1] ||
+      modelRelativePath;
+    logger.error(`Model setting is invalid for path ${lastErrorUrl}`);
+    return null;
   }
 
   private nowMs() {
@@ -190,14 +299,31 @@ export class ModelManager {
           model.modelId = 0;
         }
         // Load using Index
-        const item = model.modelIndex[model.modelId];
-        const modelSettingPath = `${model.assetsPath}model/${item.path}/${item.configFile}`;
-        const modelSetting = await model.fetchWithCache(modelSettingPath);
-        if (modelSetting) {
-          model.currentModelVersion = model.checkModelVersion(modelSetting);
+        const tryPrimeFromIndex = async () => {
+          const item = model.modelIndex[model.modelId];
+          const loaded = await model.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`);
+          if (!loaded?.json) return false;
+          model.currentModelVersion = model.checkModelVersion(loaded.json);
           if (model.currentModelVersion === 2) {
-            // For V2, we might check textures if needed, but simplified for now
             model.modelTexturesId = 0;
+          }
+          return true;
+        };
+
+        const primed = await tryPrimeFromIndex();
+        if (!primed) {
+          model.modelId = 0;
+          const primedAfterReset = await tryPrimeFromIndex();
+          if (!primedAfterReset) {
+            try {
+              const response = await fetch(`${model.cdnPath}model_list.json`);
+              if (response.ok) {
+                model.modelList = await response.json();
+                model.modelIndex = [];
+              }
+            } catch (e) {
+              logger.warn('Failed to recover via model_list.json', e);
+            }
           }
         }
       } else if (model.modelList) {
@@ -210,16 +336,36 @@ export class ModelManager {
             model.modelTexturesId = 0;
           }
         } else {
-          const modelSettingPath = `${model.assetsPath}model/${modelName}/model.json`;
-          const modelSetting = await model.fetchWithCache(modelSettingPath);
-          const version = model.checkModelVersion(modelSetting);
+          const configPath =
+            typeof modelName === 'string' && modelName.trim().toLowerCase().endsWith('.json')
+              ? modelName
+              : `${modelName}/model.json`;
+          let loaded = await model.fetchModelJsonWithFallback(configPath);
+          if (!loaded?.json) {
+            model.modelId = 0;
+            const fallbackModelName = model.modelList?.models[model.modelId];
+            const fallbackConfigPath =
+              typeof fallbackModelName === 'string' &&
+              fallbackModelName.trim().toLowerCase().endsWith('.json')
+                ? fallbackModelName
+                : `${fallbackModelName}/model.json`;
+            loaded = await model.fetchModelJsonWithFallback(fallbackConfigPath);
+          }
+
+          const version = model.checkModelVersion(loaded?.json);
           if (version === 2) {
-            const textureCache = await model.loadTextureCache(modelName as string);
-            if (model.modelTexturesId >= textureCache.length) {
-              model.modelTexturesId = 0;
+            model.currentModelVersion = 2;
+            if (
+              typeof modelName === 'string' &&
+              !modelName.trim().toLowerCase().endsWith('.json')
+            ) {
+              const textureCache = await model.loadTextureCache(modelName as string);
+              if (model.modelTexturesId >= textureCache.length) {
+                model.modelTexturesId = 0;
+              }
             }
-          } else if (model.modelList) {
-            model.modelId = (config.modelId ?? 0) % model.modelList.models.length;
+          } else if (version === 3) {
+            model.currentModelVersion = 3;
             model.modelTexturesId = 0;
           }
         }
@@ -261,25 +407,7 @@ export class ModelManager {
   }
 
   async fetchWithCache(url: string) {
-    let result;
-    if (url in this.modelJSONCache) {
-      result = this.modelJSONCache[url];
-    } else {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) {
-          logger.error(`Failed to fetch model json: ${url}, status ${response.status}`);
-          result = null;
-        } else {
-          result = await response.json();
-        }
-      } catch (e) {
-        logger.error('Failed to fetch model json: ' + url, e);
-        result = null;
-      }
-      this.modelJSONCache[url] = result;
-    }
-    return result;
+    return this.fetchJson(url, false);
   }
 
   checkModelVersion(modelSetting: any) {
@@ -369,8 +497,9 @@ export class ModelManager {
   }
 
   async loadTextureCache(modelName: string): Promise<any[]> {
-    const textureCache = await this.fetchWithCache(
-      `${this.assetsPath}model/${modelName}/textures.cache`
+    const textureCache = await this.fetchJson(
+      this.getModelAssetUrl(`${modelName}/textures.cache`),
+      true
     );
     return textureCache || [];
   }
@@ -488,16 +617,29 @@ export class ModelManager {
   }
 
   async loadModel(message: string | string[]) {
-    let modelSettingPath, modelSetting;
+    let modelSettingPath: string | undefined;
+    let modelSetting: any;
     if (this.useCDN && this.modelIndex.length > 0) {
-      const item = this.modelIndex[this.modelId];
-      // Construct path from index
-      modelSettingPath = `${this.assetsPath}model/${item.path}/${item.configFile}`;
-      modelSetting = await this.fetchWithCache(modelSettingPath);
+      let item = this.modelIndex[this.modelId];
+      let loaded = await this.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`);
+      if (!loaded) {
+        const originalId = this.modelId;
+        this.modelId = 0;
+        item = this.modelIndex[this.modelId];
+        loaded = await this.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`);
+        if (!loaded) {
+          this.modelId = originalId;
+        }
+      }
+      if (!loaded) {
+        showMessage('Failed to load model configuration.', 4000, 10);
+        return;
+      }
+      modelSettingPath = loaded.url;
+      modelSetting = loaded.json;
 
       const version = this.checkModelVersion(modelSetting);
       if (version === 0) {
-        logger.error(`Model setting is invalid for path ${modelSettingPath}`);
         showMessage('Failed to load model configuration.', 4000, 10);
         return;
       }
@@ -513,20 +655,44 @@ export class ModelManager {
       if (Array.isArray(modelName)) {
         modelName = modelName[this.modelTexturesId];
       }
-      modelSettingPath = `${this.assetsPath}model/${modelName}/model.json`;
-      modelSetting = await this.fetchWithCache(modelSettingPath);
+      const configPath =
+        typeof modelName === 'string' && modelName.trim().toLowerCase().endsWith('.json')
+          ? modelName
+          : `${modelName}/model.json`;
+      let loaded = await this.fetchModelJsonWithFallback(configPath);
+      if (!loaded) {
+        const originalId = this.modelId;
+        this.modelId = 0;
+        let fallbackName = this.modelList.models[this.modelId];
+        if (Array.isArray(fallbackName)) fallbackName = fallbackName[0];
+        const fallbackConfigPath =
+          typeof fallbackName === 'string' && fallbackName.trim().toLowerCase().endsWith('.json')
+            ? fallbackName
+            : `${fallbackName}/model.json`;
+        loaded = await this.fetchModelJsonWithFallback(fallbackConfigPath);
+        if (!loaded) {
+          this.modelId = originalId;
+        }
+      }
+      if (!loaded) {
+        showMessage('Failed to load model configuration.', 4000, 10);
+        return;
+      }
+      modelSettingPath = loaded.url;
+      modelSetting = loaded.json;
       const version = this.checkModelVersion(modelSetting);
       if (version === 0) {
-        logger.error(`Model setting is invalid for path ${modelSettingPath}`);
         showMessage('Failed to load model configuration.', 4000, 10);
         return;
       }
       if (version === 2) {
-        const textureCache = await this.loadTextureCache(modelName as string);
-        if (textureCache.length > 0) {
-          let textures = textureCache[this.modelTexturesId];
-          if (typeof textures === 'string') textures = [textures];
-          (modelSetting as any).textures = textures;
+        if (typeof modelName === 'string' && !modelName.trim().toLowerCase().endsWith('.json')) {
+          const textureCache = await this.loadTextureCache(modelName as string);
+          if (textureCache.length > 0) {
+            let textures = textureCache[this.modelTexturesId];
+            if (typeof textures === 'string') textures = [textures];
+            (modelSetting as any).textures = textures;
+          }
         }
       }
     } else {
@@ -538,18 +704,22 @@ export class ModelManager {
         return;
       }
     }
+    if (!modelSettingPath) {
+      showMessage('Failed to load model configuration.', 4000, 10);
+      return;
+    }
     await this.loadLive2D(modelSettingPath, modelSetting);
     showMessage(message, 4000, 10);
   }
 
   async loadSpecificModel(modelRelativePath: string, options?: { message?: string }) {
-    const modelSettingPath = `${this.assetsPath}model/${modelRelativePath}`;
-    const modelSetting = await this.fetchWithCache(modelSettingPath);
-    if (!modelSetting) {
-      logger.error(`Model setting is invalid for specific path ${modelSettingPath}`);
+    const loaded = await this.fetchModelJsonWithFallback(modelRelativePath);
+    if (!loaded) {
       showMessage('Failed to load specified model configuration.', 4000, 10);
       return;
     }
+    const modelSettingPath = loaded.url;
+    const modelSetting = loaded.json;
     await this.loadLive2D(modelSettingPath, modelSetting);
     if (options?.message) {
       showMessage(options.message, 4000, 10);
@@ -574,11 +744,10 @@ export class ModelManager {
       if (Array.isArray(modelName)) {
         this.modelTexturesId = randomOtherOption(modelName.length, this.modelTexturesId);
       } else {
-        const modelSettingPath = `${this.assetsPath}model/${modelName}/model.json`;
-        const modelSetting = await this.fetchWithCache(modelSettingPath);
+        const loaded = await this.fetchModelJsonWithFallback(`${modelName}/model.json`);
+        const modelSetting = loaded?.json;
         const version = this.checkModelVersion(modelSetting);
         if (version === 0) {
-          logger.error(`Model setting is invalid for path ${modelSettingPath}`);
           noTextureAvailable = true;
         } else if (version === 2) {
           const textureCache = await this.loadTextureCache(modelName as string);
@@ -611,25 +780,30 @@ export class ModelManager {
   async loadNextModel() {
     this.modelTexturesId = 0;
     if (this.useCDN && this.modelIndex.length > 0) {
-      // Implement version locking
-      const currentVersion = this.currentModelVersion;
-      let foundIndex = -1;
+      const lockVersion =
+        this.currentModelVersion === 2 || this.currentModelVersion === 3
+          ? this.currentModelVersion
+          : null;
 
-      // Search for next model with same version
       for (let i = 1; i < this.modelIndex.length; i++) {
         const nextIndex = (this.modelId + i) % this.modelIndex.length;
-        if (this.modelIndex[nextIndex].version === currentVersion) {
-          foundIndex = nextIndex;
-          break;
-        }
+        const next = this.modelIndex[nextIndex];
+        if (lockVersion && next.version !== lockVersion) continue;
+
+        const loaded = await this.fetchModelJsonWithFallback(`${next.path}/${next.configFile}`);
+        if (!loaded) continue;
+
+        this.modelId = nextIndex;
+        await this.loadLive2D(loaded.url, loaded.json);
+        showMessage(`Switched to ${next.name}`, 4000, 10);
+        return;
       }
 
-      if (foundIndex !== -1) {
-        this.modelId = foundIndex;
-        await this.loadModel(`Switched to ${this.modelIndex[this.modelId].name}`);
-      } else {
-        showMessage(`No other V${currentVersion} models found.`, 3000, 10);
-      }
+      showMessage(
+        lockVersion ? `No other V${lockVersion} models found.` : 'No loadable models found.',
+        3000,
+        10
+      );
     } else if (this.useCDN && this.modelList) {
       this.modelId = (this.modelId + 1) % this.modelList.models.length;
       await this.loadModel(this.modelList.messages[this.modelId]);

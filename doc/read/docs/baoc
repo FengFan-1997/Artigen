@@ -1,19 +1,99 @@
-Live2D Cubism SDK Core Version 5.1.0
-index.ts:55 [Live2D] Failed to load Cubism3 model: TypeError: Cannot read properties of undefined (reading 'remove')
-    at set autoUpdate (pixi-live2d-display_cubism4.js?v=af5a8e33:4874:53)
-    at Live2DModel.init (pixi-live2d-display_cubism4.js?v=af5a8e33:4888:21)
-    at Live2DModel.<anonymous> (pixi-live2d-display_cubism4.js?v=af5a8e33:4844:41)
-    at Live2DModel.emit (chunk-LLRQYCCV.js?v=af5a8e33:101:31)
-    at pixi-live2d-display_cubism4.js?v=af5a8e33:4606:19
-    at Generator.next (<anonymous>)
-    at fulfilled (pixi-live2d-display_cubism4.js?v=af5a8e33:19:24)
-loadCubism3Model @ index.ts:55
-await in loadCubism3Model
-loadLive2D @ Live2DModelManager.ts:204
-loadSpecificModel @ Live2DModelManager.ts:356
+[Live2D Widget][INFO] Loaded 101 models from model_index.json
+logger.ts:30 [Live2D Widget][ERROR] Failed to fetch model json: /live2d/model/BengHuaiXueYuan2/Lita/model.json SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON
+error @ logger.ts:30
+fetchWithCache @ Live2DModelManager.ts:277
+await in fetchWithCache
+initCheck @ Live2DModelManager.ts:195
+await in initCheck
+initWidget @ widget.ts:144
+await in initWidget
+initLive2D @ Live2DWidget.vue:290
+await in initLive2D
+(anonymous) @ Live2DWidget.vue:327
+setTimeout
+(anonymous) @ Live2DWidget.vue:326
+(anonymous) @ chunk-7PWJH7UX.js?v=af5a8e33:5049
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=af5a8e33:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=af5a8e33:2349
+hook.__weh.hook.__weh @ chunk-7PWJH7UX.js?v=af5a8e33:5029
+flushPostFlushCbs @ chunk-7PWJH7UX.js?v=af5a8e33:2527
+flushJobs @ chunk-7PWJH7UX.js?v=af5a8e33:2569
+Promise.then
+queueFlush @ chunk-7PWJH7UX.js?v=af5a8e33:2464
+queuePostFlushCb @ chunk-7PWJH7UX.js?v=af5a8e33:2478
+queueEffectWithSuspense @ chunk-7PWJH7UX.js?v=af5a8e33:9588
+baseWatchOptions.scheduler @ chunk-7PWJH7UX.js?v=af5a8e33:6345
+effect2.scheduler @ chunk-7PWJH7UX.js?v=af5a8e33:2088
+trigger @ chunk-7PWJH7UX.js?v=af5a8e33:533
+endBatch @ chunk-7PWJH7UX.js?v=af5a8e33:591
+notify @ chunk-7PWJH7UX.js?v=af5a8e33:853
+trigger @ chunk-7PWJH7UX.js?v=af5a8e33:827
+set value @ chunk-7PWJH7UX.js?v=af5a8e33:1734
+finalizeNavigation @ vue-router.js?v=af5a8e33:2058
+(anonymous) @ vue-router.js?v=af5a8e33:1996
+Promise.then
+pushWithRedirect @ vue-router.js?v=af5a8e33:1983
+push @ vue-router.js?v=af5a8e33:1934
+install @ vue-router.js?v=af5a8e33:2166
+use @ chunk-7PWJH7UX.js?v=af5a8e33:6087
+(anonymous) @ main.ts:12
+logger.ts:30 [Live2D Widget][ERROR] Model setting is invalid for path /live2d/model/BengHuaiXueYuan2/Lita/model.json
+error @ logger.ts:30
+loadModel @ Live2DModelManager.ts:500
+await in loadModel
+initWidget @ widget.ts:145
+await in initWidget
+initLive2D @ Live2DWidget.vue:290
+await in initLive2D
+(anonymous) @ Live2DWidget.vue:327
+setTimeout
+(anonymous) @ Live2DWidget.vue:326
+(anonymous) @ chunk-7PWJH7UX.js?v=af5a8e33:5049
+callWithErrorHandling @ chunk-7PWJH7UX.js?v=af5a8e33:2342
+callWithAsyncErrorHandling @ chunk-7PWJH7UX.js?v=af5a8e33:2349
+hook.__weh.hook.__weh @ chunk-7PWJH7UX.js?v=af5a8e33:5029
+flushPostFlushCbs @ chunk-7PWJH7UX.js?v=af5a8e33:2527
+flushJobs @ chunk-7PWJH7UX.js?v=af5a8e33:2569
+Promise.then
+queueFlush @ chunk-7PWJH7UX.js?v=af5a8e33:2464
+queuePostFlushCb @ chunk-7PWJH7UX.js?v=af5a8e33:2478
+queueEffectWithSuspense @ chunk-7PWJH7UX.js?v=af5a8e33:9588
+baseWatchOptions.scheduler @ chunk-7PWJH7UX.js?v=af5a8e33:6345
+effect2.scheduler @ chunk-7PWJH7UX.js?v=af5a8e33:2088
+trigger @ chunk-7PWJH7UX.js?v=af5a8e33:533
+endBatch @ chunk-7PWJH7UX.js?v=af5a8e33:591
+notify @ chunk-7PWJH7UX.js?v=af5a8e33:853
+trigger @ chunk-7PWJH7UX.js?v=af5a8e33:827
+set value @ chunk-7PWJH7UX.js?v=af5a8e33:1734
+finalizeNavigation @ vue-router.js?v=af5a8e33:2058
+(anonymous) @ vue-router.js?v=af5a8e33:1996
+Promise.then
+pushWithRedirect @ vue-router.js?v=af5a8e33:1983
+push @ vue-router.js?v=af5a8e33:1934
+install @ vue-router.js?v=af5a8e33:2166
+use @ chunk-7PWJH7UX.js?v=af5a8e33:6087
+(anonymous) @ main.ts:12
+Live2DWidget.vue:314 [Live2DWidget] Loaded Model Debug Info
+Live2DWidget.vue:315 Available Hit Areas: []
+Live2DWidget.vue:316 Available Motion Groups: []
+
+
+
+
+
+
+logger.ts:30 [Live2D Widget][ERROR] Failed to fetch model json: /live2d/model/ZiYuXin/ots14_4501/normal/normal.model3.json SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON
+error @ logger.ts:30
+fetchWithCache @ Live2DModelManager.ts:277
+await in fetchWithCache
+loadSpecificModel @ Live2DModelManager.ts:547
+callback @ tools.ts:90
+(anonymous) @ tools.ts:143
+logger.ts:30 [Live2D Widget][ERROR] Model setting is invalid for specific path /live2d/model/ZiYuXin/ots14_4501/normal/normal.model3.json
+error @ logger.ts:30
+loadSpecificModel @ Live2DModelManager.ts:549
 await in loadSpecificModel
 callback @ tools.ts:90
 (anonymous) @ tools.ts:143
-logger.ts:42 [Live2D Widget][INFO] Model /live2d/model/ZiYuXin/ots14_4501/normal/normal.model3.json (Cubism version 3) loaded
-目前问题，切换ziyuxin 模型不出现，一致存在这个问题，为什么还不解决，一次性解决好呀！
-
+Agent.vue:869 Processing Interaction: [System Event]: User interaction session ended. User circled the mouse -437 degrees around you. Decide how to react based on this combination.
+现在无论是我的cubism2 还是3都没有模型了，上面是页面的报错，修复这些问题

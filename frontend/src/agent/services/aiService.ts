@@ -1,10 +1,18 @@
 import type { ChatMessage } from '../types';
 import { getUserId } from '../utils/user';
 import { getPageContext } from '../utils/pageContext';
-import { projectKnowledge } from '../data/projectKnowledge';
 
-const API_URL = 'http://localhost:8080/api/chat';
-const USER_API_URL = 'http://localhost:8080/api/user';
+const normalizeBaseUrl = (baseUrl: string) => {
+  const trimmed = (baseUrl || '').trim();
+  if (!trimmed) return '';
+  return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
+};
+
+const apiBaseUrl = normalizeBaseUrl(
+  import.meta.env.VITE_AGENT_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:8080'
+);
+const API_URL = `${apiBaseUrl}/api/chat`;
+const USER_API_URL = `${apiBaseUrl}/api/user`;
 
 export const sendMessageToAI = async (
   message: string,
@@ -13,19 +21,22 @@ export const sendMessageToAI = async (
   try {
     const userId = getUserId();
     const pageContext = getPageContext();
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 30000);
 
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
+      signal: controller.signal,
       body: JSON.stringify({
         message,
         userId,
-        pageContext, // Send current page state
-        projectKnowledge // Send project knowledge
+        pageContext // Send current page state
       })
     });
+    window.clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -61,7 +72,7 @@ export const getUserProfile = async () => {
 
 export const getChatHistory = async (userId: string) => {
   try {
-    const response = await fetch(`http://localhost:8080/api/chat/history/${userId}`);
+    const response = await fetch(`${apiBaseUrl}/api/chat/history/${userId}`);
     if (!response.ok) throw new Error('Failed to fetch history');
     const data = await response.json();
     return data.history || [];
