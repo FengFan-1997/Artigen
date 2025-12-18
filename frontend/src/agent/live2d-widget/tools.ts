@@ -85,11 +85,9 @@ class ToolsManager {
       'switch-ziyuxin': {
         icon: fa_cube,
         callback: () => {
-          showMessage('切换到紫雨心模型（Cubism3/4 引擎开发中）', 4000, 9);
-          if ((model as any).loadSpecificModel) {
-            (model as any).loadSpecificModel('ZiYuXin/ots14_3001/normal/normal.model3.json', {
-              message: '紫雨心模型加载中（实验功能）...'
-            });
+          showMessage('切换模型类型中...', 2000, 9);
+          if ((model as any).toggleModelVersion) {
+            (model as any).toggleModelVersion();
           }
         }
       },

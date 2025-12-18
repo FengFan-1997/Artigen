@@ -234,7 +234,7 @@ const SPECIAL_MODEL_SCALE: Record<string, number> = {
 };
 
 const getSpecialScale = (modelJsonPath: string): number | undefined => {
-  const relativePath = modelJsonPath.replace(/^.*model\//, '');
+  const relativePath = modelJsonPath.replace(/^.*model_backup\//, '').replace(/^.*model\//, '');
   let specialScale = SPECIAL_MODEL_SCALE[relativePath];
   if (!specialScale && modelJsonPath.includes('ZiYuXin')) {
     specialScale = 1.0;
@@ -245,7 +245,8 @@ const getSpecialScale = (modelJsonPath: string): number | undefined => {
 type SizeBucket = 'large' | 'medium' | 'small';
 
 const computeCubism3Layout = (
-  live2dModel: any,
+  measuredW: number,
+  measuredH: number,
   rendererWidth: number,
   rendererHeight: number,
   modelJsonPath: string
@@ -258,18 +259,8 @@ const computeCubism3Layout = (
   const fitWidth = Math.max(1, rendererWidth - marginLeft - marginRight);
   const fitHeight = Math.max(1, rendererHeight - marginTop - marginBottom);
 
-  let boundsW = 0;
-  let boundsH = 0;
-  try {
-    const localBounds = live2dModel?.getLocalBounds?.();
-    boundsW = Number(localBounds?.width) || 0;
-    boundsH = Number(localBounds?.height) || 0;
-  } catch {}
-
-  if (!(boundsW > 0 && boundsH > 0)) {
-    boundsW = Number(live2dModel?.width) || 0;
-    boundsH = Number(live2dModel?.height) || 0;
-  }
+  const boundsW = Number(measuredW) || 0;
+  const boundsH = Number(measuredH) || 0;
 
   let fitScale = 0.25;
   if (boundsW > 0 && boundsH > 0) {
@@ -280,22 +271,15 @@ const computeCubism3Layout = (
     fitScale = 0.25;
   }
 
-  const safeFitScale = fitScale * 0.98;
-
-  const bucket: SizeBucket =
-    safeFitScale < 0.24 ? 'large' : safeFitScale < 0.34 ? 'medium' : 'small';
-  const bucketMaxScale: Record<SizeBucket, number> = {
-    large: 0.24,
-    medium: 0.31,
-    small: 0.38
+  const bucket: SizeBucket = fitScale < 0.2 ? 'large' : fitScale < 0.3 ? 'medium' : 'small';
+  const bucketCoverage: Record<SizeBucket, number> = {
+    large: 0.76,
+    medium: 0.84,
+    small: 0.9
   };
 
   const specialScale = getSpecialScale(modelJsonPath);
-  const scale = clamp(
-    Math.min(safeFitScale, bucketMaxScale[bucket]) * (specialScale || 1),
-    0.12,
-    3
-  );
+  const scale = clamp(fitScale * bucketCoverage[bucket] * (specialScale || 1), 0.08, 3);
 
   const targetX = Math.round(rendererWidth * 0.32);
   const targetY = rendererHeight - marginBottom;
@@ -323,7 +307,57 @@ const applyCubism3Layout = (appInstance: any, modelJsonPath: string) => {
   const rendererWidth = appInstance.renderer.width || 800;
   const rendererHeight = appInstance.renderer.height || 800;
 
-  const layout = computeCubism3Layout(model, rendererWidth, rendererHeight, modelJsonPath);
+  const marginBottom = Math.max(10, Math.round(rendererHeight * 0.02));
+
+  const probeX = Math.round(rendererWidth * 0.32);
+  const probeY = rendererHeight - marginBottom;
+
+  const previousScaleX = Number(model.scale?.x) || 1;
+  const previousScaleY = Number(model.scale?.y) || 1;
+  const previousX = Number(model.x) || 0;
+  const previousY = Number(model.y) || 0;
+
+  model.scale.set(1, 1);
+  model.position.set(probeX, probeY);
+
+  try {
+    if (typeof model.update === 'function') {
+      model.update(0);
+    }
+  } catch {}
+
+  try {
+    if (typeof appInstance.renderer?.render === 'function') {
+      appInstance.renderer.render(appInstance.stage);
+    }
+  } catch {}
+
+  let measuredW = 0;
+  let measuredH = 0;
+  try {
+    const b = model.getBounds?.();
+    measuredW = Number(b?.width) || 0;
+    measuredH = Number(b?.height) || 0;
+  } catch {}
+
+  if (!(measuredW > 0 && measuredH > 0)) {
+    try {
+      const lb = model.getLocalBounds?.();
+      measuredW = Number(lb?.width) || 0;
+      measuredH = Number(lb?.height) || 0;
+    } catch {}
+  }
+
+  model.scale.set(previousScaleX, previousScaleY);
+  model.position.set(previousX, previousY);
+
+  const layout = computeCubism3Layout(
+    measuredW,
+    measuredH,
+    rendererWidth,
+    rendererHeight,
+    modelJsonPath
+  );
   model.scale.set(layout.scale, layout.scale);
   model.position.set(layout.targetX, layout.targetY);
 
@@ -359,6 +393,60 @@ const applyCubism3Layout = (appInstance: any, modelJsonPath: string) => {
         model.y += topLimit - bounds.top;
       } else if (bounds.bottom > bottomLimit) {
         model.y -= bounds.bottom - bottomLimit;
+      }
+    }
+  }
+
+  try {
+    bounds = model.getBounds?.();
+  } catch {}
+
+  if (bounds) {
+    const fitWidth = Math.max(1, rendererWidth - layout.marginLeft - layout.marginRight);
+    const fitHeight = Math.max(1, rendererHeight - layout.marginTop - layout.marginBottom);
+    const bw = Number(bounds.width) || 0;
+    const bh = Number(bounds.height) || 0;
+
+    if (bw > 0 && bh > 0 && (bw > fitWidth || bh > fitHeight)) {
+      const shrink = clamp(Math.min(fitWidth / bw, fitHeight / bh) * 0.98, 0.05, 1);
+      if (shrink < 0.999) {
+        const nextScale = (Number(model.scale?.x) || 1) * shrink;
+        model.scale.set(nextScale, nextScale);
+
+        try {
+          bounds = model.getBounds?.();
+        } catch {}
+
+        if (bounds) {
+          const targetBottom = rendererHeight - layout.marginBottom;
+          const dyBottom = targetBottom - bounds.bottom;
+          if (Number.isFinite(dyBottom) && Math.abs(dyBottom) > 0.5) {
+            model.y += dyBottom;
+          }
+
+          const leftLimit = layout.marginLeft;
+          const rightLimit = rendererWidth - layout.marginRight;
+          const topLimit = layout.marginTop;
+          const bottomLimit = rendererHeight - layout.marginBottom;
+
+          try {
+            bounds = model.getBounds?.();
+          } catch {}
+
+          if (bounds) {
+            if (bounds.left < leftLimit) {
+              model.x += leftLimit - bounds.left;
+            } else if (bounds.right > rightLimit) {
+              model.x -= bounds.right - rightLimit;
+            }
+
+            if (bounds.top < topLimit) {
+              model.y += topLimit - bounds.top;
+            } else if (bounds.bottom > bottomLimit) {
+              model.y -= bounds.bottom - bottomLimit;
+            }
+          }
+        }
       }
     }
   }

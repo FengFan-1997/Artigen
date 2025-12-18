@@ -112,14 +112,23 @@ export class ModelManager {
     const includesDirPrefix = /^model_backup\/|^model\//i.test(raw);
     const pathWithDir = includesDirPrefix ? raw : `${dir}/${raw}`;
 
-    if (raw) {
-      candidates.push(`${base}${pathWithDir}`);
-    }
-
     const isHttp = /^https?:\/\//i.test(base);
     const hasLive2dSegment = /\/live2d\/$/i.test(base) || /\/live2d\//i.test(base);
-    if (isHttp && !hasLive2dSegment && pathWithDir) {
-      candidates.push(`${base}live2d/${pathWithDir}`);
+    const addCandidate = (path: string) => {
+      if (!path) return;
+      candidates.push(`${base}${path}`);
+      if (isHttp && !hasLive2dSegment) {
+        candidates.push(`${base}live2d/${path}`);
+      }
+    };
+
+    addCandidate(pathWithDir);
+
+    const strippedShaoqian = raw.replace(/^shaoqian\//i, '');
+    if (strippedShaoqian && strippedShaoqian !== raw) {
+      const altIncludesDirPrefix = /^model_backup\/|^model\//i.test(strippedShaoqian);
+      const altPathWithDir = altIncludesDirPrefix ? strippedShaoqian : `${dir}/${strippedShaoqian}`;
+      addCandidate(altPathWithDir);
     }
 
     return Array.from(new Set(candidates));
@@ -459,8 +468,7 @@ export class ModelManager {
           // Check if Live2D global is already available
           if (!(window as any).Live2D) {
             if (!this.cubism2Path) {
-              logger.error('No cubism2Path set, cannot load Cubism 2 Core.');
-              return;
+              throw new Error('No cubism2Path set, cannot load Cubism 2 Core.');
             }
             await loadExternalResource(this.cubism2Path, 'js');
           }
@@ -475,21 +483,23 @@ export class ModelManager {
         } else {
           await this.cubism2model!.changeModelWithJSON(modelSettingPath, modelSetting);
         }
+        this.currentModelVersion = 2;
       } else {
         this.setRendererVersion(3);
         try {
           await loadCubism3Model(modelSettingPath);
+          this.currentModelVersion = 3;
         } catch (e) {
           logger.error('Failed to load Cubism3 model via Pixi renderer', e);
           showMessage('加载 Cubism3/4 模型时出错，请稍后重试', 5000, 9);
         }
       }
       logger.info(`Model ${modelSettingPath} (Cubism version ${version}) loaded`);
-      this.currentModelVersion = version;
     } catch (err) {
       console.error('loadLive2D failed', err);
+    } finally {
+      this.loading = false;
     }
-    this.loading = false;
   }
 
   private setRendererVersion(version: number) {
@@ -515,6 +525,38 @@ export class ModelManager {
     } catch (e) {
       logger.error('Failed to toggle renderer version', e);
     }
+  }
+
+  private getExpectedSwitchVersion(): 2 | 3 {
+    if (this.currentModelVersion === 3) return 3;
+    return 2;
+  }
+
+  private async loadIndexModelAt(id: number, expectedVersion?: 2 | 3) {
+    const item = this.modelIndex[id];
+    if (!item) return null;
+    if (expectedVersion && item.version && item.version !== expectedVersion) return null;
+    const loaded = await this.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`, {
+      silent: true
+    });
+    if (!loaded?.json) return null;
+    const version = this.checkModelVersion(loaded.json);
+    if (expectedVersion && version !== expectedVersion) return null;
+    return { ...loaded, name: item.name, version };
+  }
+
+  private async loadListModelAt(id: number, expectedVersion?: 2 | 3) {
+    if (!this.modelList) return null;
+    let name: any = this.modelList.models[id];
+    if (Array.isArray(name)) name = name[0];
+    if (typeof name !== 'string') return null;
+
+    const configPath = name.trim().toLowerCase().endsWith('.json') ? name : `${name}/model.json`;
+    const loaded = await this.fetchModelJsonWithFallback(configPath, { silent: true });
+    if (!loaded?.json) return null;
+    const version = this.checkModelVersion(loaded.json);
+    if (expectedVersion && version !== expectedVersion) return null;
+    return { ...loaded, name, version };
   }
 
   async loadTextureCache(modelName: string): Promise<any[]> {
@@ -823,38 +865,99 @@ export class ModelManager {
   async loadNextModel() {
     this.modelTexturesId = 0;
     if (this.useCDN && this.modelIndex.length > 0) {
-      const lockVersion =
-        this.currentModelVersion === 2 || this.currentModelVersion === 3
-          ? this.currentModelVersion
-          : null;
-
+      const expectedVersion = this.getExpectedSwitchVersion();
       for (let i = 1; i < this.modelIndex.length; i++) {
         const nextIndex = (this.modelId + i) % this.modelIndex.length;
-        const next = this.modelIndex[nextIndex];
-        if (lockVersion && next.version !== lockVersion) continue;
-
-        const loaded = await this.fetchModelJsonWithFallback(`${next.path}/${next.configFile}`, {
-          silent: true
-        });
+        const loaded = await this.loadIndexModelAt(nextIndex, expectedVersion);
         if (!loaded) continue;
-
         this.modelId = nextIndex;
         await this.loadLive2D(loaded.url, loaded.json);
-        showMessage(`Switched to ${next.name}`, 4000, 10);
+        showMessage(`Switched to ${loaded.name}`, 4000, 10);
         return;
       }
 
-      showMessage(
-        lockVersion ? `No other V${lockVersion} models found.` : 'No loadable models found.',
-        3000,
-        10
-      );
+      showMessage('No loadable models found.', 3000, 10);
     } else if (this.useCDN && this.modelList) {
-      this.modelId = (this.modelId + 1) % this.modelList.models.length;
-      await this.loadModel(this.modelList.messages[this.modelId]);
+      const expectedVersion = this.getExpectedSwitchVersion();
+      for (let i = 1; i < this.modelList.models.length; i++) {
+        const nextIndex = (this.modelId + i) % this.modelList.models.length;
+        const loaded = await this.loadListModelAt(nextIndex, expectedVersion);
+        if (!loaded) continue;
+        this.modelId = nextIndex;
+        await this.loadLive2D(loaded.url, loaded.json);
+        showMessage(`Switched to ${loaded.name}`, 4000, 10);
+        return;
+      }
+
+      showMessage('No loadable models found.', 3000, 10);
     } else {
       this.modelId = (this.modelId + 1) % this.models.length;
       await this.loadModel(this.models[this.modelId].message);
+    }
+  }
+
+  async loadPrevModel() {
+    this.modelTexturesId = 0;
+    if (this.useCDN && this.modelIndex.length > 0) {
+      const expectedVersion = this.getExpectedSwitchVersion();
+      for (let i = 1; i < this.modelIndex.length; i++) {
+        const prevIndex = (this.modelId - i + this.modelIndex.length) % this.modelIndex.length;
+        const loaded = await this.loadIndexModelAt(prevIndex, expectedVersion);
+        if (!loaded) continue;
+        this.modelId = prevIndex;
+        await this.loadLive2D(loaded.url, loaded.json);
+        showMessage(`Switched to ${loaded.name}`, 4000, 10);
+        return;
+      }
+      showMessage('No loadable models found.', 3000, 10);
+    } else if (this.useCDN && this.modelList) {
+      const expectedVersion = this.getExpectedSwitchVersion();
+      for (let i = 1; i < this.modelList.models.length; i++) {
+        const prevIndex =
+          (this.modelId - i + this.modelList.models.length) % this.modelList.models.length;
+        const loaded = await this.loadListModelAt(prevIndex, expectedVersion);
+        if (!loaded) continue;
+        this.modelId = prevIndex;
+        await this.loadLive2D(loaded.url, loaded.json);
+        showMessage(`Switched to ${loaded.name}`, 4000, 10);
+        return;
+      }
+      showMessage('No loadable models found.', 3000, 10);
+    } else {
+      this.modelId = (this.modelId - 1 + this.models.length) % this.models.length;
+      await this.loadModel(this.models[this.modelId].message);
+    }
+  }
+
+  async toggleModelVersion() {
+    const targetVersion: 2 | 3 = this.currentModelVersion === 3 ? 2 : 3;
+    this.modelTexturesId = 0;
+
+    if (this.useCDN && this.modelIndex.length > 0) {
+      for (let i = 1; i <= this.modelIndex.length; i++) {
+        const nextIndex = (this.modelId + i) % this.modelIndex.length;
+        const loaded = await this.loadIndexModelAt(nextIndex, targetVersion);
+        if (!loaded) continue;
+        this.modelId = nextIndex;
+        await this.loadLive2D(loaded.url, loaded.json);
+        showMessage(`Switched to Cubism${targetVersion}: ${loaded.name}`, 4000, 10);
+        return;
+      }
+      showMessage(`No Cubism${targetVersion} models found.`, 3000, 10);
+      return;
+    }
+
+    if (this.useCDN && this.modelList) {
+      for (let i = 1; i <= this.modelList.models.length; i++) {
+        const nextIndex = (this.modelId + i) % this.modelList.models.length;
+        const loaded = await this.loadListModelAt(nextIndex, targetVersion);
+        if (!loaded) continue;
+        this.modelId = nextIndex;
+        await this.loadLive2D(loaded.url, loaded.json);
+        showMessage(`Switched to Cubism${targetVersion}: ${loaded.name}`, 4000, 10);
+        return;
+      }
+      showMessage(`No Cubism${targetVersion} models found.`, 3000, 10);
     }
   }
 }
