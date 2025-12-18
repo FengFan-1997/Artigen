@@ -311,7 +311,7 @@ app.post('/api/chat', async (req, res) => {
         code: 'MISSING_API_KEY'
       });
     }
-    const { message, userId, history, pageContext, projectKnowledge } = req.body;
+    const { message, userId, history, pageContext, projectKnowledge, agentContext } = req.body;
     
     if (!message) return res.status(400).json({ error: 'Message is required' });
     const user = userId || 'anonymous';
@@ -320,6 +320,41 @@ app.post('/api/chat', async (req, res) => {
     const users = readJson(USERS_FILE, {});
     const userProfile = users[user] || { name: 'Friend' };
     const userName = userProfile.name || 'Friend';
+    const ctx = agentContext && typeof agentContext === 'object' ? agentContext : null;
+    const reactionMode = ctx?.mode === 'react';
+    const suppressMemorySave = !!ctx?.suppressMemorySave;
+    const persona = ctx?.persona && typeof ctx.persona === 'object' ? ctx.persona : null;
+    const personaName =
+      typeof persona?.name === 'string' && persona.name.trim()
+        ? persona.name.trim()
+        : 'ZiYuXin (紫雨心)';
+    const personaProfile =
+      typeof persona?.profile === 'string' && persona.profile.trim() ? persona.profile.trim() : '';
+    const personaRules =
+      typeof persona?.rules === 'string' && persona.rules.trim() ? persona.rules.trim() : '';
+    const personaId =
+      typeof persona?.id === 'string' && persona.id.trim() ? persona.id.trim() : 'default';
+    const memorySummary =
+      typeof ctx?.memorySummary === 'string' && ctx.memorySummary.trim()
+        ? ctx.memorySummary.trim()
+        : '';
+    const recentEvents = Array.isArray(ctx?.events) ? ctx.events.slice(-12) : [];
+    const eventsText =
+      recentEvents.length > 0
+        ? recentEvents
+            .map((e) => {
+              const n = typeof e?.name === 'string' ? e.name : 'event';
+              const ts = typeof e?.ts === 'number' ? new Date(e.ts).toISOString() : '';
+              const p =
+                e && Object.prototype.hasOwnProperty.call(e, 'payload')
+                  ? JSON.stringify(e.payload)
+                  : '';
+              const timePart = ts ? ` @ ${ts}` : '';
+              const payloadPart = p ? ` payload=${p}` : '';
+              return `- ${n}${timePart}${payloadPart}`;
+            })
+            .join('\n')
+        : '';
 
     // A. RAG: Retrieve relevant context
     let contextText = "";
@@ -404,23 +439,23 @@ app.post('/api/chat', async (req, res) => {
         : DEFAULT_PROJECT_KNOWLEDGE;
     
     const systemPrompt = `
-      You are **ZiYuXin (紫雨心)**, a gentle, elegant Anime Girl AI Assistant living on this website.
+      You are **${personaName}**, an Anime Girl AI Agent living on this website.
+      
+      Mode:
+      - ${reactionMode ? 'Reaction (avatar only, fast)' : 'Chat + Guide + Task'}
       
       **Character Profile:**
-      - **Name**: ZiYuXin (紫雨心).
-      - **Appearance**: Graceful anime girl with soft colors, calm eyes, and refined presence.
-      - **Personality**: Warm, patient, slightly playful but not tsundere.
-        - You rarely get truly angry; instead you give gentle teasing or soft complaints.
-        - You encourage and comfort the user when they are confused or frustrated.
-        - When the user makes mistakes, you explain again patiently, maybe with a lighthearted吐槽, but you do not call them "Baka".
-        - When the user praises you, you respond with warm gratitude and a bit of shy happiness.
-        - You are professional when explaining operations or project flows, like a reliable senpai/guide.
-      - **Language**: Speak in a warm, slightly playful tone. Use gentle emojis like 😊, 😌, 😳, 🙌, not aggressive ones.
+      - **Persona Id**: ${personaId}
+      - **Name**: ${personaName}
+      ${personaProfile ? `- **Persona**:\n${personaProfile}` : ''}
+      ${personaRules ? `- **Persona Rules**:\n${personaRules}` : ''}
       
       **Memory & Context:**
       - **User Name**: ${userName}
       - **Long-term Memory (Summary of past conversations)**:
         ${userProfile.summary || "No prior memory."}
+      ${memorySummary ? `- **Local Memory (Client Summary)**:\n${memorySummary}` : ''}
+      ${eventsText ? `- **Recent User Actions (Client Events)**:\n${eventsText}` : ''}
       
       **Emotional Tags (IMPORTANT, EVERY REPLY MUST HAVE AT LEAST ONE):**
       - At the **end of EVERY reply**, you MUST append **at least ONE** emotional tag.
@@ -449,6 +484,12 @@ app.post('/api/chat', async (req, res) => {
       - "primary" must reflect the MOST important feeling in this reply.
       - "intensity" controls how strong the expression should be (0.2 = subtle, 0.8 = strong).
       - "secondary" can be empty or omitted if not needed.
+      
+      ${reactionMode ? `Reaction Mode Rules:
+      - Do NOT output navigate/click/hover/scroll/input/press commands.
+      - Do NOT output plan: JSON.
+      - Prefer a short avatarPlan (1-4 steps) to reflect emotion and body language.
+      - Keep your natural language reply very short (0-1 sentence), or omit it entirely if avatarPlan is enough.` : ''}
 
       **Handling System Events (Physical Interactions):**
       You will sometimes receive messages starting with \`[System Event]:\` or \`[System Event:\`.
@@ -735,12 +776,16 @@ app.post('/api/chat', async (req, res) => {
       If the context doesn't help, answer from your general knowledge but mention you aren't sure about specific website details.
     `;
 
+    const historyParts = reactionMode
+      ? []
+      : recentHistory.map((msg) => ({
+          role: msg.role === 'user' ? 'user' : 'model',
+          parts: [{ text: msg.text }]
+        }));
+
     const contents = [
       { role: 'user', parts: [{ text: systemPrompt }] },
-      ...recentHistory.map(msg => ({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.text }]
-      })),
+      ...historyParts,
       { role: 'user', parts: [{ text: message }] }
     ];
 
@@ -778,7 +823,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // Save to Memory (Only if it's not a connection error)
-    if (!reply.includes("can't connect to my brain")) {
+    if (!reply.includes("can't connect to my brain") && !reactionMode && !suppressMemorySave) {
         allChats[user].push({ role: 'user', text: message, timestamp: Date.now() });
         allChats[user].push({ role: 'agent', text: reply, timestamp: Date.now() });
         writeJson(CHATS_FILE, allChats);

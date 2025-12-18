@@ -10,6 +10,7 @@ if (typeof window !== 'undefined' && !(window as any).PIXI) {
 let app: any | null = null;
 let model: any = null;
 let tickerAdded = false;
+let lastLayoutLogKey = '';
 
 let poiTarget = { x: 0, y: 0 };
 let poiCurrent = { x: 0, y: 0 };
@@ -406,6 +407,14 @@ const getContainer = (): HTMLElement | null => {
   return document.getElementById('live2d-cubism3') as HTMLElement | null;
 };
 
+const isDebugEnabled = () => {
+  try {
+    return typeof window !== 'undefined' && Boolean((window as any).__LIVE2D_DEBUG__);
+  } catch {
+    return false;
+  }
+};
+
 const ensureApp = async (): Promise<any | null> => {
   if (typeof window === 'undefined') return null;
   if (app) return app;
@@ -460,7 +469,14 @@ const ensureApp = async (): Promise<any | null> => {
     console.warn('[Live2D] Error patching autoUpdate:', e);
   }
 
-  app = new Application({ resizeTo: container as any, backgroundAlpha: 0 });
+  const resolution = clamp((window.devicePixelRatio || 1) as number, 1, 2);
+  app = new Application({
+    resizeTo: container as any,
+    backgroundAlpha: 0,
+    antialias: true,
+    autoDensity: true,
+    resolution
+  });
 
   container.innerHTML = '';
   container.appendChild(app.view as HTMLCanvasElement);
@@ -704,25 +720,37 @@ const applyCubism3Layout = (appInstance: any, modelJsonPath: string) => {
     }
   }
 
-  console.log('[Live2D] Cubism3 Layout Applied:', {
-    modelJsonPath,
-    rendererWidth,
-    rendererHeight,
-    bucket: layout.bucket,
-    specialScale: layout.specialScale,
-    finalScale: layout.scale,
-    boundsW: layout.boundsW,
-    boundsH: layout.boundsH
-  });
+  if (isDebugEnabled()) {
+    const key = `${modelJsonPath}|${rendererWidth}x${rendererHeight}|${layout.scale}`;
+    if (key !== lastLayoutLogKey) {
+      lastLayoutLogKey = key;
+      console.log('[Live2D] Cubism3 Layout Applied:', {
+        modelJsonPath,
+        rendererWidth,
+        rendererHeight,
+        bucket: layout.bucket,
+        specialScale: layout.specialScale,
+        finalScale: layout.scale,
+        boundsW: layout.boundsW,
+        boundsH: layout.boundsH
+      });
+    }
+  }
 };
 
-export const loadCubism3Model = async (modelJsonPath: string) => {
+export const loadCubism3Model = async (modelJsonPath: string): Promise<boolean> => {
   const appInstance = await ensureApp();
-  if (!appInstance) return;
+  if (!appInstance) return false;
 
   if (model) {
-    appInstance.stage.removeChild(model);
-    model.destroy();
+    try {
+      appInstance.stage.removeChild(model);
+    } catch {}
+    try {
+      if (typeof model.destroy === 'function') {
+        model.destroy({ children: true, texture: true, baseTexture: true });
+      }
+    } catch {}
     model = null;
   }
 
@@ -731,7 +759,8 @@ export const loadCubism3Model = async (modelJsonPath: string) => {
     model = await Live2D.from(modelJsonPath, { autoUpdate: false });
   } catch (err) {
     console.error('[Live2D] Failed to load Cubism3 model:', err);
-    return;
+    currentModelPath = '';
+    return false;
   }
 
   currentModelPath = modelJsonPath;
@@ -748,6 +777,13 @@ export const loadCubism3Model = async (modelJsonPath: string) => {
 
   appInstance.stage.addChild(model);
   applyCubism3Layout(appInstance, modelJsonPath);
+  try {
+    requestAnimationFrame(() => {
+      if (model && currentModelPath === modelJsonPath) {
+        applyCubism3Layout(appInstance, modelJsonPath);
+      }
+    });
+  } catch {}
 
   lastRendererWidth = appInstance.renderer.width || 0;
   lastRendererHeight = appInstance.renderer.height || 0;
@@ -785,6 +821,8 @@ export const loadCubism3Model = async (modelJsonPath: string) => {
       }
     });
   }
+
+  return true;
 };
 
 export const playCubism3Motion = (group: string, index?: number): boolean => {
@@ -914,11 +952,17 @@ export const hitTestCubism3 = (x: number, y: number): string[] => {
   if (!model) return [];
   const m = model as any;
   if (typeof m.hitTest === 'function') {
-    const container = getContainer();
-    if (!container) return [];
-    const rect = container.getBoundingClientRect();
-    const localX = x - rect.left;
-    const localY = y - rect.top;
+    const view = (app?.view as HTMLCanvasElement | undefined) || undefined;
+    const rect = view?.getBoundingClientRect() || getContainer()?.getBoundingClientRect();
+    if (!rect) return [];
+
+    const screenW = Number(app?.renderer?.screen?.width) || rect.width || 1;
+    const screenH = Number(app?.renderer?.screen?.height) || rect.height || 1;
+    const scaleX = screenW / Math.max(1, rect.width);
+    const scaleY = screenH / Math.max(1, rect.height);
+
+    const localX = (x - rect.left) * scaleX;
+    const localY = (y - rect.top) * scaleY;
     return m.hitTest(localX, localY);
   }
   return [];
@@ -927,9 +971,13 @@ export const hitTestCubism3 = (x: number, y: number): string[] => {
 export const disposeCubism3 = () => {
   if (app) {
     if (model) {
-      app.stage.removeChild(model);
+      try {
+        app.stage.removeChild(model);
+      } catch {}
       if (typeof model.destroy === 'function') {
-        model.destroy();
+        try {
+          model.destroy({ children: true, texture: true, baseTexture: true });
+        } catch {}
       }
       model = null;
     }
@@ -942,4 +990,18 @@ export const disposeCubism3 = () => {
   if (container) {
     container.innerHTML = '';
   }
+
+  currentModelPath = '';
+  lastRendererWidth = 0;
+  lastRendererHeight = 0;
+  poiTarget = { x: 0, y: 0 };
+  poiCurrent = { x: 0, y: 0 };
+  poiLastUpdateAt = 0;
+  talkingActive = false;
+  talkingPhase = 0;
+  syntheticExpressionTargets = null;
+  syntheticMotionType = null;
+  syntheticMotionUntil = 0;
+  syntheticMotionStartedAt = 0;
+  lastLayoutLogKey = '';
 };

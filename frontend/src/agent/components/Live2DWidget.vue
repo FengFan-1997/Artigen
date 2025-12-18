@@ -199,20 +199,6 @@ export default defineComponent({
       { immediate: true }
     );
 
-    const loadScript = (src: string) => {
-      return new Promise((resolve, reject) => {
-        if (document.querySelector(`script[src="${src}"]`)) {
-          resolve(true);
-          return;
-        }
-        const script = document.createElement('script');
-        script.src = src;
-        script.onload = () => resolve(true);
-        script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
-        document.head.appendChild(script);
-      });
-    };
-
     const cleanup = () => {
       try {
         if (unsubscribeLoading) {
@@ -285,7 +271,6 @@ export default defineComponent({
       try {
         cleanup();
         modelLoading.value = true;
-        await loadScript('/live2d/core/live2d.min.js');
 
         const normalizeHfBase = (raw: string) => {
           const trimmed = (raw || '').trim();
@@ -332,7 +317,7 @@ export default defineComponent({
                 'switch-texture',
                 'photo'
               ],
-              modelId: 3,
+              modelId: 101,
               drag: false,
               disableIdle: true,
               logLevel: 'info',

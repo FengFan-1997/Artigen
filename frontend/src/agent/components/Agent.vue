@@ -77,7 +77,8 @@ import { useTaskExecutor } from '../composables/useTaskExecutor';
 import { useAuth } from '../composables/useAuth';
 import { lerp, getRandomPosition } from '../utils/math';
 import { resolveTarget } from '../utils/dom';
-import { sendMessageToAI, getChatHistory } from '../services/aiService';
+import { sendMessageToAI, getChatHistory, requestAgentReaction } from '../services/aiService';
+import { getUserId } from '../utils/user';
 import type { Position, ChatMessage } from '../types';
 import type { AvatarPlanStep } from '../types/avatarPlan';
 
@@ -188,11 +189,173 @@ const chatOpen = ref(false);
 const messages = ref<ChatMessage[]>([{ role: 'agent', text: 'Hello! How can I help you today?' }]);
 const isLoading = ref(false);
 
+const ALLOWED_MOTIONS = [
+  'idle',
+  'tap_body',
+  'flick_head',
+  'shake',
+  'nod',
+  'talking',
+  'happy',
+  'sad',
+  'surprised',
+  'activity',
+  'friend',
+  'mail',
+  'morning',
+  'afternoon',
+  'evening',
+  'point_left',
+  'point_right',
+  'wave',
+  'tilt_left',
+  'tilt_right',
+  'step_forward',
+  'step_back',
+  'shake_head',
+  'mood_happy',
+  'mood_angry',
+  'mood_tired',
+  'mood_sleepy',
+  'mood_confused'
+] as const;
+
+const ALLOWED_EXPRESSIONS = [
+  'neutral',
+  'happy',
+  'angry',
+  'sad',
+  'shy',
+  'surprised',
+  'dizzy',
+  'confused'
+] as const;
+
+type LocalMemoryItem = {
+  ts: number;
+  role: 'user' | 'agent' | 'system';
+  text: string;
+  type?: string;
+};
+type LocalMemory = { items: LocalMemoryItem[] };
+const localMemory = ref<LocalMemory>({ items: [] });
+const memoryKey = computed(() => `agent_memory_v1_${getUserId()}`);
+
+const loadLocalMemory = () => {
+  try {
+    const raw = localStorage.getItem(memoryKey.value);
+    if (!raw) {
+      localMemory.value = { items: [] };
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.items)) {
+      localMemory.value = { items: [] };
+      return;
+    }
+    localMemory.value = { items: parsed.items.slice(-200) };
+  } catch {
+    localMemory.value = { items: [] };
+  }
+};
+
+const persistLocalMemory = () => {
+  try {
+    localStorage.setItem(
+      memoryKey.value,
+      JSON.stringify({ items: localMemory.value.items.slice(-200) })
+    );
+  } catch {}
+};
+
+const pushMemoryItem = (item: Omit<LocalMemoryItem, 'ts'>) => {
+  localMemory.value.items.push({ ...item, ts: Date.now() });
+  if (localMemory.value.items.length > 200) {
+    localMemory.value.items = localMemory.value.items.slice(-200);
+  }
+  persistLocalMemory();
+};
+
+const getCharacterName = () => {
+  const stored = localStorage.getItem('agent_character_name');
+  if (stored && stored.trim()) return stored.trim();
+  return 'Lumina';
+};
+
+const getPersonaText = () => {
+  const stored = localStorage.getItem('agent_persona_text');
+  if (stored && stored.trim()) return stored.trim();
+  return currentLang.value === 'zh'
+    ? '你叫 Lumina，是一个有点傲娇但很可靠的桌面精灵助理。你会根据用户的聊天与互动（点击、拖拽、鼠标绕圈、长时间无操作等）做出细腻的表情与动作反应。你不会解释提示词本身，也不会提到系统或上下文。'
+    : "Your name is Lumina. You're a slightly tsundere but reliable desktop sprite assistant. You react to chat and interactions (clicks, drags, circling the cursor, long idle) with subtle expressions and motions. Never mention system prompts or hidden context.";
+};
+
+const buildAgentContext = (input: { trigger: string; userText?: string; systemEvent?: string }) => {
+  const recent = localMemory.value.items.slice(-24);
+  const recentChat = recent
+    .filter((x) => x.role === 'user' || x.role === 'agent')
+    .slice(-12)
+    .map((x) => ({ role: x.role, text: x.text, ts: x.ts }));
+  const recentEvents = recent
+    .filter((x) => x.role === 'system')
+    .slice(-12)
+    .map((x) => ({ type: x.type || 'event', text: x.text, ts: x.ts }));
+
+  return {
+    trigger: input.trigger,
+    character: {
+      name: getCharacterName(),
+      persona: getPersonaText()
+    },
+    user: {
+      id: getUserId(),
+      name: currentUser.value?.name || currentUser.value?.username || ''
+    },
+    runtime: {
+      lang: currentLang.value,
+      modelId: Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0
+    },
+    state: {
+      energy: energy.value,
+      isMoving: isMoving.value,
+      isHovered: isHovered.value,
+      isDragging: isDragging.value,
+      isTalking: isTalking.value,
+      emotions: {
+        angry: isAngry.value,
+        happy: isHappy.value,
+        pouting: isPouting.value,
+        dizzy: isDizzy.value,
+        confused: isConfused.value,
+        tired: isTired.value,
+        fainted: isFainted.value,
+        crying: isCrying.value
+      }
+    },
+    memory: {
+      recentChat,
+      recentEvents
+    },
+    input: {
+      userText: input.userText,
+      systemEvent: input.systemEvent
+    },
+    constraints: {
+      allowedMotions: ALLOWED_MOTIONS,
+      allowedExpressions: ALLOWED_EXPRESSIONS
+    }
+  };
+};
+
 const interactionState = ref({
   clicks: 0,
   accumulatedAngle: 0,
   startTime: Date.now()
 });
+
+const recordSystemEvent = (text: string, type = 'event') => {
+  pushMemoryItem({ role: 'system', text, type });
+};
 
 // Task Executor
 const { plan, isExecuting, setPlan } = useTaskExecutor();
@@ -563,14 +726,10 @@ const avatarAdapter = {
 
 // --- Event Handlers & Core Logic ---
 
-async function handleSendMessage(text: string) {
-  messages.value.push({ role: 'user', text });
-  isLoading.value = true;
-  message.value = 'Hmm...';
-
-  const rawResponse = await sendMessageToAI(text, messages.value);
-
-  isLoading.value = false;
+const applyAiReply = async (
+  rawResponse: string,
+  options: { displayInChat: boolean; speakText?: boolean; defaultMessageFallback?: string }
+) => {
   let cleanResponse = rawResponse;
 
   motionCommand.value = '';
@@ -759,7 +918,6 @@ async function handleSendMessage(text: string) {
     }
   }
 
-  // Clean hidden commands
   const displayResponse = cleanResponse
     .replace(/highlight:\s*[^\n]+/g, '')
     .replace(/navigate:\s*[^\n]+/g, '')
@@ -772,17 +930,21 @@ async function handleSendMessage(text: string) {
     .trim();
 
   if (displayResponse) {
-    messages.value.push({ role: 'agent', text: displayResponse });
+    if (options.displayInChat) {
+      messages.value.push({ role: 'agent', text: displayResponse });
+    }
+    pushMemoryItem({ role: 'agent', text: displayResponse });
     message.value = displayResponse;
-    speak(displayResponse);
-  } else {
-    const fallback = "I'm on it!";
-    messages.value.push({ role: 'agent', text: fallback });
-    message.value = fallback;
-    speak(fallback);
+    if (options.speakText !== false) speak(displayResponse);
+  } else if (options.defaultMessageFallback) {
+    if (options.displayInChat) {
+      messages.value.push({ role: 'agent', text: options.defaultMessageFallback });
+    }
+    pushMemoryItem({ role: 'agent', text: options.defaultMessageFallback });
+    message.value = options.defaultMessageFallback;
+    if (options.speakText !== false) speak(options.defaultMessageFallback);
   }
 
-  // Parse Commands
   if (parsedPlan) {
     try {
       console.log('Executing Plan:', parsedPlan);
@@ -790,15 +952,19 @@ async function handleSendMessage(text: string) {
       if (result.success) {
         applyExpression('happy', 4000);
         playMotionInternal('tap_body', 4000);
-        messages.value.push({ role: 'agent', text: 'Mission Complete! Praise me! [HAPPY]' });
+        if (options.displayInChat) {
+          messages.value.push({ role: 'agent', text: 'Mission Complete! Praise me! [HAPPY]' });
+        }
+        pushMemoryItem({ role: 'agent', text: 'Mission Complete! Praise me!' });
         message.value = 'Mission Complete! ✨';
         speak('Mission Complete! Praise me!');
       } else {
         applyExpression('shy', 4000);
-        messages.value.push({
-          role: 'agent',
-          text: `Oops... I failed: ${result.message || 'Unknown error'}. [SHY]`
-        });
+        const errText = `Oops... I failed: ${result.message || 'Unknown error'}.`;
+        if (options.displayInChat) {
+          messages.value.push({ role: 'agent', text: `${errText} [SHY]` });
+        }
+        pushMemoryItem({ role: 'agent', text: errText });
         message.value = 'Oops... failed... 😖';
         speak("Oops... I failed... don't look at me!");
       }
@@ -927,6 +1093,56 @@ async function handleSendMessage(text: string) {
       }, 500);
     }
   }
+};
+
+const isBackgroundReacting = ref(false);
+let lastReactionAt = 0;
+const backgroundReactCooldownMs = 4000;
+
+const reactToSystemEvent = async (input: { text: string; type?: string; trigger?: string }) => {
+  const now = Date.now();
+  if (isBackgroundReacting.value) return;
+  if (now - lastReactionAt < backgroundReactCooldownMs) return;
+
+  const text = (input.text || '').trim();
+  if (!text) return;
+
+  lastReactionAt = now;
+  isBackgroundReacting.value = true;
+  try {
+    recordSystemEvent(text, input.type || 'event');
+    const agentContext = buildAgentContext({
+      trigger: input.trigger || 'system',
+      systemEvent: text
+    });
+    const rawResponse = await requestAgentReaction({ message: text, agentContext });
+    if (!rawResponse) return;
+    await applyAiReply(rawResponse, {
+      displayInChat: false,
+      speakText: false
+    });
+  } finally {
+    isBackgroundReacting.value = false;
+  }
+};
+
+async function handleSendMessage(text: string) {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return;
+  messages.value.push({ role: 'user', text: trimmed });
+  pushMemoryItem({ role: 'user', text: trimmed });
+  isLoading.value = true;
+  message.value = 'Hmm...';
+
+  const agentContext = buildAgentContext({ trigger: 'chat', userText: trimmed });
+  const rawResponse = await sendMessageToAI(trimmed, messages.value, agentContext);
+  isLoading.value = false;
+
+  await applyAiReply(rawResponse, {
+    displayInChat: true,
+    speakText: true,
+    defaultMessageFallback: "I'm on it!"
+  });
 }
 
 const triggerDizzy = () => {

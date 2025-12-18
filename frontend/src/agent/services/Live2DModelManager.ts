@@ -44,6 +44,7 @@ export class ModelManager {
   private readonly assetsPath: string;
   private readonly cubism2Path: string;
   private modelDirectory: 'model' | 'model_backup';
+  private readonly hasStoredModelId: boolean;
   private _modelId: number;
   private _modelTexturesId: number;
   private modelList: ModelListCDN | null = null;
@@ -81,7 +82,11 @@ export class ModelManager {
     } else {
       assetsPath = cdnPath;
     }
-    let modelId: number = parseInt(localStorage.getItem('modelId') as string, 10);
+    const modelIdRaw = localStorage.getItem('modelId') as string | null;
+    const storedModelId = parseInt(modelIdRaw ?? '', 10);
+    const hasStoredModelId = !isNaN(storedModelId);
+
+    let modelId: number = storedModelId;
     let modelTexturesId: number = parseInt(localStorage.getItem('modelTexturesId') as string, 10);
     if (isNaN(modelId) || isNaN(modelTexturesId)) {
       modelTexturesId = 0;
@@ -93,7 +98,8 @@ export class ModelManager {
     this.cdnPath = cdnPath || '';
     this.assetsPath = assetsPath || this.cdnPath;
     this.cubism2Path = cubism2Path || '';
-    this.modelDirectory = 'model';
+    this.modelDirectory = 'model_backup';
+    this.hasStoredModelId = hasStoredModelId;
     this._modelId = modelId;
     this._modelTexturesId = modelTexturesId;
     this.currentModelVersion = 0;
@@ -347,6 +353,17 @@ export class ModelManager {
       }
 
       if (model.modelIndex.length > 0) {
+        try {
+          if (
+            model.hasStoredModelId &&
+            typeof config.modelId === 'number' &&
+            model.modelIndex[model.modelId]?.version === 2 &&
+            model.modelIndex[config.modelId]?.version === 3
+          ) {
+            model.modelId = config.modelId;
+          }
+        } catch {}
+
         if (model.modelId >= model.modelIndex.length) {
           model.modelId = 0;
         }
@@ -517,8 +534,12 @@ export class ModelManager {
       } else {
         this.setRendererVersion(3);
         try {
-          await loadCubism3Model(modelSettingPath);
-          this.currentModelVersion = 3;
+          const ok = await loadCubism3Model(modelSettingPath);
+          if (ok) {
+            this.currentModelVersion = 3;
+          } else {
+            throw new Error('loadCubism3Model returned false');
+          }
         } catch (e) {
           logger.error('Failed to load Cubism3 model via Pixi renderer', e);
           showMessage('加载 Cubism3/4 模型时出错，请稍后重试', 5000, 9);

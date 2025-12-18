@@ -16,7 +16,8 @@ const USER_API_URL = `${apiBaseUrl}/api/user`;
 
 export const sendMessageToAI = async (
   message: string,
-  _history: ChatMessage[] = [] // Kept for compatibility but not strictly needed for backend context
+  _history: ChatMessage[] = [], // Kept for compatibility but not strictly needed for backend context
+  agentContext?: any
 ): Promise<string> => {
   try {
     const userId = getUserId();
@@ -33,7 +34,8 @@ export const sendMessageToAI = async (
       body: JSON.stringify({
         message,
         userId,
-        pageContext // Send current page state
+        pageContext,
+        agentContext
       })
     });
     window.clearTimeout(timeoutId);
@@ -59,6 +61,46 @@ export const sendMessageToAI = async (
       'emotionTag: {"primary":"dizzy","intensity":0.9,"secondary":["confused"]}\n\n' +
       'motionTag: [{"type":"gesture","name":"shake_head","duration":900,"loop":false}]'
     );
+  }
+};
+
+export const requestAgentReaction = async (input: {
+  message: string;
+  agentContext?: any;
+}): Promise<string> => {
+  try {
+    const userId = getUserId();
+    const pageContext = getPageContext();
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        message: input.message,
+        userId,
+        pageContext,
+        agentContext: input.agentContext
+      })
+    });
+    window.clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Backend Error:', errorText);
+      throw new Error(`API Error: ${response.status} ${errorText}`);
+    }
+
+    const data = await response.json();
+    if (data.reply) return data.reply;
+    return '';
+  } catch (error) {
+    console.error('Error calling AI:', error);
+    return '';
   }
 };
 

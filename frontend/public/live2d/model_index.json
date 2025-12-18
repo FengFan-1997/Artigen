@@ -604,5 +604,29 @@
     "path": "shaoqian/wa2000_6/normal",
     "configFile": "normal.model3.json",
     "version": 3
+  },
+  {
+    "name": "ZiYuXin_ots14_3001_normal",
+    "path": "ZiYuXin/ots14_3001/normal",
+    "configFile": "normal.model3.json",
+    "version": 3
+  },
+  {
+    "name": "ZiYuXin_ots14_1203_normal",
+    "path": "ZiYuXin/ots14_1203/normal",
+    "configFile": "normal.model3.json",
+    "version": 3
+  },
+  {
+    "name": "ZiYuXin_ots14_4501_normal",
+    "path": "ZiYuXin/ots14_4501/normal",
+    "configFile": "normal.model3.json",
+    "version": 3
+  },
+  {
+    "name": "ZiYuXin_ots14_5602_normal",
+    "path": "ZiYuXin/ots14_5602/normal",
+    "configFile": "normal.model3.json",
+    "version": 3
   }
 ]
