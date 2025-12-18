@@ -8,6 +8,53 @@ import logger from '../../utils/logger';
 const UNIFORM_MODEL_HEIGHT = 1.6;
 const UNIFORM_MODEL_BOTTOM = -0.9;
 
+const soundCheckCache = new Map();
+
+const checkSoundAvailable = async (url) => {
+  if (!url) return false;
+  const cached = soundCheckCache.get(url);
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  if (
+    cached &&
+    typeof cached.ok === 'boolean' &&
+    now - (cached.checkedAt || 0) < 6 * 60 * 60 * 1000
+  ) {
+    return cached.ok;
+  }
+
+  if (cached?.checking) return cached.checking;
+
+  const checking = (async () => {
+    let ok = false;
+    try {
+      const head = await fetch(url, { method: 'HEAD' });
+      ok = head.ok;
+    } catch {
+      ok = false;
+    }
+
+    if (!ok) {
+      try {
+        const range = await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-0' } });
+        ok = range.ok;
+      } catch {
+        ok = false;
+      }
+    }
+
+    soundCheckCache.set(url, { ok, checkedAt: now });
+    return ok;
+  })();
+
+  soundCheckCache.set(url, { ...cached, checking, checkedAt: now });
+  return checking.finally(() => {
+    const after = soundCheckCache.get(url);
+    if (after?.checking) {
+      soundCheckCache.set(url, { ok: !!after.ok, checkedAt: after.checkedAt || now });
+    }
+  });
+};
+
 //============================================================
 //============================================================
 //  class LAppModel     extends L2DBaseModel
@@ -313,18 +360,18 @@ class LAppModel extends L2DBaseModel {
       this.mainMotionManager.startMotionPrio(motion, priority);
     } else {
       const soundName = this.modelSetting.getMotionSound(name, no);
-      // var player = new Sound(this.modelHomeDir + soundName);
+      const soundUrl = this.modelHomeDir + soundName;
+      const cached = soundCheckCache.get(soundUrl);
 
-      const snd = document.createElement('audio');
-      snd.src = this.modelHomeDir + soundName;
-
-      logger.trace('Start sound : ' + soundName);
-
-      const playPromise = snd.play();
-      if (playPromise !== undefined) {
-        playPromise.catch((error) => {
-          if (error.name !== 'NotAllowedError' && error.name !== 'NotSupportedError') {
-            logger.error('Sound play failed: ' + error);
+      if (!cached || cached.ok !== false) {
+        void checkSoundAvailable(soundUrl).then((ok) => {
+          if (!ok) return;
+          const snd = document.createElement('audio');
+          snd.preload = 'none';
+          snd.src = soundUrl;
+          const playPromise = snd.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(() => undefined);
           }
         });
       }

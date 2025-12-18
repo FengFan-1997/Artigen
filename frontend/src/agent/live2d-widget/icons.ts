@@ -16,4 +16,19 @@ const fa_quote_left =
 const fa_cube =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M239 6.3L15 119C6 123.5 0 132.9 0 143.3V368.7C0 379.1 6 388.5 15 393L239 505.7C248.3 510.4 259.7 510.4 269 505.7L493 393C502 388.5 508 379.1 508 368.7V143.3C508 132.9 502 123.5 493 119L269 6.3C259.7 1.6 248.3 1.6 239 6.3zM256 52.2L432 140.1L256 228L80 140.1L256 52.2zM48 184.4L232 276.4V453.8L48 361.8V184.4zM280 453.8V276.4L464 184.4V361.8L280 453.8z"/></svg>';
 
-export { fa_comment, fa_street_view, fa_shirt, fa_camera_retro, fa_quote_left, fa_cube };
+const fa_arrow_up =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path d="M214.6 41.4c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L160 141.3V448c0 17.7 14.3 32 32 32s32-14.3 32-32V141.3l105.4 105.4c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3l-160-160z"/></svg>';
+
+const fa_arrow_down =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path d="M169.4 470.6c12.5 12.5 32.8 12.5 45.3 0l160-160c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L224 370.7V64c0-17.7-14.3-32-32-32s-32 14.3-32 32V370.7L54.6 265.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l160 160z"/></svg>';
+
+export {
+  fa_comment,
+  fa_street_view,
+  fa_shirt,
+  fa_camera_retro,
+  fa_quote_left,
+  fa_cube,
+  fa_arrow_up,
+  fa_arrow_down
+};

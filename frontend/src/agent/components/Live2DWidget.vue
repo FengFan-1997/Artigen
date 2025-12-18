@@ -10,7 +10,11 @@
       height: '100%'
     }"
   >
-    <!-- Widget will be injected here -->
+    <div ref="widgetRoot" class="live2d-widget-root"></div>
+    <div v-if="modelLoading" class="model-loading-overlay">
+      <div class="model-loading-spinner"></div>
+      <div class="model-loading-text">{{ loadingText }}</div>
+    </div>
   </div>
 </template>
 
@@ -44,6 +48,7 @@ export default defineComponent({
   emits: ['toggle-chat'],
   setup(props, { emit, expose }) {
     const container = ref<HTMLElement | null>(null);
+    const widgetRoot = ref<HTMLElement | null>(null);
     const modelMgr = ref<ModelManager | null>(null);
 
     let messageTalkTimeout: number | null = null;
@@ -52,6 +57,9 @@ export default defineComponent({
     const dizzy = computed(() => !!props.isDizzy);
     const headHit = computed(() => !!props.isHeadHit);
     const scaleValue = computed(() => props.scale ?? 1);
+    const loadingText = computed(() => (props.currentLang === 'zh' ? '加载中...' : 'Loading...'));
+    const modelLoading = ref(false);
+    let unsubscribeLoading: null | (() => void) = null;
 
     const toggleChat = () => {
       console.log('Live2DWidget: toggleChat called');
@@ -117,9 +125,6 @@ export default defineComponent({
       (val) => {
         if (!modelMgr.value) return;
         modelMgr.value.setEmotionFlags({ isAngry: !!val });
-        if (val) {
-          modelMgr.value.startMotion('shake');
-        }
       }
     );
 
@@ -128,9 +133,6 @@ export default defineComponent({
       (val) => {
         if (!modelMgr.value) return;
         modelMgr.value.setEmotionFlags({ isHappy: !!val });
-        if (val) {
-          modelMgr.value.startMotion('happy');
-        }
       }
     );
 
@@ -139,9 +141,6 @@ export default defineComponent({
       (val) => {
         if (!modelMgr.value) return;
         modelMgr.value.setEmotionFlags({ isShy: !!val });
-        if (val) {
-          modelMgr.value.startMotion('friend');
-        }
       }
     );
 
@@ -149,9 +148,7 @@ export default defineComponent({
       () => props.isDizzy,
       (val) => {
         if (!modelMgr.value) return;
-        if (val) {
-          modelMgr.value.startMotion('shake');
-        }
+        void val;
       }
     );
 
@@ -176,9 +173,7 @@ export default defineComponent({
       () => props.isHeadHit,
       (val) => {
         if (!modelMgr.value) return;
-        if (val) {
-          modelMgr.value.startMotion('shake');
-        }
+        void val;
       }
     );
 
@@ -220,6 +215,15 @@ export default defineComponent({
 
     const cleanup = () => {
       try {
+        if (unsubscribeLoading) {
+          unsubscribeLoading();
+          unsubscribeLoading = null;
+        }
+        if (modelMgr.value && typeof (modelMgr.value as any).destroy === 'function') {
+          try {
+            (modelMgr.value as any).destroy();
+          } catch {}
+        }
         disposeCubism3();
         const live2dGlobal = (window as any).Live2D;
         if (live2dGlobal && typeof live2dGlobal.dispose === 'function') {
@@ -264,6 +268,7 @@ export default defineComponent({
         if (waifuTool) waifuTool.remove();
 
         modelMgr.value = null;
+        modelLoading.value = false;
 
         if (messageTalkTimeout) {
           window.clearTimeout(messageTalkTimeout);
@@ -279,6 +284,7 @@ export default defineComponent({
     const initLive2D = async () => {
       try {
         cleanup();
+        modelLoading.value = true;
         await loadScript('/live2d/core/live2d.min.js');
 
         const normalizeHfBase = (raw: string) => {
@@ -309,7 +315,7 @@ export default defineComponent({
         const hfNormalized = normalizeHfBase(assetsBaseRaw);
         const assetsBase = hfNormalized.endsWith('/') ? hfNormalized : `${hfNormalized}/`;
 
-        if (container.value) {
+        if (widgetRoot.value) {
           modelMgr.value = await initWidget(
             {
               waifuPath: `${configBase}waifu-tips.json`,
@@ -319,7 +325,9 @@ export default defineComponent({
               tools: [
                 'chat',
                 'hitokoto',
+                'switch-model-prev',
                 'switch-model',
+                'switch-model-next',
                 'switch-ziyuxin',
                 'switch-texture',
                 'photo'
@@ -330,10 +338,13 @@ export default defineComponent({
               logLevel: 'info',
               onChat: toggleChat
             },
-            container.value
+            widgetRoot.value
           );
 
           if (modelMgr.value) {
+            unsubscribeLoading = modelMgr.value.onLoadingChange((loading) => {
+              modelLoading.value = loading;
+            });
             console.group('[Live2DWidget] Loaded Model Debug Info');
             console.log('Available Hit Areas:', modelMgr.value.getHitAreas());
             console.log('Available Motion Groups:', modelMgr.value.getMotionGroups());
@@ -342,6 +353,8 @@ export default defineComponent({
         }
       } catch (error) {
         console.error('Error loading Live2D widget:', error);
+      } finally {
+        modelLoading.value = false;
       }
     };
 
@@ -357,10 +370,13 @@ export default defineComponent({
 
     return {
       container,
+      widgetRoot,
       angry,
       dizzy,
       headHit,
-      scaleValue
+      scaleValue,
+      modelLoading,
+      loadingText
     };
   }
 });
@@ -371,6 +387,49 @@ export default defineComponent({
   position: relative;
   width: 100%;
   height: 100%;
+}
+
+.live2d-widget-root {
+  width: 100%;
+  height: 100%;
+}
+
+.model-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  z-index: 50;
+  pointer-events: none;
+}
+
+.model-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.4);
+  border-top-color: rgba(255, 255, 255, 0.95);
+  animation: model-spin 0.9s linear infinite;
+}
+
+.model-loading-text {
+  font-size: 12px;
+  line-height: 16px;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+@keyframes model-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Deep styles for the widget elements */

@@ -1,11 +1,5 @@
 import { ref, computed } from 'vue';
-import {
-  getUserId,
-  isLoggedIn as checkIsLoggedIn,
-  loginUser,
-  registerUser,
-  logoutUser
-} from '../utils/user';
+import { isLoggedIn as checkIsLoggedIn, loginUser, registerUser, logoutUser } from '../utils/user';
 import { getUserProfile } from '../services/aiService';
 
 const currentUser = ref<any>(null);

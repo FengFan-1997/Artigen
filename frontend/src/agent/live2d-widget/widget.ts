@@ -5,7 +5,7 @@
 
 import { ModelManager } from '../services/Live2DModelManager';
 import type { Config, ModelList, Tips } from '../types/live2d';
-import { showMessage, welcomeMessage } from '../services/message';
+import { showMessage } from '../services/message';
 import { randomSelection } from '../utils';
 import { ToolsManager } from './tools';
 import logger from '../utils/logger';

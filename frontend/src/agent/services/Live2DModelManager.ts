@@ -16,7 +16,8 @@ import {
   hitTestCubism3,
   setCubism3PointOfInterest,
   getCubism3HitAreas,
-  getCubism3MotionGroups
+  getCubism3MotionGroups,
+  triggerCubism3SyntheticMotion
 } from '../live2d-widget/cubism3';
 
 // We import Cubism2Model type for type checking, but we load it dynamically or via index
@@ -50,6 +51,9 @@ export class ModelManager {
   private cubism2model: Cubism2Model | undefined;
   private currentModelVersion: number;
   private loading: boolean;
+  private loadingListeners: Set<
+    (loading: boolean, info?: { modelSettingPath?: string; version?: number }) => void
+  >;
   private modelJSONCache: Record<string, any>;
   private models: ModelList[];
 
@@ -94,9 +98,34 @@ export class ModelManager {
     this._modelTexturesId = modelTexturesId;
     this.currentModelVersion = 0;
     this.loading = false;
+    this.loadingListeners = new Set();
     this.modelJSONCache = {};
     this.models = models;
     this.lastMotionAt = {};
+  }
+
+  public onLoadingChange(
+    listener: (loading: boolean, info?: { modelSettingPath?: string; version?: number }) => void
+  ) {
+    this.loadingListeners.add(listener);
+    try {
+      listener(this.loading);
+    } catch {}
+    return () => {
+      this.loadingListeners.delete(listener);
+    };
+  }
+
+  public get isLoading() {
+    return this.loading;
+  }
+
+  private emitLoading(loading: boolean, info?: { modelSettingPath?: string; version?: number }) {
+    for (const l of this.loadingListeners) {
+      try {
+        l(loading, info);
+      } catch {}
+    }
   }
 
   private getModelAssetUrlCandidates(
@@ -459,9 +488,10 @@ export class ModelManager {
       logger.error(`loadLive2D called with empty modelSetting for ${modelSettingPath}`);
       return;
     }
+    const version = this.checkModelVersion(modelSetting);
     this.loading = true;
+    this.emitLoading(true, { modelSettingPath, version });
     try {
-      const version = this.checkModelVersion(modelSetting);
       if (version === 2) {
         this.setRendererVersion(2);
         if (!this.cubism2model) {
@@ -499,6 +529,7 @@ export class ModelManager {
       console.error('loadLive2D failed', err);
     } finally {
       this.loading = false;
+      this.emitLoading(false, { modelSettingPath, version });
     }
   }
 
@@ -521,6 +552,12 @@ export class ModelManager {
           canvas.style.pointerEvents = 'none';
         }
         if (cubism3Container) cubism3Container.style.display = '';
+        if (this.cubism2model && typeof (this.cubism2model as any).destroy === 'function') {
+          try {
+            (this.cubism2model as any).destroy();
+          } catch {}
+          this.cubism2model = undefined;
+        }
       }
     } catch (e) {
       logger.error('Failed to toggle renderer version', e);
@@ -592,12 +629,16 @@ export class ModelManager {
     if (!force && this.shouldThrottleMotionKey(throttleKey)) return;
 
     if (this.currentModelVersion === 3) {
+      let played = false;
       if (mapping && mapping.v3 && mapping.v3.group) {
-        playCubism3Motion(mapping.v3.group, mapping.v3.index);
+        played = playCubism3Motion(mapping.v3.group, mapping.v3.index);
       } else if (v3Direct) {
-        playCubism3Motion(v3Direct.group, v3Direct.index);
+        played = playCubism3Motion(v3Direct.group, v3Direct.index);
       } else {
-        playCubism3Motion(name);
+        played = playCubism3Motion(name);
+      }
+      if (!played) {
+        triggerCubism3SyntheticMotion(lowerName, { durationMs: force ? 1400 : 1100 });
       }
       return;
     }
@@ -959,5 +1000,22 @@ export class ModelManager {
       }
       showMessage(`No Cubism${targetVersion} models found.`, 3000, 10);
     }
+  }
+
+  public destroy() {
+    try {
+      if (this.cubism2model && typeof (this.cubism2model as any).destroy === 'function') {
+        (this.cubism2model as any).destroy();
+      }
+    } catch {}
+    this.cubism2model = undefined;
+
+    try {
+      disposeCubism3();
+    } catch {}
+
+    this.loading = false;
+    this.emitLoading(false);
+    this.loadingListeners.clear();
   }
 }

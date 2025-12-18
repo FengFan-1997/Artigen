@@ -79,6 +79,7 @@ import { lerp, getRandomPosition } from '../utils/math';
 import { resolveTarget } from '../utils/dom';
 import { sendMessageToAI, getChatHistory } from '../services/aiService';
 import type { Position, ChatMessage } from '../types';
+import type { AvatarPlanStep } from '../types/avatarPlan';
 
 const router = useRouter();
 const { initAuth, currentUser } = useAuth();
@@ -217,6 +218,25 @@ const setTransient = (key: string, setter: (v: boolean) => void, activeMs: numbe
   }, ms);
 };
 
+const clearTransient = (key: string, setter: (v: boolean) => void) => {
+  setter(false);
+  if (transientTimeouts[key]) {
+    window.clearTimeout(transientTimeouts[key]!);
+    transientTimeouts[key] = null;
+  }
+};
+
+const clearAiEmotions = () => {
+  clearTransient('angry', (v) => (isAngry.value = v));
+  clearTransient('happy', (v) => (isHappy.value = v));
+  clearTransient('pouting', (v) => (isPouting.value = v));
+  clearTransient('confused', (v) => (isConfused.value = v));
+  clearTransient('crying', (v) => (isCrying.value = v));
+  clearTransient('dizzy', (v) => (isDizzy.value = v));
+  clearTransient('tired', (v) => (isTired.value = v));
+  clearTransient('fainted', (v) => (isFainted.value = v));
+};
+
 // --- Config ---
 const MOVE_INTERVAL = 60000;
 const IDLE_TALK_INTERVAL = 30000;
@@ -268,6 +288,66 @@ const containerStyle = computed(() => ({
 // --- Helpers ---
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+type ExtractedJsonBlock = { raw: string; jsonText: string };
+
+const extractJsonAfterLabel = (text: string, label: string): ExtractedJsonBlock | null => {
+  const re = new RegExp(`${label}\\s*:\\s*`, 'i');
+  const match = re.exec(text);
+  if (!match || typeof match.index !== 'number') return null;
+
+  let i = match.index + match[0].length;
+  while (i < text.length && /\s/.test(text[i] || '')) i++;
+
+  const first = text[i];
+  if (first !== '{' && first !== '[') return null;
+
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let j = i; j < text.length; j++) {
+    const ch = text[j];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '{' || ch === '[') {
+      stack.push(ch);
+      continue;
+    }
+
+    if (ch === '}' || ch === ']') {
+      const last = stack[stack.length - 1];
+      const ok = (last === '{' && ch === '}') || (last === '[' && ch === ']');
+      if (!ok) return null;
+      stack.pop();
+      if (stack.length === 0) {
+        const jsonText = text.slice(i, j + 1);
+        const raw = text.slice(match.index, j + 1);
+        return { raw, jsonText };
+      }
+    }
+  }
+
+  return null;
+};
+
 const speak = (text: string) => {
   if (isMuted.value || !window.speechSynthesis) return;
   window.speechSynthesis.cancel();
@@ -316,10 +396,14 @@ const applyExpression = (expression: string | undefined, duration: number) => {
     setTransient('pouting', (v) => (isPouting.value = v), duration);
   } else if (exp === 'confused' || exp === 'thinking') {
     setTransient('confused', (v) => (isConfused.value = v), duration);
+  } else if (exp === 'sad' || exp === 'cry' || exp === 'crying') {
+    setTransient('crying', (v) => (isCrying.value = v), duration);
   } else if (exp === 'dizzy') {
     setTransient('dizzy', (v) => (isDizzy.value = v), duration);
   } else if (exp === 'tired' || exp === 'sleepy') {
     setTransient('tired', (v) => (isTired.value = v), duration);
+  } else if (exp === 'surprised' || exp === 'surprise') {
+    setExpressionOverride('surprised', duration);
   }
 };
 
@@ -339,102 +423,128 @@ const emit = defineEmits<{
 }>();
 
 // --- Avatar Plan Logic ---
-let avatarPlanRunning = false;
+type QueuedAvatarPlan = { steps: any[]; resolve: () => void };
 
-async function runAvatarPlan(steps: any[]) {
-  if (!steps || !Array.isArray(steps) || avatarPlanRunning) return;
-  avatarPlanRunning = true;
-  try {
-    for (const step of steps) {
-      const executeStep = async () => {
-        try {
-          const t = step?.type;
-          const duration = typeof step?.duration === 'number' ? step.duration : 1200;
+const avatarPlanQueue: QueuedAvatarPlan[] = [];
+let avatarPlanRunnerActive = false;
 
-          if (t === 'pose') {
-            if (typeof step.motion === 'string') {
-              playMotionInternal(step.motion, duration);
-            }
-            applyExpression(step.expression, duration);
-            await delay(duration);
-          } else if (t === 'motion') {
-            if (typeof step.motion === 'string') {
-              playMotionInternal(step.motion, duration);
-            }
-            await delay(duration);
-          } else if (t === 'expression' || t === 'emotion') {
-            applyExpression(step.expression, duration);
-            await delay(duration);
-          } else if (t === 'speak') {
-            if (typeof step.text === 'string') {
-              if (step.bubble !== false) {
-                message.value = step.text;
-              }
-              speak(step.text);
-            }
-            if (typeof step.motion === 'string') {
-              playMotionInternal(step.motion, duration);
-            }
-            await delay(duration);
-          } else if (t === 'bubble') {
-            if (typeof step.text === 'string') {
+async function runAvatarPlanSteps(steps: any[]) {
+  if (!steps || !Array.isArray(steps) || steps.length === 0) return;
+
+  const parallelPromises: Promise<unknown>[] = [];
+
+  for (const step of steps) {
+    const executeStep = async () => {
+      try {
+        const t = step?.type;
+        const duration = typeof step?.duration === 'number' ? step.duration : 1200;
+
+        if (t === 'pose') {
+          if (typeof step.motion === 'string') {
+            playMotionInternal(step.motion, duration);
+          }
+          applyExpression(step.expression, duration);
+          await delay(duration);
+        } else if (t === 'motion') {
+          if (typeof step.motion === 'string') {
+            playMotionInternal(step.motion, duration);
+          }
+          await delay(duration);
+        } else if (t === 'expression' || t === 'emotion') {
+          applyExpression(step.expression, duration);
+          await delay(duration);
+        } else if (t === 'speak') {
+          if (typeof step.text === 'string') {
+            if (step.bubble !== false) {
               message.value = step.text;
             }
-            await delay(duration);
-          } else if (t === 'look_at') {
-            isLookAtOverride.value = true;
-            eyeOffset.value = { x: step.x || 0, y: step.y || 0 };
-            setTimeout(() => {
-              isLookAtOverride.value = false;
-            }, duration);
-            await delay(duration);
-          } else if (t === 'wait') {
-            await delay(duration);
-          } else if (t === 'move') {
-            const targetXPos = parsePosition(step.x, x.value, window.innerWidth - AGENT_SIZE.value);
-            const targetYPos = parsePosition(
-              step.y,
-              y.value,
-              window.innerHeight - AGENT_SIZE.value
-            );
-            const targetScale = typeof step.scale === 'number' ? step.scale : dynamicScale.value;
+            speak(step.text);
+          }
+          if (typeof step.motion === 'string') {
+            playMotionInternal(step.motion, duration);
+          }
+          applyExpression(step.expression, duration);
+          await delay(duration);
+        } else if (t === 'bubble') {
+          if (typeof step.text === 'string') {
+            message.value = step.text;
+          }
+          await delay(duration);
+        } else if (t === 'look_at') {
+          isLookAtOverride.value = true;
+          eyeOffset.value = { x: step.x || 0, y: step.y || 0 };
+          setTimeout(() => {
+            isLookAtOverride.value = false;
+          }, duration);
+          await delay(duration);
+        } else if (t === 'wait') {
+          await delay(duration);
+        } else if (t === 'move') {
+          const targetXPos = parsePosition(step.x, x.value, window.innerWidth - AGENT_SIZE.value);
+          const targetYPos = parsePosition(step.y, y.value, window.innerHeight - AGENT_SIZE.value);
+          const targetScale = typeof step.scale === 'number' ? step.scale : dynamicScale.value;
 
-            if (step.immediate) {
-              isTeleporting.value = true;
-              x.value = targetXPos;
-              y.value = targetYPos;
-              dynamicScale.value = targetScale;
-              await nextTick();
-              setTimeout(() => {
-                isTeleporting.value = false;
-              }, 50);
-            } else {
-              x.value = targetXPos;
-              y.value = targetYPos;
-              dynamicScale.value = targetScale;
-              await delay(duration);
-            }
-          } else if (t === 'event') {
-            emit('agent-event', { name: step.name, payload: step.payload });
-            await delay(100); // Small delay for event propagation
-          } else if (t === 'console') {
-            console.log('[AvatarPlan]', step.message);
+          if (step.immediate) {
+            isTeleporting.value = true;
+            x.value = targetXPos;
+            y.value = targetYPos;
+            dynamicScale.value = targetScale;
+            await nextTick();
+            setTimeout(() => {
+              isTeleporting.value = false;
+            }, 50);
           } else {
+            x.value = targetXPos;
+            y.value = targetYPos;
+            dynamicScale.value = targetScale;
             await delay(duration);
           }
-        } catch (err) {
-          console.error('Error executing step:', step, err);
+        } else if (t === 'event') {
+          emit('agent-event', { name: step.name, payload: step.payload });
+          await delay(100);
+        } else if (t === 'console') {
+          console.log('[AvatarPlan]', step.message);
+        } else {
+          await delay(duration);
         }
-      };
-
-      if (step.parallel) {
-        executeStep();
-      } else {
-        await executeStep();
+      } catch (err) {
+        console.error('Error executing step:', step, err);
       }
+    };
+
+    if (step?.parallel) {
+      parallelPromises.push(executeStep());
+    } else {
+      await executeStep();
+    }
+  }
+
+  if (parallelPromises.length > 0) {
+    await Promise.all(parallelPromises.map((p) => p.catch(() => undefined)));
+  }
+}
+
+const enqueueAvatarPlan = (steps: any[]): Promise<void> => {
+  if (!steps || !Array.isArray(steps) || steps.length === 0) return Promise.resolve();
+
+  return new Promise<void>((resolve) => {
+    avatarPlanQueue.push({ steps, resolve });
+    void startAvatarPlanRunner();
+  });
+};
+
+async function startAvatarPlanRunner() {
+  if (avatarPlanRunnerActive) return;
+  avatarPlanRunnerActive = true;
+  try {
+    while (avatarPlanQueue.length > 0) {
+      const item = avatarPlanQueue.shift();
+      if (!item) continue;
+      await runAvatarPlanSteps(item.steps);
+      item.resolve();
     }
   } finally {
-    avatarPlanRunning = false;
+    avatarPlanRunnerActive = false;
   }
 }
 
@@ -447,7 +557,7 @@ const avatarAdapter = {
     applyExpression(expression, d);
   },
   runPlan: async (steps: any[]) => {
-    await runAvatarPlan(steps);
+    await enqueueAvatarPlan(steps);
   }
 };
 
@@ -464,6 +574,13 @@ async function handleSendMessage(text: string) {
   let cleanResponse = rawResponse;
 
   motionCommand.value = '';
+  clearAiEmotions();
+
+  let parsedPlan: any[] | null = null;
+  let parsedAvatarPlan: AvatarPlanStep[] | null = null;
+  const queuedAvatarSteps: AvatarPlanStep[] = [];
+  let hasExplicitMotion = false;
+  let primaryEmotion: string | null = null;
 
   const lockMatch = rawResponse.match(/\[LOCK:\s*(\d+)\]/i);
   if (lockMatch) {
@@ -496,132 +613,151 @@ async function handleSendMessage(text: string) {
     cleanResponse = cleanResponse.replace(expressionTagMatch[0], '');
   }
 
-  // Emotion Tags
-  const emotionTagMatch = rawResponse.match(/emotionTag:\s*(\{[\s\S]*?\})/);
-  if (emotionTagMatch) {
+  const planExtract = extractJsonAfterLabel(cleanResponse, 'plan');
+  if (planExtract) {
     try {
-      const emotionJson = JSON.parse(emotionTagMatch[1]);
-      const primary = (emotionJson.primary || '').toLowerCase();
-      const intensity = typeof emotionJson.intensity === 'number' ? emotionJson.intensity : 0.6;
+      const planJson = JSON.parse(planExtract.jsonText);
+      if (Array.isArray(planJson)) parsedPlan = planJson;
+    } catch (e) {
+      console.error('Failed to parse task plan:', e);
+    }
+    cleanResponse = cleanResponse.replace(planExtract.raw, '');
+  }
 
-      if (primary === 'angry') isAngry.value = true;
-      else if (primary === 'shy') isPouting.value = true;
-      else if (primary === 'happy') isHappy.value = true;
-      else if (primary === 'confused' || primary === 'thinking') isConfused.value = true;
-      else if (primary === 'sad') isCrying.value = true;
-      else if (primary === 'dizzy') isDizzy.value = true;
-      else if (primary === 'surprised') setExpressionOverride('surprised', 1400);
+  const avatarPlanExtract = extractJsonAfterLabel(cleanResponse, 'avatarPlan');
+  if (avatarPlanExtract) {
+    try {
+      const avatarPlanJson = JSON.parse(avatarPlanExtract.jsonText);
+      if (Array.isArray(avatarPlanJson)) {
+        parsedAvatarPlan = avatarPlanJson as AvatarPlanStep[];
+        hasExplicitMotion =
+          hasExplicitMotion ||
+          parsedAvatarPlan.some(
+            (s) => s?.type === 'motion' || s?.type === 'pose' || !!(s as any)?.motion
+          );
+      }
+    } catch (e) {
+      console.error('Failed to parse avatar plan:', e);
+    }
+    cleanResponse = cleanResponse.replace(avatarPlanExtract.raw, '');
+  }
 
+  const motionJsonExtract = extractJsonAfterLabel(cleanResponse, 'motionTag');
+  if (motionJsonExtract) {
+    try {
+      const motions = JSON.parse(motionJsonExtract.jsonText);
+      if (Array.isArray(motions) && motions.length > 0) {
+        for (const m of motions) {
+          if (!m || typeof m.name !== 'string') continue;
+          let logicName = String(m.name).toLowerCase().trim();
+          if (logicName === 'forward') logicName = 'step_forward';
+          else if (logicName === 'backward') logicName = 'step_back';
+          const duration = typeof m.duration === 'number' ? m.duration : 900;
+          const step: AvatarPlanStep = { type: 'motion', motion: logicName, duration };
+          queuedAvatarSteps.push(step);
+        }
+        if (queuedAvatarSteps.length > 0) hasExplicitMotion = true;
+      }
+    } catch (e) {
+      console.error('Failed to parse motionTag JSON:', e);
+    }
+    cleanResponse = cleanResponse.replace(motionJsonExtract.raw, '');
+  }
+
+  const emotionJsonExtract = extractJsonAfterLabel(cleanResponse, 'emotionTag');
+  if (emotionJsonExtract) {
+    try {
+      const emotionJson = JSON.parse(emotionJsonExtract.jsonText);
+      const primary = (emotionJson?.primary || '').toLowerCase().trim();
+      const intensity = typeof emotionJson?.intensity === 'number' ? emotionJson.intensity : 0.6;
       const decay = Math.max(2000, Math.min(6000, 2000 + intensity * 4000));
-      setTimeout(() => {
-        if (primary === 'angry') isAngry.value = false;
-        if (primary === 'shy') isPouting.value = false;
-        if (primary === 'happy') isHappy.value = false;
-        if (primary === 'confused' || primary === 'thinking') isConfused.value = false;
-        if (primary === 'sad') isCrying.value = false;
-        if (primary === 'dizzy') isDizzy.value = false;
-      }, decay);
+      if (primary) {
+        primaryEmotion = primary;
+        applyExpression(primary, decay);
+      }
     } catch (e) {
       console.error('Failed to parse emotionTag JSON:', e);
     }
-    cleanResponse = cleanResponse.replace(emotionTagMatch[0], '');
+    cleanResponse = cleanResponse.replace(emotionJsonExtract.raw, '');
   }
 
-  // Keywords
   if (
     rawResponse.includes('[ANGRY]') ||
     rawResponse.includes('Baka') ||
     rawResponse.includes('Hmph') ||
     rawResponse.includes('💢')
   ) {
-    isAngry.value = true;
+    primaryEmotion = primaryEmotion || 'angry';
+    applyExpression('angry', 4000);
     cleanResponse = cleanResponse.replace('[ANGRY]', '');
   }
   if (rawResponse.includes('[POUT]') || rawResponse.includes('[SHY]')) {
-    isPouting.value = true;
+    primaryEmotion = primaryEmotion || 'shy';
+    applyExpression('shy', 4000);
     cleanResponse = cleanResponse.replace('[POUT]', '').replace('[SHY]', '');
   }
   if (rawResponse.includes('[HAPPY]')) {
-    isHappy.value = true;
+    primaryEmotion = primaryEmotion || 'happy';
+    applyExpression('happy', 4000);
     cleanResponse = cleanResponse.replace('[HAPPY]', '');
   }
   if (rawResponse.includes('[DIZZY]')) {
-    isDizzy.value = true;
+    primaryEmotion = primaryEmotion || 'dizzy';
+    applyExpression('dizzy', 4500);
     cleanResponse = cleanResponse.replace('[DIZZY]', '');
+  }
+  if (rawResponse.includes('[CRY]')) {
+    primaryEmotion = primaryEmotion || 'sad';
+    applyExpression('sad', 5000);
+    cleanResponse = cleanResponse.replace('[CRY]', '');
+  }
+  if (rawResponse.includes('[CONFUSED]')) {
+    primaryEmotion = primaryEmotion || 'confused';
+    applyExpression('confused', 4000);
+    cleanResponse = cleanResponse.replace('[CONFUSED]', '');
   }
   if (
     rawResponse.includes('[FAINT]') ||
     rawResponse.includes('[TIRED]') ||
     rawResponse.includes('[SLEEPY]')
   ) {
-    isFainted.value = true;
-    isTired.value = true;
+    setTransient('fainted', (v) => (isFainted.value = v), 5000);
+    applyExpression('tired', 5000);
+    primaryEmotion = primaryEmotion || 'tired';
     cleanResponse = cleanResponse
       .replace('[FAINT]', '')
       .replace('[TIRED]', '')
       .replace('[SLEEPY]', '');
   }
-  if (rawResponse.includes('[CRY]')) {
-    isCrying.value = true;
-    cleanResponse = cleanResponse.replace('[CRY]', '');
-  }
-  if (rawResponse.includes('[CONFUSED]')) {
-    isConfused.value = true;
-    cleanResponse = cleanResponse.replace('[CONFUSED]', '');
-  }
 
-  // Motion Tags
-  const motionTagMatch = rawResponse.match(/motionTag:\s*(\[[\s\S]*?\])/);
-  if (motionTagMatch) {
-    try {
-      const motions = JSON.parse(motionTagMatch[1]);
-      if (Array.isArray(motions) && motions.length > 0) {
-        const steps = motions
-          .filter((m: any) => m && typeof m.name === 'string')
-          .map((m: any) => {
-            let logicName = String(m.name).toLowerCase();
-            if (logicName === 'forward') logicName = 'step_forward';
-            else if (logicName === 'backward') logicName = 'step_back';
-            const duration = typeof m.duration === 'number' ? m.duration : 900;
-            return { type: 'motion', motion: logicName, duration };
-          });
-        if (steps.length > 0) avatarAdapter.runPlan(steps);
-      }
-    } catch (e) {
-      console.error('Failed to parse motionTag JSON:', e);
-    }
-    cleanResponse = cleanResponse.replace(motionTagMatch[0], '');
+  const legacyMotionMatch = rawResponse.match(/\[MOTION:\s*([^\]]+?)\s*\]/);
+  if (legacyMotionMatch) {
+    const motion = legacyMotionMatch[1].trim().toLowerCase();
+    const step: AvatarPlanStep = { type: 'motion', motion, duration: 2000 };
+    queuedAvatarSteps.push(step);
+    hasExplicitMotion = true;
   }
-
-  const motionMatch = rawResponse.match(/\[MOTION:\s*([^\]]+?)\s*\]/);
-  if (motionMatch) playMotionInternal(motionMatch[1].trim(), 2000);
   cleanResponse = cleanResponse.replace(/\[MOTION:\s*[^\]]+?\]/g, '');
 
-  // Auto-reset
-  if (isPouting.value)
-    setTimeout(() => {
-      isPouting.value = false;
-    }, 4000);
-  if (isAngry.value)
-    setTimeout(() => {
-      isAngry.value = false;
-    }, 4000);
-  if (isHappy.value)
-    setTimeout(() => {
-      isHappy.value = false;
-    }, 4000);
-  if (isConfused.value)
-    setTimeout(() => {
-      isConfused.value = false;
-    }, 4000);
-  if (isDizzy.value)
-    setTimeout(() => {
-      isDizzy.value = false;
-    }, 4000);
-  if (isCrying.value)
-    setTimeout(() => {
-      isCrying.value = false;
-    }, 5000);
+  if (!hasExplicitMotion && primaryEmotion) {
+    const m =
+      primaryEmotion === 'angry'
+        ? 'shake'
+        : primaryEmotion === 'happy'
+          ? 'happy'
+          : primaryEmotion === 'shy'
+            ? 'friend'
+            : primaryEmotion === 'dizzy'
+              ? 'shake'
+              : primaryEmotion === 'confused' || primaryEmotion === 'thinking'
+                ? 'tap_body'
+                : null;
+    if (m) {
+      const step: AvatarPlanStep = { type: 'motion', motion: m, duration: 1200 };
+      queuedAvatarSteps.push(step);
+      hasExplicitMotion = true;
+    }
+  }
 
   // Clean hidden commands
   const displayResponse = cleanResponse
@@ -647,53 +783,38 @@ async function handleSendMessage(text: string) {
   }
 
   // Parse Commands
-  const response = rawResponse;
-
-  const planMatch = response.match(/plan:\s*(\[[\s\S]*?\])/);
-  if (planMatch) {
+  if (parsedPlan) {
     try {
-      const planJson = JSON.parse(planMatch[1]);
-      if (Array.isArray(planJson)) {
-        console.log('Executing Plan:', planJson);
-        const result = await setPlan(planJson);
-        if (result.success) {
-          isHappy.value = true;
-          playMotionInternal('tap_body', 4000);
-          messages.value.push({ role: 'agent', text: 'Mission Complete! Praise me! [HAPPY]' });
-          message.value = 'Mission Complete! ✨';
-          speak('Mission Complete! Praise me!');
-          setTimeout(() => {
-            isHappy.value = false;
-          }, 4000);
-        } else {
-          isPouting.value = true;
-          messages.value.push({
-            role: 'agent',
-            text: `Oops... I failed: ${result.message || 'Unknown error'}. [SHY]`
-          });
-          message.value = 'Oops... failed... 😖';
-          speak("Oops... I failed... don't look at me!");
-          setTimeout(() => {
-            isPouting.value = false;
-          }, 4000);
-        }
+      console.log('Executing Plan:', parsedPlan);
+      const result = await setPlan(parsedPlan);
+      if (result.success) {
+        applyExpression('happy', 4000);
+        playMotionInternal('tap_body', 4000);
+        messages.value.push({ role: 'agent', text: 'Mission Complete! Praise me! [HAPPY]' });
+        message.value = 'Mission Complete! ✨';
+        speak('Mission Complete! Praise me!');
+      } else {
+        applyExpression('shy', 4000);
+        messages.value.push({
+          role: 'agent',
+          text: `Oops... I failed: ${result.message || 'Unknown error'}. [SHY]`
+        });
+        message.value = 'Oops... failed... 😖';
+        speak("Oops... I failed... don't look at me!");
       }
     } catch (e) {
       console.error('Failed to parse task plan:', e);
     }
   }
 
-  const avatarPlanMatch = response.match(/avatarPlan:\s*(\[[\s\S]*?\])/);
-  if (avatarPlanMatch) {
-    try {
-      const avatarPlanJson = JSON.parse(avatarPlanMatch[1]);
-      if (Array.isArray(avatarPlanJson)) {
-        avatarAdapter.runPlan(avatarPlanJson);
-      }
-    } catch (e) {
-      console.error('Failed to parse avatar plan:', e);
-    }
+  if (parsedAvatarPlan && parsedAvatarPlan.length > 0) {
+    void avatarAdapter.runPlan(parsedAvatarPlan);
   }
+  if (queuedAvatarSteps.length > 0) {
+    void avatarAdapter.runPlan(queuedAvatarSteps);
+  }
+
+  const response = rawResponse;
 
   // Guide Commands
   const guideMatch = response.match(/highlight:\s*([^\n]+)/);
@@ -1256,7 +1377,8 @@ const startIdleTalk = () => {
     }
     if (message.value)
       setTimeout(() => {
-        if (!isTalking.value && !avatarPlanRunning) message.value = '';
+        if (!isTalking.value && !avatarPlanRunnerActive && avatarPlanQueue.length === 0)
+          message.value = '';
       }, 3000);
   }, IDLE_TALK_INTERVAL);
 };

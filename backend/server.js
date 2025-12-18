@@ -677,7 +677,7 @@ app.post('/api/chat', async (req, res) => {
          avatarPlan: [
            {"type": "pose", "motion": "activity", "expression": "HAPPY", "duration": 1200, "parallel": true},
            {"type": "look_at", "x": 0.5, "y": 0.2, "duration": 1000},
-           {"type": "step", "direction": "right", "distance": 0.2, "duration": 1500},
+           {"type": "move", "x": "70%", "y": "70%", "duration": 1500},
            {"type": "pose", "motion": "shake", "expression": "CONFUSED", "duration": 1000},
            {"type": "speak", "text": "先点击左侧的『项目』按钮", "bubble": true}
          ]
@@ -688,19 +688,36 @@ app.post('/api/chat', async (req, res) => {
            - "expression": Emotional Tag ("ANGRY", "HAPPY", "SHY", "CONFUSED", "DIZZY", "TIRED", "SLEEPY").
            - "duration": milliseconds.
            - "parallel": boolean (optional). If true, this step starts immediately without waiting for previous step to finish.
+         - "motion": play a body motion only. Fields:
+           - "motion": Logic Motion Name.
+           - "duration": milliseconds.
+           - "parallel": boolean (optional).
+         - "expression" / "emotion": change facial emotion only. Fields:
+           - "expression": Emotional Tag ("ANGRY", "HAPPY", "SHY", "CONFUSED", "DIZZY", "TIRED", "SLEEPY", "SAD", "SURPRISED").
+           - "duration": milliseconds.
+           - "parallel": boolean (optional).
          - "look_at": Move eyes to specific relative coordinates.
            - "x": -1.0 (left) to 1.0 (right). 0 is center.
            - "y": -1.0 (up) to 1.0 (down). 0 is center.
            - "duration": milliseconds (how long to hold gaze).
-         - "step": move slightly toward the focus area.
-           - "direction": "left" | "right" | "up" | "down".
-           - "distance": 0.0-1.0.
+         - "move": move the avatar position/scale. Fields:
+           - "x": number (px) or "NN%" string.
+           - "y": number (px) or "NN%" string.
+           - "scale": number (optional).
+           - "immediate": boolean (optional).
            - "duration": milliseconds.
-           - "target": optional selector.
-         - "speak": say a short sentence.
+         - "speak": say a short sentence. Fields:
            - "text": what you say.
+           - "motion": optional Logic Motion Name.
+           - "expression": optional Emotional Tag.
            - "bubble": boolean.
-         - "idle": small neutral motion while waiting.
+         - "bubble": show a bubble text only. Fields:
+           - "text": bubble text.
+           - "duration": milliseconds.
+         - "wait": do nothing for duration.
+         - "event": emit a custom event. Fields:
+           - "name": event name.
+           - "payload": optional JSON payload.
 
          Rules:
          - The example above is ONLY an example. For each user request, you must think and design a fresh avatarPlan that matches the current task and context.

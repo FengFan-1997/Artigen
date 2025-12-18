@@ -33,6 +33,10 @@
   </transition>
 </template>
 
+<script lang="ts">
+export default {};
+</script>
+
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { TaskPlan } from '../types/task';

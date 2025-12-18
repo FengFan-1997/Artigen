@@ -18,6 +18,27 @@ let poiLastUpdateAt = 0;
 let talkingActive = false;
 let talkingPhase = 0;
 
+let syntheticExpressionTargets: Record<string, number> | null = null;
+const syntheticExpressionCurrent: Record<string, number> = {};
+
+type SyntheticMotionType =
+  | 'shake'
+  | 'shake_head'
+  | 'nod'
+  | 'tilt_left'
+  | 'tilt_right'
+  | 'happy'
+  | 'sad'
+  | 'surprised'
+  | 'activity'
+  | 'talking'
+  | 'idle';
+
+let syntheticMotionType: SyntheticMotionType | null = null;
+let syntheticMotionStartedAt = 0;
+let syntheticMotionUntil = 0;
+let syntheticMotionIntensity = 0.7;
+
 let lastRendererWidth = 0;
 let lastRendererHeight = 0;
 let currentModelPath = '';
@@ -62,7 +83,7 @@ const resolveMotionGroupName = (requestedGroup: string): string | undefined => {
   );
   if (contains) return contains;
 
-  return keys[0];
+  return undefined;
 };
 
 const getExpressionNames = (): string[] => {
@@ -110,6 +131,137 @@ const resolveExpressionId = (requested: string): string | undefined => {
   return undefined;
 };
 
+const getSyntheticExpressionTargets = (requested: string): Record<string, number> | null => {
+  const key = normalizeKey(requested || '');
+  if (!key) return null;
+
+  const set = (pairs: Array<[string, number]>) =>
+    pairs.reduce<Record<string, number>>((acc, [id, value]) => {
+      acc[id] = value;
+      return acc;
+    }, {});
+
+  if (key === 'neutral' || key === 'default') {
+    return set([
+      ['ParamEyeLSmile', 0],
+      ['ParamEyeRSmile', 0],
+      ['ParamEyeSmile', 0],
+      ['ParamMouthForm', 0],
+      ['ParamEyeLOpen', 1],
+      ['ParamEyeROpen', 1],
+      ['ParamEyeOpen', 1],
+      ['ParamBrowLY', 0],
+      ['ParamBrowRY', 0],
+      ['ParamBrowY', 0],
+      ['ParamBrowLAngle', 0],
+      ['ParamBrowRAngle', 0],
+      ['ParamBrowAngle', 0]
+    ]);
+  }
+
+  if (key === 'happy') {
+    return set([
+      ['ParamEyeLSmile', 1],
+      ['ParamEyeRSmile', 1],
+      ['ParamEyeSmile', 1],
+      ['ParamMouthForm', 0.6],
+      ['ParamEyeLOpen', 1],
+      ['ParamEyeROpen', 1],
+      ['ParamEyeOpen', 1],
+      ['ParamBrowLY', 0.3],
+      ['ParamBrowRY', 0.3],
+      ['ParamBrowY', 0.3],
+      ['ParamBrowLAngle', 0.2],
+      ['ParamBrowRAngle', 0.2],
+      ['ParamBrowAngle', 0.2]
+    ]);
+  }
+
+  if (key === 'angry') {
+    return set([
+      ['ParamEyeLOpen', 0.75],
+      ['ParamEyeROpen', 0.75],
+      ['ParamEyeOpen', 0.75],
+      ['ParamMouthForm', -0.5],
+      ['ParamBrowLY', -0.5],
+      ['ParamBrowRY', -0.5],
+      ['ParamBrowY', -0.5],
+      ['ParamBrowLAngle', -0.35],
+      ['ParamBrowRAngle', -0.35],
+      ['ParamBrowAngle', -0.35]
+    ]);
+  }
+
+  if (key === 'sad' || key === 'cry' || key === 'crying') {
+    return set([
+      ['ParamEyeLOpen', 0.6],
+      ['ParamEyeROpen', 0.6],
+      ['ParamEyeOpen', 0.6],
+      ['ParamMouthForm', -0.25],
+      ['ParamBrowLY', -0.25],
+      ['ParamBrowRY', -0.25],
+      ['ParamBrowY', -0.25],
+      ['ParamBrowLAngle', 0.15],
+      ['ParamBrowRAngle', 0.15],
+      ['ParamBrowAngle', 0.15]
+    ]);
+  }
+
+  if (key === 'shy' || key === 'pout' || key === 'pouting') {
+    return set([
+      ['ParamEyeLOpen', 0.7],
+      ['ParamEyeROpen', 0.7],
+      ['ParamEyeOpen', 0.7],
+      ['ParamMouthForm', 0.25],
+      ['ParamBrowLY', 0.1],
+      ['ParamBrowRY', 0.1],
+      ['ParamBrowY', 0.1]
+    ]);
+  }
+
+  if (key === 'surprised' || key === 'surprise') {
+    return set([
+      ['ParamEyeLOpen', 1],
+      ['ParamEyeROpen', 1],
+      ['ParamEyeOpen', 1],
+      ['ParamMouthForm', 0],
+      ['ParamBrowLY', 0.55],
+      ['ParamBrowRY', 0.55],
+      ['ParamBrowY', 0.55],
+      ['ParamBrowLAngle', 0],
+      ['ParamBrowRAngle', 0],
+      ['ParamBrowAngle', 0]
+    ]);
+  }
+
+  if (key === 'dizzy' || key === 'tired' || key === 'sleepy') {
+    return set([
+      ['ParamEyeLOpen', 0.25],
+      ['ParamEyeROpen', 0.25],
+      ['ParamEyeOpen', 0.25],
+      ['ParamMouthForm', -0.05],
+      ['ParamBrowLY', -0.1],
+      ['ParamBrowRY', -0.1],
+      ['ParamBrowY', -0.1]
+    ]);
+  }
+
+  if (key === 'confused' || key === 'thinking') {
+    return set([
+      ['ParamEyeLOpen', 0.75],
+      ['ParamEyeROpen', 0.75],
+      ['ParamEyeOpen', 0.75],
+      ['ParamMouthForm', 0.1],
+      ['ParamBrowLY', 0.2],
+      ['ParamBrowRY', -0.2],
+      ['ParamBrowLAngle', 0.25],
+      ['ParamBrowRAngle', -0.25]
+    ]);
+  }
+
+  return null;
+};
+
 const applyAgentDrivenParams = (delta: number) => {
   if (!model) return;
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -128,12 +280,92 @@ const applyAgentDrivenParams = (delta: number) => {
   const x = clamp(poiCurrent.x, -1, 1);
   const y = clamp(poiCurrent.y, -1, 1);
 
-  safeSetParam('ParamEyeBallX', x);
-  safeSetParam('ParamEyeBallY', y);
-  safeSetParam('ParamAngleX', x * 30);
-  safeSetParam('ParamAngleY', y * 30);
-  safeSetParam('ParamAngleZ', x * y * -10);
-  safeSetParam('ParamBodyAngleX', x * 10);
+  const baseEyeX = x;
+  const baseEyeY = y;
+
+  let baseAngleX = x * 30;
+  let baseAngleY = y * 30;
+  let baseAngleZ = x * y * -10;
+  let baseBodyAngleX = x * 10;
+
+  let motionAngleX = 0;
+  let motionAngleY = 0;
+  let motionAngleZ = 0;
+  let motionBodyAngleX = 0;
+
+  if (syntheticMotionUntil > 0 && now < syntheticMotionUntil && syntheticMotionType) {
+    const elapsed = Math.max(0, now - syntheticMotionStartedAt);
+    const progress = clamp(
+      elapsed / Math.max(1, syntheticMotionUntil - syntheticMotionStartedAt),
+      0,
+      1
+    );
+    const ease = 1 - Math.pow(1 - progress, 2);
+    const amp = clamp(syntheticMotionIntensity, 0.1, 1.2);
+
+    const fast = 10 + 6 * amp;
+    const mid = 5 + 3 * amp;
+    const slow = 2.5 + 1.8 * amp;
+
+    const sFast = Math.sin((elapsed / 1000) * Math.PI * fast);
+    const sMid = Math.sin((elapsed / 1000) * Math.PI * mid);
+    const sSlow = Math.sin((elapsed / 1000) * Math.PI * slow);
+
+    const fadeIn = clamp(ease * 1.2, 0, 1);
+    const fadeOut = clamp((1 - progress) * 1.2, 0, 1);
+    const w = fadeIn * fadeOut;
+
+    if (syntheticMotionType === 'shake' || syntheticMotionType === 'shake_head') {
+      motionAngleX = sFast * 18 * amp * w;
+      motionAngleZ = sFast * -12 * amp * w;
+      motionBodyAngleX = sMid * 6 * amp * w;
+    } else if (syntheticMotionType === 'nod') {
+      motionAngleY = Math.abs(sFast) * 18 * amp * w - 8 * amp * w;
+      motionBodyAngleX = sMid * 4 * amp * w;
+    } else if (syntheticMotionType === 'tilt_left') {
+      motionAngleZ = -18 * amp * w;
+      motionAngleX = sSlow * 6 * amp * w;
+    } else if (syntheticMotionType === 'tilt_right') {
+      motionAngleZ = 18 * amp * w;
+      motionAngleX = sSlow * 6 * amp * w;
+    } else if (syntheticMotionType === 'happy') {
+      motionAngleY = -Math.abs(sFast) * 10 * amp * w;
+      motionAngleZ = sMid * 10 * amp * w;
+      motionBodyAngleX = sMid * 8 * amp * w;
+    } else if (syntheticMotionType === 'sad') {
+      motionAngleY = 10 * amp * w;
+      motionAngleZ = sSlow * 6 * amp * w;
+      motionBodyAngleX = -6 * amp * w;
+    } else if (syntheticMotionType === 'surprised') {
+      motionAngleY = -12 * amp * w;
+      motionAngleZ = sFast * 8 * amp * w;
+    } else if (syntheticMotionType === 'activity') {
+      motionAngleX = sMid * 14 * amp * w;
+      motionAngleY = sMid * -10 * amp * w;
+      motionAngleZ = sMid * 8 * amp * w;
+      motionBodyAngleX = sSlow * 10 * amp * w;
+    } else if (syntheticMotionType === 'idle') {
+      motionAngleX = sSlow * 5 * amp * w;
+      motionAngleY = sSlow * 3 * amp * w;
+      motionAngleZ = sSlow * 2 * amp * w;
+    }
+  } else if (syntheticMotionUntil > 0 && now >= syntheticMotionUntil) {
+    syntheticMotionType = null;
+    syntheticMotionUntil = 0;
+    syntheticMotionStartedAt = 0;
+  }
+
+  baseAngleX += motionAngleX;
+  baseAngleY += motionAngleY;
+  baseAngleZ += motionAngleZ;
+  baseBodyAngleX += motionBodyAngleX;
+
+  safeSetParam('ParamEyeBallX', baseEyeX);
+  safeSetParam('ParamEyeBallY', baseEyeY);
+  safeSetParam('ParamAngleX', baseAngleX);
+  safeSetParam('ParamAngleY', baseAngleY);
+  safeSetParam('ParamAngleZ', baseAngleZ);
+  safeSetParam('ParamBodyAngleX', baseBodyAngleX);
 
   const mouthSmooth = clamp(0.18 * (delta || 1), 0.08, 0.35);
   if (talkingActive) {
@@ -145,6 +377,27 @@ const applyAgentDrivenParams = (delta: number) => {
     talkingPhase = lerp(talkingPhase, 0, mouthSmooth);
     safeSetParam('ParamMouthOpenY', 0);
     safeSetParam('ParamMouthForm', 0);
+  }
+
+  const synthSmooth = clamp(0.16 * (delta || 1), 0.06, 0.3);
+  if (syntheticExpressionTargets) {
+    for (const [id, target] of Object.entries(syntheticExpressionTargets)) {
+      const cur =
+        typeof syntheticExpressionCurrent[id] === 'number' ? syntheticExpressionCurrent[id] : 0;
+      const next = lerp(cur, target, synthSmooth);
+      syntheticExpressionCurrent[id] = next;
+      safeSetParam(id, next);
+    }
+  } else if (Object.keys(syntheticExpressionCurrent).length > 0) {
+    for (const id of Object.keys(syntheticExpressionCurrent)) {
+      const cur = syntheticExpressionCurrent[id];
+      const next = lerp(cur, 0, synthSmooth);
+      syntheticExpressionCurrent[id] = next;
+      safeSetParam(id, next);
+      if (Math.abs(next) < 0.01) {
+        delete syntheticExpressionCurrent[id];
+      }
+    }
   }
 };
 
@@ -527,20 +780,20 @@ export const loadCubism3Model = async (modelJsonPath: string) => {
           lastRendererHeight = h;
           applyCubism3Layout(appInstance, currentModelPath);
         }
-        applyAgentDrivenParams(delta);
         model.update(delta);
+        applyAgentDrivenParams(delta);
       }
     });
   }
 };
 
-export const playCubism3Motion = (group: string, index?: number) => {
-  if (!model) return;
+export const playCubism3Motion = (group: string, index?: number): boolean => {
+  if (!model) return false;
 
   const m = model as any;
 
   const resolvedGroup = resolveMotionGroupName(group);
-  if (!resolvedGroup) return;
+  if (!resolvedGroup) return false;
 
   let targetIndex = index;
   try {
@@ -557,9 +810,11 @@ export const playCubism3Motion = (group: string, index?: number) => {
     if (controller && typeof controller.play === 'function') {
       try {
         controller.play(targetIndex);
+        return true;
       } catch {}
     }
   }
+  return false;
 };
 
 export const setCubism3Expression = (expressionId: string) => {
@@ -567,15 +822,67 @@ export const setCubism3Expression = (expressionId: string) => {
   const m = model as any;
   if (typeof m.expression === 'function') {
     const resolved = resolveExpressionId(expressionId);
-    if (!resolved) return;
-    try {
-      m.expression(resolved);
-    } catch {}
+    if (resolved) {
+      syntheticExpressionTargets = null;
+      try {
+        m.expression(resolved);
+      } catch {}
+      return;
+    }
   }
+
+  const synth = getSyntheticExpressionTargets(expressionId);
+  syntheticExpressionTargets = synth;
 };
 
 export const setCubism3Talking = (active: boolean) => {
   talkingActive = !!active;
+};
+
+export const triggerCubism3SyntheticMotion = (
+  motion: string,
+  options?: { durationMs?: number; intensity?: number }
+) => {
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const normalized = normalizeKey(motion || '');
+  if (!normalized) return;
+
+  const durationMs = Math.max(350, Math.min(3600, options?.durationMs ?? 1200));
+  const intensity = clamp(options?.intensity ?? 0.7, 0.1, 1.2);
+
+  const type: SyntheticMotionType | null =
+    normalized === 'shake' || normalized === 'mood_angry' || normalized === 'mood_confused'
+      ? 'shake'
+      : normalized === 'shake_head'
+        ? 'shake_head'
+        : normalized === 'nod'
+          ? 'nod'
+          : normalized === 'tilt_left'
+            ? 'tilt_left'
+            : normalized === 'tilt_right'
+              ? 'tilt_right'
+              : normalized === 'happy' || normalized === 'mood_happy'
+                ? 'happy'
+                : normalized === 'sad' ||
+                    normalized === 'mood_tired' ||
+                    normalized === 'mood_sleepy'
+                  ? 'sad'
+                  : normalized === 'surprised'
+                    ? 'surprised'
+                    : normalized === 'activity' || normalized === 'wave' || normalized === 'friend'
+                      ? 'activity'
+                      : normalized === 'idle'
+                        ? 'idle'
+                        : normalized === 'talking'
+                          ? 'talking'
+                          : null;
+
+  if (!type) return;
+
+  syntheticMotionType = type;
+  syntheticMotionStartedAt = now;
+  syntheticMotionUntil = now + durationMs;
+  syntheticMotionIntensity = intensity;
 };
 
 export const setCubism3PointOfInterest = (x: number, y: number) => {

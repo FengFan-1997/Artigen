@@ -56,6 +56,10 @@
   </div>
 </template>
 
+<script lang="ts">
+export default {};
+</script>
+
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useAuth } from '../composables/useAuth';

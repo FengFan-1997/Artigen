@@ -9,7 +9,9 @@ import {
   fa_shirt,
   fa_camera_retro,
   fa_quote_left,
-  fa_cube
+  fa_cube,
+  fa_arrow_up,
+  fa_arrow_down
 } from './icons';
 import { showMessage, i18n } from '../services/message';
 import type { ModelManager } from '../services/Live2DModelManager';
@@ -79,6 +81,22 @@ class ToolsManager {
         icon: fa_street_view,
         callback: () => {
           showMessage('切换模型中...', 2000, 9);
+          model.loadNextModel();
+        }
+      },
+      'switch-model-prev': {
+        icon: fa_arrow_up,
+        callback: () => {
+          showMessage('切换上一个模型中...', 2000, 9);
+          if ((model as any).loadPrevModel) {
+            (model as any).loadPrevModel();
+          }
+        }
+      },
+      'switch-model-next': {
+        icon: fa_arrow_down,
+        callback: () => {
+          showMessage('切换下一个模型中...', 2000, 9);
           model.loadNextModel();
         }
       },

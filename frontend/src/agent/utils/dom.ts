@@ -40,7 +40,7 @@ export const resolveTarget = (target: string): HTMLElement | null => {
 
   try {
     return document.querySelector(target) as HTMLElement;
-  } catch (e) {
+  } catch {
     console.warn('Invalid selector:', target);
     return null;
   }

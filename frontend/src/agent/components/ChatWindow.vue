@@ -110,8 +110,12 @@
   </div>
 </template>
 
+<script lang="ts">
+export default {};
+</script>
+
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted, onBeforeUnmount, computed } from 'vue';
+import { ref, nextTick, watch, onMounted, computed } from 'vue';
 import { marked } from 'marked';
 import type { ChatMessage } from '../types';
 import { useAuth } from '../composables/useAuth';

@@ -54,7 +54,11 @@ export const sendMessageToAI = async (
     return "I'm not sure what to say...";
   } catch (error) {
     console.error('Error calling AI:', error);
-    return "Sorry, I'm having trouble connecting to my brain right now! 😵‍💫";
+    return (
+      "Sorry, I'm having trouble connecting to my brain right now! [DIZZY] [MOTION: shake]\n\n" +
+      'emotionTag: {"primary":"dizzy","intensity":0.9,"secondary":["confused"]}\n\n' +
+      'motionTag: [{"type":"gesture","name":"shake_head","duration":900,"loop":false}]'
+    );
   }
 };
 

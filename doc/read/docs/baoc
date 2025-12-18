@@ -1,53 +1,18 @@
-index-BgzTOFgh.js:6450  GET https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/ZiYuXin/ots14_3001/normal/normal.model3.json 404 (Not Found)
-fetchJson @ index-BgzTOFgh.js:6450
-fetchModelJsonWithFallback @ index-BgzTOFgh.js:6450
-loadSpecificModel @ index-BgzTOFgh.js:6450
-callback @ index-BgzTOFgh.js:6450
-(anonymous) @ index-BgzTOFgh.js:6450
-index-BgzTOFgh.js:6450  GET https://huggingface.co/Feng1997/ModelDoc/resolve/main/live2d/model/ZiYuXin/ots14_3001/normal/normal.model3.json 404 (Not Found)
-fetchJson @ index-BgzTOFgh.js:6450
-fetchModelJsonWithFallback @ index-BgzTOFgh.js:6450
-await in fetchModelJsonWithFallback
-loadSpecificModel @ index-BgzTOFgh.js:6450
-callback @ index-BgzTOFgh.js:6450
-(anonymous) @ index-BgzTOFgh.js:6450
-index-BgzTOFgh.js:6450  GET https://huggingface.co/Feng1997/ModelDoc/resolve/main/model_backup/ZiYuXin/ots14_3001/normal/normal.model3.json 404 (Not Found)
-fetchJson @ index-BgzTOFgh.js:6450
-fetchModelJsonWithFallback @ index-BgzTOFgh.js:6450
-await in fetchModelJsonWithFallback
-loadSpecificModel @ index-BgzTOFgh.js:6450
-callback @ index-BgzTOFgh.js:6450
-(anonymous) @ index-BgzTOFgh.js:6450
-index-BgzTOFgh.js:6450  GET https://huggingface.co/Feng1997/ModelDoc/resolve/main/live2d/model_backup/ZiYuXin/ots14_3001/normal/normal.model3.json 404 (Not Found)
-fetchJson @ index-BgzTOFgh.js:6450
-fetchModelJsonWithFallback @ index-BgzTOFgh.js:6450
-await in fetchModelJsonWithFallback
-loadSpecificModel @ index-BgzTOFgh.js:6450
-callback @ index-BgzTOFgh.js:6450
-(anonymous) @ index-BgzTOFgh.js:6450
-index-BgzTOFgh.js:4880 [Live2D Widget][INFO] [Live2D Widget] LAppModel.loadJSON starting for Nindi.moc
-index-BgzTOFgh.js:4880 [Live2D Widget][INFO] Load model : https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/Nindi/Nindi.moc
-4index-BgzTOFgh.js:4880 [Live2D Widget][WARN] Still loading. Abort.
-warn @ index-BgzTOFgh.js:4880
-loadLive2D @ index-BgzTOFgh.js:6450
-loadNextModel @ index-BgzTOFgh.js:6450
-await in loadNextModel
-callback @ index-BgzTOFgh.js:6450
-(anonymous) @ index-BgzTOFgh.js:6450
-index-BgzTOFgh.js:4880 [Live2D Widget][INFO] Load Texture : https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/Nindi/Nindi.2048/texture_00.png
-2index-BgzTOFgh.js:4880 [Live2D Widget][WARN] Still loading. Abort.
-warn @ index-BgzTOFgh.js:4880
-loadLive2D @ index-BgzTOFgh.js:6450
-loadNextModel @ index-BgzTOFgh.js:6450
-await in loadNextModel
-callback @ index-BgzTOFgh.js:6450
-(anonymous) @ index-BgzTOFgh.js:6450
-index-BgzTOFgh.js:4880 [Live2D Widget][INFO] LAppModel.loadJSON finished successfully
-index-BgzTOFgh.js:4880 [Live2D Widget][INFO] Model https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/Nindi/model.json (Cubism version 2) loaded
-index-BgzTOFgh.js:4880 [Live2D Widget][INFO] [Live2D Widget] LAppModel.loadJSON starting for model.moc
-index-BgzTOFgh.js:4880 [Live2D Widget][INFO] Load model : https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/himeko/model.moc
-index-BgzTOFgh.js:4880 [Live2D Widget][INFO] Load Texture : https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/himeko/himeko.2048/texture_00.png
-index-BgzTOFgh.js:4880 [Live2D Widget][INFO] LAppModel.loadJSON finished successfully
-index-BgzTOFgh.js:4880 [Live2D Widget][INFO] Model https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/himeko/model.json (Cubism version 2) loaded
-index-BgzTOFgh.js:6516 Processing Interaction: [System Event]: User interaction session ended. User circled the mouse 385 degrees around you. Decide how to react based on this combination.
-himeko_live2d_010.wav:1  GET https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/himeko/sound/himeko_live2d_010.wav 404 (Not Found)
+Live2D Cubism SDK Core Version 5.1.0
+himeko_live2d_019.wav:1  GET https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/himeko/sound/himeko_live2d_019.wav 404 (Not Found)
+index-BIndrMXS.js:6450 [Live2D] Cubism3 Layout Applied: {modelJsonPath: 'https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/bilan/aijier_2/aijier_2.model3.json', rendererWidth: 800, rendererHeight: 800, bucket: 'large', specialScale: undefined, …}
+index-BIndrMXS.js:4880 [Live2D Widget][INFO] Model https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/bilan/aijier_2/aijier_2.model3.json (Cubism version 3) loaded
+himeko_live2d_011.wav:1  GET https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/himeko/sound/himeko_live2d_011.wav 404 (Not Found)
+index-BIndrMXS.js:6516 Processing Interaction: [System Event]: User interaction session ended. User circled the mouse -537 degrees around you. Decide how to react based on this combination.
+live2dcubismcore.min.js:9 Live2D Cubism SDK Core Version 5.1.0
+himeko_live2d_011.wav:1  GET https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/himeko/sound/himeko_live2d_011.wav 404 (Not Found)
+himeko_live2d_019.wav:1  GET https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/himeko/sound/himeko_live2d_019.wav net::ERR_ABORTED 404 (Not Found)
+index-BIndrMXS.js:6450 [Live2D] Cubism3 Layout Applied: {modelJsonPath: 'https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/bilan/aijier_3/aijier_3.model3.json', rendererWidth: 800, rendererHeight: 800, bucket: 'large', specialScale: undefined, …}
+index-BIndrMXS.js:4880 [Live2D Widget][INFO] Model https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/bilan/aijier_3/aijier_3.model3.json (Cubism version 3) loaded
+index-BIndrMXS.js:6516 Processing Interaction: [System Event]: User interaction session ended. User circled the mouse -361 degrees around you. Decide how to react based on this combination.
+himeko_live2d_011.wav:1  GET https://huggingface.co/Feng1997/ModelDoc/resolve/main/model/BengHuaiXueYuan2/himeko/sound/himeko_live2d_011.wav 404 (Not Found)
+
+zh这是目前的报错，修复问题，这么说吧，有语音的播放语音，没有语音的就不播放了，不要搞这么多报错，然后还有一个问题，就是报错和当前的模型人物不一致，我现在应该是bilan的某个角色然后benghuaixueyuan2的人物报错了
+其次还有一个问题，就是切换模型的时候给一个加载动画，起码让用户知道当前正在加载，现在我点击切换模型尤其是切换cubism3的时候，然后进行切换人物，点击了之后模型就会消失，但是因为需要向huggingface请求资源，所以时间取决于用户的网速，导致有些很慢，这个时候他不知道啊只知道突然模型没了，不知道咋办了，所以我们需要给一个加载动画，让用户感知到当前在干什么
+
+多做一些优化用户体验的设置
