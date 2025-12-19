@@ -3,6 +3,8 @@ const cors = require('cors');
 require('dotenv').config();
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const { readJson, writeJson, VECTORS_FILE, CHATS_FILE, USERS_FILE } = require('./utils/storage');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -31,6 +33,91 @@ Tasking rules:
 `;
 
 // --- Helpers ---
+
+const MODEDOC_ROOT = path.resolve(__dirname, '../doc/modeDoc');
+let modeDocIndex = null;
+
+const normalizeModeDocKey = (input) => {
+  const s = (input ?? '').toString().trim().toLowerCase();
+  if (!s) return '';
+  return s.replace(/\.md$/i, '').replace(/[\s_-]+/g, '').replace(/[^\w\u4e00-\u9fa5]+/g, '');
+};
+
+const buildModeDocIndex = () => {
+  if (modeDocIndex) return modeDocIndex;
+  const zhMap = new Map();
+  const enMap = new Map();
+
+  const addKey = (map, rawKey, fullPath) => {
+    const key = normalizeModeDocKey(rawKey);
+    if (!key) return;
+    const existing = map.get(key);
+    if (existing) existing.push(fullPath);
+    else map.set(key, [fullPath]);
+  };
+
+  const walk = (dir, map, rootDir) => {
+    if (!dir || !fs.existsSync(dir)) return;
+    const root = rootDir || dir;
+    const stack = [dir];
+    while (stack.length > 0) {
+      const cur = stack.pop();
+      let entries = [];
+      try {
+        entries = fs.readdirSync(cur, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const ent of entries) {
+        const full = path.join(cur, ent.name);
+        if (ent.isDirectory()) {
+          stack.push(full);
+          continue;
+        }
+        if (!ent.isFile()) continue;
+        if (!/\.md$/i.test(ent.name)) continue;
+        addKey(map, ent.name, full);
+        const rel = path.relative(root, full);
+        addKey(map, rel, full);
+        const relNoExt = rel.replace(/\.md$/i, '');
+        addKey(map, relNoExt, full);
+      }
+    }
+  };
+
+  const zhRoot = path.join(MODEDOC_ROOT, 'modeldoc');
+  const enRoot = path.join(MODEDOC_ROOT, 'modeldoc_en');
+  walk(zhRoot, zhMap, zhRoot);
+  walk(enRoot, enMap, enRoot);
+  modeDocIndex = { zh: zhMap, en: enMap };
+  return modeDocIndex;
+};
+
+const readModeDoc = ({ lang, keys }) => {
+  const idx = buildModeDocIndex();
+  const map = lang === 'en' ? idx.en : idx.zh;
+  for (const k of keys) {
+    const key = normalizeModeDocKey(k);
+    if (!key) continue;
+    const paths = map.get(key);
+    if (!paths || paths.length === 0) continue;
+    const filePath = paths[0];
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const text = (raw || '').trim();
+      if (text) return text;
+    } catch {}
+  }
+  return '';
+};
+
+const trimPromptText = (text, maxChars) => {
+  const s = (text || '').trim();
+  if (!s) return '';
+  const limit = typeof maxChars === 'number' ? Math.max(200, maxChars) : 5000;
+  if (s.length <= limit) return s;
+  return `${s.slice(0, limit)}\n...(truncated)`;
+};
 
 // Calculate Cosine Similarity
 const cosineSimilarity = (vecA, vecB) => {
@@ -324,21 +411,66 @@ app.post('/api/chat', async (req, res) => {
     const reactionMode = ctx?.mode === 'react';
     const suppressMemorySave = !!ctx?.suppressMemorySave;
     const persona = ctx?.persona && typeof ctx.persona === 'object' ? ctx.persona : null;
-    const personaName =
-      typeof persona?.name === 'string' && persona.name.trim()
-        ? persona.name.trim()
-        : 'ZiYuXin (紫雨心)';
-    const personaProfile =
-      typeof persona?.profile === 'string' && persona.profile.trim() ? persona.profile.trim() : '';
+    const character = ctx?.character && typeof ctx.character === 'object' ? ctx.character : null;
+    const runtime = ctx?.runtime && typeof ctx.runtime === 'object' ? ctx.runtime : null;
+
+    const personaNameRaw =
+      (typeof persona?.name === 'string' && persona.name.trim() && persona.name.trim()) ||
+      (typeof character?.name === 'string' && character.name.trim() && character.name.trim()) ||
+      'Lumina';
+
+    let personaProfileRaw =
+      (typeof persona?.profile === 'string' && persona.profile.trim() && persona.profile.trim()) ||
+      (typeof character?.persona === 'string' && character.persona.trim() && character.persona.trim()) ||
+      '';
+
     const personaRules =
       typeof persona?.rules === 'string' && persona.rules.trim() ? persona.rules.trim() : '';
-    const personaId =
-      typeof persona?.id === 'string' && persona.id.trim() ? persona.id.trim() : 'default';
+
+    const personaIdRaw =
+      (typeof persona?.id === 'string' && persona.id.trim() && persona.id.trim()) ||
+      (typeof runtime?.modelName === 'string' && runtime.modelName.trim() && runtime.modelName.trim()) ||
+      (typeof runtime?.modelId === 'number' ? `model_${runtime.modelId}` : 'default');
+
+    const lang = typeof runtime?.lang === 'string' && runtime.lang.trim() ? runtime.lang.trim() : 'zh';
+    if (!personaProfileRaw) {
+      const modelName = typeof runtime?.modelName === 'string' ? runtime.modelName : '';
+      const modelPath = typeof runtime?.modelPath === 'string' ? runtime.modelPath : '';
+      const baseFromPath = modelPath ? path.basename(modelPath) : '';
+      personaProfileRaw = readModeDoc({
+        lang: lang === 'en' ? 'en' : 'zh',
+        keys: [modelName, baseFromPath, personaIdRaw, personaNameRaw]
+      });
+    }
+
+    const personaName = personaNameRaw;
+    const personaId = personaIdRaw;
+    const personaProfile = trimPromptText(personaProfileRaw, 5200);
     const memorySummary =
       typeof ctx?.memorySummary === 'string' && ctx.memorySummary.trim()
         ? ctx.memorySummary.trim()
         : '';
-    const recentEvents = Array.isArray(ctx?.events) ? ctx.events.slice(-12) : [];
+    const mergedEvents = [];
+    if (Array.isArray(ctx?.events)) mergedEvents.push(...ctx.events);
+    if (Array.isArray(ctx?.input?.interactionEvents)) {
+      mergedEvents.push(
+        ...ctx.input.interactionEvents.map((e) => ({
+          name: `interaction:${e?.type || 'event'}`,
+          ts: e?.ts,
+          payload: { trigger: e?.trigger, text: e?.text }
+        }))
+      );
+    }
+    if (Array.isArray(ctx?.memory?.recentEvents)) {
+      mergedEvents.push(
+        ...ctx.memory.recentEvents.map((e) => ({
+          name: `memory:${e?.type || 'event'}`,
+          ts: e?.ts,
+          payload: { text: e?.text }
+        }))
+      );
+    }
+    const recentEvents = mergedEvents.slice(-12);
     const eventsText =
       recentEvents.length > 0
         ? recentEvents

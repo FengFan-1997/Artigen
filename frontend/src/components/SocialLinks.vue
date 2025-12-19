@@ -53,22 +53,51 @@
         <circle cx="4" cy="4" r="2"></circle>
       </svg>
     </a>
+    <div
+      class="social-item"
+      :class="{ active: isPinned }"
+      @click.prevent="$emit('toggle-pin')"
+      aria-label="Pin Agent"
+      title="Pin Agent to Bottom Left"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+        <circle cx="12" cy="10" r="3"></circle>
+      </svg>
+    </div>
     <div class="line"></div>
   </div>
 </template>
+
+<script setup lang="ts">
+defineProps<{
+  isPinned?: boolean;
+}>();
+defineEmits(['toggle-pin']);
+</script>
 
 <style scoped>
 .social-links {
   position: fixed;
   bottom: 0;
-  left: 40px;
+  right: 80px; /* Moved from left to right as requested */
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 20px;
   z-index: 10;
   @media screen and (min-width: 980px) and (max-width: 1279px) {
-    left: 0px;
+    right: 0px;
   }
 }
 

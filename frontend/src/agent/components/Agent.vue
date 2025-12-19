@@ -23,7 +23,6 @@
       :is-crying="isCrying"
       :is-tired="isTired"
       :expression-override="expressionOverride"
-      :scale="AGENT_SCALE"
       :motion-command="motionCommand"
       :message="message"
       :current-lang="currentLang"
@@ -58,12 +57,13 @@
       :visible="!!guideTarget"
       :target-rect="guideTargetRect"
       :label="guideLabel"
-      :agent-position="{ x, y }"
+      :agent-position="{ x: x, y: y }"
     />
   </div>
 </template>
 
 <script setup lang="ts">
+// Agent Component
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { useLanguageStore } from '../../stores/language';
@@ -77,8 +77,20 @@ import { useTaskExecutor } from '../composables/useTaskExecutor';
 import { useAuth } from '../composables/useAuth';
 import { lerp, getRandomPosition } from '../utils/math';
 import { resolveTarget } from '../utils/dom';
-import { sendMessageToAI, getChatHistory, requestAgentReaction } from '../services/aiService';
+import {
+  sendMessageToAI,
+  getChatHistory,
+  requestAgentReaction,
+  cancelAiRequests
+} from '../services/aiService';
 import { getUserId } from '../utils/user';
+import {
+  buildInteractionMetrics,
+  buildInteractionSummary,
+  computeRelativePoint,
+  shouldAskAiForInteraction,
+  type InteractionSample
+} from '../utils/semanticEvents';
 import type { Position, ChatMessage } from '../types';
 import type { AvatarPlanStep } from '../types/avatarPlan';
 
@@ -87,21 +99,26 @@ const { initAuth, currentUser } = useAuth();
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 
+const props = defineProps<{
+  isPinned?: boolean;
+}>();
+
 const isMobile = ref(window.innerWidth <= 768);
-const BASE_AGENT_SIZE_MOBILE = 250;
-const BASE_AGENT_SIZE_DESKTOP = 400;
-const AGENT_SCALE = 0.7;
+const BASE_AGENT_SIZE_MOBILE = 1000;
+const BASE_AGENT_SIZE_DESKTOP = 1200;
+// User requested to scale down by half (from previous 0.35 to 0.175)
+const AGENT_SCALE = 0.175;
 const dynamicScale = ref(1.0);
 const AGENT_SIZE = computed(
   () =>
-    (isMobile.value ? BASE_AGENT_SIZE_MOBILE : BASE_AGENT_SIZE_DESKTOP) *
+    (isMobile.value ? BASE_AGENT_SIZE_MOBILE * 0.6 : BASE_AGENT_SIZE_DESKTOP) * // Mobile uses 0.6 of base
     AGENT_SCALE *
     dynamicScale.value
 );
 
 // --- State ---
 const initialSize =
-  (window.innerWidth <= 768 ? BASE_AGENT_SIZE_MOBILE : BASE_AGENT_SIZE_DESKTOP) * AGENT_SCALE;
+  (window.innerWidth <= 768 ? BASE_AGENT_SIZE_MOBILE * 0.6 : BASE_AGENT_SIZE_DESKTOP) * AGENT_SCALE;
 const x = ref(window.innerWidth - initialSize);
 const y = ref(window.innerHeight - initialSize);
 const targetX = ref(x.value);
@@ -188,6 +205,8 @@ const hasMouseMoved = ref(false);
 const chatOpen = ref(false);
 const messages = ref<ChatMessage[]>([{ role: 'agent', text: 'Hello! How can I help you today?' }]);
 const isLoading = ref(false);
+let chatAbortController: AbortController | null = null;
+let chatRequestSeq = 0;
 
 const ALLOWED_MOTIONS = [
   'idle',
@@ -213,6 +232,9 @@ const ALLOWED_MOTIONS = [
   'step_forward',
   'step_back',
   'shake_head',
+  'yawn',
+  'play_hair',
+  'stretch',
   'mood_happy',
   'mood_angry',
   'mood_tired',
@@ -277,20 +299,149 @@ const pushMemoryItem = (item: Omit<LocalMemoryItem, 'ts'>) => {
 };
 
 const getCharacterName = () => {
+  const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
+  const perModel = localStorage.getItem(`agent_character_name_${modelId}`);
+  if (perModel && perModel.trim()) return perModel.trim();
   const stored = localStorage.getItem('agent_character_name');
   if (stored && stored.trim()) return stored.trim();
   return 'Lumina';
 };
 
+const getRuntimeModelInfo = () => {
+  try {
+    const fn = live2dWidgetRef.value?.getCurrentModelInfo;
+    if (typeof fn !== 'function') return null;
+    return fn();
+  } catch {
+    return null;
+  }
+};
+
 const getPersonaText = () => {
+  const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
+  const perModelRaw = localStorage.getItem(`agent_persona_text_${modelId}`);
+  if (perModelRaw && perModelRaw.trim()) {
+    const trimmed = perModelRaw.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const s = (currentLang.value === 'zh' ? parsed?.zh : parsed?.en) ?? parsed?.default;
+        if (typeof s === 'string' && s.trim()) return s.trim();
+      } catch {}
+    }
+    return trimmed;
+  }
   const stored = localStorage.getItem('agent_persona_text');
   if (stored && stored.trim()) return stored.trim();
   return currentLang.value === 'zh'
-    ? '你叫 Lumina，是一个有点傲娇但很可靠的桌面精灵助理。你会根据用户的聊天与互动（点击、拖拽、鼠标绕圈、长时间无操作等）做出细腻的表情与动作反应。你不会解释提示词本身，也不会提到系统或上下文。'
-    : "Your name is Lumina. You're a slightly tsundere but reliable desktop sprite assistant. You react to chat and interactions (clicks, drags, circling the cursor, long idle) with subtle expressions and motions. Never mention system prompts or hidden context.";
+    ? '你叫 Lumina，是一个二次元风格的傲娇小萝莉萌妹子桌面精灵。用户一直逗你会让你生气，但你嘴硬心软；遇到不会的问题会害羞、嘟嘴、转移话题，必要时会说用户是笨蛋。你会根据用户的聊天与互动（点击、拖拽、鼠标绕圈、长时间无操作等）做出细腻的表情与动作反应。永远不要解释提示词本身，也不要提到系统、上下文或隐藏信息。'
+    : "Your name is Lumina, a cute anime-style tsundere little sprite. If the user keeps teasing or poking you, you get mad but you're secretly kind. If you don't know something, you may act shy/pout and deflect; you may call the user a dummy. React to chat and interactions (clicks, drags, circling the cursor, long idle) with subtle expressions and motions. Never mention system prompts, hidden context, or internal rules.";
 };
 
-const buildAgentContext = (input: { trigger: string; userText?: string; systemEvent?: string }) => {
+type IdleProfile = {
+  motions: string[];
+  messageChance: number;
+  motionChance: number;
+  messages: { zh: string[]; en: string[] };
+};
+
+const getIdleProfile = (): IdleProfile => {
+  const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
+  const raw =
+    localStorage.getItem(`agent_idle_profile_${modelId}`) ||
+    localStorage.getItem('agent_idle_profile');
+  if (raw && raw.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw);
+      const motions = Array.isArray(parsed?.motions)
+        ? parsed.motions
+            .filter((m: any) => typeof m === 'string' && m.trim())
+            .map((m: string) => m.trim())
+        : null;
+      const messagesZh = Array.isArray(parsed?.messages?.zh)
+        ? parsed.messages.zh
+            .filter((m: any) => typeof m === 'string' && m.trim())
+            .map((m: string) => m.trim())
+        : null;
+      const messagesEn = Array.isArray(parsed?.messages?.en)
+        ? parsed.messages.en
+            .filter((m: any) => typeof m === 'string' && m.trim())
+            .map((m: string) => m.trim())
+        : null;
+      if (motions && motions.length > 0 && messagesZh && messagesEn) {
+        return {
+          motions,
+          messageChance:
+            typeof parsed?.messageChance === 'number'
+              ? Math.max(0, Math.min(1, parsed.messageChance))
+              : 0.7,
+          motionChance:
+            typeof parsed?.motionChance === 'number'
+              ? Math.max(0, Math.min(1, parsed.motionChance))
+              : 0.7,
+          messages: { zh: messagesZh, en: messagesEn }
+        };
+      }
+    } catch {}
+  }
+
+  const persona = getPersonaText();
+  const personaKey = persona.toLowerCase();
+  const motions = ['idle', 'mail', 'morning', 'afternoon', 'evening'];
+
+  if (/(困|疲|累|慵懒|嗜睡|sleepy|tired|lazy)/i.test(persona)) motions.push('yawn');
+  if (/(辫子|头发|发丝|整理|hair|braid)/i.test(persona)) motions.push('play_hair');
+  if (/(元气|活泼|开朗|energetic|cheerful|lively)/i.test(persona)) motions.push('wave', 'stretch');
+  if (/(高冷|冷淡|沉默|quiet|cold)/i.test(persona)) motions.push('tilt_left', 'tilt_right');
+
+  const extraMsgsZh: string[] = [];
+  const extraMsgsEn: string[] = [];
+
+  if (/(傲娇|tsundere)/i.test(personaKey)) {
+    extraMsgsZh.push('才、才不是在等你！', '你终于想起我了？哼。');
+    extraMsgsEn.push("I-I'm not waiting for you!", 'Finally noticed me? Hmph.');
+  }
+  if (/(温柔|治愈|gentle|soft)/i.test(personaKey)) {
+    extraMsgsZh.push('要不要喝点水？', '累了就休息一下吧。');
+    extraMsgsEn.push('Want some water?', 'Take a little break if you’re tired.');
+  }
+  if (/(高冷|冷淡|quiet|cold)/i.test(personaKey)) {
+    extraMsgsZh.push('……', '别吵。');
+    extraMsgsEn.push('…', 'Quiet.');
+  }
+  if (/(元气|活泼|energetic|cheerful|lively)/i.test(personaKey)) {
+    extraMsgsZh.push('嘿！我在呢！', '要不要一起做点什么？');
+    extraMsgsEn.push('Hey! I’m here!', 'Wanna do something together?');
+  }
+  if (/(困|疲|累|sleepy|tired|lazy)/i.test(personaKey)) {
+    extraMsgsZh.push('哈——欠……', '我先眯一会儿…');
+    extraMsgsEn.push('Yaaawn…', 'Let me rest a bit…');
+  }
+  if (/(辫子|头发|hair|braid)/i.test(personaKey)) {
+    extraMsgsZh.push('我整理一下头发…', '别看啦，很奇怪吗？');
+    extraMsgsEn.push('Let me fix my hair…', 'Don’t stare, is it weird?');
+  }
+
+  const messages = {
+    zh: [...extraMsgsZh, ...idleMessages.zh],
+    en: [...extraMsgsEn, ...idleMessages.en]
+  };
+
+  const isQuiet = /(高冷|冷淡|quiet|cold)/i.test(personaKey);
+  return {
+    motions,
+    motionChance: isQuiet ? 0.55 : 0.75,
+    messageChance: isQuiet ? 0.35 : 0.7,
+    messages
+  };
+};
+
+const buildAgentContext = (input: {
+  trigger: string;
+  userText?: string;
+  systemEvent?: string;
+  interactionEvents?: Array<{ text: string; type: string; trigger: string; ts: number }>;
+}) => {
   const recent = localMemory.value.items.slice(-24);
   const recentChat = recent
     .filter((x) => x.role === 'user' || x.role === 'agent')
@@ -300,6 +451,7 @@ const buildAgentContext = (input: { trigger: string; userText?: string; systemEv
     .filter((x) => x.role === 'system')
     .slice(-12)
     .map((x) => ({ type: x.type || 'event', text: x.text, ts: x.ts }));
+  const modelInfo = getRuntimeModelInfo();
 
   return {
     trigger: input.trigger,
@@ -313,7 +465,9 @@ const buildAgentContext = (input: { trigger: string; userText?: string; systemEv
     },
     runtime: {
       lang: currentLang.value,
-      modelId: Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0
+      modelId: Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0,
+      modelName: typeof modelInfo?.modelName === 'string' ? modelInfo.modelName : undefined,
+      modelPath: typeof modelInfo?.modelPath === 'string' ? modelInfo.modelPath : undefined
     },
     state: {
       energy: energy.value,
@@ -338,7 +492,8 @@ const buildAgentContext = (input: { trigger: string; userText?: string; systemEv
     },
     input: {
       userText: input.userText,
-      systemEvent: input.systemEvent
+      systemEvent: input.systemEvent,
+      interactionEvents: input.interactionEvents
     },
     constraints: {
       allowedMotions: ALLOWED_MOTIONS,
@@ -430,23 +585,38 @@ const idleMessages = {
   ]
 };
 
-const containerStyle = computed(() => ({
-  transform: `translate(${x.value}px, ${y.value}px)`,
-  width: `${AGENT_SIZE.value}px`,
-  height: `${AGENT_SIZE.value}px`,
-  transition:
-    isDragging.value || isTeleporting.value
-      ? 'none'
-      : isMoving.value
-        ? 'transform 3s cubic-bezier(0.4, 0.0, 0.2, 1)'
-        : 'transform 0.25s ease-out',
-  zIndex: 9999,
-  position: 'fixed' as const,
-  top: 0,
-  left: 0,
-  pointerEvents: 'auto' as const,
-  overflow: 'visible'
-}));
+const containerStyle = computed(() => {
+  if (props.isPinned) {
+    return {
+      transform: 'none',
+      width: `${AGENT_SIZE.value}px`,
+      height: `${AGENT_SIZE.value}px`,
+      position: 'fixed' as const,
+      bottom: '0',
+      left: '0',
+      zIndex: 9999,
+      pointerEvents: 'auto' as const,
+      overflow: 'visible'
+    };
+  }
+  return {
+    transform: `translate(${x.value}px, ${y.value}px)`,
+    width: `${AGENT_SIZE.value}px`,
+    height: `${AGENT_SIZE.value}px`,
+    transition:
+      isDragging.value || isTeleporting.value
+        ? 'none'
+        : isMoving.value
+          ? 'transform 3s cubic-bezier(0.4, 0.0, 0.2, 1)'
+          : 'transform 0.25s ease-out',
+    zIndex: 9999,
+    position: 'fixed' as const,
+    top: 0,
+    left: 0,
+    pointerEvents: 'auto' as const,
+    overflow: 'visible'
+  };
+});
 
 // --- Helpers ---
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1098,32 +1268,87 @@ const applyAiReply = async (
 const isBackgroundReacting = ref(false);
 let lastReactionAt = 0;
 const backgroundReactCooldownMs = 4000;
+type PendingReactionEvent = { text: string; type: string; trigger: string; ts: number };
+let pendingBackgroundReactions: PendingReactionEvent[] = [];
+let backgroundReactTimer: number | null = null;
+let lastSystemRecordAt = 0;
+let lastSystemRecordText = '';
+let backgroundAbortController: AbortController | null = null;
 
-const reactToSystemEvent = async (input: { text: string; type?: string; trigger?: string }) => {
-  const now = Date.now();
+const flushBackgroundReaction = async () => {
+  if (pendingBackgroundReactions.length === 0) return;
   if (isBackgroundReacting.value) return;
-  if (now - lastReactionAt < backgroundReactCooldownMs) return;
 
-  const text = (input.text || '').trim();
-  if (!text) return;
+  const now = Date.now();
+  const waitMs = backgroundReactCooldownMs - (now - lastReactionAt);
+  if (waitMs > 0) {
+    if (backgroundReactTimer) window.clearTimeout(backgroundReactTimer);
+    backgroundReactTimer = window.setTimeout(() => {
+      backgroundReactTimer = null;
+      void flushBackgroundReaction();
+    }, waitMs);
+    return;
+  }
 
-  lastReactionAt = now;
+  const batch = pendingBackgroundReactions.slice(0, 6);
+  pendingBackgroundReactions = pendingBackgroundReactions.slice(batch.length);
+  const last = batch[batch.length - 1];
+  const summaryLines = batch.map((e) => `- (${e.type}) ${e.text}`);
+  const summary = `[System Event Batch]\n${summaryLines.join('\n')}\n\nRespond naturally as the character.`;
+  lastReactionAt = Date.now();
   isBackgroundReacting.value = true;
+
+  if (backgroundAbortController) {
+    backgroundAbortController.abort();
+  }
+  backgroundAbortController = new AbortController();
+
   try {
-    recordSystemEvent(text, input.type || 'event');
     const agentContext = buildAgentContext({
-      trigger: input.trigger || 'system',
-      systemEvent: text
+      trigger: last?.trigger || 'system',
+      systemEvent: summary,
+      interactionEvents: batch
     });
-    const rawResponse = await requestAgentReaction({ message: text, agentContext });
+    const rawResponse = await requestAgentReaction({
+      message: summary,
+      agentContext,
+      signal: backgroundAbortController.signal
+    });
     if (!rawResponse) return;
-    await applyAiReply(rawResponse, {
-      displayInChat: false,
-      speakText: false
-    });
+    await applyAiReply(rawResponse, { displayInChat: false, speakText: false });
   } finally {
     isBackgroundReacting.value = false;
+    backgroundAbortController = null;
+    if (pendingBackgroundReactions.length > 0) void flushBackgroundReaction();
   }
+};
+
+const reactToSystemEvent = (input: { text: string; type?: string; trigger?: string }) => {
+  const text = (input.text || '').trim();
+  if (!text) return;
+  const type = (input.type || 'event').trim() || 'event';
+  const trigger = (input.trigger || 'system').trim() || 'system';
+
+  const now = Date.now();
+  const shouldRecord = text !== lastSystemRecordText || now - lastSystemRecordAt > 1500;
+  if (shouldRecord) {
+    recordSystemEvent(text, type);
+    lastSystemRecordAt = now;
+    lastSystemRecordText = text;
+  }
+
+  const lastQueued = pendingBackgroundReactions[pendingBackgroundReactions.length - 1];
+  if (!lastQueued || lastQueued.text !== text || now - lastQueued.ts > 600) {
+    pendingBackgroundReactions.push({ text, type, trigger, ts: now });
+  }
+  if (pendingBackgroundReactions.length > 10) {
+    pendingBackgroundReactions = pendingBackgroundReactions.slice(-10);
+  }
+  if (backgroundReactTimer) window.clearTimeout(backgroundReactTimer);
+  backgroundReactTimer = window.setTimeout(() => {
+    backgroundReactTimer = null;
+    void flushBackgroundReaction();
+  }, 250);
 };
 
 async function handleSendMessage(text: string) {
@@ -1134,15 +1359,34 @@ async function handleSendMessage(text: string) {
   isLoading.value = true;
   message.value = 'Hmm...';
 
-  const agentContext = buildAgentContext({ trigger: 'chat', userText: trimmed });
-  const rawResponse = await sendMessageToAI(trimmed, messages.value, agentContext);
-  isLoading.value = false;
+  chatAbortController?.abort();
+  chatAbortController = new AbortController();
 
-  await applyAiReply(rawResponse, {
-    displayInChat: true,
-    speakText: true,
-    defaultMessageFallback: "I'm on it!"
-  });
+  if (backgroundAbortController) {
+    backgroundAbortController.abort();
+    backgroundAbortController = null;
+  }
+
+  const requestSeq = (chatRequestSeq += 1);
+
+  try {
+    const agentContext = buildAgentContext({ trigger: 'chat', userText: trimmed });
+    const rawResponse = await sendMessageToAI(trimmed, messages.value, agentContext, {
+      signal: chatAbortController.signal
+    });
+    if (requestSeq !== chatRequestSeq) return;
+    isLoading.value = false;
+
+    await applyAiReply(rawResponse, {
+      displayInChat: true,
+      speakText: true,
+      defaultMessageFallback: "I'm on it!"
+    });
+  } finally {
+    if (requestSeq === chatRequestSeq) {
+      isLoading.value = false;
+    }
+  }
 }
 
 const triggerDizzy = () => {
@@ -1150,10 +1394,10 @@ const triggerDizzy = () => {
   isDizzy.value = true;
   message.value = "Whoa! I'm dizzy... @.@";
   playMotionInternal('shake', 3000);
-  messages.value.push({
-    role: 'user',
-    text: '[System Event: User made you dizzy by circling the mouse around you.]'
-  });
+  recordSystemEvent(
+    '[System Event: User made you dizzy by circling the mouse around you.]',
+    'dizzy'
+  );
   if (dizzyTimeout) clearTimeout(dizzyTimeout);
   dizzyTimeout = window.setTimeout(() => {
     isDizzy.value = false;
@@ -1178,12 +1422,44 @@ const triggerHeadHit = () => {
   }, 2000);
 };
 
-// Interaction Processing
-let interactionTimer: ReturnType<typeof setTimeout> | null = null;
-function resetInteractionTimer() {
-  if (interactionTimer) clearTimeout(interactionTimer);
-  interactionTimer = setTimeout(processInteraction, 1500);
-}
+let interactionHasPending = false;
+let interactionLastEventAt = 0;
+const markInteractionActivity = () => {
+  interactionHasPending = true;
+  interactionLastEventAt = Date.now();
+};
+
+const interactionSamples = ref<InteractionSample[]>([]);
+let lastInteractionSample: { ts: number; x: number; y: number } | null = null;
+let lastInteractionSampleAt = 0;
+let lastHitTestAt = 0;
+
+const pushInteractionSample = (input: {
+  ts: number;
+  x: number;
+  y: number;
+  hitAreas?: string[];
+}) => {
+  const ts = input.ts;
+  const dx = lastInteractionSample ? input.x - lastInteractionSample.x : 0;
+  const dy = lastInteractionSample ? input.y - lastInteractionSample.y : 0;
+  const dt = lastInteractionSample ? Math.max(1, ts - lastInteractionSample.ts) : 1;
+  const speed = Math.sqrt(dx * dx + dy * dy) / dt;
+  const { relX, relY } = computeRelativePoint(x.value, y.value, AGENT_SIZE.value, input.x, input.y);
+  interactionSamples.value.push({
+    ts,
+    x: input.x,
+    y: input.y,
+    speed,
+    relX,
+    relY,
+    hitAreas: input.hitAreas
+  });
+  if (interactionSamples.value.length > 180) {
+    interactionSamples.value = interactionSamples.value.slice(-180);
+  }
+  lastInteractionSample = { ts, x: input.x, y: input.y };
+};
 
 function processInteraction() {
   if (isFainted.value || isAngry.value || isDizzy.value) {
@@ -1197,19 +1473,44 @@ function processInteraction() {
   }
   if (clicks === 0 && Math.abs(accumulatedAngle) < 360) return;
 
-  let desc = '[System Event]: User interaction session ended. ';
-  if (clicks > 0) desc += `User clicked you ${clicks} times. `;
-  if (Math.abs(accumulatedAngle) > 360)
-    desc += `User circled the mouse ${Math.round(accumulatedAngle)} degrees around you. `;
-  desc += 'Decide how to react based on this combination.';
+  const absAngle = Math.abs(accumulatedAngle);
+  if (clicks > 0 || absAngle > 0) {
+    if (absAngle >= 220) {
+      setTransient('confused', (v) => (isConfused.value = v), 2600);
+      playMotionInternal(accumulatedAngle >= 0 ? 'tilt_right' : 'tilt_left', 1400);
+      message.value =
+        currentLang.value === 'zh'
+          ? '你在转圈圈吗……我有点晕。'
+          : 'Are you spinning around me…? I feel a bit dizzy.';
+    } else if (clicks >= 3) {
+      setTransient('pouting', (v) => (isPouting.value = v), 2200);
+      playMotionInternal('shake', 1400);
+      message.value =
+        currentLang.value === 'zh' ? '别闹啦……有话好好说！' : 'Hey, stop poking… just talk to me!';
+    } else if (clicks === 2) {
+      playMotionInternal('tap_body', 1000);
+      message.value = currentLang.value === 'zh' ? '嗯？怎么啦？' : 'Hm? What is it?';
+    }
+  }
 
-  console.log('Processing Interaction:', desc);
-  handleSendMessage(desc);
+  const metrics = buildInteractionMetrics({
+    samples: interactionSamples.value,
+    clickCount: clicks,
+    spinDegrees: accumulatedAngle
+  });
+  const lang = currentLang.value === 'zh' ? 'zh' : 'en';
+  const desc = buildInteractionSummary(metrics, lang);
+  const shouldAskAi = shouldAskAiForInteraction(metrics);
+  if (shouldAskAi)
+    void reactToSystemEvent({ text: desc, type: 'interaction_session', trigger: 'interaction' });
   resetInteractionState();
 }
 
 function resetInteractionState() {
   interactionState.value = { clicks: 0, accumulatedAngle: 0, startTime: Date.now() };
+  interactionSamples.value = [];
+  lastInteractionSample = null;
+  lastInteractionSampleAt = 0;
 }
 
 const toggleChat = () => {
@@ -1222,6 +1523,14 @@ const toggleChat = () => {
       y.value = 40;
     }
     message.value = '';
+  } else {
+    if (isLoading.value) {
+      try {
+        chatAbortController?.abort();
+      } catch {}
+      cancelAiRequests('chat');
+      isLoading.value = false;
+    }
   }
 };
 
@@ -1234,6 +1543,9 @@ const handleClick = (event: MouseEvent) => {
 
   const hitAreas = live2dWidgetRef.value?.hitTest(event.clientX, event.clientY) || [];
   const normalizedHitAreas = hitAreas.map((h: string) => h.toLowerCase());
+  const nowTs = Date.now();
+  lastHitTestAt = nowTs;
+  pushInteractionSample({ ts: nowTs, x: event.clientX, y: event.clientY, hitAreas });
 
   let isHead =
     normalizedHitAreas.includes('head') ||
@@ -1290,10 +1602,10 @@ const handleClick = (event: MouseEvent) => {
           ];
     message.value = shyMessages[Math.floor(Math.random() * shyMessages.length)];
     playMotionInternal('mood_angry', 3000);
-    messages.value.push({
-      role: 'user',
-      text: '[System Event: User poked your body area. You feel shy/tsundere.]'
-    });
+    recordSystemEvent(
+      '[System Event: User poked your body area. You feel shy/tsundere.]',
+      'body_poke'
+    );
     setTimeout(() => {
       isPouting.value = false;
     }, 3000);
@@ -1326,13 +1638,15 @@ const handleClick = (event: MouseEvent) => {
     message.value = shyMessages[Math.floor(Math.random() * shyMessages.length)];
     playMotionInternal('shake', 3000);
     clickCount.value = 0;
-    messages.value.push({
-      role: 'user',
-      text: '[System Event: User poked you rapidly. You feel ticklish and shy.]'
-    });
+    recordSystemEvent(
+      '[System Event: User poked you rapidly. You feel ticklish and shy.]',
+      'rapid_poke'
+    );
     return;
   }
 
+  interactionState.value.clicks += 1;
+  markInteractionActivity();
   playMotionInternal('tap_body');
 };
 
@@ -1344,7 +1658,17 @@ const handleMouseMove = (event: MouseEvent) => {
   mouseX.value = event.clientX;
   mouseY.value = event.clientY;
 
-  resetInteractionTimer();
+  markInteractionActivity();
+  const now = Date.now();
+  if (now - lastInteractionSampleAt >= 80) {
+    lastInteractionSampleAt = now;
+    const includeHit = now - lastHitTestAt >= 150;
+    const hitAreas = includeHit
+      ? live2dWidgetRef.value?.hitTest(event.clientX, event.clientY) || []
+      : undefined;
+    if (includeHit) lastHitTestAt = now;
+    pushInteractionSample({ ts: now, x: event.clientX, y: event.clientY, hitAreas });
+  }
 
   const centerX = x.value + AGENT_SIZE.value / 2;
   const centerY = y.value + AGENT_SIZE.value / 2;
@@ -1518,6 +1842,11 @@ const startLoop = () => {
     }
     updateEyeTracking();
 
+    if (interactionHasPending && Date.now() - interactionLastEventAt > 1000) {
+      interactionHasPending = false;
+      processInteraction();
+    }
+
     if (isDizzy.value || isFainted.value || isHeadHit.value) {
     } else if (isFollowingMouse.value) {
       const targetXPos = mouseX.value + MOUSE_FOLLOW_OFFSET.x;
@@ -1582,22 +1911,46 @@ const startIdleTalk = () => {
     } else if (isHappy.value) playMotionInternal('mood_happy');
     else if (isAngry.value) playMotionInternal('mood_angry');
     else {
-      if (Math.random() > 0.7) {
-        const randomIdles = ['idle', 'mail', 'morning', 'afternoon'];
-        playMotionInternal(randomIdles[Math.floor(Math.random() * randomIdles.length)]);
-      }
-      if (Math.random() > 0.7) {
-        const msgs = currentLang.value === 'zh' ? idleMessages.zh : idleMessages.en;
-        message.value = msgs[Math.floor(Math.random() * msgs.length)];
+      const idleProfile = getIdleProfile();
+      if (Math.random() < idleProfile.motionChance) {
+        const randomIdles = idleProfile.motions;
+        const chosen = randomIdles[Math.floor(Math.random() * randomIdles.length)];
+        playMotionInternal(chosen);
+        if (!message.value && Math.random() < 0.55) {
+          if (chosen === 'yawn') {
+            const yawnMsgs =
+              currentLang.value === 'zh'
+                ? ['哈——欠……', '有点困了…', '我先眯一下…']
+                : ['Yaaawn…', 'A bit sleepy…', 'Let me nap…'];
+            message.value = yawnMsgs[Math.floor(Math.random() * yawnMsgs.length)];
+          } else if (chosen === 'play_hair') {
+            const hairMsgs =
+              currentLang.value === 'zh'
+                ? ['我整理一下头发…', '别盯着我看啦…', '辫子有点乱…']
+                : ['Fixing my hair...', "Don't stare...", 'My braid is messy...'];
+            message.value = hairMsgs[Math.floor(Math.random() * hairMsgs.length)];
+          }
+        } else if (!message.value && Math.random() < idleProfile.messageChance) {
+          const msgs =
+            currentLang.value === 'zh' ? idleProfile.messages.zh : idleProfile.messages.en;
+          message.value = msgs[Math.floor(Math.random() * msgs.length)];
+        }
       }
     }
-    if (message.value)
+
+    if (message.value) {
       setTimeout(() => {
-        if (!isTalking.value && !avatarPlanRunnerActive && avatarPlanQueue.length === 0)
-          message.value = '';
-      }, 3000);
+        if (!isTalking.value) message.value = '';
+      }, 5000);
+    }
   }, IDLE_TALK_INTERVAL);
 };
+
+const chatPlacement = computed<'top' | 'bottom'>(() => {
+  if (isMobile.value) return 'top';
+  const centerY = y.value + AGENT_SIZE.value / 2;
+  return centerY < window.innerHeight / 2 ? 'top' : 'bottom';
+});
 
 let roamTimer: number | null = null;
 const startRoaming = () => {
@@ -1701,11 +2054,19 @@ const avoidObstacle = (obstacleRect: DOMRect) => {
 
 // --- Lifecycle ---
 onMounted(async () => {
+  loadLocalMemory();
   window.addEventListener('mousemove', handleMouseMove);
   window.addEventListener('resize', () => {
     isMobile.value = window.innerWidth <= 768;
   });
   window.addEventListener('focusin', handleFocusIn);
+
+  // Mobile initial position
+  if (isMobile.value) {
+    x.value = (window.innerWidth - AGENT_SIZE.value) / 2;
+    y.value = window.innerHeight - AGENT_SIZE.value - 20;
+  }
+
   startLoop();
   startRoaming();
   startIdleTalk();
@@ -1713,6 +2074,21 @@ onMounted(async () => {
 
   // Expose for debugging/external control
   (window as any).runAgentPlan = (plan: any[]) => avatarAdapter.runPlan(plan);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('mousemove', handleMouseMove);
+  window.removeEventListener('focusin', handleFocusIn);
+  if (animationFrameId) cancelAnimationFrame(animationFrameId);
+  if (idleTimer) clearInterval(idleTimer);
+  if (roamTimer) clearInterval(roamTimer);
+  if (dizzyTimeout) clearTimeout(dizzyTimeout);
+  if (expressionOverrideTimeout) clearTimeout(expressionOverrideTimeout);
+  if (backgroundReactTimer) clearTimeout(backgroundReactTimer);
+  try {
+    chatAbortController?.abort();
+  } catch {}
+  cancelAiRequests();
 });
 
 watch(currentUser, async (user) => {
@@ -1842,27 +2218,24 @@ watch(
     }
   }
 );
-
-const chatPlacement = computed(() => (y.value < 400 ? 'bottom' : 'top'));
-
-onBeforeUnmount(() => {
-  window.removeEventListener('mousemove', handleMouseMove);
-  window.removeEventListener('focusin', handleFocusIn);
-  cancelAnimationFrame(animationFrameId);
-  if (roamTimer) clearInterval(roamTimer);
-  if (idleTimer) clearInterval(idleTimer);
-  if (dizzyTimeout) clearTimeout(dizzyTimeout);
-});
 </script>
 
 <style scoped>
+.agent-container {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 9999;
+}
+
 .pop-enter-active,
 .pop-leave-active {
-  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+
 .pop-enter-from,
 .pop-leave-to {
   opacity: 0;
-  transform: scale(0.8) translateY(20px);
+  transform: scale(0.8) translateY(10px);
 }
 </style>

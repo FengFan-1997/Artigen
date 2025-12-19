@@ -11,9 +11,10 @@ let app: any | null = null;
 let model: any = null;
 let tickerAdded = false;
 let lastLayoutLogKey = '';
+let layoutSettleSeq = 0;
 
-let poiTarget = { x: 0, y: 0 };
-let poiCurrent = { x: 0, y: 0 };
+const poiTarget = { x: 0, y: 0 };
+const poiCurrent = { x: 0, y: 0 };
 let poiLastUpdateAt = 0;
 
 let talkingActive = false;
@@ -21,6 +22,8 @@ let talkingPhase = 0;
 
 let syntheticExpressionTargets: Record<string, number> | null = null;
 const syntheticExpressionCurrent: Record<string, number> = {};
+let syntheticExpressionEntries: Array<[string, number]> | null = null;
+const syntheticExpressionActiveIds = new Set<string>();
 
 type SyntheticMotionType =
   | 'shake'
@@ -33,6 +36,9 @@ type SyntheticMotionType =
   | 'surprised'
   | 'activity'
   | 'talking'
+  | 'yawn'
+  | 'play_hair'
+  | 'stretch'
   | 'idle';
 
 let syntheticMotionType: SyntheticMotionType | null = null;
@@ -43,6 +49,12 @@ let syntheticMotionIntensity = 0.7;
 let lastRendererWidth = 0;
 let lastRendererHeight = 0;
 let currentModelPath = '';
+let coreSetParam: ((id: string, value: number) => void) | null = null;
+let lastParamValues: Record<string, number> = {};
+let motionGroupKeysCache: string[] | null = null;
+let expressionNamesCache: string[] | null = null;
+const resolvedMotionGroupCache = new Map<string, string | undefined>();
+const resolvedExpressionCache = new Map<string, string | undefined>();
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
@@ -50,13 +62,37 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 const normalizeKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+const SYNTHETIC_MOTION_MAP: Record<string, SyntheticMotionType> = {
+  shake: 'shake',
+  moodangry: 'shake',
+  moodconfused: 'shake',
+  shakehead: 'shake_head',
+  nod: 'nod',
+  tiltleft: 'tilt_left',
+  tiltright: 'tilt_right',
+  happy: 'happy',
+  moodhappy: 'happy',
+  sad: 'sad',
+  moodtired: 'sad',
+  moodsleepy: 'sad',
+  surprised: 'surprised',
+  activity: 'activity',
+  wave: 'activity',
+  friend: 'activity',
+  talking: 'talking',
+  idle: 'idle',
+  yawn: 'yawn',
+  playhair: 'play_hair',
+  stretch: 'stretch'
+};
+
 const safeSetParam = (id: string, value: number) => {
-  if (!model) return;
-  const m = model as any;
-  const coreModel = m.internalModel?.coreModel;
-  if (!coreModel || typeof coreModel.setParameterValueById !== 'function') return;
+  if (!coreSetParam) return;
+  const prev = lastParamValues[id];
+  if (typeof prev === 'number' && Math.abs(prev - value) < 0.0008) return;
   try {
-    coreModel.setParameterValueById(id, value);
+    coreSetParam(id, value);
+    lastParamValues[id] = value;
   } catch {}
 };
 
@@ -68,26 +104,40 @@ const getMotionDefinitions = (): Record<string, any[]> => {
   return {};
 };
 
+const getMotionGroupKeys = (): string[] => {
+  if (motionGroupKeysCache) return motionGroupKeysCache;
+  const keys = Object.keys(getMotionDefinitions());
+  motionGroupKeysCache = keys;
+  return keys;
+};
+
 const resolveMotionGroupName = (requestedGroup: string): string | undefined => {
+  const requestedNorm = normalizeKey(requestedGroup);
+  if (resolvedMotionGroupCache.has(requestedNorm)) {
+    return resolvedMotionGroupCache.get(requestedNorm);
+  }
+
   const defs = getMotionDefinitions();
-  const keys = Object.keys(defs);
+  const keys = getMotionGroupKeys();
   if (keys.length === 0) return undefined;
 
   if (requestedGroup in defs) return requestedGroup;
 
-  const requestedNorm = normalizeKey(requestedGroup);
   const exact = keys.find((k) => normalizeKey(k) === requestedNorm);
-  if (exact) return exact;
+  if (exact) {
+    resolvedMotionGroupCache.set(requestedNorm, exact);
+    return exact;
+  }
 
   const contains = keys.find(
     (k) => normalizeKey(k).includes(requestedNorm) || requestedNorm.includes(normalizeKey(k))
   );
-  if (contains) return contains;
-
-  return undefined;
+  resolvedMotionGroupCache.set(requestedNorm, contains);
+  return contains;
 };
 
 const getExpressionNames = (): string[] => {
+  if (expressionNamesCache) return expressionNamesCache;
   if (!model) return [];
   const m = model as any;
   const maybeDefs =
@@ -96,40 +146,50 @@ const getExpressionNames = (): string[] => {
     m.internalModel?.expressions;
 
   if (Array.isArray(maybeDefs)) {
-    return maybeDefs
+    const names = maybeDefs
       .map((x: any) => {
         if (typeof x === 'string') return x;
         return x?.Name || x?.name || x?.Id || x?.id;
       })
       .filter((x: any) => typeof x === 'string');
+    expressionNamesCache = names;
+    return names;
   }
 
   if (maybeDefs && typeof maybeDefs === 'object') {
-    return Object.keys(maybeDefs);
+    const names = Object.keys(maybeDefs);
+    expressionNamesCache = names;
+    return names;
   }
 
   return [];
 };
 
 const resolveExpressionId = (requested: string): string | undefined => {
+  const base = requested.replace(/\.exp3\.json$/i, '').replace(/\.json$/i, '');
+  const reqNorm = normalizeKey(base);
+  if (resolvedExpressionCache.has(reqNorm)) {
+    return resolvedExpressionCache.get(reqNorm);
+  }
+
   const names = getExpressionNames();
   if (names.length === 0) return requested || undefined;
 
   if (names.includes(requested)) return requested;
 
-  const base = requested.replace(/\.exp3\.json$/i, '').replace(/\.json$/i, '');
   if (names.includes(base)) return base;
 
-  const reqNorm = normalizeKey(base);
   const exact = names.find((n) => normalizeKey(n) === reqNorm);
-  if (exact) return exact;
+  if (exact) {
+    resolvedExpressionCache.set(reqNorm, exact);
+    return exact;
+  }
 
   const contains = names.find(
     (n) => normalizeKey(n).includes(reqNorm) || reqNorm.includes(normalizeKey(n))
   );
-  if (contains) return contains;
-
-  return undefined;
+  resolvedExpressionCache.set(reqNorm, contains);
+  return contains;
 };
 
 const getSyntheticExpressionTargets = (requested: string): Record<string, number> | null => {
@@ -269,14 +329,13 @@ const applyAgentDrivenParams = (delta: number) => {
 
   const idleTimeoutMs = 1800;
   if (poiLastUpdateAt > 0 && now - poiLastUpdateAt > idleTimeoutMs) {
-    poiTarget = { x: 0, y: 0 };
+    poiTarget.x = 0;
+    poiTarget.y = 0;
   }
 
   const t = clamp(0.12 * (delta || 1), 0.05, 0.28);
-  poiCurrent = {
-    x: lerp(poiCurrent.x, poiTarget.x, t),
-    y: lerp(poiCurrent.y, poiTarget.y, t)
-  };
+  poiCurrent.x = lerp(poiCurrent.x, poiTarget.x, t);
+  poiCurrent.y = lerp(poiCurrent.y, poiTarget.y, t);
 
   const x = clamp(poiCurrent.x, -1, 1);
   const y = clamp(poiCurrent.y, -1, 1);
@@ -339,12 +398,32 @@ const applyAgentDrivenParams = (delta: number) => {
       motionBodyAngleX = -6 * amp * w;
     } else if (syntheticMotionType === 'surprised') {
       motionAngleY = -12 * amp * w;
-      motionAngleZ = sFast * 8 * amp * w;
+      motionAngleX = sFast * 6 * amp * w;
+      motionBodyAngleX = -12 * amp * w;
     } else if (syntheticMotionType === 'activity') {
       motionAngleX = sMid * 14 * amp * w;
       motionAngleY = sMid * -10 * amp * w;
       motionAngleZ = sMid * 8 * amp * w;
       motionBodyAngleX = sSlow * 10 * amp * w;
+    } else if (syntheticMotionType === 'yawn') {
+      // Yawn: Head tilts back (AngleY up), eyes close slightly, mouth opens
+      // AngleY is typically up for positive values? Or down?
+      // Standard Live2D: AngleY +30 is Up.
+      const durationMs = Math.max(1, syntheticMotionUntil - syntheticMotionStartedAt);
+      const yawnPhase = Math.sin((elapsed / durationMs) * Math.PI); // 0 -> 1 -> 0
+      motionAngleY = 20 * amp * yawnPhase * w;
+      motionAngleZ = 5 * amp * Math.sin(elapsed / 200) * w;
+      // We can also influence mouth/eyes if we want, but applyAgentDrivenParams focuses on angles.
+      // We'll leave expressions to the expression system or manual params if needed.
+    } else if (syntheticMotionType === 'play_hair') {
+      // Play Hair: Head tilt to side, slight looking down
+      motionAngleZ = 15 * amp * w; // Tilt
+      motionAngleY = -10 * amp * w; // Look down
+      motionBodyAngleX = 5 * amp * Math.sin(elapsed / 300) * w;
+    } else if (syntheticMotionType === 'stretch') {
+      // Stretch: Head back, body up?
+      motionAngleY = 25 * amp * w;
+      motionBodyAngleX = -10 * amp * w;
     } else if (syntheticMotionType === 'idle') {
       motionAngleX = sSlow * 5 * amp * w;
       motionAngleY = sSlow * 3 * amp * w;
@@ -376,27 +455,44 @@ const applyAgentDrivenParams = (delta: number) => {
     safeSetParam('ParamMouthForm', 0.2 * Math.sin(talkingPhase * 0.7));
   } else {
     talkingPhase = lerp(talkingPhase, 0, mouthSmooth);
-    safeSetParam('ParamMouthOpenY', 0);
-    safeSetParam('ParamMouthForm', 0);
+    const yawnActive =
+      syntheticMotionUntil > 0 && now < syntheticMotionUntil && syntheticMotionType === 'yawn';
+    if (yawnActive) {
+      const progress = clamp(
+        (now - syntheticMotionStartedAt) /
+          Math.max(1, syntheticMotionUntil - syntheticMotionStartedAt),
+        0,
+        1
+      );
+      const open = clamp(Math.sin(Math.PI * progress) * 0.95, 0, 1);
+      safeSetParam('ParamMouthOpenY', open);
+      safeSetParam('ParamMouthForm', 0.08);
+    } else {
+      safeSetParam('ParamMouthOpenY', 0);
+      safeSetParam('ParamMouthForm', 0);
+    }
   }
 
   const synthSmooth = clamp(0.16 * (delta || 1), 0.06, 0.3);
   if (syntheticExpressionTargets) {
-    for (const [id, target] of Object.entries(syntheticExpressionTargets)) {
+    const entries = syntheticExpressionEntries || Object.entries(syntheticExpressionTargets);
+    for (const [id, target] of entries) {
       const cur =
         typeof syntheticExpressionCurrent[id] === 'number' ? syntheticExpressionCurrent[id] : 0;
       const next = lerp(cur, target, synthSmooth);
       syntheticExpressionCurrent[id] = next;
+      syntheticExpressionActiveIds.add(id);
       safeSetParam(id, next);
     }
-  } else if (Object.keys(syntheticExpressionCurrent).length > 0) {
-    for (const id of Object.keys(syntheticExpressionCurrent)) {
-      const cur = syntheticExpressionCurrent[id];
+  } else if (syntheticExpressionActiveIds.size > 0) {
+    for (const id of Array.from(syntheticExpressionActiveIds)) {
+      const cur = syntheticExpressionCurrent[id] || 0;
       const next = lerp(cur, 0, synthSmooth);
       syntheticExpressionCurrent[id] = next;
       safeSetParam(id, next);
       if (Math.abs(next) < 0.01) {
         delete syntheticExpressionCurrent[id];
+        syntheticExpressionActiveIds.delete(id);
       }
     }
   }
@@ -441,14 +537,11 @@ const ensureApp = async (): Promise<any | null> => {
     }
   } catch {}
 
-  // Patch autoUpdate to prevent internal ticker errors
+  const debug = isDebugEnabled();
   try {
     const Live2D = Live2DModel as any;
     if (Live2D && Live2D.prototype) {
-      // Check if already patched
       const desc = Object.getOwnPropertyDescriptor(Live2D.prototype, 'autoUpdate');
-      // If it's not our patch (we can't easily tell, but we can just overwrite)
-      // We only overwrite if it's configurable or missing
       if (!desc || desc.configurable) {
         Object.defineProperty(Live2D.prototype, 'autoUpdate', {
           get() {
@@ -456,17 +549,15 @@ const ensureApp = async (): Promise<any | null> => {
           },
           set(value: boolean) {
             (this as any)._autoUpdateEnabled = !!value;
-            // Do NOT call internal ticker logic here
           },
           configurable: true
         });
-        console.log('[Live2D] Successfully patched autoUpdate');
       } else {
-        console.warn('[Live2D] autoUpdate is not configurable');
+        if (debug) console.warn('[Live2D] autoUpdate is not configurable');
       }
     }
   } catch (e) {
-    console.warn('[Live2D] Error patching autoUpdate:', e);
+    if (debug) console.warn('[Live2D] Error patching autoUpdate:', e);
   }
 
   const resolution = clamp((window.devicePixelRatio || 1) as number, 1, 2);
@@ -486,13 +577,12 @@ const ensureApp = async (): Promise<any | null> => {
     if (Live2D && typeof Live2D.registerTicker === 'function') {
       if (app.ticker) {
         Live2D.registerTicker(app.ticker);
-        console.log('[Live2D] Registered ticker');
       } else {
-        console.warn('[Live2D] app.ticker is missing. AutoUpdate may fail.');
+        if (debug) console.warn('[Live2D] app.ticker is missing. AutoUpdate may fail.');
       }
     }
   } catch (e) {
-    console.warn('[Live2D] Error registering ticker:', e);
+    if (debug) console.warn('[Live2D] Error registering ticker:', e);
   }
 
   return app;
@@ -764,6 +854,23 @@ export const loadCubism3Model = async (modelJsonPath: string): Promise<boolean> 
   }
 
   currentModelPath = modelJsonPath;
+  motionGroupKeysCache = null;
+  expressionNamesCache = null;
+  resolvedMotionGroupCache.clear();
+  resolvedExpressionCache.clear();
+  try {
+    const m = model as any;
+    const coreModel = m?.internalModel?.coreModel;
+    const setter = coreModel?.setParameterValueById;
+    coreSetParam = typeof setter === 'function' ? setter.bind(coreModel) : null;
+  } catch {
+    coreSetParam = null;
+  }
+  lastParamValues = {};
+  syntheticExpressionTargets = null;
+  syntheticExpressionEntries = null;
+  syntheticExpressionActiveIds.clear();
+  for (const k of Object.keys(syntheticExpressionCurrent)) delete syntheticExpressionCurrent[k];
 
   if (model.anchor && typeof model.anchor.set === 'function') {
     model.anchor.set(0.5, 1.0);
@@ -784,6 +891,16 @@ export const loadCubism3Model = async (modelJsonPath: string): Promise<boolean> 
       }
     });
   } catch {}
+  const settleSeq = (layoutSettleSeq += 1);
+  const settleDelaysMs = [200, 600, 1400, 2600];
+  for (const delayMs of settleDelaysMs) {
+    window.setTimeout(() => {
+      if (settleSeq !== layoutSettleSeq) return;
+      if (!model) return;
+      if (currentModelPath !== modelJsonPath) return;
+      applyCubism3Layout(appInstance, modelJsonPath);
+    }, delayMs);
+  }
 
   lastRendererWidth = appInstance.renderer.width || 0;
   lastRendererHeight = appInstance.renderer.height || 0;
@@ -862,6 +979,7 @@ export const setCubism3Expression = (expressionId: string) => {
     const resolved = resolveExpressionId(expressionId);
     if (resolved) {
       syntheticExpressionTargets = null;
+      syntheticExpressionEntries = null;
       try {
         m.expression(resolved);
       } catch {}
@@ -871,6 +989,7 @@ export const setCubism3Expression = (expressionId: string) => {
 
   const synth = getSyntheticExpressionTargets(expressionId);
   syntheticExpressionTargets = synth;
+  syntheticExpressionEntries = synth ? Object.entries(synth) : null;
 };
 
 export const setCubism3Talking = (active: boolean) => {
@@ -888,32 +1007,7 @@ export const triggerCubism3SyntheticMotion = (
   const durationMs = Math.max(350, Math.min(3600, options?.durationMs ?? 1200));
   const intensity = clamp(options?.intensity ?? 0.7, 0.1, 1.2);
 
-  const type: SyntheticMotionType | null =
-    normalized === 'shake' || normalized === 'mood_angry' || normalized === 'mood_confused'
-      ? 'shake'
-      : normalized === 'shake_head'
-        ? 'shake_head'
-        : normalized === 'nod'
-          ? 'nod'
-          : normalized === 'tilt_left'
-            ? 'tilt_left'
-            : normalized === 'tilt_right'
-              ? 'tilt_right'
-              : normalized === 'happy' || normalized === 'mood_happy'
-                ? 'happy'
-                : normalized === 'sad' ||
-                    normalized === 'mood_tired' ||
-                    normalized === 'mood_sleepy'
-                  ? 'sad'
-                  : normalized === 'surprised'
-                    ? 'surprised'
-                    : normalized === 'activity' || normalized === 'wave' || normalized === 'friend'
-                      ? 'activity'
-                      : normalized === 'idle'
-                        ? 'idle'
-                        : normalized === 'talking'
-                          ? 'talking'
-                          : null;
+  const type: SyntheticMotionType | null = SYNTHETIC_MOTION_MAP[normalized] || null;
 
   if (!type) return;
 
@@ -924,7 +1018,8 @@ export const triggerCubism3SyntheticMotion = (
 };
 
 export const setCubism3PointOfInterest = (x: number, y: number) => {
-  poiTarget = { x: clamp(x, -1, 1), y: clamp(y, -1, 1) };
+  poiTarget.x = clamp(x, -1, 1);
+  poiTarget.y = clamp(y, -1, 1);
   poiLastUpdateAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
 };
 
@@ -994,14 +1089,24 @@ export const disposeCubism3 = () => {
   currentModelPath = '';
   lastRendererWidth = 0;
   lastRendererHeight = 0;
-  poiTarget = { x: 0, y: 0 };
-  poiCurrent = { x: 0, y: 0 };
+  poiTarget.x = 0;
+  poiTarget.y = 0;
+  poiCurrent.x = 0;
+  poiCurrent.y = 0;
   poiLastUpdateAt = 0;
   talkingActive = false;
   talkingPhase = 0;
   syntheticExpressionTargets = null;
+  syntheticExpressionEntries = null;
+  syntheticExpressionActiveIds.clear();
   syntheticMotionType = null;
   syntheticMotionUntil = 0;
   syntheticMotionStartedAt = 0;
   lastLayoutLogKey = '';
+  coreSetParam = null;
+  lastParamValues = {};
+  motionGroupKeysCache = null;
+  expressionNamesCache = null;
+  resolvedMotionGroupCache.clear();
+  resolvedExpressionCache.clear();
 };

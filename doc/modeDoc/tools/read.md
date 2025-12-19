@@ -1,0 +1,2 @@
+- 生成脚本： /Users/fengfan/Documents/mode/model/tools/generate_modeldoc_i18n.py
+- 运行命令： python3 tools/generate_modeldoc_i18n.py

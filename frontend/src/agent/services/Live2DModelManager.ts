@@ -59,6 +59,11 @@ export class ModelManager {
   private models: ModelList[];
 
   private lastMotionAt: Record<string, number>;
+  private lastExpressionKey: string;
+  private lastExpressionAt: number;
+  private lastPoiX: number;
+  private lastPoiY: number;
+  private lastPoiAt: number;
 
   constructor(config: Config, models: ModelList[] = []) {
     let { apiPath, cdnPath } = config;
@@ -98,7 +103,15 @@ export class ModelManager {
     this.cdnPath = cdnPath || '';
     this.assetsPath = assetsPath || this.cdnPath;
     this.cubism2Path = cubism2Path || '';
-    this.modelDirectory = 'model_backup';
+
+    // In development (local), we use 'model' directory (symlinked to doc/model) to access all models
+    // In production, we use 'model_backup' or whatever is configured.
+    if (import.meta.env.DEV) {
+      this.modelDirectory = 'model';
+    } else {
+      this.modelDirectory = 'model_backup';
+    }
+
     this.hasStoredModelId = hasStoredModelId;
     this._modelId = modelId;
     this._modelTexturesId = modelTexturesId;
@@ -108,6 +121,11 @@ export class ModelManager {
     this.modelJSONCache = {};
     this.models = models;
     this.lastMotionAt = {};
+    this.lastExpressionKey = '';
+    this.lastExpressionAt = 0;
+    this.lastPoiX = 0;
+    this.lastPoiY = 0;
+    this.lastPoiAt = 0;
   }
 
   public onLoadingChange(
@@ -176,15 +194,37 @@ export class ModelManager {
 
   private async fetchJson(url: string, silent = false) {
     if (url in this.modelJSONCache) return this.modelJSONCache[url];
-    let result: any = null;
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        if (!silent) {
-          logger.error(`Failed to fetch model json: ${url}, status ${response.status}`);
+    const timeoutMs = 15000;
+    const maxAttempts = 3;
+    const backoffMs = (attempt: number) => 250 * attempt;
+
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let response: Response | null = null;
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        response = await fetch(url, { signal: controller.signal });
+
+        if (!response.ok) {
+          const retryable =
+            response.status === 408 ||
+            response.status === 429 ||
+            (response.status >= 500 && response.status <= 599);
+
+          if (!retryable || attempt === maxAttempts) {
+            if (!silent) {
+              logger.error(`Failed to fetch model json: ${url}, status ${response.status}`);
+            }
+            return null;
+          }
+
+          await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+          continue;
         }
-        result = null;
-      } else {
+
         const contentType = response.headers.get('content-type') || '';
         const isJson = contentType.includes('application/json') || contentType.includes('+json');
         const urlLooksJson = url.toLowerCase().includes('.json');
@@ -194,31 +234,46 @@ export class ModelManager {
               `Failed to fetch model json: ${url}, content-type ${contentType || 'unknown'}`
             );
           }
-          result = null;
-        } else {
-          try {
-            if (isJson) {
-              result = await response.json();
-            } else {
-              const text = await response.text();
-              result = JSON.parse(text);
-            }
-          } catch (e) {
+          return null;
+        }
+
+        try {
+          const result = isJson ? await response.json() : JSON.parse(await response.text());
+          this.modelJSONCache[url] = result;
+          return result;
+        } catch (e) {
+          lastError = e;
+          if (attempt === maxAttempts) {
             if (!silent) {
               logger.error(`Failed to parse model json: ${url}`, e);
             }
-            result = null;
+            return null;
           }
+          await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+          continue;
         }
+      } catch (e) {
+        lastError = e;
+        const isAbort = e instanceof DOMException && e.name === 'AbortError';
+        if (attempt === maxAttempts) {
+          if (!silent) {
+            logger.error('Failed to fetch model json: ' + url, e);
+          }
+          return null;
+        }
+        if (!isAbort && !silent && attempt === 1) {
+          logger.warn(`Fetch model json failed, retrying: ${url}`);
+        }
+        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+      } finally {
+        window.clearTimeout(timeoutId);
       }
-    } catch (e) {
-      if (!silent) {
-        logger.error('Failed to fetch model json: ' + url, e);
-      }
-      result = null;
     }
-    this.modelJSONCache[url] = result;
-    return result;
+
+    if (!silent && lastError) {
+      logger.error('Failed to fetch model json: ' + url, lastError);
+    }
+    return null;
   }
 
   private async fetchModelJsonWithFallback(
@@ -328,6 +383,136 @@ export class ModelManager {
 
   public static async initCheck(config: Config, models: ModelList[] = []) {
     const model = new ModelManager(config, models);
+
+    // In development mode, we prioritize local Ziyuxin models but also try to load model_index.json
+    // to allow seeing other models if available locally.
+    if (import.meta.env.DEV) {
+      // First, try to load model_index.json or model_list.json from the configured path
+      let loadedIndex = false;
+
+      try {
+        const indexResponse = await fetch(`${model.cdnPath}model_index.json`);
+        if (indexResponse.ok) {
+          model.modelIndex = await indexResponse.json();
+          if (model.modelIndex.length > 0) {
+            loadedIndex = true;
+            logger.info(
+              `[DEV] Loaded ${model.modelIndex.length} models from local model_index.json`
+            );
+          }
+        }
+      } catch (e) {
+        logger.warn('[DEV] Failed to load local model_index.json', e);
+      }
+
+      if (!loadedIndex) {
+        try {
+          const listResponse = await fetch(`${model.cdnPath}model_list.json`);
+          if (listResponse.ok) {
+            model.modelList = await listResponse.json();
+            if (
+              model.modelList &&
+              Array.isArray(model.modelList.models) &&
+              model.modelList.models.length > 0
+            ) {
+              loadedIndex = true;
+              logger.info(`[DEV] Loaded models from local model_list.json`);
+            }
+          }
+        } catch (e) {
+          logger.warn('[DEV] Failed to load local model_list.json', e);
+        }
+      }
+
+      // If we couldn't load any index/list, OR if we want to ensure Ziyuxin is available as a fallback/default
+      // We merge or set the Ziyuxin models.
+      // However, the user requirement says: "local only use ziyuxin... connect local model so I can see others".
+      // And "online... logic do not change".
+      // So if we found an index, we use it. If not, we fall back to the hardcoded list.
+
+      if (!loadedIndex) {
+        model.modelIndex = [];
+        model.modelList = {
+          models: [
+            'shaoqian/ZiYuXin/ots14_1203/normal/normal.model3.json',
+            'shaoqian/ZiYuXin/ots14_3001/normal/normal.model3.json',
+            'shaoqian/ZiYuXin/ots14_4501/normal/normal.model3.json',
+            'shaoqian/ZiYuXin/ots14_5602/normal/normal.model3.json'
+          ],
+          messages: ['Ziyuxin (Local)', 'Ziyuxin (Skin 2)', 'Ziyuxin (Skin 3)', 'Ziyuxin (Skin 4)']
+        };
+        logger.info('[DEV] Using hardcoded Ziyuxin models as fallback');
+      }
+
+      // Initialize with the first model or stored ID
+      if (
+        model.modelId >=
+        (model.modelIndex.length > 0
+          ? model.modelIndex.length
+          : model.modelList?.models.length || 0)
+      ) {
+        model.modelId = 0;
+      }
+
+      // If we loaded from index, we need to use primeIndexAt logic, otherwise primeListAt logic.
+      // Since the original code for DEV block only had primeListAt, we need to adapt.
+
+      if (loadedIndex && model.modelIndex.length > 0) {
+        // Use Index Logic for DEV if index loaded
+        const primeIndexAt = async (id: number) => {
+          const item = model.modelIndex[id];
+          const loaded = await model.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`, {
+            silent: true
+          });
+          if (!loaded?.json) return false;
+          model.modelId = id;
+          model.currentModelVersion = model.checkModelVersion(loaded.json);
+          model.modelTexturesId = 0;
+          return true;
+        };
+
+        let primed = await primeIndexAt(model.modelId);
+        if (!primed) {
+          for (let i = 0; i < model.modelIndex.length; i++) {
+            if (i === model.modelId) continue;
+            primed = await primeIndexAt(i);
+            if (primed) break;
+          }
+        }
+        return model;
+      } else {
+        // Use List Logic (Hardcoded or loaded from model_list.json)
+        const primeListAt = async (id: number) => {
+          const entry = model.modelList?.models[id];
+          let modelName = entry;
+
+          if (Array.isArray(modelName)) {
+            modelName = modelName[0];
+          }
+          if (typeof modelName !== 'string') return false;
+
+          const configPath = modelName;
+          const loaded = await model.fetchModelJsonWithFallback(configPath, { silent: true });
+          if (!loaded?.json) return false;
+
+          model.modelId = id;
+          model.modelTexturesId = 0;
+          model.currentModelVersion = 3; // Ziyuxin is Cubism 3, others might differ but fallback assumes 3 for hardcoded
+          return true;
+        };
+
+        let primed = await primeListAt(model.modelId);
+        if (!primed) {
+          for (let i = 0; i < (model.modelList?.models.length || 0); i++) {
+            if (i === model.modelId) continue;
+            primed = await primeListAt(i);
+            if (primed) break;
+          }
+        }
+        return model;
+      }
+    }
+
     if (model.useCDN) {
       // Try loading new model_index.json first
       try {
@@ -473,6 +658,66 @@ export class ModelManager {
 
   public get modelTexturesId() {
     return this._modelTexturesId;
+  }
+
+  public getCurrentModelInfo(): {
+    modelId: number;
+    modelTexturesId: number;
+    modelName?: string;
+    modelPath?: string;
+    configFile?: string;
+    version?: number;
+    source: 'index' | 'cdn_list' | 'local_list' | 'unknown';
+  } {
+    const modelId = this.modelId;
+    const modelTexturesId = this.modelTexturesId;
+    const version = this.currentModelVersion || undefined;
+
+    if (this.modelIndex.length > 0) {
+      const item = this.modelIndex[modelId];
+      if (item) {
+        return {
+          modelId,
+          modelTexturesId,
+          modelName: item.name,
+          modelPath: item.path,
+          configFile: item.configFile,
+          version: item.version || version,
+          source: 'index'
+        };
+      }
+    }
+
+    if (this.useCDN && this.modelList && Array.isArray(this.modelList.models)) {
+      const raw: any = (this.modelList.models as any)[modelId];
+      const name = Array.isArray(raw) ? (raw[modelTexturesId] ?? raw[0]) : raw;
+      if (typeof name === 'string' && name.trim()) {
+        return {
+          modelId,
+          modelTexturesId,
+          modelName: name.trim(),
+          modelPath: name.trim(),
+          version,
+          source: 'cdn_list'
+        };
+      }
+    }
+
+    if (this.models.length > 0) {
+      const m = this.models[modelId];
+      if (m) {
+        return {
+          modelId,
+          modelTexturesId,
+          modelName: m.name,
+          modelPath: m.paths?.[modelTexturesId] ?? m.paths?.[0],
+          version,
+          source: 'local_list'
+        };
+      }
+    }
+
+    return { modelId, modelTexturesId, version, source: 'unknown' };
   }
 
   resetCanvas() {
@@ -678,6 +923,17 @@ export class ModelManager {
     const mapping = EXPRESSION_MAPPING[lowerName as LogicExpression];
 
     if (this.currentModelVersion === 3) {
+      const resolvedKey = (mapping?.v3?.name || name || '').toLowerCase().trim();
+      const now = this.nowMs();
+      if (
+        resolvedKey &&
+        resolvedKey === this.lastExpressionKey &&
+        now - this.lastExpressionAt < 2000
+      ) {
+        return;
+      }
+      this.lastExpressionKey = resolvedKey;
+      this.lastExpressionAt = now;
       if (mapping && mapping.v3) {
         setCubism3Expression(mapping.v3.name);
       } else {
@@ -687,6 +943,17 @@ export class ModelManager {
     }
 
     if (this.cubism2model) {
+      const resolvedKey = (mapping?.v2?.name || name || '').toLowerCase().trim();
+      const now = this.nowMs();
+      if (
+        resolvedKey &&
+        resolvedKey === this.lastExpressionKey &&
+        now - this.lastExpressionAt < 2000
+      ) {
+        return;
+      }
+      this.lastExpressionKey = resolvedKey;
+      this.lastExpressionAt = now;
       if (mapping && mapping.v2) {
         (this.cubism2model as any).setExpression(mapping.v2.name);
       } else {
@@ -711,6 +978,17 @@ export class ModelManager {
 
   public setPointOfInterest(x: number, y: number) {
     if (this.currentModelVersion === 3) {
+      const now = this.nowMs();
+      if (
+        now - this.lastPoiAt < 34 &&
+        Math.abs(x - this.lastPoiX) < 0.004 &&
+        Math.abs(y - this.lastPoiY) < 0.004
+      ) {
+        return;
+      }
+      this.lastPoiAt = now;
+      this.lastPoiX = x;
+      this.lastPoiY = y;
       setCubism3PointOfInterest(x, y);
     }
     // Cubism 2 logic can be added here

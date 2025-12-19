@@ -79,7 +79,13 @@ export default defineComponent({
       }
     };
 
-    expose({ hitTest, setPointOfInterest });
+    const getCurrentModelInfo = () => {
+      if (!modelMgr.value) return null;
+      const fn = (modelMgr.value as any).getCurrentModelInfo;
+      return typeof fn === 'function' ? fn.call(modelMgr.value) : null;
+    };
+
+    expose({ hitTest, setPointOfInterest, getCurrentModelInfo });
 
     watch(
       () => props.motionCommand,

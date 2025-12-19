@@ -18,6 +18,9 @@ export type LogicMotion =
   | 'morning' // Greeting
   | 'afternoon' // Casual
   | 'evening' // Tired / Relaxed
+  | 'yawn'
+  | 'play_hair'
+  | 'stretch'
   | 'point_left'
   | 'point_right'
   | 'wave'
@@ -162,6 +165,18 @@ export const MOTION_MAPPING: Record<LogicMotion, MotionMappingConfig> = {
   evening: {
     v2: { group: 'idle' },
     v3: { group: V3_IDLE_GROUP, index: 6 }
+  },
+  yawn: {
+    v2: { group: 'idle' },
+    v3: { group: 'Yawn' }
+  },
+  play_hair: {
+    v2: { group: 'idle' },
+    v3: { group: 'Hair' }
+  },
+  stretch: {
+    v2: { group: 'idle' },
+    v3: { group: 'Stretch' }
   },
   point_left: {
     v2: { group: 'tap_body' },

@@ -10,10 +10,33 @@
     <ScrollProgress />
 
     <!-- Social Links -->
-    <SocialLinks />
+    <SocialLinks :is-pinned="isPinned" @toggle-pin="isPinned = !isPinned" />
 
     <!-- Config Panel -->
     <ConfigPanel v-model="config.mode" class="desktop-config-panel" />
+
+    <!-- Agent Toggle -->
+    <div
+      class="agent-toggle"
+      :class="{ active: showAgent }"
+      @click="showAgent = !showAgent"
+      title="Toggle Agent"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+        <circle cx="12" cy="7" r="4"></circle>
+      </svg>
+    </div>
 
     <!-- Language Switcher -->
     <div class="lang-switch">
@@ -58,7 +81,7 @@
     </main>
 
     <!-- Live2D Agent Widget -->
-    <Agent />
+    <Agent v-if="showAgent" :is-pinned="isPinned" />
   </div>
 </template>
 
@@ -90,6 +113,9 @@ const universeRef = ref<InstanceType<typeof UniverseBackground> | null>(null);
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 const { setLanguage } = languageStore;
+
+const showAgent = ref(true);
+const isPinned = ref(false);
 
 const config = reactive({
   mode: '0' // 0: Ripple, 1: Kaleidoscope, 2: Starburst
@@ -198,7 +224,50 @@ const handleNavigation = (route: string) => {
     padding: 6px 10px;
     gap: 6px;
   }
+}
 
+.agent-toggle {
+  position: fixed;
+  top: 20px;
+  right: 120px;
+  z-index: 60;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  color: #94a3b8;
+  backdrop-filter: blur(8px);
+  transition: all 0.3s ease;
+}
+
+.agent-toggle:hover {
+  background: rgba(56, 189, 248, 0.1);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.agent-toggle.active {
+  color: #38bdf8;
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.2);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+}
+
+@media (max-width: 980px) {
+  .agent-toggle {
+    top: 16px;
+    right: 100px;
+    width: 36px;
+    height: 36px;
+  }
+}
+
+@media (max-width: 980px) {
   .desktop-config-panel {
     display: none;
   }
