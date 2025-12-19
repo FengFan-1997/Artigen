@@ -13,3 +13,9 @@ declare module 'pixi-live2d-display/cubism4' {
 declare module 'pixi.js' {
   export const Application: any;
 }
+
+declare const __DEV_VRM_BASE__: string;
+
+declare module 'virtual:vrm-models' {
+  export const vrmRelativePaths: string[];
+}

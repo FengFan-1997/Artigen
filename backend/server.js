@@ -32,6 +32,141 @@ Tasking rules:
 - If user asks where a UI element is, output highlight: selector.
 `;
 
+const proxyHuggingFace = async (req, res) => {
+  const owner = req.params.owner;
+  const repo = req.params.repo;
+  const ref = req.params.ref;
+  const restParam = req.params.rest;
+  const rest = Array.isArray(restParam) ? restParam.join('/') : restParam || '';
+
+  const candidates = [
+    `https://huggingface.co/${owner}/${repo}/resolve/${ref}/${rest}`,
+    `https://hf-mirror.com/${owner}/${repo}/resolve/${ref}/${rest}`
+  ];
+
+  const headers = {};
+  const forwardKeys = ['range', 'if-none-match', 'if-modified-since', 'accept'];
+  for (const k of forwardKeys) {
+    const v = req.headers[k];
+    if (typeof v === 'string' && v) headers[k] = v;
+  }
+
+  let lastError = null;
+  for (const url of candidates) {
+    try {
+      const upstream = await fetch(url, { method: req.method, headers, redirect: 'follow' });
+      res.status(upstream.status);
+      upstream.headers?.forEach((value, key) => {
+        if (!key) return;
+        const lower = key.toLowerCase();
+        if (
+          lower === 'transfer-encoding' ||
+          lower === 'connection' ||
+          lower === 'keep-alive' ||
+          lower === 'proxy-authenticate' ||
+          lower === 'proxy-authorization' ||
+          lower === 'te' ||
+          lower === 'trailer' ||
+          lower === 'upgrade'
+        ) {
+          return;
+        }
+        res.setHeader(key, value);
+      });
+
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
+
+      if (!upstream.body) {
+        const buf = await upstream.arrayBuffer();
+        res.end(Buffer.from(buf));
+        return;
+      }
+
+      upstream.body.pipe(res);
+      return;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  res.status(502).json({
+    error: 'Failed to proxy HuggingFace resource',
+    detail: lastError ? String(lastError?.message || lastError) : 'unknown'
+  });
+};
+
+app.all('/api/hf/:owner/:repo/resolve/:ref/*rest', proxyHuggingFace);
+
+const hfListCache = new Map();
+const HF_LIST_TTL_MS = 10 * 60 * 1000;
+
+app.get('/api/hf-list/:owner/:repo', async (req, res) => {
+  const owner = req.params.owner;
+  const repo = req.params.repo;
+  const ref = typeof req.query.ref === 'string' && req.query.ref ? req.query.ref : 'main';
+  const prefix = typeof req.query.prefix === 'string' ? req.query.prefix : '';
+  const ext = typeof req.query.ext === 'string' ? req.query.ext : 'vrm';
+
+  const cacheKey = `${owner}/${repo}@${ref}|${prefix}|${ext}`;
+  const now = Date.now();
+  const cached = hfListCache.get(cacheKey);
+  if (cached && now - cached.ts < HF_LIST_TTL_MS) {
+    res.json(cached.data);
+    return;
+  }
+
+  try {
+    const urls = [
+      `https://hf-mirror.com/api/models/${owner}/${repo}`,
+      `https://huggingface.co/api/models/${owner}/${repo}`
+    ];
+
+    let json = null;
+    let lastStatus = 502;
+    for (const url of urls) {
+      try {
+        const upstream = await fetch(url, { method: 'GET', redirect: 'follow' });
+        lastStatus = upstream.status;
+        if (!upstream.ok) continue;
+        json = await upstream.json();
+        break;
+      } catch (e) {
+        json = null;
+      }
+    }
+
+    if (!json) {
+      res.status(lastStatus || 502).json({ error: 'Failed to fetch HuggingFace model metadata' });
+      return;
+    }
+    const siblings = Array.isArray(json?.siblings) ? json.siblings : [];
+    const filenames = siblings
+      .map((x) => x?.rfilename)
+      .filter((x) => typeof x === 'string');
+
+    const normalizedPrefix = (prefix || '').replace(/^\/+/, '').replace(/\/+$/, '');
+    const prefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : '';
+    const suffix = ext ? `.${String(ext).replace(/^\./, '').toLowerCase()}` : '';
+
+    const items = filenames
+      .filter((p) => {
+        if (prefixWithSlash && !p.startsWith(prefixWithSlash)) return false;
+        if (suffix && !p.toLowerCase().endsWith(suffix)) return false;
+        return true;
+      })
+      .sort((a, b) => a.localeCompare(b));
+
+    const data = { owner, repo, ref, prefix: normalizedPrefix, ext: suffix, items };
+    hfListCache.set(cacheKey, { ts: now, data });
+    res.json(data);
+  } catch (e) {
+    res.status(502).json({ error: 'Failed to fetch HuggingFace model metadata', detail: String(e) });
+  }
+});
+
 // --- Helpers ---
 
 const MODEDOC_ROOT = path.resolve(__dirname, '../doc/modeDoc');

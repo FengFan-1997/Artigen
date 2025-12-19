@@ -9,6 +9,7 @@
     @click="handleClick($event)"
   >
     <Live2DWidget
+      v-if="agentType !== 'vrm' || !hasVrmSupport"
       ref="live2dWidgetRef"
       :is-talking="isTalking"
       :is-moving="isMoving"
@@ -23,11 +24,66 @@
       :is-crying="isCrying"
       :is-tired="isTired"
       :expression-override="expressionOverride"
-      :motion-command="motionCommand"
+      :motion-command="effectiveMotionCommand"
       :message="message"
       :current-lang="currentLang"
       @toggle-chat="toggleChat"
     />
+    <VrmWidget
+      v-else
+      :src="currentVrmSrc"
+      :current-lang="currentLang"
+      :is-talking="isTalking"
+      :is-moving="isMoving"
+      :is-hovered="isHovered"
+      :is-dizzy="isDizzy"
+      :is-happy="isHappy"
+      :is-confused="isConfused"
+      :is-angry="isAngry"
+      :is-fainted="isFainted"
+      :is-pouting="isPouting"
+      :is-head-hit="isHeadHit"
+      :is-crying="isCrying"
+      :is-tired="isTired"
+      :expression-override="expressionOverride"
+      :motion-command="effectiveMotionCommand"
+      @loading-change="vrmLoading = $event"
+    />
+
+    <div class="agent-controls">
+      <button class="agent-pill" type="button" @click.stop="cycleAgentType">
+        {{ agentTypeLabel }}
+      </button>
+      <template v-if="agentType === 'vrm' && hasVrmSupport">
+        <button
+          class="agent-pill agent-pill-icon"
+          type="button"
+          :disabled="vrmModels.length <= 1 || vrmLoading || vrmListLoading"
+          @click.stop="prevVrmModel"
+        >
+          ‹
+        </button>
+        <button
+          class="agent-pill agent-pill-model"
+          type="button"
+          :disabled="vrmModels.length <= 1 || vrmLoading || vrmListLoading"
+          @click.stop="nextVrmModel"
+          :title="currentVrmName"
+        >
+          <span v-if="vrmLoading || vrmListLoading" class="agent-pill-spinner"></span>
+          <span class="agent-pill-model-name">{{ currentVrmName }}</span>
+          <span v-if="vrmModelCounter" class="agent-pill-count">{{ vrmModelCounter }}</span>
+        </button>
+        <button
+          class="agent-pill agent-pill-icon"
+          type="button"
+          :disabled="vrmModels.length <= 1 || vrmLoading || vrmListLoading"
+          @click.stop="nextVrmModel"
+        >
+          ›
+        </button>
+      </template>
+    </div>
 
     <Teleport to="body">
       <transition name="pop">
@@ -70,6 +126,8 @@ import { useLanguageStore } from '../../stores/language';
 import { storeToRefs } from 'pinia';
 import Live2DWidget from './Live2DWidget.vue';
 import ChatWindow from './ChatWindow.vue';
+import VrmWidget from './VrmWidget.vue';
+import { vrmRelativePaths } from 'virtual:vrm-models';
 import GuideOverlay from './GuideOverlay.vue';
 import TaskDisplay from './TaskDisplay.vue';
 import ConnectionLine from './ConnectionLine.vue';
@@ -91,6 +149,7 @@ import {
   shouldAskAiForInteraction,
   type InteractionSample
 } from '../utils/semanticEvents';
+import { hitTestByRect } from '../utils/agentHitTest';
 import type { Position, ChatMessage } from '../types';
 import type { AvatarPlanStep } from '../types/avatarPlan';
 
@@ -106,8 +165,7 @@ const props = defineProps<{
 const isMobile = ref(window.innerWidth <= 768);
 const BASE_AGENT_SIZE_MOBILE = 1000;
 const BASE_AGENT_SIZE_DESKTOP = 1200;
-// User requested to scale down by half (from previous 0.35 to 0.175)
-const AGENT_SCALE = 0.175;
+const AGENT_SCALE = 0.125;
 const dynamicScale = ref(1.0);
 const AGENT_SIZE = computed(
   () =>
@@ -119,8 +177,8 @@ const AGENT_SIZE = computed(
 // --- State ---
 const initialSize =
   (window.innerWidth <= 768 ? BASE_AGENT_SIZE_MOBILE * 0.6 : BASE_AGENT_SIZE_DESKTOP) * AGENT_SCALE;
-const x = ref(window.innerWidth - initialSize);
-const y = ref(window.innerHeight - initialSize);
+const x = ref(20);
+const y = ref(window.innerHeight - initialSize - 20);
 const targetX = ref(x.value);
 const targetY = ref(y.value);
 
@@ -143,6 +201,199 @@ const message = ref('Hello! I am Lumina!');
 const motionCommand = ref(''); // New: Motion command from AI
 const expressionOverride = ref('');
 const live2dWidgetRef = ref<any>(null);
+
+const getDefaultAgentType = () => {
+  if (!import.meta.env.DEV) return 'vrm';
+  if (Array.isArray(vrmRelativePaths) && vrmRelativePaths.length > 0) return 'vrm';
+  return 'cubism3';
+};
+
+const agentType = ref<'cubism3' | 'cubism2' | 'vrm'>(getDefaultAgentType());
+const vrmModelIndex = ref(0);
+const vrmLoading = ref(false);
+const vrmListLoading = ref(false);
+const vrmListError = ref('');
+const remoteVrmItems = ref<Array<{ name: string; path: string }>>([]);
+
+const VRM_HF_OWNER = 'Feng1997';
+const VRM_HF_REPO = 'ModelDoc';
+const VRM_HF_REF = 'main';
+const VRM_HF_PREFIX = 'model/Genshin/all';
+
+const devVrmItems = computed(() => {
+  const list = Array.isArray(vrmRelativePaths) ? vrmRelativePaths : [];
+  return list.map((relative) => {
+    const base = (relative.split('/').pop() || relative).replace(/\.vrm$/i, '');
+    return { name: base, path: relative };
+  });
+});
+
+const vrmModels = computed<Array<{ name: string; path: string }>>(() => {
+  if (import.meta.env.DEV) return devVrmItems.value;
+  return remoteVrmItems.value;
+});
+
+const hasVrmSupport = computed(() => vrmModels.value.length > 0);
+
+watch(
+  () => hasVrmSupport.value,
+  (next) => {
+    if (!next && agentType.value === 'vrm') agentType.value = 'cubism3';
+  },
+  { immediate: true }
+);
+
+const currentVrmSrc = computed(() => {
+  const item = vrmModels.value[vrmModelIndex.value];
+  if (!item) return '';
+  if (import.meta.env.DEV) {
+    const abs = `${__DEV_VRM_BASE__}/${item.path}`;
+    return encodeURI(`/@fs${abs}`);
+  }
+  const url = `/api/hf/${VRM_HF_OWNER}/${VRM_HF_REPO}/resolve/${VRM_HF_REF}/${item.path}`;
+  return encodeURI(url);
+});
+
+const agentTypeLabel = computed(() => {
+  if (agentType.value === 'vrm') return '3D';
+  if (agentType.value === 'cubism3') return '2D C3';
+  return '2D C2';
+});
+
+const currentVrmName = computed(() => {
+  const item = vrmModels.value[vrmModelIndex.value];
+  return item?.name || 'Yae Miko';
+});
+
+const vrmModelCounter = computed(() => {
+  const total = vrmModels.value.length;
+  if (total <= 0) return '';
+  const idx = Math.min(total, Math.max(1, vrmModelIndex.value + 1));
+  return `${idx}/${total}`;
+});
+
+const effectiveMotionCommand = computed(() => motionCommand.value);
+
+const VRM_MODEL_INDEX_KEY = 'agent_vrm_model_index_v1';
+const loadVrmModelIndex = () => {
+  const raw = localStorage.getItem(VRM_MODEL_INDEX_KEY);
+  const v = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  if (!Number.isFinite(v)) return null;
+  if (v < 0 || v >= vrmModels.value.length) return null;
+  return v;
+};
+
+const persistVrmModelIndex = () => {
+  try {
+    localStorage.setItem(VRM_MODEL_INDEX_KEY, String(vrmModelIndex.value));
+  } catch {}
+};
+
+const pickDefaultVrmModelIndex = () => {
+  const list = vrmModels.value;
+  if (list.length === 0) return 0;
+  const preferred = list.findIndex((m) => /yae|miko|八重|神子/i.test(m.name));
+  return preferred >= 0 ? preferred : 0;
+};
+
+const loadRemoteVrmModels = async () => {
+  if (import.meta.env.DEV) return;
+  if (vrmListLoading.value) return;
+  vrmListLoading.value = true;
+  vrmListError.value = '';
+  try {
+    const params = new URLSearchParams({
+      ref: VRM_HF_REF,
+      prefix: VRM_HF_PREFIX,
+      ext: 'vrm'
+    });
+    const res = await fetch(`/api/hf-list/${VRM_HF_OWNER}/${VRM_HF_REPO}?${params.toString()}`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const json = await res.json();
+    const items = Array.isArray(json?.items) ? json.items : [];
+    remoteVrmItems.value = items
+      .filter((p: any) => typeof p === 'string' && p.toLowerCase().endsWith('.vrm'))
+      .map((p: string) => {
+        const base = (p.split('/').pop() || p).replace(/\.vrm$/i, '');
+        return { name: base, path: p };
+      });
+  } catch (e: any) {
+    vrmListError.value = typeof e?.message === 'string' ? e.message : String(e);
+    remoteVrmItems.value = [];
+  } finally {
+    vrmListLoading.value = false;
+  }
+};
+
+onMounted(() => {
+  void loadRemoteVrmModels();
+});
+
+watch(
+  () => vrmModels.value.length,
+  () => {
+    if (vrmModels.value.length === 0) return;
+    const stored = loadVrmModelIndex();
+    vrmModelIndex.value = stored ?? pickDefaultVrmModelIndex();
+  },
+  { immediate: true }
+);
+
+const ensureLive2dVersion = async (target: 2 | 3) => {
+  const widget = live2dWidgetRef.value;
+  if (!widget) return;
+  const getVer = widget.getCurrentModelVersion as undefined | (() => 2 | 3 | null);
+  const toggle = widget.toggleModelVersion as undefined | (() => Promise<void> | void);
+  if (!getVer || !toggle) return;
+
+  let cur = getVer();
+  if (cur === target) return;
+
+  for (let i = 0; i < 2; i++) {
+    await toggle();
+    await new Promise((r) => setTimeout(r, 80));
+    cur = getVer();
+    if (cur === target) return;
+  }
+};
+
+const cycleAgentType = async () => {
+  const candidates: Array<'cubism3' | 'cubism2' | 'vrm'> = ['cubism3', 'cubism2'];
+  if (hasVrmSupport.value) candidates.push('vrm');
+
+  const idx = candidates.indexOf(agentType.value);
+  const next = candidates[(idx + 1) % candidates.length] || candidates[0];
+  agentType.value = next;
+  await nextTick();
+
+  if (agentType.value === 'cubism3') await ensureLive2dVersion(3);
+  else if (agentType.value === 'cubism2') await ensureLive2dVersion(2);
+};
+
+const prevVrmModel = () => {
+  const list = vrmModels.value;
+  if (list.length <= 1) return;
+  vrmModelIndex.value = (vrmModelIndex.value - 1 + list.length) % list.length;
+  persistVrmModelIndex();
+};
+
+const nextVrmModel = () => {
+  const list = vrmModels.value;
+  if (list.length <= 1) return;
+  vrmModelIndex.value = (vrmModelIndex.value + 1) % list.length;
+  persistVrmModelIndex();
+};
+
+watch(
+  () => live2dWidgetRef.value,
+  (v) => {
+    if (!v) return;
+    if (agentType.value === 'cubism3') void ensureLive2dVersion(3);
+    else if (agentType.value === 'cubism2') void ensureLive2dVersion(2);
+  }
+);
 
 let expressionOverrideTimeout: number | null = null;
 const setExpressionOverride = (exp: string, durationMs = 1800) => {
@@ -521,6 +772,11 @@ const mouseY = ref(0);
 const eyeOffset = ref<Position>({ x: 0, y: 0 });
 const isFollowingMouse = ref(false);
 const isLookAtOverride = ref(false);
+const nowMs = ref(Date.now());
+const lastUserActivityAt = ref(Date.now());
+const markUserActivity = () => {
+  lastUserActivityAt.value = Date.now();
+};
 
 // Dizziness Logic State
 let dizzyTimeout: number | null = null;
@@ -816,6 +1072,11 @@ async function runAvatarPlanSteps(steps: any[]) {
           const targetXPos = parsePosition(step.x, x.value, window.innerWidth - AGENT_SIZE.value);
           const targetYPos = parsePosition(step.y, y.value, window.innerHeight - AGENT_SIZE.value);
           const targetScale = typeof step.scale === 'number' ? step.scale : dynamicScale.value;
+          const persona = getPersonaText();
+          const isLazy = /(懒散|慵懒|懒|lazy|sleepy|tired)/i.test(persona);
+          const moveFactor = isLazy ? 1.6 : 1;
+          const tiredFactor = isTired.value ? 2.2 : 1;
+          const actualDuration = Math.max(200, Math.round(duration * moveFactor * tiredFactor));
 
           if (step.immediate) {
             isTeleporting.value = true;
@@ -827,10 +1088,12 @@ async function runAvatarPlanSteps(steps: any[]) {
               isTeleporting.value = false;
             }, 50);
           } else {
+            isMoving.value = true;
             x.value = targetXPos;
             y.value = targetYPos;
             dynamicScale.value = targetScale;
-            await delay(duration);
+            await delay(actualDuration);
+            isMoving.value = false;
           }
         } else if (t === 'event') {
           emit('agent-event', { name: step.name, payload: step.payload });
@@ -991,6 +1254,20 @@ const applyAiReply = async (
       console.error('Failed to parse motionTag JSON:', e);
     }
     cleanResponse = cleanResponse.replace(motionJsonExtract.raw, '');
+  }
+
+  const motionCommandMatch = cleanResponse.match(/motionCommand\s*:\s*([^\n]+)/i);
+  if (motionCommandMatch) {
+    const motion = String(motionCommandMatch[1] || '')
+      .trim()
+      .replace(/^["']|["']$/g, '')
+      .toLowerCase();
+    if (motion && (ALLOWED_MOTIONS as readonly string[]).includes(motion)) {
+      const step: AvatarPlanStep = { type: 'motion', motion, duration: 1400 };
+      queuedAvatarSteps.push(step);
+      hasExplicitMotion = true;
+    }
+    cleanResponse = cleanResponse.replace(motionCommandMatch[0], '');
   }
 
   const emotionJsonExtract = extractJsonAfterLabel(cleanResponse, 'emotionTag');
@@ -1268,7 +1545,13 @@ const applyAiReply = async (
 const isBackgroundReacting = ref(false);
 let lastReactionAt = 0;
 const backgroundReactCooldownMs = 4000;
-type PendingReactionEvent = { text: string; type: string; trigger: string; ts: number };
+type PendingReactionEvent = {
+  text: string;
+  type: string;
+  trigger: string;
+  ts: number;
+  payload?: any;
+};
 let pendingBackgroundReactions: PendingReactionEvent[] = [];
 let backgroundReactTimer: number | null = null;
 let lastSystemRecordAt = 0;
@@ -1323,11 +1606,17 @@ const flushBackgroundReaction = async () => {
   }
 };
 
-const reactToSystemEvent = (input: { text: string; type?: string; trigger?: string }) => {
+const reactToSystemEvent = (input: {
+  text: string;
+  type?: string;
+  trigger?: string;
+  payload?: any;
+}) => {
   const text = (input.text || '').trim();
   if (!text) return;
   const type = (input.type || 'event').trim() || 'event';
   const trigger = (input.trigger || 'system').trim() || 'system';
+  const payload = input.payload;
 
   const now = Date.now();
   const shouldRecord = text !== lastSystemRecordText || now - lastSystemRecordAt > 1500;
@@ -1339,7 +1628,7 @@ const reactToSystemEvent = (input: { text: string; type?: string; trigger?: stri
 
   const lastQueued = pendingBackgroundReactions[pendingBackgroundReactions.length - 1];
   if (!lastQueued || lastQueued.text !== text || now - lastQueued.ts > 600) {
-    pendingBackgroundReactions.push({ text, type, trigger, ts: now });
+    pendingBackgroundReactions.push({ text, type, trigger, ts: now, payload });
   }
   if (pendingBackgroundReactions.length > 10) {
     pendingBackgroundReactions = pendingBackgroundReactions.slice(-10);
@@ -1354,6 +1643,7 @@ const reactToSystemEvent = (input: { text: string; type?: string; trigger?: stri
 async function handleSendMessage(text: string) {
   const trimmed = (text || '').trim();
   if (!trimmed) return;
+  markUserActivity();
   messages.value.push({ role: 'user', text: trimmed });
   pushMemoryItem({ role: 'user', text: trimmed });
   isLoading.value = true;
@@ -1427,6 +1717,7 @@ let interactionLastEventAt = 0;
 const markInteractionActivity = () => {
   interactionHasPending = true;
   interactionLastEventAt = Date.now();
+  markUserActivity();
 };
 
 const interactionSamples = ref<InteractionSample[]>([]);
@@ -1502,7 +1793,12 @@ function processInteraction() {
   const desc = buildInteractionSummary(metrics, lang);
   const shouldAskAi = shouldAskAiForInteraction(metrics);
   if (shouldAskAi)
-    void reactToSystemEvent({ text: desc, type: 'interaction_session', trigger: 'interaction' });
+    void reactToSystemEvent({
+      text: desc,
+      type: 'interaction_session',
+      trigger: 'interaction',
+      payload: { metrics }
+    });
   resetInteractionState();
 }
 
@@ -1541,7 +1837,14 @@ const handleClick = (event: MouseEvent) => {
     return;
   }
 
-  const hitAreas = live2dWidgetRef.value?.hitTest(event.clientX, event.clientY) || [];
+  const hitAreas =
+    agentType.value === 'vrm'
+      ? hitTestByRect(
+          { left: x.value, top: y.value, width: AGENT_SIZE.value, height: AGENT_SIZE.value },
+          event.clientX,
+          event.clientY
+        )
+      : live2dWidgetRef.value?.hitTest(event.clientX, event.clientY) || [];
   const normalizedHitAreas = hitAreas.map((h: string) => h.toLowerCase());
   const nowTs = Date.now();
   lastHitTestAt = nowTs;
@@ -1559,12 +1862,8 @@ const handleClick = (event: MouseEvent) => {
     normalizedHitAreas.includes('torso');
 
   if (!isHead && hitAreas.length === 0) {
-    const target = event.currentTarget as HTMLElement | null;
-    if (target) {
-      const rect = target.getBoundingClientRect();
-      const relativeY = event.clientY - rect.top;
-      isHead = relativeY >= 0 && relativeY <= rect.height * 0.3;
-    }
+    const relativeY = event.clientY - y.value;
+    isHead = relativeY >= 0 && relativeY <= AGENT_SIZE.value * 0.3;
   }
 
   if (isHead) {
@@ -1664,7 +1963,13 @@ const handleMouseMove = (event: MouseEvent) => {
     lastInteractionSampleAt = now;
     const includeHit = now - lastHitTestAt >= 150;
     const hitAreas = includeHit
-      ? live2dWidgetRef.value?.hitTest(event.clientX, event.clientY) || []
+      ? agentType.value === 'vrm'
+        ? hitTestByRect(
+            { left: x.value, top: y.value, width: AGENT_SIZE.value, height: AGENT_SIZE.value },
+            event.clientX,
+            event.clientY
+          )
+        : live2dWidgetRef.value?.hitTest(event.clientX, event.clientY) || []
       : undefined;
     if (includeHit) lastHitTestAt = now;
     pushInteractionSample({ ts: now, x: event.clientX, y: event.clientY, hitAreas });
@@ -1712,6 +2017,8 @@ const handleMouseMove = (event: MouseEvent) => {
 const startDrag = (event: MouseEvent | TouchEvent) => {
   if (isInteractionLocked()) return;
   if (isFainted.value || isDizzy.value) return;
+  markUserActivity();
+
   hasDraggedSinceMouseDown.value = false;
   isDragging.value = false;
   isMoving.value = false;
@@ -1814,6 +2121,84 @@ const handleThrowCollisions = () => {
 };
 
 let animationFrameId: number;
+let taskMoveTimeout: number | null = null;
+let lastTaskMoveUpdateAt = 0;
+let taskMovePauseUntil = 0;
+let lastTaskMoveReactAt = 0;
+
+const getIsLazyPersona = () => /(懒散|慵懒|懒|lazy|sleepy|tired)/i.test(getPersonaText());
+
+const pickTaskMoveTarget = (rect: DOMRect) => {
+  const size = AGENT_SIZE.value;
+  const gap = 16;
+  const viewW = window.innerWidth;
+  const viewH = window.innerHeight;
+
+  const preferRight = rect.right + gap + size <= viewW;
+  const preferLeft = rect.left - gap - size >= 0;
+  let targetXPos = preferRight ? rect.right + gap : preferLeft ? rect.left - gap - size : x.value;
+
+  let targetYPos = rect.top + rect.height / 2 - size / 2;
+  targetXPos = Math.max(0, Math.min(targetXPos, viewW - size));
+  targetYPos = Math.max(0, Math.min(targetYPos, viewH - size));
+
+  return { x: targetXPos, y: targetYPos };
+};
+
+const maybeMoveForTask = () => {
+  if (props.isPinned) return;
+  if (plan.value?.status !== 'running') return;
+  if (!guideTargetRect.value) return;
+  if (isDragging.value || isDizzy.value || isFainted.value || isHeadHit.value) return;
+
+  const now = nowMs.value;
+  const isLazy = getIsLazyPersona();
+  if (isLazy && now < taskMovePauseUntil) return;
+
+  const idleForMs = now - lastUserActivityAt.value;
+  const updateEvery = isLazy ? 1200 : 700;
+  if (now - lastTaskMoveUpdateAt < updateEvery) return;
+  lastTaskMoveUpdateAt = now;
+
+  if (isLazy && idleForMs > 2500 && now - lastTaskMoveReactAt > 9000 && Math.random() < 0.25) {
+    lastTaskMoveReactAt = now;
+    taskMovePauseUntil = now + 700 + Math.floor(Math.random() * 800);
+    playMotionInternal('yawn', 1600);
+    if (!message.value && Math.random() < 0.35) {
+      message.value = currentLang.value === 'zh' ? '嗯…我动一下…' : 'Mm… moving…';
+      setTimeout(() => {
+        if (
+          !isTalking.value &&
+          message.value === (currentLang.value === 'zh' ? '嗯…我动一下…' : 'Mm… moving…')
+        )
+          message.value = '';
+      }, 2200);
+    }
+    return;
+  }
+
+  const target = pickTaskMoveTarget(guideTargetRect.value);
+  const dx = target.x - x.value;
+  const dy = target.y - y.value;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 8) return;
+
+  isMoving.value = true;
+  x.value = target.x;
+  y.value = target.y;
+
+  if (taskMoveTimeout) window.clearTimeout(taskMoveTimeout);
+  const base = isLazy ? 3200 : 2000;
+  const tiredFactor = isTired.value ? 1.6 : 1;
+  taskMoveTimeout = window.setTimeout(
+    () => {
+      taskMoveTimeout = null;
+      if (!isDragging.value) isMoving.value = false;
+    },
+    Math.round(base * tiredFactor)
+  );
+};
+
 const updateEyeTracking = () => {
   if (isDizzy.value || isFainted.value || isHeadHit.value) return;
   if (guideTargetRect.value) {
@@ -1836,11 +2221,13 @@ const updateEyeTracking = () => {
 
 const startLoop = () => {
   const loop = () => {
+    nowMs.value = Date.now();
     if (!isDragging.value) {
       checkBoundaries();
       handleThrowCollisions();
     }
     updateEyeTracking();
+    maybeMoveForTask();
 
     if (interactionHasPending && Date.now() - interactionLastEventAt > 1000) {
       interactionHasPending = false;
@@ -1899,6 +2286,24 @@ const startIdleTalk = () => {
   idleTimer = window.setInterval(() => {
     if (chatOpen.value || isMoving.value || message.value || isDragging.value || isFainted.value)
       return;
+    const now = Date.now();
+    const idleForMs = now - lastUserActivityAt.value;
+    const isLazy = getIsLazyPersona();
+    if (
+      isLazy &&
+      idleForMs > 45000 &&
+      !isTired.value &&
+      !isAngry.value &&
+      !isHappy.value &&
+      !isConfused.value
+    ) {
+      setTransient('tired', (v) => (isTired.value = v), 7000);
+      playMotionInternal('mood_sleepy', 2400);
+      if (!message.value && Math.random() < 0.8) {
+        message.value = currentLang.value === 'zh' ? '我先躺一会儿…' : "I'll rest a bit…";
+      }
+      return;
+    }
     if (isTired.value) {
       playMotionInternal('mood_tired');
       if (Math.random() > 0.5) {
@@ -1956,7 +2361,11 @@ let roamTimer: number | null = null;
 const startRoaming = () => {
   moveRandomly();
   roamTimer = window.setInterval(() => {
+    const now = Date.now();
+    const idleForMs = now - lastUserActivityAt.value;
+    const isLazy = getIsLazyPersona();
     if (
+      plan.value?.status !== 'running' &&
       !isDragging.value &&
       !isHovered.value &&
       !isDizzy.value &&
@@ -1964,13 +2373,27 @@ const startRoaming = () => {
       !isHeadHit.value &&
       !chatOpen.value
     ) {
-      moveRandomly();
+      if (!props.isPinned && idleForMs > (isLazy ? 25000 : 9000)) {
+        if (!isLazy || Math.random() < 0.55) moveRandomly();
+      }
     }
   }, MOVE_INTERVAL);
 };
 
 const moveRandomly = () => {
-  const newPos = getRandomPosition(window.innerWidth, window.innerHeight, AGENT_SIZE.value);
+  if (props.isPinned) return;
+  const size = AGENT_SIZE.value;
+  const isLazy = getIsLazyPersona();
+  const newPos = isLazy
+    ? (() => {
+        const radius = 220;
+        const nx = x.value + (Math.random() * 2 - 1) * radius;
+        const ny = y.value + (Math.random() * 2 - 1) * radius;
+        const maxX = window.innerWidth - size;
+        const maxY = window.innerHeight - size;
+        return { x: Math.max(0, Math.min(nx, maxX)), y: Math.max(0, Math.min(ny, maxY)) };
+      })()
+    : getRandomPosition(window.innerWidth, window.innerHeight, size);
   isMoving.value = true;
   x.value = newPos.x;
   y.value = newPos.y;
@@ -2068,7 +2491,7 @@ onMounted(async () => {
   }
 
   startLoop();
-  startRoaming();
+  if (!props.isPinned) startRoaming();
   startIdleTalk();
   await initAuth();
 
@@ -2085,6 +2508,7 @@ onBeforeUnmount(() => {
   if (dizzyTimeout) clearTimeout(dizzyTimeout);
   if (expressionOverrideTimeout) clearTimeout(expressionOverrideTimeout);
   if (backgroundReactTimer) clearTimeout(backgroundReactTimer);
+  if (taskMoveTimeout) clearTimeout(taskMoveTimeout);
   try {
     chatAbortController?.abort();
   } catch {}
@@ -2226,6 +2650,87 @@ watch(
   user-select: none;
   -webkit-user-select: none;
   z-index: 9999;
+}
+
+.agent-controls {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  display: flex;
+  gap: 6px;
+  z-index: 10001;
+}
+
+.agent-pill {
+  height: 30px;
+  padding: 0 10px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.35);
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-pill:hover {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.agent-pill-model {
+  max-width: 220px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 8px;
+}
+
+.agent-pill-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+
+.agent-pill-count {
+  font-size: 11px;
+  opacity: 0.9;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.12);
+  line-height: 1;
+}
+
+.agent-pill-icon {
+  width: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.agent-pill-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: rgba(255, 255, 255, 0.95);
+  animation: agent-spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes agent-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .pop-enter-active,

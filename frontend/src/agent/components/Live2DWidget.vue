@@ -85,7 +85,27 @@ export default defineComponent({
       return typeof fn === 'function' ? fn.call(modelMgr.value) : null;
     };
 
-    expose({ hitTest, setPointOfInterest, getCurrentModelInfo });
+    const getCurrentModelVersion = (): 2 | 3 | null => {
+      const getter = (modelMgr.value as any)?.getCurrentModelVersion;
+      const resolved = typeof getter === 'function' ? getter.call(modelMgr.value) : null;
+      if (resolved === 2 || resolved === 3) return resolved;
+      return null;
+    };
+
+    const toggleModelVersion = async () => {
+      const fn = (modelMgr.value as any)?.toggleModelVersion;
+      if (typeof fn === 'function') {
+        await fn.call(modelMgr.value);
+      }
+    };
+
+    expose({
+      hitTest,
+      setPointOfInterest,
+      getCurrentModelInfo,
+      getCurrentModelVersion,
+      toggleModelVersion
+    });
 
     watch(
       () => props.motionCommand,
@@ -300,11 +320,19 @@ export default defineComponent({
           return `${withResolve}/resolve/main/`;
         };
 
+        const maybeUseHfProxy = (baseUrl: string) => {
+          const trimmed = (baseUrl || '').trim();
+          if (!trimmed) return trimmed;
+          if (import.meta.env.DEV) return trimmed;
+          return trimmed.replace(/^https?:\/\/(www\.)?(huggingface\.co|hf\.co)\//i, '/api/hf/');
+        };
+
         const configBaseRaw = import.meta.env.VITE_LIVE2D_CONFIG_BASE || '/live2d/';
         const configBase = configBaseRaw.endsWith('/') ? configBaseRaw : `${configBaseRaw}/`;
         const assetsBaseRaw = import.meta.env.VITE_LIVE2D_ASSETS_BASE || configBase;
         const hfNormalized = normalizeHfBase(assetsBaseRaw);
-        const assetsBase = hfNormalized.endsWith('/') ? hfNormalized : `${hfNormalized}/`;
+        const proxied = maybeUseHfProxy(hfNormalized);
+        const assetsBase = proxied.endsWith('/') ? proxied : `${proxied}/`;
 
         if (widgetRoot.value) {
           modelMgr.value = await initWidget(
@@ -345,7 +373,7 @@ export default defineComponent({
       } catch (error) {
         console.error('Error loading Live2D widget:', error);
       } finally {
-        modelLoading.value = false;
+        if (!modelMgr.value) modelLoading.value = false;
       }
     };
 

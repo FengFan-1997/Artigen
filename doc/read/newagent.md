@@ -14,7 +14,7 @@
 这个文件夹
 ai的接口我也有一个/Users/fengfan/Documents/newPro/backend/server.js
 下载用pnpm 不要用npm！！！ 能用国内镜像就用国内的，比如淘宝的镜像
-然后为什么本地找不到模型文件，是因为我上传到了huggingface里面，模型文件又多又大，所以我传到了huggingface，但是我本地也存了一份，我放在doc目录下面的/Users/fengfan/Documents/newPro/doc/model
+然后为什么本地找不到模型文件，是因为我上传到了huggingface里面，模型文件又多又大，所以我传到了huggingface 然后我又添加了一些vrm模型  model/模型文件 这是路径，然后现在有一个问题，我这个项目已经部署在了zeabur 这样我国内朋友不挂梯子可以访问，但是我访问到了却无法加载huggingface的模型，因为需要外网才可以请求成功，所以你给我想个办法，让我在国内也能请求到这些模型，比如用清华的镜像啥的，弄一下。然后如果你想看里面究竟有什么 那么也有 我本地也存了一份，我放在doc目录下面的/Users/fengfan/Documents/newPro/doc/model   这里面跟我huggingface的内容一摸一样 
 但是这个只能是参考！不可以上传git以及修改，修改不可以改模型的，因为改了也没用。所以只能作为你的参考
 /Users/fengfan/Documents/newPro/doc/modeDoc这个路径，是我生成的每个模型的性格特点语音动作文档，可以拿这些md当做相应模型给到ai 的角色提示词
 目前后端也有/Users/fengfan/Documents/newPro/backend 然后数据直接存储在我这个文件夹/Users/fengfan/Documents/newPro/backend/memory（先本地存储）我目前没有数据库（每一个账号（目前没有账号系统就直接开发一个，放在/Users/fengfan/Documents/newPro/frontend里面，不用非得放在agent里面，因为这个账号是全局生效我之前的其他项目也许会用到）对应一个数据文本或者文件）
@@ -22,6 +22,16 @@ ai的接口我也有一个/Users/fengfan/Documents/newPro/backend/server.js
 
 OK 必须遵循的结束。
 下方是简要说明（这个也很重要，仅次于上面必须遵守的规则）
+
+
+new rule：
+我用vrm模型，比如我告诉我的agent模型让他帮我在网页上面的某个地方输入文字，然后我的vrm模型能不能听从ai返回的字段或者json然后做出思考->转身->行走->弯腰 这样一连串流程的动作？
+ 其实我的逻辑是这样设想的，首先没有指令的时候，模型会根据自己的性格特点做出一部分动作，比如懒散的性格，就会站一会就蹲下，或者模型被拖拽撞到页面边缘会抱头蹲防，然后喊疼，什么的。然后我们本地没有承接的动作，就数据清洗 然后行为和动作语义化，交给ai，让ai结合人物特点做出动作，然后人物模型实现，然后如果用户给出行为也是一个逻辑，本地有承接就先走本地，本地没有就走ai让ai告诉我们的模型该做出什么反应
+
+
+
+
+
 
 
 

@@ -835,6 +835,12 @@ export class ModelManager {
     return 2;
   }
 
+  public getCurrentModelVersion(): 2 | 3 | null {
+    if (this.currentModelVersion === 2 || this.currentModelVersion === 3)
+      return this.currentModelVersion;
+    return null;
+  }
+
   private async loadIndexModelAt(id: number, expectedVersion?: 2 | 3) {
     const item = this.modelIndex[id];
     if (!item) return null;
