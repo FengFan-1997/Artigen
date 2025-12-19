@@ -27,6 +27,7 @@ const props = defineProps<{
   isTired?: boolean;
   motionCommand?: string;
   expressionOverride?: string;
+  facingLock?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -676,8 +677,9 @@ const updatePresentation = (t: number) => {
   let targetPosY = fainted ? -0.18 : bobAmp * Math.sin(t * bobSpeed);
 
   if (hovered) {
-    targetRotY += pointer.x * 0.25;
-    targetRotX += pointer.y * 0.12;
+    targetRotZ += pointer.x * 0.06;
+    targetRotX += pointer.y * 0.06;
+    targetPosX += pointer.x * 0.02;
   }
 
   if (dizzy) {
@@ -799,19 +801,19 @@ const applyRelaxPose = (vrm: any) => {
   if (hips) hips.rotation.x = 0.02;
 
   if (lUpperArm) {
-    lUpperArm.rotation.z = 1.38;
-    lUpperArm.rotation.x = -0.12;
-    lUpperArm.rotation.y = 0.06;
+    lUpperArm.rotation.z = 0.55;
+    lUpperArm.rotation.x = -0.08;
+    lUpperArm.rotation.y = 0.05;
   }
   if (rUpperArm) {
-    rUpperArm.rotation.z = -1.38;
-    rUpperArm.rotation.x = -0.12;
-    rUpperArm.rotation.y = -0.06;
+    rUpperArm.rotation.z = -0.55;
+    rUpperArm.rotation.x = -0.08;
+    rUpperArm.rotation.y = -0.05;
   }
-  if (lLowerArm) lLowerArm.rotation.z = 0.18;
-  if (rLowerArm) rLowerArm.rotation.z = -0.18;
-  if (lHand) lHand.rotation.z = 0.04;
-  if (rHand) rHand.rotation.z = -0.04;
+  if (lLowerArm) lLowerArm.rotation.z = 0.06;
+  if (rLowerArm) rLowerArm.rotation.z = -0.06;
+  if (lHand) lHand.rotation.z = 0.02;
+  if (rHand) rHand.rotation.z = -0.02;
 };
 
 const ensureFacingCamera = (vrm: any, root: THREE.Object3D) => {
@@ -844,19 +846,55 @@ const ensureFacingCamera = (vrm: any, root: THREE.Object3D) => {
   if (up.lengthSq() < 1e-6 || across.lengthSq() < 1e-6) return;
   up.normalize();
   across.normalize();
-  const forward = up.clone().cross(across).normalize();
-  const desired = new THREE.Vector3(0, 0, 1);
-  if (forward.dot(desired) < 0) {
-    root.rotation.y += Math.PI;
-    root.updateMatrixWorld(true);
-  }
-  facingRootRotationY = root.rotation.y;
+  const forwardRaw = across.clone().cross(up).normalize();
+  const desiredRaw = (() => {
+    if (!camera) return new THREE.Vector3(0, 0, 1);
+    const rootPos = new THREE.Vector3();
+    root.getWorldPosition(rootPos);
+    const dir = camera.position.clone().sub(rootPos);
+    if (dir.lengthSq() < 1e-6) return new THREE.Vector3(0, 0, 1);
+    return dir.normalize();
+  })();
+
+  const forward = forwardRaw.clone();
+  forward.y = 0;
+  const desired = desiredRaw.clone();
+  desired.y = 0;
+  if (forward.lengthSq() < 1e-6 || desired.lengthSq() < 1e-6) return;
+  forward.normalize();
+  desired.normalize();
+
+  const forwardOpp = forward.clone().multiplyScalar(-1);
+  const chosenForward = forward.dot(desired) >= forwardOpp.dot(desired) ? forward : forwardOpp;
+
+  const normalizeAngle = (a: number) => {
+    let x = a;
+    while (x > Math.PI) x -= Math.PI * 2;
+    while (x < -Math.PI) x += Math.PI * 2;
+    return x;
+  };
+
+  const yawFromVec = (v: THREE.Vector3) => Math.atan2(v.x, v.z);
+  const currentYaw = yawFromVec(chosenForward);
+  const desiredYaw = yawFromVec(desired);
+  const deltaYaw = normalizeAngle(desiredYaw - currentYaw);
+
+  root.rotation.y = normalizeAngle(root.rotation.y + deltaYaw);
+  root.updateMatrixWorld(true);
+
+  const parentYaw = (root.parent as any)?.rotation?.y ?? 0;
+  facingRootRotationY = normalizeAngle(root.rotation.y + parentYaw);
 };
 
 const applyFacingLock = () => {
+  if (props.facingLock === false) return;
   if (!mountedRoot) return;
   if (facingRootRotationY == null) return;
-  mountedRoot.rotation.y = facingRootRotationY;
+  const parentYaw = (mountedRoot.parent as any)?.rotation?.y ?? 0;
+  const targetLocalYaw =
+    THREE.MathUtils.euclideanModulo(facingRootRotationY - parentYaw + Math.PI, Math.PI * 2) -
+    Math.PI;
+  mountedRoot.rotation.y = THREE.MathUtils.lerp(mountedRoot.rotation.y, targetLocalYaw, 0.35);
 };
 
 const updateLook = (t: number) => {
@@ -1028,6 +1066,9 @@ const loadModel = async (url: string) => {
       ensureFacingCamera(vrm, toMount);
     } catch {}
     fitToView(toMount);
+    try {
+      ensureFacingCamera(vrm, toMount);
+    } catch {}
 
     clips = Array.isArray(gltf.animations) ? gltf.animations : [];
     if (clips.length > 0) {

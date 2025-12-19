@@ -47,6 +47,7 @@
       :is-tired="isTired"
       :expression-override="expressionOverride"
       :motion-command="effectiveMotionCommand"
+      :facing-lock="!isExecuting"
       @loading-change="vrmLoading = $event"
     />
 
@@ -2405,6 +2406,43 @@ const startLoop = () => {
 
 // Roaming & Idle
 let idleTimer: number | null = null;
+let lastIdleAiAt = 0;
+let idleAiAbortController: AbortController | null = null;
+const maybeTriggerIdleAi = async (idleForMs: number) => {
+  if (chatOpen.value || isMoving.value || message.value || isDragging.value || isFainted.value)
+    return;
+  if (isLoading.value || isExecuting.value || isBackgroundReacting.value) return;
+  if (idleForMs < 65000) return;
+  const now = Date.now();
+  if (now - lastIdleAiAt < 120000) return;
+  if (Math.random() > 0.22) return;
+
+  lastIdleAiAt = now;
+  if (idleAiAbortController) {
+    try {
+      idleAiAbortController.abort();
+    } catch {}
+  }
+  idleAiAbortController = new AbortController();
+
+  try {
+    const seconds = Math.max(0, Math.round(idleForMs / 1000));
+    const idlePrompt =
+      currentLang.value === 'zh'
+        ? `[Idle]: 用户已经 ${seconds} 秒没有操作。请用人设口吻，给一个下一步建议或友好问题，保持简短。`
+        : `[Idle]: The user has been inactive for ${seconds} seconds. Suggest one next action or ask one friendly question in-character, keep it short.`;
+    const agentContext: any = buildAgentContext({ trigger: 'idle', systemEvent: idlePrompt });
+    agentContext.suppressMemorySave = true;
+    const rawResponse = await sendMessageToAI(idlePrompt, [], agentContext, {
+      signal: idleAiAbortController.signal
+    });
+    if (!rawResponse) return;
+    await applyAiReply(rawResponse, { displayInChat: false, speakText: false });
+  } finally {
+    idleAiAbortController = null;
+  }
+};
+
 const startIdleTalk = () => {
   if (idleTimer) clearInterval(idleTimer);
   idleTimer = window.setInterval(() => {
@@ -2412,6 +2450,7 @@ const startIdleTalk = () => {
       return;
     const now = Date.now();
     const idleForMs = now - lastUserActivityAt.value;
+    void maybeTriggerIdleAi(idleForMs);
     const isLazy = getIsLazyPersona();
     if (
       isLazy &&
