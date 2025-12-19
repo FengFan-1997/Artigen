@@ -54,7 +54,7 @@
       <button class="agent-pill" type="button" @click.stop="cycleAgentType">
         {{ agentTypeLabel }}
       </button>
-      <template v-if="agentType === 'vrm' && hasVrmSupport">
+      <template v-if="agentType === 'vrm' && hasVrmSupport && !isExecuting">
         <button
           class="agent-pill agent-pill-icon"
           type="button"
@@ -89,51 +89,53 @@
       <button class="agent-side-btn" type="button" @click.stop="toggleChat" :title="chatTitle">
         💬
       </button>
-      <button
-        class="agent-side-btn"
-        type="button"
-        :disabled="vrmLoading || vrmListLoading"
-        @click.stop="triggerSideMotion('wave')"
-        :title="sideTitles.wave"
-      >
-        👋
-      </button>
-      <button
-        class="agent-side-btn"
-        type="button"
-        :disabled="vrmLoading || vrmListLoading"
-        @click.stop="triggerSideMotion('nod')"
-        :title="sideTitles.nod"
-      >
-        ⤵︎
-      </button>
-      <button
-        class="agent-side-btn"
-        type="button"
-        :disabled="vrmLoading || vrmListLoading"
-        @click.stop="triggerSideMotion('shake_head')"
-        :title="sideTitles.shakeHead"
-      >
-        ⇄
-      </button>
-      <button
-        class="agent-side-btn"
-        type="button"
-        :disabled="vrmLoading || vrmListLoading"
-        @click.stop="triggerSideMotion('stretch')"
-        :title="sideTitles.stretch"
-      >
-        ⤢
-      </button>
-      <button
-        class="agent-side-btn"
-        type="button"
-        :disabled="vrmLoading || vrmListLoading"
-        @click.stop="triggerSideMotion('idle')"
-        :title="sideTitles.reset"
-      >
-        ⟲
-      </button>
+      <template v-if="!isExecuting">
+        <button
+          class="agent-side-btn"
+          type="button"
+          :disabled="vrmLoading || vrmListLoading"
+          @click.stop="triggerSideMotion('wave')"
+          :title="sideTitles.wave"
+        >
+          👋
+        </button>
+        <button
+          class="agent-side-btn"
+          type="button"
+          :disabled="vrmLoading || vrmListLoading"
+          @click.stop="triggerSideMotion('nod')"
+          :title="sideTitles.nod"
+        >
+          ⤵︎
+        </button>
+        <button
+          class="agent-side-btn"
+          type="button"
+          :disabled="vrmLoading || vrmListLoading"
+          @click.stop="triggerSideMotion('shake_head')"
+          :title="sideTitles.shakeHead"
+        >
+          ⇄
+        </button>
+        <button
+          class="agent-side-btn"
+          type="button"
+          :disabled="vrmLoading || vrmListLoading"
+          @click.stop="triggerSideMotion('stretch')"
+          :title="sideTitles.stretch"
+        >
+          ⤢
+        </button>
+        <button
+          class="agent-side-btn"
+          type="button"
+          :disabled="vrmLoading || vrmListLoading"
+          @click.stop="triggerSideMotion('idle')"
+          :title="sideTitles.reset"
+        >
+          ⟲
+        </button>
+      </template>
     </div>
 
     <Teleport to="body">
@@ -1489,6 +1491,10 @@ const applyAiReply = async (
     .replace(/scroll:\s*[^\n]+/g, '')
     .replace(/input:\s*[^\n]+/g, '')
     .replace(/press:\s*[^\n]+/g, '')
+    .replace(/emotionTag:\s*[^\n]+/gi, '')
+    .replace(/expressionTag:\s*[^\n]+/gi, '')
+    .replace(/motionTag:\s*[^\n]+/gi, '')
+    .replace(/avatarPlan:\s*[^\n]+/gi, '')
     .replace(/plan:\s*\[[\s\S]*?\]/g, '')
     .trim();
 

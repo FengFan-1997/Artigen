@@ -441,7 +441,7 @@ const maybeStartIdleMotion = () => {
   if (!idleState.nextAt) scheduleNextIdle();
   if (Date.now() < idleState.nextAt) return;
 
-  const pool = ['idle_shift_weight', 'idle_yawn', 'idle_squat_think'];
+  const pool = ['idle_shift_weight', 'idle_yawn', 'idle_squat_think', 'play_hair', 'stretch'];
   const candidates = pool.filter((n) => n !== idleState.lastName);
   const name =
     (candidates.length ? candidates : pool)[Math.floor(Math.random() * pool.length)] || 'idle_yawn';

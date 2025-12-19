@@ -5,6 +5,11 @@ const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch
 const { readJson, writeJson, VECTORS_FILE, CHATS_FILE, USERS_FILE } = require('./utils/storage');
 const fs = require('fs');
 const path = require('path');
+let HttpsProxyAgent = null;
+try {
+  const mod = require('https-proxy-agent');
+  HttpsProxyAgent = mod?.HttpsProxyAgent || mod?.default || null;
+} catch {}
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -55,11 +60,34 @@ const appendApiKey = (url, apiKey) => {
   return url.includes('?') ? `${url}&key=${apiKey}` : `${url}?key=${apiKey}`;
 };
 
+const getProxyForUrl = (targetUrl) => {
+  const u = (targetUrl || '').toString();
+  const isHttps = /^https:/i.test(u);
+  const isHttp = /^http:/i.test(u);
+  const httpsProxy =
+    process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || '';
+  const httpProxy = process.env.HTTP_PROXY || process.env.http_proxy || '';
+  if (isHttps && httpsProxy) return httpsProxy;
+  if (isHttp && httpProxy) return httpProxy;
+  return '';
+};
+
+const buildFetchAgent = (targetUrl) => {
+  const proxyUrl = getProxyForUrl(targetUrl);
+  if (!proxyUrl || !HttpsProxyAgent) return undefined;
+  try {
+    return new HttpsProxyAgent(proxyUrl);
+  } catch {
+    return undefined;
+  }
+};
+
 const fetchWithTimeout = async (url, options, timeoutMs) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
   try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
+    const agent = buildFetchAgent(url);
+    const res = await fetch(url, { ...options, signal: controller.signal, agent });
     return res;
   } finally {
     clearTimeout(timeoutId);
@@ -186,6 +214,65 @@ const buildOfflineReply = ({ lang, personaName, message }) => {
 
   return `${speakText}\n\nemotionTag: ${JSON.stringify(emotionTag)}\n\navatarPlan: ${JSON.stringify(avatarPlan)}`;
 };
+
+app.get('/api/health', async (req, res) => {
+  const probe = String(req.query.probe || '').trim() === '1';
+  const hasApiKey = !!API_KEY;
+  const proxyUrl =
+    process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || '';
+
+  const result = {
+    ok: true,
+    serverTime: Date.now(),
+    hasApiKey,
+    gemini: {
+      generateUrls: GEMINI_GENERATE_URLS,
+      embedUrls: GEMINI_EMBED_URLS,
+      timeoutMs: GEMINI_TIMEOUT_MS,
+      reactionTimeoutMs: GEMINI_REACTION_TIMEOUT_MS,
+      proxyConfigured: !!proxyUrl,
+      lastProbe: null
+    },
+    modedoc: {
+      root: MODEDOC_ROOT,
+      indexed: false,
+      countZh: 0,
+      countEn: 0
+    }
+  };
+
+  try {
+    const idx = buildModeDocIndex();
+    result.modedoc.indexed = true;
+    result.modedoc.countZh = idx?.zh?.size || 0;
+    result.modedoc.countEn = idx?.en?.size || 0;
+  } catch {}
+
+  if (probe && hasApiKey) {
+    const startedAt = Date.now();
+    try {
+      const { usedUrl, failures } = await callGeminiGenerate({
+        timeoutMs: 5000,
+        contents: [{ role: 'user', parts: [{ text: 'ping' }] }]
+      });
+      result.gemini.lastProbe = {
+        ok: true,
+        usedUrl,
+        elapsedMs: Date.now() - startedAt,
+        failures: Array.isArray(failures) ? failures.slice(0, 3) : []
+      };
+    } catch (e) {
+      result.gemini.lastProbe = {
+        ok: false,
+        elapsedMs: Date.now() - startedAt,
+        error: String(e?.message || e),
+        failures: Array.isArray(e?.failures) ? e.failures.slice(0, 3) : []
+      };
+    }
+  }
+
+  res.json(result);
+});
 
 const DEFAULT_PROJECT_KNOWLEDGE = `
 System: Feng Fan's AI Portfolio (Vue 3 + TypeScript)

@@ -71,6 +71,26 @@
       "role": "agent",
       "text": "W-Wait! I can't connect to my brain! 😖 [DIZZY]\n\nIt looks like a network error... maybe try switching your network node or VPN? We can try again in a bit!\n\n(I did find this in my notes though:)\nHere is some relevant information from the website knowledge base:\n- # Module 3: Intelligence & RAG - Implementation Log\n\n**Date:** 2025-12-11\n**Module:** III. Intelligence & RAG\n**Status:** In Progre...",
       "timestamp": 1765534151595
+    },
+    {
+      "role": "user",
+      "text": "1+1等于多少",
+      "timestamp": 1766140544554
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！\n\nemotionTag: {\"primary\":\"confused\",\"intensity\":0.75,\"secondary\":[]}\n\navatarPlan: [{\"type\":\"pose\",\"motion\":\"shake\",\"expression\":\"confused\",\"duration\":900},{\"type\":\"speak\",\"text\":\"我、我刚刚脑子断线了……你别笑！\",\"bubble\":true,\"duration\":2200}]",
+      "timestamp": 1766140544554
+    },
+    {
+      "role": "user",
+      "text": "1+1等于多少",
+      "timestamp": 1766140567618
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！\n\nemotionTag: {\"primary\":\"confused\",\"intensity\":0.75,\"secondary\":[]}\n\navatarPlan: [{\"type\":\"pose\",\"motion\":\"shake\",\"expression\":\"confused\",\"duration\":900},{\"type\":\"speak\",\"text\":\"我、我刚刚脑子断线了……你别笑！\",\"bubble\":true,\"duration\":2200}]",
+      "timestamp": 1766140567618
     }
   ],
   "debug_user": [

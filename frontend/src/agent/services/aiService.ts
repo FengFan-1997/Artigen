@@ -42,14 +42,8 @@ const safeJsonStringify = (v: any) => {
 };
 
 const resolveTransport = (): AiTransport => {
-  if (
-    REQUEST_TRANSPORT === 'proxy' ||
-    REQUEST_TRANSPORT === 'direct' ||
-    REQUEST_TRANSPORT === 'auto'
-  ) {
-    return REQUEST_TRANSPORT;
-  }
-  return 'auto';
+  if (REQUEST_TRANSPORT === 'direct') return 'direct';
+  return 'proxy';
 };
 
 const buildAgentContextKey = (agentContext: any) => {
@@ -358,30 +352,8 @@ const requestAi = async (input: {
         });
       };
 
-      if (transport === 'proxy') {
-        await tryBackend();
-      } else if (transport === 'direct') {
-        try {
-          await tryDirect();
-        } catch {
-          await tryBackend();
-        }
-      } else {
-        try {
-          await tryBackend();
-        } catch (err) {
-          const body = typeof (err as any)?.body === 'string' ? (err as any).body : '';
-          const looksLikeMissingKey =
-            body.includes('GEMINI_API_KEY is not configured') ||
-            body.includes('MISSING_API_KEY') ||
-            body.includes('not configured on the server');
-          if (GEMINI_API_KEY || looksLikeMissingKey) {
-            await tryDirect();
-          } else {
-            throw err;
-          }
-        }
-      }
+      if (transport === 'direct') await tryDirect();
+      else await tryBackend();
 
       const result = reply || (input.kind === 'chat' ? "I'm not sure what to say..." : '');
       if (input.allowCache) {
