@@ -88,6 +88,7 @@ let motionNodes: {
 let proceduralMotion: { name: string; startedAt: number; duration: number } | null = null;
 let lastMotionCommandAt = 0;
 let idleState: { nextAt: number; lastName: string | null } = { nextAt: 0, lastName: null };
+let facingRootRotationY: number | null = null;
 let lookNodes: {
   head: THREE.Object3D | null;
   neck: THREE.Object3D | null;
@@ -258,6 +259,7 @@ const startLoop = () => {
       if (mixer) mixer.update(delta);
       const elapsed = clock ? clock.getElapsedTime() : 0;
       updatePresentation(elapsed);
+      applyFacingLock();
       updateLook(elapsed);
       maybeStartIdleMotion();
       applyProceduralMotion();
@@ -842,12 +844,19 @@ const ensureFacingCamera = (vrm: any, root: THREE.Object3D) => {
   if (up.lengthSq() < 1e-6 || across.lengthSq() < 1e-6) return;
   up.normalize();
   across.normalize();
-  const forward = across.clone().cross(up).normalize();
+  const forward = up.clone().cross(across).normalize();
   const desired = new THREE.Vector3(0, 0, 1);
   if (forward.dot(desired) < 0) {
     root.rotation.y += Math.PI;
     root.updateMatrixWorld(true);
   }
+  facingRootRotationY = root.rotation.y;
+};
+
+const applyFacingLock = () => {
+  if (!mountedRoot) return;
+  if (facingRootRotationY == null) return;
+  mountedRoot.rotation.y = facingRootRotationY;
 };
 
 const updateLook = (t: number) => {
@@ -955,6 +964,7 @@ const loadModel = async (url: string) => {
   proceduralMotion = null;
   lookNodes = { head: null, neck: null, leftEye: null, rightEye: null, base: {} };
   idleState = { nextAt: 0, lastName: null };
+  facingRootRotationY = null;
 
   for (const child of presentationGroup.children.slice()) {
     try {
