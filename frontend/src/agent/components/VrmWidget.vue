@@ -47,11 +47,73 @@ let clock: THREE.Clock | null = null;
 let frameId: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let presentationGroup: THREE.Group | null = null;
+let mountedRoot: THREE.Object3D | null = null;
 let mixer: THREE.AnimationMixer | null = null;
 let clips: THREE.AnimationClip[] = [];
 let activeAction: THREE.AnimationAction | null = null;
 const pointer = { x: 0, y: 0, active: false };
 let disposeFns: Array<() => void> = [];
+let currentVrm: any | null = null;
+let motionNodes: {
+  hips: THREE.Object3D | null;
+  spine: THREE.Object3D | null;
+  chest: THREE.Object3D | null;
+  rightUpperArm: THREE.Object3D | null;
+  rightLowerArm: THREE.Object3D | null;
+  rightHand: THREE.Object3D | null;
+  leftUpperArm: THREE.Object3D | null;
+  leftLowerArm: THREE.Object3D | null;
+  leftHand: THREE.Object3D | null;
+  rightUpperLeg: THREE.Object3D | null;
+  rightLowerLeg: THREE.Object3D | null;
+  leftUpperLeg: THREE.Object3D | null;
+  leftLowerLeg: THREE.Object3D | null;
+  base: Record<string, { x: number; y: number; z: number }>;
+} = {
+  hips: null,
+  spine: null,
+  chest: null,
+  rightUpperArm: null,
+  rightLowerArm: null,
+  rightHand: null,
+  leftUpperArm: null,
+  leftLowerArm: null,
+  leftHand: null,
+  rightUpperLeg: null,
+  rightLowerLeg: null,
+  leftUpperLeg: null,
+  leftLowerLeg: null,
+  base: {}
+};
+let proceduralMotion: { name: string; startedAt: number; duration: number } | null = null;
+let lastMotionCommandAt = 0;
+let idleState: { nextAt: number; lastName: string | null } = { nextAt: 0, lastName: null };
+let lookNodes: {
+  head: THREE.Object3D | null;
+  neck: THREE.Object3D | null;
+  leftEye: THREE.Object3D | null;
+  rightEye: THREE.Object3D | null;
+  base: {
+    head?: { x: number; y: number; z: number };
+    neck?: { x: number; y: number; z: number };
+    leftEye?: { x: number; y: number; z: number };
+    rightEye?: { x: number; y: number; z: number };
+  };
+} = {
+  head: null,
+  neck: null,
+  leftEye: null,
+  rightEye: null,
+  base: {}
+};
+
+const lookState = {
+  lastPointerAt: 0,
+  autoTargetX: 0,
+  autoTargetY: 0,
+  autoUntil: 0,
+  nextAutoAt: 0
+};
 
 const disposeObject = (obj: THREE.Object3D) => {
   obj.traverse((child) => {
@@ -73,6 +135,7 @@ const disposeObject = (obj: THREE.Object3D) => {
 
 const fitToView = (root: THREE.Object3D) => {
   if (!containerRef.value || !camera) return;
+  root.position.set(0, 0, 0);
   const box = new THREE.Box3().setFromObject(root);
   const size = new THREE.Vector3();
   box.getSize(size);
@@ -80,16 +143,20 @@ const fitToView = (root: THREE.Object3D) => {
   box.getCenter(center);
 
   root.position.sub(center);
+  const fovV = (camera.fov * Math.PI) / 180;
+  const fovH = 2 * Math.atan(Math.tan(fovV / 2) * camera.aspect);
+  const safeFovV = Math.max(0.0001, fovV);
+  const safeFovH = Math.max(0.0001, fovH);
+  const width = Math.max(0.0001, Math.max(size.x, size.z));
+  const height = Math.max(0.0001, size.y);
+  const distV = height / 2 / Math.tan(safeFovV / 2);
+  const distH = width / 2 / Math.tan(safeFovH / 2);
+  const dist = Math.max(distV, distH) * 1.12 + size.z * 0.5;
 
-  const maxDim = Math.max(size.x, size.y, size.z, 0.0001);
-  const fov = (camera.fov * Math.PI) / 180;
-  const viewH = Math.tan(fov / 2) * 2;
-  const dist = (maxDim / viewH) * 1.45;
-
-  camera.position.set(0, maxDim * 0.15, dist);
+  camera.position.set(0, 0, dist);
   camera.lookAt(0, 0, 0);
   camera.near = Math.max(0.01, dist / 100);
-  camera.far = dist * 20;
+  camera.far = dist * 50;
   camera.updateProjectionMatrix();
 };
 
@@ -125,6 +192,7 @@ const ensureThree = () => {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    if (mountedRoot) fitToView(mountedRoot);
   };
   updateSize();
 
@@ -135,24 +203,25 @@ const ensureThree = () => {
   disposeFns.push(() => window.removeEventListener('resize', updateSize));
   window.addEventListener('resize', updateSize);
 
-  const updatePointer = (ev: PointerEvent) => {
+  const updatePointerFromClient = (clientX: number, clientY: number) => {
     if (!containerRef.value) return;
     const rect = containerRef.value.getBoundingClientRect();
     const w = Math.max(1, rect.width);
     const h = Math.max(1, rect.height);
-    const nx = ((ev.clientX - rect.left) / w) * 2 - 1;
-    const ny = -(((ev.clientY - rect.top) / h) * 2 - 1);
+    const nx = ((clientX - rect.left) / w) * 2 - 1;
+    const ny = -(((clientY - rect.top) / h) * 2 - 1);
     pointer.x = THREE.MathUtils.clamp(nx, -1, 1);
     pointer.y = THREE.MathUtils.clamp(ny, -1, 1);
+    const near = Math.abs(nx) <= 1.15 && Math.abs(ny) <= 1.15;
+    pointer.active = near;
+    if (near) lookState.lastPointerAt = Date.now();
   };
 
   const onPointerMove = (ev: PointerEvent) => {
-    pointer.active = true;
-    updatePointer(ev);
+    updatePointerFromClient(ev.clientX, ev.clientY);
   };
   const onPointerEnter = (ev: PointerEvent) => {
-    pointer.active = true;
-    updatePointer(ev);
+    updatePointerFromClient(ev.clientX, ev.clientY);
   };
   const onPointerLeave = () => {
     pointer.active = false;
@@ -164,6 +233,12 @@ const ensureThree = () => {
   disposeFns.push(() => containerRef.value?.removeEventListener('pointermove', onPointerMove));
   disposeFns.push(() => containerRef.value?.removeEventListener('pointerenter', onPointerEnter));
   disposeFns.push(() => containerRef.value?.removeEventListener('pointerleave', onPointerLeave));
+
+  const onWindowPointerMove = (ev: PointerEvent) => {
+    updatePointerFromClient(ev.clientX, ev.clientY);
+  };
+  window.addEventListener('pointermove', onWindowPointerMove, { passive: true });
+  disposeFns.push(() => window.removeEventListener('pointermove', onWindowPointerMove));
 
   return true;
 };
@@ -181,7 +256,16 @@ const startLoop = () => {
     if (renderer && scene && camera) {
       const delta = clock ? clock.getDelta() : 0.016;
       if (mixer) mixer.update(delta);
-      updatePresentation(clock ? clock.getElapsedTime() : 0);
+      const elapsed = clock ? clock.getElapsedTime() : 0;
+      updatePresentation(elapsed);
+      updateLook(elapsed);
+      maybeStartIdleMotion();
+      applyProceduralMotion();
+      if (currentVrm && typeof currentVrm.update === 'function') {
+        try {
+          currentVrm.update(delta);
+        } catch {}
+      }
       renderer.render(scene, camera);
     }
     frameId = requestAnimationFrame(tick);
@@ -196,7 +280,7 @@ const pickClipByHint = (hint: string | undefined) => {
   const exact = clips.find((c) => c.name.toLowerCase() === raw);
   if (exact) return exact;
   const partial = clips.find((c) => c.name.toLowerCase().includes(raw));
-  return partial || clips[0];
+  return partial || null;
 };
 
 const playClip = (clip: THREE.AnimationClip | null) => {
@@ -212,6 +296,356 @@ const playClip = (clip: THREE.AnimationClip | null) => {
     next.reset().play();
   }
   activeAction = next;
+};
+
+const captureMotionNodes = (vrm: any) => {
+  motionNodes = {
+    hips: null,
+    spine: null,
+    chest: null,
+    rightUpperArm: null,
+    rightLowerArm: null,
+    rightHand: null,
+    leftUpperArm: null,
+    leftLowerArm: null,
+    leftHand: null,
+    rightUpperLeg: null,
+    rightLowerLeg: null,
+    leftUpperLeg: null,
+    leftLowerLeg: null,
+    base: {}
+  };
+  const humanoid = vrm?.humanoid;
+  const getBone =
+    typeof humanoid?.getNormalizedBoneNode === 'function'
+      ? (name: string) => humanoid.getNormalizedBoneNode(name)
+      : typeof humanoid?.getBoneNode === 'function'
+        ? (name: string) => humanoid.getBoneNode(name)
+        : () => null;
+
+  const nodes: Array<[keyof typeof motionNodes, string]> = [
+    ['hips', 'hips'],
+    ['spine', 'spine'],
+    ['chest', 'chest'],
+    ['rightUpperArm', 'rightUpperArm'],
+    ['rightLowerArm', 'rightLowerArm'],
+    ['rightHand', 'rightHand'],
+    ['leftUpperArm', 'leftUpperArm'],
+    ['leftLowerArm', 'leftLowerArm'],
+    ['leftHand', 'leftHand'],
+    ['rightUpperLeg', 'rightUpperLeg'],
+    ['rightLowerLeg', 'rightLowerLeg'],
+    ['leftUpperLeg', 'leftUpperLeg'],
+    ['leftLowerLeg', 'leftLowerLeg']
+  ];
+  for (const [key, boneName] of nodes) {
+    const node = getBone(boneName) as THREE.Object3D | null;
+    (motionNodes as any)[key] = node;
+    if (node) {
+      motionNodes.base[String(key)] = {
+        x: node.rotation.x,
+        y: node.rotation.y,
+        z: node.rotation.z
+      };
+    }
+  }
+};
+
+const clearProceduralMotion = () => {
+  proceduralMotion = null;
+  const restore = (key: keyof typeof motionNodes) => {
+    const node = motionNodes[key] as THREE.Object3D | null;
+    const base = motionNodes.base[String(key)];
+    if (!node || !base) return;
+    node.rotation.set(base.x, base.y, base.z);
+  };
+  restore('hips');
+  restore('spine');
+  restore('chest');
+  restore('rightUpperArm');
+  restore('rightLowerArm');
+  restore('rightHand');
+  restore('leftUpperArm');
+  restore('leftLowerArm');
+  restore('leftHand');
+  restore('rightUpperLeg');
+  restore('rightLowerLeg');
+  restore('leftUpperLeg');
+  restore('leftLowerLeg');
+};
+
+const startProceduralMotion = (name: string) => {
+  const n = name.toLowerCase().trim();
+  if (!n) return;
+  const duration =
+    n === 'wave'
+      ? 1400
+      : n === 'nod'
+        ? 1100
+        : n === 'shake_head'
+          ? 1100
+          : n === 'stretch'
+            ? 1400
+            : n === 'clap'
+              ? 1400
+              : n === 'yawn' || n === 'idle_yawn'
+                ? 5200
+                : n === 'idle_squat_think'
+                  ? 7800
+                  : n === 'play_hair'
+                    ? 4200
+                    : n === 'idle_shift_weight'
+                      ? 4600
+                      : 1200;
+  proceduralMotion = { name: n, startedAt: Date.now(), duration };
+  if (activeAction) {
+    try {
+      activeAction.fadeOut(0.1);
+    } catch {}
+  }
+};
+
+const shouldIdle = () => {
+  if (!mountedRoot) return false;
+  if (proceduralMotion) return false;
+  const busy =
+    !!props.isTalking ||
+    !!props.isMoving ||
+    !!props.isHovered ||
+    pointer.active ||
+    !!props.isDizzy ||
+    !!props.isHappy ||
+    !!props.isAngry ||
+    !!props.isConfused ||
+    !!props.isPouting ||
+    !!props.isHeadHit ||
+    !!props.isCrying ||
+    !!props.isTired ||
+    !!props.isFainted;
+  if (busy) return false;
+  if (activeAction && activeAction.isRunning()) return false;
+  if (Date.now() - lastMotionCommandAt < 1400) return false;
+  return true;
+};
+
+const scheduleNextIdle = (minMs = 6500, maxMs = 14500) => {
+  const span = Math.max(0, maxMs - minMs);
+  idleState.nextAt = Date.now() + minMs + Math.floor(Math.random() * (span + 1));
+};
+
+const maybeStartIdleMotion = () => {
+  if (!shouldIdle()) {
+    if (proceduralMotion && pointer.active) clearProceduralMotion();
+    return;
+  }
+  if (!idleState.nextAt) scheduleNextIdle();
+  if (Date.now() < idleState.nextAt) return;
+
+  const pool = ['idle_shift_weight', 'idle_yawn', 'idle_squat_think'];
+  const candidates = pool.filter((n) => n !== idleState.lastName);
+  const name =
+    (candidates.length ? candidates : pool)[Math.floor(Math.random() * pool.length)] || 'idle_yawn';
+  idleState.lastName = name;
+  startProceduralMotion(name);
+  scheduleNextIdle();
+};
+
+const applyProceduralMotion = () => {
+  if (!proceduralMotion) return;
+  const now = Date.now();
+  const elapsedMs = now - proceduralMotion.startedAt;
+  const p = proceduralMotion.duration > 0 ? elapsedMs / proceduralMotion.duration : 1;
+  if (p >= 1) {
+    clearProceduralMotion();
+    return;
+  }
+  const k = Math.sin(Math.PI * p);
+  const w = Math.sin(Math.PI * 6 * p) * k;
+
+  const rUpper = motionNodes.rightUpperArm;
+  const rLower = motionNodes.rightLowerArm;
+  const rHand = motionNodes.rightHand;
+  const lUpper = motionNodes.leftUpperArm;
+  const lLower = motionNodes.leftLowerArm;
+  const lHand = motionNodes.leftHand;
+
+  const baseRU = motionNodes.base['rightUpperArm'];
+  const baseRL = motionNodes.base['rightLowerArm'];
+  const baseRH = motionNodes.base['rightHand'];
+  const baseLU = motionNodes.base['leftUpperArm'];
+  const baseLL = motionNodes.base['leftLowerArm'];
+  const baseLH = motionNodes.base['leftHand'];
+  const hips = motionNodes.hips;
+  const spine = motionNodes.spine;
+  const chest = motionNodes.chest;
+  const rUpperLeg = motionNodes.rightUpperLeg;
+  const rLowerLeg = motionNodes.rightLowerLeg;
+  const lUpperLeg = motionNodes.leftUpperLeg;
+  const lLowerLeg = motionNodes.leftLowerLeg;
+  const baseHips = motionNodes.base['hips'];
+  const baseSpine = motionNodes.base['spine'];
+  const baseChest = motionNodes.base['chest'];
+  const baseRULeg = motionNodes.base['rightUpperLeg'];
+  const baseRLLeg = motionNodes.base['rightLowerLeg'];
+  const baseLULeg = motionNodes.base['leftUpperLeg'];
+  const baseLLLeg = motionNodes.base['leftLowerLeg'];
+
+  const name = proceduralMotion.name;
+  if (name === 'wave') {
+    if (rUpper && baseRU) {
+      rUpper.rotation.x = baseRU.x - 0.55 * k;
+      rUpper.rotation.z = baseRU.z - 0.25 * k;
+    }
+    if (rLower && baseRL) {
+      rLower.rotation.z = baseRL.z - 0.18 * k;
+    }
+    if (rHand && baseRH) {
+      rHand.rotation.y = baseRH.y + 0.65 * w;
+    }
+  } else if (name === 'stretch') {
+    if (lUpper && baseLU) {
+      lUpper.rotation.x = baseLU.x - 0.35 * k;
+      lUpper.rotation.z = baseLU.z + 0.35 * k;
+    }
+    if (rUpper && baseRU) {
+      rUpper.rotation.x = baseRU.x - 0.35 * k;
+      rUpper.rotation.z = baseRU.z - 0.35 * k;
+    }
+    if (lLower && baseLL) lLower.rotation.z = baseLL.z + 0.12 * k;
+    if (rLower && baseRL) rLower.rotation.z = baseRL.z - 0.12 * k;
+    if (lHand && baseLH) lHand.rotation.x = baseLH.x + 0.08 * k;
+    if (rHand && baseRH) rHand.rotation.x = baseRH.x + 0.08 * k;
+  } else if (name === 'nod') {
+    const headBase = lookNodes.base.head;
+    const neckBase = lookNodes.base.neck;
+    if (lookNodes.head && headBase) {
+      lookNodes.head.rotation.x = headBase.x + Math.sin(Math.PI * 6 * p) * 0.22 * k;
+    }
+    if (lookNodes.neck && neckBase) {
+      lookNodes.neck.rotation.x = neckBase.x + Math.sin(Math.PI * 6 * p) * 0.12 * k;
+    }
+  } else if (name === 'shake_head') {
+    const headBase = lookNodes.base.head;
+    const neckBase = lookNodes.base.neck;
+    if (lookNodes.head && headBase) {
+      lookNodes.head.rotation.y = headBase.y + Math.sin(Math.PI * 6 * p) * 0.32 * k;
+    }
+    if (lookNodes.neck && neckBase) {
+      lookNodes.neck.rotation.y = neckBase.y + Math.sin(Math.PI * 6 * p) * 0.18 * k;
+    }
+  } else if (name === 'clap') {
+    const beat = Math.abs(Math.sin(Math.PI * 2.1 * p));
+    const lift = Math.sin(Math.PI * p);
+    const close = beat * lift;
+    if (lUpper && baseLU) {
+      lUpper.rotation.x = baseLU.x - 0.45 * lift;
+      lUpper.rotation.z = baseLU.z - 0.72 * close;
+    }
+    if (rUpper && baseRU) {
+      rUpper.rotation.x = baseRU.x - 0.45 * lift;
+      rUpper.rotation.z = baseRU.z + 0.72 * close;
+    }
+    if (lLower && baseLL) {
+      lLower.rotation.z = baseLL.z - 0.38 * close;
+    }
+    if (rLower && baseRL) {
+      rLower.rotation.z = baseRL.z + 0.38 * close;
+    }
+    if (lHand && baseLH) lHand.rotation.y = baseLH.y + 0.16 * w;
+    if (rHand && baseRH) rHand.rotation.y = baseRH.y - 0.16 * w;
+  } else if (name === 'yawn' || name === 'idle_yawn') {
+    const ease = Math.sin(Math.PI * p);
+    const slow = Math.sin(Math.PI * 2 * p) * ease;
+    if (rUpper && baseRU) {
+      rUpper.rotation.x = baseRU.x - 0.55 * ease;
+      rUpper.rotation.z = baseRU.z - 0.42 * ease;
+    }
+    if (rLower && baseRL) rLower.rotation.z = baseRL.z + 0.35 * ease;
+    if (rHand && baseRH) rHand.rotation.x = baseRH.x + 0.45 * ease;
+    if (lookNodes.head && lookNodes.base.head) {
+      lookNodes.head.rotation.x = lookNodes.base.head.x + 0.12 * ease;
+      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.06 * slow;
+    }
+    if (spine && baseSpine) spine.rotation.x = baseSpine.x - 0.05 * ease;
+    if (chest && baseChest) chest.rotation.x = baseChest.x - 0.03 * ease;
+  } else if (name === 'play_hair') {
+    const ease = Math.sin(Math.PI * p);
+    const sway = Math.sin(Math.PI * 2.2 * p) * ease;
+    if (lUpper && baseLU) {
+      lUpper.rotation.x = baseLU.x - 0.52 * ease;
+      lUpper.rotation.z = baseLU.z - 0.35 * ease;
+    }
+    if (lLower && baseLL) lLower.rotation.z = baseLL.z - 0.25 * ease;
+    if (lHand && baseLH) {
+      lHand.rotation.x = baseLH.x + 0.22 * ease;
+      lHand.rotation.y = baseLH.y + 0.24 * sway;
+    }
+    if (lookNodes.head && lookNodes.base.head) {
+      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.1 * sway;
+      lookNodes.head.rotation.z = lookNodes.base.head.z - 0.08 * ease;
+    }
+  } else if (name === 'idle_shift_weight') {
+    if (hips && baseHips) {
+      hips.rotation.y = baseHips.y + Math.sin(Math.PI * 2 * p) * 0.08 * k;
+      hips.rotation.z = baseHips.z + Math.sin(Math.PI * 1.6 * p) * 0.06 * k;
+    }
+    if (spine && baseSpine) spine.rotation.z = baseSpine.z - Math.sin(Math.PI * 1.6 * p) * 0.04 * k;
+    if (lookNodes.head && lookNodes.base.head) {
+      lookNodes.head.rotation.y = lookNodes.base.head.y + Math.sin(Math.PI * 1.6 * p) * 0.08 * k;
+    }
+  } else if (name === 'idle_squat_think') {
+    const ease = Math.sin(Math.PI * p);
+    const hold =
+      THREE.MathUtils.clamp((p - 0.18) / 0.25, 0, 1) *
+      THREE.MathUtils.clamp((0.92 - p) / 0.25, 0, 1);
+    const squat = ease * (0.65 + 0.35 * hold);
+    if (hips && baseHips) hips.rotation.x = baseHips.x + 0.34 * squat;
+    if (spine && baseSpine) spine.rotation.x = baseSpine.x - 0.12 * squat;
+    if (chest && baseChest) chest.rotation.x = baseChest.x - 0.06 * squat;
+    if (lUpperLeg && baseLULeg) lUpperLeg.rotation.x = baseLULeg.x - 0.68 * squat;
+    if (rUpperLeg && baseRULeg) rUpperLeg.rotation.x = baseRULeg.x - 0.68 * squat;
+    if (lLowerLeg && baseLLLeg) lLowerLeg.rotation.x = baseLLLeg.x + 1.12 * squat;
+    if (rLowerLeg && baseRLLeg) rLowerLeg.rotation.x = baseRLLeg.x + 1.12 * squat;
+    if (lUpper && baseLU) {
+      lUpper.rotation.x = baseLU.x - 0.45 * squat;
+      lUpper.rotation.z = baseLU.z - 0.42 * squat;
+    }
+    if (rUpper && baseRU) {
+      rUpper.rotation.x = baseRU.x - 0.45 * squat;
+      rUpper.rotation.z = baseRU.z + 0.42 * squat;
+    }
+    if (lLower && baseLL) lLower.rotation.z = baseLL.z - 0.55 * squat;
+    if (rLower && baseRL) rLower.rotation.z = baseRL.z + 0.55 * squat;
+    if (lookNodes.head && lookNodes.base.head) {
+      lookNodes.head.rotation.x = lookNodes.base.head.x + 0.08 * squat;
+      lookNodes.head.rotation.z = lookNodes.base.head.z + 0.12 * squat;
+    }
+  }
+};
+
+const handleMotionCommand = (cmd: string | undefined) => {
+  const raw = (cmd || '').toLowerCase().trim();
+  if (!raw) return;
+  lastMotionCommandAt = Date.now();
+  idleState.nextAt = 0;
+  if (raw === 'idle') {
+    startProceduralMotion('idle_shift_weight');
+    return;
+  }
+  if (raw === 'yawn') {
+    startProceduralMotion('yawn');
+    return;
+  }
+  if (raw === 'clap' || raw === 'play_hair' || raw.startsWith('idle_')) {
+    startProceduralMotion(raw);
+    return;
+  }
+  const clip = pickClipByHint(raw);
+  if (clip) {
+    playClip(clip);
+    return;
+  }
+  startProceduralMotion(raw);
 };
 
 const updatePresentation = (t: number) => {
@@ -301,6 +735,206 @@ const updatePresentation = (t: number) => {
   presentationGroup.position.y = THREE.MathUtils.lerp(presentationGroup.position.y, targetPosY, k);
 };
 
+const captureLookNodes = (vrm: any) => {
+  lookNodes = { head: null, neck: null, leftEye: null, rightEye: null, base: {} };
+  const humanoid = vrm?.humanoid;
+  const getBone =
+    typeof humanoid?.getNormalizedBoneNode === 'function'
+      ? (name: string) => humanoid.getNormalizedBoneNode(name)
+      : typeof humanoid?.getBoneNode === 'function'
+        ? (name: string) => humanoid.getBoneNode(name)
+        : () => null;
+
+  const head = getBone('head') as THREE.Object3D | null;
+  const neck = getBone('neck') as THREE.Object3D | null;
+  const leftEye = getBone('leftEye') as THREE.Object3D | null;
+  const rightEye = getBone('rightEye') as THREE.Object3D | null;
+
+  lookNodes.head = head;
+  lookNodes.neck = neck;
+  lookNodes.leftEye = leftEye;
+  lookNodes.rightEye = rightEye;
+
+  if (head) lookNodes.base.head = { x: head.rotation.x, y: head.rotation.y, z: head.rotation.z };
+  if (neck) lookNodes.base.neck = { x: neck.rotation.x, y: neck.rotation.y, z: neck.rotation.z };
+  if (leftEye)
+    lookNodes.base.leftEye = {
+      x: leftEye.rotation.x,
+      y: leftEye.rotation.y,
+      z: leftEye.rotation.z
+    };
+  if (rightEye)
+    lookNodes.base.rightEye = {
+      x: rightEye.rotation.x,
+      y: rightEye.rotation.y,
+      z: rightEye.rotation.z
+    };
+};
+
+const applyRelaxPose = (vrm: any) => {
+  const humanoid = vrm?.humanoid;
+  const getBone =
+    typeof humanoid?.getNormalizedBoneNode === 'function'
+      ? (name: string) => humanoid.getNormalizedBoneNode(name)
+      : typeof humanoid?.getBoneNode === 'function'
+        ? (name: string) => humanoid.getBoneNode(name)
+        : () => null;
+
+  try {
+    if (typeof humanoid?.resetNormalizedPose === 'function') humanoid.resetNormalizedPose();
+  } catch {}
+
+  const lUpperArm = getBone('leftUpperArm') as THREE.Object3D | null;
+  const rUpperArm = getBone('rightUpperArm') as THREE.Object3D | null;
+  const lLowerArm = getBone('leftLowerArm') as THREE.Object3D | null;
+  const rLowerArm = getBone('rightLowerArm') as THREE.Object3D | null;
+  const lHand = getBone('leftHand') as THREE.Object3D | null;
+  const rHand = getBone('rightHand') as THREE.Object3D | null;
+  const spine = getBone('spine') as THREE.Object3D | null;
+  const hips = getBone('hips') as THREE.Object3D | null;
+
+  if (spine) spine.rotation.x = -0.03;
+  if (hips) hips.rotation.x = 0.02;
+
+  if (lUpperArm) {
+    lUpperArm.rotation.z = 1.38;
+    lUpperArm.rotation.x = -0.12;
+    lUpperArm.rotation.y = 0.06;
+  }
+  if (rUpperArm) {
+    rUpperArm.rotation.z = -1.38;
+    rUpperArm.rotation.x = -0.12;
+    rUpperArm.rotation.y = -0.06;
+  }
+  if (lLowerArm) lLowerArm.rotation.z = 0.18;
+  if (rLowerArm) rLowerArm.rotation.z = -0.18;
+  if (lHand) lHand.rotation.z = 0.04;
+  if (rHand) rHand.rotation.z = -0.04;
+};
+
+const ensureFacingCamera = (vrm: any, root: THREE.Object3D) => {
+  const humanoid = vrm?.humanoid;
+  const getBone =
+    typeof humanoid?.getNormalizedBoneNode === 'function'
+      ? (name: string) => humanoid.getNormalizedBoneNode(name)
+      : typeof humanoid?.getBoneNode === 'function'
+        ? (name: string) => humanoid.getBoneNode(name)
+        : () => null;
+
+  const left = (getBone('leftUpperArm') || getBone('leftShoulder')) as THREE.Object3D | null;
+  const right = (getBone('rightUpperArm') || getBone('rightShoulder')) as THREE.Object3D | null;
+  const hips = getBone('hips') as THREE.Object3D | null;
+  const head = (getBone('head') || getBone('neck')) as THREE.Object3D | null;
+  if (!left || !right || !hips || !head) return;
+
+  root.updateMatrixWorld(true);
+  const vLeft = new THREE.Vector3();
+  const vRight = new THREE.Vector3();
+  const vHips = new THREE.Vector3();
+  const vHead = new THREE.Vector3();
+  left.getWorldPosition(vLeft);
+  right.getWorldPosition(vRight);
+  hips.getWorldPosition(vHips);
+  head.getWorldPosition(vHead);
+
+  const up = vHead.clone().sub(vHips);
+  const across = vRight.clone().sub(vLeft);
+  if (up.lengthSq() < 1e-6 || across.lengthSq() < 1e-6) return;
+  up.normalize();
+  across.normalize();
+  const forward = across.clone().cross(up).normalize();
+  const desired = new THREE.Vector3(0, 0, 1);
+  if (forward.dot(desired) < 0) {
+    root.rotation.y += Math.PI;
+    root.updateMatrixWorld(true);
+  }
+};
+
+const updateLook = (t: number) => {
+  const head = lookNodes.head || lookNodes.neck;
+  if (!head) return;
+
+  const now = Date.now();
+  const pointerRecent = now - lookState.lastPointerAt < 900;
+  if (!pointerRecent && now >= lookState.nextAutoAt && now >= lookState.autoUntil) {
+    lookState.autoTargetX = (Math.random() * 2 - 1) * 0.65;
+    lookState.autoTargetY = (Math.random() * 2 - 1) * 0.35;
+    lookState.autoUntil = now + 1100 + Math.floor(Math.random() * 800);
+    lookState.nextAutoAt = now + 4200 + Math.floor(Math.random() * 3800);
+  }
+
+  const usePointer = pointerRecent && pointer.active;
+  const tx = usePointer ? pointer.x : now < lookState.autoUntil ? lookState.autoTargetX : 0;
+  const ty = usePointer ? pointer.y : now < lookState.autoUntil ? lookState.autoTargetY : 0;
+
+  const headYaw = THREE.MathUtils.clamp(tx * 0.38, -0.42, 0.42);
+  const headPitch = THREE.MathUtils.clamp(ty * 0.16 + Math.sin(t * 0.7) * 0.015, -0.2, 0.2);
+
+  const neckYaw = headYaw * 0.55;
+  const neckPitch = headPitch * 0.55;
+
+  const eyeYaw = THREE.MathUtils.clamp(tx * 0.22, -0.28, 0.28);
+  const eyePitch = THREE.MathUtils.clamp(ty * 0.12, -0.18, 0.18);
+
+  const k = 0.09;
+  const headBase = lookNodes.base.head || { x: 0, y: 0, z: 0 };
+  const neckBase = lookNodes.base.neck || { x: 0, y: 0, z: 0 };
+  const leftEyeBase = lookNodes.base.leftEye || { x: 0, y: 0, z: 0 };
+  const rightEyeBase = lookNodes.base.rightEye || { x: 0, y: 0, z: 0 };
+
+  if (lookNodes.head) {
+    lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+      lookNodes.head.rotation.y,
+      headBase.y + headYaw,
+      k
+    );
+    lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+      lookNodes.head.rotation.x,
+      headBase.x + headPitch,
+      k
+    );
+  }
+
+  if (lookNodes.neck) {
+    lookNodes.neck.rotation.y = THREE.MathUtils.lerp(
+      lookNodes.neck.rotation.y,
+      neckBase.y + neckYaw,
+      k
+    );
+    lookNodes.neck.rotation.x = THREE.MathUtils.lerp(
+      lookNodes.neck.rotation.x,
+      neckBase.x + neckPitch,
+      k
+    );
+  }
+
+  if (lookNodes.leftEye) {
+    lookNodes.leftEye.rotation.y = THREE.MathUtils.lerp(
+      lookNodes.leftEye.rotation.y,
+      leftEyeBase.y + eyeYaw,
+      k * 1.35
+    );
+    lookNodes.leftEye.rotation.x = THREE.MathUtils.lerp(
+      lookNodes.leftEye.rotation.x,
+      leftEyeBase.x + eyePitch,
+      k * 1.35
+    );
+  }
+
+  if (lookNodes.rightEye) {
+    lookNodes.rightEye.rotation.y = THREE.MathUtils.lerp(
+      lookNodes.rightEye.rotation.y,
+      rightEyeBase.y + eyeYaw,
+      k * 1.35
+    );
+    lookNodes.rightEye.rotation.x = THREE.MathUtils.lerp(
+      lookNodes.rightEye.rotation.x,
+      rightEyeBase.x + eyePitch,
+      k * 1.35
+    );
+  }
+};
+
 const loadModel = async (url: string) => {
   if (!ensureThree() || !scene || !presentationGroup) return;
   if (!url) return;
@@ -316,6 +950,11 @@ const loadModel = async (url: string) => {
   mixer = null;
   clips = [];
   activeAction = null;
+  currentVrm = null;
+  mountedRoot = null;
+  proceduralMotion = null;
+  lookNodes = { head: null, neck: null, leftEye: null, rightEye: null, base: {} };
+  idleState = { nextAt: 0, lastName: null };
 
   for (const child of presentationGroup.children.slice()) {
     try {
@@ -328,7 +967,11 @@ const loadModel = async (url: string) => {
 
   try {
     const mod = await import('three/examples/jsm/loaders/GLTFLoader.js');
+    const vrmMod = await import('@pixiv/three-vrm');
     const loader = new mod.GLTFLoader();
+    if (typeof vrmMod?.VRMLoaderPlugin === 'function') {
+      loader.register((parser: any) => new vrmMod.VRMLoaderPlugin(parser));
+    }
 
     const gltf = await new Promise<any>((resolve, reject) => {
       loader.load(
@@ -344,15 +987,44 @@ const loadModel = async (url: string) => {
       throw new Error(props.currentLang === 'zh' ? '模型加载失败' : 'Failed to load model');
     }
 
+    const vrm = gltf?.userData?.vrm;
+    if (vrm) {
+      currentVrm = vrm;
+      try {
+        if (vrmMod?.VRMUtils && typeof vrmMod.VRMUtils.rotateVRM0 === 'function') {
+          vrmMod.VRMUtils.rotateVRM0(vrm);
+        }
+      } catch {}
+      try {
+        applyRelaxPose(vrm);
+      } catch {}
+      try {
+        captureLookNodes(vrm);
+      } catch {}
+      try {
+        captureMotionNodes(vrm);
+      } catch {}
+    }
+
     presentationGroup.position.set(0, 0, 0);
     presentationGroup.rotation.set(0, 0, 0);
-    presentationGroup.add(root);
-    fitToView(root);
+    const toMount = vrm?.scene || root;
+    try {
+      toMount.scale.multiplyScalar(1.8);
+    } catch {}
+    presentationGroup.add(toMount);
+    mountedRoot = toMount;
+    try {
+      ensureFacingCamera(vrm, toMount);
+    } catch {}
+    fitToView(toMount);
 
     clips = Array.isArray(gltf.animations) ? gltf.animations : [];
     if (clips.length > 0) {
-      mixer = new THREE.AnimationMixer(root);
-      playClip(pickClipByHint(props.motionCommand));
+      mixer = new THREE.AnimationMixer(toMount);
+      handleMotionCommand(props.motionCommand);
+    } else {
+      handleMotionCommand(props.motionCommand);
     }
 
     startLoop();
@@ -381,7 +1053,7 @@ watch(loading, (v) => emit('loading-change', v), { immediate: true });
 watch(
   () => props.motionCommand,
   () => {
-    playClip(pickClipByHint(props.motionCommand));
+    handleMotionCommand(props.motionCommand);
   }
 );
 

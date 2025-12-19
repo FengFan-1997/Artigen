@@ -9,12 +9,13 @@ const normalizeBaseUrl = (baseUrl: string) => {
 };
 
 const apiBaseUrl = normalizeBaseUrl(
-  import.meta.env.VITE_AGENT_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:8080'
+  import.meta.env.VITE_AGENT_API_BASE || import.meta.env.VITE_API_BASE || ''
 );
 const API_URL = `${apiBaseUrl}/api/chat`;
 const USER_API_URL = `${apiBaseUrl}/api/user`;
 
 type AiRequestKind = 'chat' | 'reaction';
+type AiTransport = 'auto' | 'proxy' | 'direct';
 
 type CachedValue = { value: string; expiresAt: number };
 type InflightValue = { promise: Promise<string>; controller: AbortController; startedAt: number };
@@ -25,12 +26,30 @@ const groupControllers = new Map<AiRequestKind, AbortController>();
 
 const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
+const GEMINI_MODEL = import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+const REQUEST_TRANSPORT = ((import.meta.env.VITE_AGENT_AI_TRANSPORT || '') as string)
+  .trim()
+  .toLowerCase() as AiTransport;
+
 const safeJsonStringify = (v: any) => {
   try {
     return JSON.stringify(v);
   } catch {
     return '';
   }
+};
+
+const resolveTransport = (): AiTransport => {
+  if (
+    REQUEST_TRANSPORT === 'proxy' ||
+    REQUEST_TRANSPORT === 'direct' ||
+    REQUEST_TRANSPORT === 'auto'
+  ) {
+    return REQUEST_TRANSPORT;
+  }
+  return 'auto';
 };
 
 const buildAgentContextKey = (agentContext: any) => {
@@ -43,6 +62,9 @@ const buildAgentContextKey = (agentContext: any) => {
     },
     character: {
       name: agentContext.character?.name
+    },
+    ai: {
+      transport: resolveTransport()
     }
   };
   return safeJsonStringify(keyObj);
@@ -71,6 +93,195 @@ const pruneCache = () => {
       inflight.delete(k);
     }
   }
+};
+
+const buildDirectSystemPrompt = (input: {
+  kind: AiRequestKind;
+  message: string;
+  agentContext?: any;
+  pageContext?: any;
+}) => {
+  const ctx =
+    input.agentContext && typeof input.agentContext === 'object' ? input.agentContext : null;
+  const lang =
+    typeof ctx?.runtime?.lang === 'string' && ctx.runtime.lang.trim()
+      ? ctx.runtime.lang.trim()
+      : 'zh';
+  const personaName =
+    (typeof ctx?.persona?.name === 'string' &&
+      ctx.persona.name.trim() &&
+      ctx.persona.name.trim()) ||
+    (typeof ctx?.character?.name === 'string' &&
+      ctx.character.name.trim() &&
+      ctx.character.name.trim()) ||
+    'Lumina';
+  const personaRules =
+    (typeof ctx?.persona?.rules === 'string' &&
+      ctx.persona.rules.trim() &&
+      ctx.persona.rules.trim()) ||
+    '';
+  const personaProfile =
+    (typeof ctx?.persona?.profile === 'string' &&
+      ctx.persona.profile.trim() &&
+      ctx.persona.profile.trim()) ||
+    '';
+  const allowedMotions = Array.isArray(ctx?.constraints?.allowedMotions)
+    ? ctx.constraints.allowedMotions
+    : [];
+  const allowedExpressions = Array.isArray(ctx?.constraints?.allowedExpressions)
+    ? ctx.constraints.allowedExpressions
+    : [];
+
+  const motionList = allowedMotions.length > 0 ? allowedMotions.join(', ') : '';
+  const exprList = allowedExpressions.length > 0 ? allowedExpressions.join(', ') : '';
+
+  const pageText =
+    typeof input.pageContext === 'string'
+      ? input.pageContext
+      : safeJsonStringify(input.pageContext);
+  const trimmedPage = pageText ? String(pageText).slice(0, 2200) : '';
+
+  const responseRules =
+    lang === 'en'
+      ? [
+          `Always reply as ${personaName}.`,
+          'Append at least one emotional tag at the end like "[HAPPY]".',
+          input.kind === 'reaction'
+            ? 'You MUST include a JSON array after the label "avatarPlan:" on its own line.'
+            : 'If you want the avatar to move, include a JSON array after the label "avatarPlan:" on its own line.',
+          'The "avatarPlan" must be strict JSON and use only allowed motions/expressions.',
+          'Keep avatarPlan steps short (1–6 steps).'
+        ].join('\n- ')
+      : [
+          `始终以 ${personaName} 的口吻回复。`,
+          '每次回复末尾必须带至少一个情绪标签，例如「…… [HAPPY]」。',
+          input.kind === 'reaction'
+            ? '必须输出模型动作：在单独一行输出「avatarPlan:」后面紧跟 JSON 数组。'
+            : '如果需要模型动作，在单独一行输出「avatarPlan:」后面紧跟 JSON 数组。',
+          'avatarPlan 必须是严格 JSON，只能使用允许的 motions/expressions。',
+          'avatarPlan 步骤保持简短（1–6 步）。'
+        ].join('\n- ');
+
+  const constraints =
+    lang === 'en'
+      ? `Allowed motions: ${motionList || '(not provided)'}\nAllowed expressions: ${exprList || '(not provided)'}`
+      : `允许的动作 motions: ${motionList || '（未提供）'}\n允许的表情 expressions: ${exprList || '（未提供）'}`;
+
+  const modeText =
+    input.kind === 'reaction'
+      ? lang === 'en'
+        ? 'Mode: Reaction (fast, minimal text)'
+        : '模式：Reaction（快速，仅简短）'
+      : lang === 'en'
+        ? 'Mode: Chat'
+        : '模式：Chat';
+
+  const personaBlock = personaProfile
+    ? lang === 'en'
+      ? `Persona Profile:\n${personaProfile}`
+      : `人设（Profile）：\n${personaProfile}`
+    : '';
+
+  const personaRulesBlock = personaRules
+    ? lang === 'en'
+      ? `Persona Rules:\n${personaRules}`
+      : `人设（Rules）：\n${personaRules}`
+    : '';
+
+  const pageBlock = trimmedPage
+    ? lang === 'en'
+      ? `Page context (may be noisy):\n${trimmedPage}`
+      : `页面上下文（可能有噪声）：\n${trimmedPage}`
+    : '';
+
+  return [
+    modeText,
+    personaBlock,
+    personaRulesBlock,
+    pageBlock,
+    constraints,
+    `Rules:\n- ${responseRules}`
+  ]
+    .filter((x) => x && String(x).trim())
+    .join('\n\n');
+};
+
+const callBackendChat = async (input: {
+  message: string;
+  userId: string;
+  pageContext: any;
+  agentContext?: any;
+  signal: AbortSignal;
+}) => {
+  const response = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal: input.signal,
+    body: JSON.stringify({
+      message: input.message,
+      userId: input.userId,
+      pageContext: input.pageContext,
+      agentContext: input.agentContext
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    const normalized = errorText.trim();
+    const err = new Error(`API Error: ${response.status} ${normalized}`);
+    (err as any).status = response.status;
+    (err as any).body = normalized;
+    throw err;
+  }
+
+  const data = await response.json();
+  return typeof data?.reply === 'string' ? data.reply : '';
+};
+
+const callGeminiDirect = async (input: {
+  kind: AiRequestKind;
+  message: string;
+  agentContext?: any;
+  pageContext: any;
+  signal: AbortSignal;
+}) => {
+  if (!GEMINI_API_KEY) {
+    throw new Error('MISSING_VITE_GEMINI_API_KEY');
+  }
+
+  const systemPrompt = buildDirectSystemPrompt({
+    kind: input.kind,
+    message: input.message,
+    agentContext: input.agentContext,
+    pageContext: input.pageContext
+  });
+
+  const body = {
+    contents: [
+      { role: 'user', parts: [{ text: systemPrompt }] },
+      { role: 'user', parts: [{ text: input.message }] }
+    ]
+  };
+
+  const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal: input.signal,
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    const normalized = errorText.trim();
+    const err = new Error(`GEMINI_DIRECT_ERROR: ${response.status} ${normalized}`);
+    (err as any).status = response.status;
+    (err as any).body = normalized;
+    throw err;
+  }
+
+  const data = await response.json();
+  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  return typeof rawText === 'string' ? rawText : '';
 };
 
 const requestAi = async (input: {
@@ -124,26 +335,54 @@ const requestAi = async (input: {
   const p = (async () => {
     const timeoutId = window.setTimeout(() => controller.abort(), Math.max(1000, input.timeoutMs));
     try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
+      const transport = resolveTransport();
+      let reply = '';
+
+      const tryBackend = async () => {
+        reply = await callBackendChat({
           message: input.message,
           userId,
           pageContext,
-          agentContext: input.agentContext
-        })
-      });
+          agentContext: input.agentContext,
+          signal: controller.signal
+        });
+      };
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Backend Error:', errorText);
-        throw new Error(`API Error: ${response.status} ${errorText}`);
+      const tryDirect = async () => {
+        reply = await callGeminiDirect({
+          kind: input.kind,
+          message: input.message,
+          agentContext: input.agentContext,
+          pageContext,
+          signal: controller.signal
+        });
+      };
+
+      if (transport === 'proxy') {
+        await tryBackend();
+      } else if (transport === 'direct') {
+        try {
+          await tryDirect();
+        } catch {
+          await tryBackend();
+        }
+      } else {
+        try {
+          await tryBackend();
+        } catch (err) {
+          const body = typeof (err as any)?.body === 'string' ? (err as any).body : '';
+          const looksLikeMissingKey =
+            body.includes('GEMINI_API_KEY is not configured') ||
+            body.includes('MISSING_API_KEY') ||
+            body.includes('not configured on the server');
+          if (GEMINI_API_KEY || looksLikeMissingKey) {
+            await tryDirect();
+          } else {
+            throw err;
+          }
+        }
       }
 
-      const data = await response.json();
-      const reply = typeof data?.reply === 'string' ? data.reply : '';
       const result = reply || (input.kind === 'chat' ? "I'm not sure what to say..." : '');
       if (input.allowCache) {
         const ttlMs =
@@ -155,6 +394,9 @@ const requestAi = async (input: {
         resolvedCache.set(key, { value: result, expiresAt: Date.now() + ttlMs });
       }
       return result;
+    } catch (err) {
+      console.error('AI request failed', err);
+      throw err;
     } finally {
       window.clearTimeout(timeoutId);
       inflight.delete(key);

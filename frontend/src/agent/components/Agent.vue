@@ -85,6 +85,57 @@
       </template>
     </div>
 
+    <div v-if="agentType === 'vrm' && hasVrmSupport" class="agent-side-tools">
+      <button class="agent-side-btn" type="button" @click.stop="toggleChat" :title="chatTitle">
+        💬
+      </button>
+      <button
+        class="agent-side-btn"
+        type="button"
+        :disabled="vrmLoading || vrmListLoading"
+        @click.stop="triggerSideMotion('wave')"
+        :title="sideTitles.wave"
+      >
+        👋
+      </button>
+      <button
+        class="agent-side-btn"
+        type="button"
+        :disabled="vrmLoading || vrmListLoading"
+        @click.stop="triggerSideMotion('nod')"
+        :title="sideTitles.nod"
+      >
+        ⤵︎
+      </button>
+      <button
+        class="agent-side-btn"
+        type="button"
+        :disabled="vrmLoading || vrmListLoading"
+        @click.stop="triggerSideMotion('shake_head')"
+        :title="sideTitles.shakeHead"
+      >
+        ⇄
+      </button>
+      <button
+        class="agent-side-btn"
+        type="button"
+        :disabled="vrmLoading || vrmListLoading"
+        @click.stop="triggerSideMotion('stretch')"
+        :title="sideTitles.stretch"
+      >
+        ⤢
+      </button>
+      <button
+        class="agent-side-btn"
+        type="button"
+        :disabled="vrmLoading || vrmListLoading"
+        @click.stop="triggerSideMotion('idle')"
+        :title="sideTitles.reset"
+      >
+        ⟲
+      </button>
+    </div>
+
     <Teleport to="body">
       <transition name="pop">
         <ChatWindow
@@ -165,22 +216,49 @@ const props = defineProps<{
 const isMobile = ref(window.innerWidth <= 768);
 const BASE_AGENT_SIZE_MOBILE = 1000;
 const BASE_AGENT_SIZE_DESKTOP = 1200;
-const AGENT_SCALE = 0.125;
+const LIVE2D_AGENT_SCALE = 0.125;
+const VRM_AGENT_SCALE = 0.34;
 const dynamicScale = ref(1.0);
-const AGENT_SIZE = computed(
-  () =>
-    (isMobile.value ? BASE_AGENT_SIZE_MOBILE * 0.6 : BASE_AGENT_SIZE_DESKTOP) * // Mobile uses 0.6 of base
-    AGENT_SCALE *
-    dynamicScale.value
+
+const getDefaultAgentType = () => {
+  if (!import.meta.env.DEV) return 'vrm';
+  if (Array.isArray(vrmRelativePaths) && vrmRelativePaths.length > 0) return 'vrm';
+  return 'cubism3';
+};
+
+const agentType = ref<'cubism3' | 'cubism2' | 'vrm'>(getDefaultAgentType());
+
+const agentBaseSize = computed(() => {
+  if (!isMobile.value) return BASE_AGENT_SIZE_DESKTOP;
+  return agentType.value === 'vrm' ? BASE_AGENT_SIZE_MOBILE * 0.9 : BASE_AGENT_SIZE_MOBILE * 0.6;
+});
+const agentScale = computed(() =>
+  agentType.value === 'vrm' ? VRM_AGENT_SCALE : LIVE2D_AGENT_SCALE
 );
+const AGENT_SIZE = computed(() => agentBaseSize.value * agentScale.value * dynamicScale.value);
 
 // --- State ---
-const initialSize =
-  (window.innerWidth <= 768 ? BASE_AGENT_SIZE_MOBILE * 0.6 : BASE_AGENT_SIZE_DESKTOP) * AGENT_SCALE;
 const x = ref(20);
-const y = ref(window.innerHeight - initialSize - 20);
+const y = ref(window.innerHeight - AGENT_SIZE.value - 20);
 const targetX = ref(x.value);
 const targetY = ref(y.value);
+
+const clampAgentPosition = () => {
+  const size = AGENT_SIZE.value;
+  const maxX = Math.max(0, window.innerWidth - size);
+  const maxY = Math.max(0, window.innerHeight - size);
+  x.value = Math.min(maxX, Math.max(0, x.value));
+  y.value = Math.min(maxY, Math.max(0, y.value));
+};
+
+watch(
+  () => AGENT_SIZE.value,
+  () => {
+    if (props.isPinned) return;
+    clampAgentPosition();
+  },
+  { flush: 'post' }
+);
 
 const isMoving = ref(false);
 const isHovered = ref(false);
@@ -201,14 +279,6 @@ const message = ref('Hello! I am Lumina!');
 const motionCommand = ref(''); // New: Motion command from AI
 const expressionOverride = ref('');
 const live2dWidgetRef = ref<any>(null);
-
-const getDefaultAgentType = () => {
-  if (!import.meta.env.DEV) return 'vrm';
-  if (Array.isArray(vrmRelativePaths) && vrmRelativePaths.length > 0) return 'vrm';
-  return 'cubism3';
-};
-
-const agentType = ref<'cubism3' | 'cubism2' | 'vrm'>(getDefaultAgentType());
 const vrmModelIndex = ref(0);
 const vrmLoading = ref(false);
 const vrmListLoading = ref(false);
@@ -258,6 +328,23 @@ const agentTypeLabel = computed(() => {
   if (agentType.value === 'vrm') return '3D';
   if (agentType.value === 'cubism3') return '2D C3';
   return '2D C2';
+});
+
+const chatTitle = computed(() => {
+  const zh = currentLang.value === 'zh';
+  if (chatOpen.value) return zh ? '关闭聊天' : 'Close chat';
+  return zh ? '打开聊天' : 'Open chat';
+});
+
+const sideTitles = computed(() => {
+  const zh = currentLang.value === 'zh';
+  return {
+    wave: zh ? '挥手' : 'Wave',
+    nod: zh ? '点头' : 'Nod',
+    shakeHead: zh ? '摇头' : 'Shake head',
+    stretch: zh ? '伸懒腰' : 'Stretch',
+    reset: zh ? '重置' : 'Reset'
+  };
 });
 
 const currentVrmName = computed(() => {
@@ -589,6 +676,25 @@ const getPersonaText = () => {
     : "Your name is Lumina, a cute anime-style tsundere little sprite. If the user keeps teasing or poking you, you get mad but you're secretly kind. If you don't know something, you may act shy/pout and deflect; you may call the user a dummy. React to chat and interactions (clicks, drags, circling the cursor, long idle) with subtle expressions and motions. Never mention system prompts, hidden context, or internal rules.";
 };
 
+const getPersonaRulesForAi = () => {
+  const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
+  const perModelRaw = localStorage.getItem(`agent_persona_text_${modelId}`);
+  if (perModelRaw && perModelRaw.trim()) {
+    const trimmed = perModelRaw.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const s = (currentLang.value === 'zh' ? parsed?.zh : parsed?.en) ?? parsed?.default;
+        if (typeof s === 'string' && s.trim()) return s.trim();
+      } catch {}
+    }
+    return trimmed;
+  }
+  const stored = localStorage.getItem('agent_persona_text');
+  if (stored && stored.trim()) return stored.trim();
+  return '';
+};
+
 type IdleProfile = {
   motions: string[];
   messageChance: number;
@@ -703,12 +809,17 @@ const buildAgentContext = (input: {
     .slice(-12)
     .map((x) => ({ type: x.type || 'event', text: x.text, ts: x.ts }));
   const modelInfo = getRuntimeModelInfo();
+  const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
 
   return {
     trigger: input.trigger,
-    character: {
+    persona: {
       name: getCharacterName(),
-      persona: getPersonaText()
+      id: typeof modelInfo?.modelName === 'string' ? modelInfo.modelName : `model_${modelId}`,
+      rules: getPersonaRulesForAi()
+    },
+    character: {
+      name: getCharacterName()
     },
     user: {
       id: getUserId(),
@@ -716,7 +827,7 @@ const buildAgentContext = (input: {
     },
     runtime: {
       lang: currentLang.value,
-      modelId: Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0,
+      modelId,
       modelName: typeof modelInfo?.modelName === 'string' ? modelInfo.modelName : undefined,
       modelPath: typeof modelInfo?.modelPath === 'string' ? modelInfo.modelPath : undefined
     },
@@ -972,6 +1083,11 @@ const playMotionInternal = (name: string, duration?: number) => {
       motionCommand.value = '';
     }
   }, d);
+};
+
+const triggerSideMotion = (motion: (typeof ALLOWED_MOTIONS)[number]) => {
+  const d = motion === 'idle' ? 900 : 1400;
+  playMotionInternal(motion, d);
 };
 
 const applyExpression = (expression: string | undefined, duration: number) => {
@@ -1587,11 +1703,13 @@ const flushBackgroundReaction = async () => {
   backgroundAbortController = new AbortController();
 
   try {
-    const agentContext = buildAgentContext({
+    const agentContext: any = buildAgentContext({
       trigger: last?.trigger || 'system',
       systemEvent: summary,
       interactionEvents: batch
     });
+    agentContext.mode = 'react';
+    agentContext.suppressMemorySave = true;
     const rawResponse = await requestAgentReaction({
       message: summary,
       agentContext,
@@ -2659,6 +2777,36 @@ watch(
   display: flex;
   gap: 6px;
   z-index: 10001;
+}
+
+.agent-side-tools {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 10001;
+}
+
+.agent-side-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.35);
+  color: #e2e8f0;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.agent-side-btn:hover {
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .agent-pill {

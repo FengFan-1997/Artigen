@@ -72,5 +72,69 @@
       "text": "W-Wait! I can't connect to my brain! 😖 [DIZZY]\n\nIt looks like a network error... maybe try switching your network node or VPN? We can try again in a bit!\n\n(I did find this in my notes though:)\nHere is some relevant information from the website knowledge base:\n- # Module 3: Intelligence & RAG - Implementation Log\n\n**Date:** 2025-12-11\n**Module:** III. Intelligence & RAG\n**Status:** In Progre...",
       "timestamp": 1765534151595
     }
+  ],
+  "debug_user": [
+    {
+      "role": "user",
+      "text": "快一点",
+      "timestamp": 1766126425602
+    },
+    {
+      "role": "agent",
+      "text": "baka！这已经很快啦！\n\nemotionTag: {\"primary\":\"angry\",\"intensity\":0.85,\"secondary\":[]}\n\navatarPlan: [{\"type\":\"pose\",\"motion\":\"shake\",\"expression\":\"angry\",\"duration\":900},{\"type\":\"speak\",\"text\":\"baka！这已经很快啦！\",\"bubble\":true,\"duration\":2200}]",
+      "timestamp": 1766126425602
+    },
+    {
+      "role": "user",
+      "text": "ping",
+      "timestamp": 1766132781760
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！\n\nemotionTag: {\"primary\":\"confused\",\"intensity\":0.75,\"secondary\":[]}\n\navatarPlan: [{\"type\":\"pose\",\"motion\":\"shake\",\"expression\":\"confused\",\"duration\":900},{\"type\":\"speak\",\"text\":\"我、我刚刚脑子断线了……你别笑！\",\"bubble\":true,\"duration\":2200}]\n\n（我本地找到了这些相关笔记：）\nHere is some relevant information from the website knowledge base:\n- # Module 3: Intelligence & RAG - Implementation Log\n\n**Date:** 2025-12-11\n**Module:** III. Intelligence & RAG\n**Status:** In Progress (Basic Chat & API Connected)\n\n## 1. What was done\n- **Cre...",
+      "timestamp": 1766132781760
+    }
+  ],
+  "guest_5x0fmg8a6": [
+    {
+      "role": "user",
+      "text": "[System Event Batch]\n- (interaction_session) [System Event]: 用户交互片段结束。 时长=15.41s 点击=0次 绕圈角度=-626°(multi) 鼠标速度=very_fast 命中区域=body, face, head, legs 请结合人设决定此刻角色的反应与动作微调。\n\nRespond naturally as the character.",
+      "timestamp": 1766127058018
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！\n\nemotionTag: {\"primary\":\"confused\",\"intensity\":0.75,\"secondary\":[]}\n\navatarPlan: [{\"type\":\"pose\",\"motion\":\"shake\",\"expression\":\"confused\",\"duration\":900},{\"type\":\"speak\",\"text\":\"我、我刚刚脑子断线了……你别笑！\",\"bubble\":true,\"duration\":2200}]\n\n（我本地找到了这些相关笔记：）\nHere is some relevant information from the website knowledge base:\n-   - Pauses \"Roaming\" and \"Dizzy\" checks when the chat is open to prevent the Agent from walking away while you type.\n  - Clears the speech bubble when the chat opens.\n\n## 3. Limitations & Nex...",
+      "timestamp": 1766127058018
+    },
+    {
+      "role": "user",
+      "text": "[System Event Batch]\n- (interaction_session) [System Event]: 用户交互片段结束。 时长=9.97s 点击=0次 绕圈角度=-648°(multi) 鼠标速度=very_fast 命中区域=body, face, head, hair 请结合人设决定此刻角色的反应与动作微调。\n\nRespond naturally as the character.",
+      "timestamp": 1766129746524
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！\n\nemotionTag: {\"primary\":\"confused\",\"intensity\":0.75,\"secondary\":[]}\n\navatarPlan: [{\"type\":\"pose\",\"motion\":\"shake\",\"expression\":\"confused\",\"duration\":900},{\"type\":\"speak\",\"text\":\"我、我刚刚脑子断线了……你别笑！\",\"bubble\":true,\"duration\":2200}]\n\n（我本地找到了这些相关笔记：）\nHere is some relevant information from the website knowledge base:\n-   - Pauses \"Roaming\" and \"Dizzy\" checks when the chat is open to prevent the Agent from walking away while you type.\n  - Clears the speech bubble when the chat opens.\n\n## 3. Limitations & Nex...",
+      "timestamp": 1766129746524
+    },
+    {
+      "role": "user",
+      "text": "sda",
+      "timestamp": 1766130015244
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！\n\nemotionTag: {\"primary\":\"confused\",\"intensity\":0.75,\"secondary\":[]}\n\navatarPlan: [{\"type\":\"pose\",\"motion\":\"shake\",\"expression\":\"confused\",\"duration\":900},{\"type\":\"speak\",\"text\":\"我、我刚刚脑子断线了……你别笑！\",\"bubble\":true,\"duration\":2200}]",
+      "timestamp": 1766130015244
+    },
+    {
+      "role": "user",
+      "text": "[System Event Batch]\n- (interaction_session) [System Event]: 用户交互片段结束。 时长=10.46s 点击=0次 绕圈角度=-394°(full) 鼠标速度=very_fast 命中区域=body, face, head, hair 请结合人设决定此刻角色的反应与动作微调。\n\nRespond naturally as the character.",
+      "timestamp": 1766133374596
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！\n\nemotionTag: {\"primary\":\"confused\",\"intensity\":0.75,\"secondary\":[]}\n\navatarPlan: [{\"type\":\"pose\",\"motion\":\"shake\",\"expression\":\"confused\",\"duration\":900},{\"type\":\"speak\",\"text\":\"我、我刚刚脑子断线了……你别笑！\",\"bubble\":true,\"duration\":2200}]\n\n（我本地找到了这些相关笔记：）\nHere is some relevant information from the website knowledge base:\n-   - Pauses \"Roaming\" and \"Dizzy\" checks when the chat is open to prevent the Agent from walking away while you type.\n  - Clears the speech bubble when the chat opens.\n\n## 3. Limitations & Nex...",
+      "timestamp": 1766133374596
+    }
   ]
 }

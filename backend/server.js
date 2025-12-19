@@ -13,8 +13,179 @@ app.use(cors());
 app.use(express.json());
 
 const API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_GENERATE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
-const GEMINI_EMBED_URL = 'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent';
+const normalizeUrl = (url) => {
+  const s = (url || '').toString().trim();
+  return s.endsWith('/') ? s.slice(0, -1) : s;
+};
+const GEMINI_API_BASE = normalizeUrl(process.env.GEMINI_API_BASE || '');
+const DEFAULT_GEMINI_GENERATE_PATH = 'v1beta/models/gemini-2.5-flash:generateContent';
+const DEFAULT_GEMINI_EMBED_PATH = 'v1beta/models/text-embedding-004:embedContent';
+const GEMINI_GENERATE_URL =
+  process.env.GEMINI_GENERATE_URL ||
+  (GEMINI_API_BASE
+    ? `${GEMINI_API_BASE}/${DEFAULT_GEMINI_GENERATE_PATH}`
+    : 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
+const GEMINI_EMBED_URL =
+  process.env.GEMINI_EMBED_URL ||
+  (GEMINI_API_BASE
+    ? `${GEMINI_API_BASE}/${DEFAULT_GEMINI_EMBED_PATH}`
+    : 'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent');
+const GEMINI_TIMEOUT_MS = (() => {
+  const v = Number.parseInt(process.env.GEMINI_TIMEOUT_MS || '', 10);
+  return Number.isFinite(v) && v > 1000 ? v : 12000;
+})();
+const GEMINI_REACTION_TIMEOUT_MS = (() => {
+  const v = Number.parseInt(process.env.GEMINI_REACTION_TIMEOUT_MS || '', 10);
+  return Number.isFinite(v) && v > 1000 ? v : 6000;
+})();
+
+const parseUrlList = (raw, fallback) => {
+  const list = (raw || '')
+    .toString()
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return list.length ? list : fallback;
+};
+const GEMINI_GENERATE_URLS = parseUrlList(process.env.GEMINI_GENERATE_URLS, [GEMINI_GENERATE_URL]);
+const GEMINI_EMBED_URLS = parseUrlList(process.env.GEMINI_EMBED_URLS, [GEMINI_EMBED_URL]);
+
+const appendApiKey = (url, apiKey) => {
+  if (!apiKey) return url;
+  return url.includes('?') ? `${url}&key=${apiKey}` : `${url}?key=${apiKey}`;
+};
+
+const fetchWithTimeout = async (url, options, timeoutMs) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+const callGeminiGenerate = async ({ contents, timeoutMs }) => {
+  const failures = [];
+  for (const baseUrl of GEMINI_GENERATE_URLS) {
+    const url = appendApiKey(baseUrl, API_KEY);
+    const startedAt = Date.now();
+    try {
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents })
+        },
+        timeoutMs
+      );
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '');
+        failures.push({
+          url: baseUrl,
+          status: response.status,
+          statusText: response.statusText,
+          elapsedMs: Date.now() - startedAt,
+          bodyPreview: String(errBody || '').slice(0, 1800)
+        });
+        continue;
+      }
+
+      const data = await response.json();
+      return { data, usedUrl: baseUrl, failures };
+    } catch (e) {
+      failures.push({
+        url: baseUrl,
+        status: 0,
+        statusText: '',
+        elapsedMs: Date.now() - startedAt,
+        error: String(e?.message || e)
+      });
+    }
+  }
+  const err = new Error('All Gemini generateContent endpoints failed');
+  err.failures = failures;
+  throw err;
+};
+
+const callGeminiEmbed = async ({ body, timeoutMs }) => {
+  const failures = [];
+  for (const baseUrl of GEMINI_EMBED_URLS) {
+    const url = appendApiKey(baseUrl, API_KEY);
+    const startedAt = Date.now();
+    try {
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        },
+        timeoutMs
+      );
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '');
+        failures.push({
+          url: baseUrl,
+          status: response.status,
+          statusText: response.statusText,
+          elapsedMs: Date.now() - startedAt,
+          bodyPreview: String(errBody || '').slice(0, 1800)
+        });
+        continue;
+      }
+
+      const data = await response.json();
+      return { data, usedUrl: baseUrl, failures };
+    } catch (e) {
+      failures.push({
+        url: baseUrl,
+        status: 0,
+        statusText: '',
+        elapsedMs: Date.now() - startedAt,
+        error: String(e?.message || e)
+      });
+    }
+  }
+  const err = new Error('All Gemini embedContent endpoints failed');
+  err.failures = failures;
+  throw err;
+};
+
+const buildOfflineReply = ({ lang, personaName, message }) => {
+  const zh = lang === 'zh';
+  const text = (message || '').toString();
+  let primary = 'confused';
+  let intensity = 0.75;
+  let speakText = zh ? '我、我刚刚脑子断线了……你别笑！' : "M-My brain went offline... don't laugh!";
+
+  if (/快一点|快点|hurry|faster/i.test(text)) {
+    primary = 'angry';
+    intensity = 0.85;
+    speakText = zh ? 'baka！这已经很快啦！' : "Baka! I'm already fast!";
+  } else if (/谢谢|thx|thank/i.test(text)) {
+    primary = 'shy';
+    intensity = 0.6;
+    speakText = zh ? '哼……才、才不是为了你呢。' : "Hmph... it's not like I did it for you.";
+  } else if (/你好|hello|hi\b/i.test(text)) {
+    primary = 'happy';
+    intensity = 0.55;
+    speakText = zh ? '哼，来啦来啦。有什么事快说。' : "Hmph. I'm here. Say it already.";
+  }
+
+  const emotionTag = { primary, intensity, secondary: [] };
+  const motion = primary === 'happy' ? 'happy' : primary === 'shy' ? 'friend' : 'shake';
+  const avatarPlan = [
+    { type: 'pose', motion, expression: primary, duration: 900 },
+    { type: 'speak', text: speakText, bubble: true, duration: 2200 }
+  ];
+
+  return `${speakText}\n\nemotionTag: ${JSON.stringify(emotionTag)}\n\navatarPlan: ${JSON.stringify(avatarPlan)}`;
+};
 
 const DEFAULT_PROJECT_KNOWLEDGE = `
 System: Feng Fan's AI Portfolio (Vue 3 + TypeScript)
@@ -274,28 +445,14 @@ const getEmbedding = async (text) => {
       console.error('GEMINI_API_KEY is not configured. Skipping embedding.');
       return null;
     }
-    // Set a timeout for the fetch request
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-
-    const response = await fetch(`${GEMINI_EMBED_URL}?key=${API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: "models/text-embedding-004",
+    const { data } = await callGeminiEmbed({
+      timeoutMs: 10000,
+      body: {
+        model: 'models/text-embedding-004',
         content: { parts: [{ text }] }
-      }),
-      signal: controller.signal
+      }
     });
-    
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`Embedding API Error: ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    return data.embedding.values;
+    return data?.embedding?.values || null;
   } catch (error) {
     console.error('Error getting embedding:', error);
     return null;
@@ -322,24 +479,11 @@ const summarizeHistory = async (oldSummary, newMessages) => {
       Output a concise summary paragraph.
     `;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-    
-    const response = await fetch(`${GEMINI_GENERATE_URL}?key=${API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }]
-      }),
-      signal: controller.signal
+    const { data } = await callGeminiGenerate({
+      timeoutMs: 10000,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
     });
-    
-    clearTimeout(timeoutId);
-
-    if (!response.ok) return oldSummary; // Fail safe
-    
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || oldSummary;
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text || oldSummary;
   } catch (e) {
     console.error("Summarization failed:", e);
     return oldSummary;
@@ -501,21 +645,10 @@ app.post('/api/generate', async (req, res) => {
       return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
     }
 
-    const response = await fetch(`${GEMINI_GENERATE_URL}?key=${API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }]
-      })
+    const { data } = await callGeminiGenerate({
+      timeoutMs: GEMINI_TIMEOUT_MS,
+      contents: [{ parts: [{ text: prompt }] }]
     });
-
-    if (!response.ok) {
-       const errorText = await response.text();
-       console.error('Gemini API Error:', response.status, errorText);
-       return res.status(response.status).json({ error: `Gemini API Error: ${response.statusText}` });
-    }
-
-    const data = await response.json();
     res.json(data);
 
   } catch (error) {
@@ -527,12 +660,6 @@ app.post('/api/generate', async (req, res) => {
 // 3. Chat with RAG & Memory
 app.post('/api/chat', async (req, res) => {
   try {
-    if (!API_KEY) {
-      return res.status(500).json({
-        error: 'GEMINI_API_KEY is not configured on the server.',
-        code: 'MISSING_API_KEY'
-      });
-    }
     const { message, userId, history, pageContext, projectKnowledge, agentContext } = req.body;
     
     if (!message) return res.status(400).json({ error: 'Message is required' });
@@ -1059,33 +1186,39 @@ app.post('/api/chat', async (req, res) => {
     // Call Gemini
     let reply = "";
     try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout for generation
-
-        const response = await fetch(`${GEMINI_GENERATE_URL}?key=${API_KEY}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents }),
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          throw new Error(`API Error: ${response.status}`);
+        if (!API_KEY) throw new Error('MISSING_API_KEY');
+        const timeoutMs = reactionMode ? GEMINI_REACTION_TIMEOUT_MS : GEMINI_TIMEOUT_MS;
+        const startedAt = Date.now();
+        const { data, usedUrl, failures } = await callGeminiGenerate({ contents, timeoutMs });
+        reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "I'm speechless!";
+        if (Array.isArray(failures) && failures.length > 0) {
+          console.warn('Gemini generateContent partial failures', {
+            usedUrl,
+            reactionMode,
+            timeoutMs,
+            elapsedMs: Date.now() - startedAt,
+            failures
+          });
         }
-
-        const data = await response.json();
-        reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "I'm speechless!";
     } catch (apiError) {
-        console.error("Gemini API Failed:", apiError.message);
-        
-        // Smart Error Handling for Network Issues
-        reply = "W-Wait! I can't connect to my brain! 😖 [DIZZY]\n\nIt looks like a network error... maybe try switching your network node or VPN? We can try again in a bit!";
-        
-        // Mock response based on keyword for testing RAG fallback
+        const errMsg = typeof apiError?.message === 'string' ? apiError.message : String(apiError);
+        console.error("Gemini API Failed:", {
+          message: errMsg,
+          name: apiError?.name,
+          code: apiError?.code,
+          urls: GEMINI_GENERATE_URLS,
+          failures: apiError?.failures,
+          reactionMode,
+          hasApiKey: !!API_KEY
+        });
+
+        const isZh = lang === 'zh';
+        reply = buildOfflineReply({ lang, personaName, message });
         if (contextText) {
-             reply += "\n\n(I did find this in my notes though:)\n" + contextText.substring(0, 200) + "...";
+          const hint = contextText.substring(0, 260);
+          reply += `\n\n${isZh ? '（我本地找到了这些相关笔记：）' : '(I did find these local notes:)'}\n${hint}${
+            contextText.length > hint.length ? '...' : ''
+          }`;
         }
     }
 
@@ -1114,25 +1247,10 @@ app.post('/api/generate', async (req, res) => {
        return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-    const response = await fetch(`${GEMINI_GENERATE_URL}?key=${API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }]
-      }),
-      signal: controller.signal
+    const { data } = await callGeminiGenerate({
+      timeoutMs: 30000,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
     });
-    
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
     res.json(data);
   } catch (error) {
     console.error('Error in /api/generate:', error);

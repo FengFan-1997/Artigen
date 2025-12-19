@@ -512,6 +512,12 @@ watch(
   outline: none;
   transition: all 0.2s;
   background: #f9fafb;
+  color: #111827;
+  caret-color: #111827;
+}
+
+.chat-input-area input::placeholder {
+  color: rgba(17, 24, 39, 0.55);
 }
 
 .chat-input-area input:focus {
