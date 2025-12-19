@@ -381,6 +381,33 @@ export class ModelManager {
     return false;
   }
 
+  public async loadAdjacentModels() {
+    if (this.modelIndex.length === 0) return;
+
+    const count = this.modelIndex.length;
+    const current = this.modelId;
+
+    const loadAt = async (id: number) => {
+      if (id < 0 || id >= count) return;
+      const item = this.modelIndex[id];
+      if (!item) return;
+      // Just fetch json to cache it
+      await this.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`, { silent: true });
+    };
+
+    // Load 3 left and 3 right
+    const targets = new Set<number>();
+    for (let i = 1; i <= 3; i++) {
+      targets.add((current - i + count) % count);
+      targets.add((current + i) % count);
+    }
+
+    for (const id of targets) {
+      if (id === current) continue;
+      await loadAt(id);
+    }
+  }
+
   public static async initCheck(config: Config, models: ModelList[] = []) {
     const model = new ModelManager(config, models);
 
@@ -460,25 +487,49 @@ export class ModelManager {
       if (loadedIndex && model.modelIndex.length > 0) {
         // Use Index Logic for DEV if index loaded
         const primeIndexAt = async (id: number) => {
+          if (id < 0 || id >= model.modelIndex.length) return false;
           const item = model.modelIndex[id];
           const loaded = await model.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`, {
             silent: true
           });
           if (!loaded?.json) return false;
-          model.modelId = id;
-          model.currentModelVersion = model.checkModelVersion(loaded.json);
-          model.modelTexturesId = 0;
+
+          if (id === model.modelId) {
+            model.currentModelVersion = model.checkModelVersion(loaded.json);
+            model.modelTexturesId = 0;
+          }
           return true;
         };
 
         let primed = await primeIndexAt(model.modelId);
+
+        // Preload defaults (Cubism 3: dafeng_6, Cubism 2: index 2)
+        const dafengIndex = model.modelIndex.findIndex((m) => m.name === 'dafeng_6');
+        if (dafengIndex >= 0 && dafengIndex !== model.modelId) {
+          await primeIndexAt(dafengIndex);
+        }
+        if (model.modelId !== 2 && model.modelIndex.length > 2) {
+          await primeIndexAt(2);
+        }
+
         if (!primed) {
-          for (let i = 0; i < model.modelIndex.length; i++) {
-            if (i === model.modelId) continue;
-            primed = await primeIndexAt(i);
-            if (primed) break;
+          // If primary failed, try dafeng_6
+          if (dafengIndex >= 0) {
+            primed = await primeIndexAt(dafengIndex);
+            if (primed) model.modelId = dafengIndex;
+          }
+          // If still failed, try index 0
+          if (!primed && model.modelIndex.length > 0) {
+            primed = await primeIndexAt(0);
+            if (primed) model.modelId = 0;
           }
         }
+
+        // Lazy load adjacent models
+        setTimeout(() => {
+          model.loadAdjacentModels();
+        }, 2000);
+
         return model;
       } else {
         // Use List Logic (Hardcoded or loaded from model_list.json)
@@ -554,25 +605,45 @@ export class ModelManager {
         }
         // Load using Index
         const primeIndexAt = async (id: number) => {
+          if (id < 0 || id >= model.modelIndex.length) return false;
           const item = model.modelIndex[id];
           const loaded = await model.fetchModelJsonWithFallback(`${item.path}/${item.configFile}`, {
             silent: true
           });
           if (!loaded?.json) return false;
-          model.modelId = id;
-          model.currentModelVersion = model.checkModelVersion(loaded.json);
-          model.modelTexturesId = 0;
+
+          if (id === model.modelId) {
+            model.currentModelVersion = model.checkModelVersion(loaded.json);
+            model.modelTexturesId = 0;
+          }
           return true;
         };
 
         let primed = await primeIndexAt(model.modelId);
+
+        // Preload defaults
+        const dafengIndex = model.modelIndex.findIndex((m) => m.name === 'dafeng_6');
+        if (dafengIndex >= 0 && dafengIndex !== model.modelId) {
+          await primeIndexAt(dafengIndex);
+        }
+        if (model.modelId !== 2 && model.modelIndex.length > 2) {
+          await primeIndexAt(2);
+        }
+
         if (!primed) {
-          for (let i = 0; i < model.modelIndex.length; i++) {
-            if (i === model.modelId) continue;
-            primed = await primeIndexAt(i);
-            if (primed) break;
+          if (dafengIndex >= 0) {
+            primed = await primeIndexAt(dafengIndex);
+            if (primed) model.modelId = dafengIndex;
+          }
+          if (!primed && model.modelIndex.length > 0) {
+            primed = await primeIndexAt(0);
+            if (primed) model.modelId = 0;
           }
         }
+
+        setTimeout(() => {
+          model.loadAdjacentModels();
+        }, 2000);
 
         if (!primed) {
           try {

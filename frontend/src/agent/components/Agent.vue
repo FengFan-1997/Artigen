@@ -382,8 +382,11 @@ const persistVrmModelIndex = () => {
 const pickDefaultVrmModelIndex = () => {
   const list = vrmModels.value;
   if (list.length === 0) return 0;
-  const preferred = list.findIndex((m) => /yae|miko|八重|神子/i.test(m.name));
-  return preferred >= 0 ? preferred : 0;
+  // User requested Keqing as default
+  const preferred = list.findIndex((m) => /keqing|刻晴/i.test(m.name));
+  if (preferred >= 0) return preferred;
+  const fallback = list.findIndex((m) => /yae|miko|八重|神子/i.test(m.name));
+  return fallback >= 0 ? fallback : 0;
 };
 
 const loadRemoteVrmModels = async () => {
