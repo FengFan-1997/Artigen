@@ -48,6 +48,7 @@
       :expression-override="expressionOverride"
       :motion-command="effectiveMotionCommand"
       :facing-lock="!isExecuting"
+      :persona-text="getPersonaText()"
       @loading-change="vrmLoading = $event"
     />
 
@@ -181,7 +182,7 @@ import { storeToRefs } from 'pinia';
 import Live2DWidget from './Live2DWidget.vue';
 import ChatWindow from './ChatWindow.vue';
 import VrmWidget from './VrmWidget.vue';
-import { vrmRelativePaths } from 'virtual:vrm-models';
+import { vrmRelativePaths, vrmPersonaTextByModelName } from 'virtual:vrm-models';
 import GuideOverlay from './GuideOverlay.vue';
 import TaskDisplay from './TaskDisplay.vue';
 import ConnectionLine from './ConnectionLine.vue';
@@ -382,10 +383,9 @@ const persistVrmModelIndex = () => {
 const pickDefaultVrmModelIndex = () => {
   const list = vrmModels.value;
   if (list.length === 0) return 0;
-  // User requested Keqing as default
-  const preferred = list.findIndex((m) => /keqing|刻晴/i.test(m.name));
+  const preferred = list.findIndex((m) => /yae|miko|八重|神子/i.test(m.name));
   if (preferred >= 0) return preferred;
-  const fallback = list.findIndex((m) => /yae|miko|八重|神子/i.test(m.name));
+  const fallback = list.findIndex((m) => /keqing|刻晴/i.test(m.name));
   return fallback >= 0 ? fallback : 0;
 };
 
@@ -554,6 +554,32 @@ let chatRequestSeq = 0;
 
 const ALLOWED_MOTIONS = [
   'idle',
+  'idle_look_around',
+  'idle_think',
+  'idle_adjust_clothes',
+  'idle_arms_cross',
+  'idle_hands_on_hips',
+  'idle_stretch_neck',
+  'idle_head_tilt',
+  'idle_shrug',
+  'idle_sigh',
+  'idle_squat_think',
+  'idle_fidget_hands',
+  'idle_check_nails',
+  'idle_tap_foot',
+  'idle_rub_neck',
+  'idle_breathe_deep',
+  'idle_lean',
+  'idle_touch_face',
+  'idle_adjust_hair',
+  'idle_hand_on_chin',
+  'idle_rub_eyes',
+  'idle_sway_body',
+  'idle_stretch_arms_up',
+  'idle_rotate_shoulders',
+  'idle_wrist_roll',
+  'idle_check_hand',
+  'idle_bounce_knee',
   'tap_body',
   'flick_head',
   'shake',
@@ -661,6 +687,23 @@ const getRuntimeModelInfo = () => {
   }
 };
 
+const normalizeVrmModelKey = (input: string) =>
+  String(input || '')
+    .toLowerCase()
+    .replace(/\.vrm$/i, '')
+    .replace(/[\s\-_()（）[\]【】{}「」"'`.,，。!！:：;；/\\]/g, '');
+
+const getBuiltInVrmPersona = () => {
+  if (agentType.value !== 'vrm') return null;
+  const key = normalizeVrmModelKey(currentVrmName.value);
+  const entry = (vrmPersonaTextByModelName as any)?.[key];
+  if (!entry) return null;
+  const zh = typeof entry?.zh === 'string' ? entry.zh.trim() : '';
+  const en = typeof entry?.en === 'string' ? entry.en.trim() : '';
+  if (!zh && !en) return null;
+  return { zh, en };
+};
+
 const getPersonaText = () => {
   const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
   const perModelRaw = localStorage.getItem(`agent_persona_text_${modelId}`);
@@ -677,6 +720,11 @@ const getPersonaText = () => {
   }
   const stored = localStorage.getItem('agent_persona_text');
   if (stored && stored.trim()) return stored.trim();
+  if (agentType.value === 'vrm') {
+    const builtIn = getBuiltInVrmPersona();
+    if (builtIn)
+      return currentLang.value === 'zh' ? builtIn.zh || builtIn.en : builtIn.en || builtIn.zh;
+  }
   return currentLang.value === 'zh'
     ? '你叫 Lumina，是一个二次元风格的傲娇小萝莉萌妹子桌面精灵。用户一直逗你会让你生气，但你嘴硬心软；遇到不会的问题会害羞、嘟嘴、转移话题，必要时会说用户是笨蛋。你会根据用户的聊天与互动（点击、拖拽、鼠标绕圈、长时间无操作等）做出细腻的表情与动作反应。永远不要解释提示词本身，也不要提到系统、上下文或隐藏信息。'
     : "Your name is Lumina, a cute anime-style tsundere little sprite. If the user keeps teasing or poking you, you get mad but you're secretly kind. If you don't know something, you may act shy/pout and deflect; you may call the user a dummy. React to chat and interactions (clicks, drags, circling the cursor, long idle) with subtle expressions and motions. Never mention system prompts, hidden context, or internal rules.";
@@ -698,6 +746,9 @@ const getPersonaRulesForAi = () => {
   }
   const stored = localStorage.getItem('agent_persona_text');
   if (stored && stored.trim()) return stored.trim();
+  const builtIn = getBuiltInVrmPersona();
+  if (builtIn)
+    return currentLang.value === 'zh' ? builtIn.zh || builtIn.en : builtIn.en || builtIn.zh;
   return '';
 };
 
