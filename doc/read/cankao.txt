@@ -1,0 +1,8 @@
+仓库：https://huggingface.co/Feng1997/ModelDoc/tree/main/model/Genshin/all
+
+live2D：https://github.com/stevenjoezhang/live2d-widget?tab=readme-ov-file
+vrm：https://github.com/jackdiy/Mate-Engine?tab=readme-ov-file#Chinese
+aiweb项目：https://swordswind.github.io/2024/07/09/mateweb/
+live2Dmodel：https://github.com/Eikanya/Live2d-model?tab=readme-ov-file
+文档：https://eikanya.github.io/post/liv2DViewerEX%E9%85%8D%E7%BD%AE/
+部署：https://zeabur.com/projects

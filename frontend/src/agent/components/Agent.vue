@@ -9,8 +9,8 @@
     @click="handleClick($event)"
   >
     <Live2DWidget
-      v-if="agentType !== 'vrm' || !hasVrmSupport"
       ref="live2dWidgetRef"
+      v-show="agentType !== 'vrm' || !hasVrmSupport"
       :is-talking="isTalking"
       :is-moving="isMoving"
       :is-hovered="isHovered"
@@ -27,10 +27,12 @@
       :motion-command="effectiveMotionCommand"
       :message="message"
       :current-lang="currentLang"
+      :init-enabled="live2dInitEnabled"
       @toggle-chat="toggleChat"
     />
     <VrmWidget
-      v-else
+      v-if="hasVrmSupport"
+      v-show="agentType === 'vrm'"
       :src="currentVrmSrc"
       :current-lang="currentLang"
       :is-talking="isTalking"
@@ -60,7 +62,7 @@
         <button
           class="agent-pill agent-pill-icon"
           type="button"
-          :disabled="vrmModels.length <= 1 || vrmLoading || vrmListLoading"
+          :disabled="!canCycleVrmModel"
           @click.stop="prevVrmModel"
         >
           ‹
@@ -68,7 +70,7 @@
         <button
           class="agent-pill agent-pill-model"
           type="button"
-          :disabled="vrmModels.length <= 1 || vrmLoading || vrmListLoading"
+          :disabled="!canCycleVrmModel"
           @click.stop="nextVrmModel"
           :title="currentVrmName"
         >
@@ -79,7 +81,7 @@
         <button
           class="agent-pill agent-pill-icon"
           type="button"
-          :disabled="vrmModels.length <= 1 || vrmLoading || vrmListLoading"
+          :disabled="!canCycleVrmModel"
           @click.stop="nextVrmModel"
         >
           ›
@@ -287,12 +289,36 @@ const vrmModelIndex = ref(0);
 const vrmLoading = ref(false);
 const vrmListLoading = ref(false);
 const vrmListError = ref('');
-const remoteVrmItems = ref<Array<{ name: string; path: string }>>([]);
-
 const VRM_HF_OWNER = 'Feng1997';
 const VRM_HF_REPO = 'ModelDoc';
 const VRM_HF_REF = 'main';
 const VRM_HF_PREFIX = 'model/Genshin/all';
+const VRM_MODEL_PATH_KEY = 'agent_vrm_model_path_v1';
+const DEFAULT_REMOTE_VRM_PATH = `${VRM_HF_PREFIX}/YaeMiko.vrm`;
+
+const guessVrmNameFromPath = (p: string) => {
+  const base = (p.split('/').pop() || p).replace(/\.vrm$/i, '');
+  return base || 'Yae Miko';
+};
+
+const getInitialRemoteVrmItems = () => {
+  if (import.meta.env.DEV) return [];
+  try {
+    const storedPathRaw = localStorage.getItem(VRM_MODEL_PATH_KEY);
+    const storedPath =
+      typeof storedPathRaw === 'string' && storedPathRaw.trim() ? storedPathRaw : '';
+    const path = storedPath || DEFAULT_REMOTE_VRM_PATH;
+    return [{ name: guessVrmNameFromPath(path), path }];
+  } catch {
+    return [{ name: guessVrmNameFromPath(DEFAULT_REMOTE_VRM_PATH), path: DEFAULT_REMOTE_VRM_PATH }];
+  }
+};
+
+const remoteVrmItems = ref<Array<{ name: string; path: string }>>(getInitialRemoteVrmItems());
+const remoteVrmListLoaded = ref(false);
+const live2dInitEnabled = ref(agentType.value !== 'vrm');
+const vrmHasStartedLoading = ref(false);
+const live2dDefaultsPreloaded = ref(false);
 
 const devVrmItems = computed(() => {
   const list = Array.isArray(vrmRelativePaths) ? vrmRelativePaths : [];
@@ -308,6 +334,12 @@ const vrmModels = computed<Array<{ name: string; path: string }>>(() => {
 });
 
 const hasVrmSupport = computed(() => vrmModels.value.length > 0);
+const canCycleVrmModel = computed(() => {
+  if (vrmLoading.value || vrmListLoading.value) return false;
+  if (import.meta.env.DEV) return vrmModels.value.length > 1;
+  if (!remoteVrmListLoaded.value) return true;
+  return vrmModels.value.length > 1;
+});
 
 watch(
   () => hasVrmSupport.value,
@@ -357,6 +389,7 @@ const currentVrmName = computed(() => {
 });
 
 const vrmModelCounter = computed(() => {
+  if (!import.meta.env.DEV && !remoteVrmListLoaded.value) return '1/…';
   const total = vrmModels.value.length;
   if (total <= 0) return '';
   const idx = Math.min(total, Math.max(1, vrmModelIndex.value + 1));
@@ -366,6 +399,16 @@ const vrmModelCounter = computed(() => {
 const effectiveMotionCommand = computed(() => motionCommand.value);
 
 const VRM_MODEL_INDEX_KEY = 'agent_vrm_model_index_v1';
+const loadVrmModelPath = () => {
+  try {
+    const raw = localStorage.getItem(VRM_MODEL_PATH_KEY);
+    const v = typeof raw === 'string' ? raw.trim() : '';
+    return v || null;
+  } catch {
+    return null;
+  }
+};
+
 const loadVrmModelIndex = () => {
   const raw = localStorage.getItem(VRM_MODEL_INDEX_KEY);
   const v = raw ? Number.parseInt(raw, 10) : Number.NaN;
@@ -374,9 +417,11 @@ const loadVrmModelIndex = () => {
   return v;
 };
 
-const persistVrmModelIndex = () => {
+const persistVrmSelection = () => {
   try {
     localStorage.setItem(VRM_MODEL_INDEX_KEY, String(vrmModelIndex.value));
+    const item = vrmModels.value[vrmModelIndex.value];
+    if (item?.path) localStorage.setItem(VRM_MODEL_PATH_KEY, item.path);
   } catch {}
 };
 
@@ -395,6 +440,7 @@ const loadRemoteVrmModels = async () => {
   vrmListLoading.value = true;
   vrmListError.value = '';
   try {
+    const currentPath = vrmModels.value[vrmModelIndex.value]?.path || loadVrmModelPath() || '';
     const params = new URLSearchParams({
       ref: VRM_HF_REF,
       prefix: VRM_HF_PREFIX,
@@ -412,22 +458,33 @@ const loadRemoteVrmModels = async () => {
         const base = (p.split('/').pop() || p).replace(/\.vrm$/i, '');
         return { name: base, path: p };
       });
+    remoteVrmListLoaded.value = true;
+    if (currentPath) {
+      const idx = remoteVrmItems.value.findIndex((m) => m.path === currentPath);
+      if (idx >= 0) vrmModelIndex.value = idx;
+    }
   } catch (e: any) {
     vrmListError.value = typeof e?.message === 'string' ? e.message : String(e);
-    remoteVrmItems.value = [];
+    remoteVrmListLoaded.value = false;
   } finally {
     vrmListLoading.value = false;
   }
 };
 
-onMounted(() => {
-  void loadRemoteVrmModels();
-});
+onMounted(() => {});
 
 watch(
   () => vrmModels.value.length,
   () => {
     if (vrmModels.value.length === 0) return;
+    const storedPath = loadVrmModelPath();
+    if (storedPath) {
+      const idx = vrmModels.value.findIndex((m) => m.path === storedPath);
+      if (idx >= 0) {
+        vrmModelIndex.value = idx;
+        return;
+      }
+    }
     const stored = loadVrmModelIndex();
     vrmModelIndex.value = stored ?? pickDefaultVrmModelIndex();
   },
@@ -452,6 +509,48 @@ const ensureLive2dVersion = async (target: 2 | 3) => {
   }
 };
 
+const waitForLive2dLoaded = async (timeoutMs = 12000) => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const widget = live2dWidgetRef.value;
+    const getVer = widget?.getCurrentModelVersion as undefined | (() => 2 | 3 | null);
+    const v = typeof getVer === 'function' ? getVer() : null;
+    if (v === 2 || v === 3) return v;
+    await new Promise((r) => setTimeout(r, 80));
+  }
+  return null;
+};
+
+const preloadLive2dDefaultsOnce = async () => {
+  if (import.meta.env.DEV) return;
+  if (live2dDefaultsPreloaded.value) return;
+  live2dInitEnabled.value = true;
+  await nextTick();
+  const loadedVer = await waitForLive2dLoaded(12000);
+  if (!loadedVer) return;
+  await ensureLive2dVersion(3);
+  await waitForLive2dLoaded(8000);
+  await ensureLive2dVersion(2);
+  await waitForLive2dLoaded(8000);
+  live2dDefaultsPreloaded.value = true;
+};
+
+watch(
+  () => vrmLoading.value,
+  (loading) => {
+    if (import.meta.env.DEV) return;
+    if (!hasVrmSupport.value) return;
+    if (loading) {
+      vrmHasStartedLoading.value = true;
+      return;
+    }
+    if (!vrmHasStartedLoading.value) return;
+    if (live2dDefaultsPreloaded.value) return;
+    void preloadLive2dDefaultsOnce();
+  },
+  { immediate: true }
+);
+
 const cycleAgentType = async () => {
   const candidates: Array<'cubism3' | 'cubism2' | 'vrm'> = ['cubism3', 'cubism2'];
   if (hasVrmSupport.value) candidates.push('vrm');
@@ -465,18 +564,26 @@ const cycleAgentType = async () => {
   else if (agentType.value === 'cubism2') await ensureLive2dVersion(2);
 };
 
-const prevVrmModel = () => {
+const ensureRemoteVrmListLoaded = async () => {
+  if (import.meta.env.DEV) return;
+  if (remoteVrmListLoaded.value) return;
+  await loadRemoteVrmModels();
+};
+
+const prevVrmModel = async () => {
+  await ensureRemoteVrmListLoaded();
   const list = vrmModels.value;
   if (list.length <= 1) return;
   vrmModelIndex.value = (vrmModelIndex.value - 1 + list.length) % list.length;
-  persistVrmModelIndex();
+  persistVrmSelection();
 };
 
-const nextVrmModel = () => {
+const nextVrmModel = async () => {
+  await ensureRemoteVrmListLoaded();
   const list = vrmModels.value;
   if (list.length <= 1) return;
   vrmModelIndex.value = (vrmModelIndex.value + 1) % list.length;
-  persistVrmModelIndex();
+  persistVrmSelection();
 };
 
 watch(
@@ -605,12 +712,48 @@ const ALLOWED_MOTIONS = [
   'yawn',
   'play_hair',
   'stretch',
+  'clap',
   'mood_happy',
   'mood_angry',
   'mood_tired',
   'mood_sleepy',
   'mood_confused'
 ] as const;
+
+const normalizeMotionName = (raw: string | undefined): (typeof ALLOWED_MOTIONS)[number] | null => {
+  const n = String(raw || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .toLowerCase();
+  if (!n) return null;
+  let m = n;
+  if (m === 'forward') m = 'step_forward';
+  else if (m === 'backward') m = 'step_back';
+  if ((ALLOWED_MOTIONS as readonly string[]).includes(m))
+    return m as (typeof ALLOWED_MOTIONS)[number];
+
+  if (/^(wave|hello|hi)\b/i.test(m) || m.includes('greet')) return 'wave';
+  if (m.includes('head_hit') || m.includes('headhit') || (m.includes('hit') && m.includes('head')))
+    return 'flick_head';
+  if (m.includes('nod') || m.includes('agree') || m.includes('yes')) return 'nod';
+  if (m.includes('shake_head') || (m.includes('shake') && m.includes('head')) || m.includes('no'))
+    return 'shake_head';
+  if (m.includes('shake') || m.includes('tremble')) return 'shake';
+  if (m.includes('yawn') || m.includes('sleep')) return 'mood_sleepy';
+  if (m.includes('crouch') || m.includes('squat')) return 'mood_tired';
+  if (m.includes('tired') || m.includes('exhaust')) return 'mood_tired';
+  if (m.includes('angry') || m.includes('mad')) return 'mood_angry';
+  if (m.includes('happy') || m.includes('smile') || m.includes('joy')) return 'mood_happy';
+  if (m.includes('confus') || m.includes('think') || m.includes('hmm')) return 'mood_confused';
+  if (m.includes('point') && m.includes('left')) return 'point_left';
+  if (m.includes('point') && m.includes('right')) return 'point_right';
+  if (m.includes('point')) return Math.random() < 0.5 ? 'point_left' : 'point_right';
+  if (m.includes('stretch')) return 'stretch';
+  if (m.includes('clap')) return 'clap';
+  if (m.includes('tap') || m.includes('poke')) return 'tap_body';
+
+  return 'tap_body';
+};
 
 const ALLOWED_EXPRESSIONS = [
   'neutral',
@@ -1414,9 +1557,8 @@ const applyAiReply = async (
       if (Array.isArray(motions) && motions.length > 0) {
         for (const m of motions) {
           if (!m || typeof m.name !== 'string') continue;
-          let logicName = String(m.name).toLowerCase().trim();
-          if (logicName === 'forward') logicName = 'step_forward';
-          else if (logicName === 'backward') logicName = 'step_back';
+          const logicName = normalizeMotionName(m.name);
+          if (!logicName) continue;
           const duration = typeof m.duration === 'number' ? m.duration : 900;
           const step: AvatarPlanStep = { type: 'motion', motion: logicName, duration };
           queuedAvatarSteps.push(step);
@@ -1431,11 +1573,8 @@ const applyAiReply = async (
 
   const motionCommandMatch = cleanResponse.match(/motionCommand\s*:\s*([^\n]+)/i);
   if (motionCommandMatch) {
-    const motion = String(motionCommandMatch[1] || '')
-      .trim()
-      .replace(/^["']|["']$/g, '')
-      .toLowerCase();
-    if (motion && (ALLOWED_MOTIONS as readonly string[]).includes(motion)) {
+    const motion = normalizeMotionName(motionCommandMatch[1]);
+    if (motion) {
       const step: AvatarPlanStep = { type: 'motion', motion, duration: 1400 };
       queuedAvatarSteps.push(step);
       hasExplicitMotion = true;
@@ -1511,10 +1650,12 @@ const applyAiReply = async (
 
   const legacyMotionMatch = rawResponse.match(/\[MOTION:\s*([^\]]+?)\s*\]/);
   if (legacyMotionMatch) {
-    const motion = legacyMotionMatch[1].trim().toLowerCase();
-    const step: AvatarPlanStep = { type: 'motion', motion, duration: 2000 };
-    queuedAvatarSteps.push(step);
-    hasExplicitMotion = true;
+    const motion = normalizeMotionName(legacyMotionMatch[1]);
+    if (motion) {
+      const step: AvatarPlanStep = { type: 'motion', motion, duration: 2000 };
+      queuedAvatarSteps.push(step);
+      hasExplicitMotion = true;
+    }
   }
   cleanResponse = cleanResponse.replace(/\[MOTION:\s*[^\]]+?\]/g, '');
 
@@ -1884,6 +2025,7 @@ const triggerHeadHit = () => {
   if (isHeadHit.value || isFainted.value) return;
   isHeadHit.value = true;
   message.value = 'Ouch! My head! >_<';
+  playMotionInternal('flick_head', 1100);
   isMoving.value = false;
   setTimeout(() => {
     isHeadHit.value = false;

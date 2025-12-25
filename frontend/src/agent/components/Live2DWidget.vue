@@ -43,7 +43,8 @@ export default defineComponent({
     expressionOverride: { type: String, required: false },
     currentLang: { type: String, required: false },
     motionCommand: { type: String, required: false },
-    scale: { type: Number, required: false }
+    scale: { type: Number, required: false },
+    initEnabled: { type: Boolean, required: false, default: true }
   },
   emits: ['toggle-chat'],
   setup(props, { emit, expose }) {
@@ -293,7 +294,10 @@ export default defineComponent({
       }
     };
 
+    let hasInitialized = false;
     const initLive2D = async () => {
+      if (hasInitialized) return;
+      hasInitialized = true;
       try {
         cleanup();
         modelLoading.value = true;
@@ -373,15 +377,27 @@ export default defineComponent({
       } catch (error) {
         console.error('Error loading Live2D widget:', error);
       } finally {
+        if (!modelMgr.value) hasInitialized = false;
         if (!modelMgr.value) modelLoading.value = false;
       }
     };
 
     onMounted(() => {
+      if (!props.initEnabled) return;
       setTimeout(() => {
         initLive2D();
       }, 100);
     });
+
+    watch(
+      () => props.initEnabled,
+      (enabled) => {
+        if (!enabled) return;
+        setTimeout(() => {
+          initLive2D();
+        }, 0);
+      }
+    );
 
     onUnmounted(() => {
       cleanup();

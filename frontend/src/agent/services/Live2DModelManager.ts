@@ -503,14 +503,7 @@ export class ModelManager {
 
         let primed = await primeIndexAt(model.modelId);
 
-        // Preload defaults (Cubism 3: dafeng_6, Cubism 2: index 2)
         const dafengIndex = model.modelIndex.findIndex((m) => m.name === 'dafeng_6');
-        if (dafengIndex >= 0 && dafengIndex !== model.modelId) {
-          await primeIndexAt(dafengIndex);
-        }
-        if (model.modelId !== 2 && model.modelIndex.length > 2) {
-          await primeIndexAt(2);
-        }
 
         if (!primed) {
           // If primary failed, try dafeng_6
@@ -524,11 +517,6 @@ export class ModelManager {
             if (primed) model.modelId = 0;
           }
         }
-
-        // Lazy load adjacent models
-        setTimeout(() => {
-          model.loadAdjacentModels();
-        }, 2000);
 
         return model;
       } else {
@@ -621,14 +609,7 @@ export class ModelManager {
 
         let primed = await primeIndexAt(model.modelId);
 
-        // Preload defaults
         const dafengIndex = model.modelIndex.findIndex((m) => m.name === 'dafeng_6');
-        if (dafengIndex >= 0 && dafengIndex !== model.modelId) {
-          await primeIndexAt(dafengIndex);
-        }
-        if (model.modelId !== 2 && model.modelIndex.length > 2) {
-          await primeIndexAt(2);
-        }
 
         if (!primed) {
           if (dafengIndex >= 0) {
@@ -640,10 +621,6 @@ export class ModelManager {
             if (primed) model.modelId = 0;
           }
         }
-
-        setTimeout(() => {
-          model.loadAdjacentModels();
-        }, 2000);
 
         if (!primed) {
           try {

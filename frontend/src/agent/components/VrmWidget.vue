@@ -543,8 +543,69 @@ const clearProceduralMotion = () => {
   restore('leftLowerLeg');
 };
 
+const resolveProceduralMotionName = (input: string) => {
+  const n = (input || '').toLowerCase().trim();
+  if (!n) return '';
+  const direct =
+    n === 'wave' ||
+    n === 'nod' ||
+    n === 'shake_head' ||
+    n === 'shake' ||
+    n === 'stretch' ||
+    n === 'clap' ||
+    n === 'tap_body' ||
+    n === 'flick_head' ||
+    n === 'head_hit' ||
+    n === 'crouch' ||
+    n === 'tilt_left' ||
+    n === 'tilt_right' ||
+    n === 'happy' ||
+    n === 'friend' ||
+    n === 'activity' ||
+    n === 'point_left' ||
+    n === 'point_right' ||
+    n === 'yawn' ||
+    n === 'play_hair' ||
+    n === 'idle' ||
+    n === 'mood_happy' ||
+    n === 'mood_angry' ||
+    n === 'mood_tired' ||
+    n === 'mood_sleepy' ||
+    n === 'mood_confused' ||
+    n.startsWith('idle_');
+  if (direct) {
+    if (n === 'idle') return 'idle_shift_weight';
+    if (n === 'mood_happy') return 'happy';
+    if (n === 'mood_confused') return 'idle_think';
+    if (n === 'mood_tired') return 'idle_squat_think';
+    if (n === 'mood_sleepy') return 'idle_yawn';
+    return n;
+  }
+
+  if (/^(wave|hello|hi)\b/i.test(n) || n.includes('greet')) return 'wave';
+  if (n.includes('head_hit') || n.includes('headhit') || (n.includes('hit') && n.includes('head')))
+    return 'head_hit';
+  if (n.includes('crouch') || n.includes('squat')) return 'crouch';
+  if (n.includes('nod') || n.includes('yes') || n.includes('agree')) return 'nod';
+  if (n.includes('shake_head') || (n.includes('shake') && n.includes('head')) || n.includes('no'))
+    return 'shake_head';
+  if (n.includes('shake') || n.includes('tremble')) return 'shake';
+  if (n.includes('yawn') || n.includes('sleep')) return 'idle_yawn';
+  if (n.includes('angry') || n.includes('mad')) return 'mood_angry';
+  if (n.includes('happy') || n.includes('smile') || n.includes('joy')) return 'happy';
+  if (n.includes('point') && n.includes('left')) return 'point_left';
+  if (n.includes('point') && n.includes('right')) return 'point_right';
+  if (n.includes('point')) return Math.random() < 0.5 ? 'point_left' : 'point_right';
+  if (n.includes('think') || n.includes('confus') || n.includes('hmm')) return 'idle_think';
+  if (n.includes('stretch')) return 'stretch';
+  if (n.includes('clap')) return 'clap';
+  if (n.includes('tap') || n.includes('poke')) return 'tap_body';
+
+  return 'tap_body';
+};
+
 const startProceduralMotion = (name: string) => {
-  const n = name.toLowerCase().trim();
+  const n = resolveProceduralMotionName(name);
   if (!n) return;
   const duration =
     n === 'wave'
@@ -553,69 +614,102 @@ const startProceduralMotion = (name: string) => {
         ? 1100
         : n === 'shake_head'
           ? 1100
-          : n === 'stretch'
-            ? 1400
-            : n === 'clap'
+          : n === 'shake'
+            ? 1200
+            : n === 'stretch'
               ? 1400
-              : n === 'idle_look_around'
-                ? 3200
-                : n === 'idle_think'
-                  ? 3400
-                  : n === 'idle_adjust_clothes'
-                    ? 2600
-                    : n === 'idle_arms_cross'
-                      ? 3600
-                      : n === 'idle_hands_on_hips'
-                        ? 3200
-                        : n === 'idle_stretch_neck'
-                          ? 3000
-                          : n === 'idle_head_tilt'
-                            ? 2600
-                            : n === 'idle_shrug'
-                              ? 2200
-                              : n === 'idle_sigh'
-                                ? 2400
-                                : n === 'idle_fidget_hands'
-                                  ? 3200
-                                  : n === 'idle_check_nails'
-                                    ? 3600
-                                    : n === 'idle_tap_foot'
-                                      ? 3000
-                                      : n === 'idle_rub_neck'
-                                        ? 3800
-                                        : n === 'idle_breathe_deep'
-                                          ? 3600
-                                          : n === 'idle_lean'
-                                            ? 3400
-                                            : n === 'idle_touch_face'
-                                              ? 3600
-                                              : n === 'idle_adjust_hair'
-                                                ? 4200
-                                                : n === 'idle_hand_on_chin'
-                                                  ? 3600
-                                                  : n === 'idle_rub_eyes'
-                                                    ? 3800
-                                                    : n === 'idle_sway_body'
-                                                      ? 5200
-                                                      : n === 'idle_stretch_arms_up'
-                                                        ? 4200
-                                                        : n === 'idle_rotate_shoulders'
-                                                          ? 3200
-                                                          : n === 'idle_wrist_roll'
+              : n === 'clap'
+                ? 1400
+                : n === 'tap_body'
+                  ? 900
+                  : n === 'flick_head'
+                    ? 1100
+                    : n === 'head_hit'
+                      ? 900
+                      : n === 'crouch'
+                        ? 2400
+                        : n === 'tilt_left' || n === 'tilt_right'
+                          ? 1100
+                          : n === 'happy' || n === 'friend' || n === 'mood_happy'
+                            ? 1400
+                            : n === 'mood_angry'
+                              ? 1300
+                              : n === 'mood_confused'
+                                ? 1600
+                                : n === 'activity'
+                                  ? 1500
+                                  : n === 'point_left' || n === 'point_right'
+                                    ? 1300
+                                    : n === 'idle_look_around'
+                                      ? 3200
+                                      : n === 'idle_think'
+                                        ? 3400
+                                        : n === 'idle_adjust_clothes'
+                                          ? 2600
+                                          : n === 'idle_arms_cross'
+                                            ? 3600
+                                            : n === 'idle_hands_on_hips'
+                                              ? 3200
+                                              : n === 'idle_stretch_neck'
+                                                ? 3000
+                                                : n === 'idle_head_tilt'
+                                                  ? 2600
+                                                  : n === 'idle_shrug'
+                                                    ? 2200
+                                                    : n === 'idle_sigh'
+                                                      ? 2400
+                                                      : n === 'idle_fidget_hands'
+                                                        ? 3200
+                                                        : n === 'idle_check_nails'
+                                                          ? 3600
+                                                          : n === 'idle_tap_foot'
                                                             ? 3000
-                                                            : n === 'idle_check_hand'
-                                                              ? 3600
-                                                              : n === 'idle_bounce_knee'
-                                                                ? 4200
-                                                                : n === 'yawn' || n === 'idle_yawn'
-                                                                  ? 5200
-                                                                  : n === 'idle_squat_think'
-                                                                    ? 7800
-                                                                    : n === 'play_hair'
+                                                            : n === 'idle_rub_neck'
+                                                              ? 3800
+                                                              : n === 'idle_breathe_deep'
+                                                                ? 3600
+                                                                : n === 'idle_lean'
+                                                                  ? 3400
+                                                                  : n === 'idle_touch_face'
+                                                                    ? 3600
+                                                                    : n === 'idle_adjust_hair'
                                                                       ? 4200
-                                                                      : n === 'idle_shift_weight'
-                                                                        ? 4600
-                                                                        : 1200;
+                                                                      : n === 'idle_hand_on_chin'
+                                                                        ? 3600
+                                                                        : n === 'idle_rub_eyes'
+                                                                          ? 3800
+                                                                          : n === 'idle_sway_body'
+                                                                            ? 5200
+                                                                            : n ===
+                                                                                'idle_stretch_arms_up'
+                                                                              ? 4200
+                                                                              : n ===
+                                                                                  'idle_rotate_shoulders'
+                                                                                ? 3200
+                                                                                : n ===
+                                                                                    'idle_wrist_roll'
+                                                                                  ? 3000
+                                                                                  : n ===
+                                                                                      'idle_check_hand'
+                                                                                    ? 3600
+                                                                                    : n ===
+                                                                                        'idle_bounce_knee'
+                                                                                      ? 4200
+                                                                                      : n ===
+                                                                                            'yawn' ||
+                                                                                          n ===
+                                                                                            'idle_yawn'
+                                                                                        ? 5200
+                                                                                        : n ===
+                                                                                            'idle_squat_think'
+                                                                                          ? 7800
+                                                                                          : n ===
+                                                                                              'play_hair'
+                                                                                            ? 4200
+                                                                                            : n ===
+                                                                                                'idle_shift_weight'
+                                                                                              ? 4600
+                                                                                              : 1200;
   const seed = Math.random();
   proceduralMotion = {
     name: n,
@@ -1007,6 +1101,91 @@ const applyProceduralMotion = () => {
     if (lookNodes.neck && neckBase) {
       lookNodes.neck.rotation.y = neckBase.y + Math.sin(Math.PI * 6 * p) * 0.18 * k;
     }
+  } else if (name === 'shake') {
+    const headBase = lookNodes.base.head;
+    const neckBase = lookNodes.base.neck;
+    const shake = Math.sin(Math.PI * 10 * p) * 0.18 * k * intensity;
+    if (lookNodes.head && headBase) {
+      lookNodes.head.rotation.y = headBase.y + shake;
+      lookNodes.head.rotation.z = headBase.z + shake * 0.5;
+    }
+    if (lookNodes.neck && neckBase) {
+      lookNodes.neck.rotation.y = neckBase.y + shake * 0.65;
+    }
+    if (hips && baseHips) {
+      hips.rotation.z = baseHips.z + shake * 0.35;
+      hips.rotation.y = baseHips.y + shake * 0.25;
+    }
+    if (spine && baseSpine) spine.rotation.z = baseSpine.z - shake * 0.25;
+    if (chest && baseChest) chest.rotation.z = baseChest.z - shake * 0.12;
+  } else if (name === 'tilt_left' || name === 'tilt_right') {
+    const headBase = lookNodes.base.head;
+    const neckBase = lookNodes.base.neck;
+    const sign = name === 'tilt_left' ? 1 : -1;
+    const ease = Math.sin(Math.PI * p);
+    const tilt = Math.sin(Math.PI * 2 * p) * 0.28 * ease * sign;
+    if (lookNodes.head && headBase) lookNodes.head.rotation.z = headBase.z + tilt;
+    if (lookNodes.neck && neckBase) lookNodes.neck.rotation.z = neckBase.z + tilt * 0.6;
+    if (lShoulder && baseLS) lShoulder.rotation.z = baseLS.z + tilt * 0.2;
+    if (rShoulder && baseRS) rShoulder.rotation.z = baseRS.z - tilt * 0.2;
+  } else if (name === 'tap_body') {
+    const ease = Math.sin(Math.PI * p);
+    const beat = Math.abs(Math.sin(Math.PI * 4 * p)) * ease;
+    if (spine && baseSpine) spine.rotation.x = baseSpine.x - 0.08 * beat * intensity;
+    if (chest && baseChest) chest.rotation.x = baseChest.x - 0.04 * beat * intensity;
+    if (hips && baseHips) hips.rotation.y = baseHips.y + 0.08 * Math.sin(Math.PI * 2 * p) * ease;
+    if (lookNodes.head && lookNodes.base.head) {
+      lookNodes.head.rotation.x = lookNodes.base.head.x + 0.08 * ease;
+      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.08 * Math.sin(Math.PI * 2 * p) * ease;
+    }
+    if (lUpper && baseLU) lUpper.rotation.z = baseLU.z - 0.08 * beat;
+    if (rUpper && baseRU) rUpper.rotation.z = baseRU.z + 0.08 * beat;
+  } else if (name === 'flick_head') {
+    const headBase = lookNodes.base.head;
+    const neckBase = lookNodes.base.neck;
+    const ease = Math.sin(Math.PI * p);
+    const pet = Math.sin(Math.PI * 2 * p) * 0.22 * ease;
+    if (lookNodes.head && headBase) {
+      lookNodes.head.rotation.x = headBase.x + 0.18 * ease;
+      lookNodes.head.rotation.y = headBase.y + pet * 0.35;
+      lookNodes.head.rotation.z = headBase.z - pet * 0.2 * dir;
+    }
+    if (lookNodes.neck && neckBase) {
+      lookNodes.neck.rotation.x = neckBase.x + 0.08 * ease;
+      lookNodes.neck.rotation.y = neckBase.y + pet * 0.2;
+    }
+    if (lShoulder && baseLS) lShoulder.rotation.x = baseLS.x + 0.06 * ease;
+    if (rShoulder && baseRS) rShoulder.rotation.x = baseRS.x + 0.06 * ease;
+  } else if (name === 'head_hit') {
+    const ease = Math.sin(Math.PI * p);
+    const snap = Math.sin(Math.PI * 2.6 * p) * ease;
+    if (lookNodes.head && lookNodes.base.head) {
+      lookNodes.head.rotation.x = lookNodes.base.head.x - 0.22 * ease - 0.06 * snap;
+      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.08 * snap * dir;
+      lookNodes.head.rotation.z = lookNodes.base.head.z + 0.12 * ease * dir;
+    }
+    if (lookNodes.neck && lookNodes.base.neck) {
+      lookNodes.neck.rotation.x = lookNodes.base.neck.x - 0.1 * ease;
+      lookNodes.neck.rotation.y = lookNodes.base.neck.y + 0.05 * snap * dir;
+    }
+    if (spine && baseSpine) spine.rotation.x = baseSpine.x + 0.06 * ease;
+    if (chest && baseChest) chest.rotation.x = baseChest.x + 0.04 * ease;
+    if (hips && baseHips) hips.rotation.z = baseHips.z - 0.06 * ease * dir;
+  } else if (name === 'crouch') {
+    const ease = Math.sin(Math.PI * p);
+    const hold =
+      THREE.MathUtils.clamp((p - 0.12) / 0.22, 0, 1) *
+      THREE.MathUtils.clamp((0.92 - p) / 0.22, 0, 1);
+    const squat = ease * (0.75 + 0.25 * hold);
+    if (hips && baseHips) hips.rotation.x = baseHips.x + 0.22 * squat;
+    if (spine && baseSpine) spine.rotation.x = baseSpine.x - 0.08 * squat;
+    if (chest && baseChest) chest.rotation.x = baseChest.x - 0.04 * squat;
+    if (lUpperLeg && baseLULeg) lUpperLeg.rotation.x = baseLULeg.x - 0.5 * squat;
+    if (rUpperLeg && baseRULeg) rUpperLeg.rotation.x = baseRULeg.x - 0.5 * squat;
+    if (lLowerLeg && baseLLLeg) lLowerLeg.rotation.x = baseLLLeg.x + 0.82 * squat;
+    if (rLowerLeg && baseRLLeg) rLowerLeg.rotation.x = baseRLLeg.x + 0.82 * squat;
+    if (lookNodes.head && lookNodes.base.head)
+      lookNodes.head.rotation.x = lookNodes.base.head.x + 0.06 * squat;
   } else if (name === 'clap') {
     const beat = Math.abs(Math.sin(Math.PI * 2.1 * p));
     const lift = Math.sin(Math.PI * p);
@@ -1027,6 +1206,73 @@ const applyProceduralMotion = () => {
     }
     if (lHand && baseLH) lHand.rotation.y = baseLH.y + 0.16 * w;
     if (rHand && baseRH) rHand.rotation.y = baseRH.y - 0.16 * w;
+  } else if (name === 'point_left' || name === 'point_right') {
+    const ease = Math.sin(Math.PI * p);
+    const arm = name === 'point_left' ? lUpper : rUpper;
+    const fore = name === 'point_left' ? lLower : rLower;
+    const hand = name === 'point_left' ? lHand : rHand;
+    const baseArm = name === 'point_left' ? baseLU : baseRU;
+    const baseFore = name === 'point_left' ? baseLL : baseRL;
+    const baseHand = name === 'point_left' ? baseLH : baseRH;
+    const sign = name === 'point_left' ? 1 : -1;
+    if (arm && baseArm) {
+      arm.rotation.x = baseArm.x - 0.45 * ease;
+      arm.rotation.z = baseArm.z - 0.5 * ease * sign;
+      arm.rotation.y = baseArm.y + 0.2 * ease * sign;
+    }
+    if (fore && baseFore) fore.rotation.z = baseFore.z - 0.18 * ease * sign;
+    if (hand && baseHand) {
+      hand.rotation.y = baseHand.y + 0.22 * ease * sign;
+      hand.rotation.x = baseHand.x + 0.08 * ease;
+    }
+    if (lookNodes.head && lookNodes.base.head) {
+      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.22 * ease * sign;
+      lookNodes.head.rotation.x = lookNodes.base.head.x - 0.04 * ease;
+    }
+  } else if (name === 'happy' || name === 'friend' || name === 'mood_happy') {
+    const ease = Math.sin(Math.PI * p);
+    const bounce = Math.abs(Math.sin(Math.PI * 6 * p)) * ease;
+    if (hips && baseHips) hips.rotation.y = baseHips.y + 0.08 * Math.sin(Math.PI * 2 * p) * ease;
+    if (spine && baseSpine) spine.rotation.x = baseSpine.x - 0.05 * bounce;
+    if (chest && baseChest) chest.rotation.x = baseChest.x - 0.03 * bounce;
+    if (lookNodes.head && lookNodes.base.head) {
+      lookNodes.head.rotation.x = lookNodes.base.head.x - 0.06 * ease;
+      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.12 * Math.sin(Math.PI * 2 * p) * ease;
+    }
+    if (rUpper && baseRU) {
+      rUpper.rotation.x = baseRU.x - 0.45 * ease;
+      rUpper.rotation.z = baseRU.z - 0.18 * ease;
+    }
+    if (rHand && baseRH) rHand.rotation.y = baseRH.y + 0.35 * Math.sin(Math.PI * 6 * p) * ease;
+  } else if (name === 'mood_angry') {
+    const ease = Math.sin(Math.PI * p);
+    const headBase = lookNodes.base.head;
+    const neckBase = lookNodes.base.neck;
+    const shake = Math.sin(Math.PI * 8 * p) * 0.28 * ease * intensity;
+    if (lookNodes.head && headBase) {
+      lookNodes.head.rotation.y = headBase.y + shake;
+      lookNodes.head.rotation.x = headBase.x + 0.06 * ease;
+    }
+    if (lookNodes.neck && neckBase) lookNodes.neck.rotation.y = neckBase.y + shake * 0.55;
+    if (lUpper && baseLU) {
+      lUpper.rotation.x = baseLU.x - 0.25 * ease;
+      lUpper.rotation.z = baseLU.z + 0.4 * ease;
+    }
+    if (rUpper && baseRU) {
+      rUpper.rotation.x = baseRU.x - 0.25 * ease;
+      rUpper.rotation.z = baseRU.z - 0.4 * ease;
+    }
+    if (lLower && baseLL) lLower.rotation.z = baseLL.z + 0.35 * ease;
+    if (rLower && baseRL) rLower.rotation.z = baseRL.z - 0.35 * ease;
+    if (spine && baseSpine) spine.rotation.z = baseSpine.z - 0.05 * ease * dir;
+  } else if (name === 'activity') {
+    const ease = Math.sin(Math.PI * p);
+    const swing = Math.sin(Math.PI * 4 * p) * ease;
+    if (hips && baseHips) hips.rotation.y = baseHips.y + 0.08 * swing;
+    if (spine && baseSpine) spine.rotation.z = baseSpine.z - 0.05 * swing;
+    if (chest && baseChest) chest.rotation.z = baseChest.z - 0.03 * swing;
+    if (lUpper && baseLU) lUpper.rotation.x = baseLU.x - 0.12 * ease;
+    if (rUpper && baseRU) rUpper.rotation.x = baseRU.x - 0.12 * ease;
   } else if (name === 'yawn' || name === 'idle_yawn') {
     const ease = Math.sin(Math.PI * p);
     const slow = Math.sin(Math.PI * 2 * p) * ease;
@@ -1560,12 +1806,24 @@ const handleMotionCommand = (cmd: string | undefined) => {
   if (!raw) return;
   lastMotionCommandAt = Date.now();
   idleState.nextAt = 0;
+  if (raw === 'mood_happy') {
+    startProceduralMotion('happy');
+    return;
+  }
+  if (raw === 'mood_angry') {
+    startProceduralMotion('mood_angry');
+    return;
+  }
   if (raw === 'mood_sleepy') {
     startProceduralMotion('idle_yawn');
     return;
   }
   if (raw === 'mood_tired') {
     startProceduralMotion('idle_squat_think');
+    return;
+  }
+  if (raw === 'mood_confused') {
+    startProceduralMotion('idle_think');
     return;
   }
   if (raw === 'idle') {
@@ -1577,6 +1835,30 @@ const handleMotionCommand = (cmd: string | undefined) => {
     return;
   }
   if (raw === 'clap' || raw === 'play_hair' || raw.startsWith('idle_')) {
+    startProceduralMotion(raw);
+    return;
+  }
+  if (raw === 'flick_head') {
+    if (props.isHeadHit) {
+      startProceduralMotion('head_hit');
+      return;
+    }
+    startProceduralMotion('flick_head');
+    return;
+  }
+  if (raw === 'tap_body' || raw === 'shake') {
+    startProceduralMotion(raw);
+    return;
+  }
+  if (raw === 'tilt_left' || raw === 'tilt_right') {
+    startProceduralMotion(raw);
+    return;
+  }
+  if (raw === 'happy' || raw === 'friend' || raw === 'activity') {
+    startProceduralMotion(raw);
+    return;
+  }
+  if (raw === 'point_left' || raw === 'point_right') {
     startProceduralMotion(raw);
     return;
   }
@@ -2065,6 +2347,16 @@ watch(
   () => props.motionCommand,
   () => {
     handleMotionCommand(props.motionCommand);
+  }
+);
+
+watch(
+  () => props.isHeadHit,
+  (v, prev) => {
+    if (!v || prev) return;
+    lastMotionCommandAt = Date.now();
+    idleState.nextAt = 0;
+    startProceduralMotion('head_hit');
   }
 );
 
