@@ -345,16 +345,7 @@ export default defineComponent({
               cdnPath: configBase,
               assetsPath: assetsBase,
               cubism2Path: '/live2d/core/live2d.min.js',
-              tools: [
-                'chat',
-                'hitokoto',
-                'switch-model-prev',
-                'switch-model',
-                'switch-model-next',
-                'switch-ziyuxin',
-                'switch-texture',
-                'photo'
-              ],
+              tools: [],
               modelId: 101,
               drag: false,
               disableIdle: true,

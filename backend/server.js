@@ -54,6 +54,11 @@ const parseUrlList = (raw, fallback) => {
 };
 const GEMINI_GENERATE_URLS = parseUrlList(process.env.GEMINI_GENERATE_URLS, [GEMINI_GENERATE_URL]);
 const GEMINI_EMBED_URLS = parseUrlList(process.env.GEMINI_EMBED_URLS, [GEMINI_EMBED_URL]);
+const HF_RESOLVE_BASES = parseUrlList(process.env.HF_RESOLVE_BASES, [
+  'https://hf-mirror.com',
+  'https://huggingface.co'
+]);
+const HF_API_BASES = parseUrlList(process.env.HF_API_BASES, ['https://hf-mirror.com', 'https://huggingface.co']);
 
 const appendApiKey = (url, apiKey) => {
   if (!apiKey) return url;
@@ -651,10 +656,10 @@ const proxyHuggingFace = async (req, res) => {
   const restParam = req.params.rest;
   const rest = Array.isArray(restParam) ? restParam.join('/') : restParam || '';
 
-  const candidates = [
-    `https://huggingface.co/${owner}/${repo}/resolve/${ref}/${rest}`,
-    `https://hf-mirror.com/${owner}/${repo}/resolve/${ref}/${rest}`
-  ];
+  const candidates = HF_RESOLVE_BASES.map((base) => {
+    const trimmed = String(base || '').trim().replace(/\/+$/, '');
+    return `${trimmed}/${owner}/${repo}/resolve/${ref}/${rest}`;
+  }).filter(Boolean);
 
   const headers = {};
   const forwardKeys = ['range', 'if-none-match', 'if-modified-since', 'accept'];
@@ -731,10 +736,10 @@ app.get('/api/hf-list/:owner/:repo', async (req, res) => {
   }
 
   try {
-    const urls = [
-      `https://hf-mirror.com/api/models/${owner}/${repo}`,
-      `https://huggingface.co/api/models/${owner}/${repo}`
-    ];
+    const urls = HF_API_BASES.map((base) => {
+      const trimmed = String(base || '').trim().replace(/\/+$/, '');
+      return `${trimmed}/api/models/${owner}/${repo}`;
+    }).filter(Boolean);
 
     let json = null;
     let lastStatus = 502;

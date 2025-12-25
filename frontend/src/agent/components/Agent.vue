@@ -50,6 +50,7 @@
       :expression-override="expressionOverride"
       :motion-command="effectiveMotionCommand"
       :facing-lock="!isExecuting"
+      :mouse-control-enabled="vrmMouseControlEnabled"
       :persona-text="getPersonaText()"
       @loading-change="vrmLoading = $event"
     />
@@ -60,38 +61,90 @@
       </button>
       <template v-if="agentType === 'vrm' && hasVrmSupport && !isExecuting">
         <button
-          class="agent-pill agent-pill-icon"
-          type="button"
-          :disabled="!canCycleVrmModel"
-          @click.stop="prevVrmModel"
-        >
-          ‹
-        </button>
-        <button
           class="agent-pill agent-pill-model"
           type="button"
           :disabled="!canCycleVrmModel"
-          @click.stop="nextVrmModel"
+          :class="{ open: vrmPickerOpen }"
+          ref="vrmPickerButtonEl"
+          @click.stop="vrmPickerOpen = !vrmPickerOpen"
           :title="currentVrmName"
         >
           <span v-if="vrmLoading || vrmListLoading" class="agent-pill-spinner"></span>
+          <span class="agent-pill-badge" :style="currentVrmBadgeStyle">{{
+            currentVrmBadgeText
+          }}</span>
           <span class="agent-pill-model-name">{{ currentVrmName }}</span>
           <span v-if="vrmModelCounter" class="agent-pill-count">{{ vrmModelCounter }}</span>
-        </button>
-        <button
-          class="agent-pill agent-pill-icon"
-          type="button"
-          :disabled="!canCycleVrmModel"
-          @click.stop="nextVrmModel"
-        >
-          ›
+          <span class="agent-pill-caret">▾</span>
         </button>
       </template>
+      <transition name="agent-menu">
+        <div
+          v-if="vrmPickerOpen && agentType === 'vrm' && hasVrmSupport && !isExecuting"
+          class="agent-menu"
+          ref="vrmPickerEl"
+          @mousedown.stop
+          @click.stop
+        >
+          <div class="agent-menu-head">
+            <button
+              class="agent-menu-nav"
+              type="button"
+              :disabled="!canCycleVrmModel"
+              @click.stop="prevVrmModel(false)"
+            >
+              ‹
+            </button>
+            <input
+              v-model="vrmPickerQuery"
+              class="agent-menu-search"
+              type="text"
+              :placeholder="currentLang === 'zh' ? '搜索模型…' : 'Search models…'"
+              ref="vrmPickerSearchEl"
+            />
+            <button
+              class="agent-menu-nav"
+              type="button"
+              :disabled="!canCycleVrmModel"
+              @click.stop="nextVrmModel(false)"
+            >
+              ›
+            </button>
+            <button class="agent-menu-close" type="button" @click.stop="vrmPickerOpen = false">
+              ×
+            </button>
+          </div>
+          <div class="agent-menu-list">
+            <button
+              v-for="m in filteredVrmModels"
+              :key="`${m.path}-${m.index}`"
+              class="agent-menu-item"
+              type="button"
+              :class="{ active: m.index === vrmModelIndex }"
+              @click.stop="selectVrmModel(m.index)"
+              :title="m.name"
+            >
+              <span class="agent-menu-badge" :style="m.badgeStyle">{{ m.badgeText }}</span>
+              <span class="agent-menu-name">{{ m.name }}</span>
+              <span v-if="m.index === vrmModelIndex" class="agent-menu-check">✓</span>
+            </button>
+          </div>
+        </div>
+      </transition>
     </div>
 
     <div v-if="agentType === 'vrm' && hasVrmSupport" class="agent-side-tools">
       <button class="agent-side-btn" type="button" @click.stop="toggleChat" :title="chatTitle">
         💬
+      </button>
+      <button
+        class="agent-side-btn"
+        :class="{ active: vrmMouseControlEnabled }"
+        type="button"
+        @click.stop="vrmMouseControlEnabled = !vrmMouseControlEnabled"
+        :title="vrmMouseControlTitle"
+      >
+        🖱️
       </button>
       <template v-if="!isExecuting">
         <button
@@ -201,6 +254,7 @@ import {
 import { getUserId } from '../utils/user';
 import {
   buildInteractionMetrics,
+  buildSemanticInteractionContext,
   buildInteractionSummary,
   computeRelativePoint,
   shouldAskAiForInteraction,
@@ -225,6 +279,7 @@ const BASE_AGENT_SIZE_DESKTOP = 1200;
 const LIVE2D_AGENT_SCALE = 0.125;
 const VRM_AGENT_SCALE = 0.34;
 const dynamicScale = ref(1.0);
+const moveTransitionMs = ref(3000);
 
 const getDefaultAgentType = () => {
   if (!import.meta.env.DEV) return 'vrm';
@@ -284,6 +339,7 @@ const isMuted = ref(false);
 const message = ref('Hello! I am Lumina!');
 const motionCommand = ref(''); // New: Motion command from AI
 const expressionOverride = ref('');
+const vrmMouseControlEnabled = ref(false);
 const live2dWidgetRef = ref<any>(null);
 const vrmModelIndex = ref(0);
 const vrmLoading = ref(false);
@@ -299,6 +355,40 @@ const DEFAULT_REMOTE_VRM_PATH = `${VRM_HF_PREFIX}/YaeMiko.vrm`;
 const guessVrmNameFromPath = (p: string) => {
   const base = (p.split('/').pop() || p).replace(/\.vrm$/i, '');
   return base || 'Yae Miko';
+};
+
+const hashString = (input: string) => {
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+};
+
+const makeModelBadge = (rawName: string) => {
+  const name = String(rawName || '').trim() || 'VRM';
+  const hasCjk = /[\u4e00-\u9fff]/.test(name);
+  const text = hasCjk
+    ? name.replace(/\s+/g, '').slice(0, 2)
+    : name
+        .split(/[\s_-]+/g)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((p) => p.slice(0, 1).toUpperCase())
+        .join('')
+        .slice(0, 2) || name.slice(0, 2).toUpperCase();
+
+  const hue = hashString(name) % 360;
+  const bg = `hsl(${hue} 72% 42% / 0.95)`;
+  const border = `hsl(${hue} 72% 58% / 0.55)`;
+  return {
+    badgeText: text,
+    badgeStyle: {
+      background: bg,
+      borderColor: border
+    } as Record<string, string>
+  };
 };
 
 const getInitialRemoteVrmItems = () => {
@@ -319,6 +409,19 @@ const remoteVrmListLoaded = ref(false);
 const live2dInitEnabled = ref(agentType.value !== 'vrm');
 const vrmHasStartedLoading = ref(false);
 const live2dDefaultsPreloaded = ref(false);
+const vrmPickerOpen = ref(false);
+const vrmPickerQuery = ref('');
+const vrmPickerEl = ref<HTMLElement | null>(null);
+const vrmPickerButtonEl = ref<HTMLElement | null>(null);
+const vrmPickerSearchEl = ref<HTMLInputElement | null>(null);
+
+watch(
+  () => agentType.value,
+  (next) => {
+    if (next !== 'vrm') live2dInitEnabled.value = true;
+  },
+  { immediate: true }
+);
 
 const devVrmItems = computed(() => {
   const list = Array.isArray(vrmRelativePaths) ? vrmRelativePaths : [];
@@ -372,6 +475,12 @@ const chatTitle = computed(() => {
   return zh ? '打开聊天' : 'Open chat';
 });
 
+const vrmMouseControlTitle = computed(() => {
+  const zh = currentLang.value === 'zh';
+  if (vrmMouseControlEnabled.value) return zh ? '关闭鼠标控制' : 'Disable mouse control';
+  return zh ? '开启鼠标控制' : 'Enable mouse control';
+});
+
 const sideTitles = computed(() => {
   const zh = currentLang.value === 'zh';
   return {
@@ -386,6 +495,23 @@ const sideTitles = computed(() => {
 const currentVrmName = computed(() => {
   const item = vrmModels.value[vrmModelIndex.value];
   return item?.name || 'Yae Miko';
+});
+
+const currentVrmBadgeText = computed(() => makeModelBadge(currentVrmName.value).badgeText);
+const currentVrmBadgeStyle = computed(() => makeModelBadge(currentVrmName.value).badgeStyle);
+
+const filteredVrmModels = computed(() => {
+  const q = vrmPickerQuery.value.trim().toLowerCase();
+  const items = vrmModels.value.map((m, index) => {
+    const badge = makeModelBadge(m?.name || '');
+    return { ...m, index, ...badge };
+  });
+  if (!q) return items;
+  return items.filter((m) =>
+    String(m?.name || '')
+      .toLowerCase()
+      .includes(q)
+  );
 });
 
 const vrmModelCounter = computed(() => {
@@ -570,21 +696,51 @@ const ensureRemoteVrmListLoaded = async () => {
   await loadRemoteVrmModels();
 };
 
-const prevVrmModel = async () => {
+const selectVrmModel = async (idx: number) => {
+  await ensureRemoteVrmListLoaded();
+  const list = vrmModels.value;
+  if (list.length === 0) return;
+  const next = Math.max(0, Math.min(idx, list.length - 1));
+  if (next !== vrmModelIndex.value) {
+    vrmModelIndex.value = next;
+    persistVrmSelection();
+  }
+  vrmPickerOpen.value = false;
+};
+
+const prevVrmModel = async (closePicker = true) => {
   await ensureRemoteVrmListLoaded();
   const list = vrmModels.value;
   if (list.length <= 1) return;
   vrmModelIndex.value = (vrmModelIndex.value - 1 + list.length) % list.length;
   persistVrmSelection();
+  if (closePicker) vrmPickerOpen.value = false;
 };
 
-const nextVrmModel = async () => {
+const nextVrmModel = async (closePicker = true) => {
   await ensureRemoteVrmListLoaded();
   const list = vrmModels.value;
   if (list.length <= 1) return;
   vrmModelIndex.value = (vrmModelIndex.value + 1) % list.length;
   persistVrmSelection();
+  if (closePicker) vrmPickerOpen.value = false;
 };
+
+watch(
+  () => vrmPickerOpen.value,
+  async (open) => {
+    if (!open) return;
+    await ensureRemoteVrmListLoaded();
+    await nextTick();
+    try {
+      vrmPickerSearchEl.value?.focus();
+      const active = vrmPickerEl.value?.querySelector(
+        '.agent-menu-item.active'
+      ) as HTMLElement | null;
+      active?.scrollIntoView({ block: 'nearest' });
+    } catch {}
+  }
+);
 
 watch(
   () => live2dWidgetRef.value,
@@ -689,6 +845,8 @@ const ALLOWED_MOTIONS = [
   'idle_bounce_knee',
   'tap_body',
   'flick_head',
+  'head_hit',
+  'crouch',
   'shake',
   'nod',
   'talking',
@@ -740,7 +898,7 @@ const normalizeMotionName = (raw: string | undefined): (typeof ALLOWED_MOTIONS)[
     return 'shake_head';
   if (m.includes('shake') || m.includes('tremble')) return 'shake';
   if (m.includes('yawn') || m.includes('sleep')) return 'mood_sleepy';
-  if (m.includes('crouch') || m.includes('squat')) return 'mood_tired';
+  if (m.includes('crouch') || m.includes('squat')) return 'crouch';
   if (m.includes('tired') || m.includes('exhaust')) return 'mood_tired';
   if (m.includes('angry') || m.includes('mad')) return 'mood_angry';
   if (m.includes('happy') || m.includes('smile') || m.includes('joy')) return 'mood_happy';
@@ -1133,6 +1291,25 @@ const ENERGY_RECOVER_RATE = 0.02;
 const TIRED_THRESHOLD = 20;
 const DRAG_MOVE_THRESHOLD = 5;
 
+let lastTiredReactAt = 0;
+watch(
+  () => isTired.value,
+  (v, prev) => {
+    if (!v || prev) return;
+    const now = Date.now();
+    if (now - lastTiredReactAt < 8000) return;
+    lastTiredReactAt = now;
+    if (agentType.value !== 'vrm') return;
+    const msg =
+      currentLang.value === 'zh' ? '哈…好累…让我歇会儿…' : "Ugh... I'm tired... let me rest...";
+    if (!message.value) message.value = msg;
+    playMotionInternal('mood_tired', 2200);
+    setTimeout(() => {
+      if (message.value === msg) message.value = '';
+    }, 3600);
+  }
+);
+
 const idleMessages = {
   en: [
     'Hmph... you still there?',
@@ -1174,7 +1351,7 @@ const containerStyle = computed(() => {
       isDragging.value || isTeleporting.value
         ? 'none'
         : isMoving.value
-          ? 'transform 3s cubic-bezier(0.4, 0.0, 0.2, 1)'
+          ? `transform ${Math.max(120, Math.round(moveTransitionMs.value))}ms cubic-bezier(0.4, 0.0, 0.2, 1)`
           : 'transform 0.25s ease-out',
     zIndex: 9999,
     position: 'fixed' as const,
@@ -1393,6 +1570,7 @@ async function runAvatarPlanSteps(steps: any[]) {
           const moveFactor = isLazy ? 1.6 : 1;
           const tiredFactor = isTired.value ? 2.2 : 1;
           const actualDuration = Math.max(200, Math.round(duration * moveFactor * tiredFactor));
+          moveTransitionMs.value = actualDuration;
 
           if (step.immediate) {
             isTeleporting.value = true;
@@ -1408,6 +1586,8 @@ async function runAvatarPlanSteps(steps: any[]) {
             x.value = targetXPos;
             y.value = targetYPos;
             dynamicScale.value = targetScale;
+            if (agentType.value === 'vrm')
+              playMotionInternal('activity', Math.min(2600, actualDuration));
             await delay(actualDuration);
             isMoving.value = false;
           }
@@ -1660,18 +1840,27 @@ const applyAiReply = async (
   cleanResponse = cleanResponse.replace(/\[MOTION:\s*[^\]]+?\]/g, '');
 
   if (!hasExplicitMotion && primaryEmotion) {
-    const m =
-      primaryEmotion === 'angry'
-        ? 'shake'
-        : primaryEmotion === 'happy'
-          ? 'happy'
-          : primaryEmotion === 'shy'
-            ? 'friend'
-            : primaryEmotion === 'dizzy'
-              ? 'shake'
-              : primaryEmotion === 'confused' || primaryEmotion === 'thinking'
-                ? 'tap_body'
-                : null;
+    const isVrm = agentType.value === 'vrm';
+    const m = (() => {
+      if (isVrm) {
+        if (primaryEmotion === 'angry') return 'mood_angry';
+        if (primaryEmotion === 'happy') return 'mood_happy';
+        if (primaryEmotion === 'shy') return 'friend';
+        if (primaryEmotion === 'dizzy') return 'shake';
+        if (primaryEmotion === 'tired') return 'mood_tired';
+        if (primaryEmotion === 'sleepy') return 'mood_sleepy';
+        if (primaryEmotion === 'confused' || primaryEmotion === 'thinking') return 'mood_confused';
+        return null;
+      }
+      if (primaryEmotion === 'angry') return 'shake';
+      if (primaryEmotion === 'happy') return 'happy';
+      if (primaryEmotion === 'shy') return 'friend';
+      if (primaryEmotion === 'dizzy') return 'shake';
+      if (primaryEmotion === 'tired') return 'mood_tired';
+      if (primaryEmotion === 'sleepy') return 'mood_sleepy';
+      if (primaryEmotion === 'confused' || primaryEmotion === 'thinking') return 'tap_body';
+      return null;
+    })();
     if (m) {
       const step: AvatarPlanStep = { type: 'motion', motion: m, duration: 1200 };
       queuedAvatarSteps.push(step);
@@ -1969,6 +2158,29 @@ async function handleSendMessage(text: string) {
   isLoading.value = true;
   message.value = 'Hmm...';
 
+  const isHurryRequest = (() => {
+    const zh = currentLang.value === 'zh';
+    const re = zh
+      ? /(快点|快一点|快些|赶快|加快|速度|快啊)/i
+      : /(hurry|faster|speed up|quick|go faster)/i;
+    return re.test(trimmed);
+  })();
+  if (isHurryRequest && agentType.value === 'vrm' && !isExecuting.value) {
+    const persona = getPersonaText();
+    const isLazyOrTsundere = /(懒散|慵懒|lazy|sleepy|tired|傲娇|tsundere)/i.test(persona);
+    if (isLazyOrTsundere) {
+      const msg =
+        currentLang.value === 'zh' ? 'baka！这已经很快啦！' : "Baka! I'm already going fast!";
+      setTransient('pouting', (v) => (isPouting.value = v), 1800);
+      playMotionInternal('shake_head', 1200);
+      if (!message.value || message.value === 'Hmm...') message.value = msg;
+      recordSystemEvent('[System Event: User asked you to hurry.]', 'hurry');
+      setTimeout(() => {
+        if (!isTalking.value && message.value === msg) message.value = '';
+      }, 1600);
+    }
+  }
+
   chatAbortController?.abort();
   chatAbortController = new AbortController();
 
@@ -2118,7 +2330,7 @@ function processInteraction() {
       text: desc,
       type: 'interaction_session',
       trigger: 'interaction',
-      payload: { metrics }
+      payload: { metrics, semantic: buildSemanticInteractionContext(metrics) }
     });
   resetInteractionState();
 }
@@ -2338,6 +2550,13 @@ const handleMouseMove = (event: MouseEvent) => {
 const startDrag = (event: MouseEvent | TouchEvent) => {
   if (isInteractionLocked()) return;
   if (isFainted.value || isDizzy.value) return;
+  if (
+    agentType.value === 'vrm' &&
+    vrmMouseControlEnabled.value &&
+    event.target instanceof Element &&
+    event.target.closest('.vrm-widget')
+  )
+    return;
   markUserActivity();
 
   hasDraggedSinceMouseDown.value = false;
@@ -2431,6 +2650,7 @@ const handleThrowCollisions = () => {
       isCrying.value = true;
       isHeadHit.value = true;
       message.value = '不要乱丢我啦！';
+      if (agentType.value === 'vrm') playMotionInternal('crouch', 2600);
       setTimeout(() => {
         isHeadHit.value = false;
         if (message.value === '不要乱丢我啦！') message.value = '';
@@ -2511,6 +2731,7 @@ const maybeMoveForTask = () => {
   if (taskMoveTimeout) window.clearTimeout(taskMoveTimeout);
   const base = isLazy ? 3200 : 2000;
   const tiredFactor = isTired.value ? 1.6 : 1;
+  moveTransitionMs.value = Math.round(base * tiredFactor);
   taskMoveTimeout = window.setTimeout(
     () => {
       taskMoveTimeout = null;
@@ -2656,10 +2877,11 @@ const startIdleTalk = () => {
       !isHappy.value &&
       !isConfused.value
     ) {
-      setTransient('tired', (v) => (isTired.value = v), 7000);
-      playMotionInternal('mood_sleepy', 2400);
+      setTransient('tired', (v) => (isTired.value = v), 12000);
+      playMotionInternal('mood_tired', 2600);
       if (!message.value && Math.random() < 0.8) {
-        message.value = currentLang.value === 'zh' ? '我先躺一会儿…' : "I'll rest a bit…";
+        message.value =
+          currentLang.value === 'zh' ? '哈…好累…我先蹲一会儿…' : "Ugh... I'm tired... let me rest…";
       }
       return;
     }
@@ -2756,6 +2978,7 @@ const moveRandomly = () => {
   isMoving.value = true;
   x.value = newPos.x;
   y.value = newPos.y;
+  moveTransitionMs.value = Math.round((isLazy ? 2600 : 2000) * (isTired.value ? 1.4 : 1));
   if (energy.value > 0) {
     const newEnergy = Math.max(0, energy.value - 5);
     energy.value = newEnergy;
@@ -2770,7 +2993,7 @@ const moveRandomly = () => {
   }
   setTimeout(() => {
     isMoving.value = false;
-  }, 2000);
+  }, moveTransitionMs.value);
 };
 
 const handleMouseEnter = () => {
@@ -2824,6 +3047,7 @@ const avoidObstacle = (obstacleRect: DOMRect) => {
     targetX.value = newX;
     targetY.value = newY;
     isMoving.value = true;
+    moveTransitionMs.value = 650;
     x.value = newX;
     y.value = newY;
     message.value = currentLang.value === 'zh' ? '哎呀，借过一下！' : 'Oops, excuse me!';
@@ -2834,6 +3058,20 @@ const avoidObstacle = (obstacleRect: DOMRect) => {
   }
 };
 
+const handleGlobalPointerDown = (event: Event) => {
+  if (!vrmPickerOpen.value) return;
+  const target = event.target as Node | null;
+  if (!target) return;
+  if (vrmPickerEl.value?.contains(target)) return;
+  if (vrmPickerButtonEl.value?.contains(target)) return;
+  vrmPickerOpen.value = false;
+};
+
+const handleGlobalKeyDown = (event: KeyboardEvent) => {
+  if (!vrmPickerOpen.value) return;
+  if (event.key === 'Escape') vrmPickerOpen.value = false;
+};
+
 // --- Lifecycle ---
 onMounted(async () => {
   loadLocalMemory();
@@ -2842,6 +3080,9 @@ onMounted(async () => {
     isMobile.value = window.innerWidth <= 768;
   });
   window.addEventListener('focusin', handleFocusIn);
+  window.addEventListener('mousedown', handleGlobalPointerDown, true);
+  window.addEventListener('touchstart', handleGlobalPointerDown, true);
+  window.addEventListener('keydown', handleGlobalKeyDown, true);
 
   // Mobile initial position
   if (isMobile.value) {
@@ -2861,6 +3102,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('mousemove', handleMouseMove);
   window.removeEventListener('focusin', handleFocusIn);
+  window.removeEventListener('mousedown', handleGlobalPointerDown, true);
+  window.removeEventListener('touchstart', handleGlobalPointerDown, true);
+  window.removeEventListener('keydown', handleGlobalKeyDown, true);
   if (animationFrameId) cancelAnimationFrame(animationFrameId);
   if (idleTimer) clearInterval(idleTimer);
   if (roamTimer) clearInterval(roamTimer);
@@ -3018,6 +3262,14 @@ watch(
   display: flex;
   gap: 6px;
   z-index: 10001;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.agent-container:hover .agent-controls {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .agent-side-tools {
@@ -3050,6 +3302,11 @@ watch(
   background: rgba(0, 0, 0, 0.5);
 }
 
+.agent-side-btn.active {
+  border-color: rgba(56, 189, 248, 0.7);
+  background: rgba(56, 189, 248, 0.18);
+}
+
 .agent-pill {
   height: 30px;
   padding: 0 10px;
@@ -3080,11 +3337,188 @@ watch(
   padding-right: 8px;
 }
 
+.agent-pill-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+  flex: 0 0 auto;
+}
+
+.agent-pill-model.open {
+  border-color: rgba(56, 189, 248, 0.6);
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.agent-pill-model-label {
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  opacity: 0.95;
+}
+
 .agent-pill-model-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 150px;
+}
+
+.agent-pill-caret {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.agent-pill-model.open .agent-pill-caret {
+  transform: rotate(180deg) translateY(1px);
+}
+
+.agent-menu {
+  position: absolute;
+  left: 0;
+  top: 42px;
+  width: 284px;
+  max-width: min(284px, calc(100vw - 24px));
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(10, 10, 12, 0.72);
+  box-shadow:
+    0 14px 38px rgba(0, 0, 0, 0.45),
+    0 2px 10px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+
+.agent-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.agent-menu-nav,
+.agent-menu-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.agent-menu-nav:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.agent-menu-nav:hover:not(:disabled),
+.agent-menu-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.agent-menu-search {
+  flex: 1 1 auto;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.22);
+  color: #e2e8f0;
+  padding: 0 10px;
+  outline: none;
+  font-size: 12px;
+}
+
+.agent-menu-search::placeholder {
+  color: rgba(226, 232, 240, 0.55);
+}
+
+.agent-menu-list {
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.agent-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  line-height: 1.1;
+}
+
+.agent-menu-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+  flex: 0 0 auto;
+}
+
+.agent-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.agent-menu-item.active {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(56, 189, 248, 0.14);
+}
+
+.agent-menu-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  color: rgba(56, 189, 248, 0.95);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.agent-menu-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-menu-enter-active,
+.agent-menu-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.agent-menu-enter-from,
+.agent-menu-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
 }
 
 .agent-pill-count {

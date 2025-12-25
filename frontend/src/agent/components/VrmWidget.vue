@@ -29,6 +29,7 @@ const props = defineProps<{
   expressionOverride?: string;
   facingLock?: boolean;
   personaText?: string;
+  mouseControlEnabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -99,6 +100,7 @@ let proceduralMotion: {
   side: 'left' | 'right';
   intensity: number;
 } | null = null;
+let proceduralBase: Record<string, { x: number; y: number; z: number }> = {};
 let lastMotionCommandAt = 0;
 let idleState: { nextAt: number; lastName: string | null } = { nextAt: 0, lastName: null };
 let facingRootRotationY: number | null = null;
@@ -148,8 +150,34 @@ const lookState = {
   autoTargetX: 0,
   autoTargetY: 0,
   autoUntil: 0,
-  nextAutoAt: 0
+  nextAutoAt: 0,
+  leftEyeTargetX: 0,
+  leftEyeTargetY: 0,
+  rightEyeTargetX: 0,
+  rightEyeTargetY: 0
 };
+
+const mouseControl = {
+  pointerId: null as number | null,
+  dragging: false,
+  lastClientX: 0,
+  lastClientY: 0,
+  yaw: 0,
+  pitch: 0,
+  targetYaw: 0,
+  targetPitch: 0
+};
+
+watch(
+  () => !!props.mouseControlEnabled,
+  (enabled) => {
+    if (enabled) return;
+    mouseControl.pointerId = null;
+    mouseControl.dragging = false;
+    mouseControl.targetYaw = 0;
+    mouseControl.targetPitch = 0;
+  }
+);
 
 const disposeObject = (obj: THREE.Object3D) => {
   obj.traverse((child) => {
@@ -255,6 +283,43 @@ const ensureThree = () => {
 
   const onPointerMove = (ev: PointerEvent) => {
     updatePointerFromClient(ev.clientX, ev.clientY);
+    if (!props.mouseControlEnabled) return;
+    if (!mouseControl.dragging) return;
+    if (mouseControl.pointerId != null && ev.pointerId !== mouseControl.pointerId) return;
+    const dx = ev.clientX - mouseControl.lastClientX;
+    const dy = ev.clientY - mouseControl.lastClientY;
+    mouseControl.lastClientX = ev.clientX;
+    mouseControl.lastClientY = ev.clientY;
+    const scale = 0.004;
+    mouseControl.targetYaw = THREE.MathUtils.clamp(
+      mouseControl.targetYaw + dx * scale,
+      -1.35,
+      1.35
+    );
+    mouseControl.targetPitch = THREE.MathUtils.clamp(
+      mouseControl.targetPitch + dy * scale,
+      -0.85,
+      0.85
+    );
+    ev.preventDefault();
+  };
+  const onPointerDown = (ev: PointerEvent) => {
+    if (!props.mouseControlEnabled) return;
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+    mouseControl.dragging = true;
+    mouseControl.pointerId = ev.pointerId;
+    mouseControl.lastClientX = ev.clientX;
+    mouseControl.lastClientY = ev.clientY;
+    try {
+      containerRef.value?.setPointerCapture(ev.pointerId);
+    } catch {}
+    ev.preventDefault();
+  };
+  const endPointerDrag = (ev: PointerEvent) => {
+    if (!mouseControl.dragging) return;
+    if (mouseControl.pointerId != null && ev.pointerId !== mouseControl.pointerId) return;
+    mouseControl.dragging = false;
+    mouseControl.pointerId = null;
   };
   const onPointerEnter = (ev: PointerEvent) => {
     updatePointerFromClient(ev.clientX, ev.clientY);
@@ -264,9 +329,15 @@ const ensureThree = () => {
   };
 
   containerRef.value.addEventListener('pointermove', onPointerMove);
+  containerRef.value.addEventListener('pointerdown', onPointerDown);
+  containerRef.value.addEventListener('pointerup', endPointerDrag);
+  containerRef.value.addEventListener('pointercancel', endPointerDrag);
   containerRef.value.addEventListener('pointerenter', onPointerEnter);
   containerRef.value.addEventListener('pointerleave', onPointerLeave);
   disposeFns.push(() => containerRef.value?.removeEventListener('pointermove', onPointerMove));
+  disposeFns.push(() => containerRef.value?.removeEventListener('pointerdown', onPointerDown));
+  disposeFns.push(() => containerRef.value?.removeEventListener('pointerup', endPointerDrag));
+  disposeFns.push(() => containerRef.value?.removeEventListener('pointercancel', endPointerDrag));
   disposeFns.push(() => containerRef.value?.removeEventListener('pointerenter', onPointerEnter));
   disposeFns.push(() => containerRef.value?.removeEventListener('pointerleave', onPointerLeave));
 
@@ -290,8 +361,25 @@ const setVrmExpression = (key: string, value: number) => {
   const mgr = currentVrm?.expressionManager;
   if (!mgr || typeof mgr.setValue !== 'function') return;
   const v = THREE.MathUtils.clamp(value, 0, 1);
+  const k = String(key || '').trim();
+  if (!k) return;
+  const keys = new Set<string>();
+  keys.add(k);
+  if (k.length > 1) keys.add(k[0].toUpperCase() + k.slice(1));
+  if (k === 'blink') keys.add('Blink');
+  if (k === 'blinkLeft') keys.add('BlinkLeft');
+  if (k === 'blinkRight') keys.add('BlinkRight');
+  if (k === 'aa') keys.add('A');
+  if (k === 'ih') keys.add('I');
+  if (k === 'ou') keys.add('U');
+  if (k === 'ee') keys.add('E');
+  if (k === 'oh') keys.add('O');
   try {
-    mgr.setValue(key, v);
+    for (const kk of keys) {
+      try {
+        mgr.setValue(kk, v);
+      } catch {}
+    }
   } catch {}
 };
 
@@ -333,10 +421,45 @@ const updateExpressions = (t: number, delta: number) => {
     }
   }
 
+  const crying = !!props.isCrying && !fainted;
+  if (tired && !fainted) blinkTarget = THREE.MathUtils.clamp(Math.max(blinkTarget, 0.18), 0, 1);
+  if (crying && !fainted) blinkTarget = THREE.MathUtils.clamp(Math.max(blinkTarget, 0.14), 0, 1);
+
   const talk = !!props.isTalking && !fainted;
-  const mouthTarget = talk
-    ? THREE.MathUtils.clamp(0.15 + 0.18 * Math.sin(t * 11.5) + 0.08 * Math.sin(t * 19.2), 0, 1)
-    : 0;
+  const idleMouth =
+    crying || tired
+      ? THREE.MathUtils.clamp(
+          (crying ? 0.06 : 0.03) + (crying ? 0.02 : 0.01) * Math.sin(t * (crying ? 2.4 : 1.8)),
+          0,
+          0.12
+        )
+      : 0;
+  const mouthOpen = talk
+    ? THREE.MathUtils.clamp(0.16 + 0.2 * Math.sin(t * 11.5) + 0.1 * Math.sin(t * 19.2), 0, 1)
+    : idleMouth;
+  const mouthWide = talk ? 0.5 + 0.5 * Math.sin(t * 7.4 + 0.7) : crying ? 0.25 : 0;
+  const mouthRound = talk
+    ? 0.5 + 0.5 * Math.sin(t * 5.2 + 1.8)
+    : props.isPouting || crying
+      ? 0.65
+      : 0;
+  const aaTarget = THREE.MathUtils.clamp(mouthOpen * (0.78 + 0.18 * mouthWide), 0, 1);
+  const ihTarget = THREE.MathUtils.clamp(
+    mouthOpen * (0.26 + 0.22 * mouthWide) * (0.95 - 0.35 * mouthRound),
+    0,
+    1
+  );
+  const eeTarget = THREE.MathUtils.clamp(
+    mouthOpen * (0.18 + 0.18 * mouthWide) * (0.85 - 0.25 * mouthRound),
+    0,
+    1
+  );
+  const ouTarget = THREE.MathUtils.clamp(
+    mouthOpen * (0.26 + 0.22 * mouthRound) * (0.9 - 0.25 * mouthWide),
+    0,
+    1
+  );
+  const ohTarget = THREE.MathUtils.clamp(mouthOpen * (0.22 + 0.26 * mouthRound), 0, 1);
 
   const expKey = String(props.expressionOverride || '')
     .toLowerCase()
@@ -386,14 +509,17 @@ const updateExpressions = (t: number, delta: number) => {
     const next = cur + (target - cur) * s;
     faceState.values[key] = next;
     setVrmExpression(key, next);
-    if (key.length > 1) setVrmExpression(key[0].toUpperCase() + key.slice(1), next);
   };
 
   if (currentVrm?.expressionManager) {
     step('blink', blinkTarget);
     step('blinkLeft', blinkTarget);
     step('blinkRight', blinkTarget);
-    step('aa', mouthTarget);
+    step('aa', aaTarget);
+    step('ih', ihTarget);
+    step('ee', eeTarget);
+    step('ou', ouTarget);
+    step('oh', Math.max(ohTarget, props.isPouting ? 0.22 : 0));
 
     step('happy', THREE.MathUtils.clamp(happyTarget + microHappy, 0, 1));
     step('angry', angryTarget);
@@ -401,11 +527,27 @@ const updateExpressions = (t: number, delta: number) => {
     step('surprised', surprisedTarget);
     step('relaxed', THREE.MathUtils.clamp(relaxedTarget + microRelaxed, 0, 1));
   } else {
-    if (lookNodes.leftEye && lookNodes.base.leftEye) {
-      lookNodes.leftEye.rotation.x = lookNodes.leftEye.rotation.x + blinkTarget * 0.28;
+    if (lookNodes.leftEye) {
+      const targetX =
+        typeof lookState.leftEyeTargetX === 'number'
+          ? lookState.leftEyeTargetX
+          : (lookNodes.base.leftEye?.x ?? lookNodes.leftEye.rotation.x);
+      lookNodes.leftEye.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.leftEye.rotation.x,
+        targetX + blinkTarget * 0.28,
+        0.65
+      );
     }
-    if (lookNodes.rightEye && lookNodes.base.rightEye) {
-      lookNodes.rightEye.rotation.x = lookNodes.rightEye.rotation.x + blinkTarget * 0.28;
+    if (lookNodes.rightEye) {
+      const targetX =
+        typeof lookState.rightEyeTargetX === 'number'
+          ? lookState.rightEyeTargetX
+          : (lookNodes.base.rightEye?.x ?? lookNodes.rightEye.rotation.x);
+      lookNodes.rightEye.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.rightEye.rotation.x,
+        targetX + blinkTarget * 0.28,
+        0.65
+      );
     }
   }
 };
@@ -506,7 +648,10 @@ const captureMotionNodes = (vrm: any) => {
     ['leftLowerLeg', 'leftLowerLeg']
   ];
   for (const [key, boneName] of nodes) {
-    const node = getBone(boneName) as THREE.Object3D | null;
+    const node =
+      boneName === 'chest'
+        ? ((getBone('chest') || getBone('upperChest')) as THREE.Object3D | null)
+        : (getBone(boneName) as THREE.Object3D | null);
     (motionNodes as any)[key] = node;
     if (node) {
       motionNodes.base[String(key)] = {
@@ -519,10 +664,11 @@ const captureMotionNodes = (vrm: any) => {
 };
 
 const clearProceduralMotion = () => {
+  const restoreBase = proceduralBase;
   proceduralMotion = null;
   const restore = (key: keyof typeof motionNodes) => {
     const node = motionNodes[key] as THREE.Object3D | null;
-    const base = motionNodes.base[String(key)];
+    const base = restoreBase[String(key)] || motionNodes.base[String(key)];
     if (!node || !base) return;
     node.rotation.set(base.x, base.y, base.z);
   };
@@ -541,6 +687,36 @@ const clearProceduralMotion = () => {
   restore('rightLowerLeg');
   restore('leftUpperLeg');
   restore('leftLowerLeg');
+  proceduralBase = {};
+};
+
+const snapshotProceduralBase = () => {
+  const next: Record<string, { x: number; y: number; z: number }> = {};
+  const snapshot = (key: keyof typeof motionNodes) => {
+    const node = motionNodes[key] as THREE.Object3D | null;
+    const fallback = motionNodes.base[String(key)];
+    if (node) {
+      next[String(key)] = { x: node.rotation.x, y: node.rotation.y, z: node.rotation.z };
+      return;
+    }
+    if (fallback) next[String(key)] = { x: fallback.x, y: fallback.y, z: fallback.z };
+  };
+  snapshot('hips');
+  snapshot('spine');
+  snapshot('chest');
+  snapshot('leftShoulder');
+  snapshot('rightShoulder');
+  snapshot('rightUpperArm');
+  snapshot('rightLowerArm');
+  snapshot('rightHand');
+  snapshot('leftUpperArm');
+  snapshot('leftLowerArm');
+  snapshot('leftHand');
+  snapshot('rightUpperLeg');
+  snapshot('rightLowerLeg');
+  snapshot('leftUpperLeg');
+  snapshot('leftLowerLeg');
+  proceduralBase = next;
 };
 
 const resolveProceduralMotionName = (input: string) => {
@@ -607,6 +783,7 @@ const resolveProceduralMotionName = (input: string) => {
 const startProceduralMotion = (name: string) => {
   const n = resolveProceduralMotionName(name);
   if (!n) return;
+  snapshotProceduralBase();
   const duration =
     n === 'wave'
       ? 1400
@@ -717,7 +894,7 @@ const startProceduralMotion = (name: string) => {
     duration,
     seed,
     side: seed < 0.5 ? 'left' : 'right',
-    intensity: 0.85 + seed * 0.3
+    intensity: (n.startsWith('idle_') ? 0.72 : 0.85) + seed * (n.startsWith('idle_') ? 0.22 : 0.3)
   };
   if (activeAction) {
     try {
@@ -980,12 +1157,20 @@ const applyBaselineMotion = (t: number, delta: number) => {
   const hips = motionNodes.hips;
   const lUpper = motionNodes.leftUpperArm;
   const rUpper = motionNodes.rightUpperArm;
+  const rUpperLeg = motionNodes.rightUpperLeg;
+  const rLowerLeg = motionNodes.rightLowerLeg;
+  const lUpperLeg = motionNodes.leftUpperLeg;
+  const lLowerLeg = motionNodes.leftLowerLeg;
 
   const baseSpine = motionNodes.base['spine'];
   const baseChest = motionNodes.base['chest'];
   const baseHips = motionNodes.base['hips'];
   const baseLU = motionNodes.base['leftUpperArm'];
   const baseRU = motionNodes.base['rightUpperArm'];
+  const baseRULeg = motionNodes.base['rightUpperLeg'];
+  const baseRLLeg = motionNodes.base['rightLowerLeg'];
+  const baseLULeg = motionNodes.base['leftUpperLeg'];
+  const baseLLLeg = motionNodes.base['leftLowerLeg'];
 
   const s = 1 - Math.exp(-Math.max(0, delta) * 7.5);
   const breathe = Math.sin(t * 1.25);
@@ -1009,6 +1194,58 @@ const applyBaselineMotion = (t: number, delta: number) => {
   }
   if (rUpper && baseRU) {
     rUpper.rotation.x = THREE.MathUtils.lerp(rUpper.rotation.x, baseRU.x + breathe * 0.01, s);
+  }
+
+  if (!!props.isMoving) {
+    const persona = String(props.personaText || '').toLowerCase();
+    const isLazy = /(懒散|慵懒|懒|lazy|sleepy|tired)/i.test(persona);
+    const isElegant = /(优雅|高贵|端庄|从容|elegan|grace|refined|poised)/i.test(persona);
+    const isWarrior = /(战斗|武|剑|弓|枪|骑士|武士|soldier|warrior|knight|fighter)/i.test(persona);
+
+    const baseStepHz = isElegant ? 2.3 : isWarrior ? 4.4 : 3.5;
+    const stepHz = baseStepHz * (isLazy ? 0.72 : 1) * (props.isTired ? 0.7 : 1);
+    const phase = t * (Math.PI * 2) * stepHz;
+    const stride = Math.sin(phase);
+    const lift = Math.max(0, Math.sin(phase + Math.PI / 2));
+    const ampUpper = (isElegant ? 0.14 : 0.22) * (isLazy ? 0.75 : 1);
+    const ampLower = (isElegant ? 0.18 : 0.28) * (isLazy ? 0.75 : 1);
+
+    if (rUpperLeg && baseRULeg) {
+      rUpperLeg.rotation.x = THREE.MathUtils.lerp(
+        rUpperLeg.rotation.x,
+        baseRULeg.x + stride * ampUpper,
+        s
+      );
+    }
+    if (lUpperLeg && baseLULeg) {
+      lUpperLeg.rotation.x = THREE.MathUtils.lerp(
+        lUpperLeg.rotation.x,
+        baseLULeg.x - stride * ampUpper,
+        s
+      );
+    }
+
+    if (rLowerLeg && baseRLLeg) {
+      rLowerLeg.rotation.x = THREE.MathUtils.lerp(
+        rLowerLeg.rotation.x,
+        baseRLLeg.x - lift * ampLower,
+        s
+      );
+    }
+    if (lLowerLeg && baseLLLeg) {
+      lLowerLeg.rotation.x = THREE.MathUtils.lerp(
+        lLowerLeg.rotation.x,
+        baseLLLeg.x - Math.max(0, Math.sin(phase + Math.PI / 2 + Math.PI)) * ampLower,
+        s
+      );
+    }
+
+    if (hips && baseHips) {
+      const bob = Math.abs(stride) * 0.008;
+      hips.position.y = THREE.MathUtils.lerp(hips.position.y, bob, s);
+    }
+  } else {
+    if (hips) hips.position.y = THREE.MathUtils.lerp(hips.position.y, 0, s);
   }
 };
 
@@ -1035,14 +1272,14 @@ const applyProceduralMotion = () => {
   const lShoulder = motionNodes.leftShoulder;
   const rShoulder = motionNodes.rightShoulder;
 
-  const baseRU = motionNodes.base['rightUpperArm'];
-  const baseRL = motionNodes.base['rightLowerArm'];
-  const baseRH = motionNodes.base['rightHand'];
-  const baseLU = motionNodes.base['leftUpperArm'];
-  const baseLL = motionNodes.base['leftLowerArm'];
-  const baseLH = motionNodes.base['leftHand'];
-  const baseLS = motionNodes.base['leftShoulder'];
-  const baseRS = motionNodes.base['rightShoulder'];
+  const baseRU = proceduralBase['rightUpperArm'] || motionNodes.base['rightUpperArm'];
+  const baseRL = proceduralBase['rightLowerArm'] || motionNodes.base['rightLowerArm'];
+  const baseRH = proceduralBase['rightHand'] || motionNodes.base['rightHand'];
+  const baseLU = proceduralBase['leftUpperArm'] || motionNodes.base['leftUpperArm'];
+  const baseLL = proceduralBase['leftLowerArm'] || motionNodes.base['leftLowerArm'];
+  const baseLH = proceduralBase['leftHand'] || motionNodes.base['leftHand'];
+  const baseLS = proceduralBase['leftShoulder'] || motionNodes.base['leftShoulder'];
+  const baseRS = proceduralBase['rightShoulder'] || motionNodes.base['rightShoulder'];
   const hips = motionNodes.hips;
   const spine = motionNodes.spine;
   const chest = motionNodes.chest;
@@ -1050,13 +1287,13 @@ const applyProceduralMotion = () => {
   const rLowerLeg = motionNodes.rightLowerLeg;
   const lUpperLeg = motionNodes.leftUpperLeg;
   const lLowerLeg = motionNodes.leftLowerLeg;
-  const baseHips = motionNodes.base['hips'];
-  const baseSpine = motionNodes.base['spine'];
-  const baseChest = motionNodes.base['chest'];
-  const baseRULeg = motionNodes.base['rightUpperLeg'];
-  const baseRLLeg = motionNodes.base['rightLowerLeg'];
-  const baseLULeg = motionNodes.base['leftUpperLeg'];
-  const baseLLLeg = motionNodes.base['leftLowerLeg'];
+  const baseHips = proceduralBase['hips'] || motionNodes.base['hips'];
+  const baseSpine = proceduralBase['spine'] || motionNodes.base['spine'];
+  const baseChest = proceduralBase['chest'] || motionNodes.base['chest'];
+  const baseRULeg = proceduralBase['rightUpperLeg'] || motionNodes.base['rightUpperLeg'];
+  const baseRLLeg = proceduralBase['rightLowerLeg'] || motionNodes.base['rightLowerLeg'];
+  const baseLULeg = proceduralBase['leftUpperLeg'] || motionNodes.base['leftUpperLeg'];
+  const baseLLLeg = proceduralBase['leftLowerLeg'] || motionNodes.base['leftLowerLeg'];
 
   const name = proceduralMotion.name;
   if (name === 'wave') {
@@ -1874,6 +2111,7 @@ const updatePresentation = (t: number) => {
   if (!presentationGroup) return;
 
   const hovered = !!props.isHovered || pointer.active;
+  const allowMouseControl = !!props.mouseControlEnabled;
   const talking = !!props.isTalking;
   const moving = !!props.isMoving;
   const dizzy = !!props.isDizzy;
@@ -1895,7 +2133,15 @@ const updatePresentation = (t: number) => {
   let targetPosX = 0;
   let targetPosY = fainted ? -0.18 : bobAmp * Math.sin(t * bobSpeed);
 
-  if (hovered) {
+  if (allowMouseControl) {
+    const s = mouseControl.dragging ? 0.22 : 0.14;
+    mouseControl.yaw = THREE.MathUtils.lerp(mouseControl.yaw, mouseControl.targetYaw, s);
+    mouseControl.pitch = THREE.MathUtils.lerp(mouseControl.pitch, mouseControl.targetPitch, s);
+    targetRotY += mouseControl.yaw;
+    targetRotX += mouseControl.pitch;
+  }
+
+  if (hovered && allowMouseControl && !mouseControl.dragging) {
     targetRotZ += pointer.x * 0.06;
     targetRotX += pointer.y * 0.06;
     targetPosX += pointer.x * 0.02;
@@ -2016,45 +2262,47 @@ const applyRelaxPose = (vrm: any) => {
   const lHand = getBone('leftHand') as THREE.Object3D | null;
   const rHand = getBone('rightHand') as THREE.Object3D | null;
   const spine = getBone('spine') as THREE.Object3D | null;
+  const chest = (getBone('chest') || getBone('upperChest')) as THREE.Object3D | null;
   const hips = getBone('hips') as THREE.Object3D | null;
 
-  if (spine) spine.rotation.x = -0.03;
-  if (hips) hips.rotation.x = 0.02;
+  if (spine) spine.rotation.x = -0.025;
+  if (chest) chest.rotation.x = -0.01;
+  if (hips) hips.rotation.x = 0.018;
 
   if (lShoulder) {
-    lShoulder.rotation.z = 0.08;
-    lShoulder.rotation.x = -0.03;
+    lShoulder.rotation.z = 0.07;
+    lShoulder.rotation.x = -0.028;
   }
   if (rShoulder) {
-    rShoulder.rotation.z = -0.08;
-    rShoulder.rotation.x = -0.03;
+    rShoulder.rotation.z = -0.07;
+    rShoulder.rotation.x = -0.028;
   }
 
   if (lUpperArm) {
-    lUpperArm.rotation.z = 1.02;
-    lUpperArm.rotation.x = -0.12;
-    lUpperArm.rotation.y = 0.08;
+    lUpperArm.rotation.z = 1.05;
+    lUpperArm.rotation.x = -0.14;
+    lUpperArm.rotation.y = 0.09;
   }
   if (rUpperArm) {
-    rUpperArm.rotation.z = -1.02;
-    rUpperArm.rotation.x = -0.12;
-    rUpperArm.rotation.y = -0.08;
+    rUpperArm.rotation.z = -1.05;
+    rUpperArm.rotation.x = -0.14;
+    rUpperArm.rotation.y = -0.09;
   }
   if (lLowerArm) {
-    lLowerArm.rotation.z = 0.18;
-    lLowerArm.rotation.x = 0.02;
+    lLowerArm.rotation.z = 0.22;
+    lLowerArm.rotation.x = 0.03;
   }
   if (rLowerArm) {
-    rLowerArm.rotation.z = -0.18;
-    rLowerArm.rotation.x = 0.02;
+    rLowerArm.rotation.z = -0.22;
+    rLowerArm.rotation.x = 0.03;
   }
   if (lHand) {
-    lHand.rotation.z = 0.06;
-    lHand.rotation.x = 0.03;
+    lHand.rotation.z = 0.07;
+    lHand.rotation.x = 0.035;
   }
   if (rHand) {
-    rHand.rotation.z = -0.06;
-    rHand.rotation.x = 0.03;
+    rHand.rotation.z = -0.07;
+    rHand.rotation.x = 0.035;
   }
 };
 
@@ -2170,6 +2418,10 @@ const updateLook = (t: number) => {
   const neckBase = lookNodes.base.neck || { x: 0, y: 0, z: 0 };
   const leftEyeBase = lookNodes.base.leftEye || { x: 0, y: 0, z: 0 };
   const rightEyeBase = lookNodes.base.rightEye || { x: 0, y: 0, z: 0 };
+  lookState.leftEyeTargetY = leftEyeBase.y + eyeYaw;
+  lookState.leftEyeTargetX = leftEyeBase.x + eyePitch;
+  lookState.rightEyeTargetY = rightEyeBase.y + eyeYaw;
+  lookState.rightEyeTargetX = rightEyeBase.x + eyePitch;
 
   if (lookNodes.head) {
     lookNodes.head.rotation.y = THREE.MathUtils.lerp(
@@ -2200,12 +2452,12 @@ const updateLook = (t: number) => {
   if (lookNodes.leftEye) {
     lookNodes.leftEye.rotation.y = THREE.MathUtils.lerp(
       lookNodes.leftEye.rotation.y,
-      leftEyeBase.y + eyeYaw,
+      lookState.leftEyeTargetY,
       k * 1.35
     );
     lookNodes.leftEye.rotation.x = THREE.MathUtils.lerp(
       lookNodes.leftEye.rotation.x,
-      leftEyeBase.x + eyePitch,
+      lookState.leftEyeTargetX,
       k * 1.35
     );
   }
@@ -2213,12 +2465,12 @@ const updateLook = (t: number) => {
   if (lookNodes.rightEye) {
     lookNodes.rightEye.rotation.y = THREE.MathUtils.lerp(
       lookNodes.rightEye.rotation.y,
-      rightEyeBase.y + eyeYaw,
+      lookState.rightEyeTargetY,
       k * 1.35
     );
     lookNodes.rightEye.rotation.x = THREE.MathUtils.lerp(
       lookNodes.rightEye.rotation.x,
-      rightEyeBase.x + eyePitch,
+      lookState.rightEyeTargetX,
       k * 1.35
     );
   }
