@@ -597,8 +597,6 @@ const loadRemoteVrmModels = async () => {
   }
 };
 
-onMounted(() => {});
-
 watch(
   () => vrmModels.value.length,
   () => {
@@ -1234,7 +1232,44 @@ const recordSystemEvent = (text: string, type = 'event') => {
 };
 
 // Task Executor
-const { plan, isExecuting, setPlan } = useTaskExecutor();
+const { plan, isExecuting, setPlan, stopTask } = useTaskExecutor();
+
+const TASK_SESSION_STORAGE_KEY = 'agent_task_session';
+const taskSession = ref<{
+  active: boolean;
+  goal: string;
+  autoContinueCount: number;
+  lastContinueAt: number;
+} | null>(null);
+let lastChatUserText = '';
+let taskContinueAbortController: AbortController | null = null;
+const isTaskContinuing = ref(false);
+
+const saveTaskSession = () => {
+  try {
+    if (taskSession.value)
+      localStorage.setItem(TASK_SESSION_STORAGE_KEY, JSON.stringify(taskSession.value));
+    else localStorage.removeItem(TASK_SESSION_STORAGE_KEY);
+  } catch {}
+};
+
+const loadTaskSession = () => {
+  try {
+    const raw = localStorage.getItem(TASK_SESSION_STORAGE_KEY);
+    if (!raw || !raw.trim()) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      const goal = typeof parsed.goal === 'string' ? parsed.goal : '';
+      taskSession.value = {
+        active: !!parsed.active,
+        goal,
+        autoContinueCount:
+          typeof parsed.autoContinueCount === 'number' ? parsed.autoContinueCount : 0,
+        lastContinueAt: typeof parsed.lastContinueAt === 'number' ? parsed.lastContinueAt : 0
+      };
+    }
+  } catch {}
+};
 
 // Eye Tracking State
 const mouseX = ref(0);
@@ -1908,27 +1943,23 @@ const applyAiReply = async (
 
   if (parsedPlan) {
     try {
+      const candidateGoal = (lastChatUserText || '').trim();
+      const existingGoal = (taskSession.value?.goal || '').trim();
+      const nextGoal = candidateGoal || existingGoal;
+      taskSession.value = {
+        active: true,
+        goal: nextGoal,
+        autoContinueCount:
+          taskSession.value && existingGoal === nextGoal ? taskSession.value.autoContinueCount : 0,
+        lastContinueAt: taskSession.value?.lastContinueAt || 0
+      };
+      saveTaskSession();
+
       console.log('Executing Plan:', parsedPlan);
       const result = await setPlan(parsedPlan);
-      if (result.success) {
-        applyExpression('happy', 4000);
-        playMotionInternal('tap_body', 4000);
-        if (options.displayInChat) {
-          messages.value.push({ role: 'agent', text: 'Mission Complete! Praise me! [HAPPY]' });
-        }
-        if (!options.suppressMemorySave)
-          pushMemoryItem({ role: 'agent', text: 'Mission Complete! Praise me!' });
-        message.value = 'Mission Complete! ✨';
-        speak('Mission Complete! Praise me!');
-      } else {
-        applyExpression('shy', 4000);
-        const errText = `Oops... I failed: ${result.message || 'Unknown error'}.`;
-        if (options.displayInChat) {
-          messages.value.push({ role: 'agent', text: `${errText} [SHY]` });
-        }
-        if (!options.suppressMemorySave) pushMemoryItem({ role: 'agent', text: errText });
-        message.value = 'Oops... failed... 😖';
-        speak("Oops... I failed... don't look at me!");
+      if (!result.success && taskSession.value) {
+        taskSession.value.active = false;
+        saveTaskSession();
       }
     } catch (e) {
       console.error('Failed to parse task plan:', e);
@@ -2115,9 +2146,15 @@ const flushBackgroundReaction = async () => {
       signal: backgroundAbortController.signal
     });
     if (!rawResponse) return;
+    const shouldSpeak = (() => {
+      const t = String(last?.trigger || '')
+        .trim()
+        .toLowerCase();
+      return t === 'task' || t === 'dom' || t === 'nav' || t === 'error';
+    })();
     await applyAiReply(rawResponse, {
       displayInChat: false,
-      speakText: false,
+      speakText: shouldSpeak,
       suppressMemorySave: true
     });
   } finally {
@@ -2161,14 +2198,221 @@ const reactToSystemEvent = (input: {
   }, 250);
 };
 
+let domObserver: MutationObserver | null = null;
+let domFlushTimer: number | null = null;
+let lastDomSignalAt = 0;
+let lastDomSignalText = '';
+let pendingDomSignals: Array<{ text: string; type: 'dom' | 'error' }> = [];
+
+const classifyDomSignal = (text: string): 'error' | 'success' | null => {
+  const t = text.toLowerCase();
+  if (/(错误|失败|异常|报错|无法|error|failed|exception|traceback|stack|500|404|403)/i.test(t))
+    return 'error';
+  if (/(成功|完成|已生成|生成成功|done|success|completed|saved)/i.test(t)) return 'success';
+  return null;
+};
+
+const pushDomSignal = (text: string, type: 'dom' | 'error') => {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return;
+  const now = Date.now();
+  if (trimmed === lastDomSignalText && now - lastDomSignalAt < 1200) return;
+  lastDomSignalAt = now;
+  lastDomSignalText = trimmed;
+  pendingDomSignals.push({ text: trimmed, type });
+  if (pendingDomSignals.length > 8) pendingDomSignals = pendingDomSignals.slice(-8);
+  if (domFlushTimer) window.clearTimeout(domFlushTimer);
+  domFlushTimer = window.setTimeout(() => {
+    domFlushTimer = null;
+    const batch = pendingDomSignals;
+    pendingDomSignals = [];
+    const summary = batch
+      .map((x) => x.text)
+      .filter(Boolean)
+      .slice(-4)
+      .join('\n');
+    if (!summary.trim()) return;
+    const trigger = batch.some((x) => x.type === 'error') ? 'error' : 'dom';
+    reactToSystemEvent({
+      text: summary,
+      type: trigger === 'error' ? 'dom_error' : 'dom_signal',
+      trigger
+    });
+  }, 350);
+};
+
+const startDomObserver = () => {
+  if (typeof MutationObserver === 'undefined') return;
+  if (domObserver) return;
+
+  const scanNode = (node: Node): string[] => {
+    const results: string[] = [];
+    if (node.nodeType === Node.TEXT_NODE) {
+      const t = (node.textContent || '').trim();
+      if (t) results.push(t);
+      return results;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return results;
+    const el = node as HTMLElement;
+
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    const ariaLive = (el.getAttribute('aria-live') || '').toLowerCase();
+    const className = typeof el.className === 'string' ? el.className : '';
+    const isSignalContainer =
+      role === 'alert' ||
+      ariaLive === 'polite' ||
+      ariaLive === 'assertive' ||
+      /(toast|notification|notify|alert|error|success|snackbar|message)/i.test(className);
+
+    const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (text && text.length <= 240) {
+      const kind = classifyDomSignal(text);
+      if (kind === 'error')
+        results.push(
+          currentLang.value === 'zh' ? `页面提示错误：${text}` : `Page shows an error: ${text}`
+        );
+      else if (kind === 'success')
+        results.push(
+          currentLang.value === 'zh' ? `页面提示成功：${text}` : `Page shows success: ${text}`
+        );
+      else if (isSignalContainer && text.length <= 120)
+        results.push(currentLang.value === 'zh' ? `页面提示：${text}` : `Page message: ${text}`);
+    }
+
+    if (el.children && el.children.length > 0 && el.children.length <= 12) {
+      for (const child of Array.from(el.children)) results.push(...scanNode(child));
+    }
+    return results;
+  };
+
+  domObserver = new MutationObserver((mutations) => {
+    const collected: string[] = [];
+    for (const m of mutations) {
+      if (m.type === 'childList') {
+        for (const n of Array.from(m.addedNodes)) collected.push(...scanNode(n));
+      } else if (m.type === 'characterData') {
+        if (m.target) collected.push(...scanNode(m.target));
+      } else if (m.type === 'attributes') {
+        if (m.target) collected.push(...scanNode(m.target));
+      }
+    }
+
+    const uniq = Array.from(new Set(collected.map((t) => t.trim()).filter(Boolean))).slice(0, 6);
+    if (uniq.length === 0) return;
+    const summary = uniq.join('\n');
+    const kind = classifyDomSignal(summary);
+    if (kind === 'error') pushDomSignal(summary, 'error');
+    else if (kind === 'success') pushDomSignal(summary, 'dom');
+    else pushDomSignal(summary, 'dom');
+  });
+
+  domObserver.observe(document.body, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ['class', 'style', 'aria-live', 'role']
+  });
+};
+
+const stopDomObserver = () => {
+  if (domObserver) {
+    try {
+      domObserver.disconnect();
+    } catch {}
+    domObserver = null;
+  }
+  if (domFlushTimer) window.clearTimeout(domFlushTimer);
+  domFlushTimer = null;
+  pendingDomSignals = [];
+};
+
+const requestNextTaskChunk = async (reason: 'completed' | 'failed' | 'manual') => {
+  if (isTaskContinuing.value) return;
+  if (isLoading.value || isBackgroundReacting.value) return;
+  if (isExecuting.value) return;
+  const session = taskSession.value;
+  if (!session?.active) return;
+
+  const now = Date.now();
+  if (now - (session.lastContinueAt || 0) < 2500) return;
+  if (session.autoContinueCount >= 6 && reason !== 'manual') return;
+
+  session.lastContinueAt = now;
+  session.autoContinueCount = Math.max(0, session.autoContinueCount) + 1;
+  saveTaskSession();
+
+  if (taskContinueAbortController) {
+    try {
+      taskContinueAbortController.abort();
+    } catch {}
+  }
+  taskContinueAbortController = new AbortController();
+  isTaskContinuing.value = true;
+
+  try {
+    const goal = (session.goal || '').trim();
+    const routePath = router.currentRoute.value?.fullPath || window.location.pathname;
+    const prompt =
+      currentLang.value === 'zh'
+        ? `[TaskContinue]: 继续任务。\n原因: ${reason}\n目标: ${goal || '（未提供）'}\n当前路由: ${routePath}\n\n要求：\n1) 如果需要继续操作页面：输出 plan: 后面跟严格 JSON 数组（1–8 步），每步包含 {\"type\":\"click|input|hover|scroll|press|wait|navigate\",\"target\":string,\"value\"?:string|number}。\n2) 不管是否继续操作，都必须输出 avatarPlan: 后面跟严格 JSON 数组（1–4 步），用于你的旁白/动作/表情。\n3) 如果任务已完成：不要输出 plan，只输出一句很短的完成确认 + avatarPlan。`
+        : `[TaskContinue]: Continue the task.\nReason: ${reason}\nGoal: ${goal || '(not provided)'}\nRoute: ${routePath}\n\nRules:\n1) If you need to keep operating the page: output \"plan:\" followed by a strict JSON array (1–8 steps), each step has {\"type\":\"click|input|hover|scroll|press|wait|navigate\",\"target\":string,\"value\"?:string|number}.\n2) Always output \"avatarPlan:\" followed by a strict JSON array (1–4 steps) for narration/motion/expression.\n3) If the task is done: do NOT output plan; just a very short done confirmation + avatarPlan.`;
+    const agentContext: any = buildAgentContext({
+      trigger: 'task',
+      systemEvent: prompt,
+      userText: goal
+    });
+    agentContext.suppressMemorySave = true;
+    const rawResponse = await sendMessageToAI(prompt, messages.value, agentContext, {
+      signal: taskContinueAbortController.signal
+    });
+    if (!rawResponse) {
+      session.active = false;
+      saveTaskSession();
+      return;
+    }
+    await applyAiReply(rawResponse, {
+      displayInChat: false,
+      speakText: true,
+      suppressMemorySave: true
+    });
+
+    const hasPlan = /\bplan\s*:\s*\[/i.test(rawResponse);
+    if (!hasPlan && reason !== 'manual') {
+      session.active = false;
+      saveTaskSession();
+    }
+  } finally {
+    isTaskContinuing.value = false;
+  }
+};
+
 async function handleSendMessage(text: string) {
   const trimmed = (text || '').trim();
   if (!trimmed) return;
+  lastChatUserText = trimmed;
   markUserActivity();
   messages.value.push({ role: 'user', text: trimmed });
   pushMemoryItem({ role: 'user', text: trimmed });
   isLoading.value = true;
   message.value = 'Hmm...';
+
+  const isCancelTask = (() => {
+    const zh = currentLang.value === 'zh';
+    const re = zh ? /(取消|停止|结束任务|别做了|停下)/i : /(cancel|stop task|stop doing|abort)/i;
+    return re.test(trimmed);
+  })();
+  if (isCancelTask) {
+    if (plan.value?.status === 'running') stopTask();
+    if (taskSession.value) taskSession.value.active = false;
+    saveTaskSession();
+    isLoading.value = false;
+    const msg = currentLang.value === 'zh' ? '好，我先停下。' : "Okay, I'll stop.";
+    message.value = msg;
+    messages.value.push({ role: 'agent', text: msg });
+    speak(msg);
+    return;
+  }
 
   const isHurryRequest = (() => {
     const zh = currentLang.value === 'zh';
@@ -3091,6 +3335,7 @@ const handleGlobalKeyDown = (event: KeyboardEvent) => {
 // --- Lifecycle ---
 onMounted(async () => {
   loadLocalMemory();
+  loadTaskSession();
   window.addEventListener('mousemove', handleMouseMove);
   window.addEventListener('resize', () => {
     isMobile.value = window.innerWidth <= 768;
@@ -3110,6 +3355,12 @@ onMounted(async () => {
   if (!props.isPinned) startRoaming();
   startIdleTalk();
   await initAuth();
+  startDomObserver();
+  if (taskSession.value?.active && !plan.value?.status) {
+    window.setTimeout(() => {
+      void requestNextTaskChunk('manual');
+    }, 900);
+  }
 
   // Expose for debugging/external control
   (window as any).runAgentPlan = (plan: any[]) => avatarAdapter.runPlan(plan);
@@ -3128,11 +3379,29 @@ onBeforeUnmount(() => {
   if (expressionOverrideTimeout) clearTimeout(expressionOverrideTimeout);
   if (backgroundReactTimer) clearTimeout(backgroundReactTimer);
   if (taskMoveTimeout) clearTimeout(taskMoveTimeout);
+  stopDomObserver();
   try {
     chatAbortController?.abort();
   } catch {}
   cancelAiRequests();
 });
+
+watch(
+  () => router.currentRoute.value?.fullPath,
+  (path, prev) => {
+    if (!path || path === prev) return;
+    if (taskSession.value?.active) {
+      reactToSystemEvent({
+        text: currentLang.value === 'zh' ? `页面已跳转：${path}` : `Navigation happened: ${path}`,
+        type: 'navigation',
+        trigger: 'nav'
+      });
+      window.setTimeout(() => {
+        void requestNextTaskChunk('manual');
+      }, 1200);
+    }
+  }
+);
 
 watch(currentUser, async (user) => {
   if (user) {
@@ -3245,6 +3514,9 @@ watch(
       isHappy.value = true;
       message.value = 'Mission Accomplished!';
       guideLabel.value = 'Done!';
+      window.setTimeout(() => {
+        void requestNextTaskChunk('completed');
+      }, 450);
       setTimeout(() => {
         isHappy.value = false;
         if (message.value === 'Mission Accomplished!') message.value = '';
@@ -3254,6 +3526,9 @@ watch(
     } else if (newStatus === 'failed') {
       isConfused.value = true;
       message.value = 'Oops, something went wrong.';
+      window.setTimeout(() => {
+        void requestNextTaskChunk('failed');
+      }, 650);
       setTimeout(() => {
         isConfused.value = false;
         message.value = '';

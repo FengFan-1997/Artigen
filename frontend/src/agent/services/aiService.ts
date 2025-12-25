@@ -124,7 +124,10 @@ const buildDirectSystemPrompt = (input: {
     typeof ctx?.runtime?.agentType === 'string' ? ctx.runtime.agentType.trim().toLowerCase() : '';
   const trigger = typeof ctx?.trigger === 'string' ? ctx.trigger.trim().toLowerCase() : '';
   const mustIncludeAvatarPlan =
-    input.kind === 'reaction' || trigger === 'idle' || agentType === 'vrm';
+    input.kind === 'reaction' ||
+    trigger === 'idle' ||
+    trigger.startsWith('task') ||
+    agentType === 'vrm';
   const allowedMotions = Array.isArray(ctx?.constraints?.allowedMotions)
     ? ctx.constraints.allowedMotions
     : [];
