@@ -2140,11 +2140,16 @@ const flushBackgroundReaction = async () => {
     });
     agentContext.mode = 'react';
     agentContext.suppressMemorySave = true;
-    const rawResponse = await requestAgentReaction({
-      message: summary,
-      agentContext,
-      signal: backgroundAbortController.signal
-    });
+    let rawResponse = '';
+    try {
+      rawResponse = await requestAgentReaction({
+        message: summary,
+        agentContext,
+        signal: backgroundAbortController.signal
+      });
+    } catch {
+      return;
+    }
     if (!rawResponse) return;
     const shouldSpeak = (() => {
       const t = String(last?.trigger || '')
@@ -2363,9 +2368,14 @@ const requestNextTaskChunk = async (reason: 'completed' | 'failed' | 'manual') =
       userText: goal
     });
     agentContext.suppressMemorySave = true;
-    const rawResponse = await sendMessageToAI(prompt, messages.value, agentContext, {
-      signal: taskContinueAbortController.signal
-    });
+    let rawResponse = '';
+    try {
+      rawResponse = await sendMessageToAI(prompt, messages.value, agentContext, {
+        signal: taskContinueAbortController.signal
+      });
+    } catch {
+      return;
+    }
     if (!rawResponse) {
       session.active = false;
       saveTaskSession();
