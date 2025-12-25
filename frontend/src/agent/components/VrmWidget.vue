@@ -1,11 +1,3 @@
-<template>
-  <div class="vrm-widget" ref="containerRef">
-    <canvas class="vrm-canvas" ref="canvasRef"></canvas>
-    <div v-if="loading" class="vrm-loading">{{ loadingText }}</div>
-    <div v-else-if="error" class="vrm-error">{{ error }}</div>
-  </div>
-</template>
-
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
@@ -200,11 +192,38 @@ const disposeObject = (obj: THREE.Object3D) => {
 const fitToView = (root: THREE.Object3D) => {
   if (!containerRef.value || !camera) return;
   root.position.set(0, 0, 0);
+  root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
   const size = new THREE.Vector3();
   box.getSize(size);
   const center = new THREE.Vector3();
   box.getCenter(center);
+
+  const humanoid = currentVrm?.humanoid;
+  const getBone =
+    typeof humanoid?.getNormalizedBoneNode === 'function'
+      ? (name: string) => humanoid.getNormalizedBoneNode(name)
+      : typeof humanoid?.getBoneNode === 'function'
+        ? (name: string) => humanoid.getBoneNode(name)
+        : (_name: string) => null;
+
+  const headNode = (getBone('head') || getBone('neck')) as THREE.Object3D | null;
+  const leftFootNode = (getBone('leftFoot') || getBone('leftToes')) as THREE.Object3D | null;
+  const rightFootNode = (getBone('rightFoot') || getBone('rightToes')) as THREE.Object3D | null;
+  const useHumanoidFrame = !!headNode && (!!leftFootNode || !!rightFootNode);
+  if (useHumanoidFrame) {
+    const headPos = new THREE.Vector3();
+    const lfPos = new THREE.Vector3();
+    const rfPos = new THREE.Vector3();
+    headNode.getWorldPosition(headPos);
+    if (leftFootNode) leftFootNode.getWorldPosition(lfPos);
+    if (rightFootNode) rightFootNode.getWorldPosition(rfPos);
+    const footY =
+      leftFootNode && rightFootNode ? Math.min(lfPos.y, rfPos.y) : leftFootNode ? lfPos.y : rfPos.y;
+    const humanoidHeight = Math.max(0.0001, headPos.y - footY);
+    size.y = Math.max(size.y, humanoidHeight);
+    center.y = (headPos.y + footY) / 2;
+  }
 
   root.position.sub(center);
   const fovV = (camera.fov * Math.PI) / 180;
@@ -215,7 +234,8 @@ const fitToView = (root: THREE.Object3D) => {
   const height = Math.max(0.0001, size.y);
   const distV = height / 2 / Math.tan(safeFovV / 2);
   const distH = width / 2 / Math.tan(safeFovH / 2);
-  const dist = Math.max(distV, distH) * 1.12 + size.z * 0.5;
+  const margin = useHumanoidFrame ? 1.32 : 1.22;
+  const dist = Math.max(distV, distH) * margin + size.z * 0.55;
 
   camera.position.set(0, 0, dist);
   camera.lookAt(0, 0, 0);
@@ -2133,18 +2153,38 @@ const updatePresentation = (t: number) => {
   let targetPosX = 0;
   let targetPosY = fainted ? -0.18 : bobAmp * Math.sin(t * bobSpeed);
 
-  if (allowMouseControl) {
-    const s = mouseControl.dragging ? 0.22 : 0.14;
-    mouseControl.yaw = THREE.MathUtils.lerp(mouseControl.yaw, mouseControl.targetYaw, s);
-    mouseControl.pitch = THREE.MathUtils.lerp(mouseControl.pitch, mouseControl.targetPitch, s);
-    targetRotY += mouseControl.yaw;
-    targetRotX += mouseControl.pitch;
+  const desiredYaw = allowMouseControl ? mouseControl.targetYaw : 0;
+  const desiredPitch = allowMouseControl ? mouseControl.targetPitch : 0;
+  const s = mouseControl.dragging ? 0.22 : allowMouseControl ? 0.14 : 0.08;
+  mouseControl.yaw = THREE.MathUtils.lerp(mouseControl.yaw, desiredYaw, s);
+  mouseControl.pitch = THREE.MathUtils.lerp(mouseControl.pitch, desiredPitch, s);
+  targetRotY += mouseControl.yaw;
+  targetRotX += mouseControl.pitch;
+
+  if (hovered && !mouseControl.dragging) {
+    const f = allowMouseControl ? 1 : 0.25;
+    targetRotZ += pointer.x * 0.06 * f;
+    targetRotX += pointer.y * 0.06 * f;
+    targetPosX += pointer.x * 0.02 * f;
   }
 
-  if (hovered && allowMouseControl && !mouseControl.dragging) {
-    targetRotZ += pointer.x * 0.06;
-    targetRotX += pointer.y * 0.06;
-    targetPosX += pointer.x * 0.02;
+  const isCalm =
+    !talking &&
+    !moving &&
+    !dizzy &&
+    !happy &&
+    !angry &&
+    !confused &&
+    !pouting &&
+    !headHit &&
+    !crying &&
+    !tired &&
+    !fainted;
+  if (isCalm) {
+    targetPosY += Math.sin(t * 1.65 + 0.5) * 0.0035;
+    targetRotZ += Math.sin(t * 1.05 + 1.2) * 0.02;
+    targetRotY += Math.sin(t * 0.85 + 0.2) * 0.035;
+    targetPosX += Math.sin(t * 0.75 + 2.3) * 0.006;
   }
 
   if (dizzy) {
@@ -2391,6 +2431,10 @@ const updateLook = (t: number) => {
   const head = lookNodes.head || lookNodes.neck;
   if (!head) return;
 
+  const shouldDriveHead =
+    !proceduralMotion &&
+    !(activeAction && typeof activeAction.isRunning === 'function' && activeAction.isRunning());
+
   const now = Date.now();
   const pointerRecent = now - lookState.lastPointerAt < 900;
   if (!pointerRecent && now >= lookState.nextAutoAt && now >= lookState.autoUntil) {
@@ -2404,8 +2448,13 @@ const updateLook = (t: number) => {
   const tx = usePointer ? pointer.x : now < lookState.autoUntil ? lookState.autoTargetX : 0;
   const ty = usePointer ? pointer.y : now < lookState.autoUntil ? lookState.autoTargetY : 0;
 
-  const headYaw = THREE.MathUtils.clamp(tx * 0.38, -0.42, 0.42);
-  const headPitch = THREE.MathUtils.clamp(ty * 0.16 + Math.sin(t * 0.7) * 0.015, -0.2, 0.2);
+  const headFactor = props.mouseControlEnabled ? 1 : 0.2;
+  const headYaw = THREE.MathUtils.clamp(tx * 0.38 * headFactor, -0.42, 0.42);
+  const headPitch = THREE.MathUtils.clamp(
+    (ty * 0.16 + Math.sin(t * 0.7) * 0.015) * headFactor,
+    -0.2,
+    0.2
+  );
 
   const neckYaw = headYaw * 0.55;
   const neckPitch = headPitch * 0.55;
@@ -2423,7 +2472,7 @@ const updateLook = (t: number) => {
   lookState.rightEyeTargetY = rightEyeBase.y + eyeYaw;
   lookState.rightEyeTargetX = rightEyeBase.x + eyePitch;
 
-  if (lookNodes.head) {
+  if (shouldDriveHead && lookNodes.head) {
     lookNodes.head.rotation.y = THREE.MathUtils.lerp(
       lookNodes.head.rotation.y,
       headBase.y + headYaw,
@@ -2436,7 +2485,7 @@ const updateLook = (t: number) => {
     );
   }
 
-  if (lookNodes.neck) {
+  if (shouldDriveHead && lookNodes.neck) {
     lookNodes.neck.rotation.y = THREE.MathUtils.lerp(
       lookNodes.neck.rotation.y,
       neckBase.y + neckYaw,
@@ -2658,6 +2707,14 @@ onBeforeUnmount(() => {
   }
 });
 </script>
+
+<template>
+  <div class="vrm-widget" ref="containerRef">
+    <canvas class="vrm-canvas" ref="canvasRef"></canvas>
+    <div v-if="loading" class="vrm-loading">{{ loadingText }}</div>
+    <div v-else-if="error" class="vrm-error">{{ error }}</div>
+  </div>
+</template>
 
 <style scoped>
 .vrm-widget {

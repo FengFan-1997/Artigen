@@ -52,7 +52,8 @@ const buildAgentContextKey = (agentContext: any) => {
     trigger: agentContext.trigger,
     runtime: {
       lang: agentContext.runtime?.lang,
-      modelId: agentContext.runtime?.modelId
+      modelId: agentContext.runtime?.modelId,
+      agentType: agentContext.runtime?.agentType
     },
     character: {
       name: agentContext.character?.name
@@ -119,6 +120,11 @@ const buildDirectSystemPrompt = (input: {
       ctx.persona.profile.trim() &&
       ctx.persona.profile.trim()) ||
     '';
+  const agentType =
+    typeof ctx?.runtime?.agentType === 'string' ? ctx.runtime.agentType.trim().toLowerCase() : '';
+  const trigger = typeof ctx?.trigger === 'string' ? ctx.trigger.trim().toLowerCase() : '';
+  const mustIncludeAvatarPlan =
+    input.kind === 'reaction' || trigger === 'idle' || agentType === 'vrm';
   const allowedMotions = Array.isArray(ctx?.constraints?.allowedMotions)
     ? ctx.constraints.allowedMotions
     : [];
@@ -140,7 +146,7 @@ const buildDirectSystemPrompt = (input: {
       ? [
           `Always reply as ${personaName}.`,
           'Append at least one emotional tag at the end like "[HAPPY]".',
-          input.kind === 'reaction'
+          mustIncludeAvatarPlan
             ? 'You MUST include a JSON array after the label "avatarPlan:" on its own line.'
             : 'If you want the avatar to move, include a JSON array after the label "avatarPlan:" on its own line.',
           'The "avatarPlan" must be strict JSON and use only allowed motions/expressions.',
@@ -149,7 +155,7 @@ const buildDirectSystemPrompt = (input: {
       : [
           `始终以 ${personaName} 的口吻回复。`,
           '每次回复末尾必须带至少一个情绪标签，例如「…… [HAPPY]」。',
-          input.kind === 'reaction'
+          mustIncludeAvatarPlan
             ? '必须输出模型动作：在单独一行输出「avatarPlan:」后面紧跟 JSON 数组。'
             : '如果需要模型动作，在单独一行输出「avatarPlan:」后面紧跟 JSON 数组。',
           'avatarPlan 必须是严格 JSON，只能使用允许的 motions/expressions。',

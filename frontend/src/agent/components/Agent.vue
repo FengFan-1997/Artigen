@@ -1186,6 +1186,7 @@ const buildAgentContext = (input: {
     runtime: {
       lang: currentLang.value,
       modelId,
+      agentType: agentType.value,
       modelName: typeof modelInfo?.modelName === 'string' ? modelInfo.modelName : undefined,
       modelPath: typeof modelInfo?.modelPath === 'string' ? modelInfo.modelPath : undefined
     },
@@ -1657,7 +1658,12 @@ const avatarAdapter = {
 
 const applyAiReply = async (
   rawResponse: string,
-  options: { displayInChat: boolean; speakText?: boolean; defaultMessageFallback?: string }
+  options: {
+    displayInChat: boolean;
+    speakText?: boolean;
+    defaultMessageFallback?: string;
+    suppressMemorySave?: boolean;
+  }
 ) => {
   let cleanResponse = rawResponse;
 
@@ -1887,14 +1893,15 @@ const applyAiReply = async (
     if (options.displayInChat) {
       messages.value.push({ role: 'agent', text: displayResponse });
     }
-    pushMemoryItem({ role: 'agent', text: displayResponse });
+    if (!options.suppressMemorySave) pushMemoryItem({ role: 'agent', text: displayResponse });
     message.value = displayResponse;
     if (options.speakText !== false) speak(displayResponse);
   } else if (options.defaultMessageFallback) {
     if (options.displayInChat) {
       messages.value.push({ role: 'agent', text: options.defaultMessageFallback });
     }
-    pushMemoryItem({ role: 'agent', text: options.defaultMessageFallback });
+    if (!options.suppressMemorySave)
+      pushMemoryItem({ role: 'agent', text: options.defaultMessageFallback });
     message.value = options.defaultMessageFallback;
     if (options.speakText !== false) speak(options.defaultMessageFallback);
   }
@@ -1909,7 +1916,8 @@ const applyAiReply = async (
         if (options.displayInChat) {
           messages.value.push({ role: 'agent', text: 'Mission Complete! Praise me! [HAPPY]' });
         }
-        pushMemoryItem({ role: 'agent', text: 'Mission Complete! Praise me!' });
+        if (!options.suppressMemorySave)
+          pushMemoryItem({ role: 'agent', text: 'Mission Complete! Praise me!' });
         message.value = 'Mission Complete! ✨';
         speak('Mission Complete! Praise me!');
       } else {
@@ -1918,7 +1926,7 @@ const applyAiReply = async (
         if (options.displayInChat) {
           messages.value.push({ role: 'agent', text: `${errText} [SHY]` });
         }
-        pushMemoryItem({ role: 'agent', text: errText });
+        if (!options.suppressMemorySave) pushMemoryItem({ role: 'agent', text: errText });
         message.value = 'Oops... failed... 😖';
         speak("Oops... I failed... don't look at me!");
       }
@@ -2107,7 +2115,11 @@ const flushBackgroundReaction = async () => {
       signal: backgroundAbortController.signal
     });
     if (!rawResponse) return;
-    await applyAiReply(rawResponse, { displayInChat: false, speakText: false });
+    await applyAiReply(rawResponse, {
+      displayInChat: false,
+      speakText: false,
+      suppressMemorySave: true
+    });
   } finally {
     isBackgroundReacting.value = false;
     backgroundAbortController = null;
@@ -2846,15 +2858,19 @@ const maybeTriggerIdleAi = async (idleForMs: number) => {
     const seconds = Math.max(0, Math.round(idleForMs / 1000));
     const idlePrompt =
       currentLang.value === 'zh'
-        ? `[Idle]: 用户已经 ${seconds} 秒没有操作。请用人设口吻，给一个下一步建议或友好问题，保持简短。`
-        : `[Idle]: The user has been inactive for ${seconds} seconds. Suggest one next action or ask one friendly question in-character, keep it short.`;
+        ? `[Idle]: 用户已经 ${seconds} 秒没有操作。请用人设口吻进行一次「闲置行为」：必须输出 avatarPlan（严格 JSON 数组，1–4 步），动作以 idle / mood / 轻微表情为主，可选 bubble 或 speak 一句很短的话。保持自然、简短。`
+        : `[Idle]: The user has been inactive for ${seconds} seconds. Do one in-character idle beat: you MUST output an avatarPlan (strict JSON array, 1–4 steps). Prefer idle/mood motions + subtle expression. Optionally include one very short bubble or speak line. Keep it short.`;
     const agentContext: any = buildAgentContext({ trigger: 'idle', systemEvent: idlePrompt });
     agentContext.suppressMemorySave = true;
     const rawResponse = await sendMessageToAI(idlePrompt, [], agentContext, {
       signal: idleAiAbortController.signal
     });
     if (!rawResponse) return;
-    await applyAiReply(rawResponse, { displayInChat: false, speakText: false });
+    await applyAiReply(rawResponse, {
+      displayInChat: false,
+      speakText: false,
+      suppressMemorySave: true
+    });
   } finally {
     idleAiAbortController = null;
   }
