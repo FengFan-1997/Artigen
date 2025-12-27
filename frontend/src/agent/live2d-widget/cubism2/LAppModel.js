@@ -81,9 +81,26 @@ class LAppModel extends L2DBaseModel {
       `[Live2D Widget] LAppModel.loadJSON starting for ${this.modelSetting.getModelFile()}`
     );
     const path = this.modelHomeDir + this.modelSetting.getModelFile();
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     this.loadModelData(path, (model) => {
-      for (let i = 0; i < this.modelSetting.getTextureNum(); i++) {
+      if (!model) {
+        this.setUpdating(false);
+        this.setInitialized(false);
+        logger.error(`[Live2D Widget] LAppModel.loadJSON failed to load model: ${path}`);
+        if (typeof callback == 'function') callback();
+        return;
+      }
+      const textureNum = this.modelSetting.getTextureNum();
+      if (!textureNum || textureNum <= 0) {
+        this.preloadMotionGroup(LAppDefine.MOTION_GROUP_IDLE);
+        this.mainMotionManager.stopAllMotions();
+        this.setUpdating(false);
+        this.setInitialized(true);
+        if (typeof callback == 'function') callback();
+        return;
+      }
+
+      for (let i = 0; i < textureNum; i++) {
         const texPaths = this.modelHomeDir + this.modelSetting.getTextureFile(i);
 
         this.loadTexture(i, texPaths, () => {

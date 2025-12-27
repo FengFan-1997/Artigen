@@ -33,6 +33,8 @@ const REQUEST_TRANSPORT = ((import.meta.env.VITE_AGENT_AI_TRANSPORT || '') as st
   .trim()
   .toLowerCase() as AiTransport;
 
+const TRANSPORT_OVERRIDE_KEY = 'agent_ai_transport_override';
+
 const safeJsonStringify = (v: any) => {
   try {
     return JSON.stringify(v);
@@ -41,7 +43,27 @@ const safeJsonStringify = (v: any) => {
   }
 };
 
+const getTransportOverride = (): AiTransport | '' => {
+  try {
+    const v = window.localStorage.getItem(TRANSPORT_OVERRIDE_KEY) || '';
+    const normalized = v.trim().toLowerCase();
+    if (normalized === 'direct' || normalized === 'proxy') return normalized;
+    return '';
+  } catch {
+    return '';
+  }
+};
+
+const setTransportOverride = (v: AiTransport | '') => {
+  try {
+    if (!v) window.localStorage.removeItem(TRANSPORT_OVERRIDE_KEY);
+    else window.localStorage.setItem(TRANSPORT_OVERRIDE_KEY, v);
+  } catch {}
+};
+
 const resolveTransport = (): AiTransport => {
+  const override = getTransportOverride();
+  if (override === 'direct' || override === 'proxy') return override;
   if (REQUEST_TRANSPORT === 'direct') return 'direct';
   return 'proxy';
 };
@@ -361,8 +383,22 @@ const requestAi = async (input: {
         });
       };
 
-      if (transport === 'direct') await tryDirect();
-      else await tryBackend();
+      if (transport === 'direct') {
+        try {
+          await tryDirect();
+        } catch (e: any) {
+          const msg = typeof e?.message === 'string' ? e.message : String(e);
+          if (!/abort/i.test(msg)) {
+            setTransportOverride('proxy');
+            await tryBackend();
+            setTransportOverride('proxy');
+          } else {
+            throw e;
+          }
+        }
+      } else {
+        await tryBackend();
+      }
 
       const result = reply || (input.kind === 'chat' ? "I'm not sure what to say..." : '');
       if (input.allowCache) {

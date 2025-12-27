@@ -155,24 +155,46 @@ class L2DBaseModel {
     logger.info('Load model : ' + path);
 
     pm.loadLive2DModel(path, (l2dModel) => {
-      this.live2DModel = l2dModel;
-      this.live2DModel.saveParam();
+      if (!l2dModel) {
+        this.live2DModel = null;
+        logger.error('Error : Failed to loadModelData() (model is null).');
+        if (typeof callback == 'function') callback(null);
+        return;
+      }
+
+      try {
+        this.live2DModel = l2dModel;
+        this.live2DModel.saveParam();
+      } catch (e) {
+        this.live2DModel = null;
+        logger.error('Error : Failed to loadModelData() (saveParam failed).', e);
+        if (typeof callback == 'function') callback(null);
+        return;
+      }
 
       const _err = Live2D.getError();
 
       if (_err != 0) {
         logger.error('Error : Failed to loadModelData().');
+        this.live2DModel = null;
+        if (typeof callback == 'function') callback(null);
         return;
       }
 
-      this.modelMatrix = new L2DModelMatrix(
-        this.live2DModel.getCanvasWidth(),
-        this.live2DModel.getCanvasHeight()
-      ); //L2DModelMatrix
-      this.modelMatrix.setWidth(2);
-      this.modelMatrix.setCenterPosition(0, 0);
+      try {
+        this.modelMatrix = new L2DModelMatrix(
+          this.live2DModel.getCanvasWidth(),
+          this.live2DModel.getCanvasHeight()
+        ); //L2DModelMatrix
+        this.modelMatrix.setWidth(2);
+        this.modelMatrix.setCenterPosition(0, 0);
+      } catch (e) {
+        logger.error('Error : Failed to init modelMatrix.', e);
+        if (typeof callback == 'function') callback(null);
+        return;
+      }
 
-      callback(this.live2DModel);
+      if (typeof callback == 'function') callback(this.live2DModel);
     });
   }
 
@@ -204,11 +226,17 @@ class L2DBaseModel {
     let motion = null; //Live2DMotion
 
     pm.loadBytes(path, (buf) => {
-      motion = Live2DMotion.loadMotion(buf);
-      if (name != null) {
-        this.motions[name] = motion;
+      try {
+        motion = Live2DMotion.loadMotion(buf);
+        if (name != null) {
+          this.motions[name] = motion;
+        }
+      } catch (e) {
+        logger.error('Failed to load motion : ' + path, e);
+        motion = null;
+      } finally {
+        callback(motion);
       }
-      callback(motion);
     });
   }
 
@@ -221,10 +249,15 @@ class L2DBaseModel {
     logger.trace('Load Expression : ' + path);
 
     pm.loadBytes(path, (buf) => {
-      if (name != null) {
-        this.expressions[name] = L2DExpressionMotion.loadJson(buf);
+      try {
+        if (name != null) {
+          this.expressions[name] = L2DExpressionMotion.loadJson(buf);
+        }
+      } catch (e) {
+        logger.error('Failed to load expression : ' + path, e);
+      } finally {
+        if (typeof callback == 'function') callback();
       }
-      if (typeof callback == 'function') callback();
     });
   }
 
@@ -236,11 +269,18 @@ class L2DBaseModel {
     logger.trace('Load Pose : ' + path);
     try {
       pm.loadBytes(path, (buf) => {
-        this.pose = L2DPose.load(buf);
-        if (typeof callback == 'function') callback();
+        try {
+          this.pose = L2DPose.load(buf);
+        } catch (e) {
+          logger.warn(e);
+          this.pose = null;
+        } finally {
+          if (typeof callback == 'function') callback();
+        }
       });
     } catch (e) {
       logger.warn(e);
+      if (typeof callback == 'function') callback();
     }
   }
 

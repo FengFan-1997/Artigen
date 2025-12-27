@@ -1,10 +1,10 @@
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const { readJson, writeJson, VECTORS_FILE, CHATS_FILE, USERS_FILE } = require('./utils/storage');
 const fs = require('fs');
-const path = require('path');
 let HttpsProxyAgent = null;
 try {
   const mod = require('https-proxy-agent');
@@ -17,11 +17,38 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 app.use(express.json());
 
-const API_KEY = process.env.GEMINI_API_KEY || '';
 const normalizeUrl = (url) => {
   const s = (url || '').toString().trim();
   return s.endsWith('/') ? s.slice(0, -1) : s;
 };
+
+const normalizeSecret = (value) => {
+  const raw = (value || '').toString().trim();
+  if (!raw) return '';
+  if (raw.startsWith('<') && raw.endsWith('>')) return '';
+  if (/^(changeme|replace_me|your_|placeholder)$/i.test(raw)) return '';
+  return raw;
+};
+
+const API_KEY = normalizeSecret(process.env.GEMINI_API_KEY || '');
+
+const SILICONFLOW_API_KEY =
+  normalizeSecret(
+    process.env.SILICONFLOW_API_KEY || process.env.SILICONFLOW_TOKEN || process.env.SILICONFLOW_KEY || ''
+  );
+const SILICONFLOW_API_BASE = normalizeUrl(process.env.SILICONFLOW_API_BASE || 'https://api.siliconflow.cn/v1');
+const SILICONFLOW_MODEL = (process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-8B').toString().trim();
+const SILICONFLOW_MESSAGES_URL = `${SILICONFLOW_API_BASE}/messages`;
+const SILICONFLOW_CHAT_COMPLETIONS_URL = `${SILICONFLOW_API_BASE}/chat/completions`;
+
+let activeTextProvider = (() => {
+  const preferred = (process.env.TEXT_PROVIDER || '').toString().trim().toLowerCase();
+  if (preferred === 'siliconflow') return 'siliconflow';
+  if (preferred === 'gemini') return 'gemini';
+  if (API_KEY) return 'gemini';
+  if (SILICONFLOW_API_KEY) return 'siliconflow';
+  return 'offline';
+})();
 const GEMINI_API_BASE = normalizeUrl(process.env.GEMINI_API_BASE || '');
 const DEFAULT_GEMINI_GENERATE_PATH = 'v1beta/models/gemini-2.5-flash:generateContent';
 const DEFAULT_GEMINI_EMBED_PATH = 'v1beta/models/text-embedding-004:embedContent';
@@ -142,6 +169,135 @@ const callGeminiGenerate = async ({ contents, timeoutMs }) => {
   const err = new Error('All Gemini generateContent endpoints failed');
   err.failures = failures;
   throw err;
+};
+
+const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens }) => {
+  if (!SILICONFLOW_API_KEY) {
+    const err = new Error('MISSING_SILICONFLOW_API_KEY');
+    err.code = 'MISSING_SILICONFLOW_API_KEY';
+    throw err;
+  }
+
+  const startedAt = Date.now();
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${SILICONFLOW_API_KEY}`
+  };
+
+  const tryUrls = [SILICONFLOW_MESSAGES_URL, SILICONFLOW_CHAT_COMPLETIONS_URL];
+  const failures = [];
+
+  for (const url of tryUrls) {
+    try {
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model: SILICONFLOW_MODEL,
+            messages,
+            max_tokens: typeof maxTokens === 'number' ? maxTokens : undefined
+          })
+        },
+        timeoutMs
+      );
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '');
+        failures.push({
+          url,
+          status: response.status,
+          statusText: response.statusText,
+          elapsedMs: Date.now() - startedAt,
+          bodyPreview: String(errBody || '').slice(0, 1800)
+        });
+        continue;
+      }
+
+      const data = await response.json();
+      const openaiText = data?.choices?.[0]?.message?.content;
+      if (typeof openaiText === 'string' && openaiText.trim()) {
+        return { text: openaiText, usedUrl: url, failures };
+      }
+
+      const messageText =
+        data?.content?.[0]?.text ||
+        data?.message?.content ||
+        data?.data?.choices?.[0]?.message?.content ||
+        '';
+      if (typeof messageText === 'string' && messageText.trim()) {
+        return { text: messageText, usedUrl: url, failures };
+      }
+
+      failures.push({
+        url,
+        status: 200,
+        statusText: 'OK',
+        elapsedMs: Date.now() - startedAt,
+        bodyPreview: String(JSON.stringify(data) || '').slice(0, 1800)
+      });
+    } catch (e) {
+      failures.push({
+        url,
+        status: 0,
+        statusText: '',
+        elapsedMs: Date.now() - startedAt,
+        error: String(e?.message || e)
+      });
+    }
+  }
+
+  const err = new Error('All SiliconFlow endpoints failed');
+  err.failures = failures;
+  throw err;
+};
+
+const callTextGenerate = async ({ contents, timeoutMs, reactionMode }) => {
+  const canGemini = !!API_KEY;
+  const canSiliconflow = !!SILICONFLOW_API_KEY;
+
+  const toSiliconflowMessages = () => {
+    const messages = [];
+    for (const c of contents || []) {
+      const roleRaw = String(c?.role || '').toLowerCase();
+      const role = roleRaw === 'model' ? 'assistant' : roleRaw === 'user' ? 'user' : 'user';
+      const text = c?.parts?.[0]?.text;
+      if (typeof text === 'string' && text.trim()) {
+        messages.push({ role, content: text });
+      }
+    }
+    return messages;
+  };
+
+  if (canGemini) {
+    try {
+      const { data } = await callGeminiGenerate({ contents, timeoutMs });
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      return { text, provider: 'gemini' };
+    } catch (e) {
+      if (canSiliconflow) {
+        const { text } = await callSiliconFlowChat({
+          messages: toSiliconflowMessages(),
+          timeoutMs,
+          maxTokens: reactionMode ? 512 : 2048
+        });
+        return { text, provider: 'siliconflow' };
+      }
+      throw e;
+    }
+  }
+
+  if (canSiliconflow) {
+    const { text } = await callSiliconFlowChat({
+      messages: toSiliconflowMessages(),
+      timeoutMs,
+      maxTokens: reactionMode ? 512 : 2048
+    });
+    return { text, provider: 'siliconflow' };
+  }
+
+  return { text: '', provider: 'offline' };
 };
 
 const callGeminiEmbed = async ({ body, timeoutMs }) => {
@@ -577,6 +733,7 @@ const buildChatPrompt = (input) => {
 app.get('/api/health', async (req, res) => {
   const probe = String(req.query.probe || '').trim() === '1';
   const hasApiKey = !!API_KEY;
+  const hasSiliconflowKey = !!SILICONFLOW_API_KEY;
   const proxyUrl =
     process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || '';
 
@@ -584,12 +741,19 @@ app.get('/api/health', async (req, res) => {
     ok: true,
     serverTime: Date.now(),
     hasApiKey,
+    textProvider: activeTextProvider,
     gemini: {
       generateUrls: GEMINI_GENERATE_URLS,
       embedUrls: GEMINI_EMBED_URLS,
       timeoutMs: GEMINI_TIMEOUT_MS,
       reactionTimeoutMs: GEMINI_REACTION_TIMEOUT_MS,
       proxyConfigured: !!proxyUrl,
+      lastProbe: null
+    },
+    siliconflow: {
+      baseUrl: SILICONFLOW_API_BASE,
+      model: SILICONFLOW_MODEL,
+      hasApiKey: hasSiliconflowKey,
       lastProbe: null
     },
     modedoc: {
@@ -607,26 +771,49 @@ app.get('/api/health', async (req, res) => {
     result.modedoc.countEn = idx?.en?.size || 0;
   } catch {}
 
-  if (probe && hasApiKey) {
+  if (probe) {
     const startedAt = Date.now();
-    try {
-      const { usedUrl, failures } = await callGeminiGenerate({
-        timeoutMs: 5000,
-        contents: [{ role: 'user', parts: [{ text: 'ping' }] }]
-      });
-      result.gemini.lastProbe = {
-        ok: true,
-        usedUrl,
-        elapsedMs: Date.now() - startedAt,
-        failures: Array.isArray(failures) ? failures.slice(0, 3) : []
-      };
-    } catch (e) {
-      result.gemini.lastProbe = {
-        ok: false,
-        elapsedMs: Date.now() - startedAt,
-        error: String(e?.message || e),
-        failures: Array.isArray(e?.failures) ? e.failures.slice(0, 3) : []
-      };
+    if (activeTextProvider === 'gemini' && hasApiKey) {
+      try {
+        const { usedUrl, failures } = await callGeminiGenerate({
+          timeoutMs: 5000,
+          contents: [{ role: 'user', parts: [{ text: 'ping' }] }]
+        });
+        result.gemini.lastProbe = {
+          ok: true,
+          usedUrl,
+          elapsedMs: Date.now() - startedAt,
+          failures: Array.isArray(failures) ? failures.slice(0, 3) : []
+        };
+      } catch (e) {
+        result.gemini.lastProbe = {
+          ok: false,
+          elapsedMs: Date.now() - startedAt,
+          error: String(e?.message || e),
+          failures: Array.isArray(e?.failures) ? e.failures.slice(0, 3) : []
+        };
+      }
+    } else if (hasSiliconflowKey) {
+      try {
+        const { usedUrl, failures } = await callSiliconFlowChat({
+          timeoutMs: 5000,
+          messages: [{ role: 'user', content: 'ping' }],
+          maxTokens: 32
+        });
+        result.siliconflow.lastProbe = {
+          ok: true,
+          usedUrl,
+          elapsedMs: Date.now() - startedAt,
+          failures: Array.isArray(failures) ? failures.slice(0, 3) : []
+        };
+      } catch (e) {
+        result.siliconflow.lastProbe = {
+          ok: false,
+          elapsedMs: Date.now() - startedAt,
+          error: String(e?.message || e),
+          failures: Array.isArray(e?.failures) ? e.failures.slice(0, 3) : []
+        };
+      }
     }
   }
 
@@ -671,7 +858,11 @@ const proxyHuggingFace = async (req, res) => {
   let lastError = null;
   for (const url of candidates) {
     try {
-      const upstream = await fetch(url, { method: req.method, headers, redirect: 'follow' });
+      const upstream = await fetchWithTimeout(
+        url,
+        { method: req.method, headers, redirect: 'follow' },
+        20000
+      );
       res.status(upstream.status);
       upstream.headers?.forEach((value, key) => {
         if (!key) return;
@@ -745,7 +936,7 @@ app.get('/api/hf-list/:owner/:repo', async (req, res) => {
     let lastStatus = 502;
     for (const url of urls) {
       try {
-        const upstream = await fetch(url, { method: 'GET', redirect: 'follow' });
+        const upstream = await fetchWithTimeout(url, { method: 'GET', redirect: 'follow' }, 12000);
         lastStatus = upstream.status;
         if (!upstream.ok) continue;
         json = await upstream.json();
@@ -1089,15 +1280,43 @@ app.post('/api/generate', async (req, res) => {
   try {
     const { prompt } = req.body;
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
-    if (!API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
+
+    const contents = [{ role: 'user', parts: [{ text: prompt }] }];
+
+    if (API_KEY) {
+      try {
+        const { data } = await callGeminiGenerate({
+          timeoutMs: GEMINI_TIMEOUT_MS,
+          contents
+        });
+        return res.json(data);
+      } catch (e) {
+        if (SILICONFLOW_API_KEY) {
+          const { text } = await callSiliconFlowChat({
+            messages: [{ role: 'user', content: String(prompt) }],
+            timeoutMs: GEMINI_TIMEOUT_MS,
+            maxTokens: 2048
+          });
+          return res.json({
+            candidates: [{ content: { parts: [{ text: String(text || '') }] } }]
+          });
+        }
+        throw e;
+      }
     }
 
-    const { data } = await callGeminiGenerate({
-      timeoutMs: GEMINI_TIMEOUT_MS,
-      contents: [{ parts: [{ text: prompt }] }]
-    });
-    res.json(data);
+    if (SILICONFLOW_API_KEY) {
+      const { text } = await callSiliconFlowChat({
+        messages: [{ role: 'user', content: String(prompt) }],
+        timeoutMs: GEMINI_TIMEOUT_MS,
+        maxTokens: 2048
+      });
+      return res.json({
+        candidates: [{ content: { parts: [{ text: String(text || '') }] } }]
+      });
+    }
+
+    return res.status(500).json({ error: 'No LLM provider configured on the server.' });
 
   } catch (error) {
     console.error('Error in /api/generate:', error);
@@ -1325,41 +1544,71 @@ app.post('/api/chat', async (req, res) => {
       { role: 'user', parts: [{ text: message }] }
     ];
 
-    // Call Gemini
+    // Call LLM (Gemini default, auto-fallback to SiliconFlow)
     let reply = "";
     try {
-        if (!API_KEY) throw new Error('MISSING_API_KEY');
         const timeoutMs = reactionMode ? GEMINI_REACTION_TIMEOUT_MS : GEMINI_TIMEOUT_MS;
         const startedAt = Date.now();
-        const { data, usedUrl, failures } = await callGeminiGenerate({ contents, timeoutMs });
-        reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "I'm speechless!";
-        if (Array.isArray(failures) && failures.length > 0) {
-          console.warn('Gemini generateContent partial failures', {
-            usedUrl,
-            reactionMode,
-            timeoutMs,
-            elapsedMs: Date.now() - startedAt,
-            failures
-          });
+        const { text, provider } = await callTextGenerate({ contents, timeoutMs, reactionMode });
+        reply = (text || '').trim() || "I'm speechless!";
+        if (provider === 'offline') {
+          throw new Error('NO_LLM_PROVIDER_AVAILABLE');
+        }
+
+        const elapsedMs = Date.now() - startedAt;
+        if (elapsedMs > Math.max(2000, timeoutMs)) {
+          console.warn('LLM request exceeded expected timeout window', { provider, reactionMode, timeoutMs, elapsedMs });
         }
     } catch (apiError) {
         const errMsg = typeof apiError?.message === 'string' ? apiError.message : String(apiError);
-        console.error("Gemini API Failed:", {
+        const failures = apiError?.failures;
+        console.error("LLM API Failed:", {
           message: errMsg,
           name: apiError?.name,
           code: apiError?.code,
-          urls: GEMINI_GENERATE_URLS,
-          failures: apiError?.failures,
+          provider: activeTextProvider,
+          geminiUrls: GEMINI_GENERATE_URLS,
+          siliconflowBase: SILICONFLOW_API_BASE,
+          failures,
           reactionMode,
-          hasApiKey: !!API_KEY
+          hasGeminiKey: !!API_KEY,
+          hasSiliconflowKey: !!SILICONFLOW_API_KEY
         });
 
+        if (activeTextProvider === 'gemini' && SILICONFLOW_API_KEY) {
+          try {
+            const messages = [
+              { role: 'system', content: systemPrompt },
+              ...recentHistory.map((msg) => ({
+                role: msg.role === 'user' ? 'user' : 'assistant',
+                content: stripControlText(msg.text)
+              })),
+              { role: 'user', content: message }
+            ];
+
+            const timeoutMs = reactionMode ? GEMINI_REACTION_TIMEOUT_MS : GEMINI_TIMEOUT_MS;
+            const { text } = await callSiliconFlowChat({
+              messages,
+              timeoutMs,
+              maxTokens: reactionMode ? 512 : 2048
+            });
+            reply = (text || '').trim() || buildOfflineReply({ lang, personaName, message });
+          } catch (fallbackError) {
+            const fbMsg =
+              typeof fallbackError?.message === 'string' ? fallbackError.message : String(fallbackError);
+            console.error('SiliconFlow fallback failed', {
+              message: fbMsg,
+              failures: fallbackError?.failures
+            });
+          }
+        }
+
         const isZh = lang === 'zh';
-        reply = buildOfflineReply({ lang, personaName, message });
-        if (contextText) {
-          const hint = contextText.substring(0, 260);
+        if (!reply) reply = buildOfflineReply({ lang, personaName, message });
+        if (ragText) {
+          const hint = ragText.substring(0, 260);
           reply += `\n\n${isZh ? '（我本地找到了这些相关笔记：）' : '(I did find these local notes:)'}\n${hint}${
-            contextText.length > hint.length ? '...' : ''
+            ragText.length > hint.length ? '...' : ''
           }`;
         }
     }
@@ -1375,27 +1624,6 @@ app.post('/api/chat', async (req, res) => {
 
   } catch (error) {
     console.error('Error in /api/chat:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
-  }
-});
-
-// Keep the old endpoint for backward compatibility (or testing)
-app.post('/api/generate', async (req, res) => {
-  try {
-    const { prompt } = req.body;
-    if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
-
-    if (!API_KEY) {
-       return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
-    }
-
-    const { data } = await callGeminiGenerate({
-      timeoutMs: 30000,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }]
-    });
-    res.json(data);
-  } catch (error) {
-    console.error('Error in /api/generate:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });

@@ -199,16 +199,29 @@ export class ModelManager {
     const backoffMs = (attempt: number) => 250 * attempt;
 
     let lastError: unknown = null;
+    const debug =
+      import.meta.env.DEV &&
+      /(^\/api\/hf\/)|huggingface\.co|hf-mirror\.com|hf\.co/i.test(String(url || ''));
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       let response: Response | null = null;
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+      const startedAt = debug ? performance.now() : 0;
 
       try {
         response = await fetch(url, { signal: controller.signal });
 
         if (!response.ok) {
+          if (debug) {
+            console.warn('[Live2D] fetchJson non-OK', {
+              url,
+              attempt,
+              status: response.status,
+              statusText: response.statusText,
+              elapsedMs: Math.round(performance.now() - startedAt)
+            });
+          }
           const retryable =
             response.status === 408 ||
             response.status === 429 ||
@@ -229,6 +242,9 @@ export class ModelManager {
         const isJson = contentType.includes('application/json') || contentType.includes('+json');
         const urlLooksJson = url.toLowerCase().includes('.json');
         if (!isJson && !urlLooksJson) {
+          if (debug) {
+            console.warn('[Live2D] fetchJson unexpected content-type', { url, contentType });
+          }
           if (!silent) {
             logger.error(
               `Failed to fetch model json: ${url}, content-type ${contentType || 'unknown'}`
@@ -239,6 +255,13 @@ export class ModelManager {
 
         try {
           const result = isJson ? await response.json() : JSON.parse(await response.text());
+          if (debug) {
+            console.log('[Live2D] fetchJson OK', {
+              url,
+              attempt,
+              elapsedMs: Math.round(performance.now() - startedAt)
+            });
+          }
           this.modelJSONCache[url] = result;
           return result;
         } catch (e) {
@@ -254,6 +277,14 @@ export class ModelManager {
         }
       } catch (e) {
         lastError = e;
+        if (debug) {
+          console.warn('[Live2D] fetchJson error', {
+            url,
+            attempt,
+            elapsedMs: Math.round(performance.now() - startedAt),
+            error: String((e as any)?.message || e)
+          });
+        }
         const isAbort = e instanceof DOMException && e.name === 'AbortError';
         if (attempt === maxAttempts) {
           if (!silent) {
@@ -307,6 +338,18 @@ export class ModelManager {
       alternateCandidates[alternateCandidates.length - 1] ||
       primaryCandidates[primaryCandidates.length - 1] ||
       modelRelativePath;
+    if (import.meta.env.DEV) {
+      console.groupCollapsed('[Live2D] Failed to load model json');
+      console.log({
+        modelRelativePath,
+        assetsPath: this.assetsPath,
+        modelDirectory: this.modelDirectory,
+        primaryCandidates,
+        alternateDir,
+        alternateCandidates
+      });
+      console.groupEnd();
+    }
     if (!silent) {
       logger.error(`Model setting is invalid for path ${lastErrorUrl}`);
     }
@@ -799,11 +842,11 @@ export class ModelManager {
       return;
     }
     const version = this.checkModelVersion(modelSetting);
+    const prevVersion = this.currentModelVersion;
     this.loading = true;
     this.emitLoading(true, { modelSettingPath, version });
     try {
       if (version === 2) {
-        this.setRendererVersion(2);
         if (!this.cubism2model) {
           // Check if Live2D global is already available
           if (!(window as any).Live2D) {
@@ -823,14 +866,30 @@ export class ModelManager {
         } else {
           await this.cubism2model!.changeModelWithJSON(modelSettingPath, modelSetting);
         }
+        this.setRendererVersion(2);
         this.currentModelVersion = 2;
       } else {
-        this.setRendererVersion(3);
         try {
+          try {
+            const cubism3Container = document.getElementById(
+              'live2d-cubism3'
+            ) as HTMLElement | null;
+            if (cubism3Container) cubism3Container.style.display = '';
+          } catch {}
+
           const ok = await loadCubism3Model(modelSettingPath);
           if (ok) {
+            this.setRendererVersion(3);
             this.currentModelVersion = 3;
           } else {
+            try {
+              if (prevVersion === 2) {
+                const cubism3Container = document.getElementById(
+                  'live2d-cubism3'
+                ) as HTMLElement | null;
+                if (cubism3Container) cubism3Container.style.display = 'none';
+              }
+            } catch {}
             throw new Error('loadCubism3Model returned false');
           }
         } catch (e) {
@@ -841,6 +900,7 @@ export class ModelManager {
       logger.info(`Model ${modelSettingPath} (Cubism version ${version}) loaded`);
     } catch (err) {
       console.error('loadLive2D failed', err);
+      showMessage('模型加载失败，请稍后重试', 5000, 9);
     } finally {
       this.loading = false;
       this.emitLoading(false, { modelSettingPath, version });

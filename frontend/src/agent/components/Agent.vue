@@ -281,11 +281,7 @@ const VRM_AGENT_SCALE = 0.34;
 const dynamicScale = ref(1.0);
 const moveTransitionMs = ref(3000);
 
-const getDefaultAgentType = () => {
-  if (!import.meta.env.DEV) return 'vrm';
-  if (Array.isArray(vrmRelativePaths) && vrmRelativePaths.length > 0) return 'vrm';
-  return 'cubism3';
-};
+const getDefaultAgentType = (): 'cubism3' | 'cubism2' | 'vrm' => 'vrm';
 
 const agentType = ref<'cubism3' | 'cubism2' | 'vrm'>(getDefaultAgentType());
 

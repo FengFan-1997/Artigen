@@ -302,6 +302,8 @@ export default defineComponent({
         cleanup();
         modelLoading.value = true;
 
+        const DEFAULT_LIVE2D_ASSETS_BASE = '/api/hf/Feng1997/ModelDoc/resolve/main/';
+
         const normalizeHfBase = (raw: string) => {
           const trimmed = (raw || '').trim();
           if (!trimmed) return '';
@@ -309,9 +311,10 @@ export default defineComponent({
           if (!hasProtocol) return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
 
           const normalized = trimmed.replace(/\/+$/, '');
-          const isHf = /(^https?:\/\/(www\.)?huggingface\.co\/)|(^https?:\/\/hf\.co\/)/i.test(
-            normalized
-          );
+          const isHf =
+            /(^https?:\/\/(www\.)?huggingface\.co\/)|(^https?:\/\/hf\.co\/)|(^https?:\/\/hf-mirror\.com\/)/i.test(
+              normalized
+            );
           if (!isHf) return `${normalized}/`;
 
           const withResolve = normalized
@@ -327,16 +330,31 @@ export default defineComponent({
         const maybeUseHfProxy = (baseUrl: string) => {
           const trimmed = (baseUrl || '').trim();
           if (!trimmed) return trimmed;
-          if (import.meta.env.DEV) return trimmed;
-          return trimmed.replace(/^https?:\/\/(www\.)?(huggingface\.co|hf\.co)\//i, '/api/hf/');
+          if (/^\/api\/hf\//i.test(trimmed)) return trimmed;
+          return trimmed.replace(
+            /^https?:\/\/(www\.)?(huggingface\.co|hf\.co|hf-mirror\.com)\//i,
+            '/api/hf/'
+          );
         };
 
         const configBaseRaw = import.meta.env.VITE_LIVE2D_CONFIG_BASE || '/live2d/';
         const configBase = configBaseRaw.endsWith('/') ? configBaseRaw : `${configBaseRaw}/`;
-        const assetsBaseRaw = import.meta.env.VITE_LIVE2D_ASSETS_BASE || configBase;
+        const assetsBaseRaw =
+          import.meta.env.VITE_LIVE2D_ASSETS_BASE ||
+          localStorage.getItem('live2d_assets_base') ||
+          DEFAULT_LIVE2D_ASSETS_BASE;
         const hfNormalized = normalizeHfBase(assetsBaseRaw);
         const proxied = maybeUseHfProxy(hfNormalized);
         const assetsBase = proxied.endsWith('/') ? proxied : `${proxied}/`;
+
+        console.group('[Live2DWidget] Assets Base');
+        console.log({
+          configBase,
+          assetsBaseRaw,
+          hfNormalized,
+          assetsBase
+        });
+        console.groupEnd();
 
         if (widgetRoot.value) {
           modelMgr.value = await initWidget(

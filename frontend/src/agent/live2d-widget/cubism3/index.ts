@@ -832,6 +832,16 @@ export const loadCubism3Model = async (modelJsonPath: string): Promise<boolean> 
   const appInstance = await ensureApp();
   if (!appInstance) return false;
 
+  const Live2D = Live2DModel as any;
+  let nextModel: any = null;
+  try {
+    nextModel = await Live2D.from(modelJsonPath, { autoUpdate: false });
+  } catch (err) {
+    console.error('[Live2D] Failed to load Cubism3 model:', err);
+    currentModelPath = '';
+    return false;
+  }
+
   if (model) {
     try {
       appInstance.stage.removeChild(model);
@@ -844,15 +854,7 @@ export const loadCubism3Model = async (modelJsonPath: string): Promise<boolean> 
     model = null;
   }
 
-  const Live2D = Live2DModel as any;
-  try {
-    model = await Live2D.from(modelJsonPath, { autoUpdate: false });
-  } catch (err) {
-    console.error('[Live2D] Failed to load Cubism3 model:', err);
-    currentModelPath = '';
-    return false;
-  }
-
+  model = nextModel;
   currentModelPath = modelJsonPath;
   motionGroupKeysCache = null;
   expressionNamesCache = null;

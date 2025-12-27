@@ -25,10 +25,19 @@ class PlatformManager {
       return callback(this.cache[path]);
     }
     fetch(path)
-      .then((response) => response.arrayBuffer())
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP_${response.status}_${response.statusText || 'ERROR'}`);
+        }
+        return response.arrayBuffer();
+      })
       .then((arrayBuffer) => {
         this.cache[path] = arrayBuffer;
         callback(arrayBuffer);
+      })
+      .catch((e) => {
+        logger.error('Failed to load bytes : ' + path, e);
+        callback(new ArrayBuffer(0));
       });
   }
 
@@ -40,8 +49,14 @@ class PlatformManager {
 
     // load moc
     this.loadBytes(path, (buf) => {
-      model = Live2DModelWebGL.loadModel(buf);
-      callback(model);
+      try {
+        model = Live2DModelWebGL.loadModel(buf);
+      } catch (e) {
+        logger.error('Failed to parse Live2D model bytes : ' + path, e);
+        model = null;
+      } finally {
+        callback(model);
+      }
     });
   }
 
@@ -64,6 +79,7 @@ class PlatformManager {
         const canvas = document.getElementById('live2d');
         if (!canvas) {
           logger.error('Failed to find live2d canvas when loading texture: ' + path);
+          if (typeof callback == 'function') callback();
           return;
         }
         gl =
@@ -82,6 +98,7 @@ class PlatformManager {
 
         if (!gl) {
           logger.error('Failed to get WebGL context for texture: ' + path);
+          if (typeof callback == 'function') callback();
           return;
         }
 
@@ -93,7 +110,8 @@ class PlatformManager {
       let texture = gl.createTexture();
       if (!texture) {
         logger.error('Failed to generate gl texture name.');
-        return -1;
+        if (typeof callback == 'function') callback();
+        return;
       }
 
       if (model.isPremultipliedAlpha() == false) {
@@ -118,6 +136,56 @@ class PlatformManager {
 
     loadedImage.onerror = () => {
       logger.error('Failed to load image : ' + path);
+      let gl = null;
+
+      if (typeof Live2D !== 'undefined' && typeof Live2D.getGL === 'function') {
+        gl = Live2D.getGL(0);
+      }
+
+      if (!gl) {
+        const canvas = document.getElementById('live2d');
+        gl =
+          canvas?.getContext('webgl2', { premultipliedAlpha: true, preserveDrawingBuffer: true }) ||
+          canvas?.getContext('webgl', { premultipliedAlpha: true, preserveDrawingBuffer: true }) ||
+          canvas?.getContext('experimental-webgl', {
+            premultipliedAlpha: true,
+            preserveDrawingBuffer: true
+          });
+
+        if (gl && typeof Live2D !== 'undefined' && typeof Live2D.setGL === 'function') {
+          Live2D.setGL(gl);
+        }
+      }
+
+      try {
+        if (gl) {
+          const texture = gl.createTexture();
+          if (texture) {
+            gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(
+              gl.TEXTURE_2D,
+              0,
+              gl.RGBA,
+              1,
+              1,
+              0,
+              gl.RGBA,
+              gl.UNSIGNED_BYTE,
+              new Uint8Array([0, 0, 0, 0])
+            );
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            model.setTexture(no, texture);
+          }
+        }
+      } catch (e) {
+        logger.error('Failed to apply fallback texture : ' + path, e);
+      } finally {
+        if (typeof callback == 'function') callback();
+      }
     };
   }
 

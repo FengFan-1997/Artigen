@@ -156,5 +156,17 @@
       "text": "我、我刚刚脑子断线了……你别笑！\n\nemotionTag: {\"primary\":\"confused\",\"intensity\":0.75,\"secondary\":[]}\n\navatarPlan: [{\"type\":\"pose\",\"motion\":\"shake\",\"expression\":\"confused\",\"duration\":900},{\"type\":\"speak\",\"text\":\"我、我刚刚脑子断线了……你别笑！\",\"bubble\":true,\"duration\":2200}]\n\n（我本地找到了这些相关笔记：）\nHere is some relevant information from the website knowledge base:\n-   - Pauses \"Roaming\" and \"Dizzy\" checks when the chat is open to prevent the Agent from walking away while you type.\n  - Clears the speech bubble when the chat opens.\n\n## 3. Limitations & Nex...",
       "timestamp": 1766133374596
     }
+  ],
+  "local-test": [
+    {
+      "role": "user",
+      "text": "ping",
+      "timestamp": 1766834359450
+    },
+    {
+      "role": "agent",
+      "text": "嗨，Friend！[HAPPY]  \n{\"primary\":\"happy\",\"intensity\":0.8,\"secondary\":[]}",
+      "timestamp": 1766834359451
+    }
   ]
 }
