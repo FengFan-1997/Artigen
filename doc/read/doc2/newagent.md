@@ -9,7 +9,7 @@
 然后你每次都要在read文件夹下面的docs（doc/read/docs）生成一个简要文档（文档命名按照之前存在的来），一定要生成新的，而不是改之前的。来描述你干了什么（中文），然后下一步准备干什么，标注好时间，这样我才能分清前后顺序
 然后你可以在生成的这个文档里面告诉我，你无法做到，但是一定需要的一些东西
 并且你可以修改我的这个agent文档，记得，你可以修改，因为这个文档只是最基础的，你可以深化这个文档，探索更深的技术力，这个也很重要！
-我给你创建了一个文件夹，所有的前端代码都放在agent（/Users/fengfan/Documents/newPro/frontend/src/agent），但是不要只写一个vue文件，要懂得分离，比如一些方法或者什么，反正按照企业级开发！
+我给你创建了一个文件夹，所有涉及agent的前端代码都放在agent（/Users/fengfan/Documents/newPro/frontend/src/agent），但是不要只写一个vue文件，要懂得分离，比如一些方法或者什么，反正按照企业级开发！
 包括要用到的utils assets services types stores也在agent建一个就行，记得一定要单独写在agent里面，不要跟其他的混在一起，不好分辩
 这个文件夹
 ai的接口我也有一个/Users/fengfan/Documents/newPro/backend/server.js

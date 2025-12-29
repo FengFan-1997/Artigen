@@ -1542,51 +1542,236 @@ type QueuedAvatarPlan = { steps: any[]; resolve: () => void };
 const avatarPlanQueue: QueuedAvatarPlan[] = [];
 let avatarPlanRunnerActive = false;
 
+const clampNumber = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+
+const safeJsonStringify = (v: unknown) => {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return '';
+  }
+};
+
+const normalizeExpressionName = (
+  raw: unknown
+): (typeof ALLOWED_EXPRESSIONS)[number] | undefined => {
+  if (typeof raw !== 'string') return undefined;
+  const n = raw
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .toLowerCase();
+  if (!n) return undefined;
+  const mapped = n === 'pout' || n === 'pouting' ? 'shy' : n;
+  if ((ALLOWED_EXPRESSIONS as readonly string[]).includes(mapped))
+    return mapped as (typeof ALLOWED_EXPRESSIONS)[number];
+  return undefined;
+};
+
+const sanitizeAvatarPlanSteps = (rawSteps: any[]): AvatarPlanStep[] => {
+  if (!Array.isArray(rawSteps)) return [];
+  const result: AvatarPlanStep[] = [];
+  const maxSteps = 12;
+
+  for (const raw of rawSteps) {
+    if (result.length >= maxSteps) break;
+    if (!raw || typeof raw !== 'object') continue;
+    const t = String((raw as any).type || '')
+      .trim()
+      .toLowerCase();
+    const parallel = !!(raw as any).parallel;
+    const rawDuration = (raw as any).duration;
+    const duration = clampNumber(
+      typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : 1200,
+      120,
+      12000
+    );
+
+    if (t === 'pose') {
+      const motion = normalizeMotionName((raw as any).motion);
+      const expression = normalizeExpressionName((raw as any).expression);
+      if (motion) {
+        result.push({
+          type: 'pose',
+          motion,
+          expression,
+          duration,
+          parallel
+        });
+      } else if (expression) {
+        result.push({
+          type: 'expression',
+          expression,
+          duration,
+          parallel
+        });
+      }
+      continue;
+    }
+
+    if (t === 'motion') {
+      const motion = normalizeMotionName((raw as any).motion);
+      if (!motion) continue;
+      result.push({
+        type: 'motion',
+        motion,
+        duration,
+        parallel
+      });
+      continue;
+    }
+
+    if (t === 'expression' || t === 'emotion') {
+      const expression = normalizeExpressionName((raw as any).expression);
+      if (!expression) continue;
+      result.push({
+        type: 'expression',
+        expression,
+        duration,
+        parallel
+      });
+      continue;
+    }
+
+    if (t === 'speak') {
+      const text = typeof (raw as any).text === 'string' ? (raw as any).text.trim() : '';
+      if (!text) continue;
+      const motion = normalizeMotionName((raw as any).motion) || undefined;
+      const expression = normalizeExpressionName((raw as any).expression);
+      const bubble = (raw as any).bubble !== false;
+      result.push({
+        type: 'speak',
+        text: text.slice(0, 160),
+        motion,
+        expression,
+        bubble,
+        duration,
+        parallel
+      });
+      continue;
+    }
+
+    if (t === 'bubble') {
+      const text = typeof (raw as any).text === 'string' ? (raw as any).text.trim() : '';
+      if (!text) continue;
+      result.push({
+        type: 'bubble',
+        text: text.slice(0, 120),
+        duration,
+        parallel
+      });
+      continue;
+    }
+
+    if (t === 'look_at') {
+      const x = clampNumber(
+        typeof (raw as any).x === 'number' && Number.isFinite((raw as any).x) ? (raw as any).x : 0,
+        -1,
+        1
+      );
+      const y = clampNumber(
+        typeof (raw as any).y === 'number' && Number.isFinite((raw as any).y) ? (raw as any).y : 0,
+        -1,
+        1
+      );
+      result.push({
+        type: 'look_at',
+        x,
+        y,
+        duration,
+        parallel
+      });
+      continue;
+    }
+
+    if (t === 'wait') {
+      result.push({ type: 'wait', duration, parallel });
+      continue;
+    }
+
+    if (t === 'move') {
+      const scaleRaw = (raw as any).scale;
+      const scale =
+        typeof scaleRaw === 'number' && Number.isFinite(scaleRaw)
+          ? clampNumber(scaleRaw, 0.5, 2)
+          : undefined;
+      result.push({
+        type: 'move',
+        x: (raw as any).x,
+        y: (raw as any).y,
+        scale,
+        immediate: !!(raw as any).immediate,
+        duration,
+        parallel
+      });
+      continue;
+    }
+
+    if (t === 'event') {
+      const name =
+        typeof (raw as any).name === 'string' ? (raw as any).name.trim().slice(0, 80) : '';
+      if (!name) continue;
+      result.push({
+        type: 'event',
+        name,
+        payload: (raw as any).payload,
+        duration: clampNumber(duration, 80, 1200),
+        parallel
+      });
+      continue;
+    }
+
+    if (t === 'console') {
+      const message =
+        typeof (raw as any).message === 'string'
+          ? (raw as any).message.trim().slice(0, 240)
+          : safeJsonStringify((raw as any).message).slice(0, 240);
+      result.push({
+        type: 'console',
+        message,
+        duration: 0,
+        parallel
+      });
+      continue;
+    }
+  }
+
+  return result;
+};
+
 async function runAvatarPlanSteps(steps: any[]) {
-  if (!steps || !Array.isArray(steps) || steps.length === 0) return;
+  const safeSteps = sanitizeAvatarPlanSteps(steps);
+  if (safeSteps.length === 0) return;
 
   const parallelPromises: Promise<unknown>[] = [];
 
-  for (const step of steps) {
+  for (const step of safeSteps) {
     const executeStep = async () => {
       try {
         const t = step?.type;
         const duration = typeof step?.duration === 'number' ? step.duration : 1200;
 
         if (t === 'pose') {
-          if (typeof step.motion === 'string') {
-            playMotionInternal(step.motion, duration);
-          }
+          playMotionInternal(step.motion, duration);
           applyExpression(step.expression, duration);
           await delay(duration);
         } else if (t === 'motion') {
-          if (typeof step.motion === 'string') {
-            playMotionInternal(step.motion, duration);
-          }
+          playMotionInternal(step.motion, duration);
           await delay(duration);
-        } else if (t === 'expression' || t === 'emotion') {
+        } else if (t === 'expression') {
           applyExpression(step.expression, duration);
           await delay(duration);
         } else if (t === 'speak') {
-          if (typeof step.text === 'string') {
-            if (step.bubble !== false) {
-              message.value = step.text;
-            }
-            speak(step.text);
-          }
-          if (typeof step.motion === 'string') {
-            playMotionInternal(step.motion, duration);
-          }
+          if (step.bubble !== false) message.value = step.text;
+          speak(step.text);
+          if (typeof step.motion === 'string') playMotionInternal(step.motion, duration);
           applyExpression(step.expression, duration);
           await delay(duration);
         } else if (t === 'bubble') {
-          if (typeof step.text === 'string') {
-            message.value = step.text;
-          }
+          message.value = step.text;
           await delay(duration);
         } else if (t === 'look_at') {
           isLookAtOverride.value = true;
-          eyeOffset.value = { x: step.x || 0, y: step.y || 0 };
+          eyeOffset.value = { x: step.x, y: step.y };
           setTimeout(() => {
             isLookAtOverride.value = false;
           }, duration);
@@ -1594,9 +1779,14 @@ async function runAvatarPlanSteps(steps: any[]) {
         } else if (t === 'wait') {
           await delay(duration);
         } else if (t === 'move') {
-          const targetXPos = parsePosition(step.x, x.value, window.innerWidth - AGENT_SIZE.value);
-          const targetYPos = parsePosition(step.y, y.value, window.innerHeight - AGENT_SIZE.value);
-          const targetScale = typeof step.scale === 'number' ? step.scale : dynamicScale.value;
+          const maxX = window.innerWidth - AGENT_SIZE.value;
+          const maxY = window.innerHeight - AGENT_SIZE.value;
+          const rawX = parsePosition(step.x, x.value, maxX);
+          const rawY = parsePosition(step.y, y.value, maxY);
+          const targetXPos = clampNumber(rawX, -100, maxX + 100);
+          const targetYPos = clampNumber(rawY, -50, maxY + 50);
+          const targetScale =
+            typeof step.scale === 'number' ? clampNumber(step.scale, 0.5, 2) : dynamicScale.value;
           const persona = getPersonaText();
           const isLazy = /(懒散|慵懒|懒|lazy|sleepy|tired)/i.test(persona);
           const moveFactor = isLazy ? 1.6 : 1;
@@ -2239,6 +2429,15 @@ const pushDomSignal = (text: string, type: 'dom' | 'error') => {
       type: trigger === 'error' ? 'dom_error' : 'dom_signal',
       trigger
     });
+    if (taskSession.value?.active) {
+      const reason = trigger === 'error' ? 'failed' : 'completed';
+      window.setTimeout(
+        () => {
+          void requestNextTaskChunk(reason);
+        },
+        trigger === 'error' ? 900 : 1200
+      );
+    }
   }, 350);
 };
 

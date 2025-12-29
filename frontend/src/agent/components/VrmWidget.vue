@@ -742,6 +742,12 @@ const snapshotProceduralBase = () => {
 const resolveProceduralMotionName = (input: string) => {
   const n = (input || '').toLowerCase().trim();
   if (!n) return '';
+  if (n === 'mail') return 'idle_check_hand';
+  if (n === 'morning') return 'wave';
+  if (n === 'afternoon') return 'idle_shift_weight';
+  if (n === 'evening') return 'idle_sigh';
+  if (n === 'sad') return 'idle_sigh';
+  if (n === 'surprised') return Math.random() < 0.5 ? 'tilt_left' : 'tilt_right';
   const direct =
     n === 'wave' ||
     n === 'nod' ||
@@ -1007,6 +1013,8 @@ const maybeStartIdleMotion = () => {
       'idle_head_tilt',
       'idle_shift_weight',
       'idle_shift_weight',
+      'idle_squat_think',
+      'idle_squat_think',
       'idle_stretch_neck',
       'idle_breathe_deep',
       'idle_breathe_deep',
