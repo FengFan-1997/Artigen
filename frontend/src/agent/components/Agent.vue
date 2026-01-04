@@ -115,6 +115,23 @@
             </button>
           </div>
           <div class="agent-menu-list">
+            <div v-if="vrmListLoading" class="agent-menu-status">
+              {{ currentLang === 'zh' ? '正在加载模型列表…' : 'Loading models…' }}
+            </div>
+            <div v-else-if="vrmListError" class="agent-menu-status agent-menu-status-error">
+              <div class="agent-menu-status-title">
+                {{ currentLang === 'zh' ? '模型列表加载失败' : 'Failed to load models' }}
+              </div>
+              <div class="agent-menu-status-msg">{{ vrmListError }}</div>
+              <button
+                class="agent-menu-status-action"
+                type="button"
+                :disabled="vrmListLoading"
+                @click.stop="loadRemoteVrmModels()"
+              >
+                {{ currentLang === 'zh' ? '重试' : 'Retry' }}
+              </button>
+            </div>
             <button
               v-for="m in filteredVrmModels"
               :key="`${m.path}-${m.index}`"
@@ -208,6 +225,7 @@
           @close="toggleChat"
           @send="handleSendMessage"
           @toggle-mute="isMuted = !isMuted"
+          @activity="handleChatActivity"
           @mousedown.stop
           @touchstart.stop
           @click.stop
@@ -230,28 +248,36 @@
 
 <script setup lang="ts">
 // Agent Component
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
+import {
+  ref,
+  computed,
+  defineAsyncComponent,
+  onMounted,
+  onBeforeUnmount,
+  watch,
+  nextTick
+} from 'vue';
 import { useRouter } from 'vue-router';
 import { useLanguageStore } from '../../stores/language';
 import { storeToRefs } from 'pinia';
-import Live2DWidget from './Live2DWidget.vue';
 import ChatWindow from './ChatWindow.vue';
-import VrmWidget from './VrmWidget.vue';
 import { vrmRelativePaths, vrmPersonaTextByModelName } from 'virtual:vrm-models';
 import GuideOverlay from './GuideOverlay.vue';
 import TaskDisplay from './TaskDisplay.vue';
 import ConnectionLine from './ConnectionLine.vue';
 import { useTaskExecutor } from '../composables/useTaskExecutor';
 import { useAuth } from '../composables/useAuth';
+import { useLocalMemory } from '../composables/useLocalMemory';
+import { useAgentContextBuilder } from '../composables/useAgentContextBuilder';
 import { lerp, getRandomPosition } from '../utils/math';
 import { resolveTarget } from '../utils/dom';
+import { buildApiUrl, getUserId } from '../utils/user';
 import {
   sendMessageToAI,
   getChatHistory,
   requestAgentReaction,
   cancelAiRequests
 } from '../services/aiService';
-import { getUserId } from '../utils/user';
 import {
   buildInteractionMetrics,
   buildSemanticInteractionContext,
@@ -261,8 +287,22 @@ import {
   type InteractionSample
 } from '../utils/semanticEvents';
 import { hitTestByRect } from '../utils/agentHitTest';
+import {
+  clearDiagnostics,
+  getConsoleCaptureInfoEnabled,
+  getDiagnosticsSnapshot,
+  installConsoleDiagnostics,
+  installGlobalDiagnostics,
+  recordDiagnostic,
+  setConsoleCaptureInfoEnabled,
+  setDiagnosticsEnabled,
+  setDiagnosticsMaxItems
+} from '../utils/diagnostics';
 import type { Position, ChatMessage } from '../types';
 import type { AvatarPlanStep } from '../types/avatarPlan';
+
+const Live2DWidget = defineAsyncComponent(() => import('./Live2DWidget.vue'));
+const VrmWidget = defineAsyncComponent(() => import('./VrmWidget.vue'));
 
 const router = useRouter();
 const { initAuth, currentUser } = useAuth();
@@ -455,7 +495,9 @@ const currentVrmSrc = computed(() => {
     const abs = `${__DEV_VRM_BASE__}/${item.path}`;
     return encodeURI(`/@fs${abs}`);
   }
-  const url = `/api/hf/${VRM_HF_OWNER}/${VRM_HF_REPO}/resolve/${VRM_HF_REF}/${item.path}`;
+  const url = buildApiUrl(
+    `/api/hf/${VRM_HF_OWNER}/${VRM_HF_REPO}/resolve/${VRM_HF_REF}/${item.path}`
+  );
   return encodeURI(url);
 });
 
@@ -568,7 +610,8 @@ const loadRemoteVrmModels = async () => {
       prefix: VRM_HF_PREFIX,
       ext: 'vrm'
     });
-    const res = await fetch(`/api/hf-list/${VRM_HF_OWNER}/${VRM_HF_REPO}?${params.toString()}`);
+    const listUrl = buildApiUrl(`/api/hf-list/${VRM_HF_OWNER}/${VRM_HF_REPO}?${params.toString()}`);
+    const res = await fetch(listUrl);
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
@@ -808,6 +851,119 @@ const messages = ref<ChatMessage[]>([{ role: 'agent', text: 'Hello! How can I he
 const isLoading = ref(false);
 let chatAbortController: AbortController | null = null;
 let chatRequestSeq = 0;
+const MAX_UI_MESSAGES_KEY = 'agent_ui_max_messages';
+const CHAT_AUTO_CLOSE_MS_KEY = 'agent_chat_auto_close_ms';
+const CONSOLE_CAPTURE_INFO_KEY = 'agent_console_capture_info';
+const readIntSetting = (key: string, fallback: number, min: number, max: number) => {
+  try {
+    const raw = localStorage.getItem(key);
+    const v = raw ? Number.parseInt(raw, 10) : Number.NaN;
+    if (!Number.isFinite(v)) return fallback;
+    return Math.max(min, Math.min(max, v));
+  } catch {
+    return fallback;
+  }
+};
+const readFloatSetting = (key: string, fallback: number, min: number, max: number) => {
+  try {
+    const raw = localStorage.getItem(key);
+    const v = raw ? Number.parseFloat(raw) : Number.NaN;
+    if (!Number.isFinite(v)) return fallback;
+    return Math.max(min, Math.min(max, v));
+  } catch {
+    return fallback;
+  }
+};
+const readBoolSetting = (key: string, fallback: boolean) => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw == null) return fallback;
+    const v = raw.trim().toLowerCase();
+    if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+    if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+};
+const maxUiMessages = ref(readIntSetting(MAX_UI_MESSAGES_KEY, 120, 20, 800));
+const chatAutoCloseMs = ref(readIntSetting(CHAT_AUTO_CLOSE_MS_KEY, 5000, 0, 600000));
+const lastChatActivityAt = ref(Date.now());
+let chatAutoCloseTimer: number | null = null;
+
+const pushUiMessage = (msg: ChatMessage) => {
+  messages.value.push(msg);
+  const maxKeep = Math.max(20, Number(maxUiMessages.value) || 120);
+  if (messages.value.length > maxKeep) {
+    messages.value = messages.value.slice(-maxKeep);
+  }
+};
+
+const scheduleChatAutoClose = (delayMs = chatAutoCloseMs.value) => {
+  if (chatAutoCloseTimer) window.clearTimeout(chatAutoCloseTimer);
+  chatAutoCloseTimer = window.setTimeout(
+    () => {
+      chatAutoCloseTimer = null;
+      if (!chatOpen.value) return;
+      const idleForMs = Date.now() - lastChatActivityAt.value;
+      const closeMs = Math.max(0, Number(chatAutoCloseMs.value) || 5000);
+      if (idleForMs < closeMs) {
+        scheduleChatAutoClose(closeMs - idleForMs);
+        return;
+      }
+      if (isLoading.value) {
+        scheduleChatAutoClose(1200);
+        return;
+      }
+      closeChat();
+    },
+    Math.max(200, delayMs)
+  );
+};
+
+const handleChatActivity = () => {
+  lastChatActivityAt.value = Date.now();
+  markUserActivity();
+  if (chatOpen.value) scheduleChatAutoClose();
+};
+
+const extractFactsFromUserText = (raw: string) => {
+  const text = String(raw || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return [];
+  const facts: string[] = [];
+
+  const rememberMatch = text.match(
+    /(?:^|[，。,.!！\n\r])(?:记住|记下|别忘了|不要忘)(?:我|我们)?(?:：|:)?\s*(.+)$/i
+  );
+  if (rememberMatch?.[1]) {
+    const v = rememberMatch[1].trim().slice(0, 180);
+    if (v) facts.push(v);
+  }
+
+  const nameZh = text.match(/(?:^|[，。,.!！\s])我叫\s*([^\s，。,.!！]{1,24})/);
+  if (nameZh?.[1]) facts.push(`User name: ${nameZh[1].trim()}`);
+
+  const nameEn = text.match(/\bmy name is\s+([a-z0-9 _'\-]{1,32})/i);
+  if (nameEn?.[1]) facts.push(`User name: ${nameEn[1].trim()}`);
+
+  const likeZh = text.match(/(?:^|[，。,.!！\s])我(喜欢|爱|讨厌|不喜欢)\s*([^，。,.!！]{1,40})/);
+  if (likeZh?.[1] && likeZh?.[2]) {
+    const verb = likeZh[1].trim();
+    const obj = likeZh[2].trim();
+    facts.push(`Preference: ${verb} ${obj}`);
+  }
+
+  const contactZh = text.match(
+    /我的(邮箱|电话|手机号|微信|地址|生日|公司|学校|城市|住址|住在)(?:是|为|：|:)?\s*([^，。,.!！]{1,60})/i
+  );
+  if (contactZh?.[1] && contactZh?.[2]) {
+    facts.push(`${contactZh[1].trim()}: ${contactZh[2].trim()}`);
+  }
+
+  return Array.from(new Set(facts.map((x) => x.replace(/\s+/g, ' ').trim()))).filter(Boolean);
+};
 
 const ALLOWED_MOTIONS = [
   'idle',
@@ -918,50 +1074,8 @@ const ALLOWED_EXPRESSIONS = [
   'confused'
 ] as const;
 
-type LocalMemoryItem = {
-  ts: number;
-  role: 'user' | 'agent' | 'system';
-  text: string;
-  type?: string;
-};
-type LocalMemory = { items: LocalMemoryItem[] };
-const localMemory = ref<LocalMemory>({ items: [] });
-const memoryKey = computed(() => `agent_memory_v1_${getUserId()}`);
-
-const loadLocalMemory = () => {
-  try {
-    const raw = localStorage.getItem(memoryKey.value);
-    if (!raw) {
-      localMemory.value = { items: [] };
-      return;
-    }
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.items)) {
-      localMemory.value = { items: [] };
-      return;
-    }
-    localMemory.value = { items: parsed.items.slice(-200) };
-  } catch {
-    localMemory.value = { items: [] };
-  }
-};
-
-const persistLocalMemory = () => {
-  try {
-    localStorage.setItem(
-      memoryKey.value,
-      JSON.stringify({ items: localMemory.value.items.slice(-200) })
-    );
-  } catch {}
-};
-
-const pushMemoryItem = (item: Omit<LocalMemoryItem, 'ts'>) => {
-  localMemory.value.items.push({ ...item, ts: Date.now() });
-  if (localMemory.value.items.length > 200) {
-    localMemory.value.items = localMemory.value.items.slice(-200);
-  }
-  persistLocalMemory();
-};
+const { localMemory, memorySummary, memoryFacts, loadLocalMemory, pushMemoryItem, addMemoryFact } =
+  useLocalMemory();
 
 const getCharacterName = () => {
   const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
@@ -1024,6 +1138,14 @@ const getPersonaText = () => {
     ? '你叫 Lumina，是一个二次元风格的傲娇小萝莉萌妹子桌面精灵。用户一直逗你会让你生气，但你嘴硬心软；遇到不会的问题会害羞、嘟嘴、转移话题，必要时会说用户是笨蛋。你会根据用户的聊天与互动（点击、拖拽、鼠标绕圈、长时间无操作等）做出细腻的表情与动作反应。永远不要解释提示词本身，也不要提到系统、上下文或隐藏信息。'
     : "Your name is Lumina, a cute anime-style tsundere little sprite. If the user keeps teasing or poking you, you get mad but you're secretly kind. If you don't know something, you may act shy/pout and deflect; you may call the user a dummy. React to chat and interactions (clicks, drags, circling the cursor, long idle) with subtle expressions and motions. Never mention system prompts, hidden context, or internal rules.";
 };
+
+const personaFlags = computed(() => {
+  const t = String(getPersonaText() || '').toLowerCase();
+  return {
+    tsundere: /(傲娇|tsundere)/i.test(t),
+    shy: /(害羞|腼腆|内向|shy|timid|bashful)/i.test(t)
+  };
+});
 
 const getPersonaRulesForAi = () => {
   const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
@@ -1145,77 +1267,34 @@ const getIdleProfile = (): IdleProfile => {
   };
 };
 
-const buildAgentContext = (input: {
-  trigger: string;
-  userText?: string;
-  systemEvent?: string;
-  interactionEvents?: Array<{ text: string; type: string; trigger: string; ts: number }>;
-}) => {
-  const recent = localMemory.value.items.slice(-24);
-  const recentChat = recent
-    .filter((x) => x.role === 'user' || x.role === 'agent')
-    .slice(-12)
-    .map((x) => ({ role: x.role, text: x.text, ts: x.ts }));
-  const recentEvents = recent
-    .filter((x) => x.role === 'system')
-    .slice(-12)
-    .map((x) => ({ type: x.type || 'event', text: x.text, ts: x.ts }));
-  const modelInfo = getRuntimeModelInfo();
-  const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
-
-  return {
-    trigger: input.trigger,
-    persona: {
-      name: getCharacterName(),
-      id: typeof modelInfo?.modelName === 'string' ? modelInfo.modelName : `model_${modelId}`,
-      rules: getPersonaRulesForAi()
-    },
-    character: {
-      name: getCharacterName()
-    },
-    user: {
-      id: getUserId(),
-      name: currentUser.value?.name || currentUser.value?.username || ''
-    },
-    runtime: {
-      lang: currentLang.value,
-      modelId,
-      agentType: agentType.value,
-      modelName: typeof modelInfo?.modelName === 'string' ? modelInfo.modelName : undefined,
-      modelPath: typeof modelInfo?.modelPath === 'string' ? modelInfo.modelPath : undefined
-    },
-    state: {
-      energy: energy.value,
-      isMoving: isMoving.value,
-      isHovered: isHovered.value,
-      isDragging: isDragging.value,
-      isTalking: isTalking.value,
-      emotions: {
-        angry: isAngry.value,
-        happy: isHappy.value,
-        pouting: isPouting.value,
-        dizzy: isDizzy.value,
-        confused: isConfused.value,
-        tired: isTired.value,
-        fainted: isFainted.value,
-        crying: isCrying.value
-      }
-    },
-    memory: {
-      recentChat,
-      recentEvents
-    },
-    input: {
-      userText: input.userText,
-      systemEvent: input.systemEvent,
-      interactionEvents: input.interactionEvents
-    },
-    constraints: {
-      allowedMotions: ALLOWED_MOTIONS,
-      allowedExpressions: ALLOWED_EXPRESSIONS
-    }
-  };
-};
+const { buildAgentContext } = useAgentContextBuilder({
+  agentType,
+  currentVrmName,
+  currentLang,
+  currentUser,
+  localMemory,
+  memorySummary,
+  memoryFacts,
+  energy,
+  isMoving,
+  isHovered,
+  isDragging,
+  isTalking,
+  isAngry,
+  isHappy,
+  isPouting,
+  isDizzy,
+  isConfused,
+  isTired,
+  isFainted,
+  isCrying,
+  allowedMotions: ALLOWED_MOTIONS,
+  allowedExpressions: ALLOWED_EXPRESSIONS,
+  getRuntimeModelInfo,
+  getCharacterName,
+  getPersonaRulesForAi,
+  normalizeVrmModelKey
+});
 
 const interactionState = ref({
   clicks: 0,
@@ -1225,6 +1304,12 @@ const interactionState = ref({
 
 const recordSystemEvent = (text: string, type = 'event') => {
   pushMemoryItem({ role: 'system', text, type });
+  recordDiagnostic({
+    kind: 'agent_system_event',
+    level: type === 'error' ? 'error' : 'info',
+    message: String(text || '').slice(0, 900),
+    data: { type }
+  });
 };
 
 // Task Executor
@@ -1279,6 +1364,12 @@ const markUserActivity = () => {
   lastUserActivityAt.value = Date.now();
 };
 
+const perfFrameMs = ref(0);
+const perfAvgFrameMs = ref(0);
+const perfFps = ref(0);
+const perfLongFramesInWindow = ref(0);
+const perfHeapUsedBytes = ref<number | null>(null);
+
 // Dizziness Logic State
 let dizzyTimeout: number | null = null;
 
@@ -1313,14 +1404,39 @@ const clearAiEmotions = () => {
 };
 
 // --- Config ---
-const MOVE_INTERVAL = 60000;
-const IDLE_TALK_INTERVAL = 30000;
-const LERP_FACTOR = 0.02;
-const MOUSE_FOLLOW_OFFSET = { x: 20, y: 20 };
-const MAX_ENERGY = 100;
-const ENERGY_DECAY_RATE = 0.03;
-const ENERGY_RECOVER_RATE = 0.02;
-const TIRED_THRESHOLD = 20;
+const MOVE_INTERVAL_MS_KEY = 'agent_roam_interval_ms';
+const IDLE_TALK_INTERVAL_MS_KEY = 'agent_idle_talk_interval_ms';
+const LERP_FACTOR_KEY = 'agent_lerp_factor';
+const MOUSE_FOLLOW_OFFSET_X_KEY = 'agent_mouse_follow_offset_x';
+const MOUSE_FOLLOW_OFFSET_Y_KEY = 'agent_mouse_follow_offset_y';
+const MAX_ENERGY_KEY = 'agent_max_energy';
+const ENERGY_DECAY_RATE_KEY = 'agent_energy_decay_rate';
+const ENERGY_RECOVER_RATE_KEY = 'agent_energy_recover_rate';
+const TIRED_THRESHOLD_KEY = 'agent_tired_threshold';
+const ROAM_ENABLED_KEY = 'agent_roam_enabled';
+const IDLE_TALK_ENABLED_KEY = 'agent_idle_talk_enabled';
+const IDLE_AI_ENABLED_KEY = 'agent_idle_ai_enabled';
+const IDLE_AI_MIN_IDLE_MS_KEY = 'agent_idle_ai_min_idle_ms';
+const IDLE_AI_COOLDOWN_MS_KEY = 'agent_idle_ai_cooldown_ms';
+const IDLE_AI_CHANCE_KEY = 'agent_idle_ai_chance';
+
+const roamEnabled = ref(readBoolSetting(ROAM_ENABLED_KEY, true));
+const idleTalkEnabled = ref(readBoolSetting(IDLE_TALK_ENABLED_KEY, true));
+const idleAiEnabled = ref(readBoolSetting(IDLE_AI_ENABLED_KEY, true));
+const moveIntervalMs = ref(readIntSetting(MOVE_INTERVAL_MS_KEY, 60000, 5000, 600000));
+const idleTalkIntervalMs = ref(readIntSetting(IDLE_TALK_INTERVAL_MS_KEY, 30000, 3000, 600000));
+const lerpFactor = ref(readFloatSetting(LERP_FACTOR_KEY, 0.06, 0.01, 0.35));
+const mouseFollowOffset = ref({
+  x: readIntSetting(MOUSE_FOLLOW_OFFSET_X_KEY, 20, -300, 300),
+  y: readIntSetting(MOUSE_FOLLOW_OFFSET_Y_KEY, 20, -300, 300)
+});
+const maxEnergy = ref(readIntSetting(MAX_ENERGY_KEY, 100, 10, 2000));
+const energyDecayRate = ref(readFloatSetting(ENERGY_DECAY_RATE_KEY, 0.03, 0, 5));
+const energyRecoverRate = ref(readFloatSetting(ENERGY_RECOVER_RATE_KEY, 0.02, 0, 5));
+const tiredThreshold = ref(readIntSetting(TIRED_THRESHOLD_KEY, 20, 0, 2000));
+const idleAiMinIdleMs = ref(readIntSetting(IDLE_AI_MIN_IDLE_MS_KEY, 65000, 3000, 600000));
+const idleAiCooldownMs = ref(readIntSetting(IDLE_AI_COOLDOWN_MS_KEY, 120000, 0, 900000));
+const idleAiChance = ref(readFloatSetting(IDLE_AI_CHANCE_KEY, 0.22, 0, 1));
 const DRAG_MOVE_THRESHOLD = 5;
 
 let lastTiredReactAt = 0;
@@ -2112,14 +2228,14 @@ const applyAiReply = async (
 
   if (displayResponse) {
     if (options.displayInChat) {
-      messages.value.push({ role: 'agent', text: displayResponse });
+      pushUiMessage({ role: 'agent', text: displayResponse });
     }
     if (!options.suppressMemorySave) pushMemoryItem({ role: 'agent', text: displayResponse });
     message.value = displayResponse;
     if (options.speakText !== false) speak(displayResponse);
   } else if (options.defaultMessageFallback) {
     if (options.displayInChat) {
-      messages.value.push({ role: 'agent', text: options.defaultMessageFallback });
+      pushUiMessage({ role: 'agent', text: options.defaultMessageFallback });
     }
     if (!options.suppressMemorySave)
       pushMemoryItem({ role: 'agent', text: options.defaultMessageFallback });
@@ -2331,7 +2447,8 @@ const flushBackgroundReaction = async () => {
       rawResponse = await requestAgentReaction({
         message: summary,
         agentContext,
-        signal: backgroundAbortController.signal
+        signal: backgroundAbortController.signal,
+        group: 'background'
       });
     } catch {
       return;
@@ -2566,7 +2683,8 @@ const requestNextTaskChunk = async (reason: 'completed' | 'failed' | 'manual') =
     let rawResponse = '';
     try {
       rawResponse = await sendMessageToAI(prompt, messages.value, agentContext, {
-        signal: taskContinueAbortController.signal
+        signal: taskContinueAbortController.signal,
+        group: 'task'
       });
     } catch {
       return;
@@ -2596,8 +2714,9 @@ async function handleSendMessage(text: string) {
   const trimmed = (text || '').trim();
   if (!trimmed) return;
   lastChatUserText = trimmed;
-  markUserActivity();
-  messages.value.push({ role: 'user', text: trimmed });
+  handleChatActivity();
+  for (const fact of extractFactsFromUserText(trimmed)) addMemoryFact(fact);
+  pushUiMessage({ role: 'user', text: trimmed });
   pushMemoryItem({ role: 'user', text: trimmed });
   isLoading.value = true;
   message.value = 'Hmm...';
@@ -2614,7 +2733,7 @@ async function handleSendMessage(text: string) {
     isLoading.value = false;
     const msg = currentLang.value === 'zh' ? '好，我先停下。' : "Okay, I'll stop.";
     message.value = msg;
-    messages.value.push({ role: 'agent', text: msg });
+    pushUiMessage({ role: 'agent', text: msg });
     speak(msg);
     return;
   }
@@ -2655,7 +2774,8 @@ async function handleSendMessage(text: string) {
   try {
     const agentContext = buildAgentContext({ trigger: 'chat', userText: trimmed });
     const rawResponse = await sendMessageToAI(trimmed, messages.value, agentContext, {
-      signal: chatAbortController.signal
+      signal: chatAbortController.signal,
+      group: 'chat'
     });
     if (requestSeq !== chatRequestSeq) return;
     isLoading.value = false;
@@ -2765,16 +2885,33 @@ function processInteraction() {
       playMotionInternal(accumulatedAngle >= 0 ? 'tilt_right' : 'tilt_left', 1400);
       message.value =
         currentLang.value === 'zh'
-          ? '你在转圈圈吗……我有点晕。'
-          : 'Are you spinning around me…? I feel a bit dizzy.';
+          ? personaFlags.value.tsundere
+            ? '喂！别转了啦……我、我才没晕呢！'
+            : '你在转圈圈吗……我有点晕。'
+          : personaFlags.value.tsundere
+            ? "Hey! Stop spinning... I-I'm not dizzy!"
+            : 'Are you spinning around me…? I feel a bit dizzy.';
     } else if (clicks >= 3) {
       setTransient('pouting', (v) => (isPouting.value = v), 2200);
       playMotionInternal('shake', 1400);
       message.value =
-        currentLang.value === 'zh' ? '别闹啦……有话好好说！' : 'Hey, stop poking… just talk to me!';
+        currentLang.value === 'zh'
+          ? personaFlags.value.tsundere
+            ? '哼！别戳啦！有事就说！'
+            : '别闹啦……有话好好说！'
+          : personaFlags.value.tsundere
+            ? 'Hmph! Stop poking me. Just say it!'
+            : 'Hey, stop poking… just talk to me!';
     } else if (clicks === 2) {
       playMotionInternal('tap_body', 1000);
-      message.value = currentLang.value === 'zh' ? '嗯？怎么啦？' : 'Hm? What is it?';
+      message.value =
+        currentLang.value === 'zh'
+          ? personaFlags.value.tsundere
+            ? '哼…干嘛。'
+            : '嗯？怎么啦？'
+          : personaFlags.value.tsundere
+            ? 'Hmph... what?'
+            : 'Hm? What is it?';
     }
   }
 
@@ -2798,31 +2935,55 @@ function processInteraction() {
 
 function resetInteractionState() {
   interactionState.value = { clicks: 0, accumulatedAngle: 0, startTime: Date.now() };
+  accumulatedAngle.value = 0;
   interactionSamples.value = [];
   lastInteractionSample = null;
   lastInteractionSampleAt = 0;
 }
 
-const toggleChat = () => {
-  const next = !chatOpen.value;
-  chatOpen.value = next;
-  if (chatOpen.value) {
-    if (isMobile.value) {
-      const size = AGENT_SIZE.value;
-      x.value = (window.innerWidth - size) / 2;
-      y.value = 40;
-    }
-    message.value = '';
-  } else {
-    if (isLoading.value) {
-      try {
-        chatAbortController?.abort();
-      } catch {}
-      cancelAiRequests('chat');
-      isLoading.value = false;
-    }
+function openChat() {
+  if (chatOpen.value) return;
+  chatOpen.value = true;
+  lastChatActivityAt.value = Date.now();
+  markUserActivity();
+  scheduleChatAutoClose();
+  if (isMobile.value) {
+    const size = AGENT_SIZE.value;
+    x.value = (window.innerWidth - size) / 2;
+    y.value = 40;
   }
+  message.value = '';
+}
+
+function closeChat() {
+  if (!chatOpen.value) return;
+  chatOpen.value = false;
+  if (chatAutoCloseTimer) {
+    window.clearTimeout(chatAutoCloseTimer);
+    chatAutoCloseTimer = null;
+  }
+  if (isLoading.value) {
+    try {
+      chatAbortController?.abort();
+    } catch {}
+    chatAbortController = null;
+    cancelAiRequests('chat');
+    isLoading.value = false;
+  }
+}
+
+const toggleChat = () => {
+  if (chatOpen.value) closeChat();
+  else openChat();
 };
+
+watch(
+  () => chatOpen.value,
+  (open) => {
+    if (open) isFollowingMouse.value = false;
+    else if (isHovered.value && !props.isPinned) isFollowingMouse.value = true;
+  }
+);
 
 const handleClick = (event: MouseEvent) => {
   if (isInteractionLocked()) return;
@@ -2865,12 +3026,19 @@ const handleClick = (event: MouseEvent) => {
     isFainted.value = false;
     isAngry.value = false;
     isTired.value = false;
-    energy.value = Math.min(MAX_ENERGY, energy.value + 20);
-    message.value = '摸摸头就有精神了~';
+    energy.value = Math.min(Math.max(1, Number(maxEnergy.value) || 100), energy.value + 20);
+    if (personaFlags.value.tsundere) message.value = '别、别摸啦……我又不是小孩子！';
+    else if (personaFlags.value.shy) message.value = '呜…别突然摸头啦…我会害羞的…';
+    else message.value = '摸摸头就有精神了~';
     playMotionInternal('flick_head', 3000);
     setTimeout(() => {
       isHappy.value = false;
-      if (message.value === '摸摸头就有精神了~') message.value = '';
+      if (
+        message.value === '摸摸头就有精神了~' ||
+        message.value === '别、别摸啦……我又不是小孩子！' ||
+        message.value === '呜…别突然摸头啦…我会害羞的…'
+      )
+        message.value = '';
     }, 3000);
     return;
   }
@@ -2882,16 +3050,18 @@ const handleClick = (event: MouseEvent) => {
     const shyMessages =
       currentLang.value === 'zh'
         ? [
-            '喂喂，你手往哪儿放呢！',
-            '不要乱戳啦，很痒的……',
-            '再乱来我要生气了哦！',
-            '明明可以好好说话的嘛！'
+            personaFlags.value.tsundere ? '喂喂，你手往哪儿放呢！' : '不要乱戳啦，很痒的……',
+            personaFlags.value.tsundere ? '哼！离、离我远点啦！' : '再乱来我要生气了哦！',
+            personaFlags.value.shy ? '呜……别这样啦…我会脸红的…' : '明明可以好好说话的嘛！'
           ]
         : [
-            'Hey, where are you touching!',
-            'Don’t poke there...',
-            'I will get mad if you keep this!',
-            'You can just talk to me nicely!'
+            personaFlags.value.tsundere ? 'Hey, where are you touching!' : 'Don’t poke there...',
+            personaFlags.value.tsundere
+              ? 'Hmph! Get away from me!'
+              : 'I will get mad if you keep this!',
+            personaFlags.value.shy
+              ? 'W-Wait… that’s embarrassing…'
+              : 'You can just talk to me nicely!'
           ];
     message.value = shyMessages[Math.floor(Math.random() * shyMessages.length)];
     playMotionInternal('mood_angry', 3000);
@@ -2917,14 +3087,16 @@ const handleClick = (event: MouseEvent) => {
     const shyMessages =
       currentLang.value === 'zh'
         ? [
-            '哎呀，别戳啦，有点痒…… 😳',
-            '再戳我就要脸红了……',
+            personaFlags.value.tsundere ? '哼！别戳啦！烦死了…' : '哎呀，别戳啦，有点痒…… 😳',
+            personaFlags.value.shy ? '再戳我就要脸红了……' : '别、别一直戳我啦……',
             '是有什么急事吗？可以直接说哦~',
             '呜……头都要晕了…… 💫'
           ]
         : [
-            'Ah... that tickles... 😳',
-            "Please don't poke so fast...",
+            personaFlags.value.tsundere ? 'Hmph! Stop poking me!' : 'Ah... that tickles... 😳',
+            personaFlags.value.shy
+              ? "P-Please don't poke so fast..."
+              : "Please don't poke so fast...",
             'Do you need something? Just ask~',
             "Waaah... I'm getting dizzy... 💫"
           ];
@@ -2945,7 +3117,7 @@ const handleClick = (event: MouseEvent) => {
 
 const handleMouseMove = (event: MouseEvent) => {
   if (isInteractionLocked()) return;
-  if (isFainted.value || isAngry.value || isTired.value) return;
+  if (isDizzy.value || isFainted.value || isAngry.value || isTired.value) return;
 
   hasMouseMoved.value = true;
   mouseX.value = event.clientX;
@@ -2989,6 +3161,11 @@ const handleMouseMove = (event: MouseEvent) => {
   const dx = event.clientX - centerX;
   const dy = event.clientY - centerY;
   const currentAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+  if (!lastInteractionSample) {
+    lastMouseAngle.value = currentAngle;
+    return;
+  }
 
   let delta = currentAngle - lastMouseAngle.value;
   if (delta > 180) delta -= 360;
@@ -3223,7 +3400,41 @@ const updateEyeTracking = () => {
 };
 
 const startLoop = () => {
+  let lastPerfTs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const frameWindow: number[] = [];
+  let frameSum = 0;
+  let longCount = 0;
+  let heapTick = 0;
+
   const loop = () => {
+    const perfTs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const frameMs = perfTs - lastPerfTs;
+    lastPerfTs = perfTs;
+    if (Number.isFinite(frameMs) && frameMs > 0 && frameMs < 1000) {
+      if (frameWindow.length >= 60) {
+        const removed = frameWindow.shift()!;
+        frameSum -= removed;
+        if (removed > 50) longCount -= 1;
+      }
+      frameWindow.push(frameMs);
+      frameSum += frameMs;
+      if (frameMs > 50) longCount += 1;
+      const avg = frameSum / Math.max(1, frameWindow.length);
+      perfFrameMs.value = frameMs;
+      perfAvgFrameMs.value = avg;
+      perfFps.value = avg > 0 ? Math.max(0, Math.min(240, 1000 / avg)) : 0;
+      perfLongFramesInWindow.value = Math.max(0, longCount);
+    }
+    heapTick += 1;
+    if (heapTick % 30 === 0) {
+      try {
+        const mem = (performance as any)?.memory;
+        perfHeapUsedBytes.value =
+          typeof mem?.usedJSHeapSize === 'number' ? mem.usedJSHeapSize : null;
+      } catch {
+        perfHeapUsedBytes.value = null;
+      }
+    }
     nowMs.value = Date.now();
     if (!isDragging.value) {
       checkBoundaries();
@@ -3232,26 +3443,33 @@ const startLoop = () => {
     updateEyeTracking();
     maybeMoveForTask();
 
-    if (interactionHasPending && Date.now() - interactionLastEventAt > 1000) {
+    if (interactionHasPending && Date.now() - interactionLastEventAt > 350) {
       interactionHasPending = false;
       processInteraction();
     }
 
     if (isDizzy.value || isFainted.value || isHeadHit.value) {
     } else if (isFollowingMouse.value) {
-      const targetXPos = mouseX.value + MOUSE_FOLLOW_OFFSET.x;
-      const targetYPos = mouseY.value + MOUSE_FOLLOW_OFFSET.y;
+      const targetXPos = mouseX.value + (mouseFollowOffset.value?.x || 0);
+      const targetYPos = mouseY.value + (mouseFollowOffset.value?.y || 0);
       const dx = targetXPos - x.value;
       const dy = targetYPos - y.value;
       const distance = Math.sqrt(dx * dx + dy * dy);
       if (distance > 1) {
-        x.value = lerp(x.value, targetXPos, LERP_FACTOR);
-        y.value = lerp(y.value, targetYPos, LERP_FACTOR);
+        x.value = lerp(x.value, targetXPos, Math.max(0.001, Number(lerpFactor.value) || 0.06));
+        y.value = lerp(y.value, targetYPos, Math.max(0.001, Number(lerpFactor.value) || 0.06));
         if (energy.value > 0) {
-          const newEnergy = Math.max(0, energy.value - ENERGY_DECAY_RATE);
+          const newEnergy = Math.max(
+            0,
+            energy.value - Math.max(0, Number(energyDecayRate.value) || 0.03)
+          );
           if (newEnergy !== energy.value) {
             energy.value = newEnergy;
-            if (!isTired.value && energy.value <= TIRED_THRESHOLD && energy.value > 0) {
+            if (
+              !isTired.value &&
+              energy.value <= Math.max(0, Number(tiredThreshold.value) || 20) &&
+              energy.value > 0
+            ) {
               isTired.value = true;
               message.value = '有点累了...';
             }
@@ -3261,14 +3479,36 @@ const startLoop = () => {
             }
           }
         }
-      } else if (!isDragging.value && !isMoving.value && energy.value < MAX_ENERGY) {
-        energy.value = Math.min(MAX_ENERGY, energy.value + ENERGY_RECOVER_RATE);
-        if (energy.value > TIRED_THRESHOLD && isTired.value && !isFainted.value)
+      } else if (
+        !isDragging.value &&
+        !isMoving.value &&
+        energy.value < Math.max(1, Number(maxEnergy.value) || 100)
+      ) {
+        energy.value = Math.min(
+          Math.max(1, Number(maxEnergy.value) || 100),
+          energy.value + Math.max(0, Number(energyRecoverRate.value) || 0.02)
+        );
+        if (
+          energy.value > Math.max(0, Number(tiredThreshold.value) || 20) &&
+          isTired.value &&
+          !isFainted.value
+        )
           isTired.value = false;
       }
-    } else if (!isDragging.value && !isMoving.value && energy.value < MAX_ENERGY) {
-      energy.value = Math.min(MAX_ENERGY, energy.value + ENERGY_RECOVER_RATE);
-      if (energy.value > TIRED_THRESHOLD && isTired.value && !isFainted.value)
+    } else if (
+      !isDragging.value &&
+      !isMoving.value &&
+      energy.value < Math.max(1, Number(maxEnergy.value) || 100)
+    ) {
+      energy.value = Math.min(
+        Math.max(1, Number(maxEnergy.value) || 100),
+        energy.value + Math.max(0, Number(energyRecoverRate.value) || 0.02)
+      );
+      if (
+        energy.value > Math.max(0, Number(tiredThreshold.value) || 20) &&
+        isTired.value &&
+        !isFainted.value
+      )
         isTired.value = false;
     }
 
@@ -3287,13 +3527,14 @@ let idleTimer: number | null = null;
 let lastIdleAiAt = 0;
 let idleAiAbortController: AbortController | null = null;
 const maybeTriggerIdleAi = async (idleForMs: number) => {
+  if (!idleAiEnabled.value) return;
   if (chatOpen.value || isMoving.value || message.value || isDragging.value || isFainted.value)
     return;
   if (isLoading.value || isExecuting.value || isBackgroundReacting.value) return;
-  if (idleForMs < 65000) return;
+  if (idleForMs < Math.max(0, Number(idleAiMinIdleMs.value) || 65000)) return;
   const now = Date.now();
-  if (now - lastIdleAiAt < 120000) return;
-  if (Math.random() > 0.22) return;
+  if (now - lastIdleAiAt < Math.max(0, Number(idleAiCooldownMs.value) || 120000)) return;
+  if (Math.random() > Math.max(0, Math.min(1, Number(idleAiChance.value) || 0.22))) return;
 
   lastIdleAiAt = now;
   if (idleAiAbortController) {
@@ -3312,7 +3553,8 @@ const maybeTriggerIdleAi = async (idleForMs: number) => {
     const agentContext: any = buildAgentContext({ trigger: 'idle', systemEvent: idlePrompt });
     agentContext.suppressMemorySave = true;
     const rawResponse = await sendMessageToAI(idlePrompt, [], agentContext, {
-      signal: idleAiAbortController.signal
+      signal: idleAiAbortController.signal,
+      group: 'idle'
     });
     if (!rawResponse) return;
     await applyAiReply(rawResponse, {
@@ -3327,74 +3569,80 @@ const maybeTriggerIdleAi = async (idleForMs: number) => {
 
 const startIdleTalk = () => {
   if (idleTimer) clearInterval(idleTimer);
-  idleTimer = window.setInterval(() => {
-    if (chatOpen.value || isMoving.value || message.value || isDragging.value || isFainted.value)
-      return;
-    const now = Date.now();
-    const idleForMs = now - lastUserActivityAt.value;
-    void maybeTriggerIdleAi(idleForMs);
-    const isLazy = getIsLazyPersona();
-    if (
-      isLazy &&
-      idleForMs > 45000 &&
-      !isTired.value &&
-      !isAngry.value &&
-      !isHappy.value &&
-      !isConfused.value
-    ) {
-      setTransient('tired', (v) => (isTired.value = v), 12000);
-      playMotionInternal('mood_tired', 2600);
-      if (!message.value && Math.random() < 0.8) {
-        message.value =
-          currentLang.value === 'zh' ? '哈…好累…我先蹲一会儿…' : "Ugh... I'm tired... let me rest…";
+  if (!idleTalkEnabled.value) return;
+  idleTimer = window.setInterval(
+    () => {
+      if (chatOpen.value || isMoving.value || message.value || isDragging.value || isFainted.value)
+        return;
+      const now = Date.now();
+      const idleForMs = now - lastUserActivityAt.value;
+      void maybeTriggerIdleAi(idleForMs);
+      const isLazy = getIsLazyPersona();
+      if (
+        isLazy &&
+        idleForMs > 45000 &&
+        !isTired.value &&
+        !isAngry.value &&
+        !isHappy.value &&
+        !isConfused.value
+      ) {
+        setTransient('tired', (v) => (isTired.value = v), 12000);
+        playMotionInternal('mood_tired', 2600);
+        if (!message.value && Math.random() < 0.8) {
+          message.value =
+            currentLang.value === 'zh'
+              ? '哈…好累…我先蹲一会儿…'
+              : "Ugh... I'm tired... let me rest…";
+        }
+        return;
       }
-      return;
-    }
-    if (isTired.value) {
-      playMotionInternal('mood_tired');
-      if (Math.random() > 0.5) {
-        const tiredMsgs =
-          currentLang.value === 'zh'
-            ? ['好累...', '休息一下...', 'Zzz...']
-            : ['So tired...', 'Need rest...', 'Zzz...'];
-        message.value = tiredMsgs[Math.floor(Math.random() * tiredMsgs.length)];
-      }
-    } else if (isHappy.value) playMotionInternal('mood_happy');
-    else if (isAngry.value) playMotionInternal('mood_angry');
-    else {
-      const idleProfile = getIdleProfile();
-      if (Math.random() < idleProfile.motionChance) {
-        const randomIdles = idleProfile.motions;
-        const chosen = randomIdles[Math.floor(Math.random() * randomIdles.length)];
-        playMotionInternal(chosen);
-        if (!message.value && Math.random() < 0.55) {
-          if (chosen === 'yawn') {
-            const yawnMsgs =
-              currentLang.value === 'zh'
-                ? ['哈——欠……', '有点困了…', '我先眯一下…']
-                : ['Yaaawn…', 'A bit sleepy…', 'Let me nap…'];
-            message.value = yawnMsgs[Math.floor(Math.random() * yawnMsgs.length)];
-          } else if (chosen === 'play_hair') {
-            const hairMsgs =
-              currentLang.value === 'zh'
-                ? ['我整理一下头发…', '别盯着我看啦…', '辫子有点乱…']
-                : ['Fixing my hair...', "Don't stare...", 'My braid is messy...'];
-            message.value = hairMsgs[Math.floor(Math.random() * hairMsgs.length)];
+      if (isTired.value) {
+        playMotionInternal('mood_tired');
+        if (Math.random() > 0.5) {
+          const tiredMsgs =
+            currentLang.value === 'zh'
+              ? ['好累...', '休息一下...', 'Zzz...']
+              : ['So tired...', 'Need rest...', 'Zzz...'];
+          message.value = tiredMsgs[Math.floor(Math.random() * tiredMsgs.length)];
+        }
+      } else if (isHappy.value) playMotionInternal('mood_happy');
+      else if (isAngry.value) playMotionInternal('mood_angry');
+      else {
+        const idleProfile = getIdleProfile();
+        if (Math.random() < idleProfile.motionChance) {
+          const randomIdles = idleProfile.motions;
+          const chosen = randomIdles[Math.floor(Math.random() * randomIdles.length)];
+          playMotionInternal(chosen);
+          if (!message.value && Math.random() < 0.55) {
+            if (chosen === 'yawn') {
+              const yawnMsgs =
+                currentLang.value === 'zh'
+                  ? ['哈——欠……', '有点困了…', '我先眯一下…']
+                  : ['Yaaawn…', 'A bit sleepy…', 'Let me nap…'];
+              message.value = yawnMsgs[Math.floor(Math.random() * yawnMsgs.length)];
+            } else if (chosen === 'play_hair') {
+              const hairMsgs =
+                currentLang.value === 'zh'
+                  ? ['我整理一下头发…', '别盯着我看啦…', '辫子有点乱…']
+                  : ['Fixing my hair...', "Don't stare...", 'My braid is messy...'];
+              message.value = hairMsgs[Math.floor(Math.random() * hairMsgs.length)];
+            }
+          } else if (!message.value && Math.random() < idleProfile.messageChance) {
+            const msgs =
+              currentLang.value === 'zh' ? idleProfile.messages.zh : idleProfile.messages.en;
+            message.value = msgs[Math.floor(Math.random() * msgs.length)];
           }
-        } else if (!message.value && Math.random() < idleProfile.messageChance) {
-          const msgs =
-            currentLang.value === 'zh' ? idleProfile.messages.zh : idleProfile.messages.en;
-          message.value = msgs[Math.floor(Math.random() * msgs.length)];
         }
       }
-    }
 
-    if (message.value) {
-      setTimeout(() => {
-        if (!isTalking.value) message.value = '';
-      }, 5000);
-    }
-  }, IDLE_TALK_INTERVAL);
+      if (message.value) {
+        setTimeout(() => {
+          if (!isTalking.value) message.value = '';
+        }, 5000);
+      }
+    },
+    Math.max(1000, Number(idleTalkIntervalMs.value) || 30000)
+  );
 };
 
 const chatPlacement = computed<'top' | 'bottom'>(() => {
@@ -3405,26 +3653,49 @@ const chatPlacement = computed<'top' | 'bottom'>(() => {
 
 let roamTimer: number | null = null;
 const startRoaming = () => {
+  if (roamTimer) clearInterval(roamTimer);
+  roamTimer = null;
+  if (props.isPinned) return;
+  if (!roamEnabled.value) return;
   moveRandomly();
-  roamTimer = window.setInterval(() => {
-    const now = Date.now();
-    const idleForMs = now - lastUserActivityAt.value;
-    const isLazy = getIsLazyPersona();
-    if (
-      plan.value?.status !== 'running' &&
-      !isDragging.value &&
-      !isHovered.value &&
-      !isDizzy.value &&
-      !isFainted.value &&
-      !isHeadHit.value &&
-      !chatOpen.value
-    ) {
-      if (!props.isPinned && idleForMs > (isLazy ? 25000 : 9000)) {
-        if (!isLazy || Math.random() < 0.55) moveRandomly();
+  roamTimer = window.setInterval(
+    () => {
+      const now = Date.now();
+      const idleForMs = now - lastUserActivityAt.value;
+      const isLazy = getIsLazyPersona();
+      if (
+        plan.value?.status !== 'running' &&
+        !isDragging.value &&
+        !isHovered.value &&
+        !isDizzy.value &&
+        !isFainted.value &&
+        !isHeadHit.value &&
+        !chatOpen.value
+      ) {
+        if (!props.isPinned && idleForMs > (isLazy ? 25000 : 9000)) {
+          if (!isLazy || Math.random() < 0.55) moveRandomly();
+        }
       }
-    }
-  }, MOVE_INTERVAL);
+    },
+    Math.max(2000, Number(moveIntervalMs.value) || 60000)
+  );
 };
+
+watch(
+  [roamEnabled, moveIntervalMs],
+  () => {
+    startRoaming();
+  },
+  { deep: false }
+);
+
+watch(
+  [idleTalkEnabled, idleTalkIntervalMs],
+  () => {
+    startIdleTalk();
+  },
+  { deep: false }
+);
 
 const moveRandomly = () => {
   if (props.isPinned) return;
@@ -3447,7 +3718,7 @@ const moveRandomly = () => {
   if (energy.value > 0) {
     const newEnergy = Math.max(0, energy.value - 5);
     energy.value = newEnergy;
-    if (!isTired.value && newEnergy <= TIRED_THRESHOLD && newEnergy > 0) {
+    if (!isTired.value && newEnergy <= tiredThreshold.value && newEnergy > 0) {
       isTired.value = true;
       message.value = '有点累了...';
     }
@@ -3474,12 +3745,14 @@ const handleMouseEnter = () => {
     }
   }
   isHovered.value = true;
+  if (!props.isPinned && !chatOpen.value) isFollowingMouse.value = true;
   isMoving.value = false;
-  if (!chatOpen.value) message.value = 'Hello!';
+  if (!chatOpen.value) message.value = personaFlags.value.tsundere ? '哼…来干嘛。' : 'Hello!';
 };
 
 const handleMouseLeave = () => {
   isHovered.value = false;
+  isFollowingMouse.value = false;
   if (!chatOpen.value) message.value = '';
 };
 
@@ -3539,6 +3812,9 @@ const handleGlobalKeyDown = (event: KeyboardEvent) => {
 
 // --- Lifecycle ---
 onMounted(async () => {
+  installGlobalDiagnostics();
+  installConsoleDiagnostics({ captureInfo: readBoolSetting(CONSOLE_CAPTURE_INFO_KEY, false) });
+  recordDiagnostic({ kind: 'agent_mounted', level: 'info' });
   loadLocalMemory();
   loadTaskSession();
   window.addEventListener('mousemove', handleMouseMove);
@@ -3569,6 +3845,262 @@ onMounted(async () => {
 
   // Expose for debugging/external control
   (window as any).runAgentPlan = (plan: any[]) => avatarAdapter.runPlan(plan);
+  const w = window as any;
+  w.__agentDebug = {
+    getSnapshot: () => {
+      const p = plan.value as any;
+      const status = typeof p?.status === 'string' ? p.status : '';
+      const steps = Array.isArray(p?.steps) ? p.steps : [];
+      const runningIdx = steps.findIndex((s: any) => s?.status === 'running');
+      const runningStep = runningIdx >= 0 ? steps[runningIdx] : null;
+      return {
+        ts: Date.now(),
+        route: router.currentRoute.value?.fullPath || window.location.pathname,
+        perf: {
+          frameMs: perfFrameMs.value,
+          avgFrameMs: perfAvgFrameMs.value,
+          fps: perfFps.value,
+          longFrames60: perfLongFramesInWindow.value,
+          heapUsedBytes: perfHeapUsedBytes.value
+        },
+        agent: {
+          type: agentType.value,
+          position: { x: x.value, y: y.value, size: AGENT_SIZE.value },
+          flags: {
+            isMoving: isMoving.value,
+            isHovered: isHovered.value,
+            isDragging: isDragging.value,
+            isTalking: isTalking.value
+          },
+          emotions: {
+            isAngry: isAngry.value,
+            isHappy: isHappy.value,
+            isPouting: isPouting.value,
+            isDizzy: isDizzy.value,
+            isConfused: isConfused.value,
+            isTired: isTired.value,
+            isFainted: isFainted.value,
+            isCrying: isCrying.value
+          },
+          energy: energy.value,
+          message: message.value || ''
+        },
+        chat: {
+          open: chatOpen.value,
+          isLoading: isLoading.value,
+          isMuted: isMuted.value,
+          lastActivityAt: lastChatActivityAt.value,
+          messages: messages.value.slice(-Math.max(20, Number(maxUiMessages.value) || 120))
+        },
+        memory: {
+          summary: memorySummary.value,
+          facts: memoryFacts.value,
+          itemCount: localMemory.value.items.length,
+          recentItems: localMemory.value.items.slice(-40)
+        },
+        task: {
+          active: !!taskSession.value?.active,
+          goal: taskSession.value?.goal || '',
+          isExecuting: isExecuting.value,
+          planStatus: status,
+          runningStepIndex: runningIdx,
+          runningStep: runningStep
+            ? {
+                type: runningStep.type,
+                target: runningStep.target,
+                value: runningStep.value,
+                status: runningStep.status,
+                description: runningStep.description
+              }
+            : null
+        },
+        params: {
+          maxUiMessages: maxUiMessages.value,
+          chatAutoCloseMs: chatAutoCloseMs.value,
+          dynamicScale: dynamicScale.value,
+          moveTransitionMs: moveTransitionMs.value,
+          roamEnabled: roamEnabled.value,
+          idleTalkEnabled: idleTalkEnabled.value,
+          idleAiEnabled: idleAiEnabled.value,
+          moveIntervalMs: moveIntervalMs.value,
+          idleTalkIntervalMs: idleTalkIntervalMs.value,
+          lerpFactor: lerpFactor.value,
+          mouseFollowOffset: mouseFollowOffset.value,
+          maxEnergy: maxEnergy.value,
+          energyDecayRate: energyDecayRate.value,
+          energyRecoverRate: energyRecoverRate.value,
+          tiredThreshold: tiredThreshold.value,
+          idleAiMinIdleMs: idleAiMinIdleMs.value,
+          idleAiCooldownMs: idleAiCooldownMs.value,
+          idleAiChance: idleAiChance.value
+        }
+      };
+    },
+    setParam: (key: string, value: any) => {
+      const k = String(key || '').trim();
+      const rawNum = typeof value === 'number' ? value : Number.parseInt(String(value || ''), 10);
+      const rawFloat =
+        typeof value === 'number' ? value : Number.parseFloat(String(value ?? '').trim());
+      const num = Number.isFinite(rawNum) ? rawNum : Number.NaN;
+      const floatNum = Number.isFinite(rawFloat) ? rawFloat : Number.NaN;
+      const parseBool = (v: any) => {
+        if (typeof v === 'boolean') return v;
+        if (typeof v === 'number') return v !== 0;
+        const s = String(v ?? '')
+          .trim()
+          .toLowerCase();
+        if (s === '1' || s === 'true' || s === 'yes' || s === 'on') return true;
+        if (s === '0' || s === 'false' || s === 'no' || s === 'off') return false;
+        return false;
+      };
+      if (k === 'maxUiMessages') {
+        const v = Math.max(20, Math.min(800, Number.isFinite(num) ? Math.round(num) : 120));
+        maxUiMessages.value = v;
+        try {
+          localStorage.setItem(MAX_UI_MESSAGES_KEY, String(v));
+        } catch {}
+        if (messages.value.length > v) messages.value = messages.value.slice(-v);
+      } else if (k === 'chatAutoCloseMs') {
+        const v = Math.max(0, Math.min(600000, Number.isFinite(num) ? Math.round(num) : 5000));
+        chatAutoCloseMs.value = v;
+        try {
+          localStorage.setItem(CHAT_AUTO_CLOSE_MS_KEY, String(v));
+        } catch {}
+        if (chatOpen.value) scheduleChatAutoClose();
+      } else if (k === 'dynamicScale') {
+        const v = Math.max(0.06, Math.min(1.6, Number.isFinite(rawNum) ? rawNum : 1.0));
+        dynamicScale.value = v;
+      } else if (k === 'moveTransitionMs') {
+        const v = Math.max(80, Math.min(20000, Number.isFinite(num) ? Math.round(num) : 3000));
+        moveTransitionMs.value = v;
+      } else if (k === 'roamEnabled') {
+        const v = parseBool(value);
+        roamEnabled.value = v;
+        try {
+          localStorage.setItem(ROAM_ENABLED_KEY, v ? '1' : '0');
+        } catch {}
+        startRoaming();
+      } else if (k === 'idleTalkEnabled') {
+        const v = parseBool(value);
+        idleTalkEnabled.value = v;
+        try {
+          localStorage.setItem(IDLE_TALK_ENABLED_KEY, v ? '1' : '0');
+        } catch {}
+        startIdleTalk();
+      } else if (k === 'idleAiEnabled') {
+        const v = parseBool(value);
+        idleAiEnabled.value = v;
+        try {
+          localStorage.setItem(IDLE_AI_ENABLED_KEY, v ? '1' : '0');
+        } catch {}
+      } else if (k === 'moveIntervalMs') {
+        const v = Math.max(5000, Math.min(600000, Number.isFinite(num) ? Math.round(num) : 60000));
+        moveIntervalMs.value = v;
+        try {
+          localStorage.setItem(MOVE_INTERVAL_MS_KEY, String(v));
+        } catch {}
+        startRoaming();
+      } else if (k === 'idleTalkIntervalMs') {
+        const v = Math.max(3000, Math.min(600000, Number.isFinite(num) ? Math.round(num) : 30000));
+        idleTalkIntervalMs.value = v;
+        try {
+          localStorage.setItem(IDLE_TALK_INTERVAL_MS_KEY, String(v));
+        } catch {}
+        startIdleTalk();
+      } else if (k === 'lerpFactor') {
+        const v = Math.max(0.01, Math.min(0.35, Number.isFinite(floatNum) ? floatNum : 0.06));
+        lerpFactor.value = v;
+        try {
+          localStorage.setItem(LERP_FACTOR_KEY, String(v));
+        } catch {}
+      } else if (k === 'mouseFollowOffsetX') {
+        const v = Math.max(-300, Math.min(300, Number.isFinite(num) ? Math.round(num) : 20));
+        mouseFollowOffset.value = { ...mouseFollowOffset.value, x: v };
+        try {
+          localStorage.setItem(MOUSE_FOLLOW_OFFSET_X_KEY, String(v));
+        } catch {}
+      } else if (k === 'mouseFollowOffsetY') {
+        const v = Math.max(-300, Math.min(300, Number.isFinite(num) ? Math.round(num) : 20));
+        mouseFollowOffset.value = { ...mouseFollowOffset.value, y: v };
+        try {
+          localStorage.setItem(MOUSE_FOLLOW_OFFSET_Y_KEY, String(v));
+        } catch {}
+      } else if (k === 'maxEnergy') {
+        const v = Math.max(10, Math.min(2000, Number.isFinite(num) ? Math.round(num) : 100));
+        maxEnergy.value = v;
+        try {
+          localStorage.setItem(MAX_ENERGY_KEY, String(v));
+        } catch {}
+        if (energy.value > v) energy.value = v;
+      } else if (k === 'energyDecayRate') {
+        const v = Math.max(0, Math.min(5, Number.isFinite(floatNum) ? floatNum : 0.03));
+        energyDecayRate.value = v;
+        try {
+          localStorage.setItem(ENERGY_DECAY_RATE_KEY, String(v));
+        } catch {}
+      } else if (k === 'energyRecoverRate') {
+        const v = Math.max(0, Math.min(5, Number.isFinite(floatNum) ? floatNum : 0.02));
+        energyRecoverRate.value = v;
+        try {
+          localStorage.setItem(ENERGY_RECOVER_RATE_KEY, String(v));
+        } catch {}
+      } else if (k === 'tiredThreshold') {
+        const v = Math.max(0, Math.min(2000, Number.isFinite(num) ? Math.round(num) : 20));
+        tiredThreshold.value = v;
+        try {
+          localStorage.setItem(TIRED_THRESHOLD_KEY, String(v));
+        } catch {}
+      } else if (k === 'idleAiMinIdleMs') {
+        const v = Math.max(3000, Math.min(600000, Number.isFinite(num) ? Math.round(num) : 65000));
+        idleAiMinIdleMs.value = v;
+        try {
+          localStorage.setItem(IDLE_AI_MIN_IDLE_MS_KEY, String(v));
+        } catch {}
+      } else if (k === 'idleAiCooldownMs') {
+        const v = Math.max(0, Math.min(900000, Number.isFinite(num) ? Math.round(num) : 120000));
+        idleAiCooldownMs.value = v;
+        try {
+          localStorage.setItem(IDLE_AI_COOLDOWN_MS_KEY, String(v));
+        } catch {}
+      } else if (k === 'idleAiChance') {
+        const v = Math.max(0, Math.min(1, Number.isFinite(floatNum) ? floatNum : 0.22));
+        idleAiChance.value = v;
+        try {
+          localStorage.setItem(IDLE_AI_CHANCE_KEY, String(v));
+        } catch {}
+      }
+    },
+    action: (name: string) => {
+      const n = String(name || '').trim();
+      if (n === 'openChat') openChat();
+      else if (n === 'closeChat') closeChat();
+      else if (n === 'toggleChat') toggleChat();
+      else if (n === 'cancelAi') cancelAiRequests();
+      else if (n === 'reloadMemory') loadLocalMemory();
+      else if (n === 'taskNext') void requestNextTaskChunk('manual');
+      else if (n === 'taskStop') stopTask();
+      else if (n === 'clearLocalMemory') {
+        const uid = getUserId();
+        try {
+          localStorage.removeItem(`agent_memory_v1_${uid}`);
+          localStorage.removeItem(`agent_memory_summary_v1_${uid}`);
+          localStorage.removeItem(`agent_memory_facts_v1_${uid}`);
+        } catch {}
+        loadLocalMemory();
+      }
+    },
+    getDiagnosticsSnapshot: () => getDiagnosticsSnapshot(),
+    clearDiagnostics: () => clearDiagnostics(),
+    setDiagnosticsEnabled: (v: boolean) => setDiagnosticsEnabled(v),
+    setDiagnosticsMaxItems: (n: number) => setDiagnosticsMaxItems(n),
+    getConsoleCaptureInfoEnabled: () => getConsoleCaptureInfoEnabled(),
+    setConsoleCaptureInfoEnabled: (v: boolean) => {
+      setConsoleCaptureInfoEnabled(v);
+      try {
+        localStorage.setItem(CONSOLE_CAPTURE_INFO_KEY, v ? '1' : '0');
+      } catch {}
+    }
+  };
 });
 
 onBeforeUnmount(() => {
@@ -3577,12 +4109,17 @@ onBeforeUnmount(() => {
   window.removeEventListener('mousedown', handleGlobalPointerDown, true);
   window.removeEventListener('touchstart', handleGlobalPointerDown, true);
   window.removeEventListener('keydown', handleGlobalKeyDown, true);
+  try {
+    const w = window as any;
+    if (w.__agentDebug) delete w.__agentDebug;
+  } catch {}
   if (animationFrameId) cancelAnimationFrame(animationFrameId);
   if (idleTimer) clearInterval(idleTimer);
   if (roamTimer) clearInterval(roamTimer);
   if (dizzyTimeout) clearTimeout(dizzyTimeout);
   if (expressionOverrideTimeout) clearTimeout(expressionOverrideTimeout);
   if (backgroundReactTimer) clearTimeout(backgroundReactTimer);
+  if (chatAutoCloseTimer) clearTimeout(chatAutoCloseTimer);
   if (taskMoveTimeout) clearTimeout(taskMoveTimeout);
   stopDomObserver();
   try {
@@ -3623,11 +4160,14 @@ watch(currentUser, async (user) => {
     try {
       const history = await getChatHistory(user.userId || user.id);
       if (history && history.length > 0) {
-        messages.value = history.map((msg: any) => ({
-          role: msg.role === 'model' ? 'agent' : 'user',
-          text: msg.parts?.[0]?.text || msg.text || ''
-        }));
-        messages.value.push({
+        messages.value = history
+          .map((msg: any) => ({
+            role: msg.role === 'model' ? 'agent' : 'user',
+            text: msg.parts?.[0]?.text || msg.text || ''
+          }))
+          .filter((m: any) => typeof m?.text === 'string' && m.text.trim())
+          .slice(-Math.max(20, Number(maxUiMessages.value) || 120));
+        pushUiMessage({
           role: 'agent',
           text:
             currentLang.value === 'zh'
@@ -3944,6 +4484,53 @@ watch(
   max-height: 260px;
   overflow: auto;
   padding: 8px;
+}
+
+.agent-menu-status {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.agent-menu-status-error {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.agent-menu-status-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.agent-menu-status-msg {
+  opacity: 0.9;
+  word-break: break-word;
+}
+
+.agent-menu-status-action {
+  margin-top: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.agent-menu-status-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.agent-menu-status-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .agent-menu-item {

@@ -1,13 +1,6 @@
-const normalizeBaseUrl = (baseUrl: string) => {
-  const trimmed = (baseUrl || '').trim();
-  if (!trimmed) return '';
-  return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
-};
+import { buildApiUrl } from '../agent/utils/user';
 
-const apiBaseUrl = normalizeBaseUrl(
-  import.meta.env.VITE_API_BASE || import.meta.env.VITE_AGENT_API_BASE
-);
-const API_URL = apiBaseUrl ? `${apiBaseUrl}/api/generate` : '/api/generate';
+const API_URL = buildApiUrl('/api/generate');
 
 export interface AIResponse {
   text: string;

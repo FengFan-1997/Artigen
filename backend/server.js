@@ -3,7 +3,15 @@ const cors = require('cors');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-const { readJson, writeJson, VECTORS_FILE, CHATS_FILE, USERS_FILE } = require('./utils/storage');
+const {
+  readJson,
+  writeJson,
+  readUserMemory,
+  writeUserMemory,
+  VECTORS_FILE,
+  CHATS_FILE,
+  USERS_FILE
+} = require('./utils/storage');
 const fs = require('fs');
 let HttpsProxyAgent = null;
 try {
@@ -386,6 +394,55 @@ const toOneLine = (text) => {
   return String(text || '')
     .replace(/\s+/g, ' ')
     .trim();
+};
+
+const extractRagKeywords = (text, lang) => {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  const normalized = raw.toLowerCase();
+  const out = [];
+  const seen = new Set();
+  const add = (v) => {
+    if (out.length >= 14) return;
+    const s = String(v || '').trim();
+    if (!s) return;
+    const k = s.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(s);
+  };
+
+  const stop = new Set(['the', 'and', 'with', 'that', 'this', 'what', 'where', 'when', 'how', 'help', 'please']);
+
+  const en = normalized.match(/[a-z0-9][a-z0-9_-]{2,}/g) || [];
+  for (const w of en) {
+    if (stop.has(w)) continue;
+    add(w);
+    if (out.length >= 10) break;
+  }
+
+  const zhSegments = raw.match(/[\u4e00-\u9fff]{2,}/g) || [];
+  for (const seg of zhSegments) {
+    if (out.length >= 14) break;
+    const s = String(seg || '').trim();
+    if (!s) continue;
+    if (s.length <= 10) add(s);
+    for (let i = 0; i < s.length - 1 && out.length < 14; i++) add(s.slice(i, i + 2));
+    for (let i = 0; i < s.length - 2 && out.length < 14; i += 2) add(s.slice(i, i + 3));
+  }
+
+  const numbers = raw.match(/\d{2,}/g) || [];
+  for (const n of numbers) add(n);
+
+  return out.slice(0, 14);
+};
+
+const scoreRagKeywordHit = (textLower, keywordLower) => {
+  if (!keywordLower) return 0;
+  if (!textLower.includes(keywordLower)) return 0;
+  if (keywordLower.length >= 6) return 3;
+  if (keywordLower.length >= 4) return 2;
+  return 1;
 };
 
 const stripControlText = (text) => {
@@ -860,7 +917,7 @@ const proxyHuggingFace = async (req, res) => {
     try {
       const upstream = await fetchWithTimeout(
         url,
-        { method: req.method, headers, redirect: 'follow' },
+        { method: req.method, headers, redirect: 'follow', compress: false },
         20000
       );
       res.status(upstream.status);
@@ -907,6 +964,73 @@ const proxyHuggingFace = async (req, res) => {
 };
 
 app.all('/api/hf/:owner/:repo/resolve/:ref/*rest', proxyHuggingFace);
+
+const proxyLive2DCubismCore = async (req, res) => {
+  const candidates = [
+    'https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js',
+    'https://cdn.jsdelivr.net/npm/live2dcubismcore@1.0.2/live2dcubismcore.min.js'
+  ];
+
+  const headers = {};
+  const forwardKeys = ['range', 'if-none-match', 'if-modified-since', 'accept'];
+  for (const k of forwardKeys) {
+    const v = req.headers[k];
+    if (typeof v === 'string' && v) headers[k] = v;
+  }
+
+  let lastError = null;
+  for (const url of candidates) {
+    try {
+      const upstream = await fetchWithTimeout(
+        url,
+        { method: req.method, headers, redirect: 'follow', compress: false },
+        20000
+      );
+
+      res.status(upstream.status);
+      upstream.headers?.forEach((value, key) => {
+        if (!key) return;
+        const lower = key.toLowerCase();
+        if (
+          lower === 'transfer-encoding' ||
+          lower === 'connection' ||
+          lower === 'keep-alive' ||
+          lower === 'proxy-authenticate' ||
+          lower === 'proxy-authorization' ||
+          lower === 'te' ||
+          lower === 'trailer' ||
+          lower === 'upgrade'
+        ) {
+          return;
+        }
+        res.setHeader(key, value);
+      });
+
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
+
+      if (!upstream.body) {
+        const buf = await upstream.arrayBuffer();
+        res.end(Buffer.from(buf));
+        return;
+      }
+
+      upstream.body.pipe(res);
+      return;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  res.status(502).json({
+    error: 'Failed to proxy Live2D Cubism Core',
+    detail: lastError ? String(lastError?.message || lastError) : 'unknown'
+  });
+};
+
+app.all('/api/live2d-core/live2dcubismcore.min.js', proxyLive2DCubismCore);
 
 const hfListCache = new Map();
 const HF_LIST_TTL_MS = 10 * 60 * 1000;
@@ -1072,14 +1196,20 @@ const cosineSimilarity = (vecA, vecB) => {
     magnitudeA += vecA[i] * vecA[i];
     magnitudeB += vecB[i] * vecB[i];
   }
-  return dotProduct / (Math.sqrt(magnitudeA) * Math.sqrt(magnitudeB));
+  const denom = Math.sqrt(magnitudeA) * Math.sqrt(magnitudeB);
+  if (!denom) return 0;
+  return dotProduct / denom;
 };
 
 // Generate Embedding for a text
+let warnedMissingEmbeddingKey = false;
 const getEmbedding = async (text) => {
   try {
     if (!API_KEY) {
-      console.error('GEMINI_API_KEY is not configured. Skipping embedding.');
+      if (!warnedMissingEmbeddingKey) {
+        warnedMissingEmbeddingKey = true;
+        console.warn('GEMINI_API_KEY is not configured. Skipping embedding.');
+      }
       return null;
     }
     const { data } = await callGeminiEmbed({
@@ -1127,6 +1257,188 @@ const summarizeHistory = async (oldSummary, newMessages) => {
     console.error("Summarization failed:", e);
     return oldSummary;
   }
+};
+
+const ensureUserMemoryShape = (userId, v) => {
+  const id = String(userId || 'anonymous');
+  const base =
+    v && typeof v === 'object'
+      ? v
+      : {
+          user_id: id,
+          meta: {},
+          core_memory: [],
+          short_term_buffer: []
+        };
+  base.user_id = typeof base.user_id === 'string' && base.user_id.trim() ? base.user_id : id;
+  base.meta = base.meta && typeof base.meta === 'object' ? base.meta : {};
+  base.core_memory = Array.isArray(base.core_memory) ? base.core_memory : [];
+  base.short_term_buffer = Array.isArray(base.short_term_buffer) ? base.short_term_buffer : [];
+  return base;
+};
+
+const getIsoDay = () => {
+  try {
+    return new Date().toISOString().slice(0, 10);
+  } catch {
+    return '';
+  }
+};
+
+const dedupeStrings = (items, limit) => {
+  const out = [];
+  const seen = new Set();
+  for (const raw of items || []) {
+    const s = String(raw || '').trim();
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (typeof limit === 'number' && out.length >= limit) break;
+  }
+  return out;
+};
+
+const tryParseJsonStringArray = (text) => {
+  const s = String(text || '').trim();
+  if (!s) return null;
+  const start = s.indexOf('[');
+  const end = s.lastIndexOf(']');
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(s.slice(start, end + 1));
+    if (!Array.isArray(parsed)) return null;
+    const cleaned = parsed.map((x) => String(x || '').trim()).filter(Boolean);
+    return cleaned;
+  } catch {
+    return null;
+  }
+};
+
+const extractCoreFacts = async (input) => {
+  const lang = input?.lang === 'en' ? 'en' : 'zh';
+  const personaName = String(input?.personaName || 'Lumina').trim() || 'Lumina';
+  const existing = Array.isArray(input?.existingCore) ? input.existingCore : [];
+  const buffer = Array.isArray(input?.buffer) ? input.buffer : [];
+
+  const lines = [];
+  for (const m of buffer) {
+    const role = m?.role === 'user' ? 'user' : m?.role === 'agent' ? 'assistant' : 'system';
+    const t = toOneLine(stripControlText(m?.text || ''));
+    if (!t) continue;
+    lines.push(`${role}: ${t.slice(0, 220)}`);
+    if (lines.length >= 30) break;
+  }
+  const convo = lines.join('\n');
+  if (!convo) return [];
+
+  const existingBlock = dedupeStrings(existing, 30)
+    .map((x) => `- ${x}`)
+    .join('\n');
+
+  const prompt =
+    lang === 'en'
+      ? [
+          `You are extracting long-term memory facts for an anime-style website agent named ${personaName}.`,
+          `From the following short-term buffer, extract 1–5 durable facts worth remembering.`,
+          `Good facts: user preferences, recurring habits, names, boundaries, repeated interaction patterns.`,
+          `Bad facts: temporary chit-chat, one-off questions, tool output, URLs, code blocks, raw UI selectors.`,
+          `Existing core memory (avoid duplicates):`,
+          existingBlock || '(none)',
+          `Short-term buffer:`,
+          convo,
+          `Return ONLY a strict JSON array of strings, no extra text.`
+        ].join('\n\n')
+      : [
+          `你在为站内二次元助手「${personaName}」提取长期记忆。`,
+          `从下面的短期缓冲中提取 1–5 条“值得长期记住”的事实。`,
+          `要：用户偏好/称呼/边界/反复出现的习惯/反复的特殊互动。`,
+          `不要：一次性闲聊、临时任务细节、工具输出、URL、代码块、DOM 选择器。`,
+          `已有长期记忆（尽量避免重复）：`,
+          existingBlock || '（无）',
+          `短期缓冲：`,
+          convo,
+          `只输出严格 JSON 字符串数组，不要输出任何多余文字。`
+        ].join('\n\n');
+
+  const { text } = await callTextGenerate({
+    timeoutMs: 8000,
+    contents: [{ role: 'user', parts: [{ text: prompt }] }]
+  });
+  const parsed = tryParseJsonStringArray(text);
+  if (parsed && parsed.length) return dedupeStrings(parsed, 6);
+
+  const fallback = [];
+  for (const m of buffer) {
+    const raw = toOneLine(stripControlText(m?.text || '')).slice(0, 140);
+    if (!raw) continue;
+    if (m?.role === 'system' || /(喜欢|讨厌|偏好|习惯|名字|叫我|记住|不喜欢|别这样|边界)/.test(raw)) {
+      fallback.push(raw);
+    }
+    if (fallback.length >= 4) break;
+  }
+  return dedupeStrings(fallback, 4);
+};
+
+const buildLongMemoryText = (input) => {
+  const core = Array.isArray(input?.coreMemory) ? input.coreMemory : [];
+  const summary = String(input?.summary || '').trim();
+  const coreBlock = dedupeStrings(core, 60)
+    .map((x) => `- ${x}`)
+    .join('\n');
+  return [coreBlock ? `CoreMemory:\n${coreBlock}` : '', summary ? `Summary:\n${summary}` : '']
+    .filter((x) => x && String(x).trim())
+    .join('\n\n')
+    .trim();
+};
+
+const appendUserMemoryItems = async (input) => {
+  const userId = String(input?.userId || 'anonymous');
+  const lang = input?.lang === 'en' ? 'en' : 'zh';
+  const personaName = String(input?.personaName || 'Lumina').trim() || 'Lumina';
+  const items = Array.isArray(input?.items) ? input.items : [];
+
+  const mem0 = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+  const now = Date.now();
+  mem0.meta.last_interaction = getIsoDay() || mem0.meta.last_interaction || '';
+  mem0.meta.updatedAt = now;
+
+  for (const it of items) {
+    const role = it?.role === 'user' ? 'user' : it?.role === 'agent' ? 'agent' : 'system';
+    const text = String(it?.text || '').trim();
+    if (!text) continue;
+    mem0.short_term_buffer.push({
+      role,
+      text: text.slice(0, 1200),
+      type: typeof it?.type === 'string' && it.type.trim() ? it.type.trim() : undefined,
+      ts: typeof it?.ts === 'number' ? it.ts : now
+    });
+  }
+
+  if (mem0.short_term_buffer.length > 140) {
+    mem0.short_term_buffer = mem0.short_term_buffer.slice(-140);
+  }
+
+  const compressThreshold = 20;
+  if (mem0.short_term_buffer.length > compressThreshold) {
+    const toCompress = mem0.short_term_buffer.slice(0, compressThreshold);
+    const remaining = mem0.short_term_buffer.slice(compressThreshold);
+    const facts = await extractCoreFacts({
+      lang,
+      personaName,
+      buffer: toCompress,
+      existingCore: mem0.core_memory
+    });
+    if (facts.length) {
+      mem0.core_memory = dedupeStrings([...mem0.core_memory, ...facts], 80);
+    }
+    mem0.short_term_buffer = remaining.slice(-3);
+    mem0.meta.coreUpdatedAt = Date.now();
+  }
+
+  writeUserMemory(userId, mem0);
+  return mem0;
 };
 
 // --- Endpoints ---
@@ -1376,9 +1688,11 @@ app.post('/api/chat', async (req, res) => {
     const personaId = personaIdRaw;
     const personaProfile = trimPromptText(personaProfileRaw, 5200);
     const memorySummary =
-      typeof ctx?.memorySummary === 'string' && ctx.memorySummary.trim()
-        ? ctx.memorySummary.trim()
-        : '';
+      typeof ctx?.memory?.summary === 'string' && ctx.memory.summary.trim()
+        ? ctx.memory.summary.trim()
+        : typeof ctx?.memorySummary === 'string' && ctx.memorySummary.trim()
+          ? ctx.memorySummary.trim()
+          : '';
     const mergedEvents = [];
     if (Array.isArray(ctx?.events)) mergedEvents.push(...ctx.events);
     if (Array.isArray(ctx?.input?.interactionEvents)) {
@@ -1437,16 +1751,12 @@ app.post('/api/chat', async (req, res) => {
         topDocs = scoredDocs.slice(0, 3).filter((d) => d.score > 0.5);
       }
       if (topDocs.length === 0 && vectors.length > 0) {
-        const keywords = message
-          .toLowerCase()
-          .split(/\s+/)
-          .filter((w) => w.length > 2)
-          .slice(0, 10);
+        const keywords = extractRagKeywords(message, lang);
         const scoredDocs = vectors.map((vec) => {
           const textLower = String(vec.text || '').toLowerCase();
           let score = 0;
           for (const word of keywords) {
-            if (textLower.includes(word)) score += 1;
+            score += scoreRagKeywordHit(textLower, String(word || '').toLowerCase());
           }
           return { ...vec, score };
         });
@@ -1512,6 +1822,12 @@ app.post('/api/chat', async (req, res) => {
         })()
       : '';
 
+    const userMem = ensureUserMemoryShape(user, readUserMemory(user, null));
+    const longMemoryText = buildLongMemoryText({
+      coreMemory: userMem.core_memory,
+      summary: userProfile.summary || ''
+    });
+
     const systemPrompt = buildChatPrompt({
       lang,
       intent,
@@ -1520,7 +1836,7 @@ app.post('/api/chat', async (req, res) => {
       personaProfile,
       personaRules,
       userName,
-      longMemory: trimPromptText(userProfile.summary || '', 1600),
+      longMemory: trimPromptText(longMemoryText, 1600),
       memorySummary: trimPromptText(memorySummary, 1200),
       eventsText: trimPromptText(promptEventsText, 1200),
       allowedMotions,
@@ -1550,10 +1866,10 @@ app.post('/api/chat', async (req, res) => {
         const timeoutMs = reactionMode ? GEMINI_REACTION_TIMEOUT_MS : GEMINI_TIMEOUT_MS;
         const startedAt = Date.now();
         const { text, provider } = await callTextGenerate({ contents, timeoutMs, reactionMode });
-        reply = (text || '').trim() || "I'm speechless!";
         if (provider === 'offline') {
           throw new Error('NO_LLM_PROVIDER_AVAILABLE');
         }
+        reply = (text || '').trim() || "I'm speechless!";
 
         const elapsedMs = Date.now() - startedAt;
         if (elapsedMs > Math.max(2000, timeoutMs)) {
@@ -1618,6 +1934,33 @@ app.post('/api/chat', async (req, res) => {
         allChats[user].push({ role: 'user', text: message, timestamp: Date.now() });
         allChats[user].push({ role: 'agent', text: stripControlText(reply), timestamp: Date.now() });
         writeJson(CHATS_FILE, allChats);
+        try {
+          const extra = [];
+          if (Array.isArray(ctx?.input?.interactionEvents)) {
+            for (const e of ctx.input.interactionEvents.slice(-6)) {
+              const t = String(e?.text || '').trim();
+              if (!t) continue;
+              extra.push({ role: 'system', text: t.slice(0, 800), type: e?.type || 'interaction', ts: e?.ts });
+            }
+          }
+          if (Array.isArray(ctx?.memory?.recentEvents)) {
+            for (const e of ctx.memory.recentEvents.slice(-6)) {
+              const t = String(e?.text || '').trim();
+              if (!t) continue;
+              extra.push({ role: 'system', text: t.slice(0, 800), type: e?.type || 'event', ts: e?.ts });
+            }
+          }
+          await appendUserMemoryItems({
+            userId: user,
+            lang,
+            personaName,
+            items: [
+              ...extra.slice(-8),
+              { role: 'user', text: message, ts: Date.now() },
+              { role: 'agent', text: stripControlText(reply), ts: Date.now() }
+            ]
+          });
+        } catch {}
     }
 
     res.json({ reply });
@@ -1640,6 +1983,44 @@ app.get('/api/chat/history/:userId', (req, res) => {
     res.json({ history: cleanHistory.slice(-20) });
   } catch (error) {
     console.error('Error in GET /api/chat/history:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/memory/:userId', (req, res) => {
+  try {
+    const { userId } = req.params;
+    const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+    res.json({ memory: mem });
+  } catch (error) {
+    console.error('Error in GET /api/memory/:userId:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/memory/ingest', async (req, res) => {
+  try {
+    const { userId, items, lang, personaName } = req.body || {};
+    const id = String(userId || '').trim() || 'anonymous';
+    const list = Array.isArray(items) ? items : [];
+    const trimmed = list
+      .map((x) => ({
+        role: x?.role,
+        text: x?.text,
+        type: x?.type,
+        ts: x?.ts
+      }))
+      .filter((x) => typeof x.text === 'string' && x.text.trim())
+      .slice(-60);
+    const mem = await appendUserMemoryItems({
+      userId: id,
+      lang: lang === 'en' ? 'en' : 'zh',
+      personaName: String(personaName || '').trim() || 'Lumina',
+      items: trimmed
+    });
+    res.json({ ok: true, memory: mem });
+  } catch (error) {
+    console.error('Error in POST /api/memory/ingest:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });

@@ -41,3 +41,31 @@ export function loadExternalResource(url: string, type: string): Promise<string>
     }
   });
 }
+
+export function safeJsonParse<T>(input: string, fallback: T): T {
+  try {
+    if (typeof input !== 'string') return fallback;
+    const trimmed = input.trim();
+    if (!trimmed) return fallback;
+    return JSON.parse(trimmed) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export function scheduleIdleTask(fn: () => void, timeoutMs = 800) {
+  const w = window as any;
+  if (typeof w.requestIdleCallback === 'function') {
+    const id = w.requestIdleCallback(
+      () => {
+        fn();
+      },
+      { timeout: Math.max(0, timeoutMs) }
+    );
+    return () => {
+      if (typeof w.cancelIdleCallback === 'function') w.cancelIdleCallback(id);
+    };
+  }
+  const id = window.setTimeout(() => fn(), Math.max(0, timeoutMs));
+  return () => window.clearTimeout(id);
+}

@@ -1,10 +1,5 @@
 {
   "models": [
-    "ZiYuXin/ots14_3001/normal",
-    "BengHuai/Lita",
-    "BengHuai/bronya",
-    "BengHuai/mie",
-    "BengHuai/xier",
     "BengHuaiXueYuan2/BYC",
     "BengHuaiXueYuan2/Kiana",
     "BengHuaiXueYuan2/Kiro",
@@ -23,11 +18,6 @@
     "BengHuaiXueYuan2/xier"
   ],
   "messages": [
-    "ZiYuXin loaded",
-    "Lita loaded",
-    "Bronya loaded",
-    "Mie loaded",
-    "Xier loaded",
     "BYC loaded",
     "Kiana loaded",
     "Kiro loaded",

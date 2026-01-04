@@ -168,5 +168,65 @@
       "text": "嗨，Friend！[HAPPY]  \n{\"primary\":\"happy\",\"intensity\":0.8,\"secondary\":[]}",
       "timestamp": 1766834359451
     }
+  ],
+  "verify_user": [
+    {
+      "role": "user",
+      "text": "?? RAG ????????????",
+      "timestamp": 1767257198307
+    },
+    {
+      "role": "agent",
+      "text": "我不太明白你在问什么，能再详细说一下吗？「[CONFUSED]」",
+      "timestamp": 1767257198307
+    }
+  ],
+  "verify_user2": [
+    {
+      "role": "user",
+      "text": "?? RAG ????",
+      "timestamp": 1767257239252
+    },
+    {
+      "role": "agent",
+      "text": "I'm speechless!",
+      "timestamp": 1767257239252
+    }
+  ],
+  "verify_user3": [
+    {
+      "role": "user",
+      "text": "agent ?? RAG",
+      "timestamp": 1767257256621
+    },
+    {
+      "role": "agent",
+      "text": "I'm speechless!",
+      "timestamp": 1767257256621
+    }
+  ],
+  "verify_user4": [
+    {
+      "role": "user",
+      "text": "?? RAG ????",
+      "timestamp": 1767257321303
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！",
+      "timestamp": 1767257321303
+    }
+  ],
+  "verify_user5": [
+    {
+      "role": "user",
+      "text": "?? RAG agent",
+      "timestamp": 1767257341565
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！",
+      "timestamp": 1767257341565
+    }
   ]
 }

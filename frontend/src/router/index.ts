@@ -22,6 +22,7 @@ import BlackHolePage from '../components/secret/pages/BlackHolePage.vue';
 import TimeTunnelPage from '../components/secret/pages/TimeTunnelPage.vue';
 import NebulaPage from '../components/secret/pages/NebulaPage.vue';
 import SakuraPage from '../components/secret/pages/SakuraPage.vue';
+import AgentDebug from '../views/AgentDebug.vue';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -145,6 +146,11 @@ const router = createRouter({
       path: '/aether-market',
       name: 'aether-market',
       component: AetherMarket
+    },
+    {
+      path: '/agent-debug',
+      name: 'agent-debug',
+      component: AgentDebug
     }
   ]
 });

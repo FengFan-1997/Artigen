@@ -1,0 +1,20 @@
+{
+  "user_id": "verify_user4",
+  "meta": {
+    "last_interaction": "2026-01-01",
+    "updatedAt": 1767257321304
+  },
+  "core_memory": [],
+  "short_term_buffer": [
+    {
+      "role": "user",
+      "text": "?? RAG ????",
+      "ts": 1767257321304
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！",
+      "ts": 1767257321304
+    }
+  ]
+}

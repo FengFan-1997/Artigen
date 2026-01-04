@@ -56,6 +56,7 @@ export class ModelManager {
     (loading: boolean, info?: { modelSettingPath?: string; version?: number }) => void
   >;
   private modelJSONCache: Record<string, any>;
+  private modelJSONNegativeCache: Set<string>;
   private models: ModelList[];
 
   private lastMotionAt: Record<string, number>;
@@ -106,11 +107,13 @@ export class ModelManager {
 
     // In development (local), we use 'model' directory (symlinked to doc/model) to access all models
     // In production, we use 'model_backup' or whatever is configured.
-    if (import.meta.env.DEV) {
-      this.modelDirectory = 'model';
-    } else {
-      this.modelDirectory = 'model_backup';
-    }
+    const assetsBase = this.assetsPath || '';
+    const isHfAssetsBase =
+      /^\/api\/hf\//i.test(assetsBase) || /huggingface\.co|hf-mirror\.com|hf\.co/i.test(assetsBase);
+    const isRemoteAssetsBase = /^https?:\/\//i.test(assetsBase) || isHfAssetsBase;
+    if (import.meta.env.DEV && !isRemoteAssetsBase) this.modelDirectory = 'model';
+    else if (isHfAssetsBase) this.modelDirectory = 'model';
+    else this.modelDirectory = 'model_backup';
 
     this.hasStoredModelId = hasStoredModelId;
     this._modelId = modelId;
@@ -119,6 +122,7 @@ export class ModelManager {
     this.loading = false;
     this.loadingListeners = new Set();
     this.modelJSONCache = {};
+    this.modelJSONNegativeCache = new Set();
     this.models = models;
     this.lastMotionAt = {};
     this.lastExpressionKey = '';
@@ -194,6 +198,7 @@ export class ModelManager {
 
   private async fetchJson(url: string, silent = false) {
     if (url in this.modelJSONCache) return this.modelJSONCache[url];
+    if (this.modelJSONNegativeCache.has(url)) return null;
     const timeoutMs = 15000;
     const maxAttempts = 3;
     const backoffMs = (attempt: number) => 250 * attempt;
@@ -228,6 +233,14 @@ export class ModelManager {
             (response.status >= 500 && response.status <= 599);
 
           if (!retryable || attempt === maxAttempts) {
+            if (
+              response.status >= 400 &&
+              response.status <= 499 &&
+              response.status !== 408 &&
+              response.status !== 429
+            ) {
+              this.modelJSONNegativeCache.add(url);
+            }
             if (!silent) {
               logger.error(`Failed to fetch model json: ${url}, status ${response.status}`);
             }
@@ -573,13 +586,27 @@ export class ModelManager {
           }
           if (typeof modelName !== 'string') return false;
 
-          const configPath = modelName;
+          const configPath = modelName.trim().toLowerCase().endsWith('.json')
+            ? modelName
+            : `${modelName}/model.json`;
           const loaded = await model.fetchModelJsonWithFallback(configPath, { silent: true });
           if (!loaded?.json) return false;
 
           model.modelId = id;
           model.modelTexturesId = 0;
-          model.currentModelVersion = 3; // Ziyuxin is Cubism 3, others might differ but fallback assumes 3 for hardcoded
+
+          const version = model.checkModelVersion(loaded.json);
+          if (version === 2) {
+            model.currentModelVersion = 2;
+            if (!modelName.trim().toLowerCase().endsWith('.json')) {
+              const textureCache = await model.loadTextureCache(modelName as string);
+              if (model.modelTexturesId >= textureCache.length) {
+                model.modelTexturesId = 0;
+              }
+            }
+          } else if (version === 3) {
+            model.currentModelVersion = 3;
+          }
           return true;
         };
 
@@ -1149,13 +1176,23 @@ export class ModelManager {
         return loaded;
       };
 
-      let loaded = await tryLoadIndexAt(this.modelId);
-      if (!loaded) {
-        for (let i = 0; i < this.modelIndex.length; i++) {
-          if (i === this.modelId) continue;
-          loaded = await tryLoadIndexAt(i);
-          if (loaded) break;
-        }
+      const count = this.modelIndex.length;
+      const dafengIndex = this.modelIndex.findIndex((m) => m.name === 'dafeng_6');
+      const probeIds: number[] = [];
+      probeIds.push(this.modelId);
+      if (dafengIndex >= 0) probeIds.push(dafengIndex);
+      probeIds.push(0);
+      const maxProbe = Math.min(count, 10);
+      for (let i = 0; i < maxProbe; i++) probeIds.push(i);
+
+      let loaded: { url: string; json: any } | null = null;
+      const seen = new Set<number>();
+      for (const id of probeIds) {
+        if (id < 0 || id >= count) continue;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        loaded = await tryLoadIndexAt(id);
+        if (loaded) break;
       }
 
       if (!loaded) {
@@ -1199,13 +1236,21 @@ export class ModelManager {
         return { loaded, name };
       };
 
-      let tried = await tryLoadListAt(this.modelId);
-      if (!tried) {
-        for (let i = 0; i < this.modelList.models.length; i++) {
-          if (i === this.modelId) continue;
-          tried = await tryLoadListAt(i);
-          if (tried) break;
-        }
+      const count = this.modelList.models.length;
+      const probeIds: number[] = [];
+      probeIds.push(this.modelId);
+      probeIds.push(0);
+      const maxProbe = Math.min(count, 10);
+      for (let i = 0; i < maxProbe; i++) probeIds.push(i);
+
+      let tried: { loaded: { url: string; json: any }; name: any } | null = null;
+      const seen = new Set<number>();
+      for (const id of probeIds) {
+        if (id < 0 || id >= count) continue;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        tried = await tryLoadListAt(id);
+        if (tried) break;
       }
 
       if (!tried) {

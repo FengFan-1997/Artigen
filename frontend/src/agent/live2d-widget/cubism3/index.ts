@@ -1,11 +1,14 @@
 import * as PIXI from 'pixi.js';
 import { Application } from 'pixi.js';
-import { Live2DModel } from 'pixi-live2d-display/cubism4';
+import { loadExternalResource } from '../../utils';
 
 // Expose PIXI globally for pixi-live2d-display if needed
 if (typeof window !== 'undefined' && !(window as any).PIXI) {
   (window as any).PIXI = PIXI;
 }
+
+let Live2DModelCtor: any | null = null;
+let cubismCorePromise: Promise<boolean> | null = null;
 
 let app: any | null = null;
 let model: any = null;
@@ -61,6 +64,52 @@ const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(ma
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 const normalizeKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const ensureCubismCore = async (): Promise<boolean> => {
+  const w = typeof window !== 'undefined' ? (window as any) : null;
+  if (w?.Live2DCubismCore) return true;
+  if (!w) return false;
+
+  if (!cubismCorePromise) {
+    const urls = [
+      '/api/live2d-core/live2dcubismcore.min.js',
+      'https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js',
+      'https://cdn.jsdelivr.net/npm/live2dcubismcore@1.0.2/live2dcubismcore.min.js'
+    ];
+
+    cubismCorePromise = (async () => {
+      for (const url of urls) {
+        try {
+          await loadExternalResource(url, 'js');
+          if ((window as any).Live2DCubismCore) return true;
+        } catch {}
+      }
+      return false;
+    })();
+  }
+
+  return cubismCorePromise;
+};
+
+const ensureLive2DModelCtor = async () => {
+  if (Live2DModelCtor) return Live2DModelCtor;
+  const w = typeof window !== 'undefined' ? (window as any) : null;
+  if (!w?.Live2DCubismCore) {
+    const ok = await ensureCubismCore();
+    if (!ok) {
+      throw new Error('MISSING_LIVE2D_CUBISM_CORE');
+    }
+  }
+  if (!w?.Live2DCubismCore) {
+    throw new Error('MISSING_LIVE2D_CUBISM_CORE');
+  }
+  const mod = await import('pixi-live2d-display/cubism4');
+  Live2DModelCtor = (mod as any)?.Live2DModel || null;
+  if (!Live2DModelCtor) {
+    throw new Error('MISSING_LIVE2D_MODEL_CTOR');
+  }
+  return Live2DModelCtor;
+};
 
 const SYNTHETIC_MOTION_MAP: Record<string, SyntheticMotionType> = {
   shake: 'shake',
@@ -539,7 +588,7 @@ const ensureApp = async (): Promise<any | null> => {
 
   const debug = isDebugEnabled();
   try {
-    const Live2D = Live2DModel as any;
+    const Live2D = (await ensureLive2DModelCtor()) as any;
     if (Live2D && Live2D.prototype) {
       const desc = Object.getOwnPropertyDescriptor(Live2D.prototype, 'autoUpdate');
       if (!desc || desc.configurable) {
@@ -573,7 +622,7 @@ const ensureApp = async (): Promise<any | null> => {
   container.appendChild(app.view as HTMLCanvasElement);
 
   try {
-    const Live2D = Live2DModel as any;
+    const Live2D = (await ensureLive2DModelCtor()) as any;
     if (Live2D && typeof Live2D.registerTicker === 'function') {
       if (app.ticker) {
         Live2D.registerTicker(app.ticker);
@@ -832,7 +881,13 @@ export const loadCubism3Model = async (modelJsonPath: string): Promise<boolean> 
   const appInstance = await ensureApp();
   if (!appInstance) return false;
 
-  const Live2D = Live2DModel as any;
+  let Live2D: any;
+  try {
+    Live2D = await ensureLive2DModelCtor();
+  } catch (err) {
+    console.warn('[Live2D] Cubism core is not available. Skip Cubism3/4 loading.', err);
+    return false;
+  }
   let nextModel: any = null;
   try {
     nextModel = await Live2D.from(modelJsonPath, { autoUpdate: false });

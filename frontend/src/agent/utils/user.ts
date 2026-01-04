@@ -1,6 +1,22 @@
 const STORAGE_KEY_ID = 'agent_user_id';
 const STORAGE_KEY_TOKEN = 'agent_auth_token';
-const API_URL = 'http://localhost:8080/api/auth';
+export const normalizeBaseUrl = (baseUrl: string) => {
+  const trimmed = (baseUrl || '').trim();
+  if (!trimmed) return '';
+  return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
+};
+
+export const getApiBaseUrl = () =>
+  normalizeBaseUrl(import.meta.env.VITE_AGENT_API_BASE || import.meta.env.VITE_API_BASE || '');
+
+export const buildApiUrl = (path: string) => {
+  const base = getApiBaseUrl();
+  const p = String(path || '').trim() || '/';
+  const normalizedPath = p.startsWith('/') ? p : `/${p}`;
+  return base ? `${base}${normalizedPath}` : normalizedPath;
+};
+
+const API_URL = buildApiUrl('/api/auth');
 
 export const getUserId = (): string => {
   let userId = localStorage.getItem(STORAGE_KEY_ID);

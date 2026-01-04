@@ -1,0 +1,20 @@
+{
+  "user_id": "verify_user",
+  "meta": {
+    "last_interaction": "2026-01-01",
+    "updatedAt": 1767257198308
+  },
+  "core_memory": [],
+  "short_term_buffer": [
+    {
+      "role": "user",
+      "text": "?? RAG ????????????",
+      "ts": 1767257198308
+    },
+    {
+      "role": "agent",
+      "text": "我不太明白你在问什么，能再详细说一下吗？「[CONFUSED]」",
+      "ts": 1767257198308
+    }
+  ]
+}

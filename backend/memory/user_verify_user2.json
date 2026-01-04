@@ -1,0 +1,20 @@
+{
+  "user_id": "verify_user2",
+  "meta": {
+    "last_interaction": "2026-01-01",
+    "updatedAt": 1767257239254
+  },
+  "core_memory": [],
+  "short_term_buffer": [
+    {
+      "role": "user",
+      "text": "?? RAG ????",
+      "ts": 1767257239253
+    },
+    {
+      "role": "agent",
+      "text": "I'm speechless!",
+      "ts": 1767257239253
+    }
+  ]
+}

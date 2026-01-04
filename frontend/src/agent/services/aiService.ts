@@ -1,28 +1,32 @@
 import type { ChatMessage } from '../types';
-import { getUserId } from '../utils/user';
+import { buildApiUrl, getUserId } from '../utils/user';
 import { getPageContext } from '../utils/pageContext';
+import { recordAiRequest, recordDiagnostic, updateAiRequest } from '../utils/diagnostics';
 
-const normalizeBaseUrl = (baseUrl: string) => {
-  const trimmed = (baseUrl || '').trim();
-  if (!trimmed) return '';
-  return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
-};
-
-const apiBaseUrl = normalizeBaseUrl(
-  import.meta.env.VITE_AGENT_API_BASE || import.meta.env.VITE_API_BASE || ''
-);
-const API_URL = `${apiBaseUrl}/api/chat`;
-const USER_API_URL = `${apiBaseUrl}/api/user`;
+const API_URL = buildApiUrl('/api/chat');
+const USER_API_URL = buildApiUrl('/api/user');
 
 type AiRequestKind = 'chat' | 'reaction';
 type AiTransport = 'auto' | 'proxy' | 'direct';
+type AiRequestGroup = 'chat' | 'task' | 'background' | 'interaction' | 'idle' | 'reaction';
 
 type CachedValue = { value: string; expiresAt: number };
 type InflightValue = { promise: Promise<string>; controller: AbortController; startedAt: number };
+type ActiveGroupValue = { controller: AbortController; priority: number; startedAt: number };
 
 const resolvedCache = new Map<string, CachedValue>();
 const inflight = new Map<string, InflightValue>();
-const groupControllers = new Map<AiRequestKind, AbortController>();
+const groupControllers = new Map<string, AbortController>();
+const activeGroups = new Map<string, ActiveGroupValue>();
+
+const DEFAULT_GROUP_PRIORITIES: Record<AiRequestGroup, number> = {
+  chat: 100,
+  task: 90,
+  background: 60,
+  interaction: 50,
+  reaction: 40,
+  idle: 10
+};
 
 const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
@@ -91,6 +95,15 @@ const buildRequestKey = (kind: AiRequestKind, message: string, agentContext: any
   return `${kind}|${message}|${buildAgentContextKey(agentContext)}`;
 };
 
+const buildRequestKeyWithGroup = (
+  group: string,
+  kind: AiRequestKind,
+  message: string,
+  agentContext: any
+) => {
+  return `${group}|${buildRequestKey(kind, message, agentContext)}`;
+};
+
 const pruneCache = () => {
   const t = Date.now();
   for (const [k, v] of resolvedCache) {
@@ -110,6 +123,40 @@ const pruneCache = () => {
       inflight.delete(k);
     }
   }
+};
+
+const getDefaultPriorityForGroup = (group: string) => {
+  const g = (group || '').trim() as AiRequestGroup;
+  if (g && Object.prototype.hasOwnProperty.call(DEFAULT_GROUP_PRIORITIES, g))
+    return DEFAULT_GROUP_PRIORITIES[g];
+  return 40;
+};
+
+const cancelGroup = (group: string) => {
+  const controller = groupControllers.get(group);
+  if (controller) {
+    try {
+      controller.abort();
+    } catch {}
+    groupControllers.delete(group);
+  }
+  activeGroups.delete(group);
+  for (const [k, v] of inflight) {
+    if (k.startsWith(`${group}|`)) {
+      try {
+        v.controller.abort();
+      } catch {}
+      inflight.delete(k);
+    }
+  }
+};
+
+const getMaxActivePriority = () => {
+  let max = 0;
+  for (const v of activeGroups.values()) {
+    if (typeof v.priority === 'number' && v.priority > max) max = v.priority;
+  }
+  return max;
 };
 
 const buildDirectSystemPrompt = (input: {
@@ -219,10 +266,72 @@ const buildDirectSystemPrompt = (input: {
       : `页面上下文（可能有噪声）：\n${trimmedPage}`
     : '';
 
+  const summaryRaw =
+    typeof ctx?.memory?.summary === 'string' && ctx.memory.summary.trim()
+      ? ctx.memory.summary.trim()
+      : '';
+  const summary = summaryRaw ? summaryRaw.slice(-1200) : '';
+  const summaryBlock = summary
+    ? lang === 'en'
+      ? `Memory summary:\n${summary}`
+      : `记忆摘要：\n${summary}`
+    : '';
+
+  const factsList = Array.isArray(ctx?.memory?.facts) ? ctx.memory.facts : [];
+  const factLines = factsList
+    .map((f: any) =>
+      typeof f?.text === 'string' ? f.text.trim() : typeof f === 'string' ? f.trim() : ''
+    )
+    .filter((x: string) => x && x.trim())
+    .slice(-18)
+    .map((x: string) => `- ${x.slice(0, 180)}`);
+  const factsBlock =
+    factLines.length > 0
+      ? lang === 'en'
+        ? `Long-term facts (important):\n${factLines.join('\n')}`
+        : `长期要点（重要）：\n${factLines.join('\n')}`
+      : '';
+
+  const chatItems = Array.isArray(ctx?.memory?.recentChat) ? ctx.memory.recentChat : [];
+  const chatLines = chatItems
+    .slice(-10)
+    .map((m: any) => {
+      const role = m?.role === 'agent' ? 'A' : 'U';
+      const t = typeof m?.text === 'string' ? m.text.trim() : '';
+      return t ? `${role}: ${t.slice(0, 220)}` : '';
+    })
+    .filter(Boolean);
+  const recentChatBlock =
+    chatLines.length > 0
+      ? lang === 'en'
+        ? `Recent chat:\n${chatLines.join('\n')}`
+        : `近期对话：\n${chatLines.join('\n')}`
+      : '';
+
+  const eventItems = Array.isArray(ctx?.memory?.recentEvents) ? ctx.memory.recentEvents : [];
+  const eventLines = eventItems
+    .slice(-10)
+    .map((e: any) => {
+      const type = typeof e?.type === 'string' && e.type.trim() ? e.type.trim() : 'event';
+      const t = typeof e?.text === 'string' ? e.text.trim() : '';
+      return t ? `- (${type}) ${t.slice(0, 220)}` : '';
+    })
+    .filter(Boolean);
+  const recentEventsBlock =
+    eventLines.length > 0
+      ? lang === 'en'
+        ? `Recent events:\n${eventLines.join('\n')}`
+        : `近期事件：\n${eventLines.join('\n')}`
+      : '';
+
   return [
     modeText,
     personaBlock,
     personaRulesBlock,
+    factsBlock,
+    summaryBlock,
+    recentChatBlock,
+    recentEventsBlock,
     pageBlock,
     constraints,
     `Rules:\n- ${responseRules}`
@@ -311,6 +420,10 @@ const callGeminiDirect = async (input: {
 
 const requestAi = async (input: {
   kind: AiRequestKind;
+  group?: AiRequestGroup | string;
+  priority?: number;
+  cancelLowerPriority?: boolean;
+  dropIfHigherPriorityActive?: boolean;
   message: string;
   agentContext?: any;
   timeoutMs: number;
@@ -322,15 +435,76 @@ const requestAi = async (input: {
 
   const userId = getUserId();
   const pageContext = getPageContext();
+  const requestId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
 
-  const key = buildRequestKey(input.kind, input.message, input.agentContext);
+  const group = ((input.group || input.kind) as string).trim() || input.kind;
+  const priority =
+    typeof input.priority === 'number' ? input.priority : getDefaultPriorityForGroup(group);
+  const dropIfHigherPriorityActive =
+    typeof input.dropIfHigherPriorityActive === 'boolean'
+      ? input.dropIfHigherPriorityActive
+      : group !== 'chat';
+  const cancelLowerPriority =
+    typeof input.cancelLowerPriority === 'boolean' ? input.cancelLowerPriority : group === 'chat';
+
+  const trigger =
+    typeof input.agentContext?.trigger === 'string' ? String(input.agentContext.trigger) : '';
+  if (dropIfHigherPriorityActive && getMaxActivePriority() > priority) {
+    recordAiRequest({
+      id: requestId,
+      ts: Date.now(),
+      kind: input.kind,
+      group,
+      priority,
+      transport: resolveTransport(),
+      dropped: true,
+      ok: true,
+      endedAt: Date.now(),
+      durationMs: 0,
+      messagePreview: String(input.message || '').slice(0, 260),
+      trigger: trigger.slice(0, 60)
+    });
+    return '';
+  }
+
+  if (cancelLowerPriority) {
+    for (const [g, v] of activeGroups) {
+      if (typeof v.priority === 'number' && v.priority < priority) cancelGroup(g);
+    }
+  }
+
+  const key = buildRequestKeyWithGroup(group, input.kind, input.message, input.agentContext);
   const cached = input.allowCache ? resolvedCache.get(key) : undefined;
-  if (cached && Date.now() < cached.expiresAt) return cached.value;
+  if (cached && Date.now() < cached.expiresAt) {
+    recordAiRequest({
+      id: requestId,
+      ts: Date.now(),
+      kind: input.kind,
+      group,
+      priority,
+      transport: resolveTransport(),
+      cached: true,
+      ok: true,
+      endedAt: Date.now(),
+      durationMs: 0,
+      messagePreview: String(input.message || '').slice(0, 260),
+      trigger: trigger.slice(0, 60)
+    });
+    return cached.value;
+  }
 
   const inflightHit = inflight.get(key);
-  if (inflightHit) return inflightHit.promise;
+  if (inflightHit) {
+    recordDiagnostic({
+      kind: 'ai_dedupe',
+      level: 'info',
+      message: `${input.kind}:${group}`,
+      data: { group, kind: input.kind }
+    });
+    return inflightHit.promise;
+  }
 
-  const prevController = groupControllers.get(input.kind);
+  const prevController = groupControllers.get(group);
   if (prevController) {
     try {
       prevController.abort();
@@ -338,7 +512,18 @@ const requestAi = async (input: {
   }
 
   const controller = new AbortController();
-  groupControllers.set(input.kind, controller);
+  groupControllers.set(group, controller);
+  activeGroups.set(group, { controller, priority, startedAt: nowMs() });
+  recordAiRequest({
+    id: requestId,
+    ts: Date.now(),
+    kind: input.kind,
+    group,
+    priority,
+    transport: resolveTransport(),
+    messagePreview: String(input.message || '').slice(0, 260),
+    trigger: trigger.slice(0, 60)
+  });
   let detachExternalAbort: null | (() => void) = null;
   if (input.signal) {
     if (input.signal.aborted) {
@@ -410,15 +595,45 @@ const requestAi = async (input: {
               : 5000;
         resolvedCache.set(key, { value: result, expiresAt: Date.now() + ttlMs });
       }
+      updateAiRequest(requestId, {
+        ok: true,
+        endedAt: Date.now(),
+        durationMs: Math.max(0, nowMs() - startedAt)
+      });
       return result;
     } catch (err) {
+      const status = typeof (err as any)?.status === 'number' ? (err as any).status : undefined;
+      const msg = typeof (err as any)?.message === 'string' ? (err as any).message : String(err);
+      const aborted =
+        (err as any)?.name === 'AbortError' || /\babort(ed)?\b/i.test(String(msg || ''));
+      updateAiRequest(requestId, {
+        ok: false,
+        aborted,
+        status,
+        errorMessage: String(msg || '').slice(0, 900),
+        endedAt: Date.now(),
+        durationMs: Math.max(0, nowMs() - startedAt)
+      });
+      recordDiagnostic({
+        kind: 'ai_error',
+        level: aborted ? 'warn' : 'error',
+        message: `${input.kind}:${group} ${String(msg || '').slice(0, 220)}`,
+        data: {
+          group,
+          kind: input.kind,
+          status,
+          aborted
+        }
+      });
       console.error('AI request failed', err);
       throw err;
     } finally {
       window.clearTimeout(timeoutId);
       inflight.delete(key);
-      const currentGroup = groupControllers.get(input.kind);
-      if (currentGroup === controller) groupControllers.delete(input.kind);
+      const currentGroup = groupControllers.get(group);
+      if (currentGroup === controller) groupControllers.delete(group);
+      const currentActive = activeGroups.get(group);
+      if (currentActive?.controller === controller) activeGroups.delete(group);
       if (detachExternalAbort) {
         try {
           detachExternalAbort();
@@ -436,11 +651,21 @@ export const sendMessageToAI = async (
   message: string,
   _history: ChatMessage[] = [], // Kept for compatibility but not strictly needed for backend context
   agentContext?: any,
-  options?: { signal?: AbortSignal }
+  options?: {
+    signal?: AbortSignal;
+    group?: AiRequestGroup | string;
+    priority?: number;
+    cancelLowerPriority?: boolean;
+    dropIfHigherPriorityActive?: boolean;
+  }
 ): Promise<string> => {
   try {
     return await requestAi({
       kind: 'chat',
+      group: options?.group || 'chat',
+      priority: options?.priority,
+      cancelLowerPriority: options?.cancelLowerPriority,
+      dropIfHigherPriorityActive: options?.dropIfHigherPriorityActive,
       message,
       agentContext,
       timeoutMs: 30000,
@@ -461,10 +686,18 @@ export const requestAgentReaction = async (input: {
   message: string;
   agentContext?: any;
   signal?: AbortSignal;
+  group?: AiRequestGroup | string;
+  priority?: number;
+  cancelLowerPriority?: boolean;
+  dropIfHigherPriorityActive?: boolean;
 }): Promise<string> => {
   try {
     return await requestAi({
       kind: 'reaction',
+      group: input.group || 'reaction',
+      priority: input.priority,
+      cancelLowerPriority: input.cancelLowerPriority,
+      dropIfHigherPriorityActive: input.dropIfHigherPriorityActive,
       message: input.message,
       agentContext: input.agentContext,
       timeoutMs: 15000,
@@ -477,39 +710,15 @@ export const requestAgentReaction = async (input: {
   }
 };
 
-export const cancelAiRequests = (kind?: AiRequestKind) => {
-  if (kind) {
-    const controller = groupControllers.get(kind);
-    if (controller) {
-      try {
-        controller.abort();
-      } catch {}
-      groupControllers.delete(kind);
-    }
-    for (const [k, v] of inflight) {
-      if (k.startsWith(`${kind}|`)) {
-        try {
-          v.controller.abort();
-        } catch {}
-        inflight.delete(k);
-      }
-    }
+export const cancelAiRequests = (group?: AiRequestKind | AiRequestGroup | string) => {
+  if (group) {
+    recordDiagnostic({ kind: 'ai_cancel', level: 'info', message: String(group) });
+    cancelGroup(group);
     return;
   }
 
-  for (const controller of groupControllers.values()) {
-    try {
-      controller.abort();
-    } catch {}
-  }
-  groupControllers.clear();
-
-  for (const v of inflight.values()) {
-    try {
-      v.controller.abort();
-    } catch {}
-  }
-  inflight.clear();
+  recordDiagnostic({ kind: 'ai_cancel', level: 'info', message: 'all' });
+  for (const g of Array.from(groupControllers.keys())) cancelGroup(g);
 };
 
 export const clearAiCache = () => {
@@ -530,7 +739,7 @@ export const getUserProfile = async () => {
 
 export const getChatHistory = async (userId: string) => {
   try {
-    const response = await fetch(`${apiBaseUrl}/api/chat/history/${userId}`);
+    const response = await fetch(buildApiUrl(`/api/chat/history/${userId}`));
     if (!response.ok) throw new Error('Failed to fetch history');
     const data = await response.json();
     return data.history || [];
@@ -554,4 +763,25 @@ export const updateUserProfile = async (profile: any) => {
     console.error('Error updating profile:', error);
     return null;
   }
+};
+
+export const getAiTransportOverride = (): AiTransport | '' => getTransportOverride();
+
+export const setAiTransportOverride = (v: AiTransport | '') => {
+  setTransportOverride(v);
+};
+
+export const getAiRuntimeState = () => {
+  return {
+    transport: resolveTransport(),
+    override: getTransportOverride(),
+    inflightCount: inflight.size,
+    cacheCount: resolvedCache.size,
+    groupControllers: Array.from(groupControllers.keys()),
+    activeGroups: Array.from(activeGroups.entries()).map(([k, v]) => ({
+      group: k,
+      priority: v.priority,
+      startedAt: v.startedAt
+    }))
+  };
 };

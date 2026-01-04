@@ -52,7 +52,7 @@ export interface Tips {
     referrer: string;
     hoverBody: string | string[];
     tapBody: string | string[];
-    [key: string]: any;
+    [key: string]: unknown;
   };
   time: Time;
   mouseover: {

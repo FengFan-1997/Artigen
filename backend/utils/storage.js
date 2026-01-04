@@ -32,11 +32,32 @@ const writeJson = (filePath, data) => {
   }
 };
 
+const sanitizeUserId = (userId) => {
+  const raw = String(userId || '').trim() || 'anonymous';
+  const safe = raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+  return safe || 'anonymous';
+};
+
+const getUserMemoryFile = (userId) => {
+  return path.join(MEMORY_DIR, `user_${sanitizeUserId(userId)}.json`);
+};
+
+const readUserMemory = (userId, defaultValue = null) => {
+  return readJson(getUserMemoryFile(userId), defaultValue);
+};
+
+const writeUserMemory = (userId, data) => {
+  return writeJson(getUserMemoryFile(userId), data);
+};
+
 module.exports = {
   MEMORY_DIR,
   VECTORS_FILE,
   CHATS_FILE,
   USERS_FILE,
   readJson,
-  writeJson
+  writeJson,
+  getUserMemoryFile,
+  readUserMemory,
+  writeUserMemory
 };

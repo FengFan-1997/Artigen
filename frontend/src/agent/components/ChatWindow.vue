@@ -134,6 +134,7 @@ const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'send', text: string): void;
   (e: 'toggle-mute'): void;
+  (e: 'activity'): void;
 }>();
 
 const { isAuthenticated, currentUser, logout } = useAuth();
@@ -298,7 +299,9 @@ const handleSend = () => {
   refreshActivity();
 };
 
-const refreshActivity = () => {};
+const refreshActivity = () => {
+  emit('activity');
+};
 
 const scrollToBottom = () => {
   nextTick(() => {
