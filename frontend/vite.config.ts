@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { resolve } from 'path';
 import fs from 'fs';
+import { loginSmtpPlugin } from './src/login/server/viteSmtpPlugin';
 
 const vrmBaseDirCandidates = [
   resolve(__dirname, '../doc/model/Genshin'),
@@ -29,6 +30,7 @@ const normalizeModelKey = (input: string) =>
 export default defineConfig({
   plugins: [
     vue(),
+    loginSmtpPlugin(),
     {
       name: 'virtual-vrm-models',
       resolveId(id) {
@@ -38,16 +40,17 @@ export default defineConfig({
       load(id) {
         if (id !== '\0virtual:vrm-models') return null;
         const baseDir = VRM_BASE_DIR;
+        const publicDir = resolve(__dirname, './public/model');
 
-        const walk = (dir: string, out: string[]) => {
+        const walk = (dir: string, rootDir: string, out: string[]) => {
           const entries = fs.readdirSync(dir, { withFileTypes: true });
           for (const entry of entries) {
             const full = resolve(dir, entry.name);
             if (entry.isDirectory()) {
-              walk(full, out);
+              walk(full, rootDir, out);
             } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.vrm')) {
               const rel = full
-                .slice(baseDir.length + 1)
+                .slice(rootDir.length + 1)
                 .split('\\')
                 .join('/');
               out.push(rel);
@@ -57,10 +60,17 @@ export default defineConfig({
 
         const relPaths: string[] = [];
         try {
-          if (fs.existsSync(baseDir)) walk(baseDir, relPaths);
+          if (fs.existsSync(baseDir)) walk(baseDir, baseDir, relPaths);
         } catch {}
 
         relPaths.sort((a, b) => a.localeCompare(b));
+
+        const publicRelPaths: string[] = [];
+        try {
+          if (fs.existsSync(publicDir)) walk(publicDir, publicDir, publicRelPaths);
+        } catch {}
+
+        publicRelPaths.sort((a, b) => a.localeCompare(b));
 
         const personaRoot = resolve(__dirname, '../doc/modeDoc/modeldoc/genshin');
         const personaDirs = [resolve(personaRoot, 'all'), resolve(personaRoot, 'other')];
@@ -147,9 +157,9 @@ export default defineConfig({
           vrmPersonaTextByModelName[normalizeModelKey(modelBase)] = { zh, en };
         }
 
-        return `export const vrmRelativePaths = ${JSON.stringify(relPaths)};\nexport const vrmPersonaTextByModelName = ${JSON.stringify(
-          vrmPersonaTextByModelName
-        )};`;
+        return `export const vrmRelativePaths = ${JSON.stringify(relPaths)};\nexport const publicVrmRelativePaths = ${JSON.stringify(
+          publicRelPaths
+        )};\nexport const vrmPersonaTextByModelName = ${JSON.stringify(vrmPersonaTextByModelName)};`;
       }
     }
   ],

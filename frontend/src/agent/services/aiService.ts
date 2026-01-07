@@ -1,14 +1,20 @@
 import type { ChatMessage } from '../types';
-import { buildApiUrl, getUserId } from '../utils/user';
+import { buildApiUrl, getAuthToken, getUserId } from '../utils/user';
 import { getPageContext } from '../utils/pageContext';
 import { recordAiRequest, recordDiagnostic, updateAiRequest } from '../utils/diagnostics';
+import { projectKnowledge } from '../data/projectKnowledge';
+import logger from '../utils/logger';
 
 const API_URL = buildApiUrl('/api/chat');
 const USER_API_URL = buildApiUrl('/api/user');
+const USAGE_INGEST_URL = buildApiUrl('/api/usage/ingest');
 
 type AiRequestKind = 'chat' | 'reaction';
 type AiTransport = 'auto' | 'proxy' | 'direct';
 type AiRequestGroup = 'chat' | 'task' | 'background' | 'interaction' | 'idle' | 'reaction';
+
+const SESSION_ID_KEY = 'agent_session_id_v1';
+const PROJECT_ID_KEY = 'agent_project_id_v1';
 
 type CachedValue = { value: string; expiresAt: number };
 type InflightValue = { promise: Promise<string>; controller: AbortController; startedAt: number };
@@ -47,6 +53,53 @@ const safeJsonStringify = (v: any) => {
   }
 };
 
+const getOrCreateSessionId = () => {
+  const make = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    const existing = window.sessionStorage.getItem(SESSION_ID_KEY);
+    if (existing && existing.trim()) return existing.trim();
+  } catch {}
+  const created = make();
+  try {
+    window.sessionStorage.setItem(SESSION_ID_KEY, created);
+  } catch {}
+  return created;
+};
+
+const computeDefaultProjectId = () => {
+  try {
+    const host = String(window.location?.host || '').trim();
+    if (host) return host;
+  } catch {}
+  return 'default';
+};
+
+const getOrCreateProjectId = () => {
+  try {
+    const existing = window.localStorage.getItem(PROJECT_ID_KEY);
+    if (existing && existing.trim()) return existing.trim();
+  } catch {}
+  const created = computeDefaultProjectId();
+  try {
+    window.localStorage.setItem(PROJECT_ID_KEY, created);
+  } catch {}
+  return created;
+};
+
+const ingestUsage = async (payload: any) => {
+  try {
+    const token = getAuthToken();
+    await fetch(USAGE_INGEST_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify(payload || {})
+    });
+  } catch {}
+};
+
 const getTransportOverride = (): AiTransport | '' => {
   try {
     const v = window.localStorage.getItem(TRANSPORT_OVERRIDE_KEY) || '';
@@ -66,6 +119,31 @@ const setTransportOverride = (v: AiTransport | '') => {
 };
 
 const resolveTransport = (): AiTransport => {
+  const allowDirectInProd =
+    String((import.meta as any)?.env?.VITE_AGENT_ALLOW_DIRECT_IN_PROD || '')
+      .trim()
+      .toLowerCase() === 'true';
+  if ((import.meta as any)?.env?.PROD && !allowDirectInProd) {
+    const override = getTransportOverride();
+    if (override === 'direct') {
+      setTransportOverride('proxy');
+      recordDiagnostic({
+        kind: 'policy',
+        level: 'warn',
+        message: 'direct_transport_blocked_in_prod',
+        data: { override: 'direct' }
+      });
+    }
+    if (REQUEST_TRANSPORT === 'direct') {
+      recordDiagnostic({
+        kind: 'policy',
+        level: 'warn',
+        message: 'direct_env_blocked_in_prod',
+        data: { env: 'VITE_AGENT_AI_TRANSPORT=direct' }
+      });
+    }
+    return 'proxy';
+  }
   const override = getTransportOverride();
   if (override === 'direct' || override === 'proxy') return override;
   if (REQUEST_TRANSPORT === 'direct') return 'direct';
@@ -217,21 +295,29 @@ const buildDirectSystemPrompt = (input: {
     lang === 'en'
       ? [
           `Always reply as ${personaName}.`,
-          'Append at least one emotional tag at the end like "[HAPPY]".',
+          'Preferred output: a single strict JSON object (no code fences, no extra text).',
+          'JSON envelope schema: {"v":"1","text":"...","emotionTag":{"primary":"happy","intensity":0.6},"avatarPlan":[...],"plan":[...],"memoryFacts":[...],"lockMs":1200,"exprOverride":"smile"}.',
+          'If you output the JSON envelope, do NOT append bracket emotion tags like "[HAPPY]".',
+          'If you do NOT use the JSON envelope, then append at least one bracket emotion tag at the end like "[HAPPY]".',
           mustIncludeAvatarPlan
-            ? 'You MUST include a JSON array after the label "avatarPlan:" on its own line.'
-            : 'If you want the avatar to move, include a JSON array after the label "avatarPlan:" on its own line.',
-          'The "avatarPlan" must be strict JSON and use only allowed motions/expressions.',
-          'Keep avatarPlan steps short (1–6 steps).'
+            ? 'You MUST include motion: either "avatarPlan" in the JSON envelope or a JSON array after the label "avatarPlan:" on its own line.'
+            : 'If you want the avatar to move, include motion: either "avatarPlan" in the JSON envelope or a JSON array after the label "avatarPlan:" on its own line.',
+          'If present, "avatarPlan" must be strict JSON and use only allowed motions/expressions.',
+          'Keep avatarPlan steps short (1–6 steps).',
+          'If present, "plan" must be safe and stay within current website origin.'
         ].join('\n- ')
       : [
           `始终以 ${personaName} 的口吻回复。`,
-          '每次回复末尾必须带至少一个情绪标签，例如「…… [HAPPY]」。',
+          '优先输出：单一严格 JSON 对象（不要代码块，不要夹杂任何其他文字）。',
+          'JSON Envelope 结构：{"v":"1","text":"...","emotionTag":{"primary":"happy","intensity":0.6},"avatarPlan":[...],"plan":[...],"memoryFacts":[...],"lockMs":1200,"exprOverride":"smile"}。',
+          '如果输出了 JSON Envelope，就不要再追加「[HAPPY]」这种括号情绪标签。',
+          '如果没有用 JSON Envelope，才在回复末尾追加至少一个括号情绪标签，例如「…… [HAPPY]」。',
           mustIncludeAvatarPlan
-            ? '必须输出模型动作：在单独一行输出「avatarPlan:」后面紧跟 JSON 数组。'
-            : '如果需要模型动作，在单独一行输出「avatarPlan:」后面紧跟 JSON 数组。',
-          'avatarPlan 必须是严格 JSON，只能使用允许的 motions/expressions。',
-          'avatarPlan 步骤保持简短（1–6 步）。'
+            ? '必须输出动作：要么在 JSON Envelope 里带 "avatarPlan"，要么在单独一行输出「avatarPlan:」后面紧跟 JSON 数组。'
+            : '需要动作时：要么在 JSON Envelope 里带 "avatarPlan"，要么在单独一行输出「avatarPlan:」后面紧跟 JSON 数组。',
+          '只要有 avatarPlan，就必须是严格 JSON，只能使用允许的 motions/expressions。',
+          'avatarPlan 步骤保持简短（1–6 步）。',
+          '只要有 plan，就必须安全且不得跨域。'
         ].join('\n- ');
 
   const constraints =
@@ -340,21 +426,35 @@ const buildDirectSystemPrompt = (input: {
     .join('\n\n');
 };
 
+type BackendChatResponse = {
+  reply: string;
+  rag?: any;
+  requestId?: string;
+};
+
 const callBackendChat = async (input: {
   message: string;
   userId: string;
+  requestId: string;
   pageContext: any;
+  projectKnowledge?: string;
   agentContext?: any;
   signal: AbortSignal;
-}) => {
+}): Promise<BackendChatResponse> => {
+  const token = getAuthToken();
   const response = await fetch(API_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
     signal: input.signal,
     body: JSON.stringify({
       message: input.message,
       userId: input.userId,
+      requestId: input.requestId,
       pageContext: input.pageContext,
+      projectKnowledge: input.projectKnowledge,
       agentContext: input.agentContext
     })
   });
@@ -369,7 +469,11 @@ const callBackendChat = async (input: {
   }
 
   const data = await response.json();
-  return typeof data?.reply === 'string' ? data.reply : '';
+  return {
+    reply: typeof data?.reply === 'string' ? data.reply : '',
+    rag: data?.rag,
+    requestId: typeof data?.requestId === 'string' ? data.requestId : undefined
+  };
 };
 
 const callGeminiDirect = async (input: {
@@ -378,7 +482,12 @@ const callGeminiDirect = async (input: {
   agentContext?: any;
   pageContext: any;
   signal: AbortSignal;
-}) => {
+}): Promise<{
+  text: string;
+  usage: { promptTokens: number; completionTokens: number; totalTokens: number } | null;
+  model: string;
+  usedUrl: string;
+}> => {
   if (!GEMINI_API_KEY) {
     throw new Error('MISSING_VITE_GEMINI_API_KEY');
   }
@@ -415,7 +524,21 @@ const callGeminiDirect = async (input: {
 
   const data = await response.json();
   const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  return typeof rawText === 'string' ? rawText : '';
+  const usageRaw = data?.usageMetadata;
+  const usage =
+    usageRaw && typeof usageRaw === 'object'
+      ? {
+          promptTokens: Number(usageRaw.promptTokenCount ?? 0) || 0,
+          completionTokens: Number(usageRaw.candidatesTokenCount ?? 0) || 0,
+          totalTokens: Number(usageRaw.totalTokenCount ?? 0) || 0
+        }
+      : null;
+  return {
+    text: typeof rawText === 'string' ? rawText : '',
+    usage,
+    model: GEMINI_MODEL,
+    usedUrl: GEMINI_API_URL
+  };
 };
 
 const requestAi = async (input: {
@@ -435,6 +558,8 @@ const requestAi = async (input: {
 
   const userId = getUserId();
   const pageContext = getPageContext();
+  const sessionId = getOrCreateSessionId();
+  const projectId = getOrCreateProjectId();
   const requestId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
 
   const group = ((input.group || input.kind) as string).trim() || input.kind;
@@ -548,24 +673,79 @@ const requestAi = async (input: {
       const transport = resolveTransport();
       let reply = '';
 
+      const ctxForBackend = (() => {
+        const base =
+          input.agentContext && typeof input.agentContext === 'object' ? input.agentContext : {};
+        const mode = input.kind === 'reaction' ? 'react' : base?.mode;
+        const next = { ...base, requestId, sessionId, projectId };
+        if (mode === base?.mode) return next;
+        return { ...next, mode };
+      })();
+
+      const knowledgeForBackend = (() => {
+        const v = typeof projectKnowledge === 'string' ? projectKnowledge : '';
+        const trimmed = v.trim();
+        return trimmed ? trimmed.slice(0, 20000) : '';
+      })();
+
       const tryBackend = async () => {
-        reply = await callBackendChat({
+        const result = await callBackendChat({
           message: input.message,
           userId,
+          requestId,
           pageContext,
-          agentContext: input.agentContext,
+          projectKnowledge: knowledgeForBackend,
+          agentContext: ctxForBackend,
           signal: controller.signal
         });
+        reply = result.reply;
+        if (result?.rag && typeof result.rag === 'object') {
+          recordDiagnostic({
+            kind: 'rag',
+            level: 'info',
+            message: 'backend_rag',
+            data: result.rag
+          });
+        }
       };
 
       const tryDirect = async () => {
-        reply = await callGeminiDirect({
+        const startedAt = Date.now();
+        const result = await callGeminiDirect({
           kind: input.kind,
           message: input.message,
           agentContext: input.agentContext,
           pageContext,
           signal: controller.signal
         });
+        reply = result.text;
+
+        try {
+          const usage = result.usage;
+          const tokensIn = Number(usage?.promptTokens ?? 0) || 0;
+          const tokensOut = Number(usage?.completionTokens ?? 0) || 0;
+          const tokensTotal = Number(usage?.totalTokens ?? 0) || tokensIn + tokensOut;
+          const trigger =
+            typeof input.agentContext?.trigger === 'string'
+              ? String(input.agentContext.trigger).trim().toLowerCase()
+              : input.kind;
+          await ingestUsage({
+            userId,
+            requestId,
+            sessionId,
+            projectId,
+            ts: Date.now(),
+            trigger,
+            provider: 'gemini_direct',
+            model: result.model,
+            usedUrl: result.usedUrl,
+            tokensIn,
+            tokensOut,
+            tokensTotal,
+            status: 'ok',
+            durationMs: Math.max(0, Date.now() - startedAt)
+          });
+        } catch {}
       };
 
       if (transport === 'direct') {
@@ -625,7 +805,7 @@ const requestAi = async (input: {
           aborted
         }
       });
-      console.error('AI request failed', err);
+      logger.error('AI request failed', { kind: input.kind, group, status, aborted, message: msg });
       throw err;
     } finally {
       window.clearTimeout(timeoutId);
@@ -673,7 +853,7 @@ export const sendMessageToAI = async (
       signal: options?.signal
     });
   } catch (error) {
-    console.error('Error calling AI:', error);
+    logger.error('Error calling AI', error);
     return (
       "Sorry, I'm having trouble connecting to my brain right now! [DIZZY] [MOTION: shake]\n\n" +
       'emotionTag: {"primary":"dizzy","intensity":0.9,"secondary":["confused"]}\n\n' +
@@ -705,7 +885,7 @@ export const requestAgentReaction = async (input: {
       signal: input.signal
     });
   } catch (error) {
-    console.error('Error calling AI:', error);
+    logger.error('Error calling AI', error);
     return '';
   }
 };
@@ -728,23 +908,29 @@ export const clearAiCache = () => {
 export const getUserProfile = async () => {
   try {
     const userId = getUserId();
-    const response = await fetch(`${USER_API_URL}/${userId}`);
+    const token = getAuthToken();
+    const response = await fetch(`${USER_API_URL}/${userId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined
+    });
     if (!response.ok) throw new Error('Failed to fetch profile');
     return await response.json();
   } catch (error) {
-    console.error('Error fetching profile:', error);
+    logger.error('Error fetching profile', error);
     return null;
   }
 };
 
 export const getChatHistory = async (userId: string) => {
   try {
-    const response = await fetch(buildApiUrl(`/api/chat/history/${userId}`));
+    const token = getAuthToken();
+    const response = await fetch(buildApiUrl(`/api/chat/history/${userId}`), {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined
+    });
     if (!response.ok) throw new Error('Failed to fetch history');
     const data = await response.json();
     return data.history || [];
   } catch (error) {
-    console.error('Error fetching chat history:', error);
+    logger.error('Error fetching chat history', error);
     return [];
   }
 };
@@ -752,15 +938,19 @@ export const getChatHistory = async (userId: string) => {
 export const updateUserProfile = async (profile: any) => {
   try {
     const userId = getUserId();
+    const token = getAuthToken();
     const response = await fetch(USER_API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
       body: JSON.stringify({ userId, profile })
     });
     if (!response.ok) throw new Error('Failed to update profile');
     return await response.json();
   } catch (error) {
-    console.error('Error updating profile:', error);
+    logger.error('Error updating profile', error);
     return null;
   }
 };

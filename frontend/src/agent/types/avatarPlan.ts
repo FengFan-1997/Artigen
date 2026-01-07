@@ -2,6 +2,9 @@ export interface AvatarPlanStepBase {
   type: string;
   duration?: number;
   parallel?: boolean;
+  tempo?: 'slow' | 'normal' | 'fast' | number;
+  gap?: number;
+  interrupt?: 'soft' | 'hard';
 }
 
 export interface PoseStep extends AvatarPlanStepBase {

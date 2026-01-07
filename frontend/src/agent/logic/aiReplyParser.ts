@@ -60,6 +60,74 @@ export const extractJsonAfterLabel = (text: string, label: string): ExtractedJso
   return null;
 };
 
+const extractJsonObjectFromIndex = (
+  text: string,
+  startIndex: number
+): { raw: string; jsonText: string; endIndex: number } | null => {
+  if (text[startIndex] !== '{') return null;
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let j = startIndex; j < text.length; j++) {
+    const ch = text[j];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '{') {
+      stack.push(ch);
+      continue;
+    }
+
+    if (ch === '}') {
+      const last = stack[stack.length - 1];
+      if (last !== '{') return null;
+      stack.pop();
+      if (stack.length === 0) {
+        const jsonText = text.slice(startIndex, j + 1);
+        return { raw: jsonText, jsonText, endIndex: j + 1 };
+      }
+    }
+  }
+
+  return null;
+};
+
+const extractEnvelopeObject = (text: string): { raw: string; obj: any } | null => {
+  const s = String(text || '');
+  const maxScan = Math.min(s.length, 60000);
+  for (let i = 0; i < maxScan; i++) {
+    if (s[i] !== '{') continue;
+    const block = extractJsonObjectFromIndex(s, i);
+    if (!block) continue;
+    if (block.jsonText.length > 60000) continue;
+    try {
+      const obj = JSON.parse(block.jsonText);
+      const vRaw = obj?.v;
+      const v =
+        typeof vRaw === 'number' ? String(vRaw) : typeof vRaw === 'string' ? vRaw.trim() : '';
+      if (v === '1') return { raw: block.raw, obj };
+    } catch {}
+    i = Math.max(i, block.endIndex - 1);
+  }
+  return null;
+};
+
 export type ParsedAiReply = {
   cleanResponse: string;
   parsedPlan: any[] | null;
@@ -71,6 +139,7 @@ export type ParsedAiReply = {
   lockMs?: number;
   exprOverride?: string;
   emotionTag?: { primary: string; intensity: number };
+  memoryFacts?: string[];
   tags: {
     angry: boolean;
     happy: boolean;
@@ -89,7 +158,8 @@ export function parseAiReply(
     normalizeMotionName: (raw: string | undefined) => string | null;
   }
 ): ParsedAiReply {
-  let cleanResponse = rawResponse;
+  let workingRaw = String(rawResponse || '');
+  let cleanResponse = workingRaw;
   const allowPlan = input.allowPlan;
 
   let parsedPlan: any[] | null = null;
@@ -98,6 +168,10 @@ export function parseAiReply(
   let hasExplicitMotion = false;
   let primaryEmotion: string | null = null;
   let envelopeFallback: string | undefined = undefined;
+  let memoryFacts: string[] | undefined = undefined;
+  let lockMs: number | undefined = undefined;
+  let exprOverride: string | undefined = undefined;
+  let emotionTag: { primary: string; intensity: number } | undefined = undefined;
 
   const tags = {
     angry: false,
@@ -109,61 +183,114 @@ export function parseAiReply(
     tiredOrFaint: false
   };
 
-  const trimmedEnvelope = (rawResponse || '').trim();
-  if (trimmedEnvelope.startsWith('{') && trimmedEnvelope.endsWith('}')) {
-    try {
-      const obj = JSON.parse(trimmedEnvelope);
-      const v = typeof obj?.v === 'string' ? obj.v.trim() : '';
-      if (v === '1') {
-        if (allowPlan && Array.isArray(obj?.plan)) parsedPlan = obj.plan;
-        if (Array.isArray(obj?.avatarPlan)) {
-          parsedAvatarPlan = obj.avatarPlan as AvatarPlanStep[];
-          hasExplicitMotion =
-            hasExplicitMotion ||
-            parsedAvatarPlan.some(
-              (s) => s?.type === 'motion' || s?.type === 'pose' || !!(s as any)?.motion
-            );
-        }
-        const decision = obj?.decision;
-        const kind = typeof decision?.kind === 'string' ? decision.kind.trim() : '';
-        const decisionText =
-          (typeof decision?.text === 'string' && decision.text.trim() && decision.text.trim()) ||
-          (typeof decision?.prompt === 'string' &&
-            decision.prompt.trim() &&
-            decision.prompt.trim()) ||
-          (typeof decision?.reason === 'string' &&
-            decision.reason.trim() &&
-            decision.reason.trim()) ||
-          '';
-        if (kind && decisionText) envelopeFallback = decisionText;
-        cleanResponse = '';
+  const envelope = extractEnvelopeObject(workingRaw);
+  if (envelope) {
+    const obj = envelope.obj;
+    if (allowPlan && Array.isArray(obj?.plan)) parsedPlan = obj.plan;
+    if (Array.isArray(obj?.avatarPlan)) {
+      parsedAvatarPlan = obj.avatarPlan as AvatarPlanStep[];
+      hasExplicitMotion =
+        hasExplicitMotion ||
+        parsedAvatarPlan.some(
+          (s) => s?.type === 'motion' || s?.type === 'pose' || !!(s as any)?.motion
+        );
+    }
+    const txt =
+      (typeof obj?.text === 'string' && obj.text.trim() && obj.text.trim()) ||
+      (typeof obj?.message === 'string' && obj.message.trim() && obj.message.trim()) ||
+      '';
+    if (txt) cleanResponse = txt;
+
+    const decision = obj?.decision;
+    const kind = typeof decision?.kind === 'string' ? decision.kind.trim() : '';
+    const decisionText =
+      (typeof decision?.text === 'string' && decision.text.trim() && decision.text.trim()) ||
+      (typeof decision?.prompt === 'string' && decision.prompt.trim() && decision.prompt.trim()) ||
+      (typeof decision?.reason === 'string' && decision.reason.trim() && decision.reason.trim()) ||
+      '';
+    if (kind && decisionText) envelopeFallback = decisionText;
+
+    const lockCandidate = obj?.lockMs ?? obj?.lock;
+    const lockNum =
+      typeof lockCandidate === 'number'
+        ? lockCandidate
+        : Number.parseInt(String(lockCandidate || ''), 10);
+    if (Number.isFinite(lockNum) && lockNum > 0) lockMs = Math.max(0, Math.min(60000, lockNum));
+
+    const exprCandidate = obj?.exprOverride ?? obj?.expr ?? obj?.expression;
+    if (typeof exprCandidate === 'string' && exprCandidate.trim())
+      exprOverride = exprCandidate.trim();
+
+    const emotionCandidate = obj?.emotionTag;
+    if (emotionCandidate && typeof emotionCandidate === 'object') {
+      const primary = String((emotionCandidate as any)?.primary || '')
+        .toLowerCase()
+        .trim();
+      const intensityRaw = (emotionCandidate as any)?.intensity;
+      const intensity =
+        typeof intensityRaw === 'number' ? intensityRaw : Number.parseFloat(String(intensityRaw));
+      if (primary) {
+        emotionTag = {
+          primary,
+          intensity: Number.isFinite(intensity) ? Math.max(0, Math.min(1, intensity)) : 0.6
+        };
+        primaryEmotion = primaryEmotion || primary;
       }
-    } catch {}
+    }
+
+    const factsCandidate = obj?.memoryFacts ?? obj?.facts;
+    if (Array.isArray(factsCandidate)) {
+      const out: string[] = [];
+      const seen = new Set<string>();
+      for (const raw of factsCandidate) {
+        const t = String(raw || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 240);
+        if (!t) continue;
+        const k0 = t.toLowerCase();
+        if (seen.has(k0)) continue;
+        seen.add(k0);
+        out.push(t);
+        if (out.length >= 6) break;
+      }
+      if (out.length > 0) memoryFacts = out;
+    }
+
+    workingRaw = workingRaw.replace(envelope.raw, '').trim();
+    if (!txt) cleanResponse = workingRaw;
   }
 
-  const lockMatch = rawResponse.match(/\[LOCK:\s*(\d+)\]/i);
-  const lockMs = lockMatch ? Number.parseInt(lockMatch[1], 10) : undefined;
-  if (lockMatch) cleanResponse = cleanResponse.replace(lockMatch[0], '');
+  if (lockMs === undefined) {
+    const lockMatch = workingRaw.match(/\[LOCK:\s*(\d+)\]/i);
+    const lockParsed = lockMatch ? Number.parseInt(lockMatch[1], 10) : undefined;
+    if (Number.isFinite(lockParsed as any) && (lockParsed as any) > 0) lockMs = lockParsed;
+    if (lockMatch) cleanResponse = cleanResponse.replace(lockMatch[0], '');
+  }
 
-  const exprInlineMatch = rawResponse.match(/\[EXPR:\s*([a-zA-Z0-9_\-]+)\]/);
-  let exprOverride =
-    exprInlineMatch && typeof exprInlineMatch[1] === 'string' ? exprInlineMatch[1] : undefined;
-  if (exprInlineMatch) cleanResponse = cleanResponse.replace(exprInlineMatch[0], '');
+  if (exprOverride === undefined) {
+    const exprInlineMatch = workingRaw.match(/\[EXPR:\s*([a-zA-Z0-9_\-]+)\]/);
+    if (exprInlineMatch && typeof exprInlineMatch[1] === 'string')
+      exprOverride = exprInlineMatch[1];
+    if (exprInlineMatch) cleanResponse = cleanResponse.replace(exprInlineMatch[0], '');
+  }
 
-  const expressionTagMatch = rawResponse.match(/expressionTag:\s*("[^"]+"|\w+)/i);
-  if (expressionTagMatch) {
-    const rawVal = expressionTagMatch[1];
-    const value = rawVal.startsWith('"')
-      ? (() => {
-          try {
-            return JSON.parse(rawVal);
-          } catch {
-            return rawVal.replace(/"/g, '');
-          }
-        })()
-      : rawVal;
-    if (typeof value === 'string' && value.trim() && !exprOverride) exprOverride = value;
-    cleanResponse = cleanResponse.replace(expressionTagMatch[0], '');
+  if (exprOverride === undefined) {
+    const expressionTagMatch = workingRaw.match(/expressionTag:\s*("[^"]+"|\w+)/i);
+    if (expressionTagMatch) {
+      const rawVal = expressionTagMatch[1];
+      const value = rawVal.startsWith('"')
+        ? (() => {
+            try {
+              return JSON.parse(rawVal);
+            } catch {
+              return rawVal.replace(/"/g, '');
+            }
+          })()
+        : rawVal;
+      if (typeof value === 'string' && value.trim()) exprOverride = value;
+      cleanResponse = cleanResponse.replace(expressionTagMatch[0], '');
+    }
   }
 
   const planExtract = parsedPlan ? null : extractJsonAfterLabel(cleanResponse, 'plan');
@@ -203,7 +330,30 @@ export function parseAiReply(
           const logicName = input.normalizeMotionName(m.name);
           if (!logicName) continue;
           const duration = typeof m.duration === 'number' ? m.duration : 900;
+          const rawTempo = (m as any)?.tempo;
+          const tempo =
+            typeof rawTempo === 'number' && Number.isFinite(rawTempo)
+              ? rawTempo
+              : typeof rawTempo === 'string'
+                ? rawTempo
+                : undefined;
+          const rawGap = (m as any)?.gap ?? (m as any)?.after;
+          const gap =
+            typeof rawGap === 'number' && Number.isFinite(rawGap) ? Math.max(0, rawGap) : undefined;
+          const rawInterrupt = (m as any)?.interrupt;
+          const interrupt =
+            typeof rawInterrupt === 'string'
+              ? rawInterrupt.trim().toLowerCase() === 'soft'
+                ? 'soft'
+                : rawInterrupt.trim().toLowerCase() === 'hard'
+                  ? 'hard'
+                  : undefined
+              : undefined;
+
           const step: AvatarPlanStep = { type: 'motion', motion: logicName, duration };
+          if (tempo !== undefined) (step as any).tempo = tempo;
+          if (gap !== undefined) (step as any).gap = gap;
+          if (interrupt !== undefined) (step as any).interrupt = interrupt;
           queuedAvatarSteps.push(step);
         }
         if (queuedAvatarSteps.length > 0) hasExplicitMotion = true;
@@ -223,60 +373,91 @@ export function parseAiReply(
     cleanResponse = cleanResponse.replace(motionCommandMatch[0], '');
   }
 
-  let emotionTag: { primary: string; intensity: number } | undefined = undefined;
-  const emotionJsonExtract = extractJsonAfterLabel(cleanResponse, 'emotionTag');
-  if (emotionJsonExtract) {
-    try {
-      const emotionJson = JSON.parse(emotionJsonExtract.jsonText);
-      const primary = (emotionJson?.primary || '').toLowerCase().trim();
-      const intensity = typeof emotionJson?.intensity === 'number' ? emotionJson.intensity : 0.6;
-      if (primary) {
-        emotionTag = { primary, intensity };
-        primaryEmotion = primary;
-      }
-    } catch {}
-    cleanResponse = cleanResponse.replace(emotionJsonExtract.raw, '');
+  if (!emotionTag) {
+    const emotionJsonExtract = extractJsonAfterLabel(cleanResponse, 'emotionTag');
+    if (emotionJsonExtract) {
+      try {
+        const emotionJson = JSON.parse(emotionJsonExtract.jsonText);
+        const primary = (emotionJson?.primary || '').toLowerCase().trim();
+        const intensity = typeof emotionJson?.intensity === 'number' ? emotionJson.intensity : 0.6;
+        if (primary) {
+          emotionTag = { primary, intensity };
+          primaryEmotion = primaryEmotion || primary;
+        }
+      } catch {}
+      cleanResponse = cleanResponse.replace(emotionJsonExtract.raw, '');
+    }
   }
 
+  if (!memoryFacts) {
+    const memoryFactsExtract =
+      extractJsonAfterLabel(cleanResponse, 'memoryFacts') ||
+      extractJsonAfterLabel(cleanResponse, 'facts');
+    if (memoryFactsExtract) {
+      try {
+        const arr = JSON.parse(memoryFactsExtract.jsonText);
+        if (Array.isArray(arr)) {
+          const out: string[] = [];
+          const seen = new Set<string>();
+          for (const raw of arr) {
+            const t = String(raw || '')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 240);
+            if (!t) continue;
+            const k = t.toLowerCase();
+            if (seen.has(k)) continue;
+            seen.add(k);
+            out.push(t);
+            if (out.length >= 6) break;
+          }
+          if (out.length > 0) memoryFacts = out;
+        }
+      } catch {}
+      cleanResponse = cleanResponse.replace(memoryFactsExtract.raw, '');
+    }
+  }
+
+  const tagSource = `${workingRaw}\n${cleanResponse}`;
   if (
-    rawResponse.includes('[ANGRY]') ||
-    rawResponse.includes('Baka') ||
-    rawResponse.includes('Hmph') ||
-    rawResponse.includes('💢')
+    tagSource.includes('[ANGRY]') ||
+    tagSource.includes('Baka') ||
+    tagSource.includes('Hmph') ||
+    tagSource.includes('💢')
   ) {
     tags.angry = true;
     primaryEmotion = primaryEmotion || 'angry';
     cleanResponse = cleanResponse.replace('[ANGRY]', '');
   }
-  if (rawResponse.includes('[POUT]') || rawResponse.includes('[SHY]')) {
+  if (tagSource.includes('[POUT]') || tagSource.includes('[SHY]')) {
     tags.poutingOrShy = true;
     primaryEmotion = primaryEmotion || 'shy';
     cleanResponse = cleanResponse.replace('[POUT]', '').replace('[SHY]', '');
   }
-  if (rawResponse.includes('[HAPPY]')) {
+  if (tagSource.includes('[HAPPY]')) {
     tags.happy = true;
     primaryEmotion = primaryEmotion || 'happy';
     cleanResponse = cleanResponse.replace('[HAPPY]', '');
   }
-  if (rawResponse.includes('[DIZZY]')) {
+  if (tagSource.includes('[DIZZY]')) {
     tags.dizzy = true;
     primaryEmotion = primaryEmotion || 'dizzy';
     cleanResponse = cleanResponse.replace('[DIZZY]', '');
   }
-  if (rawResponse.includes('[CRY]')) {
+  if (tagSource.includes('[CRY]')) {
     tags.cry = true;
     primaryEmotion = primaryEmotion || 'sad';
     cleanResponse = cleanResponse.replace('[CRY]', '');
   }
-  if (rawResponse.includes('[CONFUSED]')) {
+  if (tagSource.includes('[CONFUSED]')) {
     tags.confused = true;
     primaryEmotion = primaryEmotion || 'confused';
     cleanResponse = cleanResponse.replace('[CONFUSED]', '');
   }
   if (
-    rawResponse.includes('[FAINT]') ||
-    rawResponse.includes('[TIRED]') ||
-    rawResponse.includes('[SLEEPY]')
+    tagSource.includes('[FAINT]') ||
+    tagSource.includes('[TIRED]') ||
+    tagSource.includes('[SLEEPY]')
   ) {
     tags.tiredOrFaint = true;
     primaryEmotion = primaryEmotion || 'tired';
@@ -286,7 +467,7 @@ export function parseAiReply(
       .replace('[SLEEPY]', '');
   }
 
-  const legacyMotionMatch = rawResponse.match(/\[MOTION:\s*([^\]]+?)\s*\]/);
+  const legacyMotionMatch = tagSource.match(/\[MOTION:\s*([^\]]+?)\s*\]/);
   if (legacyMotionMatch) {
     const motion = input.normalizeMotionName(legacyMotionMatch[1]);
     if (motion) {
@@ -308,6 +489,7 @@ export function parseAiReply(
     lockMs: Number.isFinite(lockMs as any) && (lockMs as any) > 0 ? lockMs : undefined,
     exprOverride,
     emotionTag,
+    memoryFacts,
     tags
   };
 }

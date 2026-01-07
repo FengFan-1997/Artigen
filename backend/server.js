@@ -8,11 +8,16 @@ const {
   writeJson,
   readUserMemory,
   writeUserMemory,
+  getUserMemoryFile,
   VECTORS_FILE,
   CHATS_FILE,
-  USERS_FILE
+  USERS_FILE,
+  USAGE_LEDGER_FILE
 } = require('./utils/storage');
+const { installImgagentRoutes, credits: imgCredits } = require('./imgagent');
 const fs = require('fs');
+const crypto = require('crypto');
+const { PassThrough } = require('stream');
 let HttpsProxyAgent = null;
 try {
   const mod = require('https-proxy-agent');
@@ -23,7 +28,63 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '10mb' }));
+
+const rateBucketStore = new Map();
+
+const getClientIp = (req) => {
+  const xf = req.headers['x-forwarded-for'];
+  if (typeof xf === 'string' && xf.trim()) return xf.split(',')[0].trim();
+  if (Array.isArray(xf) && xf.length) return String(xf[0] || '').trim();
+  const ip = typeof req.ip === 'string' ? req.ip.trim() : '';
+  return ip || 'unknown';
+};
+
+const consumeRateToken = (key, maxTokens, windowMs, cost = 1) => {
+  const now = Date.now();
+  const cap = Math.max(1, Number(maxTokens) || 1);
+  const window = Math.max(1000, Number(windowMs) || 1000);
+  const refillPerMs = cap / window;
+
+  const cur = rateBucketStore.get(key) || { tokens: cap, last: now };
+  const elapsed = Math.max(0, now - (Number(cur.last) || now));
+  const tokens = Math.min(cap, (Number(cur.tokens) || 0) + elapsed * refillPerMs);
+  const nextTokens = tokens - (Number(cost) || 1);
+  const ok = nextTokens >= 0;
+  rateBucketStore.set(key, { tokens: ok ? nextTokens : tokens, last: now });
+
+  if (rateBucketStore.size > 4000) {
+    let removed = 0;
+    for (const [k, v] of rateBucketStore) {
+      const last = Number(v?.last) || 0;
+      if (now - last > window * 4) {
+        rateBucketStore.delete(k);
+        removed += 1;
+      }
+      if (removed > 300) break;
+    }
+  }
+
+  const retryAfterMs = ok ? 0 : Math.ceil((0 - nextTokens) / refillPerMs);
+  return { ok, retryAfterMs };
+};
+
+const rateLimit = (tag, opts) => {
+  const max = Number(opts?.max || 30);
+  const windowMs = Number(opts?.windowMs || 60000);
+  const cost = Number(opts?.cost || 1);
+  return (req, res, next) => {
+    const ip = getClientIp(req);
+    const key = `${tag}|${ip}`;
+    const result = consumeRateToken(key, max, windowMs, cost);
+    if (result.ok) return next();
+    const retryAfterSec = Math.max(1, Math.ceil(result.retryAfterMs / 1000));
+    res.status(429);
+    res.setHeader('Retry-After', String(retryAfterSec));
+    res.json({ error: 'Too Many Requests', retryAfterSec });
+  };
+};
 
 const normalizeUrl = (url) => {
   const s = (url || '').toString().trim();
@@ -91,9 +152,227 @@ const GEMINI_GENERATE_URLS = parseUrlList(process.env.GEMINI_GENERATE_URLS, [GEM
 const GEMINI_EMBED_URLS = parseUrlList(process.env.GEMINI_EMBED_URLS, [GEMINI_EMBED_URL]);
 const HF_RESOLVE_BASES = parseUrlList(process.env.HF_RESOLVE_BASES, [
   'https://hf-mirror.com',
+  'https://hf.co',
   'https://huggingface.co'
 ]);
-const HF_API_BASES = parseUrlList(process.env.HF_API_BASES, ['https://hf-mirror.com', 'https://huggingface.co']);
+const HF_API_BASES = parseUrlList(process.env.HF_API_BASES, [
+  'https://hf-mirror.com',
+  'https://hf.co',
+  'https://huggingface.co'
+]);
+
+const hfProxyNegativeCache = new Map();
+const HF_PROXY_NEGATIVE_TTL_MS = (() => {
+  const v = Number.parseInt(process.env.HF_PROXY_NEGATIVE_TTL_MS || '', 10);
+  return Number.isFinite(v) && v >= 0 ? v : 2 * 60 * 1000;
+})();
+
+const HF_PROXY_RATE_MAX = (() => {
+  const v = Number.parseInt(process.env.HF_PROXY_RATE_MAX || '', 10);
+  return Number.isFinite(v) && v > 0 ? v : 2400;
+})();
+const HF_PROXY_RATE_WINDOW_MS = (() => {
+  const v = Number.parseInt(process.env.HF_PROXY_RATE_WINDOW_MS || '', 10);
+  return Number.isFinite(v) && v > 0 ? v : 60 * 1000;
+})();
+
+const hfProxyBaseHealth = new Map();
+const HF_PROXY_BASE_COOLDOWN_MS = (() => {
+  const v = Number.parseInt(process.env.HF_PROXY_BASE_COOLDOWN_MS || '', 10);
+  return Number.isFinite(v) && v >= 0 ? v : 60 * 1000;
+})();
+
+const normalizeUpstreamBase = (base) => String(base || '').trim().replace(/\/+$/, '');
+
+const HF_CACHE_DIR = path.resolve(__dirname, process.env.HF_CACHE_DIR || 'cache/hf');
+const HF_CACHE_TTL_MS = (() => {
+  const v = Number.parseInt(process.env.HF_CACHE_TTL_MS || '', 10);
+  return Number.isFinite(v) && v >= 0 ? v : 7 * 24 * 60 * 60 * 1000;
+})();
+const HF_CACHE_MAX_BYTES = (() => {
+  const v = Number.parseInt(process.env.HF_CACHE_MAX_BYTES || '', 10);
+  return Number.isFinite(v) && v >= 0 ? v : 1024 * 1024 * 1024;
+})();
+const HF_CACHE_MAX_FILES = (() => {
+  const v = Number.parseInt(process.env.HF_CACHE_MAX_FILES || '', 10);
+  return Number.isFinite(v) && v > 0 ? v : 2000;
+})();
+
+const ensureDirSync = (dir) => {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const hashCacheKey = (key) => crypto.createHash('sha1').update(String(key || '')).digest('hex');
+
+const getCachePaths = (cacheKey, rest) => {
+  const hash = hashCacheKey(cacheKey);
+  const cleanRest = String(rest || '').split('?')[0].split('#')[0];
+  const ext = path.extname(cleanRest || '').slice(0, 12);
+  const suffix = ext && /^[a-z0-9.]+$/i.test(ext) ? ext : '';
+  return {
+    filePath: path.join(HF_CACHE_DIR, `${hash}${suffix}`),
+    metaPath: path.join(HF_CACHE_DIR, `${hash}.json`)
+  };
+};
+
+const readCacheMeta = (metaPath) => {
+  try {
+    const raw = fs.readFileSync(metaPath, 'utf-8');
+    const json = JSON.parse(raw);
+    return json && typeof json === 'object' ? json : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeCacheMeta = (metaPath, meta) => {
+  try {
+    fs.writeFileSync(metaPath, JSON.stringify(meta || {}, null, 2), 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const statSafe = (p) => {
+  try {
+    return fs.statSync(p);
+  } catch {
+    return null;
+  }
+};
+
+const walkFiles = (rootDir, out = []) => {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(rootDir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const ent of entries) {
+    const full = path.join(rootDir, ent.name);
+    if (ent.isDirectory()) {
+      walkFiles(full, out);
+    } else if (ent.isFile()) {
+      out.push(full);
+    }
+  }
+  return out;
+};
+
+let hfCachePruneTimer = null;
+const pruneHfCache = () => {
+  if (!HF_CACHE_MAX_BYTES && !HF_CACHE_MAX_FILES) return;
+  const files = walkFiles(HF_CACHE_DIR, []).filter((p) => !p.endsWith('.tmp'));
+  const items = files
+    .map((p) => {
+      const st = statSafe(p);
+      if (!st || !st.isFile()) return null;
+      return { path: p, size: Number(st.size || 0), mtimeMs: Number(st.mtimeMs || 0) };
+    })
+    .filter(Boolean);
+
+  const totalSize = items.reduce((acc, x) => acc + (Number(x.size) || 0), 0);
+  const totalFiles = items.length;
+  const overBytes = HF_CACHE_MAX_BYTES > 0 && totalSize > HF_CACHE_MAX_BYTES;
+  const overFiles = HF_CACHE_MAX_FILES > 0 && totalFiles > HF_CACHE_MAX_FILES;
+  if (!overBytes && !overFiles) return;
+
+  items.sort((a, b) => (a.mtimeMs || 0) - (b.mtimeMs || 0));
+  let curSize = totalSize;
+  let curFiles = totalFiles;
+  for (const it of items) {
+    if (!(HF_CACHE_MAX_BYTES > 0 && curSize > HF_CACHE_MAX_BYTES) && !(HF_CACHE_MAX_FILES > 0 && curFiles > HF_CACHE_MAX_FILES)) break;
+    try {
+      fs.unlinkSync(it.path);
+      curSize -= Number(it.size) || 0;
+      curFiles -= 1;
+    } catch {}
+  }
+};
+
+const schedulePruneHfCache = () => {
+  if (hfCachePruneTimer) return;
+  hfCachePruneTimer = setTimeout(() => {
+    hfCachePruneTimer = null;
+    try {
+      ensureDirSync(HF_CACHE_DIR);
+      pruneHfCache();
+    } catch {}
+  }, 2000);
+};
+
+let hfCacheUsageCache = { ts: 0, data: { files: 0, bytes: 0 } };
+const getHfCacheUsage = () => {
+  const now = Date.now();
+  if (now - (hfCacheUsageCache.ts || 0) < 30000) return hfCacheUsageCache.data;
+  ensureDirSync(HF_CACHE_DIR);
+  const files = walkFiles(HF_CACHE_DIR, []).filter((p) => !p.endsWith('.tmp'));
+  let bytes = 0;
+  for (const p of files) {
+    const st = statSafe(p);
+    if (st && st.isFile()) bytes += Number(st.size || 0);
+  }
+  const data = { files: files.length, bytes };
+  hfCacheUsageCache = { ts: now, data };
+  return data;
+};
+
+const isUpstreamBaseDown = (base) => {
+  const key = normalizeUpstreamBase(base);
+  const s = hfProxyBaseHealth.get(key);
+  if (!s) return false;
+  const until = Number(s?.downUntil || 0);
+  return until > Date.now();
+};
+
+const markUpstreamBaseFailure = (base) => {
+  const key = normalizeUpstreamBase(base);
+  if (!key) return;
+  const cur = hfProxyBaseHealth.get(key) || { failCount: 0, downUntil: 0 };
+  const failCount = Math.min(20, (Number(cur.failCount) || 0) + 1);
+  const cooldown = HF_PROXY_BASE_COOLDOWN_MS * Math.min(10, failCount);
+  const downUntil = Date.now() + cooldown;
+  hfProxyBaseHealth.set(key, { failCount, downUntil });
+};
+
+const normalizeResolveBasePreference = (raw) => {
+  const v = String(raw || '').trim();
+  if (!v) return '';
+  const lower = v.toLowerCase();
+  if (lower === 'mirror' || lower === 'hf-mirror' || lower === 'hf-mirror.com') return 'https://hf-mirror.com';
+  if (lower === 'hf' || lower === 'hf.co') return 'https://hf.co';
+  if (lower === 'huggingface' || lower === 'huggingface.co') return 'https://huggingface.co';
+  if (/^https?:\/\//i.test(v)) return v;
+  return '';
+};
+
+const pickResolveCandidates = ({ owner, repo, ref, rest, preferBase }) => {
+  const list = HF_RESOLVE_BASES.map((raw, index) => {
+    const base = normalizeUpstreamBase(raw);
+    const down = isUpstreamBaseDown(base);
+    return {
+      base,
+      index,
+      down,
+      url: base ? `${base}/${owner}/${repo}/resolve/${ref}/${rest}` : ''
+    };
+  }).filter((x) => x.url);
+
+  const prefer = normalizeUpstreamBase(preferBase);
+  const healthy = list
+    .filter((x) => !x.down)
+    .sort((a, b) => (a.base === prefer ? -1 : b.base === prefer ? 1 : a.index - b.index));
+  const down = list
+    .filter((x) => x.down)
+    .sort((a, b) => (a.base === prefer ? -1 : b.base === prefer ? 1 : a.index - b.index));
+  return [...healthy, ...down];
+};
 
 const appendApiKey = (url, apiKey) => {
   if (!apiKey) return url;
@@ -224,9 +503,19 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens }) => {
       }
 
       const data = await response.json();
+      const usageRaw = data?.usage || data?.data?.usage || null;
+      const usage =
+        usageRaw && typeof usageRaw === 'object'
+          ? {
+              promptTokens: Number(usageRaw.prompt_tokens ?? usageRaw.promptTokens ?? usageRaw.input_tokens ?? usageRaw.inputTokens ?? 0) || 0,
+              completionTokens: Number(usageRaw.completion_tokens ?? usageRaw.completionTokens ?? usageRaw.output_tokens ?? usageRaw.outputTokens ?? 0) || 0,
+              totalTokens: Number(usageRaw.total_tokens ?? usageRaw.totalTokens ?? 0) || 0
+            }
+          : null;
+
       const openaiText = data?.choices?.[0]?.message?.content;
       if (typeof openaiText === 'string' && openaiText.trim()) {
-        return { text: openaiText, usedUrl: url, failures };
+        return { text: openaiText, usedUrl: url, failures, usage, model: SILICONFLOW_MODEL };
       }
 
       const messageText =
@@ -235,7 +524,7 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens }) => {
         data?.data?.choices?.[0]?.message?.content ||
         '';
       if (typeof messageText === 'string' && messageText.trim()) {
-        return { text: messageText, usedUrl: url, failures };
+        return { text: messageText, usedUrl: url, failures, usage, model: SILICONFLOW_MODEL };
       }
 
       failures.push({
@@ -280,32 +569,46 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode }) => {
 
   if (canGemini) {
     try {
-      const { data } = await callGeminiGenerate({ contents, timeoutMs });
+      const { data, usedUrl } = await callGeminiGenerate({ contents, timeoutMs });
       const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      return { text, provider: 'gemini' };
+      const usageRaw = data?.usageMetadata;
+      const usage =
+        usageRaw && typeof usageRaw === 'object'
+          ? {
+              promptTokens: Number(usageRaw.promptTokenCount ?? 0) || 0,
+              completionTokens: Number(usageRaw.candidatesTokenCount ?? 0) || 0,
+              totalTokens: Number(usageRaw.totalTokenCount ?? 0) || 0
+            }
+          : null;
+      const model = (() => {
+        const u = String(usedUrl || '').trim();
+        const m = u.match(/\/models\/([^:/?]+)(?::|\?|$)/i);
+        return m ? String(m[1] || '').trim() : 'gemini';
+      })();
+      return { text, provider: 'gemini', usage, model, usedUrl };
     } catch (e) {
       if (canSiliconflow) {
-        const { text } = await callSiliconFlowChat({
+        const { text, usage, model, usedUrl } = await callSiliconFlowChat({
           messages: toSiliconflowMessages(),
           timeoutMs,
           maxTokens: reactionMode ? 512 : 2048
         });
-        return { text, provider: 'siliconflow' };
+        return { text, provider: 'siliconflow', usage, model, usedUrl };
       }
       throw e;
     }
   }
 
   if (canSiliconflow) {
-    const { text } = await callSiliconFlowChat({
+    const { text, usage, model, usedUrl } = await callSiliconFlowChat({
       messages: toSiliconflowMessages(),
       timeoutMs,
       maxTokens: reactionMode ? 512 : 2048
     });
-    return { text, provider: 'siliconflow' };
+    return { text, provider: 'siliconflow', usage, model, usedUrl };
   }
 
-  return { text: '', provider: 'offline' };
+  return { text: '', provider: 'offline', usage: null, model: 'offline', usedUrl: '' };
 };
 
 const callGeminiEmbed = async ({ body, timeoutMs }) => {
@@ -388,6 +691,105 @@ const clampInt = (n, min, max) => {
   const v = Number.parseInt(String(n || ''), 10);
   if (!Number.isFinite(v)) return min;
   return Math.max(min, Math.min(max, v));
+};
+
+const USAGE_LEDGER_MAX_ITEMS = (() => {
+  const v = Number.parseInt(process.env.USAGE_LEDGER_MAX_ITEMS || '', 10);
+  return Number.isFinite(v) && v > 0 ? v : 20000;
+})();
+const USAGE_CREDITS_PER_1K_TOKENS = (() => {
+  const v = Number.parseFloat(process.env.USAGE_CREDITS_PER_1K_TOKENS || '');
+  return Number.isFinite(v) && v >= 0 ? v : 1;
+})();
+const USAGE_CREDITS_PER_RAG_QUERY = (() => {
+  const v = Number.parseFloat(process.env.USAGE_CREDITS_PER_RAG_QUERY || '');
+  return Number.isFinite(v) && v >= 0 ? v : 1;
+})();
+
+const sanitizeLedgerId = (raw, fallback = '') => {
+  const s = String(raw || '').trim();
+  if (!s) return fallback;
+  const safe = s.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 96);
+  return safe || fallback;
+};
+
+const readUsageLedgerStore = () => {
+  const data = readJson(USAGE_LEDGER_FILE, { v: 1, items: [] });
+  if (!data || typeof data !== 'object') return { v: 1, items: [] };
+  const items = Array.isArray(data.items) ? data.items.filter((x) => x && typeof x === 'object') : [];
+  return { v: 1, items };
+};
+
+const mergeLedgerItem = (prev, next) => {
+  const out = { ...(prev || {}) };
+  for (const [k, v] of Object.entries(next || {})) {
+    if (v === undefined || v === null) continue;
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (!s) continue;
+      out[k] = s;
+      continue;
+    }
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) continue;
+      out[k] = v;
+      continue;
+    }
+    if (Array.isArray(v)) {
+      if (v.length === 0) continue;
+      out[k] = v;
+      continue;
+    }
+    if (typeof v === 'object') {
+      if (!v || Object.keys(v).length === 0) continue;
+      out[k] = v;
+      continue;
+    }
+    out[k] = v;
+  }
+  return out;
+};
+
+const upsertUsageLedgerItem = (input) => {
+  const requestId = sanitizeLedgerId(input?.requestId);
+  if (!requestId) return { ok: false, error: 'requestId is required' };
+
+  const store = readUsageLedgerStore();
+  const items = store.items;
+  const idx = items.findIndex((x) => String(x?.requestId || '') === requestId);
+
+  if (idx >= 0) {
+    const prev = items[idx];
+    const chargedAlready = !!prev?.chargedAt;
+    const merged = mergeLedgerItem(prev, { ...input, requestId, updatedAt: Date.now() });
+    items[idx] = merged;
+    writeJson(USAGE_LEDGER_FILE, { v: 1, items: items.slice(-USAGE_LEDGER_MAX_ITEMS) });
+    return { ok: true, existed: true, chargedAlready, item: merged };
+  }
+
+  const createdAt = typeof input?.ts === 'number' ? input.ts : Date.now();
+  const item = mergeLedgerItem(
+    {
+      requestId,
+      ts: createdAt,
+      createdAt,
+      updatedAt: createdAt
+    },
+    input
+  );
+
+  items.push(item);
+  if (items.length > USAGE_LEDGER_MAX_ITEMS) items.splice(0, items.length - USAGE_LEDGER_MAX_ITEMS);
+  writeJson(USAGE_LEDGER_FILE, { v: 1, items });
+  return { ok: true, existed: false, chargedAlready: false, item };
+};
+
+const computeCreditsDelta = (input) => {
+  const tokens = Number(input?.tokensTotal || 0);
+  const ragUsed = !!input?.ragUsed;
+  const creditsFromTokens = tokens > 0 ? Math.max(1, Math.ceil((tokens / 1000) * USAGE_CREDITS_PER_1K_TOKENS)) : 0;
+  const creditsFromRag = ragUsed ? USAGE_CREDITS_PER_RAG_QUERY : 0;
+  return creditsFromTokens + creditsFromRag;
 };
 
 const toOneLine = (text) => {
@@ -794,11 +1196,35 @@ app.get('/api/health', async (req, res) => {
   const proxyUrl =
     process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || '';
 
+  const hfBases = HF_RESOLVE_BASES.map((b) => normalizeUpstreamBase(b)).filter(Boolean);
+  const hfHealth = hfBases.map((b) => {
+    const s = hfProxyBaseHealth.get(b) || { failCount: 0, downUntil: 0 };
+    const downUntil = Number(s?.downUntil || 0);
+    return {
+      base: b,
+      failCount: Number(s?.failCount || 0),
+      downUntil: downUntil || 0,
+      down: downUntil > Date.now()
+    };
+  });
+
   const result = {
     ok: true,
     serverTime: Date.now(),
     hasApiKey,
     textProvider: activeTextProvider,
+    hf: {
+      resolveBases: HF_RESOLVE_BASES,
+      apiBases: HF_API_BASES,
+      baseHealth: hfHealth,
+      cache: {
+        dir: HF_CACHE_DIR,
+        ttlMs: HF_CACHE_TTL_MS,
+        maxBytes: HF_CACHE_MAX_BYTES,
+        maxFiles: HF_CACHE_MAX_FILES,
+        usage: getHfCacheUsage()
+      }
+    },
     gemini: {
       generateUrls: GEMINI_GENERATE_URLS,
       embedUrls: GEMINI_EMBED_URLS,
@@ -813,6 +1239,15 @@ app.get('/api/health', async (req, res) => {
       hasApiKey: hasSiliconflowKey,
       lastProbe: null
     },
+    rag: {
+      vectorsFile: VECTORS_FILE,
+      exists: false,
+      sizeBytes: 0,
+      totalVectors: 0,
+      withEmbedding: 0,
+      embeddingNull: 0,
+      sources: 0
+    },
     modedoc: {
       root: MODEDOC_ROOT,
       indexed: false,
@@ -820,6 +1255,31 @@ app.get('/api/health', async (req, res) => {
       countEn: 0
     }
   };
+
+  try {
+    if (fs.existsSync(VECTORS_FILE)) {
+      result.rag.exists = true;
+      const st = fs.statSync(VECTORS_FILE);
+      result.rag.sizeBytes = Number(st?.size || 0);
+      const vectors0 = readJson(VECTORS_FILE, []);
+      const vectors = Array.isArray(vectors0) ? vectors0 : [];
+      result.rag.totalVectors = vectors.length;
+      let withEmbedding = 0;
+      let embeddingNull = 0;
+      const sources = new Set();
+      for (const v of vectors) {
+        const emb = v?.embedding;
+        if (Array.isArray(emb) && emb.length > 0) withEmbedding += 1;
+        else embeddingNull += 1;
+        const meta = v?.metadata && typeof v.metadata === 'object' ? v.metadata : null;
+        const src = typeof meta?.sourceRel === 'string' ? meta.sourceRel : typeof meta?.source === 'string' ? meta.source : '';
+        if (src && String(src).trim()) sources.add(String(src).trim());
+      }
+      result.rag.withEmbedding = withEmbedding;
+      result.rag.embeddingNull = embeddingNull;
+      result.rag.sources = sources.size;
+    }
+  } catch {}
 
   try {
     const idx = buildModeDocIndex();
@@ -900,27 +1360,192 @@ const proxyHuggingFace = async (req, res) => {
   const restParam = req.params.rest;
   const rest = Array.isArray(restParam) ? restParam.join('/') : restParam || '';
 
-  const candidates = HF_RESOLVE_BASES.map((base) => {
-    const trimmed = String(base || '').trim().replace(/\/+$/, '');
-    return `${trimmed}/${owner}/${repo}/resolve/${ref}/${rest}`;
-  }).filter(Boolean);
+  const inferContentType = (p) => {
+    const raw = (p || '').toString().split('?')[0].split('#')[0];
+    const lower = raw.toLowerCase();
+    const ext = (lower.split('.').pop() || '').trim();
+    if (!ext) return '';
+    if (ext === 'json') return 'application/json; charset=utf-8';
+    if (ext === 'js') return 'application/javascript; charset=utf-8';
+    if (ext === 'css') return 'text/css; charset=utf-8';
+    if (ext === 'txt' || ext === 'atlas' || ext === 'vtt') return 'text/plain; charset=utf-8';
+    if (ext === 'svg') return 'image/svg+xml';
+    if (ext === 'png') return 'image/png';
+    if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+    if (ext === 'gif') return 'image/gif';
+    if (ext === 'webp') return 'image/webp';
+    if (ext === 'mp3') return 'audio/mpeg';
+    if (ext === 'wav') return 'audio/wav';
+    if (ext === 'ogg') return 'audio/ogg';
+    if (ext === 'm4a') return 'audio/mp4';
+    if (ext === 'wasm') return 'application/wasm';
+    if (ext === 'glb' || ext === 'vrm') return 'model/gltf-binary';
+    if (ext === 'gltf') return 'model/gltf+json';
+    return '';
+  };
+
+  const cacheKey = `${owner}/${repo}@${ref}/${rest}`;
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    const cached = hfProxyNegativeCache.get(cacheKey);
+    if (cached && cached?.expiresAt > Date.now() && cached?.status) {
+      res.status(cached.status);
+      res.setHeader('Cache-Control', 'public, max-age=60');
+      res.end();
+      return;
+    }
+  }
+
+  const rangeHeader = typeof req.headers.range === 'string' ? req.headers.range : '';
+  const wantRange = !!rangeHeader;
+  const cacheEnabled = HF_CACHE_TTL_MS >= 0 && ensureDirSync(HF_CACHE_DIR);
+  const cachePaths = cacheEnabled ? getCachePaths(cacheKey, rest) : null;
+  const cacheFileStat = cachePaths ? statSafe(cachePaths.filePath) : null;
+  const cacheFresh =
+    !!cacheFileStat &&
+    cacheFileStat.isFile() &&
+    (HF_CACHE_TTL_MS === 0 || Date.now() - Number(cacheFileStat.mtimeMs || 0) <= HF_CACHE_TTL_MS) &&
+    Number(cacheFileStat.size || 0) > 0;
+
+  const tryServeFromCache = () => {
+    if (!cacheFresh || !cachePaths) return false;
+    const meta = readCacheMeta(cachePaths.metaPath);
+    const contentType =
+      (typeof meta?.contentType === 'string' && meta.contentType.trim() && meta.contentType) ||
+      inferContentType(rest) ||
+      'application/octet-stream';
+
+    const size = Number(cacheFileStat.size || 0);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Content-Type', contentType);
+    if (typeof meta?.etag === 'string' && meta.etag.trim()) res.setHeader('ETag', meta.etag);
+    if (typeof meta?.lastModified === 'string' && meta.lastModified.trim())
+      res.setHeader('Last-Modified', meta.lastModified);
+    res.setHeader('Content-Disposition', 'inline');
+
+    if (wantRange) {
+      const m = rangeHeader.match(/bytes\s*=\s*(\d*)\s*-\s*(\d*)/i);
+      const startRaw = m ? m[1] : '';
+      const endRaw = m ? m[2] : '';
+      const start = startRaw ? Number.parseInt(startRaw, 10) : 0;
+      const end = endRaw ? Number.parseInt(endRaw, 10) : size - 1;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= size) {
+        res.status(416);
+        res.setHeader('Content-Range', `bytes */${size}`);
+        res.end();
+        return true;
+      }
+
+      res.status(206);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Range', `bytes ${start}-${Math.min(end, size - 1)}/${size}`);
+      res.setHeader('Content-Length', String(Math.min(end, size - 1) - start + 1));
+
+      if (req.method === 'HEAD') {
+        res.end();
+        return true;
+      }
+
+      fs.createReadStream(cachePaths.filePath, { start, end: Math.min(end, size - 1) }).pipe(res);
+      return true;
+    }
+
+    res.status(200);
+    res.setHeader('Content-Length', String(size));
+    if (req.method === 'HEAD') {
+      res.end();
+      return true;
+    }
+
+    fs.createReadStream(cachePaths.filePath).pipe(res);
+    return true;
+  };
+
+  if (tryServeFromCache()) return;
+
+  const preferBaseRaw = normalizeResolveBasePreference(req.query.base || req.query.preferBase || '');
+  const allowedBases = new Set(HF_RESOLVE_BASES.map((b) => normalizeUpstreamBase(b)));
+  const preferBaseNormalized = normalizeUpstreamBase(preferBaseRaw);
+  const preferBase = preferBaseNormalized && allowedBases.has(preferBaseNormalized) ? preferBaseRaw : '';
+
+  const candidates = pickResolveCandidates({ owner, repo, ref, rest, preferBase });
 
   const headers = {};
-  const forwardKeys = ['range', 'if-none-match', 'if-modified-since', 'accept'];
+  const forwardKeys = ['range', 'if-none-match', 'if-modified-since', 'accept', 'user-agent', 'accept-encoding'];
   for (const k of forwardKeys) {
     const v = req.headers[k];
     if (typeof v === 'string' && v) headers[k] = v;
   }
 
   let lastError = null;
-  for (const url of candidates) {
+  let lastStatus = 0;
+  let gotNotFound = false;
+  let notFoundCount = 0;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    const url = candidate.url;
+    const base = candidate.base;
     try {
+      if ((req.method === 'GET' || req.method === 'HEAD') && i > 0 && gotNotFound) {
+        try {
+          const probe = await fetchWithTimeout(
+            url,
+            { method: 'HEAD', headers, redirect: 'follow', compress: false },
+            2500
+          );
+          if (probe.status === 404 || probe.status === 410) {
+            lastStatus = probe.status;
+            gotNotFound = true;
+            notFoundCount += 1;
+            try {
+              probe.body?.destroy?.();
+            } catch {}
+            continue;
+          }
+          if (probe.status >= 500 || probe.status === 403 || probe.status === 429) {
+            lastStatus = probe.status;
+            try {
+              probe.body?.destroy?.();
+            } catch {}
+            continue;
+          }
+          try {
+            probe.body?.destroy?.();
+          } catch {}
+        } catch (e) {
+          lastError = e;
+          markUpstreamBaseFailure(base);
+          continue;
+        }
+      }
+
+      const timeoutMs = gotNotFound ? 9000 : 12000;
       const upstream = await fetchWithTimeout(
         url,
         { method: req.method, headers, redirect: 'follow', compress: false },
-        20000
+        timeoutMs
       );
-      res.status(upstream.status);
+
+      const status = upstream.status;
+      lastStatus = status;
+      const isOk = status === 200 || status === 206 || status === 304;
+      const shouldTryNext =
+        !isOk &&
+        i < candidates.length - 1 &&
+        (status === 404 || status === 410 || status === 403 || status === 429 || status >= 500);
+
+      if (shouldTryNext) {
+        if (status === 404 || status === 410) {
+          gotNotFound = true;
+          notFoundCount += 1;
+        }
+        try {
+          upstream.body?.destroy?.();
+        } catch {}
+        continue;
+      }
+
+      res.status(status);
+      let upstreamContentType = '';
       upstream.headers?.forEach((value, key) => {
         if (!key) return;
         const lower = key.toLowerCase();
@@ -932,38 +1557,130 @@ const proxyHuggingFace = async (req, res) => {
           lower === 'proxy-authorization' ||
           lower === 'te' ||
           lower === 'trailer' ||
-          lower === 'upgrade'
+          lower === 'upgrade' ||
+          lower === 'content-disposition'
         ) {
           return;
         }
+        if (lower === 'content-type') upstreamContentType = value;
         res.setHeader(key, value);
       });
+
+      try {
+        const inferred = inferContentType(rest);
+        if (inferred) {
+          const ct = (upstreamContentType || '').toString().toLowerCase();
+          if (!ct || ct.includes('application/octet-stream')) {
+            res.setHeader('Content-Type', inferred);
+          }
+        }
+        res.setHeader('Content-Disposition', 'inline');
+      } catch {}
 
       if (req.method === 'HEAD') {
         res.end();
         return;
       }
 
+      const shouldCache = cacheEnabled && !!cachePaths && req.method === 'GET' && !wantRange && status === 200;
+
       if (!upstream.body) {
         const buf = await upstream.arrayBuffer();
-        res.end(Buffer.from(buf));
+        const out = Buffer.from(buf);
+        if (shouldCache) {
+          try {
+            const tmp = `${cachePaths.filePath}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            fs.writeFileSync(tmp, out);
+            fs.renameSync(tmp, cachePaths.filePath);
+            writeCacheMeta(cachePaths.metaPath, {
+              key: cacheKey,
+              owner,
+              repo,
+              ref,
+              rest,
+              cachedAt: Date.now(),
+              size: out.length,
+              contentType: res.getHeader('Content-Type') || upstreamContentType || '',
+              etag: upstream.headers?.get ? upstream.headers.get('etag') : '',
+              lastModified: upstream.headers?.get ? upstream.headers.get('last-modified') : ''
+            });
+            schedulePruneHfCache();
+          } catch {}
+        }
+        res.end(out);
         return;
       }
 
-      upstream.body.pipe(res);
+      if (shouldCache) {
+        try {
+          const tmp = `${cachePaths.filePath}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          const ws = fs.createWriteStream(tmp);
+          const tee = new PassThrough();
+          tee.pipe(res);
+          tee.pipe(ws);
+          ws.on('finish', () => {
+            try {
+              fs.renameSync(tmp, cachePaths.filePath);
+              const st = statSafe(cachePaths.filePath);
+              writeCacheMeta(cachePaths.metaPath, {
+                key: cacheKey,
+                owner,
+                repo,
+                ref,
+                rest,
+                cachedAt: Date.now(),
+                size: st ? Number(st.size || 0) : 0,
+                contentType: res.getHeader('Content-Type') || upstreamContentType || '',
+                etag: upstream.headers?.get ? upstream.headers.get('etag') : '',
+                lastModified: upstream.headers?.get ? upstream.headers.get('last-modified') : ''
+              });
+              schedulePruneHfCache();
+            } catch {}
+          });
+          ws.on('error', () => {
+            try {
+              ws.close();
+            } catch {}
+            try {
+              fs.unlinkSync(tmp);
+            } catch {}
+          });
+          upstream.body.pipe(tee);
+        } catch {
+          upstream.body.pipe(res);
+        }
+      } else {
+        upstream.body.pipe(res);
+      }
       return;
     } catch (e) {
       lastError = e;
+      markUpstreamBaseFailure(base);
     }
+  }
+
+  if ((req.method === 'GET' || req.method === 'HEAD') && (lastStatus === 404 || lastStatus === 410 || notFoundCount)) {
+    hfProxyNegativeCache.set(cacheKey, { status: lastStatus || 404, expiresAt: Date.now() + HF_PROXY_NEGATIVE_TTL_MS });
+    res.status(lastStatus || 404);
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.end();
+    return;
   }
 
   res.status(502).json({
     error: 'Failed to proxy HuggingFace resource',
+    status: lastStatus || 0,
+    preferBase: preferBase || null,
+    triedBases: candidates.map((c) => c.base).filter(Boolean),
     detail: lastError ? String(lastError?.message || lastError) : 'unknown'
   });
 };
 
-app.all('/api/hf/:owner/:repo/resolve/:ref/*rest', proxyHuggingFace);
+app.all(
+  '/api/hf/:owner/:repo/resolve/:ref/*rest',
+  rateLimit('hf_proxy', { max: HF_PROXY_RATE_MAX, windowMs: HF_PROXY_RATE_WINDOW_MS }),
+  proxyHuggingFace
+);
 
 const proxyLive2DCubismCore = async (req, res) => {
   const candidates = [
@@ -1035,7 +1752,7 @@ app.all('/api/live2d-core/live2dcubismcore.min.js', proxyLive2DCubismCore);
 const hfListCache = new Map();
 const HF_LIST_TTL_MS = 10 * 60 * 1000;
 
-app.get('/api/hf-list/:owner/:repo', async (req, res) => {
+app.get('/api/hf-list/:owner/:repo', rateLimit('hf_list', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
   const owner = req.params.owner;
   const repo = req.params.repo;
   const ref = typeof req.query.ref === 'string' && req.query.ref ? req.query.ref : 'main';
@@ -1441,6 +2158,180 @@ const appendUserMemoryItems = async (input) => {
   return mem0;
 };
 
+const resolveRepoRoot = () => {
+  try {
+    return path.resolve(__dirname, '..');
+  } catch {
+    return path.resolve(__dirname);
+  }
+};
+
+const REPO_ROOT = resolveRepoRoot();
+
+const isPathInside = (candidatePath, baseDir) => {
+  try {
+    const base = path.resolve(baseDir);
+    const full = path.resolve(candidatePath);
+    const rel = path.relative(base, full);
+    return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+  } catch {
+    return false;
+  }
+};
+
+const listFilesRecursively = (rootDir, predicate, options) => {
+  const out = [];
+  const maxFiles = typeof options?.maxFiles === 'number' ? Math.max(0, options.maxFiles) : 4000;
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    if (!cur) continue;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      const full = path.join(cur, ent.name);
+      if (ent.isDirectory()) {
+        if (ent.name === 'node_modules' || ent.name === '.git' || ent.name === 'dist') continue;
+        stack.push(full);
+        continue;
+      }
+      if (!ent.isFile()) continue;
+      if (predicate && !predicate(full, ent)) continue;
+      out.push(full);
+      if (out.length >= maxFiles) return out;
+    }
+  }
+  return out;
+};
+
+const readTextFileSafe = (filePath, maxBytes) => {
+  try {
+    const stat = fs.statSync(filePath);
+    const limit = typeof maxBytes === 'number' ? Math.max(1024, maxBytes) : 512 * 1024;
+    if (!stat || typeof stat.size !== 'number' || stat.size <= 0) return '';
+    if (stat.size > limit) return '';
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    return (raw || '').toString();
+  } catch {
+    return '';
+  }
+};
+
+const hashText = (text) => {
+  try {
+    return crypto.createHash('sha1').update(String(text || ''), 'utf8').digest('hex');
+  } catch {
+    return String(Math.random()).slice(2);
+  }
+};
+
+const chunkTextByParagraphs = (text, maxChars) => {
+  const limit = typeof maxChars === 'number' ? Math.max(240, Math.min(2400, maxChars)) : 900;
+  const raw = String(text || '').replace(/\r\n/g, '\n');
+  const blocks = raw
+    .split(/\n{2,}/g)
+    .map((b) => b.trim())
+    .filter(Boolean);
+  const out = [];
+  let cur = '';
+  const pushCur = () => {
+    const v = cur.trim();
+    if (v) out.push(v);
+    cur = '';
+  };
+  for (const b of blocks) {
+    if (!cur) {
+      if (b.length <= limit) {
+        cur = b;
+      } else {
+        for (let i = 0; i < b.length; i += limit) out.push(b.slice(i, i + limit).trim());
+      }
+      continue;
+    }
+    if (cur.length + 2 + b.length <= limit) {
+      cur = `${cur}\n\n${b}`;
+      continue;
+    }
+    pushCur();
+    if (b.length <= limit) {
+      cur = b;
+    } else {
+      for (let i = 0; i < b.length; i += limit) out.push(b.slice(i, i + limit).trim());
+    }
+  }
+  pushCur();
+  return out;
+};
+
+const buildDocVectorsFromRoots = (input) => {
+  const roots = Array.isArray(input?.roots) ? input.roots : [];
+  const lang = input?.lang === 'en' ? 'en' : 'zh';
+  const maxFiles = typeof input?.maxFiles === 'number' ? input.maxFiles : 1200;
+  const maxBytes = typeof input?.maxBytes === 'number' ? input.maxBytes : 512 * 1024;
+  const chunkChars = typeof input?.chunkChars === 'number' ? input.chunkChars : 900;
+  const maxChunks = typeof input?.maxChunks === 'number' ? input.maxChunks : 12000;
+
+  const normalizedRoots = roots
+    .map((r) => (typeof r === 'string' ? r.trim() : ''))
+    .filter(Boolean)
+    .map((r) => path.resolve(REPO_ROOT, r))
+    .filter((r) => isPathInside(r, REPO_ROOT));
+
+  const mdFiles = [];
+  for (const root of normalizedRoots) {
+    const hits = listFilesRecursively(
+      root,
+      (p) => /\.md$/i.test(p),
+      { maxFiles }
+    );
+    mdFiles.push(...hits);
+  }
+
+  const files = [];
+  for (const f of mdFiles) {
+    const rel = path.relative(REPO_ROOT, f);
+    if (!rel || rel.startsWith('..')) continue;
+    files.push({ abs: f, rel });
+  }
+
+  const docs = [];
+  const perSourceCounts = new Map();
+  for (const file of files) {
+    if (docs.length >= maxChunks) break;
+    const raw = readTextFileSafe(file.abs, maxBytes);
+    const cleaned = (raw || '').trim();
+    if (!cleaned) continue;
+
+    const chunks = chunkTextByParagraphs(cleaned, chunkChars).slice(0, Math.max(1, Math.min(80, maxChunks - docs.length)));
+    let idx = 0;
+    for (const chunk of chunks) {
+      const text = String(chunk || '').trim();
+      if (!text) continue;
+      const id = `doc:${lang}:${file.rel}:${idx}:${hashText(text).slice(0, 10)}`;
+      docs.push({
+        id,
+        text,
+        metadata: {
+          kind: 'doc',
+          lang,
+          sourceRel: file.rel,
+          chunk: idx,
+          hash: hashText(text).slice(0, 16)
+        }
+      });
+      idx += 1;
+      if (docs.length >= maxChunks) break;
+    }
+    perSourceCounts.set(file.rel, idx);
+  }
+
+  return { docs, perSourceCounts, roots: normalizedRoots.map((r) => path.relative(REPO_ROOT, r)) };
+};
+
 // --- Endpoints ---
 
 // 1. Embed Document (Admin/Setup)
@@ -1479,44 +2370,318 @@ app.post('/api/embed', async (req, res) => {
   }
 });
 
-// 2. User Profile Management & Authentication
+app.post('/api/embed/fs', rateLimit('embed_fs', { max: 3, windowMs: 60 * 1000 }), async (req, res) => {
+  try {
+    const lang = req?.body?.lang === 'en' ? 'en' : 'zh';
+    const rootsRaw = Array.isArray(req?.body?.roots) ? req.body.roots : null;
+    const roots = rootsRaw && rootsRaw.length ? rootsRaw : ['doc/read/docs'];
+    const chunkChars = typeof req?.body?.chunkChars === 'number' ? req.body.chunkChars : 900;
+    const maxFiles = typeof req?.body?.maxFiles === 'number' ? req.body.maxFiles : 1200;
+    const maxChunks = typeof req?.body?.maxChunks === 'number' ? req.body.maxChunks : 12000;
+    const maxBytes = typeof req?.body?.maxBytes === 'number' ? req.body.maxBytes : 512 * 1024;
 
-// Helper to generate simple token (mock)
-const generateToken = () => Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const startedAt = Date.now();
+    const built = buildDocVectorsFromRoots({ roots, lang, chunkChars, maxFiles, maxChunks, maxBytes });
+    const vectors0 = readJson(VECTORS_FILE, []);
+    const vectors = Array.isArray(vectors0) ? vectors0 : [];
+
+    const touchedSources = new Set();
+    for (const d of built.docs) {
+      const s = d?.metadata?.sourceRel;
+      if (typeof s === 'string' && s.trim()) touchedSources.add(s.trim());
+    }
+
+    const kept = vectors.filter((v) => {
+      const meta = v?.metadata && typeof v.metadata === 'object' ? v.metadata : null;
+      if (!meta) return true;
+      const kind = typeof meta.kind === 'string' ? meta.kind : '';
+      const sourceRel = typeof meta.sourceRel === 'string' ? meta.sourceRel : '';
+      if (kind !== 'doc' || !sourceRel) return true;
+      return !touchedSources.has(sourceRel);
+    });
+
+    const byId = new Map();
+    for (const v of kept) {
+      const id = typeof v?.id === 'string' ? v.id : '';
+      if (!id) continue;
+      byId.set(id, v);
+    }
+
+    let embeddedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    for (const doc of built.docs) {
+      const text = String(doc?.text || '').trim();
+      if (!text) continue;
+      const id = typeof doc?.id === 'string' ? doc.id : '';
+      if (!id) continue;
+      if (byId.has(id)) {
+        skippedCount += 1;
+        continue;
+      }
+      const embedding = await getEmbedding(text);
+      if (!embedding) failedCount += 1;
+      byId.set(id, {
+        id,
+        text,
+        metadata: doc.metadata || {},
+        embedding: embedding || null
+      });
+      embeddedCount += 1;
+      if (embeddedCount >= maxChunks) break;
+    }
+
+    const next = Array.from(byId.values());
+    writeJson(VECTORS_FILE, next);
+
+    res.json({
+      ok: true,
+      lang,
+      roots: built.roots,
+      sources: Array.from(touchedSources),
+      counts: {
+        sources: touchedSources.size,
+        documents: built.docs.length,
+        embedded: embeddedCount,
+        skipped: skippedCount,
+        embeddingFailed: failedCount,
+        totalVectors: next.length
+      },
+      elapsedMs: Date.now() - startedAt
+    });
+  } catch (error) {
+    const msg = typeof error?.message === 'string' ? error.message : String(error);
+    console.error('Error in /api/embed/fs:', msg);
+    res.status(500).json({ ok: false, error: 'Internal Server Error' });
+  }
+});
+
+// 2. User Profile Management & Authentication
+const generateToken = () => {
+  try {
+    return `${crypto.randomBytes(24).toString('hex')}${Date.now().toString(36)}`;
+  } catch {
+    return Math.random().toString(36).substring(2) + Date.now().toString(36);
+  }
+};
+
+const normalizeUsername = (raw) => String(raw || '').trim();
+
+const makeUserId = () => {
+  const ts = Date.now().toString(36);
+  const rnd = (() => {
+    try {
+      return crypto.randomBytes(6).toString('hex');
+    } catch {
+      return Math.random().toString(16).slice(2);
+    }
+  })();
+  return `user_${ts}_${rnd.slice(0, 12)}`;
+};
+
+const hashPassword = (password, salt) => {
+  const pw = String(password || '');
+  const s = String(salt || '');
+  const buf = crypto.scryptSync(pw, s, 32);
+  return buf.toString('hex');
+};
+
+const verifyPassword = (user, password) => {
+  const pw = String(password || '');
+  const algo = typeof user?.passwordAlgo === 'string' ? user.passwordAlgo : '';
+  const salt = typeof user?.passwordSalt === 'string' ? user.passwordSalt : '';
+  const expected = typeof user?.passwordHash === 'string' ? user.passwordHash : '';
+  if (algo === 'scrypt' && salt && expected) {
+    try {
+      const actual = hashPassword(pw, salt);
+      const a = Buffer.from(actual, 'hex');
+      const b = Buffer.from(expected, 'hex');
+      if (a.length !== b.length) return { ok: false, upgraded: false };
+      return { ok: crypto.timingSafeEqual(a, b), upgraded: false };
+    } catch {
+      return { ok: false, upgraded: false };
+    }
+  }
+
+  const legacy = typeof user?.password === 'string' ? user.password : '';
+  if (legacy && legacy === pw) return { ok: true, upgraded: true };
+  return { ok: false, upgraded: false };
+};
+
+const sanitizeUserProfile = (u) => {
+  if (!u || typeof u !== 'object') return u;
+  const out = { ...u };
+  delete out.password;
+  delete out.passwordHash;
+  delete out.passwordSalt;
+  delete out.passwordAlgo;
+  return out;
+};
+
+const readUsersMap = () => {
+  const users = readJson(USERS_FILE, {});
+  return users && typeof users === 'object' ? users : {};
+};
+
+const parseBearerToken = (req) => {
+  const raw = typeof req?.headers?.authorization === 'string' ? req.headers.authorization.trim() : '';
+  if (!raw) return '';
+  const m = raw.match(/^Bearer\s+(.+)$/i);
+  return m ? String(m[1] || '').trim() : '';
+};
+
+const resolveAuthUser = (req) => {
+  const token = parseBearerToken(req);
+  if (!token) return { ok: false, status: 401, error: 'Missing token' };
+  const users = readUsersMap();
+  const hit = Object.values(users).find((u) => String(u?.sessionToken || '') === token);
+  const userId = typeof hit?.id === 'string' ? hit.id.trim() : '';
+  if (!userId) return { ok: false, status: 401, error: 'Invalid token' };
+  return { ok: true, userId, token };
+};
+
+const assertAuthUserMatches = (req, res, requestedUserId) => {
+  const userId = String(requestedUserId || '').trim();
+  if (!userId) {
+    res.status(400).json({ error: 'UserId is required' });
+    return null;
+  }
+  if (userId.startsWith('guest_')) return { userId, isGuest: true };
+  const auth = resolveAuthUser(req);
+  if (!auth.ok) {
+    res.status(auth.status).json({ error: auth.error });
+    return null;
+  }
+  if (auth.userId !== userId) {
+    res.status(403).json({ error: 'Forbidden' });
+    return null;
+  }
+  return { userId, isGuest: false };
+};
+
+try {
+  installImgagentRoutes(app, { assertAuthUserMatches });
+} catch (e) {
+  console.error('Error installing imgagent routes:', e);
+}
+
+const mergeUserData = (fromUserId, toUserId) => {
+  const from = String(fromUserId || '').trim();
+  const to = String(toUserId || '').trim();
+  if (!from || !to || from === to) return { ok: false, reason: 'invalid' };
+
+  try {
+    const allChats = readJson(CHATS_FILE, {});
+    const fromChats = Array.isArray(allChats[from]) ? allChats[from] : [];
+    const toChats = Array.isArray(allChats[to]) ? allChats[to] : [];
+    if (fromChats.length) {
+      const merged = [...toChats, ...fromChats].filter((m) => m && typeof m === 'object');
+      allChats[to] = merged.slice(-240);
+      delete allChats[from];
+      writeJson(CHATS_FILE, allChats);
+    }
+  } catch {}
+
+  try {
+    const a = ensureUserMemoryShape(from, readUserMemory(from, null));
+    const b = ensureUserMemoryShape(to, readUserMemory(to, null));
+    const core = dedupeStrings([...(b.core_memory || []), ...(a.core_memory || [])], 80);
+    const buffer = [...(b.short_term_buffer || []), ...(a.short_term_buffer || [])]
+      .filter((x) => x && typeof x === 'object')
+      .slice(-12);
+    const merged = ensureUserMemoryShape(to, {
+      user_id: to,
+      meta: {
+        ...(b.meta || {}),
+        updatedAt: Date.now(),
+        migratedFrom: from
+      },
+      core_memory: core,
+      short_term_buffer: buffer
+    });
+    writeUserMemory(to, merged);
+  } catch {}
+
+  try {
+    imgCredits.mergeWallet(from, to);
+  } catch {}
+
+  if (from.startsWith('guest_')) {
+    try {
+      const p = getUserMemoryFile(from);
+      if (p && fs.existsSync(p)) fs.unlinkSync(p);
+    } catch {}
+    try {
+      const users = readJson(USERS_FILE, {});
+      if (users && typeof users === 'object' && users[from]) {
+        delete users[from];
+        writeJson(USERS_FILE, users);
+      }
+    } catch {}
+  }
+
+  return { ok: true };
+};
 
 app.post('/api/auth/register', (req, res) => {
   try {
-    const { username, password, name } = req.body;
-    if (!username || !password) {
+    const { username, password, name, fromUserId } = req.body || {};
+    const uname = normalizeUsername(username);
+    const pw = String(password || '');
+    if (!uname || !pw) {
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
-    const users = readJson(USERS_FILE, {});
+    const users = readUsersMap();
     
     // Check if username already exists
-    const existingUser = Object.values(users).find(u => u.username === username);
+    const existingUser = Object.values(users).find((u) => {
+      const u0 = normalizeUsername(u?.username);
+      return u0 && u0.toLowerCase() === uname.toLowerCase();
+    });
     if (existingUser) {
       return res.status(409).json({ error: 'Username already exists' });
     }
 
-    const userId = 'user_' + Date.now();
+    const userId = makeUserId();
+    const salt = crypto.randomBytes(16).toString('hex');
+    const passwordHash = hashPassword(pw, salt);
+    const token = generateToken();
     const newUser = {
       id: userId,
-      username,
-      password, // In a real app, HASH this!
-      name: name || username,
+      username: uname,
+      passwordHash,
+      passwordSalt: salt,
+      passwordAlgo: 'scrypt',
+      name: String(name || '').trim() || uname,
       visits: 0,
       preferences: {},
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      sessionToken: token,
+      sessionTokenIssuedAt: Date.now()
     };
 
     users[userId] = newUser;
     writeJson(USERS_FILE, users);
 
+    try {
+      const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+      writeUserMemory(userId, mem);
+    } catch {}
+
+    try {
+      imgCredits.ensureWallet(userId);
+    } catch {}
+
+    try {
+      const from = String(fromUserId || '').trim();
+      if (from && from !== userId && from.startsWith('guest_')) mergeUserData(from, userId);
+    } catch {}
+
     res.json({ 
       userId: newUser.id, 
       name: newUser.name,
-      token: generateToken() 
+      token
     });
 
   } catch (error) {
@@ -1527,25 +2692,68 @@ app.post('/api/auth/register', (req, res) => {
 
 app.post('/api/auth/login', (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
+    const { username, password, fromUserId } = req.body || {};
+    const uname = normalizeUsername(username);
+    const pw = String(password || '');
+    if (!uname || !pw) {
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
-    const users = readJson(USERS_FILE, {});
+    const users = readUsersMap();
     
     // Find user by username
-    const user = Object.values(users).find(u => u.username === username);
+    const user = Object.values(users).find((u) => {
+      const u0 = normalizeUsername(u?.username);
+      return u0 && u0.toLowerCase() === uname.toLowerCase();
+    });
     
-    if (!user || user.password !== password) {
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    const verified = verifyPassword(user, pw);
+    if (!verified.ok) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    res.json({ 
-      userId: user.id, 
-      name: user.name,
-      token: generateToken() 
-    });
+    if (verified.upgraded) {
+      try {
+        const salt = crypto.randomBytes(16).toString('hex');
+        const passwordHash = hashPassword(pw, salt);
+        const userId = String(user.id || '').trim();
+        if (userId && users[userId]) {
+          users[userId] = {
+            ...users[userId],
+            passwordHash,
+            passwordSalt: salt,
+            passwordAlgo: 'scrypt'
+          };
+          delete users[userId].password;
+          writeJson(USERS_FILE, users);
+        }
+      } catch {}
+    }
+
+    const uid = String(user.id || '').trim();
+    const token = generateToken();
+    const target = users[uid] || null;
+    if (!target) return res.status(500).json({ error: 'Internal Server Error' });
+    const visits = Number(target.visits || 0) + 1;
+    users[uid] = {
+      ...target,
+      visits,
+      lastSeen: Date.now(),
+      sessionToken: token,
+      sessionTokenIssuedAt: Date.now()
+    };
+    writeJson(USERS_FILE, users);
+
+    try {
+      const from = String(fromUserId || '').trim();
+      const to = String(user.id || '').trim();
+      if (from && to && from !== to && from.startsWith('guest_')) mergeUserData(from, to);
+    } catch {}
+
+    res.json({ userId: user.id, name: user.name, token });
 
   } catch (error) {
     console.error('Error in /api/auth/login:', error);
@@ -1556,9 +2764,10 @@ app.post('/api/auth/login', (req, res) => {
 app.get('/api/user/:userId', (req, res) => {
   try {
     const { userId } = req.params;
+    if (!assertAuthUserMatches(req, res, userId)) return;
     const users = readJson(USERS_FILE, {});
     const userProfile = users[userId] || { id: userId, visits: 0, preferences: {} };
-    res.json(userProfile);
+    res.json(sanitizeUserProfile(userProfile));
   } catch (error) {
     console.error('Error in GET /api/user:', error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -1568,7 +2777,8 @@ app.get('/api/user/:userId', (req, res) => {
 app.post('/api/user', (req, res) => {
   try {
     const { userId, profile } = req.body;
-    if (!userId) return res.status(400).json({ error: 'UserId is required' });
+    const auth = assertAuthUserMatches(req, res, userId);
+    if (!auth) return;
     
     const users = readJson(USERS_FILE, {});
     // Merge existing profile with updates
@@ -1580,7 +2790,7 @@ app.post('/api/user', (req, res) => {
     };
     
     writeJson(USERS_FILE, users);
-    res.json(users[userId]);
+    res.json(sanitizeUserProfile(users[userId]));
   } catch (error) {
     console.error('Error in POST /api/user:', error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -1588,10 +2798,29 @@ app.post('/api/user', (req, res) => {
 });
 
 // 2.5 Generic Generate Content (for simple AI tasks)
-app.post('/api/generate', async (req, res) => {
+app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }), async (req, res) => {
   try {
-    const { prompt } = req.body;
+    const { prompt, userId: userIdRaw, requestId: requestIdRaw } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
+
+    const derivedUserId = (() => {
+      const ip = getClientIp(req);
+      const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
+      const h = crypto.createHash('sha1').update(`${ip}|${ua}`).digest('hex').slice(0, 10);
+      return `guest_${h}`;
+    })();
+    const userId = String(userIdRaw || '').trim() || derivedUserId;
+    if (!assertAuthUserMatches(req, res, userId)) return;
+
+    const cost = (() => {
+      const v = Number.parseInt(process.env.CREDITS_COST_GENERATE || '1', 10);
+      return Number.isFinite(v) && v > 0 ? v : 1;
+    })();
+    const requestId =
+      String(requestIdRaw || '').trim() || `gen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const holdRes = imgCredits.freezeCredits({ userId, cost, requestId, reason: 'generate' });
+    if (!holdRes.ok) return res.status(402).json({ error: holdRes.error, wallet: holdRes.wallet || null });
+    const holdId = holdRes.holdId;
 
     const contents = [{ role: 'user', parts: [{ text: prompt }] }];
 
@@ -1601,6 +2830,11 @@ app.post('/api/generate', async (req, res) => {
           timeoutMs: GEMINI_TIMEOUT_MS,
           contents
         });
+        const confirmed = imgCredits.confirmHold({ userId, holdId });
+        if (!confirmed.ok) {
+          imgCredits.refundHold({ userId, holdId });
+          return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+        }
         return res.json(data);
       } catch (e) {
         if (SILICONFLOW_API_KEY) {
@@ -1609,6 +2843,11 @@ app.post('/api/generate', async (req, res) => {
             timeoutMs: GEMINI_TIMEOUT_MS,
             maxTokens: 2048
           });
+          const confirmed = imgCredits.confirmHold({ userId, holdId });
+          if (!confirmed.ok) {
+            imgCredits.refundHold({ userId, holdId });
+            return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+          }
           return res.json({
             candidates: [{ content: { parts: [{ text: String(text || '') }] } }]
           });
@@ -1623,26 +2862,58 @@ app.post('/api/generate', async (req, res) => {
         timeoutMs: GEMINI_TIMEOUT_MS,
         maxTokens: 2048
       });
+      const confirmed = imgCredits.confirmHold({ userId, holdId });
+      if (!confirmed.ok) {
+        imgCredits.refundHold({ userId, holdId });
+        return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+      }
       return res.json({
         candidates: [{ content: { parts: [{ text: String(text || '') }] } }]
       });
     }
 
+    imgCredits.refundHold({ userId, holdId });
     return res.status(500).json({ error: 'No LLM provider configured on the server.' });
 
   } catch (error) {
+    try {
+      const body = req.body || {};
+      const userIdFromBody = String(body.userId || '').trim();
+      const derivedUserId = (() => {
+        const ip = getClientIp(req);
+        const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
+        const h = crypto.createHash('sha1').update(`${ip}|${ua}`).digest('hex').slice(0, 10);
+        return `guest_${h}`;
+      })();
+      const userId = userIdFromBody || derivedUserId;
+      const requestId = String(body.requestId || '').trim();
+      const holds = readJson(require('./utils/storage').CREDITS_HOLDS_FILE, {});
+      const hit =
+        requestId && holds && typeof holds === 'object'
+          ? Object.keys(holds).find((k) => {
+              const h = holds[k];
+              if (!h || typeof h !== 'object') return false;
+              return String(h.userId || '').trim() === userId && String(h.requestId || '').trim() === requestId;
+            })
+          : '';
+      if (hit) imgCredits.refundHold({ userId, holdId: hit });
+    } catch {}
     console.error('Error in /api/generate:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
 // 3. Chat with RAG & Memory
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async (req, res) => {
   try {
-    const { message, userId, history, pageContext, projectKnowledge, agentContext } = req.body;
+    const { message, userId, history, pageContext, projectKnowledge, agentContext, requestId: requestIdRaw } = req.body;
     
     if (!message) return res.status(400).json({ error: 'Message is required' });
-    const user = userId || 'anonymous';
+    const requestedUserId = String(userId || '').trim();
+    const authed = requestedUserId && !requestedUserId.startsWith('guest_') ? assertAuthUserMatches(req, res, requestedUserId) : { userId: requestedUserId || 'anonymous', isGuest: true };
+    if (!authed) return;
+    const user = authed.userId || 'anonymous';
+    const userMessage = trimPromptText(String(message || ''), 4000);
 
     // Get User Profile
     const users = readJson(USERS_FILE, {});
@@ -1654,6 +2925,10 @@ app.post('/api/chat', async (req, res) => {
     const persona = ctx?.persona && typeof ctx.persona === 'object' ? ctx.persona : null;
     const character = ctx?.character && typeof ctx.character === 'object' ? ctx.character : null;
     const runtime = ctx?.runtime && typeof ctx.runtime === 'object' ? ctx.runtime : null;
+    const requestId = sanitizeLedgerId(
+      requestIdRaw || ctx?.requestId,
+      sanitizeLedgerId(`${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`)
+    );
 
     const personaNameRaw =
       (typeof persona?.name === 'string' && persona.name.trim() && persona.name.trim()) ||
@@ -1735,6 +3010,7 @@ app.post('/api/chat', async (req, res) => {
     const promptEventsText = intent.kind === 'chat' ? '' : eventsText;
 
     let ragText = '';
+    let ragMeta = intent.includeRag ? { hits: [], used: false } : null;
     if (intent.includeRag) {
       const vectors = readJson(VECTORS_FILE, []);
       const hasEmbeddings = vectors.some((v) => Array.isArray(v.embedding) && v.embedding.length > 0);
@@ -1764,8 +3040,30 @@ app.post('/api/chat', async (req, res) => {
         topDocs = scoredDocs.slice(0, 3).filter((d) => d.score > 0);
       }
       if (topDocs.length > 0) {
-        const joined = topDocs.map((d) => `- ${toOneLine(d.text).slice(0, 380)}`).join('\n');
+        const hits = topDocs.map((d) => {
+          const meta = d?.metadata && typeof d.metadata === 'object' ? d.metadata : null;
+          const sourceRel = typeof meta?.sourceRel === 'string' ? meta.sourceRel : '';
+          const source = sourceRel || (typeof meta?.source === 'string' ? meta.source : '') || '';
+          return {
+            id: typeof d?.id === 'string' ? d.id : '',
+            source,
+            score: typeof d?.score === 'number' ? d.score : undefined
+          };
+        });
+        const joined = topDocs
+          .map((d) => {
+            const meta = d?.metadata && typeof d.metadata === 'object' ? d.metadata : null;
+            const sourceRel = typeof meta?.sourceRel === 'string' ? meta.sourceRel : '';
+            const source = sourceRel || (typeof meta?.source === 'string' ? meta.source : '') || '';
+            const prefix = source ? `(${source}) ` : '';
+            return `- ${prefix}${toOneLine(d.text).slice(0, 360)}`;
+          })
+          .join('\n');
         ragText = joined.trim();
+        ragMeta = {
+          hits: hits.filter((h) => h && (h.id || h.source)).slice(0, 6),
+          used: true
+        };
       }
     }
 
@@ -1850,30 +3148,39 @@ app.post('/api/chat', async (req, res) => {
     const historyParts = keepHistory
       ? recentHistory.map((msg) => ({
           role: msg.role === 'user' ? 'user' : 'model',
-          parts: [{ text: stripControlText(msg.text) }]
+          parts: [{ text: trimPromptText(stripControlText(msg.text), 1600) }]
         }))
       : [];
 
     const contents = [
       { role: 'user', parts: [{ text: systemPrompt }] },
       ...historyParts,
-      { role: 'user', parts: [{ text: message }] }
+      { role: 'user', parts: [{ text: userMessage }] }
     ];
 
     // Call LLM (Gemini default, auto-fallback to SiliconFlow)
     let reply = "";
+    let usageInfo = null;
+    let usageProvider = '';
+    let usageModel = '';
+    let usageUrl = '';
+    let usageDurationMs = 0;
     try {
         const timeoutMs = reactionMode ? GEMINI_REACTION_TIMEOUT_MS : GEMINI_TIMEOUT_MS;
         const startedAt = Date.now();
-        const { text, provider } = await callTextGenerate({ contents, timeoutMs, reactionMode });
+        const { text, provider, usage, model, usedUrl } = await callTextGenerate({ contents, timeoutMs, reactionMode });
         if (provider === 'offline') {
           throw new Error('NO_LLM_PROVIDER_AVAILABLE');
         }
         reply = (text || '').trim() || "I'm speechless!";
 
-        const elapsedMs = Date.now() - startedAt;
-        if (elapsedMs > Math.max(2000, timeoutMs)) {
-          console.warn('LLM request exceeded expected timeout window', { provider, reactionMode, timeoutMs, elapsedMs });
+        usageDurationMs = Date.now() - startedAt;
+        usageInfo = usage;
+        usageProvider = provider;
+        usageModel = String(model || '').trim();
+        usageUrl = String(usedUrl || '').trim();
+        if (usageDurationMs > Math.max(2000, timeoutMs)) {
+          console.warn('LLM request exceeded expected timeout window', { provider, reactionMode, timeoutMs, elapsedMs: usageDurationMs });
         }
     } catch (apiError) {
         const errMsg = typeof apiError?.message === 'string' ? apiError.message : String(apiError);
@@ -1897,9 +3204,9 @@ app.post('/api/chat', async (req, res) => {
               { role: 'system', content: systemPrompt },
               ...recentHistory.map((msg) => ({
                 role: msg.role === 'user' ? 'user' : 'assistant',
-                content: stripControlText(msg.text)
+                content: trimPromptText(stripControlText(msg.text), 1600)
               })),
-              { role: 'user', content: message }
+              { role: 'user', content: userMessage }
             ];
 
             const timeoutMs = reactionMode ? GEMINI_REACTION_TIMEOUT_MS : GEMINI_TIMEOUT_MS;
@@ -1929,10 +3236,42 @@ app.post('/api/chat', async (req, res) => {
         }
     }
 
+    try {
+      const tokensIn = Number(usageInfo?.promptTokens ?? 0) || 0;
+      const tokensOut = Number(usageInfo?.completionTokens ?? 0) || 0;
+      const tokensTotal = Number(usageInfo?.totalTokens ?? 0) || (tokensIn + tokensOut);
+      const ragUsed = !!(ragMeta && ragMeta.used);
+      const creditsDelta = computeCreditsDelta({ tokensTotal, ragUsed });
+      upsertUsageLedgerItem({
+        requestId,
+        ts: Date.now(),
+        userId: user,
+        sessionId: sanitizeLedgerId(ctx?.sessionId),
+        projectId: sanitizeLedgerId(ctx?.projectId),
+        trigger: String(ctx?.trigger || intent.kind || '').trim().toLowerCase().slice(0, 80),
+        provider: String(usageProvider || activeTextProvider || '').trim().slice(0, 40),
+        model: String(usageModel || '').trim().slice(0, 80),
+        usedUrl: String(usageUrl || '').trim().slice(0, 240),
+        tokensIn: Math.max(0, tokensIn),
+        tokensOut: Math.max(0, tokensOut),
+        tokensTotal: Math.max(0, tokensTotal),
+        creditsDelta,
+        rag: ragMeta && typeof ragMeta === 'object' ? ragMeta : undefined,
+        status: usageProvider ? 'ok' : 'offline',
+        durationMs: usageDurationMs || undefined,
+        ip: getClientIp(req),
+        ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 220) : ''
+      });
+    } catch {}
+
     // Save to Memory (Only if it's not a connection error)
     if (!reply.includes("can't connect to my brain") && !reactionMode && !suppressMemorySave) {
-        allChats[user].push({ role: 'user', text: message, timestamp: Date.now() });
-        allChats[user].push({ role: 'agent', text: stripControlText(reply), timestamp: Date.now() });
+        allChats[user].push({ role: 'user', text: userMessage, timestamp: Date.now() });
+        allChats[user].push({
+          role: 'agent',
+          text: trimPromptText(stripControlText(reply), 9000),
+          timestamp: Date.now()
+        });
         writeJson(CHATS_FILE, allChats);
         try {
           const extra = [];
@@ -1956,18 +3295,36 @@ app.post('/api/chat', async (req, res) => {
             personaName,
             items: [
               ...extra.slice(-8),
-              { role: 'user', text: message, ts: Date.now() },
-              { role: 'agent', text: stripControlText(reply), ts: Date.now() }
+              { role: 'user', text: userMessage, ts: Date.now() },
+              { role: 'agent', text: trimPromptText(stripControlText(reply), 1400), ts: Date.now() }
             ]
           });
         } catch {}
     }
 
-    res.json({ reply });
+    res.json({ reply, rag: ragMeta, requestId });
 
   } catch (error) {
     console.error('Error in /api/chat:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    if (res.headersSent) return;
+    try {
+      const body = req && req.body && typeof req.body === 'object' ? req.body : {};
+      const message = typeof body.message === 'string' ? body.message : '';
+      const ctx = body.agentContext && typeof body.agentContext === 'object' ? body.agentContext : null;
+      const runtime = ctx?.runtime && typeof ctx.runtime === 'object' ? ctx.runtime : null;
+      const lang =
+        typeof runtime?.lang === 'string' && runtime.lang.trim() ? runtime.lang.trim() : 'zh';
+      const persona = ctx?.persona && typeof ctx.persona === 'object' ? ctx.persona : null;
+      const character = ctx?.character && typeof ctx.character === 'object' ? ctx.character : null;
+      const personaNameRaw =
+        (typeof persona?.name === 'string' && persona.name.trim() && persona.name.trim()) ||
+        (typeof character?.name === 'string' && character.name.trim() && character.name.trim()) ||
+        'Lumina';
+      const personaName = personaNameRaw;
+      res.json({ reply: buildOfflineReply({ lang, personaName, message }) });
+    } catch {
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   }
 });
 
@@ -1975,6 +3332,7 @@ app.post('/api/chat', async (req, res) => {
 app.get('/api/chat/history/:userId', (req, res) => {
   try {
     const { userId } = req.params;
+    if (!assertAuthUserMatches(req, res, userId)) return;
     const allChats = readJson(CHATS_FILE, {});
     const history = allChats[userId] || [];
     // Only return last 20 messages to keep payload light
@@ -1990,6 +3348,7 @@ app.get('/api/chat/history/:userId', (req, res) => {
 app.get('/api/memory/:userId', (req, res) => {
   try {
     const { userId } = req.params;
+    if (!assertAuthUserMatches(req, res, userId)) return;
     const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
     res.json({ memory: mem });
   } catch (error) {
@@ -1998,10 +3357,11 @@ app.get('/api/memory/:userId', (req, res) => {
   }
 });
 
-app.post('/api/memory/ingest', async (req, res) => {
+app.post('/api/memory/ingest', rateLimit('memory_ingest', { max: 20, windowMs: 60 * 1000 }), async (req, res) => {
   try {
     const { userId, items, lang, personaName } = req.body || {};
     const id = String(userId || '').trim() || 'anonymous';
+    if (!assertAuthUserMatches(req, res, id)) return;
     const list = Array.isArray(items) ? items : [];
     const trimmed = list
       .map((x) => ({
@@ -2021,6 +3381,185 @@ app.post('/api/memory/ingest', async (req, res) => {
     res.json({ ok: true, memory: mem });
   } catch (error) {
     console.error('Error in POST /api/memory/ingest:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/usage/ingest', rateLimit('usage_ingest', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const userId = String(body.userId || '').trim() || 'anonymous';
+    if (!assertAuthUserMatches(req, res, userId)) return;
+
+    const requestId = sanitizeLedgerId(body.requestId);
+    if (!requestId) return res.status(400).json({ error: 'requestId is required' });
+
+    const tokensIn = Number(body.tokensIn ?? body.promptTokens ?? 0) || 0;
+    const tokensOut = Number(body.tokensOut ?? body.completionTokens ?? 0) || 0;
+    const tokensTotal = Number(body.tokensTotal ?? body.totalTokens ?? 0) || 0;
+    const ragUsed = !!(body.rag && body.rag.used);
+    const creditsDeltaRaw = body.creditsDelta;
+    const creditsDelta =
+      typeof creditsDeltaRaw === 'number'
+        ? creditsDeltaRaw
+        : Number.isFinite(Number(creditsDeltaRaw))
+          ? Number(creditsDeltaRaw)
+          : computeCreditsDelta({ tokensTotal, ragUsed });
+
+    const item = {
+      requestId,
+      ts: typeof body.ts === 'number' ? body.ts : Date.now(),
+      userId,
+      sessionId: sanitizeLedgerId(body.sessionId),
+      projectId: sanitizeLedgerId(body.projectId),
+      trigger: String(body.trigger || '').trim().slice(0, 80),
+      provider: String(body.provider || '').trim().slice(0, 40),
+      model: String(body.model || '').trim().slice(0, 80),
+      usedUrl: String(body.usedUrl || '').trim().slice(0, 240),
+      tokensIn: Math.max(0, tokensIn),
+      tokensOut: Math.max(0, tokensOut),
+      tokensTotal: Math.max(0, tokensTotal || tokensIn + tokensOut),
+      creditsDelta,
+      rag: body.rag && typeof body.rag === 'object' ? body.rag : undefined,
+      plan: body.plan && typeof body.plan === 'object' ? body.plan : undefined,
+      status: String(body.status || '').trim().slice(0, 40),
+      durationMs: typeof body.durationMs === 'number' ? Math.max(0, body.durationMs) : undefined,
+      ip: getClientIp(req),
+      ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 220) : ''
+    };
+
+    const result = upsertUsageLedgerItem(item);
+    if (!result.ok) return res.status(400).json({ error: result.error || 'Bad Request' });
+    res.json({ ok: true, existed: result.existed, item: result.item });
+  } catch (error) {
+    console.error('Error in POST /api/usage/ingest:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/usage/ledger', rateLimit('usage_ledger', { max: 120, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    const userId = String(req.query.userId || '').trim() || 'anonymous';
+    if (!assertAuthUserMatches(req, res, userId)) return;
+
+    const parseTime = (raw) => {
+      if (raw === undefined || raw === null) return null;
+      if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+      const s = String(raw || '').trim();
+      if (!s) return null;
+      const n = Number(s);
+      if (Number.isFinite(n) && n > 0) return n;
+      const d = Date.parse(s);
+      return Number.isFinite(d) ? d : null;
+    };
+
+    const from = parseTime(req.query.from);
+    const to = parseTime(req.query.to);
+    const trigger = String(req.query.trigger || '').trim().toLowerCase();
+    const model = String(req.query.model || '').trim().toLowerCase();
+    const sessionId = sanitizeLedgerId(req.query.sessionId);
+    const projectId = sanitizeLedgerId(req.query.projectId);
+
+    const limit = clampInt(req.query.limit, 200, 2000);
+    const offset = clampInt(req.query.offset, 0, 2000000);
+
+    const store = readUsageLedgerStore();
+    const all = store.items
+      .filter((x) => String(x?.userId || '') === userId)
+      .filter((x) => {
+        const ts = Number(x?.ts || 0) || 0;
+        if (from && ts < from) return false;
+        if (to && ts > to) return false;
+        if (trigger && String(x?.trigger || '').toLowerCase() !== trigger) return false;
+        if (model && String(x?.model || '').toLowerCase() !== model) return false;
+        if (sessionId && String(x?.sessionId || '') !== sessionId) return false;
+        if (projectId && String(x?.projectId || '') !== projectId) return false;
+        return true;
+      })
+      .sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
+
+    const items = all.slice(offset, offset + limit);
+    res.json({ ok: true, total: all.length, items });
+  } catch (error) {
+    console.error('Error in GET /api/usage/ledger:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/usage/summary', rateLimit('usage_summary', { max: 120, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    const userId = String(req.query.userId || '').trim() || 'anonymous';
+    if (!assertAuthUserMatches(req, res, userId)) return;
+
+    const parseTime = (raw) => {
+      if (raw === undefined || raw === null) return null;
+      if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+      const s = String(raw || '').trim();
+      if (!s) return null;
+      const n = Number(s);
+      if (Number.isFinite(n) && n > 0) return n;
+      const d = Date.parse(s);
+      return Number.isFinite(d) ? d : null;
+    };
+
+    const from = parseTime(req.query.from);
+    const to = parseTime(req.query.to);
+    const groupBy = String(req.query.groupBy || 'day').trim().toLowerCase();
+
+    const store = readUsageLedgerStore();
+    const items = store.items
+      .filter((x) => String(x?.userId || '') === userId)
+      .filter((x) => {
+        const ts = Number(x?.ts || 0) || 0;
+        if (from && ts < from) return false;
+        if (to && ts > to) return false;
+        return true;
+      });
+
+    const bucketKey = (x) => {
+      if (groupBy === 'trigger') return String(x?.trigger || '') || 'unknown';
+      if (groupBy === 'model') return String(x?.model || '') || 'unknown';
+      if (groupBy === 'projectid') return String(x?.projectId || '') || 'unknown';
+      if (groupBy === 'sessionid') return String(x?.sessionId || '') || 'unknown';
+      const ts = Number(x?.ts || 0) || 0;
+      const d = new Date(ts || Date.now());
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    };
+
+    const groups = new Map();
+    const totals = { count: 0, tokensIn: 0, tokensOut: 0, tokensTotal: 0, credits: 0 };
+    for (const x of items) {
+      const key = bucketKey(x);
+      const cur = groups.get(key) || { key, count: 0, tokensIn: 0, tokensOut: 0, tokensTotal: 0, credits: 0 };
+      const tokensIn = Number(x?.tokensIn || 0) || 0;
+      const tokensOut = Number(x?.tokensOut || 0) || 0;
+      const tokensTotal = Number(x?.tokensTotal || 0) || (tokensIn + tokensOut);
+      const credits = Number(x?.creditsDelta || 0) || 0;
+      cur.count += 1;
+      cur.tokensIn += tokensIn;
+      cur.tokensOut += tokensOut;
+      cur.tokensTotal += tokensTotal;
+      cur.credits += credits;
+      groups.set(key, cur);
+
+      totals.count += 1;
+      totals.tokensIn += tokensIn;
+      totals.tokensOut += tokensOut;
+      totals.tokensTotal += tokensTotal;
+      totals.credits += credits;
+    }
+
+    const list = Array.from(groups.values()).sort((a, b) => {
+      if (groupBy === 'day') return String(a.key).localeCompare(String(b.key));
+      return Number(b.credits || 0) - Number(a.credits || 0);
+    });
+
+    res.json({ ok: true, groupBy, totals, groups: list });
+  } catch (error) {
+    console.error('Error in GET /api/usage/summary:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });

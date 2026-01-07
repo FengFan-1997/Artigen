@@ -16,6 +16,7 @@ import {
 import { showMessage, i18n } from '../services/message';
 import type { ModelManager } from '../services/Live2DModelManager';
 import type { Config, Tips } from '../types/live2d';
+import logger from '../utils/logger';
 
 interface Tools {
   /**
@@ -32,9 +33,20 @@ interface Tools {
      * Callback function for the tool.
      * @type {() => void}
      */
-    callback: (message: any) => void;
+    callback: (message: any) => void | Promise<void>;
   };
 }
+
+type Live2DToolEventPhase = 'start' | 'done' | 'error';
+
+type Live2DToolEventDetail = {
+  tool: string;
+  phase: Live2DToolEventPhase;
+  ts: number;
+  modelId?: number;
+  ok?: boolean;
+  error?: string;
+};
 
 /**
  * Waifu tools manager.
@@ -54,7 +66,7 @@ class ToolsManager {
           } else if ((window as any).toggleChat) {
             (window as any).toggleChat();
           } else {
-            console.warn('toggleChat function not found.');
+            logger.warn('toggleChat function not found.');
           }
         }
       },
@@ -72,7 +84,7 @@ class ToolsManager {
               showMessage(text, 4000, 9);
             }, 6000);
           } catch (error) {
-            console.error('Failed to fetch hitokoto:', error);
+            logger.error('Failed to fetch hitokoto', error);
             showMessage('Every day is a new beginning.', 4000, 9);
           }
         }
@@ -143,20 +155,88 @@ class ToolsManager {
     };
   }
 
+  private dispatchToolEvent(detail: Live2DToolEventDetail) {
+    try {
+      window.dispatchEvent(new CustomEvent('live2d:tool', { detail }));
+    } catch {
+      try {
+        window.dispatchEvent(new Event('live2d:tool'));
+      } catch {}
+    }
+  }
+
   registerTools() {
+    const toolBar = document.getElementById('waifu-tool');
+    if (!toolBar) return;
     if (!Array.isArray(this.config.tools)) {
       this.config.tools = Object.keys(this.tools);
     }
     for (const toolName of this.config.tools) {
       if (this.tools[toolName]) {
         const { icon, callback } = this.tools[toolName];
+        const elementId = `waifu-tool-${toolName}`;
+        try {
+          document.getElementById(elementId)?.remove();
+        } catch {}
         const element = document.createElement('span');
-        element.id = `waifu-tool-${toolName}`;
-        element.innerHTML = icon;
-        document.getElementById('waifu-tool')?.insertAdjacentElement('beforeend', element);
+        element.id = elementId;
+        try {
+          const doc = new DOMParser().parseFromString(String(icon || ''), 'image/svg+xml');
+          const root = doc.documentElement as any;
+          if (root && String(root.tagName || '').toLowerCase() === 'svg') {
+            const svg = document.importNode(root, true) as SVGElement;
+            const nodes = Array.from(svg.querySelectorAll('*'));
+            for (const n of nodes) {
+              const attrs = Array.from((n as Element).attributes);
+              for (const a of attrs) {
+                const name = a.name.toLowerCase();
+                const value = String(a.value || '');
+                if (name.startsWith('on')) (n as Element).removeAttribute(a.name);
+                if (name === 'href' || name === 'xlink:href') {
+                  if (/^(javascript|data|vbscript):/i.test(value.trim()))
+                    (n as Element).removeAttribute(a.name);
+                }
+              }
+            }
+            element.appendChild(svg);
+          }
+        } catch {}
+        toolBar.insertAdjacentElement('beforeend', element);
         element.addEventListener('click', (e) => {
           e.stopPropagation();
-          callback(e);
+          const base: Omit<Live2DToolEventDetail, 'phase'> = {
+            tool: toolName,
+            ts: Date.now(),
+            modelId: typeof this.config.modelId === 'number' ? this.config.modelId : undefined
+          };
+          this.dispatchToolEvent({ ...base, phase: 'start' });
+
+          try {
+            const result = callback(e);
+            const isPromise =
+              !!result &&
+              (typeof (result as any).then === 'function' ||
+                typeof (result as any).catch === 'function');
+
+            if (!isPromise) {
+              this.dispatchToolEvent({ ...base, phase: 'done', ok: true });
+              return;
+            }
+
+            void (result as Promise<void>)
+              .then(() => {
+                this.dispatchToolEvent({ ...base, phase: 'done', ok: true });
+              })
+              .catch((err) => {
+                const msg = String(err?.message || err || '').slice(0, 240);
+                this.dispatchToolEvent({ ...base, phase: 'error', ok: false, error: msg });
+                logger.error('[Live2DWidget] Tool callback failed', { tool: toolName, error: msg });
+              });
+          } catch (err: any) {
+            const msg = String(err?.message || err || '').slice(0, 240);
+            this.dispatchToolEvent({ ...base, phase: 'error', ok: false, error: msg });
+            logger.error('[Live2DWidget] Tool callback failed', { tool: toolName, error: msg });
+          }
         });
       }
     }

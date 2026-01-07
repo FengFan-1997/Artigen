@@ -1,6 +1,7 @@
 import * as PIXI from 'pixi.js';
 import { Application } from 'pixi.js';
 import { loadExternalResource } from '../../utils';
+import logger from '../../utils/logger';
 
 // Expose PIXI globally for pixi-live2d-display if needed
 if (typeof window !== 'undefined' && !(window as any).PIXI) {
@@ -63,6 +64,15 @@ const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(ma
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
+const expApproach = (current: number, target: number, halfLifeSec: number, dtSec: number) => {
+  if (!Number.isFinite(current) || !Number.isFinite(target)) return target;
+  if (!Number.isFinite(halfLifeSec) || halfLifeSec <= 0) return target;
+  if (!Number.isFinite(dtSec) || dtSec <= 0) return current;
+  const dt = clamp(dtSec, 0, 0.1);
+  const alpha = 1 - Math.pow(0.5, dt / halfLifeSec);
+  return current + (target - current) * alpha;
+};
+
 const normalizeKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 const ensureCubismCore = async (): Promise<boolean> => {
@@ -71,11 +81,7 @@ const ensureCubismCore = async (): Promise<boolean> => {
   if (!w) return false;
 
   if (!cubismCorePromise) {
-    const urls = [
-      '/api/live2d-core/live2dcubismcore.min.js',
-      'https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js',
-      'https://cdn.jsdelivr.net/npm/live2dcubismcore@1.0.2/live2dcubismcore.min.js'
-    ];
+    const urls = ['/api/live2d-core/live2dcubismcore.min.js'];
 
     cubismCorePromise = (async () => {
       for (const url of urls) {
@@ -382,9 +388,11 @@ const applyAgentDrivenParams = (delta: number) => {
     poiTarget.y = 0;
   }
 
-  const t = clamp(0.12 * (delta || 1), 0.05, 0.28);
-  poiCurrent.x = lerp(poiCurrent.x, poiTarget.x, t);
-  poiCurrent.y = lerp(poiCurrent.y, poiTarget.y, t);
+  const dtSec = clamp((delta || 1) / 60, 0, 0.1);
+  const idle = poiLastUpdateAt > 0 && now - poiLastUpdateAt > idleTimeoutMs;
+  const poiHalfLifeSec = idle ? 0.14 : 0.09;
+  poiCurrent.x = expApproach(poiCurrent.x, poiTarget.x, poiHalfLifeSec, dtSec);
+  poiCurrent.y = expApproach(poiCurrent.y, poiTarget.y, poiHalfLifeSec, dtSec);
 
   const x = clamp(poiCurrent.x, -1, 1);
   const y = clamp(poiCurrent.y, -1, 1);
@@ -602,11 +610,11 @@ const ensureApp = async (): Promise<any | null> => {
           configurable: true
         });
       } else {
-        if (debug) console.warn('[Live2D] autoUpdate is not configurable');
+        if (debug) logger.warn('[Live2D] autoUpdate is not configurable');
       }
     }
   } catch (e) {
-    if (debug) console.warn('[Live2D] Error patching autoUpdate:', e);
+    if (debug) logger.warn('[Live2D] Error patching autoUpdate', e);
   }
 
   const resolution = clamp((window.devicePixelRatio || 1) as number, 1, 2);
@@ -618,7 +626,7 @@ const ensureApp = async (): Promise<any | null> => {
     resolution
   });
 
-  container.innerHTML = '';
+  while (container.firstChild) container.removeChild(container.firstChild);
   container.appendChild(app.view as HTMLCanvasElement);
 
   try {
@@ -627,11 +635,11 @@ const ensureApp = async (): Promise<any | null> => {
       if (app.ticker) {
         Live2D.registerTicker(app.ticker);
       } else {
-        if (debug) console.warn('[Live2D] app.ticker is missing. AutoUpdate may fail.');
+        if (debug) logger.warn('[Live2D] app.ticker is missing. AutoUpdate may fail.');
       }
     }
   } catch (e) {
-    if (debug) console.warn('[Live2D] Error registering ticker:', e);
+    if (debug) logger.warn('[Live2D] Error registering ticker', e);
   }
 
   return app;
@@ -863,7 +871,7 @@ const applyCubism3Layout = (appInstance: any, modelJsonPath: string) => {
     const key = `${modelJsonPath}|${rendererWidth}x${rendererHeight}|${layout.scale}`;
     if (key !== lastLayoutLogKey) {
       lastLayoutLogKey = key;
-      console.log('[Live2D] Cubism3 Layout Applied:', {
+      logger.info('[Live2D] Cubism3 Layout Applied', {
         modelJsonPath,
         rendererWidth,
         rendererHeight,
@@ -885,14 +893,14 @@ export const loadCubism3Model = async (modelJsonPath: string): Promise<boolean> 
   try {
     Live2D = await ensureLive2DModelCtor();
   } catch (err) {
-    console.warn('[Live2D] Cubism core is not available. Skip Cubism3/4 loading.', err);
+    logger.warn('[Live2D] Cubism core is not available. Skip Cubism3/4 loading.', err);
     return false;
   }
   let nextModel: any = null;
   try {
     nextModel = await Live2D.from(modelJsonPath, { autoUpdate: false });
   } catch (err) {
-    console.error('[Live2D] Failed to load Cubism3 model:', err);
+    logger.error('[Live2D] Failed to load Cubism3 model', err);
     currentModelPath = '';
     return false;
   }
@@ -1140,7 +1148,7 @@ export const disposeCubism3 = () => {
 
   const container = getContainer();
   if (container) {
-    container.innerHTML = '';
+    while (container.firstChild) container.removeChild(container.firstChild);
   }
 
   currentModelPath = '';

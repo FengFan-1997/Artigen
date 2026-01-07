@@ -5,6 +5,10 @@ const MEMORY_DIR = path.join(__dirname, '../memory');
 const VECTORS_FILE = path.join(MEMORY_DIR, 'vectors.json');
 const CHATS_FILE = path.join(MEMORY_DIR, 'chats.json');
 const USERS_FILE = path.join(MEMORY_DIR, 'users.json');
+const USAGE_LEDGER_FILE = path.join(MEMORY_DIR, 'usage_ledger.json');
+const CREDITS_WALLET_FILE = path.join(MEMORY_DIR, 'credits_wallet.json');
+const CREDITS_HOLDS_FILE = path.join(MEMORY_DIR, 'credits_holds.json');
+const CREDITS_ORDERS_FILE = path.join(MEMORY_DIR, 'credits_orders.json');
 
 // Ensure memory directory exists
 if (!fs.existsSync(MEMORY_DIR)) {
@@ -55,6 +59,10 @@ module.exports = {
   VECTORS_FILE,
   CHATS_FILE,
   USERS_FILE,
+  USAGE_LEDGER_FILE,
+  CREDITS_WALLET_FILE,
+  CREDITS_HOLDS_FILE,
+  CREDITS_ORDERS_FILE,
   readJson,
   writeJson,
   getUserMemoryFile,

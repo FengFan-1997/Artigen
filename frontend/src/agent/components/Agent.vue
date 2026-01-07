@@ -9,8 +9,8 @@
     @click="handleClick($event)"
   >
     <Live2DWidget
+      v-if="agentType !== 'vrm' || !hasVrmSupport"
       ref="live2dWidgetRef"
-      v-show="agentType !== 'vrm' || !hasVrmSupport"
       :is-talking="isTalking"
       :is-moving="isMoving"
       :is-hovered="isHovered"
@@ -34,8 +34,11 @@
       v-if="hasVrmSupport"
       v-show="agentType === 'vrm'"
       :src="currentVrmSrc"
+      :ui-mode="props.uiMode"
       :current-lang="currentLang"
+      :emotion-snapshot="emotionSnapshot"
       :is-talking="isTalking"
+      :speech-pulse="speechPulse"
       :is-moving="isMoving"
       :is-hovered="isHovered"
       :is-dizzy="isDizzy"
@@ -49,16 +52,15 @@
       :is-tired="isTired"
       :expression-override="expressionOverride"
       :motion-command="effectiveMotionCommand"
-      :facing-lock="!isExecuting"
+      :facing-lock="isExecuting || (!vrmMouseControlEnabled && !isDizzy && !isFainted)"
       :mouse-control-enabled="vrmMouseControlEnabled"
       :persona-text="getPersonaText()"
+      :persona-traits="personaTraits"
+      :look-at="vrmLookAt"
       @loading-change="vrmLoading = $event"
     />
 
-    <div class="agent-controls">
-      <button class="agent-pill" type="button" @click.stop="cycleAgentType">
-        {{ agentTypeLabel }}
-      </button>
+    <div v-if="props.uiMode !== 'room'" class="agent-controls">
       <template v-if="agentType === 'vrm' && hasVrmSupport && !isExecuting">
         <button
           class="agent-pill agent-pill-model"
@@ -150,7 +152,10 @@
       </transition>
     </div>
 
-    <div v-if="agentType === 'vrm' && hasVrmSupport" class="agent-side-tools">
+    <div
+      v-if="props.uiMode !== 'room' && agentType === 'vrm' && hasVrmSupport"
+      class="agent-side-tools"
+    >
       <button class="agent-side-btn" type="button" @click.stop="toggleChat" :title="chatTitle">
         💬
       </button>
@@ -212,7 +217,7 @@
       </template>
     </div>
 
-    <Teleport to="body">
+    <Teleport v-if="props.uiMode !== 'room'" to="body">
       <transition name="pop">
         <ChatWindow
           v-if="chatOpen"
@@ -261,16 +266,23 @@ import { useRouter } from 'vue-router';
 import { useLanguageStore } from '../../stores/language';
 import { storeToRefs } from 'pinia';
 import ChatWindow from './ChatWindow.vue';
-import { vrmRelativePaths, vrmPersonaTextByModelName } from 'virtual:vrm-models';
+import {
+  vrmRelativePaths,
+  publicVrmRelativePaths,
+  vrmPersonaTextByModelName
+} from 'virtual:vrm-models';
 import GuideOverlay from './GuideOverlay.vue';
 import TaskDisplay from './TaskDisplay.vue';
 import ConnectionLine from './ConnectionLine.vue';
 import { useTaskExecutor } from '../composables/useTaskExecutor';
+import { useAgentChatUi } from '../composables/useAgentChatUi';
+import { useAgentBackgroundReactions } from '../composables/useAgentBackgroundReactions';
 import { useAuth } from '../composables/useAuth';
 import { useLocalMemory } from '../composables/useLocalMemory';
 import { useAgentContextBuilder } from '../composables/useAgentContextBuilder';
 import { lerp, getRandomPosition } from '../utils/math';
 import { resolveTarget } from '../utils/dom';
+import { readBoolSetting, readFloatSetting, readIntSetting } from '../utils/settings';
 import { buildApiUrl, getUserId } from '../utils/user';
 import {
   sendMessageToAI,
@@ -298,7 +310,14 @@ import {
   setDiagnosticsEnabled,
   setDiagnosticsMaxItems
 } from '../utils/diagnostics';
-import type { Position, ChatMessage } from '../types';
+import { parseAiReply } from '../logic/aiReplyParser';
+import { computePersonaTraits, type PersonaTraits } from '../logic/persona';
+import { createEmotionEngine } from '../logic/emotionEngine';
+import { MOTION_PRIORITY, useMotionArbitration } from '../composables/useMotionArbitration';
+import { useExpressionArbitration } from '../composables/useExpressionArbitration';
+import { useAvatarPlanRunner } from '../composables/useAvatarPlanRunner';
+import logger from '../utils/logger';
+import type { Position } from '../types';
 import type { AvatarPlanStep } from '../types/avatarPlan';
 
 const Live2DWidget = defineAsyncComponent(() => import('./Live2DWidget.vue'));
@@ -309,8 +328,30 @@ const { initAuth, currentUser } = useAuth();
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 
+const safeStorageGet = (key: string) => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const safeStorageSet = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+};
+
+const safeStorageRemove = (key: string) => {
+  try {
+    localStorage.removeItem(key);
+  } catch {}
+};
+
 const props = defineProps<{
   isPinned?: boolean;
+  layoutMode?: 'fixed' | 'absolute' | 'relative';
+  uiMode?: 'default' | 'room';
 }>();
 
 const isMobile = ref(window.innerWidth <= 768);
@@ -321,9 +362,16 @@ const VRM_AGENT_SCALE = 0.34;
 const dynamicScale = ref(1.0);
 const moveTransitionMs = ref(3000);
 
-const getDefaultAgentType = (): 'cubism3' | 'cubism2' | 'vrm' => 'vrm';
+const AGENT_TYPE_KEY = 'agent_type_v1';
+const getDefaultAgentType = (): 'cubism3' | 'vrm' => {
+  try {
+    const stored = localStorage.getItem(AGENT_TYPE_KEY);
+    if (stored === 'vrm' || stored === 'cubism3') return stored;
+  } catch {}
+  return 'vrm';
+};
 
-const agentType = ref<'cubism3' | 'cubism2' | 'vrm'>(getDefaultAgentType());
+const agentType = ref<'cubism3' | 'vrm'>(getDefaultAgentType());
 
 const agentBaseSize = computed(() => {
   if (!isMobile.value) return BASE_AGENT_SIZE_DESKTOP;
@@ -381,12 +429,45 @@ const vrmModelIndex = ref(0);
 const vrmLoading = ref(false);
 const vrmListLoading = ref(false);
 const vrmListError = ref('');
+const vrmPreferLocalRuntime = ref(false);
 const VRM_HF_OWNER = 'Feng1997';
 const VRM_HF_REPO = 'ModelDoc';
 const VRM_HF_REF = 'main';
 const VRM_HF_PREFIX = 'model/Genshin/all';
 const VRM_MODEL_PATH_KEY = 'agent_vrm_model_path_v1';
 const DEFAULT_REMOTE_VRM_PATH = `${VRM_HF_PREFIX}/YaeMiko.vrm`;
+const DEFAULT_LOCAL_VRM_PATH = 'Keqing.vrm';
+
+type VrmItem = { name: string; path: string; source?: 'hf' | 'local' };
+
+const normalizeLocalVrmPath = (p: string) => {
+  const raw = String(p || '').trim();
+  if (!raw) return '';
+  const trimmed = raw.replace(/^\/+/, '');
+  if (trimmed.toLowerCase().startsWith('model/')) return trimmed.slice('model/'.length);
+  return trimmed;
+};
+
+const parseStoredVrmSelection = (): { source: 'hf' | 'local'; path: string } | null => {
+  try {
+    const raw = localStorage.getItem(VRM_MODEL_PATH_KEY);
+    const v = typeof raw === 'string' ? raw.trim() : '';
+    if (!v) return { source: 'local', path: DEFAULT_LOCAL_VRM_PATH };
+    if (v.startsWith('local:')) {
+      const p = normalizeLocalVrmPath(v.slice('local:'.length));
+      return p ? { source: 'local', path: p } : { source: 'local', path: DEFAULT_LOCAL_VRM_PATH };
+    }
+    if (v.startsWith('hf:')) return { source: 'local', path: DEFAULT_LOCAL_VRM_PATH };
+    if (/^\/?model\/.+\.vrm$/i.test(v)) {
+      const p = normalizeLocalVrmPath(v);
+      return p ? { source: 'local', path: p } : { source: 'local', path: DEFAULT_LOCAL_VRM_PATH };
+    }
+    if (/^[^/\\]+\.vrm$/i.test(v)) return { source: 'local', path: v };
+    return { source: 'local', path: DEFAULT_LOCAL_VRM_PATH };
+  } catch {
+    return { source: 'local', path: DEFAULT_LOCAL_VRM_PATH };
+  }
+};
 
 const guessVrmNameFromPath = (p: string) => {
   const base = (p.split('/').pop() || p).replace(/\.vrm$/i, '');
@@ -430,21 +511,27 @@ const makeModelBadge = (rawName: string) => {
 const getInitialRemoteVrmItems = () => {
   if (import.meta.env.DEV) return [];
   try {
-    const storedPathRaw = localStorage.getItem(VRM_MODEL_PATH_KEY);
-    const storedPath =
-      typeof storedPathRaw === 'string' && storedPathRaw.trim() ? storedPathRaw : '';
-    const path = storedPath || DEFAULT_REMOTE_VRM_PATH;
-    return [{ name: guessVrmNameFromPath(path), path }];
+    const stored = parseStoredVrmSelection();
+    if (stored?.source === 'local') {
+      const file = stored.path;
+      return [{ name: guessVrmNameFromPath(file), path: file, source: 'local' }];
+    }
+    const path = stored?.path || DEFAULT_REMOTE_VRM_PATH;
+    return [{ name: guessVrmNameFromPath(path), path, source: 'hf' }];
   } catch {
-    return [{ name: guessVrmNameFromPath(DEFAULT_REMOTE_VRM_PATH), path: DEFAULT_REMOTE_VRM_PATH }];
+    return [
+      {
+        name: guessVrmNameFromPath(DEFAULT_LOCAL_VRM_PATH),
+        path: DEFAULT_LOCAL_VRM_PATH,
+        source: 'local'
+      }
+    ];
   }
 };
 
-const remoteVrmItems = ref<Array<{ name: string; path: string }>>(getInitialRemoteVrmItems());
+const remoteVrmItems = ref<VrmItem[]>(getInitialRemoteVrmItems() as VrmItem[]);
 const remoteVrmListLoaded = ref(false);
 const live2dInitEnabled = ref(agentType.value !== 'vrm');
-const vrmHasStartedLoading = ref(false);
-const live2dDefaultsPreloaded = ref(false);
 const vrmPickerOpen = ref(false);
 const vrmPickerQuery = ref('');
 const vrmPickerEl = ref<HTMLElement | null>(null);
@@ -454,20 +541,22 @@ const vrmPickerSearchEl = ref<HTMLInputElement | null>(null);
 watch(
   () => agentType.value,
   (next) => {
-    if (next !== 'vrm') live2dInitEnabled.value = true;
+    live2dInitEnabled.value = next !== 'vrm';
   },
   { immediate: true }
 );
 
 const devVrmItems = computed(() => {
   const list = Array.isArray(vrmRelativePaths) ? vrmRelativePaths : [];
-  return list.map((relative) => {
+  const mapped = list.map((relative) => {
     const base = (relative.split('/').pop() || relative).replace(/\.vrm$/i, '');
     return { name: base, path: relative };
   });
+  if (mapped.length > 0) return mapped;
+  return [{ name: 'Keqing', path: DEFAULT_LOCAL_VRM_PATH, source: 'local' as const }];
 });
 
-const vrmModels = computed<Array<{ name: string; path: string }>>(() => {
+const vrmModels = computed<VrmItem[]>(() => {
   if (import.meta.env.DEV) return devVrmItems.value;
   return remoteVrmItems.value;
 });
@@ -483,7 +572,8 @@ const canCycleVrmModel = computed(() => {
 watch(
   () => hasVrmSupport.value,
   (next) => {
-    if (!next && agentType.value === 'vrm') agentType.value = 'cubism3';
+    if (next) agentType.value = 'vrm';
+    else if (agentType.value === 'vrm') agentType.value = 'cubism3';
   },
   { immediate: true }
 );
@@ -492,19 +582,26 @@ const currentVrmSrc = computed(() => {
   const item = vrmModels.value[vrmModelIndex.value];
   if (!item) return '';
   if (import.meta.env.DEV) {
+    const forceLocal = item.source === 'local' || item.path === DEFAULT_LOCAL_VRM_PATH;
+    if (forceLocal) return encodeURI(`/model/${normalizeLocalVrmPath(item.path)}`);
     const abs = `${__DEV_VRM_BASE__}/${item.path}`;
     return encodeURI(`/@fs${abs}`);
   }
-  const url = buildApiUrl(
-    `/api/hf/${VRM_HF_OWNER}/${VRM_HF_REPO}/resolve/${VRM_HF_REF}/${item.path}`
+  const fileNameRaw = (item.path.split('/').pop() || '').trim();
+  const fileName = fileNameRaw && /\.vrm$/i.test(fileNameRaw) ? fileNameRaw : `${fileNameRaw}.vrm`;
+  const hfPath = item.source === 'hf' ? item.path : `${VRM_HF_PREFIX}/${fileName}`;
+  const remoteUrl = buildApiUrl(
+    `/api/hf/${VRM_HF_OWNER}/${VRM_HF_REPO}/resolve/${VRM_HF_REF}/${hfPath}`
   );
-  return encodeURI(url);
-});
-
-const agentTypeLabel = computed(() => {
-  if (agentType.value === 'vrm') return '3D';
-  if (agentType.value === 'cubism3') return '2D C3';
-  return '2D C2';
+  const localRel = item.source === 'local' ? item.path : fileName;
+  const localUrl = `/model/${localRel}`;
+  const preferLocalEnv =
+    String(import.meta.env.VITE_VRM_PREFER_LOCAL || '').toLowerCase() === 'true';
+  const preferLocal = preferLocalEnv || vrmPreferLocalRuntime.value || item.source === 'local';
+  const primary = preferLocal ? localUrl : remoteUrl;
+  const fallback = preferLocal ? remoteUrl : localUrl;
+  if (primary === fallback) return encodeURI(primary);
+  return `${encodeURI(primary)}|${encodeURI(fallback)}`;
 });
 
 const chatTitle = computed(() => {
@@ -560,21 +657,39 @@ const vrmModelCounter = computed(() => {
   return `${idx}/${total}`;
 });
 
-const effectiveMotionCommand = computed(() => motionCommand.value);
+const normalizeLive2dMotionCommand = (raw: string) => {
+  const n = String(raw || '')
+    .toLowerCase()
+    .trim();
+  if (!n) return '';
+  if (n === 'idle_yawn') return 'yawn';
+  if (n.startsWith('idle_')) {
+    if (n.includes('sigh')) return 'evening';
+    if (n.includes('think') || n.includes('chin')) return 'mood_confused';
+    if (n.includes('rub_eyes') || n.includes('breathe') || n.includes('lean')) return 'mood_tired';
+    if (n.includes('tap') || n.includes('bounce')) return 'activity';
+    if (n.includes('stretch')) return 'stretch';
+    if (n.includes('hair') || n.includes('face')) return 'play_hair';
+    return 'idle';
+  }
+  if (n === 'mood_sleepy') return 'yawn';
+  return raw;
+};
+
+const effectiveMotionCommand = computed(() => {
+  const raw = motionCommand.value;
+  if (agentType.value === 'vrm') return raw;
+  return normalizeLive2dMotionCommand(raw);
+});
 
 const VRM_MODEL_INDEX_KEY = 'agent_vrm_model_index_v1';
 const loadVrmModelPath = () => {
-  try {
-    const raw = localStorage.getItem(VRM_MODEL_PATH_KEY);
-    const v = typeof raw === 'string' ? raw.trim() : '';
-    return v || null;
-  } catch {
-    return null;
-  }
+  const stored = parseStoredVrmSelection();
+  return stored ? stored : null;
 };
 
 const loadVrmModelIndex = () => {
-  const raw = localStorage.getItem(VRM_MODEL_INDEX_KEY);
+  const raw = safeStorageGet(VRM_MODEL_INDEX_KEY);
   const v = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (!Number.isFinite(v)) return null;
   if (v < 0 || v >= vrmModels.value.length) return null;
@@ -583,18 +698,21 @@ const loadVrmModelIndex = () => {
 
 const persistVrmSelection = () => {
   try {
-    localStorage.setItem(VRM_MODEL_INDEX_KEY, String(vrmModelIndex.value));
+    safeStorageSet(VRM_MODEL_INDEX_KEY, String(vrmModelIndex.value));
     const item = vrmModels.value[vrmModelIndex.value];
-    if (item?.path) localStorage.setItem(VRM_MODEL_PATH_KEY, item.path);
+    if (item?.path) {
+      const prefix = item.source === 'local' ? 'local:' : 'hf:';
+      safeStorageSet(VRM_MODEL_PATH_KEY, `${prefix}${item.path}`);
+    }
   } catch {}
 };
 
 const pickDefaultVrmModelIndex = () => {
   const list = vrmModels.value;
   if (list.length === 0) return 0;
-  const preferred = list.findIndex((m) => /yae|miko|八重|神子/i.test(m.name));
+  const preferred = list.findIndex((m) => /keqing|刻晴/i.test(m.name));
   if (preferred >= 0) return preferred;
-  const fallback = list.findIndex((m) => /keqing|刻晴/i.test(m.name));
+  const fallback = list.findIndex((m) => /yae|miko|八重|神子/i.test(m.name));
   return fallback >= 0 ? fallback : 0;
 };
 
@@ -604,7 +722,8 @@ const loadRemoteVrmModels = async () => {
   vrmListLoading.value = true;
   vrmListError.value = '';
   try {
-    const currentPath = vrmModels.value[vrmModelIndex.value]?.path || loadVrmModelPath() || '';
+    const stored = loadVrmModelPath();
+    const currentPath = vrmModels.value[vrmModelIndex.value]?.path || stored?.path || '';
     const params = new URLSearchParams({
       ref: VRM_HF_REF,
       prefix: VRM_HF_PREFIX,
@@ -621,16 +740,53 @@ const loadRemoteVrmModels = async () => {
       .filter((p: any) => typeof p === 'string' && p.toLowerCase().endsWith('.vrm'))
       .map((p: string) => {
         const base = (p.split('/').pop() || p).replace(/\.vrm$/i, '');
-        return { name: base, path: p };
+        return { name: base, path: p, source: 'hf' };
       });
     remoteVrmListLoaded.value = true;
+    vrmPreferLocalRuntime.value = false;
     if (currentPath) {
-      const idx = remoteVrmItems.value.findIndex((m) => m.path === currentPath);
-      if (idx >= 0) vrmModelIndex.value = idx;
+      const storedSelection = stored;
+      const byExact = remoteVrmItems.value.findIndex((m) => m.path === currentPath);
+      if (byExact >= 0) vrmModelIndex.value = byExact;
+      else if (storedSelection?.source === 'local') {
+        const file = (storedSelection.path.split('/').pop() || '').trim().toLowerCase();
+        const idx = remoteVrmItems.value.findIndex(
+          (m) => (m.path.split('/').pop() || '').trim().toLowerCase() === file
+        );
+        if (idx >= 0) vrmModelIndex.value = idx;
+      }
     }
   } catch (e: any) {
-    vrmListError.value = typeof e?.message === 'string' ? e.message : String(e);
-    remoteVrmListLoaded.value = false;
+    const msg = typeof e?.message === 'string' ? e.message : String(e);
+    const tryLocal = async () => {
+      const list = Array.isArray(publicVrmRelativePaths) ? publicVrmRelativePaths : [];
+      const localItems: VrmItem[] = list
+        .filter((p) => typeof p === 'string' && p.toLowerCase().endsWith('.vrm'))
+        .map((p) => {
+          const base = (p.split('/').pop() || p).replace(/\.vrm$/i, '');
+          return { name: base, path: p, source: 'local' as const };
+        });
+      if (localItems.length === 0) throw new Error('no local models');
+      remoteVrmItems.value = localItems;
+      remoteVrmListLoaded.value = true;
+      vrmPreferLocalRuntime.value = true;
+      vrmListError.value = '';
+
+      const stored = loadVrmModelPath();
+      if (stored?.path) {
+        const file = (stored.path.split('/').pop() || '').trim().toLowerCase();
+        const idx = localItems.findIndex(
+          (m) => (m.path.split('/').pop() || '').trim().toLowerCase() === file
+        );
+        if (idx >= 0) vrmModelIndex.value = idx;
+      }
+    };
+    try {
+      await tryLocal();
+    } catch {
+      vrmListError.value = msg;
+      remoteVrmListLoaded.value = false;
+    }
   } finally {
     vrmListLoading.value = false;
   }
@@ -640,91 +796,76 @@ watch(
   () => vrmModels.value.length,
   () => {
     if (vrmModels.value.length === 0) return;
-    const storedPath = loadVrmModelPath();
-    if (storedPath) {
-      const idx = vrmModels.value.findIndex((m) => m.path === storedPath);
+    const stored = loadVrmModelPath();
+    if (stored?.path) {
+      const idx = vrmModels.value.findIndex(
+        (m) => m.path === stored.path && (m.source || 'hf') === stored.source
+      );
       if (idx >= 0) {
         vrmModelIndex.value = idx;
         return;
       }
+      if (stored.source === 'local') {
+        const file = (stored.path.split('/').pop() || '').trim().toLowerCase();
+        const matchByFile = vrmModels.value.findIndex(
+          (m) => (m.path.split('/').pop() || '').trim().toLowerCase() === file
+        );
+        if (matchByFile >= 0) {
+          vrmModelIndex.value = matchByFile;
+          return;
+        }
+      }
     }
-    const stored = loadVrmModelIndex();
-    vrmModelIndex.value = stored ?? pickDefaultVrmModelIndex();
+    const storedIdx = loadVrmModelIndex();
+    vrmModelIndex.value = storedIdx ?? pickDefaultVrmModelIndex();
   },
   { immediate: true }
 );
 
-const ensureLive2dVersion = async (target: 2 | 3) => {
+const ensureLive2dVersion = async (target: 3) => {
   const widget = live2dWidgetRef.value;
   if (!widget) return;
   const getVer = widget.getCurrentModelVersion as undefined | (() => 2 | 3 | null);
   const toggle = widget.toggleModelVersion as undefined | (() => Promise<void> | void);
   if (!getVer || !toggle) return;
 
-  let cur = getVer();
+  const cur = getVer();
   if (cur === target) return;
 
-  for (let i = 0; i < 2; i++) {
-    await toggle();
-    await new Promise((r) => setTimeout(r, 80));
-    cur = getVer();
-    if (cur === target) return;
-  }
-};
+  const timeoutMs = 20000;
+  const startedAt = Date.now();
 
-const waitForLive2dLoaded = async (timeoutMs = 12000) => {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const widget = live2dWidgetRef.value;
-    const getVer = widget?.getCurrentModelVersion as undefined | (() => 2 | 3 | null);
-    const v = typeof getVer === 'function' ? getVer() : null;
-    if (v === 2 || v === 3) return v;
-    await new Promise((r) => setTimeout(r, 80));
-  }
-  return null;
-};
-
-const preloadLive2dDefaultsOnce = async () => {
-  if (import.meta.env.DEV) return;
-  if (live2dDefaultsPreloaded.value) return;
-  live2dInitEnabled.value = true;
-  await nextTick();
-  const loadedVer = await waitForLive2dLoaded(12000);
-  if (!loadedVer) return;
-  await ensureLive2dVersion(3);
-  await waitForLive2dLoaded(8000);
-  await ensureLive2dVersion(2);
-  await waitForLive2dLoaded(8000);
-  live2dDefaultsPreloaded.value = true;
-};
-
-watch(
-  () => vrmLoading.value,
-  (loading) => {
-    if (import.meta.env.DEV) return;
-    if (!hasVrmSupport.value) return;
-    if (loading) {
-      vrmHasStartedLoading.value = true;
+  const pending = (ensureLive2dVersion as any)._pending as
+    | { target: 3; promise: Promise<void> }
+    | undefined;
+  if (pending?.promise) {
+    if (pending.target === target) {
+      await pending.promise;
       return;
     }
-    if (!vrmHasStartedLoading.value) return;
-    if (live2dDefaultsPreloaded.value) return;
-    void preloadLive2dDefaultsOnce();
-  },
-  { immediate: true }
-);
+    try {
+      await pending.promise;
+    } catch {}
+    const after = getVer();
+    if (after === target) return;
+  }
 
-const cycleAgentType = async () => {
-  const candidates: Array<'cubism3' | 'cubism2' | 'vrm'> = ['cubism3', 'cubism2'];
-  if (hasVrmSupport.value) candidates.push('vrm');
+  const p = (async () => {
+    await toggle();
+    while (Date.now() - startedAt < timeoutMs) {
+      const v = getVer();
+      if (v === target) return;
+      await new Promise((r) => setTimeout(r, 80));
+    }
+  })();
 
-  const idx = candidates.indexOf(agentType.value);
-  const next = candidates[(idx + 1) % candidates.length] || candidates[0];
-  agentType.value = next;
-  await nextTick();
-
-  if (agentType.value === 'cubism3') await ensureLive2dVersion(3);
-  else if (agentType.value === 'cubism2') await ensureLive2dVersion(2);
+  (ensureLive2dVersion as any)._pending = { target, promise: p };
+  try {
+    await p;
+  } finally {
+    const curPending = (ensureLive2dVersion as any)._pending;
+    if (curPending?.promise === p) (ensureLive2dVersion as any)._pending = undefined;
+  }
 };
 
 const ensureRemoteVrmListLoaded = async () => {
@@ -784,7 +925,6 @@ watch(
   (v) => {
     if (!v) return;
     if (agentType.value === 'cubism3') void ensureLive2dVersion(3);
-    else if (agentType.value === 'cubism2') void ensureLive2dVersion(2);
   }
 );
 
@@ -844,88 +984,56 @@ const accumulatedAngle = ref(0);
 const lastMouseAngle = ref(0);
 const lastVelocity = ref({ x: 0, y: 0 });
 const hasMouseMoved = ref(false);
+const lastUserActivityAt = ref(Date.now());
+const markUserActivity = () => {
+  lastUserActivityAt.value = Date.now();
+};
 
 // Chat State
-const chatOpen = ref(false);
-const messages = ref<ChatMessage[]>([{ role: 'agent', text: 'Hello! How can I help you today?' }]);
-const isLoading = ref(false);
-let chatAbortController: AbortController | null = null;
-let chatRequestSeq = 0;
 const MAX_UI_MESSAGES_KEY = 'agent_ui_max_messages';
 const CHAT_AUTO_CLOSE_MS_KEY = 'agent_chat_auto_close_ms';
 const CONSOLE_CAPTURE_INFO_KEY = 'agent_console_capture_info';
-const readIntSetting = (key: string, fallback: number, min: number, max: number) => {
-  try {
-    const raw = localStorage.getItem(key);
-    const v = raw ? Number.parseInt(raw, 10) : Number.NaN;
-    if (!Number.isFinite(v)) return fallback;
-    return Math.max(min, Math.min(max, v));
-  } catch {
-    return fallback;
-  }
-};
-const readFloatSetting = (key: string, fallback: number, min: number, max: number) => {
-  try {
-    const raw = localStorage.getItem(key);
-    const v = raw ? Number.parseFloat(raw) : Number.NaN;
-    if (!Number.isFinite(v)) return fallback;
-    return Math.max(min, Math.min(max, v));
-  } catch {
-    return fallback;
-  }
-};
-const readBoolSetting = (key: string, fallback: boolean) => {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw == null) return fallback;
-    const v = raw.trim().toLowerCase();
-    if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
-    if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
-    return fallback;
-  } catch {
-    return fallback;
-  }
-};
-const maxUiMessages = ref(readIntSetting(MAX_UI_MESSAGES_KEY, 120, 20, 800));
-const chatAutoCloseMs = ref(readIntSetting(CHAT_AUTO_CLOSE_MS_KEY, 5000, 0, 600000));
-const lastChatActivityAt = ref(Date.now());
-let chatAutoCloseTimer: number | null = null;
+const isLoading = ref(false);
+let chatAbortController: AbortController | null = null;
+let chatRequestSeq = 0;
 
-const pushUiMessage = (msg: ChatMessage) => {
-  messages.value.push(msg);
-  const maxKeep = Math.max(20, Number(maxUiMessages.value) || 120);
-  if (messages.value.length > maxKeep) {
-    messages.value = messages.value.slice(-maxKeep);
+const {
+  chatOpen,
+  messages,
+  maxUiMessages,
+  chatAutoCloseMs,
+  lastChatActivityAt,
+  pushUiMessage,
+  handleChatActivity: handleChatActivityUi,
+  scheduleChatAutoClose,
+  openChat: openChatUi,
+  closeChat: closeChatUi,
+  toggleChat: toggleChatUi
+} = useAgentChatUi({
+  isMobile,
+  agentSize: AGENT_SIZE,
+  x,
+  y,
+  markUserActivity,
+  onOpen: () => {
+    message.value = '';
+  },
+  onClose: () => {
+    if (isLoading.value) {
+      try {
+        chatAbortController?.abort();
+      } catch {}
+      chatAbortController = null;
+      cancelAiRequests('chat');
+      isLoading.value = false;
+    }
   }
-};
+});
 
-const scheduleChatAutoClose = (delayMs = chatAutoCloseMs.value) => {
-  if (chatAutoCloseTimer) window.clearTimeout(chatAutoCloseTimer);
-  chatAutoCloseTimer = window.setTimeout(
-    () => {
-      chatAutoCloseTimer = null;
-      if (!chatOpen.value) return;
-      const idleForMs = Date.now() - lastChatActivityAt.value;
-      const closeMs = Math.max(0, Number(chatAutoCloseMs.value) || 5000);
-      if (idleForMs < closeMs) {
-        scheduleChatAutoClose(closeMs - idleForMs);
-        return;
-      }
-      if (isLoading.value) {
-        scheduleChatAutoClose(1200);
-        return;
-      }
-      closeChat();
-    },
-    Math.max(200, delayMs)
-  );
-};
-
-const handleChatActivity = () => {
-  lastChatActivityAt.value = Date.now();
-  markUserActivity();
-  if (chatOpen.value) scheduleChatAutoClose();
-};
+const handleChatActivity = () => handleChatActivityUi(() => isLoading.value);
+const openChat = () => openChatUi(() => isLoading.value);
+const closeChat = () => closeChatUi();
+const toggleChat = () => toggleChatUi(() => isLoading.value);
 
 const extractFactsFromUserText = (raw: string) => {
   const text = String(raw || '')
@@ -976,6 +1084,7 @@ const ALLOWED_MOTIONS = [
   'idle_head_tilt',
   'idle_shrug',
   'idle_sigh',
+  'idle_yawn',
   'idle_squat_think',
   'idle_fidget_hands',
   'idle_check_nails',
@@ -1078,10 +1187,10 @@ const { localMemory, memorySummary, memoryFacts, loadLocalMemory, pushMemoryItem
   useLocalMemory();
 
 const getCharacterName = () => {
-  const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
-  const perModel = localStorage.getItem(`agent_character_name_${modelId}`);
+  const modelId = Number.parseInt(safeStorageGet('modelId') || '0', 10) || 0;
+  const perModel = safeStorageGet(`agent_character_name_${modelId}`);
   if (perModel && perModel.trim()) return perModel.trim();
-  const stored = localStorage.getItem('agent_character_name');
+  const stored = safeStorageGet('agent_character_name');
   if (stored && stored.trim()) return stored.trim();
   return 'Lumina';
 };
@@ -1114,8 +1223,8 @@ const getBuiltInVrmPersona = () => {
 };
 
 const getPersonaText = () => {
-  const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
-  const perModelRaw = localStorage.getItem(`agent_persona_text_${modelId}`);
+  const modelId = Number.parseInt(safeStorageGet('modelId') || '0', 10) || 0;
+  const perModelRaw = safeStorageGet(`agent_persona_text_${modelId}`);
   if (perModelRaw && perModelRaw.trim()) {
     const trimmed = perModelRaw.trim();
     if (trimmed.startsWith('{')) {
@@ -1127,7 +1236,7 @@ const getPersonaText = () => {
     }
     return trimmed;
   }
-  const stored = localStorage.getItem('agent_persona_text');
+  const stored = safeStorageGet('agent_persona_text');
   if (stored && stored.trim()) return stored.trim();
   if (agentType.value === 'vrm') {
     const builtIn = getBuiltInVrmPersona();
@@ -1147,9 +1256,33 @@ const personaFlags = computed(() => {
   };
 });
 
+const personaTraits = computed<PersonaTraits>(() => computePersonaTraits(getPersonaText()));
+
+const emotionEngine = createEmotionEngine({ personaTraits });
+const emotionSnapshot = emotionEngine.snapshot;
+
+const vrmLookAt = computed(() => {
+  const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+  if (agentType.value !== 'vrm') return { x: 0, y: 0, active: false };
+  if (isDizzy.value || isFainted.value) return { x: 0, y: 0, active: false };
+
+  if (guideTargetRect.value) {
+    const agentCenterX = x.value + AGENT_SIZE.value / 2;
+    const agentCenterY = y.value + AGENT_SIZE.value / 2;
+    const targetCenterX = guideTargetRect.value.left + guideTargetRect.value.width / 2;
+    const targetCenterY = guideTargetRect.value.top + guideTargetRect.value.height / 2;
+    const dx = targetCenterX - agentCenterX;
+    const dy = targetCenterY - agentCenterY;
+    const sensitivity = 520;
+    return { x: clamp(dx / sensitivity), y: clamp(dy / sensitivity), active: true };
+  }
+
+  return { x: clamp(eyeOffset.value.x), y: clamp(eyeOffset.value.y), active: true };
+});
+
 const getPersonaRulesForAi = () => {
-  const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
-  const perModelRaw = localStorage.getItem(`agent_persona_text_${modelId}`);
+  const modelId = Number.parseInt(safeStorageGet('modelId') || '0', 10) || 0;
+  const perModelRaw = safeStorageGet(`agent_persona_text_${modelId}`);
   if (perModelRaw && perModelRaw.trim()) {
     const trimmed = perModelRaw.trim();
     if (trimmed.startsWith('{')) {
@@ -1161,7 +1294,7 @@ const getPersonaRulesForAi = () => {
     }
     return trimmed;
   }
-  const stored = localStorage.getItem('agent_persona_text');
+  const stored = safeStorageGet('agent_persona_text');
   if (stored && stored.trim()) return stored.trim();
   const builtIn = getBuiltInVrmPersona();
   if (builtIn)
@@ -1177,10 +1310,9 @@ type IdleProfile = {
 };
 
 const getIdleProfile = (): IdleProfile => {
-  const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
+  const modelId = Number.parseInt(safeStorageGet('modelId') || '0', 10) || 0;
   const raw =
-    localStorage.getItem(`agent_idle_profile_${modelId}`) ||
-    localStorage.getItem('agent_idle_profile');
+    safeStorageGet(`agent_idle_profile_${modelId}`) || safeStorageGet('agent_idle_profile');
   if (raw && raw.trim().startsWith('{')) {
     try {
       const parsed = JSON.parse(raw);
@@ -1313,7 +1445,161 @@ const recordSystemEvent = (text: string, type = 'event') => {
 };
 
 // Task Executor
-const { plan, isExecuting, setPlan, stopTask } = useTaskExecutor();
+type PendingTaskEvent = import('../composables/useTaskExecutor').TaskExecutorEvent;
+const pendingTaskEvents = ref<PendingTaskEvent[]>([]);
+let taskEventFlushTimer: number | null = null;
+const scheduleFlushTaskEvents = () => {
+  if (taskEventFlushTimer) return;
+  taskEventFlushTimer = window.setTimeout(() => {
+    taskEventFlushTimer = null;
+    void flushTaskEvents();
+  }, 0);
+};
+
+async function flushTaskEvents() {
+  if (pendingTaskEvents.value.length === 0) return;
+  const batch = pendingTaskEvents.value.splice(0, pendingTaskEvents.value.length);
+
+  const now = Date.now();
+  const lastBeatRaw = (flushTaskEvents as any)._lastBeatAt as number | undefined;
+  const lastBeatAt = typeof lastBeatRaw === 'number' ? lastBeatRaw : 0;
+  const minIntervalMs = 900;
+  const canBeat = now - lastBeatAt >= minIntervalMs;
+
+  const tryBeat = (args: {
+    motion?: string;
+    expression?: string;
+    duration?: number;
+    message?: string;
+  }) => {
+    if (!canBeat) return;
+    if (chatOpen.value || isDragging.value || isFainted.value) return;
+    const duration = typeof args.duration === 'number' ? args.duration : 1200;
+    if (args.expression) {
+      requestExpression(args.expression, duration, {
+        priority: MOTION_PRIORITY.ai,
+        source: 'task',
+        force: false
+      });
+    }
+    if (args.motion) {
+      const m = normalizeMotionName(args.motion);
+      if (m) {
+        requestMotion(m, duration, {
+          priority: MOTION_PRIORITY.ai,
+          source: 'task',
+          force: false
+        });
+      }
+    }
+    if (args.message && !message.value && Math.random() < 0.55) {
+      const msg = String(args.message || '')
+        .trim()
+        .slice(0, 40);
+      if (msg) {
+        message.value = msg;
+        window.setTimeout(() => {
+          if (message.value === msg && !isTalking.value) message.value = '';
+        }, 2400);
+      }
+    }
+    (flushTaskEvents as any)._lastBeatAt = Date.now();
+  };
+
+  const last = batch[batch.length - 1];
+  if (!last) return;
+
+  if (last.type === 'plan_start') {
+    tryBeat({
+      motion: personaTraits.value.cheerful ? 'wave' : 'nod',
+      expression: personaTraits.value.cold ? 'neutral' : 'happy',
+      duration: 1100,
+      message: currentLang.value === 'zh' ? '交给我。' : 'On it.'
+    });
+    return;
+  }
+
+  if (last.type === 'plan_done') {
+    tryBeat({
+      motion: personaTraits.value.cheerful ? 'clap' : 'mood_happy',
+      expression: 'happy',
+      duration: 1400,
+      message: currentLang.value === 'zh' ? '搞定。' : 'Done.'
+    });
+    return;
+  }
+
+  if (last.type === 'plan_failed') {
+    tryBeat({
+      motion: personaTraits.value.strict ? 'shake_head' : 'mood_confused',
+      expression: 'confused',
+      duration: 1500,
+      message: currentLang.value === 'zh' ? '这里有点卡住了…' : 'I’m stuck here…'
+    });
+    return;
+  }
+
+  if (last.type === 'step_retry') {
+    const base =
+      last.attempt >= 1
+        ? personaTraits.value.strict
+          ? 'shake_head'
+          : 'mood_confused'
+        : 'tap_body';
+    tryBeat({
+      motion: base,
+      expression: 'confused',
+      duration: 1100
+    });
+    return;
+  }
+
+  if (last.type === 'step_failed') {
+    tryBeat({
+      motion: personaTraits.value.strict ? 'shake_head' : 'mood_confused',
+      expression: 'confused',
+      duration: 1200
+    });
+    return;
+  }
+
+  if (last.type === 'step_start') {
+    const t = String(last.step?.type || '');
+    if (t === 'click' || t === 'hover' || t === 'highlight') {
+      tryBeat({
+        motion: Math.random() < 0.5 ? 'point_left' : 'point_right',
+        expression: personaTraits.value.cold ? 'neutral' : 'happy',
+        duration: 1100
+      });
+    } else if (t === 'input') {
+      tryBeat({
+        motion: 'idle_think',
+        expression: 'confused',
+        duration: 1200
+      });
+    } else if (t === 'navigate' || t === 'scroll') {
+      tryBeat({
+        motion: personaTraits.value.lazy ? 'idle_look_around' : 'step_forward',
+        expression: personaTraits.value.cold ? 'neutral' : 'happy',
+        duration: 1200
+      });
+    } else if (t === 'press') {
+      tryBeat({
+        motion: 'nod',
+        expression: personaTraits.value.cold ? 'neutral' : 'happy',
+        duration: 900
+      });
+    }
+    return;
+  }
+}
+
+const { plan, isExecuting, setPlan, stopTask } = useTaskExecutor({
+  onEvent: (event) => {
+    pendingTaskEvents.value.push(event);
+    scheduleFlushTaskEvents();
+  }
+});
 
 const TASK_SESSION_STORAGE_KEY = 'agent_task_session';
 const taskSession = ref<{
@@ -1329,14 +1615,14 @@ const isTaskContinuing = ref(false);
 const saveTaskSession = () => {
   try {
     if (taskSession.value)
-      localStorage.setItem(TASK_SESSION_STORAGE_KEY, JSON.stringify(taskSession.value));
-    else localStorage.removeItem(TASK_SESSION_STORAGE_KEY);
+      safeStorageSet(TASK_SESSION_STORAGE_KEY, JSON.stringify(taskSession.value));
+    else safeStorageRemove(TASK_SESSION_STORAGE_KEY);
   } catch {}
 };
 
 const loadTaskSession = () => {
   try {
-    const raw = localStorage.getItem(TASK_SESSION_STORAGE_KEY);
+    const raw = safeStorageGet(TASK_SESSION_STORAGE_KEY);
     if (!raw || !raw.trim()) return;
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object') {
@@ -1359,10 +1645,6 @@ const eyeOffset = ref<Position>({ x: 0, y: 0 });
 const isFollowingMouse = ref(false);
 const isLookAtOverride = ref(false);
 const nowMs = ref(Date.now());
-const lastUserActivityAt = ref(Date.now());
-const markUserActivity = () => {
-  lastUserActivityAt.value = Date.now();
-};
 
 const perfFrameMs = ref(0);
 const perfAvgFrameMs = ref(0);
@@ -1419,6 +1701,8 @@ const IDLE_AI_ENABLED_KEY = 'agent_idle_ai_enabled';
 const IDLE_AI_MIN_IDLE_MS_KEY = 'agent_idle_ai_min_idle_ms';
 const IDLE_AI_COOLDOWN_MS_KEY = 'agent_idle_ai_cooldown_ms';
 const IDLE_AI_CHANCE_KEY = 'agent_idle_ai_chance';
+const MOUSE_FOLLOW_ENABLED_KEY = 'agent_mouse_follow_enabled';
+const AVATARPLAN_SOFT_INTERRUPT_KEY = 'agent_avatarplan_soft_interrupt';
 
 const roamEnabled = ref(readBoolSetting(ROAM_ENABLED_KEY, true));
 const idleTalkEnabled = ref(readBoolSetting(IDLE_TALK_ENABLED_KEY, true));
@@ -1426,6 +1710,7 @@ const idleAiEnabled = ref(readBoolSetting(IDLE_AI_ENABLED_KEY, true));
 const moveIntervalMs = ref(readIntSetting(MOVE_INTERVAL_MS_KEY, 60000, 5000, 600000));
 const idleTalkIntervalMs = ref(readIntSetting(IDLE_TALK_INTERVAL_MS_KEY, 30000, 3000, 600000));
 const lerpFactor = ref(readFloatSetting(LERP_FACTOR_KEY, 0.06, 0.01, 0.35));
+const mouseFollowEnabled = ref(readBoolSetting(MOUSE_FOLLOW_ENABLED_KEY, false));
 const mouseFollowOffset = ref({
   x: readIntSetting(MOUSE_FOLLOW_OFFSET_X_KEY, 20, -300, 300),
   y: readIntSetting(MOUSE_FOLLOW_OFFSET_Y_KEY, 20, -300, 300)
@@ -1437,7 +1722,30 @@ const tiredThreshold = ref(readIntSetting(TIRED_THRESHOLD_KEY, 20, 0, 2000));
 const idleAiMinIdleMs = ref(readIntSetting(IDLE_AI_MIN_IDLE_MS_KEY, 65000, 3000, 600000));
 const idleAiCooldownMs = ref(readIntSetting(IDLE_AI_COOLDOWN_MS_KEY, 120000, 0, 900000));
 const idleAiChance = ref(readFloatSetting(IDLE_AI_CHANCE_KEY, 0.22, 0, 1));
+const avatarPlanSoftInterrupt = ref(readBoolSetting(AVATARPLAN_SOFT_INTERRUPT_KEY, true));
 const DRAG_MOVE_THRESHOLD = 5;
+
+watch(
+  () => agentType.value,
+  (v) => {
+    try {
+      localStorage.setItem(AGENT_TYPE_KEY, v);
+    } catch {}
+  },
+  { immediate: true }
+);
+
+watch(
+  () => mouseFollowEnabled.value,
+  (v) => {
+    if (!v) isFollowingMouse.value = false;
+    else if (isHovered.value && !props.isPinned && !chatOpen.value) isFollowingMouse.value = true;
+    try {
+      localStorage.setItem(MOUSE_FOLLOW_ENABLED_KEY, v ? '1' : '0');
+    } catch {}
+  },
+  { immediate: true }
+);
 
 let lastTiredReactAt = 0;
 watch(
@@ -1451,7 +1759,7 @@ watch(
     const msg =
       currentLang.value === 'zh' ? '哈…好累…让我歇会儿…' : "Ugh... I'm tired... let me rest...";
     if (!message.value) message.value = msg;
-    playMotionInternal('mood_tired', 2200);
+    requestMotion('mood_tired', 2200, { priority: MOTION_PRIORITY.system, source: 'energy' });
     setTimeout(() => {
       if (message.value === msg) message.value = '';
     }, 3600);
@@ -1478,14 +1786,15 @@ const idleMessages = {
 };
 
 const containerStyle = computed(() => {
+  const mode = props.layoutMode || 'fixed';
   if (props.isPinned) {
     return {
       transform: 'none',
       width: `${AGENT_SIZE.value}px`,
       height: `${AGENT_SIZE.value}px`,
-      position: 'fixed' as const,
-      bottom: '0',
-      left: '0',
+      position: mode as any,
+      bottom: mode === 'fixed' ? '0' : undefined,
+      left: mode === 'fixed' ? '0' : undefined,
       zIndex: 9999,
       pointerEvents: 'auto' as const,
       overflow: 'visible'
@@ -1511,67 +1820,7 @@ const containerStyle = computed(() => {
 });
 
 // --- Helpers ---
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-type ExtractedJsonBlock = { raw: string; jsonText: string };
-
-const extractJsonAfterLabel = (text: string, label: string): ExtractedJsonBlock | null => {
-  const re = new RegExp(`${label}\\s*:\\s*`, 'i');
-  const match = re.exec(text);
-  if (!match || typeof match.index !== 'number') return null;
-
-  let i = match.index + match[0].length;
-  while (i < text.length && /\s/.test(text[i] || '')) i++;
-
-  const first = text[i];
-  if (first !== '{' && first !== '[') return null;
-
-  const stack: string[] = [];
-  let inString = false;
-  let escaped = false;
-
-  for (let j = i; j < text.length; j++) {
-    const ch = text[j];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === '\\') {
-        escaped = true;
-        continue;
-      }
-      if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (ch === '{' || ch === '[') {
-      stack.push(ch);
-      continue;
-    }
-
-    if (ch === '}' || ch === ']') {
-      const last = stack[stack.length - 1];
-      const ok = (last === '{' && ch === '}') || (last === '[' && ch === ']');
-      if (!ok) return null;
-      stack.pop();
-      if (stack.length === 0) {
-        const jsonText = text.slice(i, j + 1);
-        const raw = text.slice(match.index, j + 1);
-        return { raw, jsonText };
-      }
-    }
-  }
-
-  return null;
-};
+const speechPulse = ref(0);
 
 const speak = (text: string) => {
   if (isMuted.value || !window.speechSynthesis) return;
@@ -1585,34 +1834,38 @@ const speak = (text: string) => {
       v.lang.startsWith(utterance.lang)
   );
   if (voice) utterance.voice = voice;
-  utterance.pitch = 1.2;
-  utterance.rate = 1.1;
+  const traits = personaTraits.value;
+  utterance.pitch = traits.cold ? 0.95 : traits.elegant ? 1.05 : traits.shy ? 1.18 : 1.12;
+  utterance.rate = traits.lazy ? 0.98 : traits.cheerful ? 1.16 : traits.strict ? 1.08 : 1.1;
   utterance.onstart = () => {
     isTalking.value = true;
+    speechPulse.value = Date.now();
+  };
+  utterance.onboundary = () => {
+    speechPulse.value = Date.now();
   };
   utterance.onend = () => {
     isTalking.value = false;
+    speechPulse.value = 0;
   };
   utterance.onerror = () => {
     isTalking.value = false;
+    speechPulse.value = 0;
   };
   window.speechSynthesis.speak(utterance);
 };
-
-const playMotionInternal = (name: string, duration?: number) => {
-  if (!name) return;
-  const d = typeof duration === 'number' ? duration : 2000;
-  motionCommand.value = name;
-  setTimeout(() => {
-    if (motionCommand.value === name) {
-      motionCommand.value = '';
-    }
-  }, d);
-};
+const {
+  requestMotion,
+  playMotionInternal,
+  clearChannel: clearMotionChannel
+} = useMotionArbitration({
+  motionCommand,
+  lockInteraction
+});
 
 const triggerSideMotion = (motion: (typeof ALLOWED_MOTIONS)[number]) => {
   const d = motion === 'idle' ? 900 : 1400;
-  playMotionInternal(motion, d);
+  requestMotion(motion, d, { priority: MOTION_PRIORITY.user, source: 'side' });
 };
 
 const applyExpression = (expression: string | undefined, duration: number) => {
@@ -1637,359 +1890,65 @@ const applyExpression = (expression: string | undefined, duration: number) => {
   }
 };
 
-const parsePosition = (val: number | string | undefined, current: number, max: number): number => {
-  if (val === undefined) return current;
-  if (typeof val === 'number') return val;
-  if (val.endsWith('%')) {
-    const p = parseFloat(val);
-    return (p / 100) * max;
-  }
-  return parseFloat(val) || current;
+const clearVisualTransientEmotions = () => {
+  clearTransient('angry', (v) => (isAngry.value = v));
+  clearTransient('happy', (v) => (isHappy.value = v));
+  clearTransient('pouting', (v) => (isPouting.value = v));
+  clearTransient('confused', (v) => (isConfused.value = v));
+  clearTransient('crying', (v) => (isCrying.value = v));
+  clearTransient('dizzy', (v) => (isDizzy.value = v));
 };
+const { requestExpression, clearChannel: clearExpressionChannel } = useExpressionArbitration({
+  clearVisualTransientEmotions,
+  applyExpression
+});
 
 const emit = defineEmits<{
   (e: 'toggle-chat'): void;
   (e: 'agent-event', payload: { name: string; payload?: any }): void;
 }>();
 
-// --- Avatar Plan Logic ---
-type QueuedAvatarPlan = { steps: any[]; resolve: () => void };
-
-const avatarPlanQueue: QueuedAvatarPlan[] = [];
-let avatarPlanRunnerActive = false;
-
-const clampNumber = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
-
-const safeJsonStringify = (v: unknown) => {
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return '';
-  }
-};
-
-const normalizeExpressionName = (
-  raw: unknown
-): (typeof ALLOWED_EXPRESSIONS)[number] | undefined => {
-  if (typeof raw !== 'string') return undefined;
-  const n = raw
-    .trim()
-    .replace(/^["']|["']$/g, '')
-    .toLowerCase();
-  if (!n) return undefined;
-  const mapped = n === 'pout' || n === 'pouting' ? 'shy' : n;
-  if ((ALLOWED_EXPRESSIONS as readonly string[]).includes(mapped))
-    return mapped as (typeof ALLOWED_EXPRESSIONS)[number];
-  return undefined;
-};
-
-const sanitizeAvatarPlanSteps = (rawSteps: any[]): AvatarPlanStep[] => {
-  if (!Array.isArray(rawSteps)) return [];
-  const result: AvatarPlanStep[] = [];
-  const maxSteps = 12;
-
-  for (const raw of rawSteps) {
-    if (result.length >= maxSteps) break;
-    if (!raw || typeof raw !== 'object') continue;
-    const t = String((raw as any).type || '')
-      .trim()
-      .toLowerCase();
-    const parallel = !!(raw as any).parallel;
-    const rawDuration = (raw as any).duration;
-    const duration = clampNumber(
-      typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : 1200,
-      120,
-      12000
-    );
-
-    if (t === 'pose') {
-      const motion = normalizeMotionName((raw as any).motion);
-      const expression = normalizeExpressionName((raw as any).expression);
-      if (motion) {
-        result.push({
-          type: 'pose',
-          motion,
-          expression,
-          duration,
-          parallel
-        });
-      } else if (expression) {
-        result.push({
-          type: 'expression',
-          expression,
-          duration,
-          parallel
-        });
-      }
-      continue;
-    }
-
-    if (t === 'motion') {
-      const motion = normalizeMotionName((raw as any).motion);
-      if (!motion) continue;
-      result.push({
-        type: 'motion',
-        motion,
-        duration,
-        parallel
-      });
-      continue;
-    }
-
-    if (t === 'expression' || t === 'emotion') {
-      const expression = normalizeExpressionName((raw as any).expression);
-      if (!expression) continue;
-      result.push({
-        type: 'expression',
-        expression,
-        duration,
-        parallel
-      });
-      continue;
-    }
-
-    if (t === 'speak') {
-      const text = typeof (raw as any).text === 'string' ? (raw as any).text.trim() : '';
-      if (!text) continue;
-      const motion = normalizeMotionName((raw as any).motion) || undefined;
-      const expression = normalizeExpressionName((raw as any).expression);
-      const bubble = (raw as any).bubble !== false;
-      result.push({
-        type: 'speak',
-        text: text.slice(0, 160),
-        motion,
-        expression,
-        bubble,
-        duration,
-        parallel
-      });
-      continue;
-    }
-
-    if (t === 'bubble') {
-      const text = typeof (raw as any).text === 'string' ? (raw as any).text.trim() : '';
-      if (!text) continue;
-      result.push({
-        type: 'bubble',
-        text: text.slice(0, 120),
-        duration,
-        parallel
-      });
-      continue;
-    }
-
-    if (t === 'look_at') {
-      const x = clampNumber(
-        typeof (raw as any).x === 'number' && Number.isFinite((raw as any).x) ? (raw as any).x : 0,
-        -1,
-        1
-      );
-      const y = clampNumber(
-        typeof (raw as any).y === 'number' && Number.isFinite((raw as any).y) ? (raw as any).y : 0,
-        -1,
-        1
-      );
-      result.push({
-        type: 'look_at',
-        x,
-        y,
-        duration,
-        parallel
-      });
-      continue;
-    }
-
-    if (t === 'wait') {
-      result.push({ type: 'wait', duration, parallel });
-      continue;
-    }
-
-    if (t === 'move') {
-      const scaleRaw = (raw as any).scale;
-      const scale =
-        typeof scaleRaw === 'number' && Number.isFinite(scaleRaw)
-          ? clampNumber(scaleRaw, 0.5, 2)
-          : undefined;
-      result.push({
-        type: 'move',
-        x: (raw as any).x,
-        y: (raw as any).y,
-        scale,
-        immediate: !!(raw as any).immediate,
-        duration,
-        parallel
-      });
-      continue;
-    }
-
-    if (t === 'event') {
-      const name =
-        typeof (raw as any).name === 'string' ? (raw as any).name.trim().slice(0, 80) : '';
-      if (!name) continue;
-      result.push({
-        type: 'event',
-        name,
-        payload: (raw as any).payload,
-        duration: clampNumber(duration, 80, 1200),
-        parallel
-      });
-      continue;
-    }
-
-    if (t === 'console') {
-      const message =
-        typeof (raw as any).message === 'string'
-          ? (raw as any).message.trim().slice(0, 240)
-          : safeJsonStringify((raw as any).message).slice(0, 240);
-      result.push({
-        type: 'console',
-        message,
-        duration: 0,
-        parallel
-      });
-      continue;
-    }
-  }
-
-  return result;
-};
-
-async function runAvatarPlanSteps(steps: any[]) {
-  const safeSteps = sanitizeAvatarPlanSteps(steps);
-  if (safeSteps.length === 0) return;
-
-  const parallelPromises: Promise<unknown>[] = [];
-
-  for (const step of safeSteps) {
-    const executeStep = async () => {
-      try {
-        const t = step?.type;
-        const duration = typeof step?.duration === 'number' ? step.duration : 1200;
-
-        if (t === 'pose') {
-          playMotionInternal(step.motion, duration);
-          applyExpression(step.expression, duration);
-          await delay(duration);
-        } else if (t === 'motion') {
-          playMotionInternal(step.motion, duration);
-          await delay(duration);
-        } else if (t === 'expression') {
-          applyExpression(step.expression, duration);
-          await delay(duration);
-        } else if (t === 'speak') {
-          if (step.bubble !== false) message.value = step.text;
-          speak(step.text);
-          if (typeof step.motion === 'string') playMotionInternal(step.motion, duration);
-          applyExpression(step.expression, duration);
-          await delay(duration);
-        } else if (t === 'bubble') {
-          message.value = step.text;
-          await delay(duration);
-        } else if (t === 'look_at') {
-          isLookAtOverride.value = true;
-          eyeOffset.value = { x: step.x, y: step.y };
-          setTimeout(() => {
-            isLookAtOverride.value = false;
-          }, duration);
-          await delay(duration);
-        } else if (t === 'wait') {
-          await delay(duration);
-        } else if (t === 'move') {
-          const maxX = window.innerWidth - AGENT_SIZE.value;
-          const maxY = window.innerHeight - AGENT_SIZE.value;
-          const rawX = parsePosition(step.x, x.value, maxX);
-          const rawY = parsePosition(step.y, y.value, maxY);
-          const targetXPos = clampNumber(rawX, -100, maxX + 100);
-          const targetYPos = clampNumber(rawY, -50, maxY + 50);
-          const targetScale =
-            typeof step.scale === 'number' ? clampNumber(step.scale, 0.5, 2) : dynamicScale.value;
-          const persona = getPersonaText();
-          const isLazy = /(懒散|慵懒|懒|lazy|sleepy|tired)/i.test(persona);
-          const moveFactor = isLazy ? 1.6 : 1;
-          const tiredFactor = isTired.value ? 2.2 : 1;
-          const actualDuration = Math.max(200, Math.round(duration * moveFactor * tiredFactor));
-          moveTransitionMs.value = actualDuration;
-
-          if (step.immediate) {
-            isTeleporting.value = true;
-            x.value = targetXPos;
-            y.value = targetYPos;
-            dynamicScale.value = targetScale;
-            await nextTick();
-            setTimeout(() => {
-              isTeleporting.value = false;
-            }, 50);
-          } else {
-            isMoving.value = true;
-            x.value = targetXPos;
-            y.value = targetYPos;
-            dynamicScale.value = targetScale;
-            if (agentType.value === 'vrm')
-              playMotionInternal('activity', Math.min(2600, actualDuration));
-            await delay(actualDuration);
-            isMoving.value = false;
-          }
-        } else if (t === 'event') {
-          emit('agent-event', { name: step.name, payload: step.payload });
-          await delay(100);
-        } else if (t === 'console') {
-          console.log('[AvatarPlan]', step.message);
-        } else {
-          await delay(duration);
-        }
-      } catch (err) {
-        console.error('Error executing step:', step, err);
-      }
-    };
-
-    if (step?.parallel) {
-      parallelPromises.push(executeStep());
-    } else {
-      await executeStep();
-    }
-  }
-
-  if (parallelPromises.length > 0) {
-    await Promise.all(parallelPromises.map((p) => p.catch(() => undefined)));
-  }
-}
-
-const enqueueAvatarPlan = (steps: any[]): Promise<void> => {
-  if (!steps || !Array.isArray(steps) || steps.length === 0) return Promise.resolve();
-
-  return new Promise<void>((resolve) => {
-    avatarPlanQueue.push({ steps, resolve });
-    void startAvatarPlanRunner();
+const playMotionForAvatarPlan = (name: string, duration?: number) => {
+  const d = typeof duration === 'number' && Number.isFinite(duration) ? duration : 2000;
+  requestMotion(name, d, {
+    priority: MOTION_PRIORITY.avatarPlan,
+    source: 'avatarPlan',
+    force: true,
+    lockInteractionMs: Math.min(260, Math.max(0, Math.round(d)))
   });
 };
 
-async function startAvatarPlanRunner() {
-  if (avatarPlanRunnerActive) return;
-  avatarPlanRunnerActive = true;
-  try {
-    while (avatarPlanQueue.length > 0) {
-      const item = avatarPlanQueue.shift();
-      if (!item) continue;
-      await runAvatarPlanSteps(item.steps);
-      item.resolve();
-    }
-  } finally {
-    avatarPlanRunnerActive = false;
-  }
-}
-
-const avatarAdapter = {
-  playMotion: (name: string, duration?: number) => {
-    playMotionInternal(name, duration);
-  },
-  setEmotion: (expression: string | undefined, duration?: number) => {
-    const d = typeof duration === 'number' ? duration : 1200;
-    applyExpression(expression, d);
-  },
-  runPlan: async (steps: any[]) => {
-    await enqueueAvatarPlan(steps);
-  }
+const normalizeMotionNameAny = (raw: unknown) => {
+  if (typeof raw === 'string') return normalizeMotionName(raw);
+  if (raw === null || raw === undefined) return null;
+  return normalizeMotionName(String(raw));
 };
+
+const { cancelAvatarPlan, avatarAdapter } = useAvatarPlanRunner({
+  agentType,
+  uiMode: props.uiMode || 'default',
+  agentSize: AGENT_SIZE,
+  x,
+  y,
+  dynamicScale,
+  moveTransitionMs,
+  isMoving,
+  isTeleporting,
+  isLookAtOverride,
+  eyeOffset,
+  isTired,
+  message,
+  allowedExpressions: ALLOWED_EXPRESSIONS as unknown as readonly string[],
+  normalizeMotionName: normalizeMotionNameAny,
+  getPersonaText,
+  playMotion: playMotionForAvatarPlan,
+  applyExpression,
+  requestExpression,
+  speak,
+  emitAgentEvent: (payload) => emit('agent-event', payload),
+  clearMotionChannel: () => clearMotionChannel('avatarPlan'),
+  clearExpressionChannel: () => clearExpressionChannel('avatarPlan')
+});
 
 // --- Event Handlers & Core Logic ---
 
@@ -2000,187 +1959,73 @@ const applyAiReply = async (
     speakText?: boolean;
     defaultMessageFallback?: string;
     suppressMemorySave?: boolean;
+    allowPlan?: boolean;
   }
 ) => {
-  let cleanResponse = rawResponse;
-
   motionCommand.value = '';
   clearAiEmotions();
+  cancelAvatarPlan({ mode: 'hard' });
 
-  let parsedPlan: any[] | null = null;
-  let parsedAvatarPlan: AvatarPlanStep[] | null = null;
-  const queuedAvatarSteps: AvatarPlanStep[] = [];
-  let hasExplicitMotion = false;
-  let primaryEmotion: string | null = null;
+  const allowPlan = options.allowPlan !== false && props.uiMode !== 'room';
+  const parsed = parseAiReply(rawResponse, { allowPlan, normalizeMotionName });
+  const cleanResponse = parsed.cleanResponse;
+  const queuedAvatarSteps: AvatarPlanStep[] = Array.isArray(parsed.queuedAvatarSteps)
+    ? parsed.queuedAvatarSteps.slice()
+    : [];
+  let hasExplicitMotion = !!parsed.hasExplicitMotion;
+  let primaryEmotion: string | null = parsed.primaryEmotion || null;
 
-  const lockMatch = rawResponse.match(/\[LOCK:\s*(\d+)\]/i);
-  if (lockMatch) {
-    const ms = Number.parseInt(lockMatch[1], 10);
-    if (Number.isFinite(ms) && ms > 0) {
-      lockInteraction(ms);
-    }
-    cleanResponse = cleanResponse.replace(lockMatch[0], '');
+  if (typeof parsed.lockMs === 'number' && Number.isFinite(parsed.lockMs) && parsed.lockMs > 0) {
+    lockInteraction(parsed.lockMs);
   }
 
-  const exprInlineMatch = rawResponse.match(/\[EXPR:\s*([a-zA-Z0-9_\-]+)\]/);
-  if (exprInlineMatch) {
-    setExpressionOverride(exprInlineMatch[1], 1800);
-    cleanResponse = cleanResponse.replace(exprInlineMatch[0], '');
+  if (typeof parsed.exprOverride === 'string' && parsed.exprOverride.trim()) {
+    setExpressionOverride(parsed.exprOverride.trim(), 1800);
   }
 
-  const expressionTagMatch = rawResponse.match(/expressionTag:\s*("[^"]+"|\w+)/i);
-  if (expressionTagMatch) {
-    const rawVal = expressionTagMatch[1];
-    const value = rawVal.startsWith('"')
-      ? (() => {
-          try {
-            return JSON.parse(rawVal);
-          } catch {
-            return rawVal.replace(/"/g, '');
-          }
-        })()
-      : rawVal;
-    if (typeof value === 'string') setExpressionOverride(value, 1800);
-    cleanResponse = cleanResponse.replace(expressionTagMatch[0], '');
+  if (parsed.emotionTag?.primary) {
+    const intensity =
+      typeof parsed.emotionTag.intensity === 'number' ? parsed.emotionTag.intensity : 0.6;
+    const decay = Math.max(2000, Math.min(6000, 2000 + intensity * 4000));
+    applyExpression(parsed.emotionTag.primary, decay);
+    if (!primaryEmotion) primaryEmotion = parsed.emotionTag.primary;
   }
 
-  const planExtract = extractJsonAfterLabel(cleanResponse, 'plan');
-  if (planExtract) {
-    try {
-      const planJson = JSON.parse(planExtract.jsonText);
-      if (Array.isArray(planJson)) parsedPlan = planJson;
-    } catch (e) {
-      console.error('Failed to parse task plan:', e);
-    }
-    cleanResponse = cleanResponse.replace(planExtract.raw, '');
-  }
-
-  const avatarPlanExtract = extractJsonAfterLabel(cleanResponse, 'avatarPlan');
-  if (avatarPlanExtract) {
-    try {
-      const avatarPlanJson = JSON.parse(avatarPlanExtract.jsonText);
-      if (Array.isArray(avatarPlanJson)) {
-        parsedAvatarPlan = avatarPlanJson as AvatarPlanStep[];
-        hasExplicitMotion =
-          hasExplicitMotion ||
-          parsedAvatarPlan.some(
-            (s) => s?.type === 'motion' || s?.type === 'pose' || !!(s as any)?.motion
-          );
-      }
-    } catch (e) {
-      console.error('Failed to parse avatar plan:', e);
-    }
-    cleanResponse = cleanResponse.replace(avatarPlanExtract.raw, '');
-  }
-
-  const motionJsonExtract = extractJsonAfterLabel(cleanResponse, 'motionTag');
-  if (motionJsonExtract) {
-    try {
-      const motions = JSON.parse(motionJsonExtract.jsonText);
-      if (Array.isArray(motions) && motions.length > 0) {
-        for (const m of motions) {
-          if (!m || typeof m.name !== 'string') continue;
-          const logicName = normalizeMotionName(m.name);
-          if (!logicName) continue;
-          const duration = typeof m.duration === 'number' ? m.duration : 900;
-          const step: AvatarPlanStep = { type: 'motion', motion: logicName, duration };
-          queuedAvatarSteps.push(step);
-        }
-        if (queuedAvatarSteps.length > 0) hasExplicitMotion = true;
-      }
-    } catch (e) {
-      console.error('Failed to parse motionTag JSON:', e);
-    }
-    cleanResponse = cleanResponse.replace(motionJsonExtract.raw, '');
-  }
-
-  const motionCommandMatch = cleanResponse.match(/motionCommand\s*:\s*([^\n]+)/i);
-  if (motionCommandMatch) {
-    const motion = normalizeMotionName(motionCommandMatch[1]);
-    if (motion) {
-      const step: AvatarPlanStep = { type: 'motion', motion, duration: 1400 };
-      queuedAvatarSteps.push(step);
-      hasExplicitMotion = true;
-    }
-    cleanResponse = cleanResponse.replace(motionCommandMatch[0], '');
-  }
-
-  const emotionJsonExtract = extractJsonAfterLabel(cleanResponse, 'emotionTag');
-  if (emotionJsonExtract) {
-    try {
-      const emotionJson = JSON.parse(emotionJsonExtract.jsonText);
-      const primary = (emotionJson?.primary || '').toLowerCase().trim();
-      const intensity = typeof emotionJson?.intensity === 'number' ? emotionJson.intensity : 0.6;
-      const decay = Math.max(2000, Math.min(6000, 2000 + intensity * 4000));
-      if (primary) {
-        primaryEmotion = primary;
-        applyExpression(primary, decay);
-      }
-    } catch (e) {
-      console.error('Failed to parse emotionTag JSON:', e);
-    }
-    cleanResponse = cleanResponse.replace(emotionJsonExtract.raw, '');
-  }
-
-  if (
-    rawResponse.includes('[ANGRY]') ||
-    rawResponse.includes('Baka') ||
-    rawResponse.includes('Hmph') ||
-    rawResponse.includes('💢')
-  ) {
+  if (parsed.tags.angry) {
     primaryEmotion = primaryEmotion || 'angry';
     applyExpression('angry', 4000);
-    cleanResponse = cleanResponse.replace('[ANGRY]', '');
   }
-  if (rawResponse.includes('[POUT]') || rawResponse.includes('[SHY]')) {
+  if (parsed.tags.poutingOrShy) {
     primaryEmotion = primaryEmotion || 'shy';
     applyExpression('shy', 4000);
-    cleanResponse = cleanResponse.replace('[POUT]', '').replace('[SHY]', '');
   }
-  if (rawResponse.includes('[HAPPY]')) {
+  if (parsed.tags.happy) {
     primaryEmotion = primaryEmotion || 'happy';
     applyExpression('happy', 4000);
-    cleanResponse = cleanResponse.replace('[HAPPY]', '');
   }
-  if (rawResponse.includes('[DIZZY]')) {
+  if (parsed.tags.dizzy) {
     primaryEmotion = primaryEmotion || 'dizzy';
     applyExpression('dizzy', 4500);
-    cleanResponse = cleanResponse.replace('[DIZZY]', '');
   }
-  if (rawResponse.includes('[CRY]')) {
+  if (parsed.tags.cry) {
     primaryEmotion = primaryEmotion || 'sad';
     applyExpression('sad', 5000);
-    cleanResponse = cleanResponse.replace('[CRY]', '');
   }
-  if (rawResponse.includes('[CONFUSED]')) {
+  if (parsed.tags.confused) {
     primaryEmotion = primaryEmotion || 'confused';
     applyExpression('confused', 4000);
-    cleanResponse = cleanResponse.replace('[CONFUSED]', '');
   }
-  if (
-    rawResponse.includes('[FAINT]') ||
-    rawResponse.includes('[TIRED]') ||
-    rawResponse.includes('[SLEEPY]')
-  ) {
+  if (parsed.tags.tiredOrFaint) {
     setTransient('fainted', (v) => (isFainted.value = v), 5000);
     applyExpression('tired', 5000);
     primaryEmotion = primaryEmotion || 'tired';
-    cleanResponse = cleanResponse
-      .replace('[FAINT]', '')
-      .replace('[TIRED]', '')
-      .replace('[SLEEPY]', '');
   }
 
-  const legacyMotionMatch = rawResponse.match(/\[MOTION:\s*([^\]]+?)\s*\]/);
-  if (legacyMotionMatch) {
-    const motion = normalizeMotionName(legacyMotionMatch[1]);
-    if (motion) {
-      const step: AvatarPlanStep = { type: 'motion', motion, duration: 2000 };
-      queuedAvatarSteps.push(step);
-      hasExplicitMotion = true;
-    }
+  if (primaryEmotion) {
+    const intensity =
+      typeof parsed.emotionTag?.intensity === 'number' ? parsed.emotionTag.intensity : 0.7;
+    emotionEngine.applyEmotionTag(primaryEmotion, intensity);
   }
-  cleanResponse = cleanResponse.replace(/\[MOTION:\s*[^\]]+?\]/g, '');
 
   if (!hasExplicitMotion && primaryEmotion) {
     const isVrm = agentType.value === 'vrm';
@@ -2211,6 +2056,46 @@ const applyAiReply = async (
     }
   }
 
+  const hasAnyAvatarSteps =
+    (Array.isArray(parsed.parsedAvatarPlan) && parsed.parsedAvatarPlan.length > 0) ||
+    queuedAvatarSteps.length > 0;
+  const hasPlanSpeak =
+    Array.isArray(parsed.parsedAvatarPlan) &&
+    parsed.parsedAvatarPlan.some((s: any) => s?.type === 'speak');
+  if (!hasAnyAvatarSteps) {
+    const isVrm = agentType.value === 'vrm';
+    const fallbackMotion = (() => {
+      if (primaryEmotion) {
+        if (isVrm) {
+          if (primaryEmotion === 'angry') return 'mood_angry';
+          if (primaryEmotion === 'happy') return 'mood_happy';
+          if (primaryEmotion === 'shy') return 'friend';
+          if (primaryEmotion === 'dizzy') return 'shake';
+          if (primaryEmotion === 'tired') return 'mood_tired';
+          if (primaryEmotion === 'sleepy') return 'mood_sleepy';
+          if (primaryEmotion === 'confused' || primaryEmotion === 'thinking')
+            return 'mood_confused';
+        } else {
+          if (primaryEmotion === 'angry') return 'shake';
+          if (primaryEmotion === 'happy') return 'happy';
+          if (primaryEmotion === 'shy') return 'friend';
+          if (primaryEmotion === 'dizzy') return 'shake';
+          if (primaryEmotion === 'tired') return 'mood_tired';
+          if (primaryEmotion === 'sleepy') return 'mood_sleepy';
+          if (primaryEmotion === 'confused' || primaryEmotion === 'thinking') return 'tap_body';
+        }
+      }
+      return 'idle';
+    })();
+    const motion = normalizeMotionName(fallbackMotion) || 'tap_body';
+    queuedAvatarSteps.push({ type: 'motion', motion, duration: 1100 });
+    recordDiagnostic({
+      kind: 'avatarplan_fallback',
+      level: 'warn',
+      message: String(rawResponse || '').slice(0, 240)
+    });
+  }
+
   const displayResponse = cleanResponse
     .replace(/highlight:\s*[^\n]+/g, '')
     .replace(/navigate:\s*[^\n]+/g, '')
@@ -2226,24 +2111,45 @@ const applyAiReply = async (
     .replace(/plan:\s*\[[\s\S]*?\]/g, '')
     .trim();
 
-  if (displayResponse) {
+  const envelopeFallback =
+    typeof parsed.envelopeFallback === 'string' ? parsed.envelopeFallback : '';
+  const finalText = displayResponse || envelopeFallback;
+
+  if (
+    !options.suppressMemorySave &&
+    Array.isArray(parsed.memoryFacts) &&
+    parsed.memoryFacts.length > 0
+  ) {
+    for (const fact of parsed.memoryFacts) addMemoryFact(fact);
+  }
+
+  if (parsed.parsedAvatarPlan && parsed.parsedAvatarPlan.length > 0) {
+    void avatarAdapter.runPlan(parsed.parsedAvatarPlan);
+  }
+  if (queuedAvatarSteps.length > 0) {
+    void avatarAdapter.runPlan(queuedAvatarSteps);
+  }
+
+  if (finalText) {
     if (options.displayInChat) {
-      pushUiMessage({ role: 'agent', text: displayResponse });
+      pushUiMessage({ role: 'agent', text: finalText });
     }
-    if (!options.suppressMemorySave) pushMemoryItem({ role: 'agent', text: displayResponse });
-    message.value = displayResponse;
-    if (options.speakText !== false) speak(displayResponse);
+    if (!options.suppressMemorySave) pushMemoryItem({ role: 'agent', text: finalText });
+    emotionEngine.applyChatText(finalText, 'agent');
+    if (!hasPlanSpeak) message.value = finalText;
+    if (!hasPlanSpeak && options.speakText !== false) speak(finalText);
   } else if (options.defaultMessageFallback) {
     if (options.displayInChat) {
       pushUiMessage({ role: 'agent', text: options.defaultMessageFallback });
     }
     if (!options.suppressMemorySave)
       pushMemoryItem({ role: 'agent', text: options.defaultMessageFallback });
-    message.value = options.defaultMessageFallback;
-    if (options.speakText !== false) speak(options.defaultMessageFallback);
+    emotionEngine.applyChatText(options.defaultMessageFallback, 'agent');
+    if (!hasPlanSpeak) message.value = options.defaultMessageFallback;
+    if (!hasPlanSpeak && options.speakText !== false) speak(options.defaultMessageFallback);
   }
 
-  if (parsedPlan) {
+  if (allowPlan && parsed.parsedPlan) {
     try {
       const candidateGoal = (lastChatUserText || '').trim();
       const existingGoal = (taskSession.value?.goal || '').trim();
@@ -2257,260 +2163,78 @@ const applyAiReply = async (
       };
       saveTaskSession();
 
-      console.log('Executing Plan:', parsedPlan);
-      const result = await setPlan(parsedPlan);
-      if (!result.success && taskSession.value) {
-        taskSession.value.active = false;
-        saveTaskSession();
+      logger.info('Executing Plan', parsed.parsedPlan);
+      const result = await setPlan(parsed.parsedPlan);
+      if (!result.success) {
+        recordDiagnostic({
+          kind: 'task_plan_failed',
+          level: 'warn',
+          message: String(result.message || '').slice(0, 240),
+          data: {
+            route: router.currentRoute.value?.fullPath || window.location.pathname,
+            failureContext: result.failureContext
+          }
+        });
       }
     } catch (e) {
-      console.error('Failed to parse task plan:', e);
+      logger.error('Failed to parse task plan', e);
     }
-  }
-
-  if (parsedAvatarPlan && parsedAvatarPlan.length > 0) {
-    void avatarAdapter.runPlan(parsedAvatarPlan);
-  }
-  if (queuedAvatarSteps.length > 0) {
-    void avatarAdapter.runPlan(queuedAvatarSteps);
   }
 
   const response = rawResponse;
 
   // Guide Commands
+  if (!allowPlan || parsed.parsedPlan) return;
   const guideMatch = response.match(/highlight:\s*([^\n]+)/);
-  if (guideMatch) {
-    const el = resolveTarget(guideMatch[1].trim());
-    if (el) {
-      guideTarget.value = el;
-      guideTargetRect.value = el.getBoundingClientRect();
-      guideLabel.value = 'Click here!';
-      setTimeout(() => {
-        guideTarget.value = null;
-        guideTargetRect.value = null;
-      }, 5000);
-    }
-  }
-
   const navMatch = response.match(/navigate:\s*([^\s\n]+)/);
-  if (navMatch) router.push(navMatch[1].trim());
-
   const clickMatch = response.match(/click:\s*([^\n]+)/);
-  if (clickMatch) {
-    const el = resolveTarget(clickMatch[1].trim());
-    if (el) {
-      guideTarget.value = el;
-      guideTargetRect.value = el.getBoundingClientRect();
-      guideLabel.value = 'Clicking this!';
-      setTimeout(() => {
-        el.click();
-        el.focus();
-        setTimeout(() => {
-          guideTarget.value = null;
-          guideTargetRect.value = null;
-        }, 1000);
-      }, 500);
-    }
-  }
-
   const hoverMatch = response.match(/hover:\s*([^\n]+)/);
-  if (hoverMatch) {
-    const el = resolveTarget(hoverMatch[1].trim());
-    if (el) {
-      guideTarget.value = el;
-      guideTargetRect.value = el.getBoundingClientRect();
-      guideLabel.value = 'Hovering...';
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setTimeout(() => {
-        el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-        el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-        setTimeout(() => {
-          guideTarget.value = null;
-          guideTargetRect.value = null;
-        }, 1500);
-      }, 500);
-    }
-  }
-
   const scrollMatch = response.match(/scroll:\s*([^\n]+)/);
-  if (scrollMatch) {
-    const target = scrollMatch[1].trim();
-    if (target === 'down') window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
-    else if (target === 'up') window.scrollBy({ top: -window.innerHeight, behavior: 'smooth' });
-    else if (target === 'bottom')
-      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-    else if (target === 'top') window.scrollTo({ top: 0, behavior: 'smooth' });
-    else {
-      const el = resolveTarget(target);
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }
-
   const inputMatch = response.match(/input:\s*([^|]+)\|\s*(.+)/);
-  if (inputMatch) {
-    const el = resolveTarget(inputMatch[1].trim()) as HTMLInputElement;
-    if (el) {
-      guideTarget.value = el;
-      guideTargetRect.value = el.getBoundingClientRect();
-      guideLabel.value = `Typing "${inputMatch[2].trim()}"...`;
-      setTimeout(() => {
-        el.value = inputMatch[2].trim();
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        guideTarget.value = null;
-      }, 1000);
-    }
-  }
-
   const pressMatch = response.match(/press:\s*([^\s]+)(?:\s+on\s+(.+))?/);
+
+  const rawPlan: any[] = [];
+  if (guideMatch) rawPlan.push({ type: 'highlight', target: guideMatch[1].trim() });
+  if (navMatch) rawPlan.push({ type: 'navigate', target: navMatch[1].trim() });
+  if (clickMatch) rawPlan.push({ type: 'click', target: clickMatch[1].trim() });
+  if (hoverMatch) rawPlan.push({ type: 'hover', target: hoverMatch[1].trim() });
+  if (scrollMatch) rawPlan.push({ type: 'scroll', target: scrollMatch[1].trim() });
+  if (inputMatch)
+    rawPlan.push({ type: 'input', target: inputMatch[1].trim(), value: inputMatch[2].trim() });
   if (pressMatch) {
     const key = pressMatch[1].trim();
     const selector = pressMatch[2]?.trim();
-    let el = document.activeElement as HTMLElement;
-    if (selector) {
-      const found = resolveTarget(selector);
-      if (found) el = found;
-    }
-    if (el) {
-      guideTarget.value = el;
-      guideTargetRect.value = el.getBoundingClientRect();
-      guideLabel.value = `Pressing ${key}...`;
-      el.focus();
-      setTimeout(() => {
-        const options = { key, code: key, bubbles: true, cancelable: true, view: window };
-        el.dispatchEvent(new KeyboardEvent('keydown', options));
-        el.dispatchEvent(new KeyboardEvent('keypress', options));
-        el.dispatchEvent(new KeyboardEvent('keyup', options));
-        setTimeout(() => {
-          guideTarget.value = null;
-          guideTargetRect.value = null;
-        }, 1000);
-      }, 500);
-    }
-  }
-};
-
-const isBackgroundReacting = ref(false);
-let lastReactionAt = 0;
-const backgroundReactCooldownMs = 4000;
-type PendingReactionEvent = {
-  text: string;
-  type: string;
-  trigger: string;
-  ts: number;
-  payload?: any;
-};
-let pendingBackgroundReactions: PendingReactionEvent[] = [];
-let backgroundReactTimer: number | null = null;
-let lastSystemRecordAt = 0;
-let lastSystemRecordText = '';
-let backgroundAbortController: AbortController | null = null;
-
-const flushBackgroundReaction = async () => {
-  if (pendingBackgroundReactions.length === 0) return;
-  if (isBackgroundReacting.value) return;
-
-  const now = Date.now();
-  const waitMs = backgroundReactCooldownMs - (now - lastReactionAt);
-  if (waitMs > 0) {
-    if (backgroundReactTimer) window.clearTimeout(backgroundReactTimer);
-    backgroundReactTimer = window.setTimeout(() => {
-      backgroundReactTimer = null;
-      void flushBackgroundReaction();
-    }, waitMs);
-    return;
+    rawPlan.push({ type: 'press', value: key, target: selector || undefined });
   }
 
-  const batch = pendingBackgroundReactions.slice(0, 6);
-  pendingBackgroundReactions = pendingBackgroundReactions.slice(batch.length);
-  const last = batch[batch.length - 1];
-  const summaryLines = batch.map((e) => `- (${e.type}) ${e.text}`);
-  const summary = `[System Event Batch]\n${summaryLines.join('\n')}\n\nRespond naturally as the character.`;
-  lastReactionAt = Date.now();
-  isBackgroundReacting.value = true;
-
-  if (backgroundAbortController) {
-    backgroundAbortController.abort();
-  }
-  backgroundAbortController = new AbortController();
-
-  try {
-    const agentContext: any = buildAgentContext({
-      trigger: last?.trigger || 'system',
-      systemEvent: summary,
-      interactionEvents: batch
-    });
-    agentContext.mode = 'react';
-    agentContext.suppressMemorySave = true;
-    let rawResponse = '';
+  if (rawPlan.length > 0) {
     try {
-      rawResponse = await requestAgentReaction({
-        message: summary,
-        agentContext,
-        signal: backgroundAbortController.signal,
-        group: 'background'
-      });
-    } catch {
-      return;
-    }
-    if (!rawResponse) return;
-    const shouldSpeak = (() => {
-      const t = String(last?.trigger || '')
-        .trim()
-        .toLowerCase();
-      return t === 'task' || t === 'dom' || t === 'nav' || t === 'error';
-    })();
-    await applyAiReply(rawResponse, {
-      displayInChat: false,
-      speakText: shouldSpeak,
-      suppressMemorySave: true
-    });
-  } finally {
-    isBackgroundReacting.value = false;
-    backgroundAbortController = null;
-    if (pendingBackgroundReactions.length > 0) void flushBackgroundReaction();
+      await setPlan(rawPlan);
+    } catch {}
   }
 };
 
-const reactToSystemEvent = (input: {
-  text: string;
-  type?: string;
-  trigger?: string;
-  payload?: any;
-}) => {
-  const text = (input.text || '').trim();
-  if (!text) return;
-  const type = (input.type || 'event').trim() || 'event';
-  const trigger = (input.trigger || 'system').trim() || 'system';
-  const payload = input.payload;
-
-  const now = Date.now();
-  const shouldRecord = text !== lastSystemRecordText || now - lastSystemRecordAt > 1500;
-  if (shouldRecord) {
-    recordSystemEvent(text, type);
-    lastSystemRecordAt = now;
-    lastSystemRecordText = text;
-  }
-
-  const lastQueued = pendingBackgroundReactions[pendingBackgroundReactions.length - 1];
-  if (!lastQueued || lastQueued.text !== text || now - lastQueued.ts > 600) {
-    pendingBackgroundReactions.push({ text, type, trigger, ts: now, payload });
-  }
-  if (pendingBackgroundReactions.length > 10) {
-    pendingBackgroundReactions = pendingBackgroundReactions.slice(-10);
-  }
-  if (backgroundReactTimer) window.clearTimeout(backgroundReactTimer);
-  backgroundReactTimer = window.setTimeout(() => {
-    backgroundReactTimer = null;
-    void flushBackgroundReaction();
-  }, 250);
-};
+const {
+  isBackgroundReacting,
+  reactToSystemEvent,
+  dispose: disposeBackgroundReactions,
+  abortInFlight: abortBackgroundReactions
+} = useAgentBackgroundReactions({
+  buildAgentContext,
+  requestAgentReaction,
+  applyAiReply: (raw, opts) => applyAiReply(raw, opts),
+  recordSystemEvent,
+  recordDiagnostic
+});
 
 let domObserver: MutationObserver | null = null;
 let domFlushTimer: number | null = null;
 let lastDomSignalAt = 0;
 let lastDomSignalText = '';
 let pendingDomSignals: Array<{ text: string; type: 'dom' | 'error' }> = [];
+const DOM_SIGNAL_DEDUPE_WINDOW_MS = 15000;
+const DOM_SIGNAL_DEDUPE_MAX = 80;
+const recentDomSignalAtByText = new Map<string, number>();
 
 const classifyDomSignal = (text: string): 'error' | 'success' | null => {
   const t = text.toLowerCase();
@@ -2524,6 +2248,26 @@ const pushDomSignal = (text: string, type: 'dom' | 'error') => {
   const trimmed = (text || '').trim();
   if (!trimmed) return;
   const now = Date.now();
+  const key = trimmed.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (key) {
+    for (const [k, ts] of recentDomSignalAtByText) {
+      if (now - ts > DOM_SIGNAL_DEDUPE_WINDOW_MS) recentDomSignalAtByText.delete(k);
+    }
+    const recentAt = recentDomSignalAtByText.get(key);
+    if (typeof recentAt === 'number' && now - recentAt < DOM_SIGNAL_DEDUPE_WINDOW_MS) return;
+    recentDomSignalAtByText.set(key, now);
+    if (recentDomSignalAtByText.size > DOM_SIGNAL_DEDUPE_MAX) {
+      let oldestKey = '';
+      let oldestTs = Number.POSITIVE_INFINITY;
+      for (const [k, ts] of recentDomSignalAtByText) {
+        if (ts < oldestTs) {
+          oldestTs = ts;
+          oldestKey = k;
+        }
+      }
+      if (oldestKey) recentDomSignalAtByText.delete(oldestKey);
+    }
+  }
   if (trimmed === lastDomSignalText && now - lastDomSignalAt < 1200) return;
   lastDomSignalAt = now;
   lastDomSignalText = trimmed;
@@ -2571,6 +2315,7 @@ const startDomObserver = () => {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return results;
     const el = node as HTMLElement;
+    if (typeof el.closest === 'function' && el.closest('.agent-container')) return results;
 
     const role = (el.getAttribute('role') || '').toLowerCase();
     const ariaLive = (el.getAttribute('aria-live') || '').toLowerCase();
@@ -2642,9 +2387,13 @@ const stopDomObserver = () => {
   if (domFlushTimer) window.clearTimeout(domFlushTimer);
   domFlushTimer = null;
   pendingDomSignals = [];
+  recentDomSignalAtByText.clear();
 };
 
-const requestNextTaskChunk = async (reason: 'completed' | 'failed' | 'manual') => {
+const requestNextTaskChunk = async (
+  reason: 'completed' | 'failed' | 'manual',
+  failure?: { message?: string; step?: any }
+) => {
   if (isTaskContinuing.value) return;
   if (isLoading.value || isBackgroundReacting.value) return;
   if (isExecuting.value) return;
@@ -2670,10 +2419,32 @@ const requestNextTaskChunk = async (reason: 'completed' | 'failed' | 'manual') =
   try {
     const goal = (session.goal || '').trim();
     const routePath = router.currentRoute.value?.fullPath || window.location.pathname;
+    const failureMessage = String(failure?.message || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 260);
+    const failureStep = failure?.step && typeof failure.step === 'object' ? failure.step : null;
+    const failureStepType = String(failureStep?.type || '').trim();
+    const failureStepTarget = String(failureStep?.target || '')
+      .trim()
+      .slice(0, 220);
+    const failureStepDesc = String(failureStep?.description || '')
+      .trim()
+      .slice(0, 220);
+    const failureContextZh =
+      reason === 'failed' &&
+      (failureMessage || failureStepType || failureStepTarget || failureStepDesc)
+        ? `\n失败信息: ${failureMessage || '（无）'}\n失败步骤: ${failureStepDesc || failureStepType || '（未知）'}\n失败目标: ${failureStepTarget || '（无）'}`
+        : '';
+    const failureContextEn =
+      reason === 'failed' &&
+      (failureMessage || failureStepType || failureStepTarget || failureStepDesc)
+        ? `\nFailure: ${failureMessage || '(none)'}\nFailed step: ${failureStepDesc || failureStepType || '(unknown)'}\nTarget: ${failureStepTarget || '(none)'}`
+        : '';
     const prompt =
       currentLang.value === 'zh'
-        ? `[TaskContinue]: 继续任务。\n原因: ${reason}\n目标: ${goal || '（未提供）'}\n当前路由: ${routePath}\n\n要求：\n1) 如果需要继续操作页面：输出 plan: 后面跟严格 JSON 数组（1–8 步），每步包含 {\"type\":\"click|input|hover|scroll|press|wait|navigate\",\"target\":string,\"value\"?:string|number}。\n2) 不管是否继续操作，都必须输出 avatarPlan: 后面跟严格 JSON 数组（1–4 步），用于你的旁白/动作/表情。\n3) 如果任务已完成：不要输出 plan，只输出一句很短的完成确认 + avatarPlan。`
-        : `[TaskContinue]: Continue the task.\nReason: ${reason}\nGoal: ${goal || '(not provided)'}\nRoute: ${routePath}\n\nRules:\n1) If you need to keep operating the page: output \"plan:\" followed by a strict JSON array (1–8 steps), each step has {\"type\":\"click|input|hover|scroll|press|wait|navigate\",\"target\":string,\"value\"?:string|number}.\n2) Always output \"avatarPlan:\" followed by a strict JSON array (1–4 steps) for narration/motion/expression.\n3) If the task is done: do NOT output plan; just a very short done confirmation + avatarPlan.`;
+        ? `[TaskContinue]: 继续任务。\n原因: ${reason}${failureContextZh}\n目标: ${goal || '（未提供）'}\n当前路由: ${routePath}\n\n要求：\n1) 优先输出单一 JSON Envelope（不要代码块、不要夹杂任何其他文字）：{\"v\":\"1\",\"text\":\"...\",\"plan\":[...],\"avatarPlan\":[...]}。\n2) 如果需要继续操作页面：在 Envelope 里给出 plan（1–8 步），每步 {\"type\":\"click|input|hover|scroll|press|wait|navigate\",\"target\":string,\"value\"?:string|number}；若无法输出 Envelope，才用 \"plan:\" + JSON 数组。\n3) 不管是否继续操作，都必须给出 avatarPlan（1–4 步）；若无法输出 Envelope，才用 \"avatarPlan:\" + JSON 数组。\n4) 如果任务已完成：不要输出 plan，只输出一句很短的完成确认 + avatarPlan。`
+        : `[TaskContinue]: Continue the task.\nReason: ${reason}${failureContextEn}\nGoal: ${goal || '(not provided)'}\nRoute: ${routePath}\n\nRules:\n1) Prefer a single JSON envelope (no code fences, no extra text): {\"v\":\"1\",\"text\":\"...\",\"plan\":[...],\"avatarPlan\":[...]}.\n2) If you need to keep operating the page: provide \"plan\" in the envelope (1–8 steps), each step has {\"type\":\"click|input|hover|scroll|press|wait|navigate\",\"target\":string,\"value\"?:string|number}. If you cannot output the envelope, then output \"plan:\" followed by a strict JSON array.\n3) Always provide avatarPlan (1–4 steps). If you cannot output the envelope, then output \"avatarPlan:\" followed by a strict JSON array.\n4) If the task is done: do NOT output plan; just a very short done confirmation + avatarPlan.`;
     const agentContext: any = buildAgentContext({
       trigger: 'task',
       systemEvent: prompt,
@@ -2700,7 +2471,21 @@ const requestNextTaskChunk = async (reason: 'completed' | 'failed' | 'manual') =
       suppressMemorySave: true
     });
 
-    const hasPlan = /\bplan\s*:\s*\[/i.test(rawResponse);
+    const hasPlan = (() => {
+      const s = String(rawResponse || '').trim();
+      if (/\bplan\s*:\s*\[/i.test(s)) return true;
+      if (s.startsWith('{') && s.endsWith('}')) {
+        try {
+          const obj: any = JSON.parse(s);
+          const vRaw = obj?.v;
+          const v =
+            typeof vRaw === 'number' ? String(vRaw) : typeof vRaw === 'string' ? vRaw.trim() : '';
+          if (v === '1' && Array.isArray(obj?.plan) && obj.plan.length > 0) return true;
+        } catch {}
+      }
+      if (/"plan"\s*:\s*\[/.test(s)) return true;
+      return false;
+    })();
     if (!hasPlan && reason !== 'manual') {
       session.active = false;
       saveTaskSession();
@@ -2714,6 +2499,7 @@ async function handleSendMessage(text: string) {
   const trimmed = (text || '').trim();
   if (!trimmed) return;
   lastChatUserText = trimmed;
+  emotionEngine.applyChatText(trimmed, 'user');
   handleChatActivity();
   for (const fact of extractFactsFromUserText(trimmed)) addMemoryFact(fact);
   pushUiMessage({ role: 'user', text: trimmed });
@@ -2752,7 +2538,7 @@ async function handleSendMessage(text: string) {
       const msg =
         currentLang.value === 'zh' ? 'baka！这已经很快啦！' : "Baka! I'm already going fast!";
       setTransient('pouting', (v) => (isPouting.value = v), 1800);
-      playMotionInternal('shake_head', 1200);
+      requestMotion('shake_head', 1200, { priority: MOTION_PRIORITY.user, source: 'chat' });
       if (!message.value || message.value === 'Hmm...') message.value = msg;
       recordSystemEvent('[System Event: User asked you to hurry.]', 'hurry');
       setTimeout(() => {
@@ -2764,10 +2550,7 @@ async function handleSendMessage(text: string) {
   chatAbortController?.abort();
   chatAbortController = new AbortController();
 
-  if (backgroundAbortController) {
-    backgroundAbortController.abort();
-    backgroundAbortController = null;
-  }
+  abortBackgroundReactions();
 
   const requestSeq = (chatRequestSeq += 1);
 
@@ -2792,11 +2575,31 @@ async function handleSendMessage(text: string) {
   }
 }
 
+const clearChatMessages = () => {
+  const first = messages.value?.[0];
+  const keepFirst =
+    first && typeof first === 'object' && typeof (first as any).text === 'string'
+      ? [first]
+      : [{ role: 'agent', text: currentLang.value === 'zh' ? '你好！' : 'Hello!' }];
+  messages.value = keepFirst as any;
+};
+
+defineExpose({
+  sendChat: handleSendMessage,
+  getChatMessages: () => messages.value,
+  isChatLoading: () => isLoading.value,
+  clearChatMessages
+});
+
 const triggerDizzy = () => {
   if (isDizzy.value || isFainted.value) return;
   isDizzy.value = true;
   message.value = "Whoa! I'm dizzy... @.@";
-  playMotionInternal('shake', 3000);
+  requestMotion('shake', 3000, {
+    priority: MOTION_PRIORITY.user,
+    source: 'dizzy',
+    lockInteractionMs: 1400
+  });
   recordSystemEvent(
     '[System Event: User made you dizzy by circling the mouse around you.]',
     'dizzy'
@@ -2818,7 +2621,7 @@ const triggerHeadHit = () => {
   if (isHeadHit.value || isFainted.value) return;
   isHeadHit.value = true;
   message.value = 'Ouch! My head! >_<';
-  playMotionInternal('flick_head', 1100);
+  requestMotion('flick_head', 1100, { priority: MOTION_PRIORITY.user, source: 'headHit' });
   isMoving.value = false;
   setTimeout(() => {
     isHeadHit.value = false;
@@ -2872,17 +2675,38 @@ function processInteraction() {
     return;
   }
   const { clicks, accumulatedAngle } = interactionState.value;
-  if (clicks === 1 && Math.abs(accumulatedAngle) < 360) {
+  const absAngle = Math.abs(accumulatedAngle);
+
+  const metrics = buildInteractionMetrics({
+    samples: interactionSamples.value,
+    clickCount: clicks,
+    spinDegrees: accumulatedAngle
+  });
+  const semantic = buildSemanticInteractionContext(metrics);
+
+  const hasMeaningfulHover =
+    metrics.samples >= 10 && metrics.durationMs >= 1200 && metrics.avgSpeed <= 0.25;
+  const hasAnySignal = clicks > 0 || absAngle >= 120 || hasMeaningfulHover;
+  if (!hasAnySignal) {
     resetInteractionState();
     return;
   }
-  if (clicks === 0 && Math.abs(accumulatedAngle) < 360) return;
+  if (clicks === 1 && absAngle < 120 && !hasMeaningfulHover) {
+    resetInteractionState();
+    return;
+  }
 
-  const absAngle = Math.abs(accumulatedAngle);
   if (clicks > 0 || absAngle > 0) {
     if (absAngle >= 220) {
-      setTransient('confused', (v) => (isConfused.value = v), 2600);
-      playMotionInternal(accumulatedAngle >= 0 ? 'tilt_right' : 'tilt_left', 1400);
+      requestExpression('confused', 2600, {
+        priority: MOTION_PRIORITY.user,
+        source: 'interaction'
+      });
+      requestMotion(accumulatedAngle >= 0 ? 'tilt_right' : 'tilt_left', 1400, {
+        priority: MOTION_PRIORITY.user,
+        source: 'interaction',
+        lockInteractionMs: 1200
+      });
       message.value =
         currentLang.value === 'zh'
           ? personaFlags.value.tsundere
@@ -2892,8 +2716,12 @@ function processInteraction() {
             ? "Hey! Stop spinning... I-I'm not dizzy!"
             : 'Are you spinning around me…? I feel a bit dizzy.';
     } else if (clicks >= 3) {
-      setTransient('pouting', (v) => (isPouting.value = v), 2200);
-      playMotionInternal('shake', 1400);
+      requestExpression('shy', 2200, { priority: MOTION_PRIORITY.user, source: 'interaction' });
+      requestMotion('shake', 1400, {
+        priority: MOTION_PRIORITY.user,
+        source: 'interaction',
+        lockInteractionMs: 1100
+      });
       message.value =
         currentLang.value === 'zh'
           ? personaFlags.value.tsundere
@@ -2903,7 +2731,7 @@ function processInteraction() {
             ? 'Hmph! Stop poking me. Just say it!'
             : 'Hey, stop poking… just talk to me!';
     } else if (clicks === 2) {
-      playMotionInternal('tap_body', 1000);
+      requestMotion('tap_body', 1000, { priority: MOTION_PRIORITY.user, source: 'interaction' });
       message.value =
         currentLang.value === 'zh'
           ? personaFlags.value.tsundere
@@ -2914,21 +2742,46 @@ function processInteraction() {
             : 'Hm? What is it?';
     }
   }
-
-  const metrics = buildInteractionMetrics({
-    samples: interactionSamples.value,
-    clickCount: clicks,
-    spinDegrees: accumulatedAngle
-  });
+  emotionEngine.applyInteractionSession(metrics, semantic);
   const lang = currentLang.value === 'zh' ? 'zh' : 'en';
   const desc = buildInteractionSummary(metrics, lang);
   const shouldAskAi = shouldAskAiForInteraction(metrics);
+  if (!shouldAskAi) {
+    const tags = Array.isArray(semantic?.tags) ? semantic.tags : [];
+    const primary = Array.isArray(semantic?.primaryTargets) ? semantic.primaryTargets[0] : '';
+    if (tags.includes('USER_STARING_EYES')) {
+      requestExpression('shy', 1600, { priority: MOTION_PRIORITY.user, source: 'interaction' });
+      requestMotion('idle_head_tilt', 1400, {
+        priority: MOTION_PRIORITY.user,
+        source: 'interaction',
+        lockInteractionMs: 900
+      });
+    } else if (
+      tags.includes('USER_SLOW_HOVER') &&
+      /^(head|hair|accessory)$/i.test(String(primary))
+    ) {
+      requestExpression('happy', 1200, { priority: MOTION_PRIORITY.micro, source: 'interaction' });
+      requestMotion('idle_sway_body', 1100, {
+        priority: MOTION_PRIORITY.micro,
+        source: 'interaction'
+      });
+    } else if (tags.includes('USER_FAST_SWEEP')) {
+      requestExpression('confused', 1200, {
+        priority: MOTION_PRIORITY.micro,
+        source: 'interaction'
+      });
+      requestMotion(Math.random() < 0.5 ? 'tilt_left' : 'tilt_right', 900, {
+        priority: MOTION_PRIORITY.micro,
+        source: 'interaction'
+      });
+    }
+  }
   if (shouldAskAi)
     void reactToSystemEvent({
       text: desc,
       type: 'interaction_session',
       trigger: 'interaction',
-      payload: { metrics, semantic: buildSemanticInteractionContext(metrics) }
+      payload: { metrics, semantic }
     });
   resetInteractionState();
 }
@@ -2941,47 +2794,12 @@ function resetInteractionState() {
   lastInteractionSampleAt = 0;
 }
 
-function openChat() {
-  if (chatOpen.value) return;
-  chatOpen.value = true;
-  lastChatActivityAt.value = Date.now();
-  markUserActivity();
-  scheduleChatAutoClose();
-  if (isMobile.value) {
-    const size = AGENT_SIZE.value;
-    x.value = (window.innerWidth - size) / 2;
-    y.value = 40;
-  }
-  message.value = '';
-}
-
-function closeChat() {
-  if (!chatOpen.value) return;
-  chatOpen.value = false;
-  if (chatAutoCloseTimer) {
-    window.clearTimeout(chatAutoCloseTimer);
-    chatAutoCloseTimer = null;
-  }
-  if (isLoading.value) {
-    try {
-      chatAbortController?.abort();
-    } catch {}
-    chatAbortController = null;
-    cancelAiRequests('chat');
-    isLoading.value = false;
-  }
-}
-
-const toggleChat = () => {
-  if (chatOpen.value) closeChat();
-  else openChat();
-};
-
 watch(
   () => chatOpen.value,
   (open) => {
     if (open) isFollowingMouse.value = false;
-    else if (isHovered.value && !props.isPinned) isFollowingMouse.value = true;
+    else if (mouseFollowEnabled.value && isHovered.value && !props.isPinned)
+      isFollowingMouse.value = true;
   }
 );
 
@@ -2991,6 +2809,7 @@ const handleClick = (event: MouseEvent) => {
     hasDraggedSinceMouseDown.value = false;
     return;
   }
+  cancelAvatarPlan({ mode: avatarPlanSoftInterrupt.value ? 'soft' : 'hard' });
 
   const hitAreas =
     agentType.value === 'vrm'
@@ -3005,23 +2824,46 @@ const handleClick = (event: MouseEvent) => {
   lastHitTestAt = nowTs;
   pushInteractionSample({ ts: nowTs, x: event.clientX, y: event.clientY, hitAreas });
 
-  let isHead =
-    normalizedHitAreas.includes('head') ||
-    normalizedHitAreas.includes('face') ||
-    normalizedHitAreas.includes('hair');
-  const isBody =
-    normalizedHitAreas.includes('body') ||
-    normalizedHitAreas.includes('chest') ||
-    normalizedHitAreas.includes('breast') ||
-    normalizedHitAreas.includes('bust') ||
-    normalizedHitAreas.includes('torso');
-
-  if (!isHead && hitAreas.length === 0) {
-    const relativeY = event.clientY - y.value;
-    isHead = relativeY >= 0 && relativeY <= AGENT_SIZE.value * 0.3;
+  if (agentType.value === 'vrm') {
+    const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+    const agentCenterX = x.value + AGENT_SIZE.value / 2;
+    const agentCenterY = y.value + AGENT_SIZE.value / 2;
+    const dx = event.clientX - agentCenterX;
+    const dy = event.clientY - agentCenterY;
+    const sensitivity = 520;
+    isLookAtOverride.value = true;
+    eyeOffset.value = { x: clamp(dx / sensitivity), y: clamp(dy / sensitivity) };
+    window.setTimeout(() => {
+      isLookAtOverride.value = false;
+    }, 900);
   }
 
-  if (isHead) {
+  let isHeadArea =
+    normalizedHitAreas.includes('head') ||
+    normalizedHitAreas.includes('hair') ||
+    normalizedHitAreas.includes('accessory');
+  const isFaceArea = normalizedHitAreas.includes('face');
+  const isBodyArea = normalizedHitAreas.includes('body');
+  const isLegsArea = normalizedHitAreas.includes('legs');
+
+  if (hitAreas.length === 0) {
+    const relativeY = event.clientY - y.value;
+    if (relativeY >= 0 && relativeY <= AGENT_SIZE.value * 0.22) isHeadArea = true;
+  }
+
+  const engineAreas = isHeadArea
+    ? ['head']
+    : isFaceArea
+      ? ['face']
+      : isBodyArea
+        ? ['body']
+        : isLegsArea
+          ? ['legs']
+          : normalizedHitAreas;
+  if (engineAreas.length > 0) emotionEngine.applyHitAreas(engineAreas);
+
+  if (isHeadArea) {
+    setTransient('head_hit', (v) => (isHeadHit.value = v), 1200);
     isHappy.value = true;
     isFainted.value = false;
     isAngry.value = false;
@@ -3030,7 +2872,11 @@ const handleClick = (event: MouseEvent) => {
     if (personaFlags.value.tsundere) message.value = '别、别摸啦……我又不是小孩子！';
     else if (personaFlags.value.shy) message.value = '呜…别突然摸头啦…我会害羞的…';
     else message.value = '摸摸头就有精神了~';
-    playMotionInternal('flick_head', 3000);
+    requestMotion('flick_head', 3000, {
+      priority: MOTION_PRIORITY.user,
+      source: 'click',
+      lockInteractionMs: 1200
+    });
     setTimeout(() => {
       isHappy.value = false;
       if (
@@ -3043,7 +2889,35 @@ const handleClick = (event: MouseEvent) => {
     return;
   }
 
-  if (isBody && hitAreas.length > 0) {
+  if (isFaceArea) {
+    requestExpression('confused', 2200, { priority: MOTION_PRIORITY.user, source: 'click' });
+    isHappy.value = false;
+    isAngry.value = false;
+    const faceMessages =
+      currentLang.value === 'zh'
+        ? [
+            personaFlags.value.tsundere ? '喂！别戳我脸啦！' : '唔…别戳脸，会变奇怪的…',
+            personaFlags.value.shy ? '呜…你离得太近了…' : '你是在逗我吗？',
+            '脸上有什么吗…？'
+          ]
+        : [
+            personaFlags.value.tsundere ? "Hey! Don't poke my face!" : "Eek… don't poke my face…",
+            personaFlags.value.shy ? "Y-You're too close…" : 'Are you teasing me?',
+            'Is there something on my face...?'
+          ];
+    message.value = faceMessages[Math.floor(Math.random() * faceMessages.length)];
+    requestMotion('idle_head_tilt', 2200, {
+      priority: MOTION_PRIORITY.user,
+      source: 'click',
+      lockInteractionMs: 900
+    });
+    window.setTimeout(() => {
+      if (faceMessages.includes(message.value)) message.value = '';
+    }, 2200);
+    return;
+  }
+
+  if (isBodyArea && hitAreas.length > 0) {
     isPouting.value = true;
     isHappy.value = false;
     isAngry.value = false;
@@ -3064,7 +2938,11 @@ const handleClick = (event: MouseEvent) => {
               : 'You can just talk to me nicely!'
           ];
     message.value = shyMessages[Math.floor(Math.random() * shyMessages.length)];
-    playMotionInternal('mood_angry', 3000);
+    requestMotion('mood_angry', 3000, {
+      priority: MOTION_PRIORITY.user,
+      source: 'click',
+      lockInteractionMs: 1400
+    });
     recordSystemEvent(
       '[System Event: User poked your body area. You feel shy/tsundere.]',
       'body_poke'
@@ -3072,6 +2950,36 @@ const handleClick = (event: MouseEvent) => {
     setTimeout(() => {
       isPouting.value = false;
     }, 3000);
+    return;
+  }
+
+  if (isLegsArea) {
+    isPouting.value = true;
+    isHappy.value = false;
+    isAngry.value = false;
+    const legMessages =
+      currentLang.value === 'zh'
+        ? [
+            personaFlags.value.tsundere ? '喂！别碰那里！' : '别、别碰腿…有点痒…',
+            personaFlags.value.shy ? '呜…太近了啦…' : '你在干嘛呀…'
+          ]
+        : [
+            personaFlags.value.tsundere ? "Hey! Don't touch there!" : "D-Don't touch my legs…",
+            personaFlags.value.shy ? "P-Please don't…" : 'What are you doing...?'
+          ];
+    message.value = legMessages[Math.floor(Math.random() * legMessages.length)];
+    requestMotion('step_back', 1800, {
+      priority: MOTION_PRIORITY.user,
+      source: 'click',
+      lockInteractionMs: 900
+    });
+    recordSystemEvent(
+      '[System Event: User poked your legs area. You feel ticklish and shy.]',
+      'legs_poke'
+    );
+    window.setTimeout(() => {
+      isPouting.value = false;
+    }, 2000);
     return;
   }
 
@@ -3101,7 +3009,11 @@ const handleClick = (event: MouseEvent) => {
             "Waaah... I'm getting dizzy... 💫"
           ];
     message.value = shyMessages[Math.floor(Math.random() * shyMessages.length)];
-    playMotionInternal('shake', 3000);
+    requestMotion('shake', 3000, {
+      priority: MOTION_PRIORITY.user,
+      source: 'click',
+      lockInteractionMs: 1300
+    });
     clickCount.value = 0;
     recordSystemEvent(
       '[System Event: User poked you rapidly. You feel ticklish and shy.]',
@@ -3112,7 +3024,7 @@ const handleClick = (event: MouseEvent) => {
 
   interactionState.value.clicks += 1;
   markInteractionActivity();
-  playMotionInternal('tap_body');
+  requestMotion('tap_body', 1100, { priority: MOTION_PRIORITY.user, source: 'click' });
 };
 
 const handleMouseMove = (event: MouseEvent) => {
@@ -3188,6 +3100,8 @@ const handleMouseMove = (event: MouseEvent) => {
 const startDrag = (event: MouseEvent | TouchEvent) => {
   if (isInteractionLocked()) return;
   if (isFainted.value || isDizzy.value) return;
+  markUserActivity();
+  cancelAvatarPlan({ mode: avatarPlanSoftInterrupt.value ? 'soft' : 'hard' });
   if (
     agentType.value === 'vrm' &&
     vrmMouseControlEnabled.value &&
@@ -3195,7 +3109,6 @@ const startDrag = (event: MouseEvent | TouchEvent) => {
     event.target.closest('.vrm-widget')
   )
     return;
-  markUserActivity();
 
   hasDraggedSinceMouseDown.value = false;
   isDragging.value = false;
@@ -3288,7 +3201,12 @@ const handleThrowCollisions = () => {
       isCrying.value = true;
       isHeadHit.value = true;
       message.value = '不要乱丢我啦！';
-      if (agentType.value === 'vrm') playMotionInternal('crouch', 2600);
+      if (agentType.value === 'vrm')
+        requestMotion('crouch', 2600, {
+          priority: MOTION_PRIORITY.user,
+          source: 'throw',
+          lockInteractionMs: 1200
+        });
       setTimeout(() => {
         isHeadHit.value = false;
         if (message.value === '不要乱丢我啦！') message.value = '';
@@ -3304,6 +3222,18 @@ let taskMoveTimeout: number | null = null;
 let lastTaskMoveUpdateAt = 0;
 let taskMovePauseUntil = 0;
 let lastTaskMoveReactAt = 0;
+let lastMicroReactionAt = 0;
+let microLockUntil = 0;
+let lastMicroMotion = '';
+const microMotionCooldownUntil: Record<string, number> = {};
+const getMicroMotionCooldownMs = (motion: string) => {
+  const m = String(motion || '').toLowerCase();
+  if (!m) return 6500;
+  if (m.includes('yawn')) return 14000;
+  if (m.includes('breathe') || m.includes('sigh')) return 11000;
+  if (m.startsWith('idle_')) return 9500;
+  return 7000;
+};
 
 const getIsLazyPersona = () => /(懒散|慵懒|懒|lazy|sleepy|tired)/i.test(getPersonaText());
 
@@ -3342,7 +3272,7 @@ const maybeMoveForTask = () => {
   if (isLazy && idleForMs > 2500 && now - lastTaskMoveReactAt > 9000 && Math.random() < 0.25) {
     lastTaskMoveReactAt = now;
     taskMovePauseUntil = now + 700 + Math.floor(Math.random() * 800);
-    playMotionInternal('yawn', 1600);
+    requestMotion('yawn', 1600, { priority: MOTION_PRIORITY.micro, source: 'taskMove' });
     if (!message.value && Math.random() < 0.35) {
       message.value = currentLang.value === 'zh' ? '嗯…我动一下…' : 'Mm… moving…';
       setTimeout(() => {
@@ -3436,6 +3366,18 @@ const startLoop = () => {
       }
     }
     nowMs.value = Date.now();
+    if (Number.isFinite(frameMs) && frameMs > 0 && frameMs < 1000) {
+      emotionEngine.tick(frameMs);
+      emotionEngine.applyRealtimeState({
+        dtMs: frameMs,
+        isTalking: isTalking.value,
+        isHovered: isHovered.value,
+        isMoving: isMoving.value,
+        isExecuting: isExecuting.value,
+        isFainted: isFainted.value,
+        isDizzy: isDizzy.value
+      });
+    }
     if (!isDragging.value) {
       checkBoundaries();
       handleThrowCollisions();
@@ -3449,7 +3391,7 @@ const startLoop = () => {
     }
 
     if (isDizzy.value || isFainted.value || isHeadHit.value) {
-    } else if (isFollowingMouse.value) {
+    } else if (mouseFollowEnabled.value && isFollowingMouse.value) {
       const targetXPos = mouseX.value + (mouseFollowOffset.value?.x || 0);
       const targetYPos = mouseY.value + (mouseFollowOffset.value?.y || 0);
       const dx = targetXPos - x.value;
@@ -3517,6 +3459,73 @@ const startLoop = () => {
     else if (accumulatedAngle.value < 0)
       accumulatedAngle.value = Math.min(0, accumulatedAngle.value + 5);
 
+    const now = nowMs.value;
+    const idleForMs = now - lastUserActivityAt.value;
+    const microBusy =
+      chatOpen.value ||
+      isDragging.value ||
+      isMoving.value ||
+      isLoading.value ||
+      isExecuting.value ||
+      isTalking.value ||
+      isBackgroundReacting.value ||
+      isFainted.value ||
+      isHeadHit.value;
+    if (
+      !microBusy &&
+      !isDizzy.value &&
+      !message.value &&
+      idleForMs >= 2600 &&
+      now >= microLockUntil &&
+      now - lastMicroReactionAt >= 3400
+    ) {
+      const r = emotionEngine.recommendMicroReaction({
+        idleForMs,
+        lang: currentLang.value === 'zh' ? 'zh' : 'en',
+        isBusy: microBusy,
+        hasMessage: !!message.value,
+        nowMs: now,
+        lastMicroMotion,
+        microMotionCooldownUntil
+      });
+      if (r) {
+        lastMicroReactionAt = now;
+        const lockMs = typeof r.lockMs === 'number' && r.lockMs > 0 ? r.lockMs : 900;
+        microLockUntil = now + lockMs;
+        if (r.expression)
+          requestExpression(r.expression, lockMs, {
+            priority: MOTION_PRIORITY.micro,
+            source: 'micro'
+          });
+        if (r.motion) {
+          const motion = String(r.motion || '').trim();
+          const lastUntil = microMotionCooldownUntil[motion] ?? 0;
+          const canPlay = motion && motion !== lastMicroMotion && now >= lastUntil;
+          if (canPlay) {
+            lastMicroMotion = motion;
+            microMotionCooldownUntil[motion] = now + getMicroMotionCooldownMs(motion);
+            requestMotion(motion, lockMs, {
+              priority: MOTION_PRIORITY.micro,
+              source: 'micro',
+              lockInteractionMs: lockMs
+            });
+          }
+        }
+        if (r.message) {
+          const txt = currentLang.value === 'zh' ? r.message.zh : r.message.en;
+          if (txt) {
+            message.value = txt;
+            window.setTimeout(
+              () => {
+                if (!isTalking.value && message.value === txt) message.value = '';
+              },
+              Math.max(900, lockMs + 900)
+            );
+          }
+        }
+      }
+    }
+
     animationFrameId = requestAnimationFrame(loop);
   };
   animationFrameId = requestAnimationFrame(loop);
@@ -3560,7 +3569,8 @@ const maybeTriggerIdleAi = async (idleForMs: number) => {
     await applyAiReply(rawResponse, {
       displayInChat: false,
       speakText: false,
-      suppressMemorySave: true
+      suppressMemorySave: true,
+      allowPlan: false
     });
   } finally {
     idleAiAbortController = null;
@@ -3745,7 +3755,7 @@ const handleMouseEnter = () => {
     }
   }
   isHovered.value = true;
-  if (!props.isPinned && !chatOpen.value) isFollowingMouse.value = true;
+  if (mouseFollowEnabled.value && !props.isPinned && !chatOpen.value) isFollowingMouse.value = true;
   isMoving.value = false;
   if (!chatOpen.value) message.value = personaFlags.value.tsundere ? '哼…来干嘛。' : 'Hello!';
 };
@@ -3810,6 +3820,195 @@ const handleGlobalKeyDown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') vrmPickerOpen.value = false;
 };
 
+const AGENT_SETTINGS_REQUEST_EVENT = 'agent_settings_request';
+const AGENT_SETTINGS_UPDATE_EVENT = 'agent_settings_update';
+const AGENT_SETTINGS_STATE_EVENT = 'agent_settings_state';
+
+const AGENT_DEBUG_ENABLE_KEY = 'agent_debug_enable_v1';
+let agentDebugExposed = false;
+
+const shouldExposeAgentDebug = () => {
+  if (import.meta.env.DEV) return true;
+  try {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get('agentDebug') === '1' || q.get('__agent_debug') === '1') return true;
+  } catch {}
+  try {
+    if (localStorage.getItem(AGENT_DEBUG_ENABLE_KEY) === '1') return true;
+  } catch {}
+  return false;
+};
+
+const dispatchAgentSettingsState = async (includeModels: boolean) => {
+  if (includeModels) await ensureRemoteVrmListLoaded();
+  const models = includeModels
+    ? vrmModels.value.map((m) => ({
+        name: m.name,
+        path: m.path,
+        source: (m.source || 'hf') as 'hf' | 'local'
+      }))
+    : [];
+  window.dispatchEvent(
+    new CustomEvent(AGENT_SETTINGS_STATE_EVENT, {
+      detail: {
+        agentType: agentType.value,
+        mouseFollowEnabled: mouseFollowEnabled.value,
+        dynamicScale: dynamicScale.value,
+        isExecuting: isExecuting.value,
+        hasVrmSupport: hasVrmSupport.value,
+        vrmModelIndex: vrmModelIndex.value,
+        vrmModels: models,
+        vrmListLoading: vrmListLoading.value,
+        vrmListError: vrmListError.value,
+        vrmPreferLocalRuntime: vrmPreferLocalRuntime.value
+      }
+    })
+  );
+};
+
+const setAgentType = async (next: unknown) => {
+  const raw = String(next || '')
+    .trim()
+    .toLowerCase();
+  const v = raw === 'cubism2' ? 'vrm' : raw;
+  if (v !== 'cubism3' && v !== 'vrm') return;
+  if (v === agentType.value) return;
+  agentType.value = v as 'cubism3' | 'vrm';
+  await nextTick();
+  if (agentType.value === 'cubism3') await ensureLive2dVersion(3);
+  else await ensureRemoteVrmListLoaded();
+};
+
+const applyAgentSettingsUpdate = async (detail: any) => {
+  if (!detail || typeof detail !== 'object') return;
+  if (typeof detail.mouseFollowEnabled === 'boolean') {
+    mouseFollowEnabled.value = detail.mouseFollowEnabled;
+  }
+  if (typeof detail.dynamicScale === 'number') {
+    const v = Math.max(0.8, Math.min(2.8, Number(detail.dynamicScale)));
+    if (Number.isFinite(v)) dynamicScale.value = v;
+  }
+  if (typeof detail.agentType === 'string') {
+    await setAgentType(detail.agentType);
+  }
+  if (typeof detail.vrmModelIndex === 'number') {
+    await selectVrmModel(detail.vrmModelIndex);
+  }
+  if (typeof detail.action === 'string') {
+    const n = String(detail.action || '').trim();
+    if (n === 'cancelAi') cancelAiRequests();
+    else if (n === 'reloadMemory') loadLocalMemory();
+    else if (n === 'clearLocalMemory') {
+      const uid = getUserId();
+      try {
+        localStorage.removeItem(`agent_memory_v1_${uid}`);
+        localStorage.removeItem(`agent_memory_summary_v1_${uid}`);
+        localStorage.removeItem(`agent_memory_facts_v1_${uid}`);
+      } catch {}
+      loadLocalMemory();
+    }
+  }
+  await dispatchAgentSettingsState(false);
+};
+
+const handleAgentSettingsRequest = () => {
+  void dispatchAgentSettingsState(true);
+};
+
+const handleAgentSettingsUpdate = (event: Event) => {
+  const detail = (event as CustomEvent).detail;
+  void applyAgentSettingsUpdate(detail);
+};
+
+const handleLive2dTool = (event: Event) => {
+  const detail = (event as any)?.detail;
+  const tool = typeof detail?.tool === 'string' ? detail.tool.trim() : '';
+  if (!tool) return;
+
+  const phaseRaw = typeof detail?.phase === 'string' ? detail.phase.trim() : '';
+  const phase = phaseRaw === 'done' || phaseRaw === 'error' ? phaseRaw : 'start';
+
+  if (phase === 'done') return;
+
+  markUserActivity();
+
+  const label = (() => {
+    if (tool === 'chat') return currentLang.value === 'zh' ? '聊天' : 'chat';
+    if (tool === 'switch-model-prev')
+      return currentLang.value === 'zh' ? '上一个模型' : 'previous model';
+    if (tool === 'switch-model-next')
+      return currentLang.value === 'zh' ? '下一个模型' : 'next model';
+    if (tool === 'switch-model') return currentLang.value === 'zh' ? '切换模型' : 'switch model';
+    if (tool === 'switch-texture') return currentLang.value === 'zh' ? '换装' : 'switch texture';
+    if (tool === 'switch-ziyuxin')
+      return currentLang.value === 'zh' ? '切换模型类型' : 'toggle model type';
+    if (tool === 'photo') return currentLang.value === 'zh' ? '拍照' : 'photo';
+    if (tool === 'hitokoto') return currentLang.value === 'zh' ? '一言' : 'hitokoto';
+    return tool;
+  })();
+
+  const errorText = typeof detail?.error === 'string' ? detail.error.trim().slice(0, 240) : '';
+  const prompt =
+    phase === 'error'
+      ? currentLang.value === 'zh'
+        ? `[System Event]: Live2D 工具执行失败：${label}${errorText ? `（${errorText}）` : ''}。`
+        : `[System Event]: Live2D tool failed: ${label}${errorText ? ` (${errorText})` : ''}.`
+      : currentLang.value === 'zh'
+        ? `[System Event]: 用户点击了 Live2D 工具：${label}。`
+        : `[System Event]: User clicked Live2D tool: ${label}.`;
+  reactToSystemEvent({
+    text: prompt,
+    type: 'live2d_tool',
+    trigger: 'tool',
+    payload: {
+      tool,
+      phase,
+      modelId: typeof detail?.modelId === 'number' ? detail.modelId : undefined,
+      ok: typeof detail?.ok === 'boolean' ? detail.ok : undefined,
+      error: errorText || undefined
+    }
+  });
+
+  if (isFainted.value || isDizzy.value || isHeadHit.value) return;
+
+  const applyTag = (tag: string, intensity: number) => {
+    emotionEngine.applyEmotionTag(tag, intensity);
+  };
+
+  if (phase === 'error') {
+    applyTag('confused', 0.18);
+    return;
+  }
+
+  if (tool === 'chat') {
+    applyTag('happy', 0.28);
+    return;
+  }
+  if (tool === 'photo') {
+    applyTag('happy', 0.22);
+    return;
+  }
+  if (tool === 'switch-texture') {
+    applyTag('happy', 0.18);
+    return;
+  }
+  if (tool === 'switch-model' || tool === 'switch-model-prev' || tool === 'switch-model-next') {
+    applyTag('confused', 0.14);
+    return;
+  }
+  if (tool === 'switch-ziyuxin') {
+    applyTag('confused', 0.22);
+    return;
+  }
+  if (tool === 'hitokoto') {
+    applyTag('happy', 0.12);
+  }
+};
+
+const handleResize = () => {
+  isMobile.value = window.innerWidth <= 768;
+};
+
 // --- Lifecycle ---
 onMounted(async () => {
   installGlobalDiagnostics();
@@ -3817,10 +4016,12 @@ onMounted(async () => {
   recordDiagnostic({ kind: 'agent_mounted', level: 'info' });
   loadLocalMemory();
   loadTaskSession();
+  if (agentType.value === 'vrm') void ensureRemoteVrmListLoaded();
+  window.addEventListener(AGENT_SETTINGS_REQUEST_EVENT, handleAgentSettingsRequest as any);
+  window.addEventListener(AGENT_SETTINGS_UPDATE_EVENT, handleAgentSettingsUpdate as any);
+  window.addEventListener('live2d:tool', handleLive2dTool as any);
   window.addEventListener('mousemove', handleMouseMove);
-  window.addEventListener('resize', () => {
-    isMobile.value = window.innerWidth <= 768;
-  });
+  window.addEventListener('resize', handleResize);
   window.addEventListener('focusin', handleFocusIn);
   window.addEventListener('mousedown', handleGlobalPointerDown, true);
   window.addEventListener('touchstart', handleGlobalPointerDown, true);
@@ -3833,6 +4034,8 @@ onMounted(async () => {
   }
 
   startLoop();
+  guideRectLoopActive = true;
+  guideRectFrameId = window.requestAnimationFrame(updateGuideRect);
   if (!props.isPinned) startRoaming();
   startIdleTalk();
   await initAuth();
@@ -3843,283 +4046,322 @@ onMounted(async () => {
     }, 900);
   }
 
-  // Expose for debugging/external control
-  (window as any).runAgentPlan = (plan: any[]) => avatarAdapter.runPlan(plan);
   const w = window as any;
-  w.__agentDebug = {
-    getSnapshot: () => {
-      const p = plan.value as any;
-      const status = typeof p?.status === 'string' ? p.status : '';
-      const steps = Array.isArray(p?.steps) ? p.steps : [];
-      const runningIdx = steps.findIndex((s: any) => s?.status === 'running');
-      const runningStep = runningIdx >= 0 ? steps[runningIdx] : null;
-      return {
-        ts: Date.now(),
-        route: router.currentRoute.value?.fullPath || window.location.pathname,
-        perf: {
-          frameMs: perfFrameMs.value,
-          avgFrameMs: perfAvgFrameMs.value,
-          fps: perfFps.value,
-          longFrames60: perfLongFramesInWindow.value,
-          heapUsedBytes: perfHeapUsedBytes.value
-        },
-        agent: {
-          type: agentType.value,
-          position: { x: x.value, y: y.value, size: AGENT_SIZE.value },
-          flags: {
-            isMoving: isMoving.value,
-            isHovered: isHovered.value,
-            isDragging: isDragging.value,
-            isTalking: isTalking.value
+  if (!agentDebugExposed && shouldExposeAgentDebug()) {
+    agentDebugExposed = true;
+    w.runAgentPlan = (plan: any[]) => avatarAdapter.runPlan(plan);
+    w.__agentDebug = {
+      getSnapshot: () => {
+        const p = plan.value as any;
+        const status = typeof p?.status === 'string' ? p.status : '';
+        const steps = Array.isArray(p?.steps) ? p.steps : [];
+        const runningIdx = steps.findIndex((s: any) => s?.status === 'running');
+        const runningStep = runningIdx >= 0 ? steps[runningIdx] : null;
+        return {
+          ts: Date.now(),
+          route: router.currentRoute.value?.fullPath || window.location.pathname,
+          perf: {
+            frameMs: perfFrameMs.value,
+            avgFrameMs: perfAvgFrameMs.value,
+            fps: perfFps.value,
+            longFrames60: perfLongFramesInWindow.value,
+            heapUsedBytes: perfHeapUsedBytes.value
           },
-          emotions: {
-            isAngry: isAngry.value,
-            isHappy: isHappy.value,
-            isPouting: isPouting.value,
-            isDizzy: isDizzy.value,
-            isConfused: isConfused.value,
-            isTired: isTired.value,
-            isFainted: isFainted.value,
-            isCrying: isCrying.value
+          agent: {
+            type: agentType.value,
+            position: { x: x.value, y: y.value, size: AGENT_SIZE.value },
+            flags: {
+              isMoving: isMoving.value,
+              isHovered: isHovered.value,
+              isDragging: isDragging.value,
+              isTalking: isTalking.value
+            },
+            emotions: {
+              isAngry: isAngry.value,
+              isHappy: isHappy.value,
+              isPouting: isPouting.value,
+              isDizzy: isDizzy.value,
+              isConfused: isConfused.value,
+              isTired: isTired.value,
+              isFainted: isFainted.value,
+              isCrying: isCrying.value
+            },
+            energy: energy.value,
+            message: message.value || ''
           },
-          energy: energy.value,
-          message: message.value || ''
-        },
-        chat: {
-          open: chatOpen.value,
-          isLoading: isLoading.value,
-          isMuted: isMuted.value,
-          lastActivityAt: lastChatActivityAt.value,
-          messages: messages.value.slice(-Math.max(20, Number(maxUiMessages.value) || 120))
-        },
-        memory: {
-          summary: memorySummary.value,
-          facts: memoryFacts.value,
-          itemCount: localMemory.value.items.length,
-          recentItems: localMemory.value.items.slice(-40)
-        },
-        task: {
-          active: !!taskSession.value?.active,
-          goal: taskSession.value?.goal || '',
-          isExecuting: isExecuting.value,
-          planStatus: status,
-          runningStepIndex: runningIdx,
-          runningStep: runningStep
-            ? {
-                type: runningStep.type,
-                target: runningStep.target,
-                value: runningStep.value,
-                status: runningStep.status,
-                description: runningStep.description
-              }
-            : null
-        },
-        params: {
-          maxUiMessages: maxUiMessages.value,
-          chatAutoCloseMs: chatAutoCloseMs.value,
-          dynamicScale: dynamicScale.value,
-          moveTransitionMs: moveTransitionMs.value,
-          roamEnabled: roamEnabled.value,
-          idleTalkEnabled: idleTalkEnabled.value,
-          idleAiEnabled: idleAiEnabled.value,
-          moveIntervalMs: moveIntervalMs.value,
-          idleTalkIntervalMs: idleTalkIntervalMs.value,
-          lerpFactor: lerpFactor.value,
-          mouseFollowOffset: mouseFollowOffset.value,
-          maxEnergy: maxEnergy.value,
-          energyDecayRate: energyDecayRate.value,
-          energyRecoverRate: energyRecoverRate.value,
-          tiredThreshold: tiredThreshold.value,
-          idleAiMinIdleMs: idleAiMinIdleMs.value,
-          idleAiCooldownMs: idleAiCooldownMs.value,
-          idleAiChance: idleAiChance.value
+          chat: {
+            open: chatOpen.value,
+            isLoading: isLoading.value,
+            isMuted: isMuted.value,
+            lastActivityAt: lastChatActivityAt.value,
+            messages: messages.value.slice(-Math.max(20, Number(maxUiMessages.value) || 120))
+          },
+          memory: {
+            summary: memorySummary.value,
+            facts: memoryFacts.value,
+            itemCount: localMemory.value.items.length,
+            recentItems: localMemory.value.items.slice(-40)
+          },
+          task: {
+            active: !!taskSession.value?.active,
+            goal: taskSession.value?.goal || '',
+            isExecuting: isExecuting.value,
+            planStatus: status,
+            runningStepIndex: runningIdx,
+            runningStep: runningStep
+              ? {
+                  type: runningStep.type,
+                  target: runningStep.target,
+                  value: runningStep.value,
+                  status: runningStep.status,
+                  description: runningStep.description
+                }
+              : null
+          },
+          params: {
+            maxUiMessages: maxUiMessages.value,
+            chatAutoCloseMs: chatAutoCloseMs.value,
+            dynamicScale: dynamicScale.value,
+            moveTransitionMs: moveTransitionMs.value,
+            roamEnabled: roamEnabled.value,
+            idleTalkEnabled: idleTalkEnabled.value,
+            idleAiEnabled: idleAiEnabled.value,
+            moveIntervalMs: moveIntervalMs.value,
+            idleTalkIntervalMs: idleTalkIntervalMs.value,
+            lerpFactor: lerpFactor.value,
+            mouseFollowOffset: mouseFollowOffset.value,
+            maxEnergy: maxEnergy.value,
+            energyDecayRate: energyDecayRate.value,
+            energyRecoverRate: energyRecoverRate.value,
+            tiredThreshold: tiredThreshold.value,
+            idleAiMinIdleMs: idleAiMinIdleMs.value,
+            idleAiCooldownMs: idleAiCooldownMs.value,
+            idleAiChance: idleAiChance.value
+          }
+        };
+      },
+      applyAiReply: async (raw: string, opts?: any) => {
+        const displayInChat = !!opts?.displayInChat;
+        const speakText = typeof opts?.speakText === 'boolean' ? opts.speakText : false;
+        const suppressMemorySave =
+          typeof opts?.suppressMemorySave === 'boolean' ? opts.suppressMemorySave : true;
+        const defaultMessageFallback =
+          typeof opts?.defaultMessageFallback === 'string'
+            ? opts.defaultMessageFallback
+            : undefined;
+        await applyAiReply(String(raw || ''), {
+          displayInChat,
+          speakText,
+          suppressMemorySave,
+          defaultMessageFallback
+        });
+      },
+      parseAiReply: (raw: string) =>
+        parseAiReply(String(raw || ''), { allowPlan: true, normalizeMotionName }),
+      setParam: (key: string, value: any) => {
+        const k = String(key || '').trim();
+        const rawNum = typeof value === 'number' ? value : Number.parseInt(String(value || ''), 10);
+        const rawFloat =
+          typeof value === 'number' ? value : Number.parseFloat(String(value ?? '').trim());
+        const num = Number.isFinite(rawNum) ? rawNum : Number.NaN;
+        const floatNum = Number.isFinite(rawFloat) ? rawFloat : Number.NaN;
+        const parseBool = (v: any) => {
+          if (typeof v === 'boolean') return v;
+          if (typeof v === 'number') return v !== 0;
+          const s = String(v ?? '')
+            .trim()
+            .toLowerCase();
+          if (s === '1' || s === 'true' || s === 'yes' || s === 'on') return true;
+          if (s === '0' || s === 'false' || s === 'no' || s === 'off') return false;
+          return false;
+        };
+        if (k === 'maxUiMessages') {
+          const v = Math.max(20, Math.min(800, Number.isFinite(num) ? Math.round(num) : 120));
+          maxUiMessages.value = v;
+          try {
+            localStorage.setItem(MAX_UI_MESSAGES_KEY, String(v));
+          } catch {}
+          if (messages.value.length > v) messages.value = messages.value.slice(-v);
+        } else if (k === 'chatAutoCloseMs') {
+          const v = Math.max(0, Math.min(600000, Number.isFinite(num) ? Math.round(num) : 5000));
+          chatAutoCloseMs.value = v;
+          try {
+            localStorage.setItem(CHAT_AUTO_CLOSE_MS_KEY, String(v));
+          } catch {}
+          if (chatOpen.value) scheduleChatAutoClose(undefined, () => isLoading.value);
+        } else if (k === 'dynamicScale') {
+          const v = Math.max(0.06, Math.min(2.8, Number.isFinite(rawNum) ? rawNum : 1.0));
+          dynamicScale.value = v;
+        } else if (k === 'moveTransitionMs') {
+          const v = Math.max(80, Math.min(20000, Number.isFinite(num) ? Math.round(num) : 3000));
+          moveTransitionMs.value = v;
+        } else if (k === 'roamEnabled') {
+          const v = parseBool(value);
+          roamEnabled.value = v;
+          try {
+            localStorage.setItem(ROAM_ENABLED_KEY, v ? '1' : '0');
+          } catch {}
+          startRoaming();
+        } else if (k === 'idleTalkEnabled') {
+          const v = parseBool(value);
+          idleTalkEnabled.value = v;
+          try {
+            localStorage.setItem(IDLE_TALK_ENABLED_KEY, v ? '1' : '0');
+          } catch {}
+          startIdleTalk();
+        } else if (k === 'idleAiEnabled') {
+          const v = parseBool(value);
+          idleAiEnabled.value = v;
+          try {
+            localStorage.setItem(IDLE_AI_ENABLED_KEY, v ? '1' : '0');
+          } catch {}
+        } else if (k === 'moveIntervalMs') {
+          const v = Math.max(
+            5000,
+            Math.min(600000, Number.isFinite(num) ? Math.round(num) : 60000)
+          );
+          moveIntervalMs.value = v;
+          try {
+            localStorage.setItem(MOVE_INTERVAL_MS_KEY, String(v));
+          } catch {}
+          startRoaming();
+        } else if (k === 'idleTalkIntervalMs') {
+          const v = Math.max(
+            3000,
+            Math.min(600000, Number.isFinite(num) ? Math.round(num) : 30000)
+          );
+          idleTalkIntervalMs.value = v;
+          try {
+            localStorage.setItem(IDLE_TALK_INTERVAL_MS_KEY, String(v));
+          } catch {}
+          startIdleTalk();
+        } else if (k === 'lerpFactor') {
+          const v = Math.max(0.01, Math.min(0.35, Number.isFinite(floatNum) ? floatNum : 0.06));
+          lerpFactor.value = v;
+          try {
+            localStorage.setItem(LERP_FACTOR_KEY, String(v));
+          } catch {}
+        } else if (k === 'mouseFollowOffsetX') {
+          const v = Math.max(-300, Math.min(300, Number.isFinite(num) ? Math.round(num) : 20));
+          mouseFollowOffset.value = { ...mouseFollowOffset.value, x: v };
+          try {
+            localStorage.setItem(MOUSE_FOLLOW_OFFSET_X_KEY, String(v));
+          } catch {}
+        } else if (k === 'mouseFollowOffsetY') {
+          const v = Math.max(-300, Math.min(300, Number.isFinite(num) ? Math.round(num) : 20));
+          mouseFollowOffset.value = { ...mouseFollowOffset.value, y: v };
+          try {
+            localStorage.setItem(MOUSE_FOLLOW_OFFSET_Y_KEY, String(v));
+          } catch {}
+        } else if (k === 'maxEnergy') {
+          const v = Math.max(10, Math.min(2000, Number.isFinite(num) ? Math.round(num) : 100));
+          maxEnergy.value = v;
+          try {
+            localStorage.setItem(MAX_ENERGY_KEY, String(v));
+          } catch {}
+          if (energy.value > v) energy.value = v;
+        } else if (k === 'energyDecayRate') {
+          const v = Math.max(0, Math.min(5, Number.isFinite(floatNum) ? floatNum : 0.03));
+          energyDecayRate.value = v;
+          try {
+            localStorage.setItem(ENERGY_DECAY_RATE_KEY, String(v));
+          } catch {}
+        } else if (k === 'energyRecoverRate') {
+          const v = Math.max(0, Math.min(5, Number.isFinite(floatNum) ? floatNum : 0.02));
+          energyRecoverRate.value = v;
+          try {
+            localStorage.setItem(ENERGY_RECOVER_RATE_KEY, String(v));
+          } catch {}
+        } else if (k === 'tiredThreshold') {
+          const v = Math.max(0, Math.min(2000, Number.isFinite(num) ? Math.round(num) : 20));
+          tiredThreshold.value = v;
+          try {
+            localStorage.setItem(TIRED_THRESHOLD_KEY, String(v));
+          } catch {}
+        } else if (k === 'idleAiMinIdleMs') {
+          const v = Math.max(
+            3000,
+            Math.min(600000, Number.isFinite(num) ? Math.round(num) : 65000)
+          );
+          idleAiMinIdleMs.value = v;
+          try {
+            localStorage.setItem(IDLE_AI_MIN_IDLE_MS_KEY, String(v));
+          } catch {}
+        } else if (k === 'idleAiCooldownMs') {
+          const v = Math.max(0, Math.min(900000, Number.isFinite(num) ? Math.round(num) : 120000));
+          idleAiCooldownMs.value = v;
+          try {
+            localStorage.setItem(IDLE_AI_COOLDOWN_MS_KEY, String(v));
+          } catch {}
+        } else if (k === 'idleAiChance') {
+          const v = Math.max(0, Math.min(1, Number.isFinite(floatNum) ? floatNum : 0.22));
+          idleAiChance.value = v;
+          try {
+            localStorage.setItem(IDLE_AI_CHANCE_KEY, String(v));
+          } catch {}
         }
-      };
-    },
-    setParam: (key: string, value: any) => {
-      const k = String(key || '').trim();
-      const rawNum = typeof value === 'number' ? value : Number.parseInt(String(value || ''), 10);
-      const rawFloat =
-        typeof value === 'number' ? value : Number.parseFloat(String(value ?? '').trim());
-      const num = Number.isFinite(rawNum) ? rawNum : Number.NaN;
-      const floatNum = Number.isFinite(rawFloat) ? rawFloat : Number.NaN;
-      const parseBool = (v: any) => {
-        if (typeof v === 'boolean') return v;
-        if (typeof v === 'number') return v !== 0;
-        const s = String(v ?? '')
-          .trim()
-          .toLowerCase();
-        if (s === '1' || s === 'true' || s === 'yes' || s === 'on') return true;
-        if (s === '0' || s === 'false' || s === 'no' || s === 'off') return false;
-        return false;
-      };
-      if (k === 'maxUiMessages') {
-        const v = Math.max(20, Math.min(800, Number.isFinite(num) ? Math.round(num) : 120));
-        maxUiMessages.value = v;
+      },
+      action: (name: string) => {
+        const n = String(name || '').trim();
+        if (n === 'openChat') openChat();
+        else if (n === 'closeChat') closeChat();
+        else if (n === 'toggleChat') toggleChat();
+        else if (n === 'cancelAi') cancelAiRequests();
+        else if (n === 'reloadMemory') loadLocalMemory();
+        else if (n === 'taskNext') void requestNextTaskChunk('manual');
+        else if (n === 'taskStop') stopTask();
+        else if (n === 'clearLocalMemory') {
+          const uid = getUserId();
+          try {
+            localStorage.removeItem(`agent_memory_v1_${uid}`);
+            localStorage.removeItem(`agent_memory_summary_v1_${uid}`);
+            localStorage.removeItem(`agent_memory_facts_v1_${uid}`);
+          } catch {}
+          loadLocalMemory();
+        }
+      },
+      getDiagnosticsSnapshot: () => getDiagnosticsSnapshot(),
+      clearDiagnostics: () => clearDiagnostics(),
+      setDiagnosticsEnabled: (v: boolean) => setDiagnosticsEnabled(v),
+      setDiagnosticsMaxItems: (n: number) => setDiagnosticsMaxItems(n),
+      getConsoleCaptureInfoEnabled: () => getConsoleCaptureInfoEnabled(),
+      setConsoleCaptureInfoEnabled: (v: boolean) => {
+        setConsoleCaptureInfoEnabled(v);
         try {
-          localStorage.setItem(MAX_UI_MESSAGES_KEY, String(v));
-        } catch {}
-        if (messages.value.length > v) messages.value = messages.value.slice(-v);
-      } else if (k === 'chatAutoCloseMs') {
-        const v = Math.max(0, Math.min(600000, Number.isFinite(num) ? Math.round(num) : 5000));
-        chatAutoCloseMs.value = v;
-        try {
-          localStorage.setItem(CHAT_AUTO_CLOSE_MS_KEY, String(v));
-        } catch {}
-        if (chatOpen.value) scheduleChatAutoClose();
-      } else if (k === 'dynamicScale') {
-        const v = Math.max(0.06, Math.min(1.6, Number.isFinite(rawNum) ? rawNum : 1.0));
-        dynamicScale.value = v;
-      } else if (k === 'moveTransitionMs') {
-        const v = Math.max(80, Math.min(20000, Number.isFinite(num) ? Math.round(num) : 3000));
-        moveTransitionMs.value = v;
-      } else if (k === 'roamEnabled') {
-        const v = parseBool(value);
-        roamEnabled.value = v;
-        try {
-          localStorage.setItem(ROAM_ENABLED_KEY, v ? '1' : '0');
-        } catch {}
-        startRoaming();
-      } else if (k === 'idleTalkEnabled') {
-        const v = parseBool(value);
-        idleTalkEnabled.value = v;
-        try {
-          localStorage.setItem(IDLE_TALK_ENABLED_KEY, v ? '1' : '0');
-        } catch {}
-        startIdleTalk();
-      } else if (k === 'idleAiEnabled') {
-        const v = parseBool(value);
-        idleAiEnabled.value = v;
-        try {
-          localStorage.setItem(IDLE_AI_ENABLED_KEY, v ? '1' : '0');
-        } catch {}
-      } else if (k === 'moveIntervalMs') {
-        const v = Math.max(5000, Math.min(600000, Number.isFinite(num) ? Math.round(num) : 60000));
-        moveIntervalMs.value = v;
-        try {
-          localStorage.setItem(MOVE_INTERVAL_MS_KEY, String(v));
-        } catch {}
-        startRoaming();
-      } else if (k === 'idleTalkIntervalMs') {
-        const v = Math.max(3000, Math.min(600000, Number.isFinite(num) ? Math.round(num) : 30000));
-        idleTalkIntervalMs.value = v;
-        try {
-          localStorage.setItem(IDLE_TALK_INTERVAL_MS_KEY, String(v));
-        } catch {}
-        startIdleTalk();
-      } else if (k === 'lerpFactor') {
-        const v = Math.max(0.01, Math.min(0.35, Number.isFinite(floatNum) ? floatNum : 0.06));
-        lerpFactor.value = v;
-        try {
-          localStorage.setItem(LERP_FACTOR_KEY, String(v));
-        } catch {}
-      } else if (k === 'mouseFollowOffsetX') {
-        const v = Math.max(-300, Math.min(300, Number.isFinite(num) ? Math.round(num) : 20));
-        mouseFollowOffset.value = { ...mouseFollowOffset.value, x: v };
-        try {
-          localStorage.setItem(MOUSE_FOLLOW_OFFSET_X_KEY, String(v));
-        } catch {}
-      } else if (k === 'mouseFollowOffsetY') {
-        const v = Math.max(-300, Math.min(300, Number.isFinite(num) ? Math.round(num) : 20));
-        mouseFollowOffset.value = { ...mouseFollowOffset.value, y: v };
-        try {
-          localStorage.setItem(MOUSE_FOLLOW_OFFSET_Y_KEY, String(v));
-        } catch {}
-      } else if (k === 'maxEnergy') {
-        const v = Math.max(10, Math.min(2000, Number.isFinite(num) ? Math.round(num) : 100));
-        maxEnergy.value = v;
-        try {
-          localStorage.setItem(MAX_ENERGY_KEY, String(v));
-        } catch {}
-        if (energy.value > v) energy.value = v;
-      } else if (k === 'energyDecayRate') {
-        const v = Math.max(0, Math.min(5, Number.isFinite(floatNum) ? floatNum : 0.03));
-        energyDecayRate.value = v;
-        try {
-          localStorage.setItem(ENERGY_DECAY_RATE_KEY, String(v));
-        } catch {}
-      } else if (k === 'energyRecoverRate') {
-        const v = Math.max(0, Math.min(5, Number.isFinite(floatNum) ? floatNum : 0.02));
-        energyRecoverRate.value = v;
-        try {
-          localStorage.setItem(ENERGY_RECOVER_RATE_KEY, String(v));
-        } catch {}
-      } else if (k === 'tiredThreshold') {
-        const v = Math.max(0, Math.min(2000, Number.isFinite(num) ? Math.round(num) : 20));
-        tiredThreshold.value = v;
-        try {
-          localStorage.setItem(TIRED_THRESHOLD_KEY, String(v));
-        } catch {}
-      } else if (k === 'idleAiMinIdleMs') {
-        const v = Math.max(3000, Math.min(600000, Number.isFinite(num) ? Math.round(num) : 65000));
-        idleAiMinIdleMs.value = v;
-        try {
-          localStorage.setItem(IDLE_AI_MIN_IDLE_MS_KEY, String(v));
-        } catch {}
-      } else if (k === 'idleAiCooldownMs') {
-        const v = Math.max(0, Math.min(900000, Number.isFinite(num) ? Math.round(num) : 120000));
-        idleAiCooldownMs.value = v;
-        try {
-          localStorage.setItem(IDLE_AI_COOLDOWN_MS_KEY, String(v));
-        } catch {}
-      } else if (k === 'idleAiChance') {
-        const v = Math.max(0, Math.min(1, Number.isFinite(floatNum) ? floatNum : 0.22));
-        idleAiChance.value = v;
-        try {
-          localStorage.setItem(IDLE_AI_CHANCE_KEY, String(v));
+          localStorage.setItem(CONSOLE_CAPTURE_INFO_KEY, v ? '1' : '0');
         } catch {}
       }
-    },
-    action: (name: string) => {
-      const n = String(name || '').trim();
-      if (n === 'openChat') openChat();
-      else if (n === 'closeChat') closeChat();
-      else if (n === 'toggleChat') toggleChat();
-      else if (n === 'cancelAi') cancelAiRequests();
-      else if (n === 'reloadMemory') loadLocalMemory();
-      else if (n === 'taskNext') void requestNextTaskChunk('manual');
-      else if (n === 'taskStop') stopTask();
-      else if (n === 'clearLocalMemory') {
-        const uid = getUserId();
-        try {
-          localStorage.removeItem(`agent_memory_v1_${uid}`);
-          localStorage.removeItem(`agent_memory_summary_v1_${uid}`);
-          localStorage.removeItem(`agent_memory_facts_v1_${uid}`);
-        } catch {}
-        loadLocalMemory();
-      }
-    },
-    getDiagnosticsSnapshot: () => getDiagnosticsSnapshot(),
-    clearDiagnostics: () => clearDiagnostics(),
-    setDiagnosticsEnabled: (v: boolean) => setDiagnosticsEnabled(v),
-    setDiagnosticsMaxItems: (n: number) => setDiagnosticsMaxItems(n),
-    getConsoleCaptureInfoEnabled: () => getConsoleCaptureInfoEnabled(),
-    setConsoleCaptureInfoEnabled: (v: boolean) => {
-      setConsoleCaptureInfoEnabled(v);
-      try {
-        localStorage.setItem(CONSOLE_CAPTURE_INFO_KEY, v ? '1' : '0');
-      } catch {}
-    }
-  };
+    };
+  }
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener(AGENT_SETTINGS_REQUEST_EVENT, handleAgentSettingsRequest as any);
+  window.removeEventListener(AGENT_SETTINGS_UPDATE_EVENT, handleAgentSettingsUpdate as any);
+  window.removeEventListener('live2d:tool', handleLive2dTool as any);
   window.removeEventListener('mousemove', handleMouseMove);
+  window.removeEventListener('resize', handleResize);
   window.removeEventListener('focusin', handleFocusIn);
   window.removeEventListener('mousedown', handleGlobalPointerDown, true);
   window.removeEventListener('touchstart', handleGlobalPointerDown, true);
   window.removeEventListener('keydown', handleGlobalKeyDown, true);
   try {
     const w = window as any;
-    if (w.__agentDebug) delete w.__agentDebug;
+    if (agentDebugExposed) {
+      if (w.__agentDebug) delete w.__agentDebug;
+      if (w.runAgentPlan) delete w.runAgentPlan;
+      agentDebugExposed = false;
+    }
   } catch {}
   if (animationFrameId) cancelAnimationFrame(animationFrameId);
+  guideRectLoopActive = false;
+  if (guideRectFrameId) cancelAnimationFrame(guideRectFrameId);
+  guideRectFrameId = null;
   if (idleTimer) clearInterval(idleTimer);
   if (roamTimer) clearInterval(roamTimer);
   if (dizzyTimeout) clearTimeout(dizzyTimeout);
   if (expressionOverrideTimeout) clearTimeout(expressionOverrideTimeout);
-  if (backgroundReactTimer) clearTimeout(backgroundReactTimer);
-  if (chatAutoCloseTimer) clearTimeout(chatAutoCloseTimer);
+  disposeBackgroundReactions();
   if (taskMoveTimeout) clearTimeout(taskMoveTimeout);
   stopDomObserver();
   try {
@@ -4186,7 +4428,7 @@ watch(currentUser, async (user) => {
         ];
       }
     } catch (e) {
-      console.error('Failed to load history', e);
+      logger.error('Failed to load history', e);
     }
   } else {
     message.value = currentLang.value === 'zh' ? '再见！' : 'See you later!';
@@ -4203,7 +4445,10 @@ watch(currentUser, async (user) => {
 });
 
 // Update guideTargetRect loop
+let guideRectLoopActive = false;
+let guideRectFrameId: number | null = null;
 const updateGuideRect = () => {
+  if (!guideRectLoopActive) return;
   if (!guideTarget.value && plan.value?.status === 'running') {
     const activeStep = plan.value.steps.find((s) => s.status === 'running');
     if (activeStep?.target) {
@@ -4222,9 +4467,8 @@ const updateGuideRect = () => {
       guideTargetRect.value = guideTarget.value.getBoundingClientRect();
     }
   }
-  requestAnimationFrame(updateGuideRect);
+  guideRectFrameId = window.requestAnimationFrame(updateGuideRect);
 };
-requestAnimationFrame(updateGuideRect);
 
 watch(
   () => plan.value?.steps,
@@ -4270,9 +4514,20 @@ watch(
       motionCommand.value = 'happy';
     } else if (newStatus === 'failed') {
       isConfused.value = true;
-      message.value = 'Oops, something went wrong.';
+      const err = String(plan.value?.errorMessage || '').trim();
+      message.value =
+        currentLang.value === 'zh'
+          ? err
+            ? `任务失败：${err}`
+            : '任务失败了…'
+          : err
+            ? `Task failed: ${err}`
+            : 'Oops, something went wrong.';
       window.setTimeout(() => {
-        void requestNextTaskChunk('failed');
+        void requestNextTaskChunk('failed', {
+          message: plan.value?.errorMessage,
+          step: plan.value?.steps?.[plan.value?.currentStepIndex]
+        });
       }, 650);
       setTimeout(() => {
         isConfused.value = false;

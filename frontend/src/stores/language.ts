@@ -189,6 +189,35 @@ export const useLanguageStore = defineStore('language', () => {
       },
       common: {
         loading: 'Loading...'
+      },
+      login: {
+        title: 'Login',
+        email_label: 'Email',
+        email_placeholder: 'Enter your email',
+        send_code: 'Send Code',
+        sending: 'Sending...',
+        verify_title: 'Verify',
+        verify_subtitle: 'Enter the code sent to {email}',
+        code_label: 'Verification Code',
+        code_placeholder: '6-digit code',
+        verify_btn: 'Verify & Login',
+        account_title: 'Account',
+        current_user: 'Current User',
+        local_users: 'Local Users',
+        switch: 'Switch',
+        logout: 'Logout',
+        back: 'Back',
+        success: 'Sent successfully',
+        failed: 'Send failed',
+        login_success: 'Login successful',
+        welcome: 'Welcome',
+        enter_email: 'Please enter email',
+        enter_code: 'Please enter code',
+        invalid_email: 'Invalid email format',
+        invalid_code: 'Invalid code format',
+        resend: 'Resend',
+        resend_wait: 'Resend in {s}s',
+        no_users: 'No local users found'
       }
     },
     zh: {
@@ -374,6 +403,44 @@ export const useLanguageStore = defineStore('language', () => {
       },
       common: {
         loading: '加载中...'
+      },
+      login: {
+        title: '登录',
+        email_label: '邮箱',
+        email_placeholder: '请输入您的邮箱',
+        send_code: '发送验证码',
+        sending: '发送中...',
+        verify_title: '验证',
+        verify_subtitle: '请输入发送至 {email} 的验证码',
+        code_label: '验证码',
+        code_placeholder: '6位数字验证码',
+        verify_btn: '验证并登录',
+        account_title: '账户',
+        current_user: '当前用户',
+        local_users: '本地用户',
+        switch: '切换',
+        logout: '退出登录',
+        back: '返回',
+        success: '发送成功',
+        failed: '发送失败',
+        login_success: '登录成功',
+        welcome: '欢迎',
+        enter_email: '请输入邮箱',
+        enter_code: '请输入验证码',
+        invalid_email: '邮箱格式不正确',
+        invalid_code: '验证码格式不正确',
+        resend: '重新发送',
+        resend_wait: '{s}秒后重发',
+        no_users: '暂无本地用户',
+        sub: '使用 QQ 邮箱 SMTP 发送验证码（本地接口）',
+        hint: '验证码有效期 10 分钟；每次发送间隔 60 秒',
+        verifying: '验证中…',
+        verify_hint: '登录成功后，用户信息将仅存储在本地浏览器',
+        back_to_resend: '返回重发',
+        account_sub: '当前登录用户（本地存储）',
+        user_id: 'USER_ID',
+        empty: '暂无',
+        login_other: '登录其他邮箱'
       }
     }
   };
@@ -386,7 +453,7 @@ export const useLanguageStore = defineStore('language', () => {
     currentLang.value = lang;
   }
 
-  function t(key: string) {
+  function t(key: string, args?: Record<string, string | number>) {
     const keys = key.split('.');
     let value: any = translations[currentLang.value];
     for (const k of keys) {
@@ -395,6 +462,9 @@ export const useLanguageStore = defineStore('language', () => {
       } else {
         return key;
       }
+    }
+    if (typeof value === 'string' && args) {
+      return value.replace(/\{(\w+)\}/g, (_, k) => String(args[k] ?? ''));
     }
     return value;
   }

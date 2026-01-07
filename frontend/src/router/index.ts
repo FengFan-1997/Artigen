@@ -9,7 +9,7 @@ import ResumeForge from '../project/ResumeForge.vue';
 import CodeGuardian from '../project/CodeGuardian.vue';
 import TravelPlanner from '../project/TravelPlanner.vue';
 import NexusDashboard from '../project/NexusDashboard.vue';
-import AetherMarket from '../project/AetherMarket.vue';
+import AetherMarket from '../agentImg/views/AetherMarket.vue';
 import AiPptGen from '../project/AiPptGen.vue';
 import SecretLove from '../project/SecretLove.vue';
 import GalaxyPage from '../components/secret/pages/GalaxyPage.vue';
@@ -23,10 +23,72 @@ import TimeTunnelPage from '../components/secret/pages/TimeTunnelPage.vue';
 import NebulaPage from '../components/secret/pages/NebulaPage.vue';
 import SakuraPage from '../components/secret/pages/SakuraPage.vue';
 import AgentDebug from '../views/AgentDebug.vue';
+import RoomPage from '../room/RoomPage.vue';
+import LandingPage from '../agentImg/views/LandingPage.vue';
+import FormatFactory from '../agentImg/views/FormatFactory.vue';
+import TermsOfService from '../agentImg/views/legal/TermsOfService.vue';
+import PrivacyPolicy from '../agentImg/views/legal/PrivacyPolicy.vue';
+import RefundPolicy from '../agentImg/views/legal/RefundPolicy.vue';
+import AgentImg from '../agentImg/index.vue';
+import { loginRoutes } from '../login/routes';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    {
+      path: '/',
+      name: 'home',
+      component: PortfolioHome
+    },
+    {
+      path: '/agent-img',
+      redirect: '/agentimg/ai'
+    },
+    {
+      path: '/format-factory',
+      redirect: '/agentimg/format-factory'
+    },
+    {
+      path: '/aether-market',
+      redirect: '/agentimg/market'
+    },
+    {
+      path: '/legal/terms',
+      redirect: '/agentimg/legal/terms'
+    },
+    {
+      path: '/legal/privacy',
+      redirect: '/agentimg/legal/privacy'
+    },
+    {
+      path: '/legal/refund',
+      redirect: '/agentimg/legal/refund'
+    },
+    {
+      path: '/agentimg',
+      name: 'agent-img-landing',
+      component: LandingPage
+    },
+    {
+      path: '/agentimg/format-factory',
+      name: 'format-factory',
+      component: FormatFactory
+    },
+    {
+      path: '/agentimg/legal/terms',
+      name: 'terms',
+      component: TermsOfService
+    },
+    {
+      path: '/agentimg/legal/privacy',
+      name: 'privacy',
+      component: PrivacyPolicy
+    },
+    {
+      path: '/agentimg/legal/refund',
+      name: 'refund',
+      component: RefundPolicy
+    },
     {
       path: '/ai-ppt',
       name: 'ai-ppt',
@@ -88,11 +150,6 @@ const router = createRouter({
       component: SakuraPage
     },
     {
-      path: '/',
-      name: 'home',
-      component: PortfolioHome
-    },
-    {
       path: '/portfolio-home',
       name: 'portfolio-home',
       component: PortfolioHome
@@ -143,15 +200,26 @@ const router = createRouter({
       component: NexusDashboard
     },
     {
-      path: '/aether-market',
+      path: '/agentimg/market',
       name: 'aether-market',
       component: AetherMarket
+    },
+    {
+      path: '/room',
+      name: 'room',
+      component: RoomPage
     },
     {
       path: '/agent-debug',
       name: 'agent-debug',
       component: AgentDebug
-    }
+    },
+    {
+      path: '/agentimg/ai',
+      name: 'agent-img-tool',
+      component: AgentImg
+    },
+    ...loginRoutes
   ]
 });
 

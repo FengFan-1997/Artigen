@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
+import { computePersonaTraits, type PersonaTraits } from '../logic/persona';
+import type { EmotionSnapshot } from '../logic/emotionEngine';
 
 const props = defineProps<{
   src: string;
+  uiMode?: 'default' | 'room';
   currentLang?: string;
+  emotionSnapshot?: EmotionSnapshot;
   isTalking?: boolean;
   isMoving?: boolean;
   isHovered?: boolean;
@@ -19,8 +23,11 @@ const props = defineProps<{
   isTired?: boolean;
   motionCommand?: string;
   expressionOverride?: string;
+  speechPulse?: number;
   facingLock?: boolean;
   personaText?: string;
+  personaTraits?: PersonaTraits;
+  lookAt?: { x: number; y: number; active?: boolean } | null;
   mouseControlEnabled?: boolean;
 }>();
 
@@ -92,6 +99,12 @@ let proceduralMotion: {
   side: 'left' | 'right';
   intensity: number;
 } | null = null;
+let proceduralRelease: {
+  startedAt: number;
+  duration: number;
+  from: Record<string, { x: number; y: number; z: number }>;
+  to: Record<string, { x: number; y: number; z: number }>;
+} | null = null;
 let proceduralBase: Record<string, { x: number; y: number; z: number }> = {};
 let lastMotionCommandAt = 0;
 let idleState: { nextAt: number; lastName: string | null } = { nextAt: 0, lastName: null };
@@ -143,11 +156,32 @@ const lookState = {
   autoTargetY: 0,
   autoUntil: 0,
   nextAutoAt: 0,
+  autoVX: 0,
+  autoVY: 0,
+  autoLastAt: 0,
+  nextSaccadeAt: 0,
+  saccadeUntil: 0,
+  holdUntil: 0,
+  saccadeTargetX: 0,
+  saccadeTargetY: 0,
   leftEyeTargetX: 0,
   leftEyeTargetY: 0,
   rightEyeTargetX: 0,
   rightEyeTargetY: 0
 };
+
+const randn = () => {
+  let u = 0;
+  let v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+};
+
+const resolvedPersonaTraits = computed<PersonaTraits>(() => {
+  if (props.personaTraits) return props.personaTraits;
+  return computePersonaTraits(String(props.personaText || ''));
+});
 
 const mouseControl = {
   pointerId: null as number | null,
@@ -226,6 +260,8 @@ const fitToView = (root: THREE.Object3D) => {
   }
 
   root.position.sub(center);
+  root.updateMatrixWorld(true);
+  const boxCentered = new THREE.Box3().setFromObject(root);
   const fovV = (camera.fov * Math.PI) / 180;
   const fovH = 2 * Math.atan(Math.tan(fovV / 2) * camera.aspect);
   const safeFovV = Math.max(0.0001, fovV);
@@ -234,14 +270,87 @@ const fitToView = (root: THREE.Object3D) => {
   const height = Math.max(0.0001, size.y);
   const distV = height / 2 / Math.tan(safeFovV / 2);
   const distH = width / 2 / Math.tan(safeFovH / 2);
-  const margin = useHumanoidFrame ? 1.32 : 1.22;
-  const dist = Math.max(distV, distH) * margin + size.z * 0.55;
+  const isRoom = props.uiMode === 'room';
+  const padTop = isRoom ? 0.06 : 0.08;
+  const padBottom = isRoom ? 0.12 : 0.12;
+  let margin = useHumanoidFrame ? (isRoom ? 1.55 : 1.58) : isRoom ? 1.45 : 1.34;
+  for (let i = 0; i < 7; i++) {
+    const dist = Math.max(distV, distH) * margin + size.z * 0.55;
+    camera.position.set(0, 0, dist);
+    camera.lookAt(0, 0, 0);
+    camera.near = Math.max(0.005, dist / 220);
+    camera.far = dist * 50;
+    camera.updateProjectionMatrix();
 
-  camera.position.set(0, 0, dist);
-  camera.lookAt(0, 0, 0);
-  camera.near = Math.max(0.01, dist / 100);
-  camera.far = dist * 50;
-  camera.updateProjectionMatrix();
+    root.updateMatrixWorld(true);
+    const headW = new THREE.Vector3();
+    const footW = new THREE.Vector3();
+    let hasHead = false;
+    let hasFoot = false;
+    if (useHumanoidFrame) {
+      const head = headNode as THREE.Object3D;
+      head.getWorldPosition(headW);
+      hasHead = true;
+      const lf = leftFootNode;
+      const rf = rightFootNode;
+      if (lf && rf) {
+        const a = new THREE.Vector3();
+        const b = new THREE.Vector3();
+        lf.getWorldPosition(a);
+        rf.getWorldPosition(b);
+        if (a.y <= b.y) footW.copy(a);
+        else footW.copy(b);
+        hasFoot = true;
+      } else if (lf) {
+        lf.getWorldPosition(footW);
+        hasFoot = true;
+      } else if (rf) {
+        rf.getWorldPosition(footW);
+        hasFoot = true;
+      }
+    }
+    if (!useHumanoidFrame || !hasHead || !hasFoot) {
+      headW.set(0, boxCentered.max.y, 0);
+      footW.set(0, boxCentered.min.y, 0);
+    }
+
+    const headN = headW.clone().project(camera);
+    const footN = footW.clone().project(camera);
+    const minDeltaN = -1 + padBottom - footN.y;
+    const maxDeltaN = 1 - padTop - headN.y;
+
+    const footCam = footW.clone().applyMatrix4(camera.matrixWorldInverse);
+    const headCam = headW.clone().applyMatrix4(camera.matrixWorldInverse);
+    const zFoot = Math.max(0.0001, Math.abs(footCam.z));
+    const zHead = Math.max(0.0001, Math.abs(headCam.z));
+    const deltaScale = Math.tan(safeFovV / 2);
+    const minDeltaY = minDeltaN * zFoot * deltaScale;
+    const maxDeltaY = maxDeltaN * zHead * deltaScale;
+
+    if (minDeltaY > maxDeltaY) {
+      margin *= 1.07;
+      continue;
+    }
+
+    const midTarget = (1 - padTop + (-1 + padBottom)) / 2;
+    const midNow = (headN.y + footN.y) / 2;
+    const midDeltaN = midTarget - midNow;
+    const midCam = headW
+      .clone()
+      .add(footW)
+      .multiplyScalar(0.5)
+      .applyMatrix4(camera.matrixWorldInverse);
+    const zMid = Math.max(0.0001, Math.abs(midCam.z));
+    let deltaY = midDeltaN * zMid * deltaScale;
+    if (deltaY < minDeltaY) deltaY = minDeltaY;
+    if (deltaY > maxDeltaY) deltaY = maxDeltaY;
+
+    if (Number.isFinite(deltaY) && Math.abs(deltaY) > 1e-6) {
+      root.position.y += deltaY;
+      continue;
+    }
+    break;
+  }
 };
 
 const ensureThree = () => {
@@ -410,13 +519,17 @@ const updateExpressions = (t: number, delta: number) => {
   }
 
   const fainted = !!props.isFainted;
-  const tired = !!props.isTired;
+  const tiredFromEngine =
+    typeof props.emotionSnapshot?.d?.tired === 'number'
+      ? THREE.MathUtils.clamp(props.emotionSnapshot.d.tired, 0, 1)
+      : 0;
+  const tired = !!props.isTired || tiredFromEngine > 0.55;
   const hovered = !!props.isHovered || pointer.active;
 
   if (!faceState.blinkActive && !fainted && now >= faceState.blinkNextAt) {
     faceState.blinkActive = true;
     faceState.blinkStartedAt = now;
-    faceState.blinkDuration = 260 + Math.floor(Math.random() * 90);
+    faceState.blinkDuration = (tired ? 330 : 260) + Math.floor(Math.random() * (tired ? 140 : 90));
     faceState.blinkNextAt =
       now +
       (tired ? 1200 : 2200) +
@@ -446,6 +559,11 @@ const updateExpressions = (t: number, delta: number) => {
   if (crying && !fainted) blinkTarget = THREE.MathUtils.clamp(Math.max(blinkTarget, 0.14), 0, 1);
 
   const talk = !!props.isTalking && !fainted;
+  const pulseAt = typeof props.speechPulse === 'number' ? props.speechPulse : 0;
+  const pulseDt = pulseAt > 0 ? now - pulseAt : 1e9;
+  const pulseEnv = talk && pulseDt < 650 ? Math.exp(-pulseDt / 150) : 0;
+  const pulseVibe =
+    talk && pulseDt < 380 ? Math.sin((pulseDt / 1000) * Math.PI * 2 * 7.5) * 0.06 : 0;
   const idleMouth =
     crying || tired
       ? THREE.MathUtils.clamp(
@@ -455,9 +573,17 @@ const updateExpressions = (t: number, delta: number) => {
         )
       : 0;
   const mouthOpen = talk
-    ? THREE.MathUtils.clamp(0.16 + 0.2 * Math.sin(t * 11.5) + 0.1 * Math.sin(t * 19.2), 0, 1)
+    ? THREE.MathUtils.clamp(
+        0.16 + 0.2 * Math.sin(t * 11.5) + 0.1 * Math.sin(t * 19.2) + 0.26 * pulseEnv + pulseVibe,
+        0,
+        1
+      )
     : idleMouth;
-  const mouthWide = talk ? 0.5 + 0.5 * Math.sin(t * 7.4 + 0.7) : crying ? 0.25 : 0;
+  const mouthWide = talk
+    ? THREE.MathUtils.clamp(0.48 + 0.52 * Math.sin(t * 7.4 + 0.7) + 0.16 * pulseEnv, 0, 1)
+    : crying
+      ? 0.25
+      : 0;
   const mouthRound = talk
     ? 0.5 + 0.5 * Math.sin(t * 5.2 + 1.8)
     : props.isPouting || crying
@@ -484,12 +610,28 @@ const updateExpressions = (t: number, delta: number) => {
   const expKey = String(props.expressionOverride || '')
     .toLowerCase()
     .trim();
-  const happyTarget = expKey === 'happy' || !!props.isHappy ? 0.8 : expKey === 'neutral' ? 0 : 0;
-  const angryTarget = expKey === 'angry' || !!props.isAngry ? 0.85 : expKey === 'neutral' ? 0 : 0;
-  const sadTarget =
-    expKey === 'sad' || !!props.isCrying || !!props.isPouting ? 0.65 : expKey === 'neutral' ? 0 : 0;
-  const surprisedTarget = expKey === 'surprised' ? 0.85 : 0;
-  const relaxedTarget = tired ? 0.35 : 0;
+  const emo = props.emotionSnapshot?.d;
+  const happyFromEngine =
+    typeof emo?.happy === 'number' ? THREE.MathUtils.clamp(emo.happy, 0, 1) : 0;
+  const angryFromEngine =
+    typeof emo?.angry === 'number' ? THREE.MathUtils.clamp(emo.angry, 0, 1) : 0;
+  const poutFromEngine =
+    typeof emo?.pouting === 'number' ? THREE.MathUtils.clamp(emo.pouting, 0, 1) : 0;
+  const confusedFromEngine =
+    typeof emo?.confused === 'number' ? THREE.MathUtils.clamp(emo.confused, 0, 1) : 0;
+  const dizzyFromEngine =
+    typeof emo?.dizzy === 'number' ? THREE.MathUtils.clamp(emo.dizzy, 0, 1) : 0;
+
+  const happyFlag = expKey === 'happy' || !!props.isHappy;
+  const angryFlag = expKey === 'angry' || !!props.isAngry;
+  const sadFlag = expKey === 'sad' || !!props.isCrying || !!props.isPouting;
+  const surprisedFlag = expKey === 'surprised';
+
+  const happyTarget = happyFlag ? 0.8 : expKey === 'neutral' ? 0 : 0;
+  const angryTarget = angryFlag ? 0.85 : expKey === 'neutral' ? 0 : 0;
+  const sadTarget = sadFlag ? 0.65 : expKey === 'neutral' ? 0 : 0;
+  const surprisedTarget = surprisedFlag ? 0.85 : 0;
+  const relaxedTarget = tired || tiredFromEngine > 0.4 ? 0.35 : 0;
 
   const allowMicro =
     !talk &&
@@ -497,6 +639,7 @@ const updateExpressions = (t: number, delta: number) => {
     !props.isAngry &&
     !props.isCrying &&
     !props.isPouting &&
+    angryFromEngine < 0.6 &&
     expKey !== 'angry' &&
     expKey !== 'sad';
   if (allowMicro && now >= faceState.microNextAt) {
@@ -541,11 +684,33 @@ const updateExpressions = (t: number, delta: number) => {
     step('ou', ouTarget);
     step('oh', Math.max(ohTarget, props.isPouting ? 0.22 : 0));
 
-    step('happy', THREE.MathUtils.clamp(happyTarget + microHappy, 0, 1));
-    step('angry', angryTarget);
-    step('sad', sadTarget);
-    step('surprised', surprisedTarget);
-    step('relaxed', THREE.MathUtils.clamp(relaxedTarget + microRelaxed, 0, 1));
+    const happyBlend = THREE.MathUtils.clamp(
+      Math.max(happyTarget, happyFromEngine * 0.9) + microHappy,
+      0,
+      1
+    );
+    const angryBlend = THREE.MathUtils.clamp(Math.max(angryTarget, angryFromEngine * 0.9), 0, 1);
+    const sadBlend = THREE.MathUtils.clamp(
+      Math.max(sadTarget, poutFromEngine > 0.4 ? poutFromEngine * 0.8 : confusedFromEngine * 0.5),
+      0,
+      1
+    );
+    const surprisedBlend = THREE.MathUtils.clamp(
+      Math.max(surprisedTarget, dizzyFromEngine > 0.58 ? (dizzyFromEngine - 0.58) * 1.25 : 0),
+      0,
+      1
+    );
+    const relaxedBlend = THREE.MathUtils.clamp(
+      Math.max(relaxedTarget, Math.max(0, (tiredFromEngine - 0.35) * 0.75)) + microRelaxed,
+      0,
+      1
+    );
+
+    step('happy', happyBlend);
+    step('angry', angryBlend);
+    step('sad', sadBlend);
+    step('surprised', surprisedBlend);
+    step('relaxed', relaxedBlend);
   } else {
     if (lookNodes.leftEye) {
       const targetX =
@@ -580,12 +745,13 @@ const startLoop = () => {
       if (mixer) mixer.update(delta);
       const elapsed = clock ? clock.getElapsedTime() : 0;
       updatePresentation(elapsed);
-      applyFacingLock();
-      updateLook(elapsed);
+      applyFacingLock(delta);
+      updateLook(elapsed, delta);
       updateExpressions(elapsed, delta);
       maybeStartIdleMotion();
-      applyProceduralMotion();
       applyBaselineMotion(elapsed, delta);
+      applyProceduralMotion(delta);
+      applyProceduralRelease();
       if (currentVrm && typeof currentVrm.update === 'function') {
         try {
           currentVrm.update(delta);
@@ -615,8 +781,8 @@ const playClip = (clip: THREE.AnimationClip | null) => {
   next.clampWhenFinished = false;
   next.enabled = true;
   if (activeAction && activeAction !== next) {
-    activeAction.fadeOut(0.15);
-    next.reset().fadeIn(0.15).play();
+    activeAction.fadeOut(0.25);
+    next.reset().fadeIn(0.25).play();
   } else {
     next.reset().play();
   }
@@ -685,29 +851,68 @@ const captureMotionNodes = (vrm: any) => {
 
 const clearProceduralMotion = () => {
   const restoreBase = proceduralBase;
-  proceduralMotion = null;
-  const restore = (key: keyof typeof motionNodes) => {
+  const from: Record<string, { x: number; y: number; z: number }> = {};
+  const to: Record<string, { x: number; y: number; z: number }> = {};
+  const snapshot = (key: keyof typeof motionNodes) => {
     const node = motionNodes[key] as THREE.Object3D | null;
     const base = restoreBase[String(key)] || motionNodes.base[String(key)];
     if (!node || !base) return;
-    node.rotation.set(base.x, base.y, base.z);
+    from[String(key)] = { x: node.rotation.x, y: node.rotation.y, z: node.rotation.z };
+    to[String(key)] = { x: base.x, y: base.y, z: base.z };
   };
-  restore('hips');
-  restore('spine');
-  restore('chest');
-  restore('leftShoulder');
-  restore('rightShoulder');
-  restore('rightUpperArm');
-  restore('rightLowerArm');
-  restore('rightHand');
-  restore('leftUpperArm');
-  restore('leftLowerArm');
-  restore('leftHand');
-  restore('rightUpperLeg');
-  restore('rightLowerLeg');
-  restore('leftUpperLeg');
-  restore('leftLowerLeg');
+  snapshot('hips');
+  snapshot('spine');
+  snapshot('chest');
+  snapshot('leftShoulder');
+  snapshot('rightShoulder');
+  snapshot('rightUpperArm');
+  snapshot('rightLowerArm');
+  snapshot('rightHand');
+  snapshot('leftUpperArm');
+  snapshot('leftLowerArm');
+  snapshot('leftHand');
+  snapshot('rightUpperLeg');
+  snapshot('rightLowerLeg');
+  snapshot('leftUpperLeg');
+  snapshot('leftLowerLeg');
+
+  proceduralMotion = null;
+  proceduralRelease = {
+    startedAt: Date.now(),
+    duration: 240,
+    from,
+    to
+  };
   proceduralBase = {};
+};
+
+const applyProceduralRelease = () => {
+  if (!proceduralRelease) return;
+  const now = Date.now();
+  const p =
+    proceduralRelease.duration > 0
+      ? (now - proceduralRelease.startedAt) / proceduralRelease.duration
+      : 1;
+  if (p >= 1) {
+    const entries = Object.entries(proceduralRelease.to);
+    for (const [key, b] of entries) {
+      const node = (motionNodes as any)[key] as THREE.Object3D | null;
+      if (!node) continue;
+      node.rotation.set(b.x, b.y, b.z);
+    }
+    proceduralRelease = null;
+    return;
+  }
+  const ease = 1 - Math.pow(1 - THREE.MathUtils.clamp(p, 0, 1), 2);
+  const entries = Object.entries(proceduralRelease.to);
+  for (const [key, b] of entries) {
+    const node = (motionNodes as any)[key] as THREE.Object3D | null;
+    const a = proceduralRelease.from[key];
+    if (!node || !a) continue;
+    node.rotation.x = THREE.MathUtils.lerp(a.x, b.x, ease);
+    node.rotation.y = THREE.MathUtils.lerp(a.y, b.y, ease);
+    node.rotation.z = THREE.MathUtils.lerp(a.z, b.z, ease);
+  }
 };
 
 const snapshotProceduralBase = () => {
@@ -809,6 +1014,7 @@ const resolveProceduralMotionName = (input: string) => {
 const startProceduralMotion = (name: string) => {
   const n = resolveProceduralMotionName(name);
   if (!n) return;
+  proceduralRelease = null;
   snapshotProceduralBase();
   const duration =
     n === 'wave'
@@ -931,7 +1137,7 @@ const startProceduralMotion = (name: string) => {
 
 const shouldIdle = () => {
   if (!mountedRoot) return false;
-  if (proceduralMotion) return false;
+  if (proceduralMotion || proceduralRelease) return false;
   const busy =
     !!props.isTalking ||
     !!props.isMoving ||
@@ -1200,28 +1406,85 @@ const applyBaselineMotion = (t: number, delta: number) => {
   const baseLULeg = motionNodes.base['leftUpperLeg'];
   const baseLLLeg = motionNodes.base['leftLowerLeg'];
 
-  const s = 1 - Math.exp(-Math.max(0, delta) * 7.5);
+  const dt = Math.max(0.001, Math.min(0.05, Number.isFinite(delta) ? delta : 0.016));
   const breathe = Math.sin(t * 1.25);
   const sway = Math.sin(t * 0.95 + 0.6);
+  const emoV = props.emotionSnapshot?.v;
+  const arousal = typeof emoV?.arousal === 'number' ? THREE.MathUtils.clamp(emoV.arousal, 0, 1) : 0;
+  const fatigue = typeof emoV?.fatigue === 'number' ? THREE.MathUtils.clamp(emoV.fatigue, 0, 1) : 0;
+  const annoyance =
+    typeof emoV?.annoyance === 'number' ? THREE.MathUtils.clamp(emoV.annoyance, 0, 1) : 0;
+  const dizziness =
+    typeof emoV?.dizziness === 'number' ? THREE.MathUtils.clamp(emoV.dizziness, 0, 1) : 0;
+  const breatheAmp = 1 + arousal * 0.5 - fatigue * 0.55;
+  const swayAmp = 1 + annoyance * 0.35 - dizziness * 0.4;
+  const smoothScale = THREE.MathUtils.clamp(
+    0.85 + arousal * 0.25 - fatigue * 0.3 - dizziness * 0.35 + annoyance * 0.1,
+    0.55,
+    1.25
+  );
+  const bodyLambda = 5.2 * smoothScale;
+  const limbLambda = 6.0 * smoothScale;
+  const posLambda = 7.0 * smoothScale;
 
   if (hips && baseHips) {
-    hips.rotation.y = THREE.MathUtils.lerp(hips.rotation.y, baseHips.y + sway * 0.035, s);
-    hips.rotation.z = THREE.MathUtils.lerp(hips.rotation.z, baseHips.z + sway * 0.02, s);
+    hips.rotation.y = THREE.MathUtils.damp(
+      hips.rotation.y,
+      baseHips.y + sway * 0.035 * swayAmp,
+      bodyLambda,
+      dt
+    );
+    hips.rotation.z = THREE.MathUtils.damp(
+      hips.rotation.z,
+      baseHips.z + sway * 0.02 * swayAmp,
+      bodyLambda,
+      dt
+    );
   }
   if (spine && baseSpine) {
-    spine.rotation.x = THREE.MathUtils.lerp(spine.rotation.x, baseSpine.x + breathe * 0.02, s);
-    spine.rotation.z = THREE.MathUtils.lerp(spine.rotation.z, baseSpine.z - sway * 0.025, s);
+    spine.rotation.x = THREE.MathUtils.damp(
+      spine.rotation.x,
+      baseSpine.x + breathe * 0.02 * breatheAmp,
+      bodyLambda,
+      dt
+    );
+    spine.rotation.z = THREE.MathUtils.damp(
+      spine.rotation.z,
+      baseSpine.z - sway * 0.025 * swayAmp,
+      bodyLambda,
+      dt
+    );
   }
   if (chest && baseChest) {
-    chest.rotation.x = THREE.MathUtils.lerp(chest.rotation.x, baseChest.x + breathe * 0.012, s);
-    chest.rotation.y = THREE.MathUtils.lerp(chest.rotation.y, baseChest.y + sway * 0.015, s);
+    chest.rotation.x = THREE.MathUtils.damp(
+      chest.rotation.x,
+      baseChest.x + breathe * 0.012 * breatheAmp,
+      bodyLambda,
+      dt
+    );
+    chest.rotation.y = THREE.MathUtils.damp(
+      chest.rotation.y,
+      baseChest.y + sway * 0.015 * swayAmp,
+      bodyLambda,
+      dt
+    );
   }
 
   if (lUpper && baseLU) {
-    lUpper.rotation.x = THREE.MathUtils.lerp(lUpper.rotation.x, baseLU.x + breathe * 0.01, s);
+    lUpper.rotation.x = THREE.MathUtils.damp(
+      lUpper.rotation.x,
+      baseLU.x + breathe * 0.01 * breatheAmp,
+      limbLambda,
+      dt
+    );
   }
   if (rUpper && baseRU) {
-    rUpper.rotation.x = THREE.MathUtils.lerp(rUpper.rotation.x, baseRU.x + breathe * 0.01, s);
+    rUpper.rotation.x = THREE.MathUtils.damp(
+      rUpper.rotation.x,
+      baseRU.x + breathe * 0.01 * breatheAmp,
+      limbLambda,
+      dt
+    );
   }
 
   if (!!props.isMoving) {
@@ -1239,45 +1502,49 @@ const applyBaselineMotion = (t: number, delta: number) => {
     const ampLower = (isElegant ? 0.18 : 0.28) * (isLazy ? 0.75 : 1);
 
     if (rUpperLeg && baseRULeg) {
-      rUpperLeg.rotation.x = THREE.MathUtils.lerp(
+      rUpperLeg.rotation.x = THREE.MathUtils.damp(
         rUpperLeg.rotation.x,
         baseRULeg.x + stride * ampUpper,
-        s
+        limbLambda,
+        dt
       );
     }
     if (lUpperLeg && baseLULeg) {
-      lUpperLeg.rotation.x = THREE.MathUtils.lerp(
+      lUpperLeg.rotation.x = THREE.MathUtils.damp(
         lUpperLeg.rotation.x,
         baseLULeg.x - stride * ampUpper,
-        s
+        limbLambda,
+        dt
       );
     }
 
     if (rLowerLeg && baseRLLeg) {
-      rLowerLeg.rotation.x = THREE.MathUtils.lerp(
+      rLowerLeg.rotation.x = THREE.MathUtils.damp(
         rLowerLeg.rotation.x,
         baseRLLeg.x - lift * ampLower,
-        s
+        limbLambda,
+        dt
       );
     }
     if (lLowerLeg && baseLLLeg) {
-      lLowerLeg.rotation.x = THREE.MathUtils.lerp(
+      lLowerLeg.rotation.x = THREE.MathUtils.damp(
         lLowerLeg.rotation.x,
         baseLLLeg.x - Math.max(0, Math.sin(phase + Math.PI / 2 + Math.PI)) * ampLower,
-        s
+        limbLambda,
+        dt
       );
     }
 
     if (hips && baseHips) {
       const bob = Math.abs(stride) * 0.008;
-      hips.position.y = THREE.MathUtils.lerp(hips.position.y, bob, s);
+      hips.position.y = THREE.MathUtils.damp(hips.position.y, bob, posLambda, dt);
     }
   } else {
-    if (hips) hips.position.y = THREE.MathUtils.lerp(hips.position.y, 0, s);
+    if (hips) hips.position.y = THREE.MathUtils.damp(hips.position.y, 0, posLambda, dt);
   }
 };
 
-const applyProceduralMotion = () => {
+const applyProceduralMotion = (delta: number) => {
   if (!proceduralMotion) return;
   const now = Date.now();
   const elapsedMs = now - proceduralMotion.startedAt;
@@ -1286,9 +1553,30 @@ const applyProceduralMotion = () => {
     clearProceduralMotion();
     return;
   }
-  const k = Math.sin(Math.PI * p);
-  const w = Math.sin(Math.PI * 6 * p) * k;
-  const intensity = proceduralMotion.intensity || 1;
+  const progress = THREE.MathUtils.clamp(p, 0, 1);
+  const env = 0.5 - 0.5 * Math.cos(Math.PI * progress);
+  const w = Math.sin(Math.PI * 6 * progress) * env;
+  const dt = Math.max(0.001, Math.min(0.05, Number.isFinite(delta) ? delta : 0.016));
+  const aFast = 1 - Math.exp(-dt * 20);
+  const aMid = 1 - Math.exp(-dt * 13);
+  const aSlow = 1 - Math.exp(-dt * 9);
+
+  const emoV = props.emotionSnapshot?.v;
+  const emoD = props.emotionSnapshot?.d;
+  const arousal = typeof emoV?.arousal === 'number' ? THREE.MathUtils.clamp(emoV.arousal, 0, 1) : 0;
+  const fatigue = typeof emoV?.fatigue === 'number' ? THREE.MathUtils.clamp(emoV.fatigue, 0, 1) : 0;
+  const dizziness =
+    typeof emoV?.dizziness === 'number' ? THREE.MathUtils.clamp(emoV.dizziness, 0, 1) : 0;
+  const annoyance =
+    typeof emoV?.annoyance === 'number' ? THREE.MathUtils.clamp(emoV.annoyance, 0, 1) : 0;
+  const happy = typeof emoD?.happy === 'number' ? THREE.MathUtils.clamp(emoD.happy, 0, 1) : 0;
+
+  const intensity = THREE.MathUtils.clamp(
+    proceduralMotion.intensity *
+      (0.9 + arousal * 0.55 + happy * 0.12 - fatigue * 0.55 - dizziness * 0.38 + annoyance * 0.08),
+    0.35,
+    1.35
+  );
   const dir = proceduralMotion.side === 'left' ? 1 : -1;
 
   const rUpper = motionNodes.rightUpperArm;
@@ -1324,155 +1612,311 @@ const applyProceduralMotion = () => {
   const baseLLLeg = proceduralBase['leftLowerLeg'] || motionNodes.base['leftLowerLeg'];
 
   const name = proceduralMotion.name;
+  const stepRot = (
+    node: THREE.Object3D | null,
+    base: { x: number; y: number; z: number } | undefined,
+    x: number | null,
+    y: number | null,
+    z: number | null,
+    alpha: number
+  ) => {
+    if (!node || !base) return;
+    if (typeof x === 'number') node.rotation.x = THREE.MathUtils.lerp(node.rotation.x, x, alpha);
+    if (typeof y === 'number') node.rotation.y = THREE.MathUtils.lerp(node.rotation.y, y, alpha);
+    if (typeof z === 'number') node.rotation.z = THREE.MathUtils.lerp(node.rotation.z, z, alpha);
+  };
+
   if (name === 'wave') {
     if (rUpper && baseRU) {
-      rUpper.rotation.x = baseRU.x - 0.55 * k;
-      rUpper.rotation.z = baseRU.z - 0.25 * k;
+      stepRot(
+        rUpper,
+        baseRU,
+        baseRU.x - 0.55 * env * intensity,
+        null,
+        baseRU.z - 0.25 * env * intensity,
+        aFast
+      );
     }
     if (rLower && baseRL) {
-      rLower.rotation.z = baseRL.z - 0.18 * k;
+      stepRot(rLower, baseRL, null, null, baseRL.z - 0.18 * env * intensity, aFast);
     }
     if (rHand && baseRH) {
-      rHand.rotation.y = baseRH.y + 0.65 * w;
+      stepRot(rHand, baseRH, null, baseRH.y + 0.65 * w * intensity, null, aFast);
     }
   } else if (name === 'stretch') {
     if (lUpper && baseLU) {
-      lUpper.rotation.x = baseLU.x - 0.35 * k;
-      lUpper.rotation.z = baseLU.z + 0.35 * k;
+      stepRot(
+        lUpper,
+        baseLU,
+        baseLU.x - 0.35 * env * intensity,
+        null,
+        baseLU.z + 0.35 * env * intensity,
+        aMid
+      );
     }
     if (rUpper && baseRU) {
-      rUpper.rotation.x = baseRU.x - 0.35 * k;
-      rUpper.rotation.z = baseRU.z - 0.35 * k;
+      stepRot(
+        rUpper,
+        baseRU,
+        baseRU.x - 0.35 * env * intensity,
+        null,
+        baseRU.z - 0.35 * env * intensity,
+        aMid
+      );
     }
-    if (lLower && baseLL) lLower.rotation.z = baseLL.z + 0.12 * k;
-    if (rLower && baseRL) rLower.rotation.z = baseRL.z - 0.12 * k;
-    if (lHand && baseLH) lHand.rotation.x = baseLH.x + 0.08 * k;
-    if (rHand && baseRH) rHand.rotation.x = baseRH.x + 0.08 * k;
+    if (lLower && baseLL)
+      stepRot(lLower, baseLL, null, null, baseLL.z + 0.12 * env * intensity, aMid);
+    if (rLower && baseRL)
+      stepRot(rLower, baseRL, null, null, baseRL.z - 0.12 * env * intensity, aMid);
+    if (lHand && baseLH)
+      stepRot(lHand, baseLH, baseLH.x + 0.08 * env * intensity, null, null, aFast);
+    if (rHand && baseRH)
+      stepRot(rHand, baseRH, baseRH.x + 0.08 * env * intensity, null, null, aFast);
   } else if (name === 'nod') {
     const headBase = lookNodes.base.head;
     const neckBase = lookNodes.base.neck;
     if (lookNodes.head && headBase) {
-      lookNodes.head.rotation.x = headBase.x + Math.sin(Math.PI * 6 * p) * 0.22 * k;
+      lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.x,
+        headBase.x + Math.sin(Math.PI * 6 * progress) * 0.22 * env * intensity,
+        aFast
+      );
     }
     if (lookNodes.neck && neckBase) {
-      lookNodes.neck.rotation.x = neckBase.x + Math.sin(Math.PI * 6 * p) * 0.12 * k;
+      lookNodes.neck.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.neck.rotation.x,
+        neckBase.x + Math.sin(Math.PI * 6 * progress) * 0.12 * env * intensity,
+        aFast
+      );
     }
   } else if (name === 'shake_head') {
     const headBase = lookNodes.base.head;
     const neckBase = lookNodes.base.neck;
     if (lookNodes.head && headBase) {
-      lookNodes.head.rotation.y = headBase.y + Math.sin(Math.PI * 6 * p) * 0.32 * k;
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        headBase.y + Math.sin(Math.PI * 6 * progress) * 0.32 * env * intensity,
+        aFast
+      );
     }
     if (lookNodes.neck && neckBase) {
-      lookNodes.neck.rotation.y = neckBase.y + Math.sin(Math.PI * 6 * p) * 0.18 * k;
+      lookNodes.neck.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.neck.rotation.y,
+        neckBase.y + Math.sin(Math.PI * 6 * progress) * 0.18 * env * intensity,
+        aFast
+      );
     }
   } else if (name === 'shake') {
     const headBase = lookNodes.base.head;
     const neckBase = lookNodes.base.neck;
-    const shake = Math.sin(Math.PI * 10 * p) * 0.18 * k * intensity;
+    const shake = Math.sin(Math.PI * 10 * progress) * 0.18 * env * intensity;
     if (lookNodes.head && headBase) {
-      lookNodes.head.rotation.y = headBase.y + shake;
-      lookNodes.head.rotation.z = headBase.z + shake * 0.5;
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        headBase.y + shake,
+        aFast
+      );
+      lookNodes.head.rotation.z = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.z,
+        headBase.z + shake * 0.5,
+        aFast
+      );
     }
     if (lookNodes.neck && neckBase) {
-      lookNodes.neck.rotation.y = neckBase.y + shake * 0.65;
+      lookNodes.neck.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.neck.rotation.y,
+        neckBase.y + shake * 0.65,
+        aFast
+      );
     }
     if (hips && baseHips) {
-      hips.rotation.z = baseHips.z + shake * 0.35;
-      hips.rotation.y = baseHips.y + shake * 0.25;
+      stepRot(hips, baseHips, null, baseHips.y + shake * 0.25, baseHips.z + shake * 0.35, aFast);
     }
-    if (spine && baseSpine) spine.rotation.z = baseSpine.z - shake * 0.25;
-    if (chest && baseChest) chest.rotation.z = baseChest.z - shake * 0.12;
+    if (spine && baseSpine)
+      stepRot(spine, baseSpine, null, null, baseSpine.z - shake * 0.25, aFast);
+    if (chest && baseChest)
+      stepRot(chest, baseChest, null, null, baseChest.z - shake * 0.12, aFast);
   } else if (name === 'tilt_left' || name === 'tilt_right') {
     const headBase = lookNodes.base.head;
     const neckBase = lookNodes.base.neck;
     const sign = name === 'tilt_left' ? 1 : -1;
-    const ease = Math.sin(Math.PI * p);
-    const tilt = Math.sin(Math.PI * 2 * p) * 0.28 * ease * sign;
-    if (lookNodes.head && headBase) lookNodes.head.rotation.z = headBase.z + tilt;
-    if (lookNodes.neck && neckBase) lookNodes.neck.rotation.z = neckBase.z + tilt * 0.6;
-    if (lShoulder && baseLS) lShoulder.rotation.z = baseLS.z + tilt * 0.2;
-    if (rShoulder && baseRS) rShoulder.rotation.z = baseRS.z - tilt * 0.2;
-  } else if (name === 'tap_body') {
-    const ease = Math.sin(Math.PI * p);
-    const beat = Math.abs(Math.sin(Math.PI * 4 * p)) * ease;
-    if (spine && baseSpine) spine.rotation.x = baseSpine.x - 0.08 * beat * intensity;
-    if (chest && baseChest) chest.rotation.x = baseChest.x - 0.04 * beat * intensity;
-    if (hips && baseHips) hips.rotation.y = baseHips.y + 0.08 * Math.sin(Math.PI * 2 * p) * ease;
-    if (lookNodes.head && lookNodes.base.head) {
-      lookNodes.head.rotation.x = lookNodes.base.head.x + 0.08 * ease;
-      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.08 * Math.sin(Math.PI * 2 * p) * ease;
+    const tilt = Math.sin(Math.PI * 2 * progress) * 0.28 * env * sign * intensity;
+    if (lookNodes.head && headBase) {
+      lookNodes.head.rotation.z = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.z,
+        headBase.z + tilt,
+        aFast
+      );
     }
-    if (lUpper && baseLU) lUpper.rotation.z = baseLU.z - 0.08 * beat;
-    if (rUpper && baseRU) rUpper.rotation.z = baseRU.z + 0.08 * beat;
+    if (lookNodes.neck && neckBase) {
+      lookNodes.neck.rotation.z = THREE.MathUtils.lerp(
+        lookNodes.neck.rotation.z,
+        neckBase.z + tilt * 0.6,
+        aFast
+      );
+    }
+    if (lShoulder && baseLS) stepRot(lShoulder, baseLS, null, null, baseLS.z + tilt * 0.2, aFast);
+    if (rShoulder && baseRS) stepRot(rShoulder, baseRS, null, null, baseRS.z - tilt * 0.2, aFast);
+  } else if (name === 'tap_body') {
+    const beat = Math.abs(Math.sin(Math.PI * 4 * progress)) * env;
+    if (spine && baseSpine)
+      stepRot(spine, baseSpine, baseSpine.x - 0.08 * beat * intensity, null, null, aFast);
+    if (chest && baseChest)
+      stepRot(chest, baseChest, baseChest.x - 0.04 * beat * intensity, null, null, aFast);
+    if (hips && baseHips)
+      stepRot(
+        hips,
+        baseHips,
+        null,
+        baseHips.y + 0.08 * Math.sin(Math.PI * 2 * progress) * env * intensity,
+        null,
+        aFast
+      );
+    if (lookNodes.head && lookNodes.base.head) {
+      lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.x,
+        lookNodes.base.head.x + 0.08 * env * intensity,
+        aFast
+      );
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        lookNodes.base.head.y + 0.08 * Math.sin(Math.PI * 2 * progress) * env * intensity,
+        aFast
+      );
+    }
+    if (lUpper && baseLU)
+      stepRot(lUpper, baseLU, null, null, baseLU.z - 0.08 * beat * intensity, aFast);
+    if (rUpper && baseRU)
+      stepRot(rUpper, baseRU, null, null, baseRU.z + 0.08 * beat * intensity, aFast);
   } else if (name === 'flick_head') {
     const headBase = lookNodes.base.head;
     const neckBase = lookNodes.base.neck;
-    const ease = Math.sin(Math.PI * p);
-    const pet = Math.sin(Math.PI * 2 * p) * 0.22 * ease;
+    const pet = Math.sin(Math.PI * 2 * progress) * 0.22 * env * intensity;
     if (lookNodes.head && headBase) {
-      lookNodes.head.rotation.x = headBase.x + 0.18 * ease;
-      lookNodes.head.rotation.y = headBase.y + pet * 0.35;
-      lookNodes.head.rotation.z = headBase.z - pet * 0.2 * dir;
+      lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.x,
+        headBase.x + 0.18 * env * intensity,
+        aFast
+      );
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        headBase.y + pet * 0.35,
+        aFast
+      );
+      lookNodes.head.rotation.z = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.z,
+        headBase.z - pet * 0.2 * dir,
+        aFast
+      );
     }
     if (lookNodes.neck && neckBase) {
-      lookNodes.neck.rotation.x = neckBase.x + 0.08 * ease;
-      lookNodes.neck.rotation.y = neckBase.y + pet * 0.2;
+      lookNodes.neck.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.neck.rotation.x,
+        neckBase.x + 0.08 * env * intensity,
+        aFast
+      );
+      lookNodes.neck.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.neck.rotation.y,
+        neckBase.y + pet * 0.2,
+        aFast
+      );
     }
-    if (lShoulder && baseLS) lShoulder.rotation.x = baseLS.x + 0.06 * ease;
-    if (rShoulder && baseRS) rShoulder.rotation.x = baseRS.x + 0.06 * ease;
+    if (lShoulder && baseLS)
+      stepRot(lShoulder, baseLS, baseLS.x + 0.06 * env * intensity, null, null, aFast);
+    if (rShoulder && baseRS)
+      stepRot(rShoulder, baseRS, baseRS.x + 0.06 * env * intensity, null, null, aFast);
   } else if (name === 'head_hit') {
-    const ease = Math.sin(Math.PI * p);
-    const snap = Math.sin(Math.PI * 2.6 * p) * ease;
+    const snap = Math.sin(Math.PI * 2.6 * progress) * env * intensity;
     if (lookNodes.head && lookNodes.base.head) {
-      lookNodes.head.rotation.x = lookNodes.base.head.x - 0.22 * ease - 0.06 * snap;
-      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.08 * snap * dir;
-      lookNodes.head.rotation.z = lookNodes.base.head.z + 0.12 * ease * dir;
+      lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.x,
+        lookNodes.base.head.x - 0.22 * env * intensity - 0.06 * snap,
+        aFast
+      );
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        lookNodes.base.head.y + 0.08 * snap * dir,
+        aFast
+      );
+      lookNodes.head.rotation.z = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.z,
+        lookNodes.base.head.z + 0.12 * env * dir * intensity,
+        aFast
+      );
     }
     if (lookNodes.neck && lookNodes.base.neck) {
-      lookNodes.neck.rotation.x = lookNodes.base.neck.x - 0.1 * ease;
-      lookNodes.neck.rotation.y = lookNodes.base.neck.y + 0.05 * snap * dir;
+      lookNodes.neck.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.neck.rotation.x,
+        lookNodes.base.neck.x - 0.1 * env * intensity,
+        aFast
+      );
+      lookNodes.neck.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.neck.rotation.y,
+        lookNodes.base.neck.y + 0.05 * snap * dir,
+        aFast
+      );
     }
-    if (spine && baseSpine) spine.rotation.x = baseSpine.x + 0.06 * ease;
-    if (chest && baseChest) chest.rotation.x = baseChest.x + 0.04 * ease;
-    if (hips && baseHips) hips.rotation.z = baseHips.z - 0.06 * ease * dir;
+    if (spine && baseSpine)
+      stepRot(spine, baseSpine, baseSpine.x + 0.06 * env * intensity, null, null, aFast);
+    if (chest && baseChest)
+      stepRot(chest, baseChest, baseChest.x + 0.04 * env * intensity, null, null, aFast);
+    if (hips && baseHips)
+      stepRot(hips, baseHips, null, null, baseHips.z - 0.06 * env * dir * intensity, aFast);
   } else if (name === 'crouch') {
-    const ease = Math.sin(Math.PI * p);
     const hold =
-      THREE.MathUtils.clamp((p - 0.12) / 0.22, 0, 1) *
-      THREE.MathUtils.clamp((0.92 - p) / 0.22, 0, 1);
-    const squat = ease * (0.75 + 0.25 * hold);
-    if (hips && baseHips) hips.rotation.x = baseHips.x + 0.22 * squat;
-    if (spine && baseSpine) spine.rotation.x = baseSpine.x - 0.08 * squat;
-    if (chest && baseChest) chest.rotation.x = baseChest.x - 0.04 * squat;
-    if (lUpperLeg && baseLULeg) lUpperLeg.rotation.x = baseLULeg.x - 0.5 * squat;
-    if (rUpperLeg && baseRULeg) rUpperLeg.rotation.x = baseRULeg.x - 0.5 * squat;
-    if (lLowerLeg && baseLLLeg) lLowerLeg.rotation.x = baseLLLeg.x + 0.82 * squat;
-    if (rLowerLeg && baseRLLeg) rLowerLeg.rotation.x = baseRLLeg.x + 0.82 * squat;
+      THREE.MathUtils.clamp((progress - 0.12) / 0.22, 0, 1) *
+      THREE.MathUtils.clamp((0.92 - progress) / 0.22, 0, 1);
+    const squat = env * (0.75 + 0.25 * hold) * intensity;
+    if (hips && baseHips) stepRot(hips, baseHips, baseHips.x + 0.22 * squat, null, null, aMid);
+    if (spine && baseSpine) stepRot(spine, baseSpine, baseSpine.x - 0.08 * squat, null, null, aMid);
+    if (chest && baseChest) stepRot(chest, baseChest, baseChest.x - 0.04 * squat, null, null, aMid);
+    if (lUpperLeg && baseLULeg)
+      stepRot(lUpperLeg, baseLULeg, baseLULeg.x - 0.5 * squat, null, null, aMid);
+    if (rUpperLeg && baseRULeg)
+      stepRot(rUpperLeg, baseRULeg, baseRULeg.x - 0.5 * squat, null, null, aMid);
+    if (lLowerLeg && baseLLLeg)
+      stepRot(lLowerLeg, baseLLLeg, baseLLLeg.x + 0.82 * squat, null, null, aMid);
+    if (rLowerLeg && baseRLLeg)
+      stepRot(rLowerLeg, baseRLLeg, baseRLLeg.x + 0.82 * squat, null, null, aMid);
     if (lookNodes.head && lookNodes.base.head)
-      lookNodes.head.rotation.x = lookNodes.base.head.x + 0.06 * squat;
+      lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.x,
+        lookNodes.base.head.x + 0.06 * squat,
+        aSlow
+      );
   } else if (name === 'clap') {
-    const beat = Math.abs(Math.sin(Math.PI * 2.1 * p));
-    const lift = Math.sin(Math.PI * p);
+    const beat = Math.abs(Math.sin(Math.PI * 2.1 * progress));
+    const lift = env;
     const close = beat * lift;
     if (lUpper && baseLU) {
-      lUpper.rotation.x = baseLU.x - 0.45 * lift;
-      lUpper.rotation.z = baseLU.z - 0.72 * close;
+      stepRot(
+        lUpper,
+        baseLU,
+        baseLU.x - 0.45 * lift * intensity,
+        null,
+        baseLU.z - 0.72 * close * intensity,
+        aFast
+      );
     }
     if (rUpper && baseRU) {
-      rUpper.rotation.x = baseRU.x - 0.45 * lift;
-      rUpper.rotation.z = baseRU.z + 0.72 * close;
+      stepRot(
+        rUpper,
+        baseRU,
+        baseRU.x - 0.45 * lift * intensity,
+        null,
+        baseRU.z + 0.72 * close * intensity,
+        aFast
+      );
     }
     if (lLower && baseLL) {
-      lLower.rotation.z = baseLL.z - 0.38 * close;
+      stepRot(lLower, baseLL, null, null, baseLL.z - 0.38 * close * intensity, aFast);
     }
     if (rLower && baseRL) {
-      rLower.rotation.z = baseRL.z + 0.38 * close;
+      stepRot(rLower, baseRL, null, null, baseRL.z + 0.38 * close * intensity, aFast);
     }
-    if (lHand && baseLH) lHand.rotation.y = baseLH.y + 0.16 * w;
-    if (rHand && baseRH) rHand.rotation.y = baseRH.y - 0.16 * w;
+    if (lHand && baseLH) stepRot(lHand, baseLH, null, baseLH.y + 0.16 * w * intensity, null, aFast);
+    if (rHand && baseRH) stepRot(rHand, baseRH, null, baseRH.y - 0.16 * w * intensity, null, aFast);
   } else if (name === 'point_left' || name === 'point_right') {
-    const ease = Math.sin(Math.PI * p);
     const arm = name === 'point_left' ? lUpper : rUpper;
     const fore = name === 'point_left' ? lLower : rLower;
     const hand = name === 'point_left' ? lHand : rHand;
@@ -1481,129 +1925,256 @@ const applyProceduralMotion = () => {
     const baseHand = name === 'point_left' ? baseLH : baseRH;
     const sign = name === 'point_left' ? 1 : -1;
     if (arm && baseArm) {
-      arm.rotation.x = baseArm.x - 0.45 * ease;
-      arm.rotation.z = baseArm.z - 0.5 * ease * sign;
-      arm.rotation.y = baseArm.y + 0.2 * ease * sign;
+      stepRot(
+        arm,
+        baseArm,
+        baseArm.x - 0.45 * env * intensity,
+        baseArm.y + 0.2 * env * sign * intensity,
+        baseArm.z - 0.5 * env * sign * intensity,
+        aFast
+      );
     }
-    if (fore && baseFore) fore.rotation.z = baseFore.z - 0.18 * ease * sign;
+    if (fore && baseFore)
+      stepRot(fore, baseFore, null, null, baseFore.z - 0.18 * env * sign * intensity, aFast);
     if (hand && baseHand) {
-      hand.rotation.y = baseHand.y + 0.22 * ease * sign;
-      hand.rotation.x = baseHand.x + 0.08 * ease;
+      stepRot(
+        hand,
+        baseHand,
+        baseHand.x + 0.08 * env * intensity,
+        baseHand.y + 0.22 * env * sign * intensity,
+        null,
+        aFast
+      );
     }
     if (lookNodes.head && lookNodes.base.head) {
-      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.22 * ease * sign;
-      lookNodes.head.rotation.x = lookNodes.base.head.x - 0.04 * ease;
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        lookNodes.base.head.y + 0.22 * env * sign * intensity,
+        aFast
+      );
+      lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.x,
+        lookNodes.base.head.x - 0.04 * env * intensity,
+        aFast
+      );
     }
   } else if (name === 'happy' || name === 'friend' || name === 'mood_happy') {
-    const ease = Math.sin(Math.PI * p);
-    const bounce = Math.abs(Math.sin(Math.PI * 6 * p)) * ease;
-    if (hips && baseHips) hips.rotation.y = baseHips.y + 0.08 * Math.sin(Math.PI * 2 * p) * ease;
-    if (spine && baseSpine) spine.rotation.x = baseSpine.x - 0.05 * bounce;
-    if (chest && baseChest) chest.rotation.x = baseChest.x - 0.03 * bounce;
+    const bounce = Math.abs(Math.sin(Math.PI * 6 * progress)) * env * intensity;
+    if (hips && baseHips)
+      stepRot(
+        hips,
+        baseHips,
+        null,
+        baseHips.y + 0.08 * Math.sin(Math.PI * 2 * progress) * env * intensity,
+        null,
+        aMid
+      );
+    if (spine && baseSpine)
+      stepRot(spine, baseSpine, baseSpine.x - 0.05 * bounce, null, null, aMid);
+    if (chest && baseChest)
+      stepRot(chest, baseChest, baseChest.x - 0.03 * bounce, null, null, aMid);
     if (lookNodes.head && lookNodes.base.head) {
-      lookNodes.head.rotation.x = lookNodes.base.head.x - 0.06 * ease;
-      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.12 * Math.sin(Math.PI * 2 * p) * ease;
+      lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.x,
+        lookNodes.base.head.x - 0.06 * env * intensity,
+        aMid
+      );
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        lookNodes.base.head.y + 0.12 * Math.sin(Math.PI * 2 * progress) * env * intensity,
+        aMid
+      );
     }
     if (rUpper && baseRU) {
-      rUpper.rotation.x = baseRU.x - 0.45 * ease;
-      rUpper.rotation.z = baseRU.z - 0.18 * ease;
+      stepRot(
+        rUpper,
+        baseRU,
+        baseRU.x - 0.45 * env * intensity,
+        null,
+        baseRU.z - 0.18 * env * intensity,
+        aMid
+      );
     }
-    if (rHand && baseRH) rHand.rotation.y = baseRH.y + 0.35 * Math.sin(Math.PI * 6 * p) * ease;
+    if (rHand && baseRH)
+      stepRot(
+        rHand,
+        baseRH,
+        null,
+        baseRH.y + 0.35 * Math.sin(Math.PI * 6 * progress) * env * intensity,
+        null,
+        aFast
+      );
   } else if (name === 'mood_angry') {
-    const ease = Math.sin(Math.PI * p);
     const headBase = lookNodes.base.head;
     const neckBase = lookNodes.base.neck;
-    const shake = Math.sin(Math.PI * 8 * p) * 0.28 * ease * intensity;
+    const shake = Math.sin(Math.PI * 8 * progress) * 0.28 * env * intensity;
     if (lookNodes.head && headBase) {
-      lookNodes.head.rotation.y = headBase.y + shake;
-      lookNodes.head.rotation.x = headBase.x + 0.06 * ease;
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        headBase.y + shake,
+        aFast
+      );
+      lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.x,
+        headBase.x + 0.06 * env * intensity,
+        aFast
+      );
     }
-    if (lookNodes.neck && neckBase) lookNodes.neck.rotation.y = neckBase.y + shake * 0.55;
+    if (lookNodes.neck && neckBase)
+      lookNodes.neck.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.neck.rotation.y,
+        neckBase.y + shake * 0.55,
+        aFast
+      );
     if (lUpper && baseLU) {
-      lUpper.rotation.x = baseLU.x - 0.25 * ease;
-      lUpper.rotation.z = baseLU.z + 0.4 * ease;
+      stepRot(
+        lUpper,
+        baseLU,
+        baseLU.x - 0.25 * env * intensity,
+        null,
+        baseLU.z + 0.4 * env * intensity,
+        aFast
+      );
     }
     if (rUpper && baseRU) {
-      rUpper.rotation.x = baseRU.x - 0.25 * ease;
-      rUpper.rotation.z = baseRU.z - 0.4 * ease;
+      stepRot(
+        rUpper,
+        baseRU,
+        baseRU.x - 0.25 * env * intensity,
+        null,
+        baseRU.z - 0.4 * env * intensity,
+        aFast
+      );
     }
-    if (lLower && baseLL) lLower.rotation.z = baseLL.z + 0.35 * ease;
-    if (rLower && baseRL) rLower.rotation.z = baseRL.z - 0.35 * ease;
-    if (spine && baseSpine) spine.rotation.z = baseSpine.z - 0.05 * ease * dir;
+    if (lLower && baseLL)
+      stepRot(lLower, baseLL, null, null, baseLL.z + 0.35 * env * intensity, aFast);
+    if (rLower && baseRL)
+      stepRot(rLower, baseRL, null, null, baseRL.z - 0.35 * env * intensity, aFast);
+    if (spine && baseSpine)
+      stepRot(spine, baseSpine, null, null, baseSpine.z - 0.05 * env * dir * intensity, aMid);
   } else if (name === 'activity') {
-    const ease = Math.sin(Math.PI * p);
-    const swing = Math.sin(Math.PI * 4 * p) * ease;
-    if (hips && baseHips) hips.rotation.y = baseHips.y + 0.08 * swing;
-    if (spine && baseSpine) spine.rotation.z = baseSpine.z - 0.05 * swing;
-    if (chest && baseChest) chest.rotation.z = baseChest.z - 0.03 * swing;
-    if (lUpper && baseLU) lUpper.rotation.x = baseLU.x - 0.12 * ease;
-    if (rUpper && baseRU) rUpper.rotation.x = baseRU.x - 0.12 * ease;
+    const swing = Math.sin(Math.PI * 4 * progress) * env * intensity;
+    if (hips && baseHips) stepRot(hips, baseHips, null, baseHips.y + 0.08 * swing, null, aMid);
+    if (spine && baseSpine) stepRot(spine, baseSpine, null, null, baseSpine.z - 0.05 * swing, aMid);
+    if (chest && baseChest) stepRot(chest, baseChest, null, null, baseChest.z - 0.03 * swing, aMid);
+    if (lUpper && baseLU)
+      stepRot(lUpper, baseLU, baseLU.x - 0.12 * env * intensity, null, null, aMid);
+    if (rUpper && baseRU)
+      stepRot(rUpper, baseRU, baseRU.x - 0.12 * env * intensity, null, null, aMid);
   } else if (name === 'yawn' || name === 'idle_yawn') {
-    const ease = Math.sin(Math.PI * p);
-    const slow = Math.sin(Math.PI * 2 * p) * ease;
+    const slow = Math.sin(Math.PI * 2 * progress) * env * intensity;
     if (rUpper && baseRU) {
-      rUpper.rotation.x = baseRU.x - 0.55 * ease;
-      rUpper.rotation.z = baseRU.z - 0.42 * ease;
+      stepRot(
+        rUpper,
+        baseRU,
+        baseRU.x - 0.55 * env * intensity,
+        null,
+        baseRU.z - 0.42 * env * intensity,
+        aSlow
+      );
     }
-    if (rLower && baseRL) rLower.rotation.z = baseRL.z + 0.35 * ease;
-    if (rHand && baseRH) rHand.rotation.x = baseRH.x + 0.45 * ease;
+    if (rLower && baseRL)
+      stepRot(rLower, baseRL, null, null, baseRL.z + 0.35 * env * intensity, aSlow);
+    if (rHand && baseRH)
+      stepRot(rHand, baseRH, baseRH.x + 0.45 * env * intensity, null, null, aMid);
     if (lookNodes.head && lookNodes.base.head) {
-      lookNodes.head.rotation.x = lookNodes.base.head.x + 0.12 * ease;
-      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.06 * slow;
+      lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.x,
+        lookNodes.base.head.x + 0.12 * env * intensity,
+        aSlow
+      );
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        lookNodes.base.head.y + 0.06 * slow,
+        aSlow
+      );
     }
-    if (spine && baseSpine) spine.rotation.x = baseSpine.x - 0.05 * ease;
-    if (chest && baseChest) chest.rotation.x = baseChest.x - 0.03 * ease;
+    if (spine && baseSpine)
+      stepRot(spine, baseSpine, baseSpine.x - 0.05 * env * intensity, null, null, aSlow);
+    if (chest && baseChest)
+      stepRot(chest, baseChest, baseChest.x - 0.03 * env * intensity, null, null, aSlow);
   } else if (name === 'idle_head_tilt') {
-    const ease = Math.sin(Math.PI * p);
-    const tilt = Math.sin(Math.PI * 2 * p) * 0.22 * ease;
+    const tilt = Math.sin(Math.PI * 2 * progress) * 0.22 * env * intensity;
     if (lookNodes.head && lookNodes.base.head) {
-      lookNodes.head.rotation.z = lookNodes.base.head.z + tilt;
+      lookNodes.head.rotation.z = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.z,
+        lookNodes.base.head.z + tilt,
+        aSlow
+      );
     }
     if (lookNodes.neck && lookNodes.base.neck) {
-      lookNodes.neck.rotation.z = lookNodes.base.neck.z + tilt * 0.55;
+      lookNodes.neck.rotation.z = THREE.MathUtils.lerp(
+        lookNodes.neck.rotation.z,
+        lookNodes.base.neck.z + tilt * 0.55,
+        aSlow
+      );
     }
-    if (lShoulder && baseLS) lShoulder.rotation.z = baseLS.z + tilt * 0.22;
-    if (rShoulder && baseRS) rShoulder.rotation.z = baseRS.z - tilt * 0.22;
+    if (lShoulder && baseLS) stepRot(lShoulder, baseLS, null, null, baseLS.z + tilt * 0.22, aSlow);
+    if (rShoulder && baseRS) stepRot(rShoulder, baseRS, null, null, baseRS.z - tilt * 0.22, aSlow);
   } else if (name === 'idle_shrug') {
-    const ease = Math.sin(Math.PI * p);
     if (lShoulder && baseLS) {
-      lShoulder.rotation.x = baseLS.x + 0.22 * ease;
-      lShoulder.rotation.z = baseLS.z + 0.08 * ease;
+      stepRot(
+        lShoulder,
+        baseLS,
+        baseLS.x + 0.22 * env * intensity,
+        null,
+        baseLS.z + 0.08 * env * intensity,
+        aMid
+      );
     }
     if (rShoulder && baseRS) {
-      rShoulder.rotation.x = baseRS.x + 0.22 * ease;
-      rShoulder.rotation.z = baseRS.z - 0.08 * ease;
+      stepRot(
+        rShoulder,
+        baseRS,
+        baseRS.x + 0.22 * env * intensity,
+        null,
+        baseRS.z - 0.08 * env * intensity,
+        aMid
+      );
     }
-    if (lUpper && baseLU) lUpper.rotation.x = baseLU.x - 0.08 * ease;
-    if (rUpper && baseRU) rUpper.rotation.x = baseRU.x - 0.08 * ease;
+    if (lUpper && baseLU)
+      stepRot(lUpper, baseLU, baseLU.x - 0.08 * env * intensity, null, null, aMid);
+    if (rUpper && baseRU)
+      stepRot(rUpper, baseRU, baseRU.x - 0.08 * env * intensity, null, null, aMid);
     if (spine && baseSpine)
-      spine.rotation.z = baseSpine.z + Math.sin(Math.PI * 2 * p) * 0.03 * ease;
+      stepRot(
+        spine,
+        baseSpine,
+        null,
+        null,
+        baseSpine.z + Math.sin(Math.PI * 2 * progress) * 0.03 * env * intensity,
+        aMid
+      );
   } else if (name === 'idle_sigh') {
-    const ease = Math.sin(Math.PI * p);
-    const slow = Math.sin(Math.PI * 1.2 * p) * ease;
-    if (chest && baseChest) chest.rotation.x = baseChest.x + 0.09 * ease;
-    if (spine && baseSpine) spine.rotation.x = baseSpine.x + 0.06 * ease;
-    if (hips && baseHips) hips.rotation.z = baseHips.z + 0.03 * slow;
-    if (lShoulder && baseLS) lShoulder.rotation.x = baseLS.x + 0.12 * ease;
-    if (rShoulder && baseRS) rShoulder.rotation.x = baseRS.x + 0.12 * ease;
+    const slow = Math.sin(Math.PI * 1.2 * progress) * env * intensity;
+    if (chest && baseChest)
+      stepRot(chest, baseChest, baseChest.x + 0.09 * env * intensity, null, null, aSlow);
+    if (spine && baseSpine)
+      stepRot(spine, baseSpine, baseSpine.x + 0.06 * env * intensity, null, null, aSlow);
+    if (hips && baseHips) stepRot(hips, baseHips, null, null, baseHips.z + 0.03 * slow, aSlow);
+    if (lShoulder && baseLS)
+      stepRot(lShoulder, baseLS, baseLS.x + 0.12 * env * intensity, null, null, aSlow);
+    if (rShoulder && baseRS)
+      stepRot(rShoulder, baseRS, baseRS.x + 0.12 * env * intensity, null, null, aSlow);
   } else if (name === 'idle_fidget_hands') {
-    const ease = Math.sin(Math.PI * p);
-    const f = Math.sin(Math.PI * 4.2 * p) * ease;
-    const drift = Math.sin(Math.PI * 1.2 * p) * ease;
-    if (lLower && baseLL) lLower.rotation.z = baseLL.z - 0.08 * f;
-    if (rLower && baseRL) rLower.rotation.z = baseRL.z + 0.08 * f;
+    const f = Math.sin(Math.PI * 4.2 * progress) * env * intensity;
+    const drift = Math.sin(Math.PI * 1.2 * progress) * env * intensity;
+    if (lLower && baseLL) stepRot(lLower, baseLL, null, null, baseLL.z - 0.08 * f, aMid);
+    if (rLower && baseRL) stepRot(rLower, baseRL, null, null, baseRL.z + 0.08 * f, aMid);
     if (lHand && baseLH) {
-      lHand.rotation.y = baseLH.y + 0.18 * f;
-      lHand.rotation.x = baseLH.x + 0.06 * drift;
+      stepRot(lHand, baseLH, baseLH.x + 0.06 * drift, baseLH.y + 0.18 * f, null, aFast);
     }
     if (rHand && baseRH) {
-      rHand.rotation.y = baseRH.y - 0.18 * f;
-      rHand.rotation.x = baseRH.x + 0.06 * drift;
+      stepRot(rHand, baseRH, baseRH.x + 0.06 * drift, baseRH.y - 0.18 * f, null, aFast);
     }
-    if (lUpper && baseLU) lUpper.rotation.x = baseLU.x - 0.04 * drift;
-    if (rUpper && baseRU) rUpper.rotation.x = baseRU.x - 0.04 * drift;
+    if (lUpper && baseLU) stepRot(lUpper, baseLU, baseLU.x - 0.04 * drift, null, null, aMid);
+    if (rUpper && baseRU) stepRot(rUpper, baseRU, baseRU.x - 0.04 * drift, null, null, aMid);
     if (lookNodes.head && lookNodes.base.head) {
-      lookNodes.head.rotation.y = lookNodes.base.head.y + 0.04 * f;
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        lookNodes.base.head.y + 0.04 * f,
+        aMid
+      );
     }
   } else if (name === 'idle_check_nails') {
     const ease = Math.sin(Math.PI * p);
@@ -1816,13 +2387,25 @@ const applyProceduralMotion = () => {
       lookNodes.head.rotation.z = lookNodes.base.head.z - 0.08 * ease;
     }
   } else if (name === 'idle_shift_weight') {
-    if (hips && baseHips) {
-      hips.rotation.y = baseHips.y + Math.sin(Math.PI * 2 * p) * 0.08 * k;
-      hips.rotation.z = baseHips.z + Math.sin(Math.PI * 1.6 * p) * 0.06 * k;
-    }
-    if (spine && baseSpine) spine.rotation.z = baseSpine.z - Math.sin(Math.PI * 1.6 * p) * 0.04 * k;
+    const swayY = Math.sin(Math.PI * 2 * progress) * 0.08 * env * intensity;
+    const swayZ = Math.sin(Math.PI * 1.6 * progress) * 0.06 * env * intensity;
+    if (hips && baseHips)
+      stepRot(hips, baseHips, null, baseHips.y + swayY, baseHips.z + swayZ, aSlow);
+    if (spine && baseSpine)
+      stepRot(
+        spine,
+        baseSpine,
+        null,
+        null,
+        baseSpine.z - Math.sin(Math.PI * 1.6 * progress) * 0.04 * env * intensity,
+        aSlow
+      );
     if (lookNodes.head && lookNodes.base.head) {
-      lookNodes.head.rotation.y = lookNodes.base.head.y + Math.sin(Math.PI * 1.6 * p) * 0.08 * k;
+      lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+        lookNodes.head.rotation.y,
+        lookNodes.base.head.y + Math.sin(Math.PI * 1.6 * progress) * 0.08 * env * intensity,
+        aSlow
+      );
     }
   } else if (name === 'idle_squat_think') {
     const ease = Math.sin(Math.PI * p);
@@ -2424,39 +3007,172 @@ const ensureFacingCamera = (vrm: any, root: THREE.Object3D) => {
   facingRootRotationY = normalizeAngle(root.rotation.y + parentYaw);
 };
 
-const applyFacingLock = () => {
+const applyFacingLock = (delta: number) => {
   if (props.facingLock === false) return;
   if (!mountedRoot) return;
   if (facingRootRotationY == null) return;
+  const actionRunning = (() => {
+    try {
+      return !!(
+        activeAction &&
+        typeof activeAction.isRunning === 'function' &&
+        activeAction.isRunning()
+      );
+    } catch {
+      return false;
+    }
+  })();
+  if (proceduralMotion || proceduralRelease || actionRunning) return;
+  const normalizeAngle = (a: number) => {
+    let x = a;
+    while (x > Math.PI) x -= Math.PI * 2;
+    while (x < -Math.PI) x += Math.PI * 2;
+    return x;
+  };
+  const dt = Math.max(0.001, Math.min(0.05, Number.isFinite(delta) ? delta : 0.016));
+  const lambda = props.isMoving ? 18 : 12;
   const parentYaw = (mountedRoot.parent as any)?.rotation?.y ?? 0;
   const targetLocalYaw =
     THREE.MathUtils.euclideanModulo(facingRootRotationY - parentYaw + Math.PI, Math.PI * 2) -
     Math.PI;
-  mountedRoot.rotation.y = THREE.MathUtils.lerp(mountedRoot.rotation.y, targetLocalYaw, 0.35);
+  const deltaYaw = normalizeAngle(targetLocalYaw - mountedRoot.rotation.y);
+  const k = 1 - Math.exp(-lambda * dt);
+  mountedRoot.rotation.y = normalizeAngle(mountedRoot.rotation.y + deltaYaw * k);
 };
 
-const updateLook = (t: number) => {
+const updateLook = (t: number, delta: number) => {
   const head = lookNodes.head || lookNodes.neck;
   if (!head) return;
 
-  const shouldDriveHead =
-    !proceduralMotion &&
-    !(activeAction && typeof activeAction.isRunning === 'function' && activeAction.isRunning());
-
-  const now = Date.now();
-  const pointerRecent = now - lookState.lastPointerAt < 900;
-  if (!pointerRecent && now >= lookState.nextAutoAt && now >= lookState.autoUntil) {
-    lookState.autoTargetX = (Math.random() * 2 - 1) * 0.65;
-    lookState.autoTargetY = (Math.random() * 2 - 1) * 0.35;
-    lookState.autoUntil = now + 1100 + Math.floor(Math.random() * 800);
-    lookState.nextAutoAt = now + 4200 + Math.floor(Math.random() * 3800);
+  const actionRunning = (() => {
+    try {
+      return !!(
+        activeAction &&
+        typeof activeAction.isRunning === 'function' &&
+        activeAction.isRunning()
+      );
+    } catch {
+      return false;
+    }
+  })();
+  const lookSuspended = !!proceduralMotion || !!proceduralRelease || actionRunning;
+  if (lookSuspended) {
+    if (lookNodes.leftEye) {
+      lookState.leftEyeTargetX = lookNodes.leftEye.rotation.x;
+      lookState.leftEyeTargetY = lookNodes.leftEye.rotation.y;
+    }
+    if (lookNodes.rightEye) {
+      lookState.rightEyeTargetX = lookNodes.rightEye.rotation.x;
+      lookState.rightEyeTargetY = lookNodes.rightEye.rotation.y;
+    }
+    return;
   }
 
-  const usePointer = pointerRecent && pointer.active;
-  const tx = usePointer ? pointer.x : now < lookState.autoUntil ? lookState.autoTargetX : 0;
-  const ty = usePointer ? pointer.y : now < lookState.autoUntil ? lookState.autoTargetY : 0;
+  const shouldDriveHead = !proceduralMotion && !proceduralRelease && !actionRunning;
 
-  const headFactor = props.mouseControlEnabled ? 1 : 0.2;
+  const now = Date.now();
+  const lookOverride = props.lookAt;
+  const overrideActive = !!lookOverride && lookOverride.active !== false;
+  const pointerRecent = overrideActive || now - lookState.lastPointerAt < 900;
+  const emoV = props.emotionSnapshot?.v;
+  const curiosity =
+    typeof emoV?.curiosity === 'number' ? THREE.MathUtils.clamp(emoV.curiosity, 0, 1) : 0;
+  const shyness = typeof emoV?.shyness === 'number' ? THREE.MathUtils.clamp(emoV.shyness, 0, 1) : 0;
+  const annoyance =
+    typeof emoV?.annoyance === 'number' ? THREE.MathUtils.clamp(emoV.annoyance, 0, 1) : 0;
+  const dizziness =
+    typeof emoV?.dizziness === 'number' ? THREE.MathUtils.clamp(emoV.dizziness, 0, 1) : 0;
+  const fatigue = typeof emoV?.fatigue === 'number' ? THREE.MathUtils.clamp(emoV.fatigue, 0, 1) : 0;
+  const traits = resolvedPersonaTraits.value;
+  const dt = Math.max(0.001, Math.min(0.05, Number.isFinite(delta) ? delta : 0.016));
+
+  const autoActive = !overrideActive && !pointer.active && now - lookState.lastPointerAt >= 900;
+  if (autoActive) {
+    const ampX = (0.65 + curiosity * 0.2) * (1 - dizziness * 0.45) * (1 - fatigue * 0.25);
+    const ampY = (0.35 + curiosity * 0.12) * (1 - dizziness * 0.45) * (1 - fatigue * 0.25);
+    const autoScale = Math.max(0.35, 1 + curiosity * 0.9 - fatigue * 0.55 - annoyance * 0.25);
+
+    if (!lookState.autoLastAt) lookState.autoLastAt = now;
+    if (!lookState.nextSaccadeAt) {
+      lookState.nextSaccadeAt = now + Math.round((850 + Math.random() * 950) / autoScale);
+    }
+
+    const inSaccade = now < lookState.saccadeUntil;
+    const inHold = !inSaccade && now < lookState.holdUntil;
+
+    if (!inSaccade && !inHold && now >= lookState.nextSaccadeAt) {
+      lookState.saccadeTargetX =
+        THREE.MathUtils.clamp(randn() * 0.42, -1, 1) * ampX * (0.82 + 0.18 * Math.random());
+      lookState.saccadeTargetY =
+        THREE.MathUtils.clamp(randn() * 0.38, -1, 1) * ampY * (0.82 + 0.18 * Math.random());
+      const saccadeMs = 70 + Math.floor(Math.random() * 90);
+      const holdMs = 520 + Math.floor(Math.random() * 980);
+      lookState.saccadeUntil = now + saccadeMs;
+      lookState.holdUntil = lookState.saccadeUntil + holdMs;
+      const nextGap = 900 + Math.floor(Math.random() * 2800);
+      lookState.nextSaccadeAt = lookState.holdUntil + Math.round(nextGap / autoScale);
+    }
+
+    if (now >= lookState.holdUntil) {
+      const sigma =
+        (0.26 + curiosity * 0.6) * (1 - fatigue * 0.65) * (1 - dizziness * 0.55) * autoScale;
+      const theta = traits.cold ? 8.2 : traits.cheerful ? 7.2 : 7.6;
+      lookState.autoVX += (-theta * lookState.autoVX + sigma * randn() * 4.2) * dt;
+      lookState.autoVY += (-theta * lookState.autoVY + sigma * randn() * 3.4) * dt;
+      lookState.autoTargetX += lookState.autoVX * dt;
+      lookState.autoTargetY += lookState.autoVY * dt;
+    }
+
+    const targetX = now < lookState.holdUntil ? lookState.saccadeTargetX : lookState.autoTargetX;
+    const targetY = now < lookState.holdUntil ? lookState.saccadeTargetY : lookState.autoTargetY;
+    const driveLambda = inSaccade ? 46 : inHold ? 12 : 7;
+
+    lookState.autoTargetX = THREE.MathUtils.clamp(lookState.autoTargetX, -ampX, ampX);
+    lookState.autoTargetY = THREE.MathUtils.clamp(lookState.autoTargetY, -ampY, ampY);
+    lookState.autoTargetX = THREE.MathUtils.clamp(
+      THREE.MathUtils.damp(lookState.autoTargetX, targetX, driveLambda, dt),
+      -ampX,
+      ampX
+    );
+    lookState.autoTargetY = THREE.MathUtils.clamp(
+      THREE.MathUtils.damp(lookState.autoTargetY, targetY, driveLambda, dt),
+      -ampY,
+      ampY
+    );
+  } else {
+    lookState.autoLastAt = 0;
+    lookState.nextSaccadeAt = 0;
+    lookState.saccadeUntil = 0;
+    lookState.holdUntil = 0;
+  }
+
+  const clamp = (v: number) => THREE.MathUtils.clamp(v, -1, 1);
+  const usePointer = !overrideActive && pointerRecent && pointer.active;
+  let tx = overrideActive
+    ? clamp(Number(lookOverride?.x ?? 0))
+    : usePointer
+      ? pointer.x
+      : autoActive
+        ? lookState.autoTargetX
+        : 0;
+  let ty = overrideActive
+    ? clamp(Number(lookOverride?.y ?? 0))
+    : usePointer
+      ? pointer.y
+      : autoActive
+        ? lookState.autoTargetY
+        : 0;
+
+  const shyAvert = shyness * 0.55;
+  tx = tx * (1 - shyAvert) + (tx >= 0 ? -1 : 1) * (0.08 + 0.14 * shyAvert) * shyAvert;
+  ty = ty * (1 - shyAvert * 0.65) + 0.08 * shyAvert;
+  if (annoyance > 0.55 && !overrideActive) {
+    const wiggle = Math.sin(t * (1.1 + annoyance * 1.8)) * 0.08 * (annoyance - 0.55);
+    tx = clamp(tx + wiggle);
+  }
+
+  const baseHeadFactor = props.mouseControlEnabled ? 1 : 0.2;
+  const headFactor = baseHeadFactor * (1 - dizziness * 0.55) * (1 - fatigue * 0.25);
   const headYaw = THREE.MathUtils.clamp(tx * 0.38 * headFactor, -0.42, 0.42);
   const headPitch = THREE.MathUtils.clamp(
     (ty * 0.16 + Math.sin(t * 0.7) * 0.015) * headFactor,
@@ -2467,10 +3183,13 @@ const updateLook = (t: number) => {
   const neckYaw = headYaw * 0.55;
   const neckPitch = headPitch * 0.55;
 
-  const eyeYaw = THREE.MathUtils.clamp(tx * 0.22, -0.28, 0.28);
-  const eyePitch = THREE.MathUtils.clamp(ty * 0.12, -0.18, 0.18);
+  const eyeFactor = (1 - dizziness * 0.5) * (1 - fatigue * 0.2) * (1 - shyAvert * 0.35);
+  const eyeYaw = THREE.MathUtils.clamp(tx * 0.22 * eyeFactor, -0.28, 0.28);
+  const eyePitch = THREE.MathUtils.clamp(ty * 0.12 * eyeFactor, -0.18, 0.18);
 
-  const k = 0.09;
+  const baseLambda = traits.cheerful ? 12 : traits.cold ? 8 : 10;
+  const headLambda = baseLambda * (props.mouseControlEnabled ? 1.15 : 0.95);
+  const eyeLambda = baseLambda * 1.55;
   const headBase = lookNodes.base.head || { x: 0, y: 0, z: 0 };
   const neckBase = lookNodes.base.neck || { x: 0, y: 0, z: 0 };
   const leftEyeBase = lookNodes.base.leftEye || { x: 0, y: 0, z: 0 };
@@ -2481,90 +3200,104 @@ const updateLook = (t: number) => {
   lookState.rightEyeTargetX = rightEyeBase.x + eyePitch;
 
   if (shouldDriveHead && lookNodes.head) {
-    lookNodes.head.rotation.y = THREE.MathUtils.lerp(
+    lookNodes.head.rotation.y = THREE.MathUtils.damp(
       lookNodes.head.rotation.y,
       headBase.y + headYaw,
-      k
+      headLambda,
+      dt
     );
-    lookNodes.head.rotation.x = THREE.MathUtils.lerp(
+    lookNodes.head.rotation.x = THREE.MathUtils.damp(
       lookNodes.head.rotation.x,
       headBase.x + headPitch,
-      k
+      headLambda,
+      dt
     );
   }
 
   if (shouldDriveHead && lookNodes.neck) {
-    lookNodes.neck.rotation.y = THREE.MathUtils.lerp(
+    lookNodes.neck.rotation.y = THREE.MathUtils.damp(
       lookNodes.neck.rotation.y,
       neckBase.y + neckYaw,
-      k
+      headLambda * 0.9,
+      dt
     );
-    lookNodes.neck.rotation.x = THREE.MathUtils.lerp(
+    lookNodes.neck.rotation.x = THREE.MathUtils.damp(
       lookNodes.neck.rotation.x,
       neckBase.x + neckPitch,
-      k
+      headLambda * 0.9,
+      dt
     );
   }
 
   if (lookNodes.leftEye) {
-    lookNodes.leftEye.rotation.y = THREE.MathUtils.lerp(
+    lookNodes.leftEye.rotation.y = THREE.MathUtils.damp(
       lookNodes.leftEye.rotation.y,
       lookState.leftEyeTargetY,
-      k * 1.35
+      eyeLambda,
+      dt
     );
-    lookNodes.leftEye.rotation.x = THREE.MathUtils.lerp(
+    lookNodes.leftEye.rotation.x = THREE.MathUtils.damp(
       lookNodes.leftEye.rotation.x,
       lookState.leftEyeTargetX,
-      k * 1.35
+      eyeLambda,
+      dt
     );
   }
 
   if (lookNodes.rightEye) {
-    lookNodes.rightEye.rotation.y = THREE.MathUtils.lerp(
+    lookNodes.rightEye.rotation.y = THREE.MathUtils.damp(
       lookNodes.rightEye.rotation.y,
       lookState.rightEyeTargetY,
-      k * 1.35
+      eyeLambda,
+      dt
     );
-    lookNodes.rightEye.rotation.x = THREE.MathUtils.lerp(
+    lookNodes.rightEye.rotation.x = THREE.MathUtils.damp(
       lookNodes.rightEye.rotation.x,
       lookState.rightEyeTargetX,
-      k * 1.35
+      eyeLambda,
+      dt
     );
   }
 };
 
-const loadModel = async (url: string) => {
+const loadModel = async (src: string) => {
   if (!ensureThree() || !scene || !presentationGroup) return;
-  if (!url) return;
+  if (!src) return;
+  const pg = presentationGroup;
+
+  const candidates = src
+    .split('|')
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   loading.value = true;
   error.value = '';
 
-  if (mixer) {
-    try {
-      mixer.stopAllAction();
-    } catch {}
-  }
-  mixer = null;
-  clips = [];
-  activeAction = null;
-  currentVrm = null;
-  mountedRoot = null;
-  proceduralMotion = null;
-  lookNodes = { head: null, neck: null, leftEye: null, rightEye: null, base: {} };
-  idleState = { nextAt: 0, lastName: null };
-  facingRootRotationY = null;
+  const loadOnce = async (url: string) => {
+    if (mixer) {
+      try {
+        mixer.stopAllAction();
+      } catch {}
+    }
+    mixer = null;
+    clips = [];
+    activeAction = null;
+    currentVrm = null;
+    mountedRoot = null;
+    proceduralMotion = null;
+    lookNodes = { head: null, neck: null, leftEye: null, rightEye: null, base: {} };
+    idleState = { nextAt: 0, lastName: null };
+    facingRootRotationY = null;
 
-  for (const child of presentationGroup.children.slice()) {
-    try {
-      presentationGroup.remove(child);
-    } catch {}
-    try {
-      disposeObject(child);
-    } catch {}
-  }
+    for (const child of pg.children.slice()) {
+      try {
+        pg.remove(child);
+      } catch {}
+      try {
+        disposeObject(child);
+      } catch {}
+    }
 
-  try {
     const mod = await import('three/examples/jsm/loaders/GLTFLoader.js');
     const vrmMod = await import('@pixiv/three-vrm');
     const loader = new mod.GLTFLoader();
@@ -2605,13 +3338,13 @@ const loadModel = async (url: string) => {
       } catch {}
     }
 
-    presentationGroup.position.set(0, 0, 0);
-    presentationGroup.rotation.set(0, 0, 0);
+    pg.position.set(0, 0, 0);
+    pg.rotation.set(0, 0, 0);
     const toMount = vrm?.scene || root;
     try {
       toMount.scale.multiplyScalar(1.8);
     } catch {}
-    presentationGroup.add(toMount);
+    pg.add(toMount);
     mountedRoot = toMount;
     try {
       ensureFacingCamera(vrm, toMount);
@@ -2624,16 +3357,142 @@ const loadModel = async (url: string) => {
     clips = Array.isArray(gltf.animations) ? gltf.animations : [];
     if (clips.length > 0) {
       mixer = new THREE.AnimationMixer(toMount);
-      handleMotionCommand(props.motionCommand);
-    } else {
-      handleMotionCommand(props.motionCommand);
+    }
+    handleMotionCommand(props.motionCommand);
+
+    if (import.meta.env.DEV) {
+      (window as any).vrmDebug = {
+        refit: () => {
+          if (mountedRoot) fitToView(mountedRoot);
+        },
+        box: () => {
+          if (!mountedRoot) return null;
+          mountedRoot.updateMatrixWorld(true);
+          const b = new THREE.Box3().setFromObject(mountedRoot);
+          return { min: b.min.toArray(), max: b.max.toArray() };
+        },
+        frame: () => {
+          if (!mountedRoot || !camera) return null;
+          const vrm = currentVrm;
+          const humanoid = vrm?.humanoid;
+          const getBone =
+            typeof humanoid?.getNormalizedBoneNode === 'function'
+              ? (name: string) => humanoid.getNormalizedBoneNode(name)
+              : typeof humanoid?.getBoneNode === 'function'
+                ? (name: string) => humanoid.getBoneNode(name)
+                : () => null;
+
+          const headNode = (getBone('head') || getBone('neck')) as THREE.Object3D | null;
+          const leftFootNode = (getBone('leftFoot') ||
+            getBone('leftToes')) as THREE.Object3D | null;
+          const rightFootNode = (getBone('rightFoot') ||
+            getBone('rightToes')) as THREE.Object3D | null;
+
+          mountedRoot.updateMatrixWorld(true);
+          camera.updateMatrixWorld(true);
+
+          const headW = new THREE.Vector3();
+          const footW = new THREE.Vector3();
+          if (headNode) headNode.getWorldPosition(headW);
+          if (leftFootNode && rightFootNode) {
+            const a = new THREE.Vector3();
+            const b = new THREE.Vector3();
+            leftFootNode.getWorldPosition(a);
+            rightFootNode.getWorldPosition(b);
+            if (a.y <= b.y) footW.copy(a);
+            else footW.copy(b);
+          } else if (leftFootNode) {
+            leftFootNode.getWorldPosition(footW);
+          } else if (rightFootNode) {
+            rightFootNode.getWorldPosition(footW);
+          }
+
+          const box = new THREE.Box3().setFromObject(mountedRoot);
+          const headP = (headNode ? headW : new THREE.Vector3(0, box.max.y, 0)).project(camera);
+          const footP =
+            leftFootNode || rightFootNode
+              ? footW.clone().project(camera)
+              : new THREE.Vector3(0, box.min.y, 0).project(camera);
+
+          return {
+            ndc: {
+              head: headP.toArray(),
+              foot: footP.toArray()
+            },
+            world: {
+              head: headNode ? headW.toArray() : null,
+              foot: leftFootNode || rightFootNode ? footW.toArray() : null
+            },
+            box: { min: box.min.toArray(), max: box.max.toArray() },
+            camera: {
+              pos: camera.position.toArray(),
+              fov: camera.fov,
+              near: camera.near,
+              far: camera.far
+            }
+          };
+        },
+        bones: () => {
+          if (!mountedRoot) return null;
+          const vrm = currentVrm;
+          const humanoid = vrm?.humanoid;
+          const getBone =
+            typeof humanoid?.getNormalizedBoneNode === 'function'
+              ? (name: string) => humanoid.getNormalizedBoneNode(name)
+              : typeof humanoid?.getBoneNode === 'function'
+                ? (name: string) => humanoid.getBoneNode(name)
+                : () => null;
+
+          mountedRoot.updateMatrixWorld(true);
+          const rootPos = new THREE.Vector3();
+          mountedRoot.getWorldPosition(rootPos);
+          const pick = (name: string) => {
+            const n = getBone(name) as THREE.Object3D | null;
+            if (!n) return null;
+            const v = new THREE.Vector3();
+            n.getWorldPosition(v);
+            return v.toArray();
+          };
+          return {
+            root: { pos: rootPos.toArray(), scale: mountedRoot.scale.toArray() },
+            hips: pick('hips'),
+            spine: pick('spine'),
+            chest: pick('chest'),
+            head: pick('head') || pick('neck'),
+            leftFoot: pick('leftFoot') || pick('leftToes'),
+            rightFoot: pick('rightFoot') || pick('rightToes'),
+            camera: camera
+              ? {
+                  pos: camera.position.toArray(),
+                  fov: camera.fov,
+                  near: camera.near,
+                  far: camera.far
+                }
+              : null
+          };
+        }
+      };
     }
 
     startLoop();
-  } catch (e: any) {
+  };
+
+  try {
+    let lastErr: any = null;
+    for (let i = 0; i < candidates.length; i++) {
+      const url = candidates[i];
+      try {
+        await loadOnce(url);
+        error.value = '';
+        return;
+      } catch (e: any) {
+        lastErr = e;
+        if (i < candidates.length - 1) continue;
+      }
+    }
     const msg =
-      typeof e?.message === 'string'
-        ? e.message
+      typeof lastErr?.message === 'string'
+        ? lastErr.message
         : props.currentLang === 'zh'
           ? '模型加载失败'
           : 'Failed to load model';

@@ -65,6 +65,9 @@ export class ModelManager {
   private lastPoiX: number;
   private lastPoiY: number;
   private lastPoiAt: number;
+  private lastLoadedByVersion: Partial<
+    Record<2 | 3, { id: number; name: string; url: string; json: any }>
+  >;
 
   constructor(config: Config, models: ModelList[] = []) {
     let { apiPath, cdnPath } = config;
@@ -88,12 +91,21 @@ export class ModelManager {
     } else {
       assetsPath = cdnPath;
     }
-    const modelIdRaw = localStorage.getItem('modelId') as string | null;
+
+    const safeStorageGet = (key: string) => {
+      try {
+        return localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    };
+
+    const modelIdRaw = safeStorageGet('modelId') as string | null;
     const storedModelId = parseInt(modelIdRaw ?? '', 10);
     const hasStoredModelId = !isNaN(storedModelId);
 
     let modelId: number = storedModelId;
-    let modelTexturesId: number = parseInt(localStorage.getItem('modelTexturesId') as string, 10);
+    let modelTexturesId: number = parseInt(safeStorageGet('modelTexturesId') as string, 10);
     if (isNaN(modelId) || isNaN(modelTexturesId)) {
       modelTexturesId = 0;
     }
@@ -109,7 +121,7 @@ export class ModelManager {
     // In production, we use 'model_backup' or whatever is configured.
     const assetsBase = this.assetsPath || '';
     const isHfAssetsBase =
-      /^\/api\/hf\//i.test(assetsBase) || /huggingface\.co|hf-mirror\.com|hf\.co/i.test(assetsBase);
+      /\/api\/hf\//i.test(assetsBase) || /huggingface\.co|hf-mirror\.com|hf\.co/i.test(assetsBase);
     const isRemoteAssetsBase = /^https?:\/\//i.test(assetsBase) || isHfAssetsBase;
     if (import.meta.env.DEV && !isRemoteAssetsBase) this.modelDirectory = 'model';
     else if (isHfAssetsBase) this.modelDirectory = 'model';
@@ -130,6 +142,7 @@ export class ModelManager {
     this.lastPoiX = 0;
     this.lastPoiY = 0;
     this.lastPoiAt = 0;
+    this.lastLoadedByVersion = {};
   }
 
   public onLoadingChange(
@@ -169,14 +182,11 @@ export class ModelManager {
     const includesDirPrefix = /^model_backup\/|^model\//i.test(raw);
     const pathWithDir = includesDirPrefix ? raw : `${dir}/${raw}`;
 
-    const isHttp = /^https?:\/\//i.test(base);
     const hasLive2dSegment = /\/live2d\/$/i.test(base) || /\/live2d\//i.test(base);
     const addCandidate = (path: string) => {
       if (!path) return;
       candidates.push(`${base}${path}`);
-      if (isHttp && !hasLive2dSegment) {
-        candidates.push(`${base}live2d/${path}`);
-      }
+      if (!hasLive2dSegment) candidates.push(`${base}live2d/${path}`);
     };
 
     addCandidate(pathWithDir);
@@ -219,7 +229,7 @@ export class ModelManager {
 
         if (!response.ok) {
           if (debug) {
-            console.warn('[Live2D] fetchJson non-OK', {
+            logger.warn('[Live2D] fetchJson non-OK', {
               url,
               attempt,
               status: response.status,
@@ -256,7 +266,7 @@ export class ModelManager {
         const urlLooksJson = url.toLowerCase().includes('.json');
         if (!isJson && !urlLooksJson) {
           if (debug) {
-            console.warn('[Live2D] fetchJson unexpected content-type', { url, contentType });
+            logger.warn('[Live2D] fetchJson unexpected content-type', { url, contentType });
           }
           if (!silent) {
             logger.error(
@@ -269,7 +279,7 @@ export class ModelManager {
         try {
           const result = isJson ? await response.json() : JSON.parse(await response.text());
           if (debug) {
-            console.log('[Live2D] fetchJson OK', {
+            logger.info('[Live2D] fetchJson OK', {
               url,
               attempt,
               elapsedMs: Math.round(performance.now() - startedAt)
@@ -291,7 +301,7 @@ export class ModelManager {
       } catch (e) {
         lastError = e;
         if (debug) {
-          console.warn('[Live2D] fetchJson error', {
+          logger.warn('[Live2D] fetchJson error', {
             url,
             attempt,
             elapsedMs: Math.round(performance.now() - startedAt),
@@ -352,8 +362,7 @@ export class ModelManager {
       primaryCandidates[primaryCandidates.length - 1] ||
       modelRelativePath;
     if (import.meta.env.DEV) {
-      console.groupCollapsed('[Live2D] Failed to load model json');
-      console.log({
+      logger.warn('[Live2D] Failed to load model json', {
         modelRelativePath,
         assetsPath: this.assetsPath,
         modelDirectory: this.modelDirectory,
@@ -361,7 +370,6 @@ export class ModelManager {
         alternateDir,
         alternateCandidates
       });
-      console.groupEnd();
     }
     if (!silent) {
       logger.error(`Model setting is invalid for path ${lastErrorUrl}`);
@@ -841,7 +849,15 @@ export class ModelManager {
   resetCanvas() {
     const canvas = document.getElementById('waifu-canvas');
     if (canvas) {
-      canvas.innerHTML = '<canvas id="live2d" width="800" height="800"></canvas>';
+      while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
+      const live2d = document.createElement('canvas');
+      live2d.id = 'live2d';
+      live2d.width = 800;
+      live2d.height = 800;
+      const cubism3 = document.createElement('div');
+      cubism3.id = 'live2d-cubism3';
+      canvas.appendChild(live2d);
+      canvas.appendChild(cubism3);
     }
   }
 
@@ -859,7 +875,26 @@ export class ModelManager {
     return 2;
   }
 
-  async loadLive2D(modelSettingPath: string, modelSetting: object) {
+  private updateLastLoaded(
+    version: 2 | 3,
+    info: { id: number; name?: string; url: string; json: any }
+  ) {
+    const id = Number(info?.id);
+    const name = String(info?.name || '').trim();
+    if (!Number.isFinite(id)) return;
+    this.lastLoadedByVersion[version] = {
+      id,
+      name: name || `Cubism${version}`,
+      url: info.url,
+      json: info.json
+    };
+  }
+
+  async loadLive2D(
+    modelSettingPath: string,
+    modelSetting: object,
+    info?: { id?: number; name?: string }
+  ) {
     if (this.loading) {
       logger.warn('Still loading. Abort.');
       return;
@@ -873,6 +908,10 @@ export class ModelManager {
     this.loading = true;
     this.emitLoading(true, { modelSettingPath, version });
     try {
+      if (version !== prevVersion && (prevVersion === 2 || prevVersion === 3)) {
+        this.setRendererVersion(version);
+        await new Promise((r) => setTimeout(r, 0));
+      }
       if (version === 2) {
         if (!this.cubism2model) {
           // Check if Live2D global is already available
@@ -895,6 +934,12 @@ export class ModelManager {
         }
         this.setRendererVersion(2);
         this.currentModelVersion = 2;
+        this.updateLastLoaded(2, {
+          id: typeof info?.id === 'number' ? info.id : this.modelId,
+          name: info?.name,
+          url: modelSettingPath,
+          json: modelSetting
+        });
       } else {
         try {
           try {
@@ -908,6 +953,12 @@ export class ModelManager {
           if (ok) {
             this.setRendererVersion(3);
             this.currentModelVersion = 3;
+            this.updateLastLoaded(3, {
+              id: typeof info?.id === 'number' ? info.id : this.modelId,
+              name: info?.name,
+              url: modelSettingPath,
+              json: modelSetting
+            });
           } else {
             try {
               if (prevVersion === 2) {
@@ -926,7 +977,7 @@ export class ModelManager {
       }
       logger.info(`Model ${modelSettingPath} (Cubism version ${version}) loaded`);
     } catch (err) {
-      console.error('loadLive2D failed', err);
+      logger.error('loadLive2D failed', err);
       showMessage('模型加载失败，请稍后重试', 5000, 9);
     } finally {
       this.loading = false;
@@ -1163,6 +1214,7 @@ export class ModelManager {
   async loadModel(message: string | string[]) {
     let modelSettingPath: string | undefined;
     let modelSetting: any;
+    let modelName: any = '';
     if (this.useCDN && this.modelIndex.length > 0) {
       const tryLoadIndexAt = async (id: number) => {
         const item = this.modelIndex[id];
@@ -1200,6 +1252,7 @@ export class ModelManager {
         return;
       }
 
+      modelName = this.modelIndex[this.modelId]?.name || '';
       modelSettingPath = loaded.url;
       modelSetting = loaded.json;
 
@@ -1216,7 +1269,7 @@ export class ModelManager {
         // For now, we trust model.json
       }
     } else if (this.useCDN && this.modelList) {
-      let modelName = this.modelList.models[this.modelId];
+      modelName = this.modelList.models[this.modelId];
       if (Array.isArray(modelName)) {
         modelName = modelName[this.modelTexturesId];
       }
@@ -1290,7 +1343,7 @@ export class ModelManager {
       showMessage('Failed to load model configuration.', 4000, 10);
       return;
     }
-    await this.loadLive2D(modelSettingPath, modelSetting);
+    await this.loadLive2D(modelSettingPath, modelSetting, { id: this.modelId, name: modelName });
     showMessage(message, 4000, 10);
   }
 
@@ -1302,7 +1355,7 @@ export class ModelManager {
     }
     const modelSettingPath = loaded.url;
     const modelSetting = loaded.json;
-    await this.loadLive2D(modelSettingPath, modelSetting);
+    await this.loadLive2D(modelSettingPath, modelSetting, { id: this.modelId });
     if (options?.message) {
       showMessage(options.message, 4000, 10);
     }
@@ -1370,7 +1423,7 @@ export class ModelManager {
         const loaded = await this.loadIndexModelAt(nextIndex, expectedVersion);
         if (!loaded) continue;
         this.modelId = nextIndex;
-        await this.loadLive2D(loaded.url, loaded.json);
+        await this.loadLive2D(loaded.url, loaded.json, { id: nextIndex, name: loaded.name });
         showMessage(`Switched to ${loaded.name}`, 4000, 10);
         return;
       }
@@ -1383,7 +1436,7 @@ export class ModelManager {
         const loaded = await this.loadListModelAt(nextIndex, expectedVersion);
         if (!loaded) continue;
         this.modelId = nextIndex;
-        await this.loadLive2D(loaded.url, loaded.json);
+        await this.loadLive2D(loaded.url, loaded.json, { id: nextIndex, name: loaded.name });
         showMessage(`Switched to ${loaded.name}`, 4000, 10);
         return;
       }
@@ -1404,7 +1457,7 @@ export class ModelManager {
         const loaded = await this.loadIndexModelAt(prevIndex, expectedVersion);
         if (!loaded) continue;
         this.modelId = prevIndex;
-        await this.loadLive2D(loaded.url, loaded.json);
+        await this.loadLive2D(loaded.url, loaded.json, { id: prevIndex, name: loaded.name });
         showMessage(`Switched to ${loaded.name}`, 4000, 10);
         return;
       }
@@ -1417,7 +1470,7 @@ export class ModelManager {
         const loaded = await this.loadListModelAt(prevIndex, expectedVersion);
         if (!loaded) continue;
         this.modelId = prevIndex;
-        await this.loadLive2D(loaded.url, loaded.json);
+        await this.loadLive2D(loaded.url, loaded.json, { id: prevIndex, name: loaded.name });
         showMessage(`Switched to ${loaded.name}`, 4000, 10);
         return;
       }
@@ -1432,13 +1485,42 @@ export class ModelManager {
     const targetVersion: 2 | 3 = this.currentModelVersion === 3 ? 2 : 3;
     this.modelTexturesId = 0;
 
+    const cached = this.lastLoadedByVersion[targetVersion];
+    if (cached?.url && cached?.json) {
+      this.modelId = cached.id;
+      await this.loadLive2D(cached.url, cached.json, { id: cached.id, name: cached.name });
+      showMessage(`Switched to Cubism${targetVersion}: ${cached.name}`, 4000, 10);
+      return;
+    }
+
     if (this.useCDN && this.modelIndex.length > 0) {
-      for (let i = 1; i <= this.modelIndex.length; i++) {
+      const knownMatch = (() => {
+        const count = this.modelIndex.length;
+        for (let i = 1; i <= count; i++) {
+          const nextIndex = (this.modelId + i) % count;
+          const item = this.modelIndex[nextIndex];
+          if (item?.version && item.version === targetVersion) return nextIndex;
+        }
+        return -1;
+      })();
+
+      if (knownMatch >= 0) {
+        const loaded = await this.loadIndexModelAt(knownMatch, targetVersion);
+        if (loaded) {
+          this.modelId = knownMatch;
+          await this.loadLive2D(loaded.url, loaded.json, { id: knownMatch, name: loaded.name });
+          showMessage(`Switched to Cubism${targetVersion}: ${loaded.name}`, 4000, 10);
+          return;
+        }
+      }
+
+      const maxProbe = Math.min(12, this.modelIndex.length);
+      for (let i = 1; i <= maxProbe; i++) {
         const nextIndex = (this.modelId + i) % this.modelIndex.length;
         const loaded = await this.loadIndexModelAt(nextIndex, targetVersion);
         if (!loaded) continue;
         this.modelId = nextIndex;
-        await this.loadLive2D(loaded.url, loaded.json);
+        await this.loadLive2D(loaded.url, loaded.json, { id: nextIndex, name: loaded.name });
         showMessage(`Switched to Cubism${targetVersion}: ${loaded.name}`, 4000, 10);
         return;
       }
@@ -1447,12 +1529,13 @@ export class ModelManager {
     }
 
     if (this.useCDN && this.modelList) {
-      for (let i = 1; i <= this.modelList.models.length; i++) {
+      const maxProbe = Math.min(12, this.modelList.models.length);
+      for (let i = 1; i <= maxProbe; i++) {
         const nextIndex = (this.modelId + i) % this.modelList.models.length;
         const loaded = await this.loadListModelAt(nextIndex, targetVersion);
         if (!loaded) continue;
         this.modelId = nextIndex;
-        await this.loadLive2D(loaded.url, loaded.json);
+        await this.loadLive2D(loaded.url, loaded.json, { id: nextIndex, name: loaded.name });
         showMessage(`Switched to Cubism${targetVersion}: ${loaded.name}`, 4000, 10);
         return;
       }

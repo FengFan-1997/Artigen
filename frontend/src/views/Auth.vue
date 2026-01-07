@@ -45,7 +45,7 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue';
 import { useRouter } from 'vue-router';
-import { loginUser, registerUser } from '../agent/utils/user'; // We will implement this
+import { loginUser, registerUser } from '../auth';
 
 const router = useRouter();
 const isLogin = ref(true);

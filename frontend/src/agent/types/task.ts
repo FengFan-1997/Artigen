@@ -21,4 +21,5 @@ export interface TaskPlan {
   steps: TaskStep[];
   status: 'pending' | 'running' | 'completed' | 'failed';
   currentStepIndex: number;
+  errorMessage?: string;
 }

@@ -14,9 +14,16 @@ declare module 'pixi.js' {
   export const Application: any;
 }
 
+declare module 'gifenc' {
+  export const GIFEncoder: any;
+  export const applyPalette: any;
+  export const quantize: any;
+}
+
 declare const __DEV_VRM_BASE__: string;
 
 declare module 'virtual:vrm-models' {
   export const vrmRelativePaths: string[];
+  export const publicVrmRelativePaths: string[];
   export const vrmPersonaTextByModelName: Record<string, { zh: string; en: string }>;
 }

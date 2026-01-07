@@ -16,11 +16,19 @@ export function useAgentPersona(input: {
   currentLang: Ref<string>;
   vrmPersonaMap: Record<string, unknown> | null | undefined;
 }) {
+  const safeStorageGet = (key: string) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+
   const getCharacterName = () => {
-    const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
-    const perModel = localStorage.getItem(`agent_character_name_${modelId}`);
+    const modelId = Number.parseInt(safeStorageGet('modelId') || '0', 10) || 0;
+    const perModel = safeStorageGet(`agent_character_name_${modelId}`);
     if (perModel && perModel.trim()) return perModel.trim();
-    const stored = localStorage.getItem('agent_character_name');
+    const stored = safeStorageGet('agent_character_name');
     if (stored && stored.trim()) return stored.trim();
     return 'Lumina';
   };
@@ -39,8 +47,8 @@ export function useAgentPersona(input: {
   };
 
   const getPersonaText = () => {
-    const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
-    const perModelRaw = localStorage.getItem(`agent_persona_text_${modelId}`);
+    const modelId = Number.parseInt(safeStorageGet('modelId') || '0', 10) || 0;
+    const perModelRaw = safeStorageGet(`agent_persona_text_${modelId}`);
     if (perModelRaw && perModelRaw.trim()) {
       const trimmed = perModelRaw.trim();
       if (trimmed.startsWith('{')) {
@@ -50,7 +58,7 @@ export function useAgentPersona(input: {
       }
       return trimmed;
     }
-    const stored = localStorage.getItem('agent_persona_text');
+    const stored = safeStorageGet('agent_persona_text');
     if (stored && stored.trim()) return stored.trim();
     if (input.agentType.value === 'vrm') {
       const builtIn = getBuiltInVrmPersona();
@@ -65,8 +73,8 @@ export function useAgentPersona(input: {
   };
 
   const getPersonaRulesForAi = () => {
-    const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
-    const perModelRaw = localStorage.getItem(`agent_persona_text_${modelId}`);
+    const modelId = Number.parseInt(safeStorageGet('modelId') || '0', 10) || 0;
+    const perModelRaw = safeStorageGet(`agent_persona_text_${modelId}`);
     if (perModelRaw && perModelRaw.trim()) {
       const trimmed = perModelRaw.trim();
       if (trimmed.startsWith('{')) {
@@ -76,7 +84,7 @@ export function useAgentPersona(input: {
       }
       return trimmed;
     }
-    const stored = localStorage.getItem('agent_persona_text');
+    const stored = safeStorageGet('agent_persona_text');
     if (stored && stored.trim()) return stored.trim();
     const builtIn = getBuiltInVrmPersona();
     if (builtIn)

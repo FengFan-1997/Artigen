@@ -23,6 +23,8 @@ import { defineComponent, onMounted, onUnmounted, ref, watch, computed } from 'v
 import { initWidget, showMessage } from '../live2d-widget/widget';
 import type { ModelManager } from '../services/Live2DModelManager';
 import { disposeCubism3 } from '../live2d-widget/cubism3';
+import { buildApiUrl } from '../utils/user';
+import logger from '../utils/logger';
 
 export default defineComponent({
   name: 'Live2DWidget',
@@ -52,6 +54,14 @@ export default defineComponent({
     const widgetRoot = ref<HTMLElement | null>(null);
     const modelMgr = ref<ModelManager | null>(null);
 
+    const safeStorageGet = (key: string) => {
+      try {
+        return localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    };
+
     let messageTalkTimeout: number | null = null;
 
     const angry = computed(() => !!props.isAngry);
@@ -63,7 +73,7 @@ export default defineComponent({
     let unsubscribeLoading: null | (() => void) = null;
 
     const toggleChat = () => {
-      console.log('Live2DWidget: toggleChat called');
+      logger.info('Live2DWidget: toggleChat called');
       emit('toggle-chat');
     };
 
@@ -242,9 +252,9 @@ export default defineComponent({
         if (live2dGlobal && typeof live2dGlobal.dispose === 'function') {
           try {
             live2dGlobal.dispose();
-            console.log('Live2D global disposed');
+            logger.info('Live2D global disposed');
           } catch (e) {
-            console.error('Error disposing Live2D', e);
+            logger.error('Error disposing Live2D', e);
           }
         }
 
@@ -288,9 +298,9 @@ export default defineComponent({
           messageTalkTimeout = null;
         }
 
-        console.log('Live2DWidget cleanup complete');
+        logger.info('Live2DWidget cleanup complete');
       } catch (e) {
-        console.error('Error during Live2D cleanup:', e);
+        logger.error('Error during Live2D cleanup', e);
       }
     };
 
@@ -302,7 +312,7 @@ export default defineComponent({
         cleanup();
         modelLoading.value = true;
 
-        const DEFAULT_LIVE2D_ASSETS_BASE = '/api/hf/Feng1997/ModelDoc/resolve/main/';
+        const DEFAULT_LIVE2D_ASSETS_BASE = buildApiUrl('/api/hf/Feng1997/ModelDoc/resolve/main/');
 
         const normalizeHfBase = (raw: string) => {
           const trimmed = (raw || '').trim();
@@ -341,20 +351,21 @@ export default defineComponent({
         const configBase = configBaseRaw.endsWith('/') ? configBaseRaw : `${configBaseRaw}/`;
         const assetsBaseRaw =
           import.meta.env.VITE_LIVE2D_ASSETS_BASE ||
-          localStorage.getItem('live2d_assets_base') ||
+          safeStorageGet('live2d_assets_base') ||
           DEFAULT_LIVE2D_ASSETS_BASE;
         const hfNormalized = normalizeHfBase(assetsBaseRaw);
         const proxied = maybeUseHfProxy(hfNormalized);
-        const assetsBase = proxied.endsWith('/') ? proxied : `${proxied}/`;
+        const assetsBasePath = proxied.endsWith('/') ? proxied : `${proxied}/`;
+        const assetsBase = /^https?:\/\//i.test(assetsBasePath)
+          ? assetsBasePath
+          : buildApiUrl(assetsBasePath);
 
-        console.group('[Live2DWidget] Assets Base');
-        console.log({
+        logger.info('[Live2DWidget] Assets Base', {
           configBase,
           assetsBaseRaw,
           hfNormalized,
           assetsBase
         });
-        console.groupEnd();
 
         if (widgetRoot.value) {
           modelMgr.value = await initWidget(
@@ -363,7 +374,14 @@ export default defineComponent({
               cdnPath: configBase,
               assetsPath: assetsBase,
               cubism2Path: '/live2d/core/live2d.min.js',
-              tools: [],
+              tools: [
+                'chat',
+                'switch-model-prev',
+                'switch-model-next',
+                'switch-texture',
+                'switch-ziyuxin',
+                'photo'
+              ],
               modelId: 101,
               drag: false,
               disableIdle: true,
@@ -377,14 +395,16 @@ export default defineComponent({
             unsubscribeLoading = modelMgr.value.onLoadingChange((loading) => {
               modelLoading.value = loading;
             });
-            console.group('[Live2DWidget] Loaded Model Debug Info');
-            console.log('Available Hit Areas:', modelMgr.value.getHitAreas());
-            console.log('Available Motion Groups:', modelMgr.value.getMotionGroups());
-            console.groupEnd();
+            if (import.meta.env.DEV) {
+              logger.info('[Live2DWidget] Loaded Model Debug Info', {
+                hitAreas: modelMgr.value.getHitAreas(),
+                motionGroups: modelMgr.value.getMotionGroups()
+              });
+            }
           }
         }
       } catch (error) {
-        console.error('Error loading Live2D widget:', error);
+        logger.error('Error loading Live2D widget', error);
       } finally {
         if (!modelMgr.value) hasInitialized = false;
         if (!modelMgr.value) modelLoading.value = false;
@@ -401,7 +421,11 @@ export default defineComponent({
     watch(
       () => props.initEnabled,
       (enabled) => {
-        if (!enabled) return;
+        if (!enabled) {
+          hasInitialized = false;
+          cleanup();
+          return;
+        }
         setTimeout(() => {
           initLive2D();
         }, 0);

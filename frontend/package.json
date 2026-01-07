@@ -11,7 +11,7 @@
     "lint": "eslint . --fix",
     "format": "prettier --write src/",
     "type-check": "vue-tsc -b",
-    "prepare": "husky install"
+    "prepare": "husky install || exit 0"
   },
   "lint-staged": {
     "*.{js,jsx,vue,ts,tsx}": [
@@ -27,8 +27,10 @@
     "@pixiv/three-vrm": "^3.4.4",
     "@types/three": "^0.181.0",
     "ant-design-vue": "^4.2.6",
+    "gifenc": "^1.0.3",
     "gsap": "^3.13.0",
     "marked": "^17.0.1",
+    "pdfjs-dist": "^4.10.38",
     "pinia": "^2.3.0",
     "pixi-live2d-display": "0.4.0",
     "pixi.js": "^6.5.10",
@@ -41,6 +43,8 @@
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
+    "@types/nodemailer": "^6.4.17",
+    "nodemailer": "^6.9.16",
     "@typescript-eslint/eslint-plugin": "^8.49.0",
     "@typescript-eslint/parser": "^8.49.0",
     "@vitejs/plugin-vue": "^5.2.1",

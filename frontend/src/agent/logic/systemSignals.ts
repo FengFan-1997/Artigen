@@ -64,6 +64,7 @@ export const createSystemSignals = (input: {
       }
       if (node.nodeType !== Node.ELEMENT_NODE) return results;
       const el = node as HTMLElement;
+      if (typeof el.closest === 'function' && el.closest('.agent-container')) return results;
 
       const role = (el.getAttribute('role') || '').toLowerCase();
       const ariaLive = (el.getAttribute('aria-live') || '').toLowerCase();

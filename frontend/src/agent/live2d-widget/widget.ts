@@ -85,7 +85,7 @@ function registerEventListener(tips: Tips, config?: Config) {
   });
 
   const devtools = () => {};
-  console.log('%c', devtools);
+  logger.trace('%c', devtools as any);
   devtools.toString = () => {
     showMessage(tips.message.console, 6000, 9);
   };
@@ -105,20 +105,41 @@ async function initWidget(config: Config, container?: HTMLElement) {
   localStorage.removeItem('waifu-display');
   sessionStorage.removeItem('waifu-message-priority');
 
-  const html = `
-    <div id="waifu">
-       <div id="waifu-tips"></div>
-       <div id="waifu-canvas">
-         <canvas id="live2d" width="800" height="800"></canvas>
-         <div id="live2d-cubism3"></div>
-       </div>
-       <div id="waifu-tool"></div>
-    </div>`;
+  const waifu = document.createElement('div');
+  waifu.id = 'waifu';
+
+  const tipsEl = document.createElement('div');
+  tipsEl.id = 'waifu-tips';
+
+  const canvasWrap = document.createElement('div');
+  canvasWrap.id = 'waifu-canvas';
+
+  const canvas = document.createElement('canvas');
+  canvas.id = 'live2d';
+  canvas.width = 800;
+  canvas.height = 800;
+
+  const cubism3 = document.createElement('div');
+  cubism3.id = 'live2d-cubism3';
+
+  canvasWrap.appendChild(canvas);
+  canvasWrap.appendChild(cubism3);
+
+  const tool = document.createElement('div');
+  tool.id = 'waifu-tool';
+
+  waifu.appendChild(tipsEl);
+  waifu.appendChild(canvasWrap);
+  waifu.appendChild(tool);
+
+  const existing = document.getElementById('waifu');
+  if (existing && existing.parentElement) existing.parentElement.removeChild(existing);
 
   if (container) {
-    container.innerHTML = html;
+    while (container.firstChild) container.removeChild(container.firstChild);
+    container.appendChild(waifu);
   } else {
-    document.body.insertAdjacentHTML('beforeend', html);
+    document.body.appendChild(waifu);
   }
 
   let models: ModelList[] = [];
@@ -150,8 +171,8 @@ async function initWidget(config: Config, container?: HTMLElement) {
 
   if (config.drag) registerDrag();
 
-  const waifu = document.getElementById('waifu');
-  if (waifu) waifu.classList.add('waifu-active');
+  const waifuEl = document.getElementById('waifu');
+  if (waifuEl) waifuEl.classList.add('waifu-active');
 
   return model;
 }

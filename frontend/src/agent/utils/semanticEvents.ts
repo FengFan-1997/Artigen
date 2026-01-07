@@ -163,16 +163,71 @@ export const buildSemanticInteractionContext = (
   if (durationMs >= 1200 && avgSpeed <= 0.25) pushTag(tags, 'USER_SLOW_HOVER');
   if (durationMs >= 600 && maxSpeed >= 1.4) pushTag(tags, 'USER_FAST_SWEEP');
 
-  const primary = primaryTargets[0];
-  if (primary === 'eyes') pushTag(tags, 'USER_STARING_EYES');
-  if (primary === 'cheek') pushTag(tags, 'USER_STROKES_CHEEK');
-  if (primary === 'head') pushTag(tags, 'USER_PATS_HEAD');
-  if (primary === 'hair') pushTag(tags, 'USER_TOUCHES_HAIR');
-  if (primary === 'accessory') pushTag(tags, 'USER_TOUCHES_ACCESSORY');
-  if (primary === 'body') pushTag(tags, 'USER_TOUCHES_BODY');
-  if (primary === 'hand') pushTag(tags, 'USER_TOUCHES_HAND');
+  const totalHits = Object.values(targetCounts).reduce(
+    (sum, n) => sum + (typeof n === 'number' && Number.isFinite(n) ? Math.max(0, n) : 0),
+    0
+  );
+  const ratio = (k: string) => {
+    const n = typeof targetCounts[k] === 'number' ? targetCounts[k] : 0;
+    if (totalHits <= 0) return 0;
+    return n / totalHits;
+  };
+
+  const tagByTarget = (target: string, tag: string, minRatio = 0.28, minHits = 4) => {
+    const hits = typeof targetCounts[target] === 'number' ? targetCounts[target] : 0;
+    if (hits >= minHits && ratio(target) >= minRatio) pushTag(tags, tag);
+  };
+
+  tagByTarget('eyes', 'USER_STARING_EYES', durationMs >= 900 ? 0.18 : 0.28, 3);
+  tagByTarget('cheek', 'USER_STROKES_CHEEK', 0.22, 3);
+  tagByTarget('head', 'USER_PATS_HEAD', 0.26, 3);
+  tagByTarget('hair', 'USER_TOUCHES_HAIR', 0.26, 3);
+  tagByTarget('accessory', 'USER_TOUCHES_ACCESSORY', 0.22, 2);
+  tagByTarget('body', 'USER_TOUCHES_BODY', 0.18, 2);
+  tagByTarget('hand', 'USER_TOUCHES_HAND', 0.24, 3);
+  tagByTarget('mouth', 'USER_TOUCHES_MOUTH', 0.18, 2);
+
+  if (
+    tags.includes('USER_SLOW_HOVER') &&
+    clicks <= 2 &&
+    (ratio('head') + ratio('hair') >= 0.42 || ratio('cheek') >= 0.28)
+  ) {
+    pushTag(tags, 'USER_GENTLE_PETTING');
+  }
+  if (clicks >= 4 && (tags.includes('USER_TOUCHES_BODY') || tags.includes('USER_TOUCHES_MOUTH'))) {
+    pushTag(tags, 'USER_TEASING');
+  }
 
   return { primaryTargets, tags };
+};
+
+const computeInteractionIntensity = (
+  metrics: InteractionMetrics,
+  semantic: SemanticInteractionContext
+) => {
+  const clicks = Math.max(0, metrics?.clickCount || 0);
+  const spin = Math.abs(metrics?.spinDegrees || 0);
+  const maxSpeed = Math.max(0, metrics?.maxSpeed || 0);
+  const durationMs = Math.max(0, metrics?.durationMs || 0);
+  const avgSpeed = Math.max(0, metrics?.avgSpeed || 0);
+
+  const clickScore = clamp(clicks / 8, 0, 1);
+  const spinScore = clamp(spin / 540, 0, 1);
+  const speedScore = clamp(maxSpeed / 1.7, 0, 1);
+  const hoverScore = durationMs >= 1200 && avgSpeed <= 0.25 ? 0.18 : 0;
+
+  const tags = Array.isArray(semantic?.tags) ? semantic.tags : [];
+  const sensitiveScore =
+    (tags.includes('USER_TOUCHES_BODY') ? 0.18 : 0) +
+    (tags.includes('USER_TOUCHES_MOUTH') ? 0.18 : 0) +
+    (tags.includes('USER_STARING_EYES') ? 0.12 : 0) +
+    (tags.includes('USER_STROKES_CHEEK') ? 0.08 : 0);
+
+  return clamp(
+    clickScore * 0.55 + spinScore * 0.45 + speedScore * 0.25 + hoverScore + sensitiveScore,
+    0,
+    1
+  );
 };
 
 export const buildInteractionSummary = (metrics: InteractionMetrics, lang: 'zh' | 'en') => {
@@ -217,19 +272,32 @@ export const buildInteractionSummary = (metrics: InteractionMetrics, lang: 'zh' 
 };
 
 export const shouldAskAiForInteraction = (metrics: InteractionMetrics) => {
-  const clicks = metrics.clickCount;
-  const spin = Math.abs(metrics.spinDegrees);
   const semantic = buildSemanticInteractionContext(metrics);
-  const hasInterestingTarget = semantic.primaryTargets.some((t) =>
-    /^(eyes|cheek|mouth|accessory|hand|unknown)$/i.test(t)
-  );
+  const clicks = Math.max(0, metrics?.clickCount || 0);
+  const spin = Math.abs(metrics?.spinDegrees || 0);
+  const durationMs = Math.max(0, metrics?.durationMs || 0);
+  const maxSpeed = Math.max(0, metrics?.maxSpeed || 0);
+  const tags = Array.isArray(semantic?.tags) ? semantic.tags : [];
 
-  if (hasInterestingTarget) return true;
-  if (spin >= 360 && clicks >= 1) return true;
+  if (durationMs < 260 && clicks < 2 && spin < 120) return false;
+
+  const intensity = computeInteractionIntensity(metrics, semantic);
+  const primary = Array.isArray(semantic?.primaryTargets) ? semantic.primaryTargets[0] : '';
+  const unknownPrimary = String(primary || '').toLowerCase() === 'unknown';
+
+  if (tags.includes('USER_MAKING_ME_DIZZY') && durationMs >= 450) return true;
   if (clicks >= 6) return true;
   if (clicks >= 4 && spin >= 120) return true;
-  if (metrics.maxSpeed >= 1.4 && metrics.durationMs >= 600) return true;
-  return false;
+  if (maxSpeed >= 1.4 && durationMs >= 650 && !tags.includes('USER_SLOW_HOVER')) return true;
+
+  if (unknownPrimary && intensity < 0.72) return false;
+
+  if (tags.includes('USER_TOUCHES_BODY') && clicks >= 2) return true;
+  if (tags.includes('USER_TOUCHES_MOUTH') && clicks >= 1) return true;
+  if (tags.includes('USER_STARING_EYES') && tags.includes('USER_SLOW_HOVER') && durationMs >= 1200)
+    return true;
+
+  return intensity >= 0.62;
 };
 
 export const computeRelativePoint = (

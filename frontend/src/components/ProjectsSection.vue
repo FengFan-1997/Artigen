@@ -81,6 +81,16 @@ const hoveredIndex = ref<number | null>(null);
 
 const navItems = computed(() => [
   {
+    id: 'agentimg',
+    title: 'Agent Image',
+    desc: 'Cyberpunk style AI image processing platform with format factory and compute mall.',
+    route: '/agentimg',
+    icon: '🖼️',
+    image:
+      'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?q=80&w=800&auto=format&fit=crop',
+    tags: ['Vue 3', 'Cyberpunk', 'AI']
+  },
+  {
     id: 'ingredients',
     title: t('projects.items.ingredients.title'),
     desc: t('projects.items.ingredients.desc'),
@@ -144,7 +154,7 @@ const navItems = computed(() => [
     id: 'market',
     title: t('projects.items.market.title'),
     desc: t('projects.items.market.desc'),
-    route: '/aether-market',
+    route: '/agentimg/market',
     icon: '💎',
     image:
       'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?q=80&w=800&auto=format&fit=crop',

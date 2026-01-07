@@ -1,0 +1,50 @@
+后端逻辑：积分系统的信任架构
+
+积分系统听起来简单：用户充钱 → 加积分 → 生成图片 → 扣积分。
+
+但魔鬼在细节里。
+
+问题1：扣积分和生成图片，谁先谁后？
+
+错误做法：先生成图片，成功后再扣积分。
+
+风险：生成成功但扣积分失败，用户白嫖。
+正确做法：先扣积分，失败后再退回。
+
+逻辑：先"冻结"积分，生成成功则确认扣除，失败则退回。
+// 伪代码
+await deductCredits(userId, cost);  // 先扣
+try {
+  const image = await generateImage(prompt);
+  return image;  // 成功，积分已扣
+} catch (error) {
+  await refundCredits(userId, cost);  // 失败，退回
+  throw error;
+}
+问题2：如何防止订单重复处理？
+
+爱发电的Webhook可能会重复发送。如果不做幂等处理，用户可能被多次加积分。
+
+解决方案：用 afdianOrderId 做唯一键。
+
+// 检查订单是否已处理
+const existing = await prisma.transaction.findFirst({
+  where: { afdianOrderId: orderId },
+});
+if (existing) {
+  return { ec: 200, em: 'Already processed' };
+}
+问题3：免费额度怎么设计？
+
+新用户应该能免费试用，否则付费转化无从谈起。
+
+我的设计：注册即送 10 积分（够生成2次），每日签到送 2 积分（不够生成1次，但积累2天可以）。
+
+PS：签到功能还没实现哈，后续加上，很快
+
+这个数字是刻意的：
+
+10 积分让用户体验核心功能
+每日 2 积分制造"再来一次"的动机
+但不够随便用，必须付费才能畅玩
+积分系统的本质是信任系统：用户相信付了钱就能用，你相信用户不会薅走你的服务。          

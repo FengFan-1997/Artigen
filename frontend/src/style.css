@@ -106,3 +106,63 @@ button:focus-visible {
     box-shadow: 0 0 0 0px rgba(255, 105, 180, 0);
   }
 }
+
+.agent-risk-modal .ant-modal-content {
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  box-shadow: 0 30px 120px rgba(0, 0, 0, 0.55);
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.agent-risk-modal .ant-modal-confirm-body .ant-modal-confirm-title,
+.agent-risk-modal .ant-modal-title {
+  color: rgba(226, 232, 240, 0.98);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.agent-risk-modal .ant-modal-confirm-body .ant-modal-confirm-content,
+.agent-risk-modal .ant-modal-body {
+  color: rgba(226, 232, 240, 0.85);
+  line-height: 1.55;
+}
+
+.agent-risk-modal .ant-modal-header {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.agent-risk-modal .ant-modal-close {
+  color: rgba(226, 232, 240, 0.75);
+}
+
+.agent-risk-modal .ant-modal-close:hover {
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.agent-risk-modal .ant-btn {
+  border-radius: 10px;
+}
+
+.agent-risk-modal .ant-btn-default {
+  background: rgba(2, 6, 23, 0.35);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.agent-risk-modal .ant-btn-default:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.agent-risk-modal .ant-btn-primary {
+  background: rgba(56, 189, 248, 0.95);
+  border-color: rgba(56, 189, 248, 0.95);
+  color: rgba(2, 6, 23, 0.95);
+}
+
+.agent-risk-modal .ant-btn-primary:hover {
+  background: rgba(56, 189, 248, 1);
+  border-color: rgba(56, 189, 248, 1);
+}

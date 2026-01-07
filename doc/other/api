@@ -17,4 +17,4 @@ curl --request POST \
 
 用这个模型
 Qwen/Qwen3-8B
-sk-fuwvtaiaghlaiqacfwotpuvhawdldbvpftcufklzgdigmzau
+sk-REDACTED_PLEASE_USE_ENV_VAR

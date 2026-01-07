@@ -1,4 +1,4 @@
-import { buildApiUrl } from '../agent/utils/user';
+import { buildApiUrl } from '../utils/api';
 
 const API_URL = buildApiUrl('/api/generate');
 

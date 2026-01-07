@@ -4,11 +4,87 @@ import ModelSettingJson from './utils/ModelSettingJson';
 import LAppDefine from './LAppDefine';
 import MatrixStack from './utils/MatrixStack';
 import logger from '../../utils/logger';
+import { buildApiUrl } from '../../../utils/api';
 
 const UNIFORM_MODEL_HEIGHT = 1.6;
 const UNIFORM_MODEL_BOTTOM = -0.9;
 
 const soundCheckCache = new Map();
+const audioBlobCache = new Map();
+const AUDIO_BLOB_CACHE_LIMIT = 20;
+
+const normalizeHfProxyUrl = (rawUrl) => {
+  const u = (rawUrl || '').toString().trim();
+  if (!u) return '';
+  if (/^\/api\/hf\//i.test(u)) return buildApiUrl(u);
+  const replaced = u.replace(
+    /^https?:\/\/(www\.)?(huggingface\.co|hf\.co|hf-mirror\.com)\//i,
+    '/api/hf/'
+  );
+  if (/^\/api\/hf\//i.test(replaced)) return buildApiUrl(replaced);
+  return replaced;
+};
+
+const resolveAssetUrl = (modelHomeDir, nameOrUrl) => {
+  const raw = (nameOrUrl || '').toString().trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return normalizeHfProxyUrl(raw);
+  const base = (modelHomeDir || '').toString();
+  const joined = `${base}${raw}`.replace(/([^:]\/)\/+/g, '$1');
+  return normalizeHfProxyUrl(joined);
+};
+
+const fetchAudioBlobUrl = async (url) => {
+  if (!url) return '';
+  const cached = audioBlobCache.get(url);
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  if (
+    cached &&
+    typeof cached.blobUrl === 'string' &&
+    now - (cached.cachedAt || 0) < 60 * 60 * 1000
+  ) {
+    return cached.blobUrl;
+  }
+  if (cached?.pending) return cached.pending;
+
+  const pending = (async () => {
+    try {
+      const res = await fetch(url, { method: 'GET' });
+      if (!res.ok) return '';
+      const blob = await res.blob();
+      if (!blob || blob.size <= 0) return '';
+
+      const blobUrl = URL.createObjectURL(blob);
+      audioBlobCache.set(url, { blobUrl, cachedAt: now });
+
+      if (audioBlobCache.size > AUDIO_BLOB_CACHE_LIMIT) {
+        const first = audioBlobCache.entries().next().value;
+        if (first && first[0]) {
+          const removeKey = first[0];
+          const remove = audioBlobCache.get(removeKey);
+          if (remove?.blobUrl) {
+            try {
+              URL.revokeObjectURL(remove.blobUrl);
+            } catch {}
+          }
+          audioBlobCache.delete(removeKey);
+        }
+      }
+
+      return blobUrl;
+    } catch {
+      return '';
+    } finally {
+      const after = audioBlobCache.get(url);
+      if (after?.pending) {
+        audioBlobCache.set(url, { blobUrl: after.blobUrl || '', cachedAt: after.cachedAt || now });
+      }
+    }
+  })();
+
+  audioBlobCache.set(url, { ...cached, pending, cachedAt: now });
+  return pending;
+};
 
 const checkSoundAvailable = async (url) => {
   if (!url) return false;
@@ -74,6 +150,7 @@ class LAppModel extends L2DBaseModel {
       isHappy: false,
       isAngry: false
     };
+    this._soundToken = 0;
   }
 
   loadJSON(callback) {
@@ -175,6 +252,7 @@ class LAppModel extends L2DBaseModel {
   async loadModelSetting(modelSettingPath, modelSetting) {
     this.setUpdating(true);
     this.setInitialized(false);
+    this._soundToken += 1;
 
     this.modelHomeDir = modelSettingPath.substring(0, modelSettingPath.lastIndexOf('/') + 1);
 
@@ -187,6 +265,7 @@ class LAppModel extends L2DBaseModel {
     logger.info('LAppModel.load start: ' + modelSettingPath);
     this.setUpdating(true);
     this.setInitialized(false);
+    this._soundToken += 1;
 
     this.modelHomeDir = modelSettingPath.substring(0, modelSettingPath.lastIndexOf('/') + 1);
 
@@ -377,15 +456,31 @@ class LAppModel extends L2DBaseModel {
       this.mainMotionManager.startMotionPrio(motion, priority);
     } else {
       const soundName = this.modelSetting.getMotionSound(name, no);
-      const soundUrl = this.modelHomeDir + soundName;
+      const soundUrl = resolveAssetUrl(this.modelHomeDir, soundName);
       const cached = soundCheckCache.get(soundUrl);
+      const token = this._soundToken;
 
       if (!cached || cached.ok !== false) {
-        void checkSoundAvailable(soundUrl).then((ok) => {
+        void checkSoundAvailable(soundUrl).then(async (ok) => {
           if (!ok) return;
+          if (this._soundToken !== token) return;
+          const blobUrl = await fetchAudioBlobUrl(soundUrl);
+          if (!blobUrl) return;
+          if (this._soundToken !== token) return;
           const snd = document.createElement('audio');
           snd.preload = 'none';
-          snd.src = soundUrl;
+          snd.src = blobUrl;
+          const cleanup = () => {
+            try {
+              snd.pause();
+            } catch {}
+            try {
+              snd.removeAttribute('src');
+              snd.load();
+            } catch {}
+          };
+          snd.addEventListener('ended', cleanup, { once: true });
+          snd.addEventListener('error', cleanup, { once: true });
           const playPromise = snd.play();
           if (playPromise !== undefined) {
             playPromise.catch(() => undefined);

@@ -108,20 +108,23 @@ const handleSubmit = async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  color: #333;
+  color: rgba(226, 232, 240, 0.92);
 }
 
 .auth-title {
   margin: 0;
   font-size: 24px;
-  color: #2c3e50;
+  color: rgba(226, 232, 240, 0.98);
   text-align: center;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.95), rgba(139, 92, 246, 0.95));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .auth-subtitle {
   margin: 0;
   font-size: 14px;
-  color: #7f8c8d;
+  color: rgba(226, 232, 240, 0.7);
   text-align: center;
   margin-bottom: 8px;
 }
@@ -129,21 +132,27 @@ const handleSubmit = async () => {
 .form-group input {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #ddd;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   font-size: 14px;
   outline: none;
   transition: border-color 0.2s;
   box-sizing: border-box; /* Fix width overflow */
+  background: rgba(2, 6, 23, 0.25);
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.form-group input::placeholder {
+  color: rgba(226, 232, 240, 0.55);
 }
 
 .form-group input:focus {
-  border-color: #409eff;
+  border-color: rgba(56, 189, 248, 0.7);
 }
 
 .submit-btn {
-  background: #409eff;
-  color: white;
+  background: rgba(56, 189, 248, 0.95);
+  color: rgba(2, 6, 23, 0.95);
   border: none;
   padding: 12px;
   border-radius: 8px;
@@ -158,19 +167,21 @@ const handleSubmit = async () => {
 }
 
 .submit-btn:disabled {
-  background: #a0cfff;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(226, 232, 240, 0.55);
   cursor: not-allowed;
 }
 
 .submit-btn:hover:not(:disabled) {
-  background: #66b1ff;
+  background: rgba(56, 189, 248, 1);
 }
 
 .error-message {
-  color: #e74c3c;
+  color: rgba(254, 202, 202, 0.95);
   font-size: 12px;
   text-align: center;
-  background: #fde8e7;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.25);
   padding: 8px;
   border-radius: 4px;
 }
@@ -178,11 +189,11 @@ const handleSubmit = async () => {
 .auth-footer {
   text-align: center;
   font-size: 12px;
-  color: #7f8c8d;
+  color: rgba(226, 232, 240, 0.65);
 }
 
 .auth-footer a {
-  color: #409eff;
+  color: rgba(56, 189, 248, 0.95);
   text-decoration: none;
   font-weight: 600;
 }

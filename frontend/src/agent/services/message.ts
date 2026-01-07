@@ -20,6 +20,21 @@ export type Time = {
 
 let messageTimer: any = null;
 
+const escapeHtml = (input: string) => {
+  const s = String(input ?? '');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+};
+
+const toSafeHtmlWithBreaks = (input: string) => {
+  const normalized = String(input ?? '').replace(/<br\s*\/?>/gi, '\n');
+  return escapeHtml(normalized).replace(/\n/g, '<br>');
+};
+
 /**
  * Display waifu message.
  * @param {string | string[]} text - Message text or array of texts.
@@ -51,7 +66,7 @@ export function showMessage(
   sessionStorage.setItem('waifu-message-priority', String(priority));
   const tips = document.getElementById('waifu-tips');
   if (tips) {
-    tips.innerHTML = text;
+    tips.innerHTML = toSafeHtmlWithBreaks(text);
     tips.classList.add('waifu-tips-active');
     messageTimer = setTimeout(() => {
       sessionStorage.removeItem('waifu-message-priority');

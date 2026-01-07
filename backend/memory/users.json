@@ -5,5 +5,14 @@
     "id": "user_nmvnnro78",
     "lastSeen": 1765449457482,
     "summary": ""
+  },
+  "user_1767512211723": {
+    "id": "user_1767512211723",
+    "username": "test_user_1767512211591",
+    "password": "pass123",
+    "name": "Test",
+    "visits": 0,
+    "preferences": {},
+    "createdAt": 1767512211723
   }
 }

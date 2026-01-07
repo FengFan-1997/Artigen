@@ -11,7 +11,7 @@ import {
   LOCAL_MEMORY_SUMMARY_MAX_CHARS
 } from '../constants';
 import { safeJsonParse, scheduleIdleTask } from '../utils';
-import { buildApiUrl, getApiBaseUrl, getUserId } from '../utils/user';
+import { buildApiUrl, getApiBaseUrl, getAuthToken, getUserId } from '../utils/user';
 
 export type LocalMemoryItem = {
   ts: number;
@@ -73,8 +73,17 @@ export function useLocalMemory() {
         return null;
       }
     })();
-    memorySummary.value =
+    const rawSummaryText =
       summaryRaw && typeof summaryRaw === 'string' && summaryRaw.trim() ? summaryRaw : '';
+    const trimmedSummaryText = rawSummaryText
+      ? rawSummaryText.slice(-LOCAL_MEMORY_SUMMARY_MAX_CHARS)
+      : '';
+    memorySummary.value = trimmedSummaryText;
+    if (rawSummaryText && rawSummaryText.length > LOCAL_MEMORY_SUMMARY_MAX_CHARS) {
+      try {
+        localStorage.setItem(memorySummaryKey.value, trimmedSummaryText);
+      } catch {}
+    }
 
     const factsRaw = (() => {
       try {
@@ -115,7 +124,10 @@ export function useLocalMemory() {
 
   const persistMemorySummary = () => {
     try {
-      localStorage.setItem(memorySummaryKey.value, memorySummary.value);
+      localStorage.setItem(
+        memorySummaryKey.value,
+        String(memorySummary.value || '').slice(-LOCAL_MEMORY_SUMMARY_MAX_CHARS)
+      );
     } catch {}
   };
 
@@ -196,11 +208,15 @@ export function useLocalMemory() {
     if (pendingToIngest.length === 0) return;
 
     const userId = getUserId();
+    const token = getAuthToken();
     const items = pendingToIngest.splice(0, pendingToIngest.length);
     try {
       await fetch(buildApiUrl('/api/memory/ingest'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           userId,
           items: items.map((x) => ({

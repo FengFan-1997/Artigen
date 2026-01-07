@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue';
 import { isLoggedIn as checkIsLoggedIn, loginUser, registerUser, logoutUser } from '../utils/user';
 import { getUserProfile } from '../services/aiService';
+import logger from '../utils/logger';
 
 const currentUser = ref<any>(null);
 const isAuthenticated = ref(checkIsLoggedIn());
@@ -18,7 +19,7 @@ export function useAuth() {
         const profile = await getUserProfile();
         currentUser.value = profile;
       } catch (e) {
-        console.error('Failed to load user profile', e);
+        logger.error('Failed to load user profile', e);
       }
     }
   };

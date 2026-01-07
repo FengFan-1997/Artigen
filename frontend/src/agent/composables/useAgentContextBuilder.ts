@@ -32,6 +32,14 @@ export function useAgentContextBuilder(input: {
   getPersonaRulesForAi: () => string;
   normalizeVrmModelKey: (input: string) => string;
 }) {
+  const safeStorageGet = (key: string) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+
   const sliceTailByChars = (text: string, maxChars: number) => {
     const s = String(text || '');
     if (!maxChars || maxChars <= 0) return '';
@@ -92,7 +100,7 @@ export function useAgentContextBuilder(input: {
       budgets.facts
     );
     const modelInfo = input.getRuntimeModelInfo();
-    const modelId = Number.parseInt(localStorage.getItem('modelId') || '0', 10) || 0;
+    const modelId = Number.parseInt(safeStorageGet('modelId') || '0', 10) || 0;
     const personaName =
       input.agentType.value === 'vrm'
         ? input.currentVrmName.value || input.getCharacterName()
