@@ -28,6 +28,18 @@ export const getCurrentUserId = (): string => {
   }
 };
 
+export const getAuthToken = (): string => {
+  try {
+    return String(
+      window.localStorage.getItem(STORAGE_KEY_TOKEN) ||
+        window.localStorage.getItem(LEGACY_STORAGE_KEY_TOKEN) ||
+        ''
+    ).trim();
+  } catch {
+    return '';
+  }
+};
+
 export const ensureGuestUserId = (): string => {
   const existing = getCurrentUserId();
   if (existing) return existing;

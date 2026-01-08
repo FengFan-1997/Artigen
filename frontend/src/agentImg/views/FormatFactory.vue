@@ -97,7 +97,12 @@
                       type="file"
                       class="file-input"
                       :accept="acceptFor(activeTool.id)"
-                      :multiple="activeTool.id === 'img2pdf'"
+                      :multiple="
+                        activeTool.id === 'img2pdf' ||
+                        activeTool.id === 'webp' ||
+                        activeTool.id === 'jpeg' ||
+                        activeTool.id === 'ico'
+                      "
                       @change="onFileChange"
                     />
                     <div class="file-drop-icon">📂</div>
@@ -601,8 +606,31 @@
                     >
                       取消
                     </button>
-                    <button class="btn ghost" :disabled="!outputBlob" @click="downloadOutput">
+                    <button
+                      v-if="outputItems.length > 1"
+                      class="btn ghost"
+                      :disabled="outputItems.length === 0"
+                      type="button"
+                      @click="downloadAllOutputs"
+                    >
+                      下载全部
+                    </button>
+                    <button
+                      v-else
+                      class="btn ghost"
+                      :disabled="!outputBlob"
+                      type="button"
+                      @click="downloadOutput"
+                    >
                       下载
+                    </button>
+                    <button
+                      v-if="outputUrl && (activeTool.id === 'img2pdf' || activeTool.id === 'ico')"
+                      class="btn ghost"
+                      type="button"
+                      @click="openOutputPreview(outputUrl)"
+                    >
+                      预览
                     </button>
                     <button
                       class="btn ghost"
@@ -637,17 +665,29 @@
                     </div>
                   </div>
 
+                  <div v-if="outputItems.length > 1" class="batch-list">
+                    <div v-for="it in outputItems" :key="it.url" class="batch-item">
+                      <div class="batch-name">{{ it.name }}</div>
+                      <div class="batch-size">{{ formatBytes(it.size) }}</div>
+                      <button class="btn ghost" type="button" @click="downloadOutputItem(it)">
+                        下载
+                      </button>
+                    </div>
+                  </div>
                   <div
-                    v-if="outputUrl && activeTool.id !== 'ico' && activeTool.id !== 'img2pdf'"
-                    class="preview"
+                    v-else-if="outputUrl && outputMeta && outputMeta.name.endsWith('.pdf')"
+                    class="ico-hint"
                   >
+                    PDF 已生成，可下载或预览。
+                  </div>
+                  <div
+                    v-else-if="outputUrl && outputMeta && outputMeta.name.endsWith('.ico')"
+                    class="ico-hint"
+                  >
+                    ICO 已生成，可下载或预览。
+                  </div>
+                  <div v-else-if="outputUrl" class="preview">
                     <img :src="outputUrl" alt="output" class="preview-img" />
-                  </div>
-                  <div v-else-if="outputBlob && activeTool.id === 'img2pdf'" class="ico-hint">
-                    PDF 已生成，可直接下载使用。
-                  </div>
-                  <div v-else-if="outputBlob && activeTool.id === 'ico'" class="ico-hint">
-                    ICO 已生成，可直接下载使用。
                   </div>
                 </div>
               </div>
@@ -679,6 +719,7 @@ const {
   outputUrl,
   outputBlob,
   outputMeta,
+  outputItems,
   isProcessing,
   toolError,
   webpOutFormat,
@@ -733,6 +774,9 @@ const {
   progressPercent,
   cancelProcessing,
   downloadOutput,
+  downloadAllOutputs,
+  downloadOutputItem,
+  openOutputPreview,
   resetTool,
   formatBytes,
   isDragging,
@@ -780,6 +824,38 @@ const {
   letter-spacing: 0.2px;
   box-shadow: 0 0 18px rgba(204, 255, 0, 0.12);
   pointer-events: none;
+}
+
+.batch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.batch-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.batch-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #e2e8f0;
+}
+
+.batch-size {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .format-factory-page {
@@ -1164,6 +1240,10 @@ const {
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -1180,7 +1260,7 @@ const {
 .tool-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 18px;
+  gap: 24px;
 }
 
 .tool-card-panel {

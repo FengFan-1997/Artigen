@@ -14,5 +14,41 @@
     "visits": 0,
     "preferences": {},
     "createdAt": 1767512211723
+  },
+  "email_d7bd7c338fbb9d1f": {
+    "id": "email_d7bd7c338fbb9d1f",
+    "email": "demo@example.com",
+    "username": "demo@example.com",
+    "name": "demo",
+    "visits": 0,
+    "preferences": {},
+    "createdAt": 1767881514866,
+    "sessionToken": "bca235607db336a40ee5beb5e9004d8d328148a8b1864e2fmk5j0b5e",
+    "sessionTokenIssuedAt": 1767881514866
+  },
+  "email_56271fc8e558df66": {
+    "id": "email_56271fc8e558df66",
+    "email": "577623946@qq.com",
+    "username": "577623946@qq.com",
+    "name": "577623946",
+    "visits": 0,
+    "preferences": {},
+    "createdAt": 1767882305160,
+    "sessionToken": "3575c7e6a66a7ec515dd2caac4472ffc6226ec58f196ebb8mk5jh8y0",
+    "sessionTokenIssuedAt": 1767882305160
+  },
+  "user_test_100k": {
+    "id": "user_test_100k",
+    "username": "test100k",
+    "name": "Test100k",
+    "visits": 2,
+    "preferences": {},
+    "createdAt": 1767888000000,
+    "passwordHash": "1005d3d36429952a1079af7fea7cfc2bcece7d7f296fb4470f940604468787a9",
+    "passwordSalt": "9a5cc2349482189361f1f4b316ef936f",
+    "passwordAlgo": "scrypt",
+    "lastSeen": 1767887448060,
+    "sessionToken": "9f5c3c1f9694f0436449b3e58af121eed118ae4d40020958mk5mjh8c",
+    "sessionTokenIssuedAt": 1767887448060
   }
 }

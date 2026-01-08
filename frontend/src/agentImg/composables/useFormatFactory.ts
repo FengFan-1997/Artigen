@@ -18,6 +18,8 @@ import { downloadBlob, revokeUrl } from '../logic/formatFactory/url';
 import { useFormatFactoryLive } from './useFormatFactoryLive';
 import { useFormatFactoryWatermark } from './useFormatFactoryWatermark';
 
+type FormatFactoryOutputItem = { name: string; size: number; blob: Blob; url: string };
+
 export const useFormatFactory = () => {
   const tools = ref<FormatFactoryTool[]>(formatFactoryTools);
 
@@ -40,6 +42,7 @@ export const useFormatFactory = () => {
 
   const sourceMeta = ref<{ name: string; size: number; dimensions?: string } | null>(null);
   const outputMeta = ref<{ name: string; size: number } | null>(null);
+  const outputItems = ref<FormatFactoryOutputItem[]>([]);
 
   const webpOutFormat = ref<'image/webp' | 'image/jpeg' | 'image/png'>('image/webp');
   const webpQuality = ref(0.9);
@@ -82,6 +85,13 @@ export const useFormatFactory = () => {
   const live = useFormatFactoryLive({ sourceFile });
   const watermark = useFormatFactoryWatermark({ activeToolId, sourceUrl, sourceFile });
 
+  const revokeOutputItems = () => {
+    for (const it of outputItems.value) {
+      revokeUrl(it.url);
+    }
+    outputItems.value = [];
+  };
+
   const resetTool = () => {
     try {
       runController.value?.abort();
@@ -96,6 +106,7 @@ export const useFormatFactory = () => {
     sourceMeta.value = null;
     outputMeta.value = null;
     outputBlob.value = null;
+    revokeOutputItems();
     revokeUrl(sourceUrl.value);
     revokeUrl(outputUrl.value);
     sourceUrl.value = null;
@@ -135,12 +146,14 @@ export const useFormatFactory = () => {
     toolError.value = null;
     outputMeta.value = null;
     outputBlob.value = null;
+    revokeOutputItems();
     progress.value = null;
     revokeUrl(outputUrl.value);
     outputUrl.value = null;
 
     const toolId = activeTool.value?.id;
-    sourceFiles.value = toolId === 'img2pdf' ? files : [];
+    const isBatchTool = toolId === 'webp' || toolId === 'jpeg' || toolId === 'ico';
+    sourceFiles.value = toolId === 'img2pdf' || isBatchTool ? files : [];
     const file = files[0];
     sourceFile.value = file;
 
@@ -148,6 +161,12 @@ export const useFormatFactory = () => {
     sourceUrl.value = URL.createObjectURL(file);
 
     if (toolId === 'img2pdf') {
+      const totalSize = files.reduce((sum, f) => sum + (f?.size || 0), 0);
+      sourceMeta.value = { name: `${files.length} files`, size: totalSize };
+      return;
+    }
+
+    if (isBatchTool) {
       const totalSize = files.reduce((sum, f) => sum + (f?.size || 0), 0);
       sourceMeta.value = { name: `${files.length} files`, size: totalSize };
       return;
@@ -224,6 +243,7 @@ export const useFormatFactory = () => {
     toolError.value = null;
     outputMeta.value = null;
     outputBlob.value = null;
+    revokeOutputItems();
     revokeUrl(outputUrl.value);
     outputUrl.value = null;
     progress.value = null;
@@ -243,7 +263,77 @@ export const useFormatFactory = () => {
       if (nonce !== runNonce.value) return;
       progress.value = p;
     };
+
+    const isBatchTool = tool.id === 'webp' || tool.id === 'jpeg' || tool.id === 'ico';
+    const batchFiles = isBatchTool ? (sourceFiles.value.length ? sourceFiles.value : [file]) : [];
+
     try {
+      if (isBatchTool && batchFiles.length > 1) {
+        const results: FormatFactoryOutputItem[] = [];
+        const totalFiles = batchFiles.length;
+        for (let i = 0; i < totalFiles; i += 1) {
+          const f = batchFiles[i];
+          const onFileProgress = (p: FormatFactoryProgress) => {
+            const innerTotal = Number(p.total || 0);
+            const innerDone = Number(p.done || 0);
+            const inner = innerTotal > 0 ? Math.max(0, Math.min(1, innerDone / innerTotal)) : 0;
+            setProgress({
+              done: i * 100 + inner * 100,
+              total: totalFiles * 100,
+              label: `${i + 1}/${totalFiles} ${p.label || '处理中'}`
+            });
+          };
+
+          if (tool.id === 'webp') {
+            const { blob, filename } = await convertImage(
+              f,
+              webpOutFormat.value,
+              webpOutFormat.value === 'image/png' ? undefined : webpQuality.value,
+              { signal: controller.signal, onProgress: onFileProgress }
+            );
+            if (nonce !== runNonce.value) return;
+            const url = URL.createObjectURL(blob);
+            results.push({ blob, name: filename, size: blob.size, url });
+            continue;
+          }
+
+          if (tool.id === 'jpeg') {
+            const maxSide = parsePositiveInt(jpegMaxSide.value);
+            const { blob, filename } = await convertToJpeg(f, jpegQuality.value, maxSide, {
+              signal: controller.signal,
+              onProgress: onFileProgress
+            });
+            if (nonce !== runNonce.value) return;
+            const url = URL.createObjectURL(blob);
+            results.push({ blob, name: filename, size: blob.size, url });
+            continue;
+          }
+
+          if (tool.id === 'ico') {
+            const sizes = icoSizes.value.slice().sort((a, b) => a - b);
+            if (sizes.length === 0) {
+              toolError.value = '请至少选择一个尺寸';
+              return;
+            }
+            const { blob, filename } = await generateIco(f, sizes, {
+              signal: controller.signal,
+              onProgress: onFileProgress
+            });
+            if (nonce !== runNonce.value) return;
+            const url = URL.createObjectURL(blob);
+            results.push({ blob, name: filename, size: blob.size, url });
+            continue;
+          }
+        }
+
+        outputItems.value = results;
+        outputMeta.value = {
+          name: `${results.length} outputs`,
+          size: results.reduce((sum, it) => sum + it.size, 0)
+        };
+        return;
+      }
+
       if (tool.id === 'webp') {
         const { blob, filename } = await convertImage(
           file,
@@ -255,9 +345,11 @@ export const useFormatFactory = () => {
           }
         );
         if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
         outputBlob.value = blob;
         outputMeta.value = { name: filename, size: blob.size };
-        outputUrl.value = URL.createObjectURL(blob);
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
         return;
       }
 
@@ -268,9 +360,11 @@ export const useFormatFactory = () => {
           onProgress: setProgress
         });
         if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
         outputBlob.value = blob;
         outputMeta.value = { name: filename, size: blob.size };
-        outputUrl.value = URL.createObjectURL(blob);
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
         return;
       }
 
@@ -285,26 +379,33 @@ export const useFormatFactory = () => {
           onProgress: setProgress
         });
         if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
         outputBlob.value = blob;
         outputMeta.value = { name: filename, size: blob.size };
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
         return;
       }
 
       if (tool.id === 'watermark') {
         const { blob, filename } = await watermark.exportWatermark();
         if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
         outputBlob.value = blob;
         outputMeta.value = { name: filename, size: blob.size };
-        outputUrl.value = URL.createObjectURL(blob);
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
         return;
       }
 
       if (tool.id === 'live') {
         const { blob, filename } = await live.captureVideoFrame();
         if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
         outputBlob.value = blob;
         outputMeta.value = { name: filename, size: blob.size };
-        outputUrl.value = URL.createObjectURL(blob);
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
         return;
       }
 
@@ -324,9 +425,11 @@ export const useFormatFactory = () => {
           onProgress: setProgress
         });
         if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
         outputBlob.value = blob;
         outputMeta.value = { name: filename, size: blob.size };
-        outputUrl.value = URL.createObjectURL(blob);
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
         return;
       }
 
@@ -340,8 +443,11 @@ export const useFormatFactory = () => {
           onProgress: setProgress
         });
         if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
         outputBlob.value = blob;
         outputMeta.value = { name: filename, size: blob.size };
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
         return;
       }
 
@@ -356,9 +462,11 @@ export const useFormatFactory = () => {
           onProgress: setProgress
         });
         if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
         outputBlob.value = blob;
         outputMeta.value = { name: filename, size: blob.size };
-        outputUrl.value = URL.createObjectURL(blob);
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
         return;
       }
     } catch (err: any) {
@@ -370,10 +478,34 @@ export const useFormatFactory = () => {
   };
 
   const downloadOutput = () => {
+    const single = outputItems.value.length === 1 ? outputItems.value[0] : null;
+    if (single) {
+      downloadBlob(single.blob, single.name);
+      return;
+    }
     const blob = outputBlob.value;
     const meta = outputMeta.value;
     if (!blob || !meta) return;
     downloadBlob(blob, meta.name);
+  };
+
+  const downloadAllOutputs = async () => {
+    const list = outputItems.value.slice();
+    if (list.length === 0) return;
+    for (let i = 0; i < list.length; i += 1) {
+      const it = list[i];
+      downloadBlob(it.blob, it.name);
+      await new Promise((r) => window.setTimeout(r, 180));
+    }
+  };
+
+  const downloadOutputItem = (it: { blob: Blob; name: string }) => {
+    downloadBlob(it.blob, it.name);
+  };
+
+  const openOutputPreview = (url: string | null) => {
+    if (!url) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   const toggleIcoSize = (s: number) => {
@@ -464,6 +596,9 @@ export const useFormatFactory = () => {
     onFileChange,
     runTool,
     downloadOutput,
+    downloadAllOutputs,
+    downloadOutputItem,
+    openOutputPreview,
     toggleIcoSize,
     formatBytes,
     sourceFile,
@@ -472,6 +607,7 @@ export const useFormatFactory = () => {
     outputUrl,
     outputBlob,
     outputMeta,
+    outputItems,
     isProcessing,
     toolError,
     progress,

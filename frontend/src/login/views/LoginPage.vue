@@ -17,7 +17,7 @@
       </div>
 
       <button
-        class="btn primary"
+        class="nth-login-btn primary"
         :disabled="sending || !email || cooldownLeft > 0"
         type="button"
         @click="sendCode"
@@ -46,7 +46,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { sendLoginCode } from '../api';
 import { getLastEmail, setLastEmail } from '../storage';
 import { isLocalLoggedIn } from '../session';
@@ -54,6 +54,7 @@ import { useLanguageStore } from '@/stores/language';
 import LanguageSwitcher from '../components/LanguageSwitcher.vue';
 
 const { t } = useLanguageStore();
+const route = useRoute();
 const router = useRouter();
 const email = ref(getLastEmail());
 const sending = ref(false);
@@ -87,7 +88,11 @@ const sendCode = async () => {
       return;
     }
     startCooldown(res.cooldownSec);
-    router.push({ path: '/login/verify', query: { email: email.value } });
+    const redirect = String(route.query.redirect || '').trim();
+    router.push({
+      path: '/login/verify',
+      query: { email: email.value, ...(redirect ? { redirect } : {}) }
+    });
   } catch (e: any) {
     error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
   } finally {
@@ -178,35 +183,8 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 1px rgba(204, 255, 0, 0.12);
 }
 
-.btn {
+.nth-login-btn {
   width: 100%;
-  border-radius: 8px;
-  padding: 12px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.4);
-  color: #f1f5f9;
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.btn.primary {
-  border-color: rgba(204, 255, 0, 0.45);
-  background: rgba(204, 255, 0, 0.14);
-  color: #ccff00;
-}
-
-.btn.primary:hover:not(:disabled) {
-  background: rgba(204, 255, 0, 0.22);
-  border-color: rgba(204, 255, 0, 0.8);
 }
 
 .hint {

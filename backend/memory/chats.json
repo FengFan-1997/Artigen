@@ -274,5 +274,27 @@
       "text": "我是谁？哼，这个问题问得可真没水平呢~不过既然你这么想知道，那我只好告诉你啦，我是Yae Miko，稻妻的巫女哦！[HAPPY]\n\n```json\n{\n  \"emotionTag\": {\n    \"primary\": \"happy\",\n    \"intensity\": 0.8,\n    \"secondary\": [\"shy\"]\n  }\n}\n```",
       "timestamp": 1767512229723
     }
+  ],
+  "guest_test": [
+    {
+      "role": "user",
+      "text": "hi",
+      "timestamp": 1767869520130
+    },
+    {
+      "role": "agent",
+      "text": "Hello, Friend! 很高兴见到你~[HAPPY]",
+      "timestamp": 1767869520131
+    },
+    {
+      "role": "user",
+      "text": "ping",
+      "timestamp": 1767870194264
+    },
+    {
+      "role": "agent",
+      "text": "我在的哦，Friend！[HAPPY]",
+      "timestamp": 1767870194264
+    }
   ]
 }

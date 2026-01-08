@@ -2,7 +2,18 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 
 export const useLanguageStore = defineStore('language', () => {
-  const currentLang = ref<'en' | 'zh'>('zh');
+  const currentLang = ref<'en' | 'zh'>(
+    (() => {
+      try {
+        const v = String(window.localStorage.getItem('app_lang') || '')
+          .trim()
+          .toLowerCase();
+        return v === 'en' ? 'en' : 'zh';
+      } catch {
+        return 'zh';
+      }
+    })()
+  );
 
   const translations = {
     en: {
@@ -191,22 +202,37 @@ export const useLanguageStore = defineStore('language', () => {
         loading: 'Loading...'
       },
       login: {
+        login: 'Login',
+        register: 'Register',
         title: 'Login',
+        sub: 'Use QQ Mail SMTP verification code (local service)',
+        password_login_sub: 'Login with username & password',
+        register_sub: 'Create an account with email verification code',
+        username_label: 'Username',
+        username_placeholder: 'Enter your username',
+        password_label: 'Password',
+        password_placeholder: 'Enter your password',
         email_label: 'Email',
         email_placeholder: 'Enter your email',
         send_code: 'Send Code',
         sending: 'Sending...',
+        hint: 'Code valid for 10 minutes; resend interval 60 seconds',
         verify_title: 'Verify',
         verify_subtitle: 'Enter the code sent to {email}',
         code_label: 'Verification Code',
         code_placeholder: '6-digit code',
         verify_btn: 'Verify & Login',
+        login_btn: 'Login',
+        register_btn: 'Register',
         account_title: 'Account',
+        account_sub: 'Current user (stored locally)',
+        user_id: 'USER_ID',
         current_user: 'Current User',
         local_users: 'Local Users',
         switch: 'Switch',
         logout: 'Logout',
         back: 'Back',
+        back_to_resend: 'Back',
         success: 'Sent successfully',
         failed: 'Send failed',
         login_success: 'Login successful',
@@ -217,7 +243,13 @@ export const useLanguageStore = defineStore('language', () => {
         invalid_code: 'Invalid code format',
         resend: 'Resend',
         resend_wait: 'Resend in {s}s',
-        no_users: 'No local users found'
+        no_users: 'No local users found',
+        empty: 'Empty',
+        login_other: 'Login with another email',
+        verify_hint: 'After login, user data is stored in your browser only',
+        debug_code_hint: 'SMTP not configured, debug code: {code}',
+        switch_to_register: 'No account? Register',
+        switch_to_login: 'Have an account? Login'
       }
     },
     zh: {
@@ -405,16 +437,26 @@ export const useLanguageStore = defineStore('language', () => {
         loading: '加载中...'
       },
       login: {
+        login: '登录',
+        register: '注册',
         title: '登录',
+        register_sub: '使用邮箱验证码完成注册',
+        password_login_sub: '使用账号和密码登录',
+        username_label: '账号',
+        username_placeholder: '请输入账号',
+        password_label: '密码',
+        password_placeholder: '请输入密码',
         email_label: '邮箱',
-        email_placeholder: '请输入您的邮箱',
+        email_placeholder: '请输入 QQ 邮箱',
         send_code: '发送验证码',
-        sending: '发送中...',
-        verify_title: '验证',
-        verify_subtitle: '请输入发送至 {email} 的验证码',
+        sending: '发送中…',
+        verify_title: '验证登录',
+        verify_subtitle: '验证码已发送至 {email}',
         code_label: '验证码',
-        code_placeholder: '6位数字验证码',
+        code_placeholder: '请输入 6 位验证码',
         verify_btn: '验证并登录',
+        login_btn: '登录',
+        register_btn: '注册',
         account_title: '账户',
         current_user: '当前用户',
         local_users: '本地用户',
@@ -436,21 +478,30 @@ export const useLanguageStore = defineStore('language', () => {
         hint: '验证码有效期 10 分钟；每次发送间隔 60 秒',
         verifying: '验证中…',
         verify_hint: '登录成功后，用户信息将仅存储在本地浏览器',
+        debug_code_hint: 'SMTP 未配置，已返回验证码：{code}',
         back_to_resend: '返回重发',
         account_sub: '当前登录用户（本地存储）',
         user_id: 'USER_ID',
         empty: '暂无',
-        login_other: '登录其他邮箱'
+        login_other: '登录其他邮箱',
+        switch_to_register: '没有账号？注册',
+        switch_to_login: '已有账号？登录'
       }
     }
   };
 
   function toggleLanguage() {
     currentLang.value = currentLang.value === 'en' ? 'zh' : 'en';
+    try {
+      window.localStorage.setItem('app_lang', currentLang.value);
+    } catch {}
   }
 
   function setLanguage(lang: 'en' | 'zh') {
     currentLang.value = lang;
+    try {
+      window.localStorage.setItem('app_lang', currentLang.value);
+    } catch {}
   }
 
   function t(key: string, args?: Record<string, string | number>) {

@@ -1,0 +1,30 @@
+{
+  "user_id": "guest_test",
+  "meta": {
+    "last_interaction": "2026-01-08",
+    "updatedAt": 1767870194265
+  },
+  "core_memory": [],
+  "short_term_buffer": [
+    {
+      "role": "user",
+      "text": "hi",
+      "ts": 1767869520131
+    },
+    {
+      "role": "agent",
+      "text": "Hello, Friend! 很高兴见到你~[HAPPY]",
+      "ts": 1767869520131
+    },
+    {
+      "role": "user",
+      "text": "ping",
+      "ts": 1767870194265
+    },
+    {
+      "role": "agent",
+      "text": "我在的哦，Friend！[HAPPY]",
+      "ts": 1767870194265
+    }
+  ]
+}

@@ -19,7 +19,7 @@
       </div>
 
       <button
-        class="btn primary"
+        class="nth-login-btn primary"
         :disabled="verifying || !email || code.length < 4"
         type="button"
         @click="verify"
@@ -90,8 +90,9 @@ const verify = async () => {
     }
     setLastEmail(e);
     upsertUser({ email: e, userId: res.userId });
-    setLoggedIn({ userId: res.userId });
-    router.push('/login/account');
+    setLoggedIn({ userId: res.userId, token: res.token });
+    const redirect = String(route.query.redirect || '').trim();
+    router.push(redirect || '/login/account');
   } catch (err: any) {
     error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
   } finally {
@@ -178,35 +179,8 @@ const verify = async () => {
   box-shadow: 0 0 0 1px rgba(204, 255, 0, 0.12);
 }
 
-.btn {
+.nth-login-btn {
   width: 100%;
-  border-radius: 8px;
-  padding: 12px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.4);
-  color: #f1f5f9;
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.btn.primary {
-  border-color: rgba(204, 255, 0, 0.45);
-  background: rgba(204, 255, 0, 0.14);
-  color: #ccff00;
-}
-
-.btn.primary:hover:not(:disabled) {
-  background: rgba(204, 255, 0, 0.22);
-  border-color: rgba(204, 255, 0, 0.8);
 }
 
 .hint {

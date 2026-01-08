@@ -1,58 +1,9 @@
 <template>
   <div class="auth-form">
-    <h3 class="auth-title">{{ isLogin ? 'Welcome Back!' : 'Join Us' }}</h3>
-    <p class="auth-subtitle">
-      {{ isLogin ? 'Login to sync your memory' : 'Create an account to get started' }}
-    </p>
+    <h3 class="auth-title">邮箱验证码登录</h3>
+    <p class="auth-subtitle">统一使用 /login（QQ SMTP 验证码）</p>
 
-    <div class="form-group">
-      <input
-        v-model="username"
-        type="text"
-        placeholder="Username"
-        :disabled="isLoading"
-        @keyup.enter="handleSubmit"
-      />
-    </div>
-
-    <div class="form-group">
-      <input
-        v-model="password"
-        type="password"
-        placeholder="Password"
-        :disabled="isLoading"
-        @keyup.enter="handleSubmit"
-      />
-    </div>
-
-    <div v-if="!isLogin" class="form-group">
-      <input
-        v-model="name"
-        type="text"
-        placeholder="Display Name (Optional)"
-        :disabled="isLoading"
-        @keyup.enter="handleSubmit"
-      />
-    </div>
-
-    <div v-if="error" class="error-message">
-      {{ error }}
-    </div>
-
-    <button class="submit-btn" @click="handleSubmit" :disabled="isLoading || !isValid">
-      <span v-if="isLoading" class="spinner">↻</span>
-      {{ isLogin ? 'Login' : 'Register' }}
-    </button>
-
-    <div class="auth-footer">
-      <span v-if="isLogin">
-        New here? <a href="#" @click.prevent="$emit('switch-mode', 'register')">Create account</a>
-      </span>
-      <span v-else>
-        Already have an account?
-        <a href="#" @click.prevent="$emit('switch-mode', 'login')">Login</a>
-      </span>
-    </div>
+    <button class="submit-btn nth-login-btn" type="button" @click="goLogin">前往登录</button>
   </div>
 </template>
 
@@ -61,44 +12,18 @@ export default {};
 </script>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { useAuth } from '../composables/useAuth';
+import { useRoute } from 'vue-router';
+import { useLoginModel } from '@/stores';
 
-const props = defineProps<{
+defineProps<{
   mode: 'login' | 'register';
 }>();
 
-const emit = defineEmits<{
-  (e: 'success'): void;
-  (e: 'switch-mode', mode: 'login' | 'register'): void;
-}>();
+const route = useRoute();
+const loginStore = useLoginModel();
 
-const { login, register, isLoading, error: authError } = useAuth();
-
-const username = ref('');
-const password = ref('');
-const name = ref('');
-
-const isLogin = computed(() => props.mode === 'login');
-const isValid = computed(() => {
-  return username.value.trim().length > 0 && password.value.trim().length > 0;
-});
-
-const error = computed(() => authError.value);
-
-const handleSubmit = async () => {
-  if (!isValid.value || isLoading.value) return;
-
-  try {
-    if (isLogin.value) {
-      await login(username.value, password.value);
-    } else {
-      await register(username.value, password.value, name.value);
-    }
-    emit('success');
-  } catch (e) {
-    // Error is handled by useAuth and exposed via authError
-  }
+const goLogin = () => {
+  loginStore.open({ mode: 'login', returnTo: String(route.fullPath || '').trim() });
 };
 </script>
 
@@ -151,9 +76,9 @@ const handleSubmit = async () => {
 }
 
 .submit-btn {
-  background: rgba(56, 189, 248, 0.95);
-  color: rgba(2, 6, 23, 0.95);
-  border: none;
+  background: transparent;
+  color: rgba(226, 232, 240, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   padding: 12px;
   border-radius: 8px;
   font-size: 16px;
@@ -164,55 +89,5 @@ const handleSubmit = async () => {
   justify-content: center;
   align-items: center;
   gap: 8px;
-}
-
-.submit-btn:disabled {
-  background: rgba(255, 255, 255, 0.12);
-  color: rgba(226, 232, 240, 0.55);
-  cursor: not-allowed;
-}
-
-.submit-btn:hover:not(:disabled) {
-  background: rgba(56, 189, 248, 1);
-}
-
-.error-message {
-  color: rgba(254, 202, 202, 0.95);
-  font-size: 12px;
-  text-align: center;
-  background: rgba(239, 68, 68, 0.14);
-  border: 1px solid rgba(239, 68, 68, 0.25);
-  padding: 8px;
-  border-radius: 4px;
-}
-
-.auth-footer {
-  text-align: center;
-  font-size: 12px;
-  color: rgba(226, 232, 240, 0.65);
-}
-
-.auth-footer a {
-  color: rgba(56, 189, 248, 0.95);
-  text-decoration: none;
-  font-weight: 600;
-}
-
-.auth-footer a:hover {
-  text-decoration: underline;
-}
-
-.spinner {
-  display: inline-block;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
 }
 </style>

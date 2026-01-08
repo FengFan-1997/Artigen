@@ -17,19 +17,32 @@
 
         <div class="header-right">
           <div class="lang-container" @click="isLangMenuOpen = !isLangMenuOpen">
-            <button class="lang-switch">
-              <span class="globe-icon">🌐</span> ZH
+            <button class="lang-switch" type="button">
+              <span class="globe-icon">🌐</span> {{ langLabel }}
               <span class="arrow" :class="{ open: isLangMenuOpen }">⌄</span>
             </button>
             <transition name="dropdown-fade">
               <div v-if="isLangMenuOpen" class="lang-dropdown">
-                <div class="lang-option active">ZH · 中文</div>
-                <div class="lang-option">EN · English</div>
-                <div class="lang-option">JP · 日本語</div>
+                <div
+                  class="lang-option"
+                  :class="{ active: currentLang === 'zh' }"
+                  @click.stop="selectLanguage('zh')"
+                >
+                  ZH · 中文
+                </div>
+                <div
+                  class="lang-option"
+                  :class="{ active: currentLang === 'en' }"
+                  @click.stop="selectLanguage('en')"
+                >
+                  EN · English
+                </div>
               </div>
             </transition>
           </div>
-          <button class="login-btn">LOGIN</button>
+          <button class="login-btn nth-login-btn" type="button" @click="goLogin">
+            {{ loginText }}
+          </button>
         </div>
       </header>
 
@@ -38,43 +51,43 @@
         <div class="hero-left">
           <div class="status-badge">
             <span class="status-dot"></span>
-            工具库在线 SYS v2.0.4
+            {{ statusText }}
           </div>
 
           <h1 class="headline">
-            聚合 N 种<span class="highlight">黑科技</span><br />
-            <span class="highlight">搞定图片</span>一切需求
+            {{ headlineLine1 }}<span class="highlight">{{ headlineHighlight1 }}</span
+            ><br />
+            <span class="highlight">{{ headlineHighlight2 }}</span
+            >{{ headlineLine2 }}
           </h1>
 
           <p class="description">
-            从 AI 智能创作到格式批量转换，打造一站式影像处理解决方案。深度集成 AI
-            算力引擎与高性能传统算法，20+ 专业工具覆盖图片全生命周期。支持双模型 AI
-            生成、多种格式转换，纯前端处理确保数据隐私安全。
+            {{ heroDesc }}
           </p>
 
           <div class="tags-row">
-            <span class="tag">AI_POWERED</span>
-            <span class="tag">CLIENT_SIDE</span>
-            <span class="tag">PRIVACY_FIRST</span>
+            <span class="tag">{{ tag1 }}</span>
+            <span class="tag">{{ tag2 }}</span>
+            <span class="tag">{{ tag3 }}</span>
           </div>
 
           <div class="cta-row">
             <router-link to="/agentimg/ai" class="btn primary-btn">
-              AI 工坊 <span class="arrow">→</span>
+              {{ ctaWorkshop }} <span class="arrow">→</span>
             </router-link>
-            <router-link to="/agentimg/format-factory" class="btn outline-btn"
-              >格式工厂</router-link
-            >
-            <router-link to="/agentimg/market" class="btn outline-btn">算力商城</router-link>
+            <router-link to="/agentimg/format-factory" class="btn outline-btn">{{
+              ctaFormatFactory
+            }}</router-link>
+            <router-link to="/agentimg/market" class="btn outline-btn">{{ ctaMarket }}</router-link>
           </div>
 
           <div class="stats-row">
             <div class="stat-item">
-              <div class="stat-label">响应速度</div>
+              <div class="stat-label">{{ statLabel1 }}</div>
               <div class="stat-value">~2.5s</div>
             </div>
             <div class="stat-item">
-              <div class="stat-label">工具数量</div>
+              <div class="stat-label">{{ statLabel2 }}</div>
               <div class="stat-value">20+</div>
             </div>
           </div>
@@ -111,8 +124,8 @@
       <section class="features-section">
         <div class="section-header">
           <div class="sub-label">// FUNCTIONAL_MODULES</div>
-          <h2 class="section-title">核心功能</h2>
-          <p class="section-desc">三大工具矩阵，覆盖图片全生命周期</p>
+          <h2 class="section-title">{{ featuresTitle }}</h2>
+          <p class="section-desc">{{ featuresDesc }}</p>
         </div>
 
         <div class="features-grid">
@@ -122,11 +135,10 @@
               <span class="module-id">MODULE_01</span>
               <span class="badge">ACTIVE</span>
             </div>
-            <h3 class="card-title">AI 工坊</h3>
+            <h3 class="card-title">{{ feature1Title }}</h3>
             <div class="card-subtitle">AI-POWERED CREATION</div>
             <p class="card-text">
-              搭载双模型 AI 图片生成引擎，支持文生图、图生图。 内置 Prompt
-              优化助手，让创意精准落地。
+              {{ feature1Desc }}
             </p>
             <div class="card-tags"><span>TXT2IMG</span><span>IMG2IMG</span></div>
             <div class="card-action">
@@ -141,11 +153,10 @@
               <span class="module-id">MODULE_02</span>
               <span class="badge">ACTIVE</span>
             </div>
-            <h3 class="card-title">格式工厂</h3>
+            <h3 class="card-title">{{ feature2Title }}</h3>
             <div class="card-subtitle">FORMAT CONVERTER</div>
             <p class="card-text">
-              WebP/JPEG/PNG 全格式支持，纯前端处理保障隐私。 支持批量压缩、去水印、PDF 转换等 20+
-              实用工具。
+              {{ feature2Desc }}
             </p>
             <div class="card-tags"><span>LOCAL_PROCESS</span><span>PRIVACY</span></div>
             <div class="card-action">
@@ -160,10 +171,10 @@
               <span class="module-id">MODULE_03</span>
               <span class="badge">BETA</span>
             </div>
-            <h3 class="card-title">算力商城</h3>
+            <h3 class="card-title">{{ feature3Title }}</h3>
             <div class="card-subtitle">COMPUTE MARKET</div>
             <p class="card-text">
-              分布式算力租赁平台，按需购买 GPU 资源。 支持模型微调、批量渲染任务托管。
+              {{ feature3Desc }}
             </p>
             <div class="card-tags"><span>GPU_RENTAL</span><span>DISTRIBUTED</span></div>
             <div class="card-action">
@@ -180,14 +191,91 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
+import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import GlobalFooter from '../components/GlobalFooter.vue';
+import { useLanguageStore } from '@/stores/language';
+import { useLoginModel } from '@/stores';
 
 const router = useRouter();
 const bgCanvas = ref<HTMLCanvasElement | null>(null);
 const isLangMenuOpen = ref(false);
 let animationId: number;
+
+const languageStore = useLanguageStore();
+const { currentLang } = storeToRefs(languageStore);
+const loginStore = useLoginModel();
+
+const selectLanguage = (lang: 'zh' | 'en') => {
+  languageStore.setLanguage(lang);
+  isLangMenuOpen.value = false;
+};
+
+const langLabel = computed(() => (currentLang.value === 'zh' ? 'ZH' : 'EN'));
+
+const headlineLine1 = computed(() =>
+  currentLang.value === 'zh' ? '聚合 N 种' : 'Aggregate N kinds of '
+);
+const headlineHighlight1 = computed(() => (currentLang.value === 'zh' ? '黑科技' : 'Tech Magic'));
+const headlineHighlight2 = computed(() =>
+  currentLang.value === 'zh' ? '搞定图片' : 'Solve Images'
+);
+const headlineLine2 = computed(() =>
+  currentLang.value === 'zh' ? '一切需求' : ' for every use case'
+);
+
+const heroDesc = computed(() =>
+  currentLang.value === 'zh'
+    ? '从 AI 智能创作到格式批量转换，打造一站式影像处理解决方案。深度集成 AI 算力引擎与高性能传统算法，20+ 专业工具覆盖图片全生命周期。支持双模型 AI 生成、多种格式转换，纯前端处理确保数据隐私安全。'
+    : 'From AI creation to batch format conversion, a one-stop imaging toolkit. Deeply integrated AI compute and high-performance classic algorithms, with 20+ professional tools covering the full image lifecycle. Dual-model AI generation, multi-format conversion, and client-side processing for privacy.'
+);
+
+const ctaWorkshop = computed(() => (currentLang.value === 'zh' ? 'AI 工坊' : 'AI Workshop'));
+const ctaFormatFactory = computed(() =>
+  currentLang.value === 'zh' ? '格式工厂' : 'Format Factory'
+);
+const ctaMarket = computed(() => (currentLang.value === 'zh' ? '算力商城' : 'Compute Market'));
+
+const loginText = computed(() => (currentLang.value === 'zh' ? '登录' : 'LOGIN'));
+const statusText = computed(() =>
+  currentLang.value === 'zh' ? '工具库在线 SYS v2.0.4' : 'TOOLBOX ONLINE SYS v2.0.4'
+);
+const tag1 = computed(() => (currentLang.value === 'zh' ? 'AI 驱动' : 'AI_POWERED'));
+const tag2 = computed(() => (currentLang.value === 'zh' ? '纯前端' : 'CLIENT_SIDE'));
+const tag3 = computed(() => (currentLang.value === 'zh' ? '隐私优先' : 'PRIVACY_FIRST'));
+const statLabel1 = computed(() => (currentLang.value === 'zh' ? '响应速度' : 'Latency'));
+const statLabel2 = computed(() => (currentLang.value === 'zh' ? '工具数量' : 'Tools'));
+
+const featuresTitle = computed(() => (currentLang.value === 'zh' ? '核心功能' : 'Core Modules'));
+const featuresDesc = computed(() =>
+  currentLang.value === 'zh'
+    ? '三大工具矩阵，覆盖图片全生命周期'
+    : 'Three tool clusters covering the full image lifecycle'
+);
+const feature1Title = computed(() => (currentLang.value === 'zh' ? 'AI 工坊' : 'AI Workshop'));
+const feature1Desc = computed(() =>
+  currentLang.value === 'zh'
+    ? '搭载双模型 AI 图片生成引擎，支持文生图、图生图。内置 Prompt 优化助手，让创意精准落地。'
+    : 'Dual-model image generation: text-to-image and image-to-image. Built-in prompt helper for precise creation.'
+);
+const feature2Title = computed(() => (currentLang.value === 'zh' ? '格式工厂' : 'Format Factory'));
+const feature2Desc = computed(() =>
+  currentLang.value === 'zh'
+    ? 'WebP/JPEG/PNG 全格式支持，纯前端处理保障隐私。支持批量压缩、去水印、PDF 转换等 20+ 实用工具。'
+    : 'Full format support (WebP/JPEG/PNG) with client-side processing for privacy. 20+ utilities like batch compress, watermark removal, and PDF conversion.'
+);
+const feature3Title = computed(() => (currentLang.value === 'zh' ? '算力商城' : 'Compute Market'));
+const feature3Desc = computed(() =>
+  currentLang.value === 'zh'
+    ? '分布式算力租赁平台，按需购买 GPU 资源。支持模型微调、批量渲染任务托管。'
+    : 'A distributed compute marketplace to rent GPU resources on demand. Supports fine-tuning and batch rendering workloads.'
+);
+
+const goLogin = () => {
+  const returnTo = router.currentRoute.value.fullPath;
+  loginStore.open({ mode: 'login', returnTo });
+};
 
 // Matrix Rain Effect
 const initMatrixRain = () => {

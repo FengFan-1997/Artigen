@@ -17,6 +17,7 @@ const {
 const { installImgagentRoutes, credits: imgCredits } = require('./imgagent');
 const fs = require('fs');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const { PassThrough } = require('stream');
 let HttpsProxyAgent = null;
 try {
@@ -109,6 +110,11 @@ const SILICONFLOW_API_BASE = normalizeUrl(process.env.SILICONFLOW_API_BASE || 'h
 const SILICONFLOW_MODEL = (process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-8B').toString().trim();
 const SILICONFLOW_MESSAGES_URL = `${SILICONFLOW_API_BASE}/messages`;
 const SILICONFLOW_CHAT_COMPLETIONS_URL = `${SILICONFLOW_API_BASE}/chat/completions`;
+const SILICONFLOW_IMAGES_GENERATIONS_URL = `${SILICONFLOW_API_BASE}/images/generations`;
+const SILICONFLOW_IMAGE_MODEL = (process.env.SILICONFLOW_IMAGE_MODEL || 'Qwen/Qwen-Image-Edit-2509')
+  .toString()
+  .trim();
+const SILICONFLOW_IMAGE_INPUT_FIELD = (process.env.SILICONFLOW_IMAGE_INPUT_FIELD || 'image').toString().trim();
 
 let activeTextProvider = (() => {
   const preferred = (process.env.TEXT_PROVIDER || '').toString().trim().toLowerCase();
@@ -138,6 +144,14 @@ const GEMINI_TIMEOUT_MS = (() => {
 const GEMINI_REACTION_TIMEOUT_MS = (() => {
   const v = Number.parseInt(process.env.GEMINI_REACTION_TIMEOUT_MS || '', 10);
   return Number.isFinite(v) && v > 1000 ? v : 6000;
+})();
+const SILICONFLOW_TIMEOUT_MS = (() => {
+  const v = Number.parseInt(process.env.SILICONFLOW_TIMEOUT_MS || '', 10);
+  return Number.isFinite(v) && v > 1000 ? v : 45000;
+})();
+const SILICONFLOW_REACTION_TIMEOUT_MS = (() => {
+  const v = Number.parseInt(process.env.SILICONFLOW_REACTION_TIMEOUT_MS || '', 10);
+  return Number.isFinite(v) && v > 1000 ? v : 15000;
 })();
 
 const parseUrlList = (raw, fallback) => {
@@ -550,9 +564,102 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens }) => {
   throw err;
 };
 
+const toSiliconflowImage = (v) => {
+  if (!v) return '';
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return '';
+    if (s.startsWith('data:')) return s;
+    if (/^https?:\/\//i.test(s)) return s;
+    if (/^[a-z0-9+/=\s]+$/i.test(s) && s.length >= 32) return s;
+    return '';
+  }
+  if (typeof v === 'object') {
+    const mimeType = String(v.mimeType || '').trim() || 'image/png';
+    const dataBase64 = String(v.dataBase64 || '').trim();
+    if (!dataBase64) return '';
+    return `data:${mimeType};base64,${dataBase64}`;
+  }
+  return '';
+};
+
+const callSiliconFlowImageGenerate = async ({
+  prompt,
+  negativePrompt,
+  params,
+  images,
+  timeoutMs
+}) => {
+  if (!SILICONFLOW_API_KEY) {
+    const err = new Error('MISSING_SILICONFLOW_API_KEY');
+    err.code = 'MISSING_SILICONFLOW_API_KEY';
+    throw err;
+  }
+
+  const startedAt = Date.now();
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${SILICONFLOW_API_KEY}`
+  };
+
+  const p = String(prompt || '').trim();
+  if (!p) {
+    const err = new Error('EMPTY_PROMPT');
+    err.code = 'EMPTY_PROMPT';
+    throw err;
+  }
+
+  const body = {
+    model: SILICONFLOW_IMAGE_MODEL,
+    prompt: p,
+    negative_prompt: String(negativePrompt || '').trim() || undefined,
+    image_size: String(params?.imageSize || '').trim() || '1024x1024',
+    num_inference_steps:
+      typeof params?.steps === 'number' && Number.isFinite(params.steps) ? params.steps : undefined,
+    guidance_scale:
+      typeof params?.guidanceScale === 'number' && Number.isFinite(params.guidanceScale)
+        ? params.guidanceScale
+        : undefined,
+    seed:
+      typeof params?.seed === 'number' && Number.isFinite(params.seed) ? Math.trunc(params.seed) : undefined
+  };
+
+  const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
+  if (imgs[0]) body[SILICONFLOW_IMAGE_INPUT_FIELD] = imgs[0];
+  if (imgs[1]) body.image2 = imgs[1];
+  if (imgs[2]) body.image3 = imgs[2];
+
+  const response = await fetchWithTimeout(
+    SILICONFLOW_IMAGES_GENERATIONS_URL,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body)
+    },
+    timeoutMs
+  );
+
+  const raw = await response.text().catch(() => '');
+  if (!response.ok) {
+    const err = new Error(`SILICONFLOW_IMAGE_${response.status}`);
+    err.code = `SILICONFLOW_IMAGE_${response.status}`;
+    err.status = response.status;
+    err.bodyPreview = String(raw || '').slice(0, 1800);
+    err.elapsedMs = Date.now() - startedAt;
+    throw err;
+  }
+
+  const data = raw ? JSON.parse(raw) : null;
+  return { data, elapsedMs: Date.now() - startedAt };
+};
+
 const callTextGenerate = async ({ contents, timeoutMs, reactionMode }) => {
   const canGemini = !!API_KEY;
   const canSiliconflow = !!SILICONFLOW_API_KEY;
+  const sfTimeoutMs = Math.max(
+    Math.max(1000, Number(timeoutMs || 0) || 0),
+    reactionMode ? SILICONFLOW_REACTION_TIMEOUT_MS : SILICONFLOW_TIMEOUT_MS
+  );
 
   const toSiliconflowMessages = () => {
     const messages = [];
@@ -590,7 +697,7 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode }) => {
       if (canSiliconflow) {
         const { text, usage, model, usedUrl } = await callSiliconFlowChat({
           messages: toSiliconflowMessages(),
-          timeoutMs,
+          timeoutMs: sfTimeoutMs,
           maxTokens: reactionMode ? 512 : 2048
         });
         return { text, provider: 'siliconflow', usage, model, usedUrl };
@@ -602,7 +709,7 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode }) => {
   if (canSiliconflow) {
     const { text, usage, model, usedUrl } = await callSiliconFlowChat({
       messages: toSiliconflowMessages(),
-      timeoutMs,
+      timeoutMs: sfTimeoutMs,
       maxTokens: reactionMode ? 512 : 2048
     });
     return { text, provider: 'siliconflow', usage, model, usedUrl };
@@ -1335,6 +1442,36 @@ app.get('/api/health', async (req, res) => {
   }
 
   res.json(result);
+});
+
+const listRegisteredRoutes = (appInstance) => {
+  try {
+    const router = appInstance?.router || appInstance?._router;
+    const stack = Array.isArray(router?.stack) ? router.stack : [];
+    const routes = [];
+    for (const layer of stack) {
+      const route = layer?.route;
+      const routePath = route?.path;
+      const methodsObj = route?.methods;
+      if (!routePath || !methodsObj || typeof methodsObj !== 'object') continue;
+      const methods = Object.keys(methodsObj)
+        .filter((k) => !!methodsObj[k])
+        .map((m) => m.toUpperCase());
+      routes.push({ path: routePath, methods });
+    }
+    return routes;
+  } catch {
+    return [];
+  }
+};
+
+app.get('/api/_debug/routes', (req, res) => {
+  if (String(process.env.DEBUG_ROUTES || '').trim() !== '1') return res.status(404).json({ error: 'Not Found' });
+  const routes = listRegisteredRoutes(app);
+  const hasImg2img = routes.some(
+    (r) => r && r.path === '/api/img2img' && Array.isArray(r.methods) && r.methods.includes('POST')
+  );
+  res.json({ ok: true, hasImg2img, routes });
 });
 
 const DEFAULT_PROJECT_KNOWLEDGE = `
@@ -2623,17 +2760,218 @@ const mergeUserData = (fromUserId, toUserId) => {
   return { ok: true };
 };
 
+const LOGIN_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const LOGIN_CODE_TTL_MS = 10 * 60 * 1000;
+const LOGIN_SEND_COOLDOWN_MS = 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
+const loginCodes = new Map();
+
+const normalizeEmail = (input) => String(input || '').trim().toLowerCase();
+
+const emailToUserId = (email) => {
+  const e = normalizeEmail(email);
+  if (!e) return '';
+  const h = crypto.createHash('sha1').update(e).digest('hex').slice(0, 16);
+  return `email_${h}`;
+};
+
+const buildSmtpTransport = () => {
+  const user = String(process.env.QQ_SMTP_USER || '').trim();
+  const pass = String(process.env.QQ_SMTP_PASS || '').trim();
+  if (!user || !pass) throw new Error('QQ_SMTP_MISSING');
+  return nodemailer.createTransport({
+    host: 'smtp.qq.com',
+    port: 465,
+    secure: true,
+    auth: { user, pass }
+  });
+};
+
+const sendLoginMail = async (to, code) => {
+  const transport = buildSmtpTransport();
+  const fromUser = String(process.env.QQ_SMTP_USER || '').trim();
+  const fromName = String(process.env.QQ_SMTP_FROM_NAME || 'Nth Me').trim();
+  const subject = '登录验证码';
+  const html = `
+    <div style="font-family: -apple-system, Segoe UI, Roboto, Arial; line-height: 1.6; color: #0f172a;">
+      <div style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">邮箱验证码登录</div>
+      <div style="margin-bottom: 12px;">你的验证码是：</div>
+      <div style="font-size: 28px; font-weight: 900; letter-spacing: 4px; margin: 10px 0;">${code}</div>
+      <div style="color: #475569; font-size: 12px;">10 分钟内有效。如非本人操作，请忽略。</div>
+    </div>
+  `;
+  await transport.sendMail({
+    from: `${fromName} <${fromUser}>`,
+    to,
+    subject,
+    html
+  });
+};
+
+app.post(
+  '/api/login/send-code',
+  rateLimit('login_send_code', { max: 10, windowMs: 60 * 1000 }),
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const email = normalizeEmail(body.email);
+      if (!email || email.length > 254 || !LOGIN_EMAIL_RE.test(email)) {
+        return res.status(400).json({ ok: false, message: '邮箱格式不正确' });
+      }
+
+      const now = Date.now();
+      const existing = loginCodes.get(email);
+      if (existing && existing.nextSendAt > now) {
+        const left = Math.ceil((existing.nextSendAt - now) / 1000);
+        return res.status(429).json({
+          ok: false,
+          message: `发送太频繁，请 ${left}s 后再试`,
+          cooldownSec: left
+        });
+      }
+
+      const code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0');
+      loginCodes.set(email, {
+        code,
+        expiresAt: now + LOGIN_CODE_TTL_MS,
+        nextSendAt: now + LOGIN_SEND_COOLDOWN_MS,
+        attemptsLeft: LOGIN_MAX_ATTEMPTS
+      });
+
+      const cooldownSec = Math.ceil(LOGIN_SEND_COOLDOWN_MS / 1000);
+      let debugCode = '';
+      try {
+        await sendLoginMail(email, code);
+      } catch (e) {
+        const msg = typeof e?.message === 'string' ? e.message : '';
+        const ip = getClientIp(req);
+        const isLocal = ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1';
+        const allowDebug =
+          String(process.env.LOGIN_DEBUG_RETURN_CODE || '').trim() === '1' ||
+          String(process.env.DEBUG_ROUTES || '').trim() === '1';
+        if (msg === 'QQ_SMTP_MISSING' && allowDebug && isLocal) {
+          debugCode = code;
+        } else if (msg === 'QQ_SMTP_MISSING') {
+          return res.status(500).json({ ok: false, message: '缺少 QQ_SMTP_USER / QQ_SMTP_PASS 环境变量' });
+        } else {
+          throw e;
+        }
+      }
+      return res.json({ ok: true, cooldownSec, ...(debugCode ? { debugCode } : {}) });
+    } catch (e) {
+      console.error('Error in /api/login/send-code:', e);
+      return res.status(500).json({ ok: false, message: '发送失败，请检查 SMTP 配置' });
+    }
+  }
+);
+
+app.post(
+  '/api/login/verify',
+  rateLimit('login_verify', { max: 30, windowMs: 60 * 1000 }),
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const email = normalizeEmail(body.email);
+      const code = String(body.code || '').trim();
+      const fromUserId = String(body.fromUserId || '').trim();
+      if (!email || !LOGIN_EMAIL_RE.test(email)) return res.status(400).json({ ok: false, message: '邮箱格式不正确' });
+      if (!code) return res.status(400).json({ ok: false, message: '请输入验证码' });
+
+      const st = loginCodes.get(email);
+      if (!st) return res.status(400).json({ ok: false, message: '请先发送验证码' });
+
+      const now = Date.now();
+      if (now > Number(st.expiresAt || 0)) {
+        loginCodes.delete(email);
+        return res.status(400).json({ ok: false, message: '验证码已过期，请重新发送' });
+      }
+
+      if (Number(st.attemptsLeft || 0) <= 0) {
+        loginCodes.delete(email);
+        return res.status(429).json({ ok: false, message: '尝试次数过多，请重新发送验证码' });
+      }
+
+      if (code !== String(st.code || '')) {
+        st.attemptsLeft = Number(st.attemptsLeft || 0) - 1;
+        loginCodes.set(email, st);
+        return res.status(400).json({ ok: false, message: '验证码错误' });
+      }
+
+      loginCodes.delete(email);
+
+      const users = readUsersMap();
+      const existingUser = Object.values(users).find((u) => normalizeEmail(u?.email) === email);
+      const userId = existingUser?.id ? String(existingUser.id).trim() : emailToUserId(email);
+      if (!userId) return res.status(500).json({ ok: false, message: 'USER_ID_FAILED' });
+
+      const token = generateToken();
+      const nameFallback = (() => {
+        const idx = email.indexOf('@');
+        const base = idx > 0 ? email.slice(0, idx) : email;
+        return base || 'Friend';
+      })();
+
+      const nextUser = existingUser
+        ? {
+            ...existingUser,
+            id: userId,
+            email,
+            username: String(existingUser.username || email).trim() || email,
+            name: String(existingUser.name || '').trim() || nameFallback,
+            sessionToken: token,
+            sessionTokenIssuedAt: Date.now()
+          }
+        : {
+            id: userId,
+            email,
+            username: email,
+            name: nameFallback,
+            visits: 0,
+            preferences: {},
+            createdAt: Date.now(),
+            sessionToken: token,
+            sessionTokenIssuedAt: Date.now()
+          };
+
+      users[userId] = nextUser;
+      writeJson(USERS_FILE, users);
+
+      try {
+        const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+        writeUserMemory(userId, mem);
+      } catch {}
+
+      try {
+        imgCredits.ensureWallet(userId);
+      } catch {}
+
+      try {
+        if (fromUserId && fromUserId !== userId && fromUserId.startsWith('guest_')) mergeUserData(fromUserId, userId);
+      } catch {}
+
+      return res.json({ ok: true, userId, token, email, name: nextUser.name });
+    } catch (e) {
+      console.error('Error in /api/login/verify:', e);
+      return res.status(500).json({ ok: false, message: '验证失败' });
+    }
+  }
+);
+
 app.post('/api/auth/register', (req, res) => {
   try {
-    const { username, password, name, fromUserId } = req.body || {};
+    const { username, password, name, fromUserId, email, code } = req.body || {};
     const uname = normalizeUsername(username);
     const pw = String(password || '');
-    if (!uname || !pw) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
+    const mail = normalizeEmail(email);
+    const c = String(code || '').trim();
+    if (!uname || !pw || !mail || !c) return res.status(400).json({ error: 'Username, password, email, code are required' });
+    if (!LOGIN_EMAIL_RE.test(mail)) return res.status(400).json({ error: 'Invalid email format' });
 
     const users = readUsersMap();
     
+    const existingEmail = Object.values(users).find((u) => normalizeEmail(u?.email) === mail);
+    if (existingEmail) return res.status(409).json({ error: 'Email already exists' });
+
     // Check if username already exists
     const existingUser = Object.values(users).find((u) => {
       const u0 = normalizeUsername(u?.username);
@@ -2643,6 +2981,24 @@ app.post('/api/auth/register', (req, res) => {
       return res.status(409).json({ error: 'Username already exists' });
     }
 
+    const st = loginCodes.get(mail);
+    if (!st) return res.status(400).json({ error: 'Please send code first' });
+    const now = Date.now();
+    if (now > Number(st.expiresAt || 0)) {
+      loginCodes.delete(mail);
+      return res.status(400).json({ error: 'Code expired' });
+    }
+    if (Number(st.attemptsLeft || 0) <= 0) {
+      loginCodes.delete(mail);
+      return res.status(429).json({ error: 'Too many attempts, resend code' });
+    }
+    if (c !== String(st.code || '')) {
+      st.attemptsLeft = Number(st.attemptsLeft || 0) - 1;
+      loginCodes.set(mail, st);
+      return res.status(400).json({ error: 'Invalid code' });
+    }
+    loginCodes.delete(mail);
+
     const userId = makeUserId();
     const salt = crypto.randomBytes(16).toString('hex');
     const passwordHash = hashPassword(pw, salt);
@@ -2650,6 +3006,7 @@ app.post('/api/auth/register', (req, res) => {
     const newUser = {
       id: userId,
       username: uname,
+      email: mail,
       passwordHash,
       passwordSalt: salt,
       passwordAlgo: 'scrypt',
@@ -2797,6 +3154,87 @@ app.post('/api/user', (req, res) => {
   }
 });
 
+app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }), async (req, res) => {
+  let holdCtx = null;
+  try {
+    const body = req.body || {};
+    const prompt = String(body.prompt || '').trim();
+    if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
+
+    const derivedUserId = (() => {
+      const ip = getClientIp(req);
+      const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
+      const h = crypto.createHash('sha1').update(`${ip}|${ua}`).digest('hex').slice(0, 10);
+      return `guest_${h}`;
+    })();
+    const userId = String(body.userId || '').trim() || derivedUserId;
+    if (!assertAuthUserMatches(req, res, userId)) return;
+
+    if (!SILICONFLOW_API_KEY) {
+      return res.status(500).json({ error: 'MISSING_SILICONFLOW_API_KEY' });
+    }
+
+    const imagesRaw = Array.isArray(body.images) ? body.images : [];
+    if (imagesRaw.length === 0) return res.status(400).json({ error: 'Image is required' });
+
+    const cost = (() => {
+      const v = Number.parseInt(
+        process.env.CREDITS_COST_IMG2IMG || process.env.CREDITS_COST_IMAGE || process.env.CREDITS_COST_GENERATE || '1',
+        10
+      );
+      return Number.isFinite(v) && v > 0 ? v : 1;
+    })();
+    const requestId =
+      String(body.requestId || '').trim() ||
+      `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const holdRes = imgCredits.freezeCredits({ userId, cost, requestId, reason: 'img2img' });
+    if (!holdRes.ok) return res.status(402).json({ error: holdRes.error, wallet: holdRes.wallet || null });
+    holdCtx = { userId, holdId: holdRes.holdId, requestId };
+
+    const paramsRaw = body.params && typeof body.params === 'object' ? body.params : {};
+    const params = {
+      imageSize: typeof paramsRaw.imageSize === 'string' ? paramsRaw.imageSize.trim() : '',
+      steps: Number.isFinite(Number(paramsRaw.steps)) ? Number(paramsRaw.steps) : undefined,
+      guidanceScale: Number.isFinite(Number(paramsRaw.guidanceScale)) ? Number(paramsRaw.guidanceScale) : undefined,
+      seed: Number.isFinite(Number(paramsRaw.seed)) ? Number(paramsRaw.seed) : undefined
+    };
+
+    const { data } = await callSiliconFlowImageGenerate({
+      prompt,
+      negativePrompt: body.negativePrompt,
+      params,
+      images: imagesRaw,
+      timeoutMs: Math.max(5000, Number(body.timeoutMs || '') || 120000)
+    });
+
+    const confirmed = imgCredits.confirmHold({ userId, holdId: holdRes.holdId });
+    if (!confirmed.ok) {
+      imgCredits.refundHold({ userId, holdId: holdRes.holdId });
+      return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+    }
+    holdCtx = null;
+    return res.json({ requestId, ...data });
+  } catch (error) {
+    try {
+      if (holdCtx?.userId && holdCtx?.holdId)
+        imgCredits.refundHold({ userId: holdCtx.userId, holdId: holdCtx.holdId });
+    } catch {}
+    console.error('Error in /api/img2img:', error);
+    const code = typeof error?.code === 'string' ? String(error.code) : '';
+    const status =
+      typeof error?.status === 'number' && Number.isFinite(error.status) ? Math.trunc(error.status) : 500;
+    if (code === 'EMPTY_PROMPT') return res.status(400).json({ error: code });
+    if (code === 'MISSING_SILICONFLOW_API_KEY') return res.status(500).json({ error: code });
+    if (code.startsWith('SILICONFLOW_IMAGE_') && status >= 400 && status < 600) {
+      return res.status(status).json({
+        error: code,
+        detail: typeof error?.bodyPreview === 'string' ? error.bodyPreview : ''
+      });
+    }
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 // 2.5 Generic Generate Content (for simple AI tasks)
 app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }), async (req, res) => {
   try {
@@ -2840,7 +3278,7 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
         if (SILICONFLOW_API_KEY) {
           const { text } = await callSiliconFlowChat({
             messages: [{ role: 'user', content: String(prompt) }],
-            timeoutMs: GEMINI_TIMEOUT_MS,
+            timeoutMs: Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS),
             maxTokens: 2048
           });
           const confirmed = imgCredits.confirmHold({ userId, holdId });
@@ -2859,7 +3297,7 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
     if (SILICONFLOW_API_KEY) {
       const { text } = await callSiliconFlowChat({
         messages: [{ role: 'user', content: String(prompt) }],
-        timeoutMs: GEMINI_TIMEOUT_MS,
+        timeoutMs: Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS),
         maxTokens: 2048
       });
       const confirmed = imgCredits.confirmHold({ userId, holdId });
@@ -3209,7 +3647,9 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
               { role: 'user', content: userMessage }
             ];
 
-            const timeoutMs = reactionMode ? GEMINI_REACTION_TIMEOUT_MS : GEMINI_TIMEOUT_MS;
+            const timeoutMs = reactionMode
+              ? Math.max(GEMINI_REACTION_TIMEOUT_MS, SILICONFLOW_REACTION_TIMEOUT_MS)
+              : Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS);
             const { text } = await callSiliconFlowChat({
               messages,
               timeoutMs,

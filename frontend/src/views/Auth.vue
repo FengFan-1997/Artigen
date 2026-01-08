@@ -1,90 +1,26 @@
 <template>
   <div class="auth-container">
     <div class="auth-card">
-      <h2>{{ isLogin ? 'Welcome Back' : 'Join the Future' }}</h2>
-      <p class="subtitle">
-        {{
-          isLogin
-            ? 'Sign in to continue your journey'
-            : 'Create an account to unlock full potential'
-        }}
-      </p>
-
-      <form @submit.prevent="handleSubmit">
-        <div class="form-group">
-          <label>Email / Username</label>
-          <input v-model="form.username" type="text" placeholder="Enter your username" required />
-        </div>
-
-        <div class="form-group" v-if="!isLogin">
-          <label>Display Name</label>
-          <input v-model="form.name" type="text" placeholder="What should we call you?" />
-        </div>
-
-        <div class="form-group">
-          <label>Password</label>
-          <input v-model="form.password" type="password" placeholder="••••••••" required />
-        </div>
-
-        <button type="submit" class="auth-btn" :disabled="loading">
-          {{ loading ? 'Processing...' : isLogin ? 'Sign In' : 'Sign Up' }}
-        </button>
-      </form>
-
-      <div class="toggle-mode">
-        <span @click="toggleMode">
-          {{ isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in' }}
-        </span>
-      </div>
-
-      <div v-if="error" class="error-msg">{{ error }}</div>
+      <h2>Redirecting…</h2>
+      <p class="subtitle">Use unified email-code login at /login</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue';
-import { useRouter } from 'vue-router';
-import { loginUser, registerUser } from '../auth';
+import { onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { useLoginModel } from '@/stores';
 
 const router = useRouter();
-const isLogin = ref(true);
-const loading = ref(false);
-const error = ref('');
+const route = useRoute();
+const loginStore = useLoginModel();
 
-const form = reactive({
-  username: '',
-  password: '',
-  name: ''
+onMounted(() => {
+  const redirect = String(route.query.redirect || '').trim();
+  loginStore.open({ mode: 'login', returnTo: redirect || router.currentRoute.value.fullPath });
+  router.replace(redirect || '/');
 });
-
-const toggleMode = () => {
-  isLogin.value = !isLogin.value;
-  error.value = '';
-};
-
-const handleSubmit = async () => {
-  loading.value = true;
-  error.value = '';
-
-  try {
-    if (isLogin.value) {
-      await loginUser(form.username, form.password);
-    } else {
-      await registerUser(form.username, form.password, form.name || form.username);
-    }
-
-    // Redirect to home or previous page
-    router.push('/');
-
-    // Force reload to refresh Agent state (simple way)
-    // window.location.href = '/';
-  } catch (e: any) {
-    error.value = e.message || 'Authentication failed';
-  } finally {
-    loading.value = false;
-  }
-};
 </script>
 
 <style scoped>

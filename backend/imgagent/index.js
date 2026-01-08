@@ -14,6 +14,29 @@ const installImgagentRoutes = (app, opts) => {
     res.json(bal);
   });
 
+  app.post('/api/credits/checkin', (req, res) => {
+    const body = req.body || {};
+    const userId = String(body.userId || '').trim();
+    if (typeof assertAuthUserMatches === 'function') {
+      const auth = assertAuthUserMatches(req, res, userId);
+      if (!auth) return;
+    }
+
+    const daily = (() => {
+      const v = Number.parseInt(String(process.env.CREDITS_DAILY_CHECKIN || '2'), 10);
+      return Number.isFinite(v) && v > 0 ? v : 2;
+    })();
+
+    const result = credits.checkinCredits({ userId, credits: daily });
+    if (!result.ok) return res.status(400).json({ ok: false, error: result.error });
+    res.json({
+      ok: true,
+      alreadyCheckedIn: !!result.alreadyCheckedIn,
+      creditsAdded: Number(result.creditsAdded ?? 0) || 0,
+      wallet: result.wallet || null
+    });
+  });
+
   app.post('/api/pay/afdian/webhook', (req, res) => {
     const expected = String(process.env.AFDIAN_WEBHOOK_TOKEN || '').trim();
     if (expected) {

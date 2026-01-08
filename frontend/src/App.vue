@@ -1,7 +1,10 @@
-<script setup lang="ts"></script>
+<script setup lang="ts">
+import LoginModal from './login/components/LoginModal.vue';
+</script>
 
 <template>
   <router-view></router-view>
+  <LoginModal />
   <!-- <Agent /> -->
 </template>
 

@@ -49,13 +49,20 @@ const ensureWallet = (userId, opts) => {
     const frozen = Number(cur.frozen ?? 0) || 0;
     const createdAt = Number(cur.createdAt ?? 0) || 0;
     const updatedAt = Number(cur.updatedAt ?? 0) || 0;
-    const fixed = { available, frozen, createdAt: createdAt || now(), updatedAt: updatedAt || now() };
+    const lastCheckinDay = typeof cur.lastCheckinDay === 'string' ? cur.lastCheckinDay.trim() : '';
+    const fixed = {
+      available,
+      frozen,
+      createdAt: createdAt || now(),
+      updatedAt: updatedAt || now(),
+      ...(lastCheckinDay ? { lastCheckinDay } : {})
+    };
     wallets[uid] = fixed;
     writeWalletMap(wallets);
     return fixed;
   }
 
-  const created = { available: initCredits, frozen: 0, createdAt: now(), updatedAt: now() };
+  const created = { available: initCredits, frozen: 0, createdAt: now(), updatedAt: now(), lastCheckinDay: '' };
   wallets[uid] = created;
   writeWalletMap(wallets);
   return created;
@@ -65,7 +72,20 @@ const getBalance = (userId) => {
   const uid = normalizeUserId(userId);
   const wallet = ensureWallet(uid);
   if (!wallet) return null;
-  return { userId: uid, available: wallet.available, frozen: wallet.frozen };
+  return {
+    userId: uid,
+    available: wallet.available,
+    frozen: wallet.frozen,
+    lastCheckinDay: typeof wallet.lastCheckinDay === 'string' ? wallet.lastCheckinDay : ''
+  };
+};
+
+const getTodayKey = () => {
+  try {
+    return new Date().toISOString().slice(0, 10);
+  } catch {
+    return '';
+  }
 };
 
 const makeHoldId = () => {
@@ -221,6 +241,28 @@ const grantCredits = (input) => {
   return { ok: true, wallet: getBalance(uid) };
 };
 
+const checkinCredits = (input) => {
+  const uid = normalizeUserId(input?.userId);
+  const credits = Number.parseInt(String(input?.credits ?? 0), 10);
+  if (!uid) return { ok: false, error: 'MISSING_USER_ID' };
+  if (!Number.isFinite(credits) || credits <= 0) return { ok: false, error: 'INVALID_CREDITS' };
+
+  ensureWallet(uid);
+  const wallets = readWalletMap();
+  const w = wallets[uid] || {};
+  const today = getTodayKey();
+  const last = typeof w.lastCheckinDay === 'string' ? w.lastCheckinDay.trim() : '';
+  if (today && last === today) {
+    return { ok: true, alreadyCheckedIn: true, creditsAdded: 0, wallet: getBalance(uid) };
+  }
+
+  const available = Number(w?.available ?? 0) || 0;
+  const frozen = Number(w?.frozen ?? 0) || 0;
+  wallets[uid] = { ...w, available: available + credits, frozen, lastCheckinDay: today || last, updatedAt: now() };
+  writeWalletMap(wallets);
+  return { ok: true, alreadyCheckedIn: false, creditsAdded: credits, wallet: getBalance(uid) };
+};
+
 const applyAfdianOrder = (input) => {
   const uid = normalizeUserId(input?.userId);
   const afdianOrderId = String(input?.afdianOrderId || '').trim();
@@ -279,6 +321,7 @@ module.exports = {
   confirmHold,
   refundHold,
   grantCredits,
+  checkinCredits,
   applyAfdianOrder,
   mergeWallet
 };

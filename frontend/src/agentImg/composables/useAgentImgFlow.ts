@@ -2,7 +2,7 @@ import { computed, ref } from 'vue';
 import { agentImgPromptLibrary } from '../data/promptLibrary';
 import { extractFirstJsonObject, safeJsonStringify } from '../logic/json';
 import type { AgentImgDirectionOption, AgentImgPromptResult } from '../types';
-import { generateText } from '../services/text';
+import { generateText, type GenerateImageInput } from '../services/text';
 
 const clampNumber = (n: any, min: number, max: number) => {
   const v = typeof n === 'number' ? n : Number(n);
@@ -106,13 +106,26 @@ const buildFinalPrompt = (input: {
     .join('\n\n');
 };
 
-export const useAgentImgFlow = (opts?: { getContextText?: () => string }) => {
+export const useAgentImgFlow = (opts?: {
+  getContextText?: () => string;
+  getImages?: () => Promise<GenerateImageInput[] | undefined> | GenerateImageInput[] | undefined;
+}) => {
   const getContextText = () => {
     try {
       const fn = opts?.getContextText;
       return typeof fn === 'function' ? String(fn() || '').trim() : '';
     } catch {
       return '';
+    }
+  };
+  const getImages = async (): Promise<GenerateImageInput[] | undefined> => {
+    try {
+      const fn = opts?.getImages;
+      if (typeof fn !== 'function') return undefined;
+      const res = await fn();
+      return Array.isArray(res) ? res : undefined;
+    } catch {
+      return undefined;
     }
   };
   const userInput = ref('');
@@ -178,7 +191,13 @@ export const useAgentImgFlow = (opts?: { getContextText?: () => string }) => {
     const reqId = `agentimg_${nextStage}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     lastRequestId.value = reqId;
     try {
-      return await generateText(prompt, { signal: ctl.signal, timeoutMs: 45000, requestId: reqId });
+      const images = await getImages();
+      return await generateText(prompt, {
+        signal: ctl.signal,
+        timeoutMs: 45000,
+        requestId: reqId,
+        images
+      });
     } finally {
       activeAbort.value = null;
     }
@@ -221,9 +240,9 @@ export const useAgentImgFlow = (opts?: { getContextText?: () => string }) => {
     loading.value = false;
   };
 
-  const generateFinal = async () => {
+  const generateFinal = async (): Promise<AgentImgPromptResult | null> => {
     const input = userInput.value.trim();
-    if (!input || loading.value) return;
+    if (!input || loading.value) return null;
     loading.value = true;
     error.value = '';
     finalPrompt.value = null;
@@ -238,7 +257,7 @@ export const useAgentImgFlow = (opts?: { getContextText?: () => string }) => {
     if (!res.ok) {
       loading.value = false;
       error.value = humanizeError(res.errorCode || res.error);
-      return;
+      return null;
     }
 
     const json = extractFirstJsonObject(res.text);
@@ -246,11 +265,12 @@ export const useAgentImgFlow = (opts?: { getContextText?: () => string }) => {
     if (!normalized) {
       loading.value = false;
       error.value = humanizeError('PARSE_PROMPT_FAILED');
-      return;
+      return null;
     }
 
     finalPrompt.value = normalized;
     loading.value = false;
+    return normalized;
   };
 
   return {

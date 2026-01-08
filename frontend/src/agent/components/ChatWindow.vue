@@ -84,12 +84,12 @@
             <div class="avatar-large">
               <span>👤</span>
             </div>
-            <h3>{{ currentUser?.name || currentUser?.username }}</h3>
-            <p class="user-id">ID: {{ currentUser?.userId || currentUser?.id }}</p>
+            <h3>{{ sessionEmail || '-' }}</h3>
+            <p class="user-id">ID: {{ sessionUserId || '-' }}</p>
 
             <div class="stats">
               <div class="stat-item">
-                <span class="stat-val">{{ currentUser?.visits || 1 }}</span>
+                <span class="stat-val">1</span>
                 <span class="stat-label">{{ t.visits }}</span>
               </div>
             </div>
@@ -98,12 +98,12 @@
             <button class="back-btn" @click="currentView = 'chat'">{{ t.backToChat }}</button>
           </div>
 
-          <AuthForm
-            v-else
-            :mode="authMode"
-            @switch-mode="(m) => (authMode = m)"
-            @success="handleAuthSuccess"
-          />
+          <div v-else class="login-cta">
+            <button class="nth-login-btn" type="button" @click="goLogin">{{ t.login }}</button>
+            <button class="back-btn" type="button" @click="currentView = 'chat'">
+              {{ t.backToChat }}
+            </button>
+          </div>
         </div>
       </div>
     </transition>
@@ -119,9 +119,11 @@ import { ref, nextTick, watch, onMounted, computed } from 'vue';
 import { marked } from 'marked';
 import { message } from 'ant-design-vue';
 import type { ChatMessage } from '../types';
-import { useAuth } from '../composables/useAuth';
-import AuthForm from './AuthForm.vue';
 import logger from '../utils/logger';
+import { useRoute } from 'vue-router';
+import { getCurrentUserId, isLocalLoggedIn, logoutLocal } from '@/login/session';
+import { getLastEmail, loadUsers } from '@/login/storage';
+import { useLoginModel } from '@/stores';
 
 const props = defineProps<{
   messages: ChatMessage[];
@@ -139,7 +141,9 @@ const emit = defineEmits<{
   (e: 'activity'): void;
 }>();
 
-const { isAuthenticated, currentUser, logout } = useAuth();
+const route = useRoute();
+const loginStore = useLoginModel();
+
 const chatWindowRef = ref<HTMLElement | null>(null);
 
 const translations = {
@@ -181,6 +185,20 @@ const messagesContainer = ref<HTMLElement | null>(null);
 // Voice Input State
 const isListening = ref(false);
 let recognition: any = null;
+
+const isAuthenticated = ref(false);
+const sessionUserId = ref('');
+const sessionEmail = ref('');
+
+const refreshSession = () => {
+  const authed = isLocalLoggedIn();
+  const uid = getCurrentUserId();
+  const users = loadUsers();
+  const found = users.find((u) => u.userId === uid);
+  isAuthenticated.value = authed;
+  sessionUserId.value = uid;
+  sessionEmail.value = (found?.email || getLastEmail() || '').trim();
+};
 
 const toggleVoice = () => {
   if (isListening.value) {
@@ -279,7 +297,6 @@ const windowStyle = computed(() => {
 
 // View State
 const currentView = ref<'chat' | 'auth'>('chat');
-const authMode = ref<'login' | 'register'>('login');
 
 const visibleMessages = computed(() => {
   return props.messages.filter((msg) => !msg.text.startsWith('[System Event]:'));
@@ -435,26 +452,26 @@ watch(() => props.isLoading, scrollToBottom);
 watch(currentView, scrollToBottom);
 
 onMounted(() => {
+  refreshSession();
   scrollToBottom();
 });
 
 const handleLogout = async () => {
-  await logout();
-  currentView.value = 'auth';
-  authMode.value = 'login';
-};
-
-const handleAuthSuccess = () => {
-  currentView.value = 'chat';
+  logoutLocal();
 };
 
 const toggleView = () => {
+  refreshSession();
   if (currentView.value === 'chat') {
     currentView.value = 'auth';
   } else {
     currentView.value = 'chat';
   }
   refreshActivity();
+};
+
+const goLogin = () => {
+  loginStore.open({ mode: 'login', returnTo: String(route.fullPath || '').trim() });
 };
 
 // Auto-scroll to bottom when messages change
@@ -537,11 +554,17 @@ watch(
   border: none;
   font-size: 18px;
   cursor: pointer;
-  padding: 8px;
+  padding: 0;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   transition: background 0.2s;
   color: rgba(226, 232, 240, 0.75);
   margin-left: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 .icon-btn:hover {

@@ -34,7 +34,8 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background-color: #0f172a;
-  overflow-x: hidden; /* Only hide horizontal scroll */
+  overflow-x: hidden;
+  /* Only hide horizontal scroll */
 }
 
 h1 {
@@ -53,12 +54,64 @@ button {
   cursor: pointer;
   transition: border-color 0.25s;
 }
+
 button:hover {
   border-color: #646cff;
 }
+
 button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
+}
+
+.nth-login-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: rgba(241, 245, 249, 0.95);
+  padding: 8px 20px;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 14px;
+  letter-spacing: 1px;
+  transition: all 0.3s;
+  position: relative;
+  overflow: hidden;
+}
+
+.nth-login-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.nth-login-btn.primary {
+  border-color: rgba(204, 255, 0, 0.65);
+  color: rgba(204, 255, 0, 0.95);
+  box-shadow: 0 0 15px rgba(204, 255, 0, 0.12);
+}
+
+.nth-login-btn.primary:hover:not(:disabled) {
+  box-shadow: 0 0 18px rgba(204, 255, 0, 0.18);
+}
+
+.nth-login-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(204, 255, 0, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.nth-login-btn:hover {
+  border-color: rgba(204, 255, 0, 0.65);
+  color: rgba(204, 255, 0, 0.95);
+  box-shadow: 0 0 15px rgba(204, 255, 0, 0.15);
+}
+
+.nth-login-btn:hover::before {
+  left: 100%;
 }
 
 .card {
@@ -76,9 +129,11 @@ button:focus-visible {
     color: #213547;
     background-color: #ffffff;
   }
+
   a:hover {
     color: #747bff;
   }
+
   button {
     background-color: #f9f9f9;
   }
@@ -87,7 +142,8 @@ button:focus-visible {
 /* Agent Task Highlighting */
 .agent-highlight-target {
   position: relative;
-  z-index: 9998; /* Below agent but above other content */
+  z-index: 9998;
+  /* Below agent but above other content */
   box-shadow:
     0 0 0 4px rgba(255, 105, 180, 0.6),
     0 0 20px rgba(255, 105, 180, 0.4);
@@ -99,9 +155,11 @@ button:focus-visible {
   0% {
     box-shadow: 0 0 0 0px rgba(255, 105, 180, 0.7);
   }
+
   70% {
     box-shadow: 0 0 0 10px rgba(255, 105, 180, 0);
   }
+
   100% {
     box-shadow: 0 0 0 0px rgba(255, 105, 180, 0);
   }
