@@ -1,7 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const MEMORY_DIR = path.join(__dirname, '../memory');
+const MEMORY_DIR = (() => {
+  const raw = String(process.env.MEMORY_DIR || '').trim();
+  if (raw) return path.resolve(raw);
+  return path.join(__dirname, '../memory');
+})();
 const VECTORS_FILE = path.join(MEMORY_DIR, 'vectors.json');
 const CHATS_FILE = path.join(MEMORY_DIR, 'chats.json');
 const USERS_FILE = path.join(MEMORY_DIR, 'users.json');

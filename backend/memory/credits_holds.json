@@ -178,5 +178,45 @@
     "status": "confirmed",
     "createdAt": 1767887675649,
     "updatedAt": 1767887702148
+  },
+  "d959433e09507fd79585404d4d405aa2mk5o9219": {
+    "id": "d959433e09507fd79585404d4d405aa2mk5o9219",
+    "userId": "user_test_100k",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "smoke_2f9f7d0d949e484b873b60c25cfc9eb6",
+    "status": "confirmed",
+    "createdAt": 1767890321037,
+    "updatedAt": 1767890337241
+  },
+  "752b864adef54a82d867c663189645c2mk5ogq2d": {
+    "id": "752b864adef54a82d867c663189645c2mk5ogq2d",
+    "userId": "guest_test",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "smoke_generate_1",
+    "status": "confirmed",
+    "createdAt": 1767890678773,
+    "updatedAt": 1767890691402
+  },
+  "05d27d0965d104ad76aeb7543388a34bmk5oh40m": {
+    "id": "05d27d0965d104ad76aeb7543388a34bmk5oh40m",
+    "userId": "guest_test",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "smoke_img2img_no_image",
+    "status": "refunded",
+    "createdAt": 1767890696854,
+    "updatedAt": 1767890696902
+  },
+  "ab0a956680d2bdc04ea8546d0a7a4a54mk5pqlgt": {
+    "id": "ab0a956680d2bdc04ea8546d0a7a4a54mk5pqlgt",
+    "userId": "guest_test",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "img2img_test_1767892818911",
+    "status": "confirmed",
+    "createdAt": 1767892818989,
+    "updatedAt": 1767892825262
   }
 }

@@ -1166,6 +1166,25 @@
       "durationMs": 17055,
       "ip": "::1",
       "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "requestId": "chat_4c3d8e7333214efaa93bddafbfba9476",
+      "ts": 1767890352230,
+      "createdAt": 1767890352230,
+      "updatedAt": 1767890352230,
+      "userId": "user_test_100k",
+      "trigger": "chat",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen3-8B",
+      "usedUrl": "https://api.siliconflow.cn/v1/messages",
+      "tokensIn": 342,
+      "tokensOut": 55,
+      "tokensTotal": 397,
+      "creditsDelta": 1,
+      "status": "ok",
+      "durationMs": 14846,
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456"
     }
   ]
 }

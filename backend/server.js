@@ -28,9 +28,49 @@ try {
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-app.use(cors());
-app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '10mb' }));
+if (String(process.env.TRUST_PROXY || '').trim() === '1') {
+  app.set('trust proxy', true);
+}
+
+const parseCorsOrigins = (raw) => {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (s === '*') return '*';
+  const list = s
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return list.length ? list : null;
+};
+
+const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGIN || process.env.CORS_ORIGINS || '');
+if (!corsOrigins || corsOrigins === '*') {
+  app.use(cors());
+} else {
+  const allowed = new Set(corsOrigins);
+  app.use(
+    cors({
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        if (allowed.has(origin)) return cb(null, true);
+        return cb(new Error('CORS_NOT_ALLOWED'));
+      },
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Afdian-Token']
+    })
+  );
+}
+const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '25mb').trim() || '25mb';
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
+
+app.use((err, req, res, next) => {
+  const status = typeof err?.status === 'number' ? err.status : 0;
+  const type = typeof err?.type === 'string' ? err.type : '';
+  if (type === 'entity.too.large') return res.status(413).json({ error: 'PAYLOAD_TOO_LARGE' });
+  if (status === 400 && err instanceof SyntaxError) return res.status(400).json({ error: 'INVALID_JSON' });
+  return next(err);
+});
 
 const rateBucketStore = new Map();
 
@@ -111,7 +151,14 @@ const SILICONFLOW_MODEL = (process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-8B').toS
 const SILICONFLOW_MESSAGES_URL = `${SILICONFLOW_API_BASE}/messages`;
 const SILICONFLOW_CHAT_COMPLETIONS_URL = `${SILICONFLOW_API_BASE}/chat/completions`;
 const SILICONFLOW_IMAGES_GENERATIONS_URL = `${SILICONFLOW_API_BASE}/images/generations`;
-const SILICONFLOW_IMAGE_MODEL = (process.env.SILICONFLOW_IMAGE_MODEL || 'Qwen/Qwen-Image-Edit-2509')
+const SILICONFLOW_IMAGE_MODEL = (process.env.SILICONFLOW_IMAGE_MODEL || 'Qwen/Qwen-Image-Edit')
+  .toString()
+  .trim();
+const SILICONFLOW_TXT2IMG_MODEL = (
+  process.env.SILICONFLOW_TXT2IMG_MODEL ||
+  process.env.SILICONFLOW_IMAGE_MODEL_TXT2IMG ||
+  'Qwen/Qwen-Image'
+)
   .toString()
   .trim();
 const SILICONFLOW_IMAGE_INPUT_FIELD = (process.env.SILICONFLOW_IMAGE_INPUT_FIELD || 'image').toString().trim();
@@ -609,48 +656,84 @@ const callSiliconFlowImageGenerate = async ({
     throw err;
   }
 
-  const body = {
-    model: SILICONFLOW_IMAGE_MODEL,
-    prompt: p,
-    negative_prompt: String(negativePrompt || '').trim() || undefined,
-    image_size: String(params?.imageSize || '').trim() || '1024x1024',
-    num_inference_steps:
-      typeof params?.steps === 'number' && Number.isFinite(params.steps) ? params.steps : undefined,
-    guidance_scale:
-      typeof params?.guidanceScale === 'number' && Number.isFinite(params.guidanceScale)
-        ? params.guidanceScale
-        : undefined,
-    seed:
-      typeof params?.seed === 'number' && Number.isFinite(params.seed) ? Math.trunc(params.seed) : undefined
+  const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
+  const modelCandidates = (() => {
+    const primary = imgs.length ? SILICONFLOW_IMAGE_MODEL : SILICONFLOW_TXT2IMG_MODEL || SILICONFLOW_IMAGE_MODEL;
+    const fallbacks = imgs.length
+      ? ['Qwen/Qwen-Image-Edit', 'Qwen/Qwen-Image-Edit-2509']
+      : ['Qwen/Qwen-Image', 'Qwen/Qwen-Image-Edit', 'Qwen/Qwen-Image-Edit-2509'];
+    const rawList = [primary, ...fallbacks].map((x) => String(x || '').trim()).filter(Boolean);
+    const uniq = [];
+    for (const m of rawList) if (!uniq.includes(m)) uniq.push(m);
+    return uniq;
+  })();
+
+  const isModelNotFound = (raw) => {
+    const s = String(raw || '').toLowerCase();
+    if (!s) return false;
+    return s.includes('model') && (s.includes('not exist') || s.includes('not found') || s.includes('invalid'));
   };
 
-  const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
-  if (imgs[0]) body[SILICONFLOW_IMAGE_INPUT_FIELD] = imgs[0];
-  if (imgs[1]) body.image2 = imgs[1];
-  if (imgs[2]) body.image3 = imgs[2];
+  const buildBody = (model) => {
+    const m = String(model || '').trim();
+    const isQwenEdit = /(^|\/)qwen-image-edit/i.test(m);
+    const body = {
+      model: m,
+      batch_size: 1,
+      prompt: p,
+      negative_prompt: String(negativePrompt || '').trim() || undefined,
+      image_size: String(params?.imageSize || '').trim() || '1024x1024',
+      num_inference_steps:
+        typeof params?.steps === 'number' && Number.isFinite(params.steps) ? params.steps : undefined,
+      seed:
+        typeof params?.seed === 'number' && Number.isFinite(params.seed) ? Math.trunc(params.seed) : undefined
+    };
+    if (!isQwenEdit) {
+      body.guidance_scale =
+        typeof params?.guidanceScale === 'number' && Number.isFinite(params.guidanceScale)
+          ? params.guidanceScale
+          : undefined;
+    }
 
-  const response = await fetchWithTimeout(
-    SILICONFLOW_IMAGES_GENERATIONS_URL,
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body)
-    },
-    timeoutMs
-  );
+    if (imgs[0]) body[SILICONFLOW_IMAGE_INPUT_FIELD] = imgs[0];
+    if (imgs[1]) body.image2 = imgs[1];
+    if (imgs[2]) body.image3 = imgs[2];
+    return body;
+  };
 
-  const raw = await response.text().catch(() => '');
-  if (!response.ok) {
-    const err = new Error(`SILICONFLOW_IMAGE_${response.status}`);
-    err.code = `SILICONFLOW_IMAGE_${response.status}`;
-    err.status = response.status;
-    err.bodyPreview = String(raw || '').slice(0, 1800);
-    err.elapsedMs = Date.now() - startedAt;
-    throw err;
+  let lastErr = null;
+  for (const model of modelCandidates) {
+    const body = buildBody(model);
+    const response = await fetchWithTimeout(
+      SILICONFLOW_IMAGES_GENERATIONS_URL,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      },
+      timeoutMs
+    );
+
+    const raw = await response.text().catch(() => '');
+    if (!response.ok) {
+      const err = new Error(`SILICONFLOW_IMAGE_${response.status}`);
+      err.code = `SILICONFLOW_IMAGE_${response.status}`;
+      err.status = response.status;
+      err.bodyPreview = String(raw || '').slice(0, 1800);
+      err.elapsedMs = Date.now() - startedAt;
+      err.modelTried = String(model || '').trim();
+      lastErr = err;
+      if (response.status === 400 && isModelNotFound(raw) && model !== modelCandidates[modelCandidates.length - 1]) {
+        continue;
+      }
+      throw err;
+    }
+
+    const data = raw ? JSON.parse(raw) : null;
+    return { data, elapsedMs: Date.now() - startedAt };
   }
 
-  const data = raw ? JSON.parse(raw) : null;
-  return { data, elapsedMs: Date.now() - startedAt };
+  throw lastErr || new Error('SILICONFLOW_IMAGE_500');
 };
 
 const callTextGenerate = async ({ contents, timeoutMs, reactionMode }) => {
@@ -1107,6 +1190,9 @@ const buildChatPrompt = (input) => {
     lang === 'en'
       ? `You are ${personaName} (anime-style assistant) on a website.`
       : `你是 ${personaName}（二次元风格的站内助手）。`,
+    lang === 'en'
+      ? `Always respond in the same language as the user's last message.`
+      : `始终使用用户最新一条消息的语言回复。`,
     `personaId: ${personaId}`,
     personaProfile ? `${lang === 'en' ? 'personaProfile:' : '人设信息：'}\n${personaProfile}` : '',
     personaRules ? `${lang === 'en' ? 'personaRules:' : '人设规则：'}\n${personaRules}` : '',
@@ -3175,7 +3261,6 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
     }
 
     const imagesRaw = Array.isArray(body.images) ? body.images : [];
-    if (imagesRaw.length === 0) return res.status(400).json({ error: 'Image is required' });
 
     const cost = (() => {
       const v = Number.parseInt(
@@ -3207,17 +3292,75 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
       timeoutMs: Math.max(5000, Number(body.timeoutMs || '') || 120000)
     });
 
+    const toImageUrl = (v) => {
+      if (!v) return '';
+      if (typeof v === 'string') {
+        const s = v.trim();
+        if (!s) return '';
+        if (s.startsWith('data:')) return s;
+        if (/^https?:\/\//i.test(s)) return s;
+        if (/^[a-z0-9+/=\s]+$/i.test(s) && s.length >= 32) return `data:image/png;base64,${s.replace(/\s+/g, '')}`;
+        return '';
+      }
+      if (typeof v === 'object') {
+        const url = typeof v.url === 'string' ? v.url.trim() : '';
+        if (url) return toImageUrl(url);
+        const b64 =
+          typeof v.b64_json === 'string'
+            ? v.b64_json.trim()
+            : typeof v.base64 === 'string'
+              ? v.base64.trim()
+              : typeof v.dataBase64 === 'string'
+                ? v.dataBase64.trim()
+                : '';
+        if (b64) return toImageUrl(b64);
+        return '';
+      }
+      return '';
+    };
+
+    const normalizeImages = (raw) => {
+      const candidates = [];
+      if (raw && typeof raw === 'object') {
+        if (Array.isArray(raw.images)) candidates.push(...raw.images);
+        if (Array.isArray(raw.data)) candidates.push(...raw.data);
+        if (raw.output) candidates.push(raw.output);
+        if (raw.image) candidates.push(raw.image);
+        if (raw.result) candidates.push(raw.result);
+      }
+      const out = [];
+      for (const it of candidates) {
+        const url = toImageUrl(it);
+        if (url) out.push({ url });
+        if (out.length >= 4) break;
+      }
+      return out;
+    };
+
+    const normalizedImages = normalizeImages(data);
+    if (!normalizedImages.length) {
+      const refunded = imgCredits.refundHold({ userId, holdId: holdRes.holdId });
+      holdCtx = null;
+      return res.status(502).json({ error: 'EMPTY_IMAGE_RESULT', wallet: refunded?.wallet || null });
+    }
+
     const confirmed = imgCredits.confirmHold({ userId, holdId: holdRes.holdId });
     if (!confirmed.ok) {
       imgCredits.refundHold({ userId, holdId: holdRes.holdId });
       return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
     }
     holdCtx = null;
-    return res.json({ requestId, ...data });
+    return res.json({
+      requestId,
+      images: normalizedImages,
+      seed: typeof data?.seed === 'number' ? data.seed : undefined,
+      timings: data?.timings
+    });
   } catch (error) {
+    let refundedWallet = null;
     try {
       if (holdCtx?.userId && holdCtx?.holdId)
-        imgCredits.refundHold({ userId: holdCtx.userId, holdId: holdCtx.holdId });
+        refundedWallet = imgCredits.refundHold({ userId: holdCtx.userId, holdId: holdCtx.holdId })?.wallet || null;
     } catch {}
     console.error('Error in /api/img2img:', error);
     const code = typeof error?.code === 'string' ? String(error.code) : '';
@@ -3228,10 +3371,11 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
     if (code.startsWith('SILICONFLOW_IMAGE_') && status >= 400 && status < 600) {
       return res.status(status).json({
         error: code,
-        detail: typeof error?.bodyPreview === 'string' ? error.bodyPreview : ''
+        detail: typeof error?.bodyPreview === 'string' ? error.bodyPreview : '',
+        ...(refundedWallet ? { wallet: refundedWallet } : {})
       });
     }
-    return res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).json({ error: 'Internal Server Error', ...(refundedWallet ? { wallet: refundedWallet } : {}) });
   }
 });
 
@@ -3926,7 +4070,7 @@ app.get('/api/usage/ledger', rateLimit('usage_ledger', { max: 120, windowMs: 60 
   }
 });
 
-app.get('/api/usage/summary', rateLimit('usage_summary', { max: 120, windowMs: 60 * 1000 }), (req, res) => {
+app.get('/api/usage/summary', rateLimit('usage_summary', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
   try {
     const userId = String(req.query.userId || '').trim() || 'anonymous';
     if (!assertAuthUserMatches(req, res, userId)) return;
@@ -4003,6 +4147,42 @@ app.get('/api/usage/summary', rateLimit('usage_summary', { max: 120, windowMs: 6
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
+
+const shouldServeStatic = (() => {
+  const raw = String(process.env.SERVE_STATIC || '').trim();
+  if (raw === '0') return false;
+  if (raw === '1') return true;
+  return String(process.env.NODE_ENV || '').trim() === 'production';
+})();
+
+if (shouldServeStatic) {
+  try {
+    const distDir = path.resolve(
+      __dirname,
+      String(process.env.FRONTEND_DIST_DIR || '').trim() || '../frontend/dist'
+    );
+    const indexFile = path.join(distDir, 'index.html');
+    if (fs.existsSync(distDir) && fs.existsSync(indexFile)) {
+      app.use(
+        express.static(distDir, {
+          index: false,
+          maxAge: '7d',
+          immutable: true
+        })
+      );
+      app.get('*', (req, res, next) => {
+        if (req.path === '/api' || req.path.startsWith('/api/')) return next();
+        res.setHeader('Cache-Control', 'no-cache');
+        res.sendFile(indexFile);
+      });
+      console.log('Static frontend enabled:', distDir);
+    } else {
+      console.warn('Static frontend not found, skip serving:', distDir);
+    }
+  } catch (e) {
+    console.warn('Static frontend init failed:', String(e?.message || e));
+  }
+}
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);

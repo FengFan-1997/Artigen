@@ -41,14 +41,14 @@
     "id": "user_test_100k",
     "username": "test100k",
     "name": "Test100k",
-    "visits": 2,
+    "visits": 3,
     "preferences": {},
     "createdAt": 1767888000000,
     "passwordHash": "1005d3d36429952a1079af7fea7cfc2bcece7d7f296fb4470f940604468787a9",
     "passwordSalt": "9a5cc2349482189361f1f4b316ef936f",
     "passwordAlgo": "scrypt",
-    "lastSeen": 1767887448060,
-    "sessionToken": "9f5c3c1f9694f0436449b3e58af121eed118ae4d40020958mk5mjh8c",
-    "sessionTokenIssuedAt": 1767887448060
+    "lastSeen": 1767890320811,
+    "sessionToken": "7fc04e5435d58853d427b796217ea99ffdf73e4d3f0c88ebmk5o91uz",
+    "sessionTokenIssuedAt": 1767890320811
   }
 }

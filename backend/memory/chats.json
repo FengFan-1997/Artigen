@@ -296,5 +296,17 @@
       "text": "我在的哦，Friend！[HAPPY]",
       "timestamp": 1767870194264
     }
+  ],
+  "user_test_100k": [
+    {
+      "role": "user",
+      "text": "?????:????",
+      "timestamp": 1767890352233
+    },
+    {
+      "role": "agent",
+      "text": "你好，Test100k！[HAPPY]",
+      "timestamp": 1767890352234
+    }
   ]
 }

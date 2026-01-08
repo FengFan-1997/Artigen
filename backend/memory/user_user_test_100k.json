@@ -1,0 +1,20 @@
+{
+  "user_id": "user_test_100k",
+  "meta": {
+    "last_interaction": "2026-01-08",
+    "updatedAt": 1767890352237
+  },
+  "core_memory": [],
+  "short_term_buffer": [
+    {
+      "role": "user",
+      "text": "?????:????",
+      "ts": 1767890352235
+    },
+    {
+      "role": "agent",
+      "text": "你好，Test100k！[HAPPY]",
+      "ts": 1767890352235
+    }
+  ]
+}

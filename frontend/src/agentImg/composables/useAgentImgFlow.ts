@@ -65,6 +65,7 @@ const buildDirectionPrompt = (input: string, contextText: string) => {
   return [
     agentImgPromptLibrary.directionSystem,
     `Schema: ${schema}`,
+    'Language: Use the same language as the user input for all text fields.',
     contextText ? `Context:\n${contextText}` : '',
     `User input: ${input}`,
     'Output JSON example:',
@@ -95,6 +96,7 @@ const buildFinalPrompt = (input: {
   return [
     agentImgPromptLibrary.finalPromptSystem,
     `Schema: ${schema}`,
+    'Language: Use the same language as the user input for prompt and negativePrompt.',
     `Base style tags to incorporate when appropriate: ${baseStyle}`,
     `Safety negative tags (must include): ${safeNeg}`,
     input.contextText ? `Context:\n${input.contextText}` : '',
@@ -153,21 +155,24 @@ export const useAgentImgFlow = (opts?: {
     return !!selectedOption.value;
   });
 
-  const reset = () => {
-    options.value = [];
-    selectedOptionId.value = '';
-    finalPrompt.value = null;
-    error.value = '';
-    stage.value = 'idle';
-    lastRequestId.value = '';
-  };
-
   const cancel = () => {
     const ctl = activeAbort.value;
     if (!ctl) return;
     try {
       ctl.abort();
     } catch {}
+    activeAbort.value = null;
+  };
+
+  const reset = () => {
+    cancel();
+    loading.value = false;
+    options.value = [];
+    selectedOptionId.value = '';
+    finalPrompt.value = null;
+    error.value = '';
+    stage.value = 'idle';
+    lastRequestId.value = '';
   };
 
   const humanizeError = (code: string) => {

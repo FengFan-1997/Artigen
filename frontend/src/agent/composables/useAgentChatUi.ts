@@ -1,6 +1,7 @@
-import { ref, type Ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 import type { ChatMessage } from '../types';
 import { readIntSetting } from '../utils/settings';
+import { getUserId } from '../utils/user';
 
 export const useAgentChatUi = (input: {
   isMobile: Ref<boolean>;
@@ -13,6 +14,7 @@ export const useAgentChatUi = (input: {
 }) => {
   const MAX_UI_MESSAGES_KEY = 'agent_ui_max_messages';
   const CHAT_AUTO_CLOSE_MS_KEY = 'agent_chat_auto_close_ms';
+  const chatMessagesKey = ref(`agent_ui_messages_v1_${getUserId()}`);
 
   const chatOpen = ref(false);
   const messages = ref<ChatMessage[]>([
@@ -22,6 +24,7 @@ export const useAgentChatUi = (input: {
   const chatAutoCloseMs = ref(readIntSetting(CHAT_AUTO_CLOSE_MS_KEY, 5000, 0, 600000));
   const lastChatActivityAt = ref(Date.now());
   let chatAutoCloseTimer: number | null = null;
+  let persistTimer: number | null = null;
 
   const pushUiMessage = (msg: ChatMessage) => {
     messages.value.push(msg);
@@ -29,6 +32,50 @@ export const useAgentChatUi = (input: {
     if (messages.value.length > maxKeep) {
       messages.value = messages.value.slice(-maxKeep);
     }
+  };
+
+  const loadMessagesFromStorage = () => {
+    try {
+      const raw = localStorage.getItem(chatMessagesKey.value);
+      const parsed = raw ? JSON.parse(raw) : null;
+      const list = Array.isArray(parsed) ? parsed : [];
+      const maxKeep = Math.max(20, Number(maxUiMessages.value) || 120);
+      const out: ChatMessage[] = [];
+      for (const it of list) {
+        const role = it?.role === 'user' ? 'user' : 'agent';
+        const text = typeof it?.text === 'string' ? it.text.trim() : '';
+        if (!text) continue;
+        out.push({ role, text });
+        if (out.length >= maxKeep) break;
+      }
+      messages.value = out.length
+        ? out
+        : [{ role: 'agent', text: 'Hello! How can I help you today?' }];
+    } catch {
+      messages.value = [{ role: 'agent', text: 'Hello! How can I help you today?' }];
+    }
+  };
+
+  const persistMessagesThrottled = () => {
+    if (persistTimer) return;
+    persistTimer = window.setTimeout(() => {
+      persistTimer = null;
+      try {
+        const maxKeep = Math.max(20, Number(maxUiMessages.value) || 120);
+        localStorage.setItem(chatMessagesKey.value, JSON.stringify(messages.value.slice(-maxKeep)));
+      } catch {}
+    }, 250);
+  };
+
+  watch(
+    () => messages.value,
+    () => persistMessagesThrottled(),
+    { deep: true }
+  );
+
+  const handleAuthChanged = () => {
+    chatMessagesKey.value = `agent_ui_messages_v1_${getUserId()}`;
+    loadMessagesFromStorage();
   };
 
   const scheduleChatAutoClose = (delayMs = chatAutoCloseMs.value, isLoading?: () => boolean) => {
@@ -87,6 +134,18 @@ export const useAgentChatUi = (input: {
     if (chatOpen.value) closeChat();
     else openChat(isLoading);
   };
+
+  onMounted(() => {
+    chatMessagesKey.value = `agent_ui_messages_v1_${getUserId()}`;
+    loadMessagesFromStorage();
+    window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
+  });
+
+  onBeforeUnmount(() => {
+    if (persistTimer) window.clearTimeout(persistTimer);
+    persistTimer = null;
+    window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
+  });
 
   return {
     chatOpen,

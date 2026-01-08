@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "concurrently \"pnpm --dir backend run dev\" \"pnpm --dir frontend run dev\"",
     "build": "pnpm --dir frontend run build",
+    "install:all": "pnpm --dir backend install --frozen-lockfile && pnpm --dir frontend install --frozen-lockfile",
+    "zeabur:build": "pnpm run install:all && pnpm --dir frontend run build",
+    "start": "pnpm --dir backend run start",
     "prepare": "husky"
   },
   "keywords": [],

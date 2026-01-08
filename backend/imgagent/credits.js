@@ -314,6 +314,15 @@ const mergeWallet = (fromUserId, toUserId) => {
   return { ok: true, wallet: getBalance(to) };
 };
 
+const getOrders = (userId) => {
+  const uid = normalizeUserId(userId);
+  if (!uid) return [];
+  const orders = readOrdersMap();
+  return Object.values(orders)
+    .filter((o) => String(o.userId || '').trim() === uid)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+};
+
 module.exports = {
   ensureWallet,
   getBalance,
@@ -323,6 +332,7 @@ module.exports = {
   grantCredits,
   checkinCredits,
   applyAfdianOrder,
-  mergeWallet
+  mergeWallet,
+  getOrders
 };
 

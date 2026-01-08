@@ -6,10 +6,10 @@
     "updatedAt": 1767863511748
   },
   "guest_test": {
-    "available": 5,
+    "available": 3,
     "frozen": 0,
     "createdAt": 1767869330816,
-    "updatedAt": 1767871936314
+    "updatedAt": 1767892825262
   },
   "email_d7bd7c338fbb9d1f": {
     "available": 22,
@@ -30,10 +30,10 @@
     "updatedAt": 1767884902552
   },
   "user_test_100k": {
-    "available": 99996,
+    "available": 99995,
     "frozen": 0,
     "createdAt": 1767888000000,
-    "updatedAt": 1767887702148
+    "updatedAt": 1767890337241
   },
   "guest_demo": {
     "available": 9,

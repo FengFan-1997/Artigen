@@ -219,6 +219,47 @@ const router = createRouter({
       name: 'agent-img-tool',
       component: AgentImg
     },
+    {
+      path: '/console',
+      component: () => import('@/console/ConsoleLayout.vue'),
+      children: [
+        {
+          path: '',
+          name: 'console-dashboard',
+          component: () => import('@/console/views/Dashboard.vue')
+        },
+        {
+          path: 'billing',
+          name: 'console-billing',
+          component: () => import('@/console/views/Billing.vue')
+        },
+        {
+          path: 'usage',
+          name: 'console-usage',
+          component: () => import('@/console/views/Usage.vue')
+        },
+        {
+          path: 'settings',
+          name: 'console-settings',
+          component: () => import('@/console/views/Settings.vue')
+        },
+        {
+          path: 'playground',
+          name: 'console-playground',
+          component: () => import('@/console/views/Playground.vue')
+        },
+        {
+          path: 'users',
+          name: 'console-users',
+          component: () => import('@/console/views/UserManagement.vue')
+        },
+        {
+          path: 'audit',
+          name: 'console-audit',
+          component: () => import('@/console/views/ContentAudit.vue')
+        }
+      ]
+    },
     ...loginRoutes
   ]
 });

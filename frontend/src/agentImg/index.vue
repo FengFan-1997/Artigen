@@ -288,6 +288,7 @@
                   <span class="typing-dot"></span>
                   <span class="typing-dot"></span>
                   <span class="typing-dot"></span>
+                  <span class="loading-text">{{ ui.loadingText }}</span>
                 </div>
               </div>
 
@@ -315,9 +316,6 @@
                   <div class="result-panel">
                     <div class="panel-header">
                       <div class="panel-title">{{ ui.resultTitle }}</div>
-                      <button class="copy-btn" type="button" @click="copyResult(item.result)">
-                        {{ copied ? ui.copied : ui.copyAll }}
-                      </button>
                     </div>
 
                     <div class="prompt-box">
@@ -433,29 +431,28 @@
             >
               <div style="font-size: 12px; color: var(--text-muted)">{{ ui.noHistory }}</div>
             </div>
-            <div v-else class="history-item" v-for="item in history" :key="item.id">
-              <button
-                v-if="item.image"
-                class="history-image-placeholder"
-                type="button"
-                @click="scrollToGeneration(item.id)"
-              >
+            <button
+              v-else
+              class="history-item history-item-btn"
+              v-for="item in history"
+              :key="item.id"
+              type="button"
+              @click="scrollToGeneration(item.id)"
+            >
+              <div v-if="item.image" class="history-image-placeholder">
                 <img
                   :src="item.image"
                   alt="generated"
                   style="width: 100%; height: 100%; object-fit: cover; border-radius: 10px"
                 />
-              </button>
+              </div>
               <div class="history-content">
                 <div class="history-prompt">{{ item.result.prompt }}</div>
                 <div class="history-meta">
                   <span>{{ new Date(item.timestamp).toLocaleTimeString() }}</span>
-                  <span class="copy-action" @click="copyHistoryPrompt(item.result.prompt)">
-                    {{ copied ? ui.copied : ui.copy }}
-                  </span>
                 </div>
               </div>
-            </div>
+            </button>
           </div>
         </aside>
       </div>
@@ -464,7 +461,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useAgentImgFlow } from './composables/useAgentImgFlow';
@@ -524,9 +521,6 @@ const ui = computed(() => {
         '请在左侧配置您的产品信息，或直接在下方描述您的拍摄需求。我会为您提供专业的视觉方向建议。',
       memory: '历史记录',
       noHistory: '暂无历史记录',
-      copy: '复制',
-      copied: '已复制',
-      copyAll: '复制全部',
       resultTitle: '生成结果',
       positivePrompt: 'Positive Prompt',
       negativePrompt: 'Negative Prompt',
@@ -534,7 +528,8 @@ const ui = computed(() => {
       addImage: '添加图片',
       deepThinkToggle: '深度思考',
       sendHint: 'Ctrl + Enter 发送',
-      inputPlaceholder: '描述您的画面构想，例如：一瓶放置在冰块上的清爽气泡水，背景是阳光海滩...'
+      inputPlaceholder: '描述你想要的产品图，比如：“一瓶精华液放在冰块上，背景是阳光海滩”...',
+      loadingText: '正在处理，请耐心等待…'
     };
   }
   return {
@@ -572,9 +567,6 @@ const ui = computed(() => {
       'Configure your product details on the left, or describe your shooting needs below. I will suggest professional visual directions.',
     memory: 'History',
     noHistory: 'No history yet',
-    copy: 'Copy',
-    copied: 'Copied',
-    copyAll: 'Copy All',
     resultTitle: 'Result',
     positivePrompt: 'Positive Prompt',
     negativePrompt: 'Negative Prompt',
@@ -583,7 +575,8 @@ const ui = computed(() => {
     deepThinkToggle: 'Deep Thinking',
     sendHint: 'Ctrl + Enter to send',
     inputPlaceholder:
-      'Describe your scene, e.g. a sparkling soda on ice cubes with a sunny beach background...'
+      'Describe your scene, e.g. a sparkling soda on ice cubes with a sunny beach background...',
+    loadingText: 'Processing, please wait…'
   };
 });
 
@@ -593,6 +586,8 @@ type HistoryItem = {
   result: AgentImgPromptResult;
   image: string | null;
 };
+
+const MAX_HISTORY = 200;
 
 const categories = computed(() =>
   currentLang.value === 'zh'
@@ -657,6 +652,7 @@ const {
   canAnalyze,
   canFinalize,
   reset,
+  cancel,
   analyzeDirections,
   generateFinal
 } = useAgentImgFlow({
@@ -668,7 +664,7 @@ const {
     const list = files.slice(0, 3);
     if (!list.length) return undefined;
     const inputs = await Promise.all(list.map(fileToGenerateInput));
-    const ok = inputs.filter((x) => x && x.mimeType && x.dataBase64);
+    const ok = inputs.filter((x): x is GenerateImageInput => !!x && !!x.mimeType && !!x.dataBase64);
     return ok.length ? ok : undefined;
   }
 });
@@ -677,7 +673,6 @@ const finalPrompt = finalPrompt0 as Ref<AgentImgPromptResult | null>;
 
 const router = useRouter();
 
-const copied = ref(false);
 const showMobileSettings = ref(false);
 const previewUrls = ref<string[]>(['', '']);
 const previewFiles = ref<(File | null)[]>([null, null]);
@@ -726,6 +721,56 @@ const checkinLoading = ref(false);
 const checkinStatus = ref<'idle' | 'ok' | 'already' | 'error'>('idle');
 const finalImageUrl = ref('');
 const history = ref<HistoryItem[]>([]);
+
+const historyStorageKey = computed(() => {
+  const uid = String(authUserId.value || '').trim() || ensureGuestUserId();
+  return `agentimg_history_v1_${uid}`;
+});
+
+const loadHistoryFromStorage = () => {
+  try {
+    const raw = window.localStorage.getItem(historyStorageKey.value);
+    const parsed = raw ? JSON.parse(raw) : null;
+    const list = Array.isArray(parsed) ? parsed : [];
+    const normalized: HistoryItem[] = [];
+    for (const it of list) {
+      const id = typeof it?.id === 'number' && Number.isFinite(it.id) ? it.id : 0;
+      const timestamp =
+        typeof it?.timestamp === 'number' && Number.isFinite(it.timestamp) ? it.timestamp : 0;
+      const res = it?.result && typeof it.result === 'object' ? it.result : null;
+      const prompt = typeof res?.prompt === 'string' ? res.prompt.trim() : '';
+      const negativePrompt =
+        typeof res?.negativePrompt === 'string' ? res.negativePrompt.trim() : '';
+      if (!id || !timestamp || !prompt || !negativePrompt) continue;
+      const params = res?.params && typeof res.params === 'object' ? res.params : undefined;
+      const image = typeof it?.image === 'string' && it.image.trim() ? it.image.trim() : null;
+      normalized.push({ id, timestamp, result: { prompt, negativePrompt, params }, image });
+      if (normalized.length >= MAX_HISTORY) break;
+    }
+    history.value = normalized;
+  } catch {
+    history.value = [];
+  }
+};
+
+let historyPersistTimer: number | null = null;
+const persistHistoryThrottled = () => {
+  if (historyPersistTimer) return;
+  historyPersistTimer = window.setTimeout(() => {
+    historyPersistTimer = null;
+    try {
+      window.localStorage.setItem(
+        historyStorageKey.value,
+        JSON.stringify(history.value.slice(0, MAX_HISTORY))
+      );
+    } catch {}
+  }, 250);
+};
+
+watch(
+  () => history.value,
+  () => persistHistoryThrottled()
+);
 
 const refreshCredits = async () => {
   if (creditsLoading.value) return;
@@ -821,6 +866,7 @@ const primaryText = computed(() => {
 const canPrimary = computed(() => (deepMode.value ? canAnalyze.value : canFinalize.value));
 
 const doPrimary = async () => {
+  cancel();
   if (finalPrompt.value) {
     // Reset for new round but keep settings
     finalPrompt.value = null;
@@ -836,15 +882,14 @@ const doPrimary = async () => {
     if (logoFile.value) files.push(logoFile.value);
     for (const f of previewFiles.value) if (f) files.push(f);
     const list = files.slice(0, 3);
-    if (!list.length) return null;
+    if (!list.length) return [];
     const inputs = await Promise.all(list.map(fileToGenerateInput));
-    const ok = inputs.filter((x) => x && x.mimeType && x.dataBase64);
-    return ok.length ? ok : null;
+    const ok = inputs.filter((x): x is GenerateImageInput => !!x && !!x.mimeType && !!x.dataBase64);
+    return ok.length ? ok : [];
   };
 
   const maybeRunImg2Img = async (fp: AgentImgPromptResult) => {
     const imgs = await getImgInputs();
-    if (!imgs) return null;
     loading.value = true;
     error.value = '';
     const res = await img2img({
@@ -886,12 +931,15 @@ const doPrimary = async () => {
       if (fp) {
         const id = Date.now();
         const imgUrl = await maybeRunImg2Img(fp);
-        history.value.unshift({
-          id,
-          timestamp: Date.now(),
-          result: fp,
-          image: imgUrl
-        });
+        history.value = [
+          {
+            id,
+            timestamp: Date.now(),
+            result: fp,
+            image: imgUrl
+          },
+          ...history.value
+        ].slice(0, MAX_HISTORY);
       }
     }
   } else {
@@ -899,12 +947,15 @@ const doPrimary = async () => {
     if (fp) {
       const id = Date.now();
       const imgUrl = await maybeRunImg2Img(fp);
-      history.value.unshift({
-        id,
-        timestamp: Date.now(),
-        result: fp,
-        image: imgUrl
-      });
+      history.value = [
+        {
+          id,
+          timestamp: Date.now(),
+          result: fp,
+          image: imgUrl
+        },
+        ...history.value
+      ].slice(0, MAX_HISTORY);
     }
   }
 };
@@ -929,17 +980,50 @@ const onLogoChange = (e: Event) => {
   if (input) input.value = '';
 };
 
-const fileToGenerateInput = (f: File): Promise<GenerateImageInput> => {
-  return new Promise((resolve, reject) => {
+const fileToGenerateInput = (f: File): Promise<GenerateImageInput | null> => {
+  return new Promise((resolve) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error('READ_FILE_FAILED'));
+    reader.onerror = () => resolve(null);
     reader.onload = () => {
       const raw = String(reader.result || '');
-      const m = raw.match(/^data:([^;]+);base64,(.+)$/);
-      resolve({
-        mimeType: (m?.[1] || f.type || 'image/png').trim(),
-        dataBase64: String(m?.[2] || '').trim()
-      });
+      const toInput = (dataUrl: string): GenerateImageInput => {
+        const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        return {
+          mimeType: (m?.[1] || f.type || 'image/png').trim(),
+          dataBase64: String(m?.[2] || '').trim()
+        };
+      };
+
+      const shouldCompress = f.size > 2.5 * 1024 * 1024;
+      if (!shouldCompress) return resolve(toInput(raw));
+
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1536;
+        const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+        if (scale >= 1) return resolve(toInput(raw));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(toInput(raw));
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) return resolve(toInput(raw));
+            const r2 = new FileReader();
+            r2.onerror = () => resolve(toInput(raw));
+            r2.onload = () => resolve(toInput(String(r2.result || raw)));
+            r2.readAsDataURL(blob);
+          },
+          'image/jpeg',
+          0.92
+        );
+      };
+      img.onerror = () => resolve(toInput(raw));
+      img.src = raw;
     };
     reader.readAsDataURL(f);
   });
@@ -966,6 +1050,7 @@ const onPreviewChange = (idx: number, e: Event) => {
   previewFiles.value[idx] = f;
   setPreviewUrl(idx, url);
   deepMode.value = false;
+  cancel();
   reset();
   if (input) input.value = '';
   if (userInput.value.trim()) {
@@ -982,9 +1067,16 @@ onBeforeUnmount(() => {
   for (let i = 0; i < previewUrls.value.length; i++) setPreviewUrl(i, '');
 });
 
-onMounted(async () => {
+const handleAuthChanged = () => {
   syncAuth();
-  await refreshCredits();
+  authTick.value++;
+  loadHistoryFromStorage();
+  void refreshCredits();
+};
+
+onMounted(() => {
+  handleAuthChanged();
+  window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
   window.addEventListener('click', onWindowClick);
 });
 
@@ -996,41 +1088,11 @@ const onWindowClick = (e: MouseEvent) => {
 };
 
 onBeforeUnmount(() => {
+  if (historyPersistTimer) window.clearTimeout(historyPersistTimer);
+  historyPersistTimer = null;
+  window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
   window.removeEventListener('click', onWindowClick);
 });
-
-const copyResult = async (res: AgentImgPromptResult) => {
-  if (!res) return;
-  const text = [
-    res.prompt,
-    '',
-    '---',
-    '',
-    `negative_prompt: ${res.negativePrompt}`,
-    res.params ? `params: ${JSON.stringify(res.params)}` : ''
-  ]
-    .filter(Boolean)
-    .join('\n');
-  try {
-    await window.navigator.clipboard.writeText(text);
-    copied.value = true;
-    window.setTimeout(() => (copied.value = false), 1500);
-  } catch {
-    copied.value = false;
-  }
-};
-
-const copyHistoryPrompt = async (text: string) => {
-  const t = String(text || '').trim();
-  if (!t) return;
-  try {
-    await navigator.clipboard.writeText(t);
-    copied.value = true;
-    window.setTimeout(() => (copied.value = false), 1000);
-  } catch {
-    copied.value = false;
-  }
-};
 </script>
 
 <style scoped>
@@ -1506,6 +1568,12 @@ const copyHistoryPrompt = async (text: string) => {
   gap: 6px;
   width: fit-content;
 }
+.loading-text {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
 .typing-dot {
   width: 6px;
   height: 6px;
@@ -1651,20 +1719,6 @@ const copyHistoryPrompt = async (text: string) => {
 }
 .panel-title::before {
   content: '✦';
-}
-
-.copy-btn {
-  background: rgba(255, 255, 255, 0.1);
-  border: none;
-  color: var(--text-main);
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.copy-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
 }
 
 .prompt-box {
@@ -2212,6 +2266,17 @@ const copyHistoryPrompt = async (text: string) => {
   font-size: 12px;
   color: var(--text-muted);
 }
+.history-item-btn {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  font: inherit;
+}
+.history-item-btn:hover {
+  border-color: rgba(204, 255, 0, 0.35);
+  background: rgba(204, 255, 0, 0.06);
+}
 .history-prompt {
   color: var(--text-main);
   margin-bottom: 8px;
@@ -2257,7 +2322,7 @@ const copyHistoryPrompt = async (text: string) => {
 }
 .dt-header {
   margin-bottom: 24px;
-  text-align: center;
+  text-align: left;
 }
 .dt-title {
   font-size: 20px;
@@ -2374,14 +2439,5 @@ const copyHistoryPrompt = async (text: string) => {
 .history-content {
   flex: 1;
   min-width: 0;
-}
-
-.copy-action {
-  cursor: pointer;
-  color: #ccff00;
-  transition: opacity 0.2s;
-}
-.copy-action:hover {
-  opacity: 0.8;
 }
 </style>

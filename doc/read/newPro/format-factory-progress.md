@@ -1,6 +1,6 @@
 # FormatFactory（格式工厂）当前实现与后续计划
 
-更新时间：2026-01-07  
+更新时间：2026-01-09  
 相关页面：[FormatFactory.vue](file:///g:/AvuePro/newPro/frontend/src/agentImg/views/FormatFactory.vue)  
 核心状态逻辑：[useFormatFactory.ts](file:///g:/AvuePro/newPro/frontend/src/agentImg/composables/useFormatFactory.ts)  
 转换处理器：[processors.ts](file:///g:/AvuePro/newPro/frontend/src/agentImg/logic/formatFactory/processors.ts)  
@@ -69,6 +69,12 @@
 ### 2.3 类型检查与依赖问题修复
 - 由于 `gifenc` 无内置类型声明，补充了模块声明到：[env.d.ts](file:///g:/AvuePro/newPro/frontend/src/env.d.ts)
 - 已通过 `vue-tsc -b` 与 `eslint . --fix` 验证（本地环境 husky prepare 会因缺少 .git 报错，不影响运行）
+
+### 2.4 稳定性与性能优化（GIF/PDF）
+- 修复“视频转 GIF”在首帧（t=0）时可能一直等待 `seeked` 事件，导致工具卡死不可用。
+- 增强视频加载与跳转：基于 `readyState` 做即时判定 + 超时兜底，避免事件已触发但监听未挂上造成的永久等待。
+- GIF 生成进度回调做节流，减少频繁更新引起的 UI 开销。
+- PDF 长图拼接改为“两段式”：先计算各页 viewport 尺寸，再逐页渲染并直接绘制到输出画布，避免缓存所有页的 canvas，降低峰值内存占用与卡顿风险。
 
 ## 3. 距离“理想模板/完整版”还差什么（按优先级）
 

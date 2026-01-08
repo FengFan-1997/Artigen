@@ -426,24 +426,32 @@ export const pdfToImage = async (
     }
 
     const takePages = Math.min(pages, Math.max(1, Math.floor(maxPages)));
-    reportProgress({ onProgress }, { done: 0, total: takePages, label: `渲染 1/${takePages}` });
+    reportProgress({ onProgress }, { done: 0, total: takePages, label: `计算尺寸 1/${takePages}` });
 
-    const canvases: HTMLCanvasElement[] = [];
+    const pageSizes: Array<{ w: number; h: number }> = [];
+    const safeScale = clamp(scale, 0.5, 3);
     for (let i = 1; i <= takePages; i += 1) {
       abortIfNeeded(signal);
-      const canvas = await renderPdfPageToCanvasFromDoc(doc, i, scale, { signal });
-      canvases.push(canvas);
+      const page = await doc.getPage(i);
+      const viewport = page.getViewport({ scale: safeScale });
+      pageSizes.push({
+        w: Math.max(1, Math.floor(viewport.width)),
+        h: Math.max(1, Math.floor(viewport.height))
+      });
       reportProgress(
         { onProgress },
-        { done: i, total: takePages, label: `渲染 ${i}/${takePages}` }
+        { done: i, total: takePages, label: `计算尺寸 ${i}/${takePages}` }
       );
     }
 
     abortIfNeeded(signal);
-    reportProgress({ onProgress }, { done: takePages, total: takePages, label: '拼接长图' });
+    reportProgress(
+      { onProgress },
+      { done: 0, total: takePages, label: `渲染并拼接 1/${takePages}` }
+    );
 
-    const width = Math.max(...canvases.map((c) => c.width));
-    const height = canvases.reduce((sum, c) => sum + c.height, 0);
+    const width = Math.max(...pageSizes.map((s) => s.w));
+    const height = pageSizes.reduce((sum, s) => sum + s.h, 0);
     const out = document.createElement('canvas');
     out.width = width;
     out.height = height;
@@ -452,10 +460,15 @@ export const pdfToImage = async (
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, out.width, out.height);
     let y = 0;
-    for (const c of canvases) {
+    for (let i = 1; i <= takePages; i += 1) {
       abortIfNeeded(signal);
-      ctx.drawImage(c, 0, y);
-      y += c.height;
+      const canvas = await renderPdfPageToCanvasFromDoc(doc, i, safeScale, { signal });
+      ctx.drawImage(canvas, 0, y);
+      y += canvas.height;
+      reportProgress(
+        { onProgress },
+        { done: i, total: takePages, label: `渲染并拼接 ${i}/${takePages}` }
+      );
     }
 
     abortIfNeeded(signal);
@@ -475,8 +488,24 @@ export const pdfToImage = async (
   }
 };
 
-const waitForEvent = (el: EventTarget, eventName: string) =>
+const waitForVideoReadyState = (
+  video: HTMLVideoElement,
+  minReadyState: number,
+  opts?: { signal?: AbortSignal; timeoutMs?: number }
+) =>
   new Promise<void>((resolve, reject) => {
+    if (opts?.signal?.aborted) {
+      reject(new Error('ABORTED'));
+      return;
+    }
+    if (video.readyState >= minReadyState) {
+      resolve();
+      return;
+    }
+
+    const timeoutMs = typeof opts?.timeoutMs === 'number' ? opts.timeoutMs : 8000;
+    let timer: any = null;
+
     const onOk = () => {
       cleanup();
       resolve();
@@ -485,16 +514,59 @@ const waitForEvent = (el: EventTarget, eventName: string) =>
       cleanup();
       reject(new Error('VIDEO_LOAD_FAIL'));
     };
-    const cleanup = () => {
-      el.removeEventListener(eventName, onOk as any);
-      el.removeEventListener('error', onErr as any);
+    const onAbort = () => {
+      cleanup();
+      reject(new Error('ABORTED'));
     };
-    el.addEventListener(eventName, onOk as any, { once: true });
-    el.addEventListener('error', onErr as any, { once: true });
+    const onTimeout = () => {
+      cleanup();
+      reject(new Error('VIDEO_LOAD_FAIL'));
+    };
+
+    const cleanup = () => {
+      video.removeEventListener('loadedmetadata', onOk as any);
+      video.removeEventListener('loadeddata', onOk as any);
+      video.removeEventListener('canplay', onOk as any);
+      video.removeEventListener('error', onErr as any);
+      opts?.signal?.removeEventListener('abort', onAbort as any);
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    video.addEventListener('loadedmetadata', onOk as any, { once: true });
+    video.addEventListener('loadeddata', onOk as any, { once: true });
+    video.addEventListener('canplay', onOk as any, { once: true });
+    video.addEventListener('error', onErr as any, { once: true });
+    opts?.signal?.addEventListener('abort', onAbort as any, { once: true });
+    if (timeoutMs > 0) timer = setTimeout(onTimeout, timeoutMs);
   });
 
-const seekVideo = (video: HTMLVideoElement, t: number) =>
-  new Promise<void>((resolve, reject) => {
+const seekVideo = async (
+  video: HTMLVideoElement,
+  t: number,
+  opts?: { signal?: AbortSignal; timeoutMs?: number }
+) => {
+  abortIfNeeded(opts?.signal);
+  const target = Math.max(0, Number.isFinite(t) ? t : 0);
+
+  if (Math.abs((video.currentTime || 0) - target) < 0.001) {
+    if (video.readyState >= 2) return;
+    await waitForVideoReadyState(video, 2, { signal: opts?.signal, timeoutMs: opts?.timeoutMs });
+    abortIfNeeded(opts?.signal);
+    return;
+  }
+
+  const timeoutMs = typeof opts?.timeoutMs === 'number' ? opts.timeoutMs : 8000;
+  await new Promise<void>((resolve, reject) => {
+    if (opts?.signal?.aborted) {
+      reject(new Error('ABORTED'));
+      return;
+    }
+
+    let timer: any = null;
+
     const onSeeked = () => {
       cleanup();
       resolve();
@@ -503,14 +575,38 @@ const seekVideo = (video: HTMLVideoElement, t: number) =>
       cleanup();
       reject(new Error('VIDEO_SEEK_FAIL'));
     };
+    const onAbort = () => {
+      cleanup();
+      reject(new Error('ABORTED'));
+    };
+    const onTimeout = () => {
+      cleanup();
+      reject(new Error('VIDEO_SEEK_FAIL'));
+    };
+
     const cleanup = () => {
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('error', onErr);
+      opts?.signal?.removeEventListener('abort', onAbort as any);
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
     };
+
     video.addEventListener('seeked', onSeeked, { once: true });
     video.addEventListener('error', onErr, { once: true });
-    video.currentTime = Math.max(0, t);
+    opts?.signal?.addEventListener('abort', onAbort as any, { once: true });
+    if (timeoutMs > 0) timer = setTimeout(onTimeout, timeoutMs);
+
+    video.currentTime = target;
   });
+
+  abortIfNeeded(opts?.signal);
+  if (video.readyState >= 2) return;
+  await waitForVideoReadyState(video, 2, { signal: opts?.signal, timeoutMs });
+  abortIfNeeded(opts?.signal);
+};
 
 export const videoToGif = async (
   file: File,
@@ -537,10 +633,14 @@ export const videoToGif = async (
   video.src = srcUrl;
   video.muted = true;
   video.playsInline = true;
+  video.preload = 'auto';
 
   try {
     abortIfNeeded(signal);
-    await waitForEvent(video, 'loadedmetadata');
+    try {
+      video.load();
+    } catch {}
+    await waitForVideoReadyState(video, 1, { signal, timeoutMs: 12000 });
     abortIfNeeded(signal);
     const dur = Number(video.duration || 0);
     if (!Number.isFinite(dur) || dur <= 0) throw new Error('VIDEO_META_FAIL');
@@ -558,6 +658,7 @@ export const videoToGif = async (
 
     const outW = clamp(Math.floor(width), 120, 960);
     const outH = Math.max(1, Math.round((outW * vh) / vw));
+    const colors = clamp(Math.floor(maxColors), 16, 256);
 
     const canvas = document.createElement('canvas');
     canvas.width = outW;
@@ -569,18 +670,21 @@ export const videoToGif = async (
     gif.writeHeader();
     gif.setRepeat(0);
 
+    const reportEvery = Math.max(1, Math.floor(frameCount / 30));
     for (let i = 0; i < frameCount; i += 1) {
       abortIfNeeded(signal);
-      reportProgress(
-        { onProgress },
-        { done: i, total: frameCount, label: `抽帧 ${i + 1}/${frameCount}` }
-      );
+      if (i === 0 || i === frameCount - 1 || i % reportEvery === 0) {
+        reportProgress(
+          { onProgress },
+          { done: i, total: frameCount, label: `抽帧 ${i + 1}/${frameCount}` }
+        );
+      }
       const t = safeStart + i / safeFps;
-      await seekVideo(video, t);
+      await seekVideo(video, t, { signal, timeoutMs: 12000 });
       ctx.drawImage(video, 0, 0, outW, outH);
       const imageData = ctx.getImageData(0, 0, outW, outH);
       const rgba = imageData.data;
-      const palette = quantize(rgba, clamp(Math.floor(maxColors), 16, 256));
+      const palette = quantize(rgba, colors);
       const index = applyPalette(rgba, palette);
       gif.writeFrame(index, outW, outH, { palette, delay });
     }

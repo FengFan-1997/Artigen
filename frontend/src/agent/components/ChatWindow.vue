@@ -48,6 +48,7 @@
 
           <div v-if="isLoading" class="chat-message agent loading">
             <div class="typing-indicator"><span></span><span></span><span></span></div>
+            <div class="loading-text">{{ t.loadingText }}</div>
           </div>
         </div>
 
@@ -154,6 +155,7 @@ const translations = {
     profile: 'Profile',
     login: 'Login',
     typeMessage: 'Type a message...',
+    loadingText: 'Processing, please wait…',
     speak: 'Speak',
     stopListening: 'Stop Listening',
     visits: 'Visits',
@@ -167,6 +169,7 @@ const translations = {
     profile: '个人资料',
     login: '登录',
     typeMessage: '输入消息...',
+    loadingText: '正在处理，请耐心等待…',
     speak: '语音输入',
     stopListening: '停止语音',
     visits: '访问次数',
@@ -587,7 +590,7 @@ watch(
   padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 18px;
 }
 
 .chat-message {
@@ -612,6 +615,16 @@ watch(
   line-height: 1.5;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
   word-wrap: break-word;
+  text-align: left;
+}
+
+.chat-message.loading {
+  gap: 10px;
+}
+
+.chat-message.loading .loading-text {
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.65);
 }
 
 .chat-message.agent .message-content {

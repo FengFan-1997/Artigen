@@ -20,6 +20,7 @@
     ]
   },
   "dependencies": {
+    "@ant-design/icons-vue": "^7.0.1",
     "@fortawesome/fontawesome-free": "^7.1.0",
     "@mediapipe/camera_utils": "^0.3.1675466862",
     "@mediapipe/drawing_utils": "^0.3.1675466124",
@@ -27,6 +28,7 @@
     "@pixiv/three-vrm": "^3.4.4",
     "@types/three": "^0.181.0",
     "ant-design-vue": "^4.2.6",
+    "echarts": "^6.0.0",
     "gifenc": "^1.0.3",
     "gsap": "^3.13.0",
     "marked": "^17.0.1",
@@ -38,13 +40,13 @@
     "serve": "^14.2.4",
     "three": "^0.181.2",
     "vue": "^3.5.24",
+    "vue-echarts": "^8.0.1",
     "vue-router": "^4.5.0",
     "vue3-lazyload": "^0.3.8"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
     "@types/nodemailer": "^6.4.17",
-    "nodemailer": "^6.9.16",
     "@typescript-eslint/eslint-plugin": "^8.49.0",
     "@typescript-eslint/parser": "^8.49.0",
     "@vitejs/plugin-vue": "^5.2.1",
@@ -56,6 +58,7 @@
     "husky": "8.0.3",
     "less": "^4.4.2",
     "lint-staged": "^15.2.10",
+    "nodemailer": "^6.9.16",
     "prettier": "^3.7.4",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",

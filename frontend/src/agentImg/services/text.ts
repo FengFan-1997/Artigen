@@ -34,6 +34,21 @@ export type Img2ImgResult =
       wallet?: CreditsBalance | null;
     };
 
+const normalizeImageUrl = (raw: string) => {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (s.startsWith('data:')) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  const compact = s.replace(/\s+/g, '');
+  const looksBase64 =
+    compact.length >= 64 &&
+    compact.length % 4 === 0 &&
+    /^[A-Za-z0-9+/=]+$/.test(compact) &&
+    (compact.includes('/') || compact.includes('+') || compact.includes('='));
+  if (looksBase64) return `data:image/png;base64,${compact}`;
+  return s;
+};
+
 export const img2img = async (input: {
   prompt: string;
   negativePrompt?: string;
@@ -43,7 +58,7 @@ export const img2img = async (input: {
     guidanceScale?: number;
     seed?: number;
   };
-  images: GenerateImageInput[];
+  images?: GenerateImageInput[];
   timeoutMs?: number;
   requestId?: string;
 }): Promise<Img2ImgResult> => {
@@ -53,8 +68,6 @@ export const img2img = async (input: {
   const prompt = String(input.prompt || '').trim();
   if (!prompt) return { ok: false, errorCode: 'EMPTY_PROMPT', error: 'EMPTY_PROMPT', requestId };
   const images = Array.isArray(input.images) ? input.images : [];
-  if (images.length === 0)
-    return { ok: false, errorCode: 'EMPTY_IMAGE', error: 'EMPTY_IMAGE', requestId };
 
   try {
     const userId = ensureGuestUserId();
@@ -71,7 +84,7 @@ export const img2img = async (input: {
         prompt,
         negativePrompt: input.negativePrompt,
         params: input.params,
-        images,
+        ...(images.length ? { images } : {}),
         timeoutMs: input.timeoutMs
       })
     });
@@ -96,7 +109,7 @@ export const img2img = async (input: {
     const data = await response.json().catch(() => null);
     const imagesRaw = Array.isArray(data?.images) ? data.images : [];
     const outImages = imagesRaw
-      .map((x: any) => ({ url: String(x?.url || '').trim() }))
+      .map((x: any) => ({ url: normalizeImageUrl(String(x?.url || '')) }))
       .filter((x: any) => !!x.url);
     if (!outImages.length) {
       return { ok: false, errorCode: 'EMPTY_IMAGE_RESULT', error: 'EMPTY_IMAGE_RESULT', requestId };

@@ -2556,6 +2556,11 @@ async function handleSendMessage(text: string) {
 
   try {
     const agentContext = buildAgentContext({ trigger: 'chat', userText: trimmed });
+    const detectedLang = /[\u4e00-\u9fff]/.test(trimmed) ? 'zh' : 'en';
+    (agentContext as any).runtime = {
+      ...(((agentContext as any).runtime || {}) as any),
+      lang: detectedLang
+    };
     const rawResponse = await sendMessageToAI(trimmed, messages.value, agentContext, {
       signal: chatAbortController.signal,
       group: 'chat'

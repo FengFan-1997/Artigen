@@ -101,13 +101,13 @@
               <div class="hud-bottom-left">RENDER_ENGINE: ACTIVE</div>
               <div class="hud-bottom-right"><span class="status-dot"></span> SIGNAL_STABLE</div>
 
-              <!-- 3D Sphere Representation -->
-              <div class="sphere-wrapper">
-                <div class="sphere">
-                  <div class="ring ring-1"></div>
-                  <div class="ring ring-2"></div>
-                  <div class="ring ring-3"></div>
-                  <div class="core"></div>
+              <!-- 3D Reactor Representation -->
+              <div class="reactor-wrapper">
+                <div class="reactor-container">
+                  <div class="reactor-ring ring-outer"></div>
+                  <div class="reactor-ring ring-middle"></div>
+                  <div class="reactor-ring ring-inner"></div>
+                  <div class="reactor-core-glow"></div>
                 </div>
                 <div class="floating-data">
                   <span class="bit bit-1">0</span>
@@ -364,6 +364,14 @@ onBeforeUnmount(() => {
   font-family: 'Inter', sans-serif;
   overflow: hidden;
   text-align: left;
+  user-select: none;
+  cursor: default;
+}
+
+.landing-page input,
+.landing-page textarea {
+  user-select: text;
+  cursor: text;
 }
 
 .bg-canvas {
@@ -460,6 +468,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
   display: flex;
   align-items: center;
+  line-height: 1;
   gap: 6px;
   transition: color 0.2s;
 }
@@ -711,68 +720,72 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 
-/* 3D Sphere CSS Implementation */
-.sphere-wrapper {
+/* 3D Reactor CSS Implementation */
+.reactor-wrapper {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   width: 300px;
   height: 300px;
+  perspective: 1000px;
 }
 
-.sphere {
+.reactor-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  animation: reactor-float 6s ease-in-out infinite;
+}
+
+.reactor-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--primary-dim);
+}
+
+.ring-outer {
+  width: 260px;
+  height: 260px;
+  border: 2px dashed rgba(204, 255, 0, 0.3);
+  animation: spin-slow 20s linear infinite;
+}
+
+.ring-middle {
   width: 200px;
   height: 200px;
+  border-left: 2px solid var(--primary);
+  border-right: 2px solid var(--primary);
+  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  animation: spin-reverse 10s linear infinite;
+}
+
+.ring-inner {
+  width: 140px;
+  height: 140px;
+  border: 4px dotted var(--primary);
+  opacity: 0.7;
+  animation: spin-fast 5s linear infinite;
+}
+
+.reactor-core-glow {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, #333, #000);
-  box-shadow:
-    inset 0 0 20px rgba(0, 0, 0, 0.8),
-    0 0 30px rgba(204, 255, 0, 0.1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.core {
   width: 60px;
   height: 60px;
-  background: radial-gradient(circle, var(--primary), #000);
+  background: radial-gradient(circle, #fff, var(--primary));
   border-radius: 50%;
-  box-shadow: 0 0 20px var(--primary);
-  animation: pulse 2s infinite ease-in-out;
-}
-
-.ring {
-  position: absolute;
-  border: 1px solid rgba(204, 255, 0, 0.3);
-  border-radius: 50%;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-}
-
-.ring-1 {
-  width: 240px;
-  height: 140px;
-  transform: translate(-50%, -50%) rotate(45deg);
-  animation: spin 8s infinite linear;
-}
-.ring-2 {
-  width: 140px;
-  height: 240px;
-  transform: translate(-50%, -50%) rotate(-45deg);
-  animation: spin-rev 10s infinite linear;
-}
-.ring-3 {
-  width: 280px;
-  height: 280px;
-  border: 1px dashed rgba(204, 255, 0, 0.1);
-  animation: spin 20s infinite linear;
+  box-shadow:
+    0 0 40px var(--primary),
+    0 0 80px var(--primary);
+  animation: pulse-glow 2s ease-in-out infinite alternate;
 }
 
 .floating-data .bit {
@@ -805,33 +818,51 @@ onBeforeUnmount(() => {
   animation-delay: 1.5s;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 0.8;
-  }
-  50% {
-    transform: scale(1.1);
-    opacity: 1;
-  }
-}
-
-@keyframes spin {
-  from {
+@keyframes spin-slow {
+  0% {
     transform: translate(-50%, -50%) rotate(0deg);
   }
-  to {
+  100% {
     transform: translate(-50%, -50%) rotate(360deg);
   }
 }
 
-@keyframes spin-rev {
-  from {
-    transform: translate(-50%, -50%) rotate(0deg);
+@keyframes spin-reverse {
+  0% {
+    transform: translate(-50%, -50%) rotate(360deg) rotateX(45deg);
   }
-  to {
-    transform: translate(-50%, -50%) rotate(-360deg);
+  100% {
+    transform: translate(-50%, -50%) rotate(0deg) rotateX(45deg);
+  }
+}
+
+@keyframes spin-fast {
+  0% {
+    transform: translate(-50%, -50%) rotate(0deg) rotateY(60deg);
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(360deg) rotateY(60deg);
+  }
+}
+
+@keyframes pulse-glow {
+  0% {
+    transform: translate(-50%, -50%) scale(0.9);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.1);
+    opacity: 1;
+  }
+}
+
+@keyframes reactor-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
   }
 }
 
