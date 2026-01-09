@@ -2931,8 +2931,30 @@ const assertAuthUserMatches = (req, res, requestedUserId) => {
   return { userId, isGuest: false };
 };
 
+const assertAuthedUserMatches = (req, res, requestedUserId) => {
+  const userId = String(requestedUserId || '').trim();
+  if (!userId) {
+    res.status(400).json({ error: 'UserId is required' });
+    return null;
+  }
+  if (userId.startsWith('guest_')) {
+    res.status(401).json({ error: 'Login required' });
+    return null;
+  }
+  const auth = resolveAuthUser(req);
+  if (!auth.ok) {
+    res.status(auth.status).json({ error: auth.error });
+    return null;
+  }
+  if (auth.userId !== userId) {
+    res.status(403).json({ error: 'Forbidden' });
+    return null;
+  }
+  return { userId, isGuest: false };
+};
+
 try {
-  installImgagentRoutes(app, { assertAuthUserMatches });
+  installImgagentRoutes(app, { assertAuthUserMatches: assertAuthedUserMatches });
 } catch (e) {
   console.error('Error installing imgagent routes:', e);
 }
@@ -3446,14 +3468,8 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
     const prompt = String(body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
-    const derivedUserId = (() => {
-      const ip = getClientIp(req);
-      const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
-      const h = crypto.createHash('sha1').update(`${ip}|${ua}`).digest('hex').slice(0, 10);
-      return `guest_${h}`;
-    })();
-    const userId = String(body.userId || '').trim() || derivedUserId;
-    if (!assertAuthUserMatches(req, res, userId)) return;
+    const userId = String(body.userId || '').trim();
+    if (!assertAuthedUserMatches(req, res, userId)) return;
 
     if (!SILICONFLOW_API_KEY) {
       return res.status(500).json({ error: 'MISSING_SILICONFLOW_API_KEY' });
@@ -3463,10 +3479,10 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
 
     const cost = (() => {
       const v = Number.parseInt(
-        process.env.CREDITS_COST_IMG2IMG || process.env.CREDITS_COST_IMAGE || process.env.CREDITS_COST_GENERATE || '1',
+        process.env.CREDITS_COST_IMG2IMG || process.env.CREDITS_COST_IMAGE || process.env.CREDITS_COST_GENERATE || '10',
         10
       );
-      return Number.isFinite(v) && v > 0 ? v : 1;
+      return Number.isFinite(v) && v > 0 ? v : 10;
     })();
     const requestId =
       String(body.requestId || '').trim() ||
@@ -3611,7 +3627,7 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
 app.get('/api/images/history/:userId', rateLimit('images_history', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
   try {
     const userId = String(req.params.userId || '').trim();
-    if (!assertAuthUserMatches(req, res, userId)) return;
+    if (!assertAuthedUserMatches(req, res, userId)) return;
     const limit = clampInt(req.query.limit, 50, 200);
     const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
     const items = Array.isArray(mem.image_history) ? mem.image_history : [];
@@ -3629,25 +3645,22 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
     const { prompt, userId: userIdRaw, requestId: requestIdRaw } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
-    const derivedUserId = (() => {
-      const ip = getClientIp(req);
-      const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
-      const h = crypto.createHash('sha1').update(`${ip}|${ua}`).digest('hex').slice(0, 10);
-      return `guest_${h}`;
-    })();
-    const userId = String(userIdRaw || '').trim() || derivedUserId;
-    if (!assertAuthUserMatches(req, res, userId)) return;
+    const userId = String(userIdRaw || '').trim();
+    if (!assertAuthedUserMatches(req, res, userId)) return;
 
     const cost = (() => {
-      const v = Number.parseInt(process.env.CREDITS_COST_GENERATE || '1', 10);
-      return Number.isFinite(v) && v > 0 ? v : 1;
+      const v = Number.parseInt(process.env.CREDITS_COST_GENERATE || '0', 10);
+      return Number.isFinite(v) && v >= 0 ? v : 0;
     })();
     const requestId =
       String(requestIdRaw || '').trim() || `gen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    const holdRes = imgCredits.freezeCredits({ userId, cost, requestId, reason: 'generate' });
-    if (!holdRes.ok) return res.status(402).json({ error: holdRes.error, wallet: holdRes.wallet || null });
-    const holdId = holdRes.holdId;
-    holdCtx = { userId, holdId, requestId };
+    let holdId = '';
+    if (cost > 0) {
+      const holdRes = imgCredits.freezeCredits({ userId, cost, requestId, reason: 'generate' });
+      if (!holdRes.ok) return res.status(402).json({ error: holdRes.error, wallet: holdRes.wallet || null });
+      holdId = holdRes.holdId;
+      holdCtx = { userId, holdId, requestId };
+    }
 
     const contents = [{ role: 'user', parts: [{ text: prompt }] }];
 
@@ -3657,10 +3670,12 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
           timeoutMs: GEMINI_TIMEOUT_MS,
           contents
         });
-        const confirmed = imgCredits.confirmHold({ userId, holdId });
-        if (!confirmed.ok) {
-          imgCredits.refundHold({ userId, holdId });
-          return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+        if (cost > 0) {
+          const confirmed = imgCredits.confirmHold({ userId, holdId });
+          if (!confirmed.ok) {
+            imgCredits.refundHold({ userId, holdId });
+            return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+          }
         }
         return res.json(data);
       } catch (e) {
@@ -3670,10 +3685,12 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
             timeoutMs: Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS),
             maxTokens: 2048
           });
-          const confirmed = imgCredits.confirmHold({ userId, holdId });
-          if (!confirmed.ok) {
-            imgCredits.refundHold({ userId, holdId });
-            return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+          if (cost > 0) {
+            const confirmed = imgCredits.confirmHold({ userId, holdId });
+            if (!confirmed.ok) {
+              imgCredits.refundHold({ userId, holdId });
+              return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+            }
           }
           return res.json({
             candidates: [{ content: { parts: [{ text: String(text || '') }] } }]
@@ -3689,17 +3706,19 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
         timeoutMs: Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS),
         maxTokens: 2048
       });
-      const confirmed = imgCredits.confirmHold({ userId, holdId });
-      if (!confirmed.ok) {
-        imgCredits.refundHold({ userId, holdId });
-        return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+      if (cost > 0) {
+        const confirmed = imgCredits.confirmHold({ userId, holdId });
+        if (!confirmed.ok) {
+          imgCredits.refundHold({ userId, holdId });
+          return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+        }
       }
       return res.json({
         candidates: [{ content: { parts: [{ text: String(text || '') }] } }]
       });
     }
 
-    imgCredits.refundHold({ userId, holdId });
+    if (cost > 0) imgCredits.refundHold({ userId, holdId });
     return res.status(500).json({ error: 'No LLM provider configured on the server.' });
 
   } catch (error) {
@@ -3709,28 +3728,6 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
         refundedWallet = imgCredits.refundHold({ userId: holdCtx.userId, holdId: holdCtx.holdId })?.wallet || null;
         holdCtx = null;
       }
-    } catch {}
-    try {
-      const body = req.body || {};
-      const userIdFromBody = String(body.userId || '').trim();
-      const derivedUserId = (() => {
-        const ip = getClientIp(req);
-        const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
-        const h = crypto.createHash('sha1').update(`${ip}|${ua}`).digest('hex').slice(0, 10);
-        return `guest_${h}`;
-      })();
-      const userId = userIdFromBody || derivedUserId;
-      const requestId = String(body.requestId || '').trim();
-      const holds = readJson(require('./utils/storage').CREDITS_HOLDS_FILE, {});
-      const hit =
-        requestId && holds && typeof holds === 'object'
-          ? Object.keys(holds).find((k) => {
-              const h = holds[k];
-              if (!h || typeof h !== 'object') return false;
-              return String(h.userId || '').trim() === userId && String(h.requestId || '').trim() === requestId;
-            })
-          : '';
-      if (hit) refundedWallet = imgCredits.refundHold({ userId, holdId: hit })?.wallet || refundedWallet;
     } catch {}
     console.error('Error in /api/generate:', error);
     res.status(500).json({ error: 'Internal Server Error', ...(refundedWallet ? { wallet: refundedWallet } : {}) });

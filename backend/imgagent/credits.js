@@ -38,8 +38,8 @@ const ensureWallet = (userId, opts) => {
   if (!uid) return null;
 
   const initCredits = (() => {
-    const v = Number.parseInt(String(opts?.initCredits ?? process.env.CREDITS_INIT ?? '10'), 10);
-    return Number.isFinite(v) && v >= 0 ? v : 10;
+    const v = Number.parseInt(String(opts?.initCredits ?? process.env.CREDITS_INIT ?? '100'), 10);
+    return Number.isFinite(v) && v >= 0 ? v : 100;
   })();
 
   const wallets = readWalletMap();

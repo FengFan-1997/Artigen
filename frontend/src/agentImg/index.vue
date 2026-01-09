@@ -42,14 +42,6 @@
                     <button class="user-item" type="button" @click="refreshCredits">
                       {{ refreshCreditsText }}
                     </button>
-                    <button
-                      class="user-item"
-                      type="button"
-                      @click="doCheckin"
-                      :disabled="checkinLoading"
-                    >
-                      {{ checkinText }}
-                    </button>
                     <button class="user-item" type="button" @click="goMarket">
                       {{ ui.goMarket }}
                     </button>
@@ -506,7 +498,7 @@ import {
 } from '@/login/session';
 import { useLoginModel } from '@/stores';
 import { useLanguageStore } from '@/stores/language';
-import { checkinCredits, getCreditsBalance, type CreditsBalance } from '@/points';
+import { getCreditsBalance, type CreditsBalance } from '@/points';
 import { img2img, type GenerateImageInput, type Img2ImgImageInput } from './services/text';
 import type { AgentImgPromptResult } from './types';
 import { agentImgPromptLibrary } from './data/promptLibrary';
@@ -836,8 +828,6 @@ const ensureAuthed = (after?: () => Promise<void> | void) => {
 
 const creditsBalance = ref<CreditsBalance | null>(null);
 const creditsLoading = ref(false);
-const checkinLoading = ref(false);
-const checkinStatus = ref<'idle' | 'ok' | 'already' | 'error'>('idle');
 const finalImageUrl = ref('');
 const history = ref<HistoryItem[]>([]);
 
@@ -943,30 +933,6 @@ const creditsText = computed(() => {
 const refreshCreditsText = computed(() =>
   currentLang.value === 'zh' ? '刷新点数' : 'Refresh Credits'
 );
-const checkinText = computed(() => {
-  if (checkinLoading.value) return currentLang.value === 'zh' ? '签到中…' : 'Checking in…';
-  if (checkinStatus.value === 'ok') return currentLang.value === 'zh' ? '签到成功' : 'Checked in';
-  if (checkinStatus.value === 'already')
-    return currentLang.value === 'zh' ? '今日已签到' : 'Already checked in';
-  if (checkinStatus.value === 'error')
-    return currentLang.value === 'zh' ? '签到失败' : 'Check-in failed';
-  return currentLang.value === 'zh' ? '每日签到' : 'Daily Check-in';
-});
-
-const doCheckin = async () => {
-  if (checkinLoading.value) return;
-  checkinLoading.value = true;
-  checkinStatus.value = 'idle';
-  const res = await checkinCredits();
-  checkinLoading.value = false;
-  if (!res.ok) {
-    checkinStatus.value = 'error';
-    return;
-  }
-  checkinStatus.value = res.alreadyCheckedIn ? 'already' : 'ok';
-  if (res.wallet) creditsBalance.value = res.wallet;
-  else await refreshCredits();
-};
 
 const showUserMenu = ref(false);
 

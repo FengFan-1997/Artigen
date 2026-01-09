@@ -1,5 +1,5 @@
 import { buildApiUrl } from '@/utils/api';
-import { ensureGuestUserId, getAuthToken } from '@/login/session';
+import { getAuthToken, getCurrentUserId, isLocalLoggedIn } from '@/login/session';
 
 export type CreditsBalance = {
   userId: string;
@@ -9,12 +9,13 @@ export type CreditsBalance = {
 };
 
 const BALANCE_URL = buildApiUrl('/api/credits/balance');
-const CHECKIN_URL = buildApiUrl('/api/credits/checkin');
 
 export const getCreditsBalance = async (): Promise<CreditsBalance | null> => {
   try {
-    const userId = ensureGuestUserId();
+    if (!isLocalLoggedIn()) return null;
+    const userId = getCurrentUserId();
     const token = getAuthToken();
+    if (!token) return null;
     const url = `${BALANCE_URL}?userId=${encodeURIComponent(userId)}`;
     const res = await fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined
@@ -39,25 +40,7 @@ export type CreditsCheckinResult =
 
 export const checkinCredits = async (): Promise<CreditsCheckinResult> => {
   try {
-    const userId = ensureGuestUserId();
-    const token = getAuthToken();
-    const res = await fetch(CHECKIN_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify({ userId })
-    });
-    const json = await res.json().catch(() => null);
-    if (!res.ok)
-      return { ok: false, error: String(json?.error || json?.message || 'CHECKIN_FAILED') };
-    return {
-      ok: true,
-      alreadyCheckedIn: !!json?.alreadyCheckedIn,
-      creditsAdded: Number(json?.creditsAdded ?? 0) || 0,
-      wallet: (json?.wallet as CreditsBalance | null) || null
-    };
+    return { ok: false, error: 'DISABLED' };
   } catch (e: any) {
     return { ok: false, error: typeof e?.message === 'string' ? e.message : 'CHECKIN_FAILED' };
   }

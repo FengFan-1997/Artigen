@@ -74,26 +74,7 @@ const installImgagentRoutes = (app, opts) => {
   });
 
   app.post('/api/credits/checkin', (req, res) => {
-    const body = req.body || {};
-    const userId = String(body.userId || '').trim();
-    if (typeof assertAuthUserMatches === 'function') {
-      const auth = assertAuthUserMatches(req, res, userId);
-      if (!auth) return;
-    }
-
-    const daily = (() => {
-      const v = Number.parseInt(String(process.env.CREDITS_DAILY_CHECKIN || '2'), 10);
-      return Number.isFinite(v) && v > 0 ? v : 2;
-    })();
-
-    const result = credits.checkinCredits({ userId, credits: daily });
-    if (!result.ok) return res.status(400).json({ ok: false, error: result.error });
-    res.json({
-      ok: true,
-      alreadyCheckedIn: !!result.alreadyCheckedIn,
-      creditsAdded: Number(result.creditsAdded ?? 0) || 0,
-      wallet: result.wallet || null
-    });
+    res.status(404).json({ ok: false, error: 'NOT_FOUND' });
   });
 
   app.post('/api/pay/afdian/webhook', (req, res) => {
@@ -127,6 +108,9 @@ const installImgagentRoutes = (app, opts) => {
   });
 
   app.post('/api/credits/order/mock', (req, res) => {
+    if (String(process.env.ENABLE_MOCK_ORDERS || '').trim() !== '1') {
+      return res.status(404).json({ error: 'Not Found' });
+    }
     const { userId, amount, credits: creditsCount } = req.body || {};
     const uid = String(userId || '').trim();
     if (typeof assertAuthUserMatches === 'function') {
