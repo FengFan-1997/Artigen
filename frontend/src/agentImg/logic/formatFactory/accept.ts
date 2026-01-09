@@ -1,6 +1,7 @@
 import type { FormatFactoryToolId } from './types';
 
 export const acceptForTool = (toolId: FormatFactoryToolId) => {
+  if (toolId === 'ingredient-list') return '';
   if (toolId === 'ico') return 'image/png,image/jpeg,image/webp';
   if (toolId === 'jpeg') return 'image/png,image/jpeg,image/webp';
   if (toolId === 'webp') return 'image/png,image/jpeg,image/webp';
@@ -13,6 +14,7 @@ export const acceptForTool = (toolId: FormatFactoryToolId) => {
 };
 
 export const acceptHintForTool = (toolId: FormatFactoryToolId) => {
+  if (toolId === 'ingredient-list') return '输入配方/描述文本即可';
   if (toolId === 'ico') return '支持 PNG / JPEG / WEBP';
   if (toolId === 'jpeg') return '支持 PNG / JPEG / WEBP';
   if (toolId === 'webp') return '支持 PNG / JPEG / WEBP';

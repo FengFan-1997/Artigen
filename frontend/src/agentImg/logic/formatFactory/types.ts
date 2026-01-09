@@ -8,7 +8,8 @@ export type FormatFactoryToolId =
   | 'pdf'
   | 'img2pdf'
   | 'gif'
-  | 'ico';
+  | 'ico'
+  | 'ingredient-list';
 
 export type FormatFactoryTool = {
   id: FormatFactoryToolId;

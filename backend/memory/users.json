@@ -28,9 +28,9 @@
   },
   "email_56271fc8e558df66": {
     "id": "email_56271fc8e558df66",
-    "email": "577623946@qq.com",
-    "username": "577623946@qq.com",
-    "name": "577623946",
+    "email": "577223946@qq.com",
+    "username": "577223946@qq.com",
+    "name": "577223946",
     "visits": 0,
     "preferences": {},
     "createdAt": 1767882305160,
@@ -50,5 +50,20 @@
     "lastSeen": 1767890320811,
     "sessionToken": "7fc04e5435d58853d427b796217ea99ffdf73e4d3f0c88ebmk5o91uz",
     "sessionTokenIssuedAt": 1767890320811
+  },
+  "user_mk5vb7v2_ebe837825fb2": {
+    "id": "user_mk5vb7v2_ebe837825fb2",
+    "username": "dev123",
+    "email": "577623946@qq.com",
+    "passwordHash": "729b957129e03cbfd2c48a4fd19161e4457b683f9c30bd0736cb0281b99e3ad4",
+    "passwordSalt": "970676ae15c17852b68f6f8586a76f6e",
+    "passwordAlgo": "scrypt",
+    "name": "dev123",
+    "visits": 6,
+    "preferences": {},
+    "createdAt": 1767902179277,
+    "sessionToken": "7b99983b35f3528b6076526f04bfb92fcde84b538e106b45mk5vl0cw",
+    "sessionTokenIssuedAt": 1767902636048,
+    "lastSeen": 1767902636048
   }
 }

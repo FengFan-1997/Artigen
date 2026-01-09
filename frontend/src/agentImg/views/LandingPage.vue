@@ -197,6 +197,7 @@ import { useRouter } from 'vue-router';
 import GlobalFooter from '../components/GlobalFooter.vue';
 import { useLanguageStore } from '@/stores/language';
 import { useLoginModel } from '@/stores';
+import { isLocalLoggedIn } from '@/login/session';
 
 const router = useRouter();
 const bgCanvas = ref<HTMLCanvasElement | null>(null);
@@ -206,6 +207,15 @@ let animationId: number;
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 const loginStore = useLoginModel();
+
+const authTick = ref(0);
+const isAuthed = computed(() => {
+  return authTick.value >= 0 && isLocalLoggedIn();
+});
+
+const handleAuthChanged = () => {
+  authTick.value++;
+};
 
 const selectLanguage = (lang: 'zh' | 'en') => {
   languageStore.setLanguage(lang);
@@ -237,7 +247,10 @@ const ctaFormatFactory = computed(() =>
 );
 const ctaMarket = computed(() => (currentLang.value === 'zh' ? '算力商城' : 'Compute Market'));
 
-const loginText = computed(() => (currentLang.value === 'zh' ? '登录' : 'LOGIN'));
+const loginText = computed(() => {
+  if (isAuthed.value) return currentLang.value === 'zh' ? '账号' : 'ACCOUNT';
+  return currentLang.value === 'zh' ? '登录' : 'LOGIN';
+});
 const statusText = computed(() =>
   currentLang.value === 'zh' ? '工具库在线 SYS v2.0.4' : 'TOOLBOX ONLINE SYS v2.0.4'
 );
@@ -273,6 +286,10 @@ const feature3Desc = computed(() =>
 );
 
 const goLogin = () => {
+  if (isAuthed.value) {
+    router.push('/login/account');
+    return;
+  }
   const returnTo = router.currentRoute.value.fullPath;
   loginStore.open({ mode: 'login', returnTo });
 };
@@ -335,11 +352,14 @@ const handleResize = () => {
 onMounted(() => {
   initMatrixRain();
   window.addEventListener('resize', handleResize);
+  handleAuthChanged();
+  window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
 });
 
 onBeforeUnmount(() => {
   if (animationId) cancelAnimationFrame(animationId);
   window.removeEventListener('resize', handleResize);
+  window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
 });
 </script>
 

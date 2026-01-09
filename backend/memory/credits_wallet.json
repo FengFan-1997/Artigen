@@ -1,10 +1,4 @@
 {
-  "guest_f8v52i4r0": {
-    "available": 10,
-    "frozen": 0,
-    "createdAt": 1767861480790,
-    "updatedAt": 1767863511748
-  },
   "guest_test": {
     "available": 3,
     "frozen": 0,
@@ -40,5 +34,11 @@
     "frozen": 0,
     "createdAt": 1767886955483,
     "updatedAt": 1767886994920
+  },
+  "user_mk5vb7v2_ebe837825fb2": {
+    "available": 11,
+    "frozen": 0,
+    "createdAt": 1767902179279,
+    "updatedAt": 1767941195872
   }
 }

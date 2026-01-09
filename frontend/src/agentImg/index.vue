@@ -191,8 +191,93 @@
 
         <!-- CENTER: Main Interaction -->
         <main class="main">
+          <div v-if="promptDraft" class="prompt-edit-view">
+            <div class="dt-header">
+              <h2 class="dt-title">编辑提示词</h2>
+              <p class="dt-subtitle">编辑后将作为最终提示词发送给生图模型</p>
+            </div>
+
+            <div class="prompt-edit-grid">
+              <div class="prompt-box">
+                <div class="box-label">{{ ui.positivePrompt }}</div>
+                <textarea v-model="promptDraft.prompt" class="box-textarea" rows="8"></textarea>
+              </div>
+
+              <div class="prompt-box negative">
+                <div class="box-label">{{ ui.negativePrompt }}</div>
+                <textarea
+                  v-model="promptDraft.negativePrompt"
+                  class="box-textarea"
+                  rows="8"
+                ></textarea>
+              </div>
+
+              <div class="prompt-style">
+                <div class="box-label">风格</div>
+                <div class="chips-row">
+                  <span v-for="t in promptDraftStyleTags" :key="t" class="chip">
+                    {{ t }}
+                    <button class="chip-x" type="button" @click="removeDraftStyleTag(t)">×</button>
+                  </span>
+                </div>
+                <div class="tag-add-row">
+                  <input
+                    v-model="draftStyleTagInput"
+                    class="control"
+                    type="text"
+                    placeholder="输入风格标签，回车添加"
+                    @keydown.enter.prevent="addDraftStyleTag()"
+                  />
+                  <button class="btn ghost" type="button" @click="addDraftStyleTag()">添加</button>
+                </div>
+              </div>
+
+              <div class="prompt-style">
+                <div class="box-label">参数</div>
+                <div class="params-row">
+                  <div class="param">
+                    <div class="param-label">Size</div>
+                    <input
+                      v-model="promptDraft.params.imageSize"
+                      class="control"
+                      type="text"
+                      placeholder="1024x1024"
+                    />
+                  </div>
+                  <div class="param">
+                    <div class="param-label">Steps</div>
+                    <input v-model="promptDraft.params.steps" class="control" type="number" />
+                  </div>
+                  <div class="param">
+                    <div class="param-label">CFG</div>
+                    <input
+                      v-model="promptDraft.params.guidanceScale"
+                      class="control"
+                      type="number"
+                    />
+                  </div>
+                  <div class="param">
+                    <div class="param-label">Seed</div>
+                    <input v-model="promptDraft.params.seed" class="control" type="number" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="dt-actions">
+              <button class="dt-btn" @click="onPrimary" :disabled="!canPrimary">
+                {{ primaryText }}
+              </button>
+              <button class="btn ghost" type="button" @click="closePromptDraft" :disabled="loading">
+                取消
+              </button>
+            </div>
+          </div>
           <!-- Deep Thinking Mode -->
-          <div v-if="deepMode && options.length > 0 && !finalPrompt" class="deep-thinking-view">
+          <div
+            v-else-if="deepMode && options.length > 0 && !finalPrompt"
+            class="deep-thinking-view"
+          >
             <div class="dt-header">
               <h2 class="dt-title">{{ ui.deepThinkingTitle }}</h2>
               <p class="dt-subtitle">{{ ui.deepThinkingSub }}</p>
@@ -215,26 +300,52 @@
             </div>
 
             <div class="dt-content" v-if="selectedOptionId">
-              <div class="dt-tab-title" style="font-size: 16px; margin-bottom: 12px">
-                {{ options.find((o) => o.id === selectedOptionId)?.title }}
-              </div>
-              <p
-                style="
-                  color: var(--text-muted);
-                  font-size: 13px;
-                  line-height: 1.6;
-                  margin-bottom: 16px;
-                "
-              >
-                {{ options.find((o) => o.id === selectedOptionId)?.summary }}
-              </p>
-              <div class="chips-row" style="margin-bottom: 24px">
-                <span
-                  v-for="t in options.find((o) => o.id === selectedOptionId)?.styleTags"
-                  :key="t"
-                  class="chip"
-                  >{{ t }}</span
-                >
+              <div class="dt-option-edit">
+                <div class="dt-tab-title" style="font-size: 16px; margin-bottom: 12px">
+                  <input
+                    class="control"
+                    type="text"
+                    :value="selectedOptionTitle"
+                    @input="
+                      (e) =>
+                        updateSelectedOptionTitle(
+                          String((e.target as HTMLInputElement).value || '')
+                        )
+                    "
+                  />
+                </div>
+                <textarea
+                  class="control"
+                  rows="4"
+                  style="margin-bottom: 16px"
+                  :value="selectedOptionSummary"
+                  @input="
+                    (e) =>
+                      updateSelectedOptionSummary(
+                        String((e.target as HTMLTextAreaElement).value || '')
+                      )
+                  "
+                ></textarea>
+                <div class="chips-row" style="margin-bottom: 12px">
+                  <span v-for="t in selectedOptionStyleTags" :key="t" class="chip">
+                    {{ t }}
+                    <button class="chip-x" type="button" @click="removeSelectedOptionStyleTag(t)">
+                      ×
+                    </button>
+                  </span>
+                </div>
+                <div class="tag-add-row" style="margin-bottom: 24px">
+                  <input
+                    v-model="optionStyleTagInput"
+                    class="control"
+                    type="text"
+                    placeholder="输入风格标签，回车添加"
+                    @keydown.enter.prevent="addSelectedOptionStyleTag()"
+                  />
+                  <button class="btn ghost" type="button" @click="addSelectedOptionStyleTag()">
+                    添加
+                  </button>
+                </div>
               </div>
 
               <div class="dt-actions">
@@ -243,28 +354,9 @@
             </div>
           </div>
 
-          <div v-else class="chat-scroll">
+          <div v-else class="chat-scroll" ref="chatScrollEl">
             <!-- Messages -->
             <div class="messages">
-              <!-- User Message -->
-              <div
-                class="msg msg-user"
-                v-if="userInput && (loading || options.length > 0 || finalPrompt)"
-              >
-                <div class="msg-avatar">
-                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="12" cy="12" r="12" fill="#333" />
-                    <path
-                      d="M12 12C14.21 12 16 10.21 16 8C16 5.79 14.21 4 12 4C9.79 4 8 5.79 8 8C8 10.21 9.79 12 12 12ZM12 14C9.33 14 4 15.34 4 18V20H20V18C20 15.34 14.67 14 12 14Z"
-                      fill="#888"
-                    />
-                  </svg>
-                </div>
-                <div class="msg-bubble">
-                  {{ userInput }}
-                </div>
-              </div>
-
               <!-- Welcome Message -->
               <div
                 class="msg msg-ai"
@@ -280,18 +372,6 @@
               </div>
 
               <!-- Loading State -->
-              <div v-if="loading" class="msg msg-ai">
-                <div class="msg-avatar">
-                  <img src="/logo.png" alt="System" />
-                </div>
-                <div class="msg-bubble loading-bubble">
-                  <span class="typing-dot"></span>
-                  <span class="typing-dot"></span>
-                  <span class="typing-dot"></span>
-                  <span class="loading-text">{{ ui.loadingText }}</span>
-                </div>
-              </div>
-
               <!-- Error State -->
               <div v-if="error" class="msg msg-ai">
                 <div class="msg-avatar">
@@ -303,49 +383,57 @@
                 </div>
               </div>
 
-              <div
-                v-for="item in historyTimeline"
-                :key="item.id"
-                class="msg msg-ai"
-                :id="`gen-${item.id}`"
-              >
+              <template v-for="item in history" :key="item.id">
+                <div class="msg msg-user">
+                  <div class="msg-avatar">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="12" cy="12" r="12" fill="#333" />
+                      <path
+                        d="M12 12C14.21 12 16 10.21 16 8C16 5.79 14.21 4 12 4C9.79 4 8 5.79 8 8C8 10.21 9.79 12 12 12ZM12 14C9.33 14 4 15.34 4 18V20H20V18C20 15.34 14.67 14 12 14Z"
+                        fill="#888"
+                      />
+                    </svg>
+                  </div>
+                  <div class="msg-bubble">{{ item.userText }}</div>
+                </div>
+                <div class="msg msg-ai" :id="`gen-${item.id}`">
+                  <div class="msg-avatar">
+                    <img src="/logo.png" alt="System" />
+                  </div>
+                  <div class="msg-bubble">
+                    <img
+                      v-if="item.image"
+                      :src="item.image"
+                      alt="generated"
+                      style="max-width: 100%; border-radius: 10px"
+                      @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
+                    />
+                  </div>
+                </div>
+              </template>
+
+              <div v-if="pendingUserText" class="msg msg-user">
+                <div class="msg-avatar">
+                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="12" cy="12" r="12" fill="#333" />
+                    <path
+                      d="M12 12C14.21 12 16 10.21 16 8C16 5.79 14.21 4 12 4C9.79 4 8 5.79 8 8C8 10.21 9.79 12 12 12ZM12 14C9.33 14 4 15.34 4 18V20H20V18C20 15.34 14.67 14 12 14Z"
+                      fill="#888"
+                    />
+                  </svg>
+                </div>
+                <div class="msg-bubble">{{ pendingUserText }}</div>
+              </div>
+
+              <div v-if="loading" class="msg msg-ai">
                 <div class="msg-avatar">
                   <img src="/logo.png" alt="System" />
                 </div>
-                <div class="msg-bubble">
-                  <div class="result-panel">
-                    <div class="panel-header">
-                      <div class="panel-title">{{ ui.resultTitle }}</div>
-                    </div>
-
-                    <div class="prompt-box">
-                      <div class="box-label">{{ ui.positivePrompt }}</div>
-                      <div class="box-content">{{ item.result.prompt }}</div>
-                    </div>
-
-                    <div class="prompt-box negative">
-                      <div class="box-label">{{ ui.negativePrompt }}</div>
-                      <div class="box-content">{{ item.result.negativePrompt }}</div>
-                    </div>
-
-                    <div class="params-row" v-if="item.result.params">
-                      <div class="param-item" v-for="(val, key) in item.result.params" :key="key">
-                        <span class="key">{{ key }}:</span>
-                        <span class="val">{{ val }}</span>
-                      </div>
-                    </div>
-
-                    <div class="prompt-box" v-if="item.image">
-                      <div class="box-label">{{ ui.imageLabel }}</div>
-                      <div class="box-content">
-                        <img
-                          :src="item.image"
-                          alt="generated"
-                          style="max-width: 100%; border-radius: 10px"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                <div class="msg-bubble loading-bubble">
+                  <span class="typing-dot"></span>
+                  <span class="typing-dot"></span>
+                  <span class="typing-dot"></span>
+                  <span class="loading-text">{{ ui.loadingText }}</span>
                 </div>
               </div>
             </div>
@@ -434,7 +522,7 @@
             <button
               v-else
               class="history-item history-item-btn"
-              v-for="item in history"
+              v-for="item in historyForSidebar"
               :key="item.id"
               type="button"
               @click="scrollToGeneration(item.id)"
@@ -444,10 +532,11 @@
                   :src="item.image"
                   alt="generated"
                   style="width: 100%; height: 100%; object-fit: cover; border-radius: 10px"
+                  @error="(e) => ((e.target as HTMLImageElement).src = '/logo.png')"
                 />
               </div>
               <div class="history-content">
-                <div class="history-prompt">{{ item.result.prompt }}</div>
+                <div class="history-prompt">{{ item.userText }}</div>
                 <div class="history-meta">
                   <span>{{ new Date(item.timestamp).toLocaleTimeString() }}</span>
                 </div>
@@ -583,6 +672,7 @@ const ui = computed(() => {
 type HistoryItem = {
   id: number;
   timestamp: number;
+  userText: string;
   result: AgentImgPromptResult;
   image: string | null;
 };
@@ -671,6 +761,168 @@ const {
 
 const finalPrompt = finalPrompt0 as Ref<AgentImgPromptResult | null>;
 
+type DraftParams = {
+  imageSize: string;
+  steps: string;
+  guidanceScale: string;
+  seed: string;
+};
+
+type PromptDraft = {
+  prompt: string;
+  negativePrompt: string;
+  params: DraftParams;
+};
+
+const promptDraft = ref<PromptDraft | null>(null);
+const promptDraftUserText = ref('');
+const promptDraftStyleTags = ref<string[]>([]);
+const draftStyleTagInput = ref('');
+const optionStyleTagInput = ref('');
+const pendingUserText = ref('');
+const chatScrollEl = ref<HTMLElement | null>(null);
+
+const normalizeTag = (v: string) =>
+  String(v || '')
+    .trim()
+    .replace(/\s+/g, ' ');
+
+const ensureUniqueTags = (tags: string[]) => {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of tags) {
+    const t = normalizeTag(raw);
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+    if (out.length >= 24) break;
+  }
+  return out;
+};
+
+const applyStyleTagsToPrompt = (prompt: string, tags: string[]) => {
+  let out = String(prompt || '').trim();
+  const lower = () => out.toLowerCase();
+  for (const t of ensureUniqueTags(tags)) {
+    if (!t) continue;
+    if (lower().includes(t.toLowerCase())) continue;
+    if (!out) out = t;
+    else out = `${out}${out.endsWith(',') || out.endsWith('，') ? ' ' : ', '}${t}`;
+  }
+  return out;
+};
+
+const draftParamsFromResult = (p?: AgentImgPromptResult['params']): DraftParams => {
+  return {
+    imageSize: String(p?.imageSize || '').trim(),
+    steps: p?.steps == null ? '' : String(p.steps),
+    guidanceScale: p?.guidanceScale == null ? '' : String(p.guidanceScale),
+    seed: p?.seed == null ? '' : String(p.seed)
+  };
+};
+
+const draftParamsToResult = (p: DraftParams): AgentImgPromptResult['params'] | undefined => {
+  const out: AgentImgPromptResult['params'] = {};
+  const imageSize = String(p.imageSize || '').trim();
+  if (imageSize) out.imageSize = imageSize;
+
+  const steps = Number(String(p.steps || '').trim());
+  if (Number.isFinite(steps) && steps > 0) out.steps = steps;
+
+  const guidanceScale = Number(String(p.guidanceScale || '').trim());
+  if (Number.isFinite(guidanceScale) && guidanceScale > 0) out.guidanceScale = guidanceScale;
+
+  const seed = Number(String(p.seed || '').trim());
+  if (Number.isFinite(seed) && seed >= 0) out.seed = Math.floor(seed);
+
+  return Object.keys(out).length ? out : undefined;
+};
+
+const selectedOptionIndex = computed(() => {
+  const id = String(selectedOptionId.value || '').trim();
+  if (!id) return -1;
+  return options.value.findIndex((o) => o.id === id);
+});
+
+const selectedOptionTitle = computed(() => {
+  const idx = selectedOptionIndex.value;
+  return idx >= 0 ? options.value[idx]?.title || '' : '';
+});
+
+const selectedOptionSummary = computed(() => {
+  const idx = selectedOptionIndex.value;
+  return idx >= 0 ? options.value[idx]?.summary || '' : '';
+});
+
+const selectedOptionStyleTags = computed(() => {
+  const idx = selectedOptionIndex.value;
+  return idx >= 0 ? options.value[idx]?.styleTags || [] : [];
+});
+
+const buildUserTextFromSelectedOption = (fallback: string) => {
+  const title = String(selectedOptionTitle.value || '').trim();
+  const summary = String(selectedOptionSummary.value || '').trim();
+  const out = [title, summary].filter(Boolean).join('\n').trim();
+  return out || String(fallback || '').trim();
+};
+
+const updateSelectedOptionTitle = (next: string) => {
+  const idx = selectedOptionIndex.value;
+  if (idx < 0) return;
+  const cur = options.value[idx];
+  options.value[idx] = { ...cur, title: String(next || '') };
+};
+
+const updateSelectedOptionSummary = (next: string) => {
+  const idx = selectedOptionIndex.value;
+  if (idx < 0) return;
+  const cur = options.value[idx];
+  options.value[idx] = { ...cur, summary: String(next || '') };
+};
+
+const addSelectedOptionStyleTag = () => {
+  const idx = selectedOptionIndex.value;
+  if (idx < 0) return;
+  const tag = normalizeTag(optionStyleTagInput.value);
+  if (!tag) return;
+  optionStyleTagInput.value = '';
+  const cur = options.value[idx];
+  const nextTags = ensureUniqueTags([...(cur.styleTags || []), tag]);
+  options.value[idx] = { ...cur, styleTags: nextTags };
+};
+
+const removeSelectedOptionStyleTag = (tag: string) => {
+  const idx = selectedOptionIndex.value;
+  if (idx < 0) return;
+  const cur = options.value[idx];
+  const key = normalizeTag(tag).toLowerCase();
+  const nextTags = (cur.styleTags || []).filter((t) => normalizeTag(t).toLowerCase() !== key);
+  options.value[idx] = { ...cur, styleTags: nextTags };
+};
+
+const addDraftStyleTag = () => {
+  const tag = normalizeTag(draftStyleTagInput.value);
+  if (!tag) return;
+  draftStyleTagInput.value = '';
+  promptDraftStyleTags.value = ensureUniqueTags([...(promptDraftStyleTags.value || []), tag]);
+};
+
+const removeDraftStyleTag = (tag: string) => {
+  const key = normalizeTag(tag).toLowerCase();
+  promptDraftStyleTags.value = (promptDraftStyleTags.value || []).filter(
+    (t) => normalizeTag(t).toLowerCase() !== key
+  );
+};
+
+const closePromptDraft = () => {
+  promptDraft.value = null;
+  promptDraftUserText.value = '';
+  draftStyleTagInput.value = '';
+  promptDraftStyleTags.value = [];
+};
+
 const router = useRouter();
 
 const showMobileSettings = ref(false);
@@ -737,14 +989,22 @@ const loadHistoryFromStorage = () => {
       const id = typeof it?.id === 'number' && Number.isFinite(it.id) ? it.id : 0;
       const timestamp =
         typeof it?.timestamp === 'number' && Number.isFinite(it.timestamp) ? it.timestamp : 0;
+      const userText = typeof it?.userText === 'string' ? it.userText.trim() : '';
       const res = it?.result && typeof it.result === 'object' ? it.result : null;
       const prompt = typeof res?.prompt === 'string' ? res.prompt.trim() : '';
       const negativePrompt =
         typeof res?.negativePrompt === 'string' ? res.negativePrompt.trim() : '';
       if (!id || !timestamp || !prompt || !negativePrompt) continue;
+      if (!userText || userText === prompt) continue;
       const params = res?.params && typeof res.params === 'object' ? res.params : undefined;
       const image = typeof it?.image === 'string' && it.image.trim() ? it.image.trim() : null;
-      normalized.push({ id, timestamp, result: { prompt, negativePrompt, params }, image });
+      normalized.push({
+        id,
+        timestamp,
+        userText,
+        result: { prompt, negativePrompt, params },
+        image
+      });
       if (normalized.length >= MAX_HISTORY) break;
     }
     history.value = normalized;
@@ -752,6 +1012,8 @@ const loadHistoryFromStorage = () => {
     history.value = [];
   }
 };
+
+const historyForSidebar = computed(() => [...history.value].slice().reverse());
 
 let historyPersistTimer: number | null = null;
 const persistHistoryThrottled = () => {
@@ -770,6 +1032,19 @@ const persistHistoryThrottled = () => {
 watch(
   () => history.value,
   () => persistHistoryThrottled()
+);
+
+const scrollChatToBottom = () => {
+  const el = chatScrollEl.value;
+  if (!el) return;
+  requestAnimationFrame(() => {
+    el.scrollTop = el.scrollHeight;
+  });
+};
+
+watch(
+  () => [history.value.length, loading.value, pendingUserText.value],
+  () => scrollChatToBottom()
 );
 
 const refreshCredits = async () => {
@@ -867,6 +1142,87 @@ const canPrimary = computed(() => (deepMode.value ? canAnalyze.value : canFinali
 
 const doPrimary = async () => {
   cancel();
+  const activeUserText = String(userInput.value || '').trim();
+  pendingUserText.value = activeUserText;
+
+  if (promptDraft.value) {
+    const fp: AgentImgPromptResult = {
+      prompt: applyStyleTagsToPrompt(promptDraft.value.prompt, promptDraftStyleTags.value),
+      negativePrompt: String(promptDraft.value.negativePrompt || '').trim(),
+      params: draftParamsToResult(promptDraft.value.params)
+    };
+    if (!fp.prompt || !fp.negativePrompt) {
+      pendingUserText.value = '';
+      return;
+    }
+    finalPrompt.value = fp;
+
+    const getImgInputs = async () => {
+      const files: File[] = [];
+      if (logoFile.value) files.push(logoFile.value);
+      for (const f of previewFiles.value) if (f) files.push(f);
+      const list = files.slice(0, 3);
+      if (!list.length) return [];
+      const inputs = await Promise.all(list.map(fileToGenerateInput));
+      const ok = inputs.filter(
+        (x): x is GenerateImageInput => !!x && !!x.mimeType && !!x.dataBase64
+      );
+      return ok.length ? ok : [];
+    };
+
+    const maybeRunImg2Img = async (p: AgentImgPromptResult) => {
+      const imgs = await getImgInputs();
+      loading.value = true;
+      error.value = '';
+      const res = await img2img({
+        prompt: p.prompt,
+        negativePrompt: p.negativePrompt,
+        params: p.params,
+        images: imgs,
+        timeoutMs: 120000
+      });
+      loading.value = false;
+      if (!res.ok) {
+        if (res.wallet) creditsBalance.value = res.wallet;
+        error.value =
+          res.errorCode === 'INSUFFICIENT_CREDITS'
+            ? currentLang.value === 'zh'
+              ? '积分不足，请前往「算力商城」充值'
+              : 'Insufficient credits. Please top up in the Market.'
+            : res.errorCode === 'EMPTY_IMAGE'
+              ? currentLang.value === 'zh'
+                ? '请先上传一张参考图再出图'
+                : 'Please upload a reference image first.'
+              : currentLang.value === 'zh'
+                ? `出图失败：${res.errorCode}`
+                : `Image generation failed: ${res.errorCode}`;
+        return null;
+      }
+      const url = String(res.images?.[0]?.url || '').trim();
+      if (!url) return null;
+      finalImageUrl.value = url;
+      await refreshCredits();
+      return url;
+    };
+
+    const id = Date.now();
+    const imgUrl = await maybeRunImg2Img(fp);
+    const historyUserText = String(promptDraftUserText.value || activeUserText || '').trim();
+    history.value = [
+      ...history.value,
+      {
+        id,
+        timestamp: Date.now(),
+        userText: historyUserText,
+        result: fp,
+        image: imgUrl
+      }
+    ].slice(-MAX_HISTORY);
+    closePromptDraft();
+    pendingUserText.value = '';
+    return;
+  }
+
   if (finalPrompt.value) {
     // Reset for new round but keep settings
     finalPrompt.value = null;
@@ -877,85 +1233,89 @@ const doPrimary = async () => {
     // Let's keep user input for refinement
   }
 
-  const getImgInputs = async () => {
-    const files: File[] = [];
-    if (logoFile.value) files.push(logoFile.value);
-    for (const f of previewFiles.value) if (f) files.push(f);
-    const list = files.slice(0, 3);
-    if (!list.length) return [];
-    const inputs = await Promise.all(list.map(fileToGenerateInput));
-    const ok = inputs.filter((x): x is GenerateImageInput => !!x && !!x.mimeType && !!x.dataBase64);
-    return ok.length ? ok : [];
-  };
-
-  const maybeRunImg2Img = async (fp: AgentImgPromptResult) => {
-    const imgs = await getImgInputs();
-    loading.value = true;
-    error.value = '';
-    const res = await img2img({
-      prompt: fp.prompt,
-      negativePrompt: fp.negativePrompt,
-      params: fp.params,
-      images: imgs,
-      timeoutMs: 120000
-    });
-    loading.value = false;
-    if (!res.ok) {
-      if (res.wallet) creditsBalance.value = res.wallet;
-      error.value =
-        res.errorCode === 'INSUFFICIENT_CREDITS'
-          ? currentLang.value === 'zh'
-            ? '积分不足，请前往「算力商城」充值'
-            : 'Insufficient credits. Please top up in the Market.'
-          : res.errorCode === 'EMPTY_IMAGE'
-            ? currentLang.value === 'zh'
-              ? '请先上传一张参考图再出图'
-              : 'Please upload a reference image first.'
-            : currentLang.value === 'zh'
-              ? `出图失败：${res.errorCode}`
-              : `Image generation failed: ${res.errorCode}`;
-      return null;
-    }
-    const url = String(res.images?.[0]?.url || '').trim();
-    if (!url) return null;
-    finalImageUrl.value = url;
-    await refreshCredits();
-    return url;
-  };
-
   if (deepMode.value) {
     if (options.value.length === 0) {
       await analyzeDirections();
+      pendingUserText.value = '';
     } else {
       const fp = await generateFinal();
       if (fp) {
-        const id = Date.now();
-        const imgUrl = await maybeRunImg2Img(fp);
-        history.value = [
-          {
-            id,
-            timestamp: Date.now(),
-            result: fp,
-            image: imgUrl
-          },
-          ...history.value
-        ].slice(0, MAX_HISTORY);
+        finalPrompt.value = fp;
+        promptDraft.value = {
+          prompt: fp.prompt,
+          negativePrompt: fp.negativePrompt,
+          params: draftParamsFromResult(fp.params)
+        };
+        promptDraftUserText.value = buildUserTextFromSelectedOption(activeUserText);
+        promptDraftStyleTags.value = ensureUniqueTags(selectedOptionStyleTags.value || []);
+        pendingUserText.value = '';
       }
     }
   } else {
     const fp = await generateFinal();
     if (fp) {
+      finalPrompt.value = fp;
+      const getImgInputs = async () => {
+        const files: File[] = [];
+        if (logoFile.value) files.push(logoFile.value);
+        for (const f of previewFiles.value) if (f) files.push(f);
+        const list = files.slice(0, 3);
+        if (!list.length) return [];
+        const inputs = await Promise.all(list.map(fileToGenerateInput));
+        const ok = inputs.filter(
+          (x): x is GenerateImageInput => !!x && !!x.mimeType && !!x.dataBase64
+        );
+        return ok.length ? ok : [];
+      };
+
+      const imgs = await getImgInputs();
+      loading.value = true;
+      error.value = '';
+      const res = await img2img({
+        prompt: fp.prompt,
+        negativePrompt: fp.negativePrompt,
+        params: fp.params,
+        images: imgs,
+        timeoutMs: 120000
+      });
+      loading.value = false;
+      if (!res.ok) {
+        if (res.wallet) creditsBalance.value = res.wallet;
+        error.value =
+          res.errorCode === 'INSUFFICIENT_CREDITS'
+            ? currentLang.value === 'zh'
+              ? '积分不足，请前往「算力商城」充值'
+              : 'Insufficient credits. Please top up in the Market.'
+            : res.errorCode === 'EMPTY_IMAGE'
+              ? currentLang.value === 'zh'
+                ? '请先上传一张参考图再出图'
+                : 'Please upload a reference image first.'
+              : currentLang.value === 'zh'
+                ? `出图失败：${res.errorCode}`
+                : `Image generation failed: ${res.errorCode}`;
+      }
+
+      let url = '';
+      if (res.ok) {
+        url = String(res.images?.[0]?.url || '').trim();
+        if (url) {
+          finalImageUrl.value = url;
+          await refreshCredits();
+        }
+      }
+
       const id = Date.now();
-      const imgUrl = await maybeRunImg2Img(fp);
       history.value = [
+        ...history.value,
         {
           id,
           timestamp: Date.now(),
+          userText: activeUserText,
           result: fp,
-          image: imgUrl
-        },
-        ...history.value
-      ].slice(0, MAX_HISTORY);
+          image: url || null
+        }
+      ].slice(-MAX_HISTORY);
+      pendingUserText.value = '';
     }
   }
 };
@@ -964,8 +1324,6 @@ const onPrimary = async () => {
   if (!ensureAuthed(() => onPrimary())) return;
   await doPrimary();
 };
-
-const historyTimeline = computed(() => [...history.value].reverse());
 
 const scrollToGeneration = (id: number) => {
   const el = document.getElementById(`gen-${id}`);
@@ -1389,6 +1747,21 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+.tag-add-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.tag-add-row .control {
+  flex: 1;
+  min-width: 0;
+}
+.tag-add-row .ghost {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 6px;
+}
+
 .side-footer {
   padding: 16px;
   border-top: 1px solid var(--border-color);
@@ -1516,6 +1889,7 @@ onBeforeUnmount(() => {
   animation: fadeIn 0.3s ease-out;
 }
 .msg-user {
+  margin-bottom: 20px;
   flex-direction: row-reverse;
 }
 @keyframes fadeIn {
@@ -1556,6 +1930,7 @@ onBeforeUnmount(() => {
   font-size: 14px;
   line-height: 1.6;
   max-width: 80%;
+  margin-bottom: 40px;
 }
 .msg-user .msg-bubble {
   background: rgba(204, 255, 0, 0.1);
@@ -2317,34 +2692,34 @@ onBeforeUnmount(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 24px;
+  padding: 16px;
   overflow-y: auto;
 }
 .dt-header {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   text-align: left;
 }
 .dt-title {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   color: #ccff00;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .dt-subtitle {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 .dt-tabs {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-  margin-bottom: 24px;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 .dt-tab {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 16px;
+  padding: 12px;
   cursor: pointer;
   transition: all 0.2s;
   text-align: left;
@@ -2359,24 +2734,28 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 20px rgba(204, 255, 0, 0.1);
 }
 .dt-tab-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--text-main);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 .dt-tab-desc {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
   line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .dt-content {
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 24px;
+  padding: 16px;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2384,13 +2763,13 @@ onBeforeUnmount(() => {
 .dt-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 24px;
+  margin-top: 16px;
 }
 .dt-btn {
   background: #ccff00;
   color: #000;
   border: none;
-  padding: 10px 24px;
+  padding: 9px 18px;
   border-radius: 4px;
   font-weight: 700;
   cursor: pointer;

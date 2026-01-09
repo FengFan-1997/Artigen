@@ -34,7 +34,7 @@
         </div>
       </div>
 
-      <p class="subtitle">纯前端处理 · 隐私安全 · 8 种格式工具</p>
+      <p class="subtitle">纯前端处理 · 隐私安全 · {{ tools.length }} 种格式工具</p>
     </div>
 
     <div class="tools-grid">
@@ -84,33 +84,67 @@
           <div class="tool-modal-body">
             <div class="tool-grid">
               <div class="tool-card-panel">
-                <div class="panel-title">输入文件</div>
+                <div class="panel-title">
+                  {{ activeTool.id === 'ingredient-list' ? '输入内容' : '输入文件' }}
+                </div>
                 <div class="panel-body">
-                  <label
-                    class="file-drop"
-                    :class="{ active: isDragging }"
-                    @dragover="onDragOver"
-                    @dragleave="onDragLeave"
-                    @drop="onDrop"
-                  >
-                    <input
-                      type="file"
-                      class="file-input"
-                      :accept="acceptFor(activeTool.id)"
-                      :multiple="
-                        activeTool.id === 'img2pdf' ||
-                        activeTool.id === 'webp' ||
-                        activeTool.id === 'jpeg' ||
-                        activeTool.id === 'ico'
-                      "
-                      @change="onFileChange"
-                    />
-                    <div class="file-drop-icon">📂</div>
-                    <div class="file-drop-title">点击或拖拽文件到这里</div>
-                    <div class="file-drop-sub">{{ acceptHintFor(activeTool.id) }}</div>
-                  </label>
+                  <template v-if="activeTool.id === 'ingredient-list'">
+                    <div class="field-row">
+                      <div class="field-label">产品名（可选）</div>
+                      <input
+                        v-model="ingredientProductName"
+                        class="control"
+                        type="text"
+                        placeholder="例如 NthMe Gummies"
+                      />
+                    </div>
+                    <div class="field-row">
+                      <div class="field-label">类型</div>
+                      <select v-model="ingredientProductType" class="control">
+                        <option value="Auto">自动</option>
+                        <option value="Food">食品</option>
+                        <option value="Dietary Supplement">膳食补充剂</option>
+                        <option value="Cosmetic">化妆品</option>
+                        <option value="Drug">药品</option>
+                      </select>
+                    </div>
+                    <div class="field-row">
+                      <div class="field-label">文本</div>
+                      <textarea
+                        v-model="ingredientText"
+                        class="control"
+                        rows="10"
+                        placeholder="粘贴配料/配方/包装描述文本（支持中英文，自动转美式英文输出）"
+                      ></textarea>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <label
+                      class="file-drop"
+                      :class="{ active: isDragging }"
+                      @dragover="onDragOver"
+                      @dragleave="onDragLeave"
+                      @drop="onDrop"
+                    >
+                      <input
+                        type="file"
+                        class="file-input"
+                        :accept="acceptFor(activeTool.id)"
+                        :multiple="
+                          activeTool.id === 'img2pdf' ||
+                          activeTool.id === 'webp' ||
+                          activeTool.id === 'jpeg' ||
+                          activeTool.id === 'ico'
+                        "
+                        @change="onFileChange"
+                      />
+                      <div class="file-drop-icon">📂</div>
+                      <div class="file-drop-title">点击或拖拽文件到这里</div>
+                      <div class="file-drop-sub">{{ acceptHintFor(activeTool.id) }}</div>
+                    </label>
+                  </template>
 
-                  <div v-if="sourceMeta" class="meta-row">
+                  <div v-if="sourceMeta && activeTool.id !== 'ingredient-list'" class="meta-row">
                     <div class="meta-item">
                       <div class="meta-k">NAME</div>
                       <div class="meta-v">{{ sourceMeta.name }}</div>
@@ -125,7 +159,7 @@
                     </div>
                   </div>
 
-                  <div v-if="sourceUrl" class="preview">
+                  <div v-if="sourceUrl && activeTool.id !== 'ingredient-list'" class="preview">
                     <div v-if="activeTool.id === 'watermark'" class="wm-stage">
                       <canvas ref="wmCanvasRef" class="wm-canvas"></canvas>
                       <canvas
@@ -585,7 +619,10 @@
                   <div class="actions">
                     <button
                       class="btn primary"
-                      :disabled="!sourceFile || isProcessing"
+                      :disabled="
+                        isProcessing ||
+                        (activeTool.id === 'ingredient-list' ? !ingredientText.trim() : !sourceFile)
+                      "
                       @click="runTool"
                     >
                       {{
@@ -744,6 +781,9 @@ const {
   gifFps,
   gifWidth,
   gifMaxColors,
+  ingredientProductName,
+  ingredientText,
+  ingredientProductType,
   wmCanvasRef,
   wmOverlayCanvasRef,
   wmMode,

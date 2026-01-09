@@ -64,5 +64,13 @@ export const formatFactoryTools: FormatFactoryTool[] = [
     icon: '📐',
     tag: '通用处理',
     status: 'ready'
+  },
+  {
+    id: 'ingredient-list',
+    name: '配料表生成器',
+    description: '输入文字 · 一键生成标签图',
+    icon: '🧾',
+    tag: 'AI 免费工具',
+    status: 'ready'
   }
 ];

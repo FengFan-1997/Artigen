@@ -1,23 +1,23 @@
 {
   "db8078bad92e5c72937229be5ed18c46mk588x4i": {
     "id": "db8078bad92e5c72937229be5ed18c46mk588x4i",
-    "userId": "guest_f8v52i4r0",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
     "requestId": "agentimg_directions_mk588x2d_ndwv1a",
     "status": "refunded",
     "createdAt": 1767863440818,
-    "updatedAt": 1767863476848
+    "updatedAt": 1767902179283
   },
   "4521cacfbc82c5e737282f1560826efemk589o1r": {
     "id": "4521cacfbc82c5e737282f1560826efemk589o1r",
-    "userId": "guest_f8v52i4r0",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
     "requestId": "agentimg_directions_mk589o1k_hhpkaw",
     "status": "refunded",
     "createdAt": 1767863475711,
-    "updatedAt": 1767863511748
+    "updatedAt": 1767902179283
   },
   "5b74576b0dcad47f38fe30016cbc5581mk5brf20": {
     "id": "5b74576b0dcad47f38fe30016cbc5581mk5brf20",
@@ -218,5 +218,95 @@
     "status": "confirmed",
     "createdAt": 1767892818989,
     "updatedAt": 1767892825262
+  },
+  "4e2d463b89efa3812bfdbf6c5e3bf50dmk5vcl3l": {
+    "id": "4e2d463b89efa3812bfdbf6c5e3bf50dmk5vcl3l",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "agentimg_directions_mk5vcl36_nfmfqr",
+    "status": "confirmed",
+    "createdAt": 1767902243025,
+    "updatedAt": 1767902269145
+  },
+  "cda43e0de8c7175483eaa5c9a08b14e2mk5vq059": {
+    "id": "cda43e0de8c7175483eaa5c9a08b14e2mk5vq059",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "agentimg_directions_mk5vq04x_aqjehq",
+    "status": "confirmed",
+    "createdAt": 1767902869053,
+    "updatedAt": 1767902899164
+  },
+  "665ae9ffa54443c68c45e0d786db0417mk5vsps1": {
+    "id": "665ae9ffa54443c68c45e0d786db0417mk5vsps1",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "agentimg_final_mk5vsprv_28xy58",
+    "status": "confirmed",
+    "createdAt": 1767902995585,
+    "updatedAt": 1767903011980
+  },
+  "4e91a4675ea28aacd01bea225e9e1c0emk5vt2fu": {
+    "id": "4e91a4675ea28aacd01bea225e9e1c0emk5vt2fu",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "agentimg_img2img_mk5vt2fo_mjtnn6my",
+    "status": "confirmed",
+    "createdAt": 1767903011994,
+    "updatedAt": 1767903018416
+  },
+  "704942bce0d102872e4fe463009c32f2mk5vwn84": {
+    "id": "704942bce0d102872e4fe463009c32f2mk5vwn84",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "agentimg_directions_mk5vwn7w_jm0z8y",
+    "status": "confirmed",
+    "createdAt": 1767903178900,
+    "updatedAt": 1767903220363
+  },
+  "883311fff0b23c96e7cfa657919a20edmk5vy50i": {
+    "id": "883311fff0b23c96e7cfa657919a20edmk5vy50i",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "agentimg_final_mk5vy50a_c8gr4y",
+    "status": "confirmed",
+    "createdAt": 1767903248610,
+    "updatedAt": 1767903265457
+  },
+  "88cc5946a254d852f6d84b5112deab0amk5vyi0p": {
+    "id": "88cc5946a254d852f6d84b5112deab0amk5vyi0p",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "agentimg_img2img_mk5vyi0l_kdnro6qb",
+    "status": "confirmed",
+    "createdAt": 1767903265465,
+    "updatedAt": 1767903276266
+  },
+  "b1cf7e81dd5d83ff62bd55999cad87f8mk5x7tpo": {
+    "id": "b1cf7e81dd5d83ff62bd55999cad87f8mk5x7tpo",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "agentimg_directions_mk5x7tpb_m0p4tm",
+    "status": "confirmed",
+    "createdAt": 1767905380140,
+    "updatedAt": 1767905404686
+  },
+  "8bed5954d250e2f308d5014a26fed798mk6ij58x": {
+    "id": "8bed5954d250e2f308d5014a26fed798mk6ij58x",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "agentimg_final_mk6ij578_ucizt2",
+    "status": "confirmed",
+    "createdAt": 1767941180241,
+    "updatedAt": 1767941195872
   }
 }
