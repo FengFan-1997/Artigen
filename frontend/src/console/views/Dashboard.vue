@@ -1,23 +1,31 @@
 <template>
   <div>
-    <a-typography-title :level="2">Overview</a-typography-title>
+    <a-typography-title :level="2">{{ ui.title }}</a-typography-title>
 
     <a-row :gutter="16">
       <a-col :span="8">
         <a-card>
-          <a-statistic title="Current Balance" :value="userPoints" :precision="0" suffix="Credits">
+          <a-statistic
+            :title="ui.currentBalance"
+            :value="userPoints"
+            :precision="0"
+            :suffix="ui.credits"
+          >
             <template #prefix>
               <wallet-outlined />
             </template>
           </a-statistic>
-          <a-button type="primary" style="margin-top: 16px" @click="router.push('/console/billing')"
-            >Recharge</a-button
+          <a-button
+            type="primary"
+            style="margin-top: 16px"
+            @click="router.push('/console/billing')"
+            >{{ ui.recharge }}</a-button
           >
         </a-card>
       </a-col>
       <a-col :span="8">
         <a-card>
-          <a-statistic title="Account Level" :value="userLevel" />
+          <a-statistic :title="ui.accountLevel" :value="userLevel" />
           <div style="margin-top: 16px">
             <a-tag :color="getLevelColor(userLevel)">{{ userLevel.toUpperCase() }}</a-tag>
           </div>
@@ -25,7 +33,7 @@
       </a-col>
       <a-col :span="8">
         <a-card>
-          <a-statistic title="User ID" :value="userId" class="small-text-stat" />
+          <a-statistic :title="ui.userId" :value="userId" class="small-text-stat" />
           <div style="margin-top: 10px; color: #888">{{ userEmail }}</div>
         </a-card>
       </a-col>
@@ -34,20 +42,24 @@
     <div style="margin-top: 24px">
       <a-row :gutter="16">
         <a-col :span="16">
-          <a-card title="Usage Trend (Last 7 Days)">
+          <a-card :title="ui.usageTrend">
             <div style="height: 300px">
               <v-chart class="chart" :option="chartOption" autoresize />
             </div>
           </a-card>
         </a-col>
         <a-col :span="8">
-          <a-card title="Quick Actions">
+          <a-card :title="ui.quickActions">
             <a-space direction="vertical" style="width: 100%">
-              <a-button block type="primary" @click="router.push('/console/playground')"
-                >Try Playground</a-button
-              >
-              <a-button block @click="router.push('/console/usage')">View Full History</a-button>
-              <a-button block @click="router.push('/console/users')">User Management</a-button>
+              <a-button block type="primary" @click="router.push('/console/playground')">{{
+                ui.tryPlayground
+              }}</a-button>
+              <a-button block @click="router.push('/console/usage')">{{
+                ui.viewFullHistory
+              }}</a-button>
+              <a-button block @click="router.push('/console/users')">{{
+                ui.userManagement
+              }}</a-button>
             </a-space>
           </a-card>
         </a-col>
@@ -55,7 +67,7 @@
     </div>
 
     <div style="margin-top: 24px">
-      <a-typography-title :level="4">Recent Activity</a-typography-title>
+      <a-typography-title :level="4">{{ ui.recentActivity }}</a-typography-title>
       <a-table :columns="columns" :data-source="recentUsage" row-key="id" pagination="false" />
     </div>
   </div>
@@ -68,6 +80,8 @@ import { WalletOutlined } from '@ant-design/icons-vue';
 import { useAuth } from '@/agent/composables/useAuth';
 import { getCurrentUserId } from '@/login/session';
 import { useConsoleStore } from '@/stores/console';
+import { storeToRefs } from 'pinia';
+import { useLanguageStore } from '@/stores/language';
 
 import { use } from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
@@ -81,6 +95,51 @@ const router = useRouter();
 const { currentUser } = useAuth();
 const consoleStore = useConsoleStore();
 
+const languageStore = useLanguageStore();
+const { currentLang } = storeToRefs(languageStore);
+
+const ui = computed(() =>
+  currentLang.value === 'zh'
+    ? {
+        title: '总览',
+        currentBalance: '当前余额',
+        credits: '点数',
+        recharge: '充值',
+        accountLevel: '账户等级',
+        userId: '用户 ID',
+        usageTrend: '用量趋势（近 7 天）',
+        quickActions: '快捷操作',
+        tryPlayground: '进入试验场',
+        viewFullHistory: '查看完整记录',
+        userManagement: '用户管理',
+        recentActivity: '最近活动',
+        colTime: '时间',
+        colType: '类型',
+        colDesc: '描述',
+        colAmount: '数量',
+        pointsSpent: '消耗点数'
+      }
+    : {
+        title: 'Overview',
+        currentBalance: 'Current Balance',
+        credits: 'Credits',
+        recharge: 'Recharge',
+        accountLevel: 'Account Level',
+        userId: 'User ID',
+        usageTrend: 'Usage Trend (Last 7 Days)',
+        quickActions: 'Quick Actions',
+        tryPlayground: 'Try Playground',
+        viewFullHistory: 'View Full History',
+        userManagement: 'User Management',
+        recentActivity: 'Recent Activity',
+        colTime: 'Time',
+        colType: 'Type',
+        colDesc: 'Description',
+        colAmount: 'Amount',
+        pointsSpent: 'Points Spent'
+      }
+);
+
 const userId = computed(() => currentUser.value?.userId || getCurrentUserId());
 const userPoints = computed(() => consoleStore.getCurrentUser?.points || 0);
 const userLevel = computed(() => consoleStore.getCurrentUser?.level || 'free');
@@ -90,17 +149,17 @@ const recentUsage = computed(() => {
   return consoleStore.getUserTransactions(userId.value).slice(0, 5);
 });
 
-const columns = [
+const columns = computed(() => [
   {
-    title: 'Time',
+    title: ui.value.colTime,
     dataIndex: 'timestamp',
     key: 'timestamp',
     customRender: ({ text }: any) => new Date(text).toLocaleString()
   },
-  { title: 'Type', dataIndex: 'type', key: 'type' },
-  { title: 'Description', dataIndex: 'description', key: 'description' },
+  { title: ui.value.colType, dataIndex: 'type', key: 'type' },
+  { title: ui.value.colDesc, dataIndex: 'description', key: 'description' },
   {
-    title: 'Amount',
+    title: ui.value.colAmount,
     dataIndex: 'amount',
     key: 'amount',
     customRender: ({ text }: any) => {
@@ -108,7 +167,7 @@ const columns = [
       return val > 0 ? `+${val}` : `${val}`;
     }
   }
-];
+]);
 
 const chartOption = computed(() => {
   const transactions = consoleStore.getUserTransactions(userId.value);
@@ -143,7 +202,7 @@ const chartOption = computed(() => {
     },
     yAxis: {
       type: 'value',
-      name: 'Points Spent'
+      name: ui.value.pointsSpent
     },
     series: [
       {

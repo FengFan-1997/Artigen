@@ -7,51 +7,35 @@
         </router-link>
 
         <nav class="top-nav">
-          <router-link to="/artigen/format-factory" class="top-nav-item">格式工厂</router-link>
-          <router-link to="/artigen/ai" class="top-nav-item">AI工坊</router-link>
-          <router-link to="/artigen/market" class="top-nav-item">算力商城</router-link>
+          <router-link to="/artigen/format-factory" class="top-nav-item">{{
+            ui.navFormatFactory
+          }}</router-link>
+          <router-link to="/artigen/ai" class="top-nav-item">{{ ui.navAiWorkshop }}</router-link>
+          <router-link to="/artigen/market" class="top-nav-item">{{ ui.navMarket }}</router-link>
         </nav>
 
         <div class="top-actions">
-          <router-link to="/" class="top-action-link">PORTFOLIO</router-link>
+          <router-link to="/" class="top-action-link">{{ ui.portfolio }}</router-link>
         </div>
       </div>
     </header>
 
     <div class="legal-container">
       <header class="legal-header">
-        <h1>退款政策</h1>
-        <p class="subtitle">最后更新: 2025-12-30</p>
+        <h1>{{ ui.title }}</h1>
+        <p class="subtitle">{{ ui.updatedAt }}</p>
       </header>
 
       <div class="legal-content">
-        <p class="intro">
-          在「Artigen」，我们致力于提供透明、公平的退款体验。请在购买前仔细阅读本政策。
-        </p>
+        <p class="intro">{{ ui.intro }}</p>
 
-        <section>
-          <h2>14 天无理由退款</h2>
-          <p>我们提供购买后 14 天内的全额退款，前提是积分尚未被使用。</p>
-        </section>
-
-        <section>
-          <h2>如何申请退款</h2>
-          <p>
-            如果您在 14 天内且未使用已购积分，请发送邮件至 sorates1997@163.com
-            并附上您的订单号。我们将通过原支付方式处理退款。
-          </p>
-        </section>
-
-        <section>
-          <h2>例外情况</h2>
-          <p>
-            如果您已使用购买的任何积分，我们保留拒绝退款请求或酌情提供部分退款的权利。超过 14
-            天后，所有销售均为最终销售。
-          </p>
+        <section v-for="(section, idx) in ui.sections" :key="idx">
+          <h2>{{ section.title }}</h2>
+          <p v-for="(line, lineIdx) in section.paragraphs" :key="lineIdx">{{ line }}</p>
         </section>
 
         <div class="contact-box">
-          如有疑问，请联系: <span class="highlight">sorates1997@163.com</span>
+          {{ ui.contactLabel }}: <span class="highlight">sorates1997@163.com</span>
         </div>
       </div>
     </div>
@@ -60,7 +44,76 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useLanguageStore } from '@/stores/language';
 import GlobalFooter from '../../components/GlobalFooter.vue';
+
+const languageStore = useLanguageStore();
+const { currentLang } = storeToRefs(languageStore);
+
+const ui = computed(() =>
+  currentLang.value === 'zh'
+    ? {
+        navFormatFactory: '格式工厂',
+        navAiWorkshop: 'AI工坊',
+        navMarket: '算力商城',
+        portfolio: '作品集',
+        title: '退款政策',
+        updatedAt: '最后更新: 2025-12-30',
+        intro: '在「Artigen」，我们致力于提供透明、公平的退款体验。请在购买前仔细阅读本政策。',
+        sections: [
+          {
+            title: '14 天无理由退款',
+            paragraphs: ['我们提供购买后 14 天内的全额退款，前提是积分尚未被使用。']
+          },
+          {
+            title: '如何申请退款',
+            paragraphs: [
+              '如果您在 14 天内且未使用已购积分，请发送邮件至 sorates1997@163.com 并附上您的订单号。我们将通过原支付方式处理退款。'
+            ]
+          },
+          {
+            title: '例外情况',
+            paragraphs: [
+              '如果您已使用购买的任何积分，我们保留拒绝退款请求或酌情提供部分退款的权利。超过 14 天后，所有销售均为最终销售。'
+            ]
+          }
+        ],
+        contactLabel: '如有疑问，请联系'
+      }
+    : {
+        navFormatFactory: 'Format Factory',
+        navAiWorkshop: 'AI Workshop',
+        navMarket: 'Compute Market',
+        portfolio: 'PORTFOLIO',
+        title: 'Refund Policy',
+        updatedAt: 'Last updated: 2025-12-30',
+        intro:
+          'At Artigen, we aim to provide a transparent and fair refund experience. Please read this policy carefully before purchasing.',
+        sections: [
+          {
+            title: '14-Day Refund',
+            paragraphs: [
+              'We offer a full refund within 14 days of purchase, provided the points have not been used.'
+            ]
+          },
+          {
+            title: 'How to Request a Refund',
+            paragraphs: [
+              'If you are within 14 days and have not used the purchased points, email sorates1997@163.com with your order number. Refunds will be processed to the original payment method.'
+            ]
+          },
+          {
+            title: 'Exceptions',
+            paragraphs: [
+              'If you have used any purchased points, we may deny the refund request or provide a partial refund at our discretion. After 14 days, all sales are final.'
+            ]
+          }
+        ],
+        contactLabel: 'Questions? Contact'
+      }
+);
 </script>
 
 <style scoped>

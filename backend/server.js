@@ -1462,6 +1462,10 @@ app.get('/api/health', async (req, res) => {
       indexed: false,
       countZh: 0,
       countEn: 0
+    },
+    storage: {
+      memoryDir: '',
+      writable: false
     }
   };
 
@@ -1496,6 +1500,32 @@ app.get('/api/health', async (req, res) => {
     result.modedoc.countZh = idx?.zh?.size || 0;
     result.modedoc.countEn = idx?.en?.size || 0;
   } catch {}
+
+  try {
+    const { MEMORY_DIR } = require('./utils/storage');
+    const check = (() => {
+      try {
+        const p = path.resolve(String(MEMORY_DIR || '').trim());
+        fs.mkdirSync(p, { recursive: true });
+        const testFile = path.join(
+          p,
+          `.write_test_${process.pid}_${Date.now()}_${Math.random().toString(16).slice(2)}.tmp`
+        );
+        fs.writeFileSync(testFile, 'ok');
+        fs.unlinkSync(testFile);
+        return { ok: true, path: p };
+      } catch (e) {
+        return { ok: false, error: String(e?.message || e) };
+      }
+    })();
+    result.storage.memoryDir = MEMORY_DIR;
+    result.storage.writable = !!check.ok;
+    if (!check.ok) result.storage.error = check.error;
+  } catch (e) {
+    result.storage.memoryDir = '';
+    result.storage.writable = false;
+    result.storage.error = String(e?.message || e);
+  }
 
   if (probe) {
     const startedAt = Date.now();
@@ -1567,6 +1597,22 @@ const listRegisteredRoutes = (appInstance) => {
   }
 };
 
+const isWritableDir = (dirPath) => {
+  try {
+    const p = path.resolve(String(dirPath || '').trim());
+    fs.mkdirSync(p, { recursive: true });
+    const testFile = path.join(
+      p,
+      `.write_test_${process.pid}_${Date.now()}_${Math.random().toString(16).slice(2)}.tmp`
+    );
+    fs.writeFileSync(testFile, 'ok');
+    fs.unlinkSync(testFile);
+    return { ok: true, path: p };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+};
+
 app.get('/api/_debug/routes', (req, res) => {
   if (String(process.env.DEBUG_ROUTES || '').trim() !== '1') return res.status(404).json({ error: 'Not Found' });
   const routes = listRegisteredRoutes(app);
@@ -1574,6 +1620,56 @@ app.get('/api/_debug/routes', (req, res) => {
     (r) => r && r.path === '/api/img2img' && Array.isArray(r.methods) && r.methods.includes('POST')
   );
   res.json({ ok: true, hasImg2img, routes });
+});
+
+app.get('/api/_debug/storage', (req, res) => {
+  if (String(process.env.DEBUG_ROUTES || '').trim() !== '1') return res.status(404).json({ error: 'Not Found' });
+  const { MEMORY_DIR } = require('./utils/storage');
+  const check = isWritableDir(MEMORY_DIR);
+  res.json({
+    ok: true,
+    memoryDir: MEMORY_DIR,
+    writable: !!check.ok,
+    ...(check.ok ? {} : { error: check.error }),
+    nodeEnv: String(process.env.NODE_ENV || '').trim()
+  });
+});
+
+app.get('/api/_debug/ip', (req, res) => {
+  const ip = getClientIp(req);
+  const local =
+    ip === '::1' ||
+    ip === '127.0.0.1' ||
+    ip.startsWith('127.') ||
+    ip === '::ffff:127.0.0.1' ||
+    ip.startsWith('::ffff:127.') ||
+    ip === '::ffff:7f00:1' ||
+    ip === 'localhost';
+  if (!local) return res.status(404).json({ error: 'Not Found' });
+  res.json({
+    ok: true,
+    ip,
+    reqIp: typeof req.ip === 'string' ? req.ip : '',
+    xf: req.headers['x-forwarded-for'] || null
+  });
+});
+
+app.post('/api/_debug/login-test', (req, res) => {
+  if (String(process.env.DEBUG_ROUTES || '').trim() !== '1') return res.status(404).json({ error: 'Not Found' });
+  const body = req.body || {};
+  const email = normalizeEmail(body.email);
+  const code = String(body.code || '').trim();
+  const expected = String(process.env.LOGIN_TEST_CODE || '123456').trim() || '123456';
+  const ip = getClientIp(req);
+  res.json({
+    ok: true,
+    ip,
+    nodeEnv: String(process.env.NODE_ENV || ''),
+    email,
+    code,
+    expected,
+    canUse: canUseTestLoginCode(req, code, email)
+  });
 });
 
 const DEFAULT_PROJECT_KNOWLEDGE = `
@@ -2233,6 +2329,43 @@ const ensureUserMemoryShape = (userId, v) => {
   return base;
 };
 
+const IMAGE_HISTORY_MAX_ITEMS = (() => {
+  const v = Number.parseInt(String(process.env.IMAGE_HISTORY_MAX_ITEMS || ''), 10);
+  return Number.isFinite(v) && v > 0 ? v : 80;
+})();
+
+const toImageHistoryRef = (rawUrl) => {
+  const url = String(rawUrl || '').trim();
+  if (!url) return null;
+  if (url.startsWith('data:')) {
+    const semi = url.indexOf(';');
+    const mime = semi > 5 ? url.slice(5, semi).trim() : '';
+    return { kind: 'data', ...(mime ? { mime } : {}) };
+  }
+  if (/^https?:\/\//i.test(url)) return { kind: 'url', url: url.slice(0, 800) };
+  return null;
+};
+
+const appendUserImageHistory = (input) => {
+  try {
+    const userId = String(input?.userId || '').trim();
+    if (!userId) return false;
+    const entry = input?.entry && typeof input.entry === 'object' ? input.entry : null;
+    if (!entry) return false;
+
+    const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+    const list = Array.isArray(mem.image_history) ? mem.image_history : [];
+    const next = [entry, ...list].slice(0, IMAGE_HISTORY_MAX_ITEMS);
+    mem.image_history = next;
+    mem.meta = mem.meta && typeof mem.meta === 'object' ? mem.meta : {};
+    mem.meta.updatedAt = Date.now();
+    writeUserMemory(userId, mem);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const getIsoDay = () => {
   try {
     return new Date().toISOString().slice(0, 10);
@@ -2870,6 +3003,50 @@ const loginCodes = new Map();
 
 const normalizeEmail = (input) => String(input || '').trim().toLowerCase();
 
+const canUseTestLoginCode = (req, code, email) => {
+  const expected = String(process.env.LOGIN_TEST_CODE || '123456').trim() || '123456';
+  const got = String(code || '').trim();
+  if (!got || got !== expected) return false;
+
+  const ip = getClientIp(req);
+  const isLocal =
+    ip === '::1' ||
+    ip === '127.0.0.1' ||
+    ip.startsWith('127.') ||
+    ip === '::ffff:127.0.0.1' ||
+    ip.startsWith('::ffff:127.') ||
+    ip === '::ffff:7f00:1' ||
+    ip === 'localhost';
+  if (isLocal) return true;
+
+  const allowEmailsRaw =
+    String(process.env.LOGIN_TEST_EMAILS || '').trim() ||
+    String(process.env.LOGIN_TEST_EMAIL_ALLOWLIST || '').trim();
+  if (allowEmailsRaw) {
+    const e = normalizeEmail(email);
+    const allowSet = new Set(
+      allowEmailsRaw
+        .split(',')
+        .map((s) => normalizeEmail(s))
+        .filter(Boolean)
+    );
+    if (e && allowSet.has(e)) return true;
+  }
+
+  const env = String(process.env.NODE_ENV || '').trim().toLowerCase();
+  const isProd = env === 'production';
+  if (!isProd) return true;
+
+  const enabled =
+    String(process.env.LOGIN_ALLOW_TEST_CODE || '').trim() === '1' ||
+    String(process.env.DEBUG_ROUTES || '').trim() === '1' ||
+    String(process.env.LOGIN_DEBUG_RETURN_CODE || '').trim() === '1';
+  if (!enabled) return false;
+  if (String(process.env.LOGIN_ALLOW_TEST_CODE_IN_PROD || '').trim() !== '1') return false;
+
+  return String(process.env.LOGIN_ALLOW_TEST_CODE_REMOTE || '').trim() === '1';
+};
+
 const emailToUserId = (email) => {
   const e = normalizeEmail(email);
   if (!e) return '';
@@ -2979,24 +3156,27 @@ app.post(
       if (!email || !LOGIN_EMAIL_RE.test(email)) return res.status(400).json({ ok: false, message: '邮箱格式不正确' });
       if (!code) return res.status(400).json({ ok: false, message: '请输入验证码' });
 
-      const st = loginCodes.get(email);
-      if (!st) return res.status(400).json({ ok: false, message: '请先发送验证码' });
+      const usingTestCode = canUseTestLoginCode(req, code, email);
+      if (!usingTestCode) {
+        const st = loginCodes.get(email);
+        if (!st) return res.status(400).json({ ok: false, message: '请先发送验证码' });
 
-      const now = Date.now();
-      if (now > Number(st.expiresAt || 0)) {
-        loginCodes.delete(email);
-        return res.status(400).json({ ok: false, message: '验证码已过期，请重新发送' });
-      }
+        const now = Date.now();
+        if (now > Number(st.expiresAt || 0)) {
+          loginCodes.delete(email);
+          return res.status(400).json({ ok: false, message: '验证码已过期，请重新发送' });
+        }
 
-      if (Number(st.attemptsLeft || 0) <= 0) {
-        loginCodes.delete(email);
-        return res.status(429).json({ ok: false, message: '尝试次数过多，请重新发送验证码' });
-      }
+        if (Number(st.attemptsLeft || 0) <= 0) {
+          loginCodes.delete(email);
+          return res.status(429).json({ ok: false, message: '尝试次数过多，请重新发送验证码' });
+        }
 
-      if (code !== String(st.code || '')) {
-        st.attemptsLeft = Number(st.attemptsLeft || 0) - 1;
-        loginCodes.set(email, st);
-        return res.status(400).json({ ok: false, message: '验证码错误' });
+        if (code !== String(st.code || '')) {
+          st.attemptsLeft = Number(st.attemptsLeft || 0) - 1;
+          loginCodes.set(email, st);
+          return res.status(400).json({ ok: false, message: '验证码错误' });
+        }
       }
 
       loginCodes.delete(email);
@@ -3083,21 +3263,24 @@ app.post('/api/auth/register', (req, res) => {
       return res.status(409).json({ error: 'Username already exists' });
     }
 
-    const st = loginCodes.get(mail);
-    if (!st) return res.status(400).json({ error: 'Please send code first' });
-    const now = Date.now();
-    if (now > Number(st.expiresAt || 0)) {
-      loginCodes.delete(mail);
-      return res.status(400).json({ error: 'Code expired' });
-    }
-    if (Number(st.attemptsLeft || 0) <= 0) {
-      loginCodes.delete(mail);
-      return res.status(429).json({ error: 'Too many attempts, resend code' });
-    }
-    if (c !== String(st.code || '')) {
-      st.attemptsLeft = Number(st.attemptsLeft || 0) - 1;
-      loginCodes.set(mail, st);
-      return res.status(400).json({ error: 'Invalid code' });
+    const usingTestCode = canUseTestLoginCode(req, c, mail);
+    if (!usingTestCode) {
+      const st = loginCodes.get(mail);
+      if (!st) return res.status(400).json({ error: 'Please send code first' });
+      const now = Date.now();
+      if (now > Number(st.expiresAt || 0)) {
+        loginCodes.delete(mail);
+        return res.status(400).json({ error: 'Code expired' });
+      }
+      if (Number(st.attemptsLeft || 0) <= 0) {
+        loginCodes.delete(mail);
+        return res.status(429).json({ error: 'Too many attempts, resend code' });
+      }
+      if (c !== String(st.code || '')) {
+        st.attemptsLeft = Number(st.attemptsLeft || 0) - 1;
+        loginCodes.set(mail, st);
+        return res.status(400).json({ error: 'Invalid code' });
+      }
     }
     loginCodes.delete(mail);
 
@@ -3365,6 +3548,36 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
       imgCredits.refundHold({ userId, holdId: holdRes.holdId });
       return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
     }
+    try {
+      const paramsRaw = body.params && typeof body.params === 'object' ? body.params : {};
+      const params = {
+        imageSize: typeof paramsRaw.imageSize === 'string' ? paramsRaw.imageSize.trim() : '',
+        steps: Number.isFinite(Number(paramsRaw.steps)) ? Number(paramsRaw.steps) : undefined,
+        guidanceScale: Number.isFinite(Number(paramsRaw.guidanceScale)) ? Number(paramsRaw.guidanceScale) : undefined,
+        seed: Number.isFinite(Number(paramsRaw.seed)) ? Number(paramsRaw.seed) : undefined
+      };
+      const imagesForHistory = normalizedImages
+        .map((it) => toImageHistoryRef(it?.url))
+        .filter(Boolean)
+        .slice(0, 4);
+      appendUserImageHistory({
+        userId,
+        entry: {
+          id: requestId,
+          ts: Date.now(),
+          type: 'img2img',
+          provider: 'siliconflow',
+          model: String(SILICONFLOW_IMAGE_MODEL || '').trim(),
+          cost,
+          prompt: String(body.prompt || '').trim().slice(0, 1200),
+          negativePrompt: String(body.negativePrompt || '').trim().slice(0, 1200),
+          params,
+          images: imagesForHistory,
+          seed: typeof data?.seed === 'number' ? data.seed : undefined,
+          timings: data?.timings
+        }
+      });
+    } catch {}
     holdCtx = null;
     return res.json({
       requestId,
@@ -3392,6 +3605,20 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
       });
     }
     return res.status(500).json({ error: 'Internal Server Error', ...(refundedWallet ? { wallet: refundedWallet } : {}) });
+  }
+});
+
+app.get('/api/images/history/:userId', rateLimit('images_history', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    const userId = String(req.params.userId || '').trim();
+    if (!assertAuthUserMatches(req, res, userId)) return;
+    const limit = clampInt(req.query.limit, 50, 200);
+    const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+    const items = Array.isArray(mem.image_history) ? mem.image_history : [];
+    res.json({ ok: true, items: items.slice(0, limit) });
+  } catch (error) {
+    console.error('Error in GET /api/images/history:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 

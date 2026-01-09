@@ -1,0 +1,21 @@
+{
+  "user_id": "user_history_smoke",
+  "meta": {
+    "updatedAt": 1767970406747
+  },
+  "core_memory": [],
+  "short_term_buffer": [],
+  "image_history": [
+    {
+      "id": "r1",
+      "ts": 1767970406747,
+      "type": "smoke",
+      "images": [
+        {
+          "kind": "url",
+          "url": "https://example.com/x.png"
+        }
+      ]
+    }
+  ]
+}

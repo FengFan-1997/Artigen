@@ -7,53 +7,33 @@
         </router-link>
 
         <nav class="top-nav">
-          <router-link to="/artigen/format-factory" class="top-nav-item">格式工厂</router-link>
-          <router-link to="/artigen/ai" class="top-nav-item">AI工坊</router-link>
-          <router-link to="/artigen/market" class="top-nav-item">算力商城</router-link>
+          <router-link to="/artigen/format-factory" class="top-nav-item">{{
+            ui.navFormatFactory
+          }}</router-link>
+          <router-link to="/artigen/ai" class="top-nav-item">{{ ui.navAiWorkshop }}</router-link>
+          <router-link to="/artigen/market" class="top-nav-item">{{ ui.navMarket }}</router-link>
         </nav>
 
         <div class="top-actions">
-          <router-link to="/" class="top-action-link">PORTFOLIO</router-link>
+          <router-link to="/" class="top-action-link">{{ ui.portfolio }}</router-link>
         </div>
       </div>
     </header>
 
     <div class="legal-container">
       <header class="legal-header">
-        <h1>隐私政策</h1>
-        <p class="subtitle">最后更新: 2025-12-30</p>
+        <h1>{{ ui.title }}</h1>
+        <p class="subtitle">{{ ui.updatedAt }}</p>
       </header>
 
       <div class="legal-content">
-        <section>
-          <h2>1. 信息收集</h2>
-          <p>
-            我们仅收集提供服务所必需的最少信息。这可能包括您的账户信息（如需登录）、使用数据（如访问频率）以及您上传用于处理的图片数据。
-          </p>
-        </section>
-
-        <section>
-          <h2>2. 图片处理与存储</h2>
-          <p>
-            您上传的图片仅用于即时处理。图片会直接传输至我们的 AI 推理引擎或本地处理逻辑。对于 AI
-            生成服务，原图在生成任务完成后会立即从临时存储中清除。对于本地格式转换工具，所有处理均在您的浏览器端完成，图片不会上传至服务器。
-          </p>
-        </section>
-
-        <section>
-          <h2>3. 数据使用</h2>
-          <p>
-            我们不会将您的个人数据或上传的图片用于广告投放或出售给第三方。您的数据仅用于提供和改进我们的服务。
-          </p>
-        </section>
-
-        <section>
-          <h2>4. Cookie 使用</h2>
-          <p>我们使用本地存储和必要的 Cookie 来保存您的登录状态和偏好设置。</p>
+        <section v-for="(section, idx) in ui.sections" :key="idx">
+          <h2>{{ section.title }}</h2>
+          <p v-for="(line, lineIdx) in section.paragraphs" :key="lineIdx">{{ line }}</p>
         </section>
 
         <div class="contact-box">
-          如有隐私相关问题，请联系: <span class="highlight">sorates1997@163.com</span>
+          {{ ui.contactLabel }}: <span class="highlight">sorates1997@163.com</span>
         </div>
       </div>
     </div>
@@ -62,7 +42,85 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useLanguageStore } from '@/stores/language';
 import GlobalFooter from '../../components/GlobalFooter.vue';
+
+const languageStore = useLanguageStore();
+const { currentLang } = storeToRefs(languageStore);
+
+const ui = computed(() =>
+  currentLang.value === 'zh'
+    ? {
+        navFormatFactory: '格式工厂',
+        navAiWorkshop: 'AI工坊',
+        navMarket: '算力商城',
+        portfolio: '作品集',
+        title: '隐私政策',
+        updatedAt: '最后更新: 2025-12-30',
+        sections: [
+          {
+            title: '1. 信息收集',
+            paragraphs: [
+              '我们仅收集提供服务所必需的最少信息。这可能包括您的账户信息（如需登录）、使用数据（如访问频率）以及您上传用于处理的图片数据。'
+            ]
+          },
+          {
+            title: '2. 图片处理与存储',
+            paragraphs: [
+              '您上传的图片仅用于即时处理。图片会直接传输至我们的 AI 推理引擎或本地处理逻辑。对于 AI 生成服务，原图在生成任务完成后会立即从临时存储中清除。对于本地格式转换工具，所有处理均在您的浏览器端完成，图片不会上传至服务器。'
+            ]
+          },
+          {
+            title: '3. 数据使用',
+            paragraphs: [
+              '我们不会将您的个人数据或上传的图片用于广告投放或出售给第三方。您的数据仅用于提供和改进我们的服务。'
+            ]
+          },
+          {
+            title: '4. Cookie 使用',
+            paragraphs: ['我们使用本地存储和必要的 Cookie 来保存您的登录状态和偏好设置。']
+          }
+        ],
+        contactLabel: '如有隐私相关问题，请联系'
+      }
+    : {
+        navFormatFactory: 'Format Factory',
+        navAiWorkshop: 'AI Workshop',
+        navMarket: 'Compute Market',
+        portfolio: 'PORTFOLIO',
+        title: 'Privacy Policy',
+        updatedAt: 'Last updated: 2025-12-30',
+        sections: [
+          {
+            title: '1. Information We Collect',
+            paragraphs: [
+              'We collect the minimum information necessary to provide the service. This may include your account information (if login is required), usage data (e.g., visit frequency), and image data you upload for processing.'
+            ]
+          },
+          {
+            title: '2. Image Processing & Storage',
+            paragraphs: [
+              'Uploaded images are used only for immediate processing. Images are transmitted directly to our AI inference engine or local processing logic. For AI generation services, the original image is removed from temporary storage immediately after the task completes. For local format-conversion tools, processing happens entirely in your browser and images are not uploaded to the server.'
+            ]
+          },
+          {
+            title: '3. How We Use Data',
+            paragraphs: [
+              'We do not use your personal data or uploaded images for advertising, nor do we sell them to third parties. Your data is used only to provide and improve our services.'
+            ]
+          },
+          {
+            title: '4. Cookies & Local Storage',
+            paragraphs: [
+              'We use local storage and essential cookies to keep you signed in and save your preferences.'
+            ]
+          }
+        ],
+        contactLabel: 'Privacy questions? Contact'
+      }
+);
 </script>
 
 <style scoped>

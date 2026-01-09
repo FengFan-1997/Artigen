@@ -162,21 +162,23 @@
                 />
               </div>
 
-              <div class="card-divider"></div>
-              <div class="card-title">{{ ui.brandAssets }}</div>
+              <div v-show="false">
+                <div class="card-divider"></div>
+                <div class="card-title">{{ ui.brandAssets }}</div>
 
-              <div class="field">
-                <div class="label">{{ ui.logoFile }}</div>
-                <div class="file-input-wrapper">
-                  <input
-                    type="file"
-                    accept="image/png,image/svg+xml"
-                    @change="onLogoChange"
-                    :disabled="loading"
-                  />
-                  <div class="file-trigger" :class="{ 'has-file': logoFileName }">
-                    <span v-if="logoFileName" class="file-name">{{ logoFileName }}</span>
-                    <span v-else class="placeholder">{{ ui.logoUploadPh }}</span>
+                <div class="field">
+                  <div class="label">{{ ui.logoFile }}</div>
+                  <div class="file-input-wrapper">
+                    <input
+                      type="file"
+                      accept="image/png,image/svg+xml"
+                      @change="onLogoChange"
+                      :disabled="loading"
+                    />
+                    <div class="file-trigger" :class="{ 'has-file': logoFileName }">
+                      <span v-if="logoFileName" class="file-name">{{ logoFileName }}</span>
+                      <span v-else class="placeholder">{{ ui.logoUploadPh }}</span>
+                    </div>
                   </div>
                 </div>
               </div>

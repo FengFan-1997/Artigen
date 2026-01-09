@@ -65,5 +65,30 @@
     "sessionToken": "66ad1d964cb4c77f7e05502dbe1dc8b59e262254a17f2150mk6po0t9",
     "sessionTokenIssuedAt": 1767953165085,
     "lastSeen": 1767953165085
+  },
+  "user_mk6thoz6_1388ca4f90fc": {
+    "id": "user_mk6thoz6_1388ca4f90fc",
+    "username": "u1767959588254",
+    "email": "u1767959588254@example.com",
+    "passwordHash": "cc2445eb0800eb2aeae05482eaf554a1250ce94a059f2e3f55b81da1bf692c23",
+    "passwordSalt": "928cffe85eaf2f8a8a98d4060c5623d7",
+    "passwordAlgo": "scrypt",
+    "name": "u1767959588254",
+    "visits": 0,
+    "preferences": {},
+    "createdAt": 1767959588338,
+    "sessionToken": "3ebcd2f85374d7f2164a5cfb0143e52cb8bf06f2382a95a7mk6thp0y",
+    "sessionTokenIssuedAt": 1767959588338
+  },
+  "email_bb71ee7c4141365b": {
+    "id": "email_bb71ee7c4141365b",
+    "email": "x@example.com",
+    "username": "x@example.com",
+    "name": "x",
+    "visits": 0,
+    "preferences": {},
+    "createdAt": 1767959599530,
+    "sessionToken": "7531935ea36444c126e1f3c9e77c0f857f1b18d0b7ac7e73mk6thxnu",
+    "sessionTokenIssuedAt": 1767959599530
   }
 }

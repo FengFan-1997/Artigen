@@ -1,11 +1,11 @@
 <template>
   <div>
-    <a-typography-title :level="2">Usage History</a-typography-title>
+    <a-typography-title :level="2">{{ ui.title }}</a-typography-title>
 
     <a-card>
       <div style="margin-bottom: 16px; display: flex; gap: 16px; flex-wrap: wrap">
         <a-range-picker v-model:value="dateRange" />
-        <a-button type="primary" @click="fetchUsage" :loading="loading">Filter</a-button>
+        <a-button type="primary" @click="fetchUsage" :loading="loading">{{ ui.filter }}</a-button>
       </div>
 
       <a-table
@@ -21,29 +21,34 @@
             <a-tag color="blue">{{ record.model }}</a-tag>
           </template>
           <template v-else-if="column.key === 'action'">
-            <a-button type="link" size="small" @click="showDetails(record)">Details</a-button>
+            <a-button type="link" size="small" @click="showDetails(record)">{{
+              ui.details
+            }}</a-button>
           </template>
         </template>
       </a-table>
     </a-card>
 
-    <a-modal v-model:visible="detailsVisible" title="Usage Details" footer="" width="600px">
+    <a-modal v-model:visible="detailsVisible" :title="ui.usageDetails" footer="" width="600px">
       <a-descriptions bordered column="1" size="small">
-        <a-descriptions-item label="Request ID">{{ currentRecord?.requestId }}</a-descriptions-item>
-        <a-descriptions-item label="Time">{{
+        <a-descriptions-item :label="ui.requestId">{{
+          currentRecord?.requestId
+        }}</a-descriptions-item>
+        <a-descriptions-item :label="ui.time">{{
           currentRecord?.ts ? new Date(currentRecord.ts).toLocaleString() : ''
         }}</a-descriptions-item>
-        <a-descriptions-item label="Model">{{ currentRecord?.model }}</a-descriptions-item>
-        <a-descriptions-item label="Cost"
-          >{{ currentRecord?.creditsDelta }} Credits</a-descriptions-item
+        <a-descriptions-item :label="ui.model">{{ currentRecord?.model }}</a-descriptions-item>
+        <a-descriptions-item :label="ui.cost"
+          >{{ currentRecord?.creditsDelta }} {{ ui.credits }}</a-descriptions-item
         >
-        <a-descriptions-item label="Tokens">
-          In: {{ currentRecord?.tokensIn }} / Out: {{ currentRecord?.tokensOut }}
+        <a-descriptions-item :label="ui.tokens">
+          {{ ui.inLabel }}: {{ currentRecord?.tokensIn }} / {{ ui.outLabel }}:
+          {{ currentRecord?.tokensOut }}
         </a-descriptions-item>
       </a-descriptions>
 
       <div style="margin-top: 16px">
-        <h4>Raw Data</h4>
+        <h4>{{ ui.rawData }}</h4>
         <pre
           style="
             background: #f5f5f5;
@@ -64,10 +69,62 @@ import { ref, onMounted, computed } from 'vue';
 import { useAuth } from '@/agent/composables/useAuth';
 import { getCurrentUserId } from '@/login/session';
 import { useConsoleStore } from '@/stores/console';
+import { storeToRefs } from 'pinia';
+import { useLanguageStore } from '@/stores/language';
 
 const { currentUser } = useAuth();
 const userId = computed(() => currentUser.value?.userId || getCurrentUserId());
 const consoleStore = useConsoleStore();
+
+const languageStore = useLanguageStore();
+const { currentLang } = storeToRefs(languageStore);
+
+const ui = computed(() =>
+  currentLang.value === 'zh'
+    ? {
+        title: '使用记录',
+        filter: '筛选',
+        details: '详情',
+        usageDetails: '用量详情',
+        requestId: '请求 ID',
+        time: '时间',
+        model: '模型',
+        cost: '消耗',
+        credits: '点数',
+        tokens: 'Tokens',
+        inLabel: '输入',
+        outLabel: '输出',
+        rawData: '原始数据',
+        colTime: '时间',
+        colRequestId: '请求 ID',
+        colType: '类型',
+        colDesc: '描述',
+        colCredits: '点数',
+        colAction: '操作'
+      }
+    : {
+        title: 'Usage History',
+        filter: 'Filter',
+        details: 'Details',
+        usageDetails: 'Usage Details',
+        requestId: 'Request ID',
+        time: 'Time',
+        model: 'Model',
+        cost: 'Cost',
+        credits: 'Credits',
+        tokens: 'Tokens',
+        inLabel: 'In',
+        outLabel: 'Out',
+        rawData: 'Raw Data',
+        colTime: 'Time',
+        colRequestId: 'Request ID',
+        colType: 'Type',
+        colDesc: 'Description',
+        colCredits: 'Credits',
+        colAction: 'Action'
+      }
+);
+
 const loading = ref(false);
 const dateRange = ref<any[]>([]);
 const pagination = ref({
@@ -80,20 +137,20 @@ const pagination = ref({
 const detailsVisible = ref(false);
 const currentRecord = ref<any>(null);
 
-const columns = [
+const columns = computed(() => [
   {
-    title: 'Time',
+    title: ui.value.colTime,
     dataIndex: 'ts',
     key: 'ts',
     width: 180,
     customRender: ({ text }: any) => new Date(text).toLocaleString()
   },
-  { title: 'Request ID', dataIndex: 'requestId', key: 'requestId', ellipsis: true },
-  { title: 'Type', dataIndex: 'trigger', key: 'trigger' },
-  { title: 'Description', dataIndex: 'model', key: 'model' }, // Using model col for description
-  { title: 'Credits', dataIndex: 'creditsDelta', key: 'creditsDelta', align: 'right' },
-  { title: 'Action', key: 'action', width: 100, fixed: 'right' }
-];
+  { title: ui.value.colRequestId, dataIndex: 'requestId', key: 'requestId', ellipsis: true },
+  { title: ui.value.colType, dataIndex: 'trigger', key: 'trigger' },
+  { title: ui.value.colDesc, dataIndex: 'model', key: 'model' },
+  { title: ui.value.colCredits, dataIndex: 'creditsDelta', key: 'creditsDelta', align: 'right' },
+  { title: ui.value.colAction, key: 'action', width: 100, fixed: 'right' }
+]);
 
 const items = computed(() => {
   const transactions = consoleStore

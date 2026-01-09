@@ -9,43 +9,43 @@
     >
       <div class="logo-container">
         <div class="logo">
-          <span v-if="!collapsed" class="logo-text">Artigen Console</span>
+          <span v-if="!collapsed" class="logo-text">{{ ui.logo }}</span>
           <span v-else class="logo-text-small">A</span>
         </div>
       </div>
       <a-menu v-model:selectedKeys="selectedKeys" theme="dark" mode="inline">
         <a-menu-item key="dashboard" @click="router.push('/console')">
           <template #icon><dashboard-outlined /></template>
-          <span>Overview</span>
+          <span>{{ ui.menuOverview }}</span>
         </a-menu-item>
         <a-menu-item key="playground" @click="router.push('/console/playground')">
           <template #icon><experiment-outlined /></template>
-          <span>Playground</span>
+          <span>{{ ui.menuPlayground }}</span>
         </a-menu-item>
         <a-menu-item key="billing" @click="router.push('/console/billing')">
           <template #icon><wallet-outlined /></template>
-          <span>Billing & Credits</span>
+          <span>{{ ui.menuBilling }}</span>
         </a-menu-item>
         <a-menu-item key="usage" @click="router.push('/console/usage')">
           <template #icon><bar-chart-outlined /></template>
-          <span>Usage History</span>
+          <span>{{ ui.menuUsage }}</span>
         </a-menu-item>
         <a-menu-item key="settings" @click="router.push('/console/settings')">
           <template #icon><setting-outlined /></template>
-          <span>Settings</span>
+          <span>{{ ui.menuSettings }}</span>
         </a-menu-item>
         <a-menu-item key="users" @click="router.push('/console/users')">
           <template #icon><team-outlined /></template>
-          <span>User Management</span>
+          <span>{{ ui.menuUsers }}</span>
         </a-menu-item>
         <a-menu-item key="audit" @click="router.push('/console/audit')">
           <template #icon><safety-certificate-outlined /></template>
-          <span>Content Audit</span>
+          <span>{{ ui.menuAudit }}</span>
         </a-menu-item>
         <a-menu-divider />
         <a-menu-item key="home" @click="router.push('/')">
           <template #icon><home-outlined /></template>
-          <span>Back to Home</span>
+          <span>{{ ui.backToHome }}</span>
         </a-menu-item>
       </a-menu>
     </a-layout-sider>
@@ -62,7 +62,7 @@
         "
       >
         <a-breadcrumb>
-          <a-breadcrumb-item>Console</a-breadcrumb-item>
+          <a-breadcrumb-item>{{ ui.console }}</a-breadcrumb-item>
           <a-breadcrumb-item>{{ currentRouteName }}</a-breadcrumb-item>
         </a-breadcrumb>
 
@@ -77,11 +77,11 @@
           <template #overlay>
             <a-menu>
               <a-menu-item key="profile" @click="router.push('/console/settings')">
-                <user-outlined /> Profile
+                <user-outlined /> {{ ui.profile }}
               </a-menu-item>
               <a-menu-divider />
               <a-menu-item key="logout" @click="handleLogout">
-                <logout-outlined /> Logout
+                <logout-outlined /> {{ ui.logout }}
               </a-menu-item>
             </a-menu>
           </template>
@@ -101,7 +101,7 @@
         </div>
       </a-layout-content>
       <a-layout-footer style="text-align: center; color: rgba(0, 0, 0, 0.45)">
-        Artigen ©2025 Created by Feng Fan
+        {{ ui.footer }}
       </a-layout-footer>
     </a-layout>
   </a-layout>
@@ -110,6 +110,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import { storeToRefs } from 'pinia';
 import {
   DashboardOutlined,
   WalletOutlined,
@@ -125,23 +126,85 @@ import {
 } from '@ant-design/icons-vue';
 import { useAuth } from '@/agent/composables/useAuth';
 import { getCurrentUserId } from '@/login/session';
+import { useLanguageStore } from '@/stores/language';
 
 const router = useRouter();
 const route = useRoute();
 const { currentUser } = useAuth();
 const userId = computed(() => currentUser.value?.userId || getCurrentUserId());
 
+const languageStore = useLanguageStore();
+const { currentLang } = storeToRefs(languageStore);
+
 const collapsed = ref(false);
 const selectedKeys = ref<string[]>(['dashboard']);
 
+const ui = computed(() =>
+  currentLang.value === 'zh'
+    ? {
+        logo: 'Artigen 控制台',
+        console: '控制台',
+        menuOverview: '总览',
+        menuPlayground: '试验场',
+        menuBilling: '计费与点数',
+        menuUsage: '使用记录',
+        menuSettings: '设置',
+        menuUsers: '用户管理',
+        menuAudit: '内容审计',
+        backToHome: '返回首页',
+        profile: '个人资料',
+        logout: '退出登录',
+        footer: 'Artigen ©2025 Created by Feng Fan',
+        routeOverview: '总览',
+        routeBilling: '计费',
+        routeUsage: '用量',
+        routeSettings: '设置',
+        routePlayground: '试验场',
+        routeUsers: '用户管理',
+        routeAudit: '内容审计'
+      }
+    : {
+        logo: 'Artigen Console',
+        console: 'Console',
+        menuOverview: 'Overview',
+        menuPlayground: 'Playground',
+        menuBilling: 'Billing & Credits',
+        menuUsage: 'Usage History',
+        menuSettings: 'Settings',
+        menuUsers: 'User Management',
+        menuAudit: 'Content Audit',
+        backToHome: 'Back to Home',
+        profile: 'Profile',
+        logout: 'Logout',
+        footer: 'Artigen ©2025 Created by Feng Fan',
+        routeOverview: 'Overview',
+        routeBilling: 'Billing',
+        routeUsage: 'Usage',
+        routeSettings: 'Settings',
+        routePlayground: 'Playground',
+        routeUsers: 'User Management',
+        routeAudit: 'Content Audit'
+      }
+);
+
+const currentRouteKey = computed(() => {
+  if (route.path.includes('/billing')) return 'billing';
+  if (route.path.includes('/usage')) return 'usage';
+  if (route.path.includes('/settings')) return 'settings';
+  if (route.path.includes('/playground')) return 'playground';
+  if (route.path.includes('/users')) return 'users';
+  if (route.path.includes('/audit')) return 'audit';
+  return 'overview';
+});
+
 const currentRouteName = computed(() => {
-  if (route.path.includes('/billing')) return 'Billing';
-  if (route.path.includes('/usage')) return 'Usage';
-  if (route.path.includes('/settings')) return 'Settings';
-  if (route.path.includes('/playground')) return 'Playground';
-  if (route.path.includes('/users')) return 'User Management';
-  if (route.path.includes('/audit')) return 'Content Audit';
-  return 'Overview';
+  if (currentRouteKey.value === 'billing') return ui.value.routeBilling;
+  if (currentRouteKey.value === 'usage') return ui.value.routeUsage;
+  if (currentRouteKey.value === 'settings') return ui.value.routeSettings;
+  if (currentRouteKey.value === 'playground') return ui.value.routePlayground;
+  if (currentRouteKey.value === 'users') return ui.value.routeUsers;
+  if (currentRouteKey.value === 'audit') return ui.value.routeAudit;
+  return ui.value.routeOverview;
 });
 
 watch(

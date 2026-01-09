@@ -7,14 +7,39 @@
       </div>
 
       <div class="footer-links">
-        <router-link to="/artigen/legal/terms">服务条款</router-link>
-        <router-link to="/artigen/legal/privacy">隐私政策</router-link>
-        <router-link to="/artigen/legal/refund">退款政策</router-link>
-        <a href="mailto:sorates1997@163.com">联系我们</a>
+        <router-link to="/artigen/legal/terms">{{ ui.terms }}</router-link>
+        <router-link to="/artigen/legal/privacy">{{ ui.privacy }}</router-link>
+        <router-link to="/artigen/legal/refund">{{ ui.refund }}</router-link>
+        <a href="mailto:sorates1997@163.com">{{ ui.contact }}</a>
       </div>
     </div>
   </footer>
 </template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useLanguageStore } from '@/stores/language';
+
+const languageStore = useLanguageStore();
+const { currentLang } = storeToRefs(languageStore);
+
+const ui = computed(() =>
+  currentLang.value === 'zh'
+    ? {
+        terms: '服务条款',
+        privacy: '隐私政策',
+        refund: '退款政策',
+        contact: '联系我们'
+      }
+    : {
+        terms: 'Terms',
+        privacy: 'Privacy',
+        refund: 'Refund',
+        contact: 'Contact'
+      }
+);
+</script>
 
 <style scoped>
 .global-footer {

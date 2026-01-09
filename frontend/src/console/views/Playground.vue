@@ -3,38 +3,38 @@
     <a-row :gutter="24">
       <!-- Left Panel: Settings -->
       <a-col :xs="24" :lg="8">
-        <a-card title="Generation Settings" :bordered="false" class="settings-card">
+        <a-card :title="ui.generationSettings" :bordered="false" class="settings-card">
           <a-form layout="vertical">
-            <a-form-item label="Prompt" required>
+            <a-form-item :label="ui.prompt" required>
               <a-textarea
                 v-model:value="form.prompt"
                 :rows="4"
-                placeholder="Describe your image..."
+                :placeholder="ui.promptPh"
                 :maxLength="1000"
                 show-count
               />
             </a-form-item>
 
-            <a-form-item label="Negative Prompt">
+            <a-form-item :label="ui.negativePrompt">
               <a-textarea
                 v-model:value="form.negativePrompt"
                 :rows="2"
-                placeholder="What to exclude..."
+                :placeholder="ui.negativePromptPh"
               />
             </a-form-item>
 
-            <a-form-item label="Image Size">
+            <a-form-item :label="ui.imageSize">
               <a-select v-model:value="form.imageSize">
-                <a-select-option value="1024x1024">Square (1024x1024)</a-select-option>
-                <a-select-option value="768x1024">Portrait (768x1024)</a-select-option>
-                <a-select-option value="1024x768">Landscape (1024x768)</a-select-option>
-                <a-select-option value="512x512">Square Small (512x512)</a-select-option>
+                <a-select-option value="1024x1024">{{ ui.square1024 }}</a-select-option>
+                <a-select-option value="768x1024">{{ ui.portrait }}</a-select-option>
+                <a-select-option value="1024x768">{{ ui.landscape }}</a-select-option>
+                <a-select-option value="512x512">{{ ui.squareSmall }}</a-select-option>
               </a-select>
             </a-form-item>
 
             <a-row :gutter="16">
               <a-col :span="12">
-                <a-form-item label="Steps">
+                <a-form-item :label="ui.steps">
                   <a-input-number
                     v-model:value="form.steps"
                     :min="1"
@@ -44,7 +44,7 @@
                 </a-form-item>
               </a-col>
               <a-col :span="12">
-                <a-form-item label="Guidance Scale">
+                <a-form-item :label="ui.guidanceScale">
                   <a-input-number
                     v-model:value="form.guidanceScale"
                     :min="1"
@@ -56,15 +56,15 @@
               </a-col>
             </a-row>
 
-            <a-form-item label="Seed">
+            <a-form-item :label="ui.seed">
               <a-input-number
                 v-model:value="form.seed"
                 style="width: 100%"
-                placeholder="Random (-1)"
+                :placeholder="ui.seedPh"
               />
             </a-form-item>
 
-            <a-form-item label="Reference Image (Optional)">
+            <a-form-item :label="ui.referenceImage">
               <a-upload-dragger
                 name="file"
                 :multiple="false"
@@ -74,7 +74,7 @@
                 <p class="ant-upload-drag-icon">
                   <inbox-outlined />
                 </p>
-                <p class="ant-upload-text">Click or drag file to this area to upload</p>
+                <p class="ant-upload-text">{{ ui.uploadHint }}</p>
                 <div v-if="imageUrl" class="uploaded-image-preview">
                   <img :src="imageUrl" alt="Reference" />
                   <delete-outlined class="remove-icon" @click.stop="clearImage" />
@@ -83,7 +83,7 @@
             </a-form-item>
 
             <a-button type="primary" block size="large" :loading="loading" @click="handleGenerate">
-              {{ loading ? 'Generating...' : 'Generate Image' }}
+              {{ loading ? ui.generating : ui.generateImage }}
             </a-button>
           </a-form>
         </a-card>
@@ -91,30 +91,27 @@
 
       <!-- Right Panel: Result -->
       <a-col :xs="24" :lg="16">
-        <a-card title="Result" :bordered="false" class="result-card">
+        <a-card :title="ui.result" :bordered="false" class="result-card">
           <div class="result-area">
-            <a-empty
-              v-if="!resultImage && !loading"
-              description="Enter a prompt and click Generate to see results"
-            />
+            <a-empty v-if="!resultImage && !loading" :description="ui.emptyDesc" />
 
             <div v-if="loading" class="loading-state">
-              <a-spin size="large" tip="Dreaming..." />
+              <a-spin size="large" :tip="ui.dreaming" />
             </div>
 
             <div v-if="resultImage" class="image-display">
               <a-image :src="resultImage" />
               <div class="image-actions" style="margin-top: 16px">
-                <a-button type="link" :href="resultImage" download="generated-image.png"
-                  >Download</a-button
-                >
+                <a-button type="link" :href="resultImage" download="generated-image.png">{{
+                  ui.download
+                }}</a-button>
               </div>
             </div>
           </div>
         </a-card>
 
         <!-- Debug/Logs -->
-        <a-card v-if="logs.length" title="Logs" size="small" style="margin-top: 16px">
+        <a-card v-if="logs.length" :title="ui.logs" size="small" style="margin-top: 16px">
           <div class="logs-container">
             <div v-for="(log, index) in logs" :key="index" class="log-entry">
               {{ log }}
@@ -133,10 +130,83 @@ import { InboxOutlined, DeleteOutlined } from '@ant-design/icons-vue';
 import { useConsoleStore } from '@/stores/console';
 import { useAuth } from '@/agent/composables/useAuth';
 import { getCurrentUserId } from '@/login/session';
+import { storeToRefs } from 'pinia';
+import { useLanguageStore } from '@/stores/language';
 
 const { currentUser } = useAuth();
 const userId = computed(() => currentUser.value?.userId || getCurrentUserId());
 const consoleStore = useConsoleStore();
+
+const languageStore = useLanguageStore();
+const { currentLang } = storeToRefs(languageStore);
+
+const ui = computed(() =>
+  currentLang.value === 'zh'
+    ? {
+        generationSettings: '生成设置',
+        prompt: '提示词',
+        promptPh: '描述你想生成的图片…',
+        negativePrompt: '反向提示词',
+        negativePromptPh: '不希望出现的内容…',
+        imageSize: '图片尺寸',
+        square1024: '正方形（1024x1024）',
+        portrait: '竖版（768x1024）',
+        landscape: '横版（1024x768）',
+        squareSmall: '小图正方形（512x512）',
+        steps: '步数',
+        guidanceScale: '引导强度',
+        seed: '随机种子',
+        seedPh: '随机（-1）',
+        referenceImage: '参考图（可选）',
+        uploadHint: '点击或拖拽文件到此区域上传',
+        generating: '生成中…',
+        generateImage: '生成图片',
+        result: '结果',
+        emptyDesc: '输入提示词并点击生成，即可看到结果',
+        dreaming: '生成中…',
+        download: '下载',
+        logs: '日志',
+        onlyJpgPng: '仅支持上传 JPG/PNG 文件！',
+        max2m: '图片大小不能超过 2MB！',
+        enterPrompt: '请输入提示词',
+        insufficientCredits: '点数不足，请先充值。',
+        startLog: (p: string) => `开始生成，提示词：${p}...`,
+        doneLog: '生成完成（模拟）。',
+        failed: (msg: string) => `生成失败：${msg}`
+      }
+    : {
+        generationSettings: 'Generation Settings',
+        prompt: 'Prompt',
+        promptPh: 'Describe your image...',
+        negativePrompt: 'Negative Prompt',
+        negativePromptPh: 'What to exclude...',
+        imageSize: 'Image Size',
+        square1024: 'Square (1024x1024)',
+        portrait: 'Portrait (768x1024)',
+        landscape: 'Landscape (1024x768)',
+        squareSmall: 'Square Small (512x512)',
+        steps: 'Steps',
+        guidanceScale: 'Guidance Scale',
+        seed: 'Seed',
+        seedPh: 'Random (-1)',
+        referenceImage: 'Reference Image (Optional)',
+        uploadHint: 'Click or drag file to this area to upload',
+        generating: 'Generating...',
+        generateImage: 'Generate Image',
+        result: 'Result',
+        emptyDesc: 'Enter a prompt and click Generate to see results',
+        dreaming: 'Dreaming...',
+        download: 'Download',
+        logs: 'Logs',
+        onlyJpgPng: 'You can only upload JPG/PNG file!',
+        max2m: 'Image must smaller than 2MB!',
+        enterPrompt: 'Please enter a prompt',
+        insufficientCredits: 'Insufficient credits. Please recharge.',
+        startLog: (p: string) => `Starting generation with prompt: ${p}...`,
+        doneLog: 'Generation completed successfully (Simulated).',
+        failed: (msg: string) => `Generation failed: ${msg}`
+      }
+);
 
 const loading = ref(false);
 const resultImage = ref('');
@@ -159,12 +229,12 @@ onMounted(() => {
 const beforeUpload = (file: File) => {
   const isJpgOrPng = file.type === 'image/jpeg' || file.type === 'image/png';
   if (!isJpgOrPng) {
-    message.error('You can only upload JPG/PNG file!');
+    message.error(ui.value.onlyJpgPng);
     return false;
   }
   const isLt2M = file.size / 1024 / 1024 < 2;
   if (!isLt2M) {
-    message.error('Image must smaller than 2MB!');
+    message.error(ui.value.max2m);
     return false;
   }
 
@@ -183,21 +253,21 @@ const clearImage = () => {
 
 const handleGenerate = async () => {
   if (!form.prompt.trim()) {
-    message.warning('Please enter a prompt');
+    message.warning(ui.value.enterPrompt);
     return;
   }
 
   // Check points
   const user = consoleStore.getUserById(userId.value);
   if (user && user.points < 5) {
-    message.error('Insufficient credits. Please recharge.');
+    message.error(ui.value.insufficientCredits);
     return;
   }
 
   loading.value = true;
   resultImage.value = '';
   logs.value = [];
-  logs.value.push(`Starting generation with prompt: ${form.prompt.substring(0, 50)}...`);
+  logs.value.push(ui.value.startLog(form.prompt.substring(0, 50)));
 
   try {
     // Simulate generation delay
@@ -212,7 +282,7 @@ const handleGenerate = async () => {
     const finalImage = mockImages[Math.floor(Math.random() * mockImages.length)];
 
     resultImage.value = finalImage;
-    logs.value.push('Generation completed successfully (Simulated).');
+    logs.value.push(ui.value.doneLog);
 
     // Update Console Store
     consoleStore.updatePoints(
@@ -239,8 +309,8 @@ const handleGenerate = async () => {
     consoleStore.save();
   } catch (err: any) {
     console.error(err);
-    message.error('Generation failed: ' + err.message);
-    logs.value.push(`Error: ${err.message}`);
+    message.error(ui.value.failed(String(err?.message || '')));
+    logs.value.push(ui.value.failed(String(err?.message || '')));
   } finally {
     loading.value = false;
   }

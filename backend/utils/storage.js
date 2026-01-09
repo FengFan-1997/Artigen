@@ -4,6 +4,7 @@ const path = require('path');
 const MEMORY_DIR = (() => {
   const raw = String(process.env.MEMORY_DIR || '').trim();
   if (raw) return path.resolve(raw);
+  if (process.platform !== 'win32' && fs.existsSync('/data')) return '/data';
   return path.join(__dirname, '../memory');
 })();
 const VECTORS_FILE = path.join(MEMORY_DIR, 'vectors.json');
@@ -34,7 +35,19 @@ const readJson = (filePath, defaultValue = []) => {
 
 const writeJson = (filePath, data) => {
   try {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const text = JSON.stringify(data, null, 2);
+    const tmpPath = `${filePath}.tmp_${process.pid}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    fs.writeFileSync(tmpPath, text);
+    try {
+      fs.renameSync(tmpPath, filePath);
+    } catch (e) {
+      try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch { }
+      fs.renameSync(tmpPath, filePath);
+    }
   } catch (err) {
     console.error(`Error writing ${filePath}:`, err);
   }

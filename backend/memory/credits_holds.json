@@ -498,5 +498,65 @@
     "status": "confirmed",
     "createdAt": 1767951834618,
     "updatedAt": 1767951841236
+  },
+  "7b18b56d63b5615359f20e35783d8b6emk6qdgf7": {
+    "id": "7b18b56d63b5615359f20e35783d8b6emk6qdgf7",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_directions_mk6qdgej_xdz9ic",
+    "status": "confirmed",
+    "createdAt": 1767954351715,
+    "updatedAt": 1767954377019
+  },
+  "1a0b55d82c6a76d67aa99d4e9ef759cfmk6qe2r9": {
+    "id": "1a0b55d82c6a76d67aa99d4e9ef759cfmk6qe2r9",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "artigen_img2img_mk6qe2r2_2fwweoy7",
+    "status": "confirmed",
+    "createdAt": 1767954380661,
+    "updatedAt": 1767954387339
+  },
+  "3a41b6e39121041b9fc4ff2de2a2dd77mk6qe7xa": {
+    "id": "3a41b6e39121041b9fc4ff2de2a2dd77mk6qe7xa",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "artigen_img2img_mk6qe7ww_faxdthty",
+    "status": "confirmed",
+    "createdAt": 1767954387358,
+    "updatedAt": 1767954407544
+  },
+  "55e3a2ca675361f7cf465a1df6a7eb15mk6qf1q2": {
+    "id": "55e3a2ca675361f7cf465a1df6a7eb15mk6qf1q2",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_directions_mk6qf1pt_q3d71v",
+    "status": "confirmed",
+    "createdAt": 1767954425978,
+    "updatedAt": 1767954451481
+  },
+  "995e160fe098157e99b42db37a990b3emk6qfq7v": {
+    "id": "995e160fe098157e99b42db37a990b3emk6qfq7v",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "artigen_img2img_mk6qfq7q_gl8txp00",
+    "status": "confirmed",
+    "createdAt": 1767954457723,
+    "updatedAt": 1767954469296
+  },
+  "2cdeb1b684c838a2bbccfac46e3e7bdfmk6qfz5q": {
+    "id": "2cdeb1b684c838a2bbccfac46e3e7bdfmk6qfz5q",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "artigen_img2img_mk6qfz5g_emlcgps3",
+    "status": "confirmed",
+    "createdAt": 1767954469310,
+    "updatedAt": 1767954489629
   }
 }
