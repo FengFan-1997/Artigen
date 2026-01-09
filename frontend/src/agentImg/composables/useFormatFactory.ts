@@ -1,4 +1,5 @@
 import { computed, onBeforeUnmount, ref } from 'vue';
+import { storeToRefs } from 'pinia';
 import { formatFactoryTools } from '../data/formatFactoryTools';
 import { acceptForTool, acceptHintForTool } from '../logic/formatFactory/accept';
 import { loadImageFromUrl } from '../logic/formatFactory/canvas';
@@ -10,10 +11,13 @@ import {
 import {
   convertImage,
   convertToJpeg,
+  filterImage,
   generateIco,
   getPdfPageCount,
   imagesToPdf,
   pdfToImage,
+  resizeImage,
+  rotateFlipImage,
   videoToGif
 } from '../logic/formatFactory/processors';
 import type { FormatFactoryProgress } from '../logic/formatFactory/processors';
@@ -23,11 +27,62 @@ import { extractFirstJsonObject, safeJsonStringify } from '../logic/json';
 import { generateText } from '../services/text';
 import { useFormatFactoryLive } from './useFormatFactoryLive';
 import { useFormatFactoryWatermark } from './useFormatFactoryWatermark';
+import { useLanguageStore } from '@/stores/language';
 
 type FormatFactoryOutputItem = { name: string; size: number; blob: Blob; url: string };
 
 export const useFormatFactory = () => {
-  const tools = ref<FormatFactoryTool[]>(formatFactoryTools);
+  const languageStore = useLanguageStore();
+  const { currentLang } = storeToRefs(languageStore);
+  const isZh = computed(() => currentLang.value === 'zh');
+
+  const tools = computed<FormatFactoryTool[]>(() => {
+    if (isZh.value) return formatFactoryTools;
+    const map: Partial<
+      Record<FormatFactoryToolId, Pick<FormatFactoryTool, 'name' | 'description' | 'tag'>>
+    > = {
+      webp: {
+        name: 'WebP Converter',
+        description: 'Web format · two-way conversion',
+        tag: 'Modern Web'
+      },
+      jpeg: { name: 'JPEG Compressor', description: 'Extreme compression · batch', tag: 'General' },
+      resize: { name: 'Resize Image', description: 'Change size · keep ratio', tag: 'General' },
+      rotate: {
+        name: 'Rotate / Flip',
+        description: 'Rotate degrees · mirror flip',
+        tag: 'General'
+      },
+      filter: { name: 'Image Filters', description: 'B/W · sepia · invert', tag: 'General' },
+      watermark: {
+        name: 'Watermark Remover',
+        description: 'Smart crop · manual select',
+        tag: 'General'
+      },
+      live: {
+        name: 'Live Photo Converter',
+        description: 'HEIC still · MOV frame pick',
+        tag: 'Mobile'
+      },
+      pdf: {
+        name: 'PDF to Images',
+        description: 'Split pages · stitch long image',
+        tag: 'PDF Tools'
+      },
+      img2pdf: { name: 'Images to PDF', description: 'Merge multiple images', tag: 'PDF Tools' },
+      gif: { name: 'Video to GIF', description: 'Clip video · export GIF', tag: 'Video' },
+      ico: { name: 'ICO Generator', description: 'Pack multi-size PNGs', tag: 'General' },
+      'ingredient-list': {
+        name: 'Ingredient Label',
+        description: 'Paste text · generate label image',
+        tag: 'Free AI Tool'
+      }
+    };
+    return formatFactoryTools.map((t) => {
+      const tr = map[t.id];
+      return tr ? { ...t, ...tr } : t;
+    });
+  });
 
   const activeToolId = ref<FormatFactoryToolId | null>(null);
   const activeTool = computed(() => tools.value.find((t) => t.id === activeToolId.value) || null);
@@ -55,6 +110,23 @@ export const useFormatFactory = () => {
 
   const jpegQuality = ref(0.75);
   const jpegMaxSide = ref<string>('');
+
+  const resizeWidth = ref<string>('');
+  const resizeHeight = ref<string>('');
+  const resizeMaxSide = ref<string>('');
+  const resizeOutFormat = ref<'image/png' | 'image/jpeg' | 'image/webp'>('image/png');
+  const resizeQuality = ref(0.9);
+
+  const rotateDeg = ref<0 | 90 | 180 | 270>(0);
+  const rotateFlipH = ref(false);
+  const rotateFlipV = ref(false);
+  const rotateOutFormat = ref<'image/png' | 'image/jpeg' | 'image/webp'>('image/png');
+  const rotateQuality = ref(0.9);
+
+  const filterPreset = ref<'grayscale' | 'sepia' | 'invert'>('grayscale');
+  const filterIntensity = ref(1);
+  const filterOutFormat = ref<'image/png' | 'image/jpeg' | 'image/webp'>('image/png');
+  const filterQuality = ref(0.9);
 
   const icoSizeOptions = [16, 32, 48, 64, 128, 256] as const;
   const icoSizes = ref<number[]>([16, 32, 48, 64, 128, 256]);
@@ -85,13 +157,21 @@ export const useFormatFactory = () => {
 
   const toUserError = (err: unknown, fallback: string) => {
     const msg = typeof (err as any)?.message === 'string' ? (err as any).message : '';
-    if (msg === 'ABORTED') return '已取消';
-    if (msg.includes('AbortError')) return '已取消';
-    if (msg === 'CANVAS_CONTEXT_FAIL') return '浏览器 Canvas 初始化失败';
-    if (msg === 'VIDEO_LOAD_FAIL') return '视频加载失败，请换一个文件或浏览器再试';
-    if (msg === 'VIDEO_META_FAIL') return '无法读取视频信息';
-    if (msg === 'VIDEO_DIM_FAIL') return '无法读取视频尺寸';
-    if (msg === 'VIDEO_SEEK_FAIL') return '视频跳转失败（可能是编码不支持）';
+    if (msg === 'ABORTED' || msg.includes('AbortError')) return isZh.value ? '已取消' : 'Cancelled';
+    if (msg === 'CANVAS_CONTEXT_FAIL')
+      return isZh.value ? '浏览器 Canvas 初始化失败' : 'Canvas initialization failed';
+    if (msg === 'VIDEO_LOAD_FAIL')
+      return isZh.value
+        ? '视频加载失败，请换一个文件或浏览器再试'
+        : 'Video load failed. Try another file/browser.';
+    if (msg === 'VIDEO_META_FAIL')
+      return isZh.value ? '无法读取视频信息' : 'Failed to read video metadata';
+    if (msg === 'VIDEO_DIM_FAIL')
+      return isZh.value ? '无法读取视频尺寸' : 'Failed to read video dimensions';
+    if (msg === 'VIDEO_SEEK_FAIL')
+      return isZh.value
+        ? '视频跳转失败（可能是编码不支持）'
+        : 'Video seek failed (codec may be unsupported)';
     return msg || fallback;
   };
 
@@ -139,7 +219,7 @@ export const useFormatFactory = () => {
 
   const handleToolClick = (tool: FormatFactoryTool) => {
     if (tool.status !== 'ready') {
-      soonTip.value = `${tool.name} 即将上线`;
+      soonTip.value = isZh.value ? `${tool.name} 即将上线` : `${tool.name} is coming soon`;
       if (soonTipTimer) window.clearTimeout(soonTipTimer);
       soonTipTimer = window.setTimeout(() => {
         soonTip.value = '';
@@ -178,13 +258,19 @@ export const useFormatFactory = () => {
 
     if (toolId === 'img2pdf') {
       const totalSize = files.reduce((sum, f) => sum + (f?.size || 0), 0);
-      sourceMeta.value = { name: `${files.length} files`, size: totalSize };
+      sourceMeta.value = {
+        name: isZh.value ? `${files.length} 个文件` : `${files.length} files`,
+        size: totalSize
+      };
       return;
     }
 
     if (isBatchTool) {
       const totalSize = files.reduce((sum, f) => sum + (f?.size || 0), 0);
-      sourceMeta.value = { name: `${files.length} files`, size: totalSize };
+      sourceMeta.value = {
+        name: isZh.value ? `${files.length} 个文件` : `${files.length} files`,
+        size: totalSize
+      };
       return;
     }
 
@@ -619,6 +705,71 @@ export const useFormatFactory = () => {
         return;
       }
 
+      if (tool.id === 'resize') {
+        const width = parsePositiveInt(resizeWidth.value);
+        const height = parsePositiveInt(resizeHeight.value);
+        const maxSide = parsePositiveInt(resizeMaxSide.value);
+        const { blob, filename } = await resizeImage(
+          file,
+          {
+            width,
+            height,
+            maxSide,
+            outType: resizeOutFormat.value,
+            quality: resizeOutFormat.value === 'image/png' ? undefined : resizeQuality.value
+          },
+          { signal: controller.signal, onProgress: setProgress }
+        );
+        if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
+        outputBlob.value = blob;
+        outputMeta.value = { name: filename, size: blob.size };
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
+        return;
+      }
+
+      if (tool.id === 'rotate') {
+        const { blob, filename } = await rotateFlipImage(
+          file,
+          {
+            rotate: rotateDeg.value,
+            flipH: rotateFlipH.value,
+            flipV: rotateFlipV.value,
+            outType: rotateOutFormat.value,
+            quality: rotateOutFormat.value === 'image/png' ? undefined : rotateQuality.value
+          },
+          { signal: controller.signal, onProgress: setProgress }
+        );
+        if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
+        outputBlob.value = blob;
+        outputMeta.value = { name: filename, size: blob.size };
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
+        return;
+      }
+
+      if (tool.id === 'filter') {
+        const { blob, filename } = await filterImage(
+          file,
+          {
+            preset: filterPreset.value,
+            intensity: filterIntensity.value,
+            outType: filterOutFormat.value,
+            quality: filterOutFormat.value === 'image/png' ? undefined : filterQuality.value
+          },
+          { signal: controller.signal, onProgress: setProgress }
+        );
+        if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
+        outputBlob.value = blob;
+        outputMeta.value = { name: filename, size: blob.size };
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
+        return;
+      }
+
       if (tool.id === 'ico') {
         const sizes = icoSizes.value.slice().sort((a, b) => a - b);
         if (sizes.length === 0) {
@@ -868,6 +1019,20 @@ export const useFormatFactory = () => {
     webpQuality,
     jpegQuality,
     jpegMaxSide,
+    resizeWidth,
+    resizeHeight,
+    resizeMaxSide,
+    resizeOutFormat,
+    resizeQuality,
+    rotateDeg,
+    rotateFlipH,
+    rotateFlipV,
+    rotateOutFormat,
+    rotateQuality,
+    filterPreset,
+    filterIntensity,
+    filterOutFormat,
+    filterQuality,
     icoSizeOptions,
     icoSizes,
     pdfPageCount,

@@ -68,7 +68,7 @@ export const setLoggedIn = (input: { userId: string; token?: string }) => {
   } catch {}
 };
 
-export const logoutLocal = () => {
+export const logoutLocal = (opts?: { redirectTo?: string; reload?: boolean }) => {
   try {
     window.localStorage.removeItem(STORAGE_KEY_ID);
     window.localStorage.removeItem(LEGACY_STORAGE_KEY_ID);
@@ -76,5 +76,17 @@ export const logoutLocal = () => {
     window.localStorage.removeItem(LEGACY_STORAGE_KEY_TOKEN);
   } catch {}
   ensureGuestUserId();
+  try {
+    window.dispatchEvent(new CustomEvent('app-auth-changed'));
+  } catch {}
+  const redirectTo = String(opts?.redirectTo || '').trim();
+  if (redirectTo) {
+    const to = /^https?:\/\//i.test(redirectTo)
+      ? redirectTo
+      : `${window.location.origin}${redirectTo.startsWith('/') ? redirectTo : `/${redirectTo}`}`;
+    window.location.assign(to);
+    return;
+  }
+  if (opts?.reload === false) return;
   window.location.reload();
 };

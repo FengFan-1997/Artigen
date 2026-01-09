@@ -2,15 +2,15 @@
   <footer class="global-footer">
     <div class="footer-content">
       <div class="footer-left">
-        <div class="footer-logo">Nth Me</div>
-        <div class="copyright">© 2026 无限图界 - 聚合 N 种黑科技</div>
+        <div class="footer-logo">Artigen</div>
+        <div class="copyright">© 2024 Artigen. All rights reserved.</div>
       </div>
 
       <div class="footer-links">
-        <router-link to="/agentimg/legal/terms">服务条款</router-link>
-        <router-link to="/agentimg/legal/privacy">隐私政策</router-link>
-        <router-link to="/agentimg/legal/refund">退款政策</router-link>
-        <a href="mailto:surgethisworld@gmail.com">联系我们</a>
+        <router-link to="/artigen/legal/terms">服务条款</router-link>
+        <router-link to="/artigen/legal/privacy">隐私政策</router-link>
+        <router-link to="/artigen/legal/refund">退款政策</router-link>
+        <a href="mailto:sorates1997@163.com">联系我们</a>
       </div>
     </div>
   </footer>

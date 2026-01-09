@@ -3,6 +3,9 @@ export type FormatFactoryToolStatus = 'ready' | 'soon';
 export type FormatFactoryToolId =
   | 'webp'
   | 'jpeg'
+  | 'resize'
+  | 'rotate'
+  | 'filter'
   | 'watermark'
   | 'live'
   | 'pdf'

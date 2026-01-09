@@ -9,8 +9,8 @@
     >
       <div class="logo-container">
         <div class="logo">
-          <span v-if="!collapsed" class="logo-text">Nth Me Console</span>
-          <span v-else class="logo-text-small">N</span>
+          <span v-if="!collapsed" class="logo-text">Artigen Console</span>
+          <span v-else class="logo-text-small">A</span>
         </div>
       </div>
       <a-menu v-model:selectedKeys="selectedKeys" theme="dark" mode="inline">
@@ -101,7 +101,7 @@
         </div>
       </a-layout-content>
       <a-layout-footer style="text-align: center; color: rgba(0, 0, 0, 0.45)">
-        Nth Me ©2025 Created by Feng Fan
+        Artigen ©2025 Created by Feng Fan
       </a-layout-footer>
     </a-layout>
   </a-layout>

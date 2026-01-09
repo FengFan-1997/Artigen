@@ -2,14 +2,14 @@
   <div class="market-page">
     <header class="top-header">
       <div class="top-header-inner">
-        <router-link to="/agentimg" class="top-logo">
-          <span class="top-logo-text">Nth Me</span>
+        <router-link to="/artigen" class="top-logo">
+          <span class="top-logo-text">Artigen</span>
         </router-link>
 
         <nav class="top-nav">
-          <router-link to="/agentimg/format-factory" class="top-nav-item">格式工厂</router-link>
-          <router-link to="/agentimg/ai" class="top-nav-item">AI工坊</router-link>
-          <router-link to="/agentimg/market" class="top-nav-item active">算力商城</router-link>
+          <router-link to="/artigen/format-factory" class="top-nav-item">格式工厂</router-link>
+          <router-link to="/artigen/ai" class="top-nav-item">AI工坊</router-link>
+          <router-link to="/artigen/market" class="top-nav-item active">算力商城</router-link>
         </nav>
 
         <div class="top-actions">

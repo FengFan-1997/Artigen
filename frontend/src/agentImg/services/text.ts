@@ -18,6 +18,8 @@ export type TextGenerateResult =
 
 export type GenerateImageInput = { mimeType: string; dataBase64: string };
 
+export type Img2ImgImageInput = GenerateImageInput | string;
+
 export type Img2ImgResult =
   | {
       ok: true;
@@ -58,13 +60,13 @@ export const img2img = async (input: {
     guidanceScale?: number;
     seed?: number;
   };
-  images?: GenerateImageInput[];
+  images?: Img2ImgImageInput[];
   timeoutMs?: number;
   requestId?: string;
 }): Promise<Img2ImgResult> => {
   const requestId =
     String(input.requestId || '').trim() ||
-    `agentimg_img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    `artigen_img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const prompt = String(input.prompt || '').trim();
   if (!prompt) return { ok: false, errorCode: 'EMPTY_PROMPT', error: 'EMPTY_PROMPT', requestId };
   const images = Array.isArray(input.images) ? input.images : [];
@@ -139,7 +141,7 @@ export const generateText = async (
   const p = String(prompt || '').trim();
   const requestId =
     String(opts?.requestId || '').trim() ||
-    `agentimg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    `artigen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   if (!p) return { ok: false, errorCode: 'EMPTY_PROMPT', error: 'EMPTY_PROMPT', requestId };
 
   try {

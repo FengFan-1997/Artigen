@@ -42,50 +42,50 @@ const router = createRouter({
     },
     {
       path: '/agent-img',
-      redirect: '/agentimg/ai'
+      redirect: '/artigen/ai'
     },
     {
       path: '/format-factory',
-      redirect: '/agentimg/format-factory'
+      redirect: '/artigen/format-factory'
     },
     {
       path: '/aether-market',
-      redirect: '/agentimg/market'
+      redirect: '/artigen/market'
     },
     {
       path: '/legal/terms',
-      redirect: '/agentimg/legal/terms'
+      redirect: '/artigen/legal/terms'
     },
     {
       path: '/legal/privacy',
-      redirect: '/agentimg/legal/privacy'
+      redirect: '/artigen/legal/privacy'
     },
     {
       path: '/legal/refund',
-      redirect: '/agentimg/legal/refund'
+      redirect: '/artigen/legal/refund'
     },
     {
-      path: '/agentimg',
+      path: '/artigen',
       name: 'agent-img-landing',
       component: LandingPage
     },
     {
-      path: '/agentimg/format-factory',
+      path: '/artigen/format-factory',
       name: 'format-factory',
       component: FormatFactory
     },
     {
-      path: '/agentimg/legal/terms',
+      path: '/artigen/legal/terms',
       name: 'terms',
       component: TermsOfService
     },
     {
-      path: '/agentimg/legal/privacy',
+      path: '/artigen/legal/privacy',
       name: 'privacy',
       component: PrivacyPolicy
     },
     {
-      path: '/agentimg/legal/refund',
+      path: '/artigen/legal/refund',
       name: 'refund',
       component: RefundPolicy
     },
@@ -200,7 +200,7 @@ const router = createRouter({
       component: NexusDashboard
     },
     {
-      path: '/agentimg/market',
+      path: '/artigen/market',
       name: 'aether-market',
       component: AetherMarket
     },
@@ -215,7 +215,7 @@ const router = createRouter({
       component: AgentDebug
     },
     {
-      path: '/agentimg/ai',
+      path: '/artigen/ai',
       name: 'agent-img-tool',
       component: AgentImg
     },

@@ -193,7 +193,7 @@ export const useAgentImgFlow = (opts?: {
   const runGenerateText = async (prompt: string, nextStage: 'directions' | 'final') => {
     const ctl = new AbortController();
     activeAbort.value = ctl;
-    const reqId = `agentimg_${nextStage}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const reqId = `artigen_${nextStage}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     lastRequestId.value = reqId;
     try {
       const images = await getImages();

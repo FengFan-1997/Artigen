@@ -54,7 +54,7 @@ const buildTransport = () => {
 const sendMail = async (to: string, code: string) => {
   const transport = buildTransport();
   const fromUser = String(process.env.QQ_SMTP_USER || '').trim();
-  const fromName = String(process.env.QQ_SMTP_FROM_NAME || 'Nth Me').trim();
+  const fromName = String(process.env.QQ_SMTP_FROM_NAME || 'Artigen').trim();
   const subject = '登录验证码';
   const html = `
     <div style="font-family: -apple-system, Segoe UI, Roboto, Arial; line-height: 1.6; color: #0f172a;">

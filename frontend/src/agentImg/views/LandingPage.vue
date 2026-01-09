@@ -6,17 +6,23 @@
       <!-- Header -->
       <header class="header">
         <div class="logo">
-          <span class="logo-text">Nth Me</span>
+          <span class="logo-text">Artigen</span>
         </div>
 
         <nav class="nav-links">
-          <router-link to="/agentimg/format-factory" class="nav-item">格式工厂</router-link>
-          <router-link to="/agentimg/ai" class="nav-item active">AI工坊</router-link>
-          <router-link to="/agentimg/market" class="nav-item">算力商城</router-link>
+          <router-link to="/artigen/format-factory" class="nav-item">{{
+            navFormatFactory
+          }}</router-link>
+          <router-link to="/artigen/ai" class="nav-item active">{{ navAiWorkshop }}</router-link>
+          <router-link to="/artigen/market" class="nav-item">{{ navMarket }}</router-link>
         </nav>
 
         <div class="header-right">
-          <div class="lang-container" @click="isLangMenuOpen = !isLangMenuOpen">
+          <div
+            ref="langContainerRef"
+            class="lang-container"
+            @click="isLangMenuOpen = !isLangMenuOpen"
+          >
             <button class="lang-switch" type="button">
               <span class="globe-icon">🌐</span> {{ langLabel }}
               <span class="arrow" :class="{ open: isLangMenuOpen }">⌄</span>
@@ -72,13 +78,13 @@
           </div>
 
           <div class="cta-row">
-            <router-link to="/agentimg/ai" class="btn primary-btn">
+            <router-link to="/artigen/ai" class="btn primary-btn">
               {{ ctaWorkshop }} <span class="arrow">→</span>
             </router-link>
-            <router-link to="/agentimg/format-factory" class="btn outline-btn">{{
+            <router-link to="/artigen/format-factory" class="btn outline-btn">{{
               ctaFormatFactory
             }}</router-link>
-            <router-link to="/agentimg/market" class="btn outline-btn">{{ ctaMarket }}</router-link>
+            <router-link to="/artigen/market" class="btn outline-btn">{{ ctaMarket }}</router-link>
           </div>
 
           <div class="stats-row">
@@ -129,7 +135,7 @@
         </div>
 
         <div class="features-grid">
-          <div class="feature-card" @click="router.push('/agentimg/ai')">
+          <div class="feature-card" @click="router.push('/artigen/ai')">
             <div class="card-header">
               <span class="status-dot green"></span>
               <span class="module-id">MODULE_01</span>
@@ -147,7 +153,7 @@
             </div>
           </div>
 
-          <div class="feature-card" @click="router.push('/agentimg/format-factory')">
+          <div class="feature-card" @click="router.push('/artigen/format-factory')">
             <div class="card-header">
               <span class="status-dot green"></span>
               <span class="module-id">MODULE_02</span>
@@ -165,7 +171,7 @@
             </div>
           </div>
 
-          <div class="feature-card" @click="router.push('/agentimg/market')">
+          <div class="feature-card" @click="router.push('/artigen/market')">
             <div class="card-header">
               <span class="status-dot yellow"></span>
               <span class="module-id">MODULE_03</span>
@@ -202,6 +208,7 @@ import { isLocalLoggedIn } from '@/login/session';
 const router = useRouter();
 const bgCanvas = ref<HTMLCanvasElement | null>(null);
 const isLangMenuOpen = ref(false);
+const langContainerRef = ref<HTMLElement | null>(null);
 let animationId: number;
 
 const languageStore = useLanguageStore();
@@ -223,6 +230,12 @@ const selectLanguage = (lang: 'zh' | 'en') => {
 };
 
 const langLabel = computed(() => (currentLang.value === 'zh' ? 'ZH' : 'EN'));
+
+const navFormatFactory = computed(() =>
+  currentLang.value === 'zh' ? '格式工厂' : 'Format Factory'
+);
+const navAiWorkshop = computed(() => (currentLang.value === 'zh' ? 'AI工坊' : 'AI Workshop'));
+const navMarket = computed(() => (currentLang.value === 'zh' ? '算力商城' : 'Market'));
 
 const headlineLine1 = computed(() =>
   currentLang.value === 'zh' ? '聚合 N 种' : 'Aggregate N kinds of '
@@ -255,7 +268,7 @@ const statusText = computed(() =>
   currentLang.value === 'zh' ? '工具库在线 SYS v2.0.4' : 'TOOLBOX ONLINE SYS v2.0.4'
 );
 const tag1 = computed(() => (currentLang.value === 'zh' ? 'AI 驱动' : 'AI_POWERED'));
-const tag2 = computed(() => (currentLang.value === 'zh' ? '纯前端' : 'CLIENT_SIDE'));
+const tag2 = computed(() => (currentLang.value === 'zh' ? '前端处理' : 'CLIENT_SIDE'));
 const tag3 = computed(() => (currentLang.value === 'zh' ? '隐私优先' : 'PRIVACY_FIRST'));
 const statLabel1 = computed(() => (currentLang.value === 'zh' ? '响应速度' : 'Latency'));
 const statLabel2 = computed(() => (currentLang.value === 'zh' ? '工具数量' : 'Tools'));
@@ -292,6 +305,15 @@ const goLogin = () => {
   }
   const returnTo = router.currentRoute.value.fullPath;
   loginStore.open({ mode: 'login', returnTo });
+};
+
+const onDocMouseDown = (e: MouseEvent) => {
+  if (!isLangMenuOpen.value) return;
+  const el = langContainerRef.value;
+  const target = e.target;
+  if (!el || !(target instanceof Node)) return;
+  if (el.contains(target)) return;
+  isLangMenuOpen.value = false;
 };
 
 // Matrix Rain Effect
@@ -350,6 +372,7 @@ const handleResize = () => {
 };
 
 onMounted(() => {
+  document.addEventListener('mousedown', onDocMouseDown, true);
   initMatrixRain();
   window.addEventListener('resize', handleResize);
   handleAuthChanged();
@@ -357,6 +380,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocMouseDown, true);
   if (animationId) cancelAnimationFrame(animationId);
   window.removeEventListener('resize', handleResize);
   window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
@@ -498,11 +522,13 @@ onBeforeUnmount(() => {
 }
 
 .lang-switch .arrow {
-  transition: transform 0.3s ease;
+  /* transition: transform 0.3s ease; */
+  margin-top: -11px;
   display: inline-block;
 }
 
 .lang-switch .arrow.open {
+  margin-top: 11px;
   transform: rotate(180deg);
 }
 

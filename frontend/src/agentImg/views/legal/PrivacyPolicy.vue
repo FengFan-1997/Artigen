@@ -2,14 +2,14 @@
   <div class="legal-page">
     <header class="top-header">
       <div class="top-header-inner">
-        <router-link to="/agentimg" class="top-logo">
-          <span class="top-logo-text">Nth Me</span>
+        <router-link to="/artigen" class="top-logo">
+          <span class="top-logo-text">Artigen</span>
         </router-link>
 
         <nav class="top-nav">
-          <router-link to="/agentimg/format-factory" class="top-nav-item">格式工厂</router-link>
-          <router-link to="/agentimg/ai" class="top-nav-item">AI工坊</router-link>
-          <router-link to="/agentimg/market" class="top-nav-item">算力商城</router-link>
+          <router-link to="/artigen/format-factory" class="top-nav-item">格式工厂</router-link>
+          <router-link to="/artigen/ai" class="top-nav-item">AI工坊</router-link>
+          <router-link to="/artigen/market" class="top-nav-item">算力商城</router-link>
         </nav>
 
         <div class="top-actions">
@@ -21,7 +21,7 @@
     <div class="legal-container">
       <header class="legal-header">
         <h1>隐私政策</h1>
-        <p class="subtitle">最后更新: 2025-12-06</p>
+        <p class="subtitle">最后更新: 2025-12-30</p>
       </header>
 
       <div class="legal-content">
@@ -49,13 +49,11 @@
 
         <section>
           <h2>4. Cookie 使用</h2>
-          <p>
-            我们使用本地存储和必要的 Cookie 来保存您的登录状态和偏好设置（如深色模式、语言选择）。
-          </p>
+          <p>我们使用本地存储和必要的 Cookie 来保存您的登录状态和偏好设置。</p>
         </section>
 
         <div class="contact-box">
-          如有隐私相关问题，请联系: <span class="highlight">surgethisworld@gmail.com</span>
+          如有隐私相关问题，请联系: <span class="highlight">sorates1997@163.com</span>
         </div>
       </div>
     </div>

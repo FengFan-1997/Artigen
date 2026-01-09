@@ -4,7 +4,7 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_directions_mk588x2d_ndwv1a",
+    "requestId": "artigen_directions_mk588x2d_ndwv1a",
     "status": "refunded",
     "createdAt": 1767863440818,
     "updatedAt": 1767902179283
@@ -14,7 +14,7 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_directions_mk589o1k_hhpkaw",
+    "requestId": "artigen_directions_mk589o1k_hhpkaw",
     "status": "refunded",
     "createdAt": 1767863475711,
     "updatedAt": 1767902179283
@@ -124,7 +124,7 @@
     "userId": "email_56271fc8e558df66",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_directions_mk5jhb9c_rt6b2a",
+    "requestId": "artigen_directions_mk5jhb9c_rt6b2a",
     "status": "refunded",
     "createdAt": 1767882308173,
     "updatedAt": 1767882344196
@@ -154,7 +154,7 @@
     "userId": "user_test_100k",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_directions_mk5mjmix_bhoa12",
+    "requestId": "artigen_directions_mk5mjmix_bhoa12",
     "status": "confirmed",
     "createdAt": 1767887454933,
     "updatedAt": 1767887476806
@@ -164,7 +164,7 @@
     "userId": "user_test_100k",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_final_mk5mkg7e_dy8n9z",
+    "requestId": "artigen_final_mk5mkg7e_dy8n9z",
     "status": "confirmed",
     "createdAt": 1767887493393,
     "updatedAt": 1767887510093
@@ -174,7 +174,7 @@
     "userId": "user_test_100k",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_directions_mk5mocto_kp28pe",
+    "requestId": "artigen_directions_mk5mocto_kp28pe",
     "status": "confirmed",
     "createdAt": 1767887675649,
     "updatedAt": 1767887702148
@@ -224,7 +224,7 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_directions_mk5vcl36_nfmfqr",
+    "requestId": "artigen_directions_mk5vcl36_nfmfqr",
     "status": "confirmed",
     "createdAt": 1767902243025,
     "updatedAt": 1767902269145
@@ -234,7 +234,7 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_directions_mk5vq04x_aqjehq",
+    "requestId": "artigen_directions_mk5vq04x_aqjehq",
     "status": "confirmed",
     "createdAt": 1767902869053,
     "updatedAt": 1767902899164
@@ -244,7 +244,7 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_final_mk5vsprv_28xy58",
+    "requestId": "artigen_final_mk5vsprv_28xy58",
     "status": "confirmed",
     "createdAt": 1767902995585,
     "updatedAt": 1767903011980
@@ -254,7 +254,7 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "img2img",
-    "requestId": "agentimg_img2img_mk5vt2fo_mjtnn6my",
+    "requestId": "artigen_img2img_mk5vt2fo_mjtnn6my",
     "status": "confirmed",
     "createdAt": 1767903011994,
     "updatedAt": 1767903018416
@@ -264,7 +264,7 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_directions_mk5vwn7w_jm0z8y",
+    "requestId": "artigen_directions_mk5vwn7w_jm0z8y",
     "status": "confirmed",
     "createdAt": 1767903178900,
     "updatedAt": 1767903220363
@@ -274,7 +274,7 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_final_mk5vy50a_c8gr4y",
+    "requestId": "artigen_final_mk5vy50a_c8gr4y",
     "status": "confirmed",
     "createdAt": 1767903248610,
     "updatedAt": 1767903265457
@@ -284,7 +284,7 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "img2img",
-    "requestId": "agentimg_img2img_mk5vyi0l_kdnro6qb",
+    "requestId": "artigen_img2img_mk5vyi0l_kdnro6qb",
     "status": "confirmed",
     "createdAt": 1767903265465,
     "updatedAt": 1767903276266
@@ -294,7 +294,7 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_directions_mk5x7tpb_m0p4tm",
+    "requestId": "artigen_directions_mk5x7tpb_m0p4tm",
     "status": "confirmed",
     "createdAt": 1767905380140,
     "updatedAt": 1767905404686
@@ -304,9 +304,199 @@
     "userId": "user_mk5vb7v2_ebe837825fb2",
     "cost": 1,
     "reason": "generate",
-    "requestId": "agentimg_final_mk6ij578_ucizt2",
+    "requestId": "artigen_final_mk6ij578_ucizt2",
     "status": "confirmed",
     "createdAt": 1767941180241,
     "updatedAt": 1767941195872
+  },
+  "117aa6f56a32db514ab9af06d2aa6231mk6lwzy5": {
+    "id": "117aa6f56a32db514ab9af06d2aa6231mk6lwzy5",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_final_mk6lwzxh_p2d286",
+    "status": "confirmed",
+    "createdAt": 1767946865405,
+    "updatedAt": 1767946881920
+  },
+  "fdb1e4751cb49f7c8b35398b41a242dbmk6lxcpg": {
+    "id": "fdb1e4751cb49f7c8b35398b41a242dbmk6lxcpg",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "artigen_img2img_mk6lxcp6_lgjpxr08",
+    "status": "confirmed",
+    "createdAt": 1767946881940,
+    "updatedAt": 1767946902281
+  },
+  "543ebd73157bee27b69131efdc8777cemk6msebl": {
+    "id": "543ebd73157bee27b69131efdc8777cemk6msebl",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_directions_mk6mseay_ne6uw2",
+    "status": "confirmed",
+    "createdAt": 1767948330369,
+    "updatedAt": 1767948360291
+  },
+  "9ac45628d0b5fcd5174a452123b07512mk6mu2im": {
+    "id": "9ac45628d0b5fcd5174a452123b07512mk6mu2im",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_final_mk6mu2ie_qd81mw",
+    "status": "confirmed",
+    "createdAt": 1767948408382,
+    "updatedAt": 1767948425042
+  },
+  "539a0326a983585505c1d3d19d7debfbmk6mu4xf": {
+    "id": "539a0326a983585505c1d3d19d7debfbmk6mu4xf",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_final_mk6mu4x9_wmp1h7",
+    "status": "confirmed",
+    "createdAt": 1767948411507,
+    "updatedAt": 1767948428193
+  },
+  "d3760c6eeb26be3fb78720ea02ff2327mk6mu5gr": {
+    "id": "d3760c6eeb26be3fb78720ea02ff2327mk6mu5gr",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_final_mk6mu5gg_tzf84m",
+    "status": "confirmed",
+    "createdAt": 1767948412203,
+    "updatedAt": 1767948427849
+  },
+  "d3a4e867a9268664b4edbb9d005f4e4bmk6mucrv": {
+    "id": "d3a4e867a9268664b4edbb9d005f4e4bmk6mucrv",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_final_mk6mucrq_77bva3",
+    "status": "confirmed",
+    "createdAt": 1767948421675,
+    "updatedAt": 1767948438546
+  },
+  "5c768b5f488fc1f9420af17ed8049127mk6mw0f6": {
+    "id": "5c768b5f488fc1f9420af17ed8049127mk6mw0f6",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_directions_mk6mw0ev_rhzff9",
+    "status": "confirmed",
+    "createdAt": 1767948498978,
+    "updatedAt": 1767948524466
+  },
+  "921a6ed64527cdc110fff674a3e67d7cmk6mysrg": {
+    "id": "921a6ed64527cdc110fff674a3e67d7cmk6mysrg",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_final_mk6mysra_49l9rj",
+    "status": "confirmed",
+    "createdAt": 1767948629020,
+    "updatedAt": 1767948646771
+  },
+  "00f2eff38e7ecbc963498a165c06e91emk6n9gdf": {
+    "id": "00f2eff38e7ecbc963498a165c06e91emk6n9gdf",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_directions_mk6n9gd2_6mt5v5",
+    "status": "confirmed",
+    "createdAt": 1767949126179,
+    "updatedAt": 1767949170841
+  },
+  "cd525c27420e5a4c054f2508ff7b4a9dmk6nbn1n": {
+    "id": "cd525c27420e5a4c054f2508ff7b4a9dmk6nbn1n",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_final_mk6nbn1e_89b4le",
+    "status": "confirmed",
+    "createdAt": 1767949228140,
+    "updatedAt": 1767949248418
+  },
+  "91854a60346a53ee33d9a8b663047814mk6njmku": {
+    "id": "91854a60346a53ee33d9a8b663047814mk6njmku",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_directions_mk6njmki_tjkdhg",
+    "status": "confirmed",
+    "createdAt": 1767949600782,
+    "updatedAt": 1767949636965
+  },
+  "4cb82990a70b64a117bed85177e8dacfmk6nlkha": {
+    "id": "4cb82990a70b64a117bed85177e8dacfmk6nlkha",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_final_mk6nlkh2_ad6dkp",
+    "status": "confirmed",
+    "createdAt": 1767949691374,
+    "updatedAt": 1767949713374
+  },
+  "4ca298d6b8796014e03a9c72d9162473mk6nmekl": {
+    "id": "4ca298d6b8796014e03a9c72d9162473mk6nmekl",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_directions_mk6nmekb_5c2jkk",
+    "status": "confirmed",
+    "createdAt": 1767949730373,
+    "updatedAt": 1767949760462
+  },
+  "470b032fd02882930de273dd26c0034bmk6nn3wh": {
+    "id": "470b032fd02882930de273dd26c0034bmk6nn3wh",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_final_mk6nn3w8_f6aq3l",
+    "status": "confirmed",
+    "createdAt": 1767949763201,
+    "updatedAt": 1767949782019
+  },
+  "30d70de40cdf05e1a423d715dbe0e0d9mk6npqdw": {
+    "id": "30d70de40cdf05e1a423d715dbe0e0d9mk6npqdw",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_directions_mk6npqdl_by4kzi",
+    "status": "confirmed",
+    "createdAt": 1767949885652,
+    "updatedAt": 1767949912703
+  },
+  "c0506f38e5b551f910ed11970affd63amk6oasin": {
+    "id": "c0506f38e5b551f910ed11970affd63amk6oasin",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "generate",
+    "requestId": "artigen_directions_mk6oasi8_bwo1m7",
+    "status": "confirmed",
+    "createdAt": 1767950868192,
+    "updatedAt": 1767950896253
+  },
+  "3f8ea4a0a408a373802d8ae122f54698mk6obgim": {
+    "id": "3f8ea4a0a408a373802d8ae122f54698mk6obgim",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "artigen_img2img_mk6obgig_p6r23fgm",
+    "status": "confirmed",
+    "createdAt": 1767950899294,
+    "updatedAt": 1767950905915
+  },
+  "1fa4aafc2131328619c0cf92ef1c7ce3mk6ovi7u": {
+    "id": "1fa4aafc2131328619c0cf92ef1c7ce3mk6ovi7u",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 1,
+    "reason": "img2img",
+    "requestId": "artigen_img2img_mk6ovi6d_ky7kqo7g",
+    "status": "confirmed",
+    "createdAt": 1767951834618,
+    "updatedAt": 1767951841236
   }
 }

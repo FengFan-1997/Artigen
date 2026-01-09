@@ -2,14 +2,14 @@
   <div class="legal-page">
     <header class="top-header">
       <div class="top-header-inner">
-        <router-link to="/agentimg" class="top-logo">
-          <span class="top-logo-text">Nth Me</span>
+        <router-link to="/artigen" class="top-logo">
+          <span class="top-logo-text">Artigen</span>
         </router-link>
 
         <nav class="top-nav">
-          <router-link to="/agentimg/format-factory" class="top-nav-item">格式工厂</router-link>
-          <router-link to="/agentimg/ai" class="top-nav-item">AI工坊</router-link>
-          <router-link to="/agentimg/market" class="top-nav-item">算力商城</router-link>
+          <router-link to="/artigen/format-factory" class="top-nav-item">格式工厂</router-link>
+          <router-link to="/artigen/ai" class="top-nav-item">AI工坊</router-link>
+          <router-link to="/artigen/market" class="top-nav-item">算力商城</router-link>
         </nav>
 
         <div class="top-actions">
@@ -21,15 +21,14 @@
     <div class="legal-container">
       <header class="legal-header">
         <h1>服务条款</h1>
-        <p class="subtitle">最后更新: 2025-12-06</p>
+        <p class="subtitle">最后更新: 2025-12-30</p>
       </header>
 
       <div class="legal-content">
         <section>
           <h2>1. 服务说明</h2>
           <p>
-            「Nth
-            Me」（由个人开发者独立运营）是一款基于人工智能的图像生成服务。您上传照片后，我们的AI系统会根据预设的风格模板为您生成艺术化的头像图片。
+            「Artigen」（由个人开发者独立运营）是一款基于人工智能的图像生成服务。您上传照片后，我们的AI系统会根据预设的风格模板为您生成艺术化的头像图片。
           </p>
         </section>
 
@@ -59,8 +58,7 @@
         <section>
           <h2>5. 知识产权</h2>
           <p>
-            生成的图片归您所有，您可以自由使用。但本服务的技术、界面设计、风格模板等知识产权归「Nth
-            Me」所有。
+            生成的图片归您所有，您可以自由使用。但本服务的技术、界面设计、风格模板等知识产权归「Artigen」所有。
           </p>
         </section>
 
@@ -72,7 +70,7 @@
         </section>
 
         <div class="contact-box">
-          如有疑问，请联系: <span class="highlight">surgethisworld@gmail.com</span>
+          如有疑问，请联系: <span class="highlight">sorates1997@163.com</span>
         </div>
       </div>
     </div>

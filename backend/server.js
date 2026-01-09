@@ -658,11 +658,19 @@ const callSiliconFlowImageGenerate = async ({
 
   const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
   const modelCandidates = (() => {
-    const primary = imgs.length ? SILICONFLOW_IMAGE_MODEL : SILICONFLOW_TXT2IMG_MODEL || SILICONFLOW_IMAGE_MODEL;
+    const primary = imgs.length
+      ? SILICONFLOW_IMAGE_MODEL
+      : SILICONFLOW_TXT2IMG_MODEL || 'Qwen/Qwen-Image';
     const fallbacks = imgs.length
       ? ['Qwen/Qwen-Image-Edit', 'Qwen/Qwen-Image-Edit-2509']
       : ['Qwen/Qwen-Image', 'Qwen/Qwen-Image-Edit', 'Qwen/Qwen-Image-Edit-2509'];
-    const rawList = [primary, ...fallbacks].map((x) => String(x || '').trim()).filter(Boolean);
+    const rawList = [
+      primary,
+      ...(imgs.length ? [] : [SILICONFLOW_IMAGE_MODEL]),
+      ...fallbacks
+    ]
+      .map((x) => String(x || '').trim())
+      .filter(Boolean);
     const uniq = [];
     for (const m of rawList) if (!uniq.includes(m)) uniq.push(m);
     return uniq;
@@ -723,6 +731,14 @@ const callSiliconFlowImageGenerate = async ({
       err.elapsedMs = Date.now() - startedAt;
       err.modelTried = String(model || '').trim();
       lastErr = err;
+      if (
+        response.status === 400 &&
+        !imgs.length &&
+        /image-edit/i.test(String(model || '')) &&
+        model !== modelCandidates[modelCandidates.length - 1]
+      ) {
+        continue;
+      }
       if (response.status === 400 && isModelNotFound(raw) && model !== modelCandidates[modelCandidates.length - 1]) {
         continue;
       }
@@ -2876,7 +2892,7 @@ const buildSmtpTransport = () => {
 const sendLoginMail = async (to, code) => {
   const transport = buildSmtpTransport();
   const fromUser = String(process.env.QQ_SMTP_USER || '').trim();
-  const fromName = String(process.env.QQ_SMTP_FROM_NAME || 'Nth Me').trim();
+  const fromName = String(process.env.QQ_SMTP_FROM_NAME || 'Artigen').trim();
   const subject = '登录验证码';
   const html = `
     <div style="font-family: -apple-system, Segoe UI, Roboto, Arial; line-height: 1.6; color: #0f172a;">
@@ -3381,6 +3397,7 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
 
 // 2.5 Generic Generate Content (for simple AI tasks)
 app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }), async (req, res) => {
+  let holdCtx = null;
   try {
     const { prompt, userId: userIdRaw, requestId: requestIdRaw } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
@@ -3403,6 +3420,7 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
     const holdRes = imgCredits.freezeCredits({ userId, cost, requestId, reason: 'generate' });
     if (!holdRes.ok) return res.status(402).json({ error: holdRes.error, wallet: holdRes.wallet || null });
     const holdId = holdRes.holdId;
+    holdCtx = { userId, holdId, requestId };
 
     const contents = [{ role: 'user', parts: [{ text: prompt }] }];
 
@@ -3458,6 +3476,13 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
     return res.status(500).json({ error: 'No LLM provider configured on the server.' });
 
   } catch (error) {
+    let refundedWallet = null;
+    try {
+      if (holdCtx?.userId && holdCtx?.holdId) {
+        refundedWallet = imgCredits.refundHold({ userId: holdCtx.userId, holdId: holdCtx.holdId })?.wallet || null;
+        holdCtx = null;
+      }
+    } catch {}
     try {
       const body = req.body || {};
       const userIdFromBody = String(body.userId || '').trim();
@@ -3478,10 +3503,10 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
               return String(h.userId || '').trim() === userId && String(h.requestId || '').trim() === requestId;
             })
           : '';
-      if (hit) imgCredits.refundHold({ userId, holdId: hit });
+      if (hit) refundedWallet = imgCredits.refundHold({ userId, holdId: hit })?.wallet || refundedWallet;
     } catch {}
     console.error('Error in /api/generate:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(500).json({ error: 'Internal Server Error', ...(refundedWallet ? { wallet: refundedWallet } : {}) });
   }
 });
 

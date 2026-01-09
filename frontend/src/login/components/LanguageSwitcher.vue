@@ -18,6 +18,7 @@ const { toggleLanguage } = languageStore;
 
 <style scoped>
 .lang-switcher {
+  display: none !important;
   position: absolute;
   top: 20px;
   right: 20px;

@@ -18,6 +18,30 @@ export const formatFactoryTools: FormatFactoryTool[] = [
     status: 'ready'
   },
   {
+    id: 'resize',
+    name: '图片尺寸调整',
+    description: '改宽高 · 保持比例',
+    icon: '📏',
+    tag: '通用处理',
+    status: 'ready'
+  },
+  {
+    id: 'rotate',
+    name: '图片旋转/翻转',
+    description: '旋转角度 · 镜像翻转',
+    icon: '🔄',
+    tag: '通用处理',
+    status: 'ready'
+  },
+  {
+    id: 'filter',
+    name: '图片滤镜',
+    description: '黑白/复古/反色',
+    icon: '🎛️',
+    tag: '通用处理',
+    status: 'ready'
+  },
+  {
     id: 'watermark',
     name: '图片去水印',
     description: '智能裁剪 · 手动框选',

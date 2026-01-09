@@ -71,6 +71,8 @@ export const convertImage = async (
   }
 };
 
+const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
+
 export const convertToJpeg = async (
   file: File,
   quality: number,
@@ -89,6 +91,185 @@ export const convertToJpeg = async (
     const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
     reportProgress(opts, { done: 2, total: 2, label: '完成' });
     return { blob, filename: `${safeBaseName(file.name)}.jpg` };
+  } finally {
+    revokeUrl(srcUrl);
+  }
+};
+
+export const resizeImage = async (
+  file: File,
+  input: {
+    width: number | null;
+    height: number | null;
+    maxSide: number | null;
+    outType: 'image/png' | 'image/jpeg' | 'image/webp';
+    quality?: number;
+  },
+  opts?: FormatFactoryRunOpts
+) => {
+  const srcUrl = URL.createObjectURL(file);
+  try {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 2, label: '读取图片' });
+    const img = await loadImageFromUrl(srcUrl);
+
+    const w0 = img.naturalWidth || 0;
+    const h0 = img.naturalHeight || 0;
+    if (!w0 || !h0) throw new Error('读取图片失败');
+
+    const width = input.width && input.width > 0 ? Math.floor(input.width) : null;
+    const height = input.height && input.height > 0 ? Math.floor(input.height) : null;
+    const maxSide = input.maxSide && input.maxSide > 0 ? Math.floor(input.maxSide) : null;
+
+    let w = w0;
+    let h = h0;
+    if (width && height) {
+      w = width;
+      h = height;
+    } else if (width) {
+      w = width;
+      h = Math.max(1, Math.round((h0 * width) / w0));
+    } else if (height) {
+      h = height;
+      w = Math.max(1, Math.round((w0 * height) / h0));
+    } else if (maxSide) {
+      const scaled = scaleToMaxSide(w0, h0, maxSide);
+      w = scaled.w;
+      h = scaled.h;
+    } else {
+      throw new Error('请输入宽/高或最长边');
+    }
+
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 1, total: 2, label: '导出图片' });
+    const canvas = drawToCanvas(img, w, h);
+    const blob = await canvasToBlob(canvas, input.outType, input.quality);
+    const ext =
+      input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
+    reportProgress(opts, { done: 2, total: 2, label: '完成' });
+    return { blob, filename: `${safeBaseName(file.name)}_${w}x${h}.${ext}` };
+  } finally {
+    revokeUrl(srcUrl);
+  }
+};
+
+export const rotateFlipImage = async (
+  file: File,
+  input: {
+    rotate: 0 | 90 | 180 | 270;
+    flipH: boolean;
+    flipV: boolean;
+    outType: 'image/png' | 'image/jpeg' | 'image/webp';
+    quality?: number;
+  },
+  opts?: FormatFactoryRunOpts
+) => {
+  const srcUrl = URL.createObjectURL(file);
+  try {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 2, label: '读取图片' });
+    const img = await loadImageFromUrl(srcUrl);
+
+    const w0 = img.naturalWidth || 0;
+    const h0 = img.naturalHeight || 0;
+    if (!w0 || !h0) throw new Error('读取图片失败');
+
+    const rot = input.rotate;
+    const swap = rot === 90 || rot === 270;
+    const w = swap ? h0 : w0;
+    const h = swap ? w0 : h0;
+
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 1, total: 2, label: '导出图片' });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
+
+    ctx.translate(w / 2, h / 2);
+    if (rot) ctx.rotate((rot * Math.PI) / 180);
+    const sx = input.flipH ? -1 : 1;
+    const sy = input.flipV ? -1 : 1;
+    ctx.scale(sx, sy);
+    ctx.drawImage(img, -w0 / 2, -h0 / 2, w0, h0);
+
+    const blob = await canvasToBlob(canvas, input.outType, input.quality);
+    const ext =
+      input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
+    reportProgress(opts, { done: 2, total: 2, label: '完成' });
+    return { blob, filename: `${safeBaseName(file.name)}_${rot}deg.${ext}` };
+  } finally {
+    revokeUrl(srcUrl);
+  }
+};
+
+export const filterImage = async (
+  file: File,
+  input: {
+    preset: 'grayscale' | 'sepia' | 'invert';
+    intensity: number;
+    outType: 'image/png' | 'image/jpeg' | 'image/webp';
+    quality?: number;
+  },
+  opts?: FormatFactoryRunOpts
+) => {
+  const srcUrl = URL.createObjectURL(file);
+  try {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 3, label: '读取图片' });
+    const img = await loadImageFromUrl(srcUrl);
+
+    const w = img.naturalWidth || 0;
+    const h = img.naturalHeight || 0;
+    if (!w || !h) throw new Error('读取图片失败');
+
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 1, total: 3, label: '渲染画布' });
+    const canvas = drawToCanvas(img, w, h);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
+
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 2, total: 3, label: '应用滤镜' });
+    const t = clamp01(Number(input.intensity || 0));
+    if (t > 0) {
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const d = imageData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i];
+        const g = d[i + 1];
+        const b = d[i + 2];
+        let r2 = r;
+        let g2 = g;
+        let b2 = b;
+        if (input.preset === 'grayscale') {
+          const y = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+          r2 = y;
+          g2 = y;
+          b2 = y;
+        } else if (input.preset === 'sepia') {
+          r2 = Math.min(255, Math.round(0.393 * r + 0.769 * g + 0.189 * b));
+          g2 = Math.min(255, Math.round(0.349 * r + 0.686 * g + 0.168 * b));
+          b2 = Math.min(255, Math.round(0.272 * r + 0.534 * g + 0.131 * b));
+        } else {
+          r2 = 255 - r;
+          g2 = 255 - g;
+          b2 = 255 - b;
+        }
+        d[i] = Math.round(r * (1 - t) + r2 * t);
+        d[i + 1] = Math.round(g * (1 - t) + g2 * t);
+        d[i + 2] = Math.round(b * (1 - t) + b2 * t);
+      }
+      ctx.putImageData(imageData, 0, 0);
+    }
+
+    const blob = await canvasToBlob(canvas, input.outType, input.quality);
+    const ext =
+      input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
+    reportProgress(opts, { done: 3, total: 3, label: '完成' });
+    return { blob, filename: `${safeBaseName(file.name)}_${input.preset}.${ext}` };
   } finally {
     revokeUrl(srcUrl);
   }

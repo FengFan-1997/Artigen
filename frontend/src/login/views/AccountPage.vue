@@ -32,8 +32,8 @@
       </div>
 
       <div class="actions">
-        <router-link class="btn ghost" to="/">{{ t('login.back') }}</router-link>
-        <router-link class="btn ghost" to="/login">{{ t('login.login_other') }}</router-link>
+        <router-link class="btn ghost" to="/artigen">{{ t('login.back') }}</router-link>
+        <!-- <router-link class="btn ghost" to="/login">{{ t('login.login_other') }}</router-link> -->
         <button class="btn danger" type="button" @click="logout">{{ t('login.logout') }}</button>
       </div>
     </div>
@@ -72,7 +72,7 @@ const switchTo = (uid: string) => {
 };
 
 const logout = () => {
-  logoutLocal();
+  logoutLocal({ redirectTo: '/artigen' });
 };
 </script>
 
@@ -182,6 +182,7 @@ const logout = () => {
 }
 
 .user-item {
+  display: none;
   width: 100%;
   text-align: left;
   padding: 12px;

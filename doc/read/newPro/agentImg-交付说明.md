@@ -18,7 +18,7 @@
 
 ## 1. 核心功能演示（业务视角）
 
-### 1.1 AI 工坊 (AI Workshop) - `/agentimg/ai`
+### 1.1 AI 工坊 (AI Workshop) - `/artigen/ai`
 这是核心作业区，采用了**沉浸式聊天流（Chat UI）**设计，让创作像对话一样自然。
 
 **操作流程脚本（面试/演示必背）：**
@@ -37,7 +37,7 @@
     *   结果以**聊天气泡**形式追加在对话流底部。
     *   右侧“历史记录”同步更新，支持回溯。
 
-### 1.2 格式工厂 (Format Factory) - `/agentimg/format-factory`
+### 1.2 格式工厂 (Format Factory) - `/artigen/format-factory`
 8 个纯前端工具箱，解决设计师痛点：
 *   **格式转换**：WebP/JPG/PNG 互转，ICO 图标生成。
 *   **隐私处理**：本地图片去水印（Canvas 像素操作）。
@@ -90,7 +90,7 @@ graph LR
 我们的聊天窗口和右侧历史记录是**数据同步**的，但展示方式不同。
 
 *   **数据源**：`history` 数组（响应式 `ref`）。
-*   **持久化**：使用 `localStorage` 存储，键名为 `agentimg_history_v1_${userId}`。这意味着不同账号的历史记录是隔离的。
+*   **持久化**：使用 `localStorage` 存储，键名为 `artigen_history_v1_${userId}`。这意味着不同账号的历史记录是隔离的。
 *   **渲染逻辑**：
     *   **聊天窗口**：使用 `computed` 属性 `historyTimeline` 对 `history` 进行**反转**（`reverse()`），因为数组通常是 `push`（新在后），但聊天流通常是“新在下”（我们这里直接渲染倒序后的数组，或者配合 Flex 布局）。*注：实际代码中我们直接追加到数组头部或尾部，取决于具体实现，当前逻辑是“新记录在数组前”还是“后”，请看代码 `unshift` vs `push`。目前代码是 `unshift` 也就是新记录在索引 0，所以渲染时直接遍历即可显示在顶部；或者反之。*（**修正：最新代码已改为 append 追加模式，渲染时不需要 reverse，直接 v-for 即可，符合直觉**）。
     *   **侧边栏**：展示缩略图，点击可滚动定位（`scrollIntoView`）到聊天窗口的对应位置。

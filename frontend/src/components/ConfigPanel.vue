@@ -124,7 +124,7 @@ onBeforeUnmount(() => {
 
 .arrow {
   font-size: 0.7rem;
-  transition: transform 0.3s ease;
+  /* transition: transform 0.3s ease; */
   color: #38bdf8;
 }
 

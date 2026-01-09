@@ -49,6 +49,10 @@
 4. 直接生成 1 张预览图
 5. 用户再来一张 / 调整参数 / 收藏 / 下载
 
+
+
+
+我再次阐述一下逻辑！！文生图，有两种模式一种是非深度思考模式，用户输入的语句直接交给生图ai 然后直接返回图片。另一种是深度思考模式，用户输入，然后我们给它补充上提示词交给ai大模型让ai给我们生成四种风格方向，然后我们选择其一进行生成！容纳后返图！！！没有图1这种编辑提示词的模块！！！谁给我加上的！！！只有图2这种四种风格方向的选项块，然后在下方可以编辑，如果用户编辑就把编辑之后的给到生图ai让生图ai生图，用户没有编辑就按照选择的方向风格来生成！！
 深度思考模式（核心差异化）：
 1. 用户输入一句话
 2. LLM 生成 4 个“方向卡片”（不同风格/构图/情绪）
@@ -110,10 +114,10 @@
 - 频控：服务端 rate limit
 
 AgentImg 需要新增的后端接口（后续开发时做）：
-- `POST /api/agentimg/options`：输入 + deepMode → 返回 4 个方向卡片（含标题、关键词、风格、建议参数）
-- `POST /api/agentimg/prompt`：锁定方向 + 用户补充 → 返回最终 Prompt（含负面词、结构化参数）
-- `POST /api/agentimg/image`：最终 Prompt + 参数 → 调用生图服务并返回图片 URL/Base64
-- `GET /api/agentimg/history`：按 userId 获取历史（MVP 可先用本地存储，V1 再上云）
+- `POST /api/artigen/options`：输入 + deepMode → 返回 4 个方向卡片（含标题、关键词、风格、建议参数）
+- `POST /api/artigen/prompt`：锁定方向 + 用户补充 → 返回最终 Prompt（含负面词、结构化参数）
+- `POST /api/artigen/image`：最终 Prompt + 参数 → 调用生图服务并返回图片 URL/Base64
+- `GET /api/artigen/history`：按 userId 获取历史（MVP 可先用本地存储，V1 再上云）
 
 密钥与环境变量（安全要求）：
 - 只允许通过环境变量配置：`SILICONFLOW_API_KEY`、`GEMINI_API_KEY` 等

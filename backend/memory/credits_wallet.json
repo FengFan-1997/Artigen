@@ -36,9 +36,10 @@
     "updatedAt": 1767886994920
   },
   "user_mk5vb7v2_ebe837825fb2": {
-    "available": 11,
+    "available": 24,
     "frozen": 0,
     "createdAt": 1767902179279,
-    "updatedAt": 1767941195872
+    "updatedAt": 1767953165089,
+    "lastCheckinDay": "2026-01-09"
   }
 }

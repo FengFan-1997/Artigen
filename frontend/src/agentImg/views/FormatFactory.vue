@@ -2,16 +2,16 @@
   <div class="format-factory-page">
     <header class="top-header">
       <div class="top-header-inner">
-        <router-link to="/agentimg" class="top-logo">
-          <span class="top-logo-text">Nth Me</span>
+        <router-link to="/artigen" class="top-logo">
+          <span class="top-logo-text">Artigen</span>
         </router-link>
 
         <nav class="top-nav">
-          <router-link to="/agentimg/format-factory" class="top-nav-item active"
+          <router-link to="/artigen/format-factory" class="top-nav-item active"
             >格式工厂</router-link
           >
-          <router-link to="/agentimg/ai" class="top-nav-item">AI工坊</router-link>
-          <router-link to="/agentimg/market" class="top-nav-item">算力商城</router-link>
+          <router-link to="/artigen/ai" class="top-nav-item">AI工坊</router-link>
+          <router-link to="/artigen/market" class="top-nav-item">算力商城</router-link>
         </nav>
 
         <div class="top-actions">
@@ -95,7 +95,7 @@
                         v-model="ingredientProductName"
                         class="control"
                         type="text"
-                        placeholder="例如 NthMe Gummies"
+                        placeholder="例如 Artigen Gummies"
                       />
                     </div>
                     <div class="field-row">
@@ -251,6 +251,165 @@
                         min="16"
                         placeholder="例如 1600"
                       />
+                    </div>
+                  </template>
+
+                  <template v-else-if="activeTool.id === 'resize'">
+                    <div class="field-row">
+                      <div class="field-label">宽度(px)</div>
+                      <input
+                        v-model="resizeWidth"
+                        class="control"
+                        type="number"
+                        min="1"
+                        placeholder="留空表示自动"
+                      />
+                    </div>
+
+                    <div class="field-row">
+                      <div class="field-label">高度(px)</div>
+                      <input
+                        v-model="resizeHeight"
+                        class="control"
+                        type="number"
+                        min="1"
+                        placeholder="留空表示自动"
+                      />
+                    </div>
+
+                    <div class="field-row">
+                      <div class="field-label">最长边(px)</div>
+                      <input
+                        v-model="resizeMaxSide"
+                        class="control"
+                        type="number"
+                        min="16"
+                        placeholder="仅在宽高都留空时生效"
+                      />
+                    </div>
+
+                    <div class="field-row">
+                      <div class="field-label">输出格式</div>
+                      <select v-model="resizeOutFormat" class="control">
+                        <option value="image/png">PNG</option>
+                        <option value="image/jpeg">JPEG</option>
+                        <option value="image/webp">WEBP</option>
+                      </select>
+                    </div>
+
+                    <div v-if="resizeOutFormat !== 'image/png'" class="field-row">
+                      <div class="field-label">质量</div>
+                      <div class="range-row">
+                        <input
+                          v-model.number="resizeQuality"
+                          type="range"
+                          min="0.1"
+                          max="1"
+                          step="0.05"
+                          class="range"
+                        />
+                        <div class="range-val">{{ Math.round(resizeQuality * 100) }}%</div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template v-else-if="activeTool.id === 'rotate'">
+                    <div class="field-row">
+                      <div class="field-label">旋转</div>
+                      <select v-model.number="rotateDeg" class="control">
+                        <option :value="0">0°</option>
+                        <option :value="90">90°</option>
+                        <option :value="180">180°</option>
+                        <option :value="270">270°</option>
+                      </select>
+                    </div>
+
+                    <div class="field-row">
+                      <div class="field-label">翻转</div>
+                      <div class="chips">
+                        <label class="chip" :class="{ active: rotateFlipH }">
+                          <input v-model="rotateFlipH" type="checkbox" style="display: none" />
+                          水平镜像
+                        </label>
+                        <label class="chip" :class="{ active: rotateFlipV }">
+                          <input v-model="rotateFlipV" type="checkbox" style="display: none" />
+                          垂直镜像
+                        </label>
+                      </div>
+                    </div>
+
+                    <div class="field-row">
+                      <div class="field-label">输出格式</div>
+                      <select v-model="rotateOutFormat" class="control">
+                        <option value="image/png">PNG</option>
+                        <option value="image/jpeg">JPEG</option>
+                        <option value="image/webp">WEBP</option>
+                      </select>
+                    </div>
+
+                    <div v-if="rotateOutFormat !== 'image/png'" class="field-row">
+                      <div class="field-label">质量</div>
+                      <div class="range-row">
+                        <input
+                          v-model.number="rotateQuality"
+                          type="range"
+                          min="0.1"
+                          max="1"
+                          step="0.05"
+                          class="range"
+                        />
+                        <div class="range-val">{{ Math.round(rotateQuality * 100) }}%</div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template v-else-if="activeTool.id === 'filter'">
+                    <div class="field-row">
+                      <div class="field-label">滤镜</div>
+                      <select v-model="filterPreset" class="control">
+                        <option value="grayscale">黑白</option>
+                        <option value="sepia">复古</option>
+                        <option value="invert">反色</option>
+                      </select>
+                    </div>
+
+                    <div class="field-row">
+                      <div class="field-label">强度</div>
+                      <div class="range-row">
+                        <input
+                          v-model.number="filterIntensity"
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          class="range"
+                        />
+                        <div class="range-val">{{ Math.round(filterIntensity * 100) }}%</div>
+                      </div>
+                    </div>
+
+                    <div class="field-row">
+                      <div class="field-label">输出格式</div>
+                      <select v-model="filterOutFormat" class="control">
+                        <option value="image/png">PNG</option>
+                        <option value="image/jpeg">JPEG</option>
+                        <option value="image/webp">WEBP</option>
+                      </select>
+                    </div>
+
+                    <div v-if="filterOutFormat !== 'image/png'" class="field-row">
+                      <div class="field-label">质量</div>
+                      <div class="range-row">
+                        <input
+                          v-model.number="filterQuality"
+                          type="range"
+                          min="0.1"
+                          max="1"
+                          step="0.05"
+                          class="range"
+                        />
+                        <div class="range-val">{{ Math.round(filterQuality * 100) }}%</div>
+                      </div>
                     </div>
                   </template>
 
@@ -763,6 +922,20 @@ const {
   webpQuality,
   jpegQuality,
   jpegMaxSide,
+  resizeWidth,
+  resizeHeight,
+  resizeMaxSide,
+  resizeOutFormat,
+  resizeQuality,
+  rotateDeg,
+  rotateFlipH,
+  rotateFlipV,
+  rotateOutFormat,
+  rotateQuality,
+  filterPreset,
+  filterIntensity,
+  filterOutFormat,
+  filterQuality,
   icoSizeOptions,
   icoSizes,
   toggleIcoSize,

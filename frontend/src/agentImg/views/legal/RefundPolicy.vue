@@ -2,14 +2,14 @@
   <div class="legal-page">
     <header class="top-header">
       <div class="top-header-inner">
-        <router-link to="/agentimg" class="top-logo">
-          <span class="top-logo-text">Nth Me</span>
+        <router-link to="/artigen" class="top-logo">
+          <span class="top-logo-text">Artigen</span>
         </router-link>
 
         <nav class="top-nav">
-          <router-link to="/agentimg/format-factory" class="top-nav-item">格式工厂</router-link>
-          <router-link to="/agentimg/ai" class="top-nav-item">AI工坊</router-link>
-          <router-link to="/agentimg/market" class="top-nav-item">算力商城</router-link>
+          <router-link to="/artigen/format-factory" class="top-nav-item">格式工厂</router-link>
+          <router-link to="/artigen/ai" class="top-nav-item">AI工坊</router-link>
+          <router-link to="/artigen/market" class="top-nav-item">算力商城</router-link>
         </nav>
 
         <div class="top-actions">
@@ -21,12 +21,12 @@
     <div class="legal-container">
       <header class="legal-header">
         <h1>退款政策</h1>
-        <p class="subtitle">最后更新: 2025-12-06</p>
+        <p class="subtitle">最后更新: 2025-12-30</p>
       </header>
 
       <div class="legal-content">
         <p class="intro">
-          在「Nth Me」，我们致力于提供透明、公平的退款体验。请在购买前仔细阅读本政策。
+          在「Artigen」，我们致力于提供透明、公平的退款体验。请在购买前仔细阅读本政策。
         </p>
 
         <section>
@@ -37,7 +37,7 @@
         <section>
           <h2>如何申请退款</h2>
           <p>
-            如果您在 14 天内且未使用已购积分，请发送邮件至 surgethisworld@gmail.com
+            如果您在 14 天内且未使用已购积分，请发送邮件至 sorates1997@163.com
             并附上您的订单号。我们将通过原支付方式处理退款。
           </p>
         </section>
@@ -51,7 +51,7 @@
         </section>
 
         <div class="contact-box">
-          如有疑问，请联系: <span class="highlight">surgethisworld@gmail.com</span>
+          如有疑问，请联系: <span class="highlight">sorates1997@163.com</span>
         </div>
       </div>
     </div>

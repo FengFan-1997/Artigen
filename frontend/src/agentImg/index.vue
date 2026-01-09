@@ -1,68 +1,70 @@
 <template>
-  <div class="agentimg-page">
+  <div class="artigen-page">
     <div class="tool-container">
       <header class="top-header">
         <div class="top-header-inner">
-          <router-link to="/agentimg" class="top-logo">
-            <span class="top-logo-text">Nth Me</span>
+          <router-link to="/artigen" class="top-logo">
+            <span class="top-logo-text">Artigen</span>
           </router-link>
 
           <nav class="top-nav">
-            <router-link to="/agentimg/format-factory" class="top-nav-item">{{
+            <router-link to="/artigen/format-factory" class="top-nav-item">{{
               ui.navFormatFactory
             }}</router-link>
-            <router-link to="/agentimg/ai" class="top-nav-item active">{{
+            <router-link to="/artigen/ai" class="top-nav-item active">{{
               ui.navAiWorkshop
             }}</router-link>
-            <router-link to="/agentimg/market" class="top-nav-item">{{ ui.navMarket }}</router-link>
+            <router-link to="/artigen/market" class="top-nav-item">{{ ui.navMarket }}</router-link>
           </nav>
 
           <div class="top-actions">
-            <button class="credits-btn" type="button" @click="goMarket" :disabled="creditsLoading">
-              <span class="credits-icon">⚡</span>
-              <span class="credits-value">{{ creditsText }}</span>
+            <template v-if="isAuthed">
+              <button
+                class="credits-btn"
+                type="button"
+                @click="goMarket"
+                :disabled="creditsLoading"
+              >
+                <span class="credits-icon">⚡</span>
+                <span class="credits-value">{{ creditsText }}</span>
+              </button>
+
+              <div class="user-menu">
+                <button class="avatar-btn" type="button" @click="toggleUserMenu">
+                  <span class="avatar-text">{{ avatarText }}</span>
+                </button>
+                <transition name="dropdown-fade">
+                  <div v-if="showUserMenu" class="user-dropdown">
+                    <div class="user-row">
+                      <div class="user-name">{{ userTitle }}</div>
+                      <div class="user-sub">{{ userSubtitle }}</div>
+                    </div>
+                    <button class="user-item" type="button" @click="refreshCredits">
+                      {{ refreshCreditsText }}
+                    </button>
+                    <button
+                      class="user-item"
+                      type="button"
+                      @click="doCheckin"
+                      :disabled="checkinLoading"
+                    >
+                      {{ checkinText }}
+                    </button>
+                    <button class="user-item" type="button" @click="goMarket">
+                      {{ ui.goMarket }}
+                    </button>
+                    <button class="user-item danger" type="button" @click="handleLogout">
+                      {{ ui.logout }}
+                    </button>
+                  </div>
+                </transition>
+              </div>
+            </template>
+            <button v-else class="nth-login-btn" type="button" @click="onLoginClick">
+              {{ ui.loginOrRegister }}
             </button>
 
-            <div class="user-menu">
-              <button class="avatar-btn" type="button" @click="toggleUserMenu">
-                <span class="avatar-text">{{ avatarText }}</span>
-              </button>
-              <transition name="dropdown-fade">
-                <div v-if="showUserMenu" class="user-dropdown">
-                  <div class="user-row">
-                    <div class="user-name">{{ userTitle }}</div>
-                    <div class="user-sub">{{ userSubtitle }}</div>
-                  </div>
-                  <button class="user-item" type="button" @click="refreshCredits">
-                    {{ refreshCreditsText }}
-                  </button>
-                  <button
-                    class="user-item"
-                    type="button"
-                    @click="doCheckin"
-                    :disabled="checkinLoading"
-                  >
-                    {{ checkinText }}
-                  </button>
-                  <button class="user-item" type="button" @click="goMarket">
-                    {{ ui.goMarket }}
-                  </button>
-                  <button
-                    v-if="isAuthed"
-                    class="user-item danger"
-                    type="button"
-                    @click="handleLogout"
-                  >
-                    {{ ui.logout }}
-                  </button>
-                  <button v-else class="nth-login-btn" type="button" @click="onLoginClick">
-                    {{ ui.loginOrRegister }}
-                  </button>
-                </div>
-              </transition>
-            </div>
-
-            <router-link to="/agentimg" class="top-action-link">{{ ui.homeLink }}</router-link>
+            <router-link to="/artigen" class="top-action-link">{{ ui.homeLink }}</router-link>
           </div>
         </div>
       </header>
@@ -191,93 +193,8 @@
 
         <!-- CENTER: Main Interaction -->
         <main class="main">
-          <div v-if="promptDraft" class="prompt-edit-view">
-            <div class="dt-header">
-              <h2 class="dt-title">编辑提示词</h2>
-              <p class="dt-subtitle">编辑后将作为最终提示词发送给生图模型</p>
-            </div>
-
-            <div class="prompt-edit-grid">
-              <div class="prompt-box">
-                <div class="box-label">{{ ui.positivePrompt }}</div>
-                <textarea v-model="promptDraft.prompt" class="box-textarea" rows="8"></textarea>
-              </div>
-
-              <div class="prompt-box negative">
-                <div class="box-label">{{ ui.negativePrompt }}</div>
-                <textarea
-                  v-model="promptDraft.negativePrompt"
-                  class="box-textarea"
-                  rows="8"
-                ></textarea>
-              </div>
-
-              <div class="prompt-style">
-                <div class="box-label">风格</div>
-                <div class="chips-row">
-                  <span v-for="t in promptDraftStyleTags" :key="t" class="chip">
-                    {{ t }}
-                    <button class="chip-x" type="button" @click="removeDraftStyleTag(t)">×</button>
-                  </span>
-                </div>
-                <div class="tag-add-row">
-                  <input
-                    v-model="draftStyleTagInput"
-                    class="control"
-                    type="text"
-                    placeholder="输入风格标签，回车添加"
-                    @keydown.enter.prevent="addDraftStyleTag()"
-                  />
-                  <button class="btn ghost" type="button" @click="addDraftStyleTag()">添加</button>
-                </div>
-              </div>
-
-              <div class="prompt-style">
-                <div class="box-label">参数</div>
-                <div class="params-row">
-                  <div class="param">
-                    <div class="param-label">Size</div>
-                    <input
-                      v-model="promptDraft.params.imageSize"
-                      class="control"
-                      type="text"
-                      placeholder="1024x1024"
-                    />
-                  </div>
-                  <div class="param">
-                    <div class="param-label">Steps</div>
-                    <input v-model="promptDraft.params.steps" class="control" type="number" />
-                  </div>
-                  <div class="param">
-                    <div class="param-label">CFG</div>
-                    <input
-                      v-model="promptDraft.params.guidanceScale"
-                      class="control"
-                      type="number"
-                    />
-                  </div>
-                  <div class="param">
-                    <div class="param-label">Seed</div>
-                    <input v-model="promptDraft.params.seed" class="control" type="number" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="dt-actions">
-              <button class="dt-btn" @click="onPrimary" :disabled="!canPrimary">
-                {{ primaryText }}
-              </button>
-              <button class="btn ghost" type="button" @click="closePromptDraft" :disabled="loading">
-                取消
-              </button>
-            </div>
-          </div>
           <!-- Deep Thinking Mode -->
-          <div
-            v-else-if="deepMode && options.length > 0 && !finalPrompt"
-            class="deep-thinking-view"
-          >
+          <div v-if="deepMode && options.length > 0" class="deep-thinking-view">
             <div class="dt-header">
               <h2 class="dt-title">{{ ui.deepThinkingTitle }}</h2>
               <p class="dt-subtitle">{{ ui.deepThinkingSub }}</p>
@@ -349,7 +266,20 @@
               </div>
 
               <div class="dt-actions">
-                <button class="dt-btn" @click="onPrimary">{{ ui.generateThisDirection }}</button>
+                <button class="dt-btn" @click="onPrimary" :disabled="loading">
+                  <span
+                    v-if="loading"
+                    class="loading-spinner"
+                    style="width: 14px; height: 14px; border-width: 2px; margin-right: 8px"
+                  ></span>
+                  {{
+                    loading
+                      ? currentLang === 'zh'
+                        ? '正在生成...'
+                        : 'Generating...'
+                      : ui.generateThisDirection
+                  }}
+                </button>
               </div>
             </div>
           </div>
@@ -358,10 +288,7 @@
             <!-- Messages -->
             <div class="messages">
               <!-- Welcome Message -->
-              <div
-                class="msg msg-ai"
-                v-if="!userInput && !loading && !options.length && !finalPrompt"
-              >
+              <div class="msg msg-ai" v-if="!userInput && !loading && !options.length">
                 <div class="msg-avatar">
                   <img src="/logo.png" alt="System" />
                 </div>
@@ -394,18 +321,31 @@
                       />
                     </svg>
                   </div>
-                  <div class="msg-bubble">{{ item.userText }}</div>
+                  <div class="msg-bubble">
+                    <div class="msg-text">{{ item.userText }}</div>
+                    <div v-if="item.refImages && item.refImages.length" class="msg-ref-list">
+                      <img
+                        v-for="(u, idx) in item.refImages"
+                        :key="idx"
+                        class="msg-ref-img"
+                        :src="u"
+                        alt="ref"
+                        @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div class="msg msg-ai" :id="`gen-${item.id}`">
                   <div class="msg-avatar">
                     <img src="/logo.png" alt="System" />
                   </div>
-                  <div class="msg-bubble">
+                  <div class="msg-bubble msg-media-bubble">
+                    <div v-if="item.aiText" class="msg-ai-text">{{ item.aiText }}</div>
                     <img
                       v-if="item.image"
                       :src="item.image"
                       alt="generated"
-                      style="max-width: 100%; border-radius: 10px"
+                      class="msg-media-img"
                       @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
                     />
                   </div>
@@ -550,7 +490,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useAgentImgFlow } from './composables/useAgentImgFlow';
@@ -565,8 +505,9 @@ import {
 import { useLoginModel } from '@/stores';
 import { useLanguageStore } from '@/stores/language';
 import { checkinCredits, getCreditsBalance, type CreditsBalance } from '@/points';
-import { img2img, type GenerateImageInput } from './services/text';
+import { img2img, type GenerateImageInput, type Img2ImgImageInput } from './services/text';
 import type { AgentImgPromptResult } from './types';
+import { agentImgPromptLibrary } from './data/promptLibrary';
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -605,7 +546,7 @@ const ui = computed(() => {
       deepThinkingTitle: '深度思考分析',
       deepThinkingSub: '基于您的输入，为您规划了 4 个视觉方向',
       generateThisDirection: '生成该方向',
-      welcomeTitle: '欢迎使用 AgentImg 产品摄影助手。',
+      welcomeTitle: '欢迎使用 Artigen 智能摄影助手。',
       welcomeSub:
         '请在左侧配置您的产品信息，或直接在下方描述您的拍摄需求。我会为您提供专业的视觉方向建议。',
       memory: '历史记录',
@@ -651,7 +592,7 @@ const ui = computed(() => {
     deepThinkingTitle: 'Deep Thinking Analysis',
     deepThinkingSub: 'Based on your input, we planned 4 visual directions',
     generateThisDirection: 'Generate This Direction',
-    welcomeTitle: 'Welcome to AgentImg Product Photography Assistant.',
+    welcomeTitle: 'Welcome to Artigen AI Photography Assistant.',
     welcomeSub:
       'Configure your product details on the left, or describe your shooting needs below. I will suggest professional visual directions.',
     memory: 'History',
@@ -675,6 +616,8 @@ type HistoryItem = {
   userText: string;
   result: AgentImgPromptResult;
   image: string | null;
+  refImages?: string[];
+  aiText?: string;
 };
 
 const MAX_HISTORY = 200;
@@ -738,18 +681,14 @@ const {
   error,
   options,
   selectedOptionId,
-  finalPrompt: finalPrompt0,
   canAnalyze,
-  canFinalize,
   reset,
   cancel,
-  analyzeDirections,
-  generateFinal
+  analyzeDirections
 } = useAgentImgFlow({
   getContextText: () => contextText.value,
   getImages: async () => {
     const files: File[] = [];
-    if (logoFile.value) files.push(logoFile.value);
     for (const f of previewFiles.value) if (f) files.push(f);
     const list = files.slice(0, 3);
     if (!list.length) return undefined;
@@ -758,26 +697,6 @@ const {
     return ok.length ? ok : undefined;
   }
 });
-
-const finalPrompt = finalPrompt0 as Ref<AgentImgPromptResult | null>;
-
-type DraftParams = {
-  imageSize: string;
-  steps: string;
-  guidanceScale: string;
-  seed: string;
-};
-
-type PromptDraft = {
-  prompt: string;
-  negativePrompt: string;
-  params: DraftParams;
-};
-
-const promptDraft = ref<PromptDraft | null>(null);
-const promptDraftUserText = ref('');
-const promptDraftStyleTags = ref<string[]>([]);
-const draftStyleTagInput = ref('');
 const optionStyleTagInput = ref('');
 const pendingUserText = ref('');
 const chatScrollEl = ref<HTMLElement | null>(null);
@@ -814,32 +733,6 @@ const applyStyleTagsToPrompt = (prompt: string, tags: string[]) => {
   return out;
 };
 
-const draftParamsFromResult = (p?: AgentImgPromptResult['params']): DraftParams => {
-  return {
-    imageSize: String(p?.imageSize || '').trim(),
-    steps: p?.steps == null ? '' : String(p.steps),
-    guidanceScale: p?.guidanceScale == null ? '' : String(p.guidanceScale),
-    seed: p?.seed == null ? '' : String(p.seed)
-  };
-};
-
-const draftParamsToResult = (p: DraftParams): AgentImgPromptResult['params'] | undefined => {
-  const out: AgentImgPromptResult['params'] = {};
-  const imageSize = String(p.imageSize || '').trim();
-  if (imageSize) out.imageSize = imageSize;
-
-  const steps = Number(String(p.steps || '').trim());
-  if (Number.isFinite(steps) && steps > 0) out.steps = steps;
-
-  const guidanceScale = Number(String(p.guidanceScale || '').trim());
-  if (Number.isFinite(guidanceScale) && guidanceScale > 0) out.guidanceScale = guidanceScale;
-
-  const seed = Number(String(p.seed || '').trim());
-  if (Number.isFinite(seed) && seed >= 0) out.seed = Math.floor(seed);
-
-  return Object.keys(out).length ? out : undefined;
-};
-
 const selectedOptionIndex = computed(() => {
   const id = String(selectedOptionId.value || '').trim();
   if (!id) return -1;
@@ -860,13 +753,6 @@ const selectedOptionStyleTags = computed(() => {
   const idx = selectedOptionIndex.value;
   return idx >= 0 ? options.value[idx]?.styleTags || [] : [];
 });
-
-const buildUserTextFromSelectedOption = (fallback: string) => {
-  const title = String(selectedOptionTitle.value || '').trim();
-  const summary = String(selectedOptionSummary.value || '').trim();
-  const out = [title, summary].filter(Boolean).join('\n').trim();
-  return out || String(fallback || '').trim();
-};
 
 const updateSelectedOptionTitle = (next: string) => {
   const idx = selectedOptionIndex.value;
@@ -900,27 +786,6 @@ const removeSelectedOptionStyleTag = (tag: string) => {
   const key = normalizeTag(tag).toLowerCase();
   const nextTags = (cur.styleTags || []).filter((t) => normalizeTag(t).toLowerCase() !== key);
   options.value[idx] = { ...cur, styleTags: nextTags };
-};
-
-const addDraftStyleTag = () => {
-  const tag = normalizeTag(draftStyleTagInput.value);
-  if (!tag) return;
-  draftStyleTagInput.value = '';
-  promptDraftStyleTags.value = ensureUniqueTags([...(promptDraftStyleTags.value || []), tag]);
-};
-
-const removeDraftStyleTag = (tag: string) => {
-  const key = normalizeTag(tag).toLowerCase();
-  promptDraftStyleTags.value = (promptDraftStyleTags.value || []).filter(
-    (t) => normalizeTag(t).toLowerCase() !== key
-  );
-};
-
-const closePromptDraft = () => {
-  promptDraft.value = null;
-  promptDraftUserText.value = '';
-  draftStyleTagInput.value = '';
-  promptDraftStyleTags.value = [];
 };
 
 const router = useRouter();
@@ -976,7 +841,7 @@ const history = ref<HistoryItem[]>([]);
 
 const historyStorageKey = computed(() => {
   const uid = String(authUserId.value || '').trim() || ensureGuestUserId();
-  return `agentimg_history_v1_${uid}`;
+  return `artigen_history_v1_${uid}`;
 });
 
 const loadHistoryFromStorage = () => {
@@ -998,12 +863,20 @@ const loadHistoryFromStorage = () => {
       if (!userText || userText === prompt) continue;
       const params = res?.params && typeof res.params === 'object' ? res.params : undefined;
       const image = typeof it?.image === 'string' && it.image.trim() ? it.image.trim() : null;
+      const aiText = typeof it?.aiText === 'string' && it.aiText.trim() ? it.aiText.trim() : '';
+      const refImagesRaw = Array.isArray(it?.refImages) ? it.refImages : [];
+      const refImages = refImagesRaw
+        .map((x: any) => (typeof x === 'string' ? x.trim() : ''))
+        .filter((x: string) => !!x)
+        .slice(0, 3);
       normalized.push({
         id,
         timestamp,
         userText,
         result: { prompt, negativePrompt, params },
-        image
+        image,
+        ...(refImages.length ? { refImages } : {}),
+        ...(aiText ? { aiText } : {})
       });
       if (normalized.length >= MAX_HISTORY) break;
     }
@@ -1048,6 +921,11 @@ watch(
 );
 
 const refreshCredits = async () => {
+  if (!isAuthed.value) {
+    creditsBalance.value = null;
+    creditsLoading.value = false;
+    return;
+  }
   if (creditsLoading.value) return;
   creditsLoading.value = true;
   creditsBalance.value = await getCreditsBalance();
@@ -1128,183 +1006,257 @@ const handleLogout = () => {
 };
 
 const goMarket = () => {
-  router.push('/agentimg/market');
+  router.push('/artigen/market');
 };
 
 const primaryText = computed(() => {
-  if (loading.value) return '思考中...';
-  if (finalPrompt.value) return '再次生成';
-  if (options.value.length > 0 && !finalPrompt.value) return '生成 Prompt';
-  return deepMode.value ? '分析视觉方向' : '快速生成';
+  if (loading.value) return currentLang.value === 'zh' ? '正在处理...' : 'Processing...';
+  if (deepMode.value) {
+    return options.value.length > 0
+      ? currentLang.value === 'zh'
+        ? '生成该方向'
+        : 'Generate This Direction'
+      : currentLang.value === 'zh'
+        ? '分析视觉方向'
+        : 'Analyze Directions';
+  }
+  return currentLang.value === 'zh' ? '快速生成' : 'Generate';
 });
 
-const canPrimary = computed(() => (deepMode.value ? canAnalyze.value : canFinalize.value));
+const canPrimary = computed(() => {
+  if (loading.value) return false;
+  if (deepMode.value) {
+    if (options.value.length === 0) return canAnalyze.value;
+    return !!String(selectedOptionId.value || '').trim() && !!String(userInput.value || '').trim();
+  }
+  return !!String(userInput.value || '').trim();
+});
+
+const fileToThumbDataUrl = (f: File): Promise<string | null> => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onerror = () => resolve(null);
+    reader.onload = () => {
+      const raw = String(reader.result || '');
+      if (!raw.startsWith('data:')) return resolve(null);
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 360;
+        const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round((img.width || 1) * scale));
+        canvas.height = Math.max(1, Math.round((img.height || 1) * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(raw);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        try {
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        } catch {
+          resolve(raw);
+        }
+      };
+      img.onerror = () => resolve(raw);
+      img.src = raw;
+    };
+    reader.readAsDataURL(f);
+  });
+};
+
+const humanizeImgError = (code: string) => {
+  const c = String(code || '').trim();
+  if (!c) return currentLang.value === 'zh' ? '出图失败，请稍后再试' : 'Image generation failed.';
+  if (c === 'INSUFFICIENT_CREDITS')
+    return currentLang.value === 'zh'
+      ? '积分不足，请前往「算力商城」充值'
+      : 'Insufficient credits. Please top up in the Market.';
+  if (c === 'EMPTY_IMAGE')
+    return currentLang.value === 'zh'
+      ? '请先上传一张参考图再出图'
+      : 'Please upload a reference image first.';
+  return currentLang.value === 'zh' ? `出图失败：${c}` : `Image generation failed: ${c}`;
+};
+
+const buildDeepPrompt = (baseText: string) => {
+  const title = String(selectedOptionTitle.value || '').trim();
+  const summary = String(selectedOptionSummary.value || '').trim();
+  const tags = ensureUniqueTags(selectedOptionStyleTags.value || []).join(', ');
+  const parts = [String(baseText || '').trim(), title, summary, tags].filter(Boolean);
+  return parts.join(', ');
+};
+
+const buildNegativePrompt = (extra?: string[]) => {
+  const base = Array.isArray(agentImgPromptLibrary.safeNegative)
+    ? agentImgPromptLibrary.safeNegative
+    : [];
+  const extraTags = Array.isArray(extra) ? extra : [];
+  const allowLogo = !!logoFile.value;
+  const filteredBase = allowLogo
+    ? base.filter((t) => {
+        const k = normalizeTag(t).toLowerCase();
+        return k !== 'watermark' && k !== 'signature' && k !== 'text';
+      })
+    : base;
+  const merged = ensureUniqueTags([...filteredBase, ...extraTags]);
+  return merged.join(', ');
+};
+
+const applyLogoInstructionToPrompt = (prompt: string) => {
+  const p = String(prompt || '').trim();
+  if (!logoFile.value) return p;
+  const inst =
+    currentLang.value === 'zh'
+      ? '在画面左上角添加提供的品牌Logo（使用上传的Logo参考图），小尺寸，四周留出边距，保持Logo清晰且不变形，尽量不要改变原有主体与构图。'
+      : 'Add the provided brand logo (use the uploaded logo reference image) to the top-left corner, small size with margin, keep it crisp and not distorted, and preserve the original subject and composition as much as possible.';
+  if (!p) return inst;
+  return `${p}\n\n${inst}`;
+};
 
 const doPrimary = async () => {
   cancel();
   const activeUserText = String(userInput.value || '').trim();
   pendingUserText.value = activeUserText;
-
-  if (promptDraft.value) {
-    const fp: AgentImgPromptResult = {
-      prompt: applyStyleTagsToPrompt(promptDraft.value.prompt, promptDraftStyleTags.value),
-      negativePrompt: String(promptDraft.value.negativePrompt || '').trim(),
-      params: draftParamsToResult(promptDraft.value.params)
-    };
-    if (!fp.prompt || !fp.negativePrompt) {
-      pendingUserText.value = '';
-      return;
-    }
-    finalPrompt.value = fp;
-
-    const getImgInputs = async () => {
-      const files: File[] = [];
-      if (logoFile.value) files.push(logoFile.value);
-      for (const f of previewFiles.value) if (f) files.push(f);
-      const list = files.slice(0, 3);
-      if (!list.length) return [];
-      const inputs = await Promise.all(list.map(fileToGenerateInput));
-      const ok = inputs.filter(
-        (x): x is GenerateImageInput => !!x && !!x.mimeType && !!x.dataBase64
-      );
-      return ok.length ? ok : [];
-    };
-
-    const maybeRunImg2Img = async (p: AgentImgPromptResult) => {
-      const imgs = await getImgInputs();
-      loading.value = true;
-      error.value = '';
-      const res = await img2img({
-        prompt: p.prompt,
-        negativePrompt: p.negativePrompt,
-        params: p.params,
-        images: imgs,
-        timeoutMs: 120000
-      });
-      loading.value = false;
-      if (!res.ok) {
-        if (res.wallet) creditsBalance.value = res.wallet;
-        error.value =
-          res.errorCode === 'INSUFFICIENT_CREDITS'
-            ? currentLang.value === 'zh'
-              ? '积分不足，请前往「算力商城」充值'
-              : 'Insufficient credits. Please top up in the Market.'
-            : res.errorCode === 'EMPTY_IMAGE'
-              ? currentLang.value === 'zh'
-                ? '请先上传一张参考图再出图'
-                : 'Please upload a reference image first.'
-              : currentLang.value === 'zh'
-                ? `出图失败：${res.errorCode}`
-                : `Image generation failed: ${res.errorCode}`;
-        return null;
-      }
-      const url = String(res.images?.[0]?.url || '').trim();
-      if (!url) return null;
-      finalImageUrl.value = url;
-      await refreshCredits();
-      return url;
-    };
-
-    const id = Date.now();
-    const imgUrl = await maybeRunImg2Img(fp);
-    const historyUserText = String(promptDraftUserText.value || activeUserText || '').trim();
-    history.value = [
-      ...history.value,
-      {
-        id,
-        timestamp: Date.now(),
-        userText: historyUserText,
-        result: fp,
-        image: imgUrl
-      }
-    ].slice(-MAX_HISTORY);
-    closePromptDraft();
+  if (!activeUserText) {
     pendingUserText.value = '';
     return;
   }
 
-  if (finalPrompt.value) {
-    // Reset for new round but keep settings
-    finalPrompt.value = null;
-    finalImageUrl.value = '';
-    options.value = [];
-    selectedOptionId.value = '';
-    // If userInput is empty, maybe don't clear it? Or clear it?
-    // Let's keep user input for refinement
-  }
+  const getImgInputs = async () => {
+    const files: File[] = [];
+    for (const f of previewFiles.value) if (f) files.push(f);
+    const list = files.slice(0, 3);
+    if (!list.length) return [];
+    const inputs = await Promise.all(list.map(fileToGenerateInput));
+    const ok = inputs.filter((x): x is GenerateImageInput => !!x && !!x.mimeType && !!x.dataBase64);
+    return ok.length ? ok : [];
+  };
+
+  const runGen = async (fp: AgentImgPromptResult) => {
+    const refImgs = await getImgInputs();
+    const logoInput = logoFile.value ? await fileToGenerateInput(logoFile.value) : null;
+    const hasLogo = !!logoInput && !!logoFile.value;
+    const buildFinalImages = () => {
+      if (!hasLogo) return refImgs as Img2ImgImageInput[];
+      if (refImgs.length)
+        return [...refImgs.slice(0, 2), logoInput as GenerateImageInput] as Img2ImgImageInput[];
+      return [logoInput as GenerateImageInput] as Img2ImgImageInput[];
+    };
+
+    const runOnce = async (args: {
+      prompt: string;
+      negativePrompt?: string;
+      params?: AgentImgPromptResult['params'];
+      images: Img2ImgImageInput[];
+    }) => {
+      const res = await img2img({
+        prompt: args.prompt,
+        negativePrompt: args.negativePrompt,
+        params: args.params,
+        images: args.images,
+        timeoutMs: 120000
+      });
+      if (!res.ok) {
+        if (res.wallet) creditsBalance.value = res.wallet;
+        error.value = humanizeImgError(res.errorCode || res.error);
+        return { ok: false as const, url: '' };
+      }
+      const url = String(res.images?.[0]?.url || '').trim();
+      if (!url) {
+        error.value = humanizeImgError('EMPTY_IMAGE_RESULT');
+        return { ok: false as const, url: '' };
+      }
+      return { ok: true as const, url };
+    };
+
+    loading.value = true;
+    error.value = '';
+
+    if (!hasLogo) {
+      const out = await runOnce({
+        prompt: fp.prompt,
+        negativePrompt: fp.negativePrompt,
+        params: fp.params,
+        images: buildFinalImages()
+      });
+      loading.value = false;
+      if (out.ok) {
+        finalImageUrl.value = out.url;
+        await refreshCredits();
+      }
+      return out;
+    }
+
+    if (refImgs.length) {
+      const out = await runOnce({
+        prompt: applyLogoInstructionToPrompt(fp.prompt),
+        negativePrompt: fp.negativePrompt,
+        params: fp.params,
+        images: buildFinalImages()
+      });
+      loading.value = false;
+      if (out.ok) {
+        finalImageUrl.value = out.url;
+        await refreshCredits();
+      }
+      return out;
+    }
+
+    const base = await runOnce({
+      prompt: fp.prompt,
+      negativePrompt: fp.negativePrompt,
+      params: fp.params,
+      images: []
+    });
+    if (!base.ok) {
+      loading.value = false;
+      return base;
+    }
+    const final = await runOnce({
+      prompt: applyLogoInstructionToPrompt(fp.prompt),
+      negativePrompt: fp.negativePrompt,
+      params: fp.params,
+      images: [base.url, logoInput as GenerateImageInput]
+    });
+    loading.value = false;
+    if (final.ok) {
+      finalImageUrl.value = final.url;
+      await refreshCredits();
+    }
+    return final;
+  };
 
   if (deepMode.value) {
     if (options.value.length === 0) {
       await analyzeDirections();
       pendingUserText.value = '';
-    } else {
-      const fp = await generateFinal();
-      if (fp) {
-        finalPrompt.value = fp;
-        promptDraft.value = {
-          prompt: fp.prompt,
-          negativePrompt: fp.negativePrompt,
-          params: draftParamsFromResult(fp.params)
-        };
-        promptDraftUserText.value = buildUserTextFromSelectedOption(activeUserText);
-        promptDraftStyleTags.value = ensureUniqueTags(selectedOptionStyleTags.value || []);
-        pendingUserText.value = '';
-      }
+      return;
     }
-  } else {
-    const fp = await generateFinal();
-    if (fp) {
-      finalPrompt.value = fp;
-      const getImgInputs = async () => {
-        const files: File[] = [];
-        if (logoFile.value) files.push(logoFile.value);
-        for (const f of previewFiles.value) if (f) files.push(f);
-        const list = files.slice(0, 3);
-        if (!list.length) return [];
-        const inputs = await Promise.all(list.map(fileToGenerateInput));
-        const ok = inputs.filter(
-          (x): x is GenerateImageInput => !!x && !!x.mimeType && !!x.dataBase64
-        );
-        return ok.length ? ok : [];
-      };
 
-      const imgs = await getImgInputs();
-      loading.value = true;
-      error.value = '';
-      const res = await img2img({
-        prompt: fp.prompt,
-        negativePrompt: fp.negativePrompt,
-        params: fp.params,
-        images: imgs,
-        timeoutMs: 120000
-      });
-      loading.value = false;
-      if (!res.ok) {
-        if (res.wallet) creditsBalance.value = res.wallet;
-        error.value =
-          res.errorCode === 'INSUFFICIENT_CREDITS'
-            ? currentLang.value === 'zh'
-              ? '积分不足，请前往「算力商城」充值'
-              : 'Insufficient credits. Please top up in the Market.'
-            : res.errorCode === 'EMPTY_IMAGE'
-              ? currentLang.value === 'zh'
-                ? '请先上传一张参考图再出图'
-                : 'Please upload a reference image first.'
-              : currentLang.value === 'zh'
-                ? `出图失败：${res.errorCode}`
-                : `Image generation failed: ${res.errorCode}`;
-      }
+    const idx = selectedOptionIndex.value;
+    if (idx < 0) {
+      pendingUserText.value = '';
+      return;
+    }
+    const opt = options.value[idx];
+    const prompt = applyStyleTagsToPrompt(buildDeepPrompt(activeUserText), opt.styleTags || []);
+    const negativePrompt = buildNegativePrompt(opt.negativeTags || []);
+    const fp: AgentImgPromptResult = { prompt, negativePrompt };
+    options.value = [];
+    selectedOptionId.value = '';
 
-      let url = '';
-      if (res.ok) {
-        url = String(res.images?.[0]?.url || '').trim();
-        if (url) {
-          finalImageUrl.value = url;
-          await refreshCredits();
-        }
-      }
-
-      const id = Date.now();
+    const id = Date.now();
+    const { ok, url } = await runGen(fp);
+    const refThumbsRaw = await Promise.all(
+      previewFiles.value
+        .filter((f): f is File => !!f)
+        .slice(0, 3)
+        .map((f) => fileToThumbDataUrl(f))
+    );
+    const refThumbs = refThumbsRaw.filter((x): x is string => !!x);
+    if (ok) {
+      const aiText =
+        currentLang.value === 'zh'
+          ? `生成完成：已根据你的提示词生成图片${refThumbs.length ? '（已参考你上传的图片）' : ''}${logoFile.value ? '（已叠加Logo）' : ''}。`
+          : `Done: image generated from your prompt${refThumbs.length ? ' (with your reference image)' : ''}${logoFile.value ? ' (with logo applied)' : ''}.`;
       history.value = [
         ...history.value,
         {
@@ -1312,12 +1264,48 @@ const doPrimary = async () => {
           timestamp: Date.now(),
           userText: activeUserText,
           result: fp,
-          image: url || null
+          image: url,
+          ...(refThumbs.length ? { refImages: refThumbs } : {}),
+          ...(aiText ? { aiText } : {})
         }
       ].slice(-MAX_HISTORY);
-      pendingUserText.value = '';
     }
+    pendingUserText.value = '';
+    return;
   }
+
+  const fp: AgentImgPromptResult = {
+    prompt: activeUserText,
+    negativePrompt: buildNegativePrompt()
+  };
+  const id = Date.now();
+  const { ok, url } = await runGen(fp);
+  const refThumbsRaw = await Promise.all(
+    previewFiles.value
+      .filter((f): f is File => !!f)
+      .slice(0, 3)
+      .map((f) => fileToThumbDataUrl(f))
+  );
+  const refThumbs = refThumbsRaw.filter((x): x is string => !!x);
+  if (ok) {
+    const aiText =
+      currentLang.value === 'zh'
+        ? `生成完成：已根据你的提示词生成图片${refThumbs.length ? '（已参考你上传的图片）' : ''}${logoFile.value ? '（已叠加Logo）' : ''}。`
+        : `Done: image generated from your prompt${refThumbs.length ? ' (with your reference image)' : ''}${logoFile.value ? ' (with logo applied)' : ''}.`;
+    history.value = [
+      ...history.value,
+      {
+        id,
+        timestamp: Date.now(),
+        userText: activeUserText,
+        result: fp,
+        image: url,
+        ...(refThumbs.length ? { refImages: refThumbs } : {}),
+        ...(aiText ? { aiText } : {})
+      }
+    ].slice(-MAX_HISTORY);
+  }
+  pendingUserText.value = '';
 };
 
 const onPrimary = async () => {
@@ -1429,7 +1417,8 @@ const handleAuthChanged = () => {
   syncAuth();
   authTick.value++;
   loadHistoryFromStorage();
-  void refreshCredits();
+  if (isAuthed.value) void refreshCredits();
+  else creditsBalance.value = null;
 };
 
 onMounted(() => {
@@ -1456,7 +1445,7 @@ onBeforeUnmount(() => {
 <style scoped>
 @import './styles/cyberpunk.css';
 
-.agentimg-page {
+.artigen-page {
   --text-main: #f1f5f9;
   --text-muted: #94a3b8;
   --primary: #ccff00;
@@ -1501,8 +1490,8 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
-.agentimg-page,
-.agentimg-page * {
+.artigen-page,
+.artigen-page * {
   box-sizing: border-box;
 }
 
@@ -1702,8 +1691,8 @@ onBeforeUnmount(() => {
 .control {
   width: 100%;
   height: 36px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid transparent;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 4px;
   padding: 0 12px;
   color: var(--text-main);
@@ -1711,10 +1700,11 @@ onBeforeUnmount(() => {
   transition: all 0.2s;
 }
 .control:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.8);
+  border-color: rgba(255, 255, 255, 0.15);
 }
 .control:focus {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.86);
   border-color: var(--primary);
   outline: none;
 }
@@ -1738,7 +1728,13 @@ onBeforeUnmount(() => {
 }
 .select {
   appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
   cursor: pointer;
+  background-image: none !important;
+}
+.select::-ms-expand {
+  display: none;
 }
 
 .chips-row {
@@ -1859,14 +1855,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   position: relative;
-  background-image:
-    radial-gradient(circle at 50% 0%, rgba(204, 255, 0, 0.03) 0%, transparent 40%),
-    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-  background-size:
-    100% 100%,
-    40px 40px,
-    40px 40px;
+  background: #000;
+  background-image: none;
 }
 
 .chat-scroll {
@@ -1929,6 +1919,7 @@ onBeforeUnmount(() => {
   padding: 20px;
   font-size: 14px;
   line-height: 1.6;
+  text-align: left;
   max-width: 80%;
   margin-bottom: 40px;
 }
@@ -1936,6 +1927,37 @@ onBeforeUnmount(() => {
   background: rgba(204, 255, 0, 0.1);
   border-color: rgba(204, 255, 0, 0.3);
   color: var(--text-main);
+}
+
+.msg-media-bubble {
+  background: transparent;
+  padding: 0;
+  border: none;
+}
+.msg-media-img {
+  max-width: 100%;
+  border-radius: 12px;
+  display: block;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+.msg-ai-text {
+  font-size: 13px;
+  color: rgba(241, 245, 249, 0.92);
+  margin-bottom: 10px;
+  text-align: left;
+}
+.msg-ref-list {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.msg-ref-img {
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .loading-bubble {
@@ -2216,6 +2238,7 @@ onBeforeUnmount(() => {
   border: none;
   color: var(--text-main);
   font-size: 14px;
+  text-align: left;
   resize: none;
   outline: none;
   font-family: inherit;
