@@ -9,6 +9,13 @@ export type PasswordAuthResult =
   | { ok: true; userId: string; token: string; name?: string }
   | { ok: false; message: string };
 
+import { buildApiUrl } from '../utils/api';
+
+const SEND_CODE_URL = buildApiUrl('/api/login/send-code');
+const VERIFY_CODE_URL = buildApiUrl('/api/login/verify');
+const PASSWORD_LOGIN_URL = buildApiUrl('/api/auth/login');
+const REGISTER_URL = buildApiUrl('/api/auth/register');
+
 const parseJson = async (res: Response) => {
   const txt = await res.text().catch(() => '');
   try {
@@ -19,7 +26,7 @@ const parseJson = async (res: Response) => {
 };
 
 export const sendLoginCode = async (email: string): Promise<SendCodeResult> => {
-  const res = await fetch('/api/login/send-code', {
+  const res = await fetch(SEND_CODE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email })
@@ -55,7 +62,7 @@ export const verifyLoginCode = async (email: string, code: string): Promise<Veri
     }
   })();
 
-  const res = await fetch('/api/login/verify', {
+  const res = await fetch(VERIFY_CODE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, code, fromUserId })
@@ -84,7 +91,7 @@ export const loginWithPassword = async (
     }
   })();
 
-  const res = await fetch('/api/auth/login', {
+  const res = await fetch(PASSWORD_LOGIN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -122,7 +129,7 @@ export const registerWithEmailCode = async (input: {
     }
   })();
 
-  const res = await fetch('/api/auth/register', {
+  const res = await fetch(REGISTER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
