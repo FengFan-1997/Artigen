@@ -387,102 +387,122 @@ MQIDAQAB
   });
 
   app.post('/api/pay/afdian/webhook', (req, res) => {
-    const body = req.body || {};
-    const data = body && typeof body === 'object' && body.data && typeof body.data === 'object' ? body.data : null;
-    const order = data && typeof data.order === 'object' ? data.order : null;
-    const sign = firstNonEmptyString(body.sign, body.signature, data?.sign, order?.sign);
+    const ok = () => res.json({ ec: 200, em: '' });
+    try {
+      const body = req.body || {};
+      const data = body && typeof body === 'object' && body.data && typeof body.data === 'object' ? body.data : null;
+      const order = data && typeof data.order === 'object' ? data.order : null;
+      const sign = firstNonEmptyString(body.sign, body.signature, data?.sign, order?.sign);
 
-    const orderStatus = order ? Number.parseInt(String(order?.status ?? ''), 10) : NaN;
-    if (Number.isFinite(orderStatus) && orderStatus !== 2) {
-      return res.json({ ec: 200, em: '' });
-    }
-
-    const requireSign = String(process.env.AFDIAN_WEBHOOK_REQUIRE_SIGN || '').trim() === '1';
-    if (order && (requireSign || sign)) {
-      if (!sign) return res.status(401).json({ ec: 401, em: 'MISSING_SIGN' });
-      const vr = verifyAfdianWebhookSign(order, sign);
-      if (!vr.ok) return res.status(401).json({ ec: 401, em: String(vr.error || 'Invalid sign') });
-    }
-
-    const afdianOrderId = firstNonEmptyString(
-      body.afdianOrderId,
-      body.afdian_order_id,
-      body.orderId,
-      body.order_id,
-      body.tradeNo,
-      body.trade_no,
-      order?.out_trade_no,
-      order?.trade_no,
-      order?.order_id
-    );
-    const remarkText = firstNonEmptyString(
-      body.remark,
-      body.remarkText,
-      body.remark_text,
-      body.note,
-      body.memo,
-      order?.custom_order_id,
-      order?.remark,
-      order?.remark_text,
-      order?.note,
-      order?.memo
-    );
-    const payOrderId = firstNonEmptyString(
-      body.payOrderId,
-      body.pay_order_id,
-      body.localOrderId,
-      body.local_order_id,
-      order?.custom_order_id,
-      extractPayOrderIdFromText(remarkText)
-    );
-
-    const uid = firstNonEmptyString(body.appUserId, body.app_user_id, body.uid, body.userId, extractUserIdFromText(remarkText));
-    const planId = firstNonEmptyString(order?.plan_id, order?.planId);
-    const planMap = parsePlanPackageMap();
-    const pkgId = firstNonEmptyString(
-      body.packageId,
-      body.package_id,
-      order?.packageId,
-      order?.package_id,
-      planId && planMap ? planMap[planId] : '',
-      extractPackageIdFromText(remarkText)
-    );
-    const creditsCount = body.credits ?? body.credit ?? body.creditsCount ?? order?.credits ?? order?.credit;
-    const resolvedCredits = (() => {
-      const n = Number.parseInt(String(creditsCount ?? ''), 10);
-      if (Number.isFinite(n) && n > 0) return n;
-      const pkg = resolvePayPackage(pkgId);
-      if (pkg) return pkg.credits;
-      const fromAmount = getCreditsByAmountCny(firstNonEmptyString(order?.total_amount, order?.show_amount, order?.totalAmount));
-      return fromAmount || 0;
-    })();
-    const fallbackPayOrder = payOrderId ? getPayOrder(payOrderId) : null;
-    const resolvedUserId = firstNonEmptyString(fallbackPayOrder?.userId, uid);
-    const resolvedPkgId = firstNonEmptyString(pkgId, fallbackPayOrder?.packageId);
-    const resolvedCreditsFinal = (() => {
-      const n = Number(fallbackPayOrder?.credits ?? 0) || 0;
-      if (n > 0) return n;
-      if (resolvedCredits > 0) return resolvedCredits;
-      const pkg = resolvePayPackage(resolvedPkgId);
-      return pkg ? Number(pkg.credits ?? 0) || 0 : 0;
-    })();
-
-    const enforceAmountMatch = String(process.env.AFDIAN_ENFORCE_AMOUNT_MATCH || '').trim() === '1';
-    if (enforceAmountMatch && fallbackPayOrder && Number(fallbackPayOrder?.amountCny ?? 0) > 0) {
-      const expected = Number(fallbackPayOrder.amountCny ?? 0) || 0;
-      const actual = firstNonEmptyString(order?.total_amount, order?.totalAmount, order?.show_amount, order?.showAmount);
-      if (actual && !equalsCny(expected, actual)) {
-        return res.status(400).json({ ec: 400, em: 'AMOUNT_MISMATCH' });
+      const orderStatus = order ? Number.parseInt(String(order?.status ?? ''), 10) : NaN;
+      if (Number.isFinite(orderStatus) && orderStatus !== 2) {
+        return ok();
       }
-    }
 
-    const result = credits.applyAfdianOrder({
-      afdianOrderId,
-      userId: resolvedUserId,
-      credits: resolvedCreditsFinal
-    });
-    if (!result.ok) return res.status(400).json({ error: result.error });
-    res.json({ ec: 200, em: '' });
+      const outTradeNo = firstNonEmptyString(order?.out_trade_no, order?.trade_no, order?.order_id);
+      const isTestRequest =
+        /^test[_-]/i.test(outTradeNo) ||
+        /^(1|true)$/i.test(String(body.test || body.is_test || body.isTest || '').trim());
+      if (isTestRequest) return ok();
+
+      const afdianOrderId = firstNonEmptyString(
+        body.afdianOrderId,
+        body.afdian_order_id,
+        body.orderId,
+        body.order_id,
+        body.tradeNo,
+        body.trade_no,
+        outTradeNo
+      );
+      const remarkText = firstNonEmptyString(
+        body.remark,
+        body.remarkText,
+        body.remark_text,
+        body.note,
+        body.memo,
+        order?.custom_order_id,
+        order?.remark,
+        order?.remark_text,
+        order?.note,
+        order?.memo
+      );
+      const payOrderId = firstNonEmptyString(
+        body.payOrderId,
+        body.pay_order_id,
+        body.localOrderId,
+        body.local_order_id,
+        order?.custom_order_id,
+        extractPayOrderIdFromText(remarkText)
+      );
+      const fallbackPayOrder = payOrderId ? getPayOrder(payOrderId) : null;
+
+      const requireSign = String(process.env.AFDIAN_WEBHOOK_REQUIRE_SIGN || '').trim() === '1';
+      if (order && (requireSign || sign)) {
+        if (!sign) {
+          if (!fallbackPayOrder) return ok();
+        } else {
+          const vr = verifyAfdianWebhookSign(order, sign);
+          if (!vr.ok && !fallbackPayOrder) return ok();
+        }
+      }
+
+      const uid = firstNonEmptyString(body.appUserId, body.app_user_id, body.uid, body.userId, extractUserIdFromText(remarkText));
+      const planId = firstNonEmptyString(order?.plan_id, order?.planId);
+      const planMap = parsePlanPackageMap();
+      const pkgId = firstNonEmptyString(
+        body.packageId,
+        body.package_id,
+        order?.packageId,
+        order?.package_id,
+        planId && planMap ? planMap[planId] : '',
+        extractPackageIdFromText(remarkText)
+      );
+      const creditsCount = body.credits ?? body.credit ?? body.creditsCount ?? order?.credits ?? order?.credit;
+      const resolvedCredits = (() => {
+        const n = Number.parseInt(String(creditsCount ?? ''), 10);
+        if (Number.isFinite(n) && n > 0) return n;
+        const pkg = resolvePayPackage(pkgId);
+        if (pkg) return pkg.credits;
+        const fromAmount = getCreditsByAmountCny(firstNonEmptyString(order?.total_amount, order?.show_amount, order?.totalAmount));
+        return fromAmount || 0;
+      })();
+      const resolvedUserId = firstNonEmptyString(fallbackPayOrder?.userId, uid);
+      const resolvedPkgId = firstNonEmptyString(pkgId, fallbackPayOrder?.packageId);
+      const resolvedCreditsFinal = (() => {
+        const n = Number(fallbackPayOrder?.credits ?? 0) || 0;
+        if (n > 0) return n;
+        if (resolvedCredits > 0) return resolvedCredits;
+        const pkg = resolvePayPackage(resolvedPkgId);
+        return pkg ? Number(pkg.credits ?? 0) || 0 : 0;
+      })();
+
+      const enforceAmountMatch = String(process.env.AFDIAN_ENFORCE_AMOUNT_MATCH || '').trim() === '1';
+      if (enforceAmountMatch && fallbackPayOrder && Number(fallbackPayOrder?.amountCny ?? 0) > 0) {
+        const expected = Number(fallbackPayOrder.amountCny ?? 0) || 0;
+        const actual = firstNonEmptyString(order?.total_amount, order?.totalAmount, order?.show_amount, order?.showAmount);
+        if (actual && !equalsCny(expected, actual)) {
+          return ok();
+        }
+      }
+
+      if (!afdianOrderId || !resolvedUserId || resolvedUserId.startsWith('guest_') || Number(resolvedCreditsFinal || 0) <= 0) {
+        return ok();
+      }
+
+      if (!fallbackPayOrder && !/^(user|email)_[a-zA-Z0-9_-]{3,}$/.test(resolvedUserId)) {
+        return ok();
+      }
+
+      const result = credits.applyAfdianOrder({
+        afdianOrderId,
+        userId: resolvedUserId,
+        credits: resolvedCreditsFinal
+      });
+      if (!result.ok) return ok();
+      return ok();
+    } catch {
+      return ok();
+    }
   });
 
   app.get('/api/credits/orders', (req, res) => {

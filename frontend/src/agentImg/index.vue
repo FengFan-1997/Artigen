@@ -1535,7 +1535,10 @@ onBeforeUnmount(() => {
   --border-active: rgba(204, 255, 0, 0.5);
 
   width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
   height: 100vh;
+  height: 100dvh;
   background: var(--bg-dark);
   color: var(--text-main);
   font-family:
@@ -1590,6 +1593,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
 }
 
 .artigen-page,
@@ -1730,7 +1734,7 @@ onBeforeUnmount(() => {
   flex: 1;
   display: flex;
   overflow: hidden;
-  height: calc(100vh - 64px);
+  min-height: 0;
 }
 
 .side {

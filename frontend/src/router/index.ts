@@ -1,8 +1,20 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { loginRoutes } from '../login/routes';
-//here 路由开关 注释会开启
-(globalThis as any).__ROUTE_LOCKDOWN__ = true;
-const ROUTE_LOCKDOWN = (globalThis as any).__ROUTE_LOCKDOWN__ === true;
+
+const readRouteLockdown = () => {
+  try {
+    if ((globalThis as any).__ROUTE_LOCKDOWN__ === true) return true;
+  } catch {}
+  if (!import.meta.env.DEV) return false;
+  try {
+    const q = new URLSearchParams(window.location.search);
+    return q.get('__route_lockdown') === '1' || q.get('route_lockdown') === '1';
+  } catch {
+    return false;
+  }
+};
+
+const ROUTE_LOCKDOWN = readRouteLockdown();
 
 type RouteSeoMeta = {
   title?: { zh: string; en: string } | string;
@@ -74,9 +86,7 @@ const ensureJsonLd = (id: string, data: any) => {
 const routes = [
   {
     path: '/',
-    ...(ROUTE_LOCKDOWN
-      ? { redirect: '/artigen' }
-      : { name: 'home', component: () => import('../views/PortfolioHome.vue') })
+    redirect: '/artigen'
   },
   {
     path: '/agent-img',
@@ -417,6 +427,26 @@ const activeRoutes = ROUTE_LOCKDOWN
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: activeRoutes as any
+});
+
+router.onError((err, to) => {
+  const msg = String((err as any)?.message || err || '').trim();
+  const isChunkLoadError =
+    /loading chunk|chunkloaderror|failed to fetch dynamically imported module|importing a module script failed/i.test(
+      msg
+    );
+  if (!isChunkLoadError) return;
+  try {
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.has('__reload')) return;
+    const target = String((to as any)?.fullPath || (to as any)?.path || '/').trim() || '/';
+    const sep = target.includes('?') ? '&' : '?';
+    window.location.replace(`${target}${sep}__reload=${Date.now()}`);
+  } catch {
+    try {
+      window.location.reload();
+    } catch {}
+  }
 });
 
 router.afterEach((to) => {

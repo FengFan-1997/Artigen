@@ -1,15 +1,6 @@
 <template>
   <div class="market-page">
-    <TitleBar>
-      <template #actions>
-        <button class="nth-login-btn" type="button" @click="openAccountPopup('orders')">
-          {{ ui.myOrders }}
-        </button>
-        <button class="nth-login-btn" type="button" @click="openAccountPopup('usage')">
-          {{ ui.creditsUsage }}
-        </button>
-      </template>
-    </TitleBar>
+    <TitleBar />
 
     <div class="market-container">
       <header class="market-header">

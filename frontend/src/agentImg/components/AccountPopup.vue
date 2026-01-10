@@ -450,19 +450,24 @@ watch(
 }
 
 .icon-btn {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.28);
-  color: rgba(241, 245, 249, 0.92);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(241, 245, 249, 0.7);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .icon-btn:hover {
-  border-color: rgba(204, 255, 0, 0.5);
-  color: rgba(204, 255, 0, 0.95);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: rotate(90deg);
 }
 
 .user-block {
@@ -746,17 +751,29 @@ watch(
 
 @media (max-width: 900px) {
   .account-overlay {
-    padding: 92px 16px 16px 16px;
+    padding: 80px 16px 24px 16px;
+    align-items: flex-start;
     justify-content: center;
   }
 
   .account-card {
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    max-height: calc(100dvh - 100px);
+    display: flex;
+    flex-direction: column;
   }
 
   .left-pane {
     border-right: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 16px;
+    flex-shrink: 0;
+  }
+
+  .right-pane {
+    flex: 1;
+    min-height: 0;
   }
 }
 </style>

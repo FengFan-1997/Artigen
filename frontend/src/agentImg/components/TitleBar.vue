@@ -1,5 +1,5 @@
 <template>
-  <header class="header">
+  <header ref="headerRef" class="header">
     <router-link to="/artigen" class="logo">
       <span class="logo-text">Artigen</span>
     </router-link>
@@ -25,9 +25,14 @@
     </nav>
 
     <div class="header-right">
+      <button class="nav-toggle" type="button" @click="isMobileMenuOpen = !isMobileMenuOpen">
+        ≡
+      </button>
+
       <div ref="langContainerRef" class="lang-container" @click="isLangMenuOpen = !isLangMenuOpen">
         <button class="lang-switch" type="button">
-          <span class="globe-icon">🌐</span> {{ langLabel }}
+          <span class="globe-icon">🌐</span>
+          <span class="lang-label">{{ langLabel }}</span>
           <span class="arrow" :class="{ open: isLangMenuOpen }">⌄</span>
         </button>
         <transition name="dropdown-fade">
@@ -58,6 +63,35 @@
     </div>
   </header>
 
+  <transition name="dropdown-fade">
+    <div v-if="isMobileMenuOpen" ref="mobileMenuRef" class="mobile-menu">
+      <router-link
+        to="/artigen/ai"
+        class="mobile-item"
+        :class="{ active: activeKey === 'ai' }"
+        @click="isMobileMenuOpen = false"
+      >
+        {{ ui.navAiWorkshop }}
+      </router-link>
+      <router-link
+        to="/artigen/format-factory"
+        class="mobile-item"
+        :class="{ active: activeKey === 'format' }"
+        @click="isMobileMenuOpen = false"
+      >
+        {{ ui.navFormatFactory }}
+      </router-link>
+      <router-link
+        to="/artigen/market"
+        class="mobile-item"
+        :class="{ active: activeKey === 'market' }"
+        @click="isMobileMenuOpen = false"
+      >
+        {{ ui.navMarket }}
+      </router-link>
+    </div>
+  </transition>
+
   <AccountPopup />
 </template>
 
@@ -77,8 +111,12 @@ defineProps<{
 const router = useRouter();
 const route = useRoute();
 
+const headerRef = ref<HTMLElement | null>(null);
+const mobileMenuRef = ref<HTMLElement | null>(null);
+
 const isLangMenuOpen = ref(false);
 const langContainerRef = ref<HTMLElement | null>(null);
+const isMobileMenuOpen = ref(false);
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -95,12 +133,20 @@ const handleAuthChanged = () => {
 };
 
 const onDocMouseDown = (e: MouseEvent) => {
-  if (!isLangMenuOpen.value) return;
-  const el = langContainerRef.value;
   const target = e.target;
-  if (!el || !(target instanceof Node)) return;
-  if (el.contains(target)) return;
-  isLangMenuOpen.value = false;
+  if (!(target instanceof Node)) return;
+  if (isLangMenuOpen.value) {
+    const el = langContainerRef.value;
+    if (el && el.contains(target)) return;
+    isLangMenuOpen.value = false;
+  }
+  if (isMobileMenuOpen.value) {
+    const h = headerRef.value;
+    if (h && h.contains(target)) return;
+    const m = mobileMenuRef.value;
+    if (m && m.contains(target)) return;
+    isMobileMenuOpen.value = false;
+  }
 };
 
 onMounted(() => {
@@ -225,6 +271,38 @@ const goLogin = () => {
   align-items: center;
 }
 
+.nav-toggle {
+  display: none;
+  background: transparent;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  color: var(--text-main, #f1f5f9);
+  width: 36px;
+  height: 34px;
+  border-radius: 6px;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0;
+}
+
+.mobile-menu {
+  display: none;
+}
+
+.mobile-item {
+  display: block;
+  padding: 14px 18px;
+  text-decoration: none;
+  color: var(--text-muted, #94a3b8);
+  font-size: 14px;
+  font-weight: 600;
+  border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  background: rgba(5, 5, 5, 0.9);
+}
+
+.mobile-item.active {
+  color: var(--text-main, #f1f5f9);
+}
+
 .lang-container {
   position: relative;
   cursor: pointer;
@@ -241,6 +319,14 @@ const goLogin = () => {
   line-height: 1;
   gap: 6px;
   transition: color 0.2s;
+}
+
+.globe-icon {
+  line-height: 1;
+}
+
+.lang-label {
+  font-family: 'JetBrains Mono', monospace;
 }
 
 .lang-switch:hover {
@@ -331,5 +417,69 @@ const goLogin = () => {
 
 .login-btn:hover::before {
   left: 100%;
+}
+
+@media (max-width: 720px) {
+  .header {
+    height: 64px;
+    padding: 0 14px;
+  }
+
+  .logo-text {
+    font-size: 18px;
+    margin-right: 0;
+  }
+
+  .nav-links {
+    display: none;
+  }
+
+  .header-right {
+    gap: 12px;
+  }
+
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .lang-switch {
+    font-size: 13px;
+  }
+
+  .login-btn {
+    padding: 7px 14px;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+  }
+
+  .mobile-menu {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+    background: rgba(5, 5, 5, 0.92);
+    backdrop-filter: blur(10px);
+  }
+}
+
+@media (max-width: 360px) {
+  .header-right {
+    gap: 8px;
+  }
+
+  .globe-icon {
+    display: none;
+  }
+
+  .nav-toggle {
+    width: 34px;
+  }
+
+  .login-btn {
+    padding: 7px 10px;
+  }
 }
 </style>
