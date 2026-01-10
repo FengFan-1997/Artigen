@@ -36,19 +36,68 @@ export type Img2ImgResult =
       wallet?: CreditsBalance | null;
     };
 
+const sanitizeUrl = (raw: string) => {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (s.startsWith('data:')) return /^data:image\//i.test(s) ? s : '';
+  try {
+    const u = new URL(s, window.location.origin);
+    const p = String(u.protocol || '').toLowerCase();
+    if (p === 'http:' || p === 'https:' || p === 'blob:') return u.href;
+    return '';
+  } catch {
+    return '';
+  }
+};
+
 const normalizeImageUrl = (raw: string) => {
   const s = String(raw || '').trim();
   if (!s) return '';
-  if (s.startsWith('data:')) return s;
-  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith('data:')) return sanitizeUrl(s);
+  if (/^https?:\/\//i.test(s)) return sanitizeUrl(s);
+  if (s.startsWith('/files/')) return buildApiUrl(s);
   const compact = s.replace(/\s+/g, '');
   const looksBase64 =
     compact.length >= 64 &&
     compact.length % 4 === 0 &&
     /^[A-Za-z0-9+/=]+$/.test(compact) &&
     (compact.includes('/') || compact.includes('+') || compact.includes('='));
-  if (looksBase64) return `data:image/png;base64,${compact}`;
-  return s;
+  if (looksBase64) return sanitizeUrl(`data:image/png;base64,${compact}`);
+  return sanitizeUrl(s);
+};
+
+const toRequestErrorCode = (err: any) => {
+  if (err && typeof err === 'object' && (err as any).name === 'AbortError') return 'ABORTED';
+  const msg = String(err?.message || err || '').trim();
+  return msg || 'NETWORK_ERROR';
+};
+
+const isSafeImageRefString = (raw: string) => {
+  const s = String(raw || '').trim();
+  if (!s) return false;
+  if (/^https?:\/\//i.test(s)) return true;
+  if (/^data:image\//i.test(s)) return true;
+  if (s.startsWith('/files/')) return true;
+  return false;
+};
+
+const normalizeImg2ImgImages = (images: Img2ImgImageInput[]) => {
+  const maxItems = 3;
+  const maxBase64Len = 25 * 1024 * 1024;
+  const out: Img2ImgImageInput[] = [];
+  for (const it of images.slice(0, maxItems)) {
+    if (typeof it === 'string') {
+      if (isSafeImageRefString(it)) out.push(it.trim());
+      continue;
+    }
+    const mimeType = String((it as any)?.mimeType || '').trim();
+    const dataBase64 = String((it as any)?.dataBase64 || '').trim();
+    if (!/^image\//i.test(mimeType)) continue;
+    if (!dataBase64) continue;
+    if (dataBase64.length > maxBase64Len) continue;
+    out.push({ mimeType, dataBase64 });
+  }
+  return out;
 };
 
 export const img2img = async (input: {
@@ -63,13 +112,23 @@ export const img2img = async (input: {
   images?: Img2ImgImageInput[];
   timeoutMs?: number;
   requestId?: string;
+  signal?: AbortSignal;
 }): Promise<Img2ImgResult> => {
   const requestId =
     String(input.requestId || '').trim() ||
     `artigen_img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const prompt = String(input.prompt || '').trim();
   if (!prompt) return { ok: false, errorCode: 'EMPTY_PROMPT', error: 'EMPTY_PROMPT', requestId };
-  const images = Array.isArray(input.images) ? input.images : [];
+  const images = normalizeImg2ImgImages(Array.isArray(input.images) ? input.images : []);
+
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1000, Math.min(180000, Number(input.timeoutMs ?? 120000) || 120000));
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const ext = input.signal;
+  if (ext) {
+    if (ext.aborted) controller.abort();
+    else ext.addEventListener('abort', () => controller.abort(), { once: true });
+  }
 
   try {
     const userId = ensureGuestUserId();
@@ -80,6 +139,7 @@ export const img2img = async (input: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
+      signal: controller.signal,
       body: JSON.stringify({
         userId,
         requestId,
@@ -124,8 +184,10 @@ export const img2img = async (input: {
       timings: data?.timings
     };
   } catch (e: any) {
-    const msg = String(e?.message || e || 'UNKNOWN_ERROR');
-    return { ok: false, errorCode: msg, error: msg, requestId };
+    const code = toRequestErrorCode(e);
+    return { ok: false, errorCode: code, error: code, requestId };
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 };
 
@@ -144,10 +206,11 @@ export const generateText = async (
     `artigen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   if (!p) return { ok: false, errorCode: 'EMPTY_PROMPT', error: 'EMPTY_PROMPT', requestId };
 
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1000, Number(opts?.timeoutMs ?? 45000) || 45000);
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const controller = new AbortController();
-    const timeoutMs = Math.max(1000, Number(opts?.timeoutMs ?? 45000) || 45000);
-    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
     const ext = opts?.signal;
     if (ext) {
       if (ext.aborted) controller.abort();
@@ -165,7 +228,6 @@ export const generateText = async (
       signal: controller.signal,
       body: JSON.stringify({ prompt: p, userId, requestId, images })
     });
-    window.clearTimeout(timeoutId);
 
     if (!response.ok) {
       const json = await response.json().catch(() => null);
@@ -189,7 +251,9 @@ export const generateText = async (
     if (typeof text === 'string' && text.trim()) return { ok: true, text: text.trim(), requestId };
     return { ok: false, errorCode: 'EMPTY_RESPONSE_TEXT', error: 'EMPTY_RESPONSE_TEXT', requestId };
   } catch (e: any) {
-    const msg = String(e?.message || e || 'UNKNOWN_ERROR');
-    return { ok: false, errorCode: msg, error: msg, requestId };
+    const code = toRequestErrorCode(e);
+    return { ok: false, errorCode: code, error: code, requestId };
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 };

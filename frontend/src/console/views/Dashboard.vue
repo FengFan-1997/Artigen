@@ -77,9 +77,7 @@
 import { onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { WalletOutlined } from '@ant-design/icons-vue';
-import { useAuth } from '@/agent/composables/useAuth';
-import { getCurrentUserId } from '@/login/session';
-import { useConsoleStore } from '@/stores/console';
+import { getConsoleUserId, useConsoleStore } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 
@@ -92,7 +90,6 @@ import VChart from 'vue-echarts';
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, TitleComponent]);
 
 const router = useRouter();
-const { currentUser } = useAuth();
 const consoleStore = useConsoleStore();
 
 const languageStore = useLanguageStore();
@@ -140,7 +137,7 @@ const ui = computed(() =>
       }
 );
 
-const userId = computed(() => currentUser.value?.userId || getCurrentUserId());
+const userId = computed(() => getConsoleUserId());
 const userPoints = computed(() => consoleStore.getCurrentUser?.points || 0);
 const userLevel = computed(() => consoleStore.getCurrentUser?.level || 'free');
 const userEmail = computed(() => consoleStore.getCurrentUser?.email || 'N/A');

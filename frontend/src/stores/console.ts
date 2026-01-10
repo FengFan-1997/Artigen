@@ -1,5 +1,53 @@
 import { defineStore } from 'pinia';
-import { getCurrentUserId } from '@/login/session';
+
+const AUTH_STORAGE_KEY = 'console_auth_v1';
+const STORAGE_KEY = 'console_store_v1';
+
+export type ConsoleAuthSession = {
+  userId: string;
+  expiresAt: number;
+  authHash: string;
+};
+
+export const getConsoleAuthSession = (): ConsoleAuthSession | null => {
+  try {
+    const raw = String(localStorage.getItem(AUTH_STORAGE_KEY) || '').trim();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ConsoleAuthSession>;
+    const userId = String(parsed.userId || '').trim();
+    const authHash = String(parsed.authHash || '').trim();
+    const expiresAt = Number(parsed.expiresAt || 0);
+    if (!userId || !authHash || !Number.isFinite(expiresAt)) return null;
+    return { userId, authHash, expiresAt };
+  } catch {
+    return null;
+  }
+};
+
+export const isConsoleAuthed = (): boolean => {
+  const s = getConsoleAuthSession();
+  if (!s) return false;
+  return s.expiresAt > Date.now();
+};
+
+export const getConsoleUserId = (): string => {
+  const s = getConsoleAuthSession();
+  return s?.userId || '';
+};
+
+export const setConsoleAuthSession = (session: ConsoleAuthSession) => {
+  const userId = String(session.userId || '').trim();
+  const authHash = String(session.authHash || '').trim();
+  const expiresAt = Number(session.expiresAt || 0);
+  if (!userId || !authHash || !Number.isFinite(expiresAt)) throw new Error('INVALID_SESSION');
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ userId, authHash, expiresAt }));
+};
+
+export const clearConsoleAuthSession = () => {
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {}
+};
 
 // Types
 export interface ConsoleUser {
@@ -40,8 +88,6 @@ export interface GeneratedContent {
   timestamp: number;
 }
 
-const STORAGE_KEY = 'console_store_v1';
-
 export const useConsoleStore = defineStore('console', {
   state: () => ({
     users: [] as ConsoleUser[],
@@ -56,7 +102,7 @@ export const useConsoleStore = defineStore('console', {
       return state.users.find((u) => u.userId === userId);
     },
     getCurrentUser: (state) => {
-      const uid = getCurrentUserId();
+      const uid = getConsoleUserId();
       return state.users.find((u) => u.userId === uid);
     },
     getUserTransactions: (state) => (userId: string) => {
@@ -90,9 +136,9 @@ export const useConsoleStore = defineStore('console', {
       }
 
       // Ensure current user exists
-      const currentUid = getCurrentUserId();
+      const currentUid = getConsoleUserId();
       if (currentUid && !this.users.find((u) => u.userId === currentUid)) {
-        this.createUser(currentUid, 'user@example.com'); // Default fallback
+        this.createUser(currentUid, 'user@example.com');
       }
 
       // Force update admin/current user to have 9999 points if requested

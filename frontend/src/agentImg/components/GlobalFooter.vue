@@ -3,7 +3,7 @@
     <div class="footer-content">
       <div class="footer-left">
         <div class="footer-logo">Artigen</div>
-        <div class="copyright">© 2024 Artigen. All rights reserved.</div>
+        <div class="copyright">{{ ui.copyright }}</div>
       </div>
 
       <div class="footer-links">
@@ -30,13 +30,15 @@ const ui = computed(() =>
         terms: '服务条款',
         privacy: '隐私政策',
         refund: '退款政策',
-        contact: '联系我们'
+        contact: '联系我们',
+        copyright: '© 2024 Artigen. 保留所有权利。'
       }
     : {
         terms: 'Terms',
         privacy: 'Privacy',
         refund: 'Refund',
-        contact: 'Contact'
+        contact: 'Contact',
+        copyright: '© 2024 Artigen. All rights reserved.'
       }
 );
 </script>

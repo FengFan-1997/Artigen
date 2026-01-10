@@ -1,4 +1,6 @@
 import { computed, ref } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useLanguageStore } from '@/stores/language';
 import { agentImgPromptLibrary } from '../data/promptLibrary';
 import { extractFirstJsonObject, safeJsonStringify } from '../logic/json';
 import type { AgentImgDirectionOption, AgentImgPromptResult } from '../types';
@@ -112,6 +114,10 @@ export const useAgentImgFlow = (opts?: {
   getContextText?: () => string;
   getImages?: () => Promise<GenerateImageInput[] | undefined> | GenerateImageInput[] | undefined;
 }) => {
+  const languageStore = useLanguageStore();
+  const { currentLang } = storeToRefs(languageStore);
+  const t = (zh: string, en: string) => (currentLang.value === 'en' ? en : zh);
+
   const getContextText = () => {
     try {
       const fn = opts?.getContextText;
@@ -177,16 +183,32 @@ export const useAgentImgFlow = (opts?: {
 
   const humanizeError = (code: string) => {
     const c = String(code || '').trim();
-    if (!c) return '请求失败，请稍后再试';
-    if (c === 'INSUFFICIENT_CREDITS') return '积分不足，请前往「算力商城」充值';
-    if (c === 'EMPTY_PROMPT') return '请输入需求描述后再试';
-    if (c === 'EMPTY_RESPONSE_TEXT') return '模型返回为空，请稍后再试';
-    if (c === 'PARSE_OPTIONS_FAILED') return '方向建议解析失败，请点击「重试」';
-    if (c === 'PARSE_PROMPT_FAILED') return 'Prompt 解析失败，请点击「重试」';
-    if (c === 'AbortError' || /aborted/i.test(c)) return '已取消';
-    if (/failed to fetch/i.test(c)) return '网络异常或服务不可用，请稍后再试';
-    if (/timeout/i.test(c)) return '请求超时，请稍后再试';
-    if (/API_ERROR_429/i.test(c)) return '请求过于频繁，请稍后再试';
+    if (!c) return t('请求失败，请稍后再试', 'Request failed. Please try again later.');
+    if (c === 'INSUFFICIENT_CREDITS')
+      return t(
+        '积分不足，请前往「算力商城」充值',
+        'Insufficient credits. Please top up in Compute Market.'
+      );
+    if (c === 'EMPTY_PROMPT') return t('请输入需求描述后再试', 'Please enter a request first.');
+    if (c === 'EMPTY_RESPONSE_TEXT')
+      return t('模型返回为空，请稍后再试', 'Empty model response. Please try again.');
+    if (c === 'PARSE_OPTIONS_FAILED')
+      return t(
+        '方向建议解析失败，请点击「重试」',
+        'Failed to parse directions. Please click Retry.'
+      );
+    if (c === 'PARSE_PROMPT_FAILED')
+      return t('Prompt 解析失败，请点击「重试」', 'Failed to parse prompt. Please click Retry.');
+    if (c === 'AbortError' || /aborted/i.test(c)) return t('已取消', 'Cancelled');
+    if (/failed to fetch/i.test(c))
+      return t(
+        '网络异常或服务不可用，请稍后再试',
+        'Network error or service unavailable. Please try again.'
+      );
+    if (/timeout/i.test(c))
+      return t('请求超时，请稍后再试', 'Request timed out. Please try again.');
+    if (/API_ERROR_429/i.test(c))
+      return t('请求过于频繁，请稍后再试', 'Too many requests. Please try again later.');
     return c.length > 160 ? `${c.slice(0, 160)}…` : c;
   };
 

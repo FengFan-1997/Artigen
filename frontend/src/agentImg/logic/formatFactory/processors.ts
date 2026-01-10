@@ -1,9 +1,26 @@
 import { canvasToBlob, drawToCanvas, loadImageFromUrl, scaleToMaxSide } from './canvas';
 import { safeBaseName } from './format';
 import { revokeUrl } from './url';
-import { GIFEncoder, applyPalette, quantize } from 'gifenc';
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker?url';
+
+let cachedPdfLib: any | null = null;
+let cachedPdfWorkerSrc: string | null = null;
+
+const ensurePdfLib = async () => {
+  if (cachedPdfLib && cachedPdfWorkerSrc) return cachedPdfLib as any;
+  const [libMod, workerMod] = await Promise.all([
+    import('pdfjs-dist'),
+    import('pdfjs-dist/build/pdf.worker?url')
+  ]);
+  const lib = libMod as any;
+  const workerSrc = (workerMod as any)?.default || (workerMod as any);
+  cachedPdfLib = lib;
+  cachedPdfWorkerSrc = workerSrc;
+  const anyLib = lib as any;
+  if (anyLib?.GlobalWorkerOptions?.workerSrc !== workerSrc) {
+    anyLib.GlobalWorkerOptions.workerSrc = workerSrc;
+  }
+  return lib as any;
+};
 
 const blobToArrayBuffer = (blob: Blob) => blob.arrayBuffer();
 
@@ -48,6 +65,12 @@ const buildIcoFromPngs = (items: { size: number; data: ArrayBuffer }[]) => {
   return out;
 };
 
+const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
+
+function tr(opts: { lang?: 'zh' | 'en' } | undefined, zh: string, en: string) {
+  return opts?.lang === 'en' ? en : zh;
+}
+
 export const convertImage = async (
   file: File,
   outType: 'image/webp' | 'image/jpeg' | 'image/png',
@@ -57,21 +80,19 @@ export const convertImage = async (
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 0, total: 2, label: '读取图片' });
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取图片', 'Reading image') });
     const img = await loadImageFromUrl(srcUrl);
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 1, total: 2, label: '导出图片' });
+    reportProgress(opts, { done: 1, total: 2, label: tr(opts, '导出图片', 'Exporting image') });
     const canvas = drawToCanvas(img, img.naturalWidth, img.naturalHeight);
     const blob = await canvasToBlob(canvas, outType, quality);
     const ext = outType === 'image/png' ? 'png' : outType === 'image/jpeg' ? 'jpg' : 'webp';
-    reportProgress(opts, { done: 2, total: 2, label: '完成' });
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
     return { blob, filename: `${safeBaseName(file.name)}.${ext}` };
   } finally {
     revokeUrl(srcUrl);
   }
 };
-
-const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
 export const convertToJpeg = async (
   file: File,
@@ -82,14 +103,14 @@ export const convertToJpeg = async (
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 0, total: 2, label: '读取图片' });
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取图片', 'Reading image') });
     const img = await loadImageFromUrl(srcUrl);
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 1, total: 2, label: '压缩导出' });
+    reportProgress(opts, { done: 1, total: 2, label: tr(opts, '压缩导出', 'Compressing') });
     const { w, h } = scaleToMaxSide(img.naturalWidth, img.naturalHeight, maxSide);
     const canvas = drawToCanvas(img, w, h);
     const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
-    reportProgress(opts, { done: 2, total: 2, label: '完成' });
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
     return { blob, filename: `${safeBaseName(file.name)}.jpg` };
   } finally {
     revokeUrl(srcUrl);
@@ -110,12 +131,12 @@ export const resizeImage = async (
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 0, total: 2, label: '读取图片' });
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取图片', 'Reading image') });
     const img = await loadImageFromUrl(srcUrl);
 
     const w0 = img.naturalWidth || 0;
     const h0 = img.naturalHeight || 0;
-    if (!w0 || !h0) throw new Error('读取图片失败');
+    if (!w0 || !h0) throw new Error(tr(opts, '读取图片失败', 'Failed to read image'));
 
     const width = input.width && input.width > 0 ? Math.floor(input.width) : null;
     const height = input.height && input.height > 0 ? Math.floor(input.height) : null;
@@ -137,16 +158,16 @@ export const resizeImage = async (
       w = scaled.w;
       h = scaled.h;
     } else {
-      throw new Error('请输入宽/高或最长边');
+      throw new Error(tr(opts, '请输入宽/高或最长边', 'Please enter width/height or max side'));
     }
 
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 1, total: 2, label: '导出图片' });
+    reportProgress(opts, { done: 1, total: 2, label: tr(opts, '导出图片', 'Exporting image') });
     const canvas = drawToCanvas(img, w, h);
     const blob = await canvasToBlob(canvas, input.outType, input.quality);
     const ext =
       input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
-    reportProgress(opts, { done: 2, total: 2, label: '完成' });
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
     return { blob, filename: `${safeBaseName(file.name)}_${w}x${h}.${ext}` };
   } finally {
     revokeUrl(srcUrl);
@@ -167,12 +188,12 @@ export const rotateFlipImage = async (
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 0, total: 2, label: '读取图片' });
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取图片', 'Reading image') });
     const img = await loadImageFromUrl(srcUrl);
 
     const w0 = img.naturalWidth || 0;
     const h0 = img.naturalHeight || 0;
-    if (!w0 || !h0) throw new Error('读取图片失败');
+    if (!w0 || !h0) throw new Error(tr(opts, '读取图片失败', 'Failed to read image'));
 
     const rot = input.rotate;
     const swap = rot === 90 || rot === 270;
@@ -180,7 +201,7 @@ export const rotateFlipImage = async (
     const h = swap ? w0 : h0;
 
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 1, total: 2, label: '导出图片' });
+    reportProgress(opts, { done: 1, total: 2, label: tr(opts, '导出图片', 'Exporting image') });
 
     const canvas = document.createElement('canvas');
     canvas.width = w;
@@ -198,7 +219,7 @@ export const rotateFlipImage = async (
     const blob = await canvasToBlob(canvas, input.outType, input.quality);
     const ext =
       input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
-    reportProgress(opts, { done: 2, total: 2, label: '完成' });
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
     return { blob, filename: `${safeBaseName(file.name)}_${rot}deg.${ext}` };
   } finally {
     revokeUrl(srcUrl);
@@ -218,21 +239,21 @@ export const filterImage = async (
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 0, total: 3, label: '读取图片' });
+    reportProgress(opts, { done: 0, total: 3, label: tr(opts, '读取图片', 'Reading image') });
     const img = await loadImageFromUrl(srcUrl);
 
     const w = img.naturalWidth || 0;
     const h = img.naturalHeight || 0;
-    if (!w || !h) throw new Error('读取图片失败');
+    if (!w || !h) throw new Error(tr(opts, '读取图片失败', 'Failed to read image'));
 
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 1, total: 3, label: '渲染画布' });
+    reportProgress(opts, { done: 1, total: 3, label: tr(opts, '渲染画布', 'Rendering canvas') });
     const canvas = drawToCanvas(img, w, h);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
 
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 2, total: 3, label: '应用滤镜' });
+    reportProgress(opts, { done: 2, total: 3, label: tr(opts, '应用滤镜', 'Applying filter') });
     const t = clamp01(Number(input.intensity || 0));
     if (t > 0) {
       const imageData = ctx.getImageData(0, 0, w, h);
@@ -268,7 +289,7 @@ export const filterImage = async (
     const blob = await canvasToBlob(canvas, input.outType, input.quality);
     const ext =
       input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
-    reportProgress(opts, { done: 3, total: 3, label: '完成' });
+    reportProgress(opts, { done: 3, total: 3, label: tr(opts, '完成', 'Done') });
     return { blob, filename: `${safeBaseName(file.name)}_${input.preset}.${ext}` };
   } finally {
     revokeUrl(srcUrl);
@@ -279,7 +300,11 @@ export const generateIco = async (file: File, sizes: number[], opts?: FormatFact
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
-    reportProgress(opts, { done: 0, total: Math.max(1, sizes.length + 1), label: '读取图片' });
+    reportProgress(opts, {
+      done: 0,
+      total: Math.max(1, sizes.length + 1),
+      label: tr(opts, '读取图片', 'Reading image')
+    });
     const img = await loadImageFromUrl(srcUrl);
     const pngBuffers: { size: number; data: ArrayBuffer }[] = [];
     for (let i = 0; i < sizes.length; i += 1) {
@@ -288,7 +313,7 @@ export const generateIco = async (file: File, sizes: number[], opts?: FormatFact
       reportProgress(opts, {
         done: i,
         total: Math.max(1, sizes.length + 1),
-        label: `生成 ${size}×${size}`
+        label: tr(opts, `生成 ${size}×${size}`, `Generating ${size}×${size}`)
       });
       const canvas = drawToCanvas(img, size, size);
       const pngBlob = await canvasToBlob(canvas, 'image/png');
@@ -300,14 +325,14 @@ export const generateIco = async (file: File, sizes: number[], opts?: FormatFact
     reportProgress(opts, {
       done: sizes.length,
       total: Math.max(1, sizes.length + 1),
-      label: '打包 ICO'
+      label: tr(opts, '打包 ICO', 'Packing ICO')
     });
     const icoArrayBuffer = buildIcoFromPngs(pngBuffers);
     const blob = new Blob([icoArrayBuffer], { type: 'image/x-icon' });
     reportProgress(opts, {
       done: sizes.length + 1,
       total: Math.max(1, sizes.length + 1),
-      label: '完成'
+      label: tr(opts, '完成', 'Done')
     });
     return { blob, filename: `${safeBaseName(file.name)}.ico` };
   } finally {
@@ -356,7 +381,8 @@ export const imagesToPdf = async (
   opts?: { pageSize?: 'A4' | 'auto'; marginMm?: number; quality?: number } & FormatFactoryRunOpts
 ) => {
   const list = Array.isArray(files) ? files.filter((f) => f && f.size > 0) : [];
-  if (list.length === 0) throw new Error('请选择至少一张图片');
+  if (list.length === 0)
+    throw new Error(tr(opts, '请选择至少一张图片', 'Please select at least one image'));
 
   abortIfNeeded(opts?.signal);
   const pageSize = opts?.pageSize === 'auto' ? 'auto' : 'A4';
@@ -418,7 +444,11 @@ export const imagesToPdf = async (
     reportProgress(opts, {
       done: i,
       total: list.length,
-      label: `处理图片 ${i + 1}/${list.length}`
+      label: tr(
+        opts,
+        `处理图片 ${i + 1}/${list.length}`,
+        `Processing image ${i + 1}/${list.length}`
+      )
     });
     const file = list[i];
     const { bytes, w, h } = await fileToJpegBytes(file, quality, null);
@@ -458,7 +488,11 @@ export const imagesToPdf = async (
     });
   }
 
-  reportProgress(opts, { done: list.length, total: list.length, label: '生成 PDF' });
+  reportProgress(opts, {
+    done: list.length,
+    total: list.length,
+    label: tr(opts, '生成 PDF', 'Generating PDF')
+  });
   addObject(catalogNo, [`<< /Type /Catalog /Pages ${pagesNo} 0 R >>`]);
   addObject(pagesNo, [
     `<< /Type /Pages /Count ${pageNos.length} /Kids [${pageNos.map((n) => `${n} 0 R`).join(' ')}] >>`
@@ -497,15 +531,8 @@ export const imagesToPdf = async (
   return { blob, filename: `${baseName}.pdf` };
 };
 
-const ensurePdfWorker = () => {
-  const anyLib = pdfjsLib as any;
-  if (anyLib?.GlobalWorkerOptions?.workerSrc !== pdfWorkerSrc) {
-    anyLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
-  }
-};
-
 export const getPdfPageCount = async (file: File, opts?: { signal?: AbortSignal }) => {
-  ensurePdfWorker();
+  const pdfjsLib = await ensurePdfLib();
   if (opts?.signal?.aborted) throw new Error('ABORTED');
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (opts?.signal?.aborted) throw new Error('ABORTED');
@@ -518,7 +545,7 @@ export const getPdfPageCount = async (file: File, opts?: { signal?: AbortSignal 
 };
 
 const loadPdfDocFromFile = async (file: File, opts?: { signal?: AbortSignal }) => {
-  ensurePdfWorker();
+  const pdfjsLib = await ensurePdfLib();
   if (opts?.signal?.aborted) throw new Error('ABORTED');
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (opts?.signal?.aborted) throw new Error('ABORTED');
@@ -553,6 +580,7 @@ const abortIfNeeded = (signal?: AbortSignal) => {
 export type FormatFactoryProgress = { done: number; total: number; label?: string };
 
 export type FormatFactoryRunOpts = {
+  lang?: 'zh' | 'en';
   signal?: AbortSignal;
   onProgress?: (p: FormatFactoryProgress) => void;
 };
@@ -572,9 +600,7 @@ export const pdfToImage = async (
     outType?: 'image/png' | 'image/jpeg' | 'image/webp';
     quality?: number;
     maxPages?: number;
-    signal?: AbortSignal;
-    onProgress?: (p: FormatFactoryProgress) => void;
-  }
+  } & FormatFactoryRunOpts
 ) => {
   const mode = opts?.mode === 'page' ? 'page' : 'stitch';
   const outType = opts?.outType || 'image/png';
@@ -582,7 +608,6 @@ export const pdfToImage = async (
   const scale = typeof opts?.scale === 'number' ? opts.scale : 1.4;
   const maxPages = typeof opts?.maxPages === 'number' ? opts.maxPages : 12;
   const signal = opts?.signal;
-  const onProgress = opts?.onProgress;
 
   abortIfNeeded(signal);
   const { doc } = await loadPdfDocFromFile(file, { signal });
@@ -594,9 +619,13 @@ export const pdfToImage = async (
     if (mode === 'page') {
       const pageNumber = typeof opts?.pageNumber === 'number' ? opts.pageNumber : 1;
       const p = Math.max(1, Math.min(pages, Math.floor(pageNumber)));
-      reportProgress({ onProgress }, { done: 0, total: 1, label: `渲染第 ${p} 页` });
+      reportProgress(opts, {
+        done: 0,
+        total: 1,
+        label: tr(opts, `渲染第 ${p} 页`, `Rendering page ${p}`)
+      });
       const canvas = await renderPdfPageToCanvasFromDoc(doc, p, scale, { signal });
-      reportProgress({ onProgress }, { done: 1, total: 1, label: '导出图片' });
+      reportProgress(opts, { done: 1, total: 1, label: tr(opts, '导出图片', 'Exporting image') });
       const blob = await canvasToBlob(
         canvas,
         outType,
@@ -607,7 +636,11 @@ export const pdfToImage = async (
     }
 
     const takePages = Math.min(pages, Math.max(1, Math.floor(maxPages)));
-    reportProgress({ onProgress }, { done: 0, total: takePages, label: `计算尺寸 1/${takePages}` });
+    reportProgress(opts, {
+      done: 0,
+      total: takePages,
+      label: tr(opts, `计算尺寸 1/${takePages}`, `Measuring 1/${takePages}`)
+    });
 
     const pageSizes: Array<{ w: number; h: number }> = [];
     const safeScale = clamp(scale, 0.5, 3);
@@ -619,17 +652,19 @@ export const pdfToImage = async (
         w: Math.max(1, Math.floor(viewport.width)),
         h: Math.max(1, Math.floor(viewport.height))
       });
-      reportProgress(
-        { onProgress },
-        { done: i, total: takePages, label: `计算尺寸 ${i}/${takePages}` }
-      );
+      reportProgress(opts, {
+        done: i,
+        total: takePages,
+        label: tr(opts, `计算尺寸 ${i}/${takePages}`, `Measuring ${i}/${takePages}`)
+      });
     }
 
     abortIfNeeded(signal);
-    reportProgress(
-      { onProgress },
-      { done: 0, total: takePages, label: `渲染并拼接 1/${takePages}` }
-    );
+    reportProgress(opts, {
+      done: 0,
+      total: takePages,
+      label: tr(opts, `渲染并拼接 1/${takePages}`, `Rendering & stitching 1/${takePages}`)
+    });
 
     const width = Math.max(...pageSizes.map((s) => s.w));
     const height = pageSizes.reduce((sum, s) => sum + s.h, 0);
@@ -646,14 +681,19 @@ export const pdfToImage = async (
       const canvas = await renderPdfPageToCanvasFromDoc(doc, i, safeScale, { signal });
       ctx.drawImage(canvas, 0, y);
       y += canvas.height;
-      reportProgress(
-        { onProgress },
-        { done: i, total: takePages, label: `渲染并拼接 ${i}/${takePages}` }
-      );
+      reportProgress(opts, {
+        done: i,
+        total: takePages,
+        label: tr(opts, `渲染并拼接 ${i}/${takePages}`, `Rendering & stitching ${i}/${takePages}`)
+      });
     }
 
     abortIfNeeded(signal);
-    reportProgress({ onProgress }, { done: takePages, total: takePages, label: '导出图片' });
+    reportProgress(opts, {
+      done: takePages,
+      total: takePages,
+      label: tr(opts, '导出图片', 'Exporting image')
+    });
     const blob = await canvasToBlob(
       out,
       outType,
@@ -797,9 +837,7 @@ export const videoToGif = async (
     fps?: number;
     width?: number;
     maxColors?: number;
-    signal?: AbortSignal;
-    onProgress?: (p: FormatFactoryProgress) => void;
-  }
+  } & FormatFactoryRunOpts
 ) => {
   const startSec = typeof opts?.startSec === 'number' ? opts.startSec : 0;
   const durationSec = typeof opts?.durationSec === 'number' ? opts.durationSec : 3;
@@ -807,7 +845,6 @@ export const videoToGif = async (
   const width = typeof opts?.width === 'number' ? opts.width : 480;
   const maxColors = typeof opts?.maxColors === 'number' ? opts.maxColors : 256;
   const signal = opts?.signal;
-  const onProgress = opts?.onProgress;
 
   const srcUrl = URL.createObjectURL(file);
   const video = document.createElement('video');
@@ -847,6 +884,7 @@ export const videoToGif = async (
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
 
+    const { GIFEncoder, applyPalette, quantize } = await import('gifenc');
     const gif = GIFEncoder();
     gif.writeHeader();
     gif.setRepeat(0);
@@ -855,10 +893,11 @@ export const videoToGif = async (
     for (let i = 0; i < frameCount; i += 1) {
       abortIfNeeded(signal);
       if (i === 0 || i === frameCount - 1 || i % reportEvery === 0) {
-        reportProgress(
-          { onProgress },
-          { done: i, total: frameCount, label: `抽帧 ${i + 1}/${frameCount}` }
-        );
+        reportProgress(opts, {
+          done: i,
+          total: frameCount,
+          label: tr(opts, `抽帧 ${i + 1}/${frameCount}`, `Capturing frames ${i + 1}/${frameCount}`)
+        });
       }
       const t = safeStart + i / safeFps;
       await seekVideo(video, t, { signal, timeoutMs: 12000 });
@@ -870,7 +909,11 @@ export const videoToGif = async (
       gif.writeFrame(index, outW, outH, { palette, delay });
     }
 
-    reportProgress({ onProgress }, { done: frameCount, total: frameCount, label: '输出 GIF' });
+    reportProgress(opts, {
+      done: frameCount,
+      total: frameCount,
+      label: tr(opts, '输出 GIF', 'Encoding GIF')
+    });
     gif.finish();
     const bytes = gif.bytes();
     const blob = new Blob([bytes], { type: 'image/gif' });

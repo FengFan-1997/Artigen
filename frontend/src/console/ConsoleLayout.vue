@@ -1,5 +1,5 @@
 <template>
-  <a-layout style="min-height: 100vh">
+  <a-layout v-if="isLoggedIn" style="min-height: 100vh">
     <a-layout-sider
       v-model:collapsed="collapsed"
       collapsible
@@ -105,10 +105,29 @@
       </a-layout-footer>
     </a-layout>
   </a-layout>
+
+  <div v-else class="login-root">
+    <div class="login-card">
+      <div class="login-title">{{ ui.loginTitle }}</div>
+      <div class="login-sub">{{ ui.loginSub }}</div>
+
+      <a-form layout="vertical" @submit.prevent>
+        <a-form-item :label="ui.usernameLabel">
+          <a-input v-model:value="username" autocomplete="username" />
+        </a-form-item>
+        <a-form-item :label="ui.passwordLabel">
+          <a-input-password v-model:value="password" autocomplete="current-password" />
+        </a-form-item>
+        <a-button type="primary" block :loading="submitting" @click="handleLogin">
+          {{ ui.loginBtn }}
+        </a-button>
+      </a-form>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import {
@@ -124,14 +143,36 @@ import {
   TeamOutlined,
   SafetyCertificateOutlined
 } from '@ant-design/icons-vue';
-import { useAuth } from '@/agent/composables/useAuth';
-import { getCurrentUserId } from '@/login/session';
+import { message } from 'ant-design-vue';
 import { useLanguageStore } from '@/stores/language';
+import {
+  clearConsoleAuthSession,
+  getConsoleUserId,
+  isConsoleAuthed,
+  setConsoleAuthSession
+} from '@/stores/console';
 
 const router = useRouter();
 const route = useRoute();
-const { currentUser } = useAuth();
-const userId = computed(() => currentUser.value?.userId || getCurrentUserId());
+
+const EXPECTED_USER = 'dev1997';
+const EXPECTED_HASH = 'e20475998df4a3fbfbf956bceacae26cf794267e89cf63b960af5864cb451f45';
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+const username = ref('');
+const password = ref('');
+const submitting = ref(false);
+const loginTick = ref(0);
+
+const isLoggedIn = computed(() => {
+  void loginTick.value;
+  return isConsoleAuthed();
+});
+
+const userId = computed(() => {
+  void loginTick.value;
+  return getConsoleUserId() || EXPECTED_USER;
+});
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -154,6 +195,11 @@ const ui = computed(() =>
         backToHome: '返回首页',
         profile: '个人资料',
         logout: '退出登录',
+        loginTitle: 'Artigen 控制台登录',
+        loginSub: '请输入账号与密码进入管理系统',
+        usernameLabel: '账号',
+        passwordLabel: '密码',
+        loginBtn: '登录',
         footer: 'Artigen ©2025 Created by Feng Fan',
         routeOverview: '总览',
         routeBilling: '计费',
@@ -176,6 +222,11 @@ const ui = computed(() =>
         backToHome: 'Back to Home',
         profile: 'Profile',
         logout: 'Logout',
+        loginTitle: 'Artigen Console Login',
+        loginSub: 'Enter username and password to continue',
+        usernameLabel: 'Username',
+        passwordLabel: 'Password',
+        loginBtn: 'Login',
         footer: 'Artigen ©2025 Created by Feng Fan',
         routeOverview: 'Overview',
         routeBilling: 'Billing',
@@ -221,13 +272,112 @@ watch(
   { immediate: true }
 );
 
+const toHex = (buf: ArrayBuffer) => {
+  const bytes = new Uint8Array(buf);
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    out += bytes[i].toString(16).padStart(2, '0');
+  }
+  return out;
+};
+
+const sha256Hex = async (text: string) => {
+  const data = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return toHex(digest);
+};
+
+const syncLoginTick = () => {
+  loginTick.value++;
+};
+
+const handleLogin = async () => {
+  if (submitting.value) return;
+  const u = String(username.value || '').trim();
+  const p = String(password.value || '');
+  if (!u || !p) {
+    message.error(
+      currentLang.value === 'zh' ? '请输入账号和密码' : 'Please enter username and password'
+    );
+    return;
+  }
+  submitting.value = true;
+  try {
+    const hash = await sha256Hex(`${u}:${p}`);
+    if (u !== EXPECTED_USER || hash !== EXPECTED_HASH) {
+      message.error(currentLang.value === 'zh' ? '账号或密码错误' : 'Invalid credentials');
+      return;
+    }
+    setConsoleAuthSession({
+      userId: EXPECTED_USER,
+      authHash: EXPECTED_HASH,
+      expiresAt: Date.now() + SESSION_TTL_MS
+    });
+    password.value = '';
+    message.success(currentLang.value === 'zh' ? '登录成功' : 'Login successful');
+    syncLoginTick();
+  } catch {
+    message.error(currentLang.value === 'zh' ? '登录失败' : 'Login failed');
+  } finally {
+    submitting.value = false;
+  }
+};
+
+let authTimer: number | null = null;
+onMounted(() => {
+  authTimer = window.setInterval(() => syncLoginTick(), 30_000);
+  try {
+    window.addEventListener('storage', syncLoginTick);
+  } catch {}
+});
+
+onBeforeUnmount(() => {
+  if (authTimer) window.clearInterval(authTimer);
+  authTimer = null;
+  try {
+    window.removeEventListener('storage', syncLoginTick);
+  } catch {}
+});
+
 const handleLogout = () => {
-  // Simple logout logic
-  router.push('/');
+  clearConsoleAuthSession();
+  syncLoginTick();
+  router.replace('/console');
 };
 </script>
 
 <style scoped>
+.login-root {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b1220;
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+}
+
+.login-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.9);
+}
+
+.login-sub {
+  margin-top: 6px;
+  margin-bottom: 18px;
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 13px;
+}
+
 .logo-container {
   padding: 16px;
   display: flex;

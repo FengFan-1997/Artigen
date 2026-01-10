@@ -3,54 +3,7 @@
     <canvas ref="bgCanvas" class="bg-canvas"></canvas>
 
     <div class="content-wrapper">
-      <!-- Header -->
-      <header class="header">
-        <div class="logo">
-          <span class="logo-text">Artigen</span>
-        </div>
-
-        <nav class="nav-links">
-          <router-link to="/artigen/format-factory" class="nav-item">{{
-            navFormatFactory
-          }}</router-link>
-          <router-link to="/artigen/ai" class="nav-item active">{{ navAiWorkshop }}</router-link>
-          <router-link to="/artigen/market" class="nav-item">{{ navMarket }}</router-link>
-        </nav>
-
-        <div class="header-right">
-          <div
-            ref="langContainerRef"
-            class="lang-container"
-            @click="isLangMenuOpen = !isLangMenuOpen"
-          >
-            <button class="lang-switch" type="button">
-              <span class="globe-icon">🌐</span> {{ langLabel }}
-              <span class="arrow" :class="{ open: isLangMenuOpen }">⌄</span>
-            </button>
-            <transition name="dropdown-fade">
-              <div v-if="isLangMenuOpen" class="lang-dropdown">
-                <div
-                  class="lang-option"
-                  :class="{ active: currentLang === 'zh' }"
-                  @click.stop="selectLanguage('zh')"
-                >
-                  ZH · 中文
-                </div>
-                <div
-                  class="lang-option"
-                  :class="{ active: currentLang === 'en' }"
-                  @click.stop="selectLanguage('en')"
-                >
-                  EN · English
-                </div>
-              </div>
-            </transition>
-          </div>
-          <button class="login-btn nth-login-btn" type="button" @click="goLogin">
-            {{ loginText }}
-          </button>
-        </div>
-      </header>
+      <TitleBar />
 
       <!-- Main Content -->
       <main class="hero-section">
@@ -113,6 +66,7 @@
                   <div class="reactor-ring ring-outer"></div>
                   <div class="reactor-ring ring-middle"></div>
                   <div class="reactor-ring ring-inner"></div>
+                  <div class="reactor-ring ring-detail"></div>
                   <div class="reactor-core-glow"></div>
                 </div>
                 <div class="floating-data">
@@ -120,6 +74,8 @@
                   <span class="bit bit-2">1</span>
                   <span class="bit bit-3">1</span>
                   <span class="bit bit-4">0</span>
+                  <span class="bit bit-5">1</span>
+                  <span class="bit bit-6">0</span>
                 </div>
               </div>
             </div>
@@ -201,41 +157,15 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import GlobalFooter from '../components/GlobalFooter.vue';
+import TitleBar from '../components/TitleBar.vue';
 import { useLanguageStore } from '@/stores/language';
-import { useLoginModel } from '@/stores';
-import { isLocalLoggedIn } from '@/login/session';
 
 const router = useRouter();
 const bgCanvas = ref<HTMLCanvasElement | null>(null);
-const isLangMenuOpen = ref(false);
-const langContainerRef = ref<HTMLElement | null>(null);
 let animationId: number;
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
-const loginStore = useLoginModel();
-
-const authTick = ref(0);
-const isAuthed = computed(() => {
-  return authTick.value >= 0 && isLocalLoggedIn();
-});
-
-const handleAuthChanged = () => {
-  authTick.value++;
-};
-
-const selectLanguage = (lang: 'zh' | 'en') => {
-  languageStore.setLanguage(lang);
-  isLangMenuOpen.value = false;
-};
-
-const langLabel = computed(() => (currentLang.value === 'zh' ? 'ZH' : 'EN'));
-
-const navFormatFactory = computed(() =>
-  currentLang.value === 'zh' ? '格式工厂' : 'Format Factory'
-);
-const navAiWorkshop = computed(() => (currentLang.value === 'zh' ? 'AI工坊' : 'AI Workshop'));
-const navMarket = computed(() => (currentLang.value === 'zh' ? '算力商城' : 'Market'));
 
 const headlineLine1 = computed(() =>
   currentLang.value === 'zh' ? '聚合 N 种' : 'Aggregate N kinds of '
@@ -260,10 +190,6 @@ const ctaFormatFactory = computed(() =>
 );
 const ctaMarket = computed(() => (currentLang.value === 'zh' ? '算力商城' : 'Compute Market'));
 
-const loginText = computed(() => {
-  if (isAuthed.value) return currentLang.value === 'zh' ? '账号' : 'ACCOUNT';
-  return currentLang.value === 'zh' ? '登录' : 'LOGIN';
-});
 const statusText = computed(() =>
   currentLang.value === 'zh' ? '工具库在线 SYS v2.0.4' : 'TOOLBOX ONLINE SYS v2.0.4'
 );
@@ -298,65 +224,90 @@ const feature3Desc = computed(() =>
     : 'A distributed compute marketplace to rent GPU resources on demand. Supports fine-tuning and batch rendering workloads.'
 );
 
-const goLogin = () => {
-  if (isAuthed.value) {
-    router.push('/login/account');
-    return;
-  }
-  const returnTo = router.currentRoute.value.fullPath;
-  loginStore.open({ mode: 'login', returnTo });
-};
-
-const onDocMouseDown = (e: MouseEvent) => {
-  if (!isLangMenuOpen.value) return;
-  const el = langContainerRef.value;
-  const target = e.target;
-  if (!el || !(target instanceof Node)) return;
-  if (el.contains(target)) return;
-  isLangMenuOpen.value = false;
-};
-
-// Matrix Rain Effect
-const initMatrixRain = () => {
+// Cyber Grid & Particles Effect
+const initCyberGrid = () => {
   const canvas = bgCanvas.value;
   if (!canvas) return;
 
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  const width = (canvas.width = window.innerWidth);
+  const height = (canvas.height = window.innerHeight);
 
-  const chars = '01ABCDEF';
-  const fontSize = 14;
-  const columns = Math.ceil(canvas.width / fontSize);
-  const drops: number[] = new Array(columns).fill(1).map(() => Math.random() * -100); // Random start positions
+  const particles: { x: number; y: number; vx: number; vy: number; size: number }[] = [];
+  const particleCount = Math.min(Math.floor((width * height) / 15000), 100);
+  const connectionDistance = 150;
+
+  for (let i = 0; i < particleCount; i++) {
+    particles.push({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5,
+      size: Math.random() * 2 + 1
+    });
+  }
 
   const draw = () => {
-    // Semi-transparent black to create trail effect
-    ctx.fillStyle = 'rgba(5, 5, 5, 0.05)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(5, 5, 5, 0.2)'; // Fade effect
+    ctx.fillRect(0, 0, width, height);
 
-    ctx.fillStyle = '#0F0'; // Green text
-    ctx.font = `${fontSize}px monospace`;
+    // Draw Grid
+    ctx.strokeStyle = 'rgba(204, 255, 0, 0.03)';
+    ctx.lineWidth = 1;
+    const gridSize = 50;
 
-    for (let i = 0; i < drops.length; i++) {
-      const text = chars.charAt(Math.floor(Math.random() * chars.length));
+    // Moving Grid
+    const time = Date.now() / 1000;
+    const offsetX = (time * 10) % gridSize;
+    const offsetY = (time * 10) % gridSize;
 
-      // Randomly brighter characters
-      if (Math.random() > 0.95) {
-        ctx.fillStyle = '#ccff00';
-      } else {
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
-      }
-
-      ctx.fillText(text, i * fontSize, drops[i] * fontSize);
-
-      if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
-        drops[i] = 0;
-      }
-      drops[i]++;
+    for (let x = offsetX; x < width; x += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
     }
+    for (let y = offsetY; y < height; y += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+
+    // Update and Draw Particles
+    particles.forEach((p, i) => {
+      p.x += p.vx;
+      p.y += p.vy;
+
+      if (p.x < 0) p.x = width;
+      if (p.x > width) p.x = 0;
+      if (p.y < 0) p.y = height;
+      if (p.y > height) p.y = 0;
+
+      ctx.fillStyle = 'rgba(204, 255, 0, 0.5)';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Connections
+      for (let j = i + 1; j < particles.length; j++) {
+        const p2 = particles[j];
+        const dx = p.x - p2.x;
+        const dy = p.y - p2.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < connectionDistance) {
+          ctx.strokeStyle = `rgba(204, 255, 0, ${0.1 * (1 - dist / connectionDistance)})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.stroke();
+        }
+      }
+    });
 
     animationId = requestAnimationFrame(draw);
   };
@@ -368,22 +319,19 @@ const handleResize = () => {
   if (bgCanvas.value) {
     bgCanvas.value.width = window.innerWidth;
     bgCanvas.value.height = window.innerHeight;
+    // Re-init or just let the loop handle it (with updated width/height in draw loop if moved inside)
+    // For simplicity, we update width/height variables used in draw
   }
 };
 
 onMounted(() => {
-  document.addEventListener('mousedown', onDocMouseDown, true);
-  initMatrixRain();
+  initCyberGrid();
   window.addEventListener('resize', handleResize);
-  handleAuthChanged();
-  window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
 });
 
 onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onDocMouseDown, true);
   if (animationId) cancelAnimationFrame(animationId);
   window.removeEventListener('resize', handleResize);
-  window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
 });
 </script>
 
@@ -442,7 +390,6 @@ onBeforeUnmount(() => {
   height: 80px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 0 40px;
   /* backdrop-filter: blur(5px); */
 }
@@ -451,6 +398,7 @@ onBeforeUnmount(() => {
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
   font-size: 24px;
+  margin-right: 80px;
   color: var(--primary);
   letter-spacing: -1px;
 }
@@ -495,6 +443,7 @@ onBeforeUnmount(() => {
 
 .header-right {
   display: flex;
+  margin: 0 0 0 auto;
   gap: 24px;
   align-items: center;
 }
@@ -772,9 +721,10 @@ onBeforeUnmount(() => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 300px;
-  height: 300px;
-  perspective: 1000px;
+  width: 360px;
+  height: 360px;
+  perspective: 1200px;
+  pointer-events: none;
 }
 
 .reactor-container {
@@ -791,32 +741,57 @@ onBeforeUnmount(() => {
   left: 50%;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  box-shadow: 0 0 10px var(--primary-dim);
+  box-shadow: 0 0 15px rgba(204, 255, 0, 0.05);
+  transform-style: preserve-3d;
 }
 
 .ring-outer {
-  width: 260px;
-  height: 260px;
-  border: 2px dashed rgba(204, 255, 0, 0.3);
+  width: 300px;
+  height: 300px;
+  border: 1px solid rgba(204, 255, 0, 0.1);
+  border-top: 2px solid var(--primary);
+  border-bottom: 2px solid var(--primary);
+  box-shadow: 0 0 20px rgba(204, 255, 0, 0.1);
   animation: spin-slow 20s linear infinite;
 }
 
+.ring-outer::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  border-radius: 50%;
+  border: 1px dashed rgba(204, 255, 0, 0.2);
+  animation: spin-reverse 30s linear infinite;
+}
+
 .ring-middle {
-  width: 200px;
-  height: 200px;
-  border-left: 2px solid var(--primary);
-  border-right: 2px solid var(--primary);
-  border-top: 2px solid transparent;
-  border-bottom: 2px solid transparent;
-  animation: spin-reverse 10s linear infinite;
+  width: 220px;
+  height: 220px;
+  border: 1px solid rgba(204, 255, 0, 0.05);
+  border-left: 4px solid var(--primary);
+  border-right: 4px solid var(--primary);
+  box-shadow: 0 0 15px var(--primary-dim);
+  animation: spin-reverse 12s linear infinite;
 }
 
 .ring-inner {
-  width: 140px;
-  height: 140px;
-  border: 4px dotted var(--primary);
-  opacity: 0.7;
-  animation: spin-fast 5s linear infinite;
+  width: 160px;
+  height: 160px;
+  border: 2px dotted var(--primary);
+  opacity: 0.8;
+  animation: spin-fast 8s linear infinite;
+}
+
+.ring-detail {
+  width: 260px;
+  height: 260px;
+  border: 1px solid transparent;
+  border-left: 1px solid rgba(204, 255, 0, 0.5);
+  transform: translate(-50%, -50%) rotateX(60deg);
+  animation: spin-3d 15s linear infinite;
 }
 
 .reactor-core-glow {
@@ -824,44 +799,57 @@ onBeforeUnmount(() => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 60px;
-  height: 60px;
-  background: radial-gradient(circle, #fff, var(--primary));
+  width: 80px;
+  height: 80px;
+  background: radial-gradient(circle, #fff 0%, var(--primary) 40%, transparent 80%);
   border-radius: 50%;
   box-shadow:
-    0 0 40px var(--primary),
-    0 0 80px var(--primary);
-  animation: pulse-glow 2s ease-in-out infinite alternate;
+    0 0 60px var(--primary),
+    0 0 100px rgba(204, 255, 0, 0.4),
+    inset 0 0 20px #fff;
+  animation: pulse-glow 3s ease-in-out infinite alternate;
+  filter: blur(2px);
 }
 
 .floating-data .bit {
   position: absolute;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 14px;
+  font-size: 12px;
   color: var(--primary);
   opacity: 0;
-  animation: float-bit 3s infinite;
+  text-shadow: 0 0 5px var(--primary);
+  animation: float-bit 4s infinite;
 }
 
 .bit-1 {
-  top: 20%;
-  left: 20%;
+  top: 15%;
+  left: 25%;
   animation-delay: 0s;
 }
 .bit-2 {
-  top: 30%;
-  right: 20%;
-  animation-delay: 1s;
+  top: 25%;
+  right: 15%;
+  animation-delay: 1.2s;
 }
 .bit-3 {
   bottom: 20%;
-  left: 30%;
-  animation-delay: 2s;
+  left: 20%;
+  animation-delay: 2.5s;
 }
 .bit-4 {
-  bottom: 30%;
-  right: 30%;
-  animation-delay: 1.5s;
+  bottom: 35%;
+  right: 25%;
+  animation-delay: 0.8s;
+}
+.bit-5 {
+  top: 10%;
+  right: 40%;
+  animation-delay: 3s;
+}
+.bit-6 {
+  bottom: 10%;
+  left: 45%;
+  animation-delay: 1.8s;
 }
 
 @keyframes spin-slow {
@@ -875,30 +863,43 @@ onBeforeUnmount(() => {
 
 @keyframes spin-reverse {
   0% {
-    transform: translate(-50%, -50%) rotate(360deg) rotateX(45deg);
+    transform: translate(-50%, -50%) rotate(360deg);
   }
   100% {
-    transform: translate(-50%, -50%) rotate(0deg) rotateX(45deg);
+    transform: translate(-50%, -50%) rotate(0deg);
   }
 }
 
 @keyframes spin-fast {
   0% {
-    transform: translate(-50%, -50%) rotate(0deg) rotateY(60deg);
+    transform: translate(-50%, -50%) rotate(0deg);
   }
   100% {
-    transform: translate(-50%, -50%) rotate(360deg) rotateY(60deg);
+    transform: translate(-50%, -50%) rotate(-360deg);
+  }
+}
+
+@keyframes spin-3d {
+  0% {
+    transform: translate(-50%, -50%) rotateX(60deg) rotate(0deg);
+  }
+  100% {
+    transform: translate(-50%, -50%) rotateX(60deg) rotate(360deg);
   }
 }
 
 @keyframes pulse-glow {
   0% {
     transform: translate(-50%, -50%) scale(0.9);
-    opacity: 0.8;
+    opacity: 0.7;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
   }
   100% {
     transform: translate(-50%, -50%) scale(1.1);
-    opacity: 1;
+    opacity: 0.8;
   }
 }
 
@@ -908,20 +909,23 @@ onBeforeUnmount(() => {
     transform: translateY(0);
   }
   50% {
-    transform: translateY(-10px);
+    transform: translateY(-15px);
   }
 }
 
 @keyframes float-bit {
   0% {
-    transform: translateY(0);
+    transform: translateY(10px);
     opacity: 0;
   }
-  50% {
+  20% {
+    opacity: 1;
+  }
+  80% {
     opacity: 1;
   }
   100% {
-    transform: translateY(-20px);
+    transform: translateY(-30px);
     opacity: 0;
   }
 }

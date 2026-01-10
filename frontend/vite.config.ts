@@ -182,6 +182,28 @@ export default defineConfig({
         changeOrigin: true,
         timeout: 180000,
         proxyTimeout: 180000
+      },
+      '/files': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        timeout: 180000,
+        proxyTimeout: 180000
+      }
+    }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vue: ['vue', 'vue-router', 'pinia'],
+          antd: ['ant-design-vue', '@ant-design/icons-vue'],
+          echarts: ['echarts', 'vue-echarts'],
+          three: ['three', '@pixiv/three-vrm'],
+          pixi: ['pixi.js', 'pixi-live2d-display'],
+          mediapipe: ['@mediapipe/hands', '@mediapipe/camera_utils', '@mediapipe/drawing_utils'],
+          pdf: ['pdfjs-dist'],
+          gsap: ['gsap']
+        }
       }
     }
   }

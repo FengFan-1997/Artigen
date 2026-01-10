@@ -98,13 +98,11 @@
 import { ref, computed, reactive } from 'vue';
 import { message } from 'ant-design-vue';
 import { PlusOutlined } from '@ant-design/icons-vue';
-import { useAuth } from '@/agent/composables/useAuth';
-import { getCurrentUserId } from '@/login/session';
+import { getConsoleUserId } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 
-const { currentUser } = useAuth();
-const userId = computed(() => currentUser.value?.userId || getCurrentUserId());
+const userId = computed(() => getConsoleUserId());
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);

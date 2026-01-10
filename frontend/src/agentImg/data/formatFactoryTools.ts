@@ -91,7 +91,7 @@ export const formatFactoryTools: FormatFactoryTool[] = [
   },
   {
     id: 'ingredient-list',
-    name: '配料表生成器',
+    name: 'FDA配料表生成器',
     description: '输入文字 · 一键生成标签图',
     icon: '🧾',
     tag: 'AI 免费工具',

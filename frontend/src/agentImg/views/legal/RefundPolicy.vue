@@ -1,24 +1,6 @@
 <template>
   <div class="legal-page">
-    <header class="top-header">
-      <div class="top-header-inner">
-        <router-link to="/artigen" class="top-logo">
-          <span class="top-logo-text">Artigen</span>
-        </router-link>
-
-        <nav class="top-nav">
-          <router-link to="/artigen/format-factory" class="top-nav-item">{{
-            ui.navFormatFactory
-          }}</router-link>
-          <router-link to="/artigen/ai" class="top-nav-item">{{ ui.navAiWorkshop }}</router-link>
-          <router-link to="/artigen/market" class="top-nav-item">{{ ui.navMarket }}</router-link>
-        </nav>
-
-        <div class="top-actions">
-          <router-link to="/" class="top-action-link">{{ ui.portfolio }}</router-link>
-        </div>
-      </div>
-    </header>
+    <TitleBar />
 
     <div class="legal-container">
       <header class="legal-header">
@@ -48,6 +30,7 @@ import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import GlobalFooter from '../../components/GlobalFooter.vue';
+import TitleBar from '../../components/TitleBar.vue';
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);

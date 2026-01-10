@@ -127,14 +127,11 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { message } from 'ant-design-vue';
 import { InboxOutlined, DeleteOutlined } from '@ant-design/icons-vue';
-import { useConsoleStore } from '@/stores/console';
-import { useAuth } from '@/agent/composables/useAuth';
-import { getCurrentUserId } from '@/login/session';
+import { getConsoleUserId, useConsoleStore } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 
-const { currentUser } = useAuth();
-const userId = computed(() => currentUser.value?.userId || getCurrentUserId());
+const userId = computed(() => getConsoleUserId());
 const consoleStore = useConsoleStore();
 
 const languageStore = useLanguageStore();

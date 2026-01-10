@@ -558,5 +558,15 @@
     "status": "confirmed",
     "createdAt": 1767954469310,
     "updatedAt": 1767954489629
+  },
+  "c68131c18bf88a79cba93c5493ac1dcbmk83bxo7": {
+    "id": "c68131c18bf88a79cba93c5493ac1dcbmk83bxo7",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "artigen_img2img_mk83bxnn_i7qj0upc",
+    "status": "confirmed",
+    "createdAt": 1768036581943,
+    "updatedAt": 1768036589243
   }
 }

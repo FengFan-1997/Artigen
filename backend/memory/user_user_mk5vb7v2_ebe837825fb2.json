@@ -1,9 +1,38 @@
 {
   "user_id": "user_mk5vb7v2_ebe837825fb2",
   "meta": {
-    "updatedAt": 1767953165087,
-    "migratedFrom": "guest_shfg9fkei"
+    "updatedAt": 1768036589254,
+    "migratedFrom": "guest_ho7hr3kyq"
   },
   "core_memory": [],
-  "short_term_buffer": []
+  "short_term_buffer": [],
+  "image_history": [
+    {
+      "id": "artigen_img2img_mk83bxnn_i7qj0upc",
+      "ts": 1768036589253,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen-Image-Edit",
+      "cost": 10,
+      "prompt": "给我生成一个二次元美少女, 梦幻风格美少女, 一位穿着华丽服饰的二次元美少女，背景是漂浮的星云与发光花朵，营造出神秘浪漫的氛围, anime, dreamy, magical, soft lighting",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, realistic, low detail, grayscale, distorted",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "https://bizyair-prod.oss-cn-shanghai.aliyuncs.com/outputs%2F9f77bd6f-5e6f-4c08-b378-9aab26bf2de9_77543293a17ffbbf6daecf60d8fb794b_ComfyUI_dade9bbf_00001_.png?OSSAccessKeyId=LTAI5tPza7RAEKed35dCML5U&Expires=1768040192&Signature=%2BzeKL4CtOrFOdNE7bICwLndqJiE%3D"
+        },
+        {
+          "kind": "url",
+          "url": "https://bizyair-prod.oss-cn-shanghai.aliyuncs.com/outputs%2F9f77bd6f-5e6f-4c08-b378-9aab26bf2de9_77543293a17ffbbf6daecf60d8fb794b_ComfyUI_dade9bbf_00001_.png?OSSAccessKeyId=LTAI5tPza7RAEKed35dCML5U&Expires=1768040192&Signature=%2BzeKL4CtOrFOdNE7bICwLndqJiE%3D"
+        }
+      ],
+      "seed": 1767571198,
+      "timings": {
+        "inference": 7.168
+      }
+    }
+  ]
 }

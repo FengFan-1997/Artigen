@@ -1,28 +1,12 @@
 <template>
   <div class="market-page">
-    <header class="top-header">
-      <div class="top-header-inner">
-        <router-link to="/artigen" class="top-logo">
-          <span class="top-logo-text">Artigen</span>
-        </router-link>
-
-        <nav class="top-nav">
-          <router-link to="/artigen/format-factory" class="top-nav-item">格式工厂</router-link>
-          <router-link to="/artigen/ai" class="top-nav-item">AI工坊</router-link>
-          <router-link to="/artigen/market" class="top-nav-item active">算力商城</router-link>
-        </nav>
-
-        <div class="top-actions">
-          <router-link to="/" class="top-action-link">PORTFOLIO</router-link>
-        </div>
-      </div>
-    </header>
+    <TitleBar />
 
     <div class="market-container">
       <header class="market-header">
-        <h1 class="title">购买 算力 <span class="bolt">⚡</span></h1>
-        <p class="subtitle">// 选择适合你的算力包</p>
-        <div class="nav-btn"><span class="dot">●</span> 算力商城</div>
+        <h1 class="title">{{ ui.pageTitle1 }} {{ ui.pageTitle2 }} <span class="bolt">⚡</span></h1>
+        <p class="subtitle">{{ ui.subtitle }}</p>
+        <div class="nav-btn"><span class="dot">●</span> {{ ui.navBtn }}</div>
       </header>
 
       <div class="currency-toggle">
@@ -56,7 +40,7 @@
             <div class="icon-box">
               <span class="icon">⚛️</span>
             </div>
-            <h2>入门包</h2>
+            <h2>{{ ui.starterTitle }}</h2>
             <p class="pack-en">Starter Pack</p>
             <div class="badge standard">👤 STANDARD</div>
           </div>
@@ -66,16 +50,16 @@
               <span class="symbol">{{ currencySymbol }}</span>
               <span class="amount">{{ getPrice(9.9) }}</span>
             </div>
-            <div class="compute-amount">⚡ 120 算力</div>
+            <div class="compute-amount">⚡ 120 {{ ui.computeUnit }}</div>
           </div>
 
           <ul class="features">
-            <li><span class="check">✓</span> 24 次生成 (Standard 模型)</li>
-            <li><span class="check">✓</span> 支持所有基础风格</li>
-            <li class="disabled"><span class="cross">✗</span> Pro 模型不可用</li>
+            <li><span class="check">✓</span> {{ ui.starterFeature1 }}</li>
+            <li><span class="check">✓</span> {{ ui.starterFeature2 }}</li>
+            <li class="disabled"><span class="cross">✗</span> {{ ui.starterDisabledPro }}</li>
           </ul>
 
-          <button class="buy-btn">立即购买</button>
+          <button class="buy-btn">{{ ui.buyNow }}</button>
         </div>
 
         <!-- Standard Pack -->
@@ -89,7 +73,7 @@
             <div class="icon-box">
               <span class="icon">⚡</span>
             </div>
-            <h2>标准包</h2>
+            <h2>{{ ui.standardTitle }}</h2>
             <p class="pack-en">Standard Pack</p>
             <div class="badge standard">👤 STANDARD</div>
           </div>
@@ -99,21 +83,21 @@
               <span class="symbol">{{ currencySymbol }}</span>
               <span class="amount">{{ getPrice(79.0) }}</span>
             </div>
-            <div class="compute-amount">⚡ 1,000 算力</div>
+            <div class="compute-amount">⚡ 1,000 {{ ui.computeUnit }}</div>
           </div>
 
           <ul class="features">
-            <li><span class="check">✓</span> 30 次 Standard + 30 次 Pro</li>
-            <li><span class="check">✓</span> 解锁 Pro 高清模型</li>
-            <li><span class="check">✓</span> 支持所有风格</li>
+            <li><span class="check">✓</span> {{ ui.standardFeature1 }}</li>
+            <li><span class="check">✓</span> {{ ui.standardFeature2 }}</li>
+            <li><span class="check">✓</span> {{ ui.standardFeature3 }}</li>
           </ul>
 
-          <button class="buy-btn">立即购买</button>
+          <button class="buy-btn">{{ ui.buyNow }}</button>
         </div>
 
         <!-- Professional Pack (Green Theme) -->
         <div class="pricing-card pro-theme">
-          <div class="tag-recommend">✨ 推荐</div>
+          <div class="tag-recommend">✨ {{ ui.recommend }}</div>
           <div class="card-corner top-left"></div>
           <div class="card-corner top-right"></div>
           <div class="card-corner bottom-left"></div>
@@ -123,7 +107,7 @@
             <div class="icon-box">
               <span class="icon">✨</span>
             </div>
-            <h2>专业包</h2>
+            <h2>{{ ui.proTitle }}</h2>
             <p class="pack-en">Pro Pack</p>
             <div class="badge pro">🔒 PRO ACCESS</div>
           </div>
@@ -133,22 +117,22 @@
               <span class="symbol">{{ currencySymbol }}</span>
               <span class="amount">{{ getPrice(159.0) }}</span>
             </div>
-            <div class="compute-amount">⚡ 2,400 算力</div>
+            <div class="compute-amount">⚡ 2,400 {{ ui.computeUnit }}</div>
           </div>
 
           <ul class="features">
-            <li><span class="check">✓</span> 100 次 Standard + 50 次 Pro</li>
-            <li><span class="check">✓</span> Pro 高清模型 (4K 输出)</li>
-            <li><span class="check">✓</span> 优先处理队列</li>
-            <li><span class="check">✓</span> 加入用户社群</li>
+            <li><span class="check">✓</span> {{ ui.proFeature1 }}</li>
+            <li><span class="check">✓</span> {{ ui.proFeature2 }}</li>
+            <li><span class="check">✓</span> {{ ui.proFeature3 }}</li>
+            <li><span class="check">✓</span> {{ ui.proFeature4 }}</li>
           </ul>
 
-          <button class="buy-btn primary">立即购买</button>
+          <button class="buy-btn primary">{{ ui.buyNow }}</button>
         </div>
 
         <!-- Ultimate Pack (Gold Theme) -->
         <div class="pricing-card ultimate-theme">
-          <div class="tag-recommend gold">👑 旗舰版</div>
+          <div class="tag-recommend gold">👑 {{ ui.ultimateTag }}</div>
           <div class="card-corner top-left"></div>
           <div class="card-corner top-right"></div>
           <div class="card-corner bottom-left"></div>
@@ -158,7 +142,7 @@
             <div class="icon-box">
               <span class="icon">👑</span>
             </div>
-            <h2>旗舰包</h2>
+            <h2>{{ ui.ultimateTitle }}</h2>
             <p class="pack-en">Ultimate Pack</p>
             <div class="badge ultimate">🔒 PRO ACCESS</div>
           </div>
@@ -168,17 +152,17 @@
               <span class="symbol">{{ currencySymbol }}</span>
               <span class="amount">{{ getPrice(399.0) }}</span>
             </div>
-            <div class="compute-amount">⚡ 6,500 算力</div>
+            <div class="compute-amount">⚡ 6,500 {{ ui.computeUnit }}</div>
           </div>
 
           <ul class="features">
-            <li><span class="check">✓</span> 200 次 Standard + 200 次 Pro</li>
-            <li><span class="check">✓</span> 终身 VIP 标识</li>
-            <li><span class="check">✓</span> 提前体验新工具</li>
-            <li><span class="check">✓</span> 加入核心用户群</li>
+            <li><span class="check">✓</span> {{ ui.ultimateFeature1 }}</li>
+            <li><span class="check">✓</span> {{ ui.ultimateFeature2 }}</li>
+            <li><span class="check">✓</span> {{ ui.ultimateFeature3 }}</li>
+            <li><span class="check">✓</span> {{ ui.ultimateFeature4 }}</li>
           </ul>
 
-          <button class="buy-btn gold">🔥 立即激活</button>
+          <button class="buy-btn gold">🔥 {{ ui.activateNow }}</button>
         </div>
       </div>
     </div>
@@ -188,7 +172,10 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { storeToRefs } from 'pinia';
 import GlobalFooter from '../components/GlobalFooter.vue';
+import TitleBar from '../components/TitleBar.vue';
+import { useLanguageStore } from '@/stores/language';
 
 const currency = ref<'CNY' | 'USD'>('CNY');
 
@@ -202,6 +189,72 @@ const getPrice = (cnyPrice: number) => {
     return (cnyPrice * exchangeRate).toFixed(2);
   }
 };
+
+const languageStore = useLanguageStore();
+const { currentLang } = storeToRefs(languageStore);
+
+const ui = computed(() => {
+  if (currentLang.value === 'zh') {
+    return {
+      pageTitle1: '购买',
+      pageTitle2: '算力',
+      subtitle: '// 选择适合你的算力包',
+      navBtn: '算力商城',
+      computeUnit: '算力',
+      buyNow: '立即购买',
+      activateNow: '立即激活',
+      recommend: '推荐',
+      ultimateTag: '旗舰版',
+      starterTitle: '入门包',
+      standardTitle: '标准包',
+      proTitle: '专业包',
+      ultimateTitle: '旗舰包',
+      starterFeature1: '24 次生成 (Standard 模型)',
+      starterFeature2: '支持所有基础风格',
+      starterDisabledPro: 'Pro 模型不可用',
+      standardFeature1: '30 次 Standard + 30 次 Pro',
+      standardFeature2: '解锁 Pro 高清模型',
+      standardFeature3: '支持所有风格',
+      proFeature1: '100 次 Standard + 50 次 Pro',
+      proFeature2: 'Pro 高清模型 (4K 输出)',
+      proFeature3: '优先处理队列',
+      proFeature4: '加入用户社群',
+      ultimateFeature1: '200 次 Standard + 200 次 Pro',
+      ultimateFeature2: '终身 VIP 标识',
+      ultimateFeature3: '提前体验新工具',
+      ultimateFeature4: '加入核心用户群'
+    };
+  }
+  return {
+    pageTitle1: 'Buy',
+    pageTitle2: 'Compute',
+    subtitle: '// Choose the right compute pack for you',
+    navBtn: 'Compute Market',
+    computeUnit: 'Compute',
+    buyNow: 'Buy Now',
+    activateNow: 'Activate Now',
+    recommend: 'Recommended',
+    ultimateTag: 'Ultimate',
+    starterTitle: 'Starter',
+    standardTitle: 'Standard',
+    proTitle: 'Pro',
+    ultimateTitle: 'Ultimate',
+    starterFeature1: '24 generations (Standard model)',
+    starterFeature2: 'Access all basic styles',
+    starterDisabledPro: 'Pro model not available',
+    standardFeature1: '30× Standard + 30× Pro',
+    standardFeature2: 'Unlock Pro HD model',
+    standardFeature3: 'Access all styles',
+    proFeature1: '100× Standard + 50× Pro',
+    proFeature2: 'Pro HD model (4K output)',
+    proFeature3: 'Priority queue',
+    proFeature4: 'Join the community',
+    ultimateFeature1: '200× Standard + 200× Pro',
+    ultimateFeature2: 'Lifetime VIP badge',
+    ultimateFeature3: 'Early access to new tools',
+    ultimateFeature4: 'Join the core group'
+  };
+});
 </script>
 
 <style scoped>
@@ -294,7 +347,7 @@ const getPrice = (cnyPrice: number) => {
   background-color: #050505;
   color: #fff;
   font-family: 'Inter', sans-serif;
-  padding-top: 120px;
+  padding-top: 0;
   background-image:
     linear-gradient(rgba(204, 255, 0, 0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(204, 255, 0, 0.03) 1px, transparent 1px);

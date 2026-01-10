@@ -44,15 +44,15 @@ export const useFormatFactoryLive = (input: { sourceFile: Ref<File | null> }) =>
   const captureVideoFrame = async () => {
     const v = liveVideoRef.value;
     const f = input.sourceFile.value;
-    if (!v || !f) throw new Error('请先选择视频');
+    if (!v || !f) throw new Error('VIDEO_NOT_SELECTED');
     const vw = v.videoWidth;
     const vh = v.videoHeight;
-    if (!vw || !vh) throw new Error('视频尚未就绪');
+    if (!vw || !vh) throw new Error('VIDEO_DIM_FAIL');
     const canvas = document.createElement('canvas');
     canvas.width = vw;
     canvas.height = vh;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas 初始化失败');
+    if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
     ctx.drawImage(v, 0, 0, vw, vh);
     const type = liveOutFormat.value;
     const quality = type === 'image/png' ? undefined : liveOutQuality.value;

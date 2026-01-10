@@ -9,6 +9,7 @@ const {
   readUserMemory,
   writeUserMemory,
   getUserMemoryFile,
+  MEMORY_DIR,
   VECTORS_FILE,
   CHATS_FILE,
   USERS_FILE,
@@ -28,9 +29,90 @@ try {
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+const DEBUG_FILES = String(process.env.DEBUG_FILES || '').trim() === '1';
+
+const FILES_DIR = path.join(MEMORY_DIR, 'files');
+try {
+  if (!fs.existsSync(FILES_DIR)) fs.mkdirSync(FILES_DIR, { recursive: true });
+} catch {}
+console.log('MEMORY_DIR:', MEMORY_DIR);
+console.log('FILES_DIR:', FILES_DIR);
+
 if (String(process.env.TRUST_PROXY || '').trim() === '1') {
   app.set('trust proxy', true);
 }
+
+app.disable('x-powered-by');
+
+const NODE_ENV = String(process.env.NODE_ENV || '').trim() || 'development';
+const isProd = NODE_ENV === 'production';
+
+const getOrCreateRequestId = (req) => {
+  const h =
+    typeof req.headers['x-request-id'] === 'string'
+      ? req.headers['x-request-id']
+      : Array.isArray(req.headers['x-request-id'])
+        ? String(req.headers['x-request-id'][0] || '')
+        : '';
+  const existing = String(h || '').trim();
+  if (existing && existing.length <= 120) return existing;
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `req_${Date.now().toString(36)}_${crypto.randomBytes(8).toString('hex')}`;
+  }
+};
+
+app.use((req, res, next) => {
+  const requestId = getOrCreateRequestId(req);
+  res.locals.requestId = requestId;
+  res.setHeader('X-Request-Id', requestId);
+
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('X-Frame-Options', 'DENY');
+
+  if (String(process.env.ENABLE_CROSS_ORIGIN_ISOLATION || '').trim() === '1') {
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  }
+
+  if (isProd && String(process.env.ENABLE_HSTS || '').trim() === '1') {
+    const maxAge = Math.max(0, Number.parseInt(process.env.HSTS_MAX_AGE || '15552000', 10) || 15552000);
+    res.setHeader('Strict-Transport-Security', `max-age=${maxAge}; includeSubDomains`);
+  }
+  next();
+});
+
+const shouldLogRequests = (() => {
+  const raw = String(process.env.LOG_REQUESTS || '').trim();
+  if (raw === '0') return false;
+  if (raw === '1') return true;
+  return isProd;
+})();
+
+app.use((req, res, next) => {
+  if (!shouldLogRequests) return next();
+  const startedAt = process.hrtime.bigint();
+  const ip = (() => {
+    const xf = req.headers['x-forwarded-for'];
+    if (typeof xf === 'string' && xf.trim()) return xf.split(',')[0].trim();
+    if (Array.isArray(xf) && xf.length) return String(xf[0] || '').trim();
+    return typeof req.ip === 'string' ? req.ip.trim() : '';
+  })();
+  res.on('finish', () => {
+    const durMs = Number((process.hrtime.bigint() - startedAt) / 1000000n);
+    const status = typeof res.statusCode === 'number' ? res.statusCode : 0;
+    const method = String(req.method || '').toUpperCase();
+    const url = String(req.originalUrl || req.url || '').split('?')[0];
+    const rid = String(res.locals.requestId || '');
+    const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 160) : '';
+    console.log(JSON.stringify({ ts: Date.now(), rid, ip, method, url, status, durMs, ua }));
+  });
+  next();
+});
 
 const parseCorsOrigins = (raw) => {
   const s = String(raw || '').trim();
@@ -63,6 +145,56 @@ if (!corsOrigins || corsOrigins === '*') {
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '25mb').trim() || '25mb';
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
+
+const serveLocalFileFromFilesDir = (req, res, next) => {
+  if (!req.path || typeof req.path !== 'string') return next();
+  const rawParam = req.path.replace(/^\/+/, '');
+  if (!rawParam) return res.status(404).end();
+  if (req.method !== 'GET' && req.method !== 'HEAD') return res.status(405).end();
+
+  let decoded = rawParam;
+  try {
+    decoded = decodeURIComponent(rawParam);
+  } catch {}
+  decoded = String(decoded || '').replace(/\\/g, '/');
+  if (!decoded) return res.status(404).end();
+  if (decoded.includes('\0')) return res.status(400).end();
+
+  const parts = decoded.split('/').filter(Boolean);
+  if (!parts.length) return res.status(404).end();
+  for (const seg of parts) {
+    if (seg === '.' || seg === '..') return res.status(400).end();
+  }
+
+  const root = path.resolve(FILES_DIR);
+  const full = path.resolve(root, ...parts);
+  const rootLower = root.toLowerCase();
+  const fullLower = full.toLowerCase();
+  if (fullLower !== rootLower && !fullLower.startsWith(rootLower + path.sep.toLowerCase())) {
+    return res.status(403).end();
+  }
+
+  if (DEBUG_FILES) {
+    let exists = false;
+    try {
+      exists = fs.existsSync(full);
+    } catch {}
+    console.log('FILES_DEBUG', { reqPath: req.path, rawParam, decoded, root, full, exists });
+  }
+
+  let st = null;
+  try {
+    st = fs.statSync(full);
+  } catch {
+    st = null;
+  }
+  if (!st || !st.isFile()) return res.status(404).end();
+
+  res.setHeader('Cache-Control', 'public, max-age=2592000');
+  return res.sendFile(full);
+};
+
+app.use('/files', serveLocalFileFromFilesDir);
 
 app.use((err, req, res, next) => {
   const status = typeof err?.status === 'number' ? err.status : 0;
@@ -126,6 +258,24 @@ const rateLimit = (tag, opts) => {
     res.json({ error: 'Too Many Requests', retryAfterSec });
   };
 };
+
+const enableApiRateLimit = (() => {
+  const raw = String(process.env.API_RATE_LIMIT || '').trim();
+  if (raw === '0') return false;
+  if (raw === '1') return true;
+  return isProd;
+})();
+const API_RATE_MAX = (() => {
+  const v = Number.parseInt(process.env.API_RATE_MAX || '', 10);
+  return Number.isFinite(v) && v > 0 ? v : 900;
+})();
+const API_RATE_WINDOW_MS = (() => {
+  const v = Number.parseInt(process.env.API_RATE_WINDOW_MS || '', 10);
+  return Number.isFinite(v) && v > 0 ? v : 60 * 1000;
+})();
+if (enableApiRateLimit) {
+  app.use('/api', rateLimit('api', { max: API_RATE_MAX, windowMs: API_RATE_WINDOW_MS }));
+}
 
 const normalizeUrl = (url) => {
   const s = (url || '').toString().trim();
@@ -1398,6 +1548,34 @@ const buildChatPrompt = (input) => {
     .join('\n\n');
 };
 
+const requireLlmProvider = String(process.env.REQUIRE_LLM_PROVIDER || '').trim() === '1';
+
+app.get(['/healthz', '/readyz'], (req, res) => {
+  const hasGeminiKey = !!API_KEY;
+  const hasSiliconflowKey = !!SILICONFLOW_API_KEY;
+  const hasProvider = hasGeminiKey || hasSiliconflowKey;
+  const ok = requireLlmProvider ? hasProvider : true;
+  res.status(ok ? 200 : 503).json({
+    ok,
+    nodeEnv: NODE_ENV,
+    uptimeSec: Math.floor(process.uptime()),
+    provider: activeTextProvider,
+    hasProvider,
+    rid: String(res.locals.requestId || '')
+  });
+});
+
+app.get('/api/meta', (req, res) => {
+  res.json({
+    ok: true,
+    nodeEnv: NODE_ENV,
+    uptimeSec: Math.floor(process.uptime()),
+    provider: activeTextProvider,
+    rid: String(res.locals.requestId || ''),
+    gitSha: String(process.env.GIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA || '').trim() || null
+  });
+});
+
 app.get('/api/health', async (req, res) => {
   const probe = String(req.query.probe || '').trim() === '1';
   const hasApiKey = !!API_KEY;
@@ -2334,9 +2512,142 @@ const IMAGE_HISTORY_MAX_ITEMS = (() => {
   return Number.isFinite(v) && v > 0 ? v : 80;
 })();
 
+const safeUserSegment = (userId) => {
+  const raw = String(userId || '').trim() || 'anonymous';
+  const safe = raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+  return safe || 'anonymous';
+};
+
+const extFromMime = (mime) => {
+  const m = String(mime || '').toLowerCase().trim();
+  if (m === 'image/jpeg' || m === 'image/jpg') return 'jpg';
+  if (m === 'image/webp') return 'webp';
+  if (m === 'image/gif') return 'gif';
+  if (m === 'image/svg+xml') return 'svg';
+  return 'png';
+};
+
+const tryParseDataUrl = (raw) => {
+  const s = String(raw || '').trim();
+  if (!s.startsWith('data:')) return null;
+  const m = s.match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) return null;
+  const mime = String(m[1] || '').trim();
+  const b64 = String(m[2] || '').trim();
+  if (!/^image\//i.test(mime) || !b64) return null;
+  try {
+    const buf = Buffer.from(b64, 'base64');
+    if (!buf.length) return null;
+    return { mime, buf };
+  } catch {
+    return null;
+  }
+};
+
+const writeUserImageFile = (input) => {
+  const userId = String(input?.userId || '').trim();
+  if (!userId) return '';
+  const buf = input?.buf;
+  const mime = String(input?.mime || '').trim();
+  const prefix = String(input?.prefix || 'img').trim() || 'img';
+  if (!Buffer.isBuffer(buf) || !buf.length) return '';
+  if (!/^image\//i.test(mime)) return '';
+  const safeUser = safeUserSegment(userId);
+  const dir = path.join(FILES_DIR, safeUser);
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    return '';
+  }
+  const ext = extFromMime(mime);
+  const name = `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(6).toString('hex')}.${ext}`;
+  const full = path.join(dir, name);
+  try {
+    fs.writeFileSync(full, buf);
+    return `/files/${encodeURIComponent(safeUser)}/${encodeURIComponent(name)}`;
+  } catch {
+    return '';
+  }
+};
+
+const persistImageRefForUser = async (input) => {
+  const userId = String(input?.userId || '').trim();
+  const rawUrl = String(input?.url || '').trim();
+  const prefix = String(input?.prefix || 'img').trim() || 'img';
+  if (!userId || !rawUrl) return '';
+  if (rawUrl.startsWith('/files/')) return rawUrl;
+
+  const inferMimeFromUrl = (u) => {
+    try {
+      const parsed = new URL(u);
+      const p = parsed.pathname.toLowerCase();
+      if (p.endsWith('.png')) return 'image/png';
+      if (p.endsWith('.jpg') || p.endsWith('.jpeg')) return 'image/jpeg';
+      if (p.endsWith('.webp')) return 'image/webp';
+      if (p.endsWith('.gif')) return 'image/gif';
+      if (p.endsWith('.svg')) return 'image/svg+xml';
+      return '';
+    } catch {
+      return '';
+    }
+  };
+
+  const parsed = tryParseDataUrl(rawUrl);
+  if (parsed) return writeUserImageFile({ userId, buf: parsed.buf, mime: parsed.mime, prefix });
+
+  if (/^https?:\/\//i.test(rawUrl)) {
+    try {
+      const upstream = await fetchWithTimeout(
+        rawUrl,
+        {
+          method: 'GET',
+          redirect: 'follow',
+          headers: {
+            Accept: 'image/*,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0'
+          }
+        },
+        20000
+      );
+      if (!upstream.ok) return '';
+      const ctRaw = String(upstream.headers.get('content-type') || '').trim();
+      const inferred = inferMimeFromUrl(rawUrl);
+      const ct = /^image\//i.test(ctRaw) ? ctRaw : inferred;
+      if (!/^image\//i.test(ct)) return '';
+      const len = Number.parseInt(String(upstream.headers.get('content-length') || ''), 10);
+      if (Number.isFinite(len) && len > 25 * 1024 * 1024) return '';
+      const ab = await upstream.arrayBuffer();
+      const buf = Buffer.from(ab);
+      if (!buf.length || buf.length > 25 * 1024 * 1024) return '';
+      return writeUserImageFile({ userId, buf, mime: ct, prefix });
+    } catch {
+      return '';
+    }
+  }
+  return '';
+};
+
+const persistGenerateImageInputForUser = (input) => {
+  const userId = String(input?.userId || '').trim();
+  const img = input?.image && typeof input.image === 'object' ? input.image : null;
+  const prefix = String(input?.prefix || 'img').trim() || 'img';
+  if (!userId || !img) return '';
+  const mime = String(img.mimeType || '').trim();
+  const b64 = String(img.dataBase64 || '').trim();
+  if (!/^image\//i.test(mime) || !b64) return '';
+  try {
+    const buf = Buffer.from(b64, 'base64');
+    if (!buf.length) return '';
+    return writeUserImageFile({ userId, buf, mime, prefix });
+  } catch {
+    return '';
+  }
+};
+
 const toImageHistoryRef = (rawUrl) => {
   const url = String(rawUrl || '').trim();
   if (!url) return null;
+  if (url.startsWith('/files/')) return { kind: 'url', url: url.slice(0, 800) };
   if (url.startsWith('data:')) {
     const semi = url.indexOf(';');
     const mime = semi > 5 ? url.slice(5, semi).trim() : '';
@@ -2983,6 +3294,25 @@ const mergeUserData = (fromUserId, toUserId) => {
     const buffer = [...(b.short_term_buffer || []), ...(a.short_term_buffer || [])]
       .filter((x) => x && typeof x === 'object')
       .slice(-12);
+    const imageHistory = (() => {
+      const listA = Array.isArray(a.image_history) ? a.image_history : [];
+      const listB = Array.isArray(b.image_history) ? b.image_history : [];
+      const merged0 = [...listB, ...listA].filter((x) => x && typeof x === 'object');
+      merged0.sort((x, y) => (Number(y?.ts || 0) || 0) - (Number(x?.ts || 0) || 0));
+      const out = [];
+      const seen = new Set();
+      for (const it of merged0) {
+        const id = typeof it?.id === 'string' ? it.id.trim() : '';
+        const key = id ? `id:${id}` : '';
+        if (key) {
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
+        out.push(it);
+        if (out.length >= IMAGE_HISTORY_MAX_ITEMS) break;
+      }
+      return out;
+    })();
     const merged = ensureUserMemoryShape(to, {
       user_id: to,
       meta: {
@@ -2991,7 +3321,8 @@ const mergeUserData = (fromUserId, toUserId) => {
         migratedFrom: from
       },
       core_memory: core,
-      short_term_buffer: buffer
+      short_term_buffer: buffer,
+      ...(imageHistory.length ? { image_history: imageHistory } : {})
     });
     writeUserMemory(to, merged);
   } catch {}
@@ -3564,6 +3895,13 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
       imgCredits.refundHold({ userId, holdId: holdRes.holdId });
       return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
     }
+    const persistedImages = await Promise.all(
+      normalizedImages.map(async (it) => {
+        const persisted = await persistImageRefForUser({ userId, url: it?.url, prefix: 'gen' });
+        return { url: persisted || String(it?.url || '').trim() };
+      })
+    );
+    const finalImages = persistedImages.filter((x) => x && typeof x.url === 'string' && x.url.trim());
     try {
       const paramsRaw = body.params && typeof body.params === 'object' ? body.params : {};
       const params = {
@@ -3572,7 +3910,37 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
         guidanceScale: Number.isFinite(Number(paramsRaw.guidanceScale)) ? Number(paramsRaw.guidanceScale) : undefined,
         seed: Number.isFinite(Number(paramsRaw.seed)) ? Number(paramsRaw.seed) : undefined
       };
-      const imagesForHistory = normalizedImages
+      const inputImagesForHistory = [];
+      for (const raw of imagesRaw.slice(0, 4)) {
+        if (typeof raw === 'string') {
+          const persisted = await persistImageRefForUser({ userId, url: raw, prefix: 'in' });
+          const ref = toImageHistoryRef(persisted || raw);
+          if (ref) inputImagesForHistory.push(ref);
+          continue;
+        }
+        if (raw && typeof raw === 'object') {
+          const mimeType = typeof raw.mimeType === 'string' ? raw.mimeType.trim() : '';
+          const dataBase64 = typeof raw.dataBase64 === 'string' ? raw.dataBase64.trim() : '';
+          if (mimeType && dataBase64) {
+            const persisted = persistGenerateImageInputForUser({
+              userId,
+              image: { mimeType, dataBase64 },
+              prefix: 'in'
+            });
+            const ref = toImageHistoryRef(persisted);
+            if (ref) inputImagesForHistory.push(ref);
+            continue;
+          }
+          const url = toImageUrl(raw);
+          if (url) {
+            const persisted = await persistImageRefForUser({ userId, url, prefix: 'in' });
+            const ref = toImageHistoryRef(persisted || url);
+            if (ref) inputImagesForHistory.push(ref);
+          }
+        }
+      }
+
+      const imagesForHistory = finalImages
         .map((it) => toImageHistoryRef(it?.url))
         .filter(Boolean)
         .slice(0, 4);
@@ -3589,6 +3957,7 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
           negativePrompt: String(body.negativePrompt || '').trim().slice(0, 1200),
           params,
           images: imagesForHistory,
+          ...(inputImagesForHistory.length ? { inputImages: inputImagesForHistory } : {}),
           seed: typeof data?.seed === 'number' ? data.seed : undefined,
           timings: data?.timings
         }
@@ -3597,7 +3966,7 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
     holdCtx = null;
     return res.json({
       requestId,
-      images: normalizedImages,
+      images: finalImages.length ? finalImages : normalizedImages,
       seed: typeof data?.seed === 'number' ? data.seed : undefined,
       timings: data?.timings
     });
@@ -4397,6 +4766,24 @@ app.get('/api/usage/summary', rateLimit('usage_summary', { max: 60, windowMs: 60
   }
 });
 
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Not Found', rid: String(res.locals.requestId || '') });
+});
+
+app.use((err, req, res, next) => {
+  const status = typeof err?.status === 'number' ? err.status : 0;
+  const code = status && status >= 400 && status < 600 ? status : 500;
+  const rid = String(res?.locals?.requestId || '');
+  const msg = typeof err?.message === 'string' ? err.message : String(err || '');
+  if (!isProd) {
+    console.error('Unhandled error', { rid, code, msg, stack: typeof err?.stack === 'string' ? err.stack : '' });
+  } else {
+    console.error('Unhandled error', { rid, code, msg: msg.slice(0, 240) });
+  }
+  if (res.headersSent) return next(err);
+  res.status(code).json({ error: 'Internal Server Error', rid });
+});
+
 const shouldServeStatic = (() => {
   const raw = String(process.env.SERVE_STATIC || '').trim();
   if (raw === '0') return false;
@@ -4420,7 +4807,14 @@ if (shouldServeStatic) {
         })
       );
       app.get('*', (req, res, next) => {
-        if (req.path === '/api' || req.path.startsWith('/api/')) return next();
+        if (
+          req.path === '/api' ||
+          req.path.startsWith('/api/') ||
+          req.path === '/files' ||
+          req.path.startsWith('/files/')
+        ) {
+          return next();
+        }
         res.setHeader('Cache-Control', 'no-cache');
         res.sendFile(indexFile);
       });
@@ -4433,10 +4827,34 @@ if (shouldServeStatic) {
   }
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
   console.log('GEMINI_API_KEY configured:', !!API_KEY);
 });
+
+const shutdown = (signal) => {
+  const timeoutMs = Math.max(1000, Number.parseInt(process.env.SHUTDOWN_TIMEOUT_MS || '15000', 10) || 15000);
+  console.log(JSON.stringify({ ts: Date.now(), event: 'shutdown', signal, timeoutMs }));
+  const timer = setTimeout(() => {
+    console.error(JSON.stringify({ ts: Date.now(), event: 'shutdown_force_exit' }));
+    process.exit(1);
+  }, timeoutMs);
+  try {
+    timer.unref();
+  } catch {}
+  try {
+    server.close(() => {
+      clearTimeout(timer);
+      process.exit(0);
+    });
+  } catch {
+    clearTimeout(timer);
+    process.exit(1);
+  }
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 
 

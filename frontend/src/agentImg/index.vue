@@ -1,22 +1,8 @@
 <template>
   <div class="artigen-page">
     <div class="tool-container">
-      <header class="top-header">
-        <div class="top-header-inner">
-          <router-link to="/artigen" class="top-logo">
-            <span class="top-logo-text">Artigen</span>
-          </router-link>
-
-          <nav class="top-nav">
-            <router-link to="/artigen/format-factory" class="top-nav-item">{{
-              ui.navFormatFactory
-            }}</router-link>
-            <router-link to="/artigen/ai" class="top-nav-item active">{{
-              ui.navAiWorkshop
-            }}</router-link>
-            <router-link to="/artigen/market" class="top-nav-item">{{ ui.navMarket }}</router-link>
-          </nav>
-
+      <TitleBar hideAuth>
+        <template #actions>
           <div class="top-actions">
             <template v-if="isAuthed">
               <button
@@ -58,132 +44,138 @@
 
             <router-link to="/artigen" class="top-action-link">{{ ui.homeLink }}</router-link>
           </div>
-        </div>
-      </header>
+        </template>
+      </TitleBar>
 
       <div class="workspace">
         <div
           class="mobile-overlay"
-          v-if="showMobileSettings"
-          @click="showMobileSettings = false"
+          v-if="productSidebarOpen"
+          @click="productSidebarOpen = false"
         ></div>
 
         <!-- LEFT: Product Configuration -->
-        <aside class="side" :class="{ 'mobile-open': showMobileSettings }">
-          <div class="scroll-container">
-            <section class="card settings-card">
-              <div class="card-title">{{ ui.productProfile }}</div>
+        <transition name="side-fade">
+          <aside
+            v-show="productSidebarOpen"
+            class="side"
+            :class="{ 'mobile-open': productSidebarOpen }"
+          >
+            <div class="scroll-container">
+              <section class="card settings-card">
+                <div class="card-title">{{ ui.productProfile }}</div>
 
-              <div class="form-group">
-                <div class="field">
-                  <div class="label">{{ ui.productName }}</div>
-                  <input
-                    v-model="productName"
-                    class="control"
-                    type="text"
-                    :placeholder="ui.productNamePh"
-                    :disabled="loading"
-                  />
-                </div>
-                <div class="field">
-                  <div class="label">{{ ui.brandName }}</div>
-                  <input
-                    v-model="brandName"
-                    class="control"
-                    type="text"
-                    :placeholder="ui.brandNamePh"
-                    :disabled="loading"
-                  />
-                </div>
-              </div>
-
-              <div class="field">
-                <div class="label">{{ ui.productCategory }}</div>
-                <div class="select-wrapper">
-                  <select v-model="productCategory" class="control select" :disabled="loading">
-                    <option value="" disabled selected>{{ ui.categoryPh }}</option>
-                    <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="field">
-                <div class="label">{{ ui.material }}</div>
-                <input
-                  v-model="material"
-                  class="control"
-                  type="text"
-                  :placeholder="ui.materialPh"
-                  :disabled="loading"
-                />
-              </div>
-
-              <div class="card-divider"></div>
-              <div class="card-title">{{ ui.visualStyle }}</div>
-
-              <div class="field">
-                <div class="label">{{ ui.scene }}</div>
-                <input
-                  v-model="sceneType"
-                  class="control"
-                  type="text"
-                  :placeholder="ui.scenePh"
-                  :disabled="loading"
-                />
-              </div>
-
-              <div class="field">
-                <div class="label">{{ ui.lighting }}</div>
-                <input
-                  v-model="lighting"
-                  class="control"
-                  type="text"
-                  :placeholder="ui.lightingPh"
-                  :disabled="loading"
-                />
-              </div>
-
-              <div class="field">
-                <div class="label">{{ ui.primaryColor }}</div>
-                <input
-                  v-model="primaryColor"
-                  class="control"
-                  type="text"
-                  :placeholder="ui.primaryColorPh"
-                  :disabled="loading"
-                />
-              </div>
-
-              <div v-show="false">
-                <div class="card-divider"></div>
-                <div class="card-title">{{ ui.brandAssets }}</div>
-
-                <div class="field">
-                  <div class="label">{{ ui.logoFile }}</div>
-                  <div class="file-input-wrapper">
+                <div class="form-group">
+                  <div class="field">
+                    <div class="label">{{ ui.productName }}</div>
                     <input
-                      type="file"
-                      accept="image/png,image/svg+xml"
-                      @change="onLogoChange"
+                      v-model="productName"
+                      class="control"
+                      type="text"
+                      :placeholder="ui.productNamePh"
                       :disabled="loading"
                     />
-                    <div class="file-trigger" :class="{ 'has-file': logoFileName }">
-                      <span v-if="logoFileName" class="file-name">{{ logoFileName }}</span>
-                      <span v-else class="placeholder">{{ ui.logoUploadPh }}</span>
+                  </div>
+                  <div class="field">
+                    <div class="label">{{ ui.brandName }}</div>
+                    <input
+                      v-model="brandName"
+                      class="control"
+                      type="text"
+                      :placeholder="ui.brandNamePh"
+                      :disabled="loading"
+                    />
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="label">{{ ui.productCategory }}</div>
+                  <div class="select-wrapper">
+                    <select v-model="productCategory" class="control select" :disabled="loading">
+                      <option value="" disabled selected>{{ ui.categoryPh }}</option>
+                      <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="label">{{ ui.material }}</div>
+                  <input
+                    v-model="material"
+                    class="control"
+                    type="text"
+                    :placeholder="ui.materialPh"
+                    :disabled="loading"
+                  />
+                </div>
+
+                <div class="card-divider"></div>
+                <div class="card-title">{{ ui.visualStyle }}</div>
+
+                <div class="field">
+                  <div class="label">{{ ui.scene }}</div>
+                  <input
+                    v-model="sceneType"
+                    class="control"
+                    type="text"
+                    :placeholder="ui.scenePh"
+                    :disabled="loading"
+                  />
+                </div>
+
+                <div class="field">
+                  <div class="label">{{ ui.lighting }}</div>
+                  <input
+                    v-model="lighting"
+                    class="control"
+                    type="text"
+                    :placeholder="ui.lightingPh"
+                    :disabled="loading"
+                  />
+                </div>
+
+                <div class="field">
+                  <div class="label">{{ ui.primaryColor }}</div>
+                  <input
+                    v-model="primaryColor"
+                    class="control"
+                    type="text"
+                    :placeholder="ui.primaryColorPh"
+                    :disabled="loading"
+                  />
+                </div>
+
+                <div v-show="false">
+                  <div class="card-divider"></div>
+                  <div class="card-title">{{ ui.brandAssets }}</div>
+
+                  <div class="field">
+                    <div class="label">{{ ui.logoFile }}</div>
+                    <div class="file-input-wrapper">
+                      <input
+                        type="file"
+                        accept="image/png,image/svg+xml"
+                        @change="onLogoChange"
+                        :disabled="loading"
+                      />
+                      <div class="file-trigger" :class="{ 'has-file': logoFileName }">
+                        <span v-if="logoFileName" class="file-name">{{ logoFileName }}</span>
+                        <span v-else class="placeholder">{{ ui.logoUploadPh }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            </section>
-          </div>
+              </section>
+            </div>
 
-          <div class="side-footer">
-            <button class="primary side-action-btn" @click="onPrimary" :disabled="!canPrimary">
-              <span v-if="loading" class="loading-spinner"></span>
-              <span v-else>{{ primaryText }}</span>
-            </button>
-          </div>
-        </aside>
+            <div class="side-footer">
+              <button class="primary side-action-btn" @click="onPrimary" :disabled="!canPrimary">
+                <span v-if="loading" class="loading-spinner"></span>
+                <span v-else>{{ primaryText }}</span>
+              </button>
+            </div>
+          </aside>
+        </transition>
 
         <!-- CENTER: Main Interaction -->
         <main class="main">
@@ -237,26 +229,6 @@
                       )
                   "
                 ></textarea>
-                <div class="chips-row" style="margin-bottom: 12px">
-                  <span v-for="t in selectedOptionStyleTags" :key="t" class="chip">
-                    {{ t }}
-                    <button class="chip-x" type="button" @click="removeSelectedOptionStyleTag(t)">
-                      ×
-                    </button>
-                  </span>
-                </div>
-                <div class="tag-add-row" style="margin-bottom: 24px">
-                  <input
-                    v-model="optionStyleTagInput"
-                    class="control"
-                    type="text"
-                    placeholder="输入风格标签，回车添加"
-                    @keydown.enter.prevent="addSelectedOptionStyleTag()"
-                  />
-                  <button class="btn ghost" type="button" @click="addSelectedOptionStyleTag()">
-                    添加
-                  </button>
-                </div>
               </div>
 
               <div class="dt-actions">
@@ -308,10 +280,9 @@
                 <div class="msg msg-user">
                   <div class="msg-avatar">
                     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <circle cx="12" cy="12" r="12" fill="#333" />
                       <path
-                        d="M12 12C14.21 12 16 10.21 16 8C16 5.79 14.21 4 12 4C9.79 4 8 5.79 8 8C8 10.21 9.79 12 12 12ZM12 14C9.33 14 4 15.34 4 18V20H20V18C20 15.34 14.67 14 12 14Z"
-                        fill="#888"
+                        d="M12 12.2c2.56 0 4.64-2.08 4.64-4.64S14.56 2.92 12 2.92 7.36 5 7.36 7.56 9.44 12.2 12 12.2Zm0 2.12c-3.88 0-7.08 2.01-7.08 4.62V21h14.16v-2.06c0-2.61-3.2-4.62-7.08-4.62Z"
+                        fill="currentColor"
                       />
                     </svg>
                   </div>
@@ -349,10 +320,9 @@
               <div v-if="pendingUserText" class="msg msg-user">
                 <div class="msg-avatar">
                   <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="12" cy="12" r="12" fill="#333" />
                     <path
-                      d="M12 12C14.21 12 16 10.21 16 8C16 5.79 14.21 4 12 4C9.79 4 8 5.79 8 8C8 10.21 9.79 12 12 12ZM12 14C9.33 14 4 15.34 4 18V20H20V18C20 15.34 14.67 14 12 14Z"
-                      fill="#888"
+                      d="M12 12.2c2.56 0 4.64-2.08 4.64-4.64S14.56 2.92 12 2.92 7.36 5 7.36 7.56 9.44 12.2 12 12.2Zm0 2.12c-3.88 0-7.08 2.01-7.08 4.62V21h14.16v-2.06c0-2.61-3.2-4.62-7.08-4.62Z"
+                      fill="currentColor"
                     />
                   </svg>
                 </div>
@@ -390,12 +360,12 @@
               </div>
 
               <textarea
+                ref="chatInputRef"
                 v-model="userInput"
                 class="textarea"
                 :placeholder="ui.inputPlaceholder"
-                :disabled="loading"
                 maxlength="500"
-                @keydown.enter.ctrl="onPrimary"
+                @keydown.enter.ctrl="loading ? onStop() : onPrimary()"
               ></textarea>
 
               <div class="input-toolbar">
@@ -410,6 +380,17 @@
                     <span class="toggle-icon">✦</span>
                     <span class="toggle-text">{{ ui.deepThinkToggle }}</span>
                   </label>
+
+                  <button
+                    class="toggle-btn"
+                    type="button"
+                    :class="{ active: productSidebarOpen }"
+                    @click="toggleProductSidebar"
+                    :disabled="loading"
+                  >
+                    <span class="toggle-icon">▦</span>
+                    <span class="toggle-text">{{ ui.productSpecial }}</span>
+                  </button>
 
                   <!-- Hidden Inputs -->
                   <input
@@ -430,8 +411,13 @@
 
                 <div class="right-tools">
                   <span class="footer-hint">{{ ui.sendHint }}</span>
-                  <button class="send-btn" @click="onPrimary" :disabled="!canPrimary">
-                    <span v-if="loading">...</span>
+                  <button
+                    class="send-btn"
+                    :class="{ stop: loading }"
+                    @click="loading ? onStop() : onPrimary()"
+                    :disabled="loading ? false : !canPrimary"
+                  >
+                    <span v-if="loading">■</span>
                     <span v-else>↑</span>
                   </button>
                 </div>
@@ -489,6 +475,8 @@ import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useAgentImgFlow } from './composables/useAgentImgFlow';
 import { useAgentImgSettings } from './composables/useAgentImgSettings';
+import TitleBar from './components/TitleBar.vue';
+import { buildApiUrl } from '@/utils/api';
 import {
   ensureGuestUserId,
   getAuthToken,
@@ -551,6 +539,7 @@ const ui = computed(() => {
       imageLabel: 'Image',
       addImage: '添加图片',
       deepThinkToggle: '深度思考',
+      productSpecial: '产品专项',
       sendHint: 'Ctrl + Enter 发送',
       inputPlaceholder: '描述你想要的产品图，比如：“一瓶精华液放在冰块上，背景是阳光海滩”...',
       loadingText: '正在处理，请耐心等待…'
@@ -597,6 +586,7 @@ const ui = computed(() => {
     imageLabel: 'Image',
     addImage: 'Add Image',
     deepThinkToggle: 'Deep Thinking',
+    productSpecial: 'Product',
     sendHint: 'Ctrl + Enter to send',
     inputPlaceholder:
       'Describe your scene, e.g. a sparkling soda on ice cubes with a sunny beach background...',
@@ -605,7 +595,7 @@ const ui = computed(() => {
 });
 
 type HistoryItem = {
-  id: number;
+  id: string | number;
   timestamp: number;
   userText: string;
   result: AgentImgPromptResult;
@@ -691,7 +681,15 @@ const {
     return ok.length ? ok : undefined;
   }
 });
-const optionStyleTagInput = ref('');
+const activeImgAbort = ref<AbortController | null>(null);
+const abortImg2Img = () => {
+  const ctl = activeImgAbort.value;
+  if (!ctl) return;
+  try {
+    ctl.abort();
+  } catch {}
+  activeImgAbort.value = null;
+};
 const pendingUserText = ref('');
 const chatScrollEl = ref<HTMLElement | null>(null);
 
@@ -762,33 +760,17 @@ const updateSelectedOptionSummary = (next: string) => {
   options.value[idx] = { ...cur, summary: String(next || '') };
 };
 
-const addSelectedOptionStyleTag = () => {
-  const idx = selectedOptionIndex.value;
-  if (idx < 0) return;
-  const tag = normalizeTag(optionStyleTagInput.value);
-  if (!tag) return;
-  optionStyleTagInput.value = '';
-  const cur = options.value[idx];
-  const nextTags = ensureUniqueTags([...(cur.styleTags || []), tag]);
-  options.value[idx] = { ...cur, styleTags: nextTags };
-};
-
-const removeSelectedOptionStyleTag = (tag: string) => {
-  const idx = selectedOptionIndex.value;
-  if (idx < 0) return;
-  const cur = options.value[idx];
-  const key = normalizeTag(tag).toLowerCase();
-  const nextTags = (cur.styleTags || []).filter((t) => normalizeTag(t).toLowerCase() !== key);
-  options.value[idx] = { ...cur, styleTags: nextTags };
-};
-
 const router = useRouter();
 
-const showMobileSettings = ref(false);
+const productSidebarOpen = ref(false);
 const previewUrls = ref<string[]>(['', '']);
 const previewFiles = ref<(File | null)[]>([null, null]);
 const fileInputs = ref<HTMLInputElement[]>([]);
 const hasPreviews = computed(() => previewUrls.value.some((u) => !!u));
+
+const toggleProductSidebar = () => {
+  productSidebarOpen.value = !productSidebarOpen.value;
+};
 
 const triggerUpload = () => {
   // Find first empty slot
@@ -843,7 +825,12 @@ const loadHistoryFromStorage = () => {
     const list = Array.isArray(parsed) ? parsed : [];
     const normalized: HistoryItem[] = [];
     for (const it of list) {
-      const id = typeof it?.id === 'number' && Number.isFinite(it.id) ? it.id : 0;
+      const id =
+        typeof it?.id === 'string'
+          ? it.id.trim()
+          : typeof it?.id === 'number' && Number.isFinite(it.id)
+            ? it.id
+            : '';
       const timestamp =
         typeof it?.timestamp === 'number' && Number.isFinite(it.timestamp) ? it.timestamp : 0;
       const userText = typeof it?.userText === 'string' ? it.userText.trim() : '';
@@ -880,8 +867,71 @@ const loadHistoryFromStorage = () => {
 
 const historyForSidebar = computed(() => [...history.value].slice().reverse());
 
+const resolveRemoteUrl = (raw: string) => {
+  const u = String(raw || '').trim();
+  if (!u) return '';
+  if (u.startsWith('/')) return buildApiUrl(u);
+  return u;
+};
+
+const loadHistoryFromServer = async () => {
+  try {
+    syncAuth();
+    const userId = String(authUserId.value || '').trim();
+    const token = String(authToken.value || '').trim();
+    if (!userId || !token || !isAuthed.value) return false;
+    const url = buildApiUrl(`/api/images/history/${encodeURIComponent(userId)}?limit=200`);
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return false;
+    const json: any = await res.json().catch(() => null);
+    const items: any[] = Array.isArray(json?.items) ? json.items : [];
+    const mapped = items
+      .map((it): HistoryItem | null => {
+        const ts = typeof it?.ts === 'number' && Number.isFinite(it.ts) ? it.ts : 0;
+        const prompt = typeof it?.prompt === 'string' ? it.prompt.trim() : '';
+        const negativePrompt =
+          typeof it?.negativePrompt === 'string' ? it.negativePrompt.trim() : '';
+        const images = Array.isArray(it?.images) ? it.images : [];
+        const inputImages = Array.isArray(it?.inputImages) ? it.inputImages : [];
+        const firstUrl = (() => {
+          for (const img of images) {
+            const u = typeof img?.url === 'string' ? img.url.trim() : '';
+            const resolved = resolveRemoteUrl(u);
+            if (resolved) return resolved;
+          }
+          return '';
+        })();
+        const refs = inputImages
+          .map((x: any) => (typeof x?.url === 'string' ? x.url.trim() : ''))
+          .map((x: string) => resolveRemoteUrl(x))
+          .filter((x: string) => !!x)
+          .slice(0, 3);
+        if (!ts || !prompt || !negativePrompt) return null;
+        const idRaw = typeof it?.id === 'string' && it.id.trim() ? it.id.trim() : `h_${ts}`;
+        const aiText =
+          currentLang.value === 'zh' ? '已从服务器历史记录恢复。' : 'Restored from server history.';
+        return {
+          id: idRaw,
+          timestamp: ts,
+          userText: prompt,
+          result: { prompt, negativePrompt, params: it?.params },
+          image: firstUrl || null,
+          ...(refs.length ? { refImages: refs } : {}),
+          ...(aiText ? { aiText } : {})
+        };
+      })
+      .filter((x): x is HistoryItem => x !== null);
+    mapped.sort((a, b) => a.timestamp - b.timestamp);
+    history.value = mapped.slice(-MAX_HISTORY);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 let historyPersistTimer: number | null = null;
 const persistHistoryThrottled = () => {
+  if (isAuthed.value) return;
   if (historyPersistTimer) return;
   historyPersistTimer = window.setTimeout(() => {
     historyPersistTimer = null;
@@ -1002,37 +1052,87 @@ const canPrimary = computed(() => {
 
 const fileToThumbDataUrl = (f: File): Promise<string | null> => {
   return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onerror = () => resolve(null);
-    reader.onload = () => {
-      const raw = String(reader.result || '');
-      if (!raw.startsWith('data:')) return resolve(null);
-      const img = new Image();
-      img.onload = () => {
-        const maxDim = 360;
-        const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round((img.width || 1) * scale));
-        canvas.height = Math.max(1, Math.round((img.height || 1) * scale));
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return resolve(raw);
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        try {
-          resolve(canvas.toDataURL('image/jpeg', 0.82));
-        } catch {
-          resolve(raw);
-        }
-      };
-      img.onerror = () => resolve(raw);
-      img.src = raw;
+    const srcUrl = URL.createObjectURL(f);
+    const done = (v: string | null) => {
+      try {
+        URL.revokeObjectURL(srcUrl);
+      } catch {}
+      resolve(v);
     };
-    reader.readAsDataURL(f);
+
+    const fallbackRead = () => {
+      const reader = new FileReader();
+      reader.onerror = () => done(null);
+      reader.onload = () => {
+        const raw = String(reader.result || '');
+        if (!raw.startsWith('data:image/')) return done(null);
+        done(raw);
+      };
+      reader.readAsDataURL(f);
+    };
+
+    const drawThumb = (w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void) => {
+      const maxDim = 360;
+      const scale = Math.min(1, maxDim / Math.max(w || 1, h || 1));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round((w || 1) * scale));
+      canvas.height = Math.max(1, Math.round((h || 1) * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return fallbackRead();
+      try {
+        draw(ctx);
+      } catch {
+        return fallbackRead();
+      }
+      try {
+        done(canvas.toDataURL('image/jpeg', 0.82));
+      } catch {
+        fallbackRead();
+      }
+    };
+
+    const tryBitmap = async () => {
+      const fn = (window as any).createImageBitmap;
+      if (typeof fn !== 'function') return false;
+      try {
+        const bmp = (await fn(f)) as ImageBitmap;
+        drawThumb(bmp.width, bmp.height, (ctx) => {
+          const canvas = ctx.canvas as HTMLCanvasElement;
+          ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+        });
+        try {
+          bmp.close();
+        } catch {}
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    void (async () => {
+      const ok = await tryBitmap();
+      if (ok) return;
+      const img = new Image();
+      try {
+        (img as any).decoding = 'async';
+      } catch {}
+      img.onload = () => {
+        drawThumb(img.width || 1, img.height || 1, (ctx) => {
+          const canvas = ctx.canvas as HTMLCanvasElement;
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        });
+      };
+      img.onerror = () => fallbackRead();
+      img.src = srcUrl;
+    })();
   });
 };
 
 const humanizeImgError = (code: string) => {
   const c = String(code || '').trim();
   if (!c) return currentLang.value === 'zh' ? '出图失败，请稍后再试' : 'Image generation failed.';
+  if (c === 'ABORTED' || c === 'AbortError' || /aborted/i.test(c))
+    return currentLang.value === 'zh' ? '已取消' : 'Cancelled.';
   if (c === 'INSUFFICIENT_CREDITS')
     return currentLang.value === 'zh'
       ? '积分不足，请前往「算力商城」充值'
@@ -1081,6 +1181,7 @@ const applyLogoInstructionToPrompt = (prompt: string) => {
 
 const doPrimary = async () => {
   cancel();
+  abortImg2Img();
   const activeUserText = String(userInput.value || '').trim();
   pendingUserText.value = activeUserText;
   if (!activeUserText) {
@@ -1115,24 +1216,30 @@ const doPrimary = async () => {
       params?: AgentImgPromptResult['params'];
       images: Img2ImgImageInput[];
     }) => {
+      abortImg2Img();
+      const ctl = new AbortController();
+      activeImgAbort.value = ctl;
       const res = await img2img({
         prompt: args.prompt,
         negativePrompt: args.negativePrompt,
         params: args.params,
         images: args.images,
-        timeoutMs: 120000
+        timeoutMs: 120000,
+        signal: ctl.signal
       });
+      if (activeImgAbort.value === ctl) activeImgAbort.value = null;
       if (!res.ok) {
         if (res.wallet) creditsBalance.value = res.wallet;
         error.value = humanizeImgError(res.errorCode || res.error);
         return { ok: false as const, url: '' };
       }
       const url = String(res.images?.[0]?.url || '').trim();
-      if (!url) {
+      const resolvedUrl = resolveRemoteUrl(url);
+      if (!resolvedUrl) {
         error.value = humanizeImgError('EMPTY_IMAGE_RESULT');
         return { ok: false as const, url: '' };
       }
-      return { ok: true as const, url };
+      return { ok: true as const, url: resolvedUrl };
     };
 
     loading.value = true;
@@ -1194,13 +1301,16 @@ const doPrimary = async () => {
 
   if (deepMode.value) {
     if (options.value.length === 0) {
-      await analyzeDirections();
+      const p = analyzeDirections();
+      userInput.value = '';
+      await p;
       pendingUserText.value = '';
       return;
     }
 
     const idx = selectedOptionIndex.value;
     if (idx < 0) {
+      userInput.value = '';
       pendingUserText.value = '';
       return;
     }
@@ -1212,6 +1322,7 @@ const doPrimary = async () => {
     selectedOptionId.value = '';
 
     const id = Date.now();
+    userInput.value = '';
     const { ok, url } = await runGen(fp);
     const refThumbsRaw = await Promise.all(
       previewFiles.value
@@ -1247,6 +1358,7 @@ const doPrimary = async () => {
     negativePrompt: buildNegativePrompt()
   };
   const id = Date.now();
+  userInput.value = '';
   const { ok, url } = await runGen(fp);
   const refThumbsRaw = await Promise.all(
     previewFiles.value
@@ -1281,7 +1393,12 @@ const onPrimary = async () => {
   await doPrimary();
 };
 
-const scrollToGeneration = (id: number) => {
+const onStop = () => {
+  cancel();
+  abortImg2Img();
+};
+
+const scrollToGeneration = (id: string | number) => {
   const el = document.getElementById(`gen-${id}`);
   if (!el) return;
   el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1365,6 +1482,7 @@ const onPreviewChange = (idx: number, e: Event) => {
   setPreviewUrl(idx, url);
   deepMode.value = false;
   cancel();
+  abortImg2Img();
   reset();
   if (input) input.value = '';
   if (userInput.value.trim()) {
@@ -1378,35 +1496,64 @@ const clearPreview = (idx: number) => {
 };
 
 onBeforeUnmount(() => {
+  abortImg2Img();
   for (let i = 0; i < previewUrls.value.length; i++) setPreviewUrl(i, '');
 });
 
 const handleAuthChanged = () => {
   syncAuth();
   authTick.value++;
-  loadHistoryFromStorage();
+  if (isAuthed.value) void loadHistoryFromServer();
+  else loadHistoryFromStorage();
   if (isAuthed.value) void refreshCredits();
   else creditsBalance.value = null;
+};
+
+const chatInputRef = ref<HTMLTextAreaElement | null>(null);
+
+const onGlobalPointerDown = (e: PointerEvent) => {
+  const target = e.target as HTMLElement | null;
+  if (!target) return;
+
+  if (!target.closest('.user-menu') && !target.closest('.auth-card')) {
+    showUserMenu.value = false;
+  }
+
+  if (target.closest('input, textarea, [contenteditable="true"], .msg-bubble')) return;
+
+  const active = document.activeElement as HTMLElement | null;
+  if (!active) return;
+
+  if (active === chatInputRef.value) {
+    try {
+      chatInputRef.value?.blur();
+    } catch {}
+    return;
+  }
+
+  if (
+    active instanceof HTMLInputElement ||
+    active instanceof HTMLTextAreaElement ||
+    active.getAttribute('contenteditable') === 'true'
+  ) {
+    try {
+      active.blur();
+    } catch {}
+  }
 };
 
 onMounted(() => {
   handleAuthChanged();
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
-  window.addEventListener('click', onWindowClick);
+  document.addEventListener('pointerdown', onGlobalPointerDown, true);
 });
 
-const onWindowClick = (e: MouseEvent) => {
-  const el = e.target as HTMLElement | null;
-  if (!el) return;
-  if (el.closest('.user-menu') || el.closest('.auth-card')) return;
-  showUserMenu.value = false;
-};
-
 onBeforeUnmount(() => {
+  abortImg2Img();
   if (historyPersistTimer) window.clearTimeout(historyPersistTimer);
   historyPersistTimer = null;
   window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
-  window.removeEventListener('click', onWindowClick);
+  document.removeEventListener('pointerdown', onGlobalPointerDown, true);
 });
 </script>
 
@@ -1436,6 +1583,30 @@ onBeforeUnmount(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  cursor: default;
+  user-select: none;
+}
+
+.artigen-page .msg-bubble {
+  cursor: text;
+  user-select: text;
+}
+
+.artigen-page textarea,
+.artigen-page input[type='text'],
+.artigen-page input[type='search'],
+.artigen-page input[type='email'],
+.artigen-page input[type='password'] {
+  cursor: text;
+  user-select: text;
+}
+
+.artigen-page button,
+.artigen-page select,
+.artigen-page input[type='checkbox'],
+.artigen-page input[type='range'],
+.artigen-page input[type='file'] {
+  cursor: pointer;
 }
 
 /* Scrollbar */
@@ -1495,6 +1666,7 @@ onBeforeUnmount(() => {
 .header-right {
   flex: 0 0 auto;
   display: flex;
+  margin: 0 0 0 auto;
   align-items: center;
 }
 
@@ -1835,8 +2007,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 32px;
-  max-width: 1000px;
-  margin: 0 auto;
+  max-width: 1300px;
+  margin: 0 0 0 auto;
   width: 100%;
 }
 
@@ -1871,6 +2043,26 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.msg-user .msg-avatar {
+  background:
+    radial-gradient(120% 120% at 28% 22%, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 48%),
+    linear-gradient(
+      135deg,
+      rgba(204, 255, 0, 0.95) 0%,
+      rgba(102, 255, 204, 0.86) 55%,
+      rgba(84, 109, 255, 0.78) 100%
+    );
+  border: 1px solid rgba(204, 255, 0, 0.45);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.55) inset,
+    0 10px 24px rgba(0, 0, 0, 0.45),
+    0 0 18px rgba(204, 255, 0, 0.12);
+  color: rgba(10, 10, 10, 0.9);
+}
+.msg-user .msg-avatar svg {
+  width: 62%;
+  height: 62%;
 }
 .msg-avatar img,
 .msg-avatar svg {
@@ -2274,6 +2466,18 @@ onBeforeUnmount(() => {
   display: none;
 }
 
+.side-fade-enter-active,
+.side-fade-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+.side-fade-enter-from,
+.side-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-10px);
+}
+
 .right-tools {
   display: flex;
   align-items: center;
@@ -2327,6 +2531,7 @@ onBeforeUnmount(() => {
 }
 
 .mobile-overlay {
+  display: none;
   position: fixed;
   top: 64px;
   left: 0;
@@ -2341,6 +2546,10 @@ onBeforeUnmount(() => {
 @media (max-width: 768px) {
   .mobile-menu-btn {
     display: flex;
+  }
+
+  .mobile-overlay {
+    display: block;
   }
 
   .header-left {
@@ -2809,5 +3018,81 @@ onBeforeUnmount(() => {
 .history-content {
   flex: 1;
   min-width: 0;
+}
+
+@media (min-width: 1280px) {
+  .chat-scroll {
+    padding: 34px 32px;
+  }
+
+  .messages {
+    max-width: 1180px;
+    gap: 36px;
+  }
+
+  .msg {
+    gap: 18px;
+  }
+
+  .msg-avatar {
+    width: 44px;
+    height: 44px;
+  }
+
+  .msg-bubble {
+    padding: 22px;
+    font-size: 15px;
+    margin-bottom: 44px;
+  }
+
+  .right-side {
+    width: 340px;
+  }
+
+  .right-header {
+    padding: 16px 14px;
+  }
+
+  .right-title {
+    font-size: 15px;
+  }
+
+  .history-list {
+    padding: 12px 10px;
+    direction: rtl;
+  }
+
+  .history-list > * {
+    direction: ltr;
+  }
+
+  .history-list::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .history-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .history-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+  }
+
+  .history-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.26);
+  }
+
+  .history-item {
+    padding: 14px;
+    font-size: 13px;
+    border-radius: 10px;
+  }
+
+  .history-image-placeholder {
+    width: 54px;
+    height: 54px;
+    border-radius: 10px;
+  }
 }
 </style>

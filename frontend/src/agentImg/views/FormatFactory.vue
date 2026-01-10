@@ -1,40 +1,24 @@
 <template>
   <div class="format-factory-page">
-    <header class="top-header">
-      <div class="top-header-inner">
-        <router-link to="/artigen" class="top-logo">
-          <span class="top-logo-text">Artigen</span>
-        </router-link>
-
-        <nav class="top-nav">
-          <router-link to="/artigen/format-factory" class="top-nav-item active"
-            >格式工厂</router-link
-          >
-          <router-link to="/artigen/ai" class="top-nav-item">AI工坊</router-link>
-          <router-link to="/artigen/market" class="top-nav-item">算力商城</router-link>
-        </nav>
-
-        <div class="top-actions">
-          <router-link to="/" class="top-action-link">PORTFOLIO</router-link>
-        </div>
-      </div>
-    </header>
+    <TitleBar />
 
     <div class="factory-header">
       <div class="badge-row">
         <span class="dot"></span>
-        <span class="badge-text">格式工具</span>
+        <span class="badge-text">{{ ui.badgeText }}</span>
       </div>
 
       <div class="title-row">
-        <h1 class="main-title">格式 <span class="highlight">工厂</span></h1>
+        <h1 class="main-title">
+          {{ ui.mainTitle1 }} <span class="highlight">{{ ui.mainTitle2 }}</span>
+        </h1>
         <div class="secure-badge">
           <span class="icon">🔒</span>
-          无需登录 · 免费使用
+          {{ ui.secureBadge }}
         </div>
       </div>
 
-      <p class="subtitle">纯前端处理 · 隐私安全 · {{ tools.length }} 种格式工具</p>
+      <p class="subtitle">{{ ui.subtitlePrefix }} {{ tools.length }} {{ ui.subtitleSuffix }}</p>
     </div>
 
     <div class="tools-grid">
@@ -61,7 +45,7 @@
       </div>
     </div>
 
-    <div class="security-note">// 所有转换均在浏览器本地完成，文件不会上传到服务器</div>
+    <div class="security-note">{{ ui.securityNote }}</div>
 
     <div v-if="soonTip" class="ff-toast">{{ soonTip }}</div>
 
@@ -85,36 +69,27 @@
             <div class="tool-grid">
               <div class="tool-card-panel">
                 <div class="panel-title">
-                  {{ activeTool.id === 'ingredient-list' ? '输入内容' : '输入文件' }}
+                  {{ activeTool.id === 'ingredient-list' ? ui.panelInputText : ui.panelInputFile }}
                 </div>
                 <div class="panel-body">
                   <template v-if="activeTool.id === 'ingredient-list'">
                     <div class="field-row">
-                      <div class="field-label">产品名（可选）</div>
-                      <input
-                        v-model="ingredientProductName"
-                        class="control"
-                        type="text"
-                        placeholder="例如 Artigen Gummies"
-                      />
-                    </div>
-                    <div class="field-row">
-                      <div class="field-label">类型</div>
+                      <div class="field-label">{{ ui.ingredientTypeLabel }}</div>
                       <select v-model="ingredientProductType" class="control">
-                        <option value="Auto">自动</option>
-                        <option value="Food">食品</option>
-                        <option value="Dietary Supplement">膳食补充剂</option>
-                        <option value="Cosmetic">化妆品</option>
-                        <option value="Drug">药品</option>
+                        <option value="Auto">{{ ui.ingredientTypeAuto }}</option>
+                        <option value="Food">{{ ui.ingredientTypeFood }}</option>
+                        <option value="Dietary Supplement">{{ ui.ingredientTypeDietary }}</option>
+                        <option value="Cosmetic">{{ ui.ingredientTypeCosmetic }}</option>
+                        <option value="Drug">{{ ui.ingredientTypeDrug }}</option>
                       </select>
                     </div>
                     <div class="field-row">
-                      <div class="field-label">文本</div>
+                      <div class="field-label">{{ ui.ingredientTextLabel }}</div>
                       <textarea
                         v-model="ingredientText"
                         class="control"
                         rows="10"
-                        placeholder="粘贴配料/配方/包装描述文本（支持中英文，自动转美式英文输出）"
+                        :placeholder="ui.ingredientTextPh"
                       ></textarea>
                     </div>
                   </template>
@@ -139,7 +114,7 @@
                         @change="onFileChange"
                       />
                       <div class="file-drop-icon">📂</div>
-                      <div class="file-drop-title">点击或拖拽文件到这里</div>
+                      <div class="file-drop-title">{{ ui.fileDropTitle }}</div>
                       <div class="file-drop-sub">{{ acceptHintFor(activeTool.id) }}</div>
                     </label>
                   </template>
@@ -173,7 +148,10 @@
                       ></canvas>
                     </div>
                     <div v-else-if="activeTool.id === 'pdf'" class="help-box">
-                      已选择 PDF{{ pdfPageCount ? ' · ' + pdfPageCount + ' 页' : '' }}
+                      {{ ui.pdfSelectedPrefix
+                      }}{{
+                        pdfPageCount ? ui.pdfSelectedMid + pdfPageCount + ui.pdfSelectedSuffix : ''
+                      }}
                     </div>
                     <video
                       v-else-if="activeTool.id === 'live'"
@@ -198,11 +176,11 @@
               </div>
 
               <div class="tool-card-panel">
-                <div class="panel-title">参数</div>
+                <div class="panel-title">{{ ui.panelParams }}</div>
                 <div class="panel-body">
                   <template v-if="activeTool.id === 'webp'">
                     <div class="field-row">
-                      <div class="field-label">输出格式</div>
+                      <div class="field-label">{{ ui.outFormatLabel }}</div>
                       <select v-model="webpOutFormat" class="control">
                         <option value="image/webp">WEBP</option>
                         <option value="image/jpeg">JPEG</option>
@@ -211,7 +189,7 @@
                     </div>
 
                     <div v-if="webpOutFormat !== 'image/png'" class="field-row">
-                      <div class="field-label">质量</div>
+                      <div class="field-label">{{ ui.qualityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="webpQuality"
@@ -228,7 +206,7 @@
 
                   <template v-else-if="activeTool.id === 'jpeg'">
                     <div class="field-row">
-                      <div class="field-label">质量</div>
+                      <div class="field-label">{{ ui.qualityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="jpegQuality"
@@ -243,53 +221,53 @@
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">最长边(可选)</div>
+                      <div class="field-label">{{ ui.maxSideOptionalLabel }}</div>
                       <input
                         v-model="jpegMaxSide"
                         class="control"
                         type="number"
                         min="16"
-                        placeholder="例如 1600"
+                        :placeholder="ui.eg1600"
                       />
                     </div>
                   </template>
 
                   <template v-else-if="activeTool.id === 'resize'">
                     <div class="field-row">
-                      <div class="field-label">宽度(px)</div>
+                      <div class="field-label">{{ ui.widthPxLabel }}</div>
                       <input
                         v-model="resizeWidth"
                         class="control"
                         type="number"
                         min="1"
-                        placeholder="留空表示自动"
+                        :placeholder="ui.blankAutoPh"
                       />
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">高度(px)</div>
+                      <div class="field-label">{{ ui.heightPxLabel }}</div>
                       <input
                         v-model="resizeHeight"
                         class="control"
                         type="number"
                         min="1"
-                        placeholder="留空表示自动"
+                        :placeholder="ui.blankAutoPh"
                       />
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">最长边(px)</div>
+                      <div class="field-label">{{ ui.maxSidePxLabel }}</div>
                       <input
                         v-model="resizeMaxSide"
                         class="control"
                         type="number"
                         min="16"
-                        placeholder="仅在宽高都留空时生效"
+                        :placeholder="ui.maxSideHintPh"
                       />
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">输出格式</div>
+                      <div class="field-label">{{ ui.outFormatLabel }}</div>
                       <select v-model="resizeOutFormat" class="control">
                         <option value="image/png">PNG</option>
                         <option value="image/jpeg">JPEG</option>
@@ -298,7 +276,7 @@
                     </div>
 
                     <div v-if="resizeOutFormat !== 'image/png'" class="field-row">
-                      <div class="field-label">质量</div>
+                      <div class="field-label">{{ ui.qualityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="resizeQuality"
@@ -315,7 +293,7 @@
 
                   <template v-else-if="activeTool.id === 'rotate'">
                     <div class="field-row">
-                      <div class="field-label">旋转</div>
+                      <div class="field-label">{{ ui.rotateLabel }}</div>
                       <select v-model.number="rotateDeg" class="control">
                         <option :value="0">0°</option>
                         <option :value="90">90°</option>
@@ -325,21 +303,21 @@
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">翻转</div>
+                      <div class="field-label">{{ ui.flipLabel }}</div>
                       <div class="chips">
                         <label class="chip" :class="{ active: rotateFlipH }">
                           <input v-model="rotateFlipH" type="checkbox" style="display: none" />
-                          水平镜像
+                          {{ ui.flipH }}
                         </label>
                         <label class="chip" :class="{ active: rotateFlipV }">
                           <input v-model="rotateFlipV" type="checkbox" style="display: none" />
-                          垂直镜像
+                          {{ ui.flipV }}
                         </label>
                       </div>
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">输出格式</div>
+                      <div class="field-label">{{ ui.outFormatLabel }}</div>
                       <select v-model="rotateOutFormat" class="control">
                         <option value="image/png">PNG</option>
                         <option value="image/jpeg">JPEG</option>
@@ -348,7 +326,7 @@
                     </div>
 
                     <div v-if="rotateOutFormat !== 'image/png'" class="field-row">
-                      <div class="field-label">质量</div>
+                      <div class="field-label">{{ ui.qualityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="rotateQuality"
@@ -365,16 +343,16 @@
 
                   <template v-else-if="activeTool.id === 'filter'">
                     <div class="field-row">
-                      <div class="field-label">滤镜</div>
+                      <div class="field-label">{{ ui.filterLabel }}</div>
                       <select v-model="filterPreset" class="control">
-                        <option value="grayscale">黑白</option>
-                        <option value="sepia">复古</option>
-                        <option value="invert">反色</option>
+                        <option value="grayscale">{{ ui.filterGrayscale }}</option>
+                        <option value="sepia">{{ ui.filterSepia }}</option>
+                        <option value="invert">{{ ui.filterInvert }}</option>
                       </select>
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">强度</div>
+                      <div class="field-label">{{ ui.intensityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="filterIntensity"
@@ -389,7 +367,7 @@
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">输出格式</div>
+                      <div class="field-label">{{ ui.outFormatLabel }}</div>
                       <select v-model="filterOutFormat" class="control">
                         <option value="image/png">PNG</option>
                         <option value="image/jpeg">JPEG</option>
@@ -398,7 +376,7 @@
                     </div>
 
                     <div v-if="filterOutFormat !== 'image/png'" class="field-row">
-                      <div class="field-label">质量</div>
+                      <div class="field-label">{{ ui.qualityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="filterQuality"
@@ -415,7 +393,7 @@
 
                   <template v-else-if="activeTool.id === 'ico'">
                     <div class="field-row">
-                      <div class="field-label">尺寸</div>
+                      <div class="field-label">{{ ui.icoSizesLabel }}</div>
                       <div class="chips">
                         <button
                           v-for="s in icoSizeOptions"
@@ -433,21 +411,21 @@
 
                   <template v-else-if="activeTool.id === 'watermark'">
                     <div class="field-row">
-                      <div class="field-label">选择方式</div>
-                      <div class="help-box">在左侧预览图中拖拽框选区域</div>
+                      <div class="field-label">{{ ui.wmPickLabel }}</div>
+                      <div class="help-box">{{ ui.wmPickHelp }}</div>
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">处理方式</div>
+                      <div class="field-label">{{ ui.wmMethodLabel }}</div>
                       <select v-model="wmMode" class="control">
-                        <option value="blur">模糊</option>
-                        <option value="pixelate">马赛克</option>
-                        <option value="fill">纯色覆盖</option>
+                        <option value="blur">{{ ui.wmMethodBlur }}</option>
+                        <option value="pixelate">{{ ui.wmMethodPixelate }}</option>
+                        <option value="fill">{{ ui.wmMethodFill }}</option>
                       </select>
                     </div>
 
                     <div v-if="wmMode === 'blur'" class="field-row">
-                      <div class="field-label">强度</div>
+                      <div class="field-label">{{ ui.intensityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="wmBlurPx"
@@ -462,7 +440,7 @@
                     </div>
 
                     <div v-else-if="wmMode === 'pixelate'" class="field-row">
-                      <div class="field-label">颗粒</div>
+                      <div class="field-label">{{ ui.wmPixelLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="wmPixelSize"
@@ -477,7 +455,7 @@
                     </div>
 
                     <div v-else class="field-row">
-                      <div class="field-label">颜色</div>
+                      <div class="field-label">{{ ui.colorLabel }}</div>
                       <input
                         v-model="wmFillColor"
                         class="control"
@@ -493,7 +471,7 @@
                         type="button"
                         @click="applyWatermarkSelection"
                       >
-                        应用到选区
+                        {{ ui.wmApply }}
                       </button>
                       <button
                         class="btn ghost"
@@ -501,7 +479,7 @@
                         type="button"
                         @click="undoWatermark"
                       >
-                        撤销
+                        {{ ui.undo }}
                       </button>
                       <button
                         class="btn ghost"
@@ -509,12 +487,12 @@
                         type="button"
                         @click="clearWatermarkSelection"
                       >
-                        清除选区
+                        {{ ui.wmClear }}
                       </button>
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">导出格式</div>
+                      <div class="field-label">{{ ui.exportFormatLabel }}</div>
                       <select v-model="wmOutFormat" class="control">
                         <option value="image/png">PNG</option>
                         <option value="image/jpeg">JPEG</option>
@@ -523,7 +501,7 @@
                     </div>
 
                     <div v-if="wmOutFormat !== 'image/png'" class="field-row">
-                      <div class="field-label">导出质量</div>
+                      <div class="field-label">{{ ui.exportQualityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="wmOutQuality"
@@ -540,7 +518,7 @@
 
                   <template v-else-if="activeTool.id === 'live'">
                     <div class="field-row">
-                      <div class="field-label">时间轴</div>
+                      <div class="field-label">{{ ui.liveTimelineLabel }}</div>
                       <div class="range-row">
                         <input
                           class="range"
@@ -556,13 +534,15 @@
                       </div>
                       <div class="help-box">
                         {{
-                          liveDuration ? '总时长 ' + formatTime(liveDuration) : '加载视频元信息中…'
+                          liveDuration
+                            ? ui.liveTotalDurationPrefix + formatTime(liveDuration)
+                            : ui.liveLoadingMetaLabel
                         }}
                       </div>
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">输出格式</div>
+                      <div class="field-label">{{ ui.outFormatLabel }}</div>
                       <select v-model="liveOutFormat" class="control">
                         <option value="image/png">PNG</option>
                         <option value="image/jpeg">JPEG</option>
@@ -571,7 +551,7 @@
                     </div>
 
                     <div v-if="liveOutFormat !== 'image/png'" class="field-row">
-                      <div class="field-label">质量</div>
+                      <div class="field-label">{{ ui.qualityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="liveOutQuality"
@@ -592,49 +572,53 @@
                         type="button"
                         @click="runTool"
                       >
-                        截取当前帧
+                        {{ ui.captureCurrentFrame }}
                       </button>
                     </div>
                   </template>
 
                   <template v-else-if="activeTool.id === 'pdf'">
                     <div class="field-row">
-                      <div class="field-label">导出模式</div>
+                      <div class="field-label">{{ ui.pdfExportModeLabel }}</div>
                       <select v-model="pdfMode" class="control">
-                        <option value="stitch">长图拼接（多页）</option>
-                        <option value="page">单页导出</option>
+                        <option value="stitch">{{ ui.pdfModeStitch }}</option>
+                        <option value="page">{{ ui.pdfModeSingle }}</option>
                       </select>
                     </div>
 
                     <div v-if="pdfMode === 'page'" class="field-row">
-                      <div class="field-label">页码</div>
+                      <div class="field-label">{{ ui.pdfPageNumberLabel }}</div>
                       <input
                         v-model.number="pdfPageNumber"
                         class="control"
                         type="number"
                         min="1"
-                        placeholder="例如 1"
+                        :placeholder="ui.eg1"
                       />
                       <div class="help-box">
-                        {{ pdfPageCount ? '共 ' + pdfPageCount + ' 页' : '读取页数中…' }}
+                        {{
+                          pdfPageCount
+                            ? ui.pdfTotalPagesPrefix + pdfPageCount + ui.pdfTotalPagesSuffix
+                            : ui.pdfReadingPages
+                        }}
                       </div>
                     </div>
 
                     <div v-else class="field-row">
-                      <div class="field-label">最多页数</div>
+                      <div class="field-label">{{ ui.pdfMaxPagesLabel }}</div>
                       <input
                         v-model.number="pdfMaxPages"
                         class="control"
                         type="number"
                         min="1"
                         max="50"
-                        placeholder="例如 12"
+                        :placeholder="ui.eg12"
                       />
-                      <div class="help-box">页数过多会很慢，默认限制 12 页</div>
+                      <div class="help-box">{{ ui.pdfMaxPagesHelp }}</div>
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">清晰度</div>
+                      <div class="field-label">{{ ui.pdfScaleLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="pdfScale"
@@ -649,7 +633,7 @@
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">输出格式</div>
+                      <div class="field-label">{{ ui.outFormatLabel }}</div>
                       <select v-model="pdfOutFormat" class="control">
                         <option value="image/png">PNG</option>
                         <option value="image/jpeg">JPEG</option>
@@ -658,7 +642,7 @@
                     </div>
 
                     <div v-if="pdfOutFormat !== 'image/png'" class="field-row">
-                      <div class="field-label">质量</div>
+                      <div class="field-label">{{ ui.qualityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="pdfQuality"
@@ -675,15 +659,15 @@
 
                   <template v-else-if="activeTool.id === 'img2pdf'">
                     <div class="field-row">
-                      <div class="field-label">页面尺寸</div>
+                      <div class="field-label">{{ ui.img2pdfPageSizeLabel }}</div>
                       <select v-model="img2pdfPageSize" class="control">
                         <option value="A4">A4</option>
-                        <option value="auto">跟随图片尺寸</option>
+                        <option value="auto">{{ ui.img2pdfPageSizeAuto }}</option>
                       </select>
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">边距(mm)</div>
+                      <div class="field-label">{{ ui.img2pdfMarginLabel }}</div>
                       <input
                         v-model.number="img2pdfMarginMm"
                         class="control"
@@ -694,7 +678,7 @@
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">图片质量</div>
+                      <div class="field-label">{{ ui.img2pdfQualityLabel }}</div>
                       <div class="range-row">
                         <input
                           v-model.number="img2pdfQuality"
@@ -711,7 +695,7 @@
 
                   <template v-else-if="activeTool.id === 'gif'">
                     <div class="field-row">
-                      <div class="field-label">开始(s)</div>
+                      <div class="field-label">{{ ui.gifStartLabel }}</div>
                       <input
                         v-model.number="gifStartSec"
                         class="control"
@@ -722,7 +706,7 @@
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">时长(s)</div>
+                      <div class="field-label">{{ ui.gifDurationLabel }}</div>
                       <input
                         v-model.number="gifDurationSec"
                         class="control"
@@ -731,11 +715,11 @@
                         max="10"
                         step="0.1"
                       />
-                      <div class="help-box">最长 10s，建议文件小于 20MB</div>
+                      <div class="help-box">{{ ui.gifDurationHelp }}</div>
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">帧率</div>
+                      <div class="field-label">{{ ui.gifFpsLabel }}</div>
                       <input
                         v-model.number="gifFps"
                         class="control"
@@ -746,7 +730,7 @@
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">宽度(px)</div>
+                      <div class="field-label">{{ ui.gifWidthLabel }}</div>
                       <input
                         v-model.number="gifWidth"
                         class="control"
@@ -757,7 +741,7 @@
                     </div>
 
                     <div class="field-row">
-                      <div class="field-label">颜色数</div>
+                      <div class="field-label">{{ ui.gifColorsLabel }}</div>
                       <input
                         v-model.number="gifMaxColors"
                         class="control"
@@ -773,7 +757,7 @@
               </div>
 
               <div class="tool-card-panel">
-                <div class="panel-title">输出</div>
+                <div class="panel-title">{{ ui.panelOutput }}</div>
                 <div class="panel-body">
                   <div class="actions">
                     <button
@@ -786,12 +770,12 @@
                     >
                       {{
                         isProcessing
-                          ? '处理中...'
+                          ? ui.processingEllipsis
                           : activeTool.id === 'live'
-                            ? '截取当前帧'
+                            ? ui.captureCurrentFrame
                             : activeTool.id === 'watermark'
-                              ? '导出图片'
-                              : '开始处理'
+                              ? ui.exportImage
+                              : ui.startProcess
                       }}
                     </button>
                     <button
@@ -800,7 +784,7 @@
                       type="button"
                       @click="cancelProcessing"
                     >
-                      取消
+                      {{ ui.cancel }}
                     </button>
                     <button
                       v-if="outputItems.length > 1"
@@ -809,7 +793,7 @@
                       type="button"
                       @click="downloadAllOutputs"
                     >
-                      下载全部
+                      {{ ui.downloadAll }}
                     </button>
                     <button
                       v-else
@@ -818,7 +802,7 @@
                       type="button"
                       @click="downloadOutput"
                     >
-                      下载
+                      {{ ui.download }}
                     </button>
                     <button
                       v-if="outputUrl && (activeTool.id === 'img2pdf' || activeTool.id === 'ico')"
@@ -826,20 +810,20 @@
                       type="button"
                       @click="openOutputPreview(outputUrl)"
                     >
-                      预览
+                      {{ ui.preview }}
                     </button>
                     <button
                       class="btn ghost"
                       :disabled="!sourceFile && !outputBlob"
                       @click="resetTool"
                     >
-                      重置
+                      {{ ui.reset }}
                     </button>
                   </div>
 
                   <div v-if="isProcessing && progress" class="progress-box">
                     <div class="progress-top">
-                      <div class="progress-label">{{ progress.label || '处理中' }}</div>
+                      <div class="progress-label">{{ progress.label || ui.processing }}</div>
                       <div class="progress-val">{{ progressPercent }}%</div>
                     </div>
                     <div class="progress-bar">
@@ -866,7 +850,7 @@
                       <div class="batch-name">{{ it.name }}</div>
                       <div class="batch-size">{{ formatBytes(it.size) }}</div>
                       <button class="btn ghost" type="button" @click="downloadOutputItem(it)">
-                        下载
+                        {{ ui.download }}
                       </button>
                     </div>
                   </div>
@@ -874,13 +858,13 @@
                     v-else-if="outputUrl && outputMeta && outputMeta.name.endsWith('.pdf')"
                     class="ico-hint"
                   >
-                    PDF 已生成，可下载或预览。
+                    {{ ui.pdfGeneratedHint }}
                   </div>
                   <div
                     v-else-if="outputUrl && outputMeta && outputMeta.name.endsWith('.ico')"
                     class="ico-hint"
                   >
-                    ICO 已生成，可下载或预览。
+                    {{ ui.icoGeneratedHint }}
                   </div>
                   <div v-else-if="outputUrl" class="preview">
                     <img :src="outputUrl" alt="output" class="preview-img" />
@@ -896,9 +880,233 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
+import { storeToRefs } from 'pinia';
 import GlobalFooter from '../components/GlobalFooter.vue';
+import TitleBar from '../components/TitleBar.vue';
 import { useFormatFactory } from '../composables/useFormatFactory';
 import { formatTime } from '../logic/formatFactory/format';
+import { useLanguageStore } from '@/stores/language';
+
+const languageStore = useLanguageStore();
+const { currentLang } = storeToRefs(languageStore);
+
+const ui = computed(() => {
+  if (currentLang.value === 'zh') {
+    return {
+      badgeText: '格式工具',
+      mainTitle1: '格式',
+      mainTitle2: '工厂',
+      secureBadge: '无需登录 · 免费使用',
+      subtitlePrefix: '纯前端处理 · 隐私安全 ·',
+      subtitleSuffix: '种格式工具',
+      securityNote: '// 所有转换均在浏览器本地完成，文件不会上传到服务器',
+      panelInputText: '输入文本',
+      panelInputFile: '输入文件',
+      panelParams: '参数设置',
+      panelOutput: '输出',
+      fileDropTitle: '点击或拖拽文件到此处',
+
+      ingredientTypeLabel: '类型',
+      ingredientTypeAuto: '自动识别',
+      ingredientTypeFood: '食品',
+      ingredientTypeDietary: '膳食补充剂',
+      ingredientTypeCosmetic: '化妆品',
+      ingredientTypeDrug: '药品',
+      ingredientTextLabel: '配料文本',
+      ingredientTextPh: '粘贴配料表、成分表或标签内容…',
+
+      pdfSelectedPrefix: '已选择 PDF',
+      pdfSelectedMid: ' · ',
+      pdfSelectedSuffix: ' 页',
+
+      outFormatLabel: '输出格式',
+      qualityLabel: '质量',
+      maxSideOptionalLabel: '最长边（可选）',
+      eg1600: '例如 1600',
+      eg1: '例如 1',
+      eg12: '例如 12',
+      blankAutoPh: '留空自动',
+      widthPxLabel: '宽度(px)',
+      heightPxLabel: '高度(px)',
+      maxSidePxLabel: '最长边(px)',
+      maxSideHintPh: '例如 2048（建议）',
+
+      rotateLabel: '旋转',
+      flipLabel: '翻转',
+      flipH: '水平',
+      flipV: '垂直',
+
+      filterLabel: '滤镜',
+      filterGrayscale: '黑白',
+      filterSepia: '复古',
+      filterInvert: '反色',
+      intensityLabel: '强度',
+
+      icoSizesLabel: 'ICO 尺寸',
+
+      wmPickLabel: '选区',
+      wmPickHelp: '在预览图上拖拽框选需要处理的区域',
+      wmMethodLabel: '处理方式',
+      wmMethodBlur: '模糊',
+      wmMethodPixelate: '马赛克',
+      wmMethodFill: '填充',
+      wmPixelLabel: '像素大小',
+      colorLabel: '颜色',
+      wmApply: '应用',
+      wmClear: '清除',
+      undo: '撤销',
+      exportFormatLabel: '导出格式',
+      exportQualityLabel: '导出质量',
+
+      liveTimelineLabel: '时间轴',
+      liveTotalDurationPrefix: '总时长 ',
+      liveLoadingMetaLabel: '加载视频元信息中…',
+      captureCurrentFrame: '截取当前帧',
+
+      pdfExportModeLabel: '导出模式',
+      pdfModeStitch: '长图拼接（多页）',
+      pdfModeSingle: '单页导出',
+      pdfPageNumberLabel: '页码',
+      pdfTotalPagesPrefix: '共 ',
+      pdfTotalPagesSuffix: ' 页',
+      pdfReadingPages: '读取页数中…',
+      pdfMaxPagesLabel: '最多页数',
+      pdfMaxPagesHelp: '页数过多会很慢，默认限制 12 页',
+      pdfScaleLabel: '清晰度',
+
+      img2pdfPageSizeLabel: '页面尺寸',
+      img2pdfPageSizeAuto: '跟随图片尺寸',
+      img2pdfMarginLabel: '边距(mm)',
+      img2pdfQualityLabel: '图片质量',
+
+      gifStartLabel: '开始(s)',
+      gifDurationLabel: '时长(s)',
+      gifDurationHelp: '最长 10s，建议文件小于 20MB',
+      gifFpsLabel: '帧率',
+      gifWidthLabel: '宽度(px)',
+      gifColorsLabel: '颜色数',
+
+      processing: '处理中',
+      processingEllipsis: '处理中...',
+      startProcess: '开始处理',
+      exportImage: '导出图片',
+      cancel: '取消',
+      downloadAll: '下载全部',
+      download: '下载',
+      preview: '预览',
+      reset: '重置',
+      pdfGeneratedHint: 'PDF 已生成，可下载或预览。',
+      icoGeneratedHint: 'ICO 已生成，可下载或预览。'
+    };
+  }
+  return {
+    badgeText: 'Format Tools',
+    mainTitle1: 'Format',
+    mainTitle2: 'Factory',
+    secureBadge: 'No login required · Free to use',
+    subtitlePrefix: 'Client-side processing · Privacy-first ·',
+    subtitleSuffix: 'tools',
+    securityNote: '// All conversions run locally in your browser. Files are not uploaded.',
+    panelInputText: 'Text Input',
+    panelInputFile: 'File Input',
+    panelParams: 'Parameters',
+    panelOutput: 'Output',
+    fileDropTitle: 'Click or drag files here',
+
+    ingredientTypeLabel: 'Type',
+    ingredientTypeAuto: 'Auto detect',
+    ingredientTypeFood: 'Food',
+    ingredientTypeDietary: 'Dietary Supplement',
+    ingredientTypeCosmetic: 'Cosmetic',
+    ingredientTypeDrug: 'Drug',
+    ingredientTextLabel: 'Ingredient Text',
+    ingredientTextPh: 'Paste your ingredient list, label text, or composition…',
+
+    pdfSelectedPrefix: 'PDF selected',
+    pdfSelectedMid: ' · ',
+    pdfSelectedSuffix: ' pages',
+
+    outFormatLabel: 'Output Format',
+    qualityLabel: 'Quality',
+    maxSideOptionalLabel: 'Max Side (optional)',
+    eg1600: 'e.g. 1600',
+    eg1: 'e.g. 1',
+    eg12: 'e.g. 12',
+    blankAutoPh: 'Leave blank for auto',
+    widthPxLabel: 'Width (px)',
+    heightPxLabel: 'Height (px)',
+    maxSidePxLabel: 'Max side (px)',
+    maxSideHintPh: 'e.g. 2048 (recommended)',
+
+    rotateLabel: 'Rotate',
+    flipLabel: 'Flip',
+    flipH: 'Horizontal',
+    flipV: 'Vertical',
+
+    filterLabel: 'Filter',
+    filterGrayscale: 'Grayscale',
+    filterSepia: 'Sepia',
+    filterInvert: 'Invert',
+    intensityLabel: 'Intensity',
+
+    icoSizesLabel: 'ICO Sizes',
+
+    wmPickLabel: 'Selection',
+    wmPickHelp: 'Drag on the preview to select the area',
+    wmMethodLabel: 'Method',
+    wmMethodBlur: 'Blur',
+    wmMethodPixelate: 'Pixelate',
+    wmMethodFill: 'Fill',
+    wmPixelLabel: 'Pixel Size',
+    colorLabel: 'Color',
+    wmApply: 'Apply',
+    wmClear: 'Clear',
+    undo: 'Undo',
+    exportFormatLabel: 'Export Format',
+    exportQualityLabel: 'Export Quality',
+
+    liveTimelineLabel: 'Timeline',
+    liveTotalDurationPrefix: 'Total Duration ',
+    liveLoadingMetaLabel: 'Loading video metadata…',
+    captureCurrentFrame: 'Capture frame',
+
+    pdfExportModeLabel: 'Export Mode',
+    pdfModeStitch: 'Stitch into a long image (multi-page)',
+    pdfModeSingle: 'Export a single page',
+    pdfPageNumberLabel: 'Page Number',
+    pdfTotalPagesPrefix: 'Total ',
+    pdfTotalPagesSuffix: ' pages',
+    pdfReadingPages: 'Reading page count…',
+    pdfMaxPagesLabel: 'Max Pages',
+    pdfMaxPagesHelp: 'Too many pages can be slow. Default limit: 12 pages.',
+    pdfScaleLabel: 'Scale',
+
+    img2pdfPageSizeLabel: 'Page Size',
+    img2pdfPageSizeAuto: 'Match image size',
+    img2pdfMarginLabel: 'Margin (mm)',
+    img2pdfQualityLabel: 'Image Quality',
+
+    gifStartLabel: 'Start (s)',
+    gifDurationLabel: 'Duration (s)',
+    gifDurationHelp: 'Max 10s. Recommended file size < 20MB.',
+    gifFpsLabel: 'FPS',
+    gifWidthLabel: 'Width (px)',
+    gifColorsLabel: 'Max Colors',
+
+    processing: 'Processing',
+    processingEllipsis: 'Processing...',
+    startProcess: 'Start',
+    exportImage: 'Export image',
+    cancel: 'Cancel',
+    downloadAll: 'Download all',
+    download: 'Download',
+    preview: 'Preview',
+    reset: 'Reset',
+    pdfGeneratedHint: 'PDF generated. Download or preview it.',
+    icoGeneratedHint: 'ICO generated. Download or preview it.'
+  };
+});
 
 const {
   tools,
@@ -1074,12 +1282,12 @@ const {
 .format-factory-page {
   min-height: 100vh;
   background-color: #050505;
-  color: #f1f5f9;
+  color: #fff;
   font-family: 'Inter', sans-serif;
-  padding-top: 120px;
+  padding-top: 0;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    linear-gradient(rgba(204, 255, 0, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(204, 255, 0, 0.03) 1px, transparent 1px);
   background-size: 50px 50px;
 }
 

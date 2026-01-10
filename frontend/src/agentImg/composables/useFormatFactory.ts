@@ -158,8 +158,19 @@ export const useFormatFactory = () => {
   const toUserError = (err: unknown, fallback: string) => {
     const msg = typeof (err as any)?.message === 'string' ? (err as any).message : '';
     if (msg === 'ABORTED' || msg.includes('AbortError')) return isZh.value ? '已取消' : 'Cancelled';
+    if (msg === 'IMAGE_LOAD_FAIL')
+      return isZh.value ? '图片加载失败，请换一张图再试' : 'Image load failed. Try another image.';
+    if (msg === 'CANVAS_EXPORT_FAIL')
+      return isZh.value ? '导出失败，请换一个文件再试' : 'Export failed. Try another file.';
+    if (msg === 'VIDEO_NOT_SELECTED')
+      return isZh.value ? '请先选择视频' : 'Please select a video first.';
     if (msg === 'CANVAS_CONTEXT_FAIL')
       return isZh.value ? '浏览器 Canvas 初始化失败' : 'Canvas initialization failed';
+    if (msg === 'WM_NO_IMAGE') return isZh.value ? '请先选择图片' : 'Please select an image first.';
+    if (msg === 'WM_CANVAS_INIT_FAIL')
+      return isZh.value ? '画布初始化失败' : 'Canvas initialization failed.';
+    if (msg === 'WM_CANVAS_NOT_READY')
+      return isZh.value ? '画布未初始化' : 'Canvas is not initialized.';
     if (msg === 'VIDEO_LOAD_FAIL')
       return isZh.value
         ? '视频加载失败，请换一个文件或浏览器再试'
@@ -232,7 +243,9 @@ export const useFormatFactory = () => {
   };
 
   const acceptFor = (toolId: FormatFactoryToolId) => acceptForTool(toolId);
-  const acceptHintFor = (toolId: FormatFactoryToolId) => acceptHintForTool(toolId);
+  const acceptHintFor = (toolId: FormatFactoryToolId) => {
+    return acceptHintForTool(toolId, isZh.value ? 'zh' : 'en');
+  };
 
   const isDragging = ref(false);
 
@@ -288,7 +301,7 @@ export const useFormatFactory = () => {
         sourceMeta.value = {
           name: file.name,
           size: file.size,
-          dimensions: pages ? `${pages} pages` : undefined
+          dimensions: pages ? (isZh.value ? `${pages} 页` : `${pages} pages`) : undefined
         };
       } catch {}
       return;
@@ -309,7 +322,10 @@ export const useFormatFactory = () => {
       try {
         await watermark.initEditor();
       } catch (err: any) {
-        toolError.value = toUserError(err, '初始化失败，请换一个文件再试');
+        toolError.value = toUserError(
+          err,
+          isZh.value ? '初始化失败，请换一个文件再试' : 'Initialization failed. Try another file.'
+        );
       }
     }
   };
@@ -369,7 +385,9 @@ export const useFormatFactory = () => {
       if (tool.id === 'ingredient-list') {
         const userText = ingredientText.value.trim();
         if (!userText) {
-          toolError.value = '请输入配料/描述文本';
+          toolError.value = isZh.value
+            ? '请输入配料/描述文本'
+            : 'Please paste ingredient/description text';
           return;
         }
 
@@ -568,7 +586,11 @@ export const useFormatFactory = () => {
           return { sections, layoutType };
         };
 
-        setProgress({ done: 0, total: 3, label: '生成配料结构' });
+        setProgress({
+          done: 0,
+          total: 3,
+          label: isZh.value ? '生成配料结构' : 'Generating structure'
+        });
         const { sections, layoutType } = await buildLabelSectionsUnifiedQwen(
           userText,
           ingredientProductType.value === 'Auto' ? '' : ingredientProductType.value,
@@ -576,7 +598,7 @@ export const useFormatFactory = () => {
         );
         if (nonce !== runNonce.value) return;
 
-        setProgress({ done: 1, total: 3, label: '渲染标签' });
+        setProgress({ done: 1, total: 3, label: isZh.value ? '渲染标签' : 'Rendering label' });
         const svg = buildIngredientLabelSvg({
           productName: ingredientProductName.value.trim(),
           sections,
@@ -587,7 +609,7 @@ export const useFormatFactory = () => {
         const base = ingredientProductName.value.trim() || 'ingredient_label';
         const filename = `${safeBaseName(base)}.svg`;
 
-        setProgress({ done: 3, total: 3, label: '完成' });
+        setProgress({ done: 3, total: 3, label: isZh.value ? '完成' : 'Done' });
         outputBlob.value = blob;
         outputMeta.value = { name: filename, size: blob.size };
         outputUrl.value = url;
@@ -617,7 +639,7 @@ export const useFormatFactory = () => {
             setProgress({
               done: i * 100 + inner * 100,
               total: totalFiles * 100,
-              label: `${i + 1}/${totalFiles} ${p.label || '处理中'}`
+              label: `${i + 1}/${totalFiles} ${p.label || (isZh.value ? '处理中' : 'Processing')}`
             });
           };
 
@@ -649,7 +671,9 @@ export const useFormatFactory = () => {
           if (tool.id === 'ico') {
             const sizes = icoSizes.value.slice().sort((a, b) => a - b);
             if (sizes.length === 0) {
-              toolError.value = '请至少选择一个尺寸';
+              toolError.value = isZh.value
+                ? '请至少选择一个尺寸'
+                : 'Please select at least one size';
               return;
             }
             const { blob, filename } = await generateIco(f, sizes, {
@@ -665,7 +689,7 @@ export const useFormatFactory = () => {
 
         outputItems.value = results;
         outputMeta.value = {
-          name: `${results.length} outputs`,
+          name: isZh.value ? `${results.length} 个输出` : `${results.length} outputs`,
           size: results.reduce((sum, it) => sum + it.size, 0)
         };
         return;
@@ -773,7 +797,7 @@ export const useFormatFactory = () => {
       if (tool.id === 'ico') {
         const sizes = icoSizes.value.slice().sort((a, b) => a - b);
         if (sizes.length === 0) {
-          toolError.value = '请至少选择一个尺寸';
+          toolError.value = isZh.value ? '请至少选择一个尺寸' : 'Please select at least one size';
           return;
         }
         const { blob, filename } = await generateIco(file, sizes, {
@@ -872,7 +896,10 @@ export const useFormatFactory = () => {
         return;
       }
     } catch (err: any) {
-      toolError.value = toUserError(err, '处理失败，请换一个文件再试');
+      toolError.value = toUserError(
+        err,
+        isZh.value ? '处理失败，请换一个文件再试' : 'Processing failed. Try another file.'
+      );
     } finally {
       isProcessing.value = false;
       runController.value = null;
@@ -906,8 +933,19 @@ export const useFormatFactory = () => {
   };
 
   const openOutputPreview = (url: string | null) => {
-    if (!url) return;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    const s = String(url || '').trim();
+    if (!s) return;
+    try {
+      const u = new URL(s, window.location.href);
+      const p = String(u.protocol || '').toLowerCase();
+      if (p === 'data:') {
+        const href = String(u.href || '');
+        if (!/^data:(image\/|application\/pdf)/i.test(href)) return;
+      } else if (p !== 'http:' && p !== 'https:' && p !== 'blob:') {
+        return;
+      }
+      window.open(u.href, '_blank', 'noopener,noreferrer');
+    } catch {}
   };
 
   const toggleIcoSize = (s: number) => {
@@ -927,7 +965,12 @@ export const useFormatFactory = () => {
         toolError.value = res.error;
       }
     } catch (err: any) {
-      toolError.value = typeof err?.message === 'string' ? err.message : '处理失败，请换一张图再试';
+      toolError.value =
+        typeof err?.message === 'string'
+          ? err.message
+          : isZh.value
+            ? '处理失败，请换一张图再试'
+            : 'Processing failed. Try another image.';
     } finally {
       isProcessing.value = false;
     }
@@ -938,7 +981,7 @@ export const useFormatFactory = () => {
     try {
       watermark.undoWatermark();
     } catch (err: any) {
-      toolError.value = toUserError(err, '撤销失败');
+      toolError.value = toUserError(err, isZh.value ? '撤销失败' : 'Undo failed');
     }
   };
 
@@ -947,7 +990,7 @@ export const useFormatFactory = () => {
     try {
       watermark.clearWatermarkSelection();
     } catch (err: any) {
-      toolError.value = toUserError(err, '清除失败');
+      toolError.value = toUserError(err, isZh.value ? '清除失败' : 'Clear failed');
     }
   };
 
@@ -982,7 +1025,7 @@ export const useFormatFactory = () => {
     progress.value = null;
     runNonce.value += 1;
     isProcessing.value = false;
-    toolError.value = '已取消';
+    toolError.value = isZh.value ? '已取消' : 'Cancelled';
   };
 
   return {

@@ -1,4 +1,6 @@
 import { computed, nextTick, ref, type Ref } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useLanguageStore } from '@/stores/language';
 import { canvasToBlob, loadImageFromUrl, scaleToMaxSide } from '../logic/formatFactory/canvas';
 import { safeBaseName } from '../logic/formatFactory/format';
 
@@ -7,6 +9,10 @@ export const useFormatFactoryWatermark = (input: {
   sourceUrl: Ref<string | null>;
   sourceFile: Ref<File | null>;
 }) => {
+  const languageStore = useLanguageStore();
+  const { currentLang } = storeToRefs(languageStore);
+  const t = (zh: string, en: string) => (currentLang.value === 'en' ? en : zh);
+
   const wmCanvasRef = ref<HTMLCanvasElement | null>(null);
   const wmOverlayCanvasRef = ref<HTMLCanvasElement | null>(null);
   const wmMode = ref<'blur' | 'pixelate' | 'fill'>('blur');
@@ -89,7 +95,7 @@ export const useFormatFactoryWatermark = (input: {
     const toolId = input.activeToolId.value;
     if (toolId !== 'watermark') return;
     const src = input.sourceUrl.value;
-    if (!src) throw new Error('请先选择图片');
+    if (!src) throw new Error('WM_NO_IMAGE');
 
     const img = await loadImageFromUrl(src);
     const { w, h } = scaleToMaxSide(img.naturalWidth, img.naturalHeight, wmMaxSide);
@@ -97,14 +103,14 @@ export const useFormatFactoryWatermark = (input: {
     await nextTick();
     const base = wmCanvasRef.value;
     const overlay = wmOverlayCanvasRef.value;
-    if (!base || !overlay) throw new Error('画布初始化失败');
+    if (!base || !overlay) throw new Error('WM_CANVAS_INIT_FAIL');
     base.width = w;
     base.height = h;
     overlay.width = w;
     overlay.height = h;
 
     const ctx = base.getContext('2d');
-    if (!ctx) throw new Error('Canvas 初始化失败');
+    if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.clearRect(0, 0, w, h);
@@ -119,9 +125,9 @@ export const useFormatFactoryWatermark = (input: {
 
   const getWmCanvasOrThrow = () => {
     const c = wmCanvasRef.value;
-    if (!c) throw new Error('画布未初始化');
+    if (!c) throw new Error('WM_CANVAS_NOT_READY');
     const ctx = c.getContext('2d');
-    if (!ctx) throw new Error('Canvas 初始化失败');
+    if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
     return { c, ctx };
   };
 
@@ -193,10 +199,15 @@ export const useFormatFactoryWatermark = (input: {
     if (input.activeToolId.value !== 'watermark')
       return { ok: false as const, error: 'TOOL_MISMATCH' };
     const r0 = wmRect.value;
-    if (!r0) return { ok: false as const, error: '请先在图片上框选区域' };
+    if (!r0)
+      return {
+        ok: false as const,
+        error: t('请先在图片上框选区域', 'Please select a region on the image first')
+      };
     const { c, ctx } = getWmCanvasOrThrow();
     const r = clampRectToCanvas(r0, c);
-    if (r.w < 4 || r.h < 4) return { ok: false as const, error: '选区太小' };
+    if (r.w < 4 || r.h < 4)
+      return { ok: false as const, error: t('选区太小', 'Selection is too small') };
 
     pushWmUndo();
 
@@ -216,7 +227,7 @@ export const useFormatFactoryWatermark = (input: {
       small.width = Math.max(1, Math.floor(sw / pixelSize));
       small.height = Math.max(1, Math.floor(sh / pixelSize));
       const sctx = small.getContext('2d');
-      if (!sctx) throw new Error('Canvas 初始化失败');
+      if (!sctx) throw new Error('CANVAS_CONTEXT_FAIL');
       sctx.imageSmoothingEnabled = true;
       sctx.drawImage(c, r.x, r.y, sw, sh, 0, 0, small.width, small.height);
 
@@ -233,7 +244,7 @@ export const useFormatFactoryWatermark = (input: {
     temp.width = r.w + pad * 2;
     temp.height = r.h + pad * 2;
     const tctx = temp.getContext('2d');
-    if (!tctx) throw new Error('Canvas 初始化失败');
+    if (!tctx) throw new Error('CANVAS_CONTEXT_FAIL');
     tctx.clearRect(0, 0, temp.width, temp.height);
     tctx.filter = `blur(${blurPx}px)`;
     tctx.drawImage(c, r.x, r.y, r.w, r.h, pad, pad, r.w, r.h);
