@@ -90,5 +90,19 @@
     "createdAt": 1767959599530,
     "sessionToken": "7531935ea36444c126e1f3c9e77c0f857f1b18d0b7ac7e73mk6thxnu",
     "sessionTokenIssuedAt": 1767959599530
+  },
+  "user_mk8llzvo_3ea772db76b8": {
+    "id": "user_mk8llzvo_3ea772db76b8",
+    "username": "u62412333",
+    "email": "t62412333@example.com",
+    "passwordHash": "0bdbf1b8c97b5221b6a508a486a9c49683d170621ee4a97167075a661eecec15",
+    "passwordSalt": "6df26ee42d6e456ec10334f2a9fbf446",
+    "passwordAlgo": "scrypt",
+    "name": "t",
+    "visits": 0,
+    "preferences": {},
+    "createdAt": 1768067284513,
+    "sessionToken": "a9d7268a6c0b8a3a5535227467b3b086051e6050f79d669fmk8llzxd",
+    "sessionTokenIssuedAt": 1768067284513
   }
 }

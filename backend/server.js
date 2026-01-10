@@ -13,6 +13,7 @@ const {
   VECTORS_FILE,
   CHATS_FILE,
   USERS_FILE,
+  API_KEYS_FILE,
   USAGE_LEDGER_FILE
 } = require('./utils/storage');
 const { installImgagentRoutes, credits: imgCredits } = require('./imgagent');
@@ -126,9 +127,9 @@ const parseCorsOrigins = (raw) => {
 };
 
 const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGIN || process.env.CORS_ORIGINS || '');
-if (!corsOrigins || corsOrigins === '*') {
+if (corsOrigins === '*') {
   app.use(cors());
-} else {
+} else if (corsOrigins && corsOrigins.length) {
   const allowed = new Set(corsOrigins);
   app.use(
     cors({
@@ -138,9 +139,11 @@ if (!corsOrigins || corsOrigins === '*') {
         return cb(new Error('CORS_NOT_ALLOWED'));
       },
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Afdian-Token']
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Afdian-Token', 'X-Api-Key']
     })
   );
+} else {
+  if (!isProd) app.use(cors());
 }
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '25mb').trim() || '25mb';
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
@@ -199,6 +202,7 @@ app.use('/files', serveLocalFileFromFilesDir);
 app.use((err, req, res, next) => {
   const status = typeof err?.status === 'number' ? err.status : 0;
   const type = typeof err?.type === 'string' ? err.type : '';
+  if (String(err?.message || '') === 'CORS_NOT_ALLOWED') return res.status(403).json({ error: 'CORS_NOT_ALLOWED' });
   if (type === 'entity.too.large') return res.status(413).json({ error: 'PAYLOAD_TOO_LARGE' });
   if (status === 400 && err instanceof SyntaxError) return res.status(400).json({ error: 'INVALID_JSON' });
   return next(err);
@@ -3020,33 +3024,72 @@ const buildDocVectorsFromRoots = (input) => {
 // 1. Embed Document (Admin/Setup)
 app.post('/api/embed', async (req, res) => {
   try {
-    const { documents } = req.body; // Array of { id, text, metadata }
+    const { documents } = req.body || {}; // Array of { id, text, metadata }
     
     if (!documents || !Array.isArray(documents)) {
       return res.status(400).json({ error: 'Documents array is required' });
     }
 
-    const vectors = readJson(VECTORS_FILE, []);
-    let addedCount = 0;
-
-    for (const doc of documents) {
-      // Check if already exists (simple check by ID)
-      // if (vectors.find(v => v.id === doc.id)) continue;
-
-      const embedding = await getEmbedding(doc.text);
-      
-      // Save document even if embedding fails (fallback to keyword search)
-      vectors.push({
-        id: doc.id || Date.now().toString(),
-        text: doc.text,
-        metadata: doc.metadata || {},
-        embedding: embedding || null
-      });
-      addedCount++;
+    const vectors0 = readJson(VECTORS_FILE, []);
+    const vectors = Array.isArray(vectors0) ? vectors0 : [];
+    const byId = new Map();
+    for (const v of vectors) {
+      const id = typeof v?.id === 'string' ? v.id.trim() : '';
+      if (!id) continue;
+      byId.set(id, v);
     }
 
-    writeJson(VECTORS_FILE, vectors);
-    res.json({ message: `Successfully embedded ${addedCount} documents.` });
+    const maxDocs = clampInt(req?.body?.maxDocs, 1, 10000);
+    const docs = documents.slice(0, maxDocs);
+    const maxEmbed = Object.prototype.hasOwnProperty.call(req.body || {}, 'maxEmbed')
+      ? clampInt(req?.body?.maxEmbed, 0, 2000)
+      : !!API_KEY
+        ? Math.min(2000, docs.length)
+        : 0;
+
+    let upserted = 0;
+    let embeddedAttempted = 0;
+    let embeddingFailed = 0;
+
+    for (const doc of docs) {
+      const id = String(doc?.id || '').trim() || Date.now().toString();
+      const text = String(doc?.text || '').trim();
+      if (!text) continue;
+
+      const existing = byId.get(id);
+      const existingEmbedding = existing && Array.isArray(existing.embedding) ? existing.embedding : null;
+      const shouldEmbed =
+        !!API_KEY &&
+        embeddedAttempted < maxEmbed &&
+        !(Array.isArray(existingEmbedding) && existingEmbedding.length > 0);
+
+      let embedding = Array.isArray(existingEmbedding) && existingEmbedding.length > 0 ? existingEmbedding : null;
+      if (shouldEmbed) {
+        embeddedAttempted += 1;
+        const e = await getEmbedding(text);
+        if (!e) embeddingFailed += 1;
+        embedding = e || null;
+      }
+
+      byId.set(id, {
+        id,
+        text,
+        metadata: doc?.metadata && typeof doc.metadata === 'object' ? doc.metadata : {},
+        embedding
+      });
+      upserted += 1;
+    }
+
+    writeJson(VECTORS_FILE, Array.from(byId.values()));
+    res.json({
+      ok: true,
+      message: `Successfully embedded ${upserted} documents.`,
+      counts: {
+        upserted,
+        embeddingAttempted: embeddedAttempted,
+        embeddingFailed
+      }
+    });
   } catch (error) {
     console.error('Error in /api/embed:', error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -3057,14 +3100,28 @@ app.post('/api/embed/fs', rateLimit('embed_fs', { max: 3, windowMs: 60 * 1000 })
   try {
     const lang = req?.body?.lang === 'en' ? 'en' : 'zh';
     const rootsRaw = Array.isArray(req?.body?.roots) ? req.body.roots : null;
-    const roots = rootsRaw && rootsRaw.length ? rootsRaw : ['doc/read/docs'];
+    const pathRaw = typeof req?.body?.path === 'string' ? req.body.path : '';
+    const pathRoot = pathRaw && String(pathRaw).trim() ? [String(pathRaw).trim()] : null;
+    const roots = rootsRaw && rootsRaw.length ? rootsRaw : pathRoot && pathRoot.length ? pathRoot : ['doc/read/docs'];
     const chunkChars = typeof req?.body?.chunkChars === 'number' ? req.body.chunkChars : 900;
     const maxFiles = typeof req?.body?.maxFiles === 'number' ? req.body.maxFiles : 1200;
     const maxChunks = typeof req?.body?.maxChunks === 'number' ? req.body.maxChunks : 12000;
     const maxBytes = typeof req?.body?.maxBytes === 'number' ? req.body.maxBytes : 512 * 1024;
+    const maxEmbed = Object.prototype.hasOwnProperty.call(req.body || {}, 'maxEmbed')
+      ? clampInt(req?.body?.maxEmbed, 0, 2000)
+      : !!API_KEY
+        ? 40
+        : 0;
 
     const startedAt = Date.now();
     const built = buildDocVectorsFromRoots({ roots, lang, chunkChars, maxFiles, maxChunks, maxBytes });
+    if (!built?.roots || built.roots.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'No valid roots inside repository',
+        requestedRoots: roots
+      });
+    }
     const vectors0 = readJson(VECTORS_FILE, []);
     const vectors = Array.isArray(vectors0) ? vectors0 : [];
 
@@ -3093,6 +3150,9 @@ app.post('/api/embed/fs', rateLimit('embed_fs', { max: 3, windowMs: 60 * 1000 })
     let embeddedCount = 0;
     let skippedCount = 0;
     let failedCount = 0;
+    let embeddingAttempted = 0;
+    let embeddingSucceeded = 0;
+    const embedBudget = !!API_KEY ? maxEmbed : 0;
     for (const doc of built.docs) {
       const text = String(doc?.text || '').trim();
       if (!text) continue;
@@ -3102,8 +3162,14 @@ app.post('/api/embed/fs', rateLimit('embed_fs', { max: 3, windowMs: 60 * 1000 })
         skippedCount += 1;
         continue;
       }
-      const embedding = await getEmbedding(text);
-      if (!embedding) failedCount += 1;
+      let embedding = null;
+      if (embedBudget > 0 && embeddingAttempted < embedBudget) {
+        embeddingAttempted += 1;
+        const e = await getEmbedding(text);
+        if (!e) failedCount += 1;
+        else embeddingSucceeded += 1;
+        embedding = e || null;
+      }
       byId.set(id, {
         id,
         text,
@@ -3127,6 +3193,8 @@ app.post('/api/embed/fs', rateLimit('embed_fs', { max: 3, windowMs: 60 * 1000 })
         documents: built.docs.length,
         embedded: embeddedCount,
         skipped: skippedCount,
+        embeddingAttempted,
+        embeddingSucceeded,
         embeddingFailed: failedCount,
         totalVectors: next.length
       },
@@ -3149,6 +3217,7 @@ const generateToken = () => {
 };
 
 const normalizeUsername = (raw) => String(raw || '').trim();
+const hasControlChars = (s) => /[\u0000-\u001f\u007f]/.test(String(s || ''));
 
 const makeUserId = () => {
   const ts = Date.now().toString(36);
@@ -3221,6 +3290,119 @@ const resolveAuthUser = (req) => {
   const userId = typeof hit?.id === 'string' ? hit.id.trim() : '';
   if (!userId) return { ok: false, status: 401, error: 'Invalid token' };
   return { ok: true, userId, token };
+};
+
+const readApiKeysMap = () => {
+  const raw = readJson(API_KEYS_FILE, {});
+  return raw && typeof raw === 'object' ? raw : {};
+};
+
+const writeApiKeysMap = (m) => writeJson(API_KEYS_FILE, m && typeof m === 'object' ? m : {});
+
+const makeApiKeyId = () => {
+  try {
+    return crypto.randomBytes(10).toString('hex');
+  } catch {
+    return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
+  }
+};
+
+const makeApiKeySecret = () => {
+  try {
+    return crypto.randomBytes(32).toString('base64url');
+  } catch {
+    return crypto.randomBytes(32).toString('hex');
+  }
+};
+
+const hashApiKeySecret = (secret, salt) => {
+  const s = String(secret || '');
+  const p = String(salt || '');
+  return crypto.createHash('sha256').update(`${p}:${s}`, 'utf8').digest('hex');
+};
+
+const maskApiKey = (input) => {
+  const prefix = typeof input?.prefix === 'string' ? input.prefix : '';
+  const last4 = typeof input?.last4 === 'string' ? input.last4 : '';
+  const shownPrefix = prefix ? prefix.slice(0, 16) : 'sk-';
+  return `${shownPrefix}....................${last4 || '****'}`;
+};
+
+const createApiKeyForUser = (userId, name) => {
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'MISSING_USER_ID' };
+
+  const displayName = String(name || '').trim().slice(0, 64);
+  const id = makeApiKeyId();
+  const secret = makeApiKeySecret();
+  const salt = crypto.randomBytes(16).toString('hex');
+  const secretHash = hashApiKeySecret(secret, salt);
+
+  const prefix = `sk-${id}.`;
+  const last4 = secret.slice(-4);
+  const createdAt = Date.now();
+  const apiKey = `${prefix}${secret}`;
+
+  const keys = readApiKeysMap();
+  keys[id] = {
+    id,
+    userId: uid,
+    name: displayName || 'Default Key',
+    secretSalt: salt,
+    secretHash,
+    prefix,
+    last4,
+    createdAt,
+    lastUsedAt: 0,
+    revokedAt: 0
+  };
+  writeApiKeysMap(keys);
+
+  return { ok: true, id, userId: uid, name: keys[id].name, createdAt, apiKey, maskedKey: maskApiKey(keys[id]) };
+};
+
+const parseApiKeyFromRequest = (req) => {
+  const h1 = typeof req?.headers?.['x-api-key'] === 'string' ? req.headers['x-api-key'] : '';
+  const xApiKey = String(h1 || '').trim();
+  if (xApiKey) return xApiKey;
+  const bearer = parseBearerToken(req);
+  return bearer && bearer.startsWith('sk-') ? bearer : '';
+};
+
+const resolveApiKeyUser = (req) => {
+  const raw = parseApiKeyFromRequest(req);
+  if (!raw) return { ok: false, status: 401, error: 'Missing API key' };
+  const m = raw.match(/^sk-([a-f0-9]{8,64})\.(.+)$/i);
+  if (!m) return { ok: false, status: 401, error: 'Invalid API key' };
+  const id = String(m[1] || '').trim();
+  const secret = String(m[2] || '').trim();
+  if (!id || !secret) return { ok: false, status: 401, error: 'Invalid API key' };
+
+  const keys = readApiKeysMap();
+  const rec = keys[id];
+  if (!rec || typeof rec !== 'object') return { ok: false, status: 401, error: 'Invalid API key' };
+  if (Number(rec.revokedAt || 0) > 0) return { ok: false, status: 401, error: 'API key revoked' };
+
+  const salt = typeof rec.secretSalt === 'string' ? rec.secretSalt : '';
+  const expected = typeof rec.secretHash === 'string' ? rec.secretHash : '';
+  const actual = hashApiKeySecret(secret, salt);
+  try {
+    const a = Buffer.from(String(actual || ''), 'hex');
+    const b = Buffer.from(String(expected || ''), 'hex');
+    if (a.length !== b.length) return { ok: false, status: 401, error: 'Invalid API key' };
+    if (!crypto.timingSafeEqual(a, b)) return { ok: false, status: 401, error: 'Invalid API key' };
+  } catch {
+    return { ok: false, status: 401, error: 'Invalid API key' };
+  }
+
+  const uid = typeof rec.userId === 'string' ? rec.userId.trim() : '';
+  if (!uid) return { ok: false, status: 401, error: 'Invalid API key' };
+  if (uid.startsWith('guest_')) return { ok: false, status: 401, error: 'Invalid API key' };
+
+  const now = Date.now();
+  keys[id] = { ...rec, lastUsedAt: now };
+  writeApiKeysMap(keys);
+  return { ok: true, userId: uid, apiKeyId: id };
 };
 
 const assertAuthUserMatches = (req, res, requestedUserId) => {
@@ -3592,15 +3774,29 @@ app.post(
   }
 );
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', rateLimit('auth_register', { max: 10, windowMs: 60 * 1000 }), (req, res) => {
   try {
     const { username, password, name, fromUserId, email, code } = req.body || {};
     const uname = normalizeUsername(username);
     const pw = String(password || '');
     const mail = normalizeEmail(email);
     const c = String(code || '').trim();
-    if (!uname || !pw || !mail || !c) return res.status(400).json({ error: 'Username, password, email, code are required' });
-    if (!LOGIN_EMAIL_RE.test(mail)) return res.status(400).json({ error: 'Invalid email format' });
+    if (!uname || uname.length > 64 || hasControlChars(uname)) {
+      return res.status(400).json({ error: 'Invalid username' });
+    }
+    if (!pw || pw.length < 8 || pw.length > 128 || hasControlChars(pw)) {
+      return res.status(400).json({ error: 'Invalid password' });
+    }
+    if (!mail || mail.length > 254 || !LOGIN_EMAIL_RE.test(mail) || hasControlChars(mail)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+    if (!c || c.length > 32 || hasControlChars(c)) {
+      return res.status(400).json({ error: 'Invalid code' });
+    }
+    const displayName = String(name || '').trim();
+    if (displayName && (displayName.length > 64 || hasControlChars(displayName))) {
+      return res.status(400).json({ error: 'Invalid name' });
+    }
 
     const users = readUsersMap();
     
@@ -3648,7 +3844,7 @@ app.post('/api/auth/register', (req, res) => {
       passwordHash,
       passwordSalt: salt,
       passwordAlgo: 'scrypt',
-      name: String(name || '').trim() || uname,
+      name: displayName || uname,
       visits: 0,
       preferences: {},
       createdAt: Date.now(),
@@ -3685,14 +3881,13 @@ app.post('/api/auth/register', (req, res) => {
   }
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', rateLimit('auth_login', { max: 30, windowMs: 60 * 1000 }), (req, res) => {
   try {
     const { username, password, fromUserId } = req.body || {};
     const uname = normalizeUsername(username);
     const pw = String(password || '');
-    if (!uname || !pw) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
+    if (!uname || uname.length > 64 || hasControlChars(uname)) return res.status(400).json({ error: 'Invalid username' });
+    if (!pw || pw.length > 256 || hasControlChars(pw)) return res.status(400).json({ error: 'Invalid password' });
 
     const users = readUsersMap();
     
@@ -3776,12 +3971,28 @@ app.post('/api/user', (req, res) => {
     if (!auth) return;
     
     const users = readJson(USERS_FILE, {});
-    // Merge existing profile with updates
-    users[userId] = { 
-      ...users[userId], 
-      ...profile, 
+    const p = profile && typeof profile === 'object' ? profile : {};
+    const nextProfile = {};
+    if (typeof p.name === 'string') {
+      const name = p.name.trim();
+      if (name && name.length <= 64 && !hasControlChars(name)) nextProfile.name = name;
+    }
+    if (p.preferences && typeof p.preferences === 'object' && !Array.isArray(p.preferences)) {
+      try {
+        const raw = JSON.stringify(p.preferences);
+        if (raw.length <= 10000) nextProfile.preferences = p.preferences;
+      } catch {}
+    }
+    if (typeof p.summary === 'string') {
+      const s = p.summary.trim();
+      if (s.length <= 4000 && !hasControlChars(s)) nextProfile.summary = s;
+    }
+
+    users[userId] = {
+      ...(users[userId] && typeof users[userId] === 'object' ? users[userId] : {}),
+      ...nextProfile,
       id: userId,
-      lastSeen: Date.now() 
+      lastSeen: Date.now()
     };
     
     writeJson(USERS_FILE, users);
@@ -3789,6 +4000,80 @@ app.post('/api/user', (req, res) => {
   } catch (error) {
     console.error('Error in POST /api/user:', error);
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/api-keys', (req, res) => {
+  try {
+    const auth = resolveAuthUser(req);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const keys = readApiKeysMap();
+    const out = Object.values(keys)
+      .filter((k) => k && typeof k === 'object' && String(k.userId || '').trim() === auth.userId)
+      .filter((k) => Number(k.revokedAt || 0) <= 0)
+      .sort((a, b) => (Number(b.createdAt || 0) || 0) - (Number(a.createdAt || 0) || 0))
+      .slice(0, 200)
+      .map((k) => ({
+        id: String(k.id || '').trim(),
+        name: String(k.name || '').trim() || 'Default Key',
+        maskedKey: maskApiKey(k),
+        createdAt: Number(k.createdAt || 0) || 0,
+        lastUsedAt: Number(k.lastUsedAt || 0) || 0
+      }));
+    return res.json({ ok: true, items: out });
+  } catch (e) {
+    console.error('Error in GET /api/api-keys:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/api-keys', (req, res) => {
+  try {
+    const auth = resolveAuthUser(req);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const body = req.body || {};
+    const name = typeof body.name === 'string' ? body.name : '';
+    const trimmed = String(name || '').trim();
+    if (trimmed.length > 64 || hasControlChars(trimmed)) {
+      return res.status(400).json({ error: 'Invalid name' });
+    }
+
+    const created = createApiKeyForUser(auth.userId, trimmed);
+    if (!created.ok) return res.status(500).json({ error: created.error || 'CREATE_FAILED' });
+    return res.json({
+      ok: true,
+      id: created.id,
+      name: created.name,
+      apiKey: created.apiKey,
+      maskedKey: created.maskedKey,
+      createdAt: created.createdAt
+    });
+  } catch (e) {
+    console.error('Error in POST /api/api-keys:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.delete('/api/api-keys/:id', (req, res) => {
+  try {
+    const auth = resolveAuthUser(req);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+    const id = String(req.params?.id || '').trim();
+    if (!id || id.length > 80) return res.status(400).json({ error: 'Invalid id' });
+
+    const keys = readApiKeysMap();
+    const rec = keys[id];
+    if (!rec || typeof rec !== 'object') return res.status(404).json({ error: 'Not found' });
+    if (String(rec.userId || '').trim() !== auth.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    keys[id] = { ...rec, revokedAt: Date.now() };
+    writeApiKeysMap(keys);
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('Error in DELETE /api/api-keys/:id:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
@@ -4105,12 +4390,26 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
 
 // 3. Chat with RAG & Memory
 app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async (req, res) => {
+  let holdCtx = null;
   try {
     const { message, userId, history, pageContext, projectKnowledge, agentContext, requestId: requestIdRaw } = req.body;
     
     if (!message) return res.status(400).json({ error: 'Message is required' });
     const requestedUserId = String(userId || '').trim();
-    const authed = requestedUserId && !requestedUserId.startsWith('guest_') ? assertAuthUserMatches(req, res, requestedUserId) : { userId: requestedUserId || 'anonymous', isGuest: true };
+    const apiKeyRaw = parseApiKeyFromRequest(req);
+    const apiKeyAuth = apiKeyRaw ? resolveApiKeyUser(req) : null;
+    if (apiKeyRaw && (!apiKeyAuth || !apiKeyAuth.ok)) {
+      return res.status(apiKeyAuth?.status || 401).json({ error: apiKeyAuth?.error || 'Invalid API key' });
+    }
+
+    const authed = (() => {
+      if (apiKeyAuth && apiKeyAuth.ok) {
+        if (requestedUserId && requestedUserId !== apiKeyAuth.userId) return null;
+        return { userId: apiKeyAuth.userId, isGuest: false, apiKeyId: apiKeyAuth.apiKeyId };
+      }
+      if (requestedUserId && !requestedUserId.startsWith('guest_')) return assertAuthUserMatches(req, res, requestedUserId);
+      return { userId: requestedUserId || 'anonymous', isGuest: true };
+    })();
     if (!authed) return;
     const user = authed.userId || 'anonymous';
     const userMessage = trimPromptText(String(message || ''), 4000);
@@ -4129,6 +4428,13 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
       requestIdRaw || ctx?.requestId,
       sanitizeLedgerId(`${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`)
     );
+
+    if (!authed.isGuest && user && user !== 'anonymous' && !String(user).startsWith('guest_')) {
+      const maxCost = clampInt(process.env.CREDITS_MAX_CHAT_COST || process.env.CREDITS_MAX_COST_CHAT || '10', 1, 200);
+      const holdRes = imgCredits.freezeCredits({ userId: user, cost: maxCost, requestId, reason: 'chat' });
+      if (!holdRes.ok) return res.status(402).json({ error: holdRes.error, wallet: holdRes.wallet || null });
+      holdCtx = { userId: user, holdId: holdRes.holdId, requestId };
+    }
 
     const personaNameRaw =
       (typeof persona?.name === 'string' && persona.name.trim() && persona.name.trim()) ||
@@ -4464,6 +4770,12 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
         ip: getClientIp(req),
         ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 220) : ''
       });
+      if (holdCtx?.userId && holdCtx?.holdId) {
+        try {
+          imgCredits.settleHold({ userId: holdCtx.userId, holdId: holdCtx.holdId, actualCost: creditsDelta });
+          holdCtx = null;
+        } catch {}
+      }
     } catch {}
 
     // Save to Memory (Only if it's not a connection error)
@@ -4509,6 +4821,12 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
   } catch (error) {
     console.error('Error in /api/chat:', error);
     if (res.headersSent) return;
+    try {
+      if (holdCtx?.userId && holdCtx?.holdId) {
+        imgCredits.refundHold({ userId: holdCtx.userId, holdId: holdCtx.holdId });
+        holdCtx = null;
+      }
+    } catch {}
     try {
       const body = req && req.body && typeof req.body === 'object' ? req.body : {};
       const message = typeof body.message === 'string' ? body.message : '';
@@ -4783,6 +5101,72 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   res.status(code).json({ error: 'Internal Server Error', rid });
 });
+
+const seedTestAccount = () => {
+  const enabled = String(process.env.SEED_TEST_ACCOUNT || '').trim() === '1';
+  if (!enabled) return null;
+  if (String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production') return null;
+
+  const usernameRaw = String(process.env.TEST_ACCOUNT_USERNAME || 'test').trim();
+  const username = normalizeUsername(usernameRaw);
+  const password = String(process.env.TEST_ACCOUNT_PASSWORD || 'Test123456!').trim();
+  const email = normalizeEmail(process.env.TEST_ACCOUNT_EMAIL || 'test@example.com');
+
+  if (!username || username.length > 64 || hasControlChars(username)) return null;
+  if (!password || password.length < 8 || password.length > 128 || hasControlChars(password)) return null;
+  if (!email || email.length > 254 || !LOGIN_EMAIL_RE.test(email) || hasControlChars(email)) return null;
+
+  const targetCredits = (() => {
+    const v = Number.parseInt(String(process.env.TEST_ACCOUNT_CREDITS || '100000'), 10);
+    return Number.isFinite(v) && v > 0 ? v : 100000;
+  })();
+
+  const users = readUsersMap();
+  const existing = Object.values(users).find((u) => {
+    const u0 = normalizeUsername(u?.username);
+    return u0 && u0.toLowerCase() === username.toLowerCase();
+  });
+
+  const userId = existing?.id ? String(existing.id).trim() : makeUserId();
+  if (!userId) return null;
+
+  if (!existing) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const passwordHash = hashPassword(password, salt);
+    const token = generateToken();
+    users[userId] = {
+      id: userId,
+      username,
+      email,
+      passwordHash,
+      passwordSalt: salt,
+      passwordAlgo: 'scrypt',
+      name: username,
+      visits: 0,
+      preferences: {},
+      createdAt: Date.now(),
+      sessionToken: token,
+      sessionTokenIssuedAt: Date.now()
+    };
+    writeJson(USERS_FILE, users);
+  }
+
+  try {
+    imgCredits.ensureWallet(userId);
+    const bal = imgCredits.getBalance(userId);
+    const current = (Number(bal?.available || 0) || 0) + (Number(bal?.frozen || 0) || 0);
+    const need = Math.max(0, targetCredits - current);
+    if (need > 0) imgCredits.grantCredits({ userId, credits: need });
+  } catch {}
+
+  return { userId, username, email, targetCredits };
+};
+
+try {
+  seedTestAccount();
+} catch (e) {
+  console.warn('seedTestAccount failed:', String(e?.message || e));
+}
 
 const shouldServeStatic = (() => {
   const raw = String(process.env.SERVE_STATIC || '').trim();

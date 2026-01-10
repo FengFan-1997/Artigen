@@ -300,6 +300,29 @@ const routes = [
     } satisfies RouteSeoMeta
   },
   {
+    path: '/artigen/orders',
+    name: 'credits-orders',
+    component: () => import('../agentImg/views/CreditsOrders.vue'),
+    meta: {
+      title: { zh: '我的订单 - Artigen', en: 'My Orders - Artigen' },
+      description: { zh: '查看您的算力点数购买记录。', en: 'View your credit purchase history.' },
+      keywords: { zh: '订单,购买记录,点数订单,算力商城', en: 'orders,credits,purchase history' }
+    } satisfies RouteSeoMeta
+  },
+  {
+    path: '/artigen/usage',
+    name: 'credits-usage',
+    component: () => import('../agentImg/views/CreditsUsage.vue'),
+    meta: {
+      title: { zh: '点数明细 - Artigen', en: 'Credits Usage - Artigen' },
+      description: {
+        zh: '查看点数冻结、扣费与退款记录。',
+        en: 'View holds, charges, and refunds.'
+      },
+      keywords: { zh: '点数明细,扣费记录,冻结,退款', en: 'credits,usage,holds,refunds' }
+    } satisfies RouteSeoMeta
+  },
+  {
     path: '/room',
     name: 'room',
     component: () => import('../room/RoomPage.vue')

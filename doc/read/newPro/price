@@ -1,0 +1,483 @@
+Webhook
+说明
+此功能会将开发者相关的订单打给配置好的url，同时要求开发者返回固定结构，以明确表示成功收到回调。（不排除以后在异常时会重复请求，因此建议做幂等逻辑，支持重复推送）平台请求开发者配置的URL数据示例，目前 data.type 仅为 order ，data.order 对象具体订单字段见最下方解释
+{
+  "ec": 200,
+  "em": "ok",
+  "data": {
+    "type": "order",
+    "order": {
+      "out_trade_no": "202106232138371083454010626",
+      "custom_order_id": "Steam12345",
+      "user_id": "adf397fe8374811eaacee52540025c377",
+      "user_private_id":"fdf981fu8f7g891euacee57430321c377",
+      "plan_id": "a45353328af911eb973052540025c377",
+      "month": 1,
+      "total_amount": "5.00",
+      "show_amount": "5.00",
+      "status": 2,
+      "remark": "",
+      "redeem_id": "",
+      "product_type": 0,
+      "discount": "0.00",
+      "sku_detail": [{
+        "sku_id": "b082342c4aba11ebb5cb52540025c377",
+        "count": 1,
+        "name": "15000 赏金/货币 兑换码",
+        "album_id": "",
+        "pic": "https://pic1.afdiancdn.com/user/8a8e408a3aeb11eab26352540025c377/common/sfsfsff.jpg"
+      }],
+      "address_person": "",
+      "address_phone": "",
+      "address_address": ""
+    }
+  }
+}
+
+要求开发者响应的JSON示例，如果接口不返回ec 200 ，则平台认为回调失败 
+
+{"ec":200,"em":""} 
+
+
+注明：其中包括custom_order_id等部分字段可由前端URL传参，具体请参考：  爱发电开发者功能汇总: API与Webhook接口 、OAuth2 、网页嵌入
+
+
+
+签名介绍
+公钥
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwwdaCg1Bt+UKZKs0R54y
+lYnuANma49IpgoOwNmk3a0rhg/PQuhUJ0EOZSowIC44l0K3+fqGns3Ygi4AfmEfS
+4EKbdk1ahSxu7Zkp2rHMt+R9GarQFQkwSS/5x1dYiHNVMiR8oIXDgjmvxuNes2Cr
+8fw9dEF0xNBKdkKgG2qAawcN1nZrdyaKWtPVT9m2Hl0ddOO9thZmVLFOb9NVzgYf
+jEgI+KWX6aY19Ka/ghv/L4t1IXmz9pctablN5S0CRWpJW3Cn0k6zSXgjVdKm4uN7
+jRlgSRaf/Ind46vMCm3N2sgwxu/g3bnooW+db0iLo13zzuvyn727Q3UDQ0MmZcEW
+MQIDAQAB
+-----END PUBLIC KEY-----
+签名数据由发送数据中order中的out_trade_no、user_id、plan_id、total_amount，依次拼接成的字符串sign_str
+// sign_str为需要签名的数据
+// sign为发送数据中的sign
+public function verifySign($sign_str, $sign){
+
+    $publicKey = "上面的公钥";
+    $key = openssl_get_publickey($publicKey);
+    return openssl_verify($sign_str, base64_decode($sign), $key, 'SHA256');
+}
+
+
+
+
+API
+当前功能需要用到 user_id 和 生成的API Token，以下简称 token。请求平台时可以为form表单或者json，平台返回的数据为json。
+
+
+
+签名介绍
+为了保证数据安全与灵活性，平台做了一个简单的签名逻辑。平台接收的参数如下。 
+
+user_id: 上面的 user_id，表明你是谁
+params: 具体接口传参的json字符串
+ts: 发出请求时秒级时间戳
+sign: 针对上面3个数据的签名，防止伪造数据。
+
+sign 的计算规则为：md5(token+请求数据按key排序拼接key和value)
+
+具体到这次场景，参数key为固定值，只有上面四个字段 sign 签名可以简化为
+sign = md5({token}params{params}ts{ts}user_id{user_id})
+{}包的数据为具体数值
+
+
+示例
+
+假设当前数据如下
+user_id abc
+params  {"a":333}
+ts      1624339905
+token   123        注意这个不传递到服务端，仅参与签名计算
+
+sign = md5('123params{"a":333}ts1624339905user_idabc')
+
+sign = a4acc28b81598b7e5d84ebdc3e91710c
+
+注意token直接写具体值，其它参数写kv，没有任何连接字符，直接拼接
+
+
+JSON请求示例 
+
+{"user_id":"abc", "params": "{\"a\":333}", "ts": 1624339905, "sign":"a4acc28b81598b7e5d84ebdc3e91710c"}
+
+
+检验签名是否准确
+
+https://afdian.com/api/open/ping 可用postman或其他工具请求测试接口。如果接口返回 ec = 200，则证明签名校验通过。如果签名不通过，会返回拼接的字符串，方便检查不通过的原因。比如下面这种场景就是签名不正确。可以直接复制里面的 debug.kv_string，离线计算sign值。如果token为123，由于签名计算规则为 sign=md5(tokenkv_string)，可以很方便的校验传参是否正确。
+
+{
+    "ec": 400005,
+    "em": "sign validation failed",
+    "data": {
+        "explain": "plz check the desc",
+        "debug": {
+            "kv_string": "params{\"a\":333}ts1636732646user_idxxxxx"
+        },
+        "request": {
+            "user_id": "xxxxxxx",
+            "params": "{\"a\":333}",
+            "ts": 1636732646,
+            "sign": "a9fc8cafd2c1e290cac00fc26f38e2d"
+        }
+    }
+}
+
+
+下面是ts过期的情况 
+
+{
+    "ec": 400002,
+    "em": "time was expired",
+    "data": {
+        "explain": "ts is outdated, 3600s latency was allowed"
+    }
+}
+
+
+如果返回 ec 为 200，类似下面结构，说明没问题。 
+
+{
+    "ec": 200,
+    "em": "pong",
+    "data": {
+        "uid": "xxxxxxx",
+        "request": {
+            "user_id": "xxxxxxx",
+            "params": "{\"a\":333}",
+            "ts": 1636732646,
+            "sign": "a9fc8cafd2c1e2902cac00fc26f38e2d"
+        }
+    }
+}
+
+
+ec 字段异常错误码
+
+400001  params incomplete
+400002  time was expired
+400003  params was not valid json string
+400004  no valid token found
+400005  sign validation failed
+
+
+具体接口列表
+https://afdian.com/api/open/query-order
+可传的参数为
+
+
+参数名: page
+
+含义: 按页数倒序获取订单，按订单创建时间倒序 
+
+示例: 1 2 3累加
+
+
+
+参数名: out_trade_no
+
+含义: 指定订单号查询信息，如需要查多个，则英文逗号分隔
+
+示例: 222225555,2222222666
+
+
+
+参数为 page 可传 1,2,3 等（以后会支持传时间查询）即请求参数 params 的值为 {"page":1}
+
+支持传参 per_page 默认50，支持1-100
+
+当前按订单创建时间倒序，每页50条数据返回数据结构示例
+
+【注意层级和 webhook 结构有不同，这里的 order 对象是放到 list 里的】，具体订单含义见最下方解释
+
+{
+  "ec": 200,
+  "em": "",
+  "data": {
+    "list": [{
+      "out_trade_no": "202106232138371083454010626",
+      "custom_order_id": "Steam12345",
+      "user_id": "adf397fe8374811eaacee52540025c377",
+      "user_private_id":"33这个是每个用户唯一的，相当于微信的 unionid",
+      "plan_id": "a45353328af911eb973052540025c377",
+      "month": 1,
+      "total_amount": "5.00",
+      "show_amount": "5.00",
+      "status": 2,
+      "remark": "",
+      "redeem_id": "",
+      "product_type": 0,
+      "discount": "0.00",
+      "sku_detail": [{
+        "sku_id": "b082342c4aba11ebb5cb52540025c377",
+        "count": 1,
+        "name": "15000 赏金/货币 兑换码",
+        "album_id": "",
+        "pic": "https://pic1.afdiancdn.com/user/8a8e408a3aeb11eab26352540025c377/common/sfsfsff.jpg"
+      }],
+      "address_person": "",
+      "address_phone": "",
+      "address_address": ""
+    }],
+    "total_count": 167,
+    "total_page":11
+  }
+}
+
+
+查赞助者
+https://afdian.com/api/open/query-sponsor
+
+参数为 page 可传 1,2,3 等即请求参数 params 的值为 {"page":1}当前按建立关系时间倒序，每页20个返回结构示例
+
+支持传参 per_page 默认20，支持1-100
+
+支持传参 user_id ，可以查询指定用户的赞助情况，如果需要传多个请使用英文逗号分隔
+
+{
+  "ec": 200,
+  "em": "",
+  "data": {
+    "total_count": 14,
+    "total_page": 2,
+    "list": [
+      {
+        "sponsor_plans": [],
+        "current_plan": {
+          "name": ""
+        },
+        "all_sum_amount": "0.00",
+        "create_time": 1581011280,
+        "last_pay_time": 1598852327,
+        "user": {
+          "user_id": "3524370d11e8ae8852540025c377",
+          "name": "Hee",
+          "avatar": "https://pic1.afdiancdn.com/user/27f7sss7/avatar/2d9659585fc4798068efbb652e56c08a.jpg"
+        }
+      },
+      {
+        "sponsor_plans": [
+          {
+            "plan_id": "sdfsf",
+            "rank": 0,
+            "user_id": "34343",
+            "status": 3,
+            "name": "独立永久方案",
+            "pic": "",
+            "desc": "啊1；",
+            "price": "1.00",
+            "update_time": 1621084278,
+            "pay_month": 1,
+            "show_price": "1.00",
+            "independent": 1,
+            "permanent": 1,
+            "can_buy_hide": 0,
+            "need_address": 0,
+            "product_type": 0,
+            "sale_limit_count": -1,
+            "need_invite_code": false,
+            "expire_time": 2114352000,
+            "sku_processed": [],
+            "rankType": 21
+          }
+        ],
+        "current_plan": {
+          "plan_id": "sdfsfsf",
+          "rank": 0,
+          "user_id": "3453535",
+          "status": 3,
+          "name": "独立永久方案",
+          "pic": "",
+          "desc": "啊1；",
+          "price": "1.00",
+          "update_time": 1621084278,
+          "pay_month": 1,
+          "show_price": "1.00",
+          "independent": 1,
+          "permanent": 1,
+          "can_buy_hide": 0,
+          "need_address": 0,
+          "product_type": 0,
+          "sale_limit_count": -1,
+          "need_invite_code": false,
+          "expire_time": 2114352000,
+          "sku_processed": [],
+          "rankType": 21
+        },
+        "all_sum_amount": "13.00",
+        "first_pay_time": 1576776221,
+        "last_pay_time": 1581083107,
+        "user": {
+          "user_id": "sfff",
+          "name": "sfsf：十五种幸福（新版）",
+          "avatar": "https://pic1.afdiancdn.com/user/sdfsfsf/avatar/c13b6125cbd9fbe7810c79256df1f5b2_w4032_h3024_s3215.jpeg"
+        }
+      }
+    ]
+  }
+}
+
+
+字段说明
+订单
+
+total_count     赞助者总数
+total_page      页数，默认每页50条，请求时，传 page ，curr_page < total_page则可继续请求
+
+out_trade_no 订单号
+custom_order_id 自定义信息
+user_id 下单用户ID
+plan_id 方案ID，如自选，则为空
+title 订单描述
+month 赞助月份
+total_amount 真实付款金额，如有兑换码，则为0.00
+show_amount 显示金额，如有折扣则为折扣前金额
+status 2 为交易成功。目前仅会推送此类型
+remark 订单留言
+redeem_id 兑换码ID
+product_type 0表示常规方案 1表示售卖方案
+discount 折扣
+sku_detail 如果为售卖类型，以数组形式表示具体型号
+address_person 收件人
+address_phone 收件人电话
+address_address 收件人地址
+
+
+赞助者
+
+total_count     赞助者总数
+total_page      页数，默认每页20条，请求时，传 page ，curr_page < total_page则可继续请求
+
+sponsor_plans    []数组类型，具体节点为多个赞助方案。
+current_plan     当前赞助方案，如果节点仅有 name:""，不包含其它内容时，表示无方案
+all_sum_amount   累计赞助金额，此处为折扣前金额。如有兑换码，则此处为虚拟金额，回比实际提现的多
+create_time      int 秒级时间戳，表示成为赞助者的时间，即首次赞助时间
+last_pay_time    int 秒级时间戳，最近一次赞助时间
+
+user 节点表示用户属性
+user_id    用户唯一ID
+name        昵称，非唯一，可重复
+avatar    头像
+
+
+
+
+
+
+
+
+
+
+
+
+开发者
+user_id
+5aafc3f2ee4011f0acf352540025c377
+
+爱发电提供了webhook和api两种方式为开发者提供便利。 webhook功能需要配置好url，每当有订单时，会请求配置的url；API功能需要开发者通过token生成sign签名，主动请求接口查询历史订单
+
+Webhook URL（用来被动接收订单通知）
+https://
+保存
+发送测试
+点击发送测试，爱发电服务器会立即向配置好的url发送测试数据，标准json格式；同时url返回的内容也要为json格式，最少返回内容为 {"ec":200} ，否则认为请求失败。
+
+爱发电发送数据格式如下：
+
+{
+  "ec": 200,
+  "em": "ok",
+  "data": {
+    "type": "order",
+    "order": {
+      "out_trade_no": "202106232138371083454010626",
+      "user_id": "adf397fe8374811eaacee52540025c377",
+      "plan_id": "a45353328af911eb973052540025c377",
+      "month": 1,
+      "total_amount": "5.00",
+      "show_amount": "5.00",
+      "status": 2,
+      "remark": "",
+      "redeem_id": "",
+      "product_type": 0,
+      "discount": "0.00",
+      "sku_detail": [],
+      "address_person": "",
+      "address_phone": "",
+      "address_address": ""
+    }
+  }
+}
+具体解释同下方接口文档「查订单」部分
+
+url响应格式如下：
+
+url需要返回json数据，服务器仅检验ec 是否为200，下面是返回示例
+
+{"ec":200,"em":""}
+API Token（用来主动请求API用）
+
+er639UgyGbYEPTtFp5wJdxAaHcWv7hD4
+
+
+
+
+
+
+
+
+
+
+上一次ai帮我写的 然后这是他返回给我的文档：
+**已继续开发（可上线用）**
+- 下单接口现在会把 `custom_order_id=pay_xxx` 自动拼到支付链接里，回调能稳定拿到本地订单号：[/backend/imgagent/index.js](file:///g:/AvuePro/newPro/backend/imgagent/index.js#L295-L423)
+- 回调处理改为：优先用 `custom_order_id`/备注里的 `pay_xxx` 去匹配你本地创建的订单记录（从而拿到“你系统的 userId + 对应点数”），并按爱发电要求返回 `{"ec":200,"em":""}`：[/backend/imgagent/index.js](file:///g:/AvuePro/newPro/backend/imgagent/index.js#L326-L423)
+- 前端 lint 与 type-check 已通过（你当前前端 dev 也在跑）
+
+**我还缺什么（你需要准备/确认的）**
+- 你的爱发电支付页 URL（填到后端环境变量 `AFDIAN_PAGE_URL`），例如你的爱发电主页/方案购买页链接
+- 你的后端对公网可访问的 HTTPS 域名（用于配置 Webhook 回调 URL）
+
+**爱发电官网一步步配置（直到成功）**
+- 1) 进入爱发电「开发者 / Webhook」配置页  
+  - Webhook URL 填：`https://你的后端域名/api/pay/afdian/webhook`
+  - 保存
+- 2) （强烈建议）开启签名校验（如果爱发电后台有“签名/Sign”相关选项就打开）  
+  - 我们的验签规则与你给的文档一致：`out_trade_no + user_id + plan_id + total_amount`，公钥也已内置（也可用环境变量覆盖）  
+  - 对应文档见：[/doc/read/newPro/price](file:///g:/AvuePro/newPro/doc/read/newPro/price#L46-L65)
+  - 后端生产环境建议加：`AFDIAN_WEBHOOK_REQUIRE_SIGN=1`
+- 3) 配置后端环境变量（部署平台里设置）  
+  - `AFDIAN_PAGE_URL=https://你爱发电的支付页链接`  
+  - `AFDIAN_WEBHOOK_REQUIRE_SIGN=1`（建议）  
+  - `AFDIAN_ENFORCE_AMOUNT_MATCH=1`（建议开启：当回调金额和套餐金额不一致时拒绝入账，避免异常/篡改）
+- 4) 真实联调流程（用你自己小号最稳）  
+  - 登录你的网站 → 打开算力商城 → 点购买任意套餐  
+  - 弹窗会显示 `orderId=pay_xxx`，并自动打开支付页  
+  - 正常情况下：支付页会被我们拼上 `custom_order_id=pay_xxx`（你能在订单/自定义订单号/备注相关位置看到）  
+  - 支付完成后：爱发电会 POST 回调到你的 `/api/pay/afdian/webhook`，你的点数会自动增加  
+  - 前端弹窗会轮询刷新余额（你也可以点“我已支付，检查到账”）
+- 5) 如果你发现爱发电支付页没有自动带上自定义订单号  
+  - 先手动把弹窗里的 `orderId` 粘贴到爱发电的“自定义订单号（custom_order_id）/备注”字段里再支付  
+  - 回调里只要出现 `custom_order_id: "pay_xxx"`（或备注里包含 `pay_xxx`），系统就能自动入账
+
+**关键对照点（你用来判断“成功了没有”）**
+- 爱发电 Webhook 收到响应必须是 `{"ec":200,"em":""}`，否则它会认为失败并可能重试：[/backend/imgagent/index.js](file:///g:/AvuePro/newPro/backend/imgagent/index.js#L332-L335)
+- 你后端日志里能看到一次 `POST /api/pay/afdian/webhook` 返回 200
+- 前端点数余额上涨（`/api/credits/balance` 的 available 增加）
+
+如果你把「爱发电支付页 URL」和「你准备上线的后端域名」发我（或你已经在部署平台配好了），我可以按你实际域名把最终应填的 Webhook URL/环境变量值逐项对照到“可复制粘贴”的版本，确保一次通。
+
+
+{"starter":"<入门档plan_id>","standard":"<标准档plan_id>","pro":"<专业档plan_id>","ultimate":"<旗舰档plan_id>"}
+
+plan_id=c5ef32deee4911f0872c5254001e7c00&product_type=0&remark=&affiliate_code=
+https://ifdian.net/order/create?plan_id=d296c84eee4911f0838552540025c377&product_type=0&remark=&affiliate_code=
+https://ifdian.net/order/create?plan_id=dcfc8396ee4911f0a29652540025c377&product_type=0&remark=&affiliate_code=
+https://ifdian.net/order/create?plan_id=ddd4b860ee4911f0986252540025c377&product_type=0&remark=&affiliate_code=
+
+

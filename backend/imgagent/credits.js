@@ -38,8 +38,8 @@ const ensureWallet = (userId, opts) => {
   if (!uid) return null;
 
   const initCredits = (() => {
-    const v = Number.parseInt(String(opts?.initCredits ?? process.env.CREDITS_INIT ?? '100'), 10);
-    return Number.isFinite(v) && v >= 0 ? v : 100;
+    const v = Number.parseInt(String(opts?.initCredits ?? process.env.CREDITS_INIT ?? '10'), 10);
+    return Number.isFinite(v) && v >= 0 ? v : 10;
   })();
 
   const wallets = readWalletMap();
@@ -194,6 +194,42 @@ const confirmHold = (input) => {
   return { ok: true, holdId, status: 'confirmed', wallet: getBalance(uid) };
 };
 
+const settleHold = (input) => {
+  const uid = normalizeUserId(input?.userId);
+  const holdId = String(input?.holdId || '').trim();
+  const actualCostRaw = Number.parseInt(String(input?.actualCost ?? 0), 10);
+  const actualCost = Number.isFinite(actualCostRaw) && actualCostRaw >= 0 ? actualCostRaw : 0;
+  if (!uid) return { ok: false, error: 'MISSING_USER_ID' };
+  if (!holdId) return { ok: false, error: 'MISSING_HOLD_ID' };
+
+  ensureWallet(uid);
+  const wallets = readWalletMap();
+  const holds = readHoldsMap();
+  const hold = holds[holdId];
+  if (!hold || typeof hold !== 'object') return { ok: false, error: 'HOLD_NOT_FOUND' };
+  if (String(hold.userId || '').trim() !== uid) return { ok: false, error: 'HOLD_USER_MISMATCH' };
+
+  const status = String(hold.status || '').trim();
+  if (status === 'confirmed') return { ok: true, holdId, status, wallet: getBalance(uid) };
+  if (status === 'refunded') return { ok: false, error: 'HOLD_ALREADY_REFUNDED', wallet: getBalance(uid) };
+
+  const frozenCost = Number(hold.cost ?? 0) || 0;
+  const charged = Math.min(frozenCost, Math.max(0, actualCost));
+  const refund = Math.max(0, frozenCost - charged);
+
+  const w = wallets[uid];
+  const available = Number(w?.available ?? 0) || 0;
+  const frozen = Number(w?.frozen ?? 0) || 0;
+  if (frozen < frozenCost) return { ok: false, error: 'FROZEN_INCONSISTENT', wallet: getBalance(uid) };
+
+  wallets[uid] = { ...w, available: available + refund, frozen: frozen - frozenCost, updatedAt: now() };
+  holds[holdId] = { ...hold, status: 'confirmed', cost: charged, updatedAt: now() };
+  writeWalletMap(wallets);
+  writeHoldsMap(holds);
+
+  return { ok: true, holdId, status: 'confirmed', wallet: getBalance(uid), charged, refunded: refund };
+};
+
 const refundHold = (input) => {
   const uid = normalizeUserId(input?.userId);
   const holdId = String(input?.holdId || '').trim();
@@ -329,16 +365,30 @@ const getOrders = (userId) => {
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 };
 
+const getHolds = (userId, opts) => {
+  const uid = normalizeUserId(userId);
+  if (!uid) return [];
+  const limitRaw = Number.parseInt(String(opts?.limit ?? ''), 10);
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 200;
+  const holds = readHoldsMap();
+  return Object.values(holds)
+    .filter((h) => String(h?.userId || '').trim() === uid)
+    .sort((a, b) => (b?.createdAt || 0) - (a?.createdAt || 0))
+    .slice(0, limit);
+};
+
 module.exports = {
   ensureWallet,
   getBalance,
   freezeCredits,
   confirmHold,
+  settleHold,
   refundHold,
   grantCredits,
   checkinCredits,
   applyAfdianOrder,
   mergeWallet,
-  getOrders
+  getOrders,
+  getHolds
 };
 

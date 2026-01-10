@@ -1162,7 +1162,6 @@ const {
   gifFps,
   gifWidth,
   gifMaxColors,
-  ingredientProductName,
   ingredientText,
   ingredientProductType,
   wmCanvasRef,

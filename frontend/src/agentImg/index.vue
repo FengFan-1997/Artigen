@@ -16,26 +16,9 @@
               </button>
 
               <div class="user-menu">
-                <button class="avatar-btn" type="button" @click="toggleUserMenu">
+                <button class="avatar-btn" type="button" @click="() => openAccountPopup()">
                   <span class="avatar-text">{{ avatarText }}</span>
                 </button>
-                <transition name="dropdown-fade">
-                  <div v-if="showUserMenu" class="user-dropdown">
-                    <div class="user-row">
-                      <div class="user-name">{{ userTitle }}</div>
-                      <div class="user-sub">{{ userSubtitle }}</div>
-                    </div>
-                    <button class="user-item" type="button" @click="refreshCredits">
-                      {{ refreshCreditsText }}
-                    </button>
-                    <button class="user-item" type="button" @click="goMarket">
-                      {{ ui.goMarket }}
-                    </button>
-                    <button class="user-item danger" type="button" @click="handleLogout">
-                      {{ ui.logout }}
-                    </button>
-                  </div>
-                </transition>
               </div>
             </template>
             <button v-else class="nth-login-btn" type="button" @click="onLoginClick">
@@ -481,8 +464,7 @@ import {
   ensureGuestUserId,
   getAuthToken,
   getCurrentUserId,
-  isLocalLoggedIn,
-  logoutLocal
+  isLocalLoggedIn
 } from '@/login/session';
 import { useLoginModel } from '@/stores';
 import { useLanguageStore } from '@/stores/language';
@@ -504,6 +486,8 @@ const ui = computed(() => {
       navMarket: '算力商城',
       homeLink: '首页',
       goMarket: '去算力商城',
+      myOrders: '我的订单',
+      creditsUsage: '点数明细',
       logout: '退出登录',
       loginOrRegister: '登录 / 注册',
       productProfile: '产品档案',
@@ -551,6 +535,8 @@ const ui = computed(() => {
     navMarket: 'Compute Market',
     homeLink: 'Home',
     goMarket: 'Go to Market',
+    myOrders: 'My Orders',
+    creditsUsage: 'Credits Usage',
     logout: 'Logout',
     loginOrRegister: 'Login / Register',
     productProfile: 'Product Profile',
@@ -980,18 +966,15 @@ const creditsText = computed(() => {
   return String(Number(bal.available ?? 0));
 });
 
-const refreshCreditsText = computed(() =>
-  currentLang.value === 'zh' ? '刷新点数' : 'Refresh Credits'
-);
-
-const showUserMenu = ref(false);
-
-const toggleUserMenu = () => {
-  showUserMenu.value = !showUserMenu.value;
+const openAccountPopup = (tab?: 'orders' | 'usage') => {
+  try {
+    window.dispatchEvent(
+      new CustomEvent('app-account-popup-open', tab ? { detail: { tab } } : undefined)
+    );
+  } catch {}
 };
 
 const openLogin = (afterLogin?: null | (() => Promise<void> | void)) => {
-  showUserMenu.value = false;
   const returnTo = router.currentRoute.value.fullPath;
   loginStore.open({ mode: 'login', returnTo, afterLogin });
 };
@@ -1000,28 +983,12 @@ const onLoginClick = () => {
   openLogin(null);
 };
 
-const userTitle = computed(() => {
-  return isAuthed.value ? '已登录' : '游客模式';
-});
-
-const userSubtitle = computed(() => {
-  const uid = String(authUserId.value || '').trim();
-  return uid ? uid : 'unknown';
-});
-
 const avatarText = computed(() => {
   const uid = String(authUserId.value || '').trim();
   if (!uid) return '?';
   if (uid.startsWith('guest_')) return 'G';
   return uid.slice(0, 1).toUpperCase();
 });
-
-const handleLogout = () => {
-  logoutLocal();
-  try {
-    window.dispatchEvent(new CustomEvent('app-auth-changed'));
-  } catch {}
-};
 
 const goMarket = () => {
   router.push('/artigen/market');
@@ -1514,10 +1481,6 @@ const chatInputRef = ref<HTMLTextAreaElement | null>(null);
 const onGlobalPointerDown = (e: PointerEvent) => {
   const target = e.target as HTMLElement | null;
   if (!target) return;
-
-  if (!target.closest('.user-menu') && !target.closest('.auth-card')) {
-    showUserMenu.value = false;
-  }
 
   if (target.closest('input, textarea, [contenteditable="true"], .msg-bubble')) return;
 

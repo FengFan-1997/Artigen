@@ -1185,6 +1185,83 @@
       "durationMs": 14846,
       "ip": "::1",
       "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456"
+    },
+    {
+      "requestId": "mk8i3v7j_fse1co9",
+      "ts": 1768061413718,
+      "createdAt": 1768061413718,
+      "updatedAt": 1768061413718,
+      "userId": "guest_verify",
+      "trigger": "chat",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen3-8B",
+      "usedUrl": "https://api.siliconflow.cn/v1/messages",
+      "tokensIn": 352,
+      "tokensOut": 35,
+      "tokensTotal": 387,
+      "creditsDelta": 1,
+      "status": "ok",
+      "durationMs": 13965,
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456"
+    },
+    {
+      "requestId": "mk8i4baf_9v093op",
+      "ts": 1768061434040,
+      "createdAt": 1768061434040,
+      "updatedAt": 1768061434040,
+      "userId": "guest_verify",
+      "trigger": "chat",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen3-8B",
+      "usedUrl": "https://api.siliconflow.cn/v1/messages",
+      "tokensIn": 384,
+      "tokensOut": 15,
+      "tokensTotal": 399,
+      "creditsDelta": 1,
+      "status": "ok",
+      "durationMs": 13454,
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456"
+    },
+    {
+      "requestId": "mk8i5fsv_9h4ion4",
+      "ts": 1768061488963,
+      "createdAt": 1768061488963,
+      "updatedAt": 1768061488963,
+      "userId": "guest_verify",
+      "trigger": "chat",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen3-8B",
+      "usedUrl": "https://api.siliconflow.cn/v1/messages",
+      "tokensIn": 978,
+      "tokensOut": 72,
+      "tokensTotal": 1050,
+      "creditsDelta": 3,
+      "rag": {
+        "hits": [
+          {
+            "id": "doc:zh:doc\\read\\docs\\agent_hf_mirror_and_live2d_api_base_20260105.md:0:d811f4b5d4",
+            "source": "doc\\read\\docs\\agent_hf_mirror_and_live2d_api_base_20260105.md",
+            "score": 9
+          },
+          {
+            "id": "doc:zh:doc\\read\\docs\\agent_logic_cache_and_selfcheck_20260105.md:1:1e34c968a6",
+            "source": "doc\\read\\docs\\agent_logic_cache_and_selfcheck_20260105.md",
+            "score": 9
+          },
+          {
+            "id": "module3_intelligence_rag.md-0",
+            "source": "module3_intelligence_rag.md",
+            "score": 6
+          }
+        ],
+        "used": true
+      },
+      "status": "ok",
+      "durationMs": 15871,
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456"
     }
   ]
 }

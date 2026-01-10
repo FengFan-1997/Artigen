@@ -57,17 +57,20 @@
       </button>
     </div>
   </header>
+
+  <AccountPopup />
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
+import AccountPopup from './AccountPopup.vue';
 import { useLanguageStore } from '@/stores/language';
 import { useLoginModel } from '@/stores';
 import { isLocalLoggedIn } from '@/login/session';
 
-const props = defineProps<{
+defineProps<{
   hideAuth?: boolean;
 }>();
 
@@ -146,7 +149,9 @@ const loginText = computed(() => {
 
 const goLogin = () => {
   if (isAuthed.value) {
-    router.push('/login/account');
+    try {
+      window.dispatchEvent(new CustomEvent('app-account-popup-open'));
+    } catch {}
     return;
   }
   const returnTo = router.currentRoute.value.fullPath;

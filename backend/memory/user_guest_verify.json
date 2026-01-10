@@ -1,0 +1,40 @@
+{
+  "user_id": "guest_verify",
+  "meta": {
+    "last_interaction": "2026-01-10",
+    "updatedAt": 1768061488966
+  },
+  "core_memory": [],
+  "short_term_buffer": [
+    {
+      "role": "user",
+      "text": "?? HF ???????????????????????",
+      "ts": 1768061413723
+    },
+    {
+      "role": "agent",
+      "text": "看起来你的消息有些混乱，能再说一遍吗？[confused]",
+      "ts": 1768061413723
+    },
+    {
+      "role": "user",
+      "text": "?? HF ??????????????????",
+      "ts": 1768061434056
+    },
+    {
+      "role": "agent",
+      "text": "你的消息似乎不太清楚，需要进一步说明吗？[confused]",
+      "ts": 1768061434056
+    },
+    {
+      "role": "user",
+      "text": "backend api error: how to configure HF mirror and debug endpoints?",
+      "ts": 1768061488966
+    },
+    {
+      "role": "agent",
+      "text": "配置 HF 镜像和调试端点，可以前往 `/agent-debug` 页面，在“模型加载链路”面板中进行相关操作。[confused]\n\n```json\n{\n  \"emotionTag\": {\n    \"primary\": \"confused\",\n    \"intensity\": 0.8,\n    \"secondary\": []\n  }\n}\n```",
+      "ts": 1768061488966
+    }
+  ]
+}
