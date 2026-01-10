@@ -319,14 +319,6 @@ const { currentLang } = storeToRefs(languageStore);
 const loginStore = useLoginModel();
 const router = useRouter();
 
-const openAccountPopup = (tab?: 'orders' | 'usage') => {
-  try {
-    window.dispatchEvent(
-      new CustomEvent('app-account-popup-open', tab ? { detail: { tab } } : undefined)
-    );
-  } catch {}
-};
-
 const payOpen = ref(false);
 const payChecking = ref(false);
 const payRefreshing = ref(false);
@@ -595,7 +587,7 @@ const ui = computed(() => {
       ultimateFeature4: '加入核心用户群',
       payTitle: '完成支付',
       paySub:
-        '打开支付页面后，请在备注粘贴：userId=<你的用户ID> orderId=<订单号>。支付完成后系统会自动检测到账。',
+        '打开支付页面后通常无需手动填写备注；如支付页未自动带出订单信息，可粘贴：userId=<你的用户ID> orderId=<订单号>。支付完成后系统会自动检测到账。',
       payUserIdLabel: '用户ID',
       payOrderIdLabel: '订单号',
       payPackageLabel: '套餐',
@@ -651,7 +643,7 @@ const ui = computed(() => {
     ultimateFeature4: 'Join the core group',
     payTitle: 'Complete Payment',
     paySub:
-      'After opening the payment page, paste this in remark: userId=<your userId> orderId=<orderId>. We will auto-detect credits.',
+      'Usually no manual remark is needed. If the payment page does not show order info, paste: userId=<your userId> orderId=<orderId>. We will auto-detect credits.',
     payUserIdLabel: 'UserId',
     payOrderIdLabel: 'OrderId',
     payPackageLabel: 'Package',

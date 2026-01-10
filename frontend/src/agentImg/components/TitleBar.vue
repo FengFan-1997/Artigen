@@ -209,6 +209,7 @@ const goLogin = () => {
 .header {
   height: 80px;
   display: flex;
+  border-bottom: 1px solid var(--border-color);
   align-items: center;
   padding: 0 40px;
 }

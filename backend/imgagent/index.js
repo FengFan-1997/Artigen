@@ -70,7 +70,9 @@ const installImgagentRoutes = (app, opts) => {
       const planIdMap = parseAfdianPackagePlanIdMap();
       const planId = planIdMap ? String(planIdMap[pkgId] || '').trim() : '';
       if (planId) {
-        return `${resolveAfdianOrderCreateUrl()}?plan_id=${encodeURIComponent(planId)}`;
+        const base = resolveAfdianOrderCreateUrl();
+        const joiner = base.includes('?') ? '&' : '?';
+        return `${base}${joiner}plan_id=${encodeURIComponent(planId)}&product_type=0`;
       }
     }
     return resolveAfdianPageUrl();
@@ -437,12 +439,14 @@ MQIDAQAB
       const fallbackPayOrder = payOrderId ? getPayOrder(payOrderId) : null;
 
       const requireSign = String(process.env.AFDIAN_WEBHOOK_REQUIRE_SIGN || '').trim() === '1';
-      if (order && (requireSign || sign)) {
-        if (!sign) {
-          if (!fallbackPayOrder) return ok();
-        } else {
+      if (order) {
+        if (requireSign) {
+          if (!sign) return ok();
           const vr = verifyAfdianWebhookSign(order, sign);
-          if (!vr.ok && !fallbackPayOrder) return ok();
+          if (!vr.ok) return ok();
+        } else if (sign) {
+          const vr = verifyAfdianWebhookSign(order, sign);
+          if (!vr.ok) return ok();
         }
       }
 
