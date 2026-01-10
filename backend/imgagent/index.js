@@ -79,6 +79,7 @@ const installImgagentRoutes = (app, opts) => {
 
   app.post('/api/pay/afdian/webhook', (req, res) => {
     const expected = String(process.env.AFDIAN_WEBHOOK_TOKEN || '').trim();
+    if (!expected) return res.status(404).json({ error: 'Not Found' });
     if (expected) {
       const got =
         String(req.headers['x-afdian-token'] || '').trim() ||

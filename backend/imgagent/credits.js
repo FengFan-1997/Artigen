@@ -268,8 +268,14 @@ const applyAfdianOrder = (input) => {
   const afdianOrderId = String(input?.afdianOrderId || '').trim();
   const credits = Number.parseInt(String(input?.credits ?? 0), 10);
   if (!uid) return { ok: false, error: 'MISSING_USER_ID' };
+  if (uid.startsWith('guest_')) return { ok: false, error: 'GUEST_NOT_ALLOWED' };
   if (!afdianOrderId) return { ok: false, error: 'MISSING_AFDIAN_ORDER_ID' };
   if (!Number.isFinite(credits) || credits <= 0) return { ok: false, error: 'INVALID_CREDITS' };
+  const maxPerOrder = (() => {
+    const v = Number.parseInt(String(process.env.CREDITS_MAX_GRANT_PER_ORDER || '100000'), 10);
+    return Number.isFinite(v) && v > 0 ? v : 100000;
+  })();
+  if (credits > maxPerOrder) return { ok: false, error: 'CREDITS_TOO_LARGE' };
 
   const orders = readOrdersMap();
   if (orders[afdianOrderId]) {
