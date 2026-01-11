@@ -14,7 +14,9 @@ const {
   CHATS_FILE,
   USERS_FILE,
   API_KEYS_FILE,
-  USAGE_LEDGER_FILE
+  USAGE_LEDGER_FILE,
+  PAY_ORDERS_FILE,
+  CREDITS_ORDERS_FILE
 } = require('./utils/storage');
 const { installImgagentRoutes, credits: imgCredits } = require('./imgagent');
 const fs = require('fs');
@@ -139,7 +141,7 @@ if (corsOrigins === '*') {
         return cb(new Error('CORS_NOT_ALLOWED'));
       },
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Afdian-Token', 'X-Api-Key']
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Afdian-Token', 'X-Api-Key', 'X-Admin-Key']
     })
   );
 } else {
@@ -790,7 +792,8 @@ const callSiliconFlowImageGenerate = async ({
   negativePrompt,
   params,
   images,
-  timeoutMs
+  timeoutMs,
+  model
 }) => {
   if (!SILICONFLOW_API_KEY) {
     const err = new Error('MISSING_SILICONFLOW_API_KEY');
@@ -813,9 +816,12 @@ const callSiliconFlowImageGenerate = async ({
 
   const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
   const modelCandidates = (() => {
-    const primary = imgs.length
-      ? SILICONFLOW_IMAGE_MODEL
-      : SILICONFLOW_TXT2IMG_MODEL || 'Qwen/Qwen-Image';
+    const requested = String(model || '').trim();
+    const primary = requested
+      ? requested
+      : imgs.length
+        ? SILICONFLOW_IMAGE_MODEL
+        : SILICONFLOW_TXT2IMG_MODEL || 'Qwen/Qwen-Image';
     const fallbacks = imgs.length
       ? ['Qwen/Qwen-Image-Edit', 'Qwen/Qwen-Image-Edit-2509']
       : ['Qwen/Qwen-Image', 'Qwen/Qwen-Image-Edit', 'Qwen/Qwen-Image-Edit-2509'];
@@ -865,8 +871,8 @@ const callSiliconFlowImageGenerate = async ({
   };
 
   let lastErr = null;
-  for (const model of modelCandidates) {
-    const body = buildBody(model);
+  for (const modelName of modelCandidates) {
+    const body = buildBody(modelName);
     const response = await fetchWithTimeout(
       SILICONFLOW_IMAGES_GENERATIONS_URL,
       {
@@ -884,24 +890,28 @@ const callSiliconFlowImageGenerate = async ({
       err.status = response.status;
       err.bodyPreview = String(raw || '').slice(0, 1800);
       err.elapsedMs = Date.now() - startedAt;
-      err.modelTried = String(model || '').trim();
+      err.modelTried = String(modelName || '').trim();
       lastErr = err;
       if (
         response.status === 400 &&
         !imgs.length &&
-        /image-edit/i.test(String(model || '')) &&
-        model !== modelCandidates[modelCandidates.length - 1]
+        /image-edit/i.test(String(modelName || '')) &&
+        modelName !== modelCandidates[modelCandidates.length - 1]
       ) {
         continue;
       }
-      if (response.status === 400 && isModelNotFound(raw) && model !== modelCandidates[modelCandidates.length - 1]) {
+      if (
+        response.status === 400 &&
+        isModelNotFound(raw) &&
+        modelName !== modelCandidates[modelCandidates.length - 1]
+      ) {
         continue;
       }
       throw err;
     }
 
     const data = raw ? JSON.parse(raw) : null;
-    return { data, elapsedMs: Date.now() - startedAt };
+    return { data, elapsedMs: Date.now() - startedAt, modelUsed: String(modelName || '').trim() };
   }
 
   throw lastErr || new Error('SILICONFLOW_IMAGE_500');
@@ -1151,6 +1161,13 @@ const computeCreditsDelta = (input) => {
   const creditsFromTokens = tokens > 0 ? Math.max(1, Math.ceil((tokens / 1000) * USAGE_CREDITS_PER_1K_TOKENS)) : 0;
   const creditsFromRag = ragUsed ? USAGE_CREDITS_PER_RAG_QUERY : 0;
   return creditsFromTokens + creditsFromRag;
+};
+
+const estimateTokens = (text) => {
+  const s = String(text || '');
+  if (!s) return 0;
+  const bytes = Buffer.byteLength(s, 'utf8');
+  return Math.max(1, Math.ceil(bytes / 4));
 };
 
 const toOneLine = (text) => {
@@ -1796,8 +1813,27 @@ const isWritableDir = (dirPath) => {
   }
 };
 
+const isLocalRequest = (req) => {
+  const ip = getClientIp(req);
+  return (
+    ip === '::1' ||
+    ip === '127.0.0.1' ||
+    ip.startsWith('127.') ||
+    ip === '::ffff:127.0.0.1' ||
+    ip.startsWith('::ffff:127.') ||
+    ip === '::ffff:7f00:1' ||
+    ip === 'localhost'
+  );
+};
+
+const isDebugRoutesEnabled = (req) => {
+  const raw = String(process.env.DEBUG_ROUTES || '').trim().toLowerCase();
+  if (raw === '1' || raw === 'true') return true;
+  return !isProd && isLocalRequest(req);
+};
+
 app.get('/api/_debug/routes', (req, res) => {
-  if (String(process.env.DEBUG_ROUTES || '').trim() !== '1') return res.status(404).json({ error: 'Not Found' });
+  if (!isDebugRoutesEnabled(req)) return res.status(404).json({ error: 'Not Found' });
   const routes = listRegisteredRoutes(app);
   const hasImg2img = routes.some(
     (r) => r && r.path === '/api/img2img' && Array.isArray(r.methods) && r.methods.includes('POST')
@@ -1806,7 +1842,7 @@ app.get('/api/_debug/routes', (req, res) => {
 });
 
 app.get('/api/_debug/storage', (req, res) => {
-  if (String(process.env.DEBUG_ROUTES || '').trim() !== '1') return res.status(404).json({ error: 'Not Found' });
+  if (!isDebugRoutesEnabled(req)) return res.status(404).json({ error: 'Not Found' });
   const { MEMORY_DIR } = require('./utils/storage');
   const check = isWritableDir(MEMORY_DIR);
   res.json({
@@ -1820,15 +1856,7 @@ app.get('/api/_debug/storage', (req, res) => {
 
 app.get('/api/_debug/ip', (req, res) => {
   const ip = getClientIp(req);
-  const local =
-    ip === '::1' ||
-    ip === '127.0.0.1' ||
-    ip.startsWith('127.') ||
-    ip === '::ffff:127.0.0.1' ||
-    ip.startsWith('::ffff:127.') ||
-    ip === '::ffff:7f00:1' ||
-    ip === 'localhost';
-  if (!local) return res.status(404).json({ error: 'Not Found' });
+  if (!isLocalRequest(req)) return res.status(404).json({ error: 'Not Found' });
   res.json({
     ok: true,
     ip,
@@ -1838,7 +1866,7 @@ app.get('/api/_debug/ip', (req, res) => {
 });
 
 app.post('/api/_debug/login-test', (req, res) => {
-  if (String(process.env.DEBUG_ROUTES || '').trim() !== '1') return res.status(404).json({ error: 'Not Found' });
+  if (!isDebugRoutesEnabled(req)) return res.status(404).json({ error: 'Not Found' });
   const body = req.body || {};
   const email = normalizeEmail(body.email);
   const code = String(body.code || '').trim();
@@ -3283,6 +3311,158 @@ const parseBearerToken = (req) => {
   return m ? String(m[1] || '').trim() : '';
 };
 
+const base64UrlEncode = (input) => {
+  const raw = typeof input === 'string' ? input : JSON.stringify(input ?? null);
+  return Buffer.from(raw, 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+};
+
+const base64UrlDecodeToString = (input) => {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  const normalized = raw.replace(/-/g, '+').replace(/_/g, '/');
+  const padLen = (4 - (normalized.length % 4)) % 4;
+  const padded = normalized + '='.repeat(padLen);
+  try {
+    return Buffer.from(padded, 'base64').toString('utf8');
+  } catch {
+    return '';
+  }
+};
+
+const getAdminTokenSecret = (() => {
+  let cached = '';
+  return () => {
+    if (cached) return cached;
+    const fromEnv = String(process.env.CONSOLE_ADMIN_TOKEN_SECRET || '').trim();
+    if (fromEnv) {
+      cached = fromEnv;
+      return cached;
+    }
+    try {
+      cached = crypto.randomBytes(32).toString('hex');
+    } catch {
+      cached = `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+    }
+    return cached;
+  };
+})();
+
+const signAdminTokenPart = (data) => {
+  const secret = getAdminTokenSecret();
+  return crypto
+    .createHmac('sha256', secret)
+    .update(String(data || ''), 'utf8')
+    .digest('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+};
+
+const resolveConsoleAdminAccount = () => {
+  const username = String(process.env.CONSOLE_ADMIN_USERNAME || '').trim();
+  const password = String(process.env.CONSOLE_ADMIN_PASSWORD || '');
+  if (username && password) return { ok: true, username, password };
+  if (!isProd) return { ok: true, username: 'admin', password: 'admin123456' };
+  return { ok: false, username: '', password: '' };
+};
+
+const resolveConsoleAdminTokenTtlMs = () => {
+  const hours = (() => {
+    const v = Number.parseInt(String(process.env.CONSOLE_ADMIN_TOKEN_TTL_HOURS || '24'), 10);
+    return Number.isFinite(v) && v > 0 ? Math.min(Math.max(v, 1), 168) : 24;
+  })();
+  return hours * 60 * 60 * 1000;
+};
+
+const createAdminToken = (username) => {
+  const ttlMs = resolveConsoleAdminTokenTtlMs();
+  const exp = Date.now() + ttlMs;
+  const header = base64UrlEncode({ alg: 'HS256', typ: 'JWT' });
+  const payload = base64UrlEncode({ sub: 'admin', u: String(username || '').trim(), exp });
+  const data = `${header}.${payload}`;
+  const sig = signAdminTokenPart(data);
+  return { token: `${data}.${sig}`, expiresAt: exp };
+};
+
+const verifyAdminToken = (token) => {
+  const raw = String(token || '').trim();
+  if (!raw) return { ok: false, error: 'MISSING_TOKEN' };
+  const parts = raw.split('.');
+  if (parts.length !== 3) return { ok: false, error: 'INVALID_TOKEN' };
+  const [h, p, s] = parts;
+  const data = `${h}.${p}`;
+  const expected = signAdminTokenPart(data);
+  try {
+    const a = Buffer.from(String(s || ''), 'utf8');
+    const b = Buffer.from(String(expected || ''), 'utf8');
+    if (a.length !== b.length) return { ok: false, error: 'INVALID_TOKEN' };
+    if (!crypto.timingSafeEqual(a, b)) return { ok: false, error: 'INVALID_TOKEN' };
+  } catch {
+    return { ok: false, error: 'INVALID_TOKEN' };
+  }
+  const payloadStr = base64UrlDecodeToString(p);
+  if (!payloadStr) return { ok: false, error: 'INVALID_TOKEN' };
+  let payload = null;
+  try {
+    payload = JSON.parse(payloadStr);
+  } catch {
+    payload = null;
+  }
+  const sub = typeof payload?.sub === 'string' ? payload.sub.trim() : '';
+  const username = typeof payload?.u === 'string' ? payload.u.trim() : '';
+  const exp = Number(payload?.exp || 0) || 0;
+  if (sub !== 'admin' || !username || !Number.isFinite(exp) || exp <= 0) {
+    return { ok: false, error: 'INVALID_TOKEN' };
+  }
+  if (exp <= Date.now()) return { ok: false, error: 'EXPIRED' };
+  return { ok: true, username, expiresAt: exp };
+};
+
+const assertAdmin = (req, res) => {
+  const bearer = parseBearerToken(req);
+  if (bearer) {
+    const v = verifyAdminToken(bearer);
+    if (v.ok) return true;
+    if (v.error === 'EXPIRED') {
+      res.status(401).json({ error: 'ADMIN_AUTH_EXPIRED' });
+      return false;
+    }
+    res.status(403).json({ error: 'ADMIN_AUTH_FORBIDDEN' });
+    return false;
+  }
+
+  const expected = String(process.env.ADMIN_KEY || '').trim();
+  if (!expected) {
+    res.status(501).json({ error: 'ADMIN_NOT_CONFIGURED' });
+    return false;
+  }
+  const got = typeof req?.headers?.['x-admin-key'] === 'string' ? String(req.headers['x-admin-key']).trim() : '';
+  if (!got) {
+    res.status(401).json({ error: 'ADMIN_AUTH_REQUIRED' });
+    return false;
+  }
+  try {
+    const a = Buffer.from(got, 'utf8');
+    const b = Buffer.from(expected, 'utf8');
+    if (a.length !== b.length) {
+      res.status(403).json({ error: 'ADMIN_AUTH_FORBIDDEN' });
+      return false;
+    }
+    if (!crypto.timingSafeEqual(a, b)) {
+      res.status(403).json({ error: 'ADMIN_AUTH_FORBIDDEN' });
+      return false;
+    }
+  } catch {
+    res.status(403).json({ error: 'ADMIN_AUTH_FORBIDDEN' });
+    return false;
+  }
+  return true;
+};
+
 const resolveAuthUser = (req) => {
   const token = parseBearerToken(req);
   if (!token) return { ok: false, status: 401, error: 'Missing token' };
@@ -3785,8 +3965,19 @@ app.post('/api/auth/register', rateLimit('auth_register', { max: 10, windowMs: 6
     if (!uname || uname.length > 64 || hasControlChars(uname)) {
       return res.status(400).json({ error: 'Invalid username' });
     }
-    if (!pw || pw.length < 8 || pw.length > 128 || hasControlChars(pw)) {
-      return res.status(400).json({ error: 'Invalid password' });
+    if (
+      !pw ||
+      pw.length < 8 ||
+      pw.length > 128 ||
+      hasControlChars(pw) ||
+      !/[a-z]/.test(pw) ||
+      !/[A-Z]/.test(pw) ||
+      !/\d/.test(pw)
+    ) {
+      return res.status(400).json({
+        error: 'PASSWORD_RULES',
+        message: '密码需 8-128 位，且包含大写字母、小写字母和数字'
+      });
     }
     if (!mail || mail.length > 254 || !LOGIN_EMAIL_RE.test(mail) || hasControlChars(mail)) {
       return res.status(400).json({ error: 'Invalid email format' });
@@ -3965,6 +4156,187 @@ app.get('/api/user/:userId', (req, res) => {
   }
 });
 
+app.post('/api/admin/login', rateLimit('admin_login', { max: 30, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    const body = req && req.body && typeof req.body === 'object' ? req.body : {};
+    const username = String(body.username || '').trim();
+    const password = String(body.password || '');
+    if (!username || !password) return res.status(400).json({ error: 'INVALID_INPUT' });
+
+    const cfg = resolveConsoleAdminAccount();
+    const masterKey = String(process.env.ADMIN_KEY || '').trim();
+    const masterOk = (() => {
+      if (!masterKey) return false;
+      try {
+        const a = Buffer.from(password, 'utf8');
+        const b = Buffer.from(masterKey, 'utf8');
+        if (a.length !== b.length) return false;
+        return crypto.timingSafeEqual(a, b);
+      } catch {
+        return false;
+      }
+    })();
+    if (!cfg.ok) {
+      if (masterOk) {
+        const issued = createAdminToken(username);
+        return res.json({ ok: true, token: issued.token, expiresAt: issued.expiresAt });
+      }
+      return res.status(501).json({ error: 'ADMIN_ACCOUNT_NOT_CONFIGURED' });
+    }
+
+    const uOk = (() => {
+      try {
+        const a = Buffer.from(username, 'utf8');
+        const b = Buffer.from(cfg.username, 'utf8');
+        if (a.length !== b.length) return false;
+        return crypto.timingSafeEqual(a, b);
+      } catch {
+        return false;
+      }
+    })();
+    const pOk = (() => {
+      try {
+        const a = Buffer.from(password, 'utf8');
+        const b = Buffer.from(cfg.password, 'utf8');
+        if (a.length !== b.length) return false;
+        return crypto.timingSafeEqual(a, b);
+      } catch {
+        return false;
+      }
+    })();
+    if ((!uOk || !pOk) && !masterOk) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+
+    const issued = createAdminToken(username);
+    return res.json({ ok: true, token: issued.token, expiresAt: issued.expiresAt });
+  } catch (e) {
+    console.error('Error in POST /api/admin/login:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/admin/users', rateLimit('admin_users', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    if (!assertAdmin(req, res)) return;
+    const q = String(req.query.q || '').trim().toLowerCase();
+    const limit = clampInt(req.query.limit, 20, 2000);
+    const offset = clampInt(req.query.offset, 0, 2000000);
+
+    const users = readUsersMap();
+    const list = Object.values(users)
+      .filter((u) => u && typeof u === 'object')
+      .map((u) => sanitizeUserProfile(u))
+      .map((u) => ({
+        userId: String(u?.id || '').trim(),
+        email: typeof u?.email === 'string' ? u.email : '',
+        username: typeof u?.username === 'string' ? u.username : '',
+        name: typeof u?.name === 'string' ? u.name : '',
+        createdAt: Number(u?.createdAt || 0) || 0,
+        lastSeen: Number(u?.lastSeen || 0) || 0,
+        visits: Number(u?.visits || 0) || 0
+      }))
+      .filter((u) => !!u.userId)
+      .filter((u) => {
+        if (!q) return true;
+        return (
+          u.userId.toLowerCase().includes(q) ||
+          u.email.toLowerCase().includes(q) ||
+          u.username.toLowerCase().includes(q) ||
+          u.name.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    const total = list.length;
+    const page = list.slice(offset, offset + limit);
+    const items = page.map((u) => {
+      let wallet = null;
+      try {
+        wallet = imgCredits.getBalance(u.userId);
+      } catch {}
+      return { ...u, wallet };
+    });
+    return res.json({ ok: true, total, items });
+  } catch (e) {
+    console.error('Error in GET /api/admin/users:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/admin/chats/history', rateLimit('admin_chats_history', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    if (!assertAdmin(req, res)) return;
+    const userId = String(req.query.userId || '').trim();
+    if (!userId) return res.status(400).json({ error: 'MISSING_USER_ID' });
+
+    const limit = clampInt(req.query.limit, 20, 2000);
+    const offset = clampInt(req.query.offset, 0, 2000000);
+
+    const allChats = readJson(CHATS_FILE, {});
+    const history = allChats && typeof allChats === 'object' && Array.isArray(allChats[userId]) ? allChats[userId] : [];
+    const total = history.length;
+
+    const end = Math.max(0, Math.min(total, total - offset));
+    const start = Math.max(0, end - limit);
+    const items = history.slice(start, end);
+    return res.json({ ok: true, total, items });
+  } catch (e) {
+    console.error('Error in GET /api/admin/chats/history:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/admin/orders', rateLimit('admin_orders', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    if (!assertAdmin(req, res)) return;
+    const userId = String(req.query.userId || '').trim();
+    if (!userId) return res.status(400).json({ error: 'MISSING_USER_ID' });
+
+    const limit = clampInt(req.query.limit, 20, 2000);
+    const offset = clampInt(req.query.offset, 0, 2000000);
+
+    const payRaw = readJson(PAY_ORDERS_FILE, {});
+    const creditsRaw = readJson(CREDITS_ORDERS_FILE, {});
+    const payMap = payRaw && typeof payRaw === 'object' ? payRaw : {};
+    const creditsMap = creditsRaw && typeof creditsRaw === 'object' ? creditsRaw : {};
+
+    const payItems = Object.values(payMap)
+      .filter((o) => o && typeof o === 'object' && String(o.userId || '').trim() === userId)
+      .map((o) => ({
+        kind: 'pay',
+        id: String(o.orderId || '').trim(),
+        orderId: String(o.orderId || '').trim(),
+        userId: String(o.userId || '').trim(),
+        packageId: String(o.packageId || '').trim(),
+        amountCny: Number(o.amountCny ?? 0) || 0,
+        credits: Number(o.credits ?? 0) || 0,
+        createdAt: Number(o.createdAt ?? 0) || 0,
+        updatedAt: Number(o.updatedAt ?? 0) || 0
+      }))
+      .filter((o) => !!o.id);
+
+    const creditsItems = Object.values(creditsMap)
+      .filter((o) => o && typeof o === 'object' && String(o.userId || '').trim() === userId)
+      .map((o) => ({
+        kind: 'credits',
+        id: String(o.afdianOrderId || '').trim(),
+        afdianOrderId: String(o.afdianOrderId || '').trim(),
+        userId: String(o.userId || '').trim(),
+        packageId: typeof o.packageId === 'string' ? String(o.packageId || '').trim() : '',
+        credits: Number(o.credits ?? 0) || 0,
+        createdAt: Number(o.createdAt ?? 0) || 0
+      }))
+      .filter((o) => !!o.id);
+
+    const all = [...payItems, ...creditsItems].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const total = all.length;
+    const items = all.slice(offset, offset + limit);
+    return res.json({ ok: true, total, items });
+  } catch (e) {
+    console.error('Error in GET /api/admin/orders:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 app.post('/api/user', (req, res) => {
   try {
     const { userId, profile } = req.body;
@@ -4080,7 +4452,18 @@ app.delete('/api/api-keys/:id', (req, res) => {
 
 app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }), async (req, res) => {
   let holdCtx = null;
+  let clientAborted = false;
   try {
+    try {
+      const mark = () => {
+        clientAborted = true;
+      };
+      req.on('aborted', mark);
+      req.on('close', () => {
+        if (!res.writableEnded) mark();
+      });
+    } catch {}
+
     const body = req.body || {};
     const prompt = String(body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
@@ -4093,6 +4476,7 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
     }
 
     const imagesRaw = Array.isArray(body.images) ? body.images : [];
+    const requestedModel = typeof body.model === 'string' ? body.model.trim() : '';
 
     const cost = (() => {
       const v = Number.parseInt(
@@ -4104,8 +4488,16 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
     const requestId =
       String(body.requestId || '').trim() ||
       `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    if (String(body.requestSource || '').trim() !== 'circled-generate') {
+      return res.status(403).json({ error: 'INVALID_REQUEST_SOURCE' });
+    }
     const holdRes = imgCredits.freezeCredits({ userId, cost, requestId, reason: 'img2img' });
     if (!holdRes.ok) return res.status(402).json({ error: holdRes.error, wallet: holdRes.wallet || null });
+    if (holdRes.existing) {
+      const st = String(holdRes.status || '').trim();
+      const err = st === 'frozen' ? 'REQUEST_IN_PROGRESS' : 'DUPLICATE_REQUEST';
+      return res.status(409).json({ error: err, requestId, wallet: holdRes.wallet || null });
+    }
     holdCtx = { userId, holdId: holdRes.holdId, requestId };
 
     const paramsRaw = body.params && typeof body.params === 'object' ? body.params : {};
@@ -4116,12 +4508,19 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
       seed: Number.isFinite(Number(paramsRaw.seed)) ? Number(paramsRaw.seed) : undefined
     };
 
-    const { data } = await callSiliconFlowImageGenerate({
+    if (clientAborted) {
+      const refunded = imgCredits.refundHold({ userId, holdId: holdRes.holdId });
+      holdCtx = null;
+      return res.status(499).json({ error: 'CLIENT_ABORTED', wallet: refunded?.wallet || null });
+    }
+
+    const { data, modelUsed } = await callSiliconFlowImageGenerate({
       prompt,
       negativePrompt: body.negativePrompt,
       params,
       images: imagesRaw,
-      timeoutMs: Math.max(5000, Number(body.timeoutMs || '') || 120000)
+      timeoutMs: Math.max(5000, Number(body.timeoutMs || '') || 120000),
+      model: requestedModel || undefined
     });
 
     const toImageUrl = (v) => {
@@ -4176,6 +4575,12 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
       return res.status(502).json({ error: 'EMPTY_IMAGE_RESULT', wallet: refunded?.wallet || null });
     }
 
+    if (clientAborted) {
+      const refunded = imgCredits.refundHold({ userId, holdId: holdRes.holdId });
+      holdCtx = null;
+      return res.status(499).json({ error: 'CLIENT_ABORTED', wallet: refunded?.wallet || null });
+    }
+
     const confirmed = imgCredits.confirmHold({ userId, holdId: holdRes.holdId });
     if (!confirmed.ok) {
       imgCredits.refundHold({ userId, holdId: holdRes.holdId });
@@ -4183,8 +4588,12 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
     }
     const persistedImages = await Promise.all(
       normalizedImages.map(async (it) => {
-        const persisted = await persistImageRefForUser({ userId, url: it?.url, prefix: 'gen' });
-        return { url: persisted || String(it?.url || '').trim() };
+        try {
+          const persisted = await persistImageRefForUser({ userId, url: it?.url, prefix: 'gen' });
+          return { url: persisted || String(it?.url || '').trim() };
+        } catch {
+          return { url: String(it?.url || '').trim() };
+        }
       })
     );
     const finalImages = persistedImages.filter((x) => x && typeof x.url === 'string' && x.url.trim());
@@ -4237,7 +4646,12 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
           ts: Date.now(),
           type: 'img2img',
           provider: 'siliconflow',
-          model: String(SILICONFLOW_IMAGE_MODEL || '').trim(),
+          model:
+            modelUsed ||
+            requestedModel ||
+            (imagesRaw.length
+              ? String(SILICONFLOW_IMAGE_MODEL || '').trim()
+              : String(SILICONFLOW_TXT2IMG_MODEL || 'Qwen/Qwen-Image').trim()),
           cost,
           prompt: String(body.prompt || '').trim().slice(0, 1200),
           negativePrompt: String(body.negativePrompt || '').trim().slice(0, 1200),
@@ -4293,17 +4707,80 @@ app.get('/api/images/history/:userId', rateLimit('images_history', { max: 60, wi
   }
 });
 
+app.get('/api/admin/images/history', rateLimit('admin_images_history', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    if (!assertAdmin(req, res)) return;
+    const userId = String(req.query.userId || '').trim();
+    const limit = clampInt(req.query.limit, 20, 2000);
+    const offset = clampInt(req.query.offset, 0, 2000000);
+
+    const toTs = (x) => (typeof x?.ts === 'number' && Number.isFinite(x.ts) ? x.ts : Number(x?.ts || 0) || 0);
+
+    if (userId) {
+      const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+      const list = Array.isArray(mem.image_history) ? mem.image_history : [];
+      const total = list.length;
+      const items = list
+        .filter((x) => x && typeof x === 'object')
+        .map((x) => ({ ...x, userId }))
+        .slice(offset, offset + limit);
+      return res.json({ ok: true, total, items });
+    }
+
+    const users = readUsersMap();
+    const ids = Object.values(users)
+      .map((u) => (u && typeof u === 'object' ? String(u.id || '').trim() : ''))
+      .filter(Boolean);
+
+    const all = [];
+    for (const uid of ids) {
+      try {
+        const mem = ensureUserMemoryShape(uid, readUserMemory(uid, null));
+        const list = Array.isArray(mem.image_history) ? mem.image_history : [];
+        for (const it of list) {
+          if (!it || typeof it !== 'object') continue;
+          all.push({ ...it, userId: uid });
+        }
+      } catch {}
+    }
+
+    all.sort((a, b) => toTs(b) - toTs(a));
+    const total = all.length;
+    const items = all.slice(offset, offset + limit);
+    return res.json({ ok: true, total, items });
+  } catch (e) {
+    console.error('Error in GET /api/admin/images/history:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 // 2.5 Generic Generate Content (for simple AI tasks)
 app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }), async (req, res) => {
   let holdCtx = null;
+  let clientAborted = false;
   try {
+    try {
+      const mark = () => {
+        clientAborted = true;
+      };
+      req.on('aborted', mark);
+      req.on('close', () => {
+        if (!res.writableEnded) mark();
+      });
+    } catch {}
+
     const { prompt, userId: userIdRaw, requestId: requestIdRaw, model: modelRaw } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
     const userId = String(userIdRaw || '').trim();
     if (!assertAuthedUserMatches(req, res, userId)) return;
 
+    const purposeRaw = req.body && typeof req.body === 'object' ? req.body.purpose : '';
+    const purpose = typeof purposeRaw === 'string' ? purposeRaw.trim() : '';
+    const isAgentImgPurpose = purpose === 'agentImg' || purpose.startsWith('agentImg_');
+
     const cost = (() => {
+      if (isAgentImgPurpose) return 0;
       const v = Number.parseInt(process.env.CREDITS_COST_GENERATE || '10', 10);
       return Number.isFinite(v) && v >= 0 ? v : 10;
     })();
@@ -4313,8 +4790,22 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
     if (cost > 0) {
       const holdRes = imgCredits.freezeCredits({ userId, cost, requestId, reason: 'generate' });
       if (!holdRes.ok) return res.status(402).json({ error: holdRes.error, wallet: holdRes.wallet || null });
+      if (holdRes.existing) {
+        const st = String(holdRes.status || '').trim();
+        const err = st === 'frozen' ? 'REQUEST_IN_PROGRESS' : 'DUPLICATE_REQUEST';
+        return res.status(409).json({ error: err, requestId, wallet: holdRes.wallet || null });
+      }
       holdId = holdRes.holdId;
       holdCtx = { userId, holdId, requestId };
+    }
+
+    if (clientAborted) {
+      if (cost > 0) {
+        const refunded = imgCredits.refundHold({ userId, holdId });
+        holdCtx = null;
+        return res.status(499).json({ error: 'CLIENT_ABORTED', wallet: refunded?.wallet || null });
+      }
+      return res.status(499).json({ error: 'CLIENT_ABORTED' });
     }
 
     const contents = [{ role: 'user', parts: [{ text: prompt }] }];
@@ -4461,7 +4952,7 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
       const maxCost = clampInt(process.env.CREDITS_MAX_CHAT_COST || process.env.CREDITS_MAX_COST_CHAT || '10', 1, 200);
       const holdRes = imgCredits.freezeCredits({ userId: user, cost: maxCost, requestId, reason: 'chat' });
       if (!holdRes.ok) return res.status(402).json({ error: holdRes.error, wallet: holdRes.wallet || null });
-      holdCtx = { userId: user, holdId: holdRes.holdId, requestId };
+      holdCtx = { userId: user, holdId: holdRes.holdId, requestId, maxCost };
     }
 
     const personaNameRaw =
@@ -4746,12 +5237,18 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
             const timeoutMs = reactionMode
               ? Math.max(GEMINI_REACTION_TIMEOUT_MS, SILICONFLOW_REACTION_TIMEOUT_MS)
               : Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS);
-            const { text } = await callSiliconFlowChat({
+            const startedAt = Date.now();
+            const { text, usage, model, usedUrl } = await callSiliconFlowChat({
               messages,
               timeoutMs,
               maxTokens: reactionMode ? 512 : 2048
             });
             reply = (text || '').trim() || buildOfflineReply({ lang, personaName, message });
+            usageDurationMs = Date.now() - startedAt;
+            usageInfo = usage;
+            usageProvider = 'siliconflow';
+            usageModel = String(model || '').trim();
+            usageUrl = String(usedUrl || '').trim();
           } catch (fallbackError) {
             const fbMsg =
               typeof fallbackError?.message === 'string' ? fallbackError.message : String(fallbackError);
@@ -4775,9 +5272,17 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
     try {
       const tokensIn = Number(usageInfo?.promptTokens ?? 0) || 0;
       const tokensOut = Number(usageInfo?.completionTokens ?? 0) || 0;
-      const tokensTotal = Number(usageInfo?.totalTokens ?? 0) || (tokensIn + tokensOut);
+      const tokensTotalRaw = Number(usageInfo?.totalTokens ?? 0) || (tokensIn + tokensOut);
+      const tokensInFixed = tokensIn > 0 ? tokensIn : usageProvider ? estimateTokens(systemPrompt + '\n' + userMessage) : 0;
+      const tokensOutFixed = tokensOut > 0 ? tokensOut : usageProvider ? estimateTokens(reply) : 0;
+      const tokensTotal = tokensTotalRaw > 0 ? tokensTotalRaw : tokensInFixed + tokensOutFixed;
       const ragUsed = !!(ragMeta && ragMeta.used);
-      const creditsDelta = computeCreditsDelta({ tokensTotal, ragUsed });
+      const computed = computeCreditsDelta({ tokensTotal, ragUsed });
+      const creditsDeltaRaw = usageProvider ? Math.max(1, computed) : computed;
+      const creditsDelta =
+        holdCtx && typeof holdCtx.maxCost === 'number' && Number.isFinite(holdCtx.maxCost) && holdCtx.maxCost > 0
+          ? Math.min(Math.max(0, creditsDeltaRaw), holdCtx.maxCost)
+          : creditsDeltaRaw;
       upsertUsageLedgerItem({
         requestId,
         ts: Date.now(),
@@ -4788,8 +5293,8 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
         provider: String(usageProvider || activeTextProvider || '').trim().slice(0, 40),
         model: String(usageModel || '').trim().slice(0, 80),
         usedUrl: String(usageUrl || '').trim().slice(0, 240),
-        tokensIn: Math.max(0, tokensIn),
-        tokensOut: Math.max(0, tokensOut),
+        tokensIn: Math.max(0, tokensInFixed),
+        tokensOut: Math.max(0, tokensOutFixed),
         tokensTotal: Math.max(0, tokensTotal),
         creditsDelta,
         rag: ragMeta && typeof ragMeta === 'object' ? ragMeta : undefined,
@@ -5008,7 +5513,7 @@ app.get('/api/usage/ledger', rateLimit('usage_ledger', { max: 120, windowMs: 60 
     const sessionId = sanitizeLedgerId(req.query.sessionId);
     const projectId = sanitizeLedgerId(req.query.projectId);
 
-    const limit = clampInt(req.query.limit, 200, 2000);
+    const limit = clampInt(req.query.limit, 20, 2000);
     const offset = clampInt(req.query.offset, 0, 2000000);
 
     const store = readUsageLedgerStore();
@@ -5031,6 +5536,55 @@ app.get('/api/usage/ledger', rateLimit('usage_ledger', { max: 120, windowMs: 60 
   } catch (error) {
     console.error('Error in GET /api/usage/ledger:', error);
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/admin/usage/ledger', rateLimit('admin_usage_ledger', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    if (!assertAdmin(req, res)) return;
+
+    const parseTime = (raw) => {
+      if (raw === undefined || raw === null) return null;
+      if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+      const s = String(raw || '').trim();
+      if (!s) return null;
+      const n = Number(s);
+      if (Number.isFinite(n) && n > 0) return n;
+      const d = Date.parse(s);
+      return Number.isFinite(d) ? d : null;
+    };
+
+    const userId = String(req.query.userId || '').trim();
+    const from = parseTime(req.query.from);
+    const to = parseTime(req.query.to);
+    const trigger = String(req.query.trigger || '').trim().toLowerCase();
+    const model = String(req.query.model || '').trim().toLowerCase();
+    const sessionId = sanitizeLedgerId(req.query.sessionId);
+    const projectId = sanitizeLedgerId(req.query.projectId);
+
+    const limit = clampInt(req.query.limit, 200, 2000);
+    const offset = clampInt(req.query.offset, 0, 2000000);
+
+    const store = readUsageLedgerStore();
+    const all = store.items
+      .filter((x) => (userId ? String(x?.userId || '') === userId : true))
+      .filter((x) => {
+        const ts = Number(x?.ts || 0) || 0;
+        if (from && ts < from) return false;
+        if (to && ts > to) return false;
+        if (trigger && String(x?.trigger || '').toLowerCase() !== trigger) return false;
+        if (model && String(x?.model || '').toLowerCase() !== model) return false;
+        if (sessionId && String(x?.sessionId || '') !== sessionId) return false;
+        if (projectId && String(x?.projectId || '') !== projectId) return false;
+        return true;
+      })
+      .sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
+
+    const items = all.slice(offset, offset + limit);
+    return res.json({ ok: true, total: all.length, items });
+  } catch (e) {
+    console.error('Error in GET /api/admin/usage/ledger:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 

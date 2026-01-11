@@ -20,7 +20,7 @@
 
       <button
         class="nth-login-btn primary"
-        :disabled="verifying || !email || code.length < 4"
+        :disabled="verifying || !email || code.length < 6"
         type="button"
         @click="verify"
       >
@@ -80,6 +80,10 @@ const verify = async () => {
     error.value = t('login.enter_code');
     return;
   }
+  if (!/^\d{6}$/.test(c)) {
+    error.value = t('login.invalid_code');
+    return;
+  }
 
   verifying.value = true;
   try {
@@ -92,7 +96,7 @@ const verify = async () => {
     upsertUser({ email: e, userId: res.userId });
     setLoggedIn({ userId: res.userId, token: res.token });
     const redirect = String(route.query.redirect || '').trim();
-    router.push(redirect || '/login/account');
+    router.replace(redirect || '/login/account');
   } catch (err: any) {
     error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
   } finally {

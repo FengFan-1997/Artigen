@@ -36,30 +36,48 @@
     "updatedAt": 1767886994920
   },
   "user_mk5vb7v2_ebe837825fb2": {
-    "available": 118,
+    "available": 48,
     "frozen": 0,
     "createdAt": 1767902179279,
-    "updatedAt": 1768127031943,
+    "updatedAt": 1768161792129,
     "lastCheckinDay": "2026-01-09"
   },
   "user_mk6thoz6_1388ca4f90fc": {
     "available": 10,
     "frozen": 0,
     "createdAt": 1767959588342,
-    "updatedAt": 1767959588342,
-    "lastCheckinDay": ""
+    "updatedAt": 1767959588342
   },
   "email_bb71ee7c4141365b": {
     "available": 10,
     "frozen": 0,
     "createdAt": 1767959599531,
-    "updatedAt": 1767959599531,
-    "lastCheckinDay": ""
+    "updatedAt": 1767959599531
   },
   "user_mk8llzvo_3ea772db76b8": {
     "available": 130,
     "frozen": 0,
     "createdAt": 1768067284518,
     "updatedAt": 1768069250295
+  },
+  "user_mk9t906o_afe4f95d996a": {
+    "available": 100,
+    "frozen": 0,
+    "createdAt": 1768140581500,
+    "updatedAt": 1768140581500
+  },
+  "user_1767512211723": {
+    "available": 100,
+    "frozen": 0,
+    "createdAt": 1768141499048,
+    "updatedAt": 1768141499048,
+    "lastCheckinDay": ""
+  },
+  "user_nmvnnro78": {
+    "available": 100,
+    "frozen": 0,
+    "createdAt": 1768141499049,
+    "updatedAt": 1768141499049,
+    "lastCheckinDay": ""
   }
 }

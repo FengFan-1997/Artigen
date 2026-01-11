@@ -110,6 +110,7 @@ export const img2img = async (input: {
     seed?: number;
   };
   images?: Img2ImgImageInput[];
+  model?: string;
   timeoutMs?: number;
   requestId?: string;
   signal?: AbortSignal;
@@ -120,6 +121,7 @@ export const img2img = async (input: {
   const prompt = String(input.prompt || '').trim();
   if (!prompt) return { ok: false, errorCode: 'EMPTY_PROMPT', error: 'EMPTY_PROMPT', requestId };
   const images = normalizeImg2ImgImages(Array.isArray(input.images) ? input.images : []);
+  const model = String(input.model || '').trim();
 
   const controller = new AbortController();
   const timeoutMs = Math.max(1000, Math.min(180000, Number(input.timeoutMs ?? 120000) || 120000));
@@ -146,8 +148,10 @@ export const img2img = async (input: {
         prompt,
         negativePrompt: input.negativePrompt,
         params: input.params,
+        ...(model ? { model } : {}),
         ...(images.length ? { images } : {}),
-        timeoutMs: input.timeoutMs
+        timeoutMs: input.timeoutMs,
+        requestSource: 'circled-generate'
       })
     });
 
@@ -199,6 +203,7 @@ export const generateText = async (
     requestId?: string;
     images?: GenerateImageInput[];
     model?: string;
+    purpose?: string;
   }
 ): Promise<TextGenerateResult> => {
   const p = String(prompt || '').trim();
@@ -220,6 +225,7 @@ export const generateText = async (
     const userId = ensureGuestUserId();
     const token = getAuthToken();
     const images = Array.isArray(opts?.images) ? opts?.images : undefined;
+    const purpose = String(opts?.purpose || '').trim();
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
@@ -227,7 +233,14 @@ export const generateText = async (
         ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
       signal: controller.signal,
-      body: JSON.stringify({ prompt: p, userId, requestId, images, model: opts?.model })
+      body: JSON.stringify({
+        prompt: p,
+        userId,
+        requestId,
+        images,
+        model: opts?.model,
+        ...(purpose ? { purpose } : {})
+      })
     });
 
     if (!response.ok) {

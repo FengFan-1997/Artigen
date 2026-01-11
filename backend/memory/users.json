@@ -59,12 +59,12 @@
     "passwordSalt": "970676ae15c17852b68f6f8586a76f6e",
     "passwordAlgo": "scrypt",
     "name": "dev123",
-    "visits": 12,
+    "visits": 16,
     "preferences": {},
     "createdAt": 1767902179277,
-    "sessionToken": "0189eceac94c01905987ad5d92acd81bb7fc5a5e4d436decmk9l6lbp",
-    "sessionTokenIssuedAt": 1768127031925,
-    "lastSeen": 1768127031925
+    "sessionToken": "371f553b82ea5f94cc19bcdcfc86dca1061defc58bfc88a4mka4ewom",
+    "sessionTokenIssuedAt": 1768159332598,
+    "lastSeen": 1768159332598
   },
   "user_mk6thoz6_1388ca4f90fc": {
     "id": "user_mk6thoz6_1388ca4f90fc",
@@ -104,5 +104,19 @@
     "createdAt": 1768067284513,
     "sessionToken": "a9d7268a6c0b8a3a5535227467b3b086051e6050f79d669fmk8llzxd",
     "sessionTokenIssuedAt": 1768067284513
+  },
+  "user_mk9t906o_afe4f95d996a": {
+    "id": "user_mk9t906o_afe4f95d996a",
+    "username": "u1768140581351",
+    "email": "t1768140581351@example.com",
+    "passwordHash": "1b2795e523853f60847e3198f106f9c62dd656350799bc99b2ed14c816e9c243",
+    "passwordSalt": "ae833682f40d1be2978a187c355f1d75",
+    "passwordAlgo": "scrypt",
+    "name": "u1768140581351",
+    "visits": 0,
+    "preferences": {},
+    "createdAt": 1768140581494,
+    "sessionToken": "213dc9c1dda91dc0392a25560af4ec07abfa46dd2aaee58fmk9t908m",
+    "sessionTokenIssuedAt": 1768140581494
   }
 }

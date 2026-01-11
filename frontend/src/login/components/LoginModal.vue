@@ -24,6 +24,7 @@
 
             <div class="field">
               <div class="label">{{ t('login.password_label') }}</div>
+              <div class="password-hint">{{ t('login.password_hint') }}</div>
               <input
                 v-model="password"
                 class="control"
@@ -71,6 +72,7 @@
 
             <div class="field">
               <div class="label">{{ t('login.password_label') }}</div>
+              <div class="password-hint">{{ t('login.password_hint') }}</div>
               <input
                 v-model="password"
                 class="control"
@@ -123,7 +125,7 @@
 
             <button
               class="nth-login-btn primary"
-              :disabled="registering || !username || !password || !emailLocal || code.length < 4"
+              :disabled="registering || !username || !password || !emailLocal || code.length < 6"
               type="button"
               @click="register"
             >
@@ -241,6 +243,15 @@ const startCooldown = (sec: number) => {
   }, 1000);
 };
 
+const isPasswordValidForRegister = (pw: string) => {
+  const p = String(pw || '');
+  if (p.length < 8 || p.length > 128) return false;
+  if (!/[a-z]/.test(p)) return false;
+  if (!/[A-Z]/.test(p)) return false;
+  if (!/\d/.test(p)) return false;
+  return true;
+};
+
 const close = () => {
   const to = String((loginStore as any).returnTo || '').trim();
   loginStore.close();
@@ -265,7 +276,14 @@ const sendCode = async () => {
   const e = String(emailLocal.value || '')
     .trim()
     .toLowerCase();
-  if (!e) return;
+  if (!e) {
+    error.value = t('login.enter_email');
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+    error.value = t('login.invalid_email');
+    return;
+  }
   setLastEmail(e);
   loginStore.setEmail(e);
   sending.value = true;
@@ -322,6 +340,18 @@ const register = async () => {
     .toLowerCase();
   const c = String(code.value || '').trim();
   if (!u || !p || !e || !c) return;
+  if (!isPasswordValidForRegister(p)) {
+    error.value = t('login.password_rules_error');
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+    error.value = t('login.invalid_email');
+    return;
+  }
+  if (!/^\d{6}$/.test(c)) {
+    error.value = t('login.invalid_code');
+    return;
+  }
   registering.value = true;
   try {
     const res = await registerWithEmailCode({ username: u, password: p, email: e, code: c });
@@ -435,6 +465,15 @@ onBeforeUnmount(() => {
   color: #94a3b8;
   font-size: 13px;
   margin-bottom: 16px;
+}
+
+.password-hint {
+  color: #64748b;
+  font-size: 12px;
+  margin-bottom: 8px;
+  font-family:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
 }
 
 .field {

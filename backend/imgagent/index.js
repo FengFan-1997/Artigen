@@ -336,6 +336,19 @@ MQIDAQAB
     res.json(bal);
   });
 
+  app.get('/api/credits/costs', (req, res) => {
+    const parseCost = (v, fallback) => {
+      const n = Number.parseInt(String(v ?? ''), 10);
+      return Number.isFinite(n) && n >= 0 ? n : fallback;
+    };
+    const generate = parseCost(process.env.CREDITS_COST_GENERATE, 10);
+    const img2img = parseCost(
+      process.env.CREDITS_COST_IMG2IMG || process.env.CREDITS_COST_IMAGE || process.env.CREDITS_COST_GENERATE,
+      10
+    );
+    res.json({ ok: true, generate, img2img });
+  });
+
   app.post('/api/credits/checkin', (req, res) => {
     const userId = String(req.body?.userId || req.query?.userId || '').trim();
     if (typeof assertAuthUserMatches === 'function') {

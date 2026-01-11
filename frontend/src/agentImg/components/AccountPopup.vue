@@ -90,7 +90,7 @@
               </div>
             </div>
 
-            <div v-else class="panel-body">
+            <div v-else class="panel-body no-scroll">
               <div class="panel-actions">
                 <button class="mini-btn" type="button" :disabled="holdsLoading" @click="loadHolds">
                   {{ holdsLoading ? ui.loading : ui.refresh }}
@@ -628,6 +628,10 @@ watch(
   flex: 1;
   overflow: auto;
   padding: 14px;
+}
+
+.panel-body.no-scroll {
+  overflow: hidden;
 }
 
 .panel-actions {

@@ -223,7 +223,8 @@ export const useAgentImgFlow = (opts?: {
         signal: ctl.signal,
         timeoutMs: 45000,
         requestId: reqId,
-        images
+        images,
+        purpose: `agentImg_${nextStage}`
       });
     } finally {
       activeAbort.value = null;

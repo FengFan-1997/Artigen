@@ -9,9 +9,27 @@ export type CreditsBalance = {
 };
 
 const BALANCE_URL = buildApiUrl('/api/credits/balance');
+const COSTS_URL = buildApiUrl('/api/credits/costs');
 const CREATE_ORDER_URL = buildApiUrl('/api/pay/create-order');
 const ORDERS_URL = buildApiUrl('/api/credits/orders');
 const HOLDS_URL = buildApiUrl('/api/credits/holds');
+
+export type CreditsCosts = { generate: number; img2img: number };
+
+export const getCreditsCosts = async (): Promise<CreditsCosts | null> => {
+  try {
+    const res = await fetch(COSTS_URL);
+    if (!res.ok) return null;
+    const json: any = await res.json().catch(() => null);
+    if (!json || typeof json !== 'object') return null;
+    const gen = Number(json?.generate ?? 0);
+    const img = Number(json?.img2img ?? 0);
+    if (!Number.isFinite(gen) || !Number.isFinite(img)) return null;
+    return { generate: Math.max(0, Math.trunc(gen)), img2img: Math.max(0, Math.trunc(img)) };
+  } catch {
+    return null;
+  }
+};
 
 export const getCreditsBalance = async (): Promise<CreditsBalance | null> => {
   try {

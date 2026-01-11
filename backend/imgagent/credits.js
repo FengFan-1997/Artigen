@@ -130,6 +130,7 @@ const freezeCredits = (input) => {
     const st = String(h.status || '').trim();
     return {
       ok: true,
+      existing: true,
       holdId: existing.holdId,
       status: st || 'frozen',
       cost: Number(h.cost ?? 0) || cost,
@@ -160,7 +161,7 @@ const freezeCredits = (input) => {
   writeWalletMap(wallets);
   writeHoldsMap(holds);
 
-  return { ok: true, holdId, status: 'frozen', cost, wallet: getBalance(uid) };
+  return { ok: true, existing: false, holdId, status: 'frozen', cost, wallet: getBalance(uid) };
 };
 
 const confirmHold = (input) => {

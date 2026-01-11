@@ -158,7 +158,7 @@
             <div class="side-footer">
               <button class="primary side-action-btn" @click="onPrimary" :disabled="!canPrimary">
                 <span v-if="loading" class="loading-spinner"></span>
-                <span v-else>{{ primaryText }}</span>
+                <span v-else>{{ primaryTextWithCost }}</span>
               </button>
             </div>
           </aside>
@@ -219,20 +219,22 @@
               </div>
 
               <div class="dt-actions">
-                <button class="dt-btn" @click="onPrimary" :disabled="loading">
-                  <span
-                    v-if="loading"
-                    class="loading-spinner"
-                    style="width: 14px; height: 14px; border-width: 2px; margin-right: 8px"
-                  ></span>
-                  {{
-                    loading
-                      ? currentLang === 'zh'
-                        ? '正在生成...'
-                        : 'Generating...'
-                      : ui.generateThisDirection
-                  }}
-                </button>
+                <div class="dt-generate-wrap">
+                  <button class="dt-btn" @click="onPrimary" :disabled="loading">
+                    <span
+                      v-if="loading"
+                      class="loading-spinner"
+                      style="width: 14px; height: 14px; border-width: 2px; margin-right: 8px"
+                    ></span>
+                    {{
+                      loading
+                        ? currentLang === 'zh'
+                          ? '正在生成...'
+                          : 'Generating...'
+                        : primaryTextWithCost
+                    }}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -327,6 +329,16 @@
                   <span class="loading-text">{{ ui.loadingText }}</span>
                 </div>
               </div>
+
+              <div v-for="n in chatNotices" :key="n.id" class="msg msg-ai">
+                <div class="msg-avatar">
+                  <img src="/logo.png" alt="System" />
+                </div>
+                <div class="msg-bubble error-bubble">
+                  <div class="error-icon">!</div>
+                  <div class="error-text">{{ n.text }}</div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -350,9 +362,14 @@
                 ref="chatInputRef"
                 v-model="userInput"
                 class="textarea"
+                :class="{ 'drag-over': chatInputDragOver }"
                 :placeholder="ui.inputPlaceholder"
                 maxlength="500"
+                @dragover="onChatInputDragOver"
+                @dragleave="onChatInputDragLeave"
+                @drop="onChatInputDrop"
               ></textarea>
+              <div v-if="chatInputDragOver" class="drop-hint">{{ ui.dropHint }}</div>
 
               <div class="input-toolbar">
                 <div class="left-tools">
@@ -361,39 +378,45 @@
                     <span class="tool-text">{{ ui.addImage }}</span>
                   </button>
 
-                  <div ref="modelMenuRef" class="model-menu">
+                  <div class="model-menu">
                     <button
-                      class="toggle-btn"
+                      class="toggle-btn model-btn"
                       type="button"
-                      :class="{ active: modelMenuOpen }"
+                      :title="currentModelTip"
                       :disabled="loading"
                       @click="toggleModelMenu"
                     >
-                      <span class="toggle-icon">⬡</span>
-                      <span class="toggle-text">{{ ui.model }}: {{ selectedModelLabel }}</span>
+                      <span class="toggle-icon">○</span>
+                      <span class="toggle-text">{{ currentModelLabel }}</span>
                     </button>
-
-                    <div v-if="modelMenuOpen" class="model-dropdown">
+                    <div v-if="modelMenuOpen" class="model-dropdown" @mousedown.stop @click.stop>
                       <button
-                        v-for="opt in modelOptions"
-                        :key="opt.id"
+                        v-for="m in modelOptions"
+                        :key="m.id || 'auto'"
                         class="model-item"
                         type="button"
-                        :disabled="opt.disabled"
-                        :class="{ active: opt.id === selectedModelId }"
-                        @click="selectModel(opt.id)"
+                        :class="{ active: m.id === selectedModelId }"
+                        @click="selectModel(m)"
                       >
                         <div class="model-main">
-                          <span class="model-name">{{ opt.label }}</span>
-                          <span v-if="opt.badge" class="model-badge">{{ opt.badge }}</span>
+                          <div class="model-name">{{ m.label }}</div>
+                          <div class="model-badge">{{ m.badge }}</div>
                         </div>
-                        <div v-if="opt.hint" class="model-hint">{{ opt.hint }}</div>
+                        <div v-if="m.hint" class="model-hint">{{ m.hint }}</div>
                       </button>
                     </div>
                   </div>
 
-                  <label v-if="!hasPreviews" class="toggle-btn" :class="{ active: deepMode }">
-                    <input type="checkbox" v-model="deepMode" :disabled="loading" />
+                  <label
+                    class="toggle-btn"
+                    :class="{ active: deepMode }"
+                    :title="hasPreviews && !deepMode ? ui.deepThinkDisabledTip : ''"
+                  >
+                    <input
+                      type="checkbox"
+                      v-model="deepMode"
+                      :disabled="loading || (!deepMode && hasPreviews)"
+                    />
                     <span class="toggle-icon">✦</span>
                     <span class="toggle-text">{{ ui.deepThinkToggle }}</span>
                   </label>
@@ -439,13 +462,24 @@
                   </button>
                   <button
                     class="send-btn"
-                    :class="{ stop: loading }"
-                    @click="loading ? onStop() : onPrimary()"
-                    :disabled="loading ? false : !canPrimary"
+                    :class="{ stop: loading || isStyleSelecting, 'has-cost': showSendCostInline }"
+                    @click="
+                      loading
+                        ? onStopProcessing()
+                        : isStyleSelecting
+                          ? onExitStyleSelection()
+                          : onPrimary()
+                    "
+                    :disabled="loading ? false : isStyleSelecting ? false : !canPrimary"
                     :title="generateHoverTip"
                   >
-                    <span v-if="loading">■</span>
-                    <span v-else>↑</span>
+                    <span v-if="loading || isStyleSelecting">■</span>
+                    <template v-else>
+                      <span class="send-icon">↑</span>
+                      <span v-if="showSendCostInline" class="send-cost-inline">{{
+                        sendCostText
+                      }}</span>
+                    </template>
                   </button>
                 </div>
               </div>
@@ -514,9 +548,11 @@ import { useLoginModel } from '@/stores';
 import { useLanguageStore } from '@/stores/language';
 import {
   getCreditsBalance,
-  getCreditsOrders,
   type CreditsBalance,
-  type CreditsOrder
+  getCreditsCosts,
+  type CreditsCosts,
+  getCreditsOrders,
+  type PayPackageId
 } from '@/points';
 import { img2img, type GenerateImageInput, type Img2ImgImageInput } from './services/text';
 import type { AgentImgPromptResult } from './types';
@@ -572,16 +608,19 @@ const ui = computed(() => {
       imageLabel: 'Image',
       addImage: '添加图片',
       model: '模型',
-      modelStandard: 'Standard',
+      modelTip: '当前：默认模型',
+      modelStandard: '默认模型',
       modelNanobanana: 'Nano Banana',
       modelNanobananaPro: 'Nano BananaPro',
-      modelLocked: '需要标准包以上',
+      modelLocked: '需要 Pro 以上',
       modelComingSoon: '暂未接入',
       costTip: '预计扣费：{n} 点/次（以实际扣费为准）',
       deepThinkToggle: '深度思考',
+      deepThinkDisabledTip: '图生图暂不支持深度思考',
       productSpecial: '产品专项',
       sendHint: 'Ctrl + Enter 发送',
       inputPlaceholder: '描述你想要的产品图，比如：“一瓶精华液放在冰块上，背景是阳光海滩”...',
+      dropHint: '拖拽图片到这里松开即可添加',
       loadingText: '正在处理，请耐心等待…'
     };
   }
@@ -626,19 +665,22 @@ const ui = computed(() => {
     positivePrompt: 'Positive Prompt',
     negativePrompt: 'Negative Prompt',
     imageLabel: 'Image',
-    addImage: 'Add Image',
+    addImage: 'Add image',
     model: 'Model',
-    modelStandard: 'standard',
+    modelTip: 'Current: Default model',
+    modelStandard: 'Default Model',
     modelNanobanana: 'Nano Banana',
     modelNanobananaPro: 'Nano BananaPro',
-    modelLocked: 'Requires Standard pack or higher',
+    modelLocked: 'Requires Pro pack or higher',
     modelComingSoon: 'Coming soon',
     costTip: 'Est. cost: {n} credits/run (actual deduction may vary)',
     deepThinkToggle: 'Deep Thinking',
+    deepThinkDisabledTip: 'Deep Thinking is disabled for image-to-image',
     productSpecial: 'Product',
     sendHint: 'Ctrl + Enter to send',
     inputPlaceholder:
       'Describe your scene, e.g. a sparkling soda on ice cubes with a sunny beach background...',
+    dropHint: 'Drop image here to add',
     loadingText: 'Processing, please wait…'
   };
 });
@@ -742,6 +784,19 @@ const abortImg2Img = () => {
 const pendingUserText = ref('');
 const lastUserText = ref('');
 const chatScrollEl = ref<HTMLElement | null>(null);
+const chatNotices = ref<{ id: string; text: string }[]>([]);
+const activeRequestId = ref('');
+const abortNoticeRequestId = ref('');
+
+const pushChatNotice = (text: string) => {
+  const t = String(text || '').trim();
+  if (!t) return;
+  chatNotices.value = [
+    ...chatNotices.value,
+    { id: `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`, text: t }
+  ].slice(-6);
+  scrollChatToBottom();
+};
 
 const normalizeTag = (v: string) =>
   String(v || '')
@@ -796,6 +851,8 @@ const selectedOptionStyleTags = computed(() => {
   return idx >= 0 ? options.value[idx]?.styleTags || [] : [];
 });
 
+const isStyleSelecting = computed(() => deepMode.value && options.value.length > 0);
+
 const updateSelectedOptionTitle = (next: string) => {
   const idx = selectedOptionIndex.value;
   if (idx < 0) return;
@@ -818,6 +875,102 @@ const previewUrls = ref<string[]>(['', '']);
 const previewFiles = ref<(File | null)[]>([null, null]);
 const fileInputs = ref<HTMLInputElement[]>([]);
 const hasPreviews = computed(() => previewUrls.value.some((u) => !!u));
+
+const modelMenuOpen = ref(false);
+const selectedModelId = ref<string>('');
+const userTier = ref<PayPackageId | ''>('');
+const userTierLoading = ref(false);
+
+const rankOfTier = (tier: PayPackageId | '') => {
+  if (tier === 'starter') return 1;
+  if (tier === 'standard') return 2;
+  if (tier === 'pro') return 3;
+  if (tier === 'ultimate') return 4;
+  return 0;
+};
+
+const isProPlus = computed(() => rankOfTier(userTier.value) >= 3);
+
+const refreshUserTier = async () => {
+  if (!isAuthed.value) {
+    userTier.value = '';
+    userTierLoading.value = false;
+    return;
+  }
+  if (userTierLoading.value) return;
+  userTierLoading.value = true;
+  try {
+    const orders = await getCreditsOrders();
+    if (!orders || !orders.length) {
+      userTier.value = '';
+      return;
+    }
+    const max = orders.reduce<PayPackageId | ''>((acc, o) => {
+      const next = o.packageId || '';
+      return rankOfTier(next) > rankOfTier(acc) ? next : acc;
+    }, '');
+    userTier.value = max;
+  } finally {
+    userTierLoading.value = false;
+  }
+};
+
+const modelOptions = computed(() => {
+  const autoHint =
+    currentLang.value === 'zh'
+      ? '自动：按图生图/文生图自动选择'
+      : 'Auto: picks based on img2img/txt2img';
+  const txtHint =
+    currentLang.value === 'zh' ? '更适合纯提示词出图' : 'Better for text-only generation';
+  const editHint =
+    currentLang.value === 'zh' ? '更适合带参考图编辑' : 'Better for image editing with references';
+  return [
+    { id: '', label: ui.value.modelStandard, badge: 'AUTO', hint: autoHint, requiresPro: false },
+    {
+      id: 'Qwen/Qwen-Image',
+      label: ui.value.modelNanobanana,
+      badge: 'TXT',
+      hint: txtHint,
+      requiresPro: true
+    },
+    {
+      id: 'Qwen/Qwen-Image-Edit-2509',
+      label: ui.value.modelNanobananaPro,
+      badge: 'EDIT',
+      hint: editHint,
+      requiresPro: true
+    }
+  ];
+});
+const currentModelLabel = computed(() => {
+  const found = modelOptions.value.find((x) => x.id === selectedModelId.value);
+  return found?.label || ui.value.modelStandard;
+});
+const currentModelTip = computed(() => {
+  const label = currentModelLabel.value;
+  return currentLang.value === 'zh' ? `当前：${label}` : `Current: ${label}`;
+});
+const toggleModelMenu = () => {
+  modelMenuOpen.value = !modelMenuOpen.value;
+};
+const ensureProAccessOrRedirect = async () => {
+  if (!ensureAuthed()) return false;
+  if (!userTier.value) await refreshUserTier();
+  if (isProPlus.value) return true;
+  modelMenuOpen.value = false;
+  showTopTip(ui.value.modelLocked);
+  router.push({ path: '/artigen/market', query: { proOnly: '1' } });
+  return false;
+};
+const selectModel = async (m: { id: string; requiresPro?: boolean }) => {
+  const id = String(m?.id || '').trim();
+  if (m?.requiresPro) {
+    const ok = await ensureProAccessOrRedirect();
+    if (!ok) return;
+  }
+  selectedModelId.value = id;
+  modelMenuOpen.value = false;
+};
 
 const closeMobileOverlays = () => {
   productSidebarOpen.value = false;
@@ -874,80 +1027,11 @@ const ensureAuthed = (after?: () => Promise<void> | void) => {
 
 const creditsBalance = ref<CreditsBalance | null>(null);
 const creditsLoading = ref(false);
+const creditsCosts = ref<CreditsCosts | null>(null);
 const finalImageUrl = ref('');
 const history = ref<HistoryItem[]>([]);
 
-type ModelId = 'standard' | 'Nano Banana' | 'Nano BananaPro';
-
-const selectedModelId = ref<ModelId>('standard');
-const modelMenuOpen = ref(false);
-const modelMenuRef = ref<HTMLElement | null>(null);
-
-const packageTierWeight = ref(0);
-const hasStandardOrAbove = computed(() => packageTierWeight.value >= 2);
-
-const refreshPackageTier = async () => {
-  if (!isAuthed.value) {
-    packageTierWeight.value = 0;
-    return;
-  }
-  const orders = await getCreditsOrders();
-  const list: CreditsOrder[] = Array.isArray(orders) ? orders : [];
-  const weightOf = (pkg?: string) => {
-    if (pkg === 'ultimate') return 4;
-    if (pkg === 'pro') return 3;
-    if (pkg === 'standard') return 2;
-    if (pkg === 'starter') return 1;
-    return 0;
-  };
-  let best = 0;
-  for (const o of list) best = Math.max(best, weightOf(o.packageId));
-  packageTierWeight.value = best;
-};
-
-const selectedModelLabel = computed(() => {
-  if (selectedModelId.value === 'standard') return ui.value.modelStandard;
-  if (selectedModelId.value === 'Nano Banana') return ui.value.modelNanobanana;
-  return ui.value.modelNanobananaPro;
-});
-
-const modelOptions = computed(() => {
-  const locked = !hasStandardOrAbove.value;
-  return [
-    {
-      id: 'standard' as const,
-      label: ui.value.modelStandard,
-      disabled: false,
-      badge: '',
-      hint: ''
-    },
-    {
-      id: 'Nano Banana' as const,
-      label: ui.value.modelNanobanana,
-      disabled: locked,
-      badge: locked ? '🔒' : ui.value.modelComingSoon,
-      hint: locked ? ui.value.modelLocked : ui.value.modelComingSoon
-    },
-    {
-      id: 'Nano BananaPro' as const,
-      label: ui.value.modelNanobananaPro,
-      disabled: locked,
-      badge: locked ? '🔒' : ui.value.modelComingSoon,
-      hint: locked ? ui.value.modelLocked : ui.value.modelComingSoon
-    }
-  ];
-});
-
-const toggleModelMenu = () => {
-  modelMenuOpen.value = !modelMenuOpen.value;
-};
-
-const selectModel = (id: ModelId) => {
-  const opt = modelOptions.value.find((x) => x.id === id);
-  if (!opt || opt.disabled) return;
-  selectedModelId.value = id;
-  modelMenuOpen.value = false;
-};
+const chatInputDragOver = ref(false);
 
 const historyStorageKey = computed(() => {
   const uid = String(authUserId.value || '').trim() || ensureGuestUserId();
@@ -1113,6 +1197,13 @@ watch(
   (v) => {
     const m = String(v || '').trim();
     if (!m) return;
+    const cancelled =
+      m === 'Cancelled.' || m === '已取消' || /cancelled/i.test(m) || /取消/.test(m);
+    if (cancelled) {
+      pushChatNotice(m);
+      error.value = '';
+      return;
+    }
     showTopTip(m);
   }
 );
@@ -1137,6 +1228,11 @@ const refreshCredits = async () => {
   creditsLoading.value = true;
   creditsBalance.value = await getCreditsBalance();
   creditsLoading.value = false;
+};
+
+const refreshCosts = async () => {
+  if (creditsCosts.value) return;
+  creditsCosts.value = await getCreditsCosts();
 };
 
 const creditsText = computed(() => {
@@ -1185,9 +1281,24 @@ const primaryText = computed(() => {
   return currentLang.value === 'zh' ? '快速生成' : 'Generate';
 });
 
+const primaryTextWithCost = computed(() => {
+  if (loading.value) return primaryText.value;
+  if (!showGenerateCost.value) return primaryText.value;
+  return `${primaryText.value} ${sendCostText.value}`;
+});
+
+const resolvedCost = computed(() => {
+  const costs = creditsCosts.value;
+  const fallback = 10;
+  if (!costs) return fallback;
+  const img2imgCost = Math.max(0, Number(costs.img2img ?? fallback) || 0);
+  const generateCost = Math.max(0, Number(costs.generate ?? fallback) || 0);
+  if (deepMode.value && options.value.length === 0) return generateCost;
+  return img2imgCost;
+});
+
 const canPrimary = computed(() => {
   if (loading.value) return false;
-  if (selectedModelId.value !== 'standard') return false;
   if (deepMode.value) {
     if (options.value.length === 0) return canAnalyze.value;
     return (
@@ -1200,9 +1311,22 @@ const canPrimary = computed(() => {
 
 const generateHoverTip = computed(() => {
   if (loading.value) return '';
-  const cost = 1;
-  return String(ui.value.costTip || '').replace('{n}', String(cost));
+  return String(ui.value.costTip || '').replace('{n}', String(resolvedCost.value));
 });
+
+const showGenerateCost = computed(() => {
+  if (deepMode.value) return options.value.length > 0;
+  return true;
+});
+
+const sendCostText = computed(() => {
+  const n = resolvedCost.value;
+  return `⚡${n}`;
+});
+
+const showSendCostInline = computed(
+  () => !loading.value && !deepMode.value && !isStyleSelecting.value
+);
 
 const fileToThumbDataUrl = (f: File): Promise<string | null> => {
   return new Promise((resolve) => {
@@ -1287,6 +1411,7 @@ const humanizeImgError = (code: string) => {
   if (!c) return currentLang.value === 'zh' ? '出图失败，请稍后再试' : 'Image generation failed.';
   if (c === 'ABORTED' || c === 'AbortError' || /aborted/i.test(c))
     return currentLang.value === 'zh' ? '已取消' : 'Cancelled.';
+  if (c === 'CLIENT_ABORTED') return currentLang.value === 'zh' ? '已取消' : 'Cancelled.';
   if (c === 'INSUFFICIENT_CREDITS')
     return currentLang.value === 'zh'
       ? '积分不足，请前往「算力商城」充值'
@@ -1295,6 +1420,28 @@ const humanizeImgError = (code: string) => {
     return currentLang.value === 'zh'
       ? '请先上传一张参考图再出图'
       : 'Please upload a reference image first.';
+  if (c === 'REQUEST_IN_PROGRESS')
+    return currentLang.value === 'zh'
+      ? '请求处理中，请稍后再试'
+      : 'Request in progress, try again later.';
+  if (c === 'DUPLICATE_REQUEST')
+    return currentLang.value === 'zh'
+      ? '重复请求，请稍后再试'
+      : 'Duplicate request, try again later.';
+  if (c === 'EMPTY_IMAGE_RESULT')
+    return currentLang.value === 'zh' ? '出图失败：服务未返回图片' : 'Failed: empty image result.';
+  if (c === 'CREDITS_CONFIRM_FAILED')
+    return currentLang.value === 'zh'
+      ? '扣费确认失败，已回滚，请重试'
+      : 'Credits confirmation failed (rolled back). Please retry.';
+  if (c === 'MISSING_SILICONFLOW_API_KEY')
+    return currentLang.value === 'zh' ? '服务未配置，请联系管理员' : 'Server not configured.';
+  if (c === 'NETWORK_ERROR' || c === 'FETCH_ERROR')
+    return currentLang.value === 'zh' ? '网络错误，请稍后再试' : 'Network error, please try again.';
+  if (c.startsWith('SILICONFLOW_IMAGE_'))
+    return currentLang.value === 'zh'
+      ? '服务繁忙或参数错误，请稍后再试'
+      : 'Upstream error, please try again.';
   return currentLang.value === 'zh' ? `出图失败：${c}` : `Image generation failed: ${c}`;
 };
 
@@ -1376,6 +1523,9 @@ const doPrimary = async () => {
       return [logoInput as GenerateImageInput] as Img2ImgImageInput[];
     };
 
+    const requestId = `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    activeRequestId.value = requestId;
+
     const runOnce = async (args: {
       prompt: string;
       negativePrompt?: string;
@@ -1390,13 +1540,28 @@ const doPrimary = async () => {
         negativePrompt: args.negativePrompt,
         params: args.params,
         images: args.images,
+        model: selectedModelId.value,
         timeoutMs: 120000,
+        requestId,
         signal: ctl.signal
       });
       if (activeImgAbort.value === ctl) activeImgAbort.value = null;
       if (!res.ok) {
         if (res.wallet) creditsBalance.value = res.wallet;
-        error.value = humanizeImgError(res.errorCode || res.error);
+        const code = String(res.errorCode || res.error || '').trim();
+        const abortLike =
+          code === 'ABORTED' ||
+          code === 'AbortError' ||
+          code === 'CLIENT_ABORTED' ||
+          /aborted/i.test(code) ||
+          /AbortError/i.test(code);
+        if (abortLike) {
+          const msg = humanizeImgError(code || 'ABORTED');
+          if (abortNoticeRequestId.value !== requestId) pushChatNotice(msg);
+          abortNoticeRequestId.value = '';
+          return { ok: false as const, url: '' };
+        }
+        error.value = humanizeImgError(code);
         return { ok: false as const, url: '' };
       }
       const url = String(res.images?.[0]?.url || '').trim();
@@ -1410,59 +1575,19 @@ const doPrimary = async () => {
 
     loading.value = true;
     error.value = '';
-
-    if (!hasLogo) {
-      const out = await runOnce({
-        prompt: fp.prompt,
-        negativePrompt: fp.negativePrompt,
-        params: fp.params,
-        images: buildFinalImages()
-      });
-      loading.value = false;
-      if (out.ok) {
-        finalImageUrl.value = out.url;
-        await refreshCredits();
-      }
-      return out;
-    }
-
-    if (refImgs.length) {
-      const out = await runOnce({
-        prompt: applyLogoInstructionToPrompt(fp.prompt),
-        negativePrompt: fp.negativePrompt,
-        params: fp.params,
-        images: buildFinalImages()
-      });
-      loading.value = false;
-      if (out.ok) {
-        finalImageUrl.value = out.url;
-        await refreshCredits();
-      }
-      return out;
-    }
-
-    const base = await runOnce({
-      prompt: fp.prompt,
+    const out = await runOnce({
+      prompt: hasLogo ? applyLogoInstructionToPrompt(fp.prompt) : fp.prompt,
       negativePrompt: fp.negativePrompt,
       params: fp.params,
-      images: []
-    });
-    if (!base.ok) {
-      loading.value = false;
-      return base;
-    }
-    const final = await runOnce({
-      prompt: applyLogoInstructionToPrompt(fp.prompt),
-      negativePrompt: fp.negativePrompt,
-      params: fp.params,
-      images: [base.url, logoInput as GenerateImageInput]
+      images: buildFinalImages()
     });
     loading.value = false;
-    if (final.ok) {
-      finalImageUrl.value = final.url;
+    if (activeRequestId.value === requestId) activeRequestId.value = '';
+    if (out.ok) {
+      finalImageUrl.value = out.url;
       await refreshCredits();
     }
-    return final;
+    return out;
   };
 
   if (deepMode.value) {
@@ -1470,6 +1595,7 @@ const doPrimary = async () => {
       const p = analyzeDirections();
       userInput.value = '';
       await p;
+      await refreshCredits();
       pendingUserText.value = '';
       return;
     }
@@ -1562,10 +1688,43 @@ const onPrimary = async () => {
   await doPrimary();
 };
 
-const onStop = () => {
+const onStopProcessing = () => {
+  const reqId = String(activeRequestId.value || '').trim();
+  if (reqId) {
+    abortNoticeRequestId.value = reqId;
+    pushChatNotice(humanizeImgError('ABORTED'));
+  }
   cancel();
   abortImg2Img();
 };
+
+const restoreLastUserTextToInput = () => {
+  const t = String(lastUserText.value || '').trim();
+  if (!t) return;
+  const cur = String(userInput.value || '');
+  if (!cur.trim()) {
+    userInput.value = t;
+    return;
+  }
+  const sep = cur.endsWith('\n') ? '' : '\n';
+  userInput.value = `${cur}${sep}${t}`;
+};
+
+const onExitStyleSelection = () => {
+  if (!options.value.length) return;
+  options.value = [];
+  selectedOptionId.value = '';
+  pendingUserText.value = '';
+  restoreLastUserTextToInput();
+  scrollChatToBottom();
+};
+
+watch(
+  () => deepMode.value,
+  () => {
+    if (options.value.length) onExitStyleSelection();
+  }
+);
 
 const scrollToGeneration = (id: string | number) => {
   const el = document.getElementById(`gen-${id}`);
@@ -1639,6 +1798,19 @@ const setPreviewUrl = (idx: number, nextUrl: string) => {
   previewUrls.value[idx] = nextUrl;
 };
 
+const setPreviewFileAt = (idx: number, f: File) => {
+  const url = URL.createObjectURL(f);
+  previewFiles.value[idx] = f;
+  setPreviewUrl(idx, url);
+};
+
+const afterPreviewsChanged = (keepDeep: boolean) => {
+  if (!keepDeep) deepMode.value = false;
+  cancel();
+  abortImg2Img();
+  if (!keepDeep) reset();
+};
+
 const onPreviewChange = (idx: number, e: Event) => {
   const input = e.target as HTMLInputElement | null;
   const f = input?.files && input.files.length ? input.files[0] : null;
@@ -1646,17 +1818,48 @@ const onPreviewChange = (idx: number, e: Event) => {
     if (input) input.value = '';
     return;
   }
-  const url = URL.createObjectURL(f);
-  previewFiles.value[idx] = f;
-  setPreviewUrl(idx, url);
-  deepMode.value = false;
-  cancel();
-  abortImg2Img();
-  reset();
+  setPreviewFileAt(idx, f);
+  const keepDeep = isStyleSelecting.value;
+  afterPreviewsChanged(keepDeep);
   if (input) input.value = '';
-  if (userInput.value.trim()) {
-    void onPrimary();
+};
+
+const onChatInputDragOver = (e: DragEvent) => {
+  if (loading.value) return;
+  e.preventDefault();
+  chatInputDragOver.value = true;
+};
+
+const onChatInputDragLeave = (e: DragEvent) => {
+  e.preventDefault();
+  chatInputDragOver.value = false;
+};
+
+const onChatInputDrop = (e: DragEvent) => {
+  if (loading.value) return;
+  e.preventDefault();
+  e.stopPropagation();
+  chatInputDragOver.value = false;
+
+  const dt = e.dataTransfer;
+  const files = dt?.files ? Array.from(dt.files) : [];
+  const images = files.filter(
+    (f) => f && typeof f.type === 'string' && f.type.startsWith('image/')
+  );
+  if (!images.length) return;
+
+  const emptySlots = previewUrls.value.map((u, i) => (!u ? i : -1)).filter((i) => i >= 0);
+
+  let overwriteIdx = 0;
+  for (const f of images) {
+    const idx = emptySlots.length
+      ? (emptySlots.shift() as number)
+      : overwriteIdx++ % previewUrls.value.length;
+    setPreviewFileAt(idx, f);
   }
+
+  const keepDeep = isStyleSelecting.value;
+  afterPreviewsChanged(keepDeep);
 };
 
 const clearPreview = (idx: number) => {
@@ -1676,7 +1879,8 @@ const handleAuthChanged = () => {
   else loadHistoryFromStorage();
   if (isAuthed.value) void refreshCredits();
   else creditsBalance.value = null;
-  void refreshPackageTier();
+  if (isAuthed.value) void refreshUserTier();
+  else userTier.value = '';
 };
 
 const chatInputRef = ref<HTMLTextAreaElement | null>(null);
@@ -1685,10 +1889,7 @@ const onGlobalPointerDown = (e: PointerEvent) => {
   const target = e.target as HTMLElement | null;
   if (!target) return;
 
-  if (modelMenuOpen.value) {
-    const inside = target.closest('.model-menu');
-    if (!inside) modelMenuOpen.value = false;
-  }
+  if (modelMenuOpen.value && !target.closest('.model-menu')) modelMenuOpen.value = false;
 
   if (target.closest('input, textarea, [contenteditable="true"], .msg-bubble')) return;
 
@@ -1727,6 +1928,7 @@ onMounted(() => {
   } catch {}
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
   document.addEventListener('pointerdown', onGlobalPointerDown, true);
+  void refreshCosts();
 });
 
 onBeforeUnmount(() => {
@@ -2532,6 +2734,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  position: relative;
 }
 .input-wrapper:focus-within {
   border-color: var(--primary);
@@ -2591,6 +2794,27 @@ onBeforeUnmount(() => {
   resize: none;
   outline: none;
   font-family: inherit;
+}
+
+.textarea.drag-over {
+  box-shadow: 0 0 0 1px var(--primary);
+  background: rgba(204, 255, 0, 0.06);
+}
+
+.drop-hint {
+  position: absolute;
+  inset: 12px 12px 52px 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(204, 255, 0, 0.45);
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(241, 245, 249, 0.92);
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* Input Toolbar */
@@ -2752,6 +2976,10 @@ onBeforeUnmount(() => {
   display: none;
 }
 
+.model-btn {
+  cursor: pointer;
+}
+
 .side-fade-enter-active,
 .side-fade-leave-active {
   transition:
@@ -2838,7 +3066,10 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   transition: all 0.2s;
+  position: relative;
+  overflow: visible;
 }
 .send-btn:hover:not(:disabled) {
   background: var(--primary);
@@ -2846,6 +3077,31 @@ onBeforeUnmount(() => {
 .send-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+.send-btn.has-cost {
+  width: auto;
+  padding: 0 10px;
+  justify-content: center;
+}
+
+.send-cost-inline {
+  font-family:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  line-height: 1;
+}
+
+.input-generate-cost {
+  width: auto;
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  opacity: 0.95;
 }
 
 /* Mobile Responsiveness */
@@ -2878,8 +3134,69 @@ onBeforeUnmount(() => {
   height: 100vh;
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(4px);
-  z-index: 70;
+  z-index: 10000;
   animation: fadeIn 0.3s;
+}
+
+@media (max-width: 1280px) {
+  .input-toolbar .toggle-text {
+    display: none;
+  }
+
+  .input-toolbar .tool-text {
+    display: none;
+  }
+
+  .upload-btn {
+    padding: 0 10px;
+  }
+
+  .history-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mobile-overlay {
+    display: block;
+    top: 0;
+    height: 100vh;
+  }
+
+  .side {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: min(320px, 86vw);
+    transform: translateX(-100%);
+    background: #0a0a0a;
+    border-right: 1px solid var(--border-color);
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
+    z-index: 10001;
+    transition:
+      opacity 0.18s ease,
+      transform 0.18s ease;
+  }
+
+  .side.mobile-open {
+    transform: translateX(0);
+  }
+
+  .side-fade-enter-from {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+
+  .side-fade-leave-from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .side-fade-leave-to {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
 }
 
 @media (max-width: 768px) {
@@ -2889,6 +3206,8 @@ onBeforeUnmount(() => {
 
   .mobile-overlay {
     display: block;
+    top: 0;
+    height: 100vh;
   }
 
   .header-left {
@@ -2916,23 +3235,17 @@ onBeforeUnmount(() => {
     padding: 0 10px;
   }
 
-  .history-toggle-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-
   .side {
-    position: absolute;
+    position: fixed;
     top: 0;
     left: 0;
-    height: 100%;
+    height: 100vh;
     width: min(320px, 86vw);
     transform: translateX(-100%);
     background: #0a0a0a;
     border-right: 1px solid var(--border-color);
     box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
-    z-index: 80;
+    z-index: 130;
   }
 
   .side.mobile-open {
@@ -2963,6 +3276,33 @@ onBeforeUnmount(() => {
   .form-group {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+.generate-cost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: fit-content;
+  margin: 0 auto 10px auto;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  background: rgba(139, 92, 246, 0.85);
+  color: rgba(255, 255, 255, 0.95);
+  font-family:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.55);
+}
+
+.dt-generate-cost {
+  width: auto;
+  margin: 0 0 10px 0;
+  display: inline-flex;
 }
 
 /* New Header Styles */
@@ -3175,7 +3515,7 @@ onBeforeUnmount(() => {
   z-index: 5;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1280px) {
   .right-side {
     position: fixed;
     top: 0;
@@ -3190,7 +3530,7 @@ onBeforeUnmount(() => {
       transform 0.18s ease;
     background: #0a0a0a;
     box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
-    z-index: 80;
+    z-index: 10001;
   }
 
   .right-side.mobile-open {
@@ -3349,6 +3689,12 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+.dt-generate-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
 }
 .dt-btn {
   background: #ccff00;

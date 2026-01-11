@@ -60,11 +60,22 @@
         </transition>
       </div>
 
-      <slot name="actions"></slot>
-
-      <button v-if="!hideAuth" class="login-btn nth-login-btn" type="button" @click="goLogin">
-        {{ loginText }}
-      </button>
+      <slot name="actions">
+        <div v-if="!hideAuth" class="top-actions">
+          <template v-if="isAuthed">
+            <button class="credits-btn" type="button" @click="goMarket" :disabled="creditsLoading">
+              <span class="credits-icon">⚡</span>
+              <span class="credits-value">{{ creditsText }}</span>
+            </button>
+            <button class="avatar-btn" type="button" @click="openAccountPopup">
+              <span class="avatar-text">{{ avatarText }}</span>
+            </button>
+          </template>
+          <button v-else class="login-btn nth-login-btn" type="button" @click="goLogin">
+            {{ loginText }}
+          </button>
+        </div>
+      </slot>
     </div>
   </header>
 
@@ -101,13 +112,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import AccountPopup from './AccountPopup.vue';
 import { useLanguageStore } from '@/stores/language';
 import { useLoginModel } from '@/stores';
-import { isLocalLoggedIn } from '@/login/session';
+import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import { getCreditsBalance, type CreditsBalance } from '@/points';
 
 defineProps<{
   hideAuth?: boolean;
@@ -138,6 +150,24 @@ const handleAuthChanged = () => {
   authTick.value++;
 };
 
+const creditsBalance = ref<CreditsBalance | null>(null);
+const creditsLoading = ref(false);
+
+const refreshCredits = async () => {
+  if (!isAuthed.value) {
+    creditsBalance.value = null;
+    creditsLoading.value = false;
+    return;
+  }
+  if (creditsLoading.value) return;
+  creditsLoading.value = true;
+  try {
+    creditsBalance.value = await getCreditsBalance();
+  } finally {
+    creditsLoading.value = false;
+  }
+};
+
 const onDocMouseDown = (e: MouseEvent) => {
   const target = e.target;
   if (!(target instanceof Node)) return;
@@ -158,6 +188,7 @@ const onDocMouseDown = (e: MouseEvent) => {
 onMounted(() => {
   document.addEventListener('mousedown', onDocMouseDown);
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
+  void refreshCredits();
 });
 
 onBeforeUnmount(() => {
@@ -195,8 +226,7 @@ const activeKey = computed<'format' | 'ai' | 'market'>(() => {
 });
 
 const loginText = computed(() => {
-  if (isAuthed.value) return currentLang.value === 'zh' ? '账号' : 'ACCOUNT';
-  return currentLang.value === 'zh' ? '登录' : 'LOGIN';
+  return currentLang.value === 'zh' ? '登录 / 注册' : 'LOGIN / SIGN UP';
 });
 
 const goLogin = () => {
@@ -209,9 +239,102 @@ const goLogin = () => {
   const returnTo = router.currentRoute.value.fullPath;
   loginStore.open({ mode: 'login', returnTo });
 };
+
+const openAccountPopup = () => {
+  try {
+    window.dispatchEvent(new CustomEvent('app-account-popup-open'));
+  } catch {}
+};
+
+const avatarText = computed(() => {
+  const uid = String(getCurrentUserId() || '').trim();
+  if (!uid) return '?';
+  if (uid.startsWith('guest_')) return 'G';
+  return uid.slice(0, 1).toUpperCase();
+});
+
+const creditsText = computed(() => {
+  const bal = creditsBalance.value;
+  if (!bal) return '--';
+  return String(Number(bal.available ?? 0));
+});
+
+const goMarket = () => {
+  router.push('/artigen/market');
+};
+
+watch(
+  () => isAuthed.value,
+  () => void refreshCredits()
+);
 </script>
 
 <style scoped>
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.credits-btn {
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(204, 255, 0, 0.28);
+  background: rgba(204, 255, 0, 0.08);
+  color: rgba(241, 245, 249, 0.95);
+  font-family: 'JetBrains Mono', monospace;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.credits-btn:hover:not(:disabled) {
+  border-color: rgba(204, 255, 0, 0.55);
+  background: rgba(204, 255, 0, 0.12);
+}
+
+.credits-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.credits-icon {
+  line-height: 1;
+}
+
+.credits-value {
+  color: var(--primary, #ccff00);
+  font-weight: 800;
+}
+
+.avatar-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(204, 255, 0, 0.28);
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(241, 245, 249, 0.92);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.avatar-btn:hover {
+  border-color: rgba(204, 255, 0, 0.55);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.avatar-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+}
+
 .header {
   height: 80px;
   display: flex;

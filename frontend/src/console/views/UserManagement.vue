@@ -3,37 +3,41 @@
     <a-typography-title :level="2">{{ ui.title }}</a-typography-title>
 
     <a-card>
-      <div style="margin-bottom: 16px">
+      <div style="margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap">
         <a-input-search
           v-model:value="searchText"
           :placeholder="ui.searchPh"
           style="width: 300px"
+          @search="fetchUsers"
         />
+        <a-button type="primary" :loading="loading" @click="fetchUsers">{{ ui.refresh }}</a-button>
       </div>
 
-      <a-table :dataSource="filteredUsers" :columns="columns" rowKey="userId">
+      <a-table
+        :dataSource="users"
+        :columns="columns"
+        rowKey="userId"
+        :loading="loading"
+        :pagination="pagination"
+        @change="handleTableChange"
+      >
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'level'">
-            <a-tag :color="getLevelColor(record.level)">{{ record.level.toUpperCase() }}</a-tag>
+          <template v-if="column.key === 'createdAt'">
+            {{ record.createdAt ? new Date(record.createdAt).toLocaleString() : '-' }}
           </template>
-          <template v-else-if="column.key === 'points'">
-            <span :style="{ color: record.points < 100 ? 'red' : 'green', fontWeight: 'bold' }">
-              {{ record.points }}
-            </span>
+          <template v-else-if="column.key === 'lastSeen'">
+            {{ record.lastSeen ? new Date(record.lastSeen).toLocaleString() : '-' }}
           </template>
-          <template v-else-if="column.key === 'joinedAt'">
-            {{ new Date(record.joinedAt).toLocaleDateString() }}
+          <template v-else-if="column.key === 'credits'">
+            <a-space>
+              <a-tag color="green">{{ ui.available }}: {{ record.wallet?.available ?? 0 }}</a-tag>
+              <a-tag color="orange">{{ ui.frozen }}: {{ record.wallet?.frozen ?? 0 }}</a-tag>
+            </a-space>
           </template>
           <template v-else-if="column.key === 'action'">
-            <a-space>
-              <a-button type="link" size="small" @click="openUserDetails(record)">{{
-                ui.details
-              }}</a-button>
-              <a-divider type="vertical" />
-              <a-button type="primary" size="small" @click="openEditModal(record)">{{
-                ui.edit
-              }}</a-button>
-            </a-space>
+            <a-button type="link" size="small" @click="openUserDetails(record)">{{
+              ui.details
+            }}</a-button>
           </template>
         </template>
       </a-table>
@@ -43,58 +47,79 @@
     <a-drawer
       v-model:visible="isDrawerVisible"
       :title="ui.userDetails"
-      width="600"
+      width="860"
       placement="right"
     >
       <div v-if="selectedUser">
         <a-descriptions :title="ui.basicInfo" bordered column="1">
           <a-descriptions-item :label="ui.userId">{{ selectedUser.userId }}</a-descriptions-item>
-          <a-descriptions-item :label="ui.email">{{ selectedUser.email }}</a-descriptions-item>
-          <a-descriptions-item :label="ui.level">
-            <a-tag :color="getLevelColor(selectedUser.level)">{{
-              selectedUser.level.toUpperCase()
-            }}</a-tag>
-          </a-descriptions-item>
-          <a-descriptions-item :label="ui.points">{{ selectedUser.points }}</a-descriptions-item>
-          <a-descriptions-item :label="ui.joinedAt">{{
-            new Date(selectedUser.joinedAt).toLocaleString()
+          <a-descriptions-item :label="ui.email">{{
+            selectedUser.email || '-'
           }}</a-descriptions-item>
+          <a-descriptions-item :label="ui.username">{{
+            selectedUser.username || '-'
+          }}</a-descriptions-item>
+          <a-descriptions-item :label="ui.name">{{ selectedUser.name || '-' }}</a-descriptions-item>
+          <a-descriptions-item :label="ui.joinedAt">{{
+            selectedUser.createdAt ? new Date(selectedUser.createdAt).toLocaleString() : '-'
+          }}</a-descriptions-item>
+          <a-descriptions-item :label="ui.lastSeen">{{
+            selectedUser.lastSeen ? new Date(selectedUser.lastSeen).toLocaleString() : '-'
+          }}</a-descriptions-item>
+          <a-descriptions-item :label="ui.visits">{{ selectedUser.visits }}</a-descriptions-item>
+          <a-descriptions-item :label="ui.credits">
+            {{ ui.available }}: {{ selectedUser.wallet?.available ?? 0 }} / {{ ui.frozen }}:
+            {{ selectedUser.wallet?.frozen ?? 0 }}
+          </a-descriptions-item>
         </a-descriptions>
 
-        <a-divider />
+        <a-divider style="margin: 16px 0" />
 
-        <a-tabs default-active-key="transactions">
-          <a-tab-pane key="transactions" :tab="ui.transactions">
+        <a-tabs v-model:activeKey="detailsTab">
+          <a-tab-pane key="chats" :tab="ui.tabChats">
+            <div style="margin-bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap">
+              <a-button type="primary" :loading="loadingChats" @click="fetchChats">{{
+                ui.refreshChats
+              }}</a-button>
+            </div>
             <a-table
+              :dataSource="adminChats"
+              :columns="chatColumns"
+              rowKey="ts"
               size="small"
-              :dataSource="userTransactions"
-              :columns="transactionColumns"
-              rowKey="id"
-              :pagination="{ pageSize: 5 }"
+              :loading="loadingChats"
+              :pagination="false"
             >
               <template #bodyCell="{ column, record }">
-                <template v-if="column.key === 'amount'">
-                  <span :style="{ color: record.amount > 0 ? 'green' : 'red' }">
-                    {{ record.amount > 0 ? '+' : '' }}{{ record.amount }}
-                  </span>
+                <template v-if="column.key === 'ts'">
+                  {{ record?.ts ? new Date(record.ts).toLocaleString() : '-' }}
                 </template>
-                <template v-else-if="column.key === 'timestamp'">
-                  {{ new Date(record.timestamp).toLocaleDateString() }}
+                <template v-else-if="column.key === 'text'">
+                  <div style="white-space: pre-wrap; word-break: break-word">
+                    {{ record?.text || '' }}
+                  </div>
                 </template>
               </template>
             </a-table>
           </a-tab-pane>
-          <a-tab-pane key="logs" :tab="ui.activityLogs">
+
+          <a-tab-pane key="orders" :tab="ui.tabOrders">
+            <div style="margin-bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap">
+              <a-button type="primary" :loading="loadingOrders" @click="fetchOrders">{{
+                ui.refreshOrders
+              }}</a-button>
+            </div>
             <a-table
-              size="small"
-              :dataSource="userLogs"
-              :columns="logColumns"
+              :dataSource="adminOrders"
+              :columns="orderColumns"
               rowKey="id"
-              :pagination="{ pageSize: 5 }"
+              size="small"
+              :loading="loadingOrders"
+              :pagination="false"
             >
               <template #bodyCell="{ column, record }">
-                <template v-if="column.key === 'timestamp'">
-                  {{ new Date(record.timestamp).toLocaleString() }}
+                <template v-if="column.key === 'createdAt'">
+                  {{ record?.createdAt ? new Date(record.createdAt).toLocaleString() : '-' }}
                 </template>
               </template>
             </a-table>
@@ -102,42 +127,20 @@
         </a-tabs>
       </div>
     </a-drawer>
-
-    <!-- Edit User Modal -->
-    <a-modal v-model:visible="isEditModalVisible" :title="ui.editUser" @ok="handleEditSubmit">
-      <a-form layout="vertical">
-        <a-form-item :label="ui.user">
-          <a-input disabled :value="selectedUser?.email" />
-        </a-form-item>
-        <a-form-item :label="ui.level">
-          <a-select v-model:value="editForm.level">
-            <a-select-option value="free">{{ ui.levelFree }}</a-select-option>
-            <a-select-option value="pro">{{ ui.levelPro }}</a-select-option>
-            <a-select-option value="biz">{{ ui.levelBiz }}</a-select-option>
-            <a-select-option value="enterprise">{{ ui.levelEnterprise }}</a-select-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item :label="ui.pointsBalance">
-          <a-input-number v-model:value="editForm.points" style="width: 100%" :min="0" />
-          <div style="margin-top: 8px">
-            <a-button size="small" @click="editForm.points = 9999">{{ ui.set9999 }}</a-button>
-          </div>
-        </a-form-item>
-      </a-form>
-    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, reactive } from 'vue';
-import { useConsoleStore, type ConsoleUser } from '@/stores/console';
-import { message } from 'ant-design-vue';
+import { ref, onMounted, computed } from 'vue';
+import { useConsoleStore, type AdminUserItem } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
+import { message } from 'ant-design-vue';
 
 const consoleStore = useConsoleStore();
 const searchText = ref('');
-const users = computed(() => consoleStore.users);
+const loading = ref(false);
+const users = computed(() => consoleStore.adminUsers);
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -146,167 +149,241 @@ const ui = computed(() =>
   currentLang.value === 'zh'
     ? {
         title: '用户管理',
-        searchPh: '按用户 ID 或邮箱搜索',
+        searchPh: '按用户 ID / 邮箱 / 用户名搜索',
+        refresh: '刷新',
         details: '详情',
-        edit: '编辑',
         userDetails: '用户详情',
         basicInfo: '基本信息',
         userId: '用户 ID',
         email: '邮箱',
-        level: '等级',
-        points: '点数',
+        username: '用户名',
+        name: '昵称',
         joinedAt: '加入时间',
-        transactions: '交易记录',
-        activityLogs: '活动日志',
-        editUser: '编辑用户',
-        user: '用户',
-        levelFree: '免费',
-        levelPro: 'Pro',
-        levelBiz: 'Biz',
-        levelEnterprise: '企业',
-        pointsBalance: '点数余额',
-        set9999: '设为 9999',
+        lastSeen: '最近活跃',
+        visits: '访问次数',
+        credits: '积分',
+        available: '可用',
+        frozen: '冻结',
         colUserId: '用户 ID',
         colEmail: '邮箱',
-        colLevel: '等级',
-        colPoints: '点数',
+        colUsername: '用户名',
+        colName: '昵称',
         colJoinedAt: '加入时间',
+        colLastSeen: '最近活跃',
+        colVisits: '访问',
+        colCredits: '积分',
         colAction: '操作',
-        colTime: '时间',
-        colType: '类型',
-        colAmount: '数量',
-        colDesc: '描述',
-        colLogAction: '动作',
-        colLogDetails: '详情',
-        updated: '更新成功'
+        tabChats: '聊天记录',
+        tabOrders: '订单记录',
+        refreshChats: '刷新聊天',
+        refreshOrders: '刷新订单',
+        colChatRole: '角色',
+        colChatText: '内容',
+        colChatTime: '时间',
+        colOrderKind: '类型',
+        colOrderId: '订单号',
+        colOrderPkg: '套餐',
+        colOrderAmount: '金额(CNY)',
+        colOrderCredits: '积分',
+        colOrderTime: '时间',
+        loadFailed: '加载失败，请检查登录状态与后端配置'
       }
     : {
         title: 'User Management',
-        searchPh: 'Search by User ID or Email',
+        searchPh: 'Search by userId / email / username',
+        refresh: 'Refresh',
         details: 'Details',
-        edit: 'Edit',
         userDetails: 'User Details',
         basicInfo: 'Basic Info',
         userId: 'User ID',
         email: 'Email',
-        level: 'Level',
-        points: 'Points',
+        username: 'Username',
+        name: 'Name',
         joinedAt: 'Joined At',
-        transactions: 'Transactions',
-        activityLogs: 'Activity Logs',
-        editUser: 'Edit User',
-        user: 'User',
-        levelFree: 'Free',
-        levelPro: 'Pro',
-        levelBiz: 'Biz',
-        levelEnterprise: 'Enterprise',
-        pointsBalance: 'Points Balance',
-        set9999: 'Set to 9999',
+        lastSeen: 'Last Seen',
+        visits: 'Visits',
+        credits: 'Credits',
+        available: 'Available',
+        frozen: 'Frozen',
         colUserId: 'User ID',
         colEmail: 'Email',
-        colLevel: 'Level',
-        colPoints: 'Points',
+        colUsername: 'Username',
+        colName: 'Name',
         colJoinedAt: 'Joined At',
+        colLastSeen: 'Last Seen',
+        colVisits: 'Visits',
+        colCredits: 'Credits',
         colAction: 'Action',
-        colTime: 'Time',
-        colType: 'Type',
-        colAmount: 'Amount',
-        colDesc: 'Desc',
-        colLogAction: 'Action',
-        colLogDetails: 'Details',
-        updated: 'User updated successfully'
+        tabChats: 'Chats',
+        tabOrders: 'Orders',
+        refreshChats: 'Refresh chats',
+        refreshOrders: 'Refresh orders',
+        colChatRole: 'Role',
+        colChatText: 'Text',
+        colChatTime: 'Time',
+        colOrderKind: 'Kind',
+        colOrderId: 'Order ID',
+        colOrderPkg: 'Package',
+        colOrderAmount: 'Amount(CNY)',
+        colOrderCredits: 'Credits',
+        colOrderTime: 'Time',
+        loadFailed: 'Load failed. Please check login and backend config.'
       }
 );
 
-const filteredUsers = computed(() => {
-  if (!searchText.value) return users.value;
-  const lower = searchText.value.toLowerCase();
-  return users.value.filter(
-    (u) => u.userId.toLowerCase().includes(lower) || u.email.toLowerCase().includes(lower)
-  );
+const showAdminError = (e: any) => {
+  const code = String(e?.message || '').trim();
+  const apiError = String((e as any)?.apiError || '').trim();
+  const err = apiError || code || 'REQUEST_FAILED';
+  if (err === 'ADMIN_AUTH_REQUIRED') {
+    message.error(currentLang.value === 'zh' ? '请先登录后台' : 'Please login first');
+    return;
+  }
+  if (
+    err === 'ADMIN_AUTH_INVALID' ||
+    err === 'ADMIN_AUTH_FORBIDDEN' ||
+    err === 'ADMIN_AUTH_EXPIRED'
+  ) {
+    message.error(
+      currentLang.value === 'zh' ? '登录已失效，请重新登录' : 'Session expired, please login again'
+    );
+    return;
+  }
+  if (err === 'ADMIN_NOT_CONFIGURED') {
+    message.error(
+      currentLang.value === 'zh'
+        ? '后端未配置 ADMIN_KEY（请在 Zeabur 设置）'
+        : 'ADMIN_KEY is not configured on backend'
+    );
+    return;
+  }
+  if (err === 'ADMIN_ACCOUNT_NOT_CONFIGURED') {
+    message.error(
+      currentLang.value === 'zh'
+        ? '后端未配置管理员账号（请设置 CONSOLE_ADMIN_USERNAME/PASSWORD）'
+        : 'Admin account is not configured on backend'
+    );
+    return;
+  }
+  message.error(ui.value.loadFailed);
+};
+
+const pagination = ref({
+  current: 1,
+  pageSize: 20,
+  total: 0,
+  showSizeChanger: true
 });
 
 const columns = computed(() => [
   { title: ui.value.colUserId, dataIndex: 'userId', key: 'userId' },
   { title: ui.value.colEmail, dataIndex: 'email', key: 'email' },
-  { title: ui.value.colLevel, dataIndex: 'level', key: 'level' },
-  {
-    title: ui.value.colPoints,
-    dataIndex: 'points',
-    key: 'points',
-    sorter: (a: any, b: any) => a.points - b.points
-  },
-  { title: ui.value.colJoinedAt, dataIndex: 'joinedAt', key: 'joinedAt' },
+  { title: ui.value.colUsername, dataIndex: 'username', key: 'username' },
+  { title: ui.value.colName, dataIndex: 'name', key: 'name' },
+  { title: ui.value.colJoinedAt, dataIndex: 'createdAt', key: 'createdAt', width: 180 },
+  { title: ui.value.colLastSeen, dataIndex: 'lastSeen', key: 'lastSeen', width: 180 },
+  { title: ui.value.colVisits, dataIndex: 'visits', key: 'visits', align: 'right', width: 100 },
+  { title: ui.value.colCredits, key: 'credits', width: 200 },
   { title: ui.value.colAction, key: 'action' }
 ]);
 
 // Drawer & Details
 const isDrawerVisible = ref(false);
-const userTransactions = computed(() =>
-  selectedUser.value ? consoleStore.getUserTransactions(selectedUser.value.userId) : []
-);
-const userLogs = computed(() =>
-  selectedUser.value ? consoleStore.getUserLogs(selectedUser.value.userId) : []
-);
+const selectedUser = ref<AdminUserItem | null>(null);
+const detailsTab = ref('chats');
+const loadingChats = ref(false);
+const loadingOrders = ref(false);
+const adminChats = computed(() => consoleStore.adminChats || []);
+const adminOrders = computed(() => consoleStore.adminOrders || []);
 
-const transactionColumns = computed(() => [
-  { title: ui.value.colTime, dataIndex: 'timestamp', key: 'timestamp' },
-  { title: ui.value.colType, dataIndex: 'type', key: 'type' },
-  { title: ui.value.colAmount, dataIndex: 'amount', key: 'amount' },
-  { title: ui.value.colDesc, dataIndex: 'description', key: 'description' }
+const chatColumns = computed(() => [
+  { title: ui.value.colChatRole, dataIndex: 'role', key: 'role', width: 120 },
+  { title: ui.value.colChatText, dataIndex: 'text', key: 'text' },
+  { title: ui.value.colChatTime, dataIndex: 'ts', key: 'ts', width: 180 }
 ]);
 
-const logColumns = computed(() => [
-  { title: ui.value.colTime, dataIndex: 'timestamp', key: 'timestamp' },
-  { title: ui.value.colLogAction, dataIndex: 'action', key: 'action' },
-  { title: ui.value.colLogDetails, dataIndex: 'details', key: 'details', ellipsis: true }
+const orderColumns = computed(() => [
+  { title: ui.value.colOrderKind, dataIndex: 'kind', key: 'kind', width: 110 },
+  { title: ui.value.colOrderId, dataIndex: 'id', key: 'id', ellipsis: true },
+  { title: ui.value.colOrderPkg, dataIndex: 'packageId', key: 'packageId', width: 120 },
+  {
+    title: ui.value.colOrderAmount,
+    dataIndex: 'amountCny',
+    key: 'amountCny',
+    width: 120,
+    align: 'right'
+  },
+  {
+    title: ui.value.colOrderCredits,
+    dataIndex: 'credits',
+    key: 'credits',
+    width: 110,
+    align: 'right'
+  },
+  { title: ui.value.colOrderTime, dataIndex: 'createdAt', key: 'createdAt', width: 180 }
 ]);
 
-const openUserDetails = (user: ConsoleUser) => {
+const openUserDetails = (user: AdminUserItem) => {
   selectedUser.value = user;
   isDrawerVisible.value = true;
+  detailsTab.value = 'chats';
+  void fetchChats();
 };
-
-// Edit User Modal
-const isEditModalVisible = ref(false);
-const selectedUser = ref<ConsoleUser | null>(null);
-const editForm = reactive({
-  level: 'free' as ConsoleUser['level'],
-  points: 0
-});
 
 onMounted(() => {
   consoleStore.init();
+  void fetchUsers();
 });
 
-const getLevelColor = (level: string) => {
-  switch (level) {
-    case 'enterprise':
-      return 'purple';
-    case 'biz':
-      return 'orange';
-    case 'pro':
-      return 'blue';
-    default:
-      return 'default';
+const fetchUsers = async () => {
+  if (loading.value) return;
+  loading.value = true;
+  try {
+    const offset = (pagination.value.current - 1) * pagination.value.pageSize;
+    await consoleStore.fetchAdminUsers({
+      q: searchText.value,
+      limit: pagination.value.pageSize,
+      offset
+    });
+    pagination.value.total = consoleStore.adminUsersTotal;
+  } catch (e) {
+    showAdminError(e);
+  } finally {
+    loading.value = false;
   }
 };
 
-const openEditModal = (user: ConsoleUser) => {
-  selectedUser.value = user;
-  editForm.level = user.level;
-  editForm.points = user.points;
-  isEditModalVisible.value = true;
+const handleTableChange = (pag: any) => {
+  pagination.value.current = pag.current;
+  pagination.value.pageSize = pag.pageSize;
+  void fetchUsers();
 };
 
-const handleEditSubmit = () => {
-  if (selectedUser.value) {
-    consoleStore.setUserDetails(selectedUser.value.userId, {
-      level: editForm.level,
-      points: editForm.points
-    });
-    message.success(ui.value.updated);
-    isEditModalVisible.value = false;
+const fetchChats = async () => {
+  if (loadingChats.value) return;
+  const uid = String(selectedUser.value?.userId || '').trim();
+  if (!uid) return;
+  loadingChats.value = true;
+  try {
+    await consoleStore.fetchAdminChatsHistory({ userId: uid, limit: 200, offset: 0 });
+  } catch (e) {
+    showAdminError(e);
+  } finally {
+    loadingChats.value = false;
+  }
+};
+
+const fetchOrders = async () => {
+  if (loadingOrders.value) return;
+  const uid = String(selectedUser.value?.userId || '').trim();
+  if (!uid) return;
+  loadingOrders.value = true;
+  try {
+    await consoleStore.fetchAdminOrders({ userId: uid, limit: 200, offset: 0 });
+  } catch (e) {
+    showAdminError(e);
+  } finally {
+    loadingOrders.value = false;
   }
 };
 </script>

@@ -16,6 +16,60 @@ const VERIFY_CODE_URL = buildApiUrl('/api/login/verify');
 const PASSWORD_LOGIN_URL = buildApiUrl('/api/auth/login');
 const REGISTER_URL = buildApiUrl('/api/auth/register');
 
+const isZh = () => {
+  try {
+    return String(window.localStorage.getItem('app_lang') || 'zh').startsWith('zh');
+  } catch {
+    return true;
+  }
+};
+
+const normalizeErr = (raw: any) => String(raw || '').trim();
+
+const humanizeAuthError = (raw: any) => {
+  const msg = normalizeErr(raw);
+  if (!msg) return isZh() ? '网络错误，请稍后重试' : 'Network error, please try again.';
+
+  const m = msg.toLowerCase();
+  const zh = isZh();
+
+  if (m === 'password_rules' || m.includes('password_rules')) {
+    return zh ? '密码不符合规范' : 'Password does not meet requirements.';
+  }
+  if (m.includes('invalid credentials') || m === 'invalid_credentials') {
+    return zh ? '账号或密码错误' : 'Invalid username or password.';
+  }
+  if (m.includes('email already exists')) {
+    return zh ? '该邮箱已注册' : 'Email already registered.';
+  }
+  if (m.includes('username already exists')) {
+    return zh ? '该账号已注册' : 'Username already registered.';
+  }
+  if (m.includes('please send code first')) {
+    return zh ? '请先发送验证码' : 'Please send the code first.';
+  }
+  if (m.includes('code expired')) {
+    return zh ? '验证码已过期，请重新发送' : 'Code expired, please resend.';
+  }
+  if (m.includes('too many attempts')) {
+    return zh ? '尝试次数过多，请重新发送验证码' : 'Too many attempts, please resend.';
+  }
+  if (m === 'invalid code' || m === 'invalid_code') {
+    return zh ? '验证码错误' : 'Invalid code.';
+  }
+  if (m.includes('invalid email')) {
+    return zh ? '邮箱格式不正确' : 'Invalid email format.';
+  }
+  if (m.includes('invalid username')) {
+    return zh ? '账号格式不正确' : 'Invalid username.';
+  }
+  if (m.includes('invalid password')) {
+    return zh ? '密码格式不正确' : 'Invalid password.';
+  }
+
+  return msg;
+};
+
 const parseJson = async (res: Response) => {
   const txt = await res.text().catch(() => '');
   try {
@@ -35,7 +89,7 @@ export const sendLoginCode = async (email: string): Promise<SendCodeResult> => {
   if (!res.ok) {
     return {
       ok: false,
-      message: String(json?.message || json?.error || '发送失败'),
+      message: humanizeAuthError(json?.message || json?.error || '发送失败'),
       cooldownSec: Number(json?.cooldownSec || 0) || undefined
     };
   }
@@ -68,7 +122,8 @@ export const verifyLoginCode = async (email: string, code: string): Promise<Veri
     body: JSON.stringify({ email, code, fromUserId })
   });
   const json = await parseJson(res);
-  if (!res.ok) return { ok: false, message: String(json?.message || json?.error || '验证失败') };
+  if (!res.ok)
+    return { ok: false, message: humanizeAuthError(json?.message || json?.error || '验证失败') };
   const userId = String(json?.userId || '').trim();
   const token = String(json?.token || '').trim();
   if (!userId || !token) return { ok: false, message: '验证失败' };
@@ -102,7 +157,7 @@ export const loginWithPassword = async (
   });
   const json = await parseJson(res);
   if (!res.ok) {
-    return { ok: false, message: String(json?.message || json?.error || '登录失败') };
+    return { ok: false, message: humanizeAuthError(json?.message || json?.error || '登录失败') };
   }
   const userId = String(json?.userId || '').trim();
   const token = String(json?.token || '').trim();
@@ -142,7 +197,7 @@ export const registerWithEmailCode = async (input: {
   });
   const json = await parseJson(res);
   if (!res.ok) {
-    return { ok: false, message: String(json?.message || json?.error || '注册失败') };
+    return { ok: false, message: humanizeAuthError(json?.message || json?.error || '注册失败') };
   }
   const userId = String(json?.userId || '').trim();
   const token = String(json?.token || '').trim();

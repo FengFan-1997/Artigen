@@ -30,7 +30,7 @@
 
       <div class="pricing-grid">
         <!-- Starter Pack -->
-        <div class="pricing-card">
+        <div class="pricing-card" v-if="!proOnly">
           <div class="card-corner top-left"></div>
           <div class="card-corner top-right"></div>
           <div class="card-corner bottom-left"></div>
@@ -70,7 +70,7 @@
         </div>
 
         <!-- Standard Pack -->
-        <div class="pricing-card">
+        <div class="pricing-card" v-if="!proOnly">
           <div class="card-corner top-left"></div>
           <div class="card-corner top-right"></div>
           <div class="card-corner bottom-left"></div>
@@ -301,7 +301,7 @@ import GlobalFooter from '../components/GlobalFooter.vue';
 import TitleBar from '../components/TitleBar.vue';
 import { useLanguageStore } from '@/stores/language';
 import { useLoginModel } from '@/stores';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { createPayOrder, getCreditsBalance, type PayPackageId } from '@/points';
 import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
 
@@ -321,7 +321,15 @@ const getPrice = (cnyPrice: number) => {
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 const loginStore = useLoginModel();
+const route = useRoute();
 const router = useRouter();
+
+const proOnly = computed(() => {
+  const raw = String((route.query as any)?.proOnly || '')
+    .trim()
+    .toLowerCase();
+  return raw === '1' || raw === 'true';
+});
 
 const payOpen = ref(false);
 const payChecking = ref(false);

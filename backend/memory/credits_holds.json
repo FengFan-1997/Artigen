@@ -568,5 +568,85 @@
     "status": "confirmed",
     "createdAt": 1768036581943,
     "updatedAt": 1768036589243
+  },
+  "d5c2da1e6561d265c71cbd5571f5bebdmka4eygy": {
+    "id": "d5c2da1e6561d265c71cbd5571f5bebdmka4eygy",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "generate",
+    "requestId": "artigen_directions_mka4eygl_vo1a3l",
+    "status": "confirmed",
+    "createdAt": 1768159334914,
+    "updatedAt": 1768159365823
+  },
+  "77f6c175a9c6eb696f0ab8c8b8bae6e1mka4vdme": {
+    "id": "77f6c175a9c6eb696f0ab8c8b8bae6e1mka4vdme",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "generate",
+    "requestId": "artigen_directions_mka4vdlx_j76177",
+    "status": "confirmed",
+    "createdAt": 1768160101046,
+    "updatedAt": 1768160132792
+  },
+  "7e67aaf2afacfbd0056d51dcc2ea4151mka4zmdl": {
+    "id": "7e67aaf2afacfbd0056d51dcc2ea4151mka4zmdl",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "img2img_mka4zmdc_n7t4vw",
+    "status": "refunded",
+    "createdAt": 1768160299017,
+    "updatedAt": 1768160305517
+  },
+  "369c9a98e0054405d1c6e4d5ff03f69emka54g0i": {
+    "id": "369c9a98e0054405d1c6e4d5ff03f69emka54g0i",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "generate",
+    "requestId": "artigen_directions_mka54g09_g937wy",
+    "status": "confirmed",
+    "createdAt": 1768160524050,
+    "updatedAt": 1768160553702
+  },
+  "37257c32f7ff9f9cefcad2a4d098cd85mka56q1w": {
+    "id": "37257c32f7ff9f9cefcad2a4d098cd85mka56q1w",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "generate",
+    "requestId": "artigen_directions_mka56q1m_q1bs06",
+    "status": "confirmed",
+    "createdAt": 1768160630372,
+    "updatedAt": 1768160660904
+  },
+  "b1510d9ff745be74f6eecc55a7e633b1mka5txmp": {
+    "id": "b1510d9ff745be74f6eecc55a7e633b1mka5txmp",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "generate",
+    "requestId": "artigen_directions_mka5txll_no9fvf",
+    "status": "confirmed",
+    "createdAt": 1768161713281,
+    "updatedAt": 1768161746226
+  },
+  "2af441d2c689c6c2b74a0484442a2bc1mka5uv2b": {
+    "id": "2af441d2c689c6c2b74a0484442a2bc1mka5uv2b",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "generate",
+    "requestId": "artigen_directions_mka5uv1x_rkh7ct",
+    "status": "confirmed",
+    "createdAt": 1768161756611,
+    "updatedAt": 1768161785962
+  },
+  "8b34a921056abd9b07eb28ceba5ff8acmka5v1j9": {
+    "id": "8b34a921056abd9b07eb28ceba5ff8acmka5v1j9",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "generate",
+    "requestId": "artigen_directions_mka5v1iw_0exci6",
+    "status": "confirmed",
+    "createdAt": 1768161764997,
+    "updatedAt": 1768161792129
   }
 }

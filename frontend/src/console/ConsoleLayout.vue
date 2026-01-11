@@ -116,7 +116,7 @@
           <a-input v-model:value="username" autocomplete="username" />
         </a-form-item>
         <a-form-item :label="ui.passwordLabel">
-          <a-input-password v-model:value="password" autocomplete="current-password" />
+          <a-input-password v-model:value="password" autocomplete="off" />
         </a-form-item>
         <a-button type="primary" block :loading="submitting" @click="handleLogin">
           {{ ui.loginBtn }}
@@ -149,20 +149,19 @@ import {
   clearConsoleAuthSession,
   getConsoleUserId,
   isConsoleAuthed,
-  setConsoleAuthSession
+  setConsoleAuthSession,
+  useConsoleStore
 } from '@/stores/console';
 
 const router = useRouter();
 const route = useRoute();
 
-const EXPECTED_USER = 'dev1997';
-const EXPECTED_HASH = 'e20475998df4a3fbfbf956bceacae26cf794267e89cf63b960af5864cb451f45';
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
-
 const username = ref('');
 const password = ref('');
 const submitting = ref(false);
 const loginTick = ref(0);
+
+const consoleStore = useConsoleStore();
 
 const isLoggedIn = computed(() => {
   void loginTick.value;
@@ -171,7 +170,7 @@ const isLoggedIn = computed(() => {
 
 const userId = computed(() => {
   void loginTick.value;
-  return getConsoleUserId() || EXPECTED_USER;
+  return getConsoleUserId() || '';
 });
 
 const languageStore = useLanguageStore();
@@ -272,23 +271,35 @@ watch(
   { immediate: true }
 );
 
-const toHex = (buf: ArrayBuffer) => {
-  const bytes = new Uint8Array(buf);
-  let out = '';
-  for (let i = 0; i < bytes.length; i++) {
-    out += bytes[i].toString(16).padStart(2, '0');
-  }
-  return out;
-};
-
-const sha256Hex = async (text: string) => {
-  const data = new TextEncoder().encode(text);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return toHex(digest);
-};
-
 const syncLoginTick = () => {
   loginTick.value++;
+};
+
+const humanizeLoginError = (e: any) => {
+  const code = String(e?.message || '').trim();
+  const apiError = String((e as any)?.apiError || '').trim();
+  const err = apiError || code || 'REQUEST_FAILED';
+  const zh = currentLang.value === 'zh';
+
+  if (err === 'INVALID_INPUT')
+    return zh ? '请输入账号和密码' : 'Please enter username and password';
+  if (err === 'INVALID_CREDENTIALS') return zh ? '账号或密码错误' : 'Invalid username or password';
+  if (err === 'ADMIN_ACCOUNT_NOT_CONFIGURED')
+    return zh
+      ? '后端未配置管理员账号（请设置 CONSOLE_ADMIN_USERNAME/PASSWORD，或使用 ADMIN_KEY 登录）'
+      : 'Admin account is not configured on backend';
+  if (err === 'ADMIN_NOT_CONFIGURED')
+    return zh
+      ? '后端未配置 ADMIN_KEY（请在 Zeabur 设置）'
+      : 'ADMIN_KEY is not configured on backend';
+  if (err === 'ADMIN_AUTH_EXPIRED')
+    return zh ? '登录已失效，请重新登录' : 'Session expired, please login again';
+  if (/failed to fetch/i.test(err) || /network/i.test(err))
+    return zh
+      ? '网络异常或服务不可用，请稍后再试'
+      : 'Network error or service unavailable. Please try again.';
+
+  return zh ? '登录失败' : 'Login failed';
 };
 
 const handleLogin = async () => {
@@ -303,21 +314,18 @@ const handleLogin = async () => {
   }
   submitting.value = true;
   try {
-    const hash = await sha256Hex(`${u}:${p}`);
-    if (u !== EXPECTED_USER || hash !== EXPECTED_HASH) {
-      message.error(currentLang.value === 'zh' ? '账号或密码错误' : 'Invalid credentials');
-      return;
-    }
+    consoleStore.init();
+    const login = await consoleStore.adminLogin({ username: u, password: p });
     setConsoleAuthSession({
-      userId: EXPECTED_USER,
-      authHash: EXPECTED_HASH,
-      expiresAt: Date.now() + SESSION_TTL_MS
+      userId: u,
+      authHash: login.token,
+      expiresAt: login.expiresAt
     });
     password.value = '';
     message.success(currentLang.value === 'zh' ? '登录成功' : 'Login successful');
     syncLoginTick();
-  } catch {
-    message.error(currentLang.value === 'zh' ? '登录失败' : 'Login failed');
+  } catch (e: any) {
+    message.error(humanizeLoginError(e));
   } finally {
     submitting.value = false;
   }
@@ -325,6 +333,7 @@ const handleLogin = async () => {
 
 let authTimer: number | null = null;
 onMounted(() => {
+  consoleStore.init();
   authTimer = window.setInterval(() => syncLoginTick(), 30_000);
   try {
     window.addEventListener('storage', syncLoginTick);
