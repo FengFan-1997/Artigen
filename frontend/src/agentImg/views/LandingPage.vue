@@ -43,11 +43,11 @@
           <div class="stats-row">
             <div class="stat-item">
               <div class="stat-label">{{ statLabel1 }}</div>
-              <div class="stat-value">~2.5s</div>
+              <div class="stat-value">~9.5s</div>
             </div>
             <div class="stat-item">
               <div class="stat-label">{{ statLabel2 }}</div>
-              <div class="stat-value">20+</div>
+              <div class="stat-value">10+</div>
             </div>
           </div>
         </div>
@@ -180,8 +180,8 @@ const headlineLine2 = computed(() =>
 
 const heroDesc = computed(() =>
   currentLang.value === 'zh'
-    ? '从 AI 智能创作到格式批量转换，打造一站式影像处理解决方案。深度集成 AI 算力引擎与高性能传统算法，20+ 专业工具覆盖图片全生命周期。支持双模型 AI 生成、多种格式转换，纯前端处理确保数据隐私安全。'
-    : 'From AI creation to batch format conversion, a one-stop imaging toolkit. Deeply integrated AI compute and high-performance classic algorithms, with 20+ professional tools covering the full image lifecycle. Dual-model AI generation, multi-format conversion, and client-side processing for privacy.'
+    ? '从 AI 智能创作到格式批量转换，打造一站式影像处理解决方案。深度集成 AI 算力引擎与高性能传统算法，10+ 专业工具覆盖图片全生命周期。支持双模型 AI 生成、多种格式转换，纯前端处理确保数据隐私安全。'
+    : 'From AI creation to batch format conversion, a one-stop imaging toolkit. Deeply integrated AI compute and high-performance classic algorithms, with 10+ professional tools covering the full image lifecycle. Dual-model AI generation, multi-format conversion, and client-side processing for privacy.'
 );
 
 const ctaWorkshop = computed(() => (currentLang.value === 'zh' ? 'AI 工坊' : 'AI Workshop'));
@@ -214,8 +214,8 @@ const feature1Desc = computed(() =>
 const feature2Title = computed(() => (currentLang.value === 'zh' ? '格式工厂' : 'Format Factory'));
 const feature2Desc = computed(() =>
   currentLang.value === 'zh'
-    ? 'WebP/JPEG/PNG 全格式支持，纯前端处理保障隐私。支持批量压缩、去水印、PDF 转换等 20+ 实用工具。'
-    : 'Full format support (WebP/JPEG/PNG) with client-side processing for privacy. 20+ utilities like batch compress, watermark removal, and PDF conversion.'
+    ? 'WebP/JPEG/PNG 全格式支持，纯前端处理保障隐私。支持批量压缩、去水印、PDF 转换等 10+ 实用工具。'
+    : 'Full format support (WebP/JPEG/PNG) with client-side processing for privacy. 10+ utilities like batch compress, watermark removal, and PDF conversion.'
 );
 const feature3Title = computed(() => (currentLang.value === 'zh' ? '算力商城' : 'Compute Market'));
 const feature3Desc = computed(() =>
@@ -951,6 +951,7 @@ onBeforeUnmount(() => {
   }
 
   .hero-right {
+    display: none;
     height: 300px;
   }
 
@@ -991,16 +992,6 @@ onBeforeUnmount(() => {
 
   .hero-right {
     height: 320px;
-  }
-
-  .reactor-wrapper {
-    transform: translate(-50%, -50%) scale(0.78);
-  }
-}
-
-@media (max-width: 360px) {
-  .reactor-wrapper {
-    transform: translate(-50%, -50%) scale(0.7);
   }
 }
 

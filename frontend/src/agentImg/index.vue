@@ -30,6 +30,10 @@
         </template>
       </TitleBar>
 
+      <transition name="top-tip-fade">
+        <div v-if="topTipOpen" class="top-tip">{{ topTipText }}</div>
+      </transition>
+
       <div class="workspace">
         <div
           class="mobile-overlay"
@@ -237,7 +241,7 @@
             <!-- Messages -->
             <div class="messages">
               <!-- Welcome Message -->
-              <div class="msg msg-ai" v-if="!userInput && !loading && !options.length">
+              <div class="msg msg-ai" v-if="!pendingUserText && !loading && !options.length">
                 <div class="msg-avatar">
                   <img src="/logo.png" alt="System" />
                 </div>
@@ -556,10 +560,10 @@ const ui = computed(() => {
       logoUploadPh: '点击上传 PNG/SVG',
       deepThinkingTitle: '深度思考分析',
       deepThinkingSub: '基于您的输入，为您规划了 4 个视觉方向',
-      generateThisDirection: '生成该方向',
-      welcomeTitle: '欢迎使用 Artigen 智能摄影助手。',
+      generateThisDirection: '生成',
+      welcomeTitle: '欢迎使用 Artigen AI 工坊。',
       welcomeSub:
-        '请在左侧配置您的产品信息，或直接在下方描述您的拍摄需求。我会为您提供专业的视觉方向建议。',
+        '请简单描述您想要生成的图片 或上传参考图。发送后我会优化您的输入并且结合相关提示词并生成结果。',
       memory: '历史记录',
       noHistory: '暂无历史记录',
       resultTitle: '生成结果',
@@ -568,9 +572,9 @@ const ui = computed(() => {
       imageLabel: 'Image',
       addImage: '添加图片',
       model: '模型',
-      modelStandard: 'standard',
-      modelNanobanana: 'nanobanana',
-      modelNanobananaPro: 'nanobananaPro',
+      modelStandard: 'Standard',
+      modelNanobanana: 'Nano Banana',
+      modelNanobananaPro: 'Nano BananaPro',
       modelLocked: '需要标准包以上',
       modelComingSoon: '暂未接入',
       costTip: '预计扣费：{n} 点/次（以实际扣费为准）',
@@ -612,10 +616,10 @@ const ui = computed(() => {
     logoUploadPh: 'Upload PNG/SVG',
     deepThinkingTitle: 'Deep Thinking Analysis',
     deepThinkingSub: 'Based on your input, we planned 4 visual directions',
-    generateThisDirection: 'Generate This Direction',
-    welcomeTitle: 'Welcome to Artigen AI Photography Assistant.',
+    generateThisDirection: 'Generate',
+    welcomeTitle: 'Welcome to Artigen AI Workshop.',
     welcomeSub:
-      'Configure your product details on the left, or describe your shooting needs below. I will suggest professional visual directions.',
+      'Please briefly describe the image you want to generate, or upload a reference image. After you send, I’ll refine your input, combine it with relevant prompts, and generate the result.',
     memory: 'History',
     noHistory: 'No history yet',
     resultTitle: 'Result',
@@ -625,8 +629,8 @@ const ui = computed(() => {
     addImage: 'Add Image',
     model: 'Model',
     modelStandard: 'standard',
-    modelNanobanana: 'nanobanana',
-    modelNanobananaPro: 'nanobananaPro',
+    modelNanobanana: 'Nano Banana',
+    modelNanobananaPro: 'Nano BananaPro',
     modelLocked: 'Requires Standard pack or higher',
     modelComingSoon: 'Coming soon',
     costTip: 'Est. cost: {n} credits/run (actual deduction may vary)',
@@ -736,6 +740,7 @@ const abortImg2Img = () => {
   activeImgAbort.value = null;
 };
 const pendingUserText = ref('');
+const lastUserText = ref('');
 const chatScrollEl = ref<HTMLElement | null>(null);
 
 const normalizeTag = (v: string) =>
@@ -872,7 +877,7 @@ const creditsLoading = ref(false);
 const finalImageUrl = ref('');
 const history = ref<HistoryItem[]>([]);
 
-type ModelId = 'standard' | 'nanobanana' | 'nanobananaPro';
+type ModelId = 'standard' | 'Nano Banana' | 'Nano BananaPro';
 
 const selectedModelId = ref<ModelId>('standard');
 const modelMenuOpen = ref(false);
@@ -902,7 +907,7 @@ const refreshPackageTier = async () => {
 
 const selectedModelLabel = computed(() => {
   if (selectedModelId.value === 'standard') return ui.value.modelStandard;
-  if (selectedModelId.value === 'nanobanana') return ui.value.modelNanobanana;
+  if (selectedModelId.value === 'Nano Banana') return ui.value.modelNanobanana;
   return ui.value.modelNanobananaPro;
 });
 
@@ -917,14 +922,14 @@ const modelOptions = computed(() => {
       hint: ''
     },
     {
-      id: 'nanobanana' as const,
+      id: 'Nano Banana' as const,
       label: ui.value.modelNanobanana,
       disabled: locked,
       badge: locked ? '🔒' : ui.value.modelComingSoon,
       hint: locked ? ui.value.modelLocked : ui.value.modelComingSoon
     },
     {
-      id: 'nanobananaPro' as const,
+      id: 'Nano BananaPro' as const,
       label: ui.value.modelNanobananaPro,
       disabled: locked,
       badge: locked ? '🔒' : ui.value.modelComingSoon,
@@ -1088,6 +1093,30 @@ const scrollChatToBottom = () => {
   });
 };
 
+const topTipText = ref('');
+const topTipOpen = ref(false);
+let topTipTimer: number | null = null;
+const showTopTip = (msg: string) => {
+  const m = String(msg || '').trim();
+  if (!m) return;
+  topTipText.value = m;
+  topTipOpen.value = true;
+  if (topTipTimer) window.clearTimeout(topTipTimer);
+  topTipTimer = window.setTimeout(() => {
+    topTipTimer = null;
+    topTipOpen.value = false;
+  }, 3200);
+};
+
+watch(
+  () => error.value,
+  (v) => {
+    const m = String(v || '').trim();
+    if (!m) return;
+    showTopTip(m);
+  }
+);
+
 const onHistoryItemClick = (id: string | number) => {
   scrollToGeneration(id);
   historySidebarOpen.value = false;
@@ -1148,9 +1177,7 @@ const primaryText = computed(() => {
   if (loading.value) return currentLang.value === 'zh' ? '正在处理...' : 'Processing...';
   if (deepMode.value) {
     return options.value.length > 0
-      ? currentLang.value === 'zh'
-        ? '生成该方向'
-        : 'Generate This Direction'
+      ? ui.value.generateThisDirection
       : currentLang.value === 'zh'
         ? '分析视觉方向'
         : 'Analyze Directions';
@@ -1163,7 +1190,10 @@ const canPrimary = computed(() => {
   if (selectedModelId.value !== 'standard') return false;
   if (deepMode.value) {
     if (options.value.length === 0) return canAnalyze.value;
-    return !!String(selectedOptionId.value || '').trim() && !!String(userInput.value || '').trim();
+    return (
+      !!String(selectedOptionId.value || '').trim() &&
+      (!!String(userInput.value || '').trim() || !!String(lastUserText.value || '').trim())
+    );
   }
   return !!String(userInput.value || '').trim();
 });
@@ -1316,7 +1346,9 @@ const applyLogoInstructionToPrompt = (prompt: string) => {
 const doPrimary = async () => {
   cancel();
   abortImg2Img();
-  const activeUserText = String(userInput.value || '').trim();
+  const rawUserText = String(userInput.value || '').trim();
+  const activeUserText = rawUserText || String(lastUserText.value || '').trim();
+  if (rawUserText) lastUserText.value = rawUserText;
   pendingUserText.value = activeUserText;
   if (!activeUserText) {
     pendingUserText.value = '';
@@ -1458,6 +1490,8 @@ const doPrimary = async () => {
 
     const id = Date.now();
     userInput.value = '';
+    loading.value = true;
+    error.value = '';
     const { ok, url } = await runGen(fp);
     const refThumbsRaw = await Promise.all(
       previewFiles.value
@@ -2730,6 +2764,55 @@ onBeforeUnmount(() => {
   transform: translateX(-10px);
 }
 
+.top-tip {
+  position: fixed;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  max-width: min(680px, 92vw);
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(10, 10, 10, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  color: rgba(248, 113, 113, 0.95);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-tip::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  background: rgba(248, 113, 113, 0.95);
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.55);
+  vertical-align: middle;
+}
+
+.top-tip-fade-enter-active,
+.top-tip-fade-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.top-tip-fade-enter-from,
+.top-tip-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-10px);
+}
+
 .right-tools {
   display: flex;
   align-items: center;
@@ -2922,6 +3005,7 @@ onBeforeUnmount(() => {
   background: rgba(204, 255, 0, 0.1);
 }
 .top-action-link {
+  display: none;
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   color: var(--text-muted);
