@@ -59,12 +59,12 @@
     "passwordSalt": "970676ae15c17852b68f6f8586a76f6e",
     "passwordAlgo": "scrypt",
     "name": "dev123",
-    "visits": 11,
+    "visits": 12,
     "preferences": {},
     "createdAt": 1767902179277,
-    "sessionToken": "167351680a14ca5c4264b288bbb0b211197a9ee263a731a3mk835mx8",
-    "sessionTokenIssuedAt": 1768036288076,
-    "lastSeen": 1768036288076
+    "sessionToken": "0189eceac94c01905987ad5d92acd81bb7fc5a5e4d436decmk9l6lbp",
+    "sessionTokenIssuedAt": 1768127031925,
+    "lastSeen": 1768127031925
   },
   "user_mk6thoz6_1388ca4f90fc": {
     "id": "user_mk6thoz6_1388ca4f90fc",

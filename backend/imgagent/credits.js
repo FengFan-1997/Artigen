@@ -38,8 +38,8 @@ const ensureWallet = (userId, opts) => {
   if (!uid) return null;
 
   const initCredits = (() => {
-    const v = Number.parseInt(String(opts?.initCredits ?? process.env.CREDITS_INIT ?? '10'), 10);
-    return Number.isFinite(v) && v >= 0 ? v : 10;
+    const v = Number.parseInt(String(opts?.initCredits ?? process.env.CREDITS_INIT ?? '100'), 10);
+    return Number.isFinite(v) && v >= 0 ? v : 100;
   })();
 
   const wallets = readWalletMap();
@@ -305,9 +305,9 @@ const applyAfdianOrder = (input) => {
   const packageIdRaw = String(input?.packageId || '').trim().toLowerCase();
   const packageId =
     packageIdRaw === 'starter' ||
-    packageIdRaw === 'standard' ||
-    packageIdRaw === 'pro' ||
-    packageIdRaw === 'ultimate'
+      packageIdRaw === 'standard' ||
+      packageIdRaw === 'pro' ||
+      packageIdRaw === 'ultimate'
       ? packageIdRaw
       : '';
   const credits = Number.parseInt(String(input?.credits ?? 0), 10);
@@ -345,27 +345,32 @@ const mergeWallet = (fromUserId, toUserId) => {
   const to = normalizeUserId(toUserId);
   if (!from || !to || from === to) return { ok: false, error: 'INVALID_USERS' };
 
-  ensureWallet(from);
   ensureWallet(to);
   const wallets = readWalletMap();
   const a = wallets[from];
   const b = wallets[to];
-  const aAvail = Number(a?.available ?? 0) || 0;
-  const aFrozen = Number(a?.frozen ?? 0) || 0;
-  const bAvail = Number(b?.available ?? 0) || 0;
-  const bFrozen = Number(b?.frozen ?? 0) || 0;
+  if (a && typeof a === 'object') {
+    const aAvail = Number(a?.available ?? 0) || 0;
+    const aFrozen = Number(a?.frozen ?? 0) || 0;
+    const bAvail = Number(b?.available ?? 0) || 0;
+    const bFrozen = Number(b?.frozen ?? 0) || 0;
 
-  wallets[to] = { ...b, available: bAvail + aAvail, frozen: bFrozen + aFrozen, updatedAt: now() };
-  delete wallets[from];
-  writeWalletMap(wallets);
+    wallets[to] = { ...b, available: bAvail + aAvail, frozen: bFrozen + aFrozen, updatedAt: now() };
+    delete wallets[from];
+    writeWalletMap(wallets);
+  }
 
   const holds = readHoldsMap();
+  let holdsChanged = false;
   for (const holdId of Object.keys(holds)) {
     const h = holds[holdId];
     if (!h || typeof h !== 'object') continue;
-    if (String(h.userId || '').trim() === from) holds[holdId] = { ...h, userId: to, updatedAt: now() };
+    if (String(h.userId || '').trim() === from) {
+      holds[holdId] = { ...h, userId: to, updatedAt: now() };
+      holdsChanged = true;
+    }
   }
-  writeHoldsMap(holds);
+  if (holdsChanged) writeHoldsMap(holds);
 
   return { ok: true, wallet: getBalance(to) };
 };

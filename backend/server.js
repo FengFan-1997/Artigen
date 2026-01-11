@@ -4304,8 +4304,8 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
     if (!assertAuthedUserMatches(req, res, userId)) return;
 
     const cost = (() => {
-      const v = Number.parseInt(process.env.CREDITS_COST_GENERATE || '0', 10);
-      return Number.isFinite(v) && v >= 0 ? v : 0;
+      const v = Number.parseInt(process.env.CREDITS_COST_GENERATE || '10', 10);
+      return Number.isFinite(v) && v >= 0 ? v : 10;
     })();
     const requestId =
       String(requestIdRaw || '').trim() || `gen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
