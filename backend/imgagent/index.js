@@ -500,6 +500,7 @@ MQIDAQAB
       const result = credits.applyAfdianOrder({
         afdianOrderId,
         userId: resolvedUserId,
+        packageId: resolvedPkgId,
         credits: resolvedCreditsFinal
       });
       if (!result.ok) return ok();

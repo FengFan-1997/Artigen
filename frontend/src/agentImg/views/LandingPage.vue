@@ -990,7 +990,17 @@ onBeforeUnmount(() => {
   }
 
   .hero-right {
-    height: 240px;
+    height: 320px;
+  }
+
+  .reactor-wrapper {
+    transform: translate(-50%, -50%) scale(0.78);
+  }
+}
+
+@media (max-width: 360px) {
+  .reactor-wrapper {
+    transform: translate(-50%, -50%) scale(0.7);
   }
 }
 

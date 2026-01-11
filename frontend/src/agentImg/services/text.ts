@@ -198,6 +198,7 @@ export const generateText = async (
     timeoutMs?: number;
     requestId?: string;
     images?: GenerateImageInput[];
+    model?: string;
   }
 ): Promise<TextGenerateResult> => {
   const p = String(prompt || '').trim();
@@ -226,7 +227,7 @@ export const generateText = async (
         ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
       signal: controller.signal,
-      body: JSON.stringify({ prompt: p, userId, requestId, images })
+      body: JSON.stringify({ prompt: p, userId, requestId, images, model: opts?.model })
     });
 
     if (!response.ok) {

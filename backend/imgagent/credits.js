@@ -302,6 +302,14 @@ const checkinCredits = (input) => {
 const applyAfdianOrder = (input) => {
   const uid = normalizeUserId(input?.userId);
   const afdianOrderId = String(input?.afdianOrderId || '').trim();
+  const packageIdRaw = String(input?.packageId || '').trim().toLowerCase();
+  const packageId =
+    packageIdRaw === 'starter' ||
+    packageIdRaw === 'standard' ||
+    packageIdRaw === 'pro' ||
+    packageIdRaw === 'ultimate'
+      ? packageIdRaw
+      : '';
   const credits = Number.parseInt(String(input?.credits ?? 0), 10);
   if (!uid) return { ok: false, error: 'MISSING_USER_ID' };
   if (uid.startsWith('guest_')) return { ok: false, error: 'GUEST_NOT_ALLOWED' };
@@ -321,7 +329,13 @@ const applyAfdianOrder = (input) => {
   const granted = grantCredits({ userId: uid, credits });
   if (!granted.ok) return granted;
 
-  orders[afdianOrderId] = { afdianOrderId, userId: uid, credits, createdAt: now() };
+  orders[afdianOrderId] = {
+    afdianOrderId,
+    userId: uid,
+    credits,
+    ...(packageId ? { packageId } : {}),
+    createdAt: now()
+  };
   writeOrdersMap(orders);
   return { ok: true, alreadyProcessed: false, wallet: getBalance(uid) };
 };

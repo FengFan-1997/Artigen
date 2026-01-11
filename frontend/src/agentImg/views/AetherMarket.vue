@@ -94,6 +94,7 @@
           </div>
 
           <ul class="features">
+            <li><span class="check">✓</span> {{ ui.standardIncludesStarter }}</li>
             <li><span class="check">✓</span> {{ ui.standardFeature1 }}</li>
             <li><span class="check">✓</span> {{ ui.standardFeature2 }}</li>
             <li><span class="check">✓</span> {{ ui.standardFeature3 }}</li>
@@ -135,6 +136,7 @@
           </div>
 
           <ul class="features">
+            <li><span class="check">✓</span> {{ ui.proIncludesStandard }}</li>
             <li><span class="check">✓</span> {{ ui.proFeature1 }}</li>
             <li><span class="check">✓</span> {{ ui.proFeature2 }}</li>
             <li><span class="check">✓</span> {{ ui.proFeature3 }}</li>
@@ -177,10 +179,12 @@
           </div>
 
           <ul class="features">
+            <li><span class="check">✓</span> {{ ui.ultimateIncludesPro }}</li>
             <li><span class="check">✓</span> {{ ui.ultimateFeature1 }}</li>
             <li><span class="check">✓</span> {{ ui.ultimateFeature2 }}</li>
             <li><span class="check">✓</span> {{ ui.ultimateFeature3 }}</li>
             <li><span class="check">✓</span> {{ ui.ultimateFeature4 }}</li>
+            <li><span class="check">✓</span> {{ ui.ultimateExpertService }}</li>
           </ul>
 
           <button
@@ -190,7 +194,7 @@
             @click="handleBuy('ultimate')"
           >
             <template v-if="buyingPackageId === 'ultimate'">{{ ui.creatingOrder }}</template>
-            <template v-else>🔥 {{ ui.activateNow }}</template>
+            <template v-else>{{ ui.buyNow }}</template>
           </button>
         </div>
       </div>
@@ -574,17 +578,21 @@ const ui = computed(() => {
       starterFeature1: '24 次生成 (Standard 模型)',
       starterFeature2: '支持所有基础风格',
       starterDisabledPro: 'Pro 模型不可用',
+      standardIncludesStarter: '包含入门包全部权益',
       standardFeature1: '30 次 Standard + 30 次 Pro',
       standardFeature2: '解锁 Pro 高清模型',
       standardFeature3: '支持所有风格',
+      proIncludesStandard: '包含标准包全部权益',
       proFeature1: '100 次 Standard + 50 次 Pro',
       proFeature2: 'Pro 高清模型 (4K 输出)',
       proFeature3: '优先处理队列',
       proFeature4: '加入用户社群',
+      ultimateIncludesPro: '包含专业包全部权益',
       ultimateFeature1: '200 次 Standard + 200 次 Pro',
       ultimateFeature2: '终身 VIP 标识',
       ultimateFeature3: '提前体验新工具',
       ultimateFeature4: '加入核心用户群',
+      ultimateExpertService: '专家服务',
       payTitle: '完成支付',
       paySub:
         '打开支付页面后通常无需手动填写备注；如支付页未自动带出订单信息，可粘贴：userId=<你的用户ID> orderId=<订单号>。支付完成后系统会自动检测到账。',
@@ -630,17 +638,21 @@ const ui = computed(() => {
     starterFeature1: '24 generations (Standard model)',
     starterFeature2: 'Access all basic styles',
     starterDisabledPro: 'Pro model not available',
+    standardIncludesStarter: 'Includes all Starter benefits',
     standardFeature1: '30× Standard + 30× Pro',
     standardFeature2: 'Unlock Pro HD model',
     standardFeature3: 'Access all styles',
+    proIncludesStandard: 'Includes all Standard benefits',
     proFeature1: '100× Standard + 50× Pro',
     proFeature2: 'Pro HD model (4K output)',
     proFeature3: 'Priority queue',
     proFeature4: 'Join the community',
+    ultimateIncludesPro: 'Includes all Pro benefits',
     ultimateFeature1: '200× Standard + 200× Pro',
     ultimateFeature2: 'Lifetime VIP badge',
     ultimateFeature3: 'Early access to new tools',
     ultimateFeature4: 'Join the core group',
+    ultimateExpertService: 'Expert service',
     payTitle: 'Complete Payment',
     paySub:
       'Usually no manual remark is needed. If the payment page does not show order info, paste: userId=<your userId> orderId=<orderId>. We will auto-detect credits.',
@@ -1325,5 +1337,30 @@ const ui = computed(() => {
 
 .pay-hint.error {
   color: #fca5a5;
+}
+
+/* New Styles */
+.pro-theme {
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.save-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.save-badge.gold {
+  background: rgba(255, 215, 0, 0.1);
+  color: #ffd700;
+  border-color: rgba(255, 215, 0, 0.3);
 }
 </style>

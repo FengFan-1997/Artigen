@@ -95,6 +95,7 @@ export type CreditsOrder = {
   afdianOrderId: string;
   userId: string;
   credits: number;
+  packageId?: PayPackageId;
   createdAt: number;
 };
 
@@ -116,9 +117,23 @@ export const getCreditsOrders = async (): Promise<CreditsOrder[] | null> => {
         const afdianOrderId = typeof o?.afdianOrderId === 'string' ? o.afdianOrderId.trim() : '';
         const uid = typeof o?.userId === 'string' ? o.userId.trim() : '';
         const credits = Number(o?.credits ?? 0) || 0;
+        const packageIdRaw = typeof o?.packageId === 'string' ? o.packageId.trim() : '';
+        const packageId: PayPackageId | undefined =
+          packageIdRaw === 'starter' ||
+          packageIdRaw === 'standard' ||
+          packageIdRaw === 'pro' ||
+          packageIdRaw === 'ultimate'
+            ? (packageIdRaw as PayPackageId)
+            : undefined;
         const createdAt = Number(o?.createdAt ?? 0) || 0;
         if (!afdianOrderId || !uid) return null;
-        return { afdianOrderId, userId: uid, credits, createdAt };
+        return {
+          afdianOrderId,
+          userId: uid,
+          credits,
+          ...(packageId ? { packageId } : {}),
+          createdAt
+        };
       })
       .filter((x: any) => !!x) as CreditsOrder[];
   } catch {

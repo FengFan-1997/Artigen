@@ -1,7 +1,7 @@
 <template>
   <div class="artigen-page">
     <div class="tool-container">
-      <TitleBar hideAuth>
+      <TitleBar hideAuth hideLangOnMobile>
         <template #actions>
           <div class="top-actions">
             <template v-if="isAuthed">
@@ -33,8 +33,8 @@
       <div class="workspace">
         <div
           class="mobile-overlay"
-          v-if="productSidebarOpen"
-          @click="productSidebarOpen = false"
+          v-if="productSidebarOpen || historySidebarOpen"
+          @click="closeMobileOverlays"
         ></div>
 
         <!-- LEFT: Product Configuration -->
@@ -348,15 +348,45 @@
                 class="textarea"
                 :placeholder="ui.inputPlaceholder"
                 maxlength="500"
-                @keydown.enter.ctrl="loading ? onStop() : onPrimary()"
               ></textarea>
 
               <div class="input-toolbar">
                 <div class="left-tools">
-                  <button class="tool-btn" @click="triggerUpload" :disabled="loading">
+                  <button class="tool-btn upload-btn" @click="triggerUpload" :disabled="loading">
                     <span class="tool-icon">+</span>
                     <span class="tool-text">{{ ui.addImage }}</span>
                   </button>
+
+                  <div ref="modelMenuRef" class="model-menu">
+                    <button
+                      class="toggle-btn"
+                      type="button"
+                      :class="{ active: modelMenuOpen }"
+                      :disabled="loading"
+                      @click="toggleModelMenu"
+                    >
+                      <span class="toggle-icon">⬡</span>
+                      <span class="toggle-text">{{ ui.model }}: {{ selectedModelLabel }}</span>
+                    </button>
+
+                    <div v-if="modelMenuOpen" class="model-dropdown">
+                      <button
+                        v-for="opt in modelOptions"
+                        :key="opt.id"
+                        class="model-item"
+                        type="button"
+                        :disabled="opt.disabled"
+                        :class="{ active: opt.id === selectedModelId }"
+                        @click="selectModel(opt.id)"
+                      >
+                        <div class="model-main">
+                          <span class="model-name">{{ opt.label }}</span>
+                          <span v-if="opt.badge" class="model-badge">{{ opt.badge }}</span>
+                        </div>
+                        <div v-if="opt.hint" class="model-hint">{{ opt.hint }}</div>
+                      </button>
+                    </div>
+                  </div>
 
                   <label v-if="!hasPreviews" class="toggle-btn" :class="{ active: deepMode }">
                     <input type="checkbox" v-model="deepMode" :disabled="loading" />
@@ -393,12 +423,22 @@
                 </div>
 
                 <div class="right-tools">
-                  <span class="footer-hint">{{ ui.sendHint }}</span>
+                  <button
+                    class="toggle-btn history-toggle-btn"
+                    type="button"
+                    :class="{ active: historySidebarOpen }"
+                    @click="toggleHistorySidebar"
+                    :disabled="loading"
+                  >
+                    <span class="toggle-icon">🕒</span>
+                    <span class="toggle-text">{{ ui.memory }}</span>
+                  </button>
                   <button
                     class="send-btn"
                     :class="{ stop: loading }"
                     @click="loading ? onStop() : onPrimary()"
                     :disabled="loading ? false : !canPrimary"
+                    :title="generateHoverTip"
                   >
                     <span v-if="loading">■</span>
                     <span v-else>↑</span>
@@ -409,7 +449,7 @@
           </div>
         </main>
 
-        <aside class="right-side">
+        <aside class="right-side" :class="{ 'mobile-open': historySidebarOpen }">
           <div class="right-header">
             <span class="right-title">{{ ui.memory }}</span>
           </div>
@@ -428,7 +468,7 @@
               v-for="item in historyForSidebar"
               :key="item.id"
               type="button"
-              @click="scrollToGeneration(item.id)"
+              @click="onHistoryItemClick(item.id)"
             >
               <div v-if="item.image" class="history-image-placeholder">
                 <img
@@ -468,7 +508,12 @@ import {
 } from '@/login/session';
 import { useLoginModel } from '@/stores';
 import { useLanguageStore } from '@/stores/language';
-import { getCreditsBalance, type CreditsBalance } from '@/points';
+import {
+  getCreditsBalance,
+  getCreditsOrders,
+  type CreditsBalance,
+  type CreditsOrder
+} from '@/points';
 import { img2img, type GenerateImageInput, type Img2ImgImageInput } from './services/text';
 import type { AgentImgPromptResult } from './types';
 import { agentImgPromptLibrary } from './data/promptLibrary';
@@ -522,6 +567,13 @@ const ui = computed(() => {
       negativePrompt: 'Negative Prompt',
       imageLabel: 'Image',
       addImage: '添加图片',
+      model: '模型',
+      modelStandard: 'standard',
+      modelNanobanana: 'nanobanana',
+      modelNanobananaPro: 'nanobananaPro',
+      modelLocked: '需要标准包以上',
+      modelComingSoon: '暂未接入',
+      costTip: '预计扣费：{n} 点/次（以实际扣费为准）',
       deepThinkToggle: '深度思考',
       productSpecial: '产品专项',
       sendHint: 'Ctrl + Enter 发送',
@@ -571,6 +623,13 @@ const ui = computed(() => {
     negativePrompt: 'Negative Prompt',
     imageLabel: 'Image',
     addImage: 'Add Image',
+    model: 'Model',
+    modelStandard: 'standard',
+    modelNanobanana: 'nanobanana',
+    modelNanobananaPro: 'nanobananaPro',
+    modelLocked: 'Requires Standard pack or higher',
+    modelComingSoon: 'Coming soon',
+    costTip: 'Est. cost: {n} credits/run (actual deduction may vary)',
     deepThinkToggle: 'Deep Thinking',
     productSpecial: 'Product',
     sendHint: 'Ctrl + Enter to send',
@@ -749,13 +808,27 @@ const updateSelectedOptionSummary = (next: string) => {
 const router = useRouter();
 
 const productSidebarOpen = ref(false);
+const historySidebarOpen = ref(false);
 const previewUrls = ref<string[]>(['', '']);
 const previewFiles = ref<(File | null)[]>([null, null]);
 const fileInputs = ref<HTMLInputElement[]>([]);
 const hasPreviews = computed(() => previewUrls.value.some((u) => !!u));
 
+const closeMobileOverlays = () => {
+  productSidebarOpen.value = false;
+  historySidebarOpen.value = false;
+};
+
 const toggleProductSidebar = () => {
-  productSidebarOpen.value = !productSidebarOpen.value;
+  const next = !productSidebarOpen.value;
+  productSidebarOpen.value = next;
+  if (next) historySidebarOpen.value = false;
+};
+
+const toggleHistorySidebar = () => {
+  const next = !historySidebarOpen.value;
+  historySidebarOpen.value = next;
+  if (next) productSidebarOpen.value = false;
 };
 
 const triggerUpload = () => {
@@ -798,6 +871,78 @@ const creditsBalance = ref<CreditsBalance | null>(null);
 const creditsLoading = ref(false);
 const finalImageUrl = ref('');
 const history = ref<HistoryItem[]>([]);
+
+type ModelId = 'standard' | 'nanobanana' | 'nanobananaPro';
+
+const selectedModelId = ref<ModelId>('standard');
+const modelMenuOpen = ref(false);
+const modelMenuRef = ref<HTMLElement | null>(null);
+
+const packageTierWeight = ref(0);
+const hasStandardOrAbove = computed(() => packageTierWeight.value >= 2);
+
+const refreshPackageTier = async () => {
+  if (!isAuthed.value) {
+    packageTierWeight.value = 0;
+    return;
+  }
+  const orders = await getCreditsOrders();
+  const list: CreditsOrder[] = Array.isArray(orders) ? orders : [];
+  const weightOf = (pkg?: string) => {
+    if (pkg === 'ultimate') return 4;
+    if (pkg === 'pro') return 3;
+    if (pkg === 'standard') return 2;
+    if (pkg === 'starter') return 1;
+    return 0;
+  };
+  let best = 0;
+  for (const o of list) best = Math.max(best, weightOf(o.packageId));
+  packageTierWeight.value = best;
+};
+
+const selectedModelLabel = computed(() => {
+  if (selectedModelId.value === 'standard') return ui.value.modelStandard;
+  if (selectedModelId.value === 'nanobanana') return ui.value.modelNanobanana;
+  return ui.value.modelNanobananaPro;
+});
+
+const modelOptions = computed(() => {
+  const locked = !hasStandardOrAbove.value;
+  return [
+    {
+      id: 'standard' as const,
+      label: ui.value.modelStandard,
+      disabled: false,
+      badge: '',
+      hint: ''
+    },
+    {
+      id: 'nanobanana' as const,
+      label: ui.value.modelNanobanana,
+      disabled: locked,
+      badge: locked ? '🔒' : ui.value.modelComingSoon,
+      hint: locked ? ui.value.modelLocked : ui.value.modelComingSoon
+    },
+    {
+      id: 'nanobananaPro' as const,
+      label: ui.value.modelNanobananaPro,
+      disabled: locked,
+      badge: locked ? '🔒' : ui.value.modelComingSoon,
+      hint: locked ? ui.value.modelLocked : ui.value.modelComingSoon
+    }
+  ];
+});
+
+const toggleModelMenu = () => {
+  modelMenuOpen.value = !modelMenuOpen.value;
+};
+
+const selectModel = (id: ModelId) => {
+  const opt = modelOptions.value.find((x) => x.id === id);
+  if (!opt || opt.disabled) return;
+  selectedModelId.value = id;
+  modelMenuOpen.value = false;
+};
 
 const historyStorageKey = computed(() => {
   const uid = String(authUserId.value || '').trim() || ensureGuestUserId();
@@ -943,6 +1088,11 @@ const scrollChatToBottom = () => {
   });
 };
 
+const onHistoryItemClick = (id: string | number) => {
+  scrollToGeneration(id);
+  historySidebarOpen.value = false;
+};
+
 watch(
   () => [history.value.length, loading.value, pendingUserText.value],
   () => scrollChatToBottom()
@@ -1010,11 +1160,18 @@ const primaryText = computed(() => {
 
 const canPrimary = computed(() => {
   if (loading.value) return false;
+  if (selectedModelId.value !== 'standard') return false;
   if (deepMode.value) {
     if (options.value.length === 0) return canAnalyze.value;
     return !!String(selectedOptionId.value || '').trim() && !!String(userInput.value || '').trim();
   }
   return !!String(userInput.value || '').trim();
+});
+
+const generateHoverTip = computed(() => {
+  if (loading.value) return '';
+  const cost = 1;
+  return String(ui.value.costTip || '').replace('{n}', String(cost));
 });
 
 const fileToThumbDataUrl = (f: File): Promise<string | null> => {
@@ -1133,6 +1290,16 @@ const buildNegativePrompt = (extra?: string[]) => {
     : base;
   const merged = ensureUniqueTags([...filteredBase, ...extraTags]);
   return merged.join(', ');
+};
+
+const buildPromptWithContext = (userText: string) => {
+  const u = String(userText || '').trim();
+  const ctx = String(contextText.value || '').trim();
+  if (!ctx) return u;
+  const prefix = currentLang.value === 'zh' ? '产品档案' : 'Product Profile';
+  const req = currentLang.value === 'zh' ? '用户需求' : 'User Request';
+  if (!u) return `${prefix}:\n${ctx}`;
+  return `${prefix}:\n${ctx}\n\n${req}:\n${u}`;
 };
 
 const applyLogoInstructionToPrompt = (prompt: string) => {
@@ -1282,7 +1449,8 @@ const doPrimary = async () => {
       return;
     }
     const opt = options.value[idx];
-    const prompt = applyStyleTagsToPrompt(buildDeepPrompt(activeUserText), opt.styleTags || []);
+    const baseText = buildPromptWithContext(activeUserText);
+    const prompt = applyStyleTagsToPrompt(buildDeepPrompt(baseText), opt.styleTags || []);
     const negativePrompt = buildNegativePrompt(opt.negativeTags || []);
     const fp: AgentImgPromptResult = { prompt, negativePrompt };
     options.value = [];
@@ -1321,7 +1489,7 @@ const doPrimary = async () => {
   }
 
   const fp: AgentImgPromptResult = {
-    prompt: activeUserText,
+    prompt: buildPromptWithContext(activeUserText),
     negativePrompt: buildNegativePrompt()
   };
   const id = Date.now();
@@ -1474,6 +1642,7 @@ const handleAuthChanged = () => {
   else loadHistoryFromStorage();
   if (isAuthed.value) void refreshCredits();
   else creditsBalance.value = null;
+  void refreshPackageTier();
 };
 
 const chatInputRef = ref<HTMLTextAreaElement | null>(null);
@@ -1481,6 +1650,11 @@ const chatInputRef = ref<HTMLTextAreaElement | null>(null);
 const onGlobalPointerDown = (e: PointerEvent) => {
   const target = e.target as HTMLElement | null;
   if (!target) return;
+
+  if (modelMenuOpen.value) {
+    const inside = target.closest('.model-menu');
+    if (!inside) modelMenuOpen.value = false;
+  }
 
   if (target.closest('input, textarea, [contenteditable="true"], .msg-bubble')) return;
 
@@ -1505,8 +1679,18 @@ const onGlobalPointerDown = (e: PointerEvent) => {
   }
 };
 
+let wideSidebarMql: MediaQueryList | null = null;
+const onWideSidebarChange = (e: MediaQueryListEvent) => {
+  if (e.matches) productSidebarOpen.value = true;
+};
+
 onMounted(() => {
   handleAuthChanged();
+  try {
+    wideSidebarMql = window.matchMedia('(min-width: 1920px)');
+    if (wideSidebarMql.matches) productSidebarOpen.value = true;
+    wideSidebarMql.addEventListener('change', onWideSidebarChange);
+  } catch {}
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
   document.addEventListener('pointerdown', onGlobalPointerDown, true);
 });
@@ -1515,6 +1699,10 @@ onBeforeUnmount(() => {
   abortImg2Img();
   if (historyPersistTimer) window.clearTimeout(historyPersistTimer);
   historyPersistTimer = null;
+  try {
+    wideSidebarMql?.removeEventListener('change', onWideSidebarChange);
+  } catch {}
+  wideSidebarMql = null;
   window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
   document.removeEventListener('pointerdown', onGlobalPointerDown, true);
 });
@@ -2406,6 +2594,103 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
+.model-menu {
+  position: relative;
+}
+
+.model-dropdown {
+  position: absolute;
+  bottom: 100%;
+  top: auto;
+  left: 0;
+  margin-bottom: 10px;
+  min-width: 260px;
+  max-width: min(560px, 86vw);
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 10, 10, 0.92);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 90;
+}
+
+.model-item {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  padding: 10px 10px;
+  color: var(--text-main);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.18s ease;
+}
+
+.model-item:hover:not(:disabled) {
+  border-color: rgba(204, 255, 0, 0.35);
+  box-shadow: 0 0 0 1px rgba(204, 255, 0, 0.16);
+}
+
+.model-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.model-item.active {
+  border-color: rgba(204, 255, 0, 0.7);
+  background: rgba(204, 255, 0, 0.06);
+  box-shadow: 0 0 0 1px rgba(204, 255, 0, 0.18);
+}
+
+.model-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.model-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 800;
+  color: #e2e8f0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.04);
+  flex: 0 0 auto;
+}
+
+.model-item.active .model-name {
+  color: #ccff00;
+}
+
+.model-item.active .model-badge {
+  border-color: rgba(204, 255, 0, 0.35);
+  color: #ccff00;
+  background: rgba(204, 255, 0, 0.06);
+}
+
+.model-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.25;
+}
+
 .toggle-btn {
   display: flex;
   align-items: center;
@@ -2449,6 +2734,10 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.history-toggle-btn {
+  display: none;
 }
 
 .footer-hint {
@@ -2500,13 +2789,13 @@ onBeforeUnmount(() => {
 .mobile-overlay {
   display: none;
   position: fixed;
-  top: 64px;
+  top: 0;
   left: 0;
   width: 100%;
-  height: calc(100vh - 64px);
+  height: 100vh;
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(4px);
-  z-index: 4;
+  z-index: 70;
   animation: fadeIn 0.3s;
 }
 
@@ -2531,6 +2820,25 @@ onBeforeUnmount(() => {
     display: none;
   }
 
+  .model-dropdown {
+    grid-template-columns: 1fr;
+    min-width: min(320px, 86vw);
+  }
+
+  .upload-btn .tool-text {
+    display: none;
+  }
+
+  .upload-btn {
+    padding: 0 10px;
+  }
+
+  .history-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .side {
     position: absolute;
     top: 0;
@@ -2541,6 +2849,7 @@ onBeforeUnmount(() => {
     background: #0a0a0a;
     border-right: 1px solid var(--border-color);
     box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
+    z-index: 80;
   }
 
   .side.mobile-open {
@@ -2780,6 +3089,31 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   z-index: 5;
+}
+
+@media (max-width: 768px) {
+  .right-side {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: min(320px, 86vw);
+    transform: translateX(100%);
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      opacity 0.18s ease,
+      transform 0.18s ease;
+    background: #0a0a0a;
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
+    z-index: 80;
+  }
+
+  .right-side.mobile-open {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 .right-header {
   padding: 16px;

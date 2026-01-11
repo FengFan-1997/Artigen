@@ -673,7 +673,7 @@ const callGeminiGenerate = async ({ contents, timeoutMs }) => {
   throw err;
 };
 
-const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens }) => {
+const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model }) => {
   if (!SILICONFLOW_API_KEY) {
     const err = new Error('MISSING_SILICONFLOW_API_KEY');
     err.code = 'MISSING_SILICONFLOW_API_KEY';
@@ -681,6 +681,7 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens }) => {
   }
 
   const startedAt = Date.now();
+  const resolvedModel = String(model || '').trim() || SILICONFLOW_MODEL;
   const headers = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${SILICONFLOW_API_KEY}`
@@ -697,7 +698,7 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens }) => {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            model: SILICONFLOW_MODEL,
+            model: resolvedModel,
             messages,
             max_tokens: typeof maxTokens === 'number' ? maxTokens : undefined
           })
@@ -730,7 +731,7 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens }) => {
 
       const openaiText = data?.choices?.[0]?.message?.content;
       if (typeof openaiText === 'string' && openaiText.trim()) {
-        return { text: openaiText, usedUrl: url, failures, usage, model: SILICONFLOW_MODEL };
+        return { text: openaiText, usedUrl: url, failures, usage, model: resolvedModel };
       }
 
       const messageText =
@@ -739,7 +740,7 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens }) => {
         data?.data?.choices?.[0]?.message?.content ||
         '';
       if (typeof messageText === 'string' && messageText.trim()) {
-        return { text: messageText, usedUrl: url, failures, usage, model: SILICONFLOW_MODEL };
+        return { text: messageText, usedUrl: url, failures, usage, model: resolvedModel };
       }
 
       failures.push({
@@ -4296,7 +4297,7 @@ app.get('/api/images/history/:userId', rateLimit('images_history', { max: 60, wi
 app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }), async (req, res) => {
   let holdCtx = null;
   try {
-    const { prompt, userId: userIdRaw, requestId: requestIdRaw } = req.body || {};
+    const { prompt, userId: userIdRaw, requestId: requestIdRaw, model: modelRaw } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
     const userId = String(userIdRaw || '').trim();
@@ -4317,6 +4318,33 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
     }
 
     const contents = [{ role: 'user', parts: [{ text: prompt }] }];
+    const requestedModel = typeof modelRaw === 'string' ? modelRaw.trim() : '';
+    const requestedModelKey = requestedModel.toLowerCase();
+    const forceQwen = requestedModelKey === 'qwen' || requestedModelKey.startsWith('qwen/');
+    const resolvedQwenModel = requestedModelKey === 'qwen' ? 'Qwen/Qwen3-8B' : requestedModel;
+
+    if (forceQwen) {
+      if (!SILICONFLOW_API_KEY) {
+        if (cost > 0) imgCredits.refundHold({ userId, holdId });
+        return res.status(500).json({ error: 'MISSING_SILICONFLOW_API_KEY' });
+      }
+      const { text } = await callSiliconFlowChat({
+        messages: [{ role: 'user', content: String(prompt) }],
+        timeoutMs: Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS),
+        maxTokens: 2048,
+        model: resolvedQwenModel
+      });
+      if (cost > 0) {
+        const confirmed = imgCredits.confirmHold({ userId, holdId });
+        if (!confirmed.ok) {
+          imgCredits.refundHold({ userId, holdId });
+          return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
+        }
+      }
+      return res.json({
+        candidates: [{ content: { parts: [{ text: String(text || '') }] } }]
+      });
+    }
 
     if (API_KEY) {
       try {

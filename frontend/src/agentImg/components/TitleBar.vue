@@ -4,6 +4,10 @@
       <span class="logo-text">Artigen</span>
     </router-link>
 
+    <button class="nav-toggle" type="button" @click="isMobileMenuOpen = !isMobileMenuOpen">
+      ≡
+    </button>
+
     <nav class="nav-links">
       <router-link
         to="/artigen/format-factory"
@@ -25,11 +29,12 @@
     </nav>
 
     <div class="header-right">
-      <button class="nav-toggle" type="button" @click="isMobileMenuOpen = !isMobileMenuOpen">
-        ≡
-      </button>
-
-      <div ref="langContainerRef" class="lang-container" @click="isLangMenuOpen = !isLangMenuOpen">
+      <div
+        ref="langContainerRef"
+        class="lang-container"
+        :class="{ 'mobile-hide': hideLangOnMobile }"
+        @click="isLangMenuOpen = !isLangMenuOpen"
+      >
         <button class="lang-switch" type="button">
           <span class="globe-icon">🌐</span>
           <span class="lang-label">{{ langLabel }}</span>
@@ -106,6 +111,7 @@ import { isLocalLoggedIn } from '@/login/session';
 
 defineProps<{
   hideAuth?: boolean;
+  hideLangOnMobile?: boolean;
 }>();
 
 const router = useRouter();
@@ -216,6 +222,8 @@ const goLogin = () => {
 
 .logo {
   text-decoration: none;
+  display: inline-flex;
+  align-items: center;
 }
 
 .logo-text {
@@ -298,6 +306,7 @@ const goLogin = () => {
   font-weight: 600;
   border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
   background: rgba(5, 5, 5, 0.9);
+  text-align: left;
 }
 
 .mobile-item.active {
@@ -429,6 +438,14 @@ const goLogin = () => {
   .logo-text {
     font-size: 18px;
     margin-right: 0;
+  }
+
+  .nav-toggle {
+    margin-left: 10px;
+  }
+
+  .lang-container.mobile-hide {
+    display: none;
   }
 
   .nav-links {

@@ -570,7 +570,8 @@ export const useFormatFactory = () => {
           const res = await generateText(prompt, {
             signal: opts?.signal,
             timeoutMs: 45000,
-            requestId
+            requestId,
+            model: 'qwen'
           });
           if (!res.ok) throw new Error(res.errorCode || res.error);
           const json = parseJsonFromAi(res.text);
@@ -630,6 +631,11 @@ export const useFormatFactory = () => {
       if (isBatchTool && batchFiles.length > 1) {
         const results: FormatFactoryOutputItem[] = [];
         const totalFiles = batchFiles.length;
+        setProgress({
+          done: 0,
+          total: totalFiles * 100,
+          label: isZh.value ? '准备处理' : 'Preparing'
+        });
         for (let i = 0; i < totalFiles; i += 1) {
           const f = batchFiles[i];
           const onFileProgress = (p: FormatFactoryProgress) => {
@@ -653,6 +659,11 @@ export const useFormatFactory = () => {
             if (nonce !== runNonce.value) return;
             const url = URL.createObjectURL(blob);
             results.push({ blob, name: filename, size: blob.size, url });
+            setProgress({
+              done: (i + 1) * 100,
+              total: totalFiles * 100,
+              label: `${i + 1}/${totalFiles} ${isZh.value ? '完成' : 'Done'}`
+            });
             continue;
           }
 
@@ -665,6 +676,11 @@ export const useFormatFactory = () => {
             if (nonce !== runNonce.value) return;
             const url = URL.createObjectURL(blob);
             results.push({ blob, name: filename, size: blob.size, url });
+            setProgress({
+              done: (i + 1) * 100,
+              total: totalFiles * 100,
+              label: `${i + 1}/${totalFiles} ${isZh.value ? '完成' : 'Done'}`
+            });
             continue;
           }
 
@@ -683,10 +699,20 @@ export const useFormatFactory = () => {
             if (nonce !== runNonce.value) return;
             const url = URL.createObjectURL(blob);
             results.push({ blob, name: filename, size: blob.size, url });
+            setProgress({
+              done: (i + 1) * 100,
+              total: totalFiles * 100,
+              label: `${i + 1}/${totalFiles} ${isZh.value ? '完成' : 'Done'}`
+            });
             continue;
           }
         }
 
+        setProgress({
+          done: totalFiles * 100,
+          total: totalFiles * 100,
+          label: isZh.value ? '完成' : 'Done'
+        });
         outputItems.value = results;
         outputMeta.value = {
           name: isZh.value ? `${results.length} 个输出` : `${results.length} outputs`,
@@ -896,13 +922,19 @@ export const useFormatFactory = () => {
         return;
       }
     } catch (err: any) {
+      if (nonce !== runNonce.value) return;
+      const aborted =
+        controller.signal.aborted || err?.name === 'AbortError' || err?.code === 'ABORT_ERR';
+      if (aborted) return;
       toolError.value = toUserError(
         err,
         isZh.value ? '处理失败，请换一个文件再试' : 'Processing failed. Try another file.'
       );
     } finally {
-      isProcessing.value = false;
-      runController.value = null;
+      if (nonce === runNonce.value) {
+        isProcessing.value = false;
+        runController.value = null;
+      }
     }
   };
 
