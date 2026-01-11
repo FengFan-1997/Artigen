@@ -138,7 +138,6 @@ const ui = computed(() =>
   background-color: #050505;
   color: #f1f5f9;
   font-family: 'Inter', sans-serif;
-  padding-top: 120px;
 }
 
 .top-header {
