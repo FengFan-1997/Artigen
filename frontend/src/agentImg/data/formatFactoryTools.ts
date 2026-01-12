@@ -68,15 +68,15 @@ export const formatFactoryTools: FormatFactoryTool[] = [
   {
     id: 'pdf2word',
     name: 'PDF 转 Word',
-    description: '提取文本 · 导出 DOCX',
+    description: '提取文本 · 导出 DOC',
     icon: '📝',
     tag: '文档工具',
     status: 'ready'
   },
   {
-    id: 'word2pdf',
-    name: 'Word 转 PDF',
-    description: '渲染为页面 · 导出 PDF',
+    id: 'txt2pdf',
+    name: 'TXT 转 PDF',
+    description: '纯文本排版 · 导出 PDF',
     icon: '🧷',
     tag: '文档工具',
     status: 'ready'

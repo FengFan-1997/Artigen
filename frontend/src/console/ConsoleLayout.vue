@@ -1,5 +1,5 @@
 <template>
-  <a-layout v-if="isLoggedIn" style="min-height: 100vh">
+  <a-layout v-if="isLoggedIn" class="console-shell">
     <a-layout-sider
       v-model:collapsed="collapsed"
       collapsible
@@ -49,18 +49,8 @@
         </a-menu-item>
       </a-menu>
     </a-layout-sider>
-    <a-layout>
-      <a-layout-header
-        style="
-          background: #fff;
-          padding: 0 24px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
-          z-index: 1;
-        "
-      >
+    <a-layout class="console-main">
+      <a-layout-header class="console-header">
         <a-breadcrumb>
           <a-breadcrumb-item>{{ ui.console }}</a-breadcrumb-item>
           <a-breadcrumb-item>{{ currentRouteName }}</a-breadcrumb-item>
@@ -87,20 +77,14 @@
           </template>
         </a-dropdown>
       </a-layout-header>
-      <a-layout-content style="margin: 24px">
-        <div
-          :style="{
-            padding: '24px',
-            background: '#fff',
-            minHeight: '360px',
-            borderRadius: '8px',
-            boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-          }"
-        >
-          <router-view />
+      <a-layout-content class="console-content">
+        <div class="console-card">
+          <div class="console-card-scroll">
+            <router-view />
+          </div>
         </div>
       </a-layout-content>
-      <a-layout-footer style="text-align: center; color: rgba(0, 0, 0, 0.45)">
+      <a-layout-footer class="console-footer">
         {{ ui.footer }}
       </a-layout-footer>
     </a-layout>
@@ -356,6 +340,211 @@ const handleLogout = () => {
 </script>
 
 <style scoped>
+.console-shell {
+  min-height: 100vh;
+  background: #0b1220;
+}
+
+.console-main {
+  min-width: 0;
+  background: #0b1220;
+}
+
+.console-header {
+  padding: 0 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.88);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  z-index: 2;
+}
+
+.console-content {
+  padding: clamp(12px, 2vw, 18px);
+  min-width: 0;
+  min-height: 0;
+}
+
+.console-card {
+  min-width: 0;
+  min-height: 360px;
+  padding: clamp(12px, 2vw, 18px);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.18),
+    0 20px 60px rgba(0, 0, 0, 0.25);
+}
+
+.console-card-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.console-footer {
+  text-align: center;
+  color: rgba(241, 245, 249, 0.55);
+  background: transparent;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+:deep(.ant-breadcrumb),
+:deep(.ant-breadcrumb a),
+:deep(.ant-breadcrumb span) {
+  color: rgba(241, 245, 249, 0.9);
+}
+
+:deep(.ant-layout-sider) {
+  background: #001529;
+}
+
+:deep(.ant-typography),
+:deep(.ant-typography-title) {
+  color: rgba(241, 245, 249, 0.95);
+}
+
+:deep(.ant-card) {
+  background: rgba(2, 6, 23, 0.35);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+:deep(.ant-card-head) {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+:deep(.ant-card-head-title) {
+  color: rgba(241, 245, 249, 0.92);
+}
+
+:deep(.ant-table-wrapper) {
+  min-width: 0;
+}
+
+:deep(.ant-table) {
+  background: transparent;
+  color: rgba(241, 245, 249, 0.9);
+}
+
+:deep(.ant-table-container) {
+  background: rgba(2, 6, 23, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+}
+
+:deep(.ant-table-thead > tr > th) {
+  background: rgba(15, 23, 42, 0.88) !important;
+  color: rgba(241, 245, 249, 0.92) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+:deep(.ant-table-tbody > tr > td) {
+  background: transparent !important;
+  color: rgba(241, 245, 249, 0.9) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+:deep(.ant-table-tbody > tr.ant-table-row:hover > td) {
+  background: rgba(56, 189, 248, 0.08) !important;
+}
+
+:deep(.ant-table-cell-ellipsis) {
+  color: rgba(241, 245, 249, 0.9);
+}
+
+:deep(.ant-tabs-nav) {
+  margin: 0 0 16px 0;
+}
+
+:deep(.ant-tabs-nav::before) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+:deep(.ant-tabs-tab) {
+  color: rgba(241, 245, 249, 0.75);
+}
+
+:deep(.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn) {
+  color: rgba(241, 245, 249, 0.95);
+}
+
+:deep(.ant-tabs-ink-bar) {
+  background: rgba(56, 189, 248, 0.9);
+}
+
+:deep(.ant-input),
+:deep(.ant-input-affix-wrapper),
+:deep(.ant-input-search .ant-input-group),
+:deep(.ant-input-search .ant-input-group-addon),
+:deep(.ant-select-selector),
+:deep(.ant-picker),
+:deep(.ant-input-number),
+:deep(.ant-input-number-input) {
+  background: rgba(2, 6, 23, 0.45) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(241, 245, 249, 0.92) !important;
+}
+
+:deep(.ant-input::placeholder) {
+  color: rgba(241, 245, 249, 0.45);
+}
+
+:deep(.ant-picker-input > input::placeholder) {
+  color: rgba(241, 245, 249, 0.45);
+}
+
+:deep(.ant-select-selection-placeholder) {
+  color: rgba(241, 245, 249, 0.45) !important;
+}
+
+:deep(.ant-modal-content) {
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+}
+
+:deep(.ant-modal-header) {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+:deep(.ant-modal-title) {
+  color: rgba(241, 245, 249, 0.95);
+}
+
+:deep(.ant-modal-close-x) {
+  color: rgba(241, 245, 249, 0.85);
+}
+
+:deep(.ant-divider) {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+:deep(.ant-typography strong) {
+  color: rgba(241, 245, 249, 0.92);
+}
+
+@media (max-width: 768px) {
+  .console-header {
+    padding: 0 12px;
+  }
+
+  .console-content {
+    padding: 12px;
+  }
+
+  .console-card {
+    padding: 12px;
+    border-radius: 12px;
+  }
+}
+
 .login-root {
   min-height: 100vh;
   display: flex;

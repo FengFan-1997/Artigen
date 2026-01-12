@@ -13,8 +13,7 @@ export const acceptForTool = (toolId: FormatFactoryToolId) => {
   if (toolId === 'gif') return 'video/*';
   if (toolId === 'pdf') return 'application/pdf';
   if (toolId === 'pdf2word') return 'application/pdf';
-  if (toolId === 'word2pdf')
-    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,text/plain,text/html';
+  if (toolId === 'txt2pdf') return 'text/plain';
   if (toolId === 'img2pdf') return 'image/png,image/jpeg,image/webp';
   return '';
 };
@@ -40,8 +39,7 @@ export const acceptHintForTool = (toolId: FormatFactoryToolId, lang: 'zh' | 'en'
     return isEn ? 'PDF supported (recommended < 20MB)' : '支持 PDF（建议小于 20MB）';
   if (toolId === 'pdf2word')
     return isEn ? 'PDF supported (text extraction)' : '支持 PDF（提取文字导出）';
-  if (toolId === 'word2pdf')
-    return isEn ? 'Supports DOCX / DOC (basic rendering)' : '支持 DOCX / DOC（基础渲染）';
+  if (toolId === 'txt2pdf') return isEn ? 'Supports TXT (plain text)' : '支持 TXT（纯文本）';
   if (toolId === 'img2pdf')
     return isEn ? 'Supports PNG / JPEG / WEBP (multi-select)' : '支持 PNG / JPEG / WEBP（可多选）';
   return '';

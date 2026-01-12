@@ -4,7 +4,11 @@
 
     <a-card>
       <div style="margin-bottom: 16px; display: flex; gap: 16px; flex-wrap: wrap">
-        <a-input v-model:value="filterUserId" :placeholder="ui.userFilterPh" style="width: 240px" />
+        <a-input
+          v-model:value="filterUserId"
+          :placeholder="ui.userFilterPh"
+          style="width: min(240px, 100%)"
+        />
         <a-range-picker v-model:value="dateRange" />
         <a-button type="primary" @click="fetchUsage" :loading="loading">{{ ui.filter }}</a-button>
       </div>
@@ -15,6 +19,8 @@
         row-key="requestId"
         :pagination="pagination"
         :loading="loading"
+        :tableLayout="'fixed'"
+        :scroll="{ x: 1100 }"
         @change="handleTableChange"
       >
         <template #bodyCell="{ column, record }">

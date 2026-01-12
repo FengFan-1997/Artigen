@@ -156,7 +156,7 @@
                         pdfPageCount ? ui.pdfSelectedMid + pdfPageCount + ui.pdfSelectedSuffix : ''
                       }}
                     </div>
-                    <div v-else-if="activeTool.id === 'word2pdf'" class="help-box">
+                    <div v-else-if="activeTool.id === 'txt2pdf'" class="help-box">
                       {{ sourceMeta?.name || '' }}
                     </div>
                     <video
@@ -218,8 +218,8 @@
                     <div class="help-box">{{ ui.pdf2wordHelp }}</div>
                   </template>
 
-                  <template v-else-if="activeTool.id === 'word2pdf'">
-                    <div class="help-box">{{ ui.word2pdfHelp }}</div>
+                  <template v-else-if="activeTool.id === 'txt2pdf'">
+                    <div class="help-box">{{ ui.txt2pdfHelp }}</div>
                   </template>
 
                   <template v-else-if="activeTool.id === 'jpeg'">
@@ -823,7 +823,14 @@
                       {{ ui.download }}
                     </button>
                     <button
-                      v-if="outputUrl && (activeTool.id === 'img2pdf' || activeTool.id === 'ico')"
+                      v-if="
+                        outputUrl &&
+                        outputMeta &&
+                        (outputMeta.name.endsWith('.pdf') ||
+                          outputMeta.name.endsWith('.ico') ||
+                          outputMeta.name.endsWith('.doc') ||
+                          outputMeta.name.endsWith('.docx'))
+                      "
                       class="btn ghost"
                       type="button"
                       @click="openOutputPreview(outputUrl)"
@@ -1005,7 +1012,7 @@ const ui = computed(() => {
       pdfMaxPagesHelp: '页数过多会很慢，默认限制 12 页',
       pdfScaleLabel: '清晰度',
       pdf2wordHelp: '提取 PDF 中的文字并导出为 Word（.doc）。复杂排版/图片可能无法完整还原。',
-      word2pdfHelp: '将文本导出为 PDF。DOC/DOCX 暂不支持直接解析，建议先另存为 TXT。',
+      txt2pdfHelp: '将 TXT 纯文本导出为 PDF。',
 
       img2pdfPageSizeLabel: '页面尺寸',
       img2pdfPageSizeAuto: '跟随图片尺寸',
@@ -1030,7 +1037,7 @@ const ui = computed(() => {
       reset: '重置',
       pdfGeneratedHint: 'PDF 已生成，可下载或预览。',
       icoGeneratedHint: 'ICO 已生成，可下载或预览。',
-      docGeneratedHint: 'Word 文件已生成，可下载后用 Word 打开。'
+      docGeneratedHint: 'Word 文件已生成，可预览或下载。'
     };
   }
   return {
@@ -1118,7 +1125,7 @@ const ui = computed(() => {
     pdfScaleLabel: 'Scale',
     pdf2wordHelp:
       'Extract text from PDF and export as Word (.doc). Layout/images may not be preserved.',
-    word2pdfHelp: 'Export text as PDF. DOC/DOCX parsing is not supported; save as TXT first.',
+    txt2pdfHelp: 'Export TXT (plain text) as PDF.',
 
     img2pdfPageSizeLabel: 'Page Size',
     img2pdfPageSizeAuto: 'Match image size',
@@ -1143,7 +1150,7 @@ const ui = computed(() => {
     reset: 'Reset',
     pdfGeneratedHint: 'PDF generated. Download or preview it.',
     icoGeneratedHint: 'ICO generated. Download or preview it.',
-    docGeneratedHint: 'Word file generated. Download and open it in Word.'
+    docGeneratedHint: 'Word file generated. Preview or download and open it in Word.'
   };
 });
 

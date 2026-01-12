@@ -19,7 +19,7 @@ import {
   pdfToWord,
   resizeImage,
   rotateFlipImage,
-  wordToPdf,
+  txtToPdf,
   videoToGif
 } from '../logic/formatFactory/processors';
 import type { FormatFactoryProgress } from '../logic/formatFactory/processors';
@@ -72,7 +72,7 @@ export const useFormatFactory = () => {
         tag: 'PDF Tools'
       },
       pdf2word: { name: 'PDF to Word', description: 'Extract text · export DOC', tag: 'Docs' },
-      word2pdf: { name: 'Word to PDF', description: 'Convert to PDF (basic)', tag: 'Docs' },
+      txt2pdf: { name: 'TXT to PDF', description: 'Plain text · export PDF', tag: 'Docs' },
       img2pdf: { name: 'Images to PDF', description: 'Merge multiple images', tag: 'PDF Tools' },
       gif: { name: 'Video to GIF', description: 'Clip video · export GIF', tag: 'Video' },
       ico: { name: 'ICO Generator', description: 'Pack multi-size PNGs', tag: 'General' },
@@ -922,8 +922,8 @@ export const useFormatFactory = () => {
         return;
       }
 
-      if (tool.id === 'word2pdf') {
-        const { blob, filename } = await wordToPdf(file, {
+      if (tool.id === 'txt2pdf') {
+        const { blob, filename } = await txtToPdf(file, {
           lang: isZh.value ? 'zh' : 'en',
           signal: controller.signal,
           onProgress: setProgress

@@ -7,7 +7,7 @@
         <a-input-search
           v-model:value="searchText"
           :placeholder="ui.searchPh"
-          style="width: 300px"
+          style="width: min(300px, 100%)"
           @search="fetchUsers"
         />
         <a-button type="primary" :loading="loading" @click="fetchUsers">{{ ui.refresh }}</a-button>
@@ -19,6 +19,8 @@
         rowKey="userId"
         :loading="loading"
         :pagination="pagination"
+        :tableLayout="'fixed'"
+        :scroll="{ x: 1100 }"
         @change="handleTableChange"
       >
         <template #bodyCell="{ column, record }">
@@ -109,6 +111,8 @@
               size="small"
               :loading="loadingChats"
               :pagination="false"
+              :tableLayout="'fixed'"
+              :scroll="{ x: 900 }"
             >
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'ts'">
@@ -136,6 +140,8 @@
               size="small"
               :loading="loadingOrders"
               :pagination="false"
+              :tableLayout="'fixed'"
+              :scroll="{ x: 900 }"
             >
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'createdAt'">

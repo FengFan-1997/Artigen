@@ -737,24 +737,10 @@ const wrapLines = (text: string, maxChars: number) => {
   return out;
 };
 
-export const wordToPdf = async (
+export const txtToPdf = async (
   file: File,
   opts?: { maxCharsPerLine?: number } & FormatFactoryRunOpts
 ) => {
-  const name = String(file?.name || '').trim();
-  const lower = name.toLowerCase();
-  const isDocx = lower.endsWith('.docx');
-  const isDoc = lower.endsWith('.doc');
-  if (isDocx || isDoc) {
-    throw new Error(
-      tr(
-        opts,
-        '暂不支持直接解析 DOC/DOCX。请先在 Word 里另存为 TXT 后再转换。',
-        'DOC/DOCX parsing is not supported. Please save as TXT first.'
-      )
-    );
-  }
-
   abortIfNeeded(opts?.signal);
   reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取文本', 'Reading text') });
   const raw = await file.text();
@@ -902,7 +888,7 @@ export const pdfToWord = async (file: File, opts?: FormatFactoryRunOpts) => {
       '</body>',
       '</html>'
     ].join('');
-    const blob = new Blob([html], { type: 'application/msword' });
+    const blob = new Blob([html], { type: 'text/html' });
     reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
     return { blob, filename: `${safeBaseName(file.name)}.doc` };
   } finally {
