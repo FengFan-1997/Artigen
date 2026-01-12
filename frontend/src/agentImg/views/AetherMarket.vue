@@ -50,7 +50,9 @@
               <span class="symbol">{{ currencySymbol }}</span>
               <span class="amount">{{ getPrice(9.9) }}</span>
             </div>
-            <div class="compute-amount">⚡ 120 {{ ui.computeUnit }}</div>
+            <div class="compute-amount">
+              ⚡ {{ formatCredits(PACK_CREDITS.starter) }} {{ ui.computeUnit }}
+            </div>
           </div>
 
           <ul class="features">
@@ -90,7 +92,9 @@
               <span class="symbol">{{ currencySymbol }}</span>
               <span class="amount">{{ getPrice(19.9) }}</span>
             </div>
-            <div class="compute-amount">⚡ 260 {{ ui.computeUnit }}</div>
+            <div class="compute-amount">
+              ⚡ {{ formatCredits(PACK_CREDITS.standard) }} {{ ui.computeUnit }}
+            </div>
           </div>
 
           <ul class="features">
@@ -132,7 +136,9 @@
               <span class="symbol">{{ currencySymbol }}</span>
               <span class="amount">{{ getPrice(49.9) }}</span>
             </div>
-            <div class="compute-amount">⚡ 720 {{ ui.computeUnit }}</div>
+            <div class="compute-amount">
+              ⚡ {{ formatCredits(PACK_CREDITS.pro) }} {{ ui.computeUnit }}
+            </div>
           </div>
 
           <ul class="features">
@@ -175,7 +181,9 @@
               <span class="symbol">{{ currencySymbol }}</span>
               <span class="amount">{{ getPrice(99.9) }}</span>
             </div>
-            <div class="compute-amount">⚡ 1,600 {{ ui.computeUnit }}</div>
+            <div class="compute-amount">
+              ⚡ {{ formatCredits(PACK_CREDITS.ultimate) }} {{ ui.computeUnit }}
+            </div>
           </div>
 
           <ul class="features">
@@ -305,6 +313,18 @@ import { useRoute, useRouter } from 'vue-router';
 import { createPayOrder, getCreditsBalance, type PayPackageId } from '@/points';
 import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
 
+const PACK_CREDITS: Record<PayPackageId, number> = {
+  starter: 400,
+  standard: 1000,
+  pro: 3000,
+  ultimate: 10000
+};
+
+const formatCredits = (n: number) => {
+  const v = Number(n || 0) || 0;
+  return v.toLocaleString();
+};
+
 const currency = ref<'CNY' | 'USD'>('CNY');
 
 const currencySymbol = computed(() => (currency.value === 'CNY' ? '¥' : '$'));
@@ -430,7 +450,16 @@ const payHintText = computed(() => {
     if (raw === 'NETWORK_ERROR') return ui.value.payNetworkError;
     return raw;
   }
-  if (payStatus.value === 'success') return ui.value.paySuccess;
+  if (payStatus.value === 'success') {
+    const base = baselineCredits.value;
+    const cur = latestCredits.value;
+    const delta =
+      typeof base === 'number' && typeof cur === 'number' && cur > base ? cur - base : null;
+    const add = typeof delta === 'number' && delta > 0 ? String(delta) : payCreditsText.value;
+    return currentLang.value === 'zh'
+      ? `到账成功：+${add} 点数，余额已更新。`
+      : `Success: +${add} credits. Balance updated.`;
+  }
   if (payStatus.value === 'failed') return ui.value.payTimeout;
   if (payStatus.value === 'polling') {
     const sec = pollRemainingSec.value;
@@ -583,20 +612,20 @@ const ui = computed(() => {
       standardTitle: '标准包',
       proTitle: '专业包',
       ultimateTitle: '旗舰包',
-      starterFeature1: '24 次生成 (Standard 模型)',
-      starterFeature2: '支持所有基础风格',
+      starterFeature1: `${PACK_CREDITS.starter} 点数（按实际扣费）`,
+      starterFeature2: '支持 Standard 模型与基础风格',
       starterDisabledPro: 'Pro 模型不可用',
       standardIncludesStarter: '包含入门包全部权益',
-      standardFeature1: '30 次 Standard + 30 次 Pro',
+      standardFeature1: `${PACK_CREDITS.standard} 点数（按实际扣费）`,
       standardFeature2: '解锁 Pro 高清模型',
       standardFeature3: '支持所有风格',
       proIncludesStandard: '包含标准包全部权益',
-      proFeature1: '100 次 Standard + 50 次 Pro',
+      proFeature1: `${PACK_CREDITS.pro} 点数（按实际扣费）`,
       proFeature2: 'Pro 高清模型 (4K 输出)',
       proFeature3: '优先处理队列',
       proFeature4: '加入用户社群',
       ultimateIncludesPro: '包含专业包全部权益',
-      ultimateFeature1: '200 次 Standard + 200 次 Pro',
+      ultimateFeature1: `${PACK_CREDITS.ultimate} 点数（按实际扣费）`,
       ultimateFeature2: '终身 VIP 标识',
       ultimateFeature3: '提前体验新工具',
       ultimateFeature4: '加入核心用户群',
@@ -618,7 +647,7 @@ const ui = computed(() => {
       checkingPaid: '检查中...',
       payGuide: '等待支付完成…',
       payPolling: '正在检测到账…',
-      paySuccess: '到账成功，点数已更新。',
+      paySuccess: '到账成功。',
       payTimeout: '检测超时：如已支付请稍后再试或联系客服。',
       payLoginRequired: '请先登录再购买。',
       payInvalidPackage: '套餐无效，请刷新页面后重试。',
@@ -643,20 +672,20 @@ const ui = computed(() => {
     standardTitle: 'Standard',
     proTitle: 'Pro',
     ultimateTitle: 'Ultimate',
-    starterFeature1: '24 generations (Standard model)',
-    starterFeature2: 'Access all basic styles',
+    starterFeature1: `${PACK_CREDITS.starter} credits (charged by usage)`,
+    starterFeature2: 'Standard model + basic styles',
     starterDisabledPro: 'Pro model not available',
     standardIncludesStarter: 'Includes all Starter benefits',
-    standardFeature1: '30× Standard + 30× Pro',
+    standardFeature1: `${PACK_CREDITS.standard} credits (charged by usage)`,
     standardFeature2: 'Unlock Pro HD model',
     standardFeature3: 'Access all styles',
     proIncludesStandard: 'Includes all Standard benefits',
-    proFeature1: '100× Standard + 50× Pro',
+    proFeature1: `${PACK_CREDITS.pro} credits (charged by usage)`,
     proFeature2: 'Pro HD model (4K output)',
     proFeature3: 'Priority queue',
     proFeature4: 'Join the community',
     ultimateIncludesPro: 'Includes all Pro benefits',
-    ultimateFeature1: '200× Standard + 200× Pro',
+    ultimateFeature1: `${PACK_CREDITS.ultimate} credits (charged by usage)`,
     ultimateFeature2: 'Lifetime VIP badge',
     ultimateFeature3: 'Early access to new tools',
     ultimateFeature4: 'Join the core group',
@@ -678,7 +707,7 @@ const ui = computed(() => {
     checkingPaid: 'Checking...',
     payGuide: 'Waiting for payment…',
     payPolling: 'Checking credits…',
-    paySuccess: 'Success. Credits updated.',
+    paySuccess: 'Success.',
     payTimeout: 'Timeout. If paid, try again later.',
     payLoginRequired: 'Please log in before purchasing.',
     payInvalidPackage: 'Invalid package. Refresh and try again.',
@@ -792,6 +821,7 @@ const ui = computed(() => {
 }
 
 .market-header {
+  margin-top: 60px;
   text-align: center;
   margin-bottom: 60px;
 }

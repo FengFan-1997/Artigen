@@ -24,10 +24,10 @@
     "updatedAt": 1767884902552
   },
   "user_test_100k": {
-    "available": 99995,
+    "available": 100,
     "frozen": 0,
     "createdAt": 1767888000000,
-    "updatedAt": 1767890337241
+    "updatedAt": 1768247964386
   },
   "guest_demo": {
     "available": 9,
@@ -36,10 +36,10 @@
     "updatedAt": 1767886994920
   },
   "user_mk5vb7v2_ebe837825fb2": {
-    "available": 8,
+    "available": 878,
     "frozen": 0,
     "createdAt": 1767902179279,
-    "updatedAt": 1768216066695,
+    "updatedAt": 1768252059873,
     "lastCheckinDay": "2026-01-09"
   },
   "user_mk6thoz6_1388ca4f90fc": {

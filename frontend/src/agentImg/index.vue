@@ -205,7 +205,7 @@
                   />
                 </div>
                 <textarea
-                  class="control"
+                  class="control control-textarea"
                   rows="4"
                   style="margin-bottom: 16px"
                   :value="selectedOptionSummary"
@@ -304,13 +304,30 @@
                   </div>
                   <div class="msg-bubble msg-media-bubble">
                     <div v-if="item.aiText" class="msg-ai-text">{{ item.aiText }}</div>
-                    <img
-                      v-if="item.image"
-                      :src="item.image"
-                      alt="generated"
-                      class="msg-media-img"
-                      @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
-                    />
+                    <div v-if="item.image" class="msg-image-wrap">
+                      <img
+                        :src="item.image"
+                        alt="generated"
+                        class="msg-media-img"
+                        @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
+                      />
+                      <div class="msg-image-actions">
+                        <button
+                          class="msg-image-action-btn"
+                          type="button"
+                          @click.stop="downloadMsgImage(item.image)"
+                        >
+                          {{ ui.download }}
+                        </button>
+                        <button
+                          class="msg-image-action-btn"
+                          type="button"
+                          @click.stop="referenceMsgImage(item.image)"
+                        >
+                          {{ ui.reference }}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </template>
@@ -565,6 +582,7 @@ import {
 import { img2img, type GenerateImageInput, type Img2ImgImageInput } from './services/text';
 import type { AgentImgPromptResult } from './types';
 import { agentImgPromptLibrary } from './data/promptLibrary';
+import { downloadBlob } from '@/agentImg/logic/formatFactory/url';
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -614,6 +632,8 @@ const ui = computed(() => {
       positivePrompt: 'Positive Prompt',
       negativePrompt: 'Negative Prompt',
       imageLabel: 'Image',
+      download: '下载',
+      reference: '引用',
       addImage: '添加图片',
       model: '模型',
       modelTip: '当前：默认模型',
@@ -673,10 +693,12 @@ const ui = computed(() => {
     positivePrompt: 'Positive Prompt',
     negativePrompt: 'Negative Prompt',
     imageLabel: 'Image',
+    download: 'Download',
+    reference: 'Reference',
     addImage: 'Add image',
     model: 'Model',
     modelTip: 'Current: Default model',
-    modelStandard: 'Default Model',
+    modelStandard: 'Default model',
     modelNanobanana: 'Nano Banana',
     modelNanobananaPro: 'Nano BananaPro',
     modelLocked: 'Requires Pro pack or higher',
@@ -1960,8 +1982,139 @@ const onWideSidebarChange = (e: MediaQueryListEvent) => {
   if (e.matches) productSidebarOpen.value = true;
 };
 
+type AgentImgPrefillItem = { kind: 'data' | 'url'; value: string };
+const AGENT_IMG_PREFILL_KEY = 'agentImg:prefillRef_v1';
+
+const consumeAgentImgPrefill = (): AgentImgPrefillItem[] => {
+  try {
+    const raw = window.localStorage.getItem(AGENT_IMG_PREFILL_KEY);
+    if (!raw) return [];
+    window.localStorage.removeItem(AGENT_IMG_PREFILL_KEY);
+    const parsed = JSON.parse(raw);
+    const list = Array.isArray(parsed?.items) ? parsed.items : Array.isArray(parsed) ? parsed : [];
+    const normalized = list
+      .map((it: any): AgentImgPrefillItem | null => {
+        const kind = it?.kind === 'data' ? 'data' : it?.kind === 'url' ? 'url' : '';
+        const value = String(it?.value || '').trim();
+        if (!kind || !value) return null;
+        return { kind, value };
+      })
+      .filter((x: any): x is AgentImgPrefillItem => !!x);
+    return normalized.slice(0, previewUrls.value.length);
+  } catch {
+    return [];
+  }
+};
+
+const extFromMime = (mime: string) => {
+  const m = String(mime || '').toLowerCase();
+  if (m.includes('png')) return 'png';
+  if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
+  if (m.includes('webp')) return 'webp';
+  if (m.includes('gif')) return 'gif';
+  return 'png';
+};
+
+const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> => {
+  const v = String(it?.value || '').trim();
+  if (!v) return null;
+  try {
+    const res = await fetch(v);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (
+      !String(blob.type || '')
+        .toLowerCase()
+        .startsWith('image/')
+    )
+      return null;
+    const ext = extFromMime(blob.type);
+    return new File([blob], `reference_${Date.now().toString(36)}.${ext}`, { type: blob.type });
+  } catch {
+    return null;
+  }
+};
+
+const fetchImageBlob = async (url: string): Promise<Blob | null> => {
+  try {
+    const u = String(url || '').trim();
+    if (!u) return null;
+    const res = await fetch(u);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (
+      !String(blob.type || '')
+        .toLowerCase()
+        .startsWith('image/')
+    )
+      return null;
+    return blob;
+  } catch {
+    return null;
+  }
+};
+
+const downloadMsgImage = async (url: string) => {
+  const s = String(url || '').trim();
+  if (!s) return;
+  const blob = await fetchImageBlob(s);
+  if (blob) {
+    const ext = extFromMime(blob.type);
+    downloadBlob(blob, `artigen_${Date.now().toString(36)}.${ext}`);
+    return;
+  }
+  try {
+    const a = document.createElement('a');
+    a.href = s;
+    a.download = 'image';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch {
+    try {
+      window.open(s, '_blank', 'noopener,noreferrer');
+    } catch {}
+  }
+};
+
+const referenceMsgImage = async (url: string) => {
+  const s = String(url || '').trim();
+  if (!s) return;
+  const keepDeep = isStyleSelecting.value;
+  const f = await prefillItemToFile({ kind: 'url', value: s });
+  if (!f) return;
+  const emptySlots = previewUrls.value.map((u, i) => (!u ? i : -1)).filter((i) => i >= 0);
+  const idx = emptySlots.length ? (emptySlots[0] as number) : 0;
+  setPreviewFileAt(idx, f);
+  afterPreviewsChanged(keepDeep);
+  try {
+    chatInputRef.value?.focus();
+  } catch {}
+};
+
+const applyPrefillRefImages = async () => {
+  const items = consumeAgentImgPrefill();
+  if (!items.length) return;
+  const keepDeep = isStyleSelecting.value;
+  const emptySlots = previewUrls.value.map((u, i) => (!u ? i : -1)).filter((i) => i >= 0);
+  let overwriteIdx = 0;
+  for (const it of items) {
+    const f = await prefillItemToFile(it);
+    if (!f) continue;
+    const idx = emptySlots.length
+      ? (emptySlots.shift() as number)
+      : overwriteIdx++ % previewUrls.value.length;
+    setPreviewFileAt(idx, f);
+  }
+  afterPreviewsChanged(keepDeep);
+  try {
+    chatInputRef.value?.focus();
+  } catch {}
+};
+
 onMounted(() => {
   handleAuthChanged();
+  void applyPrefillRefImages();
   try {
     wideSidebarMql = window.matchMedia('(min-width: 1920px)');
     if (wideSidebarMql.matches) productSidebarOpen.value = true;
@@ -2259,7 +2412,9 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--text-muted);
 }
-
+.control-textarea {
+  height: 200px !important;
+}
 .control {
   width: 100%;
   height: 36px;
@@ -2526,6 +2681,59 @@ onBeforeUnmount(() => {
   padding: 0;
   border: none;
 }
+
+.msg-image-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.msg-image-actions {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  height: 34px;
+  border-radius: 12px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: rgba(2, 6, 23, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+  pointer-events: none;
+}
+
+.msg-image-wrap:hover .msg-image-actions {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.msg-image-action-btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(241, 245, 249, 0.92);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.msg-image-action-btn:hover {
+  border-color: rgba(204, 255, 0, 0.35);
+  background: rgba(204, 255, 0, 0.1);
+  color: rgba(241, 245, 249, 0.98);
+}
+
 .msg-media-img {
   max-width: 100%;
   border-radius: 12px;
@@ -3286,7 +3494,7 @@ onBeforeUnmount(() => {
     background: #0a0a0a;
     border-right: 1px solid var(--border-color);
     box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
-    z-index: 130;
+    z-index: 10000;
   }
 
   .side.mobile-open {
@@ -3392,27 +3600,35 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
   text-decoration: none;
   border: 1px solid var(--border-color);
-  padding: 6px 12px;
+  padding: 8px 14px;
   border-radius: 4px;
 }
 
 .top-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+}
+
+.nth-login-btn {
+  height: 38px;
+  padding: 0 14px;
+  font-size: 13px;
+  border-radius: 999px;
 }
 
 .credits-btn {
   border: 1px solid rgba(204, 255, 0, 0.25);
   background: rgba(204, 255, 0, 0.08);
   color: var(--text-main);
-  padding: 6px 10px;
+  height: 38px;
+  padding: 0 14px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -3433,7 +3649,7 @@ onBeforeUnmount(() => {
 
 .credits-value {
   color: #ccff00;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .user-menu {
@@ -3441,12 +3657,12 @@ onBeforeUnmount(() => {
 }
 
 .avatar-btn {
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.35);
-  color: var(--text-main);
+  border: 1px solid rgba(204, 255, 0, 0.28);
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(241, 245, 249, 0.92);
   cursor: pointer;
   display: inline-flex;
   align-items: center;

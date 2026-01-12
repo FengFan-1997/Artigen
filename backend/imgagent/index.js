@@ -5,10 +5,10 @@ const { readJson, writeJson, PAY_ORDERS_FILE } = require('../utils/storage');
 const installImgagentRoutes = (app, opts) => {
   const assertAuthUserMatches = opts?.assertAuthUserMatches;
   const payPackages = {
-    starter: { packageId: 'starter', amountCny: 9.9, credits: 120 },
-    standard: { packageId: 'standard', amountCny: 19.9, credits: 260 },
-    pro: { packageId: 'pro', amountCny: 49.9, credits: 720 },
-    ultimate: { packageId: 'ultimate', amountCny: 99.9, credits: 1600 }
+    starter: { packageId: 'starter', amountCny: 9.9, credits: 400 },
+    standard: { packageId: 'standard', amountCny: 19.9, credits: 1000 },
+    pro: { packageId: 'pro', amountCny: 49.9, credits: 3000 },
+    ultimate: { packageId: 'ultimate', amountCny: 99.9, credits: 10000 }
   };
   const resolvePayPackage = (packageId) => {
     const k = String(packageId || '').trim().toLowerCase();

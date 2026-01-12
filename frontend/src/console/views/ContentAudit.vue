@@ -42,20 +42,56 @@
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'preview'">
                 <div class="img-center">
-                  <a-image
-                    :width="100"
-                    :src="record.previewUrl || 'https://via.placeholder.com/100?text=No+Image'"
-                  />
+                  <div class="img-hover">
+                    <a-image :width="100" :src="record.previewUrl || NO_IMAGE_URL" />
+                    <div v-if="canActOnUrl(record.previewUrl)" class="img-actions">
+                      <a-button
+                        size="small"
+                        type="text"
+                        class="img-action-btn"
+                        @click.stop="downloadImage(record.previewUrl, record.id)"
+                      >
+                        <template #icon><DownloadOutlined /></template>
+                        {{ ui.download }}
+                      </a-button>
+                      <a-button
+                        size="small"
+                        type="text"
+                        class="img-action-btn"
+                        @click.stop="referenceImage(record.previewUrl)"
+                      >
+                        <template #icon><LinkOutlined /></template>
+                        {{ ui.reference }}
+                      </a-button>
+                    </div>
+                  </div>
                 </div>
               </template>
               <template v-else-if="column.key === 'upload'">
                 <div class="img-center">
-                  <a-image
-                    :width="100"
-                    :src="
-                      record.uploadPreviewUrl || 'https://via.placeholder.com/100?text=No+Upload'
-                    "
-                  />
+                  <div class="img-hover">
+                    <a-image :width="100" :src="record.uploadPreviewUrl || NO_UPLOAD_URL" />
+                    <div v-if="canActOnUrl(record.uploadPreviewUrl)" class="img-actions">
+                      <a-button
+                        size="small"
+                        type="text"
+                        class="img-action-btn"
+                        @click.stop="downloadImage(record.uploadPreviewUrl, record.id)"
+                      >
+                        <template #icon><DownloadOutlined /></template>
+                        {{ ui.download }}
+                      </a-button>
+                      <a-button
+                        size="small"
+                        type="text"
+                        class="img-action-btn"
+                        @click.stop="referenceImage(record.uploadPreviewUrl)"
+                      >
+                        <template #icon><LinkOutlined /></template>
+                        {{ ui.reference }}
+                      </a-button>
+                    </div>
+                  </div>
                 </div>
               </template>
               <template v-else-if="column.key === 'type'">
@@ -169,7 +205,8 @@ import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import { buildApiUrl } from '@/utils/api';
 import { message } from 'ant-design-vue';
-import { SettingOutlined } from '@ant-design/icons-vue';
+import { DownloadOutlined, LinkOutlined, SettingOutlined } from '@ant-design/icons-vue';
+import { downloadBlob } from '@/agentImg/logic/formatFactory/url';
 
 const consoleStore = useConsoleStore();
 const activeTab = ref('images');
@@ -208,6 +245,8 @@ const ui = computed(() =>
         userFilterPh: '可选：按用户 ID 过滤',
         columns: '列设置',
         columnSettings: '列表列设置',
+        download: '下载',
+        reference: '引用',
         reset: '重置',
         close: '关闭'
       }
@@ -235,10 +274,16 @@ const ui = computed(() =>
         userFilterPh: 'Optional: filter by userId',
         columns: 'Columns',
         columnSettings: 'Column Settings',
+        download: 'Download',
+        reference: 'Reference',
         reset: 'Reset',
         close: 'Close'
       }
 );
+
+const NO_IMAGE_URL = 'https://via.placeholder.com/100?text=No+Image';
+const NO_UPLOAD_URL = 'https://via.placeholder.com/100?text=No+Upload';
+const AGENT_IMG_PREFILL_KEY = 'agentImg:prefillRef_v1';
 
 const showAdminError = (e: any) => {
   const code = String(e?.message || '').trim();
@@ -289,6 +334,108 @@ const resolveUrl = (raw: string) => {
   if (!u) return '';
   if (u.startsWith('/')) return buildApiUrl(u);
   return u;
+};
+
+const canActOnUrl = (raw: any) => {
+  const u = String(raw || '').trim();
+  if (!u) return false;
+  if (u.startsWith('https://via.placeholder.com/')) return false;
+  return true;
+};
+
+const extFromMime = (mime: string) => {
+  const m = String(mime || '').toLowerCase();
+  if (m.includes('png')) return 'png';
+  if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
+  if (m.includes('webp')) return 'webp';
+  if (m.includes('gif')) return 'gif';
+  return 'png';
+};
+
+const blobToDataUrl = (blob: Blob): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('READ_FAILED'));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(blob);
+  });
+};
+
+const fetchImageBlob = async (url: string): Promise<Blob | null> => {
+  const s = String(url || '').trim();
+  if (!s) return null;
+  try {
+    const u = new URL(s, window.location.href);
+    const sameOrigin = u.origin === window.location.origin;
+    const token = String(consoleStore.adminKey || '').trim();
+    const headers: Record<string, string> = {};
+    if (sameOrigin && token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(u.href, { headers: Object.keys(headers).length ? headers : undefined });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (
+      !String(blob.type || '')
+        .toLowerCase()
+        .startsWith('image/')
+    )
+      return null;
+    return blob;
+  } catch {
+    return null;
+  }
+};
+
+const downloadImage = async (url: string, id?: string) => {
+  const s = String(url || '').trim();
+  if (!s) return;
+  const blob = await fetchImageBlob(s);
+  if (blob) {
+    const ext = extFromMime(blob.type);
+    const safeId = String(id || '').trim() || Date.now().toString(36);
+    downloadBlob(blob, `audit_${safeId}.${ext}`);
+    return;
+  }
+  try {
+    const a = document.createElement('a');
+    a.href = s;
+    a.download = 'image';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch {
+    try {
+      window.open(s, '_blank', 'noopener,noreferrer');
+    } catch {}
+  }
+};
+
+type AgentImgPrefillItem = { kind: 'data' | 'url'; value: string };
+const writeAgentImgPrefill = (items: AgentImgPrefillItem[]) => {
+  try {
+    window.localStorage.setItem(AGENT_IMG_PREFILL_KEY, JSON.stringify({ items, ts: Date.now() }));
+  } catch {}
+};
+
+const referenceImage = async (url: string) => {
+  const s = String(url || '').trim();
+  if (!s) return;
+  const blob = await fetchImageBlob(s);
+  if (blob && blob.size <= 2.5 * 1024 * 1024) {
+    try {
+      const dataUrl = await blobToDataUrl(blob);
+      if (dataUrl.startsWith('data:image/')) {
+        writeAgentImgPrefill([{ kind: 'data', value: dataUrl }]);
+        window.open('/artigen/ai', '_blank', 'noopener,noreferrer');
+        message.success(
+          currentLang.value === 'zh' ? '已引用到 AI 工坊' : 'Referenced in AI Workshop'
+        );
+        return;
+      }
+    } catch {}
+  }
+  writeAgentImgPrefill([{ kind: 'url', value: s }]);
+  window.open('/artigen/ai', '_blank', 'noopener,noreferrer');
+  message.success(currentLang.value === 'zh' ? '已引用到 AI 工坊' : 'Referenced in AI Workshop');
 };
 
 const images = computed(() => {
@@ -673,6 +820,68 @@ const fetchUsage = async () => {
 .img-center {
   display: flex;
   justify-content: center;
+}
+
+.img-hover {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.img-actions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 6, 23, 0.72);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 2;
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.img-hover :deep(.ant-image) {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.img-hover :deep(.ant-image-img) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.img-hover :deep(.ant-image-mask) {
+  z-index: 1;
+}
+
+.img-hover:hover .img-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.img-action-btn {
+  color: rgba(241, 245, 249, 0.9);
+  padding: 0 6px;
+  height: 24px;
+  line-height: 24px;
+}
+
+.img-action-btn:hover {
+  color: rgba(255, 255, 255, 1);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .prompt-cell {

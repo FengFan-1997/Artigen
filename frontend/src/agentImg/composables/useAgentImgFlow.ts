@@ -68,7 +68,7 @@ const normalizePromptResult = (v: any): AgentImgPromptResult | null => {
   return { prompt, negativePrompt, params };
 };
 
-const buildDirectionPrompt = (input: string, contextText: string) => {
+const buildDirectionPrompt = (input: string, contextText: string, attempt = 0) => {
   const schema = safeJsonStringify(agentImgPromptLibrary.directionSchema);
   const lang = detectUserInputLang(input);
   const zh = lang === 'zh';
@@ -79,6 +79,14 @@ const buildDirectionPrompt = (input: string, contextText: string) => {
     zh
       ? '所有输出字段必须使用中文（title/summary/styleTags/negativeTags），禁止出现英文。'
       : 'All output fields must be English (title/summary/styleTags/negativeTags). Do not output Chinese.',
+    zh
+      ? '为保证内容足够丰富且不被截断：每个方向的 summary 必须是一个字符串，且只包含 7 行（每行一个模块：风格限定/视角构图/主体描述/背景设定/细节修饰/光影色调/质量词），不要额外写“导语/总述/结尾”。summary 总长度控制在 200–360 个汉字左右。styleTags 输出 12–16 条；negativeTags 输出 12–20 条。必须输出 4 个方向且 id 严格为 opt_1..opt_4，按顺序。任何字符串字段里不要出现未转义的英文双引号。'
+      : 'To ensure richness without truncation: summary must be a single string with exactly 7 lines (one per module: Style/Perspective/Subject/Background/Details/Lighting&Tone/Quality), and no extra intro/outro paragraphs. Keep summary total length around 120–220 words. Output 12–16 styleTags and 12–20 negativeTags. Must output exactly 4 options with ids opt_1..opt_4 in order. Do not include unescaped double quotes inside any string field.',
+    attempt > 0
+      ? zh
+        ? '上一次输出 JSON 不可解析或不完整。请重新从头生成，务必输出可解析的完整 JSON（含所有右括号/右中括号），不要引用或解释之前的输出。'
+        : 'Your previous output was invalid or incomplete JSON. Regenerate from scratch and output fully parseable JSON (with all closing brackets). Do not reference or explain the previous output.'
+      : '',
     contextText ? (zh ? `上下文:\n${contextText}` : `Context:\n${contextText}`) : '',
     zh ? `用户输入: ${input}` : `User input: ${input}`,
     zh ? '只返回 JSON，不要包含任何解释或多余文本。' : 'Return ONLY JSON. No extra text.',
@@ -264,21 +272,41 @@ export const useAgentImgFlow = (opts?: {
     options.value = [];
     stage.value = 'directions';
 
-    const prompt = buildDirectionPrompt(input, getContextText());
-    const res = await runGenerateText(prompt, 'directions');
-    if (!res.ok) {
+    const parseOptions = (text: string) => {
+      const json = extractFirstJsonObject(text);
+      const rawOptions = json && typeof json === 'object' ? (json as any).options : null;
+      const list = Array.isArray(rawOptions) ? rawOptions : [];
+      return list
+        .map((x, i) => normalizeOption(x, i))
+        .filter((x): x is AgentImgDirectionOption => !!x)
+        .slice(0, 4);
+    };
+
+    const runOnce = async (attempt: number) => {
+      const prompt = buildDirectionPrompt(input, getContextText(), attempt);
+      const res = await runGenerateText(prompt, 'directions');
+      if (!res.ok) return { ok: false as const, res };
+      const normalized = parseOptions(res.text);
+      return { ok: true as const, normalized, res };
+    };
+
+    const first = await runOnce(0);
+    if (!first.ok) {
       loading.value = false;
-      error.value = humanizeError(res.errorCode || res.error);
+      error.value = humanizeError(first.res.errorCode || first.res.error);
       return;
     }
 
-    const json = extractFirstJsonObject(res.text);
-    const rawOptions = json && typeof json === 'object' ? (json as any).options : null;
-    const list = Array.isArray(rawOptions) ? rawOptions : [];
-    const normalized = list
-      .map((x, i) => normalizeOption(x, i))
-      .filter((x): x is AgentImgDirectionOption => !!x)
-      .slice(0, 4);
+    let normalized = first.normalized;
+    if (normalized.length !== 4) {
+      const retry = await runOnce(1);
+      if (!retry.ok) {
+        loading.value = false;
+        error.value = humanizeError(retry.res.errorCode || retry.res.error);
+        return;
+      }
+      normalized = retry.normalized;
+    }
 
     if (normalized.length !== 4) {
       loading.value = false;
