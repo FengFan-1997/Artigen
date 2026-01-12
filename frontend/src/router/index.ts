@@ -400,7 +400,11 @@ const routes = [
       }
     ]
   },
-  ...loginRoutes.map((r) => ({ ...r, meta: { ...(r.meta || {}), robots: 'noindex,nofollow' } }))
+  ...loginRoutes.map((r) => ({ ...r, meta: { ...(r.meta || {}), robots: 'noindex,nofollow' } })),
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/artigen'
+  }
 ];
 
 const isAllowedInLockdown = (path: string) => {

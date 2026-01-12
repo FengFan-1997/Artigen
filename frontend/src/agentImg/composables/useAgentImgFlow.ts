@@ -24,6 +24,12 @@ const ensureStringArray = (v: any, max = 24) => {
   return out;
 };
 
+const detectUserInputLang = (input: string) => {
+  const s = String(input || '').trim();
+  if (/[\u4e00-\u9fff]/.test(s)) return 'zh' as const;
+  return 'en' as const;
+};
+
 const normalizeOption = (v: any, idx: number): AgentImgDirectionOption | null => {
   if (!v || typeof v !== 'object') return null;
   const id = String(v.id || '').trim() || `opt_${idx + 1}`;
@@ -64,12 +70,18 @@ const normalizePromptResult = (v: any): AgentImgPromptResult | null => {
 
 const buildDirectionPrompt = (input: string, contextText: string) => {
   const schema = safeJsonStringify(agentImgPromptLibrary.directionSchema);
+  const lang = detectUserInputLang(input);
+  const zh = lang === 'zh';
   return [
     agentImgPromptLibrary.directionSystem,
     `Schema: ${schema}`,
-    'Language: Use the same language as the user input for all text fields.',
-    contextText ? `Context:\n${contextText}` : '',
-    `User input: ${input}`,
+    `User input language: ${lang}`,
+    zh
+      ? '所有输出字段必须使用中文（title/summary/styleTags/negativeTags），禁止出现英文。'
+      : 'All output fields must be English (title/summary/styleTags/negativeTags). Do not output Chinese.',
+    contextText ? (zh ? `上下文:\n${contextText}` : `Context:\n${contextText}`) : '',
+    zh ? `用户输入: ${input}` : `User input: ${input}`,
+    zh ? '只返回 JSON，不要包含任何解释或多余文本。' : 'Return ONLY JSON. No extra text.',
     'Output JSON example:',
     '{"options":[{"id":"opt_1","title":"...","summary":"...","styleTags":["..."],"negativeTags":["..."],"suggested":{"imageSize":"1024x1024","steps":20,"guidanceScale":7.5,"seed":123}}]}'
   ]
@@ -85,6 +97,8 @@ const buildFinalPrompt = (input: {
   const schema = safeJsonStringify(agentImgPromptLibrary.finalPromptSchema);
   const baseStyle = agentImgPromptLibrary.baseStyle.join(', ');
   const safeNeg = agentImgPromptLibrary.safeNegative.join(', ');
+  const lang = detectUserInputLang(input.userInput);
+  const zh = lang === 'zh';
   const optionText = input.option
     ? safeJsonStringify({
         title: input.option.title,
@@ -98,13 +112,22 @@ const buildFinalPrompt = (input: {
   return [
     agentImgPromptLibrary.finalPromptSystem,
     `Schema: ${schema}`,
-    'Language: Use the same language as the user input for prompt and negativePrompt.',
+    `User input language: ${lang}`,
+    zh
+      ? 'prompt 与 negativePrompt 必须使用中文，禁止出现英文。'
+      : 'prompt and negativePrompt must be English. Do not output Chinese.',
     `Base style tags to incorporate when appropriate: ${baseStyle}`,
     `Safety negative tags (must include): ${safeNeg}`,
-    input.contextText ? `Context:\n${input.contextText}` : '',
-    `User input: ${input.userInput}`,
-    input.option ? `Chosen direction: ${optionText}` : '',
-    'Return JSON with: prompt, negativePrompt, params'
+    input.contextText
+      ? zh
+        ? `上下文:\n${input.contextText}`
+        : `Context:\n${input.contextText}`
+      : '',
+    zh ? `用户输入: ${input.userInput}` : `User input: ${input.userInput}`,
+    input.option ? (zh ? `已选方向: ${optionText}` : `Chosen direction: ${optionText}`) : '',
+    zh
+      ? '只返回 JSON：prompt, negativePrompt, params'
+      : 'Return JSON with: prompt, negativePrompt, params'
   ]
     .filter(Boolean)
     .join('\n\n');

@@ -142,12 +142,16 @@ export type AdminImageHistoryItem = {
   images?: AdminImageRef[];
   inputImages?: AdminImageRef[];
   userId: string;
+  username?: string;
+  email?: string;
 };
 
 export type AdminUsageLedgerItem = {
   requestId: string;
   ts: number;
   userId: string;
+  username?: string;
+  email?: string;
   sessionId?: string;
   projectId?: string;
   trigger?: string;
@@ -408,9 +412,55 @@ export const useConsoleStore = defineStore('console', {
         throw toAdminRequestError(res, json);
       }
       const items: any[] = Array.isArray(json?.items) ? json.items : [];
-      this.adminChats = items;
+      this.adminChats = items.map((it) => {
+        if (!it || typeof it !== 'object') return it;
+        const ts =
+          typeof (it as any).ts === 'number'
+            ? (it as any).ts
+            : typeof (it as any).timestamp === 'number'
+              ? (it as any).timestamp
+              : Number((it as any).timestamp || (it as any).ts || 0) || 0;
+        const text =
+          typeof (it as any).text === 'string'
+            ? (it as any).text
+            : typeof (it as any).content === 'string'
+              ? (it as any).content
+              : String((it as any).text || (it as any).content || '');
+        const role =
+          typeof (it as any).role === 'string' ? (it as any).role : String((it as any).role || '');
+        return { ...it, ts, text, role };
+      });
       this.adminChatsTotal = Number(json?.total || items.length) || items.length;
       return { ok: true as const, total: this.adminChatsTotal };
+    },
+
+    async setAdminUserCredits(input: { userId: string; available: number }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const userId = String(input?.userId || '').trim();
+      const availableRaw = Number.parseInt(String((input as any)?.available ?? ''), 10);
+      const available = Number.isFinite(availableRaw) && availableRaw >= 0 ? availableRaw : null;
+      if (!userId) throw new Error('MISSING_USER_ID');
+      if (available === null) throw new Error('INVALID_AVAILABLE');
+
+      const url = buildApiUrl('/api/admin/users/credits');
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ userId, available })
+      });
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
+        throw toAdminRequestError(res, json);
+      }
+      const wallet = json?.wallet && typeof json.wallet === 'object' ? json.wallet : null;
+      this.adminUsers = (this.adminUsers || []).map((u) =>
+        u.userId === userId ? { ...u, wallet } : u
+      );
+      return { ok: true as const, wallet };
     },
 
     async fetchAdminOrders(input: { userId: string; limit?: number; offset?: number }) {

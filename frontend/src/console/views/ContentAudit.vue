@@ -22,6 +22,15 @@
                 :src="record.previewUrl || 'https://via.placeholder.com/100?text=No+Image'"
               />
             </template>
+            <template v-else-if="column.key === 'upload'">
+              <a-image
+                :width="100"
+                :src="record.uploadPreviewUrl || 'https://via.placeholder.com/100?text=No+Upload'"
+              />
+            </template>
+            <template v-else-if="column.key === 'type'">
+              {{ record.model || record.type || '-' }}
+            </template>
             <template v-else-if="column.key === 'ts'">
               {{ record.ts ? new Date(record.ts).toLocaleString() : '-' }}
             </template>
@@ -65,6 +74,12 @@
           <strong>{{ ui.actionLabel }}:</strong> {{ selectedLog.trigger }}
         </p>
         <p>
+          <strong>{{ ui.colUsername }}:</strong> {{ selectedLog.username || '-' }}
+        </p>
+        <p>
+          <strong>{{ ui.colEmail }}:</strong> {{ selectedLog.email || '-' }}
+        </p>
+        <p>
           <strong>{{ ui.userLabel }}:</strong> {{ selectedLog.userId }}
         </p>
         <p>
@@ -80,7 +95,7 @@
             overflow: auto;
             max-height: 400px;
           "
-          >{{ JSON.stringify(selectedLog.details, null, 2) }}</pre
+          >{{ JSON.stringify(selectedLog, null, 2) }}</pre
         >
       </div>
     </a-modal>
@@ -118,8 +133,10 @@ const ui = computed(() =>
         userLabel: '用户',
         timeLabel: '时间',
         colPreview: '预览',
-        colUserId: '用户 ID',
-        colType: '类型',
+        colUpload: '用户上传图片',
+        colUsername: '用户名',
+        colEmail: '邮箱',
+        colType: '模型',
         colPrompt: '提示词',
         colCreatedAt: '创建时间',
         colProvider: '渠道',
@@ -139,8 +156,10 @@ const ui = computed(() =>
         userLabel: 'User',
         timeLabel: 'Time',
         colPreview: 'Preview',
-        colUserId: 'User ID',
-        colType: 'Type',
+        colUpload: 'User Upload',
+        colUsername: 'Username',
+        colEmail: 'Email',
+        colType: 'Model',
         colPrompt: 'Prompt',
         colCreatedAt: 'Created At',
         colProvider: 'Provider',
@@ -215,7 +234,18 @@ const images = computed(() => {
         }
       }
     }
-    return { ...it, previewUrl };
+    const inRefs = Array.isArray((it as any).inputImages) ? (it as any).inputImages : [];
+    let uploadPreviewUrl = '';
+    for (const r of inRefs) {
+      if (r && typeof r === 'object' && (r as any).kind === 'url') {
+        const u = resolveUrl(String((r as any).url || ''));
+        if (u) {
+          uploadPreviewUrl = u;
+          break;
+        }
+      }
+    }
+    return { ...it, previewUrl, uploadPreviewUrl };
   });
 });
 
@@ -229,14 +259,17 @@ const chatLogs = computed(() => {
 
 const imageColumns = computed(() => [
   { title: ui.value.colPreview, key: 'preview' },
-  { title: ui.value.colUserId, dataIndex: 'userId', key: 'userId' },
-  { title: ui.value.colType, dataIndex: 'type', key: 'type', width: 100 },
+  { title: ui.value.colUpload, key: 'upload' },
+  { title: ui.value.colUsername, dataIndex: 'username', key: 'username', width: 160 },
+  { title: ui.value.colEmail, dataIndex: 'email', key: 'email', ellipsis: true, width: 220 },
+  { title: ui.value.colType, key: 'type', width: 220 },
   { title: ui.value.colPrompt, dataIndex: 'prompt', key: 'prompt' },
   { title: ui.value.colCreatedAt, dataIndex: 'ts', key: 'ts', width: 180 }
 ]);
 
 const chatColumns = computed(() => [
-  { title: ui.value.colUserId, dataIndex: 'userId', key: 'userId' },
+  { title: ui.value.colUsername, dataIndex: 'username', key: 'username', width: 160 },
+  { title: ui.value.colEmail, dataIndex: 'email', key: 'email', ellipsis: true, width: 220 },
   { title: ui.value.actionLabel, dataIndex: 'trigger', key: 'trigger', width: 160 },
   { title: ui.value.colProvider, dataIndex: 'provider', key: 'provider', width: 120 },
   { title: ui.value.colModel, dataIndex: 'model', key: 'model', ellipsis: true },

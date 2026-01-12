@@ -66,6 +66,22 @@ export const formatFactoryTools: FormatFactoryTool[] = [
     status: 'ready'
   },
   {
+    id: 'pdf2word',
+    name: 'PDF 转 Word',
+    description: '提取文本 · 导出 DOCX',
+    icon: '📝',
+    tag: '文档工具',
+    status: 'ready'
+  },
+  {
+    id: 'word2pdf',
+    name: 'Word 转 PDF',
+    description: '渲染为页面 · 导出 PDF',
+    icon: '🧷',
+    tag: '文档工具',
+    status: 'ready'
+  },
+  {
     id: 'img2pdf',
     name: '图片转 PDF',
     description: '多图合并成文档',

@@ -709,6 +709,209 @@ export const pdfToImage = async (
   }
 };
 
+const escapePdfText = (s: string) => {
+  return String(s || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/\r/g, '');
+};
+
+const wrapLines = (text: string, maxChars: number) => {
+  const out: string[] = [];
+  const t = String(text || '');
+  const lines = t.split('\n');
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').replace(/\r/g, '');
+    if (!line) {
+      out.push('');
+      continue;
+    }
+    let cur = line;
+    while (cur.length > maxChars) {
+      out.push(cur.slice(0, maxChars));
+      cur = cur.slice(maxChars);
+    }
+    out.push(cur);
+  }
+  return out;
+};
+
+export const wordToPdf = async (
+  file: File,
+  opts?: { maxCharsPerLine?: number } & FormatFactoryRunOpts
+) => {
+  const name = String(file?.name || '').trim();
+  const lower = name.toLowerCase();
+  const isDocx = lower.endsWith('.docx');
+  const isDoc = lower.endsWith('.doc');
+  if (isDocx || isDoc) {
+    throw new Error(
+      tr(
+        opts,
+        '暂不支持直接解析 DOC/DOCX。请先在 Word 里另存为 TXT 后再转换。',
+        'DOC/DOCX parsing is not supported. Please save as TXT first.'
+      )
+    );
+  }
+
+  abortIfNeeded(opts?.signal);
+  reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取文本', 'Reading text') });
+  const raw = await file.text();
+  abortIfNeeded(opts?.signal);
+
+  const text = String(raw || '').replace(/\t/g, '    ');
+  const maxCharsPerLine = Math.max(20, Math.floor(opts?.maxCharsPerLine ?? 80));
+  const lines = wrapLines(text, maxCharsPerLine);
+
+  const pageW = 595.28;
+  const pageH = 841.89;
+  const margin = 56;
+  const fontSize = 12;
+  const lineHeight = 16;
+  const usableH = pageH - margin * 2;
+  const linesPerPage = Math.max(1, Math.floor(usableH / lineHeight));
+  const totalPages = Math.max(1, Math.ceil(lines.length / linesPerPage));
+
+  const objects: string[] = [];
+  const offsets: number[] = [];
+  let cursor = 0;
+
+  const push = (s: string) => {
+    objects.push(s);
+    cursor += new TextEncoder().encode(s).byteLength;
+  };
+
+  const addObject = (no: number, body: string) => {
+    offsets[no] = cursor;
+    push(`${no} 0 obj\n${body}\nendobj\n`);
+  };
+
+  const pagesObjNo = 2;
+  const fontObjNo = 3;
+  const firstPageObjNo = 4;
+  const firstContentObjNo = firstPageObjNo + totalPages;
+
+  const pageRefs = Array.from({ length: totalPages }, (_, i) => `${firstPageObjNo + i} 0 R`).join(
+    ' '
+  );
+
+  push('%PDF-1.4\n%\u00e2\u00e3\u00cf\u00d3\n');
+  addObject(1, `<< /Type /Catalog /Pages ${pagesObjNo} 0 R >>`);
+  addObject(pagesObjNo, `<< /Type /Pages /Count ${totalPages} /Kids [${pageRefs}] >>`);
+  addObject(fontObjNo, `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`);
+
+  reportProgress(opts, { done: 1, total: 2, label: tr(opts, '生成 PDF', 'Generating PDF') });
+
+  for (let p = 0; p < totalPages; p += 1) {
+    abortIfNeeded(opts?.signal);
+    const pageNo = firstPageObjNo + p;
+    const contentNo = firstContentObjNo + p;
+    const from = p * linesPerPage;
+    const to = Math.min(lines.length, from + linesPerPage);
+    const pageLines = lines.slice(from, to);
+
+    const startX = margin;
+    const startY = pageH - margin - fontSize;
+
+    let stream = `BT\n/F1 ${fontSize} Tf\n${startX.toFixed(2)} ${startY.toFixed(2)} Td\n`;
+    for (let i = 0; i < pageLines.length; i += 1) {
+      const ln = escapePdfText(pageLines[i]);
+      stream += `(${ln}) Tj\n`;
+      if (i !== pageLines.length - 1) stream += `0 -${lineHeight} Td\n`;
+    }
+    stream += 'ET\n';
+
+    const contentBytes = new TextEncoder().encode(stream);
+    addObject(contentNo, `<< /Length ${contentBytes.byteLength} >>\nstream\n${stream}endstream`);
+    addObject(
+      pageNo,
+      `<< /Type /Page /Parent ${pagesObjNo} 0 R /MediaBox [0 0 ${pageW.toFixed(2)} ${pageH.toFixed(
+        2
+      )}] /Resources << /Font << /F1 ${fontObjNo} 0 R >> >> /Contents ${contentNo} 0 R >>`
+    );
+  }
+
+  const xrefOffset = cursor;
+  push(`xref\n0 ${firstContentObjNo + totalPages}\n`);
+  push('0000000000 65535 f \n');
+  for (let i = 1; i < firstContentObjNo + totalPages; i += 1) {
+    const off = offsets[i] || 0;
+    push(`${String(off).padStart(10, '0')} 00000 n \n`);
+  }
+  push(
+    `trailer\n<< /Size ${firstContentObjNo + totalPages} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`
+  );
+
+  const pdfText = objects.join('');
+  const blob = new Blob([pdfText], { type: 'application/pdf' });
+  reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+  return { blob, filename: `${safeBaseName(file.name)}.pdf` };
+};
+
+export const pdfToWord = async (file: File, opts?: FormatFactoryRunOpts) => {
+  abortIfNeeded(opts?.signal);
+  const pdfjsLib = await ensurePdfLib();
+  abortIfNeeded(opts?.signal);
+  reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取 PDF', 'Reading PDF') });
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  abortIfNeeded(opts?.signal);
+
+  const doc = await (pdfjsLib as any).getDocument({ data: bytes }).promise;
+  abortIfNeeded(opts?.signal);
+
+  try {
+    const pages = Math.max(1, Number(doc?.numPages || 0));
+    const parts: string[] = [];
+    for (let i = 1; i <= pages; i += 1) {
+      abortIfNeeded(opts?.signal);
+      reportProgress(opts, {
+        done: i - 1,
+        total: pages,
+        label: tr(opts, `提取文字 ${i}/${pages}`, `Extracting text ${i}/${pages}`)
+      });
+      const page = await doc.getPage(i);
+      const tc = await page.getTextContent();
+      const items = Array.isArray(tc?.items) ? tc.items : [];
+      const pageText = items
+        .map((it: any) => (typeof it?.str === 'string' ? it.str : ''))
+        .join(' ')
+        .replace(/\s+\n/g, '\n')
+        .trim();
+      parts.push(pageText);
+    }
+
+    reportProgress(opts, {
+      done: pages,
+      total: pages,
+      label: tr(opts, '生成 Word', 'Building Word')
+    });
+    const text = parts.filter(Boolean).join('\n\n');
+    const html = [
+      '<!doctype html>',
+      '<html>',
+      '<head>',
+      '<meta charset="utf-8" />',
+      `<title>${safeBaseName(file.name)}</title>`,
+      '</head>',
+      '<body>',
+      `<pre style="white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 12pt; line-height: 1.5;">${text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')}</pre>`,
+      '</body>',
+      '</html>'
+    ].join('');
+    const blob = new Blob([html], { type: 'application/msword' });
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+    return { blob, filename: `${safeBaseName(file.name)}.doc` };
+  } finally {
+    try {
+      await doc.destroy();
+    } catch {}
+  }
+};
+
 const waitForVideoReadyState = (
   video: HTMLVideoElement,
   minReadyState: number,

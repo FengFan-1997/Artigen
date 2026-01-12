@@ -16,8 +16,10 @@ import {
   getPdfPageCount,
   imagesToPdf,
   pdfToImage,
+  pdfToWord,
   resizeImage,
   rotateFlipImage,
+  wordToPdf,
   videoToGif
 } from '../logic/formatFactory/processors';
 import type { FormatFactoryProgress } from '../logic/formatFactory/processors';
@@ -69,6 +71,8 @@ export const useFormatFactory = () => {
         description: 'Split pages · stitch long image',
         tag: 'PDF Tools'
       },
+      pdf2word: { name: 'PDF to Word', description: 'Extract text · export DOC', tag: 'Docs' },
+      word2pdf: { name: 'Word to PDF', description: 'Convert to PDF (basic)', tag: 'Docs' },
       img2pdf: { name: 'Images to PDF', description: 'Merge multiple images', tag: 'PDF Tools' },
       gif: { name: 'Video to GIF', description: 'Clip video · export GIF', tag: 'Video' },
       ico: { name: 'ICO Generator', description: 'Pack multi-size PNGs', tag: 'General' },
@@ -293,7 +297,7 @@ export const useFormatFactory = () => {
       return;
     }
 
-    if (toolId === 'pdf') {
+    if (toolId === 'pdf' || toolId === 'pdf2word') {
       sourceMeta.value = { name: file.name, size: file.size };
       try {
         const pages = await getPdfPageCount(file);
@@ -885,12 +889,42 @@ export const useFormatFactory = () => {
         return;
       }
 
+      if (tool.id === 'pdf2word') {
+        const { blob, filename } = await pdfToWord(file, {
+          lang: isZh.value ? 'zh' : 'en',
+          signal: controller.signal,
+          onProgress: setProgress
+        });
+        if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
+        outputBlob.value = blob;
+        outputMeta.value = { name: filename, size: blob.size };
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
+        return;
+      }
+
       if (tool.id === 'img2pdf') {
         const list = sourceFiles.value.length ? sourceFiles.value : [file];
         const { blob, filename } = await imagesToPdf(list, {
           pageSize: img2pdfPageSize.value,
           marginMm: img2pdfMarginMm.value,
           quality: img2pdfQuality.value,
+          signal: controller.signal,
+          onProgress: setProgress
+        });
+        if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
+        outputBlob.value = blob;
+        outputMeta.value = { name: filename, size: blob.size };
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
+        return;
+      }
+
+      if (tool.id === 'word2pdf') {
+        const { blob, filename } = await wordToPdf(file, {
+          lang: isZh.value ? 'zh' : 'en',
           signal: controller.signal,
           onProgress: setProgress
         });

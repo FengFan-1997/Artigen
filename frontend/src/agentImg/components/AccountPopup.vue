@@ -425,6 +425,7 @@ watch(
 
 .account-card {
   width: min(980px, 100%);
+  height: min(720px, calc(100vh - 120px));
   max-height: min(720px, calc(100vh - 120px));
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -594,6 +595,7 @@ watch(
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .tabs {
@@ -644,7 +646,7 @@ watch(
 }
 
 .panel-body.no-scroll {
-  overflow: hidden;
+  overflow-x: hidden;
 }
 
 .panel-actions {
@@ -778,6 +780,7 @@ watch(
   .account-card {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
+    height: calc(100dvh - 100px);
     max-height: calc(100dvh - 100px);
     display: flex;
     flex-direction: column;

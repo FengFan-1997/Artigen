@@ -9,6 +9,8 @@ export type FormatFactoryToolId =
   | 'watermark'
   | 'live'
   | 'pdf'
+  | 'pdf2word'
+  | 'word2pdf'
   | 'img2pdf'
   | 'gif'
   | 'ico'

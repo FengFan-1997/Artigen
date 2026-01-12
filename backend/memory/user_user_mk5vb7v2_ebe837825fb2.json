@@ -1,12 +1,93 @@
 {
   "user_id": "user_mk5vb7v2_ebe837825fb2",
   "meta": {
-    "updatedAt": 1768211241665,
+    "updatedAt": 1768216066915,
     "migratedFrom": "guest_rjt65oro7"
   },
   "core_memory": [],
   "short_term_buffer": [],
   "image_history": [
+    {
+      "id": "img2img_mkb26rif_dynqpk",
+      "ts": 1768216066915,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen-Image",
+      "cost": 10,
+      "prompt": "产品档案:\nHas Logo: No\n\n用户需求:\n细腻写实的雨中少女, 一位写实风格的二次元JK美少女，穿着黑色丝袜和精致的小皮鞋，正面对着我们 双腿蜷缩 贴地 大腿内侧紧贴地面 坐在雨中",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mkb26x5d_530180a34995.png"
+        },
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mkb26x5s_2bc45604c25c.png"
+        }
+      ],
+      "seed": 905441887,
+      "timings": {
+        "inference": 7.021
+      }
+    },
+    {
+      "id": "img2img_mkb24b52_ehjln6",
+      "ts": 1768215952566,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen-Image",
+      "cost": 10,
+      "prompt": "产品档案:\nHas Logo: No\n\n用户需求:\n细腻写实的雨中少女, 一位写实风格的二次元JK美少女，穿着黑色丝袜和精致的小皮鞋，以一种名叫鸭子坐的姿势 坐在雨中",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mkb24gwf_774323e66939.png"
+        },
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mkb24gxg_c8e388a9a250.png"
+        }
+      ],
+      "seed": 1697392135,
+      "timings": {
+        "inference": 7.004
+      }
+    },
+    {
+      "id": "img2img_mkb0n1gm_a3u33n",
+      "ts": 1768213466961,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen-Image",
+      "cost": 10,
+      "prompt": "产品档案:\nHas Logo: No\n\n用户需求:\n给我一张二次元jk美少女 穿着黑丝小皮鞋, Classic Anime Style, A traditional anime-style depiction of a Jk girl wearing black stockings and small leather shoes, with vibrant colors and clear outlines., anime, jk, girl, vintage, detailed",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, cartoonish, low resolution, realistic, photo",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mkb0n6zf_2a884ba7d63e.png"
+        },
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mkb0n70w_4be82464c110.png"
+        }
+      ],
+      "seed": 1193970733,
+      "timings": {
+        "inference": 6.889
+      }
+    },
     {
       "id": "img2img_mkay2xer_39wvpe",
       "ts": 1768209170111,

@@ -68,8 +68,23 @@
           }}</a-descriptions-item>
           <a-descriptions-item :label="ui.visits">{{ selectedUser.visits }}</a-descriptions-item>
           <a-descriptions-item :label="ui.credits">
-            {{ ui.available }}: {{ selectedUser.wallet?.available ?? 0 }} / {{ ui.frozen }}:
-            {{ selectedUser.wallet?.frozen ?? 0 }}
+            <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center">
+              <span>
+                {{ ui.available }}: {{ selectedUser.wallet?.available ?? 0 }} / {{ ui.frozen }}:
+                {{ selectedUser.wallet?.frozen ?? 0 }}
+              </span>
+              <a-space>
+                <a-input-number
+                  v-model:value="editAvailableCredits"
+                  :min="0"
+                  :precision="0"
+                  style="width: 140px"
+                />
+                <a-button type="primary" :loading="savingCredits" @click="saveCredits">{{
+                  ui.saveCredits
+                }}</a-button>
+              </a-space>
+            </div>
           </a-descriptions-item>
         </a-descriptions>
 
@@ -85,7 +100,12 @@
             <a-table
               :dataSource="adminChats"
               :columns="chatColumns"
-              rowKey="ts"
+              :rowKey="
+                (_record: any, index: number) =>
+                  String((_record as any)?.ts || (_record as any)?.timestamp || index) +
+                  '_' +
+                  String(index)
+              "
               size="small"
               :loading="loadingChats"
               :pagination="false"
@@ -172,6 +192,7 @@ const ui = computed(() =>
         colLastSeen: '最近活跃',
         colVisits: '访问',
         colCredits: '积分',
+        saveCredits: '保存',
         colAction: '操作',
         tabChats: '聊天记录',
         tabOrders: '订单记录',
@@ -213,6 +234,7 @@ const ui = computed(() =>
         colLastSeen: 'Last Seen',
         colVisits: 'Visits',
         colCredits: 'Credits',
+        saveCredits: 'Save',
         colAction: 'Action',
         tabChats: 'Chats',
         tabOrders: 'Orders',
@@ -293,6 +315,8 @@ const selectedUser = ref<AdminUserItem | null>(null);
 const detailsTab = ref('chats');
 const loadingChats = ref(false);
 const loadingOrders = ref(false);
+const savingCredits = ref(false);
+const editAvailableCredits = ref<number | null>(null);
 const adminChats = computed(() => consoleStore.adminChats || []);
 const adminOrders = computed(() => consoleStore.adminOrders || []);
 
@@ -327,6 +351,7 @@ const openUserDetails = (user: AdminUserItem) => {
   selectedUser.value = user;
   isDrawerVisible.value = true;
   detailsTab.value = 'chats';
+  editAvailableCredits.value = Number(user?.wallet?.available ?? 0) || 0;
   void fetchChats();
 };
 
@@ -384,6 +409,27 @@ const fetchOrders = async () => {
     showAdminError(e);
   } finally {
     loadingOrders.value = false;
+  }
+};
+
+const saveCredits = async () => {
+  if (savingCredits.value) return;
+  const uid = String(selectedUser.value?.userId || '').trim();
+  if (!uid) return;
+  const availableRaw = Number.parseInt(String(editAvailableCredits.value ?? ''), 10);
+  const available = Number.isFinite(availableRaw) && availableRaw >= 0 ? availableRaw : null;
+  if (available === null) return;
+  savingCredits.value = true;
+  try {
+    const res = await consoleStore.setAdminUserCredits({ userId: uid, available });
+    if (selectedUser.value && selectedUser.value.userId === uid) {
+      selectedUser.value = { ...selectedUser.value, wallet: res.wallet };
+    }
+    message.success(currentLang.value === 'zh' ? '已更新积分' : 'Credits updated');
+  } catch (e) {
+    showAdminError(e);
+  } finally {
+    savingCredits.value = false;
   }
 };
 </script>

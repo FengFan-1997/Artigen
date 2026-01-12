@@ -278,6 +278,22 @@ const grantCredits = (input) => {
   return { ok: true, wallet: getBalance(uid) };
 };
 
+const setAvailableCredits = (input) => {
+  const uid = normalizeUserId(input?.userId);
+  const availableRaw = Number.parseInt(String(input?.available ?? ''), 10);
+  const available = Number.isFinite(availableRaw) && availableRaw >= 0 ? availableRaw : null;
+  if (!uid) return { ok: false, error: 'MISSING_USER_ID' };
+  if (available === null) return { ok: false, error: 'INVALID_AVAILABLE' };
+
+  ensureWallet(uid);
+  const wallets = readWalletMap();
+  const w = wallets[uid] || {};
+  const frozen = Number(w?.frozen ?? 0) || 0;
+  wallets[uid] = { ...w, available, frozen, updatedAt: now() };
+  writeWalletMap(wallets);
+  return { ok: true, wallet: getBalance(uid) };
+};
+
 const checkinCredits = (input) => {
   const uid = normalizeUserId(input?.userId);
   const credits = Number.parseInt(String(input?.credits ?? 0), 10);
@@ -405,6 +421,7 @@ module.exports = {
   settleHold,
   refundHold,
   grantCredits,
+  setAvailableCredits,
   checkinCredits,
   applyAfdianOrder,
   mergeWallet,

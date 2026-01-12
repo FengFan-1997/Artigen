@@ -1488,17 +1488,11 @@ const buildDeepPrompt = (baseText: string) => {
   return parts.join(', ');
 };
 
-const buildDeepDisplayText = (userText: string, opt: { title: string; summary: string }) => {
-  const u = String(userText || '').trim();
+const buildDeepDisplayText = (_userText: string, opt: { title: string; summary: string }) => {
   const title = String(opt?.title || '').trim();
   const summary = String(opt?.summary || '').trim();
-  const sep = u ? '\n\n' : '';
-  if (currentLang.value === 'zh') {
-    const parts = [u || '', `${sep}方向：${title}`.trim(), summary].filter(Boolean);
-    return parts.join('\n');
-  }
-  const parts = [u || '', `${sep}Direction: ${title}`.trim(), summary].filter(Boolean);
-  return parts.join('\n');
+  if (title && summary) return `${title} ${summary}`.trim();
+  return (title || summary).trim();
 };
 
 const buildNegativePrompt = (extra?: string[]) => {

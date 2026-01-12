@@ -147,11 +147,17 @@
                         @pointerleave="onWmPointerUp"
                       ></canvas>
                     </div>
-                    <div v-else-if="activeTool.id === 'pdf'" class="help-box">
+                    <div
+                      v-else-if="activeTool.id === 'pdf' || activeTool.id === 'pdf2word'"
+                      class="help-box"
+                    >
                       {{ ui.pdfSelectedPrefix
                       }}{{
                         pdfPageCount ? ui.pdfSelectedMid + pdfPageCount + ui.pdfSelectedSuffix : ''
                       }}
+                    </div>
+                    <div v-else-if="activeTool.id === 'word2pdf'" class="help-box">
+                      {{ sourceMeta?.name || '' }}
                     </div>
                     <video
                       v-else-if="activeTool.id === 'live'"
@@ -188,7 +194,7 @@
                       </select>
                     </div>
 
-                    <div v-if="webpOutFormat !== 'image/png'" class="field-row">
+                    <div class="field-row">
                       <div class="field-label">{{ ui.qualityLabel }}</div>
                       <div class="range-row">
                         <input
@@ -198,10 +204,22 @@
                           max="1"
                           step="0.05"
                           class="range"
+                          :disabled="webpOutFormat === 'image/png'"
                         />
                         <div class="range-val">{{ Math.round(webpQuality * 100) }}%</div>
                       </div>
+                      <div class="help-box">
+                        {{ webpOutFormat === 'image/png' ? ui.qualityPngHint : ui.qualityHint }}
+                      </div>
                     </div>
+                  </template>
+
+                  <template v-else-if="activeTool.id === 'pdf2word'">
+                    <div class="help-box">{{ ui.pdf2wordHelp }}</div>
+                  </template>
+
+                  <template v-else-if="activeTool.id === 'word2pdf'">
+                    <div class="help-box">{{ ui.word2pdfHelp }}</div>
                   </template>
 
                   <template v-else-if="activeTool.id === 'jpeg'">
@@ -866,6 +884,16 @@
                   >
                     {{ ui.icoGeneratedHint }}
                   </div>
+                  <div
+                    v-else-if="
+                      outputUrl &&
+                      outputMeta &&
+                      (outputMeta.name.endsWith('.doc') || outputMeta.name.endsWith('.docx'))
+                    "
+                    class="ico-hint"
+                  >
+                    {{ ui.docGeneratedHint }}
+                  </div>
                   <div v-else-if="outputUrl" class="preview">
                     <img :src="outputUrl" alt="output" class="preview-img" />
                   </div>
@@ -921,7 +949,9 @@ const ui = computed(() => {
       pdfSelectedSuffix: ' 页',
 
       outFormatLabel: '输出格式',
-      qualityLabel: '质量',
+      qualityLabel: '质量（越高越清晰但文件更大）',
+      qualityHint: '仅对 JPEG/WEBP 生效',
+      qualityPngHint: 'PNG 为无损格式，质量参数不生效',
       maxSideOptionalLabel: '最长边（可选）',
       eg1600: '例如 1600',
       eg1: '例如 1',
@@ -974,6 +1004,8 @@ const ui = computed(() => {
       pdfMaxPagesLabel: '最多页数',
       pdfMaxPagesHelp: '页数过多会很慢，默认限制 12 页',
       pdfScaleLabel: '清晰度',
+      pdf2wordHelp: '提取 PDF 中的文字并导出为 Word（.doc）。复杂排版/图片可能无法完整还原。',
+      word2pdfHelp: '将文本导出为 PDF。DOC/DOCX 暂不支持直接解析，建议先另存为 TXT。',
 
       img2pdfPageSizeLabel: '页面尺寸',
       img2pdfPageSizeAuto: '跟随图片尺寸',
@@ -997,7 +1029,8 @@ const ui = computed(() => {
       preview: '预览',
       reset: '重置',
       pdfGeneratedHint: 'PDF 已生成，可下载或预览。',
-      icoGeneratedHint: 'ICO 已生成，可下载或预览。'
+      icoGeneratedHint: 'ICO 已生成，可下载或预览。',
+      docGeneratedHint: 'Word 文件已生成，可下载后用 Word 打开。'
     };
   }
   return {
@@ -1027,8 +1060,10 @@ const ui = computed(() => {
     pdfSelectedMid: ' · ',
     pdfSelectedSuffix: ' pages',
 
-    outFormatLabel: 'Output Format',
-    qualityLabel: 'Quality',
+    outFormatLabel: 'Output',
+    qualityLabel: 'Quality (higher = clearer, larger file)',
+    qualityHint: 'Applies to JPEG/WEBP only',
+    qualityPngHint: 'PNG is lossless; quality does not apply',
     maxSideOptionalLabel: 'Max Side (optional)',
     eg1600: 'e.g. 1600',
     eg1: 'e.g. 1',
@@ -1081,6 +1116,9 @@ const ui = computed(() => {
     pdfMaxPagesLabel: 'Max Pages',
     pdfMaxPagesHelp: 'Too many pages can be slow. Default limit: 12 pages.',
     pdfScaleLabel: 'Scale',
+    pdf2wordHelp:
+      'Extract text from PDF and export as Word (.doc). Layout/images may not be preserved.',
+    word2pdfHelp: 'Export text as PDF. DOC/DOCX parsing is not supported; save as TXT first.',
 
     img2pdfPageSizeLabel: 'Page Size',
     img2pdfPageSizeAuto: 'Match image size',
@@ -1104,7 +1142,8 @@ const ui = computed(() => {
     preview: 'Preview',
     reset: 'Reset',
     pdfGeneratedHint: 'PDF generated. Download or preview it.',
-    icoGeneratedHint: 'ICO generated. Download or preview it.'
+    icoGeneratedHint: 'ICO generated. Download or preview it.',
+    docGeneratedHint: 'Word file generated. Download and open it in Word.'
   };
 });
 

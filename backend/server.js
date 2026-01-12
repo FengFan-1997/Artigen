@@ -4266,12 +4266,21 @@ app.post('/api/auth/login', rateLimit('auth_login', { max: 30, windowMs: 60 * 10
     if (!pw || pw.length > 256 || hasControlChars(pw)) return res.status(400).json({ error: 'Invalid password' });
 
     const users = readUsersMap();
-    
-    // Find user by username
-    const user = Object.values(users).find((u) => {
-      const u0 = normalizeUsername(u?.username);
-      return u0 && u0.toLowerCase() === uname.toLowerCase();
-    });
+    const keyLower = uname.toLowerCase();
+
+    const user = (() => {
+      const direct = users[uname];
+      if (direct && typeof direct === 'object') return direct;
+      return Object.values(users).find((u) => {
+        const u0 = normalizeUsername(u?.username);
+        if (u0 && u0.toLowerCase() === keyLower) return true;
+        const e0 = typeof u?.email === 'string' ? u.email.trim() : '';
+        if (e0 && e0.toLowerCase() === keyLower) return true;
+        const id0 = typeof u?.id === 'string' ? u.id.trim() : '';
+        if (id0 && id0 === uname) return true;
+        return false;
+      });
+    })();
     
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -4517,6 +4526,25 @@ app.get('/api/admin/orders', rateLimit('admin_orders', { max: 60, windowMs: 60 *
     return res.json({ ok: true, total, items });
   } catch (e) {
     console.error('Error in GET /api/admin/orders:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/admin/users/credits', rateLimit('admin_user_credits', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    if (!assertAdmin(req, res)) return;
+    const body = req && req.body && typeof req.body === 'object' ? req.body : {};
+    const userId = String(body.userId || '').trim();
+    const availableRaw = Number.parseInt(String(body.available ?? ''), 10);
+    const available = Number.isFinite(availableRaw) && availableRaw >= 0 ? availableRaw : null;
+    if (!userId) return res.status(400).json({ error: 'MISSING_USER_ID' });
+    if (available === null) return res.status(400).json({ error: 'INVALID_AVAILABLE' });
+
+    const result = imgCredits.setAvailableCredits({ userId, available });
+    if (!result || !result.ok) return res.status(400).json({ error: result?.error || 'SET_CREDITS_FAILED' });
+    return res.json({ ok: true, wallet: result.wallet || null });
+  } catch (e) {
+    console.error('Error in POST /api/admin/users/credits:', e);
     return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -4923,6 +4951,13 @@ app.get('/api/admin/images/history', rateLimit('admin_images_history', { max: 60
     const offset = clampInt(req.query.offset, 0, 2000000);
 
     const toTs = (x) => (typeof x?.ts === 'number' && Number.isFinite(x.ts) ? x.ts : Number(x?.ts || 0) || 0);
+    const users = readUsersMap();
+    const getUserBrief = (uid) => {
+      const u = users && typeof users === 'object' ? users[String(uid || '').trim()] : null;
+      const username = typeof u?.username === 'string' ? u.username : '';
+      const email = typeof u?.email === 'string' ? u.email : '';
+      return { username, email };
+    };
 
     if (userId) {
       const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
@@ -4930,12 +4965,11 @@ app.get('/api/admin/images/history', rateLimit('admin_images_history', { max: 60
       const total = list.length;
       const items = list
         .filter((x) => x && typeof x === 'object')
-        .map((x) => ({ ...x, userId }))
+        .map((x) => ({ ...x, userId, ...getUserBrief(userId) }))
         .slice(offset, offset + limit);
       return res.json({ ok: true, total, items });
     }
 
-    const users = readUsersMap();
     const ids = Object.values(users)
       .map((u) => (u && typeof u === 'object' ? String(u.id || '').trim() : ''))
       .filter(Boolean);
@@ -4945,9 +4979,10 @@ app.get('/api/admin/images/history', rateLimit('admin_images_history', { max: 60
       try {
         const mem = ensureUserMemoryShape(uid, readUserMemory(uid, null));
         const list = Array.isArray(mem.image_history) ? mem.image_history : [];
+        const brief = getUserBrief(uid);
         for (const it of list) {
           if (!it || typeof it !== 'object') continue;
-          all.push({ ...it, userId: uid });
+          all.push({ ...it, userId: uid, ...brief });
         }
       } catch {}
     }
@@ -5788,7 +5823,18 @@ app.get('/api/admin/usage/ledger', rateLimit('admin_usage_ledger', { max: 60, wi
       })
       .sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
 
-    const items = all.slice(offset, offset + limit);
+    const users = readUsersMap();
+    const getUserBrief = (uid) => {
+      const u = users && typeof users === 'object' ? users[String(uid || '').trim()] : null;
+      const username = typeof u?.username === 'string' ? u.username : '';
+      const email = typeof u?.email === 'string' ? u.email : '';
+      return { username, email };
+    };
+
+    const items = all.slice(offset, offset + limit).map((x) => {
+      const uid = String(x?.userId || '').trim();
+      return { ...x, ...getUserBrief(uid) };
+    });
     return res.json({ ok: true, total: all.length, items });
   } catch (e) {
     console.error('Error in GET /api/admin/usage/ledger:', e);
