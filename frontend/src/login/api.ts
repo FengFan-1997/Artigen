@@ -9,12 +9,16 @@ export type PasswordAuthResult =
   | { ok: true; userId: string; token: string; name?: string }
   | { ok: false; message: string };
 
+export type ResetPasswordResult = { ok: true; message?: string } | { ok: false; message: string };
+
 import { buildApiUrl } from '../utils/api';
 
 const SEND_CODE_URL = buildApiUrl('/api/login/send-code');
 const VERIFY_CODE_URL = buildApiUrl('/api/login/verify');
 const PASSWORD_LOGIN_URL = buildApiUrl('/api/auth/login');
 const REGISTER_URL = buildApiUrl('/api/auth/register');
+const PASSWORD_RESET_SEND_CODE_URL = buildApiUrl('/api/auth/password-reset/send-code');
+const PASSWORD_RESET_URL = buildApiUrl('/api/auth/password-reset/reset');
 
 const isZh = () => {
   try {
@@ -65,6 +69,13 @@ const humanizeAuthError = (raw: any) => {
   }
   if (m.includes('invalid password')) {
     return zh ? '密码格式不正确' : 'Invalid password.';
+  }
+  if (
+    m.includes('email not registered') ||
+    m.includes('email_not_registered') ||
+    m.includes('email_not_found')
+  ) {
+    return zh ? '该邮箱未注册' : 'Email not registered.';
   }
 
   return msg;
@@ -204,4 +215,46 @@ export const registerWithEmailCode = async (input: {
   const name = typeof json?.name === 'string' ? String(json.name).trim() : '';
   if (!userId || !token) return { ok: false, message: '注册失败' };
   return { ok: true, userId, token, ...(name ? { name } : {}) };
+};
+
+export const sendPasswordResetCode = async (email: string): Promise<SendCodeResult> => {
+  const res = await fetch(PASSWORD_RESET_SEND_CODE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email })
+  });
+  const json = await parseJson(res);
+  if (!res.ok) {
+    return {
+      ok: false,
+      message: humanizeAuthError(json?.message || json?.error || '发送失败'),
+      cooldownSec: Number(json?.cooldownSec || 0) || undefined
+    };
+  }
+  const debugCode = typeof json?.debugCode === 'string' ? String(json.debugCode).trim() : '';
+  const message = typeof json?.message === 'string' ? String(json.message) : '';
+  return {
+    ok: true,
+    cooldownSec: Number(json?.cooldownSec || 60) || 60,
+    ...(debugCode ? { debugCode } : {}),
+    ...(message ? { message } : {})
+  };
+};
+
+export const resetPasswordWithCode = async (input: {
+  email: string;
+  code: string;
+  newPassword: string;
+}): Promise<ResetPasswordResult> => {
+  const res = await fetch(PASSWORD_RESET_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: input.email, code: input.code, newPassword: input.newPassword })
+  });
+  const json = await parseJson(res);
+  if (!res.ok) {
+    return { ok: false, message: humanizeAuthError(json?.message || json?.error || '重置失败') };
+  }
+  const msg = typeof json?.message === 'string' ? String(json.message) : '';
+  return { ok: true, ...(msg ? { message: msg } : {}) };
 };

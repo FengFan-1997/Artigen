@@ -618,15 +618,31 @@ const buildFetchAgent = (targetUrl) => {
   }
 };
 
-const fetchWithTimeout = async (url, options, timeoutMs) => {
+const fetchWithTimeout = async (url, options, timeoutMs, signal) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
+  let off = null;
   try {
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else {
+        const onAbort = () => controller.abort();
+        off = () => {
+          try {
+            signal.removeEventListener('abort', onAbort);
+          } catch {}
+        };
+        try {
+          signal.addEventListener('abort', onAbort, { once: true });
+        } catch {}
+      }
+    }
     const agent = buildFetchAgent(url);
     const res = await fetch(url, { ...options, signal: controller.signal, agent });
     return res;
   } finally {
     clearTimeout(timeoutId);
+    if (off) off();
   }
 };
 
@@ -793,7 +809,8 @@ const callSiliconFlowImageGenerate = async ({
   params,
   images,
   timeoutMs,
-  model
+  model,
+  signal
 }) => {
   if (!SILICONFLOW_API_KEY) {
     const err = new Error('MISSING_SILICONFLOW_API_KEY');
@@ -880,7 +897,8 @@ const callSiliconFlowImageGenerate = async ({
         headers,
         body: JSON.stringify(body)
       },
-      timeoutMs
+      timeoutMs,
+      signal
     );
 
     const raw = await response.text().catch(() => '');
@@ -3716,6 +3734,7 @@ const LOGIN_CODE_TTL_MS = 10 * 60 * 1000;
 const LOGIN_SEND_COOLDOWN_MS = 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
 const loginCodes = new Map();
+const passwordResetCodes = new Map();
 
 const normalizeEmail = (input) => String(input || '').trim().toLowerCase();
 
@@ -3790,6 +3809,27 @@ const sendLoginMail = async (to, code) => {
   const html = `
     <div style="font-family: -apple-system, Segoe UI, Roboto, Arial; line-height: 1.6; color: #0f172a;">
       <div style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">邮箱验证码登录</div>
+      <div style="margin-bottom: 12px;">你的验证码是：</div>
+      <div style="font-size: 28px; font-weight: 900; letter-spacing: 4px; margin: 10px 0;">${code}</div>
+      <div style="color: #475569; font-size: 12px;">10 分钟内有效。如非本人操作，请忽略。</div>
+    </div>
+  `;
+  await transport.sendMail({
+    from: `${fromName} <${fromUser}>`,
+    to,
+    subject,
+    html
+  });
+};
+
+const sendPasswordResetMail = async (to, code) => {
+  const transport = buildSmtpTransport();
+  const fromUser = String(process.env.QQ_SMTP_USER || '').trim();
+  const fromName = String(process.env.QQ_SMTP_FROM_NAME || 'Artigen').trim();
+  const subject = '重置密码验证码';
+  const html = `
+    <div style="font-family: -apple-system, Segoe UI, Roboto, Arial; line-height: 1.6; color: #0f172a;">
+      <div style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">重置密码</div>
       <div style="margin-bottom: 12px;">你的验证码是：</div>
       <div style="font-size: 28px; font-weight: 900; letter-spacing: 4px; margin: 10px 0;">${code}</div>
       <div style="color: #475569; font-size: 12px;">10 分钟内有效。如非本人操作，请忽略。</div>
@@ -3951,6 +3991,150 @@ app.post(
     } catch (e) {
       console.error('Error in /api/login/verify:', e);
       return res.status(500).json({ ok: false, message: '验证失败' });
+    }
+  }
+);
+
+app.post(
+  '/api/auth/password-reset/send-code',
+  rateLimit('password_reset_send_code', { max: 10, windowMs: 60 * 1000 }),
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const email = normalizeEmail(body.email);
+      if (!email || email.length > 254 || !LOGIN_EMAIL_RE.test(email)) {
+        return res.status(400).json({ ok: false, message: '邮箱格式不正确' });
+      }
+
+      const users = readUsersMap();
+      const existingUser = Object.values(users).find((u) => normalizeEmail(u?.email) === email);
+      if (!existingUser) return res.status(404).json({ ok: false, message: '该邮箱未注册' });
+
+      const now = Date.now();
+      const existing = passwordResetCodes.get(email);
+      if (existing && existing.nextSendAt > now) {
+        const left = Math.ceil((existing.nextSendAt - now) / 1000);
+        return res.status(429).json({
+          ok: false,
+          message: `发送太频繁，请 ${left}s 后再试`,
+          cooldownSec: left
+        });
+      }
+
+      const code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0');
+      passwordResetCodes.set(email, {
+        code,
+        expiresAt: now + LOGIN_CODE_TTL_MS,
+        nextSendAt: now + LOGIN_SEND_COOLDOWN_MS,
+        attemptsLeft: LOGIN_MAX_ATTEMPTS
+      });
+
+      const cooldownSec = Math.ceil(LOGIN_SEND_COOLDOWN_MS / 1000);
+      let debugCode = '';
+      try {
+        await sendPasswordResetMail(email, code);
+      } catch (e) {
+        const msg = typeof e?.message === 'string' ? e.message : '';
+        const ip = getClientIp(req);
+        const isLocal = ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1';
+        const allowDebug =
+          String(process.env.LOGIN_DEBUG_RETURN_CODE || '').trim() === '1' ||
+          String(process.env.DEBUG_ROUTES || '').trim() === '1';
+        if (msg === 'QQ_SMTP_MISSING' && allowDebug && isLocal) {
+          debugCode = code;
+        } else if (msg === 'QQ_SMTP_MISSING') {
+          return res.status(500).json({ ok: false, message: '缺少 QQ_SMTP_USER / QQ_SMTP_PASS 环境变量' });
+        } else {
+          throw e;
+        }
+      }
+
+      return res.json({ ok: true, cooldownSec, ...(debugCode ? { debugCode } : {}) });
+    } catch (e) {
+      console.error('Error in /api/auth/password-reset/send-code:', e);
+      return res.status(500).json({ ok: false, message: '发送失败，请检查 SMTP 配置' });
+    }
+  }
+);
+
+app.post(
+  '/api/auth/password-reset/reset',
+  rateLimit('password_reset', { max: 30, windowMs: 60 * 1000 }),
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const email = normalizeEmail(body.email);
+      const code = String(body.code || '').trim();
+      const newPassword = String(body.newPassword || '');
+      if (!email || email.length > 254 || !LOGIN_EMAIL_RE.test(email)) {
+        return res.status(400).json({ ok: false, message: '邮箱格式不正确' });
+      }
+      if (!code) return res.status(400).json({ ok: false, message: '请输入验证码' });
+      if (!/^\d{6}$/.test(code)) return res.status(400).json({ ok: false, message: '验证码格式不正确' });
+      if (
+        !newPassword ||
+        newPassword.length < 8 ||
+        newPassword.length > 128 ||
+        hasControlChars(newPassword) ||
+        !/[a-z]/.test(newPassword) ||
+        !/[A-Z]/.test(newPassword) ||
+        !/\d/.test(newPassword)
+      ) {
+        return res.status(400).json({
+          error: 'PASSWORD_RULES',
+          message: '密码需 8-128 位，且包含大写字母、小写字母和数字'
+        });
+      }
+
+      const usingTestCode = canUseTestLoginCode(req, code, email);
+      if (!usingTestCode) {
+        const st = passwordResetCodes.get(email);
+        if (!st) return res.status(400).json({ ok: false, message: '请先发送验证码' });
+
+        const now = Date.now();
+        if (now > Number(st.expiresAt || 0)) {
+          passwordResetCodes.delete(email);
+          return res.status(400).json({ ok: false, message: '验证码已过期，请重新发送' });
+        }
+
+        if (Number(st.attemptsLeft || 0) <= 0) {
+          passwordResetCodes.delete(email);
+          return res.status(429).json({ ok: false, message: '尝试次数过多，请重新发送验证码' });
+        }
+
+        if (code !== String(st.code || '')) {
+          st.attemptsLeft = Number(st.attemptsLeft || 0) - 1;
+          passwordResetCodes.set(email, st);
+          return res.status(400).json({ ok: false, message: '验证码错误' });
+        }
+      }
+
+      passwordResetCodes.delete(email);
+
+      const users = readUsersMap();
+      const existingUser = Object.values(users).find((u) => normalizeEmail(u?.email) === email);
+      if (!existingUser) return res.status(404).json({ ok: false, message: '该邮箱未注册' });
+      const userId = String(existingUser.id || '').trim();
+      if (!userId || !users[userId]) return res.status(500).json({ ok: false, message: 'USER_NOT_FOUND' });
+
+      const salt = crypto.randomBytes(16).toString('hex');
+      const passwordHash = hashPassword(newPassword, salt);
+      const token = generateToken();
+      users[userId] = {
+        ...users[userId],
+        passwordHash,
+        passwordSalt: salt,
+        passwordAlgo: 'scrypt',
+        sessionToken: token,
+        sessionTokenIssuedAt: Date.now()
+      };
+      delete users[userId].password;
+      writeJson(USERS_FILE, users);
+
+      return res.json({ ok: true, message: '密码已重置' });
+    } catch (e) {
+      console.error('Error in /api/auth/password-reset/reset:', e);
+      return res.status(500).json({ ok: false, message: '重置失败' });
     }
   }
 );
@@ -4453,13 +4637,18 @@ app.delete('/api/api-keys/:id', (req, res) => {
 app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }), async (req, res) => {
   let holdCtx = null;
   let clientAborted = false;
+  const upstreamController = new AbortController();
   try {
     try {
       const mark = () => {
+        if (clientAborted) return;
         clientAborted = true;
+        try {
+          upstreamController.abort();
+        } catch {}
       };
       req.on('aborted', mark);
-      req.on('close', () => {
+      res.on('close', () => {
         if (!res.writableEnded) mark();
       });
     } catch {}
@@ -4520,7 +4709,8 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
       params,
       images: imagesRaw,
       timeoutMs: Math.max(5000, Number(body.timeoutMs || '') || 120000),
-      model: requestedModel || undefined
+      model: requestedModel || undefined,
+      signal: upstreamController.signal
     });
 
     const toImageUrl = (v) => {
@@ -4676,6 +4866,19 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
       if (holdCtx?.userId && holdCtx?.holdId)
         refundedWallet = imgCredits.refundHold({ userId: holdCtx.userId, holdId: holdCtx.holdId })?.wallet || null;
     } catch {}
+    const isAbortError = !!(error && typeof error === 'object' && error.name === 'AbortError');
+    if (clientAborted) {
+      return res.status(499).json({
+        error: 'CLIENT_ABORTED',
+        ...(refundedWallet ? { wallet: refundedWallet } : {})
+      });
+    }
+    if (isAbortError) {
+      return res.status(504).json({
+        error: 'UPSTREAM_TIMEOUT',
+        ...(refundedWallet ? { wallet: refundedWallet } : {})
+      });
+    }
     console.error('Error in /api/img2img:', error);
     const code = typeof error?.code === 'string' ? String(error.code) : '';
     const status =

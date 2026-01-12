@@ -251,6 +251,19 @@ export const useLanguageStore = defineStore('language', () => {
         login_other: 'Login with another email',
         verify_hint: 'After login, user data is stored in your browser only',
         debug_code_hint: 'SMTP not configured, debug code: {code}',
+        forgot_password: 'Forgot password',
+        reset_title: 'Reset Password',
+        reset_sub: 'Enter your registered email to receive a code',
+        reset_sub_sent: 'Code sent to {email}',
+        send_reset_code: 'Send Reset Code',
+        reset_btn: 'Reset Password',
+        resetting: 'Resetting...',
+        reset_hint: 'Code valid for 10 minutes; resend interval 60 seconds',
+        reset_failed: 'Reset failed',
+        back_to_login: 'Back to Login',
+        new_password_label: 'New Password',
+        confirm_password_label: 'Confirm Password',
+        password_mismatch: 'Passwords do not match',
         switch_to_register: 'No account? Register',
         switch_to_login: 'Have an account? Login'
       }
@@ -490,7 +503,20 @@ export const useLanguageStore = defineStore('language', () => {
         empty: '暂无',
         login_other: '登录其他邮箱',
         switch_to_register: '没有账号？注册',
-        switch_to_login: '已有账号？登录'
+        switch_to_login: '已有账号？登录',
+        forgot_password: '找回密码',
+        reset_title: '找回密码',
+        reset_sub: '输入注册邮箱，接收验证码后重置密码',
+        reset_sub_sent: '验证码已发送至 {email}',
+        send_reset_code: '发送重置验证码',
+        reset_btn: '重置密码',
+        resetting: '重置中…',
+        reset_hint: '验证码有效期 10 分钟；每次发送间隔 60 秒',
+        reset_failed: '重置失败',
+        back_to_login: '返回登录',
+        new_password_label: '新密码',
+        confirm_password_label: '确认新密码',
+        password_mismatch: '两次输入的密码不一致'
       }
     }
   };

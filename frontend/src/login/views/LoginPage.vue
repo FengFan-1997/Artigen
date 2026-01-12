@@ -35,7 +35,10 @@
       <div v-else class="hint">{{ t('login.hint') }}</div>
 
       <div class="row">
-        <router-link class="link" to="/">{{ t('login.back') }}</router-link>
+        <div class="row-left">
+          <router-link class="link" to="/">{{ t('login.back') }}</router-link>
+          <router-link class="link" to="/login/reset">{{ t('login.forgot_password') }}</router-link>
+        </div>
         <router-link v-if="isLoggedIn" class="link" to="/login/account">{{
           t('login.account_title')
         }}</router-link>
@@ -205,6 +208,12 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.row-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .link {

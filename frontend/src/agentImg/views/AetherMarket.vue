@@ -1056,7 +1056,8 @@ const ui = computed(() => {
 /* Buttons */
 .buy-btn {
   width: 100%;
-  padding: 14px;
+  height: 56px;
+  padding: 0 14px;
   background: transparent;
   border: 1px solid #444;
   color: #fff;
@@ -1064,6 +1065,10 @@ const ui = computed(() => {
   cursor: pointer;
   transition: all 0.3s ease;
   font-family: 'Inter', sans-serif;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .buy-btn:disabled {

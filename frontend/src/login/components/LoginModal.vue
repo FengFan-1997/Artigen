@@ -49,7 +49,9 @@
             </div>
 
             <div class="row">
-              <button class="link-btn" type="button" @click="close">{{ t('login.back') }}</button>
+              <button class="link-btn" type="button" @click="goResetPassword">
+                {{ t('login.forgot_password') }}
+              </button>
               <button class="link-btn" type="button" @click="toggleMode">
                 {{ toggleModeText }}
               </button>
@@ -175,6 +177,11 @@ const { isOpen, mode, email } = storeToRefs(loginStore);
 const router = useRouter();
 
 ensureGuestUserId();
+
+const goResetPassword = () => {
+  close();
+  router.push('/login/reset');
+};
 
 const emailLocal = ref(getLastEmail());
 const username = ref('');

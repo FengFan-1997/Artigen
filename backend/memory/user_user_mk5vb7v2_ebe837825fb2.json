@@ -1,12 +1,39 @@
 {
   "user_id": "user_mk5vb7v2_ebe837825fb2",
   "meta": {
-    "updatedAt": 1768159332612,
-    "migratedFrom": "guest_0rsuc6ep3"
+    "updatedAt": 1768211241665,
+    "migratedFrom": "guest_rjt65oro7"
   },
   "core_memory": [],
   "short_term_buffer": [],
   "image_history": [
+    {
+      "id": "img2img_mkay2xer_39wvpe",
+      "ts": 1768209170111,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen-Image",
+      "cost": 10,
+      "prompt": "产品档案:\nHas Logo: No\n\n用户需求:\n美少女, Fantasy Anime Style, A beautiful young girl with magical elements and flowing robes, in a vibrant anime style with dramatic lighting and intricate details., anime, fantasy, dramatic lighting, flowing fabrics",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, low resolution, cartoonish, realistic",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mkay33j3_212855fbec4d.png"
+        },
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mkay33jx_93d604622653.png"
+        }
+      ],
+      "seed": 1322236612,
+      "timings": {
+        "inference": 7.573
+      }
+    },
     {
       "id": "artigen_img2img_mk83bxnn_i7qj0upc",
       "ts": 1768036589253,

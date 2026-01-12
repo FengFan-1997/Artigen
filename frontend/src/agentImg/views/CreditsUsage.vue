@@ -77,7 +77,7 @@
 
           <div class="usage-row">
             <div class="label">{{ ui.reason }}</div>
-            <div class="mono">{{ h.reason || '--' }}</div>
+            <div class="mono">{{ reasonText(h.reason) }}</div>
           </div>
 
           <div class="usage-row">
@@ -192,6 +192,19 @@ const amountText = (h: CreditsHold) => {
 const amountClass = (st: CreditsHoldStatus) => {
   if (st === 'refunded') return 'positive';
   return 'negative';
+};
+
+const reasonText = (raw?: string) => {
+  const r = String(raw || '').trim();
+  if (!r) return '--';
+  const key = r.toLowerCase();
+  const zh = currentLang.value === 'zh';
+  if (key === 'img2img') return zh ? '图片生成' : 'Image generation';
+  if (key === 'generate') return zh ? '文本生成' : 'Text generation';
+  if (key === 'chat') return zh ? '对话' : 'Chat';
+  if (key === 'recharge') return zh ? '充值' : 'Recharge';
+  if (key === 'admin_gift') return zh ? '赠送' : 'Gift';
+  return r;
 };
 
 const counts = computed(() => {

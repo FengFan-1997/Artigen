@@ -289,7 +289,16 @@
                     </div>
                   </div>
                 </div>
-                <div class="msg msg-ai" :id="`gen-${item.id}`">
+                <div v-if="item.notice && item.notice.type === 'cancel'" class="msg msg-ai">
+                  <div class="msg-avatar">
+                    <img src="/logo.png" alt="System" />
+                  </div>
+                  <div class="msg-bubble error-bubble">
+                    <div class="error-icon">!</div>
+                    <div class="error-text">{{ item.notice.text }}</div>
+                  </div>
+                </div>
+                <div v-if="item.aiText || item.image" class="msg msg-ai" :id="`gen-${item.id}`">
                   <div class="msg-avatar">
                     <img src="/logo.png" alt="System" />
                   </div>
@@ -317,6 +326,15 @@
                 </div>
                 <div class="msg-bubble">{{ pendingUserText }}</div>
               </div>
+              <div v-if="pendingNotice && pendingUserText" class="msg msg-ai">
+                <div class="msg-avatar">
+                  <img src="/logo.png" alt="System" />
+                </div>
+                <div class="msg-bubble error-bubble">
+                  <div class="error-icon">!</div>
+                  <div class="error-text">{{ pendingNotice.text }}</div>
+                </div>
+              </div>
 
               <div v-if="loading" class="msg msg-ai">
                 <div class="msg-avatar">
@@ -327,16 +345,6 @@
                   <span class="typing-dot"></span>
                   <span class="typing-dot"></span>
                   <span class="loading-text">{{ ui.loadingText }}</span>
-                </div>
-              </div>
-
-              <div v-for="n in chatNotices" :key="n.id" class="msg msg-ai">
-                <div class="msg-avatar">
-                  <img src="/logo.png" alt="System" />
-                </div>
-                <div class="msg-bubble error-bubble">
-                  <div class="error-icon">!</div>
-                  <div class="error-text">{{ n.text }}</div>
                 </div>
               </div>
             </div>
@@ -693,6 +701,7 @@ type HistoryItem = {
   image: string | null;
   refImages?: string[];
   aiText?: string;
+  notice?: { type: 'cancel'; text: string } | null;
 };
 
 const MAX_HISTORY = 200;
@@ -784,18 +793,24 @@ const abortImg2Img = () => {
 const pendingUserText = ref('');
 const lastUserText = ref('');
 const chatScrollEl = ref<HTMLElement | null>(null);
-const chatNotices = ref<{ id: string; text: string }[]>([]);
 const activeRequestId = ref('');
-const abortNoticeRequestId = ref('');
+const pendingNotice = ref<{ type: 'cancel'; text: string } | null>(null);
 
-const pushChatNotice = (text: string) => {
+const clearCancelNotices = () => {
+  pendingNotice.value = null;
+  history.value = history.value.map((it) => {
+    if (it.notice && it.notice.type === 'cancel') return { ...it, notice: null };
+    return it;
+  });
+};
+
+const setCancelNoticeForHistory = (id: string | number, text: string) => {
   const t = String(text || '').trim();
   if (!t) return;
-  chatNotices.value = [
-    ...chatNotices.value,
-    { id: `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`, text: t }
-  ].slice(-6);
-  scrollChatToBottom();
+  history.value = history.value.map((it) => {
+    if (it.id !== id) return it;
+    return { ...it, notice: { type: 'cancel', text: t } };
+  });
 };
 
 const normalizeTag = (v: string) =>
@@ -1200,7 +1215,9 @@ watch(
     const cancelled =
       m === 'Cancelled.' || m === '已取消' || /cancelled/i.test(m) || /取消/.test(m);
     if (cancelled) {
-      pushChatNotice(m);
+      const reqId = String(activeRequestId.value || '').trim();
+      if (reqId) setCancelNoticeForHistory(reqId, m);
+      else if (pendingUserText.value) pendingNotice.value = { type: 'cancel', text: m };
       error.value = '';
       return;
     }
@@ -1412,6 +1429,9 @@ const humanizeImgError = (code: string) => {
   if (c === 'ABORTED' || c === 'AbortError' || /aborted/i.test(c))
     return currentLang.value === 'zh' ? '已取消' : 'Cancelled.';
   if (c === 'CLIENT_ABORTED') return currentLang.value === 'zh' ? '已取消' : 'Cancelled.';
+  if (c === 'API_ERROR_499') return currentLang.value === 'zh' ? '已取消' : 'Cancelled.';
+  if (c === 'UPSTREAM_TIMEOUT' || c === 'API_ERROR_504')
+    return currentLang.value === 'zh' ? '服务超时，请稍后再试' : 'Request timed out, please retry.';
   if (c === 'INSUFFICIENT_CREDITS')
     return currentLang.value === 'zh'
       ? '积分不足，请前往「算力商城」充值'
@@ -1491,14 +1511,13 @@ const applyLogoInstructionToPrompt = (prompt: string) => {
 };
 
 const doPrimary = async () => {
+  clearCancelNotices();
   cancel();
   abortImg2Img();
   const rawUserText = String(userInput.value || '').trim();
   const activeUserText = rawUserText || String(lastUserText.value || '').trim();
   if (rawUserText) lastUserText.value = rawUserText;
-  pendingUserText.value = activeUserText;
   if (!activeUserText) {
-    pendingUserText.value = '';
     return;
   }
 
@@ -1512,7 +1531,7 @@ const doPrimary = async () => {
     return ok.length ? ok : [];
   };
 
-  const runGen = async (fp: AgentImgPromptResult) => {
+  const runGen = async (fp: AgentImgPromptResult, requestId: string) => {
     const refImgs = await getImgInputs();
     const logoInput = logoFile.value ? await fileToGenerateInput(logoFile.value) : null;
     const hasLogo = !!logoInput && !!logoFile.value;
@@ -1523,7 +1542,6 @@ const doPrimary = async () => {
       return [logoInput as GenerateImageInput] as Img2ImgImageInput[];
     };
 
-    const requestId = `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     activeRequestId.value = requestId;
 
     const runOnce = async (args: {
@@ -1553,12 +1571,12 @@ const doPrimary = async () => {
           code === 'ABORTED' ||
           code === 'AbortError' ||
           code === 'CLIENT_ABORTED' ||
+          code === 'API_ERROR_499' ||
           /aborted/i.test(code) ||
           /AbortError/i.test(code);
         if (abortLike) {
           const msg = humanizeImgError(code || 'ABORTED');
-          if (abortNoticeRequestId.value !== requestId) pushChatNotice(msg);
-          abortNoticeRequestId.value = '';
+          setCancelNoticeForHistory(requestId, msg);
           return { ok: false as const, url: '' };
         }
         error.value = humanizeImgError(code);
@@ -1592,6 +1610,7 @@ const doPrimary = async () => {
 
   if (deepMode.value) {
     if (options.value.length === 0) {
+      pendingUserText.value = activeUserText;
       const p = analyzeDirections();
       userInput.value = '';
       await p;
@@ -1614,11 +1633,7 @@ const doPrimary = async () => {
     options.value = [];
     selectedOptionId.value = '';
 
-    const id = Date.now();
     userInput.value = '';
-    loading.value = true;
-    error.value = '';
-    const { ok, url } = await runGen(fp);
     const refThumbsRaw = await Promise.all(
       previewFiles.value
         .filter((f): f is File => !!f)
@@ -1626,25 +1641,30 @@ const doPrimary = async () => {
         .map((f) => fileToThumbDataUrl(f))
     );
     const refThumbs = refThumbsRaw.filter((x): x is string => !!x);
+    const requestId = `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    history.value = [
+      ...history.value,
+      {
+        id: requestId,
+        timestamp: Date.now(),
+        userText: activeUserText,
+        result: fp,
+        image: null,
+        ...(refThumbs.length ? { refImages: refThumbs } : {}),
+        notice: null
+      }
+    ].slice(-MAX_HISTORY);
+    pendingUserText.value = '';
+    const { ok, url } = await runGen(fp, requestId);
     if (ok) {
       const aiText =
         currentLang.value === 'zh'
           ? `生成完成：已根据你的提示词生成图片${refThumbs.length ? '（已参考你上传的图片）' : ''}${logoFile.value ? '（已叠加Logo）' : ''}。`
           : `Done: image generated from your prompt${refThumbs.length ? ' (with your reference image)' : ''}${logoFile.value ? ' (with logo applied)' : ''}.`;
-      history.value = [
-        ...history.value,
-        {
-          id,
-          timestamp: Date.now(),
-          userText: activeUserText,
-          result: fp,
-          image: url,
-          ...(refThumbs.length ? { refImages: refThumbs } : {}),
-          ...(aiText ? { aiText } : {})
-        }
-      ].slice(-MAX_HISTORY);
+      history.value = history.value.map((it) =>
+        it.id === requestId ? { ...it, image: url, ...(aiText ? { aiText } : {}) } : it
+      );
     }
-    pendingUserText.value = '';
     return;
   }
 
@@ -1652,9 +1672,7 @@ const doPrimary = async () => {
     prompt: buildPromptWithContext(activeUserText),
     negativePrompt: buildNegativePrompt()
   };
-  const id = Date.now();
   userInput.value = '';
-  const { ok, url } = await runGen(fp);
   const refThumbsRaw = await Promise.all(
     previewFiles.value
       .filter((f): f is File => !!f)
@@ -1662,25 +1680,30 @@ const doPrimary = async () => {
       .map((f) => fileToThumbDataUrl(f))
   );
   const refThumbs = refThumbsRaw.filter((x): x is string => !!x);
+  const requestId = `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  history.value = [
+    ...history.value,
+    {
+      id: requestId,
+      timestamp: Date.now(),
+      userText: activeUserText,
+      result: fp,
+      image: null,
+      ...(refThumbs.length ? { refImages: refThumbs } : {}),
+      notice: null
+    }
+  ].slice(-MAX_HISTORY);
+  pendingUserText.value = '';
+  const { ok, url } = await runGen(fp, requestId);
   if (ok) {
     const aiText =
       currentLang.value === 'zh'
         ? `生成完成：已根据你的提示词生成图片${refThumbs.length ? '（已参考你上传的图片）' : ''}${logoFile.value ? '（已叠加Logo）' : ''}。`
         : `Done: image generated from your prompt${refThumbs.length ? ' (with your reference image)' : ''}${logoFile.value ? ' (with logo applied)' : ''}.`;
-    history.value = [
-      ...history.value,
-      {
-        id,
-        timestamp: Date.now(),
-        userText: activeUserText,
-        result: fp,
-        image: url,
-        ...(refThumbs.length ? { refImages: refThumbs } : {}),
-        ...(aiText ? { aiText } : {})
-      }
-    ].slice(-MAX_HISTORY);
+    history.value = history.value.map((it) =>
+      it.id === requestId ? { ...it, image: url, ...(aiText ? { aiText } : {}) } : it
+    );
   }
-  pendingUserText.value = '';
 };
 
 const onPrimary = async () => {
@@ -1691,8 +1714,9 @@ const onPrimary = async () => {
 const onStopProcessing = () => {
   const reqId = String(activeRequestId.value || '').trim();
   if (reqId) {
-    abortNoticeRequestId.value = reqId;
-    pushChatNotice(humanizeImgError('ABORTED'));
+    setCancelNoticeForHistory(reqId, humanizeImgError('ABORTED'));
+  } else if (pendingUserText.value) {
+    pendingNotice.value = { type: 'cancel', text: humanizeImgError('ABORTED') };
   }
   cancel();
   abortImg2Img();

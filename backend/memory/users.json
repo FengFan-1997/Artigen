@@ -20,11 +20,15 @@
     "email": "demo@example.com",
     "username": "demo@example.com",
     "name": "demo",
-    "visits": 0,
+    "visits": 1,
     "preferences": {},
     "createdAt": 1767881514866,
-    "sessionToken": "bca235607db336a40ee5beb5e9004d8d328148a8b1864e2fmk5j0b5e",
-    "sessionTokenIssuedAt": 1767881514866
+    "sessionToken": "b5692d4c2cc9fe28b398052ac30d2d6a692fe93354ec2567mkaw3ujw",
+    "sessionTokenIssuedAt": 1768205845868,
+    "passwordHash": "315beccf1904819b3f3497865a3da2d54c83933be35af070979d365ed36642d7",
+    "passwordSalt": "731710816148d05b8a1dbf434d8d6ce9",
+    "passwordAlgo": "scrypt",
+    "lastSeen": 1768205845868
   },
   "email_56271fc8e558df66": {
     "id": "email_56271fc8e558df66",
@@ -59,12 +63,12 @@
     "passwordSalt": "970676ae15c17852b68f6f8586a76f6e",
     "passwordAlgo": "scrypt",
     "name": "dev123",
-    "visits": 16,
+    "visits": 17,
     "preferences": {},
     "createdAt": 1767902179277,
-    "sessionToken": "371f553b82ea5f94cc19bcdcfc86dca1061defc58bfc88a4mka4ewom",
-    "sessionTokenIssuedAt": 1768159332598,
-    "lastSeen": 1768159332598
+    "sessionToken": "9d6f37cdf755f84f996fe0842607d4c892dd4f988b7d2c70mkazbhyn",
+    "sessionTokenIssuedAt": 1768211241647,
+    "lastSeen": 1768211241647
   },
   "user_mk6thoz6_1388ca4f90fc": {
     "id": "user_mk6thoz6_1388ca4f90fc",
