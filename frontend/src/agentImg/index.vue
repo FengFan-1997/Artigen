@@ -1109,6 +1109,18 @@ const resolveRemoteUrl = (raw: string) => {
   return u;
 };
 
+const extractUserTextFromPrompt = (prompt: string) => {
+  const p = String(prompt || '').trim();
+  if (!p) return '';
+  const m1 = p.match(/(?:^|\n\n)\s*(?:用户需求|User Request)\s*:\s*\n([\s\S]+)$/i);
+  if (m1 && typeof m1[1] === 'string' && m1[1].trim()) return m1[1].trim();
+  const m2 = p.match(/(?:^|\n\n)\s*(?:用户需求|User Request)\s*:\s*([\s\S]+)$/i);
+  if (m2 && typeof m2[1] === 'string' && m2[1].trim()) return m2[1].trim();
+  const m3 = p.match(/(?:^|\n\n)\s*User input\s*:\s*([\s\S]+)$/i);
+  if (m3 && typeof m3[1] === 'string' && m3[1].trim()) return m3[1].trim();
+  return p;
+};
+
 const loadHistoryFromServer = async () => {
   try {
     syncAuth();
@@ -1126,6 +1138,11 @@ const loadHistoryFromServer = async () => {
         const prompt = typeof it?.prompt === 'string' ? it.prompt.trim() : '';
         const negativePrompt =
           typeof it?.negativePrompt === 'string' ? it.negativePrompt.trim() : '';
+        const userText = (() => {
+          const ut = typeof it?.userText === 'string' ? it.userText.trim() : '';
+          if (ut) return ut;
+          return extractUserTextFromPrompt(prompt);
+        })();
         const images = Array.isArray(it?.images) ? it.images : [];
         const inputImages = Array.isArray(it?.inputImages) ? it.inputImages : [];
         const firstUrl = (() => {
@@ -1141,18 +1158,16 @@ const loadHistoryFromServer = async () => {
           .map((x: string) => resolveRemoteUrl(x))
           .filter((x: string) => !!x)
           .slice(0, 3);
-        if (!ts || !prompt || !negativePrompt) return null;
+        if (!ts || !prompt || !negativePrompt || !userText) return null;
         const idRaw = typeof it?.id === 'string' && it.id.trim() ? it.id.trim() : `h_${ts}`;
-        const aiText =
-          currentLang.value === 'zh' ? '已从服务器历史记录恢复。' : 'Restored from server history.';
         return {
           id: idRaw,
           timestamp: ts,
-          userText: prompt,
+          userText,
           result: { prompt, negativePrompt, params: it?.params },
           image: firstUrl || null,
           ...(refs.length ? { refImages: refs } : {}),
-          ...(aiText ? { aiText } : {})
+          notice: null
         };
       })
       .filter((x): x is HistoryItem => x !== null);
@@ -1473,6 +1488,19 @@ const buildDeepPrompt = (baseText: string) => {
   return parts.join(', ');
 };
 
+const buildDeepDisplayText = (userText: string, opt: { title: string; summary: string }) => {
+  const u = String(userText || '').trim();
+  const title = String(opt?.title || '').trim();
+  const summary = String(opt?.summary || '').trim();
+  const sep = u ? '\n\n' : '';
+  if (currentLang.value === 'zh') {
+    const parts = [u || '', `${sep}方向：${title}`.trim(), summary].filter(Boolean);
+    return parts.join('\n');
+  }
+  const parts = [u || '', `${sep}Direction: ${title}`.trim(), summary].filter(Boolean);
+  return parts.join('\n');
+};
+
 const buildNegativePrompt = (extra?: string[]) => {
   const base = Array.isArray(agentImgPromptLibrary.safeNegative)
     ? agentImgPromptLibrary.safeNegative
@@ -1531,7 +1559,7 @@ const doPrimary = async () => {
     return ok.length ? ok : [];
   };
 
-  const runGen = async (fp: AgentImgPromptResult, requestId: string) => {
+  const runGen = async (fp: AgentImgPromptResult, requestId: string, displayUserText: string) => {
     const refImgs = await getImgInputs();
     const logoInput = logoFile.value ? await fileToGenerateInput(logoFile.value) : null;
     const hasLogo = !!logoInput && !!logoFile.value;
@@ -1546,6 +1574,7 @@ const doPrimary = async () => {
 
     const runOnce = async (args: {
       prompt: string;
+      userText: string;
       negativePrompt?: string;
       params?: AgentImgPromptResult['params'];
       images: Img2ImgImageInput[];
@@ -1555,6 +1584,7 @@ const doPrimary = async () => {
       activeImgAbort.value = ctl;
       const res = await img2img({
         prompt: args.prompt,
+        userText: args.userText,
         negativePrompt: args.negativePrompt,
         params: args.params,
         images: args.images,
@@ -1595,6 +1625,7 @@ const doPrimary = async () => {
     error.value = '';
     const out = await runOnce({
       prompt: hasLogo ? applyLogoInstructionToPrompt(fp.prompt) : fp.prompt,
+      userText: displayUserText,
       negativePrompt: fp.negativePrompt,
       params: fp.params,
       images: buildFinalImages()
@@ -1642,12 +1673,16 @@ const doPrimary = async () => {
     );
     const refThumbs = refThumbsRaw.filter((x): x is string => !!x);
     const requestId = `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const displayText = buildDeepDisplayText(activeUserText, {
+      title: String(opt?.title || '').trim(),
+      summary: String(opt?.summary || '').trim()
+    });
     history.value = [
       ...history.value,
       {
         id: requestId,
         timestamp: Date.now(),
-        userText: activeUserText,
+        userText: displayText || activeUserText,
         result: fp,
         image: null,
         ...(refThumbs.length ? { refImages: refThumbs } : {}),
@@ -1655,15 +1690,9 @@ const doPrimary = async () => {
       }
     ].slice(-MAX_HISTORY);
     pendingUserText.value = '';
-    const { ok, url } = await runGen(fp, requestId);
+    const { ok, url } = await runGen(fp, requestId, displayText || activeUserText);
     if (ok) {
-      const aiText =
-        currentLang.value === 'zh'
-          ? `生成完成：已根据你的提示词生成图片${refThumbs.length ? '（已参考你上传的图片）' : ''}${logoFile.value ? '（已叠加Logo）' : ''}。`
-          : `Done: image generated from your prompt${refThumbs.length ? ' (with your reference image)' : ''}${logoFile.value ? ' (with logo applied)' : ''}.`;
-      history.value = history.value.map((it) =>
-        it.id === requestId ? { ...it, image: url, ...(aiText ? { aiText } : {}) } : it
-      );
+      history.value = history.value.map((it) => (it.id === requestId ? { ...it, image: url } : it));
     }
     return;
   }
@@ -1694,15 +1723,9 @@ const doPrimary = async () => {
     }
   ].slice(-MAX_HISTORY);
   pendingUserText.value = '';
-  const { ok, url } = await runGen(fp, requestId);
+  const { ok, url } = await runGen(fp, requestId, activeUserText);
   if (ok) {
-    const aiText =
-      currentLang.value === 'zh'
-        ? `生成完成：已根据你的提示词生成图片${refThumbs.length ? '（已参考你上传的图片）' : ''}${logoFile.value ? '（已叠加Logo）' : ''}。`
-        : `Done: image generated from your prompt${refThumbs.length ? ' (with your reference image)' : ''}${logoFile.value ? ' (with logo applied)' : ''}.`;
-    history.value = history.value.map((it) =>
-      it.id === requestId ? { ...it, image: url, ...(aiText ? { aiText } : {}) } : it
-    );
+    history.value = history.value.map((it) => (it.id === requestId ? { ...it, image: url } : it));
   }
 };
 

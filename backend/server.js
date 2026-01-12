@@ -4656,6 +4656,8 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
     const body = req.body || {};
     const prompt = String(body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
+    const userTextRaw = typeof body.userText === 'string' ? body.userText : '';
+    const userText = String(userTextRaw || '').trim();
 
     const userId = String(body.userId || '').trim();
     if (!assertAuthedUserMatches(req, res, userId)) return;
@@ -4843,6 +4845,9 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
               ? String(SILICONFLOW_IMAGE_MODEL || '').trim()
               : String(SILICONFLOW_TXT2IMG_MODEL || 'Qwen/Qwen-Image').trim()),
           cost,
+          ...(userText && userText.length <= 1200 && !hasControlChars(userText)
+            ? { userText: userText.slice(0, 800) }
+            : {}),
           prompt: String(body.prompt || '').trim().slice(0, 1200),
           negativePrompt: String(body.negativePrompt || '').trim().slice(0, 1200),
           params,

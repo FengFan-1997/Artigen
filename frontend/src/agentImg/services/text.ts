@@ -102,6 +102,7 @@ const normalizeImg2ImgImages = (images: Img2ImgImageInput[]) => {
 
 export const img2img = async (input: {
   prompt: string;
+  userText?: string;
   negativePrompt?: string;
   params?: {
     imageSize?: string;
@@ -146,6 +147,7 @@ export const img2img = async (input: {
         userId,
         requestId,
         prompt,
+        userText: typeof input.userText === 'string' ? input.userText.trim() : '',
         negativePrompt: input.negativePrompt,
         params: input.params,
         ...(model ? { model } : {}),
