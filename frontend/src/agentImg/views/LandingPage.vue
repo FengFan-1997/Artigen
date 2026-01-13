@@ -31,13 +31,27 @@
           </div>
 
           <div class="cta-row">
-            <router-link to="/artigen/ai" class="btn primary-btn">
+            <router-link
+              to="/artigen/ai"
+              class="btn primary-btn"
+              @click.prevent="onLandingNav('/artigen/ai', 'ai')"
+            >
               {{ ctaWorkshop }} <span class="arrow">→</span>
             </router-link>
-            <router-link to="/artigen/format-factory" class="btn outline-btn">{{
-              ctaFormatFactory
-            }}</router-link>
-            <router-link to="/artigen/market" class="btn outline-btn">{{ ctaMarket }}</router-link>
+            <router-link
+              to="/artigen/format-factory"
+              class="btn outline-btn"
+              @click.prevent="onLandingNav('/artigen/format-factory', 'format_factory')"
+            >
+              {{ ctaFormatFactory }}
+            </router-link>
+            <router-link
+              to="/artigen/market"
+              class="btn outline-btn"
+              @click.prevent="onLandingNav('/artigen/market', 'market')"
+            >
+              {{ ctaMarket }}
+            </router-link>
           </div>
 
           <div class="stats-row">
@@ -91,7 +105,7 @@
         </div>
 
         <div class="features-grid">
-          <div class="feature-card" @click="router.push('/artigen/ai')">
+          <div class="feature-card" @click="onLandingNav('/artigen/ai', 'ai')">
             <div class="card-header">
               <span class="status-dot green"></span>
               <span class="module-id">MODULE_01</span>
@@ -109,7 +123,10 @@
             </div>
           </div>
 
-          <div class="feature-card" @click="router.push('/artigen/format-factory')">
+          <div
+            class="feature-card"
+            @click="onLandingNav('/artigen/format-factory', 'format_factory')"
+          >
             <div class="card-header">
               <span class="status-dot green"></span>
               <span class="module-id">MODULE_02</span>
@@ -127,7 +144,7 @@
             </div>
           </div>
 
-          <div class="feature-card" @click="router.push('/artigen/market')">
+          <div class="feature-card" @click="onLandingNav('/artigen/market', 'market')">
             <div class="card-header">
               <span class="status-dot yellow"></span>
               <span class="module-id">MODULE_03</span>
@@ -147,6 +164,39 @@
         </div>
       </section>
 
+      <section class="content-section">
+        <div class="content-inner">
+          <div class="section-header">
+            <div class="sub-label">// CONTENT_GUIDE</div>
+            <h2 class="section-title">{{ contentTitle }}</h2>
+            <p class="section-desc">{{ contentDesc }}</p>
+          </div>
+
+          <div class="content-grid">
+            <div class="content-card">
+              <h3 class="content-card-title">{{ useCasesTitle }}</h3>
+              <ul class="content-list">
+                <li v-for="item in useCases" :key="item">{{ item }}</li>
+              </ul>
+            </div>
+            <div class="content-card">
+              <h3 class="content-card-title">{{ longTailTitle }}</h3>
+              <div class="chips">
+                <span v-for="k in longTailKeywords" :key="k" class="chip">{{ k }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="faq">
+            <h3 class="content-card-title">{{ faqTitle }}</h3>
+            <details v-for="f in faqs" :key="f.q" class="faq-item">
+              <summary class="faq-q">{{ f.q }}</summary>
+              <div class="faq-a">{{ f.a }}</div>
+            </details>
+          </div>
+        </div>
+      </section>
+
       <GlobalFooter />
     </div>
   </div>
@@ -159,6 +209,7 @@ import { useRouter } from 'vue-router';
 import GlobalFooter from '../components/GlobalFooter.vue';
 import TitleBar from '../components/TitleBar.vue';
 import { useLanguageStore } from '@/stores/language';
+import { trackEvent } from '@/utils/analytics';
 
 const router = useRouter();
 const bgCanvas = ref<HTMLCanvasElement | null>(null);
@@ -166,6 +217,11 @@ let animationId: number;
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
+
+const onLandingNav = (path: string, target: 'ai' | 'format_factory' | 'market') => {
+  trackEvent('landing_nav_click', { category: 'funnel', target, path });
+  router.push(path);
+};
 
 const headlineLine1 = computed(() =>
   currentLang.value === 'zh' ? '聚合 N 种' : 'Aggregate N kinds of '
@@ -223,6 +279,104 @@ const feature3Desc = computed(() =>
     ? '分布式算力租赁平台，按需购买 GPU 资源。支持模型微调、批量渲染任务托管。'
     : 'A distributed compute marketplace to rent GPU resources on demand. Supports fine-tuning and batch rendering workloads.'
 );
+
+const contentTitle = computed(() =>
+  currentLang.value === 'zh' ? '你能用它做什么' : 'What you can do'
+);
+const contentDesc = computed(() =>
+  currentLang.value === 'zh'
+    ? '围绕真实工作流组织内容与长尾关键词，帮助你快速找到对应工具与最佳路径。'
+    : 'Workflow-first content with long-tail queries to help you pick the right tool fast.'
+);
+const useCasesTitle = computed(() =>
+  currentLang.value === 'zh' ? '典型场景' : 'Common scenarios'
+);
+const useCases = computed(() => {
+  if (currentLang.value === 'zh') {
+    return [
+      '电商产品图：白底主图、场景图、卖点细节图',
+      '营销物料：海报、封面、社媒配图与活动横幅',
+      '内容创作：插画风格化、头像与素材快速生成',
+      '批量处理：格式转换、压缩、尺寸调整与旋转裁切',
+      '文档工作：PDF 转图片、图片转 PDF、PDF 转 Word'
+    ];
+  }
+  return [
+    'E-commerce visuals: hero images, scenes, detail shots',
+    'Marketing assets: posters, covers, social creatives, banners',
+    'Content creation: stylized illustrations, avatars, quick assets',
+    'Batch processing: convert, compress, resize, rotate/crop',
+    'Docs workflow: PDF to images, images to PDF, PDF to Word'
+  ];
+});
+const longTailTitle = computed(() =>
+  currentLang.value === 'zh' ? '常见搜索词' : 'Popular long-tail queries'
+);
+const longTailKeywords = computed(() => {
+  if (currentLang.value === 'zh') {
+    return [
+      'heic转jpg',
+      'png转jpg',
+      'webp转png',
+      '图片压缩不失真',
+      '批量图片缩放',
+      'PDF转图片',
+      '图片转PDF',
+      'PDF转Word',
+      '图生图',
+      '文生图',
+      '提示词优化',
+      '电商产品图生成'
+    ];
+  }
+  return [
+    'heic to jpg',
+    'png to jpg',
+    'webp to png',
+    'image compression',
+    'batch resize images',
+    'pdf to images',
+    'images to pdf',
+    'pdf to word',
+    'image-to-image',
+    'text-to-image',
+    'prompt optimizer',
+    'product image generator'
+  ];
+});
+const faqTitle = computed(() => (currentLang.value === 'zh' ? '常见问题' : 'FAQ'));
+const faqs = computed(() => {
+  if (currentLang.value === 'zh') {
+    return [
+      {
+        q: '文件会上传到服务器吗？',
+        a: '格式工厂相关工具默认在浏览器本地处理；AI 工坊会将必要信息发送到模型服务以完成生成。'
+      },
+      {
+        q: '从哪里开始更快？',
+        a: '有参考图就用图生图；只有想法就用文生图。做电商图建议先填产品档案，再补充具体需求。'
+      },
+      {
+        q: '如何判断卡在漏斗哪一步？',
+        a: '已接入页面访问与关键动作事件，能看到进入页面、选择工具、开始处理/生成、下单等关键节点。'
+      }
+    ];
+  }
+  return [
+    {
+      q: 'Do files get uploaded?',
+      a: 'Format Factory tools run locally in the browser by default; AI Workshop sends required inputs to the model service to generate results.'
+    },
+    {
+      q: 'What is the fastest way to start?',
+      a: 'Use image-to-image if you have reference images; use text-to-image if you only have an idea. For commerce shots, fill the product profile first.'
+    },
+    {
+      q: 'How do I find where users drop off?',
+      a: 'Page views and key action events are tracked, covering entry, tool selection, processing/generation, and ordering steps.'
+    }
+  ];
+});
 
 // Cyber Grid & Particles Effect
 const initCyberGrid = () => {
@@ -1122,6 +1276,97 @@ onBeforeUnmount(() => {
   .features-grid {
     grid-template-columns: 1fr;
     max-width: 500px;
+  }
+}
+
+.content-section {
+  padding: 90px 40px 110px;
+  background: rgba(0, 0, 0, 0.32);
+  position: relative;
+  z-index: 2;
+}
+
+.content-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+  margin-top: 34px;
+}
+
+.content-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.22);
+  padding: 18px 18px;
+}
+
+.content-card-title {
+  font-size: 16px;
+  font-weight: 800;
+  margin: 0 0 12px;
+  color: #fff;
+}
+
+.content-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #cbd5e1;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chip {
+  font-size: 11px;
+  color: var(--primary);
+  background: rgba(204, 255, 0, 0.1);
+  border: 1px solid rgba(204, 255, 0, 0.22);
+  padding: 6px 10px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.faq {
+  margin-top: 26px;
+}
+
+.faq-item {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.18);
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+
+.faq-q {
+  cursor: pointer;
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.faq-a {
+  margin-top: 10px;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+@media (max-width: 1024px) {
+  .content-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

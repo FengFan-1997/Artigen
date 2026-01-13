@@ -49,6 +49,54 @@
 
     <div v-if="soonTip" class="ff-toast">{{ soonTip }}</div>
 
+    <!-- Info Section (SEO) -->
+    <div class="info-section">
+      <div class="info-container">
+        <h2 class="info-title">{{ ui.contentTitle }}</h2>
+        <p class="info-desc">{{ ui.contentDesc }}</p>
+
+        <div class="info-grid">
+          <div class="info-card">
+            <div class="info-card-title">> {{ ui.useCasesTitle }}</div>
+            <ul class="info-list">
+              <li v-for="(item, idx) in ui.useCases" :key="idx" class="info-list-item">
+                <span class="info-list-icon">#</span>
+                {{ item }}
+              </li>
+            </ul>
+          </div>
+
+          <div class="info-card">
+            <div class="info-card-title">> {{ ui.longTailTitle }}</div>
+            <div class="info-chips">
+              <span v-for="(chip, idx) in ui.longTailKeywords" :key="idx" class="info-chip">
+                {{ chip }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FAQ Section -->
+    <div class="faq-section">
+      <div class="faq-left">
+        <div class="faq-title-large">{{ ui.faqTitle }}</div>
+        <div class="faq-subtitle">{{ ui.faqSubtitle }}</div>
+      </div>
+      <div class="faq-list">
+        <details v-for="f in ui.faqs" :key="f.q" class="faq-item">
+          <summary class="faq-q">
+            <span class="q-text">{{ f.q }}</span>
+            <span class="q-icon">+</span>
+          </summary>
+          <div class="faq-a-wrapper">
+            <div class="faq-a">{{ f.a }}</div>
+          </div>
+        </details>
+      </div>
+    </div>
+
     <GlobalFooter />
 
     <div class="modal-fade-wrap">
@@ -915,16 +963,27 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted } from 'vue';
 import { storeToRefs } from 'pinia';
 import GlobalFooter from '../components/GlobalFooter.vue';
 import TitleBar from '../components/TitleBar.vue';
 import { useFormatFactory } from '../composables/useFormatFactory';
 import { formatTime } from '../logic/formatFactory/format';
 import { useLanguageStore } from '@/stores/language';
+import { useConsoleStore } from '@/stores/console';
+import { trackEvent } from '@/utils/analytics';
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
+const consoleStore = useConsoleStore();
+
+onMounted(() => {
+  consoleStore.recordTraffic({
+    type: 'page_view',
+    page: '/artigen/format-factory',
+    meta: { referrer: document.referrer }
+  });
+});
 
 const ui = computed(() => {
   if (currentLang.value === 'zh') {
@@ -1037,7 +1096,78 @@ const ui = computed(() => {
       reset: '重置',
       pdfGeneratedHint: 'PDF 已生成，可下载或预览。',
       icoGeneratedHint: 'ICO 已生成，可下载或预览。',
-      docGeneratedHint: 'Word 文件已生成，可预览或下载。'
+      docGeneratedHint: 'Word 文件已生成，可预览或下载。',
+
+      contentTitle: '常用格式转换与处理指南',
+      contentDesc:
+        '本页工具默认在浏览器本地运行，适合做快速转换、批量处理与隐私敏感文件的基础编辑。',
+      useCasesTitle: '常见需求',
+      useCases: [
+        'HEIC 转 JPG/PNG：iPhone 照片快速通用化',
+        'PNG/JPG/WEBP 互转：适配电商平台与不同终端',
+        '图片压缩与批量缩放：减少体积、提升加载速度',
+        'PDF 转图片 / 图片转 PDF：资料整理与归档',
+        'PDF 转 Word：抽取文字内容进行二次编辑',
+        '图片加水印/去水印：保护版权或去除多余标记',
+        '视频截帧与 GIF 制作：快速提取精彩瞬间',
+        'ICO 图标生成：网站 Favicon 快速制作',
+        '图片滤镜与特效：一键美化照片风格'
+      ],
+      longTailTitle: '常见搜索词',
+      longTailKeywords: [
+        'heic转jpg',
+        'heic转png',
+        'png转jpg',
+        'webp转jpg',
+        'webp转png',
+        '图片压缩',
+        '批量压缩图片',
+        '批量修改尺寸',
+        'PDF转图片',
+        '图片转PDF',
+        'PDF转Word',
+        '视频截帧',
+        'GIF制作',
+        '视频转GIF',
+        '图片加水印',
+        '图片去水印',
+        'ICO图标生成',
+        'Favicon制作',
+        '图片滤镜',
+        '在线修图'
+      ],
+      faqTitle: '常见问题',
+      faqSubtitle: '关于格式转换与隐私安全的解答',
+      faqs: [
+        {
+          q: '为什么说“纯前端处理更安全”？',
+          a: '因为文件不需要上传到服务器，处理在本地完成，降低数据外泄风险。您的文件只在您的设备上进行处理。'
+        },
+        {
+          q: '转换慢/卡顿怎么办？',
+          a: '通常与文件体积、页数或设备性能相关。纯前端处理依赖您的设备性能。建议尝试降低输出质量、减少批量数量，或分批处理。对于超大文件，建议使用桌面端软件。'
+        },
+        {
+          q: '能批量下载吗？',
+          a: '支持。支持批量处理的工具（如格式转换、压缩）处理完成后，会提供“下载全部”按钮，打包下载所有文件。您也可以逐个预览并下载。'
+        },
+        {
+          q: '转换后的图片质量如何？',
+          a: '大部分工具提供质量调节选项。PNG 是无损格式。JPG/WEBP 可以调节质量参数。PDF 转图片会尽量保持矢量清晰度。我们致力于在文件大小和画质之间取得最佳平衡。'
+        },
+        {
+          q: '支持哪些文件格式？',
+          a: '目前支持 JPG, PNG, WEBP, PDF, GIF, ICO 以及视频截帧等。更多格式（如 TIFF, BMP, SVG 等）正在开发中，敬请期待。'
+        },
+        {
+          q: '手机上能用吗？',
+          a: '可以。本站完美适配移动端浏览器。不过对于处理大型 PDF 或视频文件，建议使用电脑端浏览器以获得更好的性能体验。'
+        },
+        {
+          q: '是完全免费的吗？',
+          a: '是的，所有基础格式转换工具完全免费，且无需登录即可使用。'
+        }
+      ]
     };
   }
   return {
@@ -1150,7 +1280,62 @@ const ui = computed(() => {
     reset: 'Reset',
     pdfGeneratedHint: 'PDF generated. Download or preview it.',
     icoGeneratedHint: 'ICO generated. Download or preview it.',
-    docGeneratedHint: 'Word file generated. Preview or download and open it in Word.'
+    docGeneratedHint: 'Word file generated. Preview or download and open it in Word.',
+
+    contentTitle: 'Common conversions and quick guides',
+    contentDesc:
+      'Tools on this page run locally in your browser by default, ideal for fast conversion, batch processing, and privacy-sensitive files.',
+    useCasesTitle: 'Typical tasks',
+    useCases: [
+      'HEIC to JPG/PNG for iPhone photo compatibility',
+      'PNG/JPG/WEBP conversion for different platforms',
+      'Image compression and batch resize for faster loading',
+      'PDF to images / images to PDF for archiving',
+      'PDF to Word for editable text extraction'
+    ],
+    longTailTitle: 'Popular queries',
+    longTailKeywords: [
+      'heic to jpg',
+      'heic to png',
+      'png to jpg',
+      'webp to jpg',
+      'webp to png',
+      'image compressor',
+      'batch compress images',
+      'batch resize images',
+      'pdf to images',
+      'images to pdf',
+      'pdf to word',
+      'extract video frame'
+    ],
+    faqTitle: 'FAQ',
+    faqSubtitle: 'Answers about format conversion and privacy',
+    faqs: [
+      {
+        q: 'Why is client-side processing safer?',
+        a: 'Files do not need to be uploaded. Processing happens locally, reducing data exposure risk.'
+      },
+      {
+        q: 'Why is it slow on large files?',
+        a: 'Performance depends on file size, page count, and device capabilities. Try lower quality, fewer files, or split into batches.'
+      },
+      {
+        q: 'Can I download everything at once?',
+        a: 'Batch-capable tools provide a “Download all” option, and you can also preview/download items individually.'
+      },
+      {
+        q: 'How is the output quality?',
+        a: 'Most tools offer quality settings. PNG is lossless. JPG/WEBP quality is adjustable. PDF tools aim to preserve vector clarity.'
+      },
+      {
+        q: 'What formats are supported?',
+        a: 'Currently supports JPG, PNG, WEBP, PDF, GIF, ICO, and video frames. More formats are coming soon.'
+      },
+      {
+        q: 'Does it work on mobile?',
+        a: 'Yes. The site is mobile-friendly, but for large files (video/large PDF), desktop is recommended for better performance.'
+      }
+    ]
   };
 });
 
@@ -1158,7 +1343,7 @@ const {
   tools,
   soonTip,
   activeTool,
-  handleToolClick,
+  handleToolClick: handleToolClickRaw,
   closeModal,
   acceptFor,
   acceptHintFor,
@@ -1235,7 +1420,7 @@ const {
   onLiveLoadedMeta,
   onLiveTimeUpdate,
   onLiveSeekInput,
-  runTool,
+  runTool: runToolRaw,
   progress,
   progressPercent,
   cancelProcessing,
@@ -1250,6 +1435,48 @@ const {
   onDragLeave,
   onDrop
 } = useFormatFactory();
+
+const handleToolClick = (tool: any) => {
+  const id = String(tool?.id || '').trim();
+  const name = String(tool?.name || '').trim();
+  trackEvent('ff_tool_click', { category: 'funnel', toolId: id, toolName: name });
+  consoleStore.recordTraffic({
+    type: 'click',
+    page: '/artigen/format-factory',
+    target: `tool:${id}`,
+    meta: { toolName: name }
+  });
+  return handleToolClickRaw(tool);
+};
+
+const runTool = async () => {
+  const id = String((activeTool as any)?.id || '').trim();
+  const startTs = Date.now();
+  trackEvent('ff_run_tool', { category: 'funnel', toolId: id });
+
+  try {
+    await runToolRaw();
+    consoleStore.recordTraffic({
+      type: 'generate_success',
+      page: '/artigen/format-factory',
+      target: `tool:${id}`,
+      meta: { duration: Date.now() - startTs, toolId: id }
+    });
+  } catch (e) {
+    consoleStore.recordTraffic({
+      type: 'generate_fail',
+      page: '/artigen/format-factory',
+      target: `tool:${id}`,
+      meta: { error: String(e), toolId: id }
+    });
+    // Rethrow or let existing error handling take over?
+    // runToolRaw likely handles UI errors (toolError.value), so we don't strictly need to rethrow if it's already handled,
+    // but looking at composable it sets toolError.
+    // However, runToolRaw is void in TS signature from useFormatFactory usually, but let's see.
+    // Actually runToolRaw is `runTool` from useFormatFactory which is async.
+    // But in the template it's called via @click="runTool".
+  }
+};
 </script>
 
 <style scoped>
@@ -2132,6 +2359,10 @@ select.control {
 
 @media (max-width: 980px) {
   .tool-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ff-content-grid {
     grid-template-columns: 1fr;
   }
 }

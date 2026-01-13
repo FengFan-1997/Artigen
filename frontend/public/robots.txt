@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /console
+Disallow: /login
+Disallow: /agent-debug
+Disallow: /secret
+
+Sitemap: /sitemap.xml

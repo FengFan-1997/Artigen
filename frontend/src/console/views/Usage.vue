@@ -3,15 +3,150 @@
     <a-typography-title :level="2">{{ ui.title }}</a-typography-title>
 
     <a-card>
-      <div style="margin-bottom: 16px; display: flex; gap: 16px; flex-wrap: wrap">
+      <div style="margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap">
         <a-input
           v-model:value="filterUserId"
           :placeholder="ui.userFilterPh"
           style="width: min(240px, 100%)"
         />
         <a-range-picker v-model:value="dateRange" />
+        <a-select
+          v-model:value="filterTrigger"
+          :options="triggerOptions"
+          :placeholder="ui.triggerPh"
+          allowClear
+          style="width: 160px"
+        />
+        <a-select
+          v-model:value="filterModel"
+          :options="modelOptions"
+          :placeholder="ui.modelPh"
+          allowClear
+          show-search
+          :filter-option="filterSelectOption"
+          style="width: 200px"
+        />
+        <a-select
+          v-model:value="filterStatus"
+          :options="statusOptions"
+          :placeholder="ui.statusPh"
+          allowClear
+          style="width: 160px"
+        />
+        <a-select
+          v-model:value="filterProvider"
+          :options="providerOptions"
+          :placeholder="ui.providerPh"
+          allowClear
+          style="width: 160px"
+        />
         <a-button type="primary" @click="fetchUsage" :loading="loading">{{ ui.filter }}</a-button>
+        <a-button @click="fetchAnalytics" :loading="analyticsLoading">{{
+          analyticsLoaded ? ui.refreshAnalytics : ui.loadAnalytics
+        }}</a-button>
+        <a-switch
+          v-model:checked="analyticsEnabled"
+          :checked-children="ui.analyticsOn"
+          :un-checked-children="ui.analyticsOff"
+          :disabled="!analyticsLoaded"
+        />
+        <a-button @click="exportCsv" :disabled="analyticsFilteredItems.length === 0">{{
+          ui.exportCsv
+        }}</a-button>
       </div>
+
+      <a-alert
+        v-if="analyticsEnabled"
+        type="info"
+        show-icon
+        :message="ui.analyticsTip(analyticsFilteredItems.length)"
+        style="margin-bottom: 16px"
+      />
+
+      <a-row :gutter="16" style="margin-bottom: 16px">
+        <a-col :xs="24" :sm="12" :md="8" :lg="6">
+          <a-card>
+            <a-statistic :title="ui.statRequests" :value="statRequests" />
+          </a-card>
+        </a-col>
+        <a-col :xs="24" :sm="12" :md="8" :lg="6">
+          <a-card>
+            <a-statistic :title="ui.statUsers" :value="statUsers" />
+          </a-card>
+        </a-col>
+        <a-col :xs="24" :sm="12" :md="8" :lg="6">
+          <a-card>
+            <a-statistic :title="ui.statCredits" :value="statCreditsSpent" :precision="2" />
+          </a-card>
+        </a-col>
+        <a-col :xs="24" :sm="12" :md="8" :lg="6">
+          <a-card>
+            <a-statistic :title="ui.statTokens" :value="statTokensTotal" />
+          </a-card>
+        </a-col>
+      </a-row>
+
+      <a-row :gutter="16" style="margin-bottom: 16px">
+        <a-col :xs="24" :sm="12" :md="8" :lg="6">
+          <a-card>
+            <a-statistic :title="ui.statSuccessRate" :value="statSuccessRate" suffix="%" />
+          </a-card>
+        </a-col>
+        <a-col :xs="24" :sm="12" :md="8" :lg="6">
+          <a-card>
+            <a-statistic :title="ui.statAvgLatency" :value="statAvgLatencyMs" suffix="ms" />
+          </a-card>
+        </a-col>
+        <a-col :xs="24" :sm="12" :md="8" :lg="6">
+          <a-card>
+            <a-statistic :title="ui.statP95Latency" :value="statP95LatencyMs" suffix="ms" />
+          </a-card>
+        </a-col>
+        <a-col :xs="24" :sm="12" :md="8" :lg="6">
+          <a-card>
+            <a-statistic :title="ui.statUniqueIp" :value="statUniqueIp" />
+          </a-card>
+        </a-col>
+      </a-row>
+
+      <a-card :title="ui.trendTitle" style="margin-bottom: 16px">
+        <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px">
+          <a-radio-group v-model:value="granularity">
+            <a-radio-button value="hour">{{ ui.byHour }}</a-radio-button>
+            <a-radio-button value="day">{{ ui.byDay }}</a-radio-button>
+          </a-radio-group>
+        </div>
+        <div style="height: 320px">
+          <v-chart class="chart" :option="trendChartOption" autoresize />
+        </div>
+      </a-card>
+
+      <a-row :gutter="16" style="margin-bottom: 16px">
+        <a-col :xs="24" :lg="12">
+          <a-card :title="ui.topModelsTitle">
+            <a-table
+              :columns="topModelsColumns"
+              :data-source="topModels"
+              row-key="key"
+              size="small"
+              :pagination="false"
+              :scroll="{ x: 520 }"
+            />
+          </a-card>
+        </a-col>
+        <a-col :xs="24" :lg="12">
+          <a-card :title="ui.topUsersTitle">
+            <a-table
+              :columns="topUsersColumns"
+              :data-source="topUsers"
+              row-key="key"
+              size="small"
+              :pagination="false"
+              :scroll="{ x: 520 }"
+            />
+          </a-card>
+        </a-col>
+      </a-row>
 
       <a-table
         :columns="columns"
@@ -73,10 +208,18 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
-import { useConsoleStore } from '@/stores/console';
+import { useConsoleStore, type AdminUsageLedgerItem } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import { message } from 'ant-design-vue';
+
+import { use } from 'echarts/core';
+import { CanvasRenderer } from 'echarts/renderers';
+import { LineChart, BarChart } from 'echarts/charts';
+import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components';
+import VChart from 'vue-echarts';
+
+use([CanvasRenderer, LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent]);
 
 const consoleStore = useConsoleStore();
 
@@ -88,6 +231,11 @@ const ui = computed(() =>
     ? {
         title: '使用记录',
         filter: '筛选',
+        loadAnalytics: '拉取更多用于分析',
+        refreshAnalytics: '刷新分析数据',
+        analyticsOn: '分析数据',
+        analyticsOff: '分页数据',
+        exportCsv: '导出 CSV',
         details: '详情',
         usageDetails: '用量详情',
         requestId: '请求 ID',
@@ -107,11 +255,34 @@ const ui = computed(() =>
         colDesc: '描述',
         colCredits: '点数',
         colAction: '操作',
-        userFilterPh: '可选：按用户 ID 过滤'
+        userFilterPh: '可选：按用户 ID 过滤',
+        triggerPh: '触发类型',
+        modelPh: '模型',
+        statusPh: '状态',
+        providerPh: 'Provider',
+        statRequests: '请求数',
+        statUsers: '用户数',
+        statCredits: '消耗点数',
+        statTokens: 'Tokens 总量',
+        statSuccessRate: '成功率',
+        statAvgLatency: '平均耗时',
+        statP95Latency: 'P95 耗时',
+        statUniqueIp: '独立 IP',
+        trendTitle: '趋势（请求数/消耗点数）',
+        byHour: '按小时',
+        byDay: '按天',
+        topModelsTitle: '模型 Top',
+        topUsersTitle: '用户 Top',
+        analyticsTip: (n: number) => `当前分析基于 ${n} 条记录（受筛选与拉取上限影响）`
       }
     : {
         title: 'Usage History',
         filter: 'Filter',
+        loadAnalytics: 'Load more for analytics',
+        refreshAnalytics: 'Refresh analytics',
+        analyticsOn: 'Analytics',
+        analyticsOff: 'Paged',
+        exportCsv: 'Export CSV',
         details: 'Details',
         usageDetails: 'Usage Details',
         requestId: 'Request ID',
@@ -131,7 +302,25 @@ const ui = computed(() =>
         colDesc: 'Description',
         colCredits: 'Credits',
         colAction: 'Action',
-        userFilterPh: 'Optional: filter by userId'
+        userFilterPh: 'Optional: filter by userId',
+        triggerPh: 'Trigger',
+        modelPh: 'Model',
+        statusPh: 'Status',
+        providerPh: 'Provider',
+        statRequests: 'Requests',
+        statUsers: 'Users',
+        statCredits: 'Credits Spent',
+        statTokens: 'Tokens Total',
+        statSuccessRate: 'Success Rate',
+        statAvgLatency: 'Avg Latency',
+        statP95Latency: 'P95 Latency',
+        statUniqueIp: 'Unique IP',
+        trendTitle: 'Trend (Requests / Credits)',
+        byHour: 'Hourly',
+        byDay: 'Daily',
+        topModelsTitle: 'Top Models',
+        topUsersTitle: 'Top Users',
+        analyticsTip: (n: number) => `Analytics based on ${n} rows (limited by fetch cap & filters)`
       }
 );
 
@@ -175,6 +364,16 @@ const showAdminError = (e: any) => {
 const loading = ref(false);
 const dateRange = ref<any[]>([]);
 const filterUserId = ref('');
+const filterTrigger = ref<string | undefined>(undefined);
+const filterModel = ref<string | undefined>(undefined);
+const filterStatus = ref<string | undefined>(undefined);
+const filterProvider = ref<string | undefined>(undefined);
+const granularity = ref<'hour' | 'day'>('day');
+
+const analyticsLoading = ref(false);
+const analyticsEnabled = ref(false);
+const analyticsItems = ref<AdminUsageLedgerItem[]>([]);
+
 const pagination = ref({
   current: 1,
   pageSize: 20,
@@ -205,6 +404,250 @@ const items = computed(() => {
   return consoleStore.adminUsage;
 });
 
+const analyticsLoaded = computed(() => analyticsItems.value.length > 0);
+
+const filterSelectOption = (input: string, option: any) => {
+  const q = String(input || '')
+    .trim()
+    .toLowerCase();
+  if (!q) return true;
+  const label = String(option?.label ?? option?.value ?? '')
+    .trim()
+    .toLowerCase();
+  return label.includes(q);
+};
+
+const toNum = (v: any) => {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const toKey = (v: any) => String(v ?? '').trim();
+
+const isSuccess = (status: any) => {
+  const s = String(status ?? '')
+    .trim()
+    .toLowerCase();
+  if (!s) return true;
+  if (s === 'ok' || s === 'success') return true;
+  if (/^2\d\d$/.test(s)) return true;
+  if (s.startsWith('2')) return true;
+  return false;
+};
+
+const analyticsBaseItems = computed<AdminUsageLedgerItem[]>(() => {
+  return analyticsEnabled.value ? analyticsItems.value : consoleStore.adminUsage;
+});
+
+const analyticsFilteredItems = computed<AdminUsageLedgerItem[]>(() => {
+  const trig = toKey(filterTrigger.value);
+  const model = toKey(filterModel.value);
+  const status = toKey(filterStatus.value);
+  const provider = toKey(filterProvider.value);
+  return analyticsBaseItems.value.filter((it) => {
+    if (trig && toKey(it.trigger) !== trig) return false;
+    if (model && toKey(it.model) !== model) return false;
+    if (status && toKey(it.status) !== status) return false;
+    if (provider && toKey(it.provider) !== provider) return false;
+    return true;
+  });
+});
+
+const buildOptions = (values: string[]) => {
+  const uniq = Array.from(new Set(values.filter((v) => v.trim()))).sort((a, b) =>
+    a.localeCompare(b)
+  );
+  return uniq.map((v) => ({ value: v, label: v }));
+};
+
+const triggerOptions = computed(() =>
+  buildOptions(analyticsBaseItems.value.map((it) => toKey(it.trigger)))
+);
+const modelOptions = computed(() =>
+  buildOptions(analyticsBaseItems.value.map((it) => toKey(it.model)))
+);
+const statusOptions = computed(() =>
+  buildOptions(analyticsBaseItems.value.map((it) => toKey(it.status)))
+);
+const providerOptions = computed(() =>
+  buildOptions(analyticsBaseItems.value.map((it) => toKey(it.provider)))
+);
+
+const statRequests = computed(() => analyticsFilteredItems.value.length);
+
+const statUsers = computed(() => {
+  const set = new Set<string>();
+  analyticsFilteredItems.value.forEach((it) => {
+    const uid = toKey(it.userId);
+    if (uid) set.add(uid);
+  });
+  return set.size;
+});
+
+const statUniqueIp = computed(() => {
+  const set = new Set<string>();
+  analyticsFilteredItems.value.forEach((it) => {
+    const ip = toKey(it.ip);
+    if (ip) set.add(ip);
+  });
+  return set.size;
+});
+
+const statCreditsSpent = computed(() => {
+  let sum = 0;
+  analyticsFilteredItems.value.forEach((it) => {
+    const d = toNum(it.creditsDelta);
+    if (d < 0) sum += Math.abs(d);
+  });
+  return sum;
+});
+
+const statTokensTotal = computed(() => {
+  let sum = 0;
+  analyticsFilteredItems.value.forEach((it) => {
+    const t = toNum(it.tokensTotal);
+    sum += t > 0 ? t : toNum(it.tokensIn) + toNum(it.tokensOut);
+  });
+  return sum;
+});
+
+const statSuccessRate = computed(() => {
+  const total = analyticsFilteredItems.value.length;
+  if (total <= 0) return 0;
+  let ok = 0;
+  analyticsFilteredItems.value.forEach((it) => {
+    if (isSuccess(it.status)) ok += 1;
+  });
+  return Math.round((ok / total) * 1000) / 10;
+});
+
+const latencyValues = computed(() => {
+  const list: number[] = [];
+  analyticsFilteredItems.value.forEach((it) => {
+    const d = toNum(it.durationMs);
+    if (d > 0) list.push(d);
+  });
+  list.sort((a, b) => a - b);
+  return list;
+});
+
+const statAvgLatencyMs = computed(() => {
+  const list = latencyValues.value;
+  if (list.length === 0) return 0;
+  const sum = list.reduce((a, b) => a + b, 0);
+  return Math.round(sum / list.length);
+});
+
+const statP95LatencyMs = computed(() => {
+  const list = latencyValues.value;
+  if (list.length === 0) return 0;
+  const idx = Math.min(list.length - 1, Math.floor(list.length * 0.95) - 1);
+  return Math.round(list[Math.max(0, idx)]);
+});
+
+const toTimeBucketKey = (ts: number, mode: 'hour' | 'day') => {
+  const d = new Date(ts);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  if (mode === 'day') return `${yyyy}-${mm}-${dd}`;
+  const hh = String(d.getHours()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:00`;
+};
+
+const trendSeries = computed(() => {
+  const map = new Map<string, { req: number; credits: number }>();
+  const mode = granularity.value;
+  analyticsFilteredItems.value.forEach((it) => {
+    const key = toTimeBucketKey(toNum(it.ts), mode);
+    const prev = map.get(key) || { req: 0, credits: 0 };
+    prev.req += 1;
+    const d = toNum(it.creditsDelta);
+    if (d < 0) prev.credits += Math.abs(d);
+    map.set(key, prev);
+  });
+  const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
+  return {
+    keys,
+    req: keys.map((k) => map.get(k)!.req),
+    credits: keys.map((k) => Math.round(map.get(k)!.credits * 100) / 100)
+  };
+});
+
+const trendChartOption = computed(() => {
+  const series = trendSeries.value;
+  return {
+    tooltip: { trigger: 'axis' },
+    legend: { data: [ui.value.statRequests, ui.value.statCredits] },
+    grid: { left: 48, right: 48, top: 40, bottom: 36 },
+    xAxis: { type: 'category', data: series.keys, axisLabel: { hideOverlap: true } },
+    yAxis: [
+      { type: 'value', name: ui.value.statRequests },
+      { type: 'value', name: ui.value.statCredits }
+    ],
+    series: [
+      { name: ui.value.statRequests, data: series.req, type: 'bar', yAxisIndex: 0 },
+      {
+        name: ui.value.statCredits,
+        data: series.credits,
+        type: 'line',
+        smooth: true,
+        yAxisIndex: 1
+      }
+    ]
+  };
+});
+
+type TopRow = { key: string; count: number; credits: number; tokens: number };
+
+const topModels = computed<TopRow[]>(() => {
+  const map = new Map<string, TopRow>();
+  analyticsFilteredItems.value.forEach((it) => {
+    const key = toKey(it.model) || '-';
+    const prev = map.get(key) || { key, count: 0, credits: 0, tokens: 0 };
+    prev.count += 1;
+    const d = toNum(it.creditsDelta);
+    if (d < 0) prev.credits += Math.abs(d);
+    prev.tokens += toNum(it.tokensTotal) || toNum(it.tokensIn) + toNum(it.tokensOut);
+    map.set(key, prev);
+  });
+  return Array.from(map.values())
+    .sort((a, b) => b.count - a.count || b.credits - a.credits)
+    .slice(0, 10)
+    .map((r) => ({ ...r, credits: Math.round(r.credits * 100) / 100 }));
+});
+
+const topUsers = computed<TopRow[]>(() => {
+  const map = new Map<string, TopRow>();
+  analyticsFilteredItems.value.forEach((it) => {
+    const key = toKey(it.userId) || '-';
+    const prev = map.get(key) || { key, count: 0, credits: 0, tokens: 0 };
+    prev.count += 1;
+    const d = toNum(it.creditsDelta);
+    if (d < 0) prev.credits += Math.abs(d);
+    prev.tokens += toNum(it.tokensTotal) || toNum(it.tokensIn) + toNum(it.tokensOut);
+    map.set(key, prev);
+  });
+  return Array.from(map.values())
+    .sort((a, b) => b.credits - a.credits || b.count - a.count)
+    .slice(0, 10)
+    .map((r) => ({ ...r, credits: Math.round(r.credits * 100) / 100 }));
+});
+
+const topModelsColumns = computed(() => [
+  { title: ui.value.model, dataIndex: 'key', key: 'key', ellipsis: true },
+  { title: ui.value.statRequests, dataIndex: 'count', key: 'count', width: 100, align: 'right' },
+  { title: ui.value.statCredits, dataIndex: 'credits', key: 'credits', width: 120, align: 'right' },
+  { title: ui.value.statTokens, dataIndex: 'tokens', key: 'tokens', width: 140, align: 'right' }
+]);
+
+const topUsersColumns = computed(() => [
+  { title: ui.value.userId, dataIndex: 'key', key: 'key', ellipsis: true },
+  { title: ui.value.statRequests, dataIndex: 'count', key: 'count', width: 100, align: 'right' },
+  { title: ui.value.statCredits, dataIndex: 'credits', key: 'credits', width: 120, align: 'right' },
+  { title: ui.value.statTokens, dataIndex: 'tokens', key: 'tokens', width: 140, align: 'right' }
+]);
+
 onMounted(() => {
   consoleStore.init();
   void fetchUsage();
@@ -232,6 +675,41 @@ const fetchUsage = async () => {
   }
 };
 
+const fetchAnalytics = async () => {
+  if (analyticsLoading.value) return;
+  analyticsLoading.value = true;
+  try {
+    const from = dateRange.value?.[0]?.valueOf ? dateRange.value[0].valueOf() : undefined;
+    const to = dateRange.value?.[1]?.valueOf ? dateRange.value[1].valueOf() : undefined;
+    const cap = 2000;
+    const pageSize = 200;
+    let offset = 0;
+    const all: AdminUsageLedgerItem[] = [];
+    while (all.length < cap) {
+      await consoleStore.fetchAdminUsageLedger({
+        userId: filterUserId.value,
+        from,
+        to,
+        limit: pageSize,
+        offset
+      });
+      const batch = Array.isArray(consoleStore.adminUsage) ? consoleStore.adminUsage : [];
+      if (batch.length === 0) break;
+      all.push(...batch);
+      offset += batch.length;
+      if (batch.length < pageSize) break;
+      if (offset >= consoleStore.adminUsageTotal && consoleStore.adminUsageTotal > 0) break;
+    }
+    analyticsItems.value = all.slice(0, cap);
+    analyticsEnabled.value = true;
+    void fetchUsage();
+  } catch (e) {
+    showAdminError(e);
+  } finally {
+    analyticsLoading.value = false;
+  }
+};
+
 const handleTableChange = (pag: any) => {
   pagination.value.current = pag.current;
   pagination.value.pageSize = pag.pageSize;
@@ -242,4 +720,58 @@ const showDetails = (record: any) => {
   currentRecord.value = record;
   detailsVisible.value = true;
 };
+
+const exportCsv = () => {
+  const rows = analyticsFilteredItems.value;
+  const headers = [
+    'ts',
+    'requestId',
+    'userId',
+    'trigger',
+    'provider',
+    'model',
+    'status',
+    'durationMs',
+    'tokensIn',
+    'tokensOut',
+    'tokensTotal',
+    'creditsDelta',
+    'ip',
+    'usedUrl'
+  ];
+  const esc = (v: any) => {
+    const s = String(v ?? '');
+    const needs = /[",\n\r]/.test(s);
+    const t = s.replace(/"/g, '""');
+    return needs ? `"${t}"` : t;
+  };
+  const lines = [
+    headers.join(','),
+    ...rows.map((r) =>
+      headers
+        .map((h) => {
+          const val = (r as any)[h];
+          if (h === 'ts') return esc(val ? new Date(toNum(val)).toISOString() : '');
+          return esc(val);
+        })
+        .join(',')
+    )
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `usage_${Date.now()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 </script>
+
+<style scoped>
+.chart {
+  height: 100%;
+  width: 100%;
+}
+</style>

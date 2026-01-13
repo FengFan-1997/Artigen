@@ -110,6 +110,15 @@ export interface GeneratedContent {
   timestamp: number;
 }
 
+export interface TrafficEvent {
+  id: string;
+  type: 'page_view' | 'click' | 'conversion' | 'generate_success' | 'generate_fail';
+  page: string;
+  target?: string;
+  meta?: any;
+  timestamp: number;
+}
+
 export type AdminWallet = {
   available?: number;
   frozen?: number;
@@ -210,6 +219,7 @@ export const useConsoleStore = defineStore('console', {
     transactions: [] as Transaction[],
     logs: [] as ActivityLog[],
     generatedContent: [] as GeneratedContent[],
+    trafficStats: [] as TrafficEvent[],
     adminKey: '' as string,
     adminUsers: [] as AdminUserItem[],
     adminUsersTotal: 0,
@@ -257,6 +267,7 @@ export const useConsoleStore = defineStore('console', {
           this.transactions = data.transactions || [];
           this.logs = data.logs || [];
           this.generatedContent = data.generatedContent || [];
+          this.trafficStats = data.trafficStats || [];
         } catch (e) {
           console.error('Failed to load console store', e);
         }
@@ -488,6 +499,15 @@ export const useConsoleStore = defineStore('console', {
       return { ok: true as const, total: this.adminOrdersTotal };
     },
 
+    recordTraffic(event: Omit<TrafficEvent, 'id' | 'timestamp'>) {
+      this.trafficStats.push({
+        ...event,
+        id: crypto.randomUUID(),
+        timestamp: Date.now()
+      });
+      this.save();
+    },
+
     save() {
       localStorage.setItem(
         STORAGE_KEY,
@@ -495,7 +515,8 @@ export const useConsoleStore = defineStore('console', {
           users: this.users,
           transactions: this.transactions,
           logs: this.logs,
-          generatedContent: this.generatedContent
+          generatedContent: this.generatedContent,
+          trafficStats: this.trafficStats
         })
       );
     },

@@ -548,6 +548,18 @@
                 </div>
               </div>
             </button>
+
+            <div class="guide-card">
+              <div class="guide-title">{{ ui.guideTitle }}</div>
+              <div class="guide-desc">{{ ui.guideDesc }}</div>
+              <div class="guide-chips">
+                <span v-for="k in ui.guideKeywords" :key="k" class="guide-chip">{{ k }}</span>
+              </div>
+              <details v-for="f in ui.guideFaqs" :key="f.q" class="guide-faq">
+                <summary class="guide-q">{{ f.q }}</summary>
+                <div class="guide-a">{{ f.a }}</div>
+              </details>
+            </div>
           </div>
         </aside>
       </div>
@@ -571,6 +583,7 @@ import {
 } from '@/login/session';
 import { useLoginModel } from '@/stores';
 import { useLanguageStore } from '@/stores/language';
+import { trackEvent } from '@/utils/analytics';
 import {
   getCreditsBalance,
   type CreditsBalance,
@@ -649,7 +662,26 @@ const ui = computed(() => {
       sendHint: 'Ctrl + Enter 发送',
       inputPlaceholder: '描述你想要的产品图，比如：“一瓶精华液放在冰块上，背景是阳光海滩”...',
       dropHint: '拖拽图片到这里松开即可添加',
-      loadingText: '正在处理，请耐心等待…'
+      loadingText: '正在处理，请耐心等待…',
+      guideTitle: '使用指南 / 长尾关键词',
+      guideDesc: '做电商产品图建议先填产品档案；有参考图用图生图更稳定；只描述想法用文生图更快。',
+      guideKeywords: [
+        '电商产品图生成',
+        '主图白底',
+        '场景图生成',
+        '图生图',
+        '文生图',
+        '提示词优化',
+        '参考图风格迁移'
+      ],
+      guideFaqs: [
+        { q: '如何提升一致性？', a: '上传参考图，固定风格描述，并尽量复用同一套产品档案字段。' },
+        { q: '如何减少扣费浪费？', a: '先用短提示词快速试方向，再补充细节；不满意及时停止生成。' },
+        {
+          q: '需要买点数吗？',
+          a: '未登录无法生成；生成会扣点数，具体扣费以页面提示与实际扣费为准。'
+        }
+      ]
     };
   }
   return {
@@ -711,7 +743,33 @@ const ui = computed(() => {
     inputPlaceholder:
       'Describe your scene, e.g. a sparkling soda on ice cubes with a sunny beach background...',
     dropHint: 'Drop image here to add',
-    loadingText: 'Processing, please wait…'
+    loadingText: 'Processing, please wait…',
+    guideTitle: 'Quick guide / long-tail queries',
+    guideDesc:
+      'For commerce visuals, fill the product profile first. Use image-to-image for higher consistency; use text-to-image for fast ideation.',
+    guideKeywords: [
+      'product image generator',
+      'white background hero image',
+      'scene image generation',
+      'image-to-image',
+      'text-to-image',
+      'prompt optimizer',
+      'style transfer'
+    ],
+    guideFaqs: [
+      {
+        q: 'How to improve consistency?',
+        a: 'Upload reference images, keep style wording stable, and reuse the same product profile.'
+      },
+      {
+        q: 'How to avoid wasting credits?',
+        a: 'Test directions with short prompts first, then add details. Stop early if it’s off.'
+      },
+      {
+        q: 'Do I need credits?',
+        a: 'You must be logged in to generate. Runs consume credits; see the UI for the latest costs.'
+      }
+    ]
   };
 });
 
@@ -1565,6 +1623,14 @@ const doPrimary = async () => {
     return;
   }
 
+  trackEvent('ai_generate_start', {
+    category: 'funnel',
+    deepMode: !!deepMode.value,
+    model: String(selectedModelId.value || '').trim(),
+    hasRef: previewFiles.value.filter((f) => !!f).length > 0,
+    hasLogo: !!logoFile.value
+  });
+
   const getImgInputs = async () => {
     const files: File[] = [];
     for (const f of previewFiles.value) if (f) files.push(f);
@@ -1623,17 +1689,42 @@ const doPrimary = async () => {
         if (abortLike) {
           const msg = humanizeImgError(code || 'ABORTED');
           setCancelNoticeForHistory(requestId, msg);
+          trackEvent('ai_generate_abort', {
+            category: 'funnel',
+            error: code || 'ABORTED',
+            model: String(selectedModelId.value || '').trim(),
+            deepMode: !!deepMode.value
+          });
           return { ok: false as const, url: '' };
         }
         error.value = humanizeImgError(code);
+        trackEvent('ai_generate_fail', {
+          category: 'funnel',
+          error: code || 'FAILED',
+          model: String(selectedModelId.value || '').trim(),
+          deepMode: !!deepMode.value
+        });
         return { ok: false as const, url: '' };
       }
       const url = String(res.images?.[0]?.url || '').trim();
       const resolvedUrl = resolveRemoteUrl(url);
       if (!resolvedUrl) {
         error.value = humanizeImgError('EMPTY_IMAGE_RESULT');
+        trackEvent('ai_generate_fail', {
+          category: 'funnel',
+          error: 'EMPTY_IMAGE_RESULT',
+          model: String(selectedModelId.value || '').trim(),
+          deepMode: !!deepMode.value
+        });
         return { ok: false as const, url: '' };
       }
+      trackEvent('ai_generate_success', {
+        category: 'funnel',
+        model: String(selectedModelId.value || '').trim(),
+        deepMode: !!deepMode.value,
+        hasRef: previewFiles.value.filter((f) => !!f).length > 0,
+        hasLogo: !!logoFile.value
+      });
       return { ok: true as const, url: resolvedUrl };
     };
 
@@ -1747,6 +1838,13 @@ const doPrimary = async () => {
 
 const onPrimary = async () => {
   if (!ensureAuthed(() => onPrimary())) return;
+  trackEvent('ai_generate_click', {
+    category: 'funnel',
+    deepMode: !!deepMode.value,
+    model: String(selectedModelId.value || '').trim(),
+    hasRef: previewFiles.value.filter((f) => !!f).length > 0,
+    hasLogo: !!logoFile.value
+  });
   await doPrimary();
 };
 
@@ -3847,6 +3945,74 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   font-size: 10px;
   opacity: 0.7;
+}
+
+.guide-card {
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.guide-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-bottom: 8px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.guide-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+
+.guide-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.guide-chip {
+  font-size: 11px;
+  color: #ccff00;
+  border: 1px solid rgba(204, 255, 0, 0.25);
+  background: rgba(204, 255, 0, 0.08);
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.guide-faq {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 10px;
+  padding: 10px 10px;
+  margin-top: 10px;
+}
+
+.guide-q {
+  cursor: pointer;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 800;
+  list-style: none;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.guide-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.guide-a {
+  margin-top: 10px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.7;
 }
 .right-footer {
   padding: 16px;

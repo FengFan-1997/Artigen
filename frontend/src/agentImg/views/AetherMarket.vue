@@ -207,6 +207,55 @@
         </div>
       </div>
     </div>
+
+    <!-- Info Section (SEO) -->
+    <div class="info-section">
+      <div class="info-container">
+        <h2 class="info-title">{{ ui.contentTitle }}</h2>
+        <p class="info-desc">{{ ui.contentDesc }}</p>
+
+        <div class="info-grid">
+          <div class="info-card">
+            <div class="info-card-title">> {{ ui.useCasesTitle }}</div>
+            <ul class="info-list">
+              <li v-for="(item, idx) in ui.useCases" :key="idx" class="info-list-item">
+                <span class="info-list-icon">#</span>
+                {{ item }}
+              </li>
+            </ul>
+          </div>
+
+          <div class="info-card">
+            <div class="info-card-title">> {{ ui.longTailTitle }}</div>
+            <div class="info-chips">
+              <span v-for="(chip, idx) in ui.longTailKeywords" :key="idx" class="info-chip">
+                {{ chip }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FAQ Section -->
+    <div class="faq-section">
+      <div class="faq-left">
+        <div class="faq-title-large">{{ ui.faqTitle }}</div>
+        <div class="faq-subtitle">{{ ui.faqSubtitle }}</div>
+      </div>
+      <div class="faq-list">
+        <details v-for="f in ui.faqs" :key="f.q" class="faq-item">
+          <summary class="faq-q">
+            <span class="q-text">{{ f.q }}</span>
+            <span class="q-icon">+</span>
+          </summary>
+          <div class="faq-a-wrapper">
+            <div class="faq-a">{{ f.a }}</div>
+          </div>
+        </details>
+      </div>
+    </div>
+
     <GlobalFooter />
 
     <Teleport to="body">
@@ -312,6 +361,8 @@ import { useLoginModel } from '@/stores';
 import { useRoute, useRouter } from 'vue-router';
 import { createPayOrder, getCreditsBalance, type PayPackageId } from '@/points';
 import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import { useConsoleStore } from '@/stores/console';
+import { trackEvent } from '@/utils/analytics';
 
 const PACK_CREDITS: Record<PayPackageId, number> = {
   starter: 400,
@@ -341,6 +392,8 @@ const getPrice = (cnyPrice: number) => {
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 const loginStore = useLoginModel();
+const consoleStore = useConsoleStore();
+
 const route = useRoute();
 const router = useRouter();
 
@@ -401,6 +454,11 @@ const onKeyDown = (e: KeyboardEvent) => {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeyDown);
+  consoleStore.recordTraffic({
+    type: 'page_view',
+    page: '/artigen/market',
+    meta: { referrer: document.referrer }
+  });
 });
 
 onBeforeUnmount(() => {
@@ -471,6 +529,13 @@ const payHintText = computed(() => {
 const openPayUrl = () => {
   const u = String(payUrl.value || '').trim();
   if (!u) return;
+  trackEvent('market_open_pay_url', { category: 'conversion', orderId: payOrderId.value });
+  consoleStore.recordTraffic({
+    type: 'click',
+    page: '/artigen/market',
+    target: 'open_pay_url_btn',
+    meta: { orderId: payOrderId.value }
+  });
   try {
     window.open(u, '_blank', 'noopener,noreferrer');
   } catch {
@@ -509,6 +574,15 @@ const copyPayValue = async (value: string, key: 'userId' | 'orderId') => {
 };
 
 const checkPaidOnce = async () => {
+  if (!payOrderId.value) return;
+  trackEvent('market_check_paid_click', { category: 'conversion', orderId: payOrderId.value });
+  consoleStore.recordTraffic({
+    type: 'click',
+    page: '/artigen/market',
+    target: 'check_paid_btn',
+    meta: { orderId: payOrderId.value }
+  });
+
   payChecking.value = true;
   try {
     const base = baselineCredits.value;
@@ -630,6 +704,45 @@ const ui = computed(() => {
       ultimateFeature3: '提前体验新工具',
       ultimateFeature4: '加入核心用户群',
       ultimateExpertService: '专家服务',
+      contentTitle: '创作指南',
+      contentDesc: '专业级 AI 绘画平台，释放您的无限创意。',
+      useCasesTitle: '应用场景',
+      useCases: [
+        '自媒体运营 (小红书/公众号配图)',
+        '品牌设计 (Logo/海报/包装)',
+        '游戏开发 (角色立绘/场景概念)',
+        '电商营销 (商品图/AI 模特)',
+        '个人娱乐 (二次元头像/壁纸)'
+      ],
+      longTailTitle: '热门关键词',
+      longTailKeywords: [
+        'AI绘画',
+        'Stable Diffusion',
+        'Midjourney平替',
+        '二次元',
+        '文生图',
+        '图生图',
+        '4K高清',
+        '写实人像'
+      ],
+      faqTitle: '常见问题',
+      faqSubtitle: '关于版权、画质与充值的解答',
+      faqs: [
+        { q: '生成的图片可以商用吗？', a: '可以。购买套餐的用户拥有生成内容的完整商业使用权。' },
+        {
+          q: '生成失败会扣点数吗？',
+          a: '不会。如果因系统原因导致生成失败，点数会自动退回您的账户。'
+        },
+        {
+          q: '如何获得更高清的图片？',
+          a: '标准版支持 1024px 输出，Pro/旗舰版支持 4K 超分放大功能。'
+        },
+        {
+          q: '支持手机端使用吗？',
+          a: '完美支持。我们的界面已针对手机浏览器进行深度适配，随时随地创作。'
+        },
+        { q: '点数有效期是多久？', a: '充值点数永久有效。赠送的点数通常有 30 天有效期。' }
+      ],
       payTitle: '完成支付',
       paySub:
         '打开支付页面后通常无需手动填写备注；如支付页未自动带出订单信息，可粘贴：userId=<你的用户ID> orderId=<订单号>。支付完成后系统会自动检测到账。',
@@ -690,6 +803,51 @@ const ui = computed(() => {
     ultimateFeature3: 'Early access to new tools',
     ultimateFeature4: 'Join the core group',
     ultimateExpertService: 'Expert service',
+    contentTitle: 'Creative Guide',
+    contentDesc: 'Professional AI art platform to unleash your creativity.',
+    useCasesTitle: 'Use Cases',
+    useCases: [
+      'Social Media (Instagram/TikTok)',
+      'Brand Design (Logo/Poster)',
+      'Game Assets (Characters/Scenes)',
+      'E-commerce (Product Photos/AI Models)',
+      'Personal Fun (Avatars/Wallpapers)'
+    ],
+    longTailTitle: 'Popular Keywords',
+    longTailKeywords: [
+      'AI Art',
+      'Stable Diffusion',
+      'Midjourney Alternative',
+      'Anime',
+      'Text-to-Image',
+      'Img-to-Img',
+      '4K HD',
+      'Photorealistic'
+    ],
+    faqTitle: 'FAQs',
+    faqSubtitle: 'Answers about copyright, quality, and credits',
+    faqs: [
+      {
+        q: 'Can I use images commercially?',
+        a: 'Yes. Paid users own full commercial rights to their generated content.'
+      },
+      {
+        q: 'Will failed generations cost credits?',
+        a: 'No. Credits are automatically refunded if generation fails due to system errors.'
+      },
+      {
+        q: 'How to get higher resolution?',
+        a: 'Standard plan supports 1024px. Pro/Ultimate plans support 4K upscaling.'
+      },
+      {
+        q: 'Is it mobile friendly?',
+        a: 'Yes. Our interface is fully optimized for mobile browsers.'
+      },
+      {
+        q: 'Do credits expire?',
+        a: 'Purchased credits never expire. Bonus credits usually expire in 30 days.'
+      }
+    ],
     payTitle: 'Complete Payment',
     paySub:
       'Usually no manual remark is needed. If the payment page does not show order info, paste: userId=<your userId> orderId=<orderId>. We will auto-detect credits.',

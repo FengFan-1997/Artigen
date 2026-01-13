@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { loginRoutes } from '../login/routes';
+import { trackPageView } from '@/utils/analytics';
 
 const readRouteLockdown = () => {
   try {
@@ -320,6 +321,25 @@ const routes = [
     } satisfies RouteSeoMeta
   },
   {
+    path: '/artigen/tools',
+    name: 'seo-tools-landing',
+    component: () => import('../agentImg/views/SeoLanding.vue'),
+    meta: {
+      title: {
+        zh: '免费在线工具集 - 格式转换与AI工坊 - Artigen',
+        en: 'Free Online Tools - Format Factory & AI Workshop - Artigen'
+      },
+      description: {
+        zh: 'Artigen 提供一站式免费在线工具：图片格式转换（HEIC/WebP/PDF）、AI 文生图、图生图与电商素材生成。隐私安全，无需下载。',
+        en: 'One-stop free online tools by Artigen: Image format conversion (HEIC/WebP/PDF), AI text-to-image, and ecommerce assets. Privacy-first, no download.'
+      },
+      keywords: {
+        zh: '在线工具,免费格式转换,HEIC转JPG,PDF工具,AI绘图,文生图,在线修图,Artigen工具箱',
+        en: 'online tools,free format converter,heic to jpg,pdf tools,ai art generator,text to image,online photo editor,artigen toolkit'
+      }
+    } satisfies RouteSeoMeta
+  },
+  {
     path: '/artigen/usage',
     name: 'credits-usage',
     component: () => import('../agentImg/views/CreditsUsage.vue'),
@@ -510,6 +530,8 @@ router.afterEach((to) => {
       url: origin
     }
   });
+
+  trackPageView({ path: to.fullPath || to.path, title, location: url });
 });
 
 export default router;

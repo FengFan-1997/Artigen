@@ -1,5 +1,6 @@
 import { buildApiUrl } from '@/utils/api';
 import { getAuthToken, getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import { trackEvent } from '@/utils/analytics';
 
 export type CreditsBalance = {
   userId: string;
@@ -71,10 +72,26 @@ export type CreatePayOrderResult =
 
 export const createPayOrder = async (packageId: PayPackageId): Promise<CreatePayOrderResult> => {
   try {
-    if (!isLocalLoggedIn()) return { ok: false, error: 'LOGIN_REQUIRED' };
+    if (!isLocalLoggedIn()) {
+      trackEvent('pay_create_order_fail', {
+        category: 'funnel',
+        packageId,
+        error: 'LOGIN_REQUIRED'
+      });
+      return { ok: false, error: 'LOGIN_REQUIRED' };
+    }
     const userId = getCurrentUserId();
     const token = getAuthToken();
-    if (!userId || !token) return { ok: false, error: 'LOGIN_REQUIRED' };
+    if (!userId || !token) {
+      trackEvent('pay_create_order_fail', {
+        category: 'funnel',
+        packageId,
+        error: 'LOGIN_REQUIRED'
+      });
+      return { ok: false, error: 'LOGIN_REQUIRED' };
+    }
+
+    trackEvent('pay_create_order_start', { category: 'funnel', packageId });
     const res = await fetch(CREATE_ORDER_URL, {
       method: 'POST',
       headers: {
@@ -89,12 +106,21 @@ export const createPayOrder = async (packageId: PayPackageId): Promise<CreatePay
         typeof json?.error === 'string' && json.error.trim()
           ? json.error.trim()
           : 'CREATE_ORDER_FAILED';
+      trackEvent('pay_create_order_fail', { category: 'funnel', packageId, error: err });
       return { ok: false, error: err };
     }
     const orderId = typeof json?.orderId === 'string' ? json.orderId.trim() : '';
     const uid = typeof json?.userId === 'string' ? json.userId.trim() : '';
     const pid = typeof json?.packageId === 'string' ? json.packageId.trim() : '';
-    if (!orderId || !uid || !pid) return { ok: false, error: 'INVALID_RESPONSE' };
+    if (!orderId || !uid || !pid) {
+      trackEvent('pay_create_order_fail', {
+        category: 'funnel',
+        packageId,
+        error: 'INVALID_RESPONSE'
+      });
+      return { ok: false, error: 'INVALID_RESPONSE' };
+    }
+    trackEvent('pay_create_order_success', { category: 'funnel', packageId, orderId });
     return {
       ok: true,
       orderId,
@@ -105,6 +131,11 @@ export const createPayOrder = async (packageId: PayPackageId): Promise<CreatePay
       payUrl: typeof json?.payUrl === 'string' ? json.payUrl.trim() : ''
     };
   } catch (e: any) {
+    trackEvent('pay_create_order_fail', {
+      category: 'funnel',
+      packageId,
+      error: typeof e?.message === 'string' ? e.message : 'NETWORK_ERROR'
+    });
     return { ok: false, error: typeof e?.message === 'string' ? e.message : 'NETWORK_ERROR' };
   }
 };
