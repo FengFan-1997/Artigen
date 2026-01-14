@@ -1,0 +1,1264 @@
+{
+  "v": 1,
+  "items": [
+    {
+      "id": "evt_mkeakdl5_47d5e0bb",
+      "ts": 1768411530185,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console",
+        "title": "test"
+      },
+      "path": "",
+      "location": "http://localhost/test",
+      "referrer": "",
+      "userId": "",
+      "ip": "::1",
+      "ua": "node"
+    },
+    {
+      "id": "evt_mkeamo39_238ecc09",
+      "ts": 1768411637109,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console?ide_webview_request_time=1768411636041",
+        "path": "/console?ide_webview_request_time=1768411636041",
+        "title": "控制台总览 - Artigen",
+        "location": "http://localhost:4000/console?ide_webview_request_time=1768411636041"
+      },
+      "path": "",
+      "location": "http://localhost:4000/console?ide_webview_request_time=1768411636041",
+      "referrer": "",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeaqjs5_32cad0d8",
+      "ts": 1768411818149,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen",
+        "path": "/artigen",
+        "title": "Artigen - AI 图片工坊与格式工厂",
+        "location": "http://localhost:4000/artigen"
+      },
+      "path": "",
+      "location": "http://localhost:4000/artigen",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeaxauf_bc2a8193",
+      "ts": 1768412133159,
+      "eventType": "click",
+      "payload": {
+        "target": "credits_btn_test"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "",
+      "userId": "",
+      "ip": "::1",
+      "ua": "node"
+    },
+    {
+      "id": "evt_mkeb4b7n_63b91c72",
+      "ts": 1768412460227,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeb7fov_95bcb4fb",
+      "ts": 1768412605999,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/market",
+        "path": "/artigen/market",
+        "title": "算力商城 - Artigen",
+        "location": "http://localhost:4000/artigen/market"
+      },
+      "path": "",
+      "location": "http://localhost:4000/artigen/market",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkebdsa4_51eb4b0b",
+      "ts": 1768412902252,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkebj1d0_90da905e",
+      "ts": 1768413147300,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/market",
+        "path": "/artigen/market",
+        "title": "算力商城 - Artigen",
+        "location": "http://localhost:4000/artigen/market"
+      },
+      "path": "",
+      "location": "http://localhost:4000/artigen/market",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkecb1v5_20bcdfd2",
+      "ts": 1768414454321,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/format-factory",
+        "path": "/artigen/format-factory",
+        "title": "格式工厂 - Artigen",
+        "location": "http://localhost:4000/artigen/format-factory"
+      },
+      "path": "",
+      "location": "http://localhost:4000/artigen/format-factory",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkecb3ih_b00dd18e",
+      "ts": 1768414456457,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeer3qz_795bd984",
+      "ts": 1768418562491,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console?__reload=1768405399842",
+        "path": "/console?__reload=1768405399842",
+        "title": "控制台总览 - Artigen",
+        "location": "http://localhost:4000/console?__reload=1768405399842"
+      },
+      "path": "",
+      "location": "http://localhost:4000/console?__reload=1768405399842",
+      "referrer": "http://localhost:4000/console?__reload=1768405399842",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeermvb_aba74f2a",
+      "ts": 1768418587271,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen",
+        "path": "/artigen",
+        "title": "Artigen - AI 图片工坊与格式工厂",
+        "location": "http://localhost:4000/artigen"
+      },
+      "path": "",
+      "location": "http://localhost:4000/artigen",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeetk5p_73495d53",
+      "ts": 1768418677069,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeetr65_63da52aa",
+      "ts": 1768418686157,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/format-factory",
+        "path": "/artigen/format-factory",
+        "title": "格式工厂 - Artigen",
+        "location": "http://localhost:4000/artigen/format-factory"
+      },
+      "path": "",
+      "location": "http://localhost:4000/artigen/format-factory",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkef8s10_0dca99d6",
+      "ts": 1768419387108,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/format-factory",
+        "path": "/artigen/format-factory",
+        "title": "格式工厂 - Artigen",
+        "location": "http://localhost:4000/artigen/format-factory"
+      },
+      "path": "/artigen/format-factory",
+      "location": "http://localhost:4000/artigen/format-factory",
+      "referrer": "http://localhost:4000/artigen/format-factory",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg0aib_b65f6c73",
+      "ts": 1768420670771,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/format-factory",
+        "path": "/artigen/format-factory",
+        "title": "格式工厂 - Artigen",
+        "location": "http://localhost:4000/artigen/format-factory"
+      },
+      "path": "/artigen/format-factory",
+      "location": "http://localhost:4000/artigen/format-factory",
+      "referrer": "http://localhost:4000/artigen/format-factory",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg1267_0b4df1ad",
+      "ts": 1768420706623,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console?__reload=1768405399842",
+        "path": "/console?__reload=1768405399842",
+        "title": "控制台总览 - Artigen",
+        "location": "http://localhost:4000/console?__reload=1768405399842"
+      },
+      "path": "",
+      "location": "http://localhost:4000/console?__reload=1768405399842",
+      "referrer": "http://localhost:4000/console?__reload=1768405399842",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg15wl_903f81cb",
+      "ts": 1768420711461,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console?__reload=1768405383242",
+        "path": "/console?__reload=1768405383242",
+        "title": "Artigen",
+        "location": "http://localhost:4000/console?__reload=1768405383242"
+      },
+      "path": "",
+      "location": "http://localhost:4000/console?__reload=1768405383242",
+      "referrer": "http://localhost:4000/console",
+      "userId": "",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg18rv_0ab1c6a2",
+      "ts": 1768420715179,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console",
+        "path": "/console",
+        "title": "控制台总览 - Artigen",
+        "location": "http://localhost:4000/console"
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg19uz_23024595",
+      "ts": 1768420716587,
+      "eventType": "console_button_click",
+      "payload": {
+        "userId": "admin",
+        "path": "/console",
+        "label": "登 录",
+        "disabled": false
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg1fvt_3e3563ba",
+      "ts": 1768420724393,
+      "eventType": "console_button_click",
+      "payload": {
+        "userId": "admin",
+        "path": "/console",
+        "label": "登 录",
+        "disabled": false
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg1fwj_1e254371",
+      "ts": 1768420724419,
+      "eventType": "console_login_success",
+      "payload": {
+        "userId": "admin",
+        "mode": "account"
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg1h9e_2e5abe14",
+      "ts": 1768420726178,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "users",
+        "path": "/console/users",
+        "from": "/console"
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg1hby_a422baaa",
+      "ts": 1768420726270,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/users",
+        "path": "/console/users",
+        "title": "控制台用户管理 - Artigen",
+        "location": "http://localhost:4000/console/users"
+      },
+      "path": "/console/users",
+      "location": "http://localhost:4000/console/users",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg4h3g_e32d7982",
+      "ts": 1768420865932,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "audit",
+        "path": "/console/audit",
+        "from": "/console/users"
+      },
+      "path": "/console/users",
+      "location": "http://localhost:4000/console/users",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg4h68_960e96da",
+      "ts": 1768420866032,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/audit",
+        "path": "/console/audit",
+        "title": "控制台内容审计 - Artigen",
+        "location": "http://localhost:4000/console/audit"
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg4yhi_cb02d624",
+      "ts": 1768420888470,
+      "eventType": "console_button_click",
+      "payload": {
+        "userId": "admin",
+        "path": "/console/audit",
+        "label": "引用",
+        "disabled": false
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg4z0b_ef58c616",
+      "ts": 1768420889147,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg55o7_6250f835",
+      "ts": 1768420897783,
+      "eventType": "console_button_click",
+      "payload": {
+        "userId": "admin",
+        "path": "/console/audit",
+        "label": "下载",
+        "disabled": false
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg5c1o_e3029e78",
+      "ts": 1768420906044,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "home",
+        "path": "/",
+        "from": "/console/audit"
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg5c2x_7c8eece0",
+      "ts": 1768420906089,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen",
+        "path": "/artigen",
+        "title": "Artigen - AI 图片工坊与格式工厂",
+        "location": "http://localhost:4000/artigen"
+      },
+      "path": "/artigen",
+      "location": "http://localhost:4000/artigen",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg5def_eb0dfe6e",
+      "ts": 1768420907799,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/audit",
+        "path": "/console/audit",
+        "title": "控制台内容审计 - Artigen",
+        "location": "http://localhost:4000/console/audit"
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg5efy_bdc699e3",
+      "ts": 1768420909150,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "users",
+        "path": "/console/users",
+        "from": "/console/audit"
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg5eg9_2617194e",
+      "ts": 1768420909161,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/users",
+        "path": "/console/users",
+        "title": "控制台用户管理 - Artigen",
+        "location": "http://localhost:4000/console/users"
+      },
+      "path": "/console/users",
+      "location": "http://localhost:4000/console/users",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg5f7f_a6db3b8a",
+      "ts": 1768420910139,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "settings",
+        "path": "/console/settings",
+        "from": "/console/users"
+      },
+      "path": "/console/users",
+      "location": "http://localhost:4000/console/users",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg5f9e_e047a435",
+      "ts": 1768420910210,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/settings",
+        "path": "/console/settings",
+        "title": "控制台设置 - Artigen",
+        "location": "http://localhost:4000/console/settings"
+      },
+      "path": "/console/settings",
+      "location": "http://localhost:4000/console/settings",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg5ipw_923f9f8b",
+      "ts": 1768420914692,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "usage",
+        "path": "/console/usage",
+        "from": "/console/settings"
+      },
+      "path": "/console/settings",
+      "location": "http://localhost:4000/console/settings",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg5isw_0a224793",
+      "ts": 1768420914800,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/usage",
+        "path": "/console/usage",
+        "title": "控制台用量 - Artigen",
+        "location": "http://localhost:4000/console/usage"
+      },
+      "path": "/console/usage",
+      "location": "http://localhost:4000/console/usage",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg6d6m_79bdd7f8",
+      "ts": 1768420954174,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "billing",
+        "path": "/console/billing",
+        "from": "/console/usage"
+      },
+      "path": "/console/usage",
+      "location": "http://localhost:4000/console/usage",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg6d7q_bef593ec",
+      "ts": 1768420954214,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/billing",
+        "path": "/console/billing",
+        "title": "控制台计费 - Artigen",
+        "location": "http://localhost:4000/console/billing"
+      },
+      "path": "/console/billing",
+      "location": "http://localhost:4000/console/billing",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg6g5v_45d37a74",
+      "ts": 1768420958035,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "playground",
+        "path": "/console/playground",
+        "from": "/console/billing"
+      },
+      "path": "/console/billing",
+      "location": "http://localhost:4000/console/billing",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg6g7a_31f15270",
+      "ts": 1768420958086,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/playground",
+        "path": "/console/playground",
+        "title": "控制台试验场 - Artigen",
+        "location": "http://localhost:4000/console/playground"
+      },
+      "path": "/console/playground",
+      "location": "http://localhost:4000/console/playground",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg6kqn_aeb4eefd",
+      "ts": 1768420963967,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "dashboard",
+        "path": "/console",
+        "from": "/console/playground"
+      },
+      "path": "/console/playground",
+      "location": "http://localhost:4000/console/playground",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg6kqy_fe72f1a2",
+      "ts": 1768420963978,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console",
+        "path": "/console",
+        "title": "控制台总览 - Artigen",
+        "location": "http://localhost:4000/console"
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg8s0d_e94e0024",
+      "ts": 1768421066701,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "profile",
+        "path": "/console/settings",
+        "from": "/console"
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg8s0r_b9deb077",
+      "ts": 1768421066715,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/settings",
+        "path": "/console/settings",
+        "title": "控制台设置 - Artigen",
+        "location": "http://localhost:4000/console/settings"
+      },
+      "path": "/console/settings",
+      "location": "http://localhost:4000/console/settings",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg91g3_7dddfa5b",
+      "ts": 1768421078931,
+      "eventType": "console_logout",
+      "payload": {
+        "userId": "admin"
+      },
+      "path": "/console/settings",
+      "location": "http://localhost:4000/console/settings",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeg91hh_fa0fbe73",
+      "ts": 1768421078981,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console",
+        "path": "/console",
+        "title": "控制台总览 - Artigen",
+        "location": "http://localhost:4000/console"
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkega714_de765a3a",
+      "ts": 1768421132824,
+      "eventType": "console_button_click",
+      "payload": {
+        "path": "/console",
+        "label": "登 录",
+        "disabled": false
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkega71h_74c38ced",
+      "ts": 1768421132837,
+      "eventType": "console_login_success",
+      "payload": {
+        "userId": "admin",
+        "mode": "account"
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkega7yp_d3fc3dc8",
+      "ts": 1768421134033,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "users",
+        "path": "/console/users",
+        "from": "/console"
+      },
+      "path": "/console",
+      "location": "http://localhost:4000/console",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkega7yy_62e89808",
+      "ts": 1768421134042,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/users",
+        "path": "/console/users",
+        "title": "控制台用户管理 - Artigen",
+        "location": "http://localhost:4000/console/users"
+      },
+      "path": "/console/users",
+      "location": "http://localhost:4000/console/users",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkega8tk_d60f1d15",
+      "ts": 1768421135144,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "settings",
+        "path": "/console/settings",
+        "from": "/console/users"
+      },
+      "path": "/console/users",
+      "location": "http://localhost:4000/console/users",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkega8tu_d84ec207",
+      "ts": 1768421135154,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/settings",
+        "path": "/console/settings",
+        "title": "控制台设置 - Artigen",
+        "location": "http://localhost:4000/console/settings"
+      },
+      "path": "/console/settings",
+      "location": "http://localhost:4000/console/settings",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkega945_feb58695",
+      "ts": 1768421135525,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "usage",
+        "path": "/console/usage",
+        "from": "/console/settings"
+      },
+      "path": "/console/settings",
+      "location": "http://localhost:4000/console/settings",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkega94e_7eb50d6e",
+      "ts": 1768421135534,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/usage",
+        "path": "/console/usage",
+        "title": "控制台用量 - Artigen",
+        "location": "http://localhost:4000/console/usage"
+      },
+      "path": "/console/usage",
+      "location": "http://localhost:4000/console/usage",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegopu5_91c7918f",
+      "ts": 1768421810381,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "users",
+        "path": "/console/users",
+        "from": "/console/usage"
+      },
+      "path": "/console/usage",
+      "location": "http://localhost:4000/console/usage",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegopuh_90f61f46",
+      "ts": 1768421810393,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/users",
+        "path": "/console/users",
+        "title": "控制台用户管理 - Artigen",
+        "location": "http://localhost:4000/console/users"
+      },
+      "path": "/console/users",
+      "location": "http://localhost:4000/console/users",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegorlp_70ee54cc",
+      "ts": 1768421812669,
+      "eventType": "console_nav_click",
+      "payload": {
+        "userId": "admin",
+        "target": "audit",
+        "path": "/console/audit",
+        "from": "/console/users"
+      },
+      "path": "/console/users",
+      "location": "http://localhost:4000/console/users",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegorm0_01c923b2",
+      "ts": 1768421812680,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/console/audit",
+        "path": "/console/audit",
+        "title": "控制台内容审计 - Artigen",
+        "location": "http://localhost:4000/console/audit"
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegovpc_e555ab71",
+      "ts": 1768421817984,
+      "eventType": "console_button_click",
+      "payload": {
+        "userId": "admin",
+        "path": "/console/audit",
+        "label": "引用",
+        "disabled": false
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegow6i_3e6445ec",
+      "ts": 1768421818602,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegpolz_5859a759",
+      "ts": 1768421855447,
+      "eventType": "console_button_click",
+      "payload": {
+        "userId": "admin",
+        "path": "/console/audit",
+        "label": "引用",
+        "disabled": false
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegpp01_ecad2f4a",
+      "ts": 1768421855953,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegq4v7_7b024f48",
+      "ts": 1768421876515,
+      "eventType": "console_button_click",
+      "payload": {
+        "userId": "admin",
+        "path": "/console/audit",
+        "label": "查看完整日志",
+        "disabled": false
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegq6x8_a7c44b14",
+      "ts": 1768421879180,
+      "eventType": "console_button_click",
+      "payload": {
+        "userId": "admin",
+        "path": "/console/audit",
+        "label": "Close",
+        "disabled": false
+      },
+      "path": "/console/audit",
+      "location": "http://localhost:4000/console/audit",
+      "referrer": "",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegrhsw_8da41061",
+      "ts": 1768421939936,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "http://localhost:4000/artigen/format-factory",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegrjj9_1e18bf90",
+      "ts": 1768421942181,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop",
+        "path": "/artigen/image-workshop",
+        "title": "AI影像工坊 - Artigen",
+        "location": "http://localhost:4000/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/format-factory",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegrjjr_6d27daaf",
+      "ts": 1768421942199,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/format-factory",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegrm2w_f6e76946",
+      "ts": 1768421945480,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/market",
+        "path": "/artigen/market",
+        "title": "算力商城 - Artigen",
+        "location": "http://localhost:4000/artigen/market"
+      },
+      "path": "/artigen/market",
+      "location": "http://localhost:4000/artigen/market",
+      "referrer": "http://localhost:4000/artigen/format-factory",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegsp80_6b49d496",
+      "ts": 1768421996208,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "http://localhost:4000/artigen/format-factory",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegsqkp_c3c8acbc",
+      "ts": 1768421997961,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "http://localhost:4000/artigen/format-factory",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegsqtf_b9ad7042",
+      "ts": 1768421998275,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/format-factory",
+        "path": "/artigen/format-factory",
+        "title": "格式工厂 - Artigen",
+        "location": "http://localhost:4000/artigen/format-factory"
+      },
+      "path": "/artigen/format-factory",
+      "location": "http://localhost:4000/artigen/format-factory",
+      "referrer": "http://localhost:4000/artigen/format-factory",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkegsril_11046fe6",
+      "ts": 1768421999181,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen",
+        "path": "/artigen",
+        "title": "Artigen - AI 图片工坊与格式工厂",
+        "location": "http://localhost:4000/artigen"
+      },
+      "path": "/artigen",
+      "location": "http://localhost:4000/artigen",
+      "referrer": "http://localhost:4000/artigen/format-factory",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkeh10xe_b7fb6157",
+      "ts": 1768422384626,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai?__reload=1768371498228",
+        "path": "/artigen/ai?__reload=1768371498228",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai?__reload=1768371498228"
+      },
+      "path": "/artigen/ai?__reload=1768371498228",
+      "location": "http://localhost:4000/artigen/ai?__reload=1768371498228",
+      "referrer": "http://localhost:4000/artigen/ai?__reload=1768371498228",
+      "userId": "user_mk5vb7v2_ebe837825fb2",
+      "ip": "::1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 SLBrowser/9.0.7.12231 SLBChan/103 SLBVPV/64-bit"
+    }
+  ]
+}

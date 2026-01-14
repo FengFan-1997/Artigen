@@ -14,36 +14,36 @@
         </div>
       </div>
       <a-menu v-model:selectedKeys="selectedKeys" theme="dark" mode="inline">
-        <a-menu-item key="dashboard" @click="router.push('/console')">
+        <a-menu-item key="dashboard" @click="navTo('/console', 'dashboard')">
           <template #icon><dashboard-outlined /></template>
           <span>{{ ui.menuOverview }}</span>
         </a-menu-item>
-        <a-menu-item key="playground" @click="router.push('/console/playground')">
+        <a-menu-item key="playground" @click="navTo('/console/playground', 'playground')">
           <template #icon><experiment-outlined /></template>
           <span>{{ ui.menuPlayground }}</span>
         </a-menu-item>
-        <a-menu-item key="billing" @click="router.push('/console/billing')">
+        <a-menu-item key="billing" @click="navTo('/console/billing', 'billing')">
           <template #icon><wallet-outlined /></template>
           <span>{{ ui.menuBilling }}</span>
         </a-menu-item>
-        <a-menu-item key="usage" @click="router.push('/console/usage')">
+        <a-menu-item key="usage" @click="navTo('/console/usage', 'usage')">
           <template #icon><bar-chart-outlined /></template>
           <span>{{ ui.menuUsage }}</span>
         </a-menu-item>
-        <a-menu-item key="settings" @click="router.push('/console/settings')">
+        <a-menu-item key="settings" @click="navTo('/console/settings', 'settings')">
           <template #icon><setting-outlined /></template>
           <span>{{ ui.menuSettings }}</span>
         </a-menu-item>
-        <a-menu-item key="users" @click="router.push('/console/users')">
+        <a-menu-item key="users" @click="navTo('/console/users', 'users')">
           <template #icon><team-outlined /></template>
           <span>{{ ui.menuUsers }}</span>
         </a-menu-item>
-        <a-menu-item key="audit" @click="router.push('/console/audit')">
+        <a-menu-item key="audit" @click="navTo('/console/audit', 'audit')">
           <template #icon><safety-certificate-outlined /></template>
           <span>{{ ui.menuAudit }}</span>
         </a-menu-item>
         <a-menu-divider />
-        <a-menu-item key="home" @click="router.push('/')">
+        <a-menu-item key="home" @click="navTo('/', 'home')">
           <template #icon><home-outlined /></template>
           <span>{{ ui.backToHome }}</span>
         </a-menu-item>
@@ -66,7 +66,7 @@
           </a-space>
           <template #overlay>
             <a-menu>
-              <a-menu-item key="profile" @click="router.push('/console/settings')">
+              <a-menu-item key="profile" @click="navTo('/console/settings', 'profile')">
                 <user-outlined /> {{ ui.profile }}
               </a-menu-item>
               <a-menu-divider />
@@ -102,6 +102,9 @@
         <a-form-item :label="ui.passwordLabel">
           <a-input-password v-model:value="password" autocomplete="off" />
         </a-form-item>
+        <a-form-item :label="ui.adminKeyLabel">
+          <a-input v-model:value="adminKeyInput" autocomplete="off" />
+        </a-form-item>
         <a-button type="primary" block :loading="submitting" @click="handleLogin">
           {{ ui.loginBtn }}
         </a-button>
@@ -136,16 +139,23 @@ import {
   setConsoleAuthSession,
   useConsoleStore
 } from '@/stores/console';
+import { trackEvent } from '@/utils/analytics';
 
 const router = useRouter();
 const route = useRoute();
 
 const username = ref('');
 const password = ref('');
+const adminKeyInput = ref('');
 const submitting = ref(false);
 const loginTick = ref(0);
 
 const consoleStore = useConsoleStore();
+
+const navTo = (path: string, target: string) => {
+  trackEvent('console_nav_click', { userId: userId.value, target, path, from: route.path });
+  router.push(path);
+};
 
 const isLoggedIn = computed(() => {
   void loginTick.value;
@@ -182,6 +192,7 @@ const ui = computed(() =>
         loginSub: '请输入账号与密码进入管理系统',
         usernameLabel: '账号',
         passwordLabel: '密码',
+        adminKeyLabel: 'ADMIN_KEY（可选）',
         loginBtn: '登录',
         footer: 'Artigen ©2025 Created by Feng Fan',
         routeOverview: '总览',
@@ -209,6 +220,7 @@ const ui = computed(() =>
         loginSub: 'Enter username and password to continue',
         usernameLabel: 'Username',
         passwordLabel: 'Password',
+        adminKeyLabel: 'ADMIN_KEY (optional)',
         loginBtn: 'Login',
         footer: 'Artigen ©2025 Created by Feng Fan',
         routeOverview: 'Overview',
@@ -290,23 +302,43 @@ const handleLogin = async () => {
   if (submitting.value) return;
   const u = String(username.value || '').trim();
   const p = String(password.value || '');
-  if (!u || !p) {
+  const key = String(adminKeyInput.value || '').trim();
+  const usingAdminKey = !!key;
+  if (!usingAdminKey && (!u || !p)) {
     message.error(
-      currentLang.value === 'zh' ? '请输入账号和密码' : 'Please enter username and password'
+      currentLang.value === 'zh'
+        ? '请输入账号和密码，或填入 ADMIN_KEY'
+        : 'Enter username/password or ADMIN_KEY'
     );
     return;
   }
   submitting.value = true;
   try {
     consoleStore.init();
-    const login = await consoleStore.adminLogin({ username: u, password: p });
-    setConsoleAuthSession({
-      userId: u,
-      authHash: login.token,
-      expiresAt: login.expiresAt
-    });
-    password.value = '';
-    message.success(currentLang.value === 'zh' ? '登录成功' : 'Login successful');
+    if (usingAdminKey) {
+      consoleStore.setAdminApiKey(key);
+      setConsoleAuthSession({
+        userId: 'admin',
+        authHash: `admin_key_${key.slice(0, 12)}`,
+        expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000
+      });
+      username.value = '';
+      password.value = '';
+      adminKeyInput.value = '';
+      message.success(currentLang.value === 'zh' ? '登录成功' : 'Login successful');
+      trackEvent('console_login_success', { mode: 'admin_key' });
+    } else {
+      const login = await consoleStore.adminLogin({ username: u, password: p });
+      setConsoleAuthSession({
+        userId: u,
+        authHash: login.token,
+        expiresAt: login.expiresAt
+      });
+      password.value = '';
+      adminKeyInput.value = '';
+      message.success(currentLang.value === 'zh' ? '登录成功' : 'Login successful');
+      trackEvent('console_login_success', { userId: u, mode: 'account' });
+    }
     syncLoginTick();
   } catch (e: any) {
     message.error(humanizeLoginError(e));
@@ -316,11 +348,38 @@ const handleLogin = async () => {
 };
 
 let authTimer: number | null = null;
+let clickListener: ((e: MouseEvent) => void) | null = null;
 onMounted(() => {
   consoleStore.init();
   authTimer = window.setInterval(() => syncLoginTick(), 30_000);
   try {
     window.addEventListener('storage', syncLoginTick);
+  } catch {}
+
+  clickListener = (e: MouseEvent) => {
+    const el = e.target instanceof Element ? e.target : null;
+    if (!el) return;
+    const btn = el.closest('button');
+    if (!btn) return;
+    if (btn.closest('.ant-menu')) return;
+
+    const label =
+      String(
+        btn.getAttribute('data-track') || btn.getAttribute('aria-label') || btn.textContent || ''
+      )
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 80) || 'button';
+
+    trackEvent('console_button_click', {
+      userId: userId.value,
+      path: route.fullPath || route.path,
+      label,
+      disabled: btn.hasAttribute('disabled') || (btn as any).disabled === true
+    });
+  };
+  try {
+    window.addEventListener('click', clickListener, true);
   } catch {}
 });
 
@@ -330,9 +389,16 @@ onBeforeUnmount(() => {
   try {
     window.removeEventListener('storage', syncLoginTick);
   } catch {}
+  if (clickListener) {
+    try {
+      window.removeEventListener('click', clickListener, true);
+    } catch {}
+  }
+  clickListener = null;
 });
 
 const handleLogout = () => {
+  trackEvent('console_logout', { userId: userId.value });
   clearConsoleAuthSession();
   syncLoginTick();
   router.replace('/console');

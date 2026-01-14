@@ -123,12 +123,12 @@ const routes = [
         en: 'Artigen - AI Image Workshop & Format Factory'
       },
       description: {
-        zh: 'Artigen 提供 AI 工坊（文生图/图生图）、格式工厂与算力商城，一站式影像处理解决方案。',
-        en: 'Artigen offers an AI workshop, format factory, and compute market for end‑to‑end image workflows.'
+        zh: 'Artigen 提供 AI 设计（文生图/图生图）、格式工厂与算力商城，一站式影像处理解决方案。',
+        en: 'Artigen offers AI Design, a format factory, and a credit market for end‑to‑end image workflows.'
       },
       keywords: {
-        zh: 'AI图片工坊,文生图,图生图,提示词优化,电商产品图,格式工厂,算力商城',
-        en: 'AI image workshop,text-to-image,image-to-image,prompt optimization,ecommerce product images,format factory,compute market'
+        zh: 'AI设计,文生图,图生图,提示词优化,电商产品图,格式工厂,算力商城',
+        en: 'AI design,text-to-image,image-to-image,prompt optimization,ecommerce product images,format factory,credits'
       }
     } satisfies RouteSeoMeta
   },
@@ -148,6 +148,7 @@ const routes = [
       }
     } satisfies RouteSeoMeta
   },
+
   {
     path: '/artigen/legal/terms',
     name: 'terms',
@@ -295,6 +296,22 @@ const routes = [
     component: () => import('../project/NexusDashboard.vue')
   },
   {
+    path: '/artigen/image-workshop',
+    name: 'image-workshop',
+    component: () => import('../agentImg/views/ImageWorkshop.vue'),
+    meta: {
+      title: { zh: 'AI影像工坊 - Artigen', en: 'AI Image Workshop - Artigen' },
+      description: {
+        zh: 'AI 驱动的影像处理工具，一键生成与修复：智能证件照、老照片修复。',
+        en: 'AI-powered image processing tools: Smart ID Photo, Old Photo Restoration.'
+      },
+      keywords: {
+        zh: 'AI影像工坊,智能证件照,老照片修复,AI修图',
+        en: 'AI image workshop,smart id photo,photo restoration'
+      }
+    } satisfies RouteSeoMeta
+  },
+  {
     path: '/artigen/market',
     name: 'aether-market',
     component: () => import('../agentImg/views/AetherMarket.vue'),
@@ -367,14 +384,14 @@ const routes = [
     name: 'agent-img-tool',
     component: () => import('../agentImg/index.vue'),
     meta: {
-      title: { zh: 'AI 工坊 - Artigen', en: 'AI Workshop - Artigen' },
+      title: { zh: 'AI 设计 - Artigen', en: 'AI Design - Artigen' },
       description: {
         zh: 'AI 图片生成与提示词优化：文生图、图生图，适配电商主图、产品场景图与营销物料工作流。',
         en: 'AI image generation and prompt refinement: text-to-image and image-to-image for product and marketing visuals.'
       },
       keywords: {
-        zh: 'AI工坊,图生图,文生图,产品图生成,电商主图,场景图,提示词优化,参考图',
-        en: 'AI workshop,image-to-image,text-to-image,product image generator,ecommerce hero images,scene images,prompt optimizer'
+        zh: 'AI设计,图生图,文生图,产品图生成,电商主图,场景图,提示词优化,参考图',
+        en: 'AI design,image-to-image,text-to-image,product image generator,ecommerce hero images,scene images,prompt optimizer'
       }
     } satisfies RouteSeoMeta
   },
@@ -386,39 +403,99 @@ const routes = [
       {
         path: '',
         name: 'console-dashboard',
-        component: () => import('@/console/views/Dashboard.vue')
+        component: () => import('@/console/views/Dashboard.vue'),
+        meta: {
+          title: { zh: '控制台总览 - Artigen', en: 'Console Overview - Artigen' },
+          description: {
+            zh: 'Artigen 后台控制台总览：账户、流量与关键指标。',
+            en: 'Artigen console overview: account, traffic, and key metrics.'
+          },
+          keywords: { zh: '后台,控制台,总览,数据面板', en: 'console,admin,overview,dashboard' }
+        } satisfies RouteSeoMeta
       },
       {
         path: 'billing',
         name: 'console-billing',
-        component: () => import('@/console/views/Billing.vue')
+        component: () => import('@/console/views/Billing.vue'),
+        meta: {
+          title: { zh: '控制台计费 - Artigen', en: 'Console Billing - Artigen' },
+          description: {
+            zh: 'Artigen 后台计费与点数管理。',
+            en: 'Artigen console billing and credits management.'
+          },
+          keywords: { zh: '后台,计费,点数,充值', en: 'console,billing,credits,topup' }
+        } satisfies RouteSeoMeta
       },
       {
         path: 'usage',
         name: 'console-usage',
-        component: () => import('@/console/views/Usage.vue')
+        component: () => import('@/console/views/Usage.vue'),
+        meta: {
+          title: { zh: '控制台用量 - Artigen', en: 'Console Usage - Artigen' },
+          description: {
+            zh: 'Artigen 后台用量与请求统计分析。',
+            en: 'Artigen console usage and request analytics.'
+          },
+          keywords: { zh: '后台,用量,统计,分析', en: 'console,usage,analytics,stats' }
+        } satisfies RouteSeoMeta
       },
       {
         path: 'settings',
         name: 'console-settings',
-        component: () => import('@/console/views/Settings.vue')
+        component: () => import('@/console/views/Settings.vue'),
+        meta: {
+          title: { zh: '控制台设置 - Artigen', en: 'Console Settings - Artigen' },
+          description: {
+            zh: 'Artigen 后台个人资料与设置。',
+            en: 'Artigen console profile and settings.'
+          },
+          keywords: { zh: '后台,设置,个人资料,API Key', en: 'console,settings,profile,api key' }
+        } satisfies RouteSeoMeta
       },
       {
         path: 'playground',
         name: 'console-playground',
-        component: () => import('@/console/views/Playground.vue')
+        component: () => import('@/console/views/Playground.vue'),
+        meta: {
+          title: { zh: '控制台试验场 - Artigen', en: 'Console Playground - Artigen' },
+          description: {
+            zh: 'Artigen 后台试验场，用于演示与验证能力。',
+            en: 'Artigen console playground for demos and validation.'
+          },
+          keywords: { zh: '后台,试验场,演示,验证', en: 'console,playground,demo,validate' }
+        } satisfies RouteSeoMeta
       },
       {
         path: 'users',
         name: 'console-users',
-        component: () => import('@/console/views/UserManagement.vue')
+        component: () => import('@/console/views/UserManagement.vue'),
+        meta: {
+          title: { zh: '控制台用户管理 - Artigen', en: 'Console Users - Artigen' },
+          description: {
+            zh: 'Artigen 后台用户管理与账户信息查看。',
+            en: 'Artigen console user management and account details.'
+          },
+          keywords: { zh: '后台,用户管理,账户,权限', en: 'console,user management,accounts,admin' }
+        } satisfies RouteSeoMeta
       },
       {
         path: 'audit',
         name: 'console-audit',
-        component: () => import('@/console/views/ContentAudit.vue')
+        component: () => import('@/console/views/ContentAudit.vue'),
+        meta: {
+          title: { zh: '控制台内容审计 - Artigen', en: 'Console Content Audit - Artigen' },
+          description: {
+            zh: 'Artigen 后台内容审计与调用记录查看。',
+            en: 'Artigen console content audit and invocation logs.'
+          },
+          keywords: { zh: '后台,内容审计,日志,合规', en: 'console,content audit,logs,compliance' }
+        } satisfies RouteSeoMeta
       }
     ]
+  },
+  {
+    path: '/console2',
+    redirect: '/console'
   },
   ...loginRoutes.map((r) => ({ ...r, meta: { ...(r.meta || {}), robots: 'noindex,nofollow' } })),
   {
@@ -431,6 +508,7 @@ const isAllowedInLockdown = (path: string) => {
   if (path === '/') return true;
   if (path.startsWith('/artigen')) return true;
   if (path.startsWith('/console')) return true;
+  if (path.startsWith('/console2')) return true;
   if (path.startsWith('/login')) return true;
   if (path === '/agent-img') return true;
   if (path === '/format-factory') return true;

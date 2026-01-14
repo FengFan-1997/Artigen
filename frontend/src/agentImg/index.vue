@@ -5,15 +5,45 @@
         <template #actions>
           <div class="top-actions">
             <template v-if="isAuthed">
-              <button
-                class="credits-btn"
-                type="button"
-                @click="goMarket"
-                :disabled="creditsLoading"
-              >
-                <span class="credits-icon">⚡</span>
-                <span class="credits-value">{{ creditsText }}</span>
-              </button>
+              <div ref="creditsContainerRef" class="credits-container">
+                <button
+                  class="credits-btn"
+                  type="button"
+                  @click="toggleCreditsPopover"
+                  :disabled="creditsLoading"
+                >
+                  <span class="credits-icon">⚡</span>
+                  <span class="credits-value">{{ creditsText }}</span>
+                </button>
+
+                <transition name="dropdown-fade">
+                  <div v-if="creditsPopoverOpen" class="credits-popover" @click.stop>
+                    <div class="credits-pop-head">
+                      <div class="credits-pop-title">{{ ui.creditsBalance }}</div>
+                      <div class="credits-pop-total">
+                        {{ ui.totalCredits }}: {{ totalCreditsText }}
+                      </div>
+                    </div>
+                    <div class="credits-pop-balance">
+                      <span class="credits-pop-icon">⚡</span>
+                      <span class="credits-pop-value">{{ creditsText }}</span>
+                    </div>
+                    <div class="credits-pop-actions">
+                      <button
+                        class="credits-pop-btn"
+                        type="button"
+                        @click="refreshCredits"
+                        :disabled="creditsLoading"
+                      >
+                        {{ ui.refreshCredits }}
+                      </button>
+                      <button class="credits-pop-btn primary" type="button" @click="goMarket">
+                        {{ ui.goMarket }}
+                      </button>
+                    </div>
+                  </div>
+                </transition>
+              </div>
 
               <div class="user-menu">
                 <button class="avatar-btn" type="button" @click="() => openAccountPopup()">
@@ -100,36 +130,78 @@
                 <div class="card-title">{{ ui.visualStyle }}</div>
 
                 <div class="field">
-                  <div class="label">{{ ui.scene }}</div>
-                  <input
-                    v-model="sceneType"
-                    class="control"
-                    type="text"
-                    :placeholder="ui.scenePh"
-                    :disabled="loading"
-                  />
+                  <div class="label">{{ ui.designElements }}</div>
+                  <div class="chips-row" v-if="designElements.length">
+                    <div
+                      v-for="tag in designElements"
+                      :key="tag"
+                      class="chip active"
+                      @click="toggleDesignElement(tag)"
+                    >
+                      {{ tag }} ×
+                    </div>
+                  </div>
+                  <div class="tag-add-row">
+                    <input
+                      v-model="newDesignElement"
+                      class="control"
+                      type="text"
+                      :placeholder="ui.add + '...'"
+                      :disabled="loading"
+                      @keydown.enter.prevent="addDesignElement"
+                    />
+                    <button class="ghost" @click="addDesignElement" :disabled="loading">+</button>
+                  </div>
                 </div>
 
                 <div class="field">
-                  <div class="label">{{ ui.lighting }}</div>
-                  <input
-                    v-model="lighting"
-                    class="control"
-                    type="text"
-                    :placeholder="ui.lightingPh"
-                    :disabled="loading"
-                  />
+                  <div class="label">{{ ui.style }}</div>
+                  <div class="chips-row" v-if="styles.length">
+                    <div
+                      v-for="tag in styles"
+                      :key="tag"
+                      class="chip active"
+                      @click="toggleStyle(tag)"
+                    >
+                      {{ tag }} ×
+                    </div>
+                  </div>
+                  <div class="tag-add-row">
+                    <input
+                      v-model="newStyle"
+                      class="control"
+                      type="text"
+                      :placeholder="ui.add + '...'"
+                      :disabled="loading"
+                      @keydown.enter.prevent="addStyle"
+                    />
+                    <button class="ghost" @click="addStyle" :disabled="loading">+</button>
+                  </div>
                 </div>
 
                 <div class="field">
-                  <div class="label">{{ ui.primaryColor }}</div>
-                  <input
-                    v-model="primaryColor"
-                    class="control"
-                    type="text"
-                    :placeholder="ui.primaryColorPh"
-                    :disabled="loading"
-                  />
+                  <div class="label">{{ ui.colorScheme }}</div>
+                  <div class="chips-row" v-if="colors.length">
+                    <div
+                      v-for="tag in colors"
+                      :key="tag"
+                      class="chip active"
+                      @click="toggleColor(tag)"
+                    >
+                      {{ tag }} ×
+                    </div>
+                  </div>
+                  <div class="tag-add-row">
+                    <input
+                      v-model="newColor"
+                      class="control"
+                      type="text"
+                      :placeholder="ui.add + '...'"
+                      :disabled="loading"
+                      @keydown.enter.prevent="addColor"
+                    />
+                    <button class="ghost" @click="addColor" :disabled="loading">+</button>
+                  </div>
                 </div>
 
                 <div v-show="false">
@@ -564,6 +636,37 @@
         </aside>
       </div>
     </div>
+    <!-- Download Dialog -->
+    <div
+      v-if="showDownloadDialog"
+      class="download-dialog-overlay"
+      @click="showDownloadDialog = false"
+    >
+      <div class="download-dialog" @click.stop>
+        <div class="download-header">
+          <h3>下载图片</h3>
+          <button class="close-btn" @click="showDownloadDialog = false">×</button>
+        </div>
+        <div class="download-options">
+          <button class="download-option-btn" @click="handleDownloadOption('1024')">
+            <span class="res-label">1024 x 1024</span>
+            <span class="res-tag">HD</span>
+          </button>
+          <button class="download-option-btn" @click="handleDownloadOption('2k')">
+            <span class="res-label">2048 x 2048</span>
+            <span class="res-tag">2K</span>
+          </button>
+          <button
+            class="download-option-btn"
+            @click="handleDownloadOption('4k')"
+            :disabled="!isProPlus"
+          >
+            <span class="res-label">4096 x 4096</span>
+            <span class="res-tag">4K</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -610,6 +713,9 @@ const ui = computed(() => {
       navMarket: '算力商城',
       homeLink: '首页',
       goMarket: '去算力商城',
+      creditsBalance: '点数余额',
+      totalCredits: '总点数',
+      refreshCredits: '刷新点数',
       myOrders: '我的订单',
       creditsUsage: '点数明细',
       logout: '退出登录',
@@ -624,6 +730,10 @@ const ui = computed(() => {
       material: '核心材质',
       materialPh: '例如：磨砂玻璃、透明塑料',
       visualStyle: '视觉风格',
+      designElements: '设计元素',
+      style: '风格',
+      colorScheme: '色系',
+      add: '添加',
       scene: '拍摄场景',
       scenePh: '例如：纯色摄影棚、自然光影',
       lighting: '布光风格',
@@ -663,23 +773,36 @@ const ui = computed(() => {
       inputPlaceholder: '描述你想要的产品图，比如：“一瓶精华液放在冰块上，背景是阳光海滩”...',
       dropHint: '拖拽图片到这里松开即可添加',
       loadingText: '正在处理，请耐心等待…',
-      guideTitle: '使用指南 / 长尾关键词',
-      guideDesc: '做电商产品图建议先填产品档案；有参考图用图生图更稳定；只描述想法用文生图更快。',
+      guideTitle: '使用指南 / 我们的优势',
+      guideDesc:
+        '先在左侧「产品档案」补齐关键信息，再用一句话描述场景；打开「深度思考」会自动优化提示词与构图。支持多参考图图生图，让风格与质感更稳定。',
       guideKeywords: [
-        '电商产品图生成',
-        '主图白底',
-        '场景图生成',
-        '图生图',
-        '文生图',
-        '提示词优化',
-        '参考图风格迁移'
+        '深度思考模型',
+        '多参考图生成',
+        '主流强力生图模型',
+        '电商产品工作流',
+        '4K 高清下载（Pro+）'
       ],
       guideFaqs: [
-        { q: '如何提升一致性？', a: '上传参考图，固定风格描述，并尽量复用同一套产品档案字段。' },
-        { q: '如何减少扣费浪费？', a: '先用短提示词快速试方向，再补充细节；不满意及时停止生成。' },
         {
-          q: '需要买点数吗？',
-          a: '未登录无法生成；生成会扣点数，具体扣费以页面提示与实际扣费为准。'
+          q: '文件会上传到服务器吗？',
+          a: '格式工厂相关工具默认在浏览器本地处理；AI 工坊在生成/图生图时会将必要信息（提示词/参考图）发送到模型服务完成生成。'
+        },
+        {
+          q: '从哪里开始更快？',
+          a: '有参考图就用图生图；只有想法就用文生图。做电商图建议先填产品档案，再选择风格/场景。'
+        },
+        {
+          q: '深度思考有什么用？',
+          a: '深度思考会自动补全构图、光影、材质与质量词，并做提示词结构化，让同样输入更容易出“电商成片”。'
+        },
+        {
+          q: '怎么提高一致性与可控性？',
+          a: '支持多张参考图同时参与生成，建议用：产品图 + 风格参考 + 场景参考；再配合产品档案字段，稳定输出。'
+        },
+        {
+          q: '我们的优势是什么？',
+          a: '内置深度思考模型做提示词与构图优化；支持多图同时作为参考进行生成；接入多种主流强力生图模型，覆盖写实/商业/风格化等场景。'
         }
       ]
     };
@@ -690,6 +813,9 @@ const ui = computed(() => {
     navMarket: 'Compute Market',
     homeLink: 'Home',
     goMarket: 'Go to Market',
+    creditsBalance: 'Credit balance',
+    totalCredits: 'Total credits',
+    refreshCredits: 'Refresh credits',
     myOrders: 'My Orders',
     creditsUsage: 'Credits Usage',
     logout: 'Logout',
@@ -704,6 +830,10 @@ const ui = computed(() => {
     material: 'Material',
     materialPh: 'e.g. Frosted glass, clear plastic',
     visualStyle: 'Visual Style',
+    designElements: 'Design Elements',
+    style: 'Style',
+    colorScheme: 'Color Scheme',
+    add: 'Add',
     scene: 'Scene',
     scenePh: 'e.g. Studio backdrop, natural light',
     lighting: 'Lighting',
@@ -744,30 +874,36 @@ const ui = computed(() => {
       'Describe your scene, e.g. a sparkling soda on ice cubes with a sunny beach background...',
     dropHint: 'Drop image here to add',
     loadingText: 'Processing, please wait…',
-    guideTitle: 'Quick guide / long-tail queries',
+    guideTitle: 'Quick guide / Why us',
     guideDesc:
-      'For commerce visuals, fill the product profile first. Use image-to-image for higher consistency; use text-to-image for fast ideation.',
+      'Fill the product profile first, then describe the scene in one line. Turn on Deep Thinking to refine prompts and composition. Multi-reference img2img keeps style and texture consistent.',
     guideKeywords: [
-      'product image generator',
-      'white background hero image',
-      'scene image generation',
-      'image-to-image',
-      'text-to-image',
-      'prompt optimizer',
-      'style transfer'
+      'deep thinking model',
+      'multi-reference img2img',
+      'top image generation models',
+      'commerce workflow',
+      '4K download (Pro+)'
     ],
     guideFaqs: [
       {
-        q: 'How to improve consistency?',
-        a: 'Upload reference images, keep style wording stable, and reuse the same product profile.'
+        q: 'Do files get uploaded to a server?',
+        a: 'Format Factory tools run locally in your browser by default. For AI generation/img2img, we send the required inputs (prompts/reference images) to the model service to produce results.'
       },
       {
-        q: 'How to avoid wasting credits?',
-        a: 'Test directions with short prompts first, then add details. Stop early if it’s off.'
+        q: 'Where should I start for faster results?',
+        a: 'Use img2img when you have references; use text-to-image for fast ideation. For commerce images, complete the product profile first.'
       },
       {
-        q: 'Do I need credits?',
-        a: 'You must be logged in to generate. Runs consume credits; see the UI for the latest costs.'
+        q: 'What does Deep Thinking do?',
+        a: 'It refines prompts and composition by adding lighting/material/quality cues, making outputs look more like polished commerce visuals.'
+      },
+      {
+        q: 'How to improve consistency and control?',
+        a: 'Use multi-reference img2img: combine a product photo, a style reference, and a scene reference. Product profile fields further stabilize results.'
+      },
+      {
+        q: 'What makes it different?',
+        a: 'Deep Thinking improves prompts and composition; multi-reference generation for stronger control; and access to powerful mainstream image models for diverse styles.'
       }
     ]
   };
@@ -835,8 +971,98 @@ const {
   logoFileName,
   logoFile,
   setLogoFile,
-  contextText
+  designElements,
+  toggleDesignElement,
+  styles,
+  toggleStyle,
+  colors,
+  toggleColor
 } = useAgentImgSettings();
+
+const newDesignElement = ref('');
+const newStyle = ref('');
+const newColor = ref('');
+
+const addDesignElement = () => {
+  if (newDesignElement.value.trim()) {
+    toggleDesignElement(newDesignElement.value.trim());
+    newDesignElement.value = '';
+  }
+};
+
+const addStyle = () => {
+  if (newStyle.value.trim()) {
+    toggleStyle(newStyle.value.trim());
+    newStyle.value = '';
+  }
+};
+
+const addColor = () => {
+  if (newColor.value.trim()) {
+    toggleColor(newColor.value.trim());
+    newColor.value = '';
+  }
+};
+
+const buildProductProfileContextText = () => {
+  const zh = currentLang.value === 'zh';
+  const sep = zh ? '：' : ': ';
+  const joinTags = (tags: string[]) => (zh ? tags.join('、') : tags.join(', '));
+
+  const pName = String(productName.value || '').trim();
+  const pCat = String(productCategory.value || '').trim();
+  const bName = String(brandName.value || '').trim();
+  const mat = String(material.value || '').trim();
+  const scene = String(sceneType.value || '').trim();
+  const light = String(lighting.value || '').trim();
+  const color = String(primaryColor.value || '').trim();
+  const logo = String(logoFileName.value || '').trim();
+  const de = Array.isArray(designElements.value)
+    ? designElements.value.map((x) => String(x || '').trim()).filter(Boolean)
+    : [];
+  const st = Array.isArray(styles.value)
+    ? styles.value.map((x) => String(x || '').trim()).filter(Boolean)
+    : [];
+  const cs = Array.isArray(colors.value)
+    ? colors.value.map((x) => String(x || '').trim()).filter(Boolean)
+    : [];
+
+  const hasAny =
+    !!pName ||
+    !!pCat ||
+    !!bName ||
+    !!mat ||
+    !!scene ||
+    !!light ||
+    !!color ||
+    !!logo ||
+    de.length > 0 ||
+    st.length > 0 ||
+    cs.length > 0;
+
+  if (!hasAny) return '';
+
+  const lines: string[] = [];
+  lines.push(
+    zh
+      ? `目标${sep}电商商品图/商业成片（主体突出、构图干净、避免文字与水印）`
+      : `Goal${sep}e-commerce product visual (commercial-ready, clean composition, subject-first, avoid text/watermarks)`
+  );
+  if (pName) lines.push(`${zh ? '产品名称' : 'Product Name'}${sep}${pName}`);
+  if (pCat) lines.push(`${zh ? '类目' : 'Category'}${sep}${pCat}`);
+  if (bName) lines.push(`${zh ? '品牌' : 'Brand'}${sep}${bName}`);
+  if (mat) lines.push(`${zh ? '材质' : 'Material'}${sep}${mat}`);
+  if (scene) lines.push(`${zh ? '场景' : 'Scene'}${sep}${scene}`);
+  if (light) lines.push(`${zh ? '布光' : 'Lighting'}${sep}${light}`);
+  if (color) lines.push(`${zh ? '主色调' : 'Primary Color'}${sep}${color}`);
+  lines.push(
+    `${zh ? 'Logo' : 'Logo'}${sep}${logo ? (zh ? `有（${logo}）` : `Yes (${logo})`) : zh ? '无' : 'No'}`
+  );
+  if (de.length) lines.push(`${zh ? '设计元素' : 'Design Elements'}${sep}${joinTags(de)}`);
+  if (st.length) lines.push(`${zh ? '风格' : 'Style'}${sep}${joinTags(st)}`);
+  if (cs.length) lines.push(`${zh ? '色系' : 'Color Scheme'}${sep}${joinTags(cs)}`);
+  return lines.join('\n');
+};
 
 const {
   userInput,
@@ -850,7 +1076,7 @@ const {
   cancel,
   analyzeDirections
 } = useAgentImgFlow({
-  getContextText: () => contextText.value,
+  getContextText: () => buildProductProfileContextText(),
   getImages: async () => {
     const files: File[] = [];
     for (const f of previewFiles.value) if (f) files.push(f);
@@ -1163,6 +1389,7 @@ const loadHistoryFromStorage = () => {
         .map((x: any) => (typeof x === 'string' ? x.trim() : ''))
         .filter((x: string) => !!x)
         .slice(0, 3);
+      if (isHiddenHistoryItem(userText)) continue;
       normalized.push({
         id,
         timestamp,
@@ -1181,6 +1408,13 @@ const loadHistoryFromStorage = () => {
 };
 
 const historyForSidebar = computed(() => [...history.value].slice().reverse());
+
+const isHiddenHistoryItem = (userText: string) => {
+  const t = String(userText || '')
+    .trim()
+    .toLowerCase();
+  return t.startsWith('id_photo:') || t.startsWith('old_photo:');
+};
 
 const resolveRemoteUrl = (raw: string) => {
   const u = String(raw || '').trim();
@@ -1223,6 +1457,7 @@ const loadHistoryFromServer = async () => {
           if (ut) return ut;
           return extractUserTextFromPrompt(prompt);
         })();
+        if (isHiddenHistoryItem(userText)) return null;
         const images = Array.isArray(it?.images) ? it.images : [];
         const inputImages = Array.isArray(it?.inputImages) ? it.inputImages : [];
         const firstUrl = (() => {
@@ -1353,6 +1588,17 @@ const creditsText = computed(() => {
   return String(Number(bal.available ?? 0));
 });
 
+const totalCreditsText = computed(() => {
+  const bal = creditsBalance.value;
+  if (!bal) return '--';
+  const a = Number(bal.available ?? 0) || 0;
+  const f = Number(bal.frozen ?? 0) || 0;
+  return String(a + f);
+});
+
+const creditsPopoverOpen = ref(false);
+const creditsContainerRef = ref<HTMLElement | null>(null);
+
 const openAccountPopup = (tab?: 'orders' | 'usage') => {
   try {
     window.dispatchEvent(
@@ -1378,7 +1624,13 @@ const avatarText = computed(() => {
 });
 
 const goMarket = () => {
+  creditsPopoverOpen.value = false;
   router.push('/artigen/market');
+};
+
+const toggleCreditsPopover = () => {
+  creditsPopoverOpen.value = !creditsPopoverOpen.value;
+  if (creditsPopoverOpen.value) void refreshCredits();
 };
 
 const primaryText = computed(() => {
@@ -1593,7 +1845,7 @@ const buildNegativePrompt = (extra?: string[]) => {
 
 const buildPromptWithContext = (userText: string) => {
   const u = String(userText || '').trim();
-  const ctx = String(contextText.value || '').trim();
+  const ctx = String(buildProductProfileContextText() || '').trim();
   if (!ctx) return u;
   const prefix = currentLang.value === 'zh' ? '产品档案' : 'Product Profile';
   const req = currentLang.value === 'zh' ? '用户需求' : 'User Request';
@@ -1671,8 +1923,10 @@ const doPrimary = async () => {
         params: args.params,
         images: args.images,
         model: selectedModelId.value,
+        reason: 'ai_design',
         timeoutMs: 120000,
         requestId,
+        deepMode: !!deepMode.value,
         signal: ctl.signal
       });
       if (activeImgAbort.value === ctl) activeImgAbort.value = null;
@@ -2050,6 +2304,10 @@ const onGlobalPointerDown = (e: PointerEvent) => {
   const target = e.target as HTMLElement | null;
   if (!target) return;
 
+  if (creditsPopoverOpen.value && !target.closest('.credits-container')) {
+    creditsPopoverOpen.value = false;
+  }
+
   if (modelMenuOpen.value && !target.closest('.model-menu')) modelMenuOpen.value = false;
 
   if (target.closest('input, textarea, [contenteditable="true"], .msg-bubble')) return;
@@ -2152,27 +2410,94 @@ const fetchImageBlob = async (url: string): Promise<Blob | null> => {
   }
 };
 
-const downloadMsgImage = async (url: string) => {
+const showDownloadDialog = ref(false);
+const downloadTargetUrl = ref('');
+
+const downloadMsgImage = (url: string) => {
   const s = String(url || '').trim();
   if (!s) return;
-  const blob = await fetchImageBlob(s);
-  if (blob) {
-    const ext = extFromMime(blob.type);
-    downloadBlob(blob, `artigen_${Date.now().toString(36)}.${ext}`);
+  downloadTargetUrl.value = s;
+  showDownloadDialog.value = true;
+};
+
+const handleDownloadOption = async (label: string) => {
+  if (label === '4k' && !isProPlus.value) {
+    showDownloadDialog.value = false;
+    showTopTip(
+      currentLang.value === 'zh' ? '4K 下载仅 Pro 及以上可用' : '4K download requires Pro+'
+    );
+    trackEvent('AgentImg', 'download_locked', '4k');
     return;
   }
-  try {
-    const a = document.createElement('a');
-    a.href = s;
-    a.download = 'image';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  } catch {
+  showDownloadDialog.value = false;
+  const url = downloadTargetUrl.value;
+  if (!url) return;
+
+  const blob = await fetchImageBlob(url);
+  if (!blob) {
     try {
-      window.open(s, '_blank', 'noopener,noreferrer');
-    } catch {}
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'image';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch {
+      try {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } catch {}
+    }
+    return;
   }
+
+  let targetSize = 0;
+  if (label === '1024') targetSize = 1024;
+  else if (label === '2k') targetSize = 2048;
+  else if (label === '4k') targetSize = 4096;
+
+  if (targetSize > 0) {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(blob);
+    img.src = objectUrl;
+    try {
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+    } catch {
+      URL.revokeObjectURL(objectUrl);
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    const scale = targetSize / Math.max(img.width, img.height);
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (b) => {
+          if (b) {
+            downloadBlob(b, `artigen_${label}_${Date.now().toString(36)}.png`);
+          }
+          URL.revokeObjectURL(objectUrl);
+        },
+        'image/png',
+        0.95
+      );
+      return;
+    }
+    URL.revokeObjectURL(objectUrl);
+  }
+
+  const ext = extFromMime(blob.type);
+  downloadBlob(blob, `artigen_${Date.now().toString(36)}.${ext}`);
 };
 
 const referenceMsgImage = async (url: string) => {
@@ -2471,6 +2796,15 @@ onBeforeUnmount(() => {
   padding: 16px;
 }
 
+.settings-card {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+}
+
 .card {
   display: flex;
   flex-direction: column;
@@ -2478,11 +2812,10 @@ onBeforeUnmount(() => {
 }
 
 .card-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-main);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: 15px;
+  font-weight: 800;
+  color: #e2e8f0;
+  letter-spacing: 0.2px;
 }
 
 .card-divider {
@@ -2493,7 +2826,7 @@ onBeforeUnmount(() => {
 
 .form-group {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 .form-group .field {
@@ -2508,29 +2841,32 @@ onBeforeUnmount(() => {
 
 .label {
   font-size: 12px;
-  color: var(--text-muted);
+  font-weight: 600;
+  color: rgba(226, 232, 240, 0.7);
+  letter-spacing: 0.2px;
 }
 .control-textarea {
   height: 200px !important;
 }
 .control {
   width: 100%;
-  height: 36px;
-  background: rgba(0, 0, 0, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 4px;
+  height: 38px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
   padding: 0 12px;
   color: var(--text-main);
   font-size: 13px;
   transition: all 0.2s;
 }
 .control:hover {
-  background: rgba(0, 0, 0, 0.8);
-  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 .control:focus {
-  background: rgba(0, 0, 0, 0.86);
-  border-color: var(--primary);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(204, 255, 0, 0.65);
+  box-shadow: 0 0 0 3px rgba(204, 255, 0, 0.08);
   outline: none;
 }
 .control:disabled {
@@ -2538,18 +2874,30 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
+.control::placeholder {
+  color: rgba(148, 163, 184, 0.55);
+}
+
 .select-wrapper {
   position: relative;
 }
 .select-wrapper::after {
-  content: '▼';
+  content: '';
   position: absolute;
-  right: 12px;
+  right: 14px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 8px;
-  color: var(--text-muted);
+  width: 8px;
+  height: 5px;
+  background-color: var(--text-muted);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
   pointer-events: none;
+  opacity: 0.8;
+  transition: transform 0.2s;
+}
+.select-wrapper:hover::after {
+  background-color: var(--text-main);
+  transform: translateY(-50%) scale(1.1);
 }
 .select {
   appearance: none;
@@ -2557,6 +2905,7 @@ onBeforeUnmount(() => {
   -moz-appearance: none;
   cursor: pointer;
   background-image: none !important;
+  padding-right: 36px;
 }
 .select::-ms-expand {
   display: none;
@@ -2566,6 +2915,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 8px;
 }
 
 .tag-add-row {
@@ -2816,6 +3166,7 @@ onBeforeUnmount(() => {
 }
 
 .msg-image-action-btn {
+  flex: 1;
   height: 26px;
   padding: 0 10px;
   border-radius: 999px;
@@ -3097,8 +3448,8 @@ onBeforeUnmount(() => {
   border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
 }
 .mini-preview-item {
-  width: 60px;
-  height: 60px;
+  width: 80px;
+  height: 80px;
   position: relative;
   border-radius: 6px;
   overflow: hidden;
@@ -3117,9 +3468,8 @@ onBeforeUnmount(() => {
   height: 16px;
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
-  border-radius: 50%;
   border: none;
-  font-size: 12px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
   display: flex;
@@ -3551,6 +3901,10 @@ onBeforeUnmount(() => {
     display: flex;
   }
 
+  .form-group {
+    grid-template-columns: 1fr;
+  }
+
   .mobile-overlay {
     display: block;
     top: 0;
@@ -3726,7 +4080,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
+  font-size: 16px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -3748,6 +4102,108 @@ onBeforeUnmount(() => {
 .credits-value {
   color: #ccff00;
   font-weight: 800;
+}
+
+.credits-container {
+  position: relative;
+  display: inline-flex;
+}
+
+.credits-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 280px;
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  z-index: 60;
+}
+
+.credits-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(241, 245, 249, 0.86);
+  font-size: 12px;
+}
+
+.credits-pop-title {
+  font-weight: 800;
+}
+
+.credits-pop-total {
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.credits-pop-balance {
+  margin-top: 10px;
+  border-radius: 12px;
+  padding: 12px 12px;
+  background: rgba(204, 255, 0, 0.08);
+  border: 1px solid rgba(204, 255, 0, 0.18);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.credits-pop-icon {
+  line-height: 1;
+}
+
+.credits-pop-value {
+  color: rgba(241, 245, 249, 0.95);
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+}
+
+.credits-pop-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.credits-pop-btn {
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(241, 245, 249, 0.92);
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.credits-pop-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.credits-pop-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.credits-pop-btn.primary {
+  border-color: rgba(204, 255, 0, 0.28);
+  background: rgba(204, 255, 0, 0.1);
+  color: rgba(241, 245, 249, 0.95);
+}
+
+.credits-pop-btn.primary:hover {
+  border-color: rgba(204, 255, 0, 0.55);
+  background: rgba(204, 255, 0, 0.14);
 }
 
 .user-menu {
@@ -3953,6 +4409,21 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   padding: 12px;
   margin-bottom: 12px;
+  transition:
+    transform 0.22s ease,
+    border-color 0.22s ease,
+    box-shadow 0.22s ease,
+    background 0.22s ease;
+  animation: guideFadeIn 0.35s ease-out both;
+}
+
+.guide-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(204, 255, 0, 0.35);
+  background: rgba(204, 255, 0, 0.05);
+  box-shadow:
+    0 10px 26px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(204, 255, 0, 0.08);
 }
 
 .guide-title {
@@ -3960,7 +4431,8 @@ onBeforeUnmount(() => {
   font-weight: 800;
   color: var(--text-main);
   margin-bottom: 8px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
+  letter-spacing: -0.2px;
 }
 
 .guide-desc {
@@ -3968,6 +4440,7 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
   line-height: 1.6;
   margin-bottom: 10px;
+  font-family: var(--common-font);
 }
 
 .guide-chips {
@@ -3984,7 +4457,21 @@ onBeforeUnmount(() => {
   background: rgba(204, 255, 0, 0.08);
   padding: 5px 8px;
   border-radius: 999px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.guide-chip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(204, 255, 0, 0.55);
+  background: rgba(204, 255, 0, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(204, 255, 0, 0.06),
+    0 12px 24px rgba(0, 0, 0, 0.35);
 }
 
 .guide-faq {
@@ -3993,6 +4480,27 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   padding: 10px 10px;
   margin-top: 10px;
+  transition:
+    transform 0.22s ease,
+    border-color 0.22s ease,
+    background 0.22s ease,
+    box-shadow 0.22s ease;
+  animation: guideFadeIn 0.35s ease-out both;
+}
+
+.guide-faq:hover {
+  transform: translateY(-1px);
+  border-color: rgba(204, 255, 0, 0.25);
+  background: rgba(204, 255, 0, 0.04);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.guide-faq[open] {
+  border-color: rgba(204, 255, 0, 0.4);
+  background: rgba(204, 255, 0, 0.05);
+  box-shadow:
+    0 0 0 1px rgba(204, 255, 0, 0.08),
+    0 16px 38px rgba(0, 0, 0, 0.4);
 }
 
 .guide-q {
@@ -4001,7 +4509,33 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 800;
   list-style: none;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  user-select: none;
+}
+
+.guide-q::after {
+  content: '+';
+  color: rgba(148, 163, 184, 0.95);
+  font-weight: 900;
+  transform-origin: center;
+  transition:
+    transform 0.22s ease,
+    color 0.22s ease;
+  flex: 0 0 auto;
+}
+
+.guide-faq[open] .guide-q {
+  color: rgba(204, 255, 0, 0.95);
+  text-shadow: 0 0 14px rgba(204, 255, 0, 0.18);
+}
+
+.guide-faq[open] .guide-q::after {
+  transform: rotate(45deg);
+  color: rgba(204, 255, 0, 0.95);
 }
 
 .guide-faq summary::-webkit-details-marker {
@@ -4013,6 +4547,18 @@ onBeforeUnmount(() => {
   color: #94a3b8;
   font-size: 12px;
   line-height: 1.7;
+  font-family: var(--common-font);
+}
+
+@keyframes guideFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .right-footer {
   padding: 16px;
@@ -4213,10 +4759,6 @@ onBeforeUnmount(() => {
 
   .history-list {
     padding: 12px 10px;
-    direction: rtl;
-  }
-
-  .history-list > * {
     direction: ltr;
   }
 
@@ -4247,6 +4789,121 @@ onBeforeUnmount(() => {
     width: 54px;
     height: 54px;
     border-radius: 10px;
+  }
+}
+
+.download-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.download-dialog {
+  background: #111;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 360px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.download-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.download-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #fff;
+}
+.close-btn {
+  background: transparent;
+  border: none;
+  color: #999;
+  font-size: 24px;
+  padding: 0;
+  line-height: 1;
+}
+
+.download-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.download-option-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  color: #fff;
+  transition: all 0.2s;
+}
+.download-option-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(204, 255, 0, 0.5);
+}
+
+.res-label {
+  font-size: 14px;
+  font-weight: 500;
+}
+.res-tag {
+  font-size: 11px;
+  background: rgba(204, 255, 0, 0.15);
+  color: #ccff00;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+@media (max-width: 768px) {
+  .download-dialog-overlay {
+    align-items: flex-end;
+  }
+  .download-dialog {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 20px 20px 0 0;
+    margin-bottom: 0;
+    padding-bottom: 40px;
+    animation: slideUpMobile 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideUpMobile {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
   }
 }
 </style>

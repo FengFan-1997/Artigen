@@ -1,142 +1,171 @@
-type AnyRecord = Record<string, any>;
+import { buildApiUrl } from '@/utils/api';
+import { ensureGuestUserId } from '@/login/session';
 
-declare global {
-  interface Window {
-    dataLayer?: any[];
-    gtag?: (...args: any[]) => void;
-    _hmt?: any[];
-  }
-}
+export const initAnalytics = () => {
+  console.log('[Analytics] Initialized');
+};
 
-const readEnv = (key: string) => {
+const safeJsonStringify = (value: any) => {
   try {
-    const env = (import.meta as any)?.env || {};
-    const v = env[key];
-    return typeof v === 'string' ? v.trim() : '';
+    const seen = new WeakSet<object>();
+    return JSON.stringify(value, (_key, v) => {
+      if (typeof v === 'bigint') return v.toString();
+      if (typeof v === 'function') return undefined;
+      if (v instanceof Error) {
+        return { name: v.name, message: v.message, stack: v.stack };
+      }
+      if (v instanceof URL) return v.toString();
+      if (typeof File !== 'undefined' && v instanceof File) {
+        return { name: v.name, size: v.size, type: v.type, lastModified: v.lastModified };
+      }
+      if (typeof Blob !== 'undefined' && v instanceof Blob) {
+        return { size: v.size, type: v.type };
+      }
+      if (typeof Event !== 'undefined' && v instanceof Event) {
+        return { type: v.type };
+      }
+      if (typeof HTMLElement !== 'undefined' && v instanceof HTMLElement) {
+        return { tag: v.tagName, id: v.id, className: v.className };
+      }
+      if (v && typeof v === 'object') {
+        if (seen.has(v)) return '[Circular]';
+        seen.add(v);
+      }
+      return v;
+    });
   } catch {
     return '';
   }
 };
 
-const ensureScript = (id: string, src: string) => {
-  if (!id || !src) return;
-  try {
-    const existing = document.head.querySelector<HTMLScriptElement>(`script#${CSS.escape(id)}`);
-    if (existing) return;
-    const s = document.createElement('script');
-    s.id = id;
-    s.async = true;
-    s.src = src;
-    document.head.appendChild(s);
-  } catch {}
-};
-
-let inited = false;
-
-export const initAnalytics = () => {
-  if (inited) return;
-  inited = true;
-
-  const ga4Id = readEnv('VITE_GA4_ID');
-  if (ga4Id) {
-    ensureScript(
-      'ga4-gtag',
-      `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(ga4Id)}`
-    );
-    try {
-      window.dataLayer = window.dataLayer || [];
-      window.gtag =
-        window.gtag ||
-        function gtag(...args: any[]) {
-          window.dataLayer!.push(args);
-        };
-      window.gtag('js', new Date());
-      window.gtag('config', ga4Id, { send_page_view: false });
-    } catch {}
-  }
-
-  const baiduHmId = readEnv('VITE_BAIDU_HM_ID');
-  if (baiduHmId) {
-    try {
-      window._hmt = window._hmt || [];
-    } catch {}
-    ensureScript('baidu-hm', `https://hm.baidu.com/hm.js?${encodeURIComponent(baiduHmId)}`);
-  }
-};
-
-const safeText = (v: any, maxLen = 180) => {
-  const s = String(v ?? '').trim();
-  if (!s) return '';
-  return s.length > maxLen ? s.slice(0, maxLen) : s;
-};
-
-const buildBaiduLabel = (params: AnyRecord) => {
-  const pieces: string[] = [];
-  for (const [k, v] of Object.entries(params || {})) {
-    if (v === undefined || v === null) continue;
-    if (typeof v === 'string' && !v.trim()) continue;
-    if (typeof v === 'object') continue;
-    const key = safeText(k, 40);
-    const val = safeText(v, 80);
-    if (!key || !val) continue;
-    pieces.push(`${key}=${val}`);
-    if (pieces.length >= 6) break;
-  }
-  return safeText(pieces.join('&'), 180);
-};
-
-export const trackPageView = (input: { path: string; title?: string; location?: string }) => {
-  const path = safeText(input?.path, 240) || '/';
-  const title = safeText(input?.title, 240);
-  const location = safeText(input?.location, 400) || safeText(window.location.href, 400);
-
-  try {
-    const ga4Id = readEnv('VITE_GA4_ID');
-    if (ga4Id && typeof window.gtag === 'function') {
-      window.gtag('event', 'page_view', {
-        page_path: path,
-        page_title: title || undefined,
-        page_location: location || undefined
+export const trackEvent = (
+  categoryOrName: string,
+  actionOrProps?: string | Record<string, any>,
+  label?: string,
+  value?: number
+) => {
+  // Check if second arg is object (Project existing style: eventName, properties)
+  if (typeof actionOrProps === 'object') {
+    const eventName = categoryOrName;
+    const props = actionOrProps;
+    console.log(`[Analytics] ${eventName}`, props);
+    if ((window as any).dataLayer) {
+      (window as any).dataLayer.push({
+        event: eventName,
+        ...props
       });
     }
-  } catch {}
+    void trackBackendEvent(eventName, props);
+    return;
+  }
 
-  try {
-    const baiduHmId = readEnv('VITE_BAIDU_HM_ID');
-    if (baiduHmId && Array.isArray(window._hmt)) {
-      window._hmt.push(['_trackPageview', path]);
-    }
-  } catch {}
+  // New style: (Category, Action, Label, Value)
+  const category = categoryOrName;
+  const action = actionOrProps as string;
+  console.log(`[Analytics] ${category} - ${action}`, label, value);
+  if ((window as any).dataLayer) {
+    (window as any).dataLayer.push({
+      event: 'custom_event',
+      eventCategory: category,
+      eventAction: action,
+      eventLabel: label,
+      eventValue: value
+    });
+  }
+  void trackBackendEvent('custom_event', {
+    eventCategory: category,
+    eventAction: action,
+    eventLabel: label,
+    eventValue: value
+  });
 };
 
-export const trackEvent = (name: string, params: AnyRecord = {}) => {
-  const eventName = safeText(name, 60);
-  if (!eventName) return;
+export const trackPageView = (
+  pathOrParams: string | { path: string; title?: string; location?: string }
+) => {
+  let path = '';
+  let props = {};
 
-  try {
-    const ga4Id = readEnv('VITE_GA4_ID');
-    if (ga4Id && typeof window.gtag === 'function') {
-      const payload: AnyRecord = {};
-      for (const [k, v] of Object.entries(params || {})) {
-        if (v === undefined || v === null) continue;
-        if (typeof v === 'object') continue;
-        payload[k] = typeof v === 'string' ? safeText(v, 120) : v;
+  if (typeof pathOrParams === 'string') {
+    path = pathOrParams;
+  } else {
+    path = pathOrParams.path;
+    props = pathOrParams;
+  }
+
+  console.log(`[Analytics] Page View: ${path}`, props);
+  if ((window as any).dataLayer) {
+    (window as any).dataLayer.push({
+      event: 'page_view',
+      pagePath: path,
+      ...props
+    });
+  }
+  void trackBackendEvent('page_view', { pagePath: path, ...props });
+};
+
+/**
+ * Mock Backend Data Collection
+ * In a real app, this would be a fetch/axios call to your backend API.
+ */
+export const trackBackendEvent = async (eventType: string, payload: Record<string, any>) => {
+  const url = buildApiUrl('/api/collection/event');
+  const userId = ensureGuestUserId();
+  const body: Record<string, any> = {
+    eventType: String(eventType || '').trim() || 'event',
+    payload: payload && typeof payload === 'object' ? payload : {},
+    ts: Date.now(),
+    userId,
+    path: (() => {
+      try {
+        const { pathname, search, hash } = window.location;
+        return `${pathname || ''}${search || ''}${hash || ''}`;
+      } catch {
+        return '';
       }
-      window.gtag('event', eventName, payload);
+    })(),
+    location: (() => {
+      try {
+        return window.location.href;
+      } catch {
+        return '';
+      }
+    })(),
+    referrer: (() => {
+      try {
+        return document.referrer || '';
+      } catch {
+        return '';
+      }
+    })()
+  };
+
+  let text = safeJsonStringify(body);
+  if (!text) {
+    body.payload = {};
+    text = safeJsonStringify(body);
+  }
+
+  try {
+    const beacon = (navigator as any)?.sendBeacon;
+    if (typeof beacon === 'function' && text && text.length < 58000) {
+      const blob = new Blob([text], { type: 'application/json' });
+      const ok = beacon.call(navigator, url, blob);
+      if (ok) return { success: true, via: 'beacon' as const };
     }
   } catch {}
 
   try {
-    const baiduHmId = readEnv('VITE_BAIDU_HM_ID');
-    if (baiduHmId && Array.isArray(window._hmt)) {
-      const category = safeText((params as any)?.category, 40) || 'funnel';
-      const label = buildBaiduLabel(params);
-      const valueRaw = (params as any)?.value;
-      const value = Number.isFinite(Number(valueRaw)) ? Number(valueRaw) : undefined;
-      const args: any[] = ['_trackEvent', category, eventName];
-      if (label) args.push(label);
-      if (value !== undefined) args.push(value);
-      window._hmt.push(args);
-    }
-  } catch {}
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: text,
+      keepalive: true
+    });
+    if (!resp.ok) return { success: false, status: resp.status };
+    const data = await resp.json().catch(() => ({}));
+    return { success: true, data };
+  } catch (e: any) {
+    return { success: false, error: typeof e?.message === 'string' ? e.message : String(e) };
+  }
 };

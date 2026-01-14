@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, computed } from 'vue';
+import { onMounted, computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { WalletOutlined } from '@ant-design/icons-vue';
 import { getConsoleUserId, useConsoleStore } from '@/stores/console';
@@ -160,7 +160,16 @@ const ui = computed(() =>
         totalViews: '总访问量',
         conversions: '转化点击',
         ctr: '转化率',
-        trafficNote: '数据来源: /artigen/tools'
+        trafficNote: '数据来源: /artigen/tools',
+        toolPerformance: '工具表现',
+        clickAnalysis: '点击分析',
+        colToolName: '工具',
+        colSuccess: '成功',
+        colFail: '失败',
+        colRate: '成功率',
+        colPage: '页面',
+        colTarget: '目标',
+        colClicks: '点击'
       }
     : {
         title: 'Overview',
@@ -202,19 +211,109 @@ const userPoints = computed(() => consoleStore.getCurrentUser?.points || 0);
 const userLevel = computed(() => consoleStore.getCurrentUser?.level || 'free');
 const userEmail = computed(() => consoleStore.getCurrentUser?.email || 'N/A');
 
-const trafficViews = computed(() => {
-  return consoleStore.trafficStats.filter((t) => t.type === 'page_view' && t.page.includes('tools'))
-    .length;
+const trafficLoading = ref(false);
+
+const normalizePage = (raw: any) => {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (s.startsWith('/')) return s;
+  try {
+    const u = new URL(s);
+    return `${u.pathname || ''}${u.search || ''}${u.hash || ''}`;
+  } catch {
+    return s;
+  }
+};
+
+const trafficEvents = computed(() => {
+  const out: Array<{
+    type: 'page_view' | 'click' | 'conversion' | 'generate_success' | 'generate_fail';
+    page: string;
+    target?: string;
+    meta?: any;
+    timestamp: number;
+    id: string;
+  }> = [];
+
+  const adminEvents = Array.isArray(consoleStore.adminEvents) ? consoleStore.adminEvents : [];
+  if (adminEvents.length > 0) {
+    for (const evt of adminEvents) {
+      const eventType = String(evt?.eventType || '').trim();
+      const payload = evt?.payload && typeof evt.payload === 'object' ? evt.payload : {};
+      const page = normalizePage((payload as any).pagePath || evt?.path || (payload as any).path);
+      const timestamp = typeof evt?.ts === 'number' ? evt.ts : Date.now();
+      const id =
+        String(evt?.id || '').trim() ||
+        `${timestamp}_${eventType}_${Math.random().toString(16).slice(2)}`;
+
+      if (eventType === 'page_view') {
+        out.push({ type: 'page_view', page, timestamp, id });
+        continue;
+      }
+      if (eventType === 'tools_conversion') {
+        out.push({
+          type: 'conversion',
+          page,
+          target:
+            String((payload as any).target || (payload as any).name || '').trim() || undefined,
+          meta: payload,
+          timestamp,
+          id
+        });
+        continue;
+      }
+      if (eventType === 'tools_click' || eventType === 'tools_chip_click') {
+        out.push({
+          type: 'click',
+          page,
+          target:
+            String((payload as any).target || '').trim() ||
+            (eventType === 'tools_chip_click'
+              ? String((payload as any).keyword || '').trim() || undefined
+              : undefined),
+          meta: payload,
+          timestamp,
+          id
+        });
+        continue;
+      }
+      if (eventType === 'ai_generate_success' || eventType === 'ai_generate_fail') {
+        out.push({
+          type: eventType === 'ai_generate_success' ? 'generate_success' : 'generate_fail',
+          page,
+          target: String((payload as any).toolId || (payload as any).model || '').trim()
+            ? `tool:${String((payload as any).toolId || (payload as any).model || '').trim()}`
+            : undefined,
+          meta: payload,
+          timestamp,
+          id
+        });
+      }
+    }
+    return out;
+  }
+
+  return (consoleStore.trafficStats || []).map((t) => ({
+    type: t.type,
+    page: normalizePage(t.page),
+    target: t.target,
+    meta: t.meta,
+    timestamp: t.timestamp,
+    id: t.id
+  }));
 });
-const trafficConversions = computed(() => {
-  return consoleStore.trafficStats.filter(
-    (t) => t.type === 'conversion' && t.page.includes('tools')
-  ).length;
-});
-const trafficCtr = computed(() => {
-  if (trafficViews.value === 0) return 0;
-  return (trafficConversions.value / trafficViews.value) * 100;
-});
+
+const trafficViews = computed(
+  () =>
+    trafficEvents.value.filter((t) => t.type === 'page_view' && t.page.includes('/tools')).length
+);
+const trafficConversions = computed(
+  () =>
+    trafficEvents.value.filter((t) => t.type === 'conversion' && t.page.includes('/tools')).length
+);
+const trafficCtr = computed(() =>
+  trafficViews.value > 0 ? (trafficConversions.value / trafficViews.value) * 100 : 0
+);
 
 const recentUsage = computed(() => {
   return consoleStore.getUserTransactions(userId.value).slice(0, 5);
@@ -290,7 +389,7 @@ const clickStats = computed(() => {
   const map = new Map<string, { id: string; target: string; page: string; count: number }>();
   const pageViews = new Map<string, number>();
 
-  consoleStore.trafficStats.forEach((evt) => {
+  trafficEvents.value.forEach((evt) => {
     if (evt.type === 'page_view') {
       const p = evt.page;
       pageViews.set(p, (pageViews.get(p) || 0) + 1);
@@ -317,7 +416,7 @@ const clickStats = computed(() => {
 const toolStats = computed(() => {
   const map = new Map<string, { id: string; name: string; success: number; fail: number }>();
 
-  consoleStore.trafficStats.forEach((evt) => {
+  trafficEvents.value.forEach((evt) => {
     if (evt.type === 'generate_success' || evt.type === 'generate_fail') {
       const toolId = evt.target?.replace('tool:', '') || 'unknown';
       const name = (evt.meta as any)?.toolName || toolId;
@@ -370,6 +469,20 @@ const getLevelColor = (level: string) => {
 
 onMounted(() => {
   consoleStore.init();
+  const loadTraffic = async () => {
+    if (trafficLoading.value) return;
+    const key = String(consoleStore.adminKey || '').trim();
+    if (!key) return;
+    trafficLoading.value = true;
+    try {
+      await consoleStore.fetchAdminCollectionEvents({ limit: 2000, offset: 0 });
+    } catch (e) {
+      void e;
+    } finally {
+      trafficLoading.value = false;
+    }
+  };
+  void loadTraffic();
   // Ensure the user has 9999 points as requested if it's the first time
   // Actually consoleStore.init() does this for new users, but let's be safe
   if (

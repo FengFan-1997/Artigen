@@ -135,6 +135,11 @@ const { currentLang } = storeToRefs(languageStore);
 
 onMounted(() => {
   consoleStore.init();
+  trackPageView({
+    path: '/artigen/tools',
+    title: document.title,
+    location: window.location.href
+  });
   // Record page view in Console Store (for internal dashboard)
   consoleStore.recordTraffic({
     type: 'page_view',

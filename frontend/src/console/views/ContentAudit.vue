@@ -156,6 +156,54 @@
           </a-table>
         </div>
       </a-tab-pane>
+
+      <a-tab-pane key="events" :tab="ui.tabEvents">
+        <div class="table-toolbar">
+          <div class="table-toolbar-left">
+            <a-input
+              v-model:value="filterEventType"
+              :placeholder="ui.eventTypeFilterPh"
+              class="filter-input"
+            />
+            <a-button type="primary" :loading="loadingEvents" @click="fetchEvents">{{
+              ui.refresh
+            }}</a-button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <a-table
+            :dataSource="events"
+            :columns="eventColumns"
+            rowKey="id"
+            :loading="loadingEvents"
+            :tableLayout="'fixed'"
+            :scroll="{ x: eventScrollX }"
+          >
+            <template #headerCell="{ column }">
+              <div class="th-wrap">
+                <span class="th-title">{{ column.title }}</span>
+                <span
+                  class="th-resizer"
+                  @mousedown="(e) => onResizeMouseDown(e, 'events', column.key)"
+                />
+              </div>
+            </template>
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'ts'">
+                {{ record.ts ? new Date(record.ts).toLocaleString() : '-' }}
+              </template>
+              <template v-else-if="column.key === 'payload'">
+                <div class="prompt-cell">{{ formatPayload(record.payload) }}</div>
+              </template>
+              <template v-else-if="column.key === 'action'">
+                <a-button size="small" @click="viewEventDetails(record)">{{
+                  ui.viewFullLog
+                }}</a-button>
+              </template>
+            </template>
+          </a-table>
+        </div>
+      </a-tab-pane>
     </a-tabs>
 
     <a-modal
@@ -176,7 +224,7 @@
     <a-modal v-model:visible="isLogModalVisible" :title="ui.logDetails" footer="" width="600px">
       <div v-if="selectedLog">
         <p>
-          <strong>{{ ui.actionLabel }}:</strong> {{ selectedLog.trigger }}
+          <strong>{{ ui.actionLabel }}:</strong> {{ selectedLog.eventType || selectedLog.trigger }}
         </p>
         <p>
           <strong>{{ ui.colUsername }}:</strong> {{ selectedLog.username || '-' }}
@@ -213,8 +261,10 @@ const activeTab = ref('images');
 const isLogModalVisible = ref(false);
 const selectedLog = ref<any>(null);
 const filterUserId = ref('');
+const filterEventType = ref('');
 const loadingImages = ref(false);
 const loadingUsage = ref(false);
+const loadingEvents = ref(false);
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -225,6 +275,7 @@ const ui = computed(() =>
         title: '内容审计',
         tabImages: '生成图片',
         tabChat: '调用记录',
+        tabEvents: '埋点事件',
         viewFullLog: '查看完整日志',
         logDetails: '日志详情',
         actionLabel: '动作',
@@ -241,8 +292,12 @@ const ui = computed(() =>
         colModel: '模型',
         colCredits: '消耗',
         colTime: '时间',
+        colEventType: '事件',
+        colPath: '路径',
+        colPayload: '参数',
         refresh: '刷新',
         userFilterPh: '可选：按用户 ID 过滤',
+        eventTypeFilterPh: '可选：按事件类型过滤（例如 page_view）',
         columns: '列设置',
         columnSettings: '列表列设置',
         download: '下载',
@@ -254,6 +309,7 @@ const ui = computed(() =>
         title: 'Content Audit',
         tabImages: 'Generated Images',
         tabChat: 'Requests',
+        tabEvents: 'Tracking Events',
         viewFullLog: 'View Full Log',
         logDetails: 'Log Details',
         actionLabel: 'Action',
@@ -270,8 +326,12 @@ const ui = computed(() =>
         colModel: 'Model',
         colCredits: 'Credits',
         colTime: 'Time',
+        colEventType: 'Event',
+        colPath: 'Path',
+        colPayload: 'Payload',
         refresh: 'Refresh',
         userFilterPh: 'Optional: filter by userId',
+        eventTypeFilterPh: 'Optional: filter by event type (e.g. page_view)',
         columns: 'Columns',
         columnSettings: 'Column Settings',
         download: 'Download',
@@ -280,6 +340,18 @@ const ui = computed(() =>
         close: 'Close'
       }
 );
+
+const events = computed(() => consoleStore.adminEvents || []);
+
+const formatPayload = (payload: any) => {
+  if (!payload || typeof payload !== 'object') return '';
+  try {
+    const text = JSON.stringify(payload);
+    return text.length > 220 ? `${text.slice(0, 220)}…` : text;
+  } catch {
+    return '';
+  }
+};
 
 const NO_IMAGE_URL = 'https://via.placeholder.com/100?text=No+Image';
 const NO_UPLOAD_URL = 'https://via.placeholder.com/100?text=No+Upload';
@@ -327,6 +399,7 @@ onMounted(() => {
   hydrateColumnPreferences();
   void fetchImages();
   void fetchUsage();
+  void fetchEvents();
 });
 
 const resolveUrl = (raw: string) => {
@@ -488,6 +561,8 @@ const STORAGE_IMAGES_VISIBLE = `${STORAGE_PREFIX}:images:visible`;
 const STORAGE_IMAGES_WIDTHS = `${STORAGE_PREFIX}:images:widths`;
 const STORAGE_CHAT_VISIBLE = `${STORAGE_PREFIX}:chat:visible`;
 const STORAGE_CHAT_WIDTHS = `${STORAGE_PREFIX}:chat:widths`;
+const STORAGE_EVENTS_VISIBLE = `${STORAGE_PREFIX}:events:visible`;
+const STORAGE_EVENTS_WIDTHS = `${STORAGE_PREFIX}:events:widths`;
 
 const baseImageColumns = computed<SimpleColumn[]>(() => [
   { title: ui.value.colPreview, key: 'preview', width: 170 },
@@ -534,13 +609,35 @@ const baseChatColumns = computed<SimpleColumn[]>(() => [
   { title: ui.value.colCreatedAt, key: 'action', width: 140 }
 ]);
 
+const baseEventColumns = computed<SimpleColumn[]>(() => [
+  { title: ui.value.colTime, dataIndex: 'ts', key: 'ts', width: 190 },
+  {
+    title: ui.value.colEventType,
+    dataIndex: 'eventType',
+    key: 'eventType',
+    width: 170,
+    ellipsis: true
+  },
+  { title: ui.value.userLabel, dataIndex: 'userId', key: 'userId', width: 140, ellipsis: true },
+  { title: ui.value.colPath, dataIndex: 'path', key: 'path', width: 240, ellipsis: true },
+  { title: ui.value.colPayload, key: 'payload', width: 520 },
+  { title: ui.value.colCreatedAt, key: 'action', width: 140 }
+]);
+
 const imageVisibleKeys = ref<string[]>([]);
 const chatVisibleKeys = ref<string[]>([]);
+const eventVisibleKeys = ref<string[]>([]);
 const imageColumnWidths = ref<Record<string, number>>({});
 const chatColumnWidths = ref<Record<string, number>>({});
+const eventColumnWidths = ref<Record<string, number>>({});
 
-const getDefaultVisibleKeys = (tab: 'images' | 'chat') =>
-  (tab === 'images' ? baseImageColumns.value : baseChatColumns.value).map((c) => c.key);
+const getDefaultVisibleKeys = (tab: 'images' | 'chat' | 'events') =>
+  (tab === 'images'
+    ? baseImageColumns.value
+    : tab === 'chat'
+      ? baseChatColumns.value
+      : baseEventColumns.value
+  ).map((c) => c.key);
 
 const safeReadJson = <T,>(key: string, fallback: T): T => {
   try {
@@ -561,10 +658,13 @@ const safeWriteJson = (key: string, value: unknown) => {
 const hydrateColumnPreferences = () => {
   const imgVisible = safeReadJson<string[]>(STORAGE_IMAGES_VISIBLE, []);
   const chatVisible = safeReadJson<string[]>(STORAGE_CHAT_VISIBLE, []);
+  const eventVisible = safeReadJson<string[]>(STORAGE_EVENTS_VISIBLE, []);
   imageVisibleKeys.value = imgVisible.length ? imgVisible : getDefaultVisibleKeys('images');
   chatVisibleKeys.value = chatVisible.length ? chatVisible : getDefaultVisibleKeys('chat');
+  eventVisibleKeys.value = eventVisible.length ? eventVisible : getDefaultVisibleKeys('events');
   imageColumnWidths.value = safeReadJson<Record<string, number>>(STORAGE_IMAGES_WIDTHS, {});
   chatColumnWidths.value = safeReadJson<Record<string, number>>(STORAGE_CHAT_WIDTHS, {});
+  eventColumnWidths.value = safeReadJson<Record<string, number>>(STORAGE_EVENTS_WIDTHS, {});
 };
 
 watch(
@@ -582,8 +682,21 @@ watch(
   { deep: true }
 );
 
-const withWidths = (tab: 'images' | 'chat', cols: SimpleColumn[]) => {
-  const widths = tab === 'images' ? imageColumnWidths.value : chatColumnWidths.value;
+watch(
+  eventVisibleKeys,
+  (v) => {
+    safeWriteJson(STORAGE_EVENTS_VISIBLE, v);
+  },
+  { deep: true }
+);
+
+const withWidths = (tab: 'images' | 'chat' | 'events', cols: SimpleColumn[]) => {
+  const widths =
+    tab === 'images'
+      ? imageColumnWidths.value
+      : tab === 'chat'
+        ? chatColumnWidths.value
+        : eventColumnWidths.value;
   return cols.map((c) => ({ ...c, width: Math.max(80, Number(widths[c.key] ?? c.width ?? 120)) }));
 };
 
@@ -607,39 +720,69 @@ const chatColumns = computed(() => {
   );
 });
 
+const eventColumns = computed(() => {
+  const allowed = new Set(
+    eventVisibleKeys.value.length ? eventVisibleKeys.value : getDefaultVisibleKeys('events')
+  );
+  return withWidths(
+    'events',
+    baseEventColumns.value.filter((c) => allowed.has(c.key))
+  );
+});
+
 const sumWidths = (cols: SimpleColumn[]) =>
   cols.reduce((acc, c) => acc + (Number(c.width) || 0), 0);
 const imageScrollX = computed(() => Math.max(900, sumWidths(imageColumns.value)));
 const chatScrollX = computed(() => Math.max(900, sumWidths(chatColumns.value)));
+const eventScrollX = computed(() => Math.max(900, sumWidths(eventColumns.value)));
 
 const isColumnModalVisible = ref(false);
-const columnModalTab = ref<'images' | 'chat'>('images');
-const openColumnModal = (tab: 'images' | 'chat') => {
+const columnModalTab = ref<'images' | 'chat' | 'events'>('images');
+const openColumnModal = (tab: 'images' | 'chat' | 'events') => {
   columnModalTab.value = tab;
   isColumnModalVisible.value = true;
 };
 
 const modalSelectedKeys = computed<string[]>({
-  get: () => (columnModalTab.value === 'images' ? imageVisibleKeys.value : chatVisibleKeys.value),
+  get: () =>
+    columnModalTab.value === 'images'
+      ? imageVisibleKeys.value
+      : columnModalTab.value === 'chat'
+        ? chatVisibleKeys.value
+        : eventVisibleKeys.value,
   set: (val) => {
     if (columnModalTab.value === 'images') imageVisibleKeys.value = val;
-    else chatVisibleKeys.value = val;
+    else if (columnModalTab.value === 'chat') chatVisibleKeys.value = val;
+    else eventVisibleKeys.value = val;
   }
 });
 
 const modalColumnOptions = computed(() => {
-  const cols = columnModalTab.value === 'images' ? baseImageColumns.value : baseChatColumns.value;
+  const cols =
+    columnModalTab.value === 'images'
+      ? baseImageColumns.value
+      : columnModalTab.value === 'chat'
+        ? baseChatColumns.value
+        : baseEventColumns.value;
   return cols.map((c) => ({ label: c.title, value: c.key }));
 });
 
-const persistWidthsForTab = (tab: 'images' | 'chat') => {
+const persistWidthsForTab = (tab: 'images' | 'chat' | 'events') => {
   safeWriteJson(
-    tab === 'images' ? STORAGE_IMAGES_WIDTHS : STORAGE_CHAT_WIDTHS,
-    tab === 'images' ? imageColumnWidths.value : chatColumnWidths.value
+    tab === 'images'
+      ? STORAGE_IMAGES_WIDTHS
+      : tab === 'chat'
+        ? STORAGE_CHAT_WIDTHS
+        : STORAGE_EVENTS_WIDTHS,
+    tab === 'images'
+      ? imageColumnWidths.value
+      : tab === 'chat'
+        ? chatColumnWidths.value
+        : eventColumnWidths.value
   );
 };
 
-const resetColumns = (tab: 'images' | 'chat') => {
+const resetColumns = (tab: 'images' | 'chat' | 'events') => {
   if (tab === 'images') {
     imageVisibleKeys.value = getDefaultVisibleKeys('images');
     imageColumnWidths.value = {};
@@ -647,30 +790,48 @@ const resetColumns = (tab: 'images' | 'chat') => {
     safeWriteJson(STORAGE_IMAGES_WIDTHS, imageColumnWidths.value);
     return;
   }
-  chatVisibleKeys.value = getDefaultVisibleKeys('chat');
-  chatColumnWidths.value = {};
-  safeWriteJson(STORAGE_CHAT_VISIBLE, chatVisibleKeys.value);
-  safeWriteJson(STORAGE_CHAT_WIDTHS, chatColumnWidths.value);
+  if (tab === 'chat') {
+    chatVisibleKeys.value = getDefaultVisibleKeys('chat');
+    chatColumnWidths.value = {};
+    safeWriteJson(STORAGE_CHAT_VISIBLE, chatVisibleKeys.value);
+    safeWriteJson(STORAGE_CHAT_WIDTHS, chatColumnWidths.value);
+    return;
+  }
+  eventVisibleKeys.value = getDefaultVisibleKeys('events');
+  eventColumnWidths.value = {};
+  safeWriteJson(STORAGE_EVENTS_VISIBLE, eventVisibleKeys.value);
+  safeWriteJson(STORAGE_EVENTS_WIDTHS, eventColumnWidths.value);
 };
 
 const resizeState = ref<null | {
-  tab: 'images' | 'chat';
+  tab: 'images' | 'chat' | 'events';
   key: string;
   startX: number;
   startWidth: number;
 }>(null);
 
-const getWidthFor = (tab: 'images' | 'chat', key: string) => {
-  const widths = tab === 'images' ? imageColumnWidths.value : chatColumnWidths.value;
-  const base = tab === 'images' ? baseImageColumns.value : baseChatColumns.value;
+const getWidthFor = (tab: 'images' | 'chat' | 'events', key: string) => {
+  const widths =
+    tab === 'images'
+      ? imageColumnWidths.value
+      : tab === 'chat'
+        ? chatColumnWidths.value
+        : eventColumnWidths.value;
+  const base =
+    tab === 'images'
+      ? baseImageColumns.value
+      : tab === 'chat'
+        ? baseChatColumns.value
+        : baseEventColumns.value;
   const fromBase = base.find((c) => c.key === key)?.width ?? 120;
   return Math.max(80, Number(widths[key] ?? fromBase));
 };
 
-const setWidthFor = (tab: 'images' | 'chat', key: string, width: number) => {
+const setWidthFor = (tab: 'images' | 'chat' | 'events', key: string, width: number) => {
   const clamped = Math.max(80, Math.min(900, Math.round(width)));
   if (tab === 'images') imageColumnWidths.value = { ...imageColumnWidths.value, [key]: clamped };
-  else chatColumnWidths.value = { ...chatColumnWidths.value, [key]: clamped };
+  else if (tab === 'chat') chatColumnWidths.value = { ...chatColumnWidths.value, [key]: clamped };
+  else eventColumnWidths.value = { ...eventColumnWidths.value, [key]: clamped };
 };
 
 const onResizeMouseMove = (e: MouseEvent) => {
@@ -693,7 +854,7 @@ const stopResize = () => {
   persistWidthsForTab(st.tab);
 };
 
-const onResizeMouseDown = (e: MouseEvent, tab: 'images' | 'chat', key: string) => {
+const onResizeMouseDown = (e: MouseEvent, tab: 'images' | 'chat' | 'events', key: string) => {
   e.preventDefault();
   e.stopPropagation();
   const startWidth = getWidthFor(tab, String(key));
@@ -712,6 +873,11 @@ onBeforeUnmount(() => {
 
 const viewLogDetails = (log: any) => {
   selectedLog.value = log;
+  isLogModalVisible.value = true;
+};
+
+const viewEventDetails = (evt: any) => {
+  selectedLog.value = evt;
   isLogModalVisible.value = true;
 };
 
@@ -744,6 +910,22 @@ const fetchUsage = async () => {
     showAdminError(e);
   } finally {
     loadingUsage.value = false;
+  }
+};
+
+const fetchEvents = async () => {
+  if (loadingEvents.value) return;
+  loadingEvents.value = true;
+  try {
+    await consoleStore.fetchAdminCollectionEvents({
+      eventType: filterEventType.value,
+      limit: 200,
+      offset: 0
+    });
+  } catch (e) {
+    showAdminError(e);
+  } finally {
+    loadingEvents.value = false;
   }
 };
 </script>

@@ -9,6 +9,12 @@
     </button>
 
     <nav class="nav-links">
+      <router-link to="/artigen" class="nav-item" :class="{ active: activeKey === 'home' }">
+        {{ ui.navHome }}
+      </router-link>
+      <router-link to="/artigen/ai" class="nav-item" :class="{ active: activeKey === 'ai' }">
+        {{ ui.navAiDesign }}
+      </router-link>
       <router-link
         to="/artigen/format-factory"
         class="nav-item"
@@ -16,8 +22,12 @@
       >
         {{ ui.navFormatFactory }}
       </router-link>
-      <router-link to="/artigen/ai" class="nav-item" :class="{ active: activeKey === 'ai' }">
-        {{ ui.navAiWorkshop }}
+      <router-link
+        to="/artigen/image-workshop"
+        class="nav-item"
+        :class="{ active: activeKey === 'image' }"
+      >
+        {{ ui.navImageWorkshop }}
       </router-link>
       <router-link
         to="/artigen/market"
@@ -63,10 +73,40 @@
       <slot name="actions">
         <div v-if="!hideAuth" class="top-actions">
           <template v-if="isAuthed">
-            <button class="credits-btn" type="button" @click="goMarket" :disabled="creditsLoading">
-              <span class="credits-icon">⚡</span>
-              <span class="credits-value">{{ creditsText }}</span>
-            </button>
+            <div ref="creditsContainerRef" class="credits-container">
+              <button class="credits-btn" type="button" @click="toggleCreditsPopover">
+                <span class="credits-icon">⚡</span>
+                <span class="credits-value">{{ creditsText }}</span>
+              </button>
+
+              <transition name="dropdown-fade">
+                <div v-if="creditsPopoverOpen" class="credits-popover" @click.stop>
+                  <div class="credits-pop-head">
+                    <div class="credits-pop-title">{{ ui.creditsBalance }}</div>
+                    <div class="credits-pop-total">
+                      {{ ui.totalCredits }}: {{ totalCreditsText }}
+                    </div>
+                  </div>
+                  <div class="credits-pop-balance">
+                    <span class="credits-pop-icon">⚡</span>
+                    <span class="credits-pop-value">{{ creditsText }}</span>
+                  </div>
+                  <div class="credits-pop-actions">
+                    <button
+                      class="credits-pop-btn"
+                      type="button"
+                      @click="refreshCredits"
+                      :disabled="creditsLoading"
+                    >
+                      {{ ui.refreshCredits }}
+                    </button>
+                    <button class="credits-pop-btn primary" type="button" @click="goMarket">
+                      {{ ui.upgradeForMore }}
+                    </button>
+                  </div>
+                </div>
+              </transition>
+            </div>
             <button class="avatar-btn" type="button" @click="openAccountPopup">
               <span class="avatar-text">{{ avatarText }}</span>
             </button>
@@ -82,12 +122,20 @@
   <transition name="dropdown-fade">
     <div v-if="isMobileMenuOpen" ref="mobileMenuRef" class="mobile-menu">
       <router-link
+        to="/artigen"
+        class="mobile-item"
+        :class="{ active: activeKey === 'home' }"
+        @click="isMobileMenuOpen = false"
+      >
+        {{ ui.navHome }}
+      </router-link>
+      <router-link
         to="/artigen/ai"
         class="mobile-item"
         :class="{ active: activeKey === 'ai' }"
         @click="isMobileMenuOpen = false"
       >
-        {{ ui.navAiWorkshop }}
+        {{ ui.navAiDesign }}
       </router-link>
       <router-link
         to="/artigen/format-factory"
@@ -96,6 +144,14 @@
         @click="isMobileMenuOpen = false"
       >
         {{ ui.navFormatFactory }}
+      </router-link>
+      <router-link
+        to="/artigen/image-workshop"
+        class="mobile-item"
+        :class="{ active: activeKey === 'image' }"
+        @click="isMobileMenuOpen = false"
+      >
+        {{ ui.navImageWorkshop }}
       </router-link>
       <router-link
         to="/artigen/market"
@@ -135,6 +191,8 @@ const mobileMenuRef = ref<HTMLElement | null>(null);
 const isLangMenuOpen = ref(false);
 const langContainerRef = ref<HTMLElement | null>(null);
 const isMobileMenuOpen = ref(false);
+const creditsPopoverOpen = ref(false);
+const creditsContainerRef = ref<HTMLElement | null>(null);
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -176,6 +234,11 @@ const onDocMouseDown = (e: MouseEvent) => {
     if (el && el.contains(target)) return;
     isLangMenuOpen.value = false;
   }
+  if (creditsPopoverOpen.value) {
+    const el = creditsContainerRef.value;
+    if (el && el.contains(target)) return;
+    creditsPopoverOpen.value = false;
+  }
   if (isMobileMenuOpen.value) {
     const h = headerRef.value;
     if (h && h.contains(target)) return;
@@ -206,23 +269,38 @@ const langLabel = computed(() => (currentLang.value === 'zh' ? 'ZH' : 'EN'));
 const ui = computed(() => {
   if (currentLang.value === 'zh') {
     return {
+      navHome: '首页',
+      navAiDesign: 'AI设计',
       navFormatFactory: '格式工厂',
-      navAiWorkshop: 'AI工坊',
-      navMarket: '算力商城'
+      navImageWorkshop: 'AI影像工坊',
+      navMarket: '算力商城',
+      creditsBalance: 'Credit balance',
+      totalCredits: 'Total credits',
+      refreshCredits: '刷新点数',
+      upgradeForMore: 'Upgrade for more'
     };
   }
   return {
+    navHome: 'Home',
+    navAiDesign: 'AI Design',
     navFormatFactory: 'Format Factory',
-    navAiWorkshop: 'AI Workshop',
-    navMarket: 'Compute Market'
+    navImageWorkshop: 'AI Image Workshop',
+    navMarket: 'Compute Market',
+    creditsBalance: 'Credit balance',
+    totalCredits: 'Total credits',
+    refreshCredits: 'Refresh credits',
+    upgradeForMore: 'Upgrade for more'
   };
 });
 
-const activeKey = computed<'format' | 'ai' | 'market'>(() => {
+const activeKey = computed<'format' | 'ai' | 'market' | 'image' | 'home'>(() => {
   const p = String(route.path || '');
+  if (p === '/artigen' || p === '/artigen/') return 'home';
   if (p.startsWith('/artigen/format-factory')) return 'format';
   if (p.startsWith('/artigen/market')) return 'market';
-  return 'ai';
+  if (p.startsWith('/artigen/image-workshop')) return 'image';
+  if (p.startsWith('/artigen/ai')) return 'ai';
+  return 'home';
 });
 
 const loginText = computed(() => {
@@ -259,8 +337,22 @@ const creditsText = computed(() => {
   return String(Number(bal.available ?? 0));
 });
 
+const totalCreditsText = computed(() => {
+  const bal = creditsBalance.value;
+  if (!bal) return '--';
+  const a = Number(bal.available ?? 0) || 0;
+  const f = Number(bal.frozen ?? 0) || 0;
+  return String(a + f);
+});
+
 const goMarket = () => {
+  creditsPopoverOpen.value = false;
   router.push('/artigen/market');
+};
+
+const toggleCreditsPopover = () => {
+  creditsPopoverOpen.value = !creditsPopoverOpen.value;
+  if (creditsPopoverOpen.value) void refreshCredits();
 };
 
 watch(
@@ -275,7 +367,11 @@ watch(
   align-items: center;
   gap: 12px;
 }
-
+@media (max-width: 400px) {
+  .top-actions {
+    font-size: 13px;
+  }
+}
 .credits-btn {
   height: 38px;
   padding: 0 14px;
@@ -283,7 +379,7 @@ watch(
   border: 1px solid rgba(204, 255, 0, 0.28);
   background: rgba(204, 255, 0, 0.08);
   color: rgba(241, 245, 249, 0.95);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -310,6 +406,108 @@ watch(
   font-weight: 800;
 }
 
+.credits-container {
+  position: relative;
+  display: inline-flex;
+}
+
+.credits-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 280px;
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  z-index: 30;
+}
+
+.credits-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(241, 245, 249, 0.86);
+  font-size: 12px;
+}
+
+.credits-pop-title {
+  font-weight: 700;
+}
+
+.credits-pop-total {
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.credits-pop-balance {
+  margin-top: 10px;
+  border-radius: 12px;
+  padding: 12px 12px;
+  background: rgba(204, 255, 0, 0.08);
+  border: 1px solid rgba(204, 255, 0, 0.18);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.credits-pop-icon {
+  line-height: 1;
+}
+
+.credits-pop-value {
+  color: rgba(241, 245, 249, 0.95);
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+}
+
+.credits-pop-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.credits-pop-btn {
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(241, 245, 249, 0.92);
+  font-family: var(--common-font);
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.credits-pop-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.credits-pop-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.credits-pop-btn.primary {
+  border-color: rgba(204, 255, 0, 0.28);
+  background: rgba(204, 255, 0, 0.1);
+  color: rgba(241, 245, 249, 0.95);
+}
+
+.credits-pop-btn.primary:hover {
+  border-color: rgba(204, 255, 0, 0.55);
+  background: rgba(204, 255, 0, 0.14);
+}
+
 .avatar-btn {
   width: 38px;
   height: 38px;
@@ -330,7 +528,7 @@ watch(
 }
 
 .avatar-text {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-weight: 900;
   letter-spacing: 0.4px;
 }
@@ -350,7 +548,7 @@ watch(
 }
 
 .logo-text {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-weight: 700;
   font-size: 24px;
   margin-right: 80px;
@@ -366,7 +564,7 @@ watch(
 .nav-item {
   color: var(--text-muted, #94a3b8);
   text-decoration: none;
-  font-size: 14px;
+  font-size: 18px;
   font-weight: 500;
   transition: color 0.2s;
   position: relative;
@@ -387,13 +585,14 @@ watch(
 
 .nav-item:hover,
 .nav-item.active {
-  color: var(--text-main, #f1f5f9);
-  text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+  color: var(--primary, #ccff00);
+  text-shadow: 0 0 12px rgba(204, 255, 0, 0.6);
 }
 
 .nav-item:hover::after,
 .nav-item.active::after {
   width: 100%;
+  box-shadow: 0 0 10px var(--primary, #ccff00);
 }
 
 .header-right {
@@ -433,7 +632,9 @@ watch(
 }
 
 .mobile-item.active {
-  color: var(--text-main, #f1f5f9);
+  color: var(--primary, #ccff00);
+  background: rgba(204, 255, 0, 0.1);
+  text-shadow: 0 0 12px rgba(204, 255, 0, 0.4);
 }
 
 .lang-container {
@@ -459,7 +660,7 @@ watch(
 }
 
 .lang-label {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
 }
 
 .lang-switch:hover {
@@ -494,7 +695,7 @@ watch(
   font-size: 12px;
   color: var(--text-muted, #94a3b8);
   transition: all 0.2s;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
 }
 
 .lang-option:hover {
@@ -523,7 +724,7 @@ watch(
   border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
   color: var(--text-main, #f1f5f9);
   padding: 8px 20px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 14px;
   letter-spacing: 1px;
   transition: all 0.3s;
@@ -552,7 +753,7 @@ watch(
   left: 100%;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 980px) {
   .header {
     height: 64px;
     padding: 0 14px;

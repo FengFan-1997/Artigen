@@ -394,9 +394,25 @@ const columns = computed(() => [
   },
   { title: ui.value.colUserId, dataIndex: 'userId', key: 'userId', width: 180, ellipsis: true },
   { title: ui.value.colRequestId, dataIndex: 'requestId', key: 'requestId', ellipsis: true },
-  { title: ui.value.colType, dataIndex: 'trigger', key: 'trigger' },
-  { title: ui.value.colDesc, dataIndex: 'model', key: 'modelTag' },
-  { title: ui.value.colCredits, dataIndex: 'creditsDelta', key: 'creditsDelta', align: 'right' },
+  {
+    title: ui.value.colType,
+    dataIndex: 'trigger',
+    key: 'trigger',
+    customRender: ({ record }: any) => getUsageTypeLabel(record)
+  },
+  {
+    title: ui.value.colDesc,
+    dataIndex: 'model',
+    key: 'modelTag',
+    customRender: ({ record }: any) => getUsageDescLabel(record)
+  },
+  {
+    title: ui.value.colCredits,
+    dataIndex: 'creditsDelta',
+    key: 'creditsDelta',
+    align: 'right',
+    customRender: ({ record }: any) => formatCreditsSpent(record)
+  },
   { title: ui.value.colAction, key: 'action', width: 100, fixed: 'right' }
 ]);
 
@@ -423,6 +439,64 @@ const toNum = (v: any) => {
 };
 
 const toKey = (v: any) => String(v ?? '').trim();
+
+const formatCreditsSpent = (it: any) => {
+  const d = toNum(it?.creditsDelta);
+  const spent = Math.max(0, d);
+  const fixed = Math.round(spent * 100) / 100;
+  return fixed ? fixed : 0;
+};
+
+const isImgTrigger = (t: string) => {
+  const k = t.trim().toLowerCase();
+  return k === 'img2img' || k === 'ai_design' || k === 'id_photo' || k === 'old_photo';
+};
+
+const isDeepImg = (it: any) => {
+  if (it?.plan && typeof it.plan === 'object' && 'deepMode' in it.plan)
+    return !!(it.plan as any).deepMode;
+  return false;
+};
+
+const getUsageTypeLabel = (it: any) => {
+  const trig = toKey(it?.trigger);
+  const k = trig.toLowerCase();
+  const zh = currentLang.value === 'zh';
+  if (k === 'id_photo') return zh ? '证件照' : 'ID Photo';
+  if (k === 'old_photo') return zh ? '老照片修复' : 'Old Photo Restore';
+  if (k === 'ai_design')
+    return isDeepImg(it)
+      ? zh
+        ? '深度思考生图'
+        : 'Deep-think Image'
+      : zh
+        ? '非深度思考生图'
+        : 'Image';
+  if (k === 'img2img') return zh ? '图生图' : 'Image-to-Image';
+  if (k === 'chat') return zh ? '对话' : 'Chat';
+  if (k === 'task') return zh ? '任务' : 'Task';
+  if (k === 'interaction') return zh ? '交互' : 'Interaction';
+  if (k === 'idle') return zh ? '空闲' : 'Idle';
+  if (k === 'dom') return zh ? '页面行为' : 'DOM';
+  if (k === 'error') return zh ? '错误' : 'Error';
+  return trig || '-';
+};
+
+const getUsageDescLabel = (it: any) => {
+  const provider = toKey(it?.provider);
+  const model = toKey(it?.model);
+  const trig = toKey(it?.trigger);
+  const k = trig.toLowerCase();
+  if (isImgTrigger(k)) {
+    const plan = it?.plan && typeof it.plan === 'object' ? it.plan : null;
+    const userTextRaw = plan && typeof plan.userText === 'string' ? plan.userText : '';
+    const userText = String(userTextRaw || '').trim();
+    if (userText) return userText.slice(0, 80);
+    return model || provider || '-';
+  }
+  if (provider && model) return `${provider} / ${model}`;
+  return model || provider || '-';
+};
 
 const isSuccess = (status: any) => {
   const s = String(status ?? '')
@@ -497,7 +571,7 @@ const statCreditsSpent = computed(() => {
   let sum = 0;
   analyticsFilteredItems.value.forEach((it) => {
     const d = toNum(it.creditsDelta);
-    if (d < 0) sum += Math.abs(d);
+    if (d > 0) sum += d;
   });
   return sum;
 });
@@ -563,7 +637,7 @@ const trendSeries = computed(() => {
     const prev = map.get(key) || { req: 0, credits: 0 };
     prev.req += 1;
     const d = toNum(it.creditsDelta);
-    if (d < 0) prev.credits += Math.abs(d);
+    if (d > 0) prev.credits += d;
     map.set(key, prev);
   });
   const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
@@ -607,7 +681,7 @@ const topModels = computed<TopRow[]>(() => {
     const prev = map.get(key) || { key, count: 0, credits: 0, tokens: 0 };
     prev.count += 1;
     const d = toNum(it.creditsDelta);
-    if (d < 0) prev.credits += Math.abs(d);
+    if (d > 0) prev.credits += d;
     prev.tokens += toNum(it.tokensTotal) || toNum(it.tokensIn) + toNum(it.tokensOut);
     map.set(key, prev);
   });
@@ -624,7 +698,7 @@ const topUsers = computed<TopRow[]>(() => {
     const prev = map.get(key) || { key, count: 0, credits: 0, tokens: 0 };
     prev.count += 1;
     const d = toNum(it.creditsDelta);
-    if (d < 0) prev.credits += Math.abs(d);
+    if (d > 0) prev.credits += d;
     prev.tokens += toNum(it.tokensTotal) || toNum(it.tokensIn) + toNum(it.tokensOut);
     map.set(key, prev);
   });

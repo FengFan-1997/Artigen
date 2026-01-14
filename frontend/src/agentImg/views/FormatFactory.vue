@@ -2243,7 +2243,7 @@ select.control {
   color: #f1f5f9;
   padding: 10px 16px;
   cursor: pointer;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   font-weight: 600;
   border-radius: 4px;

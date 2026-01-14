@@ -25,29 +25,36 @@
           </p>
 
           <div class="tags-row">
-            <span class="tag">{{ tag1 }}</span>
-            <span class="tag">{{ tag2 }}</span>
-            <span class="tag">{{ tag3 }}</span>
+            <span class="hero-tag">{{ tag1 }}</span>
+            <span class="hero-tag">{{ tag2 }}</span>
+            <span class="hero-tag">{{ tag3 }}</span>
           </div>
 
           <div class="cta-row">
             <router-link
               to="/artigen/ai"
-              class="btn primary-btn"
+              class="text-link"
               @click.prevent="onLandingNav('/artigen/ai', 'ai')"
             >
               {{ ctaWorkshop }} <span class="arrow">→</span>
             </router-link>
             <router-link
               to="/artigen/format-factory"
-              class="btn outline-btn"
+              class="text-link"
               @click.prevent="onLandingNav('/artigen/format-factory', 'format_factory')"
             >
               {{ ctaFormatFactory }}
             </router-link>
             <router-link
+              to="/artigen/image-workshop"
+              class="text-link"
+              @click.prevent="onLandingNav('/artigen/image-workshop', 'image_workshop')"
+            >
+              {{ ctaWorkshop2 }}
+            </router-link>
+            <router-link
               to="/artigen/market"
-              class="btn outline-btn"
+              class="text-link"
               @click.prevent="onLandingNav('/artigen/market', 'market')"
             >
               {{ ctaMarket }}
@@ -144,10 +151,31 @@
             </div>
           </div>
 
+          <div
+            class="feature-card"
+            @click="onLandingNav('/artigen/image-workshop', 'image_workshop')"
+          >
+            <div class="card-header">
+              <span class="status-dot green"></span>
+              <span class="module-id">MODULE_03</span>
+              <span class="badge">ACTIVE</span>
+            </div>
+            <h3 class="card-title">{{ feature4Title }}</h3>
+            <div class="card-subtitle">CLOUD SERVICES</div>
+            <p class="card-text">
+              {{ feature4Desc }}
+            </p>
+            <div class="card-tags"><span>ID_PHOTO</span><span>RESTORATION</span></div>
+            <div class="card-action">
+              <span class="link-text">ENTER FACTORY</span>
+              <span class="action-arrow">→</span>
+            </div>
+          </div>
+
           <div class="feature-card" @click="onLandingNav('/artigen/market', 'market')">
             <div class="card-header">
               <span class="status-dot yellow"></span>
-              <span class="module-id">MODULE_03</span>
+              <span class="module-id">MODULE_04</span>
               <span class="badge">BETA</span>
             </div>
             <h3 class="card-title">{{ feature3Title }}</h3>
@@ -164,36 +192,52 @@
         </div>
       </section>
 
-      <section class="content-section">
-        <div class="content-inner">
-          <div class="section-header">
-            <div class="sub-label">// CONTENT_GUIDE</div>
-            <h2 class="section-title">{{ contentTitle }}</h2>
-            <p class="section-desc">{{ contentDesc }}</p>
-          </div>
+      <section class="info-section">
+        <div class="info-container">
+          <h2 class="info-title">{{ contentTitle }}</h2>
+          <p class="info-desc">{{ contentDesc }}</p>
 
-          <div class="content-grid">
-            <div class="content-card">
-              <h3 class="content-card-title">{{ useCasesTitle }}</h3>
-              <ul class="content-list">
-                <li v-for="item in useCases" :key="item">{{ item }}</li>
+          <div class="info-grid">
+            <div class="info-card">
+              <h3 class="info-card-title">
+                <span class="status-dot green"></span>
+                {{ useCasesTitle }}
+              </h3>
+              <ul class="info-list">
+                <li v-for="item in useCases" :key="item" class="info-list-item">
+                  <span class="info-list-icon">>></span>
+                  {{ item }}
+                </li>
               </ul>
             </div>
-            <div class="content-card">
-              <h3 class="content-card-title">{{ longTailTitle }}</h3>
-              <div class="chips">
-                <span v-for="k in longTailKeywords" :key="k" class="chip">{{ k }}</span>
+            <div class="info-card">
+              <h3 class="info-card-title">
+                <span class="status-dot green"></span>
+                {{ longTailTitle }}
+              </h3>
+              <div class="info-chips">
+                <span v-for="k in longTailKeywords" :key="k" class="info-chip">{{ k }}</span>
               </div>
             </div>
           </div>
+        </div>
+      </section>
 
-          <div class="faq">
-            <h3 class="content-card-title">{{ faqTitle }}</h3>
-            <details v-for="f in faqs" :key="f.q" class="faq-item">
-              <summary class="faq-q">{{ f.q }}</summary>
+      <section class="faq-section home-faq-section">
+        <div class="faq-left">
+          <h2 class="faq-title-large">{{ faqTitle }}</h2>
+          <p class="faq-subtitle">// KNOWLEDGE_BASE</p>
+        </div>
+        <div class="faq-list">
+          <details v-for="f in faqs" :key="f.q" class="faq-item">
+            <summary class="faq-q">
+              <span class="q-text">{{ f.q }}</span>
+              <span class="q-icon">+</span>
+            </summary>
+            <div class="faq-a-wrapper">
               <div class="faq-a">{{ f.a }}</div>
-            </details>
-          </div>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -209,6 +253,7 @@ import { useRouter } from 'vue-router';
 import GlobalFooter from '../components/GlobalFooter.vue';
 import TitleBar from '../components/TitleBar.vue';
 import { useLanguageStore } from '@/stores/language';
+import { useConsoleStore } from '@/stores/console';
 import { trackEvent } from '@/utils/analytics';
 
 const router = useRouter();
@@ -218,7 +263,17 @@ let animationId: number;
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 
-const onLandingNav = (path: string, target: 'ai' | 'format_factory' | 'market') => {
+const consoleStore = useConsoleStore();
+
+const onLandingNav = (
+  path: string,
+  target: 'ai' | 'format_factory' | 'market' | 'image_workshop'
+) => {
+  consoleStore.recordTraffic({
+    type: 'conversion',
+    page: '/artigen',
+    target
+  });
   trackEvent('landing_nav_click', { category: 'funnel', target, path });
   router.push(path);
 };
@@ -241,6 +296,7 @@ const heroDesc = computed(() =>
 );
 
 const ctaWorkshop = computed(() => (currentLang.value === 'zh' ? 'AI 工坊' : 'AI Workshop'));
+const ctaWorkshop2 = computed(() => (currentLang.value === 'zh' ? '影像工坊' : 'Image Workshop'));
 const ctaFormatFactory = computed(() =>
   currentLang.value === 'zh' ? '格式工厂' : 'Format Factory'
 );
@@ -279,6 +335,14 @@ const feature3Desc = computed(() =>
     ? '分布式算力租赁平台，按需购买 GPU 资源。支持模型微调、批量渲染任务托管。'
     : 'A distributed compute marketplace to rent GPU resources on demand. Supports fine-tuning and batch rendering workloads.'
 );
+const feature4Title = computed(() =>
+  currentLang.value === 'zh' ? 'AI 影像工坊' : 'Image Workshop'
+);
+const feature4Desc = computed(() =>
+  currentLang.value === 'zh'
+    ? '提供智能证件照生成与老照片修复功能。多种规格一键生成，破损照片智能修复。'
+    : 'Smart ID photo generation and old photo restoration. One-click generation for various specs, intelligent repair for damaged photos.'
+);
 
 const contentTitle = computed(() =>
   currentLang.value === 'zh' ? '你能用它做什么' : 'What you can do'
@@ -298,7 +362,10 @@ const useCases = computed(() => {
       '营销物料：海报、封面、社媒配图与活动横幅',
       '内容创作：插画风格化、头像与素材快速生成',
       '批量处理：格式转换、压缩、尺寸调整与旋转裁切',
-      '文档工作：PDF 转图片、图片转 PDF、PDF 转 Word'
+      '文档工作：PDF 转图片、图片转 PDF、PDF 转 Word',
+      '隐私保护：本地去水印、元数据清除、安全处理',
+      '算力租赁：高性能 GPU 租用、模型微调、离线渲染',
+      '云端工坊：证件照生成、老照片修复、AI 美颜'
     ];
   }
   return [
@@ -306,7 +373,10 @@ const useCases = computed(() => {
     'Marketing assets: posters, covers, social creatives, banners',
     'Content creation: stylized illustrations, avatars, quick assets',
     'Batch processing: convert, compress, resize, rotate/crop',
-    'Docs workflow: PDF to images, images to PDF, PDF to Word'
+    'Docs workflow: PDF to images, images to PDF, PDF to Word',
+    'Privacy: Local watermark removal, metadata clearing',
+    'Compute: GPU rental, fine-tuning, offline rendering',
+    'Cloud Workshop: ID photos, restoration, AI beautification'
   ];
 });
 const longTailTitle = computed(() =>
@@ -479,6 +549,12 @@ const handleResize = () => {
 };
 
 onMounted(() => {
+  consoleStore.init();
+  consoleStore.recordTraffic({
+    type: 'page_view',
+    page: '/artigen',
+    meta: { referrer: document.referrer }
+  });
   initCyberGrid();
   window.addEventListener('resize', handleResize);
 });
@@ -491,7 +567,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 @import '../styles/cyberpunk.css';
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;700;900&display=swap');
 
 .landing-page {
   --primary: #ccff00;
@@ -508,7 +583,7 @@ onBeforeUnmount(() => {
   min-height: 100dvh;
   background-color: var(--bg-dark);
   color: var(--text-main);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--common-font);
   overflow-x: hidden;
   overflow-y: auto;
   text-align: left;
@@ -553,7 +628,7 @@ onBeforeUnmount(() => {
 }
 
 .logo-text {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-weight: 700;
   font-size: 24px;
   margin-right: 80px;
@@ -657,7 +732,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--text-muted);
   transition: all 0.2s;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
 }
 
 .lang-option:hover {
@@ -687,7 +762,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-color);
   color: var(--text-main);
   padding: 8px 20px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 14px;
   letter-spacing: 1px;
   transition: all 0.3s;
@@ -734,7 +809,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   color: var(--text-muted);
   margin-bottom: 24px;
@@ -773,26 +848,95 @@ onBeforeUnmount(() => {
 
 .tags-row {
   display: flex;
-  gap: 12px;
+  gap: 16px;
   flex-wrap: wrap;
   margin-bottom: 40px;
 }
 
-.tag {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
+.hero-tag {
+  font-family: var(--common-font);
+  font-size: 12px;
   color: var(--primary);
+  background: rgba(204, 255, 0, 0.1);
   border: 1px solid rgba(204, 255, 0, 0.3);
-  padding: 4px 8px;
-  border-radius: 2px;
-  background: rgba(204, 255, 0, 0.05);
+  padding: 8px 16px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  position: relative;
+  overflow: hidden;
+  clip-path: polygon(
+    10px 0,
+    100% 0,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    0 100%,
+    0 10px
+  );
+  transition: all 0.3s ease;
+}
+
+.hero-tag:hover {
+  background: rgba(204, 255, 0, 0.2);
+  box-shadow: 0 0 15px rgba(204, 255, 0, 0.2);
+  transform: translateY(-2px);
 }
 
 .cta-row {
   display: flex;
   gap: 16px;
+  align-items: center;
   flex-wrap: wrap;
   margin-bottom: 60px;
+}
+
+.text-link {
+  text-decoration: none;
+  font-family: var(--common-font);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 14px 24px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  position: relative;
+  min-width: 140px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
+}
+
+.text-link:first-child {
+  background: var(--primary);
+  color: #000;
+  border-color: var(--primary);
+  box-shadow: 0 0 20px rgba(204, 255, 0, 0.2);
+}
+
+.text-link:first-child:hover {
+  background: #b3e600;
+  box-shadow: 0 0 30px rgba(204, 255, 0, 0.4);
+  transform: translateY(-2px);
+}
+
+.text-link:not(:first-child):hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(204, 255, 0, 0.1);
+  box-shadow: 0 0 15px rgba(204, 255, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.text-link .arrow {
+  margin-left: 8px;
+  transition: transform 0.3s ease;
+}
+
+.text-link:hover .arrow {
+  transform: translateX(4px);
 }
 
 /* Button styles imported from cyberpunk.css */
@@ -811,7 +955,7 @@ onBeforeUnmount(() => {
 }
 
 .stat-value {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 24px;
   color: var(--primary);
 }
@@ -849,7 +993,7 @@ onBeforeUnmount(() => {
 .hud-bottom-left,
 .hud-bottom-right {
   position: absolute;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 10px;
   color: var(--primary);
   opacity: 0.7;
@@ -973,7 +1117,7 @@ onBeforeUnmount(() => {
 
 .floating-data .bit {
   position: absolute;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   color: var(--primary);
   opacity: 0;
@@ -1113,7 +1257,12 @@ onBeforeUnmount(() => {
     font-size: 40px;
   }
 }
-
+@media (max-width: 980px) {
+  .headline {
+    justify-content: center !important;
+    align-items: center !important;
+  }
+}
 @media (max-width: 720px) {
   .hero-section {
     padding: 26px 16px;
@@ -1163,7 +1312,7 @@ onBeforeUnmount(() => {
 }
 
 .sub-label {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   color: var(--text-muted);
   font-size: 12px;
   margin-bottom: 12px;
@@ -1184,13 +1333,41 @@ onBeforeUnmount(() => {
 
 .features-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 24px;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
-/* Feature card styles imported from cyberpunk.css */
+/* Feature card styles */
+.feature-card {
+  background: rgba(20, 20, 20, 0.6);
+  border: 1px solid var(--border-color);
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  height: 100%;
+  min-height: 320px;
+}
+
+.feature-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-5px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  background: rgba(30, 30, 30, 0.8);
+}
+
+.status-dot.green {
+  background: var(--primary);
+  box-shadow: 0 0 8px var(--primary);
+}
+
+.status-dot.yellow {
+  background: #ffd700;
+  box-shadow: 0 0 8px #ffd700;
+}
 
 .card-header {
   display: flex;
@@ -1247,7 +1424,7 @@ onBeforeUnmount(() => {
   color: var(--primary);
   background: rgba(204, 255, 0, 0.1);
   padding: 4px 8px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
 }
 
 .card-action {
@@ -1272,101 +1449,16 @@ onBeforeUnmount(() => {
   transform: translateX(5px);
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 980px) {
   .features-grid {
     grid-template-columns: 1fr;
-    max-width: 500px;
+    max-width: 800px;
   }
 }
 
-.content-section {
-  padding: 90px 40px 110px;
-  background: rgba(0, 0, 0, 0.32);
-  position: relative;
-  z-index: 2;
-}
-
-.content-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
-.content-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 22px;
-  margin-top: 34px;
-}
-
-.content-card {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.22);
-  padding: 18px 18px;
-}
-
-.content-card-title {
-  font-size: 16px;
-  font-weight: 800;
-  margin: 0 0 12px;
-  color: #fff;
-}
-
-.content-list {
-  margin: 0;
-  padding-left: 18px;
-  color: #cbd5e1;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.chip {
-  font-size: 11px;
-  color: var(--primary);
-  background: rgba(204, 255, 0, 0.1);
-  border: 1px solid rgba(204, 255, 0, 0.22);
-  padding: 6px 10px;
-  font-family: 'JetBrains Mono', monospace;
-}
-
-.faq {
-  margin-top: 26px;
-}
-
-.faq-item {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.18);
-  padding: 10px 12px;
-  margin-top: 10px;
-}
-
-.faq-q {
-  cursor: pointer;
-  color: #e2e8f0;
-  font-size: 13px;
-  font-weight: 700;
-  list-style: none;
-}
-
-.faq-item summary::-webkit-details-marker {
-  display: none;
-}
-
-.faq-a {
-  margin-top: 10px;
-  color: #94a3b8;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-@media (max-width: 1024px) {
-  .content-grid {
-    grid-template-columns: 1fr;
-  }
+.home-faq-section {
+  width: 60vw;
+  margin-left: auto;
+  margin-right: auto;
 }
 </style>

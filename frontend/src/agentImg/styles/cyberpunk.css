@@ -15,7 +15,7 @@ body {
   margin: 0;
   background-color: var(--bg-dark);
   color: #fff;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--common-font);
 }
 
 /* Scrollbar */
@@ -40,9 +40,9 @@ body {
 /* Shared FAQ Styles */
 .faq-section {
   display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 60px;
-  max-width: 1200px;
+  grid-template-columns: 200px 1fr;
+  gap: 40px;
+  max-width: 1400px;
   margin: 120px auto 60px;
   padding: 0 24px;
   animation: fadeInUp 0.8s ease-out backwards;
@@ -156,7 +156,6 @@ body {
   font-size: 15px;
   line-height: 1.8;
   padding-right: 20px;
-  max-width: 800px;
 }
 
 @keyframes fadeInSlide {
@@ -246,12 +245,12 @@ body {
 }
 
 .info-card-title {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   color: #ccff00;
   font-size: 14px;
   letter-spacing: 0.6px;
   margin-bottom: 16px;
-  font-weight: 700;
+  font-weight: 800;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -296,13 +295,14 @@ body {
 }
 
 .info-chip {
-  font-size: 12px;
+  font-size: 14px;
   color: #94a3b8;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(0, 0, 0, 0.3);
-  padding: 8px 16px;
-  font-family: 'JetBrains Mono', monospace;
-  border-radius: 20px;
+  padding: 12px 24px;
+  font-family: var(--common-font);
+  font-weight: 500;
+  border-radius: 24px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: default;
 }

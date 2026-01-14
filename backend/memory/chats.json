@@ -340,5 +340,27 @@
       "text": "配置 HF 镜像和调试端点，可以前往 `/agent-debug` 页面，在“模型加载链路”面板中进行相关操作。[confused]\n\n```json\n{\n  \"emotionTag\": {\n    \"primary\": \"confused\",\n    \"intensity\": 0.8,\n    \"secondary\": []\n  }\n}\n```",
       "timestamp": 1768061488965
     }
+  ],
+  "guest_localtest": [
+    {
+      "role": "user",
+      "text": "???????????",
+      "timestamp": 1768333814767
+    },
+    {
+      "role": "agent",
+      "text": "我、我刚刚脑子断线了……你别笑！",
+      "timestamp": 1768333814767
+    },
+    {
+      "role": "user",
+      "text": "你好，测试默认对话模型",
+      "timestamp": 1768334116815
+    },
+    {
+      "role": "agent",
+      "text": "哼，来啦来啦。有什么事快说。",
+      "timestamp": 1768334116815
+    }
   ]
 }

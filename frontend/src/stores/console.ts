@@ -4,6 +4,9 @@ import { buildApiUrl } from '@/utils/api';
 const AUTH_STORAGE_KEY = 'console_auth_v1';
 const STORAGE_KEY = 'console_store_v1';
 const ADMIN_KEY_STORAGE_KEY = 'console_admin_key_v1';
+const ADMIN_AUTH_MODE_STORAGE_KEY = 'console_admin_auth_mode_v1';
+
+type AdminAuthMode = 'bearer' | 'x-admin-key';
 
 export type ConsoleAuthSession = {
   userId: string;
@@ -59,15 +62,37 @@ export const getConsoleAdminKey = (): string => {
   }
 };
 
+export const getConsoleAdminAuthMode = (): AdminAuthMode => {
+  try {
+    const v = String(localStorage.getItem(ADMIN_AUTH_MODE_STORAGE_KEY) || '')
+      .trim()
+      .toLowerCase();
+    return v === 'x-admin-key' ? 'x-admin-key' : 'bearer';
+  } catch {
+    return 'bearer';
+  }
+};
+
 export const setConsoleAdminKey = (key: string) => {
   const v = String(key || '').trim();
   if (!v) throw new Error('INVALID_ADMIN_KEY');
   localStorage.setItem(ADMIN_KEY_STORAGE_KEY, v);
 };
 
+export const setConsoleAdminAuthMode = (mode: AdminAuthMode) => {
+  const v = mode === 'x-admin-key' ? 'x-admin-key' : 'bearer';
+  localStorage.setItem(ADMIN_AUTH_MODE_STORAGE_KEY, v);
+};
+
 export const clearConsoleAdminKey = () => {
   try {
     localStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
+  } catch {}
+};
+
+export const clearConsoleAdminAuthMode = () => {
+  try {
+    localStorage.removeItem(ADMIN_AUTH_MODE_STORAGE_KEY);
   } catch {}
 };
 
@@ -179,6 +204,19 @@ export type AdminUsageLedgerItem = {
   plan?: any;
 };
 
+export type AdminAnalyticsEventItem = {
+  id: string;
+  ts: number;
+  eventType: string;
+  payload?: Record<string, any>;
+  path?: string;
+  location?: string;
+  referrer?: string;
+  userId?: string;
+  ip?: string;
+  ua?: string;
+};
+
 const buildUrlWithQuery = (path: string, query: Record<string, any>) => {
   const base = buildApiUrl(path);
   const sp = new URLSearchParams();
@@ -207,10 +245,13 @@ const toAdminRequestError = (res: Response, json: any) => {
   return err;
 };
 
-const buildAdminHeaders = (token: string) => {
+const buildAdminHeaders = (token: string, mode: AdminAuthMode): Record<string, string> | null => {
   const t = String(token || '').trim();
   if (!t) return null;
-  return { Authorization: `Bearer ${t}` };
+  const headers: Record<string, string> = {};
+  if (mode === 'x-admin-key') headers['x-admin-key'] = t;
+  else headers['Authorization'] = `Bearer ${t}`;
+  return headers;
 };
 
 export const useConsoleStore = defineStore('console', {
@@ -221,12 +262,15 @@ export const useConsoleStore = defineStore('console', {
     generatedContent: [] as GeneratedContent[],
     trafficStats: [] as TrafficEvent[],
     adminKey: '' as string,
+    adminAuthMode: 'bearer' as AdminAuthMode,
     adminUsers: [] as AdminUserItem[],
     adminUsersTotal: 0,
     adminImages: [] as AdminImageHistoryItem[],
     adminImagesTotal: 0,
     adminUsage: [] as AdminUsageLedgerItem[],
     adminUsageTotal: 0,
+    adminEvents: [] as AdminAnalyticsEventItem[],
+    adminEventsTotal: 0,
     adminChats: [] as any[],
     adminChatsTotal: 0,
     adminOrders: [] as any[],
@@ -280,6 +324,7 @@ export const useConsoleStore = defineStore('console', {
       }
 
       this.adminKey = getConsoleAdminKey();
+      this.adminAuthMode = getConsoleAdminAuthMode();
 
       // Force update admin/current user to have 9999 points if requested
       // The prompt asked for "Finally give me an account with 9999 points"
@@ -315,24 +360,34 @@ export const useConsoleStore = defineStore('console', {
         throw new Error('LOGIN_FAILED');
 
       this.setAdminKey(token);
+      this.adminAuthMode = 'bearer';
+      setConsoleAdminAuthMode('bearer');
       return { ok: true as const, token, expiresAt };
     },
 
-    setAdminKey(key: string) {
+    setAdminKey(key: string, mode: AdminAuthMode = 'bearer') {
       const v = String(key || '').trim();
       setConsoleAdminKey(v);
       this.adminKey = v;
+      this.adminAuthMode = mode;
+      setConsoleAdminAuthMode(mode);
+    },
+
+    setAdminApiKey(key: string) {
+      this.setAdminKey(key, 'x-admin-key');
     },
 
     clearAdminKey() {
       clearConsoleAdminKey();
+      clearConsoleAdminAuthMode();
       this.adminKey = '';
+      this.adminAuthMode = 'bearer';
     },
 
     async fetchAdminUsers(input?: { q?: string; limit?: number; offset?: number }) {
       const adminKey = String(this.adminKey || '').trim();
       if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
-      const headers = buildAdminHeaders(adminKey);
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
       const url = buildUrlWithQuery('/api/admin/users', {
         q: input?.q || '',
@@ -354,7 +409,7 @@ export const useConsoleStore = defineStore('console', {
     async fetchAdminImagesHistory(input?: { userId?: string; limit?: number; offset?: number }) {
       const adminKey = String(this.adminKey || '').trim();
       if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
-      const headers = buildAdminHeaders(adminKey);
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
       const url = buildUrlWithQuery('/api/admin/images/history', {
         userId: input?.userId || '',
@@ -382,7 +437,7 @@ export const useConsoleStore = defineStore('console', {
     }) {
       const adminKey = String(this.adminKey || '').trim();
       if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
-      const headers = buildAdminHeaders(adminKey);
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
       const url = buildUrlWithQuery('/api/admin/usage/ledger', {
         userId: input?.userId || '',
@@ -403,10 +458,36 @@ export const useConsoleStore = defineStore('console', {
       return { ok: true as const, total: this.adminUsageTotal };
     },
 
+    async fetchAdminCollectionEvents(input?: {
+      eventType?: string;
+      limit?: number;
+      offset?: number;
+    }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/collection/events', {
+        eventType: input?.eventType || '',
+        limit: input?.limit ?? 200,
+        offset: input?.offset ?? 0
+      });
+      const res = await fetch(url, { headers });
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
+        throw toAdminRequestError(res, json);
+      }
+      const items: AdminAnalyticsEventItem[] = Array.isArray(json?.items) ? json.items : [];
+      this.adminEvents = items;
+      this.adminEventsTotal = Number(json?.total || items.length) || items.length;
+      return { ok: true as const, total: this.adminEventsTotal };
+    },
+
     async fetchAdminChatsHistory(input: { userId: string; limit?: number; offset?: number }) {
       const adminKey = String(this.adminKey || '').trim();
       if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
-      const headers = buildAdminHeaders(adminKey);
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
       const userId = String(input?.userId || '').trim();
       if (!userId) throw new Error('MISSING_USER_ID');
@@ -448,7 +529,7 @@ export const useConsoleStore = defineStore('console', {
     async setAdminUserCredits(input: { userId: string; available: number }) {
       const adminKey = String(this.adminKey || '').trim();
       if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
-      const headers = buildAdminHeaders(adminKey);
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
       const userId = String(input?.userId || '').trim();
       const availableRaw = Number.parseInt(String((input as any)?.available ?? ''), 10);
@@ -477,7 +558,7 @@ export const useConsoleStore = defineStore('console', {
     async fetchAdminOrders(input: { userId: string; limit?: number; offset?: number }) {
       const adminKey = String(this.adminKey || '').trim();
       if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
-      const headers = buildAdminHeaders(adminKey);
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
       const userId = String(input?.userId || '').trim();
       if (!userId) throw new Error('MISSING_USER_ID');

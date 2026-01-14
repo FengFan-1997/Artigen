@@ -1,12 +1,209 @@
 {
   "user_id": "user_mk5vb7v2_ebe837825fb2",
   "meta": {
-    "updatedAt": 1768252060092,
-    "migratedFrom": "guest_rjt65oro7"
+    "updatedAt": 1768401984302,
+    "migratedFrom": "guest_on7vl08bi"
   },
   "core_memory": [],
   "short_term_buffer": [],
   "image_history": [
+    {
+      "id": "imgwork_mke4vmqj_3aibag",
+      "ts": 1768401984301,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "cost": 10,
+      "userText": "old_photo:colorize:denoise",
+      "prompt": "Restore and enhance the old photo from the reference image. Keep identity and original composition; do not change face shape. Remove scratches, stains, dust, and crease marks. Increase clarity and details naturally; avoid over-sharpening. Reduce noise and blur; preserve realistic textures. Strong denoise and deblur. If the photo is black-and-white, colorize it with natural, historically plausible skin tones and clothing colors.",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, cartoon, anime, oversaturated, over-smoothed skin, distorted face",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mke4vrxm_d51a33590954.png"
+        },
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mke4vrwm_c08158aaaaf3.png"
+        }
+      ],
+      "inputImages": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/in_mke4vrxo_93c3ecf8fd60.jpg"
+        }
+      ],
+      "seed": 1050099702,
+      "timings": {
+        "inference": 6.06
+      }
+    },
+    {
+      "id": "imgwork_mke4vdrh_3p8qp6",
+      "ts": 1768401971246,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "cost": 10,
+      "userText": "id_photo:finance",
+      "prompt": "Create a high-quality realistic ID photo portrait from the reference photo. Keep the same person identity and facial features; do not beautify excessively. Front-facing, neutral expression, eyes open, clean skin texture, natural color. Even soft lighting, sharp focus, no motion blur. Plain light gray background, no patterns, no objects. Head and shoulders framing, centered composition. Formal, trustworthy corporate look; subtle contrast; conservative styling.",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, cartoon, anime, oversaturated, over-smoothed skin, distorted face",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mke4vhux_d5b5fc782e2c.png"
+        },
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mke4vhu7_b458ead2041f.png"
+        }
+      ],
+      "inputImages": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/in_mke4vhv0_2a7b858b586d.jpg"
+        }
+      ],
+      "seed": 1017680338,
+      "timings": {
+        "inference": 3.947
+      }
+    },
+    {
+      "id": "imgwork_mke3jl2a_w11vim",
+      "ts": 1768399742786,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "cost": 10,
+      "userText": "id_photo:scholar",
+      "prompt": "Create a high-quality realistic ID photo portrait from the reference photo. Keep the same person identity and facial features; do not beautify excessively. Front-facing, neutral expression, eyes open, clean skin texture, natural color. Even soft lighting, sharp focus, no motion blur. Plain light gray background, no patterns, no objects. Head and shoulders framing, centered composition. Warm, intelligent academic look; gentle lighting; calm demeanor.",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, cartoon, anime, oversaturated, over-smoothed skin, distorted face",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mke3jqdb_0b706264aca8.png"
+        },
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mke3jqd6_4cb9e3882641.png"
+        }
+      ],
+      "inputImages": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/in_mke3jqdd_b146e9e11647.jpg"
+        }
+      ],
+      "seed": 730486618,
+      "timings": {
+        "inference": 6.493
+      }
+    },
+    {
+      "id": "imgwork_mke3idg4_zl8tls",
+      "ts": 1768399683992,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "cost": 10,
+      "userText": "id_photo:scholar",
+      "prompt": "Create a high-quality realistic ID photo portrait from the reference photo. Keep the same person identity and facial features; do not beautify excessively. Front-facing, neutral expression, eyes open, clean skin texture, natural color. Even soft lighting, sharp focus, no motion blur. Plain light gray background, no patterns, no objects. Head and shoulders framing, centered composition. Warm, intelligent academic look; gentle lighting; calm demeanor.",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, cartoon, anime, oversaturated, over-smoothed skin, distorted face",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mke3igzo_7fd4a2cc7ae0.png"
+        },
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mke3ih03_2838a90d9386.png"
+        }
+      ],
+      "inputImages": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/in_mke3ih05_ca4c39dc7f1d.jpg"
+        }
+      ],
+      "seed": 204248049,
+      "timings": {
+        "inference": 4.362
+      }
+    },
+    {
+      "id": "imgwork_mke3iags_adqltw",
+      "ts": 1768399680569,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "cost": 10,
+      "userText": "id_photo:scholar",
+      "prompt": "Create a high-quality realistic ID photo portrait from the reference photo. Keep the same person identity and facial features; do not beautify excessively. Front-facing, neutral expression, eyes open, clean skin texture, natural color. Even soft lighting, sharp focus, no motion blur. Plain light gray background, no patterns, no objects. Head and shoulders framing, centered composition. Warm, intelligent academic look; gentle lighting; calm demeanor.",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, cartoon, anime, oversaturated, over-smoothed skin, distorted face",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mke3ied1_3992ee127304.png"
+        },
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mke3iebf_0175fd932a48.png"
+        }
+      ],
+      "inputImages": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/in_mke3ied3_a6ee1fb53583.jpg"
+        }
+      ],
+      "seed": 693701230,
+      "timings": {
+        "inference": 4.131
+      }
+    },
+    {
+      "id": "img2img_mkdj24ct_7f11vv",
+      "ts": 1768365334310,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "cost": 10,
+      "prompt": "产品档案:\nHas Logo: No\n\n用户需求:\n细腻写实的雨中少女, 一位写实风格的二次元JK美少女，穿着黑色丝袜和精致的小皮鞋，以一种名叫鸭子坐的姿势, 细腻写实的雨中少女, 风格限定:写实风格\n视角构图:低角度拍摄\n主体描述:一位二次元JK美少女，黑色丝袜与精致小皮鞋，鸭子坐姿势\n背景设定:城市街道，雨滴飘落，湿滑路面\n细节修饰:毛发细腻，服装贴身，表情自然\n光影色调:微弱自然光，雨水反光，灰蓝色调\n质量词:高清晰度，细腻纹理，精美细节, 写实风格, 低角度拍摄, 二次元人物, JK制服, 黑色丝袜, 精致小皮鞋, 鸭子坐姿势, 城市街道, 雨天环境, 真实雨滴, 细腻毛发, 自然表情, 灰蓝色调, 高清晰度",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, 动漫风格, 模糊画面, 低分辨率, 噪声干扰, 夸张变形, 背景模糊, 色彩刺眼, 夸张光影, 不真实皮肤, 不自然姿势, 无细节, 太亮背景, 不清晰轮廓, 太暗整体",
+      "params": {
+        "imageSize": ""
+      },
+      "images": [
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mkdj28ma_918755f3897d.png"
+        },
+        {
+          "kind": "url",
+          "url": "/files/user_mk5vb7v2_ebe837825fb2/gen_mkdj28md_074fba8067c6.png"
+        }
+      ],
+      "seed": 152385954,
+      "timings": {
+        "inference": 5.139
+      }
+    },
     {
       "id": "img2img_mkbnm7k1_c4qh3y",
       "ts": 1768252060091,

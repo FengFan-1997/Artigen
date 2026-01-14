@@ -6,10 +6,10 @@
     "updatedAt": 1767892825262
   },
   "email_d7bd7c338fbb9d1f": {
-    "available": 22,
+    "available": 12,
     "frozen": 0,
     "createdAt": 1767881514869,
-    "updatedAt": 1767881514873
+    "updatedAt": 1768338402879
   },
   "email_56271fc8e558df66": {
     "available": 20,
@@ -36,10 +36,10 @@
     "updatedAt": 1767886994920
   },
   "user_mk5vb7v2_ebe837825fb2": {
-    "available": 878,
+    "available": 818,
     "frozen": 0,
     "createdAt": 1767902179279,
-    "updatedAt": 1768252059873,
+    "updatedAt": 1768401984089,
     "lastCheckinDay": "2026-01-09"
   },
   "user_mk6thoz6_1388ca4f90fc": {

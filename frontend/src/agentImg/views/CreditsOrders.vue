@@ -203,7 +203,7 @@ const ui = computed(() => {
   min-height: 100vh;
   background-color: #050505;
   color: #fff;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--common-font);
   background-image:
     linear-gradient(rgba(204, 255, 0, 0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(204, 255, 0, 0.03) 1px, transparent 1px);
@@ -238,7 +238,7 @@ const ui = computed(() => {
 
 .orders-sub {
   color: #94a3b8;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   display: flex;
   gap: 8px;
@@ -247,9 +247,7 @@ const ui = computed(() => {
 }
 
 .mono {
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
+  font-family: var(--common-font);
 }
 
 .orders-error {
@@ -258,7 +256,7 @@ const ui = computed(() => {
   color: #fca5a5;
   padding: 12px 14px;
   border-radius: 12px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
 }
 
@@ -268,7 +266,7 @@ const ui = computed(() => {
   color: #94a3b8;
   padding: 14px 16px;
   border-radius: 12px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
 }
 
@@ -299,7 +297,7 @@ const ui = computed(() => {
 
 .label {
   color: #94a3b8;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
 }
 
@@ -325,7 +323,7 @@ const ui = computed(() => {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
@@ -335,5 +333,34 @@ const ui = computed(() => {
 .mini-btn:hover {
   border-color: rgba(204, 255, 0, 0.5);
   color: rgba(204, 255, 0, 0.95);
+}
+
+.status-pill {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-family: var(--common-font);
+  font-size: 12px;
+  color: rgba(241, 245, 249, 0.92);
+  background: rgba(0, 0, 0, 0.2);
+  flex: 0 0 auto;
+}
+
+.status-pill.st-pending {
+  border-color: rgba(250, 204, 21, 0.35);
+  color: rgba(250, 204, 21, 0.95);
+}
+
+.status-pill.st-completed {
+  border-color: rgba(34, 197, 94, 0.35);
+  color: rgba(34, 197, 94, 0.95);
+}
+
+.status-pill.st-failed {
+  border-color: rgba(239, 68, 68, 0.35);
+  color: rgba(239, 68, 68, 0.95);
 }
 </style>

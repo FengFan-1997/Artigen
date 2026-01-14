@@ -154,6 +154,11 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import pptxgen from 'pptxgenjs';
+import { buildApiUrl } from '@/utils/api';
+import { getAuthToken, getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+
+const API_URL = buildApiUrl('/api/generate');
+const FIXED_TEXT_MODEL = 'Qwen/Qwen3-8B';
 
 const router = useRouter();
 const step = ref(1);
@@ -185,6 +190,13 @@ const generateOutline = async () => {
   isLoading.value = true;
 
   try {
+    const userId = getCurrentUserId();
+    if (!userId || !isLocalLoggedIn()) {
+      alert('Please login first.');
+      return;
+    }
+    const token = getAuthToken();
+    const requestId = `ppt_gen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     const prompt = `Act as a professional presentation consultant. Create a detailed and structured presentation outline for the topic: "${topic.value}".
     
     Target Audience: General Professional
@@ -208,13 +220,41 @@ const generateOutline = async () => {
     
     Ensure the content is detailed (at least 3-5 bullet points per slide).`;
 
-    const response = await fetch('http://localhost:8080/api/generate', {
+    const controller = new AbortController();
+    const timeoutMs = 120000;
+    const startedAt = performance.now();
+    const timeoutId = window.setTimeout(() => {
+      try {
+        console.warn('[AI][timeout]', {
+          api: API_URL,
+          requestId,
+          model: FIXED_TEXT_MODEL,
+          timeoutMs,
+          elapsedMs: Math.round(performance.now() - startedAt)
+        });
+      } catch {}
+      controller.abort();
+    }, timeoutMs);
+    try {
+      console.log('[AI][request]', {
+        api: API_URL,
+        requestId,
+        model: FIXED_TEXT_MODEL,
+        timeoutMs,
+        prompt
+      });
+    } catch {}
+
+    const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
-      body: JSON.stringify({ prompt })
+      signal: controller.signal,
+      body: JSON.stringify({ prompt, userId, requestId, model: FIXED_TEXT_MODEL })
     });
+    window.clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error(`API Error: ${response.status}`);
@@ -356,7 +396,7 @@ const exportPPT = () => {
   min-height: 100vh;
   background: #0f172a;
   color: #f8fafc;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--common-font);
   display: flex;
   flex-direction: column;
 }

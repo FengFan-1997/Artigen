@@ -1,17 +1,8 @@
 :root {
-  font-family:
-    'Space Mono',
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    Roboto,
-    Oxygen,
-    Ubuntu,
-    Cantarell,
-    'Open Sans',
-    'Helvetica Neue',
-    sans-serif;
+  --common-font: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'HarmonyOS Sans', 'Noto Sans SC',
+    'Source Han Sans SC', 'DengXian', 'DengXian Light', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, Arial, sans-serif, 'Microsoft YaHei', '微软雅黑';
+  font-family: var(--common-font);
   line-height: 1.5;
   font-weight: 400;
 
@@ -27,6 +18,36 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  --font-sans:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    'Noto Sans SC',
+    'Source Han Sans SC',
+    sans-serif;
+  --font-mono:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    'Courier New',
+    monospace;
+}
+
+.force-sys-font,
+.force-sys-font * {
+  font-family: 'SF Pro SC', 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Helvetica', 'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', Arial, sans-serif !important;
+  font-weight: 500 !important;
 }
 
 body {
@@ -69,8 +90,7 @@ button:focus-visible {
   border: 1px solid rgba(255, 255, 255, 0.16);
   color: rgba(241, 245, 249, 0.95);
   padding: 8px 20px;
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
+  font-family: inherit;
   font-size: 14px;
   letter-spacing: 1px;
   transition: all 0.3s;

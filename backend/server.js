@@ -15,6 +15,7 @@ const {
   USERS_FILE,
   API_KEYS_FILE,
   USAGE_LEDGER_FILE,
+  ANALYTICS_EVENTS_FILE,
   PAY_ORDERS_FILE,
   CREDITS_ORDERS_FILE
 } = require('./utils/storage');
@@ -303,28 +304,33 @@ const SILICONFLOW_API_KEY =
     process.env.SILICONFLOW_API_KEY || process.env.SILICONFLOW_TOKEN || process.env.SILICONFLOW_KEY || ''
   );
 const SILICONFLOW_API_BASE = normalizeUrl(process.env.SILICONFLOW_API_BASE || 'https://api.siliconflow.cn/v1');
-const SILICONFLOW_MODEL = (process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-8B').toString().trim();
+const SILICONFLOW_MODEL = (process.env.SILICONFLOW_MODEL || 'deepseek-ai/DeepSeek-R1-0528-Qwen3-8B')
+  .toString()
+  .trim();
 const SILICONFLOW_MESSAGES_URL = `${SILICONFLOW_API_BASE}/messages`;
 const SILICONFLOW_CHAT_COMPLETIONS_URL = `${SILICONFLOW_API_BASE}/chat/completions`;
 const SILICONFLOW_IMAGES_GENERATIONS_URL = `${SILICONFLOW_API_BASE}/images/generations`;
-const SILICONFLOW_IMAGE_MODEL = (process.env.SILICONFLOW_IMAGE_MODEL || 'Qwen/Qwen-Image-Edit')
+const SILICONFLOW_IMAGE_MODEL = (process.env.SILICONFLOW_IMAGE_MODEL || 'Kwai-Kolors/Kolors')
   .toString()
   .trim();
 const SILICONFLOW_TXT2IMG_MODEL = (
   process.env.SILICONFLOW_TXT2IMG_MODEL ||
   process.env.SILICONFLOW_IMAGE_MODEL_TXT2IMG ||
-  'Qwen/Qwen-Image'
+  'Kwai-Kolors/Kolors'
 )
   .toString()
   .trim();
 const SILICONFLOW_IMAGE_INPUT_FIELD = (process.env.SILICONFLOW_IMAGE_INPUT_FIELD || 'image').toString().trim();
 
+const FIXED_SILICONFLOW_CHAT_MODEL = 'Qwen/Qwen3-8B';
+const FIXED_SILICONFLOW_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
+
 let activeTextProvider = (() => {
   const preferred = (process.env.TEXT_PROVIDER || '').toString().trim().toLowerCase();
   if (preferred === 'siliconflow') return 'siliconflow';
   if (preferred === 'gemini') return 'gemini';
-  if (API_KEY) return 'gemini';
   if (SILICONFLOW_API_KEY) return 'siliconflow';
+  if (API_KEY) return 'gemini';
   return 'offline';
 })();
 const GEMINI_API_BASE = normalizeUrl(process.env.GEMINI_API_BASE || '');
@@ -350,7 +356,7 @@ const GEMINI_REACTION_TIMEOUT_MS = (() => {
 })();
 const SILICONFLOW_TIMEOUT_MS = (() => {
   const v = Number.parseInt(process.env.SILICONFLOW_TIMEOUT_MS || '', 10);
-  return Number.isFinite(v) && v > 1000 ? v : 45000;
+  return Number.isFinite(v) && v > 1000 ? v : 120000;
 })();
 const SILICONFLOW_REACTION_TIMEOUT_MS = (() => {
   const v = Number.parseInt(process.env.SILICONFLOW_REACTION_TIMEOUT_MS || '', 10);
@@ -401,7 +407,11 @@ const HF_PROXY_BASE_COOLDOWN_MS = (() => {
 
 const normalizeUpstreamBase = (base) => String(base || '').trim().replace(/\/+$/, '');
 
-const HF_CACHE_DIR = path.resolve(__dirname, process.env.HF_CACHE_DIR || 'cache/hf');
+const HF_CACHE_DIR = (() => {
+  const raw = String(process.env.HF_CACHE_DIR || '').trim();
+  if (raw) return path.resolve(raw);
+  return path.join(MEMORY_DIR, 'cache', 'hf');
+})();
 const HF_CACHE_TTL_MS = (() => {
   const v = Number.parseInt(process.env.HF_CACHE_TTL_MS || '', 10);
   return Number.isFinite(v) && v >= 0 ? v : 7 * 24 * 60 * 60 * 1000;
@@ -832,27 +842,7 @@ const callSiliconFlowImageGenerate = async ({
   }
 
   const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
-  const modelCandidates = (() => {
-    const requested = String(model || '').trim();
-    const primary = requested
-      ? requested
-      : imgs.length
-        ? SILICONFLOW_IMAGE_MODEL
-        : SILICONFLOW_TXT2IMG_MODEL || 'Qwen/Qwen-Image';
-    const fallbacks = imgs.length
-      ? ['Qwen/Qwen-Image-Edit', 'Qwen/Qwen-Image-Edit-2509']
-      : ['Qwen/Qwen-Image', 'Qwen/Qwen-Image-Edit', 'Qwen/Qwen-Image-Edit-2509'];
-    const rawList = [
-      primary,
-      ...(imgs.length ? [] : [SILICONFLOW_IMAGE_MODEL]),
-      ...fallbacks
-    ]
-      .map((x) => String(x || '').trim())
-      .filter(Boolean);
-    const uniq = [];
-    for (const m of rawList) if (!uniq.includes(m)) uniq.push(m);
-    return uniq;
-  })();
+  const modelCandidates = [FIXED_SILICONFLOW_IMAGE_MODEL];
 
   const isModelNotFound = (raw) => {
     const s = String(raw || '').toLowerCase();
@@ -956,6 +946,39 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode }) => {
     return messages;
   };
 
+  if (activeTextProvider === 'siliconflow' && canSiliconflow) {
+    try {
+      const { text, usage, model, usedUrl } = await callSiliconFlowChat({
+        messages: toSiliconflowMessages(),
+        timeoutMs: sfTimeoutMs,
+        maxTokens: reactionMode ? 512 : 2048,
+        model: SILICONFLOW_MODEL
+      });
+      return { text, provider: 'siliconflow', usage, model, usedUrl };
+    } catch (e) {
+      if (canGemini) {
+        const { data, usedUrl } = await callGeminiGenerate({ contents, timeoutMs });
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const usageRaw = data?.usageMetadata;
+        const usage =
+          usageRaw && typeof usageRaw === 'object'
+            ? {
+                promptTokens: Number(usageRaw.promptTokenCount ?? 0) || 0,
+                completionTokens: Number(usageRaw.candidatesTokenCount ?? 0) || 0,
+                totalTokens: Number(usageRaw.totalTokenCount ?? 0) || 0
+              }
+            : null;
+        const model = (() => {
+          const u = String(usedUrl || '').trim();
+          const m = u.match(/\/models\/([^:/?]+)(?::|\?|$)/i);
+          return m ? String(m[1] || '').trim() : 'gemini';
+        })();
+        return { text, provider: 'gemini', usage, model, usedUrl };
+      }
+      throw e;
+    }
+  }
+
   if (canGemini) {
     try {
       const { data, usedUrl } = await callGeminiGenerate({ contents, timeoutMs });
@@ -980,7 +1003,8 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode }) => {
         const { text, usage, model, usedUrl } = await callSiliconFlowChat({
           messages: toSiliconflowMessages(),
           timeoutMs: sfTimeoutMs,
-          maxTokens: reactionMode ? 512 : 2048
+          maxTokens: reactionMode ? 512 : 2048,
+          model: SILICONFLOW_MODEL
         });
         return { text, provider: 'siliconflow', usage, model, usedUrl };
       }
@@ -992,7 +1016,8 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode }) => {
     const { text, usage, model, usedUrl } = await callSiliconFlowChat({
       messages: toSiliconflowMessages(),
       timeoutMs: sfTimeoutMs,
-      maxTokens: reactionMode ? 512 : 2048
+      maxTokens: reactionMode ? 512 : 2048,
+      model: SILICONFLOW_MODEL
     });
     return { text, provider: 'siliconflow', usage, model, usedUrl };
   }
@@ -1086,6 +1111,10 @@ const USAGE_LEDGER_MAX_ITEMS = (() => {
   const v = Number.parseInt(process.env.USAGE_LEDGER_MAX_ITEMS || '', 10);
   return Number.isFinite(v) && v > 0 ? v : 20000;
 })();
+const ANALYTICS_EVENTS_MAX_ITEMS = (() => {
+  const v = Number.parseInt(process.env.ANALYTICS_EVENTS_MAX_ITEMS || '', 10);
+  return Number.isFinite(v) && v > 0 ? v : 50000;
+})();
 const USAGE_CREDITS_PER_1K_TOKENS = (() => {
   const v = Number.parseFloat(process.env.USAGE_CREDITS_PER_1K_TOKENS || '');
   return Number.isFinite(v) && v >= 0 ? v : 1;
@@ -1102,11 +1131,85 @@ const sanitizeLedgerId = (raw, fallback = '') => {
   return safe || fallback;
 };
 
+const sanitizeAnalyticsPayload = (raw) => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  const entries = Object.entries(raw).slice(0, 40);
+  for (const [k, v] of entries) {
+    const key = String(k || '').trim().slice(0, 64);
+    if (!key) continue;
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (!s) continue;
+      out[key] = s.slice(0, 240);
+      continue;
+    }
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) continue;
+      out[key] = v;
+      continue;
+    }
+    if (typeof v === 'boolean') {
+      out[key] = v;
+      continue;
+    }
+    if (Array.isArray(v)) {
+      const arr = v
+        .slice(0, 20)
+        .map((x) => (typeof x === 'string' ? x.trim().slice(0, 120) : null))
+        .filter(Boolean);
+      if (arr.length) out[key] = arr;
+      continue;
+    }
+  }
+  return out;
+};
+
 const readUsageLedgerStore = () => {
   const data = readJson(USAGE_LEDGER_FILE, { v: 1, items: [] });
   if (!data || typeof data !== 'object') return { v: 1, items: [] };
   const items = Array.isArray(data.items) ? data.items.filter((x) => x && typeof x === 'object') : [];
   return { v: 1, items };
+};
+
+const readAnalyticsEventsStore = () => {
+  const data = readJson(ANALYTICS_EVENTS_FILE, { v: 1, items: [] });
+  if (!data || typeof data !== 'object') return { v: 1, items: [] };
+  const items = Array.isArray(data.items) ? data.items.filter((x) => x && typeof x === 'object') : [];
+  return { v: 1, items };
+};
+
+const appendAnalyticsEvent = (input) => {
+  const store = readAnalyticsEventsStore();
+  const items = store.items;
+  const ts = typeof input?.ts === 'number' && Number.isFinite(input.ts) ? input.ts : Date.now();
+  const eventType = sanitizeLedgerId(input?.eventType, 'event');
+  const payload = sanitizeAnalyticsPayload(input?.payload);
+  const path = String(input?.path || '').trim().slice(0, 240);
+  const location = String(input?.location || '').trim().slice(0, 480);
+  const referrer = String(input?.referrer || '').trim().slice(0, 480);
+  const userId = sanitizeLedgerId(input?.userId, '');
+
+  const item = {
+    id: sanitizeLedgerId(input?.id, `evt_${ts.toString(36)}_${Math.random().toString(16).slice(2, 10)}`),
+    ts,
+    eventType,
+    payload,
+    path,
+    location,
+    referrer,
+    userId,
+    ip: getClientIp(input?.req || {}),
+    ua:
+      input?.req && input.req.headers && typeof input.req.headers['user-agent'] === 'string'
+        ? input.req.headers['user-agent'].slice(0, 220)
+        : ''
+  };
+
+  items.push(item);
+  if (items.length > ANALYTICS_EVENTS_MAX_ITEMS) items.splice(0, items.length - ANALYTICS_EVENTS_MAX_ITEMS);
+  writeJson(ANALYTICS_EVENTS_FILE, { v: 1, items });
+  return item;
 };
 
 const mergeLedgerItem = (prev, next) => {
@@ -3645,6 +3748,67 @@ const assertAuthedUserMatches = (req, res, requestedUserId) => {
   return { userId, isGuest: false };
 };
 
+const tierRank = (tier) => {
+  const t = String(tier || '').trim().toLowerCase();
+  if (t === 'starter') return 1;
+  if (t === 'standard') return 2;
+  if (t === 'pro') return 3;
+  if (t === 'ultimate') return 4;
+  return 0;
+};
+
+const isProUserByOrders = (userId) => {
+  const uid = String(userId || '').trim();
+  if (!uid || uid.startsWith('guest_')) return false;
+  try {
+    const orders = imgCredits.getOrders(uid);
+    if (!Array.isArray(orders) || !orders.length) return false;
+    const max = orders.reduce((acc, o) => {
+      const r = tierRank(o && typeof o === 'object' ? o.packageId : '');
+      return r > acc ? r : acc;
+    }, 0);
+    return max >= 3;
+  } catch {
+    return false;
+  }
+};
+
+const getChatMsgTs = (msg) => {
+  if (!msg || typeof msg !== 'object') return 0;
+  const a = msg.timestamp;
+  const b = msg.ts;
+  const c = msg.createdAt;
+  const n =
+    typeof a === 'number'
+      ? a
+      : typeof b === 'number'
+        ? b
+        : typeof c === 'number'
+          ? c
+          : Number(msg.timestamp || msg.ts || msg.createdAt || 0) || 0;
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+};
+
+const pruneChatHistory = (history, opts) => {
+  const list = Array.isArray(history) ? history : [];
+  const keepDays = Number(opts?.keepDays ?? 0) || 0;
+  const maxItems = Number(opts?.maxItems ?? 0) || 0;
+  const now = Date.now();
+  const cutoff = keepDays > 0 ? now - keepDays * 24 * 60 * 60 * 1000 : 0;
+  const withoutErrors = list.filter((msg) => msg && typeof msg === 'object' && !String(msg.text || '').includes("can't connect to my brain"));
+
+  const kept = cutoff
+    ? withoutErrors.filter((msg) => {
+        const ts = getChatMsgTs(msg);
+        if (!ts) return true;
+        return ts >= cutoff;
+      })
+    : withoutErrors;
+
+  if (maxItems > 0 && kept.length > maxItems) return kept.slice(-maxItems);
+  return kept;
+};
+
 try {
   installImgagentRoutes(app, { assertAuthUserMatches: assertAuthedUserMatches });
 } catch (e) {
@@ -4666,6 +4830,7 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
   let holdCtx = null;
   let clientAborted = false;
   const upstreamController = new AbortController();
+  const startedAt = Date.now();
   try {
     try {
       const mark = () => {
@@ -4696,6 +4861,9 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
 
     const imagesRaw = Array.isArray(body.images) ? body.images : [];
     const requestedModel = typeof body.model === 'string' ? body.model.trim() : '';
+    if (requestedModel && requestedModel !== FIXED_SILICONFLOW_IMAGE_MODEL) {
+      return res.status(400).json({ error: 'MODEL_NOT_ALLOWED', allowedModel: FIXED_SILICONFLOW_IMAGE_MODEL });
+    }
 
     const cost = (() => {
       const v = Number.parseInt(
@@ -4707,10 +4875,16 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
     const requestId =
       String(body.requestId || '').trim() ||
       `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const reason = (() => {
+      const raw = typeof body.reason === 'string' ? body.reason.trim() : '';
+      const key = raw.toLowerCase();
+      if (key === 'ai_design' || key === 'id_photo' || key === 'old_photo') return key;
+      return 'img2img';
+    })();
     if (String(body.requestSource || '').trim() !== 'circled-generate') {
       return res.status(403).json({ error: 'INVALID_REQUEST_SOURCE' });
     }
-    const holdRes = imgCredits.freezeCredits({ userId, cost, requestId, reason: 'img2img' });
+    const holdRes = imgCredits.freezeCredits({ userId, cost, requestId, reason });
     if (!holdRes.ok) return res.status(402).json({ error: holdRes.error, wallet: holdRes.wallet || null });
     if (holdRes.existing) {
       const st = String(holdRes.status || '').trim();
@@ -4739,7 +4913,7 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
       params,
       images: imagesRaw,
       timeoutMs: Math.max(5000, Number(body.timeoutMs || '') || 120000),
-      model: requestedModel || undefined,
+      model: FIXED_SILICONFLOW_IMAGE_MODEL,
       signal: upstreamController.signal
     });
 
@@ -4806,6 +4980,26 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
       imgCredits.refundHold({ userId, holdId: holdRes.holdId });
       return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
     }
+    try {
+      const deepMode = !!body.deepMode;
+      upsertUsageLedgerItem({
+        requestId,
+        ts: Date.now(),
+        userId,
+        trigger: reason,
+        provider: 'siliconflow',
+        model: FIXED_SILICONFLOW_IMAGE_MODEL,
+        creditsDelta: cost,
+        plan: {
+          deepMode,
+          userText: userText ? userText.slice(0, 240) : undefined
+        },
+        status: 'ok',
+        durationMs: Math.max(0, Date.now() - startedAt) || undefined,
+        ip: getClientIp(req),
+        ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 220) : ''
+      });
+    } catch {}
     const persistedImages = await Promise.all(
       normalizedImages.map(async (it) => {
         try {
@@ -4866,12 +5060,7 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
           ts: Date.now(),
           type: 'img2img',
           provider: 'siliconflow',
-          model:
-            modelUsed ||
-            requestedModel ||
-            (imagesRaw.length
-              ? String(SILICONFLOW_IMAGE_MODEL || '').trim()
-              : String(SILICONFLOW_TXT2IMG_MODEL || 'Qwen/Qwen-Image').trim()),
+          model: FIXED_SILICONFLOW_IMAGE_MODEL,
           cost,
           ...(userText && userText.length <= 1200 && !hasControlChars(userText)
             ? { userText: userText.slice(0, 800) }
@@ -4919,9 +5108,32 @@ app.post('/api/img2img', rateLimit('img2img', { max: 15, windowMs: 60 * 1000 }),
     if (code === 'EMPTY_PROMPT') return res.status(400).json({ error: code });
     if (code === 'MISSING_SILICONFLOW_API_KEY') return res.status(500).json({ error: code });
     if (code.startsWith('SILICONFLOW_IMAGE_') && status >= 400 && status < 600) {
+      const detail = typeof error?.bodyPreview === 'string' ? error.bodyPreview : '';
+      if (status === 403) {
+        const s = String(detail || '').toLowerCase();
+        if (s.includes('"code":30001') || s.includes('balance is insufficient')) {
+          return res.status(402).json({
+            error: 'SILICONFLOW_BALANCE_INSUFFICIENT',
+            detail,
+            ...(isProd
+              ? {}
+              : {
+                  modelTried: typeof error?.modelTried === 'string' ? error.modelTried : '',
+                  modelRequested: typeof req?.body?.model === 'string' ? String(req.body.model || '').trim() : ''
+                }),
+            ...(refundedWallet ? { wallet: refundedWallet } : {})
+          });
+        }
+      }
       return res.status(status).json({
         error: code,
-        detail: typeof error?.bodyPreview === 'string' ? error.bodyPreview : '',
+        detail,
+        ...(isProd
+          ? {}
+          : {
+              modelTried: typeof error?.modelTried === 'string' ? error.modelTried : '',
+              modelRequested: typeof req?.body?.model === 'string' ? String(req.body.model || '').trim() : ''
+            }),
         ...(refundedWallet ? { wallet: refundedWallet } : {})
       });
     }
@@ -5001,13 +5213,27 @@ app.get('/api/admin/images/history', rateLimit('admin_images_history', { max: 60
 app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }), async (req, res) => {
   let holdCtx = null;
   let clientAborted = false;
+  let debugRequestedModel = '';
+  let debugPreferProvider = '';
+  const isSiliconflowBalanceInsufficient = (err) => {
+    const failures = err?.failures && Array.isArray(err.failures) ? err.failures : null;
+    if (!failures || !failures.length) return false;
+    for (const f of failures) {
+      if (!f || typeof f !== 'object') continue;
+      const status = Number(f.status || 0) || 0;
+      if (status !== 403) continue;
+      const body = String(f.bodyPreview || '').toLowerCase();
+      if (body.includes('"code":30001') || body.includes('balance is insufficient')) return true;
+    }
+    return false;
+  };
   try {
     try {
       const mark = () => {
         clientAborted = true;
       };
       req.on('aborted', mark);
-      req.on('close', () => {
+      res.on('close', () => {
         if (!res.writableEnded) mark();
       });
     } catch {}
@@ -5053,11 +5279,31 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
 
     const contents = [{ role: 'user', parts: [{ text: prompt }] }];
     const requestedModel = typeof modelRaw === 'string' ? modelRaw.trim() : '';
-    const requestedModelKey = requestedModel.toLowerCase();
-    const forceQwen = requestedModelKey === 'qwen' || requestedModelKey.startsWith('qwen/');
-    const resolvedQwenModel = requestedModelKey === 'qwen' ? 'Qwen/Qwen3-8B' : requestedModel;
+    debugRequestedModel = requestedModel;
+    if (requestedModel) {
+      const k = requestedModel.toLowerCase();
+      const ok = k === 'qwen' || k === 'qwen/qwen3-8b' || k === 'qwen3-8b';
+      if (!ok) {
+        if (cost > 0) {
+          const refunded = imgCredits.refundHold({ userId, holdId });
+          holdCtx = null;
+          return res.status(400).json({ error: 'MODEL_NOT_ALLOWED', allowedModel: FIXED_SILICONFLOW_CHAT_MODEL, wallet: refunded?.wallet || null });
+        }
+        return res.status(400).json({ error: 'MODEL_NOT_ALLOWED', allowedModel: FIXED_SILICONFLOW_CHAT_MODEL });
+      }
+    }
+    const resolvedSiliconflowModel = FIXED_SILICONFLOW_CHAT_MODEL;
+    const preferProvider = 'siliconflow';
+    debugPreferProvider = preferProvider;
 
-    if (forceQwen) {
+    const confirmCreditsOrFail = () => {
+      if (cost <= 0) return { ok: true };
+      const confirmed = imgCredits.confirmHold({ userId, holdId });
+      if (!confirmed.ok) return confirmed;
+      return { ok: true };
+    };
+
+    const respondSiliconflow = async () => {
       if (!SILICONFLOW_API_KEY) {
         if (cost > 0) imgCredits.refundHold({ userId, holdId });
         return res.status(500).json({ error: 'MISSING_SILICONFLOW_API_KEY' });
@@ -5066,76 +5312,36 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
         messages: [{ role: 'user', content: String(prompt) }],
         timeoutMs: Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS),
         maxTokens: 2048,
-        model: resolvedQwenModel
+        model: resolvedSiliconflowModel
       });
-      if (cost > 0) {
-        const confirmed = imgCredits.confirmHold({ userId, holdId });
-        if (!confirmed.ok) {
-          imgCredits.refundHold({ userId, holdId });
-          return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
-        }
+      const confirmed = confirmCreditsOrFail();
+      if (!confirmed.ok) {
+        imgCredits.refundHold({ userId, holdId });
+        return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
       }
       return res.json({
         candidates: [{ content: { parts: [{ text: String(text || '') }] } }]
       });
-    }
+    };
 
-    if (API_KEY) {
-      try {
-        const { data } = await callGeminiGenerate({
-          timeoutMs: GEMINI_TIMEOUT_MS,
-          contents
-        });
-        if (cost > 0) {
-          const confirmed = imgCredits.confirmHold({ userId, holdId });
-          if (!confirmed.ok) {
-            imgCredits.refundHold({ userId, holdId });
-            return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
-          }
-        }
-        return res.json(data);
-      } catch (e) {
-        if (SILICONFLOW_API_KEY) {
-          const { text } = await callSiliconFlowChat({
-            messages: [{ role: 'user', content: String(prompt) }],
-            timeoutMs: Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS),
-            maxTokens: 2048
-          });
-          if (cost > 0) {
-            const confirmed = imgCredits.confirmHold({ userId, holdId });
-            if (!confirmed.ok) {
-              imgCredits.refundHold({ userId, holdId });
-              return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
-            }
-          }
-          return res.json({
-            candidates: [{ content: { parts: [{ text: String(text || '') }] } }]
-          });
-        }
-        throw e;
+    const respondGemini = async () => {
+      if (!API_KEY) {
+        if (cost > 0) imgCredits.refundHold({ userId, holdId });
+        return res.status(500).json({ error: 'MISSING_GEMINI_API_KEY' });
       }
-    }
-
-    if (SILICONFLOW_API_KEY) {
-      const { text } = await callSiliconFlowChat({
-        messages: [{ role: 'user', content: String(prompt) }],
-        timeoutMs: Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS),
-        maxTokens: 2048
+      const { data } = await callGeminiGenerate({
+        timeoutMs: GEMINI_TIMEOUT_MS,
+        contents
       });
-      if (cost > 0) {
-        const confirmed = imgCredits.confirmHold({ userId, holdId });
-        if (!confirmed.ok) {
-          imgCredits.refundHold({ userId, holdId });
-          return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
-        }
+      const confirmed = confirmCreditsOrFail();
+      if (!confirmed.ok) {
+        imgCredits.refundHold({ userId, holdId });
+        return res.status(500).json({ error: 'CREDITS_CONFIRM_FAILED' });
       }
-      return res.json({
-        candidates: [{ content: { parts: [{ text: String(text || '') }] } }]
-      });
-    }
+      return res.json(data);
+    };
 
-    if (cost > 0) imgCredits.refundHold({ userId, holdId });
-    return res.status(500).json({ error: 'No LLM provider configured on the server.' });
+    return await respondSiliconflow();
 
   } catch (error) {
     let refundedWallet = null;
@@ -5145,8 +5351,101 @@ app.post('/api/generate', rateLimit('generate', { max: 30, windowMs: 60 * 1000 }
         holdCtx = null;
       }
     } catch {}
+    const isAbortError = !!(error && typeof error === 'object' && error.name === 'AbortError');
+    if (clientAborted) {
+      return res.status(499).json({
+        error: 'CLIENT_ABORTED',
+        ...(refundedWallet ? { wallet: refundedWallet } : {})
+      });
+    }
+    if (isAbortError) {
+      return res.status(504).json({
+        error: 'UPSTREAM_TIMEOUT',
+        ...(refundedWallet ? { wallet: refundedWallet } : {})
+      });
+    }
+    const code = typeof error?.code === 'string' ? String(error.code) : '';
+    if (code === 'MISSING_SILICONFLOW_API_KEY') {
+      return res.status(500).json({ error: code, ...(refundedWallet ? { wallet: refundedWallet } : {}) });
+    }
+    const msg = String(error?.message || error || '').trim();
+    const failures = error?.failures && Array.isArray(error.failures) ? error.failures : null;
+    if (isSiliconflowBalanceInsufficient(error)) {
+      return res.status(402).json({
+        error: 'SILICONFLOW_BALANCE_INSUFFICIENT',
+        ...(isProd ? {} : { failures, requestedModel: debugRequestedModel || undefined, preferProvider: debugPreferProvider || undefined }),
+        ...(refundedWallet ? { wallet: refundedWallet } : {})
+      });
+    }
+    if (failures && failures.length) {
+      const joinedUrls = failures
+        .map((f) => (f && typeof f === 'object' ? String(f.url || '') : ''))
+        .filter(Boolean)
+        .join('\n');
+      if (/siliconflow/i.test(joinedUrls)) {
+        return res.status(502).json({
+          error: 'SILICONFLOW_UPSTREAM_FAILED',
+          ...(isProd ? {} : { failures, requestedModel: debugRequestedModel || undefined, preferProvider: debugPreferProvider || undefined }),
+          ...(refundedWallet ? { wallet: refundedWallet } : {})
+        });
+      }
+      if (/(generativelanguage\\.googleapis\\.com|gemini)/i.test(joinedUrls)) {
+        return res.status(502).json({
+          error: 'GEMINI_UPSTREAM_FAILED',
+          ...(isProd ? {} : { failures, requestedModel: debugRequestedModel || undefined, preferProvider: debugPreferProvider || undefined }),
+          ...(refundedWallet ? { wallet: refundedWallet } : {})
+        });
+      }
+    }
+    if (/All Gemini generateContent endpoints failed/i.test(msg)) {
+      return res.status(502).json({
+        error: 'GEMINI_UPSTREAM_FAILED',
+        ...(failures
+          ? {
+              failures: isProd ? undefined : failures,
+              ...(isProd ? {} : { requestedModel: debugRequestedModel || undefined, preferProvider: debugPreferProvider || undefined })
+            }
+          : {}),
+        ...(refundedWallet ? { wallet: refundedWallet } : {})
+      });
+    }
+    if (/All SiliconFlow endpoints failed/i.test(msg)) {
+      return res.status(502).json({
+        error: 'SILICONFLOW_UPSTREAM_FAILED',
+        ...(failures
+          ? {
+              failures: isProd ? undefined : failures,
+              ...(isProd ? {} : { requestedModel: debugRequestedModel || undefined, preferProvider: debugPreferProvider || undefined })
+            }
+          : {}),
+        ...(refundedWallet ? { wallet: refundedWallet } : {})
+      });
+    }
     console.error('Error in /api/generate:', error);
-    res.status(500).json({ error: 'Internal Server Error', ...(refundedWallet ? { wallet: refundedWallet } : {}) });
+    const errName = typeof error?.name === 'string' ? String(error.name) : '';
+    const errorCode = code || errName || 'UNKNOWN_ERROR';
+    const devDetails =
+      isProd
+        ? {}
+        : {
+            errorCode,
+            message: msg || undefined,
+            requestedModel: debugRequestedModel || undefined,
+            preferProvider: debugPreferProvider || undefined,
+            stack:
+              typeof error?.stack === 'string'
+                ? error.stack
+                    .split('\n')
+                    .slice(0, 10)
+                    .join('\n')
+                : undefined,
+            ...(failures ? { failures } : {})
+          };
+    return res.status(500).json({
+      error: isProd ? 'Internal Server Error' : msg || 'Internal Server Error',
+      ...(refundedWallet ? { wallet: refundedWallet } : {}),
+      ...devDetails
+    });
   }
 });
 
@@ -5338,6 +5637,11 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
     // B. Memory: Load/Save Chat History
     const allChats = readJson(CHATS_FILE, {});
     if (!allChats[user]) allChats[user] = [];
+    try {
+      const keepDays = isProUserByOrders(user) ? 0 : 7;
+      allChats[user] = pruneChatHistory(allChats[user], { keepDays, maxItems: 240 });
+      writeJson(CHATS_FILE, allChats);
+    } catch {}
 
     // --- INFINITE MEMORY: Summarization ---
     // If history is too long (> 20 messages), summarize the oldest 10
@@ -5426,7 +5730,7 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
       { role: 'user', parts: [{ text: userMessage }] }
     ];
 
-    // Call LLM (Gemini default, auto-fallback to SiliconFlow)
+    // Call LLM
     let reply = "";
     let usageInfo = null;
     let usageProvider = '';
@@ -5434,21 +5738,35 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
     let usageUrl = '';
     let usageDurationMs = 0;
     try {
-        const timeoutMs = reactionMode ? GEMINI_REACTION_TIMEOUT_MS : GEMINI_TIMEOUT_MS;
+        const messages = [
+          { role: 'system', content: systemPrompt },
+          ...recentHistory.map((msg) => ({
+            role: msg.role === 'user' ? 'user' : 'assistant',
+            content: trimPromptText(stripControlText(msg.text), 1600)
+          })),
+          { role: 'user', content: userMessage }
+        ];
+
+        const timeoutMs = reactionMode
+          ? Math.max(GEMINI_REACTION_TIMEOUT_MS, SILICONFLOW_REACTION_TIMEOUT_MS)
+          : Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS);
+
         const startedAt = Date.now();
-        const { text, provider, usage, model, usedUrl } = await callTextGenerate({ contents, timeoutMs, reactionMode });
-        if (provider === 'offline') {
-          throw new Error('NO_LLM_PROVIDER_AVAILABLE');
-        }
+        const { text, usage, model, usedUrl } = await callSiliconFlowChat({
+          messages,
+          timeoutMs,
+          maxTokens: reactionMode ? 512 : 2048,
+          model: FIXED_SILICONFLOW_CHAT_MODEL
+        });
         reply = (text || '').trim() || "I'm speechless!";
 
         usageDurationMs = Date.now() - startedAt;
         usageInfo = usage;
-        usageProvider = provider;
-        usageModel = String(model || '').trim();
+        usageProvider = 'siliconflow';
+        usageModel = String(model || FIXED_SILICONFLOW_CHAT_MODEL).trim();
         usageUrl = String(usedUrl || '').trim();
         if (usageDurationMs > Math.max(2000, timeoutMs)) {
-          console.warn('LLM request exceeded expected timeout window', { provider, reactionMode, timeoutMs, elapsedMs: usageDurationMs });
+          console.warn('LLM request exceeded expected timeout window', { provider: 'siliconflow', reactionMode, timeoutMs, elapsedMs: usageDurationMs });
         }
     } catch (apiError) {
         const errMsg = typeof apiError?.message === 'string' ? apiError.message : String(apiError);
@@ -5457,50 +5775,12 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
           message: errMsg,
           name: apiError?.name,
           code: apiError?.code,
-          provider: activeTextProvider,
-          geminiUrls: GEMINI_GENERATE_URLS,
+          provider: 'siliconflow',
           siliconflowBase: SILICONFLOW_API_BASE,
           failures,
           reactionMode,
-          hasGeminiKey: !!API_KEY,
           hasSiliconflowKey: !!SILICONFLOW_API_KEY
         });
-
-        if (activeTextProvider === 'gemini' && SILICONFLOW_API_KEY) {
-          try {
-            const messages = [
-              { role: 'system', content: systemPrompt },
-              ...recentHistory.map((msg) => ({
-                role: msg.role === 'user' ? 'user' : 'assistant',
-                content: trimPromptText(stripControlText(msg.text), 1600)
-              })),
-              { role: 'user', content: userMessage }
-            ];
-
-            const timeoutMs = reactionMode
-              ? Math.max(GEMINI_REACTION_TIMEOUT_MS, SILICONFLOW_REACTION_TIMEOUT_MS)
-              : Math.max(GEMINI_TIMEOUT_MS, SILICONFLOW_TIMEOUT_MS);
-            const startedAt = Date.now();
-            const { text, usage, model, usedUrl } = await callSiliconFlowChat({
-              messages,
-              timeoutMs,
-              maxTokens: reactionMode ? 512 : 2048
-            });
-            reply = (text || '').trim() || buildOfflineReply({ lang, personaName, message });
-            usageDurationMs = Date.now() - startedAt;
-            usageInfo = usage;
-            usageProvider = 'siliconflow';
-            usageModel = String(model || '').trim();
-            usageUrl = String(usedUrl || '').trim();
-          } catch (fallbackError) {
-            const fbMsg =
-              typeof fallbackError?.message === 'string' ? fallbackError.message : String(fallbackError);
-            console.error('SiliconFlow fallback failed', {
-              message: fbMsg,
-              failures: fallbackError?.failures
-            });
-          }
-        }
 
         const isZh = lang === 'zh';
         if (!reply) reply = buildOfflineReply({ lang, personaName, message });
@@ -5562,6 +5842,10 @@ app.post('/api/chat', rateLimit('chat', { max: 20, windowMs: 60 * 1000 }), async
           text: trimPromptText(stripControlText(reply), 9000),
           timestamp: Date.now()
         });
+        try {
+          const keepDays = isProUserByOrders(user) ? 0 : 7;
+          allChats[user] = pruneChatHistory(allChats[user], { keepDays, maxItems: 240 });
+        } catch {}
         writeJson(CHATS_FILE, allChats);
         try {
           const extra = [];
@@ -5631,10 +5915,9 @@ app.get('/api/chat/history/:userId', (req, res) => {
     if (!assertAuthUserMatches(req, res, userId)) return;
     const allChats = readJson(CHATS_FILE, {});
     const history = allChats[userId] || [];
-    // Only return last 20 messages to keep payload light
-    // And filter out previous error messages from history
-    const cleanHistory = history.filter(msg => !msg.text.includes("can't connect to my brain"));
-    res.json({ history: cleanHistory.slice(-20) });
+    const keepDays = isProUserByOrders(userId) ? 0 : 7;
+    const cleaned = pruneChatHistory(history, { keepDays, maxItems: 20 });
+    res.json({ history: cleaned });
   } catch (error) {
     console.error('Error in GET /api/chat/history:', error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -5678,6 +5961,53 @@ app.post('/api/memory/ingest', rateLimit('memory_ingest', { max: 20, windowMs: 6
   } catch (error) {
     console.error('Error in POST /api/memory/ingest:', error);
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/collection/event', rateLimit('collection_event', { max: 180, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const eventType = sanitizeLedgerId(body.eventType, 'event');
+    const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+    const path = String(body.path || '').trim();
+    const location = String(body.location || '').trim();
+    const referrer = String(body.referrer || '').trim();
+    const ts = typeof body.ts === 'number' && Number.isFinite(body.ts) ? body.ts : Date.now();
+    const userId = sanitizeLedgerId(body.userId, '');
+
+    const item = appendAnalyticsEvent({
+      ts,
+      eventType,
+      payload,
+      path,
+      location,
+      referrer,
+      userId,
+      req
+    });
+    return res.json({ ok: true, item });
+  } catch (e) {
+    console.error('Error in POST /api/collection/event:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/admin/collection/events', rateLimit('admin_collection_events', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    if (!assertAdmin(req, res)) return;
+    const limit = clampInt(req.query.limit, 50, 2000);
+    const offset = clampInt(req.query.offset, 0, 2000000);
+    const eventType = String(req.query.eventType || '').trim().toLowerCase();
+
+    const store = readAnalyticsEventsStore();
+    const all = store.items
+      .filter((x) => (eventType ? String(x?.eventType || '').toLowerCase() === eventType : true))
+      .sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
+    const items = all.slice(offset, offset + limit);
+    return res.json({ ok: true, total: all.length, items });
+  } catch (e) {
+    console.error('Error in GET /api/admin/collection/events:', e);
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 

@@ -1262,6 +1262,38 @@
       "durationMs": 15871,
       "ip": "::1",
       "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456"
+    },
+    {
+      "requestId": "rid_chat_test_1",
+      "ts": 1768333814762,
+      "createdAt": 1768333814762,
+      "updatedAt": 1768333814762,
+      "userId": "guest_localtest",
+      "trigger": "chat",
+      "provider": "gemini",
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "tokensTotal": 0,
+      "creditsDelta": 0,
+      "status": "offline",
+      "ip": "::1",
+      "ua": "curl/8.13.0"
+    },
+    {
+      "requestId": "rid_chat_node_1",
+      "ts": 1768334116807,
+      "createdAt": 1768334116807,
+      "updatedAt": 1768334116807,
+      "userId": "guest_localtest",
+      "trigger": "chat",
+      "provider": "siliconflow",
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "tokensTotal": 0,
+      "creditsDelta": 0,
+      "status": "offline",
+      "ip": "::1",
+      "ua": "node"
     }
   ]
 }

@@ -33,6 +33,8 @@ export const useAgentImgSettings = () => {
   // Generation Config
   const imageCount = ref<AgentImgImageCount>(2);
   const designElements = ref<string[]>([]);
+  const styles = ref<string[]>([]);
+  const colors = ref<string[]>([]);
 
   const setLogoFile = (f: File | null) => {
     logoFile.value = f;
@@ -47,6 +49,22 @@ export const useAgentImgSettings = () => {
     else designElements.value.push(t);
   };
 
+  const toggleStyle = (tag: string) => {
+    const t = tag.trim();
+    if (!t) return;
+    const idx = styles.value.indexOf(t);
+    if (idx >= 0) styles.value.splice(idx, 1);
+    else styles.value.push(t);
+  };
+
+  const toggleColor = (tag: string) => {
+    const t = tag.trim();
+    if (!t) return;
+    const idx = colors.value.indexOf(t);
+    if (idx >= 0) colors.value.splice(idx, 1);
+    else colors.value.push(t);
+  };
+
   // Construct a rich context string for the LLM
   const contextText = computed(() => {
     const parts = [
@@ -58,7 +76,9 @@ export const useAgentImgSettings = () => {
       lighting.value ? `Lighting: ${lighting.value}` : '',
       primaryColor.value ? `Primary Color: ${primaryColor.value}` : '',
       logoFileName.value ? `Has Logo: Yes (${logoFileName.value})` : 'Has Logo: No',
-      designElements.value.length > 0 ? `Design Elements: ${designElements.value.join(', ')}` : ''
+      designElements.value.length > 0 ? `Design Elements: ${designElements.value.join(', ')}` : '',
+      styles.value.length > 0 ? `Styles: ${styles.value.join(', ')}` : '',
+      colors.value.length > 0 ? `Color Scheme: ${colors.value.join(', ')}` : ''
     ];
     return parts.filter(Boolean).join('\n');
   });
@@ -77,6 +97,10 @@ export const useAgentImgSettings = () => {
     imageCount,
     designElements,
     toggleDesignElement,
+    styles,
+    toggleStyle,
+    colors,
+    toggleColor,
     contextText
   };
 };

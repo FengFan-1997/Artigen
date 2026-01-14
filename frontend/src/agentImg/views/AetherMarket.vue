@@ -917,7 +917,7 @@ const ui = computed(() => {
 }
 
 .top-nav-item {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   color: #94a3b8;
   text-decoration: none;
@@ -945,7 +945,7 @@ const ui = computed(() => {
 }
 
 .top-action-link {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   color: #94a3b8;
   text-decoration: none;
@@ -964,7 +964,7 @@ const ui = computed(() => {
   min-height: 100vh;
   background-color: #050505;
   color: #fff;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--common-font);
   padding-top: 0;
   background-image:
     linear-gradient(rgba(204, 255, 0, 0.03) 1px, transparent 1px),
@@ -999,7 +999,7 @@ const ui = computed(() => {
 
 .subtitle {
   color: #64748b;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 14px;
   margin-bottom: 24px;
 }
@@ -1152,7 +1152,7 @@ const ui = computed(() => {
 .pack-en {
   color: #64748b;
   font-size: 14px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   margin-bottom: 12px;
 }
 
@@ -1207,7 +1207,7 @@ const ui = computed(() => {
 
 .compute-amount {
   color: #ccff00;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 14px;
 }
 
@@ -1252,7 +1252,7 @@ const ui = computed(() => {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--common-font);
   border-radius: 12px;
   display: inline-flex;
   align-items: center;
@@ -1448,7 +1448,7 @@ const ui = computed(() => {
   color: #94a3b8;
   font-size: 13px;
   margin-bottom: 16px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
 }
 
 .pay-row {
@@ -1467,15 +1467,13 @@ const ui = computed(() => {
 }
 
 .pay-label {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   color: #94a3b8;
 }
 
 .pay-mono {
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   color: rgba(241, 245, 249, 0.92);
   background: rgba(0, 0, 0, 0.35);
@@ -1496,7 +1494,7 @@ const ui = computed(() => {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
@@ -1529,7 +1527,7 @@ const ui = computed(() => {
   margin-top: 14px;
   font-size: 12px;
   color: #64748b;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
 }
 
 .pay-hint.ok {

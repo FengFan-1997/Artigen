@@ -232,6 +232,9 @@ const reasonText = (raw?: string) => {
   const zh = currentLang.value === 'zh';
   if (key === 'img2img') return zh ? '图片生成' : 'Image generation';
   if (key === 'generate') return zh ? '文本生成' : 'Text generation';
+  if (key === 'ai_design') return zh ? 'AI 设计' : 'AI Design';
+  if (key === 'id_photo') return zh ? '智能证件照生成' : 'Smart ID Photo';
+  if (key === 'old_photo') return zh ? '老照片修复' : 'Old Photo Restoration';
   if (key === 'chat') return zh ? '对话' : 'Chat';
   if (key === 'recharge') return zh ? '充值' : 'Recharge';
   if (key === 'admin_gift') return zh ? '赠送' : 'Gift';
@@ -443,8 +446,8 @@ watch(
   background: rgba(5, 5, 5, 0.55);
   display: flex;
   flex-direction: column;
-  padding: 18px;
-  gap: 16px;
+  padding: 24px;
+  gap: 24px;
 }
 
 .left-header {
@@ -455,11 +458,10 @@ watch(
 }
 
 .left-title {
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family: var(--common-font);
   font-weight: 900;
   letter-spacing: 0.5px;
+  font-size: 18px;
   color: rgba(241, 245, 249, 0.95);
 }
 
@@ -494,23 +496,24 @@ watch(
 }
 
 .row {
-  display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: 10px;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  margin-bottom: 8px;
 }
 
 .label {
   color: #94a3b8;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
+  font-weight: 500;
 }
 
 .mono {
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
+  font-weight: 500;
   color: rgba(241, 245, 249, 0.95);
   min-width: 0;
   overflow: hidden;
@@ -533,8 +536,9 @@ watch(
 
 .balance-label {
   color: #94a3b8;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
+  font-weight: 500;
   margin-bottom: 6px;
 }
 
@@ -547,19 +551,21 @@ watch(
 .left-actions {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
+  margin-top: 12px;
+  flex: 1;
 }
 
 .btn {
-  height: 38px;
+  height: 52px;
   padding: 0 14px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  font-weight: 800;
+  font-family: var(--common-font);
+  font-size: 15px;
+  font-weight: 900;
   cursor: pointer;
   transition: all 0.2s;
   text-align: left;
@@ -581,14 +587,17 @@ watch(
 }
 
 .btn.danger {
-  border-color: rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.12);
-  color: rgba(252, 165, 165, 0.95);
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.05);
+  color: #fca5a5;
+  margin-top: auto;
 }
 
 .btn.danger:hover {
-  border-color: rgba(239, 68, 68, 0.75);
-  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+  color: #fff;
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.15);
 }
 
 .right-pane {
@@ -613,7 +622,7 @@ watch(
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   font-weight: 800;
   cursor: pointer;
@@ -662,8 +671,9 @@ watch(
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -679,7 +689,7 @@ watch(
   background: rgba(0, 0, 0, 0.25);
   border-radius: 12px;
   padding: 12px 14px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   color: #94a3b8;
 }
@@ -717,7 +727,7 @@ watch(
 
 .item-label {
   color: #94a3b8;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
 }
 
@@ -745,7 +755,7 @@ watch(
   height: 22px;
   padding: 0 10px;
   border-radius: 999px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   display: inline-flex;
   align-items: center;

@@ -12,6 +12,7 @@ const CHATS_FILE = path.join(MEMORY_DIR, 'chats.json');
 const USERS_FILE = path.join(MEMORY_DIR, 'users.json');
 const API_KEYS_FILE = path.join(MEMORY_DIR, 'api_keys.json');
 const USAGE_LEDGER_FILE = path.join(MEMORY_DIR, 'usage_ledger.json');
+const ANALYTICS_EVENTS_FILE = path.join(MEMORY_DIR, 'analytics_events.json');
 const CREDITS_WALLET_FILE = path.join(MEMORY_DIR, 'credits_wallet.json');
 const CREDITS_HOLDS_FILE = path.join(MEMORY_DIR, 'credits_holds.json');
 const CREDITS_ORDERS_FILE = path.join(MEMORY_DIR, 'credits_orders.json');
@@ -80,6 +81,7 @@ module.exports = {
   USERS_FILE,
   API_KEYS_FILE,
   USAGE_LEDGER_FILE,
+  ANALYTICS_EVENTS_FILE,
   CREDITS_WALLET_FILE,
   CREDITS_HOLDS_FILE,
   CREDITS_ORDERS_FILE,

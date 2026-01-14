@@ -49,7 +49,7 @@ const ui = computed(() =>
   padding: 40px 60px;
   background: #050505;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
 }
 
 .footer-content {
@@ -61,7 +61,7 @@ const ui = computed(() =>
 }
 
 .footer-logo {
-  font-family: 'Inter', sans-serif;
+  font-family: var(--common-font);
   font-weight: 900;
   font-size: 18px;
   color: #ccff00;

@@ -201,6 +201,9 @@ const reasonText = (raw?: string) => {
   const zh = currentLang.value === 'zh';
   if (key === 'img2img') return zh ? '图片生成' : 'Image generation';
   if (key === 'generate') return zh ? '文本生成' : 'Text generation';
+  if (key === 'ai_design') return zh ? 'AI 设计' : 'AI Design';
+  if (key === 'id_photo') return zh ? '智能证件照生成' : 'Smart ID Photo';
+  if (key === 'old_photo') return zh ? '老照片修复' : 'Old Photo Restoration';
   if (key === 'chat') return zh ? '对话' : 'Chat';
   if (key === 'recharge') return zh ? '充值' : 'Recharge';
   if (key === 'admin_gift') return zh ? '赠送' : 'Gift';
@@ -329,7 +332,7 @@ const ui = computed(() => {
   min-height: 100vh;
   background-color: #050505;
   color: #fff;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--common-font);
   background-image:
     linear-gradient(rgba(204, 255, 0, 0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(204, 255, 0, 0.03) 1px, transparent 1px);
@@ -364,7 +367,7 @@ const ui = computed(() => {
 
 .usage-sub {
   color: #94a3b8;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   display: flex;
   gap: 8px;
@@ -386,7 +389,7 @@ const ui = computed(() => {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
@@ -412,9 +415,7 @@ const ui = computed(() => {
 }
 
 .mono {
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
+  font-family: var(--common-font);
 }
 
 .usage-error {
@@ -423,7 +424,7 @@ const ui = computed(() => {
   color: #fca5a5;
   padding: 12px 14px;
   border-radius: 12px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
 }
 
@@ -433,7 +434,7 @@ const ui = computed(() => {
   color: #94a3b8;
   padding: 14px 16px;
   border-radius: 12px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
 }
 
@@ -464,7 +465,7 @@ const ui = computed(() => {
 
 .label {
   color: #94a3b8;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
 }
 
@@ -490,7 +491,7 @@ const ui = computed(() => {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
@@ -509,7 +510,7 @@ const ui = computed(() => {
   padding: 0 10px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
   color: rgba(241, 245, 249, 0.92);
   background: rgba(0, 0, 0, 0.2);

@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "items": [
+    {
+      "id": "evt_mkeha7fg_393e194e",
+      "ts": 1768422812956,
+      "eventType": "event",
+      "payload": {},
+      "path": "",
+      "location": "",
+      "referrer": "",
+      "userId": "",
+      "ip": "::ffff:127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456"
+    }
+  ]
+}

@@ -4,6 +4,16 @@ import { ensureGuestUserId, getAuthToken } from '@/login/session';
 const API_URL = buildApiUrl('/api/generate');
 const IMG2IMG_URL = buildApiUrl('/api/img2img');
 
+const FIXED_TEXT_MODEL = 'Qwen/Qwen3-8B';
+const FIXED_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
+
+const isAllowedTextModel = (raw: string) => {
+  const k = String(raw || '')
+    .trim()
+    .toLowerCase();
+  return k === 'qwen' || k === 'qwen/qwen3-8b' || k === 'qwen3-8b';
+};
+
 export type CreditsBalance = { userId: string; available: number; frozen: number };
 
 export type TextGenerateResult =
@@ -112,8 +122,10 @@ export const img2img = async (input: {
   };
   images?: Img2ImgImageInput[];
   model?: string;
+  reason?: string;
   timeoutMs?: number;
   requestId?: string;
+  deepMode?: boolean;
   signal?: AbortSignal;
 }): Promise<Img2ImgResult> => {
   const requestId =
@@ -122,11 +134,39 @@ export const img2img = async (input: {
   const prompt = String(input.prompt || '').trim();
   if (!prompt) return { ok: false, errorCode: 'EMPTY_PROMPT', error: 'EMPTY_PROMPT', requestId };
   const images = normalizeImg2ImgImages(Array.isArray(input.images) ? input.images : []);
-  const model = String(input.model || '').trim();
+  const requestedModel = String(input.model || '').trim();
+  const reason = (() => {
+    const raw = String(input.reason || '')
+      .trim()
+      .toLowerCase();
+    if (raw === 'ai_design' || raw === 'id_photo' || raw === 'old_photo') return raw;
+    return 'img2img';
+  })();
+  if (requestedModel && requestedModel !== FIXED_IMAGE_MODEL) {
+    return {
+      ok: false,
+      errorCode: 'MODEL_NOT_ALLOWED',
+      error: 'MODEL_NOT_ALLOWED',
+      requestId
+    };
+  }
 
   const controller = new AbortController();
   const timeoutMs = Math.max(1000, Math.min(180000, Number(input.timeoutMs ?? 120000) || 120000));
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = performance.now();
+  const timeoutId = window.setTimeout(() => {
+    try {
+      console.warn('[AI][timeout]', {
+        api: IMG2IMG_URL,
+        requestId,
+        model: 'Kwai-Kolors/Kolors',
+        modelRequested: requestedModel || undefined,
+        timeoutMs,
+        elapsedMs: Math.round(performance.now() - startedAt)
+      });
+    } catch {}
+    controller.abort();
+  }, timeoutMs);
   const ext = input.signal;
   if (ext) {
     if (ext.aborted) controller.abort();
@@ -136,6 +176,18 @@ export const img2img = async (input: {
   try {
     const userId = ensureGuestUserId();
     const token = getAuthToken();
+    try {
+      console.log('[AI][request]', {
+        api: IMG2IMG_URL,
+        requestId,
+        model: FIXED_IMAGE_MODEL,
+        modelRequested: requestedModel || undefined,
+        timeoutMs,
+        prompt,
+        reason,
+        imagesCount: images.length
+      });
+    } catch {}
     const response = await fetch(IMG2IMG_URL, {
       method: 'POST',
       headers: {
@@ -150,9 +202,11 @@ export const img2img = async (input: {
         userText: typeof input.userText === 'string' ? input.userText.trim() : '',
         negativePrompt: input.negativePrompt,
         params: input.params,
-        ...(model ? { model } : {}),
+        model: FIXED_IMAGE_MODEL,
+        reason,
         ...(images.length ? { images } : {}),
         timeoutMs: input.timeoutMs,
+        deepMode: !!input.deepMode,
         requestSource: 'circled-generate'
       })
     });
@@ -191,6 +245,17 @@ export const img2img = async (input: {
     };
   } catch (e: any) {
     const code = toRequestErrorCode(e);
+    try {
+      console.warn('[AI][error]', {
+        api: IMG2IMG_URL,
+        requestId,
+        model: FIXED_IMAGE_MODEL,
+        modelRequested: requestedModel || undefined,
+        timeoutMs,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        errorCode: code
+      });
+    } catch {}
     return { ok: false, errorCode: code, error: code, requestId };
   } finally {
     window.clearTimeout(timeoutId);
@@ -214,9 +279,33 @@ export const generateText = async (
     `artigen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   if (!p) return { ok: false, errorCode: 'EMPTY_PROMPT', error: 'EMPTY_PROMPT', requestId };
 
+  const requestedModel = String(opts?.model || '').trim();
+  if (requestedModel && !isAllowedTextModel(requestedModel)) {
+    return {
+      ok: false,
+      errorCode: 'MODEL_NOT_ALLOWED',
+      error: 'MODEL_NOT_ALLOWED',
+      requestId
+    };
+  }
+
   const controller = new AbortController();
-  const timeoutMs = Math.max(1000, Number(opts?.timeoutMs ?? 45000) || 45000);
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutMs = Math.max(1000, Math.min(180000, Number(opts?.timeoutMs ?? 120000) || 120000));
+  const startedAt = performance.now();
+  const timeoutId = window.setTimeout(() => {
+    try {
+      console.warn('[AI][timeout]', {
+        api: API_URL,
+        requestId,
+        model: FIXED_TEXT_MODEL,
+        modelRequested: requestedModel || undefined,
+        purpose: String(opts?.purpose || '').trim() || undefined,
+        timeoutMs,
+        elapsedMs: Math.round(performance.now() - startedAt)
+      });
+    } catch {}
+    controller.abort();
+  }, timeoutMs);
 
   try {
     const ext = opts?.signal;
@@ -228,6 +317,18 @@ export const generateText = async (
     const token = getAuthToken();
     const images = Array.isArray(opts?.images) ? opts?.images : undefined;
     const purpose = String(opts?.purpose || '').trim();
+    try {
+      console.log('[AI][request]', {
+        api: API_URL,
+        requestId,
+        model: FIXED_TEXT_MODEL,
+        modelRequested: requestedModel || undefined,
+        purpose: purpose || undefined,
+        timeoutMs,
+        prompt: p,
+        imagesCount: Array.isArray(images) ? images.length : 0
+      });
+    } catch {}
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
@@ -240,7 +341,7 @@ export const generateText = async (
         userId,
         requestId,
         images,
-        model: opts?.model,
+        model: FIXED_TEXT_MODEL,
         ...(purpose ? { purpose } : {})
       })
     });
@@ -268,6 +369,18 @@ export const generateText = async (
     return { ok: false, errorCode: 'EMPTY_RESPONSE_TEXT', error: 'EMPTY_RESPONSE_TEXT', requestId };
   } catch (e: any) {
     const code = toRequestErrorCode(e);
+    try {
+      console.warn('[AI][error]', {
+        api: API_URL,
+        requestId,
+        model: FIXED_TEXT_MODEL,
+        modelRequested: requestedModel || undefined,
+        purpose: String(opts?.purpose || '').trim() || undefined,
+        timeoutMs,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        errorCode: code
+      });
+    } catch {}
     return { ok: false, errorCode: code, error: code, requestId };
   } finally {
     window.clearTimeout(timeoutId);

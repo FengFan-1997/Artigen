@@ -119,34 +119,24 @@ const setTransportOverride = (v: AiTransport | '') => {
 };
 
 const resolveTransport = (): AiTransport => {
-  const allowDirectInProd =
-    String((import.meta as any)?.env?.VITE_AGENT_ALLOW_DIRECT_IN_PROD || '')
-      .trim()
-      .toLowerCase() === 'true';
-  if ((import.meta as any)?.env?.PROD && !allowDirectInProd) {
-    const override = getTransportOverride();
-    if (override === 'direct') {
-      setTransportOverride('proxy');
-      recordDiagnostic({
-        kind: 'policy',
-        level: 'warn',
-        message: 'direct_transport_blocked_in_prod',
-        data: { override: 'direct' }
-      });
-    }
-    if (REQUEST_TRANSPORT === 'direct') {
-      recordDiagnostic({
-        kind: 'policy',
-        level: 'warn',
-        message: 'direct_env_blocked_in_prod',
-        data: { env: 'VITE_AGENT_AI_TRANSPORT=direct' }
-      });
-    }
-    return 'proxy';
-  }
   const override = getTransportOverride();
-  if (override === 'direct' || override === 'proxy') return override;
-  if (REQUEST_TRANSPORT === 'direct') return 'direct';
+  if (override === 'direct') {
+    setTransportOverride('proxy');
+    recordDiagnostic({
+      kind: 'policy',
+      level: 'warn',
+      message: 'direct_transport_blocked',
+      data: { override: 'direct' }
+    });
+  }
+  if (REQUEST_TRANSPORT === 'direct') {
+    recordDiagnostic({
+      kind: 'policy',
+      level: 'warn',
+      message: 'direct_env_blocked',
+      data: { env: 'VITE_AGENT_AI_TRANSPORT=direct' }
+    });
+  }
   return 'proxy';
 };
 
@@ -442,6 +432,14 @@ const callBackendChat = async (input: {
   signal: AbortSignal;
 }): Promise<BackendChatResponse> => {
   const token = getAuthToken();
+  try {
+    console.log('[AI][request]', {
+      api: API_URL,
+      requestId: input.requestId,
+      model: 'Qwen/Qwen3-8B',
+      message: input.message
+    });
+  } catch {}
   const response = await fetch(API_URL, {
     method: 'POST',
     headers: {
@@ -506,6 +504,13 @@ const callGeminiDirect = async (input: {
     ]
   };
 
+  try {
+    console.log('[AI][request]', {
+      api: GEMINI_API_URL,
+      model: GEMINI_MODEL,
+      message: input.message
+    });
+  } catch {}
   const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

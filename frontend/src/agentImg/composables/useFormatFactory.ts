@@ -573,7 +573,7 @@ export const useFormatFactory = () => {
           const requestId = `ff_ingredient_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
           const res = await generateText(prompt, {
             signal: opts?.signal,
-            timeoutMs: 45000,
+            timeoutMs: 120000,
             requestId,
             model: 'qwen'
           });

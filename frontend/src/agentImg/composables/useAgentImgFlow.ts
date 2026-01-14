@@ -252,7 +252,7 @@ export const useAgentImgFlow = (opts?: {
       const images = await getImages();
       return await generateText(prompt, {
         signal: ctl.signal,
-        timeoutMs: 45000,
+        timeoutMs: 120000,
         requestId: reqId,
         images,
         purpose: `agentImg_${nextStage}`

@@ -137,7 +137,7 @@ const ui = computed(() =>
   min-height: 100vh;
   background-color: #050505;
   color: #f1f5f9;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--common-font);
 }
 
 .top-header {
@@ -179,8 +179,9 @@ const ui = computed(() =>
 }
 
 .top-nav-item {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 12px;
+  font-weight: 500;
   color: #94a3b8;
   text-decoration: none;
   padding: 8px 10px;
@@ -203,6 +204,7 @@ const ui = computed(() =>
 .top-action-link {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
+  font-weight: 500;
   color: #94a3b8;
   text-decoration: none;
   padding: 8px 10px;
@@ -238,6 +240,7 @@ h1 {
   color: #94a3b8;
   font-family: 'JetBrains Mono', monospace;
   font-size: 14px;
+  font-weight: 500;
 }
 
 .legal-content section {
@@ -246,7 +249,7 @@ h1 {
 
 h2 {
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 800;
   margin-bottom: 16px;
   color: #fff;
 }
@@ -262,8 +265,9 @@ p {
   padding: 24px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--common-font);
   font-size: 14px;
+  font-weight: 500;
   color: #94a3b8;
 }
 
