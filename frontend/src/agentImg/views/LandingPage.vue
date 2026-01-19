@@ -15,8 +15,7 @@
 
           <h1 class="headline">
             {{ headlineLine1 }}<span class="highlight">{{ headlineHighlight1 }}</span
-            ><br />
-            <span class="highlight">{{ headlineHighlight2 }}</span
+            ><span class="highlight">{{ headlineHighlight2 }}</span
             >{{ headlineLine2 }}
           </h1>
 
@@ -33,28 +32,28 @@
           <div class="cta-row">
             <router-link
               to="/artigen/ai"
-              class="text-link"
+              class="hero-btn btn-primary"
               @click.prevent="onLandingNav('/artigen/ai', 'ai')"
             >
               {{ ctaWorkshop }} <span class="arrow">→</span>
             </router-link>
             <router-link
-              to="/artigen/format-factory"
-              class="text-link"
-              @click.prevent="onLandingNav('/artigen/format-factory', 'format_factory')"
+              to="/artigen/tools"
+              class="hero-btn btn-secondary"
+              @click.prevent="onLandingNav('/artigen/tools', 'format_factory')"
             >
               {{ ctaFormatFactory }}
             </router-link>
             <router-link
               to="/artigen/image-workshop"
-              class="text-link"
+              class="hero-btn btn-secondary"
               @click.prevent="onLandingNav('/artigen/image-workshop', 'image_workshop')"
             >
               {{ ctaWorkshop2 }}
             </router-link>
             <router-link
               to="/artigen/market"
-              class="text-link"
+              class="hero-btn btn-secondary"
               @click.prevent="onLandingNav('/artigen/market', 'market')"
             >
               {{ ctaMarket }}
@@ -81,23 +80,9 @@
               <div class="hud-bottom-left">RENDER_ENGINE: ACTIVE</div>
               <div class="hud-bottom-right"><span class="status-dot"></span> SIGNAL_STABLE</div>
 
-              <!-- 3D Reactor Representation -->
-              <div class="reactor-wrapper">
-                <div class="reactor-container">
-                  <div class="reactor-ring ring-outer"></div>
-                  <div class="reactor-ring ring-middle"></div>
-                  <div class="reactor-ring ring-inner"></div>
-                  <div class="reactor-ring ring-detail"></div>
-                  <div class="reactor-core-glow"></div>
-                </div>
-                <div class="floating-data">
-                  <span class="bit bit-1">0</span>
-                  <span class="bit bit-2">1</span>
-                  <span class="bit bit-3">1</span>
-                  <span class="bit bit-4">0</span>
-                  <span class="bit bit-5">1</span>
-                  <span class="bit bit-6">0</span>
-                </div>
+              <!-- Functional Carousel -->
+              <div class="carousel-container">
+                <HeroCarousel :slides="carouselSlides" @navigate="onLandingNav" />
               </div>
             </div>
           </div>
@@ -106,89 +91,143 @@
 
       <section class="features-section">
         <div class="section-header">
-          <div class="sub-label">// FUNCTIONAL_MODULES</div>
+          <!-- <div class="sub-label">// FUNCTIONAL_MODULES</div> -->
           <h2 class="section-title">{{ featuresTitle }}</h2>
           <p class="section-desc">{{ featuresDesc }}</p>
         </div>
 
         <div class="features-grid">
-          <div class="feature-card" @click="onLandingNav('/artigen/ai', 'ai')">
-            <div class="card-header">
-              <span class="status-dot green"></span>
-              <span class="module-id">MODULE_01</span>
-              <span class="badge">ACTIVE</span>
-            </div>
-            <h3 class="card-title">{{ feature1Title }}</h3>
-            <div class="card-subtitle">AI-POWERED CREATION</div>
-            <p class="card-text">
-              {{ feature1Desc }}
-            </p>
-            <div class="card-tags"><span>TXT2IMG</span><span>IMG2IMG</span></div>
-            <div class="card-action">
-              <span class="link-text">ENTER WORKSHOP</span>
-              <span class="action-arrow">→</span>
-            </div>
-          </div>
-
-          <div
+          <router-link
+            to="/artigen/ai"
             class="feature-card"
-            @click="onLandingNav('/artigen/format-factory', 'format_factory')"
+            @click.prevent="onLandingNav('/artigen/ai', 'ai')"
           >
-            <div class="card-header">
-              <span class="status-dot green"></span>
-              <span class="module-id">MODULE_02</span>
-              <span class="badge">ACTIVE</span>
+            <div class="fc-top">
+              <div class="fc-left">
+                <span class="status-dot green"></span>
+                <span class="fc-label">AI</span>
+              </div>
+              <div class="fc-right">
+                <span class="module-id">UNIT-01</span>
+                <span class="badge">ACTIVE</span>
+              </div>
             </div>
-            <h3 class="card-title">{{ feature2Title }}</h3>
-            <div class="card-subtitle">FORMAT CONVERTER</div>
-            <p class="card-text">
-              {{ feature2Desc }}
-            </p>
-            <div class="card-tags"><span>LOCAL_PROCESS</span><span>PRIVACY</span></div>
-            <div class="card-action">
-              <span class="link-text">OPEN TOOLS</span>
-              <span class="action-arrow">→</span>
-            </div>
-          </div>
 
-          <div
+            <div class="fc-body">
+              <div class="fc-title-row">
+                <h3 class="card-title">{{ feature1Title }}</h3>
+                <div class="fc-icon">🎨</div>
+              </div>
+              <p class="card-text">
+                {{ feature1Desc }}
+              </p>
+              <div class="card-tags"><span>TXT2IMG</span><span>IMG2IMG</span></div>
+            </div>
+
+            <div class="fc-footer">
+              <span class="link-text">ENTER</span>
+              <span class="action-arrow">↗</span>
+            </div>
+          </router-link>
+
+          <router-link
+            to="/artigen/tools"
             class="feature-card"
-            @click="onLandingNav('/artigen/image-workshop', 'image_workshop')"
+            @click.prevent="onLandingNav('/artigen/tools', 'format_factory')"
           >
-            <div class="card-header">
-              <span class="status-dot green"></span>
-              <span class="module-id">MODULE_03</span>
-              <span class="badge">ACTIVE</span>
+            <div class="fc-top">
+              <div class="fc-left">
+                <span class="status-dot green"></span>
+                <span class="fc-label">TOOLS</span>
+              </div>
+              <div class="fc-right">
+                <span class="module-id">UNIT-02</span>
+                <span class="badge">ACTIVE</span>
+              </div>
             </div>
-            <h3 class="card-title">{{ feature4Title }}</h3>
-            <div class="card-subtitle">CLOUD SERVICES</div>
-            <p class="card-text">
-              {{ feature4Desc }}
-            </p>
-            <div class="card-tags"><span>ID_PHOTO</span><span>RESTORATION</span></div>
-            <div class="card-action">
-              <span class="link-text">ENTER FACTORY</span>
-              <span class="action-arrow">→</span>
-            </div>
-          </div>
 
-          <div class="feature-card" @click="onLandingNav('/artigen/market', 'market')">
-            <div class="card-header">
-              <span class="status-dot yellow"></span>
-              <span class="module-id">MODULE_04</span>
-              <span class="badge">BETA</span>
+            <div class="fc-body">
+              <div class="fc-title-row">
+                <h3 class="card-title">{{ feature2Title }}</h3>
+                <div class="fc-icon">🧰</div>
+              </div>
+              <p class="card-text">
+                {{ feature2Desc }}
+              </p>
+              <div class="card-tags"><span>LOCAL</span><span>PRIVACY</span></div>
             </div>
-            <h3 class="card-title">{{ feature3Title }}</h3>
-            <div class="card-subtitle">COMPUTE MARKET</div>
-            <p class="card-text">
-              {{ feature3Desc }}
-            </p>
-            <div class="card-tags"><span>GPU_RENTAL</span><span>DISTRIBUTED</span></div>
-            <div class="card-action">
-              <span class="link-text">BROWSE MARKET</span>
-              <span class="action-arrow">→</span>
+
+            <div class="fc-footer">
+              <span class="link-text">OPEN</span>
+              <span class="action-arrow">↗</span>
             </div>
-          </div>
+          </router-link>
+
+          <router-link
+            to="/artigen/image-workshop"
+            class="feature-card"
+            @click.prevent="onLandingNav('/artigen/image-workshop', 'image_workshop')"
+          >
+            <div class="fc-top">
+              <div class="fc-left">
+                <span class="status-dot green"></span>
+                <span class="fc-label">LAB</span>
+              </div>
+              <div class="fc-right">
+                <span class="module-id">UNIT-03</span>
+                <span class="badge">ACTIVE</span>
+              </div>
+            </div>
+
+            <div class="fc-body">
+              <div class="fc-title-row">
+                <h3 class="card-title">{{ feature4Title }}</h3>
+                <div class="fc-icon">🛠️</div>
+              </div>
+              <p class="card-text">
+                {{ feature4Desc }}
+              </p>
+              <div class="card-tags"><span>ID</span><span>RESTORE</span></div>
+            </div>
+
+            <div class="fc-footer">
+              <span class="link-text">ENTER</span>
+              <span class="action-arrow">↗</span>
+            </div>
+          </router-link>
+
+          <router-link
+            to="/artigen/market"
+            class="feature-card"
+            @click.prevent="onLandingNav('/artigen/market', 'market')"
+          >
+            <div class="fc-top">
+              <div class="fc-left">
+                <span class="status-dot yellow"></span>
+                <span class="fc-label">MARKET</span>
+              </div>
+              <div class="fc-right">
+                <span class="module-id">UNIT-04</span>
+                <span class="badge">BETA</span>
+              </div>
+            </div>
+
+            <div class="fc-body">
+              <div class="fc-title-row">
+                <h3 class="card-title">{{ feature3Title }}</h3>
+                <div class="fc-icon">⚡</div>
+              </div>
+              <p class="card-text">
+                {{ feature3Desc }}
+              </p>
+              <div class="card-tags"><span>GPU</span><span>CREDITS</span></div>
+            </div>
+
+            <div class="fc-footer">
+              <span class="link-text">BROWSE</span>
+              <span class="action-arrow">↗</span>
+            </div>
+          </router-link>
         </div>
       </section>
 
@@ -256,6 +295,8 @@ import { useLanguageStore } from '@/stores/language';
 import { useConsoleStore } from '@/stores/console';
 import { trackEvent } from '@/utils/analytics';
 
+import HeroCarousel from '../components/HeroCarousel.vue';
+
 const router = useRouter();
 const bgCanvas = ref<HTMLCanvasElement | null>(null);
 let animationId: number;
@@ -279,69 +320,69 @@ const onLandingNav = (
 };
 
 const headlineLine1 = computed(() =>
-  currentLang.value === 'zh' ? '聚合 N 种' : 'Aggregate N kinds of '
+  currentLang.value === 'zh' ? '对话生成您的想法' : 'Chat to generate your ideas '
 );
-const headlineHighlight1 = computed(() => (currentLang.value === 'zh' ? '黑科技' : 'Tech Magic'));
-const headlineHighlight2 = computed(() =>
-  currentLang.value === 'zh' ? '搞定图片' : 'Solve Images'
-);
+const headlineHighlight1 = computed(() => (currentLang.value === 'zh' ? 'AI设计' : 'AI Design '));
+const headlineHighlight2 = computed(() => (currentLang.value === 'zh' ? '工具箱' : 'Toolbox '));
 const headlineLine2 = computed(() =>
-  currentLang.value === 'zh' ? '一切需求' : ' for every use case'
+  currentLang.value === 'zh' ? '一站式快速交付' : 'Fast delivery in one workflow'
 );
 
 const heroDesc = computed(() =>
   currentLang.value === 'zh'
-    ? '从 AI 智能创作到格式批量转换，打造一站式影像处理解决方案。深度集成 AI 算力引擎与高性能传统算法，10+ 专业工具覆盖图片全生命周期。支持双模型 AI 生成、多种格式转换，纯前端处理确保数据隐私安全。'
-    : 'From AI creation to batch format conversion, a one-stop imaging toolkit. Deeply integrated AI compute and high-performance classic algorithms, with 10+ professional tools covering the full image lifecycle. Dual-model AI generation, multi-format conversion, and client-side processing for privacy.'
+    ? '用对话把脑海里的画面变成可执行的提示词与方案，直接进入 AI 设计生成；再用工具箱做压缩、转格式、PDF 处理等细节优化。创作用云端算力加速，工具默认本地处理不上传，让效率与隐私同时在线。'
+    : 'Turn your idea into usable prompts through chat, then generate with AI Design. Finish with the Toolbox for conversion, compression, PDF tasks, and fine edits. Use cloud compute for creation and keep everyday tools on device for privacy.'
 );
 
-const ctaWorkshop = computed(() => (currentLang.value === 'zh' ? 'AI 工坊' : 'AI Workshop'));
-const ctaWorkshop2 = computed(() => (currentLang.value === 'zh' ? '影像工坊' : 'Image Workshop'));
-const ctaFormatFactory = computed(() =>
-  currentLang.value === 'zh' ? '格式工厂' : 'Format Factory'
+const ctaWorkshop = computed(() => (currentLang.value === 'zh' ? '开始创作' : 'Start Creating'));
+const ctaWorkshop2 = computed(() =>
+  currentLang.value === 'zh' ? 'AI 影像工坊' : 'Image Workshop'
 );
-const ctaMarket = computed(() => (currentLang.value === 'zh' ? '算力商城' : 'Compute Market'));
+const ctaFormatFactory = computed(() => (currentLang.value === 'zh' ? '工具箱' : 'Toolbox'));
+const ctaMarket = computed(() => (currentLang.value === 'zh' ? '点数商城' : 'Compute Market'));
 
 const statusText = computed(() =>
-  currentLang.value === 'zh' ? '工具库在线 SYS v2.0.4' : 'TOOLBOX ONLINE SYS v2.0.4'
+  currentLang.value === 'zh'
+    ? 'Artigen 系统在线 · AI 设计 & 工具箱 v2.0.4'
+    : 'ARTIGEN ONLINE · AI DESIGN & TOOLBOX v2.0.4'
 );
-const tag1 = computed(() => (currentLang.value === 'zh' ? 'AI 驱动' : 'AI_POWERED'));
-const tag2 = computed(() => (currentLang.value === 'zh' ? '前端处理' : 'CLIENT_SIDE'));
-const tag3 = computed(() => (currentLang.value === 'zh' ? '隐私优先' : 'PRIVACY_FIRST'));
+const tag1 = computed(() => (currentLang.value === 'zh' ? '双模生成' : 'DUAL_MODEL'));
+const tag2 = computed(() => (currentLang.value === 'zh' ? '本地工具' : 'ON_DEVICE'));
+const tag3 = computed(() => (currentLang.value === 'zh' ? '隐私守护' : 'PRIVACY_GUARD'));
 const statLabel1 = computed(() => (currentLang.value === 'zh' ? '响应速度' : 'Latency'));
 const statLabel2 = computed(() => (currentLang.value === 'zh' ? '工具数量' : 'Tools'));
 
 const featuresTitle = computed(() => (currentLang.value === 'zh' ? '核心功能' : 'Core Modules'));
 const featuresDesc = computed(() =>
   currentLang.value === 'zh'
-    ? '三大工具矩阵，覆盖图片全生命周期'
-    : 'Three tool clusters covering the full image lifecycle'
+    ? '四大工具矩阵，覆盖图片全生命周期'
+    : 'Four tool clusters covering the full image lifecycle'
 );
-const feature1Title = computed(() => (currentLang.value === 'zh' ? 'AI 工坊' : 'AI Workshop'));
+const feature1Title = computed(() => (currentLang.value === 'zh' ? 'AI 设计' : 'AI Design'));
 const feature1Desc = computed(() =>
   currentLang.value === 'zh'
     ? '搭载双模型 AI 图片生成引擎，支持文生图、图生图。内置 Prompt 优化助手，让创意精准落地。'
     : 'Dual-model image generation: text-to-image and image-to-image. Built-in prompt helper for precise creation.'
 );
-const feature2Title = computed(() => (currentLang.value === 'zh' ? '格式工厂' : 'Format Factory'));
+const feature2Title = computed(() => (currentLang.value === 'zh' ? '工具箱' : 'Toolbox'));
 const feature2Desc = computed(() =>
   currentLang.value === 'zh'
-    ? 'WebP/JPEG/PNG 全格式支持，纯前端处理保障隐私。支持批量压缩、去水印、PDF 转换等 10+ 实用工具。'
-    : 'Full format support (WebP/JPEG/PNG) with client-side processing for privacy. 10+ utilities like batch compress, watermark removal, and PDF conversion.'
+    ? '把压缩、转格式、尺寸调整与 PDF 相关能力收进一个工具箱里，多数功能默认本地处理不上传。支持批量操作，省时省心。'
+    : 'A toolbox for conversion, compression, resizing, and PDF workflows. Most tools run on device by default with batch support for faster turnaround.'
 );
-const feature3Title = computed(() => (currentLang.value === 'zh' ? '算力商城' : 'Compute Market'));
+const feature3Title = computed(() => (currentLang.value === 'zh' ? '点数商城' : 'Credit Store'));
 const feature3Desc = computed(() =>
   currentLang.value === 'zh'
-    ? '分布式算力租赁平台，按需购买 GPU 资源。支持模型微调、批量渲染任务托管。'
-    : 'A distributed compute marketplace to rent GPU resources on demand. Supports fine-tuning and batch rendering workloads.'
+    ? '购买点数以解锁高速 AI 生成服务。灵活套餐，满足不同创作需求。'
+    : 'Purchase credits to unlock high-speed AI generation. Flexible plans for every creator.'
 );
 const feature4Title = computed(() =>
   currentLang.value === 'zh' ? 'AI 影像工坊' : 'Image Workshop'
 );
 const feature4Desc = computed(() =>
   currentLang.value === 'zh'
-    ? '提供智能证件照生成与老照片修复功能。多种规格一键生成，破损照片智能修复。'
-    : 'Smart ID photo generation and old photo restoration. One-click generation for various specs, intelligent repair for damaged photos.'
+    ? '提供智能证件照生成、老照片修复与 FDA 配料表标签图生成。'
+    : 'Smart ID photos, old photo restoration, and FDA ingredient label generation.'
 );
 
 const contentTitle = computed(() =>
@@ -365,7 +406,7 @@ const useCases = computed(() => {
       '文档工作：PDF 转图片、图片转 PDF、PDF 转 Word',
       '隐私保护：本地去水印、元数据清除、安全处理',
       '算力租赁：高性能 GPU 租用、模型微调、离线渲染',
-      '云端工坊：证件照生成、老照片修复、AI 美颜'
+      '云端工坊：证件照生成、老照片修复、FDA 配料表'
     ];
   }
   return [
@@ -376,7 +417,7 @@ const useCases = computed(() => {
     'Docs workflow: PDF to images, images to PDF, PDF to Word',
     'Privacy: Local watermark removal, metadata clearing',
     'Compute: GPU rental, fine-tuning, offline rendering',
-    'Cloud Workshop: ID photos, restoration, AI beautification'
+    'Cloud Workshop: ID photos, restoration, FDA ingredient labels'
   ];
 });
 const longTailTitle = computed(() =>
@@ -396,7 +437,8 @@ const longTailKeywords = computed(() => {
       '图生图',
       '文生图',
       '提示词优化',
-      '电商产品图生成'
+      '电商产品图生成',
+      'FDA配料表生成'
     ];
   }
   return [
@@ -411,7 +453,8 @@ const longTailKeywords = computed(() => {
     'image-to-image',
     'text-to-image',
     'prompt optimizer',
-    'product image generator'
+    'product image generator',
+    'FDA ingredient label'
   ];
 });
 const faqTitle = computed(() => (currentLang.value === 'zh' ? '常见问题' : 'FAQ'));
@@ -419,34 +462,106 @@ const faqs = computed(() => {
   if (currentLang.value === 'zh') {
     return [
       {
-        q: '文件会上传到服务器吗？',
-        a: '格式工厂相关工具默认在浏览器本地处理；AI 工坊会将必要信息发送到模型服务以完成生成。'
+        q: 'Artigen 能做什么？',
+        a: 'Artigen 是一个一站式影像处理平台，提供 AI 智能创作（文生图/图生图）、AI 影像工坊（证件照/老照片修复/FDA配料表）以及纯前端的图片格式转换工具（压缩/转码/PDF工具）。'
       },
       {
-        q: '从哪里开始更快？',
-        a: '有参考图就用图生图；只有想法就用文生图。做电商图建议先填产品档案，再补充具体需求。'
+        q: '我的文件安全吗？会上传到服务器吗？',
+        a: '隐私优先是我们设计的核心。工具（转换/压缩）所有操作均在您的浏览器本地完成，文件不会上传。AI 创作相关功能需要云端算力，我们会加密传输您的图片到模型服务，生成完成后立即销毁中间数据。'
       },
       {
-        q: '如何判断卡在漏斗哪一步？',
-        a: '已接入页面访问与关键动作事件，能看到进入页面、选择工具、开始处理/生成、下单等关键节点。'
+        q: '生成的图片可以商用吗？',
+        a: '是的。您使用 Artigen 创作的图片拥有完整的商业使用权，可用于电商主图、营销海报、自媒体配图等商业场景。'
+      },
+      {
+        q: '点数是什么？如何获取？',
+        a: '点数是使用 AI 云端算力服务的凭证。新用户注册即送免费点数。您可以通过每日签到或在「点数商城」购买套餐来获取更多点数。工具等本地功能完全免费。'
+      },
+      {
+        q: '生成失败了会扣点数吗？',
+        a: '不会。系统会自动检测生成结果，如果因网络或服务原因导致生成失败，扣除的点数会自动退回您的账户。'
+      },
+      {
+        q: '支持手机端使用吗？',
+        a: '完美支持。我们的界面已针对移动端深度适配，无论是在手机还是平板上，您都可以随时随地进行创作或处理图片。'
       }
     ];
   }
   return [
     {
-      q: 'Do files get uploaded?',
-      a: 'Format Factory tools run locally in the browser by default; AI Workshop sends required inputs to the model service to generate results.'
+      q: 'What can Artigen do?',
+      a: 'Artigen is an all-in-one imaging platform offering AI creation (Text-to-Image/Image-to-Image), AI Image Workshop (ID Photos/Restoration/FDA Ingredient Labels), and client-side format tools (Conversion/Compression/PDF).'
     },
     {
-      q: 'What is the fastest way to start?',
-      a: 'Use image-to-image if you have reference images; use text-to-image if you only have an idea. For commerce shots, fill the product profile first.'
+      q: 'Are my files safe? Do they get uploaded?',
+      a: 'Privacy is our core principle. Tools run entirely in your browser; files are never uploaded. For AI features, data is encrypted during transmission and intermediate files are deleted immediately after generation.'
     },
     {
-      q: 'How do I find where users drop off?',
-      a: 'Page views and key action events are tracked, covering entry, tool selection, processing/generation, and ordering steps.'
+      q: 'Can I use the images commercially?',
+      a: 'Yes. You have full commercial rights to the images you generate with Artigen, suitable for e-commerce, marketing, and social media.'
+    },
+    {
+      q: 'What are credits and how do I get them?',
+      a: 'Credits are used for AI cloud services. New users get free starter credits. You can earn more by daily check-ins or purchasing packs in the "Compute Market". Local tools are free forever.'
+    },
+    {
+      q: 'Will I be charged if generation fails?',
+      a: 'No. The system automatically detects failures. If generation fails due to network or service errors, the credits are automatically refunded to your account.'
+    },
+    {
+      q: 'Is it mobile-friendly?',
+      a: 'Absolutely. Our interface is fully optimized for mobile devices, allowing you to create and process images anywhere, anytime on your phone or tablet.'
     }
   ];
 });
+
+type CarouselSlide = {
+  id: 'ai' | 'format_factory' | 'market' | 'image_workshop';
+  title: string;
+  desc: string;
+  icon: string;
+  image: string;
+  route: string;
+};
+
+const carouselSlides = computed<CarouselSlide[]>(() => [
+  {
+    id: 'ai',
+    title: feature1Title.value,
+    desc: feature1Desc.value,
+    icon: '🎨',
+    image:
+      'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=800&auto=format&fit=crop',
+    route: '/artigen/ai'
+  },
+  {
+    id: 'format_factory',
+    title: feature2Title.value,
+    desc: feature2Desc.value,
+    icon: '🔄',
+    image:
+      'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?q=80&w=800&auto=format&fit=crop',
+    route: '/artigen/tools'
+  },
+  {
+    id: 'image_workshop',
+    title: feature4Title.value,
+    desc: feature4Desc.value,
+    icon: '🛠️',
+    image:
+      'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?q=80&w=800&auto=format&fit=crop',
+    route: '/artigen/image-workshop'
+  },
+  {
+    id: 'market',
+    title: feature3Title.value,
+    desc: feature3Desc.value,
+    icon: '⚡',
+    image:
+      'https://images.unsplash.com/photo-1635776062127-d379bfcba9f8?q=80&w=800&auto=format&fit=crop',
+    route: '/artigen/market'
+  }
+]);
 
 // Cyber Grid & Particles Effect
 const initCyberGrid = () => {
@@ -791,6 +906,10 @@ onBeforeUnmount(() => {
   left: 100%;
 }
 
+:deep(.login-btn.nth-login-btn) {
+  border-radius: 999px;
+}
+
 /* Hero Section */
 .hero-section {
   flex: 1;
@@ -859,19 +978,12 @@ onBeforeUnmount(() => {
   color: var(--primary);
   background: rgba(204, 255, 0, 0.1);
   border: 1px solid rgba(204, 255, 0, 0.3);
+  border-radius: 999px;
   padding: 8px 16px;
   text-transform: uppercase;
   letter-spacing: 1px;
   position: relative;
   overflow: hidden;
-  clip-path: polygon(
-    10px 0,
-    100% 0,
-    100% calc(100% - 10px),
-    calc(100% - 10px) 100%,
-    0 100%,
-    0 10px
-  );
   transition: all 0.3s ease;
 }
 
@@ -889,14 +1001,11 @@ onBeforeUnmount(() => {
   margin-bottom: 60px;
 }
 
-.text-link {
+.hero-btn {
   text-decoration: none;
   font-family: var(--common-font);
   font-size: 14px;
   font-weight: 700;
-  color: var(--text-muted);
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 14px 24px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: inline-flex;
@@ -906,23 +1015,31 @@ onBeforeUnmount(() => {
   letter-spacing: 1px;
   position: relative;
   min-width: 140px;
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
 }
 
-.text-link:first-child {
+.btn-primary {
   background: var(--primary);
   color: #000;
-  border-color: var(--primary);
+  border: 1px solid var(--primary);
   box-shadow: 0 0 20px rgba(204, 255, 0, 0.2);
 }
 
-.text-link:first-child:hover {
+.btn-primary:hover {
   background: #b3e600;
   box-shadow: 0 0 30px rgba(204, 255, 0, 0.4);
   transform: translateY(-2px);
 }
 
-.text-link:not(:first-child):hover {
+.btn-secondary {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-secondary:hover {
   border-color: var(--primary);
   color: var(--primary);
   background: rgba(204, 255, 0, 0.1);
@@ -930,34 +1047,73 @@ onBeforeUnmount(() => {
   transform: translateY(-2px);
 }
 
-.text-link .arrow {
+.hero-btn .arrow {
   margin-left: 8px;
   transition: transform 0.3s ease;
 }
 
-.text-link:hover .arrow {
+.hero-btn:hover .arrow {
   transform: translateX(4px);
 }
 
 /* Button styles imported from cyberpunk.css */
 
 .stats-row {
-  display: flex;
-  gap: 40px;
-  border-top: 1px solid var(--border-color);
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  margin-top: 40px;
   padding-top: 24px;
+  border-top: 1px solid var(--border-color);
+}
+
+.stat-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 16px 24px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.stat-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--primary);
+  opacity: 0.5;
+  transition: opacity 0.3s ease;
+}
+
+.stat-item:hover {
+  background: rgba(204, 255, 0, 0.05);
+  transform: translateY(-2px);
+  border-color: rgba(204, 255, 0, 0.3);
+}
+
+.stat-item:hover::before {
+  opacity: 1;
+  box-shadow: 0 0 10px var(--primary);
 }
 
 .stat-label {
   font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
   color: var(--text-muted);
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 
 .stat-value {
   font-family: var(--common-font);
-  font-size: 24px;
+  font-size: 32px;
+  font-weight: 700;
   color: var(--primary);
+  text-shadow: 0 0 10px rgba(204, 255, 0, 0.3);
 }
 
 /* Hero Right Visual */
@@ -1019,220 +1175,15 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 
-/* 3D Reactor CSS Implementation */
-.reactor-wrapper {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 360px;
-  height: 360px;
-  perspective: 1200px;
-  pointer-events: none;
-}
-
-.reactor-container {
+/* Carousel Container */
+.carousel-container {
   width: 100%;
   height: 100%;
   position: relative;
-  transform-style: preserve-3d;
-  animation: reactor-float 6s ease-in-out infinite;
+  z-index: 10;
 }
 
-.reactor-ring {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  box-shadow: 0 0 15px rgba(204, 255, 0, 0.05);
-  transform-style: preserve-3d;
-}
-
-.ring-outer {
-  width: 300px;
-  height: 300px;
-  border: 1px solid rgba(204, 255, 0, 0.1);
-  border-top: 2px solid var(--primary);
-  border-bottom: 2px solid var(--primary);
-  box-shadow: 0 0 20px rgba(204, 255, 0, 0.1);
-  animation: spin-slow 20s linear infinite;
-}
-
-.ring-outer::before {
-  content: '';
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  right: 10px;
-  bottom: 10px;
-  border-radius: 50%;
-  border: 1px dashed rgba(204, 255, 0, 0.2);
-  animation: spin-reverse 30s linear infinite;
-}
-
-.ring-middle {
-  width: 220px;
-  height: 220px;
-  border: 1px solid rgba(204, 255, 0, 0.05);
-  border-left: 4px solid var(--primary);
-  border-right: 4px solid var(--primary);
-  box-shadow: 0 0 15px var(--primary-dim);
-  animation: spin-reverse 12s linear infinite;
-}
-
-.ring-inner {
-  width: 160px;
-  height: 160px;
-  border: 2px dotted var(--primary);
-  opacity: 0.8;
-  animation: spin-fast 8s linear infinite;
-}
-
-.ring-detail {
-  width: 260px;
-  height: 260px;
-  border: 1px solid transparent;
-  border-left: 1px solid rgba(204, 255, 0, 0.5);
-  transform: translate(-50%, -50%) rotateX(60deg);
-  animation: spin-3d 15s linear infinite;
-}
-
-.reactor-core-glow {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 80px;
-  height: 80px;
-  background: radial-gradient(circle, #fff 0%, var(--primary) 40%, transparent 80%);
-  border-radius: 50%;
-  box-shadow:
-    0 0 60px var(--primary),
-    0 0 100px rgba(204, 255, 0, 0.4),
-    inset 0 0 20px #fff;
-  animation: pulse-glow 3s ease-in-out infinite alternate;
-  filter: blur(2px);
-}
-
-.floating-data .bit {
-  position: absolute;
-  font-family: var(--common-font);
-  font-size: 12px;
-  color: var(--primary);
-  opacity: 0;
-  text-shadow: 0 0 5px var(--primary);
-  animation: float-bit 4s infinite;
-}
-
-.bit-1 {
-  top: 15%;
-  left: 25%;
-  animation-delay: 0s;
-}
-.bit-2 {
-  top: 25%;
-  right: 15%;
-  animation-delay: 1.2s;
-}
-.bit-3 {
-  bottom: 20%;
-  left: 20%;
-  animation-delay: 2.5s;
-}
-.bit-4 {
-  bottom: 35%;
-  right: 25%;
-  animation-delay: 0.8s;
-}
-.bit-5 {
-  top: 10%;
-  right: 40%;
-  animation-delay: 3s;
-}
-.bit-6 {
-  bottom: 10%;
-  left: 45%;
-  animation-delay: 1.8s;
-}
-
-@keyframes spin-slow {
-  0% {
-    transform: translate(-50%, -50%) rotate(0deg);
-  }
-  100% {
-    transform: translate(-50%, -50%) rotate(360deg);
-  }
-}
-
-@keyframes spin-reverse {
-  0% {
-    transform: translate(-50%, -50%) rotate(360deg);
-  }
-  100% {
-    transform: translate(-50%, -50%) rotate(0deg);
-  }
-}
-
-@keyframes spin-fast {
-  0% {
-    transform: translate(-50%, -50%) rotate(0deg);
-  }
-  100% {
-    transform: translate(-50%, -50%) rotate(-360deg);
-  }
-}
-
-@keyframes spin-3d {
-  0% {
-    transform: translate(-50%, -50%) rotateX(60deg) rotate(0deg);
-  }
-  100% {
-    transform: translate(-50%, -50%) rotateX(60deg) rotate(360deg);
-  }
-}
-
-@keyframes pulse-glow {
-  0% {
-    transform: translate(-50%, -50%) scale(0.9);
-    opacity: 0.7;
-  }
-  50% {
-    transform: translate(-50%, -50%) scale(1);
-    opacity: 1;
-  }
-  100% {
-    transform: translate(-50%, -50%) scale(1.1);
-    opacity: 0.8;
-  }
-}
-
-@keyframes reactor-float {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-15px);
-  }
-}
-
-@keyframes float-bit {
-  0% {
-    transform: translateY(10px);
-    opacity: 0;
-  }
-  20% {
-    opacity: 1;
-  }
-  80% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(-30px);
-    opacity: 0;
-  }
-}
+/* 3D Reactor CSS Removed */
 
 /* Responsive */
 @media (max-width: 1024px) {
@@ -1249,8 +1200,10 @@ onBeforeUnmount(() => {
   }
 
   .hero-right {
-    display: none;
-    height: 300px;
+    /* display: none; Removed to show carousel on mobile */
+    display: flex;
+    height: 400px;
+    margin-top: 40px;
   }
 
   .headline {
@@ -1334,14 +1287,17 @@ onBeforeUnmount(() => {
 .features-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 24px;
+  gap: 32px;
   max-width: 1400px;
   margin: 0 auto;
 }
 
 /* Feature card styles */
 .feature-card {
-  background: rgba(20, 20, 20, 0.6);
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(30, 30, 30, 0.4) 0%, rgba(10, 10, 10, 0.82) 100%);
   border: 1px solid var(--border-color);
   padding: 32px;
   display: flex;
@@ -1349,14 +1305,53 @@ onBeforeUnmount(() => {
   transition: all 0.3s ease;
   cursor: pointer;
   height: 100%;
-  min-height: 320px;
+  min-height: 340px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.feature-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(800px 220px at 20% 0%, rgba(204, 255, 0, 0.14), transparent 60%);
+  opacity: 0.45;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.feature-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, transparent 40%);
+  opacity: 0.25;
+  transform: translateY(20px);
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+  pointer-events: none;
+}
+
+.feature-card > * {
+  position: relative;
+  z-index: 1;
 }
 
 .feature-card:hover {
   border-color: var(--primary);
-  transform: translateY(-5px);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  background: rgba(30, 30, 30, 0.8);
+  transform: translateY(-8px);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+  background: linear-gradient(180deg, rgba(40, 40, 40, 0.55) 0%, rgba(15, 15, 15, 0.92) 100%);
+}
+
+.feature-card:hover::before {
+  opacity: 0.75;
+}
+
+.feature-card:hover::after {
+  opacity: 0.35;
+  transform: translateY(0);
 }
 
 .status-dot.green {
@@ -1369,18 +1364,32 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 8px #ffd700;
 }
 
-.card-header {
+.fc-top {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 24px;
-  font-family: 'JetBrains Mono', monospace;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  font-family: var(--common-font);
   font-size: 10px;
   color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+.fc-left,
+.fc-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fc-label {
+  text-transform: uppercase;
+  letter-spacing: 2px;
 }
 
 .module-id {
-  flex: 1;
+  opacity: 0.9;
 }
 
 .badge {
@@ -1389,26 +1398,45 @@ onBeforeUnmount(() => {
   font-size: 9px;
 }
 
+.fc-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.fc-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.fc-icon {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 18px;
+}
+
 .card-title {
   font-size: 24px;
   font-weight: 700;
-  margin-bottom: 8px;
+  margin-bottom: 0;
   color: #fff;
-}
-
-.card-subtitle {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-bottom: 24px;
-  letter-spacing: 1px;
 }
 
 .card-text {
   font-size: 13px;
   line-height: 1.6;
   color: #cbd5e1;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
   flex: 1;
 }
 
@@ -1416,7 +1444,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 32px;
 }
 
 .card-tags span {
@@ -1427,15 +1454,22 @@ onBeforeUnmount(() => {
   font-family: var(--common-font);
 }
 
-.card-action {
-  padding-top: 24px;
+.fc-footer {
+  margin-top: 18px;
+  padding-top: 18px;
   border-top: 1px solid var(--border-color);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  font-family: var(--common-font);
   font-size: 12px;
   font-weight: 700;
   color: var(--text-muted);
+}
+
+.link-text {
+  color: #fff;
+  letter-spacing: 1px;
 }
 
 .action-arrow {
@@ -1447,6 +1481,13 @@ onBeforeUnmount(() => {
 
 .feature-card:hover .action-arrow {
   transform: translateX(5px);
+}
+
+@media (max-width: 1200px) {
+  .features-grid {
+    grid-template-columns: repeat(2, 1fr);
+    max-width: 980px;
+  }
 }
 
 @media (max-width: 980px) {

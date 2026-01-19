@@ -2,28 +2,29 @@
   <div class="format-factory-page">
     <TitleBar />
 
-    <div class="factory-header">
+    <div class="page-header">
       <div class="badge-row">
-        <span class="dot"></span>
+        <span class="badge-dot"></span>
         <span class="badge-text">{{ ui.badgeText }}</span>
       </div>
 
-      <div class="title-row">
-        <h1 class="main-title">
+      <div class="title-stack">
+        <h1 class="page-title">
           {{ ui.mainTitle1 }} <span class="highlight">{{ ui.mainTitle2 }}</span>
         </h1>
-        <div class="secure-badge">
-          <span class="icon">🔒</span>
+        <div class="page-subtitle">
+          {{ ui.subtitlePrefix }} {{ displayTools.length }} {{ ui.subtitleSuffix }}
+        </div>
+        <div class="page-desc">
+          <span class="page-desc-icon">🔒</span>
           {{ ui.secureBadge }}
         </div>
       </div>
-
-      <p class="subtitle">{{ ui.subtitlePrefix }} {{ tools.length }} {{ ui.subtitleSuffix }}</p>
     </div>
 
     <div class="tools-grid">
       <div
-        v-for="tool in tools"
+        v-for="tool in displayTools"
         :key="tool.id"
         class="tool-card"
         :class="{ disabled: tool.status !== 'ready' }"
@@ -963,8 +964,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
+import { useRoute, useRouter } from 'vue-router';
 import GlobalFooter from '../components/GlobalFooter.vue';
 import TitleBar from '../components/TitleBar.vue';
 import { useFormatFactory } from '../composables/useFormatFactory';
@@ -976,11 +978,13 @@ import { trackEvent } from '@/utils/analytics';
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 const consoleStore = useConsoleStore();
+const route = useRoute();
+const router = useRouter();
 
 onMounted(() => {
   consoleStore.recordTraffic({
     type: 'page_view',
-    page: '/artigen/format-factory',
+    page: '/artigen/tools',
     meta: { referrer: document.referrer }
   });
 });
@@ -988,12 +992,12 @@ onMounted(() => {
 const ui = computed(() => {
   if (currentLang.value === 'zh') {
     return {
-      badgeText: '格式工具',
-      mainTitle1: '格式',
-      mainTitle2: '工厂',
+      badgeText: '图像与文件工具',
+      mainTitle1: '工具',
+      mainTitle2: '箱',
       secureBadge: '无需登录 · 免费使用',
       subtitlePrefix: '纯前端处理 · 隐私安全 ·',
-      subtitleSuffix: '种格式工具',
+      subtitleSuffix: '款工具',
       securityNote: '// 所有转换均在浏览器本地完成，文件不会上传到服务器',
       panelInputText: '输入文本',
       panelInputFile: '输入文件',
@@ -1171,9 +1175,9 @@ const ui = computed(() => {
     };
   }
   return {
-    badgeText: 'Format Tools',
-    mainTitle1: 'Format',
-    mainTitle2: 'Factory',
+    badgeText: 'Image & File Tools',
+    mainTitle1: 'Tool',
+    mainTitle2: 'box',
     secureBadge: 'No login required · Free to use',
     subtitlePrefix: 'Client-side processing · Privacy-first ·',
     subtitleSuffix: 'tools',
@@ -1436,13 +1440,36 @@ const {
   onDrop
 } = useFormatFactory();
 
+const displayTools = computed(() => tools.value.filter((t) => t.id !== 'ingredient-list'));
+
+const lastAutoOpenId = ref('');
+watch(
+  () => String(route.query.tool || '').trim(),
+  (toolId) => {
+    if (!toolId) return;
+    if (toolId === lastAutoOpenId.value) return;
+    const found = tools.value.find((t) => t.id === toolId);
+    if (!found) return;
+    if (activeTool.value?.id === found.id) return;
+    lastAutoOpenId.value = toolId;
+    try {
+      handleToolClickRaw(found);
+    } finally {
+      const nextQuery: Record<string, any> = { ...route.query };
+      delete nextQuery.tool;
+      router.replace({ query: nextQuery }).catch(() => {});
+    }
+  },
+  { immediate: true }
+);
+
 const handleToolClick = (tool: any) => {
   const id = String(tool?.id || '').trim();
   const name = String(tool?.name || '').trim();
   trackEvent('ff_tool_click', { category: 'funnel', toolId: id, toolName: name });
   consoleStore.recordTraffic({
     type: 'click',
-    page: '/artigen/format-factory',
+    page: '/artigen/tools',
     target: `tool:${id}`,
     meta: { toolName: name }
   });
@@ -1458,14 +1485,14 @@ const runTool = async () => {
     await runToolRaw();
     consoleStore.recordTraffic({
       type: 'generate_success',
-      page: '/artigen/format-factory',
+      page: '/artigen/tools',
       target: `tool:${id}`,
       meta: { duration: Date.now() - startTs, toolId: id }
     });
   } catch (e) {
     consoleStore.recordTraffic({
       type: 'generate_fail',
-      page: '/artigen/format-factory',
+      page: '/artigen/tools',
       target: `tool:${id}`,
       meta: { error: String(e), toolId: id }
     });
@@ -1645,22 +1672,27 @@ const runTool = async () => {
   border-color: rgba(204, 255, 0, 0.4);
 }
 
-.factory-header {
+.page-header {
   max-width: 1200px;
   margin: 0 auto 60px;
   padding: 0 24px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  row-gap: 20px;
+  align-items: start;
 }
 
 .badge-row {
+  grid-column: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
+  justify-self: start;
+  gap: 10px;
 }
 
-.dot {
-  width: 6px;
-  height: 6px;
+.badge-dot {
+  width: 8px;
+  height: 8px;
   background-color: #ccff00;
   border-radius: 50%;
   box-shadow: 0 0 8px #ccff00;
@@ -1668,45 +1700,55 @@ const runTool = async () => {
 
 .badge-text {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-size: 14px;
   color: #ccff00;
+  font-weight: 700;
 }
 
-.title-row {
+.title-stack {
+  grid-column: 1 / -1;
+  justify-self: center;
+  text-align: center;
   display: flex;
-  align-items: flex-end;
-  gap: 24px;
-  margin-bottom: 16px;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
 }
 
-.main-title {
+.page-title {
   font-size: 64px;
   font-weight: 900;
-  line-height: 1;
+  line-height: 1.05;
   letter-spacing: -2px;
+  margin: 0;
 }
 
-.main-title .highlight {
+.highlight {
   color: #ccff00;
 }
 
-.secure-badge {
-  border: 1px solid rgba(147, 51, 234, 0.3);
-  background: rgba(147, 51, 234, 0.1);
-  color: #d8b4fe;
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: 'JetBrains Mono', monospace;
-  margin-bottom: 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.page-subtitle {
+  color: #94a3b8;
+  font-size: 18px;
 }
 
-.subtitle {
-  color: #94a3b8;
-  font-size: 16px;
+.page-desc {
+  border: 1px solid rgba(147, 51, 234, 0.5);
+  background: rgba(147, 51, 234, 0.2);
+  color: #e9d5ff;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.page-desc-icon {
+  font-size: 14px;
+  line-height: 1;
 }
 
 /* Grid Layout */
@@ -1858,14 +1900,13 @@ const runTool = async () => {
     grid-template-columns: 1fr;
   }
 
-  .title-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
+  .page-header {
+    row-gap: 16px;
+    margin-bottom: 48px;
   }
 
-  .main-title {
-    font-size: 48px;
+  .page-title {
+    font-size: 40px;
   }
 }
 

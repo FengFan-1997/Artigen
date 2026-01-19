@@ -78,7 +78,25 @@ const normalizeImageUrl = (raw: string) => {
 
 const toRequestErrorCode = (err: any) => {
   if (err && typeof err === 'object' && (err as any).name === 'AbortError') return 'ABORTED';
+  try {
+    if (
+      typeof navigator !== 'undefined' &&
+      navigator &&
+      'onLine' in navigator &&
+      navigator.onLine === false
+    )
+      return 'OFFLINE';
+  } catch {}
   const msg = String(err?.message || err || '').trim();
+  const low = msg.toLowerCase();
+  if (
+    low.includes('failed to fetch') ||
+    low.includes('fetch failed') ||
+    low.includes('networkerror') ||
+    low.includes('load failed') ||
+    low.includes('network connection was lost')
+  )
+    return 'FETCH_ERROR';
   return msg || 'NETWORK_ERROR';
 };
 
@@ -154,7 +172,9 @@ export const img2img = async (input: {
   const controller = new AbortController();
   const timeoutMs = Math.max(1000, Math.min(180000, Number(input.timeoutMs ?? 120000) || 120000));
   const startedAt = performance.now();
+  let timedOut = false;
   const timeoutId = window.setTimeout(() => {
+    timedOut = true;
     try {
       console.warn('[AI][timeout]', {
         api: IMG2IMG_URL,
@@ -244,7 +264,10 @@ export const img2img = async (input: {
       timings: data?.timings
     };
   } catch (e: any) {
-    const code = toRequestErrorCode(e);
+    const code =
+      timedOut && e && typeof e === 'object' && e.name === 'AbortError'
+        ? 'UPSTREAM_TIMEOUT'
+        : toRequestErrorCode(e);
     try {
       console.warn('[AI][error]', {
         api: IMG2IMG_URL,
@@ -292,7 +315,9 @@ export const generateText = async (
   const controller = new AbortController();
   const timeoutMs = Math.max(1000, Math.min(180000, Number(opts?.timeoutMs ?? 120000) || 120000));
   const startedAt = performance.now();
+  let timedOut = false;
   const timeoutId = window.setTimeout(() => {
+    timedOut = true;
     try {
       console.warn('[AI][timeout]', {
         api: API_URL,
@@ -368,7 +393,10 @@ export const generateText = async (
     if (typeof text === 'string' && text.trim()) return { ok: true, text: text.trim(), requestId };
     return { ok: false, errorCode: 'EMPTY_RESPONSE_TEXT', error: 'EMPTY_RESPONSE_TEXT', requestId };
   } catch (e: any) {
-    const code = toRequestErrorCode(e);
+    const code =
+      timedOut && e && typeof e === 'object' && e.name === 'AbortError'
+        ? 'UPSTREAM_TIMEOUT'
+        : toRequestErrorCode(e);
     try {
       console.warn('[AI][error]', {
         api: API_URL,

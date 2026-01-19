@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { loginRoutes } from '../login/routes';
 import { trackPageView } from '@/utils/analytics';
+import ImageWorkshop from '../agentImg/views/ImageWorkshop.vue';
 
 const readRouteLockdown = () => {
   try {
@@ -95,7 +96,7 @@ const routes = [
   },
   {
     path: '/format-factory',
-    redirect: '/artigen/format-factory'
+    redirect: '/artigen/tools'
   },
   {
     path: '/aether-market',
@@ -119,32 +120,36 @@ const routes = [
     component: () => import('../agentImg/views/LandingPage.vue'),
     meta: {
       title: {
-        zh: 'Artigen - AI 图片工坊与格式工厂',
-        en: 'Artigen - AI Image Workshop & Format Factory'
+        zh: 'Artigen - AI 图片工坊与工具箱',
+        en: 'Artigen - AI Image Workshop & Tools'
       },
       description: {
-        zh: 'Artigen 提供 AI 设计（文生图/图生图）、格式工厂与算力商城，一站式影像处理解决方案。',
-        en: 'Artigen offers AI Design, a format factory, and a credit market for end‑to‑end image workflows.'
+        zh: 'Artigen 提供 AI 设计（文生图/图生图）、工具箱与点数商城，一站式影像处理解决方案。',
+        en: 'Artigen offers AI Design, Tools, and a credit market for end‑to‑end image workflows.'
       },
       keywords: {
-        zh: 'AI设计,文生图,图生图,提示词优化,电商产品图,格式工厂,算力商城',
-        en: 'AI design,text-to-image,image-to-image,prompt optimization,ecommerce product images,format factory,credits'
+        zh: 'AI设计,文生图,图生图,提示词优化,电商产品图,工具箱,点数商城',
+        en: 'AI design,text-to-image,image-to-image,prompt optimization,ecommerce product images,tools,credits'
       }
     } satisfies RouteSeoMeta
   },
   {
     path: '/artigen/format-factory',
+    redirect: '/artigen/tools'
+  },
+  {
+    path: '/artigen/tools',
     name: 'format-factory',
     component: () => import('../agentImg/views/FormatFactory.vue'),
     meta: {
-      title: { zh: '格式工厂 - Artigen', en: 'Format Factory - Artigen' },
+      title: { zh: '工具 - Artigen', en: 'Tools - Artigen' },
       description: {
-        zh: '纯前端图片格式转换与处理工具集，快速、安全、无需上传。',
-        en: 'Client-side image format conversion tools — fast, private, and upload-free.'
+        zh: '纯前端图片/文件处理工具集：转换、压缩、PDF 与常用编辑，快速、安全、无需上传。',
+        en: 'Client-side image & file tools: convert, compress, PDF, and quick edits — fast, private, and upload-free.'
       },
       keywords: {
-        zh: '图片格式转换,heic转jpg,png转jpg,webp转换,前端本地处理,隐私安全',
-        en: 'image format converter,heic to jpg,png to jpg,webp converter,client-side,privacy'
+        zh: '工具,图片处理,格式转换,heic转jpg,png转jpg,webp转换,PDF工具,前端本地处理,隐私安全',
+        en: 'tools,image tools,format converter,heic to jpg,png to jpg,webp converter,PDF tools,client-side,privacy'
       }
     } satisfies RouteSeoMeta
   },
@@ -298,16 +303,16 @@ const routes = [
   {
     path: '/artigen/image-workshop',
     name: 'image-workshop',
-    component: () => import('../agentImg/views/ImageWorkshop.vue'),
+    component: ImageWorkshop,
     meta: {
       title: { zh: 'AI影像工坊 - Artigen', en: 'AI Image Workshop - Artigen' },
       description: {
-        zh: 'AI 驱动的影像处理工具，一键生成与修复：智能证件照、老照片修复。',
-        en: 'AI-powered image processing tools: Smart ID Photo, Old Photo Restoration.'
+        zh: 'AI 驱动的影像处理工具：智能证件照、老照片修复、FDA 配料表标签图生成。',
+        en: 'AI-powered image tools: Smart ID Photo, Old Photo Restoration, FDA Ingredient Label.'
       },
       keywords: {
-        zh: 'AI影像工坊,智能证件照,老照片修复,AI修图',
-        en: 'AI image workshop,smart id photo,photo restoration'
+        zh: 'AI影像工坊,智能证件照,老照片修复,FDA配料表,标签图生成',
+        en: 'AI image workshop,smart id photo,photo restoration,FDA ingredient label'
       }
     } satisfies RouteSeoMeta
   },
@@ -316,13 +321,13 @@ const routes = [
     name: 'aether-market',
     component: () => import('../agentImg/views/AetherMarket.vue'),
     meta: {
-      title: { zh: '算力商城 - Artigen', en: 'Compute Market - Artigen' },
+      title: { zh: '点数商城 - Artigen', en: 'Compute Market - Artigen' },
       description: {
-        zh: '购买算力点数，解锁更高频率与更高质量的生成体验。',
+        zh: '购买点数，解锁更高频率与更高质量的生成体验。',
         en: 'Purchase credits to unlock higher throughput and quality generation.'
       },
       keywords: {
-        zh: 'AI算力,点数充值,生成点数,图像生成算力,订阅,电商素材生成',
+        zh: 'AI点数,点数充值,生成点数,图像生成点数,订阅,电商素材生成',
         en: 'AI credits,top-up,compute credits,image generation credits,pricing'
       }
     } satisfies RouteSeoMeta
@@ -334,7 +339,7 @@ const routes = [
     meta: {
       title: { zh: '我的订单 - Artigen', en: 'My Orders - Artigen' },
       description: { zh: '查看您的算力点数购买记录。', en: 'View your credit purchase history.' },
-      keywords: { zh: '订单,购买记录,点数订单,算力商城', en: 'orders,credits,purchase history' }
+      keywords: { zh: '订单,购买记录,点数订单,点数商城', en: 'orders,credits,purchase history' }
     } satisfies RouteSeoMeta
   },
   {
@@ -512,6 +517,7 @@ const isAllowedInLockdown = (path: string) => {
   if (path.startsWith('/login')) return true;
   if (path === '/agent-img') return true;
   if (path === '/format-factory') return true;
+  if (path === '/tools') return true;
   if (path === '/aether-market') return true;
   if (path === '/legal/terms') return true;
   if (path === '/legal/privacy') return true;
@@ -557,14 +563,12 @@ router.afterEach((to) => {
   const title = pickLang(meta.title, lang) || (lang === 'en' ? 'Artigen' : 'Artigen');
   const description =
     pickLang(meta.description, lang) ||
-    (lang === 'en'
-      ? 'Artigen AI image workshop and format factory.'
-      : 'Artigen AI 图片工坊与格式工厂。');
+    (lang === 'en' ? 'Artigen AI image workshop and tools.' : 'Artigen AI 图片工坊与工具箱。');
   const keywords =
     pickLang(meta.keywords, lang) ||
     (lang === 'en'
-      ? 'AI image workshop,image-to-image,text-to-image,prompt,format converter'
-      : 'AI图片工坊,图生图,文生图,提示词,格式转换');
+      ? 'AI image workshop,image-to-image,text-to-image,prompt,image tools,format converter'
+      : 'AI图片工坊,图生图,文生图,提示词,工具,格式转换');
 
   document.title = title;
 

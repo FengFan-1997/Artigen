@@ -3,16 +3,20 @@
     <TitleBar />
 
     <main class="main-content">
-      <div class="header-section">
-        <div class="status-badge">
-          <span class="status-dot"></span>
-          {{ ui.status }}
+      <div class="page-header">
+        <div class="badge-row">
+          <span class="badge-dot"></span>
+          <span class="badge-text">{{ ui.status }}</span>
         </div>
-        <h1 class="page-title">
-          {{ ui.titleMain }} <span class="highlight">{{ ui.titleHighlight }}</span>
-          <span class="beta-badge">{{ ui.beta }}</span>
-        </h1>
-        <p class="page-desc">{{ ui.desc }}</p>
+
+        <div class="title-stack">
+          <h1 class="page-title">
+            {{ ui.titleMain }} <span class="highlight">{{ ui.titleHighlight }}</span>
+            <sup class="real-beta-badge">Beta</sup>
+            <span class="beta-badge">{{ ui.beta }}</span>
+          </h1>
+          <p class="page-desc">{{ ui.desc }}</p>
+        </div>
       </div>
 
       <div class="tools-grid">
@@ -54,6 +58,71 @@
             <span class="launch-text">{{ ui.launch }}</span>
             <span class="arrow">→</span>
           </div>
+        </div>
+
+        <div class="tool-card" @click="openIngredientList">
+          <div class="card-header">
+            <span class="tool-id">TOOL_03</span>
+            <span class="tool-badge">FREE</span>
+          </div>
+
+          <div class="tool-icon-wrapper">
+            <span class="tool-icon">🧾</span>
+          </div>
+
+          <h3 class="tool-title">{{ ui.toolIngredientTitle }}</h3>
+          <p class="tool-desc">{{ ui.toolIngredientDesc }}</p>
+
+          <div class="card-footer">
+            <span class="launch-text">{{ ui.launch }}</span>
+            <span class="arrow">→</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="info-section">
+        <div class="info-container">
+          <h2 class="info-title">{{ ui.contentTitle }}</h2>
+          <p class="info-desc">{{ ui.contentDesc }}</p>
+
+          <div class="info-grid">
+            <div class="info-card">
+              <div class="info-card-title">> {{ ui.useCasesTitle }}</div>
+              <ul class="info-list">
+                <li v-for="(item, idx) in ui.useCases" :key="idx" class="info-list-item">
+                  <span class="info-list-icon">#</span>
+                  {{ item }}
+                </li>
+              </ul>
+            </div>
+
+            <div class="info-card">
+              <div class="info-card-title">> {{ ui.longTailTitle }}</div>
+              <div class="info-chips">
+                <span v-for="(chip, idx) in ui.longTailKeywords" :key="idx" class="info-chip">
+                  {{ chip }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-section">
+        <div class="faq-left">
+          <div class="faq-title-large">{{ ui.faqTitle }}</div>
+          <div class="faq-subtitle">{{ ui.faqSubtitle }}</div>
+        </div>
+        <div class="faq-list">
+          <details v-for="f in ui.faqs" :key="f.q" class="faq-item">
+            <summary class="faq-q">
+              <span class="q-text">{{ f.q }}</span>
+              <span class="q-icon">+</span>
+            </summary>
+            <div class="faq-a-wrapper">
+              <div class="faq-a">{{ f.a }}</div>
+            </div>
+          </details>
         </div>
       </div>
     </main>
@@ -107,6 +176,8 @@
       @close="isOldPhotoPopupOpen = false"
       @restore="handleRestoreOldPhoto"
     />
+
+    <IngredientLabel :visible="isIngredientPopupOpen" @close="isIngredientPopupOpen = false" />
   </div>
 </template>
 
@@ -117,6 +188,7 @@ import TitleBar from '../components/TitleBar.vue';
 import GlobalFooter from '../components/GlobalFooter.vue';
 import IdPhotoPopup from '../components/IdPhotoPopup.vue';
 import OldPhotoPopup from '../components/OldPhotoPopup.vue';
+import IngredientLabel from './IngredientLabel.vue';
 import { trackPageView, trackEvent } from '../../utils/analytics';
 import { setMeta } from '../../utils/seo';
 import { img2img, type GenerateImageInput } from '../services/text';
@@ -128,6 +200,7 @@ import { getCreditsCosts } from '@/points';
 
 const isIdPhotoPopupOpen = ref(false);
 const isOldPhotoPopupOpen = ref(false);
+const isIngredientPopupOpen = ref(false);
 
 const resultVisible = ref(false);
 const resultTitle = ref('');
@@ -149,8 +222,8 @@ const ui = computed(() => {
     titleHighlight: en ? 'Workshop' : '工坊',
     beta: en ? '✨ Cloud encrypted processing' : '✨ 云端加密处理',
     desc: en
-      ? 'Explore AI-powered image tools for generation and restoration.'
-      : '探索 AI 驱动的影像处理工具，一键生成与修复。',
+      ? 'Explore AI tools for generation, restoration, and FDA ingredient label creation.'
+      : '探索 AI 驱动的影像处理工具：一键生成、修复，并生成 FDA 配料表标签图。',
     toolIdTitle: en ? 'Smart ID Photo' : '智能证件照',
     toolIdDesc: en
       ? 'Multiple specs, one-click standard ID photo.'
@@ -159,13 +232,123 @@ const ui = computed(() => {
     toolOldDesc: en
       ? 'Restore blurry/damaged photos, optional colorization.'
       : '修复模糊、破损照片，支持智能上色',
+    toolIngredientTitle: en ? 'FDA Ingredient Label' : 'FDA 配料表',
+    toolIngredientDesc: en
+      ? 'Paste text and generate a clean label image.'
+      : '粘贴配料/成分文本，一键生成规范标签图',
     launch: 'LAUNCH',
     resultTitle: en ? 'Result' : '生成结果',
     download: en ? 'Download' : '下载',
     close: en ? 'Close' : '关闭',
     loading: en ? 'Generating, please wait…' : '正在生成，请稍候…',
     fileReadFailed: en ? 'Failed to read image. Please try again.' : '图片读取失败，请重试',
-    loginRequired: en ? 'Please sign in to use this feature.' : '请先登录后使用（当前免费）'
+    loginRequired: en ? 'Please sign in to use this feature.' : '请先登录后使用（当前免费）',
+
+    contentTitle: en ? 'Usage Guide' : '使用专栏',
+    contentDesc: en
+      ? 'AI Lab includes Smart ID Photos, Old Photo Restoration, and FDA ingredient label generation.'
+      : 'AI 实验室包含：智能证件照、老照片修复（可选上色/去噪）以及 FDA 配料表标签图生成。',
+    useCasesTitle: en ? 'Use Cases' : '使用场景',
+    useCases: en
+      ? [
+          'ID Photo: crop/resize, background replacement, common specs export.',
+          'Restoration: denoise, enhance clarity, optional colorization.',
+          'Ingredient Label: paste label text and generate a clean label image.',
+          'E-commerce: quick assets for listings and packaging drafts.',
+          'Personal: restore old photos and export higher quality copies.'
+        ]
+      : [
+          '证件照：裁切/尺寸标准化、换底色、常用规格一键导出。',
+          '老照片修复：去噪、清晰增强、可选智能上色。',
+          'FDA 配料表：粘贴配料/成分文本，生成规范标签图。',
+          '电商/品牌：快速产出可用素材，用于商品页与包装打样。',
+          '个人留存：修复旧照片并导出更高质量版本。'
+        ],
+    longTailTitle: en ? 'Popular Keywords' : '热门关键词',
+    longTailKeywords: en
+      ? [
+          'ID photo background',
+          '1-inch / 2-inch photo',
+          'passport photo',
+          'old photo colorize',
+          'photo denoise',
+          'FDA ingredient label',
+          'ingredient list generator',
+          'label image'
+        ]
+      : [
+          '证件照换底',
+          '一寸二寸',
+          '护照签证照',
+          '老照片上色',
+          '照片去噪',
+          'FDA 配料表',
+          '配料表生成器',
+          '标签图生成'
+        ],
+    faqTitle: en ? 'FAQ' : '常见问题',
+    faqSubtitle: en ? 'Modules, beta notes, and quality tips.' : '关于模块、Beta 与效果的说明',
+    faqs: en
+      ? [
+          {
+            q: 'What modules are included in Image Workshop?',
+            a: 'Currently includes Smart ID Photo, Old Photo Restoration, and FDA ingredient label generation.'
+          },
+          {
+            q: 'Is Image Workshop in beta?',
+            a: 'Yes. We are iterating quickly and may adjust workflows or outputs based on feedback.'
+          },
+          {
+            q: 'Will a failed generation charge credits?',
+            a: 'No. If the request fails due to system reasons, credits are refunded automatically.'
+          },
+          {
+            q: 'What ID photo specs are supported?',
+            a: 'Common sizes and aspect ratios are supported. Choose the preset in the tool and export instantly.'
+          },
+          {
+            q: 'How do I choose denoise / colorize for old photos?',
+            a: 'Enable denoise for grainy photos. Enable colorize if you want a colorized result; keep it off for a more faithful restoration.'
+          },
+          {
+            q: 'Is the FDA ingredient label output guaranteed compliant?',
+            a: 'We generate a clean label-style image from your text, but you should still review wording and formatting for your product and jurisdiction.'
+          },
+          {
+            q: 'Do you store my uploaded photos?',
+            a: 'Files are used only for processing your request. We aim to clear task-related temporary data as soon as possible after completion.'
+          }
+        ]
+      : [
+          {
+            q: '影像工坊目前有哪些模块？',
+            a: '当前包含：智能证件照、老照片修复、FDA 配料表标签图生成。'
+          },
+          {
+            q: '影像工坊是 Beta 吗？',
+            a: '是的。当前处于 Beta 阶段，我们会根据反馈持续优化流程与效果。'
+          },
+          {
+            q: '生成失败会扣点吗？',
+            a: '不会。若因系统原因生成失败，点数会自动退回。'
+          },
+          {
+            q: '证件照支持哪些规格？',
+            a: '覆盖常见尺寸与比例。进入工具后选择预设规格即可一键导出。'
+          },
+          {
+            q: '老照片去噪/上色怎么选？',
+            a: '噪点明显建议开去噪；想要彩色效果再打开上色。追求“更还原”的修复可以只开去噪。'
+          },
+          {
+            q: 'FDA 配料表生成能保证完全合规吗？',
+            a: '这里输出的是“标签图样式”的排版结果，便于快速出图；最终上线前仍建议人工校对用词、顺序与法规要求。'
+          },
+          {
+            q: '上传的照片会被保存吗？',
+            a: '文件仅用于完成本次处理。任务完成后我们会尽快清理临时数据。'
+          }
+        ]
   };
 });
 
@@ -180,16 +363,16 @@ onMounted(() => {
   setMeta({
     title:
       currentLang.value === 'zh'
-        ? 'AI 影像工坊 - 智能证件照 & 老照片修复'
-        : 'AI Image Workshop - ID Photo & Old Photo Restoration',
+        ? 'AI 影像工坊 - 证件照/老照片修复/FDA配料表'
+        : 'AI Image Workshop - ID Photo / Restoration / FDA Ingredient Label',
     description:
       currentLang.value === 'zh'
-        ? 'Artigen AI 影像工坊提供智能证件照生成与老照片修复服务。'
-        : 'Artigen AI Image Workshop provides ID photo generation and old photo restoration.',
+        ? 'Artigen AI 影像工坊提供智能证件照、老照片修复与 FDA 配料表标签图生成。'
+        : 'Artigen AI Image Workshop provides ID photos, old photo restoration, and FDA ingredient label generation.',
     keywords:
       currentLang.value === 'zh'
-        ? 'AI证件照,老照片修复,AI修图,照片上色'
-        : 'AI ID photo, old photo restoration, photo enhance, colorize'
+        ? 'AI证件照,老照片修复,FDA配料表,配料表生成器,标签图生成'
+        : 'AI ID photo, old photo restoration, FDA ingredient label, ingredient generator, label image'
   });
   getCreditsCosts()
     .then((c) => {
@@ -217,6 +400,16 @@ const openOldPhotoPopup = () => {
     target: 'old_photo'
   });
   trackEvent('ImageWorkshop', 'open_tool', 'old_photo');
+};
+
+const openIngredientList = () => {
+  isIngredientPopupOpen.value = true;
+  consoleStore.recordTraffic({
+    type: 'click',
+    page: '/artigen/image-workshop',
+    target: 'ingredient_list'
+  });
+  trackEvent('ImageWorkshop', 'open_tool', 'ingredient_list');
 };
 
 const fileToGenerateInput = (f: File): Promise<GenerateImageInput | null> => {
@@ -271,7 +464,7 @@ const fileToGenerateInput = (f: File): Promise<GenerateImageInput | null> => {
 const humanizeError = (code: string) => {
   const c = String(code || '').trim();
   if (!c) return '请求失败，请稍后再试';
-  if (c === 'INSUFFICIENT_CREDITS') return '积分不足，请前往「算力商城」充值';
+  if (c === 'INSUFFICIENT_CREDITS') return '积分不足，请前往「点数商城」充值';
   if (c === 'LOGIN_REQUIRED') return '请先登录后再试';
   if (c === 'MISSING_SILICONFLOW_API_KEY') return '服务未配置，请稍后再试';
   if (/failed to fetch/i.test(c)) return '网络异常或服务不可用，请稍后再试';
@@ -521,6 +714,7 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 
 <style scoped>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;700;900&display=swap');
+@import '../styles/cyberpunk.css';
 
 .image-workshop-page {
   min-height: 100vh;
@@ -539,23 +733,23 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   width: 100%;
 }
 
-.header-section {
-  text-align: center;
-  margin-bottom: 80px;
+.page-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  row-gap: 20px;
+  margin-bottom: 60px;
+  align-items: start;
 }
 
-.status-badge {
+.badge-row {
+  grid-column: 1;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  color: #ccff00;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 14px;
-  font-weight: 700;
-  margin-bottom: 24px;
+  justify-self: start;
+  gap: 10px;
 }
 
-.status-dot {
+.badge-dot {
   width: 8px;
   height: 8px;
   background: #ccff00;
@@ -563,10 +757,27 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   box-shadow: 0 0 8px #ccff00;
 }
 
+.badge-text {
+  color: #ccff00;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.title-stack {
+  grid-column: 1 / -1;
+  justify-self: center;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
 .page-title {
   font-size: 64px;
   font-weight: 900;
-  margin: 0 0 24px;
+  margin: 0;
   letter-spacing: -2px;
   display: flex;
   align-items: center;
@@ -576,6 +787,18 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 
 .highlight {
   color: #ccff00;
+}
+
+.real-beta-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 16px;
+  color: #ff9900;
+  font-weight: 700;
+  margin-left: 2px;
+  margin-right: 8px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  opacity: 0.9;
 }
 
 .beta-badge {
@@ -593,6 +816,8 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 .page-desc {
   color: #94a3b8;
   font-size: 18px;
+  margin: 0;
+  max-width: 860px;
 }
 
 .tools-grid {
@@ -857,7 +1082,7 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 
 @media (max-width: 768px) {
   .page-title {
-    font-size: 32px;
+    font-size: 40px;
     flex-direction: column;
     gap: 8px;
   }

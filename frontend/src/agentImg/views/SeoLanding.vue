@@ -158,8 +158,7 @@ const trackAndNavigate = (target: string, type: 'click' | 'conversion', name: st
   router.push(target);
 };
 
-const goFormatFactory = () =>
-  trackAndNavigate('/artigen/format-factory', 'conversion', 'format_factory');
+const goFormatFactory = () => trackAndNavigate('/artigen/tools', 'conversion', 'format_factory');
 const goAiWorkshop = () => trackAndNavigate('/artigen/ai', 'conversion', 'ai_workshop');
 const goMarket = () => trackAndNavigate('/artigen/market', 'click', 'market');
 
@@ -181,7 +180,7 @@ const handleChipClick = (chip: string) => {
   ) {
     router.push('/artigen/ai');
   } else {
-    router.push('/artigen/format-factory');
+    router.push('/artigen/tools');
   }
 };
 
@@ -194,8 +193,8 @@ const ui = computed(() => {
         heroTitle2: '创造力与效率',
         heroSubtitle:
           'Artigen 提供强大的 AI 图像生成、无损格式转换与本地化隐私保护工具。无需下载，打开即用。',
-        btnFormat: '格式工厂',
-        btnAi: 'AI 创作工坊',
+        btnFormat: '工具',
+        btnAi: 'AI 设计',
         trustPrivacy: '隐私安全',
         trustSpeed: '极速处理',
         trustFree: '免费使用',
@@ -203,10 +202,10 @@ const ui = computed(() => {
         featuresTitle: '为什么选择 Artigen？',
         featuresDesc: '我们将前沿的 AI 技术与便捷的工具相结合，为您提供极致的在线体验。',
 
-        featFormatTitle: '全能格式工厂',
+        featFormatTitle: '全能工具',
         featFormatDesc:
           '支持 HEIC, PDF, WEBP, PNG 等多种格式互转。纯前端处理，文件不上传服务器，绝对安全。',
-        featAiTitle: 'AI 灵感工坊',
+        featAiTitle: 'AI 设计',
         featAiDesc: '文生图、图生图、提示词优化。激发无限创意，生成高质量的电商素材与艺术作品。',
         featMarketTitle: '算力加速',
         featMarketDesc: '按需购买高性能算力，解锁更快的生成速度与更高分辨率的画质。',
@@ -245,15 +244,15 @@ const ui = computed(() => {
         faqs: [
           {
             q: 'Artigen 是免费的吗？',
-            a: '大部分工具（如格式工厂）完全免费。AI 生成功能提供免费额度，高级算力需消耗点数。'
+            a: '大部分工具完全免费。AI 生成功能提供免费额度，高级算力需消耗点数。'
           },
           {
             q: '我的文件安全吗？',
-            a: '绝对安全。格式工厂工具采用纯前端技术，文件从未离开您的设备。'
+            a: '绝对安全。工具采用纯前端技术，文件从未离开您的设备。'
           },
           {
             q: '如何开始使用 AI 绘图？',
-            a: '点击“AI 创作工坊”，输入您的创意描述（提示词），即可生成精美图片。'
+            a: '点击“AI 设计”，输入您的创意描述（提示词），即可生成精美图片。'
           },
           {
             q: '支持移动端使用吗？',
@@ -271,8 +270,8 @@ const ui = computed(() => {
         heroTitle2: 'Creativity & Efficiency',
         heroSubtitle:
           'Artigen provides powerful AI image generation, lossless format conversion, and privacy-first tools. No download required.',
-        btnFormat: 'Format Factory',
-        btnAi: 'AI Workshop',
+        btnFormat: 'Tools',
+        btnAi: 'AI Design',
         trustPrivacy: 'Privacy First',
         trustSpeed: 'Blazing Fast',
         trustFree: 'Free to Use',
@@ -281,10 +280,10 @@ const ui = computed(() => {
         featuresDesc:
           'Combining cutting-edge AI with convenient tools for the ultimate online experience.',
 
-        featFormatTitle: 'Universal Format Factory',
+        featFormatTitle: 'Universal Tools',
         featFormatDesc:
           'Convert HEIC, PDF, WEBP, PNG, and more. Client-side processing ensures your files never leave your device.',
-        featAiTitle: 'AI Art Workshop',
+        featAiTitle: 'AI Design',
         featAiDesc:
           'Text-to-Image, Image-to-Image, Prompt Optimization. Generate high-quality assets and art instantly.',
         featMarketTitle: 'Compute Power',
@@ -325,15 +324,15 @@ const ui = computed(() => {
         faqs: [
           {
             q: 'Is Artigen free?',
-            a: 'Most tools (like Format Factory) are free. AI tools offer free credits, with premium compute available.'
+            a: 'Most tools are free. AI tools offer free credits, with premium compute available.'
           },
           {
             q: 'Are my files safe?',
-            a: 'Yes. Format Factory tools run locally in your browser. Files are not uploaded.'
+            a: 'Yes. Tools run locally in your browser. Files are not uploaded.'
           },
           {
             q: 'How to start AI art?',
-            a: 'Go to AI Workshop, enter your prompt, and generate amazing images.'
+            a: 'Go to AI Design, enter your prompt, and generate amazing images.'
           },
           { q: 'Mobile friendly?', a: 'Yes, fully responsive design for phones and tablets.' }
         ],

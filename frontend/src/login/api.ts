@@ -9,6 +9,10 @@ export type PasswordAuthResult =
   | { ok: true; userId: string; token: string; name?: string }
   | { ok: false; message: string };
 
+export type GoogleAuthResult =
+  | { ok: true; userId: string; token: string; name?: string; email?: string }
+  | { ok: false; message: string };
+
 export type ResetPasswordResult = { ok: true; message?: string } | { ok: false; message: string };
 
 import { buildApiUrl } from '../utils/api';
@@ -19,6 +23,8 @@ const PASSWORD_LOGIN_URL = buildApiUrl('/api/auth/login');
 const REGISTER_URL = buildApiUrl('/api/auth/register');
 const PASSWORD_RESET_SEND_CODE_URL = buildApiUrl('/api/auth/password-reset/send-code');
 const PASSWORD_RESET_URL = buildApiUrl('/api/auth/password-reset/reset');
+const GOOGLE_VERIFY_URL = buildApiUrl('/api/auth/google/verify');
+const GOOGLE_CONFIG_URL = buildApiUrl('/api/auth/google/config');
 
 const isZh = () => {
   try {
@@ -77,6 +83,25 @@ const humanizeAuthError = (raw: any) => {
   ) {
     return zh ? '该邮箱未注册' : 'Email not registered.';
   }
+  if (m.includes('google_oauth_not_configured'))
+    return zh ? '服务未配置谷歌登录' : 'Google login is not configured.';
+  if (m.includes('google_tokeninfo_timeout'))
+    return zh
+      ? '谷歌登录校验超时，请检查网络或代理'
+      : 'Google verification timed out. Check network or proxy.';
+  if (m.includes('google_tokeninfo_unavailable'))
+    return zh
+      ? '谷歌登录校验不可用，请检查网络或代理'
+      : 'Google verification unavailable. Check network or proxy.';
+  if (m.includes('google_tokeninfo_invalid'))
+    return zh ? '谷歌登录校验失败，请重试' : 'Google verification failed, please retry.';
+  if (m.includes('missing_id_token')) return zh ? '谷歌登录失败，请重试' : 'Google login failed.';
+  if (m.includes('invalid_audience'))
+    return zh ? '谷歌登录校验失败' : 'Google login verification failed.';
+  if (m.includes('invalid_google_sub')) return zh ? '谷歌账号无效' : 'Invalid Google account.';
+  if (m.includes('email_not_verified'))
+    return zh ? '谷歌邮箱未验证' : 'Google email is not verified.';
+  if (m.includes('google_login_failed')) return zh ? '谷歌登录失败' : 'Google login failed.';
 
   return msg;
 };
@@ -177,6 +202,13 @@ export const loginWithPassword = async (
   return { ok: true, userId, token, ...(name ? { name } : {}) };
 };
 
+export const fetchGoogleClientId = async (): Promise<string> => {
+  const res = await fetch(GOOGLE_CONFIG_URL, { method: 'GET' });
+  const json = await parseJson(res);
+  if (!res.ok) return '';
+  return String(json?.clientId || '').trim();
+};
+
 export const registerWithEmailCode = async (input: {
   username: string;
   password: string;
@@ -215,6 +247,39 @@ export const registerWithEmailCode = async (input: {
   const name = typeof json?.name === 'string' ? String(json.name).trim() : '';
   if (!userId || !token) return { ok: false, message: '注册失败' };
   return { ok: true, userId, token, ...(name ? { name } : {}) };
+};
+
+export const loginWithGoogleIdToken = async (idToken: string): Promise<GoogleAuthResult> => {
+  const fromUserId = (() => {
+    try {
+      return String(
+        window.localStorage.getItem('app_user_id') ||
+          window.localStorage.getItem('agent_user_id') ||
+          ''
+      ).trim();
+    } catch {
+      return '';
+    }
+  })();
+
+  const res = await fetch(GOOGLE_VERIFY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      idToken,
+      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : ''
+    })
+  });
+  const json = await parseJson(res);
+  if (!res.ok) {
+    return { ok: false, message: humanizeAuthError(json?.message || json?.error || '登录失败') };
+  }
+  const userId = String(json?.userId || '').trim();
+  const token = String(json?.token || '').trim();
+  const name = typeof json?.name === 'string' ? String(json.name).trim() : '';
+  const email = typeof json?.email === 'string' ? String(json.email).trim() : '';
+  if (!userId || !token) return { ok: false, message: '登录失败' };
+  return { ok: true, userId, token, ...(name ? { name } : {}), ...(email ? { email } : {}) };
 };
 
 export const sendPasswordResetCode = async (email: string): Promise<SendCodeResult> => {

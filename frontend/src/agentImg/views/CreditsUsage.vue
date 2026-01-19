@@ -289,7 +289,7 @@ const ui = computed(() => {
       time: '时间',
       refresh: '刷新',
       loading: '加载中...',
-      goMarket: '去算力商城',
+      goMarket: '去点数商城',
       myOrders: '我的订单',
       filterAll: '全部',
       filterFrozen: '冻结',
@@ -385,7 +385,7 @@ const ui = computed(() => {
 .filter-btn {
   height: 32px;
   padding: 0 12px;
-  border-radius: 999px;
+  /* border-radius: 999px; */
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);

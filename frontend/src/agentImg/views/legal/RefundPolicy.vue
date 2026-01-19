@@ -38,59 +38,81 @@ const { currentLang } = storeToRefs(languageStore);
 const ui = computed(() =>
   currentLang.value === 'zh'
     ? {
-        navFormatFactory: '格式工厂',
-        navAiWorkshop: 'AI工坊',
-        navMarket: '算力商城',
+        navFormatFactory: '工具',
+        navAiWorkshop: 'AI 设计',
+        navMarket: '点数商城',
         portfolio: '作品集',
         title: '退款政策',
         updatedAt: '最后更新: 2025-12-30',
-        intro: '在「Artigen」，我们致力于提供透明、公平的退款体验。请在购买前仔细阅读本政策。',
+        intro: '我们理解数字化服务的购买需要信任。本政策说明点数/订阅类服务的退款规则与申请方式。',
         sections: [
           {
-            title: '14 天无理由退款',
-            paragraphs: ['我们提供购买后 14 天内的全额退款，前提是积分尚未被使用。']
-          },
-          {
-            title: '如何申请退款',
+            title: '1. 适用范围',
             paragraphs: [
-              '如果您在 14 天内且未使用已购积分，请发送邮件至 sorates1997@163.com 并附上您的订单号。我们将通过原支付方式处理退款。'
+              '本政策适用于在「点数商城」购买的点数/积分等数字化权益。',
+              '对第三方支付平台收取的手续费用、汇率差异或银行侧费用，可能无法完全退还（以实际发生为准）。'
             ]
           },
           {
-            title: '例外情况',
+            title: '2. 退款条件（一般规则）',
             paragraphs: [
-              '如果您已使用购买的任何积分，我们保留拒绝退款请求或酌情提供部分退款的权利。超过 14 天后，所有销售均为最终销售。'
+              '在购买后 14 天内，如点数未被使用，可申请退款；我们将在核验订单信息后按原支付路径退回。',
+              '已消耗的点数一般不支持退款。若发生明显系统故障导致的重复扣费/异常扣费，我们会优先安排更正或补偿。'
+            ]
+          },
+          {
+            title: '3. 如何申请退款',
+            paragraphs: [
+              '请发送邮件至 sorates1997@163.com，并提供：订单号、购买时间、登录账号标识（如有）、退款原因简述。',
+              '我们通常会在合理时间内回复并告知处理进度。退款到账时间取决于支付渠道与银行处理周期。'
+            ]
+          },
+          {
+            title: '4. 例外与风控',
+            paragraphs: [
+              '为防止滥用、欺诈或恶意退款，我们可能拒绝明显异常的退款请求（例如：频繁重复购买后退款、疑似盗刷、违反条款的行为）。',
+              '超过 14 天的订单通常视为最终销售。'
             ]
           }
         ],
         contactLabel: '如有疑问，请联系'
       }
     : {
-        navFormatFactory: 'Format Factory',
-        navAiWorkshop: 'AI Workshop',
+        navFormatFactory: 'Tools',
+        navAiWorkshop: 'AI Design',
         navMarket: 'Compute Market',
         portfolio: 'PORTFOLIO',
         title: 'Refund Policy',
         updatedAt: 'Last updated: 2025-12-30',
         intro:
-          'At Artigen, we aim to provide a transparent and fair refund experience. Please read this policy carefully before purchasing.',
+          'We understand that purchasing digital services requires trust. This policy explains how refunds work for credits and related digital entitlements.',
         sections: [
           {
-            title: '14-Day Refund',
+            title: '1. Scope',
             paragraphs: [
-              'We offer a full refund within 14 days of purchase, provided the points have not been used.'
+              'This policy applies to credits/points purchased through the Compute Market.',
+              'Payment processing fees, FX differences, or bank-side fees may not be fully refundable depending on the payment provider.'
             ]
           },
           {
-            title: 'How to Request a Refund',
+            title: '2. Eligibility (General Rules)',
             paragraphs: [
-              'If you are within 14 days and have not used the purchased points, email sorates1997@163.com with your order number. Refunds will be processed to the original payment method.'
+              'Within 14 days of purchase, you may request a refund if the purchased credits have not been used. After verification, we will refund via the original payment method.',
+              'Consumed credits are generally non-refundable. If a clear system issue causes duplicate or incorrect charges, we will prioritize correction or compensation.'
             ]
           },
           {
-            title: 'Exceptions',
+            title: '3. How to Request a Refund',
             paragraphs: [
-              'If you have used any purchased points, we may deny the refund request or provide a partial refund at our discretion. After 14 days, all sales are final.'
+              'Email sorates1997@163.com with your order number, purchase time, account identifier (if applicable), and a brief reason.',
+              'We will respond within a reasonable timeframe. The time for funds to appear depends on your payment provider and bank processing.'
+            ]
+          },
+          {
+            title: '4. Exceptions & Abuse Prevention',
+            paragraphs: [
+              'To prevent fraud and abuse, we may deny clearly abnormal refund requests (e.g., repeated purchase-and-refund patterns, suspected unauthorized payments, or violations of the Terms).',
+              'After 14 days, purchases are generally considered final.'
             ]
           }
         ],

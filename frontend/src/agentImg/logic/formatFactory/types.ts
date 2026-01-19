@@ -19,7 +19,9 @@ export type FormatFactoryToolId =
 export type FormatFactoryTool = {
   id: FormatFactoryToolId;
   name: string;
+  nameEn?: string;
   description: string;
+  descriptionEn?: string;
   icon: string;
   tag: string;
   status: FormatFactoryToolStatus;

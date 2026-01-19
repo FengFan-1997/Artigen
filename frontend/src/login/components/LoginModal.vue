@@ -2,148 +2,225 @@
   <Teleport to="body">
     <div v-if="isOpen" class="login-modal" @mousedown.self="onBackdrop">
       <div class="panel" role="dialog" aria-modal="true">
-        <div class="head">
-          <div class="title">{{ titleText }}</div>
-          <button class="close" type="button" @click="close">×</button>
-        </div>
-
-        <div class="body">
-          <div v-if="mode === 'login'" class="step">
-            <div class="sub">{{ subText }}</div>
-
-            <div class="field">
-              <div class="label">{{ t('login.username_label') }}</div>
-              <input
-                v-model.trim="username"
-                class="control"
-                type="text"
-                :placeholder="t('login.username_placeholder')"
-                autocomplete="username"
-              />
-            </div>
-
-            <div class="field">
-              <div class="label">{{ t('login.password_label') }}</div>
-              <div class="password-hint">{{ t('login.password_hint') }}</div>
-              <input
-                v-model="password"
-                class="control"
-                type="password"
-                :placeholder="t('login.password_placeholder')"
-                autocomplete="current-password"
-                @keyup.enter="login"
-              />
-            </div>
-
-            <button
-              class="nth-login-btn primary"
-              :disabled="loggingIn || !username || !password"
-              type="button"
-              @click="login"
-            >
-              {{ loggingIn ? t('login.verifying') : t('login.login_btn') }}
-            </button>
-
-            <div class="hint" :class="{ error: !!error }">
-              {{ error || info }}
-            </div>
-
-            <div class="row">
-              <button class="link-btn" type="button" @click="goResetPassword">
-                {{ t('login.forgot_password') }}
-              </button>
-              <button class="link-btn" type="button" @click="toggleMode">
-                {{ toggleModeText }}
-              </button>
+        <!-- Left Side Image Panel -->
+        <div class="panel-side">
+          <div class="side-content">
+            <div class="side-logo">Artigen</div>
+            <div class="side-text">
+              <h2>Welcome Back</h2>
+              <p>Sign in to continue your creative journey.</p>
             </div>
           </div>
+        </div>
 
-          <div v-else class="step">
-            <div class="sub">{{ subText }}</div>
+        <!-- Right Side Form Panel -->
+        <div class="panel-main">
+          <div class="head">
+            <div class="title">{{ titleText }}</div>
+            <button class="close" type="button" @click="close">×</button>
+          </div>
 
-            <div class="field">
-              <div class="label">{{ t('login.username_label') }}</div>
-              <input
-                v-model.trim="username"
-                class="control"
-                type="text"
-                :placeholder="t('login.username_placeholder')"
-                autocomplete="username"
-              />
+          <div class="body">
+            <div v-if="entryStep === 'select'" class="step">
+              <div class="sub">{{ subText }}</div>
+
+              <div class="method-list">
+                <button class="nth-login-btn method" type="button" @click="chooseMethod('google')">
+                  <i class="fa-brands fa-google icon"></i>
+                  <span>{{ t('login.method_google') }}</span>
+                </button>
+                <button class="nth-login-btn method" type="button" @click="chooseMethod('email')">
+                  <i class="fa-regular fa-envelope icon"></i>
+                  <span>{{ t('login.method_email') }}</span>
+                </button>
+                <button
+                  class="nth-login-btn method"
+                  type="button"
+                  @click="chooseMethod('password')"
+                >
+                  <i class="fa-solid fa-lock icon"></i>
+                  <span>{{ t('login.method_password') }}</span>
+                </button>
+              </div>
             </div>
 
-            <div class="field">
-              <div class="label">{{ t('login.password_label') }}</div>
-              <div class="password-hint">{{ t('login.password_hint') }}</div>
-              <input
-                v-model="password"
-                class="control"
-                type="password"
-                :placeholder="t('login.password_placeholder')"
-                autocomplete="new-password"
-              />
+            <div v-else-if="entryStep === 'google'" class="step">
+              <div class="sub">{{ subText }}</div>
+
+              <div class="oauth-block">
+                <div
+                  ref="googleButtonRef"
+                  class="google-btn"
+                  :class="{ disabled: googleLoading }"
+                ></div>
+              </div>
+
+              <div class="hint" :class="{ error: !!error }">
+                {{ error || info }}
+              </div>
+
+              <div class="row">
+                <button class="link-btn" type="button" @click="backToMethods">
+                  {{ t('login.back_to_methods') }}
+                </button>
+              </div>
             </div>
 
-            <div class="field">
-              <div class="label">{{ t('login.email_label') }}</div>
-              <input
-                v-model.trim="emailLocal"
-                class="control"
-                type="email"
-                :placeholder="t('login.email_placeholder')"
-                autocomplete="email"
-              />
-            </div>
+            <div v-else-if="mode === 'login'" class="step">
+              <div class="sub">{{ subText }}</div>
 
-            <div class="grid">
               <div class="field">
-                <div class="label">{{ t('login.code_label') }}</div>
+                <div class="label">{{ t('login.username_label') }}</div>
                 <input
-                  v-model.trim="code"
+                  v-model.trim="username"
                   class="control"
-                  inputmode="numeric"
-                  maxlength="6"
-                  :placeholder="t('login.code_placeholder')"
-                  autocomplete="one-time-code"
-                  @keyup.enter="register"
+                  type="text"
+                  :placeholder="t('login.username_placeholder')"
+                  autocomplete="username"
+                />
+              </div>
+
+              <div class="field">
+                <div class="label">{{ t('login.password_label') }}</div>
+                <div class="password-hint">{{ t('login.password_hint') }}</div>
+                <input
+                  v-model="password"
+                  class="control"
+                  type="password"
+                  :placeholder="t('login.password_placeholder')"
+                  autocomplete="current-password"
+                  @keyup.enter="login"
                 />
               </div>
 
               <button
-                class="nth-login-btn"
-                :disabled="sending || !emailLocal || cooldownLeft > 0"
+                class="nth-login-btn primary"
+                :disabled="loggingIn || !username || !password"
                 type="button"
-                @click="sendCode"
+                @click="login"
               >
-                {{
-                  cooldownLeft > 0
-                    ? t('login.resend_wait', { s: cooldownLeft })
-                    : sending
-                      ? t('login.sending')
-                      : t('login.send_code')
-                }}
+                {{ loggingIn ? t('login.verifying') : t('login.login_btn') }}
               </button>
+
+              <div class="hint" :class="{ error: !!error }">
+                {{ error || info }}
+              </div>
+
+              <div class="row">
+                <button class="link-btn" type="button" @click="backToMethods">
+                  {{ t('login.back_to_methods') }}
+                </button>
+                <button class="link-btn" type="button" @click="goResetPassword">
+                  {{ t('login.forgot_password') }}
+                </button>
+                <button class="link-btn" type="button" @click="toggleMode">
+                  {{ toggleModeText }}
+                </button>
+              </div>
             </div>
 
-            <button
-              class="nth-login-btn primary"
-              :disabled="registering || !username || !password || !emailLocal || code.length < 6"
-              type="button"
-              @click="register"
-            >
-              {{ registering ? t('login.verifying') : t('login.register_btn') }}
-            </button>
+            <div v-else class="step">
+              <div class="sub">{{ subText }}</div>
 
-            <div class="hint" :class="{ error: !!error }">
-              {{ error || info }}
-            </div>
+              <div class="field">
+                <div class="label">{{ t('login.username_label') }}</div>
+                <input
+                  v-model.trim="username"
+                  class="control"
+                  type="text"
+                  :placeholder="t('login.username_placeholder')"
+                  autocomplete="username"
+                />
+              </div>
 
-            <div class="row">
-              <button class="link-btn" type="button" @click="close">{{ t('login.back') }}</button>
-              <button class="link-btn" type="button" @click="toggleMode">
-                {{ toggleModeText }}
+              <div class="field">
+                <div class="label">{{ t('login.password_label') }}</div>
+                <div class="password-hint">{{ t('login.password_hint') }}</div>
+                <input
+                  v-model="password"
+                  class="control"
+                  type="password"
+                  :placeholder="t('login.password_placeholder')"
+                  autocomplete="new-password"
+                />
+              </div>
+
+              <div class="field">
+                <div class="label">{{ t('login.email_label') }}</div>
+                <input
+                  v-model.trim="emailLocal"
+                  class="control"
+                  type="email"
+                  :placeholder="t('login.email_placeholder')"
+                  autocomplete="email"
+                />
+              </div>
+
+              <div class="grid">
+                <div class="field">
+                  <div class="label">{{ t('login.code_label') }}</div>
+                  <input
+                    v-model.trim="code"
+                    class="control"
+                    inputmode="numeric"
+                    maxlength="6"
+                    :placeholder="t('login.code_placeholder')"
+                    autocomplete="one-time-code"
+                    @keyup.enter="register"
+                  />
+                </div>
+
+                <button
+                  class="nth-login-btn"
+                  :disabled="sending || !emailLocal || cooldownLeft > 0"
+                  type="button"
+                  @click="sendCode"
+                >
+                  {{
+                    cooldownLeft > 0
+                      ? t('login.resend_wait', { s: cooldownLeft })
+                      : sending
+                        ? t('login.sending')
+                        : t('login.send_code')
+                  }}
+                </button>
+              </div>
+
+              <button
+                class="nth-login-btn primary"
+                :disabled="registering || !username || !password || !emailLocal || code.length < 6"
+                type="button"
+                @click="register"
+              >
+                {{ registering ? t('login.verifying') : t('login.register_btn') }}
               </button>
+
+              <div class="hint" :class="{ error: !!error }">
+                {{ error || info }}
+              </div>
+
+              <div class="row">
+                <button class="link-btn" type="button" @click="backToMethods">
+                  {{ t('login.back_to_methods') }}
+                </button>
+                <button class="link-btn" type="button" @click="toggleMode">
+                  {{ toggleModeText }}
+                </button>
+              </div>
             </div>
+          </div>
+
+          <div class="footer-links">
+            <span class="footer-text">
+              By continuing, you accept our
+              <router-link class="footer-link" to="/legal/terms" @click="close"
+                >Terms of Service</router-link
+              >
+              and
+              <router-link class="footer-link" to="/legal/privacy" @click="close"
+                >Privacy Policy</router-link
+              >
+            </span>
           </div>
         </div>
       </div>
@@ -152,10 +229,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useLoginModel } from '@/stores';
-import { loginWithPassword, registerWithEmailCode, sendLoginCode } from '../api';
+import {
+  fetchGoogleClientId,
+  loginWithGoogleIdToken,
+  loginWithPassword,
+  registerWithEmailCode,
+  sendLoginCode
+} from '../api';
 import {
   getLastEmail,
   getLastUsername,
@@ -187,6 +270,7 @@ const emailLocal = ref(getLastEmail());
 const username = ref('');
 const password = ref('');
 const code = ref('');
+const entryStep = ref<'select' | 'google' | 'password'>('select');
 const sending = ref(false);
 const loggingIn = ref(false);
 const registering = ref(false);
@@ -194,11 +278,25 @@ const error = ref('');
 const info = ref('');
 const cooldownLeft = ref(0);
 let timer: number | null = null;
+const googleClientId = ref(String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim());
+const googleButtonRef = ref<HTMLDivElement | null>(null);
+const googleLoading = ref(false);
+let googleScriptPromise: Promise<void> | null = null;
+
+const loadGoogleClientId = async () => {
+  if (googleClientId.value) return googleClientId.value;
+  try {
+    const cid = await fetchGoogleClientId();
+    if (cid) googleClientId.value = cid;
+  } catch {}
+  return googleClientId.value;
+};
 
 watch(
   () => isOpen.value,
   (open) => {
     if (!open) return;
+    entryStep.value = 'select';
     const nextEmail = String(email.value || emailLocal.value || '')
       .trim()
       .toLowerCase();
@@ -214,6 +312,8 @@ watch(
       window.clearInterval(timer);
       timer = null;
     }
+    error.value = '';
+    info.value = '';
   }
 );
 
@@ -228,15 +328,19 @@ watch(
   }
 );
 
-const titleText = computed(() =>
-  mode.value === 'register' ? t('login.register') : t('login.login')
-);
+const titleText = computed(() => {
+  if (entryStep.value === 'select') return t('login.choose_method_title');
+  if (entryStep.value === 'google') return t('login.title');
+  return mode.value === 'register' ? t('login.register') : t('login.login');
+});
 const toggleModeText = computed(() =>
   mode.value === 'register' ? t('login.switch_to_login') : t('login.switch_to_register')
 );
-const subText = computed(() =>
-  mode.value === 'register' ? t('login.register_sub') : t('login.password_login_sub')
-);
+const subText = computed(() => {
+  if (entryStep.value === 'select') return t('login.choose_method_sub');
+  if (entryStep.value === 'google') return t('login.google_sub');
+  return mode.value === 'register' ? t('login.register_sub') : t('login.password_login_sub');
+});
 
 const startCooldown = (sec: number) => {
   cooldownLeft.value = Math.max(0, Math.floor(sec));
@@ -248,6 +352,89 @@ const startCooldown = (sec: number) => {
       timer = null;
     }
   }, 1000);
+};
+
+const loadGoogleScript = () => {
+  if (googleScriptPromise) return googleScriptPromise;
+  googleScriptPromise = new Promise<void>((resolve, reject) => {
+    const g = (window as any).google;
+    if (g?.accounts?.id) {
+      resolve();
+      return;
+    }
+    const existing = document.querySelector('script[data-google-identity]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error('GOOGLE_SCRIPT_FAILED')), {
+        once: true
+      });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleIdentity = '1';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('GOOGLE_SCRIPT_FAILED'));
+    document.head.appendChild(script);
+  });
+  return googleScriptPromise;
+};
+
+const initGoogleButton = () => {
+  if (!googleClientId.value || !isOpen.value || entryStep.value !== 'google') return;
+  const el = googleButtonRef.value;
+  if (!el) return;
+  loadGoogleScript()
+    .then(() => {
+      const g = (window as any).google;
+      if (!g?.accounts?.id) return;
+      el.innerHTML = '';
+      g.accounts.id.initialize({
+        client_id: googleClientId.value,
+        callback: async (resp: any) => {
+          error.value = '';
+          const idToken = String(resp?.credential || '').trim();
+          if (!idToken) {
+            error.value = t('login.google_failed');
+            return;
+          }
+          googleLoading.value = true;
+          try {
+            const res = await loginWithGoogleIdToken(idToken);
+            if (!res.ok) {
+              error.value = res.message;
+              return;
+            }
+            if (res.email) {
+              setLastEmail(res.email);
+              upsertUser({ email: res.email, userId: res.userId });
+            }
+            setLoggedIn({ userId: res.userId, token: res.token });
+            try {
+              window.dispatchEvent(new CustomEvent('app-auth-changed'));
+            } catch {}
+            close();
+            await loginStore.runAfterLogin();
+          } catch (e: any) {
+            error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
+          } finally {
+            googleLoading.value = false;
+          }
+        }
+      });
+      g.accounts.id.renderButton(el, {
+        theme: 'outline',
+        size: 'large',
+        shape: 'pill',
+        width: 360,
+        text: 'continue_with'
+      });
+    })
+    .catch(() => {
+      error.value = t('login.google_load_failed');
+    });
 };
 
 const isPasswordValidForRegister = (pw: string) => {
@@ -275,6 +462,40 @@ const onBackdrop = () => {
 
 const toggleMode = () => {
   loginStore.setMode(mode.value === 'register' ? 'login' : 'register');
+};
+
+const chooseMethod = async (method: 'google' | 'email' | 'password') => {
+  error.value = '';
+  info.value = '';
+  if (method === 'email') {
+    try {
+      window.sessionStorage.setItem('login_entry', 'email');
+    } catch {}
+    const to =
+      String((loginStore as any).returnTo || '').trim() || router.currentRoute.value.fullPath;
+    close();
+    router.push({ path: '/login', query: { ...(to ? { redirect: to } : {}) } });
+    return;
+  }
+  if (method === 'password') {
+    entryStep.value = 'password';
+    loginStore.setMode('login');
+    return;
+  }
+  entryStep.value = 'google';
+  const cid = await loadGoogleClientId();
+  if (!cid) {
+    error.value = t('login.google_not_configured');
+    return;
+  }
+  await nextTick();
+  initGoogleButton();
+};
+
+const backToMethods = () => {
+  entryStep.value = 'select';
+  error.value = '';
+  info.value = '';
 };
 
 const sendCode = async () => {
@@ -402,8 +623,8 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 20000;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(10px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -411,13 +632,16 @@ onBeforeUnmount(() => {
 }
 
 .panel {
-  width: min(520px, 100%);
+  display: flex;
+  width: min(900px, 95vw);
+  height: min(600px, 90vh);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(12, 12, 12, 0.92);
+  background: rgba(12, 12, 12, 0.95);
   box-shadow:
-    0 0 50px rgba(0, 0, 0, 0.6),
+    0 20px 50px rgba(0, 0, 0, 0.6),
     0 0 0 1px rgba(255, 255, 255, 0.05);
-  border-radius: 12px;
+  border-radius: 16px;
+  overflow: hidden;
   color: #f1f5f9;
   font-family:
     Inter,
@@ -429,49 +653,137 @@ onBeforeUnmount(() => {
     sans-serif;
 }
 
+.panel-side {
+  flex: 1;
+  background: url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1000&auto=format&fit=crop')
+    center/cover no-repeat;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 40px;
+  position: relative;
+}
+
+.panel-side::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent 60%);
+}
+
+.side-content {
+  position: relative;
+  z-index: 2;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.side-logo {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: #fff;
+}
+
+.side-text h2 {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0 0 10px;
+  color: #fff;
+}
+
+.side-text p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 16px;
+}
+
+.panel-main {
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+  background: #18181b;
+}
+
 .head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 16px 0 16px;
+  padding: 20px 24px;
 }
 
 .title {
-  font-size: 18px;
-  font-weight: 900;
+  font-size: 24px;
+  font-weight: 700;
   letter-spacing: -0.5px;
 }
 
 .close {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.25);
-  color: rgba(241, 245, 249, 0.92);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
-  line-height: 1;
-  padding: 0;
   font-size: 20px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .close:hover {
-  border-color: rgba(204, 255, 0, 0.5);
-  color: rgba(204, 255, 0, 0.95);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 
 .body {
-  padding: 16px;
+  padding: 0 24px 24px;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .sub {
   color: #94a3b8;
-  font-size: 13px;
-  margin-bottom: 16px;
+  font-size: 16px;
+  margin-bottom: 24px;
+}
+
+.method-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.nth-login-btn.method {
+  width: 100%;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 24px;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px; /* Standard rounded, not 999px */
+  color: #f1f5f9;
+  font-size: 20px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.nth-login-btn.method:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.icon {
+  font-size: 16px;
 }
 
 .password-hint {
@@ -484,7 +796,7 @@ onBeforeUnmount(() => {
 }
 
 .field {
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .label {
@@ -498,18 +810,21 @@ onBeforeUnmount(() => {
 
 .control {
   width: 100%;
-  padding: 12px 12px;
-  border-radius: 10px;
+  height: 56px;
+  padding: 0 16px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.3);
   color: #f1f5f9;
   outline: none;
   font-family:
     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
-  font-size: 12px;
+  font-size: 16px;
   transition: all 0.2s;
   box-sizing: border-box;
+  display: flex;
+  align-items: center;
 }
 
 .control:focus {
@@ -518,24 +833,77 @@ onBeforeUnmount(() => {
 }
 
 .hint {
-  margin-top: 12px;
-  font-size: 12px;
+  margin-top: 16px;
+  font-size: 13px;
   color: #64748b;
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
+  text-align: center;
 }
 
 .hint.error {
   color: #fca5a5;
 }
 
-.row {
-  margin-top: 18px;
+.oauth-block {
+  margin-top: 20px;
+}
+
+.google-btn {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
+  width: 100%;
+}
+
+.google-btn.disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.row {
+  margin-top: 24px;
+  display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
+}
+
+.footer-links {
+  margin-top: auto;
+  padding-top: 32px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.footer-text {
+  color: #64748b;
+}
+
+.footer-link {
+  color: #94a3b8;
+  text-decoration: none;
+  font-weight: 600;
+  margin: 0 2px;
+  transition: color 0.2s;
+}
+
+.footer-link:hover {
+  color: #ccff00;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #94a3b8;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.link-btn:hover {
+  color: #ccff00;
 }
 
 .grid {
@@ -557,6 +925,44 @@ onBeforeUnmount(() => {
   height: 44px;
 }
 
+.nth-login-btn {
+  height: 44px;
+  padding: 0 20px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+}
+
+.nth-login-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.nth-login-btn.primary {
+  width: 100%;
+  height: 56px;
+  background: #ccff00;
+  color: #000;
+  border-color: #ccff00;
+  font-weight: 700;
+  font-size: 16px;
+  margin-top: 16px;
+}
+
+.nth-login-btn.primary:hover {
+  background: #b3e600;
+  border-color: #b3e600;
+}
+
+.nth-login-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .link-btn {
   padding: 0;
   border: none;
@@ -574,7 +980,19 @@ onBeforeUnmount(() => {
   color: #ccff00;
 }
 
-.nth-login-btn {
-  width: 100%;
+@media (max-width: 768px) {
+  .panel {
+    flex-direction: column;
+    height: auto;
+    max-height: 90vh;
+  }
+
+  .panel-side {
+    display: none; /* Hide image on mobile */
+  }
+
+  .panel-main {
+    width: 100%;
+  }
 }
 </style>

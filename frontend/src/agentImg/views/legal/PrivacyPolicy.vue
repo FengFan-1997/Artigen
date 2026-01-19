@@ -36,68 +36,224 @@ const { currentLang } = storeToRefs(languageStore);
 const ui = computed(() =>
   currentLang.value === 'zh'
     ? {
-        navFormatFactory: '格式工厂',
-        navAiWorkshop: 'AI工坊',
-        navMarket: '算力商城',
+        navFormatFactory: '工具',
+        navAiWorkshop: 'AI 设计',
+        navMarket: '点数商城',
         portfolio: '作品集',
         title: '隐私政策',
-        updatedAt: '最后更新: 2025-12-30',
+        updatedAt: '最后更新: 2026-01-19',
         sections: [
           {
-            title: '1. 信息收集',
+            title: '1. 概览与适用范围',
             paragraphs: [
-              '我们仅收集提供服务所必需的最少信息。这可能包括您的账户信息（如需登录）、使用数据（如访问频率）以及您上传用于处理的图片数据。'
+              '本隐私政策说明 Artigen 如何收集、使用、披露与保护您的信息。',
+              '通过访问或使用本平台，即表示您已阅读并同意本政策。若不同意，请停止使用服务。'
             ]
           },
           {
-            title: '2. 图片处理与存储',
+            title: '2. 我们收集的信息',
             paragraphs: [
-              '您上传的图片仅用于即时处理。图片会直接传输至我们的 AI 推理引擎或本地处理逻辑。对于 AI 生成服务，原图在生成任务完成后会立即从临时存储中清除。对于本地格式转换工具，所有处理均在您的浏览器端完成，图片不会上传至服务器。'
+              '个人信息可能包括：姓名、头像、邮箱、电话、支付信息、IP 等可用于识别个人的数据。',
+              '为提供服务，您可能需要提交邮箱、姓名或国家/地区信息；如涉及第三方个人信息，请确保已取得授权。',
+              '我们还会收集非个人信息，例如浏览器类型、语言、设备信息、访问时间、页面行为与错误日志。'
             ]
           },
           {
-            title: '3. 数据使用',
+            title: '3. 信息来源',
             paragraphs: [
-              '我们不会将您的个人数据或上传的图片用于广告投放或出售给第三方。您的数据仅用于提供和改进我们的服务。'
+              '您在注册、登录、购买或使用功能时主动提供的信息。',
+              '您在使用过程中自动产生的设备、日志与使用行为信息。'
             ]
           },
           {
-            title: '4. Cookie 使用',
-            paragraphs: ['我们使用本地存储和必要的 Cookie 来保存您的登录状态和偏好设置。']
+            title: '4. 信息使用目的',
+            paragraphs: [
+              '提供与维护服务：完成登录、订单、支付、内容生成与结果交付。',
+              '回应您提出的问题或支持请求。',
+              '优化体验与功能：分析使用情况、改进性能与安全性。',
+              '向您发送必要的服务通知、政策更新或活动信息。'
+            ]
+          },
+          {
+            title: '5. Cookies 与日志信息',
+            paragraphs: [
+              '我们可能使用 Cookie 或本地存储技术以提升体验与保持登录状态。',
+              '我们会收集日志信息，例如 IP 地址、浏览器类型、设备信息、访问时间、点击流等，用于分析与改进服务。'
+            ]
+          },
+          {
+            title: '6. 信息共享与披露',
+            paragraphs: [
+              '我们不会出售或出租您的个人信息。',
+              '我们可能与员工、代理或关联方共享必要信息，以提供服务并遵守本政策。',
+              '除非法律要求或为履行您请求的服务，否则不会向第三方披露您的个人信息。'
+            ]
+          },
+          {
+            title: '7. 数据保留',
+            paragraphs: [
+              '我们仅在达成服务目的所需的期限内保留您的信息。',
+              '当法律或合规要求保留更长时间时，我们将在必要范围内进行保留。'
+            ]
+          },
+          {
+            title: '8. 安全措施',
+            paragraphs: [
+              '我们采取合理的管理、物理与技术措施保护数据安全。',
+              '互联网传输并非绝对安全，您理解并承担相应风险。'
+            ]
+          },
+          {
+            title: '9. 您的权利',
+            paragraphs: [
+              '您可请求访问、更正或删除与账户相关的信息。',
+              '您可在合规范围内撤回同意或限制特定处理。',
+              '如需行使权利，请通过下方联系方式联系我们。'
+            ]
+          },
+          {
+            title: '10. 第三方服务',
+            paragraphs: [
+              '我们可能使用第三方服务用于分析、支付或模型能力支持。',
+              '第三方服务将遵循其各自的隐私政策，我们会尽量限制共享范围，仅传输完成服务所必需的数据。'
+            ]
+          },
+          {
+            title: '11. 未成年人保护',
+            paragraphs: [
+              '我们不主动收集未成年人个人信息。若您未满 18 岁，请不要向我们提交个人信息。',
+              '如发现未成年人信息被提交，我们将尽快采取措施删除。'
+            ]
+          },
+          {
+            title: '12. 跨境传输',
+            paragraphs: [
+              '我们的服务可能在不同地区提供，信息可能在您所在地以外处理或存储。',
+              '我们将采取合理措施确保跨境传输符合法律要求。'
+            ]
+          },
+          {
+            title: '13. 账户与数据删除',
+            paragraphs: [
+              '如您希望删除账户及相关数据，可通过下方联系方式联系我们。',
+              '在完成身份核验后，我们将尽快处理您的删除请求。'
+            ]
+          },
+          {
+            title: '14. 政策更新',
+            paragraphs: ['我们可能不时更新本隐私政策。更新后继续使用服务即视为同意更新内容。']
           }
         ],
         contactLabel: '如有隐私相关问题，请联系'
       }
     : {
-        navFormatFactory: 'Format Factory',
-        navAiWorkshop: 'AI Workshop',
+        navFormatFactory: 'Tools',
+        navAiWorkshop: 'AI Design',
         navMarket: 'Compute Market',
         portfolio: 'PORTFOLIO',
         title: 'Privacy Policy',
-        updatedAt: 'Last updated: 2025-12-30',
+        updatedAt: 'Last updated: 2026-01-19',
         sections: [
           {
-            title: '1. Information We Collect',
+            title: '1. Overview & Scope',
             paragraphs: [
-              'We collect the minimum information necessary to provide the service. This may include your account information (if login is required), usage data (e.g., visit frequency), and image data you upload for processing.'
+              'This Privacy Policy explains how Artigen collects, uses, discloses, and safeguards your information.',
+              'By accessing or using the service, you agree to this policy. If you do not agree, please stop using the service.'
             ]
           },
           {
-            title: '2. Image Processing & Storage',
+            title: '2. Information We Collect',
             paragraphs: [
-              'Uploaded images are used only for immediate processing. Images are transmitted directly to our AI inference engine or local processing logic. For AI generation services, the original image is removed from temporary storage immediately after the task completes. For local format-conversion tools, processing happens entirely in your browser and images are not uploaded to the server.'
+              'Personal information may include your name, profile photo, email address, phone number, payment details, and IP address.',
+              'To provide the service, we may ask for your email, name, or country/region. If you provide third‑party data, ensure you have proper consent.',
+              'We also collect non‑personal information such as browser type, language, device information, time stamps, and usage logs.'
             ]
           },
           {
-            title: '3. How We Use Data',
+            title: '3. Sources of Information',
             paragraphs: [
-              'We do not use your personal data or uploaded images for advertising, nor do we sell them to third parties. Your data is used only to provide and improve our services.'
+              'Information you provide during registration, login, purchases, or feature usage.',
+              'Information generated automatically through your use of the service.'
             ]
           },
           {
-            title: '4. Cookies & Local Storage',
+            title: '4. How We Use Information',
             paragraphs: [
-              'We use local storage and essential cookies to keep you signed in and save your preferences.'
+              'Provide and maintain the service, including authentication, orders, payments, and result delivery.',
+              'Respond to your inquiries and support requests.',
+              'Improve performance, security, and user experience.',
+              'Send service notices, policy updates, or campaign information when appropriate.'
+            ]
+          },
+          {
+            title: '5. Cookies & Log Data',
+            paragraphs: [
+              'We may use cookies or local storage to keep you signed in and improve functionality.',
+              'We collect log data such as IP addresses, browser types, device information, timestamps, and click‑stream data for analytics and service improvement.'
+            ]
+          },
+          {
+            title: '6. Information Sharing',
+            paragraphs: [
+              'We do not sell or rent your personal information.',
+              'We may share necessary information with employees, agents, or affiliates to provide the service under this policy.',
+              'We disclose information only when required by law or to fulfill your requested services.'
+            ]
+          },
+          {
+            title: '7. Data Retention',
+            paragraphs: [
+              'We retain information only for as long as necessary to fulfill the purposes described in this policy.',
+              'We may keep certain records longer when required by law or compliance obligations.'
+            ]
+          },
+          {
+            title: '8. Security Measures',
+            paragraphs: [
+              'We use reasonable administrative, physical, and technical safeguards to protect your information.',
+              'No internet transmission is completely secure, and you acknowledge the inherent risks.'
+            ]
+          },
+          {
+            title: '9. Your Rights',
+            paragraphs: [
+              'You may request access to, correction of, or deletion of your account information.',
+              'You may withdraw consent or limit certain processing where permitted by law.',
+              'Please contact us using the details below to exercise these rights.'
+            ]
+          },
+          {
+            title: '10. Third‑Party Services',
+            paragraphs: [
+              'We may use third‑party providers for analytics, payment processing, or model capabilities.',
+              'These providers are subject to their own privacy policies, and we limit data sharing to what is necessary to deliver the service.'
+            ]
+          },
+          {
+            title: '11. Children’s Privacy',
+            paragraphs: [
+              'We do not knowingly collect personal data from minors. If you are under 18, please do not submit personal information.',
+              'If we learn that a minor’s data has been submitted, we will take steps to delete it promptly.'
+            ]
+          },
+          {
+            title: '12. Cross‑Border Transfers',
+            paragraphs: [
+              'Our services may be provided across regions, and data may be processed outside your jurisdiction.',
+              'We take reasonable steps to ensure cross‑border transfers comply with applicable laws.'
+            ]
+          },
+          {
+            title: '13. Account & Data Deletion',
+            paragraphs: [
+              'To delete your account and associated data, please contact us using the email below.',
+              'After verification, we will process the deletion request as soon as possible.'
+            ]
+          },
+          {
+            title: '14. Policy Updates',
+            paragraphs: [
+              'We may update this Privacy Policy from time to time. Continued use indicates acceptance of the updated policy.'
             ]
           }
         ],
@@ -195,14 +351,16 @@ const ui = computed(() =>
   max-width: 800px;
   margin: 0 auto;
   padding: 40px 24px;
+  text-align: left;
 }
 
 .legal-header {
   margin-bottom: 60px;
+  text-align: left;
 }
 
 h1 {
-  font-size: 48px;
+  font-size: 34px;
   font-weight: 900;
   color: #ccff00;
   margin-bottom: 16px;
@@ -212,7 +370,7 @@ h1 {
 .subtitle {
   color: #94a3b8;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .legal-content section {
@@ -220,7 +378,7 @@ h1 {
 }
 
 h2 {
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 700;
   margin-bottom: 16px;
   color: #fff;
@@ -229,7 +387,7 @@ h2 {
 p {
   line-height: 1.8;
   color: #cbd5e1;
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .contact-box {
@@ -238,8 +396,9 @@ p {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 14px;
+  font-size: 12px;
   color: #94a3b8;
+  text-align: left;
 }
 
 .highlight {

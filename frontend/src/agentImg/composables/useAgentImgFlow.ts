@@ -30,6 +30,45 @@ const detectUserInputLang = (input: string) => {
   return 'en' as const;
 };
 
+const normalizeUserInputKey = (s: string) =>
+  String(s || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
+const splitUserInputSegments = (input: string) => {
+  const s = String(input || '').trim();
+  if (!s) return [];
+  const parts = s.split(/\n\s*\n+/g).map((x) => x.trim());
+  return parts.filter(Boolean);
+};
+
+const normalizeMemoryInputs = (inputs: string[], max = 6) => {
+  const list = Array.isArray(inputs) ? inputs : [];
+  const picked: string[] = [];
+  const seen = new Set<string>();
+  for (let i = list.length - 1; i >= 0; i--) {
+    const raw = String(list[i] || '').trim();
+    if (!raw) continue;
+    const key = normalizeUserInputKey(raw);
+    if (!key) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    picked.push(raw);
+    if (picked.length >= max) break;
+  }
+  return picked.reverse();
+};
+
+const formatUserInputsForPrompt = (inputs: string[], lang: 'zh' | 'en') => {
+  const list = normalizeMemoryInputs(inputs, 6);
+  if (list.length <= 1) return '';
+  const body = list.map((s, i) => `${i + 1}. ${s}`).join('\n');
+  return lang === 'zh'
+    ? `多轮用户输入（按时间顺序，越靠后越新）:\n${body}`
+    : `Multi-turn user inputs (chronological, later is newer):\n${body}`;
+};
+
 const normalizeOption = (v: any, idx: number): AgentImgDirectionOption | null => {
   if (!v || typeof v !== 'object') return null;
   const id = String(v.id || '').trim() || `opt_${idx + 1}`;
@@ -68,10 +107,19 @@ const normalizePromptResult = (v: any): AgentImgPromptResult | null => {
   return { prompt, negativePrompt, params };
 };
 
-const buildDirectionPrompt = (input: string, contextText: string, attempt = 0) => {
+const buildDirectionPrompt = (
+  input: string,
+  contextText: string,
+  memoryInputs: string[] | undefined,
+  attempt = 0
+) => {
   const schema = safeJsonStringify(agentImgPromptLibrary.directionSchema);
   const lang = detectUserInputLang(input);
   const zh = lang === 'zh';
+  const memoryText = formatUserInputsForPrompt(
+    normalizeMemoryInputs([...(memoryInputs || []), ...splitUserInputSegments(input)], 6),
+    lang
+  );
   return [
     agentImgPromptLibrary.directionSystem,
     `Schema: ${schema}`,
@@ -80,15 +128,24 @@ const buildDirectionPrompt = (input: string, contextText: string, attempt = 0) =
       ? '所有输出字段必须使用中文（title/summary/styleTags/negativeTags），禁止出现英文。'
       : 'All output fields must be English (title/summary/styleTags/negativeTags). Do not output Chinese.',
     zh
-      ? '为保证内容足够丰富且不被截断：每个方向的 summary 必须是一个字符串，且只包含 7 行（每行一个模块：风格限定/视角构图/主体描述/背景设定/细节修饰/光影色调/质量词），不要额外写“导语/总述/结尾”。summary 总长度控制在 200–360 个汉字左右。styleTags 输出 12–16 条；negativeTags 输出 12–20 条。必须输出 4 个方向且 id 严格为 opt_1..opt_4，按顺序。任何字符串字段里不要出现未转义的英文双引号。'
-      : 'To ensure richness without truncation: summary must be a single string with exactly 7 lines (one per module: Style/Perspective/Subject/Background/Details/Lighting&Tone/Quality), and no extra intro/outro paragraphs. Keep summary total length around 120–220 words. Output 12–16 styleTags and 12–20 negativeTags. Must output exactly 4 options with ids opt_1..opt_4 in order. Do not include unescaped double quotes inside any string field.',
+      ? '为保证内容足够丰富且不被截断：每个方向的 summary 必须是一个字符串，且只包含 7 行（每行一个模块：风格限定/视角构图/主体描述/背景设定/细节修饰/光影色调/质量词），不要额外写“导语/总述/结尾”。summary 总长度控制在 260–420 个汉字左右。styleTags 输出 14–18 条；negativeTags 输出 14–22 条。必须输出 4 个方向且 id 严格为 opt_1..opt_4，按顺序。任何字符串字段里不要出现未转义的英文双引号。'
+      : 'To ensure richness without truncation: summary must be a single string with exactly 7 lines (one per module: Style/Perspective/Subject/Background/Details/Lighting&Tone/Quality), and no extra intro/outro paragraphs. Keep summary total length around 150–260 words. Output 14–18 styleTags and 14–22 negativeTags. Must output exactly 4 options with ids opt_1..opt_4 in order. Do not include unescaped double quotes inside any string field.',
+    zh
+      ? '规则：尽可能保留用户输入中的原话与具体约束（颜色/数量/人物/物体/位置/动作等），不要同义改写或删减；只补全用户未明确但生成必须的细节。'
+      : 'Rule: Preserve the user’s exact phrasing and concrete constraints (colors/counts/people/objects/positions/actions). Do not paraphrase or drop constraints; only fill in missing-but-necessary details.',
+    memoryText
+      ? zh
+        ? '如果存在多轮用户输入：将它们自动融合为一个一致的需求；若有冲突，以最新一条为准，并尽量保留可兼容的历史细节。'
+        : 'If multiple user inputs exist: merge them into one coherent request; if conflicts exist, prioritize the latest while keeping compatible prior details.'
+      : '',
     attempt > 0
       ? zh
         ? '上一次输出 JSON 不可解析或不完整。请重新从头生成，务必输出可解析的完整 JSON（含所有右括号/右中括号），不要引用或解释之前的输出。'
         : 'Your previous output was invalid or incomplete JSON. Regenerate from scratch and output fully parseable JSON (with all closing brackets). Do not reference or explain the previous output.'
       : '',
     contextText ? (zh ? `上下文:\n${contextText}` : `Context:\n${contextText}`) : '',
-    zh ? `用户输入: ${input}` : `User input: ${input}`,
+    memoryText ? memoryText : '',
+    zh ? `用户输入（本轮原文）: ${input}` : `User input (verbatim, this turn): ${input}`,
     zh ? '只返回 JSON，不要包含任何解释或多余文本。' : 'Return ONLY JSON. No extra text.',
     'Output JSON example:',
     '{"options":[{"id":"opt_1","title":"...","summary":"...","styleTags":["..."],"negativeTags":["..."],"suggested":{"imageSize":"1024x1024","steps":20,"guidanceScale":7.5,"seed":123}}]}'
@@ -101,12 +158,20 @@ const buildFinalPrompt = (input: {
   userInput: string;
   option: AgentImgDirectionOption | null;
   contextText: string;
+  memoryInputs?: string[];
 }) => {
   const schema = safeJsonStringify(agentImgPromptLibrary.finalPromptSchema);
   const baseStyle = agentImgPromptLibrary.baseStyle.join(', ');
   const safeNeg = agentImgPromptLibrary.safeNegative.join(', ');
   const lang = detectUserInputLang(input.userInput);
   const zh = lang === 'zh';
+  const memoryText = formatUserInputsForPrompt(
+    normalizeMemoryInputs(
+      [...(input.memoryInputs || []), ...splitUserInputSegments(input.userInput)],
+      6
+    ),
+    lang
+  );
   const optionText = input.option
     ? safeJsonStringify({
         title: input.option.title,
@@ -124,6 +189,9 @@ const buildFinalPrompt = (input: {
     zh
       ? 'prompt 与 negativePrompt 必须使用中文，禁止出现英文。'
       : 'prompt and negativePrompt must be English. Do not output Chinese.',
+    zh
+      ? '规则：prompt 必须尽可能保留用户输入中的原话与具体约束，不要同义改写或删减；如需补全，只补全用户未明确但生成必须的细节。'
+      : 'Rule: Keep the user’s original wording and constraints in prompt; do not paraphrase or drop them. Only add missing-but-necessary details.',
     `Base style tags to incorporate when appropriate: ${baseStyle}`,
     `Safety negative tags (must include): ${safeNeg}`,
     input.contextText
@@ -131,7 +199,10 @@ const buildFinalPrompt = (input: {
         ? `上下文:\n${input.contextText}`
         : `Context:\n${input.contextText}`
       : '',
-    zh ? `用户输入: ${input.userInput}` : `User input: ${input.userInput}`,
+    memoryText ? memoryText : '',
+    zh
+      ? `用户输入（本轮原文）: ${input.userInput}`
+      : `User input (verbatim, this turn): ${input.userInput}`,
     input.option ? (zh ? `已选方向: ${optionText}` : `Chosen direction: ${optionText}`) : '',
     zh
       ? '只返回 JSON：prompt, negativePrompt, params'
@@ -144,6 +215,7 @@ const buildFinalPrompt = (input: {
 export const useAgentImgFlow = (opts?: {
   getContextText?: () => string;
   getImages?: () => Promise<GenerateImageInput[] | undefined> | GenerateImageInput[] | undefined;
+  getUserInputMemory?: () => string[];
 }) => {
   const languageStore = useLanguageStore();
   const { currentLang } = storeToRefs(languageStore);
@@ -165,6 +237,15 @@ export const useAgentImgFlow = (opts?: {
       return Array.isArray(res) ? res : undefined;
     } catch {
       return undefined;
+    }
+  };
+  const getUserInputMemory = () => {
+    try {
+      const fn = opts?.getUserInputMemory;
+      const res = typeof fn === 'function' ? fn() : [];
+      return Array.isArray(res) ? res.map((x) => String(x || '').trim()).filter(Boolean) : [];
+    } catch {
+      return [];
     }
   };
   const userInput = ref('');
@@ -217,7 +298,7 @@ export const useAgentImgFlow = (opts?: {
     if (!c) return t('请求失败，请稍后再试', 'Request failed. Please try again later.');
     if (c === 'INSUFFICIENT_CREDITS')
       return t(
-        '积分不足，请前往「算力商城」充值',
+        '积分不足，请前往「点数商城」充值',
         'Insufficient credits. Please top up in Compute Market.'
       );
     if (c === 'EMPTY_PROMPT') return t('请输入需求描述后再试', 'Please enter a request first.');
@@ -283,7 +364,7 @@ export const useAgentImgFlow = (opts?: {
     };
 
     const runOnce = async (attempt: number) => {
-      const prompt = buildDirectionPrompt(input, getContextText(), attempt);
+      const prompt = buildDirectionPrompt(input, getContextText(), getUserInputMemory(), attempt);
       const res = await runGenerateText(prompt, 'directions');
       if (!res.ok) return { ok: false as const, res };
       const normalized = parseOptions(res.text);
@@ -330,7 +411,8 @@ export const useAgentImgFlow = (opts?: {
     const prompt = buildFinalPrompt({
       userInput: input,
       option: deepMode.value ? selectedOption.value : null,
-      contextText: getContextText()
+      contextText: getContextText(),
+      memoryInputs: getUserInputMemory()
     });
     const res = await runGenerateText(prompt, 'final');
     if (!res.ok) {

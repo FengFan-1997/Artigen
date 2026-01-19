@@ -4,6 +4,51 @@ const { readJson, writeJson, PAY_ORDERS_FILE } = require('../utils/storage');
 
 const installImgagentRoutes = (app, opts) => {
   const assertAuthUserMatches = opts?.assertAuthUserMatches;
+  const callSiliconFlowImageGenerate = opts?.callSiliconFlowImageGenerate;
+  const persistImageRefForUser = opts?.persistImageRefForUser;
+  const persistGenerateImageInputForUser = opts?.persistGenerateImageInputForUser;
+  const appendUserImageHistory = opts?.appendUserImageHistory;
+  const imgCredits = opts?.imgCredits;
+  const getClientIp = opts?.getClientIp;
+
+  const isGuestUserId = (userId) => {
+    const uid = String(userId || '').trim();
+    return !!uid && uid.startsWith('guest_');
+  };
+
+  const resolveImg2ImgCost = () => {
+    const parseCost = (v, fallback) => {
+      const n = Number.parseInt(String(v ?? ''), 10);
+      return Number.isFinite(n) && n >= 0 ? n : fallback;
+    };
+    return parseCost(
+      process.env.CREDITS_COST_IMG2IMG || process.env.CREDITS_COST_IMAGE || process.env.CREDITS_COST_GENERATE,
+      10
+    );
+  };
+
+  const extractProviderImages = (data) => {
+    const list = Array.isArray(data?.images)
+      ? data.images
+      : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.output)
+          ? data.output
+          : [];
+    const out = [];
+    for (const it of list) {
+      if (typeof it === 'string') {
+        const u = it.trim();
+        if (u) out.push(u);
+        continue;
+      }
+      if (it && typeof it === 'object') {
+        const u = typeof it.url === 'string' ? it.url.trim() : typeof it.image === 'string' ? it.image.trim() : '';
+        if (u) out.push(u);
+      }
+    }
+    return out;
+  };
   const payPackages = {
     starter: { packageId: 'starter', amountCny: 9.9, credits: 400 },
     standard: { packageId: 'standard', amountCny: 19.9, credits: 1000 },
@@ -326,14 +371,19 @@ MQIDAQAB
 
   // --- Credits & Wallet ---
   app.get('/api/credits/balance', (req, res) => {
-    const userId = String(req.query.userId || '').trim();
-    if (typeof assertAuthUserMatches === 'function') {
-      const auth = assertAuthUserMatches(req, res, userId);
-      if (!auth) return;
+    try {
+      const userId = String(req.query.userId || '').trim();
+      if (typeof assertAuthUserMatches === 'function') {
+        const auth = assertAuthUserMatches(req, res, userId);
+        if (!auth) return;
+      }
+      const bal = credits.getBalance(userId);
+      if (!bal) return res.status(400).json({ error: 'UserId is required' });
+      res.json(bal);
+    } catch (err) {
+      console.error('Error in GET /api/credits/balance:', err);
+      res.status(500).json({ error: String(err.message || err) });
     }
-    const bal = credits.getBalance(userId);
-    if (!bal) return res.status(400).json({ error: 'UserId is required' });
-    res.json(bal);
   });
 
   app.get('/api/credits/costs', (req, res) => {
@@ -347,6 +397,158 @@ MQIDAQAB
       10
     );
     res.json({ ok: true, generate, img2img });
+  });
+
+  app.post('/api/img2img', async (req, res) => {
+    const body = req.body || {};
+    const userId = String(body.userId || '').trim();
+    const requestId = String(body.requestId || res.locals?.requestId || '').trim();
+    const prompt = String(body.prompt || '').trim();
+    const negativePrompt = typeof body.negativePrompt === 'string' ? body.negativePrompt : '';
+    const model = typeof body.model === 'string' ? body.model.trim() : '';
+    const params = body.params && typeof body.params === 'object' ? body.params : undefined;
+    const imagesRaw = Array.isArray(body.images) ? body.images : [];
+    const timeoutMsRaw = Number(body.timeoutMs ?? 0) || 0;
+    const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.min(timeoutMsRaw, 180000) : undefined;
+    const userText = typeof body.userText === 'string' ? body.userText.trim() : '';
+    const reason = String(body.reason || 'img2img').trim() || 'img2img';
+
+    if (!userId) return res.status(400).json({ error: 'MISSING_USER_ID', requestId });
+    if (!prompt) return res.status(400).json({ error: 'EMPTY_PROMPT', requestId });
+
+    if (!isGuestUserId(userId) && typeof assertAuthUserMatches === 'function') {
+      const auth = assertAuthUserMatches(req, res, userId);
+      if (!auth) return;
+    }
+
+    if (typeof callSiliconFlowImageGenerate !== 'function') {
+      return res.status(501).json({ error: 'IMG_PROVIDER_NOT_CONFIGURED', requestId });
+    }
+
+    const cost = resolveImg2ImgCost();
+    const hold = (() => {
+      try {
+        if (!imgCredits || typeof imgCredits.freezeCredits !== 'function') return null;
+        return imgCredits.freezeCredits({ userId, cost, requestId, reason: 'img2img' });
+      } catch {
+        return null;
+      }
+    })();
+    if (hold && !hold.ok) {
+      const wallet = hold.wallet && typeof hold.wallet === 'object' ? hold.wallet : undefined;
+      return res.status(402).json({ error: String(hold.error || 'CREDITS_ERROR'), requestId, ...(wallet ? { wallet } : {}) });
+    }
+
+    let response = null;
+    try {
+      response = await callSiliconFlowImageGenerate({
+        prompt,
+        negativePrompt,
+        params,
+        images: imagesRaw,
+        timeoutMs,
+        ...(model ? { model } : {})
+      });
+    } catch (e) {
+      if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === 'function') {
+        try {
+          imgCredits.refundHold({ userId, holdId: hold.holdId });
+        } catch { }
+      }
+      const code =
+        typeof e?.code === 'string' && e.code.trim()
+          ? e.code.trim()
+          : typeof e?.message === 'string' && e.message.trim()
+            ? e.message.trim()
+            : 'IMG2IMG_FAILED';
+      const status = typeof e?.status === 'number' && e.status >= 400 ? e.status : 500;
+      return res.status(status).json({ error: code, requestId });
+    }
+
+    const data = response?.data;
+    const providerImages = extractProviderImages(data);
+    const persistedOutputs = [];
+    for (const url of providerImages) {
+      const persisted =
+        typeof persistImageRefForUser === 'function' ? await persistImageRefForUser({ userId, url, prefix: 'gen' }) : '';
+      const finalUrl = String(persisted || url).trim();
+      if (finalUrl) persistedOutputs.push(finalUrl);
+    }
+
+    if (!persistedOutputs.length) {
+      if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === 'function') {
+        try {
+          imgCredits.refundHold({ userId, holdId: hold.holdId });
+        } catch { }
+      }
+      return res.status(502).json({ error: 'EMPTY_IMAGE_RESULT', requestId });
+    }
+
+    if (hold?.holdId && imgCredits && typeof imgCredits.settleHold === 'function') {
+      try {
+        imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: cost });
+      } catch { }
+    }
+
+    const persistInputImage = async (img) => {
+      if (typeof img === 'string') {
+        const u = img.trim();
+        if (!u) return '';
+        if (typeof persistImageRefForUser !== 'function') return u;
+        return await persistImageRefForUser({ userId, url: u, prefix: 'in' });
+      }
+      if (img && typeof img === 'object') {
+        if (typeof persistGenerateImageInputForUser !== 'function') return '';
+        return persistGenerateImageInputForUser({ userId, image: img, prefix: 'in' });
+      }
+      return '';
+    };
+
+    const persistedInputs = [];
+    for (const it of imagesRaw) {
+      const u = await persistInputImage(it);
+      const finalUrl = String(u || '').trim();
+      if (finalUrl) persistedInputs.push(finalUrl);
+    }
+
+    if (typeof appendUserImageHistory === 'function') {
+      try {
+        const id =
+          requestId ||
+          `imgwork_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        const provider = 'siliconflow';
+        const model = typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : '';
+        const seed = typeof data?.seed === 'number' ? data.seed : undefined;
+        const timings =
+          data && typeof data === 'object' && data.timings && typeof data.timings === 'object' ? data.timings : undefined;
+        const entry = {
+          id,
+          ts: Date.now(),
+          type: 'img2img',
+          provider,
+          ...(model ? { model } : {}),
+          cost,
+          ...(userText ? { userText } : {}),
+          prompt,
+          ...(negativePrompt ? { negativePrompt } : {}),
+          ...(params ? { params } : {}),
+          images: persistedOutputs.map((u) => ({ kind: 'url', url: u })),
+          ...(persistedInputs.length ? { inputImages: persistedInputs.map((u) => ({ kind: 'url', url: u })) } : {}),
+          ...(seed !== undefined ? { seed } : {}),
+          ...(timings ? { timings } : {}),
+          ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {})
+        };
+        appendUserImageHistory({ userId, entry });
+      } catch { }
+    }
+
+    res.json({
+      ok: true,
+      requestId,
+      images: persistedOutputs.map((u) => ({ url: u })),
+      ...(typeof data?.seed === 'number' ? { seed: data.seed } : {}),
+      ...(data && typeof data === 'object' && data.timings && typeof data.timings === 'object' ? { timings: data.timings } : {})
+    });
   });
 
   app.post('/api/credits/checkin', (req, res) => {

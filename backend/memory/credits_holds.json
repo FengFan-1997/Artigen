@@ -958,5 +958,135 @@
     "status": "confirmed",
     "createdAt": 1768401977895,
     "updatedAt": 1768401984089
+  },
+  "8449653c32309350b26531a933d16a4amkjgrwyb": {
+    "id": "8449653c32309350b26531a933d16a4amkjgrwyb",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "img_6f040cf992f04ad687d1e62363bafeca",
+    "status": "refunded",
+    "createdAt": 1768724290452,
+    "updatedAt": 1768724290463
+  },
+  "1fa58cd61ce5b14515ba0e1d42a3a40fmkjgtbhs": {
+    "id": "1fa58cd61ce5b14515ba0e1d42a3a40fmkjgtbhs",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "img_d02acde834a94e999945a1d62046b1a3",
+    "status": "refunded",
+    "createdAt": 1768724355952,
+    "updatedAt": 1768724355962
+  },
+  "153169197980b5039bd44abdf342bba7mkjh8nzg": {
+    "id": "153169197980b5039bd44abdf342bba7mkjh8nzg",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "img_bb96ac75e0824fbfb575b0d11d41c4f4",
+    "status": "confirmed",
+    "createdAt": 1768725071980,
+    "updatedAt": 1768725076246
+  },
+  "c6456fea8fd09f33b3df37cc995d126dmkjh93wn": {
+    "id": "c6456fea8fd09f33b3df37cc995d126dmkjh93wn",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "old_photo_ad92a10dce1c4f4f8a6073c803b8050d",
+    "status": "confirmed",
+    "createdAt": 1768725092615,
+    "updatedAt": 1768725094445
+  },
+  "e03d3b0e1f28a0bca50063894316399dmkjh95bu": {
+    "id": "e03d3b0e1f28a0bca50063894316399dmkjh95bu",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "id_photo_ef90337058b94d8bb12b79ae70681b1c",
+    "status": "confirmed",
+    "createdAt": 1768725094458,
+    "updatedAt": 1768725098522
+  },
+  "17a62a1573d555948ccadedc121fe11fmkjhn4sz": {
+    "id": "17a62a1573d555948ccadedc121fe11fmkjhn4sz",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "stress_ai_0_15d175faf80e2",
+    "status": "confirmed",
+    "createdAt": 1768725746963,
+    "updatedAt": 1768725749842
+  },
+  "d8a78aa0c67a5e380fe93ebf87babb49mkjhn4tf": {
+    "id": "d8a78aa0c67a5e380fe93ebf87babb49mkjhn4tf",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "stress_ai_1_aad5876da180d",
+    "status": "confirmed",
+    "createdAt": 1768725746979,
+    "updatedAt": 1768725752646
+  },
+  "7722fd4afda50dad4d8ffe791c9ef089mkjhn71b": {
+    "id": "7722fd4afda50dad4d8ffe791c9ef089mkjhn71b",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "stress_ai_2_1ed55543a3f0f",
+    "status": "confirmed",
+    "createdAt": 1768725749855,
+    "updatedAt": 1768725756045
+  },
+  "bf1598df54ef5d5a76cf36dfb1f3c131mkjhn975": {
+    "id": "bf1598df54ef5d5a76cf36dfb1f3c131mkjhn975",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "stress_ai_3_c17a10eaf5318",
+    "status": "confirmed",
+    "createdAt": 1768725752657,
+    "updatedAt": 1768725754134
+  },
+  "c0e2f3ee6132fb5e06e5da1332da09ffmkjhnaci": {
+    "id": "c0e2f3ee6132fb5e06e5da1332da09ffmkjhnaci",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "stress_ai_4_7a6d5b4b84e2",
+    "status": "confirmed",
+    "createdAt": 1768725754146,
+    "updatedAt": 1768725758819
+  },
+  "8d0bc1d526d0b9e8ccd2d71945808981mkjhnbtm": {
+    "id": "8d0bc1d526d0b9e8ccd2d71945808981mkjhnbtm",
+    "userId": "guest_loadtest",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "stress_ai_5_7aa39983691f6",
+    "status": "confirmed",
+    "createdAt": 1768725756058,
+    "updatedAt": 1768725759351
+  },
+  "310c8db907242e39b5b741395830b32bmkk8nys2": {
+    "id": "310c8db907242e39b5b741395830b32bmkk8nys2",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "img2img_mkk8nyr2_x1oz3c",
+    "status": "refunded",
+    "createdAt": 1768771135442,
+    "updatedAt": 1768771138105
+  },
+  "989363d4cf7b04fde7b0c65a0c389b32mkkuab29": {
+    "id": "989363d4cf7b04fde7b0c65a0c389b32mkkuab29",
+    "userId": "user_mk5vb7v2_ebe837825fb2",
+    "cost": 10,
+    "reason": "img2img",
+    "requestId": "img2img_mkkuab19_kayazs",
+    "status": "confirmed",
+    "createdAt": 1768807449729,
+    "updatedAt": 1768807454630
   }
 }

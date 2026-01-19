@@ -36,10 +36,10 @@
     "updatedAt": 1767886994920
   },
   "user_mk5vb7v2_ebe837825fb2": {
-    "available": 818,
+    "available": 808,
     "frozen": 0,
     "createdAt": 1767902179279,
-    "updatedAt": 1768401984089,
+    "updatedAt": 1768807454630,
     "lastCheckinDay": "2026-01-09"
   },
   "user_mk6thoz6_1388ca4f90fc": {
@@ -77,5 +77,29 @@
     "frozen": 0,
     "createdAt": 1768141499049,
     "updatedAt": 1768141499049
+  },
+  "email_26c13a224d283d1c": {
+    "available": 100,
+    "frozen": 0,
+    "createdAt": 1768724269252,
+    "updatedAt": 1768724269252
+  },
+  "guest_loadtest": {
+    "available": 10,
+    "frozen": 0,
+    "createdAt": 1768724290448,
+    "updatedAt": 1768725759351
+  },
+  "user_mkkxfcks_2246cd1b051c": {
+    "available": 100,
+    "frozen": 0,
+    "createdAt": 1768812723902,
+    "updatedAt": 1768812723902
+  },
+  "email_ce0a77b5e19c191c": {
+    "available": 100,
+    "frozen": 0,
+    "createdAt": 1768814968033,
+    "updatedAt": 1768814968033
   }
 }

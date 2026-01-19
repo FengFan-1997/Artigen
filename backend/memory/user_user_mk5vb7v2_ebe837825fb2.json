@@ -1,12 +1,34 @@
 {
   "user_id": "user_mk5vb7v2_ebe837825fb2",
   "meta": {
-    "updatedAt": 1768401984302,
+    "updatedAt": 1768807454636,
     "migratedFrom": "guest_on7vl08bi"
   },
   "core_memory": [],
   "short_term_buffer": [],
   "image_history": [
+    {
+      "id": "img2img_mkkuab19_kayazs",
+      "ts": 1768807454634,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "cost": 10,
+      "userText": "经典动画风格的jk美少女 风格限定: 动画风格\n视角构图: 胸前特写\n主体描述: 穿着棕色小皮鞋、白色丝袜的jk制服美少女\n背景设定: 简约纯色背景\n细节修饰: 高马尾、饱满的胸部、精致的耳钉\n光影色调: 热带阳光色调、柔和阴影、温暖氛围\n质量词: 精美、生动、符合动画制作标准",
+      "prompt": "给我生成一张穿着棕色小皮鞋 穿着白色丝袜的jk美少女, 经典动画风格的jk美少女, 风格限定: 动画风格\n视角构图: 胸前特写\n主体描述: 穿着棕色小皮鞋、白色丝袜的jk制服美少女\n背景设定: 简约纯色背景\n细节修饰: 高马尾、饱满的胸部、精致的耳钉\n光影色调: 热带阳光色调、柔和阴影、温暖氛围\n质量词: 精美、生动、符合动画制作标准, 动画风格, 经典动画, 少女漫画风格, 特写镜头, 主人公视角, jk制服, 棕色小皮鞋, 白色丝袜, 中性色调, 清新自然, 明亮光线, 细腻笔触, 高饱和度, 卡通渲染",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, 写实风格, 低饱和度, 暗黑色调, 主观视角, 复杂背景, 过度阴影, 模糊效果, 粗糙质感, 动态模糊, 失真, 变形, 低分辨率, 无细节, 不自然肤色",
+      "images": [
+        {
+          "kind": "url",
+          "url": "https://s3.siliconflow.cn/default/outputs/434dbf3c-7b5e-4cda-80de-f751eeedd19c_44c6f6239b5960aa25e15a2c77950a9c_ComfyUI_e305597b_00001_.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXXXXFILESEXAMPLE%2F20260119%2Fcn-shanghai-1%2Fs3%2Faws4_request&X-Amz-Date=20260119T072413Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=eyJhbGciOiJSUzI1NiIsImtpZCI6ImdyYXkiLCJ0eXAiOiJKV1QifQ.eyJzdWIiOiJmYWFzOmRlcDpvcHI6ZDI5Y3UzZ2gzdnZjNzNjNWJpNWc6NDAyNTgiLCJpc3MiOiJodHRwczovL2lhbS5zaWxpY29uZmxvdy5jbiIsImlhdCI6MTc2ODc5MTA5OSwiZXhwIjoxNzY4OTYzODk5LCJ0eXAiOiJzZXJ2aWNlIiwiYXBsdCI6InNmOmZhYXM6ZmFicmljIiwidG50IjoiZDI5Y3UzZ2gzdnZjNzNjNWJpNWciLCJpZCI6ImQ1bXBvZXRzc3N2YzczZmlubzEwIiwiYWNjZXNzIjpbeyJ0eXBlIjoiZmFhcyIsInN1YmplY3RJZCI6ImQyOWN1M2doM3Z2YzczYzViaTVnIiwiYWN0aW9ucyI6WyJmYWFzOmludm9jYXRpb246cHVsbGluZyJdfV19.VNWw8pVuIw83j3LsEBuv4bO5YZxxiSWM3ZVwJO7TFqkdwiDhqYEUfhBHlYdmPVQuexTGboByza8Z_h4CzAaX36BzLiuF4SEqakIsYM8xv6iUgIQcJEDbH9zrsc1OXZjXtoda7QdBtmF7gKNHI0bnaX_qobWxSg50PH3yFIPWQO5nw8nzDuuxMl6bi8x8yosZi9WUx6y_lG_nGPxvRq2JhvnwZsMbJQQpPXde7nsg6kAAK-RrdKBzTs5XVfvMZaobbIR_Qg1qzhlBZzZf648bBLdeopawIzkOtZCA_XoHmqTapll7Z2LvBiIKy8CeyIUUAY81docySYrqKkAzvHoka4nTzLgBY1WHdHna_qNh-q7ASQ631wVQ-a7dJJbfTexb3jz23BpN9meGC9UziNFjJUJI9XwF9hmJr6BwcZ4hcSrPij4GdMjs994z52DkCeKDq2tCzL0K4el-hEkcVywI1f6nulu6BBgd4TlC-TqfVf534liKUtcIeqHpxHJMP4Pd2gb8PGxx3Ah96WCX--drAl2LtB6q53Cydy3eflZRSOLk-rIuo8wa5eLaNV-f5EG51ATYcPtgEhCq7guARM_EB8PCqr5gLqogcO53gBMhfb8bW862j6EPvLXcfiwlu3cblJVZnDHhzDjJhI7zmm968Rb6QisT0RRE-qnRFQqloCM&X-Amz-Signature=874eda564af5729bb383423530d34a0ac8ae53aca1a74624d66703bbc43a85e2"
+        }
+      ],
+      "seed": 1150295107,
+      "timings": {
+        "inference": 4.603
+      },
+      "ip": "127.0.0.1"
+    },
     {
       "id": "imgwork_mke4vmqj_3aibag",
       "ts": 1768401984301,

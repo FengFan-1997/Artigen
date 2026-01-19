@@ -25,11 +25,18 @@
             </div>
 
             <div class="left-actions">
-              <button class="btn" type="button" :disabled="balanceLoading" @click="refreshBalance">
+              <button
+                class="btn btn-text-center"
+                type="button"
+                :disabled="balanceLoading"
+                @click="refreshBalance"
+              >
                 {{ balanceLoading ? ui.loading : ui.refreshCredits }}
               </button>
-              <button class="btn primary" type="button" @click="goMarket">{{ ui.goMarket }}</button>
-              <button class="btn danger" type="button" @click="handleLogout">
+              <button class="btn primary btn-text-center" type="button" @click="goMarket">
+                {{ ui.goMarket }}
+              </button>
+              <button class="btn danger btn-text-center" type="button" @click="handleLogout">
                 {{ ui.logout }}
               </button>
             </div>
@@ -38,36 +45,48 @@
 
         <section class="right-pane">
           <header class="tabs">
-            <button
-              class="tab"
-              type="button"
-              :class="{ active: activeTab === 'orders' }"
-              @click="activeTab = 'orders'"
-            >
-              {{ ui.myOrders }}
-            </button>
-            <button
-              class="tab"
-              type="button"
-              :class="{ active: activeTab === 'usage' }"
-              @click="activeTab = 'usage'"
-            >
-              {{ ui.creditsUsage }}
-            </button>
+            <div class="tabs-center">
+              <button
+                class="tab"
+                type="button"
+                :class="{ active: activeTab === 'orders' }"
+                @click="activeTab = 'orders'"
+              >
+                {{ ui.myOrders }}
+              </button>
+              <button
+                class="tab"
+                type="button"
+                :class="{ active: activeTab === 'usage' }"
+                @click="activeTab = 'usage'"
+              >
+                {{ ui.creditsUsage }}
+              </button>
+            </div>
+            <div class="tabs-actions">
+              <button
+                v-if="activeTab === 'orders'"
+                class="mini-btn"
+                type="button"
+                :disabled="ordersLoading"
+                @click="loadOrders"
+              >
+                {{ ordersLoading ? ui.loading : ui.refresh }}
+              </button>
+              <button
+                v-else
+                class="mini-btn"
+                type="button"
+                :disabled="holdsLoading"
+                @click="loadHolds"
+              >
+                {{ holdsLoading ? ui.loading : ui.refresh }}
+              </button>
+            </div>
           </header>
 
           <div class="panel">
             <div v-if="activeTab === 'orders'" class="panel-body">
-              <div class="panel-actions">
-                <button
-                  class="mini-btn"
-                  type="button"
-                  :disabled="ordersLoading"
-                  @click="loadOrders"
-                >
-                  {{ ordersLoading ? ui.loading : ui.refresh }}
-                </button>
-              </div>
               <div v-if="ordersError" class="panel-error">{{ ordersError }}</div>
               <div v-else-if="!orders.length && !ordersLoading" class="panel-empty">
                 {{ ui.emptyOrders }}
@@ -91,11 +110,6 @@
             </div>
 
             <div v-else class="panel-body no-scroll">
-              <div class="panel-actions">
-                <button class="mini-btn" type="button" :disabled="holdsLoading" @click="loadHolds">
-                  {{ holdsLoading ? ui.loading : ui.refresh }}
-                </button>
-              </div>
               <div v-if="holdsError" class="panel-error">{{ holdsError }}</div>
               <div v-else-if="!holds.length && !holdsLoading" class="panel-empty">
                 {{ ui.emptyUsage }}
@@ -249,7 +263,7 @@ const ui = computed(() => {
       available: '可用点数',
       frozen: '冻结点数',
       refreshCredits: '刷新点数',
-      goMarket: '去算力商城',
+      goMarket: '去点数商城',
       logout: '退出登录',
       myOrders: '我的订单',
       creditsUsage: '点数明细',
@@ -571,6 +585,10 @@ watch(
   text-align: left;
 }
 
+.btn-text-center {
+  text-align: center;
+}
+
 .btn:hover {
   border-color: rgba(255, 255, 255, 0.3);
   background: rgba(255, 255, 255, 0.06);
@@ -609,22 +627,37 @@ watch(
 
 .tabs {
   display: flex;
-  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
   padding: 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(0, 0, 0, 0.22);
 }
 
+.tabs-center {
+  flex: 1;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-start;
+}
+
+.tabs-actions {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 120px;
+}
+
 .tab {
-  height: 36px;
-  padding: 0 14px;
-  border-radius: 12px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
   font-family: var(--common-font);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
+  min-width: 96px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -658,22 +691,17 @@ watch(
   overflow-x: hidden;
 }
 
-.panel-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 10px;
-}
-
 .mini-btn {
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 10px;
+  height: 42px;
+  padding: 0 18px;
+  border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
   font-family: var(--common-font);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 800;
+  min-width: 92px;
   cursor: pointer;
   transition: all 0.2s;
 }

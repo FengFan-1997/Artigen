@@ -1,0 +1,11 @@
+:root {
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  --primary: #ccff00;
+  --primary-dim: rgba(204, 255, 0, 0.15);
+  --primary-hover: #b3e600;
+  --bg-dark: #050505;
+  --bg-card: #111111;
+  --border-color: rgba(255, 255, 255, 0.15);
+  --border-active: rgba(204, 255, 0, 0.5);
+}

@@ -1,0 +1,71 @@
+.artigen-page {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--bg-dark);
+  color: var(--text-main);
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  cursor: default;
+  user-select: none;
+}
+
+.artigen-page .msg-bubble {
+  cursor: text;
+  user-select: text;
+}
+
+.artigen-page textarea,
+.artigen-page input[type='text'],
+.artigen-page input[type='search'],
+.artigen-page input[type='email'],
+.artigen-page input[type='password'] {
+  cursor: text;
+  user-select: text;
+}
+
+.artigen-page button,
+.artigen-page select,
+.artigen-page input[type='checkbox'],
+.artigen-page input[type='range'],
+.artigen-page input[type='file'] {
+  cursor: pointer;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.artigen-page,
+.artigen-page * {
+  box-sizing: border-box;
+}
+
+.side-fade-enter-active,
+.side-fade-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+.side-fade-enter-from,
+.side-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-10px);
+}

@@ -170,7 +170,7 @@ const ui = computed(() => {
       time: '时间',
       refresh: '刷新',
       loading: '加载中...',
-      goMarket: '去算力商城',
+      goMarket: '去点数商城',
       creditsUsage: '点数明细',
       copy: '复制',
       copied: '已复制',

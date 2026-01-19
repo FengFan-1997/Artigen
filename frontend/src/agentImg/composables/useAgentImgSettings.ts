@@ -1,87 +1,86 @@
-import { computed, ref } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useAgentImgSettingsStore } from '../stores/settings';
+import { useLanguageStore } from '@/stores/language';
 
-export type AgentImgImageCount = 1 | 2 | 3 | 4;
+export function useAgentImgSettings() {
+  const settingsStore = useAgentImgSettingsStore();
+  const languageStore = useLanguageStore();
+  const { currentLang } = storeToRefs(languageStore);
 
-export interface AgentImgSettings {
-  productName: string;
-  productCategory: string; // Changed from packageType
-  material: string; // New: Product material
-  sceneType: string; // New: Background/Scene context
-  imageCount: AgentImgImageCount;
-  logoFileName: string;
-  designElements: string[];
-  primaryColor: string; // Changed from palette
-  lighting: string; // New: Lighting style
-}
+  const {
+    productName,
+    productCategory,
+    material,
+    sceneType,
+    lighting,
+    primaryColor,
+    brandName,
+    logoFileName,
+    logoFile,
+    designElements,
+    styles,
+    colors
+  } = storeToRefs(settingsStore);
 
-export const useAgentImgSettings = () => {
-  // Product Core
-  const productName = ref('');
-  const productCategory = ref('');
-  const material = ref('');
+  const buildProductProfileContextText = () => {
+    const zh = currentLang.value === 'zh';
+    const sep = zh ? '：' : ': ';
+    const joinTags = (tags: string[]) => (zh ? tags.join('、') : tags.join(', '));
 
-  // Visual Style
-  const sceneType = ref('');
-  const lighting = ref('');
-  const primaryColor = ref('');
+    const pName = String(productName.value || '').trim();
+    const pCat = String(productCategory.value || '').trim();
+    const bName = String(brandName.value || '').trim();
+    const mat = String(material.value || '').trim();
+    const scene = String(sceneType.value || '').trim();
+    const light = String(lighting.value || '').trim();
+    const color = String(primaryColor.value || '').trim();
+    const logo = String(logoFileName.value || '').trim();
+    const de = Array.isArray(designElements.value)
+      ? designElements.value.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
+    const st = Array.isArray(styles.value)
+      ? styles.value.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
+    const cs = Array.isArray(colors.value)
+      ? colors.value.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
 
-  // Brand Assets
-  const brandName = ref('');
-  const logoFileName = ref('');
-  const logoFile = ref<File | null>(null);
+    const hasAny =
+      !!pName ||
+      !!pCat ||
+      !!bName ||
+      !!mat ||
+      !!scene ||
+      !!light ||
+      !!color ||
+      !!logo ||
+      de.length > 0 ||
+      st.length > 0 ||
+      cs.length > 0;
 
-  // Generation Config
-  const imageCount = ref<AgentImgImageCount>(2);
-  const designElements = ref<string[]>([]);
-  const styles = ref<string[]>([]);
-  const colors = ref<string[]>([]);
+    if (!hasAny) return '';
 
-  const setLogoFile = (f: File | null) => {
-    logoFile.value = f;
-    logoFileName.value = f ? f.name : '';
+    const lines: string[] = [];
+    lines.push(
+      zh
+        ? `目标${sep}电商商品图/商业成片（主体突出、构图干净、避免文字与水印）`
+        : `Goal${sep}e-commerce product visual (commercial-ready, clean composition, subject-first, avoid text/watermarks)`
+    );
+    if (pName) lines.push(`${zh ? '产品名称' : 'Product Name'}${sep}${pName}`);
+    if (pCat) lines.push(`${zh ? '类目' : 'Category'}${sep}${pCat}`);
+    if (bName) lines.push(`${zh ? '品牌' : 'Brand'}${sep}${bName}`);
+    if (mat) lines.push(`${zh ? '材质' : 'Material'}${sep}${mat}`);
+    if (scene) lines.push(`${zh ? '场景' : 'Scene'}${sep}${scene}`);
+    if (light) lines.push(`${zh ? '布光' : 'Lighting'}${sep}${light}`);
+    if (color) lines.push(`${zh ? '主色调' : 'Primary Color'}${sep}${color}`);
+    lines.push(
+      `${zh ? 'Logo' : 'Logo'}${sep}${logo ? (zh ? `有（${logo}）` : `Yes (${logo})`) : zh ? '无' : 'No'}`
+    );
+    if (de.length) lines.push(`${zh ? '设计元素' : 'Design Elements'}${sep}${joinTags(de)}`);
+    if (st.length) lines.push(`${zh ? '风格' : 'Style'}${sep}${joinTags(st)}`);
+    if (cs.length) lines.push(`${zh ? '色系' : 'Color Scheme'}${sep}${joinTags(cs)}`);
+    return lines.join('\n');
   };
-
-  const toggleDesignElement = (tag: string) => {
-    const t = tag.trim();
-    if (!t) return;
-    const idx = designElements.value.indexOf(t);
-    if (idx >= 0) designElements.value.splice(idx, 1);
-    else designElements.value.push(t);
-  };
-
-  const toggleStyle = (tag: string) => {
-    const t = tag.trim();
-    if (!t) return;
-    const idx = styles.value.indexOf(t);
-    if (idx >= 0) styles.value.splice(idx, 1);
-    else styles.value.push(t);
-  };
-
-  const toggleColor = (tag: string) => {
-    const t = tag.trim();
-    if (!t) return;
-    const idx = colors.value.indexOf(t);
-    if (idx >= 0) colors.value.splice(idx, 1);
-    else colors.value.push(t);
-  };
-
-  // Construct a rich context string for the LLM
-  const contextText = computed(() => {
-    const parts = [
-      productName.value ? `Product Name: ${productName.value}` : '',
-      productCategory.value ? `Category: ${productCategory.value}` : '',
-      brandName.value ? `Brand: ${brandName.value}` : '',
-      material.value ? `Material: ${material.value}` : '',
-      sceneType.value ? `Scene: ${sceneType.value}` : '',
-      lighting.value ? `Lighting: ${lighting.value}` : '',
-      primaryColor.value ? `Primary Color: ${primaryColor.value}` : '',
-      logoFileName.value ? `Has Logo: Yes (${logoFileName.value})` : 'Has Logo: No',
-      designElements.value.length > 0 ? `Design Elements: ${designElements.value.join(', ')}` : '',
-      styles.value.length > 0 ? `Styles: ${styles.value.join(', ')}` : '',
-      colors.value.length > 0 ? `Color Scheme: ${colors.value.join(', ')}` : ''
-    ];
-    return parts.filter(Boolean).join('\n');
-  });
 
   return {
     productName,
@@ -93,14 +92,9 @@ export const useAgentImgSettings = () => {
     brandName,
     logoFileName,
     logoFile,
-    setLogoFile,
-    imageCount,
     designElements,
-    toggleDesignElement,
     styles,
-    toggleStyle,
     colors,
-    toggleColor,
-    contextText
+    buildProductProfileContextText
   };
-};
+}

@@ -3,10 +3,19 @@
     <TitleBar />
 
     <div class="market-container">
-      <header class="market-header">
-        <h1 class="title">{{ ui.pageTitle1 }} {{ ui.pageTitle2 }} <span class="bolt">⚡</span></h1>
-        <p class="subtitle">{{ ui.subtitle }}</p>
-        <div class="nav-btn"><span class="dot">●</span> {{ ui.navBtn }}</div>
+      <header class="page-header">
+        <div class="badge-row">
+          <span class="badge-dot"></span>
+          <span class="badge-text">{{ ui.navBtn }}</span>
+        </div>
+
+        <div class="title-stack">
+          <h1 class="page-title">
+            <span class="market-title-accent">{{ ui.pageTitle1 }}</span> {{ ui.pageTitle2 }}
+            <span class="bolt">⚡</span>
+          </h1>
+          <p class="page-desc">{{ ui.subtitle }}</p>
+        </div>
       </header>
 
       <div class="currency-toggle">
@@ -56,9 +65,28 @@
           </div>
 
           <ul class="features">
-            <li><span class="check">✓</span> {{ ui.starterFeature1 }}</li>
-            <li><span class="check">✓</span> {{ ui.starterFeature2 }}</li>
-            <li class="disabled"><span class="cross">✗</span> {{ ui.starterDisabledPro }}</li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature1 }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature2 }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature3 }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature4 }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature5 }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature6 }}</span>
+            </li>
+            <li class="disabled">
+              <span class="cross">✗</span
+              ><span class="feature-text">{{ ui.starterDisabledPro }}</span>
+            </li>
           </ul>
 
           <button
@@ -98,10 +126,31 @@
           </div>
 
           <ul class="features">
-            <li><span class="check">✓</span> {{ ui.standardIncludesStarter }}</li>
-            <li><span class="check">✓</span> {{ ui.standardFeature1 }}</li>
-            <li><span class="check">✓</span> {{ ui.standardFeature2 }}</li>
-            <li><span class="check">✓</span> {{ ui.standardFeature3 }}</li>
+            <li>
+              <span class="check">✓</span
+              ><span class="feature-text">{{ ui.standardFeature1 }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonLicense }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonOwnership }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonExports }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonModelBase }}</span>
+            </li>
+            <li class="tier-standard">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard1 }}</span>
+            </li>
+            <li class="tier-standard">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard2 }}</span>
+            </li>
+            <li class="tier-standard">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard3 }}</span>
+            </li>
           </ul>
 
           <button
@@ -142,11 +191,39 @@
           </div>
 
           <ul class="features">
-            <li><span class="check">✓</span> {{ ui.proIncludesStandard }}</li>
-            <li><span class="check">✓</span> {{ ui.proFeature1 }}</li>
-            <li><span class="check">✓</span> {{ ui.proFeature2 }}</li>
-            <li><span class="check">✓</span> {{ ui.proFeature3 }}</li>
-            <li><span class="check">✓</span> {{ ui.proFeature4 }}</li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.proFeature1 }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonLicense }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonOwnership }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonExports }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonModelBase }}</span>
+            </li>
+            <li class="tier-standard">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard1 }}</span>
+            </li>
+            <li class="tier-standard">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard2 }}</span>
+            </li>
+            <li class="tier-standard">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard3 }}</span>
+            </li>
+            <li class="tier-pro">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro1 }}</span>
+            </li>
+            <li class="tier-pro">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro2 }}</span>
+            </li>
+            <li class="tier-pro">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro3 }}</span>
+            </li>
           </ul>
 
           <button
@@ -187,12 +264,52 @@
           </div>
 
           <ul class="features">
-            <li><span class="check">✓</span> {{ ui.ultimateIncludesPro }}</li>
-            <li><span class="check">✓</span> {{ ui.ultimateFeature1 }}</li>
-            <li><span class="check">✓</span> {{ ui.ultimateFeature2 }}</li>
-            <li><span class="check">✓</span> {{ ui.ultimateFeature3 }}</li>
-            <li><span class="check">✓</span> {{ ui.ultimateFeature4 }}</li>
-            <li><span class="check">✓</span> {{ ui.ultimateExpertService }}</li>
+            <li>
+              <span class="check">✓</span
+              ><span class="feature-text">{{ ui.ultimateFeature1 }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonLicense }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonOwnership }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonExports }}</span>
+            </li>
+            <li>
+              <span class="check">✓</span><span class="feature-text">{{ ui.commonModelBase }}</span>
+            </li>
+            <li class="tier-standard">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard1 }}</span>
+            </li>
+            <li class="tier-standard">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard2 }}</span>
+            </li>
+            <li class="tier-standard">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard3 }}</span>
+            </li>
+            <li class="tier-pro">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro1 }}</span>
+            </li>
+            <li class="tier-pro">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro2 }}</span>
+            </li>
+            <li class="tier-pro">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro3 }}</span>
+            </li>
+            <li class="tier-ultimate">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierUltimate1 }}</span>
+            </li>
+            <li class="tier-ultimate">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierUltimate2 }}</span>
+            </li>
+            <li class="tier-ultimate">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierUltimate3 }}</span>
+            </li>
+            <li class="tier-ultimate">
+              <span class="check">✓</span><span class="feature-text">{{ ui.tierUltimate4 }}</span>
+            </li>
           </ul>
 
           <button
@@ -670,13 +787,13 @@ const handleBuy = async (packageId: PayPackageId) => {
 const ui = computed(() => {
   if (currentLang.value === 'zh') {
     return {
-      pageTitle1: '购买',
-      pageTitle2: '算力',
-      subtitle: '// 选择适合你的算力包',
-      navBtn: '算力商城',
+      pageTitle1: '点数',
+      pageTitle2: '商城',
+      subtitle: ' 选择适合你的点数包',
+      navBtn: '点数商城',
       myOrders: '我的订单',
       creditsUsage: '点数明细',
-      computeUnit: '算力',
+      computeUnit: '点数/月',
       buyNow: '立即购买',
       creatingOrder: '创建订单中...',
       activateNow: '立即激活',
@@ -686,24 +803,30 @@ const ui = computed(() => {
       standardTitle: '标准包',
       proTitle: '专业包',
       ultimateTitle: '旗舰包',
-      starterFeature1: `${PACK_CREDITS.starter} 点数（按实际扣费）`,
-      starterFeature2: '支持 Standard 模型与基础风格',
+      starterFeature1: `${PACK_CREDITS.starter} 点数/月`,
+      starterFeature2: '个人商业授权',
+      starterFeature3: '作品完全所有权与隐私保护',
+      starterFeature4: '高质量设计导出',
+      starterFeature5: '标准队列',
+      starterFeature6: '支持 Standard 模型与基础风格',
       starterDisabledPro: 'Pro 模型不可用',
-      standardIncludesStarter: '包含入门包全部权益',
-      standardFeature1: `${PACK_CREDITS.standard} 点数（按实际扣费）`,
-      standardFeature2: '解锁 Pro 高清模型',
-      standardFeature3: '支持所有风格',
-      proIncludesStandard: '包含标准包全部权益',
-      proFeature1: `${PACK_CREDITS.pro} 点数（按实际扣费）`,
-      proFeature2: 'Pro 高清模型 (4K 输出)',
-      proFeature3: '优先处理队列',
-      proFeature4: '加入用户社群',
-      ultimateIncludesPro: '包含专业包全部权益',
-      ultimateFeature1: `${PACK_CREDITS.ultimate} 点数（按实际扣费）`,
-      ultimateFeature2: '终身 VIP 标识',
-      ultimateFeature3: '提前体验新工具',
-      ultimateFeature4: '加入核心用户群',
-      ultimateExpertService: '专家服务',
+      commonLicense: '个人商业授权',
+      commonOwnership: '作品完全所有权与隐私保护',
+      commonExports: '高质量设计导出',
+      commonModelBase: '支持 Standard 模型与基础风格',
+      tierStandard1: '优先队列（最快）',
+      tierStandard2: '高级理解智能体（更智能）',
+      tierStandard3: '支持所有风格',
+      tierPro1: '高级图像模型（Nano Banana / Nano BananaPro）',
+      tierPro2: '下载 4K 生成图片',
+      tierPro3: '加入用户社群',
+      tierUltimate1: '终身 VIP 标识',
+      tierUltimate2: '提前体验新工具',
+      tierUltimate3: '加入核心用户群',
+      tierUltimate4: '专家服务',
+      standardFeature1: `${PACK_CREDITS.standard} 点数`,
+      proFeature1: `${PACK_CREDITS.pro} 点数`,
+      ultimateFeature1: `${PACK_CREDITS.ultimate} 点数`,
       contentTitle: '创作指南',
       contentDesc: '专业级 AI 绘画平台，释放您的无限创意。',
       useCasesTitle: '应用场景',
@@ -728,14 +851,29 @@ const ui = computed(() => {
       faqTitle: '常见问题',
       faqSubtitle: '关于版权、画质与充值的解答',
       faqs: [
-        { q: '生成的图片可以商用吗？', a: '可以。购买套餐的用户拥有生成内容的完整商业使用权。' },
+        {
+          q: '生成的图片可以商用吗？',
+          a: '可以。入门包及以上提供个人商业授权，并支持作品完全所有权与隐私保护。'
+        },
         {
           q: '生成失败会扣点数吗？',
           a: '不会。如果因系统原因导致生成失败，点数会自动退回您的账户。'
         },
         {
           q: '如何获得更高清的图片？',
-          a: '标准版支持 1024px 输出，Pro/旗舰版支持 4K 超分放大功能。'
+          a: '入门包/标准包支持高质量设计导出；专业包/旗舰包支持下载 4K 生成图片。'
+        },
+        {
+          q: '什么是优先队列（最快）？',
+          a: '优先队列会让你的任务更快进入执行，通常等待更短，适合高频创作或赶进度场景。'
+        },
+        {
+          q: '购买后多久到账？',
+          a: '一般会在支付成功后自动到账；如偶发延迟，可在弹窗里点击“我已支付，检查到账”。'
+        },
+        {
+          q: '点数怎么消耗？一次大概多少？',
+          a: '每次生成会按任务类型扣点数；具体扣费会在生成按钮上显示预计消耗。生成失败因系统原因会自动退回。'
         },
         {
           q: '支持手机端使用吗？',
@@ -770,12 +908,12 @@ const ui = computed(() => {
   }
   return {
     pageTitle1: 'Buy',
-    pageTitle2: 'Compute',
-    subtitle: '// Choose the right compute pack for you',
-    navBtn: 'Compute Market',
+    pageTitle2: 'Credits',
+    subtitle: ' Choose the right credit pack for you',
+    navBtn: 'Credits Market',
     myOrders: 'My Orders',
     creditsUsage: 'Credits Usage',
-    computeUnit: 'Compute',
+    computeUnit: 'Credits',
     buyNow: 'Buy Now',
     creatingOrder: 'Creating...',
     activateNow: 'Activate Now',
@@ -785,24 +923,30 @@ const ui = computed(() => {
     standardTitle: 'Standard',
     proTitle: 'Pro',
     ultimateTitle: 'Ultimate',
-    starterFeature1: `${PACK_CREDITS.starter} credits (charged by usage)`,
-    starterFeature2: 'Standard model + basic styles',
+    starterFeature1: `${PACK_CREDITS.starter} credits`,
+    starterFeature2: 'Personal commercial license',
+    starterFeature3: 'Full ownership & privacy protection',
+    starterFeature4: 'High-quality design exports',
+    starterFeature5: 'Standard queue',
+    starterFeature6: 'Standard model + basic styles',
     starterDisabledPro: 'Pro model not available',
-    standardIncludesStarter: 'Includes all Starter benefits',
-    standardFeature1: `${PACK_CREDITS.standard} credits (charged by usage)`,
-    standardFeature2: 'Unlock Pro HD model',
-    standardFeature3: 'Access all styles',
-    proIncludesStandard: 'Includes all Standard benefits',
-    proFeature1: `${PACK_CREDITS.pro} credits (charged by usage)`,
-    proFeature2: 'Pro HD model (4K output)',
-    proFeature3: 'Priority queue',
-    proFeature4: 'Join the community',
-    ultimateIncludesPro: 'Includes all Pro benefits',
-    ultimateFeature1: `${PACK_CREDITS.ultimate} credits (charged by usage)`,
-    ultimateFeature2: 'Lifetime VIP badge',
-    ultimateFeature3: 'Early access to new tools',
-    ultimateFeature4: 'Join the core group',
-    ultimateExpertService: 'Expert service',
+    commonLicense: 'Personal commercial license',
+    commonOwnership: 'Full ownership & privacy protection',
+    commonExports: 'High-quality design exports',
+    commonModelBase: 'Standard model + basic styles',
+    tierStandard1: 'Priority queue (fastest)',
+    tierStandard2: 'Advanced understanding agent (smarter)',
+    tierStandard3: 'Access all styles',
+    tierPro1: 'Advanced image models (Nano Banana / Nano BananaPro)',
+    tierPro2: 'Download 4K generated images',
+    tierPro3: 'Join the community',
+    tierUltimate1: 'Lifetime VIP badge',
+    tierUltimate2: 'Early access to new tools',
+    tierUltimate3: 'Join the core group',
+    tierUltimate4: 'Expert service',
+    standardFeature1: `${PACK_CREDITS.standard} credits monthly`,
+    proFeature1: `${PACK_CREDITS.pro} credits monthly`,
+    ultimateFeature1: `${PACK_CREDITS.ultimate} credits monthly`,
     contentTitle: 'Creative Guide',
     contentDesc: 'Professional AI art platform to unleash your creativity.',
     useCasesTitle: 'Use Cases',
@@ -829,7 +973,7 @@ const ui = computed(() => {
     faqs: [
       {
         q: 'Can I use images commercially?',
-        a: 'Yes. Paid users own full commercial rights to their generated content.'
+        a: 'Yes. Starter plan and above includes personal commercial licensing, with full ownership & privacy protection.'
       },
       {
         q: 'Will failed generations cost credits?',
@@ -837,7 +981,19 @@ const ui = computed(() => {
       },
       {
         q: 'How to get higher resolution?',
-        a: 'Standard plan supports 1024px. Pro/Ultimate plans support 4K upscaling.'
+        a: 'Starter/Standard include high-quality exports. Pro/Ultimate include 4K image downloads.'
+      },
+      {
+        q: 'What is the Priority Queue (fastest)?',
+        a: 'Priority queue pushes your tasks ahead so they usually start sooner, great for high-volume creation or tight deadlines.'
+      },
+      {
+        q: 'How fast will credits be delivered after payment?',
+        a: 'Credits are usually delivered automatically right after payment. If there is a delay, click “I have paid, check now” in the payment modal.'
+      },
+      {
+        q: 'How are credits charged per generation?',
+        a: 'Credits are charged per task type. The estimated cost is shown on the generate button before you run it. System-failed generations are automatically refunded.'
       },
       {
         q: 'Is it mobile friendly?',
@@ -973,22 +1129,66 @@ const ui = computed(() => {
 }
 
 .market-container {
-  max-width: 1200px;
+  max-width: 1520px;
   margin: 0 auto;
   padding: 0 24px;
 }
 
-.market-header {
+.page-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  row-gap: 20px;
   margin-top: 60px;
-  text-align: center;
   margin-bottom: 60px;
+  align-items: start;
 }
 
-.title {
-  font-size: 48px;
+.badge-row {
+  grid-column: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 10px;
+}
+
+.badge-dot {
+  width: 8px;
+  height: 8px;
+  background: #ccff00;
+  border-radius: 50%;
+  box-shadow: 0 0 8px #ccff00;
+}
+
+.badge-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ccff00;
+}
+
+.title-stack {
+  grid-column: 1 / -1;
+  justify-self: center;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.page-title {
+  font-size: 64px;
   font-weight: 900;
-  margin-bottom: 12px;
+  margin: 0;
   letter-spacing: -1px;
+}
+
+.market-title-accent {
+  color: var(--neon-green);
+  text-shadow: 0 0 18px rgba(204, 255, 0, 0.28);
 }
 
 .bolt {
@@ -997,27 +1197,12 @@ const ui = computed(() => {
   animation: pulse 2s infinite;
 }
 
-.subtitle {
+.page-desc {
   color: #64748b;
   font-family: var(--common-font);
-  font-size: 14px;
-  margin-bottom: 24px;
-}
-
-.nav-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  padding: 8px 16px;
-  border-radius: 20px;
-  font-size: 14px;
-  color: #ccff00;
-  border: 1px solid rgba(204, 255, 0, 0.2);
-}
-
-.dot {
-  font-size: 12px;
+  font-size: 18px;
+  margin: 0;
+  max-width: 860px;
 }
 
 /* Currency Toggle */
@@ -1057,13 +1242,15 @@ const ui = computed(() => {
 /* Pricing Grid */
 .pricing-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 24px;
   margin-bottom: 80px;
 }
 
 .pricing-card {
   position: relative;
+  display: flex;
+  flex-direction: column;
   background: rgba(10, 10, 10, 0.8);
   border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 32px 24px;
@@ -1208,7 +1395,9 @@ const ui = computed(() => {
 .compute-amount {
   color: #ccff00;
   font-family: var(--common-font);
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
 }
 
 /* Features */
@@ -1216,6 +1405,8 @@ const ui = computed(() => {
   list-style: none;
   padding: 0;
   margin: 0 0 32px 0;
+  flex: 1;
+  text-align: left;
 }
 
 .features li {
@@ -1223,17 +1414,29 @@ const ui = computed(() => {
   color: #94a3b8;
   margin-bottom: 12px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   line-height: 1.5;
 }
 
 .check {
   color: #64748b;
+  flex: 0 0 auto;
+  margin-top: 2px;
 }
 
 .cross {
   color: #444;
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.feature-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
+  display: block;
 }
 
 .features li.disabled {
@@ -1241,10 +1444,35 @@ const ui = computed(() => {
   text-decoration: line-through;
 }
 
+.features li.tier-standard {
+  color: #a78bfa;
+}
+
+.features li.tier-standard .check {
+  color: #a78bfa;
+}
+
+.features li.tier-pro {
+  color: #10b981;
+}
+
+.features li.tier-pro .check {
+  color: #10b981;
+}
+
+.features li.tier-ultimate {
+  color: #ffd700;
+}
+
+.features li.tier-ultimate .check {
+  color: #ffd700;
+}
+
 /* Buttons */
 .buy-btn {
   width: 100%;
   height: 56px;
+  margin-top: auto;
   padding: 0 14px;
   background: transparent;
   border: 1px solid #444;
@@ -1377,6 +1605,16 @@ const ui = computed(() => {
 
 /* Responsive */
 @media (max-width: 768px) {
+  .page-header {
+    margin-top: 40px;
+    margin-bottom: 40px;
+    row-gap: 16px;
+  }
+
+  .page-title {
+    font-size: 40px;
+  }
+
   .pricing-grid {
     grid-template-columns: 1fr;
   }
