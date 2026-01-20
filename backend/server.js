@@ -44,7 +44,6 @@ const {
 const {
   callGeminiGenerate, callSiliconFlowChat, callSiliconFlowImageGenerate, callTextGenerate, callGeminiEmbed
 } = require('./lib/ai-providers');
-const { fetchWithTimeout } = require('./lib/fetch-utils');
 const {
   proxyHuggingFace, proxyLive2DCubismCore, getHfCacheUsage, hfProxyBaseHealth
 } = require('./lib/hf-proxy');

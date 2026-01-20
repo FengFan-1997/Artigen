@@ -14206,6 +14206,74 @@
       "userId": "guest_1g13q7tp5",
       "ip": "127.0.0.1",
       "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 SLBrowser/9.0.7.12231 SLBChan/103 SLBVPV/64-bit"
+    },
+    {
+      "id": "evt_mkmiu67a_950ebefd",
+      "ts": 1768909153510,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen",
+        "path": "/artigen",
+        "title": "Artigen - AI 图片工坊与工具箱",
+        "location": "http://localhost:4000/artigen"
+      },
+      "path": "/artigen",
+      "location": "http://localhost:4000/artigen",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "email_2555433b3bcc7bea",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkmiyfmh_ee401cf4",
+      "ts": 1768909352345,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "email_2555433b3bcc7bea",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkmiygbd_fcae1a17",
+      "ts": 1768909353241,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/tools",
+        "path": "/artigen/tools",
+        "title": "工具 - Artigen",
+        "location": "http://localhost:4000/artigen/tools"
+      },
+      "path": "/artigen/tools",
+      "location": "http://localhost:4000/artigen/tools",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "email_2555433b3bcc7bea",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mkmiyh29_1ba7521c",
+      "ts": 1768909354209,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "http://localhost:4000/artigen",
+      "userId": "email_2555433b3bcc7bea",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
     }
   ]
 }
