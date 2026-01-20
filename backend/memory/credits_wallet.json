@@ -107,5 +107,11 @@
     "frozen": 0,
     "createdAt": 1768903796305,
     "updatedAt": 1768904572181
+  },
+  "google_28b97a503732fa72": {
+    "available": 100,
+    "frozen": 0,
+    "createdAt": 1768919501817,
+    "updatedAt": 1768919501817
   }
 }

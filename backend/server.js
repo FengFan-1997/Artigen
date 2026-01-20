@@ -285,6 +285,41 @@ const isPrivateHost = (host) => {
   return false;
 };
 
+const inferImageContentType = (pathname) => {
+  const raw = String(pathname || '').trim().toLowerCase();
+  const clean = raw.split('?')[0].split('#')[0];
+  const ext = clean.split('.').pop() || '';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif') return 'image/gif';
+  if (ext === 'bmp') return 'image/bmp';
+  return '';
+};
+
+const sniffImageContentType = (buf) => {
+  if (!buf || buf.length < 12) return '';
+  if (
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47 &&
+    buf[4] === 0x0d &&
+    buf[5] === 0x0a &&
+    buf[6] === 0x1a &&
+    buf[7] === 0x0a
+  )
+    return 'image/png';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  const head6 = buf.subarray(0, 6).toString('ascii');
+  if (head6 === 'GIF87a' || head6 === 'GIF89a') return 'image/gif';
+  if (buf[0] === 0x42 && buf[1] === 0x4d) return 'image/bmp';
+  const riff = buf.subarray(0, 4).toString('ascii');
+  const webp = buf.subarray(8, 12).toString('ascii');
+  if (riff === 'RIFF' && webp === 'WEBP') return 'image/webp';
+  return '';
+};
+
 app.get('/api/proxy/image', async (req, res) => {
   try {
     const raw = typeof req.query.url === 'string' ? req.query.url : '';
@@ -316,18 +351,51 @@ app.get('/api/proxy/image', async (req, res) => {
     if (!upstream.ok) return res.status(502).json({ error: `UPSTREAM_${upstream.status || 502}` });
 
     const ct = String(upstream.headers.get('content-type') || '').trim();
-    if (!/^image\//i.test(ct)) return res.status(415).json({ error: 'NOT_IMAGE' });
-
+    const ctLower = ct.toLowerCase();
+    let finalType = '';
+    if (/^image\//i.test(ctLower)) finalType = ctLower.split(';')[0].trim();
+    if (!finalType || ctLower === 'application/octet-stream' || ctLower === 'binary/octet-stream') {
+      finalType = inferImageContentType(parsed.pathname || '');
+    }
     const len = Number.parseInt(String(upstream.headers.get('content-length') || ''), 10);
     if (Number.isFinite(len) && len > 25 * 1024 * 1024) return res.status(413).json({ error: 'TOO_LARGE' });
 
     const buf = Buffer.from(await upstream.arrayBuffer());
     if (!buf.length || buf.length > 25 * 1024 * 1024) return res.status(413).json({ error: 'TOO_LARGE' });
 
+    if (!finalType) finalType = sniffImageContentType(buf);
+    if (!finalType) return res.status(415).json({ error: 'NOT_IMAGE' });
+
     res.status(200);
-    res.setHeader('Content-Type', ct || 'image/png');
+    res.setHeader('Content-Type', finalType);
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.end(buf);
+  } catch {
+    res.status(502).json({ error: 'PROXY_FAILED' });
+  }
+});
+
+app.get('/api/proxy/google-gsi', async (req, res) => {
+  try {
+    const upstream = await fetchWithTimeout(
+      'https://accounts.google.com/gsi/client',
+      {
+        method: 'GET',
+        redirect: 'follow',
+        headers: {
+          Accept: '*/*',
+          'User-Agent': 'Mozilla/5.0'
+        }
+      },
+      20000
+    );
+    if (!upstream.ok) return res.status(502).json({ error: `UPSTREAM_${upstream.status || 502}` });
+    const ct = String(upstream.headers.get('content-type') || '').trim() || 'application/javascript';
+    const text = await upstream.text();
+    res.status(200);
+    res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.end(text);
   } catch {
     res.status(502).json({ error: 'PROXY_FAILED' });
   }

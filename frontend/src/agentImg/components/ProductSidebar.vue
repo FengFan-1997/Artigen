@@ -277,13 +277,13 @@ const onLogoChange = (e: Event) => {
 
 .custom-select-trigger {
   width: 100%;
-  height: 36px;
+  height: 48px;
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   color: var(--text-main);
   padding: 0 12px;
-  font-size: 13px;
+  font-size: 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -338,7 +338,7 @@ const onLogoChange = (e: Event) => {
 
 .custom-option {
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: 16px;
   color: var(--text-muted);
   cursor: pointer;
   transition: all 0.15s;

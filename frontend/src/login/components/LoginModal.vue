@@ -1,5 +1,8 @@
 <template>
   <Teleport to="body">
+    <transition name="top-tip-fade">
+      <div v-if="topTipOpen" class="top-tip">{{ topTipText }}</div>
+    </transition>
     <div v-if="isOpen" class="login-modal" @mousedown.self="onBackdrop">
       <div class="panel" role="dialog" aria-modal="true">
         <!-- Left Side Image Panel -->
@@ -25,10 +28,16 @@
               <div class="sub">{{ subText }}</div>
 
               <div class="method-list">
-                <button class="nth-login-btn method" type="button" @click="chooseMethod('google')">
-                  <i class="fa-brands fa-google icon"></i>
-                  <span>{{ t('login.method_google') }}</span>
-                </button>
+                <div class="oauth-block">
+                  <div
+                    ref="googleButtonRef"
+                    class="google-btn"
+                    :class="{ disabled: googleLoading }"
+                  ></div>
+                </div>
+                <div class="hint" :class="{ error: !!error }" v-if="error || info">
+                  {{ error || info }}
+                </div>
                 <button class="nth-login-btn method" type="button" @click="chooseMethod('email')">
                   <i class="fa-regular fa-envelope icon"></i>
                   <span>{{ t('login.method_email') }}</span>
@@ -320,6 +329,7 @@ import {
 import { ensureGuestUserId, setLoggedIn } from '../session';
 import { useLanguageStore } from '@/stores/language';
 import { useRouter } from 'vue-router';
+import { buildApiUrl } from '@/utils/api';
 
 const languageStore = useLanguageStore();
 const { t } = languageStore;
@@ -345,8 +355,11 @@ const loggingIn = ref(false);
 const registering = ref(false);
 const error = ref('');
 const info = ref('');
+const topTipOpen = ref(false);
+const topTipText = ref('');
 const cooldownLeft = ref(0);
 let timer: number | null = null;
+let topTipTimer: number | null = null;
 const googleClientId = ref(String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim());
 const googleButtonRef = ref<HTMLDivElement | null>(null);
 const googleLoading = ref(false);
@@ -383,6 +396,7 @@ watch(
     }
     error.value = '';
     info.value = '';
+    void ensureGoogleReady();
   }
 );
 
@@ -428,6 +442,15 @@ const startCooldown = (sec: number) => {
   }, 1000);
 };
 
+const showTopTip = (msg: string) => {
+  topTipText.value = msg;
+  topTipOpen.value = true;
+  if (topTipTimer) window.clearTimeout(topTipTimer);
+  topTipTimer = window.setTimeout(() => {
+    topTipOpen.value = false;
+  }, 3000);
+};
+
 const loadGoogleScript = () => {
   if (googleScriptPromise) return googleScriptPromise;
   googleScriptPromise = new Promise<void>((resolve, reject) => {
@@ -436,34 +459,68 @@ const loadGoogleScript = () => {
       resolve();
       return;
     }
+    const resolveScriptUrl = (useProxy: boolean) => {
+      if (!useProxy) return 'https://accounts.google.com/gsi/client';
+      const proxyUrl = buildApiUrl('/api/proxy/google-gsi');
+      return proxyUrl || 'https://accounts.google.com/gsi/client';
+    };
+    const appendScript = (useProxy: boolean) => {
+      const script = document.createElement('script');
+      script.src = resolveScriptUrl(useProxy);
+      script.async = true;
+      script.defer = true;
+      script.dataset.googleIdentity = '1';
+      script.dataset.googleProxy = useProxy ? '1' : '0';
+      script.onload = () => resolve();
+      script.onerror = () => {
+        if (useProxy) {
+          script.remove();
+          appendScript(false);
+          return;
+        }
+        reject(new Error('GOOGLE_SCRIPT_FAILED'));
+      };
+      document.head.appendChild(script);
+    };
     const existing = document.querySelector('script[data-google-identity]');
     if (existing) {
       existing.addEventListener('load', () => resolve(), { once: true });
-      existing.addEventListener('error', () => reject(new Error('GOOGLE_SCRIPT_FAILED')), {
-        once: true
-      });
+      existing.addEventListener(
+        'error',
+        () => {
+          const useProxy = (existing as HTMLScriptElement).dataset.googleProxy === '1';
+          if (useProxy) {
+            existing.remove();
+            appendScript(false);
+            return;
+          }
+          reject(new Error('GOOGLE_SCRIPT_FAILED'));
+        },
+        { once: true }
+      );
       return;
     }
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.dataset.googleIdentity = '1';
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('GOOGLE_SCRIPT_FAILED'));
-    document.head.appendChild(script);
+    appendScript(true);
   });
   return googleScriptPromise;
 };
 
 const initGoogleButton = () => {
-  if (!googleClientId.value || !isOpen.value || entryStep.value !== 'google') return;
+  if (
+    !googleClientId.value ||
+    !isOpen.value ||
+    (entryStep.value !== 'google' && entryStep.value !== 'select')
+  )
+    return;
   const el = googleButtonRef.value;
   if (!el) return;
   loadGoogleScript()
     .then(() => {
       const g = (window as any).google;
-      if (!g?.accounts?.id) return;
+      if (!g?.accounts?.id) {
+        showTopTip(t('login.google_load_failed'));
+        return;
+      }
       el.innerHTML = '';
       g.accounts.id.initialize({
         client_id: googleClientId.value,
@@ -502,12 +559,13 @@ const initGoogleButton = () => {
         theme: 'outline',
         size: 'large',
         shape: 'pill',
-        width: 360,
+        width: el.clientWidth || 360,
         text: 'continue_with'
       });
     })
-    .catch(() => {
-      error.value = t('login.google_load_failed');
+    .catch((err) => {
+      console.error('Failed to load Google script', err);
+      showTopTip(t('login.google_load_failed'));
     });
 };
 
@@ -550,15 +608,28 @@ const chooseMethod = async (method: 'google' | 'email' | 'password') => {
     loginStore.setMode('login');
     return;
   }
-  entryStep.value = 'google';
+  entryStep.value = 'select';
+  await ensureGoogleReady(true);
+};
+
+const ensureGoogleReady = async (showError = false) => {
+  if (!isOpen.value) return;
+  if (entryStep.value !== 'google' && entryStep.value !== 'select') return;
   const cid = await loadGoogleClientId();
   if (!cid) {
-    error.value = t('login.google_not_configured');
+    if (showError) error.value = t('login.google_not_configured');
     return;
   }
   await nextTick();
   initGoogleButton();
 };
+
+watch(
+  () => entryStep.value,
+  () => {
+    void ensureGoogleReady();
+  }
+);
 
 const backToMethods = () => {
   entryStep.value = 'select';
@@ -717,10 +788,61 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
   if (timer) window.clearInterval(timer);
+  if (topTipTimer) window.clearTimeout(topTipTimer);
 });
 </script>
 
 <style scoped>
+/* Top Tip */
+.top-tip {
+  position: fixed;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20001;
+  max-width: min(680px, 92vw);
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(10, 10, 10, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  color: rgba(248, 113, 113, 0.95);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-tip::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  background: rgba(248, 113, 113, 0.95);
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.55);
+  vertical-align: middle;
+}
+
+.top-tip-fade-enter-active,
+.top-tip-fade-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.top-tip-fade-enter-from,
+.top-tip-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-10px);
+}
+
 .login-modal {
   position: fixed;
   inset: 0;
@@ -863,25 +985,32 @@ onBeforeUnmount(() => {
 }
 
 .nth-login-btn.method {
+  position: relative;
   width: 100%;
-  height: 72px;
+  height: 44px;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  padding-left: 24px;
-  gap: 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px; /* Standard rounded, not 999px */
-  color: #f1f5f9;
-  font-size: 20px;
+  justify-content: center;
+  background: #ffffff;
+  border: 1px solid #dadce0;
+  border-radius: 999px;
+  color: #3c4043;
+  font-size: 14px;
   font-weight: 500;
   transition: all 0.2s;
 }
 
 .nth-login-btn.method:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: #f7f8f8;
+  box-shadow:
+    0 1px 2px 0 rgba(60, 64, 67, 0.3),
+    0 1px 3px 1px rgba(60, 64, 67, 0.15);
+}
+
+.nth-login-btn.method .icon {
+  position: absolute;
+  left: 12px;
+  font-size: 18px;
 }
 
 .icon {

@@ -20,7 +20,7 @@ export function useAgentImgUI() {
   const isMobileViewport = () => {
     if (typeof window === 'undefined') return false;
     try {
-      if (!window.matchMedia('(max-width: 1280px)').matches) return false;
+      if (!window.matchMedia('(max-width: 1400px)').matches) return false;
       return (
         window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(hover: none)').matches
       );

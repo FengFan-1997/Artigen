@@ -258,6 +258,23 @@ const sanitizeHref = (href: string) => {
   }
 };
 
+const sanitizeImgSrc = (src: string) => {
+  const raw = String(src ?? '').trim();
+  if (!raw) return null;
+  if (/[\u0000-\u001F\u007F\s]/.test(raw)) return null;
+  if (raw.startsWith('/')) return { src: raw, external: false };
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(raw)) return { src: raw, external: false };
+  if (raw.startsWith('blob:')) return { src: raw, external: false };
+  try {
+    const url = new URL(raw, window.location.href);
+    const protocol = url.protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:') return null;
+    return { src: url.href, external: url.origin !== window.location.origin };
+  } catch {
+    return null;
+  }
+};
+
 const sanitizeRenderedHtml = (html: string) => {
   if (typeof window === 'undefined' || typeof DOMParser === 'undefined') {
     return escapeHtml(html).replace(/\n/g, '<br>');
@@ -288,7 +305,8 @@ const sanitizeRenderedHtml = (html: string) => {
     'TBODY',
     'TR',
     'TH',
-    'TD'
+    'TD',
+    'IMG'
   ]);
 
   const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
@@ -312,6 +330,8 @@ const sanitizeRenderedHtml = (html: string) => {
       el.removeAttribute(attr.name);
       if (tag === 'A' && (name === 'href' || name === 'title')) {
         el.setAttribute(attr.name, attr.value);
+      } else if (tag === 'IMG' && (name === 'src' || name === 'alt' || name === 'title')) {
+        el.setAttribute(attr.name, attr.value);
       } else if ((tag === 'CODE' || tag === 'PRE') && name === 'class') {
         const v = String(attr.value || '').trim();
         if (/^(language|lang)-[a-z0-9_-]{1,24}$/i.test(v)) el.setAttribute('class', v);
@@ -331,6 +351,21 @@ const sanitizeRenderedHtml = (html: string) => {
         } else {
           el.removeAttribute('target');
           el.removeAttribute('rel');
+        }
+      }
+    }
+    if (tag === 'IMG') {
+      const safe = sanitizeImgSrc(el.getAttribute('src') || '');
+      if (!safe) {
+        el.remove();
+      } else {
+        el.setAttribute('src', safe.src);
+        el.setAttribute('loading', 'lazy');
+        el.setAttribute('decoding', 'async');
+        if (safe.external) {
+          el.setAttribute('referrerpolicy', 'no-referrer');
+        } else {
+          el.removeAttribute('referrerpolicy');
         }
       }
     }
@@ -644,6 +679,13 @@ watch(
   border: 1px solid rgba(255, 255, 255, 0.05);
   word-break: break-word;
   color: #f0f0f0;
+}
+
+.room-bubble img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+  display: block;
 }
 
 .room-message.agent .room-bubble {

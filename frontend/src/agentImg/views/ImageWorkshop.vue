@@ -1096,9 +1096,11 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 
 @media (max-width: 768px) {
   .page-title {
-    font-size: 40px;
-    flex-direction: column;
+    font-size: 26px;
+    flex-direction: row;
+    flex-wrap: nowrap;
     gap: 8px;
+    white-space: nowrap;
   }
 
   .tools-grid {

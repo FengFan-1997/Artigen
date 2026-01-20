@@ -50,12 +50,8 @@ export function useAgentImgModels(ensureAuthed: () => boolean, ui: any) {
       currentLang.value === 'zh'
         ? '自动：按图生图/文生图自动选择'
         : 'Auto: picks based on img2img/txt2img';
-    const txtHint =
-      currentLang.value === 'zh' ? '更适合纯提示词出图' : 'Better for text-only generation';
-    const editHint =
-      currentLang.value === 'zh'
-        ? '更适合带参考图编辑'
-        : 'Better for image editing with references';
+    const txtHint = currentLang.value === 'zh' ? '高级模型' : 'Advanced Model';
+    const editHint = currentLang.value === 'zh' ? '超级模型' : 'Super Model';
     return [
       { id: '', label: ui.value.modelStandard, badge: 'AUTO', hint: autoHint, requiresPro: false },
       {

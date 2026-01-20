@@ -661,6 +661,52 @@ const openPayUrl = () => {
   }
 };
 
+const openPayLoadingWindow = () => {
+  try {
+    const w = window.open('', '_blank');
+    if (!w) return null;
+    const title = ui.value.payOpeningTitle;
+    const desc = ui.value.payOpeningDesc;
+    const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${title}</title>
+<style>
+  body{margin:0;background:#050505;color:#e2e8f0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px}
+  .card{max-width:520px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:rgba(12,12,12,.92);box-shadow:0 20px 50px rgba(0,0,0,.6)}
+  .inner{padding:28px 26px;text-align:center}
+  .title{font-size:20px;font-weight:800;letter-spacing:-.3px;margin-bottom:10px;color:#ccff00}
+  .desc{font-size:13px;line-height:1.7;color:#94a3b8}
+  .dot{display:inline-block;width:6px;height:6px;border-radius:999px;background:#ccff00;margin:0 4px;box-shadow:0 0 12px rgba(204,255,0,.8)}
+  .dots{margin-top:16px}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="inner">
+        <div class="title">${title}</div>
+        <div class="desc">${desc}</div>
+        <div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+    try {
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+    } catch {}
+    return w;
+  } catch {
+    return null;
+  }
+};
+
 const refreshBalance = async () => {
   const bal = await getCreditsBalance();
   latestCredits.value = bal ? Number(bal.available ?? 0) || 0 : null;
@@ -758,7 +804,7 @@ const handleBuy = async (packageId: PayPackageId) => {
   // Pre-open window to bypass popup blocker
   let newWindow: Window | null = null;
   try {
-    newWindow = window.open('', '_blank');
+    newWindow = openPayLoadingWindow();
   } catch {}
 
   payError.value = '';
@@ -905,6 +951,8 @@ const ui = computed(() => {
       payTitle: '完成支付',
       paySub:
         '打开支付页面后通常无需手动填写备注；如支付页未自动带出订单信息，可粘贴：userId=<你的用户ID> orderId=<订单号>。支付完成后系统会自动检测到账。',
+      payOpeningTitle: '正在打开爱发电',
+      payOpeningDesc: '网络波动时可能需要稍等，页面会自动跳转到支付页。',
       payUserIdLabel: '用户ID',
       payOrderIdLabel: '订单号',
       payPackageLabel: '套餐',
@@ -1028,6 +1076,8 @@ const ui = computed(() => {
     payTitle: 'Complete Payment',
     paySub:
       'Usually no manual remark is needed. If the payment page does not show order info, paste: userId=<your userId> orderId=<orderId>. We will auto-detect credits.',
+    payOpeningTitle: 'Opening Afdian',
+    payOpeningDesc: 'Network delays may occur. You will be redirected automatically.',
     payUserIdLabel: 'UserId',
     payOrderIdLabel: 'OrderId',
     payPackageLabel: 'Package',

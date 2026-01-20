@@ -1,4 +1,4 @@
-@media (max-width: 1280px) {
+@media (max-width: 1400px) {
   .input-toolbar .toggle-text {
     display: none;
   }
@@ -146,7 +146,7 @@
   }
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1400px) {
   .side {
     width: 320px;
   }

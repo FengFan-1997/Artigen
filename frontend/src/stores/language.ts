@@ -262,7 +262,7 @@ export const useLanguageStore = defineStore('language', () => {
         debug_code_hint: 'SMTP not configured, debug code: {code}',
         or: 'OR',
         google_failed: 'Google login failed',
-        google_load_failed: 'Failed to load Google login',
+        google_load_failed: '因网络问题 谷歌账号登录按钮无法加载',
         google_not_configured: 'Google login is not configured',
         terms_of_use: 'Terms of Use',
         privacy_policy: 'Privacy Policy',

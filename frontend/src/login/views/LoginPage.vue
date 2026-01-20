@@ -1,5 +1,8 @@
 <template>
   <div class="login-page">
+    <transition name="top-tip-fade">
+      <div v-if="topTipOpen" class="top-tip">{{ topTipText }}</div>
+    </transition>
     <LanguageSwitcher />
     <div class="card">
       <!-- Left Side Image Panel -->
@@ -23,10 +26,13 @@
         <div class="body">
           <div v-if="loginMethod === 'select'" class="method-list">
             <div class="sub">{{ subText }}</div>
-            <button class="nth-login-btn method" type="button" @click="goMethod('google')">
-              <i class="fa-brands fa-google icon"></i>
-              <span>{{ t('login.method_google') }}</span>
-            </button>
+            <div class="oauth-block">
+              <div
+                ref="googleButtonRef"
+                class="google-btn"
+                :class="{ disabled: googleLoading }"
+              ></div>
+            </div>
             <button class="nth-login-btn method" type="button" @click="goMethod('email')">
               <i class="fa-regular fa-envelope icon"></i>
               <span>{{ t('login.method_email') }}</span>
@@ -159,6 +165,7 @@ import {
 } from '../storage';
 import { ensureGuestUserId, setLoggedIn } from '../session';
 import { useLanguageStore } from '@/stores/language';
+import { buildApiUrl } from '@/utils/api';
 import LanguageSwitcher from '../components/LanguageSwitcher.vue';
 
 const { t } = useLanguageStore();
@@ -172,6 +179,9 @@ const loggingIn = ref(false);
 const error = ref('');
 const cooldownLeft = ref(0);
 let timer: number | null = null;
+const topTipOpen = ref(false);
+const topTipText = ref('');
+let topTipTimer: number | null = null;
 const googleClientId = ref(String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim());
 const googleButtonRef = ref<HTMLDivElement | null>(null);
 const googleLoading = ref(false);
@@ -221,6 +231,15 @@ const startCooldown = (sec: number) => {
       timer = null;
     }
   }, 1000);
+};
+
+const showTopTip = (msg: string) => {
+  topTipText.value = msg;
+  topTipOpen.value = true;
+  if (topTipTimer) window.clearTimeout(topTipTimer);
+  topTipTimer = window.setTimeout(() => {
+    topTipOpen.value = false;
+  }, 3000);
 };
 
 const sendCode = async () => {
@@ -290,22 +309,48 @@ const loadGoogleScript = () => {
       resolve();
       return;
     }
+    const resolveScriptUrl = (useProxy: boolean) => {
+      if (!useProxy) return 'https://accounts.google.com/gsi/client';
+      const proxyUrl = buildApiUrl('/api/proxy/google-gsi');
+      return proxyUrl || 'https://accounts.google.com/gsi/client';
+    };
+    const appendScript = (useProxy: boolean) => {
+      const script = document.createElement('script');
+      script.src = resolveScriptUrl(useProxy);
+      script.async = true;
+      script.defer = true;
+      script.dataset.googleIdentity = '1';
+      script.dataset.googleProxy = useProxy ? '1' : '0';
+      script.onload = () => resolve();
+      script.onerror = () => {
+        if (useProxy) {
+          script.remove();
+          appendScript(false);
+          return;
+        }
+        reject(new Error('GOOGLE_SCRIPT_FAILED'));
+      };
+      document.head.appendChild(script);
+    };
     const existing = document.querySelector('script[data-google-identity]');
     if (existing) {
       existing.addEventListener('load', () => resolve(), { once: true });
-      existing.addEventListener('error', () => reject(new Error('GOOGLE_SCRIPT_FAILED')), {
-        once: true
-      });
+      existing.addEventListener(
+        'error',
+        () => {
+          const useProxy = (existing as HTMLScriptElement).dataset.googleProxy === '1';
+          if (useProxy) {
+            existing.remove();
+            appendScript(false);
+            return;
+          }
+          reject(new Error('GOOGLE_SCRIPT_FAILED'));
+        },
+        { once: true }
+      );
       return;
     }
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.dataset.googleIdentity = '1';
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('GOOGLE_SCRIPT_FAILED'));
-    document.head.appendChild(script);
+    appendScript(true);
   });
   return googleScriptPromise;
 };
@@ -348,7 +393,7 @@ const renderGoogleButton = () => {
     theme: 'outline',
     size: 'large',
     shape: 'pill',
-    width: 420,
+    width: googleButtonRef.value.clientWidth || 420,
     text: 'continue_with'
   });
 };
@@ -370,7 +415,7 @@ const backToMethods = () => {
 };
 
 const ensureGoogleReady = async () => {
-  if (loginMethod.value !== 'google') return;
+  if (loginMethod.value !== 'google' && loginMethod.value !== 'select') return;
   const cid = await loadGoogleClientId();
   if (!cid) {
     error.value = t('login.google_not_configured');
@@ -382,7 +427,7 @@ const ensureGoogleReady = async () => {
       renderGoogleButton();
     })
     .catch(() => {
-      error.value = t('login.google_load_failed');
+      showTopTip(t('login.google_load_failed'));
     });
 };
 
@@ -421,6 +466,7 @@ watch(
 
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer);
+  if (topTipTimer) window.clearTimeout(topTipTimer);
 });
 </script>
 
@@ -567,25 +613,32 @@ onBeforeUnmount(() => {
 }
 
 .nth-login-btn.method {
+  position: relative;
   width: 100%;
-  height: 72px;
+  height: 44px;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  padding-left: 24px;
-  gap: 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  color: #f1f5f9;
-  font-size: 20px;
+  justify-content: center;
+  background: #ffffff;
+  border: 1px solid #dadce0;
+  border-radius: 999px;
+  color: #3c4043;
+  font-size: 14px;
   font-weight: 500;
   transition: all 0.2s;
 }
 
 .nth-login-btn.method:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: #f7f8f8;
+  box-shadow:
+    0 1px 2px 0 rgba(60, 64, 67, 0.3),
+    0 1px 3px 1px rgba(60, 64, 67, 0.15);
+}
+
+.nth-login-btn.method .icon {
+  position: absolute;
+  left: 12px;
+  font-size: 18px;
 }
 
 .icon {

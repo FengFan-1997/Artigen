@@ -169,5 +169,18 @@
     "createdAt": 1768903796295,
     "sessionToken": "99ab54bfa0066d24eb6a9f9202a1db7aa9f28da9409b30bamkmfncjr",
     "sessionTokenIssuedAt": 1768903796295
+  },
+  "google_28b97a503732fa72": {
+    "id": "google_28b97a503732fa72",
+    "email": "sorates1997@gmail.com",
+    "username": "sorates1997@gmail.com",
+    "name": "Sorates",
+    "visits": 0,
+    "preferences": {},
+    "createdAt": 1768919501810,
+    "oauthProvider": "google",
+    "oauthSub": "117421557443221477342",
+    "sessionToken": "789716ccc520a0793f694f8149d979497fc5bdffa61e82a0mkmozz01",
+    "sessionTokenIssuedAt": 1768919501810
   }
 }
