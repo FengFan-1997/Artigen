@@ -66,6 +66,74 @@
               </div>
             </div>
 
+            <div v-else-if="entryStep === 'email_input'" class="step">
+              <div class="sub">{{ subText }}</div>
+              <div class="field">
+                <div class="label">{{ t('login.email_label') }}</div>
+                <input
+                  v-model.trim="emailLocal"
+                  class="control"
+                  type="email"
+                  :placeholder="t('login.email_placeholder')"
+                  autocomplete="email"
+                />
+              </div>
+              <div class="hint" :class="{ error: !!error }">
+                {{ error || info }}
+              </div>
+              <button
+                class="nth-login-btn primary"
+                :disabled="sending || !emailLocal || cooldownLeft > 0"
+                type="button"
+                @click="sendCode"
+              >
+                {{
+                  cooldownLeft > 0
+                    ? t('login.resend_wait', { s: cooldownLeft })
+                    : sending
+                      ? t('login.sending')
+                      : t('login.send_code')
+                }}
+              </button>
+              <div class="row">
+                <button class="link-btn" type="button" @click="backToMethods">
+                  {{ t('login.back_to_methods') }}
+                </button>
+              </div>
+            </div>
+
+            <div v-else-if="entryStep === 'email_verify'" class="step">
+              <div class="sub">{{ subText }}</div>
+              <div class="field">
+                <div class="label">{{ t('login.code_label') }}</div>
+                <input
+                  v-model.trim="code"
+                  class="control"
+                  inputmode="numeric"
+                  maxlength="6"
+                  :placeholder="t('login.code_placeholder')"
+                  autocomplete="one-time-code"
+                  @keyup.enter="verifyCode"
+                />
+              </div>
+              <div class="hint" :class="{ error: !!error }">
+                {{ error || info }}
+              </div>
+              <button
+                class="nth-login-btn primary"
+                :disabled="loggingIn || !emailLocal || code.length < 6"
+                type="button"
+                @click="verifyCode"
+              >
+                {{ loggingIn ? t('login.verifying') : t('login.verify_btn') }}
+              </button>
+              <div class="row">
+                <button class="link-btn" type="button" @click="entryStep = 'email_input'">
+                  {{ t('login.back_to_resend') }}
+                </button>
+              </div>
+            </div>
+
             <div v-else-if="mode === 'login'" class="step">
               <div class="sub">{{ subText }}</div>
 
@@ -237,7 +305,8 @@ import {
   loginWithGoogleIdToken,
   loginWithPassword,
   registerWithEmailCode,
-  sendLoginCode
+  sendLoginCode,
+  verifyLoginCode
 } from '../api';
 import {
   getLastEmail,
@@ -270,7 +339,7 @@ const emailLocal = ref(getLastEmail());
 const username = ref('');
 const password = ref('');
 const code = ref('');
-const entryStep = ref<'select' | 'google' | 'password'>('select');
+const entryStep = ref<'select' | 'google' | 'password' | 'email_input' | 'email_verify'>('select');
 const sending = ref(false);
 const loggingIn = ref(false);
 const registering = ref(false);
@@ -331,6 +400,8 @@ watch(
 const titleText = computed(() => {
   if (entryStep.value === 'select') return t('login.choose_method_title');
   if (entryStep.value === 'google') return t('login.title');
+  if (entryStep.value === 'email_input') return t('login.method_email');
+  if (entryStep.value === 'email_verify') return t('login.verify_title');
   return mode.value === 'register' ? t('login.register') : t('login.login');
 });
 const toggleModeText = computed(() =>
@@ -339,6 +410,9 @@ const toggleModeText = computed(() =>
 const subText = computed(() => {
   if (entryStep.value === 'select') return t('login.choose_method_sub');
   if (entryStep.value === 'google') return t('login.google_sub');
+  if (entryStep.value === 'email_input') return t('login.sub');
+  if (entryStep.value === 'email_verify')
+    return t('login.verify_subtitle', { email: emailLocal.value });
   return mode.value === 'register' ? t('login.register_sub') : t('login.password_login_sub');
 });
 
@@ -468,13 +542,7 @@ const chooseMethod = async (method: 'google' | 'email' | 'password') => {
   error.value = '';
   info.value = '';
   if (method === 'email') {
-    try {
-      window.sessionStorage.setItem('login_entry', 'email');
-    } catch {}
-    const to =
-      String((loginStore as any).returnTo || '').trim() || router.currentRoute.value.fullPath;
-    close();
-    router.push({ path: '/login', query: { ...(to ? { redirect: to } : {}) } });
+    entryStep.value = 'email_input';
     return;
   }
   if (method === 'password') {
@@ -521,12 +589,46 @@ const sendCode = async () => {
       error.value = res.message;
       return;
     }
-    info.value = res.message || t('login.success');
+    // info.value = res.message || t('login.success');
     startCooldown(res.cooldownSec);
+    entryStep.value = 'email_verify';
   } catch (err: any) {
     error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
   } finally {
     sending.value = false;
+  }
+};
+
+const verifyCode = async () => {
+  error.value = '';
+  const e = String(emailLocal.value || '')
+    .trim()
+    .toLowerCase();
+  const c = String(code.value || '').trim();
+  if (!e) return;
+  if (!c) {
+    error.value = t('login.enter_code');
+    return;
+  }
+  loggingIn.value = true;
+  try {
+    const res = await verifyLoginCode(e, c);
+    if (!res.ok) {
+      error.value = res.message;
+      return;
+    }
+    setLastEmail(e);
+    upsertUser({ email: e, userId: res.userId });
+    setLoggedIn({ userId: res.userId, token: res.token });
+    try {
+      window.dispatchEvent(new CustomEvent('app-auth-changed'));
+    } catch {}
+    close();
+    await loginStore.runAfterLogin();
+  } catch (err: any) {
+    error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
+  } finally {
+    loggingIn.value = false;
   }
 };
 
@@ -878,6 +980,7 @@ onBeforeUnmount(() => {
 
 .footer-text {
   color: #64748b;
+  margin-bottom: 5px;
 }
 
 .footer-link {

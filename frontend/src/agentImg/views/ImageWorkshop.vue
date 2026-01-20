@@ -11,9 +11,13 @@
 
         <div class="title-stack">
           <h1 class="page-title">
-            {{ ui.titleMain }} <span class="highlight">{{ ui.titleHighlight }}</span>
-            <sup class="real-beta-badge">Beta</sup>
-            <span class="beta-badge">{{ ui.beta }}</span>
+            <span class="title-text-group">
+              {{ ui.titleMain }} <span class="highlight">{{ ui.titleHighlight }}</span>
+            </span>
+            <div class="badges-group">
+              <span class="real-beta-badge">Beta</span>
+              <span class="beta-badge">{{ ui.beta }}</span>
+            </div>
           </h1>
           <p class="page-desc">{{ ui.desc }}</p>
         </div>
@@ -108,7 +112,7 @@
         </div>
       </div>
 
-      <div class="faq-section">
+      <div class="faq-section faq-mobile-pad">
         <div class="faq-left">
           <div class="faq-title-large">{{ ui.faqTitle }}</div>
           <div class="faq-subtitle">{{ ui.faqSubtitle }}</div>
@@ -783,6 +787,16 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   align-items: center;
   justify-content: center;
   gap: 20px;
+  flex-wrap: wrap;
+}
+
+.title-text-group {
+  white-space: nowrap;
+}
+
+.badges-group {
+  display: inline-flex;
+  align-items: center;
 }
 
 .highlight {

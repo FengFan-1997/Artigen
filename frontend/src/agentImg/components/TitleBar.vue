@@ -86,6 +86,13 @@
         >
           {{ ui.navMarket }}
         </router-link>
+        <router-link
+          to="/artigen/about"
+          class="nav-item"
+          :class="{ active: activeKey === 'about' }"
+        >
+          {{ ui.navAbout }}
+        </router-link>
       </nav>
 
       <div class="header-right">
@@ -236,6 +243,14 @@
         >
           {{ ui.navMarket }}
         </router-link>
+        <router-link
+          to="/artigen/about"
+          class="mobile-item"
+          :class="{ active: activeKey === 'about' }"
+          @click="isMobileMenuOpen = false"
+        >
+          {{ ui.navAbout }}
+        </router-link>
       </div>
     </transition>
 
@@ -378,6 +393,7 @@ const ui = computed(() => {
     navFormatFactory: 'Tools',
     navImageWorkshop: 'AI Image Workshop',
     navMarket: 'Compute Market',
+    navAbout: 'About',
     toolsPopoverTitle: 'Image & File Tools',
     viewAllTools: 'View all tools',
     creditsBalance: 'Credit balance',
@@ -429,13 +445,14 @@ const cancelCloseToolsMenu = () => {
   }
 };
 
-const activeKey = computed<'format' | 'ai' | 'market' | 'image' | 'home'>(() => {
+const activeKey = computed<'format' | 'ai' | 'market' | 'image' | 'home' | 'about'>(() => {
   const p = String(route.path || '');
   if (p === '/artigen' || p === '/artigen/') return 'home';
   if (p.startsWith('/artigen/tools') || p.startsWith('/artigen/format-factory')) return 'format';
   if (p.startsWith('/artigen/market')) return 'market';
   if (p.startsWith('/artigen/image-workshop')) return 'image';
   if (p.startsWith('/artigen/ai')) return 'ai';
+  if (p.startsWith('/artigen/about')) return 'about';
   return 'home';
 });
 

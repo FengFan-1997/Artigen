@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 require('dotenv').config({ path: path.resolve(__dirname, '.env'), override: true });
-const { fetch } = require('./lib/fetch-utils');
+const { fetch, fetchWithTimeout } = require('./lib/fetch-utils');
 
 const {
   readJson,
@@ -261,6 +261,78 @@ const API_RATE_WINDOW_MS = (() => {
 if (enableApiRateLimit) {
   app.use('/api', rateLimit('api', { max: API_RATE_MAX, windowMs: API_RATE_WINDOW_MS }));
 }
+
+const isPrivateHost = (host) => {
+  const h = String(host || '').trim().toLowerCase();
+  if (!h) return true;
+  if (h === 'localhost' || h === 'localhost.localdomain') return true;
+  if (h === '::1' || h === '[::1]') return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) {
+    const parts = h.split('.').map((x) => Number.parseInt(x, 10));
+    if (parts.some((x) => !Number.isFinite(x) || x < 0 || x > 255)) return true;
+    const [a, b] = parts;
+    if (a === 10) return true;
+    if (a === 127) return true;
+    if (a === 0) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    return false;
+  }
+  if (h.includes(':')) {
+    if (h.startsWith('::') || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80'))
+      return true;
+  }
+  return false;
+};
+
+app.get('/api/proxy/image', async (req, res) => {
+  try {
+    const raw = typeof req.query.url === 'string' ? req.query.url : '';
+    const target = String(raw || '').trim();
+    if (!target) return res.status(400).json({ error: 'MISSING_URL' });
+    let parsed = null;
+    try {
+      parsed = new URL(target);
+    } catch {
+      return res.status(400).json({ error: 'INVALID_URL' });
+    }
+    const proto = String(parsed.protocol || '').toLowerCase();
+    if (proto !== 'http:' && proto !== 'https:') return res.status(400).json({ error: 'INVALID_PROTOCOL' });
+    const hostname = String(parsed.hostname || '').trim();
+    if (isPrivateHost(hostname)) return res.status(403).json({ error: 'FORBIDDEN_HOST' });
+
+    const upstream = await fetchWithTimeout(
+      target,
+      {
+        method: 'GET',
+        redirect: 'follow',
+        headers: {
+          Accept: 'image/*,*/*;q=0.8',
+          'User-Agent': 'Mozilla/5.0'
+        }
+      },
+      20000
+    );
+    if (!upstream.ok) return res.status(502).json({ error: `UPSTREAM_${upstream.status || 502}` });
+
+    const ct = String(upstream.headers.get('content-type') || '').trim();
+    if (!/^image\//i.test(ct)) return res.status(415).json({ error: 'NOT_IMAGE' });
+
+    const len = Number.parseInt(String(upstream.headers.get('content-length') || ''), 10);
+    if (Number.isFinite(len) && len > 25 * 1024 * 1024) return res.status(413).json({ error: 'TOO_LARGE' });
+
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    if (!buf.length || buf.length > 25 * 1024 * 1024) return res.status(413).json({ error: 'TOO_LARGE' });
+
+    res.status(200);
+    res.setHeader('Content-Type', ct || 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.end(buf);
+  } catch {
+    res.status(502).json({ error: 'PROXY_FAILED' });
+  }
+});
 
 const clampInt = (n, min, max) => {
   const v = Number.parseInt(String(n || ''), 10);

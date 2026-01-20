@@ -160,11 +160,32 @@ const sendPasswordResetMail = async (to, code) => {
 };
 
 const installAuthRoutes = (app) => {
+  const setAuthCors = (req, res) => {
+    const origin = typeof req?.headers?.origin === 'string' ? req.headers.origin.trim() : '';
+    if (!origin) return;
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Max-Age', '600');
+  };
+
+  app.options('/api/auth/google/config', (req, res) => {
+    setAuthCors(req, res);
+    res.status(204).end();
+  });
+  app.options('/api/auth/google/verify', (req, res) => {
+    setAuthCors(req, res);
+    res.status(204).end();
+  });
+
   app.get('/api/auth/google/config', (req, res) => {
+    setAuthCors(req, res);
     const clientId = getGoogleOauthClientId();
     res.json({ ok: true, clientId: clientId || '' });
   });
   app.post('/api/auth/google/verify', rateLimit('google_login', { max: 20, windowMs: 60 * 1000 }), async (req, res) => {
+    setAuthCors(req, res);
     try {
       const idToken = String((req.body || {}).idToken || '').trim();
       const fromUserId = String((req.body || {}).fromUserId || '').trim();

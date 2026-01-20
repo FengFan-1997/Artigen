@@ -714,6 +714,7 @@ onBeforeUnmount(() => {
 
 .footer-text {
   color: #64748b;
+  margin-bottom: 5px;
 }
 
 .footer-link {

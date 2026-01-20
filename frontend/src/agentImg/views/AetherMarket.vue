@@ -355,7 +355,7 @@
     </div>
 
     <!-- FAQ Section -->
-    <div class="faq-section">
+    <div class="faq-section faq-mobile-pad">
       <div class="faq-left">
         <div class="faq-title-large">{{ ui.faqTitle }}</div>
         <div class="faq-subtitle">{{ ui.faqSubtitle }}</div>
@@ -654,7 +654,8 @@ const openPayUrl = () => {
     meta: { orderId: payOrderId.value }
   });
   try {
-    window.open(u, '_blank', 'noopener,noreferrer');
+    const w = window.open(u, '_blank', 'noopener,noreferrer');
+    if (!w) window.location.assign(u);
   } catch {
     window.location.assign(u);
   }
@@ -753,6 +754,13 @@ const handleBuy = async (packageId: PayPackageId) => {
   if (payCreating.value) return;
   const ok = ensureAuthed(() => handleBuy(packageId));
   if (!ok) return;
+
+  // Pre-open window to bypass popup blocker
+  let newWindow: Window | null = null;
+  try {
+    newWindow = window.open('', '_blank');
+  } catch {}
+
   payError.value = '';
   payChecking.value = false;
   payRefreshing.value = false;
@@ -762,6 +770,7 @@ const handleBuy = async (packageId: PayPackageId) => {
   try {
     const created = await createPayOrder(packageId);
     if (!created.ok) {
+      if (newWindow) newWindow.close();
       payError.value = created.error;
       payOpen.value = true;
       return;
@@ -776,8 +785,20 @@ const handleBuy = async (packageId: PayPackageId) => {
     baselineCredits.value = bal ? Number(bal.available ?? 0) || 0 : null;
     latestCredits.value = baselineCredits.value;
 
-    if (payUrl.value) openPayUrl();
+    if (payUrl.value) {
+      if (newWindow && !newWindow.closed) {
+        try {
+          newWindow.location.replace(payUrl.value);
+        } catch {
+          openPayUrl();
+        }
+      } else openPayUrl();
+    } else {
+      if (newWindow) newWindow.close();
+    }
     startPolling();
+  } catch {
+    if (newWindow) newWindow.close();
   } finally {
     payCreating.value = false;
     buyingPackageId.value = '';

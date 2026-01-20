@@ -126,7 +126,7 @@
                   />
                 </div>
                 <textarea
-                  class="control control-textarea"
+                  class="control control-textarea text1"
                   rows="4"
                   style="margin-bottom: 16px"
                   :value="selectedOptionSummary"
@@ -550,6 +550,7 @@ import { useAgentImgModels } from './composables/useAgentImgModels';
 import { useAgentImgUI } from './composables/useAgentImgUI';
 import { useAgentImgUpload } from './composables/useAgentImgUpload';
 import { useAgentImgGeneration } from './composables/useAgentImgGeneration';
+import { buildApiUrl, getApiBaseUrl } from '@/utils/api';
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -946,19 +947,46 @@ const extFromMime = (mime: string) => {
   return 'png';
 };
 
+const resolveRefUrl = (raw: string) => {
+  const u = String(raw || '').trim();
+  if (!u || !u.startsWith('/')) return u;
+  const base = getApiBaseUrl();
+  if (!base) return u;
+  if (u.startsWith('/files/')) {
+    if (base.endsWith('/api')) return `${base.slice(0, -4)}${u}`;
+    return `${base}${u}`;
+  }
+  return buildApiUrl(u);
+};
+
 const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> => {
   const v = String(it?.value || '').trim();
   if (!v) return null;
-  try {
-    const res = await fetch(v);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    if (
-      !String(blob.type || '')
-        .toLowerCase()
-        .startsWith('image/')
-    )
+  const tryFetchToBlob = async (url: string): Promise<Blob | null> => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      if (
+        !String(blob.type || '')
+          .toLowerCase()
+          .startsWith('image/')
+      )
+        return null;
+      return blob;
+    } catch {
       return null;
+    }
+  };
+  try {
+    const resolved = resolveRefUrl(v);
+    let blob = await tryFetchToBlob(resolved || v);
+    if (!blob && resolved && resolved !== v) blob = await tryFetchToBlob(v);
+    if (!blob && /^https?:\/\//i.test(v)) {
+      const proxyUrl = buildApiUrl(`/api/proxy/image?url=${encodeURIComponent(v)}`);
+      blob = await tryFetchToBlob(proxyUrl);
+    }
+    if (!blob) return null;
     const ext = extFromMime(blob.type);
     return new File([blob], `reference_${Date.now().toString(36)}.${ext}`, { type: blob.type });
   } catch {
@@ -971,7 +999,14 @@ const referenceMsgImage = async (url: string) => {
   if (!s) return;
   const keepDeep = isStyleSelecting.value;
   const f = await prefillItemToFile({ kind: 'url', value: s });
-  if (!f) return;
+  if (!f) {
+    showTopTip(
+      currentLang.value === 'zh'
+        ? '图片无法引用（可能存在跨域限制）'
+        : 'Cannot reference image (CORS blocked)'
+    );
+    return;
+  }
   const emptySlots = previewUrls.value.map((u, i) => (!u ? i : -1)).filter((i) => i >= 0);
   const idx = emptySlots.length ? (emptySlots[0] as number) : 0;
   setPreviewFileAt(idx, f);
@@ -1091,4 +1126,8 @@ onBeforeUnmount(() => {
 
 <style>
 @import './styles/main.css';
+
+.text1 {
+  height: 200px !important;
+}
 </style>

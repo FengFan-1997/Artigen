@@ -203,10 +203,20 @@ export const loginWithPassword = async (
 };
 
 export const fetchGoogleClientId = async (): Promise<string> => {
-  const res = await fetch(GOOGLE_CONFIG_URL, { method: 'GET' });
-  const json = await parseJson(res);
-  if (!res.ok) return '';
-  return String(json?.clientId || '').trim();
+  const tryFetch = async (url: string) => {
+    try {
+      const res = await fetch(url, { method: 'GET' });
+      const json = await parseJson(res);
+      if (!res.ok) return '';
+      const raw = json?.clientId ?? json?.client_id ?? '';
+      return String(raw || '').trim();
+    } catch {
+      return '';
+    }
+  };
+  const a = await tryFetch(GOOGLE_CONFIG_URL);
+  if (a) return a;
+  return await tryFetch('/api/auth/google/config');
 };
 
 export const registerWithEmailCode = async (input: {

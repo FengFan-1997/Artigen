@@ -90,7 +90,7 @@
     </div>
 
     <!-- FAQ Section -->
-    <div class="faq-section">
+    <div class="faq-section faq-mobile-pad">
       <div class="faq-left">
         <div class="faq-title-large">{{ ui.faqTitle }}</div>
         <div class="faq-subtitle">{{ ui.faqSubtitle }}</div>

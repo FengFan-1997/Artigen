@@ -262,7 +262,7 @@
         </div>
       </section>
 
-      <section class="faq-section home-faq-section">
+      <section class="faq-section home-faq-section faq-mobile-pad">
         <div class="faq-left">
           <h2 class="faq-title-large">{{ faqTitle }}</h2>
           <p class="faq-subtitle">// KNOWLEDGE_BASE</p>
@@ -706,6 +706,40 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
+/* Rainbow Background Animation */
+.landing-page::before {
+  content: '';
+  position: fixed;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(255, 0, 0, 0.08),
+    rgba(255, 165, 0, 0.08),
+    rgba(255, 255, 0, 0.08),
+    rgba(0, 128, 0, 0.08),
+    rgba(0, 0, 255, 0.08),
+    rgba(75, 0, 130, 0.08),
+    rgba(238, 130, 238, 0.08),
+    transparent 60%
+  );
+  animation: rainbow-rotate 30s linear infinite;
+  z-index: 0;
+  pointer-events: none;
+  filter: blur(40px);
+}
+
+@keyframes rainbow-rotate {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
 .landing-page input,
 .landing-page textarea {
   user-select: text;
@@ -730,7 +764,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   min-height: 100vh;
   min-height: 100dvh;
-  background: radial-gradient(circle at 50% 50%, rgba(5, 5, 5, 0.5) 0%, rgba(5, 5, 5, 0.9) 100%);
+  background: radial-gradient(circle at 50% 50%, rgba(5, 5, 5, 0.3) 0%, rgba(5, 5, 5, 0.7) 100%);
 }
 
 /* Header */
@@ -1492,8 +1526,17 @@ onBeforeUnmount(() => {
 
 @media (max-width: 980px) {
   .features-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
     max-width: 800px;
+    gap: 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  .features-grid {
+    grid-template-columns: 1fr;
+    max-width: 100%;
+    padding: 0 10px;
   }
 }
 
@@ -1501,5 +1544,12 @@ onBeforeUnmount(() => {
   width: 60vw;
   margin-left: auto;
   margin-right: auto;
+}
+@media (max-width: 768px) {
+  .home-faq-section {
+    width: 80vw;
+    margin-left: auto;
+    margin-right: auto;
+  }
 }
 </style>

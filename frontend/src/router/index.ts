@@ -362,6 +362,18 @@ const routes = [
     } satisfies RouteSeoMeta
   },
   {
+    path: '/artigen/about',
+    name: 'about',
+    component: () => import('../agentImg/views/AboutPage.vue'),
+    meta: {
+      title: { zh: '关于我们 - Artigen', en: 'About Us - Artigen' },
+      description: {
+        zh: '了解 Artigen 团队与使命。',
+        en: 'Learn about Artigen team and mission.'
+      }
+    } satisfies RouteSeoMeta
+  },
+  {
     path: '/artigen/usage',
     name: 'credits-usage',
     component: () => import('../agentImg/views/CreditsUsage.vue'),

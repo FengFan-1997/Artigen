@@ -1,0 +1,33 @@
+{
+  "user_id": "email_2555433b3bcc7bea",
+  "meta": {
+    "updatedAt": 1768904572196,
+    "migratedFrom": "guest_p4hskt7wq"
+  },
+  "core_memory": [],
+  "short_term_buffer": [],
+  "image_history": [
+    {
+      "id": "img2img_mkmg3vas_l298j7",
+      "ts": 1768904572194,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "cost": 10,
+      "userText": "梦幻海洋奇景 风格限定: 水彩幻想风格\n视角构图: 鸟瞰构图，广阔视野\n主体描述: 一只蓝色独角兽在海浪中跃起\n背景设定: 雾气缭绕的海洋深处，有发光水母漂浮\n细节修饰: 海浪呈波浪形，独角兽鬃毛飘动\n光影色调: 雾气泛蓝紫色，独角兽呈现暖光\n质量词: 超高清，细腻笔触，富有想象力",
+      "prompt": "大海, 梦幻海洋奇景, 风格限定: 水彩幻想风格\n视角构图: 鸟瞰构图，广阔视野\n主体描述: 一只蓝色独角兽在海浪中跃起\n背景设定: 雾气缭绕的海洋深处，有发光水母漂浮\n细节修饰: 海浪呈波浪形，独角兽鬃毛飘动\n光影色调: 雾气泛蓝紫色，独角兽呈现暖光\n质量词: 超高清，细腻笔触，富有想象力, 水彩幻想风格, 鸟瞰构图, 蓝色独角兽, 海洋深处, 发光水母, 波浪形海浪, 鬃毛飘动, 雾气缭绕, 蓝紫色调, 暖光效果, 超高清, 细腻笔触, 富有想象力, 梦幻氛围",
+      "negativePrompt": "nsfw, nudity, gore, violence, lowres, bad anatomy, blurry, watermark, signature, text, 暗淡色调, 过于写实, 模糊不清, 低分辨率, 缺少色彩, 无细节, 多余元素, 静止画面, 灰色背景, 失去主体, 过度阴影, 低饱和度, 复杂构图, 无质感",
+      "images": [
+        {
+          "kind": "url",
+          "url": "https://s3.siliconflow.cn/default/outputs/bb09a58e-5272-4e9e-af5e-fbd0777c44b0_2667b3ff5bf1c1d85a09bd1700f98798_ComfyUI_86ea9554_00001_.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXXXXFILESEXAMPLE%2F20260120%2Fcn-shanghai-1%2Fs3%2Faws4_request&X-Amz-Date=20260120T102251Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=eyJhbGciOiJSUzI1NiIsImtpZCI6ImdyYXkiLCJ0eXAiOiJKV1QifQ.eyJzdWIiOiJmYWFzOmRlcDpvcHI6ZDI5Y3UzZ2gzdnZjNzNjNWJpNWc6OGFkNDEiLCJpc3MiOiJodHRwczovL2lhbS5zaWxpY29uZmxvdy5jbiIsImlhdCI6MTc2ODg5NTQ5OCwiZXhwIjoxNzY5MDY4Mjk4LCJ0eXAiOiJzZXJ2aWNlIiwiYXBsdCI6InNmOmZhYXM6ZmFicmljIiwidG50IjoiZDI5Y3UzZ2gzdnZjNzNjNWJpNWciLCJpZCI6ImQ1bmo4Mm1jbm5jYzczZTNxdGQwIiwiYWNjZXNzIjpbeyJ0eXBlIjoiZmFhcyIsInN1YmplY3RJZCI6ImQyOWN1M2doM3Z2YzczYzViaTVnIiwiYWN0aW9ucyI6WyJmYWFzOmludm9jYXRpb246cHVsbGluZyJdfV19.t8Bw3vf5dOLJRxwlF6b46eGUQoA8n4MVpSa9mBmw1nSTsLBu3FMHuiRaoJZl6ys2sCPvUz0Ko5aidydKJxOAU83RX8ye_HGk9DKq5hZFrKSZ_e9nockGE_f3lst5Lh8TA0_IM4jceBHZP51Z82eAO1yZ3hy1KztkyHbLOWAu-WD1nGtqPP5oEk0tExER6P3LUYl18W3JiGOaQcNM1V-fNOtzeRAtGgFLR9yQu-njybUZYwVVQ341Wx6JmLjboHftYR7sNygcrO2FTL9lSDZEy7MkLMbP2ww8EKBcdA6ONL3IEFY6Y4eoLWaYrmljAaSRjUsxJ8s_GVESZ2bb0pxDqeQZ7ZvvupfYSntWo1YpNS7xP9yFAkvl2oLA0nw4BXIsdF0oD2tCIwQ_y57YDTuf4BuuuYBTQW13EpY0W6K5cm0uyLcQb877AysXXCTHFPup8ekM_fF3IYliktehMBe_za8MqtCyjMtegZL4xACldWR-VBxe5MkVm9Z3PFjciRTl7Vr24n5m-zqq4RIJl7L5GmmnkWJiz1FJ1hAVeimpk4vZmMUofSfqBWDo_0YSFQJnkBvCMztZel85LMYkVi5BJJM7RWniHKo8ENGyHgVpRMBOkKMhifcIr9yTiLlHgPkkePRHQmFoqqr3mbsi4eiDUNU9ffZAM6ifSBhVnl8xazc&X-Amz-Signature=1ceca794a2e8b87de5a60a852ebd45422b5def9ca2173a380e4c9f85a87a6989"
+        }
+      ],
+      "seed": 203017092,
+      "timings": {
+        "inference": 4.715
+      },
+      "ip": "127.0.0.1"
+    }
+  ]
+}

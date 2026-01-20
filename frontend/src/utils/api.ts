@@ -11,5 +11,10 @@ export const buildApiUrl = (path: string) => {
   const base = getApiBaseUrl();
   const p = String(path || '').trim() || '/';
   const normalizedPath = p.startsWith('/') ? p : `/${p}`;
-  return base ? `${base}${normalizedPath}` : normalizedPath;
+  if (!base) return normalizedPath;
+  if (base.endsWith('/api') && (normalizedPath === '/api' || normalizedPath.startsWith('/api/'))) {
+    const rest = normalizedPath === '/api' ? '' : normalizedPath.slice(4);
+    return `${base}${rest}`;
+  }
+  return `${base}${normalizedPath}`;
 };
