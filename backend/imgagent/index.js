@@ -23,7 +23,7 @@ const installImgagentRoutes = (app, opts) => {
     };
     return parseCost(
       process.env.CREDITS_COST_IMG2IMG || process.env.CREDITS_COST_IMAGE || process.env.CREDITS_COST_GENERATE,
-      10
+      5
     );
   };
 
@@ -394,7 +394,7 @@ MQIDAQAB
     const generate = parseCost(process.env.CREDITS_COST_GENERATE, 10);
     const img2img = parseCost(
       process.env.CREDITS_COST_IMG2IMG || process.env.CREDITS_COST_IMAGE || process.env.CREDITS_COST_GENERATE,
-      10
+      5
     );
     res.json({ ok: true, generate, img2img });
   });

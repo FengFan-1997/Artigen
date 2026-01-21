@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#061f1a" />
+      <stop offset="0.55" stop-color="#0f3a2e" />
+      <stop offset="1" stop-color="#030b0a" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0.35" cy="0.18" r="0.45">
+      <stop offset="0" stop-color="#ccff00" stop-opacity="0.22" />
+      <stop offset="0.6" stop-color="#00ffd5" stop-opacity="0.08" />
+      <stop offset="1" stop-color="#000000" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)" />
+  <rect width="1600" height="900" fill="url(#glow)" />
+  <g opacity="0.9">
+    <path d="M0 900 V520 C120 560 220 540 340 520 C520 480 610 580 760 560 C930 535 1020 500 1160 520 C1320 540 1450 610 1600 560 V900 Z" fill="#071b14" />
+    <path d="M0 900 V600 C180 660 290 620 430 600 C560 580 640 680 780 660 C950 635 1030 600 1180 620 C1350 640 1460 720 1600 670 V900 Z" fill="#040f0c" opacity="0.95" />
+  </g>
+  <g opacity="0.7">
+    <rect x="90" y="260" width="22" height="520" fill="#0a2a1f" />
+    <polygon points="101,250 10,420 192,420" fill="#0c3f2f" />
+    <polygon points="101,340 30,500 172,500" fill="#0b3327" />
+    <rect x="320" y="220" width="26" height="560" fill="#0a2a1f" />
+    <polygon points="333,210 210,410 456,410" fill="#0c3f2f" />
+    <polygon points="333,320 240,520 426,520" fill="#0b3327" />
+    <rect x="1260" y="270" width="24" height="510" fill="#0a2a1f" />
+    <polygon points="1272,260 1140,440 1404,440" fill="#0c3f2f" />
+    <polygon points="1272,360 1180,540 1364,540" fill="#0b3327" />
+  </g>
+  <g opacity="0.16">
+    <circle cx="520" cy="220" r="140" fill="#ccff00" />
+    <circle cx="520" cy="220" r="220" fill="#ccff00" />
+  </g>
+</svg>
+

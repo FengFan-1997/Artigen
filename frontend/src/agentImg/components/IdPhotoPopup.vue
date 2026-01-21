@@ -7,41 +7,19 @@
             <span class="header-icon">ID</span>
             <span class="header-title">{{ ui.title }}</span>
           </div>
-          <button class="close-btn" @click="close">×</button>
+          <CloseButton @click="close" />
         </div>
         <div class="modal-subtitle">{{ ui.subtitle }}</div>
 
         <div class="modal-body">
-          <div
-            class="upload-area"
-            @dragover.prevent="isDragOver = true"
-            @dragleave.prevent="isDragOver = false"
-            @drop.prevent="onDrop"
-            @click="triggerFileSelect"
-            :class="{ 'drag-over': isDragOver, 'has-file': !!previewUrl }"
-          >
-            <input
-              type="file"
-              ref="fileInput"
-              class="hidden-input"
-              accept="image/*"
-              @change="onFileSelect"
-            />
-
-            <template v-if="previewUrl">
-              <img :src="previewUrl" class="preview-img" alt="Preview" />
-              <div class="reupload-overlay">
-                <span>{{ ui.reupload }}</span>
-              </div>
-            </template>
-            <template v-else>
-              <div class="upload-placeholder">
-                <div class="folder-icon">📁</div>
-                <div class="upload-text">{{ ui.uploadText }}</div>
-                <div class="upload-hint">{{ ui.uploadHint }}</div>
-              </div>
-            </template>
-          </div>
+          <ImageUploadArea
+            v-model="selectedFile"
+            :upload-text="ui.uploadText"
+            :upload-hint="ui.uploadHint"
+            :reupload-text="ui.reupload"
+            placeholder-icon="📁"
+            :disabled="loading"
+          />
 
           <div class="config-panel">
             <div class="config-section">
@@ -65,7 +43,7 @@
               <button
                 class="generate-btn"
                 @click="handleGenerate"
-                :disabled="!previewUrl || loading"
+                :disabled="!selectedFile || loading"
               >
                 <span>{{ loading ? ui.generating : ui.start }}</span>
                 <span v-if="!loading && costText" class="generate-cost">{{ costText }}</span>
@@ -82,6 +60,8 @@
 import { ref, computed, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import CyberDropdown from './CyberDropdown.vue';
+import CloseButton from './CloseButton.vue';
+import ImageUploadArea from './ImageUploadArea.vue';
 import { trackEvent } from '../../utils/analytics';
 import { useLanguageStore } from '@/stores/language';
 
@@ -98,12 +78,8 @@ const emit = defineEmits<{
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 
-const isDragOver = ref(false);
-const fileInput = ref<HTMLInputElement | null>(null);
 const selectedFile = ref<File | null>(null);
-const previewUrl = ref<string>('');
 const loading = ref(false);
-const previewObjectUrl = ref<string>('');
 
 const ui = computed(() => {
   const en = currentLang.value === 'en';
@@ -170,17 +146,8 @@ const close = () => {
 };
 
 const resetState = () => {
-  try {
-    if (previewObjectUrl.value) URL.revokeObjectURL(previewObjectUrl.value);
-  } catch {}
-  previewObjectUrl.value = '';
-  previewUrl.value = '';
   selectedFile.value = null;
   loading.value = false;
-  isDragOver.value = false;
-  try {
-    if (fileInput.value) fileInput.value.value = '';
-  } catch {}
 };
 
 watch(
@@ -189,35 +156,6 @@ watch(
     if (!v) resetState();
   }
 );
-
-const triggerFileSelect = () => {
-  fileInput.value?.click();
-};
-
-const handleFile = (file: File) => {
-  if (!file.type.startsWith('image/')) return;
-  selectedFile.value = file;
-  try {
-    if (previewObjectUrl.value) URL.revokeObjectURL(previewObjectUrl.value);
-  } catch {}
-  const u = URL.createObjectURL(file);
-  previewObjectUrl.value = u;
-  previewUrl.value = u;
-};
-
-const onFileSelect = (e: Event) => {
-  const input = e.target as HTMLInputElement;
-  if (input.files && input.files[0]) {
-    handleFile(input.files[0]);
-  }
-};
-
-const onDrop = (e: DragEvent) => {
-  isDragOver.value = false;
-  if (e.dataTransfer?.files && e.dataTransfer.files[0]) {
-    handleFile(e.dataTransfer.files[0]);
-  }
-};
 
 const handleGenerate = () => {
   if (!selectedFile.value) return;
@@ -289,103 +227,10 @@ const handleGenerate = () => {
   margin-left: 54px;
 }
 
-.close-btn {
-  background: transparent;
-  border: none;
-  color: #666;
-  font-size: 24px;
-  cursor: pointer;
-  transition: color 0.2s;
-}
-
-.close-btn:hover {
-  color: #fff;
-}
-
 .modal-body {
   display: flex;
   gap: 24px;
   height: 500px;
-}
-
-.upload-area {
-  margin-top: 10px;
-  flex: 1;
-  border: 2px dashed rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-  background: rgba(10, 10, 10, 0.6);
-}
-
-.upload-area::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background:
-    linear-gradient(90deg, transparent 0%, rgba(204, 255, 0, 0.03) 50%, transparent 100%),
-    radial-gradient(circle at center, rgba(204, 255, 0, 0.05) 0%, transparent 70%);
-  opacity: 0;
-  transition: opacity 0.4s;
-  pointer-events: none;
-}
-
-.upload-area.drag-over,
-.upload-area:hover {
-  border-color: #ccff00;
-  background: rgba(15, 15, 15, 0.9);
-  box-shadow:
-    0 0 40px rgba(204, 255, 0, 0.15),
-    inset 0 0 20px rgba(204, 255, 0, 0.05);
-  transform: translateY(-2px);
-}
-
-.upload-area:hover::before {
-  opacity: 1;
-}
-
-.hidden-input {
-  display: none;
-}
-
-.upload-placeholder {
-  text-align: center;
-  transition: transform 0.3s ease;
-}
-
-.upload-area:hover .upload-placeholder {
-  transform: scale(1.05);
-}
-
-.folder-icon {
-  font-size: 64px;
-  margin-bottom: 24px;
-  opacity: 0.8;
-  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.1));
-}
-
-.upload-area:hover .folder-icon {
-  filter: drop-shadow(0 0 15px rgba(204, 255, 0, 0.3));
-}
-
-.upload-text {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 12px;
-  color: #fff;
-}
-
-.upload-hint {
-  font-size: 12px;
-  color: #666;
 }
 
 /* ... existing styles ... */
@@ -411,11 +256,6 @@ const handleGenerate = () => {
     overflow-y: auto;
   }
 
-  .upload-area {
-    min-height: 300px;
-    flex: none;
-  }
-
   .config-panel {
     width: 100% !important;
     flex: none;
@@ -425,37 +265,6 @@ const handleGenerate = () => {
     margin-left: 0;
     text-align: center;
   }
-}
-
-.preview-img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.reupload-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-
-.reupload-overlay span {
-  color: #fff;
-  border: 1px solid #fff;
-  padding: 8px 16px;
-  border-radius: 4px;
-}
-
-.upload-area:hover .reupload-overlay {
-  opacity: 1;
 }
 
 .config-panel {

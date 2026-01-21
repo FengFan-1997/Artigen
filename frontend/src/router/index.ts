@@ -37,6 +37,25 @@ const getLang = (): 'zh' | 'en' => {
   }
 };
 
+const readAiBgSeoOverride = () => {
+  try {
+    const raw = String(window.localStorage.getItem('console_store_v1') || '').trim();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const seo = parsed && typeof parsed === 'object' ? (parsed as any).aiBgSeoCopy : null;
+    if (!seo || typeof seo !== 'object') return null;
+    const pagePath = String(seo.pagePath || '').trim();
+    const title = String(seo.title || '').trim();
+    const description = String(seo.description || '').trim();
+    const keywords = String(seo.keywords || '').trim();
+    const ogImage = String(seo.ogImage || '').trim();
+    if (!pagePath) return null;
+    return { pagePath, title, description, keywords, ogImage };
+  } catch {
+    return null;
+  }
+};
+
 const pickLang = (v: { zh: string; en: string } | string | undefined, lang: 'zh' | 'en') => {
   if (!v) return '';
   if (typeof v === 'string') return v;
@@ -307,12 +326,12 @@ const routes = [
     meta: {
       title: { zh: 'AI影像工坊 - Artigen', en: 'AI Image Workshop - Artigen' },
       description: {
-        zh: 'AI 驱动的影像处理工具：智能证件照、老照片修复、FDA 配料表标签图生成。',
-        en: 'AI-powered image tools: Smart ID Photo, Old Photo Restoration, FDA Ingredient Label.'
+        zh: 'AI 驱动的影像处理工具：智能证件照、老照片修复、AI 背景、FDA 配料表标签图生成。',
+        en: 'AI-powered image tools: Smart ID Photo, Old Photo Restoration, AI Background, FDA Ingredient Label.'
       },
       keywords: {
-        zh: 'AI影像工坊,智能证件照,老照片修复,FDA配料表,标签图生成',
-        en: 'AI image workshop,smart id photo,photo restoration,FDA ingredient label'
+        zh: 'AI影像工坊,智能证件照,老照片修复,AI背景,背景替换,电商背景,FDA配料表,标签图生成',
+        en: 'AI image workshop,smart id photo,photo restoration,AI background,background replacement,FDA ingredient label'
       }
     } satisfies RouteSeoMeta
   },
@@ -572,11 +591,19 @@ router.onError((err, to) => {
 router.afterEach((to) => {
   const lang = getLang();
   const meta = (to.meta || {}) as RouteSeoMeta;
-  const title = pickLang(meta.title, lang) || (lang === 'en' ? 'Artigen' : 'Artigen');
+  const aiBgSeo = readAiBgSeoOverride();
+  const shouldUseAiBgSeo = !!aiBgSeo && String(to.path || '') === String(aiBgSeo.pagePath || '');
+
+  const title =
+    (shouldUseAiBgSeo ? String(aiBgSeo?.title || '').trim() : '') ||
+    pickLang(meta.title, lang) ||
+    (lang === 'en' ? 'Artigen' : 'Artigen');
   const description =
+    (shouldUseAiBgSeo ? String(aiBgSeo?.description || '').trim() : '') ||
     pickLang(meta.description, lang) ||
     (lang === 'en' ? 'Artigen AI image workshop and tools.' : 'Artigen AI 图片工坊与工具箱。');
   const keywords =
+    (shouldUseAiBgSeo ? String(aiBgSeo?.keywords || '').trim() : '') ||
     pickLang(meta.keywords, lang) ||
     (lang === 'en'
       ? 'AI image workshop,image-to-image,text-to-image,prompt,image tools,format converter'
@@ -594,7 +621,10 @@ router.afterEach((to) => {
 
   const origin = window.location.origin;
   const url = `${origin}${to.fullPath || to.path}`;
-  const ogImage = meta.ogImage || `${origin}/logo.png`;
+  const ogImage =
+    (shouldUseAiBgSeo ? String(aiBgSeo?.ogImage || '').trim() : '') ||
+    meta.ogImage ||
+    `${origin}/logo.png`;
 
   ensureLink('canonical', url);
 

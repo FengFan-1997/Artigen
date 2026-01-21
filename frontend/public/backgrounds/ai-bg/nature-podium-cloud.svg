@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="skyBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e3f2fd"/>
+      <stop offset="1" stop-color="#bbdefb"/>
+    </linearGradient>
+    <radialGradient id="podiumGrad" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e1f5fe"/>
+    </radialGradient>
+    <filter id="cloudBlur">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="20" />
+    </filter>
+  </defs>
+
+  <!-- Sky Background -->
+  <rect width="1600" height="900" fill="url(#skyBlue)" />
+
+  <!-- Clouds Bottom -->
+  <g filter="url(#cloudBlur)" fill="#ffffff" opacity="0.8">
+    <circle cx="200" cy="850" r="150" />
+    <circle cx="500" cy="900" r="200" />
+    <circle cx="900" cy="850" r="180" />
+    <circle cx="1300" cy="900" r="220" />
+    <circle cx="1600" cy="850" r="150" />
+  </g>
+
+  <!-- Water Surface -->
+  <rect y="600" width="1600" height="300" fill="#bbdefb" opacity="0.3" />
+
+  <!-- Podium -->
+  <ellipse cx="800" cy="650" rx="300" ry="60" fill="url(#podiumGrad)" />
+  <path d="M500 650 L500 750 A300 60 0 0 0 1100 750 L1100 650" fill="#b3e5fc" />
+  <path d="M500 750 A300 60 0 0 0 1100 750" fill="#81d4fa" />
+  
+  <!-- Reflection -->
+  <ellipse cx="800" cy="850" rx="300" ry="60" fill="#fff" opacity="0.2" filter="url(#cloudBlur)" />
+</svg>

@@ -100,6 +100,9 @@
               <template v-else-if="column.key === 'ts'">
                 {{ record.ts ? new Date(record.ts).toLocaleString() : '-' }}
               </template>
+              <template v-else-if="column.key === 'userText'">
+                <div class="prompt-cell">{{ record.userText || '' }}</div>
+              </template>
               <template v-else-if="column.key === 'prompt'">
                 <div class="prompt-cell">{{ record.prompt || '' }}</div>
               </template>
@@ -157,6 +160,47 @@
         </div>
       </a-tab-pane>
 
+      <a-tab-pane key="behavior" :tab="ui.tabBehavior">
+        <div class="table-toolbar">
+          <div class="table-toolbar-left">
+            <a-input
+              v-model:value="filterUserId"
+              :placeholder="ui.userFilterPh"
+              class="filter-input"
+            />
+            <a-input
+              v-model:value="filterBehaviorAction"
+              :placeholder="ui.behaviorActionFilterPh"
+              class="filter-input"
+            />
+            <a-button type="primary" @click="refreshBehavior">{{ ui.refresh }}</a-button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <a-table
+            :dataSource="behaviorLogs"
+            :columns="behaviorColumns"
+            rowKey="id"
+            :tableLayout="'fixed'"
+            :scroll="{ x: behaviorScrollX }"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'ts'">
+                {{ record.ts ? new Date(record.ts).toLocaleString() : '-' }}
+              </template>
+              <template v-else-if="column.key === 'details'">
+                <div class="prompt-cell">{{ formatBehaviorDetails(record.details) }}</div>
+              </template>
+              <template v-else-if="column.key === 'action'">
+                <a-button size="small" @click="viewBehaviorDetails(record)">{{
+                  ui.viewFullLog
+                }}</a-button>
+              </template>
+            </template>
+          </a-table>
+        </div>
+      </a-tab-pane>
+
       <a-tab-pane key="events" :tab="ui.tabEvents">
         <div class="table-toolbar">
           <div class="table-toolbar-left">
@@ -204,6 +248,124 @@
           </a-table>
         </div>
       </a-tab-pane>
+
+      <a-tab-pane key="seo" :tab="ui.tabSeo">
+        <div class="seo-grid">
+          <a-card class="seo-card" :title="ui.seoConfigTitle">
+            <a-form layout="vertical">
+              <a-form-item :label="ui.seoPagePath">
+                <a-input v-model:value="seoDraft.pagePath" />
+              </a-form-item>
+              <a-form-item :label="ui.seoTitle">
+                <a-input v-model:value="seoDraft.title" />
+              </a-form-item>
+              <a-form-item :label="ui.seoDescription">
+                <a-textarea v-model:value="seoDraft.description" :rows="3" />
+              </a-form-item>
+              <a-form-item :label="ui.seoKeywords">
+                <a-input v-model:value="seoDraft.keywords" />
+              </a-form-item>
+              <a-row :gutter="16">
+                <a-col :span="12">
+                  <a-form-item :label="ui.seoOgTitle">
+                    <a-input v-model:value="seoDraft.ogTitle" />
+                  </a-form-item>
+                </a-col>
+                <a-col :span="12">
+                  <a-form-item :label="ui.seoOgImage">
+                    <a-input v-model:value="seoDraft.ogImage" />
+                  </a-form-item>
+                </a-col>
+              </a-row>
+              <a-form-item :label="ui.seoOgDescription">
+                <a-textarea v-model:value="seoDraft.ogDescription" :rows="2" />
+              </a-form-item>
+              <a-divider />
+              <a-form-item :label="ui.seoH1">
+                <a-input v-model:value="seoDraft.h1" />
+              </a-form-item>
+              <a-form-item :label="ui.seoHeroTitle">
+                <a-input v-model:value="seoDraft.heroTitle" />
+              </a-form-item>
+              <a-form-item :label="ui.seoHeroSubtitle">
+                <a-textarea v-model:value="seoDraft.heroSubtitle" :rows="2" />
+              </a-form-item>
+              <a-row :gutter="16">
+                <a-col :span="12">
+                  <a-form-item :label="ui.seoCtaPrimary">
+                    <a-input v-model:value="seoDraft.ctaPrimary" />
+                  </a-form-item>
+                </a-col>
+                <a-col :span="12">
+                  <a-form-item :label="ui.seoCtaSecondary">
+                    <a-input v-model:value="seoDraft.ctaSecondary" />
+                  </a-form-item>
+                </a-col>
+              </a-row>
+              <a-form-item :label="ui.seoFeatureTitle">
+                <a-input v-model:value="seoDraft.featureTitle" />
+              </a-form-item>
+              <a-form-item :label="ui.seoFeatureItems">
+                <a-textarea v-model:value="featureInput" :rows="4" />
+              </a-form-item>
+              <a-form-item :label="ui.seoUseCasesTitle">
+                <a-input v-model:value="seoDraft.useCasesTitle" />
+              </a-form-item>
+              <a-form-item :label="ui.seoUseCases">
+                <a-textarea v-model:value="useCaseInput" :rows="4" />
+              </a-form-item>
+            </a-form>
+            <div class="seo-actions">
+              <a-button type="primary" @click="saveSeo">{{ ui.save }}</a-button>
+              <a-button @click="resetSeo">{{ ui.restoreDefault }}</a-button>
+              <span class="seo-updated">{{ ui.lastUpdated }} {{ seoUpdatedAt }}</span>
+            </div>
+          </a-card>
+          <a-card class="seo-card" :title="ui.seoPreviewTitle">
+            <div class="seo-preview">
+              <div class="seo-meta">
+                <div class="seo-meta-label">{{ ui.seoTitle }}</div>
+                <div class="seo-meta-value">{{ seoDraft.title || '-' }}</div>
+              </div>
+              <div class="seo-meta">
+                <div class="seo-meta-label">{{ ui.seoDescription }}</div>
+                <div class="seo-meta-value">{{ seoDraft.description || '-' }}</div>
+              </div>
+              <div class="seo-meta">
+                <div class="seo-meta-label">{{ ui.seoKeywords }}</div>
+                <div class="seo-meta-value">{{ seoDraft.keywords || '-' }}</div>
+              </div>
+              <a-divider />
+              <div class="seo-hero">
+                <div class="seo-h1">{{ seoDraft.h1 || '-' }}</div>
+                <div class="seo-hero-title">{{ seoDraft.heroTitle || '-' }}</div>
+                <div class="seo-hero-sub">{{ seoDraft.heroSubtitle || '-' }}</div>
+                <div class="seo-cta-row">
+                  <a-button type="primary">{{ seoDraft.ctaPrimary || ui.seoCtaPrimary }}</a-button>
+                  <a-button>{{ seoDraft.ctaSecondary || ui.seoCtaSecondary }}</a-button>
+                </div>
+              </div>
+              <a-divider />
+              <div class="seo-section">
+                <div class="seo-section-title">
+                  {{ seoDraft.featureTitle || ui.seoFeatureTitle }}
+                </div>
+                <ul class="seo-list">
+                  <li v-for="(item, idx) in previewFeatureItems" :key="idx">{{ item }}</li>
+                </ul>
+              </div>
+              <div class="seo-section">
+                <div class="seo-section-title">
+                  {{ seoDraft.useCasesTitle || ui.seoUseCasesTitle }}
+                </div>
+                <ul class="seo-list">
+                  <li v-for="(item, idx) in previewUseCases" :key="idx">{{ item }}</li>
+                </ul>
+              </div>
+            </div>
+          </a-card>
+        </div>
+      </a-tab-pane>
     </a-tabs>
 
     <a-modal
@@ -248,7 +410,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
-import { useConsoleStore } from '@/stores/console';
+import { useConsoleStore, type AiBgSeoCopy } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import { buildApiUrl } from '@/utils/api';
@@ -262,6 +424,8 @@ const isLogModalVisible = ref(false);
 const selectedLog = ref<any>(null);
 const filterUserId = ref('');
 const filterEventType = ref('');
+const filterBehaviorAction = ref('');
+const behaviorTick = ref(0);
 const loadingImages = ref(false);
 const loadingUsage = ref(false);
 const loadingEvents = ref(false);
@@ -275,7 +439,9 @@ const ui = computed(() =>
         title: '内容审计',
         tabImages: '生成图片',
         tabChat: '调用记录',
+        tabBehavior: '用户行为',
         tabEvents: '埋点事件',
+        tabSeo: 'AI 背景 SEO & 文案',
         viewFullLog: '查看完整日志',
         logDetails: '日志详情',
         actionLabel: '动作',
@@ -287,6 +453,7 @@ const ui = computed(() =>
         colEmail: '邮箱',
         colType: '模型',
         colPrompt: '提示词',
+        colUserText: '用户输入',
         colCreatedAt: '创建时间',
         colProvider: '渠道',
         colModel: '模型',
@@ -295,21 +462,47 @@ const ui = computed(() =>
         colEventType: '事件',
         colPath: '路径',
         colPayload: '参数',
+        colAction: '行为',
+        colDetails: '详情',
         refresh: '刷新',
         userFilterPh: '可选：按用户 ID 过滤',
         eventTypeFilterPh: '可选：按事件类型过滤（例如 page_view）',
+        behaviorActionFilterPh: '可选：按行为类型过滤（例如 generate_image）',
         columns: '列设置',
         columnSettings: '列表列设置',
         download: '下载',
         reference: '引用',
         reset: '重置',
-        close: '关闭'
+        close: '关闭',
+        seoConfigTitle: 'SEO 与文案配置',
+        seoPreviewTitle: '页面预览',
+        seoPagePath: '页面路径',
+        seoTitle: 'SEO 标题',
+        seoDescription: 'SEO 描述',
+        seoKeywords: 'SEO 关键词',
+        seoOgTitle: 'OG 标题',
+        seoOgDescription: 'OG 描述',
+        seoOgImage: 'OG 图片',
+        seoH1: 'H1 标题',
+        seoHeroTitle: '主标题',
+        seoHeroSubtitle: '副标题',
+        seoCtaPrimary: '主按钮文案',
+        seoCtaSecondary: '次按钮文案',
+        seoFeatureTitle: '优势标题',
+        seoFeatureItems: '优势列表（每行一条）',
+        seoUseCasesTitle: '场景标题',
+        seoUseCases: '适用场景（每行一条）',
+        save: '保存',
+        restoreDefault: '恢复默认',
+        lastUpdated: '最后更新'
       }
     : {
         title: 'Content Audit',
         tabImages: 'Generated Images',
         tabChat: 'Requests',
+        tabBehavior: 'User Activity',
         tabEvents: 'Tracking Events',
+        tabSeo: 'AI Background SEO & Copy',
         viewFullLog: 'View Full Log',
         logDetails: 'Log Details',
         actionLabel: 'Action',
@@ -321,6 +514,7 @@ const ui = computed(() =>
         colEmail: 'Email',
         colType: 'Model',
         colPrompt: 'Prompt',
+        colUserText: 'User Input',
         colCreatedAt: 'Created At',
         colProvider: 'Provider',
         colModel: 'Model',
@@ -329,24 +523,81 @@ const ui = computed(() =>
         colEventType: 'Event',
         colPath: 'Path',
         colPayload: 'Payload',
+        colAction: 'Action',
+        colDetails: 'Details',
         refresh: 'Refresh',
         userFilterPh: 'Optional: filter by userId',
         eventTypeFilterPh: 'Optional: filter by event type (e.g. page_view)',
+        behaviorActionFilterPh: 'Optional: filter by action (e.g. generate_image)',
         columns: 'Columns',
         columnSettings: 'Column Settings',
         download: 'Download',
         reference: 'Reference',
         reset: 'Reset',
-        close: 'Close'
+        close: 'Close',
+        seoConfigTitle: 'SEO & Copy',
+        seoPreviewTitle: 'Preview',
+        seoPagePath: 'Page Path',
+        seoTitle: 'SEO Title',
+        seoDescription: 'SEO Description',
+        seoKeywords: 'SEO Keywords',
+        seoOgTitle: 'OG Title',
+        seoOgDescription: 'OG Description',
+        seoOgImage: 'OG Image',
+        seoH1: 'H1 Title',
+        seoHeroTitle: 'Hero Title',
+        seoHeroSubtitle: 'Hero Subtitle',
+        seoCtaPrimary: 'Primary CTA',
+        seoCtaSecondary: 'Secondary CTA',
+        seoFeatureTitle: 'Feature Title',
+        seoFeatureItems: 'Feature List (one per line)',
+        seoUseCasesTitle: 'Use Case Title',
+        seoUseCases: 'Use Cases (one per line)',
+        save: 'Save',
+        restoreDefault: 'Restore Default',
+        lastUpdated: 'Last Updated'
       }
 );
 
 const events = computed(() => consoleStore.adminEvents || []);
+const buildBehaviorLogs = (_tick: number) => {
+  const userFilter = String(filterUserId.value || '').trim();
+  const actionFilter = String(filterBehaviorAction.value || '')
+    .trim()
+    .toLowerCase();
+  return (consoleStore.logs || [])
+    .filter((item) => {
+      if (!item) return false;
+      if (userFilter && String(item.userId || '').trim() !== userFilter) return false;
+      if (
+        actionFilter &&
+        !String(item.action || '')
+          .toLowerCase()
+          .includes(actionFilter)
+      )
+        return false;
+      return true;
+    })
+    .map((item) => ({ ...item, ts: item.timestamp }))
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+};
+const behaviorLogs = computed(() => buildBehaviorLogs(behaviorTick.value));
 
 const formatPayload = (payload: any) => {
   if (!payload || typeof payload !== 'object') return '';
   try {
     const text = JSON.stringify(payload);
+    return text.length > 220 ? `${text.slice(0, 220)}…` : text;
+  } catch {
+    return '';
+  }
+};
+
+const formatBehaviorDetails = (details: any) => {
+  if (details === null || details === undefined) return '';
+  if (typeof details === 'string') return details;
+  try {
+    const text = JSON.stringify(details);
     return text.length > 220 ? `${text.slice(0, 220)}…` : text;
   } catch {
     return '';
@@ -577,6 +828,7 @@ const baseImageColumns = computed<SimpleColumn[]>(() => [
   { title: ui.value.colEmail, dataIndex: 'email', key: 'email', width: 140, ellipsis: true },
   { title: ui.value.colType, key: 'type', width: 120, ellipsis: true },
   { title: ui.value.colPrompt, dataIndex: 'prompt', key: 'prompt', width: 460 },
+  { title: ui.value.colUserText, dataIndex: 'userText', key: 'userText', width: 360 },
   { title: ui.value.colCreatedAt, dataIndex: 'ts', key: 'ts', width: 190 }
 ]);
 
@@ -624,6 +876,20 @@ const baseEventColumns = computed<SimpleColumn[]>(() => [
   { title: ui.value.colCreatedAt, key: 'action', width: 140 }
 ]);
 
+const baseBehaviorColumns = computed<SimpleColumn[]>(() => [
+  { title: ui.value.colTime, dataIndex: 'ts', key: 'ts', width: 190 },
+  { title: ui.value.userLabel, dataIndex: 'userId', key: 'userId', width: 140, ellipsis: true },
+  {
+    title: ui.value.colAction,
+    dataIndex: 'action',
+    key: 'behaviorAction',
+    width: 160,
+    ellipsis: true
+  },
+  { title: ui.value.colDetails, key: 'details', width: 520 },
+  { title: ui.value.colCreatedAt, key: 'action', width: 140 }
+]);
+
 const imageVisibleKeys = ref<string[]>([]);
 const chatVisibleKeys = ref<string[]>([]);
 const eventVisibleKeys = ref<string[]>([]);
@@ -655,13 +921,36 @@ const safeWriteJson = (key: string, value: unknown) => {
   } catch {}
 };
 
+const mergeVisibleKeys = (stored: string[], defaults: string[]) => {
+  const out = Array.isArray(stored)
+    ? stored.map((x) => String(x || '').trim()).filter(Boolean)
+    : [];
+  const seen = new Set(out);
+  for (const k of defaults) {
+    const key = String(k || '').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+};
+
 const hydrateColumnPreferences = () => {
   const imgVisible = safeReadJson<string[]>(STORAGE_IMAGES_VISIBLE, []);
   const chatVisible = safeReadJson<string[]>(STORAGE_CHAT_VISIBLE, []);
   const eventVisible = safeReadJson<string[]>(STORAGE_EVENTS_VISIBLE, []);
-  imageVisibleKeys.value = imgVisible.length ? imgVisible : getDefaultVisibleKeys('images');
-  chatVisibleKeys.value = chatVisible.length ? chatVisible : getDefaultVisibleKeys('chat');
-  eventVisibleKeys.value = eventVisible.length ? eventVisible : getDefaultVisibleKeys('events');
+  const imgDefaults = getDefaultVisibleKeys('images');
+  const chatDefaults = getDefaultVisibleKeys('chat');
+  const eventDefaults = getDefaultVisibleKeys('events');
+  imageVisibleKeys.value = imgVisible.length
+    ? mergeVisibleKeys(imgVisible, imgDefaults)
+    : imgDefaults;
+  chatVisibleKeys.value = chatVisible.length
+    ? mergeVisibleKeys(chatVisible, chatDefaults)
+    : chatDefaults;
+  eventVisibleKeys.value = eventVisible.length
+    ? mergeVisibleKeys(eventVisible, eventDefaults)
+    : eventDefaults;
   imageColumnWidths.value = safeReadJson<Record<string, number>>(STORAGE_IMAGES_WIDTHS, {});
   chatColumnWidths.value = safeReadJson<Record<string, number>>(STORAGE_CHAT_WIDTHS, {});
   eventColumnWidths.value = safeReadJson<Record<string, number>>(STORAGE_EVENTS_WIDTHS, {});
@@ -735,6 +1024,8 @@ const sumWidths = (cols: SimpleColumn[]) =>
 const imageScrollX = computed(() => Math.max(900, sumWidths(imageColumns.value)));
 const chatScrollX = computed(() => Math.max(900, sumWidths(chatColumns.value)));
 const eventScrollX = computed(() => Math.max(900, sumWidths(eventColumns.value)));
+const behaviorColumns = computed(() => baseBehaviorColumns.value);
+const behaviorScrollX = computed(() => Math.max(900, sumWidths(behaviorColumns.value)));
 
 const isColumnModalVisible = ref(false);
 const columnModalTab = ref<'images' | 'chat' | 'events'>('images');
@@ -881,6 +1172,11 @@ const viewEventDetails = (evt: any) => {
   isLogModalVisible.value = true;
 };
 
+const viewBehaviorDetails = (log: any) => {
+  selectedLog.value = log;
+  isLogModalVisible.value = true;
+};
+
 const fetchImages = async () => {
   if (loadingImages.value) return;
   loadingImages.value = true;
@@ -927,6 +1223,77 @@ const fetchEvents = async () => {
   } finally {
     loadingEvents.value = false;
   }
+};
+
+const refreshBehavior = () => {
+  behaviorTick.value += 1;
+};
+
+const makeSeoDraft = (src: AiBgSeoCopy): AiBgSeoCopy => ({
+  ...src,
+  featureItems: Array.isArray(src.featureItems) ? [...src.featureItems] : [],
+  useCases: Array.isArray(src.useCases) ? [...src.useCases] : []
+});
+
+const seoDraft = ref<AiBgSeoCopy>(makeSeoDraft(consoleStore.aiBgSeoCopy));
+const featureInput = ref('');
+const useCaseInput = ref('');
+
+const syncSeoDraft = (src: AiBgSeoCopy) => {
+  seoDraft.value = makeSeoDraft(src);
+  featureInput.value = (seoDraft.value.featureItems || []).join('\n');
+  useCaseInput.value = (seoDraft.value.useCases || []).join('\n');
+};
+
+watch(
+  () => consoleStore.aiBgSeoCopy,
+  (val) => {
+    if (val) syncSeoDraft(val);
+  },
+  { deep: true, immediate: true }
+);
+
+const normalizeLines = (input: string) =>
+  String(input || '')
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+const previewFeatureItems = computed(() => {
+  const items = normalizeLines(featureInput.value);
+  if (items.length) return items;
+  if (seoDraft.value.featureItems?.length) return seoDraft.value.featureItems;
+  return ['-'];
+});
+
+const previewUseCases = computed(() => {
+  const items = normalizeLines(useCaseInput.value);
+  if (items.length) return items;
+  if (seoDraft.value.useCases?.length) return seoDraft.value.useCases;
+  return ['-'];
+});
+
+const seoUpdatedAt = computed(() => {
+  const ts = Number(seoDraft.value.updatedAt || 0);
+  if (!Number.isFinite(ts) || ts <= 0) return '-';
+  return new Date(ts).toLocaleString();
+});
+
+const saveSeo = () => {
+  const payload: Partial<AiBgSeoCopy> = {
+    ...seoDraft.value,
+    featureItems: normalizeLines(featureInput.value),
+    useCases: normalizeLines(useCaseInput.value)
+  };
+  consoleStore.setAiBgSeoCopy(payload);
+  syncSeoDraft(consoleStore.aiBgSeoCopy);
+  message.success(currentLang.value === 'zh' ? '已保存' : 'Saved');
+};
+
+const resetSeo = () => {
+  consoleStore.resetAiBgSeoCopy();
+  syncSeoDraft(consoleStore.aiBgSeoCopy);
+  message.success(currentLang.value === 'zh' ? '已恢复默认' : 'Restored');
 };
 </script>
 

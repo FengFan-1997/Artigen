@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia';
 import { message } from 'ant-design-vue';
 import gsap from 'gsap';
 import IngredientLabelTypeSelect from '../components/IngredientLabelTypeSelect.vue';
+import ActionButton from '@/components/ActionButton.vue';
 import { useLanguageStore } from '@/stores/language';
 import { generateText } from '../services/text';
 import {
@@ -13,7 +14,7 @@ import {
 } from '../logic/formatFactory/ingredientLabel';
 import { exportPdf } from '@/utils/export';
 
-const props = defineProps<{ visible: boolean }>();
+const props = defineProps<{ visible: boolean; creditsCost?: number }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
 
 const languageStore = useLanguageStore();
@@ -79,6 +80,12 @@ const placeholderText = computed(() => {
   const en = currentLang.value === 'en';
   const k = PLACEHOLDERS[productType.value] ?? PLACEHOLDERS.default;
   return en ? k.en : k.zh;
+});
+
+const costText = computed(() => {
+  const n = Math.max(0, Math.trunc(Number(props.creditsCost ?? 10) || 0));
+  if (!n) return '';
+  return `⚡${n}`;
 });
 
 const DEFAULT_LAYOUT_BY_TYPE: Record<
@@ -317,7 +324,11 @@ const onGenerate = async () => {
   try {
     const inputText = ingredientsInput.value.trim();
     const prompt = buildLabelPrompt(inputText, productType.value);
-    const res = await generateText(prompt, { timeoutMs: 120000, purpose: 'ingredient_label' });
+    const res = await generateText(prompt, {
+      timeoutMs: 120000,
+      purpose: 'ingredient_label',
+      cost: Math.max(0, Math.trunc(Number(props.creditsCost ?? 10) || 0))
+    });
     if (!res.ok) {
       const en = currentLang.value === 'en';
       const err = res.errorCode || res.error || 'AI_ERROR';
@@ -602,6 +613,34 @@ const titleText = computed(() => (currentLang.value === 'en' ? 'AI Ingredients' 
 const typeText = computed(() => (currentLang.value === 'en' ? 'Product type' : '产品类型'));
 const ingredientsText = computed(() => (currentLang.value === 'en' ? 'Ingredients' : '配料/成分'));
 const generateTextLabel = computed(() => (currentLang.value === 'en' ? 'Generate' : '生成'));
+const actionButtonStyles = {
+  primary: {
+    '--btn-height': '48px',
+    '--btn-radius': '12px',
+    '--btn-font-size': '15px',
+    '--btn-gap': '8px',
+    '--btn-transition': 'all 0.2s',
+    '--btn-bg': '#3b82f6',
+    '--btn-border': '1px solid #3b82f6',
+    '--btn-color': '#ffffff',
+    '--btn-shadow': '0 4px 6px rgba(59, 130, 246, 0.2)',
+    '--btn-hover-bg': '#2563eb',
+    '--btn-hover-border': '1px solid #2563eb',
+    '--btn-hover-shadow': '0 6px 10px rgba(59, 130, 246, 0.25)'
+  },
+  secondary: {
+    '--btn-height': '48px',
+    '--btn-radius': '12px',
+    '--btn-font-size': '15px',
+    '--btn-gap': '8px',
+    '--btn-transition': 'all 0.2s',
+    '--btn-bg': '#ffffff',
+    '--btn-border': '1px solid #e2e8f0',
+    '--btn-color': '#0f172a',
+    '--btn-hover-bg': '#f8fafc',
+    '--btn-hover-border': '1px solid #475569'
+  }
+} as const;
 </script>
 
 <template>
@@ -660,6 +699,7 @@ const generateTextLabel = computed(() => (currentLang.value === 'en' ? 'Generate
                       height="16"
                     />
                     <span class="generate-text">{{ generateTextLabel }}</span>
+                    <span v-if="costText && !isLoading" class="generate-cost">{{ costText }}</span>
                   </button>
                 </div>
                 <div v-if="errorMsg" class="error-text">{{ errorMsg }}</div>
@@ -700,32 +740,34 @@ const generateTextLabel = computed(() => (currentLang.value === 'en' ? 'Generate
                   </div>
 
                   <div class="operation-buttons" :class="{ 'stack-mobile': isMobile }">
-                    <button class="btn btn-secondary hover-effect" type="button" @click="close">
-                      <img
-                        class="button-icon"
-                        src="https://cdn.packify.ai/image/9e25c93e-da3f-452e-962f-13e959ff632f.svg"
-                        alt=""
-                        width="19"
-                        height="18"
-                      />
-                      <span>{{ backText }}</span>
-                    </button>
+                    <ActionButton
+                      class="hover-effect"
+                      variant="secondary"
+                      type="button"
+                      :style="actionButtonStyles.secondary"
+                      icon="https://cdn.packify.ai/image/9e25c93e-da3f-452e-962f-13e959ff632f.svg"
+                      icon-alt=""
+                      :icon-width="19"
+                      :icon-height="18"
+                      @click="close"
+                    >
+                      {{ backText }}
+                    </ActionButton>
                     <div style="position: relative">
-                      <button
-                        class="btn btn-primary hover-effect"
+                      <ActionButton
+                        class="hover-effect"
+                        variant="primary"
                         type="button"
-                        @click="openDownload"
+                        :style="actionButtonStyles.primary"
+                        icon="https://cdn.packify.ai/image/31ffedbf-fd56-4280-a55f-9cc1bc2cf848.svg"
+                        icon-alt=""
+                        :icon-width="19"
+                        :icon-height="18"
                         :disabled="!canDownload"
+                        @click="openDownload"
                       >
-                        <img
-                          class="button-icon"
-                          src="https://cdn.packify.ai/image/31ffedbf-fd56-4280-a55f-9cc1bc2cf848.svg"
-                          alt=""
-                          width="19"
-                          height="18"
-                        />
-                        <span>{{ downloadText }}</span>
-                      </button>
+                        {{ downloadText }}
+                      </ActionButton>
                       <div
                         v-if="isDownloadPopoverOpen && !isMobile"
                         class="download-popover glass-popover"
@@ -1061,6 +1103,20 @@ const generateTextLabel = computed(() => (currentLang.value === 'en' ? 'Generate
   box-shadow: 0 4px 6px rgba(59, 130, 246, 0.25);
 }
 
+.generate-cost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.12);
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
 .generate-button:hover:not(:disabled) {
   background: @primary-hover;
   transform: translateY(-1px);
@@ -1149,56 +1205,13 @@ const generateTextLabel = computed(() => (currentLang.value === 'en' ? 'Generate
   align-items: center;
 }
 
-.operation-buttons > .btn,
+.operation-buttons :deep(.btn),
 .operation-buttons > div {
   flex: 1;
 }
 
-.operation-buttons > div > .btn {
+.operation-buttons > div :deep(.btn) {
   width: 100%;
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 48px;
-  border-radius: 12px;
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-secondary {
-  background: @bg-root;
-  border: 1px solid @border-color;
-  color: @text-main;
-
-  &:hover {
-    background: @bg-surface;
-    border-color: @text-secondary;
-  }
-}
-
-.btn-primary {
-  background: @primary-color;
-  border: 1px solid @primary-color;
-  color: #fff;
-  box-shadow: 0 4px 6px rgba(59, 130, 246, 0.2);
-
-  &:hover {
-    background: @primary-hover;
-    border-color: @primary-hover;
-    box-shadow: 0 6px 10px rgba(59, 130, 246, 0.25);
-  }
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  box-shadow: none;
 }
 
 .glass-popover {

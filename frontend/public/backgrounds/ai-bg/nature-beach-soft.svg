@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e1f5fe"/>
+      <stop offset="1" stop-color="#b3e5fc"/>
+    </linearGradient>
+    <linearGradient id="seaGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4fc3f7"/>
+      <stop offset="1" stop-color="#81d4fa"/>
+    </linearGradient>
+    <linearGradient id="sandGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff9c4"/>
+      <stop offset="1" stop-color="#fff59d"/>
+    </linearGradient>
+    <filter id="blurHorizon">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" />
+    </filter>
+  </defs>
+
+  <!-- Sky -->
+  <rect width="1600" height="400" fill="url(#skyGrad)" />
+  
+  <!-- Clouds (Soft) -->
+  <path d="M100 200 Q300 100 500 200 T900 200 T1300 200" fill="none" stroke="#fff" stroke-width="40" stroke-linecap="round" filter="url(#blurHorizon)" opacity="0.8"/>
+  
+  <!-- Sea -->
+  <rect y="400" width="1600" height="200" fill="url(#seaGrad)" />
+  
+  <!-- Sand -->
+  <rect y="600" width="1600" height="300" fill="url(#sandGrad)" />
+  
+  <!-- Wave Foam -->
+  <path d="M0 600 Q400 620 800 600 T1600 600" fill="none" stroke="#fff" stroke-width="15" opacity="0.6" filter="url(#blurHorizon)" />
+  
+  <!-- Starfish Hint -->
+  <polygon points="200,800 215,810 230,800 220,820 235,835 215,830 195,835 210,820" fill="#ffcc80" opacity="0.8" transform="rotate(15, 215, 820)"/>
+</svg>

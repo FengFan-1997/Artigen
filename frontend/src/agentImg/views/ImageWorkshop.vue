@@ -24,64 +24,46 @@
       </div>
 
       <div class="tools-grid">
-        <!-- Smart ID Photo Card -->
-        <div class="tool-card" @click="openIdPhotoPopup">
-          <div class="card-header">
-            <span class="tool-id">TOOL_01</span>
-            <span class="tool-badge">NEW</span>
-          </div>
+        <ToolCard
+          tool-id="TOOL_01"
+          badge="NEW"
+          icon="ID"
+          :title="ui.toolIdTitle"
+          :desc="ui.toolIdDesc"
+          :launch="ui.launch"
+          @click="openIdPhotoPopup"
+        />
 
-          <div class="tool-icon-wrapper">
-            <span class="tool-icon">ID</span>
-          </div>
+        <ToolCard
+          tool-id="TOOL_02"
+          badge="HOT"
+          badge-tone="hot"
+          icon="🕒"
+          :title="ui.toolOldTitle"
+          :desc="ui.toolOldDesc"
+          :launch="ui.launch"
+          @click="openOldPhotoPopup"
+        />
 
-          <h3 class="tool-title">{{ ui.toolIdTitle }}</h3>
-          <p class="tool-desc">{{ ui.toolIdDesc }}</p>
+        <ToolCard
+          tool-id="TOOL_03"
+          badge="10⚡"
+          icon="🧾"
+          :title="ui.toolIngredientTitle"
+          :desc="ui.toolIngredientDesc"
+          :launch="ui.launch"
+          @click="openIngredientList"
+        />
 
-          <div class="card-footer">
-            <span class="launch-text">{{ ui.launch }}</span>
-            <span class="arrow">→</span>
-          </div>
-        </div>
-
-        <!-- Old Photo Restoration Card -->
-        <div class="tool-card" @click="openOldPhotoPopup">
-          <div class="card-header">
-            <span class="tool-id">TOOL_02</span>
-            <span class="tool-badge hot">HOT</span>
-          </div>
-
-          <div class="tool-icon-wrapper">
-            <span class="tool-icon">🕒</span>
-          </div>
-
-          <h3 class="tool-title">{{ ui.toolOldTitle }}</h3>
-          <p class="tool-desc">{{ ui.toolOldDesc }}</p>
-
-          <div class="card-footer">
-            <span class="launch-text">{{ ui.launch }}</span>
-            <span class="arrow">→</span>
-          </div>
-        </div>
-
-        <div class="tool-card" @click="openIngredientList">
-          <div class="card-header">
-            <span class="tool-id">TOOL_03</span>
-            <span class="tool-badge">FREE</span>
-          </div>
-
-          <div class="tool-icon-wrapper">
-            <span class="tool-icon">🧾</span>
-          </div>
-
-          <h3 class="tool-title">{{ ui.toolIngredientTitle }}</h3>
-          <p class="tool-desc">{{ ui.toolIngredientDesc }}</p>
-
-          <div class="card-footer">
-            <span class="launch-text">{{ ui.launch }}</span>
-            <span class="arrow">→</span>
-          </div>
-        </div>
+        <ToolCard
+          tool-id="TOOL_04"
+          badge="NEW"
+          icon="BG"
+          :title="ui.toolBgTitle"
+          :desc="ui.toolBgDesc"
+          :launch="ui.launch"
+          @click="openAiBackgroundPopup"
+        />
       </div>
 
       <div class="info-section">
@@ -138,7 +120,7 @@
         <div class="result-container" @click.stop>
           <div class="result-header">
             <div class="result-title">{{ resultTitle }}</div>
-            <button class="close-btn" @click="closeResult">×</button>
+            <CloseButton @click="closeResult" />
           </div>
           <div v-if="resultError" class="result-error">{{ resultError }}</div>
           <div v-else class="result-body">
@@ -169,19 +151,30 @@
 
     <IdPhotoPopup
       :visible="isIdPhotoPopupOpen"
-      :credits-cost="img2imgCost"
+      :credits-cost="idPhotoCost"
       @close="isIdPhotoPopupOpen = false"
       @generate="handleGenerateIdPhoto"
     />
 
     <OldPhotoPopup
       :visible="isOldPhotoPopupOpen"
-      :credits-cost="img2imgCost"
+      :credits-cost="oldPhotoCost"
       @close="isOldPhotoPopupOpen = false"
       @restore="handleRestoreOldPhoto"
     />
 
-    <IngredientLabel :visible="isIngredientPopupOpen" @close="isIngredientPopupOpen = false" />
+    <AiBackgroundPopup
+      :visible="isAiBackgroundPopupOpen"
+      :credits-cost="aiBackgroundCost"
+      @close="isAiBackgroundPopupOpen = false"
+      @generate="handleGenerateAiBackground"
+    />
+
+    <IngredientLabel
+      :visible="isIngredientPopupOpen"
+      :credits-cost="ingredientLabelCost"
+      @close="isIngredientPopupOpen = false"
+    />
   </div>
 </template>
 
@@ -192,6 +185,9 @@ import TitleBar from '../components/TitleBar.vue';
 import GlobalFooter from '../components/GlobalFooter.vue';
 import IdPhotoPopup from '../components/IdPhotoPopup.vue';
 import OldPhotoPopup from '../components/OldPhotoPopup.vue';
+import AiBackgroundPopup from '../components/AiBackgroundPopup.vue';
+import ToolCard from '../components/ToolCard.vue';
+import CloseButton from '../components/CloseButton.vue';
 import IngredientLabel from './IngredientLabel.vue';
 import { trackPageView, trackEvent } from '../../utils/analytics';
 import { setMeta } from '../../utils/seo';
@@ -200,11 +196,11 @@ import { downloadBlob } from '../logic/formatFactory/url';
 import { useConsoleStore } from '@/stores/console';
 import { getAuthToken, getCurrentUserId, isLocalLoggedIn } from '@/login/session';
 import { useLanguageStore } from '@/stores/language';
-import { getCreditsCosts } from '@/points';
 
 const isIdPhotoPopupOpen = ref(false);
 const isOldPhotoPopupOpen = ref(false);
 const isIngredientPopupOpen = ref(false);
+const isAiBackgroundPopupOpen = ref(false);
 
 const resultVisible = ref(false);
 const resultTitle = ref('');
@@ -216,7 +212,10 @@ const activeRequestId = ref('');
 const consoleStore = useConsoleStore();
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
-const img2imgCost = ref(10);
+const idPhotoCost = 5;
+const oldPhotoCost = 5;
+const aiBackgroundCost = 5;
+const ingredientLabelCost = 10;
 
 const ui = computed(() => {
   const en = currentLang.value === 'en';
@@ -226,8 +225,8 @@ const ui = computed(() => {
     titleHighlight: en ? 'Workshop' : '工坊',
     beta: en ? '✨ Cloud encrypted processing' : '✨ 云端加密处理',
     desc: en
-      ? 'Explore AI tools for generation, restoration, and FDA ingredient label creation.'
-      : '探索 AI 驱动的影像处理工具：一键生成、修复，并生成 FDA 配料表标签图。',
+      ? 'Explore AI tools for ID photos, restoration, background editing, and FDA ingredient label creation.'
+      : '探索 AI 驱动的影像处理工具：证件照、修复、AI 背景与 FDA 配料表标签图生成。',
     toolIdTitle: en ? 'Smart ID Photo' : '智能证件照',
     toolIdDesc: en
       ? 'Multiple specs, one-click standard ID photo.'
@@ -240,6 +239,10 @@ const ui = computed(() => {
     toolIngredientDesc: en
       ? 'Paste text and generate a clean label image.'
       : '粘贴配料/成分文本，一键生成规范标签图',
+    toolBgTitle: en ? 'AI Background' : 'AI 背景',
+    toolBgDesc: en
+      ? 'Replace or add realistic backgrounds with local preview.'
+      : '一键换背景/加场景，支持本地预览与主体可调',
     launch: 'LAUNCH',
     resultTitle: en ? 'Result' : '生成结果',
     download: en ? 'Download' : '下载',
@@ -250,13 +253,14 @@ const ui = computed(() => {
 
     contentTitle: en ? 'Usage Guide' : '使用专栏',
     contentDesc: en
-      ? 'AI Lab includes Smart ID Photos, Old Photo Restoration, and FDA ingredient label generation.'
-      : 'AI 实验室包含：智能证件照、老照片修复（可选上色/去噪）以及 FDA 配料表标签图生成。',
+      ? 'AI Lab includes Smart ID Photos, Old Photo Restoration, AI Background, and FDA ingredient label generation.'
+      : 'AI 实验室包含：智能证件照、老照片修复（可选上色/去噪）、AI 背景以及 FDA 配料表标签图生成。',
     useCasesTitle: en ? 'Use Cases' : '使用场景',
     useCases: en
       ? [
           'ID Photo: crop/resize, background replacement, common specs export.',
           'Restoration: denoise, enhance clarity, optional colorization.',
+          'AI Background: replace/add scenes for product shots and portraits.',
           'Ingredient Label: paste label text and generate a clean label image.',
           'E-commerce: quick assets for listings and packaging drafts.',
           'Personal: restore old photos and export higher quality copies.'
@@ -264,6 +268,7 @@ const ui = computed(() => {
       : [
           '证件照：裁切/尺寸标准化、换底色、常用规格一键导出。',
           '老照片修复：去噪、清晰增强、可选智能上色。',
+          'AI 背景：商品图/人物图一键换背景或补充场景。',
           'FDA 配料表：粘贴配料/成分文本，生成规范标签图。',
           '电商/品牌：快速产出可用素材，用于商品页与包装打样。',
           '个人留存：修复旧照片并导出更高质量版本。'
@@ -296,7 +301,7 @@ const ui = computed(() => {
       ? [
           {
             q: 'What modules are included in Image Workshop?',
-            a: 'Currently includes Smart ID Photo, Old Photo Restoration, and FDA ingredient label generation.'
+            a: 'Currently includes Smart ID Photo, Old Photo Restoration, AI Background, and FDA ingredient label generation.'
           },
           {
             q: 'Is Image Workshop in beta?',
@@ -326,7 +331,7 @@ const ui = computed(() => {
       : [
           {
             q: '影像工坊目前有哪些模块？',
-            a: '当前包含：智能证件照、老照片修复、FDA 配料表标签图生成。'
+            a: '当前包含：智能证件照、老照片修复、AI 背景、FDA 配料表标签图生成。'
           },
           {
             q: '影像工坊是 Beta 吗？',
@@ -367,23 +372,17 @@ onMounted(() => {
   setMeta({
     title:
       currentLang.value === 'zh'
-        ? 'AI 影像工坊 - 证件照/老照片修复/FDA配料表'
-        : 'AI Image Workshop - ID Photo / Restoration / FDA Ingredient Label',
+        ? 'AI 影像工坊 - 证件照/老照片修复/AI背景/FDA配料表'
+        : 'AI Image Workshop - ID Photo / Restoration / AI Background / FDA Ingredient Label',
     description:
       currentLang.value === 'zh'
-        ? 'Artigen AI 影像工坊提供智能证件照、老照片修复与 FDA 配料表标签图生成。'
-        : 'Artigen AI Image Workshop provides ID photos, old photo restoration, and FDA ingredient label generation.',
+        ? 'Artigen AI 影像工坊提供智能证件照、老照片修复、AI 背景与 FDA 配料表标签图生成。'
+        : 'Artigen AI Image Workshop provides ID photos, restoration, AI background editing, and FDA ingredient label generation.',
     keywords:
       currentLang.value === 'zh'
-        ? 'AI证件照,老照片修复,FDA配料表,配料表生成器,标签图生成'
-        : 'AI ID photo, old photo restoration, FDA ingredient label, ingredient generator, label image'
+        ? 'AI证件照,老照片修复,AI背景,背景替换,电商背景,人物背景,FDA配料表,配料表生成器,标签图生成'
+        : 'AI ID photo, old photo restoration, AI background, background replacement, product background, FDA ingredient label, ingredient generator, label image'
   });
-  getCreditsCosts()
-    .then((c) => {
-      if (c && Number.isFinite(Number(c.img2img)))
-        img2imgCost.value = Math.max(0, Number(c.img2img) || 10);
-    })
-    .catch(() => {});
 });
 
 const openIdPhotoPopup = () => {
@@ -414,6 +413,16 @@ const openIngredientList = () => {
     target: 'ingredient_list'
   });
   trackEvent('ImageWorkshop', 'open_tool', 'ingredient_list');
+};
+
+const openAiBackgroundPopup = () => {
+  isAiBackgroundPopupOpen.value = true;
+  consoleStore.recordTraffic({
+    type: 'click',
+    page: '/artigen/image-workshop',
+    target: 'ai_background'
+  });
+  trackEvent('ImageWorkshop', 'open_tool', 'ai_background');
 };
 
 const fileToGenerateInput = (f: File): Promise<GenerateImageInput | null> => {
@@ -602,7 +611,7 @@ const runImg2Img = async (args: {
   prompt: string;
   file: File;
   userText: string;
-  reason: 'ai_design' | 'id_photo' | 'old_photo';
+  reason: 'ai_design' | 'id_photo' | 'old_photo' | 'ai_background' | 'img2img';
 }) => {
   const requestId = `imgwork_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   activeRequestId.value = requestId;
@@ -686,6 +695,66 @@ const handleGenerateIdPhoto = async (file: File, type: string) => {
   });
 };
 
+const buildAiBackgroundPrompt = (args: { mode: 'replace' | 'add'; background: string }) => {
+  const base = [
+    'Edit the reference photo to produce a high-quality realistic result.',
+    'Preserve the subject identity, shape, logo/text, and fine details.',
+    'Keep edges clean and natural; keep lighting and shadows consistent.',
+    'Do not add any text, watermark, or extra objects on the subject.',
+    'Photorealistic, sharp focus, natural colors.'
+  ].join(' ');
+  const modeText =
+    args.mode === 'add'
+      ? 'Add a complementary background scene and atmosphere consistent with the style description, while keeping the subject unchanged and clearly separated.'
+      : 'Replace the original background completely with the style description, while keeping the subject unchanged and clearly separated.';
+  const bg = String(args.background || '').trim();
+  return `${base} ${modeText} Style description: ${bg}`;
+};
+
+const handleGenerateAiBackground = async (
+  file: File,
+  args: {
+    mode: 'replace' | 'add';
+    background: string;
+    presetId: string;
+    presetSrc: string;
+    presetW: number;
+    presetH: number;
+    localResultUrl?: string;
+    subjectScale?: number;
+    subjectOffset?: { x: number; y: number };
+  }
+) => {
+  isAiBackgroundPopupOpen.value = false;
+  const mode = args?.mode === 'add' ? 'add' : 'replace';
+  const presetId = String(args?.presetId || '').trim();
+  const localResultUrl = String(args?.localResultUrl || '').trim();
+
+  if (localResultUrl) {
+    resultLoading.value = false;
+    openResult({ title: ui.value.toolBgTitle, url: localResultUrl });
+    consoleStore.recordTraffic({
+      type: 'generate_success',
+      page: '/artigen/image-workshop',
+      target: `ai_background_local:${presetId || 'preset'}`
+    });
+    trackEvent('ImageWorkshop', 'generate_success', `ai_background_local:${presetId || 'preset'}`);
+    return;
+  }
+
+  const prompt = buildAiBackgroundPrompt({
+    mode,
+    background: String(args?.background || '').trim()
+  });
+  await runImg2Img({
+    title: ui.value.toolBgTitle,
+    prompt,
+    file,
+    userText: `ai_background:${mode}:${presetId || 'preset'}`,
+    reason: 'ai_background'
+  });
+};
+
 const handleRestoreOldPhoto = async (file: File, options: any) => {
   isOldPhotoPopupOpen.value = false;
   const uid = String(getCurrentUserId() || '').trim();
@@ -735,6 +804,8 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
+  position: relative;
+  z-index: 1;
 }
 
 .page-header {
@@ -839,115 +910,8 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
   gap: 40px;
   padding: 0 40px;
-}
-
-.tool-card {
-  background: rgba(20, 20, 20, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  padding: 40px;
-  cursor: pointer;
-  transition: all 0.3s;
   position: relative;
-  overflow: hidden;
-  height: 400px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
-.tool-card:hover {
-  background: rgba(30, 30, 30, 0.6);
-  border-color: rgba(204, 255, 0, 0.3);
-  transform: translateY(-5px);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-}
-
-.card-header {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-  margin-bottom: 60px;
-}
-
-.tool-id {
-  font-family: 'JetBrains Mono', monospace;
-  color: #666;
-  font-size: 12px;
-}
-
-.tool-badge {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #ccc;
-}
-
-.tool-badge.hot {
-  background: rgba(255, 100, 0, 0.2);
-  color: #ffaa80;
-}
-
-.tool-icon-wrapper {
-  margin-bottom: 32px;
-}
-
-.tool-icon {
-  font-size: 48px;
-  border: 2px solid #fff;
-  padding: 8px 16px;
-  border-radius: 4px;
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 700;
-}
-
-.tool-title {
-  font-size: 32px;
-  font-weight: 800;
-  margin: 0 0 16px;
-}
-
-.tool-desc {
-  color: #94a3b8;
-  font-size: 16px;
-  margin: 0;
-  flex: 1;
-}
-
-.card-footer {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-top: 32px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  margin-top: auto;
-}
-
-.launch-text {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 700;
-  color: #666;
-  transition: color 0.3s;
-}
-
-.tool-card:hover .launch-text {
-  color: #fff;
-}
-
-.arrow {
-  color: #ccff00;
-  font-weight: 900;
-  transform: translateX(0);
-  transition: transform 0.3s;
-}
-
-.tool-card:hover .arrow {
-  transform: translateX(5px);
+  z-index: 100;
 }
 
 .disabled {
@@ -1111,12 +1075,6 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 
   .main-content {
     padding: 40px 20px;
-  }
-
-  .tool-card {
-    padding: 24px;
-    height: auto;
-    min-height: 300px;
   }
 }
 </style>

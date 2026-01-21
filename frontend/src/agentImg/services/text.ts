@@ -157,7 +157,8 @@ export const img2img = async (input: {
     const raw = String(input.reason || '')
       .trim()
       .toLowerCase();
-    if (raw === 'ai_design' || raw === 'id_photo' || raw === 'old_photo') return raw;
+    if (raw === 'ai_design' || raw === 'id_photo' || raw === 'old_photo' || raw === 'ai_background')
+      return raw;
     return 'img2img';
   })();
   if (requestedModel && requestedModel !== FIXED_IMAGE_MODEL) {
@@ -294,6 +295,7 @@ export const generateText = async (
     images?: GenerateImageInput[];
     model?: string;
     purpose?: string;
+    cost?: number;
   }
 ): Promise<TextGenerateResult> => {
   const p = String(prompt || '').trim();
@@ -342,6 +344,8 @@ export const generateText = async (
     const token = getAuthToken();
     const images = Array.isArray(opts?.images) ? opts?.images : undefined;
     const purpose = String(opts?.purpose || '').trim();
+    const costRaw = Number.parseInt(String(opts?.cost ?? ''), 10);
+    const cost = Number.isFinite(costRaw) && costRaw > 0 ? costRaw : 0;
     try {
       console.log('[AI][request]', {
         api: API_URL,
@@ -349,6 +353,7 @@ export const generateText = async (
         model: FIXED_TEXT_MODEL,
         modelRequested: requestedModel || undefined,
         purpose: purpose || undefined,
+        cost: cost || undefined,
         timeoutMs,
         prompt: p,
         imagesCount: Array.isArray(images) ? images.length : 0
@@ -367,7 +372,8 @@ export const generateText = async (
         requestId,
         images,
         model: FIXED_TEXT_MODEL,
-        ...(purpose ? { purpose } : {})
+        ...(purpose ? { purpose } : {}),
+        ...(cost ? { cost } : {})
       })
     });
 

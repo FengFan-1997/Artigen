@@ -15128,6 +15128,791 @@
       "userId": "guest_93arokflt",
       "ip": "127.0.0.1",
       "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mknys5fi_e20457ce",
+      "ts": 1768996399230,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop",
+        "path": "/artigen/image-workshop",
+        "title": "AI影像工坊 - Artigen",
+        "location": "http://localhost:4000/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknys5g6_e09188af",
+      "ts": 1768996399254,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknys67h_68d21fc7",
+      "ts": 1768996400237,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ai_background"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknys83l_e7684ed5",
+      "ts": 1768996402689,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ai_background"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknys87z_78739c15",
+      "ts": 1768996402847,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ai_background"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknys8bv_442a64ac",
+      "ts": 1768996402987,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ai_background"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknys8fl_a35c1a80",
+      "ts": 1768996403121,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ai_background"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknys9w2_5cb29355",
+      "ts": 1768996405010,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ai_background"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknysa6b_847243ec",
+      "ts": 1768996405379,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ingredient_list"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknysb5z_0b66de20",
+      "ts": 1768996406663,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ai_background"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknzbm07_a9cebb4b",
+      "ts": 1768997307175,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ai_background"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mknzq2qb_2511cfe6",
+      "ts": 1768997982035,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen?ide_webview_request_time=1768997980441",
+        "path": "/artigen?ide_webview_request_time=1768997980441",
+        "title": "Artigen - AI 图片工坊与工具箱",
+        "location": "http://localhost:4001/artigen?ide_webview_request_time=1768997980441"
+      },
+      "path": "/artigen?ide_webview_request_time=1768997980441",
+      "location": "http://localhost:4001/artigen?ide_webview_request_time=1768997980441",
+      "referrer": "",
+      "userId": "guest_xr6sm9075",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko04vyk_aa2fdd6b",
+      "ts": 1768998673100,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop",
+        "path": "/artigen/image-workshop",
+        "title": "AI影像工坊 - Artigen",
+        "location": "http://localhost:4000/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko04vzc_7bfa4263",
+      "ts": 1768998673128,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko0cyu1_48137958",
+      "ts": 1768999050073,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop",
+        "path": "/artigen/image-workshop",
+        "title": "AI影像工坊 - Artigen",
+        "location": "http://localhost:4000/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko0cyuq_6c853b07",
+      "ts": 1768999050098,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko0d0pz_a6f5a727",
+      "ts": 1768999052519,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ai_background"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko0d60n_1552d00f",
+      "ts": 1768999059383,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "AI_Background",
+        "eventAction": "select_preset",
+        "eventLabel": "nature-podium-cloud"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko21xkx_e6bb34c9",
+      "ts": 1769001894465,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "AI_Background",
+        "eventAction": "select_preset",
+        "eventLabel": "indoor-sunlight-shadow"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2bbul_cc85c345",
+      "ts": 1769002332861,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2bbvl_dc0373a9",
+      "ts": 1769002332897,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2c9mf_1f276a35",
+      "ts": 1769002376631,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2c9nm_9ca59c4f",
+      "ts": 1769002376674,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2ctrg_ffcaa464",
+      "ts": 1769002402732,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2ctrw_01a56ddc",
+      "ts": 1769002402748,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2d7iv_b2dd3e2b",
+      "ts": 1769002420567,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "ImageWorkshop",
+        "eventAction": "open_tool",
+        "eventLabel": "ai_background"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2d8xy_e5889901",
+      "ts": 1769002422406,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "AI_Background",
+        "eventAction": "select_preset",
+        "eventLabel": "studio-white"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2d94m_a451e028",
+      "ts": 1769002422646,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "AI_Background",
+        "eventAction": "select_preset",
+        "eventLabel": "studio-dark"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2d9ew_61de3614",
+      "ts": 1769002423016,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "AI_Background",
+        "eventAction": "select_preset",
+        "eventLabel": "indoor-sunlight-shadow"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2d9yk_ba79cd74",
+      "ts": 1769002423724,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "AI_Background",
+        "eventAction": "select_preset",
+        "eventLabel": "indoor-wood-counter"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2dajm_b47637cd",
+      "ts": 1769002424482,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "AI_Background",
+        "eventAction": "select_preset",
+        "eventLabel": "indoor-table-plant"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2daxa_7cee96cf",
+      "ts": 1769002424974,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "AI_Background",
+        "eventAction": "select_preset",
+        "eventLabel": "cafe"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2dd3o_826d3f8c",
+      "ts": 1769002427796,
+      "eventType": "custom_event",
+      "payload": {
+        "eventCategory": "AI_Background",
+        "eventAction": "select_preset",
+        "eventLabel": "nature-podium-cloud"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2dhm0_34592cf2",
+      "ts": 1769002433640,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/tools",
+        "path": "/artigen/tools",
+        "title": "工具 - Artigen",
+        "location": "http://localhost:4000/artigen/tools"
+      },
+      "path": "/artigen/tools",
+      "location": "http://localhost:4000/artigen/tools",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2di7n_6afd59b9",
+      "ts": 1769002434419,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen",
+        "path": "/artigen",
+        "title": "Artigen - AI 图片工坊与工具箱",
+        "location": "http://localhost:4000/artigen"
+      },
+      "path": "/artigen",
+      "location": "http://localhost:4000/artigen",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2dm93_fcd144a7",
+      "ts": 1769002439655,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2e2co_b601663e",
+      "ts": 1769002460520,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2e4j0_246ef83d",
+      "ts": 1769002463340,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2fq8g_01b814cd",
+      "ts": 1769002538128,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/market",
+        "path": "/artigen/market",
+        "title": "点数商城 - Artigen",
+        "location": "http://localhost:4000/artigen/market"
+      },
+      "path": "/artigen/market",
+      "location": "http://localhost:4000/artigen/market",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko2zayy_502f4b16",
+      "ts": 1769003451466,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/market",
+        "path": "/artigen/market",
+        "title": "点数商城 - Artigen",
+        "location": "http://localhost:4000/artigen/market"
+      },
+      "path": "/artigen/market",
+      "location": "http://localhost:4000/artigen/market",
+      "referrer": "",
+      "userId": "user_test_100k",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.104.3 Chrome/138.0.7204.251 Electron/37.6.1 Safari/537.36"
+    },
+    {
+      "id": "evt_mko3711k_1d26024e",
+      "ts": 1769003811848,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop",
+        "path": "/artigen/image-workshop",
+        "title": "AI影像工坊 - Artigen",
+        "location": "http://localhost:4000/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko37128_dfef9f50",
+      "ts": 1769003811872,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko371a2_3a7738fb",
+      "ts": 1769003812154,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop",
+        "path": "/artigen/image-workshop",
+        "title": "AI影像工坊 - Artigen",
+        "location": "http://localhost:4000/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko371au_f428a020",
+      "ts": 1769003812182,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko372hx_5838d53a",
+      "ts": 1769003813733,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop",
+        "path": "/artigen/image-workshop",
+        "title": "AI影像工坊 - Artigen",
+        "location": "http://localhost:4000/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko372i9_ae405847",
+      "ts": 1769003813745,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko373q2_4375afdd",
+      "ts": 1769003815322,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen",
+        "path": "/artigen",
+        "title": "Artigen - AI 图片工坊与工具箱",
+        "location": "http://localhost:4000/artigen"
+      },
+      "path": "/artigen",
+      "location": "http://localhost:4000/artigen",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko377ig_99bc4d63",
+      "ts": 1769003820232,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/ai",
+        "path": "/artigen/ai",
+        "title": "AI 设计 - Artigen",
+        "location": "http://localhost:4000/artigen/ai"
+      },
+      "path": "/artigen/ai",
+      "location": "http://localhost:4000/artigen/ai",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko3r7hy_79c97925",
+      "ts": 1769004753334,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop",
+        "path": "/artigen/image-workshop",
+        "title": "AI影像工坊 - Artigen",
+        "location": "http://localhost:4000/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mko3r7iq_bd51014a",
+      "ts": 1769004753362,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/image-workshop"
+      },
+      "path": "/artigen/image-workshop",
+      "location": "http://localhost:4000/artigen/image-workshop",
+      "referrer": "http://localhost:4000/artigen/image-workshop",
+      "userId": "guest_93arokflt",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
     }
   ]
 }

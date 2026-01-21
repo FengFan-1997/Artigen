@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <filter id="bgBlur">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="15" />
+    </filter>
+    <linearGradient id="tableGradient" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f8f9fa" />
+      <stop offset="1" stop-color="#e9ecef" />
+    </linearGradient>
+    <linearGradient id="podiumSide" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#dee2e6" />
+      <stop offset="1" stop-color="#ced4da" />
+    </linearGradient>
+  </defs>
+
+  <!-- Blurred Room Background -->
+  <g filter="url(#bgBlur)">
+    <rect width="1600" height="900" fill="#e9ecef" />
+    <rect x="1000" y="100" width="400" height="600" fill="#dee2e6" />
+    <rect x="200" y="300" width="300" height="400" fill="#ced4da" />
+    <!-- Hint of Greenery in Background -->
+    <circle cx="1400" cy="400" r="150" fill="#d4edda" opacity="0.5" />
+  </g>
+
+  <!-- Round Table Top -->
+  <!-- Perspective ellipse -->
+  <ellipse cx="600" cy="750" rx="500" ry="150" fill="url(#tableGradient)" stroke="#fff" stroke-width="2"/>
+  
+  <!-- Table Edge/Thickness -->
+  <path d="M100 750 A500 150 0 0 0 1100 750 V 780 A500 150 0 0 1 100 780 Z" fill="url(#podiumSide)" />
+  
+  <!-- Plant Leaf in Foreground (Out of focus) -->
+  <path d="M-50 900 Q200 600 400 900 Z" fill="#4a7c59" opacity="0.9" filter="url(#bgBlur)" />
+</svg>

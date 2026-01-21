@@ -466,6 +466,7 @@ installSystemRoutes(app, {
   API_KEY,
   SILICONFLOW_API_KEY,
   activeTextProvider,
+  imgCredits,
   VECTORS_FILE,
   readJson,
   fs,

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="wallLight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f5f5f0"/>
+      <stop offset="1" stop-color="#e8e8e0"/>
+    </linearGradient>
+    <filter id="blurShadow">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="8" />
+    </filter>
+    <linearGradient id="surface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f0f0f0"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Wall Background -->
+  <rect width="1600" height="900" fill="url(#wallLight)" />
+  
+  <!-- Table/Counter Surface -->
+  <rect y="600" width="1600" height="300" fill="url(#surface)" />
+  
+  <!-- Window Shadows -->
+  <g fill="#000" opacity="0.1" filter="url(#blurShadow)" transform="rotate(-15, 800, 450)">
+    <!-- Vertical bars of shadow -->
+    <rect x="400" y="-200" width="50" height="1500" />
+    <rect x="800" y="-200" width="50" height="1500" />
+    <rect x="1200" y="-200" width="50" height="1500" />
+    <!-- Horizontal bars of shadow -->
+    <rect x="0" y="200" width="1600" height="50" />
+    <rect x="0" y="600" width="1600" height="50" />
+  </g>
+  
+  <!-- Plant Shadow Hint (Leaf shape) -->
+  <path d="M1200 500 Q1300 300 1500 400 Q1400 700 1200 500 Z" fill="#000" opacity="0.08" filter="url(#blurShadow)" />
+  
+  <!-- Soft Light Overlay -->
+  <rect width="1600" height="900" fill="url(#wallLight)" opacity="0.2" style="mix-blend-mode: overlay;" />
+</svg>

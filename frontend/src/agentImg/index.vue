@@ -4,58 +4,19 @@
       <TitleBar hideAuth hideLangOnMobile>
         <template #actions>
           <div class="top-actions">
-            <template v-if="isAuthed">
-              <div ref="creditsContainerRef" class="credits-container">
-                <button
-                  class="credits-btn"
-                  type="button"
-                  @click="toggleCreditsPopover"
-                  :disabled="creditsLoading"
-                >
-                  <span class="credits-icon">⚡</span>
-                  <span class="credits-value">{{ creditsText }}</span>
-                </button>
-
-                <transition name="dropdown-fade">
-                  <div v-if="creditsPopoverOpen" class="credits-popover" @click.stop>
-                    <div class="credits-pop-head">
-                      <div class="credits-pop-title">{{ ui.creditsBalance }}</div>
-                      <div class="credits-pop-total">
-                        {{ ui.totalCredits }}: {{ totalCreditsText }}
-                      </div>
-                    </div>
-                    <div class="credits-pop-balance">
-                      <span class="credits-pop-icon">⚡</span>
-                      <span class="credits-pop-value">{{ creditsText }}</span>
-                    </div>
-                    <div class="credits-pop-actions">
-                      <button
-                        class="credits-pop-btn"
-                        type="button"
-                        @click="refreshCredits"
-                        :disabled="creditsLoading"
-                      >
-                        {{ ui.refreshCredits }}
-                      </button>
-                      <button class="credits-pop-btn primary" type="button" @click="goMarket">
-                        {{ ui.goMarket }}
-                      </button>
-                    </div>
-                  </div>
-                </transition>
-              </div>
-
-              <div class="user-menu">
-                <button class="avatar-btn" type="button" @click="() => openAccountPopup()">
-                  <span class="avatar-text">{{ avatarText }}</span>
-                </button>
-              </div>
-            </template>
-            <button v-else class="nth-login-btn" type="button" @click="onLoginClick">
-              {{ ui.loginOrRegister }}
-            </button>
-
-            <router-link to="/artigen" class="top-action-link">{{ ui.homeLink }}</router-link>
+            <CreditsUserActions
+              :is-authed="isAuthed"
+              :avatar-text="avatarText"
+              :credits-text="creditsText"
+              :total-credits-text="totalCreditsText"
+              :credits-loading="creditsLoading"
+              :on-refresh-credits="refreshCredits"
+              :on-go-market="goMarket"
+              :on-open-account-popup="openAccountPopup"
+              :on-login-click="onLoginClick"
+            >
+              <router-link to="/artigen" class="top-action-link">{{ ui.homeLink }}</router-link>
+            </CreditsUserActions>
           </div>
         </template>
       </TitleBar>
@@ -500,7 +461,7 @@
       <div class="download-dialog" @click.stop>
         <div class="download-header">
           <h3>下载图片</h3>
-          <button class="close-btn" @click="showDownloadDialog = false">×</button>
+          <CloseButton @click="showDownloadDialog = false" />
         </div>
         <div class="download-options">
           <button
@@ -538,7 +499,9 @@ import { useLanguageStore } from '@/stores/language';
 import { useAgentImgFlow } from './composables/useAgentImgFlow';
 import { useAgentImgSettings } from './composables/useAgentImgSettings';
 import TitleBar from './components/TitleBar.vue';
+import CreditsUserActions from './components/CreditsUserActions.vue';
 import ProductSidebar from './components/ProductSidebar.vue';
+import CloseButton from './components/CloseButton.vue';
 import type { GenerateImageInput } from './services/text';
 
 // New Composables
@@ -575,14 +538,11 @@ const {
   creditsBalance,
   creditsLoading,
   creditsCosts,
-  creditsPopoverOpen,
-  creditsContainerRef,
   refreshCredits,
   refreshCosts,
   creditsText,
   totalCreditsText,
-  goMarket,
-  toggleCreditsPopover
+  goMarket
 } = useAgentImgCredits(isAuthed);
 
 // --- 4. UI State ---
@@ -1068,10 +1028,6 @@ const onWideSidebarChange = (e: MediaQueryListEvent) => {
 const onGlobalPointerDown = (e: PointerEvent) => {
   const target = e.target as HTMLElement | null;
   if (!target) return;
-
-  if (creditsPopoverOpen.value && !target.closest('.credits-container')) {
-    creditsPopoverOpen.value = false;
-  }
 
   if (modelMenuOpen.value && !target.closest('.model-menu')) modelMenuOpen.value = false;
 

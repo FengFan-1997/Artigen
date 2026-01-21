@@ -217,6 +217,26 @@ export type AdminAnalyticsEventItem = {
   ua?: string;
 };
 
+export type AiBgSeoCopy = {
+  pagePath: string;
+  title: string;
+  description: string;
+  keywords: string;
+  ogTitle: string;
+  ogDescription: string;
+  ogImage: string;
+  h1: string;
+  heroTitle: string;
+  heroSubtitle: string;
+  ctaPrimary: string;
+  ctaSecondary: string;
+  featureTitle: string;
+  featureItems: string[];
+  useCasesTitle: string;
+  useCases: string[];
+  updatedAt: number;
+};
+
 const buildUrlWithQuery = (path: string, query: Record<string, any>) => {
   const base = buildApiUrl(path);
   const sp = new URLSearchParams();
@@ -229,6 +249,27 @@ const buildUrlWithQuery = (path: string, query: Record<string, any>) => {
   const qs = sp.toString();
   return qs ? `${base}?${qs}` : base;
 };
+
+const buildDefaultAiBgSeoCopy = (): AiBgSeoCopy => ({
+  pagePath: '/artigen/image-workshop',
+  title: 'AI 背景生成 - 一键替换商品图背景 | Artigen',
+  description:
+    '上传商品图即可自动抠图并生成高质感场景背景，支持替换与叠加模式，提升电商图片转化率。',
+  keywords: 'AI 背景,商品图,电商主图,抠图,场景图,背景替换,AI 作图',
+  ogTitle: 'AI 背景生成｜快速替换商品图背景',
+  ogDescription: '选择风格、上传图片，一键生成电商商品场景图，支持多种尺寸与风格。',
+  ogImage: '',
+  h1: 'AI 背景生成',
+  heroTitle: '让商品图瞬间拥有高级场景',
+  heroSubtitle: '选择背景风格，上传图片，秒级生成适配电商的高质感场景图。',
+  ctaPrimary: '立即生成',
+  ctaSecondary: '查看示例',
+  featureTitle: '核心优势',
+  featureItems: ['自动抠图，无需修图基础', '多风格背景，一键适配', '支持替换与叠加两种模式'],
+  useCasesTitle: '适用场景',
+  useCases: ['电商主图', '新品上架', '品牌宣传', '社媒投放'],
+  updatedAt: Date.now()
+});
 
 const isAdminAuthErrorStatus = (status: number) => status === 401 || status === 403;
 
@@ -261,6 +302,7 @@ export const useConsoleStore = defineStore('console', {
     logs: [] as ActivityLog[],
     generatedContent: [] as GeneratedContent[],
     trafficStats: [] as TrafficEvent[],
+    aiBgSeoCopy: buildDefaultAiBgSeoCopy(),
     adminKey: '' as string,
     adminAuthMode: 'bearer' as AdminAuthMode,
     adminUsers: [] as AdminUserItem[],
@@ -312,6 +354,7 @@ export const useConsoleStore = defineStore('console', {
           this.logs = data.logs || [];
           this.generatedContent = data.generatedContent || [];
           this.trafficStats = data.trafficStats || [];
+          this.aiBgSeoCopy = data.aiBgSeoCopy || buildDefaultAiBgSeoCopy();
         } catch (e) {
           console.error('Failed to load console store', e);
         }
@@ -597,7 +640,8 @@ export const useConsoleStore = defineStore('console', {
           transactions: this.transactions,
           logs: this.logs,
           generatedContent: this.generatedContent,
-          trafficStats: this.trafficStats
+          trafficStats: this.trafficStats,
+          aiBgSeoCopy: this.aiBgSeoCopy
         })
       );
     },
@@ -704,6 +748,20 @@ export const useConsoleStore = defineStore('console', {
         timestamp: Date.now(),
         ...content
       });
+      this.save();
+    },
+
+    setAiBgSeoCopy(input: Partial<AiBgSeoCopy>) {
+      this.aiBgSeoCopy = {
+        ...this.aiBgSeoCopy,
+        ...input,
+        updatedAt: Date.now()
+      };
+      this.save();
+    },
+
+    resetAiBgSeoCopy() {
+      this.aiBgSeoCopy = buildDefaultAiBgSeoCopy();
       this.save();
     }
   }

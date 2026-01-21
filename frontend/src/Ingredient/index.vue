@@ -5,6 +5,7 @@ import LabelTypeSelect from './utils/LabelTypeSelect.vue';
 import generateImageWithAI from './utils/generateImageWithAI';
 import { message } from 'ant-design-vue';
 import gsap from 'gsap';
+import ActionButton from '@/components/ActionButton.vue';
 
 import { exportPdf } from '../utils/export';
 
@@ -58,6 +59,34 @@ const PLACEHOLDERS: Record<string, string> = {
   default: 'Ingredients (comma or newline separated)'
 };
 const placeholderText = computed(() => PLACEHOLDERS[productType.value] ?? PLACEHOLDERS.default);
+const actionButtonStyles = {
+  primary: {
+    '--btn-height': '48px',
+    '--btn-radius': '10px',
+    '--btn-font-size': '16px',
+    '--btn-gap': '10px',
+    '--btn-padding': '0 24px',
+    '--btn-transition': 'all 0.3s ease',
+    '--btn-bg': '#1d4ed8',
+    '--btn-color': '#ffffff',
+    '--btn-shadow': '0 4px 12px rgba(74, 144, 226, 0.3)',
+    '--btn-hover-bg': '#1c4acd',
+    '--btn-hover-shadow': '0 6px 16px rgba(74, 144, 226, 0.4)'
+  },
+  secondary: {
+    '--btn-height': '48px',
+    '--btn-radius': '10px',
+    '--btn-font-size': '16px',
+    '--btn-gap': '10px',
+    '--btn-padding': '0 24px',
+    '--btn-transition': 'all 0.3s ease',
+    '--btn-bg': 'rgba(255, 255, 255, 0.8)',
+    '--btn-border': '1px solid rgba(0, 0, 0, 0.1)',
+    '--btn-color': '#0f172a',
+    '--btn-hover-bg': '#ffffff',
+    '--btn-hover-shadow': '0 4px 12px rgba(0, 0, 0, 0.08)'
+  }
+} as const;
 
 const DEFAULT_DEMO_IMAGES: Record<'Food' | 'Drug' | 'Cosmetic' | 'Dietary Supplement', string> = {
   Food: 'https://cdn.packify.ai/image-resize/800xauto_outside/image/a71233c8-731a-4a42-a4bb-0c01d53bc289.png',
@@ -453,27 +482,31 @@ watch(typeIndex, (nv) => {
             </div>
           </div>
           <div v-if="!isMobile" class="operation-buttons">
-            <button class="btn btn-secondary hover-effect" @click="router.push('/portfolio-home')">
-              <img
-                class="button-icon"
-                src="https://cdn.packify.ai/image/9e25c93e-da3f-452e-962f-13e959ff632f.svg"
-                alt=""
-                width="19"
-                height="18"
-              />
-              <span>Back to Profile</span>
-            </button>
+            <ActionButton
+              class="hover-effect"
+              variant="secondary"
+              :style="actionButtonStyles.secondary"
+              icon="https://cdn.packify.ai/image/9e25c93e-da3f-452e-962f-13e959ff632f.svg"
+              icon-alt=""
+              :icon-width="19"
+              :icon-height="18"
+              @click="router.push('/portfolio-home')"
+            >
+              Back to Profile
+            </ActionButton>
             <div style="position: relative">
-              <button class="btn btn-primary hover-effect" @click="openDownload">
-                <img
-                  class="button-icon"
-                  src="https://cdn.packify.ai/image/31ffedbf-fd56-4280-a55f-9cc1bc2cf848.svg"
-                  alt=""
-                  width="19"
-                  height="18"
-                />
-                <span>Download ( PNG, SVG, PDF )</span>
-              </button>
+              <ActionButton
+                class="hover-effect"
+                variant="primary"
+                :style="actionButtonStyles.primary"
+                icon="https://cdn.packify.ai/image/31ffedbf-fd56-4280-a55f-9cc1bc2cf848.svg"
+                icon-alt=""
+                :icon-width="19"
+                :icon-height="18"
+                @click="openDownload"
+              >
+                Download ( PNG, SVG, PDF )
+              </ActionButton>
               <div v-if="isDownloadPopoverOpen && !isMobile" class="download-popover glass-popover">
                 <button
                   v-for="option in downloadOptions"
@@ -497,27 +530,31 @@ watch(typeIndex, (nv) => {
           </div>
         </div>
         <div v-if="isMobile" class="operation-buttons stack-mobile">
-          <button class="btn btn-secondary hover-effect" @click="router.push('/portfolio-home')">
-            <img
-              class="button-icon"
-              src="https://cdn.packify.ai/image/9e25c93e-da3f-452e-962f-13e959ff632f.svg"
-              alt=""
-              width="19"
-              height="18"
-            />
-            <span>Back to Profile</span>
-          </button>
+          <ActionButton
+            class="hover-effect"
+            variant="secondary"
+            :style="actionButtonStyles.secondary"
+            icon="https://cdn.packify.ai/image/9e25c93e-da3f-452e-962f-13e959ff632f.svg"
+            icon-alt=""
+            :icon-width="19"
+            :icon-height="18"
+            @click="router.push('/portfolio-home')"
+          >
+            Back to Profile
+          </ActionButton>
           <div style="position: relative">
-            <button class="btn btn-primary hover-effect" @click="openDownload">
-              <img
-                class="button-icon"
-                src="https://cdn.packify.ai/image/31ffedbf-fd56-4280-a55f-9cc1bc2cf848.svg"
-                alt=""
-                width="19"
-                height="18"
-              />
-              <span>Download ( PNG, SVG, PDF )</span>
-            </button>
+            <ActionButton
+              class="hover-effect"
+              variant="primary"
+              :style="actionButtonStyles.primary"
+              icon="https://cdn.packify.ai/image/31ffedbf-fd56-4280-a55f-9cc1bc2cf848.svg"
+              icon-alt=""
+              :icon-width="19"
+              :icon-height="18"
+              @click="openDownload"
+            >
+              Download ( PNG, SVG, PDF )
+            </ActionButton>
           </div>
         </div>
       </div>
@@ -919,43 +956,6 @@ watch(typeIndex, (nv) => {
 
   &.stack-mobile {
     flex-direction: column;
-  }
-}
-
-.btn {
-  height: 48px;
-  padding: 0 24px;
-  border-radius: 10px;
-  font-size: 16px;
-  font-weight: 500;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  border: none;
-  transition: all 0.3s ease;
-
-  &.btn-secondary {
-    background: rgba(255, 255, 255, 0.8);
-    color: @text-main;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-
-    &:hover {
-      background: #fff;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    }
-  }
-
-  &.btn-primary {
-    background: @primary-color;
-    color: #fff;
-    box-shadow: 0 4px 12px rgba(74, 144, 226, 0.3);
-
-    &:hover {
-      background: darken(@primary-color, 5%);
-      box-shadow: 0 6px 16px rgba(74, 144, 226, 0.4);
-    }
   }
 }
 

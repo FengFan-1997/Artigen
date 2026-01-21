@@ -12,26 +12,26 @@
       </button>
 
       <nav class="nav-links">
-        <router-link to="/artigen" class="nav-item" :class="{ active: activeKey === 'home' }">
+        <NavItem to="/artigen" item-class="nav-item" :active="activeKey === 'home'">
           {{ ui.navHome }}
-        </router-link>
-        <router-link to="/artigen/ai" class="nav-item" :class="{ active: activeKey === 'ai' }">
+        </NavItem>
+        <NavItem to="/artigen/ai" item-class="nav-item" :active="activeKey === 'ai'">
           {{ ui.navAiDesign }}
-        </router-link>
+        </NavItem>
         <div
           ref="toolsContainerRef"
           class="tools-container"
           @mouseenter="openToolsMenu"
           @mouseleave="scheduleCloseToolsMenu"
         >
-          <router-link
+          <NavItem
             to="/artigen/tools"
-            class="nav-item"
-            :class="{ active: activeKey === 'format' }"
+            item-class="nav-item"
+            :active="activeKey === 'format'"
             @click="isToolsMenuOpen = false"
           >
             {{ ui.navFormatFactory }}
-          </router-link>
+          </NavItem>
 
           <transition name="dropdown-fade">
             <div
@@ -44,13 +44,13 @@
               <div class="tools-pop-inner">
                 <div class="tools-pop-header">
                   <div class="tools-pop-title">{{ ui.toolsPopoverTitle }}</div>
-                  <router-link
+                  <NavItem
                     to="/artigen/tools"
-                    class="tools-pop-all"
+                    item-class="tools-pop-all"
                     @click="isToolsMenuOpen = false"
                   >
                     {{ ui.viewAllTools }} →
-                  </router-link>
+                  </NavItem>
                 </div>
 
                 <div class="tools-pop-grid">
@@ -72,27 +72,15 @@
             </div>
           </transition>
         </div>
-        <router-link
-          to="/artigen/image-workshop"
-          class="nav-item"
-          :class="{ active: activeKey === 'image' }"
-        >
+        <NavItem to="/artigen/image-workshop" item-class="nav-item" :active="activeKey === 'image'">
           {{ ui.navImageWorkshop }}
-        </router-link>
-        <router-link
-          to="/artigen/market"
-          class="nav-item"
-          :class="{ active: activeKey === 'market' }"
-        >
+        </NavItem>
+        <NavItem to="/artigen/market" item-class="nav-item" :active="activeKey === 'market'">
           {{ ui.navMarket }}
-        </router-link>
-        <router-link
-          to="/artigen/about"
-          class="nav-item"
-          :class="{ active: activeKey === 'about' }"
-        >
+        </NavItem>
+        <NavItem to="/artigen/about" item-class="nav-item" :active="activeKey === 'about'">
           {{ ui.navAbout }}
-        </router-link>
+        </NavItem>
       </nav>
 
       <div class="header-right">
@@ -129,48 +117,17 @@
 
         <slot name="actions">
           <div v-if="!hideAuth" class="top-actions">
-            <template v-if="isAuthed">
-              <div ref="creditsContainerRef" class="credits-container">
-                <button class="credits-btn" type="button" @click="toggleCreditsPopover">
-                  <span class="credits-icon">⚡</span>
-                  <span class="credits-value">{{ creditsText }}</span>
-                </button>
-
-                <transition name="dropdown-fade">
-                  <div v-if="creditsPopoverOpen" class="credits-popover" @click.stop>
-                    <div class="credits-pop-head">
-                      <div class="credits-pop-title">{{ ui.creditsBalance }}</div>
-                      <div class="credits-pop-total">
-                        {{ ui.totalCredits }}: {{ totalCreditsText }}
-                      </div>
-                    </div>
-                    <div class="credits-pop-balance">
-                      <span class="credits-pop-icon">⚡</span>
-                      <span class="credits-pop-value">{{ creditsText }}</span>
-                    </div>
-                    <div class="credits-pop-actions">
-                      <button
-                        class="credits-pop-btn"
-                        type="button"
-                        @click="refreshCredits"
-                        :disabled="creditsLoading"
-                      >
-                        {{ ui.refreshCredits }}
-                      </button>
-                      <button class="credits-pop-btn primary" type="button" @click="goMarket">
-                        {{ ui.upgradeForMore }}
-                      </button>
-                    </div>
-                  </div>
-                </transition>
-              </div>
-              <button class="avatar-btn" type="button" @click="openAccountPopup">
-                <span class="avatar-text">{{ avatarText }}</span>
-              </button>
-            </template>
-            <button v-else class="login-btn nth-login-btn" type="button" @click="goLogin">
-              {{ loginText }}
-            </button>
+            <CreditsUserActions
+              :is-authed="isAuthed"
+              :avatar-text="avatarText"
+              :credits-text="creditsText"
+              :total-credits-text="totalCreditsText"
+              :credits-loading="creditsLoading"
+              :on-refresh-credits="refreshCredits"
+              :on-go-market="goMarket"
+              :on-open-account-popup="openAccountPopup"
+              :on-login-click="onLoginClick"
+            />
           </div>
         </slot>
       </div>
@@ -178,22 +135,22 @@
 
     <transition name="dropdown-fade">
       <div v-if="isMobileMenuOpen" ref="mobileMenuRef" class="mobile-menu">
-        <router-link
+        <NavItem
           to="/artigen"
-          class="mobile-item"
-          :class="{ active: activeKey === 'home' }"
+          item-class="mobile-item"
+          :active="activeKey === 'home'"
           @click="isMobileMenuOpen = false"
         >
           {{ ui.navHome }}
-        </router-link>
-        <router-link
+        </NavItem>
+        <NavItem
           to="/artigen/ai"
-          class="mobile-item"
-          :class="{ active: activeKey === 'ai' }"
+          item-class="mobile-item"
+          :active="activeKey === 'ai'"
           @click="isMobileMenuOpen = false"
         >
           {{ ui.navAiDesign }}
-        </router-link>
+        </NavItem>
 
         <div class="mobile-item-group">
           <div
@@ -214,43 +171,43 @@
               <span class="mobile-tool-icon">{{ tool.icon }}</span>
               {{ tool.name }}
             </div>
-            <router-link
+            <NavItem
               to="/artigen/tools"
-              class="mobile-sub-item view-all"
+              item-class="mobile-sub-item view-all"
               @click="
                 isMobileMenuOpen = false;
                 isMobileToolsExpanded = false;
               "
             >
               {{ ui.viewAllTools }} →
-            </router-link>
+            </NavItem>
           </div>
         </div>
 
-        <router-link
+        <NavItem
           to="/artigen/image-workshop"
-          class="mobile-item"
-          :class="{ active: activeKey === 'image' }"
+          item-class="mobile-item"
+          :active="activeKey === 'image'"
           @click="isMobileMenuOpen = false"
         >
           {{ ui.navImageWorkshop }}
-        </router-link>
-        <router-link
+        </NavItem>
+        <NavItem
           to="/artigen/market"
-          class="mobile-item"
-          :class="{ active: activeKey === 'market' }"
+          item-class="mobile-item"
+          :active="activeKey === 'market'"
           @click="isMobileMenuOpen = false"
         >
           {{ ui.navMarket }}
-        </router-link>
-        <router-link
+        </NavItem>
+        <NavItem
           to="/artigen/about"
-          class="mobile-item"
-          :class="{ active: activeKey === 'about' }"
+          item-class="mobile-item"
+          :active="activeKey === 'about'"
           @click="isMobileMenuOpen = false"
         >
           {{ ui.navAbout }}
-        </router-link>
+        </NavItem>
       </div>
     </transition>
 
@@ -263,11 +220,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import AccountPopup from './AccountPopup.vue';
+import CreditsUserActions from './CreditsUserActions.vue';
+import NavItem from './NavItem.vue';
 import { useLanguageStore } from '@/stores/language';
-import { useLoginModel } from '@/stores';
-import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
-import { getCreditsBalance, type CreditsBalance } from '@/points';
 import { formatFactoryTools } from '../data/formatFactoryTools';
+import { useAgentImgAuth } from '../composables/useAgentImgAuth';
+import { useAgentImgCredits } from '../composables/useAgentImgCredits';
 
 defineProps<{
   hideAuth?: boolean;
@@ -283,8 +241,6 @@ const mobileMenuRef = ref<HTMLElement | null>(null);
 const isLangMenuOpen = ref(false);
 const langContainerRef = ref<HTMLElement | null>(null);
 const isMobileMenuOpen = ref(false);
-const creditsPopoverOpen = ref(false);
-const creditsContainerRef = ref<HTMLElement | null>(null);
 
 // Tools Dropdown
 const isToolsMenuOpen = ref(false);
@@ -295,33 +251,14 @@ let toolsCloseTimer: number | null = null;
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 
-const loginStore = useLoginModel();
-
-const authTick = ref(0);
-const isAuthed = computed(() => {
-  return authTick.value >= 0 && isLocalLoggedIn();
-});
+const { isAuthed, onLoginClick, avatarText, openAccountPopup, syncAuth } = useAgentImgAuth();
+const { creditsBalance, creditsLoading, refreshCredits, creditsText, totalCreditsText, goMarket } =
+  useAgentImgCredits(isAuthed);
 
 const handleAuthChanged = () => {
-  authTick.value++;
-};
-
-const creditsBalance = ref<CreditsBalance | null>(null);
-const creditsLoading = ref(false);
-
-const refreshCredits = async () => {
-  if (!isAuthed.value) {
-    creditsBalance.value = null;
-    creditsLoading.value = false;
-    return;
-  }
-  if (creditsLoading.value) return;
-  creditsLoading.value = true;
-  try {
-    creditsBalance.value = await getCreditsBalance();
-  } finally {
-    creditsLoading.value = false;
-  }
+  syncAuth();
+  if (isAuthed.value) void refreshCredits();
+  else creditsBalance.value = null;
 };
 
 const onDocMouseDown = (e: MouseEvent) => {
@@ -331,11 +268,6 @@ const onDocMouseDown = (e: MouseEvent) => {
     const el = langContainerRef.value;
     if (el && el.contains(target)) return;
     isLangMenuOpen.value = false;
-  }
-  if (creditsPopoverOpen.value) {
-    const el = creditsContainerRef.value;
-    if (el && el.contains(target)) return;
-    creditsPopoverOpen.value = false;
   }
   // Tools menu click outside
   if (isToolsMenuOpen.value) {
@@ -380,11 +312,7 @@ const ui = computed(() => {
       navImageWorkshop: 'AI影像工坊',
       navMarket: '点数商城',
       toolsPopoverTitle: '图像与文件处理工具',
-      viewAllTools: '查看全部工具',
-      creditsBalance: '点数余额',
-      totalCredits: '总点数',
-      refreshCredits: '刷新点数',
-      upgradeForMore: '升级获取更多'
+      viewAllTools: '查看全部工具'
     };
   }
   return {
@@ -395,11 +323,7 @@ const ui = computed(() => {
     navMarket: 'Compute Market',
     navAbout: 'About',
     toolsPopoverTitle: 'Image & File Tools',
-    viewAllTools: 'View all tools',
-    creditsBalance: 'Credit balance',
-    totalCredits: 'Total credits',
-    refreshCredits: 'Refresh credits',
-    upgradeForMore: 'Upgrade for more'
+    viewAllTools: 'View all tools'
   };
 });
 
@@ -456,62 +380,7 @@ const activeKey = computed<'format' | 'ai' | 'market' | 'image' | 'home' | 'abou
   return 'home';
 });
 
-const loginText = computed(() => {
-  return currentLang.value === 'zh' ? '登录 / 注册' : 'LOGIN / SIGN UP';
-});
-
-const goLogin = () => {
-  if (isAuthed.value) {
-    try {
-      window.dispatchEvent(new CustomEvent('app-account-popup-open'));
-    } catch {}
-    return;
-  }
-  const returnTo = router.currentRoute.value.fullPath;
-  loginStore.open({ mode: 'login', returnTo });
-};
-
-const openAccountPopup = () => {
-  try {
-    window.dispatchEvent(new CustomEvent('app-account-popup-open'));
-  } catch {}
-};
-
-const avatarText = computed(() => {
-  const uid = String(getCurrentUserId() || '').trim();
-  if (!uid) return '?';
-  if (uid.startsWith('guest_')) return 'G';
-  return uid.slice(0, 1).toUpperCase();
-});
-
-const creditsText = computed(() => {
-  const bal = creditsBalance.value;
-  if (!bal) return '--';
-  return String(Number(bal.available ?? 0));
-});
-
-const totalCreditsText = computed(() => {
-  const bal = creditsBalance.value;
-  if (!bal) return '--';
-  const a = Number(bal.available ?? 0) || 0;
-  const f = Number(bal.frozen ?? 0) || 0;
-  return String(a + f);
-});
-
-const goMarket = () => {
-  creditsPopoverOpen.value = false;
-  router.push('/artigen/market');
-};
-
-const toggleCreditsPopover = () => {
-  creditsPopoverOpen.value = !creditsPopoverOpen.value;
-  if (creditsPopoverOpen.value) void refreshCredits();
-};
-
-watch(
-  () => isAuthed.value,
-  () => void refreshCredits()
-);
+watch(() => isAuthed.value, handleAuthChanged);
 </script>
 
 <style scoped>

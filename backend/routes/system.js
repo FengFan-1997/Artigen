@@ -5,6 +5,7 @@ const installSystemRoutes = (app, deps) => {
   const API_KEY = deps?.API_KEY;
   const SILICONFLOW_API_KEY = deps?.SILICONFLOW_API_KEY;
   const activeTextProvider = deps?.activeTextProvider;
+  const imgCredits = deps?.imgCredits;
   const VECTORS_FILE = deps?.VECTORS_FILE;
   const readJson = deps?.readJson;
   const fs = deps?.fs;
@@ -298,6 +299,10 @@ const installSystemRoutes = (app, deps) => {
     const prompt = String(req.body.prompt || '').trim();
     const timeoutMs = Number(req.body.timeoutMs) || 0;
     const modelRaw = String(req.body.model || '').trim();
+    const userId = String(req.body.userId || '').trim();
+    const purpose = String(req.body.purpose || '').trim();
+    const costRaw = Number.parseInt(String(req.body.cost ?? ''), 10);
+    const cost = Number.isFinite(costRaw) && costRaw > 0 ? costRaw : 0;
 
     if (!prompt) {
       return res.status(400).json({ error: 'EMPTY_PROMPT', requestId });
@@ -315,15 +320,58 @@ const installSystemRoutes = (app, deps) => {
         return k === 'qwen' || k === 'qwen/qwen3-8b' || k === 'qwen3-8b';
       };
 
+      const hold = (() => {
+        try {
+          if (!cost) return null;
+          if (!userId) return { ok: false, error: 'MISSING_USER_ID' };
+          if (!imgCredits || typeof imgCredits.freezeCredits !== 'function') return null;
+          return imgCredits.freezeCredits({
+            userId,
+            cost,
+            requestId,
+            reason: purpose || 'generate'
+          });
+        } catch {
+          return null;
+        }
+      })();
+      if (hold && !hold.ok) {
+        const wallet = hold.wallet && typeof hold.wallet === 'object' ? hold.wallet : undefined;
+        return res
+          .status(402)
+          .json({ error: String(hold.error || 'CREDITS_ERROR'), requestId, ...(wallet ? { wallet } : {}) });
+      }
+
       const contents = [{ role: 'user', parts: [{ text: prompt }] }];
-      const result = await callTextGenerate({
-        contents,
-        timeoutMs: timeoutMs || 60000,
-        ...(isAllowedTextModel(modelRaw) ? { model: modelRaw } : {})
-      });
+      let result = null;
+      try {
+        result = await callTextGenerate({
+          contents,
+          timeoutMs: timeoutMs || 60000,
+          ...(isAllowedTextModel(modelRaw) ? { model: modelRaw } : {})
+        });
+      } catch (e) {
+        if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === 'function') {
+          try {
+            imgCredits.refundHold({ userId, holdId: hold.holdId });
+          } catch { }
+        }
+        throw e;
+      }
 
       if (!result.text && !result.error) {
+        if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === 'function') {
+          try {
+            imgCredits.refundHold({ userId, holdId: hold.holdId });
+          } catch { }
+        }
         return res.status(500).json({ error: 'EMPTY_RESPONSE', requestId });
+      }
+
+      if (hold?.holdId && imgCredits && typeof imgCredits.settleHold === 'function') {
+        try {
+          imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: cost });
+        } catch { }
       }
 
       res.json({

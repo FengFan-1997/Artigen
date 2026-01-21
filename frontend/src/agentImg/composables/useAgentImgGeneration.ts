@@ -1,4 +1,4 @@
-import { ref, computed, watch } from 'vue';
+import { ref, watch } from 'vue';
 import { useLanguageStore } from '@/stores/language';
 import { storeToRefs } from 'pinia';
 import { img2img, type GenerateImageInput, type Img2ImgImageInput } from '../services/text';
@@ -67,6 +67,14 @@ const normalizeTag = (v: string) =>
   String(v || '')
     .trim()
     .replace(/\s+/g, ' ');
+
+const truncateText = (value: string, maxLen: number) => {
+  const s = String(value || '').trim();
+  const max = Math.max(0, Number(maxLen) || 0);
+  if (!max) return '';
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}…`;
+};
 
 const ensureUniqueTags = (tags: string[]) => {
   const out: string[] = [];
@@ -271,14 +279,6 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
   const doPrimary = async () => {
     if (!deps.auth.ensureAuthed(() => doPrimary())) return;
 
-    trackEvent('ai_generate_click', {
-      category: 'funnel',
-      deepMode: !!deps.flow.deepMode.value,
-      model: String(deps.models.selectedModelId.value || '').trim(),
-      hasRef: deps.upload.previewFiles.value.filter((f: any) => !!f).length > 0,
-      hasLogo: !!deps.upload.logoFile.value
-    });
-
     clearCancelNotices();
     deps.flow.cancel();
     abortImg2Img();
@@ -287,6 +287,17 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
     const activeUserText = rawUserText || String(lastUserText.value || '').trim();
     if (rawUserText) lastUserText.value = rawUserText;
     if (!activeUserText) return;
+
+    trackEvent('ai_generate_click', {
+      category: 'funnel',
+      deepMode: !!deps.flow.deepMode.value,
+      model: String(deps.models.selectedModelId.value || '').trim(),
+      hasRef: deps.upload.previewFiles.value.filter((f: any) => !!f).length > 0,
+      hasLogo: !!deps.upload.logoFile.value,
+      userText: truncateText(activeUserText, 180),
+      userTextLen: activeUserText.length
+    });
+
     pushUserInputMemory(activeUserText);
 
     const getImgInputs = async () => {
@@ -355,18 +366,24 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
             deps.history.setCancelNoticeForHistory(requestId, msg);
             trackEvent('ai_generate_abort', {
               category: 'funnel',
+              requestId,
               error: code || 'ABORTED',
               model: String(deps.models.selectedModelId.value || '').trim(),
-              deepMode: !!deps.flow.deepMode.value
+              deepMode: !!deps.flow.deepMode.value,
+              userText: truncateText(args.userText, 180),
+              userTextLen: String(args.userText || '').trim().length
             });
             return { ok: false as const, url: '' };
           }
           deps.ui.error.value = humanizeImgError(code);
           trackEvent('ai_generate_fail', {
             category: 'funnel',
+            requestId,
             error: code || 'FAILED',
             model: String(deps.models.selectedModelId.value || '').trim(),
-            deepMode: !!deps.flow.deepMode.value
+            deepMode: !!deps.flow.deepMode.value,
+            userText: truncateText(args.userText, 180),
+            userTextLen: String(args.userText || '').trim().length
           });
           return { ok: false as const, url: '' };
         }
@@ -377,18 +394,24 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
           deps.ui.error.value = humanizeImgError('EMPTY_IMAGE_RESULT');
           trackEvent('ai_generate_fail', {
             category: 'funnel',
+            requestId,
             error: 'EMPTY_IMAGE_RESULT',
             model: String(deps.models.selectedModelId.value || '').trim(),
-            deepMode: !!deps.flow.deepMode.value
+            deepMode: !!deps.flow.deepMode.value,
+            userText: truncateText(args.userText, 180),
+            userTextLen: String(args.userText || '').trim().length
           });
           return { ok: false as const, url: '' };
         }
         trackEvent('ai_generate_success', {
           category: 'funnel',
+          requestId,
           model: String(deps.models.selectedModelId.value || '').trim(),
           deepMode: !!deps.flow.deepMode.value,
           hasRef: deps.upload.previewFiles.value.filter((f: any) => !!f).length > 0,
-          hasLogo: !!deps.upload.logoFile.value
+          hasLogo: !!deps.upload.logoFile.value,
+          userText: truncateText(args.userText, 180),
+          userTextLen: String(args.userText || '').trim().length
         });
         return { ok: true as const, url: finalUrl };
       };
@@ -452,6 +475,19 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
         title: String(opt?.title || '').trim(),
         summary: String(opt?.summary || '').trim()
       });
+
+      trackEvent('ai_generate_request', {
+        category: 'funnel',
+        requestId,
+        deepMode: true,
+        model: String(deps.models.selectedModelId.value || '').trim(),
+        hasRef: deps.upload.previewFiles.value.filter((f: any) => !!f).length > 0,
+        hasLogo: !!deps.upload.logoFile.value,
+        userText: truncateText(activeUserText, 180),
+        userTextLen: activeUserText.length,
+        displayText: truncateText(displayText || activeUserText, 180)
+      });
+
       deps.history.history.value = [
         ...deps.history.history.value,
         {
@@ -488,6 +524,18 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
     );
     const refThumbs = refThumbsRaw.filter((x: any): x is string => !!x);
     const requestId = `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+    trackEvent('ai_generate_request', {
+      category: 'funnel',
+      requestId,
+      deepMode: false,
+      model: String(deps.models.selectedModelId.value || '').trim(),
+      hasRef: deps.upload.previewFiles.value.filter((f: any) => !!f).length > 0,
+      hasLogo: !!deps.upload.logoFile.value,
+      userText: truncateText(activeUserText, 180),
+      userTextLen: activeUserText.length
+    });
+
     deps.history.history.value = [
       ...deps.history.history.value,
       {
