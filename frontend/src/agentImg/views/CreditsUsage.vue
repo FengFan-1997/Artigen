@@ -201,7 +201,7 @@ const reasonText = (raw?: string) => {
   const zh = currentLang.value === 'zh';
   if (key === 'img2img') return zh ? '图片生成' : 'Image generation';
   if (key === 'generate') return zh ? '文本生成' : 'Text generation';
-  if (key === 'ai_design') return zh ? 'AI 设计' : 'AI Design';
+  if (key === 'ai_design') return zh ? '提示词优化' : 'Prompt Optimization';
   if (key === 'id_photo') return zh ? '智能证件照生成' : 'Smart ID Photo';
   if (key === 'old_photo') return zh ? '老照片修复' : 'Old Photo Restoration';
   if (key === 'chat') return zh ? '对话' : 'Chat';

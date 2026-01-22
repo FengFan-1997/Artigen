@@ -488,7 +488,6 @@
           <button
             class="download-option-btn"
             @click="handleDownloadOption('4k', downloadTargetUrl, isProPlus)"
-            :disabled="!isProPlus"
           >
             <span class="res-label">4096 x 4096</span>
             <span class="res-tag">4K</span>
@@ -863,8 +862,7 @@ const sendCostValue = computed(() => {
   const costs = creditsCosts.value;
   const fallback = 10;
   const img2imgCost = Math.max(0, Number(costs?.img2img ?? fallback) || 0);
-  const generateCost = Math.max(0, Number(costs?.generate ?? fallback) || 0);
-  if (deepMode.value) return img2imgCost + generateCost;
+  if (deepMode.value) return 15;
   return img2imgCost;
 });
 

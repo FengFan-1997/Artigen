@@ -167,6 +167,7 @@ const ui = computed(() =>
         max2m: '图片大小不能超过 2MB！',
         enterPrompt: '请输入提示词',
         insufficientCredits: '点数不足，请先充值。',
+        promptOptimization: '提示词优化',
         startLog: (p: string) => `开始生成，提示词：${p}...`,
         doneLog: '生成完成（模拟）。',
         failed: (msg: string) => `生成失败：${msg}`
@@ -199,6 +200,7 @@ const ui = computed(() =>
         max2m: 'Image must smaller than 2MB!',
         enterPrompt: 'Please enter a prompt',
         insufficientCredits: 'Insufficient credits. Please recharge.',
+        promptOptimization: 'Prompt Optimization',
         startLog: (p: string) => `Starting generation with prompt: ${p}...`,
         doneLog: 'Generation completed successfully (Simulated).',
         failed: (msg: string) => `Generation failed: ${msg}`
@@ -282,12 +284,7 @@ const handleGenerate = async () => {
     logs.value.push(ui.value.doneLog);
 
     // Update Console Store
-    consoleStore.updatePoints(
-      userId.value,
-      -5,
-      'usage',
-      `Image Generation: ${form.prompt.substring(0, 20)}...`
-    );
+    consoleStore.updatePoints(userId.value, -5, 'usage', ui.value.promptOptimization);
 
     consoleStore.generatedContent.push({
       id: crypto.randomUUID(),

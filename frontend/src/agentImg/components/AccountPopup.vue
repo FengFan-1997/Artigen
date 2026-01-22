@@ -246,7 +246,7 @@ const reasonText = (raw?: string) => {
   const zh = currentLang.value === 'zh';
   if (key === 'img2img') return zh ? '图片生成' : 'Image generation';
   if (key === 'generate') return zh ? '文本生成' : 'Text generation';
-  if (key === 'ai_design') return zh ? 'AI 设计' : 'AI Design';
+  if (key === 'ai_design') return zh ? '提示词优化' : 'Prompt Optimization';
   if (key === 'id_photo') return zh ? '智能证件照生成' : 'Smart ID Photo';
   if (key === 'old_photo') return zh ? '老照片修复' : 'Old Photo Restoration';
   if (key === 'chat') return zh ? '对话' : 'Chat';
@@ -587,47 +587,47 @@ watch(
 .balance-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 12px;
 }
 
 .balance-item {
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(12, 12, 12, 0.65);
   border-radius: 14px;
-  padding: 24px;
+  padding: 18px;
 }
 
 .balance-label {
   color: #94a3b8;
   font-family: var(--common-font);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .balance-value {
-  font-size: 32px;
+  font-size: 26px;
   font-weight: 900;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.4px;
 }
 
 .left-actions {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin-top: 12px;
+  gap: 12px;
+  margin-top: 8px;
   flex: 1;
 }
 
 .btn {
-  height: 68px;
-  padding: 0 24px;
+  height: 56px;
+  padding: 0 20px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
   font-family: var(--common-font);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 900;
   cursor: pointer;
   transition: all 0.2s;

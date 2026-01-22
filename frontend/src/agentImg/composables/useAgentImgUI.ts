@@ -1,6 +1,12 @@
 import { ref } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useRouter } from 'vue-router';
+import { useLanguageStore } from '@/stores/language';
 
 export function useAgentImgUI() {
+  const router = useRouter();
+  const languageStore = useLanguageStore();
+  const { currentLang } = storeToRefs(languageStore);
   const topTipText = ref('');
   const topTipOpen = ref(false);
   let topTipTimer: number | null = null;
@@ -64,6 +70,12 @@ export function useAgentImgUI() {
     finalImageUrl: string,
     isProPlus: boolean
   ) => {
+    if (res === '4k' && !isProPlus) {
+      showTopTip(currentLang.value === 'zh' ? '需要 Pro 以上' : 'Requires Pro pack or higher');
+      showDownloadDialog.value = false;
+      router.push({ path: '/artigen/market', query: { proOnly: '1' } });
+      return;
+    }
     if (!finalImageUrl) return;
     // Mock download logic
     const link = document.createElement('a');
