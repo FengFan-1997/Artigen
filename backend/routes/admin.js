@@ -23,6 +23,38 @@ const clampInt = (n, min, max) => {
   if (Number.isNaN(v)) return min;
   return Math.max(min, Math.min(max, v));
 };
+const normalizeReasonKey = (raw) => {
+  const key = String(raw || '').trim().toLowerCase();
+  if (!key) return '';
+  return key.replace(/[\s/-]+/g, '_');
+};
+const resolveReasonText = (reason) => {
+  const key = normalizeReasonKey(reason);
+  if (!key) return '';
+  const map = {
+    aidesign_quick: '生图',
+    aidesign_generate: '生图',
+    aidesign: '生图',
+    aidesign_semantic: '深度思考语义分析',
+    aidesign_directions: '深度思考语义分析',
+    aidesign_deep_analysis: '深度思考语义分析',
+    agentimg_directions: '深度思考语义分析',
+    aidesign_final: '生图',
+    aidesign_deep_generate: '生图',
+    ai_lab: 'AI实验室',
+    ai_image_workshop: 'AI影像工坊',
+    ai_design: '生图',
+    ai_background: 'AI背景',
+    ai_id_photo: 'AI证件照',
+    id_photo: 'AI证件照',
+    ai_old_photo: 'AI老照片',
+    old_photo: 'AI老照片',
+    ai_ingredient_list: 'AI配料表',
+    img2img: '生图',
+    generate: '生成'
+  };
+  return map[key] || '';
+};
 
 const installAdminRoutes = (app) => {
   app.post('/api/admin/login', rateLimit('admin_login', { max: 30, windowMs: 60 * 1000 }), (req, res) => {
@@ -221,6 +253,30 @@ const installAdminRoutes = (app) => {
       return res.json({ ok: true, wallet: result.wallet || null });
     } catch (e) {
       console.error('Error in POST /api/admin/users/credits:', e);
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
+
+  app.get('/api/admin/credits/holds', rateLimit('admin_credits_holds', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      const userId = String(req.query.userId || '').trim();
+      if (!userId) return res.status(400).json({ error: 'MISSING_USER_ID' });
+
+      const limit = clampInt(req.query.limit, 20, 2000);
+      const offset = clampInt(req.query.offset, 0, 2000000);
+      const list = imgCredits
+        .getHolds(userId, { limit: limit + offset })
+        .slice(offset, offset + limit)
+        .map((h) => {
+          const reasonText = String(h?.reasonText || '').trim() || resolveReasonText(h?.reason);
+          const cost = Number(h?.cost ?? 0) || 0;
+          const reasonTextWithCost = reasonText ? `${reasonText}-${cost}` : '';
+          return { ...h, reasonText, reasonTextWithCost };
+        });
+      return res.json({ ok: true, total: list.length, items: list });
+    } catch (e) {
+      console.error('Error in GET /api/admin/credits/holds:', e);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   });

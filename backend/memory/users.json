@@ -182,5 +182,17 @@
     "oauthSub": "117421557443221477342",
     "sessionToken": "789716ccc520a0793f694f8149d979497fc5bdffa61e82a0mkmozz01",
     "sessionTokenIssuedAt": 1768919501810
+  },
+  "guest_test": {
+    "userId": "guest_test",
+    "apiKeys": [
+      {
+        "id": "4de7ea0a-aa3e-4da1-81f8-acc265a69359",
+        "name": "test",
+        "key": "sk-16884df8556517f8c027192d18892759e7e51b7fe9af6668",
+        "masked": "sk-1...6668",
+        "createdAt": 1769095819276
+      }
+    ]
   }
 }

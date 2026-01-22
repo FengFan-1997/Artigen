@@ -170,7 +170,7 @@ const selectedLabel = () => props.options.find((o) => o.value === props.modelVal
   border: 1px solid @border-color;
   background: @bg-root;
   box-shadow: @glass-shadow;
-  z-index: 1000;
+  z-index: 2505;
   animation: slideDown 0.2s ease-out;
   max-height: 250px;
   overflow-y: auto;

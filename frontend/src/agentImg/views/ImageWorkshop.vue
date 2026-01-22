@@ -1062,9 +1062,9 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   .page-title {
     font-size: 26px;
     flex-direction: row;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 8px;
-    white-space: nowrap;
+    white-space: normal;
   }
 
   .tools-grid {
@@ -1075,6 +1075,34 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 
   .main-content {
     padding: 40px 20px;
+  }
+}
+
+@media (max-width: 350px) {
+  .page-title {
+    font-size: 22px;
+  }
+  .tools-grid {
+    gap: 12px;
+    padding: 0 12px;
+  }
+
+  :deep(.tool-card) {
+    padding: 20px !important;
+    min-height: auto !important;
+  }
+
+  :deep(.tool-title) {
+    font-size: 20px !important;
+  }
+
+  :deep(.tool-icon) {
+    font-size: 32px !important;
+    padding: 6px 12px !important;
+  }
+
+  :deep(.tool-desc) {
+    font-size: 13px !important;
   }
 }
 </style>

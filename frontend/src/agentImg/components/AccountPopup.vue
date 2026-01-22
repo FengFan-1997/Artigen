@@ -66,7 +66,7 @@
             <div class="tabs-actions">
               <button
                 v-if="activeTab === 'orders'"
-                class="mini-btn"
+                class="mini-btn btn"
                 type="button"
                 :disabled="ordersLoading"
                 @click="loadOrders"
@@ -75,7 +75,7 @@
               </button>
               <button
                 v-else
-                class="mini-btn"
+                class="mini-btn btn"
                 type="button"
                 :disabled="holdsLoading"
                 @click="loadHolds"
@@ -440,10 +440,59 @@ watch(
   padding: 92px 28px 28px 28px;
 }
 
+@media (max-width: 600px) {
+  .account-overlay {
+    justify-content: center;
+    align-items: center;
+    padding: 16px 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .account-overlay {
+    align-items: center;
+    padding: 12px 8px;
+  }
+
+  .account-card {
+    width: 100%;
+    max-width: calc(100vw - 16px);
+    height: auto;
+    max-height: calc(100vh - 24px);
+    margin: 0 auto;
+  }
+}
+
+@media (max-width: 350px) {
+  .btn {
+    padding: 0 4px;
+    font-size: 11px;
+    height: 36px;
+  }
+  .mini-btn,
+  .tab {
+    padding: 0 6px;
+    font-size: 11px;
+    min-width: 50px;
+  }
+  .tabs-actions {
+    min-width: 60px;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
 .account-card {
-  width: min(980px, 100%);
-  height: min(720px, calc(100vh - 120px));
-  max-height: min(720px, calc(100vh - 120px));
+  width: min(1200px, 100%);
+  height: min(860px, calc(100vh - 60px));
+  max-height: min(860px, calc(100vh - 60px));
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(8, 8, 8, 0.92);
@@ -451,7 +500,7 @@ watch(
     0 40px 120px rgba(0, 0, 0, 0.7),
     0 0 0 1px rgba(255, 255, 255, 0.04);
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 360px 1fr;
   overflow: hidden;
 }
 
@@ -460,22 +509,22 @@ watch(
   background: rgba(5, 5, 5, 0.55);
   display: flex;
   flex-direction: column;
-  padding: 24px;
-  gap: 24px;
+  padding: 40px;
+  gap: 40px;
 }
 
 .left-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
 }
 
 .left-title {
   font-family: var(--common-font);
   font-weight: 900;
   letter-spacing: 0.5px;
-  font-size: 18px;
+  font-size: 32px;
   color: rgba(241, 245, 249, 0.95);
 }
 
@@ -520,13 +569,13 @@ watch(
 .label {
   color: #94a3b8;
   font-family: var(--common-font);
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 500;
 }
 
 .mono {
   font-family: var(--common-font);
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 500;
   color: rgba(241, 245, 249, 0.95);
   min-width: 0;
@@ -538,26 +587,26 @@ watch(
 .balance-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 16px;
 }
 
 .balance-item {
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(12, 12, 12, 0.65);
   border-radius: 14px;
-  padding: 12px 12px;
+  padding: 24px;
 }
 
 .balance-label {
   color: #94a3b8;
   font-family: var(--common-font);
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 500;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .balance-value {
-  font-size: 18px;
+  font-size: 32px;
   font-weight: 900;
   letter-spacing: -0.5px;
 }
@@ -571,14 +620,14 @@ watch(
 }
 
 .btn {
-  height: 52px;
-  padding: 0 14px;
+  height: 68px;
+  padding: 0 24px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
   font-family: var(--common-font);
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 900;
   cursor: pointer;
   transition: all 0.2s;
@@ -634,6 +683,12 @@ watch(
   background: rgba(0, 0, 0, 0.22);
 }
 
+@media (max-width: 500px) {
+  .tabs {
+    padding: 10px;
+  }
+}
+
 .tabs-center {
   flex: 1;
   display: flex;
@@ -641,10 +696,22 @@ watch(
   justify-content: flex-start;
 }
 
+@media (max-width: 500px) {
+  .tabs-center {
+    gap: 6px;
+  }
+}
+
 .tabs-actions {
   display: flex;
   justify-content: flex-end;
   min-width: 120px;
+}
+
+@media (max-width: 500px) {
+  .tabs-actions {
+    min-width: 80px;
+  }
 }
 
 .tab {
@@ -660,6 +727,15 @@ watch(
   min-width: 96px;
   cursor: pointer;
   transition: all 0.2s;
+}
+
+@media (max-width: 500px) {
+  .tab {
+    height: 36px;
+    padding: 0 12px;
+    font-size: 12px;
+    min-width: 80px;
+  }
 }
 
 .tab:hover {
@@ -692,18 +768,27 @@ watch(
 }
 
 .mini-btn {
-  height: 42px;
+  height: 44px;
   padding: 0 18px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
   font-family: var(--common-font);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 800;
-  min-width: 92px;
+  min-width: 96px;
   cursor: pointer;
   transition: all 0.2s;
+}
+
+@media (max-width: 500px) {
+  .mini-btn {
+    height: 36px;
+    padding: 0 12px;
+    font-size: 12px;
+    min-width: 80px;
+  }
 }
 
 .mini-btn:hover {
@@ -738,15 +823,15 @@ watch(
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(12, 12, 12, 0.75);
   border-radius: 14px;
-  padding: 14px;
+  padding: 24px;
 }
 
 .item-row {
   display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: 12px;
+  grid-template-columns: 80px 1fr;
+  gap: 16px;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .item-row:last-child {
@@ -756,7 +841,7 @@ watch(
 .item-label {
   color: #94a3b8;
   font-family: var(--common-font);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .item-value {
@@ -780,11 +865,11 @@ watch(
 }
 
 .status-pill {
-  height: 22px;
-  padding: 0 10px;
+  height: 24px;
+  padding: 0 12px;
   border-radius: 999px;
   font-family: var(--common-font);
-  font-size: 12px;
+  font-size: 14px;
   display: inline-flex;
   align-items: center;
   border: 1px solid rgba(255, 255, 255, 0.12);

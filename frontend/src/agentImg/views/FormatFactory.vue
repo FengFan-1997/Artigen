@@ -1755,7 +1755,7 @@ const runTool = async () => {
 .tools-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 24px;
+  gap: 32px;
   max-width: 1200px;
   margin: 0 auto 80px;
   padding: 0 24px;
@@ -1764,13 +1764,13 @@ const runTool = async () => {
 .tool-card {
   background: rgba(20, 20, 20, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 24px;
+  padding: 32px;
   border-radius: 2px; /* Brutalist sharp corners */
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
-  height: 240px;
+  height: 280px;
   display: flex;
   flex-direction: column;
 }
@@ -1834,22 +1834,22 @@ const runTool = async () => {
 }
 
 .icon-box {
-  font-size: 32px;
-  margin-bottom: 24px;
+  font-size: 48px;
+  margin-bottom: 32px;
   color: #ccff00;
 }
 
 .tool-name {
-  font-size: 18px;
+  font-size: 24px;
   font-weight: 700;
-  margin-bottom: 8px;
+  margin-bottom: 16px;
   color: #f1f5f9;
 }
 
 .tool-desc {
-  font-size: 12px;
+  font-size: 14px;
   color: #94a3b8;
-  line-height: 1.5;
+  line-height: 1.6;
   margin-bottom: auto;
 }
 
@@ -2412,6 +2412,18 @@ select.control {
   .top-header-inner {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 350px) {
+  .btn {
+    padding: 6px 10px;
+    font-size: 10px;
+    gap: 4px;
+  }
+
+  .actions {
+    gap: 6px;
   }
 }
 </style>

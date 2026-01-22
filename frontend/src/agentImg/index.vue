@@ -32,6 +32,8 @@
           @click="closeMobileOverlays"
         ></div>
 
+        <div class="model-menu-overlay" v-if="modelMenuOpen" @click="modelMenuOpen = false"></div>
+
         <!-- LEFT: Product Configuration -->
         <transition name="side-fade">
           <ProductSidebar
@@ -113,7 +115,7 @@
                         ? currentLang === 'zh'
                           ? '正在生成...'
                           : 'Generating...'
-                        : primaryTextWithCost
+                        : primaryText
                     }}
                   </button>
                 </div>
@@ -295,6 +297,11 @@
                       <span class="toggle-icon">○</span>
                       <span class="toggle-text">{{ currentModelLabel }}</span>
                     </button>
+                    <div
+                      v-if="modelMenuOpen"
+                      class="model-menu-overlay"
+                      @click.stop="modelMenuOpen = false"
+                    ></div>
                     <div v-if="modelMenuOpen" class="model-dropdown" @mousedown.stop @click.stop>
                       <button
                         v-for="m in modelOptions"
@@ -852,9 +859,18 @@ const canPrimary = computed(() => {
   return !!String(userInput.value || '').trim();
 });
 
+const sendCostValue = computed(() => {
+  const costs = creditsCosts.value;
+  const fallback = 10;
+  const img2imgCost = Math.max(0, Number(costs?.img2img ?? fallback) || 0);
+  const generateCost = Math.max(0, Number(costs?.generate ?? fallback) || 0);
+  if (deepMode.value) return img2imgCost + generateCost;
+  return img2imgCost;
+});
+
 const generateHoverTip = computed(() => {
   if (loading.value) return '';
-  return String(ui.value.costTip || '').replace('{n}', String(resolvedCost.value));
+  return String(ui.value.costTip || '').replace('{n}', String(sendCostValue.value));
 });
 
 const showGenerateCost = computed(() => {
@@ -862,13 +878,10 @@ const showGenerateCost = computed(() => {
   return true;
 });
 
-const sendCostText = computed(() => {
-  const n = resolvedCost.value;
-  return `⚡${n}`;
-});
+const sendCostText = computed(() => `⚡${sendCostValue.value}`);
 
 const showSendCostInline = computed(
-  () => !loading.value && !deepMode.value && !isStyleSelecting.value
+  () => !loading.value && !isStyleSelecting.value && (!deepMode.value || options.value.length === 0)
 );
 
 const onPrimary = doPrimary;

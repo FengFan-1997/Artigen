@@ -117,6 +117,7 @@ const freezeCredits = (input) => {
   const cost = Number.parseInt(String(input?.cost ?? 0), 10);
   const requestId = String(input?.requestId || '').trim();
   const reason = String(input?.reason || '').trim();
+  const reasonText = String(input?.reasonText || '').trim();
   if (!uid) return { ok: false, error: 'MISSING_USER_ID' };
   if (!Number.isFinite(cost) || cost <= 0) return { ok: false, error: 'INVALID_COST' };
 
@@ -152,6 +153,7 @@ const freezeCredits = (input) => {
     userId: uid,
     cost,
     reason,
+    ...(reasonText ? { reasonText } : {}),
     requestId,
     status: 'frozen',
     createdAt: now(),

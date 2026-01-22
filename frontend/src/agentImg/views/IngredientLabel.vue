@@ -31,6 +31,22 @@ const isMobile = ref(false);
 let progressInterval: number | null = null;
 
 const ingredientsInput = ref('');
+const textareaRef = ref<HTMLTextAreaElement | null>(null);
+
+const adjustTextareaHeight = () => {
+  const el = textareaRef.value;
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+  el.style.overflowY = 'hidden';
+};
+
+watch(ingredientsInput, () => {
+  nextTick(() => {
+    adjustTextareaHeight();
+  });
+});
+
 const productType = ref<'Food' | 'Drug' | 'Cosmetic' | 'Dietary Supplement'>('Food');
 const typeOptions = [
   { label: 'Food', value: 0, gtm: 'ga-click-demo-food' },
@@ -547,6 +563,7 @@ watch(
     await nextTick();
     updateWatermark();
     updateProgressBarPosition();
+    adjustTextareaHeight();
 
     gsap.from('.tools-main-frame', {
       y: 60,
@@ -641,6 +658,16 @@ const actionButtonStyles = {
     '--btn-hover-border': '1px solid #475569'
   }
 } as const;
+const backButtonStyles = {
+  ...actionButtonStyles.primary,
+  '--btn-bg': '#ffffff',
+  '--btn-border': '1px solid #e2e8f0',
+  '--btn-color': '#0f172a',
+  '--btn-shadow': '0 4px 6px rgba(15, 23, 42, 0.12)',
+  '--btn-hover-bg': '#f8fafc',
+  '--btn-hover-border': '1px solid #cbd5e1',
+  '--btn-hover-shadow': '0 6px 10px rgba(15, 23, 42, 0.16)'
+} as const;
 </script>
 
 <template>
@@ -679,6 +706,7 @@ const actionButtonStyles = {
                 <div class="textarea-container product-describe">
                   <div class="textarea-content">
                     <textarea
+                      ref="textareaRef"
                       v-model="ingredientsInput"
                       class="product-textarea"
                       :placeholder="placeholderText"
@@ -741,10 +769,10 @@ const actionButtonStyles = {
 
                   <div class="operation-buttons" :class="{ 'stack-mobile': isMobile }">
                     <ActionButton
-                      class="hover-effect"
-                      variant="secondary"
+                      class="hover-effect back-btn"
+                      variant="primary"
                       type="button"
-                      :style="actionButtonStyles.secondary"
+                      :style="backButtonStyles"
                       icon="https://cdn.packify.ai/image/9e25c93e-da3f-452e-962f-13e959ff632f.svg"
                       icon-alt=""
                       :icon-width="19"
@@ -1029,7 +1057,57 @@ const actionButtonStyles = {
   display: flex;
   flex-direction: column;
   gap: 24px;
-  min-width: 320px;
+  min-width: 220px;
+}
+
+@media (max-width: 500px) {
+  .tools-main-frame {
+    margin-top: 0px !important;
+    flex-direction: column !important;
+  }
+}
+@media (max-width: 980px) {
+  .tools-main-frame {
+    margin-top: -380px;
+    height: auto;
+    max-height: none;
+    overflow-y: auto;
+  }
+
+  .left-panel {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .right-panel-container {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 400px;
+    flex: none;
+  }
+
+  .ingredient-modal-body {
+    overflow-y: auto;
+    height: calc(100vh - 64px);
+  }
+
+  .ingredient-modal-container {
+    height: 100vh;
+    max-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .tools-main-frame {
+    padding: 16px;
+    gap: 24px;
+  }
 }
 
 .section-title {
@@ -1072,6 +1150,7 @@ const actionButtonStyles = {
 .product-textarea {
   width: 100%;
   height: 100%;
+  min-height: 120px;
   background: transparent;
   border: none;
   resize: none;
@@ -1080,6 +1159,7 @@ const actionButtonStyles = {
   color: @text-main;
   outline: none;
   font-family: inherit;
+  overflow: hidden;
 }
 
 .product-textarea::placeholder {
@@ -1267,7 +1347,7 @@ const actionButtonStyles = {
 .modal-mask {
   position: fixed;
   inset: 0;
-  z-index: 2000;
+  z-index: 3000;
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -1389,7 +1469,6 @@ const actionButtonStyles = {
     border: none;
   }
   .tools-main-frame {
-    flex-direction: column;
     padding: 20px;
     height: auto;
     overflow: visible;
@@ -1405,6 +1484,20 @@ const actionButtonStyles = {
   }
   .operation-buttons > div {
     width: 100%;
+  }
+  .operation-buttons :deep(.back-btn) {
+    display: none !important;
+  }
+}
+
+@media (max-width: 350px) {
+  .generate-button {
+    height: 40px;
+    font-size: 14px;
+  }
+  .operation-buttons :deep(button) {
+    height: 40px !important;
+    font-size: 13px !important;
   }
 }
 </style>

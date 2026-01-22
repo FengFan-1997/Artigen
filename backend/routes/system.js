@@ -71,6 +71,76 @@ const installSystemRoutes = (app, deps) => {
       return { ok: false, error: String(e?.message || e) };
     }
   };
+  const parseCost = (v, fallback) => {
+    const n = Number.parseInt(String(v ?? ''), 10);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  const normalizeReasonKey = (raw) => {
+    const key = String(raw || '').trim().toLowerCase();
+    if (!key) return '';
+    return key.replace(/[\s/-]+/g, '_');
+  };
+  const resolveCreditsCostByPurpose = (purpose) => {
+    const key = normalizeReasonKey(purpose);
+    if (!key) return 0;
+    const costs = {
+      aidesignQuick: parseCost(process.env.CREDITS_COST_AIDESIGN_QUICK, 10),
+      aidesignSemantic: parseCost(process.env.CREDITS_COST_AIDESIGN_SEMANTIC, 5),
+      aidesignFinal: parseCost(process.env.CREDITS_COST_AIDESIGN_FINAL, 10),
+      aiLab: parseCost(process.env.CREDITS_COST_AI_LAB, 5),
+      aiImageWorkshop: parseCost(process.env.CREDITS_COST_AI_IMAGE_WORKSHOP, 5),
+      aiBackground: parseCost(process.env.CREDITS_COST_AI_BACKGROUND, 5),
+      aiIdPhoto: parseCost(process.env.CREDITS_COST_AI_ID_PHOTO, 5),
+      aiOldPhoto: parseCost(process.env.CREDITS_COST_AI_OLD_PHOTO, 5),
+      aiIngredientList: parseCost(process.env.CREDITS_COST_AI_INGREDIENT_LIST, 10),
+      generate: parseCost(process.env.CREDITS_COST_GENERATE, 10)
+    };
+    if (key === 'aidesign_quick' || key === 'aidesign_generate' || key === 'aidesign') return costs.aidesignQuick;
+    if (
+      key === 'aidesign_semantic' ||
+      key === 'aidesign_directions' ||
+      key === 'aidesign_deep_analysis' ||
+      key === 'agentimg_directions'
+    ) {
+      return costs.aidesignSemantic;
+    }
+    if (key === 'aidesign_final' || key === 'aidesign_deep_generate') return costs.aidesignFinal;
+    if (key === 'ai_lab') return costs.aiLab;
+    if (key === 'ai_image_workshop') return costs.aiImageWorkshop;
+    if (key === 'ai_design') return costs.aidesignQuick;
+    if (key === 'ai_background') return costs.aiBackground;
+    if (key === 'ai_id_photo' || key === 'id_photo') return costs.aiIdPhoto;
+    if (key === 'ai_old_photo' || key === 'old_photo') return costs.aiOldPhoto;
+    if (key === 'ai_ingredient_list') return costs.aiIngredientList;
+    if (key === 'generate') return costs.generate;
+    return 0;
+  };
+  const resolveReasonText = (purpose) => {
+    const key = normalizeReasonKey(purpose);
+    if (!key) return '';
+    const map = {
+      aidesign_quick: '生图',
+      aidesign_generate: '生图',
+      aidesign: '生图',
+      aidesign_semantic: '深度思考语义分析',
+      aidesign_directions: '深度思考语义分析',
+      aidesign_deep_analysis: '深度思考语义分析',
+      agentimg_directions: '深度思考语义分析',
+      aidesign_final: '生图',
+      aidesign_deep_generate: '生图',
+      ai_lab: 'AI实验室',
+      ai_image_workshop: 'AI影像工坊',
+      ai_design: '生图',
+      ai_background: 'AI背景',
+      ai_id_photo: 'AI证件照',
+      id_photo: 'AI证件照',
+      ai_old_photo: 'AI老照片',
+      old_photo: 'AI老照片',
+      ai_ingredient_list: 'AI配料表',
+      generate: '生成'
+    };
+    return map[key] || '';
+  };
 
   const isLocalRequest = (req) => {
     const ip = typeof getClientIp === 'function' ? getClientIp(req) : '';
@@ -303,6 +373,7 @@ const installSystemRoutes = (app, deps) => {
     const purpose = String(req.body.purpose || '').trim();
     const costRaw = Number.parseInt(String(req.body.cost ?? ''), 10);
     const cost = Number.isFinite(costRaw) && costRaw > 0 ? costRaw : 0;
+    const resolvedCost = cost > 0 ? cost : purpose ? resolveCreditsCostByPurpose(purpose) : 0;
 
     if (!prompt) {
       return res.status(400).json({ error: 'EMPTY_PROMPT', requestId });
@@ -322,14 +393,15 @@ const installSystemRoutes = (app, deps) => {
 
       const hold = (() => {
         try {
-          if (!cost) return null;
+          if (!resolvedCost) return null;
           if (!userId) return { ok: false, error: 'MISSING_USER_ID' };
           if (!imgCredits || typeof imgCredits.freezeCredits !== 'function') return null;
           return imgCredits.freezeCredits({
             userId,
-            cost,
+            cost: resolvedCost,
             requestId,
-            reason: purpose || 'generate'
+            reason: purpose || 'generate',
+            reasonText: resolveReasonText(purpose || 'generate')
           });
         } catch {
           return null;
@@ -370,7 +442,7 @@ const installSystemRoutes = (app, deps) => {
 
       if (hold?.holdId && imgCredits && typeof imgCredits.settleHold === 'function') {
         try {
-          imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: cost });
+          imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: resolvedCost });
         } catch { }
       }
 

@@ -191,7 +191,11 @@ watch(
   -webkit-backdrop-filter: none;
   z-index: 30;
 }
-
+@media (max-width: 350px) {
+  .credits-popover {
+    right: -41px;
+  }
+}
 .credits-pop-head {
   display: flex;
   align-items: baseline;

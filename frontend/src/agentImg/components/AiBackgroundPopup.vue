@@ -1484,7 +1484,7 @@ const selectPreset = (id: string) => {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: none;
   background: rgba(255, 255, 255, 0.05);
   color: rgba(255, 255, 255, 0.6);
   font-size: 20px;
@@ -1503,7 +1503,7 @@ const selectPreset = (id: string) => {
   background: rgba(204, 255, 0, 0.15);
   color: #ccff00;
   border-color: #ccff00;
-  transform: rotate(90deg);
+  transform: none; /* Fixed: rotation causes off-center alignment */
 }
 
 .modal-overlay {
@@ -1706,9 +1706,10 @@ const selectPreset = (id: string) => {
   display: inline-flex;
   padding: 4px;
   border-radius: 999px;
-  border: 1px solid rgba(204, 255, 0, 0.2);
   background: rgba(22, 27, 34, 0.6);
   isolation: isolate;
+  border: none;
+  outline: none;
 }
 
 .mode-pill {
@@ -2072,8 +2073,9 @@ const selectPreset = (id: string) => {
   }
 
   .close-btn {
-    top: calc(env(safe-area-inset-top, 0px) + 12px);
-    right: calc(env(safe-area-inset-right, 0px) + 12px);
+    top: calc(env(safe-area-inset-top, 0px) + 24px);
+    right: calc(env(safe-area-inset-right, 0px) + 24px);
+    z-index: 3000;
   }
 
   .layout {

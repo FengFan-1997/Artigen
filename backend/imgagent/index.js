@@ -16,15 +16,92 @@ const installImgagentRoutes = (app, opts) => {
     return !!uid && uid.startsWith('guest_');
   };
 
-  const resolveImg2ImgCost = () => {
-    const parseCost = (v, fallback) => {
-      const n = Number.parseInt(String(v ?? ''), 10);
-      return Number.isFinite(n) && n >= 0 ? n : fallback;
-    };
-    return parseCost(
+  const parseCost = (v, fallback) => {
+    const n = Number.parseInt(String(v ?? ''), 10);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  const normalizeReasonKey = (raw) => {
+    const key = String(raw || '').trim().toLowerCase();
+    if (!key) return '';
+    return key.replace(/[\s/-]+/g, '_');
+  };
+  const resolveCreditsCosts = () => {
+    const generate = parseCost(process.env.CREDITS_COST_GENERATE, 10);
+    const img2img = parseCost(
       process.env.CREDITS_COST_IMG2IMG || process.env.CREDITS_COST_IMAGE || process.env.CREDITS_COST_GENERATE,
-      5
+      10
     );
+    const aidesignQuick = parseCost(process.env.CREDITS_COST_AIDESIGN_QUICK, 10);
+    const aidesignSemantic = parseCost(process.env.CREDITS_COST_AIDESIGN_SEMANTIC, 5);
+    const aidesignFinal = parseCost(process.env.CREDITS_COST_AIDESIGN_FINAL, 10);
+    const aiLab = parseCost(process.env.CREDITS_COST_AI_LAB, 5);
+    const aiImageWorkshop = parseCost(process.env.CREDITS_COST_AI_IMAGE_WORKSHOP, 5);
+    const aiBackground = parseCost(process.env.CREDITS_COST_AI_BACKGROUND, 5);
+    const aiIdPhoto = parseCost(process.env.CREDITS_COST_AI_ID_PHOTO, 5);
+    const aiOldPhoto = parseCost(process.env.CREDITS_COST_AI_OLD_PHOTO, 5);
+    const aiIngredientList = parseCost(process.env.CREDITS_COST_AI_INGREDIENT_LIST, 10);
+    return {
+      generate,
+      img2img,
+      aidesignQuick,
+      aidesignSemantic,
+      aidesignFinal,
+      aiLab,
+      aiImageWorkshop,
+      aiBackground,
+      aiIdPhoto,
+      aiOldPhoto,
+      aiIngredientList
+    };
+  };
+  const resolveCostByReason = (reason, costs) => {
+    const key = normalizeReasonKey(reason);
+    if (!key) return 0;
+    if (key === 'aidesign_quick' || key === 'aidesign_generate' || key === 'aidesign') return costs.aidesignQuick;
+    if (key === 'aidesign_semantic' || key === 'aidesign_directions' || key === 'aidesign_deep_analysis') {
+      return costs.aidesignSemantic;
+    }
+    if (key === 'aidesign_final' || key === 'aidesign_deep_generate') return costs.aidesignFinal;
+    if (key === 'ai_lab') return costs.aiLab;
+    if (key === 'ai_image_workshop') return costs.aiImageWorkshop;
+    if (key === 'ai_design') return costs.aidesignQuick;
+    if (key === 'ai_background') return costs.aiBackground;
+    if (key === 'ai_id_photo' || key === 'id_photo') return costs.aiIdPhoto;
+    if (key === 'ai_old_photo' || key === 'old_photo') return costs.aiOldPhoto;
+    if (key === 'ai_ingredient_list') return costs.aiIngredientList;
+    if (key === 'generate') return costs.generate;
+    if (key === 'img2img') return costs.img2img;
+    return 0;
+  };
+  const resolveReasonText = (reason) => {
+    const key = normalizeReasonKey(reason);
+    if (!key) return '';
+    const map = {
+      aidesign_quick: '生图',
+      aidesign_generate: '生图',
+      aidesign: '生图',
+      aidesign_semantic: '深度思考语义分析',
+      aidesign_directions: '深度思考语义分析',
+      aidesign_deep_analysis: '深度思考语义分析',
+      aidesign_final: '生图',
+      aidesign_deep_generate: '生图',
+      ai_lab: 'AI实验室',
+      ai_image_workshop: 'AI影像工坊',
+      ai_design: '生图',
+      ai_background: 'AI背景',
+      ai_id_photo: 'AI证件照',
+      id_photo: 'AI证件照',
+      ai_old_photo: 'AI老照片',
+      old_photo: 'AI老照片',
+      ai_ingredient_list: 'AI配料表',
+      img2img: '生图',
+      generate: '生成'
+    };
+    return map[key] || '';
+  };
+  const resolveImg2ImgCost = () => {
+    const costs = resolveCreditsCosts();
+    return costs.img2img;
   };
 
   const extractProviderImages = (data) => {
@@ -387,16 +464,21 @@ MQIDAQAB
   });
 
   app.get('/api/credits/costs', (req, res) => {
-    const parseCost = (v, fallback) => {
-      const n = Number.parseInt(String(v ?? ''), 10);
-      return Number.isFinite(n) && n >= 0 ? n : fallback;
-    };
-    const generate = parseCost(process.env.CREDITS_COST_GENERATE, 10);
-    const img2img = parseCost(
-      process.env.CREDITS_COST_IMG2IMG || process.env.CREDITS_COST_IMAGE || process.env.CREDITS_COST_GENERATE,
-      5
-    );
-    res.json({ ok: true, generate, img2img });
+    const costs = resolveCreditsCosts();
+    res.json({
+      ok: true,
+      generate: costs.generate,
+      img2img: costs.img2img,
+      aidesignQuick: costs.aidesignQuick,
+      aidesignSemantic: costs.aidesignSemantic,
+      aidesignFinal: costs.aidesignFinal,
+      aiLab: costs.aiLab,
+      aiImageWorkshop: costs.aiImageWorkshop,
+      aiBackground: costs.aiBackground,
+      aiIdPhoto: costs.aiIdPhoto,
+      aiOldPhoto: costs.aiOldPhoto,
+      aiIngredientList: costs.aiIngredientList
+    });
   });
 
   app.post('/api/img2img', async (req, res) => {
@@ -412,6 +494,7 @@ MQIDAQAB
     const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.min(timeoutMsRaw, 180000) : undefined;
     const userText = typeof body.userText === 'string' ? body.userText.trim() : '';
     const reason = String(body.reason || 'img2img').trim() || 'img2img';
+    const costInput = Number.parseInt(String(body.cost ?? ''), 10);
 
     if (!userId) return res.status(400).json({ error: 'MISSING_USER_ID', requestId });
     if (!prompt) return res.status(400).json({ error: 'EMPTY_PROMPT', requestId });
@@ -425,11 +508,21 @@ MQIDAQAB
       return res.status(501).json({ error: 'IMG_PROVIDER_NOT_CONFIGURED', requestId });
     }
 
-    const cost = resolveImg2ImgCost();
+    const costs = resolveCreditsCosts();
+    const resolvedCost =
+      Number.isFinite(costInput) && costInput > 0
+        ? costInput
+        : resolveCostByReason(reason, costs) || resolveImg2ImgCost();
     const hold = (() => {
       try {
         if (!imgCredits || typeof imgCredits.freezeCredits !== 'function') return null;
-        return imgCredits.freezeCredits({ userId, cost, requestId, reason: 'img2img' });
+        return imgCredits.freezeCredits({
+          userId,
+          cost: resolvedCost,
+          requestId,
+          reason,
+          reasonText: resolveReasonText(reason)
+        });
       } catch {
         return null;
       }
@@ -486,7 +579,7 @@ MQIDAQAB
 
     if (hold?.holdId && imgCredits && typeof imgCredits.settleHold === 'function') {
       try {
-        imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: cost });
+        imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: resolvedCost });
       } catch { }
     }
 
@@ -527,7 +620,7 @@ MQIDAQAB
           type: 'img2img',
           provider,
           ...(model ? { model } : {}),
-          cost,
+          cost: resolvedCost,
           ...(userText ? { userText } : {}),
           prompt,
           ...(negativePrompt ? { negativePrompt } : {}),
@@ -742,7 +835,12 @@ MQIDAQAB
       const auth = assertAuthUserMatches(req, res, userId);
       if (!auth) return;
     }
-    const list = credits.getHolds(userId, { limit });
+    const list = credits.getHolds(userId, { limit }).map((h) => {
+      const reasonText = String(h?.reasonText || '').trim() || resolveReasonText(h?.reason);
+      const cost = Number(h?.cost ?? 0) || 0;
+      const reasonTextWithCost = reasonText ? `${reasonText}-${cost}` : '';
+      return { ...h, reasonText, reasonTextWithCost };
+    });
     res.json({ ok: true, holds: list });
   });
 

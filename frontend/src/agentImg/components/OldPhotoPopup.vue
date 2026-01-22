@@ -1,62 +1,52 @@
 <template>
-  <transition name="fade">
-    <div v-if="visible" class="modal-overlay" @click="close">
-      <div class="modal-container" @click.stop>
-        <div class="modal-header">
-          <div class="header-left">
-            <span class="header-icon">FIX</span>
-            <span class="header-title">{{ ui.title }}</span>
-          </div>
-          <CloseButton @click="close" />
+  <BaseTaskPopup
+    :visible="visible"
+    :title="ui.title"
+    :subtitle="ui.subtitle"
+    icon="FIX"
+    :upload-text="ui.uploadText"
+    :upload-hint="ui.uploadHint"
+    :reupload-text="ui.reupload"
+    placeholder-icon="🕰️"
+    :loading="loading"
+    v-model:selected-file="selectedFile"
+    @close="close"
+  >
+    <template #config>
+      <div class="config-section">
+        <div class="section-title">{{ ui.sectionTitle }}</div>
+
+        <!-- Simple options for now -->
+        <div class="option-row">
+          <label class="checkbox-label">
+            <input type="checkbox" v-model="enableColorize" />
+            <span class="checkbox-text">{{ ui.colorizeLabel }}</span>
+          </label>
         </div>
-        <div class="modal-subtitle">{{ ui.subtitle }}</div>
-
-        <div class="modal-body">
-          <ImageUploadArea
-            v-model="selectedFile"
-            :upload-text="ui.uploadText"
-            :upload-hint="ui.uploadHint"
-            :reupload-text="ui.reupload"
-            placeholder-icon="🕰️"
-            :disabled="loading"
-          />
-
-          <div class="config-panel">
-            <div class="config-section">
-              <div class="section-title">{{ ui.sectionTitle }}</div>
-
-              <!-- Simple options for now -->
-              <div class="option-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" v-model="enableColorize" />
-                  <span class="checkbox-text">{{ ui.colorizeLabel }}</span>
-                </label>
-              </div>
-              <div class="option-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" v-model="enableDenoise" />
-                  <span class="checkbox-text">{{ ui.denoiseLabel }}</span>
-                </label>
-              </div>
-
-              <div class="type-desc">
-                {{ currentDesc }}
-              </div>
-
-              <button
-                class="generate-btn"
-                @click="handleRestore"
-                :disabled="!selectedFile || loading"
-              >
-                <span>{{ loading ? ui.restoring : ui.start }}</span>
-                <span v-if="!loading && costText" class="generate-cost">{{ costText }}</span>
-              </button>
-            </div>
-          </div>
+        <div class="option-row">
+          <label class="checkbox-label">
+            <input type="checkbox" v-model="enableDenoise" />
+            <span class="checkbox-text">{{ ui.denoiseLabel }}</span>
+          </label>
         </div>
+
+        <div class="type-desc">
+          {{ currentDesc }}
+        </div>
+
+        <button class="generate-btn" @click="handleRestore" :disabled="!selectedFile || loading">
+          <span v-if="loading">
+            <i class="fas fa-spinner fa-spin"></i>
+            {{ ui.restoring }}
+          </span>
+          <span v-else>
+            {{ ui.start }}
+            <span class="cost-badge" v-if="costText">{{ costText }}</span>
+          </span>
+        </button>
       </div>
-    </div>
-  </transition>
+    </template>
+  </BaseTaskPopup>
 </template>
 
 <script setup lang="ts">
@@ -64,8 +54,7 @@ import { ref, computed, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { trackEvent } from '../../utils/analytics';
 import { useLanguageStore } from '@/stores/language';
-import CloseButton from './CloseButton.vue';
-import ImageUploadArea from './ImageUploadArea.vue';
+import BaseTaskPopup from './BaseTaskPopup.vue';
 
 const props = defineProps<{
   visible: boolean;
@@ -155,89 +144,26 @@ const handleRestore = () => {
 </script>
 
 <style scoped>
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(5px);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.modal-container {
-  width: 900px;
-  max-width: 95vw;
-  background: #111;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+.config-section {
   display: flex;
   flex-direction: column;
+  gap: 16px;
+  font-family: var(--common-font);
 }
 
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.header-icon {
-  font-family: 'JetBrains Mono', monospace;
-  border: 1px solid #fff;
-  padding: 2px 6px;
-  font-size: 20px;
-  font-weight: 700;
-  color: #fff;
-}
-
-.header-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #fff;
-}
-
-.modal-subtitle {
+.section-title {
   color: #888;
   font-size: 12px;
-  margin-bottom: 24px;
-  margin-left: 54px;
-}
-
-:deep(.close-btn) {
-  background: transparent;
-  border: none;
-  color: #666;
-  font-size: 24px;
-  cursor: pointer;
-  transition: color 0.2s;
-}
-
-:deep(.close-btn:hover) {
-  color: #fff;
-}
-
-.modal-body {
-  display: flex;
-  gap: 24px;
-  height: 500px;
+  margin-bottom: 8px;
+  text-align: center;
 }
 
 /* Checkbox Styles */
 .option-row {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
 }
 
 .checkbox-label {
@@ -290,77 +216,33 @@ const handleRestore = () => {
   border-color: rgba(255, 255, 255, 0.6);
 }
 
-.config-panel {
-  width: 300px;
-  background: #161616;
-  border-radius: 8px;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-}
-
-.section-title {
-  color: #888;
-  font-size: 12px;
-  margin-bottom: 24px;
-  text-align: center;
-}
-
-.option-row {
-  margin-bottom: 16px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 4px;
-}
-
 .type-desc {
-  background: #222;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
   padding: 12px;
-  border-radius: 4px;
-  color: #888;
-  font-size: 12px;
-  margin-bottom: 24px;
+  font-size: 13px;
+  color: #aaa;
+  line-height: 1.4;
+  min-height: 60px;
   margin-top: auto;
-  min-height: 40px;
 }
 
 .generate-btn {
+  margin-top: auto;
   width: 100%;
+  height: 48px;
   background: #ccff00;
   color: #000;
   border: none;
-  padding: 12px;
-  border-radius: 4px;
+  border-radius: 8px;
+  font-size: 16px;
   font-weight: 700;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   transition: all 0.2s;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.generate-cost {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(0, 0, 0, 0.28);
-  background: rgba(0, 0, 0, 0.18);
-  color: rgba(0, 0, 0, 0.88);
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1.2;
-}
-
-.generate-btn:hover:not(:disabled) {
-  background: #b3e600;
-  transform: translateY(-1px);
 }
 
 .generate-btn:disabled {
@@ -369,42 +251,16 @@ const handleRestore = () => {
   cursor: not-allowed;
 }
 
-/* Transitions */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
+.generate-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(204, 255, 0, 0.3);
 }
 
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-/* Responsive */
-@media (max-width: 960px) {
-  .modal-container {
-    width: 100%;
-    height: 100%;
-    max-width: none;
-    border-radius: 0;
-    padding: 16px;
-  }
-
-  .modal-body {
-    flex-direction: column;
-    height: auto;
-    flex: 1;
-    overflow-y: auto;
-  }
-
-  .config-panel {
-    width: 100% !important;
-    flex: none;
-  }
-
-  .modal-subtitle {
-    margin-left: 0;
-    text-align: center;
-  }
+.cost-badge {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-left: 4px;
 }
 </style>

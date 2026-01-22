@@ -241,3 +241,133 @@
     transform: translateY(0);
   }
 }
+
+@media (max-width: 400px) {
+  .chat-footer {
+    padding: 10px 12px !important;
+  }
+
+  .left-tools,
+  .right-tools {
+    gap: 4px !important;
+  }
+
+  .tool-btn,
+  .toggle-btn,
+  .model-btn {
+    height: 28px !important;
+    padding: 0 6px !important;
+  }
+
+  .tool-icon,
+  .toggle-icon {
+    font-size: 14px !important;
+  }
+
+  .send-btn {
+    height: 28px !important;
+    width: 28px !important;
+  }
+
+  .send-btn.has-cost {
+    width: auto !important;
+    padding: 0 8px !important;
+  }
+
+  .send-icon {
+    font-size: 14px !important;
+  }
+}
+
+/* New overrides for model popup and button sizing */
+.model-menu-overlay {
+  display: none;
+}
+
+@media (max-width: 500px) {
+
+  .input-toolbar .left-tools,
+  .input-toolbar .right-tools {
+    gap: 6px !important;
+  }
+
+  /* 
+  .tool-btn,
+  .toggle-btn,
+  .model-btn {
+    height: 30px !important;
+    padding: 0 8px !important;
+    font-size: 11px !important;
+  } */
+}
+
+@media (max-width: 400px) {
+  .chat-footer {
+    backdrop-filter: none !important;
+    /* Fix for fixed positioning inside */
+  }
+
+  .model-menu-overlay {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(2px);
+    z-index: 1999;
+    animation: fadeIn 0.3s;
+  }
+
+  .model-dropdown {
+    position: fixed !important;
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 100% !important;
+    margin-bottom: 0 !important;
+    border-radius: 20px 20px 0 0 !important;
+    border: none !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.15) !important;
+    background: #111 !important;
+    z-index: 2000 !important;
+    padding: 20px 16px 40px 16px !important;
+    animation: slideUpMobile 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.8) !important;
+    display: flex;
+    flex-direction: column;
+    transform: none !important;
+  }
+
+  /* Aggressive button sizing for <400px */
+  /* .tool-btn,
+  .toggle-btn,
+  .model-btn {
+    height: 28px !important;
+    padding: 0 5px !important;
+    font-size: 10px !important;
+  } */
+
+  .tool-icon,
+  .toggle-icon {
+    font-size: 13px !important;
+  }
+}
+
+@media (max-width: 350px) {
+
+  /* .tool-btn,
+  .toggle-btn,
+  .model-btn {
+    padding: 0 3px !important;
+    font-size: 9px !important;
+  } */
+
+  .input-toolbar .left-tools,
+  .input-toolbar .right-tools {
+    gap: 2px !important;
+  }
+}

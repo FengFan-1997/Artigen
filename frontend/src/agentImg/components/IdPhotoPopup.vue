@@ -1,69 +1,58 @@
 <template>
-  <transition name="fade">
-    <div v-if="visible" class="modal-overlay" @click="close">
-      <div class="modal-container" @click.stop>
-        <div class="modal-header">
-          <div class="header-left">
-            <span class="header-icon">ID</span>
-            <span class="header-title">{{ ui.title }}</span>
-          </div>
-          <CloseButton @click="close" />
-        </div>
-        <div class="modal-subtitle">{{ ui.subtitle }}</div>
+  <BaseTaskPopup
+    :visible="visible"
+    :title="ui.title"
+    :subtitle="ui.subtitle"
+    icon="ID"
+    :upload-text="ui.uploadText"
+    :upload-hint="ui.uploadHint"
+    :reupload-text="ui.reupload"
+    placeholder-icon="📁"
+    :loading="loading"
+    v-model:selected-file="selectedFile"
+    @close="close"
+  >
+    <template #config>
+      <div class="config-section">
+        <div class="section-title">{{ ui.sectionTitle }}</div>
 
-        <div class="modal-body">
-          <ImageUploadArea
-            v-model="selectedFile"
-            :upload-text="ui.uploadText"
-            :upload-hint="ui.uploadHint"
-            :reupload-text="ui.reupload"
-            placeholder-icon="📁"
-            :disabled="loading"
-          />
-
-          <div class="config-panel">
-            <div class="config-section">
-              <div class="section-title">{{ ui.sectionTitle }}</div>
-
-              <div class="form-item">
-                <label>{{ ui.typeLabel }}</label>
-                <div class="select-wrapper">
-                  <CyberDropdown
-                    v-model="selectedType"
-                    :options="photoTypes"
-                    @change="(val) => trackEvent('ID_Photo', 'select_type', val)"
-                  />
-                </div>
-              </div>
-
-              <div class="type-desc">
-                {{ currentTypeDesc }}
-              </div>
-
-              <button
-                class="generate-btn"
-                @click="handleGenerate"
-                :disabled="!selectedFile || loading"
-              >
-                <span>{{ loading ? ui.generating : ui.start }}</span>
-                <span v-if="!loading && costText" class="generate-cost">{{ costText }}</span>
-              </button>
-            </div>
+        <div class="form-item">
+          <label>{{ ui.typeLabel }}</label>
+          <div class="select-wrapper">
+            <CyberDropdown
+              v-model="selectedType"
+              :options="photoTypes"
+              @change="(val) => trackEvent('ID_Photo', 'select_type', val)"
+            />
           </div>
         </div>
+
+        <div class="type-desc">
+          {{ currentTypeDesc }}
+        </div>
+
+        <button class="generate-btn" :disabled="!selectedFile || loading" @click="handleGenerate">
+          <span v-if="loading">
+            <i class="fas fa-spinner fa-spin"></i>
+            {{ ui.generating }}
+          </span>
+          <span v-else>
+            {{ ui.start }}
+            <span class="cost-badge" v-if="costText">{{ costText }}</span>
+          </span>
+        </button>
       </div>
-    </div>
-  </transition>
+    </template>
+  </BaseTaskPopup>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
-import { storeToRefs } from 'pinia';
+import { computed, ref, watch } from 'vue';
 import CyberDropdown from './CyberDropdown.vue';
-import CloseButton from './CloseButton.vue';
-import ImageUploadArea from './ImageUploadArea.vue';
+import BaseTaskPopup from './BaseTaskPopup.vue';
 import { trackEvent } from '../../utils/analytics';
 import { useLanguageStore } from '@/stores/language';
+import { storeToRefs } from 'pinia';
 
 const props = defineProps<{
   visible: boolean;
@@ -78,8 +67,8 @@ const emit = defineEmits<{
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 
-const selectedFile = ref<File | null>(null);
 const loading = ref(false);
+const selectedFile = ref<File | null>(null);
 
 const ui = computed(() => {
   const en = currentLang.value === 'en';
@@ -97,6 +86,8 @@ const ui = computed(() => {
     start: en ? 'Generate' : '开始生成'
   };
 });
+
+const selectedType = ref('finance');
 
 const photoTypes = computed(() => {
   const en = currentLang.value === 'en';
@@ -128,8 +119,6 @@ const photoTypes = computed(() => {
     }
   ];
 });
-
-const selectedType = ref('finance');
 
 const currentTypeDesc = computed(() => {
   return photoTypes.value.find((t) => t.value === selectedType.value)?.desc || '';
@@ -166,125 +155,22 @@ const handleGenerate = () => {
 </script>
 
 <style scoped>
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(5px);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.modal-container {
-  width: 900px;
-  max-width: 95vw;
-  background: #111;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+.config-section {
   display: flex;
   flex-direction: column;
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.header-icon {
-  font-family: 'JetBrains Mono', monospace;
-  border: 1px solid #fff;
-  padding: 2px 6px;
-  font-size: 20px;
-  font-weight: 700;
-  color: #fff;
-}
-
-.header-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #fff;
-}
-
-.modal-subtitle {
-  color: #888;
-  font-size: 12px;
-  margin-bottom: 24px;
-  margin-left: 54px;
-}
-
-.modal-body {
-  display: flex;
-  gap: 24px;
-  height: 500px;
-}
-
-/* ... existing styles ... */
-
-.select-wrapper select {
-  display: none; /* Hide old select if present */
-}
-
-/* Responsive */
-@media (max-width: 960px) {
-  .modal-container {
-    width: 100%;
-    height: 100%;
-    max-width: none;
-    border-radius: 0;
-    padding: 16px;
-  }
-
-  .modal-body {
-    flex-direction: column;
-    height: auto;
-    flex: 1;
-    overflow-y: auto;
-  }
-
-  .config-panel {
-    width: 100% !important;
-    flex: none;
-  }
-
-  .modal-subtitle {
-    margin-left: 0;
-    text-align: center;
-  }
-}
-
-.config-panel {
-  width: 300px;
-  background: #161616;
-  border-radius: 8px;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
+  gap: 16px;
+  font-family: var(--common-font);
 }
 
 .section-title {
   color: #888;
   font-size: 12px;
-  margin-bottom: 24px;
+  margin-bottom: 8px;
   text-align: center;
 }
 
 .form-item {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .form-item label {
@@ -294,68 +180,36 @@ const handleGenerate = () => {
   margin-bottom: 8px;
 }
 
-.select-wrapper select {
-  width: 100%;
-  background: #222;
-  border: 1px solid #333;
-  color: #fff;
-  padding: 10px;
-  border-radius: 4px;
-  outline: none;
-  cursor: pointer;
-}
-
-.select-wrapper select:focus {
-  border-color: #ccff00;
+.select-wrapper {
+  position: relative;
 }
 
 .type-desc {
-  background: #222;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
   padding: 12px;
-  border-radius: 4px;
-  color: #888;
-  font-size: 12px;
-  margin-bottom: 24px;
-  min-height: 40px;
+  font-size: 13px;
+  color: #aaa;
+  line-height: 1.4;
+  min-height: 60px;
 }
 
 .generate-btn {
+  margin-top: auto;
   width: 100%;
+  height: 48px;
   background: #ccff00;
   color: #000;
   border: none;
-  padding: 12px;
-  border-radius: 4px;
+  border-radius: 8px;
+  font-size: 16px;
   font-weight: 700;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   transition: all 0.2s;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.generate-cost {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(0, 0, 0, 0.28);
-  background: rgba(0, 0, 0, 0.18);
-  color: rgba(0, 0, 0, 0.88);
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1.2;
-}
-
-.generate-btn:hover:not(:disabled) {
-  background: #b3e600;
-  transform: translateY(-1px);
 }
 
 .generate-btn:disabled {
@@ -364,14 +218,16 @@ const handleGenerate = () => {
   cursor: not-allowed;
 }
 
-/* Transitions */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
+.generate-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(204, 255, 0, 0.3);
 }
 
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.cost-badge {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-left: 4px;
 }
 </style>
