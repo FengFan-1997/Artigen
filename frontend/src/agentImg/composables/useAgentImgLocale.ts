@@ -76,7 +76,7 @@ export function useAgentImgLocale() {
         loadingText: '正在处理，请耐心等待…',
         guideTitle: '使用指南 / 我们的优势',
         guideDesc:
-          '先在左侧「产品档案」补齐关键信息，再用一句话描述场景；打开「深度思考」会自动优化提示词与构图。支持多参考图图生图，让风格与质感更稳定。',
+          '如果是电商产品，可以先在左侧「产品档案」补齐关键信息；非电商场景可跳过，直接用一句话描述场景。打开「深度思考」会自动优化提示词与构图。支持多参考图图生图，让风格与质感更稳定。',
         guideKeywords: [
           '深度思考模型',
           '多参考图生成',
@@ -177,7 +177,7 @@ export function useAgentImgLocale() {
       loadingText: 'Processing, please wait…',
       guideTitle: 'Quick guide / Why us',
       guideDesc:
-        'Fill the product profile first, then describe the scene in one line. Turn on Deep Thinking to refine prompts and composition. Multi-reference img2img keeps style and texture consistent.',
+        'For e-commerce products, you can fill the product profile on the left; for other cases, you can skip it and describe the scene in one line. Turn on Deep Thinking to refine prompts and composition. Multi-reference img2img keeps style and texture consistent.',
       guideKeywords: [
         'deep thinking model',
         'multi-reference img2img',

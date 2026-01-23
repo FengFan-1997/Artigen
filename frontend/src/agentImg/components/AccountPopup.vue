@@ -731,7 +731,7 @@ watch(
 
 @media (max-width: 500px) {
   .tab {
-    height: 36px;
+    height: 38px;
     padding: 0 12px;
     font-size: 12px;
     min-width: 80px;
@@ -780,11 +780,12 @@ watch(
   min-width: 96px;
   cursor: pointer;
   transition: all 0.2s;
+  text-align: center;
 }
 
 @media (max-width: 500px) {
   .mini-btn {
-    height: 36px;
+    height: 38px !important;
     padding: 0 12px;
     font-size: 12px;
     min-width: 80px;
@@ -860,6 +861,43 @@ watch(
   color: rgba(252, 165, 165, 0.95);
 }
 
+@media (max-width: 979px) {
+  .account-card {
+    grid-template-columns: 260px 1fr;
+  }
+  .left-pane {
+    padding: 20px;
+    gap: 16px;
+  }
+  .left-title {
+    font-size: 24px;
+  }
+  .user-block {
+    gap: 10px;
+  }
+  .label,
+  .mono {
+    font-size: 14px;
+  }
+  .balance-item {
+    padding: 12px;
+  }
+  .balance-label {
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .balance-value {
+    font-size: 20px;
+  }
+  .btn {
+    height: 44px;
+    font-size: 14px;
+  }
+  .mini-btn {
+    font-size: 13px;
+  }
+}
+
 .amount {
   font-weight: 900;
 }
@@ -895,8 +933,8 @@ watch(
 
 @media (max-width: 900px) {
   .account-overlay {
-    padding: 80px 16px 24px 16px;
-    align-items: flex-start;
+    padding: 20px 16px;
+    align-items: center;
     justify-content: center;
   }
 

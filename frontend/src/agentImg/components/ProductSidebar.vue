@@ -365,4 +365,39 @@ const onLogoChange = (e: Event) => {
   opacity: 0;
   transform: translateY(-10px);
 }
+
+@media (max-width: 500px) {
+  .card-title {
+    font-size: 14px !important;
+    margin-bottom: 12px !important;
+  }
+
+  .label {
+    font-size: 12px !important;
+    margin-bottom: 6px !important;
+  }
+
+  .control {
+    height: 36px !important;
+    font-size: 13px !important;
+    padding: 0 10px !important;
+  }
+
+  .custom-select-trigger {
+    height: 36px !important;
+    font-size: 13px !important;
+    padding: 0 10px !important;
+  }
+
+  .custom-option {
+    font-size: 13px !important;
+    padding: 6px 10px !important;
+  }
+
+  .chip {
+    height: 24px !important;
+    font-size: 12px !important;
+    padding: 0 8px !important;
+  }
+}
 </style>
