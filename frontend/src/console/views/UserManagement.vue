@@ -107,7 +107,7 @@
               }}</a-button>
             </div>
             <a-table
-              :dataSource="adminChats"
+              :dataSource="chatRows"
               :columns="chatColumns"
               :rowKey="
                 (_record: any, index: number) =>
@@ -128,6 +128,15 @@
                 <template v-else-if="column.key === 'text'">
                   <div style="white-space: pre-wrap; word-break: break-word">
                     {{ record?.text || '' }}
+                  </div>
+                </template>
+                <template v-else-if="column.key === 'creditsDelta'">
+                  <div>{{ formatCredits(record?.creditsDelta) }}</div>
+                  <div
+                    v-if="record?.usageDetail"
+                    style="font-size: 12px; color: rgba(0, 0, 0, 0.55); line-height: 1.4"
+                  >
+                    {{ record?.usageDetail }}
                   </div>
                 </template>
               </template>
@@ -168,7 +177,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
-import { useConsoleStore, type AdminUserItem } from '@/stores/console';
+import { useConsoleStore, type AdminUserItem, type AdminUsageLedgerItem } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import { message } from 'ant-design-vue';
@@ -223,6 +232,7 @@ const ui = computed(() =>
         colChatRole: '角色',
         colChatText: '内容',
         colChatTime: '时间',
+        colChatCredits: '消耗',
         colOrderKind: '类型',
         colOrderId: '订单号',
         colOrderPkg: '套餐',
@@ -265,6 +275,7 @@ const ui = computed(() =>
         colChatRole: 'Role',
         colChatText: 'Text',
         colChatTime: 'Time',
+        colChatCredits: 'Credits',
         colOrderKind: 'Kind',
         colOrderId: 'Order ID',
         colOrderPkg: 'Package',
@@ -341,10 +352,107 @@ const savingCredits = ref(false);
 const editAvailableCredits = ref<number | null>(null);
 const adminChats = computed(() => consoleStore.adminChats || []);
 const adminOrders = computed(() => consoleStore.adminOrders || []);
+const usageItems = ref<AdminUsageLedgerItem[]>([]);
+const matchWindowMs = 3 * 60 * 1000;
+
+const formatCredits = (value: any) => {
+  if (value === null || value === undefined || value === '') return '-';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '-';
+  return n.toLocaleString();
+};
+
+const buildUsageText = (item: AdminUsageLedgerItem) => {
+  const trigger = String(item?.trigger || '').trim();
+  const model = String(item?.model || '').trim();
+  const provider = String(item?.provider || '').trim();
+  const parts = [trigger, model, provider].filter(Boolean);
+  const label = currentLang.value === 'zh' ? '消耗' : 'Usage';
+  return `${label}: ${parts.length ? parts.join(' / ') : '-'}`;
+};
+
+const buildUsageDetail = (item: AdminUsageLedgerItem) => {
+  const trigger = String(item?.trigger || '').trim();
+  const model = String(item?.model || '').trim();
+  const provider = String(item?.provider || '').trim();
+  const isZh = currentLang.value === 'zh';
+  const parts = [
+    trigger ? `${isZh ? '触发' : 'Trigger'}: ${trigger}` : '',
+    model ? `${isZh ? '模型' : 'Model'}: ${model}` : '',
+    provider ? `${isZh ? '来源' : 'Provider'}: ${provider}` : ''
+  ].filter(Boolean);
+  return parts.join(' | ');
+};
+
+const chatRows = computed(() => {
+  const chats = Array.isArray(adminChats.value) ? adminChats.value : [];
+  const usage = Array.isArray(usageItems.value) ? usageItems.value : [];
+  const mappedChats = chats.map((item) => ({
+    ...item,
+    ts: Number(item?.ts || item?.timestamp || 0) || 0,
+    creditsDelta: item?.creditsDelta,
+    role: String(item?.role || '').trim()
+  }));
+  const mappedUsage = usage.map((item, index) => {
+    const key =
+      String(item?.requestId || '').trim() || `usage_${index}_${Number(item?.ts || 0) || 0}`;
+    return {
+      ...item,
+      __usageKey: key,
+      role: currentLang.value === 'zh' ? '消耗' : 'usage',
+      text: buildUsageText(item),
+      usageDetail: buildUsageDetail(item),
+      ts: Number(item?.ts || 0) || 0,
+      creditsDelta: item?.creditsDelta
+    };
+  });
+  const usedUsage = new Set<string>();
+  const matchedChats = mappedChats.map((chat) => {
+    const role = String(chat?.role || '').toLowerCase();
+    if (role !== 'agent' && role !== 'assistant') return chat;
+    const chatTs = Number(chat?.ts || 0) || 0;
+    if (!chatTs) return chat;
+    let best: any = null;
+    let bestDiff = Infinity;
+    for (const item of mappedUsage) {
+      const key = String((item as any).__usageKey || '');
+      if (!key || usedUsage.has(key)) continue;
+      const diff = Math.abs(chatTs - (Number(item?.ts || 0) || 0));
+      if (diff <= matchWindowMs && diff < bestDiff) {
+        best = item;
+        bestDiff = diff;
+      }
+    }
+    if (!best) return chat;
+    usedUsage.add(String((best as any).__usageKey || ''));
+    const existingCredits = Number(chat?.creditsDelta);
+    const creditsDelta = Number.isFinite(existingCredits) ? existingCredits : best?.creditsDelta;
+    return {
+      ...chat,
+      creditsDelta,
+      usageSummary: best?.text || '',
+      usageDetail: best?.usageDetail || ''
+    };
+  });
+  const leftoverUsage = mappedUsage.filter((item) => {
+    const key = String((item as any).__usageKey || '');
+    return key ? !usedUsage.has(key) : true;
+  });
+  const merged = [...matchedChats, ...leftoverUsage];
+  merged.sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
+  return merged;
+});
 
 const chatColumns = computed(() => [
   { title: ui.value.colChatRole, dataIndex: 'role', key: 'role', width: 120 },
   { title: ui.value.colChatText, dataIndex: 'text', key: 'text' },
+  {
+    title: ui.value.colChatCredits,
+    dataIndex: 'creditsDelta',
+    key: 'creditsDelta',
+    width: 120,
+    align: 'right'
+  },
   { title: ui.value.colChatTime, dataIndex: 'ts', key: 'ts', width: 180 }
 ]);
 
@@ -419,6 +527,8 @@ const fetchChats = async () => {
   loadingChats.value = true;
   try {
     await consoleStore.fetchAdminChatsHistory({ userId: uid, limit: 200, offset: 0 });
+    await consoleStore.fetchAdminUsageLedger({ userId: uid, limit: 200, offset: 0 });
+    usageItems.value = Array.isArray(consoleStore.adminUsage) ? [...consoleStore.adminUsage] : [];
   } catch (e) {
     showAdminError(e);
   } finally {
