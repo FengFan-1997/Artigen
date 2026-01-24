@@ -28,6 +28,12 @@ const normalizeReasonKey = (raw) => {
   if (!key) return '';
   return key.replace(/[\s/-]+/g, '_');
 };
+const readAnalyticsEvents = () => {
+  const raw = readJson(ANALYTICS_EVENTS_FILE, { v: 1, items: [] });
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === 'object' && Array.isArray(raw.items)) return raw.items;
+  return [];
+};
 const resolveReasonText = (reason) => {
   const key = normalizeReasonKey(reason);
   if (!key) return '';
@@ -325,7 +331,7 @@ const installAdminRoutes = (app) => {
       const limit = clampInt(req.query.limit, 50, 2000);
       const offset = clampInt(req.query.offset, 0, 2000000);
 
-      const allEvents = readJson(ANALYTICS_EVENTS_FILE, []);
+      const allEvents = readAnalyticsEvents();
       let filtered = Array.isArray(allEvents) ? allEvents : [];
 
       if (userId) {
