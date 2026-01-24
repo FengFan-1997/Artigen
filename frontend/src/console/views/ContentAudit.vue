@@ -69,8 +69,9 @@
               </template>
               <template v-else-if="column.key === 'upload'">
                 <div class="img-center">
-                  <div class="img-hover">
-                    <a-image :width="100" :src="record.uploadPreviewUrl || NO_UPLOAD_URL" />
+                  <div v-if="record.uploadPreviewUrl" class="img-hover">
+                    <div class="prompt-cell">{{ ui.uploadReference }}</div>
+                    <a-image :width="100" :src="record.uploadPreviewUrl" />
                     <div v-if="canActOnUrl(record.uploadPreviewUrl)" class="img-actions">
                       <a-button
                         size="small"
@@ -92,6 +93,7 @@
                       </a-button>
                     </div>
                   </div>
+                  <div v-else class="prompt-cell">{{ ui.uploadEmpty }}</div>
                 </div>
               </template>
               <template v-else-if="column.key === 'type'">
@@ -497,6 +499,8 @@ const ui = computed(() =>
         colTime: '时间',
         colDeepMode: '深度思考',
         colInitialInput: '初始输入',
+        uploadReference: '引用：',
+        uploadEmpty: '用户未上传',
         colEventType: '事件',
         colPath: '路径',
         colPayload: '参数',
@@ -562,6 +566,8 @@ const ui = computed(() =>
         colTime: 'Time',
         colDeepMode: 'Deep Mode',
         colInitialInput: 'Initial Input',
+        uploadReference: 'Reference:',
+        uploadEmpty: 'No upload',
         colEventType: 'Event',
         colPath: 'Path',
         colPayload: 'Payload',
@@ -654,7 +660,6 @@ const formatBehaviorDetails = (details: any) => {
 };
 
 const NO_IMAGE_URL = 'https://via.placeholder.com/100?text=No+Image';
-const NO_UPLOAD_URL = 'https://via.placeholder.com/100?text=No+Upload';
 const AGENT_IMG_PREFILL_KEY = 'agentImg:prefillRef_v1';
 
 const showAdminError = (e: any) => {
