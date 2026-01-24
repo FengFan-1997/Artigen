@@ -295,12 +295,19 @@ const installAdminRoutes = (app) => {
       const offset = clampInt(req.query.offset, 0, 2000000);
 
       let items = [];
+      const users = readUsersMap();
+      const getUserBrief = (uid) => {
+        const u = users && typeof users === 'object' ? users[String(uid || '').trim()] : null;
+        const username = typeof u?.username === 'string' ? u.username : '';
+        const email = typeof u?.email === 'string' ? u.email : '';
+        return { username, email };
+      };
 
       if (userId) {
         const mem = readUserMemory(userId, {});
-        items = Array.isArray(mem?.image_history) ? mem.image_history : [];
+        const raw = Array.isArray(mem?.image_history) ? mem.image_history : [];
+        items = raw.map((it) => ({ ...it, userId, ...getUserBrief(userId) }));
       } else {
-        const users = readUsersMap();
         const allIds = Object.values(users)
           .map((u) => String(u?.id || '').trim())
           .filter(Boolean);
@@ -308,7 +315,8 @@ const installAdminRoutes = (app) => {
         for (const uid of allIds) {
           const mem = readUserMemory(uid, {});
           if (Array.isArray(mem?.image_history)) {
-            items.push(...mem.image_history);
+            const brief = getUserBrief(uid);
+            items.push(...mem.image_history.map((it) => ({ ...it, userId: uid, ...brief })));
           }
         }
       }

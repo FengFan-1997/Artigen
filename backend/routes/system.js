@@ -31,6 +31,8 @@ const installSystemRoutes = (app, deps) => {
   const SILICONFLOW_MODEL = deps?.SILICONFLOW_MODEL;
   const MODEDOC_ROOT = deps?.MODEDOC_ROOT;
   const getClientIp = deps?.getClientIp;
+  const upsertUsageLedgerItem = deps?.upsertUsageLedgerItem;
+  const computeCreditsDelta = deps?.computeCreditsDelta;
   const normalizeEmail = deps?.normalizeEmail;
   const canUseTestLoginCode = deps?.canUseTestLoginCode;
   const MEMORY_DIR = deps?.MEMORY_DIR;
@@ -365,6 +367,7 @@ const installSystemRoutes = (app, deps) => {
   });
 
   app.post('/api/generate', async (req, res) => {
+    const startedAt = Date.now();
     const requestId = String(res.locals.requestId || req.body.requestId || '');
     const prompt = String(req.body.prompt || '').trim();
     const timeoutMs = Number(req.body.timeoutMs) || 0;
@@ -445,6 +448,38 @@ const installSystemRoutes = (app, deps) => {
           imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: resolvedCost });
         } catch { }
       }
+
+      try {
+        if (typeof upsertUsageLedgerItem === 'function' && userId) {
+          const usage = result?.usage || null;
+          const tokensIn = Number(usage?.promptTokens || 0) || 0;
+          const tokensOut = Number(usage?.completionTokens || 0) || 0;
+          const tokensTotal = Number(usage?.totalTokens || 0) || tokensIn + tokensOut;
+          const creditsDelta =
+            resolvedCost > 0
+              ? resolvedCost
+              : typeof computeCreditsDelta === 'function'
+                ? computeCreditsDelta({ tokensTotal, ragUsed: false })
+                : 0;
+          upsertUsageLedgerItem({
+            requestId: requestId || `gen_${Date.now().toString(36)}`,
+            ts: Date.now(),
+            userId,
+            trigger: normalizeReasonKey(purpose) || 'generate',
+            provider: String(result?.provider || activeTextProvider || 'text').trim(),
+            model: String(result?.model || modelRaw || '').trim(),
+            usedUrl: String(result?.usedUrl || '').trim(),
+            tokensIn,
+            tokensOut,
+            tokensTotal,
+            creditsDelta,
+            status: result?.text ? 'ok' : 'empty',
+            durationMs: Math.max(0, Date.now() - startedAt),
+            ip: typeof getClientIp === 'function' ? getClientIp(req) : '',
+            ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 220) : ''
+          });
+        }
+      } catch {}
 
       res.json({
         candidates: [{
