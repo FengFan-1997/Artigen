@@ -4,6 +4,8 @@
       v-model:collapsed="collapsed"
       collapsible
       breakpoint="lg"
+      :collapsedWidth="siderCollapsedWidth"
+      :trigger="null"
       width="240"
       theme="dark"
     >
@@ -49,20 +51,27 @@
         </a-menu-item>
       </a-menu>
     </a-layout-sider>
+    <div v-if="isMobile && !collapsed" class="sider-overlay" @click="collapsed = true"></div>
     <a-layout class="console-main">
       <a-layout-header class="console-header">
-        <a-breadcrumb>
-          <a-breadcrumb-item>{{ ui.console }}</a-breadcrumb-item>
-          <a-breadcrumb-item>{{ currentRouteName }}</a-breadcrumb-item>
-        </a-breadcrumb>
+        <div class="header-left">
+          <a-button v-if="isMobile" class="menu-toggle" type="text" @click="collapsed = !collapsed">
+            ≡
+          </a-button>
+          <a-breadcrumb class="hidden-xs">
+            <a-breadcrumb-item>{{ ui.console }}</a-breadcrumb-item>
+            <a-breadcrumb-item>{{ currentRouteName }}</a-breadcrumb-item>
+          </a-breadcrumb>
+          <span class="visible-xs mobile-page-title">{{ currentRouteName }}</span>
+        </div>
 
         <a-dropdown>
           <a-space class="user-dropdown" style="cursor: pointer">
             <a-avatar style="background-color: #1890ff" :size="32">
               {{ userId.slice(0, 1).toUpperCase() }}
             </a-avatar>
-            <span class="username">{{ userId }}</span>
-            <down-outlined />
+            <span class="username hidden-xs">{{ userId }}</span>
+            <down-outlined class="hidden-xs" />
           </a-space>
           <template #overlay>
             <a-menu>
@@ -172,6 +181,8 @@ const { currentLang } = storeToRefs(languageStore);
 
 const collapsed = ref(false);
 const selectedKeys = ref<string[]>(['dashboard']);
+const isMobile = ref(false);
+const siderCollapsedWidth = computed(() => (isMobile.value ? 0 : 80));
 
 const ui = computed(() =>
   currentLang.value === 'zh'
@@ -349,6 +360,7 @@ const handleLogin = async () => {
 
 let authTimer: number | null = null;
 let clickListener: ((e: MouseEvent) => void) | null = null;
+let resizeListener: (() => void) | null = null;
 onMounted(() => {
   consoleStore.init();
   authTimer = window.setInterval(() => syncLoginTick(), 30_000);
@@ -381,6 +393,17 @@ onMounted(() => {
   try {
     window.addEventListener('click', clickListener, true);
   } catch {}
+
+  const syncViewport = () => {
+    const next = window.innerWidth <= 768;
+    isMobile.value = next;
+    if (next) collapsed.value = true;
+  };
+  syncViewport();
+  resizeListener = () => syncViewport();
+  try {
+    window.addEventListener('resize', resizeListener);
+  } catch {}
 });
 
 onBeforeUnmount(() => {
@@ -395,6 +418,12 @@ onBeforeUnmount(() => {
     } catch {}
   }
   clickListener = null;
+  if (resizeListener) {
+    try {
+      window.removeEventListener('resize', resizeListener);
+    } catch {}
+  }
+  resizeListener = null;
 });
 
 const handleLogout = () => {
@@ -414,6 +443,8 @@ const handleLogout = () => {
 .console-main {
   min-width: 0;
   background: #0b1220;
+  position: relative;
+  z-index: 1;
 }
 
 .console-header {
@@ -425,6 +456,70 @@ const handleLogout = () => {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
   z-index: 2;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menu-toggle {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: rgba(241, 245, 249, 0.9);
+}
+
+.visible-xs {
+  display: none;
+}
+
+.mobile-page-title {
+  color: rgba(241, 245, 249, 0.9);
+  font-weight: 600;
+  font-size: 16px;
+  margin-left: 8px;
+}
+
+@media (max-width: 480px) {
+  .hidden-xs {
+    display: none !important;
+  }
+  .visible-xs {
+    display: inline-block;
+  }
+  .console-header {
+    padding: 0 12px;
+  }
+}
+
+@media (max-width: 360px) {
+  .mobile-page-title {
+    font-size: 14px;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  .menu-toggle {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+  }
+}
+
+.sider-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.45);
+  z-index: 9;
 }
 
 .console-content {
@@ -469,6 +564,15 @@ const handleLogout = () => {
 
 :deep(.ant-layout-sider) {
   background: #001529;
+  z-index: 10;
+}
+
+:deep(.ant-layout-sider.mobile-sider) {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
 }
 
 :deep(.ant-typography),
@@ -596,21 +700,6 @@ const handleLogout = () => {
   color: rgba(241, 245, 249, 0.92);
 }
 
-@media (max-width: 768px) {
-  .console-header {
-    padding: 0 12px;
-  }
-
-  .console-content {
-    padding: 12px;
-  }
-
-  .console-card {
-    padding: 12px;
-    border-radius: 12px;
-  }
-}
-
 .login-root {
   min-height: 100vh;
   display: flex;
@@ -680,5 +769,74 @@ const handleLogout = () => {
 
 .user-dropdown:hover {
   opacity: 0.8;
+}
+
+@media (max-width: 768px) {
+  .console-header {
+    padding: 0 12px;
+  }
+
+  .console-content {
+    padding: 10px;
+  }
+
+  .console-card {
+    padding: 10px;
+    border-radius: 10px;
+  }
+
+  .console-footer {
+    font-size: 12px;
+    padding: 8px 0;
+  }
+
+  .console-card :deep(.ant-input),
+  .console-card :deep(.ant-input-number),
+  .console-card :deep(.ant-select),
+  .console-card :deep(.ant-picker) {
+    width: 100% !important;
+  }
+
+  .console-card :deep(.ant-space) {
+    width: 100%;
+  }
+
+  .console-card :deep(.ant-btn) {
+    min-height: 36px;
+  }
+
+  .console-card :deep(.ant-table-content) {
+    overflow: auto;
+  }
+
+  .console-card :deep(.ant-table),
+  .console-card :deep(.ant-table-cell) {
+    font-size: 12px;
+  }
+
+  .console-card :deep(.ant-table-cell) {
+    padding: 8px;
+  }
+}
+
+@media (max-width: 520px) {
+  .console-header :deep(.ant-breadcrumb) {
+    display: none;
+  }
+
+  .username {
+    display: none;
+  }
+
+  .login-card {
+    padding: 18px;
+  }
+
+  .user-dropdown :deep(.ant-avatar) {
+    width: 28px !important;
+    height: 28px !important;
+    line-height: 28px !important;
+    font-size: 12px !important;
+  }
 }
 </style>

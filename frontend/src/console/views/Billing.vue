@@ -36,7 +36,13 @@
 
     <div style="margin-top: 48px">
       <a-typography-title :level="4">{{ ui.orderHistory }}</a-typography-title>
-      <a-table :columns="columns" :data-source="orders" row-key="orderId" :loading="loadingOrders">
+      <a-table
+        :columns="columns"
+        :data-source="orders"
+        row-key="orderId"
+        :loading="loadingOrders"
+        :scroll="{ x: 600 }"
+      >
         <template #bodyCell="{ column }">
           <template v-if="column.key === 'status'">
             <a-tag color="green">{{ ui.success }}</a-tag>
@@ -231,5 +237,51 @@ const handlePay = async (pkg: any) => {
 
 .pkg-features .anticon {
   color: #52c41a;
+}
+
+@media (max-width: 768px) {
+  .pricing-card {
+    padding: 16px;
+  }
+
+  .pkg-credits {
+    font-size: 20px;
+  }
+
+  .pkg-price {
+    font-size: 18px;
+  }
+
+  .featured-tag {
+    font-size: 11px;
+    padding: 2px 20px;
+  }
+
+  :deep(.ant-table-content) {
+    overflow: auto;
+  }
+
+  :deep(.ant-table),
+  :deep(.ant-table-cell) {
+    font-size: 12px;
+  }
+
+  :deep(.ant-table-cell) {
+    padding: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .pricing-card {
+    padding: 12px;
+  }
+
+  .pkg-credits {
+    font-size: 18px;
+  }
+
+  .pkg-price {
+    font-size: 16px;
+  }
 }
 </style>

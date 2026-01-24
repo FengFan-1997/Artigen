@@ -156,7 +156,12 @@ export function useAgentImgHistory(
         })
         .filter((x): x is HistoryItem => x !== null);
       mapped.sort((a, b) => a.timestamp - b.timestamp);
-      history.value = mapped.slice(-MAX_HISTORY);
+      const finalList = mapped.slice(-MAX_HISTORY);
+      if (finalList.length) {
+        history.value = finalList;
+      } else {
+        loadHistoryFromStorage();
+      }
       return true;
     } catch {
       return false;
@@ -165,7 +170,6 @@ export function useAgentImgHistory(
 
   let historyPersistTimer: number | null = null;
   const persistHistoryThrottled = () => {
-    if (isAuthed.value) return;
     if (historyPersistTimer) return;
     historyPersistTimer = window.setTimeout(() => {
       historyPersistTimer = null;

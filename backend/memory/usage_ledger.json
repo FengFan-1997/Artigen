@@ -1294,6 +1294,44 @@
       "status": "offline",
       "ip": "::1",
       "ua": "node"
+    },
+    {
+      "requestId": "chat_record_test_1",
+      "ts": 1769253797186,
+      "createdAt": 1769253797186,
+      "updatedAt": 1769253797186,
+      "userId": "guest_chat_record",
+      "trigger": "chat",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen3-8B",
+      "usedUrl": "https://api.siliconflow.cn/v1/messages",
+      "tokensIn": 347,
+      "tokensOut": 49,
+      "tokensTotal": 0,
+      "ragUsed": false,
+      "status": "ok",
+      "durationMs": 4019,
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456",
+      "creditsDelta": 0
+    },
+    {
+      "requestId": "img2img_mksa9yqa_soo4z3",
+      "ts": 1769257575566,
+      "createdAt": 1769257575566,
+      "updatedAt": 1769257575566,
+      "userId": "email_2555433b3bcc7bea",
+      "trigger": "ai_design",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "usedUrl": "https://api.siliconflow.cn/v1/images/generations",
+      "creditsDelta": 10,
+      "plan": {
+        "userText": "asdasdsadsdd"
+      },
+      "status": "ok",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
     }
   ]
 }

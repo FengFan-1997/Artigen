@@ -3,7 +3,10 @@
     <a-typography-title :level="2">{{ ui.title }}</a-typography-title>
 
     <a-card>
-      <div style="margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap">
+      <div
+        class="user-toolbar"
+        style="margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap"
+      >
         <a-input-search
           v-model:value="searchText"
           :placeholder="ui.searchPh"
@@ -49,8 +52,9 @@
     <a-drawer
       v-model:visible="isDrawerVisible"
       :title="ui.userDetails"
-      width="860"
+      :width="isMobile ? '100%' : 860"
       placement="right"
+      class="user-drawer"
     >
       <div v-if="selectedUser">
         <a-descriptions :title="ui.basicInfo" bordered column="1">
@@ -70,7 +74,7 @@
           }}</a-descriptions-item>
           <a-descriptions-item :label="ui.visits">{{ selectedUser.visits }}</a-descriptions-item>
           <a-descriptions-item :label="ui.credits">
-            <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center">
+            <div class="credit-row">
               <span>
                 {{ ui.available }}: {{ selectedUser.wallet?.available ?? 0 }} / {{ ui.frozen }}:
                 {{ selectedUser.wallet?.frozen ?? 0 }}
@@ -94,7 +98,10 @@
 
         <a-tabs v-model:activeKey="detailsTab">
           <a-tab-pane key="chats" :tab="ui.tabChats">
-            <div style="margin-bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap">
+            <div
+              class="user-drawer-toolbar"
+              style="margin-bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap"
+            >
               <a-button type="primary" :loading="loadingChats" @click="fetchChats">{{
                 ui.refreshChats
               }}</a-button>
@@ -128,7 +135,10 @@
           </a-tab-pane>
 
           <a-tab-pane key="orders" :tab="ui.tabOrders">
-            <div style="margin-bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap">
+            <div
+              class="user-drawer-toolbar"
+              style="margin-bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap"
+            >
               <a-button type="primary" :loading="loadingOrders" @click="fetchOrders">{{
                 ui.refreshOrders
               }}</a-button>
@@ -157,7 +167,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import { useConsoleStore, type AdminUserItem } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
@@ -166,6 +176,12 @@ import { message } from 'ant-design-vue';
 const consoleStore = useConsoleStore();
 const searchText = ref('');
 const loading = ref(false);
+const isMobile = ref(false);
+
+const checkMobile = () => {
+  isMobile.value = window.innerWidth < 768;
+};
+
 const users = computed(() => consoleStore.adminUsers);
 
 const languageStore = useLanguageStore();
@@ -364,6 +380,12 @@ const openUserDetails = (user: AdminUserItem) => {
 onMounted(() => {
   consoleStore.init();
   void fetchUsers();
+  checkMobile();
+  window.addEventListener('resize', checkMobile);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile);
 });
 
 const fetchUsers = async () => {
@@ -439,3 +461,71 @@ const saveCredits = async () => {
   }
 };
 </script>
+
+<style scoped>
+.credit-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+@media (max-width: 768px) {
+  .user-toolbar :deep(.ant-input-search),
+  .user-toolbar :deep(.ant-btn) {
+    width: 100% !important;
+  }
+
+  .user-drawer :deep(.ant-drawer-content-wrapper) {
+    width: 100% !important;
+  }
+
+  .user-drawer :deep(.ant-drawer-body) {
+    padding: 16px;
+  }
+
+  .credit-row {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .credit-row :deep(.ant-input-number) {
+    width: 100% !important;
+  }
+
+  .user-drawer-toolbar :deep(.ant-btn) {
+    width: 100% !important;
+  }
+
+  .user-drawer :deep(.ant-tabs-nav) {
+    overflow-x: auto;
+  }
+
+  :deep(.ant-pagination) {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  :deep(.ant-pagination-item),
+  :deep(.ant-pagination-prev),
+  :deep(.ant-pagination-next) {
+    min-width: 32px;
+    height: 32px;
+    line-height: 32px;
+  }
+
+  :deep(.ant-pagination-item a) {
+    line-height: 32px;
+  }
+
+  :deep(.ant-pagination-options),
+  :deep(.ant-pagination-total-text),
+  :deep(.ant-pagination-options-quick-jumper) {
+    display: none !important;
+  }
+}
+</style>

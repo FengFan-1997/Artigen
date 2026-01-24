@@ -3,7 +3,10 @@
     <a-typography-title :level="2">{{ ui.title }}</a-typography-title>
 
     <a-card>
-      <div style="margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap">
+      <div
+        class="usage-toolbar"
+        style="margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap"
+      >
         <a-input
           v-model:value="filterUserId"
           :placeholder="ui.userFilterPh"
@@ -110,7 +113,10 @@
       </a-row>
 
       <a-card :title="ui.trendTitle" style="margin-bottom: 16px">
-        <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px">
+        <div
+          class="usage-trend-toolbar"
+          style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px"
+        >
           <a-radio-group v-model:value="granularity">
             <a-radio-button value="hour">{{ ui.byHour }}</a-radio-button>
             <a-radio-button value="day">{{ ui.byDay }}</a-radio-button>
@@ -171,7 +177,13 @@
       </a-table>
     </a-card>
 
-    <a-modal v-model:visible="detailsVisible" :title="ui.usageDetails" footer="" width="600px">
+    <a-modal
+      v-model:visible="detailsVisible"
+      :title="ui.usageDetails"
+      footer=""
+      width="90%"
+      style="max-width: 600px"
+    >
       <a-descriptions bordered column="1" size="small">
         <a-descriptions-item :label="ui.requestId">{{
           currentRecord?.requestId
@@ -847,5 +859,88 @@ const exportCsv = () => {
 .chart {
   height: 100%;
   width: 100%;
+}
+
+@media (max-width: 768px) {
+  .usage-toolbar :deep(.ant-input),
+  .usage-toolbar :deep(.ant-picker),
+  .usage-toolbar :deep(.ant-select),
+  .usage-toolbar :deep(.ant-btn) {
+    width: 100% !important;
+  }
+
+  .usage-toolbar :deep(.ant-switch) {
+    width: auto !important;
+  }
+
+  .usage-trend-toolbar :deep(.ant-radio-group) {
+    width: 100%;
+    display: flex;
+  }
+
+  .usage-trend-toolbar :deep(.ant-radio-button-wrapper) {
+    flex: 1 1 50%;
+    text-align: center;
+  }
+
+  .chart {
+    height: 240px;
+  }
+
+  :deep(.ant-modal) {
+    width: 100% !important;
+    max-width: 100% !important;
+    top: 0;
+    padding-bottom: 0;
+  }
+
+  :deep(.ant-modal-content) {
+    min-height: 100vh;
+    border-radius: 0;
+  }
+
+  :deep(.ant-modal-body) {
+    padding: 16px;
+  }
+
+  :deep(.ant-descriptions-item-label),
+  :deep(.ant-descriptions-item-content) {
+    font-size: 12px;
+  }
+
+  :deep(.ant-pagination) {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  :deep(.ant-pagination-item),
+  :deep(.ant-pagination-prev),
+  :deep(.ant-pagination-next) {
+    min-width: 32px;
+    height: 32px;
+    line-height: 32px;
+  }
+
+  :deep(.ant-pagination-item a) {
+    line-height: 32px;
+  }
+
+  :deep(.ant-pagination-options),
+  :deep(.ant-pagination-total-text),
+  :deep(.ant-pagination-options-quick-jumper) {
+    display: none !important;
+  }
+}
+@media (max-width: 480px) {
+  .usage-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .usage-toolbar > * {
+    width: 100% !important;
+    margin-right: 0 !important;
+  }
 }
 </style>

@@ -371,7 +371,8 @@
     <a-modal
       v-model:visible="isColumnModalVisible"
       :title="ui.columnSettings"
-      :width="560"
+      width="90%"
+      style="max-width: 560px"
       :okButtonProps="{ disabled: modalSelectedKeys.length === 0 }"
       @ok="isColumnModalVisible = false"
     >
@@ -383,7 +384,13 @@
     </a-modal>
 
     <!-- Log Details Modal -->
-    <a-modal v-model:visible="isLogModalVisible" :title="ui.logDetails" footer="" width="600px">
+    <a-modal
+      v-model:visible="isLogModalVisible"
+      :title="ui.logDetails"
+      footer=""
+      width="90%"
+      style="max-width: 600px"
+    >
       <div v-if="selectedLog">
         <p>
           <strong>{{ ui.actionLabel }}:</strong> {{ selectedLog.eventType || selectedLog.trigger }}
@@ -1448,8 +1455,70 @@ const resetSeo = () => {
   color: rgba(241, 245, 249, 0.9);
 }
 
+.seo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.seo-card {
+  height: 100%;
+}
+
 @media (max-width: 768px) {
+  .table-toolbar {
+    align-items: stretch;
+  }
+
+  .table-toolbar-left {
+    width: 100%;
+  }
+
   .filter-input {
+    width: 100%;
+  }
+
+  .table-toolbar-left :deep(.ant-btn) {
+    width: 100%;
+  }
+
+  .img-hover {
+    width: 72px;
+    height: 72px;
+    border-radius: 8px;
+  }
+
+  .img-action-btn {
+    font-size: 12px;
+    padding: 0 4px;
+  }
+
+  .img-actions {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  :deep(.ant-tabs-nav) {
+    overflow-x: auto;
+  }
+
+  .seo-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+@media (max-width: 480px) {
+  .table-toolbar-left {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-input {
+    width: 100%;
+  }
+
+  .table-toolbar-left > .ant-btn {
     width: 100%;
   }
 }

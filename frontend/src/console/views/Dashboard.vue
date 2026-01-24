@@ -3,7 +3,7 @@
     <a-typography-title :level="2">{{ ui.title }}</a-typography-title>
 
     <a-row :gutter="16">
-      <a-col :span="8">
+      <a-col :xs="24" :sm="12" :lg="8">
         <a-card>
           <a-statistic
             :title="ui.currentBalance"
@@ -23,7 +23,7 @@
           >
         </a-card>
       </a-col>
-      <a-col :span="8">
+      <a-col :xs="24" :sm="12" :lg="8">
         <a-card>
           <a-statistic :title="ui.accountLevel" :value="userLevel" />
           <div style="margin-top: 16px">
@@ -31,7 +31,7 @@
           </div>
         </a-card>
       </a-col>
-      <a-col :span="8">
+      <a-col :xs="24" :sm="12" :lg="8">
         <a-card>
           <a-statistic :title="ui.userId" :value="userId" class="small-text-stat" />
           <div style="margin-top: 10px; color: #888">{{ userEmail }}</div>
@@ -41,21 +41,21 @@
 
     <div style="margin-top: 24px">
       <a-row :gutter="16">
-        <a-col :span="16">
+        <a-col :xs="24" :lg="16">
           <a-card :title="ui.usageTrend">
-            <div style="height: 300px">
+            <div class="dashboard-chart">
               <v-chart class="chart" :option="chartOption" autoresize />
             </div>
           </a-card>
         </a-col>
-        <a-col :span="8">
+        <a-col :xs="24" :lg="8">
           <a-card :title="ui.trafficStats">
             <a-statistic :title="ui.totalViews" :value="trafficViews" style="margin-bottom: 16px" />
             <a-row :gutter="16">
-              <a-col :span="12">
+              <a-col :xs="12" :sm="12">
                 <a-statistic :title="ui.conversions" :value="trafficConversions" />
               </a-col>
-              <a-col :span="12">
+              <a-col :xs="12" :sm="12">
                 <a-statistic :title="ui.ctr" :value="trafficCtr" suffix="%" :precision="1" />
               </a-col>
             </a-row>
@@ -82,7 +82,7 @@
 
     <div style="margin-top: 24px">
       <a-row :gutter="16">
-        <a-col :span="12">
+        <a-col :xs="24" :lg="12">
           <a-card :title="ui.toolPerformance">
             <a-table
               :columns="toolColumns"
@@ -93,7 +93,7 @@
             />
           </a-card>
         </a-col>
-        <a-col :span="12">
+        <a-col :xs="24" :lg="12">
           <a-card :title="ui.clickAnalysis">
             <a-table
               :columns="clickColumns"
@@ -109,7 +109,13 @@
 
     <div style="margin-top: 24px">
       <a-typography-title :level="4">{{ ui.recentActivity }}</a-typography-title>
-      <a-table :columns="columns" :data-source="recentUsage" row-key="id" pagination="false" />
+      <a-table
+        :columns="columns"
+        :data-source="recentUsage"
+        row-key="id"
+        pagination="false"
+        :scroll="{ x: 720 }"
+      />
     </div>
   </div>
 </template>
@@ -497,6 +503,32 @@ onMounted(() => {
   }
 });
 </script>
+
+<style scoped>
+.dashboard-chart {
+  height: 300px;
+}
+
+@media (max-width: 768px) {
+  .dashboard-chart {
+    height: 220px;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-chart {
+    height: 180px;
+  }
+
+  :deep(.ant-card-body) {
+    padding: 12px;
+  }
+
+  :deep(.ant-statistic-content-value) {
+    font-size: 20px;
+  }
+}
+</style>
 
 <style scoped>
 .small-text-stat :deep(.ant-statistic-content-value) {

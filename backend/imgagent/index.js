@@ -8,17 +8,30 @@ const installImgagentRoutes = (app, opts) => {
   const persistImageRefForUser = opts?.persistImageRefForUser;
   const persistGenerateImageInputForUser = opts?.persistGenerateImageInputForUser;
   const appendUserImageHistory = opts?.appendUserImageHistory;
+  const readUserMemory = opts?.readUserMemory;
+  const ensureUserMemoryShape = opts?.ensureUserMemoryShape;
   const imgCredits = opts?.imgCredits;
   const getClientIp = opts?.getClientIp;
+  const sanitizeLedgerId = opts?.sanitizeLedgerId;
+  const upsertUsageLedgerItem = opts?.upsertUsageLedgerItem;
 
   const isGuestUserId = (userId) => {
     const uid = String(userId || '').trim();
     return !!uid && uid.startsWith('guest_');
   };
+  const safeLedgerId = (value) => {
+    if (typeof sanitizeLedgerId === 'function') return sanitizeLedgerId(value);
+    return String(value || '').trim();
+  };
 
   const parseCost = (v, fallback) => {
     const n = Number.parseInt(String(v ?? ''), 10);
     return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  const clampInt = (v, min, max) => {
+    const n = Number.parseInt(String(v ?? ''), 10);
+    if (!Number.isFinite(n)) return min;
+    return Math.min(Math.max(n, min), max);
   };
   const normalizeReasonKey = (raw) => {
     const key = String(raw || '').trim().toLowerCase();
@@ -481,6 +494,33 @@ MQIDAQAB
     });
   });
 
+  app.get('/api/images/history/:userId', (req, res) => {
+    const userId = String(req.params.userId || '').trim();
+    if (!userId) return res.status(400).json({ ok: false, error: 'MISSING_USER_ID' });
+
+    if (!isGuestUserId(userId) && typeof assertAuthUserMatches === 'function') {
+      const auth = assertAuthUserMatches(req, res, userId);
+      if (!auth) return;
+    }
+
+    try {
+      if (typeof readUserMemory !== 'function' || typeof ensureUserMemoryShape !== 'function') {
+        return res.status(501).json({ ok: false, error: 'MEMORY_NOT_CONFIGURED' });
+      }
+      const limit = clampInt(req.query.limit, 1, 200);
+      const offset = clampInt(req.query.offset, 0, 5000);
+      const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+      const list = Array.isArray(mem?.image_history) ? mem.image_history : [];
+      const total = list.length;
+      const start = Math.max(0, Math.min(total, offset));
+      const end = Math.max(start, Math.min(total, start + limit));
+      const items = list.slice(start, end);
+      return res.json({ ok: true, total, items });
+    } catch {
+      return res.status(500).json({ ok: false, error: 'HISTORY_FAILED' });
+    }
+  });
+
   app.post('/api/img2img', async (req, res) => {
     const body = req.body || {};
     const userId = String(body.userId || '').trim();
@@ -580,6 +620,31 @@ MQIDAQAB
     if (hold?.holdId && imgCredits && typeof imgCredits.settleHold === 'function') {
       try {
         imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: resolvedCost });
+      } catch { }
+    }
+    const ledgerRequestId = safeLedgerId(requestId || hold?.requestId);
+    if (ledgerRequestId && typeof upsertUsageLedgerItem === 'function') {
+      try {
+        const provider = 'siliconflow';
+        const modelUsed =
+          typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : model;
+        const plan = userText ? { userText } : undefined;
+        upsertUsageLedgerItem({
+          requestId: ledgerRequestId,
+          ts: Date.now(),
+          userId,
+          sessionId: safeLedgerId(body.sessionId),
+          projectId: safeLedgerId(body.projectId),
+          trigger: normalizeReasonKey(reason) || 'img2img',
+          provider,
+          model: modelUsed,
+          usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+          creditsDelta: resolvedCost,
+          ...(plan ? { plan } : {}),
+          status: 'ok',
+          ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
+          ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 220) : ''
+        });
       } catch { }
     }
 

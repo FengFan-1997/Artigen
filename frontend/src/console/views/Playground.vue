@@ -384,4 +384,49 @@ const handleGenerate = async () => {
   overflow-y: auto;
   font-size: 12px;
 }
+
+@media (max-width: 768px) {
+  .playground-container {
+    padding: 12px;
+  }
+
+  .settings-card {
+    height: auto;
+    margin-bottom: 16px;
+  }
+
+  .result-card {
+    min-height: 360px;
+  }
+
+  .result-area {
+    min-height: 280px;
+  }
+}
+
+@media (max-width: 480px) {
+  .playground-container {
+    padding: 8px;
+  }
+
+  :deep(.ant-form-item) {
+    margin-bottom: 12px;
+  }
+
+  :deep(.ant-card-body) {
+    padding: 12px;
+  }
+
+  .uploaded-image-preview img {
+    max-height: 100px;
+  }
+
+  .result-card {
+    min-height: auto;
+  }
+
+  .result-area {
+    min-height: 200px;
+  }
+}
 </style>

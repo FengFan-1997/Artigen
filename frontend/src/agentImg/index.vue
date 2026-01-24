@@ -918,6 +918,56 @@ const extFromMime = (mime: string) => {
   return 'png';
 };
 
+const dataUrlToFile = (dataUrl: string): File | null => {
+  const raw = String(dataUrl || '').trim();
+  if (!raw.startsWith('data:')) return null;
+  const m = raw.match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) return null;
+  const mime = String(m[1] || '').trim() || 'image/png';
+  const b64 = String(m[2] || '');
+  try {
+    const bin = atob(b64);
+    const len = bin.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+    const ext = extFromMime(mime);
+    return new File([bytes], `reference_${Date.now().toString(36)}.${ext}`, { type: mime });
+  } catch {
+    return null;
+  }
+};
+
+const imageElToFile = (img: HTMLImageElement): Promise<File | null> => {
+  return new Promise((resolve) => {
+    try {
+      if (!img.complete || !img.naturalWidth || !img.naturalHeight) return resolve(null);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return resolve(null);
+      try {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      } catch {
+        return resolve(null);
+      }
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) return resolve(null);
+          const ext = extFromMime(blob.type);
+          resolve(
+            new File([blob], `reference_${Date.now().toString(36)}.${ext}`, { type: blob.type })
+          );
+        },
+        'image/png',
+        0.92
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+};
+
 const resolveRefUrl = (raw: string) => {
   const u = String(raw || '').trim();
   if (!u || !u.startsWith('/')) return u;
@@ -933,6 +983,8 @@ const resolveRefUrl = (raw: string) => {
 const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> => {
   const v = String(it?.value || '').trim();
   if (!v) return null;
+  const direct = dataUrlToFile(v);
+  if (direct) return direct;
   const tryFetchToBlob = async (url: string): Promise<Blob | null> => {
     try {
       const res = await fetch(url);
@@ -969,7 +1021,13 @@ const referenceMsgImage = async (url: string) => {
   const s = String(url || '').trim();
   if (!s) return;
   const keepDeep = isStyleSelecting.value;
-  const f = await prefillItemToFile({ kind: 'url', value: s });
+  let f = dataUrlToFile(s);
+  if (!f) {
+    const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('.msg-media-img'));
+    const match = imgs.find((img) => img.currentSrc === s || img.src === s);
+    if (match) f = await imageElToFile(match);
+  }
+  if (!f) f = await prefillItemToFile({ kind: 'url', value: s });
   if (!f) {
     showTopTip(
       currentLang.value === 'zh'
@@ -1023,8 +1081,11 @@ const handleAuthChanged = () => {
   // Wait, useAgentImgAuth returned authTick ref.
   // But we need to make sure syncing updates it.
   // Actually syncAuth inside useAgentImgAuth updates the refs.
-  if (isAuthed.value) void loadHistoryFromServer();
-  else loadHistoryFromStorage();
+  if (isAuthed.value) {
+    void loadHistoryFromServer().then((ok) => {
+      if (!ok) loadHistoryFromStorage();
+    });
+  } else loadHistoryFromStorage();
   if (isAuthed.value) void refreshCredits();
   else creditsBalance.value = null;
   if (isAuthed.value) void refreshUserTier();

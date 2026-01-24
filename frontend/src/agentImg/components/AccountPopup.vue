@@ -244,9 +244,24 @@ const reasonText = (raw?: string) => {
   if (!r) return '--';
   const key = r.toLowerCase();
   const zh = currentLang.value === 'zh';
-  if (key === 'img2img') return zh ? '图片生成' : 'Image generation';
+  if (key === 'img2img') return zh ? '生图' : 'Image generation';
   if (key === 'generate') return zh ? '文本生成' : 'Text generation';
-  if (key === 'ai_design') return zh ? '提示词优化' : 'Prompt Optimization';
+  if (
+    key === 'agentimg_directions' ||
+    key === 'agentimg_final' ||
+    key === 'aidesign_semantic' ||
+    key === 'aidesign_directions' ||
+    key === 'aidesign_deep_analysis'
+  )
+    return zh ? '提示词优化' : 'Prompt Optimization';
+  if (
+    key === 'ai_design' ||
+    key === 'aidesign_quick' ||
+    key === 'aidesign_generate' ||
+    key === 'aidesign_final' ||
+    key === 'aidesign_deep_generate'
+  )
+    return zh ? '生图' : 'Image generation';
   if (key === 'id_photo') return zh ? '智能证件照生成' : 'Smart ID Photo';
   if (key === 'old_photo') return zh ? '老照片修复' : 'Old Photo Restoration';
   if (key === 'chat') return zh ? '对话' : 'Chat';

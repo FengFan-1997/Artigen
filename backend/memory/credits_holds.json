@@ -1098,5 +1098,16 @@
     "status": "confirmed",
     "createdAt": 1768904567125,
     "updatedAt": 1768904572181
+  },
+  "09faa507c51b70504aba66a20ffee3a8mksa9yzt": {
+    "id": "09faa507c51b70504aba66a20ffee3a8mksa9yzt",
+    "userId": "email_2555433b3bcc7bea",
+    "cost": 10,
+    "reason": "ai_design",
+    "reasonText": "生图",
+    "requestId": "img2img_mksa9yqa_soo4z3",
+    "status": "confirmed",
+    "createdAt": 1769257571177,
+    "updatedAt": 1769257575559
   }
 }

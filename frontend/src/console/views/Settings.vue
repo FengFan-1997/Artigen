@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="settings-root">
     <a-typography-title :level="2">{{ ui.title }}</a-typography-title>
 
     <a-row :gutter="24">
@@ -77,11 +77,19 @@
       :title="ui.newApiKeyCreated"
       @ok="showKeyModal = false"
       footer=""
+      width="90%"
+      style="max-width: 520px"
     >
       <a-result status="success" :title="ui.apiKeyGenerated" :sub-title="ui.apiKeyCopyHint">
         <template #extra>
           <div
-            style="background: #f5f5f5; padding: 16px; border-radius: 4px; word-break: break-all"
+            style="
+              background: #f5f5f5;
+              padding: 16px;
+              border-radius: 4px;
+              word-break: break-all;
+              font-family: monospace;
+            "
           >
             <a-typography-text copyable>{{ newKeyRaw }}</a-typography-text>
           </div>
@@ -217,3 +225,33 @@ const deleteApiKey = async (id: string) => {
   message.success(ui.value.apiKeyRevoked);
 };
 </script>
+
+<style scoped>
+@media (max-width: 768px) {
+  .settings-root :deep(.ant-card) {
+    border-radius: 10px;
+  }
+
+  .settings-root :deep(.ant-form-item) {
+    margin-bottom: 12px;
+  }
+
+  .settings-root :deep(.ant-list-item) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .settings-root :deep(.ant-list-item-meta) {
+    width: 100%;
+  }
+
+  .settings-root :deep(.ant-btn) {
+    min-height: 36px;
+  }
+
+  .settings-root :deep(.ant-result-title) {
+    font-size: 16px;
+  }
+}
+</style>
