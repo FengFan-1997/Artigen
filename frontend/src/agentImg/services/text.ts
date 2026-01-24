@@ -296,6 +296,8 @@ export const generateText = async (
     model?: string;
     purpose?: string;
     cost?: number;
+    deepMode?: boolean;
+    initialInput?: string;
   }
 ): Promise<TextGenerateResult> => {
   const p = String(prompt || '').trim();
@@ -346,6 +348,8 @@ export const generateText = async (
     const purpose = String(opts?.purpose || '').trim();
     const costRaw = Number.parseInt(String(opts?.cost ?? ''), 10);
     const cost = Number.isFinite(costRaw) && costRaw > 0 ? costRaw : 0;
+    const deepMode = !!opts?.deepMode;
+    const initialInput = typeof opts?.initialInput === 'string' ? opts?.initialInput.trim() : '';
     try {
       console.log('[AI][request]', {
         api: API_URL,
@@ -373,7 +377,9 @@ export const generateText = async (
         images,
         model: FIXED_TEXT_MODEL,
         ...(purpose ? { purpose } : {}),
-        ...(cost ? { cost } : {})
+        ...(cost ? { cost } : {}),
+        deepMode,
+        ...(initialInput ? { initialInput } : {})
       })
     });
 

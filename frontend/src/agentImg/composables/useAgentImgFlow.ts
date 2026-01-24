@@ -324,7 +324,11 @@ export const useAgentImgFlow = (opts?: {
     return c.length > 160 ? `${c.slice(0, 160)}…` : c;
   };
 
-  const runGenerateText = async (prompt: string, nextStage: 'directions' | 'final') => {
+  const runGenerateText = async (
+    prompt: string,
+    nextStage: 'directions' | 'final',
+    initialInput: string
+  ) => {
     const ctl = new AbortController();
     activeAbort.value = ctl;
     const reqId = `artigen_${nextStage}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -336,7 +340,9 @@ export const useAgentImgFlow = (opts?: {
         timeoutMs: 120000,
         requestId: reqId,
         images,
-        purpose: `agentImg_${nextStage}`
+        purpose: `agentImg_${nextStage}`,
+        deepMode: deepMode.value,
+        initialInput
       });
     } finally {
       activeAbort.value = null;
@@ -365,7 +371,7 @@ export const useAgentImgFlow = (opts?: {
 
     const runOnce = async (attempt: number) => {
       const prompt = buildDirectionPrompt(input, getContextText(), getUserInputMemory(), attempt);
-      const res = await runGenerateText(prompt, 'directions');
+      const res = await runGenerateText(prompt, 'directions', input);
       if (!res.ok) return { ok: false as const, res };
       const normalized = parseOptions(res.text);
       return { ok: true as const, normalized, res };
@@ -414,7 +420,7 @@ export const useAgentImgFlow = (opts?: {
       contextText: getContextText(),
       memoryInputs: getUserInputMemory()
     });
-    const res = await runGenerateText(prompt, 'final');
+    const res = await runGenerateText(prompt, 'final', input);
     if (!res.ok) {
       loading.value = false;
       error.value = humanizeError(res.errorCode || res.error);

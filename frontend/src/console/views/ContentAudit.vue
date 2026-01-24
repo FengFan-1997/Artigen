@@ -159,6 +159,24 @@
               <template v-else-if="column.key === 'email'">
                 {{ record.email || '-' }}
               </template>
+              <template v-else-if="column.key === 'deepMode'">
+                <span
+                  v-if="record?.plan?.deepMode === true || record?.plan?.meta?.deepMode === true"
+                  >{{ ui.deepModeYes }}</span
+                >
+                <span
+                  v-else-if="
+                    record?.plan?.deepMode === false || record?.plan?.meta?.deepMode === false
+                  "
+                  >{{ ui.deepModeNo }}</span
+                >
+                <span v-else>-</span>
+              </template>
+              <template v-else-if="column.key === 'initialInput'">
+                <div class="prompt-cell">
+                  {{ record?.plan?.initialInput || record?.plan?.meta?.initialInput || '' }}
+                </div>
+              </template>
               <template v-else-if="column.key === 'action'">
                 <a-button size="small" @click="viewLogDetails(record)">{{
                   ui.viewFullLog
@@ -477,11 +495,15 @@ const ui = computed(() =>
         colModel: '模型',
         colCredits: '消耗',
         colTime: '时间',
+        colDeepMode: '深度思考',
+        colInitialInput: '初始输入',
         colEventType: '事件',
         colPath: '路径',
         colPayload: '参数',
         colAction: '行为',
         colDetails: '详情',
+        deepModeYes: '是',
+        deepModeNo: '否',
         refresh: '刷新',
         userFilterPh: '可选：按用户 ID 过滤',
         eventTypeFilterPh: '可选：按事件类型过滤（例如 page_view）',
@@ -538,11 +560,15 @@ const ui = computed(() =>
         colModel: 'Model',
         colCredits: 'Credits',
         colTime: 'Time',
+        colDeepMode: 'Deep Mode',
+        colInitialInput: 'Initial Input',
         colEventType: 'Event',
         colPath: 'Path',
         colPayload: 'Payload',
         colAction: 'Action',
         colDetails: 'Details',
+        deepModeYes: 'Yes',
+        deepModeNo: 'No',
         refresh: 'Refresh',
         userFilterPh: 'Optional: filter by userId',
         eventTypeFilterPh: 'Optional: filter by event type (e.g. page_view)',
@@ -871,6 +897,8 @@ const baseChatColumns = computed<SimpleColumn[]>(() => [
     ellipsis: true
   },
   { title: ui.value.colModel, dataIndex: 'model', key: 'model', width: 160, ellipsis: true },
+  { title: ui.value.colDeepMode, dataIndex: 'deepMode', key: 'deepMode', width: 120 },
+  { title: ui.value.colInitialInput, dataIndex: 'initialInput', key: 'initialInput', width: 320 },
   {
     title: ui.value.colCredits,
     dataIndex: 'creditsDelta',

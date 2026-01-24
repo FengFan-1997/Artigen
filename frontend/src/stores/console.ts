@@ -180,6 +180,12 @@ export type AdminImageHistoryItem = {
   email?: string;
 };
 
+export type AdminUsagePlan = {
+  deepMode?: boolean;
+  initialInput?: string;
+  [key: string]: any;
+};
+
 export type AdminUsageLedgerItem = {
   requestId: string;
   ts: number;
@@ -201,7 +207,7 @@ export type AdminUsageLedgerItem = {
   ua?: string;
   usedUrl?: string;
   rag?: any;
-  plan?: any;
+  plan?: AdminUsagePlan;
 };
 
 export type AdminAnalyticsEventItem = {

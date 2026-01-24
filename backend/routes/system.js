@@ -377,6 +377,10 @@ const installSystemRoutes = (app, deps) => {
     const costRaw = Number.parseInt(String(req.body.cost ?? ''), 10);
     const cost = Number.isFinite(costRaw) && costRaw > 0 ? costRaw : 0;
     const resolvedCost = cost > 0 ? cost : purpose ? resolveCreditsCostByPurpose(purpose) : 0;
+    const deepModeProvided = req.body && Object.prototype.hasOwnProperty.call(req.body, 'deepMode');
+    const deepMode = !!req.body.deepMode;
+    const initialInputRaw = String(req.body.initialInput || '').trim();
+    const initialInput = initialInputRaw ? initialInputRaw.slice(0, 2000) : '';
 
     if (!prompt) {
       return res.status(400).json({ error: 'EMPTY_PROMPT', requestId });
@@ -461,6 +465,13 @@ const installSystemRoutes = (app, deps) => {
               : typeof computeCreditsDelta === 'function'
                 ? computeCreditsDelta({ tokensTotal, ragUsed: false })
                 : 0;
+          const plan =
+            deepModeProvided || initialInput
+              ? {
+                deepMode,
+                ...(deepMode && initialInput ? { initialInput } : {})
+              }
+              : undefined;
           upsertUsageLedgerItem({
             requestId: requestId || `gen_${Date.now().toString(36)}`,
             ts: Date.now(),
@@ -473,13 +484,14 @@ const installSystemRoutes = (app, deps) => {
             tokensOut,
             tokensTotal,
             creditsDelta,
+            ...(plan ? { plan } : {}),
             status: result?.text ? 'ok' : 'empty',
             durationMs: Math.max(0, Date.now() - startedAt),
             ip: typeof getClientIp === 'function' ? getClientIp(req) : '',
             ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 220) : ''
           });
         }
-      } catch {}
+      } catch { }
 
       res.json({
         candidates: [{
