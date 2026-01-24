@@ -313,6 +313,8 @@ export const useConsoleStore = defineStore('console', {
     adminUsageTotal: 0,
     adminEvents: [] as AdminAnalyticsEventItem[],
     adminEventsTotal: 0,
+    adminBehaviorEvents: [] as AdminAnalyticsEventItem[],
+    adminBehaviorTotal: 0,
     adminChats: [] as any[],
     adminChatsTotal: 0,
     adminOrders: [] as any[],
@@ -525,6 +527,27 @@ export const useConsoleStore = defineStore('console', {
       this.adminEvents = items;
       this.adminEventsTotal = Number(json?.total || items.length) || items.length;
       return { ok: true as const, total: this.adminEventsTotal };
+    },
+    async fetchAdminEvents(input?: { userId?: string; limit?: number; offset?: number }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/events', {
+        userId: input?.userId || '',
+        limit: input?.limit ?? 200,
+        offset: input?.offset ?? 0
+      });
+      const res = await fetch(url, { headers });
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
+        throw toAdminRequestError(res, json);
+      }
+      const items: AdminAnalyticsEventItem[] = Array.isArray(json?.items) ? json.items : [];
+      this.adminBehaviorEvents = items;
+      this.adminBehaviorTotal = Number(json?.total || items.length) || items.length;
+      return { ok: true as const, total: this.adminBehaviorTotal };
     },
 
     async fetchAdminChatsHistory(input: { userId: string; limit?: number; offset?: number }) {

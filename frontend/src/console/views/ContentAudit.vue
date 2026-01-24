@@ -173,7 +173,9 @@
               :placeholder="ui.behaviorActionFilterPh"
               class="filter-input"
             />
-            <a-button type="primary" @click="refreshBehavior">{{ ui.refresh }}</a-button>
+            <a-button type="primary" :loading="loadingBehavior" @click="refreshBehavior">{{
+              ui.refresh
+            }}</a-button>
           </div>
         </div>
         <div class="table-wrap">
@@ -432,10 +434,10 @@ const selectedLog = ref<any>(null);
 const filterUserId = ref('');
 const filterEventType = ref('');
 const filterBehaviorAction = ref('');
-const behaviorTick = ref(0);
 const loadingImages = ref(false);
 const loadingUsage = ref(false);
 const loadingEvents = ref(false);
+const loadingBehavior = ref(false);
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -567,28 +569,33 @@ const ui = computed(() =>
 );
 
 const events = computed(() => consoleStore.adminEvents || []);
-const buildBehaviorLogs = (_tick: number) => {
+const buildBehaviorLogs = () => {
   const userFilter = String(filterUserId.value || '').trim();
   const actionFilter = String(filterBehaviorAction.value || '')
     .trim()
     .toLowerCase();
-  return (consoleStore.logs || [])
+  return (consoleStore.adminBehaviorEvents || [])
     .filter((item) => {
       if (!item) return false;
       if (userFilter && String(item.userId || '').trim() !== userFilter) return false;
       if (
         actionFilter &&
-        !String(item.action || '')
+        !String((item as any).eventType || '')
           .toLowerCase()
           .includes(actionFilter)
       )
         return false;
       return true;
     })
-    .map((item) => ({ ...item, ts: item.timestamp }))
-    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    .map((item) => ({
+      ...item,
+      ts: item.ts,
+      action: (item as any).eventType || '',
+      details: (item as any).payload ?? null
+    }))
+    .sort((a, b) => (Number(b.ts || 0) || 0) - (Number(a.ts || 0) || 0));
 };
-const behaviorLogs = computed(() => buildBehaviorLogs(behaviorTick.value));
+const behaviorLogs = computed(() => buildBehaviorLogs());
 
 const formatPayload = (payload: any) => {
   if (!payload || typeof payload !== 'object') return '';
@@ -658,6 +665,7 @@ onMounted(() => {
   void fetchImages();
   void fetchUsage();
   void fetchEvents();
+  void fetchBehavior();
 });
 
 const resolveUrl = (raw: string) => {
@@ -1232,8 +1240,24 @@ const fetchEvents = async () => {
   }
 };
 
+const fetchBehavior = async () => {
+  if (loadingBehavior.value) return;
+  loadingBehavior.value = true;
+  try {
+    await consoleStore.fetchAdminEvents({
+      userId: filterUserId.value,
+      limit: 200,
+      offset: 0
+    });
+  } catch (e) {
+    showAdminError(e);
+  } finally {
+    loadingBehavior.value = false;
+  }
+};
+
 const refreshBehavior = () => {
-  behaviorTick.value += 1;
+  void fetchBehavior();
 };
 
 const makeSeoDraft = (src: AiBgSeoCopy): AiBgSeoCopy => ({

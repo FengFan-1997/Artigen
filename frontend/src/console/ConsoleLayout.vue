@@ -148,7 +148,6 @@ import {
   setConsoleAuthSession,
   useConsoleStore
 } from '@/stores/console';
-import { trackEvent } from '@/utils/analytics';
 
 const router = useRouter();
 const route = useRoute();
@@ -161,8 +160,7 @@ const loginTick = ref(0);
 
 const consoleStore = useConsoleStore();
 
-const navTo = (path: string, target: string) => {
-  trackEvent('console_nav_click', { userId: userId.value, target, path, from: route.path });
+const navTo = (path: string, _target: string) => {
   router.push(path);
 };
 
@@ -337,7 +335,6 @@ const handleLogin = async () => {
       password.value = '';
       adminKeyInput.value = '';
       message.success(currentLang.value === 'zh' ? '登录成功' : 'Login successful');
-      trackEvent('console_login_success', { mode: 'admin_key' });
     } else {
       const login = await consoleStore.adminLogin({ username: u, password: p });
       setConsoleAuthSession({
@@ -348,7 +345,6 @@ const handleLogin = async () => {
       password.value = '';
       adminKeyInput.value = '';
       message.success(currentLang.value === 'zh' ? '登录成功' : 'Login successful');
-      trackEvent('console_login_success', { userId: u, mode: 'account' });
     }
     syncLoginTick();
   } catch (e: any) {
@@ -359,39 +355,12 @@ const handleLogin = async () => {
 };
 
 let authTimer: number | null = null;
-let clickListener: ((e: MouseEvent) => void) | null = null;
 let resizeListener: (() => void) | null = null;
 onMounted(() => {
   consoleStore.init();
   authTimer = window.setInterval(() => syncLoginTick(), 30_000);
   try {
     window.addEventListener('storage', syncLoginTick);
-  } catch {}
-
-  clickListener = (e: MouseEvent) => {
-    const el = e.target instanceof Element ? e.target : null;
-    if (!el) return;
-    const btn = el.closest('button');
-    if (!btn) return;
-    if (btn.closest('.ant-menu')) return;
-
-    const label =
-      String(
-        btn.getAttribute('data-track') || btn.getAttribute('aria-label') || btn.textContent || ''
-      )
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 80) || 'button';
-
-    trackEvent('console_button_click', {
-      userId: userId.value,
-      path: route.fullPath || route.path,
-      label,
-      disabled: btn.hasAttribute('disabled') || (btn as any).disabled === true
-    });
-  };
-  try {
-    window.addEventListener('click', clickListener, true);
   } catch {}
 
   const syncViewport = () => {
@@ -412,12 +381,6 @@ onBeforeUnmount(() => {
   try {
     window.removeEventListener('storage', syncLoginTick);
   } catch {}
-  if (clickListener) {
-    try {
-      window.removeEventListener('click', clickListener, true);
-    } catch {}
-  }
-  clickListener = null;
   if (resizeListener) {
     try {
       window.removeEventListener('resize', resizeListener);
@@ -427,7 +390,6 @@ onBeforeUnmount(() => {
 });
 
 const handleLogout = () => {
-  trackEvent('console_logout', { userId: userId.value });
   clearConsoleAuthSession();
   syncLoginTick();
   router.replace('/console');
