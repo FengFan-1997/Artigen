@@ -122,9 +122,14 @@
             <a-radio-button value="day">{{ ui.byDay }}</a-radio-button>
           </a-radio-group>
         </div>
-        <div style="height: 320px">
-          <v-chart class="chart" :option="trendChartOption" autoresize />
-        </div>
+        <a-table
+          :columns="trendColumns"
+          :data-source="trendRows"
+          row-key="key"
+          size="small"
+          :pagination="false"
+          :scroll="{ x: 520, y: 320 }"
+        />
       </a-card>
 
       <a-row :gutter="16" style="margin-bottom: 16px">
@@ -224,14 +229,6 @@ import { useConsoleStore, type AdminUsageLedgerItem } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import { message } from 'ant-design-vue';
-
-import { use } from 'echarts/core';
-import { CanvasRenderer } from 'echarts/renderers';
-import { LineChart, BarChart } from 'echarts/charts';
-import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components';
-import VChart from 'vue-echarts';
-
-use([CanvasRenderer, LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent]);
 
 const consoleStore = useConsoleStore();
 
@@ -660,29 +657,35 @@ const trendSeries = computed(() => {
   };
 });
 
-const trendChartOption = computed(() => {
+type TrendRow = { key: string; time: string; requests: number; credits: number };
+
+const trendRows = computed<TrendRow[]>(() => {
   const series = trendSeries.value;
-  return {
-    tooltip: { trigger: 'axis' },
-    legend: { data: [ui.value.statRequests, ui.value.statCredits] },
-    grid: { left: 48, right: 48, top: 40, bottom: 36 },
-    xAxis: { type: 'category', data: series.keys, axisLabel: { hideOverlap: true } },
-    yAxis: [
-      { type: 'value', name: ui.value.statRequests },
-      { type: 'value', name: ui.value.statCredits }
-    ],
-    series: [
-      { name: ui.value.statRequests, data: series.req, type: 'bar', yAxisIndex: 0 },
-      {
-        name: ui.value.statCredits,
-        data: series.credits,
-        type: 'line',
-        smooth: true,
-        yAxisIndex: 1
-      }
-    ]
-  };
+  return series.keys.map((k, idx) => ({
+    key: k,
+    time: k,
+    requests: series.req[idx] ?? 0,
+    credits: series.credits[idx] ?? 0
+  }));
 });
+
+const trendColumns = computed(() => [
+  { title: ui.value.colTime, dataIndex: 'time', key: 'time', width: 180 },
+  {
+    title: ui.value.statRequests,
+    dataIndex: 'requests',
+    key: 'requests',
+    width: 120,
+    align: 'right'
+  },
+  {
+    title: ui.value.statCredits,
+    dataIndex: 'credits',
+    key: 'credits',
+    width: 140,
+    align: 'right'
+  }
+]);
 
 type TopRow = { key: string; count: number; credits: number; tokens: number };
 
@@ -856,11 +859,6 @@ const exportCsv = () => {
 </script>
 
 <style scoped>
-.chart {
-  height: 100%;
-  width: 100%;
-}
-
 @media (max-width: 768px) {
   .usage-toolbar :deep(.ant-input),
   .usage-toolbar :deep(.ant-picker),
@@ -881,10 +879,6 @@ const exportCsv = () => {
   .usage-trend-toolbar :deep(.ant-radio-button-wrapper) {
     flex: 1 1 50%;
     text-align: center;
-  }
-
-  .chart {
-    height: 240px;
   }
 
   :deep(.ant-modal) {

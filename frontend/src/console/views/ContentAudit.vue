@@ -806,11 +806,7 @@ const images = computed(() => {
 });
 
 const chatLogs = computed(() => {
-  const items = consoleStore.adminUsage;
-  return items.filter((x) => {
-    const t = String(x.trigger || '').toLowerCase();
-    return t.includes('chat') || t.includes('generate') || t.includes('img');
-  });
+  return consoleStore.adminUsage;
 });
 
 type SimpleColumn = {
