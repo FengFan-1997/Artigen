@@ -150,6 +150,15 @@
               <template v-if="column.key === 'ts'">
                 {{ record.ts ? new Date(record.ts).toLocaleString() : '-' }}
               </template>
+              <template v-else-if="column.key === 'username'">
+                {{ record.username || record.userId || '-' }}
+              </template>
+              <template v-else-if="column.key === 'userId'">
+                {{ record.userId || '-' }}
+              </template>
+              <template v-else-if="column.key === 'email'">
+                {{ record.email || '-' }}
+              </template>
               <template v-else-if="column.key === 'action'">
                 <a-button size="small" @click="viewLogDetails(record)">{{
                   ui.viewFullLog
@@ -851,6 +860,7 @@ const baseChatColumns = computed<SimpleColumn[]>(() => [
     width: 140,
     ellipsis: true
   },
+  { title: ui.value.userLabel, dataIndex: 'userId', key: 'userId', width: 140, ellipsis: true },
   { title: ui.value.colEmail, dataIndex: 'email', key: 'email', width: 180, ellipsis: true },
   { title: ui.value.actionLabel, dataIndex: 'trigger', key: 'trigger', width: 160, ellipsis: true },
   {
@@ -1500,6 +1510,14 @@ const resetSeo = () => {
 
   .table-toolbar-left :deep(.ant-btn) {
     width: 100%;
+  }
+
+  :deep(.ant-table) {
+    font-size: 12px;
+  }
+
+  :deep(.ant-table-cell) {
+    padding: 8px;
   }
 
   .img-hover {
