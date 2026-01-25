@@ -602,6 +602,7 @@ const {
   onPreviewChange,
   clearPreview,
   setPreviewFileAt,
+  setPreviewUrlAt,
   fileToGenerateInput,
   fileToThumbDataUrl,
   cleanup: cleanupPreviews
@@ -937,13 +938,17 @@ const dataUrlToFile = (dataUrl: string): File | null => {
   }
 };
 
-const imageElToFile = (img: HTMLImageElement): Promise<File | null> => {
+const imageElToFile = (img: HTMLImageElement, maxEdge = 1024): Promise<File | null> => {
   return new Promise((resolve) => {
     try {
       if (!img.complete || !img.naturalWidth || !img.naturalHeight) return resolve(null);
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const limit = Math.max(1, Number(maxEdge) || 1);
+      const scale = Math.min(1, limit / Math.max(w || 1, h || 1));
       const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
+      canvas.width = Math.max(1, Math.round(w * scale));
+      canvas.height = Math.max(1, Math.round(h * scale));
       const ctx = canvas.getContext('2d');
       if (!ctx) return resolve(null);
       try {
@@ -1021,14 +1026,22 @@ const referenceMsgImage = async (url: string) => {
   const s = String(url || '').trim();
   if (!s) return;
   const keepDeep = isStyleSelecting.value;
+  const emptySlots = previewUrls.value.map((u, i) => (!u ? i : -1)).filter((i) => i >= 0);
+  const idx = emptySlots.length ? (emptySlots[0] as number) : 0;
   let f = dataUrlToFile(s);
+  let seededUrl = '';
   if (!f) {
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('.msg-media-img'));
     const match = imgs.find((img) => img.currentSrc === s || img.src === s);
-    if (match) f = await imageElToFile(match);
+    if (match) {
+      seededUrl = String(match.currentSrc || match.src || '').trim();
+      if (seededUrl) setPreviewUrlAt(idx, seededUrl);
+      f = await imageElToFile(match, 1024);
+    }
   }
-  if (!f) f = await prefillItemToFile({ kind: 'url', value: s });
+  if (!f && !seededUrl) f = await prefillItemToFile({ kind: 'url', value: s });
   if (!f) {
+    if (seededUrl) setPreviewUrlAt(idx, '');
     showTopTip(
       currentLang.value === 'zh'
         ? '图片无法引用（可能存在跨域限制）'
@@ -1036,8 +1049,6 @@ const referenceMsgImage = async (url: string) => {
     );
     return;
   }
-  const emptySlots = previewUrls.value.map((u, i) => (!u ? i : -1)).filter((i) => i >= 0);
-  const idx = emptySlots.length ? (emptySlots[0] as number) : 0;
   setPreviewFileAt(idx, f);
   // Manual trigger of side effects if setPreviewFileAt2 doesn't do it
   if (!keepDeep) deepMode.value = false;

@@ -36,6 +36,11 @@ export function useAgentImgUpload(
     setPreviewUrl(idx, url);
   };
 
+  const setPreviewUrlAt = (idx: number, nextUrl: string) => {
+    previewFiles.value[idx] = null;
+    setPreviewUrl(idx, nextUrl);
+  };
+
   const afterPreviewsChanged = (keepDeep: boolean) => {
     if (!keepDeep) deepMode.value = false;
     cancel();
@@ -175,6 +180,7 @@ export function useAgentImgUpload(
     onPreviewChange,
     clearPreview,
     setPreviewFileAt,
+    setPreviewUrlAt,
     fileToGenerateInput,
     fileToThumbDataUrl,
     cleanup
