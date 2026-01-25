@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const fs = require('fs');
 const { rateLimit } = require('../lib/rateLimit');
 const {
   resolveConsoleAdminAccount,
@@ -14,7 +15,8 @@ const {
   PAY_ORDERS_FILE,
   CREDITS_ORDERS_FILE,
   ANALYTICS_EVENTS_FILE,
-  readUserMemory
+  readUserMemory,
+  MEMORY_DIR
 } = require('../utils/storage');
 const { credits: imgCredits } = require('../imgagent');
 
@@ -60,6 +62,17 @@ const resolveReasonText = (reason) => {
     generate: '生成'
   };
   return map[key] || '';
+};
+const resolveImageSource = (item) => {
+  const userText = String(item?.userText || '').trim().toLowerCase();
+  const type = String(item?.type || '').trim().toLowerCase();
+  if (userText.startsWith('id_photo:')) return 'id_photo';
+  if (userText.startsWith('old_photo:')) return 'old_photo';
+  if (userText.startsWith('ai_background:')) return 'ai_background';
+  if (userText.startsWith('ai_ingredient')) return 'ai_ingredient';
+  if (userText.startsWith('aidesign:')) return 'ai_design';
+  if (type) return type;
+  return userText ? 'ai_design' : '';
 };
 
 const installAdminRoutes = (app) => {
@@ -297,8 +310,9 @@ const installAdminRoutes = (app) => {
       let items = [];
       const users = readUsersMap();
       const getUserBrief = (uid) => {
-        const u = users && typeof users === 'object' ? users[String(uid || '').trim()] : null;
-        const username = typeof u?.username === 'string' ? u.username : '';
+        const safeId = String(uid || '').trim();
+        const u = users && typeof users === 'object' ? users[safeId] : null;
+        const username = typeof u?.username === 'string' ? u.username : safeId.startsWith('guest_') ? safeId : '';
         const email = typeof u?.email === 'string' ? u.email : '';
         return { username, email };
       };
@@ -306,17 +320,41 @@ const installAdminRoutes = (app) => {
       if (userId) {
         const mem = readUserMemory(userId, {});
         const raw = Array.isArray(mem?.image_history) ? mem.image_history : [];
-        items = raw.map((it) => ({ ...it, userId, ...getUserBrief(userId) }));
+        items = raw.map((it) => ({
+          ...it,
+          userId,
+          ...getUserBrief(userId),
+          source: resolveImageSource(it)
+        }));
       } else {
-        const allIds = Object.values(users)
-          .map((u) => String(u?.id || '').trim())
-          .filter(Boolean);
+        const allIds = new Set(
+          Object.values(users)
+            .map((u) => String(u?.id || '').trim())
+            .filter(Boolean)
+        );
+        try {
+          const files = fs.readdirSync(MEMORY_DIR, { withFileTypes: true });
+          for (const file of files) {
+            if (!file.isFile()) continue;
+            const name = String(file.name || '');
+            if (!name.startsWith('user_') || !name.endsWith('.json')) continue;
+            const uid = name.slice(5, -5).trim();
+            if (uid) allIds.add(uid);
+          }
+        } catch { }
 
         for (const uid of allIds) {
           const mem = readUserMemory(uid, {});
           if (Array.isArray(mem?.image_history)) {
             const brief = getUserBrief(uid);
-            items.push(...mem.image_history.map((it) => ({ ...it, userId: uid, ...brief })));
+            items.push(
+              ...mem.image_history.map((it) => ({
+                ...it,
+                userId: uid,
+                ...brief,
+                source: resolveImageSource(it)
+              }))
+            );
           }
         }
       }

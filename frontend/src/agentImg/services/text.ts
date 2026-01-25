@@ -298,6 +298,7 @@ export const generateText = async (
     cost?: number;
     deepMode?: boolean;
     initialInput?: string;
+    userText?: string;
   }
 ): Promise<TextGenerateResult> => {
   const p = String(prompt || '').trim();
@@ -350,6 +351,7 @@ export const generateText = async (
     const cost = Number.isFinite(costRaw) && costRaw > 0 ? costRaw : 0;
     const deepMode = !!opts?.deepMode;
     const initialInput = typeof opts?.initialInput === 'string' ? opts?.initialInput.trim() : '';
+    const userText = typeof opts?.userText === 'string' ? opts?.userText.trim() : '';
     try {
       console.log('[AI][request]', {
         api: API_URL,
@@ -379,7 +381,8 @@ export const generateText = async (
         ...(purpose ? { purpose } : {}),
         ...(cost ? { cost } : {}),
         deepMode,
-        ...(initialInput ? { initialInput } : {})
+        ...(initialInput ? { initialInput } : {}),
+        ...(userText ? { userText } : {})
       })
     });
 

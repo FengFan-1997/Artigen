@@ -167,9 +167,11 @@ export type AdminImageHistoryItem = {
   id: string;
   ts: number;
   type: string;
+  source?: string;
   provider?: string;
   model?: string;
   cost?: number;
+  userText?: string;
   prompt?: string;
   negativePrompt?: string;
   params?: any;

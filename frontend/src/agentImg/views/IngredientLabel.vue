@@ -343,7 +343,8 @@ const onGenerate = async () => {
     const res = await generateText(prompt, {
       timeoutMs: 120000,
       purpose: 'ingredient_label',
-      cost: Math.max(0, Math.trunc(Number(props.creditsCost ?? 10) || 0))
+      cost: Math.max(0, Math.trunc(Number(props.creditsCost ?? 10) || 0)),
+      userText: inputText
     });
     if (!res.ok) {
       const en = currentLang.value === 'en';

@@ -15,6 +15,11 @@
               :placeholder="ui.userFilterPh"
               class="filter-input"
             />
+            <a-input
+              v-model:value="filterImageSource"
+              :placeholder="ui.imageSourceFilterPh"
+              class="filter-input"
+            />
             <a-button type="primary" :loading="loadingImages" @click="fetchImages">{{
               ui.refresh
             }}</a-button>
@@ -98,6 +103,15 @@
               </template>
               <template v-else-if="column.key === 'type'">
                 {{ record.model || record.type || '-' }}
+              </template>
+              <template v-else-if="column.key === 'source'">
+                {{ record.sourceLabel || '-' }}
+              </template>
+              <template v-else-if="column.key === 'inputCount'">
+                {{ Number(record.inputCount ?? 0) || 0 }}
+              </template>
+              <template v-else-if="column.key === 'outputCount'">
+                {{ Number(record.outputCount ?? 0) || 0 }}
               </template>
               <template v-else-if="column.key === 'ts'">
                 {{ record.ts ? new Date(record.ts).toLocaleString() : '-' }}
@@ -463,6 +477,7 @@ const selectedLog = ref<any>(null);
 const filterUserId = ref('');
 const filterEventType = ref('');
 const filterBehaviorAction = ref('');
+const filterImageSource = ref('');
 const loadingImages = ref(false);
 const loadingUsage = ref(false);
 const loadingEvents = ref(false);
@@ -510,6 +525,7 @@ const ui = computed(() =>
         deepModeNo: '否',
         refresh: '刷新',
         userFilterPh: '可选：按用户 ID 过滤',
+        imageSourceFilterPh: '可选：按来源过滤（例如 img2img）',
         eventTypeFilterPh: '可选：按事件类型过滤（例如 page_view）',
         behaviorActionFilterPh: '可选：按行为类型过滤（例如 generate_image）',
         columns: '列设置',
@@ -577,6 +593,7 @@ const ui = computed(() =>
         deepModeNo: 'No',
         refresh: 'Refresh',
         userFilterPh: 'Optional: filter by userId',
+        imageSourceFilterPh: 'Optional: filter by source (e.g. img2img)',
         eventTypeFilterPh: 'Optional: filter by event type (e.g. page_view)',
         behaviorActionFilterPh: 'Optional: filter by action (e.g. generate_image)',
         columns: 'Columns',
@@ -818,31 +835,43 @@ const referenceImage = async (url: string) => {
 };
 
 const images = computed(() => {
-  return consoleStore.adminImages.map((it) => {
-    const refs = Array.isArray(it.images) ? it.images : [];
-    let previewUrl = '';
-    for (const r of refs) {
-      if (r && typeof r === 'object' && (r as any).kind === 'url') {
-        const u = resolveUrl(String((r as any).url || ''));
-        if (u) {
-          previewUrl = u;
-          break;
+  const sourceFilter = String(filterImageSource.value || '')
+    .trim()
+    .toLowerCase();
+  return consoleStore.adminImages
+    .filter((it) => {
+      if (!sourceFilter) return true;
+      const raw = String((it as any).source || it.type || '')
+        .trim()
+        .toLowerCase();
+      return raw.includes(sourceFilter);
+    })
+    .map((it) => {
+      const refs = Array.isArray(it.images) ? it.images : [];
+      let previewUrl = '';
+      for (const r of refs) {
+        if (r && typeof r === 'object' && (r as any).kind === 'url') {
+          const u = resolveUrl(String((r as any).url || ''));
+          if (u) {
+            previewUrl = u;
+            break;
+          }
         }
       }
-    }
-    const inRefs = Array.isArray((it as any).inputImages) ? (it as any).inputImages : [];
-    let uploadPreviewUrl = '';
-    for (const r of inRefs) {
-      if (r && typeof r === 'object' && (r as any).kind === 'url') {
-        const u = resolveUrl(String((r as any).url || ''));
-        if (u) {
-          uploadPreviewUrl = u;
-          break;
+      const inRefs = Array.isArray((it as any).inputImages) ? (it as any).inputImages : [];
+      let uploadPreviewUrl = '';
+      for (const r of inRefs) {
+        if (r && typeof r === 'object' && (r as any).kind === 'url') {
+          const u = resolveUrl(String((r as any).url || ''));
+          if (u) {
+            uploadPreviewUrl = u;
+            break;
+          }
         }
       }
-    }
-    return { ...it, previewUrl, uploadPreviewUrl };
-  });
+      const sourceLabel = String((it as any).source || it.type || '').trim();
+      return { ...it, previewUrl, uploadPreviewUrl, sourceLabel };
+    });
 });
 
 const chatLogs = computed(() => {
@@ -878,6 +907,7 @@ const baseImageColumns = computed<SimpleColumn[]>(() => [
   },
   { title: ui.value.colEmail, dataIndex: 'email', key: 'email', width: 140, ellipsis: true },
   { title: ui.value.colType, key: 'type', width: 120, ellipsis: true },
+  { title: ui.value.colCredits, dataIndex: 'cost', key: 'cost', width: 90 },
   { title: ui.value.colPrompt, dataIndex: 'prompt', key: 'prompt', width: 460 },
   { title: ui.value.colUserText, dataIndex: 'userText', key: 'userText', width: 360 },
   { title: ui.value.colCreatedAt, dataIndex: 'ts', key: 'ts', width: 190 }

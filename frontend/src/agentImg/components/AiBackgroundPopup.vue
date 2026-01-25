@@ -800,7 +800,7 @@ const createCutoutFromFile = async (file: File) => {
       return centers;
     };
 
-    const centersAll = kMeans(pts, 5, 10);
+    const centersAll = kMeans(pts, 6, 12);
     const kAll = Math.max(1, Math.trunc(centersAll.length / 3));
     const labL = new Float32Array(sw * sh);
     const labA = new Float32Array(sw * sh);
@@ -929,21 +929,61 @@ const createCutoutFromFile = async (file: File) => {
       borderDist.push(bgDistSq[p] || 0);
       borderEdge.push(edge[p] || 0);
     }
+    const centerDist: number[] = [];
+    const centerEdge: number[] = [];
+    for (let y = cy0; y < cy1; y += centerStep) {
+      for (let x = cx0; x < cx1; x += centerStep) {
+        const p = y * sw + x;
+        centerDist.push(bgDistSq[p] || 0);
+        centerEdge.push(edge[p] || 0);
+      }
+    }
     const distP95 = pick(borderDist, 0.95);
-    const distP70 = pick(borderDist, 0.7);
+    const distP80 = pick(borderDist, 0.8);
+    const distP60 = pick(borderDist, 0.6);
+    const centerP30 = pick(centerDist, 0.3);
+    const centerP60 = pick(centerDist, 0.6);
+    const centerP80 = pick(centerDist, 0.8);
     const edgeP90 = pick(borderEdge, 0.9);
-    const distT = Math.max(180, Math.min(26000, distP95 * 1.9 + distP70 * 0.2));
-    const edgeT = Math.max(24, Math.min(140, edgeP90 + 26));
+    const edgeP60 = pick(borderEdge, 0.6);
+    const edgeP40 = pick(borderEdge, 0.4);
+    const centerEdgeP70 = pick(centerEdge, 0.7);
+    let distT = Math.max(180, Math.min(56000, distP95 * 2 + distP80 * 0.55 + distP60 * 0.25));
+    if (centerDist.length && centerP30 > distP80 * 1.15) distT = Math.min(distT, centerP30 * 1.25);
+    if (centerDist.length && centerP60 < distP60 * 0.9) distT = Math.max(160, distT * 0.88);
+    if (centerDist.length && centerP80 > distP80 * 1.4) distT = Math.min(60000, distT * 1.08);
+    if (edgeP60 < 12) distT *= 1.05;
+    distT = Math.max(160, Math.min(60000, distT));
+    let edgeT = Math.max(16, Math.min(140, edgeP90 + 14));
+    if (centerEdgeP70 > edgeT * 0.9) edgeT = Math.max(14, edgeT * 0.88);
+    if (edgeP40 < 8) edgeT = Math.max(12, edgeT * 0.9);
+    if (edgeP90 > 70 && edgeP60 > 25) edgeT = Math.min(140, edgeT * 1.12);
 
     const cand = new Uint8Array(sw * sh);
     const strong = new Uint8Array(sw * sh);
-    const strongT = Math.max(90, distT * 0.42);
-    for (let p = 0; p < sw * sh; p += 1) {
-      const d = bgDistSq[p] || 0;
-      const e = edge[p] || 0;
-      const ok = d <= distT && (e <= edgeT || d <= distT * 0.55);
-      cand[p] = ok ? 1 : 0;
-      strong[p] = d <= strongT && e <= edgeT * 0.85 ? 1 : 0;
+    const strongT = Math.max(80, Math.min(distT * 0.3, distP80 * 1.05));
+    const guardX0 = Math.round(sw * 0.18);
+    const guardX1 = Math.round(sw * 0.82);
+    const guardY0 = Math.round(sh * 0.18);
+    const guardY1 = Math.round(sh * 0.82);
+    const borderBand2 = Math.max(2, Math.round(Math.min(sw, sh) / 60));
+    for (let y = 0; y < sh; y += 1) {
+      for (let x = 0; x < sw; x += 1) {
+        const p = y * sw + x;
+        const d = bgDistSq[p] || 0;
+        const e = edge[p] || 0;
+        let ok = d <= distT && (e <= edgeT || d <= distT * 0.48);
+        if (x >= guardX0 && x <= guardX1 && y >= guardY0 && y <= guardY1) {
+          if (e >= edgeT * 0.75 && d >= distT * 0.22) ok = false;
+        }
+        if (!ok) {
+          const nearBorder =
+            x < borderBand2 || y < borderBand2 || x >= sw - borderBand2 || y >= sh - borderBand2;
+          if (nearBorder && d <= distT * 1.22 && e <= edgeT * 0.65) ok = true;
+        }
+        cand[p] = ok ? 1 : 0;
+        strong[p] = d <= strongT && e <= edgeT * 0.75 ? 1 : 0;
+      }
     }
 
     const bg = new Uint8Array(sw * sh);
@@ -983,9 +1023,64 @@ const createCutoutFromFile = async (file: File) => {
       if (y + 1 < sh) push(x, y + 1);
     }
 
+    const qStrong = new Int32Array(sw * sh);
+    let qs3 = 0;
+    let qe3 = 0;
     for (let p = 0; p < sw * sh; p += 1) {
-      if (bg[p]) continue;
-      if (strong[p]) bg[p] = 1;
+      if (!bg[p]) continue;
+      qStrong[qe3] = p;
+      qe3 += 1;
+    }
+    while (qs3 < qe3) {
+      const idx = qStrong[qs3];
+      qs3 += 1;
+      const y = Math.trunc(idx / sw);
+      const x = idx - y * sw;
+      if (x > 0) {
+        const n = idx - 1;
+        if (!bg[n] && strong[n]) {
+          bg[n] = 1;
+          qStrong[qe3] = n;
+          qe3 += 1;
+        }
+      }
+      if (x + 1 < sw) {
+        const n = idx + 1;
+        if (!bg[n] && strong[n]) {
+          bg[n] = 1;
+          qStrong[qe3] = n;
+          qe3 += 1;
+        }
+      }
+      if (y > 0) {
+        const n = idx - sw;
+        if (!bg[n] && strong[n]) {
+          bg[n] = 1;
+          qStrong[qe3] = n;
+          qe3 += 1;
+        }
+      }
+      if (y + 1 < sh) {
+        const n = idx + sw;
+        if (!bg[n] && strong[n]) {
+          bg[n] = 1;
+          qStrong[qe3] = n;
+          qe3 += 1;
+        }
+      }
+    }
+    const pcx0 = Math.round(sw * 0.22);
+    const pcx1 = Math.round(sw * 0.78);
+    const pcy0 = Math.round(sh * 0.22);
+    const pcy1 = Math.round(sh * 0.78);
+    for (let y = pcy0; y < pcy1; y += 1) {
+      for (let x = pcx0; x < pcx1; x += 1) {
+        const idx = y * sw + x;
+        if (!bg[idx]) continue;
+        const d = bgDistSq[idx] || 0;
+        const e = edge[idx] || 0;
+        if (e >= edgeT * 0.8 && d >= distT * 0.25) bg[idx] = 0;
+      }
     }
 
     const comp = new Int32Array(sw * sh);
@@ -993,7 +1088,9 @@ const createCutoutFromFile = async (file: File) => {
     const q = new Int32Array(sw * sh);
     let compId = 0;
     let bestId = -1;
-    let bestArea = 0;
+    let bestScore = -1;
+    let maxId = -1;
+    let maxArea = 0;
     const bx0 = Math.round(sw * 0.22);
     const bx1 = Math.round(sw * 0.78);
     const by0 = Math.round(sh * 0.22);
@@ -1008,12 +1105,14 @@ const createCutoutFromFile = async (file: File) => {
       comp[p] = compId;
       let area = 0;
       let touchesCenter = false;
+      let edgeSum = 0;
       while (qs2 < qe2) {
         const idx = q[qs2];
         qs2 += 1;
         area += 1;
         const y = Math.trunc(idx / sw);
         const x = idx - y * sw;
+        edgeSum += edge[idx] || 0;
         if (!touchesCenter && x >= bx0 && x <= bx1 && y >= by0 && y <= by1) touchesCenter = true;
         if (x > 0) {
           const n = idx - 1;
@@ -1048,20 +1147,29 @@ const createCutoutFromFile = async (file: File) => {
           }
         }
       }
-      if (touchesCenter && area > bestArea) {
-        bestArea = area;
+      if (area > maxArea) {
+        maxArea = area;
+        maxId = compId;
+      }
+      const edgeDensity = edgeSum / Math.max(1, area);
+      let score = area * (0.65 + Math.min(1.1, edgeDensity / 30) * 0.55);
+      if (touchesCenter) score *= 1.1;
+      if (score > bestScore) {
+        bestScore = score;
         bestId = compId;
       }
       compId += 1;
     }
+
+    if (bestId === -1 && maxId !== -1) bestId = maxId;
 
     if (bestId !== -1) {
       for (let p = 0; p < sw * sh; p += 1) {
         if (bg[p]) continue;
         if (comp[p] !== bestId) bg[p] = 1;
       }
-      const aggressiveT = distT * 0.55;
-      const edgeLoose = edgeT * 1.25;
+      const aggressiveT = distT * 0.4;
+      const edgeLoose = edgeT * 1.05;
       for (let p = 0; p < sw * sh; p += 1) {
         if (bg[p]) continue;
         if ((bgDistSq[p] || 0) <= aggressiveT && (edge[p] || 0) <= edgeLoose) bg[p] = 1;
@@ -1079,7 +1187,7 @@ const createCutoutFromFile = async (file: File) => {
 
     const bgCount = bg.reduce((acc, v) => acc + (v ? 1 : 0), 0);
     const bgRatio = bgCount / Math.max(1, sw * sh);
-    const useFloodFillMask = bgRatio >= 0.02 && bgRatio <= 0.995;
+    const useFloodFillMask = bgRatio >= 0.002 && bgRatio <= 0.998;
 
     if (useFloodFillMask) {
       const expandMask = (mask: Uint8Array, width: number, height: number, radius: number) => {

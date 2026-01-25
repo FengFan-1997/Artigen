@@ -36,6 +36,7 @@ const installSystemRoutes = (app, deps) => {
   const normalizeEmail = deps?.normalizeEmail;
   const canUseTestLoginCode = deps?.canUseTestLoginCode;
   const MEMORY_DIR = deps?.MEMORY_DIR;
+  const appendUserImageHistory = deps?.appendUserImageHistory;
 
   const listRegisteredRoutes = (appInstance) => {
     try {
@@ -381,6 +382,7 @@ const installSystemRoutes = (app, deps) => {
     const deepMode = !!req.body.deepMode;
     const initialInputRaw = String(req.body.initialInput || '').trim();
     const initialInput = initialInputRaw ? initialInputRaw.slice(0, 2000) : '';
+    const userText = String(req.body.userText || '').trim();
 
     if (!prompt) {
       return res.status(400).json({ error: 'EMPTY_PROMPT', requestId });
@@ -490,6 +492,27 @@ const installSystemRoutes = (app, deps) => {
             ip: typeof getClientIp === 'function' ? getClientIp(req) : '',
             ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 220) : ''
           });
+        }
+      } catch { }
+
+      try {
+        if (typeof appendUserImageHistory === 'function' && userId) {
+          const isIngredient =
+            purpose.trim().toLowerCase() === 'ingredient_label' ||
+            userText.toLowerCase().startsWith('ai_ingredient');
+          if (isIngredient) {
+            const entry = {
+              id: requestId || `ingredient_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+              ts: Date.now(),
+              type: 'ingredient_label',
+              provider: String(result?.provider || activeTextProvider || 'text').trim(),
+              model: String(result?.model || modelRaw || '').trim(),
+              cost: resolvedCost,
+              ...(userText ? { userText } : {}),
+              prompt
+            };
+            appendUserImageHistory({ userId, entry });
+          }
         }
       } catch { }
 

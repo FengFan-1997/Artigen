@@ -797,7 +797,8 @@ installSystemRoutes(app, {
   cosineSimilarity,
   summarizeHistory,
   upsertUsageLedgerItem: ledger.upsertUsageLedgerItem,
-  computeCreditsDelta: ledger.computeCreditsDelta
+  computeCreditsDelta: ledger.computeCreditsDelta,
+  appendUserImageHistory
 });
 
 // ... HF Routes ...
