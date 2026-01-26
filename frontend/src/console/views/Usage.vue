@@ -204,6 +204,12 @@
           {{ ui.inLabel }}: {{ currentRecord?.tokensIn }} / {{ ui.outLabel }}:
           {{ currentRecord?.tokensOut }}
         </a-descriptions-item>
+        <a-descriptions-item :label="ui.inputCount">
+          {{ Number(currentRecord?.inputCount ?? 0) || 0 }}
+        </a-descriptions-item>
+        <a-descriptions-item :label="ui.outputCount">
+          {{ Number(currentRecord?.outputCount ?? 0) || 0 }}
+        </a-descriptions-item>
       </a-descriptions>
 
       <div style="margin-top: 16px">
@@ -256,6 +262,8 @@ const ui = computed(() =>
         tokens: 'Tokens',
         inLabel: '输入',
         outLabel: '输出',
+        inputCount: '输入数',
+        outputCount: '输出数',
         rawData: '原始数据',
         colTime: '时间',
         colUserId: '用户 ID',
@@ -303,6 +311,8 @@ const ui = computed(() =>
         tokens: 'Tokens',
         inLabel: 'In',
         outLabel: 'Out',
+        inputCount: 'Input Count',
+        outputCount: 'Output Count',
         rawData: 'Raw Data',
         colTime: 'Time',
         colUserId: 'User ID',
@@ -826,7 +836,9 @@ const exportCsv = () => {
     'tokensTotal',
     'creditsDelta',
     'ip',
-    'usedUrl'
+    'usedUrl',
+    'inputCount',
+    'outputCount'
   ];
   const esc = (v: any) => {
     const s = String(v ?? '');

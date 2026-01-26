@@ -175,6 +175,18 @@
               <template v-else-if="column.key === 'email'">
                 {{ record.email || '-' }}
               </template>
+              <template v-else-if="column.key === 'requestId'">
+                {{ record.requestId || '-' }}
+              </template>
+              <template v-else-if="column.key === 'status'">
+                {{ record.status || '-' }}
+              </template>
+              <template v-else-if="column.key === 'durationMs'">
+                {{ Number(record.durationMs ?? 0) || 0 }}
+              </template>
+              <template v-else-if="column.key === 'ip'">
+                {{ record.ip || '-' }}
+              </template>
               <template v-else-if="column.key === 'deepMode'">
                 <span
                   v-if="record?.plan?.deepMode === true || record?.plan?.meta?.deepMode === true"
@@ -197,6 +209,9 @@
                 <a-button size="small" @click="viewLogDetails(record)">{{
                   ui.viewFullLog
                 }}</a-button>
+              </template>
+              <template v-else>
+                {{ record[column.dataIndex] ?? record[column.key] ?? '-' }}
               </template>
             </template>
           </a-table>
@@ -505,13 +520,20 @@ const ui = computed(() =>
         colUsername: '用户名',
         colEmail: '邮箱',
         colType: '模型',
+        colSource: '来源',
         colPrompt: '提示词',
         colUserText: '用户输入',
+        colInputCount: '输入数',
+        colOutputCount: '输出数',
         colCreatedAt: '创建时间',
         colProvider: '渠道',
         colModel: '模型',
         colCredits: '消耗',
         colTime: '时间',
+        colRequestId: '请求 ID',
+        colStatus: '状态',
+        colDuration: '耗时(ms)',
+        colIp: 'IP',
         colDeepMode: '深度思考',
         colInitialInput: '初始输入',
         uploadReference: '引用：',
@@ -573,13 +595,20 @@ const ui = computed(() =>
         colUsername: 'Username',
         colEmail: 'Email',
         colType: 'Model',
+        colSource: 'Source',
         colPrompt: 'Prompt',
         colUserText: 'User Input',
+        colInputCount: 'Inputs',
+        colOutputCount: 'Outputs',
         colCreatedAt: 'Created At',
         colProvider: 'Provider',
         colModel: 'Model',
         colCredits: 'Credits',
         colTime: 'Time',
+        colRequestId: 'Request ID',
+        colStatus: 'Status',
+        colDuration: 'Latency(ms)',
+        colIp: 'IP',
         colDeepMode: 'Deep Mode',
         colInitialInput: 'Initial Input',
         uploadReference: 'Reference:',
@@ -870,7 +899,9 @@ const images = computed(() => {
         }
       }
       const sourceLabel = String((it as any).source || it.type || '').trim();
-      return { ...it, previewUrl, uploadPreviewUrl, sourceLabel };
+      const inputCount = Array.isArray(inRefs) ? inRefs.length : 0;
+      const outputCount = Array.isArray(refs) ? refs.length : 0;
+      return { ...it, previewUrl, uploadPreviewUrl, sourceLabel, inputCount, outputCount };
     });
 });
 
@@ -907,7 +938,10 @@ const baseImageColumns = computed<SimpleColumn[]>(() => [
   },
   { title: ui.value.colEmail, dataIndex: 'email', key: 'email', width: 140, ellipsis: true },
   { title: ui.value.colType, key: 'type', width: 120, ellipsis: true },
+  { title: ui.value.colSource, key: 'source', width: 120, ellipsis: true },
   { title: ui.value.colCredits, dataIndex: 'cost', key: 'cost', width: 90 },
+  { title: ui.value.colInputCount, key: 'inputCount', width: 100 },
+  { title: ui.value.colOutputCount, key: 'outputCount', width: 100 },
   { title: ui.value.colPrompt, dataIndex: 'prompt', key: 'prompt', width: 460 },
   { title: ui.value.colUserText, dataIndex: 'userText', key: 'userText', width: 360 },
   { title: ui.value.colCreatedAt, dataIndex: 'ts', key: 'ts', width: 190 }
@@ -923,6 +957,13 @@ const baseChatColumns = computed<SimpleColumn[]>(() => [
   },
   { title: ui.value.userLabel, dataIndex: 'userId', key: 'userId', width: 140, ellipsis: true },
   { title: ui.value.colEmail, dataIndex: 'email', key: 'email', width: 180, ellipsis: true },
+  {
+    title: ui.value.colRequestId,
+    dataIndex: 'requestId',
+    key: 'requestId',
+    width: 190,
+    ellipsis: true
+  },
   { title: ui.value.actionLabel, dataIndex: 'trigger', key: 'trigger', width: 160, ellipsis: true },
   {
     title: ui.value.colProvider,
@@ -932,6 +973,9 @@ const baseChatColumns = computed<SimpleColumn[]>(() => [
     ellipsis: true
   },
   { title: ui.value.colModel, dataIndex: 'model', key: 'model', width: 160, ellipsis: true },
+  { title: ui.value.colStatus, dataIndex: 'status', key: 'status', width: 120, ellipsis: true },
+  { title: ui.value.colDuration, dataIndex: 'durationMs', key: 'durationMs', width: 120 },
+  { title: ui.value.colIp, dataIndex: 'ip', key: 'ip', width: 140, ellipsis: true },
   { title: ui.value.colDeepMode, dataIndex: 'deepMode', key: 'deepMode', width: 120 },
   { title: ui.value.colInitialInput, dataIndex: 'initialInput', key: 'initialInput', width: 320 },
   {

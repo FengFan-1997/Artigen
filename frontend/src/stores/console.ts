@@ -199,6 +199,8 @@ export type AdminUsageLedgerItem = {
   trigger?: string;
   provider?: string;
   model?: string;
+  inputCount?: number;
+  outputCount?: number;
   tokensIn?: number;
   tokensOut?: number;
   tokensTotal?: number;
