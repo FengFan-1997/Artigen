@@ -68,6 +68,16 @@ export const setLoggedIn = (input: { userId: string; token?: string }) => {
       window.localStorage.removeItem(LEGACY_STORAGE_KEY_TOKEN);
     }
   } catch {}
+  try {
+    if (typeof document === 'undefined') return;
+    const secure = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+    if (token) {
+      const v = encodeURIComponent(token);
+      document.cookie = `auth_token=${v}; Path=/; Max-Age=2592000; SameSite=Lax${secure ? '; Secure' : ''}`;
+    } else {
+      document.cookie = `auth_token=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}`;
+    }
+  } catch {}
 };
 
 export const logoutLocal = (opts?: { redirectTo?: string; reload?: boolean }) => {
@@ -76,6 +86,12 @@ export const logoutLocal = (opts?: { redirectTo?: string; reload?: boolean }) =>
     window.localStorage.removeItem(LEGACY_STORAGE_KEY_ID);
     window.localStorage.removeItem(STORAGE_KEY_TOKEN);
     window.localStorage.removeItem(LEGACY_STORAGE_KEY_TOKEN);
+  } catch {}
+  try {
+    if (typeof document !== 'undefined') {
+      const secure = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+      document.cookie = `auth_token=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}`;
+    }
   } catch {}
   ensureGuestUserId();
   try {

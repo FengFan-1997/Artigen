@@ -165,6 +165,7 @@
   border-radius: 12px;
   display: block;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  cursor: zoom-in;
 }
 
 .msg-ai-text {
@@ -187,6 +188,7 @@
   object-fit: cover;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: zoom-in;
 }
 
 .loading-bubble {
@@ -318,6 +320,11 @@
 
 .mini-remove-btn:hover {
   background: #ff3333;
+}
+
+.mini-remove-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .textarea {

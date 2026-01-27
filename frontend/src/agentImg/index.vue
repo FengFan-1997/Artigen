@@ -165,8 +165,10 @@
                         v-for="(u, idx) in item.refImages"
                         :key="idx"
                         class="msg-ref-img"
-                        :src="u"
+                        :src="resolveRefUrl(u)"
+                        crossorigin="anonymous"
                         alt="ref"
+                        @click.stop="openImagePreview(u)"
                         @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
                       />
                     </div>
@@ -189,9 +191,11 @@
                     <div v-if="item.aiText" class="msg-ai-text">{{ item.aiText }}</div>
                     <div v-if="item.image" class="msg-image-wrap">
                       <img
-                        :src="item.image"
+                        :src="resolveRefUrl(item.image)"
                         alt="generated"
                         class="msg-media-img"
+                        crossorigin="anonymous"
+                        @click.stop="openImagePreview(item.image)"
                         @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
                       />
                       <div class="msg-image-actions">
@@ -262,7 +266,9 @@
                   class="mini-preview-item"
                 >
                   <img :src="url" alt="ref" />
-                  <button class="mini-remove-btn" @click="clearPreview(idx)">×</button>
+                  <button class="mini-remove-btn" :disabled="loading" @click="clearPreview(idx)">
+                    ×
+                  </button>
                 </div>
               </div>
 
@@ -272,6 +278,7 @@
                 class="textarea"
                 :class="{ 'drag-over': chatInputDragOver }"
                 :placeholder="ui.inputPlaceholder"
+                :disabled="loading"
                 maxlength="500"
                 @dragover="onChatInputDragOver"
                 @dragleave="onChatInputDragLeave"
@@ -430,7 +437,7 @@
             >
               <div v-if="item.image" class="history-image-placeholder">
                 <img
-                  :src="item.image"
+                  :src="resolveRefUrl(item.image)"
                   alt="generated"
                   style="width: 100%; height: 100%; object-fit: cover; border-radius: 10px"
                   @error="(e) => ((e.target as HTMLImageElement).src = '/logo.png')"
@@ -491,6 +498,34 @@
           >
             <span class="res-label">4096 x 4096</span>
             <span class="res-tag">4K</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="imagePreviewOpen" class="img-preview-overlay" @click="closeImagePreview">
+      <div class="img-preview-dialog" @click.stop>
+        <div class="img-preview-header">
+          <div class="img-preview-title">{{ ui.imageLabel }}</div>
+          <CloseButton @click="closeImagePreview" />
+        </div>
+        <div class="img-preview-body">
+          <img :src="imagePreviewResolvedUrl" alt="Preview" class="img-preview-img" />
+        </div>
+        <div class="img-preview-actions">
+          <button
+            class="img-preview-btn"
+            type="button"
+            @click="downloadMsgImage(imagePreviewRawUrl)"
+          >
+            {{ ui.download }}
+          </button>
+          <button
+            class="img-preview-btn secondary"
+            type="button"
+            @click="referenceMsgImage(imagePreviewRawUrl)"
+          >
+            {{ ui.reference }}
           </button>
         </div>
       </div>
@@ -856,7 +891,23 @@ const showSendCostInline = computed(
 
 const onPrimary = doPrimary;
 
-const downloadMsgImage = showDownload;
+const downloadMsgImage = (url: string) => showDownload(resolveRefUrl(url));
+
+const imagePreviewOpen = ref(false);
+const imagePreviewRawUrl = ref('');
+const imagePreviewResolvedUrl = computed(() => resolveRefUrl(imagePreviewRawUrl.value));
+
+const openImagePreview = (url: string) => {
+  const s = String(url || '').trim();
+  if (!s) return;
+  imagePreviewRawUrl.value = s;
+  imagePreviewOpen.value = true;
+};
+
+const closeImagePreview = () => {
+  imagePreviewOpen.value = false;
+  imagePreviewRawUrl.value = '';
+};
 
 // Prefill logic
 type AgentImgPrefillItem = { kind: 'data' | 'url'; value: string };
@@ -946,14 +997,33 @@ const imageElToFile = (img: HTMLImageElement, maxEdge = 1024): Promise<File | nu
 
 const resolveRefUrl = (raw: string) => {
   const u = String(raw || '').trim();
-  if (!u || !u.startsWith('/')) return u;
+  if (!u) return '';
+  if (u.startsWith('data:')) return u;
   const base = getApiBaseUrl();
-  if (!base) return u;
-  if (u.startsWith('/files/')) {
-    if (base.endsWith('/api')) return `${base.slice(0, -4)}${u}`;
-    return `${base}${u}`;
+  const built = (() => {
+    if (u.startsWith('/')) {
+      if (u.startsWith('/files/')) {
+        if (!base) return u;
+        if (base.endsWith('/api')) return `${base.slice(0, -4)}${u}`;
+        return `${base}${u}`;
+      }
+      return buildApiUrl(u);
+    }
+    return u;
+  })();
+  const token = String(authToken.value || '').trim();
+  if (!token) return built;
+  try {
+    const url = new URL(built, window.location.origin);
+    if (!url.pathname.startsWith('/files/')) return built;
+    if (!url.searchParams.get('token')) url.searchParams.set('token', token);
+    return url.toString();
+  } catch {
+    if (!built.includes('/files/')) return built;
+    const join = built.includes('?') ? '&' : '?';
+    if (built.includes('token=')) return built;
+    return `${built}${join}token=${encodeURIComponent(token)}`;
   }
-  return buildApiUrl(u);
 };
 
 const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> => {
@@ -961,9 +1031,12 @@ const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> 
   if (!v) return null;
   const direct = dataUrlToFile(v);
   if (direct) return direct;
-  const tryFetchToBlob = async (url: string): Promise<Blob | null> => {
+  const tryFetchToBlob = async (
+    url: string,
+    opts?: { headers?: Record<string, string> }
+  ): Promise<Blob | null> => {
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, opts);
       if (!res.ok) return null;
       const blob = await res.blob();
       if (
@@ -981,6 +1054,14 @@ const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> 
     const resolved = resolveRefUrl(v);
     let blob = await tryFetchToBlob(resolved || v);
     if (!blob && resolved && resolved !== v) blob = await tryFetchToBlob(v);
+    if (!blob) {
+      const token = String(authToken.value || '').trim();
+      if (token && (resolved || v).includes('/files/')) {
+        blob = await tryFetchToBlob(resolved || v, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      }
+    }
     if (!blob && /^https?:\/\//i.test(v)) {
       const proxyUrl = buildApiUrl(`/api/proxy/image?url=${encodeURIComponent(v)}`);
       blob = await tryFetchToBlob(proxyUrl);
@@ -996,6 +1077,7 @@ const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> 
 const referenceMsgImage = async (url: string) => {
   const s = String(url || '').trim();
   if (!s) return;
+  const resolved = resolveRefUrl(s);
   const keepDeep = isStyleSelecting.value;
   const emptySlots = previewUrls.value.map((u, i) => (!u ? i : -1)).filter((i) => i >= 0);
   const idx = emptySlots.length ? (emptySlots[0] as number) : 0;
@@ -1003,14 +1085,19 @@ const referenceMsgImage = async (url: string) => {
   let seededUrl = '';
   if (!f) {
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('.msg-media-img'));
-    const match = imgs.find((img) => img.currentSrc === s || img.src === s);
+    const match = imgs.find(
+      (img) =>
+        img.currentSrc === s ||
+        img.src === s ||
+        (resolved && (img.currentSrc === resolved || img.src === resolved))
+    );
     if (match) {
       seededUrl = String(match.currentSrc || match.src || '').trim();
       if (seededUrl) setPreviewUrlAt(idx, seededUrl);
       f = await imageElToFile(match, 1024);
     }
   }
-  if (!f && !seededUrl) f = await prefillItemToFile({ kind: 'url', value: s });
+  if (!f) f = await prefillItemToFile({ kind: 'url', value: s });
   if (!f) {
     if (seededUrl) setPreviewUrlAt(idx, '');
     showTopTip(

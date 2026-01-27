@@ -212,6 +212,25 @@ const resolveAdminForFiles = (req) => {
   return { ok: true, status: 200 };
 };
 
+const readQueryToken = (req) => {
+  try {
+    const q = req?.query?.token;
+    if (typeof q === 'string') return q.trim();
+    if (Array.isArray(q) && typeof q[0] === 'string') return String(q[0] || '').trim();
+  } catch { }
+  try {
+    const raw = typeof req?.originalUrl === 'string' ? req.originalUrl : typeof req?.url === 'string' ? req.url : '';
+    const s = String(raw || '');
+    const idx = s.indexOf('?');
+    if (idx < 0) return '';
+    const qs = s.slice(idx + 1);
+    const params = new URLSearchParams(qs);
+    return String(params.get('token') || '').trim();
+  } catch {
+    return '';
+  }
+};
+
 const serveLocalFileFromFilesDir = (req, res, next) => {
   if (!req.path || typeof req.path !== 'string') return next();
   const rawParam = req.path.replace(/^\/+/, '');
@@ -240,6 +259,51 @@ const serveLocalFileFromFilesDir = (req, res, next) => {
     const resolved = typeof resolveAuthUser === 'function' ? resolveAuthUser(req) : { ok: false, status: 401 };
     const isOwner = resolved?.ok && String(resolved.userId || '').trim() === userSegment;
     if (!isOwner) {
+      const queryToken = readQueryToken(req);
+      if (queryToken && typeof readUsersMap === 'function') {
+        try {
+          const users = readUsersMap();
+          const hit = Object.values(users).find((u) => String(u?.sessionToken || '') === queryToken);
+          const qUserId = typeof hit?.id === 'string' ? hit.id.trim() : '';
+          if (qUserId && qUserId === userSegment) {
+            res.setHeader('Cache-Control', 'private, max-age=2592000');
+            res.setHeader('Vary', 'Authorization, Cookie');
+            const root = path.resolve(FILES_DIR);
+            const full = path.resolve(root, ...parts);
+            const rootLower = root.toLowerCase();
+            const fullLower = full.toLowerCase();
+            if (fullLower !== rootLower && !fullLower.startsWith(rootLower + path.sep.toLowerCase())) {
+              return res.status(403).end();
+            }
+            let st = null;
+            try {
+              st = fs.statSync(full);
+            } catch {
+              st = null;
+            }
+            if (!st || !st.isFile()) return res.status(404).end();
+            return res.sendFile(full);
+          }
+        } catch { }
+      }
+      if (DEBUG_FILES) {
+        let tokenLen = 0;
+        try {
+          tokenLen = queryToken ? String(queryToken).length : 0;
+        } catch { }
+        let tokenMatchedUser = false;
+        try {
+          if (queryToken && typeof readUsersMap === 'function') {
+            const users = readUsersMap();
+            const hit = Object.values(users).find((u) => String(u?.sessionToken || '') === queryToken);
+            const qUserId = typeof hit?.id === 'string' ? hit.id.trim() : '';
+            tokenMatchedUser = !!qUserId && qUserId === userSegment;
+          }
+        } catch { }
+        const hasBearer = !!(typeof parseBearerToken === 'function' ? parseBearerToken(req) : '');
+        const hasCookie = typeof req?.headers?.cookie === 'string' && req.headers.cookie.includes('auth_token=');
+        console.log('FILES_DEBUG_AUTH', { userSegment, tokenLen, tokenMatchedUser, hasBearer, hasCookie });
+      }
       const admin = resolveAdminForFiles(req);
       if (!admin?.ok) return res.status(admin?.status || 401).end();
     }
