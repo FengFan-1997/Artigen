@@ -51,6 +51,17 @@
         <a-col :xs="24" :lg="8">
           <a-card :title="ui.trafficStats">
             <a-statistic :title="ui.totalViews" :value="trafficViews" style="margin-bottom: 16px" />
+            <a-row :gutter="16" style="margin-bottom: 16px">
+              <a-col :xs="8">
+                <a-statistic :title="ui.trafficOrganic" :value="trafficSourceViews.organic" />
+              </a-col>
+              <a-col :xs="8">
+                <a-statistic :title="ui.trafficSearch" :value="trafficSourceViews.search" />
+              </a-col>
+              <a-col :xs="8">
+                <a-statistic :title="ui.trafficLink" :value="trafficSourceViews.link" />
+              </a-col>
+            </a-row>
             <a-row :gutter="16">
               <a-col :xs="12" :sm="12">
                 <a-statistic :title="ui.conversions" :value="trafficConversions" />
@@ -164,6 +175,9 @@ const ui = computed(() =>
         pointsSpent: '消耗点数',
         trafficStats: 'SEO 页面流量',
         totalViews: '总访问量',
+        trafficOrganic: '自然',
+        trafficSearch: '搜索',
+        trafficLink: '外链',
         conversions: '转化点击',
         ctr: '转化率',
         trafficNote: '数据来源: /artigen/tools',
@@ -197,6 +211,9 @@ const ui = computed(() =>
         pointsSpent: 'Points Spent',
         trafficStats: 'SEO Traffic',
         totalViews: 'Total Views',
+        trafficOrganic: 'Organic',
+        trafficSearch: 'Search',
+        trafficLink: 'Referral',
         conversions: 'Conversions',
         ctr: 'CTR',
         trafficNote: 'Source: /artigen/tools',
@@ -231,6 +248,38 @@ const normalizePage = (raw: any) => {
   }
 };
 
+const safeParseUrl = (raw: any) => {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  try {
+    return new URL(s);
+  } catch {
+    return null;
+  }
+};
+
+const trafficSourceFromReferrer = (referrer: any) => {
+  const u = safeParseUrl(referrer);
+  const host = String(u?.hostname || '')
+    .trim()
+    .toLowerCase();
+  if (!host) return 'organic';
+  const searchHosts = [
+    'google.com',
+    'bing.com',
+    'yahoo.com',
+    'duckduckgo.com',
+    'baidu.com',
+    'sogou.com',
+    'so.com',
+    'yandex.com',
+    'naver.com',
+    'sm.cn'
+  ];
+  const isSearch = searchHosts.some((x) => host === x || host.endsWith(`.${x}`));
+  return isSearch ? 'search' : 'link';
+};
+
 const trafficEvents = computed(() => {
   const out: Array<{
     type: 'page_view' | 'click' | 'conversion' | 'generate_success' | 'generate_fail';
@@ -251,9 +300,26 @@ const trafficEvents = computed(() => {
       const id =
         String(evt?.id || '').trim() ||
         `${timestamp}_${eventType}_${Math.random().toString(16).slice(2)}`;
+      const trafficSource =
+        String((evt as any)?.trafficSource || (payload as any)?.trafficSource || '')
+          .trim()
+          .toLowerCase() || '';
+      const trafficRefHost = String((evt as any)?.trafficRefHost || '').trim() || '';
+      const trafficSearchEngine = String((evt as any)?.trafficSearchEngine || '').trim() || '';
 
       if (eventType === 'page_view') {
-        out.push({ type: 'page_view', page, timestamp, id });
+        out.push({
+          type: 'page_view',
+          page,
+          meta: {
+            referrer: (evt as any)?.referrer || '',
+            trafficSource,
+            trafficRefHost,
+            trafficSearchEngine
+          },
+          timestamp,
+          id
+        });
         continue;
       }
       if (eventType === 'tools_conversion') {
@@ -277,6 +343,22 @@ const trafficEvents = computed(() => {
             (eventType === 'tools_chip_click'
               ? String((payload as any).keyword || '').trim() || undefined
               : undefined),
+          meta: payload,
+          timestamp,
+          id
+        });
+        continue;
+      }
+      if (eventType === 'ui_click') {
+        const t =
+          String((payload as any).targetText || '').trim() ||
+          String((payload as any).targetHref || '').trim() ||
+          String((payload as any).targetId || '').trim() ||
+          String((payload as any).tag || '').trim();
+        out.push({
+          type: 'click',
+          page,
+          target: t || undefined,
           meta: payload,
           timestamp,
           id
@@ -313,6 +395,21 @@ const trafficViews = computed(
   () =>
     trafficEvents.value.filter((t) => t.type === 'page_view' && t.page.includes('/tools')).length
 );
+const trafficSourceViews = computed(() => {
+  const out = { organic: 0, search: 0, link: 0 };
+  trafficEvents.value.forEach((t) => {
+    if (t.type !== 'page_view') return;
+    if (!t.page.includes('/tools')) return;
+    const raw = String((t.meta as any)?.trafficSource || '')
+      .trim()
+      .toLowerCase();
+    const src = raw || trafficSourceFromReferrer((t.meta as any)?.referrer);
+    if (src === 'search') out.search++;
+    else if (src === 'link') out.link++;
+    else out.organic++;
+  });
+  return out;
+});
 const trafficConversions = computed(
   () =>
     trafficEvents.value.filter((t) => t.type === 'conversion' && t.page.includes('/tools')).length

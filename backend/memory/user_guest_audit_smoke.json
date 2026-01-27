@@ -1,0 +1,77 @@
+{
+  "user_id": "guest_audit_smoke",
+  "meta": {
+    "updatedAt": 1769443401833,
+    "last_interaction": "2026-01-26"
+  },
+  "core_memory": [],
+  "short_term_buffer": [
+    {
+      "role": "user",
+      "text": "hi",
+      "ts": 1769443401824
+    },
+    {
+      "role": "agent",
+      "text": "Hi, Friend! 「[HAPPY]」  \n{\n  \"emotionTag\": {\n    \"primary\": \"happy\",\n    \"intensity\": 0.8,\n    \"secondary\": []\n  }\n}",
+      "ts": 1769443401824
+    }
+  ],
+  "audit_history": [
+    {
+      "id": "chat_smoke_1",
+      "ts": 1769443401824,
+      "kind": "chat",
+      "biz": "chat",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen3-8B",
+      "usedUrl": "https://api.siliconflow.cn/v1/messages",
+      "tokensIn": 346,
+      "tokensOut": 44,
+      "tokensTotal": 0,
+      "ragUsed": false,
+      "status": "ok",
+      "durationMs": 8607,
+      "userText": "hi",
+      "aiText": "Hi, Friend! 「[HAPPY]」  \n{\n  \"emotionTag\": {\n    \"primary\": \"happy\",\n    \"intensity\": 0.8,\n    \"secondary\": []\n  }\n}",
+      "persona": {
+        "id": "persona_default",
+        "name": "Lumina"
+      },
+      "sessionId": "sess_smoke_1",
+      "projectId": "proj_smoke_1",
+      "requestSource": "smoke_chat",
+      "pageContext": "{\"path\":\"/smoke\",\"title\":\"smoke\"}",
+      "ip": "127.0.0.1",
+      "ua": ""
+    },
+    {
+      "id": "gen_smoke_1",
+      "ts": 1769443393214,
+      "kind": "generate",
+      "biz": "generate",
+      "provider": "siliconflow",
+      "model": "Qwen/Qwen3-8B",
+      "usedUrl": "https://api.siliconflow.cn/v1/messages",
+      "cost": 0,
+      "tokensIn": 15,
+      "tokensOut": 2,
+      "tokensTotal": 17,
+      "deepMode": false,
+      "promptLen": 13,
+      "promptHash": "41814e45",
+      "aiText": "OK.",
+      "sessionId": "sess_smoke_1",
+      "projectId": "proj_smoke_1",
+      "requestSource": "smoke_generate",
+      "pageContext": {
+        "path": "/smoke",
+        "title": "smoke"
+      },
+      "status": "ok",
+      "durationMs": 688,
+      "ip": "127.0.0.1",
+      "ua": ""
+    }
+  ]
+}

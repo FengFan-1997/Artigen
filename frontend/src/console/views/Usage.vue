@@ -165,8 +165,9 @@
         row-key="requestId"
         :pagination="pagination"
         :loading="loading"
+        :size="isMobile ? 'small' : 'middle'"
         :tableLayout="'fixed'"
-        :scroll="{ x: 1100 }"
+        :scroll="{ x: mainTableScrollX }"
         @change="handleTableChange"
       >
         <template #bodyCell="{ column, record }">
@@ -230,7 +231,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed, h } from 'vue';
 import { useConsoleStore, type AdminUsageLedgerItem } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
@@ -267,6 +268,7 @@ const ui = computed(() =>
         rawData: '原始数据',
         colTime: '时间',
         colUserId: '用户 ID',
+        colEmail: '邮箱',
         colRequestId: '请求 ID',
         colType: '类型',
         colDesc: '描述',
@@ -316,6 +318,7 @@ const ui = computed(() =>
         rawData: 'Raw Data',
         colTime: 'Time',
         colUserId: 'User ID',
+        colEmail: 'Email',
         colRequestId: 'Request ID',
         colType: 'Type',
         colDesc: 'Description',
@@ -381,6 +384,7 @@ const showAdminError = (e: any) => {
 };
 
 const loading = ref(false);
+const isMobile = ref(false);
 const dateRange = ref<any[]>([]);
 const filterUserId = ref('');
 const filterTrigger = ref<string | undefined>(undefined);
@@ -403,37 +407,141 @@ const pagination = ref({
 const detailsVisible = ref(false);
 const currentRecord = ref<any>(null);
 
+const checkMobile = () => {
+  isMobile.value = window.innerWidth < 768;
+};
+
+let resizeListener: ((this: Window, ev: UIEvent) => any) | null = null;
+onMounted(() => {
+  checkMobile();
+  resizeListener = () => checkMobile();
+  window.addEventListener('resize', resizeListener);
+});
+onBeforeUnmount(() => {
+  if (resizeListener) window.removeEventListener('resize', resizeListener);
+  resizeListener = null;
+});
+
+const columnWidths = ref<Record<string, number>>({
+  ts: 180,
+  userId: 180,
+  email: 220,
+  requestId: 280,
+  trigger: 160,
+  modelTag: 260,
+  creditsDelta: 110,
+  action: 100
+});
+
+const resizingState = ref<{ key: string; startX: number; startWidth: number } | null>(null);
+
+const handleResizeMove = (e: MouseEvent) => {
+  const s = resizingState.value;
+  if (!s) return;
+  const dx = e.clientX - s.startX;
+  const nextWidth = Math.max(80, Math.round(s.startWidth + dx));
+  columnWidths.value = { ...columnWidths.value, [s.key]: nextWidth };
+};
+
+const stopResize = () => {
+  if (!resizingState.value) return;
+  resizingState.value = null;
+  window.removeEventListener('mousemove', handleResizeMove);
+  window.removeEventListener('mouseup', stopResize);
+};
+
+const startResize = (e: MouseEvent, key: string) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const w = Number(columnWidths.value[key] ?? 160) || 160;
+  resizingState.value = { key, startX: e.clientX, startWidth: w };
+  window.addEventListener('mousemove', handleResizeMove);
+  window.addEventListener('mouseup', stopResize);
+};
+
+onBeforeUnmount(() => {
+  stopResize();
+});
+
+const renderResizableTitle = (key: string, label: string) => {
+  return h(
+    'div',
+    { class: 'usage-col-title' },
+    [
+      h('span', { class: 'usage-col-title-text' }, label),
+      isMobile.value
+        ? null
+        : h('span', {
+            class: 'usage-col-resizer',
+            onMousedown: (e: MouseEvent) => startResize(e, key)
+          })
+    ].filter(Boolean)
+  );
+};
+
 const columns = computed(() => [
   {
-    title: ui.value.colTime,
+    title: renderResizableTitle('ts', ui.value.colTime),
     dataIndex: 'ts',
     key: 'ts',
-    width: 180,
+    width: columnWidths.value.ts,
     customRender: ({ text }: any) => new Date(text).toLocaleString()
   },
-  { title: ui.value.colUserId, dataIndex: 'userId', key: 'userId', width: 180, ellipsis: true },
-  { title: ui.value.colRequestId, dataIndex: 'requestId', key: 'requestId', ellipsis: true },
   {
-    title: ui.value.colType,
+    title: renderResizableTitle('userId', ui.value.colUserId),
+    dataIndex: 'userId',
+    key: 'userId',
+    width: columnWidths.value.userId,
+    ellipsis: true
+  },
+  {
+    title: renderResizableTitle('email', ui.value.colEmail),
+    dataIndex: 'email',
+    key: 'email',
+    width: columnWidths.value.email,
+    ellipsis: true
+  },
+  {
+    title: renderResizableTitle('requestId', ui.value.colRequestId),
+    dataIndex: 'requestId',
+    key: 'requestId',
+    width: columnWidths.value.requestId,
+    ellipsis: true
+  },
+  {
+    title: renderResizableTitle('trigger', ui.value.colType),
     dataIndex: 'trigger',
     key: 'trigger',
+    width: columnWidths.value.trigger,
     customRender: ({ record }: any) => getUsageTypeLabel(record)
   },
   {
-    title: ui.value.colDesc,
+    title: renderResizableTitle('modelTag', ui.value.colDesc),
     dataIndex: 'model',
     key: 'modelTag',
+    width: columnWidths.value.modelTag,
     customRender: ({ record }: any) => getUsageDescLabel(record)
   },
   {
-    title: ui.value.colCredits,
+    title: renderResizableTitle('creditsDelta', ui.value.colCredits),
     dataIndex: 'creditsDelta',
     key: 'creditsDelta',
+    width: columnWidths.value.creditsDelta,
     align: 'right',
     customRender: ({ record }: any) => formatCreditsSpent(record)
   },
-  { title: ui.value.colAction, key: 'action', width: 100, fixed: 'right' }
+  {
+    title: renderResizableTitle('action', ui.value.colAction),
+    key: 'action',
+    width: columnWidths.value.action,
+    fixed: 'right'
+  }
 ]);
+
+const mainTableScrollX = computed(() => {
+  const sum = Object.values(columnWidths.value).reduce((acc, n) => acc + (Number(n) || 0), 0);
+  return Math.max(800, sum);
+});
 
 const items = computed(() => {
   return consoleStore.adminUsage;
@@ -478,27 +586,46 @@ const isDeepImg = (it: any) => {
 };
 
 const getUsageTypeLabel = (it: any) => {
-  const trig = toKey(it?.trigger);
-  const k = trig.toLowerCase();
   const zh = currentLang.value === 'zh';
-  if (k === 'id_photo') return zh ? '证件照' : 'ID Photo';
-  if (k === 'old_photo') return zh ? '老照片修复' : 'Old Photo Restore';
-  if (k === 'ai_design')
-    return isDeepImg(it)
-      ? zh
-        ? '深度思考生图'
-        : 'Deep-think Image'
-      : zh
-        ? '非深度思考生图'
-        : 'Image';
-  if (k === 'img2img') return zh ? '图生图' : 'Image-to-Image';
-  if (k === 'chat') return zh ? '对话' : 'Chat';
-  if (k === 'task') return zh ? '任务' : 'Task';
-  if (k === 'interaction') return zh ? '交互' : 'Interaction';
-  if (k === 'idle') return zh ? '空闲' : 'Idle';
-  if (k === 'dom') return zh ? '页面行为' : 'DOM';
-  if (k === 'error') return zh ? '错误' : 'Error';
-  return trig || '-';
+  const trig = toKey(it?.trigger);
+  const k0 = trig.toLowerCase();
+  const k = k0.replace(/[\s/-]+/g, '_');
+  const labels = zh
+    ? {
+        imgQuick: '非深度思考生图',
+        imgDeepPrompt: '深度思考提示词优化',
+        imgDeep: '深度思考生图',
+        idPhoto: '证件照生成',
+        oldPhoto: '老照片优化',
+        ingredient: '配料表提示词优化',
+        bg: 'AI背景'
+      }
+    : {
+        imgQuick: 'Image (Non-deep)',
+        imgDeepPrompt: 'Deep Prompt Optimization',
+        imgDeep: 'Deep Image',
+        idPhoto: 'ID Photo',
+        oldPhoto: 'Old Photo Enhancement',
+        ingredient: 'Ingredient Prompt Optimization',
+        bg: 'AI Background'
+      };
+
+  if (k === 'ai_background') return labels.bg;
+  if (k === 'ai_id_photo' || k === 'id_photo') return labels.idPhoto;
+  if (k === 'ai_old_photo' || k === 'old_photo') return labels.oldPhoto;
+  if (k === 'ai_ingredient_list' || k === 'ingredient_label' || k === 'agentimg_ingredient_label')
+    return labels.ingredient;
+  if (
+    k === 'aidesign_semantic' ||
+    k === 'aidesign_directions' ||
+    k === 'aidesign_deep_analysis' ||
+    k === 'agentimg_directions'
+  )
+    return labels.imgDeepPrompt;
+  if (k === 'aidesign_final' || k === 'aidesign_deep_generate' || k === 'agentimg_final')
+    return labels.imgDeep;
+  if (isDeepImg(it)) return labels.imgDeep;
+  return labels.imgQuick;
 };
 
 const getUsageDescLabel = (it: any) => {
@@ -871,7 +998,50 @@ const exportCsv = () => {
 </script>
 
 <style scoped>
+.usage-col-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  user-select: none;
+}
+
+.usage-col-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-col-resizer {
+  flex: 0 0 10px;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  position: relative;
+}
+
+.usage-col-resizer::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  top: 0;
+  height: 100%;
+  width: 2px;
+  background: rgba(148, 163, 184, 0.55);
+  border-radius: 2px;
+}
+
+.usage-col-resizer:hover::after {
+  background: rgba(56, 189, 248, 0.9);
+}
+
 @media (max-width: 768px) {
+  .usage-col-resizer {
+    display: none;
+  }
+
   .usage-toolbar :deep(.ant-input),
   .usage-toolbar :deep(.ant-picker),
   .usage-toolbar :deep(.ant-select),

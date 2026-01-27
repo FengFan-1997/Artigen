@@ -4,8 +4,29 @@ export const normalizeBaseUrl = (baseUrl: string) => {
   return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
 };
 
-export const getApiBaseUrl = () =>
-  normalizeBaseUrl(import.meta.env.VITE_API_BASE || import.meta.env.VITE_AGENT_API_BASE || '');
+export const getApiBaseUrl = () => {
+  const base = normalizeBaseUrl(
+    import.meta.env.VITE_API_BASE || import.meta.env.VITE_AGENT_API_BASE || ''
+  );
+  if (!base) return '';
+  const isSupportedBase =
+    /^https?:\/\//i.test(base) || base.startsWith('//') || base.startsWith('/');
+  if (!isSupportedBase) return '';
+  try {
+    const u = new URL(base, window.location.origin);
+    const host = String(u.hostname || '').toLowerCase();
+    const isLocalTarget =
+      host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host.endsWith('.local');
+    const pageHost = String(window.location.hostname || '').toLowerCase();
+    const isLocalPage =
+      pageHost === 'localhost' ||
+      pageHost === '127.0.0.1' ||
+      pageHost === '0.0.0.0' ||
+      pageHost.endsWith('.local');
+    if (isLocalTarget && !isLocalPage) return '';
+  } catch {}
+  return base;
+};
 
 export const buildApiUrl = (path: string) => {
   const base = getApiBaseUrl();

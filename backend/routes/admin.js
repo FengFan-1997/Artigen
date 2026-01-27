@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
-const { rateLimit } = require('../lib/rateLimit');
+const { rateLimit, getRateLimitStats } = require('../lib/rateLimit');
+const { fetchWithTimeout } = require('../lib/fetch-utils');
 const {
   resolveConsoleAdminAccount,
   createAdminToken,
@@ -75,6 +76,24 @@ const resolveImageSource = (item) => {
   return userText ? 'ai_design' : '';
 };
 
+const drainResponseBody = async (resp) => {
+  const body = resp && resp.body;
+  if (!body || typeof body.on !== 'function') return 0;
+  return await new Promise((resolve, reject) => {
+    let bytes = 0;
+    body.on('data', (chunk) => {
+      try {
+        bytes += chunk ? chunk.length || 0 : 0;
+      } catch { }
+    });
+    body.on('end', () => resolve(bytes));
+    body.on('error', (e) => reject(e));
+    try {
+      if (typeof body.resume === 'function') body.resume();
+    } catch { }
+  });
+};
+
 const installAdminRoutes = (app) => {
   app.post('/api/admin/login', rateLimit('admin_login', { max: 30, windowMs: 60 * 1000 }), (req, res) => {
     try {
@@ -134,6 +153,47 @@ const installAdminRoutes = (app) => {
     }
   });
 
+  app.post('/api/admin/hf/prewarm', rateLimit('admin_hf_prewarm', { max: 10, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      const body = req && req.body && typeof req.body === 'object' ? req.body : {};
+      const urlsRaw = Array.isArray(body.urls) ? body.urls : [];
+      const timeoutMsRaw = Number.parseInt(String(body.timeoutMs ?? ''), 10);
+      const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.min(timeoutMsRaw, 180000) : 120000;
+
+      const urls = urlsRaw
+        .map((u) => String(u || '').trim())
+        .filter(Boolean)
+        .slice(0, 30);
+
+      const selfBase = (() => {
+        const base = String(process.env.SELF_BASE_URL || '').trim();
+        if (/^https?:\/\//i.test(base)) return base.replace(/\/+$/, '');
+        const port = String(process.env.PORT || '8080').trim() || '8080';
+        return `http://127.0.0.1:${port}`;
+      })();
+
+      const items = [];
+      for (const raw of urls) {
+        const url = /^https?:\/\//i.test(raw)
+          ? raw
+          : `${selfBase}${raw.startsWith('/') ? raw : `/${raw}`}`;
+        try {
+          const resp = await fetchWithTimeout(url, { method: 'GET', redirect: 'follow' }, timeoutMs);
+          const bytes = await drainResponseBody(resp);
+          items.push({ url: raw, status: resp.status, ok: !!resp.ok, bytes });
+        } catch (e) {
+          items.push({ url: raw, status: 0, ok: false, error: String(e?.message || e) });
+        }
+      }
+
+      return res.json({ ok: true, total: items.length, items });
+    } catch (e) {
+      console.error('Error in POST /api/admin/hf/prewarm:', e);
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
+
   app.get('/api/admin/users', rateLimit('admin_users', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
     try {
       if (!assertAdmin(req, res)) return;
@@ -142,18 +202,64 @@ const installAdminRoutes = (app) => {
       const offset = clampInt(req.query.offset, 0, 2000000);
 
       const users = readUsersMap();
-      const list = Object.values(users)
-        .filter((u) => u && typeof u === 'object')
-        .map((u) => sanitizeUserProfile(u))
-        .map((u) => ({
-          userId: String(u?.id || '').trim(),
-          email: typeof u?.email === 'string' ? u.email : '',
-          username: typeof u?.username === 'string' ? u.username : '',
-          name: typeof u?.name === 'string' ? u.name : '',
-          createdAt: Number(u?.createdAt || 0) || 0,
-          lastSeen: Number(u?.lastSeen || 0) || 0,
-          visits: Number(u?.visits || 0) || 0
-        }))
+      const analyticsEvents = readAnalyticsEvents();
+      const lastSeenByUser = new Map();
+      const visitsByUser = new Map();
+      for (const evt of analyticsEvents) {
+        const userId = String(evt?.userId || '').trim();
+        if (!userId) continue;
+        const ts = Number(evt?.ts || 0) || 0;
+        if (ts > (lastSeenByUser.get(userId) || 0)) lastSeenByUser.set(userId, ts);
+        if (String(evt?.eventType || '').trim() === 'page_view') {
+          visitsByUser.set(userId, (visitsByUser.get(userId) || 0) + 1);
+        }
+      }
+
+      const chats = readJson(CHATS_FILE, {});
+      if (chats && typeof chats === 'object') {
+        for (const userId of Object.keys(chats)) {
+          const history = Array.isArray(chats[userId]) ? chats[userId] : [];
+          let maxTs = 0;
+          for (const msg of history) {
+            const ts = Number(msg?.ts || msg?.timestamp || 0) || 0;
+            if (ts > maxTs) maxTs = ts;
+          }
+          if (maxTs > (lastSeenByUser.get(userId) || 0)) lastSeenByUser.set(userId, maxTs);
+        }
+      }
+
+      const allUserIds = new Set();
+      for (const u of Object.values(users)) {
+        if (!u || typeof u !== 'object') continue;
+        const uid = String(u?.id || u?.userId || '').trim();
+        if (uid) allUserIds.add(uid);
+      }
+      for (const uid of lastSeenByUser.keys()) allUserIds.add(uid);
+      for (const uid of visitsByUser.keys()) allUserIds.add(uid);
+
+      const list = Array.from(allUserIds)
+        .map((userId) => {
+          const raw = users[userId];
+          const u = raw && typeof raw === 'object' ? sanitizeUserProfile(raw) : {};
+          const isGuest = userId.startsWith('guest_') || userId === 'guest';
+          const lastSeen = Number(u?.lastSeen || 0) || Number(lastSeenByUser.get(userId) || 0) || 0;
+          const visits = Number(u?.visits || 0) || Number(visitsByUser.get(userId) || 0) || 0;
+          const createdAt = Number(u?.createdAt || 0) || 0;
+          return {
+            userId,
+            email: typeof u?.email === 'string' ? u.email : '',
+            username: typeof u?.username === 'string' ? u.username : '',
+            name:
+              typeof u?.name === 'string' && u.name.trim()
+                ? u.name
+                : isGuest
+                  ? 'Guest'
+                  : '',
+            createdAt,
+            lastSeen,
+            visits
+          };
+        })
         .filter((u) => !!u.userId)
         .filter((u) => {
           if (!q) return true;
@@ -164,7 +270,11 @@ const installAdminRoutes = (app) => {
             u.name.toLowerCase().includes(q)
           );
         })
-        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        .sort((a, b) => {
+          const aRank = a.lastSeen || a.createdAt || 0;
+          const bRank = b.lastSeen || b.createdAt || 0;
+          return bRank - aRank;
+        });
 
       const total = list.length;
       const page = list.slice(offset, offset + limit);
@@ -370,6 +480,75 @@ const installAdminRoutes = (app) => {
     }
   });
 
+  app.get('/api/admin/audit/history', rateLimit('admin_audit_history', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      const userId = String(req.query.userId || '').trim();
+      const biz = normalizeReasonKey(req.query.biz || req.query.purpose || '');
+      const kind = normalizeReasonKey(req.query.kind || '');
+      const statusFilter = normalizeReasonKey(req.query.status || '');
+      const limit = clampInt(req.query.limit, 20, 2000);
+      const offset = clampInt(req.query.offset, 0, 2000000);
+
+      const users = readUsersMap();
+      const getUserBrief = (uid) => {
+        const safeId = String(uid || '').trim();
+        const u = users && typeof users === 'object' ? users[safeId] : null;
+        const username = typeof u?.username === 'string' ? u.username : safeId.startsWith('guest_') ? safeId : '';
+        const email = typeof u?.email === 'string' ? u.email : '';
+        return { username, email };
+      };
+
+      let items = [];
+      const pullFromUser = (uid) => {
+        const mem = readUserMemory(uid, {});
+        const raw = Array.isArray(mem?.audit_history) ? mem.audit_history : [];
+        if (!raw.length) return;
+        const brief = getUserBrief(uid);
+        for (const it of raw) {
+          if (!it || typeof it !== 'object') continue;
+          const entryBiz = normalizeReasonKey(it.biz || it.purpose || it.trigger || '');
+          const entryKind = normalizeReasonKey(it.kind || '');
+          const entryStatus = normalizeReasonKey(it.status || '');
+          if (biz && entryBiz !== biz) continue;
+          if (kind && entryKind !== kind) continue;
+          if (statusFilter && entryStatus !== statusFilter) continue;
+          items.push({ ...it, userId: uid, ...brief });
+        }
+      };
+
+      if (userId) {
+        pullFromUser(userId);
+      } else {
+        const allIds = new Set(
+          Object.values(users)
+            .map((u) => String(u?.id || '').trim())
+            .filter(Boolean)
+        );
+        try {
+          const files = fs.readdirSync(MEMORY_DIR, { withFileTypes: true });
+          for (const file of files) {
+            if (!file.isFile()) continue;
+            const name = String(file.name || '');
+            if (!name.startsWith('user_') || !name.endsWith('.json')) continue;
+            const uid = name.slice(5, -5).trim();
+            if (uid) allIds.add(uid);
+          }
+        } catch { }
+
+        for (const uid of allIds) pullFromUser(uid);
+      }
+
+      items.sort((a, b) => (Number(b.ts || 0) || 0) - (Number(a.ts || 0) || 0));
+      const total = items.length;
+      const page = items.slice(offset, offset + limit);
+      return res.json({ ok: true, total, items: page });
+    } catch (e) {
+      console.error('Error in GET /api/admin/audit/history:', e);
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
+
   app.get('/api/admin/events', rateLimit('admin_events', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
     try {
       if (!assertAdmin(req, res)) return;
@@ -391,6 +570,17 @@ const installAdminRoutes = (app) => {
       return res.json({ ok: true, total, items: page });
     } catch (e) {
       console.error('Error in GET /api/admin/events:', e);
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
+
+  app.get('/api/admin/ratelimit/stats', rateLimit('admin_ratelimit_stats', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      const stats = typeof getRateLimitStats === 'function' ? getRateLimitStats() : null;
+      return res.json({ ok: true, ...(stats || {}) });
+    } catch (e) {
+      console.error('Error in GET /api/admin/ratelimit/stats:', e);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   });

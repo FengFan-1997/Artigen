@@ -923,6 +923,14 @@
                     <div v-for="it in outputItems" :key="it.url" class="batch-item">
                       <div class="batch-name">{{ it.name }}</div>
                       <div class="batch-size">{{ formatBytes(it.size) }}</div>
+                      <button
+                        v-if="/\\.(png|jpe?g|webp|gif|svg|ico|pdf)$/i.test(it.name)"
+                        class="btn ghost"
+                        type="button"
+                        @click="openOutputPreview(it.url)"
+                      >
+                        {{ ui.preview }}
+                      </button>
                       <button class="btn ghost" type="button" @click="downloadOutputItem(it)">
                         {{ ui.download }}
                       </button>

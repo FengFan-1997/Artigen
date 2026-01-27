@@ -15913,6 +15913,102 @@
       "userId": "guest_93arokflt",
       "ip": "127.0.0.1",
       "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_smoke_1",
+      "ts": 1769443401836,
+      "eventType": "smoke",
+      "payload": {
+        "a": 1
+      },
+      "path": "/smoke",
+      "location": "http://localhost/smoke",
+      "referrer": "",
+      "userId": "guest_audit_smoke",
+      "requestId": "evt_smoke_1",
+      "sessionId": "sess_smoke_1",
+      "projectId": "proj_smoke_1",
+      "requestSource": "smoke_event",
+      "pageContext": "{\"path\":\"/smoke\",\"title\":\"smoke\"}",
+      "ip": "127.0.0.1",
+      "ua": ""
+    },
+    {
+      "id": "evt_151175eb4190480e8a039b3e628c98bd",
+      "ts": 1769509842538,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/tools"
+      },
+      "path": "/artigen/tools?utm_source=google&utm_medium=search",
+      "location": "https://artigen.example.com/artigen/tools?utm_source=google&utm_medium=search",
+      "referrer": "https://www.google.com/search?q=artigen",
+      "userId": "guest_test",
+      "trafficSource": "search",
+      "trafficRefHost": "www.google.com",
+      "trafficSearchEngine": "www.google.com",
+      "trafficUtmMedium": "search",
+      "trafficUtmSource": "google",
+      "requestId": "evt_151175eb4190480e8a039b3e628c98bd",
+      "sessionId": "sess_test",
+      "projectId": "proj_test",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456"
+    },
+    {
+      "id": "evt_a37a7da1aa64425c868604bbcd7ac5db",
+      "ts": 1769510691231,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/tools"
+      },
+      "path": "/artigen/tools",
+      "location": "https://artigen.example.com/artigen/tools",
+      "referrer": "https://example.com/blog/post1",
+      "userId": "guest_test",
+      "trafficSource": "link",
+      "trafficRefHost": "example.com",
+      "requestId": "evt_a37a7da1aa64425c868604bbcd7ac5db",
+      "sessionId": "sess_test",
+      "projectId": "proj_test",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456"
+    },
+    {
+      "id": "evt_7141d99dda0446babc43537a1ada003e",
+      "ts": 1769510693353,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/tools"
+      },
+      "path": "/artigen/tools",
+      "location": "https://artigen.example.com/artigen/tools",
+      "referrer": "",
+      "userId": "guest_test",
+      "trafficSource": "organic",
+      "requestId": "evt_7141d99dda0446babc43537a1ada003e",
+      "sessionId": "sess_test",
+      "projectId": "proj_test",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.6456"
+    },
+    {
+      "id": "evt_mkwk07vs_45dfa674",
+      "ts": 1769515777000,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen/tools",
+        "title": "tools"
+      },
+      "path": "/artigen/tools",
+      "location": "http://localhost:5173/artigen/tools",
+      "referrer": "https://www.google.com/search?q=test",
+      "userId": "",
+      "trafficSource": "search",
+      "trafficRefHost": "www.google.com",
+      "trafficSearchEngine": "www.google.com",
+      "ip": "127.0.0.1",
+      "ua": "node"
     }
   ]
 }

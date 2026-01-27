@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const dns = require('dns');
 const { FILES_DIR, readUserMemory, writeUserMemory } = require('../utils/storage');
 const { ensureUserMemoryShape } = require('./memory-utils');
 const { callTextGenerate, callGeminiGenerate } = require('./ai-providers');
@@ -145,8 +146,11 @@ const persistImageRefForUser = async (input) => {
   const userId = String(input?.userId || '').trim();
   const rawUrl = String(input?.url || '').trim();
   const prefix = String(input?.prefix || 'img').trim() || 'img';
-  if (!userId || !rawUrl) return '';
-  if (rawUrl.startsWith('/files/')) return rawUrl;
+  const wantMeta = !!(input && (input.withMeta || input.returnMeta || input.meta));
+  const ok = (url) => (wantMeta ? { ok: true, url } : url);
+  const fail = (error) => (wantMeta ? { ok: false, error: String(error || 'PERSIST_FAILED') } : '');
+  if (!userId || !rawUrl) return fail('INVALID_INPUT');
+  if (rawUrl.startsWith('/files/')) return ok(rawUrl);
 
   const inferMimeFromUrl = (u) => {
     try {
@@ -164,38 +168,199 @@ const persistImageRefForUser = async (input) => {
   };
 
   const parsed = tryParseDataUrl(rawUrl);
-  if (parsed) return writeUserImageFile({ userId, buf: parsed.buf, mime: parsed.mime, prefix });
+  if (parsed) {
+    const saved = writeUserImageFile({ userId, buf: parsed.buf, mime: parsed.mime, prefix });
+    return saved ? ok(saved) : fail('WRITE_FAILED');
+  }
 
   if (/^https?:\/\//i.test(rawUrl)) {
     try {
-      const upstream = await fetchWithTimeout(
-        rawUrl,
-        {
-          method: 'GET',
-          redirect: 'follow',
-          headers: {
-            Accept: 'image/*,*/*;q=0.8',
-            'User-Agent': 'Mozilla/5.0'
+      const maxBytes = 25 * 1024 * 1024;
+
+      const dnsLookupAll = async (hostname, timeoutMs = 1200) => {
+        const h = String(hostname || '').trim();
+        if (!h) throw new Error('INVALID_HOST');
+        const lookup = dns.promises.lookup(h, { all: true, verbatim: true });
+        const timer = new Promise((_, reject) =>
+          setTimeout(() => reject(Object.assign(new Error('DNS_TIMEOUT'), { code: 'DNS_TIMEOUT' })), timeoutMs)
+        );
+        return await Promise.race([lookup, timer]);
+      };
+
+      const isPrivateHost = (host) => {
+        let h = String(host || '').trim().toLowerCase();
+        if (!h) return true;
+        h = h.replace(/\.+$/g, '');
+        if (h === 'localhost' || h === 'localhost.localdomain') return true;
+        if (h.endsWith('.local') || h.endsWith('.localdomain') || h.endsWith('.lan') || h.endsWith('.internal'))
+          return true;
+        if (h === '::1' || h === '[::1]') return true;
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) {
+          const parts = h.split('.').map((x) => Number.parseInt(x, 10));
+          if (parts.some((x) => !Number.isFinite(x) || x < 0 || x > 255)) return true;
+          const [a, b] = parts;
+          if (a === 10) return true;
+          if (a === 127) return true;
+          if (a === 0) return true;
+          if (a === 169 && b === 254) return true;
+          if (a === 192 && b === 168) return true;
+          if (a === 172 && b >= 16 && b <= 31) return true;
+          return false;
+        }
+        if (h.includes(':')) {
+          if (h.startsWith('::') || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true;
+        }
+        return false;
+      };
+
+      const isIpHost = (h) => {
+        const host = String(h || '').trim();
+        if (!host) return false;
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true;
+        return host.includes(':');
+      };
+
+      const parseAllowedHosts = () => {
+        const raw = String(process.env.PERSIST_IMAGE_ALLOWED_HOSTS || '').trim();
+        if (!raw) return [];
+        return raw
+          .split(',')
+          .map((x) => String(x || '').trim().toLowerCase())
+          .map((x) => x.replace(/\.+$/g, ''))
+          .filter(Boolean);
+      };
+
+      const allowedHosts = parseAllowedHosts();
+      const isAllowedHost = (hostname) => {
+        if (!allowedHosts.length) return true;
+        const h = String(hostname || '').trim().toLowerCase().replace(/\.+$/g, '');
+        if (!h) return false;
+        for (const rule of allowedHosts) {
+          if (!rule) continue;
+          if (rule.startsWith('.')) {
+            if (h === rule.slice(1) || h.endsWith(rule)) return true;
+          } else if (h === rule) return true;
+        }
+        return false;
+      };
+
+      const readUpstreamBodyLimited = async (upstream, capBytes) => {
+        const cap = Math.max(1, Number(capBytes) || 1);
+        const body = upstream?.body;
+        if (!body || typeof body.on !== 'function') {
+          const buf = Buffer.from(await upstream.arrayBuffer());
+          if (buf.length > cap) throw Object.assign(new Error('TOO_LARGE'), { code: 'TOO_LARGE' });
+          return buf;
+        }
+        const chunks = [];
+        let total = 0;
+        for await (const chunk of body) {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          total += buf.length;
+          if (total > cap) throw Object.assign(new Error('TOO_LARGE'), { code: 'TOO_LARGE' });
+          chunks.push(buf);
+        }
+        return Buffer.concat(chunks, total);
+      };
+
+      const validateRemoteUrl = async (u) => {
+        let parsed = null;
+        try {
+          parsed = new URL(u);
+        } catch {
+          return { ok: false, url: '' };
+        }
+        const proto = String(parsed.protocol || '').toLowerCase();
+        if (proto !== 'http:' && proto !== 'https:') return { ok: false, url: '' };
+        if (parsed.username || parsed.password) return { ok: false, url: '' };
+        const hostname = String(parsed.hostname || '').trim();
+        if (!hostname || isPrivateHost(hostname) || !isAllowedHost(hostname)) return { ok: false, url: '' };
+        if (parsed.port) {
+          const p = Number.parseInt(String(parsed.port || ''), 10);
+          if (!(p === 80 || p === 443)) return { ok: false, url: '' };
+        }
+        if (!isIpHost(hostname)) {
+          if (!hostname.includes('.')) return { ok: false, url: '' };
+          let addrs = [];
+          try {
+            addrs = await dnsLookupAll(hostname);
+          } catch {
+            addrs = [];
           }
-        },
-        20000
-      );
-      if (!upstream.ok) return '';
-      const ctRaw = String(upstream.headers.get('content-type') || '').trim();
-      const inferred = inferMimeFromUrl(rawUrl);
-      const ct = /^image\//i.test(ctRaw) ? ctRaw : inferred;
-      if (!/^image\//i.test(ct)) return '';
-      const len = Number.parseInt(String(upstream.headers.get('content-length') || ''), 10);
-      if (Number.isFinite(len) && len > 25 * 1024 * 1024) return '';
-      const ab = await upstream.arrayBuffer();
-      const buf = Buffer.from(ab);
-      if (!buf.length || buf.length > 25 * 1024 * 1024) return '';
-      return writeUserImageFile({ userId, buf, mime: ct, prefix });
-    } catch {
-      return '';
+          if (!Array.isArray(addrs) || !addrs.length) return { ok: false, url: '' };
+          for (const a of addrs) {
+            const ip = String(a?.address || '').trim();
+            if (!ip) return { ok: false, url: '' };
+            if (isPrivateHost(ip)) return { ok: false, url: '' };
+          }
+        }
+        return { ok: true, url: parsed.toString() };
+      };
+
+      let currentUrl = rawUrl;
+      for (let i = 0; i < 5; i += 1) {
+        const checked = await validateRemoteUrl(currentUrl);
+        if (!checked.ok) return fail('URL_BLOCKED');
+        currentUrl = checked.url;
+        const upstream = await fetchWithTimeout(
+          currentUrl,
+          {
+            method: 'GET',
+            redirect: 'manual',
+            headers: {
+              Accept: 'image/*,*/*;q=0.8',
+              'User-Agent': 'Mozilla/5.0'
+            }
+          },
+          20000
+        );
+
+        const status = Number(upstream?.status || 0) || 0;
+        if (status >= 300 && status < 400) {
+          const loc = String(upstream.headers.get('location') || '').trim();
+          if (!loc) return fail('REDIRECT_NO_LOCATION');
+          try {
+            try {
+              upstream.body?.cancel?.();
+            } catch { }
+            try {
+              upstream.body?.destroy?.();
+            } catch { }
+            currentUrl = new URL(loc, currentUrl).toString();
+          } catch {
+            return fail('REDIRECT_INVALID');
+          }
+          continue;
+        }
+
+        if (!upstream.ok) {
+          try {
+            upstream.body?.cancel?.();
+          } catch { }
+          try {
+            upstream.body?.destroy?.();
+          } catch { }
+          return fail(`HTTP_${status || 0}`);
+        }
+        const ctRaw = String(upstream.headers.get('content-type') || '').trim();
+        const inferred = inferMimeFromUrl(currentUrl);
+        const ct = /^image\//i.test(ctRaw) ? ctRaw : inferred;
+        if (!/^image\//i.test(ct)) return fail('NON_IMAGE');
+        const len = Number.parseInt(String(upstream.headers.get('content-length') || ''), 10);
+        if (Number.isFinite(len) && len > maxBytes) return fail('TOO_LARGE');
+        const buf = await readUpstreamBodyLimited(upstream, maxBytes);
+        if (!buf.length || buf.length > maxBytes) return fail('EMPTY_BODY');
+        const saved = writeUserImageFile({ userId, buf, mime: ct, prefix });
+        return saved ? ok(saved) : fail('WRITE_FAILED');
+      }
+      return fail('TOO_MANY_REDIRECTS');
+    } catch (e) {
+      const code = typeof e?.code === 'string' && e.code.trim() ? e.code.trim() : '';
+      const msg = typeof e?.message === 'string' && e.message.trim() ? e.message.trim() : '';
+      return fail(code || msg || 'FETCH_FAILED');
     }
   }
-  return '';
+  return fail('UNSUPPORTED_URL');
 };
 
 const persistGenerateImageInputForUser = (input) => {
@@ -231,6 +396,31 @@ const appendUserImageHistory = (input) => {
     const list = Array.isArray(mem.image_history) ? mem.image_history : [];
     const next = [entry, ...list].slice(0, IMAGE_HISTORY_MAX_ITEMS);
     mem.image_history = next;
+    mem.meta = mem.meta && typeof mem.meta === 'object' ? mem.meta : {};
+    mem.meta.updatedAt = Date.now();
+    writeUserMemory(userId, mem);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const AUDIT_HISTORY_MAX_ITEMS = (() => {
+  const v = Number.parseInt(String(process.env.AUDIT_HISTORY_MAX_ITEMS || ''), 10);
+  return Number.isFinite(v) && v > 0 ? v : 400;
+})();
+
+const appendUserAuditHistory = (input) => {
+  try {
+    const userId = String(input?.userId || '').trim();
+    if (!userId) return false;
+    const entry = input?.entry && typeof input.entry === 'object' ? input.entry : null;
+    if (!entry) return false;
+
+    const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+    const list = Array.isArray(mem.audit_history) ? mem.audit_history : [];
+    const next = [entry, ...list].slice(0, AUDIT_HISTORY_MAX_ITEMS);
+    mem.audit_history = next;
     mem.meta = mem.meta && typeof mem.meta === 'object' ? mem.meta : {};
     mem.meta.updatedAt = Date.now();
     writeUserMemory(userId, mem);
@@ -390,6 +580,7 @@ module.exports = {
   persistImageRefForUser,
   persistGenerateImageInputForUser,
   appendUserImageHistory,
+  appendUserAuditHistory,
   appendUserMemoryItems,
   buildLongMemoryText,
   toImageHistoryRef,

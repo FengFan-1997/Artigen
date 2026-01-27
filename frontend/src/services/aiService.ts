@@ -1,5 +1,12 @@
 import { buildApiUrl } from '../utils/api';
-import { getAuthToken, getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import { getPageContext } from '@/agent/utils/pageContext';
+import {
+  getAuthToken,
+  getCurrentUserId,
+  getOrCreateProjectId,
+  getOrCreateSessionId,
+  isLocalLoggedIn
+} from '@/login/session';
 
 const API_URL = buildApiUrl('/api/generate');
 const FIXED_TEXT_MODEL = 'Qwen/Qwen3-8B';
@@ -53,6 +60,10 @@ export const generateContent = async (prompt: string): Promise<AIResponse> => {
         prompt,
         userId,
         requestId,
+        sessionId: getOrCreateSessionId(),
+        projectId: getOrCreateProjectId(),
+        pageContext: getPageContext(),
+        requestSource: 'site_generate_content',
         model: FIXED_TEXT_MODEL
       })
     });

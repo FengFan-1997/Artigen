@@ -3,6 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const dns = require('dns');
 require('dotenv').config({ path: path.resolve(__dirname, '.env'), override: true });
 const { fetch, fetchWithTimeout } = require('./lib/fetch-utils');
 
@@ -32,7 +33,7 @@ const { installHfRoutes } = require('./routes/hf');
 const { installAuthRoutes } = require('./routes/auth');
 const { installAdminRoutes } = require('./routes/admin');
 
-const { assertAdmin, sanitizeUserProfile, resolveAuthUser, parseBearerToken, normalizeEmail, canUseTestLoginCode, readUsersMap, assertAuthUserMatches } = require('./lib/auth-utils');
+const { assertAdmin, sanitizeUserProfile, resolveAuthUser, parseBearerToken, verifyAdminToken, normalizeEmail, canUseTestLoginCode, readUsersMap, assertAuthUserMatches } = require('./lib/auth-utils');
 const { readApiKeysMap, createApiKeyForUser, resolveApiKeyUser, maskApiKey } = require('./lib/api-key-utils');
 const {
   NODE_ENV, isProd, API_KEY, SILICONFLOW_API_KEY, SILICONFLOW_API_BASE, SILICONFLOW_MODEL,
@@ -45,7 +46,7 @@ const {
   callGeminiGenerate, callSiliconFlowChat, callSiliconFlowImageGenerate, callTextGenerate, callGeminiEmbed
 } = require('./lib/ai-providers');
 const {
-  proxyHuggingFace, proxyLive2DCubismCore, getHfCacheUsage, hfProxyBaseHealth
+  proxyHuggingFace, proxyLive2DCubismCore, getHfCacheUsage, getHfCacheStats, hfProxyBaseHealth
 } = require('./lib/hf-proxy');
 const {
   buildModeDocIndex, MODEDOC_ROOT
@@ -54,7 +55,14 @@ const {
   buildOfflineReply, extractRagKeywords, scoreRagKeywordHit, stripControlText, analyzeIntent, buildChatPrompt
 } = require('./lib/intent');
 const {
-  persistImageRefForUser, persistGenerateImageInputForUser, appendUserImageHistory, appendUserMemoryItems, buildLongMemoryText, toImageHistoryRef, summarizeHistory
+  persistImageRefForUser,
+  persistGenerateImageInputForUser,
+  appendUserImageHistory,
+  appendUserAuditHistory,
+  appendUserMemoryItems,
+  buildLongMemoryText,
+  toImageHistoryRef,
+  summarizeHistory
 } = require('./lib/memory-manager');
 const { ensureUserMemoryShape } = require('./lib/memory-utils');
 const {
@@ -132,12 +140,7 @@ const shouldLogRequests = (() => {
 app.use((req, res, next) => {
   if (!shouldLogRequests) return next();
   const startedAt = process.hrtime.bigint();
-  const ip = (() => {
-    const xf = req.headers['x-forwarded-for'];
-    if (typeof xf === 'string' && xf.trim()) return xf.split(',')[0].trim();
-    if (Array.isArray(xf) && xf.length) return String(xf[0] || '').trim();
-    return typeof req.ip === 'string' ? req.ip.trim() : '';
-  })();
+  const ip = getClientIp(req);
   res.on('finish', () => {
     const durMs = Number((process.hrtime.bigint() - startedAt) / 1000000n);
     const status = typeof res.statusCode === 'number' ? res.statusCode : 0;
@@ -180,9 +183,34 @@ if (corsOrigins === '*') {
 } else {
   if (!isProd) app.use(cors());
 }
-const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '25mb').trim() || '25mb';
+const JSON_BODY_LIMIT =
+  String(process.env.JSON_BODY_LIMIT || (isProd ? '10mb' : '25mb')).trim() || (isProd ? '10mb' : '25mb');
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
+
+const resolveAdminForFiles = (req) => {
+  const bearer = typeof parseBearerToken === 'function' ? parseBearerToken(req) : '';
+  if (bearer) {
+    const v = typeof verifyAdminToken === 'function' ? verifyAdminToken(bearer) : { ok: false, error: 'INVALID_TOKEN' };
+    if (v && v.ok) return { ok: true, status: 200 };
+    if (String(v?.error || '') === 'EXPIRED') return { ok: false, status: 401 };
+    return { ok: false, status: 403 };
+  }
+
+  const expected = String(process.env.ADMIN_KEY || '').trim();
+  if (!expected) return { ok: false, status: 403 };
+  const got = typeof req?.headers?.['x-admin-key'] === 'string' ? String(req.headers['x-admin-key']).trim() : '';
+  if (!got) return { ok: false, status: 401 };
+  try {
+    const a = Buffer.from(got, 'utf8');
+    const b = Buffer.from(expected, 'utf8');
+    if (a.length !== b.length) return { ok: false, status: 403 };
+    if (!crypto.timingSafeEqual(a, b)) return { ok: false, status: 403 };
+  } catch {
+    return { ok: false, status: 403 };
+  }
+  return { ok: true, status: 200 };
+};
 
 const serveLocalFileFromFilesDir = (req, res, next) => {
   if (!req.path || typeof req.path !== 'string') return next();
@@ -202,6 +230,19 @@ const serveLocalFileFromFilesDir = (req, res, next) => {
   if (!parts.length) return res.status(404).end();
   for (const seg of parts) {
     if (seg === '.' || seg === '..') return res.status(400).end();
+  }
+  if (parts.length < 2) return res.status(404).end();
+
+  const userSegment = String(parts[0] || '').trim();
+  if (!userSegment) return res.status(404).end();
+  const isGuestFile = userSegment.startsWith('guest_');
+  if (!isGuestFile) {
+    const resolved = typeof resolveAuthUser === 'function' ? resolveAuthUser(req) : { ok: false, status: 401 };
+    const isOwner = resolved?.ok && String(resolved.userId || '').trim() === userSegment;
+    if (!isOwner) {
+      const admin = resolveAdminForFiles(req);
+      if (!admin?.ok) return res.status(admin?.status || 401).end();
+    }
   }
 
   const root = path.resolve(FILES_DIR);
@@ -228,7 +269,8 @@ const serveLocalFileFromFilesDir = (req, res, next) => {
   }
   if (!st || !st.isFile()) return res.status(404).end();
 
-  res.setHeader('Cache-Control', 'public, max-age=2592000');
+  res.setHeader('Cache-Control', isGuestFile ? 'public, max-age=2592000' : 'private, max-age=2592000');
+  if (!isGuestFile) res.setHeader('Vary', 'Authorization, Cookie');
   return res.sendFile(full);
 };
 
@@ -285,6 +327,115 @@ const isPrivateHost = (host) => {
   return false;
 };
 
+const dnsLookupAll = async (hostname, timeoutMs = 1200) => {
+  const h = String(hostname || '').trim();
+  if (!h) throw new Error('INVALID_HOST');
+  const lookup = dns.promises.lookup(h, { all: true, verbatim: true });
+  const timer = new Promise((_, reject) =>
+    setTimeout(() => reject(Object.assign(new Error('DNS_TIMEOUT'), { code: 'DNS_TIMEOUT' })), timeoutMs)
+  );
+  return await Promise.race([lookup, timer]);
+};
+
+const isPrivateResolvedHost = async (hostname) => {
+  const h = String(hostname || '').trim();
+  if (!h) return true;
+  if (isPrivateHost(h)) return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(':')) return false;
+  let addrs = [];
+  try {
+    addrs = await dnsLookupAll(h);
+  } catch {
+    return true;
+  }
+  for (const it of addrs) {
+    const addr = String(it?.address || '').trim();
+    if (!addr) continue;
+    if (isPrivateHost(addr)) return true;
+  }
+  return false;
+};
+
+const safeRedirectUrl = (fromUrl, location) => {
+  try {
+    const next = new URL(String(location || '').trim(), fromUrl);
+    return next.toString();
+  } catch {
+    return '';
+  }
+};
+
+const fetchWithSafeRedirects = async (startUrl, opts, timeoutMs) => {
+  let cur = String(startUrl || '').trim();
+  const maxRedirects = 5;
+  for (let i = 0; i <= maxRedirects; i += 1) {
+    let parsed = null;
+    try {
+      parsed = new URL(cur);
+    } catch {
+      return { ok: false, error: 'INVALID_URL', res: null, url: cur };
+    }
+    const proto = String(parsed.protocol || '').toLowerCase();
+    if (proto !== 'http:' && proto !== 'https:')
+      return { ok: false, error: 'INVALID_PROTOCOL', res: null, url: cur };
+    if (parsed.username || parsed.password) return { ok: false, error: 'INVALID_URL', res: null, url: cur };
+    const hostname = String(parsed.hostname || '').trim();
+    if (!hostname) return { ok: false, error: 'INVALID_URL', res: null, url: cur };
+    if (isPrivateHost(hostname)) return { ok: false, error: 'FORBIDDEN_HOST', res: null, url: cur };
+    if (await isPrivateResolvedHost(hostname)) return { ok: false, error: 'FORBIDDEN_HOST', res: null, url: cur };
+
+    const res = await fetchWithTimeout(cur, { ...opts, redirect: 'manual' }, timeoutMs);
+    const status = Number(res?.status || 0) || 0;
+    if ([301, 302, 303, 307, 308].includes(status)) {
+      const loc = res.headers.get('location');
+      try {
+        res.body?.cancel?.();
+      } catch { }
+      try {
+        res.body?.destroy?.();
+      } catch { }
+      const next = safeRedirectUrl(cur, loc);
+      if (!next) return { ok: false, error: 'UPSTREAM_REDIRECT', res: null, url: cur };
+      cur = next;
+      continue;
+    }
+    return { ok: true, res, url: cur };
+  }
+  return { ok: false, error: 'TOO_MANY_REDIRECTS', res: null, url: cur };
+};
+
+const readUpstreamBodyLimited = async (upstream, maxBytes) => {
+  const cap = Math.max(1, Number(maxBytes) || 1);
+  const body = upstream?.body;
+  if (!body || typeof body.on !== 'function') {
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    if (buf.length > cap) throw Object.assign(new Error('TOO_LARGE'), { code: 'TOO_LARGE' });
+    return buf;
+  }
+
+  return await new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    const onData = (chunk) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.length;
+      if (total > cap) {
+        try {
+          body.destroy();
+        } catch { }
+        reject(Object.assign(new Error('TOO_LARGE'), { code: 'TOO_LARGE' }));
+        return;
+      }
+      chunks.push(buf);
+    };
+    const onEnd = () => resolve(Buffer.concat(chunks, total));
+    const onErr = (e) => reject(e);
+    body.on('data', onData);
+    body.on('end', onEnd);
+    body.on('error', onErr);
+  });
+};
+
 const inferImageContentType = (pathname) => {
   const raw = String(pathname || '').trim().toLowerCase();
   const clean = raw.split('?')[0].split('#')[0];
@@ -320,27 +471,22 @@ const sniffImageContentType = (buf) => {
   return '';
 };
 
-app.get('/api/proxy/image', async (req, res) => {
+app.get('/api/proxy/image', rateLimit('proxy_image', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
   try {
     const raw = typeof req.query.url === 'string' ? req.query.url : '';
     const target = String(raw || '').trim();
     if (!target) return res.status(400).json({ error: 'MISSING_URL' });
-    let parsed = null;
+    let parsed0 = null;
     try {
-      parsed = new URL(target);
+      parsed0 = new URL(target);
     } catch {
       return res.status(400).json({ error: 'INVALID_URL' });
     }
-    const proto = String(parsed.protocol || '').toLowerCase();
-    if (proto !== 'http:' && proto !== 'https:') return res.status(400).json({ error: 'INVALID_PROTOCOL' });
-    const hostname = String(parsed.hostname || '').trim();
-    if (isPrivateHost(hostname)) return res.status(403).json({ error: 'FORBIDDEN_HOST' });
 
-    const upstream = await fetchWithTimeout(
+    const safe = await fetchWithSafeRedirects(
       target,
       {
         method: 'GET',
-        redirect: 'follow',
         headers: {
           Accept: 'image/*,*/*;q=0.8',
           'User-Agent': 'Mozilla/5.0'
@@ -348,7 +494,21 @@ app.get('/api/proxy/image', async (req, res) => {
       },
       20000
     );
+    if (!safe.ok || !safe.res) {
+      const err = String(safe.error || '').trim();
+      const status = err === 'FORBIDDEN_HOST' ? 403 : err === 'INVALID_PROTOCOL' || err === 'INVALID_URL' ? 400 : 502;
+      return res.status(status).json({ error: err || 'PROXY_FAILED' });
+    }
+    const upstream = safe.res;
     if (!upstream.ok) return res.status(502).json({ error: `UPSTREAM_${upstream.status || 502}` });
+
+    const parsed = (() => {
+      try {
+        return new URL(String(upstream.url || safe.url || target));
+      } catch {
+        return parsed0;
+      }
+    })();
 
     const ct = String(upstream.headers.get('content-type') || '').trim();
     const ctLower = ct.toLowerCase();
@@ -358,10 +518,18 @@ app.get('/api/proxy/image', async (req, res) => {
       finalType = inferImageContentType(parsed.pathname || '');
     }
     const len = Number.parseInt(String(upstream.headers.get('content-length') || ''), 10);
-    if (Number.isFinite(len) && len > 25 * 1024 * 1024) return res.status(413).json({ error: 'TOO_LARGE' });
+    const maxBytes = 25 * 1024 * 1024;
+    if (Number.isFinite(len) && len > maxBytes) return res.status(413).json({ error: 'TOO_LARGE' });
 
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    if (!buf.length || buf.length > 25 * 1024 * 1024) return res.status(413).json({ error: 'TOO_LARGE' });
+    let buf = null;
+    try {
+      buf = await readUpstreamBodyLimited(upstream, maxBytes);
+    } catch (e) {
+      const code = String(e?.code || e?.message || '').trim();
+      if (code === 'TOO_LARGE') return res.status(413).json({ error: 'TOO_LARGE' });
+      return res.status(502).json({ error: 'PROXY_FAILED' });
+    }
+    if (!buf || !buf.length) return res.status(502).json({ error: 'PROXY_FAILED' });
 
     if (!finalType) finalType = sniffImageContentType(buf);
     if (!finalType) return res.status(415).json({ error: 'NOT_IMAGE' });
@@ -375,7 +543,7 @@ app.get('/api/proxy/image', async (req, res) => {
   }
 });
 
-app.get('/api/proxy/google-gsi', async (req, res) => {
+app.get('/api/proxy/google-gsi', rateLimit('proxy_google_gsi', { max: 120, windowMs: 60 * 1000 }), async (req, res) => {
   try {
     const upstream = await fetchWithTimeout(
       'https://accounts.google.com/gsi/client',
@@ -468,7 +636,7 @@ const ledger = createLedger({
   getClientIp
 });
 
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', rateLimit('chat', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
   const body = req.body || {};
   const requestId = String(body.requestId || res.locals.requestId || '').trim();
   const rawMessage = String(body.message || '').trim();
@@ -477,6 +645,8 @@ app.post('/api/chat', async (req, res) => {
     normalizeUserId(body.userId) ||
     normalizeUserId(agentContext?.user?.id) ||
     `guest_${Date.now().toString(36)}`;
+  const sessionId = ledger.sanitizeLedgerId(body.sessionId);
+  const projectId = ledger.sanitizeLedgerId(body.projectId);
 
   if (!rawMessage) return res.status(400).json({ error: 'EMPTY_MESSAGE', requestId });
   if (userId && !userId.startsWith('guest_')) {
@@ -508,6 +678,7 @@ app.post('/api/chat', async (req, res) => {
 
   const projectKnowledge = String(body.projectKnowledge || '').trim();
   const pageContextText = trimPromptText(stringifyPageContext(body.pageContext), 1600);
+  const requestSource = String(body.requestSource || '').trim().slice(0, 160);
 
   let ragText = '';
   let ragMeta = null;
@@ -659,6 +830,8 @@ app.post('/api/chat', async (req, res) => {
       requestId: requestId || res.locals.requestId || `chat_${now.toString(36)}`,
       ts: now,
       userId,
+      ...(sessionId ? { sessionId } : {}),
+      ...(projectId ? { projectId } : {}),
       trigger: typeof intent?.kind === 'string' ? intent.kind : 'chat',
       provider: String(result?.provider || '').trim() || 'offline',
       model: String(result?.model || '').trim(),
@@ -668,6 +841,7 @@ app.post('/api/chat', async (req, res) => {
       tokensTotal: Number(usage?.totalTokens || 0) || 0,
       rag: ragMeta || undefined,
       ragUsed,
+      ...(requestSource ? { requestSource } : {}),
       status,
       durationMs: Date.now() - startedAt,
       ip: getClientIp(req),
@@ -677,10 +851,42 @@ app.post('/api/chat', async (req, res) => {
     ledger.upsertUsageLedgerItem({ ...ledgerItem, creditsDelta });
   } catch { }
 
+  try {
+    if (typeof appendUserAuditHistory === 'function' && userId) {
+      const usage = result?.usage || null;
+      const entry = {
+        id: requestId || res.locals.requestId || `chat_${now.toString(36)}`,
+        ts: now,
+        kind: 'chat',
+        biz: typeof intent?.kind === 'string' ? intent.kind : 'chat',
+        provider: String(result?.provider || '').trim() || 'offline',
+        model: String(result?.model || '').trim(),
+        usedUrl: String(result?.usedUrl || '').trim() || undefined,
+        tokensIn: Number(usage?.promptTokens || 0) || 0,
+        tokensOut: Number(usage?.completionTokens || 0) || 0,
+        tokensTotal: Number(usage?.totalTokens || 0) || 0,
+        ragUsed: !!ragUsed,
+        rag: ragMeta || undefined,
+        status,
+        durationMs: Math.max(0, Date.now() - startedAt),
+        userText: trimPromptText(rawMessage, 8000),
+        aiText: trimPromptText(replyText, 20000),
+        persona: { id: personaId, name: personaName },
+        ...(sessionId ? { sessionId } : {}),
+        ...(projectId ? { projectId } : {}),
+        ...(requestSource ? { requestSource } : {}),
+        ...(pageContextText ? { pageContext: pageContextText } : {}),
+        ip: getClientIp(req),
+        ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+      };
+      appendUserAuditHistory({ userId, entry });
+    }
+  } catch { }
+
   return res.json({ reply: replyText, requestId: requestId || res.locals.requestId || '', rag: ragMeta || undefined });
 });
 
-app.get('/api/chat/history/:userId', (req, res) => {
+app.get('/api/chat/history/:userId', rateLimit('chat_history', { max: 120, windowMs: 60 * 1000 }), (req, res) => {
   const userId = String(req.params.userId || '').trim();
   if (!userId) return res.status(400).json({ error: 'MISSING_USER_ID' });
   if (!userId.startsWith('guest_')) {
@@ -701,6 +907,87 @@ app.get('/api/chat/history/:userId', (req, res) => {
     console.error('Error in GET /api/chat/history:', e);
     return res.status(500).json({ error: 'Internal Server Error' });
   }
+});
+
+app.get('/api/memory/:userId', rateLimit('memory_get', { max: 120, windowMs: 60 * 1000 }), (req, res) => {
+  try {
+    const userId = String(req.params.userId || '').trim();
+    if (!userId) return res.status(400).json({ ok: false, error: 'MISSING_USER_ID' });
+    if (!userId.startsWith('guest_')) {
+      if (!assertAuthUserMatches(req, res, userId)) return;
+    }
+    const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+    return res.json({ ok: true, memory: mem });
+  } catch (e) {
+    console.error('Error in GET /api/memory/:userId:', e);
+    return res.status(500).json({ ok: false, error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/memory/ingest', rateLimit('memory_ingest', { max: 120, windowMs: 60 * 1000 }), async (req, res) => {
+  const body = req.body || {};
+  const requestId = String(body.requestId || res.locals.requestId || '').trim();
+  const userId = normalizeUserId(body.userId) || `guest_${Date.now().toString(36)}`;
+  if (!userId.startsWith('guest_')) {
+    if (!assertAuthUserMatches(req, res, userId)) return;
+  }
+
+  const itemsRaw = Array.isArray(body.items) ? body.items : [];
+  const items = itemsRaw.slice(0, 120);
+  const sessionId = ledger.sanitizeLedgerId(body.sessionId);
+  const projectId = ledger.sanitizeLedgerId(body.projectId);
+  const pageContextText = trimPromptText(stringifyPageContext(body.pageContext), 1600);
+  const requestSource = String(body.requestSource || '').trim();
+  const lang = body.lang === 'en' ? 'en' : 'zh';
+  const personaName = typeof body.personaName === 'string' ? body.personaName : undefined;
+
+  const startedAt = Date.now();
+  try {
+    await appendUserMemoryItems({
+      userId,
+      lang,
+      ...(personaName ? { personaName } : {}),
+      items
+    });
+  } catch (e) {
+    console.error('Error in POST /api/memory/ingest:', e);
+    return res.status(500).json({ ok: false, error: 'INGEST_FAILED' });
+  }
+
+  try {
+    if (typeof appendUserAuditHistory === 'function' && userId) {
+      const now = Date.now();
+      const entry = {
+        id: requestId || res.locals.requestId || `mem_${now.toString(36)}`,
+        ts: now,
+        kind: 'memory_ingest',
+        biz: 'memory_ingest',
+        provider: 'local',
+        model: '',
+        status: 'ok',
+        durationMs: Math.max(0, Date.now() - startedAt),
+        itemsCount: items.length,
+        itemsPreview: items
+          .slice(0, 6)
+          .map((it) => ({
+            role: it?.role,
+            type: it?.type,
+            ts: it?.ts,
+            text: trimPromptText(String(it?.text || ''), 240)
+          }))
+          .filter((x) => x.text),
+        ...(sessionId ? { sessionId } : {}),
+        ...(projectId ? { projectId } : {}),
+        ...(requestSource ? { requestSource } : {}),
+        ...(pageContextText ? { pageContext: pageContextText } : {}),
+        ip: getClientIp(req),
+        ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+      };
+      appendUserAuditHistory({ userId, entry });
+    }
+  } catch { }
+
+  return res.json({ ok: true, requestId: requestId || res.locals.requestId || '' });
 });
 
 installAuthRoutes(app);
@@ -736,10 +1023,12 @@ installImgagentRoutes(app, {
   persistImageRefForUser,
   persistGenerateImageInputForUser,
   appendUserImageHistory,
+  appendUserAuditHistory,
   imgCredits,
   sanitizeLedgerId: ledger.sanitizeLedgerId,
   upsertUsageLedgerItem: ledger.upsertUsageLedgerItem,
   getClientIp,
+  rateLimit,
   assertAuthUserMatches
 });
 
@@ -760,6 +1049,11 @@ installSystemRoutes(app, {
   readJson,
   fs,
   path,
+  rateLimit,
+  assertAdmin,
+  fetchWithTimeout,
+  PORT,
+  assertAuthUserMatches,
   HF_RESOLVE_BASES,
   HF_API_BASES,
   hfProxyBaseHealth,
@@ -769,6 +1063,7 @@ installSystemRoutes(app, {
   HF_CACHE_MAX_BYTES,
   HF_CACHE_MAX_FILES,
   getHfCacheUsage,
+  getHfCacheStats,
   buildModeDocIndex: buildModeDocIndexGetter,
   callGeminiGenerate,
   callSiliconFlowChat,
@@ -798,7 +1093,8 @@ installSystemRoutes(app, {
   summarizeHistory,
   upsertUsageLedgerItem: ledger.upsertUsageLedgerItem,
   computeCreditsDelta: ledger.computeCreditsDelta,
-  appendUserImageHistory
+  appendUserImageHistory,
+  appendUserAuditHistory
 });
 
 // ... HF Routes ...
@@ -812,6 +1108,61 @@ installHfRoutes(app, {
   proxyLive2DCubismCore
 });
 
+const drainResponseBody = async (resp) => {
+  const body = resp && resp.body;
+  if (!body || typeof body.on !== 'function') return 0;
+  return await new Promise((resolve, reject) => {
+    let bytes = 0;
+    body.on('data', (chunk) => {
+      try {
+        bytes += chunk ? chunk.length || 0 : 0;
+      } catch { }
+    });
+    body.on('end', () => resolve(bytes));
+    body.on('error', (e) => reject(e));
+    try {
+      if (typeof body.resume === 'function') body.resume();
+    } catch { }
+  });
+};
+
+let hfPrewarmStarted = false;
+const maybeStartHfPrewarm = () => {
+  if (hfPrewarmStarted) return;
+  const raw = String(process.env.HF_PREWARM_URLS || '').trim();
+  if (!raw) return;
+  hfPrewarmStarted = true;
+
+  const urls = raw
+    .split(/[\r\n,]+/g)
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .slice(0, 30);
+  if (!urls.length) return;
+
+  const selfBase = (() => {
+    const base = String(process.env.SELF_BASE_URL || '').trim();
+    if (/^https?:\/\//i.test(base)) return base.replace(/\/+$/, '');
+    return `http://127.0.0.1:${PORT}`;
+  })();
+
+  setTimeout(async () => {
+    for (const rawUrl of urls) {
+      const url = /^https?:\/\//i.test(rawUrl)
+        ? rawUrl
+        : `${selfBase}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`;
+      try {
+        const resp = await fetchWithTimeout(url, { method: 'GET', redirect: 'follow' }, 180000);
+        const bytes = await drainResponseBody(resp);
+        console.log('[HF][Prewarm]', resp.status, bytes, rawUrl);
+      } catch (e) {
+        console.log('[HF][Prewarm][Fail]', rawUrl, String(e?.message || e));
+      }
+    }
+  }, 800);
+};
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);
+  maybeStartHfPrewarm();
 });

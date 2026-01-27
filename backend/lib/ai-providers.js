@@ -92,6 +92,16 @@ const TEXT_GENERATE_MAX_QUEUE = (() => {
 })();
 const textGenerateLimiter = createSemaphore(TEXT_GENERATE_MAX_CONCURRENCY, TEXT_GENERATE_MAX_QUEUE);
 
+const IMAGE_GENERATE_MAX_CONCURRENCY = (() => {
+  const v = Number.parseInt(String(process.env.IMAGE_GENERATE_MAX_CONCURRENCY || ''), 10);
+  return Number.isFinite(v) && v > 0 ? v : 2;
+})();
+const IMAGE_GENERATE_MAX_QUEUE = (() => {
+  const v = Number.parseInt(String(process.env.IMAGE_GENERATE_MAX_QUEUE || ''), 10);
+  return Number.isFinite(v) && v >= 0 ? v : 40;
+})();
+const imageGenerateLimiter = createSemaphore(IMAGE_GENERATE_MAX_CONCURRENCY, IMAGE_GENERATE_MAX_QUEUE);
+
 const appendApiKey = (url, apiKey) => {
   if (!apiKey) return url;
   return url.includes('?') ? `${url}&key=${apiKey}` : `${url}?key=${apiKey}`;
@@ -291,113 +301,129 @@ const callSiliconFlowImageGenerate = async ({
   model,
   signal
 }) => {
-  if (!SILICONFLOW_API_KEY) {
-    const err = new Error('MISSING_SILICONFLOW_API_KEY');
-    err.code = 'MISSING_SILICONFLOW_API_KEY';
-    throw err;
-  }
-
-  const startedAt = Date.now();
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${SILICONFLOW_API_KEY}`
-  };
-
-  const p = String(prompt || '').trim();
-  if (!p) {
-    const err = new Error('EMPTY_PROMPT');
-    err.code = 'EMPTY_PROMPT';
-    throw err;
-  }
-
-  const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
-  const preferredModel = String(model || '').trim();
-  const modelCandidates = [
-    ...(preferredModel ? [preferredModel] : []),
-    ...(FIXED_SILICONFLOW_IMAGE_MODEL && FIXED_SILICONFLOW_IMAGE_MODEL !== preferredModel
-      ? [FIXED_SILICONFLOW_IMAGE_MODEL]
-      : [])
-  ];
-
-  const isModelNotFound = (raw) => {
-    const s = String(raw || '').toLowerCase();
-    if (!s) return false;
-    return s.includes('model') && (s.includes('not exist') || s.includes('not found') || s.includes('invalid'));
-  };
-
-  const buildBody = (model) => {
-    const m = String(model || '').trim();
-    const isQwenEdit = /(^|\/)qwen-image-edit/i.test(m);
-    const body = {
-      model: m,
-      batch_size: 1,
-      prompt: p,
-      negative_prompt: String(negativePrompt || '').trim() || undefined,
-      image_size: String(params?.imageSize || '').trim() || '1024x1024',
-      num_inference_steps:
-        typeof params?.steps === 'number' && Number.isFinite(params.steps) ? params.steps : undefined,
-      seed:
-        typeof params?.seed === 'number' && Number.isFinite(params.seed) ? Math.trunc(params.seed) : undefined
-    };
-    if (!isQwenEdit) {
-      body.guidance_scale =
-        typeof params?.guidanceScale === 'number' && Number.isFinite(params.guidanceScale)
-          ? params.guidanceScale
-          : undefined;
-    }
-
-    if (imgs[0]) body[SILICONFLOW_IMAGE_INPUT_FIELD] = imgs[0];
-    if (imgs[1]) body.image2 = imgs[1];
-    if (imgs[2]) body.image3 = imgs[2];
-    return body;
-  };
-
-  let lastErr = null;
-  for (const modelName of modelCandidates) {
-    const body = buildBody(modelName);
-    const response = await fetchWithTimeout(
-      SILICONFLOW_IMAGES_GENERATIONS_URL,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body)
-      },
-      timeoutMs,
-      signal
-    );
-
-    const raw = await response.text().catch(() => '');
-    if (!response.ok) {
-      const err = new Error(`SILICONFLOW_IMAGE_${response.status}`);
-      err.code = `SILICONFLOW_IMAGE_${response.status}`;
-      err.status = response.status;
-      err.bodyPreview = String(raw || '').slice(0, 1800);
-      err.elapsedMs = Date.now() - startedAt;
-      err.modelTried = String(modelName || '').trim();
-      lastErr = err;
-      if (
-        response.status === 400 &&
-        !imgs.length &&
-        /image-edit/i.test(String(modelName || '')) &&
-        modelName !== modelCandidates[modelCandidates.length - 1]
-      ) {
-        continue;
-      }
-      if (
-        response.status === 400 &&
-        isModelNotFound(raw) &&
-        modelName !== modelCandidates[modelCandidates.length - 1]
-      ) {
-        continue;
-      }
+  return await imageGenerateLimiter.run(async () => {
+    if (!SILICONFLOW_API_KEY) {
+      const err = new Error('MISSING_SILICONFLOW_API_KEY');
+      err.code = 'MISSING_SILICONFLOW_API_KEY';
       throw err;
     }
 
-    const data = raw ? JSON.parse(raw) : null;
-    return { data, elapsedMs: Date.now() - startedAt, modelUsed: String(modelName || '').trim() };
-  }
+    const startedAt = Date.now();
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${SILICONFLOW_API_KEY}`
+    };
 
-  throw lastErr || new Error('SILICONFLOW_IMAGE_500');
+    const p = String(prompt || '').trim();
+    if (!p) {
+      const err = new Error('EMPTY_PROMPT');
+      err.code = 'EMPTY_PROMPT';
+      throw err;
+    }
+
+    const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
+    const preferredModel = String(model || '').trim();
+    const modelCandidates = [
+      ...(preferredModel ? [preferredModel] : []),
+      ...(FIXED_SILICONFLOW_IMAGE_MODEL && FIXED_SILICONFLOW_IMAGE_MODEL !== preferredModel
+        ? [FIXED_SILICONFLOW_IMAGE_MODEL]
+        : [])
+    ];
+
+    const isModelNotFound = (raw) => {
+      const s = String(raw || '').toLowerCase();
+      if (!s) return false;
+      return s.includes('model') && (s.includes('not exist') || s.includes('not found') || s.includes('invalid'));
+    };
+    const isRpmLimit = (raw) => {
+      const s = String(raw || '').toLowerCase();
+      return s.includes('rpm limit exceeded') || s.includes('identity verification');
+    };
+
+    const buildBody = (model) => {
+      const m = String(model || '').trim();
+      const isQwenEdit = /(^|\/)qwen-image-edit/i.test(m);
+      const body = {
+        model: m,
+        batch_size: 1,
+        prompt: p,
+        negative_prompt: String(negativePrompt || '').trim() || undefined,
+        image_size: String(params?.imageSize || '').trim() || '1024x1024',
+        num_inference_steps:
+          typeof params?.steps === 'number' && Number.isFinite(params.steps) ? params.steps : undefined,
+        seed:
+          typeof params?.seed === 'number' && Number.isFinite(params.seed) ? Math.trunc(params.seed) : undefined
+      };
+      if (!isQwenEdit) {
+        body.guidance_scale =
+          typeof params?.guidanceScale === 'number' && Number.isFinite(params.guidanceScale)
+            ? params.guidanceScale
+            : undefined;
+      }
+
+      if (imgs[0]) body[SILICONFLOW_IMAGE_INPUT_FIELD] = imgs[0];
+      if (imgs[1]) body.image2 = imgs[1];
+      if (imgs[2]) body.image3 = imgs[2];
+      return body;
+    };
+
+    let lastErr = null;
+    for (const modelName of modelCandidates) {
+      const body = buildBody(modelName);
+      const response = await fetchWithTimeout(
+        SILICONFLOW_IMAGES_GENERATIONS_URL,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body)
+        },
+        timeoutMs,
+        signal
+      );
+
+      const raw = await response.text().catch(() => '');
+      if (!response.ok) {
+        if (response.status === 403 && isRpmLimit(raw)) {
+          const err = new Error('SILICONFLOW_RPM_LIMIT');
+          err.code = 'SILICONFLOW_RPM_LIMIT';
+          err.status = 429;
+          err.bodyPreview = String(raw || '').slice(0, 1800);
+          err.elapsedMs = Date.now() - startedAt;
+          err.modelTried = String(modelName || '').trim();
+          lastErr = err;
+          throw err;
+        }
+        const err = new Error(`SILICONFLOW_IMAGE_${response.status}`);
+        err.code = `SILICONFLOW_IMAGE_${response.status}`;
+        err.status = response.status;
+        err.bodyPreview = String(raw || '').slice(0, 1800);
+        err.elapsedMs = Date.now() - startedAt;
+        err.modelTried = String(modelName || '').trim();
+        lastErr = err;
+        if (
+          response.status === 400 &&
+          !imgs.length &&
+          /image-edit/i.test(String(modelName || '')) &&
+          modelName !== modelCandidates[modelCandidates.length - 1]
+        ) {
+          continue;
+        }
+        if (
+          response.status === 400 &&
+          isModelNotFound(raw) &&
+          modelName !== modelCandidates[modelCandidates.length - 1]
+        ) {
+          continue;
+        }
+        throw err;
+      }
+
+      const data = raw ? JSON.parse(raw) : null;
+      return { data, elapsedMs: Date.now() - startedAt, modelUsed: String(modelName || '').trim() };
+    }
+
+    throw lastErr || new Error('SILICONFLOW_IMAGE_500');
+  });
 };
 
 const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFallback }) => {

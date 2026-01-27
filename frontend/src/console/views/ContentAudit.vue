@@ -48,7 +48,7 @@
               <template v-if="column.key === 'preview'">
                 <div class="img-center">
                   <div class="img-hover">
-                    <a-image :width="100" :src="record.previewUrl || NO_IMAGE_URL" />
+                    <a-image :width="100" :src="record.previewSrc || NO_IMAGE_URL" />
                     <div v-if="canActOnUrl(record.previewUrl)" class="img-actions">
                       <a-button
                         size="small"
@@ -76,7 +76,7 @@
                 <div class="img-center">
                   <div v-if="record.uploadPreviewUrl" class="img-hover">
                     <div class="prompt-cell">{{ ui.uploadReference }}</div>
-                    <a-image :width="100" :src="record.uploadPreviewUrl" />
+                    <a-image :width="100" :src="record.uploadPreviewSrc" />
                     <div v-if="canActOnUrl(record.uploadPreviewUrl)" class="img-actions">
                       <a-button
                         size="small"
@@ -218,6 +218,109 @@
         </div>
       </a-tab-pane>
 
+      <a-tab-pane key="audit" :tab="ui.tabAudit">
+        <div class="table-toolbar">
+          <div class="table-toolbar-left">
+            <a-button class="icon-btn" @click="openColumnModal('audit')">
+              <template #icon><SettingOutlined /></template>
+              {{ ui.columns }}
+            </a-button>
+            <a-input
+              v-model:value="filterUserId"
+              :placeholder="ui.userFilterPh"
+              class="filter-input"
+            />
+            <a-input
+              v-model:value="filterAuditBiz"
+              :placeholder="ui.auditBizFilterPh"
+              class="filter-input"
+            />
+            <a-input
+              v-model:value="filterAuditKind"
+              :placeholder="ui.auditKindFilterPh"
+              class="filter-input"
+            />
+            <a-input
+              v-model:value="filterAuditStatus"
+              :placeholder="ui.auditStatusFilterPh"
+              class="filter-input"
+            />
+            <a-button type="primary" :loading="loadingAudit" @click="fetchAudit">{{
+              ui.refresh
+            }}</a-button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <a-table
+            :dataSource="auditLogs"
+            :columns="auditColumns"
+            :rowKey="(r: any) => r.id || r.requestId || `${r.ts || 0}`"
+            :loading="loadingAudit"
+            :tableLayout="'fixed'"
+            :scroll="{ x: auditScrollX }"
+          >
+            <template #headerCell="{ column }">
+              <div class="th-wrap">
+                <span class="th-title">{{ column.title }}</span>
+                <span
+                  class="th-resizer"
+                  @mousedown="(e) => onResizeMouseDown(e, 'audit', column.key)"
+                />
+              </div>
+            </template>
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'ts'">
+                {{ record.ts ? new Date(record.ts).toLocaleString() : '-' }}
+              </template>
+              <template v-else-if="column.key === 'userId'">
+                {{ record.userId || '-' }}
+              </template>
+              <template v-else-if="column.key === 'username'">
+                {{ record.username || '-' }}
+              </template>
+              <template v-else-if="column.key === 'biz'">
+                {{ record.biz || '-' }}
+              </template>
+              <template v-else-if="column.key === 'kind'">
+                {{ record.kind || '-' }}
+              </template>
+              <template v-else-if="column.key === 'status'">
+                {{ record.status || '-' }}
+              </template>
+              <template v-else-if="column.key === 'requestSource'">
+                {{ record.requestSource || '-' }}
+              </template>
+              <template v-else-if="column.key === 'sessionId'">
+                {{ record.sessionId || '-' }}
+              </template>
+              <template v-else-if="column.key === 'projectId'">
+                {{ record.projectId || '-' }}
+              </template>
+              <template v-else-if="column.key === 'pageContext'">
+                <div class="prompt-cell">{{ JSON.stringify(record.pageContext || '') }}</div>
+              </template>
+              <template v-else-if="column.key === 'userText'">
+                <div class="prompt-cell">{{ record.userText || '-' }}</div>
+              </template>
+              <template v-else-if="column.key === 'aiText'">
+                <div class="prompt-cell">{{ record.aiText || '-' }}</div>
+              </template>
+              <template v-else-if="column.key === 'durationMs'">
+                {{ Number(record.durationMs ?? 0) || 0 }}
+              </template>
+              <template v-else-if="column.key === 'action'">
+                <a-button size="small" @click="viewLogDetails(record)">{{
+                  ui.viewFullLog
+                }}</a-button>
+              </template>
+              <template v-else>
+                {{ record[column.dataIndex] ?? record[column.key] ?? '-' }}
+              </template>
+            </template>
+          </a-table>
+        </div>
+      </a-tab-pane>
+
       <a-tab-pane key="behavior" :tab="ui.tabBehavior">
         <div class="table-toolbar">
           <div class="table-toolbar-left">
@@ -307,6 +410,77 @@
             </template>
           </a-table>
         </div>
+      </a-tab-pane>
+
+      <a-tab-pane key="system" :tab="ui.tabSystem">
+        <div class="table-toolbar">
+          <div class="table-toolbar-left">
+            <a-button type="primary" :loading="loadingSystem" @click="fetchSystem">{{
+              ui.refresh
+            }}</a-button>
+          </div>
+        </div>
+        <a-row :gutter="16">
+          <a-col :xs="24" :lg="12" style="margin-bottom: 16px">
+            <a-card :title="ui.systemHealthTitle">
+              <a-descriptions bordered column="1" size="small">
+                <a-descriptions-item :label="ui.healthOk">{{
+                  systemHealth?.ok ? ui.healthOkYes : ui.healthOkNo
+                }}</a-descriptions-item>
+                <a-descriptions-item :label="ui.healthServerTime">{{
+                  systemHealth?.serverTime
+                    ? new Date(systemHealth.serverTime).toLocaleString()
+                    : '-'
+                }}</a-descriptions-item>
+                <a-descriptions-item :label="ui.healthTextProvider">{{
+                  systemHealth?.textProvider || '-'
+                }}</a-descriptions-item>
+                <a-descriptions-item :label="ui.healthHasProvider">{{
+                  systemHealth?.hasApiKey === true || systemHealth?.siliconflow?.hasApiKey === true
+                    ? ui.healthOkYes
+                    : ui.healthOkNo
+                }}</a-descriptions-item>
+                <a-descriptions-item :label="ui.healthHfCacheUsage">{{
+                  formatHfCacheUsage(systemHealth?.hf?.cache?.usage)
+                }}</a-descriptions-item>
+                <a-descriptions-item :label="ui.healthRagVectors">{{
+                  formatRagInfo(systemHealth?.rag)
+                }}</a-descriptions-item>
+                <a-descriptions-item :label="ui.healthModeDoc">{{
+                  formatModeDocInfo(systemHealth?.modedoc)
+                }}</a-descriptions-item>
+                <a-descriptions-item :label="ui.healthStorage">{{
+                  formatStorageInfo(systemHealth?.storage)
+                }}</a-descriptions-item>
+              </a-descriptions>
+            </a-card>
+          </a-col>
+
+          <a-col :xs="24" :lg="12" style="margin-bottom: 16px">
+            <a-card :title="ui.rateLimitTitle">
+              <a-descriptions bordered column="1" size="small">
+                <a-descriptions-item :label="ui.rateLimitTotal">{{
+                  Number(rateLimitStats?.totalBuckets ?? 0) || 0
+                }}</a-descriptions-item>
+                <a-descriptions-item :label="ui.rateLimitUpdatedAt">{{
+                  rateLimitStats?.updatedAt
+                    ? new Date(rateLimitStats.updatedAt).toLocaleString()
+                    : '-'
+                }}</a-descriptions-item>
+              </a-descriptions>
+              <div style="margin-top: 12px">
+                <a-table
+                  :columns="rateLimitColumns"
+                  :data-source="rateLimitTopTags"
+                  row-key="tag"
+                  size="small"
+                  :pagination="false"
+                  :scroll="{ x: 380, y: 320 }"
+                />
+              </div>
+            </a-card>
+          </a-col>
+        </a-row>
       </a-tab-pane>
 
       <a-tab-pane key="seo" :tab="ui.tabSeo">
@@ -476,7 +650,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch, reactive } from 'vue';
 import { useConsoleStore, type AiBgSeoCopy } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
@@ -490,13 +664,19 @@ const activeTab = ref('images');
 const isLogModalVisible = ref(false);
 const selectedLog = ref<any>(null);
 const filterUserId = ref('');
+const filterAuditBiz = ref('');
+const filterAuditKind = ref('');
+const filterAuditStatus = ref('');
 const filterEventType = ref('');
 const filterBehaviorAction = ref('');
 const filterImageSource = ref('');
 const loadingImages = ref(false);
 const loadingUsage = ref(false);
+const loadingAudit = ref(false);
 const loadingEvents = ref(false);
 const loadingBehavior = ref(false);
+const loadingSystem = ref(false);
+const systemHealth = ref<any>(null);
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -507,9 +687,27 @@ const ui = computed(() =>
         title: '内容审计',
         tabImages: '生成图片',
         tabChat: '调用记录',
+        tabAudit: '审计记录',
         tabBehavior: '用户行为',
         tabEvents: '埋点事件',
+        tabSystem: '系统监控',
         tabSeo: 'AI 背景 SEO & 文案',
+        systemHealthTitle: '系统健康',
+        rateLimitTitle: '限流状态',
+        healthOk: '状态',
+        healthOkYes: '正常',
+        healthOkNo: '异常',
+        healthServerTime: '服务器时间',
+        healthTextProvider: '文本渠道',
+        healthHasProvider: 'Key 配置',
+        healthHfCacheUsage: 'HF 缓存',
+        healthRagVectors: 'RAG 向量',
+        healthModeDoc: 'ModeDoc',
+        healthStorage: '存储',
+        rateLimitTotal: '桶数量',
+        rateLimitUpdatedAt: '更新时间',
+        colRateLimitTag: '策略',
+        colRateLimitBuckets: '桶',
         viewFullLog: '查看完整日志',
         logDetails: '日志详情',
         actionLabel: '动作',
@@ -531,8 +729,15 @@ const ui = computed(() =>
         colCredits: '消耗',
         colTime: '时间',
         colRequestId: '请求 ID',
+        colBiz: '业务(biz)',
+        colKind: '类型(kind)',
         colStatus: '状态',
         colDuration: '耗时(ms)',
+        colRequestSource: '来源(requestSource)',
+        colSessionId: '会话(sessionId)',
+        colProjectId: '项目(projectId)',
+        colPageContext: '页面上下文(pageContext)',
+        colAiText: 'AI 输出',
         colIp: 'IP',
         colDeepMode: '深度思考',
         colInitialInput: '初始输入',
@@ -547,6 +752,9 @@ const ui = computed(() =>
         deepModeNo: '否',
         refresh: '刷新',
         userFilterPh: '可选：按用户 ID 过滤',
+        auditBizFilterPh: '可选：按 biz 过滤（例如 img2img/chat）',
+        auditKindFilterPh: '可选：按 kind 过滤（例如 image_generate）',
+        auditStatusFilterPh: '可选：按状态过滤（ok/error）',
         imageSourceFilterPh: '可选：按来源过滤（例如 img2img）',
         eventTypeFilterPh: '可选：按事件类型过滤（例如 page_view）',
         behaviorActionFilterPh: '可选：按行为类型过滤（例如 generate_image）',
@@ -582,9 +790,27 @@ const ui = computed(() =>
         title: 'Content Audit',
         tabImages: 'Generated Images',
         tabChat: 'Requests',
+        tabAudit: 'Audit',
         tabBehavior: 'User Activity',
         tabEvents: 'Tracking Events',
+        tabSystem: 'System',
         tabSeo: 'AI Background SEO & Copy',
+        systemHealthTitle: 'System Health',
+        rateLimitTitle: 'Rate Limit',
+        healthOk: 'Status',
+        healthOkYes: 'OK',
+        healthOkNo: 'Bad',
+        healthServerTime: 'Server Time',
+        healthTextProvider: 'Text Provider',
+        healthHasProvider: 'Key Configured',
+        healthHfCacheUsage: 'HF Cache',
+        healthRagVectors: 'RAG Vectors',
+        healthModeDoc: 'ModeDoc',
+        healthStorage: 'Storage',
+        rateLimitTotal: 'Buckets',
+        rateLimitUpdatedAt: 'Updated At',
+        colRateLimitTag: 'Tag',
+        colRateLimitBuckets: 'Buckets',
         viewFullLog: 'View Full Log',
         logDetails: 'Log Details',
         actionLabel: 'Action',
@@ -606,8 +832,15 @@ const ui = computed(() =>
         colCredits: 'Credits',
         colTime: 'Time',
         colRequestId: 'Request ID',
+        colBiz: 'Biz',
+        colKind: 'Kind',
         colStatus: 'Status',
         colDuration: 'Latency(ms)',
+        colRequestSource: 'Request Source',
+        colSessionId: 'Session ID',
+        colProjectId: 'Project ID',
+        colPageContext: 'Page Context',
+        colAiText: 'AI Output',
         colIp: 'IP',
         colDeepMode: 'Deep Mode',
         colInitialInput: 'Initial Input',
@@ -622,6 +855,9 @@ const ui = computed(() =>
         deepModeNo: 'No',
         refresh: 'Refresh',
         userFilterPh: 'Optional: filter by userId',
+        auditBizFilterPh: 'Optional: filter by biz (e.g. img2img/chat)',
+        auditKindFilterPh: 'Optional: filter by kind (e.g. image_generate)',
+        auditStatusFilterPh: 'Optional: filter by status (ok/error)',
         imageSourceFilterPh: 'Optional: filter by source (e.g. img2img)',
         eventTypeFilterPh: 'Optional: filter by event type (e.g. page_view)',
         behaviorActionFilterPh: 'Optional: filter by action (e.g. generate_image)',
@@ -656,6 +892,64 @@ const ui = computed(() =>
 );
 
 const events = computed(() => consoleStore.adminEvents || []);
+const rateLimitStats = computed(() => consoleStore.adminRateLimitStats);
+const rateLimitTopTags = computed(() =>
+  Array.isArray(rateLimitStats.value?.topTags) ? rateLimitStats.value!.topTags! : []
+);
+const rateLimitColumns = computed(() => [
+  { title: ui.value.colRateLimitTag, dataIndex: 'tag', key: 'tag' },
+  { title: ui.value.colRateLimitBuckets, dataIndex: 'buckets', key: 'buckets' }
+]);
+
+const formatBytes = (n: any) => {
+  const v = Number(n || 0);
+  if (!Number.isFinite(v) || v <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let val = v;
+  let idx = 0;
+  while (val >= 1024 && idx < units.length - 1) {
+    val /= 1024;
+    idx += 1;
+  }
+  const fixed = idx === 0 ? 0 : val >= 100 ? 0 : val >= 10 ? 1 : 2;
+  return `${val.toFixed(fixed)} ${units[idx]}`;
+};
+
+const formatHfCacheUsage = (usage: any) => {
+  if (!usage || typeof usage !== 'object') return '-';
+  const bytes =
+    Number((usage as any).totalBytes ?? (usage as any).bytes ?? (usage as any).sizeBytes ?? 0) || 0;
+  const files = Number((usage as any).totalFiles ?? (usage as any).files ?? 0) || 0;
+  const hit = Number((usage as any).hit ?? 0) || 0;
+  const miss = Number((usage as any).miss ?? 0) || 0;
+  const extra = hit + miss > 0 ? ` (hit ${hit}, miss ${miss})` : '';
+  return `${formatBytes(bytes)} / ${files}${extra}`;
+};
+
+const formatRagInfo = (rag: any) => {
+  if (!rag || typeof rag !== 'object') return '-';
+  const exists = rag.exists === true;
+  const sizeBytes = Number(rag.sizeBytes ?? 0) || 0;
+  const total = Number(rag.totalVectors ?? 0) || 0;
+  if (!exists) return `- / ${total}`;
+  return `${formatBytes(sizeBytes)} / ${total}`;
+};
+
+const formatModeDocInfo = (md: any) => {
+  if (!md || typeof md !== 'object') return '-';
+  const indexed = md.indexed === true;
+  const zh = Number(md.countZh ?? 0) || 0;
+  const en = Number(md.countEn ?? 0) || 0;
+  return `${indexed ? ui.value.healthOkYes : ui.value.healthOkNo} / zh ${zh} / en ${en}`;
+};
+
+const formatStorageInfo = (st: any) => {
+  if (!st || typeof st !== 'object') return '-';
+  const memoryDir = String(st.memoryDir || '').trim();
+  const writable = st.writable === true;
+  const dirText = memoryDir ? ` / ${memoryDir}` : '';
+  return `${writable ? ui.value.healthOkYes : ui.value.healthOkNo}${dirText}`;
+};
 const buildBehaviorLogs = () => {
   const userFilter = String(filterUserId.value || '').trim();
   const actionFilter = String(filterBehaviorAction.value || '')
@@ -708,6 +1002,9 @@ const formatBehaviorDetails = (details: any) => {
 const NO_IMAGE_URL = 'https://via.placeholder.com/100?text=No+Image';
 const AGENT_IMG_PREFILL_KEY = 'agentImg:prefillRef_v1';
 
+const filesBlobUrlCache = reactive<Record<string, string>>({});
+const inFlightFileUrls = new Set<string>();
+
 const showAdminError = (e: any) => {
   const code = String(e?.message || '').trim();
   const apiError = String((e as any)?.apiError || '').trim();
@@ -752,6 +1049,7 @@ onMounted(() => {
   void fetchUsage();
   void fetchEvents();
   void fetchBehavior();
+  void fetchSystem();
 });
 
 const resolveUrl = (raw: string) => {
@@ -786,16 +1084,44 @@ const blobToDataUrl = (blob: Blob): Promise<string> => {
   });
 };
 
+const isProtectedFilesUrl = (url: string) => {
+  const s = String(url || '').trim();
+  if (!s) return false;
+  try {
+    const u = new URL(s, window.location.href);
+    if (!u.pathname.startsWith('/files/')) return false;
+    if (u.pathname.startsWith('/files/guest_')) return false;
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const getTrustedOrigins = (): Set<string> => {
+  try {
+    const apiOrigin = new URL(buildApiUrl('/'), window.location.href).origin;
+    return new Set([window.location.origin, apiOrigin]);
+  } catch {
+    return new Set([window.location.origin]);
+  }
+};
+
+const buildConsoleAdminHeaders = (): Record<string, string> | null => {
+  const token = String(consoleStore.adminKey || '').trim();
+  if (!token) return null;
+  if (consoleStore.adminAuthMode === 'x-admin-key') return { 'x-admin-key': token };
+  return { Authorization: `Bearer ${token}` };
+};
+
 const fetchImageBlob = async (url: string): Promise<Blob | null> => {
   const s = String(url || '').trim();
   if (!s) return null;
   try {
     const u = new URL(s, window.location.href);
-    const sameOrigin = u.origin === window.location.origin;
-    const token = String(consoleStore.adminKey || '').trim();
-    const headers: Record<string, string> = {};
-    if (sameOrigin && token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch(u.href, { headers: Object.keys(headers).length ? headers : undefined });
+    const trustedOrigins = getTrustedOrigins();
+    const isTrusted = trustedOrigins.has(u.origin);
+    const headers = isTrusted ? buildConsoleAdminHeaders() : null;
+    const res = await fetch(u.href, { headers: headers || undefined });
     if (!res.ok) return null;
     const blob = await res.blob();
     if (
@@ -863,6 +1189,52 @@ const referenceImage = async (url: string) => {
   message.success(currentLang.value === 'zh' ? '已引用到 AI 工坊' : 'Referenced in AI Workshop');
 };
 
+const ensurePreviewBlobUrl = async (url: string) => {
+  const s = String(url || '').trim();
+  if (!s) return;
+  if (!isProtectedFilesUrl(s)) return;
+  if (filesBlobUrlCache[s]) return;
+  if (inFlightFileUrls.has(s)) return;
+  inFlightFileUrls.add(s);
+  try {
+    const blob = await fetchImageBlob(s);
+    if (!blob) return;
+    const objUrl = URL.createObjectURL(blob);
+    const prev = filesBlobUrlCache[s];
+    if (prev && prev.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(prev);
+      } catch {}
+    }
+    filesBlobUrlCache[s] = objUrl;
+  } finally {
+    inFlightFileUrls.delete(s);
+  }
+};
+
+const preloadFilesImages = async (list: any[]) => {
+  const urls: string[] = [];
+  for (const it of list || []) {
+    const u1 = String(it?.previewUrl || '').trim();
+    const u2 = String(it?.uploadPreviewUrl || '').trim();
+    if (u1 && isProtectedFilesUrl(u1)) urls.push(u1);
+    if (u2 && isProtectedFilesUrl(u2)) urls.push(u2);
+  }
+  const uniq = Array.from(new Set(urls)).slice(0, 120);
+  if (!uniq.length) return;
+
+  let idx = 0;
+  const concurrency = 4;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, uniq.length) }, async () => {
+      while (idx < uniq.length) {
+        const cur = uniq[idx++];
+        await ensurePreviewBlobUrl(cur);
+      }
+    })
+  );
+};
+
 const images = computed(() => {
   const sourceFilter = String(filterImageSource.value || '')
     .trim()
@@ -901,12 +1273,35 @@ const images = computed(() => {
       const sourceLabel = String((it as any).source || it.type || '').trim();
       const inputCount = Array.isArray(inRefs) ? inRefs.length : 0;
       const outputCount = Array.isArray(refs) ? refs.length : 0;
-      return { ...it, previewUrl, uploadPreviewUrl, sourceLabel, inputCount, outputCount };
+      const previewSrc = filesBlobUrlCache[previewUrl] || previewUrl;
+      const uploadPreviewSrc = filesBlobUrlCache[uploadPreviewUrl] || uploadPreviewUrl;
+      return {
+        ...it,
+        previewUrl,
+        uploadPreviewUrl,
+        previewSrc,
+        uploadPreviewSrc,
+        sourceLabel,
+        inputCount,
+        outputCount
+      };
     });
 });
 
+watch(
+  images,
+  (list) => {
+    void preloadFilesImages(list as any[]);
+  },
+  { immediate: true }
+);
+
 const chatLogs = computed(() => {
   return consoleStore.adminUsage;
+});
+
+const auditLogs = computed(() => {
+  return consoleStore.adminAudit || [];
 });
 
 type SimpleColumn = {
@@ -923,6 +1318,8 @@ const STORAGE_IMAGES_VISIBLE = `${STORAGE_PREFIX}:images:visible`;
 const STORAGE_IMAGES_WIDTHS = `${STORAGE_PREFIX}:images:widths`;
 const STORAGE_CHAT_VISIBLE = `${STORAGE_PREFIX}:chat:visible`;
 const STORAGE_CHAT_WIDTHS = `${STORAGE_PREFIX}:chat:widths`;
+const STORAGE_AUDIT_VISIBLE = `${STORAGE_PREFIX}:audit:visible`;
+const STORAGE_AUDIT_WIDTHS = `${STORAGE_PREFIX}:audit:widths`;
 const STORAGE_EVENTS_VISIBLE = `${STORAGE_PREFIX}:events:visible`;
 const STORAGE_EVENTS_WIDTHS = `${STORAGE_PREFIX}:events:widths`;
 
@@ -989,6 +1386,56 @@ const baseChatColumns = computed<SimpleColumn[]>(() => [
   { title: ui.value.colCreatedAt, key: 'action', width: 140 }
 ]);
 
+const baseAuditColumns = computed<SimpleColumn[]>(() => [
+  { title: ui.value.colTime, dataIndex: 'ts', key: 'ts', width: 190 },
+  {
+    title: ui.value.colUsername,
+    dataIndex: 'username',
+    key: 'username',
+    width: 140,
+    ellipsis: true
+  },
+  { title: ui.value.userLabel, dataIndex: 'userId', key: 'userId', width: 150, ellipsis: true },
+  { title: ui.value.colBiz, dataIndex: 'biz', key: 'biz', width: 140, ellipsis: true },
+  { title: ui.value.colKind, dataIndex: 'kind', key: 'kind', width: 160, ellipsis: true },
+  { title: ui.value.colStatus, dataIndex: 'status', key: 'status', width: 120, ellipsis: true },
+  {
+    title: ui.value.colProvider,
+    dataIndex: 'provider',
+    key: 'provider',
+    width: 140,
+    ellipsis: true
+  },
+  { title: ui.value.colModel, dataIndex: 'model', key: 'model', width: 180, ellipsis: true },
+  { title: ui.value.colDuration, dataIndex: 'durationMs', key: 'durationMs', width: 120 },
+  {
+    title: ui.value.colRequestSource,
+    dataIndex: 'requestSource',
+    key: 'requestSource',
+    width: 180,
+    ellipsis: true
+  },
+  {
+    title: ui.value.colSessionId,
+    dataIndex: 'sessionId',
+    key: 'sessionId',
+    width: 200,
+    ellipsis: true
+  },
+  {
+    title: ui.value.colProjectId,
+    dataIndex: 'projectId',
+    key: 'projectId',
+    width: 200,
+    ellipsis: true
+  },
+  { title: ui.value.colPageContext, dataIndex: 'pageContext', key: 'pageContext', width: 360 },
+  { title: ui.value.colUserText, dataIndex: 'userText', key: 'userText', width: 360 },
+  { title: ui.value.colAiText, dataIndex: 'aiText', key: 'aiText', width: 420 },
+  { title: ui.value.colRequestId, dataIndex: 'id', key: 'id', width: 220, ellipsis: true },
+  { title: ui.value.colCreatedAt, key: 'action', width: 140 }
+]);
+
 const baseEventColumns = computed<SimpleColumn[]>(() => [
   { title: ui.value.colTime, dataIndex: 'ts', key: 'ts', width: 190 },
   {
@@ -1020,17 +1467,21 @@ const baseBehaviorColumns = computed<SimpleColumn[]>(() => [
 
 const imageVisibleKeys = ref<string[]>([]);
 const chatVisibleKeys = ref<string[]>([]);
+const auditVisibleKeys = ref<string[]>([]);
 const eventVisibleKeys = ref<string[]>([]);
 const imageColumnWidths = ref<Record<string, number>>({});
 const chatColumnWidths = ref<Record<string, number>>({});
+const auditColumnWidths = ref<Record<string, number>>({});
 const eventColumnWidths = ref<Record<string, number>>({});
 
-const getDefaultVisibleKeys = (tab: 'images' | 'chat' | 'events') =>
+const getDefaultVisibleKeys = (tab: 'images' | 'chat' | 'audit' | 'events') =>
   (tab === 'images'
     ? baseImageColumns.value
     : tab === 'chat'
       ? baseChatColumns.value
-      : baseEventColumns.value
+      : tab === 'audit'
+        ? baseAuditColumns.value
+        : baseEventColumns.value
   ).map((c) => c.key);
 
 const safeReadJson = <T,>(key: string, fallback: T): T => {
@@ -1066,9 +1517,11 @@ const mergeVisibleKeys = (stored: string[], defaults: string[]) => {
 const hydrateColumnPreferences = () => {
   const imgVisible = safeReadJson<string[]>(STORAGE_IMAGES_VISIBLE, []);
   const chatVisible = safeReadJson<string[]>(STORAGE_CHAT_VISIBLE, []);
+  const auditVisible = safeReadJson<string[]>(STORAGE_AUDIT_VISIBLE, []);
   const eventVisible = safeReadJson<string[]>(STORAGE_EVENTS_VISIBLE, []);
   const imgDefaults = getDefaultVisibleKeys('images');
   const chatDefaults = getDefaultVisibleKeys('chat');
+  const auditDefaults = getDefaultVisibleKeys('audit');
   const eventDefaults = getDefaultVisibleKeys('events');
   imageVisibleKeys.value = imgVisible.length
     ? mergeVisibleKeys(imgVisible, imgDefaults)
@@ -1076,11 +1529,15 @@ const hydrateColumnPreferences = () => {
   chatVisibleKeys.value = chatVisible.length
     ? mergeVisibleKeys(chatVisible, chatDefaults)
     : chatDefaults;
+  auditVisibleKeys.value = auditVisible.length
+    ? mergeVisibleKeys(auditVisible, auditDefaults)
+    : auditDefaults;
   eventVisibleKeys.value = eventVisible.length
     ? mergeVisibleKeys(eventVisible, eventDefaults)
     : eventDefaults;
   imageColumnWidths.value = safeReadJson<Record<string, number>>(STORAGE_IMAGES_WIDTHS, {});
   chatColumnWidths.value = safeReadJson<Record<string, number>>(STORAGE_CHAT_WIDTHS, {});
+  auditColumnWidths.value = safeReadJson<Record<string, number>>(STORAGE_AUDIT_WIDTHS, {});
   eventColumnWidths.value = safeReadJson<Record<string, number>>(STORAGE_EVENTS_WIDTHS, {});
 };
 
@@ -1100,6 +1557,14 @@ watch(
 );
 
 watch(
+  auditVisibleKeys,
+  (v) => {
+    safeWriteJson(STORAGE_AUDIT_VISIBLE, v);
+  },
+  { deep: true }
+);
+
+watch(
   eventVisibleKeys,
   (v) => {
     safeWriteJson(STORAGE_EVENTS_VISIBLE, v);
@@ -1107,13 +1572,15 @@ watch(
   { deep: true }
 );
 
-const withWidths = (tab: 'images' | 'chat' | 'events', cols: SimpleColumn[]) => {
+const withWidths = (tab: 'images' | 'chat' | 'audit' | 'events', cols: SimpleColumn[]) => {
   const widths =
     tab === 'images'
       ? imageColumnWidths.value
       : tab === 'chat'
         ? chatColumnWidths.value
-        : eventColumnWidths.value;
+        : tab === 'audit'
+          ? auditColumnWidths.value
+          : eventColumnWidths.value;
   return cols.map((c) => ({ ...c, width: Math.max(80, Number(widths[c.key] ?? c.width ?? 120)) }));
 };
 
@@ -1137,6 +1604,16 @@ const chatColumns = computed(() => {
   );
 });
 
+const auditColumns = computed(() => {
+  const allowed = new Set(
+    auditVisibleKeys.value.length ? auditVisibleKeys.value : getDefaultVisibleKeys('audit')
+  );
+  return withWidths(
+    'audit',
+    baseAuditColumns.value.filter((c) => allowed.has(c.key))
+  );
+});
+
 const eventColumns = computed(() => {
   const allowed = new Set(
     eventVisibleKeys.value.length ? eventVisibleKeys.value : getDefaultVisibleKeys('events')
@@ -1151,13 +1628,14 @@ const sumWidths = (cols: SimpleColumn[]) =>
   cols.reduce((acc, c) => acc + (Number(c.width) || 0), 0);
 const imageScrollX = computed(() => Math.max(900, sumWidths(imageColumns.value)));
 const chatScrollX = computed(() => Math.max(900, sumWidths(chatColumns.value)));
+const auditScrollX = computed(() => Math.max(900, sumWidths(auditColumns.value)));
 const eventScrollX = computed(() => Math.max(900, sumWidths(eventColumns.value)));
 const behaviorColumns = computed(() => baseBehaviorColumns.value);
 const behaviorScrollX = computed(() => Math.max(900, sumWidths(behaviorColumns.value)));
 
 const isColumnModalVisible = ref(false);
-const columnModalTab = ref<'images' | 'chat' | 'events'>('images');
-const openColumnModal = (tab: 'images' | 'chat' | 'events') => {
+const columnModalTab = ref<'images' | 'chat' | 'audit' | 'events'>('images');
+const openColumnModal = (tab: 'images' | 'chat' | 'audit' | 'events') => {
   columnModalTab.value = tab;
   isColumnModalVisible.value = true;
 };
@@ -1168,10 +1646,13 @@ const modalSelectedKeys = computed<string[]>({
       ? imageVisibleKeys.value
       : columnModalTab.value === 'chat'
         ? chatVisibleKeys.value
-        : eventVisibleKeys.value,
+        : columnModalTab.value === 'audit'
+          ? auditVisibleKeys.value
+          : eventVisibleKeys.value,
   set: (val) => {
     if (columnModalTab.value === 'images') imageVisibleKeys.value = val;
     else if (columnModalTab.value === 'chat') chatVisibleKeys.value = val;
+    else if (columnModalTab.value === 'audit') auditVisibleKeys.value = val;
     else eventVisibleKeys.value = val;
   }
 });
@@ -1182,26 +1663,32 @@ const modalColumnOptions = computed(() => {
       ? baseImageColumns.value
       : columnModalTab.value === 'chat'
         ? baseChatColumns.value
-        : baseEventColumns.value;
+        : columnModalTab.value === 'audit'
+          ? baseAuditColumns.value
+          : baseEventColumns.value;
   return cols.map((c) => ({ label: c.title, value: c.key }));
 });
 
-const persistWidthsForTab = (tab: 'images' | 'chat' | 'events') => {
+const persistWidthsForTab = (tab: 'images' | 'chat' | 'audit' | 'events') => {
   safeWriteJson(
     tab === 'images'
       ? STORAGE_IMAGES_WIDTHS
       : tab === 'chat'
         ? STORAGE_CHAT_WIDTHS
-        : STORAGE_EVENTS_WIDTHS,
+        : tab === 'audit'
+          ? STORAGE_AUDIT_WIDTHS
+          : STORAGE_EVENTS_WIDTHS,
     tab === 'images'
       ? imageColumnWidths.value
       : tab === 'chat'
         ? chatColumnWidths.value
-        : eventColumnWidths.value
+        : tab === 'audit'
+          ? auditColumnWidths.value
+          : eventColumnWidths.value
   );
 };
 
-const resetColumns = (tab: 'images' | 'chat' | 'events') => {
+const resetColumns = (tab: 'images' | 'chat' | 'audit' | 'events') => {
   if (tab === 'images') {
     imageVisibleKeys.value = getDefaultVisibleKeys('images');
     imageColumnWidths.value = {};
@@ -1216,6 +1703,13 @@ const resetColumns = (tab: 'images' | 'chat' | 'events') => {
     safeWriteJson(STORAGE_CHAT_WIDTHS, chatColumnWidths.value);
     return;
   }
+  if (tab === 'audit') {
+    auditVisibleKeys.value = getDefaultVisibleKeys('audit');
+    auditColumnWidths.value = {};
+    safeWriteJson(STORAGE_AUDIT_VISIBLE, auditVisibleKeys.value);
+    safeWriteJson(STORAGE_AUDIT_WIDTHS, auditColumnWidths.value);
+    return;
+  }
   eventVisibleKeys.value = getDefaultVisibleKeys('events');
   eventColumnWidths.value = {};
   safeWriteJson(STORAGE_EVENTS_VISIBLE, eventVisibleKeys.value);
@@ -1223,33 +1717,39 @@ const resetColumns = (tab: 'images' | 'chat' | 'events') => {
 };
 
 const resizeState = ref<null | {
-  tab: 'images' | 'chat' | 'events';
+  tab: 'images' | 'chat' | 'audit' | 'events';
   key: string;
   startX: number;
   startWidth: number;
 }>(null);
 
-const getWidthFor = (tab: 'images' | 'chat' | 'events', key: string) => {
+const getWidthFor = (tab: 'images' | 'chat' | 'audit' | 'events', key: string) => {
   const widths =
     tab === 'images'
       ? imageColumnWidths.value
       : tab === 'chat'
         ? chatColumnWidths.value
-        : eventColumnWidths.value;
+        : tab === 'audit'
+          ? auditColumnWidths.value
+          : eventColumnWidths.value;
   const base =
     tab === 'images'
       ? baseImageColumns.value
       : tab === 'chat'
         ? baseChatColumns.value
-        : baseEventColumns.value;
+        : tab === 'audit'
+          ? baseAuditColumns.value
+          : baseEventColumns.value;
   const fromBase = base.find((c) => c.key === key)?.width ?? 120;
   return Math.max(80, Number(widths[key] ?? fromBase));
 };
 
-const setWidthFor = (tab: 'images' | 'chat' | 'events', key: string, width: number) => {
+const setWidthFor = (tab: 'images' | 'chat' | 'audit' | 'events', key: string, width: number) => {
   const clamped = Math.max(80, Math.min(900, Math.round(width)));
   if (tab === 'images') imageColumnWidths.value = { ...imageColumnWidths.value, [key]: clamped };
   else if (tab === 'chat') chatColumnWidths.value = { ...chatColumnWidths.value, [key]: clamped };
+  else if (tab === 'audit')
+    auditColumnWidths.value = { ...auditColumnWidths.value, [key]: clamped };
   else eventColumnWidths.value = { ...eventColumnWidths.value, [key]: clamped };
 };
 
@@ -1273,7 +1773,11 @@ const stopResize = () => {
   persistWidthsForTab(st.tab);
 };
 
-const onResizeMouseDown = (e: MouseEvent, tab: 'images' | 'chat' | 'events', key: string) => {
+const onResizeMouseDown = (
+  e: MouseEvent,
+  tab: 'images' | 'chat' | 'audit' | 'events',
+  key: string
+) => {
   e.preventDefault();
   e.stopPropagation();
   const startWidth = getWidthFor(tab, String(key));
@@ -1288,6 +1792,13 @@ const onResizeMouseDown = (e: MouseEvent, tab: 'images' | 'chat' | 'events', key
 
 onBeforeUnmount(() => {
   stopResize();
+  for (const v of Object.values(filesBlobUrlCache)) {
+    if (typeof v === 'string' && v.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(v);
+      } catch {}
+    }
+  }
 });
 
 const viewLogDetails = (log: any) => {
@@ -1337,6 +1848,25 @@ const fetchUsage = async () => {
   }
 };
 
+const fetchAudit = async () => {
+  if (loadingAudit.value) return;
+  loadingAudit.value = true;
+  try {
+    await consoleStore.fetchAdminAuditHistory({
+      userId: filterUserId.value,
+      biz: filterAuditBiz.value,
+      kind: filterAuditKind.value,
+      status: filterAuditStatus.value,
+      limit: 200,
+      offset: 0
+    });
+  } catch (e) {
+    showAdminError(e);
+  } finally {
+    loadingAudit.value = false;
+  }
+};
+
 const fetchEvents = async () => {
   if (loadingEvents.value) return;
   loadingEvents.value = true;
@@ -1366,6 +1896,33 @@ const fetchBehavior = async () => {
     showAdminError(e);
   } finally {
     loadingBehavior.value = false;
+  }
+};
+
+const fetchSystem = async () => {
+  if (loadingSystem.value) return;
+  loadingSystem.value = true;
+  try {
+    try {
+      const url = buildApiUrl('/api/health');
+      const res = await fetch(url);
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok || !json) throw new Error(String(json?.error || `HTTP_${res.status || 0}`));
+      systemHealth.value = json;
+    } catch (e) {
+      void e;
+      message.error(
+        currentLang.value === 'zh' ? '系统健康拉取失败' : 'Failed to load system health'
+      );
+    }
+
+    try {
+      await consoleStore.fetchAdminRateLimitStats();
+    } catch (e) {
+      showAdminError(e);
+    }
+  } finally {
+    loadingSystem.value = false;
   }
 };
 

@@ -374,5 +374,17 @@
       "text": "你好，TestUser！[HAPPY]  \n{\"primary\":\"happy\",\"intensity\":0.8,\"secondary\":[]}\nmotionTag: [{\"type\":\"wave\",\"name\":\"wave\",\"duration\":900,\"loop\":false}]",
       "timestamp": 1769253797186
     }
+  ],
+  "guest_audit_smoke": [
+    {
+      "role": "user",
+      "text": "hi",
+      "timestamp": 1769443401824
+    },
+    {
+      "role": "agent",
+      "text": "Hi, Friend! 「[HAPPY]」  \n{\n  \"emotionTag\": {\n    \"primary\": \"happy\",\n    \"intensity\": 0.8,\n    \"secondary\": []\n  }\n}",
+      "timestamp": 1769443401824
+    }
   ]
 }

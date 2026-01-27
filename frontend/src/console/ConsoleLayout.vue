@@ -142,7 +142,6 @@ import {
 import { message } from 'ant-design-vue';
 import { useLanguageStore } from '@/stores/language';
 import {
-  clearConsoleAuthSession,
   getConsoleUserId,
   isConsoleAuthed,
   setConsoleAuthSession,
@@ -390,7 +389,7 @@ onBeforeUnmount(() => {
 });
 
 const handleLogout = () => {
-  clearConsoleAuthSession();
+  consoleStore.clearAdminKey();
   syncLoginTick();
   router.replace('/console');
 };

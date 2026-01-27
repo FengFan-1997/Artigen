@@ -18,6 +18,13 @@ const readRouteLockdown = () => {
 
 const ROUTE_LOCKDOWN = readRouteLockdown();
 
+const isAgentDebugRouteEnabled = () => {
+  try {
+    if (import.meta.env.DEV) return true;
+  } catch {}
+  return false;
+};
+
 type RouteSeoMeta = {
   title?: { zh: string; en: string } | string;
   description?: { zh: string; en: string } | string;
@@ -410,11 +417,16 @@ const routes = [
     name: 'room',
     component: () => import('../room/RoomPage.vue')
   },
-  {
-    path: '/agent-debug',
-    name: 'agent-debug',
-    component: () => import('../views/AgentDebug.vue')
-  },
+  ...(isAgentDebugRouteEnabled()
+    ? [
+        {
+          path: '/agent-debug',
+          name: 'agent-debug',
+          component: () => import('../views/AgentDebug.vue'),
+          meta: { robots: 'noindex,nofollow' } satisfies RouteSeoMeta
+        }
+      ]
+    : []),
   {
     path: '/artigen/ai',
     name: 'agent-img-tool',

@@ -2,6 +2,9 @@ const { VECTORS_FILE, readJson, writeJson } = require('../utils/storage');
 const { rateLimit } = require('../lib/rateLimit');
 const { getEmbedding, buildDocVectorsFromRoots } = require('../lib/vector-utils');
 const { API_KEY } = require('../lib/config');
+const { assertAdmin } = require('../lib/auth-utils');
+
+const isProd = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
 
 const clampInt = (n, min, max) => {
   const v = Number.parseInt(String(n || ''), 10);
@@ -10,7 +13,23 @@ const clampInt = (n, min, max) => {
 };
 
 const installEmbedRoutes = (app) => {
-  app.post('/api/embed', async (req, res) => {
+  const EMBED_RATE_MAX = (() => {
+    const v = Number.parseInt(String(process.env.EMBED_RATE_MAX || ''), 10);
+    return Number.isFinite(v) && v > 0 ? v : 15;
+  })();
+  const EMBED_RATE_WINDOW_MS = (() => {
+    const v = Number.parseInt(String(process.env.EMBED_RATE_WINDOW_MS || ''), 10);
+    return Number.isFinite(v) && v > 0 ? v : 60 * 1000;
+  })();
+
+  const requireAdminIfProd = (req, res, next) => {
+    if (!isProd) return next();
+    if (typeof assertAdmin !== 'function') return res.status(501).json({ error: 'ADMIN_NOT_CONFIGURED' });
+    if (!assertAdmin(req, res)) return;
+    return next();
+  };
+
+  app.post('/api/embed', rateLimit('embed', { max: EMBED_RATE_MAX, windowMs: EMBED_RATE_WINDOW_MS }), requireAdminIfProd, async (req, res) => {
     try {
       const { documents } = req.body || {}; // Array of { id, text, metadata }
       
@@ -84,7 +103,7 @@ const installEmbedRoutes = (app) => {
     }
   });
 
-  app.post('/api/embed/fs', rateLimit('embed_fs', { max: 3, windowMs: 60 * 1000 }), async (req, res) => {
+  app.post('/api/embed/fs', rateLimit('embed_fs', { max: 3, windowMs: 60 * 1000 }), requireAdminIfProd, async (req, res) => {
     try {
       const lang = req?.body?.lang === 'en' ? 'en' : 'zh';
       const rootsRaw = Array.isArray(req?.body?.roots) ? req.body.roots : null;

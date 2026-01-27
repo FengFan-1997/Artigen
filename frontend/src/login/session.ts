@@ -2,6 +2,8 @@ const STORAGE_KEY_ID = 'app_user_id';
 const STORAGE_KEY_TOKEN = 'app_auth_token';
 const LEGACY_STORAGE_KEY_ID = 'agent_user_id';
 const LEGACY_STORAGE_KEY_TOKEN = 'agent_auth_token';
+const SESSION_ID_KEY = 'agent_session_id_v1';
+const PROJECT_ID_KEY = 'agent_project_id_v1';
 
 export const isLocalLoggedIn = (): boolean => {
   try {
@@ -89,4 +91,37 @@ export const logoutLocal = (opts?: { redirectTo?: string; reload?: boolean }) =>
   }
   if (opts?.reload === false) return;
   window.location.reload();
+};
+
+export const getOrCreateSessionId = (): string => {
+  const make = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    const existing = window.sessionStorage.getItem(SESSION_ID_KEY);
+    if (existing && existing.trim()) return existing.trim();
+  } catch {}
+  const created = make();
+  try {
+    window.sessionStorage.setItem(SESSION_ID_KEY, created);
+  } catch {}
+  return created;
+};
+
+const computeDefaultProjectId = () => {
+  try {
+    const host = String(window.location?.host || '').trim();
+    if (host) return host;
+  } catch {}
+  return 'default';
+};
+
+export const getOrCreateProjectId = (): string => {
+  try {
+    const existing = window.localStorage.getItem(PROJECT_ID_KEY);
+    if (existing && existing.trim()) return existing.trim();
+  } catch {}
+  const created = computeDefaultProjectId();
+  try {
+    window.localStorage.setItem(PROJECT_ID_KEY, created);
+  } catch {}
+  return created;
 };

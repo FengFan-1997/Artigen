@@ -31,13 +31,16 @@ export const getConsoleAuthSession = (): ConsoleAuthSession | null => {
 
 export const isConsoleAuthed = (): boolean => {
   const s = getConsoleAuthSession();
-  if (!s) return false;
-  return s.expiresAt > Date.now();
+  if (s && s.expiresAt > Date.now()) return true;
+  const adminKey = getConsoleAdminKey();
+  return !!adminKey;
 };
 
 export const getConsoleUserId = (): string => {
   const s = getConsoleAuthSession();
-  return s?.userId || '';
+  if (s?.userId) return s.userId;
+  const adminKey = getConsoleAdminKey();
+  return adminKey ? 'admin' : '';
 };
 
 export const setConsoleAuthSession = (session: ConsoleAuthSession) => {
@@ -52,6 +55,13 @@ export const clearConsoleAuthSession = () => {
   try {
     localStorage.removeItem(AUTH_STORAGE_KEY);
   } catch {}
+};
+
+const inferAdminAuthMode = (token: string): AdminAuthMode => {
+  const t = String(token || '').trim();
+  if (!t) return 'bearer';
+  const dotCount = (t.match(/\./g) || []).length;
+  return dotCount === 2 ? 'bearer' : 'x-admin-key';
 };
 
 export const getConsoleAdminKey = (): string => {
@@ -150,6 +160,12 @@ export type AdminWallet = {
   updatedAt?: number;
 };
 
+export type AdminRateLimitStats = {
+  totalBuckets?: number;
+  topTags?: Array<{ tag: string; buckets: number }>;
+  updatedAt?: number;
+};
+
 export type AdminUserItem = {
   userId: string;
   email: string;
@@ -222,9 +238,39 @@ export type AdminAnalyticsEventItem = {
   path?: string;
   location?: string;
   referrer?: string;
+  trafficSource?: string;
+  trafficRefHost?: string;
+  trafficSearchEngine?: string;
+  trafficUtmMedium?: string;
+  trafficUtmSource?: string;
+  trafficUtmCampaign?: string;
   userId?: string;
   ip?: string;
   ua?: string;
+};
+
+export type AdminAuditHistoryItem = {
+  id?: string;
+  ts?: number;
+  kind?: string;
+  biz?: string;
+  status?: string;
+  provider?: string;
+  model?: string;
+  usedUrl?: string;
+  durationMs?: number;
+  requestSource?: string;
+  sessionId?: string;
+  projectId?: string;
+  pageContext?: any;
+  userText?: string;
+  aiText?: string;
+  ip?: string;
+  ua?: string;
+  username?: string;
+  email?: string;
+  userId?: string;
+  [k: string]: any;
 };
 
 export type AiBgSeoCopy = {
@@ -325,10 +371,13 @@ export const useConsoleStore = defineStore('console', {
     adminEventsTotal: 0,
     adminBehaviorEvents: [] as AdminAnalyticsEventItem[],
     adminBehaviorTotal: 0,
+    adminAudit: [] as AdminAuditHistoryItem[],
+    adminAuditTotal: 0,
     adminChats: [] as any[],
     adminChatsTotal: 0,
     adminOrders: [] as any[],
     adminOrdersTotal: 0,
+    adminRateLimitStats: null as AdminRateLimitStats | null,
     isInitialized: false
   }),
 
@@ -380,6 +429,13 @@ export const useConsoleStore = defineStore('console', {
 
       this.adminKey = getConsoleAdminKey();
       this.adminAuthMode = getConsoleAdminAuthMode();
+      if (this.adminKey) {
+        const inferred = inferAdminAuthMode(this.adminKey);
+        if (this.adminAuthMode !== inferred) {
+          this.adminAuthMode = inferred;
+          setConsoleAdminAuthMode(inferred);
+        }
+      }
 
       // Force update admin/current user to have 9999 points if requested
       // The prompt asked for "Finally give me an account with 9999 points"
@@ -435,6 +491,7 @@ export const useConsoleStore = defineStore('console', {
     clearAdminKey() {
       clearConsoleAdminKey();
       clearConsoleAdminAuthMode();
+      clearConsoleAuthSession();
       this.adminKey = '';
       this.adminAuthMode = 'bearer';
     },
@@ -558,6 +615,62 @@ export const useConsoleStore = defineStore('console', {
       this.adminBehaviorEvents = items;
       this.adminBehaviorTotal = Number(json?.total || items.length) || items.length;
       return { ok: true as const, total: this.adminBehaviorTotal };
+    },
+
+    async fetchAdminAuditHistory(input?: {
+      userId?: string;
+      biz?: string;
+      kind?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+    }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/audit/history', {
+        userId: input?.userId || '',
+        biz: input?.biz || '',
+        kind: input?.kind || '',
+        status: input?.status || '',
+        limit: input?.limit ?? 200,
+        offset: input?.offset ?? 0
+      });
+      const res = await fetch(url, { headers });
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
+        throw toAdminRequestError(res, json);
+      }
+      const items: AdminAuditHistoryItem[] = Array.isArray(json?.items) ? json.items : [];
+      this.adminAudit = items;
+      this.adminAuditTotal = Number(json?.total || items.length) || items.length;
+      return { ok: true as const, total: this.adminAuditTotal };
+    },
+
+    async fetchAdminRateLimitStats() {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildApiUrl('/api/admin/ratelimit/stats');
+      const res = await fetch(url, { headers });
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
+        throw toAdminRequestError(res, json);
+      }
+      const stats: AdminRateLimitStats =
+        json && typeof json === 'object'
+          ? {
+              totalBuckets: Number(json.totalBuckets ?? 0) || 0,
+              topTags: Array.isArray(json.topTags) ? json.topTags : [],
+              updatedAt: Number(json.updatedAt ?? 0) || Date.now()
+            }
+          : { totalBuckets: 0, topTags: [], updatedAt: Date.now() };
+      this.adminRateLimitStats = stats;
+      return { ok: true as const, stats };
     },
 
     async fetchAdminChatsHistory(input: { userId: string; limit?: number; offset?: number }) {

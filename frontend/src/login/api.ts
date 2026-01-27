@@ -16,6 +16,8 @@ export type GoogleAuthResult =
 export type ResetPasswordResult = { ok: true; message?: string } | { ok: false; message: string };
 
 import { buildApiUrl } from '../utils/api';
+import { getPageContext } from '@/agent/utils/pageContext';
+import { getOrCreateProjectId, getOrCreateSessionId } from './session';
 
 const SEND_CODE_URL = buildApiUrl('/api/login/send-code');
 const VERIFY_CODE_URL = buildApiUrl('/api/login/verify');
@@ -119,7 +121,13 @@ export const sendLoginCode = async (email: string): Promise<SendCodeResult> => {
   const res = await fetch(SEND_CODE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email })
+    body: JSON.stringify({
+      email,
+      sessionId: getOrCreateSessionId(),
+      projectId: getOrCreateProjectId(),
+      pageContext: getPageContext(),
+      requestSource: 'login_send_code'
+    })
   });
   const json = await parseJson(res);
   if (!res.ok) {
@@ -155,7 +163,15 @@ export const verifyLoginCode = async (email: string, code: string): Promise<Veri
   const res = await fetch(VERIFY_CODE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, code, fromUserId })
+    body: JSON.stringify({
+      email,
+      code,
+      fromUserId,
+      sessionId: getOrCreateSessionId(),
+      projectId: getOrCreateProjectId(),
+      pageContext: getPageContext(),
+      requestSource: 'login_verify_code'
+    })
   });
   const json = await parseJson(res);
   if (!res.ok)
@@ -188,7 +204,11 @@ export const loginWithPassword = async (
     body: JSON.stringify({
       username,
       password,
-      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : ''
+      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : '',
+      sessionId: getOrCreateSessionId(),
+      projectId: getOrCreateProjectId(),
+      pageContext: getPageContext(),
+      requestSource: 'login_password'
     })
   });
   const json = await parseJson(res);
@@ -245,7 +265,11 @@ export const registerWithEmailCode = async (input: {
       password: input.password,
       email: input.email,
       code: input.code,
-      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : ''
+      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : '',
+      sessionId: getOrCreateSessionId(),
+      projectId: getOrCreateProjectId(),
+      pageContext: getPageContext(),
+      requestSource: 'register_email_code'
     })
   });
   const json = await parseJson(res);
@@ -277,7 +301,11 @@ export const loginWithGoogleIdToken = async (idToken: string): Promise<GoogleAut
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       idToken,
-      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : ''
+      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : '',
+      sessionId: getOrCreateSessionId(),
+      projectId: getOrCreateProjectId(),
+      pageContext: getPageContext(),
+      requestSource: 'login_google'
     })
   });
   const json = await parseJson(res);
@@ -296,7 +324,13 @@ export const sendPasswordResetCode = async (email: string): Promise<SendCodeResu
   const res = await fetch(PASSWORD_RESET_SEND_CODE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email })
+    body: JSON.stringify({
+      email,
+      sessionId: getOrCreateSessionId(),
+      projectId: getOrCreateProjectId(),
+      pageContext: getPageContext(),
+      requestSource: 'password_reset_send_code'
+    })
   });
   const json = await parseJson(res);
   if (!res.ok) {
@@ -324,7 +358,15 @@ export const resetPasswordWithCode = async (input: {
   const res = await fetch(PASSWORD_RESET_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: input.email, code: input.code, newPassword: input.newPassword })
+    body: JSON.stringify({
+      email: input.email,
+      code: input.code,
+      newPassword: input.newPassword,
+      sessionId: getOrCreateSessionId(),
+      projectId: getOrCreateProjectId(),
+      pageContext: getPageContext(),
+      requestSource: 'password_reset'
+    })
   });
   const json = await parseJson(res);
   if (!res.ok) {

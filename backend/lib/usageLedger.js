@@ -77,6 +77,101 @@ const createLedger = (deps) => {
     return { v: 1, items };
   };
 
+  const stringifyPageContext = (input) => {
+    if (typeof input === 'string') return input.trim();
+    if (!input) return '';
+    try {
+      return JSON.stringify(input);
+    } catch {
+      return '';
+    }
+  };
+
+  const parseUrl = (raw) => {
+    const s = String(raw || '').trim();
+    if (!s) return null;
+    try {
+      return new URL(s);
+    } catch {
+      return null;
+    }
+  };
+
+  const normalizeHost = (raw) => String(raw || '').trim().toLowerCase();
+
+  const classifyTraffic = (input) => {
+    const location = String(input?.location || '').trim();
+    const referrer = String(input?.referrer || '').trim();
+
+    const locUrl = parseUrl(location);
+    const refUrl = parseUrl(referrer);
+    const locHost = normalizeHost(locUrl?.hostname || '');
+    const refHost = normalizeHost(refUrl?.hostname || '');
+
+    const searchHosts = [
+      'google.com',
+      'bing.com',
+      'yahoo.com',
+      'duckduckgo.com',
+      'baidu.com',
+      'sogou.com',
+      'so.com',
+      'yandex.com',
+      'naver.com',
+      'sm.cn'
+    ];
+    const isSearchHost = (h) =>
+      !!h && searchHosts.some((x) => h === x || h.endsWith(`.${x}`));
+
+    const utmMedium = (() => {
+      try {
+        const m = locUrl?.searchParams?.get('utm_medium');
+        return typeof m === 'string' ? m.trim().toLowerCase() : '';
+      } catch {
+        return '';
+      }
+    })();
+
+    const utmSource = (() => {
+      try {
+        const m = locUrl?.searchParams?.get('utm_source');
+        return typeof m === 'string' ? m.trim().toLowerCase() : '';
+      } catch {
+        return '';
+      }
+    })();
+
+    const utmCampaign = (() => {
+      try {
+        const m = locUrl?.searchParams?.get('utm_campaign');
+        return typeof m === 'string' ? m.trim().slice(0, 120) : '';
+      } catch {
+        return '';
+      }
+    })();
+
+    const source = (() => {
+      if (refHost && isSearchHost(refHost)) return 'search';
+      if (utmMedium === 'search' || utmMedium === 'organic') return 'search';
+      if (utmSource && (utmSource === 'google' || utmSource === 'bing' || utmSource === 'baidu'))
+        return 'search';
+      if (refHost && locHost && refHost !== locHost) return 'link';
+      if (refHost && !locHost) return isSearchHost(refHost) ? 'search' : 'link';
+      return 'organic';
+    })();
+
+    const searchEngine = source === 'search' ? (refHost || utmSource || '').slice(0, 120) : '';
+
+    return {
+      trafficSource: source,
+      ...(refHost ? { trafficRefHost: refHost.slice(0, 180) } : {}),
+      ...(searchEngine ? { trafficSearchEngine: searchEngine } : {}),
+      ...(utmMedium ? { trafficUtmMedium: utmMedium.slice(0, 120) } : {}),
+      ...(utmSource ? { trafficUtmSource: utmSource.slice(0, 120) } : {}),
+      ...(utmCampaign ? { trafficUtmCampaign: utmCampaign } : {})
+    };
+  };
+
   const appendAnalyticsEvent = (input) => {
     const store = readAnalyticsEventsStore();
     const items = store.items;
@@ -87,6 +182,12 @@ const createLedger = (deps) => {
     const location = String(input?.location || '').trim().slice(0, 480);
     const referrer = String(input?.referrer || '').trim().slice(0, 480);
     const userId = sanitizeLedgerId(input?.userId, '');
+    const requestId = sanitizeLedgerId(input?.requestId, '');
+    const sessionId = sanitizeLedgerId(input?.sessionId, '');
+    const projectId = sanitizeLedgerId(input?.projectId, '');
+    const requestSource = String(input?.requestSource || '').trim().slice(0, 120);
+    const pageContext = stringifyPageContext(input?.pageContext).slice(0, 6000);
+    const traffic = classifyTraffic({ location, referrer, payload });
 
     const item = {
       id: sanitizeLedgerId(input?.id, `evt_${ts.toString(36)}_${Math.random().toString(16).slice(2, 10)}`),
@@ -97,6 +198,12 @@ const createLedger = (deps) => {
       location,
       referrer,
       userId,
+      ...traffic,
+      ...(requestId ? { requestId } : {}),
+      ...(sessionId ? { sessionId } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(requestSource ? { requestSource } : {}),
+      ...(pageContext ? { pageContext } : {}),
       ip: typeof getClientIp === 'function' ? getClientIp(input?.req || {}) : 'unknown',
       ua:
         input?.req && input.req.headers && typeof input.req.headers['user-agent'] === 'string'
@@ -117,7 +224,7 @@ const createLedger = (deps) => {
       if (typeof v === 'string') {
         const s = v.trim();
         if (!s) continue;
-        out[k] = s;
+        out[k] = s.length > 480 ? s.slice(0, 480) : s;
         continue;
       }
       if (typeof v === 'number') {
@@ -141,7 +248,27 @@ const createLedger = (deps) => {
   };
 
   const upsertUsageLedgerItem = (input) => {
-    const requestId = sanitizeLedgerId(input?.requestId);
+    const normalizedInput = (() => {
+      const x = input && typeof input === 'object' ? { ...input } : {};
+      if (!x.errorCode && typeof x.error === 'string' && x.error.trim()) x.errorCode = x.error.trim();
+      if (!x.durationMs && typeof x.duration === 'number' && Number.isFinite(x.duration)) x.durationMs = x.duration;
+      if (
+        !x.creditsDelta &&
+        typeof x.credits === 'number' &&
+        Number.isFinite(x.credits) &&
+        x.credits !== 0
+      )
+        x.creditsDelta = x.credits;
+      if (!x.tokensTotal) {
+        const ti = Number(x.tokensIn || 0) || 0;
+        const to = Number(x.tokensOut || 0) || 0;
+        const tt = Number(x.tokensTotal || 0) || 0;
+        if (!tt && (ti || to)) x.tokensTotal = ti + to;
+      }
+      return x;
+    })();
+
+    const requestId = sanitizeLedgerId(normalizedInput?.requestId);
     if (!requestId) return { ok: false, error: 'requestId is required' };
 
     const store = readUsageLedgerStore();
@@ -151,13 +278,13 @@ const createLedger = (deps) => {
     if (idx >= 0) {
       const prev = items[idx];
       const chargedAlready = !!prev?.chargedAt;
-      const merged = mergeLedgerItem(prev, { ...input, requestId, updatedAt: Date.now() });
+      const merged = mergeLedgerItem(prev, { ...normalizedInput, requestId, updatedAt: Date.now() });
       items[idx] = merged;
       writeJson(USAGE_LEDGER_FILE, { v: 1, items: items.slice(-USAGE_LEDGER_MAX_ITEMS) });
       return { ok: true, existed: true, chargedAlready, item: merged };
     }
 
-    const createdAt = typeof input?.ts === 'number' ? input.ts : Date.now();
+    const createdAt = typeof normalizedInput?.ts === 'number' ? normalizedInput.ts : Date.now();
     const item = mergeLedgerItem(
       {
         requestId,
@@ -165,7 +292,7 @@ const createLedger = (deps) => {
         createdAt,
         updatedAt: createdAt
       },
-      input
+      normalizedInput
     );
 
     items.push(item);
@@ -194,4 +321,3 @@ const createLedger = (deps) => {
 };
 
 module.exports = { createLedger };
-

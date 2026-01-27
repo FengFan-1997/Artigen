@@ -1109,5 +1109,159 @@
     "status": "confirmed",
     "createdAt": 1769257571177,
     "updatedAt": 1769257575559
+  },
+  "afc049fc2a20f2c42bfcc8289b95289fmkutr77v": {
+    "id": "afc049fc2a20f2c42bfcc8289b95289fmkutr77v",
+    "userId": "guest_test_user",
+    "cost": 10,
+    "reason": "generate",
+    "reasonText": "生成",
+    "requestId": "rid_seq_71feba0105",
+    "status": "confirmed",
+    "createdAt": 1769411220044,
+    "updatedAt": 1769411222650
+  },
+  "b5b3b0aaf1aeb2d2b6304bd3268cc157mkutrcf1": {
+    "id": "b5b3b0aaf1aeb2d2b6304bd3268cc157mkutrcf1",
+    "userId": "guest_test_user",
+    "cost": 10,
+    "reason": "generate",
+    "reasonText": "生成",
+    "requestId": "rid_par_5be66d7d13",
+    "status": "confirmed",
+    "createdAt": 1769411226781,
+    "updatedAt": 1769411227377
+  },
+  "fb1d023ece4028703083c5e3d12f7299mkutrfvn": {
+    "id": "fb1d023ece4028703083c5e3d12f7299mkutrfvn",
+    "userId": "guest_conc_user",
+    "cost": 10,
+    "reason": "generate",
+    "reasonText": "生成",
+    "requestId": "rid_conc_c01531d514",
+    "status": "confirmed",
+    "createdAt": 1769411231267,
+    "updatedAt": 1769411234179
+  },
+  "0db4d690e6868cb4f5fe22e73a9bd5c3mkutrge8": {
+    "id": "0db4d690e6868cb4f5fe22e73a9bd5c3mkutrge8",
+    "userId": "guest_conc_user",
+    "cost": 10,
+    "reason": "generate",
+    "reasonText": "生成",
+    "requestId": "rid_conc_0eef1a938a",
+    "status": "confirmed",
+    "createdAt": 1769411231936,
+    "updatedAt": 1769411240914
+  },
+  "24bd0f881b588103d887308667d44434mkutrkvo": {
+    "id": "24bd0f881b588103d887308667d44434mkutrkvo",
+    "userId": "guest_conc_user",
+    "cost": 10,
+    "reason": "generate",
+    "reasonText": "生成",
+    "requestId": "rid_conc_50b2f85dd2",
+    "status": "confirmed",
+    "createdAt": 1769411237748,
+    "updatedAt": 1769411247982
+  },
+  "8821401253bb972fdd50726aa7353aa3mkutsnk6": {
+    "id": "8821401253bb972fdd50726aa7353aa3mkutsnk6",
+    "userId": "guest_conc_user",
+    "cost": 10,
+    "reason": "generate",
+    "reasonText": "生成",
+    "requestId": "rid_conc_a02d5e3a37",
+    "status": "confirmed",
+    "createdAt": 1769411287878,
+    "updatedAt": 1769411288542
+  },
+  "33c47ca8d97560114ef6b965738ea74fmkutso6f": {
+    "id": "33c47ca8d97560114ef6b965738ea74fmkutso6f",
+    "userId": "guest_conc_user",
+    "cost": 10,
+    "reason": "generate",
+    "reasonText": "生成",
+    "requestId": "rid_conc_c7ef7d43e4",
+    "status": "confirmed",
+    "createdAt": 1769411288679,
+    "updatedAt": 1769411296353
+  },
+  "7a74f250ea6ff70f9b0d72d518ae5041mkutsoui": {
+    "id": "7a74f250ea6ff70f9b0d72d518ae5041mkutsoui",
+    "userId": "guest_conc_user",
+    "cost": 10,
+    "reason": "generate",
+    "reasonText": "生成",
+    "requestId": "rid_conc_b436fb60d7",
+    "status": "confirmed",
+    "createdAt": 1769411289546,
+    "updatedAt": 1769411301722
+  },
+  "47db189ca4c6b302741e213a0381d11fmkutsucv": {
+    "id": "47db189ca4c6b302741e213a0381d11fmkutsucv",
+    "userId": "guest_conc_user",
+    "cost": 10,
+    "reason": "generate",
+    "reasonText": "生成",
+    "requestId": "rid_conc_c11587aa74",
+    "status": "confirmed",
+    "createdAt": 1769411296688,
+    "updatedAt": 1769411309244
+  },
+  "38220fa99594be3948809a335585effbmkvkwjum": {
+    "id": "38220fa99594be3948809a335585effbmkvkwjum",
+    "userId": "guest_verify_generate",
+    "cost": 10,
+    "reason": "agentimg_ingredient_label",
+    "reasonText": "AI配料表",
+    "requestId": "gen_verify_mkvkwjsw",
+    "status": "refunded",
+    "createdAt": 1769456819326,
+    "updatedAt": 1769456841328
+  },
+  "6f5e80f34cb3e649505f7585d2b8b0admkvkylsm": {
+    "id": "6f5e80f34cb3e649505f7585d2b8b0admkvkylsm",
+    "userId": "guest_verify_generate",
+    "cost": 10,
+    "reason": "agentimg_ingredient_label",
+    "reasonText": "AI配料表",
+    "requestId": "gen_verify_mkvkylqy",
+    "status": "refunded",
+    "createdAt": 1769456915158,
+    "updatedAt": 1769456937004
+  },
+  "b37ae1200fd34905aacbf730de705085mkvl1kms": {
+    "id": "b37ae1200fd34905aacbf730de705085mkvl1kms",
+    "userId": "guest_verify_img2img",
+    "cost": 10,
+    "reason": "ai_design",
+    "reasonText": "生图",
+    "requestId": "img_verify_mkvl1kl7",
+    "status": "confirmed",
+    "createdAt": 1769457053620,
+    "updatedAt": 1769457057731
+  },
+  "44230c4dd40400fa450625e8cea39b11mkwdrqj3": {
+    "id": "44230c4dd40400fa450625e8cea39b11mkwdrqj3",
+    "userId": "guest_audit_e2e",
+    "cost": 10,
+    "reason": "agentimg_ingredient_label",
+    "reasonText": "AI配料表",
+    "requestId": "gen_ing_cb41f48e54c5",
+    "status": "refunded",
+    "createdAt": 1769505303567,
+    "updatedAt": 1769505325973
+  },
+  "1a78c180927b0fa647a6cd405235e2bamkwds813": {
+    "id": "1a78c180927b0fa647a6cd405235e2bamkwds813",
+    "userId": "guest_audit_e2e",
+    "cost": 5,
+    "reason": "agentimg_directions",
+    "reasonText": "深度思考语义分析",
+    "requestId": "gen_dir_9900c3fd9617",
+    "status": "refunded",
+    "createdAt": 1769505326247,
+    "updatedAt": 1769505348459
   }
 }

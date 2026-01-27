@@ -1,5 +1,11 @@
 import { buildApiUrl } from '@/utils/api';
-import { ensureGuestUserId, getAuthToken } from '@/login/session';
+import { getPageContext } from '@/agent/utils/pageContext';
+import {
+  ensureGuestUserId,
+  getAuthToken,
+  getOrCreateProjectId,
+  getOrCreateSessionId
+} from '@/login/session';
 
 const API_URL = buildApiUrl('/api/generate');
 const IMG2IMG_URL = buildApiUrl('/api/img2img');
@@ -12,6 +18,23 @@ const isAllowedTextModel = (raw: string) => {
     .trim()
     .toLowerCase();
   return k === 'qwen' || k === 'qwen/qwen3-8b' || k === 'qwen3-8b';
+};
+
+const shouldLogAiRequest = (): boolean => {
+  try {
+    if (import.meta.env.DEV) return true;
+  } catch {}
+  return false;
+};
+
+const hashText = (input: string): string => {
+  const s = String(input || '');
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
 };
 
 export type CreditsBalance = { userId: string; available: number; frozen: number };
@@ -34,7 +57,7 @@ export type Img2ImgResult =
   | {
       ok: true;
       requestId: string;
-      images: { url: string }[];
+      images: { url: string; persisted?: boolean; persistError?: string }[];
       seed?: number;
       timings?: any;
     }
@@ -144,6 +167,7 @@ export const img2img = async (input: {
   timeoutMs?: number;
   requestId?: string;
   deepMode?: boolean;
+  requestSource?: string;
   signal?: AbortSignal;
 }): Promise<Img2ImgResult> => {
   const requestId =
@@ -161,6 +185,11 @@ export const img2img = async (input: {
       return raw;
     return 'img2img';
   })();
+  const requestSource = (() => {
+    const s = String(input.requestSource || '').trim();
+    if (!s) return 'circled-generate';
+    return s.slice(0, 80);
+  })();
   if (requestedModel && requestedModel !== FIXED_IMAGE_MODEL) {
     return {
       ok: false,
@@ -177,14 +206,16 @@ export const img2img = async (input: {
   const timeoutId = window.setTimeout(() => {
     timedOut = true;
     try {
-      console.warn('[AI][timeout]', {
-        api: IMG2IMG_URL,
-        requestId,
-        model: 'Kwai-Kolors/Kolors',
-        modelRequested: requestedModel || undefined,
-        timeoutMs,
-        elapsedMs: Math.round(performance.now() - startedAt)
-      });
+      if (shouldLogAiRequest()) {
+        console.warn('[AI][timeout]', {
+          api: IMG2IMG_URL,
+          requestId,
+          model: 'Kwai-Kolors/Kolors',
+          modelRequested: requestedModel || undefined,
+          timeoutMs,
+          elapsedMs: Math.round(performance.now() - startedAt)
+        });
+      }
     } catch {}
     controller.abort();
   }, timeoutMs);
@@ -198,16 +229,19 @@ export const img2img = async (input: {
     const userId = ensureGuestUserId();
     const token = getAuthToken();
     try {
-      console.log('[AI][request]', {
-        api: IMG2IMG_URL,
-        requestId,
-        model: FIXED_IMAGE_MODEL,
-        modelRequested: requestedModel || undefined,
-        timeoutMs,
-        prompt,
-        reason,
-        imagesCount: images.length
-      });
+      if (shouldLogAiRequest()) {
+        console.log('[AI][request]', {
+          api: IMG2IMG_URL,
+          requestId,
+          model: FIXED_IMAGE_MODEL,
+          modelRequested: requestedModel || undefined,
+          timeoutMs,
+          promptLen: prompt.length,
+          promptHash: hashText(prompt),
+          reason,
+          imagesCount: images.length
+        });
+      }
     } catch {}
     const response = await fetch(IMG2IMG_URL, {
       method: 'POST',
@@ -219,6 +253,9 @@ export const img2img = async (input: {
       body: JSON.stringify({
         userId,
         requestId,
+        sessionId: getOrCreateSessionId(),
+        projectId: getOrCreateProjectId(),
+        pageContext: getPageContext(),
         prompt,
         userText: typeof input.userText === 'string' ? input.userText.trim() : '',
         negativePrompt: input.negativePrompt,
@@ -228,7 +265,7 @@ export const img2img = async (input: {
         ...(images.length ? { images } : {}),
         timeoutMs: input.timeoutMs,
         deepMode: !!input.deepMode,
-        requestSource: 'circled-generate'
+        requestSource
       })
     });
 
@@ -252,7 +289,19 @@ export const img2img = async (input: {
     const data = await response.json().catch(() => null);
     const imagesRaw = Array.isArray(data?.images) ? data.images : [];
     const outImages = imagesRaw
-      .map((x: any) => ({ url: normalizeImageUrl(String(x?.url || '')) }))
+      .map((x: any) => {
+        const url = normalizeImageUrl(String(x?.url || ''));
+        const persisted = typeof x?.persisted === 'boolean' ? x.persisted : undefined;
+        const persistError =
+          typeof x?.persistError === 'string' && x.persistError.trim()
+            ? x.persistError.trim()
+            : undefined;
+        return {
+          url,
+          ...(typeof persisted === 'boolean' ? { persisted } : {}),
+          ...(persistError ? { persistError } : {})
+        };
+      })
       .filter((x: any) => !!x.url);
     if (!outImages.length) {
       return { ok: false, errorCode: 'EMPTY_IMAGE_RESULT', error: 'EMPTY_IMAGE_RESULT', requestId };
@@ -270,15 +319,17 @@ export const img2img = async (input: {
         ? 'UPSTREAM_TIMEOUT'
         : toRequestErrorCode(e);
     try {
-      console.warn('[AI][error]', {
-        api: IMG2IMG_URL,
-        requestId,
-        model: FIXED_IMAGE_MODEL,
-        modelRequested: requestedModel || undefined,
-        timeoutMs,
-        elapsedMs: Math.round(performance.now() - startedAt),
-        errorCode: code
-      });
+      if (shouldLogAiRequest()) {
+        console.warn('[AI][error]', {
+          api: IMG2IMG_URL,
+          requestId,
+          model: FIXED_IMAGE_MODEL,
+          modelRequested: requestedModel || undefined,
+          timeoutMs,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          errorCode: code
+        });
+      }
     } catch {}
     return { ok: false, errorCode: code, error: code, requestId };
   } finally {
@@ -299,13 +350,18 @@ export const generateText = async (
     deepMode?: boolean;
     initialInput?: string;
     userText?: string;
+    requestSource?: string;
+    agentImg?: any;
   }
 ): Promise<TextGenerateResult> => {
   const p = String(prompt || '').trim();
   const requestId =
     String(opts?.requestId || '').trim() ||
     `artigen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-  if (!p) return { ok: false, errorCode: 'EMPTY_PROMPT', error: 'EMPTY_PROMPT', requestId };
+  const agentImg =
+    opts && Object.prototype.hasOwnProperty.call(opts, 'agentImg') ? (opts as any).agentImg : null;
+  if (!p && !agentImg)
+    return { ok: false, errorCode: 'EMPTY_PROMPT', error: 'EMPTY_PROMPT', requestId };
 
   const requestedModel = String(opts?.model || '').trim();
   if (requestedModel && !isAllowedTextModel(requestedModel)) {
@@ -324,15 +380,17 @@ export const generateText = async (
   const timeoutId = window.setTimeout(() => {
     timedOut = true;
     try {
-      console.warn('[AI][timeout]', {
-        api: API_URL,
-        requestId,
-        model: FIXED_TEXT_MODEL,
-        modelRequested: requestedModel || undefined,
-        purpose: String(opts?.purpose || '').trim() || undefined,
-        timeoutMs,
-        elapsedMs: Math.round(performance.now() - startedAt)
-      });
+      if (shouldLogAiRequest()) {
+        console.warn('[AI][timeout]', {
+          api: API_URL,
+          requestId,
+          model: FIXED_TEXT_MODEL,
+          modelRequested: requestedModel || undefined,
+          purpose: String(opts?.purpose || '').trim() || undefined,
+          timeoutMs,
+          elapsedMs: Math.round(performance.now() - startedAt)
+        });
+      }
     } catch {}
     controller.abort();
   }, timeoutMs);
@@ -352,18 +410,23 @@ export const generateText = async (
     const deepMode = !!opts?.deepMode;
     const initialInput = typeof opts?.initialInput === 'string' ? opts?.initialInput.trim() : '';
     const userText = typeof opts?.userText === 'string' ? opts?.userText.trim() : '';
+    const requestSource = typeof opts?.requestSource === 'string' ? opts.requestSource.trim() : '';
     try {
-      console.log('[AI][request]', {
-        api: API_URL,
-        requestId,
-        model: FIXED_TEXT_MODEL,
-        modelRequested: requestedModel || undefined,
-        purpose: purpose || undefined,
-        cost: cost || undefined,
-        timeoutMs,
-        prompt: p,
-        imagesCount: Array.isArray(images) ? images.length : 0
-      });
+      if (shouldLogAiRequest()) {
+        console.log('[AI][request]', {
+          api: API_URL,
+          requestId,
+          model: FIXED_TEXT_MODEL,
+          modelRequested: requestedModel || undefined,
+          purpose: purpose || undefined,
+          cost: cost || undefined,
+          timeoutMs,
+          promptLen: p.length,
+          promptHash: hashText(p),
+          imagesCount: Array.isArray(images) ? images.length : 0,
+          requestSource: requestSource || undefined
+        });
+      }
     } catch {}
     const response = await fetch(API_URL, {
       method: 'POST',
@@ -373,16 +436,21 @@ export const generateText = async (
       },
       signal: controller.signal,
       body: JSON.stringify({
-        prompt: p,
+        ...(p ? { prompt: p } : {}),
         userId,
         requestId,
+        sessionId: getOrCreateSessionId(),
+        projectId: getOrCreateProjectId(),
+        pageContext: getPageContext(),
+        ...(requestSource ? { requestSource } : {}),
         images,
         model: FIXED_TEXT_MODEL,
         ...(purpose ? { purpose } : {}),
         ...(cost ? { cost } : {}),
         deepMode,
         ...(initialInput ? { initialInput } : {}),
-        ...(userText ? { userText } : {})
+        ...(userText ? { userText } : {}),
+        ...(agentImg ? { agentImg } : {})
       })
     });
 
@@ -413,16 +481,18 @@ export const generateText = async (
         ? 'UPSTREAM_TIMEOUT'
         : toRequestErrorCode(e);
     try {
-      console.warn('[AI][error]', {
-        api: API_URL,
-        requestId,
-        model: FIXED_TEXT_MODEL,
-        modelRequested: requestedModel || undefined,
-        purpose: String(opts?.purpose || '').trim() || undefined,
-        timeoutMs,
-        elapsedMs: Math.round(performance.now() - startedAt),
-        errorCode: code
-      });
+      if (shouldLogAiRequest()) {
+        console.warn('[AI][error]', {
+          api: API_URL,
+          requestId,
+          model: FIXED_TEXT_MODEL,
+          modelRequested: requestedModel || undefined,
+          purpose: String(opts?.purpose || '').trim() || undefined,
+          timeoutMs,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          errorCode: code
+        });
+      }
     } catch {}
     return { ok: false, errorCode: code, error: code, requestId };
   } finally {

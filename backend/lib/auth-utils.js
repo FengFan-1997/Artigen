@@ -78,6 +78,28 @@ const parseBearerToken = (req) => {
   return m ? String(m[1] || '').trim() : '';
 };
 
+const parseCookieToken = (req) => {
+  const raw = typeof req?.headers?.cookie === 'string' ? req.headers.cookie : '';
+  if (!raw) return '';
+  const parts = raw.split(';');
+  for (const part of parts) {
+    const s = String(part || '').trim();
+    if (!s) continue;
+    const eq = s.indexOf('=');
+    if (eq <= 0) continue;
+    const k = s.slice(0, eq).trim();
+    if (k !== 'auth_token') continue;
+    const v = s.slice(eq + 1);
+    if (!v) return '';
+    try {
+      return decodeURIComponent(v);
+    } catch {
+      return v;
+    }
+  }
+  return '';
+};
+
 const base64UrlEncode = (input) => {
   const raw = typeof input === 'string' ? input : JSON.stringify(input ?? null);
   return Buffer.from(raw, 'utf8')
@@ -231,12 +253,12 @@ const assertAdmin = (req, res) => {
 };
 
 const resolveAuthUser = (req) => {
-  const token = parseBearerToken(req);
-  if (!token) return { ok: false, status: 401, error: 'Missing token' };
+  const token = parseBearerToken(req) || parseCookieToken(req);
+  if (!token) return { ok: false, status: 401, error: 'LOGIN_REQUIRED' };
   const users = readUsersMap();
   const hit = Object.values(users).find((u) => String(u?.sessionToken || '') === token);
   const userId = typeof hit?.id === 'string' ? hit.id.trim() : '';
-  if (!userId) return { ok: false, status: 401, error: 'Invalid token' };
+  if (!userId) return { ok: false, status: 401, error: 'LOGIN_REQUIRED' };
   return { ok: true, userId, token };
 };
 
@@ -271,7 +293,7 @@ const canUseTestLoginCode = () => {
 const assertAuthUserMatches = (req, res, targetUserId) => {
   const resolved = resolveAuthUser(req);
   if (!resolved.ok) {
-    res.status(resolved.status || 401).json({ error: resolved.error || 'UNAUTHORIZED' });
+    res.status(resolved.status || 401).json({ error: resolved.error || 'LOGIN_REQUIRED' });
     return false;
   }
   const uid = String(targetUserId || '').trim();

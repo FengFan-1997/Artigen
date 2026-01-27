@@ -3829,19 +3829,18 @@ const AGENT_SETTINGS_REQUEST_EVENT = 'agent_settings_request';
 const AGENT_SETTINGS_UPDATE_EVENT = 'agent_settings_update';
 const AGENT_SETTINGS_STATE_EVENT = 'agent_settings_state';
 
-const AGENT_DEBUG_ENABLE_KEY = 'agent_debug_enable_v1';
 let agentDebugExposed = false;
 
 const shouldExposeAgentDebug = () => {
   if (import.meta.env.DEV) return true;
   try {
-    const q = new URLSearchParams(window.location.search);
-    if (q.get('agentDebug') === '1' || q.get('__agent_debug') === '1') return true;
-  } catch {}
-  try {
-    if (localStorage.getItem(AGENT_DEBUG_ENABLE_KEY) === '1') return true;
-  } catch {}
-  return false;
+    const host = String(window.location.hostname || '')
+      .trim()
+      .toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+  } catch {
+    return false;
+  }
 };
 
 const dispatchAgentSettingsState = async (includeModels: boolean) => {

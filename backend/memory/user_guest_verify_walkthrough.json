@@ -1,0 +1,43 @@
+{
+  "user_id": "guest_verify_walkthrough",
+  "meta": {
+    "last_interaction": "2026-01-26",
+    "updatedAt": 1769456698837
+  },
+  "core_memory": [],
+  "short_term_buffer": [
+    {
+      "role": "user",
+      "text": "这是一条用于验证 memory ingest 的测试内容",
+      "type": "note",
+      "ts": 1769456698768
+    }
+  ],
+  "audit_history": [
+    {
+      "id": "verify_mkvktyts",
+      "ts": 1769456698836,
+      "kind": "memory_ingest",
+      "biz": "memory_ingest",
+      "provider": "local",
+      "model": "",
+      "status": "ok",
+      "durationMs": 5,
+      "itemsCount": 1,
+      "itemsPreview": [
+        {
+          "role": "user",
+          "type": "note",
+          "ts": 1769456698768,
+          "text": "这是一条用于验证 memory ingest 的测试内容"
+        }
+      ],
+      "sessionId": "sess_verify_1",
+      "projectId": "proj_verify_1",
+      "requestSource": "verify_node",
+      "pageContext": "{\"path\":\"/verify\",\"feature\":\"memory_ingest\",\"ts\":\"2026-01-26T19:44:58.768Z\"}",
+      "ip": "127.0.0.1",
+      "ua": "node"
+    }
+  ]
+}

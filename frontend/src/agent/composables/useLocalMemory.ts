@@ -11,7 +11,9 @@ import {
   LOCAL_MEMORY_SUMMARY_MAX_CHARS
 } from '../constants';
 import { safeJsonParse, scheduleIdleTask } from '../utils';
+import { getPageContext } from '../utils/pageContext';
 import { buildApiUrl, getApiBaseUrl, getAuthToken, getUserId } from '../utils/user';
+import { getOrCreateProjectId, getOrCreateSessionId } from '@/login/session';
 
 export type LocalMemoryItem = {
   ts: number;
@@ -219,6 +221,10 @@ export function useLocalMemory() {
         },
         body: JSON.stringify({
           userId,
+          sessionId: getOrCreateSessionId(),
+          projectId: getOrCreateProjectId(),
+          pageContext: getPageContext(),
+          requestSource: 'agent_local_memory_ingest',
           items: items.map((x) => ({
             role: x.role,
             text: x.text,

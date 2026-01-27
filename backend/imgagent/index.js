@@ -8,15 +8,17 @@ const installImgagentRoutes = (app, opts) => {
   const persistImageRefForUser = opts?.persistImageRefForUser;
   const persistGenerateImageInputForUser = opts?.persistGenerateImageInputForUser;
   const appendUserImageHistory = opts?.appendUserImageHistory;
+  const appendUserAuditHistory = opts?.appendUserAuditHistory;
   const readUserMemory = opts?.readUserMemory;
   const ensureUserMemoryShape = opts?.ensureUserMemoryShape;
   const imgCredits = opts?.imgCredits;
   const getClientIp = opts?.getClientIp;
   const sanitizeLedgerId = opts?.sanitizeLedgerId;
   const upsertUsageLedgerItem = opts?.upsertUsageLedgerItem;
+  const rateLimit = opts?.rateLimit;
 
   const isGuestUserId = (userId) => {
-    const uid = String(userId || '').trim();
+    const uid = String(userId || '').replace(/^[\s\uFEFF\u200B\u200C\u200D]+|[\s\uFEFF\u200B\u200C\u200D]+$/g, '');
     return !!uid && uid.startsWith('guest_');
   };
   const safeLedgerId = (value) => {
@@ -37,6 +39,15 @@ const installImgagentRoutes = (app, opts) => {
     const key = String(raw || '').trim().toLowerCase();
     if (!key) return '';
     return key.replace(/[\s/-]+/g, '_');
+  };
+  const stringifyPageContext = (input) => {
+    if (typeof input === 'string') return input.trim();
+    if (!input) return '';
+    try {
+      return JSON.stringify(input);
+    } catch {
+      return '';
+    }
   };
   const resolveCreditsCosts = () => {
     const generate = parseCost(process.env.CREDITS_COST_GENERATE, 10);
@@ -115,6 +126,41 @@ const installImgagentRoutes = (app, opts) => {
   const resolveImg2ImgCost = () => {
     const costs = resolveCreditsCosts();
     return costs.img2img;
+  };
+
+  const IMG2IMG_USER_MAX_CONCURRENCY = (() => {
+    const v = Number.parseInt(String(process.env.IMG2IMG_USER_MAX_CONCURRENCY || ''), 10);
+    return Number.isFinite(v) && v >= 0 ? Math.min(v, 20) : 2;
+  })();
+  const img2imgUserInFlight = new Map();
+  const acquireImg2imgUserSlot = (userId) => {
+    if (IMG2IMG_USER_MAX_CONCURRENCY <= 0) return { ok: true, release: () => { } };
+    const uid = String(userId || '').trim();
+    if (!uid) return { ok: true, release: () => { } };
+    const now = Date.now();
+    if (img2imgUserInFlight.size > 6000) {
+      let removed = 0;
+      for (const [k, v] of img2imgUserInFlight) {
+        const last = Number(v?.last || 0) || 0;
+        if (now - last > 10 * 60 * 1000) {
+          img2imgUserInFlight.delete(k);
+          removed += 1;
+        }
+        if (removed > 500) break;
+      }
+    }
+    const cur = img2imgUserInFlight.get(uid) || { n: 0, last: now };
+    const n = Number(cur?.n || 0) || 0;
+    if (n >= IMG2IMG_USER_MAX_CONCURRENCY) return { ok: false, release: () => { } };
+    img2imgUserInFlight.set(uid, { n: n + 1, last: now });
+    const release = () => {
+      const cur2 = img2imgUserInFlight.get(uid);
+      if (!cur2) return;
+      const n2 = Math.max(0, (Number(cur2?.n || 0) || 0) - 1);
+      if (n2 <= 0) img2imgUserInFlight.delete(uid);
+      else img2imgUserInFlight.set(uid, { n: n2, last: Date.now() });
+    };
+    return { ok: true, release };
   };
 
   const extractProviderImages = (data) => {
@@ -521,193 +567,482 @@ MQIDAQAB
     }
   });
 
-  app.post('/api/img2img', async (req, res) => {
-    const body = req.body || {};
-    const userId = String(body.userId || '').trim();
-    const requestId = String(body.requestId || res.locals?.requestId || '').trim();
-    const prompt = String(body.prompt || '').trim();
-    const negativePrompt = typeof body.negativePrompt === 'string' ? body.negativePrompt : '';
-    const model = typeof body.model === 'string' ? body.model.trim() : '';
-    const params = body.params && typeof body.params === 'object' ? body.params : undefined;
-    const imagesRaw = Array.isArray(body.images) ? body.images : [];
-    const timeoutMsRaw = Number(body.timeoutMs ?? 0) || 0;
-    const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.min(timeoutMsRaw, 180000) : undefined;
-    const userText = typeof body.userText === 'string' ? body.userText.trim() : '';
-    const reason = String(body.reason || 'img2img').trim() || 'img2img';
-    const costInput = Number.parseInt(String(body.cost ?? ''), 10);
+  const IMG2IMG_RATE_MAX = (() => {
+    const v = Number.parseInt(String(process.env.IMG2IMG_RATE_MAX || ''), 10);
+    return Number.isFinite(v) && v > 0 ? v : 30;
+  })();
+  const IMG2IMG_RATE_WINDOW_MS = (() => {
+    const v = Number.parseInt(String(process.env.IMG2IMG_RATE_WINDOW_MS || ''), 10);
+    return Number.isFinite(v) && v > 0 ? v : 60 * 1000;
+  })();
 
-    if (!userId) return res.status(400).json({ error: 'MISSING_USER_ID', requestId });
-    if (!prompt) return res.status(400).json({ error: 'EMPTY_PROMPT', requestId });
+  app.post(
+    '/api/img2img',
+    typeof rateLimit === 'function'
+      ? rateLimit('img2img', { max: IMG2IMG_RATE_MAX, windowMs: IMG2IMG_RATE_WINDOW_MS })
+      : (req, res, next) => next(),
+    async (req, res) => {
+      const body = req.body || {};
+      const userId = String(body.userId || '').trim();
+      const requestId = String(body.requestId || res.locals?.requestId || '').trim();
+      const startedAt = Date.now();
+      const prompt = String(body.prompt || '').trim();
+      const negativePrompt = typeof body.negativePrompt === 'string' ? body.negativePrompt : '';
+      const model = typeof body.model === 'string' ? body.model.trim() : '';
+      const params = body.params && typeof body.params === 'object' ? body.params : undefined;
+      const imagesRaw = Array.isArray(body.images) ? body.images : [];
+      const timeoutMsRaw = Number(body.timeoutMs ?? 0) || 0;
+      const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.min(timeoutMsRaw, 180000) : undefined;
+      const userText = typeof body.userText === 'string' ? body.userText.trim() : '';
+      const reason = String(body.reason || 'img2img').trim() || 'img2img';
+      const costInput = Number.parseInt(String(body.cost ?? ''), 10);
 
-    if (!isGuestUserId(userId) && typeof assertAuthUserMatches === 'function') {
-      const auth = assertAuthUserMatches(req, res, userId);
-      if (!auth) return;
-    }
+      if (!userId) return res.status(400).json({ error: 'MISSING_USER_ID', requestId });
+      if (!prompt) return res.status(400).json({ error: 'EMPTY_PROMPT', requestId });
 
-    if (typeof callSiliconFlowImageGenerate !== 'function') {
-      return res.status(501).json({ error: 'IMG_PROVIDER_NOT_CONFIGURED', requestId });
-    }
-
-    const costs = resolveCreditsCosts();
-    const resolvedCost =
-      Number.isFinite(costInput) && costInput > 0
-        ? costInput
-        : resolveCostByReason(reason, costs) || resolveImg2ImgCost();
-    const hold = (() => {
-      try {
-        if (!imgCredits || typeof imgCredits.freezeCredits !== 'function') return null;
-        return imgCredits.freezeCredits({
-          userId,
-          cost: resolvedCost,
-          requestId,
-          reason,
-          reasonText: resolveReasonText(reason)
-        });
-      } catch {
-        return null;
+      if (!isGuestUserId(userId) && typeof assertAuthUserMatches === 'function') {
+        const auth = assertAuthUserMatches(req, res, userId);
+        if (!auth) return;
       }
-    })();
-    if (hold && !hold.ok) {
-      const wallet = hold.wallet && typeof hold.wallet === 'object' ? hold.wallet : undefined;
-      return res.status(402).json({ error: String(hold.error || 'CREDITS_ERROR'), requestId, ...(wallet ? { wallet } : {}) });
-    }
 
-    let response = null;
-    try {
-      response = await callSiliconFlowImageGenerate({
-        prompt,
-        negativePrompt,
-        params,
-        images: imagesRaw,
-        timeoutMs,
-        ...(model ? { model } : {})
-      });
-    } catch (e) {
-      if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === 'function') {
+      if (typeof callSiliconFlowImageGenerate !== 'function') {
+        return res.status(501).json({ error: 'IMG_PROVIDER_NOT_CONFIGURED', requestId });
+      }
+
+      const userSlot = acquireImg2imgUserSlot(userId);
+      if (!userSlot.ok) return res.status(503).json({ error: 'SERVER_BUSY', requestId });
+
+      let hold = null;
+      try {
+        const costs = resolveCreditsCosts();
+        const resolvedCost =
+          Number.isFinite(costInput) && costInput > 0
+            ? costInput
+            : resolveCostByReason(reason, costs) || resolveImg2ImgCost();
+        let ledgerRequestId = safeLedgerId(requestId);
+
+        hold = (() => {
+          try {
+            if (!imgCredits || typeof imgCredits.freezeCredits !== 'function') return null;
+            return imgCredits.freezeCredits({
+              userId,
+              cost: resolvedCost,
+              requestId,
+              reason,
+              reasonText: resolveReasonText(reason)
+            });
+          } catch {
+            return null;
+          }
+        })();
+        if (hold && !hold.ok) {
+          const wallet = hold.wallet && typeof hold.wallet === 'object' ? hold.wallet : undefined;
+          return res
+            .status(402)
+            .json({ error: String(hold.error || 'CREDITS_ERROR'), requestId, ...(wallet ? { wallet } : {}) });
+        }
+        if (!ledgerRequestId) ledgerRequestId = safeLedgerId(hold?.requestId);
+
+        let response = null;
         try {
-          imgCredits.refundHold({ userId, holdId: hold.holdId });
-        } catch { }
-      }
-      const code =
-        typeof e?.code === 'string' && e.code.trim()
-          ? e.code.trim()
-          : typeof e?.message === 'string' && e.message.trim()
-            ? e.message.trim()
-            : 'IMG2IMG_FAILED';
-      const status = typeof e?.status === 'number' && e.status >= 400 ? e.status : 500;
-      return res.status(status).json({ error: code, requestId });
-    }
+          response = await callSiliconFlowImageGenerate({
+            prompt,
+            negativePrompt,
+            params,
+            images: imagesRaw,
+            timeoutMs,
+            ...(model ? { model } : {})
+          });
+        } catch (e) {
+          if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === 'function') {
+            try {
+              imgCredits.refundHold({ userId, holdId: hold.holdId });
+            } catch { }
+          }
+          const code =
+            typeof e?.code === 'string' && e.code.trim()
+              ? e.code.trim()
+              : typeof e?.message === 'string' && e.message.trim()
+                ? e.message.trim()
+                : 'IMG2IMG_FAILED';
+          const status = typeof e?.status === 'number' && e.status >= 400 ? e.status : 500;
+          if (ledgerRequestId && typeof upsertUsageLedgerItem === 'function') {
+            try {
+              const provider = 'siliconflow';
+              const modelUsed =
+                typeof e?.modelTried === 'string' && e.modelTried.trim()
+                  ? e.modelTried.trim()
+                  : model;
+              const plan = userText ? { userText } : undefined;
+              upsertUsageLedgerItem({
+                requestId: ledgerRequestId,
+                ts: Date.now(),
+                userId,
+                sessionId: safeLedgerId(body.sessionId),
+                projectId: safeLedgerId(body.projectId),
+                trigger: normalizeReasonKey(reason) || 'img2img',
+                provider,
+                ...(modelUsed ? { model: modelUsed } : {}),
+                usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+                creditsDelta: 0,
+                creditsPlanned: resolvedCost,
+                ...(plan ? { plan } : {}),
+                status: 'error',
+                errorCode: code,
+                durationMs: Math.max(0, Date.now() - startedAt),
+                ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
+                ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+              });
+            } catch { }
+          }
+          if (typeof appendUserAuditHistory === 'function') {
+            try {
+              const sessionId = safeLedgerId(body.sessionId);
+              const projectId = safeLedgerId(body.projectId);
+              const requestSource = String(body.requestSource || '').trim().slice(0, 160);
+              const pageContext = stringifyPageContext(body.pageContext).slice(0, 12000);
+              const entry = {
+                id: requestId || ledgerRequestId || `img2img_${Date.now().toString(36)}`,
+                ts: Date.now(),
+                kind: 'image',
+                biz: normalizeReasonKey(reason) || 'img2img',
+                provider: 'siliconflow',
+                ...(model ? { model } : {}),
+                usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+                cost: resolvedCost,
+                ...(userText ? { userText: String(userText).slice(0, 8000) } : {}),
+                ...(sessionId ? { sessionId } : {}),
+                ...(projectId ? { projectId } : {}),
+                ...(requestSource ? { requestSource } : {}),
+                ...(pageContext ? { pageContext } : {}),
+                ...(Object.prototype.hasOwnProperty.call(body || {}, 'deepMode') ? { deepMode: !!body.deepMode } : {}),
+                status: 'error',
+                error: code,
+                durationMs: Math.max(0, Date.now() - startedAt),
+                ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
+                ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+              };
+              appendUserAuditHistory({ userId, entry });
+            } catch { }
+          }
+          return res.status(status).json({ error: code, requestId });
+        }
 
-    const data = response?.data;
-    const providerImages = extractProviderImages(data);
-    const persistedOutputs = [];
-    for (const url of providerImages) {
-      const persisted =
-        typeof persistImageRefForUser === 'function' ? await persistImageRefForUser({ userId, url, prefix: 'gen' }) : '';
-      const finalUrl = String(persisted || url).trim();
-      if (finalUrl) persistedOutputs.push(finalUrl);
-    }
+        const data = response?.data;
+        const providerImages = extractProviderImages(data);
+        const persistedOutputs = [];
+        const persistErrors = new Map();
+        for (const url of providerImages) {
+          const originalUrl = String(url || '').trim();
+          if (!originalUrl) continue;
+          let persistedUrl = '';
+          let persistError = '';
+          if (typeof persistImageRefForUser === 'function') {
+            try {
+              const r = await persistImageRefForUser({ userId, url: originalUrl, prefix: 'gen', withMeta: true });
+              if (r && typeof r === 'object') {
+                if (r.ok && typeof r.url === 'string') persistedUrl = String(r.url || '').trim();
+                else persistError = String(r.error || 'PERSIST_FAILED');
+              } else {
+                persistedUrl = String(r || '').trim();
+              }
+            } catch (e) {
+              persistError =
+                typeof e?.code === 'string' && e.code.trim()
+                  ? e.code.trim()
+                  : typeof e?.message === 'string' && e.message.trim()
+                    ? e.message.trim()
+                    : 'PERSIST_FAILED';
+            }
+          }
+          const finalUrl = String(persistedUrl || originalUrl).trim();
+          if (!finalUrl) continue;
+          const persistedOk = !!persistedUrl && finalUrl.startsWith('/files/');
+          if (!persistedOk) {
+            const key = persistError || 'PERSIST_FAILED';
+            persistErrors.set(key, (persistErrors.get(key) || 0) + 1);
+          }
+          persistedOutputs.push({
+            url: finalUrl,
+            persisted: persistedOk,
+            ...(persistedOk ? {} : { persistError: persistError || 'PERSIST_FAILED' })
+          });
+        }
 
-    if (!persistedOutputs.length) {
-      if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === 'function') {
-        try {
-          imgCredits.refundHold({ userId, holdId: hold.holdId });
-        } catch { }
-      }
-      return res.status(502).json({ error: 'EMPTY_IMAGE_RESULT', requestId });
-    }
+        if (!persistedOutputs.length) {
+          if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === 'function') {
+            try {
+              imgCredits.refundHold({ userId, holdId: hold.holdId });
+            } catch { }
+          }
+          if (ledgerRequestId && typeof upsertUsageLedgerItem === 'function') {
+            try {
+              const provider = 'siliconflow';
+              const modelUsed =
+                typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : model;
+              const plan = userText ? { userText } : undefined;
+              upsertUsageLedgerItem({
+                requestId: ledgerRequestId,
+                ts: Date.now(),
+                userId,
+                sessionId: safeLedgerId(body.sessionId),
+                projectId: safeLedgerId(body.projectId),
+                trigger: normalizeReasonKey(reason) || 'img2img',
+                provider,
+                ...(modelUsed ? { model: modelUsed } : {}),
+                usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+                creditsDelta: 0,
+                creditsPlanned: resolvedCost,
+                ...(plan ? { plan } : {}),
+                status: 'error',
+                errorCode: 'EMPTY_IMAGE_RESULT',
+                durationMs: Math.max(0, Date.now() - startedAt),
+                ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
+                ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+              });
+            } catch { }
+          }
+          if (typeof appendUserAuditHistory === 'function') {
+            try {
+              const sessionId = safeLedgerId(body.sessionId);
+              const projectId = safeLedgerId(body.projectId);
+              const requestSource = String(body.requestSource || '').trim().slice(0, 160);
+              const pageContext = stringifyPageContext(body.pageContext).slice(0, 12000);
+              const entry = {
+                id: requestId || ledgerRequestId || `img2img_${Date.now().toString(36)}`,
+                ts: Date.now(),
+                kind: 'image',
+                biz: normalizeReasonKey(reason) || 'img2img',
+                provider: 'siliconflow',
+                ...(model ? { model } : {}),
+                usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+                cost: resolvedCost,
+                ...(userText ? { userText: String(userText).slice(0, 8000) } : {}),
+                ...(sessionId ? { sessionId } : {}),
+                ...(projectId ? { projectId } : {}),
+                ...(requestSource ? { requestSource } : {}),
+                ...(pageContext ? { pageContext } : {}),
+                ...(Object.prototype.hasOwnProperty.call(body || {}, 'deepMode') ? { deepMode: !!body.deepMode } : {}),
+                status: 'error',
+                error: 'EMPTY_IMAGE_RESULT',
+                durationMs: Math.max(0, Date.now() - startedAt),
+                ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
+                ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+              };
+              appendUserAuditHistory({ userId, entry });
+            } catch { }
+          }
+          return res.status(502).json({ error: 'EMPTY_IMAGE_RESULT', requestId });
+        }
 
-    if (hold?.holdId && imgCredits && typeof imgCredits.settleHold === 'function') {
-      try {
-        imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: resolvedCost });
-      } catch { }
-    }
-    const ledgerRequestId = safeLedgerId(requestId || hold?.requestId);
-    if (ledgerRequestId && typeof upsertUsageLedgerItem === 'function') {
-      try {
-        const provider = 'siliconflow';
-        const modelUsed =
-          typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : model;
-        const plan = userText ? { userText } : undefined;
-        upsertUsageLedgerItem({
-          requestId: ledgerRequestId,
-          ts: Date.now(),
-          userId,
-          sessionId: safeLedgerId(body.sessionId),
-          projectId: safeLedgerId(body.projectId),
-          trigger: normalizeReasonKey(reason) || 'img2img',
-          provider,
-          model: modelUsed,
-          usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
-          creditsDelta: resolvedCost,
-          ...(plan ? { plan } : {}),
-          status: 'ok',
-          ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
-          ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 220) : ''
-        });
-      } catch { }
-    }
+        if (hold?.holdId && imgCredits && typeof imgCredits.settleHold === 'function') {
+          try {
+            imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: resolvedCost });
+          } catch { }
+        }
 
-    const persistInputImage = async (img) => {
-      if (typeof img === 'string') {
-        const u = img.trim();
-        if (!u) return '';
-        if (typeof persistImageRefForUser !== 'function') return u;
-        return await persistImageRefForUser({ userId, url: u, prefix: 'in' });
-      }
-      if (img && typeof img === 'object') {
-        if (typeof persistGenerateImageInputForUser !== 'function') return '';
-        return persistGenerateImageInputForUser({ userId, image: img, prefix: 'in' });
-      }
-      return '';
-    };
-
-    const persistedInputs = [];
-    for (const it of imagesRaw) {
-      const u = await persistInputImage(it);
-      const finalUrl = String(u || '').trim();
-      if (finalUrl) persistedInputs.push(finalUrl);
-    }
-
-    if (typeof appendUserImageHistory === 'function') {
-      try {
-        const id =
-          requestId ||
-          `imgwork_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-        const provider = 'siliconflow';
-        const model = typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : '';
-        const seed = typeof data?.seed === 'number' ? data.seed : undefined;
-        const timings =
-          data && typeof data === 'object' && data.timings && typeof data.timings === 'object' ? data.timings : undefined;
-        const entry = {
-          id,
-          ts: Date.now(),
-          type: 'img2img',
-          provider,
-          ...(model ? { model } : {}),
-          cost: resolvedCost,
-          ...(userText ? { userText } : {}),
-          prompt,
-          ...(negativePrompt ? { negativePrompt } : {}),
-          ...(params ? { params } : {}),
-          images: persistedOutputs.map((u) => ({ kind: 'url', url: u })),
-          ...(persistedInputs.length ? { inputImages: persistedInputs.map((u) => ({ kind: 'url', url: u })) } : {}),
-          ...(seed !== undefined ? { seed } : {}),
-          ...(timings ? { timings } : {}),
-          ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {})
+        const persistInputImage = async (img) => {
+          if (typeof img === 'string') {
+            const originalUrl = img.trim();
+            if (!originalUrl) return { url: '', persisted: false, persistError: 'INVALID_INPUT' };
+            if (typeof persistImageRefForUser !== 'function') {
+              return { url: originalUrl, persisted: originalUrl.startsWith('/files/') };
+            }
+            let persistedUrl = '';
+            let persistError = '';
+            try {
+              const r = await persistImageRefForUser({ userId, url: originalUrl, prefix: 'in', withMeta: true });
+              if (r && typeof r === 'object') {
+                if (r.ok && typeof r.url === 'string') persistedUrl = String(r.url || '').trim();
+                else persistError = String(r.error || 'PERSIST_FAILED');
+              } else {
+                persistedUrl = String(r || '').trim();
+              }
+            } catch (e) {
+              persistError =
+                typeof e?.code === 'string' && e.code.trim()
+                  ? e.code.trim()
+                  : typeof e?.message === 'string' && e.message.trim()
+                    ? e.message.trim()
+                    : 'PERSIST_FAILED';
+            }
+            const finalUrl = String(persistedUrl || originalUrl).trim();
+            const persistedOk = !!persistedUrl && finalUrl.startsWith('/files/');
+            return {
+              url: finalUrl,
+              persisted: persistedOk,
+              ...(persistedOk ? {} : { persistError: persistError || 'PERSIST_FAILED' })
+            };
+          }
+          if (img && typeof img === 'object') {
+            if (typeof persistGenerateImageInputForUser !== 'function') {
+              return { url: '', persisted: false, persistError: 'PERSIST_NOT_CONFIGURED' };
+            }
+            const saved = persistGenerateImageInputForUser({ userId, image: img, prefix: 'in' });
+            const url = String(saved || '').trim();
+            const persistedOk = !!url && url.startsWith('/files/');
+            return { url, persisted: persistedOk, ...(persistedOk ? {} : { persistError: 'WRITE_FAILED' }) };
+          }
+          return { url: '', persisted: false, persistError: 'INVALID_INPUT' };
         };
-        appendUserImageHistory({ userId, entry });
-      } catch { }
-    }
 
-    res.json({
-      ok: true,
-      requestId,
-      images: persistedOutputs.map((u) => ({ url: u })),
-      ...(typeof data?.seed === 'number' ? { seed: data.seed } : {}),
-      ...(data && typeof data === 'object' && data.timings && typeof data.timings === 'object' ? { timings: data.timings } : {})
-    });
-  });
+        const persistedInputs = [];
+        for (const it of imagesRaw) {
+          const info = await persistInputImage(it);
+          const finalUrl = String(info?.url || '').trim();
+          if (!finalUrl) continue;
+          persistedInputs.push({
+            url: finalUrl,
+            persisted: !!info?.persisted,
+            ...(info?.persistError ? { persistError: String(info.persistError) } : {})
+          });
+        }
+
+        const persistSummary = (() => {
+          const attempted = providerImages.length;
+          const persisted = persistedOutputs.filter((it) => !!it.persisted).length;
+          const failed = Math.max(0, attempted - persisted);
+          const failures = Array.from(persistErrors.entries())
+            .map(([error, count]) => ({ error, count }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 6);
+          return { attempted, persisted, failed, ...(failures.length ? { failures } : {}) };
+        })();
+
+        if (ledgerRequestId && typeof upsertUsageLedgerItem === 'function') {
+          try {
+            const provider = 'siliconflow';
+            const modelUsed =
+              typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : model;
+            const seed = typeof data?.seed === 'number' ? data.seed : undefined;
+            const timings =
+              data && typeof data === 'object' && data.timings && typeof data.timings === 'object' ? data.timings : undefined;
+            const plan = userText ? { userText } : undefined;
+            upsertUsageLedgerItem({
+              requestId: ledgerRequestId,
+              ts: Date.now(),
+              userId,
+              sessionId: safeLedgerId(body.sessionId),
+              projectId: safeLedgerId(body.projectId),
+              trigger: normalizeReasonKey(reason) || 'img2img',
+              provider,
+              ...(modelUsed ? { model: modelUsed } : {}),
+              usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+              creditsDelta: resolvedCost,
+              ...(plan ? { plan } : {}),
+              status: 'ok',
+              durationMs: Math.max(0, Date.now() - startedAt),
+              ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
+              ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : '',
+              imageCount: persistedOutputs.length,
+              ...(persistSummary ? { persist: persistSummary } : {}),
+              ...(seed !== undefined ? { seed } : {}),
+              ...(timings ? { timings } : {})
+            });
+          } catch { }
+        }
+
+        if (typeof appendUserImageHistory === 'function') {
+          try {
+            const id =
+              requestId ||
+              `imgwork_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+            const provider = 'siliconflow';
+            const model = typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : '';
+            const seed = typeof data?.seed === 'number' ? data.seed : undefined;
+            const timings =
+              data && typeof data === 'object' && data.timings && typeof data.timings === 'object' ? data.timings : undefined;
+            const entry = {
+              id,
+              ts: Date.now(),
+              type: 'img2img',
+              provider,
+              ...(model ? { model } : {}),
+              cost: resolvedCost,
+              ...(userText ? { userText } : {}),
+              prompt,
+              ...(negativePrompt ? { negativePrompt } : {}),
+              ...(params ? { params } : {}),
+              images: persistedOutputs.map((it) => ({
+                kind: 'url',
+                url: it.url,
+                persisted: !!it.persisted,
+                ...(it.persistError ? { persistError: it.persistError } : {})
+              })),
+              ...(persistedInputs.length
+                ? {
+                  inputImages: persistedInputs.map((it) => ({
+                    kind: 'url',
+                    url: it.url,
+                    persisted: !!it.persisted,
+                    ...(it.persistError ? { persistError: it.persistError } : {})
+                  }))
+                }
+                : {}),
+              ...(seed !== undefined ? { seed } : {}),
+              ...(timings ? { timings } : {}),
+              ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
+              ...(persistSummary ? { persist: persistSummary } : {})
+            };
+            appendUserImageHistory({ userId, entry });
+          } catch { }
+        }
+        if (typeof appendUserAuditHistory === 'function') {
+          try {
+            const modelUsed =
+              typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : model;
+            const sessionId = safeLedgerId(body.sessionId);
+            const projectId = safeLedgerId(body.projectId);
+            const requestSource = String(body.requestSource || '').trim().slice(0, 160);
+            const pageContext = stringifyPageContext(body.pageContext).slice(0, 12000);
+            const entry = {
+              id: requestId || ledgerRequestId || `img2img_${Date.now().toString(36)}`,
+              ts: Date.now(),
+              kind: 'image',
+              biz: normalizeReasonKey(reason) || 'img2img',
+              provider: 'siliconflow',
+              ...(modelUsed ? { model: modelUsed } : {}),
+              usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+              cost: resolvedCost,
+              ...(userText ? { userText: String(userText).slice(0, 8000) } : {}),
+              ...(sessionId ? { sessionId } : {}),
+              ...(projectId ? { projectId } : {}),
+              ...(requestSource ? { requestSource } : {}),
+              ...(pageContext ? { pageContext } : {}),
+              ...(Object.prototype.hasOwnProperty.call(body || {}, 'deepMode') ? { deepMode: !!body.deepMode } : {}),
+              status: 'ok',
+              durationMs: Math.max(0, Date.now() - startedAt),
+              images: persistedOutputs.map((it) => ({
+                url: it.url,
+                persisted: !!it.persisted,
+                ...(it.persistError ? { persistError: it.persistError } : {})
+              })),
+              ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
+              ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+            };
+            appendUserAuditHistory({ userId, entry });
+          } catch { }
+        }
+
+        res.json({
+          ok: true,
+          requestId,
+          images: persistedOutputs.map((it) => ({
+            url: it.url,
+            persisted: !!it.persisted,
+            ...(it.persistError ? { persistError: it.persistError } : {})
+          })),
+          persist: persistSummary,
+          ...(typeof data?.seed === 'number' ? { seed: data.seed } : {}),
+          ...(data && typeof data === 'object' && data.timings && typeof data.timings === 'object' ? { timings: data.timings } : {})
+        });
+      } finally {
+        try {
+          userSlot.release();
+        } catch { }
+      }
+    }
+  );
 
   app.post('/api/credits/checkin', (req, res) => {
     const userId = String(req.body?.userId || req.query?.userId || '').trim();

@@ -12,6 +12,16 @@ const installUsageRoutes = (app, deps) => {
   const readAnalyticsEventsStore = deps?.readAnalyticsEventsStore;
   const readUsersMap = deps?.readUsersMap;
 
+  const stringifyPageContext = (input) => {
+    if (typeof input === 'string') return input.trim();
+    if (!input) return '';
+    try {
+      return JSON.stringify(input);
+    } catch {
+      return '';
+    }
+  };
+
   app.post('/api/collection/event', rateLimit('collection_event', { max: 180, windowMs: 60 * 1000 }), (req, res) => {
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -22,8 +32,14 @@ const installUsageRoutes = (app, deps) => {
       const referrer = String(body.referrer || '').trim();
       const ts = typeof body.ts === 'number' && Number.isFinite(body.ts) ? body.ts : Date.now();
       const userId = sanitizeLedgerId(body.userId, '');
+      const requestId = sanitizeLedgerId(body.requestId, '');
+      const sessionId = sanitizeLedgerId(body.sessionId, '');
+      const projectId = sanitizeLedgerId(body.projectId, '');
+      const pageContext = stringifyPageContext(body.pageContext);
+      const requestSource = String(body.requestSource || '').trim();
 
       const item = appendAnalyticsEvent({
+        ...(requestId ? { id: requestId, requestId } : {}),
         ts,
         eventType,
         payload,
@@ -31,6 +47,10 @@ const installUsageRoutes = (app, deps) => {
         location,
         referrer,
         userId,
+        ...(sessionId ? { sessionId } : {}),
+        ...(projectId ? { projectId } : {}),
+        ...(pageContext ? { pageContext } : {}),
+        ...(requestSource ? { requestSource } : {}),
         req
       });
       return res.json({ ok: true, item });
@@ -99,7 +119,7 @@ const installUsageRoutes = (app, deps) => {
         status: String(body.status || '').trim().slice(0, 40),
         durationMs: typeof body.durationMs === 'number' ? Math.max(0, body.durationMs) : undefined,
         ip: getClientIp(req),
-        ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 220) : ''
+        ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
       };
 
       const result = upsertUsageLedgerItem(item);
@@ -278,4 +298,3 @@ const installUsageRoutes = (app, deps) => {
 };
 
 module.exports = { installUsageRoutes };
-

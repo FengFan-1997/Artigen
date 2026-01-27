@@ -1,0 +1,80 @@
+{
+  "user_id": "guest_verify_img2img",
+  "meta": {
+    "updatedAt": 1769457057741
+  },
+  "core_memory": [],
+  "short_term_buffer": [],
+  "image_history": [
+    {
+      "id": "img_verify_mkvl1kl7",
+      "ts": 1769457057739,
+      "type": "img2img",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "cost": 10,
+      "userText": "测试图生图",
+      "prompt": "一张极简风格的产品海报，清爽配色",
+      "images": [
+        {
+          "kind": "url",
+          "url": "https://s3.siliconflow.cn/default/outputs/3dd77124-6042-4370-9036-4a7a98bea99a_5def09715793c5c1090cf7be273fa820_ComfyUI_274831a9_00001_.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXXXXFILESEXAMPLE%2F20260126%2Fcn-shanghai-1%2Fs3%2Faws4_request&X-Amz-Date=20260126T195056Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=eyJhbGciOiJSUzI1NiIsImtpZCI6ImdyYXkiLCJ0eXAiOiJKV1QifQ.eyJzdWIiOiJmYWFzOmRlcDpvcHI6ZDI5Y3UzZ2gzdnZjNzNjNWJpNWc6Y2ZhZjMiLCJpc3MiOiJodHRwczovL2lhbS5zaWxpY29uZmxvdy5jbiIsImlhdCI6MTc2OTQzODAxNCwiZXhwIjoxNzY5NjEwODE0LCJ0eXAiOiJzZXJ2aWNlIiwiYXBsdCI6InNmOmZhYXM6ZmFicmljIiwidG50IjoiZDI5Y3UzZ2gzdnZjNzNjNWJpNWciLCJpZCI6ImQ1cm5tZm1jbm5jYzczOGczaTQwIiwiYWNjZXNzIjpbeyJ0eXBlIjoiZmFhcyIsInN1YmplY3RJZCI6ImQyOWN1M2doM3Z2YzczYzViaTVnIiwiYWN0aW9ucyI6WyJmYWFzOmludm9jYXRpb246cHVsbGluZyJdfV19.ybh29QZQfTNFlka6Yxu0mlK3RdyaJHH_AUyEcppLsZtOKE4F3pW8yr2W7cCUAA6_-5TfaSReBiqIr3pe7lMFvr1mbFB23a4h7Vd0LxNtoTKcXIt6F5N8NQFXGk2Akz2RzOn3PrmAHmRth1OMG_aeNEyHkgSo1wAwJaR0DmcdPUj4PeZWGNz80bfAPoYtxa1M5FcRKjO_-60cNysCbTTZNGfyXcrKuUr7eEzqJbMfqVxkpS1sT1O6DNQ_0d0v8BuRXRKF7cTHC6YBNSthnOjtzlf3MwHNGH3UiLucivyST5Z5eDB_qemsZcj7mOEN7veIUxdhEgMCoqLZqgSRSIhFBfDgeuWYlXBAzY8iyBDfqcGS-V3L9pjufCF7HC-IffQKhHHP5lxpFXfTDh3suv7w-m0ybNHWvUxOT00VFkU4cSiYM6_8jpamVA3N3qIoBmOZmj5VD3pQwdoQVBBCafS6xKBSNLh0qLkNcHDgiRoB4IpdNgSgSEGJuDlf1TDK6XUQV9XbKO58Z1CtvlQa6twW8fsUXvkH3mTDB8jIBvWDe0QyZwgEQl5CyJkPqc1enKtkb6q8kLJ5qD2PtiOq7uWGPJ5_Vww6XnmSfNviOPcFBCyHO3VHu68pTDwEe-Djj7Tqq7zUCwRvpAy7lxUkpzIKVYdmTPgJYxccoNnpSTyF8KU&X-Amz-Signature=fbeed4f5b9062140d5ad01ce0a79c0c28f0acc58d4a7e141e27d7e82a1e152c8",
+          "persisted": false,
+          "persistError": "ERR_INVALID_ARG_TYPE"
+        }
+      ],
+      "inputImages": [
+        {
+          "kind": "url",
+          "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X9XcAAAAASUVORK5CYII=",
+          "persisted": false,
+          "persistError": "ERR_INVALID_ARG_TYPE"
+        }
+      ],
+      "seed": 1561477526,
+      "timings": {
+        "inference": 3.798
+      },
+      "ip": "127.0.0.1",
+      "persist": {
+        "attempted": 1,
+        "persisted": 0,
+        "failed": 1,
+        "failures": [
+          {
+            "error": "ERR_INVALID_ARG_TYPE",
+            "count": 1
+          }
+        ]
+      }
+    }
+  ],
+  "audit_history": [
+    {
+      "id": "img_verify_mkvl1kl7",
+      "ts": 1769457057740,
+      "kind": "image",
+      "biz": "ai_design",
+      "provider": "siliconflow",
+      "model": "Kwai-Kolors/Kolors",
+      "usedUrl": "https://api.siliconflow.cn/v1/images/generations",
+      "cost": 10,
+      "userText": "测试图生图",
+      "sessionId": "sess_verify_img_1",
+      "projectId": "proj_verify_img_1",
+      "requestSource": "verify_node",
+      "pageContext": "{\"path\":\"/image\",\"feature\":\"img2img\",\"ts\":\"2026-01-26T19:50:53.563Z\"}",
+      "status": "ok",
+      "durationMs": 4123,
+      "images": [
+        {
+          "url": "https://s3.siliconflow.cn/default/outputs/3dd77124-6042-4370-9036-4a7a98bea99a_5def09715793c5c1090cf7be273fa820_ComfyUI_274831a9_00001_.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXXXXFILESEXAMPLE%2F20260126%2Fcn-shanghai-1%2Fs3%2Faws4_request&X-Amz-Date=20260126T195056Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=eyJhbGciOiJSUzI1NiIsImtpZCI6ImdyYXkiLCJ0eXAiOiJKV1QifQ.eyJzdWIiOiJmYWFzOmRlcDpvcHI6ZDI5Y3UzZ2gzdnZjNzNjNWJpNWc6Y2ZhZjMiLCJpc3MiOiJodHRwczovL2lhbS5zaWxpY29uZmxvdy5jbiIsImlhdCI6MTc2OTQzODAxNCwiZXhwIjoxNzY5NjEwODE0LCJ0eXAiOiJzZXJ2aWNlIiwiYXBsdCI6InNmOmZhYXM6ZmFicmljIiwidG50IjoiZDI5Y3UzZ2gzdnZjNzNjNWJpNWciLCJpZCI6ImQ1cm5tZm1jbm5jYzczOGczaTQwIiwiYWNjZXNzIjpbeyJ0eXBlIjoiZmFhcyIsInN1YmplY3RJZCI6ImQyOWN1M2doM3Z2YzczYzViaTVnIiwiYWN0aW9ucyI6WyJmYWFzOmludm9jYXRpb246cHVsbGluZyJdfV19.ybh29QZQfTNFlka6Yxu0mlK3RdyaJHH_AUyEcppLsZtOKE4F3pW8yr2W7cCUAA6_-5TfaSReBiqIr3pe7lMFvr1mbFB23a4h7Vd0LxNtoTKcXIt6F5N8NQFXGk2Akz2RzOn3PrmAHmRth1OMG_aeNEyHkgSo1wAwJaR0DmcdPUj4PeZWGNz80bfAPoYtxa1M5FcRKjO_-60cNysCbTTZNGfyXcrKuUr7eEzqJbMfqVxkpS1sT1O6DNQ_0d0v8BuRXRKF7cTHC6YBNSthnOjtzlf3MwHNGH3UiLucivyST5Z5eDB_qemsZcj7mOEN7veIUxdhEgMCoqLZqgSRSIhFBfDgeuWYlXBAzY8iyBDfqcGS-V3L9pjufCF7HC-IffQKhHHP5lxpFXfTDh3suv7w-m0ybNHWvUxOT00VFkU4cSiYM6_8jpamVA3N3qIoBmOZmj5VD3pQwdoQVBBCafS6xKBSNLh0qLkNcHDgiRoB4IpdNgSgSEGJuDlf1TDK6XUQV9XbKO58Z1CtvlQa6twW8fsUXvkH3mTDB8jIBvWDe0QyZwgEQl5CyJkPqc1enKtkb6q8kLJ5qD2PtiOq7uWGPJ5_Vww6XnmSfNviOPcFBCyHO3VHu68pTDwEe-Djj7Tqq7zUCwRvpAy7lxUkpzIKVYdmTPgJYxccoNnpSTyF8KU&X-Amz-Signature=fbeed4f5b9062140d5ad01ce0a79c0c28f0acc58d4a7e141e27d7e82a1e152c8",
+          "persisted": false,
+          "persistError": "ERR_INVALID_ARG_TYPE"
+        }
+      ],
+      "ip": "127.0.0.1",
+      "ua": "node"
+    }
+  ]
+}

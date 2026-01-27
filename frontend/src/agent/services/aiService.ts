@@ -426,7 +426,10 @@ const callBackendChat = async (input: {
   message: string;
   userId: string;
   requestId: string;
+  sessionId: string;
+  projectId: string;
   pageContext: any;
+  requestSource: string;
   projectKnowledge?: string;
   agentContext?: any;
   signal: AbortSignal;
@@ -451,7 +454,10 @@ const callBackendChat = async (input: {
       message: input.message,
       userId: input.userId,
       requestId: input.requestId,
+      sessionId: input.sessionId,
+      projectId: input.projectId,
       pageContext: input.pageContext,
+      requestSource: input.requestSource,
       projectKnowledge: input.projectKnowledge,
       agentContext: input.agentContext
     })
@@ -698,7 +704,10 @@ const requestAi = async (input: {
           message: input.message,
           userId,
           requestId,
+          sessionId,
+          projectId,
           pageContext,
+          requestSource: `agent_chat_${String(group || input.kind).trim() || 'chat'}`.slice(0, 80),
           projectKnowledge: knowledgeForBackend,
           agentContext: ctxForBackend,
           signal: controller.signal
@@ -740,6 +749,9 @@ const requestAi = async (input: {
             sessionId,
             projectId,
             ts: Date.now(),
+            pageContext,
+            requestSource:
+              `agent_chat_${String(group || input.kind).trim() || 'chat'}_direct`.slice(0, 80),
             trigger,
             provider: 'gemini_direct',
             model: result.model,
@@ -950,7 +962,14 @@ export const updateUserProfile = async (profile: any) => {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
-      body: JSON.stringify({ userId, profile })
+      body: JSON.stringify({
+        userId,
+        profile,
+        sessionId: getOrCreateSessionId(),
+        projectId: getOrCreateProjectId(),
+        pageContext: getPageContext(),
+        requestSource: 'agent_update_profile'
+      })
     });
     if (!response.ok) throw new Error('Failed to update profile');
     return await response.json();

@@ -21,7 +21,7 @@ export function useAgentImgHistory(
   authToken: Ref<string>,
   isAuthed: Ref<boolean>,
   syncAuth: () => void,
-  scrollChatToBottom: () => void
+  _scrollChatToBottom: () => void
 ) {
   const history = ref<HistoryItem[]>([]);
 

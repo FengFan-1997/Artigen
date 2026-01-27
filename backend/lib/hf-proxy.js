@@ -133,7 +133,7 @@ const pruneHfCache = () => {
       fs.unlinkSync(it.path);
       curSize -= Number(it.size) || 0;
       curFiles -= 1;
-    } catch {}
+    } catch { }
   }
 };
 
@@ -144,7 +144,7 @@ const schedulePruneHfCache = () => {
     try {
       ensureDirSync(HF_CACHE_DIR);
       pruneHfCache();
-    } catch {}
+    } catch { }
   }, 2000);
 };
 
@@ -162,6 +162,46 @@ const getHfCacheUsage = () => {
   const data = { files: files.length, bytes };
   hfCacheUsageCache = { ts: now, data };
   return data;
+};
+
+const HF_CACHE_STATS_SAMPLE_MAX = 30;
+const hfCacheStats = {
+  startedAt: Date.now(),
+  hit: 0,
+  miss: 0,
+  origin: 0,
+  negativeHit: 0,
+  lastHit: null,
+  lastOrigin: null,
+  samples: []
+};
+const pushHfCacheSample = (s) => {
+  try {
+    if (!s || typeof s !== 'object') return;
+    const normalized = { ...s };
+    if (typeof normalized.kind !== 'string' || !normalized.kind.trim()) normalized.kind = 'unknown';
+    hfCacheStats.samples.push(normalized);
+    if (hfCacheStats.samples.length > HF_CACHE_STATS_SAMPLE_MAX) {
+      hfCacheStats.samples.splice(0, hfCacheStats.samples.length - HF_CACHE_STATS_SAMPLE_MAX);
+    }
+  } catch { }
+};
+const getHfCacheStats = () => {
+  const hit = Number(hfCacheStats.hit || 0) || 0;
+  const miss = Number(hfCacheStats.miss || 0) || 0;
+  const denom = hit + miss;
+  const hitRate = denom > 0 ? hit / denom : null;
+  return {
+    startedAt: Number(hfCacheStats.startedAt || 0) || 0,
+    hit,
+    miss,
+    hitRate,
+    origin: Number(hfCacheStats.origin || 0) || 0,
+    negativeHit: Number(hfCacheStats.negativeHit || 0) || 0,
+    lastHit: hfCacheStats.lastHit || null,
+    lastOrigin: hfCacheStats.lastOrigin || null,
+    samples: Array.isArray(hfCacheStats.samples) ? hfCacheStats.samples.slice(-HF_CACHE_STATS_SAMPLE_MAX) : []
+  };
 };
 
 const isUpstreamBaseDown = (base) => {
@@ -250,6 +290,16 @@ const proxyHuggingFace = async (req, res) => {
   if (req.method === 'GET' || req.method === 'HEAD') {
     const cached = hfProxyNegativeCache.get(cacheKey);
     if (cached && cached?.expiresAt > Date.now() && cached?.status) {
+      try {
+        hfCacheStats.negativeHit += 1;
+        pushHfCacheSample({
+          ts: Date.now(),
+          kind: 'negative',
+          key: cacheKey,
+          method: req.method,
+          status: Number(cached.status || 0) || 0
+        });
+      } catch { }
       res.status(cached.status);
       res.setHeader('Cache-Control', 'public, max-age=60');
       res.end();
@@ -283,6 +333,20 @@ const proxyHuggingFace = async (req, res) => {
     if (typeof meta?.lastModified === 'string' && meta.lastModified.trim())
       res.setHeader('Last-Modified', meta.lastModified);
     res.setHeader('Content-Disposition', 'inline');
+
+    try {
+      hfCacheStats.hit += 1;
+      const sample = {
+        ts: Date.now(),
+        kind: 'hit',
+        key: cacheKey,
+        method: req.method,
+        range: wantRange ? rangeHeader : '',
+        size
+      };
+      hfCacheStats.lastHit = sample;
+      pushHfCacheSample(sample);
+    } catch { }
 
     if (wantRange) {
       const m = rangeHeader.match(/bytes\s*=\s*(\d*)\s*-\s*(\d*)/i);
@@ -323,6 +387,18 @@ const proxyHuggingFace = async (req, res) => {
   };
 
   if (tryServeFromCache()) return;
+  try {
+    if (cacheEnabled && (req.method === 'GET' || req.method === 'HEAD')) {
+      hfCacheStats.miss += 1;
+      pushHfCacheSample({
+        ts: Date.now(),
+        kind: 'miss',
+        key: cacheKey,
+        method: req.method,
+        range: wantRange ? rangeHeader : ''
+      });
+    }
+  } catch { }
 
   const preferBaseRaw = normalizeResolveBasePreference(req.query.base || req.query.preferBase || '');
   const allowedBases = new Set(HF_RESOLVE_BASES.map((b) => normalizeUpstreamBase(b)));
@@ -360,19 +436,19 @@ const proxyHuggingFace = async (req, res) => {
             notFoundCount += 1;
             try {
               probe.body?.destroy?.();
-            } catch {}
+            } catch { }
             continue;
           }
           if (probe.status >= 500 || probe.status === 403 || probe.status === 429) {
             lastStatus = probe.status;
             try {
               probe.body?.destroy?.();
-            } catch {}
+            } catch { }
             continue;
           }
           try {
             probe.body?.destroy?.();
-          } catch {}
+          } catch { }
         } catch (e) {
           lastError = e;
           markUpstreamBaseFailure(base);
@@ -402,7 +478,7 @@ const proxyHuggingFace = async (req, res) => {
         }
         try {
           upstream.body?.destroy?.();
-        } catch {}
+        } catch { }
         continue;
       }
 
@@ -437,9 +513,23 @@ const proxyHuggingFace = async (req, res) => {
           }
         }
         res.setHeader('Content-Disposition', 'inline');
-      } catch {}
+      } catch { }
 
       if (req.method === 'HEAD') {
+        try {
+          hfCacheStats.origin += 1;
+          const sample = {
+            ts: Date.now(),
+            kind: 'origin',
+            key: cacheKey,
+            method: 'HEAD',
+            range: wantRange ? rangeHeader : '',
+            base,
+            status
+          };
+          hfCacheStats.lastOrigin = sample;
+          pushHfCacheSample(sample);
+        } catch { }
         res.end();
         return;
       }
@@ -467,8 +557,24 @@ const proxyHuggingFace = async (req, res) => {
               lastModified: upstream.headers?.get ? upstream.headers.get('last-modified') : ''
             });
             schedulePruneHfCache();
-          } catch {}
+          } catch { }
         }
+        try {
+          hfCacheStats.origin += 1;
+          const sample = {
+            ts: Date.now(),
+            kind: 'origin',
+            key: cacheKey,
+            method: 'GET',
+            range: wantRange ? rangeHeader : '',
+            base,
+            status,
+            cachedWrite: !!shouldCache,
+            bytes: out.length
+          };
+          hfCacheStats.lastOrigin = sample;
+          pushHfCacheSample(sample);
+        } catch { }
         res.end(out);
         return;
       }
@@ -497,15 +603,15 @@ const proxyHuggingFace = async (req, res) => {
                 lastModified: upstream.headers?.get ? upstream.headers.get('last-modified') : ''
               });
               schedulePruneHfCache();
-            } catch {}
+            } catch { }
           });
           ws.on('error', () => {
             try {
               ws.close();
-            } catch {}
+            } catch { }
             try {
               fs.unlinkSync(tmp);
-            } catch {}
+            } catch { }
           });
           upstream.body.pipe(tee);
         } catch {
@@ -514,6 +620,21 @@ const proxyHuggingFace = async (req, res) => {
       } else {
         upstream.body.pipe(res);
       }
+      try {
+        hfCacheStats.origin += 1;
+        const sample = {
+          ts: Date.now(),
+          kind: 'origin',
+          key: cacheKey,
+          method: 'GET',
+          range: wantRange ? rangeHeader : '',
+          base,
+          status,
+          cachedWrite: !!shouldCache
+        };
+        hfCacheStats.lastOrigin = sample;
+        pushHfCacheSample(sample);
+      } catch { }
       return;
     } catch (e) {
       lastError = e;
@@ -607,6 +728,7 @@ module.exports = {
   proxyHuggingFace,
   proxyLive2DCubismCore,
   getHfCacheUsage,
+  getHfCacheStats,
   hfProxyBaseHealth,
   HF_CACHE_DIR,
   HF_CACHE_TTL_MS,

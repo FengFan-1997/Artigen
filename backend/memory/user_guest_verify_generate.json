@@ -1,0 +1,96 @@
+{
+  "user_id": "guest_verify_generate",
+  "meta": {
+    "updatedAt": 1769456937011
+  },
+  "core_memory": [],
+  "short_term_buffer": [],
+  "image_history": [
+    {
+      "id": "gen_verify_mkvkylqy",
+      "ts": 1769456937009,
+      "type": "ingredient_label",
+      "cost": 10,
+      "durationMs": 21853,
+      "purpose": "agentimg_ingredient_label",
+      "productType": "COSMETIC",
+      "promptLen": 3016,
+      "promptHash": "f41cb68d",
+      "userText": "成分：水，甘油，透明质酸钠，烟酰胺。适用：面部精华。",
+      "status": "error",
+      "error": "NETWORK_ERROR"
+    },
+    {
+      "id": "gen_verify_mkvkwjsw",
+      "ts": 1769456841332,
+      "type": "ingredient_label",
+      "cost": 10,
+      "durationMs": 22011,
+      "purpose": "agentimg_ingredient_label",
+      "productType": "COSMETIC",
+      "promptLen": 3016,
+      "promptHash": "f41cb68d",
+      "userText": "成分：水，甘油，透明质酸钠，烟酰胺。适用：面部精华。",
+      "status": "error",
+      "error": "NETWORK_ERROR"
+    }
+  ],
+  "audit_history": [
+    {
+      "id": "gen_verify_mkvkylqy",
+      "ts": 1769456937011,
+      "kind": "generate",
+      "biz": "agentimg_ingredient_label",
+      "cost": 10,
+      "deepMode": false,
+      "input": {
+        "userText": "成分：水，甘油，透明质酸钠，烟酰胺。适用：面部精华。",
+        "productType": "COSMETIC"
+      },
+      "promptLen": 3016,
+      "promptHash": "f41cb68d",
+      "userText": "成分：水，甘油，透明质酸钠，烟酰胺。适用：面部精华。",
+      "sessionId": "sess_verify_gen_1",
+      "projectId": "proj_verify_gen_1",
+      "requestSource": "verify_node",
+      "pageContext": {
+        "path": "/ingredient",
+        "feature": "ingredient_label",
+        "ts": "2026-01-26T19:48:35.098Z"
+      },
+      "status": "error",
+      "error": "NETWORK_ERROR",
+      "durationMs": 21855,
+      "ip": "127.0.0.1",
+      "ua": "node"
+    },
+    {
+      "id": "gen_verify_mkvkwjsw",
+      "ts": 1769456841334,
+      "kind": "generate",
+      "biz": "agentimg_ingredient_label",
+      "cost": 10,
+      "deepMode": false,
+      "input": {
+        "userText": "成分：水，甘油，透明质酸钠，烟酰胺。适用：面部精华。",
+        "productType": "COSMETIC"
+      },
+      "promptLen": 3016,
+      "promptHash": "f41cb68d",
+      "userText": "成分：水，甘油，透明质酸钠，烟酰胺。适用：面部精华。",
+      "sessionId": "sess_verify_gen_1",
+      "projectId": "proj_verify_gen_1",
+      "requestSource": "verify_node",
+      "pageContext": {
+        "path": "/ingredient",
+        "feature": "ingredient_label",
+        "ts": "2026-01-26T19:46:59.264Z"
+      },
+      "status": "error",
+      "error": "NETWORK_ERROR",
+      "durationMs": 22013,
+      "ip": "127.0.0.1",
+      "ua": "node"
+    }
+  ]
+}

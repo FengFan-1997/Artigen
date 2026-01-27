@@ -1,4 +1,6 @@
 import { buildApiUrl } from '../utils/api';
+import { getPageContext } from '@/agent/utils/pageContext';
+import { getOrCreateProjectId, getOrCreateSessionId } from '@/login/session';
 
 const STORAGE_KEY_ID = 'app_user_id';
 const STORAGE_KEY_TOKEN = 'app_auth_token';
@@ -65,7 +67,11 @@ export const loginUser = async (username: string, password: string) => {
     body: JSON.stringify({
       username,
       password,
-      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : ''
+      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : '',
+      sessionId: getOrCreateSessionId(),
+      projectId: getOrCreateProjectId(),
+      pageContext: getPageContext(),
+      requestSource: 'auth_login'
     })
   });
 
@@ -95,7 +101,11 @@ export const registerUser = async (username: string, password: string, name: str
       username,
       password,
       name,
-      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : ''
+      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : '',
+      sessionId: getOrCreateSessionId(),
+      projectId: getOrCreateProjectId(),
+      pageContext: getPageContext(),
+      requestSource: 'auth_register'
     })
   });
 

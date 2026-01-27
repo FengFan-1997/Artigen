@@ -5,6 +5,9 @@ import { revokeUrl } from './url';
 let cachedPdfLib: any | null = null;
 let cachedPdfWorkerSrc: string | null = null;
 
+const MAX_CANVAS_DIM = 16384;
+const MAX_CANVAS_PIXELS = 50_000_000;
+
 const ensurePdfLib = async () => {
   if (cachedPdfLib && cachedPdfWorkerSrc) return cachedPdfLib as any;
   const [libMod, workerMod] = await Promise.all([
@@ -23,6 +26,14 @@ const ensurePdfLib = async () => {
 };
 
 const blobToArrayBuffer = (blob: Blob) => blob.arrayBuffer();
+
+const assertCanvasSafeSize = (w: number, h: number) => {
+  const width = Math.max(1, Math.floor(w || 0));
+  const height = Math.max(1, Math.floor(h || 0));
+  if (width > MAX_CANVAS_DIM || height > MAX_CANVAS_DIM) throw new Error('CANVAS_TOO_LARGE');
+  if (width * height > MAX_CANVAS_PIXELS) throw new Error('CANVAS_TOO_LARGE');
+  return { width, height };
+};
 
 const buildIcoFromPngs = (items: { size: number; data: ArrayBuffer }[]) => {
   const count = items.length;
@@ -383,6 +394,10 @@ export const imagesToPdf = async (
   const list = Array.isArray(files) ? files.filter((f) => f && f.size > 0) : [];
   if (list.length === 0)
     throw new Error(tr(opts, '请选择至少一张图片', 'Please select at least one image'));
+  if (list.length > 120)
+    throw new Error(
+      tr(opts, '图片数量过多，请分批生成', 'Too many images. Please generate in batches.')
+    );
 
   abortIfNeeded(opts?.signal);
   const pageSize = opts?.pageSize === 'auto' ? 'auto' : 'A4';
@@ -392,6 +407,7 @@ export const imagesToPdf = async (
 
   const a4 = { w: 595.28, h: 841.89 };
   const baseName = safeBaseName(list[0].name) || 'images';
+  const jpegMaxSide = pageSize === 'A4' ? 2500 : null;
 
   const chunks: Uint8Array[] = [];
   const offsets: number[] = [0];
@@ -451,7 +467,7 @@ export const imagesToPdf = async (
       )
     });
     const file = list[i];
-    const { bytes, w, h } = await fileToJpegBytes(file, quality, null);
+    const { bytes, w, h } = await fileToJpegBytes(file, quality, jpegMaxSide);
 
     const imgNo = objStart + i * 3;
     const contentNo = objStart + i * 3 + 1;
@@ -561,16 +577,23 @@ const renderPdfPageToCanvasFromDoc = async (
 ) => {
   if (opts?.signal?.aborted) throw new Error('ABORTED');
   const page = await doc.getPage(pageNumber);
-  if (opts?.signal?.aborted) throw new Error('ABORTED');
-  const viewport = page.getViewport({ scale: clamp(scale, 0.5, 3) });
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.floor(viewport.width));
-  canvas.height = Math.max(1, Math.floor(viewport.height));
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
-  await page.render({ canvasContext: ctx, viewport }).promise;
-  if (opts?.signal?.aborted) throw new Error('ABORTED');
-  return canvas;
+  try {
+    if (opts?.signal?.aborted) throw new Error('ABORTED');
+    const viewport = page.getViewport({ scale: clamp(scale, 0.5, 3) });
+    const { width, height } = assertCanvasSafeSize(viewport.width, viewport.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    if (opts?.signal?.aborted) throw new Error('ABORTED');
+    return canvas;
+  } finally {
+    try {
+      page.cleanup?.();
+    } catch {}
+  }
 };
 
 const abortIfNeeded = (signal?: AbortSignal) => {
@@ -625,6 +648,7 @@ export const pdfToImage = async (
         label: tr(opts, `渲染第 ${p} 页`, `Rendering page ${p}`)
       });
       const canvas = await renderPdfPageToCanvasFromDoc(doc, p, scale, { signal });
+      assertCanvasSafeSize(canvas.width, canvas.height);
       reportProgress(opts, { done: 1, total: 1, label: tr(opts, '导出图片', 'Exporting image') });
       const blob = await canvasToBlob(
         canvas,
@@ -647,11 +671,15 @@ export const pdfToImage = async (
     for (let i = 1; i <= takePages; i += 1) {
       abortIfNeeded(signal);
       const page = await doc.getPage(i);
-      const viewport = page.getViewport({ scale: safeScale });
-      pageSizes.push({
-        w: Math.max(1, Math.floor(viewport.width)),
-        h: Math.max(1, Math.floor(viewport.height))
-      });
+      try {
+        const viewport = page.getViewport({ scale: safeScale });
+        const { width, height } = assertCanvasSafeSize(viewport.width, viewport.height);
+        pageSizes.push({ w: width, h: height });
+      } finally {
+        try {
+          page.cleanup?.();
+        } catch {}
+      }
       reportProgress(opts, {
         done: i,
         total: takePages,
@@ -668,6 +696,7 @@ export const pdfToImage = async (
 
     const width = Math.max(...pageSizes.map((s) => s.w));
     const height = pageSizes.reduce((sum, s) => sum + s.h, 0);
+    assertCanvasSafeSize(width, height);
     const out = document.createElement('canvas');
     out.width = width;
     out.height = height;
@@ -681,6 +710,10 @@ export const pdfToImage = async (
       const canvas = await renderPdfPageToCanvasFromDoc(doc, i, safeScale, { signal });
       ctx.drawImage(canvas, 0, y);
       y += canvas.height;
+      try {
+        canvas.width = 1;
+        canvas.height = 1;
+      } catch {}
       reportProgress(opts, {
         done: i,
         total: takePages,

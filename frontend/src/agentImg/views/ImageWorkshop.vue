@@ -644,7 +644,8 @@ const runImg2Img = async (args: {
     images: [input],
     timeoutMs: 120000,
     requestId,
-    reason: args.reason
+    reason: args.reason,
+    requestSource: 'image_workshop'
   });
   if (!res.ok) {
     if (activeRequestId.value !== requestId) return;

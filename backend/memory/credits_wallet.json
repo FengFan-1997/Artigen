@@ -113,5 +113,35 @@
     "frozen": 0,
     "createdAt": 1768919501817,
     "updatedAt": 1768919501817
+  },
+  "guest_test_user": {
+    "available": 80,
+    "frozen": 0,
+    "createdAt": 1769411220038,
+    "updatedAt": 1769411227377
+  },
+  "guest_conc_user": {
+    "available": 30,
+    "frozen": 0,
+    "createdAt": 1769411231265,
+    "updatedAt": 1769411309244
+  },
+  "guest_verify_generate": {
+    "available": 100,
+    "frozen": 0,
+    "createdAt": 1769456819322,
+    "updatedAt": 1769456937004
+  },
+  "guest_verify_img2img": {
+    "available": 90,
+    "frozen": 0,
+    "createdAt": 1769457053618,
+    "updatedAt": 1769457057731
+  },
+  "guest_audit_e2e": {
+    "available": 100,
+    "frozen": 0,
+    "createdAt": 1769505303563,
+    "updatedAt": 1769505348459
   }
 }

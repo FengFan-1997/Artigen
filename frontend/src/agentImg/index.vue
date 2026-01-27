@@ -614,21 +614,7 @@ const {
 );
 
 // --- Settings ---
-const {
-  productName,
-  productCategory,
-  material,
-  sceneType,
-  lighting,
-  primaryColor,
-  brandName,
-  logoFileName,
-  logoFile,
-  designElements,
-  styles,
-  colors,
-  buildProductProfileContextText
-} = useAgentImgSettings();
+const { logoFile, buildProductProfileContextText } = useAgentImgSettings();
 
 // --- Flow ---
 const {
@@ -680,7 +666,6 @@ const {
   loadHistoryFromServer,
   historyForSidebar,
   onHistoryItemClick,
-  scrollToGeneration,
   setCancelNoticeForHistory
 } = useAgentImgHistory(authUserId, authToken, isAuthed, syncAuth, scrollChatToBottom);
 
@@ -707,17 +692,13 @@ const selectedOptionStyleTags = computed(() => {
 });
 
 const {
-  activeImgAbort,
-  activeRequestId,
   pendingUserText,
   lastUserText,
   pendingNotice,
   doPrimary,
   onStopProcessing,
   onExitStyleSelection,
-  clearCancelNotices,
-  abortImg2Img,
-  resolveRemoteUrl
+  abortImg2Img
 } = useAgentImgGeneration({
   auth: { ensureAuthed },
   credits: { refreshCredits, creditsBalance },
@@ -835,16 +816,6 @@ const primaryTextWithCost = computed(() => {
   if (loading.value) return primaryText.value;
   if (!showGenerateCost.value) return primaryText.value;
   return `${primaryText.value} ${sendCostText.value}`;
-});
-
-const resolvedCost = computed(() => {
-  const costs = creditsCosts.value;
-  const fallback = 10;
-  if (!costs) return fallback;
-  const img2imgCost = Math.max(0, Number(costs.img2img ?? fallback) || 0);
-  const generateCost = Math.max(0, Number(costs.generate ?? fallback) || 0);
-  if (deepMode.value && options.value.length === 0) return generateCost;
-  return img2imgCost;
 });
 
 const canPrimary = computed(() => {

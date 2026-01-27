@@ -23,6 +23,21 @@ const LOGIN_SEND_COOLDOWN_MS = 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
 const loginCodes = new Map();
 const passwordResetCodes = new Map();
+const isProd = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+
+const setAuthCookie = (res, token) => {
+  const t = String(token || '').trim();
+  if (!t) return;
+  const cookie = `auth_token=${encodeURIComponent(t)}; Path=/; HttpOnly; SameSite=Lax${isProd ? '; Secure' : ''}`;
+  try {
+    if (typeof res.append === 'function') res.append('Set-Cookie', cookie);
+    else res.setHeader('Set-Cookie', cookie);
+  } catch {
+    try {
+      res.setHeader('Set-Cookie', cookie);
+    } catch { }
+  }
+};
 const getGoogleOauthClientId = () => String(process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
 const allowInsecureGoogleVerify = () => {
   if (String(process.env.GOOGLE_OAUTH_ALLOW_INSECURE || '').trim() === '1') return true;
@@ -280,6 +295,7 @@ const installAuthRoutes = (app) => {
         if (fromUserId && fromUserId !== userId && fromUserId.startsWith('guest_')) mergeUserData(fromUserId, userId, imgCredits);
       } catch { }
 
+      setAuthCookie(res, token);
       return res.json({ ok: true, userId, token, email, name: nextUser.name });
     } catch (e) {
       console.error('Error in /api/auth/google/verify:', e);
@@ -431,6 +447,7 @@ const installAuthRoutes = (app) => {
           if (fromUserId && fromUserId !== userId && fromUserId.startsWith('guest_')) mergeUserData(fromUserId, userId, imgCredits);
         } catch { }
 
+        setAuthCookie(res, token);
         return res.json({ ok: true, userId, token, email, name: nextUser.name });
       } catch (e) {
         console.error('Error in /api/login/verify:', e);
@@ -683,6 +700,7 @@ const installAuthRoutes = (app) => {
         if (fromUserId && fromUserId !== userId && fromUserId.startsWith('guest_')) mergeUserData(fromUserId, userId, imgCredits);
       } catch { }
 
+      setAuthCookie(res, token);
       res.json({ ok: true, userId, token, name: newUser.name });
     } catch (e) {
       console.error('Error in /api/auth/register:', e);

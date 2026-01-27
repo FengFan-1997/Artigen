@@ -154,10 +154,43 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
       return currentLang.value === 'zh' ? '已取消' : 'Cancelled.';
     if (c === 'CLIENT_ABORTED') return currentLang.value === 'zh' ? '已取消' : 'Cancelled.';
     if (c === 'API_ERROR_499') return currentLang.value === 'zh' ? '已取消' : 'Cancelled.';
+    if (
+      c === 'RATE_LIMITED' ||
+      c === 'TOO_MANY_REQUESTS' ||
+      c === 'SERVER_RATE_LIMITED' ||
+      c === 'SILICONFLOW_RPM_LIMIT' ||
+      c === 'API_ERROR_429'
+    )
+      return currentLang.value === 'zh'
+        ? '请求过于频繁，请稍后再试'
+        : 'Too many requests. Please try again later.';
+    if (
+      c === 'SERVER_BUSY' ||
+      c === 'SERVICE_BUSY' ||
+      c === 'BUSY' ||
+      c === 'API_ERROR_503' ||
+      c === 'API_ERROR_502' ||
+      c === 'API_ERROR_500'
+    )
+      return currentLang.value === 'zh'
+        ? '服务繁忙，请稍后再试'
+        : 'Service busy, please try again.';
     if (c === 'UPSTREAM_TIMEOUT' || c === 'API_ERROR_504')
       return currentLang.value === 'zh'
         ? '服务超时，请稍后再试'
         : 'Request timed out, please retry.';
+    if (c === 'LOGIN_REQUIRED' || c === 'UNAUTHORIZED')
+      return currentLang.value === 'zh' ? '请先登录后再试' : 'Please login first.';
+    if (c === 'FORBIDDEN')
+      return currentLang.value === 'zh'
+        ? '暂无权限，请重新登录后再试'
+        : 'Forbidden. Please login again.';
+    if (c === 'MISSING_USER_ID')
+      return currentLang.value === 'zh'
+        ? '缺少用户信息，请重新登录后再试'
+        : 'Missing user info. Please login again.';
+    if (c === 'EMPTY_PROMPT')
+      return currentLang.value === 'zh' ? '请输入需求描述后再试' : 'Please enter a request first.';
     if (c === 'INSUFFICIENT_CREDITS')
       return currentLang.value === 'zh'
         ? '积分不足，请前往「点数商城」充值'
@@ -182,6 +215,8 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
       return currentLang.value === 'zh'
         ? '扣费确认失败，已回滚，请重试'
         : 'Credits confirmation failed (rolled back). Please retry.';
+    if (c === 'IMG_PROVIDER_NOT_CONFIGURED' || c === 'MEMORY_NOT_CONFIGURED')
+      return currentLang.value === 'zh' ? '服务未配置，请联系管理员' : 'Server not configured.';
     if (c === 'MISSING_SILICONFLOW_API_KEY')
       return currentLang.value === 'zh' ? '服务未配置，请联系管理员' : 'Server not configured.';
     if (c === 'NETWORK_ERROR' || c === 'FETCH_ERROR')
@@ -221,7 +256,7 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
         ? '服务繁忙或参数错误，请稍后再试'
         : 'Upstream error, please try again.';
     }
-    return currentLang.value === 'zh' ? `出图失败：${c}` : `Image generation failed: ${c}`;
+    return currentLang.value === 'zh' ? '出图失败，请稍后再试' : 'Image generation failed.';
   };
 
   const buildDeepPrompt = (baseText: string) => {
@@ -348,6 +383,7 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
           timeoutMs: 120000,
           requestId,
           deepMode: !!deps.flow.deepMode.value,
+          requestSource: 'agentimg_generation',
           signal: ctl.signal
         });
         if (activeImgAbort.value === ctl) activeImgAbort.value = null;

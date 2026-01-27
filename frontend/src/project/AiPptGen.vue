@@ -155,7 +155,14 @@ import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import pptxgen from 'pptxgenjs';
 import { buildApiUrl } from '@/utils/api';
-import { getAuthToken, getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import { getPageContext } from '@/agent/utils/pageContext';
+import {
+  getAuthToken,
+  getCurrentUserId,
+  getOrCreateProjectId,
+  getOrCreateSessionId,
+  isLocalLoggedIn
+} from '@/login/session';
 
 const API_URL = buildApiUrl('/api/generate');
 const FIXED_TEXT_MODEL = 'Qwen/Qwen3-8B';
@@ -252,7 +259,16 @@ const generateOutline = async () => {
         ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
       signal: controller.signal,
-      body: JSON.stringify({ prompt, userId, requestId, model: FIXED_TEXT_MODEL })
+      body: JSON.stringify({
+        prompt,
+        userId,
+        requestId,
+        sessionId: getOrCreateSessionId(),
+        projectId: getOrCreateProjectId(),
+        pageContext: getPageContext(),
+        requestSource: 'ppt_gen_outline',
+        model: FIXED_TEXT_MODEL
+      })
     });
     window.clearTimeout(timeoutId);
 

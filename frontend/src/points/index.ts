@@ -1,6 +1,13 @@
 import { buildApiUrl } from '@/utils/api';
-import { getAuthToken, getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import {
+  getAuthToken,
+  getCurrentUserId,
+  getOrCreateProjectId,
+  getOrCreateSessionId,
+  isLocalLoggedIn
+} from '@/login/session';
 import { trackEvent } from '@/utils/analytics';
+import { getPageContext } from '@/agent/utils/pageContext';
 
 export type CreditsBalance = {
   userId: string;
@@ -98,7 +105,14 @@ export const createPayOrder = async (packageId: PayPackageId): Promise<CreatePay
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
-      body: JSON.stringify({ userId, packageId })
+      body: JSON.stringify({
+        userId,
+        packageId,
+        sessionId: getOrCreateSessionId(),
+        projectId: getOrCreateProjectId(),
+        pageContext: getPageContext(),
+        requestSource: 'site_pay_create_order'
+      })
     });
     const json: any = await res.json().catch(() => null);
     if (!res.ok) {
