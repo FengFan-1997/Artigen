@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { buildApiUrl } from '@/utils/api';
+import { ensureGuestUserId, getOrCreateProjectId, getOrCreateSessionId } from '@/login/session';
 
 const AUTH_STORAGE_KEY = 'console_auth_v1';
 const STORAGE_KEY = 'console_store_v1';
@@ -776,6 +777,72 @@ export const useConsoleStore = defineStore('console', {
         timestamp: Date.now()
       });
       this.save();
+
+      try {
+        const userId = ensureGuestUserId();
+        const payload: Record<string, any> = {
+          page: String(event.page || '').trim(),
+          ...(event.target
+            ? {
+                target: String(event.target || '')
+                  .trim()
+                  .slice(0, 120)
+              }
+            : {})
+        };
+        const meta =
+          event.meta && typeof event.meta === 'object' && !Array.isArray(event.meta)
+            ? event.meta
+            : null;
+        if (meta) {
+          for (const [k0, v] of Object.entries(meta)) {
+            const k = String(k0 || '')
+              .trim()
+              .slice(0, 56);
+            if (!k) continue;
+            if (typeof v === 'string') {
+              const s = v.trim();
+              if (!s) continue;
+              payload[k] = s.slice(0, 240);
+              continue;
+            }
+            if (typeof v === 'number') {
+              if (!Number.isFinite(v)) continue;
+              payload[k] = v;
+              continue;
+            }
+            if (typeof v === 'boolean') {
+              payload[k] = v;
+              continue;
+            }
+            if (Array.isArray(v)) {
+              const arr = v
+                .slice(0, 20)
+                .map((x) => (typeof x === 'string' ? x.trim().slice(0, 120) : null))
+                .filter(Boolean);
+              if (arr.length) payload[k] = arr;
+            }
+          }
+        }
+
+        const url = buildApiUrl('/api/collection/event');
+        void fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            eventType: event.type,
+            payload,
+            path: String(event.page || '').trim(),
+            location: typeof window !== 'undefined' ? String(window.location?.href || '') : '',
+            referrer: typeof document !== 'undefined' ? String(document.referrer || '') : '',
+            ts: Date.now(),
+            userId,
+            sessionId: getOrCreateSessionId(),
+            projectId: getOrCreateProjectId(),
+            requestSource: 'web'
+          })
+        });
+      } catch {}
     },
 
     save() {

@@ -211,8 +211,27 @@ const installUsageRoutes = (app, deps) => {
         .sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
 
       const users = readUsersMap();
+      const usersIndex = (() => {
+        const idx = new Map();
+        if (!users || typeof users !== 'object') return idx;
+        for (const [k, raw] of Object.entries(users)) {
+          const u = raw && typeof raw === 'object' ? raw : null;
+          if (!u) continue;
+          const key = String(k || '').trim();
+          const id = typeof u.id === 'string' ? u.id.trim() : '';
+          const userId0 = typeof u.userId === 'string' ? u.userId.trim() : '';
+          const email0 = typeof u.email === 'string' ? u.email.trim() : '';
+          const username0 = typeof u.username === 'string' ? u.username.trim() : '';
+          for (const alias of [key, id, userId0, email0, username0]) {
+            if (!alias) continue;
+            if (!idx.has(alias)) idx.set(alias, u);
+          }
+        }
+        return idx;
+      })();
       const getUserBrief = (uid) => {
-        const u = users && typeof users === 'object' ? users[String(uid || '').trim()] : null;
+        const key = String(uid || '').trim();
+        const u = key ? (usersIndex.get(key) || (users && typeof users === 'object' ? users[key] : null)) : null;
         const username = typeof u?.username === 'string' ? u.username : '';
         const email = typeof u?.email === 'string' ? u.email : '';
         return { username, email };

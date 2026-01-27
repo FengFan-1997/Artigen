@@ -399,6 +399,9 @@
               <template v-if="column.key === 'ts'">
                 {{ record.ts ? new Date(record.ts).toLocaleString() : '-' }}
               </template>
+              <template v-else-if="column.key === 'trafficSource'">
+                {{ formatTrafficSource(record.trafficSource) }}
+              </template>
               <template v-else-if="column.key === 'payload'">
                 <div class="prompt-cell">{{ formatPayload(record.payload) }}</div>
               </template>
@@ -745,6 +748,12 @@ const ui = computed(() =>
         uploadEmpty: '用户未上传',
         colEventType: '事件',
         colPath: '路径',
+        colTrafficSource: '流量来源',
+        colTrafficRefHost: '来源域名',
+        colTrafficSearchEngine: '搜索引擎',
+        colTrafficUtmMedium: 'utm_medium',
+        colTrafficUtmSource: 'utm_source',
+        colTrafficUtmCampaign: 'utm_campaign',
         colPayload: '参数',
         colAction: '行为',
         colDetails: '详情',
@@ -848,6 +857,12 @@ const ui = computed(() =>
         uploadEmpty: 'No upload',
         colEventType: 'Event',
         colPath: 'Path',
+        colTrafficSource: 'Traffic Source',
+        colTrafficRefHost: 'Ref Host',
+        colTrafficSearchEngine: 'Search Engine',
+        colTrafficUtmMedium: 'utm_medium',
+        colTrafficUtmSource: 'utm_source',
+        colTrafficUtmCampaign: 'utm_campaign',
         colPayload: 'Payload',
         colAction: 'Action',
         colDetails: 'Details',
@@ -986,6 +1001,23 @@ const formatPayload = (payload: any) => {
   } catch {
     return '';
   }
+};
+
+const formatTrafficSource = (raw: any) => {
+  const k = String(raw || '')
+    .trim()
+    .toLowerCase();
+  if (!k) return '-';
+  if (currentLang.value === 'zh') {
+    if (k === 'search') return '搜索';
+    if (k === 'link') return '外链';
+    if (k === 'organic') return '直接';
+    return raw;
+  }
+  if (k === 'organic') return 'Direct';
+  if (k === 'link') return 'Referral';
+  if (k === 'search') return 'Search';
+  return raw;
 };
 
 const formatBehaviorDetails = (details: any) => {
@@ -1443,6 +1475,48 @@ const baseEventColumns = computed<SimpleColumn[]>(() => [
     dataIndex: 'eventType',
     key: 'eventType',
     width: 170,
+    ellipsis: true
+  },
+  {
+    title: ui.value.colTrafficSource,
+    dataIndex: 'trafficSource',
+    key: 'trafficSource',
+    width: 120,
+    ellipsis: true
+  },
+  {
+    title: ui.value.colTrafficRefHost,
+    dataIndex: 'trafficRefHost',
+    key: 'trafficRefHost',
+    width: 180,
+    ellipsis: true
+  },
+  {
+    title: ui.value.colTrafficSearchEngine,
+    dataIndex: 'trafficSearchEngine',
+    key: 'trafficSearchEngine',
+    width: 170,
+    ellipsis: true
+  },
+  {
+    title: ui.value.colTrafficUtmMedium,
+    dataIndex: 'trafficUtmMedium',
+    key: 'trafficUtmMedium',
+    width: 140,
+    ellipsis: true
+  },
+  {
+    title: ui.value.colTrafficUtmSource,
+    dataIndex: 'trafficUtmSource',
+    key: 'trafficUtmSource',
+    width: 140,
+    ellipsis: true
+  },
+  {
+    title: ui.value.colTrafficUtmCampaign,
+    dataIndex: 'trafficUtmCampaign',
+    key: 'trafficUtmCampaign',
+    width: 160,
     ellipsis: true
   },
   { title: ui.value.userLabel, dataIndex: 'userId', key: 'userId', width: 140, ellipsis: true },
