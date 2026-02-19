@@ -64,6 +64,16 @@
           :launch="ui.launch"
           @click="openAiBackgroundPopup"
         />
+
+        <ToolCard
+          tool-id="TOOL_05"
+          badge="NEW"
+          icon="ED"
+          :title="ui.toolEditorTitle"
+          :desc="ui.toolEditorDesc"
+          :launch="ui.launch"
+          @click="openImageEditor"
+        />
       </div>
 
       <div class="info-section">
@@ -181,6 +191,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { storeToRefs } from 'pinia';
+import { useRouter } from 'vue-router';
 import TitleBar from '../components/TitleBar.vue';
 import GlobalFooter from '../components/GlobalFooter.vue';
 import IdPhotoPopup from '../components/IdPhotoPopup.vue';
@@ -209,6 +220,7 @@ const resultError = ref('');
 const resultLoading = ref(false);
 const activeRequestId = ref('');
 
+const router = useRouter();
 const consoleStore = useConsoleStore();
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -243,6 +255,10 @@ const ui = computed(() => {
     toolBgDesc: en
       ? 'Replace or add realistic backgrounds with local preview.'
       : '一键换背景/加场景，支持本地预览与主体可调',
+    toolEditorTitle: en ? 'Image Editor' : '图片编辑',
+    toolEditorDesc: en
+      ? 'Import, layer, drag, and export. More editing tools are coming soon.'
+      : '导入、分层、拖拽与导出，后续逐步加入更多编辑能力。',
     launch: 'LAUNCH',
     resultTitle: en ? 'Result' : '生成结果',
     download: en ? 'Download' : '下载',
@@ -423,6 +439,16 @@ const openAiBackgroundPopup = () => {
     target: 'ai_background'
   });
   trackEvent('ImageWorkshop', 'open_tool', 'ai_background');
+};
+
+const openImageEditor = () => {
+  consoleStore.recordTraffic({
+    type: 'click',
+    page: '/artigen/image-workshop',
+    target: 'image_editor'
+  });
+  trackEvent('ImageWorkshop', 'open_tool', 'image_editor');
+  router.push('/artigen/image-editor');
 };
 
 const fileToGenerateInput = (f: File): Promise<GenerateImageInput | null> => {

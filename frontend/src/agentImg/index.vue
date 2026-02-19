@@ -209,6 +209,13 @@
                         <button
                           class="msg-image-action-btn"
                           type="button"
+                          @click.stop="editMsgImage(item.image)"
+                        >
+                          {{ ui.edit }}
+                        </button>
+                        <button
+                          class="msg-image-action-btn"
+                          type="button"
                           @click.stop="referenceMsgImage(item.image)"
                         >
                           {{ ui.reference }}
@@ -457,7 +464,15 @@
               <div class="guide-chips">
                 <span v-for="k in ui.guideKeywords" :key="k" class="guide-chip">{{ k }}</span>
               </div>
-              <details v-for="f in ui.guideFaqs" :key="f.q" class="guide-faq">
+              <details
+                v-for="f in ui.guideFaqs"
+                :key="f.q"
+                class="guide-faq"
+                :open="
+                  f.q ===
+                  (currentLang === 'zh' ? '深度思考有什么用？' : 'What does Deep Thinking do?')
+                "
+              >
                 <summary class="guide-q">{{ f.q }}</summary>
                 <div class="guide-a">{{ f.a }}</div>
               </details>
@@ -499,6 +514,10 @@
             <span class="res-label">4096 x 4096</span>
             <span class="res-tag">4K</span>
           </button>
+          <button class="download-option-btn" @click="editMsgImage(downloadTargetUrl)">
+            <span class="res-label">{{ ui.edit }}</span>
+            <span class="res-tag">{{ ui.edit }}</span>
+          </button>
         </div>
       </div>
     </div>
@@ -520,6 +539,9 @@
           >
             {{ ui.download }}
           </button>
+          <button class="img-preview-btn" type="button" @click="editMsgImage(imagePreviewRawUrl)">
+            {{ ui.edit }}
+          </button>
           <button
             class="img-preview-btn secondary"
             type="button"
@@ -537,6 +559,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
+import { useRouter } from 'vue-router';
 import { useAgentImgFlow } from './composables/useAgentImgFlow';
 import { useAgentImgSettings } from './composables/useAgentImgSettings';
 import TitleBar from './components/TitleBar.vue';
@@ -558,6 +581,7 @@ import { buildApiUrl, getApiBaseUrl } from '@/utils/api';
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
+const router = useRouter();
 
 // --- 1. Locale ---
 const { ui, categories } = useAgentImgLocale();
@@ -892,6 +916,35 @@ const showSendCostInline = computed(
 const onPrimary = doPrimary;
 
 const downloadMsgImage = (url: string) => showDownload(resolveRefUrl(url));
+
+const IMAGE_EDITOR_PREFILL_KEY = 'imageEditor:prefill_v1';
+
+const writeEditorPrefill = (value: string) => {
+  const v = String(value || '').trim();
+  if (!v) return;
+  try {
+    window.localStorage.setItem(
+      IMAGE_EDITOR_PREFILL_KEY,
+      JSON.stringify({ value: v, ts: Date.now() })
+    );
+  } catch {}
+};
+
+const editMsgImage = (url: string) => {
+  const s = String(url || '').trim();
+  if (!s) return;
+  const resolved = resolveRefUrl(s);
+  const isData = s.startsWith('data:');
+  const isAbsolutePath = s.startsWith('/');
+  const isHttp = /^https?:\/\//i.test(s);
+  const stored = isData || isAbsolutePath || isHttp ? s : resolved || s;
+  writeEditorPrefill(stored);
+  const useQuery = !isData && !resolved.includes('token=') && stored.length < 1800;
+  const query = useQuery ? { img: stored } : { prefill: '1' };
+  showDownloadDialog.value = false;
+  imagePreviewOpen.value = false;
+  router.push({ path: '/artigen/image-editor', query });
+};
 
 const imagePreviewOpen = ref(false);
 const imagePreviewRawUrl = ref('');

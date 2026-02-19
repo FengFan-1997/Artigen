@@ -343,6 +343,22 @@ const routes = [
     } satisfies RouteSeoMeta
   },
   {
+    path: '/artigen/image-editor',
+    name: 'image-editor',
+    component: () => import('../agentImg/views/ImageEditor.vue'),
+    meta: {
+      title: { zh: '图片编辑 - Artigen', en: 'Image Editor - Artigen' },
+      description: {
+        zh: '图层化图片编辑器：导入、分层、拖拽、基础调整与导出，逐步接入 AI 编辑能力。',
+        en: 'Layered image editor: import, layers, drag, basic adjustments and export, with AI editing coming soon.'
+      },
+      keywords: {
+        zh: '图片编辑,在线修图,图层,裁剪,调色,导出,AI抠图,去背景',
+        en: 'image editor,online photo editor,layers,crop,color adjustments,export,AI remove background'
+      }
+    } satisfies RouteSeoMeta
+  },
+  {
     path: '/artigen/market',
     name: 'aether-market',
     component: () => import('../agentImg/views/AetherMarket.vue'),

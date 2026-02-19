@@ -10,6 +10,7 @@ export type FormatFactoryToolId =
   | 'live'
   | 'pdf'
   | 'pdf2word'
+  | 'word2pdf'
   | 'txt2pdf'
   | 'img2pdf'
   | 'gif'

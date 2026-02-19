@@ -205,7 +205,10 @@
                         pdfPageCount ? ui.pdfSelectedMid + pdfPageCount + ui.pdfSelectedSuffix : ''
                       }}
                     </div>
-                    <div v-else-if="activeTool.id === 'txt2pdf'" class="help-box">
+                    <div
+                      v-else-if="activeTool.id === 'txt2pdf' || activeTool.id === 'word2pdf'"
+                      class="help-box"
+                    >
                       {{ sourceMeta?.name || '' }}
                     </div>
                     <video
@@ -265,6 +268,10 @@
 
                   <template v-else-if="activeTool.id === 'pdf2word'">
                     <div class="help-box">{{ ui.pdf2wordHelp }}</div>
+                  </template>
+
+                  <template v-else-if="activeTool.id === 'word2pdf'">
+                    <div class="help-box">{{ ui.word2pdfHelp }}</div>
                   </template>
 
                   <template v-else-if="activeTool.id === 'txt2pdf'">
@@ -1083,6 +1090,7 @@ const ui = computed(() => {
       pdfMaxPagesHelp: '页数过多会很慢，默认限制 12 页',
       pdfScaleLabel: '清晰度',
       pdf2wordHelp: '提取 PDF 中的文字并导出为 Word（.doc）。复杂排版/图片可能无法完整还原。',
+      word2pdfHelp: '提取 Word（.docx）中的文字并导出为 PDF。复杂排版/图片可能无法完整还原。',
       txt2pdfHelp: '将 TXT 纯文本导出为 PDF。',
 
       img2pdfPageSizeLabel: '页面尺寸',
@@ -1267,6 +1275,8 @@ const ui = computed(() => {
     pdfScaleLabel: 'Scale',
     pdf2wordHelp:
       'Extract text from PDF and export as Word (.doc). Layout/images may not be preserved.',
+    word2pdfHelp:
+      'Extract text from Word (.docx) and export as PDF. Layout/images may not be preserved.',
     txt2pdfHelp: 'Export TXT (plain text) as PDF.',
 
     img2pdfPageSizeLabel: 'Page Size',
@@ -1590,7 +1600,7 @@ const runTool = async () => {
   min-height: 100vh;
   background-color: #050505;
   color: #fff;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--common-font);
   padding-top: 0;
   background-image:
     linear-gradient(rgba(204, 255, 0, 0.03) 1px, transparent 1px),

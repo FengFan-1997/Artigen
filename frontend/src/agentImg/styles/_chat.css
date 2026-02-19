@@ -345,6 +345,17 @@
   background: rgba(204, 255, 0, 0.06);
 }
 
+@media (max-width: 768px) {
+  .textarea {
+    font-size: 16px;
+  }
+
+  .input-wrapper:focus-within {
+    border-color: var(--border-color);
+    box-shadow: none;
+  }
+}
+
 .drop-hint {
   position: absolute;
   inset: 12px 12px 52px 12px;

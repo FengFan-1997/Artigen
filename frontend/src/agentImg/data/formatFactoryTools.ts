@@ -92,6 +92,16 @@ export const formatFactoryTools: FormatFactoryTool[] = [
     status: 'ready'
   },
   {
+    id: 'word2pdf',
+    name: 'Word 转 PDF',
+    nameEn: 'Word to PDF',
+    description: '提取文本 · 导出 PDF',
+    descriptionEn: 'Extract Text · Export PDF',
+    icon: '📄',
+    tag: '文档工具',
+    status: 'ready'
+  },
+  {
     id: 'txt2pdf',
     name: 'TXT 转 PDF',
     nameEn: 'TXT to PDF',

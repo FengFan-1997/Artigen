@@ -17,6 +17,7 @@ import {
   imagesToPdf,
   pdfToImage,
   pdfToWord,
+  docxToPdf,
   resizeImage,
   rotateFlipImage,
   txtToPdf,
@@ -72,6 +73,7 @@ export const useFormatFactory = () => {
         tag: 'PDF Tools'
       },
       pdf2word: { name: 'PDF to Word', description: 'Extract text · export DOC', tag: 'Docs' },
+      word2pdf: { name: 'Word to PDF', description: 'Extract text · export PDF', tag: 'Docs' },
       txt2pdf: { name: 'TXT to PDF', description: 'Plain text · export PDF', tag: 'Docs' },
       img2pdf: { name: 'Images to PDF', description: 'Merge multiple images', tag: 'PDF Tools' },
       gif: { name: 'Video to GIF', description: 'Clip video · export GIF', tag: 'Video' },
@@ -191,6 +193,11 @@ export const useFormatFactory = () => {
       return isZh.value
         ? '视频跳转失败（可能是编码不支持）'
         : 'Video seek failed (codec may be unsupported)';
+    if (msg === 'DOCX_PARSE_FAIL')
+      return isZh.value
+        ? '无法解析 Word 内容，请确认文件是否损坏'
+        : 'Failed to parse Word content.';
+    if (msg === 'DOCX_ONLY') return isZh.value ? '仅支持 .docx 文件' : 'Only .docx is supported.';
     return msg || fallback;
   };
 
@@ -312,6 +319,11 @@ export const useFormatFactory = () => {
           dimensions: pages ? (isZh.value ? `${pages} 页` : `${pages} pages`) : undefined
         };
       } catch {}
+      return;
+    }
+
+    if (toolId === 'word2pdf') {
+      sourceMeta.value = { name: file.name, size: file.size };
       return;
     }
 
@@ -749,6 +761,21 @@ export const useFormatFactory = () => {
 
       if (tool.id === 'pdf2word') {
         const { blob, filename } = await pdfToWord(file, {
+          lang: isZh.value ? 'zh' : 'en',
+          signal: controller.signal,
+          onProgress: setProgress
+        });
+        if (nonce !== runNonce.value) return;
+        const url = URL.createObjectURL(blob);
+        outputBlob.value = blob;
+        outputMeta.value = { name: filename, size: blob.size };
+        outputUrl.value = url;
+        outputItems.value = [{ blob, name: filename, size: blob.size, url }];
+        return;
+      }
+
+      if (tool.id === 'word2pdf') {
+        const { blob, filename } = await docxToPdf(file, {
           lang: isZh.value ? 'zh' : 'en',
           signal: controller.signal,
           onProgress: setProgress

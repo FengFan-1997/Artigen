@@ -27,6 +27,57 @@ const ensurePdfLib = async () => {
 
 const blobToArrayBuffer = (blob: Blob) => blob.arrayBuffer();
 
+const readUint16LE = (view: DataView, offset: number) => view.getUint16(offset, true);
+const readUint32LE = (view: DataView, offset: number) => view.getUint32(offset, true);
+
+const inflateRaw = async (data: Uint8Array) => {
+  if (typeof DecompressionStream === 'undefined') throw new Error('DOCX_PARSE_FAIL');
+  const raw = new Uint8Array(data);
+  const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const buf = await new Response(stream).arrayBuffer();
+  return new Uint8Array(buf);
+};
+
+const extractZipEntry = async (bytes: Uint8Array, target: string) => {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const len = bytes.byteLength;
+  const maxSearch = Math.max(0, len - 65557);
+  let eocd = -1;
+  for (let i = len - 22; i >= maxSearch; i -= 1) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return null;
+  const cdOffset = readUint32LE(view, eocd + 16);
+  let ptr = cdOffset;
+  while (ptr + 46 <= len && view.getUint32(ptr, true) === 0x02014b50) {
+    const method = readUint16LE(view, ptr + 10);
+    const compSize = readUint32LE(view, ptr + 20);
+    const nameLen = readUint16LE(view, ptr + 28);
+    const extraLen = readUint16LE(view, ptr + 30);
+    const commentLen = readUint16LE(view, ptr + 32);
+    const localOffset = readUint32LE(view, ptr + 42);
+    const nameStart = ptr + 46;
+    const nameEnd = nameStart + nameLen;
+    const filename = new TextDecoder().decode(bytes.slice(nameStart, nameEnd));
+    if (filename === target) {
+      if (view.getUint32(localOffset, true) !== 0x04034b50) return null;
+      const localNameLen = readUint16LE(view, localOffset + 26);
+      const localExtraLen = readUint16LE(view, localOffset + 28);
+      const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+      const dataEnd = dataStart + compSize;
+      const compressed = bytes.slice(dataStart, dataEnd);
+      if (method === 0) return compressed;
+      if (method === 8) return await inflateRaw(compressed);
+      return null;
+    }
+    ptr += 46 + nameLen + extraLen + commentLen;
+  }
+  return null;
+};
+
 const assertCanvasSafeSize = (w: number, h: number) => {
   const width = Math.max(1, Math.floor(w || 0));
   const height = Math.max(1, Math.floor(h || 0));
@@ -547,6 +598,62 @@ export const imagesToPdf = async (
   return { blob, filename: `${baseName}.pdf` };
 };
 
+export const txtToPdf = async (
+  file: File,
+  opts?: { maxCharsPerLine?: number } & FormatFactoryRunOpts
+) => {
+  abortIfNeeded(opts?.signal);
+  reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取文本', 'Reading text') });
+  const raw = await file.text();
+  abortIfNeeded(opts?.signal);
+
+  const text = String(raw || '').replace(/\t/g, '    ');
+  const baseName = safeBaseName(file.name);
+  const result = buildPdfFromText(text, baseName, opts);
+  reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+  return result;
+};
+
+export const docxToPdf = async (file: File, opts?: FormatFactoryRunOpts) => {
+  abortIfNeeded(opts?.signal);
+  const name = String(file?.name || '');
+  if (!name.toLowerCase().endsWith('.docx')) throw new Error('DOCX_ONLY');
+  reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取 Word', 'Reading Word') });
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  abortIfNeeded(opts?.signal);
+  const docXml = await extractZipEntry(bytes, 'word/document.xml');
+  if (!docXml) throw new Error('DOCX_PARSE_FAIL');
+  const xmlText = new TextDecoder().decode(docXml);
+  const parser = new DOMParser();
+  const xmlDoc = parser.parseFromString(xmlText, 'application/xml');
+  const parseError = xmlDoc.getElementsByTagName('parsererror')[0];
+  if (parseError) throw new Error('DOCX_PARSE_FAIL');
+  const paragraphs = Array.from(xmlDoc.getElementsByTagName('w:p'));
+  const lines: string[] = [];
+  for (const p of paragraphs) {
+    const walker = xmlDoc.createTreeWalker(p, NodeFilter.SHOW_ELEMENT);
+    const parts: string[] = [];
+    let node = walker.nextNode() as Element | null;
+    while (node) {
+      const nodeName = node.nodeName;
+      if (nodeName === 'w:t') {
+        if (node.textContent) parts.push(node.textContent);
+      } else if (nodeName === 'w:tab') {
+        parts.push('\t');
+      } else if (nodeName === 'w:br' || nodeName === 'w:cr') {
+        parts.push('\n');
+      }
+      node = walker.nextNode() as Element | null;
+    }
+    lines.push(parts.join(''));
+  }
+  const text = lines.join('\n').replace(/\t/g, '    ');
+  const baseName = safeBaseName(name);
+  const result = buildPdfFromText(text, baseName, opts);
+  reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+  return result;
+};
+
 export const getPdfPageCount = async (file: File, opts?: { signal?: AbortSignal }) => {
   const pdfjsLib = await ensurePdfLib();
   if (opts?.signal?.aborted) throw new Error('ABORTED');
@@ -770,19 +877,13 @@ const wrapLines = (text: string, maxChars: number) => {
   return out;
 };
 
-export const txtToPdf = async (
-  file: File,
+const buildPdfFromText = (
+  text: string,
+  baseName: string,
   opts?: { maxCharsPerLine?: number } & FormatFactoryRunOpts
 ) => {
-  abortIfNeeded(opts?.signal);
-  reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取文本', 'Reading text') });
-  const raw = await file.text();
-  abortIfNeeded(opts?.signal);
-
-  const text = String(raw || '').replace(/\t/g, '    ');
   const maxCharsPerLine = Math.max(20, Math.floor(opts?.maxCharsPerLine ?? 80));
   const lines = wrapLines(text, maxCharsPerLine);
-
   const pageW = 595.28;
   const pageH = 841.89;
   const margin = 56;
@@ -865,7 +966,7 @@ export const txtToPdf = async (
   const pdfText = objects.join('');
   const blob = new Blob([pdfText], { type: 'application/pdf' });
   reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
-  return { blob, filename: `${safeBaseName(file.name)}.pdf` };
+  return { blob, filename: `${baseName}.pdf` };
 };
 
 export const pdfToWord = async (file: File, opts?: FormatFactoryRunOpts) => {

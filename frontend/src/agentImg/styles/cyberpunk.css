@@ -62,8 +62,8 @@ body {
 }
 
 .faq-left {
-  position: sticky;
-  top: 100px;
+  position: static;
+  top: auto;
   height: fit-content;
 }
 

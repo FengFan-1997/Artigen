@@ -58,6 +58,7 @@ export function useAgentImgLocale() {
         imageLabel: '图片',
         download: '下载',
         reference: '引用',
+        edit: '编辑',
         addImage: '添加图片',
         model: '模型',
         modelTip: '当前：默认模型',
@@ -86,16 +87,12 @@ export function useAgentImgLocale() {
         ],
         guideFaqs: [
           {
-            q: '文件会上传到服务器吗？',
-            a: '工具相关功能默认在浏览器本地处理；AI 设计在生成/图生图时会将必要信息（提示词/参考图）发送到模型服务完成生成。'
+            q: '深度思考有什么用？',
+            a: '深度思考会自动补全构图、光影、材质与质量词，并做提示词结构化；同时带有“记忆”能力，会结合你多轮输入自动融合需求。非深度思考仅接受单次输入。'
           },
           {
             q: '从哪里开始更快？',
             a: '有参考图就用图生图；只有想法就用文生图。做电商图建议先填产品档案，再选择风格/场景。'
-          },
-          {
-            q: '深度思考有什么用？',
-            a: '深度思考会自动补全构图、光影、材质与质量词，并做提示词结构化；同时带有“记忆”能力，会结合你多轮输入自动融合需求。非深度思考仅接受单次输入。'
           },
           {
             q: '怎么提高一致性与可控性？',
@@ -104,6 +101,10 @@ export function useAgentImgLocale() {
           {
             q: '我们的优势是什么？',
             a: '内置深度思考模型做提示词与构图优化；支持多图同时作为参考进行生成；接入多种主流强力生图模型，覆盖写实/商业/风格化等场景。'
+          },
+          {
+            q: '文件会上传到服务器吗？',
+            a: '工具相关功能默认在浏览器本地处理；AI 设计在生成/图生图时会将必要信息（提示词/参考图）发送到模型服务完成生成。'
           }
         ]
       };
@@ -158,6 +159,7 @@ export function useAgentImgLocale() {
       imageLabel: 'Image',
       download: 'Download',
       reference: 'Reference',
+      edit: 'Edit',
       addImage: 'Add image',
       model: 'Model',
       modelTip: 'Current: Default model',
@@ -187,16 +189,12 @@ export function useAgentImgLocale() {
       ],
       guideFaqs: [
         {
-          q: 'Do files get uploaded to a server?',
-          a: 'Tools run locally in your browser by default. For AI generation/img2img, we send the required inputs (prompts/reference images) to the model service to produce results.'
+          q: 'What does Deep Thinking do?',
+          a: 'It refines prompts and composition by adding lighting/material/quality cues. It also has memory: it can merge multiple turns of your inputs into one coherent request. Non-Deep Thinking accepts only single-turn input.'
         },
         {
           q: 'Where should I start for faster results?',
           a: 'Use img2img when you have references; use text-to-image for fast ideation. For commerce images, complete the product profile first.'
-        },
-        {
-          q: 'What does Deep Thinking do?',
-          a: 'It refines prompts and composition by adding lighting/material/quality cues. It also has memory: it can merge multiple turns of your inputs into one coherent request. Non-Deep Thinking accepts only single-turn input.'
         },
         {
           q: 'How to improve consistency and control?',
@@ -205,6 +203,10 @@ export function useAgentImgLocale() {
         {
           q: 'What makes it different?',
           a: 'Deep Thinking improves prompts and composition; multi-reference generation for stronger control; and access to powerful mainstream image models for diverse styles.'
+        },
+        {
+          q: 'Do files get uploaded to a server?',
+          a: 'Tools run locally in your browser by default. For AI generation/img2img, we send the required inputs (prompts/reference images) to the model service to produce results.'
         }
       ]
     };
