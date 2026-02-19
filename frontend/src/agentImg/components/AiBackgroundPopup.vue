@@ -173,7 +173,22 @@
                   @click="handleAdd"
                 >
                   <span>{{ loading ? ui.adding : ui.add }}</span>
-                  <span v-if="!loading && costText" class="add-cost">{{ costText }}</span>
+                  <span v-if="!loading && costText" class="add-cost">
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="12"
+                      height="12"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      fill="none"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      style="margin-right: 1px; position: relative; top: 1px"
+                    >
+                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                    </svg>
+                    {{ costText }}
+                  </span>
                 </button>
               </div>
             </div>
@@ -506,7 +521,7 @@ const costText = computed(() => {
   if (bgMode.value === 'replace') return '';
   const n = Math.max(0, Math.trunc(Number(props.creditsCost ?? 0) || 0));
   if (!n) return '';
-  return `⚡${n}`;
+  return `${n}`;
 });
 
 const close = () => {

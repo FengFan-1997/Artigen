@@ -12,7 +12,20 @@
         <div class="title-stack">
           <h1 class="page-title">
             <span class="market-title-accent">{{ ui.pageTitle1 }}</span> {{ ui.pageTitle2 }}
-            <span class="bolt">⚡</span>
+            <span class="bolt">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="32"
+                height="32"
+              >
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+            </span>
           </h1>
           <p class="page-desc">{{ ui.subtitle }}</p>
         </div>
@@ -47,11 +60,44 @@
 
           <div class="card-header">
             <div class="icon-box">
-              <span class="icon">⚛️</span>
+              <span class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="32"
+                  height="32"
+                >
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <circle cx="12" cy="12" r="4"></circle>
+                  <line x1="21.17" y1="8" x2="12" y2="8"></line>
+                  <line x1="3.95" y1="6.06" x2="8.54" y2="14"></line>
+                  <line x1="10.88" y1="21.94" x2="15.46" y2="14"></line>
+                </svg>
+              </span>
             </div>
             <h2>{{ ui.starterTitle }}</h2>
             <p class="pack-en">Starter Pack</p>
-            <div class="badge standard">👤 STANDARD</div>
+            <div class="badge standard">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="12"
+                height="12"
+                style="margin-right: 4px; display: inline-block; vertical-align: middle"
+              >
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
+              STANDARD
+            </div>
           </div>
 
           <div class="price-section">
@@ -60,31 +106,127 @@
               <span class="amount">{{ getPrice(9.9) }}</span>
             </div>
             <div class="compute-amount">
-              ⚡ {{ formatCredits(PACK_CREDITS.starter) }} {{ ui.computeUnit }}
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+              >
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              {{ formatCredits(PACK_CREDITS.starter) }} {{ ui.computeUnit }}
             </div>
           </div>
 
           <ul class="features">
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature1 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.starterFeature1 }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature2 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.starterFeature2 }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature3 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.starterFeature3 }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature4 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.starterFeature4 }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature5 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.starterFeature5 }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.starterFeature6 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.starterFeature6 }}</span>
             </li>
             <li class="disabled">
-              <span class="cross">✗</span
+              <span class="cross"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line></svg></span
               ><span class="feature-text">{{ ui.starterDisabledPro }}</span>
             </li>
           </ul>
@@ -108,11 +250,40 @@
 
           <div class="card-header">
             <div class="icon-box">
-              <span class="icon">⚡</span>
+              <span class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="32"
+                  height="32"
+                >
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                </svg>
+              </span>
             </div>
             <h2>{{ ui.standardTitle }}</h2>
             <p class="pack-en">Standard Pack</p>
-            <div class="badge standard">👤 STANDARD</div>
+            <div class="badge standard">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="12"
+                height="12"
+                style="margin-right: 4px; display: inline-block; vertical-align: middle"
+              >
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
+              STANDARD
+            </div>
           </div>
 
           <div class="price-section">
@@ -121,35 +292,142 @@
               <span class="amount">{{ getPrice(19.9) }}</span>
             </div>
             <div class="compute-amount">
-              ⚡ {{ formatCredits(PACK_CREDITS.standard) }} {{ ui.computeUnit }}
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+              >
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              {{ formatCredits(PACK_CREDITS.standard) }} {{ ui.computeUnit }}
             </div>
           </div>
 
           <ul class="features">
             <li>
-              <span class="check">✓</span
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
               ><span class="feature-text">{{ ui.standardFeature1 }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonLicense }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonLicense }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonOwnership }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonOwnership }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonExports }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonExports }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonModelBase }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonModelBase }}</span>
             </li>
             <li class="tier-standard">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard1 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierStandard1 }}</span>
             </li>
             <li class="tier-standard">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard2 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierStandard2 }}</span>
             </li>
             <li class="tier-standard">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard3 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierStandard3 }}</span>
             </li>
           </ul>
 
@@ -165,7 +443,24 @@
 
         <!-- Professional Pack (Green Theme) -->
         <div class="pricing-card pro-theme">
-          <div class="tag-recommend">✨ {{ ui.recommend }}</div>
+          <div class="tag-recommend">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="12"
+              height="12"
+              style="margin-right: 4px; display: inline-block; vertical-align: middle"
+            >
+              <path
+                d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+              ></path>
+            </svg>
+            {{ ui.recommend }}
+          </div>
           <div class="card-corner top-left"></div>
           <div class="card-corner top-right"></div>
           <div class="card-corner bottom-left"></div>
@@ -173,11 +468,42 @@
 
           <div class="card-header">
             <div class="icon-box">
-              <span class="icon">✨</span>
+              <span class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="32"
+                  height="32"
+                >
+                  <path
+                    d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+                  ></path>
+                </svg>
+              </span>
             </div>
             <h2>{{ ui.proTitle }}</h2>
             <p class="pack-en">Pro Pack</p>
-            <div class="badge pro">🔒 PRO ACCESS</div>
+            <div class="badge pro">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="12"
+                height="12"
+                style="margin-right: 4px; display: inline-block; vertical-align: middle"
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              PRO ACCESS
+            </div>
           </div>
 
           <div class="price-section">
@@ -186,43 +512,187 @@
               <span class="amount">{{ getPrice(49.9) }}</span>
             </div>
             <div class="compute-amount">
-              ⚡ {{ formatCredits(PACK_CREDITS.pro) }} {{ ui.computeUnit }}
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+              >
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              {{ formatCredits(PACK_CREDITS.pro) }} {{ ui.computeUnit }}
             </div>
           </div>
 
           <ul class="features">
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.proFeature1 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.proFeature1 }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonLicense }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonLicense }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonOwnership }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonOwnership }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonExports }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonExports }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonModelBase }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonModelBase }}</span>
             </li>
             <li class="tier-standard">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard1 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierStandard1 }}</span>
             </li>
             <li class="tier-standard">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard2 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierStandard2 }}</span>
             </li>
             <li class="tier-standard">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard3 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierStandard3 }}</span>
             </li>
             <li class="tier-pro">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro1 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierPro1 }}</span>
             </li>
             <li class="tier-pro">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro2 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierPro2 }}</span>
             </li>
             <li class="tier-pro">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro3 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierPro3 }}</span>
             </li>
           </ul>
 
@@ -238,7 +708,22 @@
 
         <!-- Ultimate Pack (Gold Theme) -->
         <div class="pricing-card ultimate-theme">
-          <div class="tag-recommend gold">👑 {{ ui.ultimateTag }}</div>
+          <div class="tag-recommend gold">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="12"
+              height="12"
+              style="margin-right: 4px; display: inline-block; vertical-align: middle"
+            >
+              <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path>
+            </svg>
+            {{ ui.ultimateTag }}
+          </div>
           <div class="card-corner top-left"></div>
           <div class="card-corner top-right"></div>
           <div class="card-corner bottom-left"></div>
@@ -246,11 +731,40 @@
 
           <div class="card-header">
             <div class="icon-box">
-              <span class="icon">👑</span>
+              <span class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="32"
+                  height="32"
+                >
+                  <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path>
+                </svg>
+              </span>
             </div>
             <h2>{{ ui.ultimateTitle }}</h2>
             <p class="pack-en">Ultimate Pack</p>
-            <div class="badge ultimate">🔒 PRO ACCESS</div>
+            <div class="badge ultimate">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="12"
+                height="12"
+                style="margin-right: 4px; display: inline-block; vertical-align: middle"
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              PRO ACCESS
+            </div>
           </div>
 
           <div class="price-section">
@@ -259,56 +773,247 @@
               <span class="amount">{{ getPrice(99.9) }}</span>
             </div>
             <div class="compute-amount">
-              ⚡ {{ formatCredits(PACK_CREDITS.ultimate) }} {{ ui.computeUnit }}
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+              >
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              {{ formatCredits(PACK_CREDITS.ultimate) }} {{ ui.computeUnit }}
             </div>
           </div>
 
           <ul class="features">
             <li>
-              <span class="check">✓</span
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
               ><span class="feature-text">{{ ui.ultimateFeature1 }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonLicense }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonLicense }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonOwnership }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonOwnership }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonExports }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonExports }}</span>
             </li>
             <li>
-              <span class="check">✓</span><span class="feature-text">{{ ui.commonModelBase }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.commonModelBase }}</span>
             </li>
             <li class="tier-standard">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard1 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierStandard1 }}</span>
             </li>
             <li class="tier-standard">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard2 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierStandard2 }}</span>
             </li>
             <li class="tier-standard">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierStandard3 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierStandard3 }}</span>
             </li>
             <li class="tier-pro">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro1 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierPro1 }}</span>
             </li>
             <li class="tier-pro">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro2 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierPro2 }}</span>
             </li>
             <li class="tier-pro">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierPro3 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierPro3 }}</span>
             </li>
             <li class="tier-ultimate">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierUltimate1 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierUltimate1 }}</span>
             </li>
             <li class="tier-ultimate">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierUltimate2 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierUltimate2 }}</span>
             </li>
             <li class="tier-ultimate">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierUltimate3 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierUltimate3 }}</span>
             </li>
             <li class="tier-ultimate">
-              <span class="check">✓</span><span class="feature-text">{{ ui.tierUltimate4 }}</span>
+              <span class="check"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline></svg></span
+              ><span class="feature-text">{{ ui.tierUltimate4 }}</span>
             </li>
           </ul>
 
@@ -333,17 +1038,60 @@
 
         <div class="info-grid">
           <div class="info-card">
-            <div class="info-card-title">> {{ ui.useCasesTitle }}</div>
+            <div class="info-card-title">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+                style="margin-right: 6px"
+              >
+                <polyline points="9 18 15 12 9 6"></polyline></svg
+              >{{ ui.useCasesTitle }}
+            </div>
             <ul class="info-list">
               <li v-for="(item, idx) in ui.useCases" :key="idx" class="info-list-item">
-                <span class="info-list-icon">#</span>
+                <span class="info-list-icon"
+                  ><svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    width="14"
+                    height="14"
+                  >
+                    <line x1="4" y1="9" x2="20" y2="9"></line>
+                    <line x1="4" y1="15" x2="20" y2="15"></line>
+                    <line x1="10" y1="3" x2="8" y2="21"></line>
+                    <line x1="16" y1="3" x2="14" y2="21"></line></svg
+                ></span>
                 {{ item }}
               </li>
             </ul>
           </div>
 
           <div class="info-card">
-            <div class="info-card-title">> {{ ui.longTailTitle }}</div>
+            <div class="info-card-title">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+                style="margin-right: 6px"
+              >
+                <polyline points="9 18 15 12 9 6"></polyline></svg
+              >{{ ui.longTailTitle }}
+            </div>
             <div class="info-chips">
               <span v-for="(chip, idx) in ui.longTailKeywords" :key="idx" class="info-chip">
                 {{ chip }}
@@ -364,7 +1112,20 @@
         <details v-for="f in ui.faqs" :key="f.q" class="faq-item">
           <summary class="faq-q">
             <span class="q-text">{{ f.q }}</span>
-            <span class="q-icon">+</span>
+            <span class="q-icon"
+              ><svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+              >
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line></svg
+            ></span>
           </summary>
           <div class="faq-a-wrapper">
             <div class="faq-a">{{ f.a }}</div>
@@ -380,7 +1141,21 @@
         <div class="pay-panel" role="dialog" aria-modal="true">
           <div class="pay-head">
             <div class="pay-title">{{ ui.payTitle }}</div>
-            <button class="pay-close" type="button" @click="closePay">×</button>
+            <button class="pay-close" type="button" @click="closePay">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="20"
+                height="20"
+              >
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
           </div>
 
           <div class="pay-body">

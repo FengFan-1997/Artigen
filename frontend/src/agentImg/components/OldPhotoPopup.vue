@@ -3,11 +3,11 @@
     :visible="visible"
     :title="ui.title"
     :subtitle="ui.subtitle"
-    icon="FIX"
+    icon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>'
     :upload-text="ui.uploadText"
     :upload-hint="ui.uploadHint"
     :reupload-text="ui.reupload"
-    placeholder-icon="🕰️"
+    placeholder-icon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="64" height="64"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>'
     :loading="loading"
     v-model:selected-file="selectedFile"
     @close="close"
@@ -36,12 +36,39 @@
 
         <button class="generate-btn" @click="handleRestore" :disabled="!selectedFile || loading">
           <span v-if="loading">
-            <i class="fas fa-spinner fa-spin"></i>
+            <svg
+              class="spinner-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="16"
+              height="16"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+            </svg>
             {{ ui.restoring }}
           </span>
           <span v-else>
             {{ ui.start }}
-            <span class="cost-badge" v-if="costText">{{ costText }}</span>
+            <span class="cost-badge" v-if="costText">
+              <svg
+                viewBox="0 0 24 24"
+                width="10"
+                height="10"
+                stroke="currentColor"
+                stroke-width="2"
+                fill="none"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                style="margin-right: 2px"
+              >
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              {{ costText }}
+            </span>
           </span>
         </button>
       </div>
@@ -111,7 +138,7 @@ const currentDesc = computed(() => {
 const costText = computed(() => {
   const n = Math.max(0, Math.trunc(Number(props.creditsCost ?? 0) || 0));
   if (!n) return '';
-  return `⚡${n}`;
+  return `${n}`;
 });
 
 const close = () => {
@@ -193,13 +220,15 @@ const handleRestore = () => {
 }
 
 .checkbox-label input[type='checkbox']:checked::after {
-  content: '✓';
+  content: '';
   position: absolute;
-  color: #ccff00;
-  font-size: 14px;
-  font-weight: bold;
-  left: 3px;
-  top: -1px;
+  width: 14px;
+  height: 14px;
+  left: 2px;
+  top: 2px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ccff00' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
 }
 
 .checkbox-text {
@@ -254,6 +283,20 @@ const handleRestore = () => {
 .generate-btn:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(204, 255, 0, 0.3);
+}
+
+.spinner-icon {
+  animation: spin 1s linear infinite;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .cost-badge {

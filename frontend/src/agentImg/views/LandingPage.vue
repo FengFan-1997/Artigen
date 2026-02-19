@@ -35,7 +35,21 @@
               class="hero-btn btn-primary"
               @click.prevent="onLandingNav('/artigen/ai', 'ai')"
             >
-              {{ ctaWorkshop }} <span class="arrow">→</span>
+              {{ ctaWorkshop }}
+              <span class="arrow"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                  <polyline points="12 5 19 12 12 19"></polyline></svg
+              ></span>
             </router-link>
             <router-link
               to="/artigen/tools"
@@ -116,7 +130,24 @@
             <div class="fc-body">
               <div class="fc-title-row">
                 <h3 class="card-title">{{ feature1Title }}</h3>
-                <div class="fc-icon">🎨</div>
+                <div class="fc-icon">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle>
+                    <circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle>
+                    <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle>
+                    <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle>
+                    <path
+                      d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"
+                    ></path>
+                  </svg>
+                </div>
               </div>
               <p class="card-text">
                 {{ feature1Desc }}
@@ -126,7 +157,20 @@
 
             <div class="fc-footer">
               <span class="link-text">ENTER</span>
-              <span class="action-arrow">↗</span>
+              <span class="action-arrow"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <line x1="7" y1="17" x2="17" y2="7"></line>
+                  <polyline points="7 7 17 7 17 17"></polyline></svg
+              ></span>
             </div>
           </router-link>
 
@@ -149,7 +193,19 @@
             <div class="fc-body">
               <div class="fc-title-row">
                 <h3 class="card-title">{{ feature2Title }}</h3>
-                <div class="fc-icon">🧰</div>
+                <div class="fc-icon">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                    <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                  </svg>
+                </div>
               </div>
               <p class="card-text">
                 {{ feature2Desc }}
@@ -159,7 +215,20 @@
 
             <div class="fc-footer">
               <span class="link-text">OPEN</span>
-              <span class="action-arrow">↗</span>
+              <span class="action-arrow"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <line x1="7" y1="17" x2="17" y2="7"></line>
+                  <polyline points="7 7 17 7 17 17"></polyline></svg
+              ></span>
             </div>
           </router-link>
 
@@ -182,7 +251,20 @@
             <div class="fc-body">
               <div class="fc-title-row">
                 <h3 class="card-title">{{ feature4Title }}</h3>
-                <div class="fc-icon">🛠️</div>
+                <div class="fc-icon">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
+                    ></path>
+                  </svg>
+                </div>
               </div>
               <p class="card-text">
                 {{ feature4Desc }}
@@ -192,7 +274,20 @@
 
             <div class="fc-footer">
               <span class="link-text">ENTER</span>
-              <span class="action-arrow">↗</span>
+              <span class="action-arrow"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <line x1="7" y1="17" x2="17" y2="7"></line>
+                  <polyline points="7 7 17 7 17 17"></polyline></svg
+              ></span>
             </div>
           </router-link>
 
@@ -215,7 +310,18 @@
             <div class="fc-body">
               <div class="fc-title-row">
                 <h3 class="card-title">{{ feature3Title }}</h3>
-                <div class="fc-icon">⚡</div>
+                <div class="fc-icon">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                  </svg>
+                </div>
               </div>
               <p class="card-text">
                 {{ feature3Desc }}
@@ -225,7 +331,20 @@
 
             <div class="fc-footer">
               <span class="link-text">BROWSE</span>
-              <span class="action-arrow">↗</span>
+              <span class="action-arrow"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <line x1="7" y1="17" x2="17" y2="7"></line>
+                  <polyline points="7 7 17 7 17 17"></polyline></svg
+              ></span>
             </div>
           </router-link>
         </div>
@@ -244,7 +363,19 @@
               </h3>
               <ul class="info-list">
                 <li v-for="item in useCases" :key="item" class="info-list-item">
-                  <span class="info-list-icon">>></span>
+                  <span class="info-list-icon"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      width="14"
+                      height="14"
+                    >
+                      <polyline points="9 18 15 12 9 6"></polyline></svg
+                  ></span>
                   {{ item }}
                 </li>
               </ul>
@@ -271,7 +402,20 @@
           <details v-for="f in faqs" :key="f.q" class="faq-item">
             <summary class="faq-q">
               <span class="q-text">{{ f.q }}</span>
-              <span class="q-icon">+</span>
+              <span class="q-icon"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line></svg
+              ></span>
             </summary>
             <div class="faq-a-wrapper">
               <div class="faq-a">{{ f.a }}</div>
@@ -529,7 +673,7 @@ const carouselSlides = computed<CarouselSlide[]>(() => [
     id: 'ai',
     title: feature1Title.value,
     desc: feature1Desc.value,
-    icon: '🎨',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=800&auto=format&fit=crop',
     route: '/artigen/ai'
@@ -538,7 +682,7 @@ const carouselSlides = computed<CarouselSlide[]>(() => [
     id: 'format_factory',
     title: feature2Title.value,
     desc: feature2Desc.value,
-    icon: '🔄',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?q=80&w=800&auto=format&fit=crop',
     route: '/artigen/tools'
@@ -547,7 +691,7 @@ const carouselSlides = computed<CarouselSlide[]>(() => [
     id: 'image_workshop',
     title: feature4Title.value,
     desc: feature4Desc.value,
-    icon: '🛠️',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?q=80&w=800&auto=format&fit=crop',
     route: '/artigen/image-workshop'
@@ -556,7 +700,7 @@ const carouselSlides = computed<CarouselSlide[]>(() => [
     id: 'market',
     title: feature3Title.value,
     desc: feature3Desc.value,
-    icon: '⚡',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>',
     image:
       'https://images.unsplash.com/photo-1635776062127-d379bfcba9f8?q=80&w=800&auto=format&fit=crop',
     route: '/artigen/market'

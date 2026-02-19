@@ -3,11 +3,11 @@
     :visible="visible"
     :title="ui.title"
     :subtitle="ui.subtitle"
-    icon="ID"
+    icon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="10" r="2"></circle><line x1="15" y1="8" x2="17" y2="8"></line><line x1="15" y1="12" x2="17" y2="12"></line><line x1="7" y1="16" x2="17" y2="16"></line></svg>'
     :upload-text="ui.uploadText"
     :upload-hint="ui.uploadHint"
     :reupload-text="ui.reupload"
-    placeholder-icon="📁"
+    placeholder-icon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="48" height="48"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>'
     :loading="loading"
     v-model:selected-file="selectedFile"
     @close="close"
@@ -33,12 +33,39 @@
 
         <button class="generate-btn" :disabled="!selectedFile || loading" @click="handleGenerate">
           <span v-if="loading">
-            <i class="fas fa-spinner fa-spin"></i>
+            <svg
+              class="spinner-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="16"
+              height="16"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+            </svg>
             {{ ui.generating }}
           </span>
           <span v-else>
             {{ ui.start }}
-            <span class="cost-badge" v-if="costText">{{ costText }}</span>
+            <span class="cost-badge" v-if="costText">
+              <svg
+                viewBox="0 0 24 24"
+                width="10"
+                height="10"
+                stroke="currentColor"
+                stroke-width="2"
+                fill="none"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                style="margin-right: 2px"
+              >
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              {{ costText }}
+            </span>
           </span>
         </button>
       </div>
@@ -127,7 +154,7 @@ const currentTypeDesc = computed(() => {
 const costText = computed(() => {
   const n = Math.max(0, Math.trunc(Number(props.creditsCost ?? 0) || 0));
   if (!n) return '';
-  return `⚡${n}`;
+  return `${n}`;
 });
 
 const close = () => {
@@ -198,6 +225,9 @@ const handleGenerate = () => {
   margin-top: auto;
   width: 100%;
   height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: #ccff00;
   color: #000;
   border: none;
@@ -205,11 +235,22 @@ const handleGenerate = () => {
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   gap: 8px;
   transition: all 0.2s;
+}
+
+.spinner-icon {
+  animation: spin 1s linear infinite;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .generate-btn:disabled {

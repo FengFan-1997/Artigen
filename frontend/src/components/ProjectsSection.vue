@@ -46,11 +46,27 @@
                 <span v-for="tag in item.tags" :key="tag" class="mini-tag">{{ tag }}</span>
               </div>
             </div>
-            <h2 class="card-title">{{ item.title }}</h2>
+            <h2 class="card-title">
+              <span class="title-icon" v-html="item.icon" v-if="item.icon"></span>
+              {{ item.title }}
+            </h2>
             <p class="card-desc">{{ item.desc }}</p>
             <div class="card-action">
               <span>{{ t('projects.viewProject') }}</span>
-              <span class="arrow-icon">→</span>
+              <span class="arrow-icon"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                  <polyline points="12 5 19 12 12 19"></polyline></svg
+              ></span>
             </div>
           </div>
         </div>
@@ -85,7 +101,7 @@ const navItems = computed(() => [
     title: 'Agent Image',
     desc: 'Cyberpunk style AI image processing platform with format factory and compute mall.',
     route: '/artigen',
-    icon: '🖼️',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
     image:
       'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?q=80&w=800&auto=format&fit=crop',
     tags: ['Vue 3', 'Cyberpunk', 'AI']
@@ -95,7 +111,7 @@ const navItems = computed(() => [
     title: t('projects.items.ingredients.title'),
     desc: t('projects.items.ingredients.desc'),
     route: '/ingredient',
-    icon: '🧬',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?q=80&w=800&auto=format&fit=crop', // Food/Ingredients (replaced)
     tags: ['Vue 3', 'AI', 'Automation']
@@ -105,7 +121,7 @@ const navItems = computed(() => [
     title: t('projects.items.gemini.title'),
     desc: t('projects.items.gemini.desc'),
     route: '/gemini-chat',
-    icon: '💬',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1677442136019-21780ecad995?q=80&w=800&auto=format&fit=crop', // AI/Tech
     tags: ['Vue 3', 'AI', 'NLP']
@@ -115,7 +131,7 @@ const navItems = computed(() => [
     title: t('projects.items.polyglot.title'),
     desc: t('projects.items.polyglot.desc'),
     route: '/translator',
-    icon: '🌐',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=800&auto=format&fit=crop', // Globe/Network
     tags: ['Vue 3', 'AI', 'Tools']
@@ -125,7 +141,7 @@ const navItems = computed(() => [
     title: t('projects.items.storyteller.title'),
     desc: t('projects.items.storyteller.desc'),
     route: '/storyteller',
-    icon: '📖',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1532012197267-da84d127e765?q=80&w=800&auto=format&fit=crop', // Book/Fantasy
     tags: ['Vue 3', 'AI', 'Creative']
@@ -135,7 +151,7 @@ const navItems = computed(() => [
     title: t('projects.items.christmas.title'),
     desc: t('projects.items.christmas.desc'),
     route: '/christmas-tree',
-    icon: '🎄',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><polyline points="20 12 20 22 4 22 4 12"></polyline><rect x="2" y="7" width="20" height="5"></rect><line x1="12" y1="22" x2="12" y2="7"></line><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"></path><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1512389142860-9c449e58a543?q=80&w=800&auto=format&fit=crop', // Better Christmas Tree
     tags: ['Three.js', 'Computer Vision', 'Interactive']
@@ -145,7 +161,7 @@ const navItems = computed(() => [
     title: t('projects.items.nexus.title'),
     desc: t('projects.items.nexus.desc'),
     route: '/nexus-dashboard',
-    icon: '📊',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>',
     image:
       'https://images.unsplash.com/photo-1551288049-bebda4e38f71?q=80&w=800&auto=format&fit=crop', // Data Dashboard
     tags: ['Vue 3', 'WebGL', 'FinTech']
@@ -155,7 +171,7 @@ const navItems = computed(() => [
     title: t('projects.items.market.title'),
     desc: t('projects.items.market.desc'),
     route: '/artigen/market',
-    icon: '💎',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?q=80&w=800&auto=format&fit=crop',
     tags: ['Web3', 'Three.js', 'DeFi']
@@ -165,7 +181,7 @@ const navItems = computed(() => [
     title: t('projects.items.resume.title'),
     desc: t('projects.items.resume.desc'),
     route: '/resume-forge',
-    icon: '📄',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>',
     image:
       'https://images.unsplash.com/photo-1586281380349-632531db7ed4?q=80&w=800&auto=format&fit=crop',
     tags: ['AI', 'NLP', 'Recruitment']
@@ -175,7 +191,7 @@ const navItems = computed(() => [
     title: t('projects.items.audit.title'),
     desc: t('projects.items.audit.desc'),
     route: '/code-guardian',
-    icon: '🛡️',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1555949963-ff9fe0c870eb?q=80&w=800&auto=format&fit=crop',
     tags: ['Security', 'Blockchain', 'Automation']
@@ -185,7 +201,7 @@ const navItems = computed(() => [
     title: t('projects.items.travel.title'),
     desc: t('projects.items.travel.desc'),
     route: '/travel-planner',
-    icon: '✈️',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>',
     image:
       'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?q=80&w=800&auto=format&fit=crop',
     tags: ['GenAI', 'Personalization', 'Travel']
@@ -195,7 +211,7 @@ const navItems = computed(() => [
     title: t('projects.items.aippt.title'),
     desc: t('projects.items.aippt.desc'),
     route: '/ai-ppt',
-    icon: '📽️',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>',
     image:
       'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?q=80&w=800&auto=format&fit=crop',
     tags: ['AI', 'Vue 3', 'Productivity']
@@ -548,6 +564,27 @@ onBeforeUnmount(() => {
   line-height: 1.1;
   color: #f1f5f9;
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.project-card.reversed .card-title {
+  flex-direction: row-reverse;
+}
+
+.title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: #38bdf8;
+}
+
+.title-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
 .card-desc {

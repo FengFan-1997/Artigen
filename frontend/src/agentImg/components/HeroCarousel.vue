@@ -18,6 +18,7 @@
           <img :src="slide.image" :alt="slide.title" class="slide-image" />
           <div class="slide-overlay">
             <div class="slide-header">
+              <div class="slide-icon" v-if="slide.icon" v-html="slide.icon"></div>
               <span class="brand-text">Artigen</span>
             </div>
             <div class="slide-content">
@@ -217,6 +218,27 @@ onBeforeUnmount(() => {
   padding: 32px;
   opacity: 1;
   transition: opacity 0.3s ease;
+}
+
+.slide-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slide-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: #fff;
+}
+
+.slide-icon svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
 }
 
 .brand-text {

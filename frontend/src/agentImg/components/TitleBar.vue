@@ -8,7 +8,20 @@
       </router-link>
 
       <button class="nav-toggle" type="button" @click="isMobileMenuOpen = !isMobileMenuOpen">
-        ≡
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          width="24"
+          height="24"
+        >
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
       </button>
 
       <nav class="nav-links">
@@ -61,7 +74,7 @@
                     class="tools-pop-item"
                     @click="handleToolClick(tool.id)"
                   >
-                    <span class="tools-pop-icon">{{ tool.icon }}</span>
+                    <span class="tools-pop-icon" v-html="tool.icon"></span>
                     <span class="tools-pop-text">
                       <span class="tools-pop-name">{{ tool.name }}</span>
                       <span class="tools-pop-desc">{{ tool.description }}</span>
@@ -91,7 +104,24 @@
           @click="isLangMenuOpen = !isLangMenuOpen"
         >
           <button class="lang-switch" type="button">
-            <span class="globe-icon">🌐</span>
+            <span class="globe-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+              >
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path
+                  d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
+                ></path>
+              </svg>
+            </span>
             <span class="lang-label">{{ langLabel }}</span>
             <span class="arrow" :class="{ open: isLangMenuOpen }">⌄</span>
           </button>
@@ -168,7 +198,7 @@
               class="mobile-sub-item"
               @click.stop="handleToolClick(tool.id)"
             >
-              <span class="mobile-tool-icon">{{ tool.icon }}</span>
+              <span class="mobile-tool-icon" v-html="tool.icon"></span>
               {{ tool.name }}
             </div>
             <NavItem
@@ -699,11 +729,26 @@ watch(() => isAuthed.value, handleAuthChanged);
 .tools-pop-icon {
   width: 22px;
   height: 22px;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  line-height: 1;
+  margin-top: 2px;
+}
+
+.mobile-tool-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--primary, #ccff00);
+}
+
+.mobile-tool-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
 }
 
 .tools-pop-text {

@@ -2,11 +2,15 @@
   <button class="tool-card" type="button" @click="emit('click')">
     <div class="card-header">
       <span class="tool-id">{{ toolId }}</span>
-      <span class="tool-badge" :class="badgeTone">{{ badge }}</span>
+      <span class="tool-badge" :class="badgeTone" v-html="badge"></span>
     </div>
 
     <div class="tool-icon-wrapper">
-      <span class="tool-icon">{{ icon }}</span>
+      <div class="tool-icon">
+        <slot name="icon">
+          {{ icon }}
+        </slot>
+      </div>
     </div>
 
     <h3 class="tool-title">{{ title }}</h3>
@@ -14,7 +18,20 @@
 
     <div class="card-footer">
       <span class="launch-text">{{ launch }}</span>
-      <span class="arrow">→</span>
+      <span class="arrow"
+        ><svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          width="16"
+          height="16"
+        >
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+          <polyline points="12 5 19 12 12 19"></polyline></svg
+      ></span>
     </div>
   </button>
 </template>
@@ -98,6 +115,9 @@ const emit = defineEmits<{
   border-radius: 4px;
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .tool-title {

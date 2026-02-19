@@ -864,7 +864,7 @@ export const useConsoleStore = defineStore('console', {
         userId,
         email,
         level: 'free',
-        points: 9999, // As per request "Finally give me an account 9999 points" - giving to new users for now or handle specifically
+        points: 100000, // As per request "Finally give me an account 100000 points"
         totalSpent: 0,
         joinedAt: Date.now(),
         lastActiveAt: Date.now()
@@ -876,7 +876,7 @@ export const useConsoleStore = defineStore('console', {
         id: crypto.randomUUID(),
         userId,
         type: 'admin_gift',
-        amount: 9999,
+        amount: 100000,
         description: 'Welcome Bonus',
         timestamp: Date.now()
       });

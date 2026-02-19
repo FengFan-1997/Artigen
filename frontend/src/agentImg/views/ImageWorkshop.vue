@@ -27,53 +27,131 @@
         <ToolCard
           tool-id="TOOL_01"
           badge="NEW"
-          icon="ID"
+          icon=""
           :title="ui.toolIdTitle"
           :desc="ui.toolIdDesc"
           :launch="ui.launch"
           @click="openIdPhotoPopup"
-        />
+        >
+          <template #icon>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <circle cx="12" cy="10" r="3"></circle>
+              <path d="M7 21v-2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2"></path>
+            </svg>
+          </template>
+        </ToolCard>
 
         <ToolCard
           tool-id="TOOL_02"
           badge="HOT"
           badge-tone="hot"
-          icon="🕒"
+          icon=""
           :title="ui.toolOldTitle"
           :desc="ui.toolOldDesc"
           :launch="ui.launch"
           @click="openOldPhotoPopup"
-        />
+        >
+          <template #icon>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+              <path d="M22 12h-2"></path>
+              <path d="M2 12h2"></path>
+            </svg>
+          </template>
+        </ToolCard>
 
         <ToolCard
           tool-id="TOOL_03"
-          badge="10⚡"
-          icon="🧾"
+          badge="10<svg style='display:inline-block;vertical-align:middle;margin-left:2px;' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' width='10' height='10'><polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'></polygon></svg>"
+          icon=""
           :title="ui.toolIngredientTitle"
           :desc="ui.toolIngredientDesc"
           :launch="ui.launch"
           @click="openIngredientList"
-        />
+        >
+          <template #icon>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+          </template>
+        </ToolCard>
 
         <ToolCard
           tool-id="TOOL_04"
           badge="NEW"
-          icon="BG"
+          icon=""
           :title="ui.toolBgTitle"
           :desc="ui.toolBgDesc"
           :launch="ui.launch"
           @click="openAiBackgroundPopup"
-        />
+        >
+          <template #icon>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <circle cx="8.5" cy="8.5" r="1.5"></circle>
+              <polyline points="21 15 16 10 5 21"></polyline>
+              <path d="M12 21a9 9 0 0 0 9-9"></path>
+            </svg>
+          </template>
+        </ToolCard>
 
         <ToolCard
           tool-id="TOOL_05"
           badge="NEW"
-          icon="ED"
+          icon=""
           :title="ui.toolEditorTitle"
           :desc="ui.toolEditorDesc"
           :launch="ui.launch"
           @click="openImageEditor"
-        />
+        >
+          <template #icon>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+          </template>
+        </ToolCard>
       </div>
 
       <div class="info-section">
@@ -86,7 +164,19 @@
               <div class="info-card-title">> {{ ui.useCasesTitle }}</div>
               <ul class="info-list">
                 <li v-for="(item, idx) in ui.useCases" :key="idx" class="info-list-item">
-                  <span class="info-list-icon">#</span>
+                  <span class="info-list-icon"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      width="14"
+                      height="14"
+                    >
+                      <polyline points="20 6 9 17 4 12"></polyline></svg
+                  ></span>
                   {{ item }}
                 </li>
               </ul>
@@ -113,7 +203,20 @@
           <details v-for="f in ui.faqs" :key="f.q" class="faq-item">
             <summary class="faq-q">
               <span class="q-text">{{ f.q }}</span>
-              <span class="q-icon">+</span>
+              <span class="q-icon"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line></svg
+              ></span>
             </summary>
             <div class="faq-a-wrapper">
               <div class="faq-a">{{ f.a }}</div>

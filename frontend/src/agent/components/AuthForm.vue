@@ -78,16 +78,39 @@ const goLogin = () => {
 .submit-btn {
   background: transparent;
   color: rgba(226, 232, 240, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
   padding: 12px;
   border-radius: 8px;
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.3s;
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.submit-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(204, 255, 0, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.submit-btn:hover {
+  border-color: var(--primary, #ccff00);
+  color: var(--primary, #ccff00);
+  box-shadow: 0 0 15px rgba(204, 255, 0, 0.15);
+}
+
+.submit-btn:hover::before {
+  left: 100%;
 }
 </style>

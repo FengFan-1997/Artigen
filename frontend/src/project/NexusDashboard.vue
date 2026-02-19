@@ -15,7 +15,21 @@
           :class="{ active: activeTab === 'dashboard' }"
           @click="activeTab = 'dashboard'"
         >
-          <span class="icon">📊</span>
+          <span class="icon"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="18"
+              height="18"
+            >
+              <line x1="18" y1="20" x2="18" y2="10"></line>
+              <line x1="12" y1="20" x2="12" y2="4"></line>
+              <line x1="6" y1="20" x2="6" y2="14"></line></svg
+          ></span>
           <span class="label">Dashboard</span>
           <div class="active-indicator" v-if="activeTab === 'dashboard'"></div>
         </div>
@@ -24,24 +38,82 @@
           :class="{ active: activeTab === 'prediction' }"
           @click="activeTab = 'prediction'"
         >
-          <span class="icon">🧠</span>
+          <span class="icon"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="18"
+              height="18"
+            >
+              <path
+                d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"
+              ></path>
+              <path
+                d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"
+              ></path></svg
+          ></span>
           <span class="label">AI Prediction</span>
           <div class="active-indicator" v-if="activeTab === 'prediction'"></div>
         </div>
         <div class="nav-item" :class="{ active: activeTab === 'hft' }" @click="activeTab = 'hft'">
-          <span class="icon">⚡</span>
+          <span class="icon"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="18"
+              height="18"
+            >
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg
+          ></span>
           <span class="label">HFT Status</span>
           <div class="active-indicator" v-if="activeTab === 'hft'"></div>
         </div>
         <div class="nav-item" @click="showSettings = true">
-          <span class="icon">⚙️</span>
+          <span class="icon"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="18"
+              height="18"
+            >
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+              ></path>
+              <circle cx="12" cy="12" r="3"></circle></svg
+          ></span>
           <span class="label">Settings</span>
         </div>
       </nav>
 
       <div class="sidebar-footer">
         <button class="back-home-btn" @click="goBack">
-          <span class="icon">←</span> EXIT SYSTEM
+          <span class="icon"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="16"
+              height="16"
+            >
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline></svg
+          ></span>
+          EXIT SYSTEM
         </button>
         <div class="system-status">
           <div class="status-row">
@@ -68,7 +140,21 @@
         <div class="header-actions">
           <button class="action-btn" @click="runAnalysis" :disabled="isAnalyzing">
             <span v-if="!isAnalyzing" class="btn-content"
-              ><span class="icon">🔍</span> Run AI Scan</span
+              ><span class="icon"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg
+              ></span>
+              Run AI Scan</span
             >
             <span v-else class="btn-content"><span class="loader"></span> Scanning...</span>
           </button>
@@ -166,7 +252,23 @@
             <div class="card-header">
               <h3>AI Insights</h3>
               <button class="refresh-btn" @click="refreshInsights" title="Refresh Insights">
-                <span class="icon">↻</span>
+                <span class="icon"
+                  ><svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    width="16"
+                    height="16"
+                  >
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path
+                      d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+                    ></path></svg
+                ></span>
               </button>
             </div>
             <div class="insight-list">
@@ -177,7 +279,7 @@
                   :key="insight.title + index"
                 >
                   <div class="insight-icon-wrapper">
-                    <div class="insight-icon">{{ insight.icon }}</div>
+                    <div class="insight-icon" v-html="insight.icon"></div>
                   </div>
                   <div class="insight-content">
                     <div class="insight-title">{{ insight.title }}</div>
@@ -215,7 +317,24 @@
                 </div>
               </div>
               <div class="signal-reason">
-                <div class="reason-icon">🤖</div>
+                <div class="reason-icon">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    width="24"
+                    height="24"
+                  >
+                    <rect x="3" y="11" width="18" height="10" rx="2"></rect>
+                    <circle cx="12" cy="5" r="2"></circle>
+                    <path d="M12 7v4"></path>
+                    <line x1="8" y1="16" x2="8" y2="16"></line>
+                    <line x1="16" y1="16" x2="16" y2="16"></line>
+                  </svg>
+                </div>
                 <p>{{ tradeSignal.reason }}</p>
               </div>
             </div>
@@ -292,7 +411,20 @@
                   placeholder="Ask Nexus about market trends, specific tokens, or risk analysis..."
                 />
                 <button @click="sendMessage" :disabled="!userQuery.trim()">
-                  <span class="icon">➤</span>
+                  <span class="icon"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      width="18"
+                      height="18"
+                    >
+                      <line x1="22" y1="2" x2="11" y2="13"></line>
+                      <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg
+                  ></span>
                 </button>
               </div>
             </div>
@@ -467,21 +599,21 @@ const predictionPath = computed(() => {
 
 const insights = ref([
   {
-    icon: '🚀',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"></path><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"></path><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"></path><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"></path></svg>',
     title: 'Momentum Shift',
     desc: 'Volume spike detected in Asian session.',
     score: '+8.2',
     scoreClass: 'positive'
   },
   {
-    icon: '⚠️',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
     title: 'Volatility Warning',
     desc: 'Bollinger bands expansion predicted.',
     score: 'High',
     scoreClass: 'warning'
   },
   {
-    icon: '🐋',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>',
     title: 'Whale Activity',
     desc: 'Large wallet movement tracking.',
     score: 'Alert',
@@ -515,7 +647,7 @@ const runAnalysis = () => {
     rawCandles.value.shift();
 
     insights.value.unshift({
-      icon: '⚡',
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>',
       title: 'New Anomaly',
       desc: 'Flash crash pattern detected in derivative markets.',
       score: 'CRITICAL',

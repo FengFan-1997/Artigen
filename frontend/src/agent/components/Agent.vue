@@ -77,7 +77,20 @@
           }}</span>
           <span class="agent-pill-model-name">{{ currentVrmName }}</span>
           <span v-if="vrmModelCounter" class="agent-pill-count">{{ vrmModelCounter }}</span>
-          <span class="agent-pill-caret">▾</span>
+          <span class="agent-pill-caret">
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              stroke="currentColor"
+              stroke-width="2"
+              fill="none"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </span>
         </button>
       </template>
       <transition name="agent-menu">
@@ -95,7 +108,18 @@
               :disabled="!canCycleVrmModel"
               @click.stop="prevVrmModel(false)"
             >
-              ‹
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                stroke="currentColor"
+                stroke-width="2"
+                fill="none"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="15 18 9 12 15 6"></polyline>
+              </svg>
             </button>
             <input
               v-model="vrmPickerQuery"
@@ -110,10 +134,33 @@
               :disabled="!canCycleVrmModel"
               @click.stop="nextVrmModel(false)"
             >
-              ›
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                stroke="currentColor"
+                stroke-width="2"
+                fill="none"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
             </button>
             <button class="agent-menu-close" type="button" @click.stop="vrmPickerOpen = false">
-              ×
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                stroke="currentColor"
+                stroke-width="2"
+                fill="none"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
             </button>
           </div>
           <div class="agent-menu-list">
@@ -157,7 +204,18 @@
       class="agent-side-tools"
     >
       <button class="agent-side-btn" type="button" @click.stop="toggleChat" :title="chatTitle">
-        💬
+        <svg
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          stroke="currentColor"
+          stroke-width="2"
+          fill="none"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
       </button>
       <button
         class="agent-side-btn"
@@ -176,7 +234,23 @@
           @click.stop="triggerSideMotion('wave')"
           :title="sideTitles.wave"
         >
-          👋
+          <svg
+            viewBox="0 0 24 24"
+            width="20"
+            height="20"
+            stroke="currentColor"
+            stroke-width="2"
+            fill="none"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"></path>
+            <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"></path>
+            <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"></path>
+            <path
+              d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"
+            ></path>
+          </svg>
         </button>
         <button
           class="agent-side-btn"
@@ -185,7 +259,18 @@
           @click.stop="triggerSideMotion('nod')"
           :title="sideTitles.nod"
         >
-          ⤵︎
+          <svg
+            viewBox="0 0 24 24"
+            width="20"
+            height="20"
+            stroke="currentColor"
+            stroke-width="2"
+            fill="none"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
         </button>
         <button
           class="agent-side-btn"
@@ -194,7 +279,20 @@
           @click.stop="triggerSideMotion('shake_head')"
           :title="sideTitles.shakeHead"
         >
-          ⇄
+          <svg
+            viewBox="0 0 24 24"
+            width="20"
+            height="20"
+            stroke="currentColor"
+            stroke-width="2"
+            fill="none"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
+            <polyline points="16 6 12 2 8 6"></polyline>
+            <line x1="12" y1="2" x2="12" y2="15"></line>
+          </svg>
         </button>
         <button
           class="agent-side-btn"
@@ -203,7 +301,21 @@
           @click.stop="triggerSideMotion('stretch')"
           :title="sideTitles.stretch"
         >
-          ⤢
+          <svg
+            viewBox="0 0 24 24"
+            width="20"
+            height="20"
+            stroke="currentColor"
+            stroke-width="2"
+            fill="none"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <polyline points="9 21 3 21 3 15"></polyline>
+            <line x1="21" y1="3" x2="14" y2="10"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
         </button>
         <button
           class="agent-side-btn"
@@ -212,7 +324,19 @@
           @click.stop="triggerSideMotion('idle')"
           :title="sideTitles.reset"
         >
-          ⟲
+          <svg
+            viewBox="0 0 24 24"
+            width="20"
+            height="20"
+            stroke="currentColor"
+            stroke-width="2"
+            fill="none"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+            <path d="M3 3v5h5"></path>
+          </svg>
         </button>
       </template>
     </div>

@@ -307,6 +307,50 @@ onBeforeUnmount(() => {
 
 .nth-login-btn {
   width: 100%;
+  height: 48px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  background: transparent;
+  color: #f1f5f9;
+  font-family:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.nth-login-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(204, 255, 0, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.nth-login-btn:hover {
+  border-color: var(--primary, #ccff00);
+  color: var(--primary, #ccff00);
+  box-shadow: 0 0 15px rgba(204, 255, 0, 0.15);
+}
+
+.nth-login-btn:hover::before {
+  left: 100%;
+}
+
+.nth-login-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .hint {

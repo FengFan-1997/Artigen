@@ -397,17 +397,17 @@ const downloadOptions = [
   {
     type: 'png' as const,
     label: 'PNG',
-    icon: 'https://cdn.packify.ai/image/9285df4e-a3b7-4d4c-8e40-537dea15ae08.svg'
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>'
   },
   {
     type: 'svg' as const,
     label: 'SVG',
-    icon: 'https://cdn.packify.ai/image/4243bd45-7dd6-44e5-9176-9887062b197c.svg'
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>'
   },
   {
     type: 'pdf' as const,
     label: 'PDF',
-    icon: 'https://cdn.packify.ai/image/1263cda7-1751-4833-9064-8b1f12ade129.svg'
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>'
   }
 ];
 
@@ -630,15 +630,36 @@ const backButtonStyles = {
                     :disabled="!ingredientsInput || isLoading"
                     @click="onGenerate"
                   >
-                    <span v-if="!isLoading" class="iconfont icon-ai1"></span>
-                    <img
+                    <span v-if="!isLoading">
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path
+                          d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+                        ></path>
+                      </svg>
+                    </span>
+                    <svg
                       v-else
-                      class="iconfont icon-ai1 generate-icon--loading"
-                      src="https://cdn.packify.ai/image/0a0ab795-dc73-476b-8de8-3c7add824da3.svg"
-                      alt=""
+                      class="generate-icon--loading"
                       width="16"
                       height="16"
-                    />
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+                    </svg>
                     <span class="generate-text">{{ generateTextLabel }}</span>
                     <span v-if="costText && !isLoading" class="generate-cost">{{ costText }}</span>
                   </button>
@@ -721,13 +742,17 @@ const backButtonStyles = {
                           @click="handleDownload(option.type)"
                         >
                           <div class="file-icon-wrapper">
-                            <img
+                            <div
                               class="modal-icon"
-                              :src="option.icon"
-                              width="24"
-                              height="24"
-                              :alt="option.label"
-                            />
+                              v-html="option.icon"
+                              style="
+                                width: 24px;
+                                height: 24px;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                              "
+                            ></div>
                           </div>
                           <span class="opt-text">{{ option.label }}</span>
                         </button>

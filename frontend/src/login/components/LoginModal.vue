@@ -39,7 +39,21 @@
                   {{ error || info }}
                 </div>
                 <button class="nth-login-btn method" type="button" @click="chooseMethod('email')">
-                  <i class="fa-regular fa-envelope icon"></i>
+                  <span class="icon">
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      width="20"
+                      height="20"
+                    >
+                      <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
+                    </svg>
+                  </span>
                   <span>{{ t('login.method_email') }}</span>
                 </button>
                 <button
@@ -47,7 +61,21 @@
                   type="button"
                   @click="chooseMethod('password')"
                 >
-                  <i class="fa-solid fa-lock icon"></i>
+                  <span class="icon">
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      width="20"
+                      height="20"
+                    >
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                    </svg>
+                  </span>
                   <span>{{ t('login.method_password') }}</span>
                 </button>
               </div>
@@ -1010,6 +1038,11 @@ onBeforeUnmount(() => {
 .nth-login-btn.method .icon {
   position: absolute;
   left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 18px;
 }
 
@@ -1158,20 +1191,45 @@ onBeforeUnmount(() => {
 }
 
 .nth-login-btn {
-  height: 44px;
-  padding: 0 20px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s;
   width: 100%;
+  height: 48px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  background: transparent;
+  color: #f1f5f9;
+  font-family:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.nth-login-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(204, 255, 0, 0.2), transparent);
+  transition: left 0.5s;
 }
 
 .nth-login-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--primary, #ccff00);
+  color: var(--primary, #ccff00);
+  box-shadow: 0 0 15px rgba(204, 255, 0, 0.15);
+}
+
+.nth-login-btn:hover::before {
+  left: 100%;
 }
 
 .nth-login-btn.primary {
@@ -1193,6 +1251,7 @@ onBeforeUnmount(() => {
 .nth-login-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .link-btn {

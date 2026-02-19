@@ -38,7 +38,20 @@
               <span class="selected-text" :class="{ placeholder: !productCategory }">
                 {{ productCategory || ui.categoryPh }}
               </span>
-              <span class="arrow-icon">▼</span>
+              <span class="arrow-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="16"
+                  height="16"
+                >
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </span>
             </div>
             <transition name="dropdown-fade">
               <div v-if="categoryOpen" class="custom-options">
@@ -86,7 +99,21 @@
               class="chip active"
               @click="toggleDesignElement(tag)"
             >
-              {{ tag }} ×
+              {{ tag }}
+              <span class="remove-icon"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="12"
+                  height="12"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line></svg
+              ></span>
             </div>
           </div>
           <div class="tag-add-row">
@@ -98,7 +125,21 @@
               :disabled="loading"
               @keydown.enter.prevent="addDesignElement"
             />
-            <button class="ghost" @click="addDesignElement" :disabled="loading">+</button>
+            <button class="ghost" @click="addDesignElement" :disabled="loading">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+              >
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -106,7 +147,21 @@
           <div class="label">{{ ui.style }}</div>
           <div class="chips-row" v-if="styles.length">
             <div v-for="tag in styles" :key="tag" class="chip active" @click="toggleStyle(tag)">
-              {{ tag }} ×
+              {{ tag }}
+              <span class="remove-icon"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="12"
+                  height="12"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line></svg
+              ></span>
             </div>
           </div>
           <div class="tag-add-row">
@@ -118,7 +173,21 @@
               :disabled="loading"
               @keydown.enter.prevent="addStyle"
             />
-            <button class="ghost" @click="addStyle" :disabled="loading">+</button>
+            <button class="ghost" @click="addStyle" :disabled="loading">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+              >
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -126,7 +195,21 @@
           <div class="label">{{ ui.colorScheme }}</div>
           <div class="chips-row" v-if="colors.length">
             <div v-for="tag in colors" :key="tag" class="chip active" @click="toggleColor(tag)">
-              {{ tag }} ×
+              {{ tag }}
+              <span class="remove-icon"
+                ><svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  width="12"
+                  height="12"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line></svg
+              ></span>
             </div>
           </div>
           <div class="tag-add-row">
@@ -138,7 +221,21 @@
               :disabled="loading"
               @keydown.enter.prevent="addColor"
             />
-            <button class="ghost" @click="addColor" :disabled="loading">+</button>
+            <button class="ghost" @click="addColor" :disabled="loading">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="16"
+                height="16"
+              >
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -399,5 +496,25 @@ const onLogoChange = (e: Event) => {
     font-size: 12px !important;
     padding: 0 8px !important;
   }
+}
+
+.remove-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.chip:hover .remove-icon {
+  opacity: 1;
+}
+
+.ghost {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
 </style>

@@ -2,7 +2,20 @@
   <div class="cyber-dropdown" :class="{ open: isOpen }" ref="dropdownRef">
     <div class="dropdown-trigger" @click="toggleDropdown">
       <span class="selected-label">{{ selectedLabel }}</span>
-      <span class="arrow-icon">›</span>
+      <span class="arrow-icon">
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          stroke="currentColor"
+          stroke-width="2"
+          fill="none"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+      </span>
     </div>
 
     <transition name="dropdown-fade">
@@ -15,7 +28,20 @@
           @click="selectOption(option)"
         >
           <span class="option-label">{{ option.label }}</span>
-          <span v-if="modelValue === option.value" class="check-icon">✓</span>
+          <span v-if="modelValue === option.value" class="check-icon">
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              stroke="currentColor"
+              stroke-width="2"
+              fill="none"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </span>
         </div>
       </div>
     </transition>
@@ -113,6 +139,9 @@ onUnmounted(() => {
   color: #666;
   font-size: 18px;
   font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition:
     transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     color 0.3s;

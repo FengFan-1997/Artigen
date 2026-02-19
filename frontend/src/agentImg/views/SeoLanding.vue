@@ -14,16 +14,91 @@
         <p class="hero-subtitle">{{ ui.heroSubtitle }}</p>
         <div class="hero-actions">
           <button class="action-btn primary" @click="goFormatFactory">
-            <span class="icon">⚡</span> {{ ui.btnFormat }}
+            <span class="icon"
+              ><svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg
+            ></span>
+            {{ ui.btnFormat }}
           </button>
           <button class="action-btn secondary" @click="goAiWorkshop">
-            <span class="icon">🎨</span> {{ ui.btnAi }}
+            <span class="icon"
+              ><svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="13.5" cy="6.5" r=".5"></circle>
+                <circle cx="17.5" cy="10.5" r=".5"></circle>
+                <circle cx="8.5" cy="7.5" r=".5"></circle>
+                <circle cx="6.5" cy="12.5" r=".5"></circle>
+                <path
+                  d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"
+                ></path></svg
+            ></span>
+            {{ ui.btnAi }}
           </button>
         </div>
         <div class="hero-trust">
-          <span class="trust-item">🔒 {{ ui.trustPrivacy }}</span>
-          <span class="trust-item">🚀 {{ ui.trustSpeed }}</span>
-          <span class="trust-item">🆓 {{ ui.trustFree }}</span>
+          <span class="trust-item"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            {{ ui.trustPrivacy }}</span
+          >
+          <span class="trust-item"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"
+              ></path>
+              <path
+                d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"
+              ></path>
+              <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"></path>
+              <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"></path>
+            </svg>
+            {{ ui.trustSpeed }}</span
+          >
+          <span class="trust-item"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"
+              ></path>
+              <line x1="7" y1="7" x2="7.01" y2="7"></line>
+            </svg>
+            {{ ui.trustFree }}</span
+          >
         </div>
       </div>
     </div>
@@ -35,13 +110,44 @@
       </div>
       <div class="features-grid">
         <div class="feature-card" @click="goFormatFactory">
-          <div class="card-icon">🔄</div>
+          <div class="card-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="32"
+              height="32"
+            >
+              <path d="M23 4v6h-6"></path>
+              <path d="M1 20v-6h6"></path>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+          </div>
           <h3>{{ ui.featFormatTitle }}</h3>
           <p>{{ ui.featFormatDesc }}</p>
           <div class="card-link">{{ ui.tryNow }} →</div>
         </div>
         <div class="feature-card" @click="goAiWorkshop">
-          <div class="card-icon">✨</div>
+          <div class="card-icon">
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
           <h3>{{ ui.featAiTitle }}</h3>
           <p>{{ ui.featAiDesc }}</p>
           <div class="card-link">{{ ui.tryNow }} →</div>
@@ -66,7 +172,19 @@
             <div class="info-card-title">> {{ ui.whyUsTitle }}</div>
             <ul class="info-list">
               <li v-for="(item, idx) in ui.whyUsList" :key="idx" class="info-list-item">
-                <span class="info-list-icon">✓</span>
+                <span class="info-list-icon"
+                  ><svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    width="16"
+                    height="16"
+                  >
+                    <polyline points="20 6 9 17 4 12"></polyline></svg
+                ></span>
                 {{ item }}
               </li>
             </ul>
@@ -99,7 +217,18 @@
         <details v-for="f in ui.faqs" :key="f.q" class="faq-item">
           <summary class="faq-q">
             <span class="q-text">{{ f.q }}</span>
-            <span class="q-icon">+</span>
+            <span class="q-icon"
+              ><svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line></svg
+            ></span>
           </summary>
           <div class="faq-a-wrapper">
             <div class="faq-a">{{ f.a }}</div>

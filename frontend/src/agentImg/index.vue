@@ -67,7 +67,20 @@
               >
                 <div class="dt-tab-title">
                   {{ opt.title }}
-                  <span v-if="selectedOptionId === opt.id" style="color: #ccff00">✓</span>
+                  <span v-if="selectedOptionId === opt.id" class="dt-check-icon">
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#ccff00"
+                      stroke-width="3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  </span>
                 </div>
                 <div class="dt-tab-desc">{{ opt.summary }}</div>
               </div>
@@ -143,7 +156,22 @@
                   <img src="/logo.png" alt="System" />
                 </div>
                 <div class="msg-bubble error-bubble">
-                  <div class="error-icon">!</div>
+                  <div class="error-icon">
+                    <svg
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                  </div>
                   <div class="error-text">{{ error }}</div>
                 </div>
               </div>
@@ -179,7 +207,22 @@
                     <img src="/logo.png" alt="System" />
                   </div>
                   <div class="msg-bubble error-bubble">
-                    <div class="error-icon">!</div>
+                    <div class="error-icon">
+                      <svg
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                      </svg>
+                    </div>
                     <div class="error-text">{{ item.notice.text }}</div>
                   </div>
                 </div>
@@ -228,10 +271,9 @@
 
               <div v-if="pendingUserText" class="msg msg-user">
                 <div class="msg-avatar">
-                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
                     <path
-                      d="M12 12.2c2.56 0 4.64-2.08 4.64-4.64S14.56 2.92 12 2.92 7.36 5 7.36 7.56 9.44 12.2 12 12.2Zm0 2.12c-3.88 0-7.08 2.01-7.08 4.62V21h14.16v-2.06c0-2.61-3.2-4.62-7.08-4.62Z"
-                      fill="currentColor"
+                      d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
                     />
                   </svg>
                 </div>
@@ -242,7 +284,22 @@
                   <img src="/logo.png" alt="System" />
                 </div>
                 <div class="msg-bubble error-bubble">
-                  <div class="error-icon">!</div>
+                  <div class="error-icon">
+                    <svg
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                  </div>
                   <div class="error-text">{{ pendingNotice.text }}</div>
                 </div>
               </div>
@@ -296,7 +353,21 @@
               <div class="input-toolbar">
                 <div class="left-tools">
                   <button class="tool-btn upload-btn" @click="triggerUpload" :disabled="loading">
-                    <span class="tool-icon">+</span>
+                    <span class="tool-icon">
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                      </svg>
+                    </span>
                     <span class="tool-text">{{ ui.addImage }}</span>
                   </button>
 
@@ -308,7 +379,20 @@
                       :disabled="loading"
                       @click="toggleModelMenu"
                     >
-                      <span class="toggle-icon">○</span>
+                      <span class="toggle-icon">
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="12" cy="12" r="10"></circle>
+                        </svg>
+                      </span>
                       <span class="toggle-text">{{ currentModelLabel }}</span>
                     </button>
                     <div
@@ -347,7 +431,22 @@
                       v-model="deepMode"
                       :disabled="loading || (!deepMode && hasPreviews)"
                     />
-                    <span class="toggle-icon">✦</span>
+                    <span class="toggle-icon">
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <polygon
+                          points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+                        ></polygon>
+                      </svg>
+                    </span>
                     <span class="toggle-text">{{ ui.deepThinkToggle }}</span>
                   </label>
 
@@ -358,7 +457,23 @@
                     @click="toggleProductSidebar"
                     :disabled="loading"
                   >
-                    <span class="toggle-icon">▦</span>
+                    <span class="toggle-icon">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        width="16"
+                        height="16"
+                      >
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                      </svg>
+                    </span>
                     <span class="toggle-text">{{ ui.productSpecial }}</span>
                   </button>
 
@@ -387,7 +502,21 @@
                     @click="toggleHistorySidebar"
                     :disabled="loading"
                   >
-                    <span class="toggle-icon">🕒</span>
+                    <span class="toggle-icon">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        width="16"
+                        height="16"
+                      >
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                      </svg>
+                    </span>
                     <span class="toggle-text">{{ ui.memory }}</span>
                   </button>
                   <button
@@ -403,9 +532,33 @@
                     :disabled="loading ? false : isStyleSelecting ? false : !canPrimary"
                     :title="generateHoverTip"
                   >
-                    <span v-if="loading || isStyleSelecting">■</span>
+                    <span v-if="loading || isStyleSelecting">
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        stroke="none"
+                      >
+                        <rect x="6" y="6" width="12" height="12" rx="2" ry="2"></rect>
+                      </svg>
+                    </span>
                     <template v-else>
-                      <span class="send-icon">↑</span>
+                      <span class="send-icon">
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <line x1="12" y1="19" x2="12" y2="5"></line>
+                          <polyline points="5 12 12 5 19 12"></polyline>
+                        </svg>
+                      </span>
                       <span v-if="showSendCostInline" class="send-cost-inline">{{
                         sendCostText
                       }}</span>

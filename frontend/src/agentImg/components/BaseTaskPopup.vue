@@ -4,7 +4,7 @@
       <div class="modal-container" @click.stop>
         <div class="modal-header">
           <div class="header-left">
-            <span class="header-icon">{{ icon }}</span>
+            <span class="header-icon" v-html="icon"></span>
             <span class="header-title">{{ title }}</span>
           </div>
           <CloseButton @click="$emit('close')" />

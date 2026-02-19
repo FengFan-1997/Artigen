@@ -16,7 +16,21 @@
           {{ ui.subtitlePrefix }} {{ displayTools.length }} {{ ui.subtitleSuffix }}
         </div>
         <div class="page-desc">
-          <span class="page-desc-icon">🔒</span>
+          <span class="page-desc-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="16"
+              height="16"
+            >
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </span>
           {{ ui.secureBadge }}
         </div>
       </div>
@@ -33,7 +47,17 @@
         <div class="card-status" v-if="tool.status === 'ready'"></div>
 
         <div class="icon-box">
-          <span class="icon">{{ tool.icon }}</span>
+          <div
+            class="icon"
+            v-html="tool.icon"
+            style="
+              width: 24px;
+              height: 24px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+            "
+          ></div>
         </div>
 
         <h3 class="tool-name">{{ tool.name }}</h3>
@@ -41,7 +65,20 @@
 
         <div class="card-footer">
           <span class="tag">{{ tool.tag }}</span>
-          <span class="arrow">→</span>
+          <span class="arrow"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              width="16"
+              height="16"
+            >
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+              <polyline points="12 5 19 12 12 19"></polyline></svg
+          ></span>
         </div>
       </div>
     </div>
@@ -105,13 +142,27 @@
         <div class="tool-modal-panel">
           <div class="tool-modal-header">
             <div class="tool-modal-title">
-              <span class="tool-modal-icon">{{ activeTool.icon }}</span>
+              <span class="tool-modal-icon" v-html="activeTool.icon"></span>
               <div class="tool-modal-title-text">
                 <div class="tool-modal-name">{{ activeTool.name }}</div>
                 <div class="tool-modal-sub">{{ activeTool.description }}</div>
               </div>
             </div>
-            <button class="tool-modal-close" @click="closeModal">×</button>
+            <button class="tool-modal-close" @click="closeModal">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                width="20"
+                height="20"
+              >
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
           </div>
 
           <div class="tool-modal-body">
@@ -162,7 +213,22 @@
                         "
                         @change="onFileChange"
                       />
-                      <div class="file-drop-icon">📂</div>
+                      <div class="file-drop-icon">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          width="48"
+                          height="48"
+                        >
+                          <path
+                            d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                          ></path>
+                        </svg>
+                      </div>
                       <div class="file-drop-title">{{ ui.fileDropTitle }}</div>
                       <div class="file-drop-sub">{{ acceptHintFor(activeTool.id) }}</div>
                     </label>
@@ -1854,6 +1920,9 @@ const runTool = async () => {
 .icon-box {
   font-size: 48px;
   margin-bottom: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: #ccff00;
 }
 
