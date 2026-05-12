@@ -18249,6 +18249,47 @@
       "requestSource": "web",
       "ip": "127.0.0.1",
       "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+    },
+    {
+      "id": "evt_mp2b1y5x_th8py7s8",
+      "ts": 1778570667573,
+      "eventType": "page_view",
+      "payload": {
+        "pagePath": "/artigen",
+        "path": "/artigen",
+        "title": "Artigen - AI 图片工坊与工具箱",
+        "location": "http://localhost:4000/artigen"
+      },
+      "path": "/artigen",
+      "location": "http://localhost:4000/artigen",
+      "referrer": "",
+      "userId": "guest_k46wfoi5j",
+      "trafficSource": "organic",
+      "requestId": "evt_mp2b1y5x_th8py7s8",
+      "sessionId": "mp2b1y5x_yhbpwxr5",
+      "projectId": "localhost_4000",
+      "requestSource": "site_analytics",
+      "pageContext": "[]",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.107.1 Chrome/142.0.7444.235 Electron/39.2.7 Safari/537.36"
+    },
+    {
+      "id": "evt_mp2b1y6e_d5e47dd6",
+      "ts": 1778570667590,
+      "eventType": "page_view",
+      "payload": {
+        "page": "/artigen"
+      },
+      "path": "/artigen",
+      "location": "http://localhost:4000/artigen",
+      "referrer": "",
+      "userId": "guest_k46wfoi5j",
+      "trafficSource": "organic",
+      "sessionId": "mp2b1y5x_yhbpwxr5",
+      "projectId": "localhost_4000",
+      "requestSource": "web",
+      "ip": "127.0.0.1",
+      "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.107.1 Chrome/142.0.7444.235 Electron/39.2.7 Safari/537.36"
     }
   ]
 }
