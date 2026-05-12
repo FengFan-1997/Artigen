@@ -8,7 +8,7 @@ import {
 } from '@/login/session';
 
 const API_URL = buildApiUrl('/api/generate');
-const FIXED_TEXT_MODEL = 'Qwen/Qwen3-8B';
+const FIXED_TEXT_MODEL = 'Qwen/Qwen2.5-7B-Instruct';
 
 type SupplementTableItem = {
   name: string;

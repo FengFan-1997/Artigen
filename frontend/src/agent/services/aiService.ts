@@ -439,7 +439,7 @@ const callBackendChat = async (input: {
     console.log('[AI][request]', {
       api: API_URL,
       requestId: input.requestId,
-      model: 'Qwen/Qwen3-8B',
+      model: 'Qwen/Qwen2.5-7B-Instruct',
       message: input.message
     });
   } catch {}

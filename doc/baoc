@@ -1,0 +1,65 @@
+index-BUdhqYLO.js:2 [Analytics] Initialized
+index-BUdhqYLO.js:2 [Analytics] Page View: /artigen {path: '/artigen', title: 'Artigen - AI 图片工坊与工具箱', location: 'https://aiworkplace1997.up.railway.app/artigen'}
+artigen:1 Access to resource at 'https://backendforfengfan.up.railway.app/api/collection/event' from origin 'https://aiworkplace1997.up.railway.app' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The value of the 'Access-Control-Allow-Credentials' header in the response is '' which must be 'true' when the request's credentials mode is 'include'.
+index-BUdhqYLO.js:2  POST https://backendforfengfan.up.railway.app/api/collection/event net::ERR_FAILED
+an @ index-BUdhqYLO.js:2
+xs @ index-BUdhqYLO.js:2
+（匿名） @ index-BUdhqYLO.js:12
+（匿名） @ vue-FllALWdy.js:29
+runWithContext @ vue-FllALWdy.js:13
+A @ vue-FllALWdy.js:29
+（匿名） @ vue-FllALWdy.js:29
+z @ vue-FllALWdy.js:29
+（匿名） @ vue-FllALWdy.js:29
+Promise.then
+q @ vue-FllALWdy.js:29
+M @ vue-FllALWdy.js:29
+install @ vue-FllALWdy.js:29
+use @ vue-FllALWdy.js:13
+（匿名） @ index-BUdhqYLO.js:12
+artigen:1 Access to resource at 'https://backendforfengfan.up.railway.app/api/collection/event' from origin 'https://aiworkplace1997.up.railway.app' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The value of the 'Access-Control-Allow-Credentials' header in the response is '' which must be 'true' when the request's credentials mode is 'include'.
+index-BUdhqYLO.js:2  POST https://backendforfengfan.up.railway.app/api/collection/event net::ERR_FAILED
+an @ index-BUdhqYLO.js:2
+（匿名） @ index-BUdhqYLO.js:2
+artigen:1 Access to resource at 'https://backendforfengfan.up.railway.app/api/collection/event' from origin 'https://aiworkplace1997.up.railway.app' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The value of the 'Access-Control-Allow-Credentials' header in the response is '' which must be 'true' when the request's credentials mode is 'include'.
+index-BUdhqYLO.js:2  POST https://backendforfengfan.up.railway.app/api/collection/event net::ERR_FAILED
+an @ index-BUdhqYLO.js:2
+（匿名） @ index-BUdhqYLO.js:2
+artigen:1 Access to resource at 'https://backendforfengfan.up.railway.app/api/collection/event' from origin 'https://aiworkplace1997.up.railway.app' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The value of the 'Access-Control-Allow-Credentials' header in the response is '' which must be 'true' when the request's credentials mode is 'include'.
+index-BUdhqYLO.js:2  POST https://backendforfengfan.up.railway.app/api/collection/event net::ERR_FAILED
+an @ index-BUdhqYLO.js:2
+（匿名） @ index-BUdhqYLO.js:2
+artigen:23  GET https://accounts.google.com/gsi/client net::ERR_CONNECTION_TIMED_OUT
+index-BUdhqYLO.js:2 Failed to load Google script Error: GOOGLE_SCRIPT_FAILED
+    at Oe.addEventListener.once (index-BUdhqYLO.js:2:35786)
+（匿名） @ index-BUdhqYLO.js:2
+Promise.catch
+le @ index-BUdhqYLO.js:2
+Ee @ index-BUdhqYLO.js:2
+await in Ee
+（匿名） @ index-BUdhqYLO.js:2
+wn @ vue-FllALWdy.js:13
+ke @ vue-FllALWdy.js:13
+l.call @ vue-FllALWdy.js:13
+T @ vue-FllALWdy.js:9
+wn @ vue-FllALWdy.js:13
+ao @ vue-FllALWdy.js:13
+Promise.then
+fo @ vue-FllALWdy.js:13
+ar @ vue-FllALWdy.js:13
+l.scheduler @ vue-FllALWdy.js:13
+f.scheduler @ vue-FllALWdy.js:9
+trigger @ vue-FllALWdy.js:9
+ir @ vue-FllALWdy.js:9
+rt @ vue-FllALWdy.js:9
+set @ vue-FllALWdy.js:9
+set value @ vue-FllALWdy.js:9
+set @ vue-FllALWdy.js:9
+open @ index-BUdhqYLO.js:2
+U @ vue-FllALWdy.js:21
+d @ index-BUdhqYLO.js:2
+m @ index-BUdhqYLO.js:2
+S @ index-BUdhqYLO.js:2
+wn @ vue-FllALWdy.js:13
+ke @ vue-FllALWdy.js:13
+n @ vue-FllALWdy.js:17

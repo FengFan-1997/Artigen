@@ -55,14 +55,14 @@ export function useAgentImgModels(ensureAuthed: () => boolean, ui: any) {
     return [
       { id: '', label: ui.value.modelStandard, badge: 'AUTO', hint: autoHint, requiresPro: false },
       {
-        id: 'Qwen/Qwen-Image',
+        id: 'Kwai-Kolors/Kolors',
         label: ui.value.modelNanobanana,
         badge: 'PRO',
         hint: txtHint,
         requiresPro: true
       },
       {
-        id: 'Qwen/Qwen-Image-Edit-2509',
+        id: 'Kwai-Kolors/Kolors',
         label: ui.value.modelNanobananaPro,
         badge: 'PRO',
         hint: editHint,

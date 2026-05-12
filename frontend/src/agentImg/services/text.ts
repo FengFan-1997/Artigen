@@ -10,14 +10,14 @@ import {
 const API_URL = buildApiUrl('/api/generate');
 const IMG2IMG_URL = buildApiUrl('/api/img2img');
 
-const FIXED_TEXT_MODEL = 'Qwen/Qwen3-8B';
+const FIXED_TEXT_MODEL = 'Qwen/Qwen2.5-7B-Instruct';
 const FIXED_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
 
 const isAllowedTextModel = (raw: string) => {
   const k = String(raw || '')
     .trim()
     .toLowerCase();
-  return k === 'qwen' || k === 'qwen/qwen3-8b' || k === 'qwen3-8b';
+  return k === 'qwen' || k === 'qwen/qwen2.5-7b-instruct' || k === 'qwen2.5-7b-instruct';
 };
 
 const shouldLogAiRequest = (): boolean => {
