@@ -157,10 +157,46 @@ const buildSmtpTransport = () => {
   });
 };
 
-const sendLoginMail = async (to, code) => {
+const sendViaResend = async ({ to, subject, html }) => {
+  const apiKey = String(process.env.RESEND_API_KEY || "").trim();
+  if (!apiKey) return false;
+  const fromName = String(process.env.MAIL_FROM_NAME || "Artigen").trim();
+  const fromAddr = String(
+    process.env.MAIL_FROM || "onboarding@resend.dev",
+  ).trim();
+  const from = `${fromName} <${fromAddr}>`;
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ from, to, subject, html }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`RESEND_FAILED ${resp.status}: ${text}`);
+  }
+  return true;
+};
+
+const sendMailUnified = async ({ to, subject, html }) => {
+  if (String(process.env.RESEND_API_KEY || "").trim()) {
+    await sendViaResend({ to, subject, html });
+    return;
+  }
   const transport = buildSmtpTransport();
   const fromUser = String(process.env.QQ_SMTP_USER || "").trim();
   const fromName = String(process.env.QQ_SMTP_FROM_NAME || "Artigen").trim();
+  await transport.sendMail({
+    from: `${fromName} <${fromUser}>`,
+    to,
+    subject,
+    html,
+  });
+};
+
+const sendLoginMail = async (to, code) => {
   const subject = "登录验证码";
   const html = `
     <div style="font-family: -apple-system, Segoe UI, Roboto, Arial; line-height: 1.6; color: #0f172a;">
@@ -170,18 +206,10 @@ const sendLoginMail = async (to, code) => {
       <div style="color: #475569; font-size: 12px;">10 分钟内有效。如非本人操作，请忽略。</div>
     </div>
   `;
-  await transport.sendMail({
-    from: `${fromName} <${fromUser}>`,
-    to,
-    subject,
-    html,
-  });
+  await sendMailUnified({ to, subject, html });
 };
 
 const sendPasswordResetMail = async (to, code) => {
-  const transport = buildSmtpTransport();
-  const fromUser = String(process.env.QQ_SMTP_USER || "").trim();
-  const fromName = String(process.env.QQ_SMTP_FROM_NAME || "Artigen").trim();
   const subject = "重置密码验证码";
   const html = `
     <div style="font-family: -apple-system, Segoe UI, Roboto, Arial; line-height: 1.6; color: #0f172a;">
@@ -191,12 +219,7 @@ const sendPasswordResetMail = async (to, code) => {
       <div style="color: #475569; font-size: 12px;">10 分钟内有效。如非本人操作，请忽略。</div>
     </div>
   `;
-  await transport.sendMail({
-    from: `${fromName} <${fromUser}>`,
-    to,
-    subject,
-    html,
-  });
+  await sendMailUnified({ to, subject, html });
 };
 
 const installAuthRoutes = (app) => {
@@ -440,12 +463,10 @@ const installAuthRoutes = (app) => {
           if (msg === "QQ_SMTP_MISSING" && allowDebug && isLocal) {
             debugCode = code;
           } else if (msg === "QQ_SMTP_MISSING") {
-            return res
-              .status(500)
-              .json({
-                ok: false,
-                message: "缺少 QQ_SMTP_USER / QQ_SMTP_PASS 环境变量",
-              });
+            return res.status(500).json({
+              ok: false,
+              message: "缺少 QQ_SMTP_USER / QQ_SMTP_PASS 环境变量",
+            });
           } else {
             throw e;
           }
@@ -643,12 +664,10 @@ const installAuthRoutes = (app) => {
           if (msg === "QQ_SMTP_MISSING" && allowDebug && isLocal) {
             debugCode = code;
           } else if (msg === "QQ_SMTP_MISSING") {
-            return res
-              .status(500)
-              .json({
-                ok: false,
-                message: "缺少 QQ_SMTP_USER / QQ_SMTP_PASS 环境变量",
-              });
+            return res.status(500).json({
+              ok: false,
+              message: "缺少 QQ_SMTP_USER / QQ_SMTP_PASS 环境变量",
+            });
           } else {
             throw e;
           }
