@@ -399,7 +399,11 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
             /AbortError/i.test(code);
           if (abortLike) {
             const msg = humanizeImgError(code || 'ABORTED');
-            deps.history.setCancelNoticeForHistory(requestId, msg);
+            if (typeof deps.history.removeHistoryItem === 'function') {
+              deps.history.removeHistoryItem(requestId);
+            } else {
+              deps.history.setCancelNoticeForHistory(requestId, msg);
+            }
             trackEvent('ai_generate_abort', {
               category: 'funnel',
               requestId,
@@ -596,9 +600,14 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
   const onStopProcessing = () => {
     const reqId = String(activeRequestId.value || '').trim();
     if (reqId) {
-      deps.history.setCancelNoticeForHistory(reqId, humanizeImgError('ABORTED'));
+      if (typeof deps.history.removeHistoryItem === 'function') {
+        deps.history.removeHistoryItem(reqId);
+      } else {
+        deps.history.setCancelNoticeForHistory(reqId, humanizeImgError('ABORTED'));
+      }
     } else if (pendingUserText.value) {
-      pendingNotice.value = { type: 'cancel', text: humanizeImgError('ABORTED') };
+      pendingNotice.value = null;
+      pendingUserText.value = '';
     }
     deps.flow.cancel();
     abortImg2Img();
@@ -641,8 +650,16 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
         m === 'Cancelled.' || m === '已取消' || /cancelled/i.test(m) || /取消/.test(m);
       if (cancelled) {
         const reqId = String(activeRequestId.value || '').trim();
-        if (reqId) deps.history.setCancelNoticeForHistory(reqId, m);
-        else if (pendingUserText.value) pendingNotice.value = { type: 'cancel', text: m };
+        if (reqId) {
+          if (typeof deps.history.removeHistoryItem === 'function') {
+            deps.history.removeHistoryItem(reqId);
+          } else {
+            deps.history.setCancelNoticeForHistory(reqId, m);
+          }
+        } else if (pendingUserText.value) {
+          pendingNotice.value = null;
+          pendingUserText.value = '';
+        }
         deps.ui.error.value = '';
         return;
       }

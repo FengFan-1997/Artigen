@@ -88,7 +88,9 @@ export function useAgentImgHistory(
   const resolveRemoteUrl = (raw: string) => {
     const u = String(raw || '').trim();
     if (!u) return '';
-    if (u.startsWith('/')) return buildApiUrl(u);
+    // Keep relative paths (e.g. /files/...) intact so the caller's URL
+    // resolver can attach auth tokens and pick the correct origin.
+    if (u.startsWith('/')) return u;
     return u;
   };
 
@@ -207,6 +209,10 @@ export function useAgentImgHistory(
     });
   };
 
+  const removeHistoryItem = (id: string | number) => {
+    history.value = history.value.filter((it) => it.id !== id);
+  };
+
   return {
     history,
     loadHistoryFromStorage,
@@ -214,6 +220,7 @@ export function useAgentImgHistory(
     historyForSidebar,
     onHistoryItemClick,
     scrollToGeneration,
-    setCancelNoticeForHistory
+    setCancelNoticeForHistory,
+    removeHistoryItem
   };
 }

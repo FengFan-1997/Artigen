@@ -1030,9 +1030,15 @@ onBeforeUnmount(() => {
 
 .nth-login-btn.method:hover {
   background: #f7f8f8;
+  border-color: #dadce0;
+  color: #3c4043;
   box-shadow:
     0 1px 2px 0 rgba(60, 64, 67, 0.3),
     0 1px 3px 1px rgba(60, 64, 67, 0.15);
+}
+
+.nth-login-btn.method::before {
+  display: none;
 }
 
 .nth-login-btn.method .icon {
@@ -1223,9 +1229,10 @@ onBeforeUnmount(() => {
 }
 
 .nth-login-btn:hover {
-  border-color: var(--primary, #ccff00);
-  color: var(--primary, #ccff00);
-  box-shadow: 0 0 15px rgba(204, 255, 0, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f1f5f9;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
 .nth-login-btn:hover::before {
@@ -1244,8 +1251,12 @@ onBeforeUnmount(() => {
 }
 
 .nth-login-btn.primary:hover {
-  background: #b3e600;
-  border-color: #b3e600;
+  background: #d6ff33;
+  border-color: #d6ff33;
+  color: #000;
+  box-shadow:
+    0 1px 2px 0 rgba(60, 64, 67, 0.3),
+    0 1px 3px 1px rgba(60, 64, 67, 0.15);
 }
 
 .nth-login-btn:disabled {

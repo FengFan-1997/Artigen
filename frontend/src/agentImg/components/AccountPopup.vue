@@ -505,9 +505,9 @@ watch(
 }
 
 .account-card {
-  width: min(1200px, 100%);
-  height: min(860px, calc(100vh - 60px));
-  max-height: min(860px, calc(100vh - 60px));
+  width: min(1100px, 100%);
+  height: min(640px, calc(100vh - 120px));
+  max-height: min(640px, calc(100vh - 120px));
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(8, 8, 8, 0.92);
@@ -515,7 +515,7 @@ watch(
     0 40px 120px rgba(0, 0, 0, 0.7),
     0 0 0 1px rgba(255, 255, 255, 0.04);
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 320px 1fr;
   overflow: hidden;
 }
 
@@ -524,8 +524,9 @@ watch(
   background: rgba(5, 5, 5, 0.55);
   display: flex;
   flex-direction: column;
-  padding: 40px;
-  gap: 40px;
+  padding: 24px 28px;
+  gap: 20px;
+  overflow-y: auto;
 }
 
 .left-header {
