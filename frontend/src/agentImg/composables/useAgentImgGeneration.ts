@@ -399,11 +399,7 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
             /AbortError/i.test(code);
           if (abortLike) {
             const msg = humanizeImgError(code || 'ABORTED');
-            if (typeof deps.history.removeHistoryItem === 'function') {
-              deps.history.removeHistoryItem(requestId);
-            } else {
-              deps.history.setCancelNoticeForHistory(requestId, msg);
-            }
+            deps.history.setCancelNoticeForHistory(requestId, msg);
             trackEvent('ai_generate_abort', {
               category: 'funnel',
               requestId,
@@ -600,14 +596,9 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
   const onStopProcessing = () => {
     const reqId = String(activeRequestId.value || '').trim();
     if (reqId) {
-      if (typeof deps.history.removeHistoryItem === 'function') {
-        deps.history.removeHistoryItem(reqId);
-      } else {
-        deps.history.setCancelNoticeForHistory(reqId, humanizeImgError('ABORTED'));
-      }
+      deps.history.setCancelNoticeForHistory(reqId, humanizeImgError('ABORTED'));
     } else if (pendingUserText.value) {
-      pendingNotice.value = null;
-      pendingUserText.value = '';
+      pendingNotice.value = { type: 'cancel', text: humanizeImgError('ABORTED') };
     }
     deps.flow.cancel();
     abortImg2Img();
@@ -650,16 +641,8 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
         m === 'Cancelled.' || m === '已取消' || /cancelled/i.test(m) || /取消/.test(m);
       if (cancelled) {
         const reqId = String(activeRequestId.value || '').trim();
-        if (reqId) {
-          if (typeof deps.history.removeHistoryItem === 'function') {
-            deps.history.removeHistoryItem(reqId);
-          } else {
-            deps.history.setCancelNoticeForHistory(reqId, m);
-          }
-        } else if (pendingUserText.value) {
-          pendingNotice.value = null;
-          pendingUserText.value = '';
-        }
+        if (reqId) deps.history.setCancelNoticeForHistory(reqId, m);
+        else if (pendingUserText.value) pendingNotice.value = { type: 'cancel', text: m };
         deps.ui.error.value = '';
         return;
       }
