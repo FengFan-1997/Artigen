@@ -1265,6 +1265,23 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.nth-login-btn.primary:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+  background: #ccff00;
+  border-color: #ccff00;
+  color: #000;
+  filter: brightness(0.85) saturate(0.85);
+  box-shadow: none;
+}
+
+.nth-login-btn.primary:disabled:hover {
+  background: #ccff00;
+  border-color: #ccff00;
+  color: #000;
+  box-shadow: none;
+}
+
 .link-btn {
   padding: 0;
   border: none;
