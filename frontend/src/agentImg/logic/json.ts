@@ -40,7 +40,13 @@ export const extractFirstJsonObject = (raw: string) => {
         try {
           return JSON.parse(candidate);
         } catch {
-          return null;
+          try {
+            // Fallback: replace literal newlines and tabs to fix broken AI JSON
+            const sanitized = candidate.replace(/\n/g, '\\n').replace(/\r/g, '').replace(/\t/g, '\\t');
+            return JSON.parse(sanitized);
+          } catch {
+            return null;
+          }
         }
       }
       if (depth < 0) return null;

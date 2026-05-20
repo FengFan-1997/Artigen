@@ -18,9 +18,14 @@ const CREDITS_HOLDS_FILE = path.join(MEMORY_DIR, 'credits_holds.json');
 const CREDITS_ORDERS_FILE = path.join(MEMORY_DIR, 'credits_orders.json');
 const PAY_ORDERS_FILE = path.join(MEMORY_DIR, 'pay_orders.json');
 
-// Ensure memory directory exists
+const FILES_DIR = path.join(MEMORY_DIR, 'files');
+
+// Ensure directories exist
 if (!fs.existsSync(MEMORY_DIR)) {
   fs.mkdirSync(MEMORY_DIR, { recursive: true });
+}
+if (!fs.existsSync(FILES_DIR)) {
+  fs.mkdirSync(FILES_DIR, { recursive: true });
 }
 
 // Helper to read JSON
@@ -76,6 +81,7 @@ const writeUserMemory = (userId, data) => {
 
 module.exports = {
   MEMORY_DIR,
+  FILES_DIR,
   VECTORS_FILE,
   CHATS_FILE,
   USERS_FILE,

@@ -150,32 +150,6 @@
                 </div>
               </div>
 
-              <!-- Error State -->
-              <div v-if="error" class="msg msg-ai">
-                <div class="msg-avatar">
-                  <img src="/logo.png" alt="System" />
-                </div>
-                <div class="msg-bubble error-bubble">
-                  <div class="error-icon">
-                    <svg
-                      width="24"
-                      height="24"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <line x1="12" y1="8" x2="12" y2="12"></line>
-                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                    </svg>
-                  </div>
-                  <div class="error-text">{{ error }}</div>
-                </div>
-              </div>
-
               <template v-for="item in history" :key="item.id">
                 <div class="msg msg-user">
                   <div class="msg-avatar">
@@ -313,6 +287,32 @@
                   <span class="typing-dot"></span>
                   <span class="typing-dot"></span>
                   <span class="loading-text">{{ ui.loadingText }}</span>
+                </div>
+              </div>
+
+              <!-- Error State -->
+              <div v-if="error" class="msg msg-ai">
+                <div class="msg-avatar">
+                  <img src="/logo.png" alt="System" />
+                </div>
+                <div class="msg-bubble error-bubble">
+                  <div class="error-icon">
+                    <svg
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                  </div>
+                  <div class="error-text">{{ error }}</div>
                 </div>
               </div>
             </div>
@@ -521,18 +521,12 @@
                   </button>
                   <button
                     class="send-btn"
-                    :class="{ stop: loading || isStyleSelecting, 'has-cost': showSendCostInline }"
-                    @click="
-                      loading
-                        ? onStopProcessing()
-                        : isStyleSelecting
-                          ? onExitStyleSelection()
-                          : onPrimary()
-                    "
-                    :disabled="loading ? false : isStyleSelecting ? false : !canPrimary"
+                    :class="{ stop: loading, 'has-cost': showSendCostInline }"
+                    @click="loading ? onStopProcessing() : onPrimary()"
+                    :disabled="loading ? false : !canPrimary"
                     :title="generateHoverTip"
                   >
-                    <span v-if="loading || isStyleSelecting">
+                    <span v-if="loading">
                       <svg
                         width="16"
                         height="16"

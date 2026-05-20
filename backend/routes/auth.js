@@ -157,34 +157,7 @@ const buildSmtpTransport = () => {
   });
 };
 
-const sendViaResend = async ({ to, subject, html }) => {
-  const apiKey = String(process.env.RESEND_API_KEY || "").trim();
-  if (!apiKey) return false;
-  const fromName = String(process.env.MAIL_FROM_NAME || "Artigen").trim();
-  const fromAddr = String(
-    process.env.MAIL_FROM || "onboarding@resend.dev",
-  ).trim();
-  const from = `${fromName} <${fromAddr}>`;
-  const resp = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({ from, to, subject, html }),
-  });
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`RESEND_FAILED ${resp.status}: ${text}`);
-  }
-  return true;
-};
-
 const sendMailUnified = async ({ to, subject, html }) => {
-  if (String(process.env.RESEND_API_KEY || "").trim()) {
-    await sendViaResend({ to, subject, html });
-    return;
-  }
   const transport = buildSmtpTransport();
   const fromUser = String(process.env.QQ_SMTP_USER || "").trim();
   const fromName = String(process.env.QQ_SMTP_FROM_NAME || "Artigen").trim();

@@ -59,7 +59,7 @@
           <div class="card-corner bottom-right"></div>
 
           <div class="card-header">
-            <div class="icon-box">
+            <div class="title-row">
               <span class="icon">
                 <svg
                   viewBox="0 0 24 24"
@@ -78,9 +78,8 @@
                   <line x1="10.88" y1="21.94" x2="15.46" y2="14"></line>
                 </svg>
               </span>
+              <h2>{{ ui.starterTitle }}</h2>
             </div>
-            <h2>{{ ui.starterTitle }}</h2>
-            <p class="pack-en">Starter Pack</p>
             <div class="badge standard">
               <svg
                 viewBox="0 0 24 24"
@@ -119,6 +118,17 @@
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
               </svg>
               {{ formatCredits(PACK_CREDITS.starter) }} {{ ui.computeUnit }}
+            </div>
+            
+            <div class="btn-container">
+              <button
+                class="buy-btn"
+                type="button"
+                :disabled="payCreating"
+                @click="handleBuy('starter')"
+              >
+                {{ buyingPackageId === 'starter' ? ui.creatingOrder : ui.buyNow }}
+              </button>
             </div>
           </div>
 
@@ -230,15 +240,6 @@
               ><span class="feature-text">{{ ui.starterDisabledPro }}</span>
             </li>
           </ul>
-
-          <button
-            class="buy-btn"
-            type="button"
-            :disabled="payCreating"
-            @click="handleBuy('starter')"
-          >
-            {{ buyingPackageId === 'starter' ? ui.creatingOrder : ui.buyNow }}
-          </button>
         </div>
 
         <!-- Standard Pack -->
@@ -249,7 +250,7 @@
           <div class="card-corner bottom-right"></div>
 
           <div class="card-header">
-            <div class="icon-box">
+            <div class="title-row">
               <span class="icon">
                 <svg
                   viewBox="0 0 24 24"
@@ -264,9 +265,8 @@
                   <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
                 </svg>
               </span>
+              <h2>{{ ui.standardTitle }}</h2>
             </div>
-            <h2>{{ ui.standardTitle }}</h2>
-            <p class="pack-en">Standard Pack</p>
             <div class="badge standard">
               <svg
                 viewBox="0 0 24 24"
@@ -305,6 +305,17 @@
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
               </svg>
               {{ formatCredits(PACK_CREDITS.standard) }} {{ ui.computeUnit }}
+            </div>
+            
+            <div class="btn-container">
+              <button
+                class="buy-btn"
+                type="button"
+                :disabled="payCreating"
+                @click="handleBuy('standard')"
+              >
+                {{ buyingPackageId === 'standard' ? ui.creatingOrder : ui.buyNow }}
+              </button>
             </div>
           </div>
 
@@ -430,15 +441,6 @@
               ><span class="feature-text">{{ ui.tierStandard3 }}</span>
             </li>
           </ul>
-
-          <button
-            class="buy-btn"
-            type="button"
-            :disabled="payCreating"
-            @click="handleBuy('standard')"
-          >
-            {{ buyingPackageId === 'standard' ? ui.creatingOrder : ui.buyNow }}
-          </button>
         </div>
 
         <!-- Professional Pack (Green Theme) -->
@@ -467,7 +469,7 @@
           <div class="card-corner bottom-right"></div>
 
           <div class="card-header">
-            <div class="icon-box">
+            <div class="title-row">
               <span class="icon">
                 <svg
                   viewBox="0 0 24 24"
@@ -484,9 +486,8 @@
                   ></path>
                 </svg>
               </span>
+              <h2>{{ ui.proTitle }}</h2>
             </div>
-            <h2>{{ ui.proTitle }}</h2>
-            <p class="pack-en">Pro Pack</p>
             <div class="badge pro">
               <svg
                 viewBox="0 0 24 24"
@@ -525,6 +526,17 @@
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
               </svg>
               {{ formatCredits(PACK_CREDITS.pro) }} {{ ui.computeUnit }}
+            </div>
+            
+            <div class="btn-container">
+              <button
+                class="buy-btn primary"
+                type="button"
+                :disabled="payCreating"
+                @click="handleBuy('pro')"
+              >
+                {{ buyingPackageId === 'pro' ? ui.creatingOrder : ui.buyNow }}
+              </button>
             </div>
           </div>
 
@@ -695,15 +707,6 @@
               ><span class="feature-text">{{ ui.tierPro3 }}</span>
             </li>
           </ul>
-
-          <button
-            class="buy-btn primary"
-            type="button"
-            :disabled="payCreating"
-            @click="handleBuy('pro')"
-          >
-            {{ buyingPackageId === 'pro' ? ui.creatingOrder : ui.buyNow }}
-          </button>
         </div>
 
         <!-- Ultimate Pack (Gold Theme) -->
@@ -730,7 +733,7 @@
           <div class="card-corner bottom-right"></div>
 
           <div class="card-header">
-            <div class="icon-box">
+            <div class="title-row">
               <span class="icon">
                 <svg
                   viewBox="0 0 24 24"
@@ -745,9 +748,8 @@
                   <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path>
                 </svg>
               </span>
+              <h2>{{ ui.ultimateTitle }}</h2>
             </div>
-            <h2>{{ ui.ultimateTitle }}</h2>
-            <p class="pack-en">Ultimate Pack</p>
             <div class="badge ultimate">
               <svg
                 viewBox="0 0 24 24"
@@ -786,6 +788,18 @@
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
               </svg>
               {{ formatCredits(PACK_CREDITS.ultimate) }} {{ ui.computeUnit }}
+            </div>
+            
+            <div class="btn-container">
+              <button
+                class="buy-btn gold"
+                type="button"
+                :disabled="payCreating"
+                @click="handleBuy('ultimate')"
+              >
+                <template v-if="buyingPackageId === 'ultimate'">{{ ui.creatingOrder }}</template>
+                <template v-else>{{ ui.buyNow }}</template>
+              </button>
             </div>
           </div>
 
@@ -1016,16 +1030,6 @@
               ><span class="feature-text">{{ ui.tierUltimate4 }}</span>
             </li>
           </ul>
-
-          <button
-            class="buy-btn gold"
-            type="button"
-            :disabled="payCreating"
-            @click="handleBuy('ultimate')"
-          >
-            <template v-if="buyingPackageId === 'ultimate'">{{ ui.creatingOrder }}</template>
-            <template v-else>{{ ui.buyNow }}</template>
-          </button>
         </div>
       </div>
     </div>
@@ -2026,7 +2030,7 @@ const ui = computed(() => {
 }
 
 .page-title {
-  font-size: 64px;
+  font-size: 40px;
   font-weight: 900;
   margin: 0;
   letter-spacing: -1px;
@@ -2099,7 +2103,7 @@ const ui = computed(() => {
   flex-direction: column;
   background: rgba(10, 10, 10, 0.8);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 32px 24px;
+  padding: 24px 20px;
   transition:
     transform 0.3s ease,
     box-shadow 0.3s ease,
@@ -2157,28 +2161,28 @@ const ui = computed(() => {
 
 /* Card Content */
 .card-header {
-  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
-.icon-box {
-  width: 48px;
-  height: 48px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.title-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  margin-bottom: 16px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .icon {
   font-size: 24px;
+  display: flex;
+  align-items: center;
 }
 
 .pricing-card h2 {
   font-size: 24px;
   font-weight: 700;
-  margin-bottom: 4px;
+  margin: 0;
   color: #fff;
 }
 
@@ -2196,6 +2200,8 @@ const ui = computed(() => {
   padding: 4px 8px;
   border-radius: 4px;
   letter-spacing: 0.5px;
+  margin-bottom: 24px;
+  align-self: flex-start;
 }
 
 .badge.standard {
@@ -2218,9 +2224,9 @@ const ui = computed(() => {
 
 /* Price Section */
 .price-section {
-  margin-bottom: 24px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .price {
@@ -2230,6 +2236,7 @@ const ui = computed(() => {
   margin-bottom: 8px;
   display: flex;
   align-items: baseline;
+  justify-content: flex-start;
   gap: 4px;
 }
 
@@ -2244,13 +2251,46 @@ const ui = computed(() => {
   font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  margin-bottom: 20px;
+  width: 100%;
+}
+
+.pro-theme .compute-amount {
+  color: #10b981;
+}
+
+.ultimate-theme .compute-amount {
+  color: #ffd700;
+}
+
+.btn-container {
+  width: 100%;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 24px;
+}
+
+.pro-theme .btn-container {
+  border-top-color: rgba(16, 185, 129, 0.2);
+  border-bottom-color: rgba(16, 185, 129, 0.2);
+}
+
+.ultimate-theme .btn-container {
+  border-top-color: rgba(255, 215, 0, 0.2);
+  border-bottom-color: rgba(255, 215, 0, 0.2);
 }
 
 /* Features */
 .features {
   list-style: none;
   padding: 0;
-  margin: 0 0 32px 0;
+  margin: 0;
   flex: 1;
   text-align: left;
 }
@@ -2318,7 +2358,6 @@ const ui = computed(() => {
 .buy-btn {
   width: 100%;
   height: 56px;
-  margin-top: auto;
   padding: 0 14px;
   background: transparent;
   border: 1px solid #444;
@@ -2363,16 +2402,17 @@ const ui = computed(() => {
 }
 
 /* Pro Theme Overrides */
+.pro-theme {
+  border-color: rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.1);
+}
+
 .pro-theme:hover {
   border-color: #10b981;
-  box-shadow: 0 20px 40px rgba(16, 185, 129, 0.1);
+  box-shadow: 0 20px 40px rgba(16, 185, 129, 0.2);
 }
 
-.pro-theme .icon-box {
-  color: #10b981;
-}
-
-.pro-theme .compute-amount {
+.pro-theme .icon {
   color: #10b981;
 }
 
@@ -2389,19 +2429,16 @@ const ui = computed(() => {
 
 /* Ultimate Theme Overrides */
 .ultimate-theme {
-  border-color: rgba(255, 215, 0, 0.3);
+  border-color: rgba(255, 215, 0, 0.6);
+  box-shadow: 0 0 15px rgba(255, 215, 0, 0.1);
 }
 
 .ultimate-theme:hover {
   border-color: #ffd700;
-  box-shadow: 0 20px 40px rgba(255, 215, 0, 0.1);
+  box-shadow: 0 20px 40px rgba(255, 215, 0, 0.2);
 }
 
-.ultimate-theme .icon-box {
-  color: #ffd700;
-}
-
-.ultimate-theme .compute-amount {
+.ultimate-theme .icon {
   color: #ffd700;
 }
 
@@ -2623,10 +2660,6 @@ const ui = computed(() => {
 }
 
 /* New Styles */
-.pro-theme {
-  border-color: rgba(16, 185, 129, 0.4);
-}
-
 .save-badge {
   position: absolute;
   top: 12px;

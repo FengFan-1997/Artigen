@@ -127,24 +127,6 @@
                 >
                   <MoreOutlined />
                 </button>
-                <button
-                  class="icon-btn"
-                  type="button"
-                  :aria-label="layer.visible ? ui.hide : ui.show"
-                  @click.stop="toggleVisible(layer.id)"
-                >
-                  <EyeOutlined v-if="layer.visible" />
-                  <EyeInvisibleOutlined v-else />
-                </button>
-                <button
-                  class="icon-btn"
-                  type="button"
-                  :aria-label="layer.locked ? ui.unlock : ui.lock"
-                  @click.stop="toggleLocked(layer.id)"
-                >
-                  <LockOutlined v-if="layer.locked" />
-                  <UnlockOutlined v-else />
-                </button>
               </div>
             </div>
           </div>
@@ -214,6 +196,45 @@
                           @pointerdown.stop="onCropHandlePointerDown($event, h)"
                         ></div>
                       </div>
+                    </div>
+
+                    <div
+                      v-if="toolMode === 'cutout' && cutoutMode === 'manual' && cutoutTargetLayerId === selectedLayerId"
+                      class="manual-cutout-overlay"
+                      ref="manualCutoutOverlayRef"
+                      @pointerdown.stop="onManualCutoutPointerDown"
+                      @pointermove.stop="onManualCutoutPointerMove"
+                      @pointerup.stop="onManualCutoutPointerUp"
+                      @pointercancel.stop="onManualCutoutPointerUp"
+                      @pointerleave.stop="onManualCutoutPointerUp"
+                      @contextmenu.prevent
+                      style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; z-index: 200;"
+                    >
+                      <svg width="100%" height="100%" class="manual-cutout-svg" style="pointer-events: none;">
+                        <polygon
+                          v-if="manualCutoutPath.length > 0"
+                          :points="manualCutoutPath.map(p => `${p.x},${p.y}`).join(' ')"
+                          fill="rgba(0, 229, 255, 0.2)"
+                          stroke="#00e5ff"
+                          stroke-width="2"
+                          stroke-dasharray="4 4"
+                        />
+                        <circle
+                          v-if="manualCutoutCursor"
+                          :cx="manualCutoutCursor.x"
+                          :cy="manualCutoutCursor.y"
+                          r="4"
+                          fill="#ff4d4f"
+                        />
+                        <circle
+                          v-for="(p, i) in manualCutoutPath"
+                          :key="i"
+                          :cx="p.x"
+                          :cy="p.y"
+                          r="3"
+                          fill="#00e5ff"
+                        />
+                      </svg>
                     </div>
                   </div>
                 </div>
@@ -546,36 +567,6 @@
                 <button
                   class="smart-btn"
                   type="button"
-                  :disabled="!hasSelection || isUpscaling"
-                  @click="smartAction('upscale')"
-                  :title="ui.upscale"
-                >
-                  <ExpandOutlined />
-                  <span class="mobile-text-hidden">{{ ui.upscale }}</span>
-                </button>
-                <button
-                  class="smart-btn"
-                  type="button"
-                  :disabled="!hasSelection"
-                  @click="smartAction('erase')"
-                  :title="ui.erase"
-                >
-                  <GoldOutlined />
-                  <span class="mobile-text-hidden">{{ ui.erase }}</span>
-                </button>
-                <button
-                  class="smart-btn"
-                  type="button"
-                  :disabled="!hasSelection"
-                  @click="smartAction('retouch')"
-                  :title="ui.retouch"
-                >
-                  <FormatPainterOutlined />
-                  <span class="mobile-text-hidden">{{ ui.retouch }}</span>
-                </button>
-                <button
-                  class="smart-btn"
-                  type="button"
                   :disabled="!hasSelection"
                   @click="smartAction('crop')"
                   :title="ui.crop"
@@ -675,57 +666,129 @@
                 </div>
               </div>
               <div v-if="toolMode === 'cutout'" class="straighten-panel">
-                <div class="kv">
-                  <div class="k">{{ ui.cutoutThreshold }}</div>
-                  <input
-                    v-model.number="cutoutThreshold"
-                    class="straighten-range"
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                  />
-                  <input
-                    v-model.number="cutoutThreshold"
-                    class="control"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="1"
-                  />
-                </div>
-                <div class="smart-inline">
+                <div class="smart-inline" style="margin-bottom: 12px;">
                   <button
-                    class="tool-btn"
+                    :class="['tool-btn', cutoutMode === 'manual' ? 'active' : '']"
                     type="button"
-                    :disabled="!hasSelection || isCutoutProcessing"
-                    @click="applyCutoutRemove"
-                    :title="ui.cutoutRemove"
+                    @click="cutoutMode = 'manual'"
                   >
-                    <DeleteOutlined />
-                    <span class="mobile-text-hidden">{{ ui.cutoutRemove }}</span>
+                    {{ ui.manualCutout }}
                   </button>
                   <button
-                    class="tool-btn"
+                    :class="['tool-btn', cutoutMode === 'auto' ? 'active' : '']"
                     type="button"
-                    :disabled="!hasSelection || isCutoutProcessing"
-                    @click="applyCutoutSplit"
-                    :title="ui.cutoutSplit"
+                    @click="cutoutMode = 'auto'"
                   >
-                    <SplitCellsOutlined />
-                    <span class="mobile-text-hidden">{{ ui.cutoutSplit }}</span>
-                  </button>
-                  <button
-                    class="tool-btn"
-                    type="button"
-                    :disabled="isCutoutProcessing"
-                    @click="cancelCutout"
-                    :title="ui.cancel"
-                  >
-                    <CloseOutlined />
-                    <span class="mobile-text-hidden">{{ ui.cancel }}</span>
+                    {{ ui.autoCutout }}
                   </button>
                 </div>
+                
+                <template v-if="cutoutMode === 'auto'">
+                  <div class="kv">
+                    <div class="k">{{ ui.cutoutThreshold }}</div>
+                    <input
+                      v-model.number="cutoutThreshold"
+                      class="straighten-range"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                    />
+                    <input
+                      v-model.number="cutoutThreshold"
+                      class="control"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                    />
+                  </div>
+                  <div class="smart-inline">
+                    <button
+                      class="tool-btn"
+                      type="button"
+                      :disabled="!hasSelection || isCutoutProcessing"
+                      @click="applyCutoutRemove"
+                      :title="ui.cutoutRemove"
+                    >
+                      <DeleteOutlined />
+                      <span class="mobile-text-hidden">{{ ui.cutoutRemove }}</span>
+                    </button>
+                    <button
+                      class="tool-btn"
+                      type="button"
+                      :disabled="!hasSelection || isCutoutProcessing"
+                      @click="applyCutoutSplit"
+                      :title="ui.cutoutSplit"
+                    >
+                      <SplitCellsOutlined />
+                      <span class="mobile-text-hidden">{{ ui.cutoutSplit }}</span>
+                    </button>
+                    <button
+                      class="tool-btn"
+                      type="button"
+                      :disabled="isCutoutProcessing"
+                      @click="cancelCutout"
+                      :title="ui.cancel"
+                    >
+                      <CloseOutlined />
+                      <span class="mobile-text-hidden">{{ ui.cancel }}</span>
+                    </button>
+                  </div>
+                </template>
+                
+                <template v-else>
+                  <div class="smart-inline" style="margin-bottom: 12px; justify-content: flex-start; gap: 12px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: #fff; font-size: 13px;">
+                      <input type="checkbox" v-model="manualCutoutSnapping" />
+                      {{ ui.snapping }}
+                    </label>
+                    <div style="display: flex; gap: 4px;">
+                      <button
+                        class="icon-btn"
+                        type="button"
+                        style="width: 24px; height: 24px; font-size: 12px;"
+                        :disabled="manualCutoutHistory.length === 0"
+                        @click="undoManualCutout"
+                        :title="ui.undo"
+                      >
+                        <UndoOutlined />
+                      </button>
+                      <button
+                        class="icon-btn"
+                        type="button"
+                        style="width: 24px; height: 24px; font-size: 12px;"
+                        :disabled="manualCutoutRedoStack.length === 0"
+                        @click="redoManualCutout"
+                        :title="ui.redo"
+                      >
+                        <RedoOutlined />
+                      </button>
+                    </div>
+                  </div>
+                  <div class="smart-inline">
+                    <button
+                      class="tool-btn"
+                      type="button"
+                      :disabled="manualCutoutPath.length < 3 || isCutoutProcessing"
+                      @click="applyManualCutout"
+                      :title="ui.applyManual"
+                    >
+                      <CheckOutlined />
+                      <span class="mobile-text-hidden">{{ ui.applyManual }}</span>
+                    </button>
+                    <button
+                      class="tool-btn"
+                      type="button"
+                      :disabled="isCutoutProcessing"
+                      @click="cancelCutout"
+                      :title="ui.cancel"
+                    >
+                      <CloseOutlined />
+                      <span class="mobile-text-hidden">{{ ui.cancel }}</span>
+                    </button>
+                  </div>
+                </template>
               </div>
               <div v-if="toolMode === 'restore'" class="straighten-panel">
                 <div class="kv">
@@ -816,6 +879,17 @@
         </aside>
       </div>
       <div v-if="layerMenuOpenId" class="layer-menu-float" :style="layerMenuStyle" @click.stop>
+        <button class="menu-item" type="button" @click="toggleVisible(layerMenuOpenId); layerMenuOpenId = null">
+          <EyeOutlined v-if="layers.find(l => l.id === layerMenuOpenId)?.visible" />
+          <EyeInvisibleOutlined v-else />
+          {{ layers.find(l => l.id === layerMenuOpenId)?.visible ? ui.hide : ui.show }}
+        </button>
+        <button class="menu-item" type="button" @click="toggleLocked(layerMenuOpenId); layerMenuOpenId = null">
+          <LockOutlined v-if="layers.find(l => l.id === layerMenuOpenId)?.locked" />
+          <UnlockOutlined v-else />
+          {{ layers.find(l => l.id === layerMenuOpenId)?.locked ? ui.unlock : ui.lock }}
+        </button>
+        <div style="height: 1px; background: rgba(255, 255, 255, 0.1); margin: 2px 4px;"></div>
         <button class="menu-item" type="button" @click="moveLayer(layerMenuOpenId, 'top')">
           <VerticalAlignTopOutlined /> {{ ui.moveTop }}
         </button>
@@ -977,10 +1051,15 @@ const ui = computed(() => {
     erase: en ? 'Erase' : '消除',
     retouch: en ? 'Restore' : '还原',
     crop: en ? 'Crop' : '裁剪',
-    straighten: en ? 'Straighten' : '拉直',
+    straighten: en ? 'Rotate' : '旋转',
     cutoutThreshold: en ? 'Bg Threshold' : '背景阈值',
     cutoutRemove: en ? 'Remove BG' : '去背景',
     cutoutSplit: en ? 'Split Layers' : '分层',
+    manualCutout: en ? 'Manual' : '手动抠图',
+    autoCutout: en ? 'Auto' : '自动抠图',
+    snapping: en ? 'Magnetic Snapping' : '磁性吸附',
+    manualCutoutPath: en ? 'Path' : '路径',
+    applyManual: en ? 'Cut out Selection' : '抠出选区',
     cutoutProcessing: en ? 'Processing...' : '处理中...',
     cutoutHint: en
       ? 'Algorithm 1: edge flood fill + color threshold.'
@@ -1602,22 +1681,61 @@ const layerStyle = (layer: ImageLayer) => {
 const exportImage = async () => {
   flushLayerMove();
   flushCropRect();
-  const w = CANVAS_W;
-  const h = CANVAS_H;
+
+  const visibleLayers = layers.value.filter((l) => l.visible);
+  if (visibleLayers.length === 0) return;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const layer of visibleLayers) {
+    const iw = layer.naturalWidth || 0;
+    const ih = layer.naturalHeight || 0;
+    const sx = Math.abs(Number.isFinite(layer.scaleX) ? layer.scaleX : 1);
+    const sy = Math.abs(Number.isFinite(layer.scaleY) ? layer.scaleY : 1);
+    const rot = ((Number.isFinite(layer.rotate) ? layer.rotate : 0) * Math.PI) / 180;
+    const w = iw * sx;
+    const h = ih * sy;
+    const bw = Math.abs(w * Math.cos(rot)) + Math.abs(h * Math.sin(rot));
+    const bh = Math.abs(w * Math.sin(rot)) + Math.abs(h * Math.cos(rot));
+    const cx = Number.isFinite(layer.x) ? layer.x : CANVAS_W / 2;
+    const cy = Number.isFinite(layer.y) ? layer.y : CANVAS_H / 2;
+    minX = Math.min(minX, cx - bw / 2);
+    minY = Math.min(minY, cy - bh / 2);
+    maxX = Math.max(maxX, cx + bw / 2);
+    maxY = Math.max(maxY, cy + bh / 2);
+  }
+
+  if (minX > maxX || minY > maxY) {
+    minX = 0; minY = 0; maxX = CANVAS_W; maxY = CANVAS_H;
+  }
+
+  const pad = 0; // optional padding
+  minX = Math.floor(minX - pad);
+  minY = Math.floor(minY - pad);
+  maxX = Math.ceil(maxX + pad);
+  maxY = Math.ceil(maxY + pad);
+
+  const outW = Math.max(1, maxX - minX);
+  const outH = Math.max(1, maxY - minY);
+
   const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
+  canvas.width = outW;
+  canvas.height = outH;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  const visibleLayers = layers.value.filter((l) => l.visible);
   const predecoded = new Map<string, Promise<HTMLImageElement | null>>();
   for (const l of visibleLayers) {
     const key = String(l.src || '');
     if (!predecoded.has(key)) predecoded.set(key, decodeImage(key));
   }
 
-  ctx.clearRect(0, 0, w, h);
+  ctx.clearRect(0, 0, outW, outH);
+  ctx.translate(-minX, -minY);
+
   for (const layer of visibleLayers) {
     const op = clamp(Number.isFinite(layer.opacity) ? layer.opacity : 1, 0, 1);
     const key = String(layer.src || '');
@@ -1724,6 +1842,14 @@ const restoreDirty = ref(false);
 const isCutoutProcessing = ref(false);
 const cutoutJobId = ref(0);
 const cutoutTargetLayerId = ref<string | null>(null);
+const cutoutMode = ref<'auto' | 'manual'>('manual');
+const manualCutoutSnapping = ref(true);
+const manualCutoutPath = ref<{x: number, y: number}[]>([]);
+const manualCutoutCursor = ref<{x: number, y: number} | null>(null);
+const manualCutoutOverlayRef = ref<HTMLDivElement | null>(null);
+const isManualCutoutDrawing = ref(false);
+const manualCutoutHistory = ref<{x: number, y: number}[][]>([]);
+const manualCutoutRedoStack = ref<{x: number, y: number}[][]>([]);
 const isUpscaling = ref(false);
 const upscaleJobId = ref(0);
 
@@ -1990,7 +2116,7 @@ const getCropPoint = (e: PointerEvent) => {
   const r = el.getBoundingClientRect();
   const px = (e.clientX - r.left) * (CANVAS_W / Math.max(1, r.width));
   const py = (e.clientY - r.top) * (CANVAS_H / Math.max(1, r.height));
-  return { x: clampNumber(px, 0, CANVAS_W), y: clampNumber(py, 0, CANVAS_H) };
+  return { x: px, y: py };
 };
 
 const cropRectStyle = computed(() => {
@@ -2067,14 +2193,11 @@ const beginCrop = () => {
   const h = ih * sy;
   const bw = Math.abs(w * Math.cos(rot)) + Math.abs(h * Math.sin(rot));
   const bh = Math.abs(w * Math.sin(rot)) + Math.abs(h * Math.cos(rot));
-  const cx = clampNumber(Number.isFinite(layer.x) ? layer.x : CANVAS_W / 2, 0, CANVAS_W);
-  const cy = clampNumber(Number.isFinite(layer.y) ? layer.y : CANVAS_H / 2, 0, CANVAS_H);
-  const rw = clampNumber(bw, 24, CANVAS_W);
-  const rh = clampNumber(bh, 24, CANVAS_H);
-  cropRect.value = clampCropRect(
-    { x: cx - rw / 2, y: cy - rh / 2, w: rw, h: rh },
-    { w: CANVAS_W, h: CANVAS_H }
-  );
+  const cx = Number.isFinite(layer.x) ? layer.x : CANVAS_W / 2;
+  const cy = Number.isFinite(layer.y) ? layer.y : CANVAS_H / 2;
+  const rw = Math.max(24, bw);
+  const rh = Math.max(24, bh);
+  cropRect.value = { x: cx - rw / 2, y: cy - rh / 2, w: rw, h: rh };
   toolMode.value = 'crop';
   smartHint.value = ui.value.cropHint;
   closeMenus();
@@ -2272,10 +2395,7 @@ const onCropOverlayPointerDown = (e: PointerEvent) => {
       base: null,
       handle: null
     };
-    cropRect.value = clampCropRect(
-      { x: pt.x, y: pt.y, w: 12, h: 12 },
-      { w: CANVAS_W, h: CANVAS_H }
-    );
+    cropRect.value = { x: pt.x, y: pt.y, w: 12, h: 12 };
   }
   try {
     cropOverlayRef.value?.setPointerCapture?.(pid);
@@ -2331,21 +2451,11 @@ const onCropOverlayPointerMove = (e: PointerEvent) => {
   const dx = pt.x - st.startX;
   const dy = pt.y - st.startY;
   if (st.mode === 'move' && st.base) {
-    scheduleCropRect(
-      clampCropRect(
-        { x: st.base.x + dx, y: st.base.y + dy, w: st.base.w, h: st.base.h },
-        { w: CANVAS_W, h: CANVAS_H }
-      )
-    );
+    scheduleCropRect({ x: st.base.x + dx, y: st.base.y + dy, w: st.base.w, h: st.base.h });
     return;
   }
   if (st.mode === 'draw') {
-    scheduleCropRect(
-      clampCropRect(normalizeCropRect({ x: st.startX, y: st.startY }, pt), {
-        w: CANVAS_W,
-        h: CANVAS_H
-      })
-    );
+    scheduleCropRect(normalizeCropRect({ x: st.startX, y: st.startY }, pt));
     return;
   }
   if (st.mode === 'resize' && st.base && st.handle) {
@@ -2358,15 +2468,12 @@ const onCropOverlayPointerMove = (e: PointerEvent) => {
     if (h.includes('e')) right = st.base.x + st.base.w + dx;
     if (h.includes('n')) top = st.base.y + dy;
     if (h.includes('s')) bottom = st.base.y + st.base.h + dy;
-    const next = clampCropRect(
-      {
-        x: Math.min(left, right),
-        y: Math.min(top, bottom),
-        w: Math.abs(right - left),
-        h: Math.abs(bottom - top)
-      },
-      { w: CANVAS_W, h: CANVAS_H }
-    );
+    const next = {
+      x: Math.min(left, right),
+      y: Math.min(top, bottom),
+      w: Math.abs(right - left),
+      h: Math.abs(bottom - top)
+    };
     scheduleCropRect(next);
   }
 };
@@ -2950,7 +3057,7 @@ const applyUpscale2x = async () => {
   }
 };
 
-const beginCutout = () => {
+const beginCutout = async () => {
   const layer = selectedLayer.value;
   if (!layer || layer.locked) return;
   closeMenus();
@@ -2960,6 +3067,19 @@ const beginCutout = () => {
   cutoutBasePixels.value = null;
   cutoutTargetLayerId.value = layer.id;
   smartHint.value = ui.value.cutoutHint;
+  manualCutoutPath.value = [];
+  manualCutoutHistory.value = [];
+  manualCutoutRedoStack.value = [];
+  manualCutoutCursor.value = null;
+  cutoutMode.value = 'manual';
+  const src = layer.src;
+  if (src) {
+    readPixelsForLayer(layer, src).then((r) => {
+      if (r) {
+        cutoutBasePixels.value = { layerId: layer.id, src, w: r.w, h: r.h, data: r.data };
+      }
+    });
+  }
 };
 
 const cancelCutout = () => {
@@ -2967,8 +3087,361 @@ const cancelCutout = () => {
   cutoutJobId.value += 1;
   cutoutBasePixels.value = null;
   cutoutTargetLayerId.value = null;
+  manualCutoutPath.value = [];
+  manualCutoutHistory.value = [];
+  manualCutoutRedoStack.value = [];
+  manualCutoutCursor.value = null;
   toolMode.value = 'none';
   smartHint.value = '';
+};
+
+const pushManualCutoutHistory = () => {
+  manualCutoutHistory.value.push([...manualCutoutPath.value]);
+  if (manualCutoutHistory.value.length > 50) {
+    manualCutoutHistory.value.shift();
+  }
+  manualCutoutRedoStack.value = [];
+};
+
+const undoManualCutout = () => {
+  if (manualCutoutHistory.value.length === 0) return;
+  manualCutoutRedoStack.value.push([...manualCutoutPath.value]);
+  manualCutoutPath.value = manualCutoutHistory.value.pop() || [];
+};
+
+const redoManualCutout = () => {
+  if (manualCutoutRedoStack.value.length === 0) return;
+  manualCutoutHistory.value.push([...manualCutoutPath.value]);
+  manualCutoutPath.value = manualCutoutRedoStack.value.pop() || [];
+};
+
+const getCutoutBaseForLayer = async (layer: ImageLayer) => {
+  const src = layer.src;
+  const w = Math.max(0, Math.trunc(layer.naturalWidth || 0));
+  const h = Math.max(0, Math.trunc(layer.naturalHeight || 0));
+  if (!src || !w || !h) return null;
+  const hit = cutoutBasePixels.value;
+  if (hit && hit.layerId === layer.id && hit.src === src && hit.w === w && hit.h === h) {
+    return hit;
+  }
+  const r = await readPixelsForLayer(layer, src);
+  if (!r) return null;
+  const next = { layerId: layer.id, src, w: r.w, h: r.h, data: r.data };
+  cutoutBasePixels.value = next;
+  return next;
+};
+
+const canvasPointToLayerPixel = (
+  layer: ImageLayer,
+  pixels: LayerPixelCache,
+  pt: { x: number; y: number }
+) => {
+  const sx = Number.isFinite(layer.scaleX) ? layer.scaleX : 1;
+  const sy = Number.isFinite(layer.scaleY) ? layer.scaleY : 1;
+  if (Math.abs(sx) < 1e-6 || Math.abs(sy) < 1e-6) return null;
+  const rot = ((Number.isFinite(layer.rotate) ? layer.rotate : 0) * Math.PI) / 180;
+  const dx = pt.x - layer.x;
+  const dy = pt.y - layer.y;
+  const cos = Math.cos(-rot);
+  const sin = Math.sin(-rot);
+  let localX = dx * cos - dy * sin;
+  let localY = dx * sin + dy * cos;
+  localX = localX / (sx * (layer.flipX ? -1 : 1)) + pixels.w / 2;
+  localY = localY / (sy * (layer.flipY ? -1 : 1)) + pixels.h / 2;
+  return {
+    x: clampNumber(localX, 0, pixels.w),
+    y: clampNumber(localY, 0, pixels.h)
+  };
+};
+
+const layerPixelToCanvasPoint = (
+  layer: ImageLayer,
+  pixels: LayerPixelCache,
+  pt: { x: number; y: number }
+) => {
+  const sx = Number.isFinite(layer.scaleX) ? layer.scaleX : 1;
+  const sy = Number.isFinite(layer.scaleY) ? layer.scaleY : 1;
+  const rot = ((Number.isFinite(layer.rotate) ? layer.rotate : 0) * Math.PI) / 180;
+  let localX = pt.x - pixels.w / 2;
+  let localY = pt.y - pixels.h / 2;
+  localX *= sx * (layer.flipX ? -1 : 1);
+  localY *= sy * (layer.flipY ? -1 : 1);
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  return {
+    x: localX * cos - localY * sin + layer.x,
+    y: localX * sin + localY * cos + layer.y
+  };
+};
+
+const sanitizeManualCutoutPolygon = (points: { x: number; y: number }[]) => {
+  const out: { x: number; y: number }[] = [];
+  for (const p of points) {
+    const last = out[out.length - 1];
+    if (!last || Math.hypot(last.x - p.x, last.y - p.y) > 0.5) {
+      out.push({ x: p.x, y: p.y });
+    }
+  }
+  if (out.length > 2) {
+    const first = out[0];
+    const last = out[out.length - 1];
+    if (first && last && Math.hypot(first.x - last.x, first.y - last.y) < 1) {
+      out.pop();
+    }
+  }
+  return out;
+};
+
+const getManualCutoutPoint = (e: PointerEvent) => {
+  const el = manualCutoutOverlayRef.value;
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  const px = (e.clientX - r.left) * (CANVAS_W / Math.max(1, r.width));
+  const py = (e.clientY - r.top) * (CANVAS_H / Math.max(1, r.height));
+  return { x: px, y: py };
+};
+
+const getSnappedPoint = (pt: {x: number, y: number}) => {
+  if (!manualCutoutSnapping.value || !cutoutBasePixels.value) {
+    return pt;
+  }
+
+  const layer = layers.value.find(l => l.id === cutoutTargetLayerId.value);
+  if (!layer) return pt;
+
+  const pixels = cutoutBasePixels.value;
+  const local = canvasPointToLayerPixel(layer, pixels, pt);
+  if (!local) return pt;
+  const localX = local.x;
+  const localY = local.y;
+
+  const r = 10;
+  let bestX = localX;
+  let bestY = localY;
+  let maxGrad = -1;
+  const cx = Math.round(localX);
+  const cy = Math.round(localY);
+  
+  const getLuma = (x: number, y: number) => {
+    if (x < 0 || x >= pixels.w || y < 0 || y >= pixels.h) return 0;
+    const idx = (y * pixels.w + x) * 4;
+    return 0.2126 * pixels.data[idx] + 0.7152 * pixels.data[idx+1] + 0.0722 * pixels.data[idx+2];
+  };
+
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let x = cx - r; x <= cx + r; x++) {
+      if ((x-cx)*(x-cx) + (y-cy)*(y-cy) <= r*r) {
+        const gx = getLuma(x+1, y) - getLuma(x-1, y);
+        const gy = getLuma(x, y+1) - getLuma(x, y-1);
+        const grad = gx*gx + gy*gy;
+        if (grad > maxGrad) {
+          maxGrad = grad;
+          bestX = x;
+          bestY = y;
+        }
+      }
+    }
+  }
+
+  if (maxGrad < 50) return pt;
+  return layerPixelToCanvasPoint(layer, pixels, { x: bestX, y: bestY });
+};
+
+const onManualCutoutPointerMove = (e: PointerEvent) => {
+  const pt = getManualCutoutPoint(e);
+  if (!pt) {
+    manualCutoutCursor.value = null;
+    return;
+  }
+  
+  const snapped = getSnappedPoint(pt);
+  manualCutoutCursor.value = snapped;
+
+  if (isManualCutoutDrawing.value || (manualCutoutPath.value.length > 0 && e.buttons === 1)) {
+    const last = manualCutoutPath.value[manualCutoutPath.value.length - 1];
+    if (!last || Math.hypot(last.x - snapped.x, last.y - snapped.y) > 4) {
+      manualCutoutPath.value.push(snapped);
+    }
+  }
+};
+
+const onManualCutoutPointerDown = (e: PointerEvent) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const pt = getManualCutoutPoint(e);
+  if (!pt) return;
+  
+  pushManualCutoutHistory();
+  
+  isManualCutoutDrawing.value = true;
+  
+  const snapped = getSnappedPoint(pt);
+  manualCutoutPath.value.push(snapped);
+  
+  try {
+    const pid = typeof e.pointerId === 'number' ? e.pointerId : 0;
+    const el = manualCutoutOverlayRef.value as HTMLElement;
+    if (el && el.setPointerCapture) {
+      el.setPointerCapture(pid);
+    }
+  } catch {}
+};
+
+const onManualCutoutPointerUp = (e: PointerEvent) => {
+  isManualCutoutDrawing.value = false;
+  try {
+    const pid = typeof e.pointerId === 'number' ? e.pointerId : 0;
+    const el = manualCutoutOverlayRef.value as HTMLElement;
+    if (el && el.releasePointerCapture) {
+      el.releasePointerCapture(pid);
+    }
+  } catch {}
+};
+
+const applyManualCutout = async () => {
+  if (manualCutoutPath.value.length < 3 || isCutoutProcessing.value) return;
+  const id = cutoutTargetLayerId.value;
+  if (!id) return;
+  const layer = layers.value.find((l) => l.id === id);
+  if (!layer || layer.locked) return;
+
+  const job = (cutoutJobId.value += 1);
+  isCutoutProcessing.value = true;
+  smartHint.value = ui.value.cutoutProcessing;
+  await nextTick();
+
+  try {
+    const base = await getCutoutBaseForLayer(layer);
+    if (!base) throw new Error('Failed to read cutout source pixels');
+
+    const polygon = sanitizeManualCutoutPolygon(
+      manualCutoutPath.value
+        .map((pt) => canvasPointToLayerPixel(layer, base, pt))
+        .filter((pt): pt is { x: number; y: number } => !!pt)
+    );
+    if (polygon.length < 3) {
+      showEditorTip(currentLang.value === 'en' ? 'Selection is too small.' : '选区太小，无法抠图。');
+      return;
+    }
+
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = base.w;
+    maskCanvas.height = base.h;
+    const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
+    if (!maskCtx) throw new Error('Cannot get mask context');
+    maskCtx.clearRect(0, 0, base.w, base.h);
+    maskCtx.fillStyle = '#fff';
+    maskCtx.beginPath();
+    maskCtx.moveTo(polygon[0].x, polygon[0].y);
+    for (let i = 1; i < polygon.length; i++) {
+      maskCtx.lineTo(polygon[i].x, polygon[i].y);
+    }
+    maskCtx.closePath();
+    maskCtx.fill();
+
+    const canvas = document.createElement('canvas');
+    canvas.width = base.w;
+    canvas.height = base.h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('Cannot get 2d context');
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(base.data), base.w, base.h), 0, 0);
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(maskCanvas, 0, 0);
+
+    const data = ctx.getImageData(0, 0, base.w, base.h).data;
+    let minX = base.w;
+    let minY = base.h;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < base.h; y++) {
+      for (let x = 0; x < base.w; x++) {
+        const alpha = data[(y * base.w + x) * 4 + 3];
+        if (alpha > 0) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+
+    if (minX > maxX || minY > maxY) {
+      showEditorTip(currentLang.value === 'en' ? 'Selection did not hit the image.' : '选区没有覆盖到图片内容。');
+      return;
+    }
+
+    const w = maxX - minX + 1;
+    const h = maxY - minY + 1;
+
+    const out = document.createElement('canvas');
+    out.width = w;
+    out.height = h;
+    const octx = out.getContext('2d', { willReadFrequently: true });
+    if (octx) {
+      octx.putImageData(ctx.getImageData(minX, minY, w, h), 0, 0);
+    }
+
+    const url = await canvasToOwnedUrl(out);
+    const newCenter = layerPixelToCanvasPoint(layer, base, { x: minX + w / 2, y: minY + h / 2 });
+    const nx = newCenter.x;
+    const ny = newCenter.y;
+
+    const bgCanvas = document.createElement('canvas');
+    bgCanvas.width = base.w;
+    bgCanvas.height = base.h;
+    const bgCtx = bgCanvas.getContext('2d', { willReadFrequently: true });
+    if (!bgCtx) throw new Error('Cannot get 2d context for bg');
+    bgCtx.putImageData(new ImageData(new Uint8ClampedArray(base.data), base.w, base.h), 0, 0);
+    bgCtx.globalCompositeOperation = 'destination-out';
+    bgCtx.drawImage(maskCanvas, 0, 0);
+    const bgUrl = await canvasToOwnedUrl(bgCanvas);
+
+    if (cutoutJobId.value !== job) return;
+    pushHistory();
+
+    const newLayer: ImageLayer = {
+      ...layer,
+      id: genId(),
+      name: `${layer.name || 'Layer'}-Cutout`,
+      src: url,
+      naturalWidth: w,
+      naturalHeight: h,
+      x: nx,
+      y: ny,
+      scaleX: layer.scaleX,
+      scaleY: layer.scaleY,
+      rotate: layer.rotate,
+      flipX: layer.flipX,
+      flipY: layer.flipY,
+      visible: true,
+      locked: false,
+      opacity: layer.opacity
+    };
+
+    const idx = layers.value.findIndex((l) => l.id === layer.id);
+    const nextLayers = [...layers.value];
+    if (idx >= 0) {
+      nextLayers[idx] = { ...nextLayers[idx], src: bgUrl };
+      nextLayers.splice(idx + 1, 0, newLayer);
+    } else {
+      nextLayers.push(newLayer);
+    }
+
+    layers.value = nextLayers;
+    selectedLayerId.value = newLayer.id;
+    showEditorTip(currentLang.value === 'en' ? 'Cutout layer created.' : '已新增抠图图层。');
+    cancelCutout();
+    gcObjectUrls();
+  } catch (err) {
+    console.error('Manual cutout error:', err);
+    showEditorTip(currentLang.value === 'en' ? 'Manual cutout failed.' : '手动抠图失败，请重试。');
+    if (cutoutJobId.value === job) cancelCutout();
+  } finally {
+    if (cutoutJobId.value === job) {
+      isCutoutProcessing.value = false;
+      smartHint.value = ui.value.cutoutHint;
+    }
+  }
 };
 
 const applyCutoutRemove = async () => {
@@ -3594,7 +4067,8 @@ const onStagePointerUp = (e: PointerEvent) => {
 
 .layers-list {
   padding: 10px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3721,17 +4195,7 @@ const onStagePointerUp = (e: PointerEvent) => {
   position: relative;
   overflow: hidden;
   touch-action: none;
-  background-image:
-    linear-gradient(45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%);
-  background-size: 30px 30px;
-  background-position:
-    0 0,
-    0 15px,
-    15px -15px,
-    -15px 0px;
+  background: rgba(5, 5, 5, 0.92);
 }
 
 .stage.pan-mode {
@@ -3833,10 +4297,31 @@ const onStagePointerUp = (e: PointerEvent) => {
 
 .canvas-root {
   position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5) inset;
-  background: rgba(255, 255, 255, 0.03);
-  overflow: hidden;
+  /* Make canvas infinite visually */
+  overflow: visible;
+}
+
+.canvas-root::before {
+  content: '';
+  position: absolute;
+  left: -50000px;
+  top: -50000px;
+  width: 100000px;
+  height: 100000px;
+  background-color: rgba(20, 20, 20, 0.96);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.055) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.055) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.055) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.055) 75%);
+  background-size: 30px 30px;
+  background-position:
+    0 0,
+    0 15px,
+    15px -15px,
+    -15px 0;
+  z-index: -1;
+  pointer-events: none;
 }
 
 .crop-overlay {

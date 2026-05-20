@@ -387,8 +387,8 @@ const installSystemRoutes = (app, deps) => {
         ? "所有输出字段必须使用中文（title/summary/styleTags/negativeTags），禁止出现英文。"
         : "All output fields must be English (title/summary/styleTags/negativeTags). Do not output Chinese.",
       zh
-        ? "为保证内容足够丰富且不被截断：每个方向的 summary 必须是一个字符串，且只包含 7 行（每行一个模块：风格限定/视角构图/主体描述/背景设定/细节修饰/光影色调/质量词），不要额外写“导语/总述/结尾”。summary 总长度控制在 260–420 个汉字左右。styleTags 输出 14–18 条；negativeTags 输出 14–22 条。必须输出 4 个方向且 id 严格为 opt_1..opt_4，按顺序。任何字符串字段里不要出现未转义的英文双引号。"
-        : "To ensure richness without truncation: summary must be a single string with exactly 7 lines (one per module: Style/Perspective/Subject/Background/Details/Lighting&Tone/Quality), and no extra intro/outro paragraphs. Keep summary total length around 150–260 words. Output 14–18 styleTags and 14–22 negativeTags. Must output exactly 4 options with ids opt_1..opt_4 in order. Do not include unescaped double quotes inside any string field.",
+        ? "为保证内容足够丰富且不被截断：每个方向的 summary 必须是一个单行字符串（各模块：风格限定/视角构图/主体描述/背景设定/细节修饰/光影色调/质量词 之间用逗号或句号分隔，绝对不要换行），不要额外写“导语/总述/结尾”。summary 总长度控制在 260–420 个汉字左右。styleTags 输出 14–18 条；negativeTags 输出 14–22 条。必须输出 4 个方向且 id 严格为 opt_1..opt_4，按顺序。任何字符串字段里不要出现未转义的英文双引号，也绝对禁止出现真实换行符。"
+        : "To ensure richness without truncation: summary must be a single continuous string (separate modules with commas/periods, absolutely NO newlines), and no extra intro/outro paragraphs. Keep summary total length around 150–260 words. Output 14–18 styleTags and 14–22 negativeTags. Must output exactly 4 options with ids opt_1..opt_4 in order. Do not include unescaped double quotes or real newlines inside any string field.",
       zh
         ? "规则：尽可能保留用户输入中的原话与具体约束（颜色/数量/人物/物体/位置/动作等），不要同义改写或删减；只补全用户未明确但生成必须的细节。"
         : "Rule: Preserve the user’s exact phrasing and concrete constraints (colors/counts/people/objects/positions/actions). Do not paraphrase or drop constraints; only fill in missing-but-necessary details.",
@@ -1472,6 +1472,40 @@ const installSystemRoutes = (app, deps) => {
           finalizeIdempotency(500, payload);
           return res.status(500).json(payload);
         }
+
+        // --- Add JSON validation ---
+        if (result.text && !result.error && (purposeKey === "agentimg_directions" || purposeKey === "agentimg_final" || purposeKey === "agentimg_ingredient_label" || purposeKey === "ingredient_label")) {
+           let parsedJson = null;
+           try {
+             const jsonStrMatch = result.text.match(/\{[\s\S]*\}/);
+             if (jsonStrMatch) {
+               // Attempt to parse. We'll also try the fallback replacement we added in frontend.
+               const candidate = jsonStrMatch[0];
+               try {
+                 parsedJson = JSON.parse(candidate);
+               } catch {
+                 const sanitized = candidate.replace(/\n/g, '\\n').replace(/\r/g, '').replace(/\t/g, '\\t');
+                 parsedJson = JSON.parse(sanitized);
+               }
+             }
+           } catch {}
+           
+           if (!parsedJson) {
+             if (
+               hold?.holdId &&
+               imgCredits &&
+               typeof imgCredits.refundHold === "function"
+             ) {
+               try {
+                 imgCredits.refundHold({ userId, holdId: hold.holdId });
+               } catch {}
+             }
+             const payload = { error: "PARSE_OPTIONS_FAILED", requestId };
+             finalizeIdempotency(500, payload);
+             return res.status(500).json(payload);
+           }
+        }
+        // ---------------------------
 
         if (
           hold?.holdId &&
