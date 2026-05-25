@@ -137,37 +137,96 @@ const emailToUserId = (email) => {
   return `email_${h}`;
 };
 
-const buildSmtpTransport = () => {
+const resolveQqSmtpConfig = (override = {}) => {
   const user = String(process.env.QQ_SMTP_USER || "").trim();
   const pass = String(process.env.QQ_SMTP_PASS || "").trim();
   if (!user || !pass) throw new Error("QQ_SMTP_MISSING");
-  const host = String(process.env.QQ_SMTP_HOST || "smtp.qq.com").trim();
-  const port = Number(process.env.QQ_SMTP_PORT || 465);
+  const host = String(override.host || process.env.QQ_SMTP_HOST || "smtp.qq.com").trim();
+  const port = Number(override.port || process.env.QQ_SMTP_PORT || 465);
   const secure =
-    String(
-      process.env.QQ_SMTP_SECURE || (port === 465 ? "true" : "false"),
-    ).trim() === "true";
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: { user, pass },
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 20000,
-  });
+    typeof override.secure === "boolean"
+      ? override.secure
+      : String(
+          process.env.QQ_SMTP_SECURE || (port === 465 ? "true" : "false"),
+        ).trim() === "true";
+  const timeoutMs = Math.max(
+    3000,
+    Math.min(20000, Number(process.env.QQ_SMTP_TIMEOUT_MS || 8000) || 8000),
+  );
+  return { user, pass, host, port, secure, timeoutMs };
 };
 
-const sendMailUnified = async ({ to, subject, html }) => {
-  const transport = buildSmtpTransport();
-  const fromUser = String(process.env.QQ_SMTP_USER || "").trim();
-  const fromName = String(process.env.QQ_SMTP_FROM_NAME || "Artigen").trim();
-  await transport.sendMail({
-    from: `${fromName} <${fromUser}>`,
-    to,
-    subject,
-    html,
+const buildQqSmtpTransport = (config) =>
+  nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    requireTLS: !config.secure,
+    auth: { user: config.user, pass: config.pass },
+    tls: { servername: config.host },
+    connectionTimeout: config.timeoutMs,
+    greetingTimeout: config.timeoutMs,
+    socketTimeout: config.timeoutMs,
   });
+
+const isSmtpNetworkError = (e) => {
+  const code = String(e?.code || "").trim();
+  const command = String(e?.command || "").trim();
+  if (code === "EAUTH" || command.toUpperCase().startsWith("AUTH")) return false;
+  return ["ETIMEDOUT", "ESOCKET", "ECONNECTION", "ECONNRESET", "ECONNREFUSED", "EDNS"].includes(
+    code,
+  );
+};
+
+const summarizeQqSmtpError = (e, config) => ({
+  code: String(e?.code || "").trim() || undefined,
+  command: String(e?.command || "").trim() || undefined,
+  responseCode: Number(e?.responseCode || 0) || undefined,
+  syscall: e?.syscall,
+  address: e?.address,
+  port: e?.port || config?.port,
+  host: config?.host,
+  secure: config?.secure,
+  message: String(e?.message || e || "").slice(0, 240),
+});
+
+const sendMailUnified = async ({ to, subject, html }) => {
+  const primaryConfig = resolveQqSmtpConfig();
+  const fallbackConfig = resolveQqSmtpConfig({
+    host: "smtp.qq.com",
+    port: 465,
+    secure: true,
+  });
+  const configs =
+    primaryConfig.host === fallbackConfig.host &&
+    primaryConfig.port === fallbackConfig.port &&
+    primaryConfig.secure === fallbackConfig.secure
+      ? [primaryConfig]
+      : [primaryConfig, fallbackConfig];
+  let lastError = null;
+
+  for (const config of configs) {
+    const transport = buildQqSmtpTransport(config);
+    const fromName = String(process.env.QQ_SMTP_FROM_NAME || "Artigen").trim();
+    try {
+      await transport.sendMail({
+        from: `${fromName} <${config.user}>`,
+        to,
+        subject,
+        html,
+      });
+      return;
+    } catch (e) {
+      lastError = e;
+      console.error("QQ SMTP send failed:", summarizeQqSmtpError(e, config));
+      if (!isSmtpNetworkError(e)) throw e;
+    } finally {
+      try {
+        transport.close();
+      } catch {}
+    }
+  }
+  throw lastError || new Error("QQ_SMTP_SEND_FAILED");
 };
 
 const sendLoginMail = async (to, code) => {
