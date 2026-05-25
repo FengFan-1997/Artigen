@@ -443,15 +443,6 @@
                     ? ui.healthOkYes
                     : ui.healthOkNo
                 }}</a-descriptions-item>
-                <a-descriptions-item :label="ui.healthHfCacheUsage">{{
-                  formatHfCacheUsage(systemHealth?.hf?.cache?.usage)
-                }}</a-descriptions-item>
-                <a-descriptions-item :label="ui.healthRagVectors">{{
-                  formatRagInfo(systemHealth?.rag)
-                }}</a-descriptions-item>
-                <a-descriptions-item :label="ui.healthModeDoc">{{
-                  formatModeDocInfo(systemHealth?.modedoc)
-                }}</a-descriptions-item>
                 <a-descriptions-item :label="ui.healthStorage">{{
                   formatStorageInfo(systemHealth?.storage)
                 }}</a-descriptions-item>
@@ -703,9 +694,6 @@ const ui = computed(() =>
         healthServerTime: '服务器时间',
         healthTextProvider: '文本渠道',
         healthHasProvider: 'Key 配置',
-        healthHfCacheUsage: 'HF 缓存',
-        healthRagVectors: 'RAG 向量',
-        healthModeDoc: 'ModeDoc',
         healthStorage: '存储',
         rateLimitTotal: '桶数量',
         rateLimitUpdatedAt: '更新时间',
@@ -761,7 +749,7 @@ const ui = computed(() =>
         deepModeNo: '否',
         refresh: '刷新',
         userFilterPh: '可选：按用户 ID 过滤',
-        auditBizFilterPh: '可选：按 biz 过滤（例如 img2img/chat）',
+        auditBizFilterPh: '可选：按 biz 过滤（例如 img2img/generate）',
         auditKindFilterPh: '可选：按 kind 过滤（例如 image_generate）',
         auditStatusFilterPh: '可选：按状态过滤（ok/error）',
         imageSourceFilterPh: '可选：按来源过滤（例如 img2img）',
@@ -812,9 +800,6 @@ const ui = computed(() =>
         healthServerTime: 'Server Time',
         healthTextProvider: 'Text Provider',
         healthHasProvider: 'Key Configured',
-        healthHfCacheUsage: 'HF Cache',
-        healthRagVectors: 'RAG Vectors',
-        healthModeDoc: 'ModeDoc',
         healthStorage: 'Storage',
         rateLimitTotal: 'Buckets',
         rateLimitUpdatedAt: 'Updated At',
@@ -870,7 +855,7 @@ const ui = computed(() =>
         deepModeNo: 'No',
         refresh: 'Refresh',
         userFilterPh: 'Optional: filter by userId',
-        auditBizFilterPh: 'Optional: filter by biz (e.g. img2img/chat)',
+        auditBizFilterPh: 'Optional: filter by biz (e.g. img2img/generate)',
         auditKindFilterPh: 'Optional: filter by kind (e.g. image_generate)',
         auditStatusFilterPh: 'Optional: filter by status (ok/error)',
         imageSourceFilterPh: 'Optional: filter by source (e.g. img2img)',
@@ -915,48 +900,6 @@ const rateLimitColumns = computed(() => [
   { title: ui.value.colRateLimitTag, dataIndex: 'tag', key: 'tag' },
   { title: ui.value.colRateLimitBuckets, dataIndex: 'buckets', key: 'buckets' }
 ]);
-
-const formatBytes = (n: any) => {
-  const v = Number(n || 0);
-  if (!Number.isFinite(v) || v <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let val = v;
-  let idx = 0;
-  while (val >= 1024 && idx < units.length - 1) {
-    val /= 1024;
-    idx += 1;
-  }
-  const fixed = idx === 0 ? 0 : val >= 100 ? 0 : val >= 10 ? 1 : 2;
-  return `${val.toFixed(fixed)} ${units[idx]}`;
-};
-
-const formatHfCacheUsage = (usage: any) => {
-  if (!usage || typeof usage !== 'object') return '-';
-  const bytes =
-    Number((usage as any).totalBytes ?? (usage as any).bytes ?? (usage as any).sizeBytes ?? 0) || 0;
-  const files = Number((usage as any).totalFiles ?? (usage as any).files ?? 0) || 0;
-  const hit = Number((usage as any).hit ?? 0) || 0;
-  const miss = Number((usage as any).miss ?? 0) || 0;
-  const extra = hit + miss > 0 ? ` (hit ${hit}, miss ${miss})` : '';
-  return `${formatBytes(bytes)} / ${files}${extra}`;
-};
-
-const formatRagInfo = (rag: any) => {
-  if (!rag || typeof rag !== 'object') return '-';
-  const exists = rag.exists === true;
-  const sizeBytes = Number(rag.sizeBytes ?? 0) || 0;
-  const total = Number(rag.totalVectors ?? 0) || 0;
-  if (!exists) return `- / ${total}`;
-  return `${formatBytes(sizeBytes)} / ${total}`;
-};
-
-const formatModeDocInfo = (md: any) => {
-  if (!md || typeof md !== 'object') return '-';
-  const indexed = md.indexed === true;
-  const zh = Number(md.countZh ?? 0) || 0;
-  const en = Number(md.countEn ?? 0) || 0;
-  return `${indexed ? ui.value.healthOkYes : ui.value.healthOkNo} / zh ${zh} / en ${en}`;
-};
 
 const formatStorageInfo = (st: any) => {
   if (!st || typeof st !== 'object') return '-';

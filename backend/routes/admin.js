@@ -1,7 +1,6 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const { rateLimit, getRateLimitStats } = require('../lib/rateLimit');
-const { fetchWithTimeout } = require('../lib/fetch-utils');
 const {
   resolveConsoleAdminAccount,
   createAdminToken,
@@ -76,24 +75,6 @@ const resolveImageSource = (item) => {
   return userText ? 'ai_design' : '';
 };
 
-const drainResponseBody = async (resp) => {
-  const body = resp && resp.body;
-  if (!body || typeof body.on !== 'function') return 0;
-  return await new Promise((resolve, reject) => {
-    let bytes = 0;
-    body.on('data', (chunk) => {
-      try {
-        bytes += chunk ? chunk.length || 0 : 0;
-      } catch { }
-    });
-    body.on('end', () => resolve(bytes));
-    body.on('error', (e) => reject(e));
-    try {
-      if (typeof body.resume === 'function') body.resume();
-    } catch { }
-  });
-};
-
 const installAdminRoutes = (app) => {
   app.post('/api/admin/login', rateLimit('admin_login', { max: 30, windowMs: 60 * 1000 }), (req, res) => {
     try {
@@ -149,47 +130,6 @@ const installAdminRoutes = (app) => {
       return res.json({ ok: true, token: issued.token, expiresAt: issued.expiresAt });
     } catch (e) {
       console.error('Error in POST /api/admin/login:', e);
-      return res.status(500).json({ error: 'Internal Server Error' });
-    }
-  });
-
-  app.post('/api/admin/hf/prewarm', rateLimit('admin_hf_prewarm', { max: 10, windowMs: 60 * 1000 }), async (req, res) => {
-    try {
-      if (!assertAdmin(req, res)) return;
-      const body = req && req.body && typeof req.body === 'object' ? req.body : {};
-      const urlsRaw = Array.isArray(body.urls) ? body.urls : [];
-      const timeoutMsRaw = Number.parseInt(String(body.timeoutMs ?? ''), 10);
-      const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.min(timeoutMsRaw, 180000) : 120000;
-
-      const urls = urlsRaw
-        .map((u) => String(u || '').trim())
-        .filter(Boolean)
-        .slice(0, 30);
-
-      const selfBase = (() => {
-        const base = String(process.env.SELF_BASE_URL || '').trim();
-        if (/^https?:\/\//i.test(base)) return base.replace(/\/+$/, '');
-        const port = String(process.env.PORT || '8080').trim() || '8080';
-        return `http://127.0.0.1:${port}`;
-      })();
-
-      const items = [];
-      for (const raw of urls) {
-        const url = /^https?:\/\//i.test(raw)
-          ? raw
-          : `${selfBase}${raw.startsWith('/') ? raw : `/${raw}`}`;
-        try {
-          const resp = await fetchWithTimeout(url, { method: 'GET', redirect: 'follow' }, timeoutMs);
-          const bytes = await drainResponseBody(resp);
-          items.push({ url: raw, status: resp.status, ok: !!resp.ok, bytes });
-        } catch (e) {
-          items.push({ url: raw, status: 0, ok: false, error: String(e?.message || e) });
-        }
-      }
-
-      return res.json({ ok: true, total: items.length, items });
-    } catch (e) {
-      console.error('Error in POST /api/admin/hf/prewarm:', e);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   });

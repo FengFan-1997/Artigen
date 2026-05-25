@@ -553,6 +553,7 @@ const buildBackgroundMaskAlgorithm1 = (
   const refineMask = (srcMask: Uint8Array, mw: number, mh: number) => {
     const len = mw * mh;
     if (!len) return srcMask;
+    if (mw < 5 || mh < 5) return srcMask;
     const src = srcMask;
     const tmp = new Uint8Array(len);
     const tmp2 = new Uint8Array(len);
@@ -673,6 +674,7 @@ const buildBackgroundMaskAlgorithm1 = (
   const closeForeground = (srcMask: Uint8Array, mw: number, mh: number) => {
     const len = mw * mh;
     if (!len) return srcMask;
+    if (mw < 5 || mh < 5) return srcMask;
     const fg = new Uint8Array(len);
     for (let i = 0; i < len; i++) fg[i] = srcMask[i] ? 0 : 1;
     const dil = new Uint8Array(len);

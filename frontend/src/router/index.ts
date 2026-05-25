@@ -3,28 +3,6 @@ import { loginRoutes } from '../login/routes';
 import { trackPageView } from '@/utils/analytics';
 import ImageWorkshop from '../agentImg/views/ImageWorkshop.vue';
 
-const readRouteLockdown = () => {
-  try {
-    if ((globalThis as any).__ROUTE_LOCKDOWN__ === true) return true;
-  } catch {}
-  if (!import.meta.env.DEV) return false;
-  try {
-    const q = new URLSearchParams(window.location.search);
-    return q.get('__route_lockdown') === '1' || q.get('route_lockdown') === '1';
-  } catch {
-    return false;
-  }
-};
-
-const ROUTE_LOCKDOWN = readRouteLockdown();
-
-const isAgentDebugRouteEnabled = () => {
-  try {
-    if (import.meta.env.DEV) return true;
-  } catch {}
-  return false;
-};
-
 type RouteSeoMeta = {
   title?: { zh: string; en: string } | string;
   description?: { zh: string; en: string } | string;
@@ -125,6 +103,10 @@ const routes = [
     redirect: '/artigen/tools'
   },
   {
+    path: '/tools',
+    redirect: '/artigen/tools'
+  },
+  {
     path: '/aether-market',
     redirect: '/artigen/market'
   },
@@ -151,7 +133,7 @@ const routes = [
       },
       description: {
         zh: 'Artigen 提供 AI 设计（文生图/图生图）、工具箱与点数商城，一站式影像处理解决方案。',
-        en: 'Artigen offers AI Design, Tools, and a credit market for end‑to‑end image workflows.'
+        en: 'Artigen offers AI Design, Tools, and a credit market for end-to-end image workflows.'
       },
       keywords: {
         zh: 'AI设计,文生图,图生图,提示词优化,电商产品图,工具箱,点数商城',
@@ -171,7 +153,7 @@ const routes = [
       title: { zh: '工具 - Artigen', en: 'Tools - Artigen' },
       description: {
         zh: '纯前端图片/文件处理工具集：转换、压缩、PDF 与常用编辑，快速、安全、无需上传。',
-        en: 'Client-side image & file tools: convert, compress, PDF, and quick edits — fast, private, and upload-free.'
+        en: 'Client-side image & file tools: convert, compress, PDF, and quick edits - fast, private, and upload-free.'
       },
       keywords: {
         zh: '工具,图片处理,格式转换,heic转jpg,png转jpg,webp转换,PDF工具,前端本地处理,隐私安全',
@@ -179,7 +161,25 @@ const routes = [
       }
     } satisfies RouteSeoMeta
   },
-
+  {
+    path: '/artigen/tools-seo',
+    name: 'seo-tools-landing',
+    component: () => import('../agentImg/views/SeoLanding.vue'),
+    meta: {
+      title: {
+        zh: '免费在线工具集 - 格式转换与AI工坊 - Artigen',
+        en: 'Free Online Tools - Format Factory & AI Workshop - Artigen'
+      },
+      description: {
+        zh: 'Artigen 提供一站式免费在线工具：图片格式转换（HEIC/WebP/PDF）、AI 文生图、图生图与电商素材生成。隐私安全，无需下载。',
+        en: 'One-stop free online tools by Artigen: Image format conversion (HEIC/WebP/PDF), AI text-to-image, and ecommerce assets. Privacy-first, no download.'
+      },
+      keywords: {
+        zh: '在线工具,免费格式转换,HEIC转JPG,PDF工具,AI绘图,文生图,在线修图,Artigen工具箱',
+        en: 'online tools,free format converter,heic to jpg,pdf tools,ai art generator,text to image,online photo editor,artigen toolkit'
+      }
+    } satisfies RouteSeoMeta
+  },
   {
     path: '/artigen/legal/terms',
     name: 'terms',
@@ -215,116 +215,6 @@ const routes = [
         en: 'Artigen refund and dispute policy.'
       }
     } satisfies RouteSeoMeta
-  },
-  {
-    path: '/ai-ppt',
-    name: 'ai-ppt',
-    component: () => import('../project/AiPptGen.vue')
-  },
-  {
-    path: '/secret-garden',
-    name: 'secret-garden',
-    component: () => import('../project/SecretLove.vue')
-  },
-  {
-    path: '/secret/galaxy',
-    name: 'galaxy',
-    component: () => import('../components/secret/pages/GalaxyPage.vue')
-  },
-  {
-    path: '/secret/sea',
-    name: 'sea',
-    component: () => import('../components/secret/pages/SeaOfStarsPage.vue')
-  },
-  {
-    path: '/secret/crystal',
-    name: 'crystal',
-    component: () => import('../components/secret/pages/CrystalWorldPage.vue')
-  },
-  {
-    path: '/secret/matrix',
-    name: 'matrix',
-    component: () => import('../components/secret/pages/MatrixRainPage.vue')
-  },
-  {
-    path: '/secret/fireworks',
-    name: 'fireworks',
-    component: () => import('../components/secret/pages/FireworksPage.vue')
-  },
-  {
-    path: '/secret/quantum',
-    name: 'quantum',
-    component: () => import('../components/secret/pages/QuantumFieldPage.vue')
-  },
-  {
-    path: '/secret/blackhole',
-    name: 'blackhole',
-    component: () => import('../components/secret/pages/BlackHolePage.vue')
-  },
-  {
-    path: '/secret/tunnel',
-    name: 'tunnel',
-    component: () => import('../components/secret/pages/TimeTunnelPage.vue')
-  },
-  {
-    path: '/secret/nebula',
-    name: 'nebula',
-    component: () => import('../components/secret/pages/NebulaPage.vue')
-  },
-  {
-    path: '/secret/sakura',
-    name: 'sakura',
-    component: () => import('../components/secret/pages/SakuraPage.vue')
-  },
-  {
-    path: '/portfolio-home',
-    name: 'portfolio-home',
-    component: () => import('../views/PortfolioHome.vue')
-  },
-  {
-    path: '/gemini-chat',
-    name: 'gemini-chat',
-    component: () => import('../project/GeminiChat.vue')
-  },
-  {
-    path: '/translator',
-    name: 'translator',
-    component: () => import('../project/Translator.vue')
-  },
-  {
-    path: '/storyteller',
-    name: 'storyteller',
-    component: () => import('../project/StoryTeller.vue')
-  },
-  {
-    path: '/ingredient',
-    name: 'ingredient',
-    component: () => import('../Ingredient/index.vue')
-  },
-  {
-    path: '/christmas-tree',
-    name: 'christmas-tree',
-    component: () => import('../ChristmasTree/index.vue')
-  },
-  {
-    path: '/resume-forge',
-    name: 'resume-forge',
-    component: () => import('../project/ResumeForge.vue')
-  },
-  {
-    path: '/code-guardian',
-    name: 'code-guardian',
-    component: () => import('../project/CodeGuardian.vue')
-  },
-  {
-    path: '/travel-planner',
-    name: 'travel-planner',
-    component: () => import('../project/TravelPlanner.vue')
-  },
-  {
-    path: '/nexus-dashboard',
-    name: 'nexus-dashboard',
-    component: () => import('../project/NexusDashboard.vue')
   },
   {
     path: '/artigen/image-workshop',
@@ -385,25 +275,6 @@ const routes = [
     } satisfies RouteSeoMeta
   },
   {
-    path: '/artigen/tools',
-    name: 'seo-tools-landing',
-    component: () => import('../agentImg/views/SeoLanding.vue'),
-    meta: {
-      title: {
-        zh: '免费在线工具集 - 格式转换与AI工坊 - Artigen',
-        en: 'Free Online Tools - Format Factory & AI Workshop - Artigen'
-      },
-      description: {
-        zh: 'Artigen 提供一站式免费在线工具：图片格式转换（HEIC/WebP/PDF）、AI 文生图、图生图与电商素材生成。隐私安全，无需下载。',
-        en: 'One-stop free online tools by Artigen: Image format conversion (HEIC/WebP/PDF), AI text-to-image, and ecommerce assets. Privacy-first, no download.'
-      },
-      keywords: {
-        zh: '在线工具,免费格式转换,HEIC转JPG,PDF工具,AI绘图,文生图,在线修图,Artigen工具箱',
-        en: 'online tools,free format converter,heic to jpg,pdf tools,ai art generator,text to image,online photo editor,artigen toolkit'
-      }
-    } satisfies RouteSeoMeta
-  },
-  {
     path: '/artigen/about',
     name: 'about',
     component: () => import('../agentImg/views/AboutPage.vue'),
@@ -428,21 +299,6 @@ const routes = [
       keywords: { zh: '点数明细,扣费记录,冻结,退款', en: 'credits,usage,holds,refunds' }
     } satisfies RouteSeoMeta
   },
-  {
-    path: '/room',
-    name: 'room',
-    component: () => import('../room/RoomPage.vue')
-  },
-  ...(isAgentDebugRouteEnabled()
-    ? [
-        {
-          path: '/agent-debug',
-          name: 'agent-debug',
-          component: () => import('../views/AgentDebug.vue'),
-          meta: { robots: 'noindex,nofollow' } satisfies RouteSeoMeta
-        }
-      ]
-    : []),
   {
     path: '/artigen/ai',
     name: 'agent-img-tool',
@@ -568,32 +424,9 @@ const routes = [
   }
 ];
 
-const isAllowedInLockdown = (path: string) => {
-  if (path === '/') return true;
-  if (path.startsWith('/artigen')) return true;
-  if (path.startsWith('/console')) return true;
-  if (path.startsWith('/console2')) return true;
-  if (path.startsWith('/login')) return true;
-  if (path === '/agent-img') return true;
-  if (path === '/format-factory') return true;
-  if (path === '/tools') return true;
-  if (path === '/aether-market') return true;
-  if (path === '/legal/terms') return true;
-  if (path === '/legal/privacy') return true;
-  if (path === '/legal/refund') return true;
-  return false;
-};
-
-const activeRoutes = ROUTE_LOCKDOWN
-  ? [
-      ...routes.filter((r: any) => isAllowedInLockdown(String(r?.path || ''))),
-      { path: '/:pathMatch(.*)*', redirect: '/artigen' }
-    ]
-  : routes;
-
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
-  routes: activeRoutes as any
+  routes: routes as any
 });
 
 router.onError((err, to) => {

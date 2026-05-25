@@ -7,10 +7,8 @@ const MEMORY_DIR = (() => {
   if (process.platform !== 'win32' && fs.existsSync('/data')) return '/data';
   return path.join(__dirname, '../memory');
 })();
-const VECTORS_FILE = path.join(MEMORY_DIR, 'vectors.json');
 const CHATS_FILE = path.join(MEMORY_DIR, 'chats.json');
 const USERS_FILE = path.join(MEMORY_DIR, 'users.json');
-const API_KEYS_FILE = path.join(MEMORY_DIR, 'api_keys.json');
 const USAGE_LEDGER_FILE = path.join(MEMORY_DIR, 'usage_ledger.json');
 const ANALYTICS_EVENTS_FILE = path.join(MEMORY_DIR, 'analytics_events.json');
 const CREDITS_WALLET_FILE = path.join(MEMORY_DIR, 'credits_wallet.json');
@@ -82,10 +80,8 @@ const writeUserMemory = (userId, data) => {
 module.exports = {
   MEMORY_DIR,
   FILES_DIR,
-  VECTORS_FILE,
   CHATS_FILE,
   USERS_FILE,
-  API_KEYS_FILE,
   USAGE_LEDGER_FILE,
   ANALYTICS_EVENTS_FILE,
   CREDITS_WALLET_FILE,

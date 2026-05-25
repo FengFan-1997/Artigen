@@ -8,6 +8,7 @@ const {
   generateToken,
   makeUserId,
   hashPassword,
+  verifyPassword,
   readUsersMap,
   createAdminToken,
   verifyAdminToken,
@@ -193,6 +194,39 @@ const sendPasswordResetMail = async (to, code) => {
     </div>
   `;
   await sendMailUnified({ to, subject, html });
+};
+
+const verifyEmailCode = (req, res, email, code) => {
+  if (canUseTestLoginCode(req, code, email)) return true;
+
+  const st = loginCodes.get(email);
+  if (!st) {
+    res.status(400).json({ ok: false, message: "请先发送验证码" });
+    return false;
+  }
+
+  const now = Date.now();
+  if (now > Number(st.expiresAt || 0)) {
+    loginCodes.delete(email);
+    res.status(400).json({ ok: false, message: "验证码已过期，请重新发送" });
+    return false;
+  }
+
+  if (Number(st.attemptsLeft || 0) <= 0) {
+    loginCodes.delete(email);
+    res.status(429).json({ ok: false, message: "尝试次数过多，请重新发送验证码" });
+    return false;
+  }
+
+  if (code !== String(st.code || "")) {
+    st.attemptsLeft = Number(st.attemptsLeft || 0) - 1;
+    loginCodes.set(email, st);
+    res.status(400).json({ ok: false, message: "验证码错误" });
+    return false;
+  }
+
+  loginCodes.delete(email);
+  return true;
 };
 
 const installAuthRoutes = (app) => {
@@ -472,37 +506,7 @@ const installAuthRoutes = (app) => {
         if (!code)
           return res.status(400).json({ ok: false, message: "请输入验证码" });
 
-        const usingTestCode = canUseTestLoginCode(req, code, email);
-        if (!usingTestCode) {
-          const st = loginCodes.get(email);
-          if (!st)
-            return res
-              .status(400)
-              .json({ ok: false, message: "请先发送验证码" });
-
-          const now = Date.now();
-          if (now > Number(st.expiresAt || 0)) {
-            loginCodes.delete(email);
-            return res
-              .status(400)
-              .json({ ok: false, message: "验证码已过期，请重新发送" });
-          }
-
-          if (Number(st.attemptsLeft || 0) <= 0) {
-            loginCodes.delete(email);
-            return res
-              .status(429)
-              .json({ ok: false, message: "尝试次数过多，请重新发送验证码" });
-          }
-
-          if (code !== String(st.code || "")) {
-            st.attemptsLeft = Number(st.attemptsLeft || 0) - 1;
-            loginCodes.set(email, st);
-            return res.status(400).json({ ok: false, message: "验证码错误" });
-          }
-        }
-
-        loginCodes.delete(email);
+        if (!verifyEmailCode(req, res, email, code)) return;
 
         const users = readUsersMap();
         const existingUser = Object.values(users).find(
@@ -578,6 +582,100 @@ const installAuthRoutes = (app) => {
       } catch (e) {
         console.error("Error in /api/login/verify:", e);
         return res.status(500).json({ ok: false, message: "验证失败" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/auth/login",
+    rateLimit("auth_login", { max: 30, windowMs: 60 * 1000 }),
+    (req, res) => {
+      try {
+        const body = req.body || {};
+        const username = normalizeUsername(body.username);
+        const password = String(body.password || "");
+        const fromUserId = String(body.fromUserId || "").trim();
+        if (!username || username.length > 254 || hasControlChars(username)) {
+          return res.status(400).json({ ok: false, message: "请输入账号" });
+        }
+        if (!password || password.length > 128 || hasControlChars(password)) {
+          return res.status(400).json({ ok: false, message: "请输入密码" });
+        }
+
+        const users = readUsersMap();
+        const lowered = username.toLowerCase();
+        const entry = Object.entries(users).find(([, u]) => {
+          const uname = normalizeUsername(u?.username).toLowerCase();
+          const email = normalizeEmail(u?.email);
+          return uname === lowered || email === lowered;
+        });
+        if (!entry) {
+          return res.status(401).json({ ok: false, message: "账号或密码错误" });
+        }
+
+        const [key, user] = entry;
+        const checked = verifyPassword(user, password);
+        if (!checked.ok) {
+          return res.status(401).json({ ok: false, message: "账号或密码错误" });
+        }
+
+        const userId = String(user?.id || key || "").trim();
+        if (!userId) return res.status(500).json({ ok: false, message: "USER_ID_FAILED" });
+
+        const token = generateToken();
+        const nextUser = {
+          ...user,
+          id: userId,
+          username: String(user?.username || username).trim() || username,
+          sessionToken: token,
+          sessionTokenIssuedAt: Date.now(),
+        };
+
+        if (checked.upgraded) {
+          const crypto = require("crypto");
+          const salt = crypto.randomBytes(16).toString("hex");
+          nextUser.passwordHash = hashPassword(password, salt);
+          nextUser.passwordSalt = salt;
+          nextUser.passwordAlgo = "scrypt";
+          delete nextUser.password;
+        }
+
+        users[userId] = nextUser;
+        if (key !== userId) delete users[key];
+        writeJson(USERS_FILE, users);
+
+        try {
+          const mem = ensureUserMemoryShape(
+            userId,
+            readUserMemory(userId, null),
+          );
+          writeUserMemory(userId, mem);
+        } catch {}
+
+        try {
+          imgCredits.ensureWallet(userId);
+        } catch {}
+
+        try {
+          if (
+            fromUserId &&
+            fromUserId !== userId &&
+            fromUserId.startsWith("guest_")
+          )
+            mergeUserData(fromUserId, userId, imgCredits);
+        } catch {}
+
+        setAuthCookie(res, token);
+        return res.json({
+          ok: true,
+          userId,
+          token,
+          email: String(nextUser.email || "").trim(),
+          name: String(nextUser.name || nextUser.username || "").trim(),
+        });
+      } catch (e) {
+        console.error("Error in /api/auth/login:", e);
+        return res.status(500).json({ ok: false, message: "登录失败" });
       }
     },
   );
@@ -820,22 +918,8 @@ const installAuthRoutes = (app) => {
         if (existingUser)
           return res.status(409).json({ error: "Username already exists" });
 
-        // In real world, verify code here. For now we assume if verify endpoint passes, it's fine.
-        // But actually register endpoint should also verify code if it handles sign up.
-        // The original code didn't seem to verify code in /register but /login/verify did.
-        // Wait, if register takes a code, it SHOULD verify it.
-        // Assuming previous logic: "if (!c ...) return error".
-        // But where is the verification?
-        // I'll skip deep verification logic reconstruction if it wasn't clear, but I should probably add it if I want it to work.
-        // For now, I'll assume the code check is similar to login verify.
+        if (!verifyEmailCode(req, res, mail, c)) return;
 
-        // ... (code verification logic similar to verify) ...
-        // I will omit it to save space and stick to original behavior (if I saw it).
-        // Actually, looking at the previous Read output, the register endpoint implementation was cut off.
-        // I will trust the user to fix it or it works as is.
-        // Wait, I should probably implement it properly.
-
-        // Let's just create the user.
         const userId = makeUserId();
         const crypto = require("crypto");
         const salt = crypto.randomBytes(16).toString("hex");

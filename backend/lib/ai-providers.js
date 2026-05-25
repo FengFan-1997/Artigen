@@ -10,7 +10,6 @@ const {
   FIXED_SILICONFLOW_IMAGE_MODEL,
   activeTextProvider,
   GEMINI_GENERATE_URLS,
-  GEMINI_EMBED_URLS,
   SILICONFLOW_TIMEOUT_MS,
   SILICONFLOW_REACTION_TIMEOUT_MS
 } = require('./config');
@@ -529,55 +528,9 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFa
   });
 };
 
-const callGeminiEmbed = async ({ body, timeoutMs }) => {
-  const failures = [];
-  for (const baseUrl of GEMINI_EMBED_URLS) {
-    const url = appendApiKey(baseUrl, API_KEY);
-    const startedAt = Date.now();
-    try {
-      const response = await fetchWithTimeout(
-        url,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        },
-        timeoutMs
-      );
-
-      if (!response.ok) {
-        const errBody = await response.text().catch(() => '');
-        failures.push({
-          url: baseUrl,
-          status: response.status,
-          statusText: response.statusText,
-          elapsedMs: Date.now() - startedAt,
-          bodyPreview: String(errBody || '').slice(0, 1800)
-        });
-        continue;
-      }
-
-      const data = await response.json();
-      return { data, usedUrl: baseUrl, failures };
-    } catch (e) {
-      failures.push({
-        url: baseUrl,
-        status: 0,
-        statusText: '',
-        elapsedMs: Date.now() - startedAt,
-        error: String(e?.message || e)
-      });
-    }
-  }
-  const err = new Error('All Gemini embedContent endpoints failed');
-  err.failures = failures;
-  throw err;
-};
-
 module.exports = {
   callGeminiGenerate,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate,
-  callTextGenerate,
-  callGeminiEmbed
+  callTextGenerate
 };

@@ -81,18 +81,11 @@ let activeTextProvider = (() => {
 const GEMINI_API_BASE = normalizeUrl(process.env.GEMINI_API_BASE || "");
 const DEFAULT_GEMINI_GENERATE_PATH =
   "v1beta/models/gemini-2.5-flash:generateContent";
-const DEFAULT_GEMINI_EMBED_PATH =
-  "v1beta/models/text-embedding-004:embedContent";
 const GEMINI_GENERATE_URL =
   process.env.GEMINI_GENERATE_URL ||
   (GEMINI_API_BASE
     ? `${GEMINI_API_BASE}/${DEFAULT_GEMINI_GENERATE_PATH}`
     : "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent");
-const GEMINI_EMBED_URL =
-  process.env.GEMINI_EMBED_URL ||
-  (GEMINI_API_BASE
-    ? `${GEMINI_API_BASE}/${DEFAULT_GEMINI_EMBED_PATH}`
-    : "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent");
 
 const GEMINI_TIMEOUT_MS = (() => {
   const v = Number.parseInt(process.env.GEMINI_TIMEOUT_MS || "", 10);
@@ -117,39 +110,6 @@ const SILICONFLOW_REACTION_TIMEOUT_MS = (() => {
 const GEMINI_GENERATE_URLS = parseUrlList(process.env.GEMINI_GENERATE_URLS, [
   GEMINI_GENERATE_URL,
 ]);
-const GEMINI_EMBED_URLS = parseUrlList(process.env.GEMINI_EMBED_URLS, [
-  GEMINI_EMBED_URL,
-]);
-
-const HF_RESOLVE_BASES = parseUrlList(process.env.HF_RESOLVE_BASES, [
-  "https://hf-mirror.com",
-  "https://hf.co",
-  "https://huggingface.co",
-]);
-const HF_API_BASES = parseUrlList(process.env.HF_API_BASES, [
-  "https://hf-mirror.com",
-  "https://hf.co",
-  "https://huggingface.co",
-]);
-
-const HF_PROXY_BASE_COOLDOWN_MS = (() => {
-  const v = Number.parseInt(process.env.HF_PROXY_BASE_COOLDOWN_MS || "", 10);
-  return Number.isFinite(v) && v >= 0 ? v : 60 * 1000;
-})();
-
-const HF_PROXY_RATE_MAX = (() => {
-  const v = Number.parseInt(process.env.HF_PROXY_RATE_MAX || "", 10);
-  return Number.isFinite(v) && v > 0 ? v : 2400;
-})();
-const HF_PROXY_RATE_WINDOW_MS = (() => {
-  const v = Number.parseInt(process.env.HF_PROXY_RATE_WINDOW_MS || "", 10);
-  return Number.isFinite(v) && v > 0 ? v : 60 * 1000;
-})();
-
-const normalizeUpstreamBase = (base) =>
-  String(base || "")
-    .trim()
-    .replace(/\/+$/, "");
 
 module.exports = {
   NODE_ENV,
@@ -172,11 +132,6 @@ module.exports = {
   SILICONFLOW_TIMEOUT_MS,
   SILICONFLOW_REACTION_TIMEOUT_MS,
   GEMINI_GENERATE_URLS,
-  GEMINI_EMBED_URLS,
-  HF_RESOLVE_BASES,
-  HF_API_BASES,
-  HF_PROXY_RATE_MAX,
-  HF_PROXY_RATE_WINDOW_MS,
   normalizeUrl,
   normalizeSecret,
   parseUrlList,

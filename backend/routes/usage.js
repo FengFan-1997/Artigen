@@ -91,14 +91,13 @@ const installUsageRoutes = (app, deps) => {
       const tokensIn = Number(body.tokensIn ?? body.promptTokens ?? 0) || 0;
       const tokensOut = Number(body.tokensOut ?? body.completionTokens ?? 0) || 0;
       const tokensTotal = Number(body.tokensTotal ?? body.totalTokens ?? 0) || 0;
-      const ragUsed = !!(body.rag && body.rag.used);
       const creditsDeltaRaw = body.creditsDelta;
       const creditsDelta =
         typeof creditsDeltaRaw === 'number'
           ? creditsDeltaRaw
           : Number.isFinite(Number(creditsDeltaRaw))
             ? Number(creditsDeltaRaw)
-            : computeCreditsDelta({ tokensTotal, ragUsed });
+            : computeCreditsDelta({ tokensTotal });
 
       const item = {
         requestId,
@@ -114,7 +113,6 @@ const installUsageRoutes = (app, deps) => {
         tokensOut: Math.max(0, tokensOut),
         tokensTotal: Math.max(0, tokensTotal || tokensIn + tokensOut),
         creditsDelta,
-        rag: body.rag && typeof body.rag === 'object' ? body.rag : undefined,
         plan: body.plan && typeof body.plan === 'object' ? body.plan : undefined,
         status: String(body.status || '').trim().slice(0, 40),
         durationMs: typeof body.durationMs === 'number' ? Math.max(0, body.durationMs) : undefined,

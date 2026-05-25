@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia';
 import { message } from 'ant-design-vue';
 import gsap from 'gsap';
 import IngredientLabelTypeSelect from '../components/IngredientLabelTypeSelect.vue';
-import ActionButton from '@/components/ActionButton.vue';
+import ActionButton from '@/agentImg/components/ActionButton.vue';
 import { useLanguageStore } from '@/stores/language';
 import { generateText } from '../services/text';
 import {

@@ -7,7 +7,7 @@ import {
   isLocalLoggedIn
 } from '@/login/session';
 import { trackEvent } from '@/utils/analytics';
-import { getPageContext } from '@/agent/utils/pageContext';
+import { getPageContext } from '@/utils/pageContext';
 
 export type CreditsBalance = {
   userId: string;

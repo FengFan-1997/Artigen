@@ -8,7 +8,7 @@ require("dotenv").config({
   path: path.resolve(__dirname, ".env"),
   override: true,
 });
-const { fetch, fetchWithTimeout } = require("./lib/fetch-utils");
+const { fetchWithTimeout } = require("./lib/fetch-utils");
 
 const {
   readJson,
@@ -17,10 +17,6 @@ const {
   writeUserMemory,
   getUserMemoryFile,
   MEMORY_DIR,
-  VECTORS_FILE,
-  CHATS_FILE,
-  USERS_FILE,
-  API_KEYS_FILE,
   USAGE_LEDGER_FILE,
   ANALYTICS_EVENTS_FILE,
   PAY_ORDERS_FILE,
@@ -32,27 +28,17 @@ const { getClientIp, rateLimit } = require("./lib/rateLimit");
 const { createLedger } = require("./lib/usageLedger");
 const { installSystemRoutes } = require("./routes/system");
 const { installUsageRoutes } = require("./routes/usage");
-const { installHfRoutes } = require("./routes/hf");
 const { installAuthRoutes } = require("./routes/auth");
 const { installAdminRoutes } = require("./routes/admin");
 
 const {
   assertAdmin,
-  sanitizeUserProfile,
   resolveAuthUser,
   parseBearerToken,
   verifyAdminToken,
-  normalizeEmail,
-  canUseTestLoginCode,
   readUsersMap,
   assertAuthUserMatches,
 } = require("./lib/auth-utils");
-const {
-  readApiKeysMap,
-  createApiKeyForUser,
-  resolveApiKeyUser,
-  maskApiKey,
-} = require("./lib/api-key-utils");
 const {
   NODE_ENV,
   isProd,
@@ -62,58 +48,21 @@ const {
   SILICONFLOW_MODEL,
   activeTextProvider,
   GEMINI_GENERATE_URLS,
-  GEMINI_EMBED_URLS,
   GEMINI_TIMEOUT_MS,
-  GEMINI_REACTION_TIMEOUT_MS,
-  SILICONFLOW_TIMEOUT_MS,
-  SILICONFLOW_REACTION_TIMEOUT_MS,
-  HF_RESOLVE_BASES,
-  HF_API_BASES,
-  HF_CACHE_DIR,
-  HF_CACHE_TTL_MS,
-  HF_CACHE_MAX_BYTES,
-  HF_CACHE_MAX_FILES,
-  HF_PROXY_RATE_MAX,
-  HF_PROXY_RATE_WINDOW_MS,
-  normalizeUrl,
-  normalizeUpstreamBase,
 } = require("./lib/config");
 const {
   callGeminiGenerate,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate,
   callTextGenerate,
-  callGeminiEmbed,
 } = require("./lib/ai-providers");
-const {
-  proxyHuggingFace,
-  proxyLive2DCubismCore,
-  getHfCacheUsage,
-  getHfCacheStats,
-  hfProxyBaseHealth,
-} = require("./lib/hf-proxy");
-const { buildModeDocIndex, MODEDOC_ROOT } = require("./lib/modedoc");
-const {
-  buildOfflineReply,
-  extractRagKeywords,
-  scoreRagKeywordHit,
-  stripControlText,
-  analyzeIntent,
-  buildChatPrompt,
-} = require("./lib/intent");
 const {
   persistImageRefForUser,
   persistGenerateImageInputForUser,
   appendUserImageHistory,
   appendUserAuditHistory,
-  appendUserMemoryItems,
-  buildLongMemoryText,
-  toImageHistoryRef,
-  summarizeHistory,
 } = require("./lib/memory-manager");
 const { ensureUserMemoryShape } = require("./lib/memory-utils");
-const { dedupeStrings, trimPromptText } = require("./lib/user-utils");
-const { getEmbedding, cosineSimilarity } = require("./lib/vector-utils");
 
 const app = express();
 console.log("Raw process.env.PORT:", process.env.PORT);
@@ -825,58 +774,6 @@ const clampInt = (n, min, max) => {
   return Number.isFinite(v) ? Math.min(Math.max(v, min), max) : min;
 };
 
-const normalizeUserId = (raw) => {
-  const s = String(raw || "").trim();
-  if (s) return s;
-  return "";
-};
-
-const stringifyPageContext = (input) => {
-  if (typeof input === "string") return input.trim();
-  if (!input) return "";
-  try {
-    return JSON.stringify(input);
-  } catch {
-    return "";
-  }
-};
-
-const appendChatHistory = (userId, item) => {
-  if (!userId || !item) return;
-  try {
-    const store = readJson(CHATS_FILE, {});
-    const list = Array.isArray(store[userId]) ? store[userId] : [];
-    list.push(item);
-    store[userId] = list.slice(-240);
-    writeJson(CHATS_FILE, store);
-  } catch {}
-};
-
-const formatHistoryLines = (history, lang) => {
-  const userLabel = lang === "en" ? "User" : "用户";
-  const assistantLabel = lang === "en" ? "Assistant" : "助手";
-  const lines = [];
-  for (const m of history) {
-    const role = String(m?.role || "").trim();
-    const text = trimPromptText(String(m?.text || ""), 1600);
-    if (!text) continue;
-    const label = role === "user" ? userLabel : assistantLabel;
-    lines.push(`${label}: ${text}`);
-  }
-  return lines;
-};
-
-const buildEventsText = (events) => {
-  const lines = [];
-  for (const it of events || []) {
-    const text = String(it?.text || "").trim();
-    if (!text) continue;
-    lines.push(text.slice(0, 600));
-    if (lines.length >= 12) break;
-  }
-  return lines.join("\n");
-};
-
 // Routes Installation
 
 const ledger = createLedger({
@@ -886,456 +783,6 @@ const ledger = createLedger({
   ANALYTICS_EVENTS_FILE,
   getClientIp,
 });
-
-app.post(
-  "/api/chat",
-  rateLimit("chat", { max: 60, windowMs: 60 * 1000 }),
-  async (req, res) => {
-    const body = req.body || {};
-    const requestId = String(
-      body.requestId || res.locals.requestId || "",
-    ).trim();
-    const rawMessage = String(body.message || "").trim();
-    const agentContext =
-      body.agentContext && typeof body.agentContext === "object"
-        ? body.agentContext
-        : null;
-    const userId =
-      normalizeUserId(body.userId) ||
-      normalizeUserId(agentContext?.user?.id) ||
-      `guest_${Date.now().toString(36)}`;
-    const sessionId = ledger.sanitizeLedgerId(body.sessionId);
-    const projectId = ledger.sanitizeLedgerId(body.projectId);
-
-    if (!rawMessage)
-      return res.status(400).json({ error: "EMPTY_MESSAGE", requestId });
-    if (userId && !userId.startsWith("guest_")) {
-      if (!assertAuthUserMatches(req, res, userId)) return;
-    }
-
-    const lang = agentContext?.runtime?.lang === "en" ? "en" : "zh";
-    const personaName =
-      String(
-        agentContext?.persona?.name ||
-          agentContext?.character?.name ||
-          "Lumina",
-      ).trim() || "Lumina";
-    const personaId =
-      String(agentContext?.persona?.id || "persona_default").trim() ||
-      "persona_default";
-    const personaRules = String(agentContext?.persona?.rules || "").trim();
-    const userName =
-      String(agentContext?.user?.name || "Friend").trim() || "Friend";
-    const allowedMotions = Array.isArray(
-      agentContext?.constraints?.allowedMotions,
-    )
-      ? agentContext.constraints.allowedMotions
-      : [];
-    const allowedExpressions = Array.isArray(
-      agentContext?.constraints?.allowedExpressions,
-    )
-      ? agentContext.constraints.allowedExpressions
-      : [];
-
-    const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
-    const longMemory = buildLongMemoryText({
-      coreMemory: Array.isArray(mem?.core_memory) ? mem.core_memory : [],
-      summary: String(mem?.meta?.summary || "").trim(),
-    });
-    const memorySummary = String(agentContext?.memory?.summary || "").trim();
-    const eventsText = buildEventsText(
-      agentContext?.memory?.recentEvents || [],
-    );
-
-    const intent = analyzeIntent({
-      message: rawMessage,
-      ctx: agentContext,
-      lang,
-    });
-
-    const projectKnowledge = String(body.projectKnowledge || "").trim();
-    const pageContextText = trimPromptText(
-      stringifyPageContext(body.pageContext),
-      1600,
-    );
-    const requestSource = String(body.requestSource || "")
-      .trim()
-      .slice(0, 160);
-
-    let ragText = "";
-    let ragMeta = null;
-    let ragUsed = false;
-
-    if (intent.includeRag) {
-      try {
-        const vectorsRaw = readJson(VECTORS_FILE, []);
-        const vectors = Array.isArray(vectorsRaw) ? vectorsRaw : [];
-        const keywords = extractRagKeywords(rawMessage, lang);
-        const keywordScores = [];
-        if (keywords.length) {
-          for (const v of vectors) {
-            const text = typeof v?.text === "string" ? v.text.trim() : "";
-            if (!text) continue;
-            const lower = text.toLowerCase();
-            let score = 0;
-            for (const k of keywords)
-              score += scoreRagKeywordHit(lower, String(k || "").toLowerCase());
-            if (score > 0) keywordScores.push({ v, score });
-          }
-          keywordScores.sort((a, b) => b.score - a.score);
-        }
-        const embedding = await getEmbedding(rawMessage);
-        const embScores = [];
-        if (Array.isArray(embedding) && embedding.length) {
-          for (const v of vectors) {
-            if (
-              !Array.isArray(v?.embedding) ||
-              v.embedding.length !== embedding.length
-            )
-              continue;
-            const sim = cosineSimilarity(embedding, v.embedding);
-            if (!Number.isFinite(sim)) continue;
-            embScores.push({ v, score: sim });
-          }
-          embScores.sort((a, b) => b.score - a.score);
-        }
-        const picked = (embScores.length ? embScores : keywordScores).slice(
-          0,
-          6,
-        );
-        const blocks = [];
-        const metaItems = [];
-        for (const p of picked) {
-          const text = typeof p?.v?.text === "string" ? p.v.text.trim() : "";
-          if (!text) continue;
-          const source =
-            typeof p?.v?.metadata?.sourceRel === "string"
-              ? p.v.metadata.sourceRel
-              : typeof p?.v?.metadata?.source === "string"
-                ? p.v.metadata.source
-                : "";
-          blocks.push(
-            [source ? `Source: ${source}` : "", text.slice(0, 1600)]
-              .filter(Boolean)
-              .join("\n"),
-          );
-          metaItems.push({
-            id: String(p?.v?.id || "").trim(),
-            source,
-            score: Number(p?.score || 0) || 0,
-          });
-        }
-        if (blocks.length) {
-          ragText = blocks.join("\n\n").slice(0, 6000);
-          ragUsed = true;
-          ragMeta = { keywords, hits: metaItems };
-        }
-      } catch {}
-    }
-
-    const systemPrompt = buildChatPrompt({
-      lang,
-      personaName,
-      personaId,
-      personaProfile: "",
-      personaRules,
-      userName,
-      memorySummary,
-      longMemory,
-      eventsText,
-      allowedMotions,
-      allowedExpressions,
-      projectKnowledge,
-      pageContextText,
-      ragText,
-      intent,
-    });
-
-    const allChats = (() => {
-      try {
-        const data = readJson(CHATS_FILE, {});
-        return data && typeof data === "object" ? data : {};
-      } catch {
-        return {};
-      }
-    })();
-    const historyRaw = Array.isArray(allChats[userId]) ? allChats[userId] : [];
-    const history = historyRaw.slice(-12);
-    const historyLines = formatHistoryLines(history, lang);
-    const userLabel = lang === "en" ? "User" : "用户";
-    const assistantLabel = lang === "en" ? "Assistant" : "助手";
-    const prompt = [
-      systemPrompt,
-      historyLines.length
-        ? `${lang === "en" ? "Conversation:" : "对话历史："}\n${historyLines.join("\n")}`
-        : "",
-      `${userLabel}: ${trimPromptText(rawMessage, 4000)}`,
-      `${assistantLabel}:`,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-
-    const startedAt = Date.now();
-    let result = null;
-    try {
-      result = await callTextGenerate({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        timeoutMs: Number(body.timeoutMs) || 60000,
-      });
-    } catch (e) {
-      result = {
-        text: "",
-        provider: "offline",
-        usage: null,
-        model: "offline",
-        usedUrl: "",
-        error: e,
-      };
-    }
-
-    let replyText = String(result?.text || "").trim();
-    let status = "ok";
-    if (!replyText) {
-      replyText = buildOfflineReply({ lang, personaName, message: rawMessage });
-      status = "offline";
-    }
-
-    const now = Date.now();
-    appendChatHistory(userId, {
-      role: "user",
-      text: trimPromptText(rawMessage, 4000),
-      timestamp: now,
-    });
-    appendChatHistory(userId, {
-      role: "agent",
-      text: trimPromptText(replyText, 4000),
-      timestamp: now,
-    });
-
-    if (!agentContext?.suppressMemorySave) {
-      try {
-        await appendUserMemoryItems({
-          userId,
-          lang,
-          personaName,
-          items: [
-            { role: "user", text: trimPromptText(rawMessage, 1200), ts: now },
-            { role: "agent", text: trimPromptText(replyText, 1200), ts: now },
-          ],
-        });
-      } catch {}
-    }
-
-    try {
-      const usage = result?.usage || null;
-      const ledgerItem = {
-        requestId:
-          requestId || res.locals.requestId || `chat_${now.toString(36)}`,
-        ts: now,
-        userId,
-        ...(sessionId ? { sessionId } : {}),
-        ...(projectId ? { projectId } : {}),
-        trigger: typeof intent?.kind === "string" ? intent.kind : "chat",
-        provider: String(result?.provider || "").trim() || "offline",
-        model: String(result?.model || "").trim(),
-        usedUrl: String(result?.usedUrl || "").trim(),
-        tokensIn: Number(usage?.promptTokens || 0) || 0,
-        tokensOut: Number(usage?.completionTokens || 0) || 0,
-        tokensTotal: Number(usage?.totalTokens || 0) || 0,
-        rag: ragMeta || undefined,
-        ragUsed,
-        ...(requestSource ? { requestSource } : {}),
-        status,
-        durationMs: Date.now() - startedAt,
-        ip: getClientIp(req),
-        ua:
-          typeof req.headers["user-agent"] === "string"
-            ? req.headers["user-agent"].slice(0, 200)
-            : "",
-      };
-      const creditsDelta = ledger.computeCreditsDelta(ledgerItem);
-      ledger.upsertUsageLedgerItem({ ...ledgerItem, creditsDelta });
-    } catch {}
-
-    try {
-      if (typeof appendUserAuditHistory === "function" && userId) {
-        const usage = result?.usage || null;
-        const entry = {
-          id: requestId || res.locals.requestId || `chat_${now.toString(36)}`,
-          ts: now,
-          kind: "chat",
-          biz: typeof intent?.kind === "string" ? intent.kind : "chat",
-          provider: String(result?.provider || "").trim() || "offline",
-          model: String(result?.model || "").trim(),
-          usedUrl: String(result?.usedUrl || "").trim() || undefined,
-          tokensIn: Number(usage?.promptTokens || 0) || 0,
-          tokensOut: Number(usage?.completionTokens || 0) || 0,
-          tokensTotal: Number(usage?.totalTokens || 0) || 0,
-          ragUsed: !!ragUsed,
-          rag: ragMeta || undefined,
-          status,
-          durationMs: Math.max(0, Date.now() - startedAt),
-          userText: trimPromptText(rawMessage, 8000),
-          aiText: trimPromptText(replyText, 20000),
-          persona: { id: personaId, name: personaName },
-          ...(sessionId ? { sessionId } : {}),
-          ...(projectId ? { projectId } : {}),
-          ...(requestSource ? { requestSource } : {}),
-          ...(pageContextText ? { pageContext: pageContextText } : {}),
-          ip: getClientIp(req),
-          ua:
-            typeof req.headers["user-agent"] === "string"
-              ? req.headers["user-agent"].slice(0, 200)
-              : "",
-        };
-        appendUserAuditHistory({ userId, entry });
-      }
-    } catch {}
-
-    return res.json({
-      reply: replyText,
-      requestId: requestId || res.locals.requestId || "",
-      rag: ragMeta || undefined,
-    });
-  },
-);
-
-app.get(
-  "/api/chat/history/:userId",
-  rateLimit("chat_history", { max: 120, windowMs: 60 * 1000 }),
-  (req, res) => {
-    const userId = String(req.params.userId || "").trim();
-    if (!userId) return res.status(400).json({ error: "MISSING_USER_ID" });
-    if (!userId.startsWith("guest_")) {
-      if (!assertAuthUserMatches(req, res, userId)) return;
-    }
-
-    try {
-      const limit = clampInt(req.query.limit, 1, 200);
-      const offset = clampInt(req.query.offset, 0, 5000);
-      const allChats = readJson(CHATS_FILE, {});
-      const history =
-        allChats &&
-        typeof allChats === "object" &&
-        Array.isArray(allChats[userId])
-          ? allChats[userId]
-          : [];
-      const total = history.length;
-      const end = Math.max(0, Math.min(total, total - offset));
-      const start = Math.max(0, end - limit);
-      const items = history.slice(start, end);
-      return res.json({ ok: true, total, history: items });
-    } catch (e) {
-      console.error("Error in GET /api/chat/history:", e);
-      return res.status(500).json({ error: "Internal Server Error" });
-    }
-  },
-);
-
-app.get(
-  "/api/memory/:userId",
-  rateLimit("memory_get", { max: 120, windowMs: 60 * 1000 }),
-  (req, res) => {
-    try {
-      const userId = String(req.params.userId || "").trim();
-      if (!userId)
-        return res.status(400).json({ ok: false, error: "MISSING_USER_ID" });
-      if (!userId.startsWith("guest_")) {
-        if (!assertAuthUserMatches(req, res, userId)) return;
-      }
-      const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
-      return res.json({ ok: true, memory: mem });
-    } catch (e) {
-      console.error("Error in GET /api/memory/:userId:", e);
-      return res
-        .status(500)
-        .json({ ok: false, error: "Internal Server Error" });
-    }
-  },
-);
-
-app.post(
-  "/api/memory/ingest",
-  rateLimit("memory_ingest", { max: 120, windowMs: 60 * 1000 }),
-  async (req, res) => {
-    const body = req.body || {};
-    const requestId = String(
-      body.requestId || res.locals.requestId || "",
-    ).trim();
-    const userId =
-      normalizeUserId(body.userId) || `guest_${Date.now().toString(36)}`;
-    if (!userId.startsWith("guest_")) {
-      if (!assertAuthUserMatches(req, res, userId)) return;
-    }
-
-    const itemsRaw = Array.isArray(body.items) ? body.items : [];
-    const items = itemsRaw.slice(0, 120);
-    const sessionId = ledger.sanitizeLedgerId(body.sessionId);
-    const projectId = ledger.sanitizeLedgerId(body.projectId);
-    const pageContextText = trimPromptText(
-      stringifyPageContext(body.pageContext),
-      1600,
-    );
-    const requestSource = String(body.requestSource || "").trim();
-    const lang = body.lang === "en" ? "en" : "zh";
-    const personaName =
-      typeof body.personaName === "string" ? body.personaName : undefined;
-
-    const startedAt = Date.now();
-    try {
-      await appendUserMemoryItems({
-        userId,
-        lang,
-        ...(personaName ? { personaName } : {}),
-        items,
-      });
-    } catch (e) {
-      console.error("Error in POST /api/memory/ingest:", e);
-      return res.status(500).json({ ok: false, error: "INGEST_FAILED" });
-    }
-
-    try {
-      if (typeof appendUserAuditHistory === "function" && userId) {
-        const now = Date.now();
-        const entry = {
-          id: requestId || res.locals.requestId || `mem_${now.toString(36)}`,
-          ts: now,
-          kind: "memory_ingest",
-          biz: "memory_ingest",
-          provider: "local",
-          model: "",
-          status: "ok",
-          durationMs: Math.max(0, Date.now() - startedAt),
-          itemsCount: items.length,
-          itemsPreview: items
-            .slice(0, 6)
-            .map((it) => ({
-              role: it?.role,
-              type: it?.type,
-              ts: it?.ts,
-              text: trimPromptText(String(it?.text || ""), 240),
-            }))
-            .filter((x) => x.text),
-          ...(sessionId ? { sessionId } : {}),
-          ...(projectId ? { projectId } : {}),
-          ...(requestSource ? { requestSource } : {}),
-          ...(pageContextText ? { pageContext: pageContextText } : {}),
-          ip: getClientIp(req),
-          ua:
-            typeof req.headers["user-agent"] === "string"
-              ? req.headers["user-agent"].slice(0, 200)
-              : "",
-        };
-        appendUserAuditHistory({ userId, entry });
-      }
-    } catch {}
-
-    return res.json({
-      ok: true,
-      requestId: requestId || res.locals.requestId || "",
-    });
-  },
-);
 
 installAuthRoutes(app);
 installAdminRoutes(app);
@@ -1382,8 +829,6 @@ installImgagentRoutes(app, {
 // ... System Routes ...
 const requireLlmProvider =
   String(process.env.REQUIRE_LLM_PROVIDER || "").trim() === "1";
-const buildModeDocIndexGetter = () => buildModeDocIndex();
-const modeDocRootGetter = () => MODEDOC_ROOT;
 
 installSystemRoutes(app, {
   NODE_ENV,
@@ -1393,128 +838,25 @@ installSystemRoutes(app, {
   SILICONFLOW_API_KEY,
   activeTextProvider,
   imgCredits,
-  VECTORS_FILE,
-  readJson,
   fs,
   path,
   rateLimit,
-  assertAdmin,
-  fetchWithTimeout,
-  PORT,
   assertAuthUserMatches,
-  HF_RESOLVE_BASES,
-  HF_API_BASES,
-  hfProxyBaseHealth,
-  normalizeUpstreamBase,
-  HF_CACHE_DIR,
-  HF_CACHE_TTL_MS,
-  HF_CACHE_MAX_BYTES,
-  HF_CACHE_MAX_FILES,
-  getHfCacheUsage,
-  getHfCacheStats,
-  buildModeDocIndex: buildModeDocIndexGetter,
   callGeminiGenerate,
   callSiliconFlowChat,
   callTextGenerate,
   GEMINI_GENERATE_URLS,
-  GEMINI_EMBED_URLS,
   GEMINI_TIMEOUT_MS,
-  GEMINI_REACTION_TIMEOUT_MS,
   SILICONFLOW_API_BASE,
   SILICONFLOW_MODEL,
-  MODEDOC_ROOT: modeDocRootGetter,
   getClientIp,
-  normalizeEmail,
-  canUseTestLoginCode,
   MEMORY_DIR,
-  buildOfflineReply,
-  extractRagKeywords,
-  scoreRagKeywordHit,
-  stripControlText,
-  analyzeIntent,
-  buildChatPrompt,
-  buildLongMemoryText,
-  appendUserMemoryItems,
-  trimPromptText,
-  getEmbedding,
-  cosineSimilarity,
-  summarizeHistory,
   upsertUsageLedgerItem: ledger.upsertUsageLedgerItem,
   computeCreditsDelta: ledger.computeCreditsDelta,
   appendUserImageHistory,
   appendUserAuditHistory,
 });
 
-// ... HF Routes ...
-installHfRoutes(app, {
-  rateLimit,
-  fetchWithTimeout,
-  HF_API_BASES,
-  HF_PROXY_RATE_MAX,
-  HF_PROXY_RATE_WINDOW_MS,
-  proxyHuggingFace,
-  proxyLive2DCubismCore,
-});
-
-const drainResponseBody = async (resp) => {
-  const body = resp && resp.body;
-  if (!body || typeof body.on !== "function") return 0;
-  return await new Promise((resolve, reject) => {
-    let bytes = 0;
-    body.on("data", (chunk) => {
-      try {
-        bytes += chunk ? chunk.length || 0 : 0;
-      } catch {}
-    });
-    body.on("end", () => resolve(bytes));
-    body.on("error", (e) => reject(e));
-    try {
-      if (typeof body.resume === "function") body.resume();
-    } catch {}
-  });
-};
-
-let hfPrewarmStarted = false;
-const maybeStartHfPrewarm = () => {
-  if (hfPrewarmStarted) return;
-  const raw = String(process.env.HF_PREWARM_URLS || "").trim();
-  if (!raw) return;
-  hfPrewarmStarted = true;
-
-  const urls = raw
-    .split(/[\r\n,]+/g)
-    .map((s) => String(s || "").trim())
-    .filter(Boolean)
-    .slice(0, 30);
-  if (!urls.length) return;
-
-  const selfBase = (() => {
-    const base = String(process.env.SELF_BASE_URL || "").trim();
-    if (/^https?:\/\//i.test(base)) return base.replace(/\/+$/, "");
-    return `http://127.0.0.1:${PORT}`;
-  })();
-
-  setTimeout(async () => {
-    for (const rawUrl of urls) {
-      const url = /^https?:\/\//i.test(rawUrl)
-        ? rawUrl
-        : `${selfBase}${rawUrl.startsWith("/") ? rawUrl : `/${rawUrl}`}`;
-      try {
-        const resp = await fetchWithTimeout(
-          url,
-          { method: "GET", redirect: "follow" },
-          180000,
-        );
-        const bytes = await drainResponseBody(resp);
-        console.log("[HF][Prewarm]", resp.status, bytes, rawUrl);
-      } catch (e) {
-        console.log("[HF][Prewarm][Fail]", rawUrl, String(e?.message || e));
-      }
-    }
-  }, 800);
-};
-
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);
-  maybeStartHfPrewarm();
 });

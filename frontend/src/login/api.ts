@@ -16,7 +16,7 @@ export type GoogleAuthResult =
 export type ResetPasswordResult = { ok: true; message?: string } | { ok: false; message: string };
 
 import { buildApiUrl } from '../utils/api';
-import { getPageContext } from '@/agent/utils/pageContext';
+import { getPageContext } from '@/utils/pageContext';
 import { getOrCreateProjectId, getOrCreateSessionId } from './session';
 
 const SEND_CODE_URL = buildApiUrl('/api/login/send-code');

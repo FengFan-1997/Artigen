@@ -17,10 +17,6 @@ const createLedger = (deps) => {
     const v = Number.parseFloat(process.env.USAGE_CREDITS_PER_1K_TOKENS || '');
     return Number.isFinite(v) && v >= 0 ? v : 1;
   })();
-  const USAGE_CREDITS_PER_RAG_QUERY = (() => {
-    const v = Number.parseFloat(process.env.USAGE_CREDITS_PER_RAG_QUERY || '');
-    return Number.isFinite(v) && v >= 0 ? v : 1;
-  })();
 
   const sanitizeLedgerId = (raw, fallback = '') => {
     const s = String(raw || '').trim();
@@ -303,11 +299,7 @@ const createLedger = (deps) => {
 
   const computeCreditsDelta = (input) => {
     const tokens = Number(input?.tokensTotal || 0);
-    const ragUsed = !!input?.ragUsed;
-    const creditsFromTokens =
-      tokens > 0 ? Math.max(1, Math.ceil((tokens / 1000) * USAGE_CREDITS_PER_1K_TOKENS)) : 0;
-    const creditsFromRag = ragUsed ? USAGE_CREDITS_PER_RAG_QUERY : 0;
-    return creditsFromTokens + creditsFromRag;
+    return tokens > 0 ? Math.max(1, Math.ceil((tokens / 1000) * USAGE_CREDITS_PER_1K_TOKENS)) : 0;
   };
 
   return {

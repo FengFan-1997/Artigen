@@ -1,16 +1,5 @@
 import { defineStore } from 'pinia';
 
-export const useChatStore = defineStore('chat', {
-  state: () => ({
-    chatType: 'text'
-  }),
-  actions: {
-    setChatType(type: string) {
-      this.chatType = type;
-    }
-  }
-});
-
 export const useLoginModel = defineStore('login', {
   state: () => ({
     isOpen: false,

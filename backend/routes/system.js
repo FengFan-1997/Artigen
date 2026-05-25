@@ -6,70 +6,23 @@ const installSystemRoutes = (app, deps) => {
   const SILICONFLOW_API_KEY = deps?.SILICONFLOW_API_KEY;
   const activeTextProvider = deps?.activeTextProvider;
   const imgCredits = deps?.imgCredits;
-  const VECTORS_FILE = deps?.VECTORS_FILE;
-  const readJson = deps?.readJson;
   const fs = deps?.fs;
   const path = deps?.path;
   const rateLimit = deps?.rateLimit;
   const assertAuthUserMatches = deps?.assertAuthUserMatches;
-  const HF_RESOLVE_BASES = Array.isArray(deps?.HF_RESOLVE_BASES)
-    ? deps.HF_RESOLVE_BASES
-    : [];
-  const HF_API_BASES = Array.isArray(deps?.HF_API_BASES)
-    ? deps.HF_API_BASES
-    : [];
-  const hfProxyBaseHealth = deps?.hfProxyBaseHealth;
-  const normalizeUpstreamBase = deps?.normalizeUpstreamBase;
-  const HF_CACHE_DIR = deps?.HF_CACHE_DIR;
-  const HF_CACHE_TTL_MS = deps?.HF_CACHE_TTL_MS;
-  const HF_CACHE_MAX_BYTES = deps?.HF_CACHE_MAX_BYTES;
-  const HF_CACHE_MAX_FILES = deps?.HF_CACHE_MAX_FILES;
-  const getHfCacheUsage = deps?.getHfCacheUsage;
-  const getHfCacheStats = deps?.getHfCacheStats;
-  const buildModeDocIndex = deps?.buildModeDocIndex;
   const callGeminiGenerate = deps?.callGeminiGenerate;
   const callSiliconFlowChat = deps?.callSiliconFlowChat;
   const callTextGenerate = deps?.callTextGenerate;
   const GEMINI_GENERATE_URLS = deps?.GEMINI_GENERATE_URLS;
-  const GEMINI_EMBED_URLS = deps?.GEMINI_EMBED_URLS;
   const GEMINI_TIMEOUT_MS = deps?.GEMINI_TIMEOUT_MS;
-  const GEMINI_REACTION_TIMEOUT_MS = deps?.GEMINI_REACTION_TIMEOUT_MS;
   const SILICONFLOW_API_BASE = deps?.SILICONFLOW_API_BASE;
   const SILICONFLOW_MODEL = deps?.SILICONFLOW_MODEL;
-  const MODEDOC_ROOT = deps?.MODEDOC_ROOT;
   const getClientIp = deps?.getClientIp;
-  const assertAdmin = deps?.assertAdmin;
-  const fetchWithTimeout = deps?.fetchWithTimeout;
-  const PORT = deps?.PORT;
   const upsertUsageLedgerItem = deps?.upsertUsageLedgerItem;
   const computeCreditsDelta = deps?.computeCreditsDelta;
-  const normalizeEmail = deps?.normalizeEmail;
-  const canUseTestLoginCode = deps?.canUseTestLoginCode;
   const MEMORY_DIR = deps?.MEMORY_DIR;
   const appendUserImageHistory = deps?.appendUserImageHistory;
   const appendUserAuditHistory = deps?.appendUserAuditHistory;
-
-  const listRegisteredRoutes = (appInstance) => {
-    try {
-      const router = appInstance?.router || appInstance?._router;
-      const stack = Array.isArray(router?.stack) ? router.stack : [];
-      const routes = [];
-      for (const layer of stack) {
-        const route = layer?.route;
-        const routePath = route?.path;
-        const methodsObj = route?.methods;
-        if (!routePath || !methodsObj || typeof methodsObj !== "object")
-          continue;
-        const methods = Object.keys(methodsObj)
-          .filter((k) => !!methodsObj[k])
-          .map((m) => m.toUpperCase());
-        routes.push({ path: routePath, methods });
-      }
-      return routes;
-    } catch {
-      return [];
-    }
-  };
 
   const isWritableDir = (dirPath) => {
     try {
@@ -748,50 +701,14 @@ const installSystemRoutes = (app, deps) => {
         process.env.http_proxy ||
         "";
 
-      const hfBases = HF_RESOLVE_BASES.map((b) =>
-        typeof normalizeUpstreamBase === "function"
-          ? normalizeUpstreamBase(b)
-          : "",
-      ).filter(Boolean);
-      const hfHealth = hfBases.map((b) => {
-        const s =
-          typeof hfProxyBaseHealth?.get === "function"
-            ? hfProxyBaseHealth.get(b)
-            : null;
-        const downUntil = Number(s?.downUntil || 0);
-        return {
-          base: b,
-          failCount: Number(s?.failCount || 0),
-          downUntil: downUntil || 0,
-          down: downUntil > Date.now(),
-        };
-      });
-
       const result = {
         ok: true,
         serverTime: Date.now(),
         hasApiKey,
         textProvider: activeTextProvider,
-        hf: {
-          resolveBases: HF_RESOLVE_BASES,
-          apiBases: HF_API_BASES,
-          baseHealth: hfHealth,
-          cache: {
-            dir: HF_CACHE_DIR,
-            ttlMs: HF_CACHE_TTL_MS,
-            maxBytes: HF_CACHE_MAX_BYTES,
-            maxFiles: HF_CACHE_MAX_FILES,
-            usage:
-              typeof getHfCacheUsage === "function" ? getHfCacheUsage() : null,
-            stats:
-              typeof getHfCacheStats === "function" ? getHfCacheStats() : null,
-          },
-        },
         gemini: {
           generateUrls: GEMINI_GENERATE_URLS,
-          embedUrls: GEMINI_EMBED_URLS,
           timeoutMs: GEMINI_TIMEOUT_MS,
-          reactionTimeoutMs: GEMINI_REACTION_TIMEOUT_MS,
           proxyConfigured: !!proxyUrl,
           lastProbe: null,
         },
@@ -801,68 +718,11 @@ const installSystemRoutes = (app, deps) => {
           hasApiKey: hasSiliconflowKey,
           lastProbe: null,
         },
-        rag: {
-          vectorsFile: VECTORS_FILE,
-          exists: false,
-          sizeBytes: 0,
-          totalVectors: 0,
-          withEmbedding: 0,
-          embeddingNull: 0,
-          sources: 0,
-        },
-        modedoc: {
-          root:
-            typeof MODEDOC_ROOT === "function" ? MODEDOC_ROOT() : MODEDOC_ROOT,
-          indexed: false,
-          countZh: 0,
-          countEn: 0,
-        },
         storage: {
           memoryDir: "",
           writable: false,
         },
       };
-
-      try {
-        if (fs.existsSync(VECTORS_FILE)) {
-          result.rag.exists = true;
-          const st = fs.statSync(VECTORS_FILE);
-          result.rag.sizeBytes = Number(st?.size || 0);
-          const vectors0 =
-            typeof readJson === "function" ? readJson(VECTORS_FILE, []) : [];
-          const vectors = Array.isArray(vectors0) ? vectors0 : [];
-          result.rag.totalVectors = vectors.length;
-          let withEmbedding = 0;
-          let embeddingNull = 0;
-          const sources = new Set();
-          for (const v of vectors) {
-            const emb = v?.embedding;
-            if (Array.isArray(emb) && emb.length > 0) withEmbedding += 1;
-            else embeddingNull += 1;
-            const meta =
-              v?.metadata && typeof v.metadata === "object" ? v.metadata : null;
-            const src =
-              typeof meta?.sourceRel === "string"
-                ? meta.sourceRel
-                : typeof meta?.source === "string"
-                  ? meta.source
-                  : "";
-            if (src && String(src).trim()) sources.add(String(src).trim());
-          }
-          result.rag.withEmbedding = withEmbedding;
-          result.rag.embeddingNull = embeddingNull;
-          result.rag.sources = sources.size;
-        }
-      } catch {}
-
-      try {
-        if (typeof buildModeDocIndex === "function") {
-          const idx = buildModeDocIndex();
-          result.modedoc.indexed = true;
-          result.modedoc.countZh = idx?.zh?.size || 0;
-          result.modedoc.countEn = idx?.en?.size || 0;
-        }
-      } catch {}
 
       try {
         const check = isWritableDir(MEMORY_DIR);
@@ -928,198 +788,6 @@ const installSystemRoutes = (app, deps) => {
       res.json(result);
     },
   );
-
-  let hfPrewarmRunning = null;
-  const normalizeSelfBaseUrl = (raw) =>
-    String(raw || "")
-      .trim()
-      .replace(/\/+$/, "");
-  const resolveSelfBaseUrl = () => {
-    const fromEnv = normalizeSelfBaseUrl(process.env.SELF_BASE_URL || "");
-    if (fromEnv) return fromEnv;
-    const n = Number.parseInt(String(PORT || process.env.PORT || 8080), 10);
-    const port = Number.isFinite(n) && n > 0 ? n : 8080;
-    return `http://127.0.0.1:${port}`;
-  };
-  const normalizePrewarmMode = (raw) => {
-    const m = String(raw || "")
-      .trim()
-      .toLowerCase();
-    if (m === "head" || m === "range" || m === "full") return m;
-    return "full";
-  };
-  const parsePrewarmUrls = (raw) => {
-    const items = String(raw || "")
-      .split(/[\n,\s]+/g)
-      .map((s) => String(s || "").trim())
-      .filter(Boolean)
-      .slice(0, 200);
-    const base = resolveSelfBaseUrl();
-    const out = [];
-    for (const it of items) {
-      try {
-        const u = /^https?:\/\//i.test(it)
-          ? new URL(it)
-          : new URL(it.startsWith("/") ? `${base}${it}` : `${base}/${it}`);
-        if (u.protocol !== "http:" && u.protocol !== "https:") continue;
-        if (!u.pathname.startsWith("/api/hf/")) continue;
-        u.hash = "";
-        out.push(u.toString());
-      } catch {}
-    }
-    return out;
-  };
-  const readAndDiscardBody = async (resp) => {
-    const body = resp?.body;
-    if (!body || typeof body.on !== "function") return 0;
-    return await new Promise((resolve) => {
-      let bytes = 0;
-      const onData = (chunk) => {
-        try {
-          bytes += Buffer.isBuffer(chunk)
-            ? chunk.length
-            : Buffer.byteLength(String(chunk || ""));
-        } catch {}
-      };
-      const done = () => resolve(bytes);
-      try {
-        body.on("data", onData);
-        body.on("end", done);
-        body.on("error", done);
-        body.resume();
-      } catch {
-        resolve(bytes);
-      }
-    });
-  };
-  const runHfPrewarm = async ({ urls, mode, timeoutMs, concurrency }) => {
-    if (typeof fetchWithTimeout !== "function")
-      return { ok: false, error: "FETCH_NOT_AVAILABLE", items: [] };
-    const list = Array.isArray(urls) ? urls.filter(Boolean).slice(0, 200) : [];
-    if (!list.length) return { ok: true, total: 0, items: [], elapsedMs: 0 };
-
-    const m = normalizePrewarmMode(mode);
-    const t = Number.parseInt(String(timeoutMs || ""), 10);
-    const timeout =
-      Number.isFinite(t) && t > 0 ? Math.min(Math.max(t, 2000), 180000) : 45000;
-    const c = Number.parseInt(String(concurrency || ""), 10);
-    const conc = Number.isFinite(c) && c > 0 ? Math.min(Math.max(c, 1), 6) : 2;
-
-    const startedAt = Date.now();
-    let cursor = 0;
-    const items = [];
-    const worker = async () => {
-      while (true) {
-        const idx = cursor;
-        cursor += 1;
-        if (idx >= list.length) return;
-        const url = list[idx];
-        const itemStartedAt = Date.now();
-        try {
-          const headers = {};
-          let method = "GET";
-          if (m === "head") method = "HEAD";
-          if (m === "range") headers.Range = "bytes=0-1023";
-          const resp = await fetchWithTimeout(
-            url,
-            { method, headers, redirect: "follow", compress: false },
-            timeout,
-          );
-          const status = Number(resp?.status || 0) || 0;
-          const bytes = method === "HEAD" ? 0 : await readAndDiscardBody(resp);
-          items.push({
-            ok: !!resp?.ok,
-            status,
-            url,
-            bytes,
-            elapsedMs: Math.max(0, Date.now() - itemStartedAt),
-          });
-        } catch (e) {
-          items.push({
-            ok: false,
-            status: 0,
-            url,
-            bytes: 0,
-            elapsedMs: Math.max(0, Date.now() - itemStartedAt),
-            error: String(e?.message || e),
-          });
-        }
-      }
-    };
-
-    const workers = [];
-    for (let i = 0; i < conc; i += 1) workers.push(worker());
-    await Promise.all(workers);
-    items.sort((a, b) => a.url.localeCompare(b.url));
-    return {
-      ok: true,
-      total: list.length,
-      mode: m,
-      items,
-      elapsedMs: Math.max(0, Date.now() - startedAt),
-    };
-  };
-
-  app.post(
-    "/api/admin/hf/prewarm",
-    typeof rateLimit === "function"
-      ? rateLimit("admin_hf_prewarm", { max: 12, windowMs: 60 * 1000 })
-      : (req, res, next) => next(),
-    async (req, res) => {
-      if (typeof assertAdmin !== "function")
-        return res.status(501).json({ error: "ADMIN_NOT_AVAILABLE" });
-      if (!assertAdmin(req, res)) return;
-      if (hfPrewarmRunning && typeof hfPrewarmRunning.then === "function") {
-        return res.status(409).json({ error: "PREWARM_IN_PROGRESS" });
-      }
-
-      const body = req.body && typeof req.body === "object" ? req.body : {};
-      const urls =
-        Array.isArray(body.urls) && body.urls.length
-          ? parsePrewarmUrls(body.urls.join("\n"))
-          : parsePrewarmUrls(process.env.HF_PREWARM_URLS || "");
-      const mode = normalizePrewarmMode(
-        body.mode || process.env.HF_PREWARM_MODE || "full",
-      );
-      const timeoutMs =
-        body.timeoutMs || process.env.HF_PREWARM_TIMEOUT_MS || 45000;
-      const concurrency =
-        body.concurrency || process.env.HF_PREWARM_CONCURRENCY || 2;
-
-      hfPrewarmRunning = runHfPrewarm({ urls, mode, timeoutMs, concurrency })
-        .catch((e) => ({
-          ok: false,
-          error: String(e?.message || e),
-          items: [],
-        }))
-        .finally(() => {
-          hfPrewarmRunning = null;
-        });
-      const out = await hfPrewarmRunning;
-      return res.json(out);
-    },
-  );
-
-  const HF_PREWARM_ON_START =
-    String(process.env.HF_PREWARM_ON_START || "").trim() === "1";
-  if (HF_PREWARM_ON_START) {
-    const urls = parsePrewarmUrls(process.env.HF_PREWARM_URLS || "");
-    if (urls.length && typeof fetchWithTimeout === "function") {
-      setTimeout(() => {
-        if (hfPrewarmRunning) return;
-        const mode = normalizePrewarmMode(
-          process.env.HF_PREWARM_MODE || "full",
-        );
-        const timeoutMs = process.env.HF_PREWARM_TIMEOUT_MS || 45000;
-        const concurrency = process.env.HF_PREWARM_CONCURRENCY || 2;
-        hfPrewarmRunning = runHfPrewarm({ urls, mode, timeoutMs, concurrency })
-          .catch(() => null)
-          .finally(() => {
-            hfPrewarmRunning = null;
-          });
-      }, 4000);
-    }
-  }
 
   const GENERATE_RATE_MAX = (() => {
     const v = Number.parseInt(String(process.env.GENERATE_RATE_MAX || ""), 10);
@@ -1895,68 +1563,6 @@ const installSystemRoutes = (app, deps) => {
     },
   );
 
-  app.get("/api/_debug/routes", (req, res) => {
-    if (!isDebugRoutesEnabled(req))
-      return res.status(404).json({ error: "Not Found" });
-    const routes = listRegisteredRoutes(app);
-    const hasImg2img = routes.some(
-      (r) =>
-        r &&
-        r.path === "/api/img2img" &&
-        Array.isArray(r.methods) &&
-        r.methods.includes("POST"),
-    );
-    res.json({ ok: true, hasImg2img, routes });
-  });
-
-  app.get("/api/_debug/storage", (req, res) => {
-    if (!isDebugRoutesEnabled(req))
-      return res.status(404).json({ error: "Not Found" });
-    const check = isWritableDir(MEMORY_DIR);
-    res.json({
-      ok: true,
-      memoryDir: MEMORY_DIR,
-      writable: !!check.ok,
-      ...(check.ok ? {} : { error: check.error }),
-      nodeEnv: String(process.env.NODE_ENV || "").trim(),
-    });
-  });
-
-  app.get("/api/_debug/ip", (req, res) => {
-    const ip = typeof getClientIp === "function" ? getClientIp(req) : "";
-    if (!isLocalRequest(req))
-      return res.status(404).json({ error: "Not Found" });
-    res.json({
-      ok: true,
-      ip,
-      reqIp: typeof req.ip === "string" ? req.ip : "",
-      xf: req.headers["x-forwarded-for"] || null,
-    });
-  });
-
-  app.post("/api/_debug/login-test", (req, res) => {
-    if (!isDebugRoutesEnabled(req))
-      return res.status(404).json({ error: "Not Found" });
-    const body = req.body || {};
-    const email =
-      typeof normalizeEmail === "function" ? normalizeEmail(body.email) : "";
-    const code = String(body.code || "").trim();
-    const expected =
-      String(process.env.LOGIN_TEST_CODE || "123456").trim() || "123456";
-    const ip = typeof getClientIp === "function" ? getClientIp(req) : "";
-    res.json({
-      ok: true,
-      ip,
-      nodeEnv: String(process.env.NODE_ENV || ""),
-      email,
-      code,
-      expected,
-      canUse:
-        typeof canUseTestLoginCode === "function"
-          ? canUseTestLoginCode(req, code, email)
-          : false,
-    });
-  });
 };
 
 module.exports = { installSystemRoutes };

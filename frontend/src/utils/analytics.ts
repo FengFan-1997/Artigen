@@ -1,5 +1,5 @@
 import { buildApiUrl } from '@/utils/api';
-import { getPageContext } from '@/agent/utils/pageContext';
+import { getPageContext } from '@/utils/pageContext';
 import { ensureGuestUserId, getOrCreateProjectId, getOrCreateSessionId } from '@/login/session';
 
 let autoClickInstalled = false;

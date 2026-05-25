@@ -227,7 +227,6 @@ export type AdminUsageLedgerItem = {
   ip?: string;
   ua?: string;
   usedUrl?: string;
-  rag?: any;
   plan?: AdminUsagePlan;
 };
 
