@@ -787,6 +787,21 @@ MEMORY_DIR=/your/persistent/path
 
 ## 部署说明
 
+### 分支和部署关系
+
+| 分支 | 作用 | 部署关系 |
+| --- | --- | --- |
+| `main` | 线上发布分支。 | Railway 前后端服务跟随 `main` 自动部署。 |
+| `test` | 团队测试分支。 | 用于日常功能、修复、文档的合并前测试；是否绑定 Railway 测试环境以 Railway 当前项目配置为准。 |
+
+日常协作默认流程：
+
+```text
+feature/fix/docs/refactor 分支 -> PR 到 test -> 测试通过 -> PR 到 main -> Railway 线上部署
+```
+
+紧急修复可以使用 `hotfix/*` 直接 PR 到 `main`，线上恢复后再同步回 `test`。
+
 ### 根目录脚本
 
 | 命令 | 说明 |
@@ -928,9 +943,10 @@ curl -sS http://localhost:8080/api/health
 | --- | --- |
 | `README.md` | 让新人理解项目、启动项目、知道从哪里读代码。 |
 | `PRD.md` | 给后端协作者看的模块、接口、认证、点数、支付、生成和数据约定。 |
+| `CONTRIBUTING.md` | 团队协作规范，包括分支、提交、PR、Review、Railway 发布和测试门禁。 |
 | `frontend/src/console/README_CONSOLE.md` | 控制台局部说明。 |
 
-README 负责回答“这是什么、怎么跑、从哪里看”。PRD 负责回答“前后端怎么连接、接口怎么约定、数据怎么流动”。
+README 负责回答“这是什么、怎么跑、从哪里看”。PRD 负责回答“前后端怎么连接、接口怎么约定、数据怎么流动”。CONTRIBUTING 负责回答“怎么协作、怎么 Review、怎么合并、怎么发布”，并以 `test` 作为团队测试分支、`main` 作为线上发布分支。
 
 ---
 
@@ -986,4 +1002,3 @@ README 负责回答“这是什么、怎么跑、从哪里看”。PRD 负责回
 - 法律页
 - `/files/*`
 - 健康检查和 meta 接口
-
