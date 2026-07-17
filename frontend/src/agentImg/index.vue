@@ -1324,10 +1324,13 @@ const downloadMsgImage = async (url: string, item?: any) => {
     const link = document.createElement('a');
     link.href = objectUrl;
     link.download = `artigen-${Date.now()}.${extFromMime(blob.type)}`;
+    link.hidden = true;
     document.body.appendChild(link);
     link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    window.setTimeout(() => {
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    }, 5000);
     trackEvent('download', generationActionProperties(item));
   } catch {
     showTopTip(

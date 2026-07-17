@@ -525,10 +525,13 @@ const downloadBlob = (blob: Blob, filename: string) => {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.hidden = true;
   document.body.appendChild(a);
   a.click();
-  a.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  window.setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 5000);
 };
 
 const downLoadImg = async () => {

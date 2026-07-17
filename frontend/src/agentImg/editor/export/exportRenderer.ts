@@ -83,8 +83,13 @@ export function downloadEditorExport(result: EditorExportResult): void {
   anchor.href = url;
   anchor.download = result.filename;
   anchor.rel = 'noopener';
+  anchor.hidden = true;
+  document.body.appendChild(anchor);
   anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, 5000);
 }
 
 async function paintNode(

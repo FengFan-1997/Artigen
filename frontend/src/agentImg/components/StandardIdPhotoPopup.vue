@@ -811,8 +811,13 @@ function downloadBlob(blob: Blob, filename: string): void {
   anchor.href = url;
   anchor.download = filename;
   anchor.rel = 'noopener';
+  anchor.hidden = true;
+  document.body.appendChild(anchor);
   anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, 5000);
 }
 
 function friendlyError(value: unknown): string {

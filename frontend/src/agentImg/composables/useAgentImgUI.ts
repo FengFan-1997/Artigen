@@ -87,14 +87,15 @@ export function useAgentImgUI() {
     const link = document.createElement('a');
     link.href = url;
     link.download = filename;
+    link.hidden = true;
     document.body.appendChild(link);
     link.click();
-    link.remove();
     window.setTimeout(() => {
+      link.remove();
       try {
         URL.revokeObjectURL(url);
       } catch {}
-    }, 1000);
+    }, 5000);
   };
 
   const exportImageBlob = async (rawUrl: string, maxEdge: number) => {

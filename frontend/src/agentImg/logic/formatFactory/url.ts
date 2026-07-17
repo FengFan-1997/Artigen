@@ -10,8 +10,14 @@ export const downloadBlob = (blob: Blob, filename: string) => {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.hidden = true;
   document.body.appendChild(a);
   a.click();
-  a.remove();
-  window.setTimeout(() => revokeUrl(url), 0);
+  // Safari/WebKit may not take ownership of a Blob URL until after the click task
+  // completes. Removing the anchor and revoking immediately can cancel or crash a
+  // download, especially for ZIP files on touch devices.
+  window.setTimeout(() => {
+    a.remove();
+    revokeUrl(url);
+  }, 5000);
 };
