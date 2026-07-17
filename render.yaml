@@ -1,17 +1,21 @@
 services:
   - type: web
-    name: artigen-api
+    name: artigen-app-fengfan
     runtime: node
     plan: free
+    region: virginia
     # Render serves frontend and API from one origin. Override any dashboard-level
     # legacy API base during Vite compilation so cookies and CSRF remain same-origin.
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && VITE_API_BASE='' VITE_AGENT_API_BASE='' pnpm build
+    # Render's Node image already provides the package-manager binary at a
+    # read-only path, so `corepack enable` would fail before installation.
+    buildCommand: pnpm install --frozen-lockfile && VITE_API_BASE='' VITE_AGENT_API_BASE='' pnpm build
     startCommand: pnpm start:production
     # Platform liveness must stay shallow and free of database/provider/storage I/O.
     # Use /readyz manually (or from a deployment smoke job) for the deep dependency gate.
     healthCheckPath: /healthz
-    autoDeployTrigger: checksPass
-    maxShutdownDelaySeconds: 60
+    # Deploys remain manual until the external Vercel/Workers integrations are
+    # removed from the repository and the Artigen release gate is authoritative.
+    autoDeployTrigger: off
     envVars:
       - key: NODE_VERSION
         value: 24.14.1
