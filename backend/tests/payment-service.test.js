@@ -15,6 +15,7 @@ const {
 const {
   assertRequestedUserOwner,
   containsClientPaymentAuthority,
+  isAfdianDocumentedWebhookProbe,
   legacyJsonBillingEnabled,
   publicCreditsBalance,
   publicCreditsHold,
@@ -102,6 +103,28 @@ const callbackBody = (overrides = {}) => ({
       userId: 'attacker',
       credits: 999999,
       ...overrides
+    }
+  }
+});
+
+const documentedWebhookProbe = () => ({
+  ec: 200,
+  em: 'ok',
+  data: {
+    type: 'order',
+    order: {
+      out_trade_no: '202106232138371083454010626',
+      user_id: 'adf397fe8374811eaacee52540025c377',
+      plan_id: 'a45353328af911eb973052540025c377',
+      month: 1,
+      total_amount: '5.00',
+      show_amount: '5.00',
+      status: 2,
+      remark: '',
+      redeem_id: '',
+      product_type: 0,
+      discount: '0.00',
+      sku_detail: []
     }
   }
 });
@@ -377,6 +400,31 @@ test('provider API reconciliation request uses the documented token/key ordering
   assert.deepEqual(JSON.parse(request.params), { out_trade_no: 'provider-order-1' });
   assert.equal(request.user_id, 'creator-id');
   assert.equal(request.sign, expected);
+});
+
+test('only the exact documented Afdian webhook probe is acknowledged without billing', () => {
+  const probe = documentedWebhookProbe();
+  assert.equal(isAfdianDocumentedWebhookProbe(probe), true);
+  assert.equal(
+    isAfdianDocumentedWebhookProbe({
+      ...probe,
+      data: {
+        ...probe.data,
+        order: { ...probe.data.order, total_amount: '9.90', show_amount: '9.90' }
+      }
+    }),
+    false
+  );
+  assert.equal(
+    isAfdianDocumentedWebhookProbe({
+      ...probe,
+      data: {
+        ...probe.data,
+        order: { ...probe.data.order, out_trade_no: '202106232138371083454010627' }
+      }
+    }),
+    false
+  );
 });
 
 test('production provider queries cannot redirect API credentials to another host', () => {

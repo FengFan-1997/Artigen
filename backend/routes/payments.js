@@ -18,6 +18,27 @@ const {
 } = require('../services/payment-service');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const AFDIAN_DOCUMENTED_WEBHOOK_PROBE = Object.freeze({
+  outTradeNo: '202106232138371083454010626',
+  userId: 'adf397fe8374811eaacee52540025c377',
+  planId: 'a45353328af911eb973052540025c377',
+  totalAmount: '5.00'
+});
+
+const isAfdianDocumentedWebhookProbe = (body) => {
+  const order = body?.data?.order;
+  if (!order || Number(body?.ec) !== 200 || String(body?.data?.type || '') !== 'order') {
+    return false;
+  }
+  return (
+    Number(order.status) === 2 &&
+    String(order.out_trade_no || '') === AFDIAN_DOCUMENTED_WEBHOOK_PROBE.outTradeNo &&
+    String(order.user_id || '') === AFDIAN_DOCUMENTED_WEBHOOK_PROBE.userId &&
+    String(order.plan_id || '') === AFDIAN_DOCUMENTED_WEBHOOK_PROBE.planId &&
+    String(order.total_amount || '') === AFDIAN_DOCUMENTED_WEBHOOK_PROBE.totalAmount &&
+    String(order.show_amount || '') === AFDIAN_DOCUMENTED_WEBHOOK_PROBE.totalAmount
+  );
+};
 
 const paidFeaturesEnabled = (env = process.env) => {
   return /^(1|true)$/i.test(String(env.PAID_FEATURES_ENABLED || '').trim());
@@ -354,6 +375,13 @@ const installPaymentRoutes = (app, deps = {}) => {
   app.post('/api/pay/afdian/webhook', async (req, res, next) => {
     if (legacyJsonBillingEnabled()) return next();
     try {
+      // Afdian's developer dashboard sends this exact public fixture when the
+      // creator clicks "发送测试". Acknowledge it without creating an event,
+      // touching an order or crediting a wallet. Every non-fixture callback
+      // continues through canonical provider reconciliation below.
+      if (isAfdianDocumentedWebhookProbe(req.body)) {
+        return res.json({ ec: 200, em: '' });
+      }
       assertPaymentsAvailable();
       const result = await processAfdianPaymentCallback({ body: req.body || {} });
       if (result.ok) {
@@ -427,6 +455,7 @@ module.exports = {
   assertCreditFeaturesAvailable,
   assertPaymentsAvailable,
   containsClientPaymentAuthority,
+  isAfdianDocumentedWebhookProbe,
   assertRequestedUserOwner,
   installPaymentRoutes,
   legacyJsonBillingEnabled,
