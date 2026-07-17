@@ -136,6 +136,15 @@ const assertPaymentsAvailable = ({
   return true;
 };
 
+const assertCreditFeaturesAvailable = ({
+  enabled = paidFeaturesEnabled(),
+  databaseConfigured = isDatabaseConfigured()
+} = {}) => {
+  if (!enabled) throw new ApiError(503, 'PAID_FEATURES_DISABLED', { retryable: true });
+  if (!databaseConfigured) throw new ApiError(503, 'DATABASE_NOT_CONFIGURED', { retryable: true });
+  return true;
+};
+
 const publicPackage = (row) => ({
   packageId: row.id,
   sku: row.sku,
@@ -277,7 +286,7 @@ const installPaymentRoutes = (app, deps = {}) => {
     if (legacyJsonBillingEnabled()) return next();
     try {
       res.setHeader('Cache-Control', 'private, no-store');
-      assertPaymentsAvailable();
+      assertCreditFeaturesAvailable();
       const auth = requireCookieUser(req);
       const client = await getPool().connect();
       try {
@@ -415,6 +424,7 @@ const installPaymentRoutes = (app, deps = {}) => {
 };
 
 module.exports = {
+  assertCreditFeaturesAvailable,
   assertPaymentsAvailable,
   containsClientPaymentAuthority,
   assertRequestedUserOwner,

@@ -49,7 +49,7 @@ export function useAgentImgLocale() {
         generateThisDirection: '生成',
         welcomeTitle: '欢迎使用 Artigen AI 设计。',
         welcomeSub:
-          '从模板开始或描述商品画面，按商品、风格、场景上传参考图；服务端报价确认后才会创建任务。',
+          '从模板开始或描述商品画面。当前免费标准模型仅支持文生图，确认本次费用后才会创建任务。',
         memory: '历史记录',
         noHistory: '暂无历史记录',
         resultTitle: '生成结果',
@@ -71,8 +71,8 @@ export function useAgentImgLocale() {
         model: '模型',
         modelTip: '当前：默认模型',
         modelStandard: '默认模型',
-        modelNanobanana: 'Nano Banana',
-        modelNanobananaPro: 'Nano BananaPro',
+        modelNanobanana: '未启用',
+        modelNanobananaPro: '未启用',
         modelLocked: '需要 Pro 以上',
         modelComingSoon: '暂未接入',
         costTip: '预计扣费：{n} 点/次',
@@ -85,10 +85,10 @@ export function useAgentImgLocale() {
         loadingText: '正在处理，请耐心等待…',
         guideTitle: '使用指南 / 我们的优势',
         guideDesc:
-          '先补齐产品档案，再按商品、风格、场景添加参考图。快速生成直接出图；深度思考会先单独生成 4 个视觉方向，选择后再次确认生成。每一步都独立报价。',
+          '先补齐产品档案并描述画面。快速生成直接出图；深度思考会先单独生成 4 个视觉方向，选择后再次确认生成。每一步都独立报价。',
         guideKeywords: [
           '4 个视觉方向',
-          '三类语义参考图',
+          '免费文生图模型',
           '标准生成',
           '电商产品工作流',
           '失败自动退款'
@@ -100,7 +100,7 @@ export function useAgentImgLocale() {
           },
           {
             q: '从哪里开始更快？',
-            a: '有参考图就用图生图；只有想法就用文生图。做电商图建议先填产品档案，再选择风格/场景。'
+            a: '当前免费标准模型仅支持文生图。做电商图建议先填写产品档案，再描述商品、构图、场景和光线。'
           },
           {
             q: '怎么提高一致性与可控性？',
@@ -108,11 +108,11 @@ export function useAgentImgLocale() {
           },
           {
             q: '我们的优势是什么？',
-            a: '围绕商品视觉把产品档案、三类参考图、方向探索、标准生成、编辑器与下载串成可恢复、可取消、可退款的工作流。'
+            a: '围绕商品视觉把产品档案、方向探索、标准文生图、Editor V2 与下载串成可恢复、可取消、可退款的工作流。'
           },
           {
             q: '文件会上传到服务器吗？',
-            a: '工具相关功能默认在浏览器本地处理；AI 设计在生成/图生图时会将必要信息（提示词/参考图）发送到模型服务完成生成。'
+            a: '工具相关功能默认在浏览器本地处理；AI 设计只会在你确认生成后，将必要的提示词发送到模型服务。'
           }
         ]
       };
@@ -158,7 +158,7 @@ export function useAgentImgLocale() {
       generateThisDirection: 'Generate',
       welcomeTitle: 'Welcome to Artigen AI Design.',
       welcomeSub:
-        'Start with a recipe or describe a product visual. The current free standard model supports text-to-image only, and a task starts only after you confirm the server quote.',
+        'Start with a recipe or describe a product visual. The current free standard model supports text-to-image only, and generation starts after you confirm the cost.',
       memory: 'History',
       noHistory: 'No history yet',
       resultTitle: 'Result',
@@ -180,8 +180,8 @@ export function useAgentImgLocale() {
       model: 'Model',
       modelTip: 'Current: Default model',
       modelStandard: 'Default model',
-      modelNanobanana: 'Nano Banana',
-      modelNanobananaPro: 'Nano BananaPro',
+      modelNanobanana: 'Disabled',
+      modelNanobananaPro: 'Disabled',
       modelLocked: 'Requires Pro pack or higher',
       modelComingSoon: 'Coming soon',
       costTip: 'Est. cost: {n} credits/run',

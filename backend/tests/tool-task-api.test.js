@@ -42,7 +42,12 @@ const { hashPassword, verifyPassword } = require('../lib/auth-utils');
 const { isSessionCurrent, parseSessionNotBefore } = require('../lib/auth-utils');
 const { isPaidAiUserId } = require('../lib/credit-pricing');
 const { getOtpHmacSecret, hashOtpCode, verifyOtpCode } = require('../lib/otp-security');
-const { assertPaymentsAvailable, publicOrder, publicPackage } = require('../routes/payments');
+const {
+  assertCreditFeaturesAvailable,
+  assertPaymentsAvailable,
+  publicOrder,
+  publicPackage
+} = require('../routes/payments');
 const { legacyJsonBillingEnabled: paymentLegacyJsonBillingEnabled } = require('../routes/payments');
 const { canUseLegacyJsonBilling } = require('../lib/legacy-finance-policy');
 const { canUseLegacyFileQueryToken } = require('../lib/auth-utils');
@@ -436,6 +441,17 @@ test('payment reads fail closed and public shapes omit provider order identifier
   });
   assert.equal(order.orderId, 'order-id');
   assert.equal('providerOrderId' in order, false);
+});
+
+test('wallet reads remain available while checkout is independently disabled', () => {
+  assert.equal(
+    assertCreditFeaturesAvailable({ enabled: true, databaseConfigured: true }),
+    true
+  );
+  assert.throws(
+    () => assertPaymentsAvailable({ enabled: false, databaseConfigured: true }),
+    { code: 'PAID_FEATURES_DISABLED' }
+  );
 });
 
 test('task fields reject all client-owned price and SKU authority', () => {
