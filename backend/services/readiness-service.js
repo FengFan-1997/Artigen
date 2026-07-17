@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
@@ -94,6 +95,86 @@ const checkTurnstile = (env = process.env) => {
     return { ok: false, code: hostnameConfiguration.code };
   }
   return { ok: true };
+};
+
+const checkAfdian = (env = process.env) => {
+  const apiUserId = String(env.AFDIAN_API_USER_ID || '').trim();
+  const apiToken = String(env.AFDIAN_API_TOKEN || '').trim();
+  if (apiUserId.length < 16 || apiUserId.length > 128 || SECRET_PLACEHOLDER_RE.test(apiUserId)) {
+    return { ok: false, code: 'AFDIAN_API_USER_ID_MISSING' };
+  }
+  if (apiToken.length < 16 || apiToken.length > 512 || SECRET_PLACEHOLDER_RE.test(apiToken)) {
+    return { ok: false, code: 'AFDIAN_API_TOKEN_MISSING' };
+  }
+
+  let planMap;
+  try {
+    planMap = JSON.parse(String(env.AFDIAN_PACKAGE_PLAN_ID_MAP || ''));
+  } catch {
+    planMap = null;
+  }
+  const aliases = ['starter', 'standard', 'pro', 'ultimate'];
+  const validMap = Boolean(
+    planMap &&
+    typeof planMap === 'object' &&
+    !Array.isArray(planMap) &&
+    aliases.every((alias) => /^[a-f0-9]{32}$/i.test(String(planMap[alias] || '').trim())) &&
+    new Set(aliases.map((alias) => String(planMap[alias]).trim().toLowerCase())).size === aliases.length
+  );
+  if (!validMap) return { ok: false, code: 'AFDIAN_PACKAGE_MAP_INVALID' };
+
+  let payUrl;
+  try {
+    payUrl = new URL(String(
+      env.AFDIAN_ORDER_CREATE_URL || env.AFDIAN_PAGE_URL || env.AFDIAN_PAY_URL || ''
+    ).trim());
+  } catch {
+    return { ok: false, code: 'AFDIAN_PAY_URL_INVALID' };
+  }
+  const allowedPayHosts = new Set(['afdian.com', 'www.afdian.com', 'afdian.net', 'ifdian.net']);
+  if (
+    payUrl.protocol !== 'https:' ||
+    (isProduction(env) && !allowedPayHosts.has(payUrl.hostname.toLowerCase()))
+  ) {
+    return { ok: false, code: 'AFDIAN_PAY_URL_INVALID' };
+  }
+
+  const queryUrl = String(env.AFDIAN_QUERY_ORDER_URL || '').trim();
+  if (isProduction(env) && queryUrl) {
+    try {
+      const parsed = new URL(queryUrl);
+      if (
+        parsed.origin !== 'https://afdian.net' ||
+        parsed.pathname.replace(/\/+$/, '') !== '/api/open/query-order' ||
+        parsed.username ||
+        parsed.password ||
+        parsed.search ||
+        parsed.hash
+      ) {
+        return { ok: false, code: 'AFDIAN_QUERY_URL_INVALID' };
+      }
+    } catch {
+      return { ok: false, code: 'AFDIAN_QUERY_URL_INVALID' };
+    }
+  }
+
+  const signatureMode = String(env.AFDIAN_WEBHOOK_REQUIRE_SIGN || '').trim();
+  if (!['0', '1'].includes(signatureMode)) {
+    return { ok: false, code: 'AFDIAN_WEBHOOK_MODE_REQUIRED' };
+  }
+  if (signatureMode === '1') {
+    try {
+      crypto.createPublicKey(String(env.AFDIAN_WEBHOOK_PUBLIC_KEY || '').trim());
+    } catch {
+      return { ok: false, code: 'AFDIAN_WEBHOOK_PUBLIC_KEY_INVALID' };
+    }
+  }
+  return {
+    ok: true,
+    provider: 'afdian',
+    packageCount: aliases.length,
+    webhookVerification: signatureMode === '1' ? 'provider-query+rsa' : 'provider-query'
+  };
 };
 
 const checkDatabase = async (pool) => {
@@ -356,6 +437,7 @@ const getReadinessReport = async ({
   let payload = skippedCheck();
   let provider = skippedCheck();
   let outputAllowlist = skippedCheck();
+  let payment = skippedCheck();
 
   if (databaseRequired) {
     database = await checkDatabase(
@@ -374,6 +456,7 @@ const getReadinessReport = async ({
       }
     }
     storage = await checkStorage(resolvedAdapter, { requireShared: productionGeneration });
+    payment = checkAfdian(env);
   }
   if (generationRequired) {
     payload = hasPayloadKey(env)
@@ -397,8 +480,8 @@ const getReadinessReport = async ({
     ? checkTurnstile(env)
     : skippedCheck();
   const requiredChecks = [];
-  if (generationRequired) requiredChecks.push(database, storage, payload, provider, outputAllowlist);
-  else if (paidEnabled) requiredChecks.push(database, storage);
+  if (paidEnabled) requiredChecks.push(database, storage, payment);
+  if (generationRequired) requiredChecks.push(payload, provider, outputAllowlist);
   if (authEmailOtpEnabled) requiredChecks.push(database, authSecrets, mail, turnstile);
   return {
     ok: requiredChecks.every((check) => check.ok),
@@ -413,6 +496,7 @@ const getReadinessReport = async ({
       payload,
       provider,
       outputAllowlist,
+      payment,
       authSecrets,
       mail,
       turnstile
@@ -424,6 +508,7 @@ module.exports = {
   LATEST_REPOSITORY_MIGRATION,
   REPOSITORY_MIGRATIONS,
   checkAuthSecrets,
+  checkAfdian,
   checkBrevo,
   checkDatabase,
   checkGenerationProvider,

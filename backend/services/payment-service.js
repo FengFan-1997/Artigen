@@ -7,6 +7,7 @@ const { resolveUserId } = require('./billing-service');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LEGACY_ORDER_RE = /^pay_[a-z0-9_]{8,200}$/i;
+const AFDIAN_QUERY_ORDER_URL = 'https://afdian.net/api/open/query-order';
 
 const firstText = (...values) => {
   for (const value of values) {
@@ -110,6 +111,27 @@ const assertSafePaymentUrl = (raw, env = process.env) => {
   return url;
 };
 
+const requiresAfdianWebhookSignature = (env = process.env) => {
+  return /^(1|true)$/i.test(String(env.AFDIAN_WEBHOOK_REQUIRE_SIGN || '').trim());
+};
+
+const assertAfdianQueryEndpoint = (raw, env = process.env) => {
+  const endpoint = assertSafePaymentUrl(raw || AFDIAN_QUERY_ORDER_URL, env);
+  if (String(env.NODE_ENV || '').trim().toLowerCase() !== 'production') return endpoint;
+  const official = new URL(AFDIAN_QUERY_ORDER_URL);
+  if (
+    endpoint.origin !== official.origin ||
+    endpoint.pathname.replace(/\/+$/, '') !== official.pathname ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash
+  ) {
+    throw new ApiError(503, 'PAYMENT_RECONCILIATION_NOT_CONFIGURED', { retryable: true });
+  }
+  return endpoint;
+};
+
 const buildAfdianApiRequest = ({ providerEventId, env = process.env, now = Date.now }) => {
   const userId = String(env.AFDIAN_API_USER_ID || '').trim();
   const token = String(env.AFDIAN_API_TOKEN || '').trim();
@@ -138,10 +160,7 @@ const queryAfdianProviderOrder = async ({
   fetcher = fetchWithTimeout,
   now = Date.now
 } = {}) => {
-  const endpoint = assertSafePaymentUrl(
-    env.AFDIAN_QUERY_ORDER_URL || 'https://afdian.net/api/open/query-order',
-    env
-  );
+  const endpoint = assertAfdianQueryEndpoint(env.AFDIAN_QUERY_ORDER_URL, env);
   const request = buildAfdianApiRequest({ providerEventId, env, now });
   let response;
   try {
@@ -526,15 +545,18 @@ const processAfdianPaymentCallback = async ({
 } = {}) => {
   const received = parseAfdianCallback(body, env);
   if (!received.ok) return received;
-  const signature = await verifySignature(received.order, received.sign);
-  if (signature !== true && !signature?.ok) {
-    return { ok: false, error: String(signature?.error || 'INVALID_SIGN') };
+  const signatureRequired = requiresAfdianWebhookSignature(env);
+  if (signatureRequired) {
+    const signature = await verifySignature(received.order, received.sign);
+    if (signature !== true && !signature?.ok) {
+      return { ok: false, error: String(signature?.error || 'INVALID_SIGN') };
+    }
   }
 
-  // The provider's RSA signature does not cover custom_order_id or remark.
-  // Fetch the canonical order through the authenticated provider API before
-  // trusting either field, otherwise a valid same-price webhook could be
-  // rebound to another local order.
+  // Afdian's documented webhook does not carry a signature. Treat it only as
+  // a delivery hint and fetch the canonical paid order through the
+  // token-authenticated provider API before trusting any package, amount,
+  // remark or local-order reference.
   if (typeof reconcileProviderOrder !== 'function') {
     throw new ApiError(503, 'PAYMENT_RECONCILIATION_NOT_CONFIGURED', { retryable: true });
   }
@@ -548,9 +570,11 @@ const processAfdianPaymentCallback = async ({
   if (buildAfdianSignPayload(canonicalOrder) !== buildAfdianSignPayload(received.order)) {
     return { ok: false, error: 'PROVIDER_ORDER_MISMATCH' };
   }
-  const canonicalSignature = await verifySignature(canonicalOrder, received.sign);
-  if (canonicalSignature !== true && !canonicalSignature?.ok) {
-    return { ok: false, error: String(canonicalSignature?.error || 'INVALID_SIGN') };
+  if (signatureRequired) {
+    const canonicalSignature = await verifySignature(canonicalOrder, received.sign);
+    if (canonicalSignature !== true && !canonicalSignature?.ok) {
+      return { ok: false, error: String(canonicalSignature?.error || 'INVALID_SIGN') };
+    }
   }
   const parsed = parseAfdianCallback({ sign: received.sign, data: { order: canonicalOrder } }, env);
   if (!parsed.ok) return parsed;
@@ -630,6 +654,7 @@ const createPaymentOrder = async ({
 module.exports = {
   PgPaymentRepository,
   applyParsedPaymentCallback,
+  assertAfdianQueryEndpoint,
   assertSafePaymentUrl,
   buildAfdianApiRequest,
   buildAfdianPayUrl,
@@ -645,6 +670,7 @@ module.exports = {
   processAfdianPaymentCallback,
   queryAfdianProviderOrder,
   reconcileAfdianDeadLetter,
+  requiresAfdianWebhookSignature,
   resolveActivePaymentPackage,
   validateCallbackAgainstOrder
 };

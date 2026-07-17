@@ -331,7 +331,7 @@ const installPaymentRoutes = (app, deps = {}) => {
       ].includes(error);
       if (signatureFailure) return res.status(401).json({ ec: 401, em: error });
 
-      // Signed mismatches are acknowledged to avoid a provider retry storm,
+      // Provider-verified mismatches are acknowledged to avoid a retry storm,
       // but retained as dead letters. A privileged reconciliation re-queries
       // the canonical provider order before it may claim and credit them.
       const acknowledgedDeadLetter = [

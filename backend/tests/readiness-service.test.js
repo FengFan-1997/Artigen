@@ -7,6 +7,7 @@ const { Readable } = require('stream');
 
 const {
   LATEST_REPOSITORY_MIGRATION,
+  checkAfdian,
   checkAuthSecrets,
   checkBrevo,
   checkDatabase,
@@ -66,7 +67,17 @@ const sharedAdapter = () => ({
 const baseGenerationEnv = Object.freeze({
   PAID_FEATURES_ENABLED: '1',
   AI_DESIGN_TASK_V2_ENABLED: '1',
-  TASK_PAYLOAD_ENCRYPTION_KEY: '12345678901234567890123456789012'
+  TASK_PAYLOAD_ENCRYPTION_KEY: '12345678901234567890123456789012',
+  AFDIAN_API_USER_ID: 'creator_1234567890abcdef',
+  AFDIAN_API_TOKEN: 'afdian_7Qm2Vx9Lp4Zr8Kc5Nw1Hs6',
+  AFDIAN_ORDER_CREATE_URL: 'https://afdian.com/order/create',
+  AFDIAN_WEBHOOK_REQUIRE_SIGN: '0',
+  AFDIAN_PACKAGE_PLAN_ID_MAP: JSON.stringify({
+    starter: '11111111111111111111111111111111',
+    standard: '22222222222222222222222222222222',
+    pro: '33333333333333333333333333333333',
+    ultimate: '44444444444444444444444444444444'
+  })
 });
 
 const routeApp = () => {
@@ -221,6 +232,33 @@ test('production output allowlist requires valid public DNS hostnames', () => {
     NODE_ENV: 'production',
     AI_OUTPUT_ALLOWED_HOSTS: '*.cdn.example.com,images.example.org'
   }), { ok: true, required: true, hostCount: 2 });
+});
+
+test('paid readiness requires provider-verified Afdian reconciliation configuration', () => {
+  assert.deepEqual(checkAfdian({ ...baseGenerationEnv, NODE_ENV: 'production' }), {
+    ok: true,
+    provider: 'afdian',
+    packageCount: 4,
+    webhookVerification: 'provider-query'
+  });
+  assert.equal(checkAfdian({
+    ...baseGenerationEnv,
+    AFDIAN_API_TOKEN: ''
+  }).code, 'AFDIAN_API_TOKEN_MISSING');
+  assert.equal(checkAfdian({
+    ...baseGenerationEnv,
+    AFDIAN_PACKAGE_PLAN_ID_MAP: JSON.stringify({ starter: '1'.repeat(32) })
+  }).code, 'AFDIAN_PACKAGE_MAP_INVALID');
+  assert.equal(checkAfdian({
+    ...baseGenerationEnv,
+    NODE_ENV: 'production',
+    AFDIAN_QUERY_ORDER_URL: 'https://attacker.example/query-order'
+  }).code, 'AFDIAN_QUERY_URL_INVALID');
+  assert.equal(checkAfdian({
+    ...baseGenerationEnv,
+    AFDIAN_WEBHOOK_REQUIRE_SIGN: '1',
+    AFDIAN_WEBHOOK_PUBLIC_KEY: ''
+  }).code, 'AFDIAN_WEBHOOK_PUBLIC_KEY_INVALID');
 });
 
 test('production generation refuses process-local file storage', async () => {
@@ -455,6 +493,7 @@ test('disabled paid and email OTP features skip database, storage and provider I
     'payload',
     'provider',
     'outputAllowlist',
+    'payment',
     'authSecrets',
     'mail',
     'turnstile'

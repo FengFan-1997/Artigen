@@ -2,11 +2,13 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  assertAfdianQueryEndpoint,
   buildAfdianApiRequest,
   buildAfdianPayUrl,
   parseAmountMinor,
   processAfdianPaymentCallback,
   reconcileAfdianDeadLetter,
+  requiresAfdianWebhookSignature,
   resolveActivePaymentPackage
 } = require('../services/payment-service');
 const {
@@ -107,18 +109,23 @@ const process = (
   repository,
   body,
   verifySignature = () => ({ ok: true }),
-  canonicalOrder = body?.data?.order
+  canonicalOrder = body?.data?.order,
+  envOverrides = {}
 ) => {
   return processAfdianPaymentCallback({
     body,
     repository,
     verifySignature,
     reconcileProviderOrder: async () => canonicalOrder,
-    env: { AFDIAN_PLAN_PACKAGE_MAP: JSON.stringify({ 'plan-starter': 'starter' }) }
+    env: {
+      AFDIAN_PLAN_PACKAGE_MAP: JSON.stringify({ 'plan-starter': 'starter' }),
+      AFDIAN_WEBHOOK_REQUIRE_SIGN: '0',
+      ...envOverrides
+    }
   });
 };
 
-test('50 concurrent copies of one signed provider event credit exactly once', async () => {
+test('50 concurrent copies of one provider-verified event credit exactly once', async () => {
   const repository = new FakePaymentRepository();
   const results = await Promise.all(
     Array.from({ length: 50 }, () => process(repository, callbackBody()))
@@ -130,6 +137,35 @@ test('50 concurrent copies of one signed provider event credit exactly once', as
   assert.equal(repository.creditCount, 1);
   assert.equal(repository.availableCredits, 400);
   assert.equal(repository.order.status, 'paid');
+});
+
+test('the documented unsigned webhook settles only after an authenticated provider query', async () => {
+  const repository = new FakePaymentRepository();
+  const body = callbackBody();
+  delete body.sign;
+  let providerQueries = 0;
+  let signatureChecks = 0;
+  const result = await processAfdianPaymentCallback({
+    body,
+    repository,
+    env: {
+      AFDIAN_PLAN_PACKAGE_MAP: JSON.stringify({ 'plan-starter': 'starter' }),
+      AFDIAN_WEBHOOK_REQUIRE_SIGN: '0'
+    },
+    verifySignature: () => {
+      signatureChecks += 1;
+      return { ok: false, error: 'MISSING_SIGN' };
+    },
+    reconcileProviderOrder: async () => {
+      providerQueries += 1;
+      return body.data.order;
+    }
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.credited, true);
+  assert.equal(providerQueries, 1);
+  assert.equal(signatureChecks, 0);
+  assert.equal(repository.creditCount, 1);
 });
 
 test('signed wrong amount, package, user and unknown orders never credit', async () => {
@@ -244,13 +280,20 @@ test('payment package short aliases fail closed when more than one active versio
   );
 });
 
-test('missing and forged signatures are rejected before claiming a callback event', async () => {
+test('explicit RSA mode rejects missing and forged signatures before claiming an event', async () => {
   for (const signature of [
     { ok: false, error: 'MISSING_SIGN' },
     { ok: false, error: 'INVALID_SIGN' }
   ]) {
     const repository = new FakePaymentRepository();
-    const result = await process(repository, callbackBody(), () => signature);
+    const body = callbackBody();
+    const result = await process(
+      repository,
+      body,
+      () => signature,
+      body.data.order,
+      { AFDIAN_WEBHOOK_REQUIRE_SIGN: '1' }
+    );
     assert.equal(result.ok, false);
     assert.equal(result.error, signature.error);
     assert.equal(repository.events.size, 0);
@@ -304,6 +347,22 @@ test('provider API reconciliation request uses the documented token/key ordering
   assert.equal(request.sign, expected);
 });
 
+test('production provider queries cannot redirect API credentials to another host', () => {
+  assert.equal(requiresAfdianWebhookSignature({ AFDIAN_WEBHOOK_REQUIRE_SIGN: '1' }), true);
+  assert.equal(requiresAfdianWebhookSignature({ AFDIAN_WEBHOOK_REQUIRE_SIGN: '0' }), false);
+  assert.equal(
+    assertAfdianQueryEndpoint('', { NODE_ENV: 'production' }).toString(),
+    'https://afdian.net/api/open/query-order'
+  );
+  assert.throws(
+    () => assertAfdianQueryEndpoint(
+      'https://attacker.example/query-order',
+      { NODE_ENV: 'production' }
+    ),
+    { code: 'PAYMENT_RECONCILIATION_NOT_CONFIGURED', status: 503 }
+  );
+});
+
 test('a signed callback fails closed when provider reconciliation is not configured', async () => {
   const repository = new FakePaymentRepository();
   await assert.rejects(
@@ -311,7 +370,7 @@ test('a signed callback fails closed when provider reconciliation is not configu
       body: callbackBody(),
       repository,
       verifySignature: () => ({ ok: true }),
-      env: {}
+      env: { AFDIAN_WEBHOOK_REQUIRE_SIGN: '1' }
     }),
     { code: 'PAYMENT_RECONCILIATION_NOT_CONFIGURED', status: 503 }
   );

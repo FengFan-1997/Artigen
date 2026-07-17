@@ -775,10 +775,10 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `CREDITS_COST_AI_INGREDIENT_LIST` | AI 配料表成本。 |
 | `AFDIAN_PAGE_URL` / `AFDIAN_PAY_URL` | 爱发电付款页。 |
 | `AFDIAN_ORDER_CREATE_URL` | 爱发电订单创建地址。 |
-| `AFDIAN_API_USER_ID` / `AFDIAN_API_TOKEN` | 服务端查询订单凭证；生产 webhook 入账前必须向 provider 核对规范订单。 |
-| `AFDIAN_QUERY_ORDER_URL` | 爱发电订单查询 API；默认使用官方 `query-order` 地址。 |
-| `AFDIAN_WEBHOOK_PUBLIC_KEY` | 爱发电 webhook 公钥。 |
-| `AFDIAN_WEBHOOK_REQUIRE_SIGN` | 仅旧非生产适配器保留的废弃开关；标准支付回调在所有环境始终验签。 |
+| `AFDIAN_API_USER_ID` / `AFDIAN_API_TOKEN` | 服务端查询订单凭证；生产 webhook 只作为通知，入账前必须通过官方 API 重新获取并核对规范订单。 |
+| `AFDIAN_QUERY_ORDER_URL` | 爱发电订单查询 API；生产固定为官方 `https://afdian.net/api/open/query-order`，避免凭证被发送到其他主机。 |
+| `AFDIAN_WEBHOOK_PUBLIC_KEY` | 可选爱发电 webhook RSA 公钥；仅在该创作者账号确实启用签名时配置。 |
+| `AFDIAN_WEBHOOK_REQUIRE_SIGN` | 官方文档中的 webhook 无签名，默认 `0` 并强制 API 复核；只有爱发电明确为账号启用 RSA 后才设为 `1`。 |
 | `AFDIAN_PACKAGE_PLAN_ID_MAP` | 套餐 UUID/完整 SKU 到爱发电 plan id 的服务端映射。 |
 | `AFDIAN_PACKAGE_PAY_URL_MAP` | 套餐 UUID/完整 SKU 到付款页的服务端映射。 |
 | `ENABLE_LEGACY_JSON_BILLING` | 仅无数据库、非生产环境可显式开启旧 JSON 计费适配器；生产始终禁用。 |
