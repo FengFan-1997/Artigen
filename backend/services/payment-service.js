@@ -7,7 +7,10 @@ const { resolveUserId } = require('./billing-service');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LEGACY_ORDER_RE = /^pay_[a-z0-9_]{8,200}$/i;
-const AFDIAN_QUERY_ORDER_URL = 'https://afdian.net/api/open/query-order';
+// afdian.net no longer has a resolvable public DNS record in all regions.
+// afdian.com serves the same documented Open API and is the canonical
+// production host used by the checkout flow.
+const AFDIAN_QUERY_ORDER_URL = 'https://afdian.com/api/open/query-order';
 
 const firstText = (...values) => {
   for (const value of values) {

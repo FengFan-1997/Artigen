@@ -384,7 +384,7 @@ test('production provider queries cannot redirect API credentials to another hos
   assert.equal(requiresAfdianWebhookSignature({ AFDIAN_WEBHOOK_REQUIRE_SIGN: '0' }), false);
   assert.equal(
     assertAfdianQueryEndpoint('', { NODE_ENV: 'production' }).toString(),
-    'https://afdian.net/api/open/query-order'
+    'https://afdian.com/api/open/query-order'
   );
   assert.throws(
     () => assertAfdianQueryEndpoint(

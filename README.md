@@ -780,7 +780,7 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `AFDIAN_PAGE_URL` / `AFDIAN_PAY_URL` | 爱发电付款页。 |
 | `AFDIAN_ORDER_CREATE_URL` | 爱发电订单创建地址。 |
 | `AFDIAN_API_USER_ID` / `AFDIAN_API_TOKEN` | 服务端查询订单凭证；用户领取和 webhook 处理都必须通过官方 API 获取并核对规范订单。 |
-| `AFDIAN_QUERY_ORDER_URL` | 爱发电订单查询 API；生产固定为官方 `https://afdian.net/api/open/query-order`，避免凭证被发送到其他主机。 |
+| `AFDIAN_QUERY_ORDER_URL` | 爱发电订单查询 API；生产固定为可解析的官方 `https://afdian.com/api/open/query-order`，避免凭证被发送到其他主机。 |
 | `AFDIAN_WEBHOOK_PUBLIC_KEY` | 可选爱发电 webhook RSA 公钥；仅在该创作者账号确实启用签名时配置。 |
 | `AFDIAN_WEBHOOK_REQUIRE_SIGN` | 官方文档中的 webhook 无签名，默认 `0` 并强制 API 复核；只有爱发电明确为账号启用 RSA 后才设为 `1`。 |
 | `AFDIAN_PACKAGE_PLAN_ID_MAP` | 套餐 UUID/完整 SKU 到爱发电 plan id 的服务端映射。 |

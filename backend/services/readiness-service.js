@@ -177,7 +177,7 @@ const checkAfdian = (env = process.env) => {
     try {
       const parsed = new URL(queryUrl);
       if (
-        parsed.origin !== 'https://afdian.net' ||
+        parsed.origin !== 'https://afdian.com' ||
         parsed.pathname.replace(/\/+$/, '') !== '/api/open/query-order' ||
         parsed.username ||
         parsed.password ||
