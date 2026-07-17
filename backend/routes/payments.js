@@ -10,6 +10,7 @@ const {
 } = require('../services/admin-auth-service');
 const {
   buildAfdianPayUrl,
+  claimAfdianPaymentOrder,
   createPaymentOrder,
   listAfdianDeadLetters,
   reconcileAfdianDeadLetter,
@@ -231,6 +232,36 @@ const installPaymentRoutes = (app, deps = {}) => {
       status: order.status,
       createdAt: order.createdAt,
       payUrl: order.payUrl
+    });
+  }));
+
+  app.post('/api/pay/orders/:orderId/verify', createLimiter, asyncRoute(async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    assertPaymentsAvailable();
+    const auth = requireCookieUser(req);
+    const result = await claimAfdianPaymentOrder({
+      localOrderId: req.params.orderId,
+      actorUserId: auth.dbUserId || auth.userId,
+      providerOrderId: req.body?.providerOrderId
+    });
+    if (result.credited && !result.replayed) {
+      await recordGenerationTaskEvent({
+        eventType: 'payment_confirmed',
+        actorUserId: result.actorUserId,
+        properties: {
+          source: 'server',
+          chargedCredits: Math.max(0, Number(result.credits || 0))
+        }
+      }).catch((error) => {
+        console.error('Payment analytics event failed', error?.code || error?.message || error);
+      });
+    }
+    return res.json({
+      ok: true,
+      orderId: result.orderId,
+      credited: Boolean(result.credited),
+      replayed: Boolean(result.replayed),
+      credits: Number(result.credits || 0)
     });
   }));
 

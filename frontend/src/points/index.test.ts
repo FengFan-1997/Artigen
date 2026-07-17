@@ -9,7 +9,7 @@ vi.mock('@/login/session', () => ({
 }));
 vi.mock('@/utils/analytics', () => ({ trackEvent: vi.fn() }));
 
-import { createPayOrder, getPayOrder, getPayPackages } from './index';
+import { createPayOrder, getPayOrder, getPayPackages, verifyPayOrder } from './index';
 
 describe('secure payment order client', () => {
   beforeEach(() => authFetch.mockReset());
@@ -121,5 +121,31 @@ describe('secure payment order client', () => {
       credits: 1000
     });
     expect(String(authFetch.mock.calls[0][0])).toContain('/api/pay/orders/order-uuid');
+  });
+
+  it('verifies a provider order through the authenticated local order only', async () => {
+    authFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      ok: true,
+      orderId: 'local-order-uuid',
+      credited: true,
+      replayed: false,
+      credits: 400
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    await expect(
+      verifyPayOrder('local-order-uuid', '202607171234567890123456789')
+    ).resolves.toEqual({
+      ok: true,
+      orderId: 'local-order-uuid',
+      credited: true,
+      replayed: false,
+      credits: 400
+    });
+    expect(String(authFetch.mock.calls[0][0])).toContain(
+      '/api/pay/orders/local-order-uuid/verify'
+    );
+    expect(JSON.parse(String(authFetch.mock.calls[0][1]?.body))).toEqual({
+      providerOrderId: '202607171234567890123456789'
+    });
   });
 });

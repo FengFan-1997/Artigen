@@ -1441,6 +1441,83 @@ test('landing titlebar menus and account overlays stay visually stable', async (
 
   expectCleanRuntime(issues);
 });
+
+test('credit checkout verifies an Afdian order before adding credits', async ({ page }, testInfo) => {
+  await seedAuthedBrowserState(page);
+  const localOrderId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const packageId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const providerOrderId = '202607171234567890123456789';
+  let availableCredits = 120;
+  let verifyBody: Record<string, unknown> | null = null;
+
+  await page.route('**/api/pay/packages', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: safeJson({
+        ok: true,
+        packages: [{
+          packageId,
+          sku: 'credits.starter.v1',
+          title: 'Starter',
+          amountMinor: 990,
+          currency: 'CNY',
+          credits: 400
+        }]
+      })
+    });
+  });
+  await page.route('**/api/pay/create-order', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: safeJson({
+        ok: true,
+        orderId: localOrderId,
+        packageId,
+        packageSku: 'credits.starter.v1',
+        amountMinor: 990,
+        amountCny: 9.9,
+        currency: 'CNY',
+        credits: 400,
+        status: 'pending',
+        payUrl: ''
+      })
+    });
+  });
+  await page.route(`**/api/pay/orders/${localOrderId}/verify`, async (route) => {
+    verifyBody = route.request().postDataJSON() as Record<string, unknown>;
+    availableCredits = 520;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: safeJson({
+        ok: true,
+        orderId: localOrderId,
+        credited: true,
+        replayed: false,
+        credits: 400
+      })
+    });
+  });
+  await page.route('**/api/credits/balance**', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: safeJson({ userId: 'user_visual', available: availableCredits, frozen: 0 })
+    });
+  });
+
+  await page.goto('/artigen/market');
+  await page.locator('.pricing-card').filter({ hasText: 'Starter' }).getByRole('button').click();
+  const modal = page.locator('.pay-panel');
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText('Afdian order number');
+  await modal.locator('.pay-provider-input').fill(providerOrderId);
+  await modal.getByRole('button', { name: 'Verify & add credits' }).click();
+
+  await expect(modal.locator('.pay-hint')).toContainText('Success: +400 credits');
+  await expect(modal).toContainText('520');
+  expect(verifyBody).toEqual({ providerOrderId });
+  await saveScreenshot(page, testInfo, 'payment-provider-order-verified');
+});
+
 test('AI shell popovers sidebars and long state screenshots stay stable', async ({
   page,
   isMobile

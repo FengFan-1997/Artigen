@@ -3,7 +3,10 @@ const crypto = require('node:crypto');
 const test = require('node:test');
 
 const { getPool } = require('../db/pool');
-const { processAfdianPaymentCallback } = require('../services/payment-service');
+const {
+  claimAfdianPaymentOrder,
+  processAfdianPaymentCallback
+} = require('../services/payment-service');
 
 const hasDatabase = Boolean(String(process.env.DATABASE_URL || '').trim());
 
@@ -116,6 +119,40 @@ test('50 PostgreSQL copies of one verified payment event credit exactly once', {
     purchases: Number(state.rows[0].purchases),
     events: Number(state.rows[0].events)
   }, { available: 87, purchases: 1, events: 1 });
+});
+
+test('50 authenticated claims of one paid provider order credit the local order once', {
+  skip: !hasDatabase
+}, async () => {
+  const fixture = await createFixture();
+  const providerEventId = `afdian-pg-claim-${crypto.randomUUID()}`;
+  const canonicalOrder = callbackBody(fixture, providerEventId).data.order;
+  canonicalOrder.custom_order_id = crypto.randomUUID();
+  canonicalOrder.app_user_id = 'unrelated-afdian-user';
+  const results = await Promise.all(Array.from({ length: 50 }, () =>
+    claimAfdianPaymentOrder({
+      localOrderId: fixture.orderId,
+      actorUserId: fixture.dbUserId,
+      providerOrderId: providerEventId,
+      reconcileProviderOrder: async () => canonicalOrder
+    })
+  ));
+  assert.equal(results.filter((result) => result.credited).length, 1);
+  assert.equal(results.filter((result) => result.replayed).length, 49);
+  const state = await getPool().query(
+    `SELECT po.provider_order_id, w.available_credits,
+            (SELECT count(*)::int FROM wallet_ledger
+              WHERE user_id=$1 AND entry_type='purchase') AS purchases
+       FROM payment_orders po
+       JOIN wallets w ON w.user_id=po.user_id
+      WHERE po.id=$2`,
+    [fixture.dbUserId, fixture.orderId]
+  );
+  assert.deepEqual({
+    providerOrderId: state.rows[0].provider_order_id,
+    available: Number(state.rows[0].available_credits),
+    purchases: Number(state.rows[0].purchases)
+  }, { providerOrderId: providerEventId, available: 87, purchases: 1 });
 });
 
 test('two verified provider events for one local order still credit once', {

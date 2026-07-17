@@ -544,13 +544,14 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
   -> POST /api/pay/create-order
   -> PostgreSQL 锁定套餐版本、金额、币种和点数
   -> 爱发电付款
-  -> POST /api/pay/afdian/webhook
-  -> 强制验签并通过 provider API 查询规范订单
+  -> 用户从爱发电订单详情复制 provider 订单号
+  -> POST /api/pay/orders/:orderId/verify
+  -> 使用 API token 查询并核对已付款 provider 订单
   -> 锁定本地订单和钱包
   -> PostgreSQL 订单 + 不可变 wallet_ledger 原子入账一次
 ```
 
-未知订单、错金额、错套餐等已签名异常会进入 dead letter，不会入账。管理员只能在重新查询 provider 规范订单后执行 reconciliation；重放和并发回调受唯一键与事务锁保护。
+爱发电官方 checkout 不承诺保留任意 `custom_order_id` 或 URL `remark`，因此 webhook 只作为加速通知，不能单独完成 Artigen 用户绑定。未知订单、错金额、错套餐不会入账；同一 provider 订单只能领取一次，重放和并发领取受唯一键与事务锁保护。
 
 ### 控制台
 
@@ -627,7 +628,8 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `GET` | `/api/pay/packages` | 读取当前 active 套餐 UUID、完整 SKU 和服务端价格。 |
 | `POST` | `/api/pay/create-order` | 创建支付订单。 |
 | `GET` | `/api/pay/orders/:orderId` | 读取本人本地支付订单。 |
-| `POST` | `/api/pay/afdian/webhook` | 爱发电 webhook。 |
+| `POST` | `/api/pay/orders/:orderId/verify` | 登录用户提交爱发电订单号；服务端查询并原子核验到账。 |
+| `POST` | `/api/pay/afdian/webhook` | 爱发电 webhook；仅作通知，始终通过 provider API 复核。 |
 
 ### 控制台
 
@@ -775,7 +777,7 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `CREDITS_COST_AI_INGREDIENT_LIST` | AI 配料表成本。 |
 | `AFDIAN_PAGE_URL` / `AFDIAN_PAY_URL` | 爱发电付款页。 |
 | `AFDIAN_ORDER_CREATE_URL` | 爱发电订单创建地址。 |
-| `AFDIAN_API_USER_ID` / `AFDIAN_API_TOKEN` | 服务端查询订单凭证；生产 webhook 只作为通知，入账前必须通过官方 API 重新获取并核对规范订单。 |
+| `AFDIAN_API_USER_ID` / `AFDIAN_API_TOKEN` | 服务端查询订单凭证；用户领取和 webhook 处理都必须通过官方 API 获取并核对规范订单。 |
 | `AFDIAN_QUERY_ORDER_URL` | 爱发电订单查询 API；生产固定为官方 `https://afdian.net/api/open/query-order`，避免凭证被发送到其他主机。 |
 | `AFDIAN_WEBHOOK_PUBLIC_KEY` | 可选爱发电 webhook RSA 公钥；仅在该创作者账号确实启用签名时配置。 |
 | `AFDIAN_WEBHOOK_REQUIRE_SIGN` | 官方文档中的 webhook 无签名，默认 `0` 并强制 API 复核；只有爱发电明确为账号启用 RSA 后才设为 `1`。 |

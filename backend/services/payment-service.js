@@ -193,6 +193,14 @@ const queryAfdianProviderOrder = async ({
   return order;
 };
 
+const normalizeAfdianProviderOrderId = (value) => {
+  const providerOrderId = String(value || '').trim();
+  if (!/^[a-z0-9_-]{8,200}$/i.test(providerOrderId) || /^test[_-]/i.test(providerOrderId)) {
+    throw new ApiError(400, 'INVALID_PROVIDER_ORDER_ID', { field: 'providerOrderId' });
+  }
+  return providerOrderId;
+};
+
 const buildAfdianPayUrl = (paymentOrder, env = process.env) => {
   const direct = lookupPackageConfig(env.AFDIAN_PACKAGE_PAY_URL_MAP, paymentOrder);
   const planId = lookupPackageConfig(env.AFDIAN_PACKAGE_PLAN_ID_MAP, paymentOrder);
@@ -216,10 +224,10 @@ const buildAfdianPayUrl = (paymentOrder, env = process.env) => {
   if (!UUID_RE.test(orderId) || !packageSku) {
     throw new ApiError(500, 'INVALID_LOCAL_PAYMENT_ORDER');
   }
-  // The callback may carry a user or credit count, but neither is placed in this
-  // provider URL or trusted later. Both are derived from the locked local order.
-  url.searchParams.set('custom_order_id', orderId);
-  url.searchParams.set('remark', `packageSku=${packageSku} orderId=${orderId}`);
+  // Afdian documents plan_id/product_type, but not arbitrary custom metadata
+  // on its hosted checkout. Do not imply that local order identity survives
+  // the redirect; the authenticated user claims the paid provider order after
+  // returning to Artigen.
   return url.toString();
 };
 
@@ -306,6 +314,119 @@ const validateCallbackAgainstOrder = (callback, order) => {
 };
 
 class PgPaymentRepository {
+  async claimVerifiedOrder({ localOrderId, actorUserId, parsed }) {
+    return withTransaction(async (client) => {
+      const dbUserId = await resolveUserId(client, actorUserId);
+      const locked = await client.query(
+        `SELECT po.id, po.user_id, po.package_id, po.provider_order_id,
+                po.expected_amount_minor, po.expected_credits, po.status,
+                u.legacy_user_id, pp.sku AS package_sku
+           FROM payment_orders po
+           JOIN users u ON u.id = po.user_id
+           JOIN payment_packages pp ON pp.id = po.package_id
+          WHERE po.id = $1 AND po.user_id = $2 AND po.provider = 'afdian'
+          FOR UPDATE OF po`,
+        [localOrderId, dbUserId]
+      );
+      if (!locked.rowCount) throw new ApiError(404, 'ORDER_NOT_FOUND');
+      const row = locked.rows[0];
+      const order = {
+        id: row.id,
+        userId: row.user_id,
+        legacyUserId: row.legacy_user_id,
+        packageId: row.package_id,
+        packageSku: row.package_sku,
+        amountMinor: Number(row.expected_amount_minor),
+        credits: Number(row.expected_credits),
+        status: row.status
+      };
+      if (String(row.status) === 'paid') {
+        if (String(row.provider_order_id || '') === parsed.providerEventId) {
+          return {
+            ok: true,
+            replayed: true,
+            credited: false,
+            orderId: order.id,
+            actorUserId: order.userId,
+            credits: order.credits
+          };
+        }
+        throw new ApiError(409, 'ORDER_NOT_PENDING');
+      }
+
+      const validated = validateCallbackAgainstOrder(parsed, order);
+      if (!validated.ok) throw new ApiError(409, validated.error);
+
+      const event = await client.query(
+        `INSERT INTO payment_callback_events
+          (provider, provider_event_id, payload_hash, signature_valid, status)
+         VALUES ('afdian',$1,$2,true,'received')
+         ON CONFLICT (provider, provider_event_id) DO UPDATE SET
+           payload_hash=EXCLUDED.payload_hash,
+           signature_valid=true,
+           status='received',
+           processed_at=NULL,
+           attempt_count=payment_callback_events.attempt_count + 1,
+           last_error=NULL
+         WHERE payment_callback_events.status LIKE 'dead_letter:%'
+         RETURNING id`,
+        [parsed.providerEventId, parsed.payloadHash]
+      );
+      if (!event.rowCount) {
+        throw new ApiError(409, 'PROVIDER_ORDER_ALREADY_CLAIMED');
+      }
+
+      const payment = await client.query(
+        `UPDATE payment_orders
+            SET status='paid', provider_order_id=$2, paid_at=now(), updated_at=now()
+          WHERE id=$1 AND status='pending'`,
+        [order.id, parsed.providerEventId]
+      );
+      if (payment.rowCount !== 1) throw new ApiError(409, 'ORDER_NOT_PENDING');
+
+      const wallet = await client.query(
+        `UPDATE wallets
+            SET available_credits = available_credits + $2,
+                version = version + 1, updated_at=now()
+          WHERE user_id=$1
+          RETURNING available_credits, frozen_credits`,
+        [order.userId, order.credits]
+      );
+      if (!wallet.rowCount) throw new ApiError(409, 'WALLET_NOT_FOUND');
+
+      await client.query(
+        `INSERT INTO wallet_ledger
+          (user_id, entry_type, delta_available, delta_frozen,
+           balance_available, balance_frozen, reference_type, reference_id,
+           idempotency_key, metadata)
+         VALUES ($1,'purchase',$2,0,$3,$4,'payment_order',$5,$6,$7)`,
+        [
+          order.userId,
+          order.credits,
+          wallet.rows[0].available_credits,
+          wallet.rows[0].frozen_credits,
+          order.id,
+          `purchase:afdian:${parsed.providerEventId}`,
+          JSON.stringify({ provider: 'afdian', verification: 'customer_claim' })
+        ]
+      );
+      await client.query(
+        `UPDATE payment_callback_events
+            SET payment_order_id=$2, status='processed', last_error=NULL, processed_at=now()
+          WHERE id=$1`,
+        [event.rows[0].id, order.id]
+      );
+      return {
+        ok: true,
+        replayed: false,
+        credited: true,
+        orderId: order.id,
+        actorUserId: order.userId,
+        credits: order.credits
+      };
+    });
+  }
+
   async transaction(callback) {
     return withTransaction(async (client) => callback({
       claimEvent: async ({ providerEventId, payloadHash }) => {
@@ -582,6 +703,42 @@ const processAfdianPaymentCallback = async ({
   return applyParsedPaymentCallback({ parsed, repository });
 };
 
+const claimAfdianPaymentOrder = async ({
+  localOrderId,
+  actorUserId,
+  providerOrderId,
+  env = process.env,
+  repository = new PgPaymentRepository(),
+  reconcileProviderOrder = ({ providerEventId }) => queryAfdianProviderOrder({
+    providerEventId,
+    env
+  })
+} = {}) => {
+  const orderId = String(localOrderId || '').trim();
+  if (!UUID_RE.test(orderId)) throw new ApiError(400, 'INVALID_ID', { field: 'orderId' });
+  const providerEventId = normalizeAfdianProviderOrderId(providerOrderId);
+  const canonicalOrder = await reconcileProviderOrder({ providerEventId });
+  const parsed = parseAfdianCallback({ data: { order: canonicalOrder } }, env);
+  if (!parsed.ok) throw new ApiError(409, parsed.error || 'INVALID_PROVIDER_ORDER');
+  if (parsed.providerEventId !== providerEventId) {
+    throw new ApiError(409, 'PROVIDER_ORDER_MISMATCH');
+  }
+  if (typeof repository.claimVerifiedOrder !== 'function') {
+    throw new ApiError(503, 'PAYMENT_RECONCILIATION_NOT_CONFIGURED', { retryable: true });
+  }
+  return repository.claimVerifiedOrder({
+    localOrderId: orderId,
+    actorUserId,
+    parsed: {
+      ...parsed,
+      localOrderId: orderId,
+      // Afdian user_id is a provider identity. Ownership comes from the
+      // authenticated Artigen user who created this local order.
+      appUserId: ''
+    }
+  });
+};
+
 const resolveActivePaymentPackage = async (client, packageRef) => {
   const ref = String(packageRef || '').trim().toLowerCase();
   if (!ref || ref.length > 160) {
@@ -658,10 +815,12 @@ module.exports = {
   assertSafePaymentUrl,
   buildAfdianApiRequest,
   buildAfdianPayUrl,
+  claimAfdianPaymentOrder,
   createPaymentOrder,
   extractRemarkValue,
   getAfdianDeadLetter,
   listAfdianDeadLetters,
+  normalizeAfdianProviderOrderId,
   packageAliases,
   parseAfdianCallback,
   parseAmountMinor,

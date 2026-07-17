@@ -1169,21 +1169,6 @@
             <div class="pay-sub">{{ ui.paySub }}</div>
 
             <div class="pay-row">
-              <div class="pay-label">{{ ui.payUserIdLabel }}</div>
-              <div class="pay-value">
-                <div class="pay-mono">{{ payUserId }}</div>
-                <button
-                  class="pay-copy"
-                  type="button"
-                  :disabled="payUserId === '--'"
-                  @click="copyPayValue(payUserId, 'userId')"
-                >
-                  {{ copiedKey === 'userId' ? ui.copied : ui.copy }}
-                </button>
-              </div>
-            </div>
-
-            <div class="pay-row">
               <div class="pay-label">{{ ui.payOrderIdLabel }}</div>
               <div class="pay-value">
                 <div class="pay-mono">{{ payOrderIdText }}</div>
@@ -1197,6 +1182,21 @@
                 </button>
               </div>
             </div>
+
+            <label class="pay-provider-field">
+              <span class="pay-label">{{ ui.payProviderOrderIdLabel }}</span>
+              <input
+                v-model.trim="payProviderOrderId"
+                class="pay-provider-input"
+                type="text"
+                inputmode="numeric"
+                autocomplete="off"
+                spellcheck="false"
+                :placeholder="ui.payProviderOrderIdPlaceholder"
+                @input="payError = ''"
+              />
+              <span class="pay-provider-help">{{ ui.payProviderOrderIdHelp }}</span>
+            </label>
 
             <div class="pay-row">
               <div class="pay-label">{{ ui.payPackageLabel }}</div>
@@ -1230,7 +1230,7 @@
               <button
                 class="nth-login-btn primary"
                 type="button"
-                :disabled="payChecking || payRefreshing"
+                :disabled="payChecking || payRefreshing || !payProviderOrderIdValid"
                 @click="checkPaidOnce"
               >
                 {{ payChecking ? ui.checkingPaid : ui.iHavePaid }}
@@ -1261,11 +1261,11 @@ import { useRoute, useRouter } from 'vue-router';
 import {
   createPayOrder,
   getCreditsBalance,
-  getPayOrder,
   getPayPackages,
+  verifyPayOrder,
   type PayPackageId
 } from '@/points';
-import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import { isLocalLoggedIn } from '@/login/session';
 import { useConsoleStore } from '@/stores/console';
 import { trackEvent } from '@/utils/analytics';
 
@@ -1358,37 +1358,25 @@ const payChecking = ref(false);
 const payRefreshing = ref(false);
 const payCreating = ref(false);
 const buyingPackageId = ref<PayPackageId | ''>('');
-const copiedKey = ref<'userId' | 'orderId' | ''>('');
-const payStatus = ref<'idle' | 'polling' | 'success' | 'failed'>('idle');
+const copiedKey = ref<'orderId' | ''>('');
+const payStatus = ref<'idle' | 'success' | 'failed'>('idle');
 const payError = ref('');
 const payOrderId = ref('');
+const payProviderOrderId = ref('');
 const payPackageId = ref<PayPackageId | ''>('');
 const payCredits = ref(0);
 const payUrl = ref('');
 const baselineCredits = ref<number | null>(null);
 const latestCredits = ref<number | null>(null);
 
-const POLL_TIMEOUT_MS = 2 * 60 * 1000;
-const pollTick = ref(0);
-
-let pollTimer: number | null = null;
-let pollStartedAt = 0;
-
-const stopPolling = () => {
-  if (pollTimer) window.clearInterval(pollTimer);
-  pollTimer = null;
-};
-
 const closePay = () => {
-  stopPolling();
-  pollStartedAt = 0;
-  pollTick.value = 0;
   payOpen.value = false;
   payChecking.value = false;
   payRefreshing.value = false;
   payStatus.value = 'idle';
   payError.value = '';
   payOrderId.value = '';
+  payProviderOrderId.value = '';
   payPackageId.value = '';
   payCredits.value = 0;
   payUrl.value = '';
@@ -1412,13 +1400,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  stopPolling();
   window.removeEventListener('keydown', onKeyDown);
-});
-
-const payUserId = computed(() => {
-  const uid = String(getCurrentUserId() || '').trim();
-  return uid || '--';
 });
 
 const payCreditsText = computed(() => String(Number(payCredits.value || 0)));
@@ -1427,6 +1409,10 @@ const payOrderIdText = computed(() => {
   const id = String(payOrderId.value || '').trim();
   return id || '--';
 });
+
+const payProviderOrderIdValid = computed(() =>
+  /^[a-z0-9_-]{8,200}$/i.test(String(payProviderOrderId.value || '').trim())
+);
 
 const payPackageText = computed(() => {
   const pid = String(payPackageId.value || '').trim();
@@ -1438,14 +1424,6 @@ const latestCreditsText = computed(() => {
   const v = latestCredits.value;
   if (typeof v !== 'number') return '--';
   return String(Number(v) || 0);
-});
-
-const pollRemainingSec = computed(() => {
-  if (payStatus.value !== 'polling') return null;
-  if (!pollStartedAt) return null;
-  const nowMs = Date.now() + pollTick.value * 0;
-  const remainingMs = POLL_TIMEOUT_MS - (nowMs - pollStartedAt);
-  return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
 });
 
 const payHintText = computed(() => {
@@ -1462,6 +1440,14 @@ const payHintText = computed(() => {
     if (raw === 'ORDER_REJECTED') return ui.value.payRejected;
     if (raw === 'ORDER_CANCELLED') return ui.value.payCancelled;
     if (raw === 'ORDER_EXPIRED') return ui.value.payExpired;
+    if (raw === 'INVALID_PROVIDER_ORDER_ID') return ui.value.payProviderOrderInvalid;
+    if (raw === 'PAYMENT_PROVIDER_ORDER_NOT_FOUND') return ui.value.payProviderOrderNotFound;
+    if (raw === 'ORDER_NOT_PAID') return ui.value.payProviderOrderUnpaid;
+    if (raw === 'PACKAGE_MISMATCH' || raw === 'AMOUNT_MISMATCH') {
+      return ui.value.payProviderOrderMismatch;
+    }
+    if (raw === 'PROVIDER_ORDER_ALREADY_CLAIMED') return ui.value.payProviderOrderClaimed;
+    if (raw === 'PAYMENT_RECONCILIATION_FAILED') return ui.value.payVerificationUnavailable;
     return raw;
   }
   if (payStatus.value === 'success') {
@@ -1475,10 +1461,6 @@ const payHintText = computed(() => {
       : `Success: +${add} credits. Balance updated.`;
   }
   if (payStatus.value === 'failed') return ui.value.payTimeout;
-  if (payStatus.value === 'polling') {
-    const sec = pollRemainingSec.value;
-    return typeof sec === 'number' ? `${ui.value.payPolling} (${sec}s)` : ui.value.payPolling;
-  }
   return ui.value.payGuide;
 });
 
@@ -1564,7 +1546,7 @@ const refreshBalanceOnce = async () => {
   }
 };
 
-const copyPayValue = async (value: string, key: 'userId' | 'orderId') => {
+const copyPayValue = async (value: string, key: 'orderId') => {
   const v = String(value || '').trim();
   if (!v || v === '--') return;
   try {
@@ -1587,52 +1569,20 @@ const checkPaidOnce = async () => {
   });
 
   payChecking.value = true;
+  payError.value = '';
   try {
-    await pollPaymentOrder();
+    const verified = await verifyPayOrder(payOrderId.value, payProviderOrderId.value);
+    if (!verified.ok) {
+      payError.value = verified.error;
+      payStatus.value = 'failed';
+      return;
+    }
+    payCredits.value = verified.credits || payCredits.value;
+    await refreshBalance();
+    payStatus.value = 'success';
   } finally {
     payChecking.value = false;
   }
-};
-
-let paymentPollInFlight = false;
-const pollPaymentOrder = async () => {
-  if (paymentPollInFlight || !payOrderId.value) return;
-  const orderId = payOrderId.value;
-  paymentPollInFlight = true;
-  try {
-    const order = await getPayOrder(orderId);
-    if (!payOpen.value || payOrderId.value !== orderId) return;
-    if (!order) return;
-    if (order.status === 'paid') {
-      await refreshBalance();
-      payStatus.value = 'success';
-      stopPolling();
-      return;
-    }
-    if (order.status === 'expired' || order.status === 'cancelled' || order.status === 'rejected') {
-      payError.value = `ORDER_${order.status.toUpperCase()}`;
-      payStatus.value = 'failed';
-      stopPolling();
-    }
-  } finally {
-    paymentPollInFlight = false;
-  }
-};
-
-const startPolling = () => {
-  stopPolling();
-  pollStartedAt = Date.now();
-  pollTick.value = 0;
-  payStatus.value = 'polling';
-  pollTimer = window.setInterval(async () => {
-    pollTick.value++;
-    await pollPaymentOrder();
-    if (Date.now() - pollStartedAt > POLL_TIMEOUT_MS) {
-      payStatus.value = 'failed';
-      stopPolling();
-    }
-  }, 4000);
-  void pollPaymentOrder();
 };
 
 const ensureAuthed = (afterLogin: () => void | Promise<void>) => {
@@ -1692,7 +1642,7 @@ const handleBuy = async (packageId: PayPackageId) => {
     } else {
       if (newWindow) newWindow.close();
     }
-    startPolling();
+    payStatus.value = 'idle';
   } catch {
     if (newWindow) newWindow.close();
   } finally {
@@ -1739,7 +1689,7 @@ const ui = computed(() => {
       tierPro1: '单次购买，不是按月订阅',
       tierPro2: '点数仅按实际确认的任务消耗',
       tierPro3: '订单状态可在“我的订单”查询',
-      tierUltimate1: '支付回调验签后才会入账',
+      tierUltimate1: '服务端查询并验证爱发电订单后才会入账',
       tierUltimate2: '套餐和金额以服务端订单为准',
       tierUltimate3: '付费能力不可用时禁止下单',
       tierUltimate4: '任务结果与扣费收据可追踪',
@@ -1788,7 +1738,7 @@ const ui = computed(() => {
         },
         {
           q: '购买后多久到账？',
-          a: '一般会在支付成功后自动到账；如偶发延迟，可在弹窗里点击“我已支付，检查到账”。'
+          a: '支付完成后，在爱发电订单详情复制订单号并回到 Artigen 验证。服务端确认订单已支付、套餐与金额一致且未被领取后立即到账。'
         },
         {
           q: '点数怎么消耗？一次大概多少？',
@@ -1802,11 +1752,13 @@ const ui = computed(() => {
       ],
       payTitle: '完成支付',
       paySub:
-        '打开支付页面后通常无需手动填写备注；如支付页未自动带出订单信息，可粘贴：userId=<你的用户ID> orderId=<订单号>。支付完成后系统会自动检测到账。',
+        '支付完成后，请在爱发电订单详情复制订单号并粘贴到下方。服务端会核对支付状态、套餐、金额和唯一领取记录。',
       payOpeningTitle: '正在打开爱发电',
       payOpeningDesc: '网络波动时可能需要稍等，页面会自动跳转到支付页。',
-      payUserIdLabel: '用户ID',
-      payOrderIdLabel: '订单号',
+      payOrderIdLabel: 'Artigen 订单',
+      payProviderOrderIdLabel: '爱发电订单号',
+      payProviderOrderIdPlaceholder: '粘贴爱发电订单详情中的订单号',
+      payProviderOrderIdHelp: '仅用于本次服务端核验；同一爱发电订单只能到账一次。',
       payPackageLabel: '套餐',
       payCreditsLabel: '到账点数',
       payBalanceLabel: '当前点数',
@@ -1815,7 +1767,7 @@ const ui = computed(() => {
       refresh: '刷新',
       refreshing: '刷新中...',
       openPayPage: '打开支付页面',
-      iHavePaid: '我已支付，检查到账',
+      iHavePaid: '验证订单并到账',
       checkingPaid: '检查中...',
       payGuide: '等待支付完成…',
       payPolling: '正在检测到账…',
@@ -1827,7 +1779,13 @@ const ui = computed(() => {
       payNetworkError: '网络错误，请检查网络后重试。',
       payRejected: '支付订单被拒绝，未增加点数。',
       payCancelled: '支付订单已取消。',
-      payExpired: '支付订单已过期，请重新创建。'
+      payExpired: '支付订单已过期，请重新创建。',
+      payProviderOrderInvalid: '请输入有效的爱发电订单号。',
+      payProviderOrderNotFound: '未查询到该爱发电订单，请核对后重试。',
+      payProviderOrderUnpaid: '该爱发电订单尚未支付成功。',
+      payProviderOrderMismatch: '该订单的套餐或金额与本次 Artigen 订单不一致。',
+      payProviderOrderClaimed: '该爱发电订单已经领取过点数，不能重复使用。',
+      payVerificationUnavailable: '爱发电订单核验暂时不可用，请稍后重试。'
     };
   }
   return {
@@ -1866,7 +1824,7 @@ const ui = computed(() => {
     tierPro1: 'One-time credit pack, not a subscription',
     tierPro2: 'Credits are spent only on confirmed tasks',
     tierPro3: 'Track status in My Orders',
-    tierUltimate1: 'Credits post only after webhook verification',
+    tierUltimate1: 'Credits post only after a server-side Afdian order verification',
     tierUltimate2: 'Package and amount come from the server order',
     tierUltimate3: 'Checkout is disabled when billing is unavailable',
     tierUltimate4: 'Task results and billing receipts are traceable',
@@ -1915,7 +1873,7 @@ const ui = computed(() => {
       },
       {
         q: 'How fast will credits be delivered after payment?',
-        a: 'Credits are usually delivered automatically right after payment. If there is a delay, click “I have paid, check now” in the payment modal.'
+        a: 'After payment, copy the order number from Afdian order details and verify it in Artigen. Credits post after the server confirms payment, package, amount, and single-use ownership.'
       },
       {
         q: 'How are credits charged per generation?',
@@ -1932,11 +1890,13 @@ const ui = computed(() => {
     ],
     payTitle: 'Complete Payment',
     paySub:
-      'Usually no manual remark is needed. If the payment page does not show order info, paste: userId=<your userId> orderId=<orderId>. We will auto-detect credits.',
+      'After payment, copy the order number from Afdian order details and paste it below. The server verifies status, package, amount, and single-use ownership.',
     payOpeningTitle: 'Opening Afdian',
     payOpeningDesc: 'Network delays may occur. You will be redirected automatically.',
-    payUserIdLabel: 'UserId',
-    payOrderIdLabel: 'OrderId',
+    payOrderIdLabel: 'Artigen order',
+    payProviderOrderIdLabel: 'Afdian order number',
+    payProviderOrderIdPlaceholder: 'Paste the order number from Afdian order details',
+    payProviderOrderIdHelp: 'Used only for this server verification. An Afdian order can be credited once.',
     payPackageLabel: 'Package',
     payCreditsLabel: 'Credits',
     payBalanceLabel: 'Current credits',
@@ -1945,7 +1905,7 @@ const ui = computed(() => {
     refresh: 'Refresh',
     refreshing: 'Refreshing...',
     openPayPage: 'Open payment page',
-    iHavePaid: 'I have paid, check now',
+    iHavePaid: 'Verify & add credits',
     checkingPaid: 'Checking...',
     payGuide: 'Waiting for payment…',
     payPolling: 'Checking credits…',
@@ -1957,7 +1917,13 @@ const ui = computed(() => {
     payNetworkError: 'Network error. Please try again.',
     payRejected: 'The payment order was rejected; no credits were added.',
     payCancelled: 'The payment order was cancelled.',
-    payExpired: 'The payment order expired. Create a new order.'
+    payExpired: 'The payment order expired. Create a new order.',
+    payProviderOrderInvalid: 'Enter a valid Afdian order number.',
+    payProviderOrderNotFound: 'That Afdian order was not found. Check the number and try again.',
+    payProviderOrderUnpaid: 'That Afdian order has not completed payment.',
+    payProviderOrderMismatch: 'The Afdian package or amount does not match this Artigen order.',
+    payProviderOrderClaimed: 'That Afdian order has already been used for credits.',
+    payVerificationUnavailable: 'Afdian order verification is temporarily unavailable. Try again later.'
   };
 });
 
@@ -2735,6 +2701,35 @@ const packageButtonLabel = (packageId: PayPackageId) => {
 .pay-copy:disabled:hover {
   border-color: rgba(255, 255, 255, 0.12);
   color: rgba(241, 245, 249, 0.92);
+}
+
+.pay-provider-field {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0 4px;
+}
+
+.pay-provider-input {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.42);
+  color: rgba(241, 245, 249, 0.96);
+  font: 13px/1.4 var(--common-font);
+}
+
+.pay-provider-input:focus-visible {
+  outline: 2px solid rgba(204, 255, 0, 0.9);
+  outline-offset: 2px;
+  border-color: rgba(204, 255, 0, 0.65);
+}
+
+.pay-provider-help {
+  color: #64748b;
+  font: 11px/1.5 var(--common-font);
 }
 
 .pay-actions {

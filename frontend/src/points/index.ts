@@ -178,6 +178,52 @@ export const getPayOrder = async (orderId: string): Promise<PayOrder | null> => 
   }
 };
 
+export type VerifyPayOrderResult =
+  | { ok: true; orderId: string; credited: boolean; replayed: boolean; credits: number }
+  | { ok: false; error: string };
+
+export const verifyPayOrder = async (
+  orderId: string,
+  providerOrderId: string
+): Promise<VerifyPayOrderResult> => {
+  const localId = String(orderId || '').trim();
+  const providerId = String(providerOrderId || '').trim();
+  if (!localId || !/^[a-z0-9_-]{8,200}$/i.test(providerId)) {
+    return { ok: false, error: 'INVALID_PROVIDER_ORDER_ID' };
+  }
+  try {
+    const res = await authFetch(
+      buildApiUrl(`/api/pay/orders/${encodeURIComponent(localId)}/verify`),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerOrderId: providerId })
+      }
+    );
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) {
+      const error = typeof json?.error?.code === 'string' && json.error.code.trim()
+        ? json.error.code.trim()
+        : typeof json?.error === 'string' && json.error.trim()
+          ? json.error.trim()
+          : 'PAYMENT_VERIFICATION_FAILED';
+      return { ok: false, error };
+    }
+    if (json?.ok !== true || typeof json?.orderId !== 'string') {
+      return { ok: false, error: 'INVALID_RESPONSE' };
+    }
+    return {
+      ok: true,
+      orderId: json.orderId.trim(),
+      credited: Boolean(json.credited),
+      replayed: Boolean(json.replayed),
+      credits: Math.max(0, Number(json.credits || 0))
+    };
+  } catch {
+    return { ok: false, error: 'NETWORK_ERROR' };
+  }
+};
+
 export const createPayOrder = async (
   packageId: PayPackageId,
   selectedPackageUuid: string

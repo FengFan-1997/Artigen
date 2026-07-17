@@ -5,6 +5,7 @@ const {
   assertAfdianQueryEndpoint,
   buildAfdianApiRequest,
   buildAfdianPayUrl,
+  claimAfdianPaymentOrder,
   parseAmountMinor,
   processAfdianPaymentCallback,
   reconcileAfdianDeadLetter,
@@ -166,6 +167,37 @@ test('the documented unsigned webhook settles only after an authenticated provid
   assert.equal(providerQueries, 1);
   assert.equal(signatureChecks, 0);
   assert.equal(repository.creditCount, 1);
+});
+
+test('an authenticated user claims a paid Afdian order without trusting checkout metadata', async () => {
+  let claimed = null;
+  const canonicalOrder = callbackBody({
+    custom_order_id: '44444444-4444-4444-8444-444444444444',
+    remark: 'attacker supplied text',
+    package_sku: undefined
+  }).data.order;
+  const result = await claimAfdianPaymentOrder({
+    localOrderId: LOCAL_ORDER_ID,
+    actorUserId: '33333333-3333-4333-8333-333333333333',
+    providerOrderId: canonicalOrder.out_trade_no,
+    env: {
+      AFDIAN_PACKAGE_PLAN_ID_MAP: JSON.stringify({ starter: 'plan-starter' })
+    },
+    repository: {
+      claimVerifiedOrder: async (input) => {
+        claimed = input;
+        return { ok: true, credited: true, replayed: false, credits: 400 };
+      }
+    },
+    reconcileProviderOrder: async () => canonicalOrder
+  });
+
+  assert.equal(result.credited, true);
+  assert.equal(claimed.localOrderId, LOCAL_ORDER_ID);
+  assert.equal(claimed.parsed.localOrderId, LOCAL_ORDER_ID);
+  assert.equal(claimed.parsed.appUserId, '');
+  assert.equal(claimed.parsed.packageRef, 'starter');
+  assert.equal(claimed.parsed.amountMinor, 990);
 });
 
 test('signed wrong amount, package, user and unknown orders never credit', async () => {
@@ -386,7 +418,7 @@ test('payment amounts use exact minor units and reject ambiguous decimals', () =
   assert.equal(parseAmountMinor('-1.00'), null);
 });
 
-test('payment URL contains only opaque order and package references', () => {
+test('payment URL uses only documented checkout parameters and carries no local identity', () => {
   const payUrl = buildAfdianPayUrl(
     {
       orderId: LOCAL_ORDER_ID,
@@ -403,8 +435,11 @@ test('payment URL contains only opaque order and package references', () => {
   );
   const url = new URL(payUrl);
   assert.equal(url.searchParams.get('plan_id'), 'plan-starter');
-  assert.equal(url.searchParams.get('custom_order_id'), LOCAL_ORDER_ID);
-  assert.match(url.searchParams.get('remark'), /packageSku=credits\.starter\.v1/);
+  assert.equal(url.searchParams.get('product_type'), '0');
+  assert.equal(url.searchParams.has('custom_order_id'), false);
+  assert.equal(url.searchParams.has('remark'), false);
+  assert.equal(payUrl.includes(LOCAL_ORDER_ID), false);
+  assert.equal(payUrl.includes('credits.starter.v1'), false);
   assert.equal(payUrl.includes('user_target_123'), false);
   assert.equal(payUrl.includes('credits=400'), false);
 
