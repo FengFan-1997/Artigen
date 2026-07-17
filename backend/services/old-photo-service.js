@@ -165,8 +165,16 @@ const isAllowedOutputHost = (hostname, env = process.env) => {
   return allowed.some((entry) => host === entry || host.endsWith(`.${entry}`));
 };
 
-const createPinnedLookup = (address, family) => (_hostname, _options, callback) => {
-  callback(null, String(address), Number(family) === 6 ? 6 : 4);
+const createPinnedLookup = (address, family) => (_hostname, options, callback) => {
+  const resolvedFamily = Number(family) === 6 ? 6 : 4;
+  const resolvedAddress = String(address);
+  const resolvedOptions = typeof options === 'object' && options ? options : {};
+  const done = typeof options === 'function' ? options : callback;
+  if (resolvedOptions.all) {
+    done(null, [{ address: resolvedAddress, family: resolvedFamily }]);
+    return;
+  }
+  done(null, resolvedAddress, resolvedFamily);
 };
 
 const createPinnedAgent = (url) => {
@@ -227,6 +235,21 @@ const parseDataImage = (reference) => {
   return { buffer, mimeType: match[1].toLowerCase() };
 };
 
+const validateProviderOutputMime = (buffer, declaredMime) => {
+  const declared = String(declaredMime || '').trim().toLowerCase();
+  if (![...OUTPUT_MIMES, 'application/octet-stream'].includes(declared)) {
+    throw taskError('INVALID_PROVIDER_OUTPUT_TYPE');
+  }
+  let detected;
+  try {
+    detected = defaultAssets.validateMagicBytes(buffer, declared);
+  } catch {
+    throw taskError('INVALID_PROVIDER_OUTPUT_TYPE');
+  }
+  if (!OUTPUT_MIMES.has(detected)) throw taskError('INVALID_PROVIDER_OUTPUT_TYPE');
+  return detected;
+};
+
 const downloadProviderImage = async ({
   reference,
   signal,
@@ -261,13 +284,12 @@ const downloadProviderImage = async ({
       .split(';')[0]
       .trim()
       .toLowerCase();
-    if (!OUTPUT_MIMES.has(declaredMime)) throw taskError('INVALID_PROVIDER_OUTPUT_TYPE');
     const contentLength = Number(response.headers?.get('content-length') || 0);
     if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_BYTES) {
       throw taskError('FILE_TOO_LARGE', 413);
     }
     const buffer = await readBodyLimited(response.body, { maxBytes: MAX_IMAGE_BYTES, signal });
-    return { buffer, mimeType: declaredMime };
+    return { buffer, mimeType: validateProviderOutputMime(buffer, declaredMime) };
   }
   throw taskError('INVALID_PROVIDER_REDIRECT');
 };
@@ -483,5 +505,6 @@ module.exports = {
   parseDataImage,
   persistOldPhotoOutput,
   readBodyLimited,
-  throwIfAborted
+  throwIfAborted,
+  validateProviderOutputMime
 };

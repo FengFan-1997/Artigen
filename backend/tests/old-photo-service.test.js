@@ -8,7 +8,8 @@ const {
   createPinnedLookup,
   createOldPhotoExecutor,
   createTaskRunnerRegistry,
-  isPrivateIp
+  isPrivateIp,
+  validateProviderOutputMime
 } = require('../services/old-photo-service');
 const { createRequestAbortController, validateOldPhotoOptions } = require('../routes/tool-tasks');
 const { createSemaphore } = require('../lib/ai-providers');
@@ -278,6 +279,20 @@ test('old-photo remote output guard blocks loopback and private networks', () =>
   assert.equal(isPrivateIp('1.1.1.1'), false);
 });
 
+test('provider octet-stream outputs require valid PNG or JPEG magic bytes', () => {
+  const png = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
+  assert.equal(validateProviderOutputMime(png, 'application/octet-stream'), 'image/png');
+  assert.throws(
+    () => validateProviderOutputMime(Buffer.from('not an image'), 'application/octet-stream'),
+    { code: 'INVALID_PROVIDER_OUTPUT_TYPE' }
+  );
+  assert.throws(
+    () => validateProviderOutputMime(png, 'text/html'),
+    { code: 'INVALID_PROVIDER_OUTPUT_TYPE' }
+  );
+});
+
 test('old-photo production output requires an allowlisted host and pins verified DNS', async () => {
   let lookups = 0;
   const resolver = async () => {
@@ -310,4 +325,20 @@ test('old-photo production output requires an allowlisted host and pins verified
     });
   });
   assert.deepEqual(pinned, { address: '1.1.1.1', family: 4 });
+
+  const pinnedAll = await new Promise((resolve, reject) => {
+    lookup('images.provider.example', { all: true }, (error, addresses) => {
+      if (error) reject(error);
+      else resolve(addresses);
+    });
+  });
+  assert.deepEqual(pinnedAll, [{ address: '1.1.1.1', family: 4 }]);
+
+  const pinnedWithoutOptions = await new Promise((resolve, reject) => {
+    lookup('images.provider.example', (error, address, family) => {
+      if (error) reject(error);
+      else resolve({ address, family });
+    });
+  });
+  assert.deepEqual(pinnedWithoutOptions, { address: '1.1.1.1', family: 4 });
 });
