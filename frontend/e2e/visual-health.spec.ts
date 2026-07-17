@@ -2443,7 +2443,7 @@ test('AI chat ignores stale image responses after cancellation and later request
   await page.route('**/api/img2img', async (route) => {
     requestNo += 1;
     const current = requestNo;
-    if (current === 1) await new Promise((resolve) => setTimeout(resolve, 700));
+    if (current === 1) await new Promise((resolve) => setTimeout(resolve, 5000));
     await route.fulfill({
       contentType: 'application/json',
       body: safeJson({ images: [{ url: mockImageDataUrl, persisted: true }] })
@@ -3304,15 +3304,15 @@ test('format factory runs video tools with a generated WebM fixture', async ({ p
   const inputs = page.locator('.tool-modal-panel input.control[type="number"]');
   await expect(inputs).toHaveCount(5);
   await inputs.nth(0).fill('0');
-  await inputs.nth(1).fill('0.8');
+  await inputs.nth(1).fill('0.5');
   await inputs.nth(2).fill('4');
-  await inputs.nth(3).fill('120');
-  await inputs.nth(4).fill('32');
+  await inputs.nth(3).fill('64');
+  await inputs.nth(4).fill('16');
   await expect(inputs.nth(0)).toHaveValue('0');
-  await expect(inputs.nth(1)).toHaveValue('0.8');
+  await expect(inputs.nth(1)).toHaveValue('0.5');
   await expect(inputs.nth(2)).toHaveValue('4');
-  await expect(inputs.nth(3)).toHaveValue('120');
-  await expect(inputs.nth(4)).toHaveValue('32');
+  await expect(inputs.nth(3)).toHaveValue('64');
+  await expect(inputs.nth(4)).toHaveValue('16');
   await expect(startButton).toBeEnabled();
   await startButton.click();
   await expect(outputPanel.locator('.meta-row').filter({ hasText: 'OUTPUT' }).first()).toBeVisible({
@@ -3333,8 +3333,9 @@ test('format factory runs video tools with a generated WebM fixture', async ({ p
   await expect
     .poll(async () => page.evaluate(() => (window as any).__formatWorkerStats.constructed))
     .toBeGreaterThan(workerBaseline.constructed);
-  await expect(outputPanel.locator('.btn.danger')).toBeVisible();
-  await outputPanel.locator('.btn.danger').click();
+  const cancelButton = outputPanel.locator('.btn.danger');
+  await expect(cancelButton).toBeVisible();
+  await cancelButton.evaluate((button: HTMLButtonElement) => button.click());
   await expect(page.locator('.tool-modal-panel .error-box')).toContainText('Cancelled');
   await expect
     .poll(async () => page.evaluate(() => (window as any).__formatWorkerStats.terminated))

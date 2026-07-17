@@ -5108,6 +5108,16 @@ const onStagePointerUp = (e: PointerEvent) => {
   outline: none;
 }
 
+input.control[type='number'] {
+  appearance: textfield;
+}
+
+input.control[type='number']::-webkit-inner-spin-button,
+input.control[type='number']::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
 @media (max-width: 1024px) {
   .mobile-text-hidden {
     display: none;
