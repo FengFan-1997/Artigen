@@ -14,6 +14,7 @@ const {
   checkMailRelay,
   checkDatabase,
   checkGenerationProvider,
+  probeGenerationProvider,
   checkOutputAllowlist,
   checkStorage,
   checkTurnstile,
@@ -48,7 +49,8 @@ const provider = (kind = 'siliconflow') => ({
   available: true,
   generateDirections: async () => [],
   generateImage: async () => ({}),
-  organizeIngredientSource: async () => ({})
+  organizeIngredientSource: async () => ({}),
+  checkAvailability: async () => ({ ok: true, kind, profile: 'standard-v1' })
 });
 
 const sharedAdapter = () => ({
@@ -214,6 +216,28 @@ test('provider readiness validates a callable adapter and stable internal profil
     provider: { kind: 'siliconflow', available: true },
     env: { NODE_ENV: 'production' }
   }), { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' });
+});
+
+test('production readiness fails closed for revoked provider credentials', async () => {
+  const invalid = provider('siliconflow');
+  invalid.checkAvailability = async () => ({
+    ok: false,
+    code: 'PROVIDER_CREDENTIAL_INVALID'
+  });
+  assert.deepEqual(await probeGenerationProvider({
+    provider: invalid,
+    env: { NODE_ENV: 'production' }
+  }), { ok: false, code: 'PROVIDER_CREDENTIAL_INVALID' });
+  assert.deepEqual(await probeGenerationProvider({
+    provider: {
+      kind: 'siliconflow',
+      available: true,
+      generateDirections: async () => [],
+      generateImage: async () => ({}),
+      organizeIngredientSource: async () => ({})
+    },
+    env: { NODE_ENV: 'production' }
+  }), { ok: false, code: 'PROVIDER_HEALTHCHECK_UNAVAILABLE' });
 });
 
 test('production output allowlist requires valid public DNS hostnames', () => {

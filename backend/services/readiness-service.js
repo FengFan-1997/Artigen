@@ -417,6 +417,25 @@ const checkGenerationProvider = ({
   return { ok: true, kind: provider.kind, profile: profile.id };
 };
 
+const probeGenerationProvider = async (options = {}) => {
+  const local = checkGenerationProvider(options);
+  if (!local.ok) return local;
+  if (!isProduction(options.env || process.env)) return local;
+  if (typeof options.provider?.checkAvailability !== 'function') {
+    return { ok: false, code: 'PROVIDER_HEALTHCHECK_UNAVAILABLE' };
+  }
+  const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, options.env || process.env);
+  try {
+    const result = await options.provider.checkAvailability({ profile });
+    return result?.ok ? result : {
+      ok: false,
+      code: String(result?.code || 'PROVIDER_UNAVAILABLE')
+    };
+  } catch {
+    return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
+  }
+};
+
 const normalizeAllowedHost = (value) => String(value || '')
   .trim()
   .toLowerCase()
@@ -495,7 +514,7 @@ const getReadinessReport = async ({
     payload = hasPayloadKey(env)
       ? { ok: true }
       : { ok: false, code: 'TASK_PAYLOAD_KEY_MISSING' };
-    provider = checkGenerationProvider({
+    provider = await probeGenerationProvider({
       provider: generationProvider,
       env,
       requireDirections: aiDesignEnabled,
@@ -547,6 +566,7 @@ module.exports = {
   checkMailRelay,
   checkDatabase,
   checkGenerationProvider,
+  probeGenerationProvider,
   checkOutputAllowlist,
   checkStorage,
   checkTurnstile,

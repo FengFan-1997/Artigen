@@ -238,6 +238,81 @@ test('SiliconFlow adapter owns model and image parameters and parses exactly fou
   assert.equal('guidanceScale' in calls.image.params, false);
 });
 
+test('SiliconFlow readiness probe validates credentials, endpoint and every internal model', async () => {
+  const env = {
+    NODE_ENV: 'production',
+    SILICONFLOW_API_KEY: 'sk-production-key',
+    AI_DESIGN_SILICONFLOW_TEXT_MODEL: 'internal/text-model',
+    AI_DESIGN_SILICONFLOW_EDIT_MODEL: 'internal/edit-model',
+    AI_DESIGN_SILICONFLOW_DIRECTIONS_MODEL: 'internal/directions-model'
+  };
+  const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, env);
+  let request;
+  const provider = createSiliconFlowGenerationProvider({
+    env,
+    imageGenerate: async () => ({}),
+    chatGenerate: async () => ({}),
+    fetcher: async (url, options) => {
+      request = { url, options };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [
+            { id: 'internal/text-model' },
+            { id: 'internal/edit-model' },
+            { id: 'internal/directions-model' }
+          ]
+        })
+      };
+    }
+  });
+  assert.deepEqual(await provider.checkAvailability({ profile }), {
+    ok: true,
+    kind: 'siliconflow',
+    profile: STANDARD_PROFILE_ID
+  });
+  assert.equal(request.url, 'https://api.siliconflow.cn/v1/models');
+  assert.equal(request.options.headers.authorization, 'Bearer sk-production-key');
+
+  const rejected = createSiliconFlowGenerationProvider({
+    env,
+    imageGenerate: async () => ({}),
+    chatGenerate: async () => ({}),
+    fetcher: async () => ({ ok: false, status: 401 })
+  });
+  assert.deepEqual(await rejected.checkAvailability({ profile }), {
+    ok: false,
+    code: 'PROVIDER_CREDENTIAL_INVALID'
+  });
+
+  const missingModel = createSiliconFlowGenerationProvider({
+    env,
+    imageGenerate: async () => ({}),
+    chatGenerate: async () => ({}),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ id: 'internal/text-model' }] })
+    })
+  });
+  assert.deepEqual(await missingModel.checkAvailability({ profile }), {
+    ok: false,
+    code: 'MODEL_PROFILE_UNAVAILABLE'
+  });
+
+  const unsafeEndpoint = createSiliconFlowGenerationProvider({
+    env: { ...env, SILICONFLOW_API_BASE: 'https://attacker.example/v1' },
+    imageGenerate: async () => ({}),
+    chatGenerate: async () => ({}),
+    fetcher: async () => { throw new Error('must not send credentials'); }
+  });
+  assert.deepEqual(await unsafeEndpoint.checkAvailability({ profile }), {
+    ok: false,
+    code: 'PROVIDER_ENDPOINT_INVALID'
+  });
+});
+
 test('direction parser rejects prose, partial arrays and malformed direction fields', () => {
   assert.equal(parseDirectionsResponse(JSON.stringify({
     directions: Array.from({ length: 4 }, (_, index) => ({

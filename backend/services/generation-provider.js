@@ -154,13 +154,15 @@ const createSiliconFlowGenerationProvider = ({
   imageGenerate,
   chatGenerate,
   env = process.env,
-  configured
+  configured,
+  fetcher = globalThis.fetch
 } = {}) => {
+  const credential = String(
+    env.SILICONFLOW_API_KEY || env.SILICONFLOW_TOKEN || env.SILICONFLOW_KEY || ''
+  ).trim();
   const hasCredential = typeof configured === 'boolean'
     ? configured
-    : configuredSecret(
-      env.SILICONFLOW_API_KEY || env.SILICONFLOW_TOKEN || env.SILICONFLOW_KEY
-    );
+    : configuredSecret(credential);
   const available = Boolean(hasCredential && imageGenerate && chatGenerate);
   const assertAvailable = () => {
     if (!available) throw providerError('MODEL_PROFILE_UNAVAILABLE', 503, true);
@@ -168,6 +170,65 @@ const createSiliconFlowGenerationProvider = ({
   return Object.freeze({
     kind: 'siliconflow',
     available,
+    async checkAvailability({ profile } = {}) {
+      assertAvailable();
+      if (typeof fetcher !== 'function') {
+        return { ok: false, code: 'PROVIDER_HEALTHCHECK_UNAVAILABLE' };
+      }
+      let endpoint;
+      try {
+        const base = new URL(String(
+          env.SILICONFLOW_API_BASE || 'https://api.siliconflow.cn/v1'
+        ).trim());
+        if (
+          String(env.NODE_ENV || '').trim().toLowerCase() === 'production' &&
+          (base.origin !== 'https://api.siliconflow.cn' || base.pathname.replace(/\/+$/, '') !== '/v1')
+        ) {
+          return { ok: false, code: 'PROVIDER_ENDPOINT_INVALID' };
+        }
+        endpoint = new URL(`${base.pathname.replace(/\/+$/, '')}/models`, base.origin);
+      } catch {
+        return { ok: false, code: 'PROVIDER_ENDPOINT_INVALID' };
+      }
+      const controller = new AbortController();
+      const timeoutMs = positiveTimeout(env.PROVIDER_HEALTHCHECK_TIMEOUT_MS, 8_000, 2_000);
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      timeout.unref?.();
+      try {
+        const response = await fetcher(endpoint.toString(), {
+          method: 'GET',
+          redirect: 'error',
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${credential}`
+          },
+          signal: controller.signal
+        });
+        if ([401, 403].includes(Number(response?.status || 0))) {
+          return { ok: false, code: 'PROVIDER_CREDENTIAL_INVALID' };
+        }
+        if (!response?.ok) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
+        const body = await response.json().catch(() => null);
+        const modelIds = new Set(
+          Array.isArray(body?.data)
+            ? body.data.map((item) => String(item?.id || '').trim()).filter(Boolean)
+            : []
+        );
+        const requiredModels = [
+          profile?.internalTextModel,
+          profile?.internalEditModel,
+          profile?.internalDirectionsModel
+        ].map((value) => String(value || '').trim()).filter(Boolean);
+        if (!modelIds.size || requiredModels.some((model) => !modelIds.has(model))) {
+          return { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' };
+        }
+        return { ok: true, kind: 'siliconflow', profile: profile?.id || null };
+      } catch {
+        return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
     async generateDirections({ prompt, locale, productProfile, profile, signal }) {
       assertAvailable();
       try {
@@ -333,12 +394,19 @@ const createConfiguredGenerationProvider = ({
   imageGenerate,
   chatGenerate,
   env = process.env,
-  configured
+  configured,
+  fetcher
 } = {}) => {
   const useMock = String(env.NODE_ENV || 'development').toLowerCase() !== 'production' &&
     /^(1|true)$/i.test(String(env.AI_GENERATION_CONTRACT_MOCK || '').trim());
   if (useMock) return createContractMockGenerationProvider();
-  return createSiliconFlowGenerationProvider({ imageGenerate, chatGenerate, env, configured });
+  return createSiliconFlowGenerationProvider({
+    imageGenerate,
+    chatGenerate,
+    env,
+    configured,
+    fetcher
+  });
 };
 
 module.exports = {
