@@ -10,6 +10,8 @@ const {
   checkAfdian,
   checkAuthSecrets,
   checkBrevo,
+  checkMailProvider,
+  checkMailRelay,
   checkDatabase,
   checkGenerationProvider,
   checkOutputAllowlist,
@@ -550,6 +552,38 @@ test('email OTP readiness requires migrated PostgreSQL, independent strong secre
   assert.equal(ready.checks.turnstile.ok, true);
   assert.equal(ready.checks.storage.skipped, true);
   assert.equal(ready.checks.provider.skipped, true);
+});
+
+test('email OTP readiness accepts the signed HTTPS mail relay without Brevo', async () => {
+  const env = {
+    NODE_ENV: 'production',
+    AUTH_EMAIL_OTP_ENABLED: 'true',
+    PAID_FEATURES_ENABLED: 'false',
+    OTP_HMAC_SECRET: 'otp_E7v!4LMx1@Qp9#Za6$Nr2%Ws8&Tu5*Ky',
+    CSRF_SECRET: 'csrf_R8m@2Kz7!Va4#Jn9$Wp6%Tx1&Ls5*Qe',
+    SESSION_TOKEN_HASH_SECRET: 'session_T9q#5Lc2@Wr8!Zm4$Nv7%Kx1&Ps6*Hd',
+    MAIL_PROVIDER: 'relay',
+    MAIL_RELAY_URL: 'https://artigen-mail-relay.vercel.app/api/send-otp',
+    MAIL_RELAY_SHARED_SECRET: 'relay_9Xv2Lm8Qp4Rz7Nc5Wt1Ks6Hd3Fa0Bq7Z',
+    TURNSTILE_SECRET_KEY: 'turnstile_7Qm2Vx9Lp4Zr8Kc5Nw1Hs6',
+    VITE_TURNSTILE_SITE_KEY: 'site_4Zn8Qp2Lm7Vr5Kx1Tw9Hs6',
+    TURNSTILE_HOSTNAMES: 'artigen.example',
+    APP_ORIGIN: 'https://artigen.example'
+  };
+  assert.deepEqual(checkMailRelay(env), {
+    ok: true,
+    provider: 'relay',
+    signedTransport: true
+  });
+  assert.equal(checkMailProvider(env).ok, true);
+  const ready = await getReadinessReport({
+    env,
+    pool: migratedPool,
+    adapter: null,
+    generationProvider: null
+  });
+  assert.equal(ready.ok, true);
+  assert.equal(ready.checks.mail.provider, 'relay');
 });
 
 test('email OTP readiness rejects weak, reused or incomplete runtime credentials', async () => {

@@ -740,10 +740,12 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | --- | --- |
 | `GOOGLE_OAUTH_CLIENT_ID` | Google OAuth client id。 |
 | `GOOGLE_OAUTH_ALLOW_INSECURE` | 非生产环境 Google token 兼容校验。 |
-| `AUTH_EMAIL_OTP_ENABLED` | 生产邮件验证码总开关；开启后 `/readyz` 强制检查 PostgreSQL、三份独立认证密钥、Brevo 和 Turnstile。 |
-| `MAIL_PROVIDER` | 生产固定为 `brevo`；生产环境拒绝 SMTP fallback。 |
-| `BREVO_API_KEY` | Brevo Transactional Email HTTPS API key。 |
-| `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | 计划固定为 `Artigen <sorates1997@163.com>`；上线前必须先在 Brevo 控制台完成 sender 验证。 |
+| `AUTH_EMAIL_OTP_ENABLED` | 生产邮件验证码总开关；开启后 `/readyz` 强制检查 PostgreSQL、三份独立认证密钥、邮件 Provider 和 Turnstile。 |
+| `MAIL_PROVIDER` | 生产使用 `relay`（Vercel HTTPS → 163 SMTP）；仍兼容 `brevo`，生产环境拒绝直接 SMTP fallback。 |
+| `MAIL_RELAY_URL` | Vercel 中继的固定 HTTPS `/api/send-otp` 地址。 |
+| `MAIL_RELAY_SHARED_SECRET` | Render 与中继共享的独立强密钥，至少 32 字节；只存平台环境变量。 |
+| `BREVO_API_KEY` | 可选的 Brevo Transactional Email HTTPS API key；仅在 `MAIL_PROVIDER=brevo` 时使用。 |
+| `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | 固定为 `Artigen <sorates1997@163.com>`；163 SMTP 授权码只保存在中继环境变量。 |
 | `MAIL_TIMEOUT_MS` | 邮件 HTTPS 请求超时，默认 8 秒。 |
 | `TURNSTILE_REQUIRED` | 登录/验证码人机校验总开关；生产开启邮件 OTP 时应为 `true`。 |
 | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile 服务端 secret。 |
@@ -1052,18 +1054,19 @@ curl -sS http://localhost:8080/api/health
 
 ### 2. 邮箱验证码发不出去
 
-生产 Render 不连接 QQ SMTP；验证码固定走 Brevo HTTPS API。依次检查：
+生产 Render 不直接连接 SMTP；验证码走带 HMAC 签名的 Vercel HTTPS 中继，再由中继连接 163 SMTP。依次检查：
 
 - `AUTH_EMAIL_OTP_ENABLED=true`
-- `MAIL_PROVIDER=brevo`
-- `BREVO_API_KEY`
-- Brevo 中已验证 `MAIL_FROM_EMAIL`
+- `MAIL_PROVIDER=relay`
+- `MAIL_RELAY_URL=https://你的中继域名/api/send-otp`
+- Render 与 Vercel 配置相同的 `MAIL_RELAY_SHARED_SECRET`
+- Vercel 已配置 163 的 `SMTP_USER`、SMTP 授权码 `SMTP_PASS` 与发件人
 - `VITE_TURNSTILE_SITE_KEY` 与 `TURNSTILE_SECRET_KEY`
 - `APP_ORIGIN=https://你的-render-host`
 - `TURNSTILE_HOSTNAMES=你的-render-host`（只填 hostname）
 - Cloudflare Widget Hostname Management 中也允许同一 hostname
 
-先请求 `/readyz`；如果邮件、Turnstile hostname、数据库或迁移未就绪，会返回对应的内部检查码。Brevo 接受但结果未知时接口返回 `202`，不要立即用新幂等键盲目重发。
+先请求 `/readyz`；如果邮件、Turnstile hostname、数据库或迁移未就绪，会返回对应的内部检查码。中继投递结果未知时接口返回 `202`，不要立即用新幂等键盲目重发。
 
 QQ SMTP 只保留本地兼容。非生产调试还可以使用：
 

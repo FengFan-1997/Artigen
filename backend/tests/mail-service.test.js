@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   BREVO_SEND_URL,
   MailDeliveryError,
+  createRelaySignature,
   createMailService
 } = require('../services/mail-service');
 
@@ -37,6 +38,14 @@ const productionBrevoEnv = (overrides = {}) => ({
   BREVO_API_KEY: 'brevo-test-key',
   MAIL_FROM_EMAIL: 'sender@example.com',
   MAIL_FROM_NAME: 'Artigen',
+  ...overrides
+});
+
+const productionRelayEnv = (overrides = {}) => ({
+  NODE_ENV: 'production',
+  MAIL_PROVIDER: 'relay',
+  MAIL_RELAY_URL: 'https://artigen-mail-relay.vercel.app/api/send-otp',
+  MAIL_RELAY_SHARED_SECRET: 'relay_9Xv2Lm8Qp4Rz7Nc5Wt1Ks6Hd3Fa0Bq7Z',
   ...overrides
 });
 
@@ -271,6 +280,129 @@ test('Brevo 429, 5xx, non-JSON and transport failures preserve delivery certaint
       );
     });
   }
+});
+
+test('signed relay OTP delivery uses one fixed HTTPS request and opaque result', async () => {
+  let request = null;
+  const now = 1_750_000_000_000;
+  const service = createMailService({
+    env: productionRelayEnv(),
+    now: () => now,
+    fetchRequest: async (...args) => {
+      request = args;
+      return jsonResponse(200, {
+        ok: true,
+        deliveryStatus: 'accepted',
+        messageId: 'a'.repeat(64)
+      });
+    },
+    logger: { warn() {} }
+  });
+  const delivered = await service.sendOtp({
+    ...otpRequest,
+    idempotencyKey: '123e4567-e89b-42d3-a456-426614174000'
+  });
+  assert.deepEqual(delivered, {
+    state: 'accepted',
+    provider: 'relay',
+    messageId: 'a'.repeat(64)
+  });
+  assert.equal(
+    request[0],
+    'https://artigen-mail-relay.vercel.app/api/send-otp'
+  );
+  assert.equal(request[1].method, 'POST');
+  assert.equal(request[1].redirect, 'error');
+  assert.equal(request[1].headers['x-artigen-timestamp'], String(now));
+  const payload = JSON.parse(request[1].body);
+  assert.deepEqual(payload, {
+    ...otpRequest,
+    idempotencyKey: '123e4567-e89b-42d3-a456-426614174000'
+  });
+  assert.equal(
+    request[1].headers['x-artigen-signature'],
+    createRelaySignature({
+      secret: productionRelayEnv().MAIL_RELAY_SHARED_SECRET,
+      timestamp: String(now),
+      ...payload
+    })
+  );
+});
+
+test('relay preserves unknown delivery and opens a circuit only on definite failures', async (t) => {
+  await t.test('unknown delivery', async () => {
+    const service = createMailService({
+      env: productionRelayEnv(),
+      fetchRequest: async () => jsonResponse(202, {
+        ok: true,
+        deliveryStatus: 'unknown'
+      }),
+      logger: { warn() {} }
+    });
+    await assert.rejects(
+      () => service.sendOtp({
+        ...otpRequest,
+        idempotencyKey: '123e4567-e89b-42d3-a456-426614174001'
+      }),
+      (error) =>
+        error.code === 'MAIL_DELIVERY_UNKNOWN' &&
+        error.deliveryUnknown === true
+    );
+    assert.equal(service.circuitState().open, false);
+  });
+
+  await t.test('auth failure', async () => {
+    let calls = 0;
+    const service = createMailService({
+      env: productionRelayEnv(),
+      fetchRequest: async () => {
+        calls += 1;
+        return jsonResponse(503, {
+          ok: false,
+          deliveryStatus: 'failed',
+          code: 'SMTP_AUTH_FAILED'
+        });
+      },
+      logger: { warn() {} }
+    });
+    const request = {
+      ...otpRequest,
+      idempotencyKey: '123e4567-e89b-42d3-a456-426614174002'
+    };
+    await assert.rejects(
+      () => service.sendOtp(request),
+      (error) => error.code === 'MAIL_PROVIDER_UNAVAILABLE'
+    );
+    assert.equal(service.circuitState().open, true);
+    await assert.rejects(
+      () => service.sendOtp(request),
+      (error) => error.code === 'MAIL_PROVIDER_UNAVAILABLE'
+    );
+    assert.equal(calls, 1);
+  });
+});
+
+test('production relay requires HTTPS, a fixed path, a strong secret and idempotency', async () => {
+  for (const env of [
+    productionRelayEnv({ MAIL_RELAY_URL: 'http://example.com/api/send-otp' }),
+    productionRelayEnv({ MAIL_RELAY_URL: 'https://example.com/other' }),
+    productionRelayEnv({ MAIL_RELAY_URL: 'https://example.com/api/send-otp?target=other' }),
+    productionRelayEnv({ MAIL_RELAY_SHARED_SECRET: 'short' })
+  ]) {
+    const service = createMailService({ env });
+    await assert.rejects(
+      () => service.sendOtp({
+        ...otpRequest,
+        idempotencyKey: '123e4567-e89b-42d3-a456-426614174003'
+      }),
+      (error) => error.code === 'MAIL_PROVIDER_NOT_CONFIGURED'
+    );
+  }
+  const service = createMailService({ env: productionRelayEnv() });
+  await assert.rejects(
+    () => service.sendOtp(otpRequest),
+    (error) => error.code === 'MAIL_REQUEST_INVALID'
+  );
 });
 
 test('local SMTP and debug providers cannot become production OTP backdoors', async () => {

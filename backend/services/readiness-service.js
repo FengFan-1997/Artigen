@@ -79,6 +79,39 @@ const checkBrevo = (env = process.env) => {
   return { ok: true, provider: 'brevo', senderConfigured: true };
 };
 
+const checkMailRelay = (env = process.env) => {
+  const provider = String(env.MAIL_PROVIDER || '').trim().toLowerCase();
+  const sharedSecret = String(env.MAIL_RELAY_SHARED_SECRET || '').trim();
+  if (provider !== 'relay') return { ok: false, code: 'MAIL_RELAY_PROVIDER_REQUIRED' };
+  if (!strongSecret(sharedSecret)) {
+    return { ok: false, code: 'MAIL_RELAY_SECRET_MISSING' };
+  }
+  let endpoint;
+  try {
+    endpoint = new URL(String(env.MAIL_RELAY_URL || '').trim());
+  } catch {
+    return { ok: false, code: 'MAIL_RELAY_URL_INVALID' };
+  }
+  if (
+    endpoint.protocol !== 'https:' ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash ||
+    endpoint.pathname.replace(/\/+$/, '') !== '/api/send-otp'
+  ) {
+    return { ok: false, code: 'MAIL_RELAY_URL_INVALID' };
+  }
+  return { ok: true, provider: 'relay', signedTransport: true };
+};
+
+const checkMailProvider = (env = process.env) => {
+  const provider = String(env.MAIL_PROVIDER || '').trim().toLowerCase();
+  if (provider === 'relay') return checkMailRelay(env);
+  if (provider === 'brevo') return checkBrevo(env);
+  return { ok: false, code: 'MAIL_PROVIDER_UNSUPPORTED' };
+};
+
 const checkTurnstile = (env = process.env) => {
   const secret = String(env.TURNSTILE_SECRET_KEY || '').trim();
   if (secret.length < 20 || SECRET_PLACEHOLDER_RE.test(secret)) {
@@ -474,7 +507,7 @@ const getReadinessReport = async ({
     ? checkAuthSecrets(env)
     : skippedCheck();
   const mail = authEmailOtpEnabled
-    ? checkBrevo(env)
+    ? checkMailProvider(env)
     : skippedCheck();
   const turnstile = authEmailOtpEnabled
     ? checkTurnstile(env)
@@ -510,6 +543,8 @@ module.exports = {
   checkAuthSecrets,
   checkAfdian,
   checkBrevo,
+  checkMailProvider,
+  checkMailRelay,
   checkDatabase,
   checkGenerationProvider,
   checkOutputAllowlist,

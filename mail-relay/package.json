@@ -1,0 +1,17 @@
+{
+  "name": "artigen-mail-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Signed HTTPS to 163 SMTP relay for Artigen OTP email",
+  "engines": {
+    "node": "24.x",
+    "pnpm": "10.x"
+  },
+  "scripts": {
+    "lint": "find api lib tests -name '*.js' -type f -print0 | xargs -0 -n1 node --check",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "nodemailer": "^6.10.0"
+  }
+}

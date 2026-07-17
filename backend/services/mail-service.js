@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { fetchWithTimeout } = require('../lib/fetch-utils');
 
 const BREVO_SEND_URL = 'https://api.brevo.com/v3/smtp/email';
+const RELAY_SIGNATURE_VERSION = 'artigen-mail-relay-v1';
 const DEFAULT_TIMEOUT_MS = 8000;
 const DEFAULT_CIRCUIT_MS = 5 * 60 * 1000;
 const MAX_PROVIDER_BODY_CHARS = 16 * 1024;
@@ -67,6 +68,10 @@ const resolveFromName = (env = process.env) =>
 const resolveMailProvider = (env = process.env) => {
   const configured = String(env.MAIL_PROVIDER || '').trim().toLowerCase();
   if (configured) return configured;
+  if (
+    String(env.MAIL_RELAY_URL || '').trim() &&
+    String(env.MAIL_RELAY_SHARED_SECRET || '').trim()
+  ) return 'relay';
   if (String(env.BREVO_API_KEY || '').trim()) return 'brevo';
   if (!isProduction(env)) {
     const smtpUser = String(env.MAIL_SMTP_USER || env.QQ_SMTP_USER || '').trim();
@@ -75,6 +80,40 @@ const resolveMailProvider = (env = process.env) => {
     if (enabled(env.MAIL_DEBUG_RETURN_CODE || env.LOGIN_DEBUG_RETURN_CODE)) return 'debug';
   }
   return '';
+};
+
+const resolveRelayConfig = (env = process.env) => {
+  const sharedSecret = String(env.MAIL_RELAY_SHARED_SECRET || '').trim();
+  let endpoint;
+  try {
+    endpoint = new URL(String(env.MAIL_RELAY_URL || '').trim());
+  } catch {
+    endpoint = null;
+  }
+  const validEndpoint = Boolean(
+    endpoint &&
+    ['http:', 'https:'].includes(endpoint.protocol) &&
+    (!isProduction(env) || endpoint.protocol === 'https:') &&
+    !endpoint.username &&
+    !endpoint.password &&
+    !endpoint.search &&
+    !endpoint.hash &&
+    endpoint.pathname.replace(/\/+$/, '') === '/api/send-otp'
+  );
+  if (
+    !validEndpoint ||
+    Buffer.byteLength(sharedSecret, 'utf8') < 32
+  ) {
+    throw new MailDeliveryError('MAIL_PROVIDER_NOT_CONFIGURED', {
+      provider: 'relay',
+      retryable: false
+    });
+  }
+  return {
+    endpoint: endpoint.toString(),
+    sharedSecret,
+    timeoutMs: boundedTimeoutMs(env)
+  };
 };
 
 const resolveBrevoConfig = (env = process.env) => {
@@ -249,6 +288,51 @@ const classifyBrevoFailure = ({ response, body }) => {
   });
 };
 
+const createRelaySignature = ({
+  secret,
+  timestamp,
+  idempotencyKey,
+  to,
+  purpose,
+  code
+}) => crypto
+  .createHmac('sha256', String(secret || ''))
+  .update([
+    RELAY_SIGNATURE_VERSION,
+    String(timestamp || '').trim(),
+    String(idempotencyKey || '').trim().toLowerCase(),
+    String(to || '').trim().toLowerCase(),
+    String(purpose || '').trim().toLowerCase(),
+    String(code || '').trim()
+  ].join('\n'))
+  .digest('hex');
+
+const classifyRelayFailure = ({ response, body }) => {
+  const status = Number(response?.status || 0);
+  const relayCode = String(body?.code || '').trim().toUpperCase();
+  if (status === 429) {
+    return new MailDeliveryError('MAIL_PROVIDER_THROTTLED', {
+      provider: 'relay',
+      retryable: true,
+      retryAfterSec: Number(body?.retryAfterSec) || parseRetryAfterSec(response)
+    });
+  }
+  if (
+    [400, 401, 403, 404, 405, 409].includes(status) ||
+    ['RELAY_NOT_CONFIGURED', 'SMTP_AUTH_FAILED'].includes(relayCode)
+  ) {
+    return new MailDeliveryError('MAIL_PROVIDER_UNAVAILABLE', {
+      provider: 'relay',
+      retryable: false
+    });
+  }
+  return new MailDeliveryError('MAIL_DELIVERY_UNKNOWN', {
+    provider: 'relay',
+    retryable: true,
+    deliveryUnknown: true
+  });
+};
+
 const validUuid = (value) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     .test(String(value || '').trim());
@@ -260,27 +344,30 @@ const createMailService = ({
   logger = console,
   now = () => Date.now()
 } = {}) => {
-  let brevoCircuitOpenUntil = 0;
-  const openBrevoCircuit = () => {
-    brevoCircuitOpenUntil = Math.max(
-      brevoCircuitOpenUntil,
+  let providerCircuitOpenUntil = 0;
+  let circuitProvider = '';
+  const openProviderCircuit = (provider) => {
+    circuitProvider = provider;
+    providerCircuitOpenUntil = Math.max(
+      providerCircuitOpenUntil,
       Number(now()) + boundedCircuitMs(env)
     );
   };
-  const closeBrevoCircuit = () => {
-    brevoCircuitOpenUntil = 0;
+  const closeProviderCircuit = () => {
+    providerCircuitOpenUntil = 0;
+    circuitProvider = '';
   };
-  const assertBrevoCircuitClosed = () => {
-    const remainingMs = brevoCircuitOpenUntil - Number(now());
+  const assertProviderCircuitClosed = (provider) => {
+    const remainingMs = providerCircuitOpenUntil - Number(now());
     if (remainingMs <= 0) return;
     throw new MailDeliveryError('MAIL_PROVIDER_UNAVAILABLE', {
-      provider: 'brevo',
+      provider: circuitProvider || provider,
       retryable: true,
       retryAfterSec: Math.max(1, Math.ceil(remainingMs / 1000))
     });
   };
   const sendViaBrevo = async ({ to, purpose, code, idempotencyKey }) => {
-    assertBrevoCircuitClosed();
+    assertProviderCircuitClosed('brevo');
     const config = resolveBrevoConfig(env);
     const copy = otpCopy({ purpose, code });
     const payload = {
@@ -335,12 +422,102 @@ const createMailService = ({
           deliveryUnknown: true
         });
       }
-      closeBrevoCircuit();
+      closeProviderCircuit();
       return { state: 'accepted', provider: 'brevo', messageId };
     }
     const failure = classifyBrevoFailure({ response, body });
     if ([400, 401, 402, 403].includes(Number(response.status || 0))) {
-      openBrevoCircuit();
+      openProviderCircuit('brevo');
+    }
+    throw failure;
+  };
+
+  const sendViaRelay = async ({ to, purpose, code, idempotencyKey }) => {
+    assertProviderCircuitClosed('relay');
+    if (!validUuid(idempotencyKey)) {
+      throw new MailDeliveryError('MAIL_REQUEST_INVALID', {
+        provider: 'relay',
+        retryable: false,
+        status: 400
+      });
+    }
+    const config = resolveRelayConfig(env);
+    const normalizedIdempotencyKey = String(idempotencyKey).trim().toLowerCase();
+    const timestamp = String(Math.trunc(Number(now())));
+    const payload = {
+      to,
+      purpose,
+      code,
+      idempotencyKey: normalizedIdempotencyKey
+    };
+    const signature = createRelaySignature({
+      secret: config.sharedSecret,
+      timestamp,
+      ...payload
+    });
+    let response;
+    try {
+      const request = fetchRequest || ((url, options, timeoutMs) =>
+        fetchWithTimeout(url, { ...options, disableProxy: true }, timeoutMs));
+      response = await request(
+        config.endpoint,
+        {
+          method: 'POST',
+          redirect: 'error',
+          headers: {
+            accept: 'application/json',
+            'content-type': 'application/json',
+            'x-artigen-timestamp': timestamp,
+            'x-artigen-signature': signature
+          },
+          body: JSON.stringify(payload)
+        },
+        config.timeoutMs
+      );
+    } catch (error) {
+      logger.warn?.('[MailDelivery]', {
+        provider: 'relay',
+        code: 'MAIL_DELIVERY_UNKNOWN',
+        category: String(error?.name || error?.code || 'network').slice(0, 80)
+      });
+      throw new MailDeliveryError('MAIL_DELIVERY_UNKNOWN', {
+        provider: 'relay',
+        retryable: true,
+        deliveryUnknown: true
+      });
+    }
+
+    const body = await readProviderJson(response);
+    if (
+      response.status === 200 &&
+      body?.ok === true &&
+      body?.deliveryStatus === 'accepted'
+    ) {
+      const messageId = String(body?.messageId || '').trim();
+      if (!/^[a-f0-9]{64}$/i.test(messageId)) {
+        throw new MailDeliveryError('MAIL_DELIVERY_UNKNOWN', {
+          provider: 'relay',
+          retryable: true,
+          deliveryUnknown: true
+        });
+      }
+      closeProviderCircuit();
+      return { state: 'accepted', provider: 'relay', messageId };
+    }
+    if (response.status === 202 && body?.deliveryStatus === 'unknown') {
+      throw new MailDeliveryError('MAIL_DELIVERY_UNKNOWN', {
+        provider: 'relay',
+        retryable: true,
+        deliveryUnknown: true
+      });
+    }
+    const failure = classifyRelayFailure({ response, body });
+    if (
+      [400, 401, 403, 404, 405, 409].includes(Number(response.status || 0)) ||
+      ['RELAY_NOT_CONFIGURED', 'SMTP_AUTH_FAILED']
+        .includes(String(body?.code || '').trim().toUpperCase())
+    ) {
+      openProviderCircuit('relay');
     }
     throw failure;
   };
@@ -415,6 +592,14 @@ const createMailService = ({
       throw new MailDeliveryError('MAIL_REQUEST_INVALID', { retryable: false, status: 400 });
     }
     const provider = resolveMailProvider(env);
+    if (provider === 'relay') {
+      return sendViaRelay({
+        to: target,
+        purpose: normalizedPurpose,
+        code: String(code).trim(),
+        idempotencyKey
+      });
+    }
     if (provider === 'brevo') {
       return sendViaBrevo({
         to: target,
@@ -446,7 +631,7 @@ const createMailService = ({
     provider: resolveMailProvider(env),
     sendOtp,
     circuitState() {
-      const remainingMs = Math.max(0, brevoCircuitOpenUntil - Number(now()));
+      const remainingMs = Math.max(0, providerCircuitOpenUntil - Number(now()));
       return {
         open: remainingMs > 0,
         retryAfterSec: remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0
@@ -459,10 +644,13 @@ module.exports = {
   BREVO_SEND_URL,
   DEFAULT_CIRCUIT_MS,
   MailDeliveryError,
+  RELAY_SIGNATURE_VERSION,
   assertDebugRecipient,
   boundedCircuitMs,
   boundedTimeoutMs,
   classifyBrevoFailure,
+  classifyRelayFailure,
+  createRelaySignature,
   createMailService,
   debugAllowlist,
   otpCopy,
@@ -471,6 +659,7 @@ module.exports = {
   resolveFromEmail,
   resolveFromName,
   resolveMailProvider,
+  resolveRelayConfig,
   resolveSmtpConfig,
   validUuid
 };

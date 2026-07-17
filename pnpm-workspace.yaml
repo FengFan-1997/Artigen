@@ -1,6 +1,7 @@
 packages:
   - frontend
   - backend
+  - mail-relay
 
 onlyBuiltDependencies:
   - esbuild
