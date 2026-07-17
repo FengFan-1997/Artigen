@@ -1268,7 +1268,19 @@ const expectIngredientDownload = async (
 
 const clickMessageImageAction = async (result: Locator, label: string) => {
   await result.locator('.msg-image-wrap').hover();
-  await result.locator('.msg-image-action-btn').filter({ hasText: label }).click();
+  const target = result.locator('.msg-image-action-btn').filter({ hasText: label });
+  if (!await target.isVisible()) {
+    const more = result.locator('.msg-image-action-more');
+    if (await more.isVisible()) await more.click();
+  }
+  await target.click();
+};
+
+const expandGenerationControlsIfNeeded = async (page: Page) => {
+  const toggle = page.locator('.generation-controls-toggle');
+  if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') {
+    await toggle.click();
+  }
 };
 
 const expectBufferSignature = (bytes: Buffer, kind: string) => {
@@ -1429,7 +1441,6 @@ test('landing titlebar menus and account overlays stay visually stable', async (
 
   expectCleanRuntime(issues);
 });
-
 test('AI shell popovers sidebars and long state screenshots stay stable', async ({
   page,
   isMobile
@@ -1673,6 +1684,7 @@ test('AI task V2 confirms a server quote, returns an opaque asset, and opens Edi
 
   await page.goto('/artigen/ai');
   await disableDeepThinking(page);
+  await expandGenerationControlsIfNeeded(page);
   await expect(page.getByText('Product reference')).toBeVisible();
   await page.locator('.generation-chip--ratio').filter({ hasText: '4:5' }).click();
   await page.locator('textarea.textarea').fill('Create a clean premium product hero image.');
@@ -1681,6 +1693,7 @@ test('AI task V2 confirms a server quote, returns an opaque asset, and opens Edi
   await expect(page.locator('.generation-quote-price')).toContainText('10');
   await page.locator('.generation-quote-confirm').click();
   const result = page.locator('.msg-media-bubble').last();
+  await expect(result.locator('.msg-media-img')).toHaveCount(1);
   await expect(result.locator('.msg-media-img[alt="generated"]')).toBeVisible();
   await expect.poll(async () => page.evaluate((opaqueAssetId) => {
     const keys: string[] = [];

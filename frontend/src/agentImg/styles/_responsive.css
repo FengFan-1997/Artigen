@@ -322,7 +322,7 @@
   display: none;
 }
 
-@media (max-width: 500px) {
+@media (max-width: 768px) {
 
   .input-toolbar .left-tools,
   .input-toolbar .right-tools {
@@ -343,6 +343,19 @@
   .send-btn:not(.has-cost) {
     width: 44px !important;
     padding: 0 !important;
+  }
+}
+
+@media (max-width: 350px) {
+  .input-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .input-toolbar .left-tools,
+  .input-toolbar .right-tools {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 

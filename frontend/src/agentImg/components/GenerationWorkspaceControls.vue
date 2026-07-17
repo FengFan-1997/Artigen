@@ -1,80 +1,105 @@
 <template>
-  <section class="generation-controls" aria-label="Generation setup">
-    <div v-if="showTemplates" class="generation-template-row">
-      <span class="generation-control-label">{{ copy.starters }}</span>
-      <div class="generation-chip-list">
-        <button
-          v-for="template in templates"
-          :key="template.id"
-          class="generation-chip"
-          type="button"
-          :disabled="disabled"
-          @click="emit('template', language === 'zh' ? template.promptZh : template.promptEn)"
-        >
-          {{ language === 'zh' ? template.zh : template.en }}
-        </button>
-      </div>
-    </div>
+  <section
+    class="generation-controls"
+    :class="{ 'is-compact': isCompact, 'is-collapsed': isCompact && !isExpanded }"
+    aria-label="Generation setup"
+  >
+    <button
+      v-if="isCompact"
+      class="generation-controls-toggle"
+      type="button"
+      :aria-expanded="isExpanded"
+      aria-controls="generation-controls-body"
+      @click="isExpanded = !isExpanded"
+    >
+      <span class="generation-controls-toggle-label">{{ copy.setup }}</span>
+      <span class="generation-controls-summary">{{ compactSummary }}</span>
+      <span class="generation-controls-chevron" :class="{ expanded: isExpanded }" aria-hidden="true"
+        >⌄</span
+      >
+    </button>
 
-    <div class="generation-setup-grid">
-      <div class="generation-ratio-group">
-        <span class="generation-control-label">{{ copy.ratio }}</span>
-        <div class="generation-chip-list generation-chip-list--compact">
+    <div
+      id="generation-controls-body"
+      v-show="!isCompact || isExpanded"
+      class="generation-controls-body"
+    >
+      <div v-if="showTemplates" class="generation-template-row">
+        <span class="generation-control-label">{{ copy.starters }}</span>
+        <div class="generation-chip-list">
           <button
-            v-for="ratio in aspectRatios"
-            :key="ratio"
-            class="generation-chip generation-chip--ratio"
-            :class="{ active: ratio === selectedAspectRatio }"
+            v-for="template in templates"
+            :key="template.id"
+            class="generation-chip"
             type="button"
-            :aria-pressed="ratio === selectedAspectRatio"
             :disabled="disabled"
-            @click="emit('ratio', ratio)"
+            @click="applyTemplate(language === 'zh' ? template.promptZh : template.promptEn)"
           >
-            {{ ratio }}
+            {{ language === 'zh' ? template.zh : template.en }}
           </button>
         </div>
       </div>
 
-      <div class="generation-reference-group">
-        <span class="generation-control-label">{{ copy.references }}</span>
-        <div class="generation-reference-list">
-          <div
-            v-for="(label, index) in slotLabels"
-            :key="label"
-            class="generation-reference-slot"
-            :class="{ filled: Boolean(previewUrls[index]) }"
-          >
+      <div class="generation-setup-grid">
+        <div class="generation-ratio-group">
+          <span class="generation-control-label">{{ copy.ratio }}</span>
+          <div class="generation-chip-list generation-chip-list--compact">
             <button
-              class="generation-reference-main"
+              v-for="ratio in aspectRatios"
+              :key="ratio"
+              class="generation-chip generation-chip--ratio"
+              :class="{ active: ratio === selectedAspectRatio }"
               type="button"
+              :aria-pressed="ratio === selectedAspectRatio"
               :disabled="disabled"
-              :aria-label="`${copy.upload} ${label}`"
-              @click="emit('upload', index)"
+              @click="emit('ratio', ratio)"
             >
-              <img v-if="previewUrls[index]" :src="previewUrls[index]" alt="" />
-              <span v-else class="generation-reference-plus" aria-hidden="true">+</span>
-              <span>{{ label }}</span>
-            </button>
-            <button
-              v-if="previewUrls[index]"
-              class="generation-reference-remove"
-              type="button"
-              :disabled="disabled"
-              :aria-label="`${copy.remove} ${label}`"
-              @click="emit('clear', index)"
-            >
-              ×
+              {{ ratio }}
             </button>
           </div>
         </div>
+
+        <div class="generation-reference-group">
+          <span class="generation-control-label">{{ copy.references }}</span>
+          <div class="generation-reference-list">
+            <div
+              v-for="(label, index) in slotLabels"
+              :key="label"
+              class="generation-reference-slot"
+              :class="{ filled: Boolean(previewUrls[index]) }"
+            >
+              <button
+                class="generation-reference-main"
+                type="button"
+                :disabled="disabled"
+                :aria-label="`${copy.upload} ${label}`"
+                @click="emit('upload', index)"
+              >
+                <img v-if="previewUrls[index]" :src="previewUrls[index]" alt="" />
+                <span v-else class="generation-reference-plus" aria-hidden="true">+</span>
+                <span>{{ label }}</span>
+              </button>
+              <button
+                v-if="previewUrls[index]"
+                class="generation-reference-remove"
+                type="button"
+                :disabled="disabled"
+                :aria-label="`${copy.remove} ${label}`"
+                @click="emit('clear', index)"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
+      <p class="generation-privacy-note">{{ copy.privacy }}</p>
     </div>
-    <p class="generation-privacy-note">{{ copy.privacy }}</p>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import {
   GENERATION_STARTER_TEMPLATES,
   generationReferenceSlotLabels
@@ -98,9 +123,43 @@ const emit = defineEmits<{
 
 const templates = GENERATION_STARTER_TEMPLATES;
 const slotLabels = computed(() => generationReferenceSlotLabels(props.language));
+const isCompact = ref(false);
+const isExpanded = ref(true);
+let compactMediaQuery: MediaQueryList | null = null;
+
+const syncCompactMode = (matches: boolean) => {
+  const wasCompact = isCompact.value;
+  isCompact.value = matches;
+  if (!matches) isExpanded.value = true;
+  else if (!wasCompact) isExpanded.value = false;
+};
+
+const onCompactMediaChange = (event: MediaQueryListEvent) => syncCompactMode(event.matches);
+
+onMounted(() => {
+  compactMediaQuery = window.matchMedia('(max-width: 760px)');
+  syncCompactMode(compactMediaQuery.matches);
+  compactMediaQuery.addEventListener('change', onCompactMediaChange);
+});
+
+onBeforeUnmount(() => compactMediaQuery?.removeEventListener('change', onCompactMediaChange));
+
+const referenceCount = computed(() => props.previewUrls.filter(Boolean).length);
+const compactSummary = computed(() =>
+  props.language === 'zh'
+    ? `${props.selectedAspectRatio} · ${referenceCount.value} 张参考图`
+    : `${props.selectedAspectRatio} · ${referenceCount.value} ${referenceCount.value === 1 ? 'reference' : 'references'}`
+);
+
+const applyTemplate = (prompt: string) => {
+  emit('template', prompt);
+  if (isCompact.value) isExpanded.value = false;
+};
+
 const copy = computed(() =>
   props.language === 'zh'
     ? {
+        setup: '生成设置',
         starters: '快速开始',
         ratio: '画面比例',
         references: '参考图（可选）',
@@ -109,12 +168,14 @@ const copy = computed(() =>
         privacy: '选择模板不会生成或扣费；仅在确认生成后上传必要的提示词与参考图。'
       }
     : {
+        setup: 'Generation setup',
         starters: 'Start with a recipe',
         ratio: 'Aspect ratio',
         references: 'References (optional)',
         upload: 'Upload',
         remove: 'Remove',
-        privacy: 'Recipes never generate or charge automatically. Required prompts and references upload only after confirmation.'
+        privacy:
+          'Recipes never generate or charge automatically. Required prompts and references upload only after confirmation.'
       }
 );
 </script>
@@ -126,6 +187,54 @@ const copy = computed(() =>
   padding: 12px;
   border-bottom: 1px solid rgba(200, 255, 61, 0.12);
   background: rgba(8, 11, 12, 0.72);
+}
+
+.generation-controls-body {
+  display: grid;
+  gap: 10px;
+}
+
+.generation-controls-toggle {
+  width: 100%;
+  min-height: 44px;
+  display: none;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(245, 247, 242, 0.12);
+  border-radius: 10px;
+  background: rgba(245, 247, 242, 0.04);
+  color: rgba(245, 247, 242, 0.9);
+  font: inherit;
+  text-align: left;
+}
+
+.generation-controls-toggle-label {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.generation-controls-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(245, 247, 242, 0.56);
+  font-size: 12px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.generation-controls-chevron {
+  color: #c8ff3d;
+  font-size: 18px;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 0.18s ease;
+}
+
+.generation-controls-chevron.expanded {
+  transform: rotate(180deg);
 }
 
 .generation-template-row,
@@ -259,7 +368,16 @@ button:disabled {
 
 @media (max-width: 760px) {
   .generation-controls {
-    padding: 10px;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .generation-controls.is-collapsed {
+    padding-block: 7px;
+  }
+
+  .generation-controls-toggle {
+    display: grid;
   }
 
   .generation-template-row .generation-chip-list {

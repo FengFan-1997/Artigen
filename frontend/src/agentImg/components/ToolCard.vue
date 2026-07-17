@@ -173,9 +173,35 @@ const emit = defineEmits<{
 
 @media (max-width: 768px) {
   .tool-card {
-    padding: 24px;
+    padding: 22px;
     height: auto;
-    min-height: 300px;
+    min-height: 268px;
+  }
+
+  .card-header {
+    margin-bottom: 28px;
+  }
+
+  .tool-icon-wrapper {
+    margin-bottom: 20px;
+  }
+
+  .tool-icon {
+    font-size: 40px;
+  }
+
+  .tool-title {
+    margin-bottom: 10px;
+    font-size: 26px;
+  }
+
+  .tool-desc {
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .card-footer {
+    padding-top: 20px;
   }
 }
 

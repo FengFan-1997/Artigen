@@ -21,6 +21,13 @@ async function expectVisibleButtonsAtLeast44(container: Locator): Promise<void> 
   expect(tooSmall).toEqual([]);
 }
 
+async function expandGenerationControlsIfNeeded(page: Page): Promise<void> {
+  const toggle = page.locator('.generation-controls-toggle');
+  if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') {
+    await toggle.click();
+  }
+}
+
 test('format workflows expose keyboard buttons, a trapped dialog, labelled controls, and 44px actions', async ({ page }) => {
   await page.goto('/artigen/tools');
   const firstTool = page.locator('.tools-grid .tool-card').first();
@@ -216,6 +223,7 @@ test('AI mobile setup keeps references readable, grows long prompts, and stacks 
   for (const width of [320, 390, 414]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/artigen/ai');
+    await expandGenerationControlsIfNeeded(page);
 
     const referenceList = page.locator('.generation-reference-list');
     await expect(referenceList).toBeVisible();
@@ -237,6 +245,16 @@ test('AI mobile setup keeps references readable, grows long prompts, and stacks 
     expect(textareaHeight).toBeGreaterThan(76);
     expect(textareaHeight).toBeLessThanOrEqual(132);
     await expectVisibleButtonsAtLeast44(page.locator('.input-toolbar'));
+    const clippedToolbarButtons = await page.locator('.input-toolbar button:visible').evaluateAll(
+      (buttons, viewportWidth) => buttons
+        .map((button) => {
+          const box = button.getBoundingClientRect();
+          return { name: button.getAttribute('aria-label') || button.textContent?.trim() || '', left: box.left, right: box.right };
+        })
+        .filter((button) => button.left < 0 || button.right > Number(viewportWidth) + 0.5),
+      width
+    );
+    expect(clippedToolbarButtons).toEqual([]);
 
     const productButton = page.locator('.toggle-btn').filter({ hasText: /Product|产品/ }).first();
     await productButton.click();
@@ -250,6 +268,12 @@ test('AI mobile setup keeps references readable, grows long prompts, and stacks 
     expect(secondBox!.y).toBeGreaterThanOrEqual(firstBox!.y + firstBox!.height - 1);
     await sidebar.locator('.side-close').click();
   }
+});
+
+test('AI tablet toolbar keeps touch targets at least 44px', async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await page.goto('/artigen/ai');
+  await expectVisibleButtonsAtLeast44(page.locator('.input-toolbar'));
 });
 
 test('ingredient label remains usable and branded on a 390px viewport', async ({ page }) => {
@@ -273,6 +297,7 @@ test('ingredient label remains usable and branded on a 390px viewport', async ({
 test('AI workspace starts with overlay sidebars closed in a narrow fine-pointer viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/artigen/ai');
+  await expandGenerationControlsIfNeeded(page);
 
   const starterList = page.locator('.generation-template-row .generation-chip-list');
   await expect(starterList.locator('.generation-chip')).toHaveCount(6);
@@ -313,6 +338,7 @@ test('AI authentication dialog traps focus and restores it to the generation act
     })
   );
   await page.goto('/artigen/ai');
+  await expandGenerationControlsIfNeeded(page);
 
   await page.locator('.generation-chip').first().click();
   const sendButton = page.locator('.send-btn');

@@ -234,17 +234,13 @@
                         @click.stop="openImagePreview(item.image)"
                         @error="markImageBroken(item.image)"
                       />
-                      <div class="msg-image-actions">
+                      <div
+                        class="msg-image-actions"
+                        :class="{ 'mobile-expanded': openResultActionId === item.id }"
+                        :id="`result-actions-${item.id}`"
+                      >
                         <button
-                          class="msg-image-action-btn"
-                          type="button"
-                          :disabled="isImageBroken(item.image)"
-                          @click.stop="downloadMsgImage(item.image, item)"
-                        >
-                          {{ ui.download }}
-                        </button>
-                        <button
-                          class="msg-image-action-btn"
+                          class="msg-image-action-btn msg-image-action-btn--primary"
                           type="button"
                           :disabled="isImageBroken(item.image)"
                           @click.stop="editMsgImage(item.image, item)"
@@ -252,7 +248,24 @@
                           {{ ui.edit }}
                         </button>
                         <button
-                          class="msg-image-action-btn"
+                          class="msg-image-action-btn msg-image-action-btn--primary"
+                          type="button"
+                          :disabled="isImageBroken(item.image)"
+                          @click.stop="downloadMsgImage(item.image, item)"
+                        >
+                          {{ ui.download }}
+                        </button>
+                        <button
+                          class="msg-image-action-btn msg-image-action-more"
+                          type="button"
+                          :aria-expanded="openResultActionId === item.id"
+                          :aria-controls="`result-actions-${item.id}`"
+                          @click.stop="toggleResultActions(item.id)"
+                        >
+                          {{ resultActionsToggleText(item.id) }}
+                        </button>
+                        <button
+                          class="msg-image-action-btn msg-image-action-btn--secondary"
                           type="button"
                           :disabled="isImageBroken(item.image)"
                           @click.stop="referenceMsgImage(item.image, item)"
@@ -260,14 +273,14 @@
                           {{ ui.reference }}
                         </button>
                         <button
-                          class="msg-image-action-btn"
+                          class="msg-image-action-btn msg-image-action-btn--secondary"
                           type="button"
                           @click.stop="modifyGeneration(item)"
                         >
                           {{ currentLang === 'zh' ? '修改需求' : 'Modify' }}
                         </button>
                         <button
-                          class="msg-image-action-btn"
+                          class="msg-image-action-btn msg-image-action-btn--secondary"
                           type="button"
                           :disabled="loading || isImageBroken(item.image)"
                           @click.stop="variationGeneration(item)"
@@ -1236,6 +1249,16 @@ const applyStarterTemplate = (prompt: string) => {
 };
 
 const brokenImages = ref<Record<string, true>>({});
+const openResultActionId = ref<string | number | null>(null);
+
+const toggleResultActions = (id: string | number) => {
+  openResultActionId.value = openResultActionId.value === id ? null : id;
+};
+
+const resultActionsToggleText = (id: string | number) =>
+  openResultActionId.value === id
+    ? currentLang.value === 'zh' ? '收起' : 'Less'
+    : currentLang.value === 'zh' ? '更多' : 'More';
 
 const imageBrokenKey = (url: string) => String(url || '').trim();
 

@@ -160,6 +160,10 @@
   cursor: not-allowed;
 }
 
+.msg-image-action-more {
+  display: none;
+}
+
 .msg-media-img {
   width: 100%;
   height: auto;
@@ -223,6 +227,18 @@
   .msg-image-action-btn {
     min-height: 44px;
     padding: 5px;
+  }
+
+  .msg-image-action-more {
+    display: block;
+  }
+
+  .msg-image-action-btn--secondary {
+    display: none;
+  }
+
+  .msg-image-actions.mobile-expanded .msg-image-action-btn--secondary {
+    display: block;
   }
 }
 
