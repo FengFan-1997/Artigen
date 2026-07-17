@@ -5097,6 +5097,8 @@ const onStagePointerUp = (e: PointerEvent) => {
 }
 
 .control {
+  box-sizing: border-box;
+  min-width: 0;
   width: 100%;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
