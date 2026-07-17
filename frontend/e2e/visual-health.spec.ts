@@ -893,70 +893,18 @@ const makeHistoryItem = (overrides: Record<string, unknown>) => ({
   ...overrides
 });
 
-const makeVideoFixture = async (page: Page) => {
-  const fixture = await page.evaluate(async () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 96;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    if (!ctx || typeof canvas.captureStream !== 'function' || typeof MediaRecorder === 'undefined') {
-      return { base64: '', mimeType: '' };
-    }
-    const stream = canvas.captureStream(12);
-    const mimeType = [
-      'video/webm;codecs=vp8',
-      'video/webm',
-      'video/mp4;codecs=avc1.42E01E',
-      'video/mp4'
-    ].find((candidate) => MediaRecorder.isTypeSupported(candidate));
-    return await new Promise<{ base64: string; mimeType: string }>((resolve) => {
-      const chunks: Blob[] = [];
-      let recorder: MediaRecorder;
-      try {
-        recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      } catch {
-        for (const track of stream.getTracks()) track.stop();
-        resolve({ base64: '', mimeType: '' });
-        return;
-      }
-      recorder.ondataavailable = (event) => {
-        if (event.data?.size) chunks.push(event.data);
-      };
-      recorder.onstop = async () => {
-        const outputMimeType = recorder.mimeType || mimeType || 'video/webm';
-        const blob = new Blob(chunks, { type: outputMimeType });
-        const buffer = await blob.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        let binary = '';
-        for (const b of bytes) binary += String.fromCharCode(b);
-        resolve({ base64: btoa(binary), mimeType: outputMimeType });
-      };
-      recorder.start();
-      let frame = 0;
-      const timer = window.setInterval(() => {
-        ctx.fillStyle = frame % 2 ? '#101014' : '#0b1320';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#ccff00';
-        ctx.fillRect(10 + frame * 2, 14, 30, 30);
-        ctx.fillStyle = '#33d6ff';
-        ctx.beginPath();
-        ctx.arc(62, 34, 12 + (frame % 4), 0, Math.PI * 2);
-        ctx.fill();
-        frame += 1;
-        if (frame >= 18) {
-          window.clearInterval(timer);
-          recorder.stop();
-          for (const track of stream.getTracks()) track.stop();
-        }
-      }, 80);
-    });
-  });
-  const buffer = Buffer.from(fixture.base64, 'base64');
-  expect(buffer.length, 'generated video fixture length').toBeGreaterThan(100);
-  const isMp4 = /mp4/i.test(fixture.mimeType);
+const VIDEO_FIXTURE_URL = new URL('./fixtures/animated-vp8.webm.base64', import.meta.url);
+
+const makeVideoFixture = async (_page: Page) => {
+  const base64 = (await readFile(VIDEO_FIXTURE_URL, 'utf8')).trim();
+  const buffer = Buffer.from(base64, 'base64');
+  expect(buffer.length, 'deterministic video fixture length').toBeGreaterThan(100);
+  expect(buffer.subarray(0, 4).toString('hex'), 'deterministic video fixture magic bytes').toBe(
+    '1a45dfa3'
+  );
   return {
-    name: isMp4 ? 'fixture.mp4' : 'fixture.webm',
-    mimeType: fixture.mimeType || (isMp4 ? 'video/mp4' : 'video/webm'),
+    name: 'fixture.webm',
+    mimeType: 'video/webm',
     buffer
   };
 };

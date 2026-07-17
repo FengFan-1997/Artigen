@@ -2474,6 +2474,7 @@ const runTool = async () => {
 
 .tool-modal-panel {
   box-sizing: border-box;
+  min-width: 0;
   width: min(1200px, 96%);
   max-height: calc(100vh - 48px);
   overflow: auto;
@@ -2578,16 +2579,21 @@ const runTool = async () => {
 }
 
 .tool-modal-body {
+  box-sizing: border-box;
+  min-width: 0;
   padding: 18px;
 }
 
 .tool-grid {
   display: grid;
+  min-width: 0;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 24px;
 }
 
 .tool-card-panel {
+  box-sizing: border-box;
+  min-width: 0;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(10, 10, 10, 0.5);
 }
@@ -2601,6 +2607,8 @@ const runTool = async () => {
 }
 
 .panel-body {
+  box-sizing: border-box;
+  min-width: 0;
   padding: 12px;
 }
 
@@ -2804,6 +2812,8 @@ const runTool = async () => {
 }
 
 .control {
+  min-width: 0;
+  max-width: 100%;
   width: 100%;
   min-height: 44px;
   box-sizing: border-box;
@@ -3152,6 +3162,16 @@ select.control {
     max-width: 100%;
     max-height: calc(100vh - 88px);
     max-height: calc(100dvh - 88px);
+  }
+
+  .tool-grid,
+  .tool-card-panel,
+  .panel-body,
+  .field-row,
+  .pipeline-list,
+  .pipeline-settings {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .tool-modal-header,
