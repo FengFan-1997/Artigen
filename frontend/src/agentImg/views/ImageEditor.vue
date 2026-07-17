@@ -5110,6 +5110,7 @@ const onStagePointerUp = (e: PointerEvent) => {
 
 input.control[type='number'] {
   appearance: textfield;
+  padding-inline: 6px;
 }
 
 input.control[type='number']::-webkit-inner-spin-button,
