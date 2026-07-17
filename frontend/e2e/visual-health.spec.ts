@@ -3261,18 +3261,11 @@ test('format factory Word conversion requires consent and fails closed without l
 test('format factory runs video tools with a generated WebM fixture', async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await page.addInitScript(() => {
-    const NativeWorker = window.Worker;
     (window as any).__formatWorkerStats = { constructed: 0, terminated: 0 };
-    window.Worker = new Proxy(NativeWorker, {
-      construct(Target, args) {
-        const worker = Reflect.construct(Target, args) as Worker;
-        (window as any).__formatWorkerStats.constructed += 1;
-        const nativeTerminate = worker.terminate.bind(worker);
-        worker.terminate = () => {
-          (window as any).__formatWorkerStats.terminated += 1;
-          nativeTerminate();
-        };
-        return worker;
+    window.addEventListener('artigen:format-worker-lifecycle', (event) => {
+      const phase = (event as CustomEvent<{ worker?: string; phase?: string }>).detail?.phase;
+      if (phase === 'constructed' || phase === 'terminated') {
+        (window as any).__formatWorkerStats[phase] += 1;
       }
     });
   });

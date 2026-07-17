@@ -11,6 +11,15 @@ type GifWorkerSession = {
   terminate: () => void;
 };
 
+const emitWorkerLifecycle = (phase: 'constructed' | 'terminated') => {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  window.dispatchEvent(
+    new CustomEvent('artigen:format-worker-lifecycle', {
+      detail: { worker: 'gif', phase }
+    })
+  );
+};
+
 export const createGifWorkerSession = async (input: {
   width: number;
   height: number;
@@ -22,6 +31,7 @@ export const createGifWorkerSession = async (input: {
   const worker = input.workerFactory
     ? input.workerFactory()
     : new Worker(new URL('./gifEncoder.worker.ts', import.meta.url), { type: 'module' });
+  emitWorkerLifecycle('constructed');
   let requestId = 0;
   let terminated = false;
 
@@ -29,6 +39,7 @@ export const createGifWorkerSession = async (input: {
     if (terminated) return;
     terminated = true;
     worker.terminate();
+    emitWorkerLifecycle('terminated');
   };
 
   const request = <T extends GifWorkerResponse>(
