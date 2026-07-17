@@ -111,9 +111,6 @@
         <a-form-item :label="ui.passwordLabel">
           <a-input-password v-model:value="password" autocomplete="off" />
         </a-form-item>
-        <a-form-item :label="ui.adminKeyLabel">
-          <a-input v-model:value="adminKeyInput" autocomplete="off" />
-        </a-form-item>
         <a-button type="primary" block :loading="submitting" @click="handleLogin">
           {{ ui.loginBtn }}
         </a-button>
@@ -153,7 +150,6 @@ const route = useRoute();
 
 const username = ref('');
 const password = ref('');
-const adminKeyInput = ref('');
 const submitting = ref(false);
 const loginTick = ref(0);
 
@@ -200,7 +196,6 @@ const ui = computed(() =>
         loginSub: '请输入账号与密码进入管理系统',
         usernameLabel: '账号',
         passwordLabel: '密码',
-        adminKeyLabel: 'ADMIN_KEY（可选）',
         loginBtn: '登录',
         footer: 'Artigen ©2025 Created by Feng Fan',
         routeOverview: '总览',
@@ -228,7 +223,6 @@ const ui = computed(() =>
         loginSub: 'Enter username and password to continue',
         usernameLabel: 'Username',
         passwordLabel: 'Password',
-        adminKeyLabel: 'ADMIN_KEY (optional)',
         loginBtn: 'Login',
         footer: 'Artigen ©2025 Created by Feng Fan',
         routeOverview: 'Overview',
@@ -288,14 +282,10 @@ const humanizeLoginError = (e: any) => {
   if (err === 'INVALID_INPUT')
     return zh ? '请输入账号和密码' : 'Please enter username and password';
   if (err === 'INVALID_CREDENTIALS') return zh ? '账号或密码错误' : 'Invalid username or password';
-  if (err === 'ADMIN_ACCOUNT_NOT_CONFIGURED')
+  if (err === 'ADMIN_ACCOUNT_NOT_CONFIGURED' || err === 'ADMIN_NOT_CONFIGURED')
     return zh
-      ? '后端未配置管理员账号（请设置 CONSOLE_ADMIN_USERNAME/PASSWORD，或使用 ADMIN_KEY 登录）'
-      : 'Admin account is not configured on backend';
-  if (err === 'ADMIN_NOT_CONFIGURED')
-    return zh
-      ? '后端未配置 ADMIN_KEY（请在 Zeabur 设置）'
-      : 'ADMIN_KEY is not configured on backend';
+      ? '管理员认证未配置：请在 Railway 设置 CONSOLE_ADMIN_USERNAME/PASSWORD，并完成 PostgreSQL 管理员授权'
+      : 'Admin authentication is not configured. Set CONSOLE_ADMIN_USERNAME/PASSWORD in Railway and grant the PostgreSQL administrator role.';
   if (err === 'ADMIN_AUTH_EXPIRED')
     return zh ? '登录已失效，请重新登录' : 'Session expired, please login again';
   if (/failed to fetch/i.test(err) || /network/i.test(err))
@@ -310,41 +300,23 @@ const handleLogin = async () => {
   if (submitting.value) return;
   const u = String(username.value || '').trim();
   const p = String(password.value || '');
-  const key = String(adminKeyInput.value || '').trim();
-  const usingAdminKey = !!key;
-  if (!usingAdminKey && (!u || !p)) {
+  if (!u || !p) {
     message.error(
-      currentLang.value === 'zh'
-        ? '请输入账号和密码，或填入 ADMIN_KEY'
-        : 'Enter username/password or ADMIN_KEY'
+      currentLang.value === 'zh' ? '请输入账号和密码' : 'Enter username and password'
     );
     return;
   }
   submitting.value = true;
   try {
     consoleStore.init();
-    if (usingAdminKey) {
-      consoleStore.setAdminApiKey(key);
-      setConsoleAuthSession({
-        userId: 'admin',
-        authHash: `admin_key_${key.slice(0, 12)}`,
-        expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000
-      });
-      username.value = '';
-      password.value = '';
-      adminKeyInput.value = '';
-      message.success(currentLang.value === 'zh' ? '登录成功' : 'Login successful');
-    } else {
-      const login = await consoleStore.adminLogin({ username: u, password: p });
-      setConsoleAuthSession({
-        userId: u,
-        authHash: login.token,
-        expiresAt: login.expiresAt
-      });
-      password.value = '';
-      adminKeyInput.value = '';
-      message.success(currentLang.value === 'zh' ? '登录成功' : 'Login successful');
-    }
+    const login = await consoleStore.adminLogin({ username: u, password: p });
+    setConsoleAuthSession({
+      userId: u,
+      authHash: login.token,
+      expiresAt: login.expiresAt
+    });
+    password.value = '';
+    message.success(currentLang.value === 'zh' ? '登录成功' : 'Login successful');
     syncLoginTick();
   } catch (e: any) {
     message.error(humanizeLoginError(e));

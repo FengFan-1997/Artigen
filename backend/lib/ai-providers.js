@@ -47,12 +47,20 @@ const createSemaphore = (max, maxQueue) => {
     if (inFlight >= lim) return;
     const next = queue.shift();
     if (!next) return;
+    next.cleanup();
     inFlight += 1;
     next.resolve(release);
   };
 
-  const acquire = () =>
+  const acquire = (signal) =>
     new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        const error = new Error('ABORT_ERR');
+        error.name = 'AbortError';
+        error.code = 'ABORT_ERR';
+        reject(error);
+        return;
+      }
       if (inFlight < lim) {
         inFlight += 1;
         resolve(release);
@@ -64,11 +72,22 @@ const createSemaphore = (max, maxQueue) => {
         reject(err);
         return;
       }
-      queue.push({ resolve, reject });
+      const entry = { resolve, reject, cleanup: () => {} };
+      const onAbort = () => {
+        const index = queue.indexOf(entry);
+        if (index >= 0) queue.splice(index, 1);
+        const error = new Error('ABORT_ERR');
+        error.name = 'AbortError';
+        error.code = 'ABORT_ERR';
+        reject(error);
+      };
+      entry.cleanup = () => signal?.removeEventListener('abort', onAbort);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      queue.push(entry);
     });
 
-  const run = async (fn) => {
-    const rel = await acquire();
+  const run = async (fn, signal) => {
+    const rel = await acquire(signal);
     try {
       return await fn();
     } finally {
@@ -151,7 +170,7 @@ const callGeminiGenerate = async ({ contents, timeoutMs }) => {
   throw err;
 };
 
-const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model }) => {
+const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model, signal }) => {
   if (!SILICONFLOW_API_KEY) {
     const err = new Error('MISSING_SILICONFLOW_API_KEY');
     err.code = 'MISSING_SILICONFLOW_API_KEY';
@@ -187,7 +206,8 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model }) =>
               max_tokens: typeof maxTokens === 'number' ? maxTokens : undefined
             })
           },
-          timeoutMs
+          timeoutMs,
+          signal
         );
 
         if (!response.ok) {
@@ -249,6 +269,7 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model }) =>
           bodyPreview: String(JSON.stringify(data) || '').slice(0, 1800)
         });
       } catch (e) {
+        if (signal?.aborted || e?.name === 'AbortError' || e?.code === 'ABORT_ERR') throw e;
         failures.push({
           url,
           status: 0,
@@ -298,6 +319,7 @@ const callSiliconFlowImageGenerate = async ({
   images,
   timeoutMs,
   model,
+  allowModelFallback = true,
   signal
 }) => {
   return await imageGenerateLimiter.run(async () => {
@@ -324,7 +346,7 @@ const callSiliconFlowImageGenerate = async ({
     const preferredModel = String(model || '').trim();
     const modelCandidates = [
       ...(preferredModel ? [preferredModel] : []),
-      ...(FIXED_SILICONFLOW_IMAGE_MODEL && FIXED_SILICONFLOW_IMAGE_MODEL !== preferredModel
+      ...(allowModelFallback && FIXED_SILICONFLOW_IMAGE_MODEL && FIXED_SILICONFLOW_IMAGE_MODEL !== preferredModel
         ? [FIXED_SILICONFLOW_IMAGE_MODEL]
         : [])
     ];
@@ -347,13 +369,13 @@ const callSiliconFlowImageGenerate = async ({
         batch_size: 1,
         prompt: p,
         negative_prompt: String(negativePrompt || '').trim() || undefined,
-        image_size: String(params?.imageSize || '').trim() || '1024x1024',
         num_inference_steps:
           typeof params?.steps === 'number' && Number.isFinite(params.steps) ? params.steps : undefined,
         seed:
           typeof params?.seed === 'number' && Number.isFinite(params.seed) ? Math.trunc(params.seed) : undefined
       };
       if (!isQwenEdit) {
+        body.image_size = String(params?.imageSize || '').trim() || '1024x1024';
         body.guidance_scale =
           typeof params?.guidanceScale === 'number' && Number.isFinite(params.guidanceScale)
             ? params.guidanceScale
@@ -422,7 +444,7 @@ const callSiliconFlowImageGenerate = async ({
     }
 
     throw lastErr || new Error('SILICONFLOW_IMAGE_500');
-  });
+  }, signal);
 };
 
 const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFallback }) => {
@@ -532,5 +554,6 @@ module.exports = {
   callGeminiGenerate,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate,
-  callTextGenerate
+  callTextGenerate,
+  createSemaphore
 };

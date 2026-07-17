@@ -7,7 +7,14 @@
         <span class="logo-text">Artigen</span>
       </router-link>
 
-      <button class="nav-toggle" type="button" @click="isMobileMenuOpen = !isMobileMenuOpen">
+      <button
+        class="nav-toggle"
+        type="button"
+        :aria-label="isMobileMenuOpen ? ui.closeMenu : ui.openMenu"
+        :aria-expanded="isMobileMenuOpen"
+        aria-controls="artigen-mobile-nav"
+        @click="isMobileMenuOpen = !isMobileMenuOpen"
+      >
         <svg
           viewBox="0 0 24 24"
           fill="none"
@@ -103,7 +110,12 @@
           :class="{ 'mobile-hide': hideLangOnMobile }"
           @click="isLangMenuOpen = !isLangMenuOpen"
         >
-          <button class="lang-switch" type="button">
+          <button
+            class="lang-switch"
+            type="button"
+            :aria-label="ui.languageMenu"
+            :aria-expanded="isLangMenuOpen"
+          >
             <span class="globe-icon">
               <svg
                 viewBox="0 0 24 24"
@@ -164,7 +176,12 @@
     </header>
 
     <transition name="dropdown-fade">
-      <div v-if="isMobileMenuOpen" ref="mobileMenuRef" class="mobile-menu">
+      <div
+        v-if="isMobileMenuOpen"
+        id="artigen-mobile-nav"
+        ref="mobileMenuRef"
+        class="mobile-menu"
+      >
         <NavItem
           to="/artigen"
           item-class="mobile-item"
@@ -183,24 +200,27 @@
         </NavItem>
 
         <div class="mobile-item-group">
-          <div
+          <button
+            type="button"
             class="mobile-item has-arrow"
             :class="{ active: activeKey === 'format' }"
+            :aria-expanded="isMobileToolsExpanded"
             @click="isMobileToolsExpanded = !isMobileToolsExpanded"
           >
             {{ ui.navFormatFactory }}
             <span class="arrow" :class="{ open: isMobileToolsExpanded }">⌄</span>
-          </div>
+          </button>
           <div v-if="isMobileToolsExpanded" class="mobile-sub-menu">
-            <div
+            <button
               v-for="tool in localizedTools"
               :key="tool.id"
+              type="button"
               class="mobile-sub-item"
               @click.stop="handleToolClick(tool.id)"
             >
               <span class="mobile-tool-icon" v-html="tool.icon"></span>
               {{ tool.name }}
-            </div>
+            </button>
             <NavItem
               to="/artigen/tools"
               item-class="mobile-sub-item view-all"
@@ -238,6 +258,30 @@
         >
           {{ ui.navAbout }}
         </NavItem>
+
+        <div class="mobile-language" :aria-label="ui.languageMenu">
+          <span class="mobile-language-label">{{ ui.languageMenu }}</span>
+          <div class="mobile-language-actions">
+            <button
+              type="button"
+              class="mobile-language-option"
+              :class="{ active: currentLang === 'zh' }"
+              :aria-pressed="currentLang === 'zh'"
+              @click="selectLanguage('zh')"
+            >
+              中文
+            </button>
+            <button
+              type="button"
+              class="mobile-language-option"
+              :class="{ active: currentLang === 'en' }"
+              :aria-pressed="currentLang === 'en'"
+              @click="selectLanguage('en')"
+            >
+              English
+            </button>
+          </div>
+        </div>
       </div>
     </transition>
 
@@ -254,6 +298,7 @@ import CreditsUserActions from './CreditsUserActions.vue';
 import NavItem from './NavItem.vue';
 import { useLanguageStore } from '@/stores/language';
 import { formatFactoryTools } from '../data/formatFactoryTools';
+import { toolDefinitions } from '../domain/toolCatalog';
 import { useAgentImgAuth } from '../composables/useAgentImgAuth';
 import { useAgentImgCredits } from '../composables/useAgentImgCredits';
 
@@ -329,6 +374,7 @@ onBeforeUnmount(() => {
 const selectLanguage = (lang: 'zh' | 'en') => {
   languageStore.setLanguage(lang);
   isLangMenuOpen.value = false;
+  isMobileMenuOpen.value = false;
 };
 
 const langLabel = computed(() => (currentLang.value === 'zh' ? 'ZH' : 'EN'));
@@ -341,8 +387,12 @@ const ui = computed(() => {
       navFormatFactory: '工具',
       navImageWorkshop: 'AI影像工坊',
       navMarket: '点数商城',
+      navAbout: '关于',
       toolsPopoverTitle: '图像与文件处理工具',
-      viewAllTools: '查看全部工具'
+      viewAllTools: '查看全部工具',
+      openMenu: '打开导航菜单',
+      closeMenu: '关闭导航菜单',
+      languageMenu: '切换语言'
     };
   }
   return {
@@ -353,27 +403,33 @@ const ui = computed(() => {
     navMarket: 'Compute Market',
     navAbout: 'About',
     toolsPopoverTitle: 'Image & File Tools',
-    viewAllTools: 'View all tools'
+    viewAllTools: 'View all tools',
+    openMenu: 'Open navigation menu',
+    closeMenu: 'Close navigation menu',
+    languageMenu: 'Change language'
   };
 });
 
 const localizedTools = computed(() => {
   const isZh = currentLang.value === 'zh';
-  return formatFactoryTools
-    .filter((t) => t.status === 'ready' && t.id !== 'ingredient-list')
-    .map((t) => ({
-      id: t.id,
-      icon: t.icon,
-      name: isZh ? t.name : t.nameEn,
-      description: isZh ? t.description : t.descriptionEn
-    }));
+  return toolDefinitions
+    .filter((tool) => tool.kind === 'tool')
+    .map((workflow) => {
+      const legacy = formatFactoryTools.find((tool) => workflow.legacyIds.includes(tool.id));
+      return {
+        id: workflow.id,
+        icon: legacy?.icon || '',
+        name: isZh ? workflow.name.zh : workflow.name.en,
+        description: isZh ? workflow.description.zh : workflow.description.en
+      };
+    });
 });
 
 const handleToolClick = (toolId: string) => {
   isToolsMenuOpen.value = false;
   isMobileMenuOpen.value = false;
   isMobileToolsExpanded.value = false;
-  router.push({ path: '/artigen/tools', query: { tool: toolId } }).catch(() => {});
+  router.push(`/artigen/tools/${encodeURIComponent(toolId)}`).catch(() => {});
 };
 
 const openToolsMenu = () => {
@@ -565,8 +621,12 @@ watch(() => isAuthed.value, handleAuthChanged);
 }
 
 .avatar-btn {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   /* border-radius: 999px; */
   border: 1px solid rgba(204, 255, 0, 0.28);
   background: rgba(0, 0, 0, 0.25);
@@ -614,6 +674,7 @@ watch(() => isAuthed.value, handleAuthChanged);
   text-decoration: none;
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
 }
 
 .logo-text {
@@ -824,6 +885,7 @@ watch(() => isAuthed.value, handleAuthChanged);
   margin: 0 0 0 auto;
   gap: 24px;
   align-items: center;
+  flex: 0 0 auto;
 }
 
 .nav-toggle {
@@ -831,16 +893,60 @@ watch(() => isAuthed.value, handleAuthChanged);
   background: transparent;
   border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
   color: var(--text-main, #f1f5f9);
-  width: 36px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
   border-radius: 6px;
   font-size: 20px;
   line-height: 1;
   padding: 0;
+  flex: 0 0 44px;
 }
 
 .mobile-menu {
   display: none;
+  box-sizing: border-box;
+  max-width: 100vw;
+  overflow-x: clip;
+}
+
+.mobile-language {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+}
+
+.mobile-language-label {
+  min-width: 0;
+  color: var(--text-muted, #94a3b8);
+  font-size: 13px;
+}
+
+.mobile-language-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.mobile-language-option {
+  min-width: 64px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-muted, #94a3b8);
+  font: inherit;
+  font-size: 12px;
+}
+
+.mobile-language-option.active {
+  border-color: rgba(204, 255, 0, 0.55);
+  background: rgba(204, 255, 0, 0.1);
+  color: var(--primary, #ccff00);
 }
 
 .mobile-item-group .mobile-item.has-arrow {
@@ -867,6 +973,8 @@ watch(() => isAuthed.value, handleAuthChanged);
 
 .mobile-sub-item {
   display: flex;
+  box-sizing: border-box;
+  min-width: 0;
   align-items: center;
   gap: 10px;
   padding: 12px 18px;
@@ -878,6 +986,12 @@ watch(() => isAuthed.value, handleAuthChanged);
   text-decoration: none;
   user-select: none;
   background: rgba(5, 5, 5, 0.9);
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  text-align: left;
+  font-family: inherit;
 }
 
 .mobile-sub-item:hover {
@@ -903,6 +1017,8 @@ watch(() => isAuthed.value, handleAuthChanged);
 
 .mobile-item {
   display: block;
+  box-sizing: border-box;
+  min-width: 0;
   padding: 14px 18px;
   text-decoration: none;
   color: var(--text-muted, #94a3b8);
@@ -911,6 +1027,11 @@ watch(() => isAuthed.value, handleAuthChanged);
   border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
   background: rgba(5, 5, 5, 0.9);
   text-align: left;
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  font-family: inherit;
 }
 
 .mobile-item.active {
@@ -931,6 +1052,10 @@ watch(() => isAuthed.value, handleAuthChanged);
   font-size: 14px;
   cursor: pointer;
   display: flex;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 10px;
+  justify-content: center;
   align-items: center;
   line-height: 1;
   gap: 6px;
@@ -1012,6 +1137,10 @@ watch(() => isAuthed.value, handleAuthChanged);
   transition: all 0.3s;
   position: relative;
   overflow: hidden;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .login-btn::before {
@@ -1035,7 +1164,7 @@ watch(() => isAuthed.value, handleAuthChanged);
   left: 100%;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1280px) {
   .titlebar {
     --header-height: 64px;
   }
@@ -1054,6 +1183,10 @@ watch(() => isAuthed.value, handleAuthChanged);
   }
 
   .lang-container.mobile-hide {
+    display: none;
+  }
+
+  .header .lang-container {
     display: none;
   }
 
@@ -1091,6 +1224,8 @@ watch(() => isAuthed.value, handleAuthChanged);
     border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
     background: rgba(5, 5, 5, 0.92);
     backdrop-filter: blur(10px);
+    max-height: calc(100dvh - var(--header-height));
+    overflow-y: auto;
   }
 }
 
@@ -1104,11 +1239,23 @@ watch(() => isAuthed.value, handleAuthChanged);
   }
 
   .nav-toggle {
-    width: 34px;
+    width: 44px;
   }
 
   .login-btn {
     padding: 7px 10px;
+  }
+
+  .mobile-language {
+    grid-template-columns: 1fr;
+  }
+
+  .mobile-language-actions {
+    width: 100%;
+  }
+
+  .mobile-language-option {
+    flex: 1;
   }
 }
 </style>

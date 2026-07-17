@@ -49,13 +49,21 @@ export function useAgentImgLocale() {
         generateThisDirection: '生成',
         welcomeTitle: '欢迎使用 Artigen AI 设计。',
         welcomeSub:
-          '请简单描述您想要生成的图片 或上传参考图。发送后我会优化您的输入并且结合相关提示词并生成结果。',
+          '从模板开始或描述商品画面，按商品、风格、场景上传参考图；服务端报价确认后才会创建任务。',
         memory: '历史记录',
         noHistory: '暂无历史记录',
         resultTitle: '生成结果',
         positivePrompt: '正向提示词',
         negativePrompt: '反向提示词',
         imageLabel: '图片',
+        imageMissing: '图片已失效',
+        imageMissingShort: '已失效',
+        imageMissingSub: '原图暂时无法加载',
+        generationFailed: '生成失败，请稍后再试',
+        generationCancelled: '已取消',
+        statusFailed: '失败',
+        statusCancelled: '已取消',
+        statusPending: '处理中',
         download: '下载',
         reference: '引用',
         edit: '编辑',
@@ -77,18 +85,18 @@ export function useAgentImgLocale() {
         loadingText: '正在处理，请耐心等待…',
         guideTitle: '使用指南 / 我们的优势',
         guideDesc:
-          '如果是电商产品，可以先在左侧「产品档案」补齐关键信息；非电商场景可跳过，直接用一句话描述场景。打开「深度思考」会自动优化提示词与构图。支持多参考图图生图，让风格与质感更稳定。',
+          '先补齐产品档案，再按商品、风格、场景添加参考图。快速生成直接出图；深度思考会先单独生成 4 个视觉方向，选择后再次确认生成。每一步都独立报价。',
         guideKeywords: [
-          '深度思考模型',
-          '多参考图生成',
-          '主流强力生图模型',
+          '4 个视觉方向',
+          '三类语义参考图',
+          '标准生成',
           '电商产品工作流',
-          '4K 高清下载（Pro+）'
+          '失败自动退款'
         ],
         guideFaqs: [
           {
             q: '深度思考有什么用？',
-            a: '深度思考会自动补全构图、光影、材质与质量词，并做提示词结构化；同时带有“记忆”能力，会结合你多轮输入自动融合需求。非深度思考仅接受单次输入。'
+            a: '深度思考会先生成 4 个可编辑视觉方向，这一步单独报价 5 点；只有选择方向并再次确认后，才会创建 10 点的出图任务。'
           },
           {
             q: '从哪里开始更快？',
@@ -100,7 +108,7 @@ export function useAgentImgLocale() {
           },
           {
             q: '我们的优势是什么？',
-            a: '内置深度思考模型做提示词与构图优化；支持多图同时作为参考进行生成；接入多种主流强力生图模型，覆盖写实/商业/风格化等场景。'
+            a: '围绕商品视觉把产品档案、三类参考图、方向探索、标准生成、编辑器与下载串成可恢复、可取消、可退款的工作流。'
           },
           {
             q: '文件会上传到服务器吗？',
@@ -150,13 +158,21 @@ export function useAgentImgLocale() {
       generateThisDirection: 'Generate',
       welcomeTitle: 'Welcome to Artigen AI Design.',
       welcomeSub:
-        'Please briefly describe the image you want to generate, or upload a reference image. After you send, I’ll refine your input, combine it with relevant prompts, and generate the result.',
+        'Start with a recipe or describe a product visual, then add product, style, and scene references. A task starts only after you confirm the server quote.',
       memory: 'History',
       noHistory: 'No history yet',
       resultTitle: 'Result',
       positivePrompt: 'Positive Prompt',
       negativePrompt: 'Negative Prompt',
       imageLabel: 'Image',
+      imageMissing: 'Image unavailable',
+      imageMissingShort: 'Missing',
+      imageMissingSub: 'The original image could not be loaded.',
+      generationFailed: 'Generation failed. Please try again later.',
+      generationCancelled: 'Cancelled',
+      statusFailed: 'Failed',
+      statusCancelled: 'Cancelled',
+      statusPending: 'Pending',
       download: 'Download',
       reference: 'Reference',
       edit: 'Edit',
@@ -179,18 +195,18 @@ export function useAgentImgLocale() {
       loadingText: 'Processing, please wait…',
       guideTitle: 'Quick guide / Why us',
       guideDesc:
-        'For e-commerce products, you can fill the product profile on the left; for other cases, you can skip it and describe the scene in one line. Turn on Deep Thinking to refine prompts and composition. Multi-reference img2img keeps style and texture consistent.',
+        'Complete the product profile, then add product, style, and scene references. Generate creates an image directly; Deep Thinking first creates four separately quoted directions, then asks again before generating.',
       guideKeywords: [
-        'deep thinking model',
-        'multi-reference img2img',
-        'top image generation models',
+        'four visual directions',
+        'semantic references',
+        'standard generation',
         'commerce workflow',
-        '4K download (Pro+)'
+        'automatic refunds'
       ],
       guideFaqs: [
         {
           q: 'What does Deep Thinking do?',
-          a: 'It refines prompts and composition by adding lighting/material/quality cues. It also has memory: it can merge multiple turns of your inputs into one coherent request. Non-Deep Thinking accepts only single-turn input.'
+          a: 'It creates four editable visual directions as a separately quoted 5-credit task. An image is generated only after you select a direction and confirm the separate 10-credit task.'
         },
         {
           q: 'Where should I start for faster results?',
@@ -202,7 +218,7 @@ export function useAgentImgLocale() {
         },
         {
           q: 'What makes it different?',
-          a: 'Deep Thinking improves prompts and composition; multi-reference generation for stronger control; and access to powerful mainstream image models for diverse styles.'
+          a: 'It connects product profiles, semantic references, direction exploration, standard generation, Editor V2, and downloads in one recoverable, cancellable, refundable workflow.'
         },
         {
           q: 'Do files get uploaded to a server?',

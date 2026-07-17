@@ -1,320 +1,201 @@
-# Artigen PRD
+# Artigen 产品与接口契约
 
-本文档面向后端协作者，描述 Artigen 当前已经落地的产品模块、前后端连接方式、接口边界、认证方式、点数/支付流程、生成流程、图片文件访问规则与运行期数据文件。本文只记录现状和约定。
-
-## 0. 协作和分支约定
-
-当前仓库使用两个长期分支：
-
-| 分支 | 作用 | 约定 |
-| --- | --- | --- |
-| `main` | 线上发布分支。 | Railway 前端和后端服务跟随 `main` 自动部署。 |
-| `test` | 团队测试分支。 | 功能、修复、文档先合入 `test` 验证；验证通过后再从 `test` 合入 `main`。 |
-
-后端协作者提交接口、认证、点数、支付、生成或数据目录相关改动时，默认先 PR 到 `test`。`test` 上完成前后端联调和 smoke 后，再从 `test` PR 到 `main` 触发线上部署。紧急修复可以走 `hotfix/*` 到 `main`，恢复后同步回 `test`。
+本文记录 Artigen 2.0 当前实现的产品、认证、计费、任务、资产和编辑器契约。它是协作基线，不是未来功能清单；没有可信执行器或外部环境的能力必须明确 fail-closed。
 
 ## 1. 产品范围
 
-Artigen 当前包含以下产品模块：
+稳定入口：
 
-- Artigen 首页：`/artigen`
-- AI 生图工作台：`/artigen/ai`
-- 格式工厂和工具箱：`/artigen/tools`
-- AI 影像工坊：`/artigen/image-workshop`
-- 图片编辑器：`/artigen/image-editor`
-- AI 配料表：工具箱入口和 `IngredientLabel` 页面组件链路
-- 点数商城：`/artigen/market`
-- 订单记录：`/artigen/orders`
-- 用量记录：`/artigen/usage`
-- 法律页：`/artigen/legal/terms`、`/artigen/legal/privacy`、`/artigen/legal/refund`
-- 登录/注册/找回密码：`/login`
-- 后台控制台：`/console/*`
+- `/artigen`：产品首页。
+- `/artigen/ai`：AI 生图工作台；旧 `/api/generate`、`/api/img2img` 只作一版兼容。
+- `/artigen/image-workshop/:toolId`：5 个工坊入口。
+- `/artigen/tools/:toolId`：8 个工具工作流。
+- `/artigen/image-workshop/image-editor`：图片编辑器 2.0；`?editor=legacy` 可回退一版。
+- `/artigen/market`、`/artigen/orders`、`/artigen/usage`：套餐、订单和用量。
+- `/console/*`：运营控制台，未登录不会展示伪造财务数据或模拟生成结果。
 
-保留的兼容入口：
+唯一目录是 `shared/tools.catalog.json`。前后端路由、名称、能力、隐私、限制、operation、输出格式和 SKU 都由它派生。旧 `?tool=` 与旧 ID canonical redirect 到稳定子路由。
 
-- `/agent-img` -> `/artigen/ai`
-- `/format-factory` -> `/artigen/tools`
-- `/tools` -> `/artigen/tools`
-- `/aether-market` -> `/artigen/market`
-- `/legal/*` -> `/artigen/legal/*`
-- `/console2` -> `/console`
+工坊：
 
-## 2. 前后端连接方式
+1. `id-photo`：标准证件照完全本地免费；AI 职业形象是独立、需确认的收费 operation。
+2. `old-photo`：服务端付费增强/上色，支持结果版本、对比和真实取消，不声称历史事实复原。
+3. `ingredient-label`：只整理用户原文，不补全、不发明、不提供 FDA 或其他合规结论。
+4. `background`：本地免费换色/换图与收费 AI 场景生成分开，不允许本地失败后静默上云。
+5. `image-editor`：本地非破坏编辑器 2.0。
 
-前端统一通过 `frontend/src/utils/api.ts` 构造请求地址。
+工具工作流：`image-batch`、`privacy-redaction`、`video-frame`、`pdf-image`、`pdf-text-word`、`document-pdf`、`video-gif`、`favicon`。本地任务不要求登录、不上传、不扣点；Word 保真模式是例外，必须明确同意上传并通过 LibreOffice 能力检查。
 
-API Base 规则：
+主生图现阶段只提供 `standard-v1`，不展示没有真实差异的模型品牌。快速生成使用 `ai-design.generate.v1`（10 点）；深度模式先用 `ai-design.directions.v1`（5 点）产出四个方向，用户选定后再独立确认 10 点生成。六个起步模板只填写需求，不创建任务或扣费；三个参考槽按商品、风格、场景的固定语义顺序提交。
 
-- 优先读取 `VITE_API_BASE`。
-- `VITE_API_BASE` 为空时读取 `VITE_AGENT_API_BASE`。
-- 两者都为空时使用同源相对路径，例如 `/api/generate`、`/files/...`。
-- Base 支持 `http://`、`https://`、`//` 和 `/` 开头的路径。
-- Base 如果以 `/api` 结尾，`buildApiUrl('/api/health')` 会合并为 `${base}/health`。
-- 当前页面不是本地地址时，指向 `localhost`、`127.0.0.1`、`0.0.0.0` 或 `.local` 的 Base 会被忽略。
-- Vite 开发服务在 `frontend/vite.config.ts` 中把 `/api` 和 `/files` 代理到 `http://localhost:8080`。
+## 2. 运行架构
 
-前端主要调用入口：
+- 前端：Vue 3、Vite、Pinia；按路由懒加载 Fabric、PDF、ECharts、GIF/WebP 处理代码。
+- 后端：Express 5/CommonJS、`pg`、`node-pg-migrate`、`zod`，不使用 ORM。
+- 数据：PostgreSQL 16 是用户、会话、钱包、账本、订单、任务和资产元数据的唯一生产写源。
+- 二进制：本地/单实例测试可用 file，生产付费生图必须使用多实例共享的 S3/R2 兼容适配器；数据库不保存 Base64/BLOB。
+- 发布：目标仍是 Railway，但合并、推送和上线都需要单独授权。
 
-| 文件 | 职责 | 主要接口 |
-| --- | --- | --- |
-| `frontend/src/agentImg/services/text.ts` | AI 文本生成、图生图请求、返回值归一化 | `/api/generate`、`/api/img2img` |
-| `frontend/src/agentImg/composables/useAgentImgHistory.ts` | 图片历史读取 | `/api/images/history/:userId` |
-| `frontend/src/agentImg/index.vue` | AI 生图主页面文件访问和代理 | `/files/*`、`/api/proxy/image` |
-| `frontend/src/agentImg/views/ImageEditor.vue` | 图片编辑器文件读取和远程图片代理 | `/files/*`、`/api/proxy/image` |
-| `frontend/src/points/index.ts` | 点数、订单、支付 | `/api/credits/*`、`/api/pay/create-order` |
-| `frontend/src/login/api.ts` | 邮箱验证码、账号密码、注册、重置、Google 登录 | `/api/login/*`、`/api/auth/*` |
-| `frontend/src/utils/analytics.ts` | 行为埋点 | `/api/collection/event` |
-| `frontend/src/stores/console.ts` | 后台控制台数据 | `/api/admin/*`、`/api/usage/*` |
+没有 `DATABASE_URL`，或 `PAID_FEATURES_ENABLED` 不等于 `true` 时，收费能力返回 `DATABASE_NOT_CONFIGURED` 或 `PAID_FEATURES_DISABLED`。这是一项安全门禁。
 
-## 3. 后端模块职责
+## 3. 认证与安全
 
-| 模块 | 职责 |
-| --- | --- |
-| `backend/server.js` | Express 入口、环境变量加载、CORS、JSON body、总限流、`/files`、图片代理、Google GSI 代理、路由安装。 |
-| `backend/routes/system.js` | `/api/meta`、`/api/health`、`/api/generate`，包含 Artigen prompt 生成、AI 配料表 prompt 生成、点数冻结和 usage/audit 写入。 |
-| `backend/imgagent/index.js` | `/api/img2img`、点数接口、支付接口、图片历史、用户 profile/api keys。 |
-| `backend/routes/auth.js` | 邮箱验证码登录、账号密码登录、注册、密码重置、Google 登录。 |
-| `backend/routes/admin.js` | 控制台登录、用户、订单、图片历史、审计历史、事件、限流统计、管理员调点。 |
-| `backend/routes/usage.js` | 行为事件、usage ingest、usage ledger、usage summary、管理员 usage ledger。 |
-| `backend/lib/ai-providers.js` | Gemini 文本生成、SiliconFlow 文本生成、SiliconFlow 图片生成、provider fallback。 |
-| `backend/lib/auth-utils.js` | 用户 token、管理员 token、密码哈希、鉴权断言、用户读取。 |
-| `backend/lib/memory-manager.js` | 图片持久化、用户图片历史、用户审计历史。 |
-| `backend/lib/usageLedger.js` | usage ledger 和 analytics event 的读写与归一化。 |
-| `backend/imgagent/credits.js` | 钱包、冻结、扣点、发点、订单 ledger。 |
-| `backend/utils/storage.js` | `MEMORY_DIR`、JSON 文件路径、目录自动创建和原子写入。 |
+普通用户使用同源 Cookie 会话：
 
-## 4. 接口清单
+- Cookie 名为 `auth_token`，`HttpOnly`、`SameSite=Lax`，生产增加 `Secure`。
+- 普通用户前端不读取或接收 bearer token；密码和所有 token 均不持久化。管理员登录只把短时 Bearer token 保存在内存中。
+- `GET /api/auth/session` 返回当前用户和派生 CSRF token。
+- Cookie 认证的写请求必须通过 Origin 校验并发送 `X-CSRF-Token`。
+- `POST /api/auth/logout` 撤销服务端会话并清 Cookie。
+- `SESSION_NOT_BEFORE` 可强制旧会话整体失效。
+- 用户切换必须重新登录；访客内容可显式合并，访客点数不能合并。
 
-### 系统与生成
+OTP 只保存 HMAC，10 分钟有效、60 秒发送冷却、最多 5 次尝试。密码使用异步 scrypt。Google credential 的不安全解码只允许非生产且显式开启。
 
-| Method | Path | 认证 | 说明 |
-| --- | --- | --- | --- |
-| `GET` | `/api/meta` | 无 | 返回构建和运行基础信息。 |
-| `GET` | `/api/health` | 无 | 返回服务、provider、存储状态。 |
-| `POST` | `/api/generate` | 游客可用；登录用户用 Bearer/Cookie | 文本生成、Artigen prompt 生成、AI 配料表 prompt 生成。 |
-| `POST` | `/api/img2img` | 游客可用；非游客需要 Bearer/Cookie 匹配 `userId` | 图生图、证件照、老照片、背景、图片编辑等图片生成链路。 |
-| `GET` | `/api/proxy/image?url=` | 无 | 安全代理远程图片，限制协议、跳转、大小和 content-type。 |
-| `GET` | `/api/proxy/google-gsi` | 无 | 代理 Google GSI client 脚本。 |
-| `GET` | `/files/*` | 见文件访问规则 | 读取 `MEMORY_DIR/files` 下的生成文件。 |
+管理员使用 `/api/admin/login` 签发的短时 Bearer token。生产拒绝默认 `admin/admin123456`，并始终禁用静态 `ADMIN_KEY`；后者只用于非生产显式兼容。生产登录必须绑定 active PostgreSQL `administrators` 记录，每个管理请求都重新检查角色；`operator` 可读，`admin`/`owner` 才能调账或补偿支付，财务审计保存真实 `actor_user_id`。管理员通过 `pnpm --filter backend admin:grant -- <userId> <role>` 显式授权。
 
-### 登录与认证
+远程图片代理和 provider 结果持久化执行协议、host allowlist、DNS/IP、跳转、大小、magic bytes 与 MIME 校验，并固定验证后的 DNS 地址。`/files` 不会向任意外域拼接 token。埋点、usage、图片历史与审计采用严格白名单：原始文本/上下文只保存命名空间哈希与长度，图片/文件只保存 opaque ID，IP 只保存哈希，UA 只保存设备类别；旧 JSON 在读取时也会净化并写回。
 
-| Method | Path | 认证 | 说明 |
-| --- | --- | --- | --- |
-| `GET` | `/api/auth/google/config` | 无 | 返回 Google client id。 |
-| `POST` | `/api/auth/google/verify` | 无 | 校验 Google credential，创建/更新用户 session。 |
-| `POST` | `/api/login/send-code` | 无 | 发送邮箱验证码。 |
-| `POST` | `/api/login/verify` | 无 | 邮箱验证码登录，返回 `userId` 和 `token`。 |
-| `POST` | `/api/auth/login` | 无 | 用户名/邮箱 + 密码登录，返回 `userId` 和 `token`。 |
-| `POST` | `/api/auth/register` | 无 | 邮箱验证码 + 用户名 + 密码注册，返回 `userId` 和 `token`。 |
-| `POST` | `/api/auth/password-reset/send-code` | 无 | 发送重置密码验证码。 |
-| `POST` | `/api/auth/password-reset/reset` | 无 | 验证重置码并更新密码。 |
+## 4. 任务、报价与计费
 
-### 用户、点数、支付、历史
+统一状态：
 
-| Method | Path | 认证 | 说明 |
-| --- | --- | --- | --- |
-| `GET` | `/api/user/profile` | Bearer/Cookie | 读取用户 profile。 |
-| `POST` | `/api/user/profile` | Bearer/Cookie | 保存用户 profile。 |
-| `GET` | `/api/user/apikeys` | Bearer/Cookie | 读取用户 API Key 列表。 |
-| `POST` | `/api/user/apikeys` | Bearer/Cookie | 新增用户 API Key。 |
-| `DELETE` | `/api/user/apikeys/:keyId` | Bearer/Cookie | 删除用户 API Key。 |
-| `GET` | `/api/credits/balance?userId=` | Bearer/Cookie 匹配 `userId` | 点数余额。 |
-| `GET` | `/api/credits/costs` | 无 | 当前各功能点数成本。 |
-| `POST` | `/api/credits/checkin` | Bearer/Cookie | 签到加点。 |
-| `GET` | `/api/credits/orders?userId=` | Bearer/Cookie 匹配 `userId` | 点数订单。 |
-| `GET` | `/api/credits/holds?userId=` | Bearer/Cookie 匹配 `userId` | 点数冻结记录。 |
-| `POST` | `/api/credits/order/mock` | Bearer/Cookie；需 `ENABLE_MOCK_ORDERS=1` | Mock 点数订单。 |
-| `POST` | `/api/pay/create-order` | Bearer/Cookie | 创建支付订单。 |
-| `POST` | `/api/pay/afdian/webhook` | 签名按环境变量决定 | 爱发电 webhook 入账。 |
-| `GET` | `/api/images/history/:userId` | Bearer/Cookie 匹配 `userId` | 用户图片历史。 |
+```text
+idle -> validating -> awaiting_confirmation -> queued -> running
+                                             -> success | failed | cancelled
+```
 
-### Usage 与行为事件
+本地 operation 进入浏览器 Worker；服务端 operation 使用统一任务 API。当前可信收费执行器开放老照片增强/上色、AI 职业形象、AI 场景背景、配料原文整理与 `ai-design.generate`/`ai-design.directions`。职业形象和背景客户端只能传服务端枚举及主体变换参数，prompt 由服务端构造；配料任务只允许整理用户原文，结算前必须通过来源追溯。其他未接入 operation 返回 `TOOL_OPERATION_UNAVAILABLE`，不会排队或扣费。
 
-| Method | Path | 认证 | 说明 |
-| --- | --- | --- | --- |
-| `POST` | `/api/collection/event` | 无 | 前端行为事件采集。 |
-| `POST` | `/api/usage/ingest` | Bearer/Cookie 匹配 `userId` | 写入 usage ledger。 |
-| `GET` | `/api/usage/ledger?userId=` | Bearer/Cookie 匹配 `userId` | 用户 usage ledger。 |
-| `GET` | `/api/usage/summary?userId=` | Bearer/Cookie 匹配 `userId` | 用户用量汇总。 |
+任务请求只能包含：
 
-### 控制台
+```text
+toolId / operation / options / inputAssets / quoteId
+```
 
-控制台接口使用以下任一认证方式：
+客户端禁止传 `cost`、`price`、`credits`、`sku` 或其嵌套变体。`POST /api/tool-tasks` 必须使用 multipart 和 `Idempotency-Key`。
 
-- `Authorization: Bearer <adminToken>`，token 来自 `/api/admin/login`。
-- `x-admin-key: <ADMIN_KEY>`，key 来自环境变量。
+财务事务：
+
+1. 报价锁定服务端 SKU、价格版本和有效期。
+2. 创建任务时锁钱包与报价，原子减少 available、增加 frozen，并写 task、hold、ledger。
+3. 输出通过校验且资产已持久化后，只结算一次。
+4. 失败、取消、超时、空结果、无效输出或持久化失败，原子释放全部 hold。
+5. 相同幂等键与相同请求只执行/收费一次；同键不同请求返回 `409 IDEMPOTENCY_CONFLICT`。
+6. 钱包更新带约束和行锁，可用与冻结余额不能为负。
+
+服务端任务由 PostgreSQL 租约队列认领：`FOR UPDATE SKIP LOCKED`、90 秒默认租约、心跳续约和最多一次派发前重领。`provider_dispatched_at` 是重试栅栏；一旦已派发而结果不明，只能失败退款。hold 过期会在输入完成、任务认领、心跳、Provider 派发和结算阶段 fail-closed，不能由迟到结果重新变成收费成功。DELETE 先在数据库标记取消并释放 hold，再通过 PG `NOTIFY` 和本机 `AbortController` 中断执行；取消后的迟到结果不能结算。
+
+主生图 prompt/产品档案与配料整理原文仅写入 AES-256-GCM 短期 payload，AAD 绑定 task ID，密钥来自 `TASK_PAYLOAD_ENCRYPTION_KEY`。普通任务 options 只保存必要枚举、文本长度和 SHA-256，不保存原文；缺少密钥时对应报价与创建 fail-closed，任务终态删除 payload。
+
+工坊付费 AI 使用独立熔断开关 `WORKSHOP_AI_TASK_V2_ENABLED`。关闭时职业形象、AI 场景背景和配料 AI 整理均不可报价或创建，但本地证件照、本地换背景和本地配料排版继续可用且不扣费。`/readyz` 在开关开启且付费能力启用时要求 PostgreSQL 迁移、对象存储、payload 密钥和完整 Provider adapter 全部就绪。
+
+生图发布使用稳定用户 cohort：全局 `AI_DESIGN_TASK_V2_ENABLED` 开启后，`AI_DESIGN_TASK_V2_INTERNAL_USERS` 内部用户优先放行，再按数据库用户 UUID 的确定性哈希执行 `AI_DESIGN_TASK_V2_ROLLOUT_PERCENT` 10% → 50% → 100% 灰度。财务或资产指标越界时关闭全局开关立即熔断，不能依赖浏览器随机数或会漂移的 session 分桶。
+
+结果统一为 `{ assets, receipt, warnings }`。`receipt` 包含 SKU、报价、实扣、退款和余额。错误统一包含 `code`、可选 `field`、`messageKey` 与 `retryable`。
+
+## 5. 支付契约
+
+前端先读 `GET /api/pay/packages`，创建订单时发送目录返回的套餐 UUID，不发送金额、点数、币种或用户 ID。服务端创建本地 pending 订单并锁定套餐版本、金额、币种和点数。
+
+爱发电回调流程：
+
+1. 标准支付回调在所有环境强制验签；缺签、伪造签名直接拒绝。
+2. 使用服务端 API 凭证按 provider order id 查询规范订单。
+3. 只认本地 pending 订单及其已锁定用户、套餐、金额和点数。
+4. provider event、provider order、ledger idempotency key 都有唯一约束；并发和重放只能入账一次。
+5. 已验签但未知订单、错金额、错套餐等事件进入 dead letter，不入账。
+6. 管理员 reconciliation 会再次查询 provider 规范订单；不能用请求体修改用户、套餐、金额或点数。
+
+PostgreSQL UUID 是内部规范用户标识，legacy user id 被数据库约束为不得伪装成 UUID。active 套餐短别名具有唯一约束；UUID/完整 SKU 为规范引用。
+
+## 6. 资产与保留
+
+资产行记录所有者、opaque URI、SHA-256、magic-byte 校验后的 MIME、大小、尺寸、创建时间、过期时间和 GC 状态。读取 `/api/assets/:assetId` 必须校验所有权。
+
+写入使用 URI advisory transaction lock 与 `writing -> active` 状态；数据库提交失败会尽力补偿删除对象。同内容重传会安全取消正在删除的旧 claim。回收器通过 `SKIP LOCKED` 租约认领，删除前再次检查状态以及 active transfer、queued/running task 引用。失败使用退避重试。
+
+file 适配器还执行带游标的 inventory reconciliation，在宽限期后清理数据库不存在的孤儿对象。S3/R2 第一阶段使用过期资产行回收；生产应同时配置 bucket 生命周期规则作为兜底。生成结果写入后必须重新读取并校验字节数和 SHA-256，只有通过验证的 opaque asset 才能结算。
+
+## 7. 图片编辑器 2.0
+
+`fabric@7.4.0` 只负责交互投影；`EditorDocumentV2` 和 Pinia/domain store 是业务真源，Fabric 对象只保存 `layerId`。legacy 的 `ImageEditor.vue` 不再继续堆功能。
+
+模块：
+
+- `domain/store`：像素/sRGB 文档、图层顺序、选择、工具状态和命令。
+- `engine`：Fabric 投影、viewport、多选、控制柄、对齐、分布和吸附。
+- `assets`：IndexedDB Blob、ObjectURL/ImageBitmap 生命周期与可达性 GC。
+- `history`：事务式 Undo/Redo，最多 100 条。
+- `workers`：滤镜、去背景、手动多边形抠图、增强、2x 放大和导出，均带 revision stale-result guard。
+- `export`：预览与导出共享 render description。
+
+首版支持图片、文字、矩形/圆角矩形、椭圆、直线，多选，变换，翻转，锁定/显隐/排序，非破坏 crop 和 adjustments，PNG/JPEG/WebP 1x/2x/3x 导出。导入永远先创建普通单层，不会隐式拆前景/背景。本地去背景、抠图、增强和放大明确标注为实验能力。
+
+项目在变更后 750ms 自动保存到 IndexedDB，支持崩溃草稿恢复和存储失败提示。取消、Undo、切层、切项目或离开页面后，旧 Worker 结果不能提交。移动端裁剪/抠图会收起大面板并保留紧凑控制条。
+
+V1 不承诺 PSD、视频、复杂蒙版、画笔修复、生成式填充、CMYK、多人协作。
+
+## 8. 公共 API
+
+### 认证
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| `POST` | `/api/admin/login` | 控制台账号登录，返回 admin token。 |
-| `GET` | `/api/admin/users` | 用户列表、访问统计、钱包摘要。 |
-| `POST` | `/api/admin/users/credits` | 管理员调整用户点数。 |
-| `GET` | `/api/admin/orders` | 支付订单和点数订单聚合。 |
-| `GET` | `/api/admin/credits/holds` | 点数冻结记录。 |
-| `GET` | `/api/admin/images/history` | 全站图片历史。 |
-| `GET` | `/api/admin/audit/history` | 全站审计历史。 |
-| `GET` | `/api/admin/chats/history` | 历史调用记录兼容读取。 |
-| `GET` | `/api/admin/events` | 后端记录的事件。 |
-| `GET` | `/api/admin/collection/events` | 前端行为事件。 |
-| `GET` | `/api/admin/usage/ledger` | 全站 usage ledger。 |
-| `GET` | `/api/admin/ratelimit/stats` | 限流统计。 |
+| `GET` | `/api/auth/session` | 当前 Cookie 会话与 CSRF token。 |
+| `POST` | `/api/auth/logout` | 撤销会话。 |
+| `POST` | `/api/login/send-code` | 发送 OTP。 |
+| `POST` | `/api/login/verify` | OTP 登录。 |
+| `POST` | `/api/auth/login` | 密码登录。 |
+| `POST` | `/api/auth/register` | 注册。 |
 
-## 5. 认证方式
+### 工具与资产
 
-普通用户：
+| Method | Path | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/tools/catalog` | 统一 `ToolDefinition` 目录。 |
+| `GET` | `/api/generation/models` | 稳定产品 profile 与真实 capability，不暴露内部模型。 |
+| `POST` | `/api/tool-tasks/quote` | 服务端报价。 |
+| `POST` | `/api/tool-tasks` | multipart + `Idempotency-Key` 创建任务。 |
+| `GET` | `/api/tool-tasks/:taskId` | 本人任务结果。 |
+| `DELETE` | `/api/tool-tasks/:taskId` | 取消并退款未结算任务。 |
+| `GET` | `/api/assets/:assetId` | 本人资产。 |
+| `DELETE` | `/api/assets/:assetId` | 提前删除本人资产。 |
+| `POST` | `/api/editor/transfers` | 创建短时编辑器 transfer。 |
+| `POST` | `/api/editor/transfers/:transferId/consume` | 本人一次性消费 transfer。 |
 
-- 登录、注册、Google 登录成功后，后端返回 `token`，并写入 `auth_token` HttpOnly Cookie。
-- 前端同时把 token 保存在本地 session 中，后续请求发送 `Authorization: Bearer <token>`。
-- 后端通过 `resolveAuthUser` 查 `users.json` 中的 `sessionToken`。
-- 涉及 `userId` 的接口会校验 token 对应用户与请求 `userId` 一致。
-- 游客用户 ID 以 `guest_` 开头，AI 生成和图生图链路保留游客能力；游客转登录时会合并游客数据到正式用户。
+### 支付与点数
 
-管理员：
+| Method | Path | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/pay/packages` | active 套餐与服务端价格。 |
+| `POST` | `/api/pay/create-order` | 创建本地支付订单。 |
+| `GET` | `/api/pay/orders/:orderId` | 本人订单。 |
+| `POST` | `/api/pay/afdian/webhook` | 强制验签、provider reconciliation 回调。 |
+| `GET` | `/api/credits/balance` | 本人钱包余额。 |
+| `GET` | `/api/credits/orders` | 本人已支付订单。 |
+| `GET` | `/api/credits/holds` | 本人任务冻结记录。 |
+| `GET` | `/api/admin/payments/dead-letters` | 管理员查看支付异常事件。 |
+| `POST` | `/api/admin/payments/reconcile/:eventId` | 管理员补偿处理。 |
 
-- `/api/admin/login` 使用 `CONSOLE_ADMIN_USERNAME` 和 `CONSOLE_ADMIN_PASSWORD` 校验，返回 admin token。
-- `ADMIN_KEY` 可直接作为 `x-admin-key` 访问控制台接口。
-- 控制台前端会根据 token 形态选择 Bearer 或 `x-admin-key`。
+`/api/generate`、`/api/img2img`、`/api/credits/costs` 保留一个兼容周期，忽略客户端价格。收费能力稳定迁移前不可新增对这些旧入口的直接依赖。
 
-## 6. 点数与支付流程
+生图运营事件进入 PostgreSQL `generation_events`，只接受固定事件名及枚举、布尔、长度、哈希、耗时和 task/quote/session opaque 引用，不保存 prompt、文件名或图片 URL。控制台 `/api/admin/generation/funnel` 汇总成功率、退款率、队列与 Provider p50/p95、资产持久化失败、未结算 hold 和每成功任务成本。
 
-点数字段：
+## 9. 数据迁移与发布门禁
 
-- 钱包文件：`credits_wallet.json`
-- 冻结文件：`credits_holds.json`
-- 点数订单：`credits_orders.json`
-- 支付订单：`pay_orders.json`
+迁移文件位于 `backend/migrations/`。财务 JSON 导入使用 `backend/scripts/import-json-to-postgres.js`，迁移核对使用 `audit-json-postgres.js`。切换后旧财务快照只读保留，不是回退源；最小化的非财务 usage/analytics/历史暂由 legacy JSON 适配器保存。钱包与不可变账本余额使用 bigint，避免合法购买在 32 位整数边界回滚。
 
-点数成本：
+Railway 后端服务 Root Directory 固定为 `/backend`（或显式选择该目录的配置），`preDeployCommand` 执行 `pnpm db:migrate`，迁移失败时新版本不得启动。托管 PostgreSQL 默认校验证书；生产应配置 `PG_SSL_CA`/`PG_SSL_CA_BASE64`，只有已评估的私有网络兼容场景才可显式设置 `PG_SSL_REJECT_UNAUTHORIZED=0`。
 
-- 前端通过 `/api/credits/costs` 获取成本。
-- 后端默认成本在 `backend/imgagent/index.js` 和 `backend/routes/system.js` 中解析。
-- AI 配料表成本字段是 `aiIngredientList`，环境变量是 `CREDITS_COST_AI_INGREDIENT_LIST`。
-
-生成扣点流程：
-
-1. 前端提交 `/api/generate` 或 `/api/img2img`，携带 `userId`、`requestId`、`purpose` 或 `reason`、`cost`、`sessionId`、`projectId`、`pageContext`。
-2. 后端根据请求中的 `cost` 或后端成本表计算本次成本。
-3. 对需要扣点的请求创建 hold。
-4. provider 成功返回后确认扣点，并写入图片历史、audit history、usage ledger。
-5. provider 失败或请求失败时释放 hold。
-
-支付流程：
-
-1. 前端在商城调用 `/api/pay/create-order`。
-2. 后端创建 `pay_orders.json` 订单，返回订单状态和支付信息。
-3. 爱发电回调 `/api/pay/afdian/webhook`。
-4. 后端按订单和回调内容确认金额、发放点数、写入 `credits_orders.json` 和 `credits_wallet.json`。
-5. 前端订单页从 `/api/credits/orders` 读取用户订单。
-
-## 7. AI 生成流程
-
-文本生成入口：`POST /api/generate`
-
-主要请求字段：
-
-- `prompt`：直接发送给文本 provider 的 prompt。
-- `purpose`：业务目的，例如 `agentimg_directions`、`agentimg_final`、`agentimg_ingredient_label`、`ingredient_label`。
-- `agentImg` / `ingredient`：业务结构化输入，后端按 purpose 生成 prompt。
-- `images`：图片参考。
-- `model`：前端当前选择模型。
-- `userId`、`requestId`、`sessionId`、`projectId`、`requestSource`、`pageContext`：身份、幂等、统计和审计上下文。
-- `cost`：前端传入的点数成本。
-- `deepMode`、`initialInput`、`userText`：AI 生图深度分析链路上下文。
-
-AI 配料表链路：
-
-1. 前端入口保留在工具箱中。
-2. 页面组件是 `frontend/src/agentImg/views/IngredientLabel.vue`。
-3. 类型选择组件是 `frontend/src/agentImg/components/IngredientLabelTypeSelect.vue`。
-4. 前端本地解析和格式逻辑在 `frontend/src/agentImg/logic/formatFactory/ingredientLabel.ts`。
-5. 后端 `/api/generate` 接收 `purpose=agentimg_ingredient_label` 或 `purpose=ingredient_label`。
-6. 后端通过 `buildIngredientLabelPrompt` 生成提示词，再调用当前文本 provider。
-7. 成本归类为 `aiIngredientList`。
-
-图生图入口：`POST /api/img2img`
-
-主要请求字段：
-
-- `userId`
-- `requestId`
-- `prompt`
-- `negativePrompt`
-- `model`
-- `params`
-- `images`
-- `timeoutMs`
-- `userText`
-- `reason`
-- `cost`
-
-后端返回图片 URL 后，会把远程图片持久化到 `/files/<userId>/...` 或 `/files/guest_.../...`，并写入用户图片历史。
-
-## 8. 图片文件访问规则
-
-文件根目录：`${MEMORY_DIR}/files`
-
-访问入口：`GET /files/*`
-
-规则：
-
-- 请求路径会做 decode 和 path resolve，不能越过 `FILES_DIR`。
-- 路径至少包含用户目录和文件名。
-- `guest_` 开头的用户目录按公开缓存处理，响应 `Cache-Control: public, max-age=2592000`。
-- 非游客用户目录需要满足以下任一条件：
-  - Bearer token 对应用户 ID 等于路径中的用户目录。
-  - Cookie `auth_token` 对应用户 ID 等于路径中的用户目录。
-  - 查询参数 token 对应用户 ID 等于路径中的用户目录。
-  - 管理员 Bearer token 或 `x-admin-key` 通过。
-- 非游客文件响应 `Cache-Control: private, max-age=2592000` 并设置 `Vary: Authorization, Cookie`。
-- `/api/proxy/image` 用于读取远程图片，代理会限制协议、跳转、host、文件大小和图片 content-type。
-
-## 9. 运行期数据文件
-
-默认 `MEMORY_DIR`：
-
-- 环境变量 `MEMORY_DIR` 有值时使用该路径。
-- 否则非 Windows 且存在 `/data` 时使用 `/data`。
-- 否则使用 `backend/memory`。
-
-文件说明：
-
-| 文件 | 内容 |
-| --- | --- |
-| `users.json` | 用户账号、邮箱、用户名、session token、密码哈希。 |
-| `credits_wallet.json` | 用户可用点数、冻结点数和钱包流水摘要。 |
-| `credits_holds.json` | 生成中的点数冻结记录。 |
-| `credits_orders.json` | 点数发放、消耗、管理员调整、支付入账记录。 |
-| `pay_orders.json` | 支付订单和 webhook 状态。 |
-| `usage_ledger.json` | 生成、provider、token、点数、状态和耗时记录。 |
-| `analytics_events.json` | 页面访问、按钮点击、工具使用等前端行为事件。 |
-| `chats.json` | 历史调用记录兼容数据，控制台仍可读取。 |
-| `user_<userId>.json` | 单用户 profile、图片历史、审计历史等。 |
-| `files/` | 生成图、输入图持久化文件、测试图片。 |
-
-当前仓库不依赖提交本地 `backend/memory` 数据。目录不存在时，后端启动会自动创建 `MEMORY_DIR` 和 `files/`；具体 JSON 文件会在对应业务首次读写时生成。
-
-## 10. 验证命令
-
-前端：
+完整门禁：
 
 ```bash
-pnpm --dir frontend run type-check
-pnpm --dir frontend run test
-pnpm --dir frontend run build
+pnpm check
 ```
 
-后端：
+它执行只读 lint、类型检查、前后端单测、六组 Playwright 项目（Chromium/Firefox/WebKit 桌面与移动视口）、生产构建和首页 250 KiB gzip 预算。CI 使用 PostgreSQL 16 并先应用全部迁移；任一 P0/财务测试失败时保持 `PAID_FEATURES_ENABLED=false`。
 
-```bash
-find backend -name '*.js' -not -path '*/node_modules/*' -print0 | xargs -0 -n1 node --check
-```
+Provider、内部模型或 prompt 模板变更还必须用 `backend/evaluation/ai-design-quality-set.json` 的同一组 30 个中英文电商案例生成 baseline/candidate manifest，再运行 `pnpm --filter backend eval:generation:blind -- ...` 创建去标识盲评表。完成盲评后以 `pnpm --filter backend eval:generation:score -- --review <file>` 验证：candidate 硬约束通过率不少于 90%，且平均分与偏好胜负均不得劣于旧链路。没有测试 Provider 凭证时只运行契约 mock，不伪造质量结论。
 
-本地 API smoke：
-
-```bash
-curl -sS http://localhost:8080/api/meta
-curl -sS http://localhost:8080/api/health
-curl -sS http://localhost:8080/api/credits/costs
-curl -sS http://localhost:8080/api/auth/google/config
-```
+外部 AI、SMTP、爱发电和对象存储先使用契约 mock/fixture。没有测试环境凭证时不得发起真实支付；没有明确发布授权时不得推送或部署。

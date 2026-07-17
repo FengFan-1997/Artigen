@@ -1,8 +1,14 @@
 <template>
-  <button class="close-btn" type="button" @click="emit('click')">×</button>
+  <button class="close-btn" type="button" :aria-label="label" @click="emit('click')">×</button>
 </template>
 
 <script setup lang="ts">
+withDefaults(defineProps<{
+  label?: string;
+}>(), {
+  label: 'Close / 关闭'
+});
+
 const emit = defineEmits<{
   (e: 'click'): void;
 }>();
@@ -10,8 +16,8 @@ const emit = defineEmits<{
 
 <style scoped>
 .close-btn {
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 6px;
@@ -28,6 +34,11 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: center;
   line-height: 1;
+}
+
+.close-btn:focus-visible {
+  outline: 2px solid #ccff00;
+  outline-offset: 2px;
 }
 
 .close-btn:hover {

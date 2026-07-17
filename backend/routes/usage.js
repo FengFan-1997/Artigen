@@ -1,3 +1,6 @@
+const { opaqueReference } = require('../lib/privacy-metadata');
+const generationAnalytics = require('../services/generation-analytics-service');
+
 const installUsageRoutes = (app, deps) => {
   const rateLimit = deps?.rateLimit;
   const assertAuthUserMatches = deps?.assertAuthUserMatches;
@@ -22,10 +25,21 @@ const installUsageRoutes = (app, deps) => {
     }
   };
 
-  app.post('/api/collection/event', rateLimit('collection_event', { max: 180, windowMs: 60 * 1000 }), (req, res) => {
+  app.post('/api/collection/event', rateLimit('collection_event', { max: 180, windowMs: 60 * 1000 }), async (req, res) => {
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const eventType = sanitizeLedgerId(body.eventType, 'event');
+      if (generationAnalytics.isGenerationEventType(eventType) && generationAnalytics.usesGenerationEventStore()) {
+        const item = await generationAnalytics.insertGenerationEvent({ eventType, body, req });
+        return res.status(202).json({
+          ok: true,
+          item: item ? {
+            id: String(item.id),
+            eventType: item.event_type,
+            occurredAt: item.occurred_at
+          } : null
+        });
+      }
       const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
       const path = String(body.path || '').trim();
       const location = String(body.location || '').trim();
@@ -57,6 +71,40 @@ const installUsageRoutes = (app, deps) => {
     } catch (e) {
       console.error('Error in POST /api/collection/event:', e);
       return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
+
+  app.get('/api/admin/generation/events', rateLimit('admin_generation_events', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      if (!generationAnalytics.usesGenerationEventStore()) {
+        return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
+      }
+      const result = await generationAnalytics.listGenerationEvents({
+        limit: clampInt(req.query.limit, 200, 2000),
+        offset: clampInt(req.query.offset, 0, 2000000),
+        eventType: req.query.eventType
+      });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      console.error('Error in GET /api/admin/generation/events:', error);
+      return res.status(500).json({ error: 'GENERATION_ANALYTICS_UNAVAILABLE' });
+    }
+  });
+
+  app.get('/api/admin/generation/funnel', rateLimit('admin_generation_funnel', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      if (!generationAnalytics.usesGenerationEventStore()) {
+        return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
+      }
+      const funnel = await generationAnalytics.getGenerationFunnel({
+        days: clampInt(req.query.days, 14, 90)
+      });
+      return res.json({ ok: true, funnel });
+    } catch (error) {
+      console.error('Error in GET /api/admin/generation/funnel:', error);
+      return res.status(500).json({ error: 'GENERATION_ANALYTICS_UNAVAILABLE' });
     }
   });
 
@@ -149,8 +197,8 @@ const installUsageRoutes = (app, deps) => {
       const to = parseTime(req.query.to);
       const trigger = String(req.query.trigger || '').trim().toLowerCase();
       const model = String(req.query.model || '').trim().toLowerCase();
-      const sessionId = sanitizeLedgerId(req.query.sessionId);
-      const projectId = sanitizeLedgerId(req.query.projectId);
+      const sessionRef = req.query.sessionId ? opaqueReference(req.query.sessionId, 'session') : '';
+      const projectRef = req.query.projectId ? opaqueReference(req.query.projectId, 'project') : '';
 
       const limit = clampInt(req.query.limit, 20, 2000);
       const offset = clampInt(req.query.offset, 0, 2000000);
@@ -164,8 +212,8 @@ const installUsageRoutes = (app, deps) => {
           if (to && ts > to) return false;
           if (trigger && String(x?.trigger || '').toLowerCase() !== trigger) return false;
           if (model && String(x?.model || '').toLowerCase() !== model) return false;
-          if (sessionId && String(x?.sessionId || '') !== sessionId) return false;
-          if (projectId && String(x?.projectId || '') !== projectId) return false;
+          if (sessionRef && String(x?.sessionRef || '') !== sessionRef) return false;
+          if (projectRef && String(x?.projectRef || '') !== projectRef) return false;
           return true;
         })
         .sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
@@ -187,8 +235,8 @@ const installUsageRoutes = (app, deps) => {
       const to = parseTime(req.query.to);
       const trigger = String(req.query.trigger || '').trim().toLowerCase();
       const model = String(req.query.model || '').trim().toLowerCase();
-      const sessionId = sanitizeLedgerId(req.query.sessionId);
-      const projectId = sanitizeLedgerId(req.query.projectId);
+      const sessionRef = req.query.sessionId ? opaqueReference(req.query.sessionId, 'session') : '';
+      const projectRef = req.query.projectId ? opaqueReference(req.query.projectId, 'project') : '';
 
       const limit = clampInt(req.query.limit, 200, 2000);
       const offset = clampInt(req.query.offset, 0, 2000000);
@@ -202,8 +250,8 @@ const installUsageRoutes = (app, deps) => {
           if (to && ts > to) return false;
           if (trigger && String(x?.trigger || '').toLowerCase() !== trigger) return false;
           if (model && String(x?.model || '').toLowerCase() !== model) return false;
-          if (sessionId && String(x?.sessionId || '') !== sessionId) return false;
-          if (projectId && String(x?.projectId || '') !== projectId) return false;
+          if (sessionRef && String(x?.sessionRef || '') !== sessionRef) return false;
+          if (projectRef && String(x?.projectRef || '') !== projectRef) return false;
           return true;
         })
         .sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
@@ -268,8 +316,8 @@ const installUsageRoutes = (app, deps) => {
       const bucketKey = (x) => {
         if (groupBy === 'trigger') return String(x?.trigger || '') || 'unknown';
         if (groupBy === 'model') return String(x?.model || '') || 'unknown';
-        if (groupBy === 'projectid') return String(x?.projectId || '') || 'unknown';
-        if (groupBy === 'sessionid') return String(x?.sessionId || '') || 'unknown';
+        if (groupBy === 'projectid') return String(x?.projectRef || '') || 'unknown';
+        if (groupBy === 'sessionid') return String(x?.sessionRef || '') || 'unknown';
         const ts = Number(x?.ts || 0) || 0;
         const d = new Date(ts || Date.now());
         const yyyy = d.getFullYear();

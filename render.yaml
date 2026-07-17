@@ -1,0 +1,69 @@
+services:
+  - type: web
+    name: artigen-api
+    runtime: node
+    plan: free
+    # Render serves frontend and API from one origin. Override any dashboard-level
+    # legacy API base during Vite compilation so cookies and CSRF remain same-origin.
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && VITE_API_BASE='' VITE_AGENT_API_BASE='' pnpm build
+    startCommand: pnpm start:production
+    # Platform liveness must stay shallow and free of database/provider/storage I/O.
+    # Use /readyz manually (or from a deployment smoke job) for the deep dependency gate.
+    healthCheckPath: /healthz
+    autoDeployTrigger: checksPass
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_VERSION
+        value: 24.14.1
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: PG_POOL_MAX
+        value: "5"
+      - key: PAID_FEATURES_ENABLED
+        value: "false"
+      - key: AI_DESIGN_TASK_V2_ENABLED
+        value: "false"
+      - key: WORKSHOP_AI_TASK_V2_ENABLED
+        value: "false"
+      - key: AI_DESIGN_TASK_V2_ROLLOUT_PERCENT
+        value: "0"
+      - key: TASK_WORKER_ENABLED
+        value: "0"
+      - key: AUTH_EMAIL_OTP_ENABLED
+        value: "false"
+      - key: MAIL_PROVIDER
+        value: brevo
+      - key: MAIL_FROM_NAME
+        value: Artigen
+      - key: ASSET_STORAGE_DRIVER
+        value: file
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_MIGRATION_URL
+        sync: false
+      - key: CSRF_SECRET
+        generateValue: true
+      - key: OTP_HMAC_SECRET
+        generateValue: true
+      - key: SESSION_TOKEN_HASH_SECRET
+        generateValue: true
+      - key: CONSOLE_ADMIN_TOKEN_SECRET
+        generateValue: true
+      - key: TASK_PAYLOAD_ENCRYPTION_KEY
+        sync: false
+      - key: APP_ORIGIN
+        sync: false
+      - key: VITE_TURNSTILE_SITE_KEY
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAIL_FROM_EMAIL
+        value: sorates1997@163.com
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+      # Exact FQDN only (for example artigen-api.onrender.com), matching
+      # APP_ORIGIN and the Cloudflare Turnstile widget hostname allowlist.
+      - key: TURNSTILE_HOSTNAMES
+        sync: false

@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { USERS_FILE, readJson } = require('../utils/storage');
+const { promisify } = require('util');
 
 const LOGIN_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -27,21 +27,23 @@ const makeUserId = () => {
   return `user_${ts}_${rnd.slice(0, 12)}`;
 };
 
-const hashPassword = (password, salt) => {
+const scryptAsync = promisify(crypto.scrypt);
+
+const hashPassword = async (password, salt) => {
   const pw = String(password || '');
   const s = String(salt || '');
-  const buf = crypto.scryptSync(pw, s, 32);
+  const buf = await scryptAsync(pw, s, 32);
   return buf.toString('hex');
 };
 
-const verifyPassword = (user, password) => {
+const verifyPassword = async (user, password) => {
   const pw = String(password || '');
   const algo = typeof user?.passwordAlgo === 'string' ? user.passwordAlgo : '';
   const salt = typeof user?.passwordSalt === 'string' ? user.passwordSalt : '';
   const expected = typeof user?.passwordHash === 'string' ? user.passwordHash : '';
   if (algo === 'scrypt' && salt && expected) {
     try {
-      const actual = hashPassword(pw, salt);
+      const actual = await hashPassword(pw, salt);
       const a = Buffer.from(actual, 'hex');
       const b = Buffer.from(expected, 'hex');
       if (a.length !== b.length) return { ok: false, upgraded: false };
@@ -52,7 +54,15 @@ const verifyPassword = (user, password) => {
   }
 
   const legacy = typeof user?.password === 'string' ? user.password : '';
-  if (legacy && legacy === pw) return { ok: true, upgraded: true };
+  if (legacy) {
+    try {
+      const a = Buffer.from(legacy, 'utf8');
+      const b = Buffer.from(pw, 'utf8');
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+        return { ok: true, upgraded: true };
+      }
+    } catch {}
+  }
   return { ok: false, upgraded: false };
 };
 
@@ -63,12 +73,32 @@ const sanitizeUserProfile = (u) => {
   delete out.passwordHash;
   delete out.passwordSalt;
   delete out.passwordAlgo;
+  delete out.sessionToken;
+  delete out.sessionTokenIssuedAt;
   return out;
 };
 
+// The JSON user/session file is migration input only. Runtime database auth never
+// reads it, and the no-database development adapter is deliberately process-local.
+let developmentUsers = Object.create(null);
+const databaseAuthEnabled = (env = process.env) =>
+  isProductionRuntime(env) || Boolean(String(env.DATABASE_URL || '').trim());
+const canUseLegacyFileQueryToken = (env = process.env) =>
+  !databaseAuthEnabled(env) &&
+  String(env.ALLOW_LEGACY_FILE_QUERY_TOKEN || '').trim() === '1';
 const readUsersMap = () => {
-  const users = readJson(USERS_FILE, {});
-  return users && typeof users === 'object' ? users : {};
+  if (databaseAuthEnabled(process.env)) return {};
+  return { ...developmentUsers };
+};
+const writeUsersMap = (users) => {
+  if (databaseAuthEnabled(process.env)) return false;
+  developmentUsers = users && typeof users === 'object'
+    ? { ...users }
+    : Object.create(null);
+  return true;
+};
+const resetDevelopmentUsers = () => {
+  developmentUsers = Object.create(null);
 };
 
 const parseBearerToken = (req) => {
@@ -98,6 +128,25 @@ const parseCookieToken = (req) => {
     }
   }
   return '';
+};
+
+const parseSessionNotBefore = (env = process.env) => {
+  const raw = String(env.SESSION_NOT_BEFORE || env.AUTH_SESSION_NOT_BEFORE || '').trim();
+  if (!raw) return 0;
+  if (/^\d+$/.test(raw)) {
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric) || numeric <= 0) return Number.MAX_SAFE_INTEGER;
+    return numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : Number.MAX_SAFE_INTEGER;
+};
+
+const isSessionCurrent = (user, env = process.env) => {
+  const notBefore = parseSessionNotBefore(env);
+  if (!notBefore) return true;
+  const issuedAt = Number(user?.sessionTokenIssuedAt || 0);
+  return Number.isFinite(issuedAt) && issuedAt >= notBefore;
 };
 
 const base64UrlEncode = (input) => {
@@ -151,12 +200,29 @@ const signAdminTokenPart = (data) => {
     .replace(/=+$/g, '');
 };
 
-const resolveConsoleAdminAccount = (isProd) => {
+const isProductionRuntime = (env = process.env) => {
+  return String(env.NODE_ENV || '').trim().toLowerCase() === 'production';
+};
+
+const resolveConsoleAdminAccount = (isProdOverride) => {
+  // A false override must never downgrade a real production runtime.
+  const isProd = isProductionRuntime(process.env) || isProdOverride === true;
   const username = String(process.env.CONSOLE_ADMIN_USERNAME || '').trim();
   const password = String(process.env.CONSOLE_ADMIN_PASSWORD || '');
-  if (username && password) return { ok: true, username, password };
+  if (username && password) {
+    const isKnownDefault = username.toLowerCase() === 'admin' && password === 'admin123456';
+    if (isProd && (isKnownDefault || password.length < 16)) {
+      return { ok: false, username: '', password: '' };
+    }
+    return { ok: true, username, password };
+  }
   if (!isProd) return { ok: true, username: 'admin', password: 'admin123456' };
   return { ok: false, username: '', password: '' };
+};
+
+const canUseLegacyAdminKey = (env = process.env) => {
+  if (isProductionRuntime(env)) return false;
+  return String(env.ALLOW_LEGACY_ADMIN_KEY || '').trim() === '1';
 };
 
 const resolveConsoleAdminTokenTtlMs = () => {
@@ -167,11 +233,19 @@ const resolveConsoleAdminTokenTtlMs = () => {
   return hours * 60 * 60 * 1000;
 };
 
-const createAdminToken = (username) => {
+const createAdminToken = (username, principal = {}) => {
   const ttlMs = resolveConsoleAdminTokenTtlMs();
   const exp = Date.now() + ttlMs;
   const header = base64UrlEncode({ alg: 'HS256', typ: 'JWT' });
-  const payload = base64UrlEncode({ sub: 'admin', u: String(username || '').trim(), exp });
+  const userId = String(principal.userId || '').trim();
+  const role = String(principal.role || '').trim();
+  const payload = base64UrlEncode({
+    sub: 'admin',
+    u: String(username || '').trim(),
+    ...(userId ? { uid: userId } : {}),
+    ...(role ? { r: role } : {}),
+    exp
+  });
   const data = `${header}.${payload}`;
   const sig = signAdminTokenPart(data);
   return { token: `${data}.${sig}`, expiresAt: exp };
@@ -203,12 +277,14 @@ const verifyAdminToken = (token) => {
   }
   const sub = typeof payload?.sub === 'string' ? payload.sub.trim() : '';
   const username = typeof payload?.u === 'string' ? payload.u.trim() : '';
+  const userId = typeof payload?.uid === 'string' ? payload.uid.trim() : '';
+  const role = typeof payload?.r === 'string' ? payload.r.trim() : '';
   const exp = Number(payload?.exp || 0) || 0;
   if (sub !== 'admin' || !username || !Number.isFinite(exp) || exp <= 0) {
     return { ok: false, error: 'INVALID_TOKEN' };
   }
   if (exp <= Date.now()) return { ok: false, error: 'EXPIRED' };
-  return { ok: true, username, expiresAt: exp };
+  return { ok: true, username, userId, role, expiresAt: exp };
 };
 
 const assertAdmin = (req, res) => {
@@ -221,6 +297,11 @@ const assertAdmin = (req, res) => {
       return false;
     }
     res.status(403).json({ error: 'ADMIN_AUTH_FORBIDDEN' });
+    return false;
+  }
+
+  if (!canUseLegacyAdminKey(process.env)) {
+    res.status(401).json({ error: 'ADMIN_AUTH_REQUIRED' });
     return false;
   }
 
@@ -253,12 +334,27 @@ const assertAdmin = (req, res) => {
 };
 
 const resolveAuthUser = (req) => {
+  if (req?.authResolution && typeof req.authResolution === 'object') {
+    return req.authResolution;
+  }
+  if (databaseAuthEnabled(process.env)) {
+    if (parseBearerToken(req)) {
+      return { ok: false, status: 401, error: 'BEARER_AUTH_DISABLED' };
+    }
+    return {
+      ok: false,
+      status: 503,
+      error: parseCookieToken(req) ? 'SESSION_MIDDLEWARE_REQUIRED' : 'LOGIN_REQUIRED'
+    };
+  }
   const token = parseBearerToken(req) || parseCookieToken(req);
   if (!token) return { ok: false, status: 401, error: 'LOGIN_REQUIRED' };
   const users = readUsersMap();
   const hit = Object.values(users).find((u) => String(u?.sessionToken || '') === token);
   const userId = typeof hit?.id === 'string' ? hit.id.trim() : '';
-  if (!userId) return { ok: false, status: 401, error: 'LOGIN_REQUIRED' };
+  if (!userId || !isSessionCurrent(hit, process.env)) {
+    return { ok: false, status: 401, error: 'SESSION_INVALID' };
+  }
   return { ok: true, userId, token };
 };
 
@@ -273,12 +369,21 @@ module.exports = {
   verifyPassword,
   sanitizeUserProfile,
   readUsersMap,
+  writeUsersMap,
+  resetDevelopmentUsers,
+  databaseAuthEnabled,
+  canUseLegacyFileQueryToken,
   parseBearerToken,
+  parseCookieToken,
+  parseSessionNotBefore,
+  isSessionCurrent,
   base64UrlEncode,
   base64UrlDecodeToString,
   getAdminTokenSecret,
   signAdminTokenPart,
+  isProductionRuntime,
   resolveConsoleAdminAccount,
+  canUseLegacyAdminKey,
   resolveConsoleAdminTokenTtlMs,
   createAdminToken,
   verifyAdminToken,

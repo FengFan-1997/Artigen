@@ -1,8 +1,199 @@
-import { buildApiUrl } from '@/utils/api';
-import { getPageContext } from '@/utils/pageContext';
-import { ensureGuestUserId, getOrCreateProjectId, getOrCreateSessionId } from '@/login/session';
+import {
+  ensureGuestUserId,
+  getAuthSessionSnapshot,
+  getOrCreateProjectId,
+  getOrCreateSessionId
+} from '../login/session';
+import { authFetch } from '../login/authFetch';
+import { buildApiUrl } from './api';
+import { getPageContext } from './pageContext';
 
 let autoClickInstalled = false;
+
+const ANALYTICS_URL_BASE = 'https://analytics.invalid';
+const RAW_CONTENT_FIELDS = new Set([
+  'content',
+  'dataurl',
+  'error',
+  'eventlabel',
+  'file',
+  'filename',
+  'filepath',
+  'image',
+  'imageurl',
+  'img',
+  'imgurl',
+  'input',
+  'message',
+  'output',
+  'placeholder',
+  'prompt',
+  'rawtext',
+  'reason',
+  'selector',
+  'src',
+  'targettext',
+  'text',
+  'usertext'
+]);
+
+const decodeKey = (raw: string) => {
+  let value = String(raw || '');
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const decoded = decodeURIComponent(value);
+      if (decoded === value) break;
+      value = decoded;
+    } catch {
+      break;
+    }
+  }
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+};
+
+export const isSensitiveAnalyticsQueryKey = (raw: string) => {
+  const key = decodeKey(raw);
+  if (!key) return false;
+  return (
+    key === 'auth' ||
+    key === 'authorization' ||
+    key === 'code' ||
+    key === 'otp' ||
+    key === 'sig' ||
+    key.startsWith('img') ||
+    key.startsWith('image') ||
+    key.includes('token') ||
+    key.includes('signature') ||
+    key.endsWith('sig') ||
+    key.endsWith('uri') ||
+    key.endsWith('url') ||
+    key.endsWith('password') ||
+    key.endsWith('secret') ||
+    key.endsWith('credential') ||
+    key.endsWith('apikey')
+  );
+};
+
+const looksLikeUrlValue = (raw: string) => {
+  const value = String(raw || '').trim();
+  return (
+    /^(?:https?:)?\/\//i.test(value) ||
+    /^\//.test(value) ||
+    /^(?:data|blob|javascript):/i.test(value)
+  );
+};
+
+export const sanitizeAnalyticsUrl = (raw: unknown, base = ANALYTICS_URL_BASE) => {
+  const value = String(raw || '').trim();
+  if (!value || /^(?:data|blob|javascript):/i.test(value)) return '';
+  try {
+    const url = new URL(value, base);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+    const params = new URLSearchParams();
+    for (const [key, paramValue] of url.searchParams.entries()) {
+      if (isSensitiveAnalyticsQueryKey(key) || looksLikeUrlValue(paramValue)) continue;
+      params.append(key, String(paramValue || '').slice(0, 160));
+    }
+    const path = url.pathname.startsWith('/') ? url.pathname : `/${url.pathname}`;
+    const search = params.toString();
+    return `${path || '/'}${search ? `?${search}` : ''}`;
+  } catch {
+    return '';
+  }
+};
+
+const isCredentialField = (key: string) => {
+  const normalized = decodeKey(key);
+  return (
+    normalized === 'authorization' ||
+    normalized.includes('token') ||
+    normalized.includes('signature') ||
+    normalized.endsWith('password') ||
+    normalized.endsWith('secret') ||
+    normalized.endsWith('credential') ||
+    normalized.endsWith('apikey')
+  );
+};
+
+const shouldDropAnalyticsField = (key: string) => {
+  const normalized = decodeKey(key);
+  return (
+    isCredentialField(key) ||
+    RAW_CONTENT_FIELDS.has(normalized) ||
+    normalized.startsWith('image') ||
+    normalized.startsWith('img')
+  );
+};
+
+const isUrlField = (key: string) => {
+  const normalized = decodeKey(key);
+  return (
+    normalized === 'href' ||
+    normalized === 'location' ||
+    normalized === 'path' ||
+    normalized === 'referrer' ||
+    normalized === 'url' ||
+    normalized.endsWith('href') ||
+    normalized.endsWith('location') ||
+    normalized.endsWith('path') ||
+    normalized.endsWith('referrer') ||
+    normalized.endsWith('url')
+  );
+};
+
+const scrubSensitiveQueryFragments = (raw: string) =>
+  String(raw || '')
+    .replace(/([?&])([^=&#\s]+)=([^&#\s]*)/g, (match, _prefix, key) =>
+      isSensitiveAnalyticsQueryKey(key) ? '' : match
+    )
+    .replace(/\?&/g, '?')
+    .replace(/&&+/g, '&')
+    .replace(/[?&]+$/g, '');
+
+const sanitizeAnalyticsString = (raw: string, key: string) => {
+  const value = String(raw || '');
+  if (isUrlField(key) || looksLikeUrlValue(value)) return sanitizeAnalyticsUrl(value);
+  return scrubSensitiveQueryFragments(value).replace(/https?:\/\/[^\s"'<>]+/gi, (url) =>
+    sanitizeAnalyticsUrl(url)
+  );
+};
+
+export const sanitizeAnalyticsPayload = (input: unknown): Record<string, any> => {
+  const seen = new WeakSet<object>();
+  const walk = (value: any, key = ''): any => {
+    if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
+    if (typeof value === 'bigint') return value.toString();
+    if (typeof value === 'string') return sanitizeAnalyticsString(value, key);
+    if (typeof value === 'function') return undefined;
+    if (value instanceof URL) return sanitizeAnalyticsUrl(value.toString());
+    if (typeof File !== 'undefined' && value instanceof File) {
+      return { size: value.size, type: value.type, lastModified: value.lastModified };
+    }
+    if (typeof Blob !== 'undefined' && value instanceof Blob) {
+      return { size: value.size, type: value.type };
+    }
+    if (value instanceof Error) return { name: value.name };
+    if (typeof Event !== 'undefined' && value instanceof Event) return { type: value.type };
+    if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) {
+      return { tag: value.tagName, id: value.id, className: value.className };
+    }
+    if (!value || typeof value !== 'object') return undefined;
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    if (Array.isArray(value)) {
+      return value.map((entry) => walk(entry)).filter((entry) => entry !== undefined);
+    }
+    const output: Record<string, any> = {};
+    for (const [entryKey, entryValue] of Object.entries(value)) {
+      if (shouldDropAnalyticsField(entryKey)) continue;
+      const next = walk(entryValue, entryKey);
+      if (next !== undefined) output[entryKey] = next;
+    }
+    return output;
+  };
+  const result = walk(input);
+  return result && typeof result === 'object' && !Array.isArray(result) ? result : {};
+};
 
 const normalizeText = (raw: any, maxLen = 80) => {
   const s = String(raw || '')
@@ -65,8 +256,8 @@ const installAutoClickTracking = () => {
         if (tag !== 'a') return '';
         const a = el as HTMLAnchorElement;
         const u = safeParseUrl(a.href);
-        if (!u) return normalizeText(a.getAttribute('href') || '', 240);
-        return normalizeText(`${u.pathname || ''}${u.search || ''}${u.hash || ''}`, 240);
+        if (!u) return sanitizeAnalyticsUrl(a.getAttribute('href') || '');
+        return normalizeText(sanitizeAnalyticsUrl(u.toString()), 240);
       })();
 
       const sig = `${tag}|${id}|${cls}|${href}|${text}`;
@@ -101,11 +292,11 @@ const safeJsonStringify = (value: any) => {
       if (typeof v === 'bigint') return v.toString();
       if (typeof v === 'function') return undefined;
       if (v instanceof Error) {
-        return { name: v.name, message: v.message, stack: v.stack };
+        return { name: v.name };
       }
-      if (v instanceof URL) return v.toString();
+      if (v instanceof URL) return sanitizeAnalyticsUrl(v.toString());
       if (typeof File !== 'undefined' && v instanceof File) {
-        return { name: v.name, size: v.size, type: v.type, lastModified: v.lastModified };
+        return { size: v.size, type: v.type, lastModified: v.lastModified };
       }
       if (typeof Blob !== 'undefined' && v instanceof Blob) {
         return { size: v.size, type: v.type };
@@ -136,7 +327,7 @@ export const trackEvent = (
   // Check if second arg is object (Project existing style: eventName, properties)
   if (typeof actionOrProps === 'object') {
     const eventName = categoryOrName;
-    const props = actionOrProps;
+    const props = sanitizeAnalyticsPayload(actionOrProps);
     console.log(`[Analytics] ${eventName}`, props);
     if ((window as any).dataLayer) {
       (window as any).dataLayer.push({
@@ -151,22 +342,20 @@ export const trackEvent = (
   // New style: (Category, Action, Label, Value)
   const category = categoryOrName;
   const action = actionOrProps as string;
-  console.log(`[Analytics] ${category} - ${action}`, label, value);
-  if ((window as any).dataLayer) {
-    (window as any).dataLayer.push({
-      event: 'custom_event',
-      eventCategory: category,
-      eventAction: action,
-      eventLabel: label,
-      eventValue: value
-    });
-  }
-  void trackBackendEvent('custom_event', {
+  const legacyProps = sanitizeAnalyticsPayload({
     eventCategory: category,
     eventAction: action,
     eventLabel: label,
     eventValue: value
   });
+  console.log(`[Analytics] ${category} - ${action}`, legacyProps);
+  if ((window as any).dataLayer) {
+    (window as any).dataLayer.push({
+      event: 'custom_event',
+      ...legacyProps
+    });
+  }
+  void trackBackendEvent('custom_event', legacyProps);
 };
 
 export const trackPageView = (
@@ -176,10 +365,10 @@ export const trackPageView = (
   let props = {};
 
   if (typeof pathOrParams === 'string') {
-    path = pathOrParams;
+    path = sanitizeAnalyticsUrl(pathOrParams);
   } else {
-    path = pathOrParams.path;
-    props = pathOrParams;
+    path = sanitizeAnalyticsUrl(pathOrParams.path);
+    props = sanitizeAnalyticsPayload(pathOrParams);
   }
 
   const now = Date.now();
@@ -212,47 +401,44 @@ export const trackBackendEvent = async (eventType: string, payload: Record<strin
   const requestId = `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const body: Record<string, any> = {
     eventType: String(eventType || '').trim() || 'event',
-    payload: payload && typeof payload === 'object' ? payload : {},
+    payload: sanitizeAnalyticsPayload(payload),
     ts: Date.now(),
     userId,
     requestId,
     sessionId: getOrCreateSessionId(),
     projectId: getOrCreateProjectId(),
-    pageContext: getPageContext(),
+    pageContext: sanitizeAnalyticsPayload({ elements: getPageContext() }).elements || [],
     requestSource: 'site_analytics',
     path: (() => {
       try {
-        const { pathname, search, hash } = window.location;
-        return `${pathname || ''}${search || ''}${hash || ''}`;
-      } catch {
-        return '';
-      }
-    })(),
-    location: (() => {
-      try {
-        return window.location.href;
+        const { pathname, search } = window.location;
+        return sanitizeAnalyticsUrl(`${pathname || ''}${search || ''}`);
       } catch {
         return '';
       }
     })(),
     referrer: (() => {
       try {
-        return document.referrer || '';
+        return sanitizeAnalyticsUrl(document.referrer || '');
       } catch {
         return '';
       }
     })()
   };
 
-  let text = safeJsonStringify(body);
+  const sanitizedBody = sanitizeAnalyticsPayload(body);
+  let text = safeJsonStringify(sanitizedBody);
   if (!text) {
-    body.payload = {};
-    text = safeJsonStringify(body);
+    sanitizedBody.payload = {};
+    text = safeJsonStringify(sanitizedBody);
   }
+
+  const authSession = getAuthSessionSnapshot();
+  const mayHaveCookieSession = authSession.authenticated || !authSession.verified;
 
   try {
     const beacon = (navigator as any)?.sendBeacon;
-    if (typeof beacon === 'function' && text && text.length < 58000) {
+    if (!mayHaveCookieSession && typeof beacon === 'function' && text && text.length < 58000) {
       const blob = new Blob([text], { type: 'application/json' });
       const ok = beacon.call(navigator, url, blob);
       if (ok) return { success: true, via: 'beacon' as const };
@@ -260,7 +446,8 @@ export const trackBackendEvent = async (eventType: string, payload: Record<strin
   } catch {}
 
   try {
-    const resp = await fetch(url, {
+    const request = mayHaveCookieSession ? authFetch : fetch;
+    const resp = await request(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: text,

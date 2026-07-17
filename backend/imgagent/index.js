@@ -1,6 +1,24 @@
 const credits = require('./credits');
 const profiles = require('./profiles');
 const { readJson, writeJson, PAY_ORDERS_FILE } = require('../utils/storage');
+const {
+  isPaidAiUserId,
+  normalizeOperationKey,
+  resolveCreditsCosts,
+  resolveServerCreditCost
+} = require('../lib/credit-pricing');
+const { processAfdianWebhook } = require('../lib/afdian-webhook');
+const { buildOldPhotoPrompt, isAbortError } = require('../services/old-photo-service');
+const { canUseLegacyJsonBilling } = require('../lib/legacy-finance-policy');
+const {
+  categoryMetadata,
+  classifyModel,
+  contentMetadata,
+  networkMetadata,
+  opaqueReference,
+  sanitizeImageHistoryEntry,
+  sanitizeUserHistoryMemory
+} = require('../lib/privacy-metadata');
 
 const installImgagentRoutes = (app, opts) => {
   const assertAuthUserMatches = opts?.assertAuthUserMatches;
@@ -10,12 +28,15 @@ const installImgagentRoutes = (app, opts) => {
   const appendUserImageHistory = opts?.appendUserImageHistory;
   const appendUserAuditHistory = opts?.appendUserAuditHistory;
   const readUserMemory = opts?.readUserMemory;
+  const writeUserMemory = opts?.writeUserMemory;
   const ensureUserMemoryShape = opts?.ensureUserMemoryShape;
   const imgCredits = opts?.imgCredits;
   const getClientIp = opts?.getClientIp;
   const sanitizeLedgerId = opts?.sanitizeLedgerId;
   const upsertUsageLedgerItem = opts?.upsertUsageLedgerItem;
   const rateLimit = opts?.rateLimit;
+  const isProd = !!opts?.isProd;
+  const legacyJsonBillingEnabled = canUseLegacyJsonBilling({ isProd });
 
   const isGuestUserId = (userId) => {
     const uid = String(userId || '').replace(/^[\s\uFEFF\u200B\u200C\u200D]+|[\s\uFEFF\u200B\u200C\u200D]+$/g, '');
@@ -25,78 +46,22 @@ const installImgagentRoutes = (app, opts) => {
     if (typeof sanitizeLedgerId === 'function') return sanitizeLedgerId(value);
     return String(value || '').trim();
   };
+  const requestPrivacyMetadata = (body, req) => ({
+    ...(body?.sessionId ? { sessionRef: opaqueReference(body.sessionId, 'session') } : {}),
+    ...(body?.projectId ? { projectRef: opaqueReference(body.projectId, 'project') } : {}),
+    ...categoryMetadata(body?.requestSource, 'requestSource'),
+    ...networkMetadata({
+      ip: typeof getClientIp === 'function' ? getClientIp(req) : '',
+      ua: typeof req?.headers?.['user-agent'] === 'string' ? req.headers['user-agent'] : ''
+    })
+  });
 
-  const parseCost = (v, fallback) => {
-    const n = Number.parseInt(String(v ?? ''), 10);
-    return Number.isFinite(n) && n >= 0 ? n : fallback;
-  };
   const clampInt = (v, min, max) => {
     const n = Number.parseInt(String(v ?? ''), 10);
     if (!Number.isFinite(n)) return min;
     return Math.min(Math.max(n, min), max);
   };
-  const normalizeReasonKey = (raw) => {
-    const key = String(raw || '').trim().toLowerCase();
-    if (!key) return '';
-    return key.replace(/[\s/-]+/g, '_');
-  };
-  const stringifyPageContext = (input) => {
-    if (typeof input === 'string') return input.trim();
-    if (!input) return '';
-    try {
-      return JSON.stringify(input);
-    } catch {
-      return '';
-    }
-  };
-  const resolveCreditsCosts = () => {
-    const generate = parseCost(process.env.CREDITS_COST_GENERATE, 10);
-    const img2img = parseCost(
-      process.env.CREDITS_COST_IMG2IMG || process.env.CREDITS_COST_IMAGE || process.env.CREDITS_COST_GENERATE,
-      10
-    );
-    const aidesignQuick = parseCost(process.env.CREDITS_COST_AIDESIGN_QUICK, 10);
-    const aidesignSemantic = parseCost(process.env.CREDITS_COST_AIDESIGN_SEMANTIC, 5);
-    const aidesignFinal = parseCost(process.env.CREDITS_COST_AIDESIGN_FINAL, 10);
-    const aiLab = parseCost(process.env.CREDITS_COST_AI_LAB, 5);
-    const aiImageWorkshop = parseCost(process.env.CREDITS_COST_AI_IMAGE_WORKSHOP, 5);
-    const aiBackground = parseCost(process.env.CREDITS_COST_AI_BACKGROUND, 5);
-    const aiIdPhoto = parseCost(process.env.CREDITS_COST_AI_ID_PHOTO, 5);
-    const aiOldPhoto = parseCost(process.env.CREDITS_COST_AI_OLD_PHOTO, 5);
-    const aiIngredientList = parseCost(process.env.CREDITS_COST_AI_INGREDIENT_LIST, 10);
-    return {
-      generate,
-      img2img,
-      aidesignQuick,
-      aidesignSemantic,
-      aidesignFinal,
-      aiLab,
-      aiImageWorkshop,
-      aiBackground,
-      aiIdPhoto,
-      aiOldPhoto,
-      aiIngredientList
-    };
-  };
-  const resolveCostByReason = (reason, costs) => {
-    const key = normalizeReasonKey(reason);
-    if (!key) return 0;
-    if (key === 'aidesign_quick' || key === 'aidesign_generate' || key === 'aidesign') return costs.aidesignQuick;
-    if (key === 'aidesign_semantic' || key === 'aidesign_directions' || key === 'aidesign_deep_analysis') {
-      return costs.aidesignSemantic;
-    }
-    if (key === 'aidesign_final' || key === 'aidesign_deep_generate') return costs.aidesignFinal;
-    if (key === 'ai_lab') return costs.aiLab;
-    if (key === 'ai_image_workshop') return costs.aiImageWorkshop;
-    if (key === 'ai_design') return costs.aidesignQuick;
-    if (key === 'ai_background') return costs.aiBackground;
-    if (key === 'ai_id_photo' || key === 'id_photo') return costs.aiIdPhoto;
-    if (key === 'ai_old_photo' || key === 'old_photo') return costs.aiOldPhoto;
-    if (key === 'ai_ingredient_list') return costs.aiIngredientList;
-    if (key === 'generate') return costs.generate;
-    if (key === 'img2img') return costs.img2img;
-    return 0;
-  };
+  const normalizeReasonKey = normalizeOperationKey;
   const resolveReasonText = (reason) => {
     const key = normalizeReasonKey(reason);
     if (!key) return '';
@@ -123,11 +88,6 @@ const installImgagentRoutes = (app, opts) => {
     };
     return map[key] || '';
   };
-  const resolveImg2ImgCost = () => {
-    const costs = resolveCreditsCosts();
-    return costs.img2img;
-  };
-
   const IMG2IMG_USER_MAX_CONCURRENCY = (() => {
     const v = Number.parseInt(String(process.env.IMG2IMG_USER_MAX_CONCURRENCY || ''), 10);
     return Number.isFinite(v) && v >= 0 ? Math.min(v, 20) : 2;
@@ -285,31 +245,6 @@ const installImgagentRoutes = (app, opts) => {
       ...(remarkParts.length ? { remark: remarkParts.join(' ') } : {})
     });
   };
-  const firstNonEmptyString = (...vals) => {
-    for (const v of vals) {
-      const s = typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v).trim() : '';
-      if (s) return s;
-    }
-    return '';
-  };
-  const extractUserIdFromText = (text) => {
-    const s = String(text || '');
-    const keyed = s.match(/\b(?:uid|userId|user_id|appUserId|app_user_id)\s*[:=]\s*([a-zA-Z0-9_-]{3,120})\b/);
-    if (keyed) return String(keyed[1] || '').trim();
-    const m = s.match(/\b(?:user|email)_[a-zA-Z0-9_-]{3,}\b/);
-    return m ? String(m[0] || '').trim() : '';
-  };
-  const extractPackageIdFromText = (text) => {
-    const s = String(text || '');
-    const m = s.match(/\b(starter|standard|pro|ultimate)\b/i);
-    return m ? String(m[1] || '').trim().toLowerCase() : '';
-  };
-  const extractPayOrderIdFromText = (text) => {
-    const s = String(text || '');
-    const m = s.match(/\bpay_[a-z0-9_]{8,}\b/i);
-    return m ? String(m[0] || '').trim() : '';
-  };
-
   const readPayOrdersMap = () => {
     const raw = readJson(PAY_ORDERS_FILE, {});
     return raw && typeof raw === 'object' ? raw : {};
@@ -354,6 +289,7 @@ const installImgagentRoutes = (app, opts) => {
       packageId: String(input?.packageId || '').trim(),
       amountCny: Number(input?.amountCny ?? 0) || 0,
       credits: Number(input?.credits ?? 0) || 0,
+      status: 'pending',
       createdAt: Number(input?.createdAt ?? 0) || Date.now(),
       updatedAt: Date.now()
     };
@@ -365,6 +301,26 @@ const installImgagentRoutes = (app, opts) => {
     const m = readPayOrdersMap();
     const rec = m[id];
     return rec && typeof rec === 'object' ? rec : null;
+  };
+  const completePayOrder = (input) => {
+    const localOrderId = String(input?.localOrderId || '').trim();
+    const providerOrderId = String(input?.providerOrderId || '').trim();
+    if (!localOrderId || !providerOrderId) return { ok: false, error: 'INVALID_ORDER_ID' };
+    const orders = readPayOrdersMap();
+    const current = orders[localOrderId];
+    if (!current || typeof current !== 'object') return { ok: false, error: 'UNKNOWN_LOCAL_ORDER' };
+    if (String(current.status || '').trim().toLowerCase() !== 'pending') {
+      return { ok: false, error: 'ORDER_NOT_PENDING' };
+    }
+    orders[localOrderId] = {
+      ...current,
+      status: 'paid',
+      afdianOrderId: providerOrderId,
+      paidAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    writePayOrdersMap(orders);
+    return { ok: true, order: orders[localOrderId] };
   };
 
   const parsePlanPackageMap = () => {
@@ -395,59 +351,6 @@ const installImgagentRoutes = (app, opts) => {
     const merged = { ...fromPlanEnv, ...fromPkgEnv };
     return Object.keys(merged).length ? merged : null;
   };
-  const getCreditsByAmountCny = (amount) => {
-    const n = Number.parseFloat(String(amount ?? ''));
-    if (!Number.isFinite(n) || n <= 0) return 0;
-    const eps = 0.01;
-    for (const pkg of Object.values(payPackages)) {
-      const p = Number(pkg?.amountCny ?? 0) || 0;
-      if (!p) continue;
-      if (Math.abs(p - n) <= eps) return Number(pkg?.credits ?? 0) || 0;
-      if (p.toFixed(2) === n.toFixed(2)) return Number(pkg?.credits ?? 0) || 0;
-    }
-    return 0;
-  };
-  const toCnyNumber = (amount) => {
-    const n = Number.parseFloat(String(amount ?? ''));
-    return Number.isFinite(n) ? n : NaN;
-  };
-  const equalsCny = (a, b) => {
-    const x = toCnyNumber(a);
-    const y = toCnyNumber(b);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-    return x.toFixed(2) === y.toFixed(2);
-  };
-
-  const verifyAfdianWebhookSign = (order, sign) => {
-    const crypto = require('crypto');
-    const publicKey = String(process.env.AFDIAN_WEBHOOK_PUBLIC_KEY || '').trim() || `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwwdaCg1Bt+UKZKs0R54y
-lYnuANma49IpgoOwNmk3a0rhg/PQuhUJ0EOZSowIC44l0K3+fqGns3Ygi4AfmEfS
-4EKbdk1ahSxu7Zkp2rHMt+R9GarQFQkwSS/5x1dYiHNVMiR8oIXDgjmvxuNes2Cr
-8fw9dEF0xNBKdkKgG2qAawcN1nZrdyaKWtPVT9m2Hl0ddOO9thZmVLFOb9NVzgYf
-jEgI+KWX6aY19Ka/ghv/L4t1IXmz9pctablN5S0CRWpJW3Cn0k6zSXgjVdKm4uN7
-jRlgSRaf/Ind46vMCm3N2sgwxu/g3bnooW+db0iLo13zzuvyn727Q3UDQ0MmZcEW
-MQIDAQAB
------END PUBLIC KEY-----`;
-
-    const outTradeNo = firstNonEmptyString(order?.out_trade_no, order?.trade_no, order?.order_id);
-    const userId = firstNonEmptyString(order?.user_id, order?.userId);
-    const planId = firstNonEmptyString(order?.plan_id, order?.planId);
-    const totalAmount = firstNonEmptyString(order?.total_amount, order?.totalAmount);
-    const signStr = `${outTradeNo}${userId}${planId}${totalAmount}`;
-    if (!signStr) return { ok: false, error: 'INVALID_SIGN_STR' };
-
-    try {
-      const verifier = crypto.createVerify('RSA-SHA256');
-      verifier.update(signStr);
-      verifier.end();
-      const ok = verifier.verify(publicKey, Buffer.from(String(sign || ''), 'base64'));
-      return ok ? { ok: true } : { ok: false, error: 'INVALID_SIGN' };
-    } catch (e) {
-      return { ok: false, error: 'VERIFY_FAILED' };
-    }
-  };
-
   // --- Profile & API Keys ---
   app.get('/api/user/profile', (req, res) => {
     const userId = String(req.query.userId || '').trim();
@@ -507,6 +410,9 @@ MQIDAQAB
 
   // --- Credits & Wallet ---
   app.get('/api/credits/balance', (req, res) => {
+    if (!legacyJsonBillingEnabled) {
+      return res.status(503).json({ error: 'LEGACY_CREDITS_DISABLED' });
+    }
     try {
       const userId = String(req.query.userId || '').trim();
       if (typeof assertAuthUserMatches === 'function') {
@@ -555,8 +461,15 @@ MQIDAQAB
       }
       const limit = clampInt(req.query.limit, 1, 200);
       const offset = clampInt(req.query.offset, 0, 5000);
-      const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
-      const list = Array.isArray(mem?.image_history) ? mem.image_history : [];
+      const rawMemory = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+      const scrubbed = sanitizeUserHistoryMemory(rawMemory);
+      const mem = ensureUserMemoryShape(userId, scrubbed.memory);
+      if (scrubbed.changed && typeof writeUserMemory === 'function') {
+        writeUserMemory(userId, mem);
+      }
+      const list = Array.isArray(mem?.image_history)
+        ? mem.image_history.map(sanitizeImageHistoryEntry).filter(Boolean)
+        : [];
       const total = list.length;
       const start = Math.max(0, Math.min(total, offset));
       const end = Math.max(start, Math.min(total, start + limit));
@@ -586,8 +499,8 @@ MQIDAQAB
       const userId = String(body.userId || '').trim();
       const requestId = String(body.requestId || res.locals?.requestId || '').trim();
       const startedAt = Date.now();
-      const prompt = String(body.prompt || '').trim();
-      const negativePrompt = typeof body.negativePrompt === 'string' ? body.negativePrompt : '';
+      const requestedPrompt = String(body.prompt || '').trim();
+      const requestedNegativePrompt = typeof body.negativePrompt === 'string' ? body.negativePrompt : '';
       const model = typeof body.model === 'string' ? body.model.trim() : '';
       const params = body.params && typeof body.params === 'object' ? body.params : undefined;
       const imagesRaw = Array.isArray(body.images) ? body.images : [];
@@ -595,14 +508,45 @@ MQIDAQAB
       const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.min(timeoutMsRaw, 180000) : undefined;
       const userText = typeof body.userText === 'string' ? body.userText.trim() : '';
       const reason = String(body.reason || 'img2img').trim() || 'img2img';
-      const costInput = Number.parseInt(String(body.cost ?? ''), 10);
+      const reasonKey = normalizeReasonKey(reason);
+      const isOldPhoto = reasonKey === 'old_photo' || reasonKey === 'ai_old_photo';
+      const oldPhotoPolicy = isOldPhoto
+        ? buildOldPhotoPrompt(
+            body.colorize === true ||
+              /color/i.test(String(body.operation || body.mode || '')) ||
+              /(^|:)colorize(?=:|$)/i.test(userText)
+              ? 'enhance-colorize'
+              : 'enhance'
+          )
+        : null;
+      const prompt = oldPhotoPolicy?.prompt || requestedPrompt;
+      const negativePrompt = oldPhotoPolicy?.negativePrompt || requestedNegativePrompt;
 
-      if (!userId) return res.status(400).json({ error: 'MISSING_USER_ID', requestId });
+      if (!isPaidAiUserId(userId)) return res.status(401).json({ error: 'LOGIN_REQUIRED', requestId });
       if (!prompt) return res.status(400).json({ error: 'EMPTY_PROMPT', requestId });
 
-      if (!isGuestUserId(userId) && typeof assertAuthUserMatches === 'function') {
-        const auth = assertAuthUserMatches(req, res, userId);
-        if (!auth) return;
+      if (typeof assertAuthUserMatches !== 'function') {
+        return res.status(503).json({ error: 'AUTH_NOT_CONFIGURED', requestId });
+      }
+      const auth = assertAuthUserMatches(req, res, userId);
+      if (!auth) return;
+
+      if (!legacyJsonBillingEnabled) {
+        return res.status(410).json({
+          error: isOldPhoto ? 'USE_TOOL_TASK_API' : 'LEGACY_BILLING_DISABLED',
+          requestId
+        });
+      }
+      if (
+        isOldPhoto && (
+          !imgCredits ||
+          typeof imgCredits.freezeCredits !== 'function' ||
+          typeof imgCredits.refundHold !== 'function' ||
+          typeof imgCredits.settleHold !== 'function' ||
+          typeof persistImageRefForUser !== 'function'
+        )
+      ) {
+        return res.status(503).json({ error: 'OLD_PHOTO_PIPELINE_NOT_CONFIGURED', requestId });
       }
 
       if (typeof callSiliconFlowImageGenerate !== 'function') {
@@ -612,13 +556,23 @@ MQIDAQAB
       const userSlot = acquireImg2imgUserSlot(userId);
       if (!userSlot.ok) return res.status(503).json({ error: 'SERVER_BUSY', requestId });
 
+      const requestAbort = new AbortController();
+      const abortRequest = () => {
+        if (!requestAbort.signal.aborted) requestAbort.abort();
+      };
+      const abortOnClose = () => {
+        if (!res.writableFinished) abortRequest();
+      };
+      req.once('aborted', abortRequest);
+      res.once('close', abortOnClose);
+
       let hold = null;
       try {
-        const costs = resolveCreditsCosts();
-        const resolvedCost =
-          Number.isFinite(costInput) && costInput > 0
-            ? costInput
-            : resolveCostByReason(reason, costs) || resolveImg2ImgCost();
+        // Pricing is server-owned. `body.cost` is intentionally ignored.
+        const resolvedCost = resolveServerCreditCost({
+          endpoint: 'img2img',
+          operation: reason
+        });
         let ledgerRequestId = safeLedgerId(requestId);
 
         hold = (() => {
@@ -651,6 +605,7 @@ MQIDAQAB
             params,
             images: imagesRaw,
             timeoutMs,
+            signal: requestAbort.signal,
             ...(model ? { model } : {})
           });
         } catch (e) {
@@ -659,13 +614,16 @@ MQIDAQAB
               imgCredits.refundHold({ userId, holdId: hold.holdId });
             } catch { }
           }
-          const code =
-            typeof e?.code === 'string' && e.code.trim()
+          const code = isAbortError(e, requestAbort.signal)
+            ? 'TASK_CANCELLED'
+            : typeof e?.code === 'string' && e.code.trim()
               ? e.code.trim()
               : typeof e?.message === 'string' && e.message.trim()
                 ? e.message.trim()
                 : 'IMG2IMG_FAILED';
-          const status = typeof e?.status === 'number' && e.status >= 400 ? e.status : 500;
+          const status = code === 'TASK_CANCELLED'
+            ? 499
+            : typeof e?.status === 'number' && e.status >= 400 ? e.status : 500;
           if (ledgerRequestId && typeof upsertUsageLedgerItem === 'function') {
             try {
               const provider = 'siliconflow';
@@ -673,58 +631,49 @@ MQIDAQAB
                 typeof e?.modelTried === 'string' && e.modelTried.trim()
                   ? e.modelTried.trim()
                   : model;
-              const plan = userText ? { userText } : undefined;
               upsertUsageLedgerItem({
                 requestId: ledgerRequestId,
                 ts: Date.now(),
                 userId,
-                sessionId: safeLedgerId(body.sessionId),
-                projectId: safeLedgerId(body.projectId),
+                ...(body.sessionId ? { sessionRef: opaqueReference(body.sessionId, 'session') } : {}),
+                ...(body.projectId ? { projectRef: opaqueReference(body.projectId, 'project') } : {}),
                 trigger: normalizeReasonKey(reason) || 'img2img',
                 provider,
-                ...(modelUsed ? { model: modelUsed } : {}),
-                usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+                ...(modelUsed ? { model: classifyModel(modelUsed) } : {}),
                 creditsDelta: 0,
                 creditsPlanned: resolvedCost,
-                ...(plan ? { plan } : {}),
+                ...contentMetadata(userText, 'userText'),
                 status: 'error',
                 errorCode: code,
                 durationMs: Math.max(0, Date.now() - startedAt),
-                ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
-                ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+                ...requestPrivacyMetadata(body, req)
               });
             } catch { }
           }
           if (typeof appendUserAuditHistory === 'function') {
             try {
-              const sessionId = safeLedgerId(body.sessionId);
-              const projectId = safeLedgerId(body.projectId);
-              const requestSource = String(body.requestSource || '').trim().slice(0, 160);
-              const pageContext = stringifyPageContext(body.pageContext).slice(0, 12000);
               const entry = {
                 id: requestId || ledgerRequestId || `img2img_${Date.now().toString(36)}`,
                 ts: Date.now(),
                 kind: 'image',
                 biz: normalizeReasonKey(reason) || 'img2img',
                 provider: 'siliconflow',
-                ...(model ? { model } : {}),
-                usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+                ...(model ? { model: classifyModel(model) } : {}),
                 cost: resolvedCost,
-                ...(userText ? { userText: String(userText).slice(0, 8000) } : {}),
-                ...(sessionId ? { sessionId } : {}),
-                ...(projectId ? { projectId } : {}),
-                ...(requestSource ? { requestSource } : {}),
-                ...(pageContext ? { pageContext } : {}),
+                ...contentMetadata(prompt, 'prompt'),
+                ...contentMetadata(negativePrompt, 'negativePrompt'),
+                ...contentMetadata(userText, 'userText'),
+                ...contentMetadata(body.pageContext, 'pageContext'),
+                ...requestPrivacyMetadata(body, req),
                 ...(Object.prototype.hasOwnProperty.call(body || {}, 'deepMode') ? { deepMode: !!body.deepMode } : {}),
                 status: 'error',
                 error: code,
-                durationMs: Math.max(0, Date.now() - startedAt),
-                ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
-                ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+                durationMs: Math.max(0, Date.now() - startedAt)
               };
               appendUserAuditHistory({ userId, entry });
             } catch { }
           }
+          if (res.destroyed || res.writableEnded) return;
           return res.status(status).json({ error: code, requestId });
         }
 
@@ -769,7 +718,15 @@ MQIDAQAB
           });
         }
 
-        if (!persistedOutputs.length) {
+        const outputFailureCode = !persistedOutputs.length
+          ? 'EMPTY_IMAGE_RESULT'
+          : isOldPhoto && (
+              persistedOutputs.length !== providerImages.length ||
+              persistedOutputs.some((output) => !output.persisted)
+            )
+            ? 'OUTPUT_PERSIST_FAILED'
+            : '';
+        if (outputFailureCode) {
           if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === 'function') {
             try {
               imgCredits.refundHold({ userId, holdId: hold.holdId });
@@ -780,65 +737,81 @@ MQIDAQAB
               const provider = 'siliconflow';
               const modelUsed =
                 typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : model;
-              const plan = userText ? { userText } : undefined;
               upsertUsageLedgerItem({
                 requestId: ledgerRequestId,
                 ts: Date.now(),
                 userId,
-                sessionId: safeLedgerId(body.sessionId),
-                projectId: safeLedgerId(body.projectId),
+                ...(body.sessionId ? { sessionRef: opaqueReference(body.sessionId, 'session') } : {}),
+                ...(body.projectId ? { projectRef: opaqueReference(body.projectId, 'project') } : {}),
                 trigger: normalizeReasonKey(reason) || 'img2img',
                 provider,
-                ...(modelUsed ? { model: modelUsed } : {}),
-                usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+                ...(modelUsed ? { model: classifyModel(modelUsed) } : {}),
                 creditsDelta: 0,
                 creditsPlanned: resolvedCost,
-                ...(plan ? { plan } : {}),
+                ...contentMetadata(userText, 'userText'),
                 status: 'error',
-                errorCode: 'EMPTY_IMAGE_RESULT',
+                errorCode: outputFailureCode,
                 durationMs: Math.max(0, Date.now() - startedAt),
-                ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
-                ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+                ...requestPrivacyMetadata(body, req)
               });
             } catch { }
           }
           if (typeof appendUserAuditHistory === 'function') {
             try {
-              const sessionId = safeLedgerId(body.sessionId);
-              const projectId = safeLedgerId(body.projectId);
-              const requestSource = String(body.requestSource || '').trim().slice(0, 160);
-              const pageContext = stringifyPageContext(body.pageContext).slice(0, 12000);
               const entry = {
                 id: requestId || ledgerRequestId || `img2img_${Date.now().toString(36)}`,
                 ts: Date.now(),
                 kind: 'image',
                 biz: normalizeReasonKey(reason) || 'img2img',
                 provider: 'siliconflow',
-                ...(model ? { model } : {}),
-                usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+                ...(model ? { model: classifyModel(model) } : {}),
                 cost: resolvedCost,
-                ...(userText ? { userText: String(userText).slice(0, 8000) } : {}),
-                ...(sessionId ? { sessionId } : {}),
-                ...(projectId ? { projectId } : {}),
-                ...(requestSource ? { requestSource } : {}),
-                ...(pageContext ? { pageContext } : {}),
+                ...contentMetadata(prompt, 'prompt'),
+                ...contentMetadata(negativePrompt, 'negativePrompt'),
+                ...contentMetadata(userText, 'userText'),
+                ...contentMetadata(body.pageContext, 'pageContext'),
+                ...requestPrivacyMetadata(body, req),
                 ...(Object.prototype.hasOwnProperty.call(body || {}, 'deepMode') ? { deepMode: !!body.deepMode } : {}),
                 status: 'error',
-                error: 'EMPTY_IMAGE_RESULT',
-                durationMs: Math.max(0, Date.now() - startedAt),
-                ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
-                ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+                error: outputFailureCode,
+                durationMs: Math.max(0, Date.now() - startedAt)
               };
               appendUserAuditHistory({ userId, entry });
             } catch { }
           }
-          return res.status(502).json({ error: 'EMPTY_IMAGE_RESULT', requestId });
+          if (res.destroyed || res.writableEnded) return;
+          return res.status(502).json({ error: outputFailureCode, requestId });
+        }
+
+        if (requestAbort.signal.aborted) {
+          if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === 'function') {
+            try {
+              imgCredits.refundHold({ userId, holdId: hold.holdId });
+            } catch { }
+          }
+          if (res.destroyed || res.writableEnded) return;
+          return res.status(499).json({ error: 'TASK_CANCELLED', requestId });
         }
 
         if (hold?.holdId && imgCredits && typeof imgCredits.settleHold === 'function') {
           try {
-            imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: resolvedCost });
-          } catch { }
+            const settled = imgCredits.settleHold({ userId, holdId: hold.holdId, actualCost: resolvedCost });
+            if (isOldPhoto && (!settled || !settled.ok)) {
+              try {
+                imgCredits.refundHold({ userId, holdId: hold.holdId });
+              } catch { }
+              if (res.destroyed || res.writableEnded) return;
+              return res.status(500).json({ error: 'CREDITS_SETTLE_FAILED', requestId });
+            }
+          } catch {
+            if (isOldPhoto) {
+              try {
+                imgCredits.refundHold({ userId, holdId: hold.holdId });
+              } catch { }
+              if (res.destroyed || res.writableEnded) return;
+              return res.status(500).json({ error: 'CREDITS_SETTLE_FAILED', requestId });
+            }
+          }
         }
 
         const persistInputImage = async (img) => {
@@ -915,29 +888,29 @@ MQIDAQAB
             const modelUsed =
               typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : model;
             const seed = typeof data?.seed === 'number' ? data.seed : undefined;
-            const timings =
-              data && typeof data === 'object' && data.timings && typeof data.timings === 'object' ? data.timings : undefined;
-            const plan = userText ? { userText } : undefined;
             upsertUsageLedgerItem({
               requestId: ledgerRequestId,
               ts: Date.now(),
               userId,
-              sessionId: safeLedgerId(body.sessionId),
-              projectId: safeLedgerId(body.projectId),
+              ...(body.sessionId ? { sessionRef: opaqueReference(body.sessionId, 'session') } : {}),
+              ...(body.projectId ? { projectRef: opaqueReference(body.projectId, 'project') } : {}),
               trigger: normalizeReasonKey(reason) || 'img2img',
               provider,
-              ...(modelUsed ? { model: modelUsed } : {}),
-              usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+              ...(modelUsed ? { model: classifyModel(modelUsed) } : {}),
               creditsDelta: resolvedCost,
-              ...(plan ? { plan } : {}),
+              ...contentMetadata(userText, 'userText'),
               status: 'ok',
               durationMs: Math.max(0, Date.now() - startedAt),
-              ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
-              ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : '',
+              ...requestPrivacyMetadata(body, req),
               imageCount: persistedOutputs.length,
-              ...(persistSummary ? { persist: persistSummary } : {}),
-              ...(seed !== undefined ? { seed } : {}),
-              ...(timings ? { timings } : {})
+              ...(persistSummary ? {
+                persist: {
+                  attempted: persistSummary.attempted,
+                  persisted: persistSummary.persisted,
+                  failed: persistSummary.failed
+                }
+              } : {}),
+              ...(seed !== undefined ? { seed } : {})
             });
           } catch { }
         }
@@ -950,39 +923,31 @@ MQIDAQAB
             const provider = 'siliconflow';
             const model = typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : '';
             const seed = typeof data?.seed === 'number' ? data.seed : undefined;
-            const timings =
-              data && typeof data === 'object' && data.timings && typeof data.timings === 'object' ? data.timings : undefined;
             const entry = {
               id,
               ts: Date.now(),
               type: 'img2img',
               provider,
-              ...(model ? { model } : {}),
+              ...(model ? { model: classifyModel(model) } : {}),
               cost: resolvedCost,
-              ...(userText ? { userText } : {}),
-              prompt,
-              ...(negativePrompt ? { negativePrompt } : {}),
-              ...(params ? { params } : {}),
-              images: persistedOutputs.map((it) => ({
-                kind: 'url',
-                url: it.url,
-                persisted: !!it.persisted,
-                ...(it.persistError ? { persistError: it.persistError } : {})
-              })),
+              ...contentMetadata(prompt, 'prompt'),
+              ...contentMetadata(negativePrompt, 'negativePrompt'),
+              ...contentMetadata(userText, 'userText'),
+              assets: persistedOutputs.map((it) => ({ assetId: opaqueReference(it.url, 'asset') })),
               ...(persistedInputs.length
                 ? {
-                  inputImages: persistedInputs.map((it) => ({
-                    kind: 'url',
-                    url: it.url,
-                    persisted: !!it.persisted,
-                    ...(it.persistError ? { persistError: it.persistError } : {})
-                  }))
+                  inputAssets: persistedInputs.map((it) => ({ assetId: opaqueReference(it.url, 'asset') }))
                 }
                 : {}),
               ...(seed !== undefined ? { seed } : {}),
-              ...(timings ? { timings } : {}),
-              ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
-              ...(persistSummary ? { persist: persistSummary } : {})
+              ...requestPrivacyMetadata(body, req),
+              ...(persistSummary ? {
+                persist: {
+                  attempted: persistSummary.attempted,
+                  persisted: persistSummary.persisted,
+                  failed: persistSummary.failed
+                }
+              } : {})
             };
             appendUserImageHistory({ userId, entry });
           } catch { }
@@ -991,39 +956,29 @@ MQIDAQAB
           try {
             const modelUsed =
               typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : model;
-            const sessionId = safeLedgerId(body.sessionId);
-            const projectId = safeLedgerId(body.projectId);
-            const requestSource = String(body.requestSource || '').trim().slice(0, 160);
-            const pageContext = stringifyPageContext(body.pageContext).slice(0, 12000);
             const entry = {
               id: requestId || ledgerRequestId || `img2img_${Date.now().toString(36)}`,
               ts: Date.now(),
               kind: 'image',
               biz: normalizeReasonKey(reason) || 'img2img',
               provider: 'siliconflow',
-              ...(modelUsed ? { model: modelUsed } : {}),
-              usedUrl: 'https://api.siliconflow.cn/v1/images/generations',
+              ...(modelUsed ? { model: classifyModel(modelUsed) } : {}),
               cost: resolvedCost,
-              ...(userText ? { userText: String(userText).slice(0, 8000) } : {}),
-              ...(sessionId ? { sessionId } : {}),
-              ...(projectId ? { projectId } : {}),
-              ...(requestSource ? { requestSource } : {}),
-              ...(pageContext ? { pageContext } : {}),
+              ...contentMetadata(prompt, 'prompt'),
+              ...contentMetadata(negativePrompt, 'negativePrompt'),
+              ...contentMetadata(userText, 'userText'),
+              ...contentMetadata(body.pageContext, 'pageContext'),
+              ...requestPrivacyMetadata(body, req),
               ...(Object.prototype.hasOwnProperty.call(body || {}, 'deepMode') ? { deepMode: !!body.deepMode } : {}),
               status: 'ok',
               durationMs: Math.max(0, Date.now() - startedAt),
-              images: persistedOutputs.map((it) => ({
-                url: it.url,
-                persisted: !!it.persisted,
-                ...(it.persistError ? { persistError: it.persistError } : {})
-              })),
-              ...(typeof getClientIp === 'function' ? { ip: getClientIp(req) } : {}),
-              ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
+              assets: persistedOutputs.map((it) => ({ assetId: opaqueReference(it.url, 'asset') }))
             };
             appendUserAuditHistory({ userId, entry });
           } catch { }
         }
 
+        if (res.destroyed || res.writableEnded) return;
         res.json({
           ok: true,
           requestId,
@@ -1037,6 +992,8 @@ MQIDAQAB
           ...(data && typeof data === 'object' && data.timings && typeof data.timings === 'object' ? { timings: data.timings } : {})
         });
       } finally {
+        req.removeListener('aborted', abortRequest);
+        res.removeListener('close', abortOnClose);
         try {
           userSlot.release();
         } catch { }
@@ -1045,6 +1002,9 @@ MQIDAQAB
   );
 
   app.post('/api/credits/checkin', (req, res) => {
+    if (!legacyJsonBillingEnabled) {
+      return res.status(410).json({ ok: false, error: 'LEGACY_CREDITS_DISABLED' });
+    }
     const userId = String(req.body?.userId || req.query?.userId || '').trim();
     if (typeof assertAuthUserMatches === 'function') {
       const auth = assertAuthUserMatches(req, res, userId);
@@ -1066,6 +1026,9 @@ MQIDAQAB
   });
 
   app.post('/api/pay/create-order', (req, res) => {
+    if (!legacyJsonBillingEnabled) {
+      return res.status(503).json({ error: 'PAID_BILLING_UNAVAILABLE' });
+    }
     const { userId, packageId } = req.body || {};
     const uid = String(userId || '').trim();
     if (typeof assertAuthUserMatches === 'function') {
@@ -1097,121 +1060,21 @@ MQIDAQAB
   });
 
   app.post('/api/pay/afdian/webhook', (req, res) => {
+    if (!legacyJsonBillingEnabled) {
+      return res.status(503).json({ ec: 500, em: 'PAID_BILLING_UNAVAILABLE' });
+    }
     const ok = () => res.json({ ec: 200, em: '' });
     try {
-      const body = req.body || {};
-      const data = body && typeof body === 'object' && body.data && typeof body.data === 'object' ? body.data : null;
-      const order = data && typeof data.order === 'object' ? data.order : null;
-      const sign = firstNonEmptyString(body.sign, body.signature, data?.sign, order?.sign);
-
-      const orderStatus = order ? Number.parseInt(String(order?.status ?? ''), 10) : NaN;
-      if (Number.isFinite(orderStatus) && orderStatus !== 2) {
-        return ok();
-      }
-
-      const outTradeNo = firstNonEmptyString(order?.out_trade_no, order?.trade_no, order?.order_id);
-      const isTestRequest =
-        /^test[_-]/i.test(outTradeNo) ||
-        /^(1|true)$/i.test(String(body.test || body.is_test || body.isTest || '').trim());
-      if (isTestRequest) return ok();
-
-      const afdianOrderId = firstNonEmptyString(
-        body.afdianOrderId,
-        body.afdian_order_id,
-        body.orderId,
-        body.order_id,
-        body.tradeNo,
-        body.trade_no,
-        outTradeNo
-      );
-      const remarkText = firstNonEmptyString(
-        body.remark,
-        body.remarkText,
-        body.remark_text,
-        body.note,
-        body.memo,
-        order?.custom_order_id,
-        order?.remark,
-        order?.remark_text,
-        order?.note,
-        order?.memo
-      );
-      const payOrderId = firstNonEmptyString(
-        body.payOrderId,
-        body.pay_order_id,
-        body.localOrderId,
-        body.local_order_id,
-        order?.custom_order_id,
-        extractPayOrderIdFromText(remarkText)
-      );
-      const fallbackPayOrder = payOrderId ? getPayOrder(payOrderId) : null;
-
-      const requireSign = String(process.env.AFDIAN_WEBHOOK_REQUIRE_SIGN || '').trim() === '1';
-      if (order) {
-        if (requireSign) {
-          if (!sign) return ok();
-          const vr = verifyAfdianWebhookSign(order, sign);
-          if (!vr.ok) return ok();
-        } else if (sign) {
-          const vr = verifyAfdianWebhookSign(order, sign);
-          if (!vr.ok) return ok();
-        }
-      }
-
-      const uid = firstNonEmptyString(body.appUserId, body.app_user_id, body.uid, body.userId, extractUserIdFromText(remarkText));
-      const planId = firstNonEmptyString(order?.plan_id, order?.planId);
-      const planMap = parsePlanPackageMap();
-      const pkgId = firstNonEmptyString(
-        body.packageId,
-        body.package_id,
-        order?.packageId,
-        order?.package_id,
-        planId && planMap ? planMap[planId] : '',
-        extractPackageIdFromText(remarkText)
-      );
-      const creditsCount = body.credits ?? body.credit ?? body.creditsCount ?? order?.credits ?? order?.credit;
-      const resolvedCredits = (() => {
-        const n = Number.parseInt(String(creditsCount ?? ''), 10);
-        if (Number.isFinite(n) && n > 0) return n;
-        const pkg = resolvePayPackage(pkgId);
-        if (pkg) return pkg.credits;
-        const fromAmount = getCreditsByAmountCny(firstNonEmptyString(order?.total_amount, order?.show_amount, order?.totalAmount));
-        return fromAmount || 0;
-      })();
-      const resolvedUserId = firstNonEmptyString(fallbackPayOrder?.userId, uid);
-      const resolvedPkgId = firstNonEmptyString(pkgId, fallbackPayOrder?.packageId);
-      const resolvedCreditsFinal = (() => {
-        const n = Number(fallbackPayOrder?.credits ?? 0) || 0;
-        if (n > 0) return n;
-        if (resolvedCredits > 0) return resolvedCredits;
-        const pkg = resolvePayPackage(resolvedPkgId);
-        return pkg ? Number(pkg.credits ?? 0) || 0 : 0;
-      })();
-
-      const enforceAmountMatch = String(process.env.AFDIAN_ENFORCE_AMOUNT_MATCH || '').trim() === '1';
-      if (enforceAmountMatch && fallbackPayOrder && Number(fallbackPayOrder?.amountCny ?? 0) > 0) {
-        const expected = Number(fallbackPayOrder.amountCny ?? 0) || 0;
-        const actual = firstNonEmptyString(order?.total_amount, order?.totalAmount, order?.show_amount, order?.showAmount);
-        if (actual && !equalsCny(expected, actual)) {
-          return ok();
-        }
-      }
-
-      if (!afdianOrderId || !resolvedUserId || resolvedUserId.startsWith('guest_') || Number(resolvedCreditsFinal || 0) <= 0) {
-        return ok();
-      }
-
-      if (!fallbackPayOrder && !/^(user|email)_[a-zA-Z0-9_-]{3,}$/.test(resolvedUserId)) {
-        return ok();
-      }
-
-      const result = credits.applyAfdianOrder({
-        afdianOrderId,
-        userId: resolvedUserId,
-        packageId: resolvedPkgId,
-        credits: resolvedCreditsFinal
+      processAfdianWebhook({
+        body: req.body || {},
+        env: process.env,
+        isProd,
+        getPayOrder,
+        resolvePayPackage,
+        planPackageMap: parsePlanPackageMap(),
+        applyCredits: (payment) => credits.applyAfdianOrder(payment),
+        completePayOrder
       });
-      if (!result.ok) return ok();
       return ok();
     } catch {
       return ok();
@@ -1219,6 +1082,9 @@ MQIDAQAB
   });
 
   app.get('/api/credits/orders', (req, res) => {
+    if (!legacyJsonBillingEnabled) {
+      return res.status(503).json({ error: 'LEGACY_CREDITS_DISABLED' });
+    }
     const userId = String(req.query.userId || '').trim();
     if (typeof assertAuthUserMatches === 'function') {
       const auth = assertAuthUserMatches(req, res, userId);
@@ -1229,6 +1095,9 @@ MQIDAQAB
   });
 
   app.get('/api/credits/holds', (req, res) => {
+    if (!legacyJsonBillingEnabled) {
+      return res.status(503).json({ error: 'LEGACY_CREDITS_DISABLED' });
+    }
     const userId = String(req.query.userId || '').trim();
     const limit = Number.parseInt(String(req.query.limit || ''), 10);
     if (typeof assertAuthUserMatches === 'function') {
@@ -1245,7 +1114,10 @@ MQIDAQAB
   });
 
   app.post('/api/credits/order/mock', (req, res) => {
-    if (String(process.env.ENABLE_MOCK_ORDERS || '').trim() !== '1') {
+    if (
+      !legacyJsonBillingEnabled ||
+      String(process.env.ENABLE_MOCK_ORDERS || '').trim() !== '1'
+    ) {
       return res.status(404).json({ error: 'Not Found' });
     }
     const { userId, amount, credits: creditsCount } = req.body || {};

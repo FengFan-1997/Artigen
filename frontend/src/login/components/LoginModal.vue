@@ -4,7 +4,14 @@
       <div v-if="topTipOpen" class="top-tip">{{ topTipText }}</div>
     </transition>
     <div v-if="isOpen" class="login-modal" @mousedown.self="onBackdrop">
-      <div class="panel" role="dialog" aria-modal="true">
+      <div
+        ref="panelRef"
+        class="panel"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="titleText"
+        tabindex="-1"
+      >
         <!-- Left Side Image Panel -->
         <div class="panel-side">
           <div class="side-content">
@@ -20,7 +27,14 @@
         <div class="panel-main">
           <div class="head">
             <div class="title">{{ titleText }}</div>
-            <button class="close" type="button" @click="close">×</button>
+            <button
+              class="close"
+              type="button"
+              :aria-label="currentLang === 'zh' ? '关闭登录窗口' : 'Close login dialog'"
+              @click="close"
+            >
+              ×
+            </button>
           </div>
 
           <div class="body">
@@ -28,7 +42,7 @@
               <div class="sub">{{ subText }}</div>
 
               <div class="method-list">
-                <div class="oauth-block">
+                <div v-if="googleClientId" class="oauth-block">
                   <div
                     ref="googleButtonRef"
                     class="google-btn"
@@ -113,14 +127,25 @@
                   type="email"
                   :placeholder="t('login.email_placeholder')"
                   autocomplete="email"
+                  @keyup.enter="sendCode"
                 />
               </div>
+              <TurnstileWidget
+                ref="turnstileRef"
+                v-model="turnstileToken"
+                :action="EMAIL_OTP_TURNSTILE_ACTION"
+              />
               <div class="hint" :class="{ error: !!error }">
                 {{ error || info }}
               </div>
               <button
                 class="nth-login-btn primary"
-                :disabled="sending || !emailLocal || cooldownLeft > 0"
+                :disabled="
+                  sending ||
+                  !emailLocal ||
+                  cooldownLeft > 0 ||
+                  (turnstileRequired && !turnstileToken)
+                "
                 type="button"
                 @click="sendCode"
               >
@@ -158,14 +183,16 @@
               </div>
               <button
                 class="nth-login-btn primary"
-                :disabled="loggingIn || !emailLocal || code.length < 6"
+                :disabled="
+                  loggingIn || registering || sending || !emailLocal || code.length < 6
+                "
                 type="button"
                 @click="verifyCode"
               >
                 {{ loggingIn ? t('login.verifying') : t('login.verify_btn') }}
               </button>
               <div class="row">
-                <button class="link-btn" type="button" @click="entryStep = 'email_input'">
+                <button class="link-btn" type="button" @click="backToEmailInput">
                   {{ t('login.back_to_resend') }}
                 </button>
               </div>
@@ -200,7 +227,7 @@
 
               <button
                 class="nth-login-btn primary"
-                :disabled="loggingIn || !username || !password"
+                :disabled="loggingIn || registering || sending || !username || !password"
                 type="button"
                 @click="login"
               >
@@ -258,8 +285,15 @@
                   type="email"
                   :placeholder="t('login.email_placeholder')"
                   autocomplete="email"
+                  @keyup.enter="sendCode"
                 />
               </div>
+
+              <TurnstileWidget
+                ref="turnstileRef"
+                v-model="turnstileToken"
+                :action="EMAIL_OTP_TURNSTILE_ACTION"
+              />
 
               <div class="grid">
                 <div class="field">
@@ -277,7 +311,12 @@
 
                 <button
                   class="nth-login-btn"
-                  :disabled="sending || !emailLocal || cooldownLeft > 0"
+                  :disabled="
+                    sending ||
+                    !emailLocal ||
+                    cooldownLeft > 0 ||
+                    (turnstileRequired && !turnstileToken)
+                  "
                   type="button"
                   @click="sendCode"
                 >
@@ -293,7 +332,15 @@
 
               <button
                 class="nth-login-btn primary"
-                :disabled="registering || !username || !password || !emailLocal || code.length < 6"
+                :disabled="
+                  registering ||
+                  loggingIn ||
+                  sending ||
+                  !username ||
+                  !password ||
+                  !emailLocal ||
+                  code.length < 6
+                "
                 type="button"
                 @click="register"
               >
@@ -317,13 +364,13 @@
 
           <div class="footer-links">
             <span class="footer-text">
-              By continuing, you accept our
+              {{ currentLang === 'zh' ? '继续即表示你同意' : 'By continuing, you accept our' }}
               <router-link class="footer-link" to="/legal/terms" @click="close"
-                >Terms of Service</router-link
+                >{{ t('login.terms_of_use') }}</router-link
               >
-              and
+              {{ currentLang === 'zh' ? '及' : 'and' }}
               <router-link class="footer-link" to="/legal/privacy" @click="close"
-                >Privacy Policy</router-link
+                >{{ t('login.privacy_policy') }}</router-link
               >
             </span>
           </div>
@@ -358,9 +405,20 @@ import { ensureGuestUserId, setLoggedIn } from '../session';
 import { useLanguageStore } from '@/stores/language';
 import { useRouter } from 'vue-router';
 import { buildApiUrl } from '@/utils/api';
+import TurnstileWidget from './TurnstileWidget.vue';
+import {
+  beginOtpSend,
+  clearOtpFlow,
+  completeOtpSend,
+  failOtpSend,
+  getOtpCooldownSeconds,
+  readOtpFlow
+} from '../otpFlow';
+import { EMAIL_OTP_TURNSTILE_ACTION, isTurnstileConfigured } from '../turnstile';
 
 const languageStore = useLanguageStore();
 const { t } = languageStore;
+const { currentLang } = storeToRefs(languageStore);
 
 const loginStore = useLoginModel();
 const { isOpen, mode, email } = storeToRefs(loginStore);
@@ -390,8 +448,56 @@ let timer: number | null = null;
 let topTipTimer: number | null = null;
 const googleClientId = ref(String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim());
 const googleButtonRef = ref<HTMLDivElement | null>(null);
+const panelRef = ref<HTMLElement | null>(null);
 const googleLoading = ref(false);
 let googleScriptPromise: Promise<void> | null = null;
+let returnFocusElement: HTMLElement | null = null;
+const turnstileToken = ref('');
+const turnstileRequired = isTurnstileConfigured();
+const turnstileRef = ref<{ reset: () => void } | null>(null);
+
+const focusableSelector = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])'
+].join(',');
+
+const focusableDialogElements = () => {
+  const panel = panelRef.value;
+  if (!panel) return [];
+  return Array.from(panel.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => {
+    if (element.closest('[inert]')) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  });
+};
+
+const focusDialog = async () => {
+  await nextTick();
+  if (!isOpen.value) return;
+  panelRef.value?.focus({ preventScroll: true });
+};
+
+const repairEscapedFocus = (preferLast = false) => {
+  window.requestAnimationFrame(() => {
+    if (!isOpen.value) return;
+    const panel = panelRef.value;
+    if (!panel || panel.contains(document.activeElement)) return;
+    const focusable = focusableDialogElements();
+    const target = preferLast ? focusable[focusable.length - 1] : focusable[0];
+    (target || panel).focus({ preventScroll: true });
+  });
+};
+
+const restoreTriggerFocus = async () => {
+  const target = returnFocusElement;
+  returnFocusElement = null;
+  await nextTick();
+  if (target?.isConnected) target.focus({ preventScroll: true });
+};
 
 const loadGoogleClientId = async () => {
   if (googleClientId.value) return googleClientId.value;
@@ -404,10 +510,16 @@ const loadGoogleClientId = async () => {
 
 watch(
   () => isOpen.value,
-  (open) => {
-    if (!open) return;
+  (open, wasOpen) => {
+    if (!open) {
+      if (wasOpen) void restoreTriggerFocus();
+      return;
+    }
+    returnFocusElement =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     entryStep.value = 'select';
-    const nextEmail = String(email.value || emailLocal.value || '')
+    const restoredFlow = readOtpFlow('login');
+    const nextEmail = String(email.value || restoredFlow?.email || emailLocal.value || '')
       .trim()
       .toLowerCase();
     emailLocal.value = nextEmail || getLastEmail();
@@ -417,14 +529,17 @@ watch(
     password.value = lastU ? getSavedPassword(lastU) : '';
     error.value = '';
     info.value = '';
-    cooldownLeft.value = 0;
+    turnstileToken.value = '';
     if (timer) {
       window.clearInterval(timer);
       timer = null;
     }
-    error.value = '';
-    info.value = '';
+    const restoredCooldown =
+      restoredFlow?.email === emailLocal.value ? getOtpCooldownSeconds(restoredFlow) : 0;
+    if (restoredCooldown > 0) startCooldown(restoredCooldown);
+    else cooldownLeft.value = 0;
     void ensureGoogleReady();
+    void focusDialog();
   }
 );
 
@@ -459,15 +574,37 @@ const subText = computed(() => {
 });
 
 const startCooldown = (sec: number) => {
-  cooldownLeft.value = Math.max(0, Math.floor(sec));
+  const seconds = Math.max(0, Math.floor(Number(sec) || 0));
+  cooldownLeft.value = seconds;
   if (timer) window.clearInterval(timer);
+  timer = null;
+  if (!seconds) return;
+  const deadline = Date.now() + seconds * 1000;
   timer = window.setInterval(() => {
-    cooldownLeft.value = Math.max(0, cooldownLeft.value - 1);
+    cooldownLeft.value = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
     if (cooldownLeft.value <= 0 && timer) {
       window.clearInterval(timer);
       timer = null;
     }
   }, 1000);
+};
+
+const restoreLoginCooldown = () => {
+  const flow = readOtpFlow('login');
+  const normalizedEmail = String(emailLocal.value || '')
+    .trim()
+    .toLowerCase();
+  const seconds =
+    flow?.email === normalizedEmail ? getOtpCooldownSeconds(flow) : 0;
+  startCooldown(seconds);
+};
+
+const resetOtpUi = () => {
+  code.value = '';
+  error.value = '';
+  info.value = '';
+  turnstileToken.value = '';
+  void nextTick(() => turnstileRef.value?.reset());
 };
 
 const showTopTip = (msg: string) => {
@@ -553,6 +690,7 @@ const initGoogleButton = () => {
       g.accounts.id.initialize({
         client_id: googleClientId.value,
         callback: async (resp: any) => {
+          if (googleLoading.value) return;
           error.value = '';
           const idToken = String(resp?.credential || '').trim();
           if (!idToken) {
@@ -570,10 +708,7 @@ const initGoogleButton = () => {
               setLastEmail(res.email);
               upsertUser({ email: res.email, userId: res.userId });
             }
-            setLoggedIn({ userId: res.userId, token: res.token });
-            try {
-              window.dispatchEvent(new CustomEvent('app-auth-changed'));
-            } catch {}
+            setLoggedIn({ userId: res.userId });
             close();
             await loginStore.runAfterLogin();
           } catch (e: any) {
@@ -622,13 +757,16 @@ const onBackdrop = () => {
 
 const toggleMode = () => {
   loginStore.setMode(mode.value === 'register' ? 'login' : 'register');
+  resetOtpUi();
+  restoreLoginCooldown();
 };
 
 const chooseMethod = async (method: 'google' | 'email' | 'password') => {
-  error.value = '';
-  info.value = '';
+  resetOtpUi();
   if (method === 'email') {
+    loginStore.setMode('login');
     entryStep.value = 'email_input';
+    restoreLoginCooldown();
     return;
   }
   if (method === 'password') {
@@ -660,12 +798,28 @@ watch(
 );
 
 const backToMethods = () => {
+  loginStore.setMode('login');
   entryStep.value = 'select';
-  error.value = '';
-  info.value = '';
+  resetOtpUi();
+};
+
+const backToEmailInput = () => {
+  loginStore.setMode('login');
+  entryStep.value = 'email_input';
+  resetOtpUi();
+  restoreLoginCooldown();
 };
 
 const sendCode = async () => {
+  if (
+    sending.value ||
+    loggingIn.value ||
+    registering.value ||
+    cooldownLeft.value > 0 ||
+    (turnstileRequired && !turnstileToken.value)
+  ) {
+    return;
+  }
   error.value = '';
   info.value = '';
   const e = String(emailLocal.value || '')
@@ -682,16 +836,43 @@ const sendCode = async () => {
   setLastEmail(e);
   loginStore.setEmail(e);
   sending.value = true;
+  const previous = readOtpFlow('login');
+  const attempt = beginOtpSend('login', e, {
+    forceNew:
+      previous?.email === e &&
+      previous.deliveryStatus === 'unknown' &&
+      getOtpCooldownSeconds(previous) === 0
+  });
   try {
-    const res = await sendLoginCode(e);
+    const res = await sendLoginCode(e, {
+      idempotencyKey: attempt.idempotencyKey,
+      turnstileToken: turnstileToken.value
+    });
     if (!res.ok) {
+      failOtpSend('login', attempt.idempotencyKey, { cooldownSec: res.cooldownSec });
       error.value = res.message;
+      turnstileRef.value?.reset();
+      if (res.cooldownSec) startCooldown(res.cooldownSec);
       return;
     }
-    // info.value = res.message || t('login.success');
+    completeOtpSend('login', {
+      email: e,
+      idempotencyKey: attempt.idempotencyKey,
+      challengeId: res.challengeId,
+      deliveryStatus: res.deliveryStatus,
+      cooldownSec: res.cooldownSec
+    });
+    turnstileRef.value?.reset();
+    info.value =
+      res.deliveryStatus === 'unknown'
+        ? currentLang.value === 'zh'
+          ? '邮件可能已提交发送；若收到验证码可继续验证，否则请稍后重发。'
+          : 'The email may have been submitted. Use the code if it arrives, or resend later.'
+        : res.message || '';
     startCooldown(res.cooldownSec);
-    entryStep.value = 'email_verify';
+    if (mode.value !== 'register') entryStep.value = 'email_verify';
   } catch (err: any) {
+    turnstileRef.value?.reset();
     error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
   } finally {
     sending.value = false;
@@ -699,6 +880,7 @@ const sendCode = async () => {
 };
 
 const verifyCode = async () => {
+  if (loggingIn.value || registering.value || sending.value) return;
   error.value = '';
   const e = String(emailLocal.value || '')
     .trim()
@@ -707,6 +889,10 @@ const verifyCode = async () => {
   if (!e) return;
   if (!c) {
     error.value = t('login.enter_code');
+    return;
+  }
+  if (!/^\d{6}$/.test(c)) {
+    error.value = t('login.invalid_code');
     return;
   }
   loggingIn.value = true;
@@ -718,10 +904,8 @@ const verifyCode = async () => {
     }
     setLastEmail(e);
     upsertUser({ email: e, userId: res.userId });
-    setLoggedIn({ userId: res.userId, token: res.token });
-    try {
-      window.dispatchEvent(new CustomEvent('app-auth-changed'));
-    } catch {}
+    setLoggedIn({ userId: res.userId });
+    clearOtpFlow('login');
     close();
     await loginStore.runAfterLogin();
   } catch (err: any) {
@@ -732,6 +916,7 @@ const verifyCode = async () => {
 };
 
 const login = async () => {
+  if (loggingIn.value || registering.value || sending.value) return;
   error.value = '';
   info.value = '';
   const u = String(username.value || '').trim();
@@ -746,10 +931,7 @@ const login = async () => {
     }
     setLastUsername(u);
     setSavedPassword(u, p);
-    setLoggedIn({ userId: res.userId, token: res.token });
-    try {
-      window.dispatchEvent(new CustomEvent('app-auth-changed'));
-    } catch {}
+    setLoggedIn({ userId: res.userId });
     close();
     await loginStore.runAfterLogin();
   } catch (err: any) {
@@ -760,6 +942,7 @@ const login = async () => {
 };
 
 const register = async () => {
+  if (registering.value || loggingIn.value || sending.value) return;
   error.value = '';
   info.value = '';
   const u = String(username.value || '').trim();
@@ -792,10 +975,8 @@ const register = async () => {
     setSavedPassword(u, p);
     setLastEmail(e);
     upsertUser({ email: e, userId: res.userId });
-    setLoggedIn({ userId: res.userId, token: res.token });
-    try {
-      window.dispatchEvent(new CustomEvent('app-auth-changed'));
-    } catch {}
+    setLoggedIn({ userId: res.userId });
+    clearOtpFlow('login');
     close();
     await loginStore.runAfterLogin();
   } catch (err: any) {
@@ -806,15 +987,57 @@ const register = async () => {
 };
 
 const onKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape' && isOpen.value) close();
+  if (!isOpen.value) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    close();
+    return;
+  }
+  if (e.key !== 'Tab') return;
+
+  const panel = panelRef.value;
+  if (!panel) return;
+  repairEscapedFocus(e.shiftKey);
+  const focusable = focusableDialogElements();
+  if (!focusable.length) {
+    e.preventDefault();
+    panel.focus({ preventScroll: true });
+    return;
+  }
+
+  const active = document.activeElement;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (active === panel || !panel.contains(active)) {
+    e.preventDefault();
+    (e.shiftKey ? last : first)?.focus({ preventScroll: true });
+    return;
+  }
+  if (e.shiftKey && active === first) {
+    e.preventDefault();
+    last?.focus({ preventScroll: true });
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault();
+    first?.focus({ preventScroll: true });
+  }
+};
+
+const onFocusin = () => {
+  if (!isOpen.value) return;
+  const panel = panelRef.value;
+  if (!panel || panel.contains(document.activeElement)) return;
+  panel.focus({ preventScroll: true });
 };
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown);
+  window.addEventListener('focusin', onFocusin);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
+  window.removeEventListener('focusin', onFocusin);
+  if (isOpen.value) void restoreTriggerFocus();
   if (timer) window.clearInterval(timer);
   if (topTipTimer) window.clearTimeout(topTipTimer);
 });
@@ -1142,13 +1365,15 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
   align-items: center;
-  font-size: 11px;
+  font-size: 12px;
   color: #64748b;
 }
 
 .footer-text {
   color: #64748b;
   margin-bottom: 5px;
+  line-height: 1.6;
+  text-align: center;
 }
 
 .footer-link {

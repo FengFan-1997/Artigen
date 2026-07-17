@@ -13,10 +13,11 @@
             {{ statusText }}
           </div>
 
-          <h1 class="headline">
-            {{ headlineLine1 }}<span class="highlight">{{ headlineHighlight1 }}</span
+          <h1 class="headline" :class="{ 'headline--zh': currentLang === 'zh' }">
+            <span>{{ headlineLine1 }}</span
+            ><span class="highlight">{{ headlineHighlight1 }}</span
             ><span class="highlight">{{ headlineHighlight2 }}</span
-            >{{ headlineLine2 }}
+            ><span class="headline-tail">{{ headlineLine2 }}</span>
           </h1>
 
           <p class="description">
@@ -525,8 +526,8 @@ const feature4Title = computed(() =>
 );
 const feature4Desc = computed(() =>
   currentLang.value === 'zh'
-    ? '提供智能证件照生成、老照片修复与 FDA 配料表标签图生成。'
-    : 'Smart ID photos, old photo restoration, and FDA ingredient label generation.'
+    ? '提供本地标准证件照、AI 老照片增强与仅整理用户原文的配料标签排版。'
+    : 'Local standard ID photos, AI old-photo enhancement, and source-only ingredient-label layout.'
 );
 
 const contentTitle = computed(() =>
@@ -548,9 +549,9 @@ const useCases = computed(() => {
       '内容创作：插画风格化、头像与素材快速生成',
       '批量处理：格式转换、压缩、尺寸调整与旋转裁切',
       '文档工作：PDF 转图片、图片转 PDF、PDF 转 Word',
-      '隐私保护：本地去水印、元数据清除、安全处理',
+      '隐私保护：本地模糊、像素化或纯色遮挡敏感区域',
       '算力租赁：高性能 GPU 租用、模型微调、离线渲染',
-      '云端工坊：证件照生成、老照片修复、FDA 配料表'
+      '影像工坊：本地证件照、AI 老照片增强、原文配料标签排版'
     ];
   }
   return [
@@ -559,9 +560,9 @@ const useCases = computed(() => {
     'Content creation: stylized illustrations, avatars, quick assets',
     'Batch processing: convert, compress, resize, rotate/crop',
     'Docs workflow: PDF to images, images to PDF, PDF to Word',
-    'Privacy: Local watermark removal, metadata clearing',
+    'Privacy: local blur, pixelation, or solid covers for sensitive regions',
     'Compute: GPU rental, fine-tuning, offline rendering',
-    'Cloud Workshop: ID photos, restoration, FDA ingredient labels'
+    'Workshop: local ID photos, AI enhancement, source-only ingredient labels'
   ];
 });
 const longTailTitle = computed(() =>
@@ -570,7 +571,7 @@ const longTailTitle = computed(() =>
 const longTailKeywords = computed(() => {
   if (currentLang.value === 'zh') {
     return [
-      'heic转jpg',
+      'jpeg转webp',
       'png转jpg',
       'webp转png',
       '图片压缩不失真',
@@ -582,11 +583,11 @@ const longTailKeywords = computed(() => {
       '文生图',
       '提示词优化',
       '电商产品图生成',
-      'FDA配料表生成'
+      '配料标签排版'
     ];
   }
   return [
-    'heic to jpg',
+    'jpeg to webp',
     'png to jpg',
     'webp to png',
     'image compression',
@@ -598,7 +599,7 @@ const longTailKeywords = computed(() => {
     'text-to-image',
     'prompt optimizer',
     'product image generator',
-    'FDA ingredient label'
+    'ingredient label layout'
   ];
 });
 const faqTitle = computed(() => (currentLang.value === 'zh' ? '常见问题' : 'FAQ'));
@@ -607,19 +608,19 @@ const faqs = computed(() => {
     return [
       {
         q: 'Artigen 能做什么？',
-        a: 'Artigen 是一个一站式影像处理平台，提供 AI 智能创作（文生图/图生图）、AI 影像工坊（证件照/老照片修复/FDA配料表）以及纯前端的图片格式转换工具（压缩/转码/PDF工具）。'
+        a: 'Artigen 是一个一站式影像处理平台，提供 AI 智能创作、本地标准证件照、AI 老照片增强、仅整理用户原文的配料标签排版，以及本地图片与文档工具。'
       },
       {
         q: '我的文件安全吗？会上传到服务器吗？',
-        a: '隐私优先是我们设计的核心。工具（转换/压缩）所有操作均在您的浏览器本地完成，文件不会上传。AI 创作相关功能需要云端算力，我们会加密传输您的图片到模型服务，生成完成后立即销毁中间数据。'
+        a: '图片批处理、标准证件照等标注为“本地”的流程不会上传文件。AI 与服务器文档转换会在您明确确认后上传，并在界面中说明用途、限制与保留时间。'
       },
       {
         q: '生成的图片可以商用吗？',
-        a: '是的。您使用 Artigen 创作的图片拥有完整的商业使用权，可用于电商主图、营销海报、自媒体配图等商业场景。'
+        a: '是否可商用取决于您的输入素材权利、所选模型及其服务条款。Artigen 不替您授予第三方素材或模型输出的权利，请在发布前自行核对。'
       },
       {
         q: '点数是什么？如何获取？',
-        a: '点数是使用 AI 云端算力服务的凭证。新用户注册即送免费点数。您可以通过每日签到或在「点数商城」购买套餐来获取更多点数。工具等本地功能完全免费。'
+        a: '点数用于已明确标价的 AI 云端任务。可用套餐与价格始终从服务器读取；本地工作流不扣点数。'
       },
       {
         q: '生成失败了会扣点数吗？',
@@ -627,26 +628,26 @@ const faqs = computed(() => {
       },
       {
         q: '支持手机端使用吗？',
-        a: '完美支持。我们的界面已针对移动端深度适配，无论是在手机还是平板上，您都可以随时随地进行创作或处理图片。'
+        a: '支持常见手机和平板视口；图片编辑器会使用紧凑面板，较大的本地文件仍受设备内存和浏览器能力限制。'
       }
     ];
   }
   return [
     {
       q: 'What can Artigen do?',
-      a: 'Artigen is an all-in-one imaging platform offering AI creation (Text-to-Image/Image-to-Image), AI Image Workshop (ID Photos/Restoration/FDA Ingredient Labels), and client-side format tools (Conversion/Compression/PDF).'
+      a: 'Artigen combines AI creation, local standard ID photos, AI old-photo enhancement, source-only ingredient-label layout, and local image/document tools.'
     },
     {
       q: 'Are my files safe? Do they get uploaded?',
-      a: 'Privacy is our core principle. Tools run entirely in your browser; files are never uploaded. For AI features, data is encrypted during transmission and intermediate files are deleted immediately after generation.'
+      a: 'Workflows labeled “local,” such as image batching and standard ID photos, do not upload files. AI and server document modes upload only after explicit confirmation and disclose their purpose, limits, and retention.'
     },
     {
       q: 'Can I use the images commercially?',
-      a: 'Yes. You have full commercial rights to the images you generate with Artigen, suitable for e-commerce, marketing, and social media.'
+      a: 'Commercial use depends on your rights to the input and the selected model/provider terms. Artigen does not grant rights to third-party inputs or model outputs; verify them before publishing.'
     },
     {
       q: 'What are credits and how do I get them?',
-      a: 'Credits are used for AI cloud services. New users get free starter credits. You can earn more by daily check-ins or purchasing packs in the "Compute Market". Local tools are free forever.'
+      a: 'Credits are used only for clearly priced AI cloud tasks. Available packages and prices are loaded from the server; local workflows do not consume credits.'
     },
     {
       q: 'Will I be charged if generation fails?',
@@ -654,7 +655,7 @@ const faqs = computed(() => {
     },
     {
       q: 'Is it mobile-friendly?',
-      a: 'Absolutely. Our interface is fully optimized for mobile devices, allowing you to create and process images anywhere, anytime on your phone or tablet.'
+      a: 'Common phone and tablet viewports are supported. Large local files remain subject to device memory and browser capability limits.'
     }
   ];
 });
@@ -1135,6 +1136,10 @@ onBeforeUnmount(() => {
   -webkit-text-fill-color: transparent;
 }
 
+.headline--zh .headline-tail {
+  white-space: nowrap;
+}
+
 .description {
   font-size: 16px;
   line-height: 1.6;
@@ -1180,6 +1185,7 @@ onBeforeUnmount(() => {
 }
 
 .hero-btn {
+  box-sizing: border-box;
   text-decoration: none;
   font-family: var(--common-font);
   font-size: 14px;
@@ -1412,11 +1418,23 @@ onBeforeUnmount(() => {
 
   .cta-row {
     width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
   }
 
-  .cta-row .btn {
+  .cta-row .hero-btn {
     width: 100%;
+    min-width: 0;
+    min-height: 52px;
+    padding: 12px 10px;
+    font-size: 12px;
     justify-content: center;
+  }
+
+  .cta-row .btn-primary,
+  .cta-row .btn-secondary:last-child {
+    grid-column: 1 / -1;
   }
 
   .stats-row {
@@ -1426,6 +1444,17 @@ onBeforeUnmount(() => {
 
   .hero-right {
     height: 320px;
+  }
+}
+
+@media (max-width: 360px) {
+  .cta-row {
+    grid-template-columns: 1fr;
+  }
+
+  .cta-row .btn-primary,
+  .cta-row .btn-secondary:last-child {
+    grid-column: auto;
   }
 }
 

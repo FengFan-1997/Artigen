@@ -321,6 +321,7 @@ const checkinCredits = (input) => {
 const applyAfdianOrder = (input) => {
   const uid = normalizeUserId(input?.userId);
   const afdianOrderId = String(input?.afdianOrderId || '').trim();
+  const localOrderId = String(input?.localOrderId || '').trim();
   const packageIdRaw = String(input?.packageId || '').trim().toLowerCase();
   const packageId =
     packageIdRaw === 'starter' ||
@@ -342,6 +343,19 @@ const applyAfdianOrder = (input) => {
 
   const orders = readOrdersMap();
   if (orders[afdianOrderId]) {
+    const existing = orders[afdianOrderId];
+    const existingUserId = normalizeUserId(existing?.userId);
+    const existingPackageId = String(existing?.packageId || '').trim().toLowerCase();
+    const existingCredits = Number.parseInt(String(existing?.credits ?? 0), 10);
+    const existingLocalOrderId = String(existing?.localOrderId || '').trim();
+    if (
+      existingUserId !== uid ||
+      existingPackageId !== packageId ||
+      existingCredits !== credits ||
+      (localOrderId && existingLocalOrderId !== localOrderId)
+    ) {
+      return { ok: false, error: 'ORDER_REPLAY_MISMATCH' };
+    }
     return { ok: true, alreadyProcessed: true, wallet: getBalance(uid) };
   }
 
@@ -352,6 +366,7 @@ const applyAfdianOrder = (input) => {
     afdianOrderId,
     userId: uid,
     credits,
+    ...(localOrderId ? { localOrderId } : {}),
     ...(packageId ? { packageId } : {}),
     createdAt: now()
   };
@@ -430,4 +445,3 @@ module.exports = {
   getOrders,
   getHolds
 };
-

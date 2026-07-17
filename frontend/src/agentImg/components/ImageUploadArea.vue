@@ -1,10 +1,16 @@
 <template>
   <div
     class="upload-area"
+    role="button"
+    :tabindex="disabled ? -1 : 0"
+    :aria-disabled="disabled"
+    :aria-label="previewUrl ? reuploadText : `${uploadText}。${uploadHint}`"
     @dragover.prevent="handleDragOver"
     @dragleave.prevent="handleDragLeave"
     @drop.prevent="handleDrop"
     @click="triggerFileSelect"
+    @keydown.enter.prevent="triggerFileSelect"
+    @keydown.space.prevent="triggerFileSelect"
     :class="{ 'drag-over': isDragOver, 'has-file': !!previewUrl, disabled }"
   >
     <input
@@ -17,14 +23,14 @@
     />
 
     <template v-if="previewUrl">
-      <img :src="previewUrl" class="preview-img" alt="Preview" />
+      <img :src="previewUrl" class="preview-img" :alt="modelValue?.name || uploadText" />
       <div class="reupload-overlay">
         <span>{{ reuploadText }}</span>
       </div>
     </template>
     <template v-else>
       <div class="upload-placeholder">
-        <div class="folder-icon" v-html="placeholderIcon"></div>
+        <div class="folder-icon" aria-hidden="true" v-html="placeholderIcon"></div>
         <div class="upload-text">{{ uploadText }}</div>
         <div class="upload-hint">{{ uploadHint }}</div>
       </div>
@@ -144,6 +150,12 @@ const handleDrop = (e: DragEvent) => {
   opacity: 0.7;
 }
 
+.upload-area:focus-visible {
+  outline: 3px solid #ccff00;
+  outline-offset: 3px;
+  border-color: #ccff00;
+}
+
 .upload-area::before {
   content: '';
   position: absolute;
@@ -251,6 +263,21 @@ const handleDrop = (e: DragEvent) => {
   .upload-area {
     min-height: 300px;
     flex: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+
+  .upload-area:hover,
+  .upload-area:focus-visible,
+  .upload-area:hover .upload-placeholder {
+    transform: none;
   }
 }
 </style>

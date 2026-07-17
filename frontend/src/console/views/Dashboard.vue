@@ -1,13 +1,20 @@
 <template>
   <div>
     <a-typography-title :level="2">{{ ui.title }}</a-typography-title>
+    <a-alert
+      v-if="dashboardDataError"
+      type="error"
+      show-icon
+      :message="ui.loadFailed"
+      style="margin-bottom: 16px"
+    />
 
     <a-row :gutter="16">
       <a-col :xs="24" :sm="12" :lg="8">
         <a-card>
           <a-statistic
-            :title="ui.currentBalance"
-            :value="userPoints"
+            :title="ui.totalAvailable"
+            :value="walletAvailableTotal"
             :precision="0"
             :suffix="ui.credits"
           >
@@ -18,26 +25,93 @@
           <a-button
             type="primary"
             style="margin-top: 16px"
-            @click="router.push('/console/billing')"
-            >{{ ui.recharge }}</a-button
+            @click="router.push('/console/users')"
+            >{{ ui.inspectWallets }}</a-button
           >
         </a-card>
       </a-col>
       <a-col :xs="24" :sm="12" :lg="8">
         <a-card>
-          <a-statistic :title="ui.accountLevel" :value="userLevel" />
-          <div style="margin-top: 16px">
-            <a-tag :color="getLevelColor(userLevel)">{{ userLevel.toUpperCase() }}</a-tag>
-          </div>
+          <a-statistic
+            :title="ui.totalFrozen"
+            :value="walletFrozenTotal"
+            :precision="0"
+            :suffix="ui.credits"
+          />
         </a-card>
       </a-col>
       <a-col :xs="24" :sm="12" :lg="8">
         <a-card>
-          <a-statistic :title="ui.userId" :value="userId" class="small-text-stat" />
-          <div style="margin-top: 10px; color: #888">{{ userEmail }}</div>
+          <a-statistic :title="ui.totalUsers" :value="consoleStore.adminUsersTotal" />
+          <div style="margin-top: 10px; color: #888">{{ walletCoverage }}</div>
         </a-card>
       </a-col>
     </a-row>
+
+    <a-card :title="ui.generationFunnel" style="margin-top: 24px">
+      <a-row :gutter="[16, 16]">
+        <a-col :xs="12" :sm="8" :lg="6">
+          <a-statistic
+            :title="ui.generationSuccessRate"
+            :value="generationMetrics.successRate"
+            suffix="%"
+            :precision="1"
+          />
+        </a-col>
+        <a-col :xs="12" :sm="8" :lg="6">
+          <a-statistic
+            :title="ui.refundRate"
+            :value="generationMetrics.refundRate"
+            suffix="%"
+            :precision="1"
+          />
+        </a-col>
+        <a-col :xs="12" :sm="8" :lg="6">
+          <a-statistic
+            :title="ui.persistenceFailureRate"
+            :value="generationMetrics.persistenceFailureRate"
+            suffix="%"
+            :precision="2"
+          />
+        </a-col>
+        <a-col :xs="12" :sm="8" :lg="6">
+          <a-statistic
+            :title="ui.unsettledHolds"
+            :value="generationMetrics.unsettledHolds"
+            :value-style="generationMetrics.unsettledHolds > 0 ? { color: '#cf1322' } : undefined"
+          />
+        </a-col>
+        <a-col :xs="12" :sm="8" :lg="6">
+          <a-statistic :title="ui.queueP50P95" :value="generationMetrics.queueTiming" />
+        </a-col>
+        <a-col :xs="12" :sm="8" :lg="6">
+          <a-statistic :title="ui.providerP50P95" :value="generationMetrics.providerTiming" />
+        </a-col>
+        <a-col :xs="12" :sm="8" :lg="6">
+          <a-statistic
+            :title="ui.costPerSuccess"
+            :value="generationMetrics.costPerSuccess"
+            prefix="¥"
+            :precision="3"
+          />
+        </a-col>
+        <a-col :xs="12" :sm="8" :lg="6">
+          <a-statistic
+            :title="ui.firstImageP50P95"
+            :value="generationMetrics.firstImageTiming"
+          />
+        </a-col>
+      </a-row>
+      <a-table
+        style="margin-top: 20px"
+        :columns="funnelColumns"
+        :data-source="funnelRows"
+        row-key="event"
+        pagination="false"
+        size="small"
+        :scroll="{ x: 720 }"
+      />
+    </a-card>
 
     <div style="margin-top: 24px">
       <a-row :gutter="16">
@@ -135,7 +209,7 @@
 import { onMounted, computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { WalletOutlined } from '@ant-design/icons-vue';
-import { getConsoleUserId, useConsoleStore } from '@/stores/console';
+import { useConsoleStore } from '@/stores/console';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 
@@ -157,11 +231,12 @@ const ui = computed(() =>
   currentLang.value === 'zh'
     ? {
         title: '总览',
-        currentBalance: '当前余额',
+        totalAvailable: '已加载用户可用点数合计',
+        totalFrozen: '已加载用户冻结点数合计',
+        totalUsers: '用户总数',
         credits: '点数',
-        recharge: '充值',
-        accountLevel: '账户等级',
-        userId: '用户 ID',
+        inspectWallets: '核对钱包与账本',
+        walletCoverage: (loaded: number, total: number) => `钱包统计覆盖 ${loaded} / ${total} 位用户`,
         usageTrend: '用量趋势（近 7 天）',
         quickActions: '快捷操作',
         tryPlayground: '进入试验场',
@@ -183,6 +258,19 @@ const ui = computed(() =>
         trafficNote: '数据来源: /artigen/tools',
         toolPerformance: '工具表现',
         clickAnalysis: '点击分析',
+        generationFunnel: '生图漏斗与生产健康（近 14 天）',
+        generationSuccessRate: '有效任务成功率',
+        refundRate: '失败任务全额退款率',
+        persistenceFailureRate: '资产持久化失败率',
+        unsettledHolds: '未结算预占',
+        queueP50P95: '排队 p50 / p95',
+        providerP50P95: 'Provider p50 / p95',
+        firstImageP50P95: '首图 p50 / p95',
+        costPerSuccess: '每成功任务成本',
+        colStage: '阶段',
+        colEvents: '事件数',
+        colStageRate: '相对上一阶段',
+        loadFailed: '服务端运营数据加载失败；下方不会使用浏览器假数据补位。',
         colToolName: '工具',
         colSuccess: '成功',
         colFail: '失败',
@@ -193,11 +281,13 @@ const ui = computed(() =>
       }
     : {
         title: 'Overview',
-        currentBalance: 'Current Balance',
+        totalAvailable: 'Available Credits (Loaded Users)',
+        totalFrozen: 'Frozen Credits (Loaded Users)',
+        totalUsers: 'Total Users',
         credits: 'Credits',
-        recharge: 'Recharge',
-        accountLevel: 'Account Level',
-        userId: 'User ID',
+        inspectWallets: 'Inspect Wallets & Ledger',
+        walletCoverage: (loaded: number, total: number) =>
+          `Wallet coverage: ${loaded} / ${total} users`,
         usageTrend: 'Usage Trend (Last 7 Days)',
         quickActions: 'Quick Actions',
         tryPlayground: 'Try Playground',
@@ -219,6 +309,19 @@ const ui = computed(() =>
         trafficNote: 'Source: /artigen/tools',
         toolPerformance: 'Tool Performance',
         clickAnalysis: 'Click Analysis',
+        generationFunnel: 'Generation Funnel & Production Health (14 days)',
+        generationSuccessRate: 'Valid Task Success Rate',
+        refundRate: 'Full Refund Rate on Failure',
+        persistenceFailureRate: 'Asset Persistence Failure Rate',
+        unsettledHolds: 'Unsettled Holds',
+        queueP50P95: 'Queue p50 / p95',
+        providerP50P95: 'Provider p50 / p95',
+        firstImageP50P95: 'First Image p50 / p95',
+        costPerSuccess: 'Cost per Successful Task',
+        colStage: 'Stage',
+        colEvents: 'Events',
+        colStageRate: 'vs Previous Stage',
+        loadFailed: 'Server operations data failed to load; browser mock data is never substituted.',
         colToolName: 'Tool Name',
         colSuccess: 'Success',
         colFail: 'Fail',
@@ -229,12 +332,75 @@ const ui = computed(() =>
       }
 );
 
-const userId = computed(() => getConsoleUserId());
-const userPoints = computed(() => consoleStore.getCurrentUser?.points || 0);
-const userLevel = computed(() => consoleStore.getCurrentUser?.level || 'free');
-const userEmail = computed(() => consoleStore.getCurrentUser?.email || 'N/A');
+const walletAvailableTotal = computed(() =>
+  consoleStore.adminUsers.reduce((sum, user) => sum + Number(user.wallet?.available || 0), 0)
+);
+const walletFrozenTotal = computed(() =>
+  consoleStore.adminUsers.reduce((sum, user) => sum + Number(user.wallet?.frozen || 0), 0)
+);
+const walletCoverage = computed(() =>
+  ui.value.walletCoverage(consoleStore.adminUsers.length, consoleStore.adminUsersTotal)
+);
 
 const trafficLoading = ref(false);
+const dashboardDataError = ref(false);
+
+const durationLabel = (p50: number, p95: number) => {
+  const seconds = (value: number) => (Math.max(0, Number(value) || 0) / 1000).toFixed(1);
+  return `${seconds(p50)}s / ${seconds(p95)}s`;
+};
+
+const generationMetrics = computed(() => {
+  const funnel = consoleStore.generationFunnel;
+  return {
+    successRate: Number(funnel?.successRate || 0) * 100,
+    refundRate: Number(funnel?.refundRate ?? 1) * 100,
+    persistenceFailureRate: Number(funnel?.assetPersistenceFailureRate || 0) * 100,
+    unsettledHolds: Number(funnel?.unsettledHolds?.count || 0),
+    queueTiming: durationLabel(funnel?.timing?.queueP50Ms || 0, funnel?.timing?.queueP95Ms || 0),
+    providerTiming: durationLabel(
+      funnel?.timing?.providerP50Ms || 0,
+      funnel?.timing?.providerP95Ms || 0
+    ),
+    firstImageTiming: durationLabel(
+      funnel?.timing?.firstImageP50Ms || 0,
+      funnel?.timing?.firstImageP95Ms || 0
+    ),
+    costPerSuccess: Number(funnel?.costPerSuccessfulTaskMinor || 0) / 100
+  };
+});
+
+const funnelStageOrder = [
+  'workspace_view',
+  'prompt_start',
+  'quote_shown',
+  'quote_confirmed',
+  'task_queued',
+  'task_running',
+  'task_success',
+  'download',
+  'edit',
+  'variation'
+];
+
+const funnelRows = computed(() => {
+  const events = consoleStore.generationFunnel?.events || {};
+  return funnelStageOrder.map((event, index) => {
+    const count = Number(events[event] || 0);
+    const previous = index > 0 ? Number(events[funnelStageOrder[index - 1]] || 0) : 0;
+    return {
+      event,
+      count,
+      rate: index === 0 ? '—' : previous > 0 ? `${((count / previous) * 100).toFixed(1)}%` : '0.0%'
+    };
+  });
+});
+
+const funnelColumns = computed(() => [
+  { title: ui.value.colStage, dataIndex: 'event', key: 'event' },
+  { title: ui.value.colEvents, dataIndex: 'count', key: 'count' },
+  { title: ui.value.colStageRate, dataIndex: 'rate', key: 'rate' }
+]);
 
 const normalizePage = (raw: any) => {
   const s = String(raw || '').trim();
@@ -419,7 +585,13 @@ const trafficCtr = computed(() =>
 );
 
 const recentUsage = computed(() => {
-  return consoleStore.getUserTransactions(userId.value).slice(0, 5);
+  return consoleStore.adminUsage.slice(0, 5).map((item) => ({
+    id: item.requestId,
+    timestamp: item.ts,
+    type: item.trigger || item.provider || 'usage',
+    description: [item.model, item.status].filter(Boolean).join(' · '),
+    amount: Number(item.creditsDelta || 0)
+  }));
 });
 
 const columns = computed(() => [
@@ -443,9 +615,6 @@ const columns = computed(() => [
 ]);
 
 const chartOption = computed(() => {
-  const transactions = consoleStore.getUserTransactions(userId.value);
-
-  // Group by day
   const dailyMap: Record<string, number> = {};
   const now = new Date();
   for (let i = 6; i >= 0; i--) {
@@ -454,13 +623,10 @@ const chartOption = computed(() => {
     dailyMap[key] = 0;
   }
 
-  transactions.forEach((t) => {
-    if (t.amount < 0) {
-      // Only count spending
-      const key = new Date(t.timestamp).toISOString().split('T')[0];
-      if (dailyMap[key] !== undefined) {
-        dailyMap[key] += Math.abs(t.amount);
-      }
+  consoleStore.adminUsage.forEach((item) => {
+    const key = new Date(item.ts).toISOString().split('T')[0];
+    if (dailyMap[key] !== undefined) {
+      dailyMap[key] += Math.abs(Number(item.creditsDelta || 0));
     }
   });
 
@@ -559,17 +725,6 @@ const clickColumns = computed(() => [
   { title: ui.value.ctr, dataIndex: 'ctr', key: 'ctr' }
 ]);
 
-const getLevelColor = (level: string) => {
-  switch (level) {
-    case 'enterprise':
-      return 'purple';
-    case 'pro':
-      return 'blue';
-    default:
-      return 'green';
-  }
-};
-
 onMounted(() => {
   consoleStore.init();
   const loadTraffic = async () => {
@@ -577,27 +732,22 @@ onMounted(() => {
     const key = String(consoleStore.adminKey || '').trim();
     if (!key) return;
     trafficLoading.value = true;
+    dashboardDataError.value = false;
     try {
-      await consoleStore.fetchAdminCollectionEvents({ limit: 2000, offset: 0 });
+      await Promise.all([
+        consoleStore.fetchAdminUsers({ limit: 2000, offset: 0 }),
+        consoleStore.fetchAdminUsageLedger({ limit: 2000, offset: 0 }),
+        consoleStore.fetchAdminCollectionEvents({ limit: 2000, offset: 0 }),
+        consoleStore.fetchGenerationFunnel(14)
+      ]);
     } catch (e) {
       void e;
+      dashboardDataError.value = true;
     } finally {
       trafficLoading.value = false;
     }
   };
   void loadTraffic();
-  // Ensure the user has 9999 points as requested if it's the first time
-  // Actually consoleStore.init() does this for new users, but let's be safe
-  if (
-    userId.value &&
-    (!consoleStore.getUserById(userId.value) ||
-      consoleStore.getUserById(userId.value)!.points < 9999)
-  ) {
-    // If user exists but points < 9999, maybe we shouldn't force reset unless explicit?
-    // But the prompt says "Finally give me an account 9999 points".
-    // Let's assume this means "Ensure I have at least 9999".
-    consoleStore.grantMaxPoints(userId.value);
-  }
 });
 </script>
 

@@ -1,6 +1,10 @@
 import { defineStore } from 'pinia';
 import { buildApiUrl } from '@/utils/api';
-import { ensureGuestUserId, getOrCreateProjectId, getOrCreateSessionId } from '@/login/session';
+import {
+  sanitizeAnalyticsPayload,
+  sanitizeAnalyticsUrl,
+  trackBackendEvent
+} from '@/utils/analytics';
 
 const AUTH_STORAGE_KEY = 'console_auth_v1';
 const STORAGE_KEY = 'console_store_v1';
@@ -15,19 +19,22 @@ export type ConsoleAuthSession = {
   authHash: string;
 };
 
-export const getConsoleAuthSession = (): ConsoleAuthSession | null => {
+let consoleAuthSession: ConsoleAuthSession | null = null;
+let consoleAdminKey = '';
+let consoleAdminAuthMode: AdminAuthMode = 'bearer';
+
+export const clearLegacyConsoleCredentialStorage = () => {
   try {
-    const raw = String(localStorage.getItem(AUTH_STORAGE_KEY) || '').trim();
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<ConsoleAuthSession>;
-    const userId = String(parsed.userId || '').trim();
-    const authHash = String(parsed.authHash || '').trim();
-    const expiresAt = Number(parsed.expiresAt || 0);
-    if (!userId || !authHash || !Number.isFinite(expiresAt)) return null;
-    return { userId, authHash, expiresAt };
-  } catch {
-    return null;
-  }
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
+    localStorage.removeItem(ADMIN_AUTH_MODE_STORAGE_KEY);
+  } catch {}
+};
+
+clearLegacyConsoleCredentialStorage();
+
+export const getConsoleAuthSession = (): ConsoleAuthSession | null => {
+  return consoleAuthSession ? { ...consoleAuthSession } : null;
 };
 
 export const isConsoleAuthed = (): boolean => {
@@ -49,13 +56,12 @@ export const setConsoleAuthSession = (session: ConsoleAuthSession) => {
   const authHash = String(session.authHash || '').trim();
   const expiresAt = Number(session.expiresAt || 0);
   if (!userId || !authHash || !Number.isFinite(expiresAt)) throw new Error('INVALID_SESSION');
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ userId, authHash, expiresAt }));
+  consoleAuthSession = { userId, authHash, expiresAt };
 };
 
 export const clearConsoleAuthSession = () => {
-  try {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-  } catch {}
+  consoleAuthSession = null;
+  clearLegacyConsoleCredentialStorage();
 };
 
 const inferAdminAuthMode = (token: string): AdminAuthMode => {
@@ -66,45 +72,31 @@ const inferAdminAuthMode = (token: string): AdminAuthMode => {
 };
 
 export const getConsoleAdminKey = (): string => {
-  try {
-    return String(localStorage.getItem(ADMIN_KEY_STORAGE_KEY) || '').trim();
-  } catch {
-    return '';
-  }
+  return consoleAdminKey;
 };
 
 export const getConsoleAdminAuthMode = (): AdminAuthMode => {
-  try {
-    const v = String(localStorage.getItem(ADMIN_AUTH_MODE_STORAGE_KEY) || '')
-      .trim()
-      .toLowerCase();
-    return v === 'x-admin-key' ? 'x-admin-key' : 'bearer';
-  } catch {
-    return 'bearer';
-  }
+  return consoleAdminAuthMode;
 };
 
 export const setConsoleAdminKey = (key: string) => {
   const v = String(key || '').trim();
   if (!v) throw new Error('INVALID_ADMIN_KEY');
-  localStorage.setItem(ADMIN_KEY_STORAGE_KEY, v);
+  consoleAdminKey = v;
 };
 
 export const setConsoleAdminAuthMode = (mode: AdminAuthMode) => {
-  const v = mode === 'x-admin-key' ? 'x-admin-key' : 'bearer';
-  localStorage.setItem(ADMIN_AUTH_MODE_STORAGE_KEY, v);
+  consoleAdminAuthMode = mode === 'x-admin-key' ? 'x-admin-key' : 'bearer';
 };
 
 export const clearConsoleAdminKey = () => {
-  try {
-    localStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
-  } catch {}
+  consoleAdminKey = '';
+  clearLegacyConsoleCredentialStorage();
 };
 
 export const clearConsoleAdminAuthMode = () => {
-  try {
-    localStorage.removeItem(ADMIN_AUTH_MODE_STORAGE_KEY);
-  } catch {}
+  consoleAdminAuthMode = 'bearer';
+  clearLegacyConsoleCredentialStorage();
 };
 
 // Types
@@ -249,6 +241,34 @@ export type AdminAnalyticsEventItem = {
   ua?: string;
 };
 
+export type GenerationFunnel = {
+  days: number;
+  events: Record<string, number>;
+  operations: Array<{
+    operation: string;
+    success: number;
+    failed: number;
+    cancelled: number;
+    refundedCredits: number;
+    chargedCredits: number;
+    avgQueueMs: number;
+  }>;
+  successRate: number;
+  refundRate: number;
+  assetPersistenceFailureRate: number;
+  costPerSuccessfulTaskMinor: number;
+  refundedCredits: number;
+  unsettledHolds: { count: number; overdueCount: number; credits: number };
+  timing: {
+    queueP50Ms: number;
+    queueP95Ms: number;
+    firstImageP50Ms: number;
+    firstImageP95Ms: number;
+    providerP50Ms: number;
+    providerP95Ms: number;
+  };
+};
+
 export type AdminAuditHistoryItem = {
   id?: string;
   ts?: number;
@@ -369,6 +389,7 @@ export const useConsoleStore = defineStore('console', {
     adminUsageTotal: 0,
     adminEvents: [] as AdminAnalyticsEventItem[],
     adminEventsTotal: 0,
+    generationFunnel: null as GenerationFunnel | null,
     adminBehaviorEvents: [] as AdminAnalyticsEventItem[],
     adminBehaviorTotal: 0,
     adminAudit: [] as AdminAuditHistoryItem[],
@@ -410,21 +431,17 @@ export const useConsoleStore = defineStore('console', {
       if (stored) {
         try {
           const data = JSON.parse(stored);
-          this.users = data.users || [];
-          this.transactions = data.transactions || [];
-          this.logs = data.logs || [];
-          this.generatedContent = data.generatedContent || [];
+          // Never hydrate fake balances/orders/content written by the old
+          // browser-only console. Canonical finance now comes from PostgreSQL.
+          this.users = [];
+          this.transactions = [];
+          this.logs = [];
+          this.generatedContent = [];
           this.trafficStats = data.trafficStats || [];
           this.aiBgSeoCopy = data.aiBgSeoCopy || buildDefaultAiBgSeoCopy();
         } catch (e) {
           console.error('Failed to load console store', e);
         }
-      }
-
-      // Ensure current user exists
-      const currentUid = getConsoleUserId();
-      if (currentUid && !this.users.find((u) => u.userId === currentUid)) {
-        this.createUser(currentUid, 'user@example.com');
       }
 
       this.adminKey = getConsoleAdminKey();
@@ -435,16 +452,6 @@ export const useConsoleStore = defineStore('console', {
           this.adminAuthMode = inferred;
           setConsoleAdminAuthMode(inferred);
         }
-      }
-
-      // Force update admin/current user to have 9999 points if requested
-      // The prompt asked for "Finally give me an account with 9999 points"
-      const currentUser = this.users.find((u) => u.userId === currentUid);
-      if (currentUser && currentUser.points < 9999) {
-        // Only if it's a fresh setup or we want to enforce it.
-        // Let's just enforce it for the demo purpose if it's below a threshold or first run.
-        // Or we can add a specific action for this.
-        // For now, let's just leave it to the specific 'gift' action or init logic.
       }
 
       this.isInitialized = true;
@@ -594,6 +601,21 @@ export const useConsoleStore = defineStore('console', {
       this.adminEvents = items;
       this.adminEventsTotal = Number(json?.total || items.length) || items.length;
       return { ok: true as const, total: this.adminEventsTotal };
+    },
+    async fetchGenerationFunnel(days = 14) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/generation/funnel', { days });
+      const res = await fetch(url, { headers });
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
+        throw toAdminRequestError(res, json);
+      }
+      this.generationFunnel = json.funnel as GenerationFunnel;
+      return { ok: true as const, funnel: this.generationFunnel };
     },
     async fetchAdminEvents(input?: { userId?: string; limit?: number; offset?: number }) {
       const adminKey = String(this.adminKey || '').trim();
@@ -770,197 +792,36 @@ export const useConsoleStore = defineStore('console', {
     },
 
     recordTraffic(event: Omit<TrafficEvent, 'id' | 'timestamp'>) {
-      this.trafficStats.push({
-        ...event,
+      const page = sanitizeAnalyticsUrl(event.page);
+      const rawTarget = String(event.target || '').trim();
+      const target = /^[a-z0-9][a-z0-9:_-]{0,119}$/i.test(rawTarget) ? rawTarget : '';
+      const meta = sanitizeAnalyticsPayload(event.meta);
+      const safeEvent: TrafficEvent = {
+        type: event.type,
+        page,
+        ...(target ? { target } : {}),
+        ...(Object.keys(meta).length ? { meta } : {}),
         id: crypto.randomUUID(),
         timestamp: Date.now()
-      });
+      };
+      this.trafficStats.push(safeEvent);
       this.save();
 
-      try {
-        const userId = ensureGuestUserId();
-        const payload: Record<string, any> = {
-          page: String(event.page || '').trim(),
-          ...(event.target
-            ? {
-                target: String(event.target || '')
-                  .trim()
-                  .slice(0, 120)
-              }
-            : {})
-        };
-        const meta =
-          event.meta && typeof event.meta === 'object' && !Array.isArray(event.meta)
-            ? event.meta
-            : null;
-        if (meta) {
-          for (const [k0, v] of Object.entries(meta)) {
-            const k = String(k0 || '')
-              .trim()
-              .slice(0, 56);
-            if (!k) continue;
-            if (typeof v === 'string') {
-              const s = v.trim();
-              if (!s) continue;
-              payload[k] = s.slice(0, 240);
-              continue;
-            }
-            if (typeof v === 'number') {
-              if (!Number.isFinite(v)) continue;
-              payload[k] = v;
-              continue;
-            }
-            if (typeof v === 'boolean') {
-              payload[k] = v;
-              continue;
-            }
-            if (Array.isArray(v)) {
-              const arr = v
-                .slice(0, 20)
-                .map((x) => (typeof x === 'string' ? x.trim().slice(0, 120) : null))
-                .filter(Boolean);
-              if (arr.length) payload[k] = arr;
-            }
-          }
-        }
-
-        const url = buildApiUrl('/api/collection/event');
-        void fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            eventType: event.type,
-            payload,
-            path: String(event.page || '').trim(),
-            location: typeof window !== 'undefined' ? String(window.location?.href || '') : '',
-            referrer: typeof document !== 'undefined' ? String(document.referrer || '') : '',
-            ts: Date.now(),
-            userId,
-            sessionId: getOrCreateSessionId(),
-            projectId: getOrCreateProjectId(),
-            requestSource: 'web'
-          })
-        });
-      } catch {}
+      void trackBackendEvent(event.type, {
+        pagePath: page,
+        ...(target ? { target } : {}),
+        ...(Object.keys(meta).length ? { meta } : {})
+      });
     },
 
     save() {
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
-          users: this.users,
-          transactions: this.transactions,
-          logs: this.logs,
-          generatedContent: this.generatedContent,
           trafficStats: this.trafficStats,
           aiBgSeoCopy: this.aiBgSeoCopy
         })
       );
-    },
-
-    createUser(userId: string, email: string) {
-      const newUser: ConsoleUser = {
-        userId,
-        email,
-        level: 'free',
-        points: 100000, // As per request "Finally give me an account 100000 points"
-        totalSpent: 0,
-        joinedAt: Date.now(),
-        lastActiveAt: Date.now()
-      };
-      this.users.push(newUser);
-
-      // Log initial gift
-      this.transactions.push({
-        id: crypto.randomUUID(),
-        userId,
-        type: 'admin_gift',
-        amount: 100000,
-        description: 'Welcome Bonus',
-        timestamp: Date.now()
-      });
-
-      this.save();
-      return newUser;
-    },
-
-    updatePoints(userId: string, amount: number, type: Transaction['type'], description: string) {
-      const user = this.users.find((u) => u.userId === userId);
-      if (!user) return;
-
-      user.points += amount;
-      if (amount < 0) {
-        user.totalSpent += Math.abs(amount);
-      }
-
-      this.transactions.push({
-        id: crypto.randomUUID(),
-        userId,
-        type,
-        amount,
-        description,
-        timestamp: Date.now()
-      });
-
-      this.save();
-    },
-
-    updateUserLevel(userId: string, level: ConsoleUser['level']) {
-      const user = this.users.find((u) => u.userId === userId);
-      if (!user) return;
-      user.level = level;
-      this.save();
-    },
-
-    setUserDetails(userId: string, updates: { points?: number; level?: ConsoleUser['level'] }) {
-      const user = this.users.find((u) => u.userId === userId);
-      if (!user) return;
-
-      if (updates.points !== undefined && updates.points !== user.points) {
-        const diff = updates.points - user.points;
-        this.updatePoints(userId, diff, 'admin_gift', 'Admin manual adjustment');
-      }
-
-      if (updates.level !== undefined) {
-        user.level = updates.level;
-      }
-
-      this.save();
-    },
-
-    grantMaxPoints(userId: string) {
-      const user = this.users.find((u) => u.userId === userId);
-      if (user) {
-        const diff = 9999 - user.points;
-        if (diff > 0) {
-          this.updatePoints(userId, diff, 'admin_gift', 'System Grant: Max Points');
-        }
-      } else {
-        // Create user if not exists
-        this.createUser(userId, 'user@example.com');
-      }
-    },
-
-    logActivity(userId: string, action: string, details: any) {
-      this.logs.push({
-        id: crypto.randomUUID(),
-        userId,
-        action,
-        details,
-        timestamp: Date.now()
-      });
-      this.save();
-    },
-
-    addGeneratedContent(userId: string, type: 'image' | 'text', content: any) {
-      this.generatedContent.push({
-        id: crypto.randomUUID(),
-        userId,
-        type,
-        timestamp: Date.now(),
-        ...content
-      });
-      this.save();
     },
 
     setAiBgSeoCopy(input: Partial<AiBgSeoCopy>) {

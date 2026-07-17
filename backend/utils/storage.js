@@ -54,8 +54,10 @@ const writeJson = (filePath, data) => {
       } catch { }
       fs.renameSync(tmpPath, filePath);
     }
+    return true;
   } catch (err) {
     console.error(`Error writing ${filePath}:`, err);
+    return false;
   }
 };
 

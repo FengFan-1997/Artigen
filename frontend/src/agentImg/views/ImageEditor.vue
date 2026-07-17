@@ -47,9 +47,9 @@
           <button
             class="topbar-btn"
             type="button"
-            :disabled="!hasLayers"
+            :disabled="!hasLayers || isExporting"
             @click="exportImage"
-            :title="ui.export"
+            :title="isExporting ? ui.exporting : ui.export"
           >
             <DownloadOutlined />
           </button>
@@ -78,15 +78,25 @@
         <aside class="panel left" :class="{ 'mobile-panel-open': mobilePanel === 'layers' }">
           <div class="panel-header">
             <div class="panel-title">{{ ui.layers }}</div>
-            <button
-              class="panel-btn"
-              type="button"
-              :disabled="!hasLayers"
-              @click="removeSelected"
-              :title="ui.delete"
-            >
-              <DeleteOutlined />
-            </button>
+            <div class="panel-header-actions">
+              <button
+                class="panel-btn"
+                type="button"
+                :disabled="!hasLayers"
+                @click="removeSelected"
+                :title="ui.delete"
+              >
+                <DeleteOutlined />
+              </button>
+              <button
+                class="panel-btn panel-close mobile-only"
+                type="button"
+                @click="closeMobilePanel"
+                :title="ui.closePanel"
+              >
+                <CloseOutlined />
+              </button>
+            </div>
           </div>
 
           <div class="layers-list">
@@ -208,9 +218,8 @@
                       @pointercancel.stop="onManualCutoutPointerUp"
                       @pointerleave.stop="onManualCutoutPointerUp"
                       @contextmenu.prevent
-                      style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; z-index: 200;"
                     >
-                      <svg width="100%" height="100%" class="manual-cutout-svg" style="pointer-events: none;">
+                      <svg width="100%" height="100%" class="manual-cutout-svg">
                         <polygon
                           v-if="manualCutoutPath.length > 0"
                           :points="manualCutoutPath.map(p => `${p.x},${p.y}`).join(' ')"
@@ -306,6 +315,14 @@
         <aside class="panel right" :class="{ 'mobile-panel-open': mobilePanel === 'tools' }">
           <div class="panel-header">
             <div class="panel-title">{{ ui.tools }}</div>
+            <button
+              class="panel-btn panel-close mobile-only"
+              type="button"
+              @click="closeMobilePanel"
+              :title="ui.closePanel"
+            >
+              <CloseOutlined />
+            </button>
           </div>
 
           <div class="tools-body">
@@ -584,6 +601,26 @@
                   <RotateRightOutlined />
                   <span class="mobile-text-hidden">{{ ui.straighten }}</span>
                 </button>
+                <button
+                  class="smart-btn"
+                  type="button"
+                  :disabled="!hasSelection || isRestoring"
+                  @click="smartAction('retouch')"
+                  :title="ui.retouch"
+                >
+                  <FormatPainterOutlined />
+                  <span class="mobile-text-hidden">{{ ui.retouch }}</span>
+                </button>
+                <button
+                  class="smart-btn"
+                  type="button"
+                  :disabled="!hasSelection || isUpscaling"
+                  @click="smartAction('upscale')"
+                  :title="ui.upscale"
+                >
+                  <GoldOutlined />
+                  <span class="mobile-text-hidden">{{ ui.upscale }}</span>
+                </button>
               </div>
               <div v-if="smartHint" class="smart-hint">{{ smartHint }}</div>
               <div v-if="toolMode === 'crop'" class="smart-inline">
@@ -666,7 +703,7 @@
                 </div>
               </div>
               <div v-if="toolMode === 'cutout'" class="straighten-panel">
-                <div class="smart-inline" style="margin-bottom: 12px;">
+                <div class="smart-inline smart-inline-compact">
                   <button
                     :class="['tool-btn', cutoutMode === 'manual' ? 'active' : '']"
                     type="button"
@@ -738,16 +775,15 @@
                 </template>
                 
                 <template v-else>
-                  <div class="smart-inline" style="margin-bottom: 12px; justify-content: flex-start; gap: 12px;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: #fff; font-size: 13px;">
+                  <div class="smart-inline smart-inline-compact manual-cutout-controls">
+                    <label class="manual-cutout-toggle">
                       <input type="checkbox" v-model="manualCutoutSnapping" />
                       {{ ui.snapping }}
                     </label>
-                    <div style="display: flex; gap: 4px;">
+                    <div class="manual-cutout-history">
                       <button
-                        class="icon-btn"
+                        class="icon-btn mini-icon-btn"
                         type="button"
-                        style="width: 24px; height: 24px; font-size: 12px;"
                         :disabled="manualCutoutHistory.length === 0"
                         @click="undoManualCutout"
                         :title="ui.undo"
@@ -755,9 +791,8 @@
                         <UndoOutlined />
                       </button>
                       <button
-                        class="icon-btn"
+                        class="icon-btn mini-icon-btn"
                         type="button"
-                        style="width: 24px; height: 24px; font-size: 12px;"
                         :disabled="manualCutoutRedoStack.length === 0"
                         @click="redoManualCutout"
                         :title="ui.redo"
@@ -889,7 +924,7 @@
           <UnlockOutlined v-else />
           {{ layers.find(l => l.id === layerMenuOpenId)?.locked ? ui.unlock : ui.lock }}
         </button>
-        <div style="height: 1px; background: rgba(255, 255, 255, 0.1); margin: 2px 4px;"></div>
+        <div class="menu-separator"></div>
         <button class="menu-item" type="button" @click="moveLayer(layerMenuOpenId, 'top')">
           <VerticalAlignTopOutlined /> {{ ui.moveTop }}
         </button>
@@ -933,18 +968,11 @@ import {
   SelectOutlined,
   ScissorOutlined,
   BgColorsOutlined,
-  ColumnWidthOutlined,
-  ColumnHeightOutlined,
-  FontSizeOutlined,
   GatewayOutlined,
   GoldOutlined,
   BlockOutlined,
-  FileImageOutlined,
-  PictureOutlined,
-  BuildOutlined,
   FormatPainterOutlined,
   AimOutlined,
-  ExpandOutlined,
   RotateRightOutlined,
   SwapOutlined,
   OrderedListOutlined,
@@ -961,10 +989,8 @@ import {
 } from '@ant-design/icons-vue';
 import { useLanguageStore } from '@/stores/language';
 import { buildApiUrl, getApiBaseUrl } from '@/utils/api';
-import { getAuthToken } from '@/login/session';
 import { scaleAroundScreenPoint } from '../logic/viewportMath';
 import {
-  clampCropRect,
   clampNumber,
   detectTiltAngle,
   isPointInRect,
@@ -1095,7 +1121,17 @@ const ui = computed(() => {
     selectMode: en ? 'Select' : '选择',
     importFailed: en
       ? 'Import failed. Please check the link or permissions.'
-      : '导入失败，请检查链接或权限。'
+      : '导入失败，请检查链接或权限。',
+    invalidImageType: en ? 'Only image files can be imported.' : '只能导入图片文件。',
+    imageTooLarge: en ? 'Image file is too large.' : '图片文件过大。',
+    imagePixelsTooLarge: en ? 'Image dimensions are too large.' : '图片尺寸过大。',
+    imageDecodeFailed: en ? 'Image could not be opened.' : '图片无法打开。',
+    importPartialFailed: en ? 'Some files were skipped.' : '部分文件无法导入，已跳过。',
+    exportNoVisible: en ? 'No visible image to export.' : '没有可导出的可见图片。',
+    exportTooLarge: en ? 'Export area is too large.' : '导出区域过大。',
+    exportFailed: en ? 'Export failed. Please try again.' : '导出失败，请重试。',
+    exporting: en ? 'Exporting...' : '正在导出...',
+    closePanel: en ? 'Close panel' : '关闭面板'
   };
 });
 
@@ -1106,6 +1142,7 @@ const cropOverlayRef = ref<HTMLDivElement | null>(null);
 const mobilePanel = ref<'layers' | 'tools' | ''>('');
 const editorTip = ref('');
 let editorTipTimer: number | null = null;
+const isExporting = ref(false);
 
 const interactionMode = ref<'select' | 'pan'>('select');
 const isPanMode = computed(() => interactionMode.value === 'pan');
@@ -1121,6 +1158,15 @@ const ownedObjectUrls = new Set<string>();
 const trackOwnedUrl = (url: string) => {
   const key = String(url || '');
   if (key.startsWith('blob:')) ownedObjectUrls.add(key);
+};
+
+const revokeOwnedUrl = (url: string) => {
+  const key = String(url || '');
+  if (!key.startsWith('blob:')) return;
+  try {
+    URL.revokeObjectURL(key);
+  } catch {}
+  ownedObjectUrls.delete(key);
 };
 
 const gcObjectUrls = () => {
@@ -1162,6 +1208,10 @@ const canRedo = computed(() => redoStack.value.length > 0);
 const CANVAS_W = 1200;
 const CANVAS_H = 700;
 const MM_PER_PX = 25.4 / 96;
+const MAX_IMPORT_BYTES = 40 * 1024 * 1024;
+const MAX_IMPORT_PIXELS = 50_000_000;
+const MAX_EXPORT_PIXELS = 67_000_000;
+const MAX_EXPORT_SIDE = 16_384;
 
 const viewportScale = ref(1);
 const viewportOffset = ref({ x: 0, y: 0 });
@@ -1392,22 +1442,60 @@ const calcFitScale = (w: number, h: number) => {
   return clamp(Math.min(maxW / w, maxH / h), 0.02, 20);
 };
 
+type ImportFailureReason = 'type' | 'bytes' | 'pixels' | 'decode';
+
+const isLikelyImageFile = (file: File) => {
+  const type = String(file.type || '').toLowerCase();
+  if (type.startsWith('image/')) return true;
+  return /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(String(file.name || ''));
+};
+
+const importFailureText = (reason: ImportFailureReason) => {
+  if (reason === 'type') return ui.value.invalidImageType;
+  if (reason === 'bytes') return ui.value.imageTooLarge;
+  if (reason === 'pixels') return ui.value.imagePixelsTooLarge;
+  return ui.value.imageDecodeFailed;
+};
+
+const showImportFailure = (failures: ImportFailureReason[], importedCount: number) => {
+  if (!failures.length) return;
+  if (importedCount > 0) {
+    showEditorTip(ui.value.importPartialFailed);
+    return;
+  }
+  showEditorTip(importFailureText(failures[0]));
+};
+
 const canvasToOwnedUrl = async (canvas: HTMLCanvasElement) => {
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob((b) => resolve(b), 'image/png')
-  );
-  if (!blob) return canvas.toDataURL('image/png');
-  const url = URL.createObjectURL(blob);
-  trackOwnedUrl(url);
-  return url;
+  try {
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/png')
+    );
+    if (!blob) return canvas.toDataURL('image/png');
+    const url = URL.createObjectURL(blob);
+    trackOwnedUrl(url);
+    return url;
+  } catch {
+    return '';
+  }
 };
 
 const importFiles = async (files: File[]) => {
-  const valid = files.filter((f) => (f?.type || '').startsWith('image/'));
-  if (!valid.length) return;
-
+  const inputFiles = files.filter(Boolean);
+  if (!inputFiles.length) return false;
   const newLayers: ImageLayer[] = [];
-  for (const file of valid) {
+  const failures: ImportFailureReason[] = [];
+
+  for (const file of inputFiles) {
+    if (!isLikelyImageFile(file)) {
+      failures.push('type');
+      continue;
+    }
+    if (file.size > MAX_IMPORT_BYTES) {
+      failures.push('bytes');
+      continue;
+    }
+
     const name =
       String(file.name || '').trim() || `image-${layers.value.length + newLayers.length + 1}`;
     const srcUrl = URL.createObjectURL(file);
@@ -1416,6 +1504,17 @@ const importFiles = async (files: File[]) => {
     const img = await decodeImage(srcUrl);
     const w = Math.max(0, Math.trunc(meta.w || img?.naturalWidth || 0));
     const h = Math.max(0, Math.trunc(meta.h || img?.naturalHeight || 0));
+    if (!img || !w || !h) {
+      failures.push('decode');
+      revokeOwnedUrl(srcUrl);
+      continue;
+    }
+    if (w * h > MAX_IMPORT_PIXELS) {
+      failures.push('pixels');
+      revokeOwnedUrl(srcUrl);
+      continue;
+    }
+
     const s = calcFitScale(w, h);
     const baseLayer = {
       type: 'image' as const,
@@ -1432,15 +1531,6 @@ const importFiles = async (files: File[]) => {
       rotate: 0,
       opacity: 1
     };
-    if (!img || !w || !h) {
-      newLayers.push({
-        id: genId(),
-        name,
-        src: srcUrl,
-        ...baseLayer
-      });
-      continue;
-    }
     if (w * h > AUTO_SPLIT_MAX_PIXELS) {
       newLayers.push({
         id: genId(),
@@ -1476,20 +1566,29 @@ const importFiles = async (files: File[]) => {
       ctx.putImageData(new ImageData(out.background, w, h), 0, 0);
       const bgUrl = await canvasToOwnedUrl(canvas);
 
-      newLayers.push(
-        {
+      if (!fgUrl || !bgUrl) {
+        newLayers.push({
           id: genId(),
-          name: `${name}-BG`,
-          src: bgUrl,
+          name,
+          src: srcUrl,
           ...baseLayer
-        },
-        {
-          id: genId(),
-          name: `${name}-FG`,
-          src: fgUrl,
-          ...baseLayer
-        }
-      );
+        });
+      } else {
+        newLayers.push(
+          {
+            id: genId(),
+            name: `${name}-BG`,
+            src: bgUrl,
+            ...baseLayer
+          },
+          {
+            id: genId(),
+            name: `${name}-FG`,
+            src: fgUrl,
+            ...baseLayer
+          }
+        );
+      }
     } catch {
       newLayers.push({
         id: genId(),
@@ -1500,10 +1599,18 @@ const importFiles = async (files: File[]) => {
     }
   }
 
+  if (!newLayers.length) {
+    showImportFailure(failures, 0);
+    gcObjectUrls();
+    return false;
+  }
+
   pushHistory();
   layers.value = [...layers.value, ...newLayers];
   selectedLayerId.value = newLayers[newLayers.length - 1]?.id || null;
+  showImportFailure(failures, newLayers.length);
   gcObjectUrls();
+  return true;
 };
 
 const extFromMime = (mime: string) => {
@@ -1549,27 +1656,27 @@ const resolveEditorUrl = (raw: string) => {
     }
     return u;
   })();
-  const token = String(getAuthToken() || '').trim();
-  if (!token) return built;
+  return built;
+};
+
+const isSameOriginFilesUrl = (raw: string) => {
   try {
-    const url = new URL(built, window.location.origin);
-    if (!url.pathname.startsWith('/files/')) return built;
-    if (!url.searchParams.get('token')) url.searchParams.set('token', token);
-    return url.toString();
+    const url = new URL(String(raw || ''), window.location.origin);
+    return url.origin === window.location.origin && /^\/files(?:\/|$)/.test(url.pathname);
   } catch {
-    if (!built.includes('/files/')) return built;
-    const join = built.includes('?') ? '&' : '?';
-    if (built.includes('token=')) return built;
-    return `${built}${join}token=${encodeURIComponent(token)}`;
+    return false;
   }
 };
 
 const tryFetchImageBlob = async (
   url: string,
-  headers?: Record<string, string>
+  init?: Pick<RequestInit, 'credentials' | 'headers'>
 ): Promise<Blob | null> => {
   try {
-    const res = await fetch(url, { headers: headers || undefined });
+    const res = await fetch(url, {
+      credentials: init?.credentials || 'omit',
+      headers: init?.headers
+    });
     if (!res.ok) return null;
     const blob = await res.blob();
     if (
@@ -1584,34 +1691,39 @@ const tryFetchImageBlob = async (
   }
 };
 
+const fetchEditorImageBlob = async (url: string): Promise<Blob | null> => {
+  const target = String(url || '').trim();
+  if (!target) return null;
+  if (!isSameOriginFilesUrl(target)) {
+    return tryFetchImageBlob(target, { credentials: 'omit' });
+  }
+
+  return tryFetchImageBlob(target, { credentials: 'include' });
+};
+
 const importImageFromPrefill = async (raw: string) => {
   const s = String(raw || '').trim();
   if (!s) return false;
   const direct = dataUrlToFile(s);
   if (direct) {
-    await importFiles([direct]);
+    const ok = await importFiles([direct]);
+    if (!ok) return false;
     await nextTick();
     fitView();
     return true;
   }
   const resolved = resolveEditorUrl(s);
-  let blob = await tryFetchImageBlob(resolved || s);
-  if (!blob && resolved && resolved !== s) blob = await tryFetchImageBlob(s);
-  if (!blob) {
-    const token = String(getAuthToken() || '').trim();
-    const target = resolved || s;
-    if (token && target.includes('/files/')) {
-      blob = await tryFetchImageBlob(target, { Authorization: `Bearer ${token}` });
-    }
-  }
+  let blob = await fetchEditorImageBlob(resolved || s);
+  if (!blob && resolved && resolved !== s) blob = await fetchEditorImageBlob(s);
   if (!blob && /^https?:\/\//i.test(s)) {
     const proxyUrl = buildApiUrl(`/api/proxy/image?url=${encodeURIComponent(s)}`);
-    blob = await tryFetchImageBlob(proxyUrl);
+    blob = await tryFetchImageBlob(proxyUrl, { credentials: 'omit' });
   }
   if (!blob) return false;
   const ext = extFromMime(blob.type);
   const file = new File([blob], `import_${Date.now().toString(36)}.${ext}`, { type: blob.type });
-  await importFiles([file]);
+  const ok = await importFiles([file]);
+  if (!ok) return false;
   await nextTick();
   fitView();
   return true;
@@ -1679,89 +1791,134 @@ const layerStyle = (layer: ImageLayer) => {
 };
 
 const exportImage = async () => {
+  if (isExporting.value) return;
   flushLayerMove();
   flushCropRect();
+  isExporting.value = true;
 
-  const visibleLayers = layers.value.filter((l) => l.visible);
-  if (visibleLayers.length === 0) return;
+  try {
+    const visibleLayers = layers.value.filter((l) => l.visible);
+    if (visibleLayers.length === 0) {
+      showEditorTip(ui.value.exportNoVisible);
+      return;
+    }
 
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
+    const decodedLayers: { layer: ImageLayer; image: HTMLImageElement }[] = [];
+    const predecoded = new Map<string, Promise<HTMLImageElement | null>>();
+    for (const l of visibleLayers) {
+      const key = String(l.src || '');
+      if (!key) continue;
+      if (!predecoded.has(key)) predecoded.set(key, decodeImage(key));
+    }
+    for (const layer of visibleLayers) {
+      const key = String(layer.src || '');
+      const img = key ? await (predecoded.get(key) || decodeImage(key)) : null;
+      const iw = layer.naturalWidth || img?.naturalWidth || 0;
+      const ih = layer.naturalHeight || img?.naturalHeight || 0;
+      if (!img || !iw || !ih) continue;
+      decodedLayers.push({ layer: { ...layer, naturalWidth: iw, naturalHeight: ih }, image: img });
+    }
 
-  for (const layer of visibleLayers) {
-    const iw = layer.naturalWidth || 0;
-    const ih = layer.naturalHeight || 0;
-    const sx = Math.abs(Number.isFinite(layer.scaleX) ? layer.scaleX : 1);
-    const sy = Math.abs(Number.isFinite(layer.scaleY) ? layer.scaleY : 1);
-    const rot = ((Number.isFinite(layer.rotate) ? layer.rotate : 0) * Math.PI) / 180;
-    const w = iw * sx;
-    const h = ih * sy;
-    const bw = Math.abs(w * Math.cos(rot)) + Math.abs(h * Math.sin(rot));
-    const bh = Math.abs(w * Math.sin(rot)) + Math.abs(h * Math.cos(rot));
-    const cx = Number.isFinite(layer.x) ? layer.x : CANVAS_W / 2;
-    const cy = Number.isFinite(layer.y) ? layer.y : CANVAS_H / 2;
-    minX = Math.min(minX, cx - bw / 2);
-    minY = Math.min(minY, cy - bh / 2);
-    maxX = Math.max(maxX, cx + bw / 2);
-    maxY = Math.max(maxY, cy + bh / 2);
+    if (!decodedLayers.length) {
+      showEditorTip(ui.value.exportNoVisible);
+      return;
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const { layer } of decodedLayers) {
+      const iw = layer.naturalWidth || 0;
+      const ih = layer.naturalHeight || 0;
+      const sx = Math.abs(Number.isFinite(layer.scaleX) ? layer.scaleX : 1);
+      const sy = Math.abs(Number.isFinite(layer.scaleY) ? layer.scaleY : 1);
+      const rot = ((Number.isFinite(layer.rotate) ? layer.rotate : 0) * Math.PI) / 180;
+      const w = iw * sx;
+      const h = ih * sy;
+      const bw = Math.abs(w * Math.cos(rot)) + Math.abs(h * Math.sin(rot));
+      const bh = Math.abs(w * Math.sin(rot)) + Math.abs(h * Math.cos(rot));
+      const cx = Number.isFinite(layer.x) ? layer.x : CANVAS_W / 2;
+      const cy = Number.isFinite(layer.y) ? layer.y : CANVAS_H / 2;
+      minX = Math.min(minX, cx - bw / 2);
+      minY = Math.min(minY, cy - bh / 2);
+      maxX = Math.max(maxX, cx + bw / 2);
+      maxY = Math.max(maxY, cy + bh / 2);
+    }
+
+    if (minX > maxX || minY > maxY) {
+      minX = 0;
+      minY = 0;
+      maxX = CANVAS_W;
+      maxY = CANVAS_H;
+    }
+
+    minX = Math.floor(minX);
+    minY = Math.floor(minY);
+    maxX = Math.ceil(maxX);
+    maxY = Math.ceil(maxY);
+
+    const outW = Math.max(1, maxX - minX);
+    const outH = Math.max(1, maxY - minY);
+    if (
+      outW > MAX_EXPORT_SIDE ||
+      outH > MAX_EXPORT_SIDE ||
+      outW * outH > MAX_EXPORT_PIXELS
+    ) {
+      showEditorTip(ui.value.exportTooLarge);
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = outW;
+    canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
+
+    ctx.clearRect(0, 0, outW, outH);
+    ctx.translate(-minX, -minY);
+
+    let drawn = 0;
+    for (const { layer, image } of decodedLayers) {
+      const op = clamp(Number.isFinite(layer.opacity) ? layer.opacity : 1, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = op;
+      const ok = await drawLayerToContext(ctx, layer, image);
+      ctx.restore();
+      if (ok) drawn += 1;
+    }
+
+    if (!drawn) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/png')
+    );
+    if (!blob) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `image_editor_${Date.now()}.png`;
+    a.click();
+    window.setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
+    }, 1000);
+  } catch {
+    showEditorTip(ui.value.exportFailed);
+  } finally {
+    isExporting.value = false;
   }
-
-  if (minX > maxX || minY > maxY) {
-    minX = 0; minY = 0; maxX = CANVAS_W; maxY = CANVAS_H;
-  }
-
-  const pad = 0; // optional padding
-  minX = Math.floor(minX - pad);
-  minY = Math.floor(minY - pad);
-  maxX = Math.ceil(maxX + pad);
-  maxY = Math.ceil(maxY + pad);
-
-  const outW = Math.max(1, maxX - minX);
-  const outH = Math.max(1, maxY - minY);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = outW;
-  canvas.height = outH;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  const predecoded = new Map<string, Promise<HTMLImageElement | null>>();
-  for (const l of visibleLayers) {
-    const key = String(l.src || '');
-    if (!predecoded.has(key)) predecoded.set(key, decodeImage(key));
-  }
-
-  ctx.clearRect(0, 0, outW, outH);
-  ctx.translate(-minX, -minY);
-
-  for (const layer of visibleLayers) {
-    const op = clamp(Number.isFinite(layer.opacity) ? layer.opacity : 1, 0, 1);
-    const key = String(layer.src || '');
-    const p = predecoded.get(key);
-    const img = p ? await p : await decodeImage(key);
-
-    ctx.save();
-    ctx.globalAlpha = op;
-    await drawLayerToContext(ctx, layer, img);
-    ctx.restore();
-  }
-
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob((b) => resolve(b), 'image/png')
-  );
-  if (!blob) return;
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `image_editor_${Date.now()}.png`;
-  a.click();
-  window.setTimeout(() => {
-    try {
-      URL.revokeObjectURL(url);
-    } catch {}
-  }, 1000);
 };
 
 const dragState = ref<{
@@ -2282,10 +2439,16 @@ const bakeStraighten = async () => {
   if (!layer || layer.locked) return;
 
   const img = await decodeImage(layer.src);
-  if (!img) return;
+  if (!img) {
+    showEditorTip(ui.value.imageDecodeFailed);
+    return;
+  }
   const iw = layer.naturalWidth || img.naturalWidth || 0;
   const ih = layer.naturalHeight || img.naturalHeight || 0;
-  if (!iw || !ih) return;
+  if (!iw || !ih) {
+    showEditorTip(ui.value.imageDecodeFailed);
+    return;
+  }
 
   const angleDeg = Number.isFinite(layer.rotate) ? layer.rotate : 0;
   const angle = (angleDeg * Math.PI) / 180;
@@ -2298,7 +2461,10 @@ const bakeStraighten = async () => {
   rot.width = bw;
   rot.height = bh;
   const rctx = rot.getContext('2d');
-  if (!rctx) return;
+  if (!rctx) {
+    showEditorTip(ui.value.exportFailed);
+    return;
+  }
   rctx.clearRect(0, 0, bw, bh);
   rctx.translate(bw / 2, bh / 2);
   rctx.rotate(angle);
@@ -2314,10 +2480,17 @@ const bakeStraighten = async () => {
   out.width = cw;
   out.height = ch;
   const octx = out.getContext('2d');
-  if (!octx) return;
+  if (!octx) {
+    showEditorTip(ui.value.exportFailed);
+    return;
+  }
   octx.clearRect(0, 0, cw, ch);
   octx.drawImage(rot, sx, sy, cw, ch, 0, 0, cw, ch);
-  const url = out.toDataURL('image/png');
+  const url = await canvasToOwnedUrl(out);
+  if (!url) {
+    showEditorTip(ui.value.exportFailed);
+    return;
+  }
 
   const prevSx = Number.isFinite(layer.scaleX) ? layer.scaleX : 1;
   const prevSy = Number.isFinite(layer.scaleY) ? layer.scaleY : 1;
@@ -2345,10 +2518,16 @@ const autoStraighten = async () => {
   const layer = selectedLayer.value;
   if (!layer || layer.locked) return;
   const img = await decodeImage(layer.src);
-  if (!img) return;
+  if (!img) {
+    showEditorTip(ui.value.imageDecodeFailed);
+    return;
+  }
   const iw = layer.naturalWidth || img.naturalWidth || 0;
   const ih = layer.naturalHeight || img.naturalHeight || 0;
-  if (!iw || !ih) return;
+  if (!iw || !ih) {
+    showEditorTip(ui.value.imageDecodeFailed);
+    return;
+  }
   const maxSide = 560;
   const scale = Math.min(1, maxSide / Math.max(iw, ih));
   const dw = Math.max(8, Math.round(iw * scale));
@@ -2357,7 +2536,10 @@ const autoStraighten = async () => {
   c.width = dw;
   c.height = dh;
   const ctx = c.getContext('2d');
-  if (!ctx) return;
+  if (!ctx) {
+    showEditorTip(ui.value.exportFailed);
+    return;
+  }
   ctx.clearRect(0, 0, dw, dh);
   ctx.drawImage(img, 0, 0, iw, ih, 0, 0, dw, dh);
   const data = ctx.getImageData(0, 0, dw, dh);
@@ -2522,6 +2704,7 @@ const readPixelsForLayer = async (layer: ImageLayer, src: string) => {
   const w = Math.max(0, Math.trunc(layer.naturalWidth || img?.naturalWidth || 0));
   const h = Math.max(0, Math.trunc(layer.naturalHeight || img?.naturalHeight || 0));
   if (!img || !w || !h) return null;
+  if (w * h > MAX_IMPORT_PIXELS) return null;
 
   const canvas = scratchCanvasRef.value || document.createElement('canvas');
   scratchCanvasRef.value = canvas;
@@ -2529,10 +2712,14 @@ const readPixelsForLayer = async (layer: ImageLayer, src: string) => {
   canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return null;
-  ctx.clearRect(0, 0, w, h);
-  ctx.drawImage(img, 0, 0, w, h);
-  const imageData = ctx.getImageData(0, 0, w, h);
-  return { w, h, data: new Uint8ClampedArray(imageData.data) };
+  try {
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const imageData = ctx.getImageData(0, 0, w, h);
+    return { w, h, data: new Uint8ClampedArray(imageData.data) };
+  } catch {
+    return null;
+  }
 };
 
 const drawLayerToContext = async (
@@ -2557,12 +2744,17 @@ const drawLayerToContext = async (
   const fx = layer.flipX ? -1 : 1;
   const fy = layer.flipY ? -1 : 1;
   ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(rot);
-  ctx.scale(sx * fx, sy * fy);
-  ctx.drawImage(img, -iw / 2, -ih / 2, iw, ih);
-  ctx.restore();
-  return true;
+  try {
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.scale(sx * fx, sy * fy);
+    ctx.drawImage(img, -iw / 2, -ih / 2, iw, ih);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    ctx.restore();
+  }
 };
 
 const applyCrop = async () => {
@@ -2580,14 +2772,24 @@ const applyCrop = async () => {
   out.width = w;
   out.height = h;
   const octx = out.getContext('2d');
-  if (!octx) return;
+  if (!octx) {
+    showEditorTip(ui.value.exportFailed);
+    return;
+  }
   octx.clearRect(0, 0, w, h);
   octx.save();
   octx.translate(-x, -y);
   const ok = await drawLayerToContext(octx, layer);
   octx.restore();
-  if (!ok) return;
+  if (!ok) {
+    showEditorTip(ui.value.imageDecodeFailed);
+    return;
+  }
   const url = await canvasToOwnedUrl(out);
+  if (!url) {
+    showEditorTip(ui.value.exportFailed);
+    return;
+  }
   const nx = x + w / 2;
   const ny = y + h / 2;
   pushHistory();
@@ -2923,7 +3125,10 @@ const applyRestyle = async () => {
   const src = layer.src;
   if (!src) return;
   const base = await readPixelsForLayer(layer, src);
-  if (!base) return;
+  if (!base) {
+    showEditorTip(ui.value.imageDecodeFailed);
+    return;
+  }
   const w = base.w;
   const h = base.h;
   const out = new Uint8ClampedArray(base.data.length);
@@ -2960,9 +3165,16 @@ const applyRestyle = async () => {
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return;
+  if (!ctx) {
+    showEditorTip(ui.value.exportFailed);
+    return;
+  }
   ctx.putImageData(new ImageData(out, w, h), 0, 0);
   const url = await canvasToOwnedUrl(canvas);
+  if (!url) {
+    showEditorTip(ui.value.exportFailed);
+    return;
+  }
   pushHistory();
   layers.value = layers.value.map((l) =>
     l.id === layer.id ? { ...l, src: url, naturalWidth: w, naturalHeight: h } : l
@@ -2981,7 +3193,10 @@ const applyErase = async () => {
   const src = layer.src;
   if (!src) return;
   const base = await readPixelsForLayer(layer, src);
-  if (!base) return;
+  if (!base) {
+    showEditorTip(ui.value.imageDecodeFailed);
+    return;
+  }
   const w = base.w;
   const h = base.h;
   const threshold = clampNumber(cutoutThreshold.value + 0.2, 0.05, 0.95);
@@ -2993,9 +3208,16 @@ const applyErase = async () => {
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return;
+  if (!ctx) {
+    showEditorTip(ui.value.exportFailed);
+    return;
+  }
   ctx.putImageData(new ImageData(out.data, w, h), 0, 0);
   const url = await canvasToOwnedUrl(canvas);
+  if (!url) {
+    showEditorTip(ui.value.exportFailed);
+    return;
+  }
   pushHistory();
   layers.value = layers.value.map((l) =>
     l.id === layer.id ? { ...l, src: url, naturalWidth: w, naturalHeight: h } : l
@@ -3014,17 +3236,30 @@ const applyUpscale2x = async () => {
   await nextTick();
   try {
     const img = await decodeImage(layer.src);
-    if (!img) return;
+    if (!img) {
+      showEditorTip(ui.value.imageDecodeFailed);
+      return;
+    }
     const w0 = layer.naturalWidth || img.naturalWidth || 0;
     const h0 = layer.naturalHeight || img.naturalHeight || 0;
-    if (!w0 || !h0) return;
+    if (!w0 || !h0) {
+      showEditorTip(ui.value.imageDecodeFailed);
+      return;
+    }
     const w = Math.max(1, Math.min(16384, w0 * 2));
     const h = Math.max(1, Math.min(16384, h0 * 2));
+    if (w * h > MAX_EXPORT_PIXELS) {
+      showEditorTip(ui.value.exportTooLarge);
+      return;
+    }
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
+    if (!ctx) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
     ctx.imageSmoothingEnabled = true;
     try {
       ctx.imageSmoothingQuality = 'high';
@@ -3038,6 +3273,10 @@ const applyUpscale2x = async () => {
     );
     ctx.putImageData(new ImageData(sharpened.data, w, h), 0, 0);
     const url = await canvasToOwnedUrl(canvas);
+    if (!url) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
     if (upscaleJobId.value !== job) return;
     pushHistory();
     updateLayerById(layer.id, (l) => ({
@@ -3382,6 +3621,7 @@ const applyManualCutout = async () => {
     }
 
     const url = await canvasToOwnedUrl(out);
+    if (!url) throw new Error('Cannot create cutout image');
     const newCenter = layerPixelToCanvasPoint(layer, base, { x: minX + w / 2, y: minY + h / 2 });
     const nx = newCenter.x;
     const ny = newCenter.y;
@@ -3395,6 +3635,7 @@ const applyManualCutout = async () => {
     bgCtx.globalCompositeOperation = 'destination-out';
     bgCtx.drawImage(maskCanvas, 0, 0);
     const bgUrl = await canvasToOwnedUrl(bgCanvas);
+    if (!bgUrl) throw new Error('Cannot create cutout background');
 
     if (cutoutJobId.value !== job) return;
     pushHistory();
@@ -3432,8 +3673,7 @@ const applyManualCutout = async () => {
     showEditorTip(currentLang.value === 'en' ? 'Cutout layer created.' : '已新增抠图图层。');
     cancelCutout();
     gcObjectUrls();
-  } catch (err) {
-    console.error('Manual cutout error:', err);
+  } catch {
     showEditorTip(currentLang.value === 'en' ? 'Manual cutout failed.' : '手动抠图失败，请重试。');
     if (cutoutJobId.value === job) cancelCutout();
   } finally {
@@ -3460,7 +3700,10 @@ const applyCutoutRemove = async () => {
     const src = layer.src;
     const w = Math.max(0, Math.trunc(layer.naturalWidth || 0));
     const h = Math.max(0, Math.trunc(layer.naturalHeight || 0));
-    if (!src || !w || !h) return;
+    if (!src || !w || !h) {
+      showEditorTip(ui.value.imageDecodeFailed);
+      return;
+    }
     const hit = cutoutBasePixels.value;
     const base =
       hit && hit.layerId === layer.id && hit.src === src && hit.w === w && hit.h === h
@@ -3472,19 +3715,29 @@ const applyCutoutRemove = async () => {
             cutoutBasePixels.value = next;
             return next;
           })();
-    if (!base) return;
+    if (!base) {
+      showEditorTip(ui.value.imageDecodeFailed);
+      return;
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
+    if (!ctx) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
     const out = removeBackgroundAlgorithm1(
       { width: w, height: h, data: base.data },
       { threshold: cutoutThreshold.value, feather: 0.6 }
     );
     ctx.putImageData(new ImageData(out.data, w, h), 0, 0);
     const url = await canvasToOwnedUrl(canvas);
+    if (!url) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
     if (cutoutJobId.value !== job) return;
     if (toolMode.value !== 'cutout') return;
     if (cutoutTargetLayerId.value !== id) return;
@@ -3517,7 +3770,10 @@ const applyCutoutSplit = async () => {
     const src = layer.src;
     const w = Math.max(0, Math.trunc(layer.naturalWidth || 0));
     const h = Math.max(0, Math.trunc(layer.naturalHeight || 0));
-    if (!src || !w || !h) return;
+    if (!src || !w || !h) {
+      showEditorTip(ui.value.imageDecodeFailed);
+      return;
+    }
     const hit = cutoutBasePixels.value;
     const base =
       hit && hit.layerId === layer.id && hit.src === src && hit.w === w && hit.h === h
@@ -3529,7 +3785,10 @@ const applyCutoutSplit = async () => {
             cutoutBasePixels.value = next;
             return next;
           })();
-    if (!base) return;
+    if (!base) {
+      showEditorTip(ui.value.imageDecodeFailed);
+      return;
+    }
 
     const out = splitLayersAlgorithm1(
       { width: w, height: h, data: base.data },
@@ -3540,11 +3799,18 @@ const applyCutoutSplit = async () => {
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
+    if (!ctx) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
     ctx.putImageData(new ImageData(out.foreground, w, h), 0, 0);
     const fgUrl = await canvasToOwnedUrl(canvas);
     ctx.putImageData(new ImageData(out.background, w, h), 0, 0);
     const bgUrl = await canvasToOwnedUrl(canvas);
+    if (!fgUrl || !bgUrl) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
 
     if (cutoutJobId.value !== job) return;
     if (toolMode.value !== 'cutout') return;
@@ -3609,7 +3875,10 @@ const runRestorePreview = async () => {
             restoreBasePixels.value = next;
             return next;
           })();
-    if (!base) return;
+    if (!base) {
+      showEditorTip(ui.value.imageDecodeFailed);
+      return;
+    }
     const w = base.w;
     const h = base.h;
 
@@ -3617,13 +3886,20 @@ const runRestorePreview = async () => {
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
+    if (!ctx) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
     const restored = restoreImageAlgorithm1(
       { width: w, height: h, data: base.data },
       { strength: restoreStrength.value, denoise: restoreDenoise.value }
     );
     ctx.putImageData(new ImageData(restored.data, w, h), 0, 0);
     const url = await canvasToOwnedUrl(canvas);
+    if (!url) {
+      showEditorTip(ui.value.exportFailed);
+      return;
+    }
 
     if (restoreJobId.value !== job) return;
     if (toolMode.value !== 'restore') return;
@@ -3722,6 +3998,7 @@ const applyRestore = async () => {
 
   const finalPreview = restorePreviewSrc.value;
   if (!finalPreview || finalPreview === orig) {
+    if (!finalPreview) showEditorTip(ui.value.imageDecodeFailed);
     restoreTargetLayerId.value = null;
     originalLayerSrc.value = null;
     restorePreviewSrc.value = null;
@@ -3874,7 +4151,6 @@ const onStagePointerUp = (e: PointerEvent) => {
 </script>
 
 <style scoped>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;700;900&display=swap');
 @import '../styles/cyberpunk.css';
 
 .image-editor-page {
@@ -3998,10 +4274,13 @@ const onStagePointerUp = (e: PointerEvent) => {
   background: rgba(10, 10, 10, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.14);
   backdrop-filter: blur(10px);
-  color: rgba(248, 113, 113, 0.95);
+  color: rgba(229, 231, 235, 0.96);
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
+  line-height: 1.45;
   text-align: center;
+  pointer-events: none;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
 }
 
 .mobile-panel-mask {
@@ -4049,7 +4328,16 @@ const onStagePointerUp = (e: PointerEvent) => {
   letter-spacing: 0.08em;
 }
 
+.panel-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .panel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   padding: 6px 10px;
@@ -4063,6 +4351,12 @@ const onStagePointerUp = (e: PointerEvent) => {
 .panel-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.panel-close {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
 }
 
 .layers-list {
@@ -4138,8 +4432,12 @@ const onStagePointerUp = (e: PointerEvent) => {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.06);
   color: #fff;
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   border-radius: 9px;
   cursor: pointer;
   display: inline-flex;
@@ -4159,6 +4457,12 @@ const onStagePointerUp = (e: PointerEvent) => {
   gap: 6px;
   z-index: 200;
   box-shadow: 0 18px 30px rgba(0, 0, 0, 0.45);
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 2px 4px;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .menu-item {
@@ -4362,6 +4666,18 @@ const onStagePointerUp = (e: PointerEvent) => {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
 }
 
+.manual-cutout-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.manual-cutout-svg {
+  pointer-events: none;
+}
+
 .stage-empty {
   position: absolute;
   left: 50%;
@@ -4423,10 +4739,22 @@ const onStagePointerUp = (e: PointerEvent) => {
 }
 
 .tool-section {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
   border-radius: 16px;
   padding: 12px;
+}
+
+.tool-section > *,
+.tool-section input,
+.tool-section select,
+.tool-section button {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .tool-section-title {
@@ -4455,8 +4783,12 @@ const onStagePointerUp = (e: PointerEvent) => {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.06);
   color: #e5e7eb;
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   border-radius: 9px;
   cursor: pointer;
   display: inline-flex;
@@ -4549,8 +4881,12 @@ const onStagePointerUp = (e: PointerEvent) => {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.06);
   color: #e5e7eb;
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   border-radius: 10px;
   cursor: pointer;
   font-size: 14px;
@@ -4604,6 +4940,9 @@ const onStagePointerUp = (e: PointerEvent) => {
   cursor: pointer;
   font-size: 13px;
   gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .smart-btn:disabled {
@@ -4622,6 +4961,38 @@ const onStagePointerUp = (e: PointerEvent) => {
   margin-top: 12px;
   display: flex;
   gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.smart-inline-compact {
+  margin-bottom: 12px;
+}
+
+.manual-cutout-controls {
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.manual-cutout-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.manual-cutout-history {
+  display: flex;
+  gap: 4px;
+}
+
+.mini-icon-btn {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
 }
 
 .straighten-panel {
@@ -4666,6 +5037,15 @@ const onStagePointerUp = (e: PointerEvent) => {
   cursor: pointer;
   font-size: 13px;
   gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tool-btn.active {
+  border-color: rgba(204, 255, 0, 0.35);
+  background: rgba(204, 255, 0, 0.1);
+  color: #ccff00;
 }
 
 .tool-btn:disabled {
@@ -4777,6 +5157,11 @@ const onStagePointerUp = (e: PointerEvent) => {
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
   }
 
+  .panel.mobile-panel-open .tools-body,
+  .panel.mobile-panel-open .layers-list {
+    overscroll-behavior: contain;
+  }
+
   /* Increase touch targets for mobile */
   .topbar-btn,
   .view-btn,
@@ -4788,6 +5173,21 @@ const onStagePointerUp = (e: PointerEvent) => {
     width: 44px;
     height: 44px;
     font-size: 20px;
+  }
+
+  .mini-icon-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+
+  .smart-inline {
+    gap: 8px;
+  }
+
+  .tool-row,
+  .smart-inline {
+    min-width: 0;
   }
 
   .action-icon {
@@ -4802,22 +5202,31 @@ const onStagePointerUp = (e: PointerEvent) => {
 
 @media (max-width: 600px) {
   .editor-topbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
     padding: 8px 10px;
     gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
   }
   .topbar-title {
     display: none;
   }
   .topbar-center {
-    flex: 1;
+    grid-column: 1 / -1;
+    grid-row: 2;
     justify-content: center;
   }
+  .topbar-right {
+    min-width: 0;
+  }
   .panel.mobile-panel-open {
-    top: 70px;
+    top: 122px;
     bottom: 80px;
   }
   .editor-tip {
-    top: 80px;
+    top: 126px;
+    max-width: calc(100vw - 24px);
   }
 }
 </style>

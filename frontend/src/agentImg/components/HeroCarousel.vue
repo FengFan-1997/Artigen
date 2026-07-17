@@ -15,7 +15,16 @@
         @click="$emit('navigate', slide.route, slide.id)"
       >
         <div class="slide-image-wrapper">
-          <img :src="slide.image" :alt="slide.title" class="slide-image" />
+          <img
+            v-if="!brokenSlides.has(index)"
+            :src="slide.image"
+            :alt="slide.title"
+            class="slide-image"
+            @error="markSlideBroken(index)"
+          />
+          <div v-else class="slide-image slide-image-fallback" aria-hidden="true">
+            <span class="fallback-mark"></span>
+          </div>
           <div class="slide-overlay">
             <div class="slide-header">
               <div class="slide-icon" v-if="slide.icon" v-html="slide.icon"></div>
@@ -99,6 +108,11 @@ const currentIndex = ref(0);
 let autoPlayTimer: number | null = null;
 const touchStartX = ref(0);
 const touchEndX = ref(0);
+const brokenSlides = ref<Set<number>>(new Set());
+
+const markSlideBroken = (index: number) => {
+  brokenSlides.value = new Set([...brokenSlides.value, index]);
+};
 
 const nextSlide = () => {
   currentIndex.value = (currentIndex.value + 1) % props.slides.length;
@@ -198,6 +212,33 @@ onBeforeUnmount(() => {
   object-fit: cover;
   transition: transform 0.5s ease;
   opacity: 0.9;
+}
+
+.slide-image-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(204, 255, 0, 0.08) 0,
+      rgba(204, 255, 0, 0.08) 1px,
+      transparent 1px,
+      transparent 16px
+    ),
+    #101014;
+}
+
+.fallback-mark {
+  width: 88px;
+  height: 64px;
+  border: 1px solid rgba(204, 255, 0, 0.42);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, transparent 44%, rgba(51, 214, 255, 0.18) 45%, rgba(51, 214, 255, 0.18) 55%, transparent 56%),
+    rgba(255, 255, 255, 0.04);
+  box-shadow: 18px 14px 0 rgba(255, 255, 255, 0.08);
 }
 
 .carousel-slide:hover .slide-image {

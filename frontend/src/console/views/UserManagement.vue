@@ -304,19 +304,11 @@ const showAdminError = (e: any) => {
     );
     return;
   }
-  if (err === 'ADMIN_NOT_CONFIGURED') {
+  if (err === 'ADMIN_NOT_CONFIGURED' || err === 'ADMIN_ACCOUNT_NOT_CONFIGURED') {
     message.error(
       currentLang.value === 'zh'
-        ? '后端未配置 ADMIN_KEY（请在 Zeabur 设置）'
-        : 'ADMIN_KEY is not configured on backend'
-    );
-    return;
-  }
-  if (err === 'ADMIN_ACCOUNT_NOT_CONFIGURED') {
-    message.error(
-      currentLang.value === 'zh'
-        ? '后端未配置管理员账号（请设置 CONSOLE_ADMIN_USERNAME/PASSWORD）'
-        : 'Admin account is not configured on backend'
+        ? '管理员认证未配置：请在 Railway 设置 CONSOLE_ADMIN_USERNAME/PASSWORD，并完成 PostgreSQL 管理员授权'
+        : 'Admin authentication is not configured. Set CONSOLE_ADMIN_USERNAME/PASSWORD in Railway and grant the PostgreSQL administrator role.'
     );
     return;
   }

@@ -76,6 +76,12 @@ const emit = defineEmits<{
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
 }
 
+.tool-card:focus-visible {
+  outline: 3px solid #ccff00;
+  outline-offset: 4px;
+  border-color: rgba(204, 255, 0, 0.75);
+}
+
 .card-header {
   width: 100%;
   display: flex;
@@ -170,6 +176,19 @@ const emit = defineEmits<{
     padding: 24px;
     height: auto;
     min-height: 300px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-card,
+  .launch-text,
+  .arrow {
+    transition-duration: 0.01ms !important;
+  }
+
+  .tool-card:hover,
+  .tool-card:focus-visible {
+    transform: none;
   }
 }
 </style>

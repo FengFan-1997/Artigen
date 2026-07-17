@@ -14,11 +14,9 @@
             <span class="title-text-group">
               {{ ui.titleMain }} <span class="highlight">{{ ui.titleHighlight }}</span>
             </span>
-            <div class="badges-group">
-              <span class="real-beta-badge">Beta</span>
-              <span class="beta-badge">{{ ui.beta }}</span>
-            </div>
+            <span class="real-beta-badge">Beta</span>
           </h1>
+          <div class="mode-separation-note">{{ ui.beta }}</div>
           <p class="page-desc">{{ ui.desc }}</p>
         </div>
       </div>
@@ -78,7 +76,7 @@
 
         <ToolCard
           tool-id="TOOL_03"
-          badge="10<svg style='display:inline-block;vertical-align:middle;margin-left:2px;' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' width='10' height='10'><polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'></polygon></svg>"
+          :badge="currentLang === 'en' ? 'LOCAL FREE / AI PAID' : '本地免费 / AI 付费'"
           icon=""
           :title="ui.toolIngredientTitle"
           :desc="ui.toolIngredientDesc"
@@ -229,27 +227,52 @@
     <GlobalFooter />
 
     <transition name="fade">
-      <div v-if="resultVisible" class="result-overlay" @click="closeResult">
-        <div class="result-container" @click.stop>
+      <div v-if="resultVisible" class="result-overlay" @click.self="closeResult">
+        <section
+          ref="resultDialogRef"
+          class="result-container"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="workshop-result-title"
+          tabindex="-1"
+          @keydown="onResultDialogKeydown"
+        >
           <div class="result-header">
-            <div class="result-title">{{ resultTitle }}</div>
+            <h2 id="workshop-result-title" class="result-title">{{ resultTitle }}</h2>
             <CloseButton @click="closeResult" />
           </div>
-          <div v-if="resultError" class="result-error">{{ resultError }}</div>
+          <div v-if="resultError" class="result-error" role="alert">{{ resultError }}</div>
           <div v-else class="result-body">
-            <div v-if="resultLoading" class="result-loading">
-              <div class="loading-spinner"></div>
+            <div v-if="resultLoading" class="result-loading" role="status" aria-live="polite">
+              <div class="loading-spinner" aria-hidden="true"></div>
               <div class="loading-text">{{ ui.loading }}</div>
+              <button class="result-btn secondary cancel-request" type="button" @click="cancelActiveRequest">
+                {{ ui.cancel }}
+              </button>
             </div>
             <div v-if="resultUrl" class="result-image-wrap">
-              <img :src="resultUrl" class="result-image" alt="Result" />
+              <div v-if="resultImageBroken" class="result-image-missing">
+                <div class="result-image-missing-title">{{ ui.imageMissing }}</div>
+                <div class="result-image-missing-sub">{{ ui.imageMissingSub }}</div>
+              </div>
+              <div v-else-if="resultSourceUrl" class="old-photo-comparison">
+                <figure>
+                  <img :src="resultSourceUrl" class="result-image" :alt="ui.before" />
+                  <figcaption>{{ ui.before }}</figcaption>
+                </figure>
+                <figure>
+                  <img :src="resultUrl" class="result-image" :alt="ui.after" @error="resultImageBroken = true" />
+                  <figcaption>{{ ui.version }} {{ resultVersion }}</figcaption>
+                </figure>
+              </div>
+              <img v-else :src="resultUrl" class="result-image" alt="Result" @error="resultImageBroken = true" />
             </div>
             <div class="result-actions">
               <button
                 class="result-btn"
                 type="button"
                 @click="downloadResult"
-                :disabled="!resultUrl || resultLoading"
+                :disabled="!resultUrl || resultLoading || resultImageBroken"
               >
                 {{ ui.download }}
               </button>
@@ -258,45 +281,57 @@
               </button>
             </div>
           </div>
-        </div>
+        </section>
       </div>
     </transition>
 
+    <StandardIdPhotoPopup
+      :visible="isStandardIdPhotoPopupOpen"
+      @close="closeWorkshopPopup('id-photo')"
+      @open-ai="openAiProfessionalPortrait"
+    />
+
     <IdPhotoPopup
       :visible="isIdPhotoPopupOpen"
-      :credits-cost="idPhotoCost"
-      @close="isIdPhotoPopupOpen = false"
+      :credits-cost="idPhotoQuote?.credits ?? 0"
+      :quote-loading="idPhotoQuoteLoading"
+      :quote-error="idPhotoQuoteError"
+      @close="closeWorkshopPopup('id-photo')"
       @generate="handleGenerateIdPhoto"
     />
 
     <OldPhotoPopup
       :visible="isOldPhotoPopupOpen"
-      :credits-cost="oldPhotoCost"
-      @close="isOldPhotoPopupOpen = false"
+      :credits-cost="oldPhotoQuote?.credits ?? 0"
+      :quote-loading="oldPhotoQuoteLoading"
+      :quote-error="oldPhotoQuoteError"
+      @close="closeWorkshopPopup('old-photo')"
       @restore="handleRestoreOldPhoto"
     />
 
     <AiBackgroundPopup
       :visible="isAiBackgroundPopupOpen"
-      :credits-cost="aiBackgroundCost"
-      @close="isAiBackgroundPopupOpen = false"
+      :credits-cost="backgroundQuote?.credits ?? 0"
+      :quote-loading="backgroundQuoteLoading"
+      :quote-error="backgroundQuoteError"
+      @close="closeWorkshopPopup('background')"
       @generate="handleGenerateAiBackground"
     />
 
     <IngredientLabel
       :visible="isIngredientPopupOpen"
-      :credits-cost="ingredientLabelCost"
-      @close="isIngredientPopupOpen = false"
+      @close="closeWorkshopPopup('ingredient-label')"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch } from 'vue';
 import { storeToRefs } from 'pinia';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import TitleBar from '../components/TitleBar.vue';
 import GlobalFooter from '../components/GlobalFooter.vue';
+import StandardIdPhotoPopup from '../components/StandardIdPhotoPopup.vue';
 import IdPhotoPopup from '../components/IdPhotoPopup.vue';
 import OldPhotoPopup from '../components/OldPhotoPopup.vue';
 import AiBackgroundPopup from '../components/AiBackgroundPopup.vue';
@@ -305,12 +340,25 @@ import CloseButton from '../components/CloseButton.vue';
 import IngredientLabel from './IngredientLabel.vue';
 import { trackPageView, trackEvent } from '../../utils/analytics';
 import { setMeta } from '../../utils/seo';
-import { img2img, type GenerateImageInput } from '../services/text';
 import { downloadBlob } from '../logic/formatFactory/url';
 import { useConsoleStore } from '@/stores/console';
-import { getAuthToken, getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import { resourceFetch } from '@/login/authFetch';
 import { useLanguageStore } from '@/stores/language';
+import {
+  cancelToolTask,
+  quoteToolTask,
+  taskAssetUrl,
+  type ToolTaskQuote
+} from '../services/toolTasks';
+import {
+  cancelPersistedWorkshopTask,
+  loadPendingWorkshopTask,
+  resumePersistedWorkshopTask,
+  startPersistedWorkshopTask
+} from '../services/workshopTasks';
 
+const isStandardIdPhotoPopupOpen = ref(false);
 const isIdPhotoPopupOpen = ref(false);
 const isOldPhotoPopupOpen = ref(false);
 const isIngredientPopupOpen = ref(false);
@@ -322,73 +370,105 @@ const resultUrl = ref('');
 const resultError = ref('');
 const resultLoading = ref(false);
 const activeRequestId = ref('');
+const resultImageBroken = ref(false);
+const resultSourceUrl = ref('');
+const resultVersion = ref(0);
+const resultDialogRef = ref<HTMLElement | null>(null);
+let resultReturnFocus: HTMLElement | null = null;
+let activeRequestController: AbortController | null = null;
+const activeToolTaskId = ref('');
+const activeWorkshopSlot = ref('');
+const oldPhotoQuote = ref<ToolTaskQuote | null>(null);
+const oldPhotoQuoteLoading = ref(false);
+const oldPhotoQuoteError = ref('');
+let oldPhotoQuoteController: AbortController | null = null;
+const idPhotoQuote = ref<ToolTaskQuote | null>(null);
+const idPhotoQuoteLoading = ref(false);
+const idPhotoQuoteError = ref('');
+let idPhotoQuoteController: AbortController | null = null;
+const backgroundQuote = ref<ToolTaskQuote | null>(null);
+const backgroundQuoteLoading = ref(false);
+const backgroundQuoteError = ref('');
+let backgroundQuoteController: AbortController | null = null;
 
 const router = useRouter();
+const route = useRoute();
 const consoleStore = useConsoleStore();
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
-const idPhotoCost = 5;
-const oldPhotoCost = 5;
-const aiBackgroundCost = 5;
-const ingredientLabelCost = 10;
 
 const ui = computed(() => {
   const en = currentLang.value === 'en';
   return {
-    status: en ? 'AI LAB' : 'AI 实验室',
+    status: en ? 'IMAGE WORKFLOWS' : '影像工作流',
     titleMain: en ? 'AI Image' : 'AI 影像',
     titleHighlight: en ? 'Workshop' : '工坊',
-    beta: en ? '✨ Cloud encrypted processing' : '✨ 云端加密处理',
+    beta: en ? 'Local and cloud modes are labeled separately' : '本地与云端模式明确分开',
     desc: en
-      ? 'Explore AI tools for ID photos, restoration, background editing, and FDA ingredient label creation.'
-      : '探索 AI 驱动的影像处理工具：证件照、修复、AI 背景与 FDA 配料表标签图生成。',
-    toolIdTitle: en ? 'Smart ID Photo' : '智能证件照',
+      ? 'Create local standard ID photos or professional portraits, enhance old photos, replace backgrounds, lay out labels, or open Editor 2.0.'
+      : '本地制作标准证件照或云端职业形象，也可增强老照片、替换背景、排版标签并进入编辑器 2.0。',
+    toolIdTitle: en ? 'ID Photo & Professional Portrait' : '证件照与职业形象',
     toolIdDesc: en
-      ? 'Multiple specs, one-click standard ID photo.'
-      : '支持多种规格，一键生成标准证件照',
-    toolOldTitle: en ? 'Old Photo Restoration' : '老照片修复',
+      ? 'Free local standard ID photos or paid cloud AI professional portraits, clearly separated.'
+      : '免费本地标准证件照与付费云端 AI 职业形象明确分开。',
+    toolOldTitle: en ? 'AI Old Photo Enhancement' : 'AI 老照片增强',
     toolOldDesc: en
-      ? 'Restore blurry/damaged photos, optional colorization.'
-      : '修复模糊、破损照片，支持智能上色',
-    toolIngredientTitle: en ? 'FDA Ingredient Label' : 'FDA 配料表',
+      ? 'Paid enhancement with optional inferred colorization; not a factual reconstruction.'
+      : '付费清晰增强与可选推测性上色；不宣称历史事实复原。',
+    toolIngredientTitle: en ? 'Ingredient Label Layout' : '配料标签排版助手',
     toolIngredientDesc: en
-      ? 'Paste text and generate a clean label image.'
-      : '粘贴配料/成分文本，一键生成规范标签图',
+      ? 'Lay out only supplied text; no invented content or compliance conclusion.'
+      : '只排版用户原文，不补全内容，也不提供合规结论。',
     toolBgTitle: en ? 'AI Background' : 'AI 背景',
     toolBgDesc: en
       ? 'Replace or add realistic backgrounds with local preview.'
       : '一键换背景/加场景，支持本地预览与主体可调',
-    toolEditorTitle: en ? 'Image Editor' : '图片编辑',
+    toolEditorTitle: en ? 'Image Editor 2.0' : '图片编辑器 2.0',
     toolEditorDesc: en
-      ? 'Import, layer, drag, and export. More editing tools are coming soon.'
-      : '导入、分层、拖拽与导出，后续逐步加入更多编辑能力。',
+      ? 'Non-destructive layers, autosave, local Workers, and PNG/JPEG/WebP export.'
+      : '非破坏图层、自动保存、本地 Worker 与 PNG/JPEG/WebP 导出。',
     launch: 'LAUNCH',
     resultTitle: en ? 'Result' : '生成结果',
     download: en ? 'Download' : '下载',
     close: en ? 'Close' : '关闭',
     loading: en ? 'Generating, please wait…' : '正在生成，请稍候…',
+    cancel: en ? 'Cancel request' : '取消任务',
+    cancelled: en ? 'Request cancelled. Reserved credits were released.' : '任务已取消，预占点数已释放。',
+    cancelPending: en
+      ? 'Cancellation is pending confirmation. Refreshing will safely resume and retry it.'
+      : '取消仍待服务端确认；刷新后会安全恢复并继续确认。',
+    cancelCompleted: en
+      ? 'The task completed before cancellation. No refund was claimed.'
+      : '任务已在取消前完成，本次不宣称退款。',
+    before: en ? 'Before' : '增强前',
+    after: en ? 'After' : '增强后',
+    version: en ? 'Version' : '版本',
     fileReadFailed: en ? 'Failed to read image. Please try again.' : '图片读取失败，请重试',
     loginRequired: en ? 'Please sign in to use this feature.' : '请先登录后使用（当前免费）',
+    imageMissing: en ? 'Image unavailable' : '图片已失效',
+    imageMissingSub: en ? 'The original image could not be loaded.' : '原图暂时无法加载',
 
     contentTitle: en ? 'Usage Guide' : '使用专栏',
     contentDesc: en
-      ? 'AI Lab includes Smart ID Photos, Old Photo Restoration, AI Background, and FDA ingredient label generation.'
-      : 'AI 实验室包含：智能证件照、老照片修复（可选上色/去噪）、AI 背景以及 FDA 配料表标签图生成。',
+      ? 'Each workflow states whether it stays local or uploads after confirmation.'
+      : '每个工作流都会明确标注本地处理，或在确认后上传。',
     useCasesTitle: en ? 'Use Cases' : '使用场景',
     useCases: en
       ? [
-          'ID Photo: crop/resize, background replacement, common specs export.',
+          'Standard ID photo: free local sizing, background color and 6-inch print layout.',
+          'Professional portrait: paid cloud generation with explicit confirmation.',
           'Restoration: denoise, enhance clarity, optional colorization.',
           'AI Background: replace/add scenes for product shots and portraits.',
-          'Ingredient Label: paste label text and generate a clean label image.',
+          'Ingredient label: source-only organization and editable layout.',
           'E-commerce: quick assets for listings and packaging drafts.',
           'Personal: restore old photos and export higher quality copies.'
         ]
       : [
-          '证件照：裁切/尺寸标准化、换底色、常用规格一键导出。',
-          '老照片修复：去噪、清晰增强、可选智能上色。',
+          '标准证件照：免费本地完成尺寸、背景色与 6 寸打印排版。',
+          '职业形象：明确确认后进行付费云端生成。',
+          '老照片增强：去噪、清晰增强、可选推测性上色。',
           'AI 背景：商品图/人物图一键换背景或补充场景。',
-          'FDA 配料表：粘贴配料/成分文本，生成规范标签图。',
+          '配料标签：只整理用户原文并排版，新增事实会被拒绝。',
           '电商/品牌：快速产出可用素材，用于商品页与包装打样。',
           '个人留存：修复旧照片并导出更高质量版本。'
         ],
@@ -400,8 +480,8 @@ const ui = computed(() => {
           'passport photo',
           'old photo colorize',
           'photo denoise',
-          'FDA ingredient label',
-          'ingredient list generator',
+          'ingredient label layout',
+          'source-only ingredient organizer',
           'label image'
         ]
       : [
@@ -410,8 +490,8 @@ const ui = computed(() => {
           '护照签证照',
           '老照片上色',
           '照片去噪',
-          'FDA 配料表',
-          '配料表生成器',
+          '配料标签排版',
+          '原文整理工具',
           '标签图生成'
         ],
     faqTitle: en ? 'FAQ' : '常见问题',
@@ -420,7 +500,7 @@ const ui = computed(() => {
       ? [
           {
             q: 'What modules are included in Image Workshop?',
-            a: 'Currently includes Smart ID Photo, Old Photo Restoration, AI Background, and FDA ingredient label generation.'
+            a: 'Current workflows cover AI professional portraits, old-photo enhancement, local/AI backgrounds, source-only ingredient label layout, and Editor 2.0.'
           },
           {
             q: 'Is Image Workshop in beta?',
@@ -432,25 +512,25 @@ const ui = computed(() => {
           },
           {
             q: 'What ID photo specs are supported?',
-            a: 'Common sizes and aspect ratios are supported. Choose the preset in the tool and export instantly.'
+            a: 'The local tool includes 295×413 1-inch, 413×579 2-inch and 390×567 passport presets, plus custom px or mm + DPI.'
           },
           {
             q: 'How do I choose denoise / colorize for old photos?',
             a: 'Enable denoise for grainy photos. Enable colorize if you want a colorized result; keep it off for a more faithful restoration.'
           },
           {
-            q: 'Is the FDA ingredient label output guaranteed compliant?',
-            a: 'We generate a clean label-style image from your text, but you should still review wording and formatting for your product and jurisdiction.'
+            q: 'Does the ingredient label assistant certify compliance?',
+            a: 'No. It only arranges supplied text. It rejects newly introduced facts and provides no legal or regulatory conclusion.'
           },
           {
             q: 'Do you store my uploaded photos?',
-            a: 'Files are used only for processing your request. We aim to clear task-related temporary data as soon as possible after completion.'
+            a: 'Standard ID photos stay on your device and are never uploaded. Paid AI workflows upload only after explicit confirmation.'
           }
         ]
       : [
           {
             q: '影像工坊目前有哪些模块？',
-            a: '当前包含：智能证件照、老照片修复、AI 背景、FDA 配料表标签图生成。'
+            a: '当前包含：AI 职业形象、老照片增强、本地/AI 换背景、只基于原文的配料标签排版，以及图片编辑器 2.0。'
           },
           {
             q: '影像工坊是 Beta 吗？',
@@ -462,19 +542,19 @@ const ui = computed(() => {
           },
           {
             q: '证件照支持哪些规格？',
-            a: '覆盖常见尺寸与比例。进入工具后选择预设规格即可一键导出。'
+            a: '本地工具包含一寸 295×413、二寸 413×579、护照 390×567，并支持自定义 px 或 mm + DPI。'
           },
           {
             q: '老照片去噪/上色怎么选？',
             a: '噪点明显建议开去噪；想要彩色效果再打开上色。追求“更还原”的修复可以只开去噪。'
           },
           {
-            q: 'FDA 配料表生成能保证完全合规吗？',
-            a: '这里输出的是“标签图样式”的排版结果，便于快速出图；最终上线前仍建议人工校对用词、顺序与法规要求。'
+            q: '配料标签助手能保证合规吗？',
+            a: '不能。它只整理和排版用户提供的原文，新增事实会被拒绝，也不会给出法律或监管合规结论。'
           },
           {
             q: '上传的照片会被保存吗？',
-            a: '文件仅用于完成本次处理。任务完成后我们会尽快清理临时数据。'
+            a: '标准证件照全程保留在当前设备且不会上传；付费 AI 工作流只会在明确确认后上传。'
           }
         ]
   };
@@ -491,31 +571,134 @@ onMounted(() => {
   setMeta({
     title:
       currentLang.value === 'zh'
-        ? 'AI 影像工坊 - 证件照/老照片修复/AI背景/FDA配料表'
-        : 'AI Image Workshop - ID Photo / Restoration / AI Background / FDA Ingredient Label',
+        ? 'Artigen 影像工坊 - 标准证件照/职业形象/老照片增强/换背景/图片编辑'
+        : 'Artigen Image Workshop - ID Photo / Portrait / Enhancement / Background / Editor',
     description:
       currentLang.value === 'zh'
-        ? 'Artigen AI 影像工坊提供智能证件照、老照片修复、AI 背景与 FDA 配料表标签图生成。'
-        : 'Artigen AI Image Workshop provides ID photos, restoration, AI background editing, and FDA ingredient label generation.',
+        ? 'Artigen 明确区分免费本地标准证件照与付费 AI 职业形象，并提供老照片增强、换背景与图片编辑。'
+        : 'Artigen separates free local standard ID photos from paid AI professional portraits, with enhancement and editing tools.',
     keywords:
       currentLang.value === 'zh'
-        ? 'AI证件照,老照片修复,AI背景,背景替换,电商背景,人物背景,FDA配料表,配料表生成器,标签图生成'
-        : 'AI ID photo, old photo restoration, AI background, background replacement, product background, FDA ingredient label, ingredient generator, label image'
+        ? '标准证件照,一寸照,二寸照,护照照片,AI职业形象,老照片增强,背景替换,图片编辑器'
+        : 'standard ID photo,1-inch photo,2-inch photo,passport photo,AI professional portrait,image editor'
   });
+  void resumePendingImageWorkshopTask();
 });
 
 const openIdPhotoPopup = () => {
-  isIdPhotoPopupOpen.value = true;
+  isIdPhotoPopupOpen.value = false;
+  isStandardIdPhotoPopupOpen.value = true;
+  if (route.params.toolId !== 'id-photo') router.push('/artigen/image-workshop/id-photo');
   consoleStore.recordTraffic({
     type: 'click',
     page: '/artigen/image-workshop',
-    target: 'id_photo'
+    target: 'id_photo_mode_select'
   });
-  trackEvent('ImageWorkshop', 'open_tool', 'id_photo');
+  trackEvent('ImageWorkshop', 'open_tool', 'id_photo_mode_select');
+};
+
+const openAiProfessionalPortrait = () => {
+  isStandardIdPhotoPopupOpen.value = false;
+  isIdPhotoPopupOpen.value = true;
+  void loadIdPhotoQuote();
+  trackEvent('ImageWorkshop', 'select_mode', 'ai_professional_portrait');
+};
+
+const isAuthenticated = () => {
+  const uid = String(getCurrentUserId() || '').trim();
+  return Boolean(uid && !uid.startsWith('guest_') && isLocalLoggedIn());
+};
+
+const loadIdPhotoQuote = async () => {
+  idPhotoQuoteController?.abort();
+  const controller = new AbortController();
+  idPhotoQuoteController = controller;
+  idPhotoQuote.value = null;
+  idPhotoQuoteError.value = '';
+  if (!isAuthenticated()) {
+    idPhotoQuoteLoading.value = false;
+    idPhotoQuoteError.value = 'LOGIN_REQUIRED';
+    return;
+  }
+  idPhotoQuoteLoading.value = true;
+  try {
+    idPhotoQuote.value = await quoteToolTask({
+      toolId: 'id-photo',
+      operation: 'professional-portrait'
+    }, controller.signal);
+  } catch (error: any) {
+    if (!controller.signal.aborted) {
+      idPhotoQuoteError.value = String(error?.code || error?.name || 'QUOTE_FAILED');
+    }
+  } finally {
+    if (idPhotoQuoteController === controller) {
+      idPhotoQuoteController = null;
+      idPhotoQuoteLoading.value = false;
+    }
+  }
+};
+
+const loadBackgroundQuote = async () => {
+  backgroundQuoteController?.abort();
+  const controller = new AbortController();
+  backgroundQuoteController = controller;
+  backgroundQuote.value = null;
+  backgroundQuoteError.value = '';
+  if (!isAuthenticated()) {
+    backgroundQuoteLoading.value = false;
+    backgroundQuoteError.value = 'LOGIN_REQUIRED';
+    return;
+  }
+  backgroundQuoteLoading.value = true;
+  try {
+    backgroundQuote.value = await quoteToolTask({
+      toolId: 'background',
+      operation: 'ai-scene'
+    }, controller.signal);
+  } catch (error: any) {
+    if (!controller.signal.aborted) {
+      backgroundQuoteError.value = String(error?.code || error?.name || 'QUOTE_FAILED');
+    }
+  } finally {
+    if (backgroundQuoteController === controller) {
+      backgroundQuoteController = null;
+      backgroundQuoteLoading.value = false;
+    }
+  }
+};
+
+const loadOldPhotoQuote = async () => {
+  oldPhotoQuoteController?.abort();
+  const controller = new AbortController();
+  oldPhotoQuoteController = controller;
+  oldPhotoQuote.value = null;
+  oldPhotoQuoteError.value = '';
+  const uid = String(getCurrentUserId() || '').trim();
+  if (!uid || uid.startsWith('guest_') || !isLocalLoggedIn()) {
+    oldPhotoQuoteLoading.value = false;
+    oldPhotoQuoteError.value = 'LOGIN_REQUIRED';
+    return;
+  }
+  oldPhotoQuoteLoading.value = true;
+  try {
+    const quote = await quoteToolTask({ toolId: 'old-photo', operation: 'enhance' }, controller.signal);
+    if (oldPhotoQuoteController !== controller || controller.signal.aborted) return;
+    oldPhotoQuote.value = quote;
+  } catch (error: any) {
+    if (controller.signal.aborted) return;
+    oldPhotoQuoteError.value = String(error?.code || error?.name || 'QUOTE_FAILED');
+  } finally {
+    if (oldPhotoQuoteController === controller) {
+      oldPhotoQuoteController = null;
+      oldPhotoQuoteLoading.value = false;
+    }
+  }
 };
 
 const openOldPhotoPopup = () => {
   isOldPhotoPopupOpen.value = true;
+  void loadOldPhotoQuote();
+  if (route.params.toolId !== 'old-photo') router.push('/artigen/image-workshop/old-photo');
   consoleStore.recordTraffic({
     type: 'click',
     page: '/artigen/image-workshop',
@@ -526,6 +709,9 @@ const openOldPhotoPopup = () => {
 
 const openIngredientList = () => {
   isIngredientPopupOpen.value = true;
+  if (route.params.toolId !== 'ingredient-label') {
+    router.push('/artigen/image-workshop/ingredient-label');
+  }
   consoleStore.recordTraffic({
     type: 'click',
     page: '/artigen/image-workshop',
@@ -536,6 +722,8 @@ const openIngredientList = () => {
 
 const openAiBackgroundPopup = () => {
   isAiBackgroundPopupOpen.value = true;
+  void loadBackgroundQuote();
+  if (route.params.toolId !== 'background') router.push('/artigen/image-workshop/background');
   consoleStore.recordTraffic({
     type: 'click',
     page: '/artigen/image-workshop',
@@ -551,66 +739,142 @@ const openImageEditor = () => {
     target: 'image_editor'
   });
   trackEvent('ImageWorkshop', 'open_tool', 'image_editor');
-  router.push('/artigen/image-editor');
+  router.push('/artigen/image-workshop/image-editor');
 };
 
-const fileToGenerateInput = (f: File): Promise<GenerateImageInput | null> => {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onerror = () => resolve(null);
-    reader.onload = () => {
-      const raw = String(reader.result || '');
-      const toInput = (dataUrl: string): GenerateImageInput => {
-        const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-        return {
-          mimeType: (m?.[1] || f.type || 'image/png').trim(),
-          dataBase64: String(m?.[2] || '').trim()
-        };
-      };
-
-      const shouldCompress = f.size > 2.5 * 1024 * 1024;
-      if (!shouldCompress) return resolve(toInput(raw));
-
-      const img = new Image();
-      img.onload = () => {
-        const maxDim = 1536;
-        const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
-        if (scale >= 1) return resolve(toInput(raw));
-
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(img.width * scale));
-        canvas.height = Math.max(1, Math.round(img.height * scale));
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return resolve(toInput(raw));
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) return resolve(toInput(raw));
-            const r2 = new FileReader();
-            r2.onerror = () => resolve(toInput(raw));
-            r2.onload = () => resolve(toInput(String(r2.result || raw)));
-            r2.readAsDataURL(blob);
-          },
-          'image/jpeg',
-          0.92
-        );
-      };
-      img.onerror = () => resolve(toInput(raw));
-      img.src = raw;
-    };
-    reader.readAsDataURL(f);
-  });
+const closeWorkshopPopup = (toolId: string) => {
+  if (toolId === 'id-photo') {
+    isStandardIdPhotoPopupOpen.value = false;
+    isIdPhotoPopupOpen.value = false;
+    idPhotoQuoteController?.abort();
+    idPhotoQuoteController = null;
+    idPhotoQuoteLoading.value = false;
+  }
+  if (toolId === 'old-photo') {
+    isOldPhotoPopupOpen.value = false;
+    oldPhotoQuoteController?.abort();
+    oldPhotoQuoteController = null;
+    oldPhotoQuoteLoading.value = false;
+  }
+  if (toolId === 'ingredient-label') isIngredientPopupOpen.value = false;
+  if (toolId === 'background') {
+    isAiBackgroundPopupOpen.value = false;
+    backgroundQuoteController?.abort();
+    backgroundQuoteController = null;
+    backgroundQuoteLoading.value = false;
+  }
+  if (String(route.params.toolId || '') === toolId) router.push('/artigen/image-workshop');
 };
+
+watch(
+  () => String(route.params.toolId || ''),
+  (toolId) => {
+    if (toolId === 'id-photo' && !isIdPhotoPopupOpen.value) {
+      isStandardIdPhotoPopupOpen.value = true;
+    } else if (toolId !== 'id-photo') {
+      isStandardIdPhotoPopupOpen.value = false;
+      isIdPhotoPopupOpen.value = false;
+      idPhotoQuoteController?.abort();
+      idPhotoQuoteController = null;
+      idPhotoQuoteLoading.value = false;
+    }
+    if (toolId === 'old-photo') {
+      isOldPhotoPopupOpen.value = true;
+      if (!oldPhotoQuote.value && !oldPhotoQuoteLoading.value) void loadOldPhotoQuote();
+    } else {
+      isOldPhotoPopupOpen.value = false;
+      oldPhotoQuoteController?.abort();
+      oldPhotoQuoteController = null;
+      oldPhotoQuoteLoading.value = false;
+    }
+    if (toolId === 'ingredient-label') isIngredientPopupOpen.value = true;
+    if (toolId === 'background') {
+      isAiBackgroundPopupOpen.value = true;
+      if (!backgroundQuote.value && !backgroundQuoteLoading.value) void loadBackgroundQuote();
+    } else {
+      isAiBackgroundPopupOpen.value = false;
+      backgroundQuoteController?.abort();
+      backgroundQuoteController = null;
+      backgroundQuoteLoading.value = false;
+    }
+  },
+  { immediate: true }
+);
+
+watch(resultVisible, async (visible) => {
+  if (visible) {
+    await nextTick();
+    resultReturnFocus = globalThis.document.activeElement instanceof HTMLElement
+      ? globalThis.document.activeElement
+      : null;
+    resultDialogRef.value?.focus();
+    return;
+  }
+  await nextTick();
+  if (resultReturnFocus?.isConnected) resultReturnFocus.focus();
+  resultReturnFocus = null;
+});
+
+onBeforeUnmount(() => {
+  oldPhotoQuoteController?.abort();
+  oldPhotoQuoteController = null;
+  idPhotoQuoteController?.abort();
+  idPhotoQuoteController = null;
+  backgroundQuoteController?.abort();
+  backgroundQuoteController = null;
+  activeRequestController?.abort();
+  activeRequestController = null;
+  if (resultSourceUrl.value.startsWith('blob:')) URL.revokeObjectURL(resultSourceUrl.value);
+  resultSourceUrl.value = '';
+});
 
 const humanizeError = (code: string) => {
   const c = String(code || '').trim();
-  if (!c) return '请求失败，请稍后再试';
-  if (c === 'INSUFFICIENT_CREDITS') return '积分不足，请前往「点数商城」充值';
-  if (c === 'LOGIN_REQUIRED') return '请先登录后再试';
-  if (c === 'MISSING_SILICONFLOW_API_KEY') return '服务未配置，请稍后再试';
-  if (/failed to fetch/i.test(c)) return '网络异常或服务不可用，请稍后再试';
-  if (/timeout/i.test(c) || c === 'UPSTREAM_TIMEOUT') return '请求超时，请稍后再试';
+  const en = currentLang.value === 'en';
+  if (!c) return en ? 'Request failed. Please try again later.' : '请求失败，请稍后再试';
+  if (c === 'INSUFFICIENT_CREDITS')
+    return en ? 'Insufficient credits. Please top up in the Market.' : '积分不足，请前往「点数商城」充值';
+  if (c === 'LOGIN_REQUIRED') return en ? 'Please sign in first.' : '请先登录后再试';
+  if (c === 'BROWSER_STORAGE_UNAVAILABLE') {
+    return en
+      ? 'The browser could not safely save recovery data, so no paid task was submitted.'
+      : '浏览器无法安全保存任务恢复信息，本次未提交付费任务';
+  }
+  if (
+    c === 'PAID_FEATURES_DISABLED' ||
+    c === 'DATABASE_NOT_CONFIGURED' ||
+    c === 'LEGACY_BILLING_DISABLED' ||
+    c === 'TOOL_OPERATION_UNAVAILABLE' ||
+    c === 'TASK_PAYLOAD_KEY_MISSING' ||
+    c === 'MODEL_PROFILE_UNAVAILABLE'
+  ) {
+    return en ? 'Paid enhancement is currently unavailable.' : '付费增强当前不可用';
+  }
+  if (c === 'PRICE_CHANGED' || c === 'QUOTE_ALREADY_USED' || c === 'QUOTE_NOT_FOUND') {
+    return en ? 'The quote changed. Reopen the tool to confirm the latest price.' : '报价已变化，请重新打开工具确认最新价格';
+  }
+  if (c === 'TASK_CANCELLED' || c === 'AbortError') return ui.value.cancelled;
+  if (c === 'TASK_CANCEL_PENDING') return ui.value.cancelPending;
+  if (c === 'OUTPUT_COMPOSITION_CHANGED') {
+    return en ? 'The result changed the original composition and was rejected. Credits were refunded.' : '结果改变了原始构图，已拒绝并退款';
+  }
+  if (c.startsWith('OUTPUT_') || c === 'INVALID_OUTPUT') {
+    return en ? 'The output failed integrity checks. Credits were refunded.' : '输出未通过完整性校验，已退款';
+  }
+  if (c === 'MISSING_SILICONFLOW_API_KEY')
+    return en ? 'Service is not configured. Please try again later.' : '服务未配置，请稍后再试';
+  if (c === 'SERVER_BUSY' || c === 'SERVICE_BUSY' || c === 'API_ERROR_503')
+    return en ? 'Service busy. Please try again later.' : '服务繁忙，请稍后再试';
+  if (c === 'CONTENT_POLICY_REJECTED')
+    return en ? 'This request could not be processed under the content policy.' : '此请求未通过内容安全校验，请调整后重试';
+  if (c === 'PROVIDER_TIMEOUT' || c === 'TASK_LEASE_LOST')
+    return en ? 'The generation service timed out. Credits were refunded.' : '生成服务超时，已退款';
+  if (c === 'EMPTY_IMAGE_RESULT')
+    return en ? 'Generation failed: empty image result.' : '出图失败：服务未返回图片';
+  if (/failed to fetch|network/i.test(c))
+    return en ? 'Network error. Please try again.' : '网络异常或服务不可用，请稍后再试';
+  if (/timeout/i.test(c) || c === 'UPSTREAM_TIMEOUT' || c === 'API_ERROR_504')
+    return en ? 'Request timed out. Please try again.' : '请求超时，请稍后再试';
   return c.length > 160 ? `${c.slice(0, 160)}…` : c;
 };
 
@@ -618,16 +882,102 @@ const openResult = (args: { title: string; url?: string; error?: string }) => {
   resultTitle.value = args.title;
   resultUrl.value = String(args.url || '').trim();
   resultError.value = String(args.error || '').trim();
+  resultImageBroken.value = false;
   resultVisible.value = true;
 };
 
+const confirmActiveCancellation = async () => {
+  const slot = activeWorkshopSlot.value;
+  try {
+    let task = slot ? await cancelPersistedWorkshopTask(slot) : null;
+    if (!task && activeToolTaskId.value) {
+      task = await cancelToolTask(activeToolTaskId.value);
+    }
+    if (!task) return { state: 'pending' as const };
+    activeToolTaskId.value = '';
+    activeWorkshopSlot.value = '';
+    if (task.status === 'success') return { state: 'success' as const, task };
+    if (task.status === 'cancelled' || task.status === 'failed') {
+      return { state: 'released' as const, task };
+    }
+    return { state: 'pending' as const, task };
+  } catch {
+    return { state: 'pending' as const };
+  }
+};
+
 const closeResult = () => {
+  const shouldCancel = Boolean(activeWorkshopSlot.value || activeToolTaskId.value);
+  if (activeRequestController) activeRequestController.abort();
+  activeRequestController = null;
+  if (shouldCancel) void confirmActiveCancellation();
   resultVisible.value = false;
   resultUrl.value = '';
   resultError.value = '';
   resultTitle.value = '';
   resultLoading.value = false;
   activeRequestId.value = '';
+  resultImageBroken.value = false;
+  if (resultSourceUrl.value.startsWith('blob:')) URL.revokeObjectURL(resultSourceUrl.value);
+  resultSourceUrl.value = '';
+  resultVersion.value = 0;
+};
+
+const onResultDialogKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeResult();
+    return;
+  }
+  if (event.key !== 'Tab' || !resultDialogRef.value) return;
+  const focusable = Array.from(resultDialogRef.value.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+  )).filter((element) => element.getClientRects().length > 0);
+  if (!focusable.length) {
+    event.preventDefault();
+    resultDialogRef.value.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && globalThis.document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && globalThis.document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+};
+
+const cancelActiveRequest = async () => {
+  const controller = activeRequestController;
+  activeRequestController = null;
+  activeRequestId.value = '';
+  controller?.abort();
+  resultLoading.value = false;
+  resultUrl.value = '';
+  resultError.value = ui.value.cancelPending;
+  const outcome = await confirmActiveCancellation();
+  if (!resultVisible.value) return;
+  if (outcome.state === 'released') {
+    resultError.value = ui.value.cancelled;
+    trackEvent('ImageWorkshop', 'generate_cancel', 'confirmed');
+    return;
+  }
+  if (outcome.state === 'success') {
+    const assetId = String(outcome.task.result?.assets?.[0]?.assetId || '').trim();
+    if (assetId) {
+      resultError.value = '';
+      resultVersion.value = 1;
+      resultUrl.value = taskAssetUrl(assetId);
+    } else {
+      resultError.value = ui.value.cancelCompleted;
+    }
+    trackEvent('ImageWorkshop', 'generate_cancel', 'completed_before_cancel');
+    return;
+  }
+  resultError.value = ui.value.cancelPending;
+  trackEvent('ImageWorkshop', 'generate_cancel', 'pending_confirmation');
 };
 
 const extFromMime = (mime: string) => {
@@ -643,7 +993,7 @@ const fetchImageBlob = async (url: string): Promise<Blob | null> => {
   try {
     const u = String(url || '').trim();
     if (!u) return null;
-    const res = await fetch(u);
+    const res = await resourceFetch(u);
     if (!res.ok) return null;
     const blob = await res.blob();
     if (
@@ -681,171 +1031,158 @@ const downloadResult = async () => {
   }
 };
 
-const buildIdPhotoPrompt = (type: string) => {
-  const base = [
-    'Create a high-quality realistic ID photo portrait from the reference photo.',
-    'Keep the same person identity and facial features; do not beautify excessively.',
-    'Front-facing, neutral expression, eyes open, clean skin texture, natural color.',
-    'Even soft lighting, sharp focus, no motion blur.',
-    'Plain light gray background, no patterns, no objects.',
-    'Head and shoulders framing, centered composition.'
-  ].join(' ');
-
-  const styleByType: Record<string, string> = {
-    finance: 'Formal, trustworthy corporate look; subtle contrast; conservative styling.',
-    tech: 'Modern, confident startup founder look; clean minimal aesthetic.',
-    scholar: 'Warm, intelligent academic look; gentle lighting; calm demeanor.',
-    creative: 'Distinct but professional creative look; tasteful color tone; not exaggerated.',
-    leader: 'Executive leader look; strong presence; premium lighting; classic elegance.'
-  };
-  const extra = styleByType[String(type || '').trim()] || styleByType.finance;
-  return `${base} ${extra}`;
-};
-
-const buildOldPhotoPrompt = (opts: { colorize: boolean; denoise: boolean }) => {
-  const base = [
-    'Restore and enhance the old photo from the reference image.',
-    'Keep identity and original composition; do not change face shape.',
-    'Remove scratches, stains, dust, and crease marks.',
-    'Increase clarity and details naturally; avoid over-sharpening.',
-    'Reduce noise and blur; preserve realistic textures.'
-  ].join(' ');
-  const color = opts.colorize
-    ? 'If the photo is black-and-white, colorize it with natural, historically plausible skin tones and clothing colors.'
-    : 'Keep original colors; do not colorize.';
-  const denoise = opts.denoise ? 'Strong denoise and deblur.' : 'Light denoise.';
-  return `${base} ${denoise} ${color}`;
-};
-
-const NEGATIVE = [
-  'nsfw',
-  'nudity',
-  'gore',
-  'violence',
-  'lowres',
-  'bad anatomy',
-  'blurry',
-  'watermark',
-  'signature',
-  'text',
-  'cartoon',
-  'anime',
-  'oversaturated',
-  'over-smoothed skin',
-  'distorted face'
-].join(', ');
-
-const runImg2Img = async (args: {
+const runPaidImageTask = async (args: {
+  slot: string;
   title: string;
-  prompt: string;
+  toolId: string;
+  operation: string;
+  options: Record<string, unknown>;
+  quote: ToolTaskQuote;
   file: File;
-  userText: string;
-  reason: 'ai_design' | 'id_photo' | 'old_photo' | 'ai_background' | 'img2img';
+  analyticsTarget: string;
+  showSource?: boolean;
 }) => {
-  const requestId = `imgwork_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  activeRequestController?.abort();
+  const controller = new AbortController();
+  activeRequestController = controller;
+  const requestId = `workshop_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   activeRequestId.value = requestId;
+  activeWorkshopSlot.value = args.slot;
   resultLoading.value = true;
+  if (resultSourceUrl.value.startsWith('blob:')) URL.revokeObjectURL(resultSourceUrl.value);
+  resultSourceUrl.value = args.showSource ? URL.createObjectURL(args.file) : '';
+  resultVersion.value = 0;
   openResult({ title: args.title });
   consoleStore.recordTraffic({
     type: 'conversion',
     page: '/artigen/image-workshop',
-    target: args.userText
+    target: args.analyticsTarget
   });
-  trackEvent('ImageWorkshop', 'generate_start', args.userText);
-  const input = await fileToGenerateInput(args.file);
-  if (!input) {
-    if (activeRequestId.value !== requestId) return;
-    resultLoading.value = false;
-    openResult({ title: args.title, error: ui.value.fileReadFailed });
-    consoleStore.recordTraffic({
-      type: 'generate_fail',
-      page: '/artigen/image-workshop',
-      target: 'FILE_READ_FAILED'
+  trackEvent('ImageWorkshop', 'task_start', args.analyticsTarget);
+  let terminalReached = false;
+  try {
+    const task = await startPersistedWorkshopTask({
+      slot: args.slot,
+      toolId: args.toolId,
+      operation: args.operation,
+      options: args.options,
+      quote: args.quote,
+      file: args.file,
+      signal: controller.signal,
+      onTask: (next) => {
+        activeToolTaskId.value = next.taskId;
+      }
     });
-    trackEvent('ImageWorkshop', 'generate_fail', 'FILE_READ_FAILED');
-    return;
+    terminalReached = true;
+    activeWorkshopSlot.value = '';
+    if (activeToolTaskId.value === task.taskId) activeToolTaskId.value = '';
+    if (activeRequestId.value !== requestId || controller.signal.aborted) return;
+    if (task.status !== 'success') {
+      throw new Error(task.error?.code || (task.status === 'cancelled' ? 'TASK_CANCELLED' : 'WORKSHOP_AI_FAILED'));
+    }
+    const assetId = String(task.result?.assets?.[0]?.assetId || '').trim();
+    if (!assetId) throw new Error('INVALID_OUTPUT');
+    resultLoading.value = false;
+    resultVersion.value = 1;
+    openResult({ title: args.title, url: taskAssetUrl(assetId) });
+    trackEvent('ImageWorkshop', 'task_success', args.analyticsTarget);
+  } catch (error: any) {
+    if (controller.signal.aborted || activeRequestId.value !== requestId) return;
+    resultLoading.value = false;
+    const code = String(error?.code || error?.message || error?.name || 'WORKSHOP_AI_FAILED');
+    openResult({ title: args.title, error: humanizeError(code) });
+    trackEvent('ImageWorkshop', 'task_fail', code);
+  } finally {
+    if (terminalReached) activeWorkshopSlot.value = '';
+    if (activeRequestController === controller) activeRequestController = null;
   }
+};
 
-  const res = await img2img({
-    prompt: args.prompt,
-    userText: args.userText,
-    negativePrompt: NEGATIVE,
-    images: [input],
-    timeoutMs: 120000,
-    requestId,
-    reason: args.reason,
-    requestSource: 'image_workshop'
-  });
-  if (!res.ok) {
-    if (activeRequestId.value !== requestId) return;
-    const msg = humanizeError(res.errorCode || res.error);
-    resultLoading.value = false;
-    openResult({ title: args.title, error: msg });
-    consoleStore.recordTraffic({
-      type: 'generate_fail',
-      page: '/artigen/image-workshop',
-      target: String(res.errorCode || res.error || 'UNKNOWN')
-    });
-    trackEvent('ImageWorkshop', 'generate_fail', String(res.errorCode || res.error || 'UNKNOWN'));
-    return;
+const resumePendingImageWorkshopTask = async () => {
+  const candidates = [
+    { slot: 'old-photo', title: ui.value.toolOldTitle, analyticsTarget: 'old_photo_recovered' },
+    { slot: 'professional-portrait', title: ui.value.toolIdTitle, analyticsTarget: 'professional_portrait_recovered' },
+    { slot: 'background-ai-scene', title: ui.value.toolBgTitle, analyticsTarget: 'background_scene_recovered' }
+  ];
+  for (const candidate of candidates) {
+    const stored = await loadPendingWorkshopTask(candidate.slot);
+    if (!stored) continue;
+    const controller = new AbortController();
+    activeRequestController?.abort();
+    activeRequestController = controller;
+    activeWorkshopSlot.value = candidate.slot;
+    const requestId = `recover_${Date.now().toString(36)}_${candidate.slot}`;
+    activeRequestId.value = requestId;
+    resultLoading.value = true;
+    if (candidate.slot === 'old-photo' && stored.file) {
+      if (resultSourceUrl.value.startsWith('blob:')) URL.revokeObjectURL(resultSourceUrl.value);
+      resultSourceUrl.value = URL.createObjectURL(stored.file);
+    }
+    openResult({ title: candidate.title });
+    try {
+      const task = await resumePersistedWorkshopTask(
+        candidate.slot,
+        controller.signal,
+        (next) => {
+          activeToolTaskId.value = next.taskId;
+        }
+      );
+      if (!task) continue;
+      resultLoading.value = false;
+      if (activeToolTaskId.value === task.taskId) activeToolTaskId.value = '';
+      activeWorkshopSlot.value = '';
+      if (task.status !== 'success') {
+        openResult({
+          title: candidate.title,
+          error: humanizeError(task.error?.code || (task.status === 'cancelled' ? 'TASK_CANCELLED' : 'WORKSHOP_AI_FAILED'))
+        });
+      } else {
+        const assetId = String(task.result?.assets?.[0]?.assetId || '').trim();
+        if (!assetId) {
+          openResult({ title: candidate.title, error: humanizeError('INVALID_OUTPUT') });
+        } else {
+          resultVersion.value = 1;
+          openResult({ title: candidate.title, url: taskAssetUrl(assetId) });
+        }
+      }
+      trackEvent('ImageWorkshop', 'task_recovered', candidate.analyticsTarget);
+      if (activeRequestController === controller) activeRequestController = null;
+      return;
+    } catch (error: any) {
+      if (controller.signal.aborted) return;
+      resultLoading.value = false;
+      const code = String(error?.code || error?.message || error?.name || 'WORKSHOP_AI_FAILED');
+      openResult({ title: candidate.title, error: humanizeError(code) });
+      if (activeRequestController === controller) activeRequestController = null;
+      return;
+    }
   }
-  const url = String(res.images?.[0]?.url || '').trim();
-  if (!url) {
-    if (activeRequestId.value !== requestId) return;
-    resultLoading.value = false;
-    openResult({ title: args.title, error: humanizeError('EMPTY_IMAGE_RESULT') });
-    consoleStore.recordTraffic({
-      type: 'generate_fail',
-      page: '/artigen/image-workshop',
-      target: 'EMPTY_IMAGE_RESULT'
-    });
-    trackEvent('ImageWorkshop', 'generate_fail', 'EMPTY_IMAGE_RESULT');
-    return;
-  }
-  if (activeRequestId.value !== requestId) return;
-  resultLoading.value = false;
-  openResult({ title: args.title, url });
-  consoleStore.recordTraffic({
-    type: 'generate_success',
-    page: '/artigen/image-workshop',
-    target: args.userText
-  });
-  trackEvent('ImageWorkshop', 'generate_success', args.userText);
 };
 
 const handleGenerateIdPhoto = async (file: File, type: string) => {
+  const quote = idPhotoQuote.value;
+  if (!quote) {
+    openResult({ title: ui.value.toolIdTitle, error: humanizeError(idPhotoQuoteError.value || 'QUOTE_NOT_FOUND') });
+    return;
+  }
   isIdPhotoPopupOpen.value = false;
-  const prompt = buildIdPhotoPrompt(type);
-  await runImg2Img({
+  idPhotoQuote.value = null;
+  await runPaidImageTask({
+    slot: 'professional-portrait',
     title: ui.value.toolIdTitle,
-    prompt,
+    toolId: 'id-photo',
+    operation: 'professional-portrait',
+    options: { style: String(type || '').trim() || 'finance' },
+    quote,
     file,
-    userText: `id_photo:${String(type || '').trim() || 'finance'}`,
-    reason: 'id_photo'
+    analyticsTarget: `professional_portrait:${String(type || '').trim() || 'finance'}`
   });
-};
-
-const buildAiBackgroundPrompt = (args: { mode: 'replace' | 'add'; background: string }) => {
-  const base = [
-    'Edit the reference photo to produce a high-quality realistic result.',
-    'Preserve the subject identity, shape, logo/text, and fine details.',
-    'Keep edges clean and natural; keep lighting and shadows consistent.',
-    'Do not add any text, watermark, or extra objects on the subject.',
-    'Photorealistic, sharp focus, natural colors.'
-  ].join(' ');
-  const modeText =
-    args.mode === 'add'
-      ? 'Add a complementary background scene and atmosphere consistent with the style description, while keeping the subject unchanged and clearly separated.'
-      : 'Replace the original background completely with the style description, while keeping the subject unchanged and clearly separated.';
-  const bg = String(args.background || '').trim();
-  return `${base} ${modeText} Style description: ${bg}`;
 };
 
 const handleGenerateAiBackground = async (
   file: File,
   args: {
     mode: 'replace' | 'add';
-    background: string;
     presetId: string;
     presetSrc: string;
     presetW: number;
@@ -856,7 +1193,6 @@ const handleGenerateAiBackground = async (
   }
 ) => {
   isAiBackgroundPopupOpen.value = false;
-  const mode = args?.mode === 'add' ? 'add' : 'replace';
   const presetId = String(args?.presetId || '').trim();
   const localResultUrl = String(args?.localResultUrl || '').trim();
 
@@ -872,24 +1208,102 @@ const handleGenerateAiBackground = async (
     return;
   }
 
-  const prompt = buildAiBackgroundPrompt({
-    mode,
-    background: String(args?.background || '').trim()
-  });
-  await runImg2Img({
+  const quote = backgroundQuote.value;
+  if (!quote) {
+    openResult({ title: ui.value.toolBgTitle, error: humanizeError(backgroundQuoteError.value || 'QUOTE_NOT_FOUND') });
+    return;
+  }
+  backgroundQuote.value = null;
+  await runPaidImageTask({
+    slot: 'background-ai-scene',
     title: ui.value.toolBgTitle,
-    prompt,
+    toolId: 'background',
+    operation: 'ai-scene',
+    options: {
+      mode: 'add',
+      presetId,
+      subjectScale: Number(args?.subjectScale ?? 1),
+      subjectOffset: {
+        x: Number(args?.subjectOffset?.x ?? 0),
+        y: Number(args?.subjectOffset?.y ?? 0)
+      }
+    },
+    quote,
     file,
-    userText: `ai_background:${mode}:${presetId || 'preset'}`,
-    reason: 'ai_background'
+    analyticsTarget: `ai_background:add:${presetId || 'preset'}`
   });
 };
 
-const handleRestoreOldPhoto = async (file: File, options: any) => {
+const runOldPhotoTask = async (file: File, options: { colorize: boolean; denoise: boolean }) => {
+  const quote = oldPhotoQuote.value;
+  if (!quote) {
+    openResult({ title: ui.value.toolOldTitle, error: humanizeError(oldPhotoQuoteError.value || 'QUOTE_NOT_FOUND') });
+    return;
+  }
+
   isOldPhotoPopupOpen.value = false;
+  oldPhotoQuote.value = null;
+  oldPhotoQuoteError.value = '';
+  activeRequestController?.abort();
+  const controller = new AbortController();
+  activeRequestController = controller;
+  activeWorkshopSlot.value = 'old-photo';
+  const requestId = `oldphoto_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  activeRequestId.value = requestId;
+  if (resultSourceUrl.value.startsWith('blob:')) URL.revokeObjectURL(resultSourceUrl.value);
+  resultSourceUrl.value = URL.createObjectURL(file);
+  resultVersion.value = 0;
+  resultLoading.value = true;
+  openResult({ title: ui.value.toolOldTitle });
+  consoleStore.recordTraffic({
+    type: 'conversion',
+    page: '/artigen/image-workshop/old-photo',
+    target: options.colorize ? 'enhance_colorize' : 'enhance'
+  });
+  trackEvent('ImageWorkshop', 'task_start', options.colorize ? 'old_photo_colorize' : 'old_photo_enhance');
+
+  let terminalReached = false;
+  try {
+    const task = await startPersistedWorkshopTask({
+      slot: 'old-photo',
+      toolId: 'old-photo',
+      operation: options.colorize ? 'enhance-colorize' : 'enhance',
+      options: { denoise: options.denoise },
+      quote,
+      file,
+      signal: controller.signal,
+      onTask: (next) => {
+        activeToolTaskId.value = next.taskId;
+      }
+    });
+    terminalReached = true;
+    activeWorkshopSlot.value = '';
+    if (activeToolTaskId.value === task.taskId) activeToolTaskId.value = '';
+    if (activeRequestId.value !== requestId || controller.signal.aborted) return;
+    if (task.status !== 'success') {
+      throw new Error(task.error?.code || (task.status === 'cancelled' ? 'TASK_CANCELLED' : 'OLD_PHOTO_FAILED'));
+    }
+    const assetId = String(task.result?.assets?.[0]?.assetId || '').trim();
+    if (!assetId) throw new Error('INVALID_OUTPUT');
+    resultLoading.value = false;
+    resultVersion.value = 1;
+    openResult({ title: ui.value.toolOldTitle, url: taskAssetUrl(assetId) });
+    trackEvent('ImageWorkshop', 'task_success', 'old_photo');
+  } catch (error: any) {
+    if (controller.signal.aborted || activeRequestId.value !== requestId) return;
+    resultLoading.value = false;
+    const code = String(error?.code || error?.message || error?.name || 'OLD_PHOTO_FAILED');
+    openResult({ title: ui.value.toolOldTitle, error: humanizeError(code) });
+    trackEvent('ImageWorkshop', 'task_fail', code);
+  } finally {
+    if (terminalReached) activeWorkshopSlot.value = '';
+    if (activeRequestController === controller) activeRequestController = null;
+  }
+};
+
+const handleRestoreOldPhoto = async (file: File, options: any) => {
   const uid = String(getCurrentUserId() || '').trim();
-  const token = String(getAuthToken() || '').trim();
-  const authed = !!uid && !uid.startsWith('guest_') && !!token && isLocalLoggedIn();
+  const authed = !!uid && !uid.startsWith('guest_') && isLocalLoggedIn();
   if (!authed) {
     openResult({ title: ui.value.toolOldTitle, error: ui.value.loginRequired });
     consoleStore.recordTraffic({
@@ -904,19 +1318,11 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
     colorize: !!options?.colorize,
     denoise: !!options?.denoise
   };
-  const prompt = buildOldPhotoPrompt(opts);
-  await runImg2Img({
-    title: ui.value.toolOldTitle,
-    prompt,
-    file,
-    userText: `old_photo:${opts.colorize ? 'colorize' : 'no_colorize'}:${opts.denoise ? 'denoise' : 'basic'}`,
-    reason: 'old_photo'
-  });
+  await runOldPhotoTask(file, opts);
 };
 </script>
 
 <style scoped>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;700;900&display=swap');
 @import '../styles/cyberpunk.css';
 
 .image-workshop-page {
@@ -934,6 +1340,7 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
+  box-sizing: border-box;
   position: relative;
   z-index: 1;
 }
@@ -995,11 +1402,6 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   white-space: nowrap;
 }
 
-.badges-group {
-  display: inline-flex;
-  align-items: center;
-}
-
 .highlight {
   color: #ccff00;
 }
@@ -1016,16 +1418,16 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   opacity: 0.9;
 }
 
-.beta-badge {
+.mode-separation-note {
   font-size: 14px;
   background: rgba(147, 51, 234, 0.2);
   border: 1px solid rgba(147, 51, 234, 0.5);
   color: #e9d5ff;
-  padding: 6px 12px;
-  border-radius: 4px;
+  padding: 8px 14px;
+  border-radius: 8px;
   font-weight: normal;
   letter-spacing: 0;
-  vertical-align: middle;
+  line-height: 1.4;
 }
 
 .page-desc {
@@ -1065,11 +1467,14 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 .result-container {
   width: 920px;
   max-width: 95vw;
+  box-sizing: border-box;
   background: #111;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
 }
 
 .result-header {
@@ -1080,6 +1485,7 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 }
 
 .result-title {
+  margin: 0;
   font-size: 16px;
   font-weight: 800;
   color: #fff;
@@ -1093,6 +1499,7 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 
 .result-loading {
   width: 100%;
+  box-sizing: border-box;
   height: 520px;
   border-radius: 10px;
   overflow: hidden;
@@ -1103,6 +1510,11 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   align-items: center;
   justify-content: center;
   gap: 12px;
+}
+
+.cancel-request {
+  min-height: 44px;
+  margin-top: 8px;
 }
 
 .loading-spinner {
@@ -1122,13 +1534,21 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 }
 
 .result-error {
-  color: #ff6b6b;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 107, 107, 0.28);
+  border-radius: 10px;
+  background: rgba(255, 107, 107, 0.07);
+  color: rgba(255, 180, 180, 0.92);
   font-size: 14px;
   line-height: 1.5;
+  font-weight: 700;
 }
 
 .result-image-wrap {
   width: 100%;
+  box-sizing: border-box;
   height: 520px;
   border-radius: 10px;
   overflow: hidden;
@@ -1145,6 +1565,67 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   object-fit: contain;
 }
 
+.old-photo-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+
+.old-photo-comparison figure {
+  margin: 0;
+  min-width: 0;
+}
+
+.old-photo-comparison .result-image {
+  width: 100%;
+  height: min(48vh, 480px);
+  object-fit: contain;
+  background: #0b0d0e;
+}
+
+.old-photo-comparison figcaption {
+  padding-top: 8px;
+  color: rgba(226, 232, 240, 0.76);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .old-photo-comparison {
+    grid-template-columns: 1fr;
+  }
+
+  .old-photo-comparison .result-image {
+    height: min(30vh, 300px);
+  }
+}
+
+.result-image-missing {
+  width: 100%;
+  height: 100%;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: rgba(226, 232, 240, 0.72);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.result-image-missing-title {
+  color: rgba(241, 245, 249, 0.86);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.result-image-missing-sub {
+  color: rgba(148, 163, 184, 0.86);
+  font-size: 12px;
+}
+
 .result-actions {
   display: flex;
   gap: 10px;
@@ -1152,6 +1633,7 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 }
 
 .result-btn {
+  min-height: 44px;
   appearance: none;
   border: 1px solid rgba(204, 255, 0, 0.6);
   background: rgba(204, 255, 0, 0.14);
@@ -1163,6 +1645,16 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
   transition: all 0.2s ease;
 }
 
+.result-container:focus-visible {
+  outline: none;
+}
+
+.result-container :is(button, input, select, textarea, [tabindex]):focus-visible,
+:deep(.tool-card:focus-visible) {
+  outline: 2px solid #ccff00;
+  outline-offset: 3px;
+}
+
 .result-btn.secondary {
   border-color: rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.06);
@@ -1170,7 +1662,10 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 }
 
 .result-btn:disabled {
-  opacity: 0.5;
+  opacity: 1;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(226, 232, 240, 0.42);
   cursor: not-allowed;
 }
 
@@ -1191,10 +1686,23 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 @media (max-width: 768px) {
   .page-title {
     font-size: 26px;
-    flex-direction: row;
-    flex-wrap: wrap;
+    flex-direction: column;
+    flex-wrap: nowrap;
     gap: 8px;
     white-space: normal;
+  }
+
+  .title-text-group {
+    white-space: normal;
+  }
+
+  .real-beta-badge {
+    margin: 0;
+    font-size: 13px;
+  }
+
+  .mode-separation-note {
+    width: min(100%, 360px);
   }
 
   .tools-grid {
@@ -1233,6 +1741,17 @@ const handleRestoreOldPhoto = async (file: File, options: any) => {
 
   :deep(.tool-desc) {
     font-size: 13px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 </style>

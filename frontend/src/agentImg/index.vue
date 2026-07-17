@@ -45,6 +45,7 @@
             :primary-text="primaryTextWithCost"
             :categories="categories"
             @primary="onPrimary"
+            @close="productSidebarOpen = false"
           />
         </transition>
 
@@ -163,20 +164,33 @@
                   <div class="msg-bubble">
                     <div class="msg-text">{{ item.userText }}</div>
                     <div v-if="item.refImages && item.refImages.length" class="msg-ref-list">
-                      <img
-                        v-for="(u, idx) in item.refImages"
-                        :key="idx"
-                        class="msg-ref-img"
-                        :src="resolveRefUrl(u)"
-                        crossorigin="anonymous"
-                        alt="ref"
-                        @click.stop="openImagePreview(u)"
-                        @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
-                      />
+                      <template v-for="(u, idx) in item.refImages" :key="idx">
+                        <button
+                          v-if="isImageBroken(u)"
+                          class="msg-ref-img msg-image-missing msg-image-missing--thumb"
+                          type="button"
+                          disabled
+                        >
+                          {{ ui.imageMissingShort }}
+                        </button>
+                        <img
+                          v-else
+                          class="msg-ref-img"
+                          :src="resolveRefUrl(u)"
+                          crossorigin="anonymous"
+                          alt="ref"
+                          @click.stop="openImagePreview(u)"
+                          @error="markImageBroken(u)"
+                        />
+                      </template>
                     </div>
                   </div>
                 </div>
-                <div v-if="item.notice && item.notice.type === 'cancel'" class="msg msg-ai">
+                <div
+                  v-if="historyStatusText(item)"
+                  class="msg msg-ai"
+                  :id="!item.image && !item.aiText ? `gen-${item.id}` : undefined"
+                >
                   <div class="msg-avatar">
                     <img src="/logo.png" alt="System" />
                   </div>
@@ -197,7 +211,7 @@
                         <line x1="12" y1="16" x2="12.01" y2="16"></line>
                       </svg>
                     </div>
-                    <div class="error-text">{{ item.notice.text }}</div>
+                    <div class="error-text">{{ historyStatusText(item) }}</div>
                   </div>
                 </div>
                 <div v-if="item.aiText || item.image" class="msg msg-ai" :id="`gen-${item.id}`">
@@ -207,35 +221,58 @@
                   <div class="msg-bubble msg-media-bubble">
                     <div v-if="item.aiText" class="msg-ai-text">{{ item.aiText }}</div>
                     <div v-if="item.image" class="msg-image-wrap">
+                      <div v-if="isImageBroken(item.image)" class="msg-media-img msg-image-missing">
+                        <div class="msg-image-missing-title">{{ ui.imageMissing }}</div>
+                        <div class="msg-image-missing-sub">{{ ui.imageMissingSub }}</div>
+                      </div>
                       <img
+                        v-else
                         :src="resolveRefUrl(item.image)"
                         alt="generated"
                         class="msg-media-img"
                         crossorigin="anonymous"
                         @click.stop="openImagePreview(item.image)"
-                        @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
+                        @error="markImageBroken(item.image)"
                       />
                       <div class="msg-image-actions">
                         <button
                           class="msg-image-action-btn"
                           type="button"
-                          @click.stop="downloadMsgImage(item.image)"
+                          :disabled="isImageBroken(item.image)"
+                          @click.stop="downloadMsgImage(item.image, item)"
                         >
                           {{ ui.download }}
                         </button>
                         <button
                           class="msg-image-action-btn"
                           type="button"
-                          @click.stop="editMsgImage(item.image)"
+                          :disabled="isImageBroken(item.image)"
+                          @click.stop="editMsgImage(item.image, item)"
                         >
                           {{ ui.edit }}
                         </button>
                         <button
                           class="msg-image-action-btn"
                           type="button"
-                          @click.stop="referenceMsgImage(item.image)"
+                          :disabled="isImageBroken(item.image)"
+                          @click.stop="referenceMsgImage(item.image, item)"
                         >
                           {{ ui.reference }}
+                        </button>
+                        <button
+                          class="msg-image-action-btn"
+                          type="button"
+                          @click.stop="modifyGeneration(item)"
+                        >
+                          {{ currentLang === 'zh' ? '修改需求' : 'Modify' }}
+                        </button>
+                        <button
+                          class="msg-image-action-btn"
+                          type="button"
+                          :disabled="loading || isImageBroken(item.image)"
+                          @click.stop="variationGeneration(item)"
+                        >
+                          {{ currentLang === 'zh' ? '再来一张' : 'Variation' }}
                         </button>
                       </div>
                     </div>
@@ -319,10 +356,26 @@
           </div>
 
           <!-- Chat Footer -->
-          <div class="chat-footer">
+          <div
+            class="chat-footer"
+            :class="{ 'chat-footer--deep': deepMode && options.length > 0 }"
+          >
             <div class="input-wrapper">
+              <GenerationWorkspaceControls
+                v-if="generationV2Enabled"
+                :language="currentLang"
+                :disabled="loading"
+                :show-templates="!userInput.trim() && !hasPreviews"
+                :aspect-ratios="generationAspectRatios"
+                :selected-aspect-ratio="selectedAspectRatio"
+                :preview-urls="previewUrls"
+                @template="applyStarterTemplate"
+                @ratio="selectedAspectRatio = $event"
+                @upload="triggerUploadAt"
+                @clear="clearPreview"
+              />
               <!-- Preview List -->
-              <div class="inner-preview-list" v-if="hasPreviews">
+              <div class="inner-preview-list" v-if="!generationV2Enabled && hasPreviews">
                 <div
                   v-for="(url, idx) in previewUrls"
                   :key="idx"
@@ -347,12 +400,18 @@
                 @dragover="onChatInputDragOver"
                 @dragleave="onChatInputDragLeave"
                 @drop="onChatInputDrop"
+                @input="syncChatInputHeight"
               ></textarea>
               <div v-if="chatInputDragOver" class="drop-hint">{{ ui.dropHint }}</div>
 
               <div class="input-toolbar">
                 <div class="left-tools">
-                  <button class="tool-btn upload-btn" @click="triggerUpload" :disabled="loading">
+                  <button
+                    class="tool-btn upload-btn"
+                    :aria-label="ui.addImage"
+                    @click="triggerUpload"
+                    :disabled="loading"
+                  >
                     <span class="tool-icon">
                       <svg
                         width="16"
@@ -375,6 +434,8 @@
                     <button
                       class="toggle-btn model-btn"
                       type="button"
+                      :aria-label="currentModelTip"
+                      :aria-expanded="modelMenuOpen"
                       :title="currentModelTip"
                       :disabled="loading"
                       @click="toggleModelMenu"
@@ -424,10 +485,12 @@
                   <label
                     class="toggle-btn"
                     :class="{ active: deepMode }"
+                    :aria-label="ui.deepThinkToggle"
                     :title="hasPreviews && !deepMode ? ui.deepThinkDisabledTip : ''"
                   >
                     <input
                       type="checkbox"
+                      :aria-label="ui.deepThinkToggle"
                       v-model="deepMode"
                       :disabled="loading || (!deepMode && hasPreviews)"
                     />
@@ -453,6 +516,8 @@
                   <button
                     class="toggle-btn"
                     type="button"
+                    :aria-label="ui.productSpecial"
+                    :aria-pressed="productSidebarOpen"
                     :class="{ active: productSidebarOpen }"
                     @click="toggleProductSidebar"
                     :disabled="loading"
@@ -498,6 +563,8 @@
                   <button
                     class="toggle-btn history-toggle-btn"
                     type="button"
+                    :aria-label="ui.memory"
+                    :aria-pressed="historySidebarOpen"
                     :class="{ active: historySidebarOpen }"
                     @click="toggleHistorySidebar"
                     :disabled="loading"
@@ -521,6 +588,7 @@
                   </button>
                   <button
                     class="send-btn"
+                    :aria-label="primaryTextWithCost"
                     :class="{ stop: loading, 'has-cost': showSendCostInline }"
                     @click="loading ? onStopProcessing() : onPrimary()"
                     :disabled="loading ? false : !canPrimary"
@@ -567,7 +635,10 @@
         <aside
           v-show="historySidebarOpen"
           class="right-side"
-          :class="{ 'mobile-open': historySidebarOpen }"
+          :class="{
+            'mobile-open': historySidebarOpen,
+            'overlay-navigation-active': showDownloadDialog || imagePreviewOpen
+          }"
         >
           <div class="right-header">
             <span class="right-title">{{ ui.memory }}</span>
@@ -587,20 +658,25 @@
               v-for="item in historyForSidebar"
               :key="item.id"
               type="button"
-              @click="onHistoryItemClick(item.id, closeHistorySidebar)"
+              @click="handleHistoryItemClick(item.id)"
             >
               <div v-if="item.image" class="history-image-placeholder">
+                <div v-if="isImageBroken(item.image)" class="history-image-missing">
+                  {{ ui.imageMissingShort }}
+                </div>
                 <img
+                  v-else
                   :src="resolveRefUrl(item.image)"
                   alt="generated"
                   style="width: 100%; height: 100%; object-fit: cover; border-radius: 10px"
-                  @error="(e) => ((e.target as HTMLImageElement).src = '/logo.png')"
+                  @error="markImageBroken(item.image)"
                 />
               </div>
               <div class="history-content">
                 <div class="history-prompt">{{ item.userText }}</div>
                 <div class="history-meta">
                   <span>{{ new Date(item.timestamp).toLocaleTimeString() }}</span>
+                  <span v-if="historySidebarStatusText(item)">{{ historySidebarStatusText(item) }}</span>
                 </div>
               </div>
             </button>
@@ -642,30 +718,34 @@
         <div class="download-options">
           <button
             class="download-option-btn"
+            :disabled="downloadBusy"
             @click="handleDownloadOption('1024', downloadTargetUrl, isProPlus)"
           >
             <span class="res-label">1024 x 1024</span>
-            <span class="res-tag">HD</span>
+            <span class="res-tag">{{ downloadBusyRes === '1024' ? ui.statusPending : 'HD' }}</span>
           </button>
           <button
             class="download-option-btn"
+            :disabled="downloadBusy"
             @click="handleDownloadOption('2k', downloadTargetUrl, isProPlus)"
           >
             <span class="res-label">2048 x 2048</span>
-            <span class="res-tag">2K</span>
+            <span class="res-tag">{{ downloadBusyRes === '2k' ? ui.statusPending : '2K' }}</span>
           </button>
           <button
             class="download-option-btn"
+            :disabled="downloadBusy"
             @click="handleDownloadOption('4k', downloadTargetUrl, isProPlus)"
           >
             <span class="res-label">4096 x 4096</span>
-            <span class="res-tag">4K</span>
+            <span class="res-tag">{{ downloadBusyRes === '4k' ? ui.statusPending : '4K' }}</span>
           </button>
-          <button class="download-option-btn" @click="editMsgImage(downloadTargetUrl)">
+          <button class="download-option-btn" :disabled="downloadBusy" @click="editMsgImage(downloadTargetUrl)">
             <span class="res-label">{{ ui.edit }}</span>
             <span class="res-tag">{{ ui.edit }}</span>
           </button>
         </div>
+        <div v-if="downloadError" class="download-error">{{ downloadError }}</div>
       </div>
     </div>
 
@@ -682,28 +762,41 @@
           <button
             class="img-preview-btn"
             type="button"
-            @click="downloadMsgImage(imagePreviewRawUrl)"
+            @click="downloadMsgImage(imagePreviewRawUrl, historyItemForImage(imagePreviewRawUrl))"
           >
             {{ ui.download }}
           </button>
-          <button class="img-preview-btn" type="button" @click="editMsgImage(imagePreviewRawUrl)">
+          <button
+            class="img-preview-btn"
+            type="button"
+            @click="editMsgImage(imagePreviewRawUrl, historyItemForImage(imagePreviewRawUrl))"
+          >
             {{ ui.edit }}
           </button>
           <button
             class="img-preview-btn secondary"
             type="button"
-            @click="referenceMsgImage(imagePreviewRawUrl)"
+            @click="referenceMsgImage(imagePreviewRawUrl, historyItemForImage(imagePreviewRawUrl))"
           >
             {{ ui.reference }}
           </button>
         </div>
       </div>
     </div>
+
+    <GenerationQuoteDialog
+      :open="Boolean(quoteConfirmation)"
+      :language="currentLang"
+      :operation="quoteConfirmation?.operation || 'generate'"
+      :credits="quoteConfirmation?.quote.credits || 0"
+      @confirm="confirmQuote"
+      @cancel="declineQuote"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import { useRouter } from 'vue-router';
@@ -713,6 +806,8 @@ import TitleBar from './components/TitleBar.vue';
 import CreditsUserActions from './components/CreditsUserActions.vue';
 import ProductSidebar from './components/ProductSidebar.vue';
 import CloseButton from './components/CloseButton.vue';
+import GenerationWorkspaceControls from './components/GenerationWorkspaceControls.vue';
+import GenerationQuoteDialog from './components/GenerationQuoteDialog.vue';
 import type { GenerateImageInput } from './services/text';
 
 // New Composables
@@ -723,8 +818,11 @@ import { useAgentImgLocale } from './composables/useAgentImgLocale';
 import { useAgentImgModels } from './composables/useAgentImgModels';
 import { useAgentImgUI } from './composables/useAgentImgUI';
 import { useAgentImgUpload } from './composables/useAgentImgUpload';
-import { useAgentImgGeneration } from './composables/useAgentImgGeneration';
+import { useAgentImgGenerationController } from './composables/useAgentImgGenerationController';
 import { buildApiUrl, getApiBaseUrl } from '@/utils/api';
+import { resourceFetch } from '@/login/authFetch';
+import { createEditorTransfer } from './services/toolTasks';
+import { trackEvent } from '@/utils/analytics';
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -736,7 +834,6 @@ const { ui, categories } = useAgentImgLocale();
 // --- 2. Auth ---
 const {
   authUserId,
-  authToken,
   isAuthed,
   ensureAuthed,
   onLoginClick,
@@ -770,6 +867,9 @@ const {
   toggleHistorySidebar,
   showDownloadDialog,
   downloadTargetUrl,
+  downloadBusy,
+  downloadBusyRes,
+  downloadError,
   showDownload,
   handleDownloadOption
 } = useAgentImgUI();
@@ -778,9 +878,17 @@ const closeHistorySidebar = () => {
   if (isMobileViewport()) historySidebarOpen.value = false;
 };
 
+const handleHistoryItemClick = (id: string | number) => {
+  showDownloadDialog.value = false;
+  imagePreviewOpen.value = false;
+  onHistoryItemClick(id, closeHistorySidebar);
+};
+
 // --- 5. Models ---
 const {
   selectedModelId,
+  selectedProfileId,
+  selectedAspectRatio,
   modelMenuOpen,
   userTier,
   isProPlus,
@@ -788,9 +896,12 @@ const {
   modelOptions,
   currentModelLabel,
   currentModelTip,
+  generationV2Enabled,
+  generationAspectRatios,
+  generationProfileAvailable,
   toggleModelMenu,
   selectModel
-} = useAgentImgModels(ensureAuthed, ui);
+} = useAgentImgModels(ensureAuthed, ui, isAuthed);
 
 // --- 6. Upload / Previews ---
 const chatInputRef = ref<HTMLTextAreaElement | null>(null);
@@ -805,6 +916,7 @@ const {
   fileInputs,
   hasPreviews,
   triggerUpload,
+  triggerUploadAt,
   onPreviewChange,
   clearPreview,
   setPreviewFileAt,
@@ -820,7 +932,7 @@ const {
 );
 
 // --- Settings ---
-const { logoFile, buildProductProfileContextText } = useAgentImgSettings();
+const { logoFile, productProfileSnapshot, buildProductProfileContextText } = useAgentImgSettings();
 
 // --- Flow ---
 const {
@@ -872,8 +984,9 @@ const {
   loadHistoryFromServer,
   historyForSidebar,
   onHistoryItemClick,
-  setCancelNoticeForHistory
-} = useAgentImgHistory(authUserId, authToken, isAuthed, syncAuth, scrollChatToBottom);
+  setCancelNoticeForHistory,
+  setHistoryItemStatus
+} = useAgentImgHistory(authUserId, isAuthed, syncAuth, scrollChatToBottom);
 
 // --- 8. Generation ---
 const selectedOptionIndex = computed(() => {
@@ -902,47 +1015,100 @@ const {
   lastUserText,
   pendingNotice,
   doPrimary,
+  doVariation,
+  quoteConfirmation,
+  confirmQuote,
+  declineQuote,
   onStopProcessing,
-  onExitStyleSelection,
-  abortImg2Img
-} = useAgentImgGeneration({
-  auth: { ensureAuthed },
-  credits: { refreshCredits, creditsBalance },
-  models: { selectedModelId },
-  memory: { userInputMemory },
-  upload: {
-    previewFiles,
-    logoFile,
-    fileToGenerateInput,
-    fileToThumbDataUrl
+  abortImg2Img,
+  resumePendingTask
+} = useAgentImgGenerationController(
+  {
+    auth: { ensureAuthed },
+    credits: { refreshCredits, creditsBalance },
+    models: { selectedModelId },
+    memory: { userInputMemory },
+    upload: {
+      previewFiles,
+      logoFile,
+      fileToGenerateInput,
+      fileToThumbDataUrl
+    },
+    history: {
+      history,
+      setCancelNoticeForHistory,
+      setHistoryItemStatus
+    },
+    flow: {
+      userInput,
+      deepMode,
+      options,
+      selectedOptionId,
+      selectedOptionTitle,
+      selectedOptionSummary,
+      selectedOptionStyleTags,
+      analyzeDirections,
+      cancel
+    },
+    settings: {
+      buildProductProfileContextText
+    },
+    ui: {
+      error,
+      loading,
+      scrollChatToBottom,
+      showTopTip
+    }
   },
-  history: {
-    history,
-    setCancelNoticeForHistory
+  {
+    auth: { ensureAuthed, isAuthed },
+    credits: { refreshCredits },
+    upload: { previewFiles, fileToThumbDataUrl },
+    history: { history, setCancelNoticeForHistory, setHistoryItemStatus },
+    flow: {
+      userInput,
+      deepMode,
+      loading,
+      error,
+      options,
+      selectedOptionId,
+      selectedOptionTitle,
+      selectedOptionSummary,
+      cancel
+    },
+    settings: { buildProductProfileContextText, productProfileSnapshot },
+    config: {
+      profileId: selectedProfileId,
+      aspectRatio: selectedAspectRatio,
+      profileAvailable: generationProfileAvailable
+    },
+    ui: { scrollChatToBottom, showTopTip }
   },
-  flow: {
-    userInput,
-    deepMode,
-    options,
-    selectedOptionId,
-    selectedOptionTitle,
-    selectedOptionSummary,
-    selectedOptionStyleTags,
-    analyzeDirections,
-    cancel
-  },
-  settings: {
-    buildProductProfileContextText
-  },
-  ui: {
-    error,
-    loading,
-    scrollChatToBottom,
-    showTopTip
-  }
-});
+  generationV2Enabled
+);
 
 const isStyleSelecting = computed(() => deepMode.value && options.value.length > 0);
+
+const syncChatInputHeight = () => {
+  const el = chatInputRef.value;
+  if (!el) return;
+  const narrow = window.matchMedia('(max-width: 768px)').matches;
+  const deepSelection = deepMode.value && options.value.length > 0;
+  const minHeight = narrow ? (deepSelection ? 52 : 76) : 60;
+  const maxHeight = narrow ? (deepSelection ? 88 : 132) : 180;
+  el.style.height = 'auto';
+  const nextHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight);
+  el.style.height = `${nextHeight}px`;
+  el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+};
+
+watch(
+  [userInput, deepMode, () => options.value.length],
+  () => {
+    void nextTick(syncChatInputHeight);
+  },
+  { immediate: true }
+);
 
 const updateSelectedOptionTitle = (next: string) => {
   const idx = selectedOptionIndex.value;
@@ -1037,10 +1203,13 @@ const canPrimary = computed(() => {
 });
 
 const sendCostValue = computed(() => {
+  if (generationV2Enabled.value) {
+    return deepMode.value && options.value.length === 0 ? 5 : 10;
+  }
   const costs = creditsCosts.value;
   const fallback = 10;
   const img2imgCost = Math.max(0, Number(costs?.img2img ?? fallback) || 0);
-  if (deepMode.value) return 15;
+  if (deepMode.value) return options.value.length === 0 ? 5 : 10;
   return img2imgCost;
 });
 
@@ -1050,7 +1219,6 @@ const generateHoverTip = computed(() => {
 });
 
 const showGenerateCost = computed(() => {
-  if (deepMode.value) return options.value.length > 0;
   return true;
 });
 
@@ -1062,7 +1230,90 @@ const showSendCostInline = computed(
 
 const onPrimary = doPrimary;
 
-const downloadMsgImage = (url: string) => showDownload(resolveRefUrl(url));
+const applyStarterTemplate = (prompt: string) => {
+  userInput.value = String(prompt || '').trim();
+  void nextTick(() => chatInputRef.value?.focus());
+};
+
+const brokenImages = ref<Record<string, true>>({});
+
+const imageBrokenKey = (url: string) => String(url || '').trim();
+
+const markImageBroken = (url: string) => {
+  const key = imageBrokenKey(url);
+  if (!key) return;
+  brokenImages.value = { ...brokenImages.value, [key]: true };
+};
+
+const isImageBroken = (url: string) => {
+  const key = imageBrokenKey(url);
+  return !!key && !!brokenImages.value[key];
+};
+
+const historyStatusText = (item: any) => {
+  const status = String(item?.status || '').trim();
+  const text = String(item?.errorText || item?.notice?.text || '').trim();
+  if (status === 'failed') return text || ui.value.generationFailed;
+  if (status === 'cancelled') return text || ui.value.generationCancelled;
+  if (status === 'pending') return ui.value.statusPending;
+  return '';
+};
+
+const historySidebarStatusText = (item: any) => {
+  const status = String(item?.status || '').trim();
+  if (status === 'failed') return ui.value.statusFailed;
+  if (status === 'cancelled') return ui.value.statusCancelled;
+  if (status === 'pending') return ui.value.statusPending;
+  return '';
+};
+
+const generationActionProperties = (item?: any) => ({
+  operation: 'generate',
+  source: 'history',
+  ...(item?.taskId ? { taskId: String(item.taskId) } : {}),
+  ...(item?.profileId ? { profileId: String(item.profileId) } : {}),
+  ...(item?.aspectRatio ? { aspectRatio: String(item.aspectRatio) } : {})
+});
+
+const historyItemForImage = (url: string) => {
+  const target = String(url || '').trim();
+  if (!target) return undefined;
+  return history.value.find((item) => {
+    const image = String(item?.image || '').trim();
+    return image === target || resolveRefUrl(image) === resolveRefUrl(target);
+  });
+};
+
+const downloadMsgImage = async (url: string, item?: any) => {
+  const resolved = resolveRefUrl(url);
+  if (!generationV2Enabled.value || !assetIdFromUrl(url) && !assetIdFromUrl(resolved)) {
+    showDownload(resolved);
+    return;
+  }
+  try {
+    const response = await resourceFetch(resolved);
+    if (!response.ok) throw new Error('ASSET_DOWNLOAD_FAILED');
+    const blob = await response.blob();
+    if (!blob.size || !String(blob.type || '').toLowerCase().startsWith('image/')) {
+      throw new Error('OUTPUT_INVALID');
+    }
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = `artigen-${Date.now()}.${extFromMime(blob.type)}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    trackEvent('download', generationActionProperties(item));
+  } catch {
+    showTopTip(
+      currentLang.value === 'zh'
+        ? '原图下载失败，资源可能已过期'
+        : 'Original image download failed. The asset may have expired.'
+    );
+  }
+};
 
 const IMAGE_EDITOR_PREFILL_KEY = 'imageEditor:prefill_v1';
 
@@ -1077,9 +1328,42 @@ const writeEditorPrefill = (value: string) => {
   } catch {}
 };
 
-const editMsgImage = (url: string) => {
+const assetIdFromUrl = (value: string) => {
+  const match = String(value || '').match(/\/api\/assets\/([0-9a-f-]{36})(?:[?#]|$)/i);
+  return match?.[1] || '';
+};
+
+const editMsgImage = async (url: string, item?: any) => {
   const s = String(url || '').trim();
   if (!s) return;
+  if (generationV2Enabled.value) {
+    const assetId = assetIdFromUrl(s) || assetIdFromUrl(resolveRefUrl(s));
+    if (!assetId) {
+      showTopTip(
+        currentLang.value === 'zh'
+          ? '这张旧结果尚未迁移为安全资产，请先下载后在编辑器中导入'
+          : 'This legacy result is not an opaque asset yet. Download it and import it in the editor.'
+      );
+      return;
+    }
+    try {
+      const transferId = await createEditorTransfer(assetId);
+      showDownloadDialog.value = false;
+      imagePreviewOpen.value = false;
+      await router.push({
+        path: '/artigen/image-workshop/image-editor',
+        query: { transferId, editor: 'v2' }
+      });
+      trackEvent('edit', generationActionProperties(item));
+    } catch {
+      showTopTip(
+        currentLang.value === 'zh'
+          ? '无法创建安全编辑传输，请稍后重试'
+          : 'Could not create a secure editor transfer. Please try again.'
+      );
+    }
+    return;
+  }
   const resolved = resolveRefUrl(s);
   const isData = s.startsWith('data:');
   const isAbsolutePath = s.startsWith('/');
@@ -1090,7 +1374,30 @@ const editMsgImage = (url: string) => {
   const query = useQuery ? { img: stored } : { prefill: '1' };
   showDownloadDialog.value = false;
   imagePreviewOpen.value = false;
-  router.push({ path: '/artigen/image-editor', query });
+  router.push({ path: '/artigen/image-workshop/image-editor', query });
+};
+
+const modifyGeneration = (item: any) => {
+  const text = String(item?.userText || '').trim();
+  if (!text) return;
+  userInput.value = text;
+  if (deepMode.value && options.value.length) {
+    options.value = [];
+    selectedOptionId.value = '';
+  }
+  imagePreviewOpen.value = false;
+  showDownloadDialog.value = false;
+  void nextTick(() => chatInputRef.value?.focus());
+};
+
+const variationGeneration = async (item: any) => {
+  trackEvent('variation', {
+    ...generationActionProperties(item),
+    mode: 'variation'
+  });
+  modifyGeneration(item);
+  await nextTick();
+  await doVariation();
 };
 
 const imagePreviewOpen = ref(false);
@@ -1211,19 +1518,7 @@ const resolveRefUrl = (raw: string) => {
     }
     return u;
   })();
-  const token = String(authToken.value || '').trim();
-  if (!token) return built;
-  try {
-    const url = new URL(built, window.location.origin);
-    if (!url.pathname.startsWith('/files/')) return built;
-    if (!url.searchParams.get('token')) url.searchParams.set('token', token);
-    return url.toString();
-  } catch {
-    if (!built.includes('/files/')) return built;
-    const join = built.includes('?') ? '&' : '?';
-    if (built.includes('token=')) return built;
-    return `${built}${join}token=${encodeURIComponent(token)}`;
-  }
+  return built;
 };
 
 const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> => {
@@ -1231,12 +1526,9 @@ const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> 
   if (!v) return null;
   const direct = dataUrlToFile(v);
   if (direct) return direct;
-  const tryFetchToBlob = async (
-    url: string,
-    opts?: { headers?: Record<string, string> }
-  ): Promise<Blob | null> => {
+  const tryFetchToBlob = async (url: string): Promise<Blob | null> => {
     try {
-      const res = await fetch(url, opts);
+      const res = await resourceFetch(url);
       if (!res.ok) return null;
       const blob = await res.blob();
       if (
@@ -1254,14 +1546,6 @@ const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> 
     const resolved = resolveRefUrl(v);
     let blob = await tryFetchToBlob(resolved || v);
     if (!blob && resolved && resolved !== v) blob = await tryFetchToBlob(v);
-    if (!blob) {
-      const token = String(authToken.value || '').trim();
-      if (token && (resolved || v).includes('/files/')) {
-        blob = await tryFetchToBlob(resolved || v, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-      }
-    }
     if (!blob && /^https?:\/\//i.test(v)) {
       const proxyUrl = buildApiUrl(`/api/proxy/image?url=${encodeURIComponent(v)}`);
       blob = await tryFetchToBlob(proxyUrl);
@@ -1274,7 +1558,7 @@ const prefillItemToFile = async (it: AgentImgPrefillItem): Promise<File | null> 
   }
 };
 
-const referenceMsgImage = async (url: string) => {
+const referenceMsgImage = async (url: string, item?: any) => {
   const s = String(url || '').trim();
   if (!s) return;
   const resolved = resolveRefUrl(s);
@@ -1308,6 +1592,10 @@ const referenceMsgImage = async (url: string) => {
     return;
   }
   setPreviewFileAt(idx, f);
+  trackEvent('reference', {
+    ...generationActionProperties(item),
+    referenceCount: previewFiles.value.filter(Boolean).length
+  });
   // Manual trigger of side effects if setPreviewFileAt2 doesn't do it
   if (!keepDeep) deepMode.value = false;
   cancel();
@@ -1344,16 +1632,15 @@ const applyPrefillRefImages = async () => {
   } catch {}
 };
 
-const handleAuthChanged = () => {
+const handleAuthChanged = async () => {
   syncAuth();
   // authTick.value++; // authTick is inside useAgentImgAuth, not reactive from here?
   // Wait, useAgentImgAuth returned authTick ref.
   // But we need to make sure syncing updates it.
   // Actually syncAuth inside useAgentImgAuth updates the refs.
   if (isAuthed.value) {
-    void loadHistoryFromServer().then((ok) => {
-      if (!ok) loadHistoryFromStorage();
-    });
+    const ok = await loadHistoryFromServer();
+    if (!ok) loadHistoryFromStorage();
   } else loadHistoryFromStorage();
   if (isAuthed.value) void refreshCredits();
   else creditsBalance.value = null;
@@ -1396,7 +1683,13 @@ const onGlobalPointerDown = (e: PointerEvent) => {
 };
 
 onMounted(() => {
-  handleAuthChanged();
+  trackEvent('workspace_view', {
+    source: 'workspace',
+    authenticated: isAuthed.value,
+    profileId: selectedProfileId.value,
+    aspectRatio: selectedAspectRatio.value
+  });
+  void handleAuthChanged().then(() => resumePendingTask());
   void applyPrefillRefImages();
   try {
     wideSidebarMql = window.matchMedia('(min-width: 1920px)');
@@ -1404,6 +1697,8 @@ onMounted(() => {
     wideSidebarMql.addEventListener('change', onWideSidebarChange);
   } catch {}
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
+  window.addEventListener('resize', syncChatInputHeight);
+  void nextTick(syncChatInputHeight);
   document.addEventListener('pointerdown', onGlobalPointerDown, true);
   void refreshCosts();
 });
@@ -1416,6 +1711,7 @@ onBeforeUnmount(() => {
   } catch {}
   wideSidebarMql = null;
   window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
+  window.removeEventListener('resize', syncChatInputHeight);
   document.removeEventListener('pointerdown', onGlobalPointerDown, true);
   cleanupPreviews();
 });

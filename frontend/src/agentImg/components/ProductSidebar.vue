@@ -1,5 +1,14 @@
 <template>
-  <aside class="side" :class="{ 'mobile-open': isOpen }">
+  <aside class="side" :class="{ 'mobile-open': isOpen, 'has-mobile-close': isOpen }">
+    <button
+      v-if="isOpen"
+      class="side-close"
+      type="button"
+      :aria-label="ui.close || 'Close'"
+      @click="emit('close')"
+    >
+      ×
+    </button>
     <div class="scroll-container">
       <section class="card settings-card">
         <div class="card-title">{{ ui.productProfile }}</div>
@@ -287,6 +296,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'primary'): void;
+  (e: 'close'): void;
 }>();
 
 const settingsStore = useAgentImgSettingsStore();
@@ -365,6 +375,44 @@ const onLogoChange = (e: Event) => {
 
 <style scoped>
 /* Scoped styles for ProductSidebar if needed */
+.side-close {
+  display: none;
+}
+
+.side .form-group {
+  flex-direction: column;
+  gap: 0;
+}
+
+@media (max-width: 1400px) {
+  .side-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 2;
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(241, 245, 249, 0.86);
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .side-close:active {
+    transform: scale(0.96);
+  }
+
+  .side.has-mobile-close .scroll-container {
+    padding-top: 56px;
+  }
+}
 
 /* Custom Select Styles */
 .custom-select {

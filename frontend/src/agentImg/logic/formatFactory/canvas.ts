@@ -9,17 +9,81 @@ export const loadImageFromUrl = (url: string) =>
     img.src = url;
   });
 
-export const canvasToBlob = (canvas: HTMLCanvasElement, type: string, quality?: number) =>
+const nativeCanvasToBlob = (canvas: HTMLCanvasElement, type: string, quality?: number) =>
   new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
-      (b) => {
-        if (!b) reject(new Error('CANVAS_EXPORT_FAIL'));
-        else resolve(b);
+      (blob) => {
+        if (!blob) reject(new Error('CANVAS_EXPORT_FAIL'));
+        else resolve(blob);
       },
       type,
       quality
     );
   });
+
+const hasWebpMagic = async (blob: Blob) => {
+  const bytes = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  return (
+    bytes.byteLength >= 12 &&
+    String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
+    String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP'
+  );
+};
+
+type WebpEncoder = (
+  data: ImageData,
+  options?: { quality?: number }
+) => Promise<ArrayBuffer>;
+
+let webpEncoderPromise: Promise<WebpEncoder> | null = null;
+
+const getWebpEncoder = () => {
+  if (webpEncoderPromise) return webpEncoderPromise;
+  webpEncoderPromise = Promise.all([
+    import('@jsquash/webp/encode.js'),
+    import('@jsquash/webp/codec/enc/webp_enc.wasm?url'),
+    import('@jsquash/webp/codec/enc/webp_enc_simd.wasm?url')
+  ])
+    .then(async ([encoder, scalarWasm, simdWasm]) => {
+      await encoder.init({
+        locateFile: (path: string) =>
+          path.includes('_simd') ? simdWasm.default : scalarWasm.default
+      } as any);
+      return encoder.default as WebpEncoder;
+    })
+    .catch((error) => {
+      webpEncoderPromise = null;
+      throw error;
+    });
+  return webpEncoderPromise;
+};
+
+const encodeWebpFallback = async (
+  canvas: HTMLCanvasElement,
+  quality?: number
+): Promise<Blob> => {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
+  const encodeWebp = await getWebpEncoder();
+  const encoded = await encodeWebp(ctx.getImageData(0, 0, canvas.width, canvas.height), {
+    quality: Math.round(Math.max(0, Math.min(1, quality ?? 0.9)) * 100)
+  });
+  const blob = new Blob([encoded], { type: 'image/webp' });
+  if (!(await hasWebpMagic(blob))) throw new Error('IMAGE_OUTPUT_INVALID');
+  return blob;
+};
+
+export const canvasToBlob = async (
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality?: number
+) => {
+  const blob = await nativeCanvasToBlob(canvas, type, quality);
+  if (type !== 'image/webp' || (await hasWebpMagic(blob))) return blob;
+  // WebKit can silently return PNG bytes for a requested WebP export. Use the lazy WASM
+  // encoder so the filename, MIME type, and binary contract always agree.
+  return encodeWebpFallback(canvas, quality);
+};
 
 const MAX_CANVAS_DIM = 16384;
 const MAX_CANVAS_PIXELS = 50_000_000;

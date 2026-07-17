@@ -213,8 +213,13 @@
 }
 
 .avatar-btn {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  flex: 0 0 44px;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   /* border-radius: 999px; */
   border: 1px solid rgba(204, 255, 0, 0.28);
   background: rgba(0, 0, 0, 0.25);
@@ -691,6 +696,67 @@
   box-shadow: 0 4px 12px rgba(204, 255, 0, 0.3);
 }
 
+@media (max-width: 768px) {
+  .deep-thinking-view {
+    padding: 18px 16px;
+  }
+
+  .dt-header {
+    margin-bottom: 14px;
+  }
+
+  .dt-title {
+    font-size: 20px;
+  }
+
+  .dt-subtitle {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .dt-tabs {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 2px 2px 8px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: thin;
+  }
+
+  .dt-tab {
+    flex: 0 0 min(280px, 78vw);
+    min-height: 132px;
+    padding: 14px;
+    scroll-snap-align: start;
+  }
+
+  .dt-tab-title {
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .dt-tab-desc {
+    font-size: 12px;
+    -webkit-line-clamp: 3;
+  }
+
+  .dt-content {
+    flex: 0 0 auto;
+    padding: 12px;
+  }
+
+  .dt-actions,
+  .dt-generate-wrap,
+  .dt-btn {
+    width: 100%;
+  }
+
+  .dt-btn {
+    min-height: 48px;
+    border-radius: 8px;
+  }
+}
+
 /* Download Dialog */
 .download-dialog-overlay {
   position: fixed;
@@ -849,6 +915,12 @@
   border-color: rgba(204, 255, 0, 0.5);
 }
 
+.download-option-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
 .res-label {
   font-size: 14px;
   font-weight: 500;
@@ -860,6 +932,15 @@
   color: #ccff00;
   padding: 2px 6px;
   border-radius: 4px;
+}
+
+.download-error {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* Top Tip */

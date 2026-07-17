@@ -86,7 +86,7 @@ type: summary
 
 ```bash
 git commit -m "feat: add credits order filters"
-git commit -m "fix: keep login token after refresh"
+git commit -m "fix: restore cookie session after refresh"
 git commit -m "docs: add collaboration rules"
 ```
 
@@ -145,10 +145,7 @@ refactor: remove legacy non-Artigen routes
 
 ## 验证
 
-- [ ] `pnpm --dir frontend run type-check`
-- [ ] `pnpm --dir frontend run test`
-- [ ] `pnpm --dir frontend run build`
-- [ ] `find backend -name '*.js' -not -path '*/node_modules/*' -print0 | xargs -0 -n1 node --check`
+- [ ] `pnpm check`（代码改动的完整 lint、类型、前后端单测、六组 Playwright、构建和预算门禁）
 - [ ] 关键页面 smoke：
 - [ ] 关键 API smoke：
 
@@ -212,6 +209,7 @@ Review 反馈建议使用明确语气：
 当前部署事实：
 
 - Railway 中前端和后端分别部署。
+- Railway 后端服务 Root Directory 必须是 `/backend`，以加载 `backend/railway.json`。
 - Railway 环境变量在平台内配置。
 - `main` 合并后会触发部署。
 - `test` 是上线前测试分支；是否绑定 Railway 测试环境以 Railway 当前项目配置为准，文档默认不要求必须有独立测试环境。
@@ -219,8 +217,10 @@ Review 反馈建议使用明确语气：
 
 合并到 `main` 前必须确认：
 
-- 本次改动不依赖本地 `backend/memory` 数据。
+- 本次改动不依赖本地 `backend/memory` 中的财务快照。
 - 没有提交真实 API key、SMTP 密码、支付密钥、管理员密码。
+- `preDeployCommand` 会先运行所有尚未应用的 PostgreSQL 迁移，且迁移核对已完成。
+- PostgreSQL TLS/CA、对象存储和 `PAID_FEATURES_ENABLED` 门禁已按目标环境核对。
 - 如果新增环境变量，已在 README 或 PRD 中写清变量名和作用。
 - 如果改了 API base、CORS、`/api`、`/files`、登录、支付、点数，PR 中必须写清 Railway 影响。
 - 前后端分离部署下，前端不能硬编码本地后端地址或线上私有地址。
@@ -231,10 +231,10 @@ Review 反馈建议使用明确语气：
 | 对象 | 检查 |
 | --- | --- |
 | 前端 | `/`、`/artigen`、`/artigen/ai`、`/artigen/tools`、`/login`、`/console` 可打开。 |
-| 后端 | `/api/meta`、`/api/health`、`/api/credits/costs` 可返回。 |
+| 后端 | `/api/meta`、`/api/health`、`/api/tools/catalog`、`/api/auth/session` 可返回。 |
 | 登录 | 邮箱验证码、密码登录或 Google 登录至少确认一条可用链路。 |
 | 生成 | 有线上 key 时确认 `/api/generate` 或 `/api/img2img` 关键链路。 |
-| 文件 | 生成图片后的 `/files/*` 可访问。 |
+| 文件 | 新资产 `/api/assets/:assetId` 可按所有权访问；旧 `/files/*` 仅做兼容。 |
 
 ---
 
@@ -258,14 +258,14 @@ Review 反馈建议使用明确语气：
 - 统一通过 `frontend/src/utils/api.ts` 构造 API 地址。
 - 不在页面里硬编码线上 API 域名。
 - 不把 Railway 后端地址写死在组件里。
-- 涉及登录态时使用现有 session/token 工具。
-- 涉及点数时优先读取 `/api/credits/costs`，不要在页面里散落成本常量。
+- 普通用户登录态统一使用 Cookie session、`authFetch` 与 CSRF；不得新增浏览器 bearer token 持久化。
+- 新工具的价格只读 `/api/tools/catalog` 与 `/api/tool-tasks/quote`，不得新增对兼容期 `/api/credits/costs` 的依赖或在页面散落成本常量。
 
 ### 后端规则
 
-- 不依赖本地 `backend/memory` 里的已有数据。
+- 不依赖本地 `backend/memory` 里的财务快照。
 - 不新增未记录的环境变量。
-- 不绕过 `assertAuthUserMatches` 或 `assertAdmin`。
+- 不绕过 Cookie session/Origin/CSRF、`assertAuthUserMatches`、`assertAdmin` 或生产管理员 `requireActiveAdministrator` 复核。
 - 支付、点数、登录、文件访问相关改动必须保留可审计记录。
 - 新增路由时注意限流、认证和错误响应。
 
@@ -303,13 +303,13 @@ Review 反馈建议使用明确语气：
 
 按改动类型选择测试，不要求每个纯文档 PR 都跑全量构建。
 
-### 前端改动
+### 代码改动
 
 ```bash
-pnpm --dir frontend run type-check
-pnpm --dir frontend run test
-pnpm --dir frontend run build
+pnpm check
 ```
+
+该根命令覆盖前后端 lint、类型检查、单元/后端测试、Playwright、生产构建和首页 gzip 预算。纯文档 PR 可在说明中标明未运行原因。
 
 页面 smoke 至少覆盖相关页面。例如：
 
@@ -318,15 +318,9 @@ pnpm --dir frontend run build
 /artigen/ai
 /artigen/tools
 /artigen/image-workshop
-/artigen/image-editor
+/artigen/image-workshop/image-editor
 /login
 /console
-```
-
-### 后端改动
-
-```bash
-find backend -name '*.js' -not -path '*/node_modules/*' -print0 | xargs -0 -n1 node --check
 ```
 
 API smoke 按影响范围选择：
@@ -334,8 +328,8 @@ API smoke 按影响范围选择：
 ```bash
 curl -sS http://localhost:8080/api/meta
 curl -sS http://localhost:8080/api/health
-curl -sS http://localhost:8080/api/credits/costs
-curl -sS http://localhost:8080/api/auth/google/config
+curl -sS http://localhost:8080/api/tools/catalog
+curl -sS http://localhost:8080/api/auth/session
 ```
 
 涉及生成和图片时，补充：

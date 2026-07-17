@@ -1,14 +1,33 @@
 {
-  "name": "newPro",
+  "name": "artigen",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "description": "Artigen creator workshop and media tools",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": "24.x",
+    "pnpm": "10.x"
+  },
   "scripts": {
-    "dev": "concurrently \"pnpm --dir backend run dev\" \"pnpm --dir frontend run dev\"",
-    "build": "pnpm --dir frontend run build",
-    "install:all": "pnpm --dir backend install --frozen-lockfile && pnpm --dir frontend install --frozen-lockfile",
-    "zeabur:build": "pnpm run install:all && pnpm --dir frontend run build",
-    "start": "pnpm --dir backend run start",
+    "dev": "concurrently \"pnpm --filter backend dev\" \"pnpm --filter personal dev\"",
+    "build": "pnpm --filter personal build",
+    "lint": "pnpm --filter personal lint && pnpm --filter backend lint",
+    "lint:fix": "pnpm --filter personal lint:fix",
+    "type-check": "pnpm --filter personal type-check",
+    "test": "pnpm test:unit && pnpm test:backend",
+    "test:unit": "pnpm --filter personal test",
+    "test:backend": "pnpm --filter backend test",
+    "test:integration": "pnpm --filter personal test:e2e",
+    "check:workspace": "node scripts/check-workspace-lockfile.mjs",
+    "check": "pnpm check:workspace && pnpm lint && pnpm type-check && pnpm test && pnpm test:integration && pnpm build && pnpm --filter personal test:budget",
+    "install:all": "pnpm install --frozen-lockfile",
+    "start": "pnpm --filter backend start",
+    "start:production": "pnpm --filter backend start:production",
+    "db:migrate:locked": "pnpm --filter backend db:migrate:locked",
+    "db:local:setup": "pnpm --filter backend db:local:setup",
+    "db:backup:neon": "pnpm --filter backend db:backup:neon",
+    "db:restore:verify": "pnpm --filter backend db:restore:verify",
+    "db:audit": "pnpm --filter backend db:audit",
     "prepare": "husky"
   },
   "keywords": [],
@@ -25,5 +44,10 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "prettier": "^3.7.4"
+  },
+  "lint-staged": {
+    "frontend/**/*.{js,jsx,vue,ts,tsx}": [
+      "eslint --config frontend/eslint.config.js"
+    ]
   }
 }

@@ -31,7 +31,18 @@
           {{ currentTypeDesc }}
         </div>
 
-        <button class="generate-btn" :disabled="!selectedFile || loading" @click="handleGenerate">
+        <label class="upload-consent" :class="{ disabled: quoteLoading || !!quoteError }">
+          <input v-model="uploadConsent" type="checkbox" :disabled="quoteLoading || !!quoteError" />
+          <span>{{ consentText }}</span>
+        </label>
+        <p v-if="quoteLoading" class="quote-status" role="status">{{ ui.quoteLoading }}</p>
+        <p v-else-if="quoteError" class="quote-status error" role="alert">{{ quoteErrorText }}</p>
+
+        <button
+          class="generate-btn"
+          :disabled="!selectedFile || loading || quoteLoading || !!quoteError || !uploadConsent"
+          @click="handleGenerate"
+        >
           <span v-if="loading">
             <svg
               class="spinner-icon"
@@ -84,6 +95,8 @@ import { storeToRefs } from 'pinia';
 const props = defineProps<{
   visible: boolean;
   creditsCost?: number;
+  quoteLoading?: boolean;
+  quoteError?: string;
 }>();
 
 const emit = defineEmits<{
@@ -96,21 +109,25 @@ const { currentLang } = storeToRefs(languageStore);
 
 const loading = ref(false);
 const selectedFile = ref<File | null>(null);
+const uploadConsent = ref(false);
 
 const ui = computed(() => {
   const en = currentLang.value === 'en';
   return {
-    title: en ? 'Smart ID Photo' : '智能证件照',
+    title: en ? 'AI Professional Portrait' : 'AI 职业形象',
     subtitle: en
-      ? 'Multiple specs, one-click standard ID photo.'
-      : '支持多种规格，一键生成标准证件照',
+      ? 'Paid cloud generation for professional profile portraits. This is separate from standard ID-photo layout.'
+      : '付费云端生成职业头像；这不是标准证件照尺寸排版。',
     reupload: en ? 'Click or drag to replace image' : '点击或拖拽替换图片',
     uploadText: en ? 'Click or drag image' : '点击或拖拽图片',
     uploadHint: en ? 'Supports JPG, PNG, WEBP' : '支持 JPG, PNG, WEBP',
     sectionTitle: en ? 'Setup & Generate' : '配置与生成',
-    typeLabel: en ? 'Photo Type' : '证件类型',
+    typeLabel: en ? 'Portrait Style' : '职业风格',
     generating: en ? 'Generating...' : '生成中...',
-    start: en ? 'Generate' : '开始生成'
+    start: en ? 'Generate' : '开始生成',
+    quoteLoading: en ? 'Loading the server quote…' : '正在读取服务端报价…',
+    loginRequired: en ? 'Sign in before requesting a quote.' : '请先登录后获取报价。',
+    paidUnavailable: en ? 'Paid portrait generation is currently unavailable.' : '付费职业形象当前不可用。'
   };
 });
 
@@ -157,6 +174,18 @@ const costText = computed(() => {
   return `${n}`;
 });
 
+const consentText = computed(() => {
+  const credits = costText.value || '?';
+  return currentLang.value === 'en'
+    ? `I agree to upload this photo for AI processing (retained up to 24 hours) and reserve ${credits} credits. Failed or cancelled tasks are refunded.`
+    : `我同意上传此照片进行 AI 处理（最长保留 24 小时），并预占 ${credits} 点数；失败或取消会退款。`;
+});
+
+const quoteErrorText = computed(() => {
+  if (props.quoteError === 'LOGIN_REQUIRED') return ui.value.loginRequired;
+  return ui.value.paidUnavailable;
+});
+
 const close = () => {
   emit('close');
 };
@@ -164,6 +193,7 @@ const close = () => {
 const resetState = () => {
   selectedFile.value = null;
   loading.value = false;
+  uploadConsent.value = false;
 };
 
 watch(
@@ -257,6 +287,33 @@ const handleGenerate = () => {
   background: #333;
   color: #666;
   cursor: not-allowed;
+}
+
+.upload-consent {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: #b7bdb4;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.upload-consent input {
+  margin-top: 2px;
+}
+
+.upload-consent.disabled {
+  opacity: 0.6;
+}
+
+.quote-status {
+  margin: 0;
+  color: #aeb6aa;
+  font-size: 12px;
+}
+
+.quote-status.error {
+  color: #fca5a5;
 }
 
 .generate-btn:hover:not(:disabled) {

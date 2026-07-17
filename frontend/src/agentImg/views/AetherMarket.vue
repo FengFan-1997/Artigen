@@ -50,6 +50,10 @@
         </div>
       </div>
 
+      <p v-if="packagesLoading || packagesError" class="package-status" role="status" aria-live="polite">
+        {{ packagesLoading ? ui.loadingPackages : ui.paidUnavailable }}
+      </p>
+
       <div class="pricing-grid">
         <!-- Starter Pack -->
         <div class="pricing-card" v-if="!proOnly">
@@ -102,7 +106,7 @@
           <div class="price-section">
             <div class="price">
               <span class="symbol">{{ currencySymbol }}</span>
-              <span class="amount">{{ getPrice(9.9) }}</span>
+              <span class="amount">{{ getPrice(PACK_PRICES.starter) }}</span>
             </div>
             <div class="compute-amount">
               <svg
@@ -124,10 +128,10 @@
               <button
                 class="buy-btn"
                 type="button"
-                :disabled="payCreating"
+                :disabled="payCreating || packagesLoading || !PACKAGE_AVAILABLE.starter"
                 @click="handleBuy('starter')"
               >
-                {{ buyingPackageId === 'starter' ? ui.creatingOrder : ui.buyNow }}
+                {{ packageButtonLabel('starter') }}
               </button>
             </div>
           </div>
@@ -289,7 +293,7 @@
           <div class="price-section">
             <div class="price">
               <span class="symbol">{{ currencySymbol }}</span>
-              <span class="amount">{{ getPrice(19.9) }}</span>
+              <span class="amount">{{ getPrice(PACK_PRICES.standard) }}</span>
             </div>
             <div class="compute-amount">
               <svg
@@ -311,10 +315,10 @@
               <button
                 class="buy-btn"
                 type="button"
-                :disabled="payCreating"
+                :disabled="payCreating || packagesLoading || !PACKAGE_AVAILABLE.standard"
                 @click="handleBuy('standard')"
               >
-                {{ buyingPackageId === 'standard' ? ui.creatingOrder : ui.buyNow }}
+                {{ packageButtonLabel('standard') }}
               </button>
             </div>
           </div>
@@ -510,7 +514,7 @@
           <div class="price-section">
             <div class="price">
               <span class="symbol">{{ currencySymbol }}</span>
-              <span class="amount">{{ getPrice(49.9) }}</span>
+              <span class="amount">{{ getPrice(PACK_PRICES.pro) }}</span>
             </div>
             <div class="compute-amount">
               <svg
@@ -532,10 +536,10 @@
               <button
                 class="buy-btn primary"
                 type="button"
-                :disabled="payCreating"
+                :disabled="payCreating || packagesLoading || !PACKAGE_AVAILABLE.pro"
                 @click="handleBuy('pro')"
               >
-                {{ buyingPackageId === 'pro' ? ui.creatingOrder : ui.buyNow }}
+                {{ packageButtonLabel('pro') }}
               </button>
             </div>
           </div>
@@ -772,7 +776,7 @@
           <div class="price-section">
             <div class="price">
               <span class="symbol">{{ currencySymbol }}</span>
-              <span class="amount">{{ getPrice(99.9) }}</span>
+              <span class="amount">{{ getPrice(PACK_PRICES.ultimate) }}</span>
             </div>
             <div class="compute-amount">
               <svg
@@ -794,11 +798,10 @@
               <button
                 class="buy-btn gold"
                 type="button"
-                :disabled="payCreating"
+                :disabled="payCreating || packagesLoading || !PACKAGE_AVAILABLE.ultimate"
                 @click="handleBuy('ultimate')"
               >
-                <template v-if="buyingPackageId === 'ultimate'">{{ ui.creatingOrder }}</template>
-                <template v-else>{{ ui.buyNow }}</template>
+                {{ packageButtonLabel('ultimate') }}
               </button>
             </div>
           </div>
@@ -1248,23 +1251,73 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount, onMounted } from 'vue';
+import { ref, reactive, computed, onBeforeUnmount, onMounted } from 'vue';
 import { storeToRefs } from 'pinia';
 import GlobalFooter from '../components/GlobalFooter.vue';
 import TitleBar from '../components/TitleBar.vue';
 import { useLanguageStore } from '@/stores/language';
 import { useLoginModel } from '@/stores';
 import { useRoute, useRouter } from 'vue-router';
-import { createPayOrder, getCreditsBalance, type PayPackageId } from '@/points';
+import {
+  createPayOrder,
+  getCreditsBalance,
+  getPayOrder,
+  getPayPackages,
+  type PayPackageId
+} from '@/points';
 import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
 import { useConsoleStore } from '@/stores/console';
 import { trackEvent } from '@/utils/analytics';
 
-const PACK_CREDITS: Record<PayPackageId, number> = {
+const PACK_CREDITS = reactive<Record<PayPackageId, number>>({
   starter: 400,
   standard: 1000,
   pro: 3000,
   ultimate: 10000
+});
+
+const PACK_PRICES = reactive<Record<PayPackageId, number>>({
+  starter: 9.9,
+  standard: 19.9,
+  pro: 49.9,
+  ultimate: 99.9
+});
+
+const PACKAGE_AVAILABLE = reactive<Record<PayPackageId, boolean>>({
+  starter: false,
+  standard: false,
+  pro: false,
+  ultimate: false
+});
+const PACKAGE_UUIDS = reactive<Record<PayPackageId, string>>({
+  starter: '',
+  standard: '',
+  pro: '',
+  ultimate: ''
+});
+const packagesLoading = ref(true);
+const packagesError = ref(false);
+
+const loadPackageCatalogue = async () => {
+  packagesLoading.value = true;
+  packagesError.value = false;
+  for (const key of Object.keys(PACKAGE_AVAILABLE) as PayPackageId[]) {
+    PACKAGE_AVAILABLE[key] = false;
+    PACKAGE_UUIDS[key] = '';
+  }
+  const packages = await getPayPackages();
+  if (!packages) {
+    packagesError.value = true;
+    packagesLoading.value = false;
+    return;
+  }
+  for (const item of packages) {
+    PACK_CREDITS[item.packageId] = item.credits;
+    PACK_PRICES[item.packageId] = item.amountCny;
+    PACKAGE_UUIDS[item.packageId] = item.packageUuid;
+    PACKAGE_AVAILABLE[item.packageId] = true;
+  }
+  packagesLoading.value = false;
 };
 
 const formatCredits = (n: number) => {
@@ -1350,6 +1403,7 @@ const onKeyDown = (e: KeyboardEvent) => {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeyDown);
+  void loadPackageCatalogue();
   consoleStore.recordTraffic({
     type: 'page_view',
     page: '/artigen/market',
@@ -1398,10 +1452,16 @@ const payHintText = computed(() => {
   const raw = String(payError.value || '').trim();
   if (raw) {
     if (raw === 'LOGIN_REQUIRED') return ui.value.payLoginRequired;
+    if (raw === 'PAID_FEATURES_DISABLED' || raw === 'DATABASE_NOT_CONFIGURED') {
+      return ui.value.paidUnavailable;
+    }
     if (raw === 'INVALID_PACKAGE') return ui.value.payInvalidPackage;
     if (raw === 'CREATE_ORDER_FAILED') return ui.value.payCreateFailed;
     if (raw === 'INVALID_RESPONSE') return ui.value.payCreateFailed;
     if (raw === 'NETWORK_ERROR') return ui.value.payNetworkError;
+    if (raw === 'ORDER_REJECTED') return ui.value.payRejected;
+    if (raw === 'ORDER_CANCELLED') return ui.value.payCancelled;
+    if (raw === 'ORDER_EXPIRED') return ui.value.payExpired;
     return raw;
   }
   if (payStatus.value === 'success') {
@@ -1528,19 +1588,34 @@ const checkPaidOnce = async () => {
 
   payChecking.value = true;
   try {
-    const base = baselineCredits.value;
-    const cur = await refreshBalance();
-    if (typeof base !== 'number' && typeof cur === 'number') {
-      baselineCredits.value = cur;
-      return;
-    }
-    if (typeof base === 'number' && typeof cur === 'number' && cur > base) {
+    await pollPaymentOrder();
+  } finally {
+    payChecking.value = false;
+  }
+};
+
+let paymentPollInFlight = false;
+const pollPaymentOrder = async () => {
+  if (paymentPollInFlight || !payOrderId.value) return;
+  const orderId = payOrderId.value;
+  paymentPollInFlight = true;
+  try {
+    const order = await getPayOrder(orderId);
+    if (!payOpen.value || payOrderId.value !== orderId) return;
+    if (!order) return;
+    if (order.status === 'paid') {
+      await refreshBalance();
       payStatus.value = 'success';
       stopPolling();
       return;
     }
+    if (order.status === 'expired' || order.status === 'cancelled' || order.status === 'rejected') {
+      payError.value = `ORDER_${order.status.toUpperCase()}`;
+      payStatus.value = 'failed';
+      stopPolling();
+    }
   } finally {
-    payChecking.value = false;
+    paymentPollInFlight = false;
   }
 };
 
@@ -1551,22 +1626,13 @@ const startPolling = () => {
   payStatus.value = 'polling';
   pollTimer = window.setInterval(async () => {
     pollTick.value++;
-    const base = baselineCredits.value;
-    const cur = await refreshBalance();
-    if (typeof base !== 'number' && typeof cur === 'number') {
-      baselineCredits.value = cur;
-      return;
-    }
-    if (typeof base === 'number' && typeof cur === 'number' && cur > base) {
-      payStatus.value = 'success';
-      stopPolling();
-      return;
-    }
+    await pollPaymentOrder();
     if (Date.now() - pollStartedAt > POLL_TIMEOUT_MS) {
       payStatus.value = 'failed';
       stopPolling();
     }
   }, 4000);
+  void pollPaymentOrder();
 };
 
 const ensureAuthed = (afterLogin: () => void | Promise<void>) => {
@@ -1577,6 +1643,11 @@ const ensureAuthed = (afterLogin: () => void | Promise<void>) => {
 
 const handleBuy = async (packageId: PayPackageId) => {
   if (payCreating.value) return;
+  if (!PACKAGE_AVAILABLE[packageId]) {
+    payError.value = 'PAID_FEATURES_DISABLED';
+    payOpen.value = true;
+    return;
+  }
   const ok = ensureAuthed(() => handleBuy(packageId));
   if (!ok) return;
 
@@ -1593,7 +1664,7 @@ const handleBuy = async (packageId: PayPackageId) => {
   buyingPackageId.value = packageId;
 
   try {
-    const created = await createPayOrder(packageId);
+    const created = await createPayOrder(packageId, PACKAGE_UUIDS[packageId]);
     if (!created.ok) {
       if (newWindow) newWindow.close();
       payError.value = created.error;
@@ -1639,8 +1710,10 @@ const ui = computed(() => {
       navBtn: '点数商城',
       myOrders: '我的订单',
       creditsUsage: '点数明细',
-      computeUnit: '点数/月',
+      computeUnit: '点数',
       buyNow: '立即购买',
+      loadingPackages: '正在读取服务端套餐…',
+      paidUnavailable: '付费功能当前不可用',
       creatingOrder: '创建订单中...',
       activateNow: '立即激活',
       recommend: '推荐',
@@ -1649,30 +1722,30 @@ const ui = computed(() => {
       standardTitle: '标准包',
       proTitle: '专业包',
       ultimateTitle: '旗舰包',
-      starterFeature1: `${PACK_CREDITS.starter} 点数/月`,
-      starterFeature2: '个人商业授权',
-      starterFeature3: '作品完全所有权与隐私保护',
-      starterFeature4: '高质量设计导出',
-      starterFeature5: '标准队列',
-      starterFeature6: '支持 Standard 模型与基础风格',
-      starterDisabledPro: 'Pro 模型不可用',
-      commonLicense: '个人商业授权',
-      commonOwnership: '作品完全所有权与隐私保护',
-      commonExports: '高质量设计导出',
-      commonModelBase: '支持 Standard 模型与基础风格',
-      tierStandard1: '优先队列（最快）',
-      tierStandard2: '高级理解智能体（更智能）',
-      tierStandard3: '支持所有风格',
-      tierPro1: '高级图像模型（Nano Banana / Nano BananaPro）',
-      tierPro2: '下载 4K 生成图片',
-      tierPro3: '加入用户社群',
-      tierUltimate1: '终身 VIP 标识',
-      tierUltimate2: '提前体验新工具',
-      tierUltimate3: '加入核心用户群',
-      tierUltimate4: '专家服务',
-      standardFeature1: `${PACK_CREDITS.standard} 点数/月`,
-      proFeature1: `${PACK_CREDITS.pro} 点数/月`,
-      ultimateFeature1: `${PACK_CREDITS.ultimate} 点数/月`,
+      starterFeature1: `${PACK_CREDITS.starter} 点数（一次性点数包）`,
+      starterFeature2: '使用权取决于输入素材与模型条款',
+      starterFeature3: '同源安全会话，不在浏览器保存凭证',
+      starterFeature4: '任务成功后提供结果下载',
+      starterFeature5: '生成前展示服务端报价',
+      starterFeature6: '可用模型以任务确认页为准',
+      starterDisabledPro: '高成本任务可能需要更多点数',
+      commonLicense: '发布前请核对素材与模型使用条款',
+      commonOwnership: '用户须确保输入素材具有必要权利',
+      commonExports: '任务成功后提供结果下载',
+      commonModelBase: '模型与规格以任务确认页为准',
+      tierStandard1: '服务端报价并锁定本次任务价格',
+      tierStandard2: '失败或取消会释放预占点数',
+      tierStandard3: '同一任务幂等处理，不重复扣费',
+      tierPro1: '单次购买，不是按月订阅',
+      tierPro2: '点数仅按实际确认的任务消耗',
+      tierPro3: '订单状态可在“我的订单”查询',
+      tierUltimate1: '支付回调验签后才会入账',
+      tierUltimate2: '套餐和金额以服务端订单为准',
+      tierUltimate3: '付费能力不可用时禁止下单',
+      tierUltimate4: '任务结果与扣费收据可追踪',
+      standardFeature1: `${PACK_CREDITS.standard} 点数（一次性点数包）`,
+      proFeature1: `${PACK_CREDITS.pro} 点数（一次性点数包）`,
+      ultimateFeature1: `${PACK_CREDITS.ultimate} 点数（一次性点数包）`,
       contentTitle: '创作指南',
       contentDesc: '专业级 AI 绘画平台，释放您的无限创意。',
       useCasesTitle: '应用场景',
@@ -1699,7 +1772,7 @@ const ui = computed(() => {
       faqs: [
         {
           q: '生成的图片可以商用吗？',
-          a: '可以。入门包及以上提供个人商业授权，并支持作品完全所有权与隐私保护。'
+          a: '不能由点数包一概授权。是否可商用取决于输入素材权利、所选模型及其服务条款，请在发布前自行核对。'
         },
         {
           q: '生成失败会扣点数吗？',
@@ -1707,11 +1780,11 @@ const ui = computed(() => {
         },
         {
           q: '如何获得更高清的图片？',
-          a: '入门包/标准包支持高质量设计导出；专业包/旗舰包支持下载 4K 生成图片。'
+          a: '实际输出分辨率取决于所选工具、模型和任务确认页；点数包本身不承诺固定 4K 输出。'
         },
         {
           q: '什么是优先队列（最快）？',
-          a: '优先队列会让你的任务更快进入执行，通常等待更短，适合高频创作或赶进度场景。'
+          a: '当前点数包不承诺专属优先队列；任务状态和等待进度会在执行界面显示。'
         },
         {
           q: '购买后多久到账？',
@@ -1723,9 +1796,9 @@ const ui = computed(() => {
         },
         {
           q: '支持手机端使用吗？',
-          a: '完美支持。我们的界面已针对手机浏览器进行深度适配，随时随地创作。'
+          a: '支持常见手机和平板浏览器；大型本地图片处理仍取决于设备内存与浏览器能力。'
         },
-        { q: '点数有效期是多久？', a: '充值点数永久有效。赠送的点数通常有 30 天有效期。' }
+        { q: '点数有效期是多久？', a: '当前钱包中的已购买点数不设置到期时间；若未来推出有期限的赠送点，会在活动规则中单独标明。' }
       ],
       payTitle: '完成支付',
       paySub:
@@ -1751,7 +1824,10 @@ const ui = computed(() => {
       payLoginRequired: '请先登录再购买。',
       payInvalidPackage: '套餐无效，请刷新页面后重试。',
       payCreateFailed: '创建订单失败，请稍后重试。',
-      payNetworkError: '网络错误，请检查网络后重试。'
+      payNetworkError: '网络错误，请检查网络后重试。',
+      payRejected: '支付订单被拒绝，未增加点数。',
+      payCancelled: '支付订单已取消。',
+      payExpired: '支付订单已过期，请重新创建。'
     };
   }
   return {
@@ -1763,6 +1839,8 @@ const ui = computed(() => {
     creditsUsage: 'Credits Usage',
     computeUnit: 'Credits',
     buyNow: 'Buy Now',
+    loadingPackages: 'Loading server catalogue…',
+    paidUnavailable: 'Paid features unavailable',
     creatingOrder: 'Creating...',
     activateNow: 'Activate Now',
     recommend: 'Recommended',
@@ -1772,29 +1850,29 @@ const ui = computed(() => {
     proTitle: 'Pro',
     ultimateTitle: 'Ultimate',
     starterFeature1: `${PACK_CREDITS.starter} credits`,
-    starterFeature2: 'Personal commercial license',
-    starterFeature3: 'Full ownership & privacy protection',
-    starterFeature4: 'High-quality design exports',
-    starterFeature5: 'Standard queue',
-    starterFeature6: 'Standard model + basic styles',
-    starterDisabledPro: 'Pro model not available',
-    commonLicense: 'Personal commercial license',
-    commonOwnership: 'Full ownership & privacy protection',
-    commonExports: 'High-quality design exports',
-    commonModelBase: 'Standard model + basic styles',
-    tierStandard1: 'Priority queue (fastest)',
-    tierStandard2: 'Advanced understanding agent (smarter)',
-    tierStandard3: 'Access all styles',
-    tierPro1: 'Advanced image models (Nano Banana / Nano BananaPro)',
-    tierPro2: 'Download 4K generated images',
-    tierPro3: 'Join the community',
-    tierUltimate1: 'Lifetime VIP badge',
-    tierUltimate2: 'Early access to new tools',
-    tierUltimate3: 'Join the core group',
-    tierUltimate4: 'Expert service',
-    standardFeature1: `${PACK_CREDITS.standard} credits monthly`,
-    proFeature1: `${PACK_CREDITS.pro} credits monthly`,
-    ultimateFeature1: `${PACK_CREDITS.ultimate} credits monthly`,
+    starterFeature2: 'Usage rights depend on inputs and model terms',
+    starterFeature3: 'Secure same-origin sessions; no browser credentials',
+    starterFeature4: 'Download results after a successful task',
+    starterFeature5: 'Server quote shown before generation',
+    starterFeature6: 'Available models are shown at confirmation',
+    starterDisabledPro: 'High-cost tasks may require more credits',
+    commonLicense: 'Review source and model terms before publishing',
+    commonOwnership: 'You must hold the necessary input rights',
+    commonExports: 'Download results after a successful task',
+    commonModelBase: 'Models and output specs are confirmed per task',
+    tierStandard1: 'Server-side quote locked for each task',
+    tierStandard2: 'Failed or cancelled tasks release held credits',
+    tierStandard3: 'Idempotent tasks are never charged twice',
+    tierPro1: 'One-time credit pack, not a subscription',
+    tierPro2: 'Credits are spent only on confirmed tasks',
+    tierPro3: 'Track status in My Orders',
+    tierUltimate1: 'Credits post only after webhook verification',
+    tierUltimate2: 'Package and amount come from the server order',
+    tierUltimate3: 'Checkout is disabled when billing is unavailable',
+    tierUltimate4: 'Task results and billing receipts are traceable',
+    standardFeature1: `${PACK_CREDITS.standard} credits (one-time pack)`,
+    proFeature1: `${PACK_CREDITS.pro} credits (one-time pack)`,
+    ultimateFeature1: `${PACK_CREDITS.ultimate} credits (one-time pack)`,
     contentTitle: 'Creative Guide',
     contentDesc: 'Professional AI art platform to unleash your creativity.',
     useCasesTitle: 'Use Cases',
@@ -1821,7 +1899,7 @@ const ui = computed(() => {
     faqs: [
       {
         q: 'Can I use images commercially?',
-        a: 'Yes. Starter plan and above includes personal commercial licensing, with full ownership & privacy protection.'
+        a: 'A credit pack cannot grant blanket rights. Commercial use depends on your input rights, the selected model, and its provider terms.'
       },
       {
         q: 'Will failed generations cost credits?',
@@ -1829,11 +1907,11 @@ const ui = computed(() => {
       },
       {
         q: 'How to get higher resolution?',
-        a: 'Starter/Standard include high-quality exports. Pro/Ultimate include 4K image downloads.'
+        a: 'Resolution depends on the selected tool, model, and task confirmation. Credit packs do not promise a fixed 4K output.'
       },
       {
         q: 'What is the Priority Queue (fastest)?',
-        a: 'Priority queue pushes your tasks ahead so they usually start sooner, great for high-volume creation or tight deadlines.'
+        a: 'Current credit packs do not promise a dedicated priority queue. The task screen shows execution state and progress.'
       },
       {
         q: 'How fast will credits be delivered after payment?',
@@ -1845,11 +1923,11 @@ const ui = computed(() => {
       },
       {
         q: 'Is it mobile friendly?',
-        a: 'Yes. Our interface is fully optimized for mobile browsers.'
+        a: 'Common mobile and tablet browsers are supported. Large local media jobs still depend on device memory and browser capabilities.'
       },
       {
         q: 'Do credits expire?',
-        a: 'Purchased credits never expire. Bonus credits usually expire in 30 days.'
+        a: 'Purchased wallet credits currently have no expiry. Any future time-limited bonus credits will state that explicitly in their campaign terms.'
       }
     ],
     payTitle: 'Complete Payment',
@@ -1876,9 +1954,19 @@ const ui = computed(() => {
     payLoginRequired: 'Please log in before purchasing.',
     payInvalidPackage: 'Invalid package. Refresh and try again.',
     payCreateFailed: 'Failed to create order. Please try again later.',
-    payNetworkError: 'Network error. Please try again.'
+    payNetworkError: 'Network error. Please try again.',
+    payRejected: 'The payment order was rejected; no credits were added.',
+    payCancelled: 'The payment order was cancelled.',
+    payExpired: 'The payment order expired. Create a new order.'
   };
 });
+
+const packageButtonLabel = (packageId: PayPackageId) => {
+  if (buyingPackageId.value === packageId) return ui.value.creatingOrder;
+  if (packagesLoading.value) return ui.value.loadingPackages;
+  if (!PACKAGE_AVAILABLE[packageId]) return ui.value.paidUnavailable;
+  return ui.value.buyNow;
+};
 </script>
 
 <style scoped>
@@ -2059,7 +2147,19 @@ const ui = computed(() => {
 .currency-toggle {
   display: flex;
   justify-content: center;
-  margin-bottom: 60px;
+  margin-bottom: 20px;
+}
+
+.package-status {
+  min-height: 44px;
+  margin: 0 auto 16px;
+  padding: 10px 16px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 10px;
+  color: #fbbf24;
+  background: rgba(120, 53, 15, 0.18);
+  text-align: center;
+  line-height: 24px;
 }
 
 .toggle-bg {

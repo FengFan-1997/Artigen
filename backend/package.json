@@ -1,21 +1,44 @@
 {
   "name": "backend",
   "version": "1.0.0",
+  "private": true,
   "description": "",
   "main": "server.js",
+  "engines": {
+    "node": "24.x",
+    "pnpm": "10.x"
+  },
   "scripts": {
     "dev": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "start:production": "node scripts/start-production.js",
+    "lint": "find . -path ./node_modules -prune -o -path ./memory -prune -o -name '*.js' -type f -print0 | xargs -0 -n1 node --check",
+    "test": "node --test",
+    "db:migrate": "node-pg-migrate -m migrations up",
+    "db:migrate:locked": "node scripts/start-production.js --migrate-only",
+    "db:rollback": "node-pg-migrate -m migrations down",
+    "db:local:setup": "node scripts/setup-local-pg16.js",
+    "db:backup:neon": "node scripts/neon-backup.js",
+    "db:restore:verify": "node scripts/neon-restore-verify.js",
+    "db:audit": "node scripts/audit-postgres.js",
+    "admin:grant": "node scripts/grant-admin.js",
+    "eval:generation:blind": "node scripts/create-generation-blind-review.js",
+    "eval:generation:score": "node scripts/score-generation-blind-review.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1087.0",
+    "busboy": "^1.6.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "https-proxy-agent": "^7.0.6",
     "node-fetch": "^3.3.2",
-    "nodemailer": "^6.10.0"
+    "node-pg-migrate": "^8.0.4",
+    "nodemailer": "^6.10.0",
+    "pg": "^8.22.0",
+    "zod": "^4.4.3"
   }
 }

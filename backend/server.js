@@ -3,12 +3,17 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
-const dns = require("dns");
 require("dotenv").config({
   path: path.resolve(__dirname, ".env"),
-  override: true,
+  // Deployment-provided secrets and feature gates must always win over a
+  // developer's optional local file.
+  override: false,
 });
 const { fetchWithTimeout } = require("./lib/fetch-utils");
+const {
+  fetchRemoteImageWithPinnedDns,
+  validateRemoteImageMime,
+} = require("./lib/remote-image-guard");
 
 const {
   readJson,
@@ -30,15 +35,22 @@ const { installSystemRoutes } = require("./routes/system");
 const { installUsageRoutes } = require("./routes/usage");
 const { installAuthRoutes } = require("./routes/auth");
 const { installAdminRoutes } = require("./routes/admin");
+const { installConvertRoutes, isConvertJsonRequest } = require("./routes/convert");
+const { installToolTaskRoutes } = require("./routes/tool-tasks");
+const { installPaymentRoutes } = require("./routes/payments");
+const { csrfProtection } = require("./lib/csrf-protection");
+const { installFrontendHosting } = require("./lib/frontend-hosting");
+const { installSessionMiddleware } = require("./middleware/session-auth");
 
 const {
   assertAdmin,
   resolveAuthUser,
   parseBearerToken,
-  verifyAdminToken,
+  canUseLegacyFileQueryToken,
   readUsersMap,
   assertAuthUserMatches,
 } = require("./lib/auth-utils");
+const { resolveAdminForFiles } = require("./lib/files-admin-auth");
 const {
   NODE_ENV,
   isProd,
@@ -52,8 +64,8 @@ const {
 } = require("./lib/config");
 const {
   callGeminiGenerate,
-  callSiliconFlowChat,
   callSiliconFlowImageGenerate,
+  callSiliconFlowChat,
   callTextGenerate,
 } = require("./lib/ai-providers");
 const {
@@ -201,6 +213,8 @@ if (corsOrigins === "*") {
         "X-Afdian-Token",
         "X-Api-Key",
         "X-Admin-Key",
+        "X-CSRF-Token",
+        "Idempotency-Key",
       ],
     }),
   );
@@ -208,43 +222,25 @@ if (corsOrigins === "*") {
   if (!isProd) app.use(cors());
 }
 const JSON_BODY_LIMIT =
-  String(process.env.JSON_BODY_LIMIT || (isProd ? "10mb" : "25mb")).trim() ||
-  (isProd ? "10mb" : "25mb");
-app.use(express.json({ limit: JSON_BODY_LIMIT }));
+  String(process.env.JSON_BODY_LIMIT || (isProd ? "1mb" : "25mb")).trim() ||
+  (isProd ? "1mb" : "25mb");
+const defaultJsonParser = express.json({ limit: JSON_BODY_LIMIT });
+app.use((req, res, next) => {
+  // The explicit-consent Word conversion route has a bounded, rate-limited
+  // parser sized for base64 overhead. All other JSON stays on the tight global
+  // production limit.
+  if (isConvertJsonRequest(req)) return next();
+  return defaultJsonParser(req, res, next);
+});
 app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
-
-const resolveAdminForFiles = (req) => {
-  const bearer =
-    typeof parseBearerToken === "function" ? parseBearerToken(req) : "";
-  if (bearer) {
-    const v =
-      typeof verifyAdminToken === "function"
-        ? verifyAdminToken(bearer)
-        : { ok: false, error: "INVALID_TOKEN" };
-    if (v && v.ok) return { ok: true, status: 200 };
-    if (String(v?.error || "") === "EXPIRED") return { ok: false, status: 401 };
-    return { ok: false, status: 403 };
-  }
-
-  const expected = String(process.env.ADMIN_KEY || "").trim();
-  if (!expected) return { ok: false, status: 403 };
-  const got =
-    typeof req?.headers?.["x-admin-key"] === "string"
-      ? String(req.headers["x-admin-key"]).trim()
-      : "";
-  if (!got) return { ok: false, status: 401 };
-  try {
-    const a = Buffer.from(got, "utf8");
-    const b = Buffer.from(expected, "utf8");
-    if (a.length !== b.length) return { ok: false, status: 403 };
-    if (!crypto.timingSafeEqual(a, b)) return { ok: false, status: 403 };
-  } catch {
-    return { ok: false, status: 403 };
-  }
-  return { ok: true, status: 200 };
-};
+// Cookie sessions are only meaningful for API and private file requests.
+// Keeping them off SPA/static/health requests prevents a logged-in page load
+// from waking Neon once per asset.
+installSessionMiddleware(app);
+app.use(csrfProtection());
 
 const readQueryToken = (req) => {
+  if (!canUseLegacyFileQueryToken(process.env)) return "";
   try {
     const q = req?.query?.token;
     if (typeof q === "string") return q.trim();
@@ -269,7 +265,7 @@ const readQueryToken = (req) => {
   }
 };
 
-const serveLocalFileFromFilesDir = (req, res, next) => {
+const serveLocalFileFromFilesDir = async (req, res, next) => {
   if (!req.path || typeof req.path !== "string") return next();
   const rawParam = req.path.replace(/^\/+/, "");
   if (!rawParam) return res.status(404).end();
@@ -364,7 +360,7 @@ const serveLocalFileFromFilesDir = (req, res, next) => {
           hasCookie,
         });
       }
-      const admin = resolveAdminForFiles(req);
+      const admin = await resolveAdminForFiles(req);
       if (!admin?.ok) return res.status(admin?.status || 401).end();
     }
   }
@@ -446,129 +442,6 @@ if (enableApiRateLimit) {
   );
 }
 
-const isPrivateHost = (host) => {
-  const h = String(host || "")
-    .trim()
-    .toLowerCase();
-  if (!h) return true;
-  if (h === "localhost" || h === "localhost.localdomain") return true;
-  if (h === "::1" || h === "[::1]") return true;
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) {
-    const parts = h.split(".").map((x) => Number.parseInt(x, 10));
-    if (parts.some((x) => !Number.isFinite(x) || x < 0 || x > 255)) return true;
-    const [a, b] = parts;
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 0) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    return false;
-  }
-  if (h.includes(":")) {
-    if (
-      h.startsWith("::") ||
-      h.startsWith("fc") ||
-      h.startsWith("fd") ||
-      h.startsWith("fe80")
-    )
-      return true;
-  }
-  return false;
-};
-
-const dnsLookupAll = async (hostname, timeoutMs = 1200) => {
-  const h = String(hostname || "").trim();
-  if (!h) throw new Error("INVALID_HOST");
-  const lookup = dns.promises.lookup(h, { all: true, verbatim: true });
-  const timer = new Promise((_, reject) =>
-    setTimeout(
-      () =>
-        reject(
-          Object.assign(new Error("DNS_TIMEOUT"), { code: "DNS_TIMEOUT" }),
-        ),
-      timeoutMs,
-    ),
-  );
-  return await Promise.race([lookup, timer]);
-};
-
-const isPrivateResolvedHost = async (hostname) => {
-  const h = String(hostname || "").trim();
-  if (!h) return true;
-  if (isPrivateHost(h)) return true;
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(":")) return false;
-  let addrs = [];
-  try {
-    addrs = await dnsLookupAll(h);
-  } catch {
-    return true;
-  }
-  for (const it of addrs) {
-    const addr = String(it?.address || "").trim();
-    if (!addr) continue;
-    if (isPrivateHost(addr)) return true;
-  }
-  return false;
-};
-
-const safeRedirectUrl = (fromUrl, location) => {
-  try {
-    const next = new URL(String(location || "").trim(), fromUrl);
-    return next.toString();
-  } catch {
-    return "";
-  }
-};
-
-const fetchWithSafeRedirects = async (startUrl, opts, timeoutMs) => {
-  let cur = String(startUrl || "").trim();
-  const maxRedirects = 5;
-  for (let i = 0; i <= maxRedirects; i += 1) {
-    let parsed = null;
-    try {
-      parsed = new URL(cur);
-    } catch {
-      return { ok: false, error: "INVALID_URL", res: null, url: cur };
-    }
-    const proto = String(parsed.protocol || "").toLowerCase();
-    if (proto !== "http:" && proto !== "https:")
-      return { ok: false, error: "INVALID_PROTOCOL", res: null, url: cur };
-    if (parsed.username || parsed.password)
-      return { ok: false, error: "INVALID_URL", res: null, url: cur };
-    const hostname = String(parsed.hostname || "").trim();
-    if (!hostname)
-      return { ok: false, error: "INVALID_URL", res: null, url: cur };
-    if (isPrivateHost(hostname))
-      return { ok: false, error: "FORBIDDEN_HOST", res: null, url: cur };
-    if (await isPrivateResolvedHost(hostname))
-      return { ok: false, error: "FORBIDDEN_HOST", res: null, url: cur };
-
-    const res = await fetchWithTimeout(
-      cur,
-      { ...opts, redirect: "manual" },
-      timeoutMs,
-    );
-    const status = Number(res?.status || 0) || 0;
-    if ([301, 302, 303, 307, 308].includes(status)) {
-      const loc = res.headers.get("location");
-      try {
-        res.body?.cancel?.();
-      } catch {}
-      try {
-        res.body?.destroy?.();
-      } catch {}
-      const next = safeRedirectUrl(cur, loc);
-      if (!next)
-        return { ok: false, error: "UPSTREAM_REDIRECT", res: null, url: cur };
-      cur = next;
-      continue;
-    }
-    return { ok: true, res, url: cur };
-  }
-  return { ok: false, error: "TOO_MANY_REDIRECTS", res: null, url: cur };
-};
-
 const readUpstreamBodyLimited = async (upstream, maxBytes) => {
   const cap = Math.max(1, Number(maxBytes) || 1);
   const body = upstream?.body;
@@ -602,44 +475,6 @@ const readUpstreamBodyLimited = async (upstream, maxBytes) => {
   });
 };
 
-const inferImageContentType = (pathname) => {
-  const raw = String(pathname || "")
-    .trim()
-    .toLowerCase();
-  const clean = raw.split("?")[0].split("#")[0];
-  const ext = clean.split(".").pop() || "";
-  if (ext === "png") return "image/png";
-  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
-  if (ext === "webp") return "image/webp";
-  if (ext === "gif") return "image/gif";
-  if (ext === "bmp") return "image/bmp";
-  return "";
-};
-
-const sniffImageContentType = (buf) => {
-  if (!buf || buf.length < 12) return "";
-  if (
-    buf[0] === 0x89 &&
-    buf[1] === 0x50 &&
-    buf[2] === 0x4e &&
-    buf[3] === 0x47 &&
-    buf[4] === 0x0d &&
-    buf[5] === 0x0a &&
-    buf[6] === 0x1a &&
-    buf[7] === 0x0a
-  )
-    return "image/png";
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)
-    return "image/jpeg";
-  const head6 = buf.subarray(0, 6).toString("ascii");
-  if (head6 === "GIF87a" || head6 === "GIF89a") return "image/gif";
-  if (buf[0] === 0x42 && buf[1] === 0x4d) return "image/bmp";
-  const riff = buf.subarray(0, 4).toString("ascii");
-  const webp = buf.subarray(8, 12).toString("ascii");
-  if (riff === "RIFF" && webp === "WEBP") return "image/webp";
-  return "";
-};
-
 app.get(
   "/api/proxy/image",
   rateLimit("proxy_image", { max: 60, windowMs: 60 * 1000 }),
@@ -648,59 +483,35 @@ app.get(
       const raw = typeof req.query.url === "string" ? req.query.url : "";
       const target = String(raw || "").trim();
       if (!target) return res.status(400).json({ error: "MISSING_URL" });
-      let parsed0 = null;
       try {
-        parsed0 = new URL(target);
+        new URL(target);
       } catch {
         return res.status(400).json({ error: "INVALID_URL" });
       }
 
-      const safe = await fetchWithSafeRedirects(
-        target,
-        {
+      const safe = await fetchRemoteImageWithPinnedDns({
+        startUrl: target,
+        options: {
           method: "GET",
           headers: {
             Accept: "image/*,*/*;q=0.8",
             "User-Agent": "Mozilla/5.0",
           },
         },
-        20000,
-      );
-      if (!safe.ok || !safe.res) {
+        timeoutMs: 20000,
+      });
+      if (!safe.ok || !safe.response) {
         const err = String(safe.error || "").trim();
-        const status =
-          err === "FORBIDDEN_HOST"
-            ? 403
-            : err === "INVALID_PROTOCOL" || err === "INVALID_URL"
-              ? 400
-              : 502;
+        const status = Number(safe.status || 0) || 502;
         return res.status(status).json({ error: err || "PROXY_FAILED" });
       }
-      const upstream = safe.res;
+      const upstream = safe.response;
       if (!upstream.ok)
         return res
           .status(502)
           .json({ error: `UPSTREAM_${upstream.status || 502}` });
 
-      const parsed = (() => {
-        try {
-          return new URL(String(upstream.url || safe.url || target));
-        } catch {
-          return parsed0;
-        }
-      })();
-
       const ct = String(upstream.headers.get("content-type") || "").trim();
-      const ctLower = ct.toLowerCase();
-      let finalType = "";
-      if (/^image\//i.test(ctLower)) finalType = ctLower.split(";")[0].trim();
-      if (
-        !finalType ||
-        ctLower === "application/octet-stream" ||
-        ctLower === "binary/octet-stream"
-      ) {
-        finalType = inferImageContentType(parsed.pathname || "");
-      }
       const len = Number.parseInt(
         String(upstream.headers.get("content-length") || ""),
         10,
@@ -721,7 +532,7 @@ app.get(
       if (!buf || !buf.length)
         return res.status(502).json({ error: "PROXY_FAILED" });
 
-      if (!finalType) finalType = sniffImageContentType(buf);
+      const finalType = validateRemoteImageMime(ct, buf);
       if (!finalType) return res.status(415).json({ error: "NOT_IMAGE" });
 
       res.status(200);
@@ -787,6 +598,20 @@ const ledger = createLedger({
 installAuthRoutes(app);
 installAdminRoutes(app);
 
+installConvertRoutes(app, {
+  rateLimit,
+});
+
+installToolTaskRoutes(app, {
+  rateLimit,
+  callSiliconFlowImageGenerate,
+  callSiliconFlowChat,
+});
+
+installPaymentRoutes(app, {
+  rateLimit,
+});
+
 // ... Usage Routes ...
 installUsageRoutes(app, {
   readJson,
@@ -824,6 +649,7 @@ installImgagentRoutes(app, {
   getClientIp,
   rateLimit,
   assertAuthUserMatches,
+  isProd,
 });
 
 // ... System Routes ...
@@ -843,6 +669,7 @@ installSystemRoutes(app, {
   rateLimit,
   assertAuthUserMatches,
   callGeminiGenerate,
+  callSiliconFlowImageGenerate,
   callSiliconFlowChat,
   callTextGenerate,
   GEMINI_GENERATE_URLS,
@@ -856,6 +683,13 @@ installSystemRoutes(app, {
   appendUserImageHistory,
   appendUserAuditHistory,
 });
+
+const frontendHosting = installFrontendHosting(app);
+if (frontendHosting.enabled) {
+  console.log("FRONTEND_DIST_DIR:", frontendHosting.distDir);
+} else {
+  console.warn("Frontend dist not found; API-only mode:", frontendHosting.distDir);
+}
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);

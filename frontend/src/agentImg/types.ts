@@ -4,6 +4,7 @@ export type AgentImgDirectionOption = {
   id: string;
   title: string;
   summary: string;
+  prompt?: string;
   styleTags: string[];
   negativeTags?: string[];
   suggested?: {

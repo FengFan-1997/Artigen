@@ -1,11 +1,10 @@
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { resolve } from 'path';
-import { loginSmtpPlugin } from './src/login/server/viteSmtpPlugin';
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue(), loginSmtpPlugin()],
+  plugins: [vue()],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src')
@@ -39,6 +38,7 @@ export default defineConfig({
           antd: ['ant-design-vue', '@ant-design/icons-vue'],
           echarts: ['echarts', 'vue-echarts'],
           pdf: ['pdfjs-dist'],
+          fabric: ['fabric'],
           gsap: ['gsap']
         }
       }

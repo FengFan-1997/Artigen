@@ -1,16 +1,23 @@
 export type SendCodeResult =
-  | { ok: true; cooldownSec: number; debugCode?: string; message?: string }
-  | { ok: false; message: string; cooldownSec?: number };
+  | {
+      ok: true;
+      cooldownSec: number;
+      challengeId?: string;
+      deliveryStatus: 'accepted' | 'unknown';
+      debugCode?: string;
+      message?: string;
+    }
+  | { ok: false; message: string; errorCode?: string; cooldownSec?: number };
 export type VerifyCodeResult =
-  | { ok: true; userId: string; token: string }
+  | { ok: true; userId: string }
   | { ok: false; message: string };
 
 export type PasswordAuthResult =
-  | { ok: true; userId: string; token: string; name?: string }
+  | { ok: true; userId: string; name?: string }
   | { ok: false; message: string };
 
 export type GoogleAuthResult =
-  | { ok: true; userId: string; token: string; name?: string; email?: string }
+  | { ok: true; userId: string; name?: string; email?: string }
   | { ok: false; message: string };
 
 export type ResetPasswordResult = { ok: true; message?: string } | { ok: false; message: string };
@@ -18,6 +25,7 @@ export type ResetPasswordResult = { ok: true; message?: string } | { ok: false; 
 import { buildApiUrl } from '../utils/api';
 import { getPageContext } from '@/utils/pageContext';
 import { getOrCreateProjectId, getOrCreateSessionId } from './session';
+import { authFetch, setCsrfToken } from './authFetch';
 
 const SEND_CODE_URL = buildApiUrl('/api/login/send-code');
 const VERIFY_CODE_URL = buildApiUrl('/api/login/verify');
@@ -45,28 +53,72 @@ const humanizeAuthError = (raw: any) => {
   const m = msg.toLowerCase();
   const zh = isZh();
 
+  if (
+    m === 'turnstile_required' ||
+    m === 'turnstile_invalid' ||
+    m === 'turnstile_failed' ||
+    m === 'turnstile_action_mismatch' ||
+    m === 'turnstile_hostname_mismatch'
+  ) {
+    return zh ? '请先完成安全验证' : 'Please complete the security check.';
+  }
+  if (m === 'turnstile_unavailable') {
+    return zh ? '安全验证暂时不可用，请稍后重试' : 'Security check is temporarily unavailable.';
+  }
+  if (m === 'turnstile_not_configured') {
+    return zh ? '安全验证尚未配置' : 'Security check is not configured.';
+  }
+  if (m === 'otp_format_invalid') {
+    return zh ? '请输入 6 位数字验证码' : 'Enter the 6-digit verification code.';
+  }
+  if (m === 'otp_delivery_unavailable' || m === 'otp_send_failed') {
+    return zh
+      ? '验证码服务暂时不可用，请稍后重试'
+      : 'Verification email is temporarily unavailable.';
+  }
+  if (m === 'otp_provider_throttled') {
+    return zh ? '发送服务繁忙，请稍后重试' : 'Email delivery is busy. Please try later.';
+  }
+  if (m === 'otp_cooldown') {
+    return zh ? '发送太频繁，请稍后重试' : 'Please wait before sending another code.';
+  }
+  if (m === 'otp_daily_budget_exhausted' || m === 'otp_send_quota_exceeded') {
+    return zh ? '今日验证码额度已用完，请明天再试' : 'Today’s verification email limit is reached.';
+  }
+  if (
+    m === 'idempotency_conflict' ||
+    m === 'invalid_idempotency_key' ||
+    m === 'idempotency_key_required'
+  ) {
+    return zh ? '请求状态已变化，请重新发送' : 'The request changed. Please send again.';
+  }
   if (m === 'password_rules' || m.includes('password_rules')) {
     return zh ? '密码不符合规范' : 'Password does not meet requirements.';
   }
   if (m.includes('invalid credentials') || m === 'invalid_credentials') {
     return zh ? '账号或密码错误' : 'Invalid username or password.';
   }
-  if (m.includes('email already exists')) {
+  if (m.includes('email already exists') || m === 'email_exists') {
     return zh ? '该邮箱已注册' : 'Email already registered.';
   }
-  if (m.includes('username already exists')) {
+  if (m.includes('username already exists') || m === 'username_exists') {
     return zh ? '该账号已注册' : 'Username already registered.';
   }
-  if (m.includes('please send code first')) {
+  if (m.includes('please send code first') || m === 'otp_required' || m === 'otp_already_used') {
     return zh ? '请先发送验证码' : 'Please send the code first.';
   }
-  if (m.includes('code expired')) {
+  if (m.includes('code expired') || m === 'otp_expired') {
     return zh ? '验证码已过期，请重新发送' : 'Code expired, please resend.';
   }
-  if (m.includes('too many attempts')) {
+  if (m.includes('too many attempts') || m === 'otp_attempts_exceeded') {
     return zh ? '尝试次数过多，请重新发送验证码' : 'Too many attempts, please resend.';
   }
-  if (m === 'invalid code' || m === 'invalid_code') {
+  if (
+    m === 'invalid code' ||
+    m === 'invalid_code' ||
+    m === 'otp_incorrect' ||
+    m === 'otp_invalid'
+  ) {
     return zh ? '验证码错误' : 'Invalid code.';
   }
   if (m.includes('invalid email')) {
@@ -108,21 +160,51 @@ const humanizeAuthError = (raw: any) => {
   return msg;
 };
 
+const humanizeAuthResponseError = (json: any, fallback: string) => {
+  const errorCode = normalizeErr(json?.error);
+  if (errorCode) {
+    const humanizedCode = humanizeAuthError(errorCode);
+    if (humanizedCode.toLowerCase() !== errorCode.toLowerCase()) return humanizedCode;
+  }
+  return humanizeAuthError(json?.message || errorCode || fallback);
+};
+
 const parseJson = async (res: Response) => {
   const txt = await res.text().catch(() => '');
   try {
-    return JSON.parse(txt);
+    const json = JSON.parse(txt);
+    if (json && typeof json === 'object' && json.csrfToken) setCsrfToken(json.csrfToken);
+    return json;
   } catch {
     return null;
   }
 };
 
-export const sendLoginCode = async (email: string): Promise<SendCodeResult> => {
-  const res = await fetch(SEND_CODE_URL, {
+export type SendCodeOptions = {
+  idempotencyKey?: string;
+  turnstileToken?: string;
+};
+
+const fallbackIdempotencyKey = () => {
+  try {
+    if (typeof crypto?.randomUUID === 'function') return `otp:${crypto.randomUUID()}`;
+  } catch {}
+  return `otp:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
+};
+
+export const sendLoginCode = async (
+  email: string,
+  options: SendCodeOptions = {}
+): Promise<SendCodeResult> => {
+  const res = await authFetch(SEND_CODE_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': options.idempotencyKey || fallbackIdempotencyKey()
+    },
     body: JSON.stringify({
       email,
+      turnstileToken: String(options.turnstileToken || '').trim(),
       sessionId: getOrCreateSessionId(),
       projectId: getOrCreateProjectId(),
       pageContext: getPageContext(),
@@ -131,17 +213,25 @@ export const sendLoginCode = async (email: string): Promise<SendCodeResult> => {
   });
   const json = await parseJson(res);
   if (!res.ok) {
+    const errorCode = String(json?.error || '').trim();
     return {
       ok: false,
-      message: humanizeAuthError(json?.message || json?.error || '发送失败'),
-      cooldownSec: Number(json?.cooldownSec || 0) || undefined
+      message: humanizeAuthResponseError(json, '发送失败'),
+      ...(errorCode ? { errorCode } : {}),
+      cooldownSec: Number(json?.cooldownSec || json?.retryAfterSec || 0) || undefined
     };
   }
   const debugCode = typeof json?.debugCode === 'string' ? String(json.debugCode).trim() : '';
   const message = typeof json?.message === 'string' ? String(json.message) : '';
+  const challengeId =
+    typeof json?.challengeId === 'string' ? String(json.challengeId).trim() : '';
+  const deliveryStatus =
+    json?.deliveryStatus === 'unknown' || res.status === 202 ? 'unknown' : 'accepted';
   return {
     ok: true,
     cooldownSec: Number(json?.cooldownSec || 60) || 60,
+    deliveryStatus,
+    ...(challengeId ? { challengeId } : {}),
     ...(debugCode ? { debugCode } : {}),
     ...(message ? { message } : {})
   };
@@ -160,13 +250,13 @@ export const verifyLoginCode = async (email: string, code: string): Promise<Veri
     }
   })();
 
-  const res = await fetch(VERIFY_CODE_URL, {
+  const res = await authFetch(VERIFY_CODE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       email,
       code,
-      fromUserId,
+      fromUserId: fromUserId.startsWith('guest_') ? fromUserId : '',
       sessionId: getOrCreateSessionId(),
       projectId: getOrCreateProjectId(),
       pageContext: getPageContext(),
@@ -175,11 +265,10 @@ export const verifyLoginCode = async (email: string, code: string): Promise<Veri
   });
   const json = await parseJson(res);
   if (!res.ok)
-    return { ok: false, message: humanizeAuthError(json?.message || json?.error || '验证失败') };
+    return { ok: false, message: humanizeAuthResponseError(json, '验证失败') };
   const userId = String(json?.userId || '').trim();
-  const token = String(json?.token || '').trim();
-  if (!userId || !token) return { ok: false, message: '验证失败' };
-  return { ok: true, userId, token };
+  if (!userId) return { ok: false, message: '验证失败' };
+  return { ok: true, userId };
 };
 
 export const loginWithPassword = async (
@@ -198,7 +287,7 @@ export const loginWithPassword = async (
     }
   })();
 
-  const res = await fetch(PASSWORD_LOGIN_URL, {
+  const res = await authFetch(PASSWORD_LOGIN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -213,19 +302,18 @@ export const loginWithPassword = async (
   });
   const json = await parseJson(res);
   if (!res.ok) {
-    return { ok: false, message: humanizeAuthError(json?.message || json?.error || '登录失败') };
+    return { ok: false, message: humanizeAuthResponseError(json, '登录失败') };
   }
   const userId = String(json?.userId || '').trim();
-  const token = String(json?.token || '').trim();
   const name = typeof json?.name === 'string' ? String(json.name).trim() : '';
-  if (!userId || !token) return { ok: false, message: '登录失败' };
-  return { ok: true, userId, token, ...(name ? { name } : {}) };
+  if (!userId) return { ok: false, message: '登录失败' };
+  return { ok: true, userId, ...(name ? { name } : {}) };
 };
 
 export const fetchGoogleClientId = async (): Promise<string> => {
   const tryFetch = async (url: string) => {
     try {
-      const res = await fetch(url, { method: 'GET' });
+      const res = await authFetch(url, { method: 'GET' });
       const json = await parseJson(res);
       if (!res.ok) return '';
       const raw = json?.clientId ?? json?.client_id ?? '';
@@ -257,7 +345,7 @@ export const registerWithEmailCode = async (input: {
     }
   })();
 
-  const res = await fetch(REGISTER_URL, {
+  const res = await authFetch(REGISTER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -274,13 +362,12 @@ export const registerWithEmailCode = async (input: {
   });
   const json = await parseJson(res);
   if (!res.ok) {
-    return { ok: false, message: humanizeAuthError(json?.message || json?.error || '注册失败') };
+    return { ok: false, message: humanizeAuthResponseError(json, '注册失败') };
   }
   const userId = String(json?.userId || '').trim();
-  const token = String(json?.token || '').trim();
   const name = typeof json?.name === 'string' ? String(json.name).trim() : '';
-  if (!userId || !token) return { ok: false, message: '注册失败' };
-  return { ok: true, userId, token, ...(name ? { name } : {}) };
+  if (!userId) return { ok: false, message: '注册失败' };
+  return { ok: true, userId, ...(name ? { name } : {}) };
 };
 
 export const loginWithGoogleIdToken = async (idToken: string): Promise<GoogleAuthResult> => {
@@ -296,7 +383,7 @@ export const loginWithGoogleIdToken = async (idToken: string): Promise<GoogleAut
     }
   })();
 
-  const res = await fetch(GOOGLE_VERIFY_URL, {
+  const res = await authFetch(GOOGLE_VERIFY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -310,22 +397,33 @@ export const loginWithGoogleIdToken = async (idToken: string): Promise<GoogleAut
   });
   const json = await parseJson(res);
   if (!res.ok) {
-    return { ok: false, message: humanizeAuthError(json?.message || json?.error || '登录失败') };
+    return { ok: false, message: humanizeAuthResponseError(json, '登录失败') };
   }
   const userId = String(json?.userId || '').trim();
-  const token = String(json?.token || '').trim();
   const name = typeof json?.name === 'string' ? String(json.name).trim() : '';
   const email = typeof json?.email === 'string' ? String(json.email).trim() : '';
-  if (!userId || !token) return { ok: false, message: '登录失败' };
-  return { ok: true, userId, token, ...(name ? { name } : {}), ...(email ? { email } : {}) };
+  if (!userId) return { ok: false, message: '登录失败' };
+  return {
+    ok: true,
+    userId,
+    ...(name ? { name } : {}),
+    ...(email ? { email } : {})
+  };
 };
 
-export const sendPasswordResetCode = async (email: string): Promise<SendCodeResult> => {
-  const res = await fetch(PASSWORD_RESET_SEND_CODE_URL, {
+export const sendPasswordResetCode = async (
+  email: string,
+  options: SendCodeOptions = {}
+): Promise<SendCodeResult> => {
+  const res = await authFetch(PASSWORD_RESET_SEND_CODE_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': options.idempotencyKey || fallbackIdempotencyKey()
+    },
     body: JSON.stringify({
       email,
+      turnstileToken: String(options.turnstileToken || '').trim(),
       sessionId: getOrCreateSessionId(),
       projectId: getOrCreateProjectId(),
       pageContext: getPageContext(),
@@ -334,17 +432,25 @@ export const sendPasswordResetCode = async (email: string): Promise<SendCodeResu
   });
   const json = await parseJson(res);
   if (!res.ok) {
+    const errorCode = String(json?.error || '').trim();
     return {
       ok: false,
-      message: humanizeAuthError(json?.message || json?.error || '发送失败'),
-      cooldownSec: Number(json?.cooldownSec || 0) || undefined
+      message: humanizeAuthResponseError(json, '发送失败'),
+      ...(errorCode ? { errorCode } : {}),
+      cooldownSec: Number(json?.cooldownSec || json?.retryAfterSec || 0) || undefined
     };
   }
   const debugCode = typeof json?.debugCode === 'string' ? String(json.debugCode).trim() : '';
   const message = typeof json?.message === 'string' ? String(json.message) : '';
+  const challengeId =
+    typeof json?.challengeId === 'string' ? String(json.challengeId).trim() : '';
+  const deliveryStatus =
+    json?.deliveryStatus === 'unknown' || res.status === 202 ? 'unknown' : 'accepted';
   return {
     ok: true,
     cooldownSec: Number(json?.cooldownSec || 60) || 60,
+    deliveryStatus,
+    ...(challengeId ? { challengeId } : {}),
     ...(debugCode ? { debugCode } : {}),
     ...(message ? { message } : {})
   };
@@ -355,7 +461,7 @@ export const resetPasswordWithCode = async (input: {
   code: string;
   newPassword: string;
 }): Promise<ResetPasswordResult> => {
-  const res = await fetch(PASSWORD_RESET_URL, {
+  const res = await authFetch(PASSWORD_RESET_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -370,7 +476,7 @@ export const resetPasswordWithCode = async (input: {
   });
   const json = await parseJson(res);
   if (!res.ok) {
-    return { ok: false, message: humanizeAuthError(json?.message || json?.error || '重置失败') };
+    return { ok: false, message: humanizeAuthResponseError(json, '重置失败') };
   }
   const msg = typeof json?.message === 'string' ? String(json.message) : '';
   return { ok: true, ...(msg ? { message: msg } : {}) };

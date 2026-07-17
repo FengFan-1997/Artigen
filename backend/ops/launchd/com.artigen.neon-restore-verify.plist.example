@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.artigen.neon-restore-verify</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>set -euo pipefail; set -a; source "$HOME/.config/artigen/neon-backup.env"; set +a; restore_url="${RESTORE_VERIFY_DATABASE_URL:-${NEON_VERIFY_DATABASE_URL:-}}"; [[ -n "$restore_url" ]]; export RESTORE_VERIFY_DATABASE_URL="$restore_url"; backup_dir="${NEON_BACKUP_DIR:-$HOME/Library/Application Support/Artigen/backups}"; dumps=("$backup_dir"/artigen-neon-*.dump(N.om)); (( ${#dumps} > 0 )); exec pnpm run db:restore:verify -- --dump "${dumps[1]}"</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPO_ROOT__</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>15</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

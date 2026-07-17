@@ -7,8 +7,8 @@ export function useAgentImgUpload(
   abortImg2Img: () => void,
   reset: () => void
 ) {
-  const previewUrls = ref<string[]>(['', '']);
-  const previewFiles = ref<(File | null)[]>([null, null]);
+  const previewUrls = ref<string[]>(['', '', '']);
+  const previewFiles = ref<(File | null)[]>([null, null, null]);
   const fileInputs = ref<HTMLInputElement[]>([]);
   const hasPreviews = computed(() => previewUrls.value.some((u) => !!u));
 
@@ -18,6 +18,11 @@ export function useAgentImgUpload(
     if (fileInputs.value[idx]) {
       fileInputs.value[idx].click();
     }
+  };
+
+  const triggerUploadAt = (idx: number) => {
+    const safeIndex = Math.max(0, Math.min(previewUrls.value.length - 1, Number(idx) || 0));
+    fileInputs.value[safeIndex]?.click();
   };
 
   const setPreviewUrl = (idx: number, nextUrl: string) => {
@@ -177,6 +182,7 @@ export function useAgentImgUpload(
     fileInputs,
     hasPreviews,
     triggerUpload,
+    triggerUploadAt,
     onPreviewChange,
     clearPreview,
     setPreviewFileAt,

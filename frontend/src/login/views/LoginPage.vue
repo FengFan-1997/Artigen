@@ -20,13 +20,20 @@
       <div class="panel-main">
         <div class="head">
           <div class="title">{{ titleText }}</div>
-          <button class="close" type="button" @click="close">×</button>
+          <button
+            class="close"
+            type="button"
+            :aria-label="currentLang === 'zh' ? '关闭登录页面' : 'Close login page'"
+            @click="close"
+          >
+            ×
+          </button>
         </div>
 
         <div class="body">
           <div v-if="loginMethod === 'select'" class="method-list">
             <div class="sub">{{ subText }}</div>
-            <div class="oauth-block">
+            <div v-if="googleClientId" class="oauth-block">
               <div
                 ref="googleButtonRef"
                 class="google-btn"
@@ -84,9 +91,20 @@
               />
             </div>
 
+            <TurnstileWidget
+              ref="turnstileRef"
+              v-model="turnstileToken"
+              :action="EMAIL_OTP_TURNSTILE_ACTION"
+            />
+
             <button
               class="nth-login-btn primary"
-              :disabled="sending || !email || cooldownLeft > 0"
+              :disabled="
+                sending ||
+                !email ||
+                cooldownLeft > 0 ||
+                (turnstileRequired && !turnstileToken)
+              "
               type="button"
               @click="sendCode"
             >
@@ -135,7 +153,7 @@
             </button>
           </div>
 
-          <div v-else class="oauth-block">
+          <div v-else-if="googleClientId" class="oauth-block">
             <div class="sub">{{ subText }}</div>
             <div
               ref="googleButtonRef"
@@ -161,10 +179,14 @@
           <!-- Footer for bottom space -->
           <div class="footer-links">
             <span class="footer-text">
-              By continuing, you accept our
-              <a href="#" class="footer-link">Terms of Service</a>
-              and
-              <a href="#" class="footer-link">Privacy Policy</a>
+              {{ currentLang === 'zh' ? '继续即表示你同意' : 'By continuing, you accept our' }}
+              <router-link class="footer-link" to="/legal/terms">{{
+                t('login.terms_of_use')
+              }}</router-link>
+              {{ currentLang === 'zh' ? '及' : 'and' }}
+              <router-link class="footer-link" to="/legal/privacy">{{
+                t('login.privacy_policy')
+              }}</router-link>
             </span>
           </div>
         </div>
@@ -195,17 +217,29 @@ import { ensureGuestUserId, setLoggedIn } from '../session';
 import { useLanguageStore } from '@/stores/language';
 import { buildApiUrl } from '@/utils/api';
 import LanguageSwitcher from '../components/LanguageSwitcher.vue';
+import TurnstileWidget from '../components/TurnstileWidget.vue';
+import {
+  beginOtpSend,
+  completeOtpSend,
+  failOtpSend,
+  getOtpCooldownSeconds,
+  readOtpFlow
+} from '../otpFlow';
+import { EMAIL_OTP_TURNSTILE_ACTION, isTurnstileConfigured } from '../turnstile';
 
-const { t } = useLanguageStore();
+const languageStore = useLanguageStore();
+const { t } = languageStore;
+const currentLang = computed(() => languageStore.currentLang);
 const route = useRoute();
 const router = useRouter();
-const email = ref(getLastEmail());
+const restoredLoginFlow = readOtpFlow('login');
+const email = ref(restoredLoginFlow?.email || getLastEmail());
 const username = ref(getLastUsername());
 const password = ref(username.value ? getSavedPassword(username.value) : '');
 const sending = ref(false);
 const loggingIn = ref(false);
 const error = ref('');
-const cooldownLeft = ref(0);
+const cooldownLeft = ref(getOtpCooldownSeconds(restoredLoginFlow));
 let timer: number | null = null;
 const topTipOpen = ref(false);
 const topTipText = ref('');
@@ -214,6 +248,9 @@ const googleClientId = ref(String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').t
 const googleButtonRef = ref<HTMLDivElement | null>(null);
 const googleLoading = ref(false);
 let googleScriptPromise: Promise<void> | null = null;
+const turnstileToken = ref('');
+const turnstileRequired = isTurnstileConfigured();
+const turnstileRef = ref<{ reset: () => void } | null>(null);
 
 const loadGoogleClientId = async () => {
   if (googleClientId.value) return googleClientId.value;
@@ -244,16 +281,24 @@ const subText = computed(() => {
 });
 
 const hintText = computed(() => {
-  if (loginMethod.value === 'select') return t('login.choose_method_hint');
+  if (loginMethod.value === 'select') {
+    return googleClientId.value
+      ? t('login.choose_method_hint')
+      : t('login.choose_method_hint_without_google');
+  }
   if (loginMethod.value === 'google') return t('login.google_hint');
   return t('login.hint');
 });
 
 const startCooldown = (sec: number) => {
-  cooldownLeft.value = Math.max(0, Math.floor(sec));
+  const seconds = Math.max(0, Math.floor(Number(sec) || 0));
+  cooldownLeft.value = seconds;
   if (timer) window.clearInterval(timer);
+  timer = null;
+  if (!seconds) return;
+  const deadline = Date.now() + seconds * 1000;
   timer = window.setInterval(() => {
-    cooldownLeft.value = Math.max(0, cooldownLeft.value - 1);
+    cooldownLeft.value = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
     if (cooldownLeft.value <= 0 && timer) {
       window.clearInterval(timer);
       timer = null;
@@ -271,6 +316,14 @@ const showTopTip = (msg: string) => {
 };
 
 const sendCode = async () => {
+  if (
+    sending.value ||
+    loggingIn.value ||
+    cooldownLeft.value > 0 ||
+    (turnstileRequired && !turnstileToken.value)
+  ) {
+    return;
+  }
   error.value = '';
   const e = String(email.value || '')
     .trim()
@@ -286,19 +339,41 @@ const sendCode = async () => {
   email.value = e;
   setLastEmail(e);
   sending.value = true;
+  const previous = readOtpFlow('login');
+  const attempt = beginOtpSend('login', e, {
+    forceNew:
+      previous?.email === e &&
+      previous.deliveryStatus === 'unknown' &&
+      getOtpCooldownSeconds(previous) === 0
+  });
   try {
-    const res = await sendLoginCode(e);
+    const res = await sendLoginCode(e, {
+      idempotencyKey: attempt.idempotencyKey,
+      turnstileToken: turnstileToken.value
+    });
     if (!res.ok) {
+      failOtpSend('login', attempt.idempotencyKey, { cooldownSec: res.cooldownSec });
       error.value = res.message;
+      turnstileRef.value?.reset();
+      if (res.cooldownSec) startCooldown(res.cooldownSec);
       return;
     }
+    completeOtpSend('login', {
+      email: e,
+      idempotencyKey: attempt.idempotencyKey,
+      challengeId: res.challengeId,
+      deliveryStatus: res.deliveryStatus,
+      cooldownSec: res.cooldownSec
+    });
+    turnstileRef.value?.reset();
     startCooldown(res.cooldownSec);
     const redirect = redirectTarget.value;
     router.push({
       path: '/login/verify',
-      query: { email: e, ...(redirect ? { redirect } : {}) }
+      query: { ...(redirect ? { redirect } : {}) }
     });
   } catch (e: any) {
+    turnstileRef.value?.reset();
     error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
   } finally {
     sending.value = false;
@@ -306,6 +381,7 @@ const sendCode = async () => {
 };
 
 const loginWithPasswordSubmit = async () => {
+  if (loggingIn.value || sending.value) return;
   error.value = '';
   const u = String(username.value || '').trim();
   const p = String(password.value || '');
@@ -319,7 +395,7 @@ const loginWithPasswordSubmit = async () => {
     }
     setLastUsername(u);
     setSavedPassword(u, p);
-    setLoggedIn({ userId: res.userId, token: res.token });
+    setLoggedIn({ userId: res.userId });
     const redirect = redirectTarget.value;
     router.replace(redirect || '/login/account');
   } catch (e: any) {
@@ -407,7 +483,7 @@ const renderGoogleButton = () => {
           setLastEmail(res.email);
           upsertUser({ email: res.email, userId: res.userId });
         }
-        setLoggedIn({ userId: res.userId, token: res.token });
+        setLoggedIn({ userId: res.userId });
         const redirect = redirectTarget.value;
         router.replace(redirect || '/login/account');
       } catch (e: any) {
@@ -446,7 +522,7 @@ const ensureGoogleReady = async () => {
   if (loginMethod.value !== 'google' && loginMethod.value !== 'select') return;
   const cid = await loadGoogleClientId();
   if (!cid) {
-    error.value = t('login.google_not_configured');
+    if (loginMethod.value === 'google') setMethod('select');
     return;
   }
   loadGoogleScript()
@@ -461,12 +537,17 @@ const ensureGoogleReady = async () => {
 
 onMounted(() => {
   ensureGuestUserId();
-  const entry = String(window.sessionStorage.getItem('login_entry') || '')
-    .trim()
-    .toLowerCase();
+  let entry = '';
+  try {
+    entry = String(window.sessionStorage.getItem('login_entry') || '')
+      .trim()
+      .toLowerCase();
+  } catch {}
   if (entry === 'google' || entry === 'email' || entry === 'password') {
     loginMethod.value = entry;
   }
+  const restoredCooldown = getOtpCooldownSeconds(readOtpFlow('login'));
+  if (restoredCooldown > 0) startCooldown(restoredCooldown);
   void ensureGoogleReady();
 });
 

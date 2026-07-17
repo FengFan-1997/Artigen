@@ -37,11 +37,13 @@
     </div>
 
     <div class="tools-grid">
-      <div
+      <button
         v-for="tool in displayTools"
         :key="tool.id"
+        type="button"
         class="tool-card"
         :class="{ disabled: tool.status !== 'ready' }"
+        :disabled="tool.status !== 'ready'"
         @click="handleToolClick(tool)"
       >
         <div class="card-status" v-if="tool.status === 'ready'"></div>
@@ -80,12 +82,12 @@
               <polyline points="12 5 19 12 12 19"></polyline></svg
           ></span>
         </div>
-      </div>
+      </button>
     </div>
 
     <div class="security-note">{{ ui.securityNote }}</div>
 
-    <div v-if="soonTip" class="ff-toast">{{ soonTip }}</div>
+    <div v-if="soonTip" class="ff-toast" role="status" aria-live="polite">{{ soonTip }}</div>
 
     <!-- Info Section (SEO) -->
     <div class="info-section">
@@ -139,16 +141,24 @@
 
     <div class="modal-fade-wrap">
       <div v-if="activeTool" class="tool-modal" @mousedown.self="closeModal">
-        <div class="tool-modal-panel">
+        <section
+          ref="toolModalRef"
+          class="tool-modal-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="format-factory-modal-title"
+          tabindex="-1"
+          @keydown="onToolModalKeydown"
+        >
           <div class="tool-modal-header">
             <div class="tool-modal-title">
               <span class="tool-modal-icon" v-html="activeTool.icon"></span>
               <div class="tool-modal-title-text">
-                <div class="tool-modal-name">{{ activeTool.name }}</div>
-                <div class="tool-modal-sub">{{ activeTool.description }}</div>
+                <h2 id="format-factory-modal-title" class="tool-modal-name">{{ modalToolName }}</h2>
+                <div class="tool-modal-sub">{{ modalToolDescription }}</div>
               </div>
             </div>
-            <button class="tool-modal-close" @click="closeModal">
+            <button class="tool-modal-close" type="button" :aria-label="ui.close" @click="closeModal">
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -164,6 +174,23 @@
               </svg>
             </button>
           </div>
+
+          <nav
+            v-if="workflowOperations.length > 1"
+            class="workflow-operation-tabs"
+            aria-label="工作流操作"
+          >
+            <button
+              v-for="operation in workflowOperations"
+              :key="operation.id"
+              type="button"
+              :class="{ active: activeWorkflowOperationId === operation.id }"
+              :aria-pressed="activeWorkflowOperationId === operation.id"
+              @click="openWorkflowOperation(operation.id)"
+            >
+              {{ operation.name }}
+            </button>
+          </nav>
 
           <div class="tool-modal-body">
             <div class="tool-grid">
@@ -205,12 +232,7 @@
                         type="file"
                         class="file-input"
                         :accept="acceptFor(activeTool.id)"
-                        :multiple="
-                          activeTool.id === 'img2pdf' ||
-                          activeTool.id === 'webp' ||
-                          activeTool.id === 'jpeg' ||
-                          activeTool.id === 'ico'
-                        "
+                        :multiple="multipleFor(activeTool.id)"
                         @change="onFileChange"
                       />
                       <div class="file-drop-icon">
@@ -289,10 +311,12 @@
                     ></video>
                     <video
                       v-else-if="activeTool.id === 'gif'"
+                      ref="liveVideoRef"
                       class="preview-video"
                       :src="sourceUrl"
                       controls
                       playsinline
+                      @loadedmetadata="onLiveLoadedMeta"
                     ></video>
                     <img v-else :src="sourceUrl" alt="preview" class="preview-img" />
                   </div>
@@ -302,7 +326,102 @@
               <div class="tool-card-panel">
                 <div class="panel-title">{{ ui.panelParams }}</div>
                 <div class="panel-body">
-                  <template v-if="activeTool.id === 'webp'">
+                  <template v-if="imagePipelineMode">
+                    <div class="help-box">
+                      {{
+                        currentLang === 'zh'
+                          ? '步骤严格按下列顺序执行。可启停、排序并批量导出真实 ZIP；处理始终留在浏览器。'
+                          : 'Steps run strictly in this order. Enable, reorder, batch, and export a real ZIP; processing stays in your browser.'
+                      }}
+                    </div>
+                    <ol class="pipeline-list">
+                      <li v-for="(step, index) in imagePipelineOrder" :key="step">
+                        <label class="pipeline-step-toggle">
+                          <input
+                            type="checkbox"
+                            :checked="imagePipelineEnabled[step]"
+                            @change="toggleImagePipelineStep(step)"
+                          />
+                          <span>{{ index + 1 }}. {{ pipelineStepLabel(step) }}</span>
+                        </label>
+                        <div class="pipeline-order-actions">
+                          <button
+                            type="button"
+                            :disabled="index === 0"
+                            :aria-label="`${pipelineStepLabel(step)} 向上移动`"
+                            @click="moveImagePipelineStep(step, -1)"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            :disabled="index === imagePipelineOrder.length - 1"
+                            :aria-label="`${pipelineStepLabel(step)} 向下移动`"
+                            @click="moveImagePipelineStep(step, 1)"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      </li>
+                    </ol>
+
+                    <div v-if="imagePipelineEnabled.resize" class="pipeline-settings">
+                      <div class="field-label">{{ pipelineStepLabel('resize') }}</div>
+                      <div class="field-grid-three">
+                        <input v-model="resizeWidth" class="control" type="number" min="1" :placeholder="ui.widthPxLabel" />
+                        <input v-model="resizeHeight" class="control" type="number" min="1" :placeholder="ui.heightPxLabel" />
+                        <input v-model="resizeMaxSide" class="control" type="number" min="16" :placeholder="ui.maxSidePxLabel" />
+                      </div>
+                    </div>
+
+                    <div v-if="imagePipelineEnabled.rotate" class="pipeline-settings">
+                      <div class="field-label">{{ pipelineStepLabel('rotate') }}</div>
+                      <select v-model.number="rotateDeg" class="control">
+                        <option :value="0">0°</option>
+                        <option :value="90">90°</option>
+                        <option :value="180">180°</option>
+                        <option :value="270">270°</option>
+                      </select>
+                      <div class="chips">
+                        <label class="chip" :class="{ active: rotateFlipH }">
+                          <input v-model="rotateFlipH" type="checkbox" class="visually-hidden" />{{ ui.flipH }}
+                        </label>
+                        <label class="chip" :class="{ active: rotateFlipV }">
+                          <input v-model="rotateFlipV" type="checkbox" class="visually-hidden" />{{ ui.flipV }}
+                        </label>
+                      </div>
+                    </div>
+
+                    <div v-if="imagePipelineEnabled.filter" class="pipeline-settings">
+                      <div class="field-label">{{ pipelineStepLabel('filter') }}</div>
+                      <select v-model="filterPreset" class="control">
+                        <option value="grayscale">{{ ui.filterGrayscale }}</option>
+                        <option value="sepia">{{ ui.filterSepia }}</option>
+                        <option value="invert">{{ ui.filterInvert }}</option>
+                      </select>
+                      <input v-model.number="filterIntensity" type="range" min="0" max="1" step="0.05" class="range" />
+                    </div>
+
+                    <div v-if="imagePipelineEnabled.convert" class="pipeline-settings">
+                      <div class="field-label">{{ pipelineStepLabel('convert') }}</div>
+                      <select v-model="webpOutFormat" class="control">
+                        <option value="image/webp">WEBP</option>
+                        <option value="image/jpeg">JPEG</option>
+                        <option value="image/png">PNG</option>
+                      </select>
+                      <input
+                        v-if="webpOutFormat !== 'image/png'"
+                        v-model.number="webpQuality"
+                        type="range"
+                        min="0.1"
+                        max="1"
+                        step="0.05"
+                        class="range"
+                      />
+                    </div>
+                  </template>
+
+                  <template v-else-if="activeTool.id === 'webp'">
                     <div class="field-row">
                       <div class="field-label">{{ ui.outFormatLabel }}</div>
                       <select v-model="webpOutFormat" class="control">
@@ -338,6 +457,32 @@
 
                   <template v-else-if="activeTool.id === 'word2pdf'">
                     <div class="help-box">{{ ui.word2pdfHelp }}</div>
+                    <div class="help-box" role="status" aria-live="polite">
+                      {{
+                        wordCapabilityStatus === 'idle'
+                          ? ui.wordCapabilityIdle
+                          : wordCapabilityStatus === 'checking'
+                          ? ui.wordCapabilityChecking
+                          : wordCapabilityStatus === 'available'
+                            ? ui.wordCapabilityAvailable +
+                              (wordMaxFileBytes
+                                ? ` · ${ui.wordMaxFilePrefix}${formatBytes(wordMaxFileBytes)}`
+                                : '')
+                            : ui.wordCapabilityUnavailable
+                      }}
+                    </div>
+                    <button
+                      v-if="wordCapabilityStatus === 'unavailable'"
+                      class="btn ghost"
+                      type="button"
+                      @click="checkWordCapability(sourceFile)"
+                    >
+                      {{ ui.wordCapabilityRetry }}
+                    </button>
+                    <label class="upload-consent">
+                      <input v-model="wordUploadConsent" type="checkbox" />
+                      <span>{{ ui.wordUploadConsent }}</span>
+                    </label>
                   </template>
 
                   <template v-else-if="activeTool.id === 'txt2pdf'">
@@ -533,6 +678,14 @@
 
                   <template v-else-if="activeTool.id === 'ico'">
                     <div class="field-row">
+                      <div class="field-label">{{ ui.icoFitLabel }}</div>
+                      <select v-model="icoFit" class="control">
+                        <option value="contain">{{ ui.icoFitContain }}</option>
+                        <option value="cover">{{ ui.icoFitCover }}</option>
+                        <option value="stretch">{{ ui.icoFitStretch }}</option>
+                      </select>
+                    </div>
+                    <div class="field-row">
                       <div class="field-label">{{ ui.icoSizesLabel }}</div>
                       <div class="chips">
                         <button
@@ -676,7 +829,9 @@
                         {{
                           liveDuration
                             ? ui.liveTotalDurationPrefix + formatTime(liveDuration)
-                            : ui.liveLoadingMetaLabel
+                            : sourceFile
+                              ? ui.liveLoadingMetaLabel
+                              : ui.liveNoVideoLabel
                         }}
                       </div>
                     </div>
@@ -723,6 +878,7 @@
                       <select v-model="pdfMode" class="control">
                         <option value="stitch">{{ ui.pdfModeStitch }}</option>
                         <option value="page">{{ ui.pdfModeSingle }}</option>
+                        <option value="range">{{ ui.pdfModeRangeZip }}</option>
                       </select>
                     </div>
 
@@ -745,6 +901,17 @@
                     </div>
 
                     <div v-else class="field-row">
+                      <div class="field-label">{{ ui.pdfPageRangeLabel }}</div>
+                      <input
+                        v-model="pdfPageRange"
+                        class="control"
+                        type="text"
+                        :placeholder="ui.pdfPageRangePlaceholder"
+                      />
+                      <div class="help-box">{{ ui.pdfPageRangeHelp }}</div>
+                    </div>
+
+                    <div v-if="pdfMode === 'stitch'" class="field-row">
                       <div class="field-label">{{ ui.pdfMaxPagesLabel }}</div>
                       <input
                         v-model.number="pdfMaxPages"
@@ -798,6 +965,34 @@
                   </template>
 
                   <template v-else-if="activeTool.id === 'img2pdf'">
+                    <div v-if="sourceFiles.length" class="field-row">
+                      <div class="field-label">{{ ui.img2pdfOrderLabel }}</div>
+                      <ol class="pipeline-list" :aria-label="ui.img2pdfOrderLabel">
+                        <li v-for="(file, index) in sourceFiles" :key="`${file.name}-${index}`">
+                          <span class="batch-name">{{ index + 1 }}. {{ file.name }}</span>
+                          <span class="pipeline-order-actions">
+                            <button
+                              class="btn ghost"
+                              type="button"
+                              :aria-label="ui.moveUp"
+                              :disabled="index === 0"
+                              @click="moveImg2PdfSourceFile(index, -1)"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              class="btn ghost"
+                              type="button"
+                              :aria-label="ui.moveDown"
+                              :disabled="index === sourceFiles.length - 1"
+                              @click="moveImg2PdfSourceFile(index, 1)"
+                            >
+                              ↓
+                            </button>
+                          </span>
+                        </li>
+                      </ol>
+                    </div>
                     <div class="field-row">
                       <div class="field-label">{{ ui.img2pdfPageSizeLabel }}</div>
                       <select v-model="img2pdfPageSize" class="control">
@@ -852,7 +1047,7 @@
                         class="control"
                         type="number"
                         min="0.2"
-                        max="10"
+                        max="30"
                         step="0.1"
                       />
                       <div class="help-box">{{ ui.gifDurationHelp }}</div>
@@ -892,7 +1087,7 @@
                     </div>
                   </template>
 
-                  <div v-if="toolError" class="error-box">{{ toolError }}</div>
+                  <div v-if="toolError" class="error-box" role="alert">{{ toolError }}</div>
                 </div>
               </div>
 
@@ -903,8 +1098,13 @@
                     <button
                       class="btn primary"
                       :disabled="
+                        isInspectingInput ||
                         isProcessing ||
-                        (activeTool.id === 'ingredient-list' ? !ingredientText.trim() : !sourceFile)
+                        (activeTool.id === 'ingredient-list' ? !ingredientText.trim() : !sourceFile) ||
+                        (activeTool.id === 'word2pdf' &&
+                          (!wordUploadConsent ||
+                            wordCapabilityStatus !== 'available' ||
+                            !wordFileWithinLimit))
                       "
                       @click="runTool"
                     >
@@ -929,7 +1129,7 @@
                     <button
                       v-if="outputItems.length > 1"
                       class="btn ghost"
-                      :disabled="outputItems.length === 0"
+                      :disabled="isDownloadingAll || outputItems.length === 0"
                       type="button"
                       @click="downloadAllOutputs"
                     >
@@ -973,7 +1173,14 @@
                       <div class="progress-label">{{ progress.label || ui.processing }}</div>
                       <div class="progress-val">{{ progressPercent }}%</div>
                     </div>
-                    <div class="progress-bar">
+                    <div
+                      class="progress-bar"
+                      role="progressbar"
+                      :aria-label="progress.label || ui.processing"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      :aria-valuenow="progressPercent"
+                    >
                       <div
                         class="progress-bar-inner"
                         :style="{ width: progressPercent + '%' }"
@@ -981,7 +1188,7 @@
                     </div>
                   </div>
 
-                  <div v-if="outputMeta" class="meta-row">
+                  <div v-if="outputMeta" class="meta-row" role="status" aria-live="polite" aria-atomic="true">
                     <div class="meta-item">
                       <div class="meta-k">OUTPUT</div>
                       <div class="meta-v">{{ outputMeta.name }}</div>
@@ -1038,29 +1245,35 @@
               </div>
             </div>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import GlobalFooter from '../components/GlobalFooter.vue';
 import TitleBar from '../components/TitleBar.vue';
 import { useFormatFactory } from '../composables/useFormatFactory';
+import { trafficTypeForFormatFactoryRun } from '../logic/formatFactory/runOutcome';
 import { formatTime } from '../logic/formatFactory/format';
 import { useLanguageStore } from '@/stores/language';
 import { useConsoleStore } from '@/stores/console';
 import { trackEvent } from '@/utils/analytics';
+import { getToolDefinition, toolDefinitions } from '../domain/toolCatalog';
+import type { ImagePipelineStepType } from '../logic/formatFactory/imagePipeline';
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 const consoleStore = useConsoleStore();
 const route = useRoute();
 const router = useRouter();
+const toolModalRef = ref<HTMLElement | null>(null);
+let toolModalReturnFocus: HTMLElement | null = null;
+let toolModalObserver: MutationObserver | null = null;
 
 onMounted(() => {
   consoleStore.recordTraffic({
@@ -1076,10 +1289,11 @@ const ui = computed(() => {
       badgeText: '图像与文件工具',
       mainTitle1: '工具',
       mainTitle2: '箱',
-      secureBadge: '无需登录 · 免费使用',
+      secureBadge: '本地流程无需登录 · 不扣点数',
       subtitlePrefix: '纯前端处理 · 隐私安全 ·',
       subtitleSuffix: '款工具',
-      securityNote: '// 所有转换均在浏览器本地完成，文件不会上传到服务器',
+      securityNote:
+        '// 图片、PDF、TXT 与 GIF 工作流在本地处理；Word 保真转换仅在明确同意后上传，服务不可用时不会降级',
       panelInputText: '输入文本',
       panelInputFile: '输入文件',
       panelParams: '参数设置',
@@ -1125,6 +1339,10 @@ const ui = computed(() => {
       intensityLabel: '强度',
 
       icoSizesLabel: 'ICO 尺寸',
+      icoFitLabel: '适配方式',
+      icoFitContain: '留白（默认，不变形）',
+      icoFitCover: '裁切铺满',
+      icoFitStretch: '拉伸填满',
 
       wmPickLabel: '选区',
       wmPickHelp: '在预览图上拖拽框选需要处理的区域',
@@ -1143,30 +1361,48 @@ const ui = computed(() => {
       liveTimelineLabel: '时间轴',
       liveTotalDurationPrefix: '总时长 ',
       liveLoadingMetaLabel: '加载视频元信息中…',
+      liveNoVideoLabel: '请先选择视频文件',
       captureCurrentFrame: '截取当前帧',
 
       pdfExportModeLabel: '导出模式',
       pdfModeStitch: '长图拼接（多页）',
       pdfModeSingle: '单页导出',
+      pdfModeRangeZip: '页范围逐页导出（ZIP）',
       pdfPageNumberLabel: '页码',
+      pdfPageRangeLabel: '页范围',
+      pdfPageRangePlaceholder: '例如 1-3,5；留空从第 1 页开始',
+      pdfPageRangeHelp: '支持逗号和连续范围；按填写顺序输出，重复页会自动去重，最多 50 页。',
       pdfTotalPagesPrefix: '共 ',
       pdfTotalPagesSuffix: ' 页',
       pdfReadingPages: '读取页数中…',
       pdfMaxPagesLabel: '最多页数',
       pdfMaxPagesHelp: '页数过多会很慢，默认限制 12 页',
       pdfScaleLabel: '清晰度',
-      pdf2wordHelp: '提取 PDF 中的文字并导出为 Word（.doc）。复杂排版/图片可能无法完整还原。',
-      word2pdfHelp: '提取 Word（.docx）中的文字并导出为 PDF。复杂排版/图片可能无法完整还原。',
-      txt2pdfHelp: '将 TXT 纯文本导出为 PDF。',
+      pdf2wordHelp: '提取 PDF 中的文字并导出为 Word（.docx）。复杂排版/图片可能无法完整还原。',
+      word2pdfHelp:
+        '服务器 Word 保真模式：明确同意后上传 .docx，由 LibreOffice 转换；服务不可用时不会静默改用本地文本模式。',
+      wordCapabilityChecking: '正在检查 LibreOffice 转换能力…',
+      wordCapabilityIdle: '选择 .docx 后会先检查 LibreOffice 转换能力。',
+      wordCapabilityAvailable: 'LibreOffice 保真转换可用',
+      wordCapabilityUnavailable: 'LibreOffice 保真转换当前不可用',
+      wordCapabilityRetry: '重新检查能力',
+      wordMaxFilePrefix: '最大文件 ',
+      wordUploadConsent: '我明确同意将此 Word 文件上传到服务器，仅用于本次 PDF 转换。',
+      txt2pdfHelp:
+        '本地 TXT 模式：纯文本只在浏览器内排版并导出，不上传服务器；PDF 包含可搜索的 Unicode 文字层。',
 
       img2pdfPageSizeLabel: '页面尺寸',
       img2pdfPageSizeAuto: '跟随图片尺寸',
       img2pdfMarginLabel: '边距(mm)',
       img2pdfQualityLabel: '图片质量',
+      img2pdfOrderLabel: 'PDF 页面顺序（可调整）',
+      moveUp: '上移',
+      moveDown: '下移',
 
       gifStartLabel: '开始(s)',
       gifDurationLabel: '时长(s)',
-      gifDurationHelp: '最长 10s，建议文件小于 20MB',
+      gifDurationHelp:
+        '专用 Worker 编码并支持立即取消；最长 30 秒、源视频 ≤1200 万像素、最多 720 帧，执行 192MB 预算。',
       gifFpsLabel: '帧率',
       gifWidthLabel: '宽度(px)',
       gifColorsLabel: '颜色数',
@@ -1180,6 +1416,7 @@ const ui = computed(() => {
       download: '下载',
       preview: '预览',
       reset: '重置',
+      close: '关闭',
       pdfGeneratedHint: 'PDF 已生成，可下载或预览。',
       icoGeneratedHint: 'ICO 已生成，可下载或预览。',
       docGeneratedHint: 'Word 文件已生成，可预览或下载。',
@@ -1189,20 +1426,17 @@ const ui = computed(() => {
         '本页工具默认在浏览器本地运行，适合做快速转换、批量处理与隐私敏感文件的基础编辑。',
       useCasesTitle: '常见需求',
       useCases: [
-        'HEIC 转 JPG/PNG：iPhone 照片快速通用化',
         'PNG/JPG/WEBP 互转：适配电商平台与不同终端',
         '图片压缩与批量缩放：减少体积、提升加载速度',
         'PDF 转图片 / 图片转 PDF：资料整理与归档',
         'PDF 转 Word：抽取文字内容进行二次编辑',
-        '图片加水印/去水印：保护版权或去除多余标记',
+        '隐私遮挡：用模糊、像素化或纯色覆盖敏感区域',
         '视频截帧与 GIF 制作：快速提取精彩瞬间',
         'ICO 图标生成：网站 Favicon 快速制作',
         '图片滤镜与特效：一键美化照片风格'
       ],
       longTailTitle: '常见搜索词',
       longTailKeywords: [
-        'heic转jpg',
-        'heic转png',
         'png转jpg',
         'webp转jpg',
         'webp转png',
@@ -1215,8 +1449,8 @@ const ui = computed(() => {
         '视频截帧',
         'GIF制作',
         '视频转GIF',
-        '图片加水印',
-        '图片去水印',
+        '图片隐私遮挡',
+        '图片马赛克',
         'ICO图标生成',
         'Favicon制作',
         '图片滤镜',
@@ -1235,7 +1469,7 @@ const ui = computed(() => {
         },
         {
           q: '能批量下载吗？',
-          a: '支持。支持批量处理的工具（如格式转换、压缩）处理完成后，会提供“下载全部”按钮，打包下载所有文件。您也可以逐个预览并下载。'
+          a: '支持。批量处理完成后，“下载全部”会生成一个真正的 ZIP 文件；也可以逐个预览并下载。'
         },
         {
           q: '转换后的图片质量如何？',
@@ -1243,7 +1477,7 @@ const ui = computed(() => {
         },
         {
           q: '支持哪些文件格式？',
-          a: '目前支持 JPG, PNG, WEBP, PDF, GIF, ICO 以及视频截帧等。更多格式（如 TIFF, BMP, SVG 等）正在开发中，敬请期待。'
+          a: '目前支持浏览器可解码的 JPG、PNG、WEBP、视频，以及 PDF、GIF、ICO 工作流；不承诺 HEIC、Live Photo、TIFF 或复杂 Office 版式。'
         },
         {
           q: '手机上能用吗？',
@@ -1260,10 +1494,11 @@ const ui = computed(() => {
     badgeText: 'Image & File Tools',
     mainTitle1: 'Tool',
     mainTitle2: 'box',
-    secureBadge: 'No login required · Free to use',
+    secureBadge: 'Local workflows need no login · No credits used',
     subtitlePrefix: 'Client-side processing · Privacy-first ·',
     subtitleSuffix: 'tools',
-    securityNote: '// All conversions run locally in your browser. Files are not uploaded.',
+    securityNote:
+      '// Image, PDF, TXT, and GIF workflows stay local. Word uploads only after consent and never silently falls back.',
     panelInputText: 'Text Input',
     panelInputFile: 'File Input',
     panelParams: 'Parameters',
@@ -1309,6 +1544,10 @@ const ui = computed(() => {
     intensityLabel: 'Intensity',
 
     icoSizesLabel: 'ICO Sizes',
+    icoFitLabel: 'Fit Strategy',
+    icoFitContain: 'Contain (default, no distortion)',
+    icoFitCover: 'Crop to fill',
+    icoFitStretch: 'Stretch to fill',
 
     wmPickLabel: 'Selection',
     wmPickHelp: 'Drag on the preview to select the area',
@@ -1327,12 +1566,18 @@ const ui = computed(() => {
     liveTimelineLabel: 'Timeline',
     liveTotalDurationPrefix: 'Total Duration ',
     liveLoadingMetaLabel: 'Loading video metadata…',
+    liveNoVideoLabel: 'Select a video file first',
     captureCurrentFrame: 'Capture frame',
 
     pdfExportModeLabel: 'Export Mode',
     pdfModeStitch: 'Stitch into a long image (multi-page)',
     pdfModeSingle: 'Export a single page',
+    pdfModeRangeZip: 'Export a page range as ZIP',
     pdfPageNumberLabel: 'Page Number',
+    pdfPageRangeLabel: 'Page Range',
+    pdfPageRangePlaceholder: 'e.g. 1-3,5; blank starts from page 1',
+    pdfPageRangeHelp:
+      'Comma-separated pages and ranges are supported. Requested order is preserved, duplicates are removed, max 50 pages.',
     pdfTotalPagesPrefix: 'Total ',
     pdfTotalPagesSuffix: ' pages',
     pdfReadingPages: 'Reading page count…',
@@ -1342,17 +1587,30 @@ const ui = computed(() => {
     pdf2wordHelp:
       'Extract text from PDF and export as Word (.doc). Layout/images may not be preserved.',
     word2pdfHelp:
-      'Extract text from Word (.docx) and export as PDF. Layout/images may not be preserved.',
-    txt2pdfHelp: 'Export TXT (plain text) as PDF.',
+      'Server Word fidelity mode: after explicit consent, upload the .docx for LibreOffice conversion. It never silently falls back to local text mode.',
+    wordCapabilityChecking: 'Checking LibreOffice conversion capability…',
+    wordCapabilityIdle: 'Choose a .docx to preflight LibreOffice conversion capability.',
+    wordCapabilityAvailable: 'LibreOffice fidelity conversion is available',
+    wordCapabilityUnavailable: 'LibreOffice fidelity conversion is currently unavailable',
+    wordCapabilityRetry: 'Check capability again',
+    wordMaxFilePrefix: 'Max file ',
+    wordUploadConsent:
+      'I explicitly consent to uploading this Word file to the server only for this PDF conversion.',
+    txt2pdfHelp:
+      'Local TXT mode: layout and export stay in this browser, with a searchable Unicode text layer; the file is not uploaded.',
 
     img2pdfPageSizeLabel: 'Page Size',
     img2pdfPageSizeAuto: 'Match image size',
     img2pdfMarginLabel: 'Margin (mm)',
     img2pdfQualityLabel: 'Image Quality',
+    img2pdfOrderLabel: 'PDF page order (reorderable)',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
 
     gifStartLabel: 'Start (s)',
     gifDurationLabel: 'Duration (s)',
-    gifDurationHelp: 'Max 10s. Recommended file size < 20MB.',
+    gifDurationHelp:
+      'Dedicated Worker encoding with immediate cancel; max 30s, source ≤12 MP, max 720 frames, and a 192 MB budget.',
     gifFpsLabel: 'FPS',
     gifWidthLabel: 'Width (px)',
     gifColorsLabel: 'Max Colors',
@@ -1364,8 +1622,9 @@ const ui = computed(() => {
     cancel: 'Cancel',
     downloadAll: 'Download all',
     download: 'Download',
-    preview: 'Preview',
-    reset: 'Reset',
+      preview: 'Preview',
+      reset: 'Reset',
+      close: 'Close',
     pdfGeneratedHint: 'PDF generated. Download or preview it.',
     icoGeneratedHint: 'ICO generated. Download or preview it.',
     docGeneratedHint: 'Word file generated. Preview or download and open it in Word.',
@@ -1375,7 +1634,6 @@ const ui = computed(() => {
       'Tools on this page run locally in your browser by default, ideal for fast conversion, batch processing, and privacy-sensitive files.',
     useCasesTitle: 'Typical tasks',
     useCases: [
-      'HEIC to JPG/PNG for iPhone photo compatibility',
       'PNG/JPG/WEBP conversion for different platforms',
       'Image compression and batch resize for faster loading',
       'PDF to images / images to PDF for archiving',
@@ -1383,9 +1641,7 @@ const ui = computed(() => {
     ],
     longTailTitle: 'Popular queries',
     longTailKeywords: [
-      'heic to jpg',
-      'heic to png',
-      'png to jpg',
+        'png to jpg',
       'webp to jpg',
       'webp to png',
       'image compressor',
@@ -1409,7 +1665,7 @@ const ui = computed(() => {
       },
       {
         q: 'Can I download everything at once?',
-        a: 'Batch-capable tools provide a “Download all” option, and you can also preview/download items individually.'
+        a: 'Batch-capable tools create a real ZIP from “Download all”; individual preview and download remain available.'
       },
       {
         q: 'How is the output quality?',
@@ -1417,7 +1673,7 @@ const ui = computed(() => {
       },
       {
         q: 'What formats are supported?',
-        a: 'Currently supports JPG, PNG, WEBP, PDF, GIF, ICO, and video frames. More formats are coming soon.'
+        a: 'Current workflows cover browser-decodable JPG, PNG, WEBP and video, plus PDF, GIF, and ICO. HEIC, Live Photo, TIFF, and complex Office layout are not promised.'
       },
       {
         q: 'Does it work on mobile?',
@@ -1432,18 +1688,22 @@ const {
   soonTip,
   activeTool,
   handleToolClick: handleToolClickRaw,
-  closeModal,
+  closeModal: closeModalRaw,
   acceptFor,
   acceptHintFor,
+  multipleFor,
   onFileChange,
   sourceMeta,
   sourceUrl,
   sourceFile,
+  sourceFiles,
   outputUrl,
   outputBlob,
   outputMeta,
   outputItems,
+  isInspectingInput,
   isProcessing,
+  isDownloadingAll,
   toolError,
   webpOutFormat,
   webpQuality,
@@ -1463,12 +1723,19 @@ const {
   filterIntensity,
   filterOutFormat,
   filterQuality,
+  imagePipelineMode,
+  imagePipelineOrder,
+  imagePipelineEnabled,
+  toggleImagePipelineStep,
+  moveImagePipelineStep,
   icoSizeOptions,
   icoSizes,
+  icoFit,
   toggleIcoSize,
   pdfPageCount,
   pdfMode,
   pdfPageNumber,
+  pdfPageRange,
   pdfScale,
   pdfOutFormat,
   pdfQuality,
@@ -1476,6 +1743,12 @@ const {
   img2pdfPageSize,
   img2pdfMarginMm,
   img2pdfQuality,
+  moveImg2PdfSourceFile,
+  wordUploadConsent,
+  wordCapabilityStatus,
+  wordMaxFileBytes,
+  wordFileWithinLimit,
+  checkWordCapability,
   gifStartSec,
   gifDurationSec,
   gifFps,
@@ -1524,24 +1797,125 @@ const {
   onDrop
 } = useFormatFactory();
 
-const displayTools = computed(() => tools.value.filter((t) => t.id !== 'ingredient-list'));
+const workflowDefinitions = toolDefinitions.filter((tool) => tool.kind === 'tool');
+const displayTools = computed(() =>
+  workflowDefinitions.map((workflow) => {
+    const operation = tools.value.find((tool) => workflow.legacyIds.includes(tool.id));
+    return {
+      ...(operation || tools.value[0]),
+      id: workflow.id,
+      name: currentLang.value === 'en' ? workflow.name.en : workflow.name.zh,
+      description:
+        currentLang.value === 'en' ? workflow.description.en : workflow.description.zh,
+      tag:
+        workflow.execution === 'local'
+          ? currentLang.value === 'en'
+            ? 'Local · Private'
+            : '本地 · 隐私优先'
+          : currentLang.value === 'en'
+            ? 'Local / Server Choice'
+            : '本地 / 服务端可选',
+      status: 'ready' as const
+    };
+  })
+);
+
+const activeWorkflow = computed(() => {
+  const tool = getToolDefinition(String(route.params.toolId || '').trim());
+  return tool?.kind === 'tool' ? tool : null;
+});
+
+const modalToolName = computed(() => {
+  const workflow = activeWorkflow.value;
+  if (workflow?.id === 'image-batch' && imagePipelineMode.value) {
+    return currentLang.value === 'en' ? workflow.name.en : workflow.name.zh;
+  }
+  return activeTool.value?.name || '';
+});
+
+const modalToolDescription = computed(() => {
+  const workflow = activeWorkflow.value;
+  if (workflow?.id === 'image-batch' && imagePipelineMode.value) {
+    return currentLang.value === 'en' ? workflow.description.en : workflow.description.zh;
+  }
+  return activeTool.value?.description || '';
+});
+
+const workflowOperations = computed(() => {
+  const workflow = activeWorkflow.value;
+  if (!workflow) return [];
+  const operations = workflow.legacyIds
+    .map((id) => tools.value.find((tool) => tool.id === id))
+    .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool))
+    .map((tool) => ({ id: tool.id, name: tool.name }));
+  if (workflow.id === 'image-batch') {
+    operations.unshift({
+      id: 'pipeline' as any,
+      name: currentLang.value === 'zh' ? '组合流水线' : 'Ordered pipeline'
+    });
+  }
+  return operations;
+});
+
+const activeWorkflowOperationId = computed(() =>
+  imagePipelineMode.value ? 'pipeline' : String(activeTool.value?.id || '')
+);
+
+watch(activeTool, async (tool) => {
+  if (tool) {
+    toolModalReturnFocus = globalThis.document.activeElement instanceof HTMLElement
+      ? globalThis.document.activeElement
+      : null;
+    await nextTick();
+    toolModalRef.value?.focus();
+    connectToolModalObserver();
+    wireFormatFactoryControlLabels();
+    return;
+  }
+  toolModalObserver?.disconnect();
+  toolModalObserver = null;
+  await nextTick();
+  if (toolModalReturnFocus?.isConnected) toolModalReturnFocus.focus();
+  toolModalReturnFocus = null;
+});
+
+onBeforeUnmount(() => {
+  toolModalObserver?.disconnect();
+  toolModalObserver = null;
+  if (toolModalReturnFocus?.isConnected) toolModalReturnFocus.focus();
+  toolModalReturnFocus = null;
+});
+
+const pipelineStepLabel = (step: ImagePipelineStepType) => {
+  const labels = currentLang.value === 'zh'
+    ? { resize: '缩放', rotate: '旋转 / 翻转', filter: '滤镜', convert: '格式 / 压缩' }
+    : { resize: 'Resize', rotate: 'Rotate / flip', filter: 'Filter', convert: 'Format / compress' };
+  return labels[step];
+};
 
 const lastAutoOpenId = ref('');
 watch(
-  () => String(route.query.tool || '').trim(),
-  (toolId) => {
-    if (!toolId) return;
-    if (toolId === lastAutoOpenId.value) return;
-    const found = tools.value.find((t) => t.id === toolId);
+  () => [String(route.params.toolId || '').trim(), String(route.query.operation || '').trim()],
+  ([workflowId, requestedOperation]) => {
+    const workflow = getToolDefinition(workflowId);
+    if (!workflow || workflow.kind !== 'tool') return;
+    const pipelineRequested = workflow.id === 'image-batch' && requestedOperation === 'pipeline';
+    const operation = pipelineRequested
+      ? 'pipeline'
+      : workflow.legacyIds.includes(requestedOperation)
+        ? requestedOperation
+        : workflow.id === 'image-batch'
+          ? 'pipeline'
+          : workflow.legacyIds[0];
+    const openKey = `${workflow.id}:${operation}`;
+    if (openKey === lastAutoOpenId.value) return;
+    const found = tools.value.find((tool) => tool.id === (operation === 'pipeline' ? 'webp' : operation));
     if (!found) return;
-    if (activeTool.value?.id === found.id) return;
-    lastAutoOpenId.value = toolId;
-    try {
-      handleToolClickRaw(found);
-    } finally {
-      const nextQuery: Record<string, any> = { ...route.query };
-      delete nextQuery.tool;
-      router.replace({ query: nextQuery }).catch(() => {});
+    lastAutoOpenId.value = openKey;
+    if (activeTool.value?.id !== found.id) handleToolClickRaw(found);
+    imagePipelineMode.value = operation === 'pipeline';
+    if (requestedOperation !== operation) {
+      router.replace({ query: { ...route.query, operation } }).catch(() => {});
     }
   },
   { immediate: true }
@@ -1557,22 +1931,108 @@ const handleToolClick = (tool: any) => {
     target: `tool:${id}`,
     meta: { toolName: name }
   });
-  return handleToolClickRaw(tool);
+  const workflow = getToolDefinition(id);
+  if (!workflow || workflow.kind !== 'tool') return;
+  const operation = workflow.id === 'image-batch' ? 'pipeline' : workflow.legacyIds[0];
+  router.push({ path: workflow.route, query: { operation } }).catch(() => {});
 };
 
+const openWorkflowOperation = (operation: string) => {
+  const workflow = activeWorkflow.value;
+  const allowed = workflow?.legacyIds.includes(operation) || (workflow?.id === 'image-batch' && operation === 'pipeline');
+  if (!workflow || !allowed) return;
+  router.replace({ query: { ...route.query, operation } }).catch(() => {});
+};
+
+const closeModal = () => {
+  closeModalRaw();
+  lastAutoOpenId.value = '';
+  if (activeWorkflow.value) router.push('/artigen/tools').catch(() => {});
+};
+
+const onToolModalKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeModal();
+    return;
+  }
+  if (event.key !== 'Tab' || !toolModalRef.value) return;
+  const focusable = Array.from(toolModalRef.value.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+  )).filter((element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true');
+  if (!focusable.length) {
+    event.preventDefault();
+    toolModalRef.value.focus();
+    return;
+  }
+  // WebKit can move focus to browser chrome before a boundary-only trap sees
+  // the next focus target. Drive every Tab step explicitly so focus never
+  // leaves the modal, including when the current node disappears mid-task.
+  const currentIndex = focusable.indexOf(globalThis.document.activeElement as HTMLElement);
+  const nextIndex = event.shiftKey
+    ? currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1
+    : currentIndex < 0 || currentIndex >= focusable.length - 1 ? 0 : currentIndex + 1;
+  event.preventDefault();
+  focusable[nextIndex]?.focus();
+};
+
+function connectToolModalObserver(): void {
+  toolModalObserver?.disconnect();
+  const modal = toolModalRef.value;
+  if (!modal) return;
+  toolModalObserver = new MutationObserver(() => wireFormatFactoryControlLabels());
+  toolModalObserver.observe(modal, { childList: true, subtree: true });
+}
+
+function wireFormatFactoryControlLabels(): void {
+  const modal = toolModalRef.value;
+  if (!modal) return;
+  const groups = modal.querySelectorAll<HTMLElement>('.field-row, .pipeline-settings');
+  groups.forEach((group) => {
+    const label = group.querySelector<HTMLElement>('.field-label');
+    const text = label?.textContent?.trim();
+    if (!text) return;
+    group.querySelectorAll<HTMLElement>('input, select, textarea').forEach((control) => {
+      if (control.closest('label') || control.hasAttribute('aria-label') || control.hasAttribute('aria-labelledby')) return;
+      control.setAttribute('aria-label', text);
+    });
+  });
+}
+
 const runTool = async () => {
-  const id = String((activeTool as any)?.id || '').trim();
+  const id = String(activeTool.value?.id || '').trim();
   const startTs = Date.now();
   trackEvent('ff_run_tool', { category: 'funnel', toolId: id });
 
   try {
-    await runToolRaw();
-    consoleStore.recordTraffic({
-      type: 'generate_success',
-      page: '/artigen/tools',
-      target: `tool:${id}`,
-      meta: { duration: Date.now() - startTs, toolId: id }
-    });
+    const result = await runToolRaw();
+    const trafficType = trafficTypeForFormatFactoryRun(result.status);
+    if (trafficType === 'generate_fail') {
+      consoleStore.recordTraffic({
+        type: trafficType,
+        page: '/artigen/tools',
+        target: `tool:${id}`,
+        meta: {
+          error: String(result.error || 'TOOL_RUN_FAILED'),
+          duration: Date.now() - startTs,
+          toolId: id
+        }
+      });
+    } else if (trafficType === 'generate_success') {
+      consoleStore.recordTraffic({
+        type: trafficType,
+        page: '/artigen/tools',
+        target: `tool:${id}`,
+        meta: { duration: Date.now() - startTs, toolId: id }
+      });
+    } else {
+      trackEvent('ff_tool_run_terminated', {
+        category: 'funnel',
+        toolId: id,
+        status: result.status,
+        duration: Date.now() - startTs
+      });
+    }
   } catch (e) {
     consoleStore.recordTraffic({
       type: 'generate_fail',
@@ -1580,12 +2040,6 @@ const runTool = async () => {
       target: `tool:${id}`,
       meta: { error: String(e), toolId: id }
     });
-    // Rethrow or let existing error handling take over?
-    // runToolRaw likely handles UI errors (toolError.value), so we don't strictly need to rethrow if it's already handled,
-    // but looking at composable it sets toolError.
-    // However, runToolRaw is void in TS signature from useFormatFactory usually, but let's see.
-    // Actually runToolRaw is `runTool` from useFormatFactory which is async.
-    // But in the template it's called via @click="runTool".
   }
 };
 </script>
@@ -1846,6 +2300,10 @@ const runTool = async () => {
 }
 
 .tool-card {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   background: rgba(20, 20, 20, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 32px;
@@ -1857,6 +2315,12 @@ const runTool = async () => {
   height: 280px;
   display: flex;
   flex-direction: column;
+}
+
+.tool-card:focus-visible {
+  outline: 3px solid #ccff00;
+  outline-offset: 4px;
+  border-color: #ccff00;
 }
 
 .tool-card::before {
@@ -2009,6 +2473,7 @@ const runTool = async () => {
 }
 
 .tool-modal-panel {
+  box-sizing: border-box;
   width: min(1200px, 96%);
   max-height: calc(100vh - 48px);
   overflow: auto;
@@ -2019,6 +2484,10 @@ const runTool = async () => {
     0 0 0 1px rgba(255, 255, 255, 0.05);
   border-radius: 8px;
   backdrop-filter: blur(20px);
+}
+
+.tool-modal-panel:focus-visible {
+  outline: none;
 }
 
 .tool-modal-header {
@@ -2032,8 +2501,14 @@ const runTool = async () => {
 
 .tool-modal-title {
   display: flex;
+  min-width: 0;
+  flex: 1;
   gap: 12px;
   align-items: center;
+}
+
+.tool-modal-title-text {
+  min-width: 0;
 }
 
 .tool-modal-icon {
@@ -2042,6 +2517,7 @@ const runTool = async () => {
 }
 
 .tool-modal-name {
+  margin: 0;
   font-size: 16px;
   font-weight: 800;
   color: #f1f5f9;
@@ -2050,11 +2526,13 @@ const runTool = async () => {
 .tool-modal-sub {
   font-size: 12px;
   color: #94a3b8;
+  overflow-wrap: anywhere;
 }
 
 .tool-modal-close {
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(20, 20, 20, 0.6);
   color: #f1f5f9;
@@ -2072,6 +2550,31 @@ const runTool = async () => {
   border-color: rgba(204, 255, 0, 0.4);
   color: #ccff00;
   transform: rotate(90deg);
+}
+
+.workflow-operation-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 10px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.workflow-operation-tabs button {
+  min-height: 44px;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  border: 1px solid rgba(245, 247, 242, 0.16);
+  border-radius: 6px;
+  background: #0b0d0e;
+  color: #f5f7f2;
+  cursor: pointer;
+}
+
+.workflow-operation-tabs button.active {
+  border-color: #c8ff3d;
+  color: #c8ff3d;
+  box-shadow: 0 0 0 1px rgba(200, 255, 61, 0.16);
 }
 
 .tool-modal-body {
@@ -2126,7 +2629,21 @@ const runTool = async () => {
 }
 
 .file-input {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.file-drop:focus-within {
+  outline: 3px solid #ccff00;
+  outline-offset: 3px;
+  border-color: #ccff00;
 }
 
 .file-drop-icon {
@@ -2252,6 +2769,27 @@ const runTool = async () => {
   padding: 10px;
 }
 
+.upload-consent {
+  display: flex;
+  min-height: 44px;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  color: #cbd5e1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.upload-consent input {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  accent-color: #c8ff3d;
+}
+
 .field-row {
   display: flex;
   flex-direction: column;
@@ -2267,6 +2805,8 @@ const runTool = async () => {
 
 .control {
   width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.12);
   padding: 10px 12px;
@@ -2291,7 +2831,7 @@ select.control {
   background: rgba(0, 0, 0, 0.6);
 }
 
-.control:focus {
+.control:focus-visible {
   border-color: rgba(204, 255, 0, 0.5);
   box-shadow: 0 0 0 1px rgba(204, 255, 0, 0.1);
   color: #ccff00;
@@ -2306,10 +2846,17 @@ select.control {
 .range {
   width: 100%;
   -webkit-appearance: none;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
+  appearance: none;
+  min-height: 44px;
+  height: 44px;
+  background: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.16)) center / 100% 4px no-repeat;
   border-radius: 2px;
   outline: none;
+}
+
+.range:focus-visible {
+  outline: 2px solid #ccff00;
+  outline-offset: 2px;
 }
 
 .range::-webkit-slider-thumb {
@@ -2344,6 +2891,9 @@ select.control {
 }
 
 .chip {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.2);
   color: #94a3b8;
@@ -2366,6 +2916,7 @@ select.control {
 }
 
 .btn {
+  min-height: 44px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.4);
   color: #f1f5f9;
@@ -2380,6 +2931,11 @@ select.control {
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+
+.tool-modal-panel :is(button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid #ccff00;
+  outline-offset: 2px;
 }
 
 .btn:disabled {
@@ -2468,11 +3024,92 @@ select.control {
 .error-box {
   margin-top: 10px;
   padding: 10px;
-  border: 1px solid rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.08);
-  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.22);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(254, 202, 202, 0.9);
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
+}
+
+.pipeline-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pipeline-list li {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px 6px 12px;
+  border: 1px solid rgba(200, 255, 61, 0.18);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.pipeline-step-toggle {
+  display: flex;
+  min-height: 44px;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.pipeline-step-toggle input {
+  width: 20px;
+  height: 20px;
+  accent-color: #c8ff3d;
+}
+
+.pipeline-order-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.pipeline-order-actions button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent;
+  color: #f5f7f2;
+  cursor: pointer;
+}
+
+.pipeline-order-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.pipeline-settings {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border-left: 2px solid #c8ff3d;
+  background: rgba(200, 255, 61, 0.045);
+}
+
+.field-grid-three {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .ico-hint {
@@ -2486,6 +3123,16 @@ select.control {
 }
 
 @media (max-width: 980px) {
+  .tool-modal {
+    align-items: flex-start;
+    padding-top: 88px;
+  }
+
+  .tool-modal-panel {
+    max-height: calc(100vh - 112px);
+    max-height: calc(100dvh - 112px);
+  }
+
   .tool-grid {
     grid-template-columns: 1fr;
   }
@@ -2496,9 +3143,61 @@ select.control {
 }
 
 @media (max-width: 640px) {
+  .tool-modal {
+    padding: 76px 12px 12px;
+  }
+
+  .tool-modal-panel {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100vh - 88px);
+    max-height: calc(100dvh - 88px);
+  }
+
+  .tool-modal-header,
+  .tool-modal-body,
+  .workflow-operation-tabs {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .tool-modal-header,
+  .tool-modal-body {
+    padding-inline: 12px;
+  }
+
+  .workflow-operation-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    padding-inline: 12px;
+  }
+
+  .workflow-operation-tabs button {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    padding-inline: 8px;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .control {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  select.control {
+    padding-right: 26px;
+    background-position: right 7px center;
+  }
+
   .top-header-inner {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .field-grid-three {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -2511,6 +3210,24 @@ select.control {
 
   .actions {
     gap: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .tool-card:hover,
+  .tool-card:active,
+  .tool-modal-close:hover,
+  .btn:hover {
+    transform: none !important;
   }
 }
 </style>

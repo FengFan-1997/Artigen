@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { loginRoutes } from '../login/routes';
 import { trackPageView } from '@/utils/analytics';
-import ImageWorkshop from '../agentImg/views/ImageWorkshop.vue';
+import { getToolDefinition } from '../agentImg/domain/toolCatalog';
 
 type RouteSeoMeta = {
   title?: { zh: string; en: string } | string;
@@ -89,6 +89,21 @@ const ensureJsonLd = (id: string, data: any) => {
   document.head.appendChild(el);
 };
 
+const withoutQueryKey = (query: Record<string, any>, key: string) => {
+  const next = { ...query };
+  delete next[key];
+  return next;
+};
+
+const canonicalLegacyToolLocation = (rawId: unknown, query: Record<string, any>) => {
+  const id = String(rawId || '').trim();
+  const tool = getToolDefinition(id);
+  if (!tool) return null;
+  const nextQuery = withoutQueryKey(query, 'tool');
+  if (tool.legacyIds.includes(id)) nextQuery.operation = id;
+  return { path: tool.route, query: nextQuery, replace: true };
+};
+
 const routes = [
   {
     path: '/',
@@ -100,11 +115,11 @@ const routes = [
   },
   {
     path: '/format-factory',
-    redirect: '/artigen/tools'
+    redirect: (to: any) => canonicalLegacyToolLocation(to.query.tool, to.query) || '/artigen/tools'
   },
   {
     path: '/tools',
-    redirect: '/artigen/tools'
+    redirect: (to: any) => canonicalLegacyToolLocation(to.query.tool, to.query) || '/artigen/tools'
   },
   {
     path: '/aether-market',
@@ -143,12 +158,13 @@ const routes = [
   },
   {
     path: '/artigen/format-factory',
-    redirect: '/artigen/tools'
+    redirect: (to: any) => canonicalLegacyToolLocation(to.query.tool, to.query) || '/artigen/tools'
   },
   {
     path: '/artigen/tools',
     name: 'format-factory',
     component: () => import('../agentImg/views/FormatFactory.vue'),
+    beforeEnter: (to: any) => canonicalLegacyToolLocation(to.query.tool, to.query) || true,
     meta: {
       title: { zh: '工具 - Artigen', en: 'Tools - Artigen' },
       description: {
@@ -156,8 +172,33 @@ const routes = [
         en: 'Client-side image & file tools: convert, compress, PDF, and quick edits - fast, private, and upload-free.'
       },
       keywords: {
-        zh: '工具,图片处理,格式转换,heic转jpg,png转jpg,webp转换,PDF工具,前端本地处理,隐私安全',
-        en: 'tools,image tools,format converter,heic to jpg,png to jpg,webp converter,PDF tools,client-side,privacy'
+        zh: '工具,图片处理,格式转换,jpeg转webp,png转jpg,webp转换,PDF工具,前端本地处理,隐私安全',
+        en: 'tools,image tools,format converter,jpeg to webp,png to jpg,webp converter,PDF tools,client-side,privacy'
+      }
+    } satisfies RouteSeoMeta
+  },
+  {
+    path: '/artigen/tools/:toolId',
+    name: 'tool-workflow',
+    component: () => import('../agentImg/views/FormatFactory.vue'),
+    beforeEnter: (to: any) => {
+      const requested = String(to.params.toolId || '').trim();
+      const tool = getToolDefinition(requested);
+      if (!tool || tool.kind !== 'tool') return { path: '/artigen/tools', replace: true };
+      if (tool.id !== requested) {
+        return {
+          path: tool.route,
+          query: { ...to.query, operation: requested },
+          replace: true
+        };
+      }
+      return true;
+    },
+    meta: {
+      title: { zh: '工具工作流 - Artigen', en: 'Tool Workflow - Artigen' },
+      description: {
+        zh: '本地优先、限制透明且支持真实取消与 ZIP 导出的媒体工具工作流。',
+        en: 'Local-first media workflows with explicit limits, cancellation, and real ZIP export.'
       }
     } satisfies RouteSeoMeta
   },
@@ -167,16 +208,16 @@ const routes = [
     component: () => import('../agentImg/views/SeoLanding.vue'),
     meta: {
       title: {
-        zh: '免费在线工具集 - 格式转换与AI工坊 - Artigen',
-        en: 'Free Online Tools - Format Factory & AI Workshop - Artigen'
+        zh: '本地优先在线工具集 - 格式转换与 AI 工坊 - Artigen',
+        en: 'Local-First Online Tools - Format Factory & AI Workshop - Artigen'
       },
       description: {
-        zh: 'Artigen 提供一站式免费在线工具：图片格式转换（HEIC/WebP/PDF）、AI 文生图、图生图与电商素材生成。隐私安全，无需下载。',
-        en: 'One-stop free online tools by Artigen: Image format conversion (HEIC/WebP/PDF), AI text-to-image, and ecommerce assets. Privacy-first, no download.'
+        zh: 'Artigen 提供本地优先的图片批处理、PDF/GIF/ICO 工作流，以及明确标价的 AI 文生图与图生图能力。',
+        en: 'Artigen provides local-first image batching, PDF/GIF/ICO workflows, and clearly priced AI text-to-image and image-to-image tools.'
       },
       keywords: {
-        zh: '在线工具,免费格式转换,HEIC转JPG,PDF工具,AI绘图,文生图,在线修图,Artigen工具箱',
-        en: 'online tools,free format converter,heic to jpg,pdf tools,ai art generator,text to image,online photo editor,artigen toolkit'
+        zh: '在线工具,图片批处理,JPEG转WEBP,PDF工具,AI绘图,文生图,在线修图,Artigen工具箱',
+        en: 'online tools,image batch processing,jpeg to webp,pdf tools,ai art generator,text to image,online photo editor,artigen toolkit'
       }
     } satisfies RouteSeoMeta
   },
@@ -219,32 +260,67 @@ const routes = [
   {
     path: '/artigen/image-workshop',
     name: 'image-workshop',
-    component: ImageWorkshop,
+    component: () => import('../agentImg/views/ImageWorkshop.vue'),
+    beforeEnter: (to: any) => canonicalLegacyToolLocation(to.query.tool, to.query) || true,
     meta: {
       title: { zh: 'AI影像工坊 - Artigen', en: 'AI Image Workshop - Artigen' },
       description: {
-        zh: 'AI 驱动的影像处理工具：智能证件照、老照片修复、AI 背景、FDA 配料表标签图生成。',
-        en: 'AI-powered image tools: Smart ID Photo, Old Photo Restoration, AI Background, FDA Ingredient Label.'
+        zh: '本地与 AI 影像工作流：证件照与职业形象、老照片增强、换背景、配料标签排版和图片编辑。',
+        en: 'Local and AI workflows for ID/pro portraits, old-photo enhancement, backgrounds, ingredient label layout, and editing.'
       },
       keywords: {
-        zh: 'AI影像工坊,智能证件照,老照片修复,AI背景,背景替换,电商背景,FDA配料表,标签图生成',
-        en: 'AI image workshop,smart id photo,photo restoration,AI background,background replacement,FDA ingredient label'
+        zh: '影像工坊,证件照,职业形象,老照片增强,背景替换,配料标签排版,图片编辑',
+        en: 'image workshop,ID photo,professional portrait,photo enhancement,background replacement,ingredient label layout,image editor'
+      }
+    } satisfies RouteSeoMeta
+  },
+  {
+    path: '/artigen/image-workshop/image-editor',
+    name: 'image-editor',
+    component: () => import('../agentImg/views/ImageEditorRoute.vue'),
+    meta: {
+      title: { zh: '图片编辑 - Artigen', en: 'Image Editor - Artigen' },
+      description: {
+        zh: '非破坏图层编辑器：画板、文字与形状、裁剪和调整、自动保存、Worker 像素处理与多格式导出。',
+        en: 'Non-destructive editor with artboards, text/shapes, crop and adjustments, autosave, Worker processing, and multi-format export.'
+      },
+      keywords: {
+        zh: '图片编辑,在线修图,图层,裁剪,调色,导出,AI抠图,去背景',
+        en: 'image editor,online photo editor,layers,crop,color adjustments,export,AI remove background'
       }
     } satisfies RouteSeoMeta
   },
   {
     path: '/artigen/image-editor',
-    name: 'image-editor',
-    component: () => import('../agentImg/views/ImageEditor.vue'),
+    redirect: (to: any) => ({
+      path: '/artigen/image-workshop/image-editor',
+      query: to.query,
+      replace: true
+    })
+  },
+  {
+    path: '/artigen/image-workshop/:toolId',
+    name: 'image-workshop-tool',
+    component: () => import('../agentImg/views/ImageWorkshop.vue'),
+    beforeEnter: (to: any) => {
+      const requested = String(to.params.toolId || '').trim();
+      const tool = getToolDefinition(requested);
+      if (!tool || tool.kind !== 'workshop') {
+        return { path: '/artigen/image-workshop', replace: true };
+      }
+      if (tool.id === 'image-editor') {
+        return { path: tool.route, query: to.query, replace: true };
+      }
+      if (tool.id !== requested) {
+        return { path: tool.route, query: to.query, replace: true };
+      }
+      return true;
+    },
     meta: {
-      title: { zh: '图片编辑 - Artigen', en: 'Image Editor - Artigen' },
+      title: { zh: '影像工坊 - Artigen', en: 'Image Workshop - Artigen' },
       description: {
-        zh: '图层化图片编辑器：导入、分层、拖拽、基础调整与导出，逐步接入 AI 编辑能力。',
-        en: 'Layered image editor: import, layers, drag, basic adjustments and export, with AI editing coming soon.'
-      },
-      keywords: {
-        zh: '图片编辑,在线修图,图层,裁剪,调色,导出,AI抠图,去背景',
-        en: 'image editor,online photo editor,layers,crop,color adjustments,export,AI remove background'
+        zh: '本地能力与付费 AI 明确分离的影像工作流。',
+        en: 'Image workflows with clearly separated local and paid AI capabilities.'
       }
     } satisfies RouteSeoMeta
   },
