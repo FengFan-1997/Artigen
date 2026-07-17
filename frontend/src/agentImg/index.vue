@@ -265,6 +265,7 @@
                           {{ resultActionsToggleText(item.id) }}
                         </button>
                         <button
+                          v-if="!generationV2Enabled || (activeGenerationProfile?.maxReferences || 0) > 0"
                           class="msg-image-action-btn msg-image-action-btn--secondary"
                           type="button"
                           :disabled="isImageBroken(item.image)"
@@ -789,6 +790,7 @@
             {{ ui.edit }}
           </button>
           <button
+            v-if="!generationV2Enabled || (activeGenerationProfile?.maxReferences || 0) > 0"
             class="img-preview-btn secondary"
             type="button"
             @click="referenceMsgImage(imagePreviewRawUrl, historyItemForImage(imagePreviewRawUrl))"
