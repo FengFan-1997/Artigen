@@ -871,11 +871,7 @@ const installSystemRoutes = (app, deps) => {
           const k = String(raw || "")
             .trim()
             .toLowerCase();
-          return (
-            k === "qwen" ||
-            k === "qwen/qwen2.5-7b-instruct" ||
-            k === "qwen2.5-7b-instruct"
-          );
+          return k === "qwen/qwen3-8b";
         };
 
         const hold = (() => {

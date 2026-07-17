@@ -6,6 +6,8 @@ const {
   resolveOperationSku
 } = require('../lib/tool-catalog');
 const {
+  GENERATION_DIRECTIONS_MODEL,
+  GENERATION_IMAGE_MODEL,
   STANDARD_PROFILE_ID,
   assertGenerationProfile,
   generationRolloutBucket,
@@ -54,8 +56,8 @@ test('public generation profiles expose stable capabilities but no provider or i
     id: STANDARD_PROFILE_ID,
     name: { zh: '标准生成', en: 'Standard generation' },
     available: true,
-    capabilities: ['text-to-image', 'image-reference'],
-    maxReferences: 3,
+    capabilities: ['text-to-image'],
+    maxReferences: 0,
     aspectRatios: ['1:1', '4:5', '3:4', '16:9', '9:16'],
     supportsSeed: true
   }]);
@@ -133,7 +135,7 @@ test('ai-design validators allow only the stable contract and enforce operation 
   assert.equal(directions.locale, 'zh');
   const generate = validateAiDesignTask({
     operation: 'generate',
-    inputCount: 3,
+    inputCount: 0,
     options: {
       prompt: 'Create a clean product hero image',
       profileId: STANDARD_PROFILE_ID,
@@ -142,6 +144,14 @@ test('ai-design validators allow only the stable contract and enforce operation 
     }
   });
   assert.equal(generate.seed, 42);
+  assert.throws(
+    () => validateAiDesignTask({
+      operation: 'generate',
+      inputCount: 1,
+      options: { prompt: 'x', profileId: STANDARD_PROFILE_ID, aspectRatio: '1:1' }
+    }),
+    { code: 'REFERENCE_IMAGES_NOT_SUPPORTED' }
+  );
   assert.throws(
     () => validateAiDesignTask({
       operation: 'generate',
@@ -179,7 +189,7 @@ test('ai-design validators allow only the stable contract and enforce operation 
       inputCount: 4,
       options: { prompt: 'x', profileId: STANDARD_PROFILE_ID, aspectRatio: '1:1' }
     }),
-    { code: 'TOO_MANY_FILES' }
+    { code: 'REFERENCE_IMAGES_NOT_SUPPORTED' }
   );
 });
 
@@ -187,12 +197,7 @@ test('SiliconFlow adapter owns model and image parameters and parses exactly fou
   const calls = { image: null, chat: null };
   const provider = createSiliconFlowGenerationProvider({
     configured: true,
-    env: {
-      ...enabledEnv,
-      AI_DESIGN_SILICONFLOW_TEXT_MODEL: 'internal/text-model',
-      AI_DESIGN_SILICONFLOW_EDIT_MODEL: 'internal/edit-model',
-      AI_DESIGN_SILICONFLOW_DIRECTIONS_MODEL: 'internal/directions-model'
-    },
+    env: enabledEnv,
     imageGenerate: async (input) => {
       calls.image = input;
       return { data: { images: [{ url: 'https://assets.example/result.png' }] } };
@@ -210,41 +215,64 @@ test('SiliconFlow adapter owns model and image parameters and parses exactly fou
       };
     }
   });
-  const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, {
-    ...enabledEnv,
-    AI_DESIGN_SILICONFLOW_TEXT_MODEL: 'internal/text-model',
-    AI_DESIGN_SILICONFLOW_EDIT_MODEL: 'internal/edit-model',
-    AI_DESIGN_SILICONFLOW_DIRECTIONS_MODEL: 'internal/directions-model'
-  });
+  const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, enabledEnv);
   const directions = await provider.generateDirections({
     prompt: 'A bottle hero shot',
     locale: 'en',
     profile
   });
   assert.equal(directions.length, 4);
-  assert.equal(calls.chat.model, 'internal/directions-model');
+  assert.equal(calls.chat.model, GENERATION_DIRECTIONS_MODEL);
   assert.match(calls.chat.messages[0].content, /Never invent ingredients/);
   await provider.generateImage({
     prompt: 'controlled prompt',
     profile,
     aspectRatio: '9:16',
     seed: 7,
-    images: [{ mimeType: 'image/png', dataBase64: 'abc' }]
+    images: []
   });
-  assert.equal(calls.image.model, 'internal/edit-model');
+  assert.equal(calls.image.model, GENERATION_IMAGE_MODEL);
   assert.equal(calls.image.allowModelFallback, false);
   assert.deepEqual(calls.image.params, { imageSize: '720x1280', seed: 7 });
   assert.equal('steps' in calls.image.params, false);
   assert.equal('guidanceScale' in calls.image.params, false);
 });
 
+test('generation provider rejects every model outside the two-model free allowlist', async () => {
+  const provider = createSiliconFlowGenerationProvider({
+    configured: true,
+    env: enabledEnv,
+    imageGenerate: async () => {
+      throw new Error('must not dispatch');
+    },
+    chatGenerate: async () => {
+      throw new Error('must not dispatch');
+    }
+  });
+  const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID);
+  await assert.rejects(
+    provider.generateDirections({
+      prompt: 'x',
+      locale: 'zh',
+      profile: { ...profile, internalDirectionsModel: 'paid/third-model' }
+    }),
+    { code: 'MODEL_PROFILE_UNAVAILABLE' }
+  );
+  await assert.rejects(
+    provider.generateImage({
+      prompt: 'x',
+      profile: { ...profile, internalTextModel: 'paid/third-model' },
+      aspectRatio: '1:1',
+      images: []
+    }),
+    { code: 'MODEL_PROFILE_UNAVAILABLE' }
+  );
+});
+
 test('SiliconFlow readiness probe validates credentials, endpoint and every internal model', async () => {
   const env = {
     NODE_ENV: 'production',
-    SILICONFLOW_API_KEY: 'sk-production-key',
-    AI_DESIGN_SILICONFLOW_TEXT_MODEL: 'internal/text-model',
-    AI_DESIGN_SILICONFLOW_EDIT_MODEL: 'internal/edit-model',
-    AI_DESIGN_SILICONFLOW_DIRECTIONS_MODEL: 'internal/directions-model'
+    SILICONFLOW_API_KEY: 'sk-production-key'
   };
   const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, env);
   let request;
@@ -259,9 +287,8 @@ test('SiliconFlow readiness probe validates credentials, endpoint and every inte
         status: 200,
         json: async () => ({
           data: [
-            { id: 'internal/text-model' },
-            { id: 'internal/edit-model' },
-            { id: 'internal/directions-model' }
+            { id: GENERATION_IMAGE_MODEL },
+            { id: GENERATION_DIRECTIONS_MODEL }
           ]
         })
       };
@@ -293,7 +320,7 @@ test('SiliconFlow readiness probe validates credentials, endpoint and every inte
     fetcher: async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ data: [{ id: 'internal/text-model' }] })
+      json: async () => ({ data: [{ id: GENERATION_IMAGE_MODEL }] })
     })
   });
   assert.deepEqual(await missingModel.checkAvailability({ profile }), {
@@ -445,7 +472,7 @@ test('generate executor persists and verifies an opaque asset before settlement'
       profileId: STANDARD_PROFILE_ID,
       aspectRatio: '4:5'
     },
-    inputAssetIds: ['source-asset']
+    inputAssetIds: []
   });
   assert.equal(result.ok, true);
   assert.equal(calls.findIndex(([kind]) => kind === 'persist') < calls.findIndex(([kind]) => kind === 'settle'), true);

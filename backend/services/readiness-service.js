@@ -5,6 +5,8 @@ const path = require('path');
 const { getPool, isDatabaseConfigured } = require('../db/pool');
 const { getAssetAdapter } = require('./asset-storage');
 const {
+  GENERATION_DIRECTIONS_MODEL,
+  GENERATION_IMAGE_MODEL,
   STANDARD_PROFILE_ID,
   SUPPORTED_ASPECT_RATIOS,
   getInternalGenerationProfile
@@ -388,10 +390,11 @@ const validProfileShape = (profile) => Boolean(
   SUPPORTED_ASPECT_RATIOS.every((ratio) => profile.aspectRatios.includes(ratio)) &&
   profile.aspectRatios.every((ratio) => typeof profile.imageSizes?.[ratio] === 'string') &&
   Number.isInteger(profile.maxReferences) &&
-  profile.maxReferences === 3 &&
+  profile.maxReferences === 0 &&
   profile.supportsSeed === true &&
-  ['internalTextModel', 'internalEditModel', 'internalDirectionsModel']
-    .every((key) => typeof profile[key] === 'string' && profile[key].trim().length > 0)
+  profile.internalTextModel === GENERATION_IMAGE_MODEL &&
+  profile.internalEditModel === '' &&
+  profile.internalDirectionsModel === GENERATION_DIRECTIONS_MODEL
 );
 
 const checkGenerationProvider = ({
@@ -479,6 +482,9 @@ const getReadinessReport = async ({
   const aiDesignEnabled = enabled(env.AI_DESIGN_TASK_V2_ENABLED);
   const workshopAiEnabled = enabled(env.WORKSHOP_AI_TASK_V2_ENABLED);
   const paidEnabled = enabled(env.PAID_FEATURES_ENABLED);
+  const paymentEnabled = paidEnabled &&
+    (!Object.prototype.hasOwnProperty.call(env, 'PAYMENTS_ENABLED') ||
+      enabled(env.PAYMENTS_ENABLED));
   const authEmailOtpEnabled = enabled(env.AUTH_EMAIL_OTP_ENABLED);
   const generationRequired = paidEnabled && (aiDesignEnabled || workshopAiEnabled);
   const productionGeneration = generationRequired && isProduction(env);
@@ -508,7 +514,7 @@ const getReadinessReport = async ({
       }
     }
     storage = await checkStorage(resolvedAdapter, { requireShared: productionGeneration });
-    payment = checkAfdian(env);
+    if (paymentEnabled) payment = checkAfdian(env);
   }
   if (generationRequired) {
     payload = hasPayloadKey(env)
@@ -532,12 +538,14 @@ const getReadinessReport = async ({
     ? checkTurnstile(env)
     : skippedCheck();
   const requiredChecks = [];
-  if (paidEnabled) requiredChecks.push(database, storage, payment);
+  if (paidEnabled) requiredChecks.push(database, storage);
+  if (paymentEnabled) requiredChecks.push(payment);
   if (generationRequired) requiredChecks.push(payload, provider, outputAllowlist);
   if (authEmailOtpEnabled) requiredChecks.push(database, authSecrets, mail, turnstile);
   return {
     ok: requiredChecks.every((check) => check.ok),
     paidEnabled,
+    paymentEnabled,
     authEmailOtpEnabled,
     aiDesignEnabled,
     workshopAiEnabled,

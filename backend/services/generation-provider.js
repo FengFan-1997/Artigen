@@ -1,5 +1,9 @@
 const zlib = require('zlib');
 const { ApiError } = require('../lib/api-error');
+const {
+  GENERATION_DIRECTIONS_MODEL,
+  GENERATION_IMAGE_MODEL
+} = require('./generation-profiles');
 
 const PLACEHOLDER_SECRET_RE = /^(?:<.*>|changeme|replace_me|your[_-].*|placeholder.*)$/i;
 
@@ -214,11 +218,7 @@ const createSiliconFlowGenerationProvider = ({
             ? body.data.map((item) => String(item?.id || '').trim()).filter(Boolean)
             : []
         );
-        const requiredModels = [
-          profile?.internalTextModel,
-          profile?.internalEditModel,
-          profile?.internalDirectionsModel
-        ].map((value) => String(value || '').trim()).filter(Boolean);
+        const requiredModels = [GENERATION_IMAGE_MODEL, GENERATION_DIRECTIONS_MODEL];
         if (!modelIds.size || requiredModels.some((model) => !modelIds.has(model))) {
           return { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' };
         }
@@ -231,6 +231,9 @@ const createSiliconFlowGenerationProvider = ({
     },
     async generateDirections({ prompt, locale, productProfile, profile, signal }) {
       assertAvailable();
+      if (profile?.internalDirectionsModel !== GENERATION_DIRECTIONS_MODEL) {
+        throw providerError('MODEL_PROFILE_UNAVAILABLE', 503, false);
+      }
       try {
         const response = await chatGenerate({
           messages: buildDirectionsMessages({ prompt, locale, productProfile }),
@@ -246,8 +249,13 @@ const createSiliconFlowGenerationProvider = ({
     },
     async generateImage({ prompt, profile, aspectRatio, seed, images, signal }) {
       assertAvailable();
-      const references = Array.isArray(images) ? images.slice(0, profile.maxReferences) : [];
-      const model = references.length ? profile.internalEditModel : profile.internalTextModel;
+      const references = Array.isArray(images) ? images.filter(Boolean) : [];
+      if (references.length) {
+        throw providerError('REFERENCE_IMAGES_NOT_SUPPORTED', 400, false);
+      }
+      if (profile?.internalTextModel !== GENERATION_IMAGE_MODEL) {
+        throw providerError('MODEL_PROFILE_UNAVAILABLE', 503, false);
+      }
       try {
         return await imageGenerate({
           prompt,
@@ -259,9 +267,9 @@ const createSiliconFlowGenerationProvider = ({
             imageSize: profile.imageSizes[aspectRatio],
             seed
           },
-          images: references,
+          images: [],
           timeoutMs: positiveTimeout(env.AI_IMAGE_TIMEOUT_MS, 120_000, 10_000),
-          model,
+          model: GENERATION_IMAGE_MODEL,
           allowModelFallback: false,
           signal
         });

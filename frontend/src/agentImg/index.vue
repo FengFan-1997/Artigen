@@ -382,6 +382,7 @@
                 :aspect-ratios="generationAspectRatios"
                 :selected-aspect-ratio="selectedAspectRatio"
                 :preview-urls="previewUrls"
+                :max-references="activeGenerationProfile?.maxReferences || 0"
                 @template="applyStarterTemplate"
                 @ratio="selectedAspectRatio = $event"
                 @upload="triggerUploadAt"
@@ -420,6 +421,7 @@
               <div class="input-toolbar">
                 <div class="left-tools">
                   <button
+                    v-if="!generationV2Enabled || (activeGenerationProfile?.maxReferences || 0) > 0"
                     class="tool-btn upload-btn"
                     :aria-label="ui.addImage"
                     @click="triggerUpload"
@@ -910,6 +912,7 @@ const {
   currentModelLabel,
   currentModelTip,
   generationV2Enabled,
+  activeGenerationProfile,
   generationAspectRatios,
   generationProfileAvailable,
   toggleModelMenu,

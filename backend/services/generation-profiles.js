@@ -2,6 +2,8 @@ const crypto = require('crypto');
 const { ApiError } = require('../lib/api-error');
 
 const STANDARD_PROFILE_ID = 'standard-v1';
+const GENERATION_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
+const GENERATION_DIRECTIONS_MODEL = 'Qwen/Qwen3-8B';
 const SUPPORTED_ASPECT_RATIOS = Object.freeze(['1:1', '4:5', '3:4', '16:9', '9:16']);
 const IMAGE_SIZE_BY_ASPECT_RATIO = Object.freeze({
   '1:1': '1024x1024',
@@ -50,32 +52,22 @@ const isAiDesignTaskV2Enabled = (env = process.env, subject = '') => {
   return generationRolloutBucket(normalizedSubject) < percent;
 };
 
-const getInternalGenerationProfile = (profileId, env = process.env) => {
+const getInternalGenerationProfile = (profileId) => {
   const id = String(profileId || '').trim();
   if (id !== STANDARD_PROFILE_ID) return null;
   return Object.freeze({
     id: STANDARD_PROFILE_ID,
     name: Object.freeze({ zh: '标准生成', en: 'Standard generation' }),
-    capabilities: Object.freeze(['text-to-image', 'image-reference']),
-    maxReferences: 3,
+    capabilities: Object.freeze(['text-to-image']),
+    maxReferences: 0,
     aspectRatios: SUPPORTED_ASPECT_RATIOS,
     supportsSeed: true,
     imageSizes: IMAGE_SIZE_BY_ASPECT_RATIO,
-    internalTextModel: String(
-      env.AI_DESIGN_SILICONFLOW_TEXT_MODEL ||
-      env.AI_DESIGN_SILICONFLOW_MODEL ||
-      env.SILICONFLOW_IMAGE_MODEL ||
-      'Kwai-Kolors/Kolors'
-    ).trim(),
-    internalEditModel: String(
-      env.AI_DESIGN_SILICONFLOW_EDIT_MODEL ||
-      'Qwen/Qwen-Image-Edit-2509'
-    ).trim(),
-    internalDirectionsModel: String(
-      env.AI_DESIGN_SILICONFLOW_DIRECTIONS_MODEL ||
-      env.SILICONFLOW_DIRECTIONS_MODEL ||
-      'Qwen/Qwen2.5-7B-Instruct'
-    ).trim()
+    // These are intentionally not environment-overridable. The current free
+    // production contract permits exactly these two provider models.
+    internalTextModel: GENERATION_IMAGE_MODEL,
+    internalEditModel: '',
+    internalDirectionsModel: GENERATION_DIRECTIONS_MODEL
   });
 };
 
@@ -118,6 +110,8 @@ const listPublicGenerationProfiles = ({
 };
 
 module.exports = {
+  GENERATION_DIRECTIONS_MODEL,
+  GENERATION_IMAGE_MODEL,
   IMAGE_SIZE_BY_ASPECT_RATIO,
   STANDARD_PROFILE_ID,
   SUPPORTED_ASPECT_RATIOS,

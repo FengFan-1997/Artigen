@@ -104,7 +104,7 @@ export function useAgentImgLocale() {
           },
           {
             q: '怎么提高一致性与可控性？',
-            a: '支持多张参考图同时参与生成，建议用：产品图 + 风格参考 + 场景参考；再配合产品档案字段，稳定输出。'
+            a: '当前免费标准模型仅支持文生图。你可以填写产品档案与需求，生成后进入 Editor V2 继续编辑。'
           },
           {
             q: '我们的优势是什么？',
@@ -158,7 +158,7 @@ export function useAgentImgLocale() {
       generateThisDirection: 'Generate',
       welcomeTitle: 'Welcome to Artigen AI Design.',
       welcomeSub:
-        'Start with a recipe or describe a product visual, then add product, style, and scene references. A task starts only after you confirm the server quote.',
+        'Start with a recipe or describe a product visual. The current free standard model supports text-to-image only, and a task starts only after you confirm the server quote.',
       memory: 'History',
       noHistory: 'No history yet',
       resultTitle: 'Result',
@@ -195,10 +195,10 @@ export function useAgentImgLocale() {
       loadingText: 'Processing, please wait…',
       guideTitle: 'Quick guide / Why us',
       guideDesc:
-        'Complete the product profile, then add product, style, and scene references. Generate creates an image directly; Deep Thinking first creates four separately quoted directions, then asks again before generating.',
+        'Complete the product profile and describe the visual. Generate creates an image directly; Deep Thinking first creates four separately quoted directions, then asks again before generating.',
       guideKeywords: [
         'four visual directions',
-        'semantic references',
+        'text-to-image',
         'standard generation',
         'commerce workflow',
         'automatic refunds'
@@ -210,19 +210,19 @@ export function useAgentImgLocale() {
         },
         {
           q: 'Where should I start for faster results?',
-          a: 'Use img2img when you have references; use text-to-image for fast ideation. For commerce images, complete the product profile first.'
+          a: 'The current free standard model supports text-to-image only. Complete the product profile first for more controlled commerce prompts.'
         },
         {
           q: 'How to improve consistency and control?',
-          a: 'Use multi-reference img2img: combine a product photo, a style reference, and a scene reference. Product profile fields further stabilize results.'
+          a: 'Reference-image generation is currently unavailable because it would require a non-approved model. Use product profile fields and then refine the result in Editor V2.'
         },
         {
           q: 'What makes it different?',
-          a: 'It connects product profiles, semantic references, direction exploration, standard generation, Editor V2, and downloads in one recoverable, cancellable, refundable workflow.'
+          a: 'It connects product profiles, direction exploration, standard text-to-image generation, Editor V2, and downloads in one recoverable, cancellable, refundable workflow.'
         },
         {
           q: 'Do files get uploaded to a server?',
-          a: 'Tools run locally in your browser by default. For AI generation/img2img, we send the required inputs (prompts/reference images) to the model service to produce results.'
+          a: 'Tools run locally in your browser by default. For AI generation, we send the confirmed prompt to the model service to produce the result.'
         }
       ]
     };

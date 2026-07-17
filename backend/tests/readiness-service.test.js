@@ -287,6 +287,26 @@ test('paid readiness requires provider-verified Afdian reconciliation configurat
   }).code, 'AFDIAN_WEBHOOK_PUBLIC_KEY_INVALID');
 });
 
+test('paid generation can be enabled while payment checkout remains explicitly disabled', async () => {
+  const report = await getReadinessReport({
+    env: {
+      ...baseGenerationEnv,
+      NODE_ENV: 'test',
+      PAYMENTS_ENABLED: 'false',
+      AFDIAN_API_USER_ID: '',
+      AFDIAN_API_TOKEN: ''
+    },
+    pool: migratedPool,
+    adapter: { driver: 'file', rootDir: process.cwd() },
+    generationProvider: provider('contract-mock')
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.paidEnabled, true);
+  assert.equal(report.paymentEnabled, false);
+  assert.equal(report.checks.payment.skipped, true);
+  assert.equal(report.checks.provider.ok, true);
+});
+
 test('production generation refuses process-local file storage', async () => {
   const rootDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'artigen-ready-'));
   try {

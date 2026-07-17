@@ -134,11 +134,12 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
   const humanizeError = (error: unknown) => {
     const code = String((error as any)?.code || (error as any)?.message || error || 'TOOL_TASK_FAILED');
     const messages: Record<string, [string, string]> = {
-      MODEL_PROFILE_UNAVAILABLE: ['标准生成当前不可用，请稍后重试', 'Standard generation is currently unavailable. Please try again later.'],
+      MODEL_PROFILE_UNAVAILABLE: ['服务繁忙，请稍后再试', 'Service is busy. Please try again later.'],
       INVALID_ASPECT_RATIO: ['当前模型不支持这个画面比例', 'This aspect ratio is not supported by the current profile.'],
       CONTENT_POLICY_REJECTED: ['请求未通过内容安全检查，请调整描述', 'The request did not pass the content policy check. Please revise it.'],
       TASK_PAYLOAD_KEY_MISSING: ['付费生图安全配置缺失，任务未创建', 'Secure paid-generation configuration is missing. No task was created.'],
       PROVIDER_TIMEOUT: ['模型服务超时，预占点数将自动释放', 'The model provider timed out. Held credits will be released.'],
+      REFERENCE_IMAGES_NOT_SUPPORTED: ['当前免费标准模型仅支持文生图，请移除参考图', 'The current free standard model supports text-to-image only. Remove reference images.'],
       OUTPUT_INVALID: ['生成结果未通过验证，预占点数将自动释放', 'The output failed validation. Held credits will be released.'],
       TASK_LEASE_LOST: ['任务执行实例已切换，请稍后查看状态', 'The task worker changed. Check the status again shortly.'],
       TASK_POLL_TIMEOUT: ['任务仍在处理中，刷新页面会继续恢复进度', 'The task is still running. Refreshing will resume its status.'],
@@ -433,9 +434,7 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
         )
       });
       const quote = await quoteToolTask({ toolId: 'ai-design', operation });
-      const files = operation === 'generate'
-        ? deps.upload.previewFiles.value.filter((file): file is File => file instanceof File).slice(0, 3)
-        : [];
+      const files: File[] = [];
       const refThumbsRaw = await Promise.all(files.map((file) => deps.upload.fileToThumbDataUrl(file)));
       const refThumbs = refThumbsRaw.filter((value): value is string => Boolean(value));
       const options: Record<string, unknown> = operation === 'directions'

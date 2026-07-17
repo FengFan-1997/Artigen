@@ -47,8 +47,8 @@ export function useAgentImgModels(
       id: DEFAULT_GENERATION_PROFILE_ID,
       name: { zh: '标准生成', en: 'Standard generation' },
       available: true,
-      capabilities: ['text-to-image', 'image-reference'],
-      maxReferences: 3,
+      capabilities: ['text-to-image'],
+      maxReferences: 0,
       aspectRatios: DEFAULT_GENERATION_ASPECT_RATIOS,
       supportsSeed: true
     }
@@ -91,8 +91,8 @@ export function useAgentImgModels(
         badge: 'STANDARD',
         hint:
           currentLang.value === 'zh'
-            ? '根据输入自动选择文生图或参考图生成'
-            : 'Automatically uses text or image references as provided',
+            ? '使用免费标准模型进行文生图'
+            : 'Text-to-image with the free standard model',
         requiresPro: false
       }
     ];

@@ -59,7 +59,7 @@
           </div>
         </div>
 
-        <div class="generation-reference-group">
+        <div v-if="maxReferences > 0" class="generation-reference-group">
           <span class="generation-control-label">{{ copy.references }}</span>
           <div class="generation-reference-list">
             <div
@@ -112,6 +112,7 @@ const props = defineProps<{
   aspectRatios: string[];
   selectedAspectRatio: string;
   previewUrls: string[];
+  maxReferences: number;
 }>();
 
 const emit = defineEmits<{
@@ -122,7 +123,9 @@ const emit = defineEmits<{
 }>();
 
 const templates = GENERATION_STARTER_TEMPLATES;
-const slotLabels = computed(() => generationReferenceSlotLabels(props.language));
+const slotLabels = computed(() =>
+  generationReferenceSlotLabels(props.language).slice(0, Math.max(0, props.maxReferences))
+);
 const isCompact = ref(false);
 const isExpanded = ref(true);
 let compactMediaQuery: MediaQueryList | null = null;
@@ -147,8 +150,12 @@ onBeforeUnmount(() => compactMediaQuery?.removeEventListener('change', onCompact
 const referenceCount = computed(() => props.previewUrls.filter(Boolean).length);
 const compactSummary = computed(() =>
   props.language === 'zh'
-    ? `${props.selectedAspectRatio} · ${referenceCount.value} 张参考图`
-    : `${props.selectedAspectRatio} · ${referenceCount.value} ${referenceCount.value === 1 ? 'reference' : 'references'}`
+    ? props.maxReferences > 0
+      ? `${props.selectedAspectRatio} · ${referenceCount.value} 张参考图`
+      : `${props.selectedAspectRatio} · 文生图`
+    : props.maxReferences > 0
+      ? `${props.selectedAspectRatio} · ${referenceCount.value} ${referenceCount.value === 1 ? 'reference' : 'references'}`
+      : `${props.selectedAspectRatio} · Text to image`
 );
 
 const applyTemplate = (prompt: string) => {
@@ -165,7 +172,7 @@ const copy = computed(() =>
         references: '参考图（可选）',
         upload: '上传',
         remove: '移除',
-        privacy: '选择模板不会生成或扣费；仅在确认生成后上传必要的提示词与参考图。'
+        privacy: '选择模板不会生成或扣费；当前免费标准模型仅支持文生图，确认后才提交提示词。'
       }
     : {
         setup: 'Generation setup',
@@ -175,7 +182,7 @@ const copy = computed(() =>
         upload: 'Upload',
         remove: 'Remove',
         privacy:
-          'Recipes never generate or charge automatically. Required prompts and references upload only after confirmation.'
+          'Recipes never generate or charge automatically. The current free standard model supports text-to-image only.'
       }
 );
 </script>

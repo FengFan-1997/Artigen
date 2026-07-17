@@ -23,6 +23,14 @@ const paidFeaturesEnabled = (env = process.env) => {
   return /^(1|true)$/i.test(String(env.PAID_FEATURES_ENABLED || '').trim());
 };
 
+const paymentsEnabled = (env = process.env) => {
+  if (Object.prototype.hasOwnProperty.call(env, 'PAYMENTS_ENABLED')) {
+    return paidFeaturesEnabled(env) &&
+      /^(1|true)$/i.test(String(env.PAYMENTS_ENABLED || '').trim());
+  }
+  return paidFeaturesEnabled(env);
+};
+
 const legacyJsonBillingEnabled = (env = process.env) => {
   return canUseLegacyJsonBilling({ env });
 };
@@ -120,7 +128,7 @@ const resolveBillingOwner = async (client, auth, requestedUserId) => {
 };
 
 const assertPaymentsAvailable = ({
-  enabled = paidFeaturesEnabled(),
+  enabled = paymentsEnabled(),
   databaseConfigured = isDatabaseConfigured()
 } = {}) => {
   if (!enabled) throw new ApiError(503, 'PAID_FEATURES_DISABLED', { retryable: true });
@@ -412,6 +420,7 @@ module.exports = {
   assertRequestedUserOwner,
   installPaymentRoutes,
   legacyJsonBillingEnabled,
+  paymentsEnabled,
   paidFeaturesEnabled,
   publicCreditsBalance,
   publicCreditsHold,

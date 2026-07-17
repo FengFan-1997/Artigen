@@ -1,7 +1,6 @@
 const {
   API_KEY,
   SILICONFLOW_API_KEY,
-  SILICONFLOW_MODEL,
   SILICONFLOW_MESSAGES_URL,
   SILICONFLOW_CHAT_COMPLETIONS_URL,
   SILICONFLOW_IMAGES_GENERATIONS_URL,
@@ -179,7 +178,13 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model, sign
 
   return await withSiliconflowRateGate(async () => {
     const startedAt = Date.now();
-    const resolvedModel = String(model || '').trim() || SILICONFLOW_MODEL;
+    const requestedModel = String(model || '').trim();
+    const resolvedModel = requestedModel || FIXED_SILICONFLOW_CHAT_MODEL;
+    if (resolvedModel !== FIXED_SILICONFLOW_CHAT_MODEL) {
+      const err = new Error('MODEL_NOT_ALLOWED');
+      err.code = 'MODEL_NOT_ALLOWED';
+      throw err;
+    }
     const headers = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${SILICONFLOW_API_KEY}`
@@ -319,7 +324,6 @@ const callSiliconFlowImageGenerate = async ({
   images,
   timeoutMs,
   model,
-  allowModelFallback = true,
   signal
 }) => {
   return await imageGenerateLimiter.run(async () => {
@@ -343,13 +347,18 @@ const callSiliconFlowImageGenerate = async ({
     }
 
     const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
+    if (imgs.length) {
+      const err = new Error('REFERENCE_IMAGES_NOT_SUPPORTED');
+      err.code = 'REFERENCE_IMAGES_NOT_SUPPORTED';
+      throw err;
+    }
     const preferredModel = String(model || '').trim();
-    const modelCandidates = [
-      ...(preferredModel ? [preferredModel] : []),
-      ...(allowModelFallback && FIXED_SILICONFLOW_IMAGE_MODEL && FIXED_SILICONFLOW_IMAGE_MODEL !== preferredModel
-        ? [FIXED_SILICONFLOW_IMAGE_MODEL]
-        : [])
-    ];
+    if (preferredModel && preferredModel !== FIXED_SILICONFLOW_IMAGE_MODEL) {
+      const err = new Error('MODEL_NOT_ALLOWED');
+      err.code = 'MODEL_NOT_ALLOWED';
+      throw err;
+    }
+    const modelCandidates = [FIXED_SILICONFLOW_IMAGE_MODEL];
 
     const isModelNotFound = (raw) => {
       const s = String(raw || '').toLowerCase();
@@ -448,7 +457,7 @@ const callSiliconFlowImageGenerate = async ({
 };
 
 const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFallback }) => {
-  const canGemini = !!API_KEY;
+  const canGemini = false;
   const canSiliconflow = !!SILICONFLOW_API_KEY;
   const sfTimeoutMs = Math.max(
     Math.max(1000, Number(timeoutMs || 0) || 0),
@@ -470,7 +479,7 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFa
 
   const runSiliconflow = async () => {
     const preferredModel = String(model || '').trim();
-    const resolvedModel = preferredModel || FIXED_SILICONFLOW_CHAT_MODEL || SILICONFLOW_MODEL;
+    const resolvedModel = preferredModel || FIXED_SILICONFLOW_CHAT_MODEL;
     const { text, usage, model: modelUsed, usedUrl } = await callSiliconFlowChat({
       messages: toSiliconflowMessages(),
       timeoutMs: sfTimeoutMs,
