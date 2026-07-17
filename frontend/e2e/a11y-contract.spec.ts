@@ -23,9 +23,12 @@ async function expectVisibleButtonsAtLeast44(container: Locator): Promise<void> 
 
 async function expandGenerationControlsIfNeeded(page: Page): Promise<void> {
   const toggle = page.locator('.generation-controls-toggle');
-  if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') {
-    await toggle.click();
-  }
+  const body = page.locator('#generation-controls-body');
+  await expect.poll(async () => await body.isVisible() || await toggle.isVisible()).toBe(true);
+  if (await body.isVisible()) return;
+  await expect(toggle).toBeVisible();
+  if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+  await expect(body).toBeVisible();
 }
 
 test('format workflows expose keyboard buttons, a trapped dialog, labelled controls, and 44px actions', async ({ page }) => {

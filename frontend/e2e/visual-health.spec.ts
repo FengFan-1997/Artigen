@@ -1278,9 +1278,12 @@ const clickMessageImageAction = async (result: Locator, label: string) => {
 
 const expandGenerationControlsIfNeeded = async (page: Page) => {
   const toggle = page.locator('.generation-controls-toggle');
-  if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') {
-    await toggle.click();
-  }
+  const body = page.locator('#generation-controls-body');
+  await expect.poll(async () => await body.isVisible() || await toggle.isVisible()).toBe(true);
+  if (await body.isVisible()) return;
+  await expect(toggle).toBeVisible();
+  if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+  await expect(body).toBeVisible();
 };
 
 const expectBufferSignature = (bytes: Buffer, kind: string) => {
