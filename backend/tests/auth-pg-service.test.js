@@ -74,7 +74,12 @@ const createAuthPool = () => {
       return { rowCount: 1, rows: [{ ...wallet }] };
     }
     if (q.startsWith('insert into wallet_ledger')) {
-      state.ledger.push({ userId: params[0], credits: Number(params[1]), key: params[2] });
+      state.ledger.push({
+        userId: params[0],
+        credits: Number(params[1]),
+        referenceId: params[2],
+        key: params[3]
+      });
       return { rowCount: 1, rows: [] };
     }
     if (q.startsWith('select available_credits, frozen_credits from wallets')) {
@@ -175,6 +180,8 @@ test('PostgreSQL login creates one wallet and restart-safe hashed sessions', asy
   assert.equal(registered.wallet.available, 125);
   assert.equal(pool.state.wallets.size, 1);
   assert.equal(pool.state.ledger.length, 1);
+  assert.equal(pool.state.ledger[0].referenceId, registered.user.dbUserId);
+  assert.equal(pool.state.ledger[0].key, `signup:${registered.user.dbUserId}`);
   const billingClient = await pool.connect();
   assert.equal(
     await resolveBillingUserId(billingClient, registered.user.userId),

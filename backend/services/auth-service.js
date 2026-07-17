@@ -157,10 +157,16 @@ const createAuthService = ({ pool, env = process.env, now = () => new Date() } =
         `INSERT INTO wallet_ledger
           (user_id, entry_type, delta_available, delta_frozen, balance_available,
            balance_frozen, reference_type, reference_id, idempotency_key, metadata)
-         VALUES ($1,'admin_adjustment',$2,0,$2,0,'account_signup',$1::text,$3,$4)
+         VALUES ($1,'admin_adjustment',$2,0,$2,0,'account_signup',$3,$4,$5)
          ON CONFLICT (user_id, idempotency_key)
            WHERE idempotency_key IS NOT NULL DO NOTHING`,
-        [userId, credits, `signup:${userId}`, JSON.stringify({ source: 'signup' })]
+        [
+          userId,
+          credits,
+          String(userId),
+          `signup:${userId}`,
+          JSON.stringify({ source: 'signup' })
+        ]
       );
     }
     const wallet = inserted.rowCount
