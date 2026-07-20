@@ -872,16 +872,19 @@ pnpm --filter backend admin:grant -- <用户 UUID 或 legacy user id> owner
 
 | 分支 | 作用 | 部署关系 |
 | --- | --- | --- |
-| `main` | 线上发布分支。 | Railway 前后端服务跟随 `main` 自动部署。 |
-| `test` | 团队测试分支。 | 用于日常功能、修复、文档的合并前测试；是否绑定 Railway 测试环境以 Railway 当前项目配置为准。 |
+| `codex/artigen-overhaul` | 当前生产分支。 | Vercel 主站自动部署；Render 后端当前使用该分支但保持手动部署。 |
+| `main` | 历史默认分支。 | 当前不是 Artigen 新主站的生产来源，不能把 `main` 当成已上线版本。 |
 
-日常协作默认流程：
+当前发布关系：
 
 ```text
-feature/fix/docs/refactor 分支 -> PR 到 test -> 测试通过 -> PR 到 main -> Railway 线上部署
+GitHub codex/artigen-overhaul
+  -> Vercel artigen-fengfan（Vue 静态主站，自动部署）
+  -> Render artigen-app-fengfan（Express API，手动部署）
 ```
 
-紧急修复可以使用 `hotfix/*` 直接 PR 到 `main`，线上恢复后再同步回 `test`。
+完整账号、域名、数据库、邮件和环境变量接管说明见
+[《Artigen 生产环境小白接管手册》](./PRODUCTION_RUNBOOK.zh-CN.md)。
 
 ### 根目录脚本
 
@@ -973,12 +976,22 @@ launchctl bootstrap "gui/$(id -u)" \
 frontend/dist
 ```
 
-前端可以用静态站点服务部署。线上要保证：
+当前生产前端：
+
+- Vercel Team：`FengFan's projects`
+- Project：`artigen-fengfan`
+- Domain：<https://artigen-fengfan.vercel.app>
+- Production Branch：`codex/artigen-overhaul`
+
+根目录 `vercel.json` 已保证：
 
 - SPA fallback 指向 `index.html`。
-- `/api` 指向后端服务。
+- `/api` 指向 Render 后端服务。
 - `/files` 指向后端服务（旧兼容）；新资产使用 `/api/assets/:assetId`。
-- `VITE_API_BASE` 与线上 API 规则匹配；如果同源部署可以留空。
+- `/healthz` 和 `/readyz` 指向 Render。
+- `VITE_API_BASE` 与 `VITE_AGENT_API_BASE` 留空，浏览器始终请求同源 `/api`。
+- `VITE_LAZY_BACKEND=1`，匿名页面加载不唤醒 Render。
+- `VITE_TURNSTILE_SITE_KEY` 在 Vercel 构建环境中注入。
 
 ### 后端部署
 
@@ -990,26 +1003,22 @@ pnpm run start:production
 
 该命令先连接 PostgreSQL 16，在固定 application advisory lock 下执行全部 pending migration；获得锁超时或迁移失败时不会启动 HTTP 服务。`DATABASE_MIGRATION_URL` 只用于迁移且必须与应用 `DATABASE_URL` 指向相同 hostname、port 和 database。
 
-Railway 后端服务必须把 Root Directory 设为 `/backend`（或显式选择 `backend/railway.json`），这样下列相对命令才会在正确目录执行：
+当前生产后端在 Render：
 
-```json
-{
-  "deploy": {
-    "preDeployCommand": ["pnpm db:migrate:locked"],
-    "startCommand": "pnpm start:production"
-  }
-}
-```
-
-Railway 会在新容器接管流量前执行所有尚未应用的版本化 PostgreSQL 迁移；启动命令再次幂等核对，覆盖平台重启路径。
+- Workspace：`artigen`
+- Service：`artigen-app-fengfan`
+- Plan：Free
+- Branch：`codex/artigen-overhaul`
+- URL：<https://artigen-app-fengfan.onrender.com>
+- Health Check：`/readyz`
 
 仓库根目录的 `render.yaml` 提供 Render Blueprint：CI checks 通过后部署、完整 workspace 构建、启动阶段迁移锁和 60 秒优雅关闭。构建命令会显式清空 `VITE_API_BASE` 与 `VITE_AGENT_API_BASE`，确保 Render 上的前端、Cookie 和 `/api` 保持同源。平台健康检查只调用浅层 `/healthz`，不会因数据库或外部 Provider 的短暂波动反复重启实例；`/readyz` 保留给人工 smoke 或部署深检。
 
-Render Free 不使用 `preDeployCommand`，迁移由 `start:production` 在监听端口前 fail-closed 执行。模板默认 `plan: free`、`PG_POOL_MAX=5`、`TASK_WORKER_ENABLED=0`，并关闭付费生图与邮件 OTP；此时 `/readyz` 会明确把数据库、对象存储、任务 payload、Provider 和邮件依赖标为 `skipped`，且不会对这些外部依赖发起 I/O。Cookie 会话只在 `/api` 与 `/files` 水合，SPA、静态资源和健康检查不会因用户已登录而额外唤醒 Neon。开启付费或邮件 OTP 后，深检会要求 PostgreSQL 已应用仓库最新迁移（当前 `011_otp_delivery_dispatch_state`，包含 OTP `provider_dispatched_at`）、对应对象存储/Provider，以及独立认证密钥、Brevo 和 Turnstile secret + site key；生产 Turnstile 还要求 HTTPS `APP_ORIGIN` 与精确 `TURNSTILE_HOSTNAMES` 一致。按 [Render Blueprint 规范](https://render.com/docs/blueprint-spec) 导入并完成 smoke 后，再分阶段开启邮件 OTP、Worker 与收费能力。
+Render Free 不使用 `preDeployCommand`，迁移由 `start:production` 在监听端口前 fail-closed 执行。模板默认 `plan: free`、`PG_POOL_MAX=5`、`TASK_WORKER_ENABLED=0`，并关闭付费生图与邮件 OTP；此时 `/readyz` 会明确把数据库、对象存储、任务 payload、Provider 和邮件依赖标为 `skipped`，且不会对这些外部依赖发起 I/O。Cookie 会话只在 `/api` 与 `/files` 水合，SPA、静态资源和健康检查不会因用户已登录而额外唤醒 Neon。开启付费或邮件 OTP 后，深检会要求 PostgreSQL 已应用仓库最新迁移（当前 `011_otp_delivery_dispatch_state`，包含 OTP `provider_dispatched_at`）、对应对象存储/Provider，以及独立认证密钥、签名邮件中继和 Turnstile secret + site key；生产 Turnstile 还要求 HTTPS `APP_ORIGIN` 与精确 `TURNSTILE_HOSTNAMES` 一致。按 [Render Blueprint 规范](https://render.com/docs/blueprint-spec) 导入并完成 smoke 后，再分阶段开启邮件 OTP、Worker 与收费能力。
 
-后端生产必须配置 PostgreSQL 16；生产付费生图必须使用 S3/R2 兼容共享对象存储，Railway/Render 本地文件只用于开发或非付费契约测试。未完成迁移、备份恢复演练和 staging 核对前保持 `PAID_FEATURES_ENABLED=false`。
+后端生产必须配置 PostgreSQL 16；生产付费生图必须使用 S3/R2 兼容共享对象存储，Render 本地文件只用于开发或非付费契约测试。
 
-线上 AI、Brevo、Turnstile、对象存储和支付密钥只配置在部署平台环境变量中，不写入仓库。`backend/.env.example` 只包含非敏感示例、空密钥占位和本地安全默认值。
+线上 AI、邮件中继、Turnstile、对象存储和支付密钥只配置在部署平台环境变量中，不写入仓库。`backend/.env.example` 只包含非敏感示例、空密钥占位和本地安全默认值。
 
 ---
 

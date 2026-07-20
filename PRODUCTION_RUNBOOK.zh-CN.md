@@ -13,6 +13,21 @@ Artigen 已经部署为一个公开网站：
 - 深度健康检查：<https://artigen-fengfan.vercel.app/readyz>
 - Render 后端直连备用地址：<https://artigen-app-fengfan.onrender.com>
 
+如果只记住四句话：
+
+1. 用户看见的网页在 Vercel，项目叫 `artigen-fengfan`。
+2. 登录、生图、点数和支付 API 在 Render，服务叫 `artigen-app-fengfan`。
+3. 用户、钱包、任务和订单在 Neon PostgreSQL，项目叫 `Artigen Production`。
+4. 任何密码、数据库连接串、授权码和 API Key 都不在 GitHub；它们在各平台的
+   Environment Variables 中，本机另有 macOS 钥匙串安全副本。
+
+不要混淆两个 Vercel 项目：
+
+| Vercel 项目 | 做什么 | 用户是否直接访问 |
+|---|---|---|
+| `artigen-fengfan` | 托管 Vue 主站，并把 `/api` 按需代理给 Render | 是 |
+| `artigen-mail-relay` | 接收 Render 的签名 HTTPS 请求，再通过 163 SMTP 发验证码 | 否 |
+
 当前已经真实验收的链路：
 
 1. 公网访问 Artigen。
@@ -113,11 +128,28 @@ Render，也不会再看见 Render 的启动黑屏；当天第一次发送验证
 - Project：`artigen-fengfan`
 - 套餐：Hobby（免费）
 - 生产分支：`codex/artigen-overhaul`
-- 当前生产提交：`380f9dc9f209ed132676f52fa823caf5a427c012`
+- 当前生产提交：`0ee3dcd01928f3a2447fcdcd1e10c65836240c59`
 - 主域名：`artigen-fengfan.vercel.app`
 - 匿名首页：只加载静态文件，不请求 `/api`
 - 服务端操作：通过 Vercel rewrite 按需连接 Render
 - 不配置保活任务，不绑定信用卡，不启用付费加速
+
+访问 Vercel 主站项目：
+
+1. 打开 <https://vercel.com/dashboard>。
+2. 进入 Team `FengFan's projects`。
+3. 打开 Project `artigen-fengfan`。
+4. `Deployments` 查看每次部署是否为 `Ready`。
+5. `Settings → Domains` 查看主域名。
+6. `Settings → Environment Variables` 查看前端构建变量。
+
+Vercel 从 GitHub 仓库 `FengFan-1997/Artigen` 的
+`codex/artigen-overhaul` 分支构建。根目录 `vercel.json` 定义：
+
+- 构建 `frontend/dist`。
+- `/api/*`、`/files/*`、`/healthz`、`/readyz` 转发到 Render。
+- 其他路径回退到 Vue 的 `index.html`。
+- 哈希静态资源长期缓存，`index.html` 不缓存。
 
 ## 4. 数据库在哪里
 
@@ -298,7 +330,9 @@ Cloudflare Turnstile 在浏览器完成挑战，Render 服务端再验证 Token�
 
 - Cloudflare 账号：`sorates1997@163.com`
 - Widget：`Artigen Production`
-- 允许 hostname：`artigen-app-fengfan.onrender.com`
+- 允许 hostname：
+  - `artigen-fengfan.vercel.app`
+  - `artigen-app-fengfan.onrender.com`
 - 模式：Managed
 
 OTP 仍有服务端保护：
@@ -409,9 +443,10 @@ SiliconFlow API Key 只保存在 Render 环境变量和 macOS 钥匙串中。该
 | 平台 | 用途 | 当前账号/登录方式 |
 |---|---|---|
 | GitHub | 代码仓库 | `FengFan-1997` |
-| Render | 公开网站和 API | GitHub 登录；workspace `artigen` |
+| Vercel 主站 | 静态网页和同源代理 | `876458930-7565` / `FengFan`；team `FengFan's projects`；project `artigen-fengfan` |
+| Render | API 和任务 Worker | GitHub 登录；workspace `artigen`；service `artigen-app-fengfan` |
 | Neon | PostgreSQL 和对象存储 | `sorates1997@163.com`，绑定 GitHub `@fengfan-1997` |
-| Vercel | 邮件 HTTPS 中继 | `876458930-7565` / `FengFan`，team `FengFan's projects` |
+| Vercel 邮件中继 | 邮件 HTTPS 中继 | 同一个 Vercel 账号和 team；project `artigen-mail-relay` |
 | Cloudflare | Turnstile 人机验证 | `sorates1997@163.com` |
 | 163 邮箱 | 验证码发件箱 | `sorates1997@163.com` |
 | 爱发电 | 点数支付 | 手机号 `17662591191`，创作者 `fengfan1997` |
@@ -419,6 +454,9 @@ SiliconFlow API Key 只保存在 Render 环境变量和 macOS 钥匙串中。该
 | Artigen 测试用户 | 线上业务验收 | `876458930@qq.com` |
 
 ## 9. 环境变量保存在哪里
+
+先理解“环境变量”：它们是部署平台替程序保管的配置和密钥。代码里只写变量名，
+运行时再由平台注入真实值。这样 GitHub 里没有数据库密码、邮箱授权码和 API Key。
 
 ### 9.1 Render：主应用生产变量
 
@@ -506,7 +544,29 @@ Render
 
 不要使用 Render 的 `Export` 后把结果发到聊天、邮件或提交 Git。
 
-### 9.2 Vercel：邮件中继变量
+### 9.2 Vercel：主站前端变量
+
+位置：
+
+```text
+Vercel
+  -> FengFan's projects
+  -> artigen-fengfan
+  -> Settings
+  -> Environment Variables
+```
+
+当前生产和 Preview 都配置：
+
+- `VITE_LAZY_BACKEND=1`：新匿名访客只浏览页面时不请求 Render。
+- `VITE_TURNSTILE_SITE_KEY`：Cloudflare Turnstile 的公开 Site Key。
+
+Site Key 可以出现在前端，Secret Key 绝对不能放进前端变量。
+
+`VITE_API_BASE` 和 `VITE_AGENT_API_BASE` 不配置；前端使用同源 `/api`，
+再由 `vercel.json` 转发到 Render。
+
+### 9.3 Vercel：邮件中继变量
 
 位置：
 
@@ -520,7 +580,7 @@ Vercel
 
 这里保存 163 SMTP 用户、授权码、发件人和 Render/Vercel 共享签名密钥。
 
-### 9.3 Cloudflare：Turnstile
+### 9.4 Cloudflare：Turnstile
 
 位置：
 
@@ -530,10 +590,11 @@ Cloudflare
   -> Artigen Production
 ```
 
-- Site Key 给前端，生产副本放在 Render `VITE_TURNSTILE_SITE_KEY`。
+- Site Key 给前端，生产副本放在 Vercel 主站 `VITE_TURNSTILE_SITE_KEY`；
+  Render 也保留一份用于 `/readyz` 完整性检查。
 - Secret Key 只给后端，生产副本放在 Render `TURNSTILE_SECRET_KEY`。
 
-### 9.4 本机开发环境
+### 9.5 本机开发环境
 
 文件：
 
@@ -546,7 +607,7 @@ Cloudflare
 - 只用于本机
 - 不能认为它和 Render 当前配置完全相同
 
-### 9.5 macOS 钥匙串
+### 9.6 macOS 钥匙串
 
 重要连接和密钥还有一份本机安全副本，服务名包括：
 
@@ -576,11 +637,12 @@ security find-generic-password -s '服务名' -w
 
 ### 网站打不开
 
-1. 先等 60 秒，Render Free 可能正在唤醒。
-2. 打开 `/healthz`。
-3. 再打开 `/readyz`。
-4. 去 Render `Deploys` 看是否为 Live。
-5. 去 Render `Logs` 看启动错误。
+1. 先打开 Vercel 主站 `/artigen`。普通首页应直接出现，不需要等待 Render。
+2. 若首页打不开，去 Vercel `artigen-fengfan → Deployments` 看是否为 `Ready`。
+3. 若首页能开、但登录/生图/支付一直转圈，最多等 60 秒让 Render Free 唤醒。
+4. 打开 `/healthz`，再打开 `/readyz`。
+5. 去 Render `Deploys` 看是否为 Live。
+6. 去 Render `Logs` 看启动错误。
 
 ### 验证码收不到
 
@@ -623,10 +685,11 @@ security find-generic-password -s '服务名' -w
 
 ## 12. 一句话记忆
 
-- 网站程序在 Render。
+- 用户网页在 Vercel `artigen-fengfan`。
+- API 和任务 Worker 在 Render `artigen-app-fengfan`。
 - 业务数据在 Neon PostgreSQL。
 - 图片在 Neon S3 兼容对象存储。
-- 验证码由 Render 通过 HTTPS 交给 Vercel，再由 163 SMTP 发出。
+- 验证码由 Render 通过 HTTPS 交给 Vercel `artigen-mail-relay`，再由 163 SMTP 发出。
 - Turnstile 在 Cloudflare。
 - 生图在 SiliconFlow，只允许两个指定模型。
 - 支付在爱发电，但真实扣款尚未执行。
