@@ -1,16 +1,17 @@
 # Artigen 生产环境小白接管手册
 
-> 状态快照：2026-07-17
+> 状态快照：2026-07-20
 > 本文不保存密码、验证码、SMTP 授权码、数据库连接串、API Key 或支付 Token。
 
 ## 1. 先看结论
 
 Artigen 已经部署为一个公开网站：
 
-- 主站：<https://artigen-app-fengfan.onrender.com/artigen>
-- AI 生图：<https://artigen-app-fengfan.onrender.com/artigen/ai>
-- 点数商城：<https://artigen-app-fengfan.onrender.com/artigen/market>
-- 深度健康检查：<https://artigen-app-fengfan.onrender.com/readyz>
+- 主站：<https://artigen-fengfan.vercel.app/artigen>
+- AI 生图：<https://artigen-fengfan.vercel.app/artigen/ai>
+- 点数商城：<https://artigen-fengfan.vercel.app/artigen/market>
+- 深度健康检查：<https://artigen-fengfan.vercel.app/readyz>
+- Render 后端直连备用地址：<https://artigen-app-fengfan.onrender.com>
 
 当前已经真实验收的链路：
 
@@ -38,10 +39,14 @@ Artigen 已经部署为一个公开网站：
 ```text
 用户浏览器
    |
-   | HTTPS，同一个域名
+   | HTTPS
+   v
+Vercel：artigen-fengfan
+   |-- Vue 静态前端（匿名访问不唤醒 Render）
+   |-- /api、/files、/readyz 按需代理
+   |
    v
 Render：artigen-app-fengfan
-   |-- Vue 前端
    |-- Express API
    |-- 任务 Worker
    |
@@ -75,11 +80,11 @@ Render 只运行程序，不保存长期数据。用户、钱包、订单和任�
 - 套餐：Free
 - 区域：Virginia
 - 运行时：Node.js
-- 前端和 API：同一个 Render Web Service、同一个域名
+- 用途：Express API、任务 Worker，以及旧站直连备用入口
 - GitHub 仓库：`FengFan-1997/Artigen`
 - 部署分支：`codex/artigen-overhaul`
-- 当前线上提交：`7d1cc82f3716e271a81dea59b38d492c59d1bd9d`
-- 当前成功部署：`dep-d9d1c84m815s7384k7ug`
+- 当前后端代码提交：`7d1cc82f3716e271a81dea59b38d492c59d1bd9d`
+- 当前域名配置部署：`dep-d9eposbtqb8s73avjcr0`
 - 当前 `render.yaml` 设置为手动部署，不会因为随便 push 一次就自动上线。
 
 访问 Render：
@@ -97,8 +102,22 @@ Render 只运行程序，不保存长期数据。用户、钱包、订单和任�
 - `Metrics`：看 CPU、内存和请求量。
 - `Manual Deploy`：手动部署当前分支。
 
-注意：Render Free 空闲约 15 分钟后会休眠。下一位访客可能需要等待约 1 分钟唤醒，
-这不是代码崩溃。不要在 Render 本地目录保存数据库或用户图片，因为免费实例文件系统会丢失。
+注意：Render Free 空闲约 15 分钟后会休眠。匿名访客打开 Vercel 主站不会唤醒
+Render，也不会再看见 Render 的启动黑屏；当天第一次发送验证码、登录、生图或支付时，
+该次服务端操作仍可能等待约 1 分钟唤醒，这不是代码崩溃。不要在 Render 本地目录保存
+数据库或用户图片，因为免费实例文件系统会丢失。
+
+### 3.2 Vercel 主站
+
+- Team：`FengFan's projects`
+- Project：`artigen-fengfan`
+- 套餐：Hobby（免费）
+- 生产分支：`codex/artigen-overhaul`
+- 当前生产提交：`380f9dc9f209ed132676f52fa823caf5a427c012`
+- 主域名：`artigen-fengfan.vercel.app`
+- 匿名首页：只加载静态文件，不请求 `/api`
+- 服务端操作：通过 Vercel rewrite 按需连接 Render
+- 不配置保活任务，不绑定信用卡，不启用付费加速
 
 ## 4. 数据库在哪里
 
