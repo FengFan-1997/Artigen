@@ -33,12 +33,28 @@
         <div class="body">
           <div v-if="loginMethod === 'select'" class="method-list">
             <div class="sub">{{ subText }}</div>
-            <div v-if="googleClientId" class="oauth-block">
+            <div class="oauth-block">
+              <button
+                v-if="!googleButtonReady"
+                class="nth-login-btn method google-fallback-btn"
+                type="button"
+                :disabled="googleLoading || googleSdkLoading"
+                :aria-busy="googleSdkLoading"
+                @click="retryGoogleLogin"
+              >
+                <span class="google-mark" aria-hidden="true">G</span>
+                <span>{{ t('login.method_google') }}</span>
+                <span v-if="googleSdkLoading" class="google-spinner" aria-hidden="true"></span>
+              </button>
               <div
+                v-show="googleButtonReady"
                 ref="googleButtonRef"
                 class="google-btn"
                 :class="{ disabled: googleLoading }"
               ></div>
+              <div v-if="googleStatusText" class="google-network-note">
+                {{ googleStatusText }}
+              </div>
             </div>
             <button class="nth-login-btn method" type="button" @click="goMethod('email')">
               <span class="icon">
@@ -100,10 +116,7 @@
             <button
               class="nth-login-btn primary"
               :disabled="
-                sending ||
-                !email ||
-                cooldownLeft > 0 ||
-                (turnstileRequired && !turnstileToken)
+                sending || !email || cooldownLeft > 0 || (turnstileRequired && !turnstileToken)
               "
               type="button"
               @click="sendCode"
@@ -153,13 +166,29 @@
             </button>
           </div>
 
-          <div v-else-if="googleClientId" class="oauth-block">
+          <div v-else class="oauth-block">
             <div class="sub">{{ subText }}</div>
+            <button
+              v-if="!googleButtonReady"
+              class="nth-login-btn method google-fallback-btn"
+              type="button"
+              :disabled="googleLoading || googleSdkLoading"
+              :aria-busy="googleSdkLoading"
+              @click="retryGoogleLogin"
+            >
+              <span class="google-mark" aria-hidden="true">G</span>
+              <span>{{ t('login.method_google') }}</span>
+              <span v-if="googleSdkLoading" class="google-spinner" aria-hidden="true"></span>
+            </button>
             <div
+              v-show="googleButtonReady"
               ref="googleButtonRef"
               class="google-btn"
               :class="{ disabled: googleLoading }"
             ></div>
+            <div v-if="googleStatusText" class="google-network-note">
+              {{ googleStatusText }}
+            </div>
           </div>
 
           <div v-if="error" class="hint error">{{ error }}</div>
@@ -199,7 +228,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
-  fetchGoogleClientId,
+  resolveGoogleClientId,
   loginWithGoogleIdToken,
   loginWithPassword,
   sendLoginCode
@@ -215,9 +244,9 @@ import {
 } from '../storage';
 import { ensureGuestUserId, setLoggedIn } from '../session';
 import { useLanguageStore } from '@/stores/language';
-import { buildApiUrl } from '@/utils/api';
 import LanguageSwitcher from '../components/LanguageSwitcher.vue';
 import TurnstileWidget from '../components/TurnstileWidget.vue';
+import { loadGoogleIdentityScript, resetGoogleIdentityScript } from '../googleIdentity';
 import {
   beginOtpSend,
   completeOtpSend,
@@ -244,10 +273,13 @@ let timer: number | null = null;
 const topTipOpen = ref(false);
 const topTipText = ref('');
 let topTipTimer: number | null = null;
-const googleClientId = ref(String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim());
+const googleClientId = ref('');
 const googleButtonRef = ref<HTMLDivElement | null>(null);
 const googleLoading = ref(false);
-let googleScriptPromise: Promise<void> | null = null;
+const googleConfigResolved = ref(false);
+const googleButtonReady = ref(false);
+const googleSdkLoading = ref(false);
+const googleSdkFailed = ref(false);
 const turnstileToken = ref('');
 const turnstileRequired = isTurnstileConfigured();
 const turnstileRef = ref<{ reset: () => void } | null>(null);
@@ -255,11 +287,20 @@ const turnstileRef = ref<{ reset: () => void } | null>(null);
 const loadGoogleClientId = async () => {
   if (googleClientId.value) return googleClientId.value;
   try {
-    const cid = await fetchGoogleClientId();
+    const cid = await resolveGoogleClientId();
     if (cid) googleClientId.value = cid;
-  } catch {}
+  } catch {
+  } finally {
+    googleConfigResolved.value = true;
+  }
   return googleClientId.value;
 };
+
+const googleStatusText = computed(() => {
+  if (googleConfigResolved.value && !googleClientId.value) return t('login.google_not_configured');
+  if (googleSdkFailed.value) return t('login.google_load_failed');
+  return '';
+});
 
 const close = () => {
   router.push('/');
@@ -282,9 +323,7 @@ const subText = computed(() => {
 
 const hintText = computed(() => {
   if (loginMethod.value === 'select') {
-    return googleClientId.value
-      ? t('login.choose_method_hint')
-      : t('login.choose_method_hint_without_google');
+    return t('login.choose_method_hint');
   }
   if (loginMethod.value === 'google') return t('login.google_hint');
   return t('login.hint');
@@ -405,63 +444,9 @@ const loginWithPasswordSubmit = async () => {
   }
 };
 
-const loadGoogleScript = () => {
-  if (googleScriptPromise) return googleScriptPromise;
-  googleScriptPromise = new Promise<void>((resolve, reject) => {
-    const g = (window as any).google;
-    if (g?.accounts?.id) {
-      resolve();
-      return;
-    }
-    const resolveScriptUrl = (useProxy: boolean) => {
-      if (!useProxy) return 'https://accounts.google.com/gsi/client';
-      const proxyUrl = buildApiUrl('/api/proxy/google-gsi');
-      return proxyUrl || 'https://accounts.google.com/gsi/client';
-    };
-    const appendScript = (useProxy: boolean) => {
-      const script = document.createElement('script');
-      script.src = resolveScriptUrl(useProxy);
-      script.async = true;
-      script.defer = true;
-      script.dataset.googleIdentity = '1';
-      script.dataset.googleProxy = useProxy ? '1' : '0';
-      script.onload = () => resolve();
-      script.onerror = () => {
-        if (useProxy) {
-          script.remove();
-          appendScript(false);
-          return;
-        }
-        reject(new Error('GOOGLE_SCRIPT_FAILED'));
-      };
-      document.head.appendChild(script);
-    };
-    const existing = document.querySelector('script[data-google-identity]');
-    if (existing) {
-      existing.addEventListener('load', () => resolve(), { once: true });
-      existing.addEventListener(
-        'error',
-        () => {
-          const useProxy = (existing as HTMLScriptElement).dataset.googleProxy === '1';
-          if (useProxy) {
-            existing.remove();
-            appendScript(false);
-            return;
-          }
-          reject(new Error('GOOGLE_SCRIPT_FAILED'));
-        },
-        { once: true }
-      );
-      return;
-    }
-    appendScript(true);
-  });
-  return googleScriptPromise;
-};
-
 const renderGoogleButton = () => {
   const g = (window as any).google;
-  if (!g?.accounts?.id || !googleButtonRef.value) return;
+  if (!g?.accounts?.id || !googleButtonRef.value) return false;
   googleButtonRef.value.innerHTML = '';
   g.accounts.id.initialize({
     client_id: googleClientId.value,
@@ -500,6 +485,21 @@ const renderGoogleButton = () => {
     width: googleButtonRef.value.clientWidth || 420,
     text: 'continue_with'
   });
+  googleButtonReady.value = true;
+  return true;
+};
+
+const retryGoogleLogin = async () => {
+  error.value = '';
+  const cid = await loadGoogleClientId();
+  if (!cid) {
+    error.value = t('login.google_not_configured');
+    return;
+  }
+  resetGoogleIdentityScript();
+  googleButtonReady.value = false;
+  await ensureGoogleReady(true);
+  if (googleSdkFailed.value) showTopTip(t('login.google_load_failed'));
 };
 
 const setMethod = (method: 'google' | 'email' | 'password' | 'select') => {
@@ -518,21 +518,27 @@ const backToMethods = () => {
   setMethod('select');
 };
 
-const ensureGoogleReady = async () => {
+const ensureGoogleReady = async (forceRetry = false) => {
   if (loginMethod.value !== 'google' && loginMethod.value !== 'select') return;
   const cid = await loadGoogleClientId();
   if (!cid) {
-    if (loginMethod.value === 'google') setMethod('select');
     return;
   }
-  loadGoogleScript()
-    .then(async () => {
-      await nextTick();
-      renderGoogleButton();
-    })
-    .catch(() => {
-      showTopTip(t('login.google_load_failed'));
-    });
+  if (forceRetry) resetGoogleIdentityScript();
+  googleSdkLoading.value = true;
+  googleSdkFailed.value = false;
+  googleButtonReady.value = false;
+  try {
+    await loadGoogleIdentityScript();
+    await nextTick();
+    if (!renderGoogleButton()) throw new Error('GOOGLE_SCRIPT_FAILED');
+  } catch (err) {
+    console.error('Failed to load Google script', err);
+    googleSdkFailed.value = true;
+    resetGoogleIdentityScript();
+  } finally {
+    googleSdkLoading.value = false;
+  }
 };
 
 onMounted(() => {
@@ -866,6 +872,53 @@ onBeforeUnmount(() => {
 .google-btn.disabled {
   opacity: 0.6;
   pointer-events: none;
+}
+
+.google-fallback-btn {
+  position: relative;
+  justify-content: center;
+  gap: 10px;
+  background: #fff;
+  border-color: rgba(255, 255, 255, 0.82);
+  color: #3c4043;
+}
+
+.google-fallback-btn:hover {
+  background: #f8fafc;
+  border-color: #fff;
+  color: #202124;
+}
+
+.google-mark {
+  font-size: 18px;
+  font-weight: 800;
+  background: conic-gradient(from -45deg, #4285f4 0 25%, #34a853 0 50%, #fbbc05 0 75%, #ea4335 0);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+.google-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(60, 64, 67, 0.22);
+  border-top-color: #4285f4;
+  border-radius: 50%;
+  animation: google-spin 0.8s linear infinite;
+}
+
+.google-network-note {
+  margin-top: 8px;
+  color: #fbbf24;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+@keyframes google-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .row {

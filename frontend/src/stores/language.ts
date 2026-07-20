@@ -79,7 +79,8 @@ const translations = {
       debug_code_hint: 'Development delivery code: {code}',
       or: 'OR',
       google_failed: 'Google login failed',
-      google_load_failed: 'Google login button failed to load due to network issues',
+      google_load_failed:
+        'Google is unavailable on the current network. Retry after switching networks, or use email or account password login.',
       google_not_configured: 'Google login is not configured',
       terms_of_use: 'Terms of Use',
       privacy_policy: 'Privacy Policy',
@@ -158,7 +159,7 @@ const translations = {
       debug_code_hint: '开发环境验证码：{code}',
       or: '或',
       google_failed: '谷歌登录失败',
-      google_load_failed: '谷歌登录加载失败',
+      google_load_failed: '当前网络无法连接谷歌。请切换网络后重试，或使用邮箱验证码、账号密码登录',
       google_not_configured: '谷歌登录未配置',
       terms_of_use: '使用条款',
       privacy_policy: '隐私政策',

@@ -310,7 +310,11 @@ export const loginWithPassword = async (
   return { ok: true, userId, ...(name ? { name } : {}) };
 };
 
-export const fetchGoogleClientId = async (): Promise<string> => {
+// The backend verifies the ID token audience, so it must also be the source of
+// truth for the client ID used by Google Identity Services. Keeping a separate
+// build-time ID can make the button render successfully while every login is
+// rejected with INVALID_AUDIENCE.
+export const resolveGoogleClientId = async (): Promise<string> => {
   const tryFetch = async (url: string) => {
     try {
       const res = await authFetch(url, { method: 'GET' });

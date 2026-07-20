@@ -42,12 +42,28 @@
               <div class="sub">{{ subText }}</div>
 
               <div class="method-list">
-                <div v-if="googleClientId" class="oauth-block">
+                <div class="oauth-block">
+                  <button
+                    v-if="!googleButtonReady"
+                    class="nth-login-btn method google-fallback-btn"
+                    type="button"
+                    :disabled="googleLoading || googleSdkLoading"
+                    :aria-busy="googleSdkLoading"
+                    @click="retryGoogleLogin"
+                  >
+                    <span class="google-mark" aria-hidden="true">G</span>
+                    <span>{{ t('login.method_google') }}</span>
+                    <span v-if="googleSdkLoading" class="google-spinner" aria-hidden="true"></span>
+                  </button>
                   <div
+                    v-show="googleButtonReady"
                     ref="googleButtonRef"
                     class="google-btn"
                     :class="{ disabled: googleLoading }"
                   ></div>
+                  <div v-if="googleStatusText" class="google-network-note">
+                    {{ googleStatusText }}
+                  </div>
                 </div>
                 <div class="hint" :class="{ error: !!error }" v-if="error || info">
                   {{ error || info }}
@@ -99,11 +115,27 @@
               <div class="sub">{{ subText }}</div>
 
               <div class="oauth-block">
+                <button
+                  v-if="!googleButtonReady"
+                  class="nth-login-btn method google-fallback-btn"
+                  type="button"
+                  :disabled="googleLoading || googleSdkLoading"
+                  :aria-busy="googleSdkLoading"
+                  @click="retryGoogleLogin"
+                >
+                  <span class="google-mark" aria-hidden="true">G</span>
+                  <span>{{ t('login.method_google') }}</span>
+                  <span v-if="googleSdkLoading" class="google-spinner" aria-hidden="true"></span>
+                </button>
                 <div
+                  v-show="googleButtonReady"
                   ref="googleButtonRef"
                   class="google-btn"
                   :class="{ disabled: googleLoading }"
                 ></div>
+                <div v-if="googleStatusText" class="google-network-note">
+                  {{ googleStatusText }}
+                </div>
               </div>
 
               <div class="hint" :class="{ error: !!error }">
@@ -183,9 +215,7 @@
               </div>
               <button
                 class="nth-login-btn primary"
-                :disabled="
-                  loggingIn || registering || sending || !emailLocal || code.length < 6
-                "
+                :disabled="loggingIn || registering || sending || !emailLocal || code.length < 6"
                 type="button"
                 @click="verifyCode"
               >
@@ -365,13 +395,13 @@
           <div class="footer-links">
             <span class="footer-text">
               {{ currentLang === 'zh' ? '继续即表示你同意' : 'By continuing, you accept our' }}
-              <router-link class="footer-link" to="/legal/terms" @click="close"
-                >{{ t('login.terms_of_use') }}</router-link
-              >
+              <router-link class="footer-link" to="/legal/terms" @click="close">{{
+                t('login.terms_of_use')
+              }}</router-link>
               {{ currentLang === 'zh' ? '及' : 'and' }}
-              <router-link class="footer-link" to="/legal/privacy" @click="close"
-                >{{ t('login.privacy_policy') }}</router-link
-              >
+              <router-link class="footer-link" to="/legal/privacy" @click="close">{{
+                t('login.privacy_policy')
+              }}</router-link>
             </span>
           </div>
         </div>
@@ -385,7 +415,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia';
 import { useLoginModel } from '@/stores';
 import {
-  fetchGoogleClientId,
+  resolveGoogleClientId,
   loginWithGoogleIdToken,
   loginWithPassword,
   registerWithEmailCode,
@@ -404,8 +434,8 @@ import {
 import { ensureGuestUserId, setLoggedIn } from '../session';
 import { useLanguageStore } from '@/stores/language';
 import { useRouter } from 'vue-router';
-import { buildApiUrl } from '@/utils/api';
 import TurnstileWidget from './TurnstileWidget.vue';
+import { loadGoogleIdentityScript, resetGoogleIdentityScript } from '../googleIdentity';
 import {
   beginOtpSend,
   clearOtpFlow,
@@ -446,11 +476,14 @@ const topTipText = ref('');
 const cooldownLeft = ref(0);
 let timer: number | null = null;
 let topTipTimer: number | null = null;
-const googleClientId = ref(String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim());
+const googleClientId = ref('');
 const googleButtonRef = ref<HTMLDivElement | null>(null);
 const panelRef = ref<HTMLElement | null>(null);
 const googleLoading = ref(false);
-let googleScriptPromise: Promise<void> | null = null;
+const googleConfigResolved = ref(false);
+const googleButtonReady = ref(false);
+const googleSdkLoading = ref(false);
+const googleSdkFailed = ref(false);
 let returnFocusElement: HTMLElement | null = null;
 const turnstileToken = ref('');
 const turnstileRequired = isTurnstileConfigured();
@@ -502,11 +535,20 @@ const restoreTriggerFocus = async () => {
 const loadGoogleClientId = async () => {
   if (googleClientId.value) return googleClientId.value;
   try {
-    const cid = await fetchGoogleClientId();
+    const cid = await resolveGoogleClientId();
     if (cid) googleClientId.value = cid;
-  } catch {}
+  } catch {
+  } finally {
+    googleConfigResolved.value = true;
+  }
   return googleClientId.value;
 };
+
+const googleStatusText = computed(() => {
+  if (googleConfigResolved.value && !googleClientId.value) return t('login.google_not_configured');
+  if (googleSdkFailed.value) return t('login.google_load_failed');
+  return '';
+});
 
 watch(
   () => isOpen.value,
@@ -594,8 +636,7 @@ const restoreLoginCooldown = () => {
   const normalizedEmail = String(emailLocal.value || '')
     .trim()
     .toLowerCase();
-  const seconds =
-    flow?.email === normalizedEmail ? getOtpCooldownSeconds(flow) : 0;
+  const seconds = flow?.email === normalizedEmail ? getOtpCooldownSeconds(flow) : 0;
   startCooldown(seconds);
 };
 
@@ -616,61 +657,7 @@ const showTopTip = (msg: string) => {
   }, 3000);
 };
 
-const loadGoogleScript = () => {
-  if (googleScriptPromise) return googleScriptPromise;
-  googleScriptPromise = new Promise<void>((resolve, reject) => {
-    const g = (window as any).google;
-    if (g?.accounts?.id) {
-      resolve();
-      return;
-    }
-    const resolveScriptUrl = (useProxy: boolean) => {
-      if (!useProxy) return 'https://accounts.google.com/gsi/client';
-      const proxyUrl = buildApiUrl('/api/proxy/google-gsi');
-      return proxyUrl || 'https://accounts.google.com/gsi/client';
-    };
-    const appendScript = (useProxy: boolean) => {
-      const script = document.createElement('script');
-      script.src = resolveScriptUrl(useProxy);
-      script.async = true;
-      script.defer = true;
-      script.dataset.googleIdentity = '1';
-      script.dataset.googleProxy = useProxy ? '1' : '0';
-      script.onload = () => resolve();
-      script.onerror = () => {
-        if (useProxy) {
-          script.remove();
-          appendScript(false);
-          return;
-        }
-        reject(new Error('GOOGLE_SCRIPT_FAILED'));
-      };
-      document.head.appendChild(script);
-    };
-    const existing = document.querySelector('script[data-google-identity]');
-    if (existing) {
-      existing.addEventListener('load', () => resolve(), { once: true });
-      existing.addEventListener(
-        'error',
-        () => {
-          const useProxy = (existing as HTMLScriptElement).dataset.googleProxy === '1';
-          if (useProxy) {
-            existing.remove();
-            appendScript(false);
-            return;
-          }
-          reject(new Error('GOOGLE_SCRIPT_FAILED'));
-        },
-        { once: true }
-      );
-      return;
-    }
-    appendScript(true);
-  });
-  return googleScriptPromise;
-};
-
-const initGoogleButton = () => {
+const initGoogleButton = async () => {
   if (
     !googleClientId.value ||
     !isOpen.value ||
@@ -679,57 +666,73 @@ const initGoogleButton = () => {
     return;
   const el = googleButtonRef.value;
   if (!el) return;
-  loadGoogleScript()
-    .then(() => {
-      const g = (window as any).google;
-      if (!g?.accounts?.id) {
-        showTopTip(t('login.google_load_failed'));
-        return;
-      }
-      el.innerHTML = '';
-      g.accounts.id.initialize({
-        client_id: googleClientId.value,
-        callback: async (resp: any) => {
-          if (googleLoading.value) return;
-          error.value = '';
-          const idToken = String(resp?.credential || '').trim();
-          if (!idToken) {
-            error.value = t('login.google_failed');
+  googleSdkLoading.value = true;
+  googleSdkFailed.value = false;
+  googleButtonReady.value = false;
+  try {
+    await loadGoogleIdentityScript();
+    const g = (window as any).google;
+    if (!g?.accounts?.id) throw new Error('GOOGLE_SCRIPT_FAILED');
+    el.innerHTML = '';
+    g.accounts.id.initialize({
+      client_id: googleClientId.value,
+      callback: async (resp: any) => {
+        if (googleLoading.value) return;
+        error.value = '';
+        const idToken = String(resp?.credential || '').trim();
+        if (!idToken) {
+          error.value = t('login.google_failed');
+          return;
+        }
+        googleLoading.value = true;
+        try {
+          const res = await loginWithGoogleIdToken(idToken);
+          if (!res.ok) {
+            error.value = res.message;
             return;
           }
-          googleLoading.value = true;
-          try {
-            const res = await loginWithGoogleIdToken(idToken);
-            if (!res.ok) {
-              error.value = res.message;
-              return;
-            }
-            if (res.email) {
-              setLastEmail(res.email);
-              upsertUser({ email: res.email, userId: res.userId });
-            }
-            setLoggedIn({ userId: res.userId });
-            close();
-            await loginStore.runAfterLogin();
-          } catch (e: any) {
-            error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
-          } finally {
-            googleLoading.value = false;
+          if (res.email) {
+            setLastEmail(res.email);
+            upsertUser({ email: res.email, userId: res.userId });
           }
+          setLoggedIn({ userId: res.userId });
+          close();
+          await loginStore.runAfterLogin();
+        } catch (e: any) {
+          error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
+        } finally {
+          googleLoading.value = false;
         }
-      });
-      g.accounts.id.renderButton(el, {
-        theme: 'outline',
-        size: 'large',
-        shape: 'pill',
-        width: el.clientWidth || 360,
-        text: 'continue_with'
-      });
-    })
-    .catch((err) => {
-      console.error('Failed to load Google script', err);
-      showTopTip(t('login.google_load_failed'));
+      }
     });
+    g.accounts.id.renderButton(el, {
+      theme: 'outline',
+      size: 'large',
+      shape: 'pill',
+      width: el.clientWidth || 360,
+      text: 'continue_with'
+    });
+    googleButtonReady.value = true;
+  } catch (err) {
+    console.error('Failed to load Google script', err);
+    googleSdkFailed.value = true;
+    resetGoogleIdentityScript();
+  } finally {
+    googleSdkLoading.value = false;
+  }
+};
+
+const retryGoogleLogin = async () => {
+  error.value = '';
+  const cid = await loadGoogleClientId();
+  if (!cid) {
+    error.value = t('login.google_not_configured');
+    return;
+  }
+  resetGoogleIdentityScript();
+  await nextTick();
+  await initGoogleButton();
+  if (googleSdkFailed.value) showTopTip(t('login.google_load_failed'));
 };
 
 const isPasswordValidForRegister = (pw: string) => {
@@ -787,7 +790,7 @@ const ensureGoogleReady = async (showError = false) => {
     return;
   }
   await nextTick();
-  initGoogleButton();
+  await initGoogleButton();
 };
 
 watch(
@@ -1349,6 +1352,53 @@ onBeforeUnmount(() => {
 .google-btn.disabled {
   opacity: 0.6;
   pointer-events: none;
+}
+
+.google-fallback-btn {
+  position: relative;
+  justify-content: center;
+  gap: 10px;
+  background: #fff;
+  border-color: rgba(255, 255, 255, 0.82);
+  color: #3c4043;
+}
+
+.google-fallback-btn:hover {
+  background: #f8fafc;
+  border-color: #fff;
+  color: #202124;
+}
+
+.google-mark {
+  font-size: 18px;
+  font-weight: 800;
+  background: conic-gradient(from -45deg, #4285f4 0 25%, #34a853 0 50%, #fbbc05 0 75%, #ea4335 0);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+.google-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(60, 64, 67, 0.22);
+  border-top-color: #4285f4;
+  border-radius: 50%;
+  animation: google-spin 0.8s linear infinite;
+}
+
+.google-network-note {
+  margin-top: 8px;
+  color: #fbbf24;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+@keyframes google-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .row {

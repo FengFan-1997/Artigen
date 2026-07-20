@@ -100,6 +100,27 @@ test('session reports cookie authentication without exposing secrets and logout 
   assert.equal(afterRes.state.body.authenticated, false);
 });
 
+test('Google config exposes the same client ID used for token audience verification', async () => {
+  const previousClientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  process.env.GOOGLE_OAUTH_CLIENT_ID = 'server-client.apps.googleusercontent.com';
+  try {
+    const app = buildFakeApp();
+    installAuthRoutes(app);
+    const googleConfig = app.routes.get('GET /api/auth/google/config');
+    assert.equal(typeof googleConfig, 'function');
+
+    const configRes = response();
+    await googleConfig({ headers: {} }, configRes);
+    assert.deepEqual(configRes.state.body, {
+      ok: true,
+      clientId: 'server-client.apps.googleusercontent.com'
+    });
+  } finally {
+    if (previousClientId === undefined) delete process.env.GOOGLE_OAUTH_CLIENT_ID;
+    else process.env.GOOGLE_OAUTH_CLIENT_ID = previousClientId;
+  }
+});
+
 test.after(() => {
   resetDevelopmentUsers();
   fs.rmSync(tempMemory, { recursive: true, force: true });

@@ -25,6 +25,7 @@ test('Render keeps same-origin frontend bases and uses shallow liveness', () => 
   assert.match(blueprint, /^\s+healthCheckPath:\s*\/healthz\s*$/m);
   assert.doesNotMatch(blueprint, /^\s+healthCheckPath:\s*\/readyz\s*$/m);
   assert.match(blueprint, /^\s+- key: APP_ORIGIN\s*\n\s+sync: false\s*$/m);
+  assert.match(blueprint, /^\s+- key: GOOGLE_OAUTH_CLIENT_ID\s*\n\s+sync: false\s*$/m);
   assert.match(blueprint, /^\s+- key: TURNSTILE_HOSTNAMES\s*\n\s+sync: false\s*$/m);
 });
 

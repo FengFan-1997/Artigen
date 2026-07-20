@@ -664,7 +664,7 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | --- | --- |
 | `VITE_API_BASE` | 前端 API Base。为空时请求同源 `/api` 和 `/files`。 |
 | `VITE_AGENT_API_BASE` | 兼容旧变量，`VITE_API_BASE` 为空时使用。 |
-| `VITE_GOOGLE_CLIENT_ID` | Google Identity Services 前端 client id。 |
+| `VITE_GOOGLE_CLIENT_ID` | 已弃用；Google client id 统一由后端配置接口提供。 |
 | `VITE_IMAGE_EDITOR_V2_DEFAULT` | 默认 `v2`；设为 `legacy`/`false` 可灰度回退。 |
 | `VITE_AI_DESIGN_TASK_V2_ENABLED` | 主生图统一任务链前端灰度；默认开启，设为 `false` 可回退一版。 |
 
@@ -741,7 +741,7 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 
 | 变量 | 说明 |
 | --- | --- |
-| `GOOGLE_OAUTH_CLIENT_ID` | Google OAuth client id。 |
+| `GOOGLE_OAUTH_CLIENT_ID` | Google OAuth client id；同时通过 `/api/auth/google/config` 提供给前端，避免 token audience 不一致。 |
 | `GOOGLE_OAUTH_ALLOW_INSECURE` | 非生产环境 Google token 兼容校验。 |
 | `AUTH_EMAIL_OTP_ENABLED` | 生产邮件验证码总开关；开启后 `/readyz` 强制检查 PostgreSQL、三份独立认证密钥、邮件 Provider 和 Turnstile。 |
 | `MAIL_PROVIDER` | 生产使用 `relay`（Vercel HTTPS → 163 SMTP）；仍兼容 `brevo`，生产环境拒绝直接 SMTP fallback。 |
