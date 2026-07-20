@@ -128,7 +128,7 @@ Render，也不会再看见 Render 的启动黑屏；当天第一次发送验证
 - Project：`artigen-fengfan`
 - 套餐：Hobby（免费）
 - 生产分支：`codex/artigen-overhaul`
-- 当前生产提交：`0ee3dcd01928f3a2447fcdcd1e10c65836240c59`
+- 当前生产版本：以 `Deployments` 顶部标记为 `Ready` 的 Production 部署为准
 - 主域名：`artigen-fengfan.vercel.app`
 - 匿名首页：只加载静态文件，不请求 `/api`
 - 服务端操作：通过 Vercel rewrite 按需连接 Render
@@ -468,7 +468,8 @@ Render
   -> Environment
 ```
 
-当前有 51 个变量。按用途分组：
+当前约有 52 个变量。以后增删变量时，以 Render Environment 页面实际显示为准。
+按用途分组：
 
 **数据库**
 
@@ -479,6 +480,7 @@ Render
 **认证和安全**
 
 - `APP_ORIGIN`
+- `CORS_ORIGINS`
 - `TRUST_PROXY`
 - `CSRF_SECRET`
 - `OTP_HMAC_SECRET`
