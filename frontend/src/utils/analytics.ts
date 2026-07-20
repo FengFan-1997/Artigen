@@ -11,6 +11,8 @@ import { getPageContext } from './pageContext';
 let autoClickInstalled = false;
 
 const ANALYTICS_URL_BASE = 'https://analytics.invalid';
+const DEFER_ANONYMOUS_BACKEND =
+  /^(?:1|true)$/i.test(String(import.meta.env.VITE_LAZY_BACKEND || '').trim());
 const RAW_CONTENT_FIELDS = new Set([
   'content',
   'dataurl',
@@ -396,6 +398,11 @@ let lastPageViewTs = 0;
  * In a real app, this would be a fetch/axios call to your backend API.
  */
 export const trackBackendEvent = async (eventType: string, payload: Record<string, any>) => {
+  const authSession = getAuthSessionSnapshot();
+  if (DEFER_ANONYMOUS_BACKEND && !authSession.authenticated) {
+    return { success: true, deferred: true as const };
+  }
+
   const url = buildApiUrl('/api/collection/event');
   const userId = ensureGuestUserId();
   const requestId = `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -433,7 +440,6 @@ export const trackBackendEvent = async (eventType: string, payload: Record<strin
     text = safeJsonStringify(sanitizedBody);
   }
 
-  const authSession = getAuthSessionSnapshot();
   const mayHaveCookieSession = authSession.authenticated || !authSession.verified;
 
   try {

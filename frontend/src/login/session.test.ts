@@ -6,6 +6,7 @@ import {
   clearLegacyScriptAuthCookie,
   getAuthSessionSnapshot,
   getCurrentUserId,
+  initializeAuthSessionForPageLoad,
   logoutSession,
   setLoggedIn
 } from './session';
@@ -168,6 +169,28 @@ describe('cookie-session client compatibility', () => {
       method: 'GET',
       credentials: 'include'
     });
+  });
+
+  it('does not contact the backend for a new anonymous page load', async () => {
+    const localStorage = createStorage();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('window', {
+      localStorage,
+      location: { origin: 'https://app.example', protocol: 'https:', host: 'app.example' },
+      dispatchEvent: vi.fn()
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    initializeAuthSessionForPageLoad();
+    await Promise.resolve();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(getAuthSessionSnapshot()).toEqual({
+      authenticated: false,
+      userId: '',
+      verified: true
+    });
+    expect(getCurrentUserId()).toMatch(/^guest_/);
   });
 
   it('preserves the same guest workspace when the server confirms an anonymous session', async () => {

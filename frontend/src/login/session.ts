@@ -237,6 +237,16 @@ export const startAuthSessionBootstrap = () => {
   Promise.resolve().then(() => void bootstrapAuthSession());
 };
 
+export const initializeAuthSessionForPageLoad = () => {
+  if (typeof window === 'undefined') return;
+  const storedUserId = getCurrentUserId();
+  if (storedUserId && !storedUserId.startsWith('guest_')) {
+    startAuthSessionBootstrap();
+    return;
+  }
+  applyGuestSession();
+};
+
 export const logoutSession = async () => {
   const request = authFetch(buildApiUrl('/api/auth/logout'), {
     method: 'POST',
@@ -301,4 +311,4 @@ export const getOrCreateProjectId = (): string => {
   return created;
 };
 
-startAuthSessionBootstrap();
+initializeAuthSessionForPageLoad();

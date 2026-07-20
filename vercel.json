@@ -1,0 +1,49 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm --filter personal build",
+  "outputDirectory": "frontend/dist",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://artigen-app-fengfan.onrender.com/api/:path*"
+    },
+    {
+      "source": "/files/:path*",
+      "destination": "https://artigen-app-fengfan.onrender.com/files/:path*"
+    },
+    {
+      "source": "/healthz",
+      "destination": "https://artigen-app-fengfan.onrender.com/healthz"
+    },
+    {
+      "source": "/readyz",
+      "destination": "https://artigen-app-fengfan.onrender.com/readyz"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/index.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    }
+  ]
+}
