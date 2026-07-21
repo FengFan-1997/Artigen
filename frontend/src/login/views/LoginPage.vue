@@ -473,11 +473,16 @@ const renderGoogleButton = () => {
       }
     }
   });
+  const availableWidth =
+    googleButtonRef.value.parentElement?.clientWidth ||
+    googleButtonRef.value.clientWidth ||
+    360;
+  const buttonWidth = Math.min(400, Math.max(1, Math.round(availableWidth)));
   g.accounts.id.renderButton(googleButtonRef.value, {
     theme: 'outline',
     size: 'large',
     shape: 'pill',
-    width: googleButtonRef.value.clientWidth || 420,
+    width: String(buttonWidth),
     text: 'continue_with'
   });
   googleButtonReady.value = true;
@@ -862,6 +867,11 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
   width: 100%;
+  max-width: 400px;
+  margin-inline: auto;
+  overflow: hidden;
+  border-radius: 999px;
+  isolation: isolate;
 }
 
 .google-btn.disabled {
