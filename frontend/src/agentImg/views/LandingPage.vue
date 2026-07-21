@@ -1232,8 +1232,16 @@ onBeforeUnmount(() => {
 }
 
 .hero-btn .arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-left: 8px;
+  line-height: 0;
   transition: transform 0.3s ease;
+}
+
+.hero-btn .arrow svg {
+  display: block;
 }
 
 .hero-btn:hover .arrow {
