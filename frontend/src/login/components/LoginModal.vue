@@ -1357,7 +1357,6 @@ onBeforeUnmount(() => {
 .google-fallback-btn {
   position: relative;
   justify-content: center;
-  gap: 10px;
   background: #fff;
   border-color: rgba(255, 255, 255, 0.82);
   color: #3c4043;
@@ -1370,6 +1369,15 @@ onBeforeUnmount(() => {
 }
 
 .google-mark {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
   font-size: 18px;
   font-weight: 800;
   background: conic-gradient(from -45deg, #4285f4 0 25%, #34a853 0 50%, #fbbc05 0 75%, #ea4335 0);
@@ -1379,6 +1387,9 @@ onBeforeUnmount(() => {
 }
 
 .google-spinner {
+  position: absolute;
+  right: 15px;
+  top: calc(50% - 7px);
   width: 14px;
   height: 14px;
   border: 2px solid rgba(60, 64, 67, 0.22);
