@@ -138,7 +138,9 @@ const humanizeAuthError = (raw: any) => {
     return zh ? '该邮箱未注册' : 'Email not registered.';
   }
   if (m.includes('google_oauth_not_configured'))
-    return zh ? '服务未配置谷歌登录' : 'Google login is not configured.';
+    return zh
+      ? '谷歌登录暂时不可用，请稍后重试'
+      : 'Google login is temporarily unavailable. Please try again later.';
   if (m.includes('google_tokeninfo_timeout'))
     return zh
       ? '谷歌登录校验超时，请检查网络或代理'

@@ -276,7 +276,6 @@ let topTipTimer: number | null = null;
 const googleClientId = ref('');
 const googleButtonRef = ref<HTMLDivElement | null>(null);
 const googleLoading = ref(false);
-const googleConfigResolved = ref(false);
 const googleButtonReady = ref(false);
 const googleSdkLoading = ref(false);
 const googleSdkFailed = ref(false);
@@ -289,15 +288,11 @@ const loadGoogleClientId = async () => {
   try {
     const cid = await resolveGoogleClientId();
     if (cid) googleClientId.value = cid;
-  } catch {
-  } finally {
-    googleConfigResolved.value = true;
-  }
+  } catch {}
   return googleClientId.value;
 };
 
 const googleStatusText = computed(() => {
-  if (googleConfigResolved.value && !googleClientId.value) return t('login.google_not_configured');
   if (googleSdkFailed.value) return t('login.google_load_failed');
   return '';
 });
@@ -493,7 +488,7 @@ const retryGoogleLogin = async () => {
   error.value = '';
   const cid = await loadGoogleClientId();
   if (!cid) {
-    error.value = t('login.google_not_configured');
+    showTopTip(t('login.google_load_failed'));
     return;
   }
   resetGoogleIdentityScript();
