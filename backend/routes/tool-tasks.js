@@ -32,10 +32,8 @@ const {
   createWorkshopAiExecutor,
   validateWorkshopAiTask
 } = require('../services/workshop-ai-service');
-const {
-  TaskLeaseQueue,
-  markProviderDispatched
-} = require('../services/task-queue-service');
+const { markProviderDispatched } = require('../services/task-queue-service');
+const { createTaskQueue } = require('../services/task-queue-pgboss');
 const { hasPayloadKey, resolvePayloadKey } = require('../services/task-payload-service');
 const { checkStorage } = require('../services/readiness-service');
 
@@ -522,7 +520,7 @@ const installToolTaskRoutes = (app, deps = {}) => {
   const databaseAvailable = Boolean(deps.pool) || isDatabaseConfigured();
   const startWorkers = taskWorkersEnabled(runtimeEnv);
   const queue = startWorkers && (deps.taskQueue || taskLeaseQueue || (databaseAvailable
-    ? new TaskLeaseQueue({
+    ? createTaskQueue({
         ...(deps.pool ? { pool: deps.pool } : {}),
         releaseTask: billing.releaseTask,
         requestTaskCancellation: billing.requestTaskCancellation,
@@ -551,6 +549,13 @@ const installToolTaskRoutes = (app, deps = {}) => {
       workshopAiExecutor,
       { payloadRequired: true }
     );
+    if (typeof queue.registerMaintenance === 'function') {
+      queue.registerMaintenance({
+        releaseExpiredHolds: billing.releaseExpiredHolds,
+        sweepExpiredAssets: assets.sweepExpiredAssets,
+        sweepOrphanedFileAssets: assets.sweepOrphanedFileAssets
+      });
+    }
   }
   if (!deps.taskQueue && queue) taskLeaseQueue = queue;
   if (queue && deps.enableTaskQueue !== false && databaseAvailable && startWorkers) {
@@ -558,7 +563,12 @@ const installToolTaskRoutes = (app, deps = {}) => {
       console.error('Task lease queue failed to start', error?.code || error?.message || error);
     });
   }
-  if (startWorkers && !holdSweeper && deps.enableHoldSweeper !== false) {
+  if (
+    startWorkers &&
+    !queue?.managesMaintenance &&
+    !holdSweeper &&
+    deps.enableHoldSweeper !== false
+  ) {
     holdSweeper = setInterval(() => {
       if (!isDatabaseConfigured()) return;
       billing.releaseExpiredHolds().catch((error) => {
@@ -567,7 +577,12 @@ const installToolTaskRoutes = (app, deps = {}) => {
     }, 60 * 1000);
     if (typeof holdSweeper.unref === 'function') holdSweeper.unref();
   }
-  if (startWorkers && !assetSweeper && deps.enableAssetSweeper !== false) {
+  if (
+    startWorkers &&
+    !queue?.managesMaintenance &&
+    !assetSweeper &&
+    deps.enableAssetSweeper !== false
+  ) {
     const intervalMs = Math.max(
       60 * 1000,
       Math.min(60 * 60 * 1000, Number(process.env.ASSET_GC_INTERVAL_MS || 5 * 60 * 1000))
