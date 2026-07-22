@@ -31,6 +31,17 @@ const deleteDatabase = (name: string) => new Promise<void>((resolve) => {
   request.onblocked = () => resolve();
 });
 
+const readNativeDatabaseVersion = (name: string) => new Promise<number>((resolve, reject) => {
+  const request = indexedDB.open(name);
+  request.onerror = () => reject(request.error);
+  request.onsuccess = () => {
+    const database = request.result;
+    const version = database.version;
+    database.close();
+    resolve(version);
+  };
+});
+
 afterEach(async () => {
   const workspace = await import('./generationWorkspaceDb');
   const workshop = await import('./workshopTasks');
@@ -58,6 +69,7 @@ describe('Dexie adoption of native IndexedDB data', () => {
     const storage = await import('./generationWorkspaceDb');
     await expect(storage.loadProductProfile()).resolves.toEqual(profile);
     await expect(storage.loadPendingGeneration()).resolves.toEqual(pending);
+    await expect(readNativeDatabaseVersion('artigen-generation-workspace')).resolves.toBe(1);
   });
 
   it('reads existing editor projects and assets with the original key paths', async () => {
@@ -96,6 +108,7 @@ describe('Dexie adoption of native IndexedDB data', () => {
     });
     await expect(database.getAssetBlob('legacy-asset')).resolves.toMatchObject({ size: 6 });
     database.close();
+    await expect(readNativeDatabaseVersion('artigen-editor-v2')).resolves.toBe(1);
   });
 
   it('keeps recoverable workshop tasks from the native store', async () => {
@@ -122,5 +135,6 @@ describe('Dexie adoption of native IndexedDB data', () => {
       taskId: 'legacy-task',
       slot: 'old-photo'
     });
+    await expect(readNativeDatabaseVersion('artigen-workshop-tasks')).resolves.toBe(1);
   });
 });

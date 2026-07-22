@@ -10,7 +10,9 @@ import {
 } from './browserStorageEvents';
 
 const DATABASE_NAME = 'artigen-generation-workspace';
-const DATABASE_VERSION = 1;
+// Dexie multiplies schema versions by 10 before opening native IndexedDB.
+// Using 0.1 preserves the existing native database version at exactly 1.
+const DEXIE_SCHEMA_VERSION = 0.1;
 const STORE_NAME = 'workspace';
 const PROFILE_KEY = 'product-profile-v1';
 const PENDING_KEY = 'pending-generation-v1';
@@ -20,9 +22,9 @@ class GenerationWorkspaceDatabase extends Dexie {
 
   constructor() {
     super(DATABASE_NAME);
-    // Keep the original database name, logical version and out-of-line key
+    // Keep the original database name, native version and out-of-line key
     // store. Dexie can open the native IndexedDB records without a data copy.
-    this.version(DATABASE_VERSION).stores({ [STORE_NAME]: '' });
+    this.version(DEXIE_SCHEMA_VERSION).stores({ [STORE_NAME]: '' });
     this.on('blocked', () => reportStorageIssue('blocked', DATABASE_NAME));
     this.on('versionchange', () => {
       reportStorageIssue('versionchange', DATABASE_NAME);

@@ -13,7 +13,9 @@ import {
 } from '../../services/browserStorageEvents';
 
 const DATABASE_NAME = 'artigen-editor-v2';
-const DATABASE_VERSION = 1;
+// Dexie multiplies schema versions by 10 before opening native IndexedDB.
+// Using 0.1 preserves the existing native database version at exactly 1.
+const DEXIE_SCHEMA_VERSION = 0.1;
 const ASSETS_STORE = 'assets';
 const PROJECTS_STORE = 'projects';
 
@@ -35,7 +37,7 @@ class EditorDexieDatabase extends Dexie {
     super(DATABASE_NAME);
     // This exactly mirrors the original native IndexedDB key paths and index.
     // Existing projects and blobs remain in-place during Dexie's schema adoption.
-    this.version(DATABASE_VERSION).stores({
+    this.version(DEXIE_SCHEMA_VERSION).stores({
       [ASSETS_STORE]: 'id',
       [PROJECTS_STORE]: 'projectId,savedAt'
     });
