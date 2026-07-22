@@ -614,6 +614,11 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `POST` | `/api/tool-tasks` | multipart 创建任务；必须带 `Idempotency-Key`。 |
 | `GET` | `/api/tool-tasks/:taskId` | 读取本人任务、结果、receipt 与 warnings。 |
 | `DELETE` | `/api/tool-tasks/:taskId` | 真实取消本人任务并释放未结算 hold。 |
+| `POST` | `/api/asset-uploads` | 在开关和 S3/R2 就绪时创建单 PUT 或 multipart 直传会话。 |
+| `GET` | `/api/asset-uploads/:id/parts` | 恢复已上传的 multipart 分片。 |
+| `POST` | `/api/asset-uploads/:id/parts/:part/sign` | 签发本人上传会话的短时分片 URL。 |
+| `POST` | `/api/asset-uploads/:id/complete` | 幂等完成上传、校验内容并返回现有 asset 结构。 |
+| `DELETE` | `/api/asset-uploads/:id` | 取消上传并回收暂存对象。 |
 | `GET` | `/api/assets/:assetId` | 经所有权校验读取 opaque 资产。 |
 | `DELETE` | `/api/assets/:assetId` | 用户提前删除本人资产；存在活动 transfer 时拒绝。 |
 | `POST` | `/api/editor/transfers` | 创建短时、登录用户专属的编辑器资产 transfer。 |
@@ -810,11 +815,15 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `IMG2IMG_RATE_WINDOW_MS` | `/api/img2img` 限流窗口。 |
 | `IMG2IMG_USER_MAX_CONCURRENCY` | 单用户图生图并发。 |
 | `TASK_QUEUE_CONCURRENCY` | 单实例 PostgreSQL 租约队列并发，默认 2、上限 8。 |
+| `TASK_QUEUE_DRIVER` | `legacy` 或 `pgboss`；生产默认 `legacy`，staging smoke 通过后才切换 `pgboss`，可独立一键回滚。 |
 | `TASK_WORKER_ENABLED` | 是否在当前进程启动任务 Worker；免费 Render 模板固定为 `0`，避免 Web 实例误处理收费任务。 |
 | `TASK_LEASE_MS` | Worker 租约时长，默认 90 秒。 |
 | `TASK_HEARTBEAT_MS` | Worker 心跳周期，默认 20 秒，必须短于租约。 |
 | `TASK_QUEUE_POLL_MS` | `LISTEN/NOTIFY` 之外的耐久轮询周期，默认 1 秒。 |
 | `TASK_QUEUE_LISTENER_RECONNECT_MS` | 队列 `LISTEN` 连接断开后的初始重连退避，默认 250ms。 |
+| `TASK_QUEUE_RETRY_DELAY_SECONDS` | pg-boss 在 Provider 派发前失败时的首次重试延迟，默认 15 秒；已设置 `provider_dispatched_at` 的任务不会自动重发。 |
+| `PGBOSS_SCHEMA` / `PGBOSS_POOL_MAX` | pg-boss 使用的 PostgreSQL schema 与连接池上限，默认 `pgboss` / `5`。 |
+| `PGBOSS_LISTEN_NOTIFY` | pg-boss 的 PostgreSQL 通知开关，默认 `1`。 |
 | `TOOL_TASK_CREATE_RATE_MAX` | 单用户/来源创建云端任务的每分钟上限，默认 12；在 multipart 写入临时盘前执行。 |
 | `PERSIST_IMAGE_ALLOWED_HOSTS` | 允许后端持久化抓取的远程图片 host。 |
 | `OLD_PHOTO_OUTPUT_HOSTS` / `AI_OUTPUT_ALLOWED_HOSTS` | 生产老照片和主生图 Provider 结果允许域名；缺失时远程结果抓取 fail-closed，并固定已验证 DNS 地址。 |
@@ -825,6 +834,8 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `S3_BUCKET` / `ASSET_S3_BUCKET` / `R2_BUCKET` | S3/R2 bucket。 |
 | `S3_ENDPOINT` / `ASSET_S3_ENDPOINT` / `R2_ENDPOINT` | S3/R2 兼容 endpoint。 |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | 对象存储凭证；R2 同时支持对应 `R2_*` 变量。 |
+| `S3_FORCE_PATH_STYLE` | S3 path-style 开关；MinIO 测试环境使用 `1`，Cloudflare R2/标准 S3 通常保持 `0`。 |
+| `DIRECT_ASSET_UPLOADS` | S3/R2 直传开关，生产默认 `0`；未开启或对象存储不可用时前端自动回退现有 multipart 任务上传。 |
 | `CONVERT_MAX_FILE_BYTES` | Word 转 PDF 输入上限，默认 24 MiB、硬上限 40 MiB。 |
 | `CONVERT_MAX_CONCURRENCY` | 单实例 LibreOffice 并发，默认 1、硬上限 8；在大体积 JSON 解析前 fail-closed。 |
 | `CONVERT_TIMEOUT_MS` | 单次 LibreOffice 转换超时，默认 90 秒。 |
@@ -848,7 +859,11 @@ PostgreSQL 16 保存用户/身份、Cookie 会话、验证码、管理员、钱�
 
 Word 保真转换在读取 Base64 JSON 前获取单实例并发槽，并对 ZIP central directory、本地文件头、CRC、OOXML 必需部件、entry 数量、单项/累计未压缩大小及压缩比执行预检。每次 LibreOffice 使用独立 profile；请求断开或超时会终止整个 POSIX 进程组，Windows 使用 `taskkill /T /F` fallback。Node `child_process` 没有跨平台可移植的 CPU/内存 rlimit，因此生产部署还必须在 Railway/container 层配置 CPU、内存和 PID 上限，不能只依赖应用内并发闸门。
 
-主生图与工坊付费 AI 任务通过 PostgreSQL `FOR UPDATE SKIP LOCKED` 租约认领、心跳与 `LISTEN/NOTIFY` 跨实例取消运行。Provider 派发前的过期任务最多重领一次；已派发但结果未知的任务不盲重试并全额释放 hold；过期 hold 在输入完成、认领、心跳、Provider 派发和结算各阶段都会 fail-closed。主生图 prompt/产品档案和配料原文只存在 AES-256-GCM 短期 payload，普通 `tool_tasks.options` 只保存枚举、长度与哈希，任务终态即删除 payload；职业形象与背景 prompt 始终由服务端枚举构建。参考输入默认保留 24 小时，生成结果默认 30 天并允许用户提前删除。
+主生图与工坊付费 AI 任务以 `tool_tasks`、`credit_holds` 和账本作为唯一业务真相源。`TASK_QUEUE_DRIVER=legacy` 保留原 PostgreSQL `FOR UPDATE SKIP LOCKED` 租约路径；`pgboss` 使用 `artigen-tool-task-v1` 队列，job ID 固定为 task ID，payload 只含 task ID，业务行租约仍是 Provider 单次派发的最终围栏。两种驱动都支持跨实例取消；pg-boss 还接管 dead letter、启动对账、冻结过期、payload 过期和资产 GC 定时任务。Provider 派发前失败最多指数退避重试一次；已设置 `provider_dispatched_at` 的任务不盲重发。过期 hold 在输入完成、认领、心跳、Provider 派发和结算各阶段都会 fail-closed。主生图 prompt/产品档案和配料原文只存在 AES-256-GCM 短期 payload，普通 `tool_tasks.options` 只保存枚举、长度与哈希，任务终态即删除 payload；职业形象与背景 prompt 始终由服务端枚举构建。参考输入默认保留 24 小时，生成结果默认 30 天并允许用户提前删除。
+
+S3/R2 直传只用于明确需要服务器处理的 AI/文档流程。16 MiB 以下使用单 PUT，以上使用 8 MiB multipart；浏览器保留现有 UI，由 headless Uppy 提供进度、取消、恢复和网络重试。完成时服务端流式计算 SHA-256，并用 `file-type` 与 `sharp` 校验真实类型、尺寸和像素预算，再复制到现有内容寻址资产路径。纯本地隐私工具不创建上传会话。
+
+前端服务端状态由 TanStack Query 统一管理，Pinia 只保留 UI/本地状态；任务排队或运行时每秒刷新，终态停止，4xx 不重试，网络/5xx 最多重试两次。Dexie 原地接管 `artigen-editor-v2`、`artigen-generation-workspace` 与任务恢复库，数据库名、版本、store 和 key path 不变。图片 JPEG/PNG/WebP 编码在支持 OffscreenCanvas 的 Worker 中按需加载 jSquash WASM，不支持时保留 Canvas 回退。
 
 生图灰度由全局 `AI_DESIGN_TASK_V2_ENABLED`、内部用户 allowlist 和稳定百分比分桶共同控制，发布顺序为内部用户 → 10% → 50% → 100%。全局开关是财务或资产指标越界时的立即熔断开关；分桶依据数据库用户 UUID，不因刷新、换浏览器或多实例而漂移。
 

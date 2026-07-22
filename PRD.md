@@ -159,6 +159,11 @@ V1 不承诺 PSD、视频、复杂蒙版、画笔修复、生成式填充、CMYK
 | `POST` | `/api/tool-tasks` | multipart + `Idempotency-Key` 创建任务。 |
 | `GET` | `/api/tool-tasks/:taskId` | 本人任务结果。 |
 | `DELETE` | `/api/tool-tasks/:taskId` | 取消并退款未结算任务。 |
+| `POST` | `/api/asset-uploads` | 创建登录用户专属的单 PUT / multipart S3 直传会话。 |
+| `GET` | `/api/asset-uploads/:id/parts` | 恢复本人已上传分片。 |
+| `POST` | `/api/asset-uploads/:id/parts/:part/sign` | 签发本人分片上传 URL。 |
+| `POST` | `/api/asset-uploads/:id/complete` | 幂等完成、校验并返回既有 asset 结构。 |
+| `DELETE` | `/api/asset-uploads/:id` | 取消并清理暂存对象。 |
 | `GET` | `/api/assets/:assetId` | 本人资产。 |
 | `DELETE` | `/api/assets/:assetId` | 提前删除本人资产。 |
 | `POST` | `/api/editor/transfers` | 创建短时编辑器 transfer。 |
