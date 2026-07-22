@@ -46,7 +46,7 @@ test.describe('email OTP flow', () => {
     });
 
     await page.goto('/login');
-    await page.locator('button.method').first().click();
+    await page.getByRole('button', { name: /邮箱登录|Email Login/i }).click();
     await page.locator('input[type="email"]').fill('friend@example.com');
     await page.locator('button.primary').click();
 
@@ -83,7 +83,7 @@ test.describe('email OTP flow', () => {
     );
 
     await page.goto('/login');
-    await page.locator('button.method').first().click();
+    await page.getByRole('button', { name: /邮箱登录|Email Login/i }).click();
     await page.locator('input[type="email"]').fill('friend@example.com');
     await page.locator('button.primary').click();
 
@@ -114,7 +114,7 @@ test.describe('email OTP flow', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await dialog.locator('button.method').nth(1).click();
+    await dialog.getByRole('button', { name: /账号密码登录|Password Login/i }).click();
     await dialog
       .getByRole('button', { name: /没有账号.*注册|No account.*Register/i })
       .click();
@@ -123,7 +123,7 @@ test.describe('email OTP flow', () => {
     await dialog
       .getByRole('button', { name: /返回登录方式|Back to methods/i })
       .click();
-    await dialog.locator('button.method').first().click();
+    await dialog.getByRole('button', { name: /邮箱登录|Email Login/i }).click();
 
     await expect(dialog.locator('input[autocomplete="new-password"]')).toHaveCount(0);
     await dialog.locator('input[autocomplete="email"]').fill('friend@example.com');

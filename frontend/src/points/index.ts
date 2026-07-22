@@ -89,7 +89,6 @@ export const getPayPackages = async (): Promise<PayPackage[] | null> => {
   try {
     const json: any = await fetchJsonQuery({
       queryKey: ['credits', 'packages'],
-      staleTime: 5 * 60 * 1000,
       request: (signal) => authFetch(PACKAGES_URL, { signal })
     });
     if (!Array.isArray(json?.packages)) return null;
