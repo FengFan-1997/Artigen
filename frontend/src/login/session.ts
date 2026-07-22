@@ -1,5 +1,6 @@
 import { buildApiUrl } from '../utils/api';
 import { authFetch, clearCsrfToken, setCsrfToken } from './authFetch';
+import { clearAuthenticatedServerState, queryClient } from '@/services/serverState';
 
 const STORAGE_KEY_ID = 'app_user_id';
 const STORAGE_KEY_TOKEN = 'app_auth_token';
@@ -185,12 +186,20 @@ export const bootstrapAuthSession = async (opts?: {
   force?: boolean;
 }): Promise<AuthSessionSnapshot> => {
   if (authSessionBootstrapPromise && !opts?.force) return authSessionBootstrapPromise;
+  if (opts?.force) queryClient.removeQueries({ queryKey: ['auth', 'session'], exact: true });
 
   const run = async (): Promise<AuthSessionSnapshot> => {
     const revision = authStateRevision;
     try {
-      const response = await authFetch(buildApiUrl('/api/auth/session'), { method: 'GET' });
-      const json: any = await response.json().catch(() => null);
+      const { response, json } = await queryClient.fetchQuery({
+        queryKey: ['auth', 'session'],
+        staleTime: 15_000,
+        queryFn: async () => {
+          const response = await authFetch(buildApiUrl('/api/auth/session'), { method: 'GET' });
+          const json: any = await response.json().catch(() => null);
+          return { response, json };
+        }
+      });
       if (revision !== authStateRevision) return getAuthSessionSnapshot();
       if (json?.csrfToken) setCsrfToken(json.csrfToken);
       const userId = parseSessionUserId(json);
@@ -234,7 +243,7 @@ export const bootstrapAuthSession = async (opts?: {
 export const startAuthSessionBootstrap = () => {
   if (authSessionBootstrapStarted || typeof window === 'undefined') return;
   authSessionBootstrapStarted = true;
-  Promise.resolve().then(() => void bootstrapAuthSession());
+  Promise.resolve().then(() => void bootstrapAuthSession({ force: true }));
 };
 
 export const initializeAuthSessionForPageLoad = () => {
@@ -254,6 +263,7 @@ export const logoutSession = async () => {
     keepalive: true
   });
   applyGuestSession(true);
+  clearAuthenticatedServerState();
   clearLegacyClientCredentials();
   clearLegacyScriptAuthCookie();
   try {

@@ -1,16 +1,19 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
+import { VueQueryPlugin } from '@tanstack/vue-query';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import './style.css';
 import App from './App.vue';
 import router from './router';
 import { initAnalytics } from '@/utils/analytics';
+import { queryClient } from '@/services/serverState';
 
 const app = createApp(App);
 
 initAnalytics();
 
 app.use(createPinia());
+app.use(VueQueryPlugin, { queryClient });
 app.use(router);
 
 let consoleUiPromise: Promise<void> | null = null;

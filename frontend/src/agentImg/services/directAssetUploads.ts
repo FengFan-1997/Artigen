@@ -28,7 +28,8 @@ const apiError = async (response: Response) => {
     typeof error?.code === 'string' ? error.code : `API_ERROR_${response.status}`,
     {
       field: typeof error?.field === 'string' ? error.field : undefined,
-      retryable: Boolean(error?.retryable)
+      retryable: Boolean(error?.retryable),
+      status: response.status
     }
   );
 };

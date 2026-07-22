@@ -1,3 +1,4 @@
+import Dexie, { type Table } from 'dexie';
 import {
   cancelToolTask,
   createIdempotencyKey,
@@ -8,6 +9,11 @@ import {
   type ServerToolTask,
   type ToolTaskQuote
 } from './toolTasks';
+import {
+  classifyStorageIssue,
+  notifyStorageChanged,
+  reportStorageIssue
+} from './browserStorageEvents';
 
 const DATABASE_NAME = 'artigen-workshop-tasks';
 const DATABASE_VERSION = 1;
@@ -53,41 +59,30 @@ type TaskApi = {
   cancel: typeof cancelToolTask;
 };
 
-const openDatabase = (): Promise<IDBDatabase> =>
-  new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') return reject(new Error('INDEXEDDB_UNAVAILABLE'));
-    const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    request.onerror = () => reject(request.error || new Error('INDEXEDDB_OPEN_FAILED'));
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE_NAME)) {
-        request.result.createObjectStore(STORE_NAME);
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-  });
+class WorkshopTaskDatabase extends Dexie {
+  pending!: Table<StoredPendingWorkshopTask, string>;
 
-const withStore = async <T>(
-  mode: IDBTransactionMode,
-  run: (store: IDBObjectStore) => IDBRequest<T>
-): Promise<T> => {
-  const database = await openDatabase();
-  return new Promise<T>((resolve, reject) => {
-    const transaction = database.transaction(STORE_NAME, mode);
-    const request = run(transaction.objectStore(STORE_NAME));
-    let result: T;
-    const fail = () => {
-      database.close();
-      reject(transaction.error || request.error || new Error('INDEXEDDB_TRANSACTION_FAILED'));
-    };
-    request.onsuccess = () => { result = request.result; };
-    request.onerror = fail;
-    transaction.onerror = fail;
-    transaction.onabort = fail;
-    transaction.oncomplete = () => {
-      database.close();
-      resolve(result);
-    };
-  });
+  constructor() {
+    super(DATABASE_NAME);
+    this.version(DATABASE_VERSION).stores({ [STORE_NAME]: '' });
+    this.on('blocked', () => reportStorageIssue('blocked', DATABASE_NAME));
+    this.on('versionchange', () => {
+      reportStorageIssue('versionchange', DATABASE_NAME);
+      this.close();
+    });
+  }
+}
+
+let workshopDatabase: WorkshopTaskDatabase | null = null;
+const getWorkshopDatabase = () => {
+  if (typeof indexedDB === 'undefined') throw new Error('INDEXEDDB_UNAVAILABLE');
+  if (!workshopDatabase || !workshopDatabase.isOpen()) workshopDatabase = new WorkshopTaskDatabase();
+  return workshopDatabase;
+};
+
+export const closeWorkshopTaskDatabase = () => {
+  workshopDatabase?.close();
+  workshopDatabase = null;
 };
 
 const restoreFile = (stored: StoredWorkshopFile): File => {
@@ -147,29 +142,30 @@ export const deserializePendingWorkshopTask = (
 const persistence: Persistence = {
   async load(slot) {
     try {
-      const stored = await withStore<StoredPendingWorkshopTask | undefined>(
-        'readonly',
-        (store) => store.get(slot)
-      );
+      const stored = await getWorkshopDatabase().pending.get(slot);
       return stored ? deserializePendingWorkshopTask(stored) : null;
-    } catch {
+    } catch (error) {
+      reportStorageIssue(classifyStorageIssue(error), DATABASE_NAME, error);
       return null;
     }
   },
   async save(pending) {
     try {
       const stored = await serializePendingWorkshopTask(pending);
-      await withStore<IDBValidKey>('readwrite', (store) => store.put(stored, pending.slot));
+      await getWorkshopDatabase().pending.put(stored, pending.slot);
+      notifyStorageChanged(DATABASE_NAME, STORE_NAME, pending.slot);
       return true;
-    } catch {
+    } catch (error) {
+      reportStorageIssue(classifyStorageIssue(error), DATABASE_NAME, error);
       return false;
     }
   },
   async clear(slot) {
     try {
-      await withStore<undefined>('readwrite', (store) => store.delete(slot));
-    } catch {
-      // Restricted/private browser modes may disable IndexedDB.
+      await getWorkshopDatabase().pending.delete(slot);
+      notifyStorageChanged(DATABASE_NAME, STORE_NAME, slot);
+    } catch (error) {
+      reportStorageIssue(classifyStorageIssue(error), DATABASE_NAME, error);
     }
   }
 };

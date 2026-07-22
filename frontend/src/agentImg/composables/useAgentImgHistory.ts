@@ -2,6 +2,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 import { buildApiUrl } from '@/utils/api';
 import { ensureGuestUserId } from '@/login/session';
 import { authFetch } from '@/login/authFetch';
+import { fetchJsonQuery } from '@/services/serverState';
 import type { AgentImgPromptResult } from '../types';
 
 export type HistoryItem = {
@@ -271,9 +272,10 @@ export function useAgentImgHistory(
       const userId = String(authUserId.value || '').trim();
       if (!userId || userId.startsWith('guest_') || !isAuthed.value) return false;
       const url = buildApiUrl(`/api/images/history/${encodeURIComponent(userId)}?limit=200`);
-      const res = await authFetch(url);
-      if (!res.ok) return false;
-      const json: any = await res.json().catch(() => null);
+      const json: any = await fetchJsonQuery({
+        queryKey: ['history', userId],
+        request: (signal) => authFetch(url, { signal })
+      });
       const items: any[] = Array.isArray(json?.items) ? json.items : [];
       const mapped = items
         .map((it): HistoryItem | null => {
