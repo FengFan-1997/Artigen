@@ -16,6 +16,8 @@ const { resolveAuthUser } = require('../lib/auth-utils');
 const { getPool, isDatabaseConfigured } = require('../db/pool');
 const billing = require('../services/billing-service');
 const assets = require('../services/asset-storage');
+const assetUploads = require('../services/asset-upload-service');
+const fileInspection = require('../services/file-inspection-service');
 const generationAnalytics = require('../services/generation-analytics-service');
 const {
   createOldPhotoExecutor
@@ -209,44 +211,19 @@ const inspectUploadedFile = async ({
   maxPixels,
   allowedMimeTypes
 }) => {
-  const stat = await fs.promises.stat(tempPath).catch(() => null);
-  if (!stat?.isFile()) throw new ApiError(400, 'MISSING_FILE', { field: 'files' });
-  if (stat.size <= 0) throw new ApiError(400, 'EMPTY_FILE', { field: 'files' });
-  if (stat.size > Number(maxBytes || GLOBAL_MAX_FILE_BYTES)) {
-    throw new ApiError(413, 'FILE_TOO_LARGE', { field: 'files' });
-  }
-  const handle = await fs.promises.open(tempPath, 'r');
-  let header;
-  try {
-    const buffer = Buffer.alloc(64 * 1024);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    header = buffer.subarray(0, bytesRead);
-  } finally {
-    await handle.close();
-  }
-  const mimeType = assets.validateMagicBytes(header, declaredMime);
-  if (
-    Array.isArray(allowedMimeTypes) &&
-    !allowedMimeTypes.map(assets.normalizeMime).includes(mimeType)
-  ) {
-    throw new ApiError(415, 'UNSUPPORTED_FILE_TYPE', { field: 'files' });
-  }
-  const { width, height } = assets.readImageDimensions(header, mimeType);
-  const pixels = Number(width || 0) * Number(height || 0);
-  if (Number(maxPixels || 0) > 0 && mimeType.startsWith('image/') && (!width || !height)) {
-    throw new ApiError(422, 'IMAGE_DIMENSIONS_UNAVAILABLE', { field: 'files' });
-  }
-  if (Number(maxPixels || 0) > 0 && pixels > Number(maxPixels)) {
-    throw new ApiError(413, 'PIXEL_LIMIT_EXCEEDED', { field: 'files' });
-  }
-  const digest = crypto.createHash('sha256');
-  await pipeline(fs.createReadStream(tempPath), digest);
+  const inspected = await fileInspection.inspectFile({
+    tempPath,
+    declaredMime,
+    maxBytes: Number(maxBytes || GLOBAL_MAX_FILE_BYTES),
+    maxPixels,
+    allowedMimeTypes
+  });
   return {
-    byteSize: stat.size,
-    mimeType,
-    width,
-    height,
-    sha256Hex: digest.digest('hex')
+    byteSize: inspected.byteSize,
+    mimeType: inspected.mimeType,
+    width: inspected.width,
+    height: inspected.height,
+    sha256Hex: inspected.sha256.toString('hex')
   };
 };
 
@@ -466,6 +443,18 @@ const validateTaskFields = (fields) => {
 
 const installToolTaskRoutes = (app, deps = {}) => {
   const runtimeEnv = deps.env || process.env;
+  const uploadService = deps.assetUploadService || assetUploads;
+  const createDirectUploadAdapter = () => deps.assetAdapter || new assets.S3AssetAdapter(runtimeEnv);
+  const sweepExpiredUploadSessions = async () => {
+    if (!uploadService.directAssetUploadsEnabled(runtimeEnv, deps.assetAdapter)) {
+      return { claimed: 0, cleaned: 0, failed: 0 };
+    }
+    return uploadService.sweepExpiredUploadSessions({
+      ...(deps.pool ? { pool: deps.pool } : {}),
+      adapter: createDirectUploadAdapter(),
+      env: runtimeEnv
+    });
+  };
   const rateLimit = typeof deps.rateLimit === 'function'
     ? deps.rateLimit
     : () => (_req, _res, next) => next();
@@ -553,7 +542,8 @@ const installToolTaskRoutes = (app, deps = {}) => {
       queue.registerMaintenance({
         releaseExpiredHolds: billing.releaseExpiredHolds,
         sweepExpiredAssets: assets.sweepExpiredAssets,
-        sweepOrphanedFileAssets: assets.sweepOrphanedFileAssets
+        sweepOrphanedFileAssets: assets.sweepOrphanedFileAssets,
+        sweepExpiredUploadSessions
       });
     }
   }
@@ -594,6 +584,7 @@ const installToolTaskRoutes = (app, deps = {}) => {
           console.error('Expired asset sweep completed with failures', summary.failed);
         }
         await assets.sweepOrphanedFileAssets();
+        await sweepExpiredUploadSessions();
       }).catch((error) => {
         console.error('Expired asset sweep failed', error?.code || error?.message || error);
       });
@@ -918,6 +909,102 @@ const installToolTaskRoutes = (app, deps = {}) => {
     } finally {
       await cleanupUpload(parsed);
     }
+  }));
+
+  app.post('/api/asset-uploads', createTaskLimiter, asyncRoute(async (req, res) => {
+    if (!isDatabaseConfigured()) throw new ApiError(503, 'DATABASE_NOT_CONFIGURED', { retryable: true });
+    const auth = requireAuthenticatedUser(req);
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const checked = assertToolOperation(body.toolId, body.operation);
+    if (!checked.ok) {
+      throw new ApiError(checked.code === 'TOOL_NOT_FOUND' ? 404 : 400, checked.code, {
+        field: checked.field
+      });
+    }
+    if (resolveOperationExecution(checked.tool, checked.operation) !== 'server') {
+      throw new ApiError(409, 'LOCAL_EXECUTION_REQUIRED', {
+        details: { toolId: checked.tool.id, operation: checked.operation }
+      });
+    }
+    assertServerTaskImplemented(checked.tool, checked.operation);
+    if (Number(checked.tool.limits?.maxFiles || 0) < 1) {
+      throw new ApiError(409, 'TOOL_INPUT_UPLOAD_NOT_ALLOWED');
+    }
+    const ownerUserId = await resolveDatabaseUserId(auth.dbUserId || auth.userId);
+    const upload = await uploadService.createAssetUploadSession({
+      ...(deps.pool ? { pool: deps.pool } : {}),
+      adapter: createDirectUploadAdapter(),
+      env: runtimeEnv,
+      ownerUserId,
+      idempotencyKey: req.headers?.['idempotency-key'] || body.idempotencyKey,
+      toolId: checked.tool.id,
+      operation: checked.operation,
+      declaredMime: body.mimeType,
+      declaredSize: body.size,
+      maxBytes: Number(checked.tool.limits?.maxFileBytes || GLOBAL_MAX_FILE_BYTES),
+      maxPixels: Number(checked.tool.limits?.maxPixels || 0),
+      allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp'],
+      retentionHours: Math.max(1, Number(checked.tool.privacy?.retentionHours || 1))
+    });
+    return res.status(201).json({ ok: true, upload });
+  }));
+
+  app.get('/api/asset-uploads/:id/parts', apiLimiter, asyncRoute(async (req, res) => {
+    if (!isDatabaseConfigured()) throw new ApiError(503, 'DATABASE_NOT_CONFIGURED', { retryable: true });
+    const auth = requireAuthenticatedUser(req);
+    const ownerUserId = await resolveDatabaseUserId(auth.dbUserId || auth.userId);
+    const parts = await uploadService.listUploadedParts({
+      ...(deps.pool ? { pool: deps.pool } : {}),
+      adapter: createDirectUploadAdapter(),
+      env: runtimeEnv,
+      ownerUserId,
+      sessionId: assertUuid(req.params.id, 'id')
+    });
+    return res.json({ ok: true, parts });
+  }));
+
+  app.post('/api/asset-uploads/:id/parts/:part/sign', apiLimiter, asyncRoute(async (req, res) => {
+    if (!isDatabaseConfigured()) throw new ApiError(503, 'DATABASE_NOT_CONFIGURED', { retryable: true });
+    const auth = requireAuthenticatedUser(req);
+    const ownerUserId = await resolveDatabaseUserId(auth.dbUserId || auth.userId);
+    const signed = await uploadService.signUploadPart({
+      ...(deps.pool ? { pool: deps.pool } : {}),
+      adapter: createDirectUploadAdapter(),
+      env: runtimeEnv,
+      ownerUserId,
+      sessionId: assertUuid(req.params.id, 'id'),
+      partNumber: req.params.part
+    });
+    return res.json({ ok: true, ...signed });
+  }));
+
+  app.post('/api/asset-uploads/:id/complete', createTaskLimiter, asyncRoute(async (req, res) => {
+    if (!isDatabaseConfigured()) throw new ApiError(503, 'DATABASE_NOT_CONFIGURED', { retryable: true });
+    const auth = requireAuthenticatedUser(req);
+    const ownerUserId = await resolveDatabaseUserId(auth.dbUserId || auth.userId);
+    const asset = await uploadService.completeAssetUpload({
+      ...(deps.pool ? { pool: deps.pool } : {}),
+      adapter: createDirectUploadAdapter(),
+      env: runtimeEnv,
+      ownerUserId,
+      sessionId: assertUuid(req.params.id, 'id'),
+      parts: req.body?.parts
+    });
+    return res.json({ ok: true, asset });
+  }));
+
+  app.delete('/api/asset-uploads/:id', apiLimiter, asyncRoute(async (req, res) => {
+    if (!isDatabaseConfigured()) throw new ApiError(503, 'DATABASE_NOT_CONFIGURED', { retryable: true });
+    const auth = requireAuthenticatedUser(req);
+    const ownerUserId = await resolveDatabaseUserId(auth.dbUserId || auth.userId);
+    const upload = await uploadService.cancelAssetUpload({
+      ...(deps.pool ? { pool: deps.pool } : {}),
+      adapter: createDirectUploadAdapter(),
+      env: runtimeEnv,
+      ownerUserId,
+      sessionId: assertUuid(req.params.id, 'id')
+    });
+    return res.json({ ok: true, upload });
   }));
 
   app.get('/api/tool-tasks/:taskId', apiLimiter, asyncRoute(async (req, res) => {

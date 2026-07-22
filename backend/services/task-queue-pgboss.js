@@ -207,6 +207,9 @@ class PgBossTaskQueue {
       if (typeof this.maintenance?.sweepOrphanedFileAssets === 'function') {
         await this.maintenance.sweepOrphanedFileAssets();
       }
+      if (typeof this.maintenance?.sweepExpiredUploadSessions === 'function') {
+        await this.maintenance.sweepExpiredUploadSessions();
+      }
     });
   }
 

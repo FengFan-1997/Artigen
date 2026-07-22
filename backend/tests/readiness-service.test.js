@@ -29,11 +29,13 @@ const migratedRow = Object.freeze({
   has_payloads: true,
   has_events: true,
   has_assets: true,
+  has_upload_sessions: true,
   has_otp_delivery_attempts: true,
   has_latest_migration: true,
   has_task_columns: true,
   has_payload_columns: true,
   has_asset_columns: true,
+  has_upload_session_columns: true,
   has_event_columns: true,
   has_otp_delivery_columns: true,
   has_ai_skus: true,
@@ -147,7 +149,7 @@ test('readiness verifies queue, payload, asset, event, inputs_ready and AI SKU m
     code: null,
     migration: LATEST_REPOSITORY_MIGRATION
   });
-  assert.equal(LATEST_REPOSITORY_MIGRATION, '011_otp_delivery_dispatch_state');
+  assert.equal(LATEST_REPOSITORY_MIGRATION, '012_asset_upload_sessions');
   assert.equal(migrationQueryParam, LATEST_REPOSITORY_MIGRATION);
   assert.deepEqual(await checkDatabase({
     query: async () => ({ rows: [{ ...migratedRow, has_task_columns: false }] })

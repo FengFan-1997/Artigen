@@ -113,18 +113,39 @@ export const createToolTask = async (input: {
   inputAssets?: string[];
   idempotencyKey?: string;
   signal?: AbortSignal;
+  onUploadProgress?: (progress: number) => void;
 }): Promise<ServerToolTask> => {
+  const idempotencyKey = input.idempotencyKey || createIdempotencyKey();
+  let files = input.files?.length ? input.files : input.file ? [input.file] : [];
+  let inputAssets = [...(input.inputAssets || [])];
+  if (files.length) {
+    try {
+      const { uploadTaskAssets } = await import('./directAssetUploads');
+      const uploaded = await uploadTaskAssets({
+        toolId: input.toolId,
+        operation: input.operation,
+        files,
+        taskIdempotencyKey: idempotencyKey,
+        signal: input.signal,
+        onProgress: input.onUploadProgress
+      });
+      inputAssets = [...inputAssets, ...uploaded];
+      files = [];
+    } catch (error) {
+      const { shouldFallbackToMultipart } = await import('./directAssetUploads');
+      if (!shouldFallbackToMultipart(error)) throw error;
+    }
+  }
   const form = new FormData();
   form.set('toolId', input.toolId);
   form.set('operation', input.operation);
   form.set('options', JSON.stringify(input.options || {}));
-  form.set('inputAssets', JSON.stringify(input.inputAssets || []));
+  form.set('inputAssets', JSON.stringify(inputAssets));
   form.set('quoteId', input.quoteId);
-  const files = input.files?.length ? input.files : input.file ? [input.file] : [];
   for (const file of files) form.append('files', file, file.name);
   const response = await authFetch(TASKS_URL, {
     method: 'POST',
-    headers: { 'Idempotency-Key': input.idempotencyKey || createIdempotencyKey() },
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: form,
     signal: input.signal
   });

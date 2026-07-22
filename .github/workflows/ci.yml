@@ -41,7 +41,12 @@ jobs:
       AI_DESIGN_TASK_V2_ENABLED: "true"
       WORKSHOP_AI_TASK_V2_ENABLED: "true"
       AI_GENERATION_CONTRACT_MOCK: "true"
+      TASK_QUEUE_DRIVER: pgboss
       TASK_PAYLOAD_ENCRYPTION_KEY: hex:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+      MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+      MINIO_TEST_BUCKET: artigen-ci
+      MINIO_ROOT_USER: artigen-minio
+      MINIO_ROOT_PASSWORD: artigen-minio-secret
     steps:
       - uses: actions/checkout@v4
 
@@ -59,6 +64,21 @@ jobs:
         run: pnpm check:workspace
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Start pinned MinIO S3 compatibility fixture
+        run: |
+          docker run --detach --name artigen-minio --publish 9000:9000 \
+            --env MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            --env MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            quay.io/minio/minio:RELEASE.2025-09-06T17-38-46Z server /data
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs artigen-minio
+          exit 1
 
       - name: Apply PostgreSQL 16 migrations
         run: pnpm --filter backend db:migrate

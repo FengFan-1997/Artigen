@@ -5,6 +5,7 @@ const net = require('net');
 const { ApiError } = require('../lib/api-error');
 const { fetchWithTimeout } = require('../lib/fetch-utils');
 const defaultAssets = require('./asset-storage');
+const fileInspection = require('./file-inspection-service');
 
 const MAX_IMAGE_BYTES = 40 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 32 * 1000 * 1000;
@@ -235,19 +236,23 @@ const parseDataImage = (reference) => {
   return { buffer, mimeType: match[1].toLowerCase() };
 };
 
-const validateProviderOutputMime = (buffer, declaredMime) => {
+const validateProviderOutputMime = async (buffer, declaredMime) => {
   const declared = String(declaredMime || '').trim().toLowerCase();
   if (![...OUTPUT_MIMES, 'application/octet-stream'].includes(declared)) {
     throw taskError('INVALID_PROVIDER_OUTPUT_TYPE');
   }
-  let detected;
   try {
-    detected = defaultAssets.validateMagicBytes(buffer, declared);
+    const inspected = await fileInspection.inspectBuffer({
+      buffer,
+      declaredMime: declared,
+      allowedMimeTypes: [...OUTPUT_MIMES],
+      maxBytes: MAX_IMAGE_BYTES,
+      maxPixels: MAX_IMAGE_PIXELS
+    });
+    return inspected.mimeType;
   } catch {
     throw taskError('INVALID_PROVIDER_OUTPUT_TYPE');
   }
-  if (!OUTPUT_MIMES.has(detected)) throw taskError('INVALID_PROVIDER_OUTPUT_TYPE');
-  return detected;
 };
 
 const downloadProviderImage = async ({
@@ -289,7 +294,7 @@ const downloadProviderImage = async ({
       throw taskError('FILE_TOO_LARGE', 413);
     }
     const buffer = await readBodyLimited(response.body, { maxBytes: MAX_IMAGE_BYTES, signal });
-    return { buffer, mimeType: validateProviderOutputMime(buffer, declaredMime) };
+    return { buffer, mimeType: await validateProviderOutputMime(buffer, declaredMime) };
   }
   throw taskError('INVALID_PROVIDER_REDIRECT');
 };

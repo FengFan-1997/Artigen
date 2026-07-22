@@ -228,6 +228,7 @@ const checkDatabase = async (pool) => {
          to_regclass('public.tool_task_payloads') IS NOT NULL AS has_payloads,
          to_regclass('public.generation_events') IS NOT NULL AS has_events,
          to_regclass('public.assets') IS NOT NULL AS has_assets,
+         to_regclass('public.asset_upload_sessions') IS NOT NULL AS has_upload_sessions,
          to_regclass('public.otp_delivery_attempts') IS NOT NULL AS has_otp_delivery_attempts,
          EXISTS(
            SELECT 1
@@ -266,6 +267,16 @@ const checkDatabase = async (pool) => {
                 'retention_class','gc_state','delete_requested_at'
               )
          ) AS has_asset_columns,
+         (
+           SELECT count(*) = 10
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='asset_upload_sessions'
+              AND column_name IN (
+                'owner_user_id','idempotency_key','object_key','upload_kind',
+                'provider_upload_id','declared_mime','declared_size','status',
+                'asset_id','expires_at'
+              )
+         ) AS has_upload_session_columns,
          (
            SELECT count(*) = 4
              FROM information_schema.columns
@@ -321,11 +332,13 @@ const checkDatabase = async (pool) => {
       row.has_payloads &&
       row.has_events &&
       row.has_assets &&
+      row.has_upload_sessions &&
       row.has_otp_delivery_attempts &&
       row.has_latest_migration &&
       row.has_task_columns &&
       row.has_payload_columns &&
       row.has_asset_columns &&
+      row.has_upload_session_columns &&
       row.has_event_columns &&
       row.has_otp_delivery_columns
     );

@@ -2,12 +2,11 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
-const { pipeline } = require('stream/promises');
 const { getPool, isDatabaseConfigured } = require('../db/pool');
 const { ApiError } = require('../lib/api-error');
 const { MEMORY_DIR } = require('../utils/storage');
+const fileInspection = require('./file-inspection-service');
 
-const MAGIC_READ_BYTES = 64 * 1024;
 const DEFAULT_MAX_BYTES = 40 * 1024 * 1024;
 const RETENTION_CLASSES = new Set([
   'temporary-input',
@@ -357,6 +356,94 @@ class S3AssetAdapter {
     return { uri: this.uriForKey(key), created: true };
   }
 
+  async signPut({ key, mimeType, byteSize, expiresIn = 15 * 60 }) {
+    const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+    const command = new this.commands.PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ContentType: mimeType,
+      ContentLength: byteSize
+    });
+    return getSignedUrl(this.client, command, { expiresIn });
+  }
+
+  async createMultipart({ key, mimeType }) {
+    const response = await this.client.send(new this.commands.CreateMultipartUploadCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ContentType: mimeType
+    }));
+    if (!response.UploadId) throw new ApiError(502, 'MULTIPART_CREATE_FAILED', { retryable: true });
+    return response.UploadId;
+  }
+
+  async signPart({ key, uploadId, partNumber, expiresIn = 15 * 60 }) {
+    const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+    const command = new this.commands.UploadPartCommand({
+      Bucket: this.bucket,
+      Key: key,
+      UploadId: uploadId,
+      PartNumber: partNumber
+    });
+    return getSignedUrl(this.client, command, { expiresIn });
+  }
+
+  async listParts({ key, uploadId }) {
+    const response = await this.client.send(new this.commands.ListPartsCommand({
+      Bucket: this.bucket,
+      Key: key,
+      UploadId: uploadId,
+      MaxParts: 1000
+    }));
+    return (response.Parts || []).map((part) => ({
+      partNumber: Number(part.PartNumber),
+      etag: String(part.ETag || ''),
+      size: Number(part.Size || 0)
+    }));
+  }
+
+  async completeMultipart({ key, uploadId, parts }) {
+    await this.client.send(new this.commands.CompleteMultipartUploadCommand({
+      Bucket: this.bucket,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: {
+        Parts: parts.map((part) => ({
+          ETag: part.etag,
+          PartNumber: part.partNumber
+        }))
+      }
+    }));
+  }
+
+  async abortMultipart({ key, uploadId }) {
+    if (!uploadId) return;
+    await this.client.send(new this.commands.AbortMultipartUploadCommand({
+      Bucket: this.bucket,
+      Key: key,
+      UploadId: uploadId
+    }));
+  }
+
+  async openKey(key) {
+    return this.open(this.uriForKey(key));
+  }
+
+  async deleteKey(key) {
+    return this.delete(this.uriForKey(key));
+  }
+
+  async copyKey({ sourceKey, key, mimeType }) {
+    await this.client.send(new this.commands.CopyObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      CopySource: `${this.bucket}/${sourceKey}`,
+      ContentType: mimeType,
+      MetadataDirective: 'REPLACE'
+    }));
+    return { uri: this.uriForKey(key), created: true };
+  }
+
   async replaceFile(input) {
     return this.putFile(input);
   }
@@ -440,23 +527,6 @@ const assertAssetOwner = (row, ownerUserId) => {
   }
 };
 
-const sha256File = async (filePath) => {
-  const hash = crypto.createHash('sha256');
-  await pipeline(fs.createReadStream(filePath), hash);
-  return hash.digest();
-};
-
-const readHeader = async (filePath) => {
-  const handle = await fs.promises.open(filePath, 'r');
-  try {
-    const buffer = Buffer.alloc(MAGIC_READ_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return buffer.subarray(0, bytesRead);
-  } finally {
-    await handle.close();
-  }
-};
-
 const toReadable = (body) => {
   if (body && typeof body.pipe === 'function') return body;
   if (body && typeof body.transformToWebStream === 'function') {
@@ -508,6 +578,9 @@ const verifyStoredObject = async ({ adapter, uri, sha256, byteSize }) => {
 };
 
 const writeAssetObject = async ({ adapter, input, key, mimeType, byteSize, replace }) => {
+  if (input.sourceKey && typeof adapter.copyKey === 'function') {
+    return adapter.copyKey({ sourceKey: input.sourceKey, key, mimeType, byteSize, replace });
+  }
   if (Buffer.isBuffer(input.buffer)) {
     const method = replace && typeof adapter.replaceBuffer === 'function'
       ? adapter.replaceBuffer.bind(adapter)
@@ -539,44 +612,28 @@ const storeAsset = async (input = {}) => {
   }
   const adapter = input.adapter || getAssetAdapter();
   const maxBytes = Math.max(1, Number(input.maxBytes || DEFAULT_MAX_BYTES));
-  let byteSize;
-  let header;
-  let sha256;
+  let inspected;
   if (Buffer.isBuffer(input.buffer)) {
-    byteSize = input.buffer.length;
-    header = input.buffer.subarray(0, MAGIC_READ_BYTES);
-    sha256 = crypto.createHash('sha256').update(input.buffer).digest();
+    inspected = await fileInspection.inspectBuffer({
+      buffer: input.buffer,
+      declaredMime: input.declaredMime,
+      maxBytes,
+      maxPixels: input.maxPixels,
+      allowedMimeTypes: input.allowedMimeTypes
+    });
   } else if (input.tempPath) {
-    const stat = await fs.promises.stat(input.tempPath).catch(() => null);
-    if (!stat || !stat.isFile()) throw new ApiError(400, 'MISSING_FILE', { field: 'files' });
-    byteSize = stat.size;
-    header = await readHeader(input.tempPath);
-    sha256 = await sha256File(input.tempPath);
+    inspected = await fileInspection.inspectFile({
+      tempPath: input.tempPath,
+      declaredMime: input.declaredMime,
+      maxBytes,
+      maxPixels: input.maxPixels,
+      allowedMimeTypes: input.allowedMimeTypes
+    });
   } else {
     throw new ApiError(400, 'MISSING_FILE', { field: 'files' });
   }
-  if (byteSize <= 0) throw new ApiError(400, 'EMPTY_FILE', { field: 'files' });
-  if (byteSize > maxBytes) throw new ApiError(413, 'FILE_TOO_LARGE', { field: 'files' });
-
-  const mimeType = validateMagicBytes(header, input.declaredMime);
-  if (
-    Array.isArray(input.allowedMimeTypes) &&
-    !input.allowedMimeTypes.map(normalizeMime).includes(mimeType)
-  ) {
-    throw new ApiError(415, 'UNSUPPORTED_FILE_TYPE', { field: 'files' });
-  }
-  const dimensions = readImageDimensions(header, mimeType);
-  const pixels = Number(dimensions.width || 0) * Number(dimensions.height || 0);
-  if (
-    Number(input.maxPixels || 0) > 0 &&
-    mimeType.startsWith('image/') &&
-    (!dimensions.width || !dimensions.height)
-  ) {
-    throw new ApiError(422, 'IMAGE_DIMENSIONS_UNAVAILABLE', { field: 'files' });
-  }
-  if (Number(input.maxPixels || 0) > 0 && pixels > Number(input.maxPixels)) {
-    throw new ApiError(413, 'PIXEL_LIMIT_EXCEEDED', { field: 'files' });
-  }
+  const { byteSize, mimeType, sha256 } = inspected;
+  const dimensions = { width: inspected.width, height: inspected.height };
 
   const owner = input.ownerUserId ? String(input.ownerUserId) : 'guest';
   const shaHex = sha256.toString('hex');
