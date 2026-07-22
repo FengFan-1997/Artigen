@@ -240,11 +240,12 @@ export const startAuthSessionBootstrap = () => {
 export const initializeAuthSessionForPageLoad = () => {
   if (typeof window === 'undefined') return;
   const storedUserId = getCurrentUserId();
-  if (storedUserId && !storedUserId.startsWith('guest_')) {
-    startAuthSessionBootstrap();
-    return;
-  }
-  applyGuestSession();
+  if (!storedUserId || storedUserId.startsWith('guest_')) applyGuestSession();
+  // The authoritative session is carried by an HttpOnly cookie. A browser may
+  // legitimately have no local user id (or only an anonymous workspace id)
+  // after storage cleanup, so every page load must still ask the server to
+  // restore the cookie-backed identity.
+  startAuthSessionBootstrap();
 };
 
 export const logoutSession = async () => {

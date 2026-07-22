@@ -171,9 +171,14 @@ describe('cookie-session client compatibility', () => {
     });
   });
 
-  it('does not contact the backend for a new anonymous page load', async () => {
+  it('checks the cookie-backed session for a new anonymous page load', async () => {
     const localStorage = createStorage();
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ ok: true, authenticated: false, userId: null, user: null }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
     vi.stubGlobal('window', {
       localStorage,
       location: { origin: 'https://app.example', protocol: 'https:', host: 'app.example' },
@@ -182,9 +187,12 @@ describe('cookie-session client compatibility', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     initializeAuthSessionForPageLoad();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', {
+      method: 'GET',
+      credentials: 'include'
+    });
     expect(getAuthSessionSnapshot()).toEqual({
       authenticated: false,
       userId: '',
