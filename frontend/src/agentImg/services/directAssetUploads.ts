@@ -6,6 +6,13 @@ import { ToolTaskClientError } from './toolTasks';
 
 const SINGLE_PUT_LIMIT = 16 * 1024 * 1024;
 const MULTIPART_PART_SIZE = 8 * 1024 * 1024;
+const headlessUppyLogger = {
+  debug: () => {},
+  warn: () => {},
+  // The caller converts failures into the existing task UI and analytics.
+  // Avoid a second, unhandled-looking console error during graceful fallback.
+  error: () => {}
+};
 
 type UploadSession = {
   id: string;
@@ -73,16 +80,25 @@ const assertAsset = (raw: any): UploadedAsset => {
 
 export const shouldFallbackToMultipart = (error: unknown) => {
   if (error instanceof TypeError) return true;
-  const code = error instanceof ToolTaskClientError ? error.code : '';
+  // Uppy exposes plugin failures as either the original Error or a file-level
+  // string. Preserve the rollout fallback in both cases.
+  const code = error instanceof ToolTaskClientError
+    ? error.code
+    : typeof error === 'string'
+      ? error
+      : error instanceof Error
+        ? error.message
+        : '';
   return new Set([
     'DIRECT_ASSET_UPLOADS_DISABLED',
     'S3_NOT_CONFIGURED',
     'ASSET_STORAGE_NOT_CONFIGURED',
+    'INVALID_ASSET_UPLOAD_RESPONSE',
     'API_ERROR_404',
     'API_ERROR_405',
     'API_ERROR_501',
     'API_ERROR_503'
-  ]).has(code);
+  ]).has(code.trim());
 };
 
 export const uploadTaskAssets = async (input: {
@@ -125,6 +141,7 @@ export const uploadTaskAssets = async (input: {
     id: `artigen-task-assets-${Date.now().toString(36)}`,
     autoProceed: false,
     allowMultipleUploadBatches: false,
+    logger: headlessUppyLogger,
     restrictions: { maxNumberOfFiles: input.files.length }
   });
   const awsOptions: AwsS3Options<Meta, Body> = {

@@ -8,7 +8,7 @@
 
 | 指标 | 升级前 | 当前分支 | 结果 |
 | --- | ---: | ---: | --- |
-| 前端单测 | 53 files / 195 tests | 56 files / 203 tests | 新增 Dexie、codec 和上传覆盖，不删除旧覆盖 |
+| 前端单测 | 53 files / 195 tests | 57 files / 204 tests | 新增 Dexie、codec 和上传覆盖，不删除旧覆盖 |
 | 后端单测 | 300 tests | 301 tests（本地 264 pass / 37 integration skips） | PostgreSQL/MinIO 用例由 CI 提供服务后执行 |
 | 首屏 JavaScript gzip | 75.6 KiB | 85.3 KiB | +9.7 KiB，低于 250 KiB 门禁 |
 | 生产构建墙钟 | 17.57 s | 17.19 s | 无明显回退 |
