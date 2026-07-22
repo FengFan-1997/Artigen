@@ -43,5 +43,10 @@ export default defineConfig({
         }
       }
     }
+  },
+  worker: {
+    // Codec workers lazy-load jSquash WASM, which requires an ES module worker
+    // bundle so Rollup can preserve worker-local code splitting.
+    format: 'es'
   }
 });

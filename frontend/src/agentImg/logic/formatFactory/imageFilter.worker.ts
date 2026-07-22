@@ -1,5 +1,7 @@
 /// <reference lib="webworker" />
 
+import { assertCodecDimensions, encodeCodecPixels } from './codecPipeline';
+
 export type ImageFilterWorkerRequest = {
   type: 'process';
   jobId: string;
@@ -23,9 +25,6 @@ export type ImageFilterWorkerResponse =
       jobId: string;
       error: string;
     };
-
-const MAX_CANVAS_DIMENSION = 16384;
-const MAX_CANVAS_PIXELS = 50_000_000;
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
@@ -71,16 +70,8 @@ self.onmessage = async (event: MessageEvent<ImageFilterWorkerRequest>) => {
 
   let bitmap: ImageBitmap | null = null;
   try {
-    bitmap = await createImageBitmap(request.file);
-    const width = Math.max(1, Math.floor(bitmap.width));
-    const height = Math.max(1, Math.floor(bitmap.height));
-    if (
-      width > MAX_CANVAS_DIMENSION ||
-      height > MAX_CANVAS_DIMENSION ||
-      width * height > MAX_CANVAS_PIXELS
-    ) {
-      throw new Error('CANVAS_TOO_LARGE');
-    }
+    bitmap = await createImageBitmap(request.file, { imageOrientation: 'from-image' });
+    const { width, height } = assertCodecDimensions(bitmap.width, bitmap.height);
 
     const canvas = new OffscreenCanvas(width, height);
     const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -88,13 +79,11 @@ self.onmessage = async (event: MessageEvent<ImageFilterWorkerRequest>) => {
     context.drawImage(bitmap, 0, 0, width, height);
     const imageData = context.getImageData(0, 0, width, height);
     applyFilter(imageData.data, request.preset, request.intensity);
-    context.putImageData(imageData, 0, 0);
-
-    const blob = await canvas.convertToBlob({
-      type: request.outType,
-      quality: request.outType === 'image/png' ? undefined : request.quality
-    });
-    if (!blob.size) throw new Error('IMAGE_OUTPUT_INVALID');
+    const blob = await encodeCodecPixels(
+      { width, height, data: imageData.data },
+      request.outType,
+      request.quality
+    );
     const response: ImageFilterWorkerResponse = {
       type: 'success',
       jobId: request.jobId,
