@@ -24,6 +24,10 @@ const {
   resolveAdminFinancialDataSource
 } = require('../services/admin-finance-service');
 const {
+  AdminOperationsError,
+  createAdminOperationsService
+} = require('../services/admin-operations-service');
+const {
   readJson,
   USERS_FILE,
   CHATS_FILE,
@@ -140,6 +144,17 @@ const respondAdminFinanceError = (res, error, routeName) => {
   return res.status(500).json({ error: 'Internal Server Error' });
 };
 
+const respondAdminOperationsError = (res, error, routeName) => {
+  if (error instanceof AdminAuthorizationError) {
+    return res.status(error.status || 403).json({ error: error.code || 'ADMIN_AUTH_FORBIDDEN' });
+  }
+  if (error instanceof AdminOperationsError) {
+    return res.status(error.status || 400).json({ error: error.code || 'ADMIN_OPERATIONS_ERROR' });
+  }
+  console.error(`Error in ${routeName}:`, error);
+  return res.status(500).json({ error: 'ADMIN_OPERATIONS_UNAVAILABLE' });
+};
+
 const installAdminRoutes = (app) => {
   app.use('/api/admin', async (req, res, next) => {
     const path = String(req.originalUrl || req.url || req.path || '').split('?')[0];
@@ -213,6 +228,104 @@ const installAdminRoutes = (app) => {
       }
       console.error('Error in POST /api/admin/login:', e);
       return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
+
+  app.get('/api/admin/me', rateLimit('admin_me', { max: 120, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      const principal =
+        res.locals.adminPrincipal ||
+        (isDatabaseConfigured()
+          ? await requireActiveAdministrator({ req, minimumRole: 'operator' })
+          : { username: resolveAdminActor(req), role: 'owner', legacy: true });
+      return res.json({
+        ok: true,
+        principal: {
+          username: String(principal.username || 'admin'),
+          role: String(principal.role || 'operator'),
+          legacy: Boolean(principal.legacy)
+        }
+      });
+    } catch (error) {
+      return respondAdminOperationsError(res, error, 'GET /api/admin/me');
+    }
+  });
+
+  app.get('/api/admin/overview', rateLimit('admin_overview', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      if (!isDatabaseConfigured()) {
+        return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
+      }
+      await requireActiveAdministrator({ req, minimumRole: 'operator' });
+      const overview = await createAdminOperationsService().getOverview();
+      return res.json({ ok: true, overview });
+    } catch (error) {
+      return respondAdminOperationsError(res, error, 'GET /api/admin/overview');
+    }
+  });
+
+  app.get('/api/admin/credits/ledger', rateLimit('admin_credits_ledger', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      if (!isDatabaseConfigured()) {
+        return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
+      }
+      await requireActiveAdministrator({ req, minimumRole: 'operator' });
+      const result = await createAdminOperationsService().listCreditLedger({
+        userId: req.query.userId,
+        entryType: req.query.entryType,
+        from: req.query.from,
+        to: req.query.to,
+        limit: req.query.limit,
+        offset: req.query.offset
+      });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      return respondAdminOperationsError(res, error, 'GET /api/admin/credits/ledger');
+    }
+  });
+
+  app.get('/api/admin/audit/events', rateLimit('admin_audit_events', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      if (!isDatabaseConfigured()) {
+        return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
+      }
+      await requireActiveAdministrator({ req, minimumRole: 'operator' });
+      const result = await createAdminOperationsService().listAuditEvents({
+        actor: req.query.actor,
+        eventType: req.query.eventType,
+        targetType: req.query.targetType,
+        from: req.query.from,
+        to: req.query.to,
+        limit: req.query.limit,
+        offset: req.query.offset
+      });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      return respondAdminOperationsError(res, error, 'GET /api/admin/audit/events');
+    }
+  });
+
+  app.post('/api/admin/users/status', rateLimit('admin_user_status', { max: 30, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      if (!isDatabaseConfigured()) {
+        return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
+      }
+      const principal = await requireActiveAdministrator({ req, minimumRole: 'admin' });
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const user = await createAdminOperationsService().updateUserStatus({
+        userId: body.userId,
+        status: body.status,
+        actorUserId: principal.actorUserId,
+        requestId: String(res?.locals?.requestId || '').trim()
+      });
+      return res.json({ ok: true, user });
+    } catch (error) {
+      return respondAdminOperationsError(res, error, 'POST /api/admin/users/status');
     }
   });
 
@@ -291,6 +404,7 @@ const installAdminRoutes = (app) => {
                 : isGuest
                   ? 'Guest'
                   : '',
+            status: typeof u?.status === 'string' ? u.status : 'active',
             createdAt,
             lastSeen,
             visits

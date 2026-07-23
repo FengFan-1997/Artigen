@@ -13,11 +13,13 @@ const ADMIN_KEY_STORAGE_KEY = 'console_admin_key_v1';
 const ADMIN_AUTH_MODE_STORAGE_KEY = 'console_admin_auth_mode_v1';
 
 type AdminAuthMode = 'bearer' | 'x-admin-key';
+export type AdminRole = 'operator' | 'admin' | 'owner' | 'development';
 
 export type ConsoleAuthSession = {
   userId: string;
   expiresAt: number;
   authHash: string;
+  role?: AdminRole;
 };
 
 let consoleAuthSession: ConsoleAuthSession | null = null;
@@ -57,7 +59,13 @@ export const setConsoleAuthSession = (session: ConsoleAuthSession) => {
   const authHash = String(session.authHash || '').trim();
   const expiresAt = Number(session.expiresAt || 0);
   if (!userId || !authHash || !Number.isFinite(expiresAt)) throw new Error('INVALID_SESSION');
-  consoleAuthSession = { userId, authHash, expiresAt };
+  const role = String(session.role || '').trim() as AdminRole;
+  consoleAuthSession = {
+    userId,
+    authHash,
+    expiresAt,
+    ...(role ? { role } : {})
+  };
 };
 
 export const clearConsoleAuthSession = () => {
@@ -165,10 +173,94 @@ export type AdminUserItem = {
   email: string;
   username: string;
   name: string;
+  status: 'active' | 'disabled' | 'deleted';
   createdAt: number;
   lastSeen: number;
   visits: number;
   wallet?: AdminWallet | null;
+};
+
+export type AdminPrincipal = {
+  username: string;
+  role: AdminRole;
+  legacy?: boolean;
+};
+
+export type AdminOverview = {
+  users: { total: number; new7d: number; active24h: number };
+  credits: {
+    available: number;
+    frozen: number;
+    ledgerEntries24h: number;
+    overdueHolds: number;
+  };
+  commerce: { orders7d: number; revenueMinor7d: number };
+  generation: { tasks24h: number; success24h: number; failed24h: number };
+  behavior: { events24h: number; pageViews24h: number; clicks24h: number };
+  audit: { events24h: number };
+  generatedAt: number;
+};
+
+export type AdminCreditLedgerItem = {
+  id: string;
+  userId: string;
+  username?: string;
+  email?: string;
+  entryType: string;
+  deltaAvailable: number;
+  deltaFrozen: number;
+  balanceAvailable: number;
+  balanceFrozen: number;
+  referenceType?: string;
+  referenceId?: string;
+  idempotencyKey?: string;
+  createdAt: number;
+};
+
+export type AdminBehaviorEvent = {
+  id: string;
+  eventId: string;
+  eventType: string;
+  category: string;
+  path: string;
+  action?: string;
+  element?: string;
+  properties?: Record<string, any>;
+  userId?: string;
+  userRef?: string;
+  username?: string;
+  email?: string;
+  sessionRef?: string;
+  projectRef?: string;
+  deviceCategory?: string;
+  occurredAt?: string;
+  ts: number;
+};
+
+export type AdminBehaviorSummary = {
+  days: number;
+  totals: { events: number; pageViews: number; clicks: number; activeUsers: number };
+  daily: Array<{
+    day: string;
+    events: number;
+    pageViews: number;
+    clicks: number;
+    activeUsers: number;
+  }>;
+  topPages: Array<{ key: string; count: number }>;
+  topActions: Array<{ key: string; count: number }>;
+};
+
+export type AdminDatabaseAuditEvent = {
+  id: string;
+  eventType: string;
+  targetType?: string;
+  targetId?: string;
+  requestId?: string;
+  metadata?: Record<string, any>;
+  actorId: string;
+  actorName: string;
+  createdAt: number;
 };
 
 export type AdminImageRef = { kind: 'url'; url: string } | { kind: 'data'; mime?: string };
@@ -413,8 +505,6 @@ export const useConsoleStore = defineStore('console', {
     adminEvents: [] as AdminAnalyticsEventItem[],
     adminEventsTotal: 0,
     generationFunnel: null as GenerationFunnel | null,
-    adminBehaviorEvents: [] as AdminAnalyticsEventItem[],
-    adminBehaviorTotal: 0,
     adminAudit: [] as AdminAuditHistoryItem[],
     adminAuditTotal: 0,
     adminChats: [] as any[],
@@ -422,6 +512,15 @@ export const useConsoleStore = defineStore('console', {
     adminOrders: [] as any[],
     adminOrdersTotal: 0,
     adminRateLimitStats: null as AdminRateLimitStats | null,
+    adminPrincipal: null as AdminPrincipal | null,
+    adminOverview: null as AdminOverview | null,
+    adminCreditLedger: [] as AdminCreditLedgerItem[],
+    adminCreditLedgerTotal: 0,
+    adminBehaviorEvents: [] as AdminBehaviorEvent[],
+    adminBehaviorTotal: 0,
+    adminBehaviorSummary: null as AdminBehaviorSummary | null,
+    adminDatabaseAudit: [] as AdminDatabaseAuditEvent[],
+    adminDatabaseAuditTotal: 0,
     isInitialized: false
   }),
 
@@ -497,6 +596,7 @@ export const useConsoleStore = defineStore('console', {
 
       const token = String(json?.token || '').trim();
       const expiresAt = Number(json?.expiresAt || 0) || 0;
+      const role = String(json?.role || 'development').trim() as AdminRole;
       if (!token || !Number.isFinite(expiresAt) || expiresAt <= Date.now())
         throw new Error('LOGIN_FAILED');
 
@@ -504,7 +604,8 @@ export const useConsoleStore = defineStore('console', {
       queryClient.removeQueries({ queryKey: ['console'] });
       this.adminAuthMode = 'bearer';
       setConsoleAdminAuthMode('bearer');
-      return { ok: true as const, token, expiresAt };
+      this.adminPrincipal = { username, role };
+      return { ok: true as const, token, expiresAt, role };
     },
 
     setAdminKey(key: string, mode: AdminAuthMode = 'bearer') {
@@ -525,7 +626,38 @@ export const useConsoleStore = defineStore('console', {
       clearConsoleAuthSession();
       this.adminKey = '';
       this.adminAuthMode = 'bearer';
+      this.adminPrincipal = null;
+      this.adminOverview = null;
       queryClient.removeQueries({ queryKey: ['console'] });
+    },
+
+    async fetchAdminPrincipal() {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const json = await fetchAdminJson(buildApiUrl('/api/admin/me'), headers, () =>
+        this.clearAdminKey()
+      );
+      const principal: AdminPrincipal = {
+        username: String(json?.principal?.username || 'admin'),
+        role: String(json?.principal?.role || 'operator') as AdminRole,
+        legacy: Boolean(json?.principal?.legacy)
+      };
+      this.adminPrincipal = principal;
+      return { ok: true as const, principal };
+    },
+
+    async fetchAdminOverview() {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const json = await fetchAdminJson(buildApiUrl('/api/admin/overview'), headers, () =>
+        this.clearAdminKey()
+      );
+      this.adminOverview = json.overview as AdminOverview;
+      return { ok: true as const, overview: this.adminOverview };
     },
 
     async fetchAdminUsers(input?: { q?: string; limit?: number; offset?: number }) {
@@ -617,21 +749,119 @@ export const useConsoleStore = defineStore('console', {
       this.generationFunnel = json.funnel as GenerationFunnel;
       return { ok: true as const, funnel: this.generationFunnel };
     },
-    async fetchAdminEvents(input?: { userId?: string; limit?: number; offset?: number }) {
+    async fetchAdminBehaviorEvents(input?: {
+      userId?: string;
+      eventType?: string;
+      path?: string;
+      action?: string;
+      from?: number | string;
+      to?: number | string;
+      limit?: number;
+      offset?: number;
+    }) {
       const adminKey = String(this.adminKey || '').trim();
       if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
       const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
-      const url = buildUrlWithQuery('/api/admin/events', {
+      const url = buildUrlWithQuery('/api/admin/behavior/events', {
         userId: input?.userId || '',
+        eventType: input?.eventType || '',
+        path: input?.path || '',
+        action: input?.action || '',
+        from: input?.from,
+        to: input?.to,
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
       const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
-      const items: AdminAnalyticsEventItem[] = Array.isArray(json?.items) ? json.items : [];
+      const items: AdminBehaviorEvent[] = Array.isArray(json?.items)
+        ? json.items.map((item: any) => ({
+            ...item,
+            id: String(item?.id || item?.eventId || ''),
+            eventId: String(item?.eventId || item?.id || ''),
+            eventType: String(item?.eventType || 'event'),
+            category: String(item?.category || 'interaction'),
+            path: String(item?.path || ''),
+            ts:
+              Number(item?.ts || 0) ||
+              new Date(item?.occurredAt || item?.timestamp || 0).getTime() ||
+              0
+          }))
+        : [];
       this.adminBehaviorEvents = items;
       this.adminBehaviorTotal = Number(json?.total || items.length) || items.length;
       return { ok: true as const, total: this.adminBehaviorTotal };
+    },
+
+    async fetchAdminEvents(input?: { userId?: string; limit?: number; offset?: number }) {
+      return this.fetchAdminBehaviorEvents(input);
+    },
+
+    async fetchAdminBehaviorSummary(days = 14) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/behavior/summary', { days });
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
+      this.adminBehaviorSummary = json.summary as AdminBehaviorSummary;
+      return { ok: true as const, summary: this.adminBehaviorSummary };
+    },
+
+    async fetchAdminCreditLedger(input?: {
+      userId?: string;
+      entryType?: string;
+      from?: number | string;
+      to?: number | string;
+      limit?: number;
+      offset?: number;
+    }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/credits/ledger', {
+        userId: input?.userId || '',
+        entryType: input?.entryType || '',
+        from: input?.from,
+        to: input?.to,
+        limit: input?.limit ?? 200,
+        offset: input?.offset ?? 0
+      });
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
+      const items: AdminCreditLedgerItem[] = Array.isArray(json?.items) ? json.items : [];
+      this.adminCreditLedger = items;
+      this.adminCreditLedgerTotal = Number(json?.total || items.length) || items.length;
+      return { ok: true as const, total: this.adminCreditLedgerTotal };
+    },
+
+    async fetchAdminDatabaseAudit(input?: {
+      actor?: string;
+      eventType?: string;
+      targetType?: string;
+      from?: number | string;
+      to?: number | string;
+      limit?: number;
+      offset?: number;
+    }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/audit/events', {
+        actor: input?.actor || '',
+        eventType: input?.eventType || '',
+        targetType: input?.targetType || '',
+        from: input?.from,
+        to: input?.to,
+        limit: input?.limit ?? 200,
+        offset: input?.offset ?? 0
+      });
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
+      const items: AdminDatabaseAuditEvent[] = Array.isArray(json?.items) ? json.items : [];
+      this.adminDatabaseAudit = items;
+      this.adminDatabaseAuditTotal = Number(json?.total || items.length) || items.length;
+      return { ok: true as const, total: this.adminDatabaseAuditTotal };
     },
 
     async fetchAdminAuditHistory(input?: {
@@ -745,6 +975,38 @@ export const useConsoleStore = defineStore('console', {
       );
       void queryClient.invalidateQueries({ queryKey: ['console'] });
       return { ok: true as const, wallet };
+    },
+
+    async setAdminUserStatus(input: {
+      userId: string;
+      status: 'active' | 'disabled';
+    }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const userId = String(input?.userId || '').trim();
+      if (!userId) throw new Error('MISSING_USER_ID');
+
+      const url = buildApiUrl('/api/admin/users/status');
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ userId, status: input.status })
+      });
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
+        throw toAdminRequestError(res, json);
+      }
+      const user = json?.user && typeof json.user === 'object' ? json.user : null;
+      if (user) {
+        this.adminUsers = this.adminUsers.map((item) =>
+          item.userId === userId ? { ...item, ...user } : item
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: ['console'] });
+      return { ok: true as const, user };
     },
 
     async fetchAdminOrders(input: { userId: string; limit?: number; offset?: number }) {

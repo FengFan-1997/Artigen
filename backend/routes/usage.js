@@ -1,5 +1,6 @@
 const { opaqueReference } = require('../lib/privacy-metadata');
 const generationAnalytics = require('../services/generation-analytics-service');
+const behaviorEvents = require('../services/behavior-event-service');
 
 const installUsageRoutes = (app, deps) => {
   const rateLimit = deps?.rateLimit;
@@ -38,6 +39,22 @@ const installUsageRoutes = (app, deps) => {
             eventType: item.event_type,
             occurredAt: item.occurred_at
           } : null
+        });
+      }
+      if (behaviorEvents.usesBehaviorEventStore()) {
+        const result = await behaviorEvents.insertBehaviorEvent({
+          body,
+          req,
+          getClientIp
+        });
+        return res.status(202).json({
+          ok: true,
+          duplicate: result.duplicate,
+          item: {
+            id: String(result.item.event_id || result.item.id || ''),
+            eventType: String(result.item.event_type || eventType),
+            occurredAt: result.item.occurred_at
+          }
         });
       }
       const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
@@ -108,12 +125,26 @@ const installUsageRoutes = (app, deps) => {
     }
   });
 
-  app.get('/api/admin/collection/events', rateLimit('admin_collection_events', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  const listAdminBehaviorEvents = async (req, res) => {
     try {
       if (!assertAdmin(req, res)) return;
       const limit = clampInt(req.query.limit, 50, 2000);
       const offset = clampInt(req.query.offset, 0, 2000000);
       const eventType = String(req.query.eventType || '').trim().toLowerCase();
+
+      if (behaviorEvents.usesBehaviorEventStore()) {
+        const result = await behaviorEvents.listBehaviorEvents({
+          userId: req.query.userId,
+          eventType,
+          path: req.query.path,
+          action: req.query.action,
+          from: req.query.from,
+          to: req.query.to,
+          limit,
+          offset
+        });
+        return res.json({ ok: true, source: 'postgres', ...result });
+      }
 
       const store = readAnalyticsEventsStore();
       const all = store.items
@@ -125,7 +156,38 @@ const installUsageRoutes = (app, deps) => {
       console.error('Error in GET /api/admin/collection/events:', e);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
-  });
+  };
+
+  app.get(
+    '/api/admin/collection/events',
+    rateLimit('admin_collection_events', { max: 60, windowMs: 60 * 1000 }),
+    listAdminBehaviorEvents
+  );
+  app.get(
+    '/api/admin/behavior/events',
+    rateLimit('admin_behavior_events', { max: 60, windowMs: 60 * 1000 }),
+    listAdminBehaviorEvents
+  );
+
+  app.get(
+    '/api/admin/behavior/summary',
+    rateLimit('admin_behavior_summary', { max: 60, windowMs: 60 * 1000 }),
+    async (req, res) => {
+      try {
+        if (!assertAdmin(req, res)) return;
+        if (!behaviorEvents.usesBehaviorEventStore()) {
+          return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
+        }
+        const summary = await behaviorEvents.getBehaviorSummary({
+          days: clampInt(req.query.days, 14, 90)
+        });
+        return res.json({ ok: true, summary });
+      } catch (error) {
+        console.error('Error in GET /api/admin/behavior/summary:', error);
+        return res.status(500).json({ error: 'BEHAVIOR_ANALYTICS_UNAVAILABLE' });
+      }
+    }
+  );
 
   app.post('/api/usage/ingest', rateLimit('usage_ingest', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
     try {
