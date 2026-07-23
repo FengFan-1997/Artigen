@@ -124,7 +124,7 @@ main @ 380a2b1
 | 数据库 | `artigen_dev` | `dev_artigen` | `neondb` |
 | 数据隔离 | 本机 PostgreSQL | 独立数据库；与生产共享 Neon 项目计算资源 | 生产数据库 |
 | 图片 | 本机 file | Render 临时 file | S3 兼容共享对象存储 |
-| 访问 | 本机 | HTTP Basic 访问门 | 公开站点 |
+| 访问 | 本机 | HTTP Basic 首次认证 + 短时安全 Cookie | 公开站点 |
 | 支付 | 关闭 | 关闭 | 已配置；真实扣款最终验收仍需谨慎 |
 | 邮件 OTP | 默认关闭 | 关闭 | 签名 HTTPS 中继 |
 | 收费 AI | 默认关闭 | 关闭 | 通过功能门禁启用 |
@@ -233,6 +233,10 @@ security find-generic-password -s 'Artigen Dev Access Password' -w
 ```
 
 不要把输出粘贴到 PR 或聊天。
+
+首次 Basic 认证成功后，DEV 会下发默认 12 小时有效的
+`HttpOnly + Secure + SameSite=Strict` 访问 Cookie。后台管理接口随后可以独立使用
+Bearer token，不会与 Basic 的 `Authorization` 请求头冲突。
 
 ### 6.2 DEV 安全边界
 

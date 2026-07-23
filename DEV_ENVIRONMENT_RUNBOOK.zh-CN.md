@@ -16,6 +16,10 @@
 `artigen-dev`；密码只保存在 Render 环境变量和 macOS 钥匙串
 `Artigen Dev Access Password` 中，不写入 Git。
 
+Basic 认证成功后，服务会签发仅限 DEV 域名的短时
+`HttpOnly + Secure + SameSite=Strict` 访问 Cookie。这样后台自己的 Bearer token
+可以继续使用 `Authorization` 请求头，不会与外层 DEV 访问门禁冲突。
+
 ## 隔离边界
 
 DEV 默认采用以下安全门：
