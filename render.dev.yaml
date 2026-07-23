@@ -27,6 +27,8 @@ services:
         value: artigen-dev
       - key: DEV_ACCESS_PASSWORD
         sync: false
+      - key: DEV_ACCESS_COOKIE_TTL_HOURS
+        value: "12"
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_MIGRATION_URL

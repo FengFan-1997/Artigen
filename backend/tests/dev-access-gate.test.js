@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  DEV_ACCESS_COOKIE,
   createDevAccessGate,
   devAccessEnabled,
   readBasicCredentials
@@ -79,4 +80,65 @@ test('DEV access gate leaves only the platform health check public', () => {
   const ready = response();
   gate({ path: '/readyz', headers: {} }, ready, () => assert.fail('must not continue'));
   assert.equal(ready.state.status, 401);
+});
+
+test('DEV access gate exchanges Basic auth for a secure cookie so Bearer auth remains usable', () => {
+  let currentTime = 1_800_000_000_000;
+  const gate = createDevAccessGate({
+    env: {
+      DEV_ACCESS_USERNAME: 'artigen-dev',
+      DEV_ACCESS_PASSWORD: 'independent-dev-password',
+      DEV_ACCESS_COOKIE_TTL_HOURS: '2'
+    },
+    now: () => currentTime
+  });
+  const authorization = `Basic ${Buffer.from(
+    'artigen-dev:independent-dev-password'
+  ).toString('base64')}`;
+  const basicResponse = response();
+  let basicNextCalls = 0;
+  gate(
+    { path: '/console', headers: { authorization } },
+    basicResponse,
+    () => { basicNextCalls += 1; }
+  );
+  assert.equal(basicNextCalls, 1);
+
+  const setCookie = String(basicResponse.state.headers['set-cookie'] || '');
+  assert.match(setCookie, new RegExp(`^${DEV_ACCESS_COOKIE}=`));
+  assert.match(setCookie, /Max-Age=7200/);
+  assert.match(setCookie, /Path=\//);
+  assert.match(setCookie, /HttpOnly/);
+  assert.match(setCookie, /Secure/);
+  assert.match(setCookie, /SameSite=Strict/);
+  const cookie = setCookie.split(';')[0];
+
+  let bearerNextCalls = 0;
+  gate(
+    {
+      path: '/api/admin/me',
+      headers: {
+        authorization: 'Bearer short-lived-admin-token',
+        cookie
+      }
+    },
+    response(),
+    () => { bearerNextCalls += 1; }
+  );
+  assert.equal(bearerNextCalls, 1);
+
+  currentTime += 2 * 60 * 60 * 1000 + 1;
+  const expired = response();
+  gate(
+    {
+      path: '/api/admin/me',
+      headers: {
+        authorization: 'Bearer short-lived-admin-token',
+        cookie
+      }
+    },
+    expired,
+    () => assert.fail('expired cookie must not continue')
+  );
+  assert.equal(expired.state.status, 401);
 });
