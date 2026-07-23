@@ -5,6 +5,8 @@
 
 生产网站、数据库、邮件、支付、账号和环境变量的接管说明见
 [《Artigen 生产环境小白接管手册》](./PRODUCTION_RUNBOOK.zh-CN.md)。
+DEV 测试环境的隔离边界、启动方式和健康检查见
+[《Artigen DEV 测试环境手册》](./DEV_ENVIRONMENT_RUNBOOK.zh-CN.md)。
 
 ---
 

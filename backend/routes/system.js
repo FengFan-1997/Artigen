@@ -21,6 +21,7 @@ const {
 
 const installSystemRoutes = (app, deps) => {
   const NODE_ENV = deps?.NODE_ENV;
+  const APP_ENV = String(process.env.APP_ENV || NODE_ENV || "").trim() || "development";
   const isProd = !!deps?.isProd;
   const requireLlmProvider = !!deps?.requireLlmProvider;
   const API_KEY = deps?.API_KEY;
@@ -450,6 +451,7 @@ const installSystemRoutes = (app, deps) => {
     res.status(200).json({
       ok: true,
       nodeEnv: NODE_ENV,
+      appEnv: APP_ENV,
       uptimeSec: Math.floor(process.uptime()),
       hasProvider,
       rid: String(res.locals.requestId || ""),
@@ -472,6 +474,7 @@ const installSystemRoutes = (app, deps) => {
         ...report,
         ok,
         nodeEnv: NODE_ENV,
+        appEnv: APP_ENV,
         uptimeSec: Math.floor(process.uptime()),
         hasProvider: hasAnyProvider,
         rid: String(res.locals.requestId || ""),
@@ -480,6 +483,7 @@ const installSystemRoutes = (app, deps) => {
       return res.status(503).json({
         ok: false,
         nodeEnv: NODE_ENV,
+        appEnv: APP_ENV,
         uptimeSec: Math.floor(process.uptime()),
         hasProvider: hasAnyProvider,
         checks: { readiness: { ok: false, code: "READINESS_CHECK_FAILED" } },
@@ -495,6 +499,7 @@ const installSystemRoutes = (app, deps) => {
       res.json({
         ok: true,
         nodeEnv: NODE_ENV,
+        appEnv: APP_ENV,
         uptimeSec: Math.floor(process.uptime()),
         rid: String(res.locals.requestId || ""),
         gitSha:

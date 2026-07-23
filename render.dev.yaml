@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: dev-artigen-app-fengfan
+    runtime: node
+    plan: free
+    region: virginia
+    repo: https://github.com/FengFan-1997/Artigen
+    branch: codex/oss-foundation-upgrade
+    buildCommand: pnpm install --frozen-lockfile && VITE_APP_ENV=dev VITE_API_BASE='' VITE_AGENT_API_BASE='' pnpm build
+    startCommand: pnpm start:production
+    healthCheckPath: /healthz
+    autoDeployTrigger: off
+    envVars:
+      - key: NODE_VERSION
+        value: 24.14.1
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: dev
+      - key: TRUST_PROXY
+        value: "1"
+      - key: APP_ORIGIN
+        value: https://dev-artigen-app-fengfan.onrender.com
+      - key: CORS_ORIGINS
+        value: https://dev-artigen-app-fengfan.onrender.com
+      - key: DEV_ACCESS_USERNAME
+        value: artigen-dev
+      - key: DEV_ACCESS_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_MIGRATION_URL
+        sync: false
+      - key: PG_POOL_MAX
+        value: "3"
+      - key: CSRF_SECRET
+        generateValue: true
+      - key: OTP_HMAC_SECRET
+        generateValue: true
+      - key: SESSION_TOKEN_HASH_SECRET
+        generateValue: true
+      - key: CONSOLE_ADMIN_TOKEN_SECRET
+        generateValue: true
+      - key: PAID_FEATURES_ENABLED
+        value: "false"
+      - key: PAYMENTS_ENABLED
+        value: "false"
+      - key: AUTH_EMAIL_OTP_ENABLED
+        value: "false"
+      - key: AI_DESIGN_TASK_V2_ENABLED
+        value: "false"
+      - key: WORKSHOP_AI_TASK_V2_ENABLED
+        value: "false"
+      - key: AI_DESIGN_TASK_V2_ROLLOUT_PERCENT
+        value: "0"
+      - key: TASK_WORKER_ENABLED
+        value: "0"
+      - key: ASSET_STORAGE_DRIVER
+        value: file
