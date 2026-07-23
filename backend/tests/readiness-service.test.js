@@ -707,6 +707,32 @@ test('system healthz stays shallow and does not inspect readiness dependencies',
   assert.equal(dependencyReads, 0);
 });
 
+test('system meta exposes the deployment environment and Render commit', () => {
+  const { app, routes } = routeApp();
+  installSystemRoutes(app, {
+    NODE_ENV: 'production',
+    isProd: true,
+    env: {
+      NODE_ENV: 'production',
+      APP_ENV: 'dev',
+      RENDER_GIT_COMMIT: 'render-commit-sha'
+    },
+    fs,
+    path,
+    rateLimit: () => (_req, _res, next) => next(),
+    assertAuthUserMatches: () => true
+  });
+  const res = routeResponse();
+  res.locals = { requestId: 'meta-route-test' };
+
+  routes.get('GET /api/meta')({}, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.nodeEnv, 'production');
+  assert.equal(res.payload.appEnv, 'dev');
+  assert.equal(res.payload.gitSha, 'render-commit-sha');
+});
+
 test('system readyz uses the injected generation adapter and readiness dependencies', async () => {
   const rootDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'artigen-ready-route-'));
   const routes = new Map();

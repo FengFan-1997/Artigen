@@ -21,7 +21,8 @@ const {
 
 const installSystemRoutes = (app, deps) => {
   const NODE_ENV = deps?.NODE_ENV;
-  const APP_ENV = String(process.env.APP_ENV || NODE_ENV || "").trim() || "development";
+  const readinessEnv = deps?.env || process.env;
+  const APP_ENV = String(readinessEnv.APP_ENV || NODE_ENV || "").trim() || "development";
   const isProd = !!deps?.isProd;
   const requireLlmProvider = !!deps?.requireLlmProvider;
   const API_KEY = deps?.API_KEY;
@@ -46,7 +47,6 @@ const installSystemRoutes = (app, deps) => {
   const MEMORY_DIR = deps?.MEMORY_DIR;
   const appendUserImageHistory = deps?.appendUserImageHistory;
   const appendUserAuditHistory = deps?.appendUserAuditHistory;
-  const readinessEnv = deps?.env || process.env;
   const generationProviderEnv = SILICONFLOW_API_KEY
     ? { ...readinessEnv, SILICONFLOW_API_KEY }
     : readinessEnv;
@@ -504,9 +504,10 @@ const installSystemRoutes = (app, deps) => {
         rid: String(res.locals.requestId || ""),
         gitSha:
           String(
-            process.env.GIT_SHA ||
-              process.env.VERCEL_GIT_COMMIT_SHA ||
-              process.env.RAILWAY_GIT_COMMIT_SHA ||
+            readinessEnv.GIT_SHA ||
+              readinessEnv.RENDER_GIT_COMMIT ||
+              readinessEnv.VERCEL_GIT_COMMIT_SHA ||
+              readinessEnv.RAILWAY_GIT_COMMIT_SHA ||
               "",
           ).trim() || null,
       });

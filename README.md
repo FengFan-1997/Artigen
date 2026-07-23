@@ -3,6 +3,8 @@
 > Artigen 是一个面向图片生产和图片处理的 AI 工具站。
 > 它把 AI 生图、图生图、图片编辑、格式工具箱、AI 配料表、点数支付和后台控制台放在同一个 Vue + Express 项目里。
 
+本机、DEV、生产环境的接入方式，以及从提交代码到发布/回滚的完整流程见
+[《Artigen 项目、环境与发布总手册》](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。
 生产网站、数据库、邮件、支付、账号和环境变量的接管说明见
 [《Artigen 生产环境小白接管手册》](./PRODUCTION_RUNBOOK.zh-CN.md)。
 DEV 测试环境的隔离边界、启动方式和健康检查见
@@ -258,7 +260,7 @@ FengFan-1997.github.io/
 └── backend/                   # Express 后端
     ├── server.js              # HTTP 服务入口
     ├── package.json           # 后端依赖和脚本
-    ├── railway.json           # Railway 启动配置
+    ├── railway.json           # 旧 Railway 兼容配置；当前生产在 Render
     ├── db/                    # PostgreSQL 连接与事务
     ├── migrations/            # PostgreSQL 16 结构、价格与财务约束
     ├── services/              # 任务计费、支付和 file/S3 资产适配器
@@ -859,7 +861,7 @@ PostgreSQL 16 保存用户/身份、Cookie 会话、验证码、管理员、钱�
 
 当前统一云端工具执行器开放“AI 老照片增强/上色”、AI 职业形象、AI 场景背景、配料原文整理，以及 `ai-design.generate`/`ai-design.directions`。所有价格只来自服务端 catalog、operation SKU 和 quote：职业形象 5 点、AI 场景背景 5 点、配料整理 10 点、主生图 10 点、方向分析 5 点；前端不硬编码费用。职业形象和背景请求只提交服务端枚举与主体变换参数，不能提交 prompt，prompt 由服务端构造；配料任务可以提交用户原文，但服务端会在结算前执行逐项来源追溯，新增事实即失败退款。所有 operation 的客户端都不能传 Provider、内部模型、steps、guidance 或价格。其余尚未接入可信 Provider 或 LibreOffice 能力的收费 operation 会明确返回 `TOOL_OPERATION_UNAVAILABLE`/`CONVERTER_UNAVAILABLE`，不会排队、扣费或从本地失败静默降级。Word 保真转换必须由用户勾选上传同意，服务端也会再次校验 consent 与 DOCX 容器。
 
-Word 保真转换在读取 Base64 JSON 前获取单实例并发槽，并对 ZIP central directory、本地文件头、CRC、OOXML 必需部件、entry 数量、单项/累计未压缩大小及压缩比执行预检。每次 LibreOffice 使用独立 profile；请求断开或超时会终止整个 POSIX 进程组，Windows 使用 `taskkill /T /F` fallback。Node `child_process` 没有跨平台可移植的 CPU/内存 rlimit，因此生产部署还必须在 Railway/container 层配置 CPU、内存和 PID 上限，不能只依赖应用内并发闸门。
+Word 保真转换在读取 Base64 JSON 前获取单实例并发槽，并对 ZIP central directory、本地文件头、CRC、OOXML 必需部件、entry 数量、单项/累计未压缩大小及压缩比执行预检。每次 LibreOffice 使用独立 profile；请求断开或超时会终止整个 POSIX 进程组，Windows 使用 `taskkill /T /F` fallback。Node `child_process` 没有跨平台可移植的 CPU/内存 rlimit，因此生产部署还必须在 Render/container 层配置 CPU、内存和 PID 上限，不能只依赖应用内并发闸门。
 
 主生图与工坊付费 AI 任务以 `tool_tasks`、`credit_holds` 和账本作为唯一业务真相源。`TASK_QUEUE_DRIVER=legacy` 保留原 PostgreSQL `FOR UPDATE SKIP LOCKED` 租约路径；`pgboss` 使用 `artigen-tool-task-v1` 队列，job ID 固定为 task ID，payload 只含 task ID，业务行租约仍是 Provider 单次派发的最终围栏。两种驱动都支持跨实例取消；pg-boss 还接管 dead letter、启动对账、冻结过期、payload 过期和资产 GC 定时任务。Provider 派发前失败最多指数退避重试一次；已设置 `provider_dispatched_at` 的任务不盲重发。过期 hold 在输入完成、认领、心跳、Provider 派发和结算各阶段都会 fail-closed。主生图 prompt/产品档案和配料原文只存在 AES-256-GCM 短期 payload，普通 `tool_tasks.options` 只保存枚举、长度与哈希，任务终态即删除 payload；职业形象与背景 prompt 始终由服务端枚举构建。参考输入默认保留 24 小时，生成结果默认 30 天并允许用户提前删除。
 
@@ -889,8 +891,9 @@ pnpm --filter backend admin:grant -- <用户 UUID 或 legacy user id> owner
 
 | 分支 | 作用 | 部署关系 |
 | --- | --- | --- |
+| `dev` | 云端测试集成分支。 | 自动部署到 Render `dev-artigen-app-fengfan`。 |
 | `codex/artigen-overhaul` | 当前生产分支。 | Vercel 主站自动部署；Render 后端当前使用该分支但保持手动部署。 |
-| `main` | 历史默认分支。 | 当前不是 Artigen 新主站的生产来源，不能把 `main` 当成已上线版本。 |
+| `main` | GitHub 默认分支、目标正式分支。 | 迁移完成前仍不是生产来源；合并后也要人工确认才发布。 |
 
 当前发布关系：
 
@@ -898,10 +901,13 @@ pnpm --filter backend admin:grant -- <用户 UUID 或 legacy user id> owner
 GitHub codex/artigen-overhaul
   -> Vercel artigen-fengfan（Vue 静态主站，自动部署）
   -> Render artigen-app-fengfan（Express API，手动部署）
+
+GitHub dev
+  -> Render dev-artigen-app-fengfan（整站 DEV，自动部署）
 ```
 
-完整账号、域名、数据库、邮件和环境变量接管说明见
-[《Artigen 生产环境小白接管手册》](./PRODUCTION_RUNBOOK.zh-CN.md)。
+完整分支、DEV、生产、数据库、账号和发布流程见
+[《Artigen 项目、环境与发布总手册》](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。
 
 ### 根目录脚本
 
@@ -1027,11 +1033,12 @@ pnpm run start:production
 - Plan：Free
 - Branch：`codex/artigen-overhaul`
 - URL：<https://artigen-app-fengfan.onrender.com>
-- Health Check：`/readyz`
+- Health Check：`/healthz`
+- Auto Deploy：关闭；生产发布人工触发
 
 仓库根目录的 `render.yaml` 提供 Render Blueprint：CI checks 通过后部署、完整 workspace 构建、启动阶段迁移锁和 60 秒优雅关闭。构建命令会显式清空 `VITE_API_BASE` 与 `VITE_AGENT_API_BASE`，确保 Render 上的前端、Cookie 和 `/api` 保持同源。平台健康检查只调用浅层 `/healthz`，不会因数据库或外部 Provider 的短暂波动反复重启实例；`/readyz` 保留给人工 smoke 或部署深检。
 
-Render Free 不使用 `preDeployCommand`，迁移由 `start:production` 在监听端口前 fail-closed 执行。模板默认 `plan: free`、`PG_POOL_MAX=5`、`TASK_WORKER_ENABLED=0`，并关闭付费生图与邮件 OTP；此时 `/readyz` 会明确把数据库、对象存储、任务 payload、Provider 和邮件依赖标为 `skipped`，且不会对这些外部依赖发起 I/O。Cookie 会话只在 `/api` 与 `/files` 水合，SPA、静态资源和健康检查不会因用户已登录而额外唤醒 Neon。开启付费或邮件 OTP 后，深检会要求 PostgreSQL 已应用仓库最新迁移（当前 `011_otp_delivery_dispatch_state`，包含 OTP `provider_dispatched_at`）、对应对象存储/Provider，以及独立认证密钥、签名邮件中继和 Turnstile secret + site key；生产 Turnstile 还要求 HTTPS `APP_ORIGIN` 与精确 `TURNSTILE_HOSTNAMES` 一致。按 [Render Blueprint 规范](https://render.com/docs/blueprint-spec) 导入并完成 smoke 后，再分阶段开启邮件 OTP、Worker 与收费能力。
+Render Free 不使用 `preDeployCommand`，迁移由 `start:production` 在监听端口前 fail-closed 执行。模板默认 `plan: free`、`PG_POOL_MAX=5`、`TASK_WORKER_ENABLED=0`，并关闭付费生图与邮件 OTP；此时 `/readyz` 会明确把数据库、对象存储、任务 payload、Provider 和邮件依赖标为 `skipped`，且不会对这些外部依赖发起 I/O。Cookie 会话只在 `/api` 与 `/files` 水合，SPA、静态资源和健康检查不会因用户已登录而额外唤醒 Neon。开启付费或邮件 OTP 后，深检会要求 PostgreSQL 已应用仓库最新迁移（当前 `012_asset_upload_sessions`）、对应对象存储/Provider，以及独立认证密钥、签名邮件中继和 Turnstile secret + site key；生产 Turnstile 还要求 HTTPS `APP_ORIGIN` 与精确 `TURNSTILE_HOSTNAMES` 一致。按 [Render Blueprint 规范](https://render.com/docs/blueprint-spec) 导入并完成 smoke 后，再分阶段开启邮件 OTP、Worker 与收费能力。
 
 后端生产必须配置 PostgreSQL 16；生产付费生图必须使用 S3/R2 兼容共享对象存储，Render 本地文件只用于开发或非付费契约测试。
 
@@ -1134,12 +1141,15 @@ QQ SMTP 只保留本地兼容。非生产调试还可以使用：
 
 | 文档 | 作用 |
 | --- | --- |
+| `PROJECT_OPERATIONS_GUIDE.zh-CN.md` | 本机、DEV、生产接入，以及分支、提交、发布和回滚的总入口。 |
 | `README.md` | 让新人理解项目、启动项目、知道从哪里读代码。 |
 | `PRD.md` | 给后端协作者看的模块、接口、认证、点数、支付、生成和数据约定。 |
-| `CONTRIBUTING.md` | 团队协作规范，包括分支、提交、PR、Review、Railway 发布和测试门禁。 |
+| `CONTRIBUTING.md` | `dev -> main` 协作规范、PR、Review 和测试门禁。 |
+| `DEV_ENVIRONMENT_RUNBOOK.zh-CN.md` | DEV 隔离边界和 smoke。 |
+| `PRODUCTION_RUNBOOK.zh-CN.md` | 生产平台、账号、故障排查和接管。 |
 | `frontend/src/console/README_CONSOLE.md` | 控制台局部说明。 |
 
-README 负责回答“这是什么、怎么跑、从哪里看”。PRD 负责回答“前后端怎么连接、接口怎么约定、数据怎么流动”。CONTRIBUTING 负责回答“怎么协作、怎么 Review、怎么合并、怎么发布”，并以 `test` 作为团队测试分支、`main` 作为线上发布分支。
+README 负责回答“这是什么、怎么跑、从哪里看”。总手册负责回答“环境怎么接入、代码怎么从 DEV 进入 main、怎么发布和回滚”。PRD 负责回答“前后端怎么连接、接口怎么约定、数据怎么流动”。CONTRIBUTING 负责日常协作规则。
 
 ---
 

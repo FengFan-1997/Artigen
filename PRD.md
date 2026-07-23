@@ -34,7 +34,8 @@
 - 后端：Express 5/CommonJS、`pg`、`node-pg-migrate`、`zod`，不使用 ORM。
 - 数据：PostgreSQL 16 是用户、会话、钱包、账本、订单、任务和资产元数据的唯一生产写源。
 - 二进制：本地/单实例测试可用 file，生产付费生图必须使用多实例共享的 S3/R2 兼容适配器；数据库不保存 Base64/BLOB。
-- 发布：目标仍是 Railway，但合并、推送和上线都需要单独授权。
+- 发布：DEV 使用 Render 同源站点并跟踪 `dev`；生产前端在 Vercel、后端在 Render。
+  `main` 合并与生产上线是两个独立动作，生产发布必须人工确认。
 
 没有 `DATABASE_URL`，或 `PAID_FEATURES_ENABLED` 不等于 `true` 时，收费能力返回 `DATABASE_NOT_CONFIGURED` 或 `PAID_FEATURES_DISABLED`。这是一项安全门禁。
 
@@ -191,7 +192,10 @@ V1 不承诺 PSD、视频、复杂蒙版、画笔修复、生成式填充、CMYK
 
 迁移文件位于 `backend/migrations/`。财务 JSON 导入使用 `backend/scripts/import-json-to-postgres.js`，迁移核对使用 `audit-json-postgres.js`。切换后旧财务快照只读保留，不是回退源；最小化的非财务 usage/analytics/历史暂由 legacy JSON 适配器保存。钱包与不可变账本余额使用 bigint，避免合法购买在 32 位整数边界回滚。
 
-Railway 后端服务 Root Directory 固定为 `/backend`（或显式选择该目录的配置），`preDeployCommand` 执行 `pnpm db:migrate`，迁移失败时新版本不得启动。托管 PostgreSQL 默认校验证书；生产应配置 `PG_SSL_CA`/`PG_SSL_CA_BASE64`，只有已评估的私有网络兼容场景才可显式设置 `PG_SSL_REJECT_UNAUTHORIZED=0`。
+Render 从仓库根目录安装完整 workspace。`pnpm start:production` 在监听端口前持有
+PostgreSQL advisory lock 并应用全部迁移；迁移失败时新版本不得启动。托管 PostgreSQL
+默认校验证书；生产应配置 `PG_SSL_CA`/`PG_SSL_CA_BASE64`，只有已评估的私有网络兼容
+场景才可显式设置 `PG_SSL_REJECT_UNAUTHORIZED=0`。
 
 完整门禁：
 
@@ -203,4 +207,7 @@ pnpm check
 
 Provider、内部模型或 prompt 模板变更还必须用 `backend/evaluation/ai-design-quality-set.json` 的同一组 30 个中英文电商案例生成 baseline/candidate manifest，再运行 `pnpm --filter backend eval:generation:blind -- ...` 创建去标识盲评表。完成盲评后以 `pnpm --filter backend eval:generation:score -- --review <file>` 验证：candidate 硬约束通过率不少于 90%，且平均分与偏好胜负均不得劣于旧链路。没有测试 Provider 凭证时只运行契约 mock，不伪造质量结论。
 
-外部 AI、SMTP、爱发电和对象存储先使用契约 mock/fixture。没有测试环境凭证时不得发起真实支付；没有明确发布授权时不得推送或部署。
+外部 AI、SMTP、爱发电和对象存储先使用契约 mock/fixture。没有独立 DEV 凭证时不得
+发起真实支付或收费 Provider 请求。代码先进入 `dev` 并完成 smoke，再通过 PR 进入
+`main`；合并 `main` 后仍需独立的生产发布确认。完整流程见
+`PROJECT_OPERATIONS_GUIDE.zh-CN.md`。

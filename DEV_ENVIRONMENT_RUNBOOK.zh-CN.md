@@ -72,8 +72,19 @@ DEV 服务只跟踪远端 `dev` 分支；更新该分支会自动构建并部署
 不会被触发。
 
 ```bash
-git push origin HEAD:dev
+git fetch origin
+git switch -c feat/short-name origin/dev
+git push -u origin feat/short-name
+gh pr create --base dev --head feat/short-name
 ```
+
+PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
+
+部署完成后，`/api/meta` 的 `appEnv` 必须是 `dev`，`gitSha` 必须等于本次
+`dev` commit；随后完成页面和 `/readyz` smoke，才能创建 `dev -> main` PR。
+
+完整提交流程和生产发布规则见
+[《Artigen 项目、环境与发布总手册》](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。
 
 ## 开启真实集成前
 
