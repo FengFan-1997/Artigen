@@ -41,6 +41,23 @@ const skippedCheck = (reason = 'FEATURE_DISABLED') => ({
   reason
 });
 
+const checkTaskQueue = async (readiness) => {
+  if (readiness === undefined) return skippedCheck('TASK_QUEUE_STATUS_UNAVAILABLE');
+  try {
+    const status = typeof readiness === 'function' ? await readiness() : readiness;
+    if (status?.skipped) return skippedCheck(status.reason || 'TASK_WORKERS_DISABLED');
+    const driver = String(status?.driver || '').trim() || undefined;
+    if (status?.ok) return { ok: true, ...(driver ? { driver } : {}) };
+    return {
+      ok: false,
+      code: String(status?.code || 'TASK_QUEUE_NOT_READY'),
+      ...(driver ? { driver } : {})
+    };
+  } catch {
+    return { ok: false, code: 'TASK_QUEUE_READINESS_FAILED' };
+  }
+};
+
 const strongSecret = (value) => {
   const secret = String(value || '').trim();
   if (Buffer.byteLength(secret, 'utf8') < 32 || SECRET_PLACEHOLDER_RE.test(secret)) return false;
@@ -490,7 +507,8 @@ const getReadinessReport = async ({
   env = process.env,
   pool,
   adapter,
-  generationProvider
+  generationProvider,
+  taskQueueReadiness
 } = {}) => {
   const aiDesignEnabled = enabled(env.AI_DESIGN_TASK_V2_ENABLED);
   const workshopAiEnabled = enabled(env.WORKSHOP_AI_TASK_V2_ENABLED);
@@ -509,6 +527,7 @@ const getReadinessReport = async ({
   let provider = skippedCheck();
   let outputAllowlist = skippedCheck();
   let payment = skippedCheck();
+  const taskQueue = await checkTaskQueue(taskQueueReadiness);
 
   if (databaseRequired) {
     database = await checkDatabase(
@@ -555,6 +574,7 @@ const getReadinessReport = async ({
   if (paymentEnabled) requiredChecks.push(payment);
   if (generationRequired) requiredChecks.push(payload, provider, outputAllowlist);
   if (authEmailOtpEnabled) requiredChecks.push(database, authSecrets, mail, turnstile);
+  if (!taskQueue.skipped) requiredChecks.push(taskQueue);
   return {
     ok: requiredChecks.every((check) => check.ok),
     paidEnabled,
@@ -570,6 +590,7 @@ const getReadinessReport = async ({
       provider,
       outputAllowlist,
       payment,
+      taskQueue,
       authSecrets,
       mail,
       turnstile
@@ -590,6 +611,7 @@ module.exports = {
   probeGenerationProvider,
   checkOutputAllowlist,
   checkStorage,
+  checkTaskQueue,
   checkTurnstile,
   getReadinessReport
 };

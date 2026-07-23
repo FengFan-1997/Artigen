@@ -17,6 +17,7 @@ const {
   probeGenerationProvider,
   checkOutputAllowlist,
   checkStorage,
+  checkTaskQueue,
   checkTurnstile,
   getReadinessReport
 } = require('../services/readiness-service');
@@ -705,6 +706,53 @@ test('system healthz stays shallow and does not inspect readiness dependencies',
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.ok, true);
   assert.equal(dependencyReads, 0);
+});
+
+test('task queue readiness is sanitized and fails closed', async () => {
+  assert.deepEqual(await checkTaskQueue(() => ({
+    ok: true,
+    driver: 'pgboss',
+    internal: 'must-not-leak'
+  })), {
+    ok: true,
+    driver: 'pgboss'
+  });
+  assert.deepEqual(await checkTaskQueue(() => {
+    throw new Error('database password must not leak');
+  }), {
+    ok: false,
+    code: 'TASK_QUEUE_READINESS_FAILED'
+  });
+});
+
+test('system readyz returns 503 when the task queue failed to start', async () => {
+  const { app, routes } = routeApp();
+  installSystemRoutes(app, {
+    NODE_ENV: 'test',
+    isProd: false,
+    env: { NODE_ENV: 'test' },
+    taskQueueReadiness: () => ({
+      ok: false,
+      code: 'TASK_QUEUE_START_FAILED',
+      driver: 'pgboss'
+    }),
+    fs,
+    path,
+    rateLimit: () => (_req, _res, next) => next(),
+    assertAuthUserMatches: () => true
+  });
+  const res = routeResponse();
+  res.locals = { requestId: 'queue-readiness-test' };
+
+  await routes.get('GET /readyz')({}, res);
+
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.payload.ok, false);
+  assert.deepEqual(res.payload.checks.taskQueue, {
+    ok: false,
+    code: 'TASK_QUEUE_START_FAILED',
+    driver: 'pgboss'
+  });
 });
 
 test('system meta exposes the deployment environment and Render commit', () => {

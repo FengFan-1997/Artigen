@@ -467,7 +467,8 @@ const installSystemRoutes = (app, deps) => {
         env: readinessEnv,
         pool: deps?.readinessPool,
         adapter: deps?.assetAdapter,
-        generationProvider
+        generationProvider,
+        taskQueueReadiness: deps?.taskQueueReadiness
       });
       const ok = report.ok && (!requireLlmProvider || hasAnyProvider);
       return res.status(ok ? 200 : 503).json({

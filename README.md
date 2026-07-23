@@ -826,6 +826,7 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `TASK_QUEUE_POLL_MS` | `LISTEN/NOTIFY` 之外的耐久轮询周期，默认 1 秒。 |
 | `TASK_QUEUE_LISTENER_RECONNECT_MS` | 队列 `LISTEN` 连接断开后的初始重连退避，默认 250ms。 |
 | `TASK_QUEUE_RETRY_DELAY_SECONDS` | pg-boss 在 Provider 派发前失败时的首次重试延迟，默认 15 秒；已设置 `provider_dispatched_at` 的任务不会自动重发。 |
+| `TASK_QUEUE_NOTIFY_POLL_INTERVAL_SECONDS` | pg-boss 开启 LISTEN/NOTIFY 后的兜底轮询间隔，默认 5 秒，避免延迟任务与重试等待默认 30 秒。 |
 | `PGBOSS_SCHEMA` / `PGBOSS_POOL_MAX` | pg-boss 使用的 PostgreSQL schema 与连接池上限，默认 `pgboss` / `5`。 |
 | `PGBOSS_LISTEN_NOTIFY` | pg-boss 的 PostgreSQL 通知开关，默认 `1`。 |
 | `TOOL_TASK_CREATE_RATE_MAX` | 单用户/来源创建云端任务的每分钟上限，默认 12；在 multipart 写入临时盘前执行。 |

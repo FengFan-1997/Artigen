@@ -610,7 +610,7 @@ installConvertRoutes(app, {
   rateLimit,
 });
 
-installToolTaskRoutes(app, {
+const toolTaskRuntime = installToolTaskRoutes(app, {
   rateLimit,
   callSiliconFlowImageGenerate,
   callSiliconFlowChat,
@@ -690,6 +690,7 @@ installSystemRoutes(app, {
   computeCreditsDelta: ledger.computeCreditsDelta,
   appendUserImageHistory,
   appendUserAuditHistory,
+  taskQueueReadiness: toolTaskRuntime?.getTaskQueueReadiness,
 });
 
 const frontendHosting = installFrontendHosting(app);

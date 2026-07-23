@@ -373,6 +373,51 @@ test('task workers and financial sweepers require both paid features and the wor
   }));
 });
 
+test('task worker startup exposes a fail-closed readiness state', async () => {
+  const app = {
+    get() {},
+    post() {},
+    delete() {}
+  };
+  const expected = new Error('queue unavailable');
+  expected.code = 'QUEUE_BOOT_FAILED';
+  const taskQueue = {
+    managesMaintenance: true,
+    register() {
+      return this;
+    },
+    registerMaintenance() {
+      return this;
+    },
+    async start() {
+      throw expected;
+    }
+  };
+  const runtime = installToolTaskRoutes(app, {
+    pool: {},
+    taskQueue,
+    enableHoldSweeper: false,
+    enableAssetSweeper: false,
+    env: {
+      PAID_FEATURES_ENABLED: 'true',
+      TASK_WORKER_ENABLED: '1',
+      TASK_QUEUE_DRIVER: 'pgboss'
+    }
+  });
+
+  assert.deepEqual(runtime.getTaskQueueReadiness(), {
+    ok: false,
+    code: 'TASK_QUEUE_STARTING',
+    driver: 'pgboss'
+  });
+  assert.equal(await runtime.queueStartPromise, null);
+  assert.deepEqual(runtime.getTaskQueueReadiness(), {
+    ok: false,
+    code: 'TASK_QUEUE_START_FAILED',
+    driver: 'pgboss'
+  });
+});
+
 test('implemented server operations are registered while unavailable converters fail before billing', () => {
   assert.equal(assertServerTaskImplemented(getTool('old-photo'), 'enhance'), true);
   assert.equal(assertServerTaskImplemented(getTool('old-photo'), 'enhance-colorize'), true);

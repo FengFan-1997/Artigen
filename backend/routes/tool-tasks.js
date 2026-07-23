@@ -79,6 +79,23 @@ const taskWorkersEnabled = (env = process.env) => {
   return paidFeaturesEnabled(env) && !['0', 'false', 'no', 'off'].includes(configured);
 };
 
+const createTaskQueueReadiness = ({ required, driver }) => {
+  let status = required
+    ? { ok: false, code: 'TASK_QUEUE_STARTING', driver }
+    : { ok: true, skipped: true, code: 'NOT_REQUIRED', reason: 'TASK_WORKERS_DISABLED' };
+  return {
+    fail(code = 'TASK_QUEUE_START_FAILED') {
+      status = { ok: false, code, driver };
+    },
+    ready() {
+      status = { ok: true, driver };
+    },
+    snapshot() {
+      return { ...status };
+    }
+  };
+};
+
 const assertPaidFeatureAvailable = ({ paid, enabled, databaseConfigured, authenticated }) => {
   if (!paid) return true;
   if (!enabled) throw new ApiError(503, 'PAID_FEATURES_DISABLED', { retryable: true });
@@ -508,6 +525,10 @@ const installToolTaskRoutes = (app, deps = {}) => {
   });
   const databaseAvailable = Boolean(deps.pool) || isDatabaseConfigured();
   const startWorkers = taskWorkersEnabled(runtimeEnv);
+  const queueReadiness = createTaskQueueReadiness({
+    required: startWorkers && deps.enableTaskQueue !== false,
+    driver: String(runtimeEnv.TASK_QUEUE_DRIVER || 'legacy').trim().toLowerCase() || 'legacy'
+  });
   const queue = startWorkers && (deps.taskQueue || taskLeaseQueue || (databaseAvailable
     ? createTaskQueue({
         ...(deps.pool ? { pool: deps.pool } : {}),
@@ -548,10 +569,21 @@ const installToolTaskRoutes = (app, deps = {}) => {
     }
   }
   if (!deps.taskQueue && queue) taskLeaseQueue = queue;
+  let queueStartPromise = null;
   if (queue && deps.enableTaskQueue !== false && databaseAvailable && startWorkers) {
-    queue.start().catch((error) => {
-      console.error('Task lease queue failed to start', error?.code || error?.message || error);
-    });
+    queueStartPromise = Promise.resolve()
+      .then(() => queue.start())
+      .then(() => {
+        queueReadiness.ready();
+        return queue;
+      })
+      .catch((error) => {
+        queueReadiness.fail();
+        console.error('Task lease queue failed to start', error?.code || error?.message || error);
+        return null;
+      });
+  } else if (startWorkers && deps.enableTaskQueue !== false) {
+    queueReadiness.fail(queue ? 'TASK_QUEUE_DATABASE_UNAVAILABLE' : 'TASK_QUEUE_UNAVAILABLE');
   }
   if (
     startWorkers &&
@@ -1108,6 +1140,12 @@ const installToolTaskRoutes = (app, deps = {}) => {
     });
     return res.json({ ok: true, transfer });
   }));
+
+  return {
+    getTaskQueueReadiness: () => queueReadiness.snapshot(),
+    queue,
+    queueStartPromise
+  };
 };
 
 module.exports = {
@@ -1118,6 +1156,7 @@ module.exports = {
   cleanupUpload,
   containsClientAuthority,
   createRequestAbortController,
+  createTaskQueueReadiness,
   inspectUploadedFile,
   installToolTaskRoutes,
   paidFeaturesEnabled,

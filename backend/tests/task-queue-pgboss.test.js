@@ -8,7 +8,8 @@ const {
   RECONCILE_QUEUE,
   TASK_DEAD_LETTER_QUEUE,
   TASK_QUEUE,
-  taskQueueDriver
+  taskQueueDriver,
+  taskWorkerOptions
 } = require('../services/task-queue-pgboss');
 
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
@@ -96,6 +97,34 @@ test('queue driver defaults to legacy and rejects misspelled rollout flags', () 
   });
 });
 
+test('pg-boss falls back to the shared application pool when routes do not inject one', () => {
+  const fallbackPool = { query: async () => ({ rowCount: 0, rows: [] }) };
+  const queue = new PgBossTaskQueue({
+    boss: new FakeBoss(),
+    runtime: createRuntime(),
+    poolFactory: () => fallbackPool,
+    env: {}
+  });
+  assert.equal(queue.pool, fallbackPool);
+});
+
+test('pg-boss notification backstop is short and configurable for delayed retries', () => {
+  assert.deepEqual(taskWorkerOptions({}), {
+    localConcurrency: 2,
+    pollingIntervalSeconds: 1,
+    notifyPollingIntervalSeconds: 5
+  });
+  assert.deepEqual(taskWorkerOptions({
+    TASK_QUEUE_CONCURRENCY: '4',
+    TASK_QUEUE_POLL_MS: '2000',
+    TASK_QUEUE_NOTIFY_POLL_INTERVAL_SECONDS: '1'
+  }), {
+    localConcurrency: 4,
+    pollingIntervalSeconds: 2,
+    notifyPollingIntervalSeconds: 2
+  });
+});
+
 test('pg-boss dispatch uses task id as job id and task id as the only payload', async () => {
   const boss = new FakeBoss();
   const runtime = createRuntime();
@@ -121,6 +150,7 @@ test('pg-boss dispatch uses task id as job id and task id as the only payload', 
   await boss.workers.get(TASK_QUEUE).handler([{ data: { taskId: TASK_ID } }]);
   assert.deepEqual(runtime.polled, [{ taskId: TASK_ID }]);
   assert.equal(boss.workers.get(TASK_QUEUE).options.localConcurrency, 3);
+  assert.equal(boss.workers.get(TASK_QUEUE).options.notifyPollingIntervalSeconds, 5);
   await queue.stop();
   assert.equal(runtime.stopped, true);
   assert.equal(boss.stopped.graceful, true);

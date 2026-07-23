@@ -1,5 +1,5 @@
 const { PgBoss } = require('pg-boss');
-const { resolvePoolSsl } = require('../db/pool');
+const { getPool, resolvePoolSsl } = require('../db/pool');
 const {
   CANCEL_CHANNEL,
   MAX_ATTEMPTS,
@@ -56,11 +56,31 @@ const taskQueueOptions = (env = process.env) => ({
   notify: true
 });
 
+const taskWorkerOptions = (env = process.env) => {
+  const pollingIntervalSeconds = Math.max(
+    0.5,
+    Math.min(30, (Number(env.TASK_QUEUE_POLL_MS || 1000) || 1000) / 1000)
+  );
+  const notifyPollingIntervalSeconds = Math.max(
+    pollingIntervalSeconds,
+    Math.min(30, Number(env.TASK_QUEUE_NOTIFY_POLL_INTERVAL_SECONDS || 5) || 5)
+  );
+  return {
+    localConcurrency: Math.max(
+      1,
+      Math.min(8, Number(env.TASK_QUEUE_CONCURRENCY || 2) || 2)
+    ),
+    pollingIntervalSeconds,
+    notifyPollingIntervalSeconds
+  };
+};
+
 const createBoss = (env) => new PgBoss(bossConfig(env));
 
 class PgBossTaskQueue {
   constructor({
     pool,
+    poolFactory = getPool,
     env = process.env,
     boss = null,
     bossFactory = createBoss,
@@ -70,11 +90,11 @@ class PgBossTaskQueue {
     cancelTask,
     recordEvent
   } = {}) {
-    this.pool = pool;
+    this.pool = pool || poolFactory();
     this.env = env;
     this.boss = boss || bossFactory(env);
     this.runtime = runtime || new TaskLeaseQueue({
-      pool,
+      pool: this.pool,
       env,
       releaseTask,
       requestTaskCancellation,
@@ -173,15 +193,7 @@ class PgBossTaskQueue {
   }
 
   async startWorkers() {
-    const concurrency = Math.max(
-      1,
-      Math.min(8, Number(this.env.TASK_QUEUE_CONCURRENCY || 2) || 2)
-    );
-    await this.boss.work(TASK_QUEUE, {
-      localConcurrency: concurrency,
-      pollingIntervalSeconds: 1,
-      notifyPollingIntervalSeconds: 30
-    }, async (jobs) => {
+    await this.boss.work(TASK_QUEUE, taskWorkerOptions(this.env), async (jobs) => {
       const taskId = String(jobs?.[0]?.data?.taskId || '').trim();
       if (!taskId) {
         const error = new Error('INVALID_TASK_JOB_PAYLOAD');
@@ -334,5 +346,6 @@ module.exports = {
   bossConfig,
   createTaskQueue,
   taskQueueDriver,
-  taskQueueOptions
+  taskQueueOptions,
+  taskWorkerOptions
 };
