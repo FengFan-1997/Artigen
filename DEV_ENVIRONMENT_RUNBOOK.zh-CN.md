@@ -6,6 +6,7 @@
 
 - 云端服务：`dev-artigen-app-fengfan`
 - 云端地址：`https://dev-artigen-app-fengfan.onrender.com`
+- 部署分支：`dev`（push 后自动部署）
 - 云端数据库：`dev_artigen`
 - 本机前端：`http://localhost:4000`
 - 本机后端：`http://localhost:8080`
@@ -63,6 +64,15 @@ DEV_PASSWORD="$(security find-generic-password -s 'Artigen Dev Access Password' 
 curl --user "artigen-dev:${DEV_PASSWORD}" \
   https://dev-artigen-app-fengfan.onrender.com/readyz
 unset DEV_PASSWORD
+```
+
+## 发布到 DEV
+
+DEV 服务只跟踪远端 `dev` 分支；更新该分支会自动构建并部署，生产分支和生产服务
+不会被触发。
+
+```bash
+git push origin HEAD:dev
 ```
 
 ## 开启真实集成前

@@ -5,11 +5,11 @@ services:
     plan: free
     region: virginia
     repo: https://github.com/FengFan-1997/Artigen
-    branch: codex/oss-foundation-upgrade
+    branch: dev
     buildCommand: pnpm install --frozen-lockfile && VITE_APP_ENV=dev VITE_API_BASE='' VITE_AGENT_API_BASE='' pnpm build
     startCommand: pnpm start:production
     healthCheckPath: /healthz
-    autoDeployTrigger: off
+    autoDeployTrigger: commit
     envVars:
       - key: NODE_VERSION
         value: 24.14.1
