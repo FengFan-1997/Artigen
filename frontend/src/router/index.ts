@@ -412,7 +412,7 @@ const routes = [
       {
         path: 'billing',
         name: 'console-billing',
-        component: () => import('@/console/views/Billing.vue'),
+        redirect: '/console/credits',
         meta: {
           title: { zh: '控制台计费 - Artigen', en: 'Console Billing - Artigen' },
           description: {
@@ -420,6 +420,45 @@ const routes = [
             en: 'Artigen console billing and credits management.'
           },
           keywords: { zh: '后台,计费,点数,充值', en: 'console,billing,credits,topup' }
+        } satisfies RouteSeoMeta
+      },
+      {
+        path: 'credits',
+        name: 'console-credits',
+        component: () => import('@/console/views/Credits.vue'),
+        meta: {
+          title: { zh: '点数账本 - Artigen', en: 'Credit Ledger - Artigen' },
+          description: {
+            zh: 'Artigen 后台点数余额、冻结与不可篡改钱包流水。',
+            en: 'Artigen credit balances, holds, and immutable wallet ledger.'
+          },
+          keywords: { zh: '后台,点数,钱包,账本', en: 'console,credits,wallet,ledger' }
+        } satisfies RouteSeoMeta
+      },
+      {
+        path: 'behavior',
+        name: 'console-behavior',
+        component: () => import('@/console/views/Behavior.vue'),
+        meta: {
+          title: { zh: '用户行为 - Artigen', en: 'User Behavior - Artigen' },
+          description: {
+            zh: 'Artigen 用户访问、点击与操作轨迹。',
+            en: 'Artigen user visits, clicks, and product behavior.'
+          },
+          keywords: { zh: '后台,行为,访问,点击', en: 'console,behavior,visits,clicks' }
+        } satisfies RouteSeoMeta
+      },
+      {
+        path: 'logs',
+        name: 'console-logs',
+        component: () => import('@/console/views/AuditLog.vue'),
+        meta: {
+          title: { zh: '系统审计 - Artigen', en: 'System Audit - Artigen' },
+          description: {
+            zh: 'Artigen 管理员与系统敏感操作审计日志。',
+            en: 'Artigen administrator and sensitive system audit events.'
+          },
+          keywords: { zh: '后台,审计,操作日志,安全', en: 'console,audit,operations,security' }
         } satisfies RouteSeoMeta
       },
       {
@@ -451,7 +490,7 @@ const routes = [
       {
         path: 'playground',
         name: 'console-playground',
-        component: () => import('@/console/views/Playground.vue'),
+        redirect: '/console/behavior',
         meta: {
           title: { zh: '控制台试验场 - Artigen', en: 'Console Playground - Artigen' },
           description: {

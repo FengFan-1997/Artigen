@@ -97,9 +97,14 @@ const createAdminFinanceService = ({ pool = getPool() } = {}) => {
     const search = String(q || '').trim();
     const result = await pool.query(
       `WITH filtered AS (
-         SELECT u.id, u.legacy_user_id, u.email, u.username, u.display_name,
+         SELECT u.id, u.legacy_user_id, u.email, u.username, u.display_name, u.status,
                 u.created_at, w.available_credits, w.frozen_credits, w.updated_at,
-                (SELECT max(s.last_seen_at) FROM sessions s WHERE s.user_id=u.id) AS last_seen
+                GREATEST(
+                  (SELECT max(s.last_seen_at) FROM sessions s WHERE s.user_id=u.id),
+                  (SELECT max(b.occurred_at) FROM behavior_events b WHERE b.actor_user_id=u.id)
+                ) AS last_seen,
+                (SELECT count(*)::int FROM behavior_events b
+                  WHERE b.actor_user_id=u.id AND b.event_type='page_view') AS visits
            FROM users u
            LEFT JOIN wallets w ON w.user_id=u.id
           WHERE $1='' OR u.id::text ILIKE '%' || $1 || '%'
@@ -119,9 +124,10 @@ const createAdminFinanceService = ({ pool = getPool() } = {}) => {
       email: String(row.email || ''),
       username: String(row.username || ''),
       name: String(row.display_name || row.username || ''),
+      status: String(row.status || 'active'),
       createdAt: toTimestamp(row.created_at),
       lastSeen: toTimestamp(row.last_seen),
-      visits: 0,
+      visits: Number(row.visits || 0),
       wallet: row.available_credits === null || row.available_credits === undefined
         ? null
         : {

@@ -149,7 +149,7 @@ test('readiness verifies queue, payload, asset, event, inputs_ready and AI SKU m
     code: null,
     migration: LATEST_REPOSITORY_MIGRATION
   });
-  assert.equal(LATEST_REPOSITORY_MIGRATION, '012_asset_upload_sessions');
+  assert.equal(LATEST_REPOSITORY_MIGRATION, '013_behavior_events');
   assert.equal(migrationQueryParam, LATEST_REPOSITORY_MIGRATION);
   assert.deepEqual(await checkDatabase({
     query: async () => ({ rows: [{ ...migratedRow, has_task_columns: false }] })

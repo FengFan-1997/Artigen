@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   isSensitiveAnalyticsQueryKey,
@@ -67,5 +68,15 @@ describe('analytics privacy guards', () => {
           'https://search.example/results?utm_source=test&image=https%3A%2F%2Fcdn.example%2Fprivate.png&signature=secret#fragment'
       })
     ).toEqual({ referrer: '/results?utm_source=test' });
+  });
+
+  it('records anonymous product behavior by default without reading visible button text', async () => {
+    const source = await readFile(new URL('./analytics.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain("VITE_ANALYTICS_ENABLED || '1'");
+    expect(source).not.toContain('VITE_LAZY_BACKEND');
+    expect(source).not.toContain('el as any).innerText');
+    expect(source).not.toContain('el as any).textContent');
+    expect(source).toContain("el.getAttribute('data-analytics-action')");
   });
 });

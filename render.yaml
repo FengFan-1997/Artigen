@@ -35,6 +35,12 @@ services:
         value: "0"
       - key: TASK_WORKER_ENABLED
         value: "0"
+      - key: VITE_ANALYTICS_ENABLED
+        value: "1"
+      - key: BEHAVIOR_EVENT_RETENTION_DAYS
+        value: "90"
+      - key: BEHAVIOR_EVENT_PURGE_BATCH_SIZE
+        value: "5000"
       - key: AUTH_EMAIL_OTP_ENABLED
         value: "false"
       - key: MAIL_PROVIDER

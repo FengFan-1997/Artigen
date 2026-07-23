@@ -1,94 +1,105 @@
-# Nth Me Console（管理台）对外说明
+# Artigen 运营后台
 
-## 1. 模块定位
-Nth Me Console 是一个内嵌在前端项目中的「管理台/用户控制台」原型，用于在不依赖真实后端的情况下演示：
+## 定位
 
-- 积分（Credits）充值/扣减/流水
-- 用户列表与等级管理（Free/Pro/Enterprise）
-- 生成内容与行为日志的查看
-- 基础的个人资料与 API Key（模拟）管理
+`/console` 是 Artigen 的内部运营与审计后台。它不是浏览器本地数据原型，用户、钱包、
+订单、行为和审计的权威数据均来自服务端。旧的 `console_store_v1` 只保留非敏感 UI
+配置，不可作为余额、订单或日志的数据源。
 
-入口路由：`/console`
+## 页面
 
-## 2. 访问入口与路由
+| 路由 | 页面 | 权威数据 |
+| --- | --- | --- |
+| `/console` | 运营总览 | PostgreSQL 聚合指标 |
+| `/console/users` | 用户管理 | `users`、`sessions`、`wallets` |
+| `/console/credits` | 点数账本 | `wallet_ledger`、`wallets`、`credit_holds` |
+| `/console/behavior` | 用户行为 | `behavior_events` |
+| `/console/logs` | 系统审计 | `audit_events`、限流统计 |
+| `/console/audit` | 内容审计 | 脱敏生成、图片与调用元数据 |
+| `/console/usage` | 模型用量 | usage 与 generation 事件 |
+| `/console/settings` | 系统设置 | 当前管理员和非敏感配置 |
 
-- Console 根路由与子页面注册：[router/index.ts](file:///g:/AvuePro/newPro/frontend/src/router/index.ts#L222-L264)
-- 管理台布局（侧边栏 + 顶部栏）：[ConsoleLayout.vue](file:///g:/AvuePro/newPro/frontend/src/console/ConsoleLayout.vue)
-- 页面视图目录：[src/console/views](file:///g:/AvuePro/newPro/frontend/src/console/views)
+`/console/billing` 和 `/console/playground` 只作为旧书签兼容入口，分别重定向到点数账本
+和用户行为。
 
-当前子页面包含：
+## 登录与权限
 
-- Overview：`/console` → [Dashboard.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/Dashboard.vue)
-- Playground：`/console/playground` → [Playground.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/Playground.vue)
-- Billing：`/console/billing` → [Billing.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/Billing.vue)
-- Usage：`/console/usage` → [Usage.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/Usage.vue)
-- Settings：`/console/settings` → [Settings.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/Settings.vue)
-- Users：`/console/users` → [UserManagement.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/UserManagement.vue)
-- Audit：`/console/audit` → [ContentAudit.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/ContentAudit.vue)
+后台只接受 `/api/admin/login` 返回的短时 Bearer token。生产环境还会在每次请求时查询
+PostgreSQL `administrators`，账号被停用或角色被撤销后，已有 token 也立即失效。
 
-## 3. 数据与持久化（当前为原型实现）
+| 角色 | 能力 |
+| --- | --- |
+| `operator` | 读取总览、用户、点数、行为、用量和审计 |
+| `admin` | 包含读取能力，并可调点、停用/恢复用户和处理支付补偿 |
+| `owner` | 包含全部后台能力和管理员治理 |
 
-### 3.1 数据源
-管理台的数据来自 Pinia Store：[console.ts](file:///g:/AvuePro/newPro/frontend/src/stores/console.ts)
+管理员登录账号和密码是后台身份认证，不是 DEV 站点外层的 HTTP Basic 访问口令。两层
+认证用途不同，均不得写入仓库或浏览器持久存储。
 
-- 存储键：`console_store_v1`
-- 初始化：`init()` 首次进入时从 localStorage 加载数据，若当前用户不存在则自动创建
-- 当前用户识别：通过 [login/session.ts](file:///g:/AvuePro/newPro/frontend/src/login/session.ts#L19-L52) 的 `getCurrentUserId()` 获取 userId
+## 行为采集
 
-### 3.2 核心数据模型
+前端初始化后会记录公开产品页面的：
 
-User（`ConsoleUser`）：[console.ts](file:///g:/AvuePro/newPro/frontend/src/stores/console.ts#L5-L13)
+- `page_view`：净化后的页面路径；
+- `ui_click`：显式 `data-analytics-action`，或由 id、aria-label、站内路径和元素类型
+  生成的稳定操作标识；
+- 会话、项目、登录用户或匿名访客的 opaque reference；
+- 时间与粗粒度设备类别。
 
-Transaction（`Transaction`）：[console.ts](file:///g:/AvuePro/newPro/frontend/src/stores/console.ts#L15-L23)
+后台 `/console` 自身不进入产品行为统计，避免运营操作污染用户漏斗。
 
-- `type` 支持：`recharge | usage | admin_gift | refund`
-- `amount`：正数代表增加积分，负数代表扣减积分
+不会采集输入框文字、按钮 `innerText`、prompt、模型输出、图片/文件 URL、密码、Token、
+API Key 或原始 IP。IP 只保存哈希，User-Agent 只保存 desktop/mobile/tablet/bot
+类别。`BEHAVIOR_EVENT_RETENTION_DAYS` 默认 90 天，允许范围 7–365 天；写入时会
+按小时触发一次过期清理。
 
-## 4. 关键功能与行为约束
+## 关键管理接口
 
-### 4.1 Overview（概览）
-[Dashboard.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/Dashboard.vue)
+| Method | Path | 最低角色 |
+| --- | --- | --- |
+| `GET` | `/api/admin/me` | operator |
+| `GET` | `/api/admin/overview` | operator |
+| `GET` | `/api/admin/users` | operator |
+| `POST` | `/api/admin/users/status` | admin |
+| `POST` | `/api/admin/users/credits` | admin |
+| `GET` | `/api/admin/credits/ledger` | operator |
+| `GET` | `/api/admin/behavior/events` | operator |
+| `GET` | `/api/admin/behavior/summary` | operator |
+| `GET` | `/api/admin/audit/events` | operator |
 
-- 展示：当前余额（Credits）、账号等级、UserId、Email
-- 趋势图：基于交易流水（仅统计负数扣减）聚合最近 7 天的消耗趋势
-- 初始化兜底：首次进入会触发 `consoleStore.init()`，若本地无该 userId 则创建一个默认用户
+用户停用会在同一事务中更新状态、撤销全部有效会话并写入
+`admin.user.status_changed` 审计事件。点数调整通过钱包服务写入不可变账本和可归因审计，
+不得直接修改前端余额。
 
-### 4.2 Billing（充值与订单）
-[Billing.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/Billing.vue)
+## 数据库与迁移
 
-- 充值按钮会模拟支付延迟，并通过 `consoleStore.updatePoints(userId, credits, 'recharge', ...)` 增加积分
-- 订单列表来自 `transactions` 中 `type === 'recharge'` 的记录
+行为表由 `backend/migrations/013_behavior_events.js` 创建。发布包含该页面的版本前，
+DEV 必须成功应用迁移并验证：
 
-### 4.3 Playground（生成模拟器）
-[Playground.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/Playground.vue#L164-L219)
+```bash
+curl --user "artigen-dev:${DEV_PASSWORD}" \
+  https://dev-artigen-app-fengfan.onrender.com/readyz
+```
 
-- 生成前校验：积分不足（< 5）时阻止生成
-- 单次生成成本：固定扣减 5 Credits（`updatePoints(..., -5, 'usage', ...)`）
-- 同时写入：
-  - `generatedContent`（生成内容记录）
-  - `logs`（行为日志，`logActivity`）
+生产启动通过 `start:production` 在监听端口前获取 advisory lock 并执行 pending
+migration；失败时服务不会带着旧 schema 启动。
 
-### 4.4 User Management（用户管理）
-[UserManagement.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/UserManagement.vue)
+## 开发与验证
 
-- 列表：展示所有本地用户（来自 store.users）
-- 调整积分：通过 `updatePoints(..., 'admin_gift', ...)` 写入一条流水并更新余额
-- 修改等级：通过 `updateUserLevel(userId, level)` 更新（Free/Pro/Enterprise）
-- 详情抽屉：查看该用户的交易流水与行为日志（getUserTransactions/getUserLogs）
+```bash
+pnpm type-check
+pnpm test
+pnpm build
+```
 
-### 4.5 Usage（用量/流水视图）
-[Usage.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/Usage.vue)
+后台变更至少覆盖：
 
-- 把交易流水映射为“用量记录”展示（包含 usage/admin_gift/refund）
-- 当前为纯前端筛选与展示，不做服务端分页/鉴权
+1. 登录面不允许静态管理员 key。
+2. operator 无法执行写操作。
+3. 用户状态变更撤销会话并写审计。
+4. 点数列表读取不可变账本。
+5. 行为净化不泄露内容、URL、凭证或原始网络标识。
+6. 所有列表支持服务端分页与筛选。
 
-### 4.6 Settings（设置）
-[Settings.vue](file:///g:/AvuePro/newPro/frontend/src/console/views/Settings.vue)
-
-- Profile：展示 userId，支持模拟保存 displayName 与通知开关
-- API Keys：支持生成/撤销“模拟 key”（仅在内存中维护列表，生成时弹窗展示一次）
-
-## 5. 说明（重要）
-
-- 这是原型实现：数据仅保存在浏览器 localStorage，清理站点数据会丢失
-- 真实生产版通常需要补齐：服务端鉴权、服务端账本、审计落库、内容存储与合规策略等
+完整分支、DEV、PR 和生产流程见仓库根目录
+`PROJECT_OPERATIONS_GUIDE.zh-CN.md` 与 `CONTRIBUTING.md`。

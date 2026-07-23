@@ -566,15 +566,14 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 
 主要数据：
 
-- 用户列表
-- 图片历史
-- 审计历史
-- 订单
-- 点数 holds
-- usage ledger
-- 前端行为事件
-- 限流统计
-- 系统健康
+- 运营总览与当前管理员角色
+- 用户列表、账号状态和会话撤销
+- PostgreSQL 不可变点数账本与 holds
+- 页面访问、界面点击和稳定操作标识
+- 管理员与系统敏感操作审计
+- 图片与内容审计历史
+- 订单与 usage ledger
+- 限流统计和系统健康
 
 ---
 
@@ -648,13 +647,19 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | Method | Path | 说明 |
 | --- | --- | --- |
 | `POST` | `/api/admin/login` | 管理员登录。 |
+| `GET` | `/api/admin/me` | 当前管理员与角色。 |
+| `GET` | `/api/admin/overview` | 用户、点数、订单、生成、行为与审计聚合指标。 |
 | `GET` | `/api/admin/users` | 用户列表。 |
+| `POST` | `/api/admin/users/status` | admin/owner 停用或恢复账号；停用会撤销会话并写审计。 |
 | `POST` | `/api/admin/users/credits` | 管理员调整点数。 |
+| `GET` | `/api/admin/credits/ledger` | PostgreSQL 不可变钱包流水，支持用户、类型和时间筛选。 |
 | `GET` | `/api/admin/images/history` | 全站图片任务元数据；只返回计数、分类、哈希和 opaque asset ID。 |
 | `GET` | `/api/admin/audit/history` | 全站审计元数据；不返回原始 prompt、用户文本、图片 URL 或文件名。 |
+| `GET` | `/api/admin/audit/events` | PostgreSQL 管理员与系统敏感操作审计。 |
 | `GET` | `/api/admin/orders` | 订单聚合。 |
 | `GET` | `/api/admin/usage/ledger` | 全站 usage ledger。 |
-| `GET` | `/api/admin/collection/events` | 前端行为事件。 |
+| `GET` | `/api/admin/behavior/events` | PostgreSQL 页面访问和界面点击；`collection/events` 为兼容别名。 |
+| `GET` | `/api/admin/behavior/summary` | 行为总量、日趋势、热门页面和热门操作。 |
 | `GET` | `/api/admin/generation/events` | PostgreSQL 脱敏生图事件。 |
 | `GET` | `/api/admin/generation/funnel` | 生图成功/退款/持久化、队列与 Provider p50/p95、未结算 hold 和成功成本。 |
 | `GET` | `/api/admin/ratelimit/stats` | 限流统计。 |
@@ -676,6 +681,7 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `VITE_GOOGLE_CLIENT_ID` | 已弃用；Google client id 统一由后端配置接口提供。 |
 | `VITE_IMAGE_EDITOR_V2_DEFAULT` | 默认 `v2`；设为 `legacy`/`false` 可灰度回退。 |
 | `VITE_AI_DESIGN_TASK_V2_ENABLED` | 主生图统一任务链前端灰度；默认开启，设为 `false` 可回退一版。 |
+| `VITE_ANALYTICS_ENABLED` | 产品页面访问与点击采集；默认开启，显式设为 `0`/`false` 时关闭该构建。 |
 
 ### 后端基础变量
 
@@ -709,6 +715,8 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `CONSOLE_ADMIN_PASSWORD` | 控制台账号密码；生产至少 16 位并拒绝默认密码。 |
 | `CONSOLE_ADMIN_TOKEN_SECRET` | 控制台 token 签名密钥；生产必填，多实例必须使用同一稳定值。 |
 | `CONSOLE_ADMIN_TOKEN_TTL_HOURS` | 控制台 token 有效小时数。 |
+| `BEHAVIOR_EVENT_RETENTION_DAYS` | PostgreSQL 产品行为事件保留天数；默认 90，允许 7–365。 |
+| `BEHAVIOR_EVENT_PURGE_BATCH_SIZE` | 每次小时级机会清理最多删除的过期行为行数；默认 5000，允许 100–50000。 |
 
 ### AI provider 变量
 
@@ -804,7 +812,7 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `IMAGE_HISTORY_MAX_ITEMS` | 单用户图片历史上限。 |
 | `AUDIT_HISTORY_MAX_ITEMS` | 单用户审计历史上限。 |
 | `USAGE_LEDGER_MAX_ITEMS` | usage ledger 上限。 |
-| `ANALYTICS_EVENTS_MAX_ITEMS` | 行为事件上限。 |
+| `ANALYTICS_EVENTS_MAX_ITEMS` | 无 PostgreSQL 的非生产兼容模式中，旧 JSON 行为事件上限。 |
 | `USAGE_CREDITS_PER_1K_TOKENS` | usage ingest 按 token 估算点数。 |
 
 ### 生成和文件变量
@@ -855,7 +863,7 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 
 ## 运行期数据
 
-PostgreSQL 16 保存用户/身份、Cookie 会话、验证码、管理员、钱包、不可变账本、预占、价格、套餐、支付订单/回调、工具任务、资产元数据、编辑器 transfer 和财务/管理事务审计。迁移在 `backend/migrations/`。
+PostgreSQL 16 保存用户/身份、Cookie 会话、验证码、管理员、钱包、不可变账本、预占、价格、套餐、支付订单/回调、工具任务、资产元数据、编辑器 transfer、产品行为事件和财务/管理事务审计。迁移在 `backend/migrations/`。
 
 图片二进制不写入数据库。`ASSET_STORAGE_DRIVER=file` 默认使用 `MEMORY_DIR/assets-v2`，只用于本地开发和单实例契约测试；生产付费生图必须配置 `ASSET_STORAGE_DRIVER=s3`/`r2` 及共享 endpoint、bucket 和 credentials。数据库只保存 opaque URI、magic-byte 校验后的 MIME、大小、尺寸和保留期。对象写入后会重新读取并校验大小与 SHA-256，只有验证通过的生成结果才能结算。过期资产通过 PostgreSQL `SKIP LOCKED` 租约回收；同内容重传、任务/transfer 引用和多实例并发不会绕过二次状态校验。file 适配器还会以游标扫描 inventory，在宽限期后清理“对象写成功但数据库事务未提交”的孤儿文件。
 
@@ -871,9 +879,9 @@ S3/R2 直传只用于明确需要服务器处理的 AI/文档流程。16 MiB 以
 
 生图灰度由全局 `AI_DESIGN_TASK_V2_ENABLED`、内部用户 allowlist 和稳定百分比分桶共同控制，发布顺序为内部用户 → 10% → 50% → 100%。全局开关是财务或资产指标越界时的立即熔断开关；分桶依据数据库用户 UUID，不因刷新、换浏览器或多实例而漂移。
 
-旧用户、钱包、订单等财务 JSON 快照只用于幂等导入、shadow read 和迁移核对，已从版本控制忽略；切换后不得作为财务回退源。非财务的最小化 usage、analytics、图片/审计历史目前仍使用 legacy JSON 适配器写入 `backend/memory`，只保存下述净化后的元数据。
+旧用户、钱包、订单等财务 JSON 快照只用于幂等导入、shadow read 和迁移核对，已从版本控制忽略；切换后不得作为财务回退源。产品页面访问和点击在配置 PostgreSQL 时写入 `behavior_events`，旧 JSON analytics 只保留为无数据库非生产兼容适配器；最小化 usage、图片/内容审计历史仍由现有适配器提供。
 
-行为事件、usage ledger、图片历史和审计历史采用元数据最小化：原始 prompt/用户文本/模型输出/页面上下文只保留长度与带命名空间的 SHA-256，图片和文件引用只保留 opaque ID，IP 只保留哈希，User-Agent 只保留设备类别。写入时会执行白名单净化，读取旧 JSON 时会再次净化，因此历史遗留的图片 URL、文件名、凭证和敏感 query 也不会由管理接口原样返回。
+行为事件、usage ledger、图片历史和审计历史采用元数据最小化：原始 prompt/用户文本/模型输出不进入产品行为表，图片和文件引用只保留 opaque ID，IP 只保留哈希，User-Agent 只保留设备类别。界面点击只记录显式 `data-analytics-action` 或由 id、aria-label、站内路径和元素类型生成的稳定操作标识，不读取按钮 `innerText`。写入时执行白名单净化，读取旧 JSON 时再次净化，因此历史遗留的图片 URL、文件名、凭证和敏感 query 也不会由管理接口原样返回。行为事件默认保留 90 天并按小时触发过期清理。
 
 首次生产管理员需先是普通 PostgreSQL 用户，再显式授权角色：
 
@@ -1038,7 +1046,7 @@ pnpm run start:production
 
 仓库根目录的 `render.yaml` 提供 Render Blueprint：CI checks 通过后部署、完整 workspace 构建、启动阶段迁移锁和 60 秒优雅关闭。构建命令会显式清空 `VITE_API_BASE` 与 `VITE_AGENT_API_BASE`，确保 Render 上的前端、Cookie 和 `/api` 保持同源。平台健康检查只调用浅层 `/healthz`，不会因数据库或外部 Provider 的短暂波动反复重启实例；`/readyz` 保留给人工 smoke 或部署深检。
 
-Render Free 不使用 `preDeployCommand`，迁移由 `start:production` 在监听端口前 fail-closed 执行。模板默认 `plan: free`、`PG_POOL_MAX=5`、`TASK_WORKER_ENABLED=0`，并关闭付费生图与邮件 OTP；此时 `/readyz` 会明确把数据库、对象存储、任务 payload、Provider 和邮件依赖标为 `skipped`，且不会对这些外部依赖发起 I/O。Cookie 会话只在 `/api` 与 `/files` 水合，SPA、静态资源和健康检查不会因用户已登录而额外唤醒 Neon。开启付费或邮件 OTP 后，深检会要求 PostgreSQL 已应用仓库最新迁移（当前 `012_asset_upload_sessions`）、对应对象存储/Provider，以及独立认证密钥、签名邮件中继和 Turnstile secret + site key；生产 Turnstile 还要求 HTTPS `APP_ORIGIN` 与精确 `TURNSTILE_HOSTNAMES` 一致。按 [Render Blueprint 规范](https://render.com/docs/blueprint-spec) 导入并完成 smoke 后，再分阶段开启邮件 OTP、Worker 与收费能力。
+Render Free 不使用 `preDeployCommand`，迁移由 `start:production` 在监听端口前 fail-closed 执行。模板默认 `plan: free`、`PG_POOL_MAX=5`、`TASK_WORKER_ENABLED=0`，并关闭付费生图与邮件 OTP；此时 `/readyz` 会明确把数据库、对象存储、任务 payload、Provider 和邮件依赖标为 `skipped`，且不会对这些外部依赖发起 I/O。Cookie 会话只在 `/api` 与 `/files` 水合，SPA、静态资源和健康检查不会因用户已登录而额外唤醒 Neon。开启付费或邮件 OTP 后，深检会要求 PostgreSQL 已应用仓库最新迁移（当前 `013_behavior_events`）、对应对象存储/Provider，以及独立认证密钥、签名邮件中继和 Turnstile secret + site key；生产 Turnstile 还要求 HTTPS `APP_ORIGIN` 与精确 `TURNSTILE_HOSTNAMES` 一致。按 [Render Blueprint 规范](https://render.com/docs/blueprint-spec) 导入并完成 smoke 后，再分阶段开启邮件 OTP、Worker 与收费能力。
 
 后端生产必须配置 PostgreSQL 16；生产付费生图必须使用 S3/R2 兼容共享对象存储，Render 本地文件只用于开发或非付费契约测试。
 

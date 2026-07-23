@@ -41,7 +41,7 @@ const ui = computed(() =>
         navMarket: '点数商城',
         portfolio: '作品集',
         title: '隐私政策',
-        updatedAt: '最后更新: 2026-01-19',
+        updatedAt: '最后更新: 2026-07-23',
         sections: [
           {
             title: '1. 概览与适用范围',
@@ -78,7 +78,8 @@ const ui = computed(() =>
             title: '5. Cookies 与日志信息',
             paragraphs: [
               '我们可能使用 Cookie 或本地存储技术以提升体验与保持登录状态。',
-              '我们会收集日志信息，例如 IP 地址、浏览器类型、设备信息、访问时间、点击流等，用于分析与改进服务。'
+              '我们会收集页面路径、访问时间和界面点击的稳定操作标识，用于产品分析、故障定位和安全审计。',
+              '行为日志不采集输入文字、提示词、模型输出、图片或文件地址、密码、Token 或 API Key；IP 仅保存不可逆哈希，User-Agent 仅归类为粗粒度设备类型。'
             ]
           },
           {
@@ -93,6 +94,7 @@ const ui = computed(() =>
             title: '7. 数据保留',
             paragraphs: [
               '我们仅在达成服务目的所需的期限内保留您的信息。',
+              '产品访问与点击行为默认保留 90 天，之后自动删除；为安全、财务或法定义务所需的审计及交易记录可能按适用期限另行保留。',
               '当法律或合规要求保留更长时间时，我们将在必要范围内进行保留。'
             ]
           },
@@ -152,7 +154,7 @@ const ui = computed(() =>
         navMarket: 'Compute Market',
         portfolio: 'PORTFOLIO',
         title: 'Privacy Policy',
-        updatedAt: 'Last updated: 2026-01-19',
+        updatedAt: 'Last updated: 2026-07-23',
         sections: [
           {
             title: '1. Overview & Scope',
@@ -189,7 +191,8 @@ const ui = computed(() =>
             title: '5. Cookies & Log Data',
             paragraphs: [
               'We may use cookies or local storage to keep you signed in and improve functionality.',
-              'We collect log data such as IP addresses, browser types, device information, timestamps, and click‑stream data for analytics and service improvement.'
+              'We collect page paths, timestamps, and stable UI action identifiers for product analytics, troubleshooting, and security auditing.',
+              'Behavior logs do not collect input text, prompts, model output, image or file URLs, passwords, tokens, or API keys. IP addresses are stored only as irreversible hashes and user agents are reduced to broad device categories.'
             ]
           },
           {
@@ -204,6 +207,7 @@ const ui = computed(() =>
             title: '7. Data Retention',
             paragraphs: [
               'We retain information only for as long as necessary to fulfill the purposes described in this policy.',
+              'Product visit and click events are retained for 90 days by default and then deleted automatically. Security, financial, or legally required audit and transaction records may follow separate applicable retention periods.',
               'We may keep certain records longer when required by law or compliance obligations.'
             ]
           },

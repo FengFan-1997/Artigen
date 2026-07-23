@@ -11,8 +11,8 @@ import { getPageContext } from './pageContext';
 let autoClickInstalled = false;
 
 const ANALYTICS_URL_BASE = 'https://analytics.invalid';
-const DEFER_ANONYMOUS_BACKEND =
-  /^(?:1|true)$/i.test(String(import.meta.env.VITE_LAZY_BACKEND || '').trim());
+const ANALYTICS_ENABLED =
+  !/^(?:0|false)$/i.test(String(import.meta.env.VITE_ANALYTICS_ENABLED || '1').trim());
 const RAW_CONTENT_FIELDS = new Set([
   'content',
   'dataurl',
@@ -205,6 +205,16 @@ const normalizeText = (raw: any, maxLen = 80) => {
   return s.length > maxLen ? s.slice(0, maxLen) : s;
 };
 
+const normalizeActionKey = (raw: any, maxLen = 96) => {
+  const value = String(raw || '')
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9_.:/-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLen);
+  return /^[a-z0-9][a-z0-9_.:/-]*$/.test(value) ? value : '';
+};
+
 const safeParseUrl = (raw: any) => {
   const s = String(raw || '').trim();
   if (!s) return null;
@@ -249,10 +259,20 @@ const installAutoClickTracking = () => {
       if (!tag) return;
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
 
-      const aria = normalizeText(el.getAttribute('aria-label'));
-      const text = aria || normalizeText((el as any).innerText || (el as any).textContent || '');
       const id = normalizeText((el as any).id || '', 64);
-      const cls = normalizeText((el as any).className || '', 120);
+      const cls = normalizeText((el as any).className || '', 120)
+        .split(' ')
+        .map((value) => normalizeActionKey(value, 40))
+        .filter(Boolean)
+        .slice(0, 2)
+        .join('.');
+      const explicitAction = normalizeActionKey(
+        el.getAttribute('data-analytics-action') ||
+          el.getAttribute('data-track-action') ||
+          el.getAttribute('data-testid') ||
+          ''
+      );
+      const ariaAction = normalizeActionKey(el.getAttribute('aria-label') || '');
 
       const href = (() => {
         if (tag !== 'a') return '';
@@ -262,18 +282,27 @@ const installAutoClickTracking = () => {
         return normalizeText(sanitizeAnalyticsUrl(u.toString()), 240);
       })();
 
-      const sig = `${tag}|${id}|${cls}|${href}|${text}`;
+      const action =
+        explicitAction ||
+        normalizeActionKey(id) ||
+        ariaAction ||
+        (href ? `navigate:${normalizeActionKey(href, 80)}` : '') ||
+        normalizeActionKey(`${tag}:${cls || 'control'}`);
+      const areaElement = el.closest('[data-analytics-area]') as HTMLElement | null;
+      const area = normalizeActionKey(areaElement?.getAttribute('data-analytics-area') || '');
+      const sig = `${tag}|${action}|${href}|${area}`;
       if (sig === lastSig) return;
 
       lastSig = sig;
       lastTs = now;
 
       void trackBackendEvent('ui_click', {
-        tag,
-        targetId: id,
-        targetClass: cls,
-        targetText: text,
-        targetHref: href
+        category: 'interaction',
+        action,
+        element: tag,
+        area,
+        pagePath: sanitizeAnalyticsUrl(window.location.href),
+        ...(href ? { path: href } : {})
       });
     },
     true
@@ -281,6 +310,7 @@ const installAutoClickTracking = () => {
 };
 
 export const initAnalytics = () => {
+  if (!ANALYTICS_ENABLED) return;
   console.log('[Analytics] Initialized');
   try {
     installAutoClickTracking();
@@ -372,6 +402,7 @@ export const trackPageView = (
     path = sanitizeAnalyticsUrl(pathOrParams.path);
     props = sanitizeAnalyticsPayload(pathOrParams);
   }
+  if (!ANALYTICS_ENABLED || String(path || '').startsWith('/console')) return;
 
   const now = Date.now();
   const sig = `${String(path || '').trim()}|${String((props as any)?.location || '').trim()}`;
@@ -398,10 +429,8 @@ let lastPageViewTs = 0;
  * In a real app, this would be a fetch/axios call to your backend API.
  */
 export const trackBackendEvent = async (eventType: string, payload: Record<string, any>) => {
+  if (!ANALYTICS_ENABLED) return { success: true, disabled: true as const };
   const authSession = getAuthSessionSnapshot();
-  if (DEFER_ANONYMOUS_BACKEND && !authSession.authenticated) {
-    return { success: true, deferred: true as const };
-  }
 
   const url = buildApiUrl('/api/collection/event');
   const userId = ensureGuestUserId();
