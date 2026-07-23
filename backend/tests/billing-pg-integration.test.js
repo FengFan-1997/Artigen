@@ -112,10 +112,10 @@ test('legacy task hash compatibility rejects the same key with different upload 
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'artigen-legacy-hash-'));
   const adapter = new FileAssetAdapter(root);
   try {
-    const png = Buffer.alloc(32);
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
-    png.writeUInt32BE(2, 16);
-    png.writeUInt32BE(2, 20);
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Av9Z5AAAAABJRU5ErkJggg==',
+      'base64'
+    );
     const asset = await storeAsset({
       pool: getPool(),
       adapter,

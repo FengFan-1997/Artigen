@@ -2,8 +2,9 @@ name: Quality Gate
 
 on:
   push:
-    branches: [main]
+    branches: [dev, main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -41,7 +42,12 @@ jobs:
       AI_DESIGN_TASK_V2_ENABLED: "true"
       WORKSHOP_AI_TASK_V2_ENABLED: "true"
       AI_GENERATION_CONTRACT_MOCK: "true"
+      TASK_QUEUE_DRIVER: pgboss
       TASK_PAYLOAD_ENCRYPTION_KEY: hex:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+      MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+      MINIO_TEST_BUCKET: artigen-ci
+      MINIO_ROOT_USER: artigen-minio
+      MINIO_ROOT_PASSWORD: artigen-minio-secret
     steps:
       - uses: actions/checkout@v4
 
@@ -59,6 +65,22 @@ jobs:
         run: pnpm check:workspace
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Start pinned MinIO S3 compatibility fixture
+        run: |
+          docker run --detach --name artigen-minio --publish 9000:9000 \
+            --env MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            --env MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs artigen-minio
+          exit 1
 
       - name: Apply PostgreSQL 16 migrations
         run: pnpm --filter backend db:migrate
@@ -124,3 +146,43 @@ jobs:
 
       - name: Run ${{ matrix.project }} shard ${{ matrix.shard }}
         run: pnpm --filter personal exec playwright test --project=${{ matrix.project }} --fully-parallel --shard=${{ matrix.shard }}
+
+  release-policy:
+    name: Release branch policy
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Allow only verified promotion or emergency sources
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          case "$HEAD_REF" in
+            dev|hotfix/*|codex/artigen-overhaul)
+              echo "Allowed release source: $HEAD_REF"
+              ;;
+            *)
+              echo "::error::main only accepts dev, hotfix/*, or the one-time codex/artigen-overhaul migration branch"
+              exit 1
+              ;;
+          esac
+
+  release-gate:
+    name: Release gate
+    if: always()
+    needs: [core, e2e, release-policy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Artigen quality job
+        env:
+          CORE_RESULT: ${{ needs.core.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          POLICY_RESULT: ${{ needs.release-policy.result }}
+        run: |
+          test "$CORE_RESULT" = "success"
+          test "$E2E_RESULT" = "success"
+          case "$POLICY_RESULT" in
+            success|skipped) ;;
+            *) exit 1 ;;
+          esac

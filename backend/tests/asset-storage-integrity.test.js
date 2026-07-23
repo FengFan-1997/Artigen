@@ -7,11 +7,10 @@ const { ApiError } = require('../lib/api-error');
 const { storeAsset } = require('../services/asset-storage');
 
 const pngFixture = () => {
-  const buffer = Buffer.alloc(32);
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buffer);
-  buffer.writeUInt32BE(16, 16);
-  buffer.writeUInt32BE(12, 20);
-  return buffer;
+  return Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Av9Z5AAAAABJRU5ErkJggg==',
+    'base64'
+  );
 };
 
 const createActiveRowHarness = ({ physicalBuffer, repairBuffer }) => {
@@ -32,8 +31,8 @@ const createActiveRowHarness = ({ physicalBuffer, repairBuffer }) => {
     uri,
     mime_type: 'image/png',
     byte_size: fixture.length,
-    width: 16,
-    height: 12,
+    width: 1,
+    height: 1,
     sha256: digest,
     metadata: {},
     expires_at: new Date(Date.now() + 60_000),
@@ -149,8 +148,8 @@ test('a brand-new generated output is read-verified before its database row is a
           id: '10000000-0000-4000-8000-000000000002',
           mime_type: 'image/png',
           byte_size: fixture.length,
-          width: 16,
-          height: 12,
+          width: 1,
+          height: 1,
           metadata: {},
           expires_at: null,
           created_at: new Date()

@@ -1,7 +1,10 @@
 # Artigen 生产环境小白接管手册
 
-> 状态快照：2026-07-20
+> 状态快照：2026-07-23
 > 本文不保存密码、验证码、SMTP 授权码、数据库连接串、API Key 或支付 Token。
+
+本机、DEV、`dev -> main`、生产发布和回滚的完整流程见
+[《Artigen 项目、环境与发布总手册》](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。
 
 ## 1. 先看结论
 
@@ -98,8 +101,8 @@ Render 只运行程序，不保存长期数据。用户、钱包、订单和任�
 - 用途：Express API、任务 Worker，以及旧站直连备用入口
 - GitHub 仓库：`FengFan-1997/Artigen`
 - 部署分支：`codex/artigen-overhaul`
-- 当前后端代码提交：`7d1cc82f3716e271a81dea59b38d492c59d1bd9d`
-- 当前域名配置部署：`dep-d9eposbtqb8s73avjcr0`
+- 当前后端代码提交：`10c15249d3a00fe1339a3817fe66fdcc1a4c58d9`
+- 当前生产部署：`dep-d9fhusfavr4c73c9rds0`
 - 当前 `render.yaml` 设置为手动部署，不会因为随便 push 一次就自动上线。
 
 访问 Render：
@@ -682,8 +685,9 @@ security find-generic-password -s '服务名' -w
    不要在不了解差异时用 Blueprint 覆盖 Dashboard 环境。
 5. `render.yaml` 中仍有旧模型默认值，而后端生产代码已经把生图和方向模型锁定为
    `Kwai-Kolors/Kolors` 与 `Qwen/Qwen3-8B`。后续应同步清理模板，避免接手者误解。
-6. 当前工作树还有未提交的前端修改。部署前必须检查 `git status`，不要全仓格式化、
-   不要覆盖不相关改动。
+6. GitHub 默认分支已经是 `main`，但生产 Vercel/Render 仍跟踪
+   `codex/artigen-overhaul`。必须先完成当前迁移 PR 和 DEV 验证，再把生产来源切到
+   `main`；不能从当前落后的 `main` 直接发布。
 
 ## 12. 一句话记忆
 

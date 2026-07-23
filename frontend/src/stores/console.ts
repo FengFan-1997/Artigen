@@ -5,6 +5,7 @@ import {
   sanitizeAnalyticsUrl,
   trackBackendEvent
 } from '@/utils/analytics';
+import { fetchJsonQuery, queryClient } from '@/services/serverState';
 
 const AUTH_STORAGE_KEY = 'console_auth_v1';
 const STORAGE_KEY = 'console_store_v1';
@@ -371,6 +372,28 @@ const buildAdminHeaders = (token: string, mode: AdminAuthMode): Record<string, s
   return headers;
 };
 
+const fetchAdminJson = async (
+  url: string,
+  headers: Record<string, string>,
+  onAuthError: () => void
+) => {
+  try {
+    const json: any = await fetchJsonQuery({
+      queryKey: ['console', url],
+      request: (signal) => fetch(url, { headers, signal })
+    });
+    if (!json?.ok) {
+      const error = new Error(typeof json?.error === 'string' ? json.error : 'INVALID_RESPONSE');
+      (error as any).status = 200;
+      throw error;
+    }
+    return json;
+  } catch (error) {
+    if (isAdminAuthErrorStatus(Number((error as any)?.status || 0))) onAuthError();
+    throw error;
+  }
+};
+
 export const useConsoleStore = defineStore('console', {
   state: () => ({
     users: [] as ConsoleUser[],
@@ -478,6 +501,7 @@ export const useConsoleStore = defineStore('console', {
         throw new Error('LOGIN_FAILED');
 
       this.setAdminKey(token);
+      queryClient.removeQueries({ queryKey: ['console'] });
       this.adminAuthMode = 'bearer';
       setConsoleAdminAuthMode('bearer');
       return { ok: true as const, token, expiresAt };
@@ -501,6 +525,7 @@ export const useConsoleStore = defineStore('console', {
       clearConsoleAuthSession();
       this.adminKey = '';
       this.adminAuthMode = 'bearer';
+      queryClient.removeQueries({ queryKey: ['console'] });
     },
 
     async fetchAdminUsers(input?: { q?: string; limit?: number; offset?: number }) {
@@ -513,12 +538,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminUserItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminUsers = items;
       this.adminUsersTotal = Number(json?.total || items.length) || items.length;
@@ -535,12 +555,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminImageHistoryItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminImages = items;
       this.adminImagesTotal = Number(json?.total || items.length) || items.length;
@@ -565,12 +580,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminUsageLedgerItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminUsage = items;
       this.adminUsageTotal = Number(json?.total || items.length) || items.length;
@@ -591,12 +601,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminAnalyticsEventItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminEvents = items;
       this.adminEventsTotal = Number(json?.total || items.length) || items.length;
@@ -608,12 +613,7 @@ export const useConsoleStore = defineStore('console', {
       const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
       const url = buildUrlWithQuery('/api/admin/generation/funnel', { days });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       this.generationFunnel = json.funnel as GenerationFunnel;
       return { ok: true as const, funnel: this.generationFunnel };
     },
@@ -627,12 +627,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminAnalyticsEventItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminBehaviorEvents = items;
       this.adminBehaviorTotal = Number(json?.total || items.length) || items.length;
@@ -659,12 +654,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminAuditHistoryItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminAudit = items;
       this.adminAuditTotal = Number(json?.total || items.length) || items.length;
@@ -677,12 +667,7 @@ export const useConsoleStore = defineStore('console', {
       const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
       const url = buildApiUrl('/api/admin/ratelimit/stats');
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const stats: AdminRateLimitStats =
         json && typeof json === 'object'
           ? {
@@ -708,12 +693,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: any[] = Array.isArray(json?.items) ? json.items : [];
       this.adminChats = items.map((it) => {
         if (!it || typeof it !== 'object') return it;
@@ -763,6 +743,7 @@ export const useConsoleStore = defineStore('console', {
       this.adminUsers = (this.adminUsers || []).map((u) =>
         u.userId === userId ? { ...u, wallet } : u
       );
+      void queryClient.invalidateQueries({ queryKey: ['console'] });
       return { ok: true as const, wallet };
     },
 
@@ -779,12 +760,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: any[] = Array.isArray(json?.items) ? json.items : [];
       this.adminOrders = items;
       this.adminOrdersTotal = Number(json?.total || items.length) || items.length;

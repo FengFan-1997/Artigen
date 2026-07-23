@@ -223,6 +223,24 @@ test('headers stay separated across compact laptop and mobile widths with langua
 });
 
 test('AI mobile setup keeps references readable, grows long prompts, and stacks product fields', async ({ page }) => {
+  await page.route('**/api/generation/models', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        models: [{
+          id: 'standard-v1',
+          name: { zh: '标准生成', en: 'Standard generation' },
+          available: true,
+          capabilities: ['text-to-image', 'image-reference'],
+          maxReferences: 3,
+          aspectRatios: ['1:1', '4:5', '3:4', '16:9', '9:16'],
+          supportsSeed: true
+        }]
+      })
+    })
+  );
   for (const width of [320, 390, 414]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/artigen/ai');

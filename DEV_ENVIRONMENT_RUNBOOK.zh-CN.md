@@ -1,0 +1,93 @@
+# Artigen DEV 测试环境
+
+> DEV 是线上可访问的测试环境，不是生产环境，也不承载真实用户数据。
+
+## 地址与命名
+
+- 云端服务：`dev-artigen-app-fengfan`
+- 云端地址：`https://dev-artigen-app-fengfan.onrender.com`
+- 部署分支：`dev`（push 后自动部署）
+- 云端数据库：`dev_artigen`
+- 本机前端：`http://localhost:4000`
+- 本机后端：`http://localhost:8080`
+- 本机数据库：`artigen_dev`
+
+打开云端地址时，浏览器会先要求 HTTP Basic 认证。用户名固定为
+`artigen-dev`；密码只保存在 Render 环境变量和 macOS 钥匙串
+`Artigen Dev Access Password` 中，不写入 Git。
+
+## 隔离边界
+
+DEV 默认采用以下安全门：
+
+1. `DATABASE_URL` 与 `DATABASE_MIGRATION_URL` 只连接 `dev_artigen`，不连接生产 `neondb`。
+2. `PAID_FEATURES_ENABLED=false`、`PAYMENTS_ENABLED=false`，不会创建真实支付或入账。
+3. `AUTH_EMAIL_OTP_ENABLED=false`，不会调用生产邮件中继。
+4. `AI_DESIGN_TASK_V2_ENABLED=false`、`WORKSHOP_AI_TASK_V2_ENABLED=false`，不会产生真实模型费用。
+5. `ASSET_STORAGE_DRIVER=file`，不会读写生产对象存储；Render 重启后测试图片可丢弃。
+6. 云端页面固定显示 `DEV 测试环境` 标记，并由独立访问口令保护。
+7. DEV 与生产使用不同域名，因此 HttpOnly Session Cookie 也相互隔离。
+
+## 本机启动
+
+首次或需要重建本机数据库时：
+
+```bash
+pnpm run db:local:setup
+```
+
+启动前后端：
+
+```bash
+pnpm run dev
+```
+
+健康检查：
+
+```bash
+curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
+```
+
+## 云端检查
+
+浅健康检查不需要密码，供 Render 使用：
+
+```bash
+curl https://dev-artigen-app-fengfan.onrender.com/healthz
+```
+
+深健康检查和页面需要 DEV 访问账号：
+
+```bash
+DEV_PASSWORD="$(security find-generic-password -s 'Artigen Dev Access Password' -w)"
+curl --user "artigen-dev:${DEV_PASSWORD}" \
+  https://dev-artigen-app-fengfan.onrender.com/readyz
+unset DEV_PASSWORD
+```
+
+## 发布到 DEV
+
+DEV 服务只跟踪远端 `dev` 分支；更新该分支会自动构建并部署，生产分支和生产服务
+不会被触发。
+
+```bash
+git fetch origin
+git switch -c feat/short-name origin/dev
+git push -u origin feat/short-name
+gh pr create --base dev --head feat/short-name
+```
+
+PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
+
+部署完成后，`/api/meta` 的 `appEnv` 必须是 `dev`，`gitSha` 必须等于本次
+`dev` commit；随后完成页面和 `/readyz` smoke，才能创建 `dev -> main` PR。
+
+完整提交流程和生产发布规则见
+[《Artigen 项目、环境与发布总手册》](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。
+
+## 开启真实集成前
+
+DEV 可以逐项接入独立的模型 Key、邮件发件域、Turnstile 测试站点、对象存储桶和支付
+沙盒，但不得直接复制生产支付回调或生产对象桶。每项能力需先通过 `/readyz` 和对应
+smoke test，再单独打开 feature flag。

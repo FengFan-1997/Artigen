@@ -1,5 +1,6 @@
 import { canvasToBlob, drawToCanvas, loadImageFromUrl, scaleToMaxSide } from './canvas';
 import { processImageFilterInWorker } from './filterWorkerClient';
+import { processImageWithCodecWorker } from './imageCodecWorkerClient';
 import { safeBaseName } from './format';
 import { createGifWorkerSession } from './gifWorkerClient';
 import {
@@ -15,7 +16,8 @@ import {
   assertPdfStitchBudget,
   createPdfRangeBudgetTracker,
   getRuntimeResourceBudget,
-  hasFilterWorkerCapability
+  hasFilterWorkerCapability,
+  hasImageCodecWorkerCapability
 } from './resourceBudget';
 import { revokeUrl } from './url';
 
@@ -118,6 +120,21 @@ export const convertImage = async (
   quality?: number,
   opts?: FormatFactoryRunOpts
 ) => {
+  if (hasImageCodecWorkerCapability()) {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, 'Worker 解码', 'Decoding in worker') });
+    const { blob } = await processImageWithCodecWorker({
+      file,
+      operation: { type: 'convert' },
+      outType,
+      quality,
+      signal: opts?.signal
+    });
+    await assertImageBlobMagic(blob, outType);
+    const ext = outType === 'image/png' ? 'png' : outType === 'image/jpeg' ? 'jpg' : 'webp';
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+    return { blob, filename: `${safeBaseName(file.name)}.${ext}` };
+  }
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
@@ -141,6 +158,20 @@ export const convertToJpeg = async (
   maxSide: number | null,
   opts?: FormatFactoryRunOpts
 ) => {
+  if (hasImageCodecWorkerCapability()) {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, 'Worker 解码', 'Decoding in worker') });
+    const { blob } = await processImageWithCodecWorker({
+      file,
+      operation: maxSide && maxSide > 0 ? { type: 'max-side', maxSide } : { type: 'convert' },
+      outType: 'image/jpeg',
+      quality,
+      signal: opts?.signal
+    });
+    await assertImageBlobMagic(blob, 'image/jpeg');
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+    return { blob, filename: `${safeBaseName(file.name)}.jpg` };
+  }
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
@@ -169,6 +200,26 @@ export const resizeImage = async (
   },
   opts?: FormatFactoryRunOpts
 ) => {
+  if (hasImageCodecWorkerCapability()) {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, 'Worker 解码', 'Decoding in worker') });
+    const { blob, width, height } = await processImageWithCodecWorker({
+      file,
+      operation: {
+        type: 'resize',
+        width: input.width,
+        height: input.height,
+        maxSide: input.maxSide
+      },
+      outType: input.outType,
+      quality: input.quality,
+      signal: opts?.signal
+    });
+    await assertImageBlobMagic(blob, input.outType);
+    const ext = input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+    return { blob, filename: `${safeBaseName(file.name)}_${width}x${height}.${ext}` };
+  }
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
@@ -226,6 +277,26 @@ export const rotateFlipImage = async (
   },
   opts?: FormatFactoryRunOpts
 ) => {
+  if (hasImageCodecWorkerCapability()) {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, 'Worker 解码', 'Decoding in worker') });
+    const { blob } = await processImageWithCodecWorker({
+      file,
+      operation: {
+        type: 'rotate',
+        rotate: input.rotate,
+        flipH: input.flipH,
+        flipV: input.flipV
+      },
+      outType: input.outType,
+      quality: input.quality,
+      signal: opts?.signal
+    });
+    await assertImageBlobMagic(blob, input.outType);
+    const ext = input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+    return { blob, filename: `${safeBaseName(file.name)}_${input.rotate}deg.${ext}` };
+  }
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);

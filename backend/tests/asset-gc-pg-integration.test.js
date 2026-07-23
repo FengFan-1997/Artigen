@@ -18,11 +18,10 @@ const {
 const hasDatabase = Boolean(String(process.env.DATABASE_URL || '').trim());
 
 const pngFixture = () => {
-  const buffer = Buffer.alloc(32);
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buffer);
-  buffer.writeUInt32BE(16, 16);
-  buffer.writeUInt32BE(12, 20);
-  return buffer;
+  return Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Av9Z5AAAAABJRU5ErkJggg==',
+    'base64'
+  );
 };
 
 const createUser = async () => {

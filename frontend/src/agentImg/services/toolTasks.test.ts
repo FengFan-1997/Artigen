@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
+const { authFetch, uploadTaskAssets, shouldFallbackToMultipart } = vi.hoisted(() => ({
+  authFetch: vi.fn(),
+  uploadTaskAssets: vi.fn(),
+  shouldFallbackToMultipart: vi.fn(() => true)
+}));
 vi.mock('@/login/authFetch', () => ({ authFetch }));
+vi.mock('./directAssetUploads', () => ({ uploadTaskAssets, shouldFallbackToMultipart }));
 
 import {
   createEditorTransfer,
@@ -11,7 +16,12 @@ import {
 } from './toolTasks';
 
 describe('unified tool task client', () => {
-  beforeEach(() => authFetch.mockReset());
+  beforeEach(() => {
+    authFetch.mockReset();
+    uploadTaskAssets.mockReset();
+    uploadTaskAssets.mockRejectedValue(new TypeError('direct upload unavailable'));
+    shouldFallbackToMultipart.mockClear();
+  });
 
   it('quotes without sending price authority', async () => {
     authFetch.mockResolvedValueOnce(new Response(JSON.stringify({
@@ -108,6 +118,49 @@ describe('unified tool task client', () => {
     expect(form.has('price')).toBe(false);
     expect(form.has('cost')).toBe(false);
     expect(new Headers(init.headers).get('Idempotency-Key')).toBe('web:durable-generation');
+  });
+
+  it('uses direct asset IDs when Uppy succeeds while preserving the task API contract', async () => {
+    uploadTaskAssets.mockResolvedValueOnce(['asset-one', 'asset-two']);
+    authFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      ok: true,
+      task: {
+        taskId: 'task-direct',
+        toolId: 'ai-design',
+        operation: 'generate',
+        status: 'queued',
+        assets: [],
+        warnings: [],
+        result: null,
+        error: null,
+        receipt: { sku: 'ai-design.generate.v1', quotedCredits: 10, chargedCredits: 0, refundedCredits: 0 }
+      }
+    }), { status: 202, headers: { 'Content-Type': 'application/json' } }));
+
+    const files = [
+      new File(['one'], 'one.png', { type: 'image/png' }),
+      new File(['two'], 'two.webp', { type: 'image/webp' })
+    ];
+    await createToolTask({
+      toolId: 'ai-design',
+      operation: 'generate',
+      quoteId: 'quote-direct',
+      files,
+      inputAssets: ['existing-asset'],
+      idempotencyKey: 'web:direct-assets'
+    });
+
+    expect(uploadTaskAssets).toHaveBeenCalledWith(expect.objectContaining({
+      files,
+      taskIdempotencyKey: 'web:direct-assets'
+    }));
+    const form = authFetch.mock.calls[0][1].body as FormData;
+    expect(form.getAll('files')).toEqual([]);
+    expect(JSON.parse(String(form.get('inputAssets')))).toEqual([
+      'existing-asset',
+      'asset-one',
+      'asset-two'
+    ]);
   });
 
   it('reads only stable generation model profiles', async () => {

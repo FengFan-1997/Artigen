@@ -41,6 +41,7 @@ const { installPaymentRoutes } = require("./routes/payments");
 const { csrfProtection } = require("./lib/csrf-protection");
 const { installFrontendHosting } = require("./lib/frontend-hosting");
 const { installSessionMiddleware } = require("./middleware/session-auth");
+const { createDevAccessGate, devAccessEnabled } = require("./lib/dev-access-gate");
 
 const {
   assertAdmin,
@@ -142,6 +143,13 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// A cloud DEV deployment is intentionally private even when it uses Render's
+// public hostname. The shallow platform health check stays unauthenticated.
+app.use(createDevAccessGate());
+if (devAccessEnabled()) {
+  console.log("DEV access gate: enabled");
+}
 
 const shouldLogRequests = (() => {
   const raw = String(process.env.LOG_REQUESTS || "").trim();
@@ -602,7 +610,7 @@ installConvertRoutes(app, {
   rateLimit,
 });
 
-installToolTaskRoutes(app, {
+const toolTaskRuntime = installToolTaskRoutes(app, {
   rateLimit,
   callSiliconFlowImageGenerate,
   callSiliconFlowChat,
@@ -682,6 +690,7 @@ installSystemRoutes(app, {
   computeCreditsDelta: ledger.computeCreditsDelta,
   appendUserImageHistory,
   appendUserAuditHistory,
+  taskQueueReadiness: toolTaskRuntime?.getTaskQueueReadiness,
 });
 
 const frontendHosting = installFrontendHosting(app);

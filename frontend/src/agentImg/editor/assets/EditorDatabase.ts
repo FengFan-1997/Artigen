@@ -1,3 +1,4 @@
+import Dexie, { type Table } from 'dexie';
 import { cloneDocument } from '../domain/factory';
 import { collectDocumentAssetIds, findUnreachableAssetIds } from '../domain/reachability';
 import type {
@@ -5,21 +6,62 @@ import type {
   EditorDocumentV2,
   EditorProjectRecord
 } from '../domain/types';
+import {
+  classifyStorageIssue,
+  notifyStorageChanged,
+  reportStorageIssue
+} from '../../services/browserStorageEvents';
 
 const DATABASE_NAME = 'artigen-editor-v2';
-const DATABASE_VERSION = 1;
+// Dexie multiplies schema versions by 10 before opening native IndexedDB.
+// Using 0.1 preserves the existing native database version at exactly 1.
+const DEXIE_SCHEMA_VERSION = 0.1;
 const ASSETS_STORE = 'assets';
 const PROJECTS_STORE = 'projects';
 
 export class EditorStorageUnavailableError extends Error {
-  constructor(message = '当前浏览器无法使用本地草稿存储。') {
+  issue: ReturnType<typeof classifyStorageIssue>;
+
+  constructor(message = '当前浏览器无法使用本地草稿存储。', issue: ReturnType<typeof classifyStorageIssue> = 'unavailable') {
     super(message);
     this.name = 'EditorStorageUnavailableError';
+    this.issue = issue;
   }
 }
 
+class EditorDexieDatabase extends Dexie {
+  assets!: Table<EditorAssetRecord, string>;
+  projects!: Table<EditorProjectRecord, string>;
+
+  constructor() {
+    super(DATABASE_NAME);
+    // This exactly mirrors the original native IndexedDB key paths and index.
+    // Existing projects and blobs remain in-place during Dexie's schema adoption.
+    this.version(DEXIE_SCHEMA_VERSION).stores({
+      [ASSETS_STORE]: 'id',
+      [PROJECTS_STORE]: 'projectId,savedAt'
+    });
+    this.on('blocked', () => reportStorageIssue('blocked', DATABASE_NAME));
+    this.on('versionchange', () => {
+      reportStorageIssue('versionchange', DATABASE_NAME);
+      this.close();
+    });
+  }
+}
+
+const storageError = (error: unknown) => {
+  const issue = classifyStorageIssue(error);
+  reportStorageIssue(issue, DATABASE_NAME, error);
+  const message = issue === 'quota'
+    ? '本地存储空间不足，当前项目仍保留在页面中，请导出或清理旧草稿后重试。'
+    : issue === 'blocked' || issue === 'versionchange'
+      ? '草稿数据库已在其他标签页更新，请刷新页面后重试；当前项目尚未丢失。'
+      : '当前浏览器无法写入本地草稿；当前项目仍保留在页面中。';
+  return new EditorStorageUnavailableError(message, issue);
+};
+
 export class EditorDatabase {
-  private databasePromise: Promise<IDBDatabase> | null = null;
+  private database: EditorDexieDatabase | null = null;
 
   async putAsset(input: {
     id?: string;
@@ -40,26 +82,28 @@ export class EditorDatabase {
       createdAt: now,
       lastAccessedAt: now
     };
-    const database = await this.open();
-    const transaction = database.transaction(ASSETS_STORE, 'readwrite');
-    const completed = transactionComplete(transaction);
-    transaction.objectStore(ASSETS_STORE).put(record);
-    await completed;
-    return record;
+    try {
+      await this.open().assets.put(record);
+      notifyStorageChanged(DATABASE_NAME, ASSETS_STORE, record.id);
+      return record;
+    } catch (error) {
+      throw storageError(error);
+    }
   }
 
   async getAsset(assetId: string): Promise<EditorAssetRecord | null> {
-    const database = await this.open();
-    const transaction = database.transaction(ASSETS_STORE, 'readwrite');
-    const completed = transactionComplete(transaction);
-    const store = transaction.objectStore(ASSETS_STORE);
-    const record = (await requestResult(store.get(assetId))) as EditorAssetRecord | undefined;
-    if (record) {
-      record.lastAccessedAt = new Date().toISOString();
-      store.put(record);
+    try {
+      const database = this.open();
+      return await database.transaction('rw', database.assets, async () => {
+        const record = await database.assets.get(assetId);
+        if (!record) return null;
+        record.lastAccessedAt = new Date().toISOString();
+        await database.assets.put(record);
+        return record;
+      });
+    } catch (error) {
+      throw storageError(error);
     }
-    await completed;
-    return record ?? null;
   }
 
   async getAssetBlob(assetId: string): Promise<Blob | null> {
@@ -73,115 +117,79 @@ export class EditorDatabase {
       assetIds: [...collectDocumentAssetIds(document)],
       savedAt: new Date().toISOString()
     };
-    const database = await this.open();
-    const transaction = database.transaction(PROJECTS_STORE, 'readwrite');
-    const completed = transactionComplete(transaction);
-    transaction.objectStore(PROJECTS_STORE).put(record);
-    await completed;
-    return record;
+    try {
+      await this.open().projects.put(record);
+      notifyStorageChanged(DATABASE_NAME, PROJECTS_STORE, record.projectId);
+      return record;
+    } catch (error) {
+      throw storageError(error);
+    }
   }
 
   async getProject(projectId: string): Promise<EditorProjectRecord | null> {
-    const database = await this.open();
-    const transaction = database.transaction(PROJECTS_STORE, 'readonly');
-    const completed = transactionComplete(transaction);
-    const record = (await requestResult(
-      transaction.objectStore(PROJECTS_STORE).get(projectId)
-    )) as EditorProjectRecord | undefined;
-    await completed;
-    return record ?? null;
+    try {
+      return (await this.open().projects.get(projectId)) ?? null;
+    } catch (error) {
+      throw storageError(error);
+    }
   }
 
   async getMostRecentProject(): Promise<EditorProjectRecord | null> {
-    const projects = await this.listProjects();
-    return projects.sort((left, right) => right.savedAt.localeCompare(left.savedAt))[0] ?? null;
+    try {
+      return (await this.open().projects.orderBy('savedAt').last()) ?? null;
+    } catch (error) {
+      throw storageError(error);
+    }
   }
 
   async listProjects(): Promise<EditorProjectRecord[]> {
-    const database = await this.open();
-    const transaction = database.transaction(PROJECTS_STORE, 'readonly');
-    const completed = transactionComplete(transaction);
-    const records = (await requestResult(
-      transaction.objectStore(PROJECTS_STORE).getAll()
-    )) as EditorProjectRecord[];
-    await completed;
-    return records;
+    try {
+      return await this.open().projects.toArray();
+    } catch (error) {
+      throw storageError(error);
+    }
   }
 
   async deleteProject(projectId: string): Promise<void> {
-    const database = await this.open();
-    const transaction = database.transaction(PROJECTS_STORE, 'readwrite');
-    const completed = transactionComplete(transaction);
-    transaction.objectStore(PROJECTS_STORE).delete(projectId);
-    await completed;
+    try {
+      await this.open().projects.delete(projectId);
+      notifyStorageChanged(DATABASE_NAME, PROJECTS_STORE, projectId);
+    } catch (error) {
+      throw storageError(error);
+    }
   }
 
   async garbageCollectAssets(): Promise<string[]> {
-    const database = await this.open();
-    const transaction = database.transaction([ASSETS_STORE, PROJECTS_STORE], 'readwrite');
-    const completed = transactionComplete(transaction);
-    const assetsStore = transaction.objectStore(ASSETS_STORE);
-    const projectsStore = transaction.objectStore(PROJECTS_STORE);
-    const [assetIds, projects] = await Promise.all([
-      requestResult(assetsStore.getAllKeys()) as Promise<IDBValidKey[]>,
-      requestResult(projectsStore.getAll()) as Promise<EditorProjectRecord[]>
-    ]);
-    const unreachable = findUnreachableAssetIds(assetIds.map(String), projects);
-    for (const id of unreachable) assetsStore.delete(id);
-    await completed;
-    return unreachable;
+    try {
+      const database = this.open();
+      return await database.transaction('rw', database.assets, database.projects, async () => {
+        const [assetIds, projects] = await Promise.all([
+          database.assets.toCollection().primaryKeys(),
+          database.projects.toArray()
+        ]);
+        const unreachable = findUnreachableAssetIds(assetIds.map(String), projects);
+        await database.assets.bulkDelete(unreachable);
+        for (const id of unreachable) notifyStorageChanged(DATABASE_NAME, ASSETS_STORE, id);
+        return unreachable;
+      });
+    } catch (error) {
+      throw storageError(error);
+    }
   }
 
   close(): void {
-    const databasePromise = this.databasePromise;
-    this.databasePromise = null;
-    void databasePromise?.then((database) => database.close()).catch(() => {
-      // A failed open has no live database handle to close.
-    });
+    this.database?.close();
+    this.database = null;
   }
 
-  private open(): Promise<IDBDatabase> {
-    if (typeof indexedDB === 'undefined') {
-      return Promise.reject(new EditorStorageUnavailableError());
-    }
-    if (!this.databasePromise) {
-      this.databasePromise = new Promise((resolve, reject) => {
-        const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-        request.onupgradeneeded = () => {
-          const database = request.result;
-          if (!database.objectStoreNames.contains(ASSETS_STORE)) {
-            database.createObjectStore(ASSETS_STORE, { keyPath: 'id' });
-          }
-          if (!database.objectStoreNames.contains(PROJECTS_STORE)) {
-            const projects = database.createObjectStore(PROJECTS_STORE, { keyPath: 'projectId' });
-            projects.createIndex('savedAt', 'savedAt');
-          }
-        };
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error ?? new EditorStorageUnavailableError());
-        request.onblocked = () => reject(new EditorStorageUnavailableError('草稿数据库正在被其他页面占用。'));
-      });
-    }
-    return this.databasePromise;
+  private open(): EditorDexieDatabase {
+    if (typeof indexedDB === 'undefined') throw new EditorStorageUnavailableError();
+    if (!this.database) this.database = new EditorDexieDatabase();
+    return this.database;
   }
 }
 
 function createAssetId(): string {
   const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return `asset_${id}`;
-}
-
-function requestResult<T = unknown>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-function transactionComplete(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-    transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB transaction aborted'));
-  });
 }

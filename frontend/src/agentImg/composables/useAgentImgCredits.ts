@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   getCreditsBalance,
@@ -55,6 +55,12 @@ export function useAgentImgCredits(isAuthed: Ref<boolean>) {
     creditsPopoverOpen.value = !creditsPopoverOpen.value;
     if (creditsPopoverOpen.value) void refreshCredits();
   };
+
+  const refreshOnFocus = () => {
+    if (isAuthed.value) void refreshCredits();
+  };
+  onMounted(() => window.addEventListener('focus', refreshOnFocus));
+  onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus));
 
   return {
     creditsBalance,

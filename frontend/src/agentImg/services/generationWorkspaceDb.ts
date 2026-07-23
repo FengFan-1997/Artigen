@@ -1,81 +1,71 @@
+import Dexie, { type Table } from 'dexie';
 import type {
   PendingGenerationSubmission,
   ProductProfileSnapshot
 } from '../domain/generationWorkspace';
+import {
+  classifyStorageIssue,
+  notifyStorageChanged,
+  reportStorageIssue
+} from './browserStorageEvents';
 
 const DATABASE_NAME = 'artigen-generation-workspace';
-const DATABASE_VERSION = 1;
+// Dexie multiplies schema versions by 10 before opening native IndexedDB.
+// Using 0.1 preserves the existing native database version at exactly 1.
+const DEXIE_SCHEMA_VERSION = 0.1;
 const STORE_NAME = 'workspace';
 const PROFILE_KEY = 'product-profile-v1';
 const PENDING_KEY = 'pending-generation-v1';
 
-const openDatabase = (): Promise<IDBDatabase> =>
-  new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') return reject(new Error('INDEXEDDB_UNAVAILABLE'));
-    const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    request.onerror = () => reject(request.error || new Error('INDEXEDDB_OPEN_FAILED'));
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(STORE_NAME)) database.createObjectStore(STORE_NAME);
-    };
-    request.onsuccess = () => resolve(request.result);
-  });
+class GenerationWorkspaceDatabase extends Dexie {
+  workspace!: Table<unknown, string>;
 
-const withStore = async <T>(
-  mode: IDBTransactionMode,
-  run: (store: IDBObjectStore) => IDBRequest<T>
-): Promise<T> => {
-  const database = await openDatabase();
-  return new Promise<T>((resolve, reject) => {
-    const transaction = database.transaction(STORE_NAME, mode);
-    const request = run(transaction.objectStore(STORE_NAME));
-    let result: T;
-    let settled = false;
-    const fail = (error: unknown) => {
-      if (settled) return;
-      settled = true;
-      database.close();
-      reject(error instanceof Error ? error : new Error('INDEXEDDB_TRANSACTION_FAILED'));
-    };
-    request.onerror = () => fail(request.error || new Error('INDEXEDDB_REQUEST_FAILED'));
-    request.onsuccess = () => {
-      result = request.result;
-    };
-    transaction.oncomplete = () => {
-      if (settled) return;
-      settled = true;
-      database.close();
-      resolve(result);
-    };
-    transaction.onabort = () => {
-      fail(transaction.error || new Error('INDEXEDDB_TRANSACTION_ABORTED'));
-    };
-    transaction.onerror = () => fail(transaction.error || new Error('INDEXEDDB_TRANSACTION_FAILED'));
-  });
+  constructor() {
+    super(DATABASE_NAME);
+    // Keep the original database name, native version and out-of-line key
+    // store. Dexie can open the native IndexedDB records without a data copy.
+    this.version(DEXIE_SCHEMA_VERSION).stores({ [STORE_NAME]: '' });
+    this.on('blocked', () => reportStorageIssue('blocked', DATABASE_NAME));
+    this.on('versionchange', () => {
+      reportStorageIssue('versionchange', DATABASE_NAME);
+      this.close();
+    });
+  }
+}
+
+let database: GenerationWorkspaceDatabase | null = null;
+const getDatabase = () => {
+  if (typeof indexedDB === 'undefined') throw new Error('INDEXEDDB_UNAVAILABLE');
+  if (!database || !database.isOpen()) database = new GenerationWorkspaceDatabase();
+  return database;
 };
 
 const read = async <T>(key: string): Promise<T | null> => {
   try {
-    return (await withStore<T | undefined>('readonly', (store) => store.get(key))) || null;
-  } catch {
+    return ((await getDatabase().workspace.get(key)) as T | undefined) ?? null;
+  } catch (error) {
+    reportStorageIssue(classifyStorageIssue(error), DATABASE_NAME, error);
     return null;
   }
 };
 
 const write = async (key: string, value: unknown): Promise<boolean> => {
   try {
-    await withStore<IDBValidKey>('readwrite', (store) => store.put(value, key));
+    await getDatabase().workspace.put(value, key);
+    notifyStorageChanged(DATABASE_NAME, STORE_NAME, key);
     return true;
-  } catch {
+  } catch (error) {
+    reportStorageIssue(classifyStorageIssue(error), DATABASE_NAME, error);
     return false;
   }
 };
 
 const remove = async (key: string): Promise<void> => {
   try {
-    await withStore<undefined>('readwrite', (store) => store.delete(key));
-  } catch {
-    // Restricted/private browser modes may disable IndexedDB.
+    await getDatabase().workspace.delete(key);
+    notifyStorageChanged(DATABASE_NAME, STORE_NAME, key);
+  } catch (error) {
+    reportStorageIssue(classifyStorageIssue(error), DATABASE_NAME, error);
   }
 };
 
@@ -86,3 +76,8 @@ export const loadPendingGeneration = () => read<PendingGenerationSubmission>(PEN
 export const savePendingGeneration = (pending: PendingGenerationSubmission) =>
   write(PENDING_KEY, pending);
 export const clearPendingGeneration = () => remove(PENDING_KEY);
+
+export const closeGenerationWorkspaceDatabase = () => {
+  database?.close();
+  database = null;
+};

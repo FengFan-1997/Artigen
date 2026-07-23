@@ -176,30 +176,30 @@ test('uploaded task inputs are fully inspected and fingerprinted before durable 
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'artigen-upload-inspect-'));
   const filePath = path.join(root, 'input.bin');
   try {
-    const png = Buffer.alloc(32);
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
-    png.writeUInt32BE(640, 16);
-    png.writeUInt32BE(480, 20);
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Av9Z5AAAAABJRU5ErkJggg==',
+      'base64'
+    );
     await fs.promises.writeFile(filePath, png);
     const inspected = await inspectUploadedFile({
       tempPath: filePath,
       declaredMime: 'image/png',
       maxBytes: 1024,
-      maxPixels: 640 * 480,
+      maxPixels: 1,
       allowedMimeTypes: ['image/png']
     });
     assert.deepEqual(inspected, {
       byteSize: png.length,
       mimeType: 'image/png',
-      width: 640,
-      height: 480,
+      width: 1,
+      height: 1,
       sha256Hex: require('node:crypto').createHash('sha256').update(png).digest('hex')
     });
     await assert.rejects(() => inspectUploadedFile({
       tempPath: filePath,
       declaredMime: 'image/jpeg',
       maxBytes: 1024,
-      maxPixels: 640 * 480,
+      maxPixels: 1,
       allowedMimeTypes: ['image/jpeg']
     }), { code: 'FILE_TYPE_MISMATCH' });
   } finally {
@@ -371,6 +371,51 @@ test('task workers and financial sweepers require both paid features and the wor
       TASK_WORKER_ENABLED: '0'
     }
   }));
+});
+
+test('task worker startup exposes a fail-closed readiness state', async () => {
+  const app = {
+    get() {},
+    post() {},
+    delete() {}
+  };
+  const expected = new Error('queue unavailable');
+  expected.code = 'QUEUE_BOOT_FAILED';
+  const taskQueue = {
+    managesMaintenance: true,
+    register() {
+      return this;
+    },
+    registerMaintenance() {
+      return this;
+    },
+    async start() {
+      throw expected;
+    }
+  };
+  const runtime = installToolTaskRoutes(app, {
+    pool: {},
+    taskQueue,
+    enableHoldSweeper: false,
+    enableAssetSweeper: false,
+    env: {
+      PAID_FEATURES_ENABLED: 'true',
+      TASK_WORKER_ENABLED: '1',
+      TASK_QUEUE_DRIVER: 'pgboss'
+    }
+  });
+
+  assert.deepEqual(runtime.getTaskQueueReadiness(), {
+    ok: false,
+    code: 'TASK_QUEUE_STARTING',
+    driver: 'pgboss'
+  });
+  assert.equal(await runtime.queueStartPromise, null);
+  assert.deepEqual(runtime.getTaskQueueReadiness(), {
+    ok: false,
+    code: 'TASK_QUEUE_START_FAILED',
+    driver: 'pgboss'
+  });
 });
 
 test('implemented server operations are registered while unavailable converters fail before billing', () => {

@@ -279,16 +279,18 @@ test('old-photo remote output guard blocks loopback and private networks', () =>
   assert.equal(isPrivateIp('1.1.1.1'), false);
 });
 
-test('provider octet-stream outputs require valid PNG or JPEG magic bytes', () => {
-  const png = Buffer.alloc(24);
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
-  assert.equal(validateProviderOutputMime(png, 'application/octet-stream'), 'image/png');
-  assert.throws(
-    () => validateProviderOutputMime(Buffer.from('not an image'), 'application/octet-stream'),
+test('provider octet-stream outputs require a fully valid PNG or JPEG', async () => {
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Av9Z5AAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  assert.equal(await validateProviderOutputMime(png, 'application/octet-stream'), 'image/png');
+  await assert.rejects(
+    validateProviderOutputMime(Buffer.from('not an image'), 'application/octet-stream'),
     { code: 'INVALID_PROVIDER_OUTPUT_TYPE' }
   );
-  assert.throws(
-    () => validateProviderOutputMime(png, 'text/html'),
+  await assert.rejects(
+    validateProviderOutputMime(png, 'text/html'),
     { code: 'INVALID_PROVIDER_OUTPUT_TYPE' }
   );
 });

@@ -17,6 +17,7 @@ const {
   probeGenerationProvider,
   checkOutputAllowlist,
   checkStorage,
+  checkTaskQueue,
   checkTurnstile,
   getReadinessReport
 } = require('../services/readiness-service');
@@ -29,11 +30,13 @@ const migratedRow = Object.freeze({
   has_payloads: true,
   has_events: true,
   has_assets: true,
+  has_upload_sessions: true,
   has_otp_delivery_attempts: true,
   has_latest_migration: true,
   has_task_columns: true,
   has_payload_columns: true,
   has_asset_columns: true,
+  has_upload_session_columns: true,
   has_event_columns: true,
   has_otp_delivery_columns: true,
   has_ai_skus: true,
@@ -147,7 +150,7 @@ test('readiness verifies queue, payload, asset, event, inputs_ready and AI SKU m
     code: null,
     migration: LATEST_REPOSITORY_MIGRATION
   });
-  assert.equal(LATEST_REPOSITORY_MIGRATION, '011_otp_delivery_dispatch_state');
+  assert.equal(LATEST_REPOSITORY_MIGRATION, '012_asset_upload_sessions');
   assert.equal(migrationQueryParam, LATEST_REPOSITORY_MIGRATION);
   assert.deepEqual(await checkDatabase({
     query: async () => ({ rows: [{ ...migratedRow, has_task_columns: false }] })
@@ -703,6 +706,79 @@ test('system healthz stays shallow and does not inspect readiness dependencies',
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.ok, true);
   assert.equal(dependencyReads, 0);
+});
+
+test('task queue readiness is sanitized and fails closed', async () => {
+  assert.deepEqual(await checkTaskQueue(() => ({
+    ok: true,
+    driver: 'pgboss',
+    internal: 'must-not-leak'
+  })), {
+    ok: true,
+    driver: 'pgboss'
+  });
+  assert.deepEqual(await checkTaskQueue(() => {
+    throw new Error('database password must not leak');
+  }), {
+    ok: false,
+    code: 'TASK_QUEUE_READINESS_FAILED'
+  });
+});
+
+test('system readyz returns 503 when the task queue failed to start', async () => {
+  const { app, routes } = routeApp();
+  installSystemRoutes(app, {
+    NODE_ENV: 'test',
+    isProd: false,
+    env: { NODE_ENV: 'test' },
+    taskQueueReadiness: () => ({
+      ok: false,
+      code: 'TASK_QUEUE_START_FAILED',
+      driver: 'pgboss'
+    }),
+    fs,
+    path,
+    rateLimit: () => (_req, _res, next) => next(),
+    assertAuthUserMatches: () => true
+  });
+  const res = routeResponse();
+  res.locals = { requestId: 'queue-readiness-test' };
+
+  await routes.get('GET /readyz')({}, res);
+
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.payload.ok, false);
+  assert.deepEqual(res.payload.checks.taskQueue, {
+    ok: false,
+    code: 'TASK_QUEUE_START_FAILED',
+    driver: 'pgboss'
+  });
+});
+
+test('system meta exposes the deployment environment and Render commit', () => {
+  const { app, routes } = routeApp();
+  installSystemRoutes(app, {
+    NODE_ENV: 'production',
+    isProd: true,
+    env: {
+      NODE_ENV: 'production',
+      APP_ENV: 'dev',
+      RENDER_GIT_COMMIT: 'render-commit-sha'
+    },
+    fs,
+    path,
+    rateLimit: () => (_req, _res, next) => next(),
+    assertAuthUserMatches: () => true
+  });
+  const res = routeResponse();
+  res.locals = { requestId: 'meta-route-test' };
+
+  routes.get('GET /api/meta')({}, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.nodeEnv, 'production');
+  assert.equal(res.payload.appEnv, 'dev');
+  assert.equal(res.payload.gitSha, 'render-commit-sha');
 });
 
 test('system readyz uses the injected generation adapter and readiness dependencies', async () => {

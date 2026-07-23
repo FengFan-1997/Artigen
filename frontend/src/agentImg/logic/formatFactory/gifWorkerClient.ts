@@ -44,7 +44,8 @@ export const createGifWorkerSession = async (input: {
 
   const request = <T extends GifWorkerResponse>(
     message: Record<string, unknown>,
-    transfer: Transferable[] = []
+    transfer: Transferable[] = [],
+    timeoutMs = 15_000
   ) =>
     new Promise<T>((resolve, reject) => {
       if (terminated || input.signal?.aborted) {
@@ -53,10 +54,13 @@ export const createGifWorkerSession = async (input: {
         return;
       }
       const id = ++requestId;
+      let timer: ReturnType<typeof setTimeout> | null = null;
       const cleanup = () => {
         worker.removeEventListener('message', onMessage);
         worker.removeEventListener('error', onWorkerError);
+        worker.removeEventListener('messageerror', onMessageError);
         input.signal?.removeEventListener('abort', onAbort);
+        if (timer !== null) clearTimeout(timer);
       };
       const fail = (error: Error) => {
         cleanup();
@@ -73,13 +77,19 @@ export const createGifWorkerSession = async (input: {
         resolve(response as T);
       };
       const onWorkerError = () => fail(new Error('GIF_WORKER_FAILED'));
+      const onMessageError = () => fail(new Error('GIF_WORKER_MESSAGE_FAILED'));
       const onAbort = () => {
         terminate();
         fail(new Error('ABORTED'));
       };
       worker.addEventListener('message', onMessage);
       worker.addEventListener('error', onWorkerError, { once: true });
+      worker.addEventListener('messageerror', onMessageError, { once: true });
       input.signal?.addEventListener('abort', onAbort, { once: true });
+      timer = setTimeout(() => {
+        terminate();
+        fail(new Error(`GIF_WORKER_${String(message.type || 'REQUEST').toUpperCase()}_TIMEOUT`));
+      }, Math.max(1_000, timeoutMs));
       worker.postMessage({ ...message, requestId: id }, transfer);
     });
 
@@ -98,7 +108,7 @@ export const createGifWorkerSession = async (input: {
 
   return {
     async addFrame(rgba: ArrayBuffer) {
-      await request({ type: 'frame', rgba }, [rgba]);
+      await request({ type: 'frame', rgba }, [rgba], 30_000);
     },
     async finish() {
       const response = await request<GifWorkerResponse>({ type: 'finish' });

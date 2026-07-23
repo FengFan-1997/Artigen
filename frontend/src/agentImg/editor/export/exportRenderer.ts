@@ -14,6 +14,7 @@ import {
   createAdjustmentColorMatrix,
   isIdentityColorMatrix
 } from '../rendering/imageAdjustments';
+import { encodeCodecPixels, type CodecMimeType } from '../../logic/formatFactory/codecPipeline';
 
 export type EditorExportFormat = 'png' | 'jpeg' | 'webp';
 export type EditorExportScale = 1 | 2 | 3;
@@ -290,7 +291,16 @@ function createCanvas(width: number, height: number): RenderCanvas {
 }
 
 async function canvasToBlob(canvas: RenderCanvas, type: string, quality: number): Promise<Blob> {
-  if ('convertToBlob' in canvas) return canvas.convertToBlob({ type, quality });
+  if ('convertToBlob' in canvas) {
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('EXPORT_CONTEXT_UNAVAILABLE');
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    return encodeCodecPixels(
+      { width: canvas.width, height: canvas.height, data: imageData.data },
+      type as CodecMimeType,
+      quality
+    );
+  }
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);

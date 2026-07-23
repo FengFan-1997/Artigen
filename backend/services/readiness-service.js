@@ -41,6 +41,23 @@ const skippedCheck = (reason = 'FEATURE_DISABLED') => ({
   reason
 });
 
+const checkTaskQueue = async (readiness) => {
+  if (readiness === undefined) return skippedCheck('TASK_QUEUE_STATUS_UNAVAILABLE');
+  try {
+    const status = typeof readiness === 'function' ? await readiness() : readiness;
+    if (status?.skipped) return skippedCheck(status.reason || 'TASK_WORKERS_DISABLED');
+    const driver = String(status?.driver || '').trim() || undefined;
+    if (status?.ok) return { ok: true, ...(driver ? { driver } : {}) };
+    return {
+      ok: false,
+      code: String(status?.code || 'TASK_QUEUE_NOT_READY'),
+      ...(driver ? { driver } : {})
+    };
+  } catch {
+    return { ok: false, code: 'TASK_QUEUE_READINESS_FAILED' };
+  }
+};
+
 const strongSecret = (value) => {
   const secret = String(value || '').trim();
   if (Buffer.byteLength(secret, 'utf8') < 32 || SECRET_PLACEHOLDER_RE.test(secret)) return false;
@@ -228,6 +245,7 @@ const checkDatabase = async (pool) => {
          to_regclass('public.tool_task_payloads') IS NOT NULL AS has_payloads,
          to_regclass('public.generation_events') IS NOT NULL AS has_events,
          to_regclass('public.assets') IS NOT NULL AS has_assets,
+         to_regclass('public.asset_upload_sessions') IS NOT NULL AS has_upload_sessions,
          to_regclass('public.otp_delivery_attempts') IS NOT NULL AS has_otp_delivery_attempts,
          EXISTS(
            SELECT 1
@@ -266,6 +284,16 @@ const checkDatabase = async (pool) => {
                 'retention_class','gc_state','delete_requested_at'
               )
          ) AS has_asset_columns,
+         (
+           SELECT count(*) = 10
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='asset_upload_sessions'
+              AND column_name IN (
+                'owner_user_id','idempotency_key','object_key','upload_kind',
+                'provider_upload_id','declared_mime','declared_size','status',
+                'asset_id','expires_at'
+              )
+         ) AS has_upload_session_columns,
          (
            SELECT count(*) = 4
              FROM information_schema.columns
@@ -321,11 +349,13 @@ const checkDatabase = async (pool) => {
       row.has_payloads &&
       row.has_events &&
       row.has_assets &&
+      row.has_upload_sessions &&
       row.has_otp_delivery_attempts &&
       row.has_latest_migration &&
       row.has_task_columns &&
       row.has_payload_columns &&
       row.has_asset_columns &&
+      row.has_upload_session_columns &&
       row.has_event_columns &&
       row.has_otp_delivery_columns
     );
@@ -477,7 +507,8 @@ const getReadinessReport = async ({
   env = process.env,
   pool,
   adapter,
-  generationProvider
+  generationProvider,
+  taskQueueReadiness
 } = {}) => {
   const aiDesignEnabled = enabled(env.AI_DESIGN_TASK_V2_ENABLED);
   const workshopAiEnabled = enabled(env.WORKSHOP_AI_TASK_V2_ENABLED);
@@ -496,6 +527,7 @@ const getReadinessReport = async ({
   let provider = skippedCheck();
   let outputAllowlist = skippedCheck();
   let payment = skippedCheck();
+  const taskQueue = await checkTaskQueue(taskQueueReadiness);
 
   if (databaseRequired) {
     database = await checkDatabase(
@@ -542,6 +574,7 @@ const getReadinessReport = async ({
   if (paymentEnabled) requiredChecks.push(payment);
   if (generationRequired) requiredChecks.push(payload, provider, outputAllowlist);
   if (authEmailOtpEnabled) requiredChecks.push(database, authSecrets, mail, turnstile);
+  if (!taskQueue.skipped) requiredChecks.push(taskQueue);
   return {
     ok: requiredChecks.every((check) => check.ok),
     paidEnabled,
@@ -557,6 +590,7 @@ const getReadinessReport = async ({
       provider,
       outputAllowlist,
       payment,
+      taskQueue,
       authSecrets,
       mail,
       turnstile
@@ -577,6 +611,7 @@ module.exports = {
   probeGenerationProvider,
   checkOutputAllowlist,
   checkStorage,
+  checkTaskQueue,
   checkTurnstile,
   getReadinessReport
 };

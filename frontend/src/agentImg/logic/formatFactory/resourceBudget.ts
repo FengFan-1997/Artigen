@@ -62,11 +62,13 @@ const estimatedBytesPerPixel = (mimeType: ImageOutputMime) => {
   return 1.5;
 };
 
-export const hasFilterWorkerCapability = () =>
+export const hasImageCodecWorkerCapability = () =>
   typeof Worker !== 'undefined' &&
   typeof OffscreenCanvas !== 'undefined' &&
-  typeof OffscreenCanvas.prototype?.convertToBlob === 'function' &&
+  typeof OffscreenCanvas.prototype?.getContext === 'function' &&
   typeof createImageBitmap === 'function';
+
+export const hasFilterWorkerCapability = hasImageCodecWorkerCapability;
 
 export const assertFormatFactoryResourceBudget = (input: {
   filterWorkerAvailable?: boolean;

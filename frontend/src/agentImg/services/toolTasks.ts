@@ -1,4 +1,5 @@
 import { authFetch } from '@/login/authFetch';
+import { queryClient } from '@/services/serverState';
 import { buildApiUrl } from '@/utils/api';
 import type { ToolTaskStatus } from '../domain/toolTask';
 import type { ToolTaskAsset, ToolTaskReceipt, ToolTaskResult } from '../domain/toolTask';
@@ -39,13 +40,15 @@ export class ToolTaskClientError extends Error {
   code: string;
   field?: string;
   retryable: boolean;
+  status?: number;
 
-  constructor(code: string, options?: { field?: string; retryable?: boolean }) {
+  constructor(code: string, options?: { field?: string; retryable?: boolean; status?: number }) {
     super(code);
     this.name = 'ToolTaskClientError';
     this.code = code;
     this.field = options?.field;
     this.retryable = Boolean(options?.retryable);
+    this.status = options?.status;
   }
 }
 
@@ -55,11 +58,13 @@ const errorFromResponse = async (response: Response) => {
   if (raw && typeof raw === 'object') {
     return new ToolTaskClientError(String(raw.code || 'TOOL_TASK_FAILED'), {
       field: typeof raw.field === 'string' ? raw.field : undefined,
-      retryable: Boolean(raw.retryable)
+      retryable: Boolean(raw.retryable),
+      status: response.status
     });
   }
   return new ToolTaskClientError(
-    typeof raw === 'string' && raw.trim() ? raw.trim() : `API_ERROR_${response.status}`
+    typeof raw === 'string' && raw.trim() ? raw.trim() : `API_ERROR_${response.status}`,
+    { status: response.status }
   );
 };
 
@@ -113,33 +118,63 @@ export const createToolTask = async (input: {
   inputAssets?: string[];
   idempotencyKey?: string;
   signal?: AbortSignal;
+  onUploadProgress?: (progress: number) => void;
 }): Promise<ServerToolTask> => {
+  const idempotencyKey = input.idempotencyKey || createIdempotencyKey();
+  let files = input.files?.length ? input.files : input.file ? [input.file] : [];
+  let inputAssets = [...(input.inputAssets || [])];
+  if (files.length) {
+    try {
+      const { uploadTaskAssets } = await import('./directAssetUploads');
+      const uploaded = await uploadTaskAssets({
+        toolId: input.toolId,
+        operation: input.operation,
+        files,
+        taskIdempotencyKey: idempotencyKey,
+        signal: input.signal,
+        onProgress: input.onUploadProgress
+      });
+      inputAssets = [...inputAssets, ...uploaded];
+      files = [];
+    } catch (error) {
+      const { shouldFallbackToMultipart } = await import('./directAssetUploads');
+      if (!shouldFallbackToMultipart(error)) throw error;
+    }
+  }
   const form = new FormData();
   form.set('toolId', input.toolId);
   form.set('operation', input.operation);
   form.set('options', JSON.stringify(input.options || {}));
-  form.set('inputAssets', JSON.stringify(input.inputAssets || []));
+  form.set('inputAssets', JSON.stringify(inputAssets));
   form.set('quoteId', input.quoteId);
-  const files = input.files?.length ? input.files : input.file ? [input.file] : [];
   for (const file of files) form.append('files', file, file.name);
   const response = await authFetch(TASKS_URL, {
     method: 'POST',
-    headers: { 'Idempotency-Key': input.idempotencyKey || createIdempotencyKey() },
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: form,
     signal: input.signal
   });
   if (!response.ok) throw await errorFromResponse(response);
   const json: any = await response.json().catch(() => null);
-  return assertTask(json?.task);
+  const task = assertTask(json?.task);
+  queryClient.setQueryData(['tool-task', task.taskId], task);
+  return task;
 };
 
 export const getToolTask = async (taskId: string, signal?: AbortSignal) => {
-  const response = await authFetch(buildApiUrl(`/api/tool-tasks/${encodeURIComponent(taskId)}`), {
-    signal
+  return queryClient.fetchQuery({
+    queryKey: ['tool-task', taskId],
+    staleTime: 0,
+    queryFn: async ({ signal: querySignal }) => {
+      const requestSignal = signal || querySignal;
+      const response = await authFetch(buildApiUrl(`/api/tool-tasks/${encodeURIComponent(taskId)}`), {
+        signal: requestSignal
+      });
+      if (!response.ok) throw await errorFromResponse(response);
+      const json: any = await response.json().catch(() => null);
+      return assertTask(json?.task);
+    }
   });
-  if (!response.ok) throw await errorFromResponse(response);
-  const json: any = await response.json().catch(() => null);
-  return assertTask(json?.task);
 };
 
 export const cancelToolTask = async (taskId: string) => {
@@ -148,7 +183,9 @@ export const cancelToolTask = async (taskId: string) => {
   });
   if (!response.ok) throw await errorFromResponse(response);
   const json: any = await response.json().catch(() => null);
-  return assertTask(json?.task);
+  const task = assertTask(json?.task);
+  queryClient.setQueryData(['tool-task', task.taskId], task);
+  return task;
 };
 
 const waitWithSignal = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
@@ -192,11 +229,17 @@ export const taskAssetUrl = (assetId: string) =>
   buildApiUrl(`/api/assets/${encodeURIComponent(assetId)}`);
 
 export const getGenerationModels = async (signal?: AbortSignal): Promise<GenerationModelProfile[]> => {
-  const response = await authFetch(buildApiUrl('/api/generation/models'), { signal });
-  if (!response.ok) throw await errorFromResponse(response);
-  const json: any = await response.json().catch(() => null);
-  const list = Array.isArray(json?.models) ? json.models : [];
-  return list
+  return queryClient.fetchQuery({
+    queryKey: ['generation-models'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async ({ signal: querySignal }) => {
+      const response = await authFetch(buildApiUrl('/api/generation/models'), {
+        signal: signal || querySignal
+      });
+      if (!response.ok) throw await errorFromResponse(response);
+      const json: any = await response.json().catch(() => null);
+      const list = Array.isArray(json?.models) ? json.models : [];
+      return list
     .map((raw: any): GenerationModelProfile | null => {
       const id = typeof raw?.id === 'string' ? raw.id.trim() : '';
       const name = typeof raw?.name === 'string' || (raw?.name && typeof raw.name === 'object')
@@ -217,7 +260,9 @@ export const getGenerationModels = async (signal?: AbortSignal): Promise<Generat
         supportsSeed: Boolean(raw?.supportsSeed)
       };
     })
-    .filter((profile: GenerationModelProfile | null): profile is GenerationModelProfile => profile !== null);
+        .filter((profile: GenerationModelProfile | null): profile is GenerationModelProfile => profile !== null);
+    }
+  });
 };
 
 export const createEditorTransfer = async (assetId: string): Promise<string> => {
