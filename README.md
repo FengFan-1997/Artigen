@@ -715,8 +715,11 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `CONSOLE_ADMIN_PASSWORD` | 控制台账号密码；生产至少 16 位并拒绝默认密码。 |
 | `CONSOLE_ADMIN_TOKEN_SECRET` | 控制台 token 签名密钥；生产必填，多实例必须使用同一稳定值。 |
 | `CONSOLE_ADMIN_TOKEN_TTL_HOURS` | 控制台 token 有效小时数。 |
+| `BEHAVIOR_ANALYTICS_ENABLED` | 后端行为采集门禁；开启后 `/readyz` 强制检查 PostgreSQL 与行为表。 |
 | `BEHAVIOR_EVENT_RETENTION_DAYS` | PostgreSQL 产品行为事件保留天数；默认 90，允许 7–365。 |
-| `BEHAVIOR_EVENT_PURGE_BATCH_SIZE` | 每次小时级机会清理最多删除的过期行为行数；默认 5000，允许 100–50000。 |
+| `BEHAVIOR_EVENT_PURGE_BATCH_SIZE` | 每批最多删除的过期行为行数；默认 5000，允许 100–50000。 |
+| `BEHAVIOR_EVENT_PURGE_INTERVAL_MS` | 独立清理调度间隔；默认 1 小时，允许 1 分钟–24 小时。 |
+| `BEHAVIOR_EVENT_PURGE_MAX_BATCHES` | 单次调度最多连续清理批数；默认 20，允许 1–100。 |
 
 ### AI provider 变量
 
@@ -863,7 +866,7 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 
 ## 运行期数据
 
-PostgreSQL 16 保存用户/身份、Cookie 会话、验证码、管理员、钱包、不可变账本、预占、价格、套餐、支付订单/回调、工具任务、资产元数据、编辑器 transfer、产品行为事件和财务/管理事务审计。迁移在 `backend/migrations/`。
+PostgreSQL 16 保存用户/身份、Cookie 会话、验证码、管理员、钱包、不可变账本、预占、价格、套餐、支付订单/回调、工具任务、资产元数据、编辑器 transfer、产品行为事件、最小化模型用量、图片/内容审计历史和财务/管理事务审计。迁移在 `backend/migrations/`；当前最新迁移是 `014_operational_records`。
 
 图片二进制不写入数据库。`ASSET_STORAGE_DRIVER=file` 默认使用 `MEMORY_DIR/assets-v2`，只用于本地开发和单实例契约测试；生产付费生图必须配置 `ASSET_STORAGE_DRIVER=s3`/`r2` 及共享 endpoint、bucket 和 credentials。数据库只保存 opaque URI、magic-byte 校验后的 MIME、大小、尺寸和保留期。对象写入后会重新读取并校验大小与 SHA-256，只有验证通过的生成结果才能结算。过期资产通过 PostgreSQL `SKIP LOCKED` 租约回收；同内容重传、任务/transfer 引用和多实例并发不会绕过二次状态校验。file 适配器还会以游标扫描 inventory，在宽限期后清理“对象写成功但数据库事务未提交”的孤儿文件。
 
@@ -879,9 +882,9 @@ S3/R2 直传只用于明确需要服务器处理的 AI/文档流程。16 MiB 以
 
 生图灰度由全局 `AI_DESIGN_TASK_V2_ENABLED`、内部用户 allowlist 和稳定百分比分桶共同控制，发布顺序为内部用户 → 10% → 50% → 100%。全局开关是财务或资产指标越界时的立即熔断开关；分桶依据数据库用户 UUID，不因刷新、换浏览器或多实例而漂移。
 
-旧用户、钱包、订单等财务 JSON 快照只用于幂等导入、shadow read 和迁移核对，已从版本控制忽略；切换后不得作为财务回退源。产品页面访问和点击在配置 PostgreSQL 时写入 `behavior_events`，旧 JSON analytics 只保留为无数据库非生产兼容适配器；最小化 usage、图片/内容审计历史仍由现有适配器提供。
+旧用户、钱包、订单等财务 JSON 快照只用于幂等导入、shadow read 和迁移核对，已从版本控制忽略；切换后不得作为财务回退源。产品页面访问和点击在配置 PostgreSQL 时写入 `behavior_events`，最小化 usage、图片历史和内容审计写入 `operational_records`；旧 JSON analytics/usage/history 只保留为无数据库非生产兼容适配器。
 
-行为事件、usage ledger、图片历史和审计历史采用元数据最小化：原始 prompt/用户文本/模型输出不进入产品行为表，图片和文件引用只保留 opaque ID，IP 只保留哈希，User-Agent 只保留设备类别。界面点击只记录显式 `data-analytics-action` 或由 id、aria-label、站内路径和元素类型生成的稳定操作标识，不读取按钮 `innerText`。写入时执行白名单净化，读取旧 JSON 时再次净化，因此历史遗留的图片 URL、文件名、凭证和敏感 query 也不会由管理接口原样返回。行为事件默认保留 90 天并按小时触发过期清理。
+行为事件、usage ledger、图片历史和审计历史采用元数据最小化：原始 prompt/用户文本/模型输出不进入这些表，图片和文件引用只保留 opaque ID，IP 只保留哈希，User-Agent 只保留设备类别。界面点击优先记录显式 `data-analytics-action`/`data-track-action`/`data-testid`，其次使用净化后的站内路径和非动态元素类型；不读取按钮 `innerText`、`aria-label` 或 DOM `id`。同一操作只在 400ms 内去重，不同操作和稍后重复操作仍会记录。写入时执行白名单净化，读取旧 JSON 时再次净化，因此历史遗留的图片 URL、文件名、凭证和敏感 query 也不会由管理接口原样返回。行为事件默认保留 90 天，由独立小时级调度器分批清理，不依赖新事件写入。
 
 首次生产管理员需先是普通 PostgreSQL 用户，再显式授权角色：
 
@@ -1046,7 +1049,7 @@ pnpm run start:production
 
 仓库根目录的 `render.yaml` 提供 Render Blueprint：CI checks 通过后部署、完整 workspace 构建、启动阶段迁移锁和 60 秒优雅关闭。构建命令会显式清空 `VITE_API_BASE` 与 `VITE_AGENT_API_BASE`，确保 Render 上的前端、Cookie 和 `/api` 保持同源。平台健康检查只调用浅层 `/healthz`，不会因数据库或外部 Provider 的短暂波动反复重启实例；`/readyz` 保留给人工 smoke 或部署深检。
 
-Render Free 不使用 `preDeployCommand`，迁移由 `start:production` 在监听端口前 fail-closed 执行。模板默认 `plan: free`、`PG_POOL_MAX=5`、`TASK_WORKER_ENABLED=0`，并关闭付费生图与邮件 OTP；此时 `/readyz` 会明确把数据库、对象存储、任务 payload、Provider 和邮件依赖标为 `skipped`，且不会对这些外部依赖发起 I/O。Cookie 会话只在 `/api` 与 `/files` 水合，SPA、静态资源和健康检查不会因用户已登录而额外唤醒 Neon。开启付费或邮件 OTP 后，深检会要求 PostgreSQL 已应用仓库最新迁移（当前 `013_behavior_events`）、对应对象存储/Provider，以及独立认证密钥、签名邮件中继和 Turnstile secret + site key；生产 Turnstile 还要求 HTTPS `APP_ORIGIN` 与精确 `TURNSTILE_HOSTNAMES` 一致。按 [Render Blueprint 规范](https://render.com/docs/blueprint-spec) 导入并完成 smoke 后，再分阶段开启邮件 OTP、Worker 与收费能力。
+Render Free 不使用 `preDeployCommand`，迁移由 `start:production` 在监听端口前 fail-closed 执行。模板默认 `plan: free`、`PG_POOL_MAX=5`、`TASK_WORKER_ENABLED=0`，并关闭付费生图与邮件 OTP；此时 `/readyz` 会明确把对象存储、任务 payload、Provider 和邮件等未启用依赖标为 `skipped`。后台或行为采集启用时，数据库仍是必需依赖并会检查最新迁移 `014_operational_records`，不会因 DEV/Free 配置而跳过。Cookie 会话只在 `/api` 与 `/files` 水合，SPA、静态资源和浅健康检查不会因用户已登录而额外唤醒 Neon。开启付费或邮件 OTP 后，深检还会要求对应对象存储/Provider，以及独立认证密钥、签名邮件中继和 Turnstile secret + site key；生产 Turnstile 还要求 HTTPS `APP_ORIGIN` 与精确 `TURNSTILE_HOSTNAMES` 一致。按 [Render Blueprint 规范](https://render.com/docs/blueprint-spec) 导入并完成 smoke 后，再分阶段开启邮件 OTP、Worker 与收费能力。
 
 后端生产必须配置 PostgreSQL 16；生产付费生图必须使用 S3/R2 兼容共享对象存储，Render 本地文件只用于开发或非付费契约测试。
 

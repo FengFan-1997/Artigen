@@ -28,6 +28,10 @@ const {
   createAdminOperationsService
 } = require('../services/admin-operations-service');
 const {
+  listOperationalRecords,
+  usesOperationalRecordStore
+} = require('../services/operational-record-service');
+const {
   readJson,
   USERS_FILE,
   CHATS_FILE,
@@ -155,7 +159,9 @@ const respondAdminOperationsError = (res, error, routeName) => {
   return res.status(500).json({ error: 'ADMIN_OPERATIONS_UNAVAILABLE' });
 };
 
-const installAdminRoutes = (app) => {
+const installAdminRoutes = (app, deps = {}) => {
+  const operationalStoreEnabled = deps.usesOperationalRecordStore || usesOperationalRecordStore;
+  const listPersistentRecords = deps.listOperationalRecords || listOperationalRecords;
   app.use('/api/admin', async (req, res, next) => {
     const path = String(req.originalUrl || req.url || req.path || '').split('?')[0];
     if (path === '/api/admin/login' || String(req.path || '') === '/login') return next();
@@ -594,12 +600,29 @@ const installAdminRoutes = (app) => {
     }
   });
 
-  app.get('/api/admin/images/history', rateLimit('admin_images_history', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  app.get('/api/admin/images/history', rateLimit('admin_images_history', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
     try {
       if (!assertAdmin(req, res)) return;
       const userId = String(req.query.userId || '').trim();
       const limit = clampInt(req.query.limit, 20, 2000);
       const offset = clampInt(req.query.offset, 0, 2000000);
+
+      if (operationalStoreEnabled()) {
+        const result = await listPersistentRecords({
+          kind: 'image_history',
+          userId,
+          limit,
+          offset
+        });
+        return res.json({
+          ok: true,
+          total: result.total,
+          items: result.items.map((item) => ({
+            ...item,
+            source: resolveImageSource(item)
+          }))
+        });
+      }
 
       let items = [];
       const users = readUsersMap();
@@ -650,7 +673,7 @@ const installAdminRoutes = (app) => {
     }
   });
 
-  app.get('/api/admin/audit/history', rateLimit('admin_audit_history', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  app.get('/api/admin/audit/history', rateLimit('admin_audit_history', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
     try {
       if (!assertAdmin(req, res)) return;
       const userId = String(req.query.userId || '').trim();
@@ -659,6 +682,19 @@ const installAdminRoutes = (app) => {
       const statusFilter = normalizeReasonKey(req.query.status || '');
       const limit = clampInt(req.query.limit, 20, 2000);
       const offset = clampInt(req.query.offset, 0, 2000000);
+
+      if (operationalStoreEnabled()) {
+        const result = await listPersistentRecords({
+          kind: 'audit_history',
+          userId,
+          biz,
+          entryKind: kind,
+          status: statusFilter,
+          limit,
+          offset
+        });
+        return res.json({ ok: true, ...result });
+      }
 
       const users = readUsersMap();
 

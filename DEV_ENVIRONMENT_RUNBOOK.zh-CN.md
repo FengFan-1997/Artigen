@@ -31,6 +31,8 @@ DEV 默认采用以下安全门：
 5. `ASSET_STORAGE_DRIVER=file`，不会读写生产对象存储；Render 重启后测试图片可丢弃。
 6. 云端页面固定显示 `DEV 测试环境` 标记，并由独立访问口令保护。
 7. DEV 与生产使用不同域名，因此 HttpOnly Session Cookie 也相互隔离。
+8. 页面行为、模型用量、图片历史和内容审计写入 `dev_artigen` PostgreSQL；它们不依赖
+   Render 临时磁盘。原始 prompt、文件名、图片地址和输入内容不会写入这些记录。
 
 ## 本机启动
 
@@ -86,6 +88,15 @@ PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
 
 部署完成后，`/api/meta` 的 `appEnv` 必须是 `dev`，`gitSha` 必须等于本次
 `dev` commit；随后完成页面和 `/readyz` smoke，才能创建 `dev -> main` PR。
+
+涉及后台或数据迁移时，还要检查：
+
+- `/readyz` 返回数据库迁移 `014_operational_records` 且 `ok=true`。
+- `/console/users` 的行为、点数、订单、会话任一接口失败时显示错误与“重试”，不能显示
+  成一张无数据空表。
+- `/console/usage` 能读取 PostgreSQL usage 记录。
+- `/console/content-audit` 能读取 PostgreSQL 图片/内容审计元数据。
+- 同一个按钮快速双击只去重同一瞬间事件，隔一段时间再次点击仍会新增记录。
 
 完整提交流程和生产发布规则见
 [《Artigen 项目、环境与发布总手册》](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。

@@ -188,6 +188,18 @@
 
         <a-tabs v-model:active-key="activeTab" class="detail-tabs">
           <a-tab-pane key="behavior" :tab="ui.behaviorTab">
+            <a-alert
+              v-if="detailErrors.behavior"
+              type="error"
+              show-icon
+              :message="ui.detailLoadFailed"
+              :description="detailErrors.behavior"
+              style="margin-bottom: 12px"
+            >
+              <template #action>
+                <a-button size="small" @click="retryDetailTab('behavior')">{{ ui.retry }}</a-button>
+              </template>
+            </a-alert>
             <a-table
               :data-source="behaviorRows"
               :columns="behaviorColumns"
@@ -218,6 +230,18 @@
           </a-tab-pane>
 
           <a-tab-pane key="credits" :tab="ui.creditsTab">
+            <a-alert
+              v-if="detailErrors.credits"
+              type="error"
+              show-icon
+              :message="ui.detailLoadFailed"
+              :description="detailErrors.credits"
+              style="margin-bottom: 12px"
+            >
+              <template #action>
+                <a-button size="small" @click="retryDetailTab('credits')">{{ ui.retry }}</a-button>
+              </template>
+            </a-alert>
             <a-table
               :data-source="creditRows"
               :columns="creditColumns"
@@ -239,6 +263,18 @@
           </a-tab-pane>
 
           <a-tab-pane key="orders" :tab="ui.ordersTab">
+            <a-alert
+              v-if="detailErrors.orders"
+              type="error"
+              show-icon
+              :message="ui.detailLoadFailed"
+              :description="detailErrors.orders"
+              style="margin-bottom: 12px"
+            >
+              <template #action>
+                <a-button size="small" @click="retryDetailTab('orders')">{{ ui.retry }}</a-button>
+              </template>
+            </a-alert>
             <a-table
               :data-source="orderRows"
               :columns="orderColumns"
@@ -258,6 +294,18 @@
           </a-tab-pane>
 
           <a-tab-pane key="chats" :tab="ui.chatsTab">
+            <a-alert
+              v-if="detailErrors.chats"
+              type="error"
+              show-icon
+              :message="ui.detailLoadFailed"
+              :description="detailErrors.chats"
+              style="margin-bottom: 12px"
+            >
+              <template #action>
+                <a-button size="small" @click="retryDetailTab('chats')">{{ ui.retry }}</a-button>
+              </template>
+            </a-alert>
             <a-alert type="warning" show-icon :message="ui.chatPrivacyNotice" style="margin-bottom: 12px" />
             <a-table
               :data-source="chatRows"
@@ -303,6 +351,13 @@ const detailsLoading = ref(false);
 const savingCredits = ref(false);
 const savingStatus = ref(false);
 const errorMessage = ref('');
+type DetailTab = 'behavior' | 'credits' | 'orders' | 'chats';
+const detailErrors = ref<Record<DetailTab, string>>({
+  behavior: '',
+  credits: '',
+  orders: '',
+  chats: ''
+});
 const drawerOpen = ref(false);
 const selectedUser = ref<AdminUserItem | null>(null);
 const editAvailableCredits = ref<number>(0);
@@ -344,6 +399,8 @@ const ui = computed(() =>
         statusFilter: '账号状态',
         matching: (count: number) => `共 ${count.toLocaleString()} 位用户`,
         loadFailed: '用户数据加载失败',
+        detailLoadFailed: '该项数据加载失败',
+        retry: '重试',
         identity: '用户',
         userId: '用户 ID',
         status: '状态',
@@ -407,6 +464,8 @@ const ui = computed(() =>
         statusFilter: 'Account status',
         matching: (count: number) => `${count.toLocaleString()} users`,
         loadFailed: 'Failed to load users',
+        detailLoadFailed: 'This data could not be loaded',
+        retry: 'Retry',
         identity: 'User',
         userId: 'User ID',
         status: 'Status',
@@ -561,19 +620,41 @@ const handleTableChange = (page: any) => {
   pageSize.value = Number(page?.pageSize || 50);
   void fetchUsers();
 };
+const loadUserDetailTab = async (tab: DetailTab, userId: string) => {
+  detailErrors.value[tab] = '';
+  try {
+    if (tab === 'behavior') {
+      await consoleStore.fetchAdminBehaviorEvents({ userId, limit: 100 });
+    } else if (tab === 'credits') {
+      await consoleStore.fetchAdminCreditLedger({ userId, limit: 100 });
+    } else if (tab === 'orders') {
+      await consoleStore.fetchAdminOrders({ userId, limit: 100 });
+    } else {
+      await consoleStore.fetchAdminChatsHistory({ userId, limit: 100 });
+    }
+  } catch (error: any) {
+    detailErrors.value[tab] = String(error?.apiError || error?.message || error);
+  }
+};
+const retryDetailTab = async (tab: DetailTab) => {
+  if (!selectedUser.value) return;
+  await loadUserDetailTab(tab, selectedUser.value.userId);
+};
 const openUserDetails = async (user: AdminUserItem) => {
   selectedUser.value = user;
   editAvailableCredits.value = Number(user.wallet?.available || 0);
   activeTab.value = 'behavior';
   drawerOpen.value = true;
   detailsLoading.value = true;
-  await Promise.allSettled([
-    consoleStore.fetchAdminBehaviorEvents({ userId: user.userId, limit: 100 }),
-    consoleStore.fetchAdminCreditLedger({ userId: user.userId, limit: 100 }),
-    consoleStore.fetchAdminOrders({ userId: user.userId, limit: 100 }),
-    consoleStore.fetchAdminChatsHistory({ userId: user.userId, limit: 100 })
-  ]);
-  detailsLoading.value = false;
+  detailErrors.value = { behavior: '', credits: '', orders: '', chats: '' };
+  try {
+    await Promise.all(
+      (['behavior', 'credits', 'orders', 'chats'] as DetailTab[])
+        .map((tab) => loadUserDetailTab(tab, user.userId))
+    );
+  } finally {
+    detailsLoading.value = false;
+  }
 };
 const saveCredits = async () => {
   if (!selectedUser.value || savingCredits.value) return;

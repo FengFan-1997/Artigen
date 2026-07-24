@@ -205,7 +205,9 @@ test('user and admin history routes redact legacy raw records on read', async ()
   assertNoPrivateContent(readUserMemory(userId, {}));
 
   const adminApp = makeApp();
-  installAdminRoutes(adminApp.app);
+  installAdminRoutes(adminApp.app, {
+    usesOperationalRecordStore: () => false
+  });
   const token = createAdminToken('privacy-test').token;
   const adminHeaders = { authorization: `Bearer ${token}` };
   for (const [routePath, query] of [

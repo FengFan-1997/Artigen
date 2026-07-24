@@ -134,6 +134,7 @@
               <button
                 class="small-icon-button"
                 type="button"
+                data-analytics-action="editor.layer.visibility_toggle"
                 :aria-label="layer.visible ? `隐藏 ${layer.name}` : `显示 ${layer.name}`"
                 @click="store.toggleLayerVisibility(layer.id)"
               >
@@ -142,6 +143,7 @@
               <button
                 class="small-icon-button"
                 type="button"
+                data-analytics-action="editor.layer.lock_toggle"
                 :aria-label="layer.locked ? `解锁 ${layer.name}` : `锁定 ${layer.name}`"
                 @click="store.toggleLayerLock(layer.id)"
               >

@@ -9,6 +9,7 @@ import { buildApiUrl } from './api';
 import { getPageContext } from './pageContext';
 
 let autoClickInstalled = false;
+const CLICK_DEDUP_WINDOW_MS = 400;
 
 const ANALYTICS_URL_BASE = 'https://analytics.invalid';
 const ANALYTICS_ENABLED =
@@ -225,6 +226,27 @@ const safeParseUrl = (raw: any) => {
   }
 };
 
+export const shouldRecordClickSignature = ({
+  signature,
+  now,
+  previousSignature,
+  previousTimestamp,
+  windowMs = CLICK_DEDUP_WINDOW_MS
+}: {
+  signature: string;
+  now: number;
+  previousSignature: string;
+  previousTimestamp: number;
+  windowMs?: number;
+}) => {
+  const current = String(signature || '');
+  if (!current) return false;
+  return !(
+    current === String(previousSignature || '') &&
+    Number(now) - Number(previousTimestamp || 0) < Math.max(0, Number(windowMs) || 0)
+  );
+};
+
 const installAutoClickTracking = () => {
   if (autoClickInstalled) return;
   autoClickInstalled = true;
@@ -245,7 +267,6 @@ const installAutoClickTracking = () => {
     (ev) => {
       if (isConsolePath()) return;
       const now = Date.now();
-      if (now - lastTs < 400) return;
 
       const target = (ev?.target || null) as Element | null;
       if (!target) return;
@@ -259,7 +280,6 @@ const installAutoClickTracking = () => {
       if (!tag) return;
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
 
-      const id = normalizeText((el as any).id || '', 64);
       const cls = normalizeText((el as any).className || '', 120)
         .split(' ')
         .map((value) => normalizeActionKey(value, 40))
@@ -272,7 +292,6 @@ const installAutoClickTracking = () => {
           el.getAttribute('data-testid') ||
           ''
       );
-      const ariaAction = normalizeActionKey(el.getAttribute('aria-label') || '');
 
       const href = (() => {
         if (tag !== 'a') return '';
@@ -284,14 +303,17 @@ const installAutoClickTracking = () => {
 
       const action =
         explicitAction ||
-        normalizeActionKey(id) ||
-        ariaAction ||
         (href ? `navigate:${normalizeActionKey(href, 80)}` : '') ||
         normalizeActionKey(`${tag}:${cls || 'control'}`);
       const areaElement = el.closest('[data-analytics-area]') as HTMLElement | null;
       const area = normalizeActionKey(areaElement?.getAttribute('data-analytics-area') || '');
       const sig = `${tag}|${action}|${href}|${area}`;
-      if (sig === lastSig) return;
+      if (!shouldRecordClickSignature({
+        signature: sig,
+        now,
+        previousSignature: lastSig,
+        previousTimestamp: lastTs
+      })) return;
 
       lastSig = sig;
       lastTs = now;

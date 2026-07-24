@@ -42,6 +42,15 @@ const { csrfProtection } = require("./lib/csrf-protection");
 const { installFrontendHosting } = require("./lib/frontend-hosting");
 const { installSessionMiddleware } = require("./middleware/session-auth");
 const { createDevAccessGate, devAccessEnabled } = require("./lib/dev-access-gate");
+const { getPool, isDatabaseConfigured } = require("./db/pool");
+const {
+  createBehaviorRetentionService,
+} = require("./services/behavior-event-service");
+const {
+  listOperationalRecords,
+  upsertOperationalRecord,
+  usesOperationalRecordStore,
+} = require("./services/operational-record-service");
 
 const {
   assertAdmin,
@@ -602,6 +611,30 @@ const ledger = createLedger({
   ANALYTICS_EVENTS_FILE,
   getClientIp,
 });
+const upsertPersistentUsageLedgerItem = async (entry) => {
+  if (!usesOperationalRecordStore()) return ledger.upsertUsageLedgerItem(entry);
+  return upsertOperationalRecord({
+    kind: "usage",
+    userId: entry?.userId,
+    entry,
+  });
+};
+const appendPersistentUserImageHistory = async (input) => {
+  if (!usesOperationalRecordStore()) return appendUserImageHistory(input);
+  return upsertOperationalRecord({
+    kind: "image_history",
+    userId: input?.userId,
+    entry: input?.entry,
+  });
+};
+const appendPersistentUserAuditHistory = async (input) => {
+  if (!usesOperationalRecordStore()) return appendUserAuditHistory(input);
+  return upsertOperationalRecord({
+    kind: "audit_history",
+    userId: input?.userId,
+    entry: input?.entry,
+  });
+};
 
 installAuthRoutes(app);
 installAdminRoutes(app);
@@ -635,6 +668,9 @@ installUsageRoutes(app, {
   readUsersMap,
   clampInt,
   ...ledger,
+  listOperationalRecords,
+  upsertUsageLedgerItem: upsertPersistentUsageLedgerItem,
+  usesOperationalRecordStore,
 });
 
 // ... Imgagent Routes ...
@@ -649,11 +685,11 @@ installImgagentRoutes(app, {
   callSiliconFlowImageGenerate,
   persistImageRefForUser,
   persistGenerateImageInputForUser,
-  appendUserImageHistory,
-  appendUserAuditHistory,
+  appendUserImageHistory: appendPersistentUserImageHistory,
+  appendUserAuditHistory: appendPersistentUserAuditHistory,
   imgCredits,
   sanitizeLedgerId: ledger.sanitizeLedgerId,
-  upsertUsageLedgerItem: ledger.upsertUsageLedgerItem,
+  upsertUsageLedgerItem: upsertPersistentUsageLedgerItem,
   getClientIp,
   rateLimit,
   assertAuthUserMatches,
@@ -686,10 +722,10 @@ installSystemRoutes(app, {
   SILICONFLOW_MODEL,
   getClientIp,
   MEMORY_DIR,
-  upsertUsageLedgerItem: ledger.upsertUsageLedgerItem,
+  upsertUsageLedgerItem: upsertPersistentUsageLedgerItem,
   computeCreditsDelta: ledger.computeCreditsDelta,
-  appendUserImageHistory,
-  appendUserAuditHistory,
+  appendUserImageHistory: appendPersistentUserImageHistory,
+  appendUserAuditHistory: appendPersistentUserAuditHistory,
 });
 
 const frontendHosting = installFrontendHosting(app);
@@ -701,4 +737,9 @@ if (frontendHosting.enabled) {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);
+  if (isDatabaseConfigured()) {
+    const behaviorRetention = createBehaviorRetentionService({ pool: getPool() });
+    behaviorRetention.start();
+    console.log("Behavior retention scheduler: enabled", behaviorRetention.config);
+  }
 });

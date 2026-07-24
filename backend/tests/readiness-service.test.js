@@ -28,6 +28,8 @@ const migratedRow = Object.freeze({
   has_tasks: true,
   has_payloads: true,
   has_events: true,
+  has_behavior_events: true,
+  has_operational_records: true,
   has_assets: true,
   has_upload_sessions: true,
   has_otp_delivery_attempts: true,
@@ -37,6 +39,8 @@ const migratedRow = Object.freeze({
   has_asset_columns: true,
   has_upload_session_columns: true,
   has_event_columns: true,
+  has_behavior_columns: true,
+  has_operational_columns: true,
   has_otp_delivery_columns: true,
   has_ai_skus: true,
   has_workshop_skus: true
@@ -149,10 +153,36 @@ test('readiness verifies queue, payload, asset, event, inputs_ready and AI SKU m
     code: null,
     migration: LATEST_REPOSITORY_MIGRATION
   });
-  assert.equal(LATEST_REPOSITORY_MIGRATION, '013_behavior_events');
+  assert.equal(LATEST_REPOSITORY_MIGRATION, '014_operational_records');
   assert.equal(migrationQueryParam, LATEST_REPOSITORY_MIGRATION);
   assert.deepEqual(await checkDatabase({
     query: async () => ({ rows: [{ ...migratedRow, has_task_columns: false }] })
+  }), {
+    ok: false,
+    code: 'DATABASE_MIGRATION_REQUIRED',
+    expectedMigration: LATEST_REPOSITORY_MIGRATION
+  });
+  assert.deepEqual(await checkDatabase({
+    query: async () => ({
+      rows: [{
+        ...migratedRow,
+        has_behavior_events: false,
+        has_behavior_columns: false
+      }]
+    })
+  }), {
+    ok: false,
+    code: 'DATABASE_MIGRATION_REQUIRED',
+    expectedMigration: LATEST_REPOSITORY_MIGRATION
+  });
+  assert.deepEqual(await checkDatabase({
+    query: async () => ({
+      rows: [{
+        ...migratedRow,
+        has_operational_records: false,
+        has_operational_columns: false
+      }]
+    })
   }), {
     ok: false,
     code: 'DATABASE_MIGRATION_REQUIRED',
@@ -532,6 +562,7 @@ test('disabled paid and email OTP features skip database, storage and provider I
   });
   assert.equal(report.ok, true);
   assert.equal(report.generationRequired, false);
+  assert.equal(report.databaseRequired, false);
   assert.equal(databaseQueries, 0);
   assert.equal(adapterReads, 0);
   assert.equal(providerReads, 0);
@@ -553,6 +584,36 @@ test('disabled paid and email OTP features skip database, storage and provider I
       reason: 'FEATURE_DISABLED'
     });
   }
+});
+
+test('enabled behavior analytics makes PostgreSQL part of the readiness gate', async () => {
+  const missingDatabase = await getReadinessReport({
+    env: {
+      PAID_FEATURES_ENABLED: 'false',
+      AUTH_EMAIL_OTP_ENABLED: 'false',
+      BEHAVIOR_ANALYTICS_ENABLED: 'true'
+    },
+    pool: null,
+    adapter: null,
+    generationProvider: null
+  });
+  assert.equal(missingDatabase.ok, false);
+  assert.equal(missingDatabase.behaviorAnalyticsEnabled, true);
+  assert.equal(missingDatabase.databaseRequired, true);
+  assert.equal(missingDatabase.checks.database.code, 'DATABASE_NOT_CONFIGURED');
+
+  const ready = await getReadinessReport({
+    env: {
+      PAID_FEATURES_ENABLED: 'false',
+      AUTH_EMAIL_OTP_ENABLED: 'false',
+      BEHAVIOR_ANALYTICS_ENABLED: 'true'
+    },
+    pool: migratedPool,
+    adapter: null,
+    generationProvider: null
+  });
+  assert.equal(ready.ok, true);
+  assert.equal(ready.checks.database.migration, LATEST_REPOSITORY_MIGRATION);
 });
 
 test('email OTP readiness requires migrated PostgreSQL, independent strong secrets, Brevo and Turnstile', async () => {

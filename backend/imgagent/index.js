@@ -631,7 +631,7 @@ const installImgagentRoutes = (app, opts) => {
                 typeof e?.modelTried === 'string' && e.modelTried.trim()
                   ? e.modelTried.trim()
                   : model;
-              upsertUsageLedgerItem({
+              await upsertUsageLedgerItem({
                 requestId: ledgerRequestId,
                 ts: Date.now(),
                 userId,
@@ -670,7 +670,7 @@ const installImgagentRoutes = (app, opts) => {
                 error: code,
                 durationMs: Math.max(0, Date.now() - startedAt)
               };
-              appendUserAuditHistory({ userId, entry });
+              await appendUserAuditHistory({ userId, entry });
             } catch { }
           }
           if (res.destroyed || res.writableEnded) return;
@@ -737,7 +737,7 @@ const installImgagentRoutes = (app, opts) => {
               const provider = 'siliconflow';
               const modelUsed =
                 typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : model;
-              upsertUsageLedgerItem({
+              await upsertUsageLedgerItem({
                 requestId: ledgerRequestId,
                 ts: Date.now(),
                 userId,
@@ -776,7 +776,7 @@ const installImgagentRoutes = (app, opts) => {
                 error: outputFailureCode,
                 durationMs: Math.max(0, Date.now() - startedAt)
               };
-              appendUserAuditHistory({ userId, entry });
+              await appendUserAuditHistory({ userId, entry });
             } catch { }
           }
           if (res.destroyed || res.writableEnded) return;
@@ -888,7 +888,7 @@ const installImgagentRoutes = (app, opts) => {
             const modelUsed =
               typeof response?.modelUsed === 'string' && response.modelUsed.trim() ? response.modelUsed.trim() : model;
             const seed = typeof data?.seed === 'number' ? data.seed : undefined;
-            upsertUsageLedgerItem({
+            await upsertUsageLedgerItem({
               requestId: ledgerRequestId,
               ts: Date.now(),
               userId,
@@ -949,7 +949,7 @@ const installImgagentRoutes = (app, opts) => {
                 }
               } : {})
             };
-            appendUserImageHistory({ userId, entry });
+            await appendUserImageHistory({ userId, entry });
           } catch { }
         }
         if (typeof appendUserAuditHistory === 'function') {
@@ -974,7 +974,7 @@ const installImgagentRoutes = (app, opts) => {
               durationMs: Math.max(0, Date.now() - startedAt),
               assets: persistedOutputs.map((it) => ({ assetId: opaqueReference(it.url, 'asset') }))
             };
-            appendUserAuditHistory({ userId, entry });
+            await appendUserAuditHistory({ userId, entry });
           } catch { }
         }
 

@@ -13,7 +13,8 @@ const SAFE_EVENT_RE = /^[a-z0-9][a-z0-9_.:-]{0,63}$/;
 const SAFE_ACTION_RE = /^[a-z0-9][a-z0-9_.:/-]{0,95}$/;
 const SAFE_ELEMENT_RE = /^[a-z0-9][a-z0-9_.:-]{0,63}$/;
 const DEFAULT_RETENTION_DAYS = 90;
-let lastPurgeAt = 0;
+const DEFAULT_PURGE_INTERVAL_MS = 60 * 60_000;
+const DEFAULT_PURGE_MAX_BATCHES = 20;
 
 const boundedInt = (value, fallback, min, max) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -35,6 +36,22 @@ const retentionDays = (env = process.env) =>
 
 const purgeBatchSize = (env = process.env) =>
   boundedInt(env.BEHAVIOR_EVENT_PURGE_BATCH_SIZE, 5_000, 100, 50_000);
+
+const purgeIntervalMs = (env = process.env) =>
+  boundedInt(
+    env.BEHAVIOR_EVENT_PURGE_INTERVAL_MS,
+    DEFAULT_PURGE_INTERVAL_MS,
+    60_000,
+    24 * 60 * 60_000
+  );
+
+const purgeMaxBatches = (env = process.env) =>
+  boundedInt(
+    env.BEHAVIOR_EVENT_PURGE_MAX_BATCHES,
+    DEFAULT_PURGE_MAX_BATCHES,
+    1,
+    100
+  );
 
 const normalizeBehaviorInput = ({
   body,
@@ -129,16 +146,6 @@ const insertBehaviorEvent = async ({
       event.occurredAt
     ]
   );
-  const now = Date.now();
-  if (now - lastPurgeAt >= 60 * 60_000) {
-    lastPurgeAt = now;
-    await purgeExpiredBehaviorEvents({ pool }).catch((error) => {
-      console.error(
-        'Behavior event retention cleanup failed:',
-        String(error?.code || error?.message || error)
-      );
-    });
-  }
   return {
     item: inserted.rows[0] || {
       event_id: event.eventId,
@@ -316,15 +323,109 @@ const purgeExpiredBehaviorEvents = async ({
   return { deleted: Number(result.rowCount || 0), retentionDays: days };
 };
 
+const createBehaviorRetentionService = ({
+  env = process.env,
+  pool = getPool(),
+  logger = console,
+  setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval
+} = {}) => {
+  const intervalMs = purgeIntervalMs(env);
+  const maxBatches = purgeMaxBatches(env);
+  const batchSize = purgeBatchSize(env);
+  let timer = null;
+  let inFlight = null;
+
+  const runOnce = async () => {
+    if (!pool || typeof pool.query !== 'function') {
+      return {
+        ok: false,
+        code: 'DATABASE_NOT_CONFIGURED',
+        deleted: 0,
+        batches: 0
+      };
+    }
+    let deleted = 0;
+    let batches = 0;
+    try {
+      while (batches < maxBatches) {
+        const result = await purgeExpiredBehaviorEvents({ env, pool });
+        batches += 1;
+        deleted += Number(result.deleted || 0);
+        if (Number(result.deleted || 0) < batchSize) break;
+      }
+      return {
+        ok: true,
+        deleted,
+        batches,
+        retentionDays: retentionDays(env),
+        backlogPossible: batches === maxBatches
+      };
+    } catch (error) {
+      const code = String(error?.code || error?.message || 'BEHAVIOR_RETENTION_FAILED')
+        .trim()
+        .slice(0, 120);
+      logger.warn?.('[BehaviorRetention]', { code });
+      return { ok: false, code, deleted, batches };
+    }
+  };
+
+  const trigger = () => {
+    if (inFlight) return inFlight;
+    inFlight = runOnce().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  };
+
+  const start = () => {
+    if (timer) return false;
+    void trigger();
+    timer = setIntervalFn(() => {
+      void trigger();
+    }, intervalMs);
+    timer?.unref?.();
+    return true;
+  };
+
+  const stop = () => {
+    if (!timer) return false;
+    clearIntervalFn(timer);
+    timer = null;
+    return true;
+  };
+
+  const waitForIdle = async () => {
+    if (inFlight) await inFlight;
+  };
+
+  return {
+    config: {
+      intervalMs,
+      maxBatches,
+      batchSize,
+      retentionDays: retentionDays(env)
+    },
+    runOnce,
+    start,
+    stop,
+    trigger,
+    waitForIdle
+  };
+};
+
 const usesBehaviorEventStore = () => isDatabaseConfigured();
 
 module.exports = {
+  createBehaviorRetentionService,
   getBehaviorSummary,
   insertBehaviorEvent,
   listBehaviorEvents,
   normalizeBehaviorInput,
   purgeExpiredBehaviorEvents,
   purgeBatchSize,
+  purgeIntervalMs,
+  purgeMaxBatches,
   retentionDays,
   usesBehaviorEventStore
 };

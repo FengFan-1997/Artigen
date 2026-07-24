@@ -227,6 +227,8 @@ const checkDatabase = async (pool) => {
          to_regclass('public.tool_tasks') IS NOT NULL AS has_tasks,
          to_regclass('public.tool_task_payloads') IS NOT NULL AS has_payloads,
          to_regclass('public.generation_events') IS NOT NULL AS has_events,
+         to_regclass('public.behavior_events') IS NOT NULL AS has_behavior_events,
+         to_regclass('public.operational_records') IS NOT NULL AS has_operational_records,
          to_regclass('public.assets') IS NOT NULL AS has_assets,
          to_regclass('public.asset_upload_sessions') IS NOT NULL AS has_upload_sessions,
          to_regclass('public.otp_delivery_attempts') IS NOT NULL AS has_otp_delivery_attempts,
@@ -284,6 +286,24 @@ const checkDatabase = async (pool) => {
               AND column_name IN ('event_type','task_id','properties','occurred_at')
          ) AS has_event_columns,
          (
+           SELECT count(*) = 9
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='behavior_events'
+              AND column_name IN (
+                'event_id','actor_user_id','user_ref','event_type','path','action',
+                'properties','occurred_at','received_at'
+              )
+         ) AS has_behavior_columns,
+         (
+           SELECT count(*) = 8
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='operational_records'
+              AND column_name IN (
+                'record_kind','record_key','actor_user_id','user_ref','payload',
+                'occurred_at','created_at','updated_at'
+              )
+         ) AS has_operational_columns,
+         (
            SELECT count(*) = 10 AND bool_and(
              column_name <> 'provider_dispatched_at'
              OR data_type='timestamp with time zone'
@@ -331,6 +351,8 @@ const checkDatabase = async (pool) => {
       row.has_tasks &&
       row.has_payloads &&
       row.has_events &&
+      row.has_behavior_events &&
+      row.has_operational_records &&
       row.has_assets &&
       row.has_upload_sessions &&
       row.has_otp_delivery_attempts &&
@@ -340,6 +362,8 @@ const checkDatabase = async (pool) => {
       row.has_asset_columns &&
       row.has_upload_session_columns &&
       row.has_event_columns &&
+      row.has_behavior_columns &&
+      row.has_operational_columns &&
       row.has_otp_delivery_columns
     );
     if (!migrated) {
@@ -499,9 +523,15 @@ const getReadinessReport = async ({
     (!Object.prototype.hasOwnProperty.call(env, 'PAYMENTS_ENABLED') ||
       enabled(env.PAYMENTS_ENABLED));
   const authEmailOtpEnabled = enabled(env.AUTH_EMAIL_OTP_ENABLED);
+  const behaviorAnalyticsEnabled =
+    enabled(env.BEHAVIOR_ANALYTICS_ENABLED) || enabled(env.VITE_ANALYTICS_ENABLED);
+  const adminConsoleEnabled = Boolean(
+    String(env.CONSOLE_ADMIN_PASSWORD || '').trim()
+  );
   const generationRequired = paidEnabled && (aiDesignEnabled || workshopAiEnabled);
   const productionGeneration = generationRequired && isProduction(env);
-  const databaseRequired = paidEnabled || authEmailOtpEnabled;
+  const databaseRequired =
+    paidEnabled || authEmailOtpEnabled || behaviorAnalyticsEnabled || adminConsoleEnabled;
 
   let database = skippedCheck();
   let storage = skippedCheck();
@@ -551,15 +581,19 @@ const getReadinessReport = async ({
     ? checkTurnstile(env)
     : skippedCheck();
   const requiredChecks = [];
-  if (paidEnabled) requiredChecks.push(database, storage);
+  if (databaseRequired) requiredChecks.push(database);
+  if (paidEnabled) requiredChecks.push(storage);
   if (paymentEnabled) requiredChecks.push(payment);
   if (generationRequired) requiredChecks.push(payload, provider, outputAllowlist);
-  if (authEmailOtpEnabled) requiredChecks.push(database, authSecrets, mail, turnstile);
+  if (authEmailOtpEnabled) requiredChecks.push(authSecrets, mail, turnstile);
   return {
     ok: requiredChecks.every((check) => check.ok),
     paidEnabled,
     paymentEnabled,
     authEmailOtpEnabled,
+    behaviorAnalyticsEnabled,
+    adminConsoleEnabled,
+    databaseRequired,
     aiDesignEnabled,
     workshopAiEnabled,
     generationRequired,
