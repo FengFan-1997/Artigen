@@ -2,12 +2,15 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  createBehaviorRetentionService,
   getBehaviorSummary,
   insertBehaviorEvent,
   listBehaviorEvents,
   normalizeBehaviorInput,
   purgeExpiredBehaviorEvents,
   purgeBatchSize,
+  purgeIntervalMs,
+  purgeMaxBatches,
   retentionDays
 } = require('../services/behavior-event-service');
 
@@ -161,6 +164,8 @@ test('behavior retention is bounded and purges only expired rows', async () => {
   assert.equal(retentionDays({ BEHAVIOR_EVENT_RETENTION_DAYS: '999' }), 365);
   assert.equal(purgeBatchSize({ BEHAVIOR_EVENT_PURGE_BATCH_SIZE: '1' }), 100);
   assert.equal(purgeBatchSize({ BEHAVIOR_EVENT_PURGE_BATCH_SIZE: '999999' }), 50_000);
+  assert.equal(purgeIntervalMs({ BEHAVIOR_EVENT_PURGE_INTERVAL_MS: '1' }), 60_000);
+  assert.equal(purgeMaxBatches({ BEHAVIOR_EVENT_PURGE_MAX_BATCHES: '999' }), 100);
   let values = null;
   const result = await purgeExpiredBehaviorEvents({
     env: { BEHAVIOR_EVENT_RETENTION_DAYS: '120' },
@@ -173,4 +178,44 @@ test('behavior retention is bounded and purges only expired rows', async () => {
   });
   assert.deepEqual(values, ['120', 5_000]);
   assert.deepEqual(result, { deleted: 8, retentionDays: 120 });
+});
+
+test('behavior retention scheduler runs without new events and drains bounded batches', async () => {
+  const calls = [];
+  let scheduled = null;
+  let cleared = null;
+  const deletedByBatch = [100, 100, 25];
+  const service = createBehaviorRetentionService({
+    env: {
+      BEHAVIOR_EVENT_RETENTION_DAYS: '90',
+      BEHAVIOR_EVENT_PURGE_BATCH_SIZE: '100',
+      BEHAVIOR_EVENT_PURGE_MAX_BATCHES: '5',
+      BEHAVIOR_EVENT_PURGE_INTERVAL_MS: '60000'
+    },
+    pool: {
+      query: async (_sql, values) => {
+        calls.push(values);
+        return { rowCount: deletedByBatch.shift() || 0 };
+      }
+    },
+    setIntervalFn: (callback, intervalMs) => {
+      scheduled = { callback, intervalMs, unref() {} };
+      return scheduled;
+    },
+    clearIntervalFn: (timer) => {
+      cleared = timer;
+    }
+  });
+
+  assert.equal(service.start(), true);
+  await service.waitForIdle();
+  assert.equal(scheduled.intervalMs, 60_000);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0], ['90', 100]);
+
+  scheduled.callback();
+  await service.waitForIdle();
+  assert.equal(calls.length, 4);
+  assert.equal(service.stop(), true);
+  assert.equal(cleared, scheduled);
 });

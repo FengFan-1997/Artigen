@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   isSensitiveAnalyticsQueryKey,
   sanitizeAnalyticsPayload,
-  sanitizeAnalyticsUrl
+  sanitizeAnalyticsUrl,
+  shouldRecordClickSignature
 } from './analytics';
 
 describe('analytics privacy guards', () => {
@@ -77,6 +78,36 @@ describe('analytics privacy guards', () => {
     expect(source).not.toContain('VITE_LAZY_BACKEND');
     expect(source).not.toContain('el as any).innerText');
     expect(source).not.toContain('el as any).textContent');
+    expect(source).not.toContain("el.getAttribute('aria-label')");
     expect(source).toContain("el.getAttribute('data-analytics-action')");
+  });
+
+  it('deduplicates only a short burst and records the same control again later', () => {
+    expect(
+      shouldRecordClickSignature({
+        signature: 'button|generate||workspace',
+        now: 1_200,
+        previousSignature: 'button|generate||workspace',
+        previousTimestamp: 1_000
+      })
+    ).toBe(false);
+
+    expect(
+      shouldRecordClickSignature({
+        signature: 'button|generate||workspace',
+        now: 1_500,
+        previousSignature: 'button|generate||workspace',
+        previousTimestamp: 1_000
+      })
+    ).toBe(true);
+
+    expect(
+      shouldRecordClickSignature({
+        signature: 'button|download||workspace',
+        now: 1_100,
+        previousSignature: 'button|generate||workspace',
+        previousTimestamp: 1_000
+      })
+    ).toBe(true);
   });
 });

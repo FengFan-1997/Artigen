@@ -1,6 +1,6 @@
 # Artigen 项目、环境与发布总手册
 
-> 状态基线：2026-07-23
+> 状态基线：2026-07-24
 > 仓库：`FengFan-1997/Artigen`
 > 本文回答：项目在哪里运行、如何接入本地/DEV/生产、代码怎么提交、什么时候能进
 > `main`、怎么发布和回滚，以及当前分支是从哪里建立的。
@@ -42,30 +42,27 @@ Artigen 使用三层环境：
 | 分支 | 当前作用 | 当前状态 |
 | --- | --- | --- |
 | `main` | GitHub 默认分支、目标发布分支 | 当前停在 `380a2b1`，尚未完成新架构切换 |
-| `dev` | 云端测试环境集成分支 | 当前与 `codex/oss-foundation-upgrade` 同步 |
+| `dev` | 云端测试环境集成分支 | 当前基线为 `04f4927` |
 | `codex/artigen-overhaul` | 当前生产代码来源、迁移期发布分支 | 生产 Vercel 和 Render 都跟踪它 |
-| `codex/oss-foundation-upgrade` | 当前工作分支 | 基于 `codex/artigen-overhaul` 的 `10c1524` 建立 |
+| `codex/admin-audit-hardening` | 当前工作分支 | 从 `origin/dev` 的 `04f4927` 建立，目标 PR 为 `dev` |
 | `test` | 旧测试分支 | 已废弃；不要再用于新流程 |
 
 当前工作分支的准确关系：
 
 ```text
 main @ 380a2b1
-  └─ ... Artigen production overhaul ...
-      └─ codex/artigen-overhaul @ 10c1524
-          └─ 当前工作提交
-              └─ codex/oss-foundation-upgrade / dev
+  └─ ... 46 commits ...
+      └─ dev @ 04f4927
+          └─ codex/admin-audit-hardening（当前修改）
 ```
 
-- 当前本地分支：`codex/oss-foundation-upgrade`。
-- 直接基线：`codex/artigen-overhaul` 的 `10c1524`。
-- 取证快照 `fc46cc4`（本文档提交前）相对直接基线领先 13 个提交、落后 0 个提交；
-  相对 `main` 领先 43 个提交、落后 0 个提交。本文档及后续提交会让领先数自然增加，
-  但不会改变直接基线。
-- Git 本身不保存“谁创建了分支”；可验证的是取证快照中的分支独有提交作者为
-  `NewFF <sorates1997@163.com>`，GitHub PR #2 创建者为 `FengFan-1997`。
-- 当前 PR #2：`codex/oss-foundation-upgrade -> codex/artigen-overhaul`。
-- 迁移 PR #1：`codex/artigen-overhaul -> main`。
+- 当前本地分支：`codex/admin-audit-hardening`。
+- 直接基线：`origin/dev` 的 `04f492704df441478cd8b04f5468ac8d2e17d42c`。
+- 基线提交作者：`FengFan-1997 <sorates1997@163.com>`，提交说明是
+  `fix: let dev access coexist with admin auth (#4)`。
+- Git 不保存“谁点击创建分支”；能验证的是本分支由当前工作区从上述 `origin/dev`
+  基线建立。提交后可用 `git merge-base HEAD origin/dev` 再次核对。
+- 本分支只通过 PR 进入 `dev`，不会直接进入 `main` 或触发生产发布。
 
 ### 2.2 当前迁移期事实
 
@@ -533,6 +530,8 @@ unset DATABASE_URL
 
 规则：
 
+- 当前最新迁移是 `014_operational_records`：新增最小化的 usage、图片历史和内容审计
+  PostgreSQL 存储；`/readyz` 会同时检查该表及必需列。
 - 迁移只新增、兼容旧版本，默认不做破坏性回滚。
 - 先在本机 `artigen_test` 验证。
 - 再由 DEV `dev_artigen` 的启动锁幂等应用。
@@ -554,6 +553,9 @@ pnpm run db:audit
 - 是否锁表
 - 旧代码能否读取新结构
 - 失败和回滚策略
+
+本次 `014` 为加表迁移，不替换钱包、不可变账本、任务或支付表。代码回滚后表可保留，
+不要在生产执行 `db:rollback` 或手工 `DROP TABLE`；后续版本可以继续读取或前向修复。
 
 ## 12. 回滚
 

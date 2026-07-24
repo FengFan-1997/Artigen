@@ -1072,7 +1072,7 @@ const installSystemRoutes = (app, deps) => {
                 : typeof computeCreditsDelta === "function"
                   ? computeCreditsDelta({ tokensTotal, ragUsed: false })
                   : 0;
-            upsertUsageLedgerItem({
+            await upsertUsageLedgerItem({
               requestId: requestId || `gen_${Date.now().toString(36)}`,
               ts: Date.now(),
               userId,
@@ -1120,7 +1120,7 @@ const installSystemRoutes = (app, deps) => {
                 sectionCount: ingredientMeta.sectionCount,
                 status: result?.text ? "ok" : "empty",
               };
-              appendUserImageHistory({ userId, entry });
+              await appendUserImageHistory({ userId, entry });
             }
           }
         } catch {}
@@ -1160,7 +1160,7 @@ const installSystemRoutes = (app, deps) => {
               status: result?.text ? "ok" : "empty",
               durationMs: Math.max(0, Date.now() - startedAt),
             };
-            appendUserAuditHistory({ userId, entry });
+            await appendUserAuditHistory({ userId, entry });
           }
         } catch {}
 
@@ -1260,7 +1260,7 @@ const installSystemRoutes = (app, deps) => {
               status: "error",
               error: errorCode,
             };
-            appendUserImageHistory({ userId, entry });
+            await appendUserImageHistory({ userId, entry });
           }
         } catch {}
         try {
@@ -1288,7 +1288,7 @@ const installSystemRoutes = (app, deps) => {
               error: errorCode,
               durationMs: Math.max(0, Date.now() - startedAt),
             };
-            appendUserAuditHistory({ userId, entry });
+            await appendUserAuditHistory({ userId, entry });
           }
         } catch {}
         console.error("[API][Generate] Error:", {

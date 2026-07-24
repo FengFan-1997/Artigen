@@ -57,5 +57,17 @@ services:
         value: "0"
       - key: TASK_WORKER_ENABLED
         value: "0"
+      - key: VITE_ANALYTICS_ENABLED
+        value: "1"
+      - key: BEHAVIOR_ANALYTICS_ENABLED
+        value: "true"
+      - key: BEHAVIOR_EVENT_RETENTION_DAYS
+        value: "90"
+      - key: BEHAVIOR_EVENT_PURGE_INTERVAL_MS
+        value: "3600000"
+      - key: BEHAVIOR_EVENT_PURGE_BATCH_SIZE
+        value: "5000"
+      - key: BEHAVIOR_EVENT_PURGE_MAX_BATCHES
+        value: "20"
       - key: ASSET_STORAGE_DRIVER
         value: file

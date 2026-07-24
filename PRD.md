@@ -55,7 +55,7 @@ OTP 只保存 HMAC，10 分钟有效、60 秒发送冷却、最多 5 次尝试�
 
 管理员使用 `/api/admin/login` 签发的短时 Bearer token。生产拒绝默认 `admin/admin123456`，并始终禁用静态 `ADMIN_KEY`；后者只用于非生产显式兼容。生产登录必须绑定 active PostgreSQL `administrators` 记录，每个管理请求都重新检查角色；`operator` 可读，`admin`/`owner` 才能调账、停用/恢复用户或补偿支付，财务与账号状态审计保存真实 `actor_user_id`。停用用户时必须在同一事务撤销其有效会话。管理员通过 `pnpm --filter backend admin:grant -- <userId> <role>` 显式授权。
 
-远程图片代理和 provider 结果持久化执行协议、host allowlist、DNS/IP、跳转、大小、magic bytes 与 MIME 校验，并固定验证后的 DNS 地址。`/files` 不会向任意外域拼接 token。产品页访问与点击进入 PostgreSQL `behavior_events`：只保存净化页面路径、稳定操作标识、时间和 opaque 用户/会话/项目引用；不读取按钮文案，不保存输入文字、prompt、模型输出、图片/文件 URL、密码或密钥，IP 只保存哈希，UA 只保存设备类别，默认 90 天清理。usage、图片历史与内容审计也采用严格白名单；旧 JSON 在读取时再次净化并写回。
+远程图片代理和 provider 结果持久化执行协议、host allowlist、DNS/IP、跳转、大小、magic bytes 与 MIME 校验，并固定验证后的 DNS 地址。`/files` 不会向任意外域拼接 token。产品页访问与点击进入 PostgreSQL `behavior_events`：只保存净化页面路径、稳定操作标识、时间和 opaque 用户/会话/项目引用；不读取按钮文案、`aria-label` 或 DOM `id`，不保存输入文字、prompt、模型输出、图片/文件 URL、密码或密钥，IP 只保存哈希，UA 只保存设备类别，默认 90 天并由独立调度器清理。usage、图片历史与内容审计采用同样的严格白名单并写入 `operational_records`；旧 JSON 只在无数据库非生产兼容模式使用，读取时再次净化并写回。
 
 ## 4. 任务、报价与计费
 
@@ -202,6 +202,9 @@ V1 不承诺 PSD、视频、复杂蒙版、画笔修复、生成式填充、CMYK
 | `GET` | `/api/admin/behavior/events` | 页面访问和点击行为筛选与分页。 |
 | `GET` | `/api/admin/behavior/summary` | 行为总量、趋势、热门页面和操作。 |
 | `GET` | `/api/admin/audit/events` | PostgreSQL 管理和系统审计。 |
+| `GET` | `/api/admin/usage/ledger` | PostgreSQL 最小化模型用量。 |
+| `GET` | `/api/admin/images/history` | PostgreSQL 最小化图片任务历史。 |
+| `GET` | `/api/admin/audit/history` | PostgreSQL 最小化内容审计历史。 |
 
 后台页面信息架构固定为运营总览、用户管理、点数账本、行为轨迹、系统审计、内容审计、
 模型用量和系统设置。旧 `/console/billing`、`/console/playground` 仅保留重定向，不再
@@ -209,7 +212,7 @@ V1 不承诺 PSD、视频、复杂蒙版、画笔修复、生成式填充、CMYK
 
 ## 9. 数据迁移与发布门禁
 
-迁移文件位于 `backend/migrations/`。财务 JSON 导入使用 `backend/scripts/import-json-to-postgres.js`，迁移核对使用 `audit-json-postgres.js`。切换后旧财务快照只读保留，不是回退源；产品行为已迁入 PostgreSQL，旧 JSON analytics 仅用于无数据库非生产兼容，最小化的非财务 usage/历史仍由现有适配器保存。钱包与不可变账本余额使用 bigint，避免合法购买在 32 位整数边界回滚。
+迁移文件位于 `backend/migrations/`。财务 JSON 导入使用 `backend/scripts/import-json-to-postgres.js`，迁移核对使用 `audit-json-postgres.js`。切换后旧财务快照只读保留，不是回退源；产品行为写入 `behavior_events`，最小化 usage、图片历史和内容审计写入 `operational_records`。旧 JSON analytics/usage/history 仅用于无数据库非生产兼容。钱包与不可变账本余额使用 bigint，避免合法购买在 32 位整数边界回滚。
 
 Render 从仓库根目录安装完整 workspace。`pnpm start:production` 在监听端口前持有
 PostgreSQL advisory lock 并应用全部迁移；迁移失败时新版本不得启动。托管 PostgreSQL
