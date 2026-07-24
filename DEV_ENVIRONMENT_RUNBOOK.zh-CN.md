@@ -89,9 +89,16 @@ PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
 部署完成后，`/api/meta` 的 `appEnv` 必须是 `dev`，`gitSha` 必须等于本次
 `dev` commit；随后完成页面和 `/readyz` smoke，才能创建 `dev -> main` PR。
 
+注意：仓库中的 `render.dev.yaml` 表示期望配置，但已存在的 Render 服务不保证自动同步
+后来新增的环境变量。凡是改动环境变量，都要在 DEV 服务的 Environment 页面核对实际值、
+重新部署，并以 `/readyz` 的运行时结果为准。
+
 涉及后台或数据迁移时，还要检查：
 
 - `/readyz` 返回数据库迁移 `014_operational_records` 且 `ok=true`。
+- `/readyz` 返回
+  `adminConsoleEnabled=true`、`behaviorAnalyticsEnabled=true`、
+  `databaseRequired=true`；任一不符都视为配置漂移，不能继续提 `dev -> main`。
 - `/console/users` 的行为、点数、订单、会话任一接口失败时显示错误与“重试”，不能显示
   成一张无数据空表。
 - `/console/usage` 能读取 PostgreSQL usage 记录。

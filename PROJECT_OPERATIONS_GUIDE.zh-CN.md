@@ -267,7 +267,32 @@ gh pr create --base dev --head feat/short-name
 
 PR 的 CI 全绿后合并到 `dev`。Render 会自动部署该 commit。
 
-### 6.4 DEV smoke
+### 6.4 DEV 配置漂移检查
+
+`render.dev.yaml` 是仓库中的期望配置，但已存在的 Render 服务不一定会自动同步后来新增的
+环境变量。每次新增或修改环境变量时，必须同时完成：
+
+1. 更新 `render.dev.yaml` 和 `backend/.env.example`。
+2. 在 Render 的 `dev-artigen-app-fengfan -> Environment` 中核对实际值。
+3. 保存并重新部署 DEV。
+4. 以 `/readyz` 返回值验证运行时配置，不能只看仓库文件或控制台表单。
+
+当前后台与行为日志的 DEV 运行时门槛：
+
+- `adminConsoleEnabled=true`
+- `behaviorAnalyticsEnabled=true`
+- `databaseRequired=true`
+- `checks.database.ok=true`
+- `checks.database.migration=014_operational_records`
+
+可用以下命令确认最终部署确实对应目标提交：
+
+```bash
+render deploys list srv-d9gpgs61a83c73f7k8s0 --output json \
+  | jq '.[0] | {id, status, trigger, commit: .commit.id}'
+```
+
+### 6.5 DEV smoke
 
 先确认部署版本：
 
@@ -291,6 +316,9 @@ unset DEV_PASSWORD
 - `appEnv` 是 `dev`。
 - `gitSha` 等于本次 DEV commit。
 - `/readyz` 的 `ok` 是 `true`。
+- 后台和行为日志启用时，`adminConsoleEnabled`、`behaviorAnalyticsEnabled`、
+  `databaseRequired` 都必须是 `true`。
+- 数据库检查必须返回 `ok=true` 和当前迁移版本；不能只确认进程存活。
 - 关闭的付费、邮件和 AI 能力必须显示为 disabled/skipped，不能假装通过真实链路。
 
 页面至少检查：
