@@ -43,6 +43,7 @@ const workerEnv = { ...process.env };
     'S3_ACCESS_KEY_ID',
     'S3_SECRET_ACCESS_KEY'
   ];
+  if (profile === 'production') secretNames.push('AGENT_BETA_USER_IDS');
   const missing = [];
   for (const name of secretNames) {
     const value = readMacOsKeychainSecret({ service, account: name });
@@ -55,6 +56,7 @@ const workerEnv = { ...process.env };
   }
   Object.assign(workerEnv, {
     NODE_ENV: 'production',
+    APP_ENV: profile === 'production' ? 'production' : 'dev',
     AGENT_FEATURE_ENABLED: 'true',
     AGENT_WORKER_ENABLED: '1',
     AGENT_RUNTIME_DRIVER: 'live',
@@ -72,6 +74,7 @@ const workerEnv = { ...process.env };
       profile === 'production' ? 'artigen-production-mac-1' : 'artigen-dev-mac-1'
     ),
     AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser',
+    AGENT_BETA_MODE: profile === 'production' ? 'owner-only-v1' : 'disabled',
     AGENT_MAX_MINUTES: '45',
     AGENT_MAX_STEPS: '120',
     AGENT_MEMORY_MB: '4096',

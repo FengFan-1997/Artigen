@@ -459,6 +459,47 @@ test('production paid generation is ready only with real provider, shared storag
   assert.equal(report.checks.outputAllowlist.ok, true);
 });
 
+test('production Agent readiness requires the owner-only Beta gate', async () => {
+  const base = {
+    NODE_ENV: 'production',
+    APP_ENV: 'production',
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    SILICONFLOW_API_KEY: 'test-key',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local',
+    AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
+    AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true',
+    AGENT_PUBLIC_CAPABILITIES: 'files,shell'
+  };
+  const denied = await getReadinessReport({
+    env: base,
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.checks.agent.code, 'AGENT_RUNTIME_NOT_CONFIGURED');
+  assert.deepEqual(denied.checks.agent.missing, [
+    'AGENT_BETA_MODE',
+    'AGENT_BETA_USER_IDS'
+  ]);
+
+  const ready = await getReadinessReport({
+    env: {
+      ...base,
+      AGENT_BETA_MODE: 'owner-only-v1',
+      AGENT_BETA_USER_IDS: '11111111-1111-4111-8111-111111111111'
+    },
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(ready.ok, true);
+  assert.equal(ready.checks.agent.betaMode, 'owner-only-v1');
+});
+
 test('production ai-design quote and create share the readiness storage failure without billing side effects', async () => {
   const rootDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'artigen-paid-storage-gate-'));
   const env = {

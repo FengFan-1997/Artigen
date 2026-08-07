@@ -14,6 +14,8 @@ const agentWorkerEnabled = (env = process.env) => (
 );
 const SILICONFLOW_AGENT_MODEL = 'Qwen/Qwen3-8B';
 const AGENT_BROWSER_MODE = 'full-approval-v1';
+const AGENT_BETA_MODE = 'owner-only-v1';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const assertLoopbackHttpUrl = (value, code) => {
   let url;
@@ -132,6 +134,19 @@ const getAgentConfig = (env = process.env) => {
     }) ||
     ''
   ).trim();
+  const betaMode = String(env.AGENT_BETA_MODE || 'disabled').trim().toLowerCase();
+  if (!['disabled', AGENT_BETA_MODE].includes(betaMode)) {
+    throw new ApiError(500, 'AGENT_BETA_MODE_INVALID');
+  }
+  const betaUserEntries = String(env.AGENT_BETA_USER_IDS || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  if (betaUserEntries.length > 100 || betaUserEntries.some((entry) => !UUID_RE.test(entry))) {
+    throw new ApiError(500, 'AGENT_BETA_USER_IDS_INVALID');
+  }
+  const betaUserIds = Object.freeze([...new Set(betaUserEntries)]);
+  const deploymentEnvironment = String(env.APP_ENV || 'development').trim().toLowerCase();
 
   return Object.freeze({
     enabled: agentFeatureEnabled(env),
@@ -159,6 +174,9 @@ const getAgentConfig = (env = process.env) => {
     workerRelayUrl: String(env.AGENT_WORKER_RELAY_URL || '').trim(),
     workerRelaySecret,
     workerId,
+    betaMode,
+    betaUserIds,
+    deploymentEnvironment,
     defaultMaxCredits: integer(env.AGENT_DEFAULT_MAX_CREDITS, 100, 1, 500),
     hardMaxCredits: integer(env.AGENT_HARD_MAX_CREDITS, 500, 1, 500),
     trialCredits: integer(env.AGENT_TRIAL_CREDITS, 0, 0, 500),
@@ -206,6 +224,17 @@ const assertAgentRuntimeReady = (env = process.env) => {
     throw new ApiError(503, 'AGENT_SANDBOX_IMAGE_NOT_READY', { retryable: false });
   }
   if (
+    ['production', 'prod'].includes(config.deploymentEnvironment) &&
+    (
+      config.betaMode !== AGENT_BETA_MODE ||
+      config.betaUserIds.length === 0
+    )
+  ) {
+    throw new ApiError(503, 'AGENT_BETA_ACCESS_NOT_CONFIGURED', {
+      retryable: false
+    });
+  }
+  if (
     String(env.NODE_ENV || '').trim() === 'production' &&
     config.sandboxProvider === 'cua' &&
     config.sandboxMode === 'cloud' &&
@@ -249,6 +278,7 @@ module.exports = {
   assertSiliconFlowUrl,
   assertAgentRuntimeReady,
   getAgentConfig,
+  AGENT_BETA_MODE,
   AGENT_BROWSER_MODE,
   SILICONFLOW_AGENT_MODEL
 };

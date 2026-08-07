@@ -1,6 +1,5 @@
 const { ApiError, sendApiError } = require('../lib/api-error');
 const { resolveAuthUser } = require('../lib/auth-utils');
-const { resolveUserId } = require('../services/billing-service');
 const assets = require('../services/asset-storage');
 const {
   cleanupUpload,
@@ -107,21 +106,17 @@ const installAgentRoutes = (app, deps = {}) => {
 
   app.post('/api/agent-assets', writeLimiter, asyncRoute(async (req, res) => {
     const auth = requireAuthenticatedUser(req);
-    requireService();
+    const runService = requireService();
     if (!pool) throw new ApiError(503, 'DATABASE_NOT_CONFIGURED', { retryable: true });
+    const ownerUserId = await runService.resolveUserAccess({
+      userId: auth.dbUserId || auth.userId
+    });
     const parsed = await parseMultipartRequest(req, {
       maxFiles: 10,
       maxFileBytes: 40 * 1024 * 1024
     });
     try {
       if (!parsed.files.length) throw new ApiError(400, 'AGENT_INPUT_FILES_REQUIRED');
-      const client = await pool.connect();
-      let ownerUserId;
-      try {
-        ownerUserId = await resolveUserId(client, auth.dbUserId || auth.userId);
-      } finally {
-        client.release();
-      }
       const uploaded = [];
       for (const file of parsed.files) {
         const declaredMime = String(file.declaredMime || '').startsWith('text/')
@@ -381,6 +376,7 @@ const installAgentRoutes = (app, deps = {}) => {
 
   app.post('/api/integrations/:provider/connect', writeLimiter, asyncRoute(async (req, res) => {
     const auth = requireAuthenticatedUser(req);
+    await requireService().resolveUserAccess({ userId: auth.dbUserId || auth.userId });
     const provider = String(req.params.provider || '').trim();
     if (!['google_drive', 'github'].includes(provider)) {
       throw new ApiError(404, 'AGENT_INTEGRATION_UNSUPPORTED');
@@ -398,6 +394,7 @@ const installAgentRoutes = (app, deps = {}) => {
 
   app.get('/api/integrations/:provider/callback', writeLimiter, asyncRoute(async (req, res) => {
     const auth = requireAuthenticatedUser(req);
+    await requireService().resolveUserAccess({ userId: auth.dbUserId || auth.userId });
     const provider = String(req.params.provider || '').trim();
     if (!['google_drive', 'github'].includes(provider)) {
       throw new ApiError(404, 'AGENT_INTEGRATION_UNSUPPORTED');
@@ -425,6 +422,7 @@ const installAgentRoutes = (app, deps = {}) => {
 
   app.delete('/api/integrations/:provider', writeLimiter, asyncRoute(async (req, res) => {
     const auth = requireAuthenticatedUser(req);
+    await requireService().resolveUserAccess({ userId: auth.dbUserId || auth.userId });
     const provider = String(req.params.provider || '').trim();
     if (!['google_drive', 'github'].includes(provider)) {
       throw new ApiError(404, 'AGENT_INTEGRATION_UNSUPPORTED');

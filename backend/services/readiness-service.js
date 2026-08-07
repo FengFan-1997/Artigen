@@ -711,6 +711,15 @@ const getReadinessReport = async ({
       missing.push('AGENT_CUA_IMAGE_REF');
     }
     const browserPublic = agentConfig.publicBrowserEnabled;
+    const productionBeta = ['production', 'prod'].includes(
+      agentConfig.deploymentEnvironment
+    );
+    if (productionBeta && agentConfig.betaMode !== 'owner-only-v1') {
+      missing.push('AGENT_BETA_MODE');
+    }
+    if (productionBeta && agentConfig.betaUserIds.length === 0) {
+      missing.push('AGENT_BETA_USER_IDS');
+    }
     if (browserPublic && agentConfig.browserMode !== 'full-approval-v1') {
       missing.push('AGENT_BROWSER_MODE');
     }
@@ -736,6 +745,7 @@ const getReadinessReport = async ({
           sandboxMode: agentConfig.sandboxMode,
           image: agentConfig.sandboxImageRef || agentConfig.sandboxVersion,
           browserMode: agentConfig.browserMode,
+          betaMode: agentConfig.betaMode,
           egressPolicy: agentConfig.sandboxEgressPolicy,
           desktopRelayConfigured: Boolean(agentConfig.workerRelayUrl)
         };
