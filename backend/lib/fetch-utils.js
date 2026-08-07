@@ -57,8 +57,11 @@ const fetchWithTimeout = async (url, options, timeoutMs, signal) => {
         } catch {}
       }
     }
-    const agent = buildFetchAgent(url);
-    const res = await fetch(url, { ...options, signal: controller.signal, agent });
+    const { disableProxy = false, ...requestOptions } = options || {};
+    const agent = disableProxy
+      ? requestOptions.agent
+      : buildFetchAgent(url) || requestOptions.agent;
+    const res = await fetch(url, { ...requestOptions, signal: controller.signal, agent });
     return res;
   } finally {
     clearTimeout(timeoutId);

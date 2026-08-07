@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import type { ProductProfileSnapshot } from '../domain/generationWorkspace';
 
 export type AgentImgImageCount = 1 | 2 | 3 | 4;
 
@@ -55,6 +56,44 @@ export const useAgentImgSettingsStore = defineStore('agentImgSettings', () => {
     else colors.value.push(t);
   };
 
+  const productProfileSnapshot = (): ProductProfileSnapshot => {
+    const text = (value: string, max = 200) => value.trim().slice(0, max);
+    const tags = (values: string[]) =>
+      values.map((value) => text(value, 80)).filter(Boolean).slice(0, 12);
+    return {
+      productName: text(productName.value),
+      productCategory: text(productCategory.value),
+      material: text(material.value),
+      sceneType: text(sceneType.value),
+      lighting: text(lighting.value),
+      primaryColor: text(primaryColor.value),
+      brandName: text(brandName.value),
+      designElements: tags(designElements.value),
+      styles: tags(styles.value),
+      colors: tags(colors.value)
+    };
+  };
+
+  const hydrateProductProfile = (snapshot: Partial<ProductProfileSnapshot> | null | undefined) => {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    const text = (value: unknown, max = 200) => String(value || '').trim().slice(0, max);
+    const tags = (value: unknown) =>
+      (Array.isArray(value) ? value : [])
+        .map((entry) => text(entry, 80))
+        .filter(Boolean)
+        .slice(0, 12);
+    productName.value = text(snapshot.productName);
+    productCategory.value = text(snapshot.productCategory);
+    material.value = text(snapshot.material);
+    sceneType.value = text(snapshot.sceneType);
+    lighting.value = text(snapshot.lighting);
+    primaryColor.value = text(snapshot.primaryColor);
+    brandName.value = text(snapshot.brandName);
+    designElements.value = tags(snapshot.designElements);
+    styles.value = tags(snapshot.styles);
+    colors.value = tags(snapshot.colors);
+  };
+
   // Construct a rich context string for the LLM
   const contextText = computed(() => {
     const parts = [
@@ -91,6 +130,8 @@ export const useAgentImgSettingsStore = defineStore('agentImgSettings', () => {
     toggleStyle,
     colors,
     toggleColor,
+    productProfileSnapshot,
+    hydrateProductProfile,
     contextText,
     prefillRefImages
   };

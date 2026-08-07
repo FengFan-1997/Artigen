@@ -49,13 +49,21 @@ export function useAgentImgLocale() {
         generateThisDirection: '生成',
         welcomeTitle: '欢迎使用 Artigen AI 设计。',
         welcomeSub:
-          '请简单描述您想要生成的图片 或上传参考图。发送后我会优化您的输入并且结合相关提示词并生成结果。',
+          '选择 10 点标准文生图，或用商品、风格、场景参考图进行 60 点商品参考生成；确认报价后才会创建任务。',
         memory: '历史记录',
         noHistory: '暂无历史记录',
         resultTitle: '生成结果',
         positivePrompt: '正向提示词',
         negativePrompt: '反向提示词',
         imageLabel: '图片',
+        imageMissing: '图片已失效',
+        imageMissingShort: '已失效',
+        imageMissingSub: '原图暂时无法加载',
+        generationFailed: '生成失败，请稍后再试',
+        generationCancelled: '已取消',
+        statusFailed: '失败',
+        statusCancelled: '已取消',
+        statusPending: '处理中',
         download: '下载',
         reference: '引用',
         edit: '编辑',
@@ -63,8 +71,8 @@ export function useAgentImgLocale() {
         model: '模型',
         modelTip: '当前：默认模型',
         modelStandard: '默认模型',
-        modelNanobanana: 'Nano Banana',
-        modelNanobananaPro: 'Nano BananaPro',
+        modelNanobanana: '未启用',
+        modelNanobananaPro: '未启用',
         modelLocked: '需要 Pro 以上',
         modelComingSoon: '暂未接入',
         costTip: '预计扣费：{n} 点/次',
@@ -77,34 +85,34 @@ export function useAgentImgLocale() {
         loadingText: '正在处理，请耐心等待…',
         guideTitle: '使用指南 / 我们的优势',
         guideDesc:
-          '如果是电商产品，可以先在左侧「产品档案」补齐关键信息；非电商场景可跳过，直接用一句话描述场景。打开「深度思考」会自动优化提示词与构图。支持多参考图图生图，让风格与质感更稳定。',
+          '先补齐产品档案并描述画面。快速生成直接出图；深度思考会先单独生成 4 个视觉方向，选择后再次确认生成。每一步都独立报价。',
         guideKeywords: [
-          '深度思考模型',
-          '多参考图生成',
-          '主流强力生图模型',
+          '4 个视觉方向',
+          '商品语义参考',
+          '标准生成',
           '电商产品工作流',
-          '4K 高清下载（Pro+）'
+          '失败自动退款'
         ],
         guideFaqs: [
           {
             q: '深度思考有什么用？',
-            a: '深度思考会自动补全构图、光影、材质与质量词，并做提示词结构化；同时带有“记忆”能力，会结合你多轮输入自动融合需求。非深度思考仅接受单次输入。'
+            a: '深度思考会先生成 4 个可编辑视觉方向，这一步单独报价 5 点；选择方向后，再按标准生成 10 点或商品参考生成 60 点确认出图。'
           },
           {
             q: '从哪里开始更快？',
-            a: '有参考图就用图生图；只有想法就用文生图。做电商图建议先填产品档案，再选择风格/场景。'
+            a: '没有素材时用 10 点标准文生图；已有商品图时用 60 点商品参考生成，并按商品、风格、场景顺序上传。'
           },
           {
             q: '怎么提高一致性与可控性？',
-            a: '支持多张参考图同时参与生成，建议用：产品图 + 风格参考 + 场景参考；再配合产品档案字段，稳定输出。'
+            a: '把商品图固定为第一张参考，再按需加入风格和场景参考；结果可以保存为项目分支并进入 Editor V2。'
           },
           {
             q: '我们的优势是什么？',
-            a: '内置深度思考模型做提示词与构图优化；支持多图同时作为参考进行生成；接入多种主流强力生图模型，覆盖写实/商业/风格化等场景。'
+            a: '围绕商品视觉把项目资料、语义参考、版本分支、并排比较、Editor V2 与多尺寸交付串成可恢复、可退款的工作流。'
           },
           {
             q: '文件会上传到服务器吗？',
-            a: '工具相关功能默认在浏览器本地处理；AI 设计在生成/图生图时会将必要信息（提示词/参考图）发送到模型服务完成生成。'
+            a: '15 个工具默认在浏览器本地处理；AI 设计只会在你确认报价后，将必要的提示词和参考素材发送到模型服务。'
           }
         ]
       };
@@ -150,13 +158,21 @@ export function useAgentImgLocale() {
       generateThisDirection: 'Generate',
       welcomeTitle: 'Welcome to Artigen AI Design.',
       welcomeSub:
-        'Please briefly describe the image you want to generate, or upload a reference image. After you send, I’ll refine your input, combine it with relevant prompts, and generate the result.',
+        'Choose 10-credit standard text-to-image or 60-credit product-reference generation with product, style, and scene guidance. Nothing starts before quote confirmation.',
       memory: 'History',
       noHistory: 'No history yet',
       resultTitle: 'Result',
       positivePrompt: 'Positive Prompt',
       negativePrompt: 'Negative Prompt',
       imageLabel: 'Image',
+      imageMissing: 'Image unavailable',
+      imageMissingShort: 'Missing',
+      imageMissingSub: 'The original image could not be loaded.',
+      generationFailed: 'Generation failed. Please try again later.',
+      generationCancelled: 'Cancelled',
+      statusFailed: 'Failed',
+      statusCancelled: 'Cancelled',
+      statusPending: 'Pending',
       download: 'Download',
       reference: 'Reference',
       edit: 'Edit',
@@ -164,8 +180,8 @@ export function useAgentImgLocale() {
       model: 'Model',
       modelTip: 'Current: Default model',
       modelStandard: 'Default model',
-      modelNanobanana: 'Nano Banana',
-      modelNanobananaPro: 'Nano BananaPro',
+      modelNanobanana: 'Disabled',
+      modelNanobananaPro: 'Disabled',
       modelLocked: 'Requires Pro pack or higher',
       modelComingSoon: 'Coming soon',
       costTip: 'Est. cost: {n} credits/run',
@@ -179,34 +195,34 @@ export function useAgentImgLocale() {
       loadingText: 'Processing, please wait…',
       guideTitle: 'Quick guide / Why us',
       guideDesc:
-        'For e-commerce products, you can fill the product profile on the left; for other cases, you can skip it and describe the scene in one line. Turn on Deep Thinking to refine prompts and composition. Multi-reference img2img keeps style and texture consistent.',
+        'Complete the product profile and describe the visual. Generate creates an image directly; Deep Thinking first creates four separately quoted directions, then asks again before generating.',
       guideKeywords: [
-        'deep thinking model',
-        'multi-reference img2img',
-        'top image generation models',
+        'four visual directions',
+        'text-to-image',
+        'standard generation',
         'commerce workflow',
-        '4K download (Pro+)'
+        'automatic refunds'
       ],
       guideFaqs: [
         {
           q: 'What does Deep Thinking do?',
-          a: 'It refines prompts and composition by adding lighting/material/quality cues. It also has memory: it can merge multiple turns of your inputs into one coherent request. Non-Deep Thinking accepts only single-turn input.'
+          a: 'It creates four editable visual directions as a separately quoted 5-credit task. After choosing one, confirm either a 10-credit standard generation or a 60-credit product-reference generation.'
         },
         {
           q: 'Where should I start for faster results?',
-          a: 'Use img2img when you have references; use text-to-image for fast ideation. For commerce images, complete the product profile first.'
+          a: 'Use 10-credit standard generation without assets, or 60-credit product-reference generation when you have a product image. Add style and scene guidance only when useful.'
         },
         {
           q: 'How to improve consistency and control?',
-          a: 'Use multi-reference img2img: combine a product photo, a style reference, and a scene reference. Product profile fields further stabilize results.'
+          a: 'Keep the product image in the first semantic slot, then optionally add style and scene references. Save good results as project branches and refine them in Editor V2.'
         },
         {
           q: 'What makes it different?',
-          a: 'Deep Thinking improves prompts and composition; multi-reference generation for stronger control; and access to powerful mainstream image models for diverse styles.'
+          a: 'It connects project briefs, semantic references, version branches, comparison, Editor V2, and multi-size delivery in one recoverable, refundable workflow.'
         },
         {
           q: 'Do files get uploaded to a server?',
-          a: 'Tools run locally in your browser by default. For AI generation/img2img, we send the required inputs (prompts/reference images) to the model service to produce results.'
+          a: 'The 15 utility tools run locally by default. AI generation sends only the confirmed prompt and required reference assets to the model service after quote confirmation.'
         }
       ]
     };

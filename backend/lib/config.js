@@ -1,5 +1,6 @@
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+const { readMacOsKeychainSecret } = require("./local-keychain");
 
 const normalizeUrl = (url) => {
   const s = (url || "").toString().trim();
@@ -26,10 +27,16 @@ const parseUrlList = (raw, fallback) => {
 const NODE_ENV = String(process.env.NODE_ENV || "").trim() || "development";
 const isProd = NODE_ENV === "production";
 
-const API_KEY = normalizeSecret(process.env.GEMINI_API_KEY || "");
+// Gemini is intentionally disabled. Production AI is restricted to the two
+// explicitly approved SiliconFlow models below.
+const API_KEY = "";
 
 const SILICONFLOW_API_KEY = normalizeSecret(
-  process.env.SILICONFLOW_API_KEY ||
+  readMacOsKeychainSecret({
+    service: process.env.SILICONFLOW_KEYCHAIN_SERVICE,
+    account: process.env.SILICONFLOW_KEYCHAIN_ACCOUNT,
+  }) ||
+    process.env.SILICONFLOW_API_KEY ||
     process.env.SILICONFLOW_TOKEN ||
     process.env.SILICONFLOW_KEY ||
     "",
@@ -38,7 +45,7 @@ const SILICONFLOW_API_BASE = normalizeUrl(
   process.env.SILICONFLOW_API_BASE || "https://api.siliconflow.cn/v1",
 );
 const SILICONFLOW_MODEL = (
-  process.env.SILICONFLOW_MODEL || "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
+  "Qwen/Qwen3-8B"
 )
   .toString()
   .trim();
@@ -63,8 +70,9 @@ const SILICONFLOW_IMAGE_INPUT_FIELD = (
   .toString()
   .trim();
 
-const FIXED_SILICONFLOW_CHAT_MODEL = "Qwen/Qwen2.5-7B-Instruct";
+const FIXED_SILICONFLOW_CHAT_MODEL = "Qwen/Qwen3-8B";
 const FIXED_SILICONFLOW_IMAGE_MODEL = "Kwai-Kolors/Kolors";
+const FIXED_SILICONFLOW_EDIT_MODEL = "Qwen/Qwen-Image-Edit-2509";
 
 let activeTextProvider = (() => {
   const preferred = (process.env.TEXT_PROVIDER || "")
@@ -72,9 +80,7 @@ let activeTextProvider = (() => {
     .trim()
     .toLowerCase();
   if (preferred === "siliconflow") return "siliconflow";
-  if (preferred === "gemini") return "gemini";
   if (SILICONFLOW_API_KEY) return "siliconflow";
-  if (API_KEY) return "gemini";
   return "offline";
 })();
 
@@ -125,6 +131,7 @@ module.exports = {
   SILICONFLOW_TXT2IMG_MODEL,
   SILICONFLOW_IMAGE_INPUT_FIELD,
   FIXED_SILICONFLOW_CHAT_MODEL,
+  FIXED_SILICONFLOW_EDIT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
   activeTextProvider,
   GEMINI_TIMEOUT_MS,

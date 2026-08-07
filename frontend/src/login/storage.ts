@@ -10,13 +10,6 @@ export type LocalUser = {
   lastLoginAt: number;
 };
 
-type PasswordRecord = {
-  password: string;
-  updatedAt: number;
-};
-
-type PasswordMap = Record<string, PasswordRecord>;
-
 const safeParse = <T>(text: string | null, fallback: T): T => {
   if (!text) return fallback;
   try {
@@ -93,49 +86,32 @@ export const getLastUsername = () => {
   }
 };
 
-const loadPasswordMap = (): PasswordMap => {
+type RemovableStorage = Pick<Storage, 'removeItem'>;
+
+const getBrowserStorage = (): RemovableStorage | null => {
   try {
-    const raw = window.localStorage.getItem(LOGIN_PASSWORDS_KEY);
-    const m = safeParse<PasswordMap>(raw, {});
-    if (!m || typeof m !== 'object') return {};
-    const out: PasswordMap = {};
-    for (const [k, v] of Object.entries(m)) {
-      const key = String(k || '')
-        .trim()
-        .toLowerCase();
-      const pw = typeof (v as any)?.password === 'string' ? String((v as any).password) : '';
-      const updatedAt = Number((v as any)?.updatedAt ?? 0) || 0;
-      if (!key || !pw) continue;
-      out[key] = { password: pw, updatedAt };
-    }
-    return out;
+    return typeof window === 'undefined' ? null : window.localStorage;
   } catch {
-    return {};
+    return null;
   }
 };
 
-const savePasswordMap = (m: PasswordMap) => {
+export const clearLegacySavedPasswords = (
+  storage: RemovableStorage | null = getBrowserStorage()
+) => {
   try {
-    window.localStorage.setItem(LOGIN_PASSWORDS_KEY, JSON.stringify(m || {}));
+    storage?.removeItem(LOGIN_PASSWORDS_KEY);
   } catch {}
 };
 
-export const setSavedPassword = (username: string, password: string) => {
-  const u = String(username || '')
-    .trim()
-    .toLowerCase();
-  const p = String(password || '');
-  if (!u || !p) return;
-  const m = loadPasswordMap();
-  m[u] = { password: p, updatedAt: Date.now() };
-  savePasswordMap(m);
+// Remove plaintext passwords written by older builds as soon as the login module loads.
+clearLegacySavedPasswords();
+
+export const setSavedPassword = (_username: string, _password: string) => {
+  clearLegacySavedPasswords();
 };
 
-export const getSavedPassword = (username: string) => {
-  const u = String(username || '')
-    .trim()
-    .toLowerCase();
-  if (!u) return '';
-  const m = loadPasswordMap();
-  return typeof m[u]?.password === 'string' ? m[u].password : '';
+export const getSavedPassword = (_username: string) => {
+  clearLegacySavedPasswords();
+  return '';
 };

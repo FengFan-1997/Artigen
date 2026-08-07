@@ -1,20 +1,31 @@
 <script setup lang="ts">
 import { ref, onBeforeUnmount, watch, computed, nextTick } from 'vue';
 import { storeToRefs } from 'pinia';
-import { message } from 'ant-design-vue';
 import gsap from 'gsap';
 import IngredientLabelTypeSelect from '../components/IngredientLabelTypeSelect.vue';
 import ActionButton from '@/agentImg/components/ActionButton.vue';
 import { useLanguageStore } from '@/stores/language';
-import { generateText } from '../services/text';
 import {
   buildIngredientLabelSvg,
   buildIngredientLabelSvgUrl,
   type IngredientLabelLayoutType
 } from '../logic/formatFactory/ingredientLabel';
 import { exportPdf } from '@/utils/export';
+import { validateIngredientSourceTrace } from '../logic/ingredientSourceTrace';
+import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import {
+  cancelToolTask,
+  quoteToolTask,
+  type ToolTaskQuote
+} from '../services/toolTasks';
+import {
+  cancelPersistedWorkshopTask,
+  loadPendingWorkshopTask,
+  resumePersistedWorkshopTask,
+  startPersistedWorkshopTask
+} from '../services/workshopTasks';
 
-const props = defineProps<{ visible: boolean; creditsCost?: number }>();
+const props = defineProps<{ visible: boolean }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
 
 const languageStore = useLanguageStore();
@@ -22,6 +33,10 @@ const { currentLang } = storeToRefs(languageStore);
 
 const editorBoxRef = ref<HTMLElement | null>(null);
 const watermarkRef = ref<HTMLElement | null>(null);
+const dialogRef = ref<HTMLElement | null>(null);
+const downloadModalRef = ref<HTMLElement | null>(null);
+const labelTypeModalRef = ref<HTMLElement | null>(null);
+const downloadControlRef = ref<HTMLElement | null>(null);
 const isLoading = ref(false);
 const progressValue = ref(0);
 const isDownloadModalOpen = ref(false);
@@ -29,6 +44,8 @@ const isDownloadPopoverOpen = ref(false);
 const isLabelTypeModalOpen = ref(false);
 const isMobile = ref(false);
 let progressInterval: number | null = null;
+let returnFocus: HTMLElement | null = null;
+let nestedReturnFocus: HTMLElement | null = null;
 
 const ingredientsInput = ref('');
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
@@ -48,12 +65,19 @@ watch(ingredientsInput, () => {
 });
 
 const productType = ref<'Food' | 'Drug' | 'Cosmetic' | 'Dietary Supplement'>('Food');
-const typeOptions = [
-  { label: 'Food', value: 0, gtm: 'ga-click-demo-food' },
-  { label: 'Drug', value: 1, gtm: 'ga-click-demo-drug' },
-  { label: 'Cosmetic', value: 2, gtm: 'ga-click-demo-cosmetic' },
-  { label: 'Dietary Supplement', value: 3, gtm: 'ga-click-demo-dietary-supplement' }
-];
+const typeOptions = computed(() => {
+  const zh = currentLang.value === 'zh';
+  return [
+    { label: zh ? '食品' : 'Food', value: 0, gtm: 'ga-click-demo-food' },
+    { label: zh ? '药品' : 'Drug', value: 1, gtm: 'ga-click-demo-drug' },
+    { label: zh ? '化妆品' : 'Cosmetic', value: 2, gtm: 'ga-click-demo-cosmetic' },
+    {
+      label: zh ? '膳食补充剂' : 'Dietary Supplement',
+      value: 3,
+      gtm: 'ga-click-demo-dietary-supplement'
+    }
+  ];
+});
 const productTypeMap: Record<number, 'Food' | 'Drug' | 'Cosmetic' | 'Dietary Supplement'> = {
   0: 'Food',
   1: 'Drug',
@@ -69,6 +93,13 @@ const lastLayoutType = ref<IngredientLabelLayoutType | null>(null);
 const pendingLayoutType = ref<IngredientLabelLayoutType | null>(null);
 const errorMsg = ref('');
 const canDownload = ref(false);
+const ingredientQuote = ref<ToolTaskQuote | null>(null);
+const quoteLoading = ref(false);
+const quoteError = ref('');
+const uploadConsent = ref(false);
+const activeTaskId = ref('');
+let quoteController: AbortController | null = null;
+let taskController: AbortController | null = null;
 
 const humanizeAiError = (code: string) => {
   const c = String(code || '').trim();
@@ -78,6 +109,31 @@ const humanizeAiError = (code: string) => {
     return en
       ? 'Insufficient credits. Please top up in the Market.'
       : '点数不足，请前往「点数商城」充值';
+  if (c === 'LOGIN_REQUIRED')
+    return en ? 'Sign in to use AI organization. Local layout remains available.' : '请先登录使用 AI 整理；本地排版仍可使用。';
+  if (c === 'BROWSER_STORAGE_UNAVAILABLE')
+    return en
+      ? 'The browser could not safely save recovery data, so no paid task was submitted.'
+      : '浏览器无法安全保存任务恢复信息，本次未提交付费任务。';
+  if (c === 'PRICE_CHANGED' || c === 'QUOTE_ALREADY_USED' || c === 'QUOTE_NOT_FOUND')
+    return en ? 'The quote changed. Please confirm the latest price again.' : '报价已变化，请重新确认最新价格。';
+  if (c === 'INGREDIENT_SOURCE_MISMATCH' || c === 'INVALID_INGREDIENT_OUTPUT')
+    return en
+      ? 'The organized result did not pass source-trace validation. Credits were refunded.'
+      : '整理结果未通过原文追溯校验，已退款。';
+  if (c === 'OUTPUT_INVALID' || c === 'OUTPUT_PERSIST_FAILED')
+    return en
+      ? 'The AI result did not pass output validation. Credits were refunded.'
+      : 'AI 结果未通过输出校验，已退款。';
+  if (
+    c === 'LEGACY_BILLING_DISABLED' ||
+    c === 'PAID_FEATURES_DISABLED' ||
+    c === 'DATABASE_NOT_CONFIGURED' ||
+    c === 'TOOL_OPERATION_UNAVAILABLE'
+  )
+    return en
+      ? 'AI organization is temporarily unavailable. Local layout remains available.'
+      : 'AI 整理服务暂不可用；本地排版仍可使用。';
   if (
     c === 'RATE_LIMITED' ||
     c === 'TOO_MANY_REQUESTS' ||
@@ -101,13 +157,22 @@ const humanizeAiError = (code: string) => {
     return en ? 'Network error. Please try again.' : '网络错误，请稍后再试';
   if (c === 'AbortError' || c === 'ABORTED' || /aborted/i.test(c))
     return en ? 'Cancelled.' : '已取消';
+  if (c === 'TASK_CANCEL_PENDING')
+    return en
+      ? 'Cancellation is pending confirmation. Refreshing will safely retry it.'
+      : '取消仍待服务端确认；刷新后会安全重试。';
   return en ? 'Generation failed. Please try again later.' : '生成失败，请稍后再试';
 };
 
+const downloadErrorText = () =>
+  currentLang.value === 'en'
+    ? 'Export failed. Please try again.'
+    : '导出失败，请稍后再试';
+
 const PLACEHOLDERS: Record<string, { zh: string; en: string }> = {
   Drug: {
-    zh: '请提供有效成分/用途/辅料等信息，支持用逗号或换行分隔。信息不足时系统会补全常见 FDA 规范内容。',
-    en: 'Provide active ingredients/uses/inactive ingredients. Use commas or new lines. If info is limited, the system will infer standard FDA content.'
+    zh: '请粘贴需要排版的有效成分、用途、警告和辅料原文；缺失内容不会被补全。',
+    en: 'Paste the exact active ingredient, use, warning, and inactive ingredient text to lay out. Missing content is never invented.'
   },
   Food: {
     zh: '请输入食品配料（逗号或换行分隔），例如：beef, milk chocolate。',
@@ -133,7 +198,7 @@ const placeholderText = computed(() => {
 });
 
 const costText = computed(() => {
-  const n = Math.max(0, Math.trunc(Number(props.creditsCost ?? 10) || 0));
+  const n = Math.max(0, Math.trunc(Number(ingredientQuote.value?.credits ?? 0) || 0));
   if (!n) return '';
   return `⚡${n}`;
 });
@@ -178,10 +243,11 @@ const startProgress = () => {
   progressValue.value = 0;
   setTimeout(() => updateProgressBarPosition(), 0);
   const allTime = 10000;
-  const step = 100 / (allTime / (1000 / 60));
+  const updateInterval = 200;
+  const step = 85 / (allTime / updateInterval);
   progressInterval = window.setInterval(() => {
     if (progressValue.value < 85) progressValue.value += step;
-  }, 16);
+  }, updateInterval);
 };
 
 const completeProgress = () => {
@@ -232,53 +298,44 @@ const updateWatermark = () => {
   }
 };
 
-const parseJsonFromAi = (raw: string) => {
-  const match = String(raw || '').match(/\{[\s\S]*\}/);
-  if (!match) return null;
+const isAuthenticated = () => {
+  const uid = String(getCurrentUserId() || '').trim();
+  return Boolean(uid && !uid.startsWith('guest_') && isLocalLoggedIn());
+};
+
+const loadIngredientQuote = async () => {
+  quoteController?.abort();
+  const controller = new AbortController();
+  quoteController = controller;
+  ingredientQuote.value = null;
+  quoteError.value = '';
+  uploadConsent.value = false;
+  if (!isAuthenticated()) {
+    quoteLoading.value = false;
+    quoteError.value = 'LOGIN_REQUIRED';
+    return;
+  }
+  quoteLoading.value = true;
   try {
-    return JSON.parse(match[0]);
-  } catch {
-    return null;
+    ingredientQuote.value = await quoteToolTask({
+      toolId: 'ingredient-label',
+      operation: 'ai-organize-source-text'
+    }, controller.signal);
+  } catch (error: any) {
+    if (!controller.signal.aborted) {
+      quoteError.value = String(error?.code || error?.name || 'QUOTE_FAILED');
+    }
+  } finally {
+    if (quoteController === controller) {
+      quoteController = null;
+      quoteLoading.value = false;
+    }
   }
 };
 
-const onGenerate = async () => {
-  if (isLoading.value) return;
-  if (!ingredientsInput.value.trim()) return;
-  isLoading.value = true;
-  errorMsg.value = '';
-  startProgress();
-
-  try {
-    const inputText = ingredientsInput.value.trim();
-    const res = await generateText('', {
-      timeoutMs: 120000,
-      purpose: 'agentimg_ingredient_label',
-      requestSource: 'ingredient_label_page',
-      cost: Math.max(0, Math.trunc(Number(props.creditsCost ?? 10) || 0)),
-      userText: inputText,
-      agentImg: { userText: inputText, productType: productType.value }
-    });
-    if (!res.ok) {
-      const err = res.errorCode || res.error || 'AI_ERROR';
-      errorMsg.value = humanizeAiError(err);
-      message.error(errorMsg.value);
-      pendingLayoutType.value = null;
-      completeProgress();
-      return;
-    }
-
-    const parsed = parseJsonFromAi(res.text);
-    if (!parsed || typeof parsed !== 'object') {
-      const en = currentLang.value === 'en';
-      errorMsg.value = en ? 'Invalid AI response' : 'AI 返回格式异常';
-      message.error(errorMsg.value);
-      pendingLayoutType.value = null;
-      completeProgress();
-      return;
-    }
-
-    const layoutTypeRaw = String((parsed as any).layoutType || '').trim();
+const applyLabelOutput = (parsed: any, inputText: string) => {
+  if (!parsed || typeof parsed !== 'object') throw new Error('INVALID_INGREDIENT_OUTPUT');
+  const layoutTypeRaw = String(parsed.layoutType || '').trim();
     const layoutType = ((): IngredientLabelLayoutType => {
       if (layoutTypeRaw === 'drug_facts') return 'drug_facts';
       if (layoutTypeRaw === 'supplement_facts') return 'supplement_facts';
@@ -286,7 +343,13 @@ const onGenerate = async () => {
       return 'standard';
     })();
 
-    const sections = Array.isArray((parsed as any).sections) ? (parsed as any).sections : [];
+    const sections = Array.isArray(parsed.sections) ? parsed.sections : [];
+    if (!sections.length) {
+      throw new Error('INVALID_INGREDIENT_OUTPUT');
+    }
+    if (!validateIngredientSourceTrace(parsed, inputText)) {
+      throw new Error('INGREDIENT_SOURCE_MISMATCH');
+    }
     const svg = buildIngredientLabelSvg({
       productName: '',
       sections,
@@ -295,14 +358,134 @@ const onGenerate = async () => {
     imgSrc.value = buildIngredientLabelSvgUrl(svg) || placeholderUrl;
     pendingLayoutType.value = layoutType;
     errorMsg.value = '';
-  } catch {
-    const en = currentLang.value === 'en';
-    errorMsg.value = en ? 'Generation failed, please try again later' : '生成失败，请稍后再试';
-    message.error(errorMsg.value);
-    pendingLayoutType.value = null;
-    completeProgress();
+};
+
+const onLocalLayout = () => {
+  if (isLoading.value) return;
+  const inputText = ingredientsInput.value.trim();
+  if (!inputText) return;
+  errorMsg.value = '';
+  try {
+    applyLabelOutput({
+      layoutType: DEFAULT_LAYOUT_BY_TYPE[productType.value],
+      sections: [{ title: 'SOURCE TEXT', content: [inputText] }]
+    }, inputText);
+  } catch (error: any) {
+    errorMsg.value = humanizeAiError(String(error?.code || error?.message || 'INVALID_INGREDIENT_OUTPUT'));
   }
 };
+
+const cancelIngredientTask = async () => {
+  const taskId = activeTaskId.value;
+  taskController?.abort();
+  taskController = null;
+  isLoading.value = false;
+  if (progressInterval) {
+    clearInterval(progressInterval);
+    progressInterval = null;
+  }
+  progressValue.value = 0;
+  if (props.visible) {
+    errorMsg.value = currentLang.value === 'en'
+      ? 'Cancellation is pending confirmation. Refreshing will safely resume it.'
+      : '取消仍待服务端确认；刷新后会安全恢复并继续确认。';
+  }
+  try {
+    let task = await cancelPersistedWorkshopTask('ingredient-label-ai');
+    if (!task && taskId) task = await cancelToolTask(taskId);
+    if (!task) return;
+    activeTaskId.value = '';
+    if (!props.visible) return;
+    if (task.status === 'cancelled' || task.status === 'failed') {
+      errorMsg.value = currentLang.value === 'en'
+        ? 'Cancelled. Reserved credits were released.'
+        : '已取消，预占点数已释放。';
+      return;
+    }
+    if (task.status === 'success') {
+      errorMsg.value = currentLang.value === 'en'
+        ? 'The task completed before cancellation. No refund was claimed.'
+        : '任务已在取消前完成，本次不宣称退款。';
+    }
+  } catch {
+    // Keep the durable pending record; refresh/open will retry with the same key.
+  }
+};
+
+const runIngredientTask = async (resume = false) => {
+  if (isLoading.value) return;
+  const stored = resume ? await loadPendingWorkshopTask('ingredient-label-ai') : null;
+  const inputText = resume
+    ? String(stored?.options?.sourceText || '').trim()
+    : ingredientsInput.value.trim();
+  if (!inputText) return;
+  const quote = ingredientQuote.value;
+  if (!resume && !quote) {
+    errorMsg.value = humanizeAiError(quoteError.value || 'QUOTE_NOT_FOUND');
+    return;
+  }
+  if (resume && !stored) return;
+  if (resume && !ingredientsInput.value.trim()) ingredientsInput.value = inputText;
+  isLoading.value = true;
+  errorMsg.value = '';
+  startProgress();
+  taskController?.abort();
+  const controller = new AbortController();
+  taskController = controller;
+  let terminalReached = false;
+  try {
+    const task = resume
+      ? await resumePersistedWorkshopTask(
+          'ingredient-label-ai',
+          controller.signal,
+          (next) => { activeTaskId.value = next.taskId; }
+        )
+      : await startPersistedWorkshopTask({
+          slot: 'ingredient-label-ai',
+          toolId: 'ingredient-label',
+          operation: 'ai-organize-source-text',
+          options: {
+            sourceText: inputText,
+            productType: productType.value,
+            locale: currentLang.value === 'en' ? 'en' : 'zh'
+          },
+          quote: quote as ToolTaskQuote,
+          signal: controller.signal,
+          onTask: (next) => { activeTaskId.value = next.taskId; }
+        });
+    if (!task) return;
+    terminalReached = true;
+    if (activeTaskId.value === task.taskId) activeTaskId.value = '';
+    if (task.status !== 'success') {
+      throw new Error(task.error?.code || (task.status === 'cancelled' ? 'TASK_CANCELLED' : 'WORKSHOP_AI_FAILED'));
+    }
+    const data = task.result?.data;
+    applyLabelOutput(data, inputText);
+    completeProgress();
+  } catch (error: any) {
+    if (controller.signal.aborted) return;
+    const code = String(error?.code || error?.message || error?.name || 'WORKSHOP_AI_FAILED');
+    errorMsg.value = code === 'INGREDIENT_SOURCE_MISMATCH'
+      ? currentLang.value === 'en'
+        ? 'The result introduced content that was not in your source text. Credits were refunded.'
+        : '结果包含原文中不存在的内容，已拒绝并退款。'
+      : humanizeAiError(code);
+    if (['PRICE_CHANGED', 'QUOTE_ALREADY_USED', 'QUOTE_EXPIRED', 'QUOTE_NOT_FOUND'].includes(code)) {
+      ingredientQuote.value = null;
+      void loadIngredientQuote();
+    }
+    pendingLayoutType.value = null;
+    completeProgress();
+  } finally {
+    if (taskController === controller) taskController = null;
+    if (terminalReached) {
+      ingredientQuote.value = null;
+      void loadIngredientQuote();
+    }
+  }
+};
+
+const onGenerate = () => void runIngredientTask(false);
 
 const getImg = (isBlob?: boolean) => {
   return new Promise((resolve) => {
@@ -315,52 +498,84 @@ const getImg = (isBlob?: boolean) => {
     img.src = svgDataUrl;
     img.crossOrigin = 'anonymous';
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const targetWidth = 2000;
-      canvas.width = targetWidth;
-      canvas.height = (targetWidth / img.width) * img.height;
-      const ctx = canvas.getContext('2d');
-      ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-      if (isBlob) {
-        canvas.toBlob((blob) => resolve(blob), 'image/png');
-      } else {
-        const imgDataUrl = canvas.toDataURL();
-        resolve(imgDataUrl);
+      try {
+        const canvas = document.createElement('canvas');
+        const targetWidth = 2000;
+        canvas.width = targetWidth;
+        canvas.height = (targetWidth / img.width) * img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve('');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        if (isBlob) {
+          canvas.toBlob((blob) => resolve(blob?.size ? blob : ''), 'image/png');
+        } else {
+          const imgDataUrl = canvas.toDataURL();
+          resolve(imgDataUrl);
+        }
+      } catch {
+        resolve('');
       }
     };
     img.onerror = () => resolve('');
   });
 };
 
-const downLoadImg = async () => {
-  const imgDataUrl = (await getImg()) as string;
-  if (!imgDataUrl) return;
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = imgDataUrl;
-  a.download = 'ingredients.png';
+  a.href = url;
+  a.download = filename;
+  a.hidden = true;
+  document.body.appendChild(a);
   a.click();
+  window.setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 5000);
+};
+
+const downLoadImg = async () => {
+  const blob = (await getImg(true)) as Blob | '';
+  if (!blob || !(blob instanceof Blob) || !blob.size) {
+    errorMsg.value = downloadErrorText();
+    return false;
+  }
+  downloadBlob(blob, 'ingredients.png');
+  return true;
 };
 
 const downLoadSvg = () => {
-  if (!imgSrc.value || imgSrc.value === placeholderUrl) return;
-  const svgContent = decodeURIComponent(
-    imgSrc.value.replace('data:image/svg+xml;charset=utf-8,', '')
-  );
-  const svgDataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgContent);
-  const a = document.createElement('a');
-  a.href = svgDataUrl;
-  a.download = 'ingredients.svg';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  try {
+    if (!imgSrc.value || imgSrc.value === placeholderUrl) return false;
+    const svgContent = decodeURIComponent(
+      imgSrc.value.replace('data:image/svg+xml;charset=utf-8,', '')
+    );
+    const svgDataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgContent);
+    const a = document.createElement('a');
+    a.href = svgDataUrl;
+    a.download = 'ingredients.svg';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return true;
+  } catch {
+    errorMsg.value = downloadErrorText();
+    return false;
+  }
 };
 
-const onExportPdf = () => {
-  if (!imgSrc.value || imgSrc.value === placeholderUrl) return;
-  const svgContent = decodeURIComponent(
-    imgSrc.value.replace('data:image/svg+xml;charset=utf-8,', '')
-  );
-  exportPdf(svgContent, 0);
+const onExportPdf = async () => {
+  try {
+    if (!imgSrc.value || imgSrc.value === placeholderUrl) return false;
+    const svgContent = decodeURIComponent(
+      imgSrc.value.replace('data:image/svg+xml;charset=utf-8,', '')
+    );
+    await exportPdf(svgContent, 0);
+    return true;
+  } catch {
+    errorMsg.value = downloadErrorText();
+    return false;
+  }
 };
 
 const openDownload = async () => {
@@ -370,26 +585,36 @@ const openDownload = async () => {
     isDownloadPopoverOpen.value = !isDownloadPopoverOpen.value;
     if (isDownloadPopoverOpen.value) {
       await nextTick();
-      gsap.fromTo(
-        '.download-popover',
-        { y: 10, opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.3, ease: 'power2.out' }
-      );
-      gsap.fromTo(
-        '.download-option',
-        { x: -10, opacity: 0 },
-        { x: 0, opacity: 1, duration: 0.3, stagger: 0.05, delay: 0.1 }
-      );
+      if (!reducedMotion()) {
+        gsap.fromTo(
+          '.download-popover',
+          { y: 10, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.3, ease: 'power2.out' }
+        );
+        gsap.fromTo(
+          '.download-option',
+          { x: -10, opacity: 0 },
+          { x: 0, opacity: 1, duration: 0.3, stagger: 0.05, delay: 0.1 }
+        );
+      }
+      downloadControlRef.value?.querySelector<HTMLElement>('.download-option')?.focus();
     }
   }
 };
 const closeDownloadModal = () => {
   isDownloadModalOpen.value = false;
 };
-const handleDownload = (type: 'png' | 'svg' | 'pdf') => {
-  if (type === 'png') downLoadImg();
-  else if (type === 'svg') downLoadSvg();
-  else onExportPdf();
+const openLabelTypeModal = () => {
+  isLabelTypeModalOpen.value = true;
+};
+const closeLabelTypeModal = () => {
+  isLabelTypeModalOpen.value = false;
+};
+const handleDownload = async (type: 'png' | 'svg' | 'pdf') => {
+  errorMsg.value = '';
+  const ok =
+    type === 'png' ? await downLoadImg() : type === 'svg' ? downLoadSvg() : await onExportPdf();
+  if (!ok) return;
   closeDownloadModal();
   isDownloadPopoverOpen.value = false;
 };
@@ -423,6 +648,8 @@ const close = () => {
   emit('close');
 };
 
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 const resetState = () => {
   if (progressInterval) {
     clearInterval(progressInterval);
@@ -434,6 +661,7 @@ const resetState = () => {
   isDownloadPopoverOpen.value = false;
   isLabelTypeModalOpen.value = false;
   errorMsg.value = '';
+  uploadConsent.value = false;
 };
 
 const syncMobile = () => {
@@ -465,11 +693,20 @@ watch(
   () => !!props.visible,
   async (v) => {
     if (!v) {
+      quoteController?.abort();
+      quoteController = null;
+      if (taskController || activeTaskId.value) cancelIngredientTask();
       unbindGlobalEvents();
       resetState();
+      await nextTick();
+      if (returnFocus?.isConnected) returnFocus.focus();
+      returnFocus = null;
       return;
     }
 
+    returnFocus = globalThis.document.activeElement instanceof HTMLElement
+      ? globalThis.document.activeElement
+      : null;
     syncMobile();
     pendingLayoutType.value = DEFAULT_LAYOUT_BY_TYPE[productType.value];
     bindGlobalEvents();
@@ -477,27 +714,29 @@ watch(
     updateWatermark();
     updateProgressBarPosition();
     adjustTextareaHeight();
+    dialogRef.value?.focus();
+    const pending = await loadPendingWorkshopTask('ingredient-label-ai');
+    if (pending) void runIngredientTask(true);
+    else void loadIngredientQuote();
 
-    gsap.from('.tools-main-frame', {
-      y: 60,
-      opacity: 0,
-      duration: 1.2,
-      ease: 'power3.out',
-      delay: 0.2
-    });
-
-    gsap.from('.bg-orb', {
-      scale: 0,
-      opacity: 0,
-      duration: 2,
-      stagger: 0.3,
-      ease: 'elastic.out(1, 0.5)'
-    });
+    if (!reducedMotion()) {
+      // The modal transition already provides entrance feedback. Do not animate the
+      // interactive frame after the asynchronous recovery read: a fast user can
+      // otherwise click a control just as GSAP hides and moves the whole workspace.
+      gsap.from('.bg-orb', {
+        scale: 0,
+        opacity: 0,
+        duration: 2,
+        stagger: 0.3,
+        ease: 'elastic.out(1, 0.5)'
+      });
+    }
   },
   { immediate: true }
 );
 
 const handleMouseMove = (e: MouseEvent) => {
+  if (reducedMotion()) return;
   const orbs = document.querySelectorAll('.bg-orb');
   const x = (e.clientX / window.innerWidth - 0.5) * 2;
   const y = (e.clientY / window.innerHeight - 0.5) * 2;
@@ -514,9 +753,94 @@ const handleMouseMove = (e: MouseEvent) => {
 };
 
 onBeforeUnmount(() => {
+  quoteController?.abort();
+  quoteController = null;
+  taskController?.abort();
+  taskController = null;
   unbindGlobalEvents();
   resetState();
+  if (returnFocus?.isConnected) returnFocus.focus();
+  returnFocus = null;
 });
+
+watch(isDownloadModalOpen, async (open) => {
+  if (open) {
+    nestedReturnFocus = globalThis.document.activeElement instanceof HTMLElement
+      ? globalThis.document.activeElement
+      : null;
+    await nextTick();
+    downloadModalRef.value?.focus();
+  } else {
+    await nextTick();
+    if (nestedReturnFocus?.isConnected) nestedReturnFocus.focus();
+    nestedReturnFocus = null;
+  }
+});
+
+watch(isLabelTypeModalOpen, async (open) => {
+  if (open) {
+    nestedReturnFocus = globalThis.document.activeElement instanceof HTMLElement
+      ? globalThis.document.activeElement
+      : null;
+    await nextTick();
+    labelTypeModalRef.value?.focus();
+  } else {
+    await nextTick();
+    if (nestedReturnFocus?.isConnected) nestedReturnFocus.focus();
+    nestedReturnFocus = null;
+  }
+});
+
+const trapDialogFocus = (event: KeyboardEvent, container: HTMLElement | null) => {
+  if (event.key !== 'Tab' || !container) return;
+  const focusable = Array.from(container.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+  )).filter((element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true');
+  if (!focusable.length) {
+    event.preventDefault();
+    container.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && globalThis.document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && globalThis.document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+};
+
+const onMainDialogKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (isDownloadPopoverOpen.value) {
+      isDownloadPopoverOpen.value = false;
+      downloadControlRef.value?.querySelector<HTMLElement>('button')?.focus();
+    } else close();
+    return;
+  }
+  trapDialogFocus(event, dialogRef.value);
+};
+
+const onDownloadDialogKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeDownloadModal();
+    return;
+  }
+  trapDialogFocus(event, downloadModalRef.value);
+};
+
+const onLabelTypeDialogKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeLabelTypeModal();
+    return;
+  }
+  trapDialogFocus(event, labelTypeModalRef.value);
+};
 
 watch([isLoading, imgSrc], () => {
   updateWatermark();
@@ -536,13 +860,20 @@ watch(typeIndex, (nv) => {
 });
 
 const backText = computed(() => (currentLang.value === 'en' ? 'Back' : '返回'));
-const downloadText = computed(() => {
-  return 'Download';
-});
-const titleText = computed(() => (currentLang.value === 'en' ? 'AI Ingredients' : 'AI 配料表'));
+const downloadText = computed(() => (currentLang.value === 'en' ? 'Download' : '下载'));
+const previewWatermarkText = computed(() => (currentLang.value === 'en' ? 'PREVIEW' : '预览'));
+const titleText = computed(() =>
+  currentLang.value === 'en' ? 'Ingredient Label Layout' : '配料标签排版助手'
+);
 const typeText = computed(() => (currentLang.value === 'en' ? 'Product type' : '产品类型'));
 const ingredientsText = computed(() => (currentLang.value === 'en' ? 'Ingredients' : '配料/成分'));
-const generateTextLabel = computed(() => (currentLang.value === 'en' ? 'Generate' : '生成'));
+const svgIconUrl = (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+const backIconUrl = svgIconUrl(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="19" height="18" viewBox="0 0 24 24" fill="none" stroke="#F5F7F2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>'
+);
+const downloadIconUrl = svgIconUrl(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="19" height="18" viewBox="0 0 24 24" fill="none" stroke="#0B0D0E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>'
+);
 const actionButtonStyles = {
   primary: {
     '--btn-height': '48px',
@@ -550,13 +881,13 @@ const actionButtonStyles = {
     '--btn-font-size': '15px',
     '--btn-gap': '8px',
     '--btn-transition': 'all 0.2s',
-    '--btn-bg': '#3b82f6',
-    '--btn-border': '1px solid #3b82f6',
-    '--btn-color': '#ffffff',
-    '--btn-shadow': '0 4px 6px rgba(59, 130, 246, 0.2)',
-    '--btn-hover-bg': '#2563eb',
-    '--btn-hover-border': '1px solid #2563eb',
-    '--btn-hover-shadow': '0 6px 10px rgba(59, 130, 246, 0.25)'
+    '--btn-bg': '#c8ff3d',
+    '--btn-border': '1px solid #c8ff3d',
+    '--btn-color': '#0b0d0e',
+    '--btn-shadow': '0 4px 16px rgba(200, 255, 61, 0.14)',
+    '--btn-hover-bg': '#b7f12c',
+    '--btn-hover-border': '1px solid #b7f12c',
+    '--btn-hover-shadow': '0 6px 20px rgba(200, 255, 61, 0.2)'
   },
   secondary: {
     '--btn-height': '48px',
@@ -573,23 +904,36 @@ const actionButtonStyles = {
 } as const;
 const backButtonStyles = {
   ...actionButtonStyles.primary,
-  '--btn-bg': '#ffffff',
-  '--btn-border': '1px solid #e2e8f0',
-  '--btn-color': '#0f172a',
-  '--btn-shadow': '0 4px 6px rgba(15, 23, 42, 0.12)',
-  '--btn-hover-bg': '#f8fafc',
-  '--btn-hover-border': '1px solid #cbd5e1',
-  '--btn-hover-shadow': '0 6px 10px rgba(15, 23, 42, 0.16)'
+  '--btn-bg': '#151a1b',
+  '--btn-border': '1px solid rgba(245, 247, 242, 0.16)',
+  '--btn-color': '#f5f7f2',
+  '--btn-shadow': 'none',
+  '--btn-hover-bg': '#1d2425',
+  '--btn-hover-border': '1px solid rgba(200, 255, 61, 0.5)',
+  '--btn-hover-shadow': 'none'
 } as const;
 </script>
 
 <template>
   <transition name="fade">
-    <div v-if="visible" class="ingredient-modal-overlay" @click="close">
-      <div class="ingredient-modal-container" @click.stop>
+    <div v-if="visible" class="ingredient-modal-overlay" @click.self="close">
+      <section
+        ref="dialogRef"
+        class="ingredient-modal-container"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ingredient-label-title"
+        tabindex="-1"
+        @keydown="onMainDialogKeydown"
+      >
         <div class="ingredient-modal-header">
-          <div class="ingredient-modal-title">{{ titleText }}</div>
-          <button class="ingredient-close-btn" type="button" @click="close">×</button>
+          <h2 id="ingredient-label-title" class="ingredient-modal-title">{{ titleText }}</h2>
+          <button
+            class="ingredient-close-btn"
+            type="button"
+            :aria-label="currentLang === 'en' ? 'Close' : '关闭'"
+            @click="close"
+          >×</button>
         </div>
 
         <div class="ingredient-modal-body">
@@ -610,9 +954,10 @@ const backButtonStyles = {
                   <IngredientLabelTypeSelect
                     v-model="typeIndex"
                     :options="typeOptions"
+                    :label="typeText"
                     :mobile="isMobile"
                     :disabled="false"
-                    @open-mobile="isLabelTypeModalOpen = true"
+                    @open-mobile="openLabelTypeModal"
                   />
                 </div>
                 <div class="section-title title-product">{{ ingredientsText }}</div>
@@ -623,14 +968,16 @@ const backButtonStyles = {
                       v-model="ingredientsInput"
                       class="product-textarea"
                       :placeholder="placeholderText"
+                      :aria-label="ingredientsText"
                     ></textarea>
                   </div>
-                  <button
-                    class="generate-button hover-effect"
-                    :disabled="!ingredientsInput || isLoading"
-                    @click="onGenerate"
-                  >
-                    <span v-if="!isLoading">
+                  <div class="layout-actions">
+                    <button
+                      class="generate-button local-layout-button hover-effect"
+                      type="button"
+                      :disabled="!ingredientsInput || isLoading"
+                      @click="onLocalLayout"
+                    >
                       <svg
                         width="18"
                         height="18"
@@ -645,26 +992,62 @@ const backButtonStyles = {
                           d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
                         ></path>
                       </svg>
-                    </span>
-                    <svg
-                      v-else
-                      class="generate-icon--loading"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
+                      <span class="generate-text">
+                        {{ currentLang === 'en' ? 'Local layout · Free' : '本地原文排版 · 免费' }}
+                      </span>
+                    </button>
+                    <label class="ai-consent" :class="{ disabled: quoteLoading || !!quoteError }">
+                      <input v-model="uploadConsent" type="checkbox" :disabled="quoteLoading || !!quoteError || isLoading" />
+                      <span>
+                        {{
+                          currentLang === 'en'
+                            ? `I agree to send only this source text for AI organization and reserve ${ingredientQuote?.credits ?? '?'} credits. No missing facts will be invented; failed or cancelled tasks are refunded.`
+                            : `我同意仅上传这段原文进行 AI 整理，并预占 ${ingredientQuote?.credits ?? '?'} 点数；不会补全缺失事实，失败或取消会退款。`
+                        }}
+                      </span>
+                    </label>
+                    <div v-if="quoteLoading" class="quote-status" role="status">
+                      {{ currentLang === 'en' ? 'Loading the server quote…' : '正在读取服务端报价…' }}
+                    </div>
+                    <div v-else-if="quoteError" class="quote-status error" role="alert">
+                      {{ humanizeAiError(quoteError) }}
+                    </div>
+                    <button
+                      class="generate-button hover-effect"
+                      type="button"
+                      :disabled="!ingredientsInput || isLoading || quoteLoading || !!quoteError || !uploadConsent || !ingredientQuote"
+                      @click="onGenerate"
                     >
-                      <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
-                    </svg>
-                    <span class="generate-text">{{ generateTextLabel }}</span>
-                    <span v-if="costText && !isLoading" class="generate-cost">{{ costText }}</span>
-                  </button>
+                      <svg
+                        v-if="isLoading"
+                        class="generate-icon--loading"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+                      </svg>
+                      <span class="generate-text">
+                        {{ isLoading ? (currentLang === 'en' ? 'Organizing…' : '整理中…') : (currentLang === 'en' ? 'AI organize source' : 'AI 整理原文') }}
+                      </span>
+                      <span v-if="costText && !isLoading" class="generate-cost">{{ costText }}</span>
+                    </button>
+                    <button
+                      v-if="isLoading"
+                      class="cancel-task-button"
+                      type="button"
+                      @click="cancelIngredientTask"
+                    >
+                      {{ currentLang === 'en' ? 'Cancel and refund hold' : '取消并释放预占' }}
+                    </button>
+                  </div>
                 </div>
-                <div v-if="errorMsg" class="error-text">{{ errorMsg }}</div>
+                <div v-if="errorMsg" class="error-text" role="alert">{{ errorMsg }}</div>
               </div>
 
               <div class="right-panel-container">
@@ -686,10 +1069,19 @@ const backButtonStyles = {
                         <div class="image-container">
                           <img
                             :src="imgSrc"
+                            :alt="currentLang === 'en' ? 'Ingredient label preview' : '配料标签预览'"
                             style="width: 100%; height: 100%; object-fit: contain; display: block"
                             @load="onImageLoaded"
                           />
-                          <div v-if="isLoading" class="progress-bar">
+                          <div
+                            v-if="isLoading"
+                            class="progress-bar"
+                            role="progressbar"
+                            :aria-label="currentLang === 'en' ? 'Generating label' : '正在生成标签'"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            :aria-valuenow="Math.round(progressValue)"
+                          >
                             <div
                               class="progress-fill"
                               :style="{ width: progressValue + '%' }"
@@ -697,7 +1089,9 @@ const backButtonStyles = {
                           </div>
                         </div>
                       </div>
-                      <div ref="watermarkRef" class="demo-watermark" aria-hidden="true">DEMO</div>
+                      <div ref="watermarkRef" class="demo-watermark" aria-hidden="true">
+                        {{ previewWatermarkText }}
+                      </div>
                     </div>
                   </div>
 
@@ -707,7 +1101,7 @@ const backButtonStyles = {
                       variant="primary"
                       type="button"
                       :style="backButtonStyles"
-                      icon="https://cdn.packify.ai/image/9e25c93e-da3f-452e-962f-13e959ff632f.svg"
+                      :icon="backIconUrl"
                       icon-alt=""
                       :icon-width="19"
                       :icon-height="18"
@@ -715,17 +1109,19 @@ const backButtonStyles = {
                     >
                       {{ backText }}
                     </ActionButton>
-                    <div style="position: relative">
+                    <div ref="downloadControlRef" style="position: relative">
                       <ActionButton
                         class="hover-effect"
                         variant="primary"
                         type="button"
                         :style="actionButtonStyles.primary"
-                        icon="https://cdn.packify.ai/image/31ffedbf-fd56-4280-a55f-9cc1bc2cf848.svg"
+                        :icon="downloadIconUrl"
                         icon-alt=""
                         :icon-width="19"
                         :icon-height="18"
                         :disabled="!canDownload"
+                        aria-haspopup="true"
+                        :aria-expanded="isDownloadPopoverOpen || isDownloadModalOpen"
                         @click="openDownload"
                       >
                         {{ downloadText }}
@@ -733,6 +1129,8 @@ const backButtonStyles = {
                       <div
                         v-if="isDownloadPopoverOpen && !isMobile"
                         class="download-popover glass-popover"
+                        role="group"
+                        :aria-label="currentLang === 'en' ? 'Download format' : '下载格式'"
                       >
                         <button
                           v-for="option in downloadOptions"
@@ -769,16 +1167,24 @@ const backButtonStyles = {
                 class="modal-mask glass-mask"
                 @click.self="closeDownloadModal"
               >
-                <div class="bottom-modal download-modal glass-modal">
+                <section
+                  ref="downloadModalRef"
+                  class="bottom-modal download-modal glass-modal"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="ingredient-download-title"
+                  tabindex="-1"
+                  @keydown="onDownloadDialogKeydown"
+                >
                   <div class="modal-header">
-                    <div class="modal-title">Download</div>
-                    <button class="modal-close" type="button" @click="closeDownloadModal">
-                      <img
-                        src="https://cdn.packify.ai/image/704466e6-ea37-4ea5-9821-1014fbb93a75.svg"
-                        width="20"
-                        height="20"
-                        alt=""
-                      />
+                    <h3 id="ingredient-download-title" class="modal-title">{{ downloadText }}</h3>
+                    <button
+                      class="modal-close"
+                      type="button"
+                      :aria-label="currentLang === 'en' ? 'Close download options' : '关闭下载选项'"
+                      @click="closeDownloadModal"
+                    >
+                      <span aria-hidden="true">×</span>
                     </button>
                   </div>
                   <div class="modal-options">
@@ -789,17 +1195,22 @@ const backButtonStyles = {
                       type="button"
                       @click="handleDownload(option.type)"
                     >
-                      <img
+                      <div
                         class="modal-icon"
-                        :src="option.icon"
-                        width="24"
-                        height="24"
-                        :alt="option.label"
-                      />
+                        v-html="option.icon"
+                        aria-hidden="true"
+                        style="
+                          width: 24px;
+                          height: 24px;
+                          display: flex;
+                          align-items: center;
+                          justify-content: center;
+                        "
+                      ></div>
                       <span class="opt-text">{{ option.label }}</span>
                     </button>
                   </div>
-                </div>
+                </section>
               </div>
             </teleport>
 
@@ -807,18 +1218,26 @@ const backButtonStyles = {
               <div
                 v-if="isLabelTypeModalOpen && isMobile"
                 class="modal-mask glass-mask"
-                @click.self="isLabelTypeModalOpen = false"
+                @click.self="closeLabelTypeModal"
               >
-                <div class="bottom-modal labeltype-modal glass-modal">
+                <section
+                  ref="labelTypeModalRef"
+                  class="bottom-modal labeltype-modal glass-modal"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="ingredient-type-modal-title"
+                  tabindex="-1"
+                  @keydown="onLabelTypeDialogKeydown"
+                >
                   <div class="modal-header">
-                    <div class="modal-title">{{ typeText }}</div>
-                    <button class="modal-close" type="button" @click="isLabelTypeModalOpen = false">
-                      <img
-                        src="https://cdn.packify.ai/image/704466e6-ea37-4ea5-9821-1014fbb93a75.svg"
-                        width="20"
-                        height="20"
-                        alt=""
-                      />
+                    <h3 id="ingredient-type-modal-title" class="modal-title">{{ typeText }}</h3>
+                    <button
+                      class="modal-close"
+                      type="button"
+                      :aria-label="currentLang === 'en' ? 'Close product types' : '关闭产品类型'"
+                      @click="closeLabelTypeModal"
+                    >
+                      <span aria-hidden="true">×</span>
                     </button>
                   </div>
                   <div class="modal-options">
@@ -827,38 +1246,39 @@ const backButtonStyles = {
                       :key="option.value"
                       class="modal-option"
                       :class="{ 'is-selected': typeIndex === option.value }"
+                      :aria-pressed="typeIndex === option.value"
                       type="button"
                       @click="
                         () => {
                           typeIndex = option.value;
-                          isLabelTypeModalOpen = false;
+                          closeLabelTypeModal();
                         }
                       "
                     >
                       <span class="opt-text">{{ option.label }}</span>
                     </button>
                   </div>
-                </div>
+                </section>
               </div>
             </teleport>
           </div>
         </div>
-      </div>
+      </section>
     </div>
   </transition>
 </template>
 
 <style lang="less" scoped>
-/* Color Palette - Clean Light Mode */
-@bg-root: #ffffff;
-@bg-surface: #f8fafc; /* Slate-50 */
-@bg-element: #ffffff;
-@border-color: #e2e8f0; /* Slate-200 */
-@primary-color: #3b82f6; /* Blue-500 */
-@primary-hover: #2563eb; /* Blue-600 */
-@text-main: #0f172a; /* Slate-900 */
-@text-secondary: #475569; /* Slate-600 */
-@text-muted: #94a3b8; /* Slate-400 */
+/* Artigen dark workspace palette. The generated label itself remains white. */
+@bg-root: #0b0d0e;
+@bg-surface: #111617;
+@bg-element: #151a1b;
+@border-color: rgba(245, 247, 242, 0.14);
+@primary-color: #c8ff3d;
+@primary-hover: #b7f12c;
+@text-main: #f5f7f2;
+@text-secondary: #c7cec3;
+@text-muted: #9ca69a;
 @glass-shadow:
   0 10px 15px -3px rgba(0, 0, 0, 0.1),
   0 4px 6px -2px rgba(0, 0, 0, 0.05);
@@ -875,9 +1295,7 @@ const backButtonStyles = {
   }
 }
 
-.floating-anim {
-  animation: float 6s ease-in-out infinite;
-}
+.floating-anim { animation: none; }
 
 .tools-root {
   width: 100%;
@@ -902,7 +1320,7 @@ const backButtonStyles = {
   position: fixed;
   inset: 0;
   z-index: 2500;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.76);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -923,6 +1341,17 @@ const backButtonStyles = {
   flex-direction: column;
 }
 
+.ingredient-modal-container:focus-visible,
+.bottom-modal:focus-visible {
+  outline: none;
+}
+
+.ingredient-modal-container :is(button, textarea, input, select, [tabindex]):focus-visible,
+.bottom-modal :is(button, textarea, input, select, [tabindex]):focus-visible {
+  outline: 3px solid @primary-color;
+  outline-offset: 2px;
+}
+
 .ingredient-modal-header {
   height: 64px;
   padding: 0 24px;
@@ -935,6 +1364,7 @@ const backButtonStyles = {
 }
 
 .ingredient-modal-title {
+  margin: 0;
   font-size: 18px;
   font-weight: 700;
   color: @text-main;
@@ -942,8 +1372,12 @@ const backButtonStyles = {
 }
 
 .ingredient-close-btn {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
@@ -1005,8 +1439,13 @@ const backButtonStyles = {
   }
 }
 @media (max-width: 980px) {
+  .tools-root {
+    align-items: flex-start;
+  }
+
   .tools-main-frame {
-    margin-top: -380px;
+    margin-top: 0;
+    flex-direction: column;
     height: auto;
     max-height: none;
     overflow-y: auto;
@@ -1030,12 +1469,12 @@ const backButtonStyles = {
 
   .ingredient-modal-body {
     overflow-y: auto;
-    height: calc(100vh - 64px);
+    height: calc(100dvh - 64px);
   }
 
   .ingredient-modal-container {
-    height: 100vh;
-    max-height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
     display: flex;
     flex-direction: column;
   }
@@ -1109,7 +1548,7 @@ const backButtonStyles = {
   border: none;
   border-radius: 12px;
   background: @primary-color;
-  color: #fff;
+  color: #0b0d0e;
   font-size: 16px;
   font-weight: 600;
   display: flex;
@@ -1118,7 +1557,64 @@ const backButtonStyles = {
   gap: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 4px 6px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 4px 16px rgba(200, 255, 61, 0.14);
+}
+
+.layout-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.local-layout-button {
+  border: 1px solid rgba(200, 255, 61, 0.45);
+  background: #151a1b;
+  color: @text-main;
+  box-shadow: none;
+}
+
+.generate-button.local-layout-button:hover:not(:disabled) {
+  border-color: @primary-color;
+  background: #1d2425;
+  color: @primary-color;
+  box-shadow: none;
+}
+
+.ai-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: @text-muted;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ai-consent input {
+  margin-top: 2px;
+}
+
+.ai-consent.disabled {
+  opacity: 0.6;
+}
+
+.quote-status {
+  color: @text-muted;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.quote-status.error {
+  color: #fca5a5;
+}
+
+.cancel-task-button {
+  min-height: 44px;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 10px;
+  background: rgba(248, 113, 113, 0.08);
+  color: #fca5a5;
+  cursor: pointer;
+  font: inherit;
 }
 
 .generate-cost {
@@ -1129,7 +1625,7 @@ const backButtonStyles = {
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.35);
   background: rgba(0, 0, 0, 0.12);
-  color: rgba(255, 255, 255, 0.95);
+  color: #0b0d0e;
   font-size: 12px;
   font-weight: 800;
   line-height: 1.2;
@@ -1138,7 +1634,7 @@ const backButtonStyles = {
 .generate-button:hover:not(:disabled) {
   background: @primary-hover;
   transform: translateY(-1px);
-  box-shadow: 0 6px 10px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 6px 20px rgba(200, 255, 61, 0.2);
 }
 
 .generate-button:active:not(:disabled) {
@@ -1247,6 +1743,7 @@ const backButtonStyles = {
 
 .download-option {
   width: 100%;
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1310,17 +1807,28 @@ const backButtonStyles = {
 }
 
 .modal-title {
+  margin: 0;
   font-size: 18px;
   font-weight: 600;
   color: @text-main;
 }
 
 .modal-close {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  box-sizing: border-box;
   border: none;
   background: transparent;
   padding: 8px;
   cursor: pointer;
   color: @text-secondary;
+
+  span {
+    display: block;
+    font-size: 24px;
+    line-height: 1;
+  }
 
   &:hover {
     color: @text-main;
@@ -1387,10 +1895,10 @@ const backButtonStyles = {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: #fef2f2;
+  background: rgba(239, 68, 68, 0.1);
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid #fee2e2;
+  border: 1px solid rgba(239, 68, 68, 0.32);
 }
 
 /* Legacy classes - hidden or neutral */
@@ -1400,6 +1908,9 @@ const backButtonStyles = {
 }
 
 @media (max-width: 979px) {
+  .ingredient-modal-overlay {
+    padding: 0;
+  }
   .ingredient-modal-container {
     width: 100%;
     height: 100%;
@@ -1415,8 +1926,9 @@ const backButtonStyles = {
     min-height: auto;
   }
   .right-panel-container {
-    min-height: 400px;
+    min-height: 360px;
   }
+  .preview-inner { min-height: 280px; }
   .operation-buttons {
     flex-direction: column;
   }
@@ -1430,12 +1942,32 @@ const backButtonStyles = {
 
 @media (max-width: 350px) {
   .generate-button {
-    height: 40px;
+    height: 44px;
     font-size: 14px;
   }
   .operation-buttons :deep(button) {
-    height: 40px !important;
+    height: 44px !important;
     font-size: 13px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .floating-anim,
+  .generate-icon--loading {
+    animation: none !important;
+  }
+
+  .generate-button:hover:not(:disabled) {
+    transform: none;
   }
 }
 </style>

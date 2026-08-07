@@ -98,7 +98,10 @@ export const useAgentImgFlow = (opts?: {
     }
   };
   const userInput = ref('');
-  const deepMode = ref(true);
+  // Optimize the first-session path for one confirmed generation. Direction
+  // analysis remains an explicit, optional step instead of an extra default
+  // quote before the user sees a first result.
+  const deepMode = ref(false);
   const loading = ref(false);
   const error = ref('');
   const stage = ref<'idle' | 'directions' | 'final'>('idle');
@@ -153,6 +156,13 @@ export const useAgentImgFlow = (opts?: {
     if (c === 'LOGIN_REQUIRED' || c === 'UNAUTHORIZED')
       return t('请先登录后再试', 'Please login first.');
     if (c === 'FORBIDDEN') return t('暂无权限，请重新登录后再试', 'Forbidden. Please login again.');
+    if (
+      c === 'LEGACY_BILLING_DISABLED' ||
+      c === 'PAID_FEATURES_DISABLED' ||
+      c === 'DATABASE_NOT_CONFIGURED' ||
+      c === 'TOOL_OPERATION_UNAVAILABLE'
+    )
+      return t('该云端能力正在安全迁移，当前暂不可用', 'This cloud feature is temporarily unavailable during its billing migration.');
     if (c === 'EMPTY_PROMPT') return t('请输入需求描述后再试', 'Please enter a request first.');
     if (c === 'EMPTY_RESPONSE_TEXT')
       return t('模型返回为空，请稍后再试', 'Empty model response. Please try again.');

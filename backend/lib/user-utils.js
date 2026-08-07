@@ -1,6 +1,7 @@
 const fs = require('fs');
 const { CHATS_FILE, USERS_FILE, getUserMemoryFile, readJson, writeJson, readUserMemory, writeUserMemory } = require('../utils/storage');
 const { ensureUserMemoryShape } = require('./memory-utils');
+const { sanitizeImageHistoryEntry } = require('./privacy-metadata');
 
 const dedupeStrings = (items, limit) => {
   const out = [];
@@ -57,7 +58,7 @@ const mergeUserData = (fromUserId, toUserId, imgCredits) => {
     const imageHistory = (() => {
       const listA = Array.isArray(a.image_history) ? a.image_history : [];
       const listB = Array.isArray(b.image_history) ? b.image_history : [];
-      const merged0 = [...listB, ...listA].filter((x) => x && typeof x === 'object');
+      const merged0 = [...listB, ...listA].map(sanitizeImageHistoryEntry).filter(Boolean);
       merged0.sort((x, y) => (Number(y?.ts || 0) || 0) - (Number(x?.ts || 0) || 0));
       const out = [];
       const seen = new Set();

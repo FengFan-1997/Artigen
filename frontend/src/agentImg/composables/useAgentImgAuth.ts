@@ -1,26 +1,23 @@
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useLoginModel } from '@/stores';
-import { getCurrentUserId, getAuthToken, isLocalLoggedIn } from '@/login/session';
+import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
 
 export function useAgentImgAuth() {
   const router = useRouter();
   const loginStore = useLoginModel();
 
   const authUserId = ref(getCurrentUserId());
-  const authToken = ref(getAuthToken());
   const authTick = ref(0);
 
   const syncAuth = () => {
     authUserId.value = getCurrentUserId();
-    authToken.value = getAuthToken();
   };
 
   const isAuthed = computed(() => {
     void authTick.value;
     const uid = String(authUserId.value || '').trim();
-    const token = String(authToken.value || '').trim();
-    return !!uid && !uid.startsWith('guest_') && !!token && isLocalLoggedIn();
+    return !!uid && !uid.startsWith('guest_') && isLocalLoggedIn();
   });
 
   const openLogin = (afterLogin?: null | (() => Promise<void> | void)) => {
@@ -56,7 +53,6 @@ export function useAgentImgAuth() {
 
   return {
     authUserId,
-    authToken,
     authTick,
     syncAuth,
     isAuthed,

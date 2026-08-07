@@ -132,6 +132,11 @@
     padding: 16px;
   }
 
+  .chat-footer--deep {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
   .download-dialog-overlay {
     align-items: flex-end;
   }
@@ -291,8 +296,8 @@
   }
 
   .send-btn {
-    height: 28px !important;
-    width: 28px !important;
+    height: 44px !important;
+    width: 44px !important;
   }
 
   .send-btn.has-cost {
@@ -305,12 +310,19 @@
   }
 }
 
+@media (max-width: 768px) {
+  .deep-thinking-view .text1 {
+    height: 112px !important;
+    min-height: 112px;
+  }
+}
+
 /* New overrides for model popup and button sizing */
 .model-menu-overlay {
   display: none;
 }
 
-@media (max-width: 500px) {
+@media (max-width: 768px) {
 
   .input-toolbar .left-tools,
   .input-toolbar .right-tools {
@@ -321,14 +333,29 @@
   .toggle-btn,
   .model-btn,
   .send-btn {
-    height: 34px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    height: 44px !important;
     padding: 0 10px !important;
     font-size: 12px !important;
   }
 
   .send-btn:not(.has-cost) {
-    width: 34px !important;
+    width: 44px !important;
     padding: 0 !important;
+  }
+}
+
+@media (max-width: 350px) {
+  .input-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .input-toolbar .left-tools,
+  .input-toolbar .right-tools {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 

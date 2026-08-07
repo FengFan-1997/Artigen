@@ -1,5 +1,24 @@
 import { canvasToBlob, drawToCanvas, loadImageFromUrl, scaleToMaxSide } from './canvas';
+import { processImageFilterInWorker } from './filterWorkerClient';
+import { processImageWithCodecWorker } from './imageCodecWorkerClient';
 import { safeBaseName } from './format';
+import { createGifWorkerSession } from './gifWorkerClient';
+import {
+  assertPdfPageCount,
+  createPdfSearchTextLayer,
+  createGifPlan,
+  hasGifMagic,
+  hasImageMagic,
+  normalizePdfTextParagraphs
+} from './outputContracts';
+import { formatPdfPageSelection, parsePdfPageRange } from './pdfRange';
+import {
+  assertPdfStitchBudget,
+  createPdfRangeBudgetTracker,
+  getRuntimeResourceBudget,
+  hasFilterWorkerCapability,
+  hasImageCodecWorkerCapability
+} from './resourceBudget';
 import { revokeUrl } from './url';
 
 let cachedPdfLib: any | null = null;
@@ -26,57 +45,6 @@ const ensurePdfLib = async () => {
 };
 
 const blobToArrayBuffer = (blob: Blob) => blob.arrayBuffer();
-
-const readUint16LE = (view: DataView, offset: number) => view.getUint16(offset, true);
-const readUint32LE = (view: DataView, offset: number) => view.getUint32(offset, true);
-
-const inflateRaw = async (data: Uint8Array) => {
-  if (typeof DecompressionStream === 'undefined') throw new Error('DOCX_PARSE_FAIL');
-  const raw = new Uint8Array(data);
-  const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  const buf = await new Response(stream).arrayBuffer();
-  return new Uint8Array(buf);
-};
-
-const extractZipEntry = async (bytes: Uint8Array, target: string) => {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const len = bytes.byteLength;
-  const maxSearch = Math.max(0, len - 65557);
-  let eocd = -1;
-  for (let i = len - 22; i >= maxSearch; i -= 1) {
-    if (view.getUint32(i, true) === 0x06054b50) {
-      eocd = i;
-      break;
-    }
-  }
-  if (eocd < 0) return null;
-  const cdOffset = readUint32LE(view, eocd + 16);
-  let ptr = cdOffset;
-  while (ptr + 46 <= len && view.getUint32(ptr, true) === 0x02014b50) {
-    const method = readUint16LE(view, ptr + 10);
-    const compSize = readUint32LE(view, ptr + 20);
-    const nameLen = readUint16LE(view, ptr + 28);
-    const extraLen = readUint16LE(view, ptr + 30);
-    const commentLen = readUint16LE(view, ptr + 32);
-    const localOffset = readUint32LE(view, ptr + 42);
-    const nameStart = ptr + 46;
-    const nameEnd = nameStart + nameLen;
-    const filename = new TextDecoder().decode(bytes.slice(nameStart, nameEnd));
-    if (filename === target) {
-      if (view.getUint32(localOffset, true) !== 0x04034b50) return null;
-      const localNameLen = readUint16LE(view, localOffset + 26);
-      const localExtraLen = readUint16LE(view, localOffset + 28);
-      const dataStart = localOffset + 30 + localNameLen + localExtraLen;
-      const dataEnd = dataStart + compSize;
-      const compressed = bytes.slice(dataStart, dataEnd);
-      if (method === 0) return compressed;
-      if (method === 8) return await inflateRaw(compressed);
-      return null;
-    }
-    ptr += 46 + nameLen + extraLen + commentLen;
-  }
-  return null;
-};
 
 const assertCanvasSafeSize = (w: number, h: number) => {
   const width = Math.max(1, Math.floor(w || 0));
@@ -129,6 +97,19 @@ const buildIcoFromPngs = (items: { size: number; data: ArrayBuffer }[]) => {
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
+const assertImageBlobMagic = async (
+  blob: Blob,
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp'
+) => {
+  const bytes = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+  if (!hasImageMagic(bytes, mimeType)) throw new Error('IMAGE_OUTPUT_INVALID');
+};
+
+const yieldToMainThread = () =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+
 function tr(opts: { lang?: 'zh' | 'en' } | undefined, zh: string, en: string) {
   return opts?.lang === 'en' ? en : zh;
 }
@@ -139,6 +120,21 @@ export const convertImage = async (
   quality?: number,
   opts?: FormatFactoryRunOpts
 ) => {
+  if (hasImageCodecWorkerCapability()) {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, 'Worker 解码', 'Decoding in worker') });
+    const { blob } = await processImageWithCodecWorker({
+      file,
+      operation: { type: 'convert' },
+      outType,
+      quality,
+      signal: opts?.signal
+    });
+    await assertImageBlobMagic(blob, outType);
+    const ext = outType === 'image/png' ? 'png' : outType === 'image/jpeg' ? 'jpg' : 'webp';
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+    return { blob, filename: `${safeBaseName(file.name)}.${ext}` };
+  }
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
@@ -162,6 +158,20 @@ export const convertToJpeg = async (
   maxSide: number | null,
   opts?: FormatFactoryRunOpts
 ) => {
+  if (hasImageCodecWorkerCapability()) {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, 'Worker 解码', 'Decoding in worker') });
+    const { blob } = await processImageWithCodecWorker({
+      file,
+      operation: maxSide && maxSide > 0 ? { type: 'max-side', maxSide } : { type: 'convert' },
+      outType: 'image/jpeg',
+      quality,
+      signal: opts?.signal
+    });
+    await assertImageBlobMagic(blob, 'image/jpeg');
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+    return { blob, filename: `${safeBaseName(file.name)}.jpg` };
+  }
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
@@ -190,6 +200,26 @@ export const resizeImage = async (
   },
   opts?: FormatFactoryRunOpts
 ) => {
+  if (hasImageCodecWorkerCapability()) {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, 'Worker 解码', 'Decoding in worker') });
+    const { blob, width, height } = await processImageWithCodecWorker({
+      file,
+      operation: {
+        type: 'resize',
+        width: input.width,
+        height: input.height,
+        maxSide: input.maxSide
+      },
+      outType: input.outType,
+      quality: input.quality,
+      signal: opts?.signal
+    });
+    await assertImageBlobMagic(blob, input.outType);
+    const ext = input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+    return { blob, filename: `${safeBaseName(file.name)}_${width}x${height}.${ext}` };
+  }
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
@@ -247,6 +277,26 @@ export const rotateFlipImage = async (
   },
   opts?: FormatFactoryRunOpts
 ) => {
+  if (hasImageCodecWorkerCapability()) {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, { done: 0, total: 2, label: tr(opts, 'Worker 解码', 'Decoding in worker') });
+    const { blob } = await processImageWithCodecWorker({
+      file,
+      operation: {
+        type: 'rotate',
+        rotate: input.rotate,
+        flipH: input.flipH,
+        flipV: input.flipV
+      },
+      outType: input.outType,
+      quality: input.quality,
+      signal: opts?.signal
+    });
+    await assertImageBlobMagic(blob, input.outType);
+    const ext = input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
+    reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
+    return { blob, filename: `${safeBaseName(file.name)}_${input.rotate}deg.${ext}` };
+  }
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
@@ -298,6 +348,34 @@ export const filterImage = async (
   },
   opts?: FormatFactoryRunOpts
 ) => {
+  const ext =
+    input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
+  if (hasFilterWorkerCapability()) {
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, {
+      done: 0,
+      total: 3,
+      label: tr(opts, '启动滤镜 Worker', 'Starting filter worker')
+    });
+    const { blob } = await processImageFilterInWorker({
+      file,
+      preset: input.preset,
+      intensity: input.intensity,
+      outType: input.outType,
+      quality: input.quality,
+      signal: opts?.signal
+    });
+    abortIfNeeded(opts?.signal);
+    reportProgress(opts, {
+      done: 2,
+      total: 3,
+      label: tr(opts, '校验输出', 'Validating output')
+    });
+    await assertImageBlobMagic(blob, input.outType);
+    reportProgress(opts, { done: 3, total: 3, label: tr(opts, '完成', 'Done') });
+    return { blob, filename: `${safeBaseName(file.name)}_${input.preset}.${ext}` };
+  }
+
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
@@ -307,6 +385,7 @@ export const filterImage = async (
     const w = img.naturalWidth || 0;
     const h = img.naturalHeight || 0;
     if (!w || !h) throw new Error(tr(opts, '读取图片失败', 'Failed to read image'));
+    if (w * h > 2_000_000) throw new Error('FILTER_WORKER_UNAVAILABLE');
 
     abortIfNeeded(opts?.signal);
     reportProgress(opts, { done: 1, total: 3, label: tr(opts, '渲染画布', 'Rendering canvas') });
@@ -320,37 +399,42 @@ export const filterImage = async (
     if (t > 0) {
       const imageData = ctx.getImageData(0, 0, w, h);
       const d = imageData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const r = d[i];
-        const g = d[i + 1];
-        const b = d[i + 2];
-        let r2 = r;
-        let g2 = g;
-        let b2 = b;
-        if (input.preset === 'grayscale') {
-          const y = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
-          r2 = y;
-          g2 = y;
-          b2 = y;
-        } else if (input.preset === 'sepia') {
-          r2 = Math.min(255, Math.round(0.393 * r + 0.769 * g + 0.189 * b));
-          g2 = Math.min(255, Math.round(0.349 * r + 0.686 * g + 0.168 * b));
-          b2 = Math.min(255, Math.round(0.272 * r + 0.534 * g + 0.131 * b));
-        } else {
-          r2 = 255 - r;
-          g2 = 255 - g;
-          b2 = 255 - b;
+      const chunkBytes = 128_000;
+      for (let chunkStart = 0; chunkStart < d.length; chunkStart += chunkBytes) {
+        const chunkEnd = Math.min(d.length, chunkStart + chunkBytes);
+        for (let i = chunkStart; i < chunkEnd; i += 4) {
+          const r = d[i];
+          const g = d[i + 1];
+          const b = d[i + 2];
+          let r2 = r;
+          let g2 = g;
+          let b2 = b;
+          if (input.preset === 'grayscale') {
+            const y = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+            r2 = y;
+            g2 = y;
+            b2 = y;
+          } else if (input.preset === 'sepia') {
+            r2 = Math.min(255, Math.round(0.393 * r + 0.769 * g + 0.189 * b));
+            g2 = Math.min(255, Math.round(0.349 * r + 0.686 * g + 0.168 * b));
+            b2 = Math.min(255, Math.round(0.272 * r + 0.534 * g + 0.131 * b));
+          } else {
+            r2 = 255 - r;
+            g2 = 255 - g;
+            b2 = 255 - b;
+          }
+          d[i] = Math.round(r * (1 - t) + r2 * t);
+          d[i + 1] = Math.round(g * (1 - t) + g2 * t);
+          d[i + 2] = Math.round(b * (1 - t) + b2 * t);
         }
-        d[i] = Math.round(r * (1 - t) + r2 * t);
-        d[i + 1] = Math.round(g * (1 - t) + g2 * t);
-        d[i + 2] = Math.round(b * (1 - t) + b2 * t);
+        abortIfNeeded(opts?.signal);
+        if (chunkEnd < d.length) await yieldToMainThread();
       }
       ctx.putImageData(imageData, 0, 0);
     }
 
     const blob = await canvasToBlob(canvas, input.outType, input.quality);
-    const ext =
-      input.outType === 'image/png' ? 'png' : input.outType === 'image/jpeg' ? 'jpg' : 'webp';
+    await assertImageBlobMagic(blob, input.outType);
     reportProgress(opts, { done: 3, total: 3, label: tr(opts, '完成', 'Done') });
     return { blob, filename: `${safeBaseName(file.name)}_${input.preset}.${ext}` };
   } finally {
@@ -358,7 +442,11 @@ export const filterImage = async (
   }
 };
 
-export const generateIco = async (file: File, sizes: number[], opts?: FormatFactoryRunOpts) => {
+export const generateIco = async (
+  file: File,
+  sizes: number[],
+  opts?: { fit?: 'contain' | 'cover' | 'stretch' } & FormatFactoryRunOpts
+) => {
   const srcUrl = URL.createObjectURL(file);
   try {
     abortIfNeeded(opts?.signal);
@@ -377,7 +465,26 @@ export const generateIco = async (file: File, sizes: number[], opts?: FormatFact
         total: Math.max(1, sizes.length + 1),
         label: tr(opts, `生成 ${size}×${size}`, `Generating ${size}×${size}`)
       });
-      const canvas = drawToCanvas(img, size, size);
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      const sourceW = Math.max(1, img.naturalWidth || img.width || 1);
+      const sourceH = Math.max(1, img.naturalHeight || img.height || 1);
+      const fit = opts?.fit || 'contain';
+      if (fit === 'stretch') {
+        ctx.drawImage(img, 0, 0, size, size);
+      } else {
+        const scale = fit === 'cover'
+          ? Math.max(size / sourceW, size / sourceH)
+          : Math.min(size / sourceW, size / sourceH);
+        const drawW = sourceW * scale;
+        const drawH = sourceH * scale;
+        ctx.drawImage(img, (size - drawW) / 2, (size - drawH) / 2, drawW, drawH);
+      }
       const pngBlob = await canvasToBlob(canvas, 'image/png');
       const buf = await blobToArrayBuffer(pngBlob);
       pngBuffers.push({ size, data: buf });
@@ -440,7 +547,12 @@ const fileToJpegBytes = async (file: File, quality: number, maxSide: number | nu
 
 export const imagesToPdf = async (
   files: File[],
-  opts?: { pageSize?: 'A4' | 'auto'; marginMm?: number; quality?: number } & FormatFactoryRunOpts
+  opts?: {
+    pageSize?: 'A4' | 'auto';
+    marginMm?: number;
+    quality?: number;
+    searchableTextPages?: string[];
+  } & FormatFactoryRunOpts
 ) => {
   const list = Array.isArray(files) ? files.filter((f) => f && f.size > 0) : [];
   if (list.length === 0)
@@ -459,6 +571,12 @@ export const imagesToPdf = async (
   const a4 = { w: 595.28, h: 841.89 };
   const baseName = safeBaseName(list[0].name) || 'images';
   const jpegMaxSide = pageSize === 'A4' ? 2500 : null;
+  const searchableTextPages = Array.isArray(opts?.searchableTextPages)
+    ? opts.searchableTextPages.map((page) => String(page || ''))
+    : [];
+  const hasSearchableText = searchableTextPages.some(Boolean);
+  const resourceBudget = getRuntimeResourceBudget();
+  let accumulatedImageBytes = 0;
 
   const chunks: Uint8Array[] = [];
   const offsets: number[] = [0];
@@ -488,7 +606,19 @@ export const imagesToPdf = async (
 
   const catalogNo = 1;
   const pagesNo = 2;
-  const objStart = 3;
+  const searchFontNo = hasSearchableText ? 3 : 0;
+  const searchCidFontNo = hasSearchableText ? 4 : 0;
+  const searchDescriptorNo = hasSearchableText ? 5 : 0;
+  const searchToUnicodeNo = hasSearchableText ? 6 : 0;
+  const objStart = hasSearchableText ? 7 : 3;
+  const searchLayer = hasSearchableText
+    ? createPdfSearchTextLayer(searchableTextPages, {
+        font: searchFontNo,
+        cidFont: searchCidFontNo,
+        descriptor: searchDescriptorNo,
+        toUnicode: searchToUnicodeNo
+      })
+    : null;
 
   const pageNos: number[] = [];
   const pageSpecs: Array<{
@@ -519,6 +649,13 @@ export const imagesToPdf = async (
     });
     const file = list[i];
     const { bytes, w, h } = await fileToJpegBytes(file, quality, jpegMaxSide);
+    accumulatedImageBytes += bytes.byteLength;
+    if (accumulatedImageBytes > resourceBudget.maxEstimatedOutputBytes) {
+      throw new Error('OUTPUT_BUDGET_EXCEEDED');
+    }
+    if (accumulatedImageBytes * 2 + w * h * 8 > resourceBudget.maxWorkingBytes) {
+      throw new Error('DEVICE_MEMORY_BUDGET_EXCEEDED');
+    }
 
     const imgNo = objStart + i * 3;
     const contentNo = objStart + i * 3 + 1;
@@ -564,12 +701,26 @@ export const imagesToPdf = async (
   addObject(pagesNo, [
     `<< /Type /Pages /Count ${pageNos.length} /Kids [${pageNos.map((n) => `${n} 0 R`).join(' ')}] >>`
   ]);
+  if (searchLayer) {
+    addObject(searchFontNo, [searchLayer.fontDictionary]);
+    addObject(searchCidFontNo, [searchLayer.cidFontDictionary]);
+    addObject(searchDescriptorNo, [searchLayer.descriptorDictionary]);
+    const cmapBytes = encoder.encode(searchLayer.toUnicodeCMap);
+    addObject(searchToUnicodeNo, [
+      `<< /Length ${cmapBytes.byteLength} >>\nstream\n`,
+      cmapBytes,
+      '\nendstream'
+    ]);
+  }
 
-  for (const p of pageSpecs) {
+  for (let pageIndex = 0; pageIndex < pageSpecs.length; pageIndex += 1) {
+    const p = pageSpecs[pageIndex];
     const imgDict = `<< /Type /XObject /Subtype /Image /Width ${p.imgW} /Height ${p.imgH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.jpegBytes.byteLength} >>`;
     addObject(p.imgNo, [imgDict, `\nstream\n`, p.jpegBytes, `\nendstream`]);
 
-    const contentStream = `q\n${p.drawW.toFixed(2)} 0 0 ${p.drawH.toFixed(2)} ${p.drawX.toFixed(2)} ${p.drawY.toFixed(2)} cm\n/Im0 Do\nQ\n`;
+    const contentStream =
+      `q\n${p.drawW.toFixed(2)} 0 0 ${p.drawH.toFixed(2)} ${p.drawX.toFixed(2)} ${p.drawY.toFixed(2)} cm\n/Im0 Do\nQ\n` +
+      (searchLayer?.pageContent[pageIndex] || '');
     const contentBytes = encoder.encode(contentStream);
     addObject(p.contentNo, [
       `<< /Length ${contentBytes.byteLength} >>\nstream\n`,
@@ -578,22 +729,24 @@ export const imagesToPdf = async (
     ]);
 
     addObject(p.pageNo, [
-      `<< /Type /Page /Parent ${pagesNo} 0 R /MediaBox [0 0 ${p.pageW.toFixed(2)} ${p.pageH.toFixed(2)}] /Resources << /XObject << /Im0 ${p.imgNo} 0 R >> >> /Contents ${p.contentNo} 0 R >>`
+      `<< /Type /Page /Parent ${pagesNo} 0 R /MediaBox [0 0 ${p.pageW.toFixed(2)} ${p.pageH.toFixed(2)}] /Resources << /XObject << /Im0 ${p.imgNo} 0 R >>${searchFontNo ? ` /Font << /FSearch ${searchFontNo} 0 R >>` : ''} >> /Contents ${p.contentNo} 0 R >>`
     ]);
   }
 
   const xrefOffset = cursor;
-  pushText(`xref\n0 ${pageSpecs.length * 3 + 3}\n`);
+  const objectCount = objStart + pageSpecs.length * 3;
+  pushText(`xref\n0 ${objectCount}\n`);
   pushText('0000000000 65535 f \n');
-  for (let i = 1; i < pageSpecs.length * 3 + 3; i += 1) {
+  for (let i = 1; i < objectCount; i += 1) {
     const off = offsets[i] || 0;
     pushText(`${String(off).padStart(10, '0')} 00000 n \n`);
   }
   pushText(
-    `trailer\n<< /Size ${pageSpecs.length * 3 + 3} /Root ${catalogNo} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`
+    `trailer\n<< /Size ${objectCount} /Root ${catalogNo} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`
   );
 
   const pdfBytes = concatBytes(chunks);
+  assertPdfPageCount(pdfBytes, list.length);
   const blob = new Blob([pdfBytes], { type: 'application/pdf' });
   return { blob, filename: `${baseName}.pdf` };
 };
@@ -609,47 +762,7 @@ export const txtToPdf = async (
 
   const text = String(raw || '').replace(/\t/g, '    ');
   const baseName = safeBaseName(file.name);
-  const result = buildPdfFromText(text, baseName, opts);
-  reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
-  return result;
-};
-
-export const docxToPdf = async (file: File, opts?: FormatFactoryRunOpts) => {
-  abortIfNeeded(opts?.signal);
-  const name = String(file?.name || '');
-  if (!name.toLowerCase().endsWith('.docx')) throw new Error('DOCX_ONLY');
-  reportProgress(opts, { done: 0, total: 2, label: tr(opts, '读取 Word', 'Reading Word') });
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  abortIfNeeded(opts?.signal);
-  const docXml = await extractZipEntry(bytes, 'word/document.xml');
-  if (!docXml) throw new Error('DOCX_PARSE_FAIL');
-  const xmlText = new TextDecoder().decode(docXml);
-  const parser = new DOMParser();
-  const xmlDoc = parser.parseFromString(xmlText, 'application/xml');
-  const parseError = xmlDoc.getElementsByTagName('parsererror')[0];
-  if (parseError) throw new Error('DOCX_PARSE_FAIL');
-  const paragraphs = Array.from(xmlDoc.getElementsByTagName('w:p'));
-  const lines: string[] = [];
-  for (const p of paragraphs) {
-    const walker = xmlDoc.createTreeWalker(p, NodeFilter.SHOW_ELEMENT);
-    const parts: string[] = [];
-    let node = walker.nextNode() as Element | null;
-    while (node) {
-      const nodeName = node.nodeName;
-      if (nodeName === 'w:t') {
-        if (node.textContent) parts.push(node.textContent);
-      } else if (nodeName === 'w:tab') {
-        parts.push('\t');
-      } else if (nodeName === 'w:br' || nodeName === 'w:cr') {
-        parts.push('\n');
-      }
-      node = walker.nextNode() as Element | null;
-    }
-    lines.push(parts.join(''));
-  }
-  const text = lines.join('\n').replace(/\t/g, '    ');
-  const baseName = safeBaseName(name);
-  const result = buildPdfFromText(text, baseName, opts);
+  const result = await buildPdfFromText(text, baseName, opts);
   reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
   return result;
 };
@@ -680,7 +793,10 @@ const renderPdfPageToCanvasFromDoc = async (
   doc: any,
   pageNumber: number,
   scale: number,
-  opts?: { signal?: AbortSignal }
+  opts?: {
+    signal?: AbortSignal;
+    beforeAllocate?: (size: { width: number; height: number }) => void;
+  }
 ) => {
   if (opts?.signal?.aborted) throw new Error('ABORTED');
   const page = await doc.getPage(pageNumber);
@@ -688,6 +804,7 @@ const renderPdfPageToCanvasFromDoc = async (
     if (opts?.signal?.aborted) throw new Error('ABORTED');
     const viewport = page.getViewport({ scale: clamp(scale, 0.5, 3) });
     const { width, height } = assertCanvasSafeSize(viewport.width, viewport.height);
+    opts?.beforeAllocate?.({ width, height });
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -721,11 +838,87 @@ const reportProgress = (opts: FormatFactoryRunOpts | undefined, p: FormatFactory
   } catch {}
 };
 
+export const pdfPagesToImages = async (
+  file: File,
+  opts?: {
+    pageRange?: string;
+    scale?: number;
+    outType?: 'image/png' | 'image/jpeg' | 'image/webp';
+    quality?: number;
+    maxPages?: number;
+  } & FormatFactoryRunOpts
+) => {
+  const outType = opts?.outType || 'image/png';
+  const quality = typeof opts?.quality === 'number' ? opts.quality : 0.9;
+  const scale = typeof opts?.scale === 'number' ? opts.scale : 1.4;
+  const maxPages = typeof opts?.maxPages === 'number' ? opts.maxPages : 50;
+  const signal = opts?.signal;
+
+  abortIfNeeded(signal);
+  const { doc } = await loadPdfDocFromFile(file, { signal });
+  abortIfNeeded(signal);
+  try {
+    const totalPages = Math.max(1, Number(doc?.numPages || 0));
+    const pageNumbers = parsePdfPageRange(opts?.pageRange || '', totalPages, {
+      maxPages,
+      defaultLimit: maxPages
+    });
+    const ext = outType === 'image/png' ? 'png' : outType === 'image/jpeg' ? 'jpg' : 'webp';
+    const items: Array<{ blob: Blob; filename: string; pageNumber: number }> = [];
+    const budget = createPdfRangeBudgetTracker(outType);
+    for (let index = 0; index < pageNumbers.length; index += 1) {
+      abortIfNeeded(signal);
+      const pageNumber = pageNumbers[index];
+      reportProgress(opts, {
+        done: index,
+        total: pageNumbers.length,
+        label: tr(
+          opts,
+          `渲染第 ${pageNumber} 页（${index + 1}/${pageNumbers.length}）`,
+          `Rendering page ${pageNumber} (${index + 1}/${pageNumbers.length})`
+        )
+      });
+      const canvas = await renderPdfPageToCanvasFromDoc(doc, pageNumber, scale, {
+        signal,
+        beforeAllocate: ({ width, height }) => budget.reserve(width, height)
+      });
+      const blob = await canvasToBlob(
+        canvas,
+        outType,
+        outType === 'image/png' ? undefined : clamp(quality, 0.1, 1)
+      );
+      await assertImageBlobMagic(blob, outType);
+      items.push({
+        blob,
+        filename: `${safeBaseName(file.name)}_p${pageNumber}.${ext}`,
+        pageNumber
+      });
+      canvas.width = 1;
+      canvas.height = 1;
+      reportProgress(opts, {
+        done: index + 1,
+        total: pageNumbers.length,
+        label: tr(opts, `已导出 ${index + 1}/${pageNumbers.length}`, `Exported ${index + 1}/${pageNumbers.length}`)
+      });
+    }
+    return {
+      items,
+      pageNumbers,
+      filename: `${safeBaseName(file.name)}_${formatPdfPageSelection(pageNumbers)}.zip`
+    };
+  } finally {
+    try {
+      await doc.destroy();
+    } catch {}
+  }
+};
+
 export const pdfToImage = async (
   file: File,
   opts?: {
     mode?: 'stitch' | 'page';
     pageNumber?: number;
+    pageRange?: string;
     scale?: number;
     outType?: 'image/png' | 'image/jpeg' | 'image/webp';
     quality?: number;
@@ -754,7 +947,11 @@ export const pdfToImage = async (
         total: 1,
         label: tr(opts, `渲染第 ${p} 页`, `Rendering page ${p}`)
       });
-      const canvas = await renderPdfPageToCanvasFromDoc(doc, p, scale, { signal });
+      const budget = createPdfRangeBudgetTracker(outType);
+      const canvas = await renderPdfPageToCanvasFromDoc(doc, p, scale, {
+        signal,
+        beforeAllocate: ({ width, height }) => budget.reserve(width, height)
+      });
       assertCanvasSafeSize(canvas.width, canvas.height);
       reportProgress(opts, { done: 1, total: 1, label: tr(opts, '导出图片', 'Exporting image') });
       const blob = await canvasToBlob(
@@ -762,11 +959,16 @@ export const pdfToImage = async (
         outType,
         outType === 'image/png' ? undefined : clamp(quality, 0.1, 1)
       );
+      await assertImageBlobMagic(blob, outType);
       const ext = outType === 'image/png' ? 'png' : outType === 'image/jpeg' ? 'jpg' : 'webp';
       return { blob, filename: `${safeBaseName(file.name)}_p${p}.${ext}` };
     }
 
-    const takePages = Math.min(pages, Math.max(1, Math.floor(maxPages)));
+    const pageNumbers = parsePdfPageRange(opts?.pageRange || '', pages, {
+      maxPages,
+      defaultLimit: maxPages
+    });
+    const takePages = pageNumbers.length;
     reportProgress(opts, {
       done: 0,
       total: takePages,
@@ -775,9 +977,10 @@ export const pdfToImage = async (
 
     const pageSizes: Array<{ w: number; h: number }> = [];
     const safeScale = clamp(scale, 0.5, 3);
-    for (let i = 1; i <= takePages; i += 1) {
+    for (let index = 0; index < takePages; index += 1) {
       abortIfNeeded(signal);
-      const page = await doc.getPage(i);
+      const pageNumber = pageNumbers[index];
+      const page = await doc.getPage(pageNumber);
       try {
         const viewport = page.getViewport({ scale: safeScale });
         const { width, height } = assertCanvasSafeSize(viewport.width, viewport.height);
@@ -788,9 +991,13 @@ export const pdfToImage = async (
         } catch {}
       }
       reportProgress(opts, {
-        done: i,
+        done: index + 1,
         total: takePages,
-        label: tr(opts, `计算尺寸 ${i}/${takePages}`, `Measuring ${i}/${takePages}`)
+        label: tr(
+          opts,
+          `计算第 ${pageNumber} 页 ${index + 1}/${takePages}`,
+          `Measuring page ${pageNumber} ${index + 1}/${takePages}`
+        )
       });
     }
 
@@ -801,8 +1008,10 @@ export const pdfToImage = async (
       label: tr(opts, `渲染并拼接 1/${takePages}`, `Rendering & stitching 1/${takePages}`)
     });
 
-    const width = Math.max(...pageSizes.map((s) => s.w));
-    const height = pageSizes.reduce((sum, s) => sum + s.h, 0);
+    const stitchBudget = assertPdfStitchBudget(
+      pageSizes.map(({ w, h }) => ({ width: w, height: h }))
+    );
+    const { width, height } = stitchBudget;
     assertCanvasSafeSize(width, height);
     const out = document.createElement('canvas');
     out.width = width;
@@ -812,9 +1021,10 @@ export const pdfToImage = async (
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, out.width, out.height);
     let y = 0;
-    for (let i = 1; i <= takePages; i += 1) {
+    for (let index = 0; index < takePages; index += 1) {
       abortIfNeeded(signal);
-      const canvas = await renderPdfPageToCanvasFromDoc(doc, i, safeScale, { signal });
+      const pageNumber = pageNumbers[index];
+      const canvas = await renderPdfPageToCanvasFromDoc(doc, pageNumber, safeScale, { signal });
       ctx.drawImage(canvas, 0, y);
       y += canvas.height;
       try {
@@ -822,9 +1032,13 @@ export const pdfToImage = async (
         canvas.height = 1;
       } catch {}
       reportProgress(opts, {
-        done: i,
+        done: index + 1,
         total: takePages,
-        label: tr(opts, `渲染并拼接 ${i}/${takePages}`, `Rendering & stitching ${i}/${takePages}`)
+        label: tr(
+          opts,
+          `拼接第 ${pageNumber} 页 ${index + 1}/${takePages}`,
+          `Stitching page ${pageNumber} ${index + 1}/${takePages}`
+        )
       });
     }
 
@@ -839,22 +1053,15 @@ export const pdfToImage = async (
       outType,
       outType === 'image/png' ? undefined : clamp(quality, 0.1, 1)
     );
+    await assertImageBlobMagic(blob, outType);
     const ext = outType === 'image/png' ? 'png' : outType === 'image/jpeg' ? 'jpg' : 'webp';
-    const suffix = pages > takePages ? `_p1-${takePages}` : `_p1-${pages}`;
+    const suffix = `_${formatPdfPageSelection(pageNumbers)}`;
     return { blob, filename: `${safeBaseName(file.name)}${suffix}.${ext}` };
   } finally {
     try {
       await doc.destroy();
     } catch {}
   }
-};
-
-const escapePdfText = (s: string) => {
-  return String(s || '')
-    .replace(/\\/g, '\\\\')
-    .replace(/\(/g, '\\(')
-    .replace(/\)/g, '\\)')
-    .replace(/\r/g, '');
 };
 
 const wrapLines = (text: string, maxChars: number) => {
@@ -877,96 +1084,267 @@ const wrapLines = (text: string, maxChars: number) => {
   return out;
 };
 
-const buildPdfFromText = (
+const xmlEscape = (s: string) =>
+  String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+let crcTable: Uint32Array | null = null;
+
+const getCrcTable = () => {
+  if (crcTable) return crcTable;
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  crcTable = table;
+  return table;
+};
+
+const crc32 = (bytes: Uint8Array) => {
+  const table = getCrcTable();
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) c = table[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+const bytes16 = (n: number) => {
+  const out = new Uint8Array(2);
+  new DataView(out.buffer).setUint16(0, n, true);
+  return out;
+};
+
+const bytes32 = (n: number) => {
+  const out = new Uint8Array(4);
+  new DataView(out.buffer).setUint32(0, n >>> 0, true);
+  return out;
+};
+
+const getDosDateTime = (d = new Date()) => {
+  const year = Math.max(1980, d.getFullYear());
+  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2);
+  const date = ((year - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  return { time, date };
+};
+
+const zipStore = (files: Array<{ name: string; data: Uint8Array }>) => {
+  const chunks: Uint8Array[] = [];
+  const central: Uint8Array[] = [];
+  let offset = 0;
+  const { time, date } = getDosDateTime();
+
+  for (const file of files) {
+    const nameBytes = encoder.encode(file.name);
+    const data = file.data;
+    const crc = crc32(data);
+    const localOffset = offset;
+    const local = concatBytes([
+      bytes32(0x04034b50),
+      bytes16(20),
+      bytes16(0x0800),
+      bytes16(0),
+      bytes16(time),
+      bytes16(date),
+      bytes32(crc),
+      bytes32(data.byteLength),
+      bytes32(data.byteLength),
+      bytes16(nameBytes.byteLength),
+      bytes16(0),
+      nameBytes,
+      data
+    ]);
+    chunks.push(local);
+    offset += local.byteLength;
+
+    central.push(
+      concatBytes([
+        bytes32(0x02014b50),
+        bytes16(20),
+        bytes16(20),
+        bytes16(0x0800),
+        bytes16(0),
+        bytes16(time),
+        bytes16(date),
+        bytes32(crc),
+        bytes32(data.byteLength),
+        bytes32(data.byteLength),
+        bytes16(nameBytes.byteLength),
+        bytes16(0),
+        bytes16(0),
+        bytes16(0),
+        bytes16(0),
+        bytes32(0),
+        bytes32(localOffset),
+        nameBytes
+      ])
+    );
+  }
+
+  const centralBytes = concatBytes(central);
+  const centralOffset = offset;
+  const eocd = concatBytes([
+    bytes32(0x06054b50),
+    bytes16(0),
+    bytes16(0),
+    bytes16(files.length),
+    bytes16(files.length),
+    bytes32(centralBytes.byteLength),
+    bytes32(centralOffset),
+    bytes16(0)
+  ]);
+  return concatBytes([...chunks, centralBytes, eocd]);
+};
+
+const buildDocxBlob = (paragraphs: string[]) => {
+  const clean = paragraphs.map((p) => String(p || '').trim());
+  const body = clean
+    .map((p) =>
+      p
+        ? `<w:p><w:r><w:t xml:space="preserve">${xmlEscape(p)}</w:t></w:r></w:p>`
+        : '<w:p/>'
+    )
+    .join('');
+  const files = [
+    {
+      name: '[Content_Types].xml',
+      data: encoder.encode(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+          '<Default Extension="xml" ContentType="application/xml"/>' +
+          '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+          '</Types>'
+      )
+    },
+    {
+      name: '_rels/.rels',
+      data: encoder.encode(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+          '</Relationships>'
+      )
+    },
+    {
+      name: 'word/document.xml',
+      data: encoder.encode(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+          `<w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body>` +
+          '</w:document>'
+      )
+    }
+  ];
+  const bytes = zipStore(files);
+  return new Blob([bytes], {
+    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  });
+};
+
+const makeTextPdfPageFiles = async (
   text: string,
   baseName: string,
   opts?: { maxCharsPerLine?: number } & FormatFactoryRunOpts
 ) => {
-  const maxCharsPerLine = Math.max(20, Math.floor(opts?.maxCharsPerLine ?? 80));
-  const lines = wrapLines(text, maxCharsPerLine);
-  const pageW = 595.28;
-  const pageH = 841.89;
-  const margin = 56;
-  const fontSize = 12;
-  const lineHeight = 16;
-  const usableH = pageH - margin * 2;
-  const linesPerPage = Math.max(1, Math.floor(usableH / lineHeight));
-  const totalPages = Math.max(1, Math.ceil(lines.length / linesPerPage));
+  const source = String(text || '').replace(/\t/g, '    ');
+  const pageW = 1240;
+  const pageH = 1754;
+  const margin = 108;
+  const fontSize = 28;
+  const lineHeight = 42;
+  const maxPages = 160;
+  const canvas = document.createElement('canvas');
+  canvas.width = pageW;
+  canvas.height = pageH;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
+  ctx.font = `${fontSize}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
 
-  const objects: string[] = [];
-  const offsets: number[] = [];
-  let cursor = 0;
-
-  const push = (s: string) => {
-    objects.push(s);
-    cursor += new TextEncoder().encode(s).byteLength;
+  const wrapByMeasure = (value: string) => {
+    const out: string[] = [];
+    const maxW = pageW - margin * 2;
+    for (const rawLine of value.split('\n')) {
+      const line = rawLine || '';
+      if (!line) {
+        out.push('');
+        continue;
+      }
+      let cur = '';
+      for (const ch of Array.from(line)) {
+        const next = cur + ch;
+        if (cur && ctx.measureText(next).width > maxW) {
+          out.push(cur);
+          cur = ch;
+        } else {
+          cur = next;
+        }
+      }
+      out.push(cur);
+    }
+    return out;
   };
 
-  const addObject = (no: number, body: string) => {
-    offsets[no] = cursor;
-    push(`${no} 0 obj\n${body}\nendobj\n`);
-  };
+  const lines =
+    typeof opts?.maxCharsPerLine === 'number' && opts.maxCharsPerLine > 0
+      ? wrapLines(source, opts.maxCharsPerLine)
+      : wrapByMeasure(source);
+  const linesPerPage = Math.max(1, Math.floor((pageH - margin * 2) / lineHeight));
+  const totalPages = Math.max(1, Math.ceil(Math.max(1, lines.length) / linesPerPage));
+  if (totalPages > maxPages) throw new Error('TEXT_TOO_LARGE');
 
-  const pagesObjNo = 2;
-  const fontObjNo = 3;
-  const firstPageObjNo = 4;
-  const firstContentObjNo = firstPageObjNo + totalPages;
-
-  const pageRefs = Array.from({ length: totalPages }, (_, i) => `${firstPageObjNo + i} 0 R`).join(
-    ' '
-  );
-
-  push('%PDF-1.4\n%\u00e2\u00e3\u00cf\u00d3\n');
-  addObject(1, `<< /Type /Catalog /Pages ${pagesObjNo} 0 R >>`);
-  addObject(pagesObjNo, `<< /Type /Pages /Count ${totalPages} /Kids [${pageRefs}] >>`);
-  addObject(fontObjNo, `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`);
-
-  reportProgress(opts, { done: 1, total: 2, label: tr(opts, '生成 PDF', 'Generating PDF') });
-
+  const files: File[] = [];
+  const searchableTextPages: string[] = [];
   for (let p = 0; p < totalPages; p += 1) {
     abortIfNeeded(opts?.signal);
-    const pageNo = firstPageObjNo + p;
-    const contentNo = firstContentObjNo + p;
-    const from = p * linesPerPage;
-    const to = Math.min(lines.length, from + linesPerPage);
-    const pageLines = lines.slice(from, to);
-
-    const startX = margin;
-    const startY = pageH - margin - fontSize;
-
-    let stream = `BT\n/F1 ${fontSize} Tf\n${startX.toFixed(2)} ${startY.toFixed(2)} Td\n`;
+    reportProgress(opts, {
+      done: p,
+      total: totalPages,
+      label: tr(opts, `排版第 ${p + 1}/${totalPages} 页`, `Laying out page ${p + 1}/${totalPages}`)
+    });
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, pageW, pageH);
+    ctx.fillStyle = '#111827';
+    ctx.font = `${fontSize}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    ctx.textBaseline = 'top';
+    const pageLines = lines.slice(p * linesPerPage, p * linesPerPage + linesPerPage);
+    searchableTextPages.push(pageLines.join('\n'));
     for (let i = 0; i < pageLines.length; i += 1) {
-      const ln = escapePdfText(pageLines[i]);
-      stream += `(${ln}) Tj\n`;
-      if (i !== pageLines.length - 1) stream += `0 -${lineHeight} Td\n`;
+      ctx.fillText(pageLines[i], margin, margin + i * lineHeight);
     }
-    stream += 'ET\n';
-
-    const contentBytes = new TextEncoder().encode(stream);
-    addObject(contentNo, `<< /Length ${contentBytes.byteLength} >>\nstream\n${stream}endstream`);
-    addObject(
-      pageNo,
-      `<< /Type /Page /Parent ${pagesObjNo} 0 R /MediaBox [0 0 ${pageW.toFixed(2)} ${pageH.toFixed(
-        2
-      )}] /Resources << /Font << /F1 ${fontObjNo} 0 R >> >> /Contents ${contentNo} 0 R >>`
+    const blob = await canvasToBlob(canvas, 'image/jpeg', 0.9);
+    files.push(
+      new File([blob], `${safeBaseName(baseName)}_${String(p + 1).padStart(3, '0')}.jpg`, {
+        type: 'image/jpeg'
+      })
     );
   }
+  return { files, searchableTextPages };
+};
 
-  const xrefOffset = cursor;
-  push(`xref\n0 ${firstContentObjNo + totalPages}\n`);
-  push('0000000000 65535 f \n');
-  for (let i = 1; i < firstContentObjNo + totalPages; i += 1) {
-    const off = offsets[i] || 0;
-    push(`${String(off).padStart(10, '0')} 00000 n \n`);
-  }
-  push(
-    `trailer\n<< /Size ${firstContentObjNo + totalPages} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`
+const buildPdfFromText = async (
+  text: string,
+  baseName: string,
+  opts?: { maxCharsPerLine?: number } & FormatFactoryRunOpts
+) => {
+  const { files: pageFiles, searchableTextPages } = await makeTextPdfPageFiles(
+    text,
+    baseName,
+    opts
   );
-
-  const pdfText = objects.join('');
-  const blob = new Blob([pdfText], { type: 'application/pdf' });
-  reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
-  return { blob, filename: `${baseName}.pdf` };
+  return imagesToPdf(pageFiles, {
+    pageSize: 'A4',
+    marginMm: 0,
+    quality: 0.9,
+    searchableTextPages,
+    lang: opts?.lang,
+    signal: opts?.signal,
+    onProgress: opts?.onProgress
+  });
 };
 
 export const pdfToWord = async (file: File, opts?: FormatFactoryRunOpts) => {
@@ -1006,25 +1384,10 @@ export const pdfToWord = async (file: File, opts?: FormatFactoryRunOpts) => {
       total: pages,
       label: tr(opts, '生成 Word', 'Building Word')
     });
-    const text = parts.filter(Boolean).join('\n\n');
-    const html = [
-      '<!doctype html>',
-      '<html>',
-      '<head>',
-      '<meta charset="utf-8" />',
-      `<title>${safeBaseName(file.name)}</title>`,
-      '</head>',
-      '<body>',
-      `<pre style="white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 12pt; line-height: 1.5;">${text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')}</pre>`,
-      '</body>',
-      '</html>'
-    ].join('');
-    const blob = new Blob([html], { type: 'text/html' });
+    const paragraphs = normalizePdfTextParagraphs(parts);
+    const blob = buildDocxBlob(paragraphs);
     reportProgress(opts, { done: 2, total: 2, label: tr(opts, '完成', 'Done') });
-    return { blob, filename: `${safeBaseName(file.name)}.doc` };
+    return { blob, filename: `${safeBaseName(file.name)}.docx` };
   } finally {
     try {
       await doc.destroy();
@@ -1175,6 +1538,7 @@ export const videoToGif = async (
   video.muted = true;
   video.playsInline = true;
   video.preload = 'auto';
+  let gifWorker: Awaited<ReturnType<typeof createGifWorkerSession>> | null = null;
 
   try {
     abortIfNeeded(signal);
@@ -1183,65 +1547,79 @@ export const videoToGif = async (
     } catch {}
     await waitForVideoReadyState(video, 1, { signal, timeoutMs: 12000 });
     abortIfNeeded(signal);
-    const dur = Number(video.duration || 0);
-    if (!Number.isFinite(dur) || dur <= 0) throw new Error('VIDEO_META_FAIL');
-
-    const safeStart = clamp(startSec, 0, Math.max(0, dur - 0.05));
-    const maxDur = Math.min(10, Math.max(0.2, dur - safeStart));
-    const safeDur = clamp(durationSec, 0.2, maxDur);
-    const safeFps = clamp(Math.floor(fps), 2, 24);
-    const frameCount = Math.max(1, Math.floor(safeDur * safeFps));
-    const delay = Math.round(1000 / safeFps);
+    const reportedDuration = Number(video.duration || 0);
+    // MediaRecorder WebM blobs can expose decoded dimensions but report an unknown/Infinity
+    // duration in WebKit. The requested segment is still seekable, so use it as a bounded
+    // provisional duration instead of rejecting an otherwise decodable local file.
+    const requestedEnd =
+      Math.max(0, Number(startSec) || 0) +
+      Math.max(0.2, Math.min(30, Number(durationSec) || 0.2));
+    const dur =
+      Number.isFinite(reportedDuration) && reportedDuration > 0 ? reportedDuration : requestedEnd;
 
     const vw = Math.max(1, Math.floor(video.videoWidth || 0));
     const vh = Math.max(1, Math.floor(video.videoHeight || 0));
     if (!vw || !vh) throw new Error('VIDEO_DIM_FAIL');
-
-    const outW = clamp(Math.floor(width), 120, 960);
-    const outH = Math.max(1, Math.round((outW * vh) / vw));
+    const plan = createGifPlan({
+      sourceWidth: vw,
+      sourceHeight: vh,
+      videoDurationSeconds: dur,
+      startSeconds: startSec,
+      durationSeconds: durationSec,
+      fps,
+      outputWidth: width
+    });
     const colors = clamp(Math.floor(maxColors), 16, 256);
 
     const canvas = document.createElement('canvas');
-    canvas.width = outW;
-    canvas.height = outH;
+    canvas.width = plan.outputWidth;
+    canvas.height = plan.outputHeight;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
 
-    const { GIFEncoder, applyPalette, quantize } = await import('gifenc');
-    const gif = GIFEncoder();
-    gif.writeHeader();
-    gif.setRepeat(0);
+    gifWorker = await createGifWorkerSession({
+      width: plan.outputWidth,
+      height: plan.outputHeight,
+      delayMilliseconds: plan.delayMilliseconds,
+      maxColors: colors,
+      signal
+    });
 
-    const reportEvery = Math.max(1, Math.floor(frameCount / 30));
-    for (let i = 0; i < frameCount; i += 1) {
+    const reportEvery = Math.max(1, Math.floor(plan.frameCount / 30));
+    for (let i = 0; i < plan.frameCount; i += 1) {
       abortIfNeeded(signal);
-      if (i === 0 || i === frameCount - 1 || i % reportEvery === 0) {
+      if (i === 0 || i === plan.frameCount - 1 || i % reportEvery === 0) {
         reportProgress(opts, {
           done: i,
-          total: frameCount,
-          label: tr(opts, `抽帧 ${i + 1}/${frameCount}`, `Capturing frames ${i + 1}/${frameCount}`)
+          total: plan.frameCount,
+          label: tr(
+            opts,
+            `抽帧并在 Worker 编码 ${i + 1}/${plan.frameCount}`,
+            `Capturing and encoding in Worker ${i + 1}/${plan.frameCount}`
+          )
         });
       }
-      const t = safeStart + i / safeFps;
+      const t = plan.startSeconds + i / plan.fps;
       await seekVideo(video, t, { signal, timeoutMs: 12000 });
-      ctx.drawImage(video, 0, 0, outW, outH);
-      const imageData = ctx.getImageData(0, 0, outW, outH);
-      const rgba = imageData.data;
-      const palette = quantize(rgba, colors);
-      const index = applyPalette(rgba, palette);
-      gif.writeFrame(index, outW, outH, { palette, delay });
+      ctx.drawImage(video, 0, 0, plan.outputWidth, plan.outputHeight);
+      const imageData = ctx.getImageData(0, 0, plan.outputWidth, plan.outputHeight);
+      const rgba = new Uint8ClampedArray(imageData.data).buffer;
+      await gifWorker.addFrame(rgba);
     }
 
     reportProgress(opts, {
-      done: frameCount,
-      total: frameCount,
-      label: tr(opts, '输出 GIF', 'Encoding GIF')
+      done: plan.frameCount,
+      total: plan.frameCount,
+      label: tr(opts, 'Worker 正在完成 GIF', 'Worker is finishing GIF')
     });
-    gif.finish();
-    const bytes = gif.bytes();
-    const blob = new Blob([bytes], { type: 'image/gif' });
+    const bytes = await gifWorker.finish();
+    if (!hasGifMagic(bytes)) throw new Error('GIF_OUTPUT_INVALID');
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    const blob = new Blob([copy.buffer], { type: 'image/gif' });
     return { blob, filename: `${safeBaseName(file.name)}.gif` };
   } finally {
+    gifWorker?.terminate();
     revokeUrl(srcUrl);
     try {
       video.removeAttribute('src');

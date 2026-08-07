@@ -4,23 +4,29 @@
       <div v-if="topTipOpen" class="top-tip">{{ topTipText }}</div>
     </transition>
     <div v-if="isOpen" class="login-modal" @mousedown.self="onBackdrop">
-      <div class="panel" role="dialog" aria-modal="true">
-        <!-- Left Side Image Panel -->
-        <div class="panel-side">
-          <div class="side-content">
-            <div class="side-logo">Artigen</div>
-            <div class="side-text">
-              <h2>Welcome Back</h2>
-              <p>Sign in to continue your creative journey.</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Right Side Form Panel -->
+      <div
+        ref="panelRef"
+        class="panel"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="titleText"
+        tabindex="-1"
+      >
         <div class="panel-main">
           <div class="head">
             <div class="title">{{ titleText }}</div>
-            <button class="close" type="button" @click="close">×</button>
+            <button
+              class="close"
+              type="button"
+              :aria-label="currentLang === 'zh' ? '关闭登录窗口' : 'Close login dialog'"
+              @click="close"
+            >
+              ×
+            </button>
+          </div>
+          <div class="signup-credit-note">
+            <strong>{{ currentLang === 'zh' ? '注册赠送 100 点' : 'Get 100 credits on signup' }}</strong>
+            <span>{{ currentLang === 'zh' ? '约可完成 10 次标准生成' : 'Enough for about 10 standard generations' }}</span>
           </div>
 
           <div class="body">
@@ -29,11 +35,27 @@
 
               <div class="method-list">
                 <div class="oauth-block">
+                  <button
+                    v-if="!googleButtonReady"
+                    class="nth-login-btn method google-fallback-btn"
+                    type="button"
+                    :disabled="googleLoading || googleSdkLoading"
+                    :aria-busy="googleSdkLoading"
+                    @click="retryGoogleLogin"
+                  >
+                    <span class="google-mark" aria-hidden="true">G</span>
+                    <span>{{ t('login.method_google') }}</span>
+                    <span v-if="googleSdkLoading" class="google-spinner" aria-hidden="true"></span>
+                  </button>
                   <div
+                    v-show="googleButtonReady"
                     ref="googleButtonRef"
                     class="google-btn"
                     :class="{ disabled: googleLoading }"
                   ></div>
+                  <div v-if="googleStatusText" class="google-network-note">
+                    {{ googleStatusText }}
+                  </div>
                 </div>
                 <div class="hint" :class="{ error: !!error }" v-if="error || info">
                   {{ error || info }}
@@ -85,11 +107,27 @@
               <div class="sub">{{ subText }}</div>
 
               <div class="oauth-block">
+                <button
+                  v-if="!googleButtonReady"
+                  class="nth-login-btn method google-fallback-btn"
+                  type="button"
+                  :disabled="googleLoading || googleSdkLoading"
+                  :aria-busy="googleSdkLoading"
+                  @click="retryGoogleLogin"
+                >
+                  <span class="google-mark" aria-hidden="true">G</span>
+                  <span>{{ t('login.method_google') }}</span>
+                  <span v-if="googleSdkLoading" class="google-spinner" aria-hidden="true"></span>
+                </button>
                 <div
+                  v-show="googleButtonReady"
                   ref="googleButtonRef"
                   class="google-btn"
                   :class="{ disabled: googleLoading }"
                 ></div>
+                <div v-if="googleStatusText" class="google-network-note">
+                  {{ googleStatusText }}
+                </div>
               </div>
 
               <div class="hint" :class="{ error: !!error }">
@@ -113,14 +151,25 @@
                   type="email"
                   :placeholder="t('login.email_placeholder')"
                   autocomplete="email"
+                  @keyup.enter="sendCode"
                 />
               </div>
+              <TurnstileWidget
+                ref="turnstileRef"
+                v-model="turnstileToken"
+                :action="EMAIL_OTP_TURNSTILE_ACTION"
+              />
               <div class="hint" :class="{ error: !!error }">
                 {{ error || info }}
               </div>
               <button
                 class="nth-login-btn primary"
-                :disabled="sending || !emailLocal || cooldownLeft > 0"
+                :disabled="
+                  sending ||
+                  !emailLocal ||
+                  cooldownLeft > 0 ||
+                  (turnstileRequired && !turnstileToken)
+                "
                 type="button"
                 @click="sendCode"
               >
@@ -158,14 +207,14 @@
               </div>
               <button
                 class="nth-login-btn primary"
-                :disabled="loggingIn || !emailLocal || code.length < 6"
+                :disabled="loggingIn || registering || sending || !emailLocal || code.length < 6"
                 type="button"
                 @click="verifyCode"
               >
                 {{ loggingIn ? t('login.verifying') : t('login.verify_btn') }}
               </button>
               <div class="row">
-                <button class="link-btn" type="button" @click="entryStep = 'email_input'">
+                <button class="link-btn" type="button" @click="backToEmailInput">
                   {{ t('login.back_to_resend') }}
                 </button>
               </div>
@@ -200,7 +249,7 @@
 
               <button
                 class="nth-login-btn primary"
-                :disabled="loggingIn || !username || !password"
+                :disabled="loggingIn || registering || sending || !username || !password"
                 type="button"
                 @click="login"
               >
@@ -258,8 +307,15 @@
                   type="email"
                   :placeholder="t('login.email_placeholder')"
                   autocomplete="email"
+                  @keyup.enter="sendCode"
                 />
               </div>
+
+              <TurnstileWidget
+                ref="turnstileRef"
+                v-model="turnstileToken"
+                :action="EMAIL_OTP_TURNSTILE_ACTION"
+              />
 
               <div class="grid">
                 <div class="field">
@@ -277,7 +333,12 @@
 
                 <button
                   class="nth-login-btn"
-                  :disabled="sending || !emailLocal || cooldownLeft > 0"
+                  :disabled="
+                    sending ||
+                    !emailLocal ||
+                    cooldownLeft > 0 ||
+                    (turnstileRequired && !turnstileToken)
+                  "
                   type="button"
                   @click="sendCode"
                 >
@@ -293,7 +354,15 @@
 
               <button
                 class="nth-login-btn primary"
-                :disabled="registering || !username || !password || !emailLocal || code.length < 6"
+                :disabled="
+                  registering ||
+                  loggingIn ||
+                  sending ||
+                  !username ||
+                  !password ||
+                  !emailLocal ||
+                  code.length < 6
+                "
                 type="button"
                 @click="register"
               >
@@ -317,14 +386,14 @@
 
           <div class="footer-links">
             <span class="footer-text">
-              By continuing, you accept our
-              <router-link class="footer-link" to="/legal/terms" @click="close"
-                >Terms of Service</router-link
-              >
-              and
-              <router-link class="footer-link" to="/legal/privacy" @click="close"
-                >Privacy Policy</router-link
-              >
+              {{ currentLang === 'zh' ? '继续即表示你同意' : 'By continuing, you accept our' }}
+              <router-link class="footer-link" to="/legal/terms" @click="close">{{
+                t('login.terms_of_use')
+              }}</router-link>
+              {{ currentLang === 'zh' ? '及' : 'and' }}
+              <router-link class="footer-link" to="/legal/privacy" @click="close">{{
+                t('login.privacy_policy')
+              }}</router-link>
             </span>
           </div>
         </div>
@@ -338,7 +407,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia';
 import { useLoginModel } from '@/stores';
 import {
-  fetchGoogleClientId,
+  resolveGoogleClientId,
   loginWithGoogleIdToken,
   loginWithPassword,
   registerWithEmailCode,
@@ -357,10 +426,21 @@ import {
 import { ensureGuestUserId, setLoggedIn } from '../session';
 import { useLanguageStore } from '@/stores/language';
 import { useRouter } from 'vue-router';
-import { buildApiUrl } from '@/utils/api';
+import TurnstileWidget from './TurnstileWidget.vue';
+import { loadGoogleIdentityScript, resetGoogleIdentityScript } from '../googleIdentity';
+import {
+  beginOtpSend,
+  clearOtpFlow,
+  completeOtpSend,
+  failOtpSend,
+  getOtpCooldownSeconds,
+  readOtpFlow
+} from '../otpFlow';
+import { EMAIL_OTP_TURNSTILE_ACTION, isTurnstileConfigured } from '../turnstile';
 
 const languageStore = useLanguageStore();
 const { t } = languageStore;
+const { currentLang } = storeToRefs(languageStore);
 
 const loginStore = useLoginModel();
 const { isOpen, mode, email } = storeToRefs(loginStore);
@@ -388,26 +468,87 @@ const topTipText = ref('');
 const cooldownLeft = ref(0);
 let timer: number | null = null;
 let topTipTimer: number | null = null;
-const googleClientId = ref(String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim());
+const googleClientId = ref('');
 const googleButtonRef = ref<HTMLDivElement | null>(null);
+const panelRef = ref<HTMLElement | null>(null);
 const googleLoading = ref(false);
-let googleScriptPromise: Promise<void> | null = null;
+const googleButtonReady = ref(false);
+const googleSdkLoading = ref(false);
+const googleSdkFailed = ref(false);
+let returnFocusElement: HTMLElement | null = null;
+const turnstileToken = ref('');
+const turnstileRequired = isTurnstileConfigured();
+const turnstileRef = ref<{ reset: () => void } | null>(null);
+
+const focusableSelector = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])'
+].join(',');
+
+const focusableDialogElements = () => {
+  const panel = panelRef.value;
+  if (!panel) return [];
+  return Array.from(panel.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => {
+    if (element.closest('[inert]')) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  });
+};
+
+const focusDialog = async () => {
+  await nextTick();
+  if (!isOpen.value) return;
+  panelRef.value?.focus({ preventScroll: true });
+};
+
+const repairEscapedFocus = (preferLast = false) => {
+  window.requestAnimationFrame(() => {
+    if (!isOpen.value) return;
+    const panel = panelRef.value;
+    if (!panel || panel.contains(document.activeElement)) return;
+    const focusable = focusableDialogElements();
+    const target = preferLast ? focusable[focusable.length - 1] : focusable[0];
+    (target || panel).focus({ preventScroll: true });
+  });
+};
+
+const restoreTriggerFocus = async () => {
+  const target = returnFocusElement;
+  returnFocusElement = null;
+  await nextTick();
+  if (target?.isConnected) target.focus({ preventScroll: true });
+};
 
 const loadGoogleClientId = async () => {
   if (googleClientId.value) return googleClientId.value;
   try {
-    const cid = await fetchGoogleClientId();
+    const cid = await resolveGoogleClientId();
     if (cid) googleClientId.value = cid;
   } catch {}
   return googleClientId.value;
 };
 
+const googleStatusText = computed(() => {
+  if (googleSdkFailed.value) return t('login.google_load_failed');
+  return '';
+});
+
 watch(
   () => isOpen.value,
-  (open) => {
-    if (!open) return;
+  (open, wasOpen) => {
+    if (!open) {
+      if (wasOpen) void restoreTriggerFocus();
+      return;
+    }
+    returnFocusElement =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     entryStep.value = 'select';
-    const nextEmail = String(email.value || emailLocal.value || '')
+    const restoredFlow = readOtpFlow('login');
+    const nextEmail = String(email.value || restoredFlow?.email || emailLocal.value || '')
       .trim()
       .toLowerCase();
     emailLocal.value = nextEmail || getLastEmail();
@@ -417,14 +558,17 @@ watch(
     password.value = lastU ? getSavedPassword(lastU) : '';
     error.value = '';
     info.value = '';
-    cooldownLeft.value = 0;
+    turnstileToken.value = '';
     if (timer) {
       window.clearInterval(timer);
       timer = null;
     }
-    error.value = '';
-    info.value = '';
+    const restoredCooldown =
+      restoredFlow?.email === emailLocal.value ? getOtpCooldownSeconds(restoredFlow) : 0;
+    if (restoredCooldown > 0) startCooldown(restoredCooldown);
+    else cooldownLeft.value = 0;
     void ensureGoogleReady();
+    void focusDialog();
   }
 );
 
@@ -459,15 +603,36 @@ const subText = computed(() => {
 });
 
 const startCooldown = (sec: number) => {
-  cooldownLeft.value = Math.max(0, Math.floor(sec));
+  const seconds = Math.max(0, Math.floor(Number(sec) || 0));
+  cooldownLeft.value = seconds;
   if (timer) window.clearInterval(timer);
+  timer = null;
+  if (!seconds) return;
+  const deadline = Date.now() + seconds * 1000;
   timer = window.setInterval(() => {
-    cooldownLeft.value = Math.max(0, cooldownLeft.value - 1);
+    cooldownLeft.value = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
     if (cooldownLeft.value <= 0 && timer) {
       window.clearInterval(timer);
       timer = null;
     }
   }, 1000);
+};
+
+const restoreLoginCooldown = () => {
+  const flow = readOtpFlow('login');
+  const normalizedEmail = String(emailLocal.value || '')
+    .trim()
+    .toLowerCase();
+  const seconds = flow?.email === normalizedEmail ? getOtpCooldownSeconds(flow) : 0;
+  startCooldown(seconds);
+};
+
+const resetOtpUi = () => {
+  code.value = '';
+  error.value = '';
+  info.value = '';
+  turnstileToken.value = '';
+  void nextTick(() => turnstileRef.value?.reset());
 };
 
 const showTopTip = (msg: string) => {
@@ -479,61 +644,7 @@ const showTopTip = (msg: string) => {
   }, 3000);
 };
 
-const loadGoogleScript = () => {
-  if (googleScriptPromise) return googleScriptPromise;
-  googleScriptPromise = new Promise<void>((resolve, reject) => {
-    const g = (window as any).google;
-    if (g?.accounts?.id) {
-      resolve();
-      return;
-    }
-    const resolveScriptUrl = (useProxy: boolean) => {
-      if (!useProxy) return 'https://accounts.google.com/gsi/client';
-      const proxyUrl = buildApiUrl('/api/proxy/google-gsi');
-      return proxyUrl || 'https://accounts.google.com/gsi/client';
-    };
-    const appendScript = (useProxy: boolean) => {
-      const script = document.createElement('script');
-      script.src = resolveScriptUrl(useProxy);
-      script.async = true;
-      script.defer = true;
-      script.dataset.googleIdentity = '1';
-      script.dataset.googleProxy = useProxy ? '1' : '0';
-      script.onload = () => resolve();
-      script.onerror = () => {
-        if (useProxy) {
-          script.remove();
-          appendScript(false);
-          return;
-        }
-        reject(new Error('GOOGLE_SCRIPT_FAILED'));
-      };
-      document.head.appendChild(script);
-    };
-    const existing = document.querySelector('script[data-google-identity]');
-    if (existing) {
-      existing.addEventListener('load', () => resolve(), { once: true });
-      existing.addEventListener(
-        'error',
-        () => {
-          const useProxy = (existing as HTMLScriptElement).dataset.googleProxy === '1';
-          if (useProxy) {
-            existing.remove();
-            appendScript(false);
-            return;
-          }
-          reject(new Error('GOOGLE_SCRIPT_FAILED'));
-        },
-        { once: true }
-      );
-      return;
-    }
-    appendScript(true);
-  });
-  return googleScriptPromise;
-};
-
-const initGoogleButton = () => {
+const initGoogleButton = async () => {
   if (
     !googleClientId.value ||
     !isOpen.value ||
@@ -542,59 +653,75 @@ const initGoogleButton = () => {
     return;
   const el = googleButtonRef.value;
   if (!el) return;
-  loadGoogleScript()
-    .then(() => {
-      const g = (window as any).google;
-      if (!g?.accounts?.id) {
-        showTopTip(t('login.google_load_failed'));
-        return;
-      }
-      el.innerHTML = '';
-      g.accounts.id.initialize({
-        client_id: googleClientId.value,
-        callback: async (resp: any) => {
-          error.value = '';
-          const idToken = String(resp?.credential || '').trim();
-          if (!idToken) {
-            error.value = t('login.google_failed');
+  googleSdkLoading.value = true;
+  googleSdkFailed.value = false;
+  googleButtonReady.value = false;
+  try {
+    await loadGoogleIdentityScript();
+    const g = (window as any).google;
+    if (!g?.accounts?.id) throw new Error('GOOGLE_SCRIPT_FAILED');
+    el.innerHTML = '';
+    g.accounts.id.initialize({
+      client_id: googleClientId.value,
+      callback: async (resp: any) => {
+        if (googleLoading.value) return;
+        error.value = '';
+        const idToken = String(resp?.credential || '').trim();
+        if (!idToken) {
+          error.value = t('login.google_failed');
+          return;
+        }
+        googleLoading.value = true;
+        try {
+          const res = await loginWithGoogleIdToken(idToken);
+          if (!res.ok) {
+            error.value = res.message;
             return;
           }
-          googleLoading.value = true;
-          try {
-            const res = await loginWithGoogleIdToken(idToken);
-            if (!res.ok) {
-              error.value = res.message;
-              return;
-            }
-            if (res.email) {
-              setLastEmail(res.email);
-              upsertUser({ email: res.email, userId: res.userId });
-            }
-            setLoggedIn({ userId: res.userId, token: res.token });
-            try {
-              window.dispatchEvent(new CustomEvent('app-auth-changed'));
-            } catch {}
-            close();
-            await loginStore.runAfterLogin();
-          } catch (e: any) {
-            error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
-          } finally {
-            googleLoading.value = false;
+          if (res.email) {
+            setLastEmail(res.email);
+            upsertUser({ email: res.email, userId: res.userId });
           }
+          setLoggedIn({ userId: res.userId });
+          close();
+          await loginStore.runAfterLogin();
+        } catch (e: any) {
+          error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
+        } finally {
+          googleLoading.value = false;
         }
-      });
-      g.accounts.id.renderButton(el, {
-        theme: 'outline',
-        size: 'large',
-        shape: 'pill',
-        width: el.clientWidth || 360,
-        text: 'continue_with'
-      });
-    })
-    .catch((err) => {
-      console.error('Failed to load Google script', err);
-      showTopTip(t('login.google_load_failed'));
+      }
     });
+    const availableWidth = el.parentElement?.clientWidth || el.clientWidth || 360;
+    const buttonWidth = Math.min(400, Math.max(1, Math.round(availableWidth)));
+    g.accounts.id.renderButton(el, {
+      theme: 'outline',
+      size: 'large',
+      shape: 'pill',
+      width: String(buttonWidth),
+      text: 'continue_with'
+    });
+    googleButtonReady.value = true;
+  } catch (err) {
+    console.error('Failed to load Google script', err);
+    googleSdkFailed.value = true;
+    resetGoogleIdentityScript();
+  } finally {
+    googleSdkLoading.value = false;
+  }
+};
+
+const retryGoogleLogin = async () => {
+  error.value = '';
+  const cid = await loadGoogleClientId();
+  if (!cid) {
+    showTopTip(t('login.google_load_failed'));
+    return;
+  }
+  resetGoogleIdentityScript();
+  await nextTick();
+  await initGoogleButton();
+  if (googleSdkFailed.value) showTopTip(t('login.google_load_failed'));
 };
 
 const isPasswordValidForRegister = (pw: string) => {
@@ -622,13 +749,16 @@ const onBackdrop = () => {
 
 const toggleMode = () => {
   loginStore.setMode(mode.value === 'register' ? 'login' : 'register');
+  resetOtpUi();
+  restoreLoginCooldown();
 };
 
 const chooseMethod = async (method: 'google' | 'email' | 'password') => {
-  error.value = '';
-  info.value = '';
+  resetOtpUi();
   if (method === 'email') {
+    loginStore.setMode('login');
     entryStep.value = 'email_input';
+    restoreLoginCooldown();
     return;
   }
   if (method === 'password') {
@@ -645,11 +775,11 @@ const ensureGoogleReady = async (showError = false) => {
   if (entryStep.value !== 'google' && entryStep.value !== 'select') return;
   const cid = await loadGoogleClientId();
   if (!cid) {
-    if (showError) error.value = t('login.google_not_configured');
+    if (showError) showTopTip(t('login.google_load_failed'));
     return;
   }
   await nextTick();
-  initGoogleButton();
+  await initGoogleButton();
 };
 
 watch(
@@ -660,12 +790,28 @@ watch(
 );
 
 const backToMethods = () => {
+  loginStore.setMode('login');
   entryStep.value = 'select';
-  error.value = '';
-  info.value = '';
+  resetOtpUi();
+};
+
+const backToEmailInput = () => {
+  loginStore.setMode('login');
+  entryStep.value = 'email_input';
+  resetOtpUi();
+  restoreLoginCooldown();
 };
 
 const sendCode = async () => {
+  if (
+    sending.value ||
+    loggingIn.value ||
+    registering.value ||
+    cooldownLeft.value > 0 ||
+    (turnstileRequired && !turnstileToken.value)
+  ) {
+    return;
+  }
   error.value = '';
   info.value = '';
   const e = String(emailLocal.value || '')
@@ -682,16 +828,43 @@ const sendCode = async () => {
   setLastEmail(e);
   loginStore.setEmail(e);
   sending.value = true;
+  const previous = readOtpFlow('login');
+  const attempt = beginOtpSend('login', e, {
+    forceNew:
+      previous?.email === e &&
+      previous.deliveryStatus === 'unknown' &&
+      getOtpCooldownSeconds(previous) === 0
+  });
   try {
-    const res = await sendLoginCode(e);
+    const res = await sendLoginCode(e, {
+      idempotencyKey: attempt.idempotencyKey,
+      turnstileToken: turnstileToken.value
+    });
     if (!res.ok) {
+      failOtpSend('login', attempt.idempotencyKey, { cooldownSec: res.cooldownSec });
       error.value = res.message;
+      turnstileRef.value?.reset();
+      if (res.cooldownSec) startCooldown(res.cooldownSec);
       return;
     }
-    // info.value = res.message || t('login.success');
+    completeOtpSend('login', {
+      email: e,
+      idempotencyKey: attempt.idempotencyKey,
+      challengeId: res.challengeId,
+      deliveryStatus: res.deliveryStatus,
+      cooldownSec: res.cooldownSec
+    });
+    turnstileRef.value?.reset();
+    info.value =
+      res.deliveryStatus === 'unknown'
+        ? currentLang.value === 'zh'
+          ? '邮件可能已提交发送；若收到验证码可继续验证，否则请稍后重发。'
+          : 'The email may have been submitted. Use the code if it arrives, or resend later.'
+        : res.message || '';
     startCooldown(res.cooldownSec);
-    entryStep.value = 'email_verify';
+    if (mode.value !== 'register') entryStep.value = 'email_verify';
   } catch (err: any) {
+    turnstileRef.value?.reset();
     error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
   } finally {
     sending.value = false;
@@ -699,6 +872,7 @@ const sendCode = async () => {
 };
 
 const verifyCode = async () => {
+  if (loggingIn.value || registering.value || sending.value) return;
   error.value = '';
   const e = String(emailLocal.value || '')
     .trim()
@@ -707,6 +881,10 @@ const verifyCode = async () => {
   if (!e) return;
   if (!c) {
     error.value = t('login.enter_code');
+    return;
+  }
+  if (!/^\d{6}$/.test(c)) {
+    error.value = t('login.invalid_code');
     return;
   }
   loggingIn.value = true;
@@ -718,10 +896,8 @@ const verifyCode = async () => {
     }
     setLastEmail(e);
     upsertUser({ email: e, userId: res.userId });
-    setLoggedIn({ userId: res.userId, token: res.token });
-    try {
-      window.dispatchEvent(new CustomEvent('app-auth-changed'));
-    } catch {}
+    setLoggedIn({ userId: res.userId });
+    clearOtpFlow('login');
     close();
     await loginStore.runAfterLogin();
   } catch (err: any) {
@@ -732,6 +908,7 @@ const verifyCode = async () => {
 };
 
 const login = async () => {
+  if (loggingIn.value || registering.value || sending.value) return;
   error.value = '';
   info.value = '';
   const u = String(username.value || '').trim();
@@ -746,10 +923,7 @@ const login = async () => {
     }
     setLastUsername(u);
     setSavedPassword(u, p);
-    setLoggedIn({ userId: res.userId, token: res.token });
-    try {
-      window.dispatchEvent(new CustomEvent('app-auth-changed'));
-    } catch {}
+    setLoggedIn({ userId: res.userId });
     close();
     await loginStore.runAfterLogin();
   } catch (err: any) {
@@ -760,6 +934,7 @@ const login = async () => {
 };
 
 const register = async () => {
+  if (registering.value || loggingIn.value || sending.value) return;
   error.value = '';
   info.value = '';
   const u = String(username.value || '').trim();
@@ -792,10 +967,8 @@ const register = async () => {
     setSavedPassword(u, p);
     setLastEmail(e);
     upsertUser({ email: e, userId: res.userId });
-    setLoggedIn({ userId: res.userId, token: res.token });
-    try {
-      window.dispatchEvent(new CustomEvent('app-auth-changed'));
-    } catch {}
+    setLoggedIn({ userId: res.userId });
+    clearOtpFlow('login');
     close();
     await loginStore.runAfterLogin();
   } catch (err: any) {
@@ -806,15 +979,57 @@ const register = async () => {
 };
 
 const onKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape' && isOpen.value) close();
+  if (!isOpen.value) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    close();
+    return;
+  }
+  if (e.key !== 'Tab') return;
+
+  const panel = panelRef.value;
+  if (!panel) return;
+  repairEscapedFocus(e.shiftKey);
+  const focusable = focusableDialogElements();
+  if (!focusable.length) {
+    e.preventDefault();
+    panel.focus({ preventScroll: true });
+    return;
+  }
+
+  const active = document.activeElement;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (active === panel || !panel.contains(active)) {
+    e.preventDefault();
+    (e.shiftKey ? last : first)?.focus({ preventScroll: true });
+    return;
+  }
+  if (e.shiftKey && active === first) {
+    e.preventDefault();
+    last?.focus({ preventScroll: true });
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault();
+    first?.focus({ preventScroll: true });
+  }
+};
+
+const onFocusin = () => {
+  if (!isOpen.value) return;
+  const panel = panelRef.value;
+  if (!panel || panel.contains(document.activeElement)) return;
+  panel.focus({ preventScroll: true });
 };
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown);
+  window.addEventListener('focusin', onFocusin);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
+  window.removeEventListener('focusin', onFocusin);
+  if (isOpen.value) void restoreTriggerFocus();
   if (timer) window.clearInterval(timer);
   if (topTipTimer) window.clearTimeout(topTipTimer);
 });
@@ -885,8 +1100,8 @@ onBeforeUnmount(() => {
 
 .panel {
   display: flex;
-  width: min(900px, 95vw);
-  height: min(600px, 90vh);
+  width: min(480px, 95vw);
+  max-height: min(720px, 90vh);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(12, 12, 12, 0.95);
   box-shadow:
@@ -953,10 +1168,27 @@ onBeforeUnmount(() => {
 }
 
 .panel-main {
-  width: 400px;
+  width: 100%;
   display: flex;
   flex-direction: column;
   background: #18181b;
+}
+
+.signup-credit-note {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 24px;
+  padding: 11px 12px;
+  border: 1px solid rgba(204, 255, 0, 0.24);
+  border-radius: 10px;
+  background: rgba(204, 255, 0, 0.07);
+  color: #cbd5cc;
+  font-size: 12px;
+}
+
+.signup-credit-note strong {
+  color: #ccff00;
 }
 
 .head {
@@ -1121,11 +1353,74 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
   width: 100%;
+  max-width: 400px;
+  margin-inline: auto;
+  overflow: hidden;
+  border-radius: 999px;
+  isolation: isolate;
 }
 
 .google-btn.disabled {
   opacity: 0.6;
   pointer-events: none;
+}
+
+.google-fallback-btn {
+  position: relative;
+  justify-content: center;
+  background: #fff;
+  border-color: rgba(255, 255, 255, 0.82);
+  color: #3c4043;
+}
+
+.google-fallback-btn:hover {
+  background: #f8fafc;
+  border-color: #fff;
+  color: #202124;
+}
+
+.google-mark {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  font-size: 18px;
+  font-weight: 800;
+  background: conic-gradient(from -45deg, #4285f4 0 25%, #34a853 0 50%, #fbbc05 0 75%, #ea4335 0);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+.google-spinner {
+  position: absolute;
+  right: 15px;
+  top: calc(50% - 7px);
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(60, 64, 67, 0.22);
+  border-top-color: #4285f4;
+  border-radius: 50%;
+  animation: google-spin 0.8s linear infinite;
+}
+
+.google-network-note {
+  margin-top: 8px;
+  color: #fbbf24;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+@keyframes google-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .row {
@@ -1142,13 +1437,15 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
   align-items: center;
-  font-size: 11px;
+  font-size: 12px;
   color: #64748b;
 }
 
 .footer-text {
   color: #64748b;
   margin-bottom: 5px;
+  line-height: 1.6;
+  text-align: center;
 }
 
 .footer-link {

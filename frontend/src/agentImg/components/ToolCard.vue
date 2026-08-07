@@ -76,6 +76,12 @@ const emit = defineEmits<{
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
 }
 
+.tool-card:focus-visible {
+  outline: 3px solid #ccff00;
+  outline-offset: 4px;
+  border-color: rgba(204, 255, 0, 0.75);
+}
+
 .card-header {
   width: 100%;
   display: flex;
@@ -167,9 +173,48 @@ const emit = defineEmits<{
 
 @media (max-width: 768px) {
   .tool-card {
-    padding: 24px;
+    padding: 22px;
     height: auto;
-    min-height: 300px;
+    min-height: 268px;
+  }
+
+  .card-header {
+    margin-bottom: 28px;
+  }
+
+  .tool-icon-wrapper {
+    margin-bottom: 20px;
+  }
+
+  .tool-icon {
+    font-size: 40px;
+  }
+
+  .tool-title {
+    margin-bottom: 10px;
+    font-size: 26px;
+  }
+
+  .tool-desc {
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .card-footer {
+    padding-top: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-card,
+  .launch-text,
+  .arrow {
+    transition-duration: 0.01ms !important;
+  }
+
+  .tool-card:hover,
+  .tool-card:focus-visible {
+    transform: none;
   }
 }
 </style>

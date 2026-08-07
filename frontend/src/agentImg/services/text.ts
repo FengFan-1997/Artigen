@@ -2,22 +2,22 @@ import { buildApiUrl } from '@/utils/api';
 import { getPageContext } from '@/utils/pageContext';
 import {
   ensureGuestUserId,
-  getAuthToken,
   getOrCreateProjectId,
   getOrCreateSessionId
 } from '@/login/session';
+import { authFetch } from '@/login/authFetch';
 
 const API_URL = buildApiUrl('/api/generate');
 const IMG2IMG_URL = buildApiUrl('/api/img2img');
 
-const FIXED_TEXT_MODEL = 'Qwen/Qwen2.5-7B-Instruct';
+const FIXED_TEXT_MODEL = 'Qwen/Qwen3-8B';
 const FIXED_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
 
 const isAllowedTextModel = (raw: string) => {
   const k = String(raw || '')
     .trim()
     .toLowerCase();
-  return k === 'qwen' || k === 'qwen/qwen2.5-7b-instruct' || k === 'qwen2.5-7b-instruct';
+  return k === 'qwen/qwen3-8b';
 };
 
 const shouldLogAiRequest = (): boolean => {
@@ -227,7 +227,6 @@ export const img2img = async (input: {
 
   try {
     const userId = ensureGuestUserId();
-    const token = getAuthToken();
     try {
       if (shouldLogAiRequest()) {
         console.log('[AI][request]', {
@@ -243,12 +242,9 @@ export const img2img = async (input: {
         });
       }
     } catch {}
-    const response = await fetch(IMG2IMG_URL, {
+    const response = await authFetch(IMG2IMG_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
+      headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
       body: JSON.stringify({
         userId,
@@ -346,7 +342,6 @@ export const generateText = async (
     images?: GenerateImageInput[];
     model?: string;
     purpose?: string;
-    cost?: number;
     deepMode?: boolean;
     initialInput?: string;
     userText?: string;
@@ -402,11 +397,8 @@ export const generateText = async (
       else ext.addEventListener('abort', () => controller.abort(), { once: true });
     }
     const userId = ensureGuestUserId();
-    const token = getAuthToken();
     const images = Array.isArray(opts?.images) ? opts?.images : undefined;
     const purpose = String(opts?.purpose || '').trim();
-    const costRaw = Number.parseInt(String(opts?.cost ?? ''), 10);
-    const cost = Number.isFinite(costRaw) && costRaw > 0 ? costRaw : 0;
     const deepMode = !!opts?.deepMode;
     const initialInput = typeof opts?.initialInput === 'string' ? opts?.initialInput.trim() : '';
     const userText = typeof opts?.userText === 'string' ? opts?.userText.trim() : '';
@@ -419,7 +411,6 @@ export const generateText = async (
           model: FIXED_TEXT_MODEL,
           modelRequested: requestedModel || undefined,
           purpose: purpose || undefined,
-          cost: cost || undefined,
           timeoutMs,
           promptLen: p.length,
           promptHash: hashText(p),
@@ -428,12 +419,9 @@ export const generateText = async (
         });
       }
     } catch {}
-    const response = await fetch(API_URL, {
+    const response = await authFetch(API_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
+      headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
       body: JSON.stringify({
         ...(p ? { prompt: p } : {}),
@@ -446,7 +434,6 @@ export const generateText = async (
         images,
         model: FIXED_TEXT_MODEL,
         ...(purpose ? { purpose } : {}),
-        ...(cost ? { cost } : {}),
         deepMode,
         ...(initialInput ? { initialInput } : {}),
         ...(userText ? { userText } : {}),

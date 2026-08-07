@@ -40,6 +40,16 @@
   z-index: 5;
 }
 
+@media (min-width: 1025px) {
+  /* The persistent desktop history rail remains an explicit navigation path
+     while a media preview/download dialog is open. This also makes hit testing
+     deterministic instead of relying on an overlay disappearing mid-click. */
+  .right-side.overlay-navigation-active {
+    position: relative;
+    z-index: 10001;
+  }
+}
+
 .right-header {
   padding: 16px;
   border-bottom: 1px solid var(--border-color);
@@ -78,6 +88,27 @@
 .history-item-btn:hover {
   border-color: rgba(204, 255, 0, 0.35);
   background: rgba(204, 255, 0, 0.06);
+}
+.history-image-placeholder {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.24);
+}
+.history-image-missing {
+  width: 100%;
+  height: 100%;
+  min-height: 96px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 11px;
 }
 .history-prompt {
   color: var(--text-main);

@@ -19,11 +19,18 @@
       </div>
 
       <template v-if="step === 'send'">
+        <TurnstileWidget
+          ref="turnstileRef"
+          v-model="turnstileToken"
+          :action="PASSWORD_RESET_TURNSTILE_ACTION"
+        />
         <button
           class="nth-login-btn primary"
-          :disabled="sending || !email || cooldownLeft > 0"
+          :disabled="
+            sending || !email || cooldownLeft > 0 || (turnstileRequired && !turnstileToken)
+          "
           type="button"
-          @click="sendCode"
+          @click="sendCode()"
         >
           {{
             cooldownLeft > 0
@@ -73,9 +80,43 @@
           />
         </div>
 
+        <div class="reset-resend">
+          <TurnstileWidget
+            v-if="cooldownLeft <= 0"
+            ref="turnstileRef"
+            v-model="turnstileToken"
+            :action="PASSWORD_RESET_TURNSTILE_ACTION"
+          />
+          <button
+            class="nth-login-btn reset-resend-btn"
+            :disabled="
+              sending ||
+              cooldownLeft > 0 ||
+              (turnstileRequired && !turnstileToken)
+            "
+            type="button"
+            @click="resendCode"
+          >
+            {{
+              cooldownLeft > 0
+                ? t('login.resend_wait', { s: cooldownLeft })
+                : sending
+                  ? t('login.sending')
+                  : t('login.send_reset_code')
+            }}
+          </button>
+        </div>
+
         <button
           class="nth-login-btn primary"
-          :disabled="resetting || !email || code.length < 6 || !newPassword || !confirmPassword"
+          :disabled="
+            resetting ||
+            sending ||
+            !email ||
+            code.length < 6 ||
+            !newPassword ||
+            !confirmPassword
+          "
           type="button"
           @click="resetPassword"
         >
@@ -84,7 +125,15 @@
       </template>
 
       <div v-if="error" class="hint error">{{ error }}</div>
-      <div v-else class="hint">{{ t('login.reset_hint') }}</div>
+      <div v-else class="hint">
+        {{
+          deliveryUnknown
+            ? isZh
+              ? '邮件可能已提交发送；若收到验证码可继续重置，否则请稍后重发。'
+              : 'The email may have been submitted. Use the code if it arrives, or resend later.'
+            : t('login.reset_hint')
+        }}
+      </div>
 
       <div class="row">
         <router-link class="link" to="/login">{{ t('login.back_to_login') }}</router-link>
@@ -94,33 +143,52 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { resetPasswordWithCode, sendPasswordResetCode } from '../api';
 import { getLastEmail, setLastEmail } from '../storage';
 import { useLanguageStore } from '@/stores/language';
 import LanguageSwitcher from '../components/LanguageSwitcher.vue';
+import TurnstileWidget from '../components/TurnstileWidget.vue';
+import {
+  beginOtpSend,
+  clearOtpFlow,
+  completeOtpSend,
+  failOtpSend,
+  getOtpCooldownSeconds,
+  readOtpFlow
+} from '../otpFlow';
+import {
+  isTurnstileConfigured,
+  PASSWORD_RESET_TURNSTILE_ACTION
+} from '../turnstile';
 
-const { t } = useLanguageStore();
-const route = useRoute();
+const languageStore = useLanguageStore();
+const { t } = languageStore;
 const router = useRouter();
 
-const email = ref(
-  String(route.query.email || '')
-    .trim()
-    .toLowerCase() || getLastEmail()
-);
+const restoredResetFlow = readOtpFlow('password-reset');
+const email = ref(restoredResetFlow?.email || getLastEmail());
 const code = ref('');
 const newPassword = ref('');
 const confirmPassword = ref('');
-const step = ref<'send' | 'reset'>('send');
+const step = ref<'send' | 'reset'>(
+  restoredResetFlow?.deliveryStatus === 'accepted' ||
+    restoredResetFlow?.deliveryStatus === 'unknown'
+    ? 'reset'
+    : 'send'
+);
 
 const sending = ref(false);
 const resetting = ref(false);
 const error = ref('');
+const deliveryUnknown = ref(restoredResetFlow?.deliveryStatus === 'unknown');
 
-const cooldownLeft = ref(0);
+const cooldownLeft = ref(getOtpCooldownSeconds(restoredResetFlow));
 let timer: number | null = null;
+const turnstileToken = ref('');
+const turnstileRequired = isTurnstileConfigured();
+const turnstileRef = ref<{ reset: () => void } | null>(null);
 
 const subText = computed(() =>
   step.value === 'send'
@@ -131,12 +199,17 @@ const subText = computed(() =>
           .toLowerCase()
       })
 );
+const isZh = computed(() => String(languageStore.currentLang || 'zh').startsWith('zh'));
 
 const startCooldown = (sec: number) => {
-  cooldownLeft.value = Math.max(0, Math.floor(sec));
+  const seconds = Math.max(0, Math.floor(Number(sec) || 0));
+  cooldownLeft.value = seconds;
   if (timer) window.clearInterval(timer);
+  timer = null;
+  if (!seconds) return;
+  const deadline = Date.now() + seconds * 1000;
   timer = window.setInterval(() => {
-    cooldownLeft.value = Math.max(0, cooldownLeft.value - 1);
+    cooldownLeft.value = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
     if (cooldownLeft.value <= 0 && timer) {
       window.clearInterval(timer);
       timer = null;
@@ -144,28 +217,67 @@ const startCooldown = (sec: number) => {
   }, 1000);
 };
 
-const sendCode = async () => {
+const sendCode = async (options: { forceNew?: boolean } = {}) => {
+  if (
+    sending.value ||
+    resetting.value ||
+    cooldownLeft.value > 0 ||
+    (turnstileRequired && !turnstileToken.value)
+  ) {
+    return;
+  }
   error.value = '';
   const e = String(email.value || '')
     .trim()
     .toLowerCase();
-  if (!e) return;
+  if (!e) {
+    error.value = t('login.enter_email');
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+    error.value = t('login.invalid_email');
+    return;
+  }
+  email.value = e;
   sending.value = true;
+  const attempt = beginOtpSend('password-reset', e, {
+    forceNew: Boolean(options.forceNew)
+  });
   try {
-    const res = await sendPasswordResetCode(e);
+    const res = await sendPasswordResetCode(e, {
+      idempotencyKey: attempt.idempotencyKey,
+      turnstileToken: turnstileToken.value
+    });
     if (!res.ok) {
+      failOtpSend('password-reset', attempt.idempotencyKey, {
+        cooldownSec: res.cooldownSec
+      });
       error.value = res.message;
+      turnstileRef.value?.reset();
+      if (res.cooldownSec) startCooldown(res.cooldownSec);
       return;
     }
+    completeOtpSend('password-reset', {
+      email: e,
+      idempotencyKey: attempt.idempotencyKey,
+      challengeId: res.challengeId,
+      deliveryStatus: res.deliveryStatus,
+      cooldownSec: res.cooldownSec
+    });
+    turnstileRef.value?.reset();
+    deliveryUnknown.value = res.deliveryStatus === 'unknown';
     setLastEmail(e);
     startCooldown(res.cooldownSec);
     step.value = 'reset';
   } catch (err: any) {
+    turnstileRef.value?.reset();
     error.value = typeof err?.message === 'string' ? err.message : t('login.reset_failed');
   } finally {
     sending.value = false;
   }
 };
+
+const resendCode = () => sendCode({ forceNew: true });
 
 const validatePasswordRules = (pw: string) => {
   if (!pw) return false;
@@ -177,6 +289,7 @@ const validatePasswordRules = (pw: string) => {
 };
 
 const resetPassword = async () => {
+  if (resetting.value || sending.value) return;
   error.value = '';
   const e = String(email.value || '')
     .trim()
@@ -210,13 +323,19 @@ const resetPassword = async () => {
       return;
     }
     setLastEmail(e);
-    router.replace({ path: '/login', query: { email: e } });
+    clearOtpFlow('password-reset');
+    router.replace('/login');
   } catch (err: any) {
     error.value = typeof err?.message === 'string' ? err.message : t('login.reset_failed');
   } finally {
     resetting.value = false;
   }
 };
+
+onMounted(() => {
+  const restoredCooldown = getOtpCooldownSeconds(readOtpFlow('password-reset'));
+  if (restoredCooldown > 0) startCooldown(restoredCooldown);
+});
 
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer);
@@ -351,6 +470,14 @@ onBeforeUnmount(() => {
   opacity: 0.5;
   cursor: not-allowed;
   background: rgba(255, 255, 255, 0.05);
+}
+
+.reset-resend {
+  margin-bottom: 12px;
+}
+
+.reset-resend-btn {
+  min-height: 44px;
 }
 
 .hint {

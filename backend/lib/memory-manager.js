@@ -8,6 +8,11 @@ const { callTextGenerate, callGeminiGenerate } = require('./ai-providers');
 const { fetchWithTimeout } = require('./fetch-utils');
 const { dedupeStrings } = require('./user-utils');
 const { API_KEY } = require('./config');
+const {
+  sanitizeAuditHistoryEntry,
+  sanitizeImageHistoryEntry,
+  sanitizeUserHistoryMemory
+} = require('./privacy-metadata');
 
 const toOneLine = (text) => {
   return String(text || '')
@@ -389,10 +394,11 @@ const appendUserImageHistory = (input) => {
   try {
     const userId = String(input?.userId || '').trim();
     if (!userId) return false;
-    const entry = input?.entry && typeof input.entry === 'object' ? input.entry : null;
+    const entry = sanitizeImageHistoryEntry(input?.entry);
     if (!entry) return false;
 
-    const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+    const rawMemory = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+    const mem = ensureUserMemoryShape(userId, sanitizeUserHistoryMemory(rawMemory).memory);
     const list = Array.isArray(mem.image_history) ? mem.image_history : [];
     const next = [entry, ...list].slice(0, IMAGE_HISTORY_MAX_ITEMS);
     mem.image_history = next;
@@ -414,10 +420,11 @@ const appendUserAuditHistory = (input) => {
   try {
     const userId = String(input?.userId || '').trim();
     if (!userId) return false;
-    const entry = input?.entry && typeof input.entry === 'object' ? input.entry : null;
+    const entry = sanitizeAuditHistoryEntry(input?.entry);
     if (!entry) return false;
 
-    const mem = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+    const rawMemory = ensureUserMemoryShape(userId, readUserMemory(userId, null));
+    const mem = ensureUserMemoryShape(userId, sanitizeUserHistoryMemory(rawMemory).memory);
     const list = Array.isArray(mem.audit_history) ? mem.audit_history : [];
     const next = [entry, ...list].slice(0, AUDIT_HISTORY_MAX_ITEMS);
     mem.audit_history = next;

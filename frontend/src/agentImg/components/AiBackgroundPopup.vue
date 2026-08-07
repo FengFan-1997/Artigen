@@ -1,7 +1,15 @@
 <template>
   <transition name="fade">
-    <div v-if="visible" class="modal-overlay" @click="close">
-      <div class="modal-container" @click.stop>
+    <div v-if="visible" class="modal-overlay" @click.self="close">
+      <section
+        ref="dialogRef"
+        class="modal-container"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="step === 'start' ? 'ai-background-start-title' : 'ai-background-editor-title'"
+        tabindex="-1"
+        @keydown="onDialogKeydown"
+      >
         <CloseButton @click="close" />
 
         <div class="layout">
@@ -17,6 +25,7 @@
                     type="button"
                     class="bg-card"
                     :class="{ active: selectedPresetId === p.id }"
+                    :aria-pressed="selectedPresetId === p.id"
                     @click="selectPreset(p.id)"
                   >
                     <img class="bg-thumb" :src="p.src" :alt="p.title" />
@@ -28,14 +37,14 @@
 
           <section class="main-panel">
             <div v-if="step === 'start'" class="start-panel">
-              <div class="start-title">{{ ui.startTitle }}</div>
+              <h2 id="ai-background-start-title" class="start-title">{{ ui.startTitle }}</h2>
               <div class="start-desc">{{ ui.startDesc }}</div>
               <div class="start-tips">
                 <div v-for="(t, idx) in ui.tips" :key="idx" class="tip-item">{{ t }}</div>
               </div>
 
               <div class="start-controls">
-                <div class="mode-toggle">
+                <div class="mode-toggle" role="group" :aria-label="ui.modeLabel">
                   <div
                     class="mode-pill"
                     :style="{
@@ -46,6 +55,7 @@
                     class="mode-btn"
                     type="button"
                     :class="{ active: bgMode === 'replace' }"
+                    :aria-pressed="bgMode === 'replace'"
                     @click="bgMode = 'replace'"
                   >
                     {{ ui.modeReplace }}
@@ -54,6 +64,7 @@
                     class="mode-btn"
                     type="button"
                     :class="{ active: bgMode === 'add' }"
+                    :aria-pressed="bgMode === 'add'"
                     @click="bgMode = 'add'"
                   >
                     {{ ui.modeAdd }}
@@ -79,9 +90,9 @@
 
             <div v-else class="editor-panel">
               <div class="editor-topbar">
-                <div class="editor-title">{{ ui.editorTitle }}</div>
+                <h2 id="ai-background-editor-title" class="editor-title">{{ ui.editorTitle }}</h2>
                 <div class="editor-tools">
-                  <div class="mode-toggle">
+                  <div class="mode-toggle" role="group" :aria-label="ui.modeLabel">
                     <div
                       class="mode-pill"
                       :style="{
@@ -92,6 +103,7 @@
                       class="mode-btn"
                       type="button"
                       :class="{ active: bgMode === 'replace' }"
+                      :aria-pressed="bgMode === 'replace'"
                       @click="bgMode = 'replace'"
                     >
                       {{ ui.modeReplace }}
@@ -100,6 +112,7 @@
                       class="mode-btn"
                       type="button"
                       :class="{ active: bgMode === 'add' }"
+                      :aria-pressed="bgMode === 'add'"
                       @click="bgMode = 'add'"
                     >
                       {{ ui.modeAdd }}
@@ -109,8 +122,9 @@
                     {{ ui.reset }}
                   </button>
                   <div class="zoom-row">
-                    <div class="zoom-label">{{ ui.zoom }}</div>
+                    <label class="zoom-label" for="ai-background-zoom">{{ ui.zoom }}</label>
                     <input
+                      id="ai-background-zoom"
                       class="zoom-slider"
                       type="range"
                       min="0.6"
@@ -131,45 +145,65 @@
                   ref="stageRef"
                   class="checkerboard"
                   :class="{ dragging: dragState.active }"
+                  role="group"
+                  tabindex="0"
+                  :aria-label="ui.stageLabel"
                   @pointerdown="onStagePointerDown"
                   @pointermove="onStagePointerMove"
                   @pointerup="onStagePointerUp"
                   @pointercancel="onStagePointerUp"
                   @wheel.prevent="onStageWheel"
                   @dblclick="resetTransform"
+                  @keydown="onStageKeyboard"
                 >
                   <div class="cutout-layer">
                     <img
                       v-if="cutoutUrl"
                       class="cutout-img"
                       :src="cutoutUrl"
-                      alt="Cutout"
+                      :alt="ui.subjectPreview"
                       :style="cutoutStyle"
                     />
                     <img
                       v-else
                       class="cutout-img"
                       :src="previewUrl"
-                      alt="Preview"
+                      :alt="ui.subjectPreview"
                       :style="cutoutStyle"
                     />
                   </div>
-                  <div v-if="!hasInteracted" class="stage-hint">{{ ui.helperHint }}</div>
+                  <div v-if="!hasInteracted" class="stage-hint">
+                    {{ ui.helperHint }}
+                  </div>
                 </div>
 
-                <div v-if="processing" class="processing-mask">
+                <div v-if="processing" class="processing-mask" role="status" aria-live="polite">
                   <div class="processing-card">
-                    <div class="spinner"></div>
+                    <div class="spinner" aria-hidden="true"></div>
                     <div class="processing-text">{{ ui.processing }}</div>
                   </div>
                 </div>
               </div>
 
+              <div v-if="cutoutFailed" class="cutout-error" role="alert">
+                {{ ui.localFailed }}
+              </div>
+
               <div class="editor-actions">
+                <label v-if="bgMode === 'add'" class="upload-consent" :class="{ disabled: quoteLoading || !!quoteError }">
+                  <input v-model="uploadConsent" type="checkbox" :disabled="quoteLoading || !!quoteError" />
+                  <span>{{ consentText }}</span>
+                </label>
+                <p v-if="bgMode === 'add' && quoteLoading" class="quote-status" role="status">
+                  {{ ui.quoteLoading }}
+                </p>
+                <p v-else-if="bgMode === 'add' && quoteError" class="quote-status error" role="alert">
+                  {{ quoteErrorText }}
+                </p>
                 <button
                   class="add-btn"
                   type="button"
-                  :disabled="!selectedFile || processing || loading"
+                  :disabled="!selectedFile || processing || loading || (bgMode === 'add' && (quoteLoading || !!quoteError || !uploadConsent))"
                   @click="handleAdd"
                 >
                   <span>{{ loading ? ui.adding : ui.add }}</span>
@@ -202,21 +236,28 @@
           accept="image/*"
           @change="onFileSelect"
         />
-      </div>
+      </section>
     </div>
   </transition>
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { trackEvent } from '../../utils/analytics';
 import { useLanguageStore } from '@/stores/language';
+import {
+  AiBackgroundCutoutWorkerClient,
+  CutoutCancelledError
+} from '../logic/aiBackground/AiBackgroundCutoutWorkerClient';
+import { enforceLocalBackgroundPolicy } from '../logic/aiBackground/backgroundWorkflow';
 import CloseButton from './CloseButton.vue';
 
 const props = defineProps<{
   visible: boolean;
   creditsCost?: number;
+  quoteLoading?: boolean;
+  quoteError?: string;
 }>();
 
 const emit = defineEmits<{
@@ -226,7 +267,6 @@ const emit = defineEmits<{
     file: File,
     args: {
       mode: 'replace' | 'add';
-      background: string;
       presetId: string;
       presetSrc: string;
       presetW: number;
@@ -243,13 +283,16 @@ const { currentLang } = storeToRefs(languageStore);
 
 const isDragOver = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
+const dialogRef = ref<HTMLElement | null>(null);
 const selectedFile = ref<File | null>(null);
 const previewUrl = ref<string>('');
 const loading = ref(false);
+const uploadConsent = ref(false);
 const previewObjectUrl = ref<string>('');
 const step = ref<'start' | 'edit'>('start');
 const processing = ref(false);
 const cutoutUrl = ref('');
+const cutoutFailed = ref(false);
 const stageRef = ref<HTMLDivElement | null>(null);
 const subjectScale = ref(1);
 const subjectOffset = ref({ x: 0, y: 0 });
@@ -273,7 +316,9 @@ const dragState = ref<{
   my: 0
 });
 let pointerCache = new Map<number, { x: number; y: number }>();
-let cutoutJobId = 0;
+let returnFocus: HTMLElement | null = null;
+let sourceRevision = 0;
+const cutoutClient = new AiBackgroundCutoutWorkerClient();
 
 type BgCategory = 'ecommerce' | 'daily' | 'portrait' | 'landscape';
 type BgPreset = {
@@ -478,8 +523,6 @@ const groupedPresets = computed(() => {
   }));
 });
 
-const selectedPresetResolvedSrc = computed(() => resolvePublicSrc(selectedPreset.value.src));
-
 const ui = computed(() => {
   const en = currentLang.value === 'en';
   return {
@@ -500,12 +543,20 @@ const ui = computed(() => {
     editorTitle: en ? 'Preview (background removed)' : '预览（已去背景）',
     modeReplace: en ? 'Replace' : '替换',
     modeAdd: en ? 'Add' : '添加',
+    modeLabel: en ? 'Background processing mode' : '背景处理模式',
     reset: en ? 'Reset' : '重置',
     zoom: en ? 'Zoom' : '缩放',
     reupload: en ? 'Re-upload' : '重新上传',
     processing: en ? 'Detecting subject…' : '识别主体中…',
+    localFailed: en
+      ? 'Local background processing failed. Try another image or retry. No cloud request was sent.'
+      : '本地背景处理失败，请更换图片或重试。本次未发送云端请求。',
     selectedBg: en ? 'Selected background' : '已选背景',
     helperHint: en ? 'Drag to move. Pinch or wheel to zoom.' : '拖拽移动，双指或滚轮缩放',
+    stageLabel: en
+      ? 'Subject positioning canvas. Use arrow keys to move, plus or minus to zoom, and Home to reset.'
+      : '主体定位画布。方向键移动，加减键缩放，Home 键重置。',
+    subjectPreview: en ? 'Subject preview' : '主体预览',
     add: en
       ? bgMode.value === 'add'
         ? 'Generate'
@@ -513,7 +564,10 @@ const ui = computed(() => {
       : bgMode.value === 'add'
         ? '生成'
         : '添加',
-    adding: en ? 'Processing…' : '处理中…'
+    adding: en ? 'Processing…' : '处理中…',
+    quoteLoading: en ? 'Loading the server quote…' : '正在读取服务端报价…',
+    loginRequired: en ? 'Sign in before requesting a quote.' : '请先登录后获取报价。',
+    paidUnavailable: en ? 'AI scene generation is currently unavailable.' : 'AI 场景生成当前不可用。'
   };
 });
 
@@ -524,7 +578,22 @@ const costText = computed(() => {
   return `${n}`;
 });
 
+const consentText = computed(() => {
+  const credits = costText.value || '?';
+  return currentLang.value === 'en'
+    ? `I agree to upload this image for AI scene generation (retained up to 24 hours) and reserve ${credits} credits. Failed or cancelled tasks are refunded.`
+    : `我同意上传此图片生成 AI 场景（最长保留 24 小时），并预占 ${credits} 点数；失败或取消会退款。`;
+});
+
+const quoteErrorText = computed(() => {
+  if (props.quoteError === 'LOGIN_REQUIRED') return ui.value.loginRequired;
+  return ui.value.paidUnavailable;
+});
+
 const close = () => {
+  sourceRevision += 1;
+  cutoutClient.cancelCurrent('AI_BACKGROUND_POPUP_CLOSED');
+  processing.value = false;
   emit('close');
 };
 
@@ -557,12 +626,9 @@ const unlockScroll = () => {
   scrollLocked = false;
 };
 
-const onKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape') close();
-};
-
 const resetState = () => {
-  cutoutJobId += 1;
+  sourceRevision += 1;
+  cutoutClient.cancelCurrent('AI_BACKGROUND_SOURCE_RESET');
   try {
     if (previewObjectUrl.value) URL.revokeObjectURL(previewObjectUrl.value);
   } catch {}
@@ -570,11 +636,16 @@ const resetState = () => {
   previewUrl.value = '';
   selectedFile.value = null;
   loading.value = false;
+  uploadConsent.value = false;
   isDragOver.value = false;
   selectedPresetId.value = 'studio-white';
   step.value = 'start';
   processing.value = false;
+  try {
+    if (cutoutUrl.value) URL.revokeObjectURL(cutoutUrl.value);
+  } catch {}
   cutoutUrl.value = '';
+  cutoutFailed.value = false;
   subjectScale.value = 1;
   subjectOffset.value = { x: 0, y: 0 };
   bgMode.value = 'replace';
@@ -586,25 +657,64 @@ const resetState = () => {
   } catch {}
 };
 
+watch(bgMode, (mode) => {
+  if (mode !== 'add') uploadConsent.value = false;
+});
+
 watch(
   () => !!props.visible,
-  (v) => {
+  async (v) => {
     if (v) {
+      returnFocus = globalThis.document.activeElement instanceof HTMLElement
+        ? globalThis.document.activeElement
+        : null;
       resetState();
       lockScroll();
-      document.addEventListener('keydown', onKeydown);
+      await nextTick();
+      dialogRef.value?.focus();
       return;
     }
-    document.removeEventListener('keydown', onKeydown);
     unlockScroll();
     resetState();
-  }
+    returnFocus?.focus();
+    returnFocus = null;
+  },
+  { immediate: true }
 );
 
 onUnmounted(() => {
-  document.removeEventListener('keydown', onKeydown);
+  sourceRevision += 1;
+  cutoutClient.dispose();
   unlockScroll();
+  returnFocus?.focus();
+  returnFocus = null;
 });
+
+const onDialogKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    close();
+    return;
+  }
+  if (event.key !== 'Tab' || !dialogRef.value) return;
+  const focusable = Array.from(dialogRef.value.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+  )).filter((element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true');
+  if (!focusable.length) {
+    event.preventDefault();
+    dialogRef.value.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && globalThis.document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && globalThis.document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+};
 
 const triggerFileSelect = () => {
   fileInput.value?.click();
@@ -625,701 +735,21 @@ const loadImage = async (src: string) => {
   }
 };
 
-const avgCornerColor = (data: Uint8ClampedArray, w: number, h: number) => {
-  const block = Math.max(4, Math.round(Math.min(w, h) * 0.02));
-  const samples: Array<{ x0: number; y0: number }> = [
-    { x0: 0, y0: 0 },
-    { x0: Math.max(0, w - block), y0: 0 },
-    { x0: 0, y0: Math.max(0, h - block) },
-    { x0: Math.max(0, w - block), y0: Math.max(0, h - block) }
-  ];
-
-  const cornerMeans = samples.map(({ x0, y0 }) => {
-    let r = 0;
-    let g = 0;
-    let b = 0;
-    let n = 0;
-    for (let y = y0; y < Math.min(h, y0 + block); y += 1) {
-      for (let x = x0; x < Math.min(w, x0 + block); x += 1) {
-        const i = (y * w + x) * 4;
-        r += data[i] || 0;
-        g += data[i + 1] || 0;
-        b += data[i + 2] || 0;
-        n += 1;
-      }
-    }
-    return { r: r / Math.max(1, n), g: g / Math.max(1, n), b: b / Math.max(1, n) };
-  });
-
-  const mean = cornerMeans.reduce(
-    (acc, c) => ({ r: acc.r + c.r, g: acc.g + c.g, b: acc.b + c.b }),
-    { r: 0, g: 0, b: 0 }
-  );
-  mean.r /= cornerMeans.length;
-  mean.g /= cornerMeans.length;
-  mean.b /= cornerMeans.length;
-
-  const maxCornerDist = cornerMeans.reduce((m, c) => {
-    const dr = c.r - mean.r;
-    const dg = c.g - mean.g;
-    const db = c.b - mean.b;
-    return Math.max(m, Math.sqrt(dr * dr + dg * dg + db * db));
-  }, 0);
-
-  return { mean, maxCornerDist };
-};
-
-const createCutoutFromFile = async (file: File) => {
-  const fileUrl = URL.createObjectURL(file);
-  try {
-    const img = await loadImage(fileUrl);
-    const w = Math.max(1, Math.round(img.naturalWidth || img.width || 1));
-    const h = Math.max(1, Math.round(img.naturalHeight || img.height || 1));
-
-    const maxMaskDim = 760;
-    const s = Math.min(1, maxMaskDim / Math.max(w, h));
-    const sw = Math.max(1, Math.round(w * s));
-    const sh = Math.max(1, Math.round(h * s));
-
-    const small = document.createElement('canvas');
-    small.width = sw;
-    small.height = sh;
-    const sctx = small.getContext('2d', { willReadFrequently: true });
-    if (!sctx) return '';
-    sctx.drawImage(img, 0, 0, sw, sh);
-    const sData = sctx.getImageData(0, 0, sw, sh);
-
-    const rgbToLab = (r8: number, g8: number, b8: number) => {
-      const r = (r8 || 0) / 255;
-      const g = (g8 || 0) / 255;
-      const b = (b8 || 0) / 255;
-      const rl = r <= 0.04045 ? r / 12.92 : Math.pow((r + 0.055) / 1.055, 2.4);
-      const gl = g <= 0.04045 ? g / 12.92 : Math.pow((g + 0.055) / 1.055, 2.4);
-      const bl = b <= 0.04045 ? b / 12.92 : Math.pow((b + 0.055) / 1.055, 2.4);
-      const x = (0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl) * 100;
-      const y = (0.2126729 * rl + 0.7151522 * gl + 0.072175 * bl) * 100;
-      const z = (0.0193339 * rl + 0.119192 * gl + 0.9503041 * bl) * 100;
-      const fx0 = x / 95.047;
-      const fy0 = y / 100;
-      const fz0 = z / 108.883;
-      const d = 6 / 29;
-      const d3 = d * d * d;
-      const f = (t: number) => (t > d3 ? Math.cbrt(t) : t / (3 * d * d) + 4 / 29);
-      const fx = f(fx0);
-      const fy = f(fy0);
-      const fz = f(fz0);
-      const l = 116 * fy - 16;
-      const a = 500 * (fx - fy);
-      const bb = 200 * (fy - fz);
-      return { l, a, b: bb };
-    };
-
-    const borderIdx: number[] = [];
-    const borderBand = Math.min(3, Math.max(1, Math.round(Math.min(sw, sh) / 120)));
-    const borderStep = Math.max(1, Math.round(Math.min(sw, sh) / 240));
-    for (let x = 0; x < sw; x += borderStep) {
-      for (let by = 0; by < borderBand; by += 1) {
-        borderIdx.push(by * sw + x);
-        borderIdx.push((sh - 1 - by) * sw + x);
-      }
-    }
-    for (let y = 0; y < sh; y += borderStep) {
-      for (let bx = 0; bx < borderBand; bx += 1) {
-        borderIdx.push(y * sw + bx);
-        borderIdx.push(y * sw + (sw - 1 - bx));
-      }
-    }
-
-    const pts = new Float32Array(borderIdx.length * 3);
-    for (let i = 0; i < borderIdx.length; i += 1) {
-      const p = borderIdx[i];
-      const o = p * 4;
-      const lab = rgbToLab(sData.data[o] || 0, sData.data[o + 1] || 0, sData.data[o + 2] || 0);
-      pts[i * 3] = lab.l;
-      pts[i * 3 + 1] = lab.a;
-      pts[i * 3 + 2] = lab.b;
-    }
-
-    const kMeans = (points: Float32Array, k: number, iters: number) => {
-      const n = Math.trunc(points.length / 3);
-      const kk = Math.max(1, Math.min(Math.trunc(k) || 1, n || 1));
-      const centers = new Float32Array(kk * 3);
-      const init = new Int32Array(k);
-      init[0] = 0;
-      for (let ci = 1; ci < kk; ci += 1) {
-        let best = 0;
-        let bestD = -1;
-        for (let i = 0; i < n; i += 1) {
-          const pl = points[i * 3];
-          const pa = points[i * 3 + 1];
-          const pb = points[i * 3 + 2];
-          let minD = Number.POSITIVE_INFINITY;
-          for (let j = 0; j < ci; j += 1) {
-            const jj = init[j] * 3;
-            const dl = pl - points[jj];
-            const da = pa - points[jj + 1];
-            const db = pb - points[jj + 2];
-            const d2 = dl * dl + da * da + db * db;
-            if (d2 < minD) minD = d2;
-          }
-          if (minD > bestD) {
-            bestD = minD;
-            best = i;
-          }
-        }
-        init[ci] = best;
-      }
-      for (let c = 0; c < kk; c += 1) {
-        const src = init[c] * 3;
-        centers[c * 3] = points[src];
-        centers[c * 3 + 1] = points[src + 1];
-        centers[c * 3 + 2] = points[src + 2];
-      }
-      const assign = new Int32Array(n);
-      for (let it = 0; it < iters; it += 1) {
-        const sum = new Float32Array(kk * 3);
-        const cnt = new Int32Array(kk);
-        for (let i = 0; i < n; i += 1) {
-          const pl = points[i * 3];
-          const pa = points[i * 3 + 1];
-          const pb = points[i * 3 + 2];
-          let bestK = 0;
-          let bestD = Number.POSITIVE_INFINITY;
-          for (let c = 0; c < kk; c += 1) {
-            const cl = centers[c * 3];
-            const ca = centers[c * 3 + 1];
-            const cb = centers[c * 3 + 2];
-            const dl = pl - cl;
-            const da = pa - ca;
-            const db = pb - cb;
-            const d2 = dl * dl + da * da + db * db;
-            if (d2 < bestD) {
-              bestD = d2;
-              bestK = c;
-            }
-          }
-          assign[i] = bestK;
-          cnt[bestK] += 1;
-          sum[bestK * 3] += pl;
-          sum[bestK * 3 + 1] += pa;
-          sum[bestK * 3 + 2] += pb;
-        }
-        for (let c = 0; c < kk; c += 1) {
-          const cCount = cnt[c] || 0;
-          if (!cCount) continue;
-          centers[c * 3] = sum[c * 3] / cCount;
-          centers[c * 3 + 1] = sum[c * 3 + 1] / cCount;
-          centers[c * 3 + 2] = sum[c * 3 + 2] / cCount;
-        }
-      }
-      return centers;
-    };
-
-    const centersAll = kMeans(pts, 6, 12);
-    const kAll = Math.max(1, Math.trunc(centersAll.length / 3));
-    const labL = new Float32Array(sw * sh);
-    const labA = new Float32Array(sw * sh);
-    const labB = new Float32Array(sw * sh);
-    for (let p = 0; p < sw * sh; p += 1) {
-      const o = p * 4;
-      const lab = rgbToLab(sData.data[o] || 0, sData.data[o + 1] || 0, sData.data[o + 2] || 0);
-      labL[p] = lab.l;
-      labA[p] = lab.a;
-      labB[p] = lab.b;
-    }
-
-    const nearestCenter = (l: number, a: number, b: number, centers: Float32Array, k: number) => {
-      let bestK = 0;
-      let bestD = Number.POSITIVE_INFINITY;
-      for (let c = 0; c < k; c += 1) {
-        const cl = centers[c * 3];
-        const ca = centers[c * 3 + 1];
-        const cb = centers[c * 3 + 2];
-        const dl = l - cl;
-        const da = a - ca;
-        const db = b - cb;
-        const d2 = dl * dl + da * da + db * db;
-        if (d2 < bestD) {
-          bestD = d2;
-          bestK = c;
-        }
-      }
-      return { idx: bestK, d2: bestD };
-    };
-
-    const borderCounts = new Int32Array(kAll);
-    for (let i = 0; i < borderIdx.length; i += 1) {
-      const p = borderIdx[i];
-      const res = nearestCenter(labL[p] || 0, labA[p] || 0, labB[p] || 0, centersAll, kAll);
-      borderCounts[res.idx] += 1;
-    }
-
-    const centerCounts = new Int32Array(kAll);
-    const cx0 = Math.round(sw * 0.28);
-    const cx1 = Math.round(sw * 0.72);
-    const cy0 = Math.round(sh * 0.28);
-    const cy1 = Math.round(sh * 0.72);
-    const centerStep = Math.max(1, Math.round(Math.min(sw, sh) / 220));
-    for (let y = cy0; y < cy1; y += centerStep) {
-      for (let x = cx0; x < cx1; x += centerStep) {
-        const p = y * sw + x;
-        const res = nearestCenter(labL[p] || 0, labA[p] || 0, labB[p] || 0, centersAll, kAll);
-        centerCounts[res.idx] += 1;
-      }
-    }
-
-    const clusterOrder = Array.from({ length: kAll }, (_, i) => i).sort((i, j) => {
-      const si = (borderCounts[i] || 0) - (centerCounts[i] || 0) * 0.85;
-      const sj = (borderCounts[j] || 0) - (centerCounts[j] || 0) * 0.85;
-      if (sj !== si) return sj - si;
-      return (borderCounts[j] || 0) - (borderCounts[i] || 0);
-    });
-    const bgClusters: number[] = [];
-    const borderTotal = Math.max(1, borderIdx.length);
-    for (let i = 0; i < clusterOrder.length; i += 1) {
-      const c = clusterOrder[i];
-      if ((borderCounts[c] || 0) / borderTotal < 0.08) continue;
-      bgClusters.push(c);
-      if (bgClusters.length >= 3) break;
-    }
-    if (!bgClusters.length) bgClusters.push(clusterOrder[0] ?? 0);
-
-    const bgDistSq = new Float32Array(sw * sh);
-    for (let p = 0; p < sw * sh; p += 1) {
-      const pl = labL[p];
-      const pa = labA[p];
-      const pb = labB[p];
-      let best = Number.POSITIVE_INFINITY;
-      for (let i = 0; i < bgClusters.length; i += 1) {
-        const c = bgClusters[i] ?? 0;
-        const cl = centersAll[c * 3];
-        const ca = centersAll[c * 3 + 1];
-        const cb = centersAll[c * 3 + 2];
-        const dl = pl - cl;
-        const da = pa - ca;
-        const db = pb - cb;
-        const d2 = dl * dl + da * da + db * db;
-        if (d2 < best) best = d2;
-      }
-      bgDistSq[p] = best;
-    }
-
-    const gray = new Float32Array(sw * sh);
-    for (let p = 0; p < sw * sh; p += 1) {
-      const o = p * 4;
-      const r = sData.data[o] || 0;
-      const g = sData.data[o + 1] || 0;
-      const b = sData.data[o + 2] || 0;
-      gray[p] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    }
-    const edge = new Float32Array(sw * sh);
-    for (let y = 1; y < sh - 1; y += 1) {
-      for (let x = 1; x < sw - 1; x += 1) {
-        const idx = y * sw + x;
-        const g00 = gray[idx - sw - 1] || 0;
-        const g01 = gray[idx - sw] || 0;
-        const g02 = gray[idx - sw + 1] || 0;
-        const g10 = gray[idx - 1] || 0;
-        const g12 = gray[idx + 1] || 0;
-        const g20 = gray[idx + sw - 1] || 0;
-        const g21 = gray[idx + sw] || 0;
-        const g22 = gray[idx + sw + 1] || 0;
-        const gx = -g00 - 2 * g10 - g20 + g02 + 2 * g12 + g22;
-        const gy = -g00 - 2 * g01 - g02 + g20 + 2 * g21 + g22;
-        edge[idx] = Math.min(255, (Math.abs(gx) + Math.abs(gy)) / 8);
-      }
-    }
-
-    const pick = (arr: number[], p: number) => {
-      if (!arr.length) return 0;
-      const a = [...arr].sort((x, y) => x - y);
-      const idx = Math.max(0, Math.min(a.length - 1, Math.round((a.length - 1) * p)));
-      return a[idx] || 0;
-    };
-
-    const borderDist: number[] = [];
-    const borderEdge: number[] = [];
-    for (let i = 0; i < borderIdx.length; i += 1) {
-      const p = borderIdx[i];
-      borderDist.push(bgDistSq[p] || 0);
-      borderEdge.push(edge[p] || 0);
-    }
-    const centerDist: number[] = [];
-    const centerEdge: number[] = [];
-    for (let y = cy0; y < cy1; y += centerStep) {
-      for (let x = cx0; x < cx1; x += centerStep) {
-        const p = y * sw + x;
-        centerDist.push(bgDistSq[p] || 0);
-        centerEdge.push(edge[p] || 0);
-      }
-    }
-    const distP95 = pick(borderDist, 0.95);
-    const distP80 = pick(borderDist, 0.8);
-    const distP60 = pick(borderDist, 0.6);
-    const centerP30 = pick(centerDist, 0.3);
-    const centerP60 = pick(centerDist, 0.6);
-    const centerP80 = pick(centerDist, 0.8);
-    const edgeP90 = pick(borderEdge, 0.9);
-    const edgeP60 = pick(borderEdge, 0.6);
-    const edgeP40 = pick(borderEdge, 0.4);
-    const centerEdgeP70 = pick(centerEdge, 0.7);
-    let distT = Math.max(180, Math.min(56000, distP95 * 2 + distP80 * 0.55 + distP60 * 0.25));
-    if (centerDist.length && centerP30 > distP80 * 1.15) distT = Math.min(distT, centerP30 * 1.25);
-    if (centerDist.length && centerP60 < distP60 * 0.9) distT = Math.max(160, distT * 0.88);
-    if (centerDist.length && centerP80 > distP80 * 1.4) distT = Math.min(60000, distT * 1.08);
-    if (edgeP60 < 12) distT *= 1.05;
-    distT = Math.max(160, Math.min(60000, distT));
-    let edgeT = Math.max(16, Math.min(140, edgeP90 + 14));
-    if (centerEdgeP70 > edgeT * 0.9) edgeT = Math.max(14, edgeT * 0.88);
-    if (edgeP40 < 8) edgeT = Math.max(12, edgeT * 0.9);
-    if (edgeP90 > 70 && edgeP60 > 25) edgeT = Math.min(140, edgeT * 1.12);
-
-    const cand = new Uint8Array(sw * sh);
-    const strong = new Uint8Array(sw * sh);
-    const strongT = Math.max(80, Math.min(distT * 0.3, distP80 * 1.05));
-    const guardX0 = Math.round(sw * 0.18);
-    const guardX1 = Math.round(sw * 0.82);
-    const guardY0 = Math.round(sh * 0.18);
-    const guardY1 = Math.round(sh * 0.82);
-    const borderBand2 = Math.max(2, Math.round(Math.min(sw, sh) / 60));
-    for (let y = 0; y < sh; y += 1) {
-      for (let x = 0; x < sw; x += 1) {
-        const p = y * sw + x;
-        const d = bgDistSq[p] || 0;
-        const e = edge[p] || 0;
-        let ok = d <= distT && (e <= edgeT || d <= distT * 0.48);
-        if (x >= guardX0 && x <= guardX1 && y >= guardY0 && y <= guardY1) {
-          if (e >= edgeT * 0.75 && d >= distT * 0.22) ok = false;
-        }
-        if (!ok) {
-          const nearBorder =
-            x < borderBand2 || y < borderBand2 || x >= sw - borderBand2 || y >= sh - borderBand2;
-          if (nearBorder && d <= distT * 1.22 && e <= edgeT * 0.65) ok = true;
-        }
-        cand[p] = ok ? 1 : 0;
-        strong[p] = d <= strongT && e <= edgeT * 0.75 ? 1 : 0;
-      }
-    }
-
-    const bg = new Uint8Array(sw * sh);
-    const qx = new Int32Array(sw * sh);
-    const qy = new Int32Array(sw * sh);
-    let qs = 0;
-    let qe = 0;
-    const push = (x: number, y: number) => {
-      qx[qe] = x;
-      qy[qe] = y;
-      qe += 1;
-    };
-
-    for (let x = 0; x < sw; x += 1) {
-      if (cand[x]) push(x, 0);
-      const btm = (sh - 1) * sw + x;
-      if (cand[btm]) push(x, sh - 1);
-    }
-    for (let y = 0; y < sh; y += 1) {
-      const l = y * sw;
-      const r = y * sw + (sw - 1);
-      if (cand[l]) push(0, y);
-      if (cand[r]) push(sw - 1, y);
-    }
-
-    while (qs < qe) {
-      const x = qx[qs];
-      const y = qy[qs];
-      qs += 1;
-      const idx = y * sw + x;
-      if (bg[idx]) continue;
-      if (!cand[idx]) continue;
-      bg[idx] = 1;
-      if (x > 0) push(x - 1, y);
-      if (x + 1 < sw) push(x + 1, y);
-      if (y > 0) push(x, y - 1);
-      if (y + 1 < sh) push(x, y + 1);
-    }
-
-    const qStrong = new Int32Array(sw * sh);
-    let qs3 = 0;
-    let qe3 = 0;
-    for (let p = 0; p < sw * sh; p += 1) {
-      if (!bg[p]) continue;
-      qStrong[qe3] = p;
-      qe3 += 1;
-    }
-    while (qs3 < qe3) {
-      const idx = qStrong[qs3];
-      qs3 += 1;
-      const y = Math.trunc(idx / sw);
-      const x = idx - y * sw;
-      if (x > 0) {
-        const n = idx - 1;
-        if (!bg[n] && strong[n]) {
-          bg[n] = 1;
-          qStrong[qe3] = n;
-          qe3 += 1;
-        }
-      }
-      if (x + 1 < sw) {
-        const n = idx + 1;
-        if (!bg[n] && strong[n]) {
-          bg[n] = 1;
-          qStrong[qe3] = n;
-          qe3 += 1;
-        }
-      }
-      if (y > 0) {
-        const n = idx - sw;
-        if (!bg[n] && strong[n]) {
-          bg[n] = 1;
-          qStrong[qe3] = n;
-          qe3 += 1;
-        }
-      }
-      if (y + 1 < sh) {
-        const n = idx + sw;
-        if (!bg[n] && strong[n]) {
-          bg[n] = 1;
-          qStrong[qe3] = n;
-          qe3 += 1;
-        }
-      }
-    }
-    const pcx0 = Math.round(sw * 0.22);
-    const pcx1 = Math.round(sw * 0.78);
-    const pcy0 = Math.round(sh * 0.22);
-    const pcy1 = Math.round(sh * 0.78);
-    for (let y = pcy0; y < pcy1; y += 1) {
-      for (let x = pcx0; x < pcx1; x += 1) {
-        const idx = y * sw + x;
-        if (!bg[idx]) continue;
-        const d = bgDistSq[idx] || 0;
-        const e = edge[idx] || 0;
-        if (e >= edgeT * 0.8 && d >= distT * 0.25) bg[idx] = 0;
-      }
-    }
-
-    const comp = new Int32Array(sw * sh);
-    comp.fill(-1);
-    const q = new Int32Array(sw * sh);
-    let compId = 0;
-    let bestId = -1;
-    let bestScore = -1;
-    let maxId = -1;
-    let maxArea = 0;
-    const bx0 = Math.round(sw * 0.22);
-    const bx1 = Math.round(sw * 0.78);
-    const by0 = Math.round(sh * 0.22);
-    const by1 = Math.round(sh * 0.78);
-    for (let p = 0; p < sw * sh; p += 1) {
-      if (bg[p]) continue;
-      if (comp[p] !== -1) continue;
-      let qs2 = 0;
-      let qe2 = 0;
-      q[qe2] = p;
-      qe2 += 1;
-      comp[p] = compId;
-      let area = 0;
-      let touchesCenter = false;
-      let edgeSum = 0;
-      while (qs2 < qe2) {
-        const idx = q[qs2];
-        qs2 += 1;
-        area += 1;
-        const y = Math.trunc(idx / sw);
-        const x = idx - y * sw;
-        edgeSum += edge[idx] || 0;
-        if (!touchesCenter && x >= bx0 && x <= bx1 && y >= by0 && y <= by1) touchesCenter = true;
-        if (x > 0) {
-          const n = idx - 1;
-          if (!bg[n] && comp[n] === -1) {
-            comp[n] = compId;
-            q[qe2] = n;
-            qe2 += 1;
-          }
-        }
-        if (x + 1 < sw) {
-          const n = idx + 1;
-          if (!bg[n] && comp[n] === -1) {
-            comp[n] = compId;
-            q[qe2] = n;
-            qe2 += 1;
-          }
-        }
-        if (y > 0) {
-          const n = idx - sw;
-          if (!bg[n] && comp[n] === -1) {
-            comp[n] = compId;
-            q[qe2] = n;
-            qe2 += 1;
-          }
-        }
-        if (y + 1 < sh) {
-          const n = idx + sw;
-          if (!bg[n] && comp[n] === -1) {
-            comp[n] = compId;
-            q[qe2] = n;
-            qe2 += 1;
-          }
-        }
-      }
-      if (area > maxArea) {
-        maxArea = area;
-        maxId = compId;
-      }
-      const edgeDensity = edgeSum / Math.max(1, area);
-      let score = area * (0.65 + Math.min(1.1, edgeDensity / 30) * 0.55);
-      if (touchesCenter) score *= 1.1;
-      if (score > bestScore) {
-        bestScore = score;
-        bestId = compId;
-      }
-      compId += 1;
-    }
-
-    if (bestId === -1 && maxId !== -1) bestId = maxId;
-
-    if (bestId !== -1) {
-      for (let p = 0; p < sw * sh; p += 1) {
-        if (bg[p]) continue;
-        if (comp[p] !== bestId) bg[p] = 1;
-      }
-      const aggressiveT = distT * 0.4;
-      const edgeLoose = edgeT * 1.05;
-      for (let p = 0; p < sw * sh; p += 1) {
-        if (bg[p]) continue;
-        if ((bgDistSq[p] || 0) <= aggressiveT && (edge[p] || 0) <= edgeLoose) bg[p] = 1;
-      }
-    }
-
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return '';
-    ctx.drawImage(img, 0, 0, w, h);
-    const imgData = ctx.getImageData(0, 0, w, h);
-    const out = imgData.data;
-
-    const bgCount = bg.reduce((acc, v) => acc + (v ? 1 : 0), 0);
-    const bgRatio = bgCount / Math.max(1, sw * sh);
-    const useFloodFillMask = bgRatio >= 0.002 && bgRatio <= 0.998;
-
-    if (useFloodFillMask) {
-      const expandMask = (mask: Uint8Array, width: number, height: number, radius: number) => {
-        let cur = mask;
-        for (let r = 0; r < radius; r += 1) {
-          const next = new Uint8Array(cur.length);
-          next.set(cur);
-          for (let y = 1; y < height - 1; y += 1) {
-            for (let x = 1; x < width - 1; x += 1) {
-              const idx = y * width + x;
-              if (!cur[idx]) continue;
-              next[idx - 1] = 1;
-              next[idx + 1] = 1;
-              next[idx - width] = 1;
-              next[idx + width] = 1;
-              next[idx - width - 1] = 1;
-              next[idx - width + 1] = 1;
-              next[idx + width - 1] = 1;
-              next[idx + width + 1] = 1;
-            }
-          }
-          cur = next;
-        }
-        return cur;
-      };
-      const radius = 2;
-      let cur = new Float32Array(sw * sh);
-      const expandedBg = expandMask(bg, sw, sh, 1);
-      for (let i = 0; i < bg.length; i += 1) bg[i] = expandedBg[i] ? 1 : 0;
-      for (let i = 0; i < cur.length; i += 1) cur[i] = bg[i] ? 1 : 0;
-
-      const blurOnce = (src: Float32Array) => {
-        const dst = new Float32Array(sw * sh);
-        for (let y = 0; y < sh; y += 1) {
-          for (let x = 0; x < sw; x += 1) {
-            let sum = 0;
-            let n = 0;
-            for (let oy = -radius; oy <= radius; oy += 1) {
-              const yy = y + oy;
-              if (yy < 0 || yy >= sh) continue;
-              for (let ox = -radius; ox <= radius; ox += 1) {
-                const xx = x + ox;
-                if (xx < 0 || xx >= sw) continue;
-                sum += src[yy * sw + xx] || 0;
-                n += 1;
-              }
-            }
-            dst[y * sw + x] = sum / Math.max(1, n);
-          }
-        }
-        return dst;
-      };
-
-      cur = blurOnce(cur);
-      cur = blurOnce(cur);
-
-      const sample = (sx: number, sy: number) => {
-        const x0 = Math.max(0, Math.min(sw - 1, Math.floor(sx)));
-        const y0 = Math.max(0, Math.min(sh - 1, Math.floor(sy)));
-        const x1 = Math.min(sw - 1, x0 + 1);
-        const y1 = Math.min(sh - 1, y0 + 1);
-        const fx = Math.max(0, Math.min(1, sx - x0));
-        const fy = Math.max(0, Math.min(1, sy - y0));
-        const m00 = cur[y0 * sw + x0] || 0;
-        const m10 = cur[y0 * sw + x1] || 0;
-        const m01 = cur[y1 * sw + x0] || 0;
-        const m11 = cur[y1 * sw + x1] || 0;
-        const mx0 = m00 * (1 - fx) + m10 * fx;
-        const mx1 = m01 * (1 - fx) + m11 * fx;
-        return mx0 * (1 - fy) + mx1 * fy;
-      };
-
-      for (let y = 0; y < h; y += 1) {
-        const sy = (y / Math.max(1, h - 1)) * (sh - 1);
-        for (let x = 0; x < w; x += 1) {
-          const sx = (x / Math.max(1, w - 1)) * (sw - 1);
-          const m = sample(sx, sy);
-          const a = Math.round(Math.pow(Math.max(0, Math.min(1, 1 - m)), 1.15) * 255);
-          out[(y * w + x) * 4 + 3] = Math.max(0, Math.min(255, a));
-        }
-      }
-    } else {
-      const { mean: cMean, maxCornerDist } = avgCornerColor(out, w, h);
-      const t0 = Math.max(16, Math.min(46, 14 + maxCornerDist * 1.05));
-      const t1 = Math.max(t0 + 16, Math.min(110, t0 + 50));
-      for (let i = 0; i < out.length; i += 4) {
-        const dr = (out[i] || 0) - cMean.r;
-        const dg = (out[i + 1] || 0) - cMean.g;
-        const db = (out[i + 2] || 0) - cMean.b;
-        const d = Math.sqrt(dr * dr + dg * dg + db * db);
-        if (d <= t0) {
-          out[i + 3] = 0;
-          continue;
-        }
-        if (d >= t1) continue;
-        out[i + 3] = Math.max(0, Math.min(255, Math.round(((d - t0) / (t1 - t0)) * 255)));
-      }
-    }
-
-    ctx.putImageData(imgData, 0, 0);
-    return canvas.toDataURL('image/png');
-  } catch {
-    return '';
-  } finally {
-    try {
-      URL.revokeObjectURL(fileUrl);
-    } catch {}
+const composeLocal = async (
+  cutoutDataUrl: string,
+  options: {
+    preset: BgPreset;
+    presetSrc: string;
+    scale: number;
+    offset: { x: number; y: number };
   }
-};
-
-const composeLocal = async (cutoutDataUrl: string) => {
-  const bgUrl = selectedPresetResolvedSrc.value;
+) => {
+  const bgUrl = options.presetSrc;
   const bgImg = await loadImage(bgUrl);
   const fgImg = await loadImage(cutoutDataUrl);
 
-  const targetW = Math.max(1, Math.trunc(Number(selectedPreset.value.size.w) || 1024));
-  const targetH = Math.max(1, Math.trunc(Number(selectedPreset.value.size.h) || 1024));
+  const targetW = Math.max(1, Math.trunc(Number(options.preset.size.w) || 1024));
+  const targetH = Math.max(1, Math.trunc(Number(options.preset.size.h) || 1024));
 
   const canvas = document.createElement('canvas');
   canvas.width = targetW;
@@ -1343,11 +773,11 @@ const composeLocal = async (cutoutDataUrl: string) => {
   const maxSubjectH = Math.round(targetH * 0.86);
   const fgScale =
     Math.min(maxSubjectW / fgW, maxSubjectH / fgH) *
-    Math.max(0.6, Math.min(1.6, Number(subjectScale.value) || 1));
+    Math.max(0.6, Math.min(1.6, Number(options.scale) || 1));
   const drawW = Math.max(1, Math.round(fgW * fgScale));
   const drawH = Math.max(1, Math.round(fgH * fgScale));
-  const ox = Math.max(-0.5, Math.min(0.5, Number(subjectOffset.value.x) || 0));
-  const oy = Math.max(-0.5, Math.min(0.5, Number(subjectOffset.value.y) || 0));
+  const ox = Math.max(-0.5, Math.min(0.5, Number(options.offset.x) || 0));
+  const oy = Math.max(-0.5, Math.min(0.5, Number(options.offset.y) || 0));
   const dx = Math.round((targetW - drawW) / 2 + ox * targetW);
   const dy = Math.round((targetH - drawH) / 2 + oy * targetH);
   ctx.drawImage(fgImg, dx, dy, drawW, drawH);
@@ -1396,7 +826,6 @@ const syncPinchState = () => {
 const onStagePointerDown = (e: PointerEvent) => {
   const el = stageRef.value;
   if (!el) return;
-  if (processing.value) return;
   hasInteracted.value = true;
   pointerCache.set(e.pointerId, { x: e.clientX, y: e.clientY });
   try {
@@ -1422,7 +851,6 @@ const onStagePointerMove = (e: PointerEvent) => {
   if (!el) return;
   if (!pointerCache.has(e.pointerId)) return;
   if (!dragState.value.active) return;
-  if (processing.value) return;
   pointerCache.set(e.pointerId, { x: e.clientX, y: e.clientY });
   const rect = el.getBoundingClientRect();
 
@@ -1489,15 +917,51 @@ const onStagePointerUp = (e: PointerEvent) => {
 };
 
 const onStageWheel = (e: WheelEvent) => {
-  if (processing.value) return;
   hasInteracted.value = true;
   const step = 0.06;
   const dir = (e.deltaY || 0) > 0 ? -1 : 1;
   subjectScale.value = clamp(Number(subjectScale.value || 1) + dir * step, 0.6, 1.6);
 };
 
+const onStageKeyboard = (event: KeyboardEvent) => {
+  const moveStep = event.shiftKey ? 0.05 : 0.02;
+  const scaleStep = event.shiftKey ? 0.1 : 0.04;
+  const offset = subjectOffset.value;
+  if (event.key === 'ArrowLeft') subjectOffset.value = { ...offset, x: clamp(offset.x - moveStep, -0.5, 0.5) };
+  else if (event.key === 'ArrowRight') subjectOffset.value = { ...offset, x: clamp(offset.x + moveStep, -0.5, 0.5) };
+  else if (event.key === 'ArrowUp') subjectOffset.value = { ...offset, y: clamp(offset.y - moveStep, -0.5, 0.5) };
+  else if (event.key === 'ArrowDown') subjectOffset.value = { ...offset, y: clamp(offset.y + moveStep, -0.5, 0.5) };
+  else if (event.key === '+' || event.key === '=') subjectScale.value = clamp(Number(subjectScale.value) + scaleStep, 0.6, 1.6);
+  else if (event.key === '-' || event.key === '_') subjectScale.value = clamp(Number(subjectScale.value) - scaleStep, 0.6, 1.6);
+  else if (event.key === 'Home') resetTransform();
+  else return;
+  event.preventDefault();
+  hasInteracted.value = true;
+};
+
+const isCurrentSource = (file: File, revision: number) =>
+  props.visible && sourceRevision === revision && selectedFile.value === file;
+
+const replaceCutoutUrl = (nextUrl: string) => {
+  try {
+    if (cutoutUrl.value) URL.revokeObjectURL(cutoutUrl.value);
+  } catch {}
+  cutoutUrl.value = nextUrl;
+};
+
+const createCutoutForSource = async (file: File, revision: number) => {
+  const output = await cutoutClient.run({ source: file, sourceRevision: revision });
+  if (!isCurrentSource(file, revision)) {
+    throw new CutoutCancelledError('AI_BACKGROUND_CUTOUT_STALE');
+  }
+  return URL.createObjectURL(output);
+};
+
 const handleFile = (file: File) => {
   if (!file.type.startsWith('image/')) return;
+  sourceRevision += 1;
+  cutoutClient.cancelCurrent('AI_BACKGROUND_SOURCE_CHANGED');
+  const revision = sourceRevision;
   selectedFile.value = file;
   try {
     if (previewObjectUrl.value) URL.revokeObjectURL(previewObjectUrl.value);
@@ -1506,21 +970,28 @@ const handleFile = (file: File) => {
   previewObjectUrl.value = u;
   previewUrl.value = u;
   step.value = 'edit';
-  cutoutUrl.value = '';
+  replaceCutoutUrl('');
+  cutoutFailed.value = false;
+  loading.value = false;
   hasInteracted.value = false;
   pointerCache = new Map();
   dragState.value = { active: false, mode: 'none', px: 0, py: 0, dist: 0, mx: 0, my: 0 };
   resetTransform();
-  const jobId = (cutoutJobId += 1);
   void (async () => {
     processing.value = true;
     try {
-      const url = await createCutoutFromFile(file);
-      if (jobId !== cutoutJobId) return;
-      if (selectedFile.value !== file) return;
-      cutoutUrl.value = url || '';
+      const url = await createCutoutForSource(file, revision);
+      if (!isCurrentSource(file, revision)) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      replaceCutoutUrl(url);
+    } catch (value) {
+      if (isCurrentSource(file, revision) && !(value instanceof CutoutCancelledError)) {
+        cutoutFailed.value = true;
+      }
     } finally {
-      if (jobId === cutoutJobId) processing.value = false;
+      if (isCurrentSource(file, revision)) processing.value = false;
     }
   })();
 };
@@ -1543,48 +1014,82 @@ const handleAdd = async () => {
   const file = selectedFile.value;
   if (!file) return;
   if (processing.value) return;
+  const revision = sourceRevision;
+  const mode = bgMode.value;
+  const scale = Math.max(0.6, Math.min(1.6, Number(subjectScale.value) || 1));
+  const offset = {
+    x: Math.max(-0.5, Math.min(0.5, Number(subjectOffset.value.x) || 0)),
+    y: Math.max(-0.5, Math.min(0.5, Number(subjectOffset.value.y) || 0))
+  };
   loading.value = true;
   trackEvent('ai_bg_add_click', {
     presetId: String(selectedPresetId.value || '').trim(),
     mode: String(bgMode.value || '').trim(),
     hasCutout: !!cutoutUrl.value,
-    subjectScale: Math.max(0.6, Math.min(1.6, Number(subjectScale.value) || 1)),
-    offsetX: Math.max(-0.5, Math.min(0.5, Number(subjectOffset.value.x) || 0)),
-    offsetY: Math.max(-0.5, Math.min(0.5, Number(subjectOffset.value.y) || 0)),
+    subjectScale: scale,
+    offsetX: offset.x,
+    offsetY: offset.y,
     fileName: String(file.name || '').slice(0, 120),
     fileType: String(file.type || '').slice(0, 80),
     fileSize: Number(file.size || 0) || 0
   });
 
   const preset = selectedPreset.value;
-  const prompt = currentLang.value === 'en' ? preset.prompt.en : preset.prompt.zh;
-
+  const presetSrc = resolvePublicSrc(preset.src);
   try {
+    if (mode === 'add') {
+      if (!isCurrentSource(file, revision)) return;
+      emit('generate', file, {
+        mode,
+        presetId: preset.id,
+        presetSrc: preset.src,
+        presetW: preset.size.w,
+        presetH: preset.size.h,
+        subjectScale: scale,
+        subjectOffset: offset
+      });
+      return;
+    }
+
+    cutoutFailed.value = false;
     let cutout = cutoutUrl.value || '';
     if (!cutout) {
-      cutout = await createCutoutFromFile(file);
-      cutoutUrl.value = cutout || '';
+      processing.value = true;
+      cutout = await createCutoutForSource(file, revision);
+      if (!isCurrentSource(file, revision)) {
+        URL.revokeObjectURL(cutout);
+        return;
+      }
+      replaceCutoutUrl(cutout);
     }
-    let localResultUrl = '';
-    try {
-      localResultUrl = bgMode.value === 'replace' && cutout ? await composeLocal(cutout) : '';
-    } catch {}
+    if (!cutout) throw new Error('AI_BACKGROUND_CUTOUT_EMPTY_RESULT');
+    const composedResultUrl = await composeLocal(cutout, {
+      preset,
+      presetSrc,
+      scale,
+      offset
+    });
+    if (!isCurrentSource(file, revision)) return;
+    const localResultUrl = enforceLocalBackgroundPolicy(mode, composedResultUrl);
     emit('generate', file, {
-      mode: bgMode.value,
-      background: prompt,
+      mode,
       presetId: preset.id,
       presetSrc: preset.src,
       presetW: preset.size.w,
       presetH: preset.size.h,
-      localResultUrl: localResultUrl || undefined,
-      subjectScale: Math.max(0.6, Math.min(1.6, Number(subjectScale.value) || 1)),
-      subjectOffset: {
-        x: Math.max(-0.5, Math.min(0.5, Number(subjectOffset.value.x) || 0)),
-        y: Math.max(-0.5, Math.min(0.5, Number(subjectOffset.value.y) || 0))
-      }
+      localResultUrl,
+      subjectScale: scale,
+      subjectOffset: offset
     });
+  } catch (value) {
+    if (isCurrentSource(file, revision) && !(value instanceof CutoutCancelledError)) {
+      cutoutFailed.value = true;
+    }
   } finally {
-    loading.value = false;
+    if (isCurrentSource(file, revision)) {
+      loading.value = false;
+      processing.value = false;
+    }
   }
 };
 
@@ -1604,8 +1109,8 @@ const selectPreset = (id: string) => {
   position: absolute;
   top: 16px;
   right: 16px;
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   border: none;
   background: rgba(255, 255, 255, 0.05);
@@ -1791,6 +1296,7 @@ const selectPreset = (id: string) => {
 }
 
 .start-title {
+  margin: 0;
   font-size: 34px;
   font-weight: 800;
   color: #fff;
@@ -1812,7 +1318,7 @@ const selectPreset = (id: string) => {
 
 .tip-item {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .start-controls {
@@ -1854,7 +1360,7 @@ const selectPreset = (id: string) => {
   flex: 1;
   border: none;
   background: transparent !important;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.75);
   border-radius: 999px;
   padding: 6px 16px;
   cursor: pointer;
@@ -1862,6 +1368,7 @@ const selectPreset = (id: string) => {
   font-size: 12px;
   transition: color 0.2s ease;
   min-width: 64px;
+  min-height: 44px;
   text-align: center;
 }
 
@@ -1899,7 +1406,7 @@ const selectPreset = (id: string) => {
 
 .dropzone-sub {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .upload-btn {
@@ -1938,6 +1445,7 @@ const selectPreset = (id: string) => {
 }
 
 .editor-title {
+  margin: 0;
   font-weight: 800;
   color: #fff;
   font-size: 14px;
@@ -1952,6 +1460,7 @@ const selectPreset = (id: string) => {
 }
 
 .tool-btn {
+  min-height: 44px;
   border: 1px solid rgba(255, 255, 255, 0.15);
   background: rgba(22, 27, 34, 0.6);
   color: rgba(255, 255, 255, 0.8);
@@ -1981,7 +1490,7 @@ const selectPreset = (id: string) => {
 .zoom-label {
   font-weight: 800;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .zoom-slider {
@@ -1990,6 +1499,7 @@ const selectPreset = (id: string) => {
 }
 
 .reupload-btn {
+  min-height: 44px;
   border: 1px solid rgba(204, 255, 0, 0.3);
   background: rgba(204, 255, 0, 0.05);
   color: #ccff00;
@@ -2127,11 +1637,59 @@ const selectPreset = (id: string) => {
   }
 }
 
+.cutout-error {
+  align-self: center;
+  max-width: min(720px, calc(100% - 32px));
+  margin: 4px auto 0;
+  padding: 9px 14px;
+  border: 1px solid rgba(255, 107, 107, 0.4);
+  border-radius: 10px;
+  background: rgba(255, 107, 107, 0.08);
+  color: #ffb3b3;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .editor-actions {
   padding: 12px 0 26px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
   justify-content: center;
+}
+
+.upload-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #b7bdb4;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.upload-consent input {
+  margin-top: 2px;
+}
+
+.upload-consent.disabled {
+  opacity: 0.6;
+}
+
+.quote-status {
+  margin: 0;
+  color: #aeb6aa;
+  font-size: 12px;
+  text-align: center;
+}
+
+.quote-status.error {
+  color: #fca5a5;
+}
+
+.add-btn {
+  align-self: center;
 }
 
 .add-btn {
@@ -2176,6 +1734,15 @@ const selectPreset = (id: string) => {
   display: none;
 }
 
+.modal-container:focus-visible {
+  outline: none;
+}
+
+.modal-container :is(button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid #ccff00;
+  outline-offset: 3px;
+}
+
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.3s ease;
@@ -2184,6 +1751,23 @@ const selectPreset = (id: string) => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .bg-card:hover,
+  .upload-btn:hover,
+  .add-btn:hover {
+    transform: none;
+  }
 }
 
 @media (max-width: 960px) {

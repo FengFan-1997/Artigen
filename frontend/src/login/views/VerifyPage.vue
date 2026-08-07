@@ -28,7 +28,15 @@
       </button>
 
       <div v-if="error" class="hint error">{{ error }}</div>
-      <div v-else class="hint">{{ t('login.verify_hint') }}</div>
+      <div v-else class="hint">
+        {{
+          deliveryUnknown
+            ? currentLang === 'zh'
+              ? '邮件可能已提交发送；若已收到验证码可继续验证，否则请稍后重发。'
+              : 'The email may have been submitted. Use the code if it arrives, or resend later.'
+            : t('login.verify_hint')
+        }}
+      </div>
 
       <div class="row">
         <router-link class="link" to="/login">{{ t('login.back_to_resend') }}</router-link>
@@ -44,31 +52,37 @@
 import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { verifyLoginCode } from '../api';
-import { getLastEmail, setLastEmail, upsertUser } from '../storage';
+import { setLastEmail, upsertUser } from '../storage';
 import { ensureGuestUserId, isLocalLoggedIn, setLoggedIn } from '../session';
 import { useLanguageStore } from '@/stores/language';
 import LanguageSwitcher from '../components/LanguageSwitcher.vue';
+import { clearOtpFlow, readOtpFlow } from '../otpFlow';
 
-const { t } = useLanguageStore();
+const { t, currentLang } = useLanguageStore();
 
 ensureGuestUserId();
 
 const route = useRoute();
 const router = useRouter();
 
-const email = ref(
-  String(route.query.email || '')
-    .trim()
-    .toLowerCase() || getLastEmail()
-);
+const otpFlow = readOtpFlow('login');
+const email = ref(String(otpFlow?.email || '').trim().toLowerCase());
 const code = ref('');
 const verifying = ref(false);
-const error = ref('');
+const error = ref(
+  email.value
+    ? ''
+    : currentLang === 'zh'
+      ? '验证码会话已过期，请返回重新发送'
+      : 'The verification session expired. Please send a new code.'
+);
 
 const emailDisplay = computed(() => email.value || '');
 const isLoggedIn = computed(() => isLocalLoggedIn());
+const deliveryUnknown = computed(() => otpFlow?.deliveryStatus === 'unknown');
 
 const verify = async () => {
+  if (verifying.value) return;
   error.value = '';
   const e = email.value.trim().toLowerCase();
   if (!e) {
@@ -94,7 +108,8 @@ const verify = async () => {
     }
     setLastEmail(e);
     upsertUser({ email: e, userId: res.userId });
-    setLoggedIn({ userId: res.userId, token: res.token });
+    setLoggedIn({ userId: res.userId });
+    clearOtpFlow('login');
     const redirect = String(route.query.redirect || '').trim();
     router.replace(redirect || '/login/account');
   } catch (err: any) {

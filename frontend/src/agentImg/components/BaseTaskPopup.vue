@@ -1,15 +1,24 @@
 <template>
   <transition name="fade">
-    <div v-if="visible" class="modal-overlay" @click="$emit('close')">
-      <div class="modal-container" @click.stop>
+    <div v-if="visible" class="modal-overlay" @click.self="closePopup">
+      <section
+        ref="dialogRef"
+        class="modal-container"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="base-task-popup-title"
+        aria-describedby="base-task-popup-subtitle"
+        tabindex="-1"
+        @keydown="onDialogKeydown"
+      >
         <div class="modal-header">
           <div class="header-left">
-            <span class="header-icon" v-html="icon"></span>
-            <span class="header-title">{{ title }}</span>
+            <span class="header-icon" aria-hidden="true" v-html="icon"></span>
+            <h2 id="base-task-popup-title" class="header-title">{{ title }}</h2>
           </div>
-          <CloseButton @click="$emit('close')" />
+          <CloseButton @click="closePopup" />
         </div>
-        <div class="modal-subtitle">{{ subtitle }}</div>
+        <div id="base-task-popup-subtitle" class="modal-subtitle">{{ subtitle }}</div>
 
         <div class="modal-body">
           <ImageUploadArea
@@ -26,16 +35,17 @@
             <slot name="config"></slot>
           </div>
         </div>
-      </div>
+      </section>
     </div>
   </transition>
 </template>
 
 <script setup lang="ts">
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import CloseButton from './CloseButton.vue';
 import ImageUploadArea from './ImageUploadArea.vue';
 
-defineProps<{
+const props = defineProps<{
   visible: boolean;
   title: string;
   subtitle: string;
@@ -48,10 +58,66 @@ defineProps<{
   selectedFile: File | null;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'update:selectedFile', file: File | null): void;
 }>();
+
+const dialogRef = ref<HTMLElement | null>(null);
+let returnFocus: HTMLElement | null = null;
+
+watch(
+  () => props.visible,
+  async (visible) => {
+    if (visible) {
+      returnFocus = globalThis.document.activeElement instanceof HTMLElement
+        ? globalThis.document.activeElement
+        : null;
+      await nextTick();
+      dialogRef.value?.focus();
+      return;
+    }
+    restoreFocus();
+  },
+  { immediate: true }
+);
+
+onBeforeUnmount(restoreFocus);
+
+function closePopup(): void {
+  emit('close');
+}
+
+function restoreFocus(): void {
+  returnFocus?.focus();
+  returnFocus = null;
+}
+
+function onDialogKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closePopup();
+    return;
+  }
+  if (event.key !== 'Tab' || !dialogRef.value) return;
+  const focusable = Array.from(dialogRef.value.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+  )).filter((element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true');
+  if (!focusable.length) {
+    event.preventDefault();
+    dialogRef.value.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && globalThis.document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && globalThis.document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 </script>
 
 <style scoped>
@@ -80,6 +146,9 @@ defineEmits<{
   display: flex;
   flex-direction: column;
   font-family: var(--common-font);
+  box-sizing: border-box;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
 }
 
 .modal-header {
@@ -105,9 +174,23 @@ defineEmits<{
 }
 
 .header-title {
+  margin: 0;
   font-size: 18px;
   font-weight: 700;
   color: #fff;
+}
+
+.modal-container:focus-visible {
+  outline: none;
+}
+
+.modal-container :deep(button:focus-visible),
+.modal-container :deep(input:focus-visible),
+.modal-container :deep(select:focus-visible),
+.modal-container :deep(textarea:focus-visible),
+.modal-container :deep([tabindex]:focus-visible) {
+  outline: 2px solid #ccff00;
+  outline-offset: 2px;
 }
 
 .modal-subtitle {
@@ -151,6 +234,7 @@ defineEmits<{
     max-width: none;
     border-radius: 0;
     padding: 16px;
+    max-height: none;
   }
 
   .modal-body {
@@ -168,6 +252,13 @@ defineEmits<{
   .modal-subtitle {
     margin-left: 0;
     text-align: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active,
+  .fade-leave-active {
+    transition-duration: 0.01ms !important;
   }
 }
 </style>

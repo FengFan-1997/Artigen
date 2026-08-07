@@ -8,13 +8,26 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.vercel
 dist
 dist-ssr
+frontend/playwright-report
+frontend/test-results
+frontend/coverage
+backend/coverage
+backend/memory
+backend/memory/
+backend/.venv-agent/
+__pycache__/
+*.py[cod]
+.artifacts
 *.local
 
 # Env files
 .env
-backend/.env
+.env.*
+!.env.example
+!**/.env.example
 
 # Editor directories and files
 .vscode/*

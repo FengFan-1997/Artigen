@@ -1,0 +1,84 @@
+ARG CUA_BASE_IMAGE=trycua/cua-xfce@sha256:3bf8536d354d4212aa7a2ed6309f63b573f587da50abb42692fc37e230832d91
+FROM ${CUA_BASE_IMAGE}
+
+ARG NODE_VERSION=20.20.2
+ARG NODE_ARM64_SHA256=73093db209e4e9e09dd7d15a47aeaab1b74833830df03efa5f942a1122c5fa71
+ARG NODE_AMD64_SHA256=df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends \
+        bubblewrap \
+        ca-certificates \
+        clamav \
+        curl \
+        ffmpeg \
+        fonts-noto-cjk \
+        imagemagick \
+        libreoffice \
+        poppler-utils \
+        python3 \
+        python3-docx \
+        python3-matplotlib \
+        python3-openpyxl \
+        python3-pil \
+        python3-pip \
+        python3-reportlab \
+        unzip \
+        xz-utils \
+        zip \
+    && case "${TARGETARCH}" in \
+        arm64) node_arch=arm64; node_sha="${NODE_ARM64_SHA256}" ;; \
+        amd64) node_arch=x64; node_sha="${NODE_AMD64_SHA256}" ;; \
+        *) echo "Unsupported Docker architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+       esac \
+    && curl --fail --show-error --silent --location \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
+        --output /tmp/node.tar.xz \
+    && echo "${node_sha}  /tmp/node.tar.xz" | sha256sum --check --strict \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm -f /tmp/node.tar.xz \
+    && python3 -m pip install --no-cache-dir python-pptx==1.0.2 \
+    && npm install --global playwright-core@1.55.0 \
+    && playwright-core install --with-deps chromium \
+    && chromium_path="$(find /opt/ms-playwright -type f -path '*/chrome-linux*/chrome' -print -quit)" \
+    && test -n "${chromium_path}" \
+    && ln -s "${chromium_path}" /usr/local/bin/chromium \
+    && freshclam --quiet \
+    && npm cache clean --force \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
+
+# The Cua base ships /usr/local Python 3.12 while Ubuntu Jammy's apt Python
+# extensions target 3.10. Install the document stack as native 3.12 wheels so
+# compiled modules such as lxml and matplotlib cannot cross the ABI boundary.
+RUN python3 -m pip install --no-cache-dir \
+        cycler==0.12.1 \
+        et-xmlfile==2.0.0 \
+        fonttools==4.61.1 \
+        kiwisolver==1.4.9 \
+        lxml==6.0.2 \
+        matplotlib==3.10.8 \
+        openpyxl==3.1.5 \
+        python-docx==1.2.0 \
+        python-pptx==1.0.2 \
+        reportlab==4.4.3
+
+RUN install -d -o cua -g cua -m 700 \
+        /tmp/artigen-workspace /tmp/artigen-verify
+
+COPY --chown=root:root public_network.js egress_proxy.js control_proxy.js /opt/artigen/
+COPY --chown=root:root artigen_report_pdf.py /usr/local/bin/artigen-report-pdf
+RUN chmod 0555 /opt/artigen/egress_proxy.js \
+    && chmod 0555 /opt/artigen/control_proxy.js \
+    && chmod 0444 /opt/artigen/public_network.js \
+    && chmod 0555 /usr/local/bin/artigen-report-pdf
+
+LABEL ai.artigen.cua-base="0.1.15" \
+      ai.artigen.toolchain="v2" \
+      ai.artigen.clamav-database="bundled" \
+      ai.artigen.playwright="1.55.0" \
+      ai.artigen.node="20.20.2"

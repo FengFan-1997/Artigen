@@ -1,13 +1,11 @@
 import { buildApiUrl } from '@/utils/api';
 import {
-  getAuthToken,
   getCurrentUserId,
-  getOrCreateProjectId,
-  getOrCreateSessionId,
   isLocalLoggedIn
 } from '@/login/session';
+import { authFetch } from '@/login/authFetch';
 import { trackEvent } from '@/utils/analytics';
-import { getPageContext } from '@/utils/pageContext';
+import { fetchJsonQuery, queryClient } from '@/services/serverState';
 
 export type CreditsBalance = {
   userId: string;
@@ -18,6 +16,7 @@ export type CreditsBalance = {
 
 const BALANCE_URL = buildApiUrl('/api/credits/balance');
 const COSTS_URL = buildApiUrl('/api/credits/costs');
+const PACKAGES_URL = buildApiUrl('/api/pay/packages');
 const CREATE_ORDER_URL = buildApiUrl('/api/pay/create-order');
 const ORDERS_URL = buildApiUrl('/api/credits/orders');
 const HOLDS_URL = buildApiUrl('/api/credits/holds');
@@ -26,9 +25,11 @@ export type CreditsCosts = { generate: number; img2img: number };
 
 export const getCreditsCosts = async (): Promise<CreditsCosts | null> => {
   try {
-    const res = await fetch(COSTS_URL);
-    if (!res.ok) return null;
-    const json: any = await res.json().catch(() => null);
+    const json: any = await fetchJsonQuery({
+      queryKey: ['credits', 'costs'],
+      staleTime: 5 * 60 * 1000,
+      request: (signal) => authFetch(COSTS_URL, { signal })
+    });
     if (!json || typeof json !== 'object') return null;
     const gen = Number(json?.generate ?? 0);
     const img = Number(json?.img2img ?? 0);
@@ -43,14 +44,12 @@ export const getCreditsBalance = async (): Promise<CreditsBalance | null> => {
   try {
     if (!isLocalLoggedIn()) return null;
     const userId = getCurrentUserId();
-    const token = getAuthToken();
-    if (!token) return null;
+    if (!userId || userId.startsWith('guest_')) return null;
     const url = `${BALANCE_URL}?userId=${encodeURIComponent(userId)}`;
-    const res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined
+    const json: any = await fetchJsonQuery({
+      queryKey: ['credits', 'balance', userId],
+      request: (signal) => authFetch(url, { signal })
     });
-    if (!res.ok) return null;
-    const json = await res.json().catch(() => null);
     const uid = typeof json?.userId === 'string' ? json.userId : '';
     if (!uid) return null;
     return {
@@ -65,20 +64,183 @@ export const getCreditsBalance = async (): Promise<CreditsBalance | null> => {
 
 export type PayPackageId = 'starter' | 'standard' | 'pro' | 'ultimate';
 
+export type PayPackage = {
+  packageId: PayPackageId;
+  packageUuid: string;
+  packageSku: string;
+  title: string;
+  amountMinor: number;
+  amountCny: number;
+  currency: 'CNY';
+  credits: number;
+};
+
+export const packageIdFromSku = (sku: string): PayPackageId | null => {
+  const match = String(sku || '').trim().match(/^credits\.(starter|standard|pro|ultimate)\.v\d+$/i);
+  return match ? (match[1].toLowerCase() as PayPackageId) : null;
+};
+
+/**
+ * Reads the active, server-owned payment catalogue. The marketplace deliberately
+ * fails closed when this endpoint is unavailable instead of selling from stale
+ * client-side price constants.
+ */
+export const getPayPackages = async (): Promise<PayPackage[] | null> => {
+  try {
+    const json: any = await fetchJsonQuery({
+      queryKey: ['credits', 'packages'],
+      request: (signal) => authFetch(PACKAGES_URL, { signal })
+    });
+    if (!Array.isArray(json?.packages)) return null;
+
+    const packages = json.packages
+      .map((item: any): PayPackage | null => {
+        const packageUuid = typeof item?.packageId === 'string' ? item.packageId.trim() : '';
+        const packageSku = typeof item?.sku === 'string' ? item.sku.trim() : '';
+        const packageId = packageIdFromSku(packageSku);
+        const amountMinor = Number(item?.amountMinor);
+        const credits = Number(item?.credits);
+        const currency = typeof item?.currency === 'string' ? item.currency.trim().toUpperCase() : '';
+        if (
+          !packageUuid ||
+          !packageId ||
+          currency !== 'CNY' ||
+          !Number.isSafeInteger(amountMinor) ||
+          amountMinor <= 0 ||
+          !Number.isSafeInteger(credits) ||
+          credits <= 0
+        ) return null;
+        return {
+          packageId,
+          packageUuid,
+          packageSku,
+          title: typeof item?.title === 'string' ? item.title.trim() : '',
+          amountMinor,
+          amountCny: amountMinor / 100,
+          currency: 'CNY',
+          credits
+        };
+      })
+      .filter((item: PayPackage | null): item is PayPackage => item !== null);
+
+    return packages.length > 0 ? packages : null;
+  } catch {
+    return null;
+  }
+};
+
 export type CreatePayOrderResult =
   | {
       ok: true;
       orderId: string;
-      userId: string;
       packageId: PayPackageId;
+      packageUuid: string;
+      packageSku: string;
       amountCny: number;
       credits: number;
       payUrl: string;
     }
   | { ok: false; error: string };
 
-export const createPayOrder = async (packageId: PayPackageId): Promise<CreatePayOrderResult> => {
+export type PayOrderStatus = 'pending' | 'paid' | 'expired' | 'cancelled' | 'rejected';
+export type PayOrder = {
+  orderId: string;
+  packageUuid: string;
+  packageSku: string;
+  amountMinor: number;
+  currency: string;
+  credits: number;
+  status: PayOrderStatus;
+};
+
+export const getPayOrder = async (orderId: string): Promise<PayOrder | null> => {
   try {
+    const id = String(orderId || '').trim();
+    if (!id) return null;
+    const orderUrl = buildApiUrl(`/api/pay/orders/${encodeURIComponent(id)}`);
+    const json: any = await fetchJsonQuery({
+      queryKey: ['credits', 'pay-order', id],
+      request: (signal) => authFetch(orderUrl, { signal })
+    });
+    const order = json?.order;
+    const status = String(order?.status || '') as PayOrderStatus;
+    const allowed: PayOrderStatus[] = ['pending', 'paid', 'expired', 'cancelled', 'rejected'];
+    if (
+      typeof order?.orderId !== 'string' ||
+      typeof order?.packageId !== 'string' ||
+      typeof order?.packageSku !== 'string' ||
+      !allowed.includes(status)
+    ) return null;
+    return {
+      orderId: order.orderId.trim(),
+      packageUuid: order.packageId.trim(),
+      packageSku: order.packageSku.trim(),
+      amountMinor: Number(order.amountMinor) || 0,
+      currency: typeof order.currency === 'string' ? order.currency.trim() : '',
+      credits: Number(order.credits) || 0,
+      status
+    };
+  } catch {
+    return null;
+  }
+};
+
+export type VerifyPayOrderResult =
+  | { ok: true; orderId: string; credited: boolean; replayed: boolean; credits: number }
+  | { ok: false; error: string };
+
+export const verifyPayOrder = async (
+  orderId: string,
+  providerOrderId: string
+): Promise<VerifyPayOrderResult> => {
+  const localId = String(orderId || '').trim();
+  const providerId = String(providerOrderId || '').trim();
+  if (!localId || !/^[a-z0-9_-]{8,200}$/i.test(providerId)) {
+    return { ok: false, error: 'INVALID_PROVIDER_ORDER_ID' };
+  }
+  try {
+    const res = await authFetch(
+      buildApiUrl(`/api/pay/orders/${encodeURIComponent(localId)}/verify`),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerOrderId: providerId })
+      }
+    );
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) {
+      const error = typeof json?.error?.code === 'string' && json.error.code.trim()
+        ? json.error.code.trim()
+        : typeof json?.error === 'string' && json.error.trim()
+          ? json.error.trim()
+          : 'PAYMENT_VERIFICATION_FAILED';
+      return { ok: false, error };
+    }
+    if (json?.ok !== true || typeof json?.orderId !== 'string') {
+      return { ok: false, error: 'INVALID_RESPONSE' };
+    }
+    void queryClient.invalidateQueries({ queryKey: ['credits'] });
+    return {
+      ok: true,
+      orderId: json.orderId.trim(),
+      credited: Boolean(json.credited),
+      replayed: Boolean(json.replayed),
+      credits: Math.max(0, Number(json.credits || 0))
+    };
+  } catch {
+    return { ok: false, error: 'NETWORK_ERROR' };
+  }
+};
+
+export const createPayOrder = async (
+  packageId: PayPackageId,
+  selectedPackageUuid: string
+): Promise<CreatePayOrderResult> => {
+  try {
+    const canonicalPackageId = String(selectedPackageUuid || '').trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(canonicalPackageId)) {
+      return { ok: false, error: 'PACKAGE_CATALOG_REQUIRED' };
+    }
     if (!isLocalLoggedIn()) {
       trackEvent('pay_create_order_fail', {
         category: 'funnel',
@@ -88,8 +250,7 @@ export const createPayOrder = async (packageId: PayPackageId): Promise<CreatePay
       return { ok: false, error: 'LOGIN_REQUIRED' };
     }
     const userId = getCurrentUserId();
-    const token = getAuthToken();
-    if (!userId || !token) {
+    if (!userId || userId.startsWith('guest_')) {
       trackEvent('pay_create_order_fail', {
         category: 'funnel',
         packageId,
@@ -99,34 +260,26 @@ export const createPayOrder = async (packageId: PayPackageId): Promise<CreatePay
     }
 
     trackEvent('pay_create_order_start', { category: 'funnel', packageId });
-    const res = await fetch(CREATE_ORDER_URL, {
+    const res = await authFetch(CREATE_ORDER_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify({
-        userId,
-        packageId,
-        sessionId: getOrCreateSessionId(),
-        projectId: getOrCreateProjectId(),
-        pageContext: getPageContext(),
-        requestSource: 'site_pay_create_order'
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ packageId: canonicalPackageId })
     });
     const json: any = await res.json().catch(() => null);
     if (!res.ok) {
-      const err =
-        typeof json?.error === 'string' && json.error.trim()
+      const err = typeof json?.error?.code === 'string' && json.error.code.trim()
+        ? json.error.code.trim()
+        : typeof json?.error === 'string' && json.error.trim()
           ? json.error.trim()
           : 'CREATE_ORDER_FAILED';
       trackEvent('pay_create_order_fail', { category: 'funnel', packageId, error: err });
       return { ok: false, error: err };
     }
     const orderId = typeof json?.orderId === 'string' ? json.orderId.trim() : '';
-    const uid = typeof json?.userId === 'string' ? json.userId.trim() : '';
-    const pid = typeof json?.packageId === 'string' ? json.packageId.trim() : '';
-    if (!orderId || !uid || !pid) {
+    const packageUuid = typeof json?.packageId === 'string' ? json.packageId.trim() : '';
+    const packageSku = typeof json?.packageSku === 'string' ? json.packageSku.trim() : '';
+    const resolvedPackageId = packageIdFromSku(packageSku) || packageId;
+    if (!orderId || !packageUuid || !packageSku) {
       trackEvent('pay_create_order_fail', {
         category: 'funnel',
         packageId,
@@ -135,11 +288,13 @@ export const createPayOrder = async (packageId: PayPackageId): Promise<CreatePay
       return { ok: false, error: 'INVALID_RESPONSE' };
     }
     trackEvent('pay_create_order_success', { category: 'funnel', packageId, orderId });
+    void queryClient.invalidateQueries({ queryKey: ['credits', 'orders'] });
     return {
       ok: true,
       orderId,
-      userId: uid,
-      packageId: pid as PayPackageId,
+      packageId: resolvedPackageId,
+      packageUuid,
+      packageSku,
       amountCny: Number(json?.amountCny ?? 0) || 0,
       credits: Number(json?.credits ?? 0) || 0,
       payUrl: typeof json?.payUrl === 'string' ? json.payUrl.trim() : ''
@@ -166,14 +321,12 @@ export const getCreditsOrders = async (): Promise<CreditsOrder[] | null> => {
   try {
     if (!isLocalLoggedIn()) return null;
     const userId = getCurrentUserId();
-    const token = getAuthToken();
-    if (!userId || !token) return null;
+    if (!userId || userId.startsWith('guest_')) return null;
     const url = `${ORDERS_URL}?userId=${encodeURIComponent(userId)}`;
-    const res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined
+    const json: any = await fetchJsonQuery({
+      queryKey: ['credits', 'orders', userId],
+      request: (signal) => authFetch(url, { signal })
     });
-    if (!res.ok) return null;
-    const json: any = await res.json().catch(() => null);
     const list = Array.isArray(json?.orders) ? json.orders : [];
     return list
       .map((o: any) => {
@@ -221,15 +374,13 @@ export const getCreditsHolds = async (limit = 200): Promise<CreditsHold[] | null
   try {
     if (!isLocalLoggedIn()) return null;
     const userId = getCurrentUserId();
-    const token = getAuthToken();
-    if (!userId || !token) return null;
+    if (!userId || userId.startsWith('guest_')) return null;
     const n = Number(limit) || 200;
     const url = `${HOLDS_URL}?userId=${encodeURIComponent(userId)}&limit=${encodeURIComponent(String(n))}`;
-    const res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined
+    const json: any = await fetchJsonQuery({
+      queryKey: ['credits', 'holds', userId, n],
+      request: (signal) => authFetch(url, { signal })
     });
-    if (!res.ok) return null;
-    const json: any = await res.json().catch(() => null);
     const list = Array.isArray(json?.holds) ? json.holds : [];
     return list
       .map((h: any) => {

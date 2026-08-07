@@ -321,19 +321,19 @@ const ui = computed(() => {
         heroTitle1: '释放您的',
         heroTitle2: '创造力与效率',
         heroSubtitle:
-          'Artigen 提供强大的 AI 图像生成、无损格式转换与本地化隐私保护工具。无需下载，打开即用。',
+          'Artigen 提供 AI 图像生成、本地图片处理与明确标注上传行为的文档工具。无需安装，打开即用。',
         btnFormat: '工具',
         btnAi: 'AI 设计',
         trustPrivacy: '隐私安全',
         trustSpeed: '极速处理',
-        trustFree: '免费使用',
+        trustFree: '本地任务免费',
 
         featuresTitle: '为什么选择 Artigen？',
         featuresDesc: '我们将前沿的 AI 技术与便捷的工具相结合，为您提供极致的在线体验。',
 
         featFormatTitle: '全能工具',
         featFormatDesc:
-          '支持 HEIC, PDF, WEBP, PNG 等多种格式互转。纯前端处理，文件不上传服务器，绝对安全。',
+          '支持浏览器可解码图片的批量转换，以及 PDF、GIF、ICO 等独立工作流；本地与服务器模式会明确标注。',
         featAiTitle: 'AI 设计',
         featAiDesc: '文生图、图生图、提示词优化。激发无限创意，生成高质量的电商素材与艺术作品。',
         featMarketTitle: '算力加速',
@@ -341,7 +341,7 @@ const ui = computed(() => {
         tryNow: '立即体验',
         viewPlans: '查看方案',
 
-        seoTitle: '高效、安全、免费的在线工具平台',
+        seoTitle: '高效、透明、本地优先的在线工具平台',
         seoDesc:
           'Artigen 致力于打造最受用户信赖的在线工具箱。无论您是设计师、开发者还是办公人员，这里都有您需要的工具。',
         whyUsTitle: '核心优势',
@@ -349,12 +349,12 @@ const ui = computed(() => {
           '隐私优先：格式转换等工具完全在浏览器本地运行',
           '无需安装：打开网页即可使用，跨平台兼容',
           'AI 赋能：集成最新人工智能模型，提升创作效率',
-          '持续更新：每周推出新功能与工具优化',
-          '免费友好：基础功能永久免费，无隐形收费'
+          '能力透明：显示文件、像素、浏览器与内存限制',
+          '计费透明：本地任务不扣点数，云端任务先报价再确认'
         ],
         hotToolsTitle: '热门工具直达',
         hotToolsList: [
-          'HEIC转JPG',
+          'JPEG转WEBP',
           'PDF转图片',
           '图片压缩',
           'AI绘画',
@@ -377,7 +377,7 @@ const ui = computed(() => {
           },
           {
             q: '我的文件安全吗？',
-            a: '绝对安全。工具采用纯前端技术，文件从未离开您的设备。'
+            a: '标注为“本地”的流程不会上传文件；AI 与服务器转换模式会在上传前明确请求同意。'
           },
           {
             q: '如何开始使用 AI 绘图？',
@@ -390,7 +390,7 @@ const ui = computed(() => {
         ],
 
         ctaTitle: '准备好提升效率了吗？',
-        ctaDesc: '加入数万名创作者的行列，体验 Artigen 带来的便捷与强大。',
+        ctaDesc: '从一个本地工作流开始，按需选择明确标价的云端能力。',
         ctaBtn: '开始使用'
       }
     : {
@@ -398,12 +398,12 @@ const ui = computed(() => {
         heroTitle1: 'Unleash Your',
         heroTitle2: 'Creativity & Efficiency',
         heroSubtitle:
-          'Artigen provides powerful AI image generation, lossless format conversion, and privacy-first tools. No download required.',
+          'Artigen provides AI image generation, local image processing, and document tools with explicit upload disclosure. No installation required.',
         btnFormat: 'Tools',
         btnAi: 'AI Design',
         trustPrivacy: 'Privacy First',
         trustSpeed: 'Blazing Fast',
-        trustFree: 'Free to Use',
+        trustFree: 'Local Tasks Free',
 
         featuresTitle: 'Why Choose Artigen?',
         featuresDesc:
@@ -411,7 +411,7 @@ const ui = computed(() => {
 
         featFormatTitle: 'Universal Tools',
         featFormatDesc:
-          'Convert HEIC, PDF, WEBP, PNG, and more. Client-side processing ensures your files never leave your device.',
+          'Batch browser-decodable images and use dedicated PDF, GIF, and ICO workflows. Local and server modes are labeled explicitly.',
         featAiTitle: 'AI Design',
         featAiDesc:
           'Text-to-Image, Image-to-Image, Prompt Optimization. Generate high-quality assets and art instantly.',
@@ -421,7 +421,7 @@ const ui = computed(() => {
         tryNow: 'Try Now',
         viewPlans: 'View Plans',
 
-        seoTitle: 'Efficient, Secure, Free Online Tools',
+        seoTitle: 'Efficient, Transparent, Local-First Online Tools',
         seoDesc:
           'Artigen is your trusted online toolbox for designers, developers, and office workers.',
         whyUsTitle: 'Core Benefits',
@@ -429,12 +429,12 @@ const ui = computed(() => {
           'Privacy: Local processing for file tools',
           'No Install: Works in any modern browser',
           'AI Powered: Latest models for creativity',
-          'Weekly Updates: New tools and features',
-          'Free Friendly: Basic tools are always free'
+          'Explicit Limits: file, pixel, browser, and memory constraints',
+          'Transparent Billing: local tasks use no credits; cloud tasks quote first'
         ],
         hotToolsTitle: 'Popular Tools',
         hotToolsList: [
-          'HEIC to JPG',
+          'JPEG to WEBP',
           'PDF to Image',
           'Image Compressor',
           'AI Art',
@@ -457,7 +457,7 @@ const ui = computed(() => {
           },
           {
             q: 'Are my files safe?',
-            a: 'Yes. Tools run locally in your browser. Files are not uploaded.'
+            a: 'Workflows labeled “local” do not upload files. AI and server conversion modes request explicit consent before upload.'
           },
           {
             q: 'How to start AI art?',
@@ -467,7 +467,7 @@ const ui = computed(() => {
         ],
 
         ctaTitle: 'Ready to Boost Productivity?',
-        ctaDesc: 'Join thousands of creators using Artigen today.',
+        ctaDesc: 'Start with a local workflow and opt into clearly priced cloud features only when needed.',
         ctaBtn: 'Get Started'
       };
 });

@@ -1,19 +1,34 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import Antd from 'ant-design-vue';
-import 'ant-design-vue/dist/reset.css';
+import { VueQueryPlugin } from '@tanstack/vue-query';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import './style.css';
 import App from './App.vue';
 import router from './router';
 import { initAnalytics } from '@/utils/analytics';
+import { queryClient } from '@/services/serverState';
 
 const app = createApp(App);
 
 initAnalytics();
 
 app.use(createPinia());
+app.use(VueQueryPlugin, { queryClient });
 app.use(router);
-app.use(Antd);
+
+let consoleUiPromise: Promise<void> | null = null;
+router.beforeEach(async (to) => {
+  if (!String(to.path || '').startsWith('/console')) return true;
+  if (!consoleUiPromise) {
+    consoleUiPromise = Promise.all([
+      import('ant-design-vue'),
+      import('ant-design-vue/dist/reset.css')
+    ]).then(([module]) => {
+      app.use(module.default);
+    });
+  }
+  await consoleUiPromise;
+  return true;
+});
 
 app.mount('#app');

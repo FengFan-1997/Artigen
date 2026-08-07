@@ -1,8 +1,41 @@
 import { computed, nextTick, ref, type Ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
-import { canvasToBlob, loadImageFromUrl, scaleToMaxSide } from '../logic/formatFactory/canvas';
+import { canvasToBlob, loadImageFromUrl } from '../logic/formatFactory/canvas';
 import { safeBaseName } from '../logic/formatFactory/format';
+
+export type WatermarkRect = { x: number; y: number; w: number; h: number };
+
+export function watermarkPreviewSize(
+  sourceWidth: number,
+  sourceHeight: number,
+  maxSide = 1024
+): { width: number; height: number } {
+  const width = Math.max(1, Math.round(sourceWidth));
+  const height = Math.max(1, Math.round(sourceHeight));
+  const scale = Math.min(1, Math.max(1, maxSide) / width, Math.max(1, maxSide) / height);
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale))
+  };
+}
+
+export function projectWatermarkRect(
+  rect: WatermarkRect,
+  sourceWidth: number,
+  sourceHeight: number,
+  previewWidth: number,
+  previewHeight: number
+): WatermarkRect {
+  const scaleX = Math.max(1, previewWidth) / Math.max(1, sourceWidth);
+  const scaleY = Math.max(1, previewHeight) / Math.max(1, sourceHeight);
+  return {
+    x: rect.x * scaleX,
+    y: rect.y * scaleY,
+    w: rect.w * scaleX,
+    h: rect.h * scaleY
+  };
+}
 
 export const useFormatFactoryWatermark = (input: {
   activeToolId: Ref<string | null>;
@@ -21,13 +54,15 @@ export const useFormatFactoryWatermark = (input: {
   const wmFillColor = ref('#000000');
   const wmOutFormat = ref<'image/png' | 'image/jpeg' | 'image/webp'>('image/png');
   const wmOutQuality = ref(0.92);
-  const wmMaxSide = 1600;
+  const wmMaxPixels = 32_000_000;
+  const wmMaxSide = 8192;
 
   const wmIsSelecting = ref(false);
   const wmStart = ref<{ x: number; y: number } | null>(null);
-  const wmRect = ref<{ x: number; y: number; w: number; h: number } | null>(null);
-  const wmUndoStack = ref<ImageData[]>([]);
+  const wmRect = ref<WatermarkRect | null>(null);
+  const wmUndoStack = ref<Array<{ rect: WatermarkRect; data: ImageData }>>([]);
   const wmUndoLimit = 8;
+  let overlayAnimationFrame: number | null = null;
 
   const wmHasSelection = computed(() => {
     const r = wmRect.value;
@@ -47,6 +82,10 @@ export const useFormatFactoryWatermark = (input: {
   };
 
   const clearWmOverlay = () => {
+    if (overlayAnimationFrame !== null) {
+      cancelAnimationFrame(overlayAnimationFrame);
+      overlayAnimationFrame = null;
+    }
     const c = wmOverlayCanvasRef.value;
     if (!c) return;
     const ctx = c.getContext('2d');
@@ -55,7 +94,7 @@ export const useFormatFactoryWatermark = (input: {
   };
 
   const clampRectToCanvas = (
-    r: { x: number; y: number; w: number; h: number },
+    r: WatermarkRect,
     c: HTMLCanvasElement
   ) => {
     const x = Math.max(0, Math.min(c.width - 1, r.x));
@@ -74,12 +113,30 @@ export const useFormatFactoryWatermark = (input: {
     ctx.clearRect(0, 0, c.width, c.height);
     if (!r) return;
 
+    const source = wmCanvasRef.value;
+    if (!source) return;
+    const projected = projectWatermarkRect(r, source.width, source.height, c.width, c.height);
+    const displayScale = Math.max(1, c.width / Math.max(1, c.getBoundingClientRect().width));
+
     ctx.save();
     ctx.strokeStyle = 'rgba(204, 255, 0, 0.95)';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 6]);
-    ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+    ctx.lineWidth = 2 * displayScale;
+    ctx.setLineDash([6 * displayScale, 6 * displayScale]);
+    ctx.strokeRect(
+      projected.x + displayScale,
+      projected.y + displayScale,
+      Math.max(1, projected.w - displayScale * 2),
+      Math.max(1, projected.h - displayScale * 2)
+    );
     ctx.restore();
+  };
+
+  const scheduleWmOverlayRect = () => {
+    if (overlayAnimationFrame !== null) return;
+    overlayAnimationFrame = requestAnimationFrame(() => {
+      overlayAnimationFrame = null;
+      drawWmOverlayRect();
+    });
   };
 
   const reset = () => {
@@ -98,7 +155,11 @@ export const useFormatFactoryWatermark = (input: {
     if (!src) throw new Error('WM_NO_IMAGE');
 
     const img = await loadImageFromUrl(src);
-    const { w, h } = scaleToMaxSide(img.naturalWidth, img.naturalHeight, wmMaxSide);
+    const w = Math.max(1, img.naturalWidth || img.width || 1);
+    const h = Math.max(1, img.naturalHeight || img.height || 1);
+    if (w > wmMaxSide || h > wmMaxSide || w * h > wmMaxPixels) {
+      throw new Error('IMAGE_LIMIT_EXCEEDED');
+    }
 
     await nextTick();
     const base = wmCanvasRef.value;
@@ -106,8 +167,9 @@ export const useFormatFactoryWatermark = (input: {
     if (!base || !overlay) throw new Error('WM_CANVAS_INIT_FAIL');
     base.width = w;
     base.height = h;
-    overlay.width = w;
-    overlay.height = h;
+    const preview = watermarkPreviewSize(w, h);
+    overlay.width = preview.width;
+    overlay.height = preview.height;
 
     const ctx = base.getContext('2d');
     if (!ctx) throw new Error('CANVAS_CONTEXT_FAIL');
@@ -131,9 +193,12 @@ export const useFormatFactoryWatermark = (input: {
     return { c, ctx };
   };
 
-  const pushWmUndo = () => {
-    const { c, ctx } = getWmCanvasOrThrow();
-    const snap = ctx.getImageData(0, 0, c.width, c.height);
+  const pushWmUndo = (rect: WatermarkRect) => {
+    const { ctx } = getWmCanvasOrThrow();
+    const snap = {
+      rect: { ...rect },
+      data: ctx.getImageData(rect.x, rect.y, rect.w, rect.h)
+    };
     wmUndoStack.value = [snap, ...wmUndoStack.value].slice(0, wmUndoLimit);
   };
 
@@ -141,7 +206,7 @@ export const useFormatFactoryWatermark = (input: {
     const { ctx } = getWmCanvasOrThrow();
     const snap = wmUndoStack.value[0];
     if (!snap) return;
-    ctx.putImageData(snap, 0, 0);
+    ctx.putImageData(snap.data, snap.rect.x, snap.rect.y);
     wmUndoStack.value = wmUndoStack.value.slice(1);
   };
 
@@ -155,10 +220,11 @@ export const useFormatFactoryWatermark = (input: {
   const onWmPointerDown = (e: PointerEvent) => {
     if (input.activeToolId.value !== 'watermark') return;
     const c = wmOverlayCanvasRef.value;
-    if (!c) return;
+    const source = wmCanvasRef.value;
+    if (!c || !source) return;
     const rect = c.getBoundingClientRect();
-    const x = Math.round(((e.clientX - rect.left) / rect.width) * c.width);
-    const y = Math.round(((e.clientY - rect.top) / rect.height) * c.height);
+    const x = Math.round(((e.clientX - rect.left) / rect.width) * source.width);
+    const y = Math.round(((e.clientY - rect.top) / rect.height) * source.height);
     wmIsSelecting.value = true;
     wmStart.value = { x, y };
     wmRect.value = { x, y, w: 1, h: 1 };
@@ -172,16 +238,17 @@ export const useFormatFactoryWatermark = (input: {
     if (!wmIsSelecting.value) return;
     const start = wmStart.value;
     const c = wmOverlayCanvasRef.value;
-    if (!start || !c) return;
+    const source = wmCanvasRef.value;
+    if (!start || !c || !source) return;
     const rect = c.getBoundingClientRect();
-    const x2 = Math.round(((e.clientX - rect.left) / rect.width) * c.width);
-    const y2 = Math.round(((e.clientY - rect.top) / rect.height) * c.height);
+    const x2 = Math.round(((e.clientX - rect.left) / rect.width) * source.width);
+    const y2 = Math.round(((e.clientY - rect.top) / rect.height) * source.height);
     const x = Math.min(start.x, x2);
     const y = Math.min(start.y, y2);
     const w = Math.abs(x2 - start.x);
     const h = Math.abs(y2 - start.y);
-    wmRect.value = clampRectToCanvas({ x, y, w, h }, c);
-    drawWmOverlayRect();
+    wmRect.value = clampRectToCanvas({ x, y, w, h }, source);
+    scheduleWmOverlayRect();
   };
 
   const onWmPointerUp = (e: PointerEvent) => {
@@ -192,6 +259,10 @@ export const useFormatFactoryWatermark = (input: {
     try {
       c.releasePointerCapture(e.pointerId);
     } catch {}
+    if (overlayAnimationFrame !== null) {
+      cancelAnimationFrame(overlayAnimationFrame);
+      overlayAnimationFrame = null;
+    }
     drawWmOverlayRect();
   };
 
@@ -209,7 +280,7 @@ export const useFormatFactoryWatermark = (input: {
     if (r.w < 4 || r.h < 4)
       return { ok: false as const, error: t('选区太小', 'Selection is too small') };
 
-    pushWmUndo();
+    pushWmUndo(r);
 
     if (wmMode.value === 'fill') {
       ctx.save();

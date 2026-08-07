@@ -1,0 +1,343 @@
+{
+  "version": 1,
+  "name": "artigen-ecommerce-bilingual-v1",
+  "policy": {
+    "providerChangesRequireRun": true,
+    "modelChangesRequireRun": true,
+    "promptTemplateChangesRequireRun": true,
+    "minimumHardConstraintPassRate": 0.9,
+    "blindReviewScale": [1, 2, 3, 4, 5]
+  },
+  "cases": [
+    {
+      "id": "zh-white-main-skincare",
+      "locale": "zh",
+      "category": "no-reference",
+      "prompt": "一瓶无品牌白色乳液泵瓶，纯白电商主图，瓶身居中，柔和自然阴影",
+      "profileId": "standard-v1",
+      "aspectRatio": "1:1",
+      "referenceRoles": [],
+      "hardConstraints": ["single-product", "white-background", "no-invented-logo", "no-watermark"],
+      "manualCriteria": ["commercial-readiness", "clean-edges", "realistic-material"]
+    },
+    {
+      "id": "zh-lifestyle-coffee",
+      "locale": "zh",
+      "category": "no-reference",
+      "prompt": "磨砂黑色保温咖啡杯放在清晨窗边木桌上，生活方式广告摄影",
+      "profileId": "standard-v1",
+      "aspectRatio": "4:5",
+      "referenceRoles": [],
+      "hardConstraints": ["single-product", "black-cup", "morning-window-light", "no-text"],
+      "manualCriteria": ["lighting", "composition", "commercial-readiness"]
+    },
+    {
+      "id": "zh-detail-banner-headphones",
+      "locale": "zh",
+      "category": "no-reference",
+      "prompt": "银色头戴式耳机的详情页横幅，深灰渐变背景，右侧留出文案空间",
+      "profileId": "standard-v1",
+      "aspectRatio": "16:9",
+      "referenceRoles": [],
+      "hardConstraints": ["silver-headphones", "right-negative-space", "no-invented-text"],
+      "manualCriteria": ["layout-utility", "product-shape", "premium-tone"]
+    },
+    {
+      "id": "zh-social-bag",
+      "locale": "zh",
+      "category": "no-reference",
+      "prompt": "焦糖色小号通勤手提包，现代城市街角，竖版社交媒体广告",
+      "profileId": "standard-v1",
+      "aspectRatio": "9:16",
+      "referenceRoles": [],
+      "hardConstraints": ["caramel-bag", "vertical-composition", "no-logo", "no-text"],
+      "manualCriteria": ["mobile-crop", "product-salience", "realism"]
+    },
+    {
+      "id": "zh-material-watch",
+      "locale": "zh",
+      "category": "material",
+      "prompt": "不锈钢腕表表链与拉丝表壳的微距材质特写，清晰金属纹理",
+      "profileId": "standard-v1",
+      "aspectRatio": "3:4",
+      "referenceRoles": [],
+      "hardConstraints": ["stainless-steel", "brushed-texture", "no-extra-dials", "no-text"],
+      "manualCriteria": ["material-fidelity", "micro-detail", "highlight-control"]
+    },
+    {
+      "id": "zh-person-hold-bottle",
+      "locale": "zh",
+      "category": "person-hold",
+      "prompt": "一位成年女性自然手持透明运动水瓶，户外跑步场景，商品必须完整可见",
+      "profileId": "standard-v1",
+      "aspectRatio": "4:5",
+      "referenceRoles": [],
+      "hardConstraints": ["adult-person", "correct-hand-contact", "complete-product", "transparent-bottle"],
+      "manualCriteria": ["hand-anatomy", "product-identity", "natural-pose"]
+    },
+    {
+      "id": "zh-single-product-ref-shoe",
+      "locale": "zh",
+      "category": "single-reference",
+      "prompt": "保持参考运动鞋的颜色、鞋底轮廓和鞋带结构，制作白底主图",
+      "profileId": "standard-v1",
+      "aspectRatio": "1:1",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["reference-color", "reference-silhouette", "reference-laces", "white-background"],
+      "manualCriteria": ["reference-fidelity", "edge-quality", "catalog-readiness"]
+    },
+    {
+      "id": "zh-single-style-ref-perfume",
+      "locale": "zh",
+      "category": "single-reference",
+      "prompt": "香水瓶广告，沿用参考图的光影与色调，但不要复制参考图中的商品",
+      "profileId": "standard-v1",
+      "aspectRatio": "4:5",
+      "referenceRoles": ["style"],
+      "hardConstraints": ["style-only-reference", "single-perfume", "no-copied-brand", "no-text"],
+      "manualCriteria": ["style-transfer", "subject-separation", "premium-tone"]
+    },
+    {
+      "id": "zh-single-scene-ref-chair",
+      "locale": "zh",
+      "category": "single-reference",
+      "prompt": "把浅灰休闲椅自然放入参考客厅场景，保持原场景透视和光线",
+      "profileId": "standard-v1",
+      "aspectRatio": "16:9",
+      "referenceRoles": ["scene"],
+      "hardConstraints": ["gray-chair", "scene-perspective", "scene-lighting", "no-extra-chair"],
+      "manualCriteria": ["scene-integration", "contact-shadow", "scale-consistency"]
+    },
+    {
+      "id": "zh-triple-cosmetics",
+      "locale": "zh",
+      "category": "triple-reference",
+      "prompt": "商品参考中的面霜罐，使用风格参考的奶油柔光，放到场景参考的梳妆台上",
+      "profileId": "standard-v1",
+      "aspectRatio": "4:5",
+      "referenceRoles": ["product", "style", "scene"],
+      "hardConstraints": ["product-identity", "style-only", "scene-layout", "no-invented-copy"],
+      "manualCriteria": ["multi-reference-control", "material-fidelity", "commercial-readiness"]
+    },
+    {
+      "id": "zh-logo-preserve-box",
+      "locale": "zh",
+      "category": "logo-text",
+      "prompt": "保持商品参考包装盒正面的几何标志位置和比例，不新增文字，制作棚拍主图",
+      "profileId": "standard-v1",
+      "aspectRatio": "1:1",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["logo-position", "logo-proportion", "no-new-text", "package-shape"],
+      "manualCriteria": ["logo-fidelity", "front-face-clarity", "catalog-readiness"]
+    },
+    {
+      "id": "zh-text-preserve-pouch",
+      "locale": "zh",
+      "category": "logo-text",
+      "prompt": "保持参考咖啡袋上已有的短文字区域，不翻译、不改写、不增加新卖点",
+      "profileId": "standard-v1",
+      "aspectRatio": "3:4",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["existing-text-region", "no-translation", "no-new-claims", "package-color"],
+      "manualCriteria": ["text-region-fidelity", "package-identity", "legibility"]
+    },
+    {
+      "id": "zh-glass-material",
+      "locale": "zh",
+      "category": "material",
+      "prompt": "透明玻璃精华瓶在浅水面上，保留玻璃折射与液体通透感",
+      "profileId": "standard-v1",
+      "aspectRatio": "4:5",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["transparent-glass", "visible-liquid", "correct-refraction", "no-opaque-bottle"],
+      "manualCriteria": ["glass-realism", "liquid-realism", "highlight-control"]
+    },
+    {
+      "id": "zh-fabric-material",
+      "locale": "zh",
+      "category": "material",
+      "prompt": "参考亚麻抱枕的织物纹理特写，暖色自然光，不改变原有米色",
+      "profileId": "standard-v1",
+      "aspectRatio": "3:4",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["linen-weave", "reference-beige", "warm-natural-light", "no-pattern"],
+      "manualCriteria": ["fabric-detail", "color-fidelity", "tactile-quality"]
+    },
+    {
+      "id": "zh-person-hold-phonecase",
+      "locale": "zh",
+      "category": "person-hold",
+      "prompt": "成年男性单手展示参考手机壳，镜头聚焦壳体纹理，手指不要遮挡主要图案",
+      "profileId": "standard-v1",
+      "aspectRatio": "9:16",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["adult-person", "correct-hand-contact", "visible-main-pattern", "reference-case-shape"],
+      "manualCriteria": ["hand-anatomy", "pattern-fidelity", "mobile-ad-readiness"]
+    },
+    {
+      "id": "en-white-main-speaker",
+      "locale": "en",
+      "category": "no-reference",
+      "prompt": "A compact charcoal Bluetooth speaker centered on a seamless white ecommerce background with a soft natural shadow",
+      "profileId": "standard-v1",
+      "aspectRatio": "1:1",
+      "referenceRoles": [],
+      "hardConstraints": ["single-product", "charcoal-speaker", "white-background", "no-text"],
+      "manualCriteria": ["catalog-readiness", "edge-quality", "material-realism"]
+    },
+    {
+      "id": "en-lifestyle-candle",
+      "locale": "en",
+      "category": "no-reference",
+      "prompt": "An amber glass candle on a quiet evening bedside table, warm lifestyle product photography",
+      "profileId": "standard-v1",
+      "aspectRatio": "4:5",
+      "referenceRoles": [],
+      "hardConstraints": ["amber-glass", "single-candle", "warm-evening-light", "no-label-text"],
+      "manualCriteria": ["mood", "glass-realism", "commercial-readiness"]
+    },
+    {
+      "id": "en-detail-banner-keyboard",
+      "locale": "en",
+      "category": "no-reference",
+      "prompt": "Wide product detail banner for a cream mechanical keyboard, minimal sand background, clear copy space on the left",
+      "profileId": "standard-v1",
+      "aspectRatio": "16:9",
+      "referenceRoles": [],
+      "hardConstraints": ["cream-keyboard", "left-negative-space", "wide-composition", "no-text"],
+      "manualCriteria": ["layout-utility", "key-consistency", "commercial-readiness"]
+    },
+    {
+      "id": "en-social-sunglasses",
+      "locale": "en",
+      "category": "no-reference",
+      "prompt": "Vertical social ad for tortoiseshell sunglasses by a bright Mediterranean pool, product remains the focal point",
+      "profileId": "standard-v1",
+      "aspectRatio": "9:16",
+      "referenceRoles": [],
+      "hardConstraints": ["tortoiseshell-frame", "vertical-composition", "product-focal-point", "no-text"],
+      "manualCriteria": ["mobile-crop", "lighting", "commercial-readiness"]
+    },
+    {
+      "id": "en-material-leather",
+      "locale": "en",
+      "category": "material",
+      "prompt": "Macro detail of full-grain brown leather on a minimalist wallet, visible natural grain and precise stitching",
+      "profileId": "standard-v1",
+      "aspectRatio": "3:4",
+      "referenceRoles": [],
+      "hardConstraints": ["brown-leather", "natural-grain", "precise-stitching", "no-logo"],
+      "manualCriteria": ["material-fidelity", "micro-detail", "realism"]
+    },
+    {
+      "id": "en-person-hold-snack",
+      "locale": "en",
+      "category": "person-hold",
+      "prompt": "An adult hand naturally holding a plain resealable snack pouch in a bright kitchen, full package front visible",
+      "profileId": "standard-v1",
+      "aspectRatio": "4:5",
+      "referenceRoles": [],
+      "hardConstraints": ["adult-hand", "correct-contact", "visible-package-front", "no-invented-claims"],
+      "manualCriteria": ["hand-anatomy", "package-clarity", "natural-scene"]
+    },
+    {
+      "id": "en-single-product-ref-lamp",
+      "locale": "en",
+      "category": "single-reference",
+      "prompt": "Preserve the reference desk lamp silhouette, brass finish, and switch placement in a clean catalog image",
+      "profileId": "standard-v1",
+      "aspectRatio": "1:1",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["reference-silhouette", "reference-brass", "switch-position", "no-extra-lamp"],
+      "manualCriteria": ["reference-fidelity", "metal-realism", "catalog-readiness"]
+    },
+    {
+      "id": "en-single-style-ref-tea",
+      "locale": "en",
+      "category": "single-reference",
+      "prompt": "A ceramic tea tin photographed with the reference image's dramatic side lighting and palette, without copying its product",
+      "profileId": "standard-v1",
+      "aspectRatio": "4:5",
+      "referenceRoles": ["style"],
+      "hardConstraints": ["style-only-reference", "ceramic-tin", "no-copied-brand", "no-text"],
+      "manualCriteria": ["style-transfer", "ceramic-realism", "subject-separation"]
+    },
+    {
+      "id": "en-single-scene-ref-table",
+      "locale": "en",
+      "category": "single-reference",
+      "prompt": "Place a round oak side table naturally into the reference reading nook while preserving perspective and window light",
+      "profileId": "standard-v1",
+      "aspectRatio": "16:9",
+      "referenceRoles": ["scene"],
+      "hardConstraints": ["round-oak-table", "scene-perspective", "window-light", "correct-scale"],
+      "manualCriteria": ["scene-integration", "contact-shadow", "scale-consistency"]
+    },
+    {
+      "id": "en-triple-running-shoe",
+      "locale": "en",
+      "category": "triple-reference",
+      "prompt": "Use the product shoe, the style reference's energetic lighting, and the scene reference's running track without changing product colors",
+      "profileId": "standard-v1",
+      "aspectRatio": "16:9",
+      "referenceRoles": ["product", "style", "scene"],
+      "hardConstraints": ["product-color", "product-silhouette", "style-only", "scene-perspective"],
+      "manualCriteria": ["multi-reference-control", "action-energy", "commercial-readiness"]
+    },
+    {
+      "id": "en-logo-preserve-tube",
+      "locale": "en",
+      "category": "logo-text",
+      "prompt": "Keep the small geometric mark on the reference cosmetic tube in the same position and scale; add no new words",
+      "profileId": "standard-v1",
+      "aspectRatio": "1:1",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["logo-position", "logo-scale", "no-new-text", "tube-shape"],
+      "manualCriteria": ["logo-fidelity", "package-identity", "catalog-readiness"]
+    },
+    {
+      "id": "en-text-preserve-bottle",
+      "locale": "en",
+      "category": "logo-text",
+      "prompt": "Preserve only the existing short label region on the reference bottle; do not rewrite, translate, or invent claims",
+      "profileId": "standard-v1",
+      "aspectRatio": "3:4",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["existing-text-region", "no-translation", "no-new-claims", "bottle-color"],
+      "manualCriteria": ["text-region-fidelity", "package-identity", "legibility"]
+    },
+    {
+      "id": "en-material-ceramic",
+      "locale": "en",
+      "category": "material",
+      "prompt": "Close-up of the reference matte ceramic mug, preserving its speckled glaze and muted blue color",
+      "profileId": "standard-v1",
+      "aspectRatio": "3:4",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["matte-ceramic", "speckled-glaze", "reference-blue", "no-glossy-plastic"],
+      "manualCriteria": ["ceramic-detail", "color-fidelity", "tactile-quality"]
+    },
+    {
+      "id": "en-material-chrome",
+      "locale": "en",
+      "category": "material",
+      "prompt": "Studio close-up of a chrome kitchen faucet with controlled reflections and crisp machined edges",
+      "profileId": "standard-v1",
+      "aspectRatio": "4:5",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["chrome-finish", "controlled-reflection", "reference-shape", "no-distorted-spout"],
+      "manualCriteria": ["metal-realism", "edge-quality", "highlight-control"]
+    },
+    {
+      "id": "en-person-hold-watch",
+      "locale": "en",
+      "category": "person-hold",
+      "prompt": "An adult naturally wearing the reference watch, face and crown fully visible, understated office setting",
+      "profileId": "standard-v1",
+      "aspectRatio": "4:5",
+      "referenceRoles": ["product"],
+      "hardConstraints": ["adult-person", "correct-wrist-placement", "visible-watch-face", "reference-watch-shape"],
+      "manualCriteria": ["anatomy", "product-fidelity", "natural-pose"]
+    }
+  ]
+}

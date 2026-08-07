@@ -1,3 +1,8 @@
+const {
+  sanitizeAnalyticsEvent,
+  sanitizeUsageLedgerEntry
+} = require('./privacy-metadata');
+
 const createLedger = (deps) => {
   const readJson = deps?.readJson;
   const writeJson = deps?.writeJson;
@@ -25,17 +30,82 @@ const createLedger = (deps) => {
     return safe || fallback;
   };
 
+  const normalizeAnalyticsKey = (raw) => String(raw || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+  const sensitiveQueryKey = (raw) => {
+    const key = normalizeAnalyticsKey(raw);
+    return key === 'auth' || key === 'authorization' || key === 'code' || key === 'otp' ||
+      key === 'sig' || key.startsWith('img') || key.startsWith('image') ||
+      key.includes('token') || key.includes('signature') || key.endsWith('sig') ||
+      key.endsWith('uri') || key.endsWith('url') || key.endsWith('password') ||
+      key.endsWith('secret') || key.endsWith('credential') || key.endsWith('apikey');
+  };
+
+  const rawContentKeys = new Set([
+    'content', 'dataurl', 'error', 'eventlabel', 'file', 'filename', 'filepath',
+    'image', 'imageurl', 'img', 'imgurl', 'input', 'message', 'output',
+    'placeholder', 'prompt', 'rawtext', 'reason', 'selector', 'src', 'targettext',
+    'text', 'usertext'
+  ]);
+
+  const dropAnalyticsKey = (raw) => {
+    const key = normalizeAnalyticsKey(raw);
+    return !key || sensitiveQueryKey(key) || rawContentKeys.has(key) ||
+      key.startsWith('image') || key.startsWith('img');
+  };
+
+  const looksLikeUrl = (raw) => {
+    const value = String(raw || '').trim();
+    return /^(?:https?:)?\/\//i.test(value) || /^\//.test(value) ||
+      /^(?:data|blob|javascript):/i.test(value);
+  };
+
+  const sanitizeAnalyticsUrl = (raw) => {
+    const value = String(raw || '').trim();
+    if (!value || /^(?:data|blob|javascript):/i.test(value)) return '';
+    try {
+      const url = new URL(value, 'https://analytics.invalid');
+      if (!['http:', 'https:'].includes(url.protocol)) return '';
+      const params = new URLSearchParams();
+      for (const [key, paramValue] of url.searchParams.entries()) {
+        if (sensitiveQueryKey(key) || looksLikeUrl(paramValue)) continue;
+        params.append(key, String(paramValue || '').slice(0, 160));
+      }
+      const path = url.pathname.startsWith('/') ? url.pathname : `/${url.pathname}`;
+      const query = params.toString();
+      return `${path || '/'}${query ? `?${query}` : ''}`;
+    } catch {
+      return '';
+    }
+  };
+
+  const scrubAnalyticsString = (raw) => String(raw || '')
+    .replace(/([?&])([^=&#\s]+)=([^&#\s]*)/g, (match, _prefix, key) =>
+      sensitiveQueryKey(key) ? '' : match
+    )
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (url) => sanitizeAnalyticsUrl(url))
+    .replace(/\?&/g, '?')
+    .replace(/&&+/g, '&')
+    .replace(/[?&]+$/g, '')
+    .slice(0, 240);
+
   const sanitizeAnalyticsPayload = (raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     const out = {};
     const entries = Object.entries(raw).slice(0, 40);
     for (const [k, v] of entries) {
       const key = String(k || '').trim().slice(0, 64);
-      if (!key) continue;
+      if (dropAnalyticsKey(key)) continue;
       if (typeof v === 'string') {
         const s = v.trim();
         if (!s) continue;
-        out[key] = s.slice(0, 240);
+        if (normalizeAnalyticsKey(key) === 'target' && !/^[a-z0-9][a-z0-9:_-]{0,119}$/i.test(s)) {
+          continue;
+        }
+        const cleaned = looksLikeUrl(s) ? sanitizeAnalyticsUrl(s) : scrubAnalyticsString(s);
+        if (cleaned) out[key] = cleaned;
         continue;
       }
       if (typeof v === 'number') {
@@ -50,7 +120,11 @@ const createLedger = (deps) => {
       if (Array.isArray(v)) {
         const arr = v
           .slice(0, 20)
-          .map((x) => (typeof x === 'string' ? x.trim().slice(0, 120) : null))
+          .map((x) => (
+            typeof x === 'string' && /^[a-z0-9][a-z0-9:_.-]{0,79}$/i.test(x.trim())
+              ? x.trim()
+              : null
+          ))
           .filter(Boolean);
         if (arr.length) out[key] = arr;
         continue;
@@ -62,25 +136,25 @@ const createLedger = (deps) => {
   const readUsageLedgerStore = () => {
     const data = readJson(USAGE_LEDGER_FILE, { v: 1, items: [] });
     if (!data || typeof data !== 'object') return { v: 1, items: [] };
-    const items = Array.isArray(data.items) ? data.items.filter((x) => x && typeof x === 'object') : [];
+    const items = Array.isArray(data.items)
+      ? data.items.map(sanitizeUsageLedgerEntry).filter(Boolean)
+      : [];
+    if (Array.isArray(data.items) && JSON.stringify(data.items) !== JSON.stringify(items)) {
+      writeJson(USAGE_LEDGER_FILE, { v: 1, items });
+    }
     return { v: 1, items };
   };
 
   const readAnalyticsEventsStore = () => {
     const data = readJson(ANALYTICS_EVENTS_FILE, { v: 1, items: [] });
     if (!data || typeof data !== 'object') return { v: 1, items: [] };
-    const items = Array.isArray(data.items) ? data.items.filter((x) => x && typeof x === 'object') : [];
-    return { v: 1, items };
-  };
-
-  const stringifyPageContext = (input) => {
-    if (typeof input === 'string') return input.trim();
-    if (!input) return '';
-    try {
-      return JSON.stringify(input);
-    } catch {
-      return '';
+    const items = Array.isArray(data.items)
+      ? data.items.map(sanitizeAnalyticsEvent).filter(Boolean)
+      : [];
+    if (Array.isArray(data.items) && JSON.stringify(data.items) !== JSON.stringify(items)) {
+      writeJson(ANALYTICS_EVENTS_FILE, { v: 1, items });
     }
+    return { v: 1, items };
   };
 
   const parseUrl = (raw) => {
@@ -174,18 +248,17 @@ const createLedger = (deps) => {
     const ts = typeof input?.ts === 'number' && Number.isFinite(input.ts) ? input.ts : Date.now();
     const eventType = sanitizeLedgerId(input?.eventType, 'event');
     const payload = sanitizeAnalyticsPayload(input?.payload);
-    const path = String(input?.path || '').trim().slice(0, 240);
-    const location = String(input?.location || '').trim().slice(0, 480);
-    const referrer = String(input?.referrer || '').trim().slice(0, 480);
+    const path = sanitizeAnalyticsUrl(input?.path);
+    const location = sanitizeAnalyticsUrl(input?.location);
+    const referrer = sanitizeAnalyticsUrl(input?.referrer);
     const userId = sanitizeLedgerId(input?.userId, '');
     const requestId = sanitizeLedgerId(input?.requestId, '');
     const sessionId = sanitizeLedgerId(input?.sessionId, '');
     const projectId = sanitizeLedgerId(input?.projectId, '');
-    const requestSource = String(input?.requestSource || '').trim().slice(0, 120);
-    const pageContext = stringifyPageContext(input?.pageContext).slice(0, 6000);
+    const requestSource = sanitizeLedgerId(input?.requestSource, '');
     const traffic = classifyTraffic({ location, referrer, payload });
 
-    const item = {
+    const item = sanitizeAnalyticsEvent({
       id: sanitizeLedgerId(input?.id, `evt_${ts.toString(36)}_${Math.random().toString(16).slice(2, 10)}`),
       ts,
       eventType,
@@ -199,13 +272,12 @@ const createLedger = (deps) => {
       ...(sessionId ? { sessionId } : {}),
       ...(projectId ? { projectId } : {}),
       ...(requestSource ? { requestSource } : {}),
-      ...(pageContext ? { pageContext } : {}),
       ip: typeof getClientIp === 'function' ? getClientIp(input?.req || {}) : 'unknown',
       ua:
         input?.req && input.req.headers && typeof input.req.headers['user-agent'] === 'string'
           ? input.req.headers['user-agent'].slice(0, 220)
           : ''
-    };
+    });
 
     items.push(item);
     if (items.length > ANALYTICS_EVENTS_MAX_ITEMS) items.splice(0, items.length - ANALYTICS_EVENTS_MAX_ITEMS);
@@ -244,6 +316,7 @@ const createLedger = (deps) => {
   };
 
   const upsertUsageLedgerItem = (input) => {
+    if (!sanitizeLedgerId(input?.requestId)) return { ok: false, error: 'requestId is required' };
     const normalizedInput = (() => {
       const x = input && typeof input === 'object' ? { ...input } : {};
       if (!x.errorCode && typeof x.error === 'string' && x.error.trim()) x.errorCode = x.error.trim();
@@ -261,7 +334,7 @@ const createLedger = (deps) => {
         const tt = Number(x.tokensTotal || 0) || 0;
         if (!tt && (ti || to)) x.tokensTotal = ti + to;
       }
-      return x;
+      return sanitizeUsageLedgerEntry(x) || {};
     })();
 
     const requestId = sanitizeLedgerId(normalizedInput?.requestId);
@@ -304,6 +377,8 @@ const createLedger = (deps) => {
 
   return {
     sanitizeLedgerId,
+    sanitizeAnalyticsPayload,
+    sanitizeAnalyticsUrl,
     readUsageLedgerStore,
     upsertUsageLedgerItem,
     computeCreditsDelta,

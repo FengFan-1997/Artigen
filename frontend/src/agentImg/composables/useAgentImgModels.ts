@@ -1,9 +1,12 @@
-import { computed, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useLanguageStore } from '@/stores/language';
 import { storeToRefs } from 'pinia';
 import { getCreditsOrders, type PayPackageId } from '@/points';
-import { getAuthToken, getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import { getGenerationModels, type GenerationModelProfile } from '../services/toolTasks';
+import {
+  DEFAULT_GENERATION_ASPECT_RATIOS,
+  DEFAULT_GENERATION_PROFILE_ID
+} from '../domain/generationWorkspace';
 
 const rankOfTier = (t: string) => {
   if (t === 'pro_plus') return 3;
@@ -11,15 +14,50 @@ const rankOfTier = (t: string) => {
   return 1;
 };
 
-export function useAgentImgModels(ensureAuthed: () => boolean, ui: any) {
-  const router = useRouter();
+const generationV2DevOverride = () => {
+  if (!import.meta.env.DEV) return '';
+  try {
+    const value = String(window.localStorage.getItem('artigen:ai-design-task-v2-dev') || '')
+      .trim()
+      .toLowerCase();
+    return value === 'legacy' || value === 'v2' ? value : '';
+  } catch {
+    return '';
+  }
+};
+
+export function useAgentImgModels(
+  ensureAuthed: () => boolean,
+  ui: any,
+  isAuthed?: { value: boolean }
+) {
   const languageStore = useLanguageStore();
   const { currentLang } = storeToRefs(languageStore);
 
   const selectedModelId = ref('');
+  const selectedProfileId = ref(DEFAULT_GENERATION_PROFILE_ID);
+  const selectedAspectRatio = ref('1:1');
   const modelMenuOpen = ref(false);
   const userTier = ref<PayPackageId | ''>('');
   const userTierLoading = ref(false);
+  const generationModelsLoading = ref(false);
+  const generationModelsError = ref('');
+  const generationModels = ref<GenerationModelProfile[]>([
+    {
+      id: DEFAULT_GENERATION_PROFILE_ID,
+      name: { zh: '标准生成', en: 'Standard generation' },
+      available: true,
+      capabilities: ['text-to-image'],
+      maxReferences: 0,
+      aspectRatios: DEFAULT_GENERATION_ASPECT_RATIOS,
+      supportsSeed: true
+    }
+  ]);
+  const generationV2Enabled = ref(
+    generationV2DevOverride() === 'legacy'
+      ? false
+      : String(import.meta.env.VITE_AI_DESIGN_TASK_V2_ENABLED ?? 'true').toLowerCase() !== 'false'
+  );
 
   const isProPlus = computed(() => {
     const t = userTier.value as string;
@@ -46,33 +84,30 @@ export function useAgentImgModels(ensureAuthed: () => boolean, ui: any) {
   };
 
   const modelOptions = computed(() => {
-    const autoHint =
-      currentLang.value === 'zh'
-        ? '自动：按图生图/文生图自动选择'
-        : 'Auto: picks based on img2img/txt2img';
-    const txtHint = currentLang.value === 'zh' ? '高级模型' : 'Advanced Model';
-    const editHint = currentLang.value === 'zh' ? '超级模型' : 'Super Model';
-    return [
-      { id: '', label: ui.value.modelStandard, badge: 'AUTO', hint: autoHint, requiresPro: false },
-      {
-        id: 'Kwai-Kolors/Kolors',
-        label: ui.value.modelNanobanana,
-        badge: 'PRO',
-        hint: txtHint,
-        requiresPro: true
-      },
-      {
-        id: 'Kwai-Kolors/Kolors',
-        label: ui.value.modelNanobananaPro,
-        badge: 'PRO',
-        hint: editHint,
-        requiresPro: true
-      }
-    ];
+    return generationModels.value.map((profile) => {
+      const label = typeof profile.name === 'string'
+        ? profile.name
+        : String(profile.name?.[currentLang.value === 'zh' ? 'zh' : 'en'] || profile.id);
+      const reference = profile.maxReferences > 0;
+      return {
+        id: profile.id,
+        label,
+        badge: reference ? 'REFERENCE · 60' : 'STANDARD · 10',
+        hint: currentLang.value === 'zh'
+          ? reference
+            ? '使用 1–3 张商品、风格或场景参考图'
+            : '纯文生图，不上传参考图'
+          : reference
+            ? 'Use 1–3 product, style, or scene references'
+            : 'Text-to-image without references',
+        requiresPro: false,
+        available: profile.available
+      };
+    });
   });
 
   const currentModelLabel = computed(() => {
-    const found = modelOptions.value.find((x) => x.id === selectedModelId.value);
+    const found = modelOptions.value.find((x) => x.id === selectedProfileId.value);
     return found?.label || ui.value.modelStandard;
   });
 
@@ -85,40 +120,76 @@ export function useAgentImgModels(ensureAuthed: () => boolean, ui: any) {
     modelMenuOpen.value = !modelMenuOpen.value;
   };
 
-  const ensureProAccessOrRedirect = async (showTopTip: (msg: string) => void) => {
-    const uid = String(getCurrentUserId() || '').trim();
-    const token = String(getAuthToken() || '').trim();
-    const authed = !!uid && !uid.startsWith('guest_') && !!token && isLocalLoggedIn();
-    if (!authed) {
-      modelMenuOpen.value = false;
-      showTopTip(ui.value.modelLocked);
-      router.push({ path: '/artigen/market', query: { proOnly: '1' } });
-      return false;
-    }
-    void ensureAuthed();
-    if (!userTier.value) await refreshUserTier();
-    if (isProPlus.value) return true;
-    modelMenuOpen.value = false;
-    showTopTip(ui.value.modelLocked);
-    router.push({ path: '/artigen/market', query: { proOnly: '1' } });
-    return false;
-  };
-
   const selectModel = async (
-    m: { id: string; requiresPro?: boolean },
+    m: { id: string; requiresPro?: boolean; available?: boolean },
     showTopTip: (msg: string) => void
   ) => {
     const id = String(m?.id || '').trim();
-    if (m?.requiresPro) {
-      const ok = await ensureProAccessOrRedirect(showTopTip);
-      if (!ok) return;
+    if (m.available === false) {
+      showTopTip(currentLang.value === 'zh' ? '该生成模式暂不可用' : 'This generation mode is unavailable.');
+      return;
     }
     selectedModelId.value = id;
+    if (generationModels.value.some((profile) => profile.id === id)) {
+      selectedProfileId.value = id;
+    }
     modelMenuOpen.value = false;
   };
 
+  const activeGenerationProfile = computed(() => {
+    return (
+      generationModels.value.find((profile) => profile.id === selectedProfileId.value) ||
+      generationModels.value[0] ||
+      null
+    );
+  });
+
+  const generationAspectRatios = computed(() => {
+    const values = activeGenerationProfile.value?.aspectRatios || [];
+    return values.length ? values : DEFAULT_GENERATION_ASPECT_RATIOS;
+  });
+
+  const generationProfileAvailable = computed(() => Boolean(activeGenerationProfile.value?.available));
+
+  const refreshGenerationModels = async () => {
+    if (!generationV2Enabled.value || generationModelsLoading.value) return;
+    generationModelsLoading.value = true;
+    generationModelsError.value = '';
+    try {
+      const models = await getGenerationModels();
+      if (!models.length) throw new Error('MODEL_PROFILE_UNAVAILABLE');
+      generationModels.value = models;
+      if (!models.some((profile) => profile.id === selectedProfileId.value && profile.available)) {
+        selectedProfileId.value = models.find((profile) => profile.available)?.id || models[0].id;
+      }
+      selectedModelId.value = selectedProfileId.value;
+      if (!generationAspectRatios.value.includes(selectedAspectRatio.value)) {
+        selectedAspectRatio.value = generationAspectRatios.value[0] || '1:1';
+      }
+    } catch (error: any) {
+      generationModelsError.value = String(error?.code || error?.message || 'MODEL_PROFILE_UNAVAILABLE');
+      generationModels.value = generationModels.value.map((profile) => ({ ...profile, available: false }));
+    } finally {
+      generationModelsLoading.value = false;
+    }
+  };
+
+  onMounted(() => {
+    void refreshGenerationModels();
+  });
+  if (isAuthed) {
+    watch(
+      () => isAuthed.value,
+      () => {
+        if (generationV2Enabled.value) void refreshGenerationModels();
+      }
+    );
+  }
+
   return {
     selectedModelId,
+    selectedProfileId,
+    selectedAspectRatio,
     modelMenuOpen,
     userTier,
     isProPlus,
@@ -126,6 +197,14 @@ export function useAgentImgModels(ensureAuthed: () => boolean, ui: any) {
     modelOptions,
     currentModelLabel,
     currentModelTip,
+    generationV2Enabled,
+    generationModels,
+    generationModelsLoading,
+    generationModelsError,
+    activeGenerationProfile,
+    generationAspectRatios,
+    generationProfileAvailable,
+    refreshGenerationModels,
     toggleModelMenu,
     selectModel
   };

@@ -1,3 +1,7 @@
+const { opaqueReference } = require('../lib/privacy-metadata');
+const generationAnalytics = require('../services/generation-analytics-service');
+const behaviorEvents = require('../services/behavior-event-service');
+
 const installUsageRoutes = (app, deps) => {
   const rateLimit = deps?.rateLimit;
   const assertAuthUserMatches = deps?.assertAuthUserMatches;
@@ -11,6 +15,14 @@ const installUsageRoutes = (app, deps) => {
   const appendAnalyticsEvent = deps?.appendAnalyticsEvent;
   const readAnalyticsEventsStore = deps?.readAnalyticsEventsStore;
   const readUsersMap = deps?.readUsersMap;
+  const listOperationalRecords = deps?.listOperationalRecords;
+  const usesOperationalRecordStore = deps?.usesOperationalRecordStore;
+
+  const operationalStoreEnabled = () => (
+    typeof usesOperationalRecordStore === 'function' &&
+    usesOperationalRecordStore() &&
+    typeof listOperationalRecords === 'function'
+  );
 
   const stringifyPageContext = (input) => {
     if (typeof input === 'string') return input.trim();
@@ -22,10 +34,37 @@ const installUsageRoutes = (app, deps) => {
     }
   };
 
-  app.post('/api/collection/event', rateLimit('collection_event', { max: 180, windowMs: 60 * 1000 }), (req, res) => {
+  app.post('/api/collection/event', rateLimit('collection_event', { max: 180, windowMs: 60 * 1000 }), async (req, res) => {
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const eventType = sanitizeLedgerId(body.eventType, 'event');
+      if (generationAnalytics.isGenerationEventType(eventType) && generationAnalytics.usesGenerationEventStore()) {
+        const item = await generationAnalytics.insertGenerationEvent({ eventType, body, req });
+        return res.status(202).json({
+          ok: true,
+          item: item ? {
+            id: String(item.id),
+            eventType: item.event_type,
+            occurredAt: item.occurred_at
+          } : null
+        });
+      }
+      if (behaviorEvents.usesBehaviorEventStore()) {
+        const result = await behaviorEvents.insertBehaviorEvent({
+          body,
+          req,
+          getClientIp
+        });
+        return res.status(202).json({
+          ok: true,
+          duplicate: result.duplicate,
+          item: {
+            id: String(result.item.event_id || result.item.id || ''),
+            eventType: String(result.item.event_type || eventType),
+            occurredAt: result.item.occurred_at
+          }
+        });
+      }
       const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
       const path = String(body.path || '').trim();
       const location = String(body.location || '').trim();
@@ -60,12 +99,60 @@ const installUsageRoutes = (app, deps) => {
     }
   });
 
-  app.get('/api/admin/collection/events', rateLimit('admin_collection_events', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  app.get('/api/admin/generation/events', rateLimit('admin_generation_events', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      if (!generationAnalytics.usesGenerationEventStore()) {
+        return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
+      }
+      const result = await generationAnalytics.listGenerationEvents({
+        limit: clampInt(req.query.limit, 200, 2000),
+        offset: clampInt(req.query.offset, 0, 2000000),
+        eventType: req.query.eventType
+      });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      console.error('Error in GET /api/admin/generation/events:', error);
+      return res.status(500).json({ error: 'GENERATION_ANALYTICS_UNAVAILABLE' });
+    }
+  });
+
+  app.get('/api/admin/generation/funnel', rateLimit('admin_generation_funnel', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      if (!generationAnalytics.usesGenerationEventStore()) {
+        return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
+      }
+      const funnel = await generationAnalytics.getGenerationFunnel({
+        days: clampInt(req.query.days, 14, 90)
+      });
+      return res.json({ ok: true, funnel });
+    } catch (error) {
+      console.error('Error in GET /api/admin/generation/funnel:', error);
+      return res.status(500).json({ error: 'GENERATION_ANALYTICS_UNAVAILABLE' });
+    }
+  });
+
+  const listAdminBehaviorEvents = async (req, res) => {
     try {
       if (!assertAdmin(req, res)) return;
       const limit = clampInt(req.query.limit, 50, 2000);
       const offset = clampInt(req.query.offset, 0, 2000000);
       const eventType = String(req.query.eventType || '').trim().toLowerCase();
+
+      if (behaviorEvents.usesBehaviorEventStore()) {
+        const result = await behaviorEvents.listBehaviorEvents({
+          userId: req.query.userId,
+          eventType,
+          path: req.query.path,
+          action: req.query.action,
+          from: req.query.from,
+          to: req.query.to,
+          limit,
+          offset
+        });
+        return res.json({ ok: true, source: 'postgres', ...result });
+      }
 
       const store = readAnalyticsEventsStore();
       const all = store.items
@@ -77,9 +164,40 @@ const installUsageRoutes = (app, deps) => {
       console.error('Error in GET /api/admin/collection/events:', e);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
-  });
+  };
 
-  app.post('/api/usage/ingest', rateLimit('usage_ingest', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  app.get(
+    '/api/admin/collection/events',
+    rateLimit('admin_collection_events', { max: 60, windowMs: 60 * 1000 }),
+    listAdminBehaviorEvents
+  );
+  app.get(
+    '/api/admin/behavior/events',
+    rateLimit('admin_behavior_events', { max: 60, windowMs: 60 * 1000 }),
+    listAdminBehaviorEvents
+  );
+
+  app.get(
+    '/api/admin/behavior/summary',
+    rateLimit('admin_behavior_summary', { max: 60, windowMs: 60 * 1000 }),
+    async (req, res) => {
+      try {
+        if (!assertAdmin(req, res)) return;
+        if (!behaviorEvents.usesBehaviorEventStore()) {
+          return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
+        }
+        const summary = await behaviorEvents.getBehaviorSummary({
+          days: clampInt(req.query.days, 14, 90)
+        });
+        return res.json({ ok: true, summary });
+      } catch (error) {
+        console.error('Error in GET /api/admin/behavior/summary:', error);
+        return res.status(500).json({ error: 'BEHAVIOR_ANALYTICS_UNAVAILABLE' });
+      }
+    }
+  );
+
+  app.post('/api/usage/ingest', rateLimit('usage_ingest', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const userId = String(body.userId || '').trim() || 'anonymous';
@@ -120,7 +238,7 @@ const installUsageRoutes = (app, deps) => {
         ua: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 200) : ''
       };
 
-      const result = upsertUsageLedgerItem(item);
+      const result = await upsertUsageLedgerItem(item);
       if (!result.ok) return res.status(400).json({ error: result.error || 'Bad Request' });
       res.json({ ok: true, existed: result.existed, item: result.item });
     } catch (error) {
@@ -140,7 +258,7 @@ const installUsageRoutes = (app, deps) => {
     return Number.isFinite(d) ? d : null;
   };
 
-  app.get('/api/usage/ledger', rateLimit('usage_ledger', { max: 120, windowMs: 60 * 1000 }), (req, res) => {
+  app.get('/api/usage/ledger', rateLimit('usage_ledger', { max: 120, windowMs: 60 * 1000 }), async (req, res) => {
     try {
       const userId = String(req.query.userId || '').trim() || 'anonymous';
       if (!assertAuthUserMatches(req, res, userId)) return;
@@ -149,11 +267,27 @@ const installUsageRoutes = (app, deps) => {
       const to = parseTime(req.query.to);
       const trigger = String(req.query.trigger || '').trim().toLowerCase();
       const model = String(req.query.model || '').trim().toLowerCase();
-      const sessionId = sanitizeLedgerId(req.query.sessionId);
-      const projectId = sanitizeLedgerId(req.query.projectId);
+      const sessionRef = req.query.sessionId ? opaqueReference(req.query.sessionId, 'session') : '';
+      const projectRef = req.query.projectId ? opaqueReference(req.query.projectId, 'project') : '';
 
       const limit = clampInt(req.query.limit, 20, 2000);
       const offset = clampInt(req.query.offset, 0, 2000000);
+
+      if (operationalStoreEnabled()) {
+        const result = await listOperationalRecords({
+          kind: 'usage',
+          userId,
+          from,
+          to,
+          trigger,
+          model,
+          sessionRef,
+          projectRef,
+          limit,
+          offset
+        });
+        return res.json({ ok: true, ...result });
+      }
 
       const store = readUsageLedgerStore();
       const all = store.items
@@ -164,8 +298,8 @@ const installUsageRoutes = (app, deps) => {
           if (to && ts > to) return false;
           if (trigger && String(x?.trigger || '').toLowerCase() !== trigger) return false;
           if (model && String(x?.model || '').toLowerCase() !== model) return false;
-          if (sessionId && String(x?.sessionId || '') !== sessionId) return false;
-          if (projectId && String(x?.projectId || '') !== projectId) return false;
+          if (sessionRef && String(x?.sessionRef || '') !== sessionRef) return false;
+          if (projectRef && String(x?.projectRef || '') !== projectRef) return false;
           return true;
         })
         .sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
@@ -178,7 +312,7 @@ const installUsageRoutes = (app, deps) => {
     }
   });
 
-  app.get('/api/admin/usage/ledger', rateLimit('admin_usage_ledger', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  app.get('/api/admin/usage/ledger', rateLimit('admin_usage_ledger', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
     try {
       if (!assertAdmin(req, res)) return;
 
@@ -187,26 +321,47 @@ const installUsageRoutes = (app, deps) => {
       const to = parseTime(req.query.to);
       const trigger = String(req.query.trigger || '').trim().toLowerCase();
       const model = String(req.query.model || '').trim().toLowerCase();
-      const sessionId = sanitizeLedgerId(req.query.sessionId);
-      const projectId = sanitizeLedgerId(req.query.projectId);
+      const sessionRef = req.query.sessionId ? opaqueReference(req.query.sessionId, 'session') : '';
+      const projectRef = req.query.projectId ? opaqueReference(req.query.projectId, 'project') : '';
 
       const limit = clampInt(req.query.limit, 200, 2000);
       const offset = clampInt(req.query.offset, 0, 2000000);
 
-      const store = readUsageLedgerStore();
-      const all = store.items
-        .filter((x) => (userId ? String(x?.userId || '') === userId : true))
-        .filter((x) => {
-          const ts = Number(x?.ts || 0) || 0;
-          if (from && ts < from) return false;
-          if (to && ts > to) return false;
-          if (trigger && String(x?.trigger || '').toLowerCase() !== trigger) return false;
-          if (model && String(x?.model || '').toLowerCase() !== model) return false;
-          if (sessionId && String(x?.sessionId || '') !== sessionId) return false;
-          if (projectId && String(x?.projectId || '') !== projectId) return false;
-          return true;
-        })
-        .sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
+      let total = 0;
+      let page = [];
+      if (operationalStoreEnabled()) {
+        const result = await listOperationalRecords({
+          kind: 'usage',
+          userId,
+          from,
+          to,
+          trigger,
+          model,
+          sessionRef,
+          projectRef,
+          limit,
+          offset
+        });
+        total = result.total;
+        page = result.items;
+      } else {
+        const store = readUsageLedgerStore();
+        const all = store.items
+          .filter((x) => (userId ? String(x?.userId || '') === userId : true))
+          .filter((x) => {
+            const ts = Number(x?.ts || 0) || 0;
+            if (from && ts < from) return false;
+            if (to && ts > to) return false;
+            if (trigger && String(x?.trigger || '').toLowerCase() !== trigger) return false;
+            if (model && String(x?.model || '').toLowerCase() !== model) return false;
+            if (sessionRef && String(x?.sessionRef || '') !== sessionRef) return false;
+            if (projectRef && String(x?.projectRef || '') !== projectRef) return false;
+            return true;
+          })
+          .sort((a, b) => (Number(b?.ts || 0) || 0) - (Number(a?.ts || 0) || 0));
+        total = all.length;
+        page = all.slice(offset, offset + limit);
+      }
 
       const users = readUsersMap();
       const usersIndex = (() => {
@@ -235,18 +390,23 @@ const installUsageRoutes = (app, deps) => {
         return { username, email };
       };
 
-      const items = all.slice(offset, offset + limit).map((x) => {
+      const items = page.map((x) => {
         const uid = String(x?.userId || '').trim();
-        return { ...x, ...getUserBrief(uid) };
+        const brief = getUserBrief(uid);
+        return {
+          ...x,
+          ...(brief.username ? { username: brief.username } : {}),
+          ...(brief.email ? { email: brief.email } : {})
+        };
       });
-      return res.json({ ok: true, total: all.length, items });
+      return res.json({ ok: true, total, items });
     } catch (e) {
       console.error('Error in GET /api/admin/usage/ledger:', e);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   });
 
-  app.get('/api/usage/summary', rateLimit('usage_summary', { max: 60, windowMs: 60 * 1000 }), (req, res) => {
+  app.get('/api/usage/summary', rateLimit('usage_summary', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
     try {
       const userId = String(req.query.userId || '').trim() || 'anonymous';
       if (!assertAuthUserMatches(req, res, userId)) return;
@@ -255,21 +415,29 @@ const installUsageRoutes = (app, deps) => {
       const to = parseTime(req.query.to);
       const groupBy = String(req.query.groupBy || 'day').trim().toLowerCase();
 
-      const store = readUsageLedgerStore();
-      const items = store.items
-        .filter((x) => String(x?.userId || '') === userId)
-        .filter((x) => {
-          const ts = Number(x?.ts || 0) || 0;
-          if (from && ts < from) return false;
-          if (to && ts > to) return false;
-          return true;
-        });
+      const items = operationalStoreEnabled()
+        ? (await listOperationalRecords({
+            kind: 'usage',
+            userId,
+            from,
+            to,
+            limit: 20_000,
+            offset: 0
+          })).items
+        : readUsageLedgerStore().items
+            .filter((x) => String(x?.userId || '') === userId)
+            .filter((x) => {
+              const ts = Number(x?.ts || 0) || 0;
+              if (from && ts < from) return false;
+              if (to && ts > to) return false;
+              return true;
+            });
 
       const bucketKey = (x) => {
         if (groupBy === 'trigger') return String(x?.trigger || '') || 'unknown';
         if (groupBy === 'model') return String(x?.model || '') || 'unknown';
-        if (groupBy === 'projectid') return String(x?.projectId || '') || 'unknown';
-        if (groupBy === 'sessionid') return String(x?.sessionId || '') || 'unknown';
+        if (groupBy === 'projectid') return String(x?.projectRef || '') || 'unknown';
+        if (groupBy === 'sessionid') return String(x?.sessionRef || '') || 'unknown';
         const ts = Number(x?.ts || 0) || 0;
         const d = new Date(ts || Date.now());
         const yyyy = d.getFullYear();

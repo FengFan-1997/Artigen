@@ -16,24 +16,11 @@
         </div>
       </div>
 
-      <div class="list">
-        <div class="label">{{ t('login.local_users') }}</div>
-        <div v-if="users.length === 0" class="empty">{{ t('login.empty') }}</div>
-        <button
-          v-for="u in users"
-          :key="u.userId"
-          class="user-item"
-          type="button"
-          @click="switchTo(u.userId)"
-        >
-          <div class="u-email">{{ u.email }}</div>
-          <div class="u-id">{{ u.userId }}</div>
-        </button>
-      </div>
-
       <div class="actions">
         <router-link class="btn ghost" to="/artigen">{{ t('login.back') }}</router-link>
-        <!-- <router-link class="btn ghost" to="/login">{{ t('login.login_other') }}</router-link> -->
+        <button class="btn ghost" type="button" @click="loginOther">
+          {{ t('login.login_other') }}
+        </button>
         <button class="btn danger" type="button" @click="logout">{{ t('login.logout') }}</button>
       </div>
     </div>
@@ -42,8 +29,8 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { getLastEmail, loadUsers, setLastEmail, upsertUser } from '../storage';
-import { getCurrentUserId, logoutLocal, setLoggedIn } from '../session';
+import { getLastEmail, loadUsers } from '../storage';
+import { getCurrentUserId, logoutLocal } from '../session';
 import { useLanguageStore } from '@/stores/language';
 import LanguageSwitcher from '../components/LanguageSwitcher.vue';
 
@@ -57,18 +44,8 @@ const email = computed(() => {
   return found?.email || getLastEmail();
 });
 
-const refresh = () => {
-  userId.value = getCurrentUserId();
-  users.value = loadUsers();
-};
-
-const switchTo = (uid: string) => {
-  const found = users.value.find((u) => u.userId === uid);
-  if (!found) return;
-  upsertUser({ email: found.email, userId: found.userId });
-  setLastEmail(found.email);
-  setLoggedIn({ userId: found.userId });
-  refresh();
+const loginOther = () => {
+  logoutLocal({ redirectTo: '/login' });
 };
 
 const logout = () => {
@@ -157,60 +134,6 @@ const logout = () => {
   word-break: break-all;
   text-align: right;
   max-width: 420px;
-}
-
-.list {
-  margin-top: 16px;
-}
-
-.label {
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 12px;
-  color: #94a3b8;
-  margin-bottom: 10px;
-}
-
-.empty {
-  color: #64748b;
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 12px;
-  padding: 12px 0;
-}
-
-.user-item {
-  display: none;
-  width: 100%;
-  text-align: left;
-  padding: 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(0, 0, 0, 0.35);
-  color: #f1f5f9;
-  cursor: pointer;
-  margin-bottom: 10px;
-  transition: all 0.2s;
-}
-
-.user-item:hover {
-  border-color: rgba(204, 255, 0, 0.55);
-  background: rgba(204, 255, 0, 0.06);
-}
-
-.u-email {
-  font-weight: 800;
-  margin-bottom: 6px;
-}
-
-.u-id {
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 12px;
-  color: #94a3b8;
 }
 
 .actions {

@@ -1,6 +1,8 @@
 import { storeToRefs } from 'pinia';
 import { useAgentImgSettingsStore } from '../stores/settings';
 import { useLanguageStore } from '@/stores/language';
+import { onBeforeUnmount, onMounted, watch } from 'vue';
+import { loadProductProfile, saveProductProfile } from '../services/generationWorkspaceDb';
 
 export function useAgentImgSettings() {
   const settingsStore = useAgentImgSettingsStore();
@@ -21,6 +23,47 @@ export function useAgentImgSettings() {
     styles,
     colors
   } = storeToRefs(settingsStore);
+
+  let saveTimer: number | null = null;
+  let profileHydrated = false;
+
+  onMounted(() => {
+    void loadProductProfile().then((snapshot) => {
+      if (snapshot) settingsStore.hydrateProductProfile(snapshot);
+      profileHydrated = true;
+    });
+  });
+
+  watch(
+    [
+      productName,
+      productCategory,
+      material,
+      sceneType,
+      lighting,
+      primaryColor,
+      brandName,
+      designElements,
+      styles,
+      colors
+    ],
+    () => {
+      if (!profileHydrated) return;
+      if (saveTimer) window.clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(() => {
+        saveTimer = null;
+        void saveProductProfile(settingsStore.productProfileSnapshot());
+      }, 350);
+    },
+    { deep: true }
+  );
+
+  onBeforeUnmount(() => {
+    if (!saveTimer) return;
+    window.clearTimeout(saveTimer);
+    saveTimer = null;
+    void saveProductProfile(settingsStore.productProfileSnapshot());
+  });
 
   const buildProductProfileContextText = () => {
     const zh = currentLang.value === 'zh';
@@ -95,6 +138,7 @@ export function useAgentImgSettings() {
     designElements,
     styles,
     colors,
+    productProfileSnapshot: settingsStore.productProfileSnapshot,
     buildProductProfileContextText
   };
 }

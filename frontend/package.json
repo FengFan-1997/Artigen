@@ -3,28 +3,40 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": "24.x",
+    "pnpm": "10.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "start": "sh -c 'serve -s dist -l ${PORT:-8080}'",
-    "lint": "eslint . --fix",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "format": "prettier --write src/",
     "type-check": "vue-tsc -b",
     "test": "vitest run",
-    "prepare": "husky install || exit 0"
-  },
-  "lint-staged": {
-    "*.{js,jsx,vue,ts,tsx}": [
-      "prettier --write",
-      "eslint --fix"
-    ]
+    "test:budget": "node scripts/check-initial-budget.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:update": "playwright test --update-snapshots"
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.1",
     "@fortawesome/fontawesome-free": "^7.1.0",
+    "@jsquash/jpeg": "1.6.0",
+    "@jsquash/png": "3.1.1",
+    "@jsquash/webp": "^1.5.0",
+    "@novnc/novnc": "1.5.0",
+    "@tanstack/vue-query": "5.101.4",
+    "@uppy/aws-s3": "5.1.0",
+    "@uppy/core": "5.2.0",
     "ant-design-vue": "^4.2.6",
+    "dexie": "4.4.4",
     "echarts": "^6.0.0",
+    "fabric": "7.4.0",
+    "fflate": "^0.8.3",
     "gifenc": "^1.0.3",
     "gsap": "^3.13.0",
     "pdfjs-dist": "^4.10.38",
@@ -35,8 +47,8 @@
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^20.17.0",
-    "@types/nodemailer": "^6.4.17",
     "@typescript-eslint/eslint-plugin": "^8.49.0",
     "@typescript-eslint/parser": "^8.49.0",
     "@vitejs/plugin-vue": "^5.2.1",
@@ -45,10 +57,8 @@
     "@vue/tsconfig": "^0.5.1",
     "eslint": "^9.39.1",
     "eslint-plugin-vue": "^10.6.2",
-    "husky": "8.0.3",
+    "fake-indexeddb": "6.2.4",
     "less": "^4.4.2",
-    "lint-staged": "^15.2.10",
-    "nodemailer": "^6.9.16",
     "prettier": "^3.7.4",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",

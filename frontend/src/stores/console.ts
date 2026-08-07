@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia';
 import { buildApiUrl } from '@/utils/api';
-import { ensureGuestUserId, getOrCreateProjectId, getOrCreateSessionId } from '@/login/session';
+import {
+  sanitizeAnalyticsPayload,
+  sanitizeAnalyticsUrl,
+  trackBackendEvent
+} from '@/utils/analytics';
+import { fetchJsonQuery, queryClient } from '@/services/serverState';
 
 const AUTH_STORAGE_KEY = 'console_auth_v1';
 const STORAGE_KEY = 'console_store_v1';
@@ -8,26 +13,31 @@ const ADMIN_KEY_STORAGE_KEY = 'console_admin_key_v1';
 const ADMIN_AUTH_MODE_STORAGE_KEY = 'console_admin_auth_mode_v1';
 
 type AdminAuthMode = 'bearer' | 'x-admin-key';
+export type AdminRole = 'operator' | 'admin' | 'owner' | 'development';
 
 export type ConsoleAuthSession = {
   userId: string;
   expiresAt: number;
   authHash: string;
+  role?: AdminRole;
 };
 
-export const getConsoleAuthSession = (): ConsoleAuthSession | null => {
+let consoleAuthSession: ConsoleAuthSession | null = null;
+let consoleAdminKey = '';
+let consoleAdminAuthMode: AdminAuthMode = 'bearer';
+
+export const clearLegacyConsoleCredentialStorage = () => {
   try {
-    const raw = String(localStorage.getItem(AUTH_STORAGE_KEY) || '').trim();
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<ConsoleAuthSession>;
-    const userId = String(parsed.userId || '').trim();
-    const authHash = String(parsed.authHash || '').trim();
-    const expiresAt = Number(parsed.expiresAt || 0);
-    if (!userId || !authHash || !Number.isFinite(expiresAt)) return null;
-    return { userId, authHash, expiresAt };
-  } catch {
-    return null;
-  }
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
+    localStorage.removeItem(ADMIN_AUTH_MODE_STORAGE_KEY);
+  } catch {}
+};
+
+clearLegacyConsoleCredentialStorage();
+
+export const getConsoleAuthSession = (): ConsoleAuthSession | null => {
+  return consoleAuthSession ? { ...consoleAuthSession } : null;
 };
 
 export const isConsoleAuthed = (): boolean => {
@@ -49,13 +59,18 @@ export const setConsoleAuthSession = (session: ConsoleAuthSession) => {
   const authHash = String(session.authHash || '').trim();
   const expiresAt = Number(session.expiresAt || 0);
   if (!userId || !authHash || !Number.isFinite(expiresAt)) throw new Error('INVALID_SESSION');
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ userId, authHash, expiresAt }));
+  const role = String(session.role || '').trim() as AdminRole;
+  consoleAuthSession = {
+    userId,
+    authHash,
+    expiresAt,
+    ...(role ? { role } : {})
+  };
 };
 
 export const clearConsoleAuthSession = () => {
-  try {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-  } catch {}
+  consoleAuthSession = null;
+  clearLegacyConsoleCredentialStorage();
 };
 
 const inferAdminAuthMode = (token: string): AdminAuthMode => {
@@ -66,45 +81,31 @@ const inferAdminAuthMode = (token: string): AdminAuthMode => {
 };
 
 export const getConsoleAdminKey = (): string => {
-  try {
-    return String(localStorage.getItem(ADMIN_KEY_STORAGE_KEY) || '').trim();
-  } catch {
-    return '';
-  }
+  return consoleAdminKey;
 };
 
 export const getConsoleAdminAuthMode = (): AdminAuthMode => {
-  try {
-    const v = String(localStorage.getItem(ADMIN_AUTH_MODE_STORAGE_KEY) || '')
-      .trim()
-      .toLowerCase();
-    return v === 'x-admin-key' ? 'x-admin-key' : 'bearer';
-  } catch {
-    return 'bearer';
-  }
+  return consoleAdminAuthMode;
 };
 
 export const setConsoleAdminKey = (key: string) => {
   const v = String(key || '').trim();
   if (!v) throw new Error('INVALID_ADMIN_KEY');
-  localStorage.setItem(ADMIN_KEY_STORAGE_KEY, v);
+  consoleAdminKey = v;
 };
 
 export const setConsoleAdminAuthMode = (mode: AdminAuthMode) => {
-  const v = mode === 'x-admin-key' ? 'x-admin-key' : 'bearer';
-  localStorage.setItem(ADMIN_AUTH_MODE_STORAGE_KEY, v);
+  consoleAdminAuthMode = mode === 'x-admin-key' ? 'x-admin-key' : 'bearer';
 };
 
 export const clearConsoleAdminKey = () => {
-  try {
-    localStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
-  } catch {}
+  consoleAdminKey = '';
+  clearLegacyConsoleCredentialStorage();
 };
 
 export const clearConsoleAdminAuthMode = () => {
-  try {
-    localStorage.removeItem(ADMIN_AUTH_MODE_STORAGE_KEY);
-  } catch {}
+  consoleAdminAuthMode = 'bearer';
+  clearLegacyConsoleCredentialStorage();
 };
 
 // Types
@@ -172,10 +173,94 @@ export type AdminUserItem = {
   email: string;
   username: string;
   name: string;
+  status: 'active' | 'disabled' | 'deleted';
   createdAt: number;
   lastSeen: number;
   visits: number;
   wallet?: AdminWallet | null;
+};
+
+export type AdminPrincipal = {
+  username: string;
+  role: AdminRole;
+  legacy?: boolean;
+};
+
+export type AdminOverview = {
+  users: { total: number; new7d: number; active24h: number };
+  credits: {
+    available: number;
+    frozen: number;
+    ledgerEntries24h: number;
+    overdueHolds: number;
+  };
+  commerce: { orders7d: number; revenueMinor7d: number };
+  generation: { tasks24h: number; success24h: number; failed24h: number };
+  behavior: { events24h: number; pageViews24h: number; clicks24h: number };
+  audit: { events24h: number };
+  generatedAt: number;
+};
+
+export type AdminCreditLedgerItem = {
+  id: string;
+  userId: string;
+  username?: string;
+  email?: string;
+  entryType: string;
+  deltaAvailable: number;
+  deltaFrozen: number;
+  balanceAvailable: number;
+  balanceFrozen: number;
+  referenceType?: string;
+  referenceId?: string;
+  idempotencyKey?: string;
+  createdAt: number;
+};
+
+export type AdminBehaviorEvent = {
+  id: string;
+  eventId: string;
+  eventType: string;
+  category: string;
+  path: string;
+  action?: string;
+  element?: string;
+  properties?: Record<string, any>;
+  userId?: string;
+  userRef?: string;
+  username?: string;
+  email?: string;
+  sessionRef?: string;
+  projectRef?: string;
+  deviceCategory?: string;
+  occurredAt?: string;
+  ts: number;
+};
+
+export type AdminBehaviorSummary = {
+  days: number;
+  totals: { events: number; pageViews: number; clicks: number; activeUsers: number };
+  daily: Array<{
+    day: string;
+    events: number;
+    pageViews: number;
+    clicks: number;
+    activeUsers: number;
+  }>;
+  topPages: Array<{ key: string; count: number }>;
+  topActions: Array<{ key: string; count: number }>;
+};
+
+export type AdminDatabaseAuditEvent = {
+  id: string;
+  eventType: string;
+  targetType?: string;
+  targetId?: string;
+  requestId?: string;
+  metadata?: Record<string, any>;
+  actorId: string;
+  actorName: string;
+  createdAt: number;
 };
 
 export type AdminImageRef = { kind: 'url'; url: string } | { kind: 'data'; mime?: string };
@@ -247,6 +332,34 @@ export type AdminAnalyticsEventItem = {
   userId?: string;
   ip?: string;
   ua?: string;
+};
+
+export type GenerationFunnel = {
+  days: number;
+  events: Record<string, number>;
+  operations: Array<{
+    operation: string;
+    success: number;
+    failed: number;
+    cancelled: number;
+    refundedCredits: number;
+    chargedCredits: number;
+    avgQueueMs: number;
+  }>;
+  successRate: number;
+  refundRate: number;
+  assetPersistenceFailureRate: number;
+  costPerSuccessfulTaskMinor: number;
+  refundedCredits: number;
+  unsettledHolds: { count: number; overdueCount: number; credits: number };
+  timing: {
+    queueP50Ms: number;
+    queueP95Ms: number;
+    firstImageP50Ms: number;
+    firstImageP95Ms: number;
+    providerP50Ms: number;
+    providerP95Ms: number;
+  };
 };
 
 export type AdminAuditHistoryItem = {
@@ -351,6 +464,28 @@ const buildAdminHeaders = (token: string, mode: AdminAuthMode): Record<string, s
   return headers;
 };
 
+const fetchAdminJson = async (
+  url: string,
+  headers: Record<string, string>,
+  onAuthError: () => void
+) => {
+  try {
+    const json: any = await fetchJsonQuery({
+      queryKey: ['console', url],
+      request: (signal) => fetch(url, { headers, signal })
+    });
+    if (!json?.ok) {
+      const error = new Error(typeof json?.error === 'string' ? json.error : 'INVALID_RESPONSE');
+      (error as any).status = 200;
+      throw error;
+    }
+    return json;
+  } catch (error) {
+    if (isAdminAuthErrorStatus(Number((error as any)?.status || 0))) onAuthError();
+    throw error;
+  }
+};
+
 export const useConsoleStore = defineStore('console', {
   state: () => ({
     users: [] as ConsoleUser[],
@@ -369,8 +504,7 @@ export const useConsoleStore = defineStore('console', {
     adminUsageTotal: 0,
     adminEvents: [] as AdminAnalyticsEventItem[],
     adminEventsTotal: 0,
-    adminBehaviorEvents: [] as AdminAnalyticsEventItem[],
-    adminBehaviorTotal: 0,
+    generationFunnel: null as GenerationFunnel | null,
     adminAudit: [] as AdminAuditHistoryItem[],
     adminAuditTotal: 0,
     adminChats: [] as any[],
@@ -378,6 +512,15 @@ export const useConsoleStore = defineStore('console', {
     adminOrders: [] as any[],
     adminOrdersTotal: 0,
     adminRateLimitStats: null as AdminRateLimitStats | null,
+    adminPrincipal: null as AdminPrincipal | null,
+    adminOverview: null as AdminOverview | null,
+    adminCreditLedger: [] as AdminCreditLedgerItem[],
+    adminCreditLedgerTotal: 0,
+    adminBehaviorEvents: [] as AdminBehaviorEvent[],
+    adminBehaviorTotal: 0,
+    adminBehaviorSummary: null as AdminBehaviorSummary | null,
+    adminDatabaseAudit: [] as AdminDatabaseAuditEvent[],
+    adminDatabaseAuditTotal: 0,
     isInitialized: false
   }),
 
@@ -410,21 +553,17 @@ export const useConsoleStore = defineStore('console', {
       if (stored) {
         try {
           const data = JSON.parse(stored);
-          this.users = data.users || [];
-          this.transactions = data.transactions || [];
-          this.logs = data.logs || [];
-          this.generatedContent = data.generatedContent || [];
+          // Never hydrate fake balances/orders/content written by the old
+          // browser-only console. Canonical finance now comes from PostgreSQL.
+          this.users = [];
+          this.transactions = [];
+          this.logs = [];
+          this.generatedContent = [];
           this.trafficStats = data.trafficStats || [];
           this.aiBgSeoCopy = data.aiBgSeoCopy || buildDefaultAiBgSeoCopy();
         } catch (e) {
           console.error('Failed to load console store', e);
         }
-      }
-
-      // Ensure current user exists
-      const currentUid = getConsoleUserId();
-      if (currentUid && !this.users.find((u) => u.userId === currentUid)) {
-        this.createUser(currentUid, 'user@example.com');
       }
 
       this.adminKey = getConsoleAdminKey();
@@ -435,16 +574,6 @@ export const useConsoleStore = defineStore('console', {
           this.adminAuthMode = inferred;
           setConsoleAdminAuthMode(inferred);
         }
-      }
-
-      // Force update admin/current user to have 9999 points if requested
-      // The prompt asked for "Finally give me an account with 9999 points"
-      const currentUser = this.users.find((u) => u.userId === currentUid);
-      if (currentUser && currentUser.points < 9999) {
-        // Only if it's a fresh setup or we want to enforce it.
-        // Let's just enforce it for the demo purpose if it's below a threshold or first run.
-        // Or we can add a specific action for this.
-        // For now, let's just leave it to the specific 'gift' action or init logic.
       }
 
       this.isInitialized = true;
@@ -467,13 +596,16 @@ export const useConsoleStore = defineStore('console', {
 
       const token = String(json?.token || '').trim();
       const expiresAt = Number(json?.expiresAt || 0) || 0;
+      const role = String(json?.role || 'development').trim() as AdminRole;
       if (!token || !Number.isFinite(expiresAt) || expiresAt <= Date.now())
         throw new Error('LOGIN_FAILED');
 
       this.setAdminKey(token);
+      queryClient.removeQueries({ queryKey: ['console'] });
       this.adminAuthMode = 'bearer';
       setConsoleAdminAuthMode('bearer');
-      return { ok: true as const, token, expiresAt };
+      this.adminPrincipal = { username, role };
+      return { ok: true as const, token, expiresAt, role };
     },
 
     setAdminKey(key: string, mode: AdminAuthMode = 'bearer') {
@@ -494,6 +626,38 @@ export const useConsoleStore = defineStore('console', {
       clearConsoleAuthSession();
       this.adminKey = '';
       this.adminAuthMode = 'bearer';
+      this.adminPrincipal = null;
+      this.adminOverview = null;
+      queryClient.removeQueries({ queryKey: ['console'] });
+    },
+
+    async fetchAdminPrincipal() {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const json = await fetchAdminJson(buildApiUrl('/api/admin/me'), headers, () =>
+        this.clearAdminKey()
+      );
+      const principal: AdminPrincipal = {
+        username: String(json?.principal?.username || 'admin'),
+        role: String(json?.principal?.role || 'operator') as AdminRole,
+        legacy: Boolean(json?.principal?.legacy)
+      };
+      this.adminPrincipal = principal;
+      return { ok: true as const, principal };
+    },
+
+    async fetchAdminOverview() {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const json = await fetchAdminJson(buildApiUrl('/api/admin/overview'), headers, () =>
+        this.clearAdminKey()
+      );
+      this.adminOverview = json.overview as AdminOverview;
+      return { ok: true as const, overview: this.adminOverview };
     },
 
     async fetchAdminUsers(input?: { q?: string; limit?: number; offset?: number }) {
@@ -506,12 +670,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminUserItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminUsers = items;
       this.adminUsersTotal = Number(json?.total || items.length) || items.length;
@@ -528,12 +687,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminImageHistoryItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminImages = items;
       this.adminImagesTotal = Number(json?.total || items.length) || items.length;
@@ -558,12 +712,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminUsageLedgerItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminUsage = items;
       this.adminUsageTotal = Number(json?.total || items.length) || items.length;
@@ -584,37 +733,135 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminAnalyticsEventItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminEvents = items;
       this.adminEventsTotal = Number(json?.total || items.length) || items.length;
       return { ok: true as const, total: this.adminEventsTotal };
     },
-    async fetchAdminEvents(input?: { userId?: string; limit?: number; offset?: number }) {
+    async fetchGenerationFunnel(days = 14) {
       const adminKey = String(this.adminKey || '').trim();
       if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
       const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
-      const url = buildUrlWithQuery('/api/admin/events', {
+      const url = buildUrlWithQuery('/api/admin/generation/funnel', { days });
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
+      this.generationFunnel = json.funnel as GenerationFunnel;
+      return { ok: true as const, funnel: this.generationFunnel };
+    },
+    async fetchAdminBehaviorEvents(input?: {
+      userId?: string;
+      eventType?: string;
+      path?: string;
+      action?: string;
+      from?: number | string;
+      to?: number | string;
+      limit?: number;
+      offset?: number;
+    }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/behavior/events', {
         userId: input?.userId || '',
+        eventType: input?.eventType || '',
+        path: input?.path || '',
+        action: input?.action || '',
+        from: input?.from,
+        to: input?.to,
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
-      const items: AdminAnalyticsEventItem[] = Array.isArray(json?.items) ? json.items : [];
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
+      const items: AdminBehaviorEvent[] = Array.isArray(json?.items)
+        ? json.items.map((item: any) => ({
+            ...item,
+            id: String(item?.id || item?.eventId || ''),
+            eventId: String(item?.eventId || item?.id || ''),
+            eventType: String(item?.eventType || 'event'),
+            category: String(item?.category || 'interaction'),
+            path: String(item?.path || ''),
+            ts:
+              Number(item?.ts || 0) ||
+              new Date(item?.occurredAt || item?.timestamp || 0).getTime() ||
+              0
+          }))
+        : [];
       this.adminBehaviorEvents = items;
       this.adminBehaviorTotal = Number(json?.total || items.length) || items.length;
       return { ok: true as const, total: this.adminBehaviorTotal };
+    },
+
+    async fetchAdminEvents(input?: { userId?: string; limit?: number; offset?: number }) {
+      return this.fetchAdminBehaviorEvents(input);
+    },
+
+    async fetchAdminBehaviorSummary(days = 14) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/behavior/summary', { days });
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
+      this.adminBehaviorSummary = json.summary as AdminBehaviorSummary;
+      return { ok: true as const, summary: this.adminBehaviorSummary };
+    },
+
+    async fetchAdminCreditLedger(input?: {
+      userId?: string;
+      entryType?: string;
+      from?: number | string;
+      to?: number | string;
+      limit?: number;
+      offset?: number;
+    }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/credits/ledger', {
+        userId: input?.userId || '',
+        entryType: input?.entryType || '',
+        from: input?.from,
+        to: input?.to,
+        limit: input?.limit ?? 200,
+        offset: input?.offset ?? 0
+      });
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
+      const items: AdminCreditLedgerItem[] = Array.isArray(json?.items) ? json.items : [];
+      this.adminCreditLedger = items;
+      this.adminCreditLedgerTotal = Number(json?.total || items.length) || items.length;
+      return { ok: true as const, total: this.adminCreditLedgerTotal };
+    },
+
+    async fetchAdminDatabaseAudit(input?: {
+      actor?: string;
+      eventType?: string;
+      targetType?: string;
+      from?: number | string;
+      to?: number | string;
+      limit?: number;
+      offset?: number;
+    }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const url = buildUrlWithQuery('/api/admin/audit/events', {
+        actor: input?.actor || '',
+        eventType: input?.eventType || '',
+        targetType: input?.targetType || '',
+        from: input?.from,
+        to: input?.to,
+        limit: input?.limit ?? 200,
+        offset: input?.offset ?? 0
+      });
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
+      const items: AdminDatabaseAuditEvent[] = Array.isArray(json?.items) ? json.items : [];
+      this.adminDatabaseAudit = items;
+      this.adminDatabaseAuditTotal = Number(json?.total || items.length) || items.length;
+      return { ok: true as const, total: this.adminDatabaseAuditTotal };
     },
 
     async fetchAdminAuditHistory(input?: {
@@ -637,12 +884,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: AdminAuditHistoryItem[] = Array.isArray(json?.items) ? json.items : [];
       this.adminAudit = items;
       this.adminAuditTotal = Number(json?.total || items.length) || items.length;
@@ -655,12 +897,7 @@ export const useConsoleStore = defineStore('console', {
       const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
       if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
       const url = buildApiUrl('/api/admin/ratelimit/stats');
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const stats: AdminRateLimitStats =
         json && typeof json === 'object'
           ? {
@@ -686,12 +923,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: any[] = Array.isArray(json?.items) ? json.items : [];
       this.adminChats = items.map((it) => {
         if (!it || typeof it !== 'object') return it;
@@ -741,7 +973,40 @@ export const useConsoleStore = defineStore('console', {
       this.adminUsers = (this.adminUsers || []).map((u) =>
         u.userId === userId ? { ...u, wallet } : u
       );
+      void queryClient.invalidateQueries({ queryKey: ['console'] });
       return { ok: true as const, wallet };
+    },
+
+    async setAdminUserStatus(input: {
+      userId: string;
+      status: 'active' | 'disabled';
+    }) {
+      const adminKey = String(this.adminKey || '').trim();
+      if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const userId = String(input?.userId || '').trim();
+      if (!userId) throw new Error('MISSING_USER_ID');
+
+      const url = buildApiUrl('/api/admin/users/status');
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ userId, status: input.status })
+      });
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
+        throw toAdminRequestError(res, json);
+      }
+      const user = json?.user && typeof json.user === 'object' ? json.user : null;
+      if (user) {
+        this.adminUsers = this.adminUsers.map((item) =>
+          item.userId === userId ? { ...item, ...user } : item
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: ['console'] });
+      return { ok: true as const, user };
     },
 
     async fetchAdminOrders(input: { userId: string; limit?: number; offset?: number }) {
@@ -757,12 +1022,7 @@ export const useConsoleStore = defineStore('console', {
         limit: input?.limit ?? 200,
         offset: input?.offset ?? 0
       });
-      const res = await fetch(url, { headers });
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (isAdminAuthErrorStatus(res.status)) this.clearAdminKey();
-        throw toAdminRequestError(res, json);
-      }
+      const json = await fetchAdminJson(url, headers, () => this.clearAdminKey());
       const items: any[] = Array.isArray(json?.items) ? json.items : [];
       this.adminOrders = items;
       this.adminOrdersTotal = Number(json?.total || items.length) || items.length;
@@ -770,197 +1030,36 @@ export const useConsoleStore = defineStore('console', {
     },
 
     recordTraffic(event: Omit<TrafficEvent, 'id' | 'timestamp'>) {
-      this.trafficStats.push({
-        ...event,
+      const page = sanitizeAnalyticsUrl(event.page);
+      const rawTarget = String(event.target || '').trim();
+      const target = /^[a-z0-9][a-z0-9:_-]{0,119}$/i.test(rawTarget) ? rawTarget : '';
+      const meta = sanitizeAnalyticsPayload(event.meta);
+      const safeEvent: TrafficEvent = {
+        type: event.type,
+        page,
+        ...(target ? { target } : {}),
+        ...(Object.keys(meta).length ? { meta } : {}),
         id: crypto.randomUUID(),
         timestamp: Date.now()
-      });
+      };
+      this.trafficStats.push(safeEvent);
       this.save();
 
-      try {
-        const userId = ensureGuestUserId();
-        const payload: Record<string, any> = {
-          page: String(event.page || '').trim(),
-          ...(event.target
-            ? {
-                target: String(event.target || '')
-                  .trim()
-                  .slice(0, 120)
-              }
-            : {})
-        };
-        const meta =
-          event.meta && typeof event.meta === 'object' && !Array.isArray(event.meta)
-            ? event.meta
-            : null;
-        if (meta) {
-          for (const [k0, v] of Object.entries(meta)) {
-            const k = String(k0 || '')
-              .trim()
-              .slice(0, 56);
-            if (!k) continue;
-            if (typeof v === 'string') {
-              const s = v.trim();
-              if (!s) continue;
-              payload[k] = s.slice(0, 240);
-              continue;
-            }
-            if (typeof v === 'number') {
-              if (!Number.isFinite(v)) continue;
-              payload[k] = v;
-              continue;
-            }
-            if (typeof v === 'boolean') {
-              payload[k] = v;
-              continue;
-            }
-            if (Array.isArray(v)) {
-              const arr = v
-                .slice(0, 20)
-                .map((x) => (typeof x === 'string' ? x.trim().slice(0, 120) : null))
-                .filter(Boolean);
-              if (arr.length) payload[k] = arr;
-            }
-          }
-        }
-
-        const url = buildApiUrl('/api/collection/event');
-        void fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            eventType: event.type,
-            payload,
-            path: String(event.page || '').trim(),
-            location: typeof window !== 'undefined' ? String(window.location?.href || '') : '',
-            referrer: typeof document !== 'undefined' ? String(document.referrer || '') : '',
-            ts: Date.now(),
-            userId,
-            sessionId: getOrCreateSessionId(),
-            projectId: getOrCreateProjectId(),
-            requestSource: 'web'
-          })
-        });
-      } catch {}
+      void trackBackendEvent(event.type, {
+        pagePath: page,
+        ...(target ? { target } : {}),
+        ...(Object.keys(meta).length ? { meta } : {})
+      });
     },
 
     save() {
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
-          users: this.users,
-          transactions: this.transactions,
-          logs: this.logs,
-          generatedContent: this.generatedContent,
           trafficStats: this.trafficStats,
           aiBgSeoCopy: this.aiBgSeoCopy
         })
       );
-    },
-
-    createUser(userId: string, email: string) {
-      const newUser: ConsoleUser = {
-        userId,
-        email,
-        level: 'free',
-        points: 100000, // As per request "Finally give me an account 100000 points"
-        totalSpent: 0,
-        joinedAt: Date.now(),
-        lastActiveAt: Date.now()
-      };
-      this.users.push(newUser);
-
-      // Log initial gift
-      this.transactions.push({
-        id: crypto.randomUUID(),
-        userId,
-        type: 'admin_gift',
-        amount: 100000,
-        description: 'Welcome Bonus',
-        timestamp: Date.now()
-      });
-
-      this.save();
-      return newUser;
-    },
-
-    updatePoints(userId: string, amount: number, type: Transaction['type'], description: string) {
-      const user = this.users.find((u) => u.userId === userId);
-      if (!user) return;
-
-      user.points += amount;
-      if (amount < 0) {
-        user.totalSpent += Math.abs(amount);
-      }
-
-      this.transactions.push({
-        id: crypto.randomUUID(),
-        userId,
-        type,
-        amount,
-        description,
-        timestamp: Date.now()
-      });
-
-      this.save();
-    },
-
-    updateUserLevel(userId: string, level: ConsoleUser['level']) {
-      const user = this.users.find((u) => u.userId === userId);
-      if (!user) return;
-      user.level = level;
-      this.save();
-    },
-
-    setUserDetails(userId: string, updates: { points?: number; level?: ConsoleUser['level'] }) {
-      const user = this.users.find((u) => u.userId === userId);
-      if (!user) return;
-
-      if (updates.points !== undefined && updates.points !== user.points) {
-        const diff = updates.points - user.points;
-        this.updatePoints(userId, diff, 'admin_gift', 'Admin manual adjustment');
-      }
-
-      if (updates.level !== undefined) {
-        user.level = updates.level;
-      }
-
-      this.save();
-    },
-
-    grantMaxPoints(userId: string) {
-      const user = this.users.find((u) => u.userId === userId);
-      if (user) {
-        const diff = 9999 - user.points;
-        if (diff > 0) {
-          this.updatePoints(userId, diff, 'admin_gift', 'System Grant: Max Points');
-        }
-      } else {
-        // Create user if not exists
-        this.createUser(userId, 'user@example.com');
-      }
-    },
-
-    logActivity(userId: string, action: string, details: any) {
-      this.logs.push({
-        id: crypto.randomUUID(),
-        userId,
-        action,
-        details,
-        timestamp: Date.now()
-      });
-      this.save();
-    },
-
-    addGeneratedContent(userId: string, type: 'image' | 'text', content: any) {
-      this.generatedContent.push({
-        id: crypto.randomUUID(),
-        userId,
-        type,
-        timestamp: Date.now(),
-        ...content
-      });
-      this.save();
     },
 
     setAiBgSeoCopy(input: Partial<AiBgSeoCopy>) {

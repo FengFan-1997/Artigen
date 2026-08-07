@@ -7,7 +7,7 @@ import { agentImgPromptLibrary } from '../data/promptLibrary';
 import type { AgentImgPromptResult } from '../types';
 
 // Helper types for dependencies
-interface GenerationDeps {
+export interface GenerationDeps {
   auth: {
     ensureAuthed: (cb?: () => void) => boolean;
   };
@@ -30,6 +30,16 @@ interface GenerationDeps {
   history: {
     history: any; // Ref
     setCancelNoticeForHistory: (id: string | number, text: string) => void;
+    setHistoryItemStatus: (
+      id: string | number,
+      next: {
+        status?: 'pending' | 'success' | 'failed' | 'cancelled';
+        errorCode?: string;
+        errorText?: string;
+        failedStage?: 'directions' | 'generation' | 'image_load' | 'unknown';
+        image?: string | null;
+      }
+    ) => void;
   };
   flow: {
     userInput: any; // Ref
@@ -53,7 +63,7 @@ interface GenerationDeps {
   };
 }
 
-const MAX_HISTORY = 50;
+const MAX_HISTORY = 200;
 
 const resolveRemoteUrl = (raw: string) => {
   const u = String(raw || '').trim();
@@ -185,6 +195,15 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
       return currentLang.value === 'zh'
         ? '暂无权限，请重新登录后再试'
         : 'Forbidden. Please login again.';
+    if (
+      c === 'LEGACY_BILLING_DISABLED' ||
+      c === 'PAID_FEATURES_DISABLED' ||
+      c === 'DATABASE_NOT_CONFIGURED' ||
+      c === 'TOOL_OPERATION_UNAVAILABLE'
+    )
+      return currentLang.value === 'zh'
+        ? '该云端能力正在安全迁移，当前暂不可用'
+        : 'This cloud feature is temporarily unavailable during its billing migration.';
     if (c === 'MISSING_USER_ID')
       return currentLang.value === 'zh'
         ? '缺少用户信息，请重新登录后再试'
@@ -311,6 +330,36 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
     return `${p}\n\n${inst}`;
   };
 
+  const makeRequestId = (prefix = 'img2img') =>
+    `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const appendFailedHistoryItem = (args: {
+    requestId: string;
+    userText: string;
+    result: AgentImgPromptResult;
+    errorText: string;
+    errorCode?: string;
+    failedStage?: 'directions' | 'generation' | 'image_load' | 'unknown';
+    refImages?: string[];
+  }) => {
+    deps.history.history.value = [
+      ...deps.history.history.value,
+      {
+        id: args.requestId,
+        timestamp: Date.now(),
+        userText: args.userText,
+        result: args.result,
+        image: null,
+        status: 'failed',
+        errorCode: String(args.errorCode || '').trim(),
+        errorText: String(args.errorText || '').trim(),
+        failedStage: args.failedStage || 'unknown',
+        ...(args.refImages && args.refImages.length ? { refImages: args.refImages } : {}),
+        notice: null
+      }
+    ].slice(-MAX_HISTORY);
+  };
+
   const doPrimary = async () => {
     if (!deps.auth.ensureAuthed(() => doPrimary())) return;
 
@@ -372,21 +421,26 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
         abortImg2Img();
         const ctl = new AbortController();
         activeImgAbort.value = ctl;
-        const res = await img2img({
-          prompt: args.prompt,
-          userText: args.userText,
-          negativePrompt: args.negativePrompt,
-          params: args.params,
-          images: args.images,
-          model: deps.models.selectedModelId.value,
-          reason: 'ai_design',
-          timeoutMs: 120000,
-          requestId,
-          deepMode: !!deps.flow.deepMode.value,
-          requestSource: 'agentimg_generation',
-          signal: ctl.signal
-        });
-        if (activeImgAbort.value === ctl) activeImgAbort.value = null;
+        const res = await (async () => {
+          try {
+            return await img2img({
+              prompt: args.prompt,
+              userText: args.userText,
+              negativePrompt: args.negativePrompt,
+              params: args.params,
+              images: args.images,
+              model: deps.models.selectedModelId.value,
+              reason: 'ai_design',
+              timeoutMs: 120000,
+              requestId,
+              deepMode: !!deps.flow.deepMode.value,
+              requestSource: 'agentimg_generation',
+              signal: ctl.signal
+            });
+          } finally {
+            if (activeImgAbort.value === ctl) activeImgAbort.value = null;
+          }
+        })();
         if (!res.ok) {
           if (res.wallet) deps.credits.creditsBalance.value = res.wallet;
           const code = String(res.errorCode || res.error || '').trim();
@@ -411,7 +465,16 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
             });
             return { ok: false as const, url: '' };
           }
-          deps.ui.error.value = humanizeImgError(code);
+          const errorText = humanizeImgError(code);
+          deps.history.setHistoryItemStatus(requestId, {
+            status: 'failed',
+            errorCode: code || 'FAILED',
+            errorText,
+            failedStage: 'generation',
+            image: null
+          });
+          deps.ui.showTopTip(errorText);
+          deps.ui.error.value = '';
           trackEvent('ai_generate_fail', {
             category: 'funnel',
             requestId,
@@ -427,7 +490,16 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
         const finalUrl = resolveRemoteUrl(url) || url;
 
         if (!finalUrl) {
-          deps.ui.error.value = humanizeImgError('EMPTY_IMAGE_RESULT');
+          const errorText = humanizeImgError('EMPTY_IMAGE_RESULT');
+          deps.history.setHistoryItemStatus(requestId, {
+            status: 'failed',
+            errorCode: 'EMPTY_IMAGE_RESULT',
+            errorText,
+            failedStage: 'generation',
+            image: null
+          });
+          deps.ui.showTopTip(errorText);
+          deps.ui.error.value = '';
           trackEvent('ai_generate_fail', {
             category: 'funnel',
             requestId,
@@ -454,19 +526,35 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
 
       deps.ui.loading.value = true;
       deps.ui.error.value = '';
-      const out = await runOnce({
-        prompt: hasLogo ? applyLogoInstructionToPrompt(fp.prompt) : fp.prompt,
-        userText: displayUserText,
-        negativePrompt: fp.negativePrompt,
-        params: fp.params,
-        images: buildFinalImages()
-      });
-      deps.ui.loading.value = false;
-      if (activeRequestId.value === requestId) activeRequestId.value = '';
-      if (out.ok) {
-        await deps.credits.refreshCredits();
+      try {
+        const out = await runOnce({
+          prompt: hasLogo ? applyLogoInstructionToPrompt(fp.prompt) : fp.prompt,
+          userText: displayUserText,
+          negativePrompt: fp.negativePrompt,
+          params: fp.params,
+          images: buildFinalImages()
+        });
+        if (out.ok) {
+          await deps.credits.refreshCredits().catch(() => {});
+        }
+        return out;
+      } catch (err: any) {
+        const code = String(err?.message || err || 'NETWORK_ERROR').trim();
+        const errorText = humanizeImgError(code);
+        deps.history.setHistoryItemStatus(requestId, {
+          status: 'failed',
+          errorCode: code,
+          errorText,
+          failedStage: 'generation',
+          image: null
+        });
+        deps.ui.showTopTip(errorText);
+        deps.ui.error.value = '';
+        return { ok: false as const, url: '' };
+      } finally {
+        deps.ui.loading.value = false;
+        if (activeRequestId.value === requestId) activeRequestId.value = '';
       }
-      return out;
     };
 
     if (deps.flow.deepMode.value) {
@@ -474,8 +562,27 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
         pendingUserText.value = activeUserText;
         const p = deps.flow.analyzeDirections();
         deps.flow.userInput.value = '';
-        await p;
-        await deps.credits.refreshCredits();
+        await p.catch((err: any) => {
+          const code = String(err?.message || err || 'DIRECTIONS_FAILED').trim();
+          deps.ui.error.value = humanizeImgError(code);
+        });
+        await deps.credits.refreshCredits().catch(() => {});
+        const analysisError = String(deps.ui.error.value || '').trim();
+        if (!deps.flow.options.value.length && analysisError) {
+          const requestId = makeRequestId('directions');
+          appendFailedHistoryItem({
+            requestId,
+            userText: activeUserText,
+            result: {
+              prompt: buildPromptWithContext(activeUserText),
+              negativePrompt: buildNegativePrompt()
+            },
+            errorText: analysisError,
+            errorCode: 'DIRECTIONS_FAILED',
+            failedStage: 'directions'
+          });
+          deps.ui.error.value = '';
+        }
         pendingUserText.value = '';
         return;
       }
@@ -506,7 +613,7 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
           .map((f: File) => deps.upload.fileToThumbDataUrl(f))
       );
       const refThumbs = refThumbsRaw.filter((x: any): x is string => !!x);
-      const requestId = `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const requestId = makeRequestId('img2img');
       const displayText = buildDeepDisplayText(activeUserText, {
         title: String(opt?.title || '').trim(),
         summary: String(opt?.summary || '').trim()
@@ -532,6 +639,7 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
           userText: displayText || activeUserText,
           result: fp,
           image: null,
+          status: 'pending',
           ...(refThumbs.length ? { refImages: refThumbs } : {}),
           notice: null
         }
@@ -540,7 +648,17 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
       const { ok, url } = await runGen(fp, requestId, displayText || activeUserText);
       if (ok) {
         deps.history.history.value = deps.history.history.value.map((it: any) =>
-          it.id === requestId ? { ...it, image: url } : it
+          it.id === requestId
+            ? {
+                ...it,
+                image: url,
+                status: 'success',
+                errorCode: '',
+                errorText: '',
+                failedStage: undefined,
+                notice: null
+              }
+            : it
         );
       }
       return;
@@ -559,7 +677,7 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
         .map((f: File) => deps.upload.fileToThumbDataUrl(f))
     );
     const refThumbs = refThumbsRaw.filter((x: any): x is string => !!x);
-    const requestId = `img2img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const requestId = makeRequestId('img2img');
 
     trackEvent('ai_generate_request', {
       category: 'funnel',
@@ -580,6 +698,7 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
         userText: activeUserText,
         result: fp,
         image: null,
+        status: 'pending',
         ...(refThumbs.length ? { refImages: refThumbs } : {}),
         notice: null
       }
@@ -588,7 +707,17 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
     const { ok, url } = await runGen(fp, requestId, activeUserText);
     if (ok) {
       deps.history.history.value = deps.history.history.value.map((it: any) =>
-        it.id === requestId ? { ...it, image: url } : it
+        it.id === requestId
+          ? {
+              ...it,
+              image: url,
+              status: 'success',
+              errorCode: '',
+              errorText: '',
+              failedStage: undefined,
+              notice: null
+            }
+          : it
       );
     }
   };

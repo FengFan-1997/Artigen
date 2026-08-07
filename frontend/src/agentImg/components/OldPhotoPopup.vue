@@ -34,7 +34,18 @@
           {{ currentDesc }}
         </div>
 
-        <button class="generate-btn" @click="handleRestore" :disabled="!selectedFile || loading">
+        <label class="upload-consent" :class="{ disabled: quoteLoading || !!quoteError }">
+          <input v-model="uploadConsent" type="checkbox" :disabled="quoteLoading || !!quoteError" />
+          <span>{{ consentText }}</span>
+        </label>
+        <p v-if="quoteLoading" class="quote-status" role="status">{{ ui.quoteLoading }}</p>
+        <p v-else-if="quoteError" class="quote-status error" role="alert">{{ quoteErrorText }}</p>
+
+        <button
+          class="generate-btn"
+          @click="handleRestore"
+          :disabled="!selectedFile || loading || quoteLoading || !!quoteError || !uploadConsent"
+        >
           <span v-if="loading">
             <svg
               class="spinner-icon"
@@ -86,6 +97,8 @@ import BaseTaskPopup from './BaseTaskPopup.vue';
 const props = defineProps<{
   visible: boolean;
   creditsCost?: number;
+  quoteLoading?: boolean;
+  quoteError?: string;
 }>();
 
 const emit = defineEmits<{
@@ -101,14 +114,15 @@ const loading = ref(false);
 
 const enableColorize = ref(true);
 const enableDenoise = ref(true);
+const uploadConsent = ref(false);
 
 const ui = computed(() => {
   const en = currentLang.value === 'en';
   return {
-    title: en ? 'Old Photo Restoration' : '老照片修复',
+    title: en ? 'AI Old Photo Enhancement' : 'AI 老照片增强',
     subtitle: en
-      ? 'Restore blurry/damaged photos, optional colorization.'
-      : '修复模糊、破损照片，支持智能上色',
+      ? 'Paid enhancement with optional inferred colorization; results are not historical evidence.'
+      : '付费增强与可选推测性上色；结果不代表历史事实复原。',
     reupload: en ? 'Click or drag to replace image' : '点击或拖拽替换图片',
     uploadText: en ? 'Click or drag old photo' : '点击或拖拽老照片',
     uploadHint: en ? 'Supports JPG, PNG, WEBP' : '支持 JPG, PNG, WEBP',
@@ -116,7 +130,10 @@ const ui = computed(() => {
     colorizeLabel: en ? 'Colorize (B/W)' : '黑白上色',
     denoiseLabel: en ? 'Smart Denoise' : '智能降噪',
     restoring: en ? 'Restoring...' : '修复中...',
-    start: en ? 'Restore' : '开始修复'
+    start: en ? 'Enhance with AI' : '开始 AI 增强',
+    quoteLoading: en ? 'Loading the server quote…' : '正在读取服务端报价…',
+    loginRequired: en ? 'Sign in before requesting a quote.' : '请先登录后获取报价。',
+    paidUnavailable: en ? 'Paid enhancement is currently unavailable.' : '付费增强当前不可用。'
   };
 });
 
@@ -128,8 +145,8 @@ const currentDesc = computed(() => {
       : '同时进行上色和降噪处理，适合模糊的黑白老照片';
   if (enableColorize.value)
     return en
-      ? 'Colorize black-and-white photos with natural colors.'
-      : '对黑白照片进行智能上色，还原真实色彩';
+      ? 'Infer plausible colors for black-and-white photos; colors must be reviewed.'
+      : '为黑白照片推测可能的色彩；上色结果需要人工核对。';
   if (enableDenoise.value)
     return en ? 'Reduce noise and blur for better clarity.' : '去除照片噪点和模糊，提升清晰度';
   return en ? 'Basic restoration only.' : '仅进行基础修复';
@@ -141,6 +158,18 @@ const costText = computed(() => {
   return `${n}`;
 });
 
+const consentText = computed(() => {
+  const credits = costText.value || '?';
+  return currentLang.value === 'en'
+    ? `I agree to upload this image for AI processing (retained up to 24 hours) and reserve ${credits} credits. Failed or cancelled tasks are refunded.`
+    : `我同意上传此图片进行 AI 处理（最长保留 24 小时），并预占 ${credits} 点数；失败或取消会退款。`;
+});
+
+const quoteErrorText = computed(() => {
+  if (props.quoteError === 'LOGIN_REQUIRED') return ui.value.loginRequired;
+  return ui.value.paidUnavailable;
+});
+
 const close = () => {
   emit('close');
 };
@@ -150,6 +179,7 @@ const resetState = () => {
   loading.value = false;
   enableColorize.value = true;
   enableDenoise.value = true;
+  uploadConsent.value = false;
 };
 
 watch(
@@ -194,10 +224,18 @@ const handleRestore = () => {
 }
 
 .checkbox-label {
+  min-height: 44px;
   display: flex;
   align-items: center;
   cursor: pointer;
   user-select: none;
+}
+
+.checkbox-label input[type='checkbox']:focus-visible,
+.upload-consent input:focus-visible,
+.generate-btn:focus-visible {
+  outline: 2px solid #ccff00;
+  outline-offset: 3px;
 }
 
 .checkbox-label input[type='checkbox'] {
@@ -256,6 +294,45 @@ const handleRestore = () => {
   margin-top: auto;
 }
 
+.upload-consent {
+  min-height: 44px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid rgba(204, 255, 0, 0.32);
+  border-radius: 8px;
+  color: #cbd5e1;
+  background: rgba(204, 255, 0, 0.06);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.upload-consent.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.upload-consent input {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  margin: 0;
+  accent-color: #ccff00;
+}
+
+.quote-status {
+  margin: -6px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+  text-align: center;
+}
+
+.quote-status.error {
+  color: #fca5a5;
+}
+
 .generate-btn {
   margin-top: auto;
   width: 100%;
@@ -305,5 +382,19 @@ const handleRestore = () => {
   border-radius: 4px;
   font-size: 12px;
   margin-left: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .generate-btn:hover:not(:disabled) {
+    transform: none;
+  }
 }
 </style>

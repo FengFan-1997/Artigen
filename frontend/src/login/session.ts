@@ -1,9 +1,88 @@
+import { buildApiUrl } from '../utils/api';
+import { authFetch, clearCsrfToken, setCsrfToken } from './authFetch';
+import { clearAuthenticatedServerState, queryClient } from '@/services/serverState';
+
 const STORAGE_KEY_ID = 'app_user_id';
 const STORAGE_KEY_TOKEN = 'app_auth_token';
 const LEGACY_STORAGE_KEY_ID = 'agent_user_id';
 const LEGACY_STORAGE_KEY_TOKEN = 'agent_auth_token';
+const LEGACY_PASSWORD_STORAGE_KEY = 'login_passwords_v1';
+const LEGACY_GENERATION_HISTORY_PREFIX = 'artigen_history_v1_';
 const SESSION_ID_KEY = 'agent_session_id_v1';
 const PROJECT_ID_KEY = 'agent_project_id_v1';
+const LEGACY_CREDENTIAL_STORAGE_KEYS = [
+  STORAGE_KEY_TOKEN,
+  LEGACY_STORAGE_KEY_TOKEN,
+  LEGACY_PASSWORD_STORAGE_KEY
+] as const;
+
+let authSessionStatus: 'unknown' | 'authenticated' | 'guest' = 'unknown';
+let authSessionBootstrapPromise: Promise<AuthSessionSnapshot> | null = null;
+let authSessionBootstrapStarted = false;
+let authStateRevision = 0;
+let lastBroadcastAuthSnapshot = '';
+
+type RemovableStorage = Pick<Storage, 'removeItem'>;
+type EnumerableStorage = Pick<Storage, 'key' | 'length' | 'removeItem'>;
+
+const getBrowserStorage = (): RemovableStorage | null => {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+};
+
+const getEnumerableBrowserStorage = (): EnumerableStorage | null => {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+};
+
+export const clearLegacyClientCredentials = (
+  storage: RemovableStorage | null = getBrowserStorage()
+) => {
+  for (const key of LEGACY_CREDENTIAL_STORAGE_KEYS) {
+    try {
+      storage?.removeItem(key);
+    } catch {}
+  }
+};
+
+export const clearLegacySensitiveGenerationHistory = (
+  storage: EnumerableStorage | null = getEnumerableBrowserStorage()
+) => {
+  if (!storage) return;
+  const keys: string[] = [];
+  try {
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(LEGACY_GENERATION_HISTORY_PREFIX)) keys.push(key);
+    }
+  } catch {
+    return;
+  }
+  for (const key of keys) {
+    try {
+      storage.removeItem(key);
+    } catch {}
+  }
+};
+
+export const clearLegacyScriptAuthCookie = () => {
+  try {
+    if (typeof document === 'undefined') return;
+    const secure = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+    document.cookie = `auth_token=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}`;
+  } catch {}
+};
+
+// Old bearer credentials must not survive a reload. New sessions are carried by HttpOnly cookies.
+clearLegacyClientCredentials();
+clearLegacySensitiveGenerationHistory();
+clearLegacyScriptAuthCookie();
 
 export const isLocalLoggedIn = (): boolean => {
   try {
@@ -12,7 +91,7 @@ export const isLocalLoggedIn = (): boolean => {
         window.localStorage.getItem(LEGACY_STORAGE_KEY_ID) ||
         ''
     ).trim();
-    return !!uid && !uid.startsWith('guest_');
+    return !!uid && !uid.startsWith('guest_') && authSessionStatus === 'authenticated';
   } catch {
     return false;
   }
@@ -23,18 +102,6 @@ export const getCurrentUserId = (): string => {
     return String(
       window.localStorage.getItem(STORAGE_KEY_ID) ||
         window.localStorage.getItem(LEGACY_STORAGE_KEY_ID) ||
-        ''
-    ).trim();
-  } catch {
-    return '';
-  }
-};
-
-export const getAuthToken = (): string => {
-  try {
-    return String(
-      window.localStorage.getItem(STORAGE_KEY_TOKEN) ||
-        window.localStorage.getItem(LEGACY_STORAGE_KEY_TOKEN) ||
         ''
     ).trim();
   } catch {
@@ -53,60 +120,173 @@ export const ensureGuestUserId = (): string => {
   return guest;
 };
 
-export const setLoggedIn = (input: { userId: string; token?: string }) => {
+export const setLoggedIn = (input: { userId: string }) => {
   const userId = String(input.userId || '').trim();
   if (!userId) throw new Error('MISSING_USER_ID');
-  const token = String(input.token || '').trim();
+  authStateRevision += 1;
+  authSessionStatus = 'authenticated';
   try {
     window.localStorage.setItem(STORAGE_KEY_ID, userId);
     window.localStorage.setItem(LEGACY_STORAGE_KEY_ID, userId);
-    if (token) {
-      window.localStorage.setItem(STORAGE_KEY_TOKEN, token);
-      window.localStorage.setItem(LEGACY_STORAGE_KEY_TOKEN, token);
-    } else {
-      window.localStorage.removeItem(STORAGE_KEY_TOKEN);
-      window.localStorage.removeItem(LEGACY_STORAGE_KEY_TOKEN);
-    }
   } catch {}
+  clearLegacyClientCredentials();
+  dispatchAuthSnapshotChanged();
+  Promise.resolve().then(() => void bootstrapAuthSession({ force: true }));
+};
+
+const clearStoredUserIds = () => {
   try {
-    if (typeof document === 'undefined') return;
-    const secure = typeof window !== 'undefined' && window.location?.protocol === 'https:';
-    if (token) {
-      const v = encodeURIComponent(token);
-      document.cookie = `auth_token=${v}; Path=/; Max-Age=2592000; SameSite=Lax${secure ? '; Secure' : ''}`;
-    } else {
-      document.cookie = `auth_token=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}`;
+    window.localStorage.removeItem(STORAGE_KEY_ID);
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY_ID);
+  } catch {}
+};
+
+export type AuthSessionSnapshot = {
+  authenticated: boolean;
+  userId: string;
+  verified: boolean;
+};
+
+export const getAuthSessionSnapshot = (): AuthSessionSnapshot => {
+  const userId = getCurrentUserId();
+  return {
+    authenticated: isLocalLoggedIn(),
+    userId: userId.startsWith('guest_') ? '' : userId,
+    verified: authSessionStatus !== 'unknown'
+  };
+};
+
+const dispatchAuthSnapshotChanged = () => {
+  const snapshot = getAuthSessionSnapshot();
+  const snapshotKey = JSON.stringify(snapshot);
+  if (snapshotKey === lastBroadcastAuthSnapshot) return false;
+  lastBroadcastAuthSnapshot = snapshotKey;
+  try {
+    window.dispatchEvent(new CustomEvent('app-auth-changed', { detail: snapshot }));
+  } catch {}
+  return true;
+};
+
+const applyGuestSession = (bumpRevision = false) => {
+  if (bumpRevision) authStateRevision += 1;
+  authSessionStatus = 'guest';
+  const existingId = getCurrentUserId();
+  // Preserve an anonymous workspace across refreshes. Only a stale authenticated
+  // identity is replaced when the server confirms that its Cookie session ended.
+  if (!existingId.startsWith('guest_')) clearStoredUserIds();
+  clearCsrfToken();
+  ensureGuestUserId();
+  dispatchAuthSnapshotChanged();
+};
+
+const parseSessionUserId = (json: any) =>
+  String(json?.userId || json?.user?.userId || json?.user?.id || json?.session?.userId || '').trim();
+
+export const bootstrapAuthSession = async (opts?: {
+  force?: boolean;
+}): Promise<AuthSessionSnapshot> => {
+  if (authSessionBootstrapPromise && !opts?.force) return authSessionBootstrapPromise;
+  if (opts?.force) queryClient.removeQueries({ queryKey: ['auth', 'session'], exact: true });
+
+  const run = async (): Promise<AuthSessionSnapshot> => {
+    const revision = authStateRevision;
+    try {
+      const { response, json } = await queryClient.fetchQuery({
+        queryKey: ['auth', 'session'],
+        staleTime: 15_000,
+        queryFn: async () => {
+          const response = await authFetch(buildApiUrl('/api/auth/session'), { method: 'GET' });
+          const json: any = await response.json().catch(() => null);
+          return { response, json };
+        }
+      });
+      if (revision !== authStateRevision) return getAuthSessionSnapshot();
+      if (json?.csrfToken) setCsrfToken(json.csrfToken);
+      const userId = parseSessionUserId(json);
+      const explicitlyLoggedOut =
+        response.status === 401 ||
+        response.status === 403 ||
+        json?.authenticated === false ||
+        json?.loggedIn === false ||
+        (response.ok && json?.ok === false && !userId);
+
+      if (explicitlyLoggedOut) {
+        applyGuestSession();
+        return getAuthSessionSnapshot();
+      }
+      if (!response.ok || !userId || userId.startsWith('guest_')) {
+        return getAuthSessionSnapshot();
+      }
+
+      authSessionStatus = 'authenticated';
+      try {
+        window.localStorage.setItem(STORAGE_KEY_ID, userId);
+        window.localStorage.setItem(LEGACY_STORAGE_KEY_ID, userId);
+      } catch {}
+      clearLegacyClientCredentials();
+      dispatchAuthSnapshotChanged();
+      return getAuthSessionSnapshot();
+    } catch {
+      return getAuthSessionSnapshot();
     }
+  };
+
+  const pending = run();
+  authSessionBootstrapPromise = pending;
+  try {
+    return await pending;
+  } finally {
+    if (authSessionBootstrapPromise === pending) authSessionBootstrapPromise = null;
+  }
+};
+
+export const startAuthSessionBootstrap = () => {
+  if (authSessionBootstrapStarted || typeof window === 'undefined') return;
+  authSessionBootstrapStarted = true;
+  Promise.resolve().then(() => void bootstrapAuthSession({ force: true }));
+};
+
+export const initializeAuthSessionForPageLoad = () => {
+  if (typeof window === 'undefined') return;
+  const storedUserId = getCurrentUserId();
+  if (!storedUserId || storedUserId.startsWith('guest_')) applyGuestSession();
+  // The authoritative session is carried by an HttpOnly cookie. A browser may
+  // legitimately have no local user id (or only an anonymous workspace id)
+  // after storage cleanup, so every page load must still ask the server to
+  // restore the cookie-backed identity.
+  startAuthSessionBootstrap();
+};
+
+export const logoutSession = async () => {
+  const request = authFetch(buildApiUrl('/api/auth/logout'), {
+    method: 'POST',
+    keepalive: true
+  });
+  applyGuestSession(true);
+  clearAuthenticatedServerState();
+  clearLegacyClientCredentials();
+  clearLegacyScriptAuthCookie();
+  try {
+    await request;
   } catch {}
 };
 
 export const logoutLocal = (opts?: { redirectTo?: string; reload?: boolean }) => {
-  try {
-    window.localStorage.removeItem(STORAGE_KEY_ID);
-    window.localStorage.removeItem(LEGACY_STORAGE_KEY_ID);
-    window.localStorage.removeItem(STORAGE_KEY_TOKEN);
-    window.localStorage.removeItem(LEGACY_STORAGE_KEY_TOKEN);
-  } catch {}
-  try {
-    if (typeof document !== 'undefined') {
-      const secure = typeof window !== 'undefined' && window.location?.protocol === 'https:';
-      document.cookie = `auth_token=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}`;
-    }
-  } catch {}
-  ensureGuestUserId();
-  try {
-    window.dispatchEvent(new CustomEvent('app-auth-changed'));
-  } catch {}
+  const pending = logoutSession();
   const redirectTo = String(opts?.redirectTo || '').trim();
-  if (redirectTo) {
-    const to = /^https?:\/\//i.test(redirectTo)
-      ? redirectTo
-      : `${window.location.origin}${redirectTo.startsWith('/') ? redirectTo : `/${redirectTo}`}`;
-    window.location.assign(to);
-    return;
-  }
-  if (opts?.reload === false) return;
-  window.location.reload();
+  if (!redirectTo && opts?.reload === false) return;
+  const navigate = () => {
+    if (redirectTo) {
+      const to = /^https?:\/\//i.test(redirectTo)
+        ? redirectTo
+        : `${window.location.origin}${redirectTo.startsWith('/') ? redirectTo : `/${redirectTo}`}`;
+      window.location.assign(to);
+      return;
+    }
+    window.location.reload();
+  };
+  const maxWait = new Promise<void>((resolve) => window.setTimeout(resolve, 1500));
+  void Promise.race([pending, maxWait]).finally(navigate);
 };
 
 export const getOrCreateSessionId = (): string => {
@@ -141,3 +321,5 @@ export const getOrCreateProjectId = (): string => {
   } catch {}
   return created;
 };
+
+initializeAuthSessionForPageLoad();

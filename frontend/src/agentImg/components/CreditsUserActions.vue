@@ -70,8 +70,15 @@
     </div>
   </template>
 
-  <button v-else class="login-btn nth-login-btn" type="button" @click="handleLoginClick">
-    {{ labels.loginOrRegister }}
+  <button
+    v-else
+    class="login-btn nth-login-btn"
+    type="button"
+    :aria-label="labels.loginOrRegister"
+    @click="handleLoginClick"
+  >
+    <span class="login-label-full">{{ labels.loginOrRegister }}</span>
+    <span class="login-label-compact" aria-hidden="true">{{ labels.loginCompact }}</span>
   </button>
 
   <slot />
@@ -101,7 +108,8 @@ const labels = computed(() => {
     totalCredits: ui.value.totalCredits,
     refreshCredits: ui.value.refreshCredits,
     goMarket: ui.value.goMarket,
-    loginOrRegister: ui.value.loginOrRegister
+    loginOrRegister: ui.value.loginOrRegister,
+    loginCompact: ui.value.loginOrRegister.split('/')[0]?.trim() || ui.value.loginOrRegister
   };
 });
 
@@ -166,7 +174,7 @@ watch(
 
 <style scoped>
 .credits-btn {
-  height: 38px;
+  height: 44px;
   padding: 0 14px;
   border: 1px solid rgba(204, 255, 0, 0.28);
   background: rgba(204, 255, 0, 0.08);
@@ -269,7 +277,7 @@ watch(
 }
 
 .credits-pop-btn {
-  height: 36px;
+  min-height: 44px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.06);
@@ -313,8 +321,13 @@ watch(
 }
 
 .avatar-btn {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  flex: 0 0 44px;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   border: 1px solid rgba(204, 255, 0, 0.28);
   background: rgba(0, 0, 0, 0.25);
   color: rgba(241, 245, 249, 0.92);
@@ -347,6 +360,10 @@ watch(
   transition: all 0.3s;
   position: relative;
   overflow: hidden;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .login-btn::before {
@@ -370,11 +387,25 @@ watch(
   left: 100%;
 }
 
+.login-label-compact {
+  display: none;
+}
+
 @media (max-width: 980px) {
   .login-btn {
     padding: 7px 14px;
     font-size: 13px;
     letter-spacing: 0.5px;
+  }
+}
+
+@media (max-width: 640px) {
+  .login-label-full {
+    display: none;
+  }
+
+  .login-label-compact {
+    display: inline;
   }
 }
 

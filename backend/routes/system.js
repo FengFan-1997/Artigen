@@ -1,5 +1,28 @@
+const {
+  isPaidAiUserId,
+  normalizeOperationKey,
+  resolveServerCreditCost
+} = require('../lib/credit-pricing');
+const {
+  buildIngredientLabelPrompt,
+  validateIngredientOutputTrace
+} = require('../lib/ingredient-source-validator');
+const { canUseLegacyJsonBilling } = require('../lib/legacy-finance-policy');
+const { createConfiguredGenerationProvider } = require('../services/generation-provider');
+const { getReadinessReport } = require('../services/readiness-service');
+const {
+  categoryMetadata,
+  classifyModel,
+  classifyProvider,
+  contentMetadata,
+  networkMetadata,
+  opaqueReference
+} = require('../lib/privacy-metadata');
+
 const installSystemRoutes = (app, deps) => {
   const NODE_ENV = deps?.NODE_ENV;
+  const readinessEnv = deps?.env || process.env;
+  const APP_ENV = String(readinessEnv.APP_ENV || NODE_ENV || "").trim() || "development";
   const isProd = !!deps?.isProd;
   const requireLlmProvider = !!deps?.requireLlmProvider;
   const API_KEY = deps?.API_KEY;
@@ -11,6 +34,7 @@ const installSystemRoutes = (app, deps) => {
   const rateLimit = deps?.rateLimit;
   const assertAuthUserMatches = deps?.assertAuthUserMatches;
   const callGeminiGenerate = deps?.callGeminiGenerate;
+  const callSiliconFlowImageGenerate = deps?.callSiliconFlowImageGenerate;
   const callSiliconFlowChat = deps?.callSiliconFlowChat;
   const callTextGenerate = deps?.callTextGenerate;
   const GEMINI_GENERATE_URLS = deps?.GEMINI_GENERATE_URLS;
@@ -23,6 +47,15 @@ const installSystemRoutes = (app, deps) => {
   const MEMORY_DIR = deps?.MEMORY_DIR;
   const appendUserImageHistory = deps?.appendUserImageHistory;
   const appendUserAuditHistory = deps?.appendUserAuditHistory;
+  const generationProviderEnv = SILICONFLOW_API_KEY
+    ? { ...readinessEnv, SILICONFLOW_API_KEY }
+    : readinessEnv;
+  const generationProvider = deps?.generationProvider || createConfiguredGenerationProvider({
+    imageGenerate: callSiliconFlowImageGenerate,
+    chatGenerate: callSiliconFlowChat,
+    env: generationProviderEnv
+  });
+  const legacyJsonBillingEnabled = canUseLegacyJsonBilling({ isProd });
 
   const isWritableDir = (dirPath) => {
     try {
@@ -39,67 +72,7 @@ const installSystemRoutes = (app, deps) => {
       return { ok: false, error: String(e?.message || e) };
     }
   };
-  const parseCost = (v, fallback) => {
-    const n = Number.parseInt(String(v ?? ""), 10);
-    return Number.isFinite(n) && n >= 0 ? n : fallback;
-  };
-  const normalizeReasonKey = (raw) => {
-    const key = String(raw || "")
-      .trim()
-      .toLowerCase();
-    if (!key) return "";
-    return key.replace(/[\s/-]+/g, "_");
-  };
-  const resolveCreditsCostByPurpose = (purpose) => {
-    const key = normalizeReasonKey(purpose);
-    if (!key) return 0;
-    const costs = {
-      aidesignQuick: parseCost(process.env.CREDITS_COST_AIDESIGN_QUICK, 10),
-      aidesignSemantic: parseCost(
-        process.env.CREDITS_COST_AIDESIGN_SEMANTIC,
-        5,
-      ),
-      aidesignFinal: parseCost(process.env.CREDITS_COST_AIDESIGN_FINAL, 10),
-      aiLab: parseCost(process.env.CREDITS_COST_AI_LAB, 5),
-      aiImageWorkshop: parseCost(process.env.CREDITS_COST_AI_IMAGE_WORKSHOP, 5),
-      aiBackground: parseCost(process.env.CREDITS_COST_AI_BACKGROUND, 5),
-      aiIdPhoto: parseCost(process.env.CREDITS_COST_AI_ID_PHOTO, 5),
-      aiOldPhoto: parseCost(process.env.CREDITS_COST_AI_OLD_PHOTO, 5),
-      aiIngredientList: parseCost(
-        process.env.CREDITS_COST_AI_INGREDIENT_LIST,
-        10,
-      ),
-      generate: parseCost(process.env.CREDITS_COST_GENERATE, 10),
-    };
-    if (
-      key === "aidesign_quick" ||
-      key === "aidesign_generate" ||
-      key === "aidesign"
-    )
-      return costs.aidesignQuick;
-    if (
-      key === "aidesign_semantic" ||
-      key === "aidesign_directions" ||
-      key === "aidesign_deep_analysis" ||
-      key === "agentimg_directions"
-    ) {
-      return costs.aidesignSemantic;
-    }
-    if (key === "agentimg_final") return costs.aidesignFinal;
-    if (key === "agentimg_ingredient_label") return costs.aiIngredientList;
-    if (key === "ingredient_label") return costs.aiIngredientList;
-    if (key === "aidesign_final" || key === "aidesign_deep_generate")
-      return costs.aidesignFinal;
-    if (key === "ai_lab") return costs.aiLab;
-    if (key === "ai_image_workshop") return costs.aiImageWorkshop;
-    if (key === "ai_design") return costs.aidesignQuick;
-    if (key === "ai_background") return costs.aiBackground;
-    if (key === "ai_id_photo" || key === "id_photo") return costs.aiIdPhoto;
-    if (key === "ai_old_photo" || key === "old_photo") return costs.aiOldPhoto;
-    if (key === "ai_ingredient_list") return costs.aiIngredientList;
-    if (key === "generate") return costs.generate;
-    return 0;
-  };
+  const normalizeReasonKey = normalizeOperationKey;
   const resolveReasonText = (purpose) => {
     const key = normalizeReasonKey(purpose);
     if (!key) return "";
@@ -219,15 +192,15 @@ const installSystemRoutes = (app, deps) => {
     }
   };
 
-  const fnv1aHash = (input) => {
-    const s = String(input || "");
-    let h = 2166136261;
-    for (let i = 0; i < s.length; i += 1) {
-      h ^= s.charCodeAt(i);
-      h = Math.imul(h, 16777619);
-    }
-    return (h >>> 0).toString(16).padStart(8, "0");
-  };
+  const requestPrivacyMetadata = (body, req) => ({
+    ...(body?.sessionId ? { sessionRef: opaqueReference(body.sessionId, "session") } : {}),
+    ...(body?.projectId ? { projectRef: opaqueReference(body.projectId, "project") } : {}),
+    ...categoryMetadata(body?.requestSource, "requestSource"),
+    ...networkMetadata({
+      ip: typeof getClientIp === "function" ? getClientIp(req) : "",
+      ua: typeof req?.headers?.["user-agent"] === "string" ? req.headers["user-agent"] : "",
+    }),
+  });
 
   const safeJsonParse = (raw) => {
     try {
@@ -450,180 +423,6 @@ const installSystemRoutes = (app, deps) => {
       .join("\n\n");
   };
 
-  const buildIngredientLabelPrompt = (input) => {
-    const userText = String(input?.userText || "")
-      .trim()
-      .slice(0, 8000);
-    const productTypeUpper = String(input?.productType || "")
-      .trim()
-      .toUpperCase()
-      .slice(0, 80);
-
-    let systemInstruction = "";
-    let jsonStructure = "";
-
-    if (productTypeUpper === "DRUG") {
-      systemInstruction = `Generate FDA-compliant Drug Facts JSON from: ${userText}. Titles in ALL CAPS. Required sections and order: ACTIVE INGREDIENTS, PURPOSE, USES, WARNINGS, DIRECTIONS, OTHER INFORMATION, INACTIVE INGREDIENTS, MANUFACTURER, NET CONTENT, NDC, LOT NUMBER, EXPIRATION DATE. 
-    
-    CRITICAL: If the user input is minimal, YOU MUST INFER and GENERATE realistic standard FDA content for 'WARNINGS', 'DIRECTIONS', and 'OTHER INFORMATION' based on the active ingredients identified. Do not return empty objects. 
-    - WARNINGS must be an object with keys: do_not_use, ask_doctor_before_use, ask_doctor_or_pharmacist, when_using_this_product, stop_use_and_ask_doctor, pregnancy_breastfeeding, keep_out_of_reach. Populate these with standard warnings for the drug type. **KEEP WARNINGS EXTREMELY CONCISE (3–5 words per bullet, no full sentences) while maintaining FDA compliance.**
-    - DIRECTIONS may be an object with groups [{age,dose,frequency}] and general []. Populate with standard dosages.
-    - OTHER INFORMATION: Populate with standard storage info (e.g., Store at 20-25°C).
-    - USES: Provide concise bullet-point style uses.
-    - MANUFACTURER: Generate a realistic manufacturer name and address if not provided (e.g., "HealthPharma Inc., New York, NY 10001").
-    - NET CONTENT: Generate realistic net quantity in dual units if missing (e.g., "100 tablets" or "Net Wt 1 oz (28 g)").
-    - NDC: Generate a realistic National Drug Code (e.g., "12345-678-90").
-    - LOT NUMBER: Generate a realistic lot number (e.g., "A1234567").
-    - EXPIRATION DATE: Generate a realistic expiration date (e.g., "Exp: 12/2026").
-    
-    Content must be concise, direct, and in American English.`;
-      jsonStructure = JSON.stringify({
-        layoutType: "drug_facts",
-        sections: [
-          { title: "ACTIVE INGREDIENTS", content: "..." },
-          { title: "PURPOSE", content: "..." },
-          { title: "USES", content: "..." },
-          { title: "WARNINGS", content: { do_not_use: ["..."] } },
-          {
-            title: "DIRECTIONS",
-            content: {
-              groups: [
-                {
-                  age: "Adults",
-                  dose: "2 tablets",
-                  frequency: "every 6 hours",
-                },
-              ],
-            },
-          },
-          { title: "OTHER INFORMATION", content: ["..."] },
-          { title: "INACTIVE INGREDIENTS", content: "..." },
-          { title: "MANUFACTURER", content: "..." },
-          { title: "NET CONTENT", content: "..." },
-          { title: "NDC", content: "..." },
-          { title: "LOT NUMBER", content: "..." },
-          { title: "EXPIRATION DATE", content: "..." },
-        ],
-      });
-    } else if (productTypeUpper === "DIETARY SUPPLEMENT") {
-      systemInstruction = `FDA Supplement Facts expert. Convert the user's text (${userText}) into the Supplement Facts JSON format. INGREDIENTS MUST be a single, comma-separated list (e.g., Gelatin, Cellulose). 
-    
-    **CRITICAL EXPANSION**: 
-    1. If the user text is minimal (1-2 words/ingredients) or implies 'pure'/'only', you MUST infer and expand it into a realistic, full commercial ingredient list.
-    2. **%DV Handling**: For ingredients where Daily Value (DV) is not established (e.g. herbal extracts, specific amino acids), set 'dv' to '*' (asterisk). Do NOT use 'N/A'.
-    3. **WARNINGS**: If warnings are missing, you MUST generate these **EXACT** standard warnings: "Keep out of reach of children.", "Do not use if safety seal is broken or missing.", and "Consult a physician if pregnant, nursing, taking medication, or have a medical condition."
-    4. **MANUFACTURER**: You MUST generate a realistic Manufacturer Name AND Full US Physical Address (Street, City, State Zip) if not provided (e.g., "Vitality Supps LLC, 123 Wellness Dr, Austin, TX 78701").
-    5. **NET CONTENT**: You MUST generate realistic net content in dual units if missing (e.g., "60 Capsules" or "Net Wt 5 oz (140 g)").
-    
-    Infer necessary content for all required sections. **CRITICAL: Translate all user content to American English.** Keep content extremely concise, capitalized, and without special formatting symbols. All titles must be ENGLISH and UPPERCASE. Output ONLY the JSON object.`;
-      jsonStructure = JSON.stringify({
-        layoutType: "supplement_facts",
-        sections: [
-          {
-            title: "SERVE HEADER",
-            content: { servingSize: "...", servingsPerContainer: "..." },
-            isHeader: true,
-          },
-          {
-            title: "SUPPLEMENT FACTS TABLE",
-            content: [{ name: "...", amount: "...", dv: "*" }],
-            isTable: true,
-          },
-          { title: "OTHER INGREDIENTS", content: "..." },
-          { title: "SUGGESTED USE", content: "..." },
-          { title: "WARNINGS", content: "..." },
-          { title: "MANUFACTURER", content: "..." },
-          { title: "NET CONTENT", content: "..." },
-        ],
-      });
-    } else if (productTypeUpper === "COSMETIC") {
-      systemInstruction = `FDA/INCI Cosmetic Label Expert. Convert the user's text (${userText}) into a strictly compliant Cosmetic Ingredient List JSON.
-    
-    **STRICT RULES**:
-    1. **INCI Naming**: All non-colorant ingredients MUST use INCI names (e.g., 'Water' -> 'Aqua', 'Vitamin E' -> 'Tocopherol').
-    2. **Descending Order**: Ingredients > 1% MUST be listed in descending order of weight. Ingredients <= 1% can follow in any order.
-    3. **Colorants (FDA Legal Names)**: Provide FDA-required legal colorant names with CI numbers in parentheses and list them in a unified 'MAY CONTAIN' section at the end (e.g., "Titanium Dioxide (CI 77891)", "Iron Oxides (CI 77491, CI 77492, 77499)", "Red 7 Lake (CI 15850)", "Mica"). Do NOT scatter colorants inside the main ingredients.
-    4. **Fragrance**: Use "Fragrance" or "Parfum" instead of individual components. If the fragrance contains any of FDA's 26 cosmetic contact allergens (e.g., Benzyl Alcohol, Cinnamal, Citral), list those specific allergens in the 'CONTAINS' section (not "Fragrance").
-    5. **Allergens (CONTAINS Section)**: 
-      - **Only list these FDA-recognized cosmetic/food allergens**: 
-        1. Cosmetic contact allergens (26 FDA-mandated): Benzyl Alcohol, Benzyl Cinnamate, Benzyl Salicylate, Cinnamal, Cinnamyl Alcohol, Citral, Citronellol, Coumarin, Eugenol, Farnesol, Geraniol, Hydroxycitronellal, Isoeugenol, Limonene, Linalool, Amyl Cinnamal, Amyl Cinnamal Alcohol, Anise Alcohol, Benzyl Benzoate, Butylphenyl Methylpropional, Citrus Aurantium Bergamia (Bergamot) Fruit Oil, Citrus Aurantium Dulcis (Orange) Peel Oil, Citrus Limon (Lemon) Peel Oil, Evernia Furfuracea (Treemoss) Extract, Evernia Prunastri (Oakmoss) Extract, Hydroxyisohexyl 3-Cyclohexene Carboxaldehyde
-        2. Food-derived allergens: Peanuts, Tree Nuts (Almond, Walnut), Milk, Eggs, Soy, Wheat, Fish, Crustacean Shellfish, Sesame
-      - If the user text contains these allergens (e.g., "Peanut Oil" → "Peanuts"; "Cinnamal" → "Cinnamal"), list them in a 'CONTAINS' section (UPPERCASE title) using their FDA-standard name.
-      - If NO allergens are present, OMIT the 'CONTAINS' section entirely (do NOT output "None").
-    6. **Title**: Use "INGREDIENTS" as the main section title (UPPERCASE).
-    7. **Exclusions**: DO NOT include Manufacturer/Distributor information. DO NOT include Net Content/Quantity information.
-    
-    **CRITICAL EXPANSION**: Unless the user explicitly says 'pure' or 'only', infer and expand minimal inputs into a realistic commercial formula (base, emulsifiers, preservatives, actives). When 'pure' or 'only' is stated, do not expand.
-    
-    **NO DRUG CLAIMS**: DO NOT include any therapeutic or drug claims in the text.
-    
-    Output ONLY the JSON object.`;
-      jsonStructure = JSON.stringify({
-        layoutType: "standard",
-        sections: [
-          { title: "INGREDIENTS", content: "Aqua, Glycerin, ..." },
-          { title: "CONTAINS", content: "Cinnamal, Peanuts, ..." },
-          { title: "MAY CONTAIN", content: "Titanium Dioxide (CI 77891), ..." },
-        ],
-      });
-    } else if (productTypeUpper === "FOOD") {
-      systemInstruction = `FDA Food Label Expert. Convert the user's text (${userText}) into a strictly compliant Food Ingredient List JSON.
-    
-    **STRICT RULES**:
-    1. **Layout**: Use 'standard' layout ONLY. DO NOT generate 'nutrition_facts' or 'supplement_facts'.
-    2. **Sections**: Return ONLY 'INGREDIENTS' and 'CONTAINS'.
-    3. **Net Content**: DO NOT generate or include 'NET CONTENT' or any quantity information (e.g. "10 fl oz").
-    4. **Ingredients Expansion**: Expand ingredients by default into a realistic, full commercial list (including excipients/preservatives if applicable). If the user explicitly says 'pure' or 'only', DO NOT expand and only list provided items.
-    5. **Contains (Allergens)**: 
-       - Identify major food allergens (Milk, Eggs, Fish, Crustacean shellfish, Tree Nuts, Peanuts, Wheat, Soybeans, Sesame).
-       - **CRITICAL**: If NO allergens are present, DO NOT include the 'CONTAINS' section in the JSON. Omit it entirely. DO NOT output "None".
-    
-    **Translate all content to American English.** Keep content concise and capitalized. All titles ENGLISH and UPPERCASE. Output ONLY the JSON object.`;
-      jsonStructure = JSON.stringify({
-        layoutType: "standard",
-        sections: [
-          { title: "INGREDIENTS", content: "..." },
-          { title: "CONTAINS", content: "..." },
-        ],
-      });
-    } else {
-      systemInstruction = `Convert the user's text (${userText}) into the Standard JSON format.
-    
-    **INTELLIGENT MODE**:
-    1. Check if the user provided any quantitative nutritional information (e.g., Calories, Fat).
-    2. IF YES: Generate a 'NUTRITION FACTS' JSON structure (layoutType: 'nutrition_facts').
-       - Include 'NUTRITION FACTS' section with: servingSize, servingsPerContainer, calories, totalFat (g/%), sodium (mg/%), totalCarb (g/%), protein (g).
-       - Include 'INGREDIENTS' and 'CONTAINS' as usual.
-    3. IF NO (just simple ingredients): Use 'standard' layout with 'INGREDIENTS' and 'CONTAINS'.
-    
-    **CRITICAL EXPANSION for Ingredients**: Expand by default into a realistic commercial list. If the user explicitly says 'pure' or 'only', DO NOT expand.
-    For 'CONTAINS', if NO allergens are present, omit the 'CONTAINS' section entirely.
-    **Translate all content to American English.** Keep content concise and capitalized. All titles ENGLISH and UPPERCASE. Output ONLY the JSON object.`;
-      jsonStructure = JSON.stringify({
-        layoutType: "nutrition_facts",
-        sections: [
-          {
-            title: "NUTRITION FACTS",
-            content: {
-              servingSize: "...",
-              servingsPerContainer: "...",
-              calories: "...",
-              totalFat: { amount: "...g", dv: "...%" },
-              sodium: { amount: "...mg", dv: "...%" },
-              totalCarbohydrate: { amount: "...g", dv: "...%" },
-              protein: "...g",
-            },
-            isTable: true,
-          },
-          { title: "INGREDIENTS", content: "..." },
-          { title: "CONTAINS", content: "..." },
-        ],
-      });
-    }
-
-    return `${systemInstruction}\nReturn ONLY the JSON object conforming to this structure: ${jsonStructure}`;
-  };
-
   const isLocalRequest = (req) => {
     const ip = typeof getClientIp === "function" ? getClientIp(req) : "";
     return (
@@ -645,18 +444,52 @@ const installSystemRoutes = (app, deps) => {
     return !isProd && isLocalRequest(req);
   };
 
-  app.get(["/healthz", "/readyz"], (req, res) => {
+  app.get("/healthz", (req, res) => {
     const hasGeminiKey = !!API_KEY;
     const hasSiliconflowKey = !!SILICONFLOW_API_KEY;
     const hasProvider = hasGeminiKey || hasSiliconflowKey;
-    const ok = requireLlmProvider ? hasProvider : true;
-    res.status(ok ? 200 : 503).json({
-      ok,
+    res.status(200).json({
+      ok: true,
       nodeEnv: NODE_ENV,
+      appEnv: APP_ENV,
       uptimeSec: Math.floor(process.uptime()),
       hasProvider,
       rid: String(res.locals.requestId || ""),
     });
+  });
+
+  app.get("/readyz", async (req, res) => {
+    const hasGeminiKey = !!API_KEY;
+    const hasSiliconflowKey = !!SILICONFLOW_API_KEY;
+    const hasAnyProvider = hasGeminiKey || hasSiliconflowKey;
+    try {
+      const report = await getReadinessReport({
+        env: readinessEnv,
+        pool: deps?.readinessPool,
+        adapter: deps?.assetAdapter,
+        generationProvider
+      });
+      const ok = report.ok && (!requireLlmProvider || hasAnyProvider);
+      return res.status(ok ? 200 : 503).json({
+        ...report,
+        ok,
+        nodeEnv: NODE_ENV,
+        appEnv: APP_ENV,
+        uptimeSec: Math.floor(process.uptime()),
+        hasProvider: hasAnyProvider,
+        rid: String(res.locals.requestId || ""),
+      });
+    } catch {
+      return res.status(503).json({
+        ok: false,
+        nodeEnv: NODE_ENV,
+        appEnv: APP_ENV,
+        uptimeSec: Math.floor(process.uptime()),
+        hasProvider: hasAnyProvider,
+        checks: { readiness: { ok: false, code: "READINESS_CHECK_FAILED" } },
+        rid: String(res.locals.requestId || ""),
+      });
+    }
   });
 
   app.get(
@@ -666,13 +499,15 @@ const installSystemRoutes = (app, deps) => {
       res.json({
         ok: true,
         nodeEnv: NODE_ENV,
+        appEnv: APP_ENV,
         uptimeSec: Math.floor(process.uptime()),
         rid: String(res.locals.requestId || ""),
         gitSha:
           String(
-            process.env.GIT_SHA ||
-              process.env.VERCEL_GIT_COMMIT_SHA ||
-              process.env.RAILWAY_GIT_COMMIT_SHA ||
+            readinessEnv.GIT_SHA ||
+              readinessEnv.RENDER_GIT_COMMIT ||
+              readinessEnv.VERCEL_GIT_COMMIT_SHA ||
+              readinessEnv.RAILWAY_GIT_COMMIT_SHA ||
               "",
           ).trim() || null,
       });
@@ -897,10 +732,12 @@ const installSystemRoutes = (app, deps) => {
       const userId = String(req.body.userId || "").trim();
       const purpose = String(req.body.purpose || "").trim();
       const purposeKey = normalizeReasonKey(purpose);
-      const costRaw = Number.parseInt(String(req.body.cost ?? ""), 10);
-      const cost = Number.isFinite(costRaw) && costRaw > 0 ? costRaw : 0;
-      const resolvedCost =
-        cost > 0 ? cost : purpose ? resolveCreditsCostByPurpose(purpose) : 0;
+      // Client supplied prices are never authoritative. Unknown/blank purposes
+      // use the endpoint's configured default rather than becoming free.
+      const resolvedCost = resolveServerCreditCost({
+        endpoint: "generate",
+        operation: purpose,
+      });
       const deepModeProvided =
         req.body && Object.prototype.hasOwnProperty.call(req.body, "deepMode");
       const deepMode = !!req.body.deepMode;
@@ -909,26 +746,6 @@ const installSystemRoutes = (app, deps) => {
         ? initialInputRaw.slice(0, 2000)
         : "";
       const userText = String(req.body.userText || "").trim();
-      const sessionId = String(req.body.sessionId || "")
-        .trim()
-        .slice(0, 160);
-      const projectId = String(req.body.projectId || "")
-        .trim()
-        .slice(0, 160);
-      const requestSource = String(req.body.requestSource || "")
-        .trim()
-        .slice(0, 160);
-      const pageContextRaw = req.body.pageContext;
-      const pageContext =
-        pageContextRaw && typeof pageContextRaw === "object"
-          ? trimJsonValue(pageContextRaw, {
-              maxDepth: 6,
-              maxItems: 80,
-              maxString: 260,
-            })
-          : typeof pageContextRaw === "string"
-            ? pageContextRaw.trim().slice(0, 12000)
-            : "";
 
       if (
         !prompt &&
@@ -954,6 +771,16 @@ const installSystemRoutes = (app, deps) => {
       }
       if (!prompt)
         return res.status(400).json({ error: "EMPTY_PROMPT", requestId });
+      if (!isPaidAiUserId(userId)) {
+        return res.status(401).json({ error: "LOGIN_REQUIRED", requestId });
+      }
+      if (typeof assertAuthUserMatches !== "function") {
+        return res.status(503).json({ error: "AUTH_NOT_CONFIGURED", requestId });
+      }
+      if (!assertAuthUserMatches(req, res, userId)) return;
+      if (resolvedCost > 0 && !legacyJsonBillingEnabled) {
+        return res.status(410).json({ error: "LEGACY_BILLING_DISABLED", requestId });
+      }
 
       const idempotencyKey = (() => {
         const rid = String(requestId || "").trim();
@@ -1042,23 +869,6 @@ const installSystemRoutes = (app, deps) => {
           return res.status(503).json(payload);
         }
 
-        if (
-          userId &&
-          !userId.startsWith("guest_") &&
-          typeof assertAuthUserMatches === "function"
-        ) {
-          const auth = assertAuthUserMatches(req, res, userId);
-          if (!auth) {
-            const status = Number(res.statusCode || 401) || 401;
-            const payload = {
-              error: status === 403 ? "FORBIDDEN" : "UNAUTHORIZED",
-              requestId,
-            };
-            finalizeIdempotency(status, payload);
-            return;
-          }
-        }
-
         if (typeof callTextGenerate !== "function") {
           throw new Error("callTextGenerate is not available");
         }
@@ -1067,11 +877,7 @@ const installSystemRoutes = (app, deps) => {
           const k = String(raw || "")
             .trim()
             .toLowerCase();
-          return (
-            k === "qwen" ||
-            k === "qwen/qwen2.5-7b-instruct" ||
-            k === "qwen2.5-7b-instruct"
-          );
+          return k === "qwen/qwen3-8b";
         };
 
         const hold = (() => {
@@ -1172,6 +978,29 @@ const installSystemRoutes = (app, deps) => {
              finalizeIdempotency(500, payload);
              return res.status(500).json(payload);
            }
+
+           if (purposeKey === "agentimg_ingredient_label" || purposeKey === "ingredient_label") {
+             const sourceText = String(
+               req.body?.agentImg?.userText ||
+               req.body?.ingredient?.userText ||
+               userText ||
+               ""
+             ).trim();
+             const trace = validateIngredientOutputTrace(parsedJson, sourceText);
+             if (!trace.ok) {
+               if (hold?.holdId && imgCredits && typeof imgCredits.refundHold === "function") {
+                 try {
+                   imgCredits.refundHold({ userId, holdId: hold.holdId });
+                 } catch {}
+               }
+               const payload = {
+                 error: trace.code || "INGREDIENT_SOURCE_MISMATCH",
+                 requestId
+               };
+               finalizeIdempotency(422, payload);
+               return res.status(422).json(payload);
+             }
+           }
         }
         // ---------------------------
 
@@ -1203,33 +1032,18 @@ const installSystemRoutes = (app, deps) => {
             .trim()
             .slice(0, 80);
           const parsed0 = extractFirstJsonObject(result?.text || "");
-          const parsed =
-            parsed0 && typeof parsed0 === "object"
-              ? trimJsonValue(parsed0, {
-                  maxDepth: 5,
-                  maxItems: 40,
-                  maxString: 800,
-                })
-              : null;
           const layoutType =
             parsed0 && typeof parsed0 === "object"
               ? String(parsed0?.layoutType || "")
                   .trim()
                   .slice(0, 60) || null
               : null;
-          const sectionTitles =
+          const sectionCount =
             parsed0 &&
             typeof parsed0 === "object" &&
             Array.isArray(parsed0?.sections)
-              ? parsed0.sections
-                  .map((it) =>
-                    it && typeof it === "object"
-                      ? String(it.title || "").trim()
-                      : "",
-                  )
-                  .filter(Boolean)
-                  .slice(0, 40)
-              : [];
+              ? Math.min(parsed0.sections.length, 1000)
+              : 0;
           const usage = result?.usage || null;
           const tokensIn = Number(usage?.promptTokens || 0) || 0;
           const tokensOut = Number(usage?.completionTokens || 0) || 0;
@@ -1238,8 +1052,7 @@ const installSystemRoutes = (app, deps) => {
           return {
             productType: productType || null,
             layoutType,
-            sectionTitles,
-            parsed,
+            sectionCount,
             tokensIn,
             tokensOut,
             tokensTotal,
@@ -1259,49 +1072,24 @@ const installSystemRoutes = (app, deps) => {
                 : typeof computeCreditsDelta === "function"
                   ? computeCreditsDelta({ tokensTotal, ragUsed: false })
                   : 0;
-            const basePlan =
-              deepModeProvided || initialInput
-                ? {
-                    deepMode,
-                    ...(deepMode && initialInput ? { initialInput } : {}),
-                  }
-                : undefined;
-            const plan =
-              ingredientMeta && typeof ingredientMeta === "object"
-                ? {
-                    ...(basePlan || {}),
-                    ingredientLabel: {
-                      productType: ingredientMeta.productType,
-                      layoutType: ingredientMeta.layoutType,
-                      sectionTitles: ingredientMeta.sectionTitles,
-                    },
-                  }
-                : basePlan;
-            upsertUsageLedgerItem({
+            await upsertUsageLedgerItem({
               requestId: requestId || `gen_${Date.now().toString(36)}`,
               ts: Date.now(),
               userId,
-              ...(sessionId ? { sessionId } : {}),
-              ...(projectId ? { projectId } : {}),
               trigger: normalizeReasonKey(purpose) || "generate",
-              provider: String(
-                result?.provider || activeTextProvider || "text",
-              ).trim(),
-              model: String(result?.model || modelRaw || "").trim(),
-              usedUrl: String(result?.usedUrl || "").trim(),
+              provider: classifyProvider(result?.provider || activeTextProvider || "text"),
+              model: classifyModel(result?.model || modelRaw || ""),
               tokensIn,
               tokensOut,
               tokensTotal,
               creditsDelta,
-              ...(plan ? { plan } : {}),
-              ...(requestSource ? { requestSource } : {}),
+              ...(deepModeProvided ? { deepMode } : {}),
+              ...contentMetadata(initialInput, "initialInput"),
+              ...contentMetadata(req.body?.agentImg || req.body?.ingredient, "input"),
+              ...contentMetadata(userText, "userText"),
+              ...requestPrivacyMetadata(req.body, req),
               status: result?.text ? "ok" : "empty",
               durationMs: Math.max(0, Date.now() - startedAt),
-              ip: typeof getClientIp === "function" ? getClientIp(req) : "",
-              ua:
-                typeof req.headers["user-agent"] === "string"
-                  ? req.headers["user-agent"].slice(0, 220)
-                  : "",
             });
           }
         } catch {}
@@ -1315,11 +1103,8 @@ const installSystemRoutes = (app, deps) => {
                   `ingredient_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
                 ts: Date.now(),
                 type: "ingredient_label",
-                provider: String(
-                  result?.provider || activeTextProvider || "text",
-                ).trim(),
-                model: String(result?.model || modelRaw || "").trim(),
-                usedUrl: String(result?.usedUrl || "").trim() || undefined,
+                provider: classifyProvider(result?.provider || activeTextProvider || "text"),
+                model: classifyModel(result?.model || modelRaw || ""),
                 cost: resolvedCost,
                 durationMs: Math.max(0, Date.now() - startedAt),
                 tokensIn: ingredientMeta.tokensIn,
@@ -1327,17 +1112,15 @@ const installSystemRoutes = (app, deps) => {
                 tokensTotal: ingredientMeta.tokensTotal,
                 purpose:
                   purposeKey || (purpose ? normalizeReasonKey(purpose) : ""),
-                productType: ingredientMeta.productType,
-                promptLen: prompt.length,
-                promptHash: fnv1aHash(prompt),
-                userText: userText ? userText.slice(0, 8000) : "",
-                aiText: result?.text ? String(result.text).slice(0, 20000) : "",
-                layoutType: ingredientMeta.layoutType,
-                sectionTitles: ingredientMeta.sectionTitles,
-                parsed: ingredientMeta.parsed,
+                ...categoryMetadata(ingredientMeta.productType, "productType"),
+                ...contentMetadata(prompt, "prompt"),
+                ...contentMetadata(userText, "userText"),
+                ...contentMetadata(result?.text, "output"),
+                ...categoryMetadata(ingredientMeta.layoutType, "layoutType"),
+                sectionCount: ingredientMeta.sectionCount,
                 status: result?.text ? "ok" : "empty",
               };
-              appendUserImageHistory({ userId, entry });
+              await appendUserImageHistory({ userId, entry });
             }
           }
         } catch {}
@@ -1352,14 +1135,6 @@ const installSystemRoutes = (app, deps) => {
             const agentImg = req.body?.agentImg;
             const ingredient = req.body?.ingredient;
             const input = agentImg || ingredient || null;
-            const inputTrimmed =
-              input && typeof input === "object"
-                ? trimJsonValue(input, {
-                    maxDepth: 6,
-                    maxItems: 60,
-                    maxString: 1200,
-                  })
-                : null;
             const entry = {
               id: requestId || `gen_${Date.now().toString(36)}`,
               ts: Date.now(),
@@ -1368,36 +1143,24 @@ const installSystemRoutes = (app, deps) => {
                 purposeKey ||
                 (purpose ? normalizeReasonKey(purpose) : "") ||
                 "generate",
-              provider: String(
-                result?.provider || activeTextProvider || "text",
-              ).trim(),
-              model: String(result?.model || modelRaw || "").trim(),
-              usedUrl: String(result?.usedUrl || "").trim() || undefined,
+              provider: classifyProvider(result?.provider || activeTextProvider || "text"),
+              model: classifyModel(result?.model || modelRaw || ""),
               cost: resolvedCost,
               tokensIn,
               tokensOut,
               tokensTotal,
               deepMode: !!deepMode,
-              ...(initialInput ? { initialInput } : {}),
-              ...(inputTrimmed ? { input: inputTrimmed } : {}),
-              ...(ingredientMeta ? { ingredientLabel: ingredientMeta } : {}),
-              promptLen: prompt.length,
-              promptHash: fnv1aHash(prompt),
-              ...(userText ? { userText: userText.slice(0, 8000) } : {}),
-              aiText: result?.text ? String(result.text).slice(0, 20000) : "",
-              ...(sessionId ? { sessionId } : {}),
-              ...(projectId ? { projectId } : {}),
-              ...(requestSource ? { requestSource } : {}),
-              ...(pageContext ? { pageContext } : {}),
+              ...contentMetadata(initialInput, "initialInput"),
+              ...contentMetadata(input, "input"),
+              ...contentMetadata(prompt, "prompt"),
+              ...contentMetadata(userText, "userText"),
+              ...contentMetadata(result?.text, "output"),
+              ...contentMetadata(req.body?.pageContext, "pageContext"),
+              ...requestPrivacyMetadata(req.body, req),
               status: result?.text ? "ok" : "empty",
               durationMs: Math.max(0, Date.now() - startedAt),
-              ip: typeof getClientIp === "function" ? getClientIp(req) : "",
-              ua:
-                typeof req.headers["user-agent"] === "string"
-                  ? req.headers["user-agent"].slice(0, 220)
-                  : "",
             };
-            appendUserAuditHistory({ userId, entry });
+            await appendUserAuditHistory({ userId, entry });
           }
         } catch {}
 
@@ -1491,14 +1254,13 @@ const installSystemRoutes = (app, deps) => {
               durationMs: Math.max(0, Date.now() - startedAt),
               purpose:
                 purposeKey || (purpose ? normalizeReasonKey(purpose) : ""),
-              productType,
-              promptLen: prompt.length,
-              promptHash: fnv1aHash(prompt),
-              userText: userText ? userText.slice(0, 8000) : "",
+              ...categoryMetadata(productType, "productType"),
+              ...contentMetadata(prompt, "prompt"),
+              ...contentMetadata(userText, "userText"),
               status: "error",
               error: errorCode,
             };
-            appendUserImageHistory({ userId, entry });
+            await appendUserImageHistory({ userId, entry });
           }
         } catch {}
         try {
@@ -1506,14 +1268,6 @@ const installSystemRoutes = (app, deps) => {
             const agentImg = req.body?.agentImg;
             const ingredient = req.body?.ingredient;
             const input = agentImg || ingredient || null;
-            const inputTrimmed =
-              input && typeof input === "object"
-                ? trimJsonValue(input, {
-                    maxDepth: 6,
-                    maxItems: 60,
-                    maxString: 1200,
-                  })
-                : null;
             const entry = {
               id: requestId || `gen_${Date.now().toString(36)}`,
               ts: Date.now(),
@@ -1524,25 +1278,17 @@ const installSystemRoutes = (app, deps) => {
                 "generate",
               cost: resolvedCost,
               deepMode: !!deepMode,
-              ...(initialInput ? { initialInput } : {}),
-              ...(inputTrimmed ? { input: inputTrimmed } : {}),
-              promptLen: prompt.length,
-              promptHash: fnv1aHash(prompt),
-              ...(userText ? { userText: userText.slice(0, 8000) } : {}),
-              ...(sessionId ? { sessionId } : {}),
-              ...(projectId ? { projectId } : {}),
-              ...(requestSource ? { requestSource } : {}),
-              ...(pageContext ? { pageContext } : {}),
+              ...contentMetadata(initialInput, "initialInput"),
+              ...contentMetadata(input, "input"),
+              ...contentMetadata(prompt, "prompt"),
+              ...contentMetadata(userText, "userText"),
+              ...contentMetadata(req.body?.pageContext, "pageContext"),
+              ...requestPrivacyMetadata(req.body, req),
               status: "error",
               error: errorCode,
               durationMs: Math.max(0, Date.now() - startedAt),
-              ip: typeof getClientIp === "function" ? getClientIp(req) : "",
-              ua:
-                typeof req.headers["user-agent"] === "string"
-                  ? req.headers["user-agent"].slice(0, 220)
-                  : "",
             };
-            appendUserAuditHistory({ userId, entry });
+            await appendUserAuditHistory({ userId, entry });
           }
         } catch {}
         console.error("[API][Generate] Error:", {

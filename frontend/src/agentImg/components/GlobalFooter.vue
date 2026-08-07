@@ -47,6 +47,7 @@ const ui = computed(() =>
 .global-footer {
   width: 100%;
   padding: 40px 60px;
+  box-sizing: border-box;
   background: #050505;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   font-family: var(--common-font);

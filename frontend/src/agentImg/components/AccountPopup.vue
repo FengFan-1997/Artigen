@@ -185,9 +185,14 @@ const holdsLoading = ref(false);
 const holds = ref<CreditsHold[]>([]);
 const holdsError = ref('');
 
-const isAuthed = computed(() => isLocalLoggedIn());
+const authTick = ref(0);
+const isAuthed = computed(() => {
+  void authTick.value;
+  return isLocalLoggedIn();
+});
 
 const userIdText = computed(() => {
+  void authTick.value;
   const uid = String(getCurrentUserId() || '').trim();
   return uid || '--';
 });
@@ -410,13 +415,20 @@ const onOpenEvent = (e: Event) => {
   void openPopup(tab);
 };
 
+const onAuthChanged = () => {
+  authTick.value += 1;
+  if (!isAuthed.value) close();
+};
+
 onMounted(() => {
   window.addEventListener('app-account-popup-open', onOpenEvent as EventListener);
+  window.addEventListener('app-auth-changed', onAuthChanged as EventListener);
   window.addEventListener('keydown', onKeyDown);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('app-account-popup-open', onOpenEvent as EventListener);
+  window.removeEventListener('app-auth-changed', onAuthChanged as EventListener);
   window.removeEventListener('keydown', onKeyDown);
 });
 
@@ -545,8 +557,13 @@ watch(
 }
 
 .icon-btn {
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  line-height: 1;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.28);
@@ -557,6 +574,7 @@ watch(
     border-color 0.18s ease,
     color 0.18s ease;
   display: flex;
+  flex: 0 0 44px;
   align-items: center;
   justify-content: center;
 }

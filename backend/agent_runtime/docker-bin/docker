@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Narrow Docker CLI wrapper used only by Cua's local DockerRuntime."""
+
+import os
+import socket
+import subprocess
+import sys
+
+
+def loopback_publish(value: str) -> str:
+    if value.startswith("127.0.0.1:") or value.startswith("[::1]:"):
+        return value
+    parts = value.split(":")
+    if len(parts) in (1, 2):
+        return "127.0.0.1:" + value
+    return value
+
+
+real_docker = os.environ.get("ARTIGEN_REAL_DOCKER", "/usr/bin/docker")
+args = sys.argv[1:]
+if args[:1] == ["run"]:
+    source = args[1:]
+    rewritten: list[str] = []
+    published: list[str] = []
+    index = 0
+    while index < len(source):
+        value = source[index]
+        if value in ("-p", "--publish") and index + 1 < len(source):
+            published.append(loopback_publish(source[index + 1]))
+            index += 2
+            continue
+        if value.startswith("--publish="):
+            published.append(loopback_publish(value.split("=", 1)[1]))
+        else:
+            rewritten.append(value)
+        index += 1
+    prefix = ["run", "--security-opt=seccomp=unconfined"]
+    network = os.environ.get("ARTIGEN_DOCKER_NETWORK", "").strip()
+    if network:
+        prefix.extend(["--network", network])
+    is_sandbox = "cua.sandbox=true" in rewritten
+    if not is_sandbox:
+        for value in published:
+            prefix.extend(["-p", value])
+        args = [*prefix, *rewritten]
+        os.execv(real_docker, [real_docker, *args])
+
+    def named_argument(name: str) -> str:
+        for position, item in enumerate(rewritten):
+            if item == name and position + 1 < len(rewritten):
+                return rewritten[position + 1]
+            if item.startswith(name + "="):
+                return item.split("=", 1)[1]
+        return ""
+
+    def reserve_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            return int(probe.getsockname()[1])
+
+    def normalized_publish(value: str) -> tuple[str, int]:
+        parts = value.split(":")
+        if len(parts) == 3:
+            host, host_port, container_port = parts
+        elif len(parts) == 2:
+            host, host_port, container_port = "127.0.0.1", parts[0], parts[1]
+        else:
+            raise ValueError("ARTIGEN_DOCKER_PUBLISH_INVALID")
+        if host != "127.0.0.1" or not container_port.isdigit():
+            raise ValueError("ARTIGEN_DOCKER_PUBLISH_NOT_LOOPBACK")
+        resolved_host_port = int(host_port) if host_port.isdigit() else reserve_port()
+        return f"127.0.0.1:{resolved_host_port}:{int(container_port)}", int(container_port)
+
+    sandbox_name = named_argument("--name")
+    image_ref = os.environ.get("ARTIGEN_CUA_IMAGE_REF", "").strip()
+    network_name = os.environ.get("ARTIGEN_DOCKER_NETWORK", "").strip()
+    if not sandbox_name or not image_ref or not network_name:
+        sys.stderr.write("ARTIGEN_DOCKER_CONTROL_CONFIG_INVALID\n")
+        sys.exit(1)
+    control_name = sandbox_name + "-control"
+    mappings = [normalized_publish(value) for value in published]
+    mappings.append((f"127.0.0.1:{reserve_port()}:5901", 5901))
+    sandbox_run = subprocess.run(
+        [real_docker, *prefix, *rewritten],
+        capture_output=True,
+        text=True,
+    )
+    if sandbox_run.returncode != 0:
+        sys.stdout.write(sandbox_run.stdout)
+        sys.stderr.write(sandbox_run.stderr)
+        sys.exit(sandbox_run.returncode)
+    control_args = [
+        real_docker, "run", "-d", "--name", control_name,
+        "--network", "bridge",
+        "--label", "ai.artigen.control=loopback-v1",
+        "--label", f"ai.artigen.control.sandbox={sandbox_name}",
+        "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=8m",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+        "--user", "cua",
+        "-e", f"ARTIGEN_CONTROL_TARGET={sandbox_name}",
+        "-e", "ARTIGEN_CONTROL_PORTS=" + ",".join(str(port) for _, port in mappings),
+    ]
+    for mapping, _ in mappings:
+        control_args.extend(["-p", mapping])
+    control_args.extend([
+        "--entrypoint", "node", image_ref, "/opt/artigen/control_proxy.js"
+    ])
+    control_run = subprocess.run(control_args, capture_output=True, text=True)
+    connect_run = subprocess.run(
+        [real_docker, "network", "connect", network_name, control_name],
+        capture_output=True,
+        text=True,
+    ) if control_run.returncode == 0 else control_run
+    if control_run.returncode != 0 or connect_run.returncode != 0:
+        subprocess.run([real_docker, "rm", "-f", control_name], capture_output=True)
+        subprocess.run([real_docker, "rm", "-f", sandbox_name], capture_output=True)
+        sys.stderr.write("ARTIGEN_DOCKER_CONTROL_START_FAILED\n")
+        sys.exit(1)
+    sys.stdout.write(sandbox_run.stdout)
+    sys.stderr.write(sandbox_run.stderr)
+    sys.exit(0)
+
+os.execv(real_docker, [real_docker, *args])

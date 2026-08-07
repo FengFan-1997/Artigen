@@ -1,12 +1,12 @@
 const {
   API_KEY,
   SILICONFLOW_API_KEY,
-  SILICONFLOW_MODEL,
   SILICONFLOW_MESSAGES_URL,
   SILICONFLOW_CHAT_COMPLETIONS_URL,
   SILICONFLOW_IMAGES_GENERATIONS_URL,
   SILICONFLOW_IMAGE_INPUT_FIELD,
   FIXED_SILICONFLOW_CHAT_MODEL,
+  FIXED_SILICONFLOW_EDIT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
   activeTextProvider,
   GEMINI_GENERATE_URLS,
@@ -47,12 +47,20 @@ const createSemaphore = (max, maxQueue) => {
     if (inFlight >= lim) return;
     const next = queue.shift();
     if (!next) return;
+    next.cleanup();
     inFlight += 1;
     next.resolve(release);
   };
 
-  const acquire = () =>
+  const acquire = (signal) =>
     new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        const error = new Error('ABORT_ERR');
+        error.name = 'AbortError';
+        error.code = 'ABORT_ERR';
+        reject(error);
+        return;
+      }
       if (inFlight < lim) {
         inFlight += 1;
         resolve(release);
@@ -64,11 +72,22 @@ const createSemaphore = (max, maxQueue) => {
         reject(err);
         return;
       }
-      queue.push({ resolve, reject });
+      const entry = { resolve, reject, cleanup: () => {} };
+      const onAbort = () => {
+        const index = queue.indexOf(entry);
+        if (index >= 0) queue.splice(index, 1);
+        const error = new Error('ABORT_ERR');
+        error.name = 'AbortError';
+        error.code = 'ABORT_ERR';
+        reject(error);
+      };
+      entry.cleanup = () => signal?.removeEventListener('abort', onAbort);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      queue.push(entry);
     });
 
-  const run = async (fn) => {
-    const rel = await acquire();
+  const run = async (fn, signal) => {
+    const rel = await acquire(signal);
     try {
       return await fn();
     } finally {
@@ -151,7 +170,7 @@ const callGeminiGenerate = async ({ contents, timeoutMs }) => {
   throw err;
 };
 
-const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model }) => {
+const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model, signal }) => {
   if (!SILICONFLOW_API_KEY) {
     const err = new Error('MISSING_SILICONFLOW_API_KEY');
     err.code = 'MISSING_SILICONFLOW_API_KEY';
@@ -160,7 +179,13 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model }) =>
 
   return await withSiliconflowRateGate(async () => {
     const startedAt = Date.now();
-    const resolvedModel = String(model || '').trim() || SILICONFLOW_MODEL;
+    const requestedModel = String(model || '').trim();
+    const resolvedModel = requestedModel || FIXED_SILICONFLOW_CHAT_MODEL;
+    if (resolvedModel !== FIXED_SILICONFLOW_CHAT_MODEL) {
+      const err = new Error('MODEL_NOT_ALLOWED');
+      err.code = 'MODEL_NOT_ALLOWED';
+      throw err;
+    }
     const headers = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${SILICONFLOW_API_KEY}`
@@ -187,7 +212,8 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model }) =>
               max_tokens: typeof maxTokens === 'number' ? maxTokens : undefined
             })
           },
-          timeoutMs
+          timeoutMs,
+          signal
         );
 
         if (!response.ok) {
@@ -249,6 +275,7 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model }) =>
           bodyPreview: String(JSON.stringify(data) || '').slice(0, 1800)
         });
       } catch (e) {
+        if (signal?.aborted || e?.name === 'AbortError' || e?.code === 'ABORT_ERR') throw e;
         failures.push({
           url,
           status: 0,
@@ -322,12 +349,21 @@ const callSiliconFlowImageGenerate = async ({
 
     const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
     const preferredModel = String(model || '').trim();
-    const modelCandidates = [
-      ...(preferredModel ? [preferredModel] : []),
-      ...(FIXED_SILICONFLOW_IMAGE_MODEL && FIXED_SILICONFLOW_IMAGE_MODEL !== preferredModel
-        ? [FIXED_SILICONFLOW_IMAGE_MODEL]
-        : [])
-    ];
+    const allowedModels = new Set([FIXED_SILICONFLOW_IMAGE_MODEL, FIXED_SILICONFLOW_EDIT_MODEL]);
+    if (preferredModel && !allowedModels.has(preferredModel)) {
+      const err = new Error('MODEL_NOT_ALLOWED');
+      err.code = 'MODEL_NOT_ALLOWED';
+      throw err;
+    }
+    const resolvedModel = preferredModel || (imgs.length
+      ? FIXED_SILICONFLOW_EDIT_MODEL
+      : FIXED_SILICONFLOW_IMAGE_MODEL);
+    if (imgs.length && resolvedModel !== FIXED_SILICONFLOW_EDIT_MODEL) {
+      const err = new Error('REFERENCE_IMAGES_NOT_SUPPORTED');
+      err.code = 'REFERENCE_IMAGES_NOT_SUPPORTED';
+      throw err;
+    }
+    const modelCandidates = [resolvedModel];
 
     const isModelNotFound = (raw) => {
       const s = String(raw || '').toLowerCase();
@@ -347,13 +383,13 @@ const callSiliconFlowImageGenerate = async ({
         batch_size: 1,
         prompt: p,
         negative_prompt: String(negativePrompt || '').trim() || undefined,
-        image_size: String(params?.imageSize || '').trim() || '1024x1024',
         num_inference_steps:
           typeof params?.steps === 'number' && Number.isFinite(params.steps) ? params.steps : undefined,
         seed:
           typeof params?.seed === 'number' && Number.isFinite(params.seed) ? Math.trunc(params.seed) : undefined
       };
       if (!isQwenEdit) {
+        body.image_size = String(params?.imageSize || '').trim() || '1024x1024';
         body.guidance_scale =
           typeof params?.guidanceScale === 'number' && Number.isFinite(params.guidanceScale)
             ? params.guidanceScale
@@ -422,11 +458,11 @@ const callSiliconFlowImageGenerate = async ({
     }
 
     throw lastErr || new Error('SILICONFLOW_IMAGE_500');
-  });
+  }, signal);
 };
 
 const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFallback }) => {
-  const canGemini = !!API_KEY;
+  const canGemini = false;
   const canSiliconflow = !!SILICONFLOW_API_KEY;
   const sfTimeoutMs = Math.max(
     Math.max(1000, Number(timeoutMs || 0) || 0),
@@ -448,7 +484,7 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFa
 
   const runSiliconflow = async () => {
     const preferredModel = String(model || '').trim();
-    const resolvedModel = preferredModel || FIXED_SILICONFLOW_CHAT_MODEL || SILICONFLOW_MODEL;
+    const resolvedModel = preferredModel || FIXED_SILICONFLOW_CHAT_MODEL;
     const { text, usage, model: modelUsed, usedUrl } = await callSiliconFlowChat({
       messages: toSiliconflowMessages(),
       timeoutMs: sfTimeoutMs,
@@ -532,5 +568,6 @@ module.exports = {
   callGeminiGenerate,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate,
-  callTextGenerate
+  callTextGenerate,
+  createSemaphore
 };

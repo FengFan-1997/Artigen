@@ -41,13 +41,27 @@ export const useFormatFactoryLive = (input: { sourceFile: Ref<File | null> }) =>
     liveTime.value = next;
   };
 
-  const captureVideoFrame = async () => {
+  const captureVideoFrame = async (limits?: {
+    maxPixels?: number;
+    maxDurationSeconds?: number;
+  }) => {
     const v = liveVideoRef.value;
     const f = input.sourceFile.value;
     if (!v || !f) throw new Error('VIDEO_NOT_SELECTED');
     const vw = v.videoWidth;
     const vh = v.videoHeight;
     if (!vw || !vh) throw new Error('VIDEO_DIM_FAIL');
+    if (Number(limits?.maxPixels || 0) > 0 && vw * vh > Number(limits?.maxPixels)) {
+      throw new Error('VIDEO_PIXEL_LIMIT');
+    }
+    const duration = Number(v.duration || 0);
+    if (
+      Number(limits?.maxDurationSeconds || 0) > 0 &&
+      Number.isFinite(duration) &&
+      duration > Number(limits?.maxDurationSeconds)
+    ) {
+      throw new Error('VIDEO_DURATION_LIMIT');
+    }
     const canvas = document.createElement('canvas');
     canvas.width = vw;
     canvas.height = vh;

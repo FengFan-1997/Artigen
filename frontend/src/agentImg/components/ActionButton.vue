@@ -77,6 +77,11 @@ const onClick = (event: MouseEvent) => {
   transform: var(--btn-hover-transform, none);
 }
 
+.btn:focus-visible {
+  outline: 3px solid #3b82f6;
+  outline-offset: 2px;
+}
+
 .btn:disabled {
   opacity: var(--btn-disabled-opacity, 0.6);
   cursor: not-allowed;
@@ -90,5 +95,15 @@ const onClick = (event: MouseEvent) => {
 .action-button__text {
   display: inline-flex;
   align-items: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn {
+    transition-duration: 0.01ms !important;
+  }
+
+  .btn:hover:not(:disabled) {
+    transform: none;
+  }
 }
 </style>
