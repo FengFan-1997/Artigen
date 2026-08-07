@@ -137,6 +137,7 @@ AGENT_PUBLIC_CAPABILITIES=files,shell,browser
 | 2026-08-07 | 本机 DEV | runs `0cc3eca1-a22e-4067-8167-931d660f0b2b`、`3c203a72-a088-4c5d-9afa-1b60f9d68a40` | 单 Origin profile 加密保存、恢复后 `last_used_at` 更新、撤销后密文覆盖且列表不可见；无真实登录数据 |
 | 2026-08-07 | Render DEV + Neon + Mac Worker | run `f32c30bf-ed26-4fc9-aa0a-0daaa878ca24` | `succeeded`；四项 Worker 状态 true；restricted-v1 浏览；MD/PDF 验证 passed；两项资产均为 S3，跨进程读回字节数和 SHA-256 一致；容器/网络清理 |
 | 2026-08-07 | Render DEV + Neon + Mac Worker | run `06035a9d-b19f-4e1d-ba73-c58fa954fff8` | Qwen 主动请求 blocked 密码接管；任务停在 `waiting_user`；60 秒票据 consumed/started/closed；viewer 收到本机 VNC `RFB 003.008`；无真实凭据；容器/网络清理 |
+| 2026-08-07 | Render DEV `af50290` + Neon + Mac Worker | run `d093a36c-37e4-47ff-9f7b-8cc3fb7ecf1f` | PR #9 合入后的重复验收；blocked 审批、60 秒票据、Render WSS、Mac VNC `RFB 003.008` 和关闭清理再次通过；无真实凭据 |
 
 远程烟测前一次 run `e0698848-7a7f-4083-b398-03eb5e6c7dbb` 安全失败于 `AGENT_MODEL_PARALLEL_CALLS_UNEXPECTED`，证明 Qwen3-8B 可能忽略 `parallel_tool_calls=false`。运行时现只保留首个调用并逐轮执行，保证每个工具调用都单独通过策略和审批；新增回归测试后，上表远程 run 完整通过。
 
