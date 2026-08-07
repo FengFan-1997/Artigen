@@ -14,10 +14,12 @@ Artigen Agent 已切换为“硅基流动云端模型 + 本机 CUA 沙箱”：�
 
 单站会话也完成真实生命周期烟测：run `0cc3eca1-a22e-4067-8167-931d660f0b2b` 加密保存 `https://example.com` profile，run `3c203a72-a088-4c5d-9afa-1b60f9d68a40` 恢复后更新时间；随后撤销，密文被覆盖为不可解密占位、profile 不再出现在列表中。测试不含真实 Cookie、账号、密码或 OTP。
 
+2026-08-07 又完成了真正的远程 DEV 分布式烟测 run `f32c30bf-ed26-4fc9-aa0a-0daaa878ca24`：任务和队列位于 Render DEV/Neon，Mac Worker 从同一远程队列领取，Qwen3-8B 经 `restricted-v1` 访问 `https://example.com`，生成 `artigen-dev-smoke.md` 和 `artigen-dev-smoke.pdf`，两项独立验证均为 `passed`。Worker 将文件写入共享 Neon S3，烟测进程再从对象存储读回，逐项比对字节数和 SHA-256；最终 `succeeded`，沙箱、出口代理和临时网络均已清理。第一次远程 run 暴露出 Qwen 会忽略 `parallel_tool_calls=false`，运行时已改为只保留并顺序执行首个调用，并增加回归测试后重跑通过。
+
 | 检查项 | 当前状态 | 说明 |
 |---|---:|---|
 | Agent 单元/运行时测试 | 通过 | 包括硅基流动工具循环、小模型漏计划兜底、SSRF、票据、中继、路径和交付验证 |
-| 后端完整测试 | 通过 | 371 个测试，333 通过、38 跳过、0 失败 |
+| 后端完整测试 | 通过 | 372 个测试，334 通过、38 跳过、0 失败 |
 | 前端单元测试 | 通过 | 211/211 |
 | 前端 TypeScript/生产构建 | 通过 | noVNC 按需分包，Agent 工作台可编译并完成 Vite 构建 |
 | 本机数据库 | 通过 | 已迁移到 `020_agent_secure_browser_relay` |
@@ -30,9 +32,10 @@ Artigen Agent 已切换为“硅基流动云端模型 + 本机 CUA 沙箱”：�
 | 最小真实 Agent 烟测 | 通过 | 云端模型、队列、CUA、文件执行、病毒扫描、资产登记、结算和销毁全部完成 |
 | 浏览器 Agent 技术链路 | 本机 DEV 通过 | 受限代理、CDP、`browser_dom`、Markdown+PDF、独立验证和销毁均真实通过 |
 | 浏览器 Agent 接管中继 | 本机 DEV 通过 | 票据、HMAC、WebSocket、raw VNC 握手和清理均真实通过 |
-| 浏览器 Agent 公开能力 | 本机 DEV 已开启 | `files,shell,browser`；Production 必须等共享 S3 和 DEV 线上验收 |
+| 浏览器 Agent 公开能力 | Render DEV 已开启 | `files,shell,browser`；远程队列、Mac Worker 和共享 S3 烟测通过，Production 尚未开启 |
 | Playwright Chromium | 通过 | 桌面/360px/390px 完整套件 203 通过、1 条条件跳过、0 失败 |
-| 生产环境 | 未启用 | 本机跑通不等于线上部署完成，仍需共享 S3、备份和 DEV Render 验收 |
+| DEV Render | 通过核心分布式烟测 | 迁移 020、四项 Worker 状态、浏览、MD/PDF、共享 S3 上传和读回均通过 |
+| 生产 Agent | 未启用 | 生产站标准功能在线，但尚未部署 Agent 代码、迁移和 Production Worker |
 
 系统盘当前约有 19.3GB 可用，所需 CUA v2 镜像和 Playwright Chromium 1.61.1 对应浏览器已安装并保留。Hugging Face、Ollama、PostgreSQL/Redis 数据卷和项目环境未被清理。
 
@@ -301,6 +304,10 @@ pnpm --filter backend install:agent-worker:dev-mac
 pnpm --filter backend install:agent-worker:production-mac
 ```
 
+`start:agent-worker:dev-mac` 和 DEV LaunchAgent 从独立的 `artigen-agent-dev-worker` Keychain service 读取远程 DEV Neon、共享 S3、Agent 载荷密钥、硅基流动密钥和桌面中继配置；它不会复用或改写 `backend/.env`。普通的 `pnpm start:agent-worker` 仍是本机数据库/本机中继开发入口。Production 对应 `artigen-agent-production-worker`，两套配置不能混用。
+
+本机显式配置 `SILICONFLOW_KEYCHAIN_SERVICE` 时，Keychain 值优先于 `.env` 中的旧值；本机开发的 Agent 载荷密钥默认优先读取 `artigen-agent-dev-worker / AGENT_PAYLOAD_ENCRYPTION_KEY`。Render/Linux 没有 macOS Keychain，仍只从平台环境变量读取。
+
 Production runner 会先检查 Docker，再从 `artigen-agent-production-worker` Keychain service 读取数据库、S3、载荷加密、硅基流动和中继配置。缺任何一项会输出错误码并退出，不打印值；LaunchAgent 30 秒后重试。Mac 必须接通电源、保持用户登录且 Docker Desktop 运行，合盖睡眠和关机会让任务继续排队。
 
 网页会每 15 秒请求：
@@ -369,7 +376,29 @@ real credentials entered: none
 sandbox: destroyed
 ```
 
-Production 上线前仍要在 DEV Render + 共享 S3 重做同一烟测：
+远程 DEV + 共享 S3 烟测可重复执行：
+
+```bash
+pnpm --filter backend smoke:agent:dev-mac
+```
+
+脚本只从 `artigen-agent-dev-worker` Keychain 读取秘密，不接受 Production Keychain service，也不打印账号、连接串或密钥。没有可用测试账号时，它在 DEV 数据库创建固定的内部账号 `agent-smoke@dev.artigen.invalid`；该账号没有密码、会话或生产权限，只用于服务级验收。
+
+2026-08-07 的通过记录：
+
+```text
+run: f32c30bf-ed26-4fc9-aa0a-0daaa878ca24
+status: succeeded
+model: SiliconFlow Qwen/Qwen3-8B
+browser: restricted-v1 -> https://example.com
+artifacts: artigen-dev-smoke.md (246 bytes) + artigen-dev-smoke.pdf (2861 bytes)
+verification_status: passed + passed
+storage_driver: s3 + s3
+download verification: byte size + SHA-256 matched
+sandbox/control/egress/network: destroyed
+```
+
+手工 UI 验收仍使用正常 Artigen 用户登录，然后提交：
 
 使用正常 Artigen 用户登录，然后提交：
 
@@ -444,7 +473,7 @@ Worker 使用 `Ctrl+C` 或 `SIGTERM` 停止。停止过程中数据库心跳先�
 - 开发/预发布数据库已执行 020 迁移；
 - `browserReady`、`egressVerified`、`desktopRelayReady` 和 `workerOnline` 同时为 true；
 - 网站后端和本机 Worker 指向同一目标数据库；
-- 文件交付使用共享 S3 兼容对象存储，而不是某台机器的本地目录；
+- 文件交付使用共享 S3 兼容对象存储，而不是某台机器的本地目录；DEV 已实测上传、跨进程读回和摘要一致；
 - Worker 机器能长期在线，睡眠/关机策略已处理；
 - 备份、额度释放、24 小时队列过期和 Worker 离线提示已在预发布环境验证；
 - 前端 Playwright Chromium 已安装；Agent 三个 Chromium 项目 21/21 通过，完整桌面套件 67 通过、1 条条件跳过、0 失败。
@@ -454,12 +483,12 @@ Worker 使用 `Ctrl+C` 或 `SIGTERM` 停止。停止过程中数据库心跳先�
 
 ## 12. 当前下一步
 
-1. 跑完更新后的后端、前端、质量集、生产构建和完整 Chromium E2E。
-2. 整理提交并推送 `codex/agent-runtime-local`，合入 `dev`。
-3. 备份 DEV 数据库，让 DEV Render 带锁执行迁移 015–020，并在共享 S3 上重做浏览、接管、会话和交付下载烟测。
-4. DEV 验收通过后再备份生产 Neon、合入 `main`，把生产 Render 部署分支改为 `main`，先只对所有者账号开放。
-5. 如生产承诺 Firefox/WebKit 兼容性，再安装对应 Playwright 浏览器并跑完整项目。
+1. 跑完 Qwen 顺序工具调用修复后的后端全量回归，并将补丁合入 `dev`。
+2. 在 DEV Render 通过网页 UI 重做登录接管、会话保存/恢复/撤销；核心浏览与共享 S3 交付已通过自动烟测。
+3. 配置独立的 `artigen-agent-production-worker` Keychain 项和 Production Agent secrets，再安装 Production LaunchAgent。
+4. 已有生产 Neon 手工备份作为发布前检查点；发布窗口仍需复核备份并将已验收的 `dev` 合入 `main`，把生产 Render 部署源改为 `main`，先只对所有者账号开放。
+5. 保持 Render Free 的 Beta 标识；需要 24×7 再升级 Render 并迁移 Worker。
 
 当前准确表述是：
 
-> Artigen Agent 的本机 DEV 已真实跑通 `files + shell + browser`、受限出口、Markdown+PDF 独立验证和一次性票据远程接管；DEV Render 共享 S3 验收与 Production Beta 部署尚未执行，因此仍不能宣称生产站 Agent 已上线。
+> Artigen Agent 已在 Render DEV + Neon + Mac Worker 的分布式环境真实跑通受限浏览、Markdown/PDF 独立验证、共享 S3 上传与读回；本机一次性票据远程接管和加密会话生命周期也已通过。DEV 网页端真实登录接管/会话复验与 Production Beta 发布尚未完成，因此仍不能宣称生产站 Agent 已上线。

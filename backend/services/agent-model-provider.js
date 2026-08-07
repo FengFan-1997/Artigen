@@ -949,15 +949,17 @@ class OllamaAgentModelProvider {
         role: 'assistant',
         content: String(response.message.content || '')
       };
-      if (Array.isArray(response.message.tool_calls) && response.message.tool_calls.length) {
-        assistant.tool_calls = response.message.tool_calls;
-      }
+      const returnedCalls = Array.isArray(response.message.tool_calls)
+        ? response.message.tool_calls
+        : [];
+      // Some OpenAI-compatible providers ignore parallel_tool_calls=false. Keep only
+      // the first call in the assistant history so each tool result has a complete,
+      // protocol-valid request/response pair and every action is policy-checked in order.
+      const calls = returnedCalls.slice(0, 1);
+      if (calls.length) assistant.tool_calls = calls;
       messages.push(assistant);
       text = assistant.content.trim() || text;
 
-      const calls = Array.isArray(response.message.tool_calls)
-        ? response.message.tool_calls
-        : [];
       if (!calls.length) {
         await callbacks.clearModelState?.();
         return {
@@ -967,12 +969,6 @@ class OllamaAgentModelProvider {
           credits: totalCredits,
           turns
         };
-      }
-      if (calls.length !== 1) {
-        throw new ApiError(502, 'AGENT_MODEL_PARALLEL_CALLS_UNEXPECTED', {
-          retryable: true,
-          callCount: calls.length
-        });
       }
       const fn = calls[0]?.function || {};
       const name = String(fn.name || '').trim();
@@ -1022,6 +1018,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
       stream: false,
       enable_thinking: this.config.siliconFlowThinkingEnabled,
       max_tokens: this.config.siliconFlowMaxTokens,
+      parallel_tool_calls: false,
       temperature: 0.2,
       top_p: 0.7
     };

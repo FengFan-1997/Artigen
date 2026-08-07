@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { ApiError } = require('../lib/api-error');
+const { readMacOsKeychainSecret } = require('../lib/local-keychain');
 
 const ALGORITHM = 'aes-256-gcm-v1';
 const IV_BYTES = 12;
@@ -23,8 +24,17 @@ const decodeKey = (raw) => {
   return decoded.length === KEY_BYTES ? decoded : null;
 };
 
+const payloadKeyMaterial = (env = process.env) => readMacOsKeychainSecret({
+  service: env.AGENT_PAYLOAD_KEYCHAIN_SERVICE || (
+    env === process.env && String(env.NODE_ENV || '').trim() !== 'production'
+      ? 'artigen-agent-dev-worker'
+      : ''
+  ),
+  account: env.AGENT_PAYLOAD_KEYCHAIN_ACCOUNT || 'AGENT_PAYLOAD_ENCRYPTION_KEY'
+}) || env.AGENT_PAYLOAD_ENCRYPTION_KEY;
+
 const resolveKey = (env = process.env) => {
-  const key = decodeKey(env.AGENT_PAYLOAD_ENCRYPTION_KEY);
+  const key = decodeKey(payloadKeyMaterial(env));
   if (!key) {
     throw new ApiError(503, 'AGENT_PAYLOAD_KEY_MISSING', { retryable: false });
   }
@@ -32,7 +42,7 @@ const resolveKey = (env = process.env) => {
 };
 
 const hasAgentPayloadKey = (env = process.env) => Boolean(
-  decodeKey(env.AGENT_PAYLOAD_ENCRYPTION_KEY)
+  decodeKey(payloadKeyMaterial(env))
 );
 
 const payloadAad = ({ runId, payloadId, kind }) => Buffer.from(

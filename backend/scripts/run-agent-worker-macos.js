@@ -24,9 +24,12 @@ if (dockerCheck.status !== 0) {
 }
 
 const workerEnv = { ...process.env };
-if (profile === 'production') {
+{
+  const defaultService = profile === 'production'
+    ? 'artigen-agent-production-worker'
+    : 'artigen-agent-dev-worker';
   const service = String(
-    process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-production-worker'
+    process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || defaultService
   ).trim();
   const secretNames = [
     'DATABASE_URL',
@@ -47,7 +50,7 @@ if (profile === 'production') {
     else workerEnv[name] = value;
   }
   if (missing.length) {
-    console.error(`AGENT_PRODUCTION_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
+    console.error(`AGENT_${profile.toUpperCase()}_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
     process.exit(78);
   }
   Object.assign(workerEnv, {
@@ -65,7 +68,9 @@ if (profile === 'production') {
     AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true',
     AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
     AGENT_BROWSER_MODE: 'full-approval-v1',
-    AGENT_WORKER_ID: process.env.AGENT_WORKER_ID || 'artigen-production-mac-1',
+    AGENT_WORKER_ID: process.env.AGENT_WORKER_ID || (
+      profile === 'production' ? 'artigen-production-mac-1' : 'artigen-dev-mac-1'
+    ),
     AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser',
     AGENT_MAX_MINUTES: '45',
     AGENT_MAX_STEPS: '120',
@@ -73,11 +78,10 @@ if (profile === 'production') {
     AGENT_DISK_GB: '10',
     AGENT_WORKER_CONCURRENCY: '1',
     ASSET_STORAGE_DRIVER: 's3',
+    S3_FORCE_PATH_STYLE: '1',
     CUA_PYTHON: path.join(backendRoot, '.venv-agent/bin/python'),
-    ARTIGEN_AGENT_PROFILE: 'production'
+    ARTIGEN_AGENT_PROFILE: profile
   });
-} else {
-  workerEnv.ARTIGEN_AGENT_PROFILE = 'dev';
 }
 
 const child = spawn('/usr/bin/caffeinate', [

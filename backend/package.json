@@ -31,7 +31,8 @@
     "eval:generation:score": "node scripts/score-generation-blind-review.js",
     "eval:agent:validate": "node scripts/validate-agent-quality-set.js",
     "eval:agent:trajectory": "node scripts/score-agent-trajectory.js",
-    "doctor:agent": "node scripts/doctor-agent.js"
+    "doctor:agent": "node scripts/doctor-agent.js",
+    "smoke:agent:dev-mac": "node scripts/run-agent-dev-smoke.js"
   },
   "keywords": [],
   "author": "",

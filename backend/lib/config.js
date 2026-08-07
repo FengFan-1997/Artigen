@@ -32,13 +32,13 @@ const isProd = NODE_ENV === "production";
 const API_KEY = "";
 
 const SILICONFLOW_API_KEY = normalizeSecret(
-  process.env.SILICONFLOW_API_KEY ||
+  readMacOsKeychainSecret({
+    service: process.env.SILICONFLOW_KEYCHAIN_SERVICE,
+    account: process.env.SILICONFLOW_KEYCHAIN_ACCOUNT,
+  }) ||
+    process.env.SILICONFLOW_API_KEY ||
     process.env.SILICONFLOW_TOKEN ||
     process.env.SILICONFLOW_KEY ||
-    readMacOsKeychainSecret({
-      service: process.env.SILICONFLOW_KEYCHAIN_SERVICE,
-      account: process.env.SILICONFLOW_KEYCHAIN_ACCOUNT,
-    }) ||
     "",
 );
 const SILICONFLOW_API_BASE = normalizeUrl(

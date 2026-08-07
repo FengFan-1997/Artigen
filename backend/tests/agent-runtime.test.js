@@ -1562,6 +1562,101 @@ test('SiliconFlow Qwen3-8B safely synthesizes a plan when the small model starts
   assert.equal(plans[0].steps[0].label, 'Create the note');
 });
 
+test('SiliconFlow serializes parallel Qwen tool calls into protocol-valid turns', async () => {
+  const requests = [];
+  const responses = [
+    {
+      id: 'chat-parallel',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'call-plan-first',
+              type: 'function',
+              function: {
+                name: 'update_plan',
+                arguments: JSON.stringify({
+                  explanation: 'Read the page and create the report',
+                  steps: [
+                    { label: 'Read page', status: 'in_progress' },
+                    { label: 'Create report', status: 'pending' }
+                  ]
+                })
+              }
+            },
+            {
+              id: 'call-browser-dropped',
+              type: 'function',
+              function: {
+                name: 'browser_dom',
+                arguments: JSON.stringify({
+                  action: 'navigate',
+                  url: 'https://example.com/',
+                  selector: '',
+                  text: '',
+                  purpose: 'Read the allowed page'
+                })
+              }
+            }
+          ]
+        }
+      }],
+      usage: {}
+    },
+    {
+      id: 'chat-after-plan',
+      choices: [{ message: { role: 'assistant', content: 'Plan recorded.' } }],
+      usage: {}
+    }
+  ];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  let planCalls = 0;
+  let browserCalls = 0;
+  const result = await provider.execute({
+    objective: 'Read example.com',
+    capabilities: { browser: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => {
+        planCalls += 1;
+        return { accepted: true };
+      },
+      browserDom: async () => {
+        browserCalls += 1;
+        return { ok: true };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Plan recorded.');
+  assert.equal(planCalls, 1);
+  assert.equal(browserCalls, 0);
+  assert.equal(requests[0].parallel_tool_calls, false);
+  const assistant = requests[1].messages.find((message) => message.role === 'assistant');
+  assert.deepEqual(assistant.tool_calls.map((call) => call.id), ['call-plan-first']);
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'tool' && message.tool_call_id === 'call-plan-first'
+  )));
+});
+
 test('SiliconFlow exposes browser_dom only when the run grants browser capability', () => {
   assert.deepEqual(
     ollamaFileTools({ files: true }).map((tool) => tool.function.name),
