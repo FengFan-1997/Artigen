@@ -288,6 +288,15 @@
                         >
                           {{ currentLang === 'zh' ? '再来一张' : 'Variation' }}
                         </button>
+                        <button
+                          v-if="generationV2Enabled"
+                          class="msg-image-action-btn msg-image-action-btn--secondary"
+                          type="button"
+                          :disabled="projectSaveBusy || isImageBroken(item.image)"
+                          @click.stop="openProjectSave(item)"
+                        >
+                          {{ currentLang === 'zh' ? '保存到项目' : 'Save to project' }}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -801,6 +810,47 @@
       </div>
     </div>
 
+    <div
+      v-if="projectSaveOpen"
+      class="download-dialog-overlay"
+      @click="closeProjectSave"
+    >
+      <div class="download-dialog project-save-dialog" role="dialog" aria-modal="true" @click.stop>
+        <div class="download-header">
+          <h3>{{ currentLang === 'zh' ? '保存到项目' : 'Save to project' }}</h3>
+          <CloseButton @click="closeProjectSave" />
+        </div>
+        <p class="project-save-copy">
+          {{
+            currentLang === 'zh'
+              ? '结果会成为可继续分支、比较和编辑的项目版本。'
+              : 'The result becomes a project version you can branch, compare, and edit.'
+          }}
+        </p>
+        <label class="project-save-field">
+          <span>{{ currentLang === 'zh' ? '选择项目' : 'Choose a project' }}</span>
+          <select v-model="projectSaveTargetId" :disabled="projectSaveBusy">
+            <option v-for="project in projectSaveProjects" :key="project.projectId" :value="project.projectId">
+              {{ project.title }}
+            </option>
+          </select>
+        </label>
+        <div class="project-save-actions">
+          <button type="button" class="img-preview-btn secondary" @click="createProjectForSavedResult">
+            {{ currentLang === 'zh' ? '新建项目' : 'New project' }}
+          </button>
+          <button
+            type="button"
+            class="img-preview-btn"
+            :disabled="projectSaveBusy || !projectSaveTargetId"
+            @click="confirmProjectSave"
+          >
+            {{ projectSaveBusy ? (currentLang === 'zh' ? '保存中…' : 'Saving…') : (currentLang === 'zh' ? '保存版本' : 'Save version') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <GenerationQuoteDialog
       :open="Boolean(quoteConfirmation)"
       :language="currentLang"
@@ -816,7 +866,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useAgentImgFlow } from './composables/useAgentImgFlow';
 import { useAgentImgSettings } from './composables/useAgentImgSettings';
 import TitleBar from './components/TitleBar.vue';
@@ -839,11 +889,19 @@ import { useAgentImgGenerationController } from './composables/useAgentImgGenera
 import { buildApiUrl, getApiBaseUrl } from '@/utils/api';
 import { resourceFetch } from '@/login/authFetch';
 import { createEditorTransfer } from './services/toolTasks';
+import {
+  importCreativeProjectVersion,
+  listCreativeProjects,
+  type CreativeProject
+} from './services/creativeProjects';
 import { trackEvent } from '@/utils/analytics';
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 const router = useRouter();
+const route = useRoute();
+const activeProjectId = computed(() => String(route.query.projectId || '').trim());
+const parentVersionId = computed(() => String(route.query.parentVersionId || '').trim());
 
 // --- 1. Locale ---
 const { ui, categories } = useAgentImgLocale();
@@ -1098,9 +1156,20 @@ const {
     config: {
       profileId: selectedProfileId,
       aspectRatio: selectedAspectRatio,
-      profileAvailable: generationProfileAvailable
+      profileAvailable: generationProfileAvailable,
+      projectId: activeProjectId,
+      parentVersionId
     },
-    ui: { scrollChatToBottom, showTopTip }
+    ui: {
+      scrollChatToBottom,
+      showTopTip,
+      onInsufficientCredits: () => {
+        const returnTo = activeProjectId.value
+          ? `/artigen/projects/${activeProjectId.value}`
+          : route.fullPath;
+        void router.push({ path: '/artigen/market', query: { returnTo } });
+      }
+    }
   },
   generationV2Enabled
 );
@@ -1222,7 +1291,8 @@ const canPrimary = computed(() => {
 
 const sendCostValue = computed(() => {
   if (generationV2Enabled.value) {
-    return deepMode.value && options.value.length === 0 ? 5 : 10;
+    if (deepMode.value && options.value.length === 0) return 5;
+    return selectedProfileId.value === 'product-reference-v1' ? 60 : 10;
   }
   const costs = creditsCosts.value;
   const fallback = 10;
@@ -1362,6 +1432,107 @@ const writeEditorPrefill = (value: string) => {
 const assetIdFromUrl = (value: string) => {
   const match = String(value || '').match(/\/api\/assets\/([0-9a-f-]{36})(?:[?#]|$)/i);
   return match?.[1] || '';
+};
+
+const projectSaveOpen = ref(false);
+const projectSaveBusy = ref(false);
+const projectSaveProjects = ref<CreativeProject[]>([]);
+const projectSaveTargetId = ref('');
+const projectSaveItem = ref<any>(null);
+
+const projectSaveAssetId = () => {
+  const item = projectSaveItem.value;
+  return String(item?.assetId || assetIdFromUrl(item?.image) || assetIdFromUrl(resolveRefUrl(item?.image))).trim();
+};
+
+const closeProjectSave = () => {
+  if (projectSaveBusy.value) return;
+  projectSaveOpen.value = false;
+  projectSaveItem.value = null;
+};
+
+const saveHistoryResult = async (projectId: string, item: any) => {
+  const assetId = String(item?.assetId || assetIdFromUrl(item?.image) || assetIdFromUrl(resolveRefUrl(item?.image))).trim();
+  if (!assetId) throw new Error('LEGACY_ASSET_UNAVAILABLE');
+  await importCreativeProjectVersion(projectId, {
+    assetId,
+    prompt: String(item?.userText || '').slice(0, 4000),
+    profileId: String(item?.profileId || 'imported-history-v1'),
+    aspectRatio: String(item?.aspectRatio || '')
+  });
+  trackEvent('project_version_reuse', {
+    projectId,
+    source: 'history',
+    profileId: String(item?.profileId || 'imported-history-v1')
+  });
+};
+
+const openProjectSave = async (item: any) => {
+  const assetId = String(item?.assetId || assetIdFromUrl(item?.image) || assetIdFromUrl(resolveRefUrl(item?.image))).trim();
+  if (!assetId) {
+    showTopTip(currentLang.value === 'zh'
+      ? '这张旧结果还不是可长期保存的安全资产，请先下载'
+      : 'This legacy result is not a retainable secure asset. Download it first.');
+    return;
+  }
+  if (!ensureAuthed(() => openProjectSave(item))) return;
+  if (activeProjectId.value) {
+    projectSaveBusy.value = true;
+    try {
+      await saveHistoryResult(activeProjectId.value, item);
+      showTopTip(currentLang.value === 'zh' ? '已保存为当前项目的新版本' : 'Saved as a new project version.');
+    } catch {
+      showTopTip(currentLang.value === 'zh' ? '保存失败，请稍后重试' : 'Could not save the result. Try again.');
+    } finally {
+      projectSaveBusy.value = false;
+    }
+    return;
+  }
+  projectSaveBusy.value = true;
+  projectSaveItem.value = item;
+  try {
+    projectSaveProjects.value = await listCreativeProjects();
+    if (!projectSaveProjects.value.length) {
+      await router.push({
+        path: '/artigen/projects',
+        query: { sourceAssetId: assetId }
+      });
+      return;
+    }
+    projectSaveTargetId.value = projectSaveProjects.value[0]?.projectId || '';
+    projectSaveOpen.value = true;
+  } catch {
+    showTopTip(currentLang.value === 'zh' ? '项目加载失败，请稍后重试' : 'Could not load projects.');
+  } finally {
+    projectSaveBusy.value = false;
+  }
+};
+
+const confirmProjectSave = async () => {
+  if (!projectSaveTargetId.value || !projectSaveItem.value || projectSaveBusy.value) return;
+  projectSaveBusy.value = true;
+  try {
+    await saveHistoryResult(projectSaveTargetId.value, projectSaveItem.value);
+    const target = projectSaveTargetId.value;
+    projectSaveOpen.value = false;
+    projectSaveItem.value = null;
+    showTopTip(currentLang.value === 'zh' ? '已保存为项目版本' : 'Saved as a project version.');
+    await router.push(`/artigen/projects/${target}`);
+  } catch {
+    showTopTip(currentLang.value === 'zh' ? '保存失败，请稍后重试' : 'Could not save the result.');
+  } finally {
+    projectSaveBusy.value = false;
+  }
+};
+
+const createProjectForSavedResult = async () => {
+  const assetId = projectSaveAssetId();
+  if (!assetId) return;
+  projectSaveOpen.value = false;
+  await router.push({
+    path: '/artigen/projects',
+    query: { sourceAssetId: assetId }
+  });
 };
 
 const editMsgImage = async (url: string, item?: any) => {
@@ -1714,9 +1885,17 @@ const onGlobalPointerDown = (e: PointerEvent) => {
 };
 
 onMounted(() => {
+  const requestedProfile = String(route.query.profileId || '').trim();
+  if (['standard-v1', 'product-reference-v1'].includes(requestedProfile)) {
+    selectedProfileId.value = requestedProfile;
+    selectedModelId.value = requestedProfile;
+  }
+  const requestedPrompt = String(route.query.prompt || '').trim();
+  if (requestedPrompt && !userInput.value.trim()) userInput.value = requestedPrompt.slice(0, 500);
   trackEvent('workspace_view', {
     source: 'workspace',
     authenticated: isAuthed.value,
+    projectId: activeProjectId.value,
     profileId: selectedProfileId.value,
     aspectRatio: selectedAspectRatio.value
   });
@@ -1753,5 +1932,39 @@ onBeforeUnmount(() => {
 
 .text1 {
   height: 200px !important;
+}
+
+.project-save-dialog {
+  max-width: 440px;
+}
+
+.project-save-copy {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.project-save-field {
+  display: grid;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+}
+
+.project-save-field select {
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 0 12px;
+  background: #090b0a;
+  color: #fff;
+  font: inherit;
+}
+
+.project-save-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 </style>

@@ -81,10 +81,13 @@ export type GenerationV2Deps = {
     profileId: MutableRef<string>;
     aspectRatio: MutableRef<string>;
     profileAvailable: MutableRef<boolean>;
+    projectId?: MutableRef<string>;
+    parentVersionId?: MutableRef<string>;
   };
   ui: {
     scrollChatToBottom: () => void;
     showTopTip: (message: string) => void;
+    onInsufficientCredits?: () => void;
   };
 };
 
@@ -139,7 +142,8 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
       CONTENT_POLICY_REJECTED: ['请求未通过内容安全检查，请调整描述', 'The request did not pass the content policy check. Please revise it.'],
       TASK_PAYLOAD_KEY_MISSING: ['付费生图安全配置缺失，任务未创建', 'Secure paid-generation configuration is missing. No task was created.'],
       PROVIDER_TIMEOUT: ['模型服务超时，预占点数将自动释放', 'The model provider timed out. Held credits will be released.'],
-      REFERENCE_IMAGES_NOT_SUPPORTED: ['当前免费标准模型仅支持文生图，请移除参考图', 'The current free standard model supports text-to-image only. Remove reference images.'],
+      REFERENCE_IMAGES_NOT_SUPPORTED: ['标准生成仅支持文生图，请移除参考图或切换到商品参考生成', 'Standard generation supports text-to-image only. Remove references or choose product-reference generation.'],
+      REFERENCE_IMAGE_REQUIRED: ['商品参考生成必须在第一个槽位上传商品图', 'Product reference generation requires a product image in the first slot.'],
       OUTPUT_INVALID: ['生成结果未通过验证，预占点数将自动释放', 'The output failed validation. Held credits will be released.'],
       TASK_LEASE_LOST: ['任务执行实例已切换，请稍后查看状态', 'The task worker changed. Check the status again shortly.'],
       TASK_POLL_TIMEOUT: ['任务仍在处理中，刷新页面会继续恢复进度', 'The task is still running. Refreshing will resume its status.'],
@@ -325,6 +329,8 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
           options: pending.options,
           quoteId: pending.quote.quoteId,
           files: pending.files,
+          projectId: pending.projectId,
+          parentVersionId: pending.parentVersionId,
           idempotencyKey: pending.idempotencyKey,
           signal: controller.signal
         });
@@ -358,6 +364,7 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
       if (revision !== runRevision) return;
       if (controller.signal.aborted) return;
       const code = String(error?.code || error?.name || error?.message || 'NETWORK_ERROR');
+      if (code === 'INSUFFICIENT_CREDITS') deps.ui.onInsufficientCredits?.();
       const keepForRecovery = code === 'TASK_POLL_TIMEOUT' || /network|fetch/i.test(code);
       if (!keepForRecovery) {
         await clearPendingGeneration();
@@ -421,6 +428,14 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
       (option) => option.id === deps.flow.selectedOptionId.value
     );
     if (!operationOverride && operation === 'generate' && deps.flow.deepMode.value && !selectedDirection) return;
+    if (
+      operation === 'generate' &&
+      deps.config.profileId.value === 'product-reference-v1' &&
+      !(deps.upload.previewFiles.value[0] instanceof File)
+    ) {
+      deps.ui.showTopTip(humanizeError(new ToolTaskClientError('REFERENCE_IMAGE_REQUIRED')));
+      return;
+    }
 
     deps.flow.loading.value = true;
     deps.flow.error.value = '';
@@ -433,8 +448,13 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
           Array.isArray(value) ? value.length > 0 : Boolean(value)
         )
       });
-      const quote = await quoteToolTask({ toolId: 'ai-design', operation });
-      const files: File[] = [];
+      const referenceSlots = operation === 'generate'
+        ? deps.upload.previewFiles.value
+            .map((file, index) => ({ file, role: ['product', 'style', 'scene'][index] }))
+            .filter((entry): entry is { file: File; role: string } => entry.file instanceof File)
+            .slice(0, 3)
+        : [];
+      const files = referenceSlots.map((entry) => entry.file);
       const refThumbsRaw = await Promise.all(files.map((file) => deps.upload.fileToThumbDataUrl(file)));
       const refThumbs = refThumbsRaw.filter((value): value is string => Boolean(value));
       const options: Record<string, unknown> = operation === 'directions'
@@ -447,6 +467,9 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
             prompt: buildPrompt(userText),
             profileId: deps.config.profileId.value,
             aspectRatio: deps.config.aspectRatio.value,
+            ...(referenceSlots.length
+              ? { referenceRoles: referenceSlots.map((entry) => entry.role) }
+              : {}),
             ...(selectedDirection
               ? {
                   direction: {
@@ -458,6 +481,13 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
                 }
               : {})
           };
+      const quote = await quoteToolTask({
+        toolId: 'ai-design',
+        operation,
+        ...(operation === 'generate'
+          ? { options: { profileId: deps.config.profileId.value } }
+          : {})
+      });
       quoteDraft.value = {
         version: 1,
         operation,
@@ -468,11 +498,18 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
         historyId: makeHistoryId(),
         userText,
         refThumbs,
+        ...(deps.config.projectId?.value ? { projectId: deps.config.projectId.value } : {}),
+        ...(deps.config.parentVersionId?.value
+          ? { parentVersionId: deps.config.parentVersionId.value }
+          : {}),
         createdAt: Date.now()
       };
       quoteConfirmation.value = { operation, quote };
       trackEvent('quote_shown', { operation, quoteId: quote.quoteId, quotedCredits: quote.credits });
     } catch (error) {
+      if (String((error as any)?.code || '') === 'INSUFFICIENT_CREDITS') {
+        deps.ui.onInsufficientCredits?.();
+      }
       deps.ui.showTopTip(humanizeError(error));
     } finally {
       deps.flow.loading.value = false;

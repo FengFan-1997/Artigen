@@ -11,6 +11,11 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
+    "start:agent-worker": "node scripts/start-agent-worker.js",
+    "start:agent-worker:dev-mac": "node scripts/run-agent-worker-macos.js dev",
+    "start:agent-worker:production-mac": "node scripts/run-agent-worker-macos.js production",
+    "install:agent-worker:dev-mac": "node scripts/install-agent-worker-launchagent.js dev",
+    "install:agent-worker:production-mac": "node scripts/install-agent-worker-launchagent.js production",
     "start:production": "node scripts/start-production.js",
     "lint": "find . -path ./node_modules -prune -o -path ./memory -prune -o -name '*.js' -type f -print0 | xargs -0 -n1 node --check",
     "test": "node --test",
@@ -23,7 +28,10 @@
     "db:audit": "node scripts/audit-postgres.js",
     "admin:grant": "node scripts/grant-admin.js",
     "eval:generation:blind": "node scripts/create-generation-blind-review.js",
-    "eval:generation:score": "node scripts/score-generation-blind-review.js"
+    "eval:generation:score": "node scripts/score-generation-blind-review.js",
+    "eval:agent:validate": "node scripts/validate-agent-quality-set.js",
+    "eval:agent:trajectory": "node scripts/score-agent-trajectory.js",
+    "doctor:agent": "node scripts/doctor-agent.js"
   },
   "keywords": [],
   "author": "",
@@ -43,6 +51,7 @@
     "pg": "^8.22.0",
     "pg-boss": "12.26.2",
     "sharp": "0.35.3",
+    "ws": "8.18.3",
     "zod": "^4.4.3"
   }
 }

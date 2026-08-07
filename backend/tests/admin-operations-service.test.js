@@ -22,6 +22,8 @@ test('admin overview maps operational data into stable dashboard groups', async 
         ledger_entries_24h: '12',
         overdue_holds: '2',
         orders_7d: '5',
+        first_buyers_7d: '3',
+        repeat_buyers_7d: '2',
         revenue_minor_7d: '9900',
         tasks_24h: '30',
         tasks_success_24h: '27',
@@ -29,7 +31,19 @@ test('admin overview maps operational data into stable dashboard groups', async 
         behavior_events_24h: '180',
         page_views_24h: '80',
         clicks_24h: '90',
-        audit_events_24h: '6'
+        audit_events_24h: '6',
+        projects_total: '18',
+        projects_created_7d: '6',
+        projects_success_7d: '4',
+        north_star_projects_7d: '3',
+        d1_eligible: '10',
+        d1_returned: '4',
+        d7_eligible: '8',
+        d7_returned: '2',
+        costed_success_tasks_7d: '20',
+        estimated_task_revenue_minor_7d: '1200',
+        provider_cost_minor_7d: '480',
+        tasks_below_margin_7d: '1'
       }]
     })
   };
@@ -44,6 +58,15 @@ test('admin overview maps operational data into stable dashboard groups', async 
   });
   assert.deepEqual(overview.generation, { tasks24h: 30, success24h: 27, failed24h: 3 });
   assert.equal(overview.behavior.clicks24h, 90);
+  assert.deepEqual(overview.projects, {
+    total: 18,
+    created7d: 6,
+    successful7d: 4,
+    northStar7d: 3
+  });
+  assert.equal(overview.retention.d1.rate, 0.4);
+  assert.equal(overview.retention.d7.rate, 0.25);
+  assert.equal(overview.economics.estimatedGrossMargin7d, 0.6);
 });
 
 test('credit ledger is read from the immutable PostgreSQL ledger', async () => {

@@ -31,25 +31,6 @@
         </div>
       </header>
 
-      <div class="currency-toggle">
-        <div class="toggle-bg">
-          <button
-            class="toggle-btn"
-            :class="{ active: currency === 'USD' }"
-            @click="currency = 'USD'"
-          >
-            US USD
-          </button>
-          <button
-            class="toggle-btn"
-            :class="{ active: currency === 'CNY' }"
-            @click="currency = 'CNY'"
-          >
-            CN CNY
-          </button>
-        </div>
-      </div>
-
       <p v-if="packagesLoading || packagesError" class="package-status" role="status" aria-live="polite">
         {{ packagesLoading ? ui.loadingPackages : ui.paidUnavailable }}
       </p>
@@ -123,6 +104,7 @@
               </svg>
               {{ formatCredits(PACK_CREDITS.starter) }} {{ ui.computeUnit }}
             </div>
+            <div class="generation-yield">{{ generationYield('starter') }}</div>
             
             <div class="btn-container">
               <button
@@ -310,6 +292,7 @@
               </svg>
               {{ formatCredits(PACK_CREDITS.standard) }} {{ ui.computeUnit }}
             </div>
+            <div class="generation-yield">{{ generationYield('standard') }}</div>
             
             <div class="btn-container">
               <button
@@ -531,6 +514,7 @@
               </svg>
               {{ formatCredits(PACK_CREDITS.pro) }} {{ ui.computeUnit }}
             </div>
+            <div class="generation-yield">{{ generationYield('pro') }}</div>
             
             <div class="btn-container">
               <button
@@ -793,6 +777,7 @@
               </svg>
               {{ formatCredits(PACK_CREDITS.ultimate) }} {{ ui.computeUnit }}
             </div>
+            <div class="generation-yield">{{ generationYield('ultimate') }}</div>
             
             <div class="btn-container">
               <button
@@ -1243,6 +1228,14 @@
             >
               {{ payHintText }}
             </div>
+            <button
+              v-if="payStatus === 'success' && returnTo"
+              class="nth-login-btn primary"
+              type="button"
+              @click="returnAfterPurchase"
+            >
+              {{ currentLang === 'zh' ? '返回当前项目' : 'Return to project' }}
+            </button>
           </div>
         </div>
       </div>
@@ -1325,18 +1318,8 @@ const formatCredits = (n: number) => {
   return v.toLocaleString();
 };
 
-const currency = ref<'CNY' | 'USD'>('CNY');
-
-const currencySymbol = computed(() => (currency.value === 'CNY' ? '¥' : '$'));
-const exchangeRate = 0.14; // Approximate CNY to USD rate
-
-const getPrice = (cnyPrice: number) => {
-  if (currency.value === 'CNY') {
-    return cnyPrice.toFixed(2);
-  } else {
-    return (cnyPrice * exchangeRate).toFixed(2);
-  }
-};
+const currencySymbol = '¥';
+const getPrice = (cnyPrice: number) => cnyPrice.toFixed(2);
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -1352,6 +1335,21 @@ const proOnly = computed(() => {
     .toLowerCase();
   return raw === '1' || raw === 'true';
 });
+const returnTo = computed(() => {
+  const value = String((route.query as any)?.returnTo || '').trim();
+  return value.startsWith('/artigen/') && !value.startsWith('//') ? value : '';
+});
+const returnAfterPurchase = () => {
+  if (returnTo.value) void router.push(returnTo.value);
+};
+const generationYield = (packageId: PayPackageId) => {
+  const credits = Math.max(0, Number(PACK_CREDITS[packageId] || 0));
+  const standard = Math.floor(credits / 10);
+  const reference = Math.floor(credits / 60);
+  return currentLang.value === 'zh'
+    ? `约 ${standard} 张标准图 / ${reference} 张商品参考图`
+    : `About ${standard} standard / ${reference} reference images`;
+};
 
 const payOpen = ref(false);
 const payChecking = ref(false);
@@ -2109,13 +2107,6 @@ const packageButtonLabel = (packageId: PayPackageId) => {
   max-width: 860px;
 }
 
-/* Currency Toggle */
-.currency-toggle {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 20px;
-}
-
 .package-status {
   min-height: 44px;
   margin: 0 auto 16px;
@@ -2128,31 +2119,11 @@ const packageButtonLabel = (packageId: PayPackageId) => {
   line-height: 24px;
 }
 
-.toggle-bg {
-  background: #1e1e1e;
-  padding: 4px;
-  border-radius: 8px;
-  display: flex;
-  gap: 4px;
-  border: 1px solid #333;
-}
-
-.toggle-btn {
-  background: transparent;
-  border: none;
-  color: #666;
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 14px;
-  transition: all 0.3s ease;
-}
-
-.toggle-btn.active {
-  background: #ccff00;
-  color: #000;
-  box-shadow: 0 2px 10px rgba(204, 255, 0, 0.2);
+.generation-yield {
+  margin: 10px 0 2px;
+  color: #aab4ac;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* Pricing Grid */

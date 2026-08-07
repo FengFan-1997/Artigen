@@ -2,7 +2,9 @@ const crypto = require('crypto');
 const { ApiError } = require('../lib/api-error');
 
 const STANDARD_PROFILE_ID = 'standard-v1';
+const PRODUCT_REFERENCE_PROFILE_ID = 'product-reference-v1';
 const GENERATION_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
+const GENERATION_EDIT_MODEL = 'Qwen/Qwen-Image-Edit-2509';
 const GENERATION_DIRECTIONS_MODEL = 'Qwen/Qwen3-8B';
 const SUPPORTED_ASPECT_RATIOS = Object.freeze(['1:1', '4:5', '3:4', '16:9', '9:16']);
 const IMAGE_SIZE_BY_ASPECT_RATIO = Object.freeze({
@@ -54,21 +56,40 @@ const isAiDesignTaskV2Enabled = (env = process.env, subject = '') => {
 
 const getInternalGenerationProfile = (profileId) => {
   const id = String(profileId || '').trim();
-  if (id !== STANDARD_PROFILE_ID) return null;
-  return Object.freeze({
-    id: STANDARD_PROFILE_ID,
-    name: Object.freeze({ zh: '标准生成', en: 'Standard generation' }),
-    capabilities: Object.freeze(['text-to-image']),
-    maxReferences: 0,
-    aspectRatios: SUPPORTED_ASPECT_RATIOS,
-    supportsSeed: true,
-    imageSizes: IMAGE_SIZE_BY_ASPECT_RATIO,
-    // These are intentionally not environment-overridable. The current free
-    // production contract permits exactly these two provider models.
-    internalTextModel: GENERATION_IMAGE_MODEL,
-    internalEditModel: '',
-    internalDirectionsModel: GENERATION_DIRECTIONS_MODEL
-  });
+  if (id === STANDARD_PROFILE_ID) {
+    return Object.freeze({
+      id: STANDARD_PROFILE_ID,
+      name: Object.freeze({ zh: '标准生成', en: 'Standard generation' }),
+      capabilities: Object.freeze(['text-to-image']),
+      maxReferences: 0,
+      aspectRatios: SUPPORTED_ASPECT_RATIOS,
+      supportsSeed: true,
+      imageSizes: IMAGE_SIZE_BY_ASPECT_RATIO,
+      internalTextModel: GENERATION_IMAGE_MODEL,
+      internalEditModel: '',
+      internalDirectionsModel: GENERATION_DIRECTIONS_MODEL
+    });
+  }
+  if (id === PRODUCT_REFERENCE_PROFILE_ID) {
+    return Object.freeze({
+      id: PRODUCT_REFERENCE_PROFILE_ID,
+      name: Object.freeze({ zh: '商品参考生成', en: 'Product reference generation' }),
+      capabilities: Object.freeze([
+        'reference-guided-generation',
+        'product-reference',
+        'style-reference',
+        'scene-reference'
+      ]),
+      maxReferences: 3,
+      aspectRatios: SUPPORTED_ASPECT_RATIOS,
+      supportsSeed: true,
+      imageSizes: IMAGE_SIZE_BY_ASPECT_RATIO,
+      internalTextModel: '',
+      internalEditModel: GENERATION_EDIT_MODEL,
+      internalDirectionsModel: GENERATION_DIRECTIONS_MODEL
+    });
+  }
+  return null;
 };
 
 const assertGenerationProfile = ({ profileId, aspectRatio, env = process.env }) => {
@@ -104,15 +125,17 @@ const listPublicGenerationProfiles = ({
   subject = ''
 } = {}) => {
   const standard = getInternalGenerationProfile(STANDARD_PROFILE_ID, env);
-  return [toPublicGenerationProfile(standard, {
-    available: isAiDesignTaskV2Enabled(env, subject) && providerAvailable
-  })];
+  const reference = getInternalGenerationProfile(PRODUCT_REFERENCE_PROFILE_ID, env);
+  const available = isAiDesignTaskV2Enabled(env, subject) && providerAvailable;
+  return [standard, reference].map((profile) => toPublicGenerationProfile(profile, { available }));
 };
 
 module.exports = {
   GENERATION_DIRECTIONS_MODEL,
+  GENERATION_EDIT_MODEL,
   GENERATION_IMAGE_MODEL,
   IMAGE_SIZE_BY_ASPECT_RATIO,
+  PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
   SUPPORTED_ASPECT_RATIOS,
   assertGenerationProfile,

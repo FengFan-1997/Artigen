@@ -3,6 +3,7 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const http = require("http");
 require("dotenv").config({
   path: path.resolve(__dirname, ".env"),
   // Deployment-provided secrets and feature gates must always win over a
@@ -38,6 +39,8 @@ const { installAdminRoutes } = require("./routes/admin");
 const { installConvertRoutes, isConvertJsonRequest } = require("./routes/convert");
 const { installToolTaskRoutes } = require("./routes/tool-tasks");
 const { installPaymentRoutes } = require("./routes/payments");
+const { installProjectRoutes } = require("./routes/projects");
+const { installAgentRoutes } = require("./routes/agent-runs");
 const { csrfProtection } = require("./lib/csrf-protection");
 const { installFrontendHosting } = require("./lib/frontend-hosting");
 const { installSessionMiddleware } = require("./middleware/session-auth");
@@ -46,6 +49,9 @@ const { getPool, isDatabaseConfigured } = require("./db/pool");
 const {
   createBehaviorRetentionService,
 } = require("./services/behavior-event-service");
+const {
+  createAgentDesktopRelay,
+} = require("./services/agent-desktop-relay-service");
 const {
   listOperationalRecords,
   upsertOperationalRecord,
@@ -649,6 +655,14 @@ installToolTaskRoutes(app, {
   callSiliconFlowChat,
 });
 
+installProjectRoutes(app, {
+  rateLimit,
+});
+
+installAgentRoutes(app, {
+  rateLimit,
+});
+
 installPaymentRoutes(app, {
   rateLimit,
 });
@@ -735,7 +749,9 @@ if (frontendHosting.enabled) {
   console.warn("Frontend dist not found; API-only mode:", frontendHosting.distDir);
 }
 
-app.listen(PORT, "0.0.0.0", () => {
+const httpServer = http.createServer(app);
+const agentDesktopRelay = createAgentDesktopRelay({ server: httpServer });
+httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);
   if (isDatabaseConfigured()) {
     const behaviorRetention = createBehaviorRetentionService({ pool: getPool() });
@@ -743,3 +759,7 @@ app.listen(PORT, "0.0.0.0", () => {
     console.log("Behavior retention scheduler: enabled", behaviorRetention.config);
   }
 });
+
+const closeAgentRelay = () => agentDesktopRelay.close();
+process.once("SIGTERM", closeAgentRelay);
+process.once("SIGINT", closeAgentRelay);

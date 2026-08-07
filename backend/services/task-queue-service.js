@@ -374,7 +374,8 @@ class TaskLeaseQueue {
         await this.recordLifecycle({
           id: cancelled.taskId,
           tool_id: cancelled.toolId,
-          operation: cancelled.operation
+          operation: cancelled.operation,
+          project_id: cancelled.projectId
         }, 'task_cancel', { source: 'server', status: 'cancelled', errorCategory: 'cancelled' });
       }
       return cancelled;
@@ -394,7 +395,8 @@ class TaskLeaseQueue {
       await this.recordLifecycle({
         id: released.taskId,
         tool_id: released.toolId,
-        operation: released.operation
+        operation: released.operation,
+        project_id: released.projectId
       }, 'task_cancel', { source: 'server', status: 'cancelled', errorCategory: 'cancelled' });
     }
     return released;
@@ -409,6 +411,7 @@ class TaskLeaseQueue {
         actorUserId: task.user_id,
         taskId: task.id,
         quoteId: task.quote_id,
+        projectId: task.project_id,
         operation: task.operation,
         status: properties.status,
         durationMs: properties.durationMs,

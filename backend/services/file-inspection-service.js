@@ -91,9 +91,14 @@ const inspectBuffer = async (input = {}) => {
   if (buffer.length > maxBytes) throw new ApiError(413, 'FILE_TOO_LARGE', { field: 'files' });
   const { fileTypeFromBuffer } = await loadFileType();
   const result = await fileTypeFromBuffer(buffer);
-  const textFallback = !result && normalizeMime(input.declaredMime) === 'text/plain' && isUtf8Text(buffer);
+  const declaredMime = normalizeMime(input.declaredMime);
+  const textFallback = (
+    !result &&
+    ['text/plain', 'text/markdown'].includes(declaredMime) &&
+    isUtf8Text(buffer)
+  );
   const mimeType = assertDetectedMime({
-    detectedMime: textFallback ? 'text/plain' : result?.mime,
+    detectedMime: textFallback ? declaredMime : result?.mime,
     declaredMime: input.declaredMime,
     allowedMimeTypes: input.allowedMimeTypes
   });
@@ -117,12 +122,13 @@ const inspectFile = async (input = {}) => {
   const { fileTypeFromFile } = await loadFileType();
   const result = await fileTypeFromFile(input.tempPath);
   let textFallback = false;
-  if (!result && normalizeMime(input.declaredMime) === 'text/plain') {
+  const declaredMime = normalizeMime(input.declaredMime);
+  if (!result && ['text/plain', 'text/markdown'].includes(declaredMime)) {
     const sample = await fs.promises.readFile(input.tempPath);
     textFallback = isUtf8Text(sample);
   }
   const mimeType = assertDetectedMime({
-    detectedMime: textFallback ? 'text/plain' : result?.mime,
+    detectedMime: textFallback ? declaredMime : result?.mime,
     declaredMime: input.declaredMime,
     allowedMimeTypes: input.allowedMimeTypes
   });

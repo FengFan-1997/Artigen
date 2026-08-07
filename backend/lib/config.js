@@ -1,5 +1,6 @@
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+const { readMacOsKeychainSecret } = require("./local-keychain");
 
 const normalizeUrl = (url) => {
   const s = (url || "").toString().trim();
@@ -34,6 +35,10 @@ const SILICONFLOW_API_KEY = normalizeSecret(
   process.env.SILICONFLOW_API_KEY ||
     process.env.SILICONFLOW_TOKEN ||
     process.env.SILICONFLOW_KEY ||
+    readMacOsKeychainSecret({
+      service: process.env.SILICONFLOW_KEYCHAIN_SERVICE,
+      account: process.env.SILICONFLOW_KEYCHAIN_ACCOUNT,
+    }) ||
     "",
 );
 const SILICONFLOW_API_BASE = normalizeUrl(
@@ -67,6 +72,7 @@ const SILICONFLOW_IMAGE_INPUT_FIELD = (
 
 const FIXED_SILICONFLOW_CHAT_MODEL = "Qwen/Qwen3-8B";
 const FIXED_SILICONFLOW_IMAGE_MODEL = "Kwai-Kolors/Kolors";
+const FIXED_SILICONFLOW_EDIT_MODEL = "Qwen/Qwen-Image-Edit-2509";
 
 let activeTextProvider = (() => {
   const preferred = (process.env.TEXT_PROVIDER || "")
@@ -125,6 +131,7 @@ module.exports = {
   SILICONFLOW_TXT2IMG_MODEL,
   SILICONFLOW_IMAGE_INPUT_FIELD,
   FIXED_SILICONFLOW_CHAT_MODEL,
+  FIXED_SILICONFLOW_EDIT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
   activeTextProvider,
   GEMINI_TIMEOUT_MS,

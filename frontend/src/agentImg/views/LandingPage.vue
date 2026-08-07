@@ -32,9 +32,9 @@
 
           <div class="cta-row">
             <router-link
-              to="/artigen/ai"
+              to="/artigen/projects"
               class="hero-btn btn-primary"
-              @click.prevent="onLandingNav('/artigen/ai', 'ai')"
+              @click.prevent="onLandingNav('/artigen/projects', 'projects')"
             >
               {{ ctaWorkshop }}
               <span class="arrow"
@@ -60,29 +60,22 @@
               {{ ctaFormatFactory }}
             </router-link>
             <router-link
-              to="/artigen/image-workshop"
+              to="/artigen/ai"
               class="hero-btn btn-secondary"
-              @click.prevent="onLandingNav('/artigen/image-workshop', 'image_workshop')"
+              @click.prevent="onLandingNav('/artigen/ai', 'ai')"
             >
               {{ ctaWorkshop2 }}
-            </router-link>
-            <router-link
-              to="/artigen/market"
-              class="hero-btn btn-secondary"
-              @click.prevent="onLandingNav('/artigen/market', 'market')"
-            >
-              {{ ctaMarket }}
             </router-link>
           </div>
 
           <div class="stats-row">
             <div class="stat-item">
               <div class="stat-label">{{ statLabel1 }}</div>
-              <div class="stat-value">~9.5s</div>
+              <div class="stat-value">10 CREDITS</div>
             </div>
             <div class="stat-item">
               <div class="stat-label">{{ statLabel2 }}</div>
-              <div class="stat-value">10+</div>
+              <div class="stat-value">15</div>
             </div>
           </div>
         </div>
@@ -113,9 +106,9 @@
 
         <div class="features-grid">
           <router-link
-            to="/artigen/ai"
+            to="/artigen/projects"
             class="feature-card"
-            @click.prevent="onLandingNav('/artigen/ai', 'ai')"
+            @click.prevent="onLandingNav('/artigen/projects', 'projects')"
           >
             <div class="fc-top">
               <div class="fc-left">
@@ -453,7 +446,7 @@ const consoleStore = useConsoleStore();
 
 const onLandingNav = (
   path: string,
-  target: 'ai' | 'format_factory' | 'market' | 'image_workshop'
+  target: 'projects' | 'ai' | 'format_factory' | 'market' | 'image_workshop'
 ) => {
   consoleStore.recordTraffic({
     type: 'conversion',
@@ -465,36 +458,34 @@ const onLandingNav = (
 };
 
 const headlineLine1 = computed(() =>
-  currentLang.value === 'zh' ? '对话生成您的想法' : 'Chat to generate your ideas '
+  currentLang.value === 'zh' ? '一套商品素材' : 'One product kit. '
 );
-const headlineHighlight1 = computed(() => (currentLang.value === 'zh' ? 'AI设计' : 'AI Design '));
-const headlineHighlight2 = computed(() => (currentLang.value === 'zh' ? '工具箱' : 'Toolbox '));
+const headlineHighlight1 = computed(() => (currentLang.value === 'zh' ? '完成一组' : 'A complete '));
+const headlineHighlight2 = computed(() => (currentLang.value === 'zh' ? '可投放视觉' : 'campaign set. '));
 const headlineLine2 = computed(() =>
-  currentLang.value === 'zh' ? '一站式快速交付' : 'Fast delivery in one workflow'
+  currentLang.value === 'zh' ? '从生成到编辑与多尺寸交付' : 'Generate, iterate, edit, and deliver in one workspace.'
 );
 
 const heroDesc = computed(() =>
   currentLang.value === 'zh'
-    ? '用对话把脑海里的画面变成可执行的提示词与方案，直接进入 AI 设计生成；再用工具箱做压缩、转格式、PDF 处理等细节优化。创作用云端算力加速，工具默认本地处理不上传，让效率与隐私同时在线。'
-    : 'Turn your idea into usable prompts through chat, then generate with AI Design. Finish with the Toolbox for conversion, compression, PDF tasks, and fine edits. Use cloud compute for creation and keep everyday tools on device for privacy.'
+    ? '围绕一个商品项目组织主商品图、品牌资料与语义参考，生成多个方向并分支比较，再进入非破坏编辑器完成 1:1、4:5、3:4、16:9 和 9:16 套图交付。'
+    : 'Organize product images, brand rules, and semantic references in one project. Generate and compare branches, then edit non-destructively and deliver 1:1, 4:5, 3:4, 16:9, and 9:16 assets.'
 );
 
-const ctaWorkshop = computed(() => (currentLang.value === 'zh' ? '开始创作' : 'Start Creating'));
+const ctaWorkshop = computed(() => (currentLang.value === 'zh' ? '创建商品视觉项目' : 'Create a product visual project'));
 const ctaWorkshop2 = computed(() =>
-  currentLang.value === 'zh' ? 'AI 影像工坊' : 'Image Workshop'
+  currentLang.value === 'zh' ? '快速生成' : 'Quick generation'
 );
 const ctaFormatFactory = computed(() => (currentLang.value === 'zh' ? '工具箱' : 'Toolbox'));
-const ctaMarket = computed(() => (currentLang.value === 'zh' ? '点数商城' : 'Compute Market'));
-
 const statusText = computed(() =>
   currentLang.value === 'zh'
-    ? 'Artigen 系统在线 · AI 设计 & 工具箱 v2.0.4'
-    : 'ARTIGEN ONLINE · AI DESIGN & TOOLBOX v2.0.4'
+    ? 'Artigen 专业电商视觉工作台'
+    : 'ARTIGEN · COMMERCE VISUAL WORKSPACE'
 );
-const tag1 = computed(() => (currentLang.value === 'zh' ? '双模生成' : 'DUAL_MODEL'));
-const tag2 = computed(() => (currentLang.value === 'zh' ? '本地工具' : 'ON_DEVICE'));
-const tag3 = computed(() => (currentLang.value === 'zh' ? '隐私守护' : 'PRIVACY_GUARD'));
-const statLabel1 = computed(() => (currentLang.value === 'zh' ? '响应速度' : 'Latency'));
+const tag1 = computed(() => (currentLang.value === 'zh' ? '版本分支' : 'VERSION_BRANCHES'));
+const tag2 = computed(() => (currentLang.value === 'zh' ? '品牌一致' : 'BRAND_KIT'));
+const tag3 = computed(() => (currentLang.value === 'zh' ? '套图交付' : 'MULTI_SIZE'));
+const statLabel1 = computed(() => (currentLang.value === 'zh' ? '标准生成' : 'Standard generation'));
 const statLabel2 = computed(() => (currentLang.value === 'zh' ? '工具数量' : 'Tools'));
 
 const featuresTitle = computed(() => (currentLang.value === 'zh' ? '核心功能' : 'Core Modules'));
@@ -503,11 +494,11 @@ const featuresDesc = computed(() =>
     ? '四大工具矩阵，覆盖图片全生命周期'
     : 'Four tool clusters covering the full image lifecycle'
 );
-const feature1Title = computed(() => (currentLang.value === 'zh' ? 'AI 设计' : 'AI Design'));
+const feature1Title = computed(() => (currentLang.value === 'zh' ? '商品视觉项目' : 'Product Visual Projects'));
 const feature1Desc = computed(() =>
   currentLang.value === 'zh'
-    ? '搭载双模型 AI 图片生成引擎，支持文生图、图生图。内置 Prompt 优化助手，让创意精准落地。'
-    : 'Dual-model image generation: text-to-image and image-to-image. Built-in prompt helper for precise creation.'
+    ? '围绕商品和品牌资料生成版本树，支持收藏、分支、并排比较、编辑与多尺寸交付。'
+    : 'Build a version tree around product and brand assets with favorites, branches, comparison, editing, and multi-size delivery.'
 );
 const feature2Title = computed(() => (currentLang.value === 'zh' ? '工具箱' : 'Toolbox'));
 const feature2Desc = computed(() =>
@@ -550,7 +541,6 @@ const useCases = computed(() => {
       '批量处理：格式转换、压缩、尺寸调整与旋转裁切',
       '文档工作：PDF 转图片、图片转 PDF、PDF 转 Word',
       '隐私保护：本地模糊、像素化或纯色遮挡敏感区域',
-      '算力租赁：高性能 GPU 租用、模型微调、离线渲染',
       '影像工坊：本地证件照、AI 老照片增强、原文配料标签排版'
     ];
   }

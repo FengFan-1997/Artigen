@@ -22,9 +22,23 @@ const resolveOperationExecution = (tool, operation) => {
   return serverOperations.includes(String(operation || '').trim()) ? 'server' : 'local';
 };
 
-const resolveOperationSku = (tool, operation) => {
+const resolveOperationSku = (tool, operation, options = {}) => {
   if (!tool || typeof tool !== 'object') return null;
   const op = String(operation || '').trim();
+  const profileId = String(options?.profileId || '').trim();
+  if (
+    op === 'generate' &&
+    profileId &&
+    tool.profileSkus &&
+    typeof tool.profileSkus === 'object' &&
+    !Array.isArray(tool.profileSkus) &&
+    Object.prototype.hasOwnProperty.call(tool.profileSkus, profileId)
+  ) {
+    const profileSku = tool.profileSkus[profileId];
+    return typeof profileSku === 'string' && profileSku.trim()
+      ? profileSku.trim()
+      : null;
+  }
   const operationSkus = tool.operationSkus;
   if (
     operationSkus &&
@@ -40,8 +54,9 @@ const resolveOperationSku = (tool, operation) => {
   return typeof tool.sku === 'string' && tool.sku.trim() ? tool.sku.trim() : null;
 };
 
-const isPaidOperation = (tool, operation) => {
-  return resolveOperationExecution(tool, operation) === 'server' && Boolean(resolveOperationSku(tool, operation));
+const isPaidOperation = (tool, operation, options = {}) => {
+  return resolveOperationExecution(tool, operation) === 'server' &&
+    Boolean(resolveOperationSku(tool, operation, options));
 };
 
 module.exports = {

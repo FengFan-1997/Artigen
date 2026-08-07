@@ -22,6 +22,7 @@ export interface ToolDefinition {
   requiresLogin: boolean;
   sku: string | null;
   operationSkus?: Record<string, string | null>;
+  profileSkus?: Record<string, string | null>;
   privacy: {
     localByDefault: boolean;
     uploads:
@@ -117,6 +118,16 @@ function assertToolDefinition(
       )
     ) {
       throw new Error(`INVALID_TOOL_CATALOG_OPERATION_SKUS_${index}`);
+    }
+  }
+  if (value.profileSkus !== undefined) {
+    if (
+      !isRecord(value.profileSkus) ||
+      !Object.values(value.profileSkus).every(
+        (sku) => sku === null || typeof sku === 'string'
+      )
+    ) {
+      throw new Error(`INVALID_TOOL_CATALOG_PROFILE_SKUS_${index}`);
     }
   }
   if (value.operationLimits !== undefined) {

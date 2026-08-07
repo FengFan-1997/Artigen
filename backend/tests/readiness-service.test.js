@@ -30,9 +30,22 @@ const migratedRow = Object.freeze({
   has_events: true,
   has_behavior_events: true,
   has_operational_records: true,
+  has_creative_projects: true,
+  has_project_payloads: true,
+  has_project_asset_links: true,
+  has_project_versions: true,
   has_assets: true,
   has_upload_sessions: true,
   has_otp_delivery_attempts: true,
+  has_agent_runs: true,
+  has_agent_payloads: true,
+  has_agent_model_checkpoints: true,
+  has_agent_events: true,
+  has_agent_artifacts: true,
+  has_agent_budget_holds: true,
+  has_agent_trial_usage: true,
+  has_agent_worker_heartbeats: true,
+  has_agent_desktop_tickets: true,
   has_latest_migration: true,
   has_task_columns: true,
   has_payload_columns: true,
@@ -41,7 +54,14 @@ const migratedRow = Object.freeze({
   has_event_columns: true,
   has_behavior_columns: true,
   has_operational_columns: true,
+  has_project_columns: true,
+  has_project_payload_columns: true,
+  has_project_version_columns: true,
   has_otp_delivery_columns: true,
+  has_agent_run_columns: true,
+  has_agent_relay_run_columns: true,
+  has_agent_worker_readiness_columns: true,
+  has_agent_budget_split_columns: true,
   has_ai_skus: true,
   has_workshop_skus: true
 });
@@ -153,7 +173,7 @@ test('readiness verifies queue, payload, asset, event, inputs_ready and AI SKU m
     code: null,
     migration: LATEST_REPOSITORY_MIGRATION
   });
-  assert.equal(LATEST_REPOSITORY_MIGRATION, '014_operational_records');
+  assert.equal(LATEST_REPOSITORY_MIGRATION, '020_agent_secure_browser_relay');
   assert.equal(migrationQueryParam, LATEST_REPOSITORY_MIGRATION);
   assert.deepEqual(await checkDatabase({
     query: async () => ({ rows: [{ ...migratedRow, has_task_columns: false }] })

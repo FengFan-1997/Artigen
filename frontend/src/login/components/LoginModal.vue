@@ -12,18 +12,6 @@
         :aria-label="titleText"
         tabindex="-1"
       >
-        <!-- Left Side Image Panel -->
-        <div class="panel-side">
-          <div class="side-content">
-            <div class="side-logo">Artigen</div>
-            <div class="side-text">
-              <h2>Welcome Back</h2>
-              <p>Sign in to continue your creative journey.</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Right Side Form Panel -->
         <div class="panel-main">
           <div class="head">
             <div class="title">{{ titleText }}</div>
@@ -35,6 +23,10 @@
             >
               ×
             </button>
+          </div>
+          <div class="signup-credit-note">
+            <strong>{{ currentLang === 'zh' ? '注册赠送 100 点' : 'Get 100 credits on signup' }}</strong>
+            <span>{{ currentLang === 'zh' ? '约可完成 10 次标准生成' : 'Enough for about 10 standard generations' }}</span>
           </div>
 
           <div class="body">
@@ -1108,8 +1100,8 @@ onBeforeUnmount(() => {
 
 .panel {
   display: flex;
-  width: min(900px, 95vw);
-  height: min(600px, 90vh);
+  width: min(480px, 95vw);
+  max-height: min(720px, 90vh);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(12, 12, 12, 0.95);
   box-shadow:
@@ -1176,10 +1168,27 @@ onBeforeUnmount(() => {
 }
 
 .panel-main {
-  width: 400px;
+  width: 100%;
   display: flex;
   flex-direction: column;
   background: #18181b;
+}
+
+.signup-credit-note {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 24px;
+  padding: 11px 12px;
+  border: 1px solid rgba(204, 255, 0, 0.24);
+  border-radius: 10px;
+  background: rgba(204, 255, 0, 0.07);
+  color: #cbd5cc;
+  font-size: 12px;
+}
+
+.signup-credit-note strong {
+  color: #ccff00;
 }
 
 .head {

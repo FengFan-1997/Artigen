@@ -136,6 +136,7 @@ const insertGenerationEvent = async ({ eventType, body, req, pool = getPool() })
 const recordGenerationTaskEvent = async ({
   eventType,
   actorUserId,
+  projectId,
   taskId,
   quoteId,
   operation,
@@ -150,7 +151,7 @@ const recordGenerationTaskEvent = async ({
     eventType: type,
     actorUserId: cleanUuid(actorUserId),
     sessionRef: null,
-    projectRef: null,
+    projectRef: opaqueReference(projectId, 'project') || null,
     requestRef: null,
     taskId: cleanUuid(taskId),
     quoteId: cleanUuid(quoteId),

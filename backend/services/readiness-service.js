@@ -12,6 +12,8 @@ const {
   getInternalGenerationProfile
 } = require('./generation-profiles');
 const { hasPayloadKey } = require('./task-payload-service');
+const { hasAgentPayloadKey } = require('./agent-payload-service');
+const { getAgentConfig } = require('./agent-config');
 const {
   checkTurnstileHostnameConfiguration
 } = require('../lib/turnstile');
@@ -229,26 +231,42 @@ const checkDatabase = async (pool) => {
          to_regclass('public.generation_events') IS NOT NULL AS has_events,
          to_regclass('public.behavior_events') IS NOT NULL AS has_behavior_events,
          to_regclass('public.operational_records') IS NOT NULL AS has_operational_records,
+         to_regclass('public.creative_projects') IS NOT NULL AS has_creative_projects,
+         to_regclass('public.creative_project_payloads') IS NOT NULL AS has_project_payloads,
+         to_regclass('public.project_asset_links') IS NOT NULL AS has_project_asset_links,
+         to_regclass('public.project_versions') IS NOT NULL AS has_project_versions,
          to_regclass('public.assets') IS NOT NULL AS has_assets,
          to_regclass('public.asset_upload_sessions') IS NOT NULL AS has_upload_sessions,
          to_regclass('public.otp_delivery_attempts') IS NOT NULL AS has_otp_delivery_attempts,
+         to_regclass('public.agent_runs') IS NOT NULL AS has_agent_runs,
+         to_regclass('public.agent_run_payloads') IS NOT NULL AS has_agent_payloads,
+         to_regclass('public.agent_model_checkpoints') IS NOT NULL AS has_agent_model_checkpoints,
+         to_regclass('public.agent_events') IS NOT NULL AS has_agent_events,
+         to_regclass('public.agent_artifacts') IS NOT NULL AS has_agent_artifacts,
+         to_regclass('public.agent_budget_holds') IS NOT NULL AS has_agent_budget_holds,
+         to_regclass('public.agent_trial_usage') IS NOT NULL AS has_agent_trial_usage,
+         to_regclass('public.agent_worker_heartbeats') IS NOT NULL AS has_agent_worker_heartbeats,
+         to_regclass('public.agent_desktop_tickets') IS NOT NULL AS has_agent_desktop_tickets,
          EXISTS(
            SELECT 1
              FROM public.pgmigrations
             WHERE name=$1
          ) AS has_latest_migration,
          (
-           SELECT count(*) = 7
+           SELECT count(*) = 9
              FROM information_schema.columns
             WHERE table_schema='public' AND table_name='tool_tasks'
               AND column_name IN (
                 'lease_owner','lease_expires_at','heartbeat_at','attempt_count',
-                'cancel_requested_at','provider_dispatched_at','inputs_ready'
+                'cancel_requested_at','provider_dispatched_at','inputs_ready',
+                'project_id','parent_version_id'
               )
               AND CASE column_name
                 WHEN 'lease_owner' THEN data_type='text'
                 WHEN 'attempt_count' THEN data_type='integer' AND is_nullable='NO'
                 WHEN 'inputs_ready' THEN data_type='boolean' AND is_nullable='NO'
+                WHEN 'project_id' THEN data_type='uuid'
+                WHEN 'parent_version_id' THEN data_type='uuid'
                 ELSE data_type='timestamp with time zone'
               END
          ) AS has_task_columns,
@@ -304,6 +322,29 @@ const checkDatabase = async (pool) => {
               )
          ) AS has_operational_columns,
          (
+           SELECT count(*) = 7
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='creative_projects'
+              AND column_name IN (
+                'user_id','title','status','cover_asset_id','revision','deleted_at','purge_after'
+              )
+         ) AS has_project_columns,
+         (
+           SELECT count(*) = 6
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='creative_project_payloads'
+              AND column_name IN ('project_id','algorithm','key_version','iv','auth_tag','ciphertext')
+         ) AS has_project_payload_columns,
+         (
+           SELECT count(*) = 9
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='project_versions'
+              AND column_name IN (
+                'project_id','parent_version_id','task_id','output_asset_id','status',
+                'profile_id','aspect_ratio','quoted_credits','ciphertext'
+              )
+         ) AS has_project_version_columns,
+         (
            SELECT count(*) = 10 AND bool_and(
              column_name <> 'provider_dispatched_at'
              OR data_type='timestamp with time zone'
@@ -316,16 +357,57 @@ const checkDatabase = async (pool) => {
                 'provider_dispatched_at'
               )
          ) AS has_otp_delivery_columns,
+         (
+           SELECT count(*) = 13
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_runs'
+              AND column_name IN (
+                'user_id','status','idempotency_key','request_hash','model_provider',
+                'sandbox_provider','checkpoint','max_credits','charged_credits',
+                'step_count','pause_requested','cancel_requested','queue_expires_at'
+              )
+         ) AS has_agent_run_columns,
+         (
+           SELECT count(*) = 1
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_runs'
+              AND column_name='sandbox_worker_id'
+         ) AS has_agent_relay_run_columns,
+         (
+           SELECT count(*) = 4
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_worker_heartbeats'
+              AND column_name IN (
+                'browser_ready','egress_verified','desktop_relay_ready','sandbox_image_ref'
+              )
+         ) AS has_agent_worker_readiness_columns,
+         (
+           SELECT count(*) = 2
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_budget_holds'
+              AND column_name IN ('trial_credits','daily_free_credits')
+         ) AS has_agent_budget_split_columns,
          COALESCE((
-           SELECT count(*) = 2 AND bool_and(
+           SELECT count(*) = 3 AND bool_and(
              (ps.sku='ai-design.generate.v1' AND ps.credits=10 AND ps.metadata->>'operation'='generate')
              OR
              (ps.sku='ai-design.directions.v1' AND ps.credits=5 AND ps.metadata->>'operation'='directions')
+             OR
+             (
+               ps.sku='ai-design.product-reference.v1'
+               AND ps.credits=60
+               AND ps.metadata->>'operation'='generate'
+               AND ps.metadata->>'profileId'='product-reference-v1'
+             )
            )
              FROM price_skus ps
              JOIN current_price_version pv ON pv.id=ps.price_version_id
             WHERE ps.active=true
-              AND ps.sku IN ('ai-design.generate.v1','ai-design.directions.v1')
+              AND ps.sku IN (
+                'ai-design.generate.v1',
+                'ai-design.directions.v1',
+                'ai-design.product-reference.v1'
+              )
          ), false) AS has_ai_skus,
          COALESCE((
            SELECT count(*) = 4 AND bool_and(
@@ -353,9 +435,22 @@ const checkDatabase = async (pool) => {
       row.has_events &&
       row.has_behavior_events &&
       row.has_operational_records &&
+      row.has_creative_projects &&
+      row.has_project_payloads &&
+      row.has_project_asset_links &&
+      row.has_project_versions &&
       row.has_assets &&
       row.has_upload_sessions &&
       row.has_otp_delivery_attempts &&
+      row.has_agent_runs &&
+      row.has_agent_payloads &&
+      row.has_agent_model_checkpoints &&
+      row.has_agent_events &&
+      row.has_agent_artifacts &&
+      row.has_agent_budget_holds &&
+      row.has_agent_trial_usage &&
+      row.has_agent_worker_heartbeats &&
+      row.has_agent_desktop_tickets &&
       row.has_latest_migration &&
       row.has_task_columns &&
       row.has_payload_columns &&
@@ -364,7 +459,14 @@ const checkDatabase = async (pool) => {
       row.has_event_columns &&
       row.has_behavior_columns &&
       row.has_operational_columns &&
-      row.has_otp_delivery_columns
+      row.has_project_columns &&
+      row.has_project_payload_columns &&
+      row.has_project_version_columns &&
+      row.has_otp_delivery_columns &&
+      row.has_agent_run_columns &&
+      row.has_agent_relay_run_columns &&
+      row.has_agent_worker_readiness_columns &&
+      row.has_agent_budget_split_columns
     );
     if (!migrated) {
       return {
@@ -528,10 +630,11 @@ const getReadinessReport = async ({
   const adminConsoleEnabled = Boolean(
     String(env.CONSOLE_ADMIN_PASSWORD || '').trim()
   );
+  const agentEnabled = enabled(env.AGENT_FEATURE_ENABLED);
   const generationRequired = paidEnabled && (aiDesignEnabled || workshopAiEnabled);
   const productionGeneration = generationRequired && isProduction(env);
   const databaseRequired =
-    paidEnabled || authEmailOtpEnabled || behaviorAnalyticsEnabled || adminConsoleEnabled;
+    paidEnabled || authEmailOtpEnabled || behaviorAnalyticsEnabled || adminConsoleEnabled || agentEnabled;
 
   let database = skippedCheck();
   let storage = skippedCheck();
@@ -539,6 +642,7 @@ const getReadinessReport = async ({
   let provider = skippedCheck();
   let outputAllowlist = skippedCheck();
   let payment = skippedCheck();
+  let agent = skippedCheck();
 
   if (databaseRequired) {
     database = await checkDatabase(
@@ -558,6 +662,83 @@ const getReadinessReport = async ({
     }
     storage = await checkStorage(resolvedAdapter, { requireShared: productionGeneration });
     if (paymentEnabled) payment = checkAfdian(env);
+  }
+  if (agentEnabled) {
+    const agentConfig = getAgentConfig(env);
+    let resolvedAdapter = adapter;
+    if (resolvedAdapter === undefined) {
+      try {
+        resolvedAdapter = getAssetAdapter();
+      } catch {
+        resolvedAdapter = null;
+      }
+    }
+    if (!paidEnabled) {
+      storage = await checkStorage(resolvedAdapter, {
+        requireShared: isProduction(env)
+      });
+    }
+    const missing = [];
+    if (!hasAgentPayloadKey(env)) missing.push('AGENT_PAYLOAD_ENCRYPTION_KEY');
+    if (
+      agentConfig.runtimeDriver === 'live' &&
+      agentConfig.modelProvider === 'openai' &&
+      !agentConfig.openAiApiKey
+    ) {
+      missing.push('OPENAI_API_KEY');
+    }
+    if (
+      agentConfig.runtimeDriver === 'live' &&
+      agentConfig.modelProvider === 'siliconflow' &&
+      !agentConfig.siliconFlowApiKey
+    ) {
+      missing.push('SILICONFLOW_API_KEY');
+    }
+    if (
+      agentConfig.runtimeDriver === 'live' &&
+      agentConfig.sandboxProvider === 'cua' &&
+      agentConfig.sandboxMode === 'cloud' &&
+      !agentConfig.cuaApiKey
+    ) {
+      missing.push('CUA_API_KEY');
+    }
+    if (
+      isProduction(env) &&
+      agentConfig.sandboxProvider === 'cua' &&
+      agentConfig.sandboxMode === 'cloud' &&
+      !agentConfig.sandboxImageRef
+    ) {
+      missing.push('AGENT_CUA_IMAGE_REF');
+    }
+    const browserPublic = agentConfig.publicBrowserEnabled;
+    if (browserPublic && agentConfig.browserMode !== 'full-approval-v1') {
+      missing.push('AGENT_BROWSER_MODE');
+    }
+    if (browserPublic && agentConfig.sandboxEgressPolicy !== 'restricted-v1') {
+      missing.push('AGENT_SANDBOX_EGRESS_POLICY');
+    }
+    if (browserPublic && !agentConfig.workerRelayUrl) {
+      missing.push('AGENT_WORKER_RELAY_URL');
+    }
+    if (browserPublic && Buffer.byteLength(agentConfig.workerRelaySecret, 'utf8') < 32) {
+      missing.push('AGENT_WORKER_RELAY_SECRET');
+    }
+    if (browserPublic && !agentConfig.workerId) {
+      missing.push('AGENT_WORKER_ID');
+    }
+    agent = missing.length
+      ? { ok: false, code: 'AGENT_RUNTIME_NOT_CONFIGURED', missing }
+      : {
+          ok: true,
+          model: agentConfig.modelName,
+          modelProvider: agentConfig.modelProvider,
+          sandbox: agentConfig.sandboxProvider,
+          sandboxMode: agentConfig.sandboxMode,
+          image: agentConfig.sandboxImageRef || agentConfig.sandboxVersion,
+          browserMode: agentConfig.browserMode,
+          egressPolicy: agentConfig.sandboxEgressPolicy,
+          desktopRelayConfigured: Boolean(agentConfig.workerRelayUrl)
+        };
   }
   if (generationRequired) {
     payload = hasPayloadKey(env)
@@ -583,9 +764,11 @@ const getReadinessReport = async ({
   const requiredChecks = [];
   if (databaseRequired) requiredChecks.push(database);
   if (paidEnabled) requiredChecks.push(storage);
+  if (agentEnabled && !paidEnabled) requiredChecks.push(storage);
   if (paymentEnabled) requiredChecks.push(payment);
   if (generationRequired) requiredChecks.push(payload, provider, outputAllowlist);
   if (authEmailOtpEnabled) requiredChecks.push(authSecrets, mail, turnstile);
+  if (agentEnabled) requiredChecks.push(agent);
   return {
     ok: requiredChecks.every((check) => check.ok),
     paidEnabled,
@@ -596,6 +779,7 @@ const getReadinessReport = async ({
     databaseRequired,
     aiDesignEnabled,
     workshopAiEnabled,
+    agentEnabled,
     generationRequired,
     checks: {
       database,
@@ -606,7 +790,8 @@ const getReadinessReport = async ({
       payment,
       authSecrets,
       mail,
-      turnstile
+      turnstile,
+      agent
     }
   };
 };

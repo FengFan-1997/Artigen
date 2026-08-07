@@ -1605,69 +1605,59 @@ test('AI chat runs a fully mocked deep-thinking generation with fixed text and i
   page,
   isMobile
 }, testInfo) => {
-  await seedAuthedBrowserState(page);
+  await seedAuthedBrowserState(page, 'v2');
   const issues = installRuntimeWatchers(page);
-  await page.route('**/api/generate', async (route) => {
+  await mockAiDesignModels(page);
+  let operationIndex = 0;
+  await page.route('**/api/tool-tasks/quote', async (route) => {
+    const request = route.request().postDataJSON() as { operation: AiDesignOperation };
     await route.fulfill({
       contentType: 'application/json',
       body: safeJson({
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  text: safeJson({
-                    options: [
-                      {
-                        id: 'studio',
-                        title: 'Clean Studio Product',
-                        summary: 'Soft shadows, crisp bottle edges, bright commercial lighting.',
-                        styleTags: ['studio lighting', 'premium skincare', 'clean background'],
-                        negativeTags: ['blur', 'low quality']
-                      },
-                      {
-                        id: 'editorial',
-                        title: 'Editorial Glow',
-                        summary: 'Magazine-style product scene with reflective highlights.',
-                        styleTags: ['editorial', 'glossy highlights', 'luxury'],
-                        negativeTags: ['distorted text', 'noise']
-                      },
-                      {
-                        id: 'natural',
-                        title: 'Natural Shelf Scene',
-                        summary: 'Warm natural light with soft botanical accents.',
-                        styleTags: ['natural light', 'botanical', 'warm tone'],
-                        negativeTags: ['overexposed', 'messy']
-                      },
-                      {
-                        id: 'minimal',
-                        title: 'Minimal Hero',
-                        summary: 'Single product hero composition with strong negative space.',
-                        styleTags: ['minimal', 'hero shot', 'negative space'],
-                        negativeTags: ['clutter', 'blur']
-                      }
-                    ]
-                  })
-                }
-              ]
-            }
-          }
-        ]
+        ok: true,
+        quote: {
+          quoteId: `quote-${request.operation}`,
+          sku: `ai-design.${request.operation}.v1`,
+          credits: request.operation === 'directions' ? 5 : 10,
+          expiresAt: new Date(Date.now() + 60_000).toISOString()
+        }
       })
     });
   });
-  await page.route('**/api/img2img', async (route) => {
+  await page.route('**/api/tool-tasks', async (route) => {
+    const operation = multipartField(
+      String(route.request().postData() || ''),
+      'operation'
+    ) as AiDesignOperation;
+    operationIndex += 1;
     await route.fulfill({
+      status: 202,
       contentType: 'application/json',
-      body: safeJson({ images: [{ url: mockImageDataUrl, persisted: true }] })
+      body: safeJson({
+        ok: true,
+        task: aiDesignTask({
+          taskId: `66666666-6666-4666-8666-66666666666${operationIndex}`,
+          operation,
+          status: 'success',
+          assetId: operation === 'generate'
+            ? '77777777-7777-4777-8777-777777777777'
+            : undefined
+        })
+      })
     });
+  });
+  await page.route('**/api/assets/*', async (route) => {
+    await route.fulfill({ contentType: 'image/png', body: pngBuffer });
   });
 
   await page.goto('/artigen/ai');
+  await enableDeepThinking(page);
   await page
     .locator('textarea.textarea')
     .fill('Create a premium skincare bottle campaign image with clean lighting.');
   await clickSend(page);
+  await expect(page.locator('.generation-quote-dialog')).toBeVisible();
+  await page.locator('.generation-quote-confirm').click();
   await expect(page.locator('.deep-thinking-view')).toBeVisible();
   await expect(page.getByText('Clean Studio Product')).toBeVisible();
   if (isMobile) {
@@ -1686,10 +1676,9 @@ test('AI chat runs a fully mocked deep-thinking generation with fixed text and i
   await saveScreenshot(page, testInfo, 'ai-mocked-deep-directions');
 
   await page.locator('.dt-btn').click();
+  await expect(page.locator('.generation-quote-dialog')).toBeVisible();
+  await page.locator('.generation-quote-confirm').click();
   await expect(page.locator('.msg-media-img[alt="generated"]')).toHaveCount(1);
-  await expect(
-    page.getByRole('main').getByText('Clean Studio Product Soft shadows')
-  ).toBeVisible();
   await assertNoHorizontalOverflow(page);
   await saveScreenshot(page, testInfo, 'ai-mocked-deep-result');
   expectCleanRuntime(issues);
@@ -1707,7 +1696,11 @@ test('AI task V2 confirms a server quote, returns an opaque asset, and opens Edi
   let transferConsumeCount = 0;
   await mockAiDesignModels(page);
   await page.route('**/api/tool-tasks/quote', async (route) => {
-    expect(route.request().postDataJSON()).toEqual({ toolId: 'ai-design', operation: 'generate' });
+    expect(route.request().postDataJSON()).toEqual({
+      toolId: 'ai-design',
+      operation: 'generate',
+      options: { profileId: 'standard-v1' }
+    });
     await route.fulfill({
       contentType: 'application/json',
       body: safeJson({
@@ -1765,7 +1758,7 @@ test('AI task V2 confirms a server quote, returns an opaque asset, and opens Edi
   await page.goto('/artigen/ai');
   await disableDeepThinking(page);
   await expandGenerationControlsIfNeeded(page);
-  await expect(page.getByText('Product reference')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Upload Product reference' })).toBeVisible();
   await page.locator('.generation-chip--ratio').filter({ hasText: '4:5' }).click();
   await page.locator('textarea.textarea').fill('Create a clean premium product hero image.');
   await clickSend(page);

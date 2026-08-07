@@ -17,6 +17,9 @@ frontend/coverage
 backend/coverage
 backend/memory
 backend/memory/
+backend/.venv-agent/
+__pycache__/
+*.py[cod]
 .artifacts
 *.local
 

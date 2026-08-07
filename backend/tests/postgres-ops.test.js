@@ -130,6 +130,7 @@ test('local env setup fills independent 256-bit secrets and disables a blank wor
       'OTP_HMAC_SECRET=',
       'SESSION_TOKEN_HASH_SECRET=""',
       "CSRF_SECRET=''",
+      'AGENT_PAYLOAD_ENCRYPTION_KEY=',
       'TASK_WORKER_ENABLED='
     ].join('\n'),
     {
@@ -141,15 +142,17 @@ test('local env setup fills independent 256-bit secrets and disables a blank wor
   const values = [
     readEnvValue(result.content, 'OTP_HMAC_SECRET'),
     readEnvValue(result.content, 'SESSION_TOKEN_HASH_SECRET'),
-    readEnvValue(result.content, 'CSRF_SECRET')
+    readEnvValue(result.content, 'CSRF_SECRET'),
+    readEnvValue(result.content, 'AGENT_PAYLOAD_ENCRYPTION_KEY')
   ];
   assert.equal(result.changed, true);
   assert.deepEqual(result.generatedSecretNames, [
     'OTP_HMAC_SECRET',
     'SESSION_TOKEN_HASH_SECRET',
-    'CSRF_SECRET'
+    'CSRF_SECRET',
+    'AGENT_PAYLOAD_ENCRYPTION_KEY'
   ]);
-  assert.equal(new Set(values).size, 3);
+  assert.equal(new Set(values).size, 4);
   assert.equal(values.every((value) => /^[0-9a-f]{64}$/.test(value)), true);
   assert.equal(values.every((value) => new Set(value).size >= 12), true);
   assert.equal(readEnvValue(result.content, 'TASK_WORKER_ENABLED'), '0');
@@ -163,7 +166,8 @@ test('local env setup fills blank database URLs while preserving every non-empty
     'LOCAL_PG_USER=custom_user',
     `OTP_HMAC_SECRET=${'a1'.repeat(32)}`,
     `SESSION_TOKEN_HASH_SECRET=${'b2'.repeat(32)}`,
-    `CSRF_SECRET=${'c3'.repeat(32)}`
+    `CSRF_SECRET=${'c3'.repeat(32)}`,
+    `AGENT_PAYLOAD_ENCRYPTION_KEY=${'d4'.repeat(32)}`
   ].join('\n');
   const result = prepareLocalEnvContent(original, {
     initialValues: {
@@ -197,6 +201,7 @@ test('local env setup never overwrites non-empty security or worker values', () 
     `OTP_HMAC_SECRET=${'a'.repeat(64)}`,
     `SESSION_TOKEN_HASH_SECRET=${'b'.repeat(64)}`,
     `CSRF_SECRET=${'c'.repeat(64)}`,
+    `AGENT_PAYLOAD_ENCRYPTION_KEY=${'d'.repeat(64)}`,
     'TASK_WORKER_ENABLED=1'
   ].join('\n');
   const result = prepareLocalEnvContent(original, {

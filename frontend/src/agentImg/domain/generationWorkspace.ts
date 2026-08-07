@@ -35,6 +35,8 @@ export type PendingGenerationSubmission = {
   historyId: string;
   userText: string;
   refThumbs: string[];
+  projectId?: string;
+  parentVersionId?: string;
   taskId?: string;
   cancelRequested?: boolean;
   createdAt: number;

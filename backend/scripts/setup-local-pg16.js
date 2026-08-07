@@ -87,7 +87,12 @@ const prepareLocalEnvContent = (
     filledValueNames.push(name);
   }
   const generatedSecretNames = [];
-  const secretNames = ['OTP_HMAC_SECRET', 'SESSION_TOKEN_HASH_SECRET', 'CSRF_SECRET'];
+  const secretNames = [
+    'OTP_HMAC_SECRET',
+    'SESSION_TOKEN_HASH_SECRET',
+    'CSRF_SECRET',
+    'AGENT_PAYLOAD_ENCRYPTION_KEY'
+  ];
   const usedSecrets = new Set(
     secretNames
       .map((name) => readEnvValue(next, name))

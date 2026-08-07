@@ -2,6 +2,13 @@ const crypto = require('crypto');
 const { withTransaction, getPool } = require('../db/pool');
 const { ApiError } = require('../lib/api-error');
 const taskPayloads = require('./task-payload-service');
+const {
+  assertProjectContext,
+  createPendingProjectVersion,
+  linkProjectInputAssets,
+  releaseProjectVersion,
+  settleProjectVersion
+} = require('./creative-project-service');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -153,6 +160,8 @@ const publicTask = (row, replayed = false) => {
     taskId: row.id,
     toolId: row.tool_id,
     operation: row.operation,
+    projectId: row.project_id || null,
+    parentVersionId: row.parent_version_id || null,
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -182,21 +191,88 @@ const taskWithPreparationState = (row, replayed = false, preparationCompleted = 
   return task;
 };
 
+const configuredSkuCostMinor = (sku, metadata = {}, env = process.env) => {
+  const profileId = String(metadata?.profileId || '').trim();
+  const envKey = sku === 'ai-design.product-reference.v1' || profileId === 'product-reference-v1'
+    ? 'AI_DESIGN_REFERENCE_COST_MINOR'
+    : sku === 'ai-design.generate.v1'
+      ? 'AI_DESIGN_GENERATE_COST_MINOR'
+      : sku === 'ai-design.directions.v1'
+        ? 'AI_DESIGN_DIRECTIONS_COST_MINOR'
+        : '';
+  const configured = envKey ? Number(env[envKey]) : Number.NaN;
+  if (Number.isSafeInteger(configured) && configured >= 0) return configured;
+  const fallback = Number(metadata?.providerCostMinor);
+  return Number.isSafeInteger(fallback) && fallback >= 0 ? fallback : null;
+};
+
+const assertSkuMargin = ({
+  sku,
+  credits,
+  metadata = {},
+  revenuePerCreditMinor,
+  env = process.env
+}) => {
+  const minimumGrossMargin = Number(metadata?.minimumGrossMargin);
+  const providerCostMinor = configuredSkuCostMinor(sku, metadata, env);
+  if (
+    !Number.isFinite(minimumGrossMargin) ||
+    minimumGrossMargin < 0 ||
+    minimumGrossMargin >= 1 ||
+    providerCostMinor === null
+  ) {
+    return null;
+  }
+  const unitRevenue = Number(revenuePerCreditMinor);
+  const estimatedRevenueMinor = Math.round(Number(credits || 0) * unitRevenue);
+  const estimatedGrossMargin = estimatedRevenueMinor > 0
+    ? (estimatedRevenueMinor - providerCostMinor) / estimatedRevenueMinor
+    : -1;
+  if (
+    !Number.isFinite(estimatedGrossMargin) ||
+    estimatedGrossMargin + Number.EPSILON < minimumGrossMargin
+  ) {
+    throw new ApiError(503, 'SKU_MARGIN_GUARD', {
+      retryable: true,
+      sku: String(sku || ''),
+      minimumGrossMargin
+    });
+  }
+  return {
+    estimatedRevenueMinor,
+    providerCostMinor,
+    estimatedGrossMargin,
+    minimumGrossMargin
+  };
+};
+
 const createQuote = async ({ userId, sku }) => withTransaction(async (client) => {
   const dbUserId = await resolveUserId(client, userId);
   const price = await client.query(
-    `SELECT ps.sku, ps.credits, pv.id AS price_version_id, pv.version
+    `SELECT ps.sku, ps.credits, ps.metadata,
+            pv.id AS price_version_id, pv.version,
+            (
+              SELECT min(package.amount_minor::numeric / package.credits)
+                FROM payment_packages package
+               WHERE package.active=true AND package.currency='CNY'
+            ) AS revenue_per_credit_minor
        FROM price_skus ps
        JOIN price_versions pv ON pv.id = ps.price_version_id
       WHERE ps.sku = $1 AND ps.active = true AND pv.active = true
         AND pv.effective_at <= now()
       ORDER BY pv.version DESC
       LIMIT 1
-      FOR SHARE`,
+      FOR SHARE OF ps,pv`,
     [sku]
   );
   if (!price.rowCount) throw new ApiError(409, 'SKU_NOT_AVAILABLE', { retryable: true });
   const row = price.rows[0];
+  assertSkuMargin({
+    sku: row.sku,
+    credits: Number(row.credits),
+    metadata: row.metadata,
+    revenuePerCreditMinor: row.revenue_per_credit_minor
+  });
   const quote = await client.query(
     `INSERT INTO tool_task_quotes (user_id, sku, price_version_id, credits, expires_at)
      VALUES ($1, $2, $3, $4, clock_timestamp() + interval '10 minutes')
@@ -224,17 +300,29 @@ const createTaskWithHold = async ({
   storedOptions,
   taskPayload,
   payloadTtlMinutes,
+  projectId,
+  parentVersionId,
+  projectVersionPayload,
   requestIdentity,
   deferInputAssets = false,
   idempotencyKey: rawIdempotencyKey
 }) => {
   const idempotencyKey = requireIdempotencyKey(rawIdempotencyKey);
+  const projectIdentity = projectId
+    ? { projectId, parentVersionId: parentVersionId || null }
+    : {};
   const hash = requestHash(requestIdentity === undefined
-    ? { toolId, operation, options, inputAssetIds, quoteId: quoteId || null }
-    : { toolId, operation, options, inputAssets: requestIdentity, quoteId: quoteId || null });
+    ? { toolId, operation, options, inputAssetIds, quoteId: quoteId || null, ...projectIdentity }
+    : { toolId, operation, options, inputAssets: requestIdentity, quoteId: quoteId || null, ...projectIdentity });
 
   return withTransaction(async (client) => {
     const dbUserId = await resolveUserId(client, userId);
+    const projectContext = await assertProjectContext({
+      client,
+      ownerUserId: dbUserId,
+      projectId,
+      parentVersionId
+    });
     // Serialize the initial existence check for one user/idempotency key. A
     // unique constraint alone prevents double charges but makes concurrent
     // replays surface as 23505 instead of returning the original task.
@@ -271,7 +359,13 @@ const createTaskWithHold = async ({
             operation,
             options,
             inputAssetIds: linkedInputs.rows.map((row) => row.asset_id),
-            quoteId: quoteId || null
+            quoteId: quoteId || null,
+            ...(projectContext.projectId
+              ? {
+                  projectId: projectContext.projectId,
+                  parentVersionId: projectContext.parentVersionId
+                }
+              : {})
           });
           same = Buffer.isBuffer(existing.rows[0].request_hash)
             && crypto.timingSafeEqual(existing.rows[0].request_hash, legacyHash);
@@ -326,12 +420,13 @@ const createTaskWithHold = async ({
     const created = await client.query(
       `INSERT INTO tool_tasks
         (user_id, tool_id, operation, options, quote_id, sku, quoted_credits,
-         idempotency_key, request_hash, status, inputs_ready)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10)
+         idempotency_key, request_hash, status, inputs_ready, project_id, parent_version_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11,$12)
        RETURNING *`,
       [
         dbUserId, toolId, operation, JSON.stringify(storedOptions ?? options ?? {}), quoteId || null,
-        lockedSku, quotedCredits, idempotencyKey, hash, !deferInputAssets
+        lockedSku, quotedCredits, idempotencyKey, hash, !deferInputAssets,
+        projectContext.projectId, projectContext.parentVersionId
       ]
     );
     const task = created.rows[0];
@@ -387,12 +482,29 @@ const createTaskWithHold = async ({
         );
       }
     }
+    await linkProjectInputAssets({
+      client,
+      projectId: projectContext.projectId,
+      assetIds: inputAssetIds,
+      startPosition: 0,
+      roles: Array.isArray(options?.referenceRoles)
+        ? options.referenceRoles.slice(0, (inputAssetIds || []).length)
+        : undefined
+    });
     if (taskPayload) {
       await taskPayloads.insertTaskPayload({
         client,
         taskId: task.id,
         payload: taskPayload,
         ttlMinutes: payloadTtlMinutes
+      });
+    }
+    if (projectContext.projectId && toolId === 'ai-design' && operation === 'generate') {
+      await createPendingProjectVersion({
+        client,
+        task,
+        promptPayload: projectVersionPayload || options,
+        env: process.env
       });
     }
     return taskWithPreparationState(task);
@@ -454,6 +566,15 @@ const finalizeTaskInputs = async ({
       );
     }
   }
+  await linkProjectInputAssets({
+    client,
+    projectId: task.project_id,
+    assetIds: inputAssetIds,
+    startPosition: basePosition,
+    roles: Array.isArray(task.options?.referenceRoles)
+      ? task.options.referenceRoles.slice(basePosition, basePosition + (inputAssetIds || []).length)
+      : undefined
+  });
   const updated = await client.query(
     `UPDATE tool_tasks
         SET inputs_ready=true, updated_at=now()
@@ -510,6 +631,12 @@ const settleTask = async ({
     );
     if (!linked.rowCount) throw new ApiError(422, 'OUTPUT_PERSIST_FAILED', { retryable: true });
   }
+  await settleProjectVersion({
+    client,
+    task,
+    outputAssetIds,
+    result
+  });
 
   const settledHold = await client.query(
     `UPDATE credit_holds
@@ -661,6 +788,7 @@ const releaseTask = async ({
         updated_at=now() WHERE id=$1 RETURNING *`,
       [task.id, terminalStatus, credits, errorCode]
     );
+    await releaseProjectVersion({ client, task, terminalStatus });
     await taskPayloads.deleteTaskPayload({ client, taskId: task.id });
     return publicTask(updated.rows[0]);
   });
@@ -746,6 +874,7 @@ const cancelTask = async ({ userId, taskId }) => withTransaction(async (client) 
      RETURNING *`,
     [task.id, credits]
   );
+  await releaseProjectVersion({ client, task, terminalStatus: 'cancelled' });
   await taskPayloads.deleteTaskPayload({ client, taskId: task.id });
   await client.query("SELECT pg_notify('artigen_tool_task_cancel',$1)", [task.id]);
   return publicTask(updated.rows[0]);
@@ -815,7 +944,9 @@ module.exports = {
   canonicalize,
   assetIdentitiesEqual,
   assertHoldLive,
+  assertSkuMargin,
   assertTaskLease,
+  configuredSkuCostMinor,
   requestHash,
   requireIdempotencyKey,
   resolveUserId,

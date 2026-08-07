@@ -32,11 +32,18 @@
       </button>
 
       <nav class="nav-links">
-        <NavItem to="/artigen" item-class="nav-item" :active="activeKey === 'home'">
-          {{ ui.navHome }}
-        </NavItem>
         <NavItem to="/artigen/ai" item-class="nav-item" :active="activeKey === 'ai'">
           {{ ui.navAiDesign }}
+        </NavItem>
+        <NavItem to="/artigen/agent" item-class="nav-item" :active="activeKey === 'agent'">
+          {{ ui.navAgent }}
+        </NavItem>
+        <NavItem
+          to="/artigen/projects"
+          item-class="nav-item"
+          :active="activeKey === 'projects'"
+        >
+          {{ ui.navProjects }}
         </NavItem>
         <div
           ref="toolsContainerRef"
@@ -92,14 +99,8 @@
             </div>
           </transition>
         </div>
-        <NavItem to="/artigen/image-workshop" item-class="nav-item" :active="activeKey === 'image'">
-          {{ ui.navImageWorkshop }}
-        </NavItem>
         <NavItem to="/artigen/market" item-class="nav-item" :active="activeKey === 'market'">
           {{ ui.navMarket }}
-        </NavItem>
-        <NavItem to="/artigen/about" item-class="nav-item" :active="activeKey === 'about'">
-          {{ ui.navAbout }}
         </NavItem>
       </nav>
 
@@ -183,20 +184,28 @@
         class="mobile-menu"
       >
         <NavItem
-          to="/artigen"
-          item-class="mobile-item"
-          :active="activeKey === 'home'"
-          @click="isMobileMenuOpen = false"
-        >
-          {{ ui.navHome }}
-        </NavItem>
-        <NavItem
           to="/artigen/ai"
           item-class="mobile-item"
           :active="activeKey === 'ai'"
           @click="isMobileMenuOpen = false"
         >
           {{ ui.navAiDesign }}
+        </NavItem>
+        <NavItem
+          to="/artigen/agent"
+          item-class="mobile-item"
+          :active="activeKey === 'agent'"
+          @click="isMobileMenuOpen = false"
+        >
+          {{ ui.navAgent }}
+        </NavItem>
+        <NavItem
+          to="/artigen/projects"
+          item-class="mobile-item"
+          :active="activeKey === 'projects'"
+          @click="isMobileMenuOpen = false"
+        >
+          {{ ui.navProjects }}
         </NavItem>
 
         <div class="mobile-item-group">
@@ -235,28 +244,12 @@
         </div>
 
         <NavItem
-          to="/artigen/image-workshop"
-          item-class="mobile-item"
-          :active="activeKey === 'image'"
-          @click="isMobileMenuOpen = false"
-        >
-          {{ ui.navImageWorkshop }}
-        </NavItem>
-        <NavItem
           to="/artigen/market"
           item-class="mobile-item"
           :active="activeKey === 'market'"
           @click="isMobileMenuOpen = false"
         >
           {{ ui.navMarket }}
-        </NavItem>
-        <NavItem
-          to="/artigen/about"
-          item-class="mobile-item"
-          :active="activeKey === 'about'"
-          @click="isMobileMenuOpen = false"
-        >
-          {{ ui.navAbout }}
         </NavItem>
 
         <div class="mobile-language" :aria-label="ui.languageMenu">
@@ -298,7 +291,7 @@ import CreditsUserActions from './CreditsUserActions.vue';
 import NavItem from './NavItem.vue';
 import { useLanguageStore } from '@/stores/language';
 import { formatFactoryTools } from '../data/formatFactoryTools';
-import { toolDefinitions } from '../domain/toolCatalog';
+import { locationForToolEntry } from '../domain/toolEntry';
 import { useAgentImgAuth } from '../composables/useAgentImgAuth';
 import { useAgentImgCredits } from '../composables/useAgentImgCredits';
 
@@ -383,10 +376,12 @@ const ui = computed(() => {
   if (currentLang.value === 'zh') {
     return {
       navHome: '首页',
-      navAiDesign: 'AI设计',
+      navAiDesign: '创作',
+      navAgent: 'Agent',
+      navProjects: '项目',
       navFormatFactory: '工具',
       navImageWorkshop: 'AI影像工坊',
-      navMarket: '点数商城',
+      navMarket: '价格',
       navAbout: '关于',
       toolsPopoverTitle: '图像与文件处理工具',
       viewAllTools: '查看全部工具',
@@ -397,10 +392,12 @@ const ui = computed(() => {
   }
   return {
     navHome: 'Home',
-    navAiDesign: 'AI Design',
+    navAiDesign: 'Create',
+    navAgent: 'Agent',
+    navProjects: 'Projects',
     navFormatFactory: 'Tools',
     navImageWorkshop: 'AI Image Workshop',
-    navMarket: 'Compute Market',
+    navMarket: 'Pricing',
     navAbout: 'About',
     toolsPopoverTitle: 'Image & File Tools',
     viewAllTools: 'View all tools',
@@ -412,24 +409,21 @@ const ui = computed(() => {
 
 const localizedTools = computed(() => {
   const isZh = currentLang.value === 'zh';
-  return toolDefinitions
-    .filter((tool) => tool.kind === 'tool')
-    .map((workflow) => {
-      const legacy = formatFactoryTools.find((tool) => workflow.legacyIds.includes(tool.id));
-      return {
-        id: workflow.id,
-        icon: legacy?.icon || '',
-        name: isZh ? workflow.name.zh : workflow.name.en,
-        description: isZh ? workflow.description.zh : workflow.description.en
-      };
-    });
+  return formatFactoryTools.map((tool) => ({
+    id: tool.id,
+    icon: tool.icon,
+    name: isZh ? tool.name : tool.nameEn || tool.name,
+    description: isZh ? tool.description : tool.descriptionEn || tool.description
+  }));
 });
 
 const handleToolClick = (toolId: string) => {
   isToolsMenuOpen.value = false;
   isMobileMenuOpen.value = false;
   isMobileToolsExpanded.value = false;
-  router.push(`/artigen/tools/${encodeURIComponent(toolId)}`).catch(() => {});
+  const location = locationForToolEntry(toolId);
+  if (!location) return;
+  router.push(location).catch(() => {});
 };
 
 const openToolsMenu = () => {
@@ -455,10 +449,12 @@ const cancelCloseToolsMenu = () => {
   }
 };
 
-const activeKey = computed<'format' | 'ai' | 'market' | 'image' | 'home' | 'about'>(() => {
+const activeKey = computed<'format' | 'ai' | 'agent' | 'projects' | 'market' | 'image' | 'home' | 'about'>(() => {
   const p = String(route.path || '');
   if (p === '/artigen' || p === '/artigen/') return 'home';
   if (p.startsWith('/artigen/tools') || p.startsWith('/artigen/format-factory')) return 'format';
+  if (p.startsWith('/artigen/projects')) return 'projects';
+  if (p.startsWith('/artigen/agent')) return 'agent';
   if (p.startsWith('/artigen/market')) return 'market';
   if (p.startsWith('/artigen/image-workshop')) return 'image';
   if (p.startsWith('/artigen/ai')) return 'ai';
@@ -699,6 +695,8 @@ watch(() => isAuthed.value, handleAuthChanged);
   transition: color 0.2s;
   position: relative;
   padding: 4px 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .tools-container {
@@ -1164,7 +1162,29 @@ watch(() => isAuthed.value, handleAuthChanged);
   left: 100%;
 }
 
-@media (max-width: 1280px) {
+@media (min-width: 1025px) and (max-width: 1400px) {
+  .header {
+    padding: 0 24px;
+  }
+
+  .logo-text {
+    margin-right: 38px;
+  }
+
+  .nav-links {
+    gap: 26px;
+  }
+
+  .nav-item {
+    font-size: 16px;
+  }
+
+  .header-right {
+    gap: 12px;
+  }
+}
+
+@media (max-width: 1024px) {
   .titlebar {
     --header-height: 64px;
   }

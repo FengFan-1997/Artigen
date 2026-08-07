@@ -2,6 +2,7 @@ const zlib = require('zlib');
 const { ApiError } = require('../lib/api-error');
 const {
   GENERATION_DIRECTIONS_MODEL,
+  GENERATION_EDIT_MODEL,
   GENERATION_IMAGE_MODEL
 } = require('./generation-profiles');
 
@@ -218,7 +219,11 @@ const createSiliconFlowGenerationProvider = ({
             ? body.data.map((item) => String(item?.id || '').trim()).filter(Boolean)
             : []
         );
-        const requiredModels = [GENERATION_IMAGE_MODEL, GENERATION_DIRECTIONS_MODEL];
+        const requiredModels = [
+          GENERATION_IMAGE_MODEL,
+          GENERATION_EDIT_MODEL,
+          GENERATION_DIRECTIONS_MODEL
+        ];
         if (!modelIds.size || requiredModels.some((model) => !modelIds.has(model))) {
           return { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' };
         }
@@ -250,10 +255,11 @@ const createSiliconFlowGenerationProvider = ({
     async generateImage({ prompt, profile, aspectRatio, seed, images, signal }) {
       assertAvailable();
       const references = Array.isArray(images) ? images.filter(Boolean) : [];
-      if (references.length) {
+      if (references.length > Number(profile?.maxReferences || 0)) {
         throw providerError('REFERENCE_IMAGES_NOT_SUPPORTED', 400, false);
       }
-      if (profile?.internalTextModel !== GENERATION_IMAGE_MODEL) {
+      const model = references.length ? profile?.internalEditModel : profile?.internalTextModel;
+      if (![GENERATION_IMAGE_MODEL, GENERATION_EDIT_MODEL].includes(model)) {
         throw providerError('MODEL_PROFILE_UNAVAILABLE', 503, false);
       }
       try {
@@ -267,9 +273,9 @@ const createSiliconFlowGenerationProvider = ({
             imageSize: profile.imageSizes[aspectRatio],
             seed
           },
-          images: [],
+          images: references,
           timeoutMs: positiveTimeout(env.AI_IMAGE_TIMEOUT_MS, 120_000, 10_000),
-          model: GENERATION_IMAGE_MODEL,
+          model,
           allowModelFallback: false,
           signal
         });

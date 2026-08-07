@@ -18,6 +18,8 @@ export type ServerToolTask = {
   taskId: string;
   toolId: string;
   operation: string;
+  projectId?: string | null;
+  parentVersionId?: string | null;
   status: Extract<ToolTaskStatus, 'queued' | 'running' | 'success' | 'failed' | 'cancelled'>;
   assets: ToolTaskAsset[];
   warnings: Array<{ code: string; messageKey: string }>;
@@ -78,13 +80,17 @@ const assertTask = (raw: any): ServerToolTask => {
 };
 
 export const quoteToolTask = async (
-  input: { toolId: string; operation: string },
+  input: { toolId: string; operation: string; options?: Record<string, unknown> },
   signal?: AbortSignal
 ): Promise<ToolTaskQuote> => {
   const response = await authFetch(QUOTE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ toolId: input.toolId, operation: input.operation }),
+    body: JSON.stringify({
+      toolId: input.toolId,
+      operation: input.operation,
+      ...(input.options ? { options: input.options } : {})
+    }),
     signal
   });
   if (!response.ok) throw await errorFromResponse(response);
@@ -116,6 +122,8 @@ export const createToolTask = async (input: {
   file?: File;
   files?: File[];
   inputAssets?: string[];
+  projectId?: string;
+  parentVersionId?: string;
   idempotencyKey?: string;
   signal?: AbortSignal;
   onUploadProgress?: (progress: number) => void;
@@ -147,6 +155,8 @@ export const createToolTask = async (input: {
   form.set('options', JSON.stringify(input.options || {}));
   form.set('inputAssets', JSON.stringify(inputAssets));
   form.set('quoteId', input.quoteId);
+  if (input.projectId) form.set('projectId', input.projectId);
+  if (input.parentVersionId) form.set('parentVersionId', input.parentVersionId);
   for (const file of files) form.append('files', file, file.name);
   const response = await authFetch(TASKS_URL, {
     method: 'POST',
