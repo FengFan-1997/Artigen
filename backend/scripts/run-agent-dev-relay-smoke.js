@@ -68,7 +68,7 @@ const selectSmokeUser = async (pool) => {
     await client.query('BEGIN');
     const result = await client.query(
       `INSERT INTO users (email,display_name,status)
-       VALUES ('agent-smoke@dev.artigen.invalid','Agent DEV Smoke','active')
+       VALUES ('agent-relay-smoke@dev.artigen.invalid','Agent DEV Relay Smoke','active')
        ON CONFLICT (email) DO UPDATE
          SET status='active',updated_at=now()
        RETURNING id`

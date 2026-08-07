@@ -18,6 +18,8 @@ Artigen Agent 已切换为“硅基流动云端模型 + 本机 CUA 沙箱”：�
 
 同日远程接管 run `06035a9d-b19f-4e1d-ba73-c58fa954fff8` 在 Render DEV + Neon + Mac Worker 上通过：Qwen3-8B 访问允许站点后主动调用 `request_user_approval`，任务停在 `waiting_user`；Render 签发 60 秒一次性票据，viewer 与 Mac Worker 配对并收到本机 VNC `RFB 003.008`。票据依次记录 consumed/relay_started/closed，关闭后任务取消，沙箱、出口代理和临时网络全部清理；测试没有输入真实账号、密码或 OTP。此前一次测试同时验证了 Worker 在 Neon 短时连接超时后可按租约恢复任务；现在 pg-boss 的 `error`/`warning` 事件也已显式监听，瞬时数据库错误只记录状态码，不再因未处理事件退出进程。
 
+PR #9 合入后的 Render DEV 提交 `af50290` 又以 run `d093a36c-37e4-47ff-9f7b-8cc3fb7ecf1f` 重复通过同一远程接管链路，证明结果不是旧实例或一次性偶然状态。第一次复跑在创建任务阶段被 `INSUFFICIENT_CREDITS` 拒绝，原因是共享 S3 与接管烟测共用 DEV 内部账号、当日验收额度已经消耗；两种烟测现使用独立无密码账号，避免相互影响。这次拒绝发生在预算预留阶段，没有创建沙箱或调用模型。
+
 | 检查项 | 当前状态 | 说明 |
 |---|---:|---|
 | Agent 单元/运行时测试 | 通过 | 包括硅基流动工具循环、小模型漏计划兜底、SSRF、票据、中继、路径和交付验证 |
@@ -392,7 +394,7 @@ pnpm --filter backend smoke:agent:dev-relay-mac
 
 该命令让 Qwen 显式请求密码接管，只验证一次性票据、Render WSS 中继、Mac Worker 和本机 VNC 握手，不输入任何真实凭据；成功后自动关闭票据、取消任务并触发沙箱清理。
 
-脚本只从 `artigen-agent-dev-worker` Keychain 读取秘密，不接受 Production Keychain service，也不打印账号、连接串或密钥。没有可用测试账号时，它在 DEV 数据库创建固定的内部账号 `agent-smoke@dev.artigen.invalid`；该账号没有密码、会话或生产权限，只用于服务级验收。
+脚本只从 `artigen-agent-dev-worker` Keychain 读取秘密，不接受 Production Keychain service，也不打印账号、连接串或密钥。共享 S3 烟测使用固定内部账号 `agent-smoke@dev.artigen.invalid`，接管中继烟测使用独立的 `agent-relay-smoke@dev.artigen.invalid`，避免两类验收互相消耗当日免费额度；两个账号都没有密码、会话或生产权限，只用于 DEV 服务级验收。
 
 2026-08-07 的通过记录：
 
