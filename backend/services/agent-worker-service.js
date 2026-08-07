@@ -967,6 +967,17 @@ const createAgentWorkerService = ({
         return { claimed: true, status: 'cancelled' };
       }
       const failureCosts = costMeter.snapshot({ accrue: true });
+      const failureDetail = [
+        error?.details?.detail,
+        error?.details?.command ? `command=${error.details.command}` : '',
+        error?.details?.timeoutMs ? `timeoutMs=${error.details.timeoutMs}` : ''
+      ].filter(Boolean).join(' ').trim().slice(0, 300);
+      console.error(
+        'Agent run failed',
+        runId,
+        String(error?.code || 'AGENT_RUNTIME_FAILED').slice(0, 100),
+        failureDetail
+      );
       await runService.failRun({
         runId,
         errorCode: String(error?.code || 'AGENT_RUNTIME_FAILED').slice(0, 100),
