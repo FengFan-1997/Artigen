@@ -121,8 +121,10 @@ class RfbSmokeClient {
 }
 
 const openWebSocket = ({ url, origin, authorization, timeoutMs }) => new Promise((resolve, reject) => {
+  const headers = { Origin: origin };
+  if (authorization) headers.Authorization = authorization;
   const websocket = new WebSocket(url, {
-    headers: { Origin: origin, Authorization: authorization },
+    headers,
     maxPayload: 8 * 1024 * 1024
   });
   const timer = setTimeout(() => {

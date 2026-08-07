@@ -1,6 +1,6 @@
 # Artigen 数据库、部署、域名、账号与登录接管报告
 
-> 基础设施核查日期：2026-07-27；Agent 本机 DEV 更新：2026-08-07
+> 基础设施核查日期：2026-07-27；Production Beta 最终更新：2026-08-07
 > 仓库：`FengFan-1997/Artigen`
 > 说明：本文记录已从代码、部署平台 CLI、线上健康检查和数据库只读查询中确认的现状。出于安全原因，文中不包含任何密码、Token、数据库连接串、SMTP 授权码或其他密钥原文。
 
@@ -21,7 +21,7 @@ flowchart LR
     V --> CF["Cloudflare Turnstile"]
 ```
 
-目前网站和生产 API 可以访问，生产付费、支付、邮件验证码和标准 AI 能力已开启。Render DEV 已部署 Agent 迁移 020，并由 Mac Worker 完成远程浏览和共享 S3 交付烟测；生产 Agent 仍未部署。生产数据库已有 2026-08-07 手工逻辑备份，但定时备份与恢复演练仍未建立；生产管理后台没有可用管理员，自定义域名也还没有接入。
+目前网站和生产 API 可以访问。生产浏览器 Agent 已作为 owner-only Production Beta 部署：Render `main` 提交 `9bcc77d`、数据库迁移 020、共享 S3、Production Mac Worker、受限浏览器和远程接管均通过。邮箱验证码登录已开启；付费、支付和标准生成能力当前关闭。生产数据库已有 2026-08-07 发布前逻辑备份，但定时备份与恢复演练仍未建立；生产管理后台没有可用管理员，自定义域名也还没有接入。Agent 的最终交付证据见 [ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md](./ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md)。
 
 ## 2. 线上地址与域名
 
@@ -80,9 +80,9 @@ flowchart LR
 | 运维文档中的显示名 | `FengFan` |
 | 项目名 | `artigen-fengfan` |
 | Project ID | `prj_wW0GDr1aNR18rFjlTzH6JAqhNvuL` |
-| 生产来源分支 | `codex/artigen-overhaul` |
-| 当前生产提交 | `10c15249d3a00fe1339a3817fe66fdcc1a4c58d9` |
-| 部署状态 | `READY` |
+| 生产来源分支 | `main` |
+| 当前生产提交 | `9bcc77d593e0747d5265f96f1f45b1dcb956b0bd` |
+| 部署状态 | `READY`；GitHub `Vercel – artigen-fengfan` 为 success |
 
 ### 3.2 邮件中继项目
 
@@ -118,10 +118,10 @@ vercel inspect https://artigen-fengfan.vercel.app
 | 区域 | Virginia |
 | Runtime | Node |
 | 实例数 | 1 |
-| 部署分支 | `codex/artigen-overhaul` |
+| 部署分支 | `main` |
 | 自动部署 | 关闭 |
-| 当前 Deployment ID | `dep-d9fhusfavr4c73c9rds0` |
-| 当前提交 | `10c15249d3a00fe1339a3817fe66fdcc1a4c58d9` |
+| 当前 Deployment ID | `dep-d9qs08ijnfac73e3icn0` |
+| 当前提交 | `9bcc77d593e0747d5265f96f1f45b1dcb956b0bd` |
 | 部署方式 | Manual |
 | 状态 | Live |
 | 健康检查路径 | `/healthz` |
@@ -138,10 +138,10 @@ vercel inspect https://artigen-fengfan.vercel.app
 | 区域 | Virginia |
 | 部署分支 | `dev` |
 | 自动部署 | 开启 |
-| 当前提交 | `95d51da2c0b3bc595f6d73f8067b3e49e52b5842` |
+| 当前提交 | `9c7bf5d39a081b84be243ab3675c3ef72817d8a3` |
 | 状态 | Live |
 
-开发环境的 `/readyz` 显示：
+开发环境的 `/readyz` 显示迁移 020、共享 S3 和 Agent 配置正常；DEV Worker 按需运行。生产 `/readyz` 也已通过迁移 020、共享 S3、owner-only、OTP、邮件中继和 Turnstile 检查。
 
 - 数据库必须可用；
 - 当前迁移版本为 `014_operational_records`；
@@ -225,12 +225,13 @@ neonctl projects list
 - 当前数据库：`neondb`
 - 当前角色：`neondb_owner`
 - PostgreSQL：16.14
-- `public` schema 表数量：23
-- 已执行迁移：`001`～`011`
+- `public` schema 表数量：45
+- 已执行迁移：`001`～`020`
 - 用户数量：2
 - `administrators` 表：0 条记录
 - 爱发电订单：1 条待支付测试记录
-- 对象资产：1 条，大小 1,564,588 字节
+- 对象资产：5 条；新增 4 条为最终生产 Agent 登录捕获/恢复烟测交付物
+- Agent runs：4 条，其中前两条安全失败且 charged credits 为 0，最终两条为 `succeeded`
 
 生产用户：
 
@@ -297,12 +298,11 @@ neonctl projects list
 - 仓库：`FengFan-1997/Artigen`
 - 可见性：Public
 - 默认分支：`main`
-- 当前本地分支：`dev`
-- 本地和远程 `dev`：`95d51da2c0b3bc595f6d73f8067b3e49e52b5842`
-- 远程 `main`：`380a2b15f951c14b169cd44d1bfdf0599bb21da9`
-- 远程 `codex/artigen-overhaul`：`10c15249d3a00fe1339a3817fe66fdcc1a4c58d9`
-- PR #1：Draft，`codex/artigen-overhaul` → `main`
-- PR #2：Draft，`codex/oss-foundation-upgrade` → `codex/artigen-overhaul`
+- 当前本地工作分支：`codex/agent-runtime-local`
+- 远程 `dev`：`9c7bf5d39a081b84be243ab3675c3ef72817d8a3`
+- 远程 `main`：`9bcc77d593e0747d5265f96f1f45b1dcb956b0bd`
+- PR #11：`codex/agent-runtime-local` → `dev`，已合入
+- PR #12：`dev` → `main`，已合入
 
 本机 `gh` 使用系统钥匙串保存凭据，Git 操作使用 HTTPS。
 
@@ -421,7 +421,7 @@ Turnstile 当前文档中登记的 hostname 包括：
 
 生成配置见 [`backend/services/generation-profiles.js`](./backend/services/generation-profiles.js)。
 
-生产 `/readyz` 核查显示标准 AI provider 可用，但生产部署仍是较早的 `codex/artigen-overhaul` 提交，未必包含当前工作区新增的全部模型配置。不能仅凭本地代码断言所有新模型已经在生产上线。
+生产标准图片生成能力当前关闭；Agent Provider 单独启用并固定为硅基流动 `Qwen/Qwen3-8B`。生产 `/readyz` 和两个真实 `succeeded` run 已验证该 Agent 模型链路，不依赖本地 Qwen 或 OpenAI。
 
 当前计费大致为：
 
@@ -479,7 +479,7 @@ Turnstile 当前文档中登记的 hostname 包括：
 | `Artigen Task Payload Encryption Key` | `fengfan` | 任务载荷加密密钥 |
 | `artigen-agent-dev-relay` | `AGENT_WORKER_RELAY_SECRET` | 本机 DEV 桌面中继 HMAC 密钥 |
 
-远程 DEV Agent 使用独立 Keychain service `artigen-agent-dev-worker`；Production Agent 使用 `artigen-agent-production-worker`。两者的 account 标签均为 `DATABASE_URL`、`AGENT_PAYLOAD_ENCRYPTION_KEY`、`SILICONFLOW_API_KEY`、`AGENT_WORKER_RELAY_SECRET`、`AGENT_WORKER_RELAY_URL` 和各项 `S3_*`。Production 项仍必须在正式发布窗口由所有者确认并写入；不能因为脚本支持这些标签就写成“凭据已经配置完成”。
+远程 DEV Agent 使用独立 Keychain service `artigen-agent-dev-worker`；Production Agent 使用 `artigen-agent-production-worker`。Production 的 `DATABASE_URL`、`AGENT_PAYLOAD_ENCRYPTION_KEY`、`SILICONFLOW_API_KEY`、`AGENT_WORKER_RELAY_SECRET`、`AGENT_WORKER_RELAY_URL`、各项 `S3_*` 和 `AGENT_BETA_USER_IDS` 标签已配置并被 Production LaunchAgent 成功读取。文档只记录标签，不记录值。
 
 在有权限的本机终端中按需读取，示例：
 
@@ -507,14 +507,14 @@ security find-generic-password -s 'Artigen Dev Access Password' -w
 
 ## 10. 线上核查结果
 
-2026-07-27 实际检查：
+2026-08-07 发布后实际检查：
 
 | 检查 | 结果 |
 |---|---|
 | Vercel 主站 | HTTP 200 |
-| 生产 `/api/meta` | HTTP 200，冷启动约 12.7 秒 |
+| 生产 `/api/meta` | HTTP 200，SHA `9bcc77d593e0747d5265f96f1f45b1dcb956b0bd` |
 | 生产 `/healthz` | HTTP 200 |
-| 生产 `/readyz` | HTTP 200，冷启动约 14.8 秒，`ok: true` |
+| 生产 `/readyz` | HTTP 200，`ok: true`、迁移 020、共享 S3、OTP/邮件/Turnstile/Agent 通过 |
 | 开发环境健康检查 | HTTP 200，`appEnv: dev` |
 | 邮件中继健康检查 | HTTP 200 |
 
@@ -522,41 +522,35 @@ security find-generic-password -s 'Artigen Dev Access Password' -w
 
 | 能力 | 状态 |
 |---|---|
-| 数据库 | 正常，迁移到 `011_otp_delivery_dispatch_state` |
+| 数据库 | 正常，迁移到 `020_agent_secure_browser_relay` |
 | 对象存储 | S3，共享存储正常 |
 | 任务载荷加密 | 正常 |
 | AI Provider | SiliconFlow，`standard-v1` |
 | 输出域名白名单 | 已配置，host 数量 1 |
-| 付费能力 | 开启 |
-| 爱发电支付 | 开启，4 个套餐，供应商查询验证 |
+| 付费能力 | 当前关闭 |
+| 爱发电支付 | 当前关闭 |
 | 认证密钥 | 正常 |
 | 邮件验证码 | 开启，使用签名邮件中继 |
 | Turnstile | 正常 |
-| AI Design | 开启 |
+| AI Design | 当前关闭 |
 | Workshop AI | 关闭 |
 
 ## 11. 代码版本和部署漂移
 
-2026-08-07 更新后存在以下状态：
+2026-08-07 Production Beta 发布后状态：
 
 | 环境 | 代码/数据库状态 |
 |---|---|
-| 生产 Render/Vercel | `codex/artigen-overhaul`，提交 `10c15249...`，迁移 `011` |
-| 开发 Render | `dev`，迁移 `020_agent_secure_browser_relay`，Agent 四项状态与远程接管均通过；具体提交以 Render 当前 deploy 为准 |
+| 生产 Render/Vercel | `main`，提交 `9bcc77d...`，迁移 `020_agent_secure_browser_relay`，Production Agent 四项状态 true |
+| 开发 Render | `dev`，提交 `9c7bf5d...`，迁移 `020_agent_secure_browser_relay` |
 | 本地数据库 | 迁移 `020_agent_secure_browser_relay` |
-| 当前功能分支 | `codex/agent-runtime-local`；主体提交 `3135016` 已通过 PR #8 合入 `dev`，后续 Keychain、远程 Worker、Qwen 顺序调用、接管与恢复补丁由 PR #9 跟踪 |
+| 当前功能分支 | `codex/agent-runtime-local`；主体经 PR #11 合入 `dev`，再经发布 PR #12 合入 `main` |
 
-PR #9 是否已经合入及 Render 是否完成对应部署，应以 GitHub checks 和 Render deploy commit 为准；不能仅凭本机分支存在补丁就写成已经部署。
+生产发布已经由 GitHub PR、Render live deploy、Vercel success 状态、生产 `/api/meta`、`/readyz`、Worker heartbeat 和两个最终 `succeeded` run 交叉确认，不再只依据本机分支判断。
 
-尤其是 Agent Beta：
+2026-08-07 Production runs `0bfa9eef-a989-4400-9fcd-0bcb043c211d`、`20317cd5-77e8-40ca-ac74-ad845385bf96` 已证明 owner-only、outsider 拒绝、Qwen blocked 接管、60 秒票据、Render WSS、Mac VNC、登录后 DOM、加密会话保存/恢复/撤销、4 个 Markdown/PDF、独立验证和共享 S3 读回完整可用。
 
-- 当前生产提交中没有新的 `/artigen/agent` 或项目相关生产路由；
-- 没有发现独立 Agent worker 的线上部署证据；
-- 仓库存在 `railway.json`，但没有发现正在运行的 Railway 资源证据。
-
-2026-08-07 本机 DEV 已真实完成受限浏览器 Markdown+PDF run `1dfa16bf-49a4-428b-a942-ef3e090258f3`（`succeeded`、轨迹 100、两份交付物验证通过、容器清理）以及桌面中继 run `3ddfdc37-91d9-462d-af70-e8ebaf812ef2`（真实 `RFB 003.008` 握手、票据 consumed/started/closed、无真实凭据）。同日远程 DEV run `f32c30bf-ed26-4fc9-aa0a-0daaa878ca24` 又证明了 Render DEV/Neon 队列、Mac Worker、restricted-v1 浏览、Qwen3-8B、Markdown/PDF、独立验证、共享 Neon S3 上传及跨进程读回完整可用；runs `06035a9d-b19f-4e1d-ba73-c58fa954fff8`、`d093a36c-37e4-47ff-9f7b-8cc3fb7ecf1f` 则在 PR #9 前后分别证明 Qwen blocked 审批、60 秒票据、Render WSS 中继和 Mac VNC 握手完整可用。远程烟测均未使用真实登录凭据。DEV 网页端真实账号登录/会话复验和 Production 验收仍未完成。
-
-所以当前不能对外宣称 Agent Beta 已部署。
+因此当前可以对外准确称为 **owner-only Production Beta**；不能称为 24×7 高可用正式生产。
 
 ## 12. 备份现状
 
@@ -567,7 +561,7 @@ PR #9 是否已经合入及 Render 是否完成对应部署，应以 GitHub chec
 - 没有对应的 launchd 定时任务；
 - 现有备份位于 `~/Library/Application Support/Artigen/backups/`；
 - DEV Neon 备份：`artigen-neon-2026-08-07T06-11-11-822Z.dump`，26 张表，附 manifest 与 SHA-256；
-- Production Neon 备份：`artigen-neon-2026-08-07T06-56-38-199Z.dump`，23 张表，附 manifest 与 SHA-256；
+- 最新 Production Neon 发布前备份：`artigen-neon-2026-08-07T10-24-11-527Z.dump`，迁移前 23 张表，附 manifest 与 SHA-256；
 - 两份备份都位于 `~/Library/Application Support/Artigen/backups/`，没有提交 Git。
 
 该生产 dump 已成功生成，但尚未恢复到隔离数据库验证，因此只能作为发布前逻辑备份，不能替代定时、加密、异地保留和恢复演练。
@@ -594,11 +588,11 @@ PR #9 是否已经合入及 Render 是否完成对应部署，应以 GitHub chec
 
 ### P1：版本一致性
 
-3. **生产迁移 `011`、开发/本地 `020`**
-   DEV 已带锁迁移和烟测通过；仍要在发布窗口从已验收的 `dev` 合入 `main`，让 Render 启动流程顺序执行 `012`～`020`。不要直接在生产数据库手工跳迁移。
+3. **生产、开发和本地迁移已统一到 `020`**
+   生产由 Render 启动流程持 advisory lock 顺序执行 `012`～`020`，没有手工跳迁移。后续仍须先在 DEV 验收，再合入 `main`。
 
-4. **生产分支不是默认 `main`**
-   当前生产来自 `codex/artigen-overhaul`，而 GitHub 默认分支是 `main`。应决定长期生产分支策略，并把 PR 和部署源统一。
+4. **生产分支已统一到 `main`**
+   Render 继续保持手动部署，避免未经发布窗口确认的提交自动上线。
 
 ### P2：基础设施
 
@@ -614,8 +608,8 @@ PR #9 是否已经合入及 Render 是否完成对应部署，应以 GitHub chec
 8. **生产配置不能只看 `render.yaml`**
    建立配置清单，以 Render/Vercel 实际变量和 `/readyz` 为准，并记录每次变更。
 
-9. **Agent Beta 已部署 DEV，尚未部署 Production**
-   DEV 迁移 020、远程 Mac Worker、受限浏览器和共享 S3 下载烟测已通过；仍要完成 DEV 网页端登录接管/会话复验、Production Worker Keychain 和发布窗口验收，才能先对所有者账号开放。
+9. **Agent 已作为 owner-only Production Beta 部署**
+   当前只允许 owner UUID；扩大白名单前继续观察队列、失败率、对象存储和清理状态。Render Free 与 Mac Worker 仍是可用性限制。
 
 ## 14. 建议的接管检查清单
 

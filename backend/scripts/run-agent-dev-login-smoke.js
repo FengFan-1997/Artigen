@@ -11,11 +11,22 @@ const {
   sleep
 } = require('./lib/rfb-smoke-client');
 
+const SMOKE_PROFILE = String(
+  process.env.ARTIGEN_AGENT_SMOKE_PROFILE || 'dev'
+).trim().toLowerCase();
+if (!['dev', 'production'].includes(SMOKE_PROFILE)) {
+  console.error('AGENT_LOGIN_SMOKE_PROFILE_INVALID');
+  process.exit(64);
+}
+const PRODUCTION = SMOKE_PROFILE === 'production';
+const EXPECTED_KEYCHAIN_SERVICE = PRODUCTION
+  ? 'artigen-agent-production-worker'
+  : 'artigen-agent-dev-worker';
 const KEYCHAIN_SERVICE = String(
-  process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-dev-worker'
+  process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || EXPECTED_KEYCHAIN_SERVICE
 ).trim();
-if (KEYCHAIN_SERVICE !== 'artigen-agent-dev-worker') {
-  console.error('AGENT_DEV_LOGIN_SMOKE_KEYCHAIN_SERVICE_INVALID');
+if (KEYCHAIN_SERVICE !== EXPECTED_KEYCHAIN_SERVICE) {
+  console.error('AGENT_LOGIN_SMOKE_KEYCHAIN_SERVICE_INVALID');
   process.exit(64);
 }
 
@@ -31,24 +42,27 @@ const secretNames = [
   'S3_ACCESS_KEY_ID',
   'S3_SECRET_ACCESS_KEY'
 ];
+if (PRODUCTION) secretNames.push('AGENT_BETA_USER_IDS');
 const missing = [];
 for (const name of secretNames) {
   const value = readMacOsKeychainSecret({ service: KEYCHAIN_SERVICE, account: name });
   if (!value) missing.push(name);
   else process.env[name] = value;
 }
-let devAccessPassword = readMacOsKeychainSecret({
+let devAccessPassword = '';
+devAccessPassword = readMacOsKeychainSecret({
   service: 'Artigen Dev Access Password',
   account: 'artigen-dev'
 });
 if (!devAccessPassword) missing.push('ARTIGEN_DEV_ACCESS_PASSWORD');
 if (missing.length) {
-  console.error(`AGENT_DEV_LOGIN_SMOKE_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
+  console.error(`AGENT_LOGIN_SMOKE_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
   process.exit(78);
 }
 
 Object.assign(process.env, {
   NODE_ENV: 'production',
+  APP_ENV: PRODUCTION ? 'production' : 'dev',
   AGENT_FEATURE_ENABLED: 'true',
   AGENT_WORKER_ENABLED: '1',
   AGENT_RUNTIME_DRIVER: 'live',
@@ -63,8 +77,11 @@ Object.assign(process.env, {
   CUA_PYTHON: path.resolve(__dirname, '../.venv-agent/bin/python'),
   AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
   AGENT_BROWSER_MODE: 'full-approval-v1',
-  AGENT_WORKER_ID: 'artigen-dev-login-smoke-publisher',
+  AGENT_WORKER_ID: PRODUCTION
+    ? 'artigen-production-login-smoke-publisher'
+    : 'artigen-dev-login-smoke-publisher',
   AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser',
+  AGENT_BETA_MODE: PRODUCTION ? 'owner-only-v1' : 'disabled',
   AGENT_MAX_MINUTES: '45',
   AGENT_MAX_STEPS: '120',
   ASSET_STORAGE_DRIVER: 's3',
@@ -90,6 +107,34 @@ const selectSmokeUser = async (pool) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (PRODUCTION) {
+      const allowedUserIds = String(process.env.AGENT_BETA_USER_IDS || '')
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+      if (allowedUserIds.length !== 1) {
+        throw new Error('AGENT_PRODUCTION_LOGIN_SMOKE_OWNER_INVALID');
+      }
+      const owner = await client.query(
+        `SELECT id FROM users
+          WHERE id=$1::uuid AND status <> 'deleted'
+          LIMIT 1`,
+        [allowedUserIds[0]]
+      );
+      if (owner.rowCount !== 1) {
+        throw new Error('AGENT_PRODUCTION_LOGIN_SMOKE_OWNER_NOT_FOUND');
+      }
+      const active = await client.query(
+        `SELECT 1 FROM agent_runs
+          WHERE user_id=$1
+            AND status IN ('draft','queued','provisioning','running','waiting_user','paused','verifying')
+          LIMIT 1`,
+        [owner.rows[0].id]
+      );
+      if (active.rowCount) throw new Error('AGENT_PRODUCTION_LOGIN_SMOKE_USER_BUSY');
+      await client.query('COMMIT');
+      return owner.rows[0].id;
+    }
     const result = await client.query(
       `INSERT INTO users (email,display_name,status)
        VALUES ('agent-login-smoke@dev.artigen.invalid','Agent DEV Login Smoke','active')
@@ -206,20 +251,26 @@ const waitForTicketClosed = async (pool, ticketId) => {
 
 const createRun = ({ runService, userId, origin, profileId = null, restore = false }) => {
   const timestamp = new Date().toISOString();
+  const restorePath = '/artigen';
+  const environmentLabel = PRODUCTION
+    ? '由 Production Beta 浏览器访问的受控 DEV 登录验收页'
+    : 'Artigen DEV 页面';
   const objective = restore
     ? [
-        `访问 ${origin}/artigen，确认保存的单站登录会话已经恢复，页面可直接读取且没有再次要求 Basic Auth 接管。`,
+        `访问 ${origin}${restorePath}，确认保存的单站登录会话已经恢复，页面可直接读取且没有再次要求密码接管。`,
         '不要填写、提交或修改任何表单。',
         `创建 artigen-login-restore.md，记录验证时间 ${timestamp}、页面标题、登录会话恢复结果和来源 URL，`,
-        '再用 artigen-report-pdf 生成 artigen-login-restore.pdf；检查并声明 Markdown 与 PDF 两项交付物。'
+        '然后必须通过 sandbox_shell 直接执行 `artigen-report-pdf /tmp/artigen-workspace/artigen-login-restore.md /tmp/artigen-workspace/artigen-login-restore.pdf`，',
+        '不要编写自定义 Python PDF 脚本；检查并声明 Markdown 与 PDF 两项交付物。'
       ].join('')
     : [
         '这是一次受保护站点登录验收。在进行任何浏览器导航之前，必须立即调用 request_user_approval，',
         `actionType 使用 enter_password，recipient 使用 ${origin}，等待用户通过桌面接管完成登录。`,
         '不要尝试读取、填写、记录或猜测用户名、密码、OTP、验证码，也不要在模型上下文中请求这些值。',
-        '接管结束后只读取当前 Artigen DEV 页面，不要填写或提交页面里的任何表单。',
+        `接管结束后只读取当前${environmentLabel}，不要填写或提交页面里的任何表单。`,
         `创建 artigen-login-session.md，记录验证时间 ${timestamp}、页面标题、接管登录成功和来源 URL，`,
-        '再用 artigen-report-pdf 生成 artigen-login-session.pdf；检查并声明 Markdown 与 PDF 两项交付物。'
+        '然后必须通过 sandbox_shell 直接执行 `artigen-report-pdf /tmp/artigen-workspace/artigen-login-session.md /tmp/artigen-workspace/artigen-login-session.pdf`，',
+        '不要编写自定义 Python PDF 脚本；检查并声明 Markdown 与 PDF 两项交付物。'
       ].join('');
   return runService.createRun({
     userId,
@@ -233,7 +284,7 @@ const createRun = ({ runService, userId, origin, profileId = null, restore = fal
       profileId
     },
     deliverables: ['report'],
-    idempotencyKey: `dev-login-smoke-${restore ? 'restore' : 'capture'}-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`
+    idempotencyKey: `${SMOKE_PROFILE}-login-smoke-${restore ? 'restore' : 'capture'}-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`
   });
 };
 
@@ -244,7 +295,10 @@ const main = async () => {
   const sandbox = new CuaSandboxProvider({ env: process.env });
   const browserService = createAgentBrowserService({ sandbox, env: process.env });
   const relayUrl = new URL(process.env.AGENT_WORKER_RELAY_URL);
-  const origin = `https://${relayUrl.host}`;
+  const relayOrigin = `https://${relayUrl.host}`;
+  const origin = PRODUCTION
+    ? 'https://dev-artigen-app-fengfan.onrender.com'
+    : relayOrigin;
   const runIds = [];
   let userId = '';
   let profileId = '';
@@ -255,9 +309,27 @@ const main = async () => {
       status.enabled && status.workerOnline && status.browserReady &&
       status.egressVerified && status.desktopRelayReady && status.browserPublicEnabled
     )) {
-      throw new Error('AGENT_DEV_LOGIN_SMOKE_RUNTIME_NOT_READY');
+      throw new Error('AGENT_LOGIN_SMOKE_RUNTIME_NOT_READY');
     }
     userId = await selectSmokeUser(pool);
+    if (PRODUCTION) {
+      await runService.resolveUserAccess({ userId });
+      const outsider = await pool.query(
+        `SELECT id FROM users
+          WHERE id <> $1 AND status <> 'deleted'
+          ORDER BY created_at LIMIT 1`,
+        [userId]
+      );
+      if (!outsider.rowCount) throw new Error('AGENT_PRODUCTION_LOGIN_SMOKE_OUTSIDER_MISSING');
+      let outsiderDenied = false;
+      try {
+        await runService.resolveUserAccess({ userId: outsider.rows[0].id });
+      } catch (error) {
+        outsiderDenied = error?.code === 'AGENT_BETA_ACCESS_DENIED';
+      }
+      if (!outsiderDenied) throw new Error('AGENT_PRODUCTION_LOGIN_SMOKE_OUTSIDER_ALLOWED');
+      console.log(JSON.stringify({ event: 'beta-access.verified', mode: 'owner-only-v1' }));
+    }
     const captured = await createRun({ runService, userId, origin });
     runIds.push(captured.runId);
     console.log(JSON.stringify({ event: 'capture.created', runId: captured.runId }));
@@ -287,9 +359,11 @@ const main = async () => {
       approvalId: approval.approvalId
     });
     const viewer = relayViewerUrl({ relayUrl: process.env.AGENT_WORKER_RELAY_URL, token: ticket.token });
-    let authorization = `Basic ${Buffer.from(`artigen-dev:${devAccessPassword}`).toString('base64')}`;
+    let authorization = PRODUCTION
+      ? ''
+      : `Basic ${Buffer.from(`artigen-dev:${devAccessPassword}`).toString('base64')}`;
     try {
-      rfb = await connectRfb({ url: viewer, origin, authorization });
+      rfb = await connectRfb({ url: viewer, origin: relayOrigin, authorization });
     } finally {
       authorization = '';
     }
@@ -366,6 +440,7 @@ const main = async () => {
     }
     console.log(JSON.stringify({
       event: 'login-session.succeeded',
+      profile: SMOKE_PROFILE,
       captureRunId: captured.runId,
       restoreRunId: restored.runId,
       origin,

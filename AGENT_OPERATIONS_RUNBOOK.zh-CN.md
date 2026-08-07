@@ -6,6 +6,8 @@
 
 Artigen Agent 已切换为“硅基流动云端模型 + 本机 CUA 沙箱”：模型固定使用深度思考链路同款 `Qwen/Qwen3-8B`，沙箱使用本机 CUA + Docker，任务由 PostgreSQL/pg-boss 持久排队。无需下载本地 Qwen 模型，也不需要 CUA 云账号。
 
+**2026-08-07 Production Beta 更新：** 生产提交 `9bcc77d593e0747d5265f96f1f45b1dcb956b0bd` 已部署到 Render `main`，数据库迁移 020、共享 S3、Production Mac Worker、四项浏览器状态和 owner-only 白名单全部通过。生产登录捕获 run `0bfa9eef-a989-4400-9fcd-0bcb043c211d` 与会话恢复 run `20317cd5-77e8-40ca-ac74-ad845385bf96` 均为 `succeeded`，4 个 Markdown/PDF 交付物验证通过并存入 S3；会话随后撤销并擦除。完整交付与账号登录方式见 [ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md](./ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md)。
+
 当前本机的 `files + shell` Agent 已真实端到端跑通，不再只是单元测试通过。2026-08-06 的内容级烟测 run `e8262300-085b-4db4-b5e7-e2df2919ed56` 最终为 `succeeded`，轨迹评分 100；生成的 `agent-smoke.md` 经回读确认为 5 个真实物理行且不含字面量 `\\n`，并通过文件打开、ClamAV 病毒扫描、SHA-256 和数据库登记，任务结束后沙箱已销毁。
 
 2026-08-07 完成了受限出口后的发布级浏览器烟测 run `1dfa16bf-49a4-428b-a942-ef3e090258f3`：硅基流动 Qwen3-8B 经独立 CONNECT 代理打开 `https://example.com`，读取 DOM，生成 `example-summary.md` 与 `example-summary.pdf`。两份文件都通过打开、ClamAV、SHA-256、来源和格式验证，轨迹评分 100，run 最终 `succeeded`，沙箱/代理/控制 sidecar 和临时网络均已销毁。
@@ -23,7 +25,7 @@ PR #9 合入后的 Render DEV 提交 `af50290` 又以 run `d093a36c-37e4-47ff-9f
 | 检查项 | 当前状态 | 说明 |
 |---|---:|---|
 | Agent 单元/运行时测试 | 通过 | 包括硅基流动工具循环、小模型漏计划兜底、SSRF、票据、中继、路径和交付验证 |
-| 后端完整测试 | 通过 | 374 个测试，336 通过、38 跳过、0 失败 |
+| 后端完整测试 | 通过 | 381 个测试，343 通过、38 跳过、0 失败 |
 | 前端单元测试 | 通过 | 211/211 |
 | 前端 TypeScript/生产构建 | 通过 | noVNC 按需分包，Agent 工作台可编译并完成 Vite 构建 |
 | 本机数据库 | 通过 | 已迁移到 `020_agent_secure_browser_relay` |
@@ -34,12 +36,12 @@ PR #9 合入后的 Render DEV 提交 `af50290` 又以 run `d093a36c-37e4-47ff-9f
 | Worker 启动与心跳 | 通过 | 已真实记录 online 心跳，单并发 |
 | CUA 真实容器 | 通过 | 使用官方 `0.1.15` 多架构 arm64 底座和 Artigen v2 工具镜像 |
 | 最小真实 Agent 烟测 | 通过 | 云端模型、队列、CUA、文件执行、病毒扫描、资产登记、结算和销毁全部完成 |
-| 浏览器 Agent 技术链路 | 本机 DEV 通过 | 受限代理、CDP、`browser_dom`、Markdown+PDF、独立验证和销毁均真实通过 |
+| 浏览器 Agent 技术链路 | Production Beta 通过 | 受限代理、CDP、`browser_dom`、登录接管、会话恢复、Markdown+PDF、独立验证和销毁均真实通过 |
 | 浏览器 Agent 接管中继 | Render DEV 通过 | 远程票据、HMAC、WebSocket、raw VNC 握手和清理均真实通过 |
-| 浏览器 Agent 公开能力 | Render DEV 已开启 | `files,shell,browser`；远程队列、Mac Worker 和共享 S3 烟测通过，Production 尚未开启 |
-| Playwright Chromium | 通过 | 桌面/360px/390px 完整套件 203 通过、1 条条件跳过、0 失败 |
+| 浏览器 Agent 公开能力 | Production owner-only 已开启 | `files,shell,browser`；仅 `876458930@qq.com` 对应 UUID 可用，其他用户拒绝 |
+| Playwright 多浏览器矩阵 | 通过 | 本地六项目 405 通过、3 条条件跳过、0 失败；PR #12 Release gate 通过 |
 | DEV Render | 通过核心分布式烟测 | 迁移 020、四项 Worker 状态、浏览、MD/PDF、共享 S3 上传和读回均通过 |
-| 生产 Agent | 未启用 | 生产站标准功能在线，但尚未部署 Agent 代码、迁移和 Production Worker |
+| 生产 Agent | Production Beta 在线 | Render SHA `9bcc77d`、迁移 020、共享 S3、Mac Worker 和四项状态均通过 |
 
 系统盘当前约有 19.3GB 可用，所需 CUA v2 镜像和 Playwright Chromium 1.61.1 对应浏览器已安装并保留。Hugging Face、Ollama、PostgreSQL/Redis 数据卷和项目环境未被清理。
 
@@ -230,7 +232,7 @@ pnpm --filter backend db:migrate
 pnpm --filter personal exec playwright install chromium
 ```
 
-目前只安装 Chromium；Firefox 和 WebKit 尚未安装，不能把 Chromium 结果写成“全浏览器兼容性已经验证”。
+本次发布已在本机完成 Chromium、Firefox、WebKit 的六项目 Playwright 矩阵：405 通过、3 条条件跳过、0 失败。GitHub PR #12 的分片浏览器 E2E 和 Release gate 也已通过。
 
 本地模式使用基于 Cua 官方 `0.1.15` 多架构 manifest 构建的 Artigen 工具镜像；
 Docker 会自动选择原生 arm64/amd64。先拉取底座，再一次性构建 Chromium、
@@ -486,19 +488,19 @@ Worker 使用 `Ctrl+C` 或 `SIGTERM` 停止。停止过程中数据库心跳先�
 - 文件交付使用共享 S3 兼容对象存储，而不是某台机器的本地目录；DEV 已实测上传、跨进程读回和摘要一致；
 - Worker 机器能长期在线，睡眠/关机策略已处理；
 - 备份、额度释放、24 小时队列过期和 Worker 离线提示已在预发布环境验证；
-- 前端 Playwright Chromium 已安装；Agent 三个 Chromium 项目 21/21 通过，完整桌面套件 67 通过、1 条条件跳过、0 失败。
-- 如上线目标要求 Firefox/WebKit 兼容性，先安装对应 Playwright 浏览器并跑完剩余项目。
+- 本地 Chromium、Firefox、WebKit 六项目矩阵 405 通过、3 条条件跳过、0 失败；PR #12 分片 E2E 和 Release gate 通过。
+- Firefox/WebKit 继续与 Chromium 一起纳入发布矩阵，版本升级后必须重跑。
 
 线上采用“云端网页/数据库 + 本机 Worker”时，访问网站的用户不会直接连接你的 Mac。后端只把任务写入数据库；远程接管时 Mac 主动建立临时 WSS，中继结束即关闭。不要给家用路由器开放 Docker、CUA 或 VNC 端口。
 
 ## 12. 当前下一步
 
-1. 将已通过 374 项后端回归、远程接管和共享 S3 烟测的补丁合入 `dev`，等待 Render/Vercel/Chromium CI 全绿。
-2. 在 DEV Render 通过正常 Artigen 用户 UI 重做真实站点登录和会话保存/恢复/撤销；自动化接管中继已经通过，但测试没有使用真实账号。
-3. 配置独立的 `artigen-agent-production-worker` Keychain 项和 Production Agent secrets，再安装 Production LaunchAgent。
-4. 已有生产 Neon 手工备份作为发布前检查点；发布窗口仍需复核备份并将已验收的 `dev` 合入 `main`，把生产 Render 部署源改为 `main`，先只对所有者账号开放。
-5. 保持 Render Free 的 Beta 标识；需要 24×7 再升级 Render 并迁移 Worker。
+1. 保持 owner-only Beta，先观察真实使用中的队列长度、任务失败率、S3 使用量和沙箱清理。
+2. 保持 Mac 接通电源、登录状态和 Docker Desktop；定期检查 Production LaunchAgent 与四项 Agent 状态。
+3. 建立 Neon 定时加密备份和隔离恢复演练；当前已有发布前手工 dump 和 SHA-256。
+4. 只有观察稳定后再增加 Beta UUID；不要直接改为公开所有用户。
+5. 需要 24×7 时升级 Render Starter，并把 Worker 迁移到专用 Linux 主机。
 
 当前准确表述是：
 
-> Artigen Agent 已在 Render DEV + Neon + Mac Worker 的分布式环境真实跑通受限浏览、Markdown/PDF 独立验证、共享 S3 上传与读回，以及一次性票据远程接管；本机加密会话保存/恢复/撤销也已通过。DEV 网页端真实账号登录/会话复验与 Production Beta 发布尚未完成，因此仍不能宣称生产站 Agent 已上线。
+> Artigen 浏览器 Agent 已作为 owner-only Production Beta 上线，并完成真实登录接管、加密会话保存/恢复/撤销、Markdown/PDF 独立验证和共享 S3 交付。由于 Render Free 和 Mac Worker 都不提供 24×7 SLA，不能宣称为高可用正式生产服务。

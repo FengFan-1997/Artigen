@@ -240,6 +240,7 @@ test('PostgreSQL CLI URLs are split into libpq environment variables instead of 
       assert.equal(env.PGDATABASE, 'artigen');
       assert.equal(env.PGSSLMODE, 'verify-full');
       assert.equal(env.PGCHANNELBINDING, 'require');
+      assert.ok(env.PGSSLROOTCERT);
     },
     {}
   );

@@ -298,6 +298,15 @@ const withPgCliEnvironment = async (connectionString, callback, env = process.en
     if (value) cliEnv[environmentName] = value;
   }
   const ca = decodeCa(env);
+  if (
+    !ca && !cliEnv.PGSSLROOTCERT &&
+    ['require', 'verify-ca', 'verify-full'].includes(String(cliEnv.PGSSLMODE || '').toLowerCase())
+  ) {
+    cliEnv.PGSSLROOTCERT = String(env.PG_SYSTEM_ROOT_CERT || '').trim() ||
+      ['/etc/ssl/cert.pem', '/etc/ssl/certs/ca-certificates.crt']
+        .find((candidate) => fs.existsSync(candidate)) ||
+      'system';
+  }
   let temporaryDirectory = '';
   try {
     if (ca) {
