@@ -24,6 +24,7 @@ const {
   getAgentConfig
 } = require('../services/agent-config');
 const {
+  AgentWaitingForUser,
   OllamaAgentModelProvider,
   OpenAiAgentModelProvider,
   SiliconFlowAgentModelProvider,
@@ -97,7 +98,8 @@ const {
   createAgentCostMeter
 } = require('../services/agent-worker-service');
 const {
-  AgentQueueWorker
+  AgentQueueWorker,
+  attachBossErrorLogging
 } = require('../services/agent-queue-service');
 
 const encryptionEnv = {
@@ -507,6 +509,23 @@ test('queue reconciliation coalesces overlapping cleanup passes', async () => {
   assert.equal(cleanupCalls, 1);
   releaseCleanup();
   assert.deepEqual(await Promise.all([first, second]), [0, 0]);
+});
+
+test('Agent pg-boss transient errors are handled instead of crashing the Worker', () => {
+  const { EventEmitter } = require('node:events');
+  const boss = new EventEmitter();
+  const originalError = console.error;
+  const observed = [];
+  console.error = (...args) => observed.push(args.join(' '));
+  try {
+    assert.equal(attachBossErrorLogging(boss, 'Agent test'), true);
+    assert.equal(attachBossErrorLogging(boss, 'Agent duplicate'), true);
+    assert.equal(boss.listenerCount('error'), 1);
+    boss.emit('error', Object.assign(new Error('connection timeout'), { code: 'ETIMEDOUT' }));
+    assert.ok(observed.some((entry) => entry.includes('ETIMEDOUT')));
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test('loop breakers stop repeated failures, stalled screenshots, replans and step overruns', () => {
@@ -1322,7 +1341,7 @@ test('Ollama file agent executes a sequential durable tool loop on loopback', as
   assert.equal(requests[0].options.num_ctx, 16384);
   assert.deepEqual(
     requests[0].tools.map((tool) => tool.function.name),
-    ['update_plan', 'sandbox_shell', 'declare_artifact']
+    ['update_plan', 'sandbox_shell', 'declare_artifact', 'request_user_approval']
   );
   assert.ok(ollamaUsageCredits({ prompt_eval_count: 1_000_000, eval_count: 1_000_000 }) > 0);
 });
@@ -1474,7 +1493,7 @@ test('SiliconFlow Qwen3-8B agent executes the durable file-tool loop without loc
   assert.equal(requests[0].max_tokens, 4096);
   assert.deepEqual(
     requests[0].tools.map((tool) => tool.function.name),
-    ['update_plan', 'sandbox_shell', 'declare_artifact']
+    ['update_plan', 'sandbox_shell', 'declare_artifact', 'request_user_approval']
   );
   assert.ok(requests.some((request) => request.messages.some((message) => (
     message.role === 'tool' &&
@@ -1657,14 +1676,79 @@ test('SiliconFlow serializes parallel Qwen tool calls into protocol-valid turns'
   )));
 });
 
+test('SiliconFlow Qwen can pause for a password or OTP desktop takeover', async () => {
+  const approval = {
+    id: 'approval-takeover',
+    risk_level: 'blocked',
+    consumed: false
+  };
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async () => new Response(JSON.stringify({
+      id: 'chat-takeover',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call-takeover',
+            type: 'function',
+            function: {
+              name: 'request_user_approval',
+              arguments: JSON.stringify({
+                actionType: 'enter_password',
+                recipient: 'https://example.com',
+                changeSummary: '用户接管后自行输入密码',
+                evidenceSummary: '页面显示密码输入框',
+                impactSummary: '模型暂停，用户在隔离浏览器内完成登录',
+                rollbackSummary: '关闭接管窗口并取消任务即可停止'
+              })
+            }
+          }]
+        }
+      }],
+      usage: {}
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  await assert.rejects(() => provider.execute({
+    objective: 'Wait for the user to log in',
+    capabilities: { browser: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      requestApproval: async () => approval,
+      saveModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  }), (error) => (
+    error instanceof AgentWaitingForUser &&
+    error.code === 'AGENT_WAITING_FOR_USER' &&
+    error.approval === approval
+  ));
+});
+
 test('SiliconFlow exposes browser_dom only when the run grants browser capability', () => {
   assert.deepEqual(
     ollamaFileTools({ files: true }).map((tool) => tool.function.name),
-    ['update_plan', 'sandbox_shell', 'declare_artifact']
+    ['update_plan', 'sandbox_shell', 'declare_artifact', 'request_user_approval']
   );
   assert.deepEqual(
     ollamaFileTools({ files: true, browser: true }).map((tool) => tool.function.name),
-    ['update_plan', 'browser_dom', 'sandbox_shell', 'declare_artifact']
+    [
+      'update_plan',
+      'browser_dom',
+      'sandbox_shell',
+      'declare_artifact',
+      'request_user_approval'
+    ]
   );
 });
 

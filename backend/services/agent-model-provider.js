@@ -322,7 +322,8 @@ const waitForSiliconFlowAgentSlot = async (env = process.env) => {
 const OLLAMA_FILE_TOOL_NAMES = new Set([
   'update_plan',
   'sandbox_shell',
-  'declare_artifact'
+  'declare_artifact',
+  'request_user_approval'
 ]);
 
 const ollamaFileTools = (capabilities = {}) => FUNCTION_TOOLS
@@ -910,6 +911,14 @@ class OllamaAgentModelProvider {
           accepted: true,
           artifactId: artifact.artifactId,
           verificationStatus: artifact.verificationStatus
+        };
+      }
+      if (call.name === 'request_user_approval') {
+        const approval = await callbacks.requestApproval(args);
+        if (!approval?.consumed) throw new AgentWaitingForUser(approval);
+        return {
+          approved: approval.approved !== false && approval.status !== 'denied',
+          approvalId: approval.id
         };
       }
       throw new ApiError(502, 'AGENT_MODEL_TOOL_UNSUPPORTED');

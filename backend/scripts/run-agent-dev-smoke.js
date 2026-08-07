@@ -105,7 +105,7 @@ const selectSmokeUser = async (pool) => {
     const active = await client.query(
       `SELECT 1 FROM agent_runs
         WHERE user_id=$1
-          AND status IN ('draft','queued','running','waiting_user','paused','verifying')
+          AND status IN ('draft','queued','provisioning','running','waiting_user','paused','verifying')
         LIMIT 1`,
       [userId]
     );

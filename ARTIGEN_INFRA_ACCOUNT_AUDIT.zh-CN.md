@@ -542,11 +542,11 @@ security find-generic-password -s 'Artigen Dev Access Password' -w
 | 环境 | 代码/数据库状态 |
 |---|---|
 | 生产 Render/Vercel | `codex/artigen-overhaul`，提交 `10c15249...`，迁移 `011` |
-| 开发 Render | `dev`，提交 `c53b4b9...`，迁移 `020_agent_secure_browser_relay`，Agent 四项状态均通过 |
+| 开发 Render | `dev`，迁移 `020_agent_secure_browser_relay`，Agent 四项状态与远程接管均通过；具体提交以 Render 当前 deploy 为准 |
 | 本地数据库 | 迁移 `020_agent_secure_browser_relay` |
-| 当前功能分支 | `codex/agent-runtime-local`；主体提交 `3135016` 已通过 PR #8 合入 `dev`，其后的 Keychain/远程 Worker/Qwen 顺序调用修复待提交 |
+| 当前功能分支 | `codex/agent-runtime-local`；主体提交 `3135016` 已通过 PR #8 合入 `dev`，后续 Keychain、远程 Worker、Qwen 顺序调用、接管与恢复补丁由 PR #9 跟踪 |
 
-当前工作区只保留后续 Keychain/远程 Worker、烟测脚本、Qwen 顺序工具调用修复和文档更新；仍不能把未合入部分视为已部署代码。
+PR #9 是否已经合入及 Render 是否完成对应部署，应以 GitHub checks 和 Render deploy commit 为准；不能仅凭本机分支存在补丁就写成已经部署。
 
 尤其是 Agent Beta：
 
@@ -554,7 +554,7 @@ security find-generic-password -s 'Artigen Dev Access Password' -w
 - 没有发现独立 Agent worker 的线上部署证据；
 - 仓库存在 `railway.json`，但没有发现正在运行的 Railway 资源证据。
 
-2026-08-07 本机 DEV 已真实完成受限浏览器 Markdown+PDF run `1dfa16bf-49a4-428b-a942-ef3e090258f3`（`succeeded`、轨迹 100、两份交付物验证通过、容器清理）以及桌面中继 run `3ddfdc37-91d9-462d-af70-e8ebaf812ef2`（真实 `RFB 003.008` 握手、票据 consumed/started/closed、无真实凭据）。同日远程 DEV run `f32c30bf-ed26-4fc9-aa0a-0daaa878ca24` 又证明了 Render DEV/Neon 队列、Mac Worker、restricted-v1 浏览、Qwen3-8B、Markdown/PDF、独立验证、共享 Neon S3 上传及跨进程读回完整可用。DEV 网页端真实登录接管/会话复验和 Production 验收仍未完成。
+2026-08-07 本机 DEV 已真实完成受限浏览器 Markdown+PDF run `1dfa16bf-49a4-428b-a942-ef3e090258f3`（`succeeded`、轨迹 100、两份交付物验证通过、容器清理）以及桌面中继 run `3ddfdc37-91d9-462d-af70-e8ebaf812ef2`（真实 `RFB 003.008` 握手、票据 consumed/started/closed、无真实凭据）。同日远程 DEV run `f32c30bf-ed26-4fc9-aa0a-0daaa878ca24` 又证明了 Render DEV/Neon 队列、Mac Worker、restricted-v1 浏览、Qwen3-8B、Markdown/PDF、独立验证、共享 Neon S3 上传及跨进程读回完整可用；run `06035a9d-b19f-4e1d-ba73-c58fa954fff8` 进一步证明 Qwen blocked 审批、60 秒票据、Render WSS 中继和 Mac VNC 握手完整可用。两项远程烟测均未使用真实登录凭据。DEV 网页端真实账号登录/会话复验和 Production 验收仍未完成。
 
 所以当前不能对外宣称 Agent Beta 已部署。
 

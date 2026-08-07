@@ -136,7 +136,12 @@ AGENT_PUBLIC_CAPABILITIES=files,shell,browser
 | 2026-08-07 | 本机 DEV | run `3ddfdc37-91d9-462d-af70-e8ebaf812ef2` | viewer 收到 `RFB 003.008`；票据 hash-only、consumed/started/closed；无真实凭据；沙箱清理 |
 | 2026-08-07 | 本机 DEV | runs `0cc3eca1-a22e-4067-8167-931d660f0b2b`、`3c203a72-a088-4c5d-9afa-1b60f9d68a40` | 单 Origin profile 加密保存、恢复后 `last_used_at` 更新、撤销后密文覆盖且列表不可见；无真实登录数据 |
 | 2026-08-07 | Render DEV + Neon + Mac Worker | run `f32c30bf-ed26-4fc9-aa0a-0daaa878ca24` | `succeeded`；四项 Worker 状态 true；restricted-v1 浏览；MD/PDF 验证 passed；两项资产均为 S3，跨进程读回字节数和 SHA-256 一致；容器/网络清理 |
+| 2026-08-07 | Render DEV + Neon + Mac Worker | run `06035a9d-b19f-4e1d-ba73-c58fa954fff8` | Qwen 主动请求 blocked 密码接管；任务停在 `waiting_user`；60 秒票据 consumed/started/closed；viewer 收到本机 VNC `RFB 003.008`；无真实凭据；容器/网络清理 |
 
 远程烟测前一次 run `e0698848-7a7f-4083-b398-03eb5e6c7dbb` 安全失败于 `AGENT_MODEL_PARALLEL_CALLS_UNEXPECTED`，证明 Qwen3-8B 可能忽略 `parallel_tool_calls=false`。运行时现只保留首个调用并逐轮执行，保证每个工具调用都单独通过策略和审批；新增回归测试后，上表远程 run 完整通过。
 
-DEV 网页端真实登录接管、远程会话恢复/撤销和 Production Agent `/readyz` 仍未记录为通过；不能仅凭 DEV 核心链路结果宣称 Production Agent 已上线。
+Qwen3-8B 的云端工具集合同时显式提供 `request_user_approval`。模型发现密码、OTP、CAPTCHA 或安全警告时可以创建 blocked takeover，而不必尝试填值；未消费的审批会保存加密断点并把 run 留在 `waiting_user`，由一次性桌面票据接管。
+
+远程接管前一次 run `1b14c330-e83f-4472-a35c-d1ccf8eaec1f` 暴露了两个真实运维问题：Neon 瞬时连接超时触发 pg-boss 未处理 `error`，以及 Render/Keychain 中继密钥不一致。租约恢复已证明 Worker 重启后不会重复创建 run；运行时现显式监听 pg-boss `error`/`warning`，中继密钥已通过 Keychain 对齐并轮换，随后用上表 run 重测通过。任何密钥值都不记录在本文档、日志或 Git 中。
+
+DEV 网页端真实账号登录、远程会话恢复/撤销和 Production Agent `/readyz` 仍未记录为通过；不能仅凭 DEV 核心链路结果宣称 Production Agent 已上线。
