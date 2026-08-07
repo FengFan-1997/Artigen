@@ -138,6 +138,8 @@ AGENT_PUBLIC_CAPABILITIES=files,shell,browser
 | 2026-08-07 | Render DEV + Neon + Mac Worker | run `f32c30bf-ed26-4fc9-aa0a-0daaa878ca24` | `succeeded`；四项 Worker 状态 true；restricted-v1 浏览；MD/PDF 验证 passed；两项资产均为 S3，跨进程读回字节数和 SHA-256 一致；容器/网络清理 |
 | 2026-08-07 | Render DEV + Neon + Mac Worker | run `06035a9d-b19f-4e1d-ba73-c58fa954fff8` | Qwen 主动请求 blocked 密码接管；任务停在 `waiting_user`；60 秒票据 consumed/started/closed；viewer 收到本机 VNC `RFB 003.008`；无真实凭据；容器/网络清理 |
 | 2026-08-07 | Render DEV `af50290` + Neon + Mac Worker | run `d093a36c-37e4-47ff-9f7b-8cc3fb7ecf1f` | PR #9 合入后的重复验收；blocked 审批、60 秒票据、Render WSS、Mac VNC `RFB 003.008` 和关闭清理再次通过；无真实凭据 |
+| 2026-08-07 | Render DEV `9c7bf5d` + Neon + Mac Worker | runs `8526e907-bba1-437d-b713-cbcb486423d9`、`88175fb9-ffd2-4a16-986c-460504738a5a` | 真实受保护登录接管、加密会话保存/恢复/撤销、4 个 S3 交付物和摘要验证通过 |
+| 2026-08-07 | Production `9bcc77d` + Neon + Mac Worker | runs `0bfa9eef-a989-4400-9fcd-0bcb043c211d`、`20317cd5-77e8-40ca-ac74-ad845385bf96` | owner-only 与 outsider 拒绝通过；真实登录接管、`RFB 003.008`、会话恢复/撤销、4 个 MD/PDF 验证和共享 S3 读回通过 |
 
 远程烟测前一次 run `e0698848-7a7f-4083-b398-03eb5e6c7dbb` 安全失败于 `AGENT_MODEL_PARALLEL_CALLS_UNEXPECTED`，证明 Qwen3-8B 可能忽略 `parallel_tool_calls=false`。运行时现只保留首个调用并逐轮执行，保证每个工具调用都单独通过策略和审批；新增回归测试后，上表远程 run 完整通过。
 
@@ -145,4 +147,4 @@ Qwen3-8B 的云端工具集合同时显式提供 `request_user_approval`。模�
 
 远程接管前一次 run `1b14c330-e83f-4472-a35c-d1ccf8eaec1f` 暴露了两个真实运维问题：Neon 瞬时连接超时触发 pg-boss 未处理 `error`，以及 Render/Keychain 中继密钥不一致。租约恢复已证明 Worker 重启后不会重复创建 run；运行时现显式监听 pg-boss `error`/`warning`，中继密钥已通过 Keychain 对齐并轮换，随后用上表 run 重测通过。任何密钥值都不记录在本文档、日志或 Git 中。
 
-DEV 网页端真实账号登录、远程会话恢复/撤销和 Production Agent `/readyz` 仍未记录为通过；不能仅凭 DEV 核心链路结果宣称 Production Agent 已上线。
+Production `/readyz` 已确认迁移 020、共享 S3、Qwen3-8B、`full-approval-v1`、`restricted-v1` 和 owner-only 配置；`workerOnline`、`browserReady`、`egressVerified`、`desktopRelayReady` 均为 true。Production 登录捕获和恢复 run 已成功，密码精确值不在事件、步骤、审批、交付物、模型断点或 Worker 日志中。当前可准确称为 **owner-only Production Beta**，但受 Render Free 与 Mac Worker 在线状态限制，不能称为 24×7 高可用生产服务。完整记录见 [ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md](./ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md)。

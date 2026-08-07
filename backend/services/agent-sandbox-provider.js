@@ -104,7 +104,13 @@ const runBridge = ({
     if (settled) return;
     child.kill('SIGKILL');
     settled = true;
-    reject(new ApiError(504, 'AGENT_SANDBOX_TIMEOUT', { retryable: true }));
+    reject(new ApiError(504, 'AGENT_SANDBOX_TIMEOUT', {
+      retryable: true,
+      details: {
+        command: String(payload?.command || 'unknown').slice(0, 80),
+        timeoutMs
+      }
+    }));
   }, timeoutMs);
   timer.unref?.();
   child.stdout.on('data', (chunk) => {

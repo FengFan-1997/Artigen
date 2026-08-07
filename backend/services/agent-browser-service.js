@@ -103,7 +103,7 @@ const createAgentBrowserService = ({ sandbox, env = process.env } = {}) => {
     );
     if (!started.success) {
       throw new ApiError(503, 'AGENT_BROWSER_INITIALIZATION_FAILED', {
-        detail: sanitizeText(started.stderr, 300)
+        details: { detail: sanitizeText(started.stderr, 300) }
       });
     }
     return true;
@@ -125,7 +125,7 @@ const createAgentBrowserService = ({ sandbox, env = process.env } = {}) => {
     );
     if (!result.success) {
       throw new ApiError(422, 'AGENT_BROWSER_ACTION_FAILED', {
-        detail: sanitizeText(result.stderr, 300)
+        details: { detail: sanitizeText(result.stderr, 300) }
       });
     }
     let output;

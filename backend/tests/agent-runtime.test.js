@@ -881,6 +881,41 @@ test('browser initialization daemonizes Chromium without holding the Cua shell o
   assert.equal(shell.timeout, 30);
 });
 
+test('browser failures preserve bounded sandbox diagnostics', async () => {
+  const initialization = createAgentBrowserService({
+    env: { AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1' },
+    sandbox: {
+      writeFile: async () => {},
+      systemShell: async () => ({ success: false, stdout: '', stderr: 'chromium failed safely' })
+    }
+  });
+  await assert.rejects(
+    initialization.initialize({ sandboxName: 'sandbox-1' }),
+    (error) => (
+      error.code === 'AGENT_BROWSER_INITIALIZATION_FAILED' &&
+      error.details?.detail === 'chromium failed safely'
+    )
+  );
+
+  const action = createAgentBrowserService({
+    env: { AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1' },
+    sandbox: {
+      systemShell: async () => ({ success: false, stdout: '', stderr: 'playwright failed safely' })
+    }
+  });
+  await assert.rejects(
+    action.execute({
+      sandboxName: 'sandbox-1',
+      request: { action: 'snapshot', selector: '', url: '', text: '' },
+      allowedOrigins: ['https://example.com']
+    }),
+    (error) => (
+      error.code === 'AGENT_BROWSER_ACTION_FAILED' &&
+      error.details?.detail === 'playwright failed safely'
+    )
+  );
+});
+
 test('saved browser profile shuts down only the pidfile-owned Chromium process', () => {
   const workerSource = require('node:fs').readFileSync(
     require('node:path').resolve(__dirname, '../services/agent-worker-service.js'),

@@ -48,6 +48,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
   ${production ? '<dict><key>SuccessfulExit</key><false/></dict>' : '<false/>'}
   <key>ThrottleInterval</key><integer>30</integer>
   <key>ProcessType</key><string>Background</string>
+  <key>Umask</key><integer>63</integer>
   <key>StandardOutPath</key><string>${escapeXml(path.join(logDir, `${label}.log`))}</string>
   <key>StandardErrorPath</key><string>${escapeXml(path.join(logDir, `${label}.error.log`))}</string>
   <key>EnvironmentVariables</key>
