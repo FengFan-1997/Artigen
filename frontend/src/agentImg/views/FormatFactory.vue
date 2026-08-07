@@ -36,17 +36,58 @@
       </div>
     </div>
 
+    <section class="tool-discovery" :aria-label="currentLang === 'zh' ? '查找工具' : 'Find tools'">
+      <div class="tool-search">
+        <span aria-hidden="true">⌕</span>
+        <input
+          v-model.trim="toolSearch"
+          type="search"
+          :placeholder="currentLang === 'zh' ? '搜索用途或格式，例如 PDF、压缩、视频…' : 'Search by result or format, e.g. PDF, compress, video…'"
+        />
+      </div>
+      <div class="category-tabs">
+        <button
+          v-for="category in toolCategories"
+          :key="category.id"
+          type="button"
+          :class="{ active: selectedToolCategory === category.id }"
+          @click="selectedToolCategory = category.id"
+        >
+          {{ category.label }}
+        </button>
+      </div>
+      <div v-if="recentTools.length" class="recent-tools">
+        <span>{{ currentLang === 'zh' ? '最近使用' : 'Recent' }}</span>
+        <button v-for="tool in recentTools" :key="tool.id" type="button" @click="handleToolClick(tool)">
+          {{ tool.name }}
+        </button>
+      </div>
+    </section>
+
     <div class="tools-grid">
-      <button
-        v-for="tool in displayTools"
+      <article
+        v-for="tool in filteredTools"
         :key="tool.id"
-        type="button"
         class="tool-card"
         :class="{ disabled: tool.status !== 'ready' }"
-        :disabled="tool.status !== 'ready'"
-        @click="handleToolClick(tool)"
       >
         <div class="card-status" v-if="tool.status === 'ready'"></div>
+        <button
+          v-if="tool.status === 'ready'"
+          class="tool-card-open"
+          type="button"
+          :aria-label="`${currentLang === 'zh' ? '打开' : 'Open'} ${tool.name}`"
+          @click="handleToolClick(tool)"
+        ></button>
+        <button
+          class="favorite-tool"
+          type="button"
+          :aria-pressed="favoriteToolIds.includes(tool.id)"
+          :aria-label="favoriteToolIds.includes(tool.id) ? (currentLang === 'zh' ? '取消收藏' : 'Remove favorite') : (currentLang === 'zh' ? '收藏工具' : 'Favorite tool')"
+          @click.stop="toggleToolFavorite(tool.id)"
+        >
+          {{ favoriteToolIds.includes(tool.id) ? '★' : '☆' }}
+        </button>
 
         <div class="icon-box">
           <div
@@ -82,7 +123,10 @@
               <polyline points="12 5 19 12 12 19"></polyline></svg
           ></span>
         </div>
-      </button>
+      </article>
+    </div>
+    <div v-if="!filteredTools.length" class="tool-empty">
+      {{ currentLang === 'zh' ? '没有匹配的工具，试试更短的关键词。' : 'No tools match. Try a shorter search.' }}
     </div>
 
     <div class="security-note">{{ ui.securityNote }}</div>
@@ -1263,7 +1307,8 @@ import { formatTime } from '../logic/formatFactory/format';
 import { useLanguageStore } from '@/stores/language';
 import { useConsoleStore } from '@/stores/console';
 import { trackEvent } from '@/utils/analytics';
-import { getToolDefinition, toolDefinitions } from '../domain/toolCatalog';
+import { getToolDefinition } from '../domain/toolCatalog';
+import { locationForToolEntry } from '../domain/toolEntry';
 import type { ImagePipelineStepType } from '../logic/formatFactory/imagePipeline';
 
 const languageStore = useLanguageStore();
@@ -1276,6 +1321,8 @@ let toolModalReturnFocus: HTMLElement | null = null;
 let toolModalObserver: MutationObserver | null = null;
 
 onMounted(() => {
+  favoriteToolIds.value = readToolIds('artigen:favorite-tools');
+  recentToolIds.value = readToolIds('artigen:recent-tools').slice(0, 5);
   consoleStore.recordTraffic({
     type: 'page_view',
     page: '/artigen/tools',
@@ -1797,28 +1844,63 @@ const {
   onDrop
 } = useFormatFactory();
 
-const workflowDefinitions = toolDefinitions.filter((tool) => tool.kind === 'tool');
-const displayTools = computed(() =>
-  workflowDefinitions.map((workflow) => {
-    const operation = tools.value.find((tool) => workflow.legacyIds.includes(tool.id));
-    return {
-      ...(operation || tools.value[0]),
-      id: workflow.id,
-      name: currentLang.value === 'en' ? workflow.name.en : workflow.name.zh,
-      description:
-        currentLang.value === 'en' ? workflow.description.en : workflow.description.zh,
-      tag:
-        workflow.execution === 'local'
-          ? currentLang.value === 'en'
-            ? 'Local · Private'
-            : '本地 · 隐私优先'
-          : currentLang.value === 'en'
-            ? 'Local / Server Choice'
-            : '本地 / 服务端可选',
-      status: 'ready' as const
-    };
-  })
+const displayTools = computed(() => tools.value);
+type ToolCategoryId = 'all' | 'image' | 'pdf' | 'video' | 'document' | 'privacy' | 'favorites';
+const toolSearch = ref('');
+const selectedToolCategory = ref<ToolCategoryId>('all');
+const favoriteToolIds = ref<string[]>([]);
+const recentToolIds = ref<string[]>([]);
+const readToolIds = (key: string) => {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+};
+const storeToolIds = (key: string, value: string[]) => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+};
+const toolCategory = (id: string): Exclude<ToolCategoryId, 'all' | 'favorites'> => {
+  if (id === 'watermark') return 'privacy';
+  if (['live', 'gif'].includes(id)) return 'video';
+  if (['pdf', 'img2pdf'].includes(id)) return 'pdf';
+  if (['pdf2word', 'word2pdf', 'txt2pdf', 'ingredient-list'].includes(id)) return 'document';
+  return 'image';
+};
+const toolCategories = computed(() => {
+  const labels = currentLang.value === 'zh'
+    ? ['全部', '图片', 'PDF', '视频', '文档', '隐私', '收藏']
+    : ['All', 'Image', 'PDF', 'Video', 'Document', 'Privacy', 'Favorites'];
+  const ids: ToolCategoryId[] = ['all', 'image', 'pdf', 'video', 'document', 'privacy', 'favorites'];
+  return ids.map((id, index) => ({ id, label: labels[index] }));
+});
+const filteredTools = computed(() => {
+  const query = toolSearch.value.toLocaleLowerCase();
+  return displayTools.value.filter((tool) => {
+    const categoryMatches = selectedToolCategory.value === 'all'
+      || selectedToolCategory.value === 'favorites' && favoriteToolIds.value.includes(tool.id)
+      || toolCategory(tool.id) === selectedToolCategory.value;
+    if (!categoryMatches) return false;
+    if (!query) return true;
+    return [tool.name, tool.nameEn, tool.description, tool.descriptionEn, tool.tag, tool.id]
+      .some((value) => String(value || '').toLocaleLowerCase().includes(query));
+  });
+});
+const recentTools = computed(() =>
+  recentToolIds.value
+    .map((id) => displayTools.value.find((tool) => tool.id === id))
+    .filter((tool): tool is Exclude<typeof tool, undefined> => Boolean(tool))
 );
+const toggleToolFavorite = (id: string) => {
+  favoriteToolIds.value = favoriteToolIds.value.includes(id)
+    ? favoriteToolIds.value.filter((value) => value !== id)
+    : [id, ...favoriteToolIds.value];
+  storeToolIds('artigen:favorite-tools', favoriteToolIds.value);
+  trackEvent('tool_favorite', { toolId: id, favorite: favoriteToolIds.value.includes(id) });
+};
 
 const activeWorkflow = computed(() => {
   const tool = getToolDefinition(String(route.params.toolId || '').trim());
@@ -1924,6 +2006,9 @@ watch(
 const handleToolClick = (tool: any) => {
   const id = String(tool?.id || '').trim();
   const name = String(tool?.name || '').trim();
+  if (!id) return;
+  recentToolIds.value = [id, ...recentToolIds.value.filter((value) => value !== id)].slice(0, 5);
+  storeToolIds('artigen:recent-tools', recentToolIds.value);
   trackEvent('ff_tool_click', { category: 'funnel', toolId: id, toolName: name });
   consoleStore.recordTraffic({
     type: 'click',
@@ -1931,10 +2016,9 @@ const handleToolClick = (tool: any) => {
     target: `tool:${id}`,
     meta: { toolName: name }
   });
-  const workflow = getToolDefinition(id);
-  if (!workflow || workflow.kind !== 'tool') return;
-  const operation = workflow.id === 'image-batch' ? 'pipeline' : workflow.legacyIds[0];
-  router.push({ path: workflow.route, query: { operation } }).catch(() => {});
+  const location = locationForToolEntry(id);
+  if (!location) return;
+  router.push(location).catch(() => {});
 };
 
 const openWorkflowOperation = (operation: string) => {
@@ -2290,6 +2374,97 @@ const runTool = async () => {
 }
 
 /* Grid Layout */
+.tool-discovery {
+  display: grid;
+  gap: 14px;
+  max-width: 1200px;
+  margin: 0 auto 26px;
+  padding: 0 24px;
+}
+
+.tool-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 50px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(16, 16, 16, 0.82);
+}
+
+.tool-search span {
+  color: #ccff00;
+  font-size: 24px;
+}
+
+.tool-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #f1f5f9;
+  font: inherit;
+}
+
+.category-tabs,
+.recent-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.category-tabs button,
+.recent-tools button {
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: #9ba6a0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.category-tabs button.active {
+  border-color: #ccff00;
+  background: rgba(204, 255, 0, 0.1);
+  color: #ccff00;
+}
+
+.recent-tools > span {
+  margin-right: 4px;
+  color: #6f7973;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.favorite-tool {
+  position: absolute;
+  z-index: 2;
+  top: 18px;
+  right: 18px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 50%;
+  background: rgba(5, 5, 5, 0.7);
+  color: #ccff00;
+  font-size: 19px;
+  cursor: pointer;
+}
+
+.tool-empty {
+  max-width: 1152px;
+  margin: -40px auto 70px;
+  padding: 40px 24px;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  color: #8c9790;
+  text-align: center;
+}
+
 .tools-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -2300,6 +2475,8 @@ const runTool = async () => {
 }
 
 .tool-card {
+  box-sizing: border-box;
+  min-width: 0;
   width: 100%;
   color: inherit;
   font: inherit;
@@ -2317,10 +2494,19 @@ const runTool = async () => {
   flex-direction: column;
 }
 
-.tool-card:focus-visible {
+.tool-card:has(.tool-card-open:focus-visible) {
   outline: 3px solid #ccff00;
   outline-offset: 4px;
   border-color: #ccff00;
+}
+
+.tool-card-open {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
 .tool-card::before {

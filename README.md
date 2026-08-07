@@ -1,7 +1,7 @@
 # Artigen
 
-> Artigen 是一个面向图片生产和图片处理的 AI 工具站。
-> 它把 AI 生图、图生图、图片编辑、格式工具箱、AI 配料表、点数支付和后台控制台放在同一个 Vue + Express 项目里。
+> Artigen 是一个双模式 AI 创作平台。
+> 它保留快速生图，并新增在隔离云电脑中完成调研、网页与文件操作、验证和可编辑交付的 Agent。
 
 本机、DEV、生产环境的接入方式，以及从提交代码到发布/回滚的完整流程见
 [《Artigen 项目、环境与发布总手册》](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。
@@ -14,7 +14,7 @@ DEV 测试环境的隔离边界、启动方式和健康检查见
 
 ## 30 秒速览
 
-**这是什么** - Artigen 是一个 AI 影像工具平台。用户可以在 `/artigen/ai` 做 AI 生图，在 `/artigen/tools/:toolId` 使用 8 个媒体工作流，在 `/artigen/image-workshop/:toolId` 使用 5 个工坊入口，并在 `/artigen/image-workshop/image-editor` 打开图片编辑器 2.0。
+**这是什么** - Artigen 是一个双模式 AI 创作平台。用户可以在 `/artigen/ai` 快速生图，也可以在 `/artigen/agent` 把完整目标交给隔离云电脑 Agent；媒体工具、影像工坊和图片编辑器继续保留。
 
 **给谁用** - 面向需要快速生成、处理、整理图片资产的个人创作者、电商运营、产品设计和内容团队。普通用户主要使用 Artigen 主站，管理员和运营使用控制台。
 
@@ -59,6 +59,9 @@ DEV 测试环境的隔离边界、启动方式和健康检查见
 9. `backend/services/billing-service.js` - PostgreSQL 报价、预占、结算、退款和幂等任务事务。
 10. `backend/routes/tool-tasks.js` - 统一 catalog、quote、task、asset 与 editor transfer API。
 11. `backend/migrations/` - PostgreSQL 16 数据结构和服务端 SKU/套餐种子。
+12. `backend/routes/agent-runs.js` - Agent 报价、运行、SSE、控制、输入、产物和浏览器会话 API。
+13. `backend/services/agent-worker-service.js` - 独立 Worker 的耐久编排、审批与验证主循环。
+14. `backend/agent_runtime/cua_bridge.py` - Cua 官方 Python SDK 的可替换沙箱桥。
 
 ### 运营或产品协作者
 
@@ -66,11 +69,13 @@ DEV 测试环境的隔离边界、启动方式和健康检查见
 
 1. `/artigen` - 用户看到的产品首页。
 2. `/artigen/ai` - AI 生图主流程。
-3. `/artigen/tools` - 格式工厂和工具箱。
-4. `/artigen/image-workshop` - 影像工坊和 AI 配料表。
-5. `/artigen/market` - 点数商城。
-6. `/console` - 后台用户、订单、审计和用量数据。
-7. `PRD.md` - 当前产品模块和接口现状。
+3. `/artigen/agent` - 云电脑 Agent 新任务和运行历史。
+4. `/artigen/agent/runs/:runId` - 实时桌面、计划、审批、费用、事件与交付物。
+5. `/artigen/tools` - 格式工厂和工具箱。
+6. `/artigen/image-workshop` - 影像工坊和 AI 配料表。
+7. `/artigen/market` - 点数商城。
+8. `/console` - 后台用户、订单、审计和用量数据。
+9. `PRD.md` - 当前产品模块和接口现状。
 
 ---
 
@@ -86,6 +91,7 @@ DEV 测试环境的隔离边界、启动方式和健康检查见
 | Git | 是 | 用于协作、提交和部署。 |
 | Gemini 或 SiliconFlow API Key | 线上需要 | 本地没有 key 时，AI provider 相关接口返回 offline 或配置错误属于正常现象。 |
 | Brevo API + Turnstile | 生产邮箱验证码需要 | 生产邮件走 HTTPS 443；SMTP 只允许本地兼容，debug 只允许非生产回环/白名单。 |
+| Python 3.12 + Cua SDK | Agent Worker 需要 | 只安装在独立 Worker：`python3 -m pip install -r backend/agent_runtime/requirements.txt`。 |
 
 ### 安装依赖
 
@@ -110,6 +116,29 @@ pnpm --filter backend db:migrate
 ```bash
 pnpm run dev
 ```
+
+Agent 运行必须单独启动 Worker；Web 进程不会执行长任务：
+
+```bash
+python3 -m pip install -r backend/agent_runtime/requirements.txt
+AGENT_FEATURE_ENABLED=true AGENT_WORKER_ENABLED=1 pnpm start:agent-worker
+```
+
+在生产打开开关前，必须至少应用迁移 `018_agent_approval_context`，配置共享
+S3/R2、`OPENAI_API_KEY`、`CUA_API_KEY`、独立
+`AGENT_PAYLOAD_ENCRYPTION_KEY`，并把 `AGENT_CUA_IMAGE_REF` 固定到不可变
+digest。固定镜像必须以非 root 用户运行，并在操作系统/网络层阻断 loopback、
+RFC1918、云元数据地址与危险端口；独立验证后设置
+`AGENT_SANDBOX_EGRESS_POLICY=restricted-v1`。Cua 的动作权限策略本身不提供
+网络隔离，不能用它替代出口防火墙。镜像还必须提供可用的 `bubblewrap`，
+模型发起的 Shell 会额外进入 `--unshare-net` 网络命名空间；浏览器和平台验证
+脚本走独立的可信路径。API 服务只设置 `AGENT_FEATURE_ENABLED=true`；只有独立 Worker 设置
+`AGENT_WORKER_ENABLED=1`。两者必须连接同一 PostgreSQL 与对象存储。
+
+模型的待执行工具调用、原始 `call_id` 和已完成工具回执会写入 AES-256-GCM
+加密的耐久检查点。Worker 恢复时提交原工具回执，不重放已完成动作；每轮强制单工具调用，
+并在每次续接时重新发送系统指令。报告引用只能使用 Agent 实际访问过的 HTTPS 页面；
+网站交付物在无网络、受限文件系统和 Chromium 沙箱中完成桌面/移动渲染。
 
 默认地址：
 
@@ -156,6 +185,16 @@ pnpm check
 它依次执行只读 ESLint、类型检查、前后端单测、Chromium/Firefox/WebKit 集成测试、生产构建和首页 250 KiB gzip 预算。CI 同时启动 PostgreSQL 16，并在测试前应用迁移。任何一步失败都不应开放付费入口。
 
 生图 Provider、内部模型或 prompt 模板变化需额外运行固定 30 例质量集。`pnpm --filter backend eval:generation:blind -- --baseline <manifest> --candidate <manifest> --out <review.json>` 创建不暴露左右身份的盲评表；人工填写后运行 `pnpm --filter backend eval:generation:score -- --review <review.json>`，候选硬约束通过率必须至少 90%，并且不得劣于旧链路。没有测试 Provider 凭证时只运行契约 mock，不发起真实收费任务。
+
+Agent 还必须通过四类交付物各 10 例的固定质量集：
+
+```bash
+pnpm eval:agent:validate
+pnpm --filter backend eval:agent:trajectory -- path/to/trace.json
+```
+
+成功结算前，服务端会独立检查计划先于执行、预算、禁止动作、关键动作审批回执、
+重复副作用、引用、产物验证以及耐久检查点是否已消费。模型文本不能覆盖这些结论。
 
 ---
 
@@ -750,12 +789,12 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `AI_DESIGN_TASK_V2_ROLLOUT_PERCENT` | 主生图稳定用户分桶比例，取值 `0`–`100`；同一数据库用户始终落在同一 cohort。 |
 | `AI_DESIGN_TASK_V2_INTERNAL_USERS` | 逗号分隔的数据库用户 UUID；全局开关开启时，这些内部用户可越过百分比灰度。 |
 | `TASK_PAYLOAD_ENCRYPTION_KEY` | 主生图 prompt/产品资料及配料整理原文的 AES-256-GCM 密钥；接受 32 字节原文、64 位 hex，或 `hex:`/`base64:` 编码。任一对应付费任务开启但密钥缺失时 fail-closed。 |
-| `AI_DESIGN_SILICONFLOW_TEXT_MODEL` | `standard-v1` 的服务端文生图模型 ID，不由公共模型接口返回。 |
-| `AI_DESIGN_SILICONFLOW_EDIT_MODEL` | `standard-v1` 的服务端参考图编辑模型 ID。 |
+| `AI_DESIGN_SILICONFLOW_TEXT_MODEL` | 兼容变量；生产模型 ID 由服务端 allowlist 固定，不由公共模型接口返回。 |
+| `AI_DESIGN_SILICONFLOW_EDIT_MODEL` | 兼容变量；`product-reference-v1` 使用服务端固定参考图编辑模型。 |
 | `AI_DESIGN_SILICONFLOW_DIRECTIONS_MODEL` | 四方向分析的服务端文本模型 ID。 |
 | `AI_IMAGE_TIMEOUT_MS` / `AI_DIRECTIONS_TIMEOUT_MS` | 主生图与方向分析 Provider 超时。 |
 | `AI_GENERATION_CONTRACT_MOCK` | 仅非生产契约测试可设为 `1`；生产始终使用真实 Provider 配置。 |
-| `AI_DESIGN_GENERATE_COST_MINOR` / `AI_DESIGN_DIRECTIONS_COST_MINOR` | 可选 Provider 单次成本最小货币单位，仅用于脱敏运营聚合。 |
+| `AI_DESIGN_GENERATE_COST_MINOR` / `AI_DESIGN_REFERENCE_COST_MINOR` / `AI_DESIGN_DIRECTIONS_COST_MINOR` | 可选 Provider 单次成本最小货币单位，仅用于脱敏运营聚合与毛利保护。 |
 
 ### 登录和邮件变量
 
@@ -866,11 +905,24 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 
 ## 运行期数据
 
-PostgreSQL 16 保存用户/身份、Cookie 会话、验证码、管理员、钱包、不可变账本、预占、价格、套餐、支付订单/回调、工具任务、资产元数据、编辑器 transfer、产品行为事件、最小化模型用量、图片/内容审计历史和财务/管理事务审计。迁移在 `backend/migrations/`；当前最新迁移是 `014_operational_records`。
+PostgreSQL 16 保存用户/身份、Cookie 会话、验证码、管理员、钱包、不可变账本、预占、价格、套餐、支付订单/回调、工具任务、商品视觉项目与版本、Agent 运行/事件/审批/预算、资产元数据、编辑器 transfer、产品行为事件、最小化模型用量、图片/内容审计历史和财务/管理事务审计。迁移在 `backend/migrations/`；当前最新迁移是 `018_agent_approval_context`。
+
+Agent 使用独立 `artigen-agent-run-v1` pg-boss 队列和进程级 Worker。运行状态、事件、
+检查点、审批与预算以 PostgreSQL 为真相源，SSE 只是可恢复的投影视图。Worker
+崩溃后，过期租约会被定时回收并重新排队；过期预算冻结会自动失败并释放。
+用户目标和补充信息以 run/row/kind 绑定的 AES-256-GCM 保存，OAuth token
+只在服务端连接器中解密，既不进入模型上下文也不注入沙箱。Cua 沙箱只获得
+供应商运行凭证，不获得 Artigen、OAuth 或对象存储密钥。
+
+Agent 的独立验证器会对输入和输出执行 ClamAV 扫描；PDF 必须可解析，OOXML
+必须能解包并经 LibreOffice 渲染，XLSX 还必须包含公式和图表，PPTX 必须包含
+可编辑幻灯片，网站 ZIP 必须含 `index.html` 并成功生成桌面与移动 Chromium
+截图。只有全部已声明产物通过验证且存在可编辑源文件，状态才允许进入
+`succeeded`。
 
 图片二进制不写入数据库。`ASSET_STORAGE_DRIVER=file` 默认使用 `MEMORY_DIR/assets-v2`，只用于本地开发和单实例契约测试；生产付费生图必须配置 `ASSET_STORAGE_DRIVER=s3`/`r2` 及共享 endpoint、bucket 和 credentials。数据库只保存 opaque URI、magic-byte 校验后的 MIME、大小、尺寸和保留期。对象写入后会重新读取并校验大小与 SHA-256，只有验证通过的生成结果才能结算。过期资产通过 PostgreSQL `SKIP LOCKED` 租约回收；同内容重传、任务/transfer 引用和多实例并发不会绕过二次状态校验。file 适配器还会以游标扫描 inventory，在宽限期后清理“对象写成功但数据库事务未提交”的孤儿文件。
 
-当前统一云端工具执行器开放“AI 老照片增强/上色”、AI 职业形象、AI 场景背景、配料原文整理，以及 `ai-design.generate`/`ai-design.directions`。所有价格只来自服务端 catalog、operation SKU 和 quote：职业形象 5 点、AI 场景背景 5 点、配料整理 10 点、主生图 10 点、方向分析 5 点；前端不硬编码费用。职业形象和背景请求只提交服务端枚举与主体变换参数，不能提交 prompt，prompt 由服务端构造；配料任务可以提交用户原文，但服务端会在结算前执行逐项来源追溯，新增事实即失败退款。所有 operation 的客户端都不能传 Provider、内部模型、steps、guidance 或价格。其余尚未接入可信 Provider 或 LibreOffice 能力的收费 operation 会明确返回 `TOOL_OPERATION_UNAVAILABLE`/`CONVERTER_UNAVAILABLE`，不会排队、扣费或从本地失败静默降级。Word 保真转换必须由用户勾选上传同意，服务端也会再次校验 consent 与 DOCX 容器。
+当前统一云端工具执行器开放“AI 老照片增强/上色”、AI 职业形象、AI 场景背景、配料原文整理，以及 `ai-design.generate`/`ai-design.directions`。所有价格只来自服务端 catalog、profile SKU 和 quote：职业形象 5 点、AI 场景背景 5 点、配料整理 10 点、标准主生图 10 点、商品参考生成 60 点、方向分析 5 点；前端不硬编码费用。职业形象和背景请求只提交服务端枚举与主体变换参数，不能提交 prompt，prompt 由服务端构造；配料任务可以提交用户原文，但服务端会在结算前执行逐项来源追溯，新增事实即失败退款。所有 operation 的客户端都不能传 Provider、内部模型、steps、guidance 或价格。其余尚未接入可信 Provider 或 LibreOffice 能力的收费 operation 会明确返回 `TOOL_OPERATION_UNAVAILABLE`/`CONVERTER_UNAVAILABLE`，不会排队、扣费或从本地失败静默降级。Word 保真转换必须由用户勾选上传同意，服务端也会再次校验 consent 与 DOCX 容器。
 
 Word 保真转换在读取 Base64 JSON 前获取单实例并发槽，并对 ZIP central directory、本地文件头、CRC、OOXML 必需部件、entry 数量、单项/累计未压缩大小及压缩比执行预检。每次 LibreOffice 使用独立 profile；请求断开或超时会终止整个 POSIX 进程组，Windows 使用 `taskkill /T /F` fallback。Node `child_process` 没有跨平台可移植的 CPU/内存 rlimit，因此生产部署还必须在 Render/container 层配置 CPU、内存和 PID 上限，不能只依赖应用内并发闸门。
 
@@ -1049,7 +1101,7 @@ pnpm run start:production
 
 仓库根目录的 `render.yaml` 提供 Render Blueprint：CI checks 通过后部署、完整 workspace 构建、启动阶段迁移锁和 60 秒优雅关闭。构建命令会显式清空 `VITE_API_BASE` 与 `VITE_AGENT_API_BASE`，确保 Render 上的前端、Cookie 和 `/api` 保持同源。平台健康检查只调用浅层 `/healthz`，不会因数据库或外部 Provider 的短暂波动反复重启实例；`/readyz` 保留给人工 smoke 或部署深检。
 
-Render Free 不使用 `preDeployCommand`，迁移由 `start:production` 在监听端口前 fail-closed 执行。模板默认 `plan: free`、`PG_POOL_MAX=5`、`TASK_WORKER_ENABLED=0`，并关闭付费生图与邮件 OTP；此时 `/readyz` 会明确把对象存储、任务 payload、Provider 和邮件等未启用依赖标为 `skipped`。后台或行为采集启用时，数据库仍是必需依赖并会检查最新迁移 `014_operational_records`，不会因 DEV/Free 配置而跳过。Cookie 会话只在 `/api` 与 `/files` 水合，SPA、静态资源和浅健康检查不会因用户已登录而额外唤醒 Neon。开启付费或邮件 OTP 后，深检还会要求对应对象存储/Provider，以及独立认证密钥、签名邮件中继和 Turnstile secret + site key；生产 Turnstile 还要求 HTTPS `APP_ORIGIN` 与精确 `TURNSTILE_HOSTNAMES` 一致。按 [Render Blueprint 规范](https://render.com/docs/blueprint-spec) 导入并完成 smoke 后，再分阶段开启邮件 OTP、Worker 与收费能力。
+Render Free 不使用 `preDeployCommand`，迁移由 `start:production` 在监听端口前 fail-closed 执行。模板默认 `plan: free`、`PG_POOL_MAX=5`、`TASK_WORKER_ENABLED=0`，并关闭付费生图与邮件 OTP；此时 `/readyz` 会明确把对象存储、任务 payload、Provider 和邮件等未启用依赖标为 `skipped`。后台或行为采集启用时，数据库仍是必需依赖并会检查最新迁移 `015_creative_projects`，不会因 DEV/Free 配置而跳过。Cookie 会话只在 `/api` 与 `/files` 水合，SPA、静态资源和浅健康检查不会因用户已登录而额外唤醒 Neon。开启付费或邮件 OTP 后，深检还会要求对应对象存储/Provider，以及独立认证密钥、签名邮件中继和 Turnstile secret + site key；生产 Turnstile 还要求 HTTPS `APP_ORIGIN` 与精确 `TURNSTILE_HOSTNAMES` 一致。按 [Render Blueprint 规范](https://render.com/docs/blueprint-spec) 导入并完成 smoke 后，再分阶段开启邮件 OTP、Worker 与收费能力。
 
 后端生产必须配置 PostgreSQL 16；生产付费生图必须使用 S3/R2 兼容共享对象存储，Render 本地文件只用于开发或非付费契约测试。
 

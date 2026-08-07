@@ -161,6 +161,61 @@ const routes = [
     redirect: (to: any) => canonicalLegacyToolLocation(to.query.tool, to.query) || '/artigen/tools'
   },
   {
+    path: '/artigen/projects',
+    name: 'creative-projects',
+    component: () => import('../agentImg/views/ProjectsPage.vue'),
+    meta: {
+      title: { zh: '商品视觉项目 - Artigen', en: 'Product Visual Projects - Artigen' },
+      description: {
+        zh: '在一个项目中组织商品素材、品牌资料、生成版本、编辑与多尺寸交付。',
+        en: 'Organize product assets, brand rules, generation versions, editing, and multi-size delivery in one workspace.'
+      },
+      keywords: {
+        zh: '电商视觉项目,商品图生成,品牌素材,多版本生成,套图导出',
+        en: 'ecommerce visual project,product image generation,brand assets,versioning,visual set export'
+      }
+    } satisfies RouteSeoMeta
+  },
+  {
+    path: '/artigen/agent',
+    name: 'agent-workbench',
+    component: () => import('../agentImg/views/AgentWorkbench.vue'),
+    meta: {
+      title: { zh: '云电脑 Agent - Artigen', en: 'Cloud Computer Agent - Artigen' },
+      description: {
+        zh: '把一个想法交给隔离云电脑，完成调研、网页与文件操作、验证和可编辑交付。',
+        en: 'Give an idea to an isolated cloud computer for research, browser and file work, verification, and editable delivery.'
+      },
+      robots: 'noindex,nofollow'
+    } satisfies RouteSeoMeta
+  },
+  {
+    path: '/artigen/agent/runs/:runId',
+    name: 'agent-run-detail',
+    component: () => import('../agentImg/views/AgentRunDetail.vue'),
+    meta: {
+      title: { zh: 'Agent 运行 - Artigen', en: 'Agent Run - Artigen' },
+      description: {
+        zh: '查看 Agent 的计划、实时云电脑、审批、费用、事件和交付物。',
+        en: 'View the agent plan, live desktop, approvals, cost, events, and deliverables.'
+      },
+      robots: 'noindex,nofollow'
+    } satisfies RouteSeoMeta
+  },
+  {
+    path: '/artigen/projects/:id',
+    name: 'creative-project-workspace',
+    component: () => import('../agentImg/views/ProjectWorkspace.vue'),
+    meta: {
+      title: { zh: '项目工作台 - Artigen', en: 'Project Workspace - Artigen' },
+      description: {
+        zh: '商品视觉项目的素材、品牌、版本分支、比较、编辑和交付工作台。',
+        en: 'Workspace for product assets, brand kits, version branches, comparison, editing, and delivery.'
+      },
+      robots: 'noindex,nofollow'
+    } satisfies RouteSeoMeta
+  },
+  {
     path: '/artigen/tools',
     name: 'format-factory',
     component: () => import('../agentImg/views/FormatFactory.vue'),

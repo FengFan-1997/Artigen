@@ -6,6 +6,7 @@ const {
   SILICONFLOW_IMAGES_GENERATIONS_URL,
   SILICONFLOW_IMAGE_INPUT_FIELD,
   FIXED_SILICONFLOW_CHAT_MODEL,
+  FIXED_SILICONFLOW_EDIT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
   activeTextProvider,
   GEMINI_GENERATE_URLS,
@@ -347,18 +348,22 @@ const callSiliconFlowImageGenerate = async ({
     }
 
     const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
-    if (imgs.length) {
-      const err = new Error('REFERENCE_IMAGES_NOT_SUPPORTED');
-      err.code = 'REFERENCE_IMAGES_NOT_SUPPORTED';
-      throw err;
-    }
     const preferredModel = String(model || '').trim();
-    if (preferredModel && preferredModel !== FIXED_SILICONFLOW_IMAGE_MODEL) {
+    const allowedModels = new Set([FIXED_SILICONFLOW_IMAGE_MODEL, FIXED_SILICONFLOW_EDIT_MODEL]);
+    if (preferredModel && !allowedModels.has(preferredModel)) {
       const err = new Error('MODEL_NOT_ALLOWED');
       err.code = 'MODEL_NOT_ALLOWED';
       throw err;
     }
-    const modelCandidates = [FIXED_SILICONFLOW_IMAGE_MODEL];
+    const resolvedModel = preferredModel || (imgs.length
+      ? FIXED_SILICONFLOW_EDIT_MODEL
+      : FIXED_SILICONFLOW_IMAGE_MODEL);
+    if (imgs.length && resolvedModel !== FIXED_SILICONFLOW_EDIT_MODEL) {
+      const err = new Error('REFERENCE_IMAGES_NOT_SUPPORTED');
+      err.code = 'REFERENCE_IMAGES_NOT_SUPPORTED';
+      throw err;
+    }
+    const modelCandidates = [resolvedModel];
 
     const isModelNotFound = (raw) => {
       const s = String(raw || '').toLowerCase();

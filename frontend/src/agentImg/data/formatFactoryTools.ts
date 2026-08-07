@@ -5,8 +5,8 @@ export const formatFactoryTools: FormatFactoryTool[] = [
     id: 'webp',
     name: 'WebP 转换器',
     nameEn: 'WebP Converter',
-    description: 'Web 格式 · 双向转换',
-    descriptionEn: 'Web Format · Two-way Conversion',
+    description: 'PNG/JPEG 与 WebP 互转，减小网页图片体积',
+    descriptionEn: 'Convert PNG/JPEG and WebP for lighter web images',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
     tag: 'WEB 现代格式',
     status: 'ready'
@@ -15,8 +15,8 @@ export const formatFactoryTools: FormatFactoryTool[] = [
     id: 'jpeg',
     name: 'JPEG 压缩器',
     nameEn: 'JPEG Compressor',
-    description: '极限压缩 · 批量处理',
-    descriptionEn: 'Extreme Compression · Batch Processing',
+    description: '批量减小照片体积，按需保留清晰度',
+    descriptionEn: 'Shrink photos in batches while controlling quality',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>',
     tag: '通用处理',
     status: 'ready'
@@ -65,8 +65,8 @@ export const formatFactoryTools: FormatFactoryTool[] = [
     id: 'live',
     name: '视频选帧',
     nameEn: 'Video Frame Picker',
-    description: '浏览器可解码视频 · 精确选帧',
-    descriptionEn: 'Browser-decodable Video · Frame Selection',
+    description: '从视频中精确截取一帧并导出图片',
+    descriptionEn: 'Pick an exact video frame and export it as an image',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>',
     tag: '移动端格式',
     status: 'ready'
@@ -93,10 +93,10 @@ export const formatFactoryTools: FormatFactoryTool[] = [
   },
   {
     id: 'word2pdf',
-    name: 'Word 转 PDF（服务器保真）',
-    nameEn: 'Word to PDF (Server Fidelity)',
-    description: '明确同意上传 · LibreOffice 能力检查',
-    descriptionEn: 'Explicit Upload Consent · LibreOffice Preflight',
+    name: 'Word 转 PDF',
+    nameEn: 'Word to PDF',
+    description: '明确同意上传后，尽量保留原文档版式',
+    descriptionEn: 'Preserve document layout after explicit upload consent',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>',
     tag: '文档工具',
     status: 'ready'
@@ -125,8 +125,8 @@ export const formatFactoryTools: FormatFactoryTool[] = [
     id: 'gif',
     name: '视频转 GIF',
     nameEn: 'Video to GIF',
-    description: 'Worker 编码 · 30s/12MP/内存预算',
-    descriptionEn: 'Worker Encoding · 30s/12MP/Memory Budget',
+    description: '截取视频片段并导出轻量动图',
+    descriptionEn: 'Turn a short video segment into a lightweight GIF',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>',
     tag: '视频工具',
     status: 'ready'

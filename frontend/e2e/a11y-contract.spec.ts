@@ -33,10 +33,16 @@ async function expandGenerationControlsIfNeeded(page: Page): Promise<void> {
 
 test('format workflows expose keyboard buttons, a trapped dialog, labelled controls, and 44px actions', async ({ page }) => {
   await page.goto('/artigen/tools');
-  const firstTool = page.locator('.tools-grid .tool-card').first();
-  await expect(firstTool).toHaveJSProperty('tagName', 'BUTTON');
-  await firstTool.focus();
+  const toolCards = page.locator('.tools-grid .tool-card');
+  await expect(toolCards).toHaveCount(15);
+  const firstTool = toolCards.first();
+  const firstToolOpen = firstTool.locator('.tool-card-open');
+  await expect(firstTool).toHaveJSProperty('tagName', 'ARTICLE');
+  await expect(firstToolOpen).toHaveJSProperty('tagName', 'BUTTON');
+  await firstToolOpen.focus();
   await page.keyboard.press('Enter');
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/artigen/tools/image-batch');
+  await expect.poll(() => new URL(page.url()).searchParams.get('operation')).toBe('webp');
 
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
@@ -57,7 +63,7 @@ test('format workflows expose keyboard buttons, a trapped dialog, labelled contr
   }
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
-  await expect(firstTool).toBeFocused();
+  await expect(firstToolOpen).toBeFocused();
 });
 
 test('Editor 2.0 keeps closed mobile sheets inert and restores focus after sheets and export dialog', async ({ page }) => {
@@ -203,7 +209,7 @@ test('headers stay separated across compact laptop and mobile widths with langua
     expect(layout.overlaps, `header overlap at ${width}px: ${JSON.stringify(layout.controls)}`).toEqual([]);
 
     const navToggle = page.locator('.nav-toggle');
-    if (width <= 1280) {
+    if (width <= 1024) {
       await expect(navToggle).toBeVisible();
       await navToggle.click();
       const mobileMenu = page.locator('.mobile-menu');
@@ -230,8 +236,8 @@ test('AI mobile setup keeps references readable, grows long prompts, and stacks 
       body: JSON.stringify({
         ok: true,
         models: [{
-          id: 'standard-v1',
-          name: { zh: '标准生成', en: 'Standard generation' },
+          id: 'product-reference-v1',
+          name: { zh: '商品参考生成', en: 'Product reference generation' },
           available: true,
           capabilities: ['text-to-image', 'image-reference'],
           maxReferences: 3,
@@ -339,8 +345,8 @@ test('AI authentication dialog traps focus and restores it to the generation act
         ok: true,
         models: [
           {
-            id: 'standard-v1',
-            name: { zh: '标准生成', en: 'Standard generation' },
+            id: 'product-reference-v1',
+            name: { zh: '商品参考生成', en: 'Product reference generation' },
             available: true,
             capabilities: ['text-to-image', 'image-reference'],
             maxReferences: 3,

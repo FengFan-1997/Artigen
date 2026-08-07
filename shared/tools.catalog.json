@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "tools": [
     {
       "id": "ai-design",
@@ -15,11 +15,15 @@
         "generate": "ai-design.generate.v1",
         "directions": "ai-design.directions.v1"
       },
+      "profileSkus": {
+        "standard-v1": "ai-design.generate.v1",
+        "product-reference-v1": "ai-design.product-reference.v1"
+      },
       "privacy": { "localByDefault": true, "uploads": "only-after-confirmation", "retentionHours": 24, "outputRetentionHours": 720 },
       "limits": { "maxFiles": 3, "maxFileBytes": 41943040, "maxPixels": 32000000 },
       "operations": ["generate", "directions"],
       "outputFormats": ["image/png", "image/jpeg"],
-      "capabilities": ["text-to-image", "three-reference-images", "visual-directions", "seed", "cancel", "opaque-assets"]
+      "capabilities": ["profile-specific-generation", "visual-directions", "seed", "cancel", "opaque-assets"]
     },
     {
       "id": "id-photo",

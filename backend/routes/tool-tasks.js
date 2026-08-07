@@ -28,7 +28,11 @@ const {
   validateAiDesignTask
 } = require('../services/ai-design-service');
 const { createConfiguredGenerationProvider } = require('../services/generation-provider');
-const { listPublicGenerationProfiles } = require('../services/generation-profiles');
+const {
+  getInternalGenerationProfile,
+  listPublicGenerationProfiles
+} = require('../services/generation-profiles');
+const { sweepTrashedProjects } = require('../services/creative-project-service');
 const {
   assertWorkshopAiAvailable,
   createWorkshopAiExecutor,
@@ -113,6 +117,9 @@ const buildStoredTaskOptions = ({ tool, operation, normalizedOptions }) => {
       ? {
           profileId: normalizedOptions.profileId,
           aspectRatio: normalizedOptions.aspectRatio,
+          ...(normalizedOptions.referenceRoles?.length
+            ? { referenceRoles: normalizedOptions.referenceRoles }
+            : {}),
           ...(Number.isInteger(normalizedOptions.seed) ? { seed: normalizedOptions.seed } : {})
         }
       : {
@@ -432,12 +439,18 @@ const validateTaskFields = (fields) => {
   }
   const normalizedAssetIds = inputAssetIds.map((id) => assertUuid(id, 'inputAssets'));
   const quoteId = String(fields.quoteId || '').trim();
+  const projectId = String(fields.projectId || '').trim();
+  const parentVersionId = String(fields.parentVersionId || '').trim();
   return {
     toolId: String(fields.toolId || '').trim(),
     operation: String(fields.operation || '').trim(),
     options,
     inputAssetIds: normalizedAssetIds,
-    quoteId: quoteId ? assertUuid(quoteId, 'quoteId') : null
+    quoteId: quoteId ? assertUuid(quoteId, 'quoteId') : null,
+    projectId: projectId ? assertUuid(projectId, 'projectId') : null,
+    parentVersionId: parentVersionId
+      ? assertUuid(parentVersionId, 'parentVersionId')
+      : null
   };
 };
 
@@ -543,7 +556,8 @@ const installToolTaskRoutes = (app, deps = {}) => {
         releaseExpiredHolds: billing.releaseExpiredHolds,
         sweepExpiredAssets: assets.sweepExpiredAssets,
         sweepOrphanedFileAssets: assets.sweepOrphanedFileAssets,
-        sweepExpiredUploadSessions
+        sweepExpiredUploadSessions,
+        sweepTrashedProjects
       });
     }
   }
@@ -585,6 +599,7 @@ const installToolTaskRoutes = (app, deps = {}) => {
         }
         await assets.sweepOrphanedFileAssets();
         await sweepExpiredUploadSessions();
+        await sweepTrashedProjects();
       }).catch((error) => {
         console.error('Expired asset sweep failed', error?.code || error?.message || error);
       });
@@ -667,9 +682,21 @@ const installToolTaskRoutes = (app, deps = {}) => {
         quote: { quoteId: null, sku: null, credits: 0, expiresAt: null }
       });
     }
+    const quoteOptions = body.options && typeof body.options === 'object' && !Array.isArray(body.options)
+      ? body.options
+      : {};
+    if (checked.tool.id === 'ai-design' && checked.operation === 'generate') {
+      const profileId = String(quoteOptions.profileId || '').trim();
+      if (!getInternalGenerationProfile(profileId, deps.env || process.env)) {
+        throw new ApiError(409, 'MODEL_PROFILE_UNAVAILABLE', {
+          field: 'options.profileId',
+          retryable: true
+        });
+      }
+    }
     const quote = await billing.createQuote({
       userId: auth.dbUserId || auth.userId,
-      sku: resolveOperationSku(checked.tool, checked.operation)
+      sku: resolveOperationSku(checked.tool, checked.operation, quoteOptions)
     });
     return res.json({ ok: true, quote });
   }));
@@ -824,11 +851,19 @@ const installToolTaskRoutes = (app, deps = {}) => {
           : {}),
         inputAssetIds: input.inputAssetIds,
         inputRetentionHours: retentionHours,
+        projectId: input.projectId,
+        parentVersionId: input.parentVersionId,
+        projectVersionPayload: checked.tool.id === 'ai-design' && checked.operation === 'generate'
+          ? {
+              prompt: normalizedOptions.prompt,
+              direction: normalizedOptions.direction || null
+            }
+          : null,
         requestIdentity,
         deferInputAssets: parsed.files.length > 0,
         quoteId: input.quoteId,
-        sku: isPaidOperation(checked.tool, checked.operation)
-          ? resolveOperationSku(checked.tool, checked.operation)
+        sku: isPaidOperation(checked.tool, checked.operation, normalizedOptions)
+          ? resolveOperationSku(checked.tool, checked.operation, normalizedOptions)
           : null,
         idempotencyKey
       });
@@ -888,6 +923,7 @@ const installToolTaskRoutes = (app, deps = {}) => {
           ...(deps.pool ? { pool: deps.pool } : {}),
           eventType: 'task_queued',
           actorUserId: dbUserId,
+          projectId: task.projectId,
           taskId: task.taskId,
           quoteId: input.quoteId,
           operation: checked.operation,

@@ -66,6 +66,9 @@
       <button type="button" @click="recoveredDraft = false">知道了</button>
     </div>
     <div v-if="storageError" class="storage-warning" role="alert">{{ storageError }}</div>
+    <div v-if="projectExportStatus" class="recovery-banner" role="status">
+      {{ projectExportStatus }}
+    </div>
 
     <div class="editor-workspace">
       <aside
@@ -552,6 +555,8 @@ import {
   takeInitialEditorImport,
   type InitialEditorImport
 } from '../editor/import/editorImport';
+import { uploadCreativeProjectAsset } from '../services/creativeProjects';
+import { trackEvent } from '@/utils/analytics';
 
 const store = useImageEditorV2Store();
 const route = useRoute();
@@ -587,6 +592,7 @@ const resizeObserver = shallowRef<ResizeObserver | null>(null);
 const viewportScale = ref(1);
 const isRendering = ref(false);
 const isExporting = ref(false);
+const projectExportStatus = ref('');
 const exportPanelOpen = ref(false);
 const mobilePanel = ref<'layers' | 'properties' | null>(null);
 const isCompactViewport = ref(false);
@@ -963,12 +969,40 @@ async function performExport(): Promise<void> {
   if (isExporting.value) return;
   isExporting.value = true;
   try {
-    await store.exportDesign({
+    const result = await store.exportDesign({
       ...exportOptions,
       background: exportOptions.background.type === 'transparent'
         ? { type: 'transparent' }
         : { type: 'color', color: exportOptions.background.color }
     });
+    const creativeProjectId = String(route.query.projectId || '').trim();
+    if (creativeProjectId) {
+      try {
+        const file = new File([result.blob], result.filename, {
+          type: result.blob.type || 'image/png'
+        });
+        await uploadCreativeProjectAsset(creativeProjectId, {
+          file,
+          role: 'export',
+          label: String(route.query.sourceVersionId || 'editor-export')
+        });
+        projectExportStatus.value = '导出结果已下载，并同步回当前商品视觉项目。';
+        trackEvent('project_editor_export', {
+          projectId: creativeProjectId,
+          sourceVersionId: String(route.query.sourceVersionId || ''),
+          width: result.width,
+          height: result.height
+        });
+        trackEvent('download', {
+          operation: 'generate',
+          source: 'editor',
+          projectId: creativeProjectId,
+          taskId: undefined
+        });
+      } catch {
+        projectExportStatus.value = '图片已下载；项目记录同步失败，可在项目中重新上传。';
+      }
+    }
     exportPanelOpen.value = false;
   } catch {
     // The store exposes a localized aria-live error.

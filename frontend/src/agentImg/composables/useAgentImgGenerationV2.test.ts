@@ -150,7 +150,11 @@ describe('AI design unified task controller', () => {
     const controller = useAgentImgGenerationV2(deps as any);
 
     await controller.prepareSubmission();
-    expect(taskApi.quote).toHaveBeenCalledWith({ toolId: 'ai-design', operation: 'generate' });
+    expect(taskApi.quote).toHaveBeenCalledWith({
+      toolId: 'ai-design',
+      operation: 'generate',
+      options: { profileId: 'standard-v1' }
+    });
     expect(controller.quoteConfirmation.value?.quote.credits).toBe(10);
     expect(taskApi.create).not.toHaveBeenCalled();
     expect(flow.userInput.value).toContain('premium serum');
@@ -226,7 +230,11 @@ describe('AI design unified task controller', () => {
 
     await controller.prepareSubmission('generate');
 
-    expect(taskApi.quote).toHaveBeenCalledWith({ toolId: 'ai-design', operation: 'generate' });
+    expect(taskApi.quote).toHaveBeenCalledWith({
+      toolId: 'ai-design',
+      operation: 'generate',
+      options: { profileId: 'standard-v1' }
+    });
     expect(controller.quoteConfirmation.value).toMatchObject({
       operation: 'generate',
       quote: { sku: 'ai-design.generate.v1', credits: 10 }

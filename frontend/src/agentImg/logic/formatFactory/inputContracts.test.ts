@@ -24,8 +24,8 @@ const pngFile = (width: number, height: number, name = 'fixture.png') => {
 };
 
 describe('format factory input contracts', () => {
-  it('derives UI file counts and byte limits from catalog v4', () => {
-    expect(toolCatalogVersion).toBe(4);
+  it('derives UI file counts and byte limits from catalog v5', () => {
+    expect(toolCatalogVersion).toBe(5);
     expect(getToolDefinition('ai-design')?.kind).toBe('generator');
     expect(getFormatFactoryInputPolicy('live').limits).toMatchObject({
       maxFiles: 1,

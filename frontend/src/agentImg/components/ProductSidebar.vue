@@ -248,7 +248,7 @@
           </div>
         </div>
 
-        <div v-show="false">
+        <div>
           <div class="card-divider"></div>
           <div class="card-title">{{ ui.brandAssets }}</div>
 

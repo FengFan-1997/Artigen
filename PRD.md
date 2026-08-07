@@ -7,9 +7,10 @@
 稳定入口：
 
 - `/artigen`：产品首页。
+- `/artigen/projects`、`/artigen/projects/:id`：商品视觉项目列表与项目工作台。
 - `/artigen/ai`：AI 生图工作台；旧 `/api/generate`、`/api/img2img` 只作一版兼容。
 - `/artigen/image-workshop/:toolId`：5 个工坊入口。
-- `/artigen/tools/:toolId`：8 个工具工作流。
+- `/artigen/tools/:toolId`：8 个工作流下的 15 个稳定工具入口。
 - `/artigen/image-workshop/image-editor`：图片编辑器 2.0；`?editor=legacy` 可回退一版。
 - `/artigen/market`、`/artigen/orders`、`/artigen/usage`：套餐、订单和用量。
 - `/console/*`：运营控制台，未登录不会展示伪造财务数据或模拟生成结果。
@@ -26,7 +27,12 @@
 
 工具工作流：`image-batch`、`privacy-redaction`、`video-frame`、`pdf-image`、`pdf-text-word`、`document-pdf`、`video-gif`、`favicon`。本地任务不要求登录、不上传、不扣点；Word 保真模式是例外，必须明确同意上传并通过 LibreOffice 能力检查。
 
-主生图现阶段只提供 `standard-v1`，不展示没有真实差异的模型品牌。快速生成使用 `ai-design.generate.v1`（10 点）；深度模式先用 `ai-design.directions.v1`（5 点）产出四个方向，用户选定后再独立确认 10 点生成。六个起步模板只填写需求，不创建任务或扣费；三个参考槽按商品、风格、场景的固定语义顺序提交。
+主生图提供两个稳定产品 profile，不向客户端暴露 Provider 模型 ID：
+
+- `standard-v1`：纯文生图，`maxReferences=0`，使用 `ai-design.generate.v1`（10 点）。
+- `product-reference-v1`：必须提交 1–3 张图片，按商品、风格、场景的固定语义顺序解释，使用 `ai-design.product-reference.v1`（60 点）。
+
+深度模式先用 `ai-design.directions.v1`（5 点）产出四个方向，用户选定后再独立确认生成报价。能力、比例和参考图上限全部来自 profile；前端不得静态承诺服务端未开放的能力。
 
 ## 2. 运行架构
 
@@ -72,6 +78,7 @@ idle -> validating -> awaiting_confirmation -> queued -> running
 
 ```text
 toolId / operation / options / inputAssets / quoteId
+可选 projectId / parentVersionId
 ```
 
 客户端禁止传 `cost`、`price`、`credits`、`sku` 或其嵌套变体。`POST /api/tool-tasks` 必须使用 multipart 和 `Idempotency-Key`。
@@ -118,6 +125,14 @@ PostgreSQL UUID 是内部规范用户标识，legacy user id 被数据库约束�
 
 file 适配器还执行带游标的 inventory reconciliation，在宽限期后清理数据库不存在的孤儿对象。S3/R2 第一阶段使用过期资产行回收；生产应同时配置 bucket 生命周期规则作为兜底。生成结果写入后必须重新读取并校验字节数和 SHA-256，只有通过验证的 opaque asset 才能结算。
 
+### 6.1 商品视觉项目与版本
+
+`creative_projects` 是核心业务对象；敏感内容放在 `creative_project_payloads`，复用任务 payload 的 AES-256-GCM 密钥，但 AAD 分别绑定 project/version ID。项目保存商品名称、需求、品牌名称、3–6 个品牌色、风格关键词和禁用元素。Logo、商品、风格、场景、结果和导出通过 `project_asset_links` 关联，所有关联都检查登录用户所有权。
+
+`project_versions` 保存父版本、任务、profile、比例、种子、点数、收藏状态和输出资产。创建收费生成任务时在同一账务事务创建 pending 版本；成功结算在同一事务挂接输出并把资产改为 `project-owned`，失败、取消和退款保持既有逻辑并同步版本终态。旧生成历史只提供“保存到项目”，不自动迁移。
+
+项目删除是 7 天可恢复的软删除。到期清理器先解除任务的项目引用，再删除项目、版本和关联；没有被其他项目引用的资产恢复为有期限的生成资产并交给现有 GC。项目编辑使用 revision 乐观并发控制。
+
 ## 7. 图片编辑器 2.0
 
 `fabric@7.4.0` 只负责交互投影；`EditorDocumentV2` 和 Pinia/domain store 是业务真源，Fabric 对象只保存 `layerId`。legacy 的 `ImageEditor.vue` 不再继续堆功能。
@@ -160,6 +175,13 @@ V1 不承诺 PSD、视频、复杂蒙版、画笔修复、生成式填充、CMYK
 | `POST` | `/api/tool-tasks` | multipart + `Idempotency-Key` 创建任务。 |
 | `GET` | `/api/tool-tasks/:taskId` | 本人任务结果。 |
 | `DELETE` | `/api/tool-tasks/:taskId` | 取消并退款未结算任务。 |
+| `GET/POST` | `/api/projects` | 列出或创建本人项目。 |
+| `GET/PATCH/DELETE` | `/api/projects/:projectId` | 本人项目详情、乐观并发更新和 7 天软删除。 |
+| `POST` | `/api/projects/:projectId/restore` | 在保留期内恢复项目。 |
+| `POST` | `/api/projects/:projectId/assets` | 上传或关联本人项目资产。 |
+| `DELETE` | `/api/projects/:projectId/assets/:assetId` | 按语义角色移除本人项目资产。 |
+| `POST` | `/api/projects/:projectId/versions/import` | 将本人旧生成结果显式保存为项目版本。 |
+| `PATCH` | `/api/projects/:projectId/versions/:versionId` | 收藏或取消收藏项目版本。 |
 | `POST` | `/api/asset-uploads` | 创建登录用户专属的单 PUT / multipart S3 直传会话。 |
 | `GET` | `/api/asset-uploads/:id/parts` | 恢复本人已上传分片。 |
 | `POST` | `/api/asset-uploads/:id/parts/:part/sign` | 签发本人分片上传 URL。 |
@@ -188,6 +210,8 @@ V1 不承诺 PSD、视频、复杂蒙版、画笔修复、生成式填充、CMYK
 
 生图运营事件进入 PostgreSQL `generation_events`，只接受固定事件名及枚举、布尔、长度、哈希、耗时和 task/quote/session opaque 引用，不保存 prompt、文件名或图片 URL。控制台 `/api/admin/generation/funnel` 汇总成功率、退款率、队列与 Provider p50/p95、资产持久化失败、未结算 hold 和每成功任务成本。
 
+产品北极星指标是“每周完成至少一次生成并进入编辑或导出的项目数”。`behavior_events` 记录项目创建、参考图上传、首次成功、版本复用、收藏、编辑、导出、余额不足、首购和复购的最小化事件；后台按用户和项目聚合漏斗、D1/D7 回访与每成功任务毛利，不保存 prompt 或图片 URL。套餐只展示真实 CNY，并同时换算约可完成的 10 点标准图与 60 点商品参考图；没有真实 USD 通道时不得展示近似汇率。
+
 ### 运营后台
 
 | Method | Path | 说明 |
@@ -214,6 +238,8 @@ V1 不承诺 PSD、视频、复杂蒙版、画笔修复、生成式填充、CMYK
 
 迁移文件位于 `backend/migrations/`。财务 JSON 导入使用 `backend/scripts/import-json-to-postgres.js`，迁移核对使用 `audit-json-postgres.js`。切换后旧财务快照只读保留，不是回退源；产品行为写入 `behavior_events`，最小化 usage、图片历史和内容审计写入 `operational_records`。旧 JSON analytics/usage/history 仅用于无数据库非生产兼容。钱包与不可变账本余额使用 bigint，避免合法购买在 32 位整数边界回滚。
 
+灰度顺序固定为内部账号 → 10% 用户 48 小时 → 50% 用户 48 小时 → 100%。任务成功率较基线下降超过 2 个百分点、出现不完整退款或资产归属异常时停止扩量。模型或价格调整必须按最高折扣点数包验证预计毛利不低于 50%。
+
 Render 从仓库根目录安装完整 workspace。`pnpm start:production` 在监听端口前持有
 PostgreSQL advisory lock 并应用全部迁移；迁移失败时新版本不得启动。托管 PostgreSQL
 默认校验证书；生产应配置 `PG_SSL_CA`/`PG_SSL_CA_BASE64`，只有已评估的私有网络兼容
@@ -228,6 +254,13 @@ pnpm check
 它执行只读 lint、类型检查、前后端单测、六组 Playwright 项目（Chromium/Firefox/WebKit 桌面与移动视口）、生产构建和首页 250 KiB gzip 预算。CI 使用 PostgreSQL 16 并先应用全部迁移；任一 P0/财务测试失败时保持 `PAID_FEATURES_ENABLED=false`。
 
 Provider、内部模型或 prompt 模板变更还必须用 `backend/evaluation/ai-design-quality-set.json` 的同一组 30 个中英文电商案例生成 baseline/candidate manifest，再运行 `pnpm --filter backend eval:generation:blind -- ...` 创建去标识盲评表。完成盲评后以 `pnpm --filter backend eval:generation:score -- --review <file>` 验证：candidate 硬约束通过率不少于 90%，且平均分与偏好胜负均不得劣于旧链路。没有测试 Provider 凭证时只运行契约 mock，不伪造质量结论。
+
+Agent 使用 `backend/evaluation/agent-quality-set.json` 的 40 个固定任务作为最低回归集，
+报告、XLSX、PPTX、网站各 10 个，并覆盖提示注入、禁止外部写入、低预算、来源冲突和
+离线网站渲染。每次运行成功结算前必须通过确定性轨迹验证：真实计划先于执行、费用不超
+预算、禁止动作未执行、所有高风险副作用存在一次性已消费审批、相同副作用未重复、PDF
+引用来自实际访问页面、全部产物验证通过、模型耐久工具回执已经消费。恢复使用加密的
+`call_id` 与工具回执继续 Responses 会话，不得以重新提示模型代替精确续跑。
 
 外部 AI、SMTP、爱发电和对象存储先使用契约 mock/fixture。没有独立 DEV 凭证时不得
 发起真实支付或收费 Provider 请求。代码先进入 `dev` 并完成 smoke，再通过 PR 进入

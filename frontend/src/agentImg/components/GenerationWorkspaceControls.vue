@@ -169,20 +169,23 @@ const copy = computed(() =>
         setup: '生成设置',
         starters: '快速开始',
         ratio: '画面比例',
-        references: '参考图（可选）',
+        references: '语义参考图（商品图必填）',
         upload: '上传',
         remove: '移除',
-        privacy: '选择模板不会生成或扣费；当前免费标准模型仅支持文生图，确认后才提交提示词。'
+        privacy: props.maxReferences > 0
+          ? '商品参考图必填，风格与场景参考可选；确认 60 点报价后才会提交素材。'
+          : '标准文生图不接收参考图；确认 10 点报价后才会提交提示词。'
       }
     : {
         setup: 'Generation setup',
         starters: 'Start with a recipe',
         ratio: 'Aspect ratio',
-        references: 'References (optional)',
+        references: 'Semantic references (product required)',
         upload: 'Upload',
         remove: 'Remove',
-        privacy:
-          'Recipes never generate or charge automatically. The current free standard model supports text-to-image only.'
+        privacy: props.maxReferences > 0
+          ? 'A product reference is required; style and scene are optional. Assets are submitted only after you confirm the 60-credit quote.'
+          : 'Standard text-to-image accepts no references. Your prompt is submitted only after you confirm the 10-credit quote.'
       }
 );
 </script>

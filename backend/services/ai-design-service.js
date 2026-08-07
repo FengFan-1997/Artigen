@@ -10,6 +10,7 @@ const {
   throwIfAborted
 } = require('./old-photo-service');
 const {
+  PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
   assertGenerationProfile,
   getInternalGenerationProfile,
@@ -17,7 +18,7 @@ const {
 } = require('./generation-profiles');
 
 const MAX_PROMPT_LENGTH = 4000;
-const MAX_REFERENCE_IMAGES = 0;
+const MAX_REFERENCE_IMAGES = 3;
 const MAX_IMAGE_BYTES = 40 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 32 * 1000 * 1000;
 const OUTPUT_RETENTION_HOURS = 30 * 24;
@@ -46,6 +47,7 @@ const directionSchema = z.object({
   summary: textField(400),
   prompt: textField(2000)
 }).strict();
+const referenceRoleSchema = z.enum(['product', 'style', 'scene']);
 
 const directionsOptionsSchema = z.object({
   prompt: textField(MAX_PROMPT_LENGTH),
@@ -55,10 +57,11 @@ const directionsOptionsSchema = z.object({
 
 const generateOptionsSchema = z.object({
   prompt: textField(MAX_PROMPT_LENGTH),
-  profileId: z.literal(STANDARD_PROFILE_ID),
+  profileId: z.enum([STANDARD_PROFILE_ID, PRODUCT_REFERENCE_PROFILE_ID]),
   aspectRatio: textField(12),
   seed: z.number().int().min(0).max(0xffffffff).optional(),
-  direction: directionSchema.optional()
+  direction: directionSchema.optional(),
+  referenceRoles: z.array(referenceRoleSchema).max(MAX_REFERENCE_IMAGES).optional()
 }).strict();
 
 const validationError = (result) => {
@@ -84,12 +87,6 @@ const validateAiDesignTask = ({ operation, options, inputCount = 0, env = proces
     return parsed.data;
   }
   if (normalizedOperation === 'generate') {
-    if (count > 0) {
-      throw new ApiError(400, 'REFERENCE_IMAGES_NOT_SUPPORTED', {
-        field: 'inputAssets',
-        retryable: false
-      });
-    }
     if (count > MAX_REFERENCE_IMAGES) {
       throw new ApiError(413, 'TOO_MANY_FILES', { field: 'inputAssets' });
     }
@@ -111,12 +108,36 @@ const validateAiDesignTask = ({ operation, options, inputCount = 0, env = proces
       }
       throw validationError(parsed);
     }
-    assertGenerationProfile({
+    const profile = assertGenerationProfile({
       profileId: parsed.data.profileId,
       aspectRatio: parsed.data.aspectRatio,
       env
     });
-    return parsed.data;
+    if (count > profile.maxReferences) {
+      throw new ApiError(400, 'REFERENCE_IMAGES_NOT_SUPPORTED', {
+        field: 'inputAssets',
+        retryable: false
+      });
+    }
+    if (profile.id === PRODUCT_REFERENCE_PROFILE_ID && count === 0) {
+      throw new ApiError(400, 'REFERENCE_IMAGE_REQUIRED', {
+        field: 'inputAssets',
+        retryable: false
+      });
+    }
+    const referenceRoles = parsed.data.referenceRoles ||
+      ['product', 'style', 'scene'].slice(0, count);
+    if (
+      referenceRoles.length !== count ||
+      new Set(referenceRoles).size !== referenceRoles.length ||
+      count > 0 && referenceRoles[0] !== 'product'
+    ) {
+      throw new ApiError(400, 'INVALID_REFERENCE_ROLES', {
+        field: 'options.referenceRoles',
+        retryable: false
+      });
+    }
+    return { ...parsed.data, referenceRoles };
   }
   throw new ApiError(400, 'OPERATION_NOT_SUPPORTED', { field: 'operation' });
 };
@@ -133,7 +154,7 @@ const deriveTaskSeed = (taskId) => {
   return digest.readUInt32BE(0);
 };
 
-const buildGenerationPrompt = ({ prompt, direction, referenceCount, aspectRatio }) => {
+const buildGenerationPrompt = ({ prompt, direction, referenceRoles = [], aspectRatio }) => {
   const parts = [
     'Create one polished commerce or creator-ready visual that follows the supplied request.',
     `User request: ${prompt}`,
@@ -142,9 +163,14 @@ const buildGenerationPrompt = ({ prompt, direction, referenceCount, aspectRatio 
   if (direction) {
     parts.push(`Selected visual direction: ${direction.title}. ${direction.summary}. ${direction.prompt}`);
   }
-  if (referenceCount > 0) {
+  if (referenceRoles.length > 0) {
+    const roleLabels = {
+      product: 'product identity reference',
+      style: 'visual style reference',
+      scene: 'scene reference'
+    };
     parts.push(
-      `Reference image order is semantic: ${['product identity reference', 'visual style reference', 'scene reference'].slice(0, referenceCount).join(', ')}.`,
+      `Reference image order is semantic: ${referenceRoles.map((role) => roleLabels[role]).join(', ')}.`,
       'Use each reference only for its named role and as supplied visual evidence. Preserve product identity, geometry, material, visible logo, and visible label text. Do not invent or rewrite product facts.'
     );
   }
@@ -225,10 +251,12 @@ const normalizeAiDesignFailure = (error, signal) => {
   return 'AI_DESIGN_FAILED';
 };
 
-const configuredProviderCostMinor = (operation, env = process.env) => {
+const configuredProviderCostMinor = (operation, env = process.env, profileId = '') => {
   const key = operation === 'directions'
     ? 'AI_DESIGN_DIRECTIONS_COST_MINOR'
-    : 'AI_DESIGN_GENERATE_COST_MINOR';
+    : profileId === PRODUCT_REFERENCE_PROFILE_ID
+      ? 'AI_DESIGN_REFERENCE_COST_MINOR'
+      : 'AI_DESIGN_GENERATE_COST_MINOR';
   const value = Number(env[key]);
   return Number.isSafeInteger(value) && value >= 0 ? Math.min(1_000_000_000, value) : null;
 };
@@ -338,7 +366,7 @@ const createAiDesignExecutor = ({
         prompt: buildGenerationPrompt({
           prompt: normalizedOptions.prompt,
           direction: normalizedOptions.direction,
-          referenceCount: inputs.length,
+          referenceRoles: normalizedOptions.referenceRoles,
           aspectRatio: normalizedOptions.aspectRatio
         }),
         profile,
@@ -400,7 +428,7 @@ const createAiDesignExecutor = ({
         outputs: [output],
         providerMs,
         persistMs,
-        providerCostMinor: configuredProviderCostMinor(operation, env)
+        providerCostMinor: configuredProviderCostMinor(operation, env, profile.id)
       };
     } catch (error) {
       const code = normalizeAiDesignFailure(error, signal);

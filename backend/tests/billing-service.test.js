@@ -3,7 +3,8 @@ const test = require('node:test');
 
 const {
   assetIdentitiesEqual,
-  assertHoldLive
+  assertHoldLive,
+  assertSkuMargin
 } = require('../services/billing-service');
 
 test('legacy idempotency compatibility requires the same ordered upload fingerprints', () => {
@@ -32,5 +33,30 @@ test('expired credit holds fail closed before dispatch or settlement', () => {
   assert.throws(
     () => assertHoldLive({ hold_expires_at: new Date(Date.now() - 1_000) }),
     { code: 'TASK_TIMEOUT', status: 409 }
+  );
+});
+
+test('model SKU margin guard uses the highest-discount package economics', () => {
+  assert.deepEqual(assertSkuMargin({
+    sku: 'ai-design.product-reference.v1',
+    credits: 60,
+    revenuePerCreditMinor: 0.999,
+    metadata: { providerCostMinor: 30, minimumGrossMargin: 0.5 },
+    env: {}
+  }), {
+    estimatedRevenueMinor: 60,
+    providerCostMinor: 30,
+    estimatedGrossMargin: 0.5,
+    minimumGrossMargin: 0.5
+  });
+  assert.throws(
+    () => assertSkuMargin({
+      sku: 'ai-design.product-reference.v1',
+      credits: 60,
+      revenuePerCreditMinor: 0.999,
+      metadata: { providerCostMinor: 31, minimumGrossMargin: 0.5 },
+      env: {}
+    }),
+    { code: 'SKU_MARGIN_GUARD', status: 503 }
   );
 });

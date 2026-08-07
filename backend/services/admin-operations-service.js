@@ -70,6 +70,37 @@ const createAdminOperationsService = ({ pool = getPool() } = {}) => {
 
   const getOverview = async () => {
     const result = await pool.query(`
+      WITH credit_floor AS (
+        SELECT min(amount_minor::numeric / credits) AS unit_minor
+          FROM payment_packages
+         WHERE active=true AND currency='CNY'
+      ),
+      task_cost AS (
+        SELECT task_id,
+               max((properties->>'costMinor')::numeric) AS provider_cost_minor
+          FROM generation_events
+         WHERE event_type='task_success'
+           AND properties->>'source'='server'
+           AND properties->>'costMinor' ~ '^[0-9]+$'
+           AND occurred_at >= now() - interval '7 days'
+         GROUP BY task_id
+      ),
+      task_economics AS (
+        SELECT task.id,
+               round(task.charged_credits * floor.unit_minor) AS estimated_revenue_minor,
+               cost.provider_cost_minor
+          FROM tool_tasks task
+          CROSS JOIN credit_floor floor
+          JOIN task_cost cost ON cost.task_id=task.id
+         WHERE task.status='success'
+           AND task.created_at >= now() - interval '7 days'
+      ),
+      first_orders AS (
+        SELECT user_id,min(created_at) AS first_paid_at,count(*)::integer AS paid_orders
+          FROM payment_orders
+         WHERE status IN ('paid','credited')
+         GROUP BY user_id
+      )
       SELECT
         (SELECT count(*)::bigint FROM users WHERE status <> 'deleted') AS users_total,
         (SELECT count(*)::bigint FROM users
@@ -83,6 +114,16 @@ const createAdminOperationsService = ({ pool = getPool() } = {}) => {
           WHERE created_at >= now() - interval '24 hours') AS ledger_entries_24h,
         (SELECT count(*)::bigint FROM payment_orders
           WHERE created_at >= now() - interval '7 days') AS orders_7d,
+        (SELECT count(*)::bigint FROM first_orders
+          WHERE first_paid_at >= now() - interval '7 days') AS first_buyers_7d,
+        (SELECT count(*)::bigint FROM first_orders
+          WHERE paid_orders >= 2
+            AND EXISTS (
+              SELECT 1 FROM payment_orders repeat_order
+               WHERE repeat_order.user_id=first_orders.user_id
+                 AND repeat_order.status IN ('paid','credited')
+                 AND repeat_order.created_at >= now() - interval '7 days'
+            )) AS repeat_buyers_7d,
         (SELECT COALESCE(sum(expected_amount_minor),0)::bigint FROM payment_orders
           WHERE status IN ('paid','credited')
             AND created_at >= now() - interval '7 days') AS revenue_minor_7d,
@@ -105,9 +146,92 @@ const createAdminOperationsService = ({ pool = getPool() } = {}) => {
           WHERE event_type='ui_click'
             AND occurred_at >= now() - interval '24 hours') AS clicks_24h,
         (SELECT count(*)::bigint FROM audit_events
-          WHERE created_at >= now() - interval '24 hours') AS audit_events_24h
+          WHERE created_at >= now() - interval '24 hours') AS audit_events_24h,
+        (SELECT count(*)::bigint FROM creative_projects
+          WHERE status <> 'trashed') AS projects_total,
+        (SELECT count(*)::bigint FROM creative_projects
+          WHERE created_at >= now() - interval '7 days') AS projects_created_7d,
+        (SELECT count(DISTINCT project_id)::bigint FROM project_versions
+          WHERE status='success'
+            AND created_at >= now() - interval '7 days') AS projects_success_7d,
+        (SELECT count(DISTINCT project.id)::bigint
+           FROM creative_projects project
+          WHERE EXISTS (
+            SELECT 1 FROM project_versions version
+             WHERE version.project_id=project.id
+               AND version.status='success'
+               AND version.created_at >= now() - interval '7 days'
+          )
+            AND EXISTS (
+              SELECT 1 FROM generation_events event
+               WHERE event.project_ref=project.id::text
+                 AND event.event_type IN ('edit','download')
+                 AND event.occurred_at >= now() - interval '7 days'
+            )) AS north_star_projects_7d,
+        (SELECT count(*)::bigint FROM users
+          WHERE status <> 'deleted'
+            AND created_at >= now() - interval '30 days'
+            AND created_at < now() - interval '2 days') AS d1_eligible,
+        (SELECT count(*)::bigint FROM users cohort
+          WHERE cohort.status <> 'deleted'
+            AND cohort.created_at >= now() - interval '30 days'
+            AND cohort.created_at < now() - interval '2 days'
+            AND (
+              EXISTS (
+                SELECT 1 FROM behavior_events event
+                 WHERE event.actor_user_id=cohort.id
+                   AND event.occurred_at >= cohort.created_at + interval '1 day'
+                   AND event.occurred_at < cohort.created_at + interval '2 days'
+              )
+              OR EXISTS (
+                SELECT 1 FROM generation_events event
+                 WHERE event.actor_user_id=cohort.id
+                   AND event.occurred_at >= cohort.created_at + interval '1 day'
+                   AND event.occurred_at < cohort.created_at + interval '2 days'
+              )
+            )) AS d1_returned,
+        (SELECT count(*)::bigint FROM users
+          WHERE status <> 'deleted'
+            AND created_at >= now() - interval '60 days'
+            AND created_at < now() - interval '8 days') AS d7_eligible,
+        (SELECT count(*)::bigint FROM users cohort
+          WHERE cohort.status <> 'deleted'
+            AND cohort.created_at >= now() - interval '60 days'
+            AND cohort.created_at < now() - interval '8 days'
+            AND (
+              EXISTS (
+                SELECT 1 FROM behavior_events event
+                 WHERE event.actor_user_id=cohort.id
+                   AND event.occurred_at >= cohort.created_at + interval '7 days'
+                   AND event.occurred_at < cohort.created_at + interval '8 days'
+              )
+              OR EXISTS (
+                SELECT 1 FROM generation_events event
+                 WHERE event.actor_user_id=cohort.id
+                   AND event.occurred_at >= cohort.created_at + interval '7 days'
+                   AND event.occurred_at < cohort.created_at + interval '8 days'
+              )
+            )) AS d7_returned,
+        (SELECT count(*)::bigint FROM task_economics) AS costed_success_tasks_7d,
+        (SELECT COALESCE(sum(estimated_revenue_minor),0)::bigint
+           FROM task_economics) AS estimated_task_revenue_minor_7d,
+        (SELECT COALESCE(sum(provider_cost_minor),0)::bigint
+           FROM task_economics) AS provider_cost_minor_7d,
+        (SELECT count(*)::bigint FROM task_economics
+          WHERE CASE
+            WHEN estimated_revenue_minor > 0
+              THEN (estimated_revenue_minor-provider_cost_minor)/estimated_revenue_minor < 0.5
+            ELSE true
+          END
+        ) AS tasks_below_margin_7d
     `);
     const row = result.rows[0] || {};
+    const d1Eligible = Number(row.d1_eligible || 0);
+    const d1Returned = Number(row.d1_returned || 0);
+    const d7Eligible = Number(row.d7_eligible || 0);
+    const d7Returned = Number(row.d7_returned || 0);
+    const estimatedRevenueMinor = Number(row.estimated_task_revenue_minor_7d || 0);
+    const providerCostMinor = Number(row.provider_cost_minor_7d || 0);
     return {
       users: {
         total: Number(row.users_total || 0),
@@ -122,7 +246,9 @@ const createAdminOperationsService = ({ pool = getPool() } = {}) => {
       },
       commerce: {
         orders7d: Number(row.orders_7d || 0),
-        revenueMinor7d: Number(row.revenue_minor_7d || 0)
+        revenueMinor7d: Number(row.revenue_minor_7d || 0),
+        firstBuyers7d: Number(row.first_buyers_7d || 0),
+        repeatBuyers7d: Number(row.repeat_buyers_7d || 0)
       },
       generation: {
         tasks24h: Number(row.tasks_24h || 0),
@@ -136,6 +262,33 @@ const createAdminOperationsService = ({ pool = getPool() } = {}) => {
       },
       audit: {
         events24h: Number(row.audit_events_24h || 0)
+      },
+      projects: {
+        total: Number(row.projects_total || 0),
+        created7d: Number(row.projects_created_7d || 0),
+        successful7d: Number(row.projects_success_7d || 0),
+        northStar7d: Number(row.north_star_projects_7d || 0)
+      },
+      retention: {
+        d1: {
+          eligible: d1Eligible,
+          returned: d1Returned,
+          rate: d1Eligible ? d1Returned / d1Eligible : 0
+        },
+        d7: {
+          eligible: d7Eligible,
+          returned: d7Returned,
+          rate: d7Eligible ? d7Returned / d7Eligible : 0
+        }
+      },
+      economics: {
+        costedSuccessTasks7d: Number(row.costed_success_tasks_7d || 0),
+        estimatedRevenueMinor7d: estimatedRevenueMinor,
+        providerCostMinor7d: providerCostMinor,
+        estimatedGrossMargin7d: estimatedRevenueMinor
+          ? (estimatedRevenueMinor - providerCostMinor) / estimatedRevenueMinor
+          : null,
+        tasksBelowMargin7d: Number(row.tasks_below_margin_7d || 0)
       },
       generatedAt: Date.now()
     };

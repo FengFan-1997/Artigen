@@ -84,22 +84,30 @@ export function useAgentImgModels(
   };
 
   const modelOptions = computed(() => {
-    return [
-      {
-        id: '',
-        label: currentLang.value === 'zh' ? '标准生成' : 'Standard generation',
-        badge: 'STANDARD',
-        hint:
-          currentLang.value === 'zh'
-            ? '使用免费标准模型进行文生图'
-            : 'Text-to-image with the free standard model',
-        requiresPro: false
-      }
-    ];
+    return generationModels.value.map((profile) => {
+      const label = typeof profile.name === 'string'
+        ? profile.name
+        : String(profile.name?.[currentLang.value === 'zh' ? 'zh' : 'en'] || profile.id);
+      const reference = profile.maxReferences > 0;
+      return {
+        id: profile.id,
+        label,
+        badge: reference ? 'REFERENCE · 60' : 'STANDARD · 10',
+        hint: currentLang.value === 'zh'
+          ? reference
+            ? '使用 1–3 张商品、风格或场景参考图'
+            : '纯文生图，不上传参考图'
+          : reference
+            ? 'Use 1–3 product, style, or scene references'
+            : 'Text-to-image without references',
+        requiresPro: false,
+        available: profile.available
+      };
+    });
   });
 
   const currentModelLabel = computed(() => {
-    const found = modelOptions.value.find((x) => x.id === selectedModelId.value);
+    const found = modelOptions.value.find((x) => x.id === selectedProfileId.value);
     return found?.label || ui.value.modelStandard;
   });
 
@@ -113,11 +121,18 @@ export function useAgentImgModels(
   };
 
   const selectModel = async (
-    m: { id: string; requiresPro?: boolean },
-    _showTopTip: (msg: string) => void
+    m: { id: string; requiresPro?: boolean; available?: boolean },
+    showTopTip: (msg: string) => void
   ) => {
     const id = String(m?.id || '').trim();
+    if (m.available === false) {
+      showTopTip(currentLang.value === 'zh' ? '该生成模式暂不可用' : 'This generation mode is unavailable.');
+      return;
+    }
     selectedModelId.value = id;
+    if (generationModels.value.some((profile) => profile.id === id)) {
+      selectedProfileId.value = id;
+    }
     modelMenuOpen.value = false;
   };
 
@@ -147,6 +162,7 @@ export function useAgentImgModels(
       if (!models.some((profile) => profile.id === selectedProfileId.value && profile.available)) {
         selectedProfileId.value = models.find((profile) => profile.available)?.id || models[0].id;
       }
+      selectedModelId.value = selectedProfileId.value;
       if (!generationAspectRatios.value.includes(selectedAspectRatio.value)) {
         selectedAspectRatio.value = generationAspectRatios.value[0] || '1:1';
       }

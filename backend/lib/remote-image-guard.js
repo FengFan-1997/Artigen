@@ -4,6 +4,7 @@ const https = require('https');
 const net = require('net');
 
 const { fetchWithTimeout } = require('./fetch-utils');
+const { isPublicIp } = require('../agent_runtime/public_network');
 
 const remoteError = (code, status = 502) => {
   const error = new Error(code);
@@ -17,45 +18,10 @@ const normalizeHost = (value) => String(value || '')
   .toLowerCase()
   .replace(/^\.+|\.+$/g, '');
 
-// Treat every non-public address as unsafe. Besides RFC1918 and loopback this
-// includes link-local, carrier-grade NAT, documentation, benchmark, multicast,
-// and reserved ranges which must never be useful to a public image proxy.
-const isPrivateIp = (raw) => {
-  const address = String(raw || '').trim().toLowerCase();
-  if (!address) return true;
-  if (net.isIPv4(address)) {
-    const [a, b, c] = address.split('.').map(Number);
-    return a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 0 && c === 0) ||
-      (a === 192 && b === 0 && c === 2) ||
-      (a === 192 && b === 88 && c === 99) ||
-      (a === 192 && b === 168) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      (a === 198 && b === 51 && c === 100) ||
-      (a === 203 && b === 0 && c === 113) ||
-      a >= 224;
-  }
-  if (net.isIPv6(address)) {
-    if (address.startsWith('::ffff:')) {
-      const mapped = address.slice('::ffff:'.length);
-      return net.isIPv4(mapped) ? isPrivateIp(mapped) : true;
-    }
-    return address === '::' ||
-      address === '::1' ||
-      address.startsWith('fc') ||
-      address.startsWith('fd') ||
-      address.startsWith('fe') ||
-      address.startsWith('ff') ||
-      address.startsWith('2001:db8:') ||
-      address.startsWith('64:ff9b:');
-  }
-  return true;
-};
+// Treat every address outside the globally routable set as unsafe. The shared
+// implementation is also baked into the Agent browser's CONNECT proxy so URL
+// fetches and live Chromium traffic cannot drift to different SSRF rules.
+const isPrivateIp = (raw) => !isPublicIp(raw);
 
 const configuredImageProxyHosts = (env = process.env) => String(
   env.PROXY_IMAGE_ALLOWED_HOSTS ||

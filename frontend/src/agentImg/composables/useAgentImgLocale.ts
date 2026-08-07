@@ -49,7 +49,7 @@ export function useAgentImgLocale() {
         generateThisDirection: '生成',
         welcomeTitle: '欢迎使用 Artigen AI 设计。',
         welcomeSub:
-          '从模板开始或描述商品画面。当前免费标准模型仅支持文生图，确认本次费用后才会创建任务。',
+          '选择 10 点标准文生图，或用商品、风格、场景参考图进行 60 点商品参考生成；确认报价后才会创建任务。',
         memory: '历史记录',
         noHistory: '暂无历史记录',
         resultTitle: '生成结果',
@@ -88,7 +88,7 @@ export function useAgentImgLocale() {
           '先补齐产品档案并描述画面。快速生成直接出图；深度思考会先单独生成 4 个视觉方向，选择后再次确认生成。每一步都独立报价。',
         guideKeywords: [
           '4 个视觉方向',
-          '免费文生图模型',
+          '商品语义参考',
           '标准生成',
           '电商产品工作流',
           '失败自动退款'
@@ -96,23 +96,23 @@ export function useAgentImgLocale() {
         guideFaqs: [
           {
             q: '深度思考有什么用？',
-            a: '深度思考会先生成 4 个可编辑视觉方向，这一步单独报价 5 点；只有选择方向并再次确认后，才会创建 10 点的出图任务。'
+            a: '深度思考会先生成 4 个可编辑视觉方向，这一步单独报价 5 点；选择方向后，再按标准生成 10 点或商品参考生成 60 点确认出图。'
           },
           {
             q: '从哪里开始更快？',
-            a: '当前免费标准模型仅支持文生图。做电商图建议先填写产品档案，再描述商品、构图、场景和光线。'
+            a: '没有素材时用 10 点标准文生图；已有商品图时用 60 点商品参考生成，并按商品、风格、场景顺序上传。'
           },
           {
             q: '怎么提高一致性与可控性？',
-            a: '当前免费标准模型仅支持文生图。你可以填写产品档案与需求，生成后进入 Editor V2 继续编辑。'
+            a: '把商品图固定为第一张参考，再按需加入风格和场景参考；结果可以保存为项目分支并进入 Editor V2。'
           },
           {
             q: '我们的优势是什么？',
-            a: '围绕商品视觉把产品档案、方向探索、标准文生图、Editor V2 与下载串成可恢复、可取消、可退款的工作流。'
+            a: '围绕商品视觉把项目资料、语义参考、版本分支、并排比较、Editor V2 与多尺寸交付串成可恢复、可退款的工作流。'
           },
           {
             q: '文件会上传到服务器吗？',
-            a: '工具相关功能默认在浏览器本地处理；AI 设计只会在你确认生成后，将必要的提示词发送到模型服务。'
+            a: '15 个工具默认在浏览器本地处理；AI 设计只会在你确认报价后，将必要的提示词和参考素材发送到模型服务。'
           }
         ]
       };
@@ -158,7 +158,7 @@ export function useAgentImgLocale() {
       generateThisDirection: 'Generate',
       welcomeTitle: 'Welcome to Artigen AI Design.',
       welcomeSub:
-        'Start with a recipe or describe a product visual. The current free standard model supports text-to-image only, and generation starts after you confirm the cost.',
+        'Choose 10-credit standard text-to-image or 60-credit product-reference generation with product, style, and scene guidance. Nothing starts before quote confirmation.',
       memory: 'History',
       noHistory: 'No history yet',
       resultTitle: 'Result',
@@ -206,23 +206,23 @@ export function useAgentImgLocale() {
       guideFaqs: [
         {
           q: 'What does Deep Thinking do?',
-          a: 'It creates four editable visual directions as a separately quoted 5-credit task. An image is generated only after you select a direction and confirm the separate 10-credit task.'
+          a: 'It creates four editable visual directions as a separately quoted 5-credit task. After choosing one, confirm either a 10-credit standard generation or a 60-credit product-reference generation.'
         },
         {
           q: 'Where should I start for faster results?',
-          a: 'The current free standard model supports text-to-image only. Complete the product profile first for more controlled commerce prompts.'
+          a: 'Use 10-credit standard generation without assets, or 60-credit product-reference generation when you have a product image. Add style and scene guidance only when useful.'
         },
         {
           q: 'How to improve consistency and control?',
-          a: 'Reference-image generation is currently unavailable because it would require a non-approved model. Use product profile fields and then refine the result in Editor V2.'
+          a: 'Keep the product image in the first semantic slot, then optionally add style and scene references. Save good results as project branches and refine them in Editor V2.'
         },
         {
           q: 'What makes it different?',
-          a: 'It connects product profiles, direction exploration, standard text-to-image generation, Editor V2, and downloads in one recoverable, cancellable, refundable workflow.'
+          a: 'It connects project briefs, semantic references, version branches, comparison, Editor V2, and multi-size delivery in one recoverable, refundable workflow.'
         },
         {
           q: 'Do files get uploaded to a server?',
-          a: 'Tools run locally in your browser by default. For AI generation, we send the confirmed prompt to the model service to produce the result.'
+          a: 'The 15 utility tools run locally by default. AI generation sends only the confirmed prompt and required reference assets to the model service after quote confirmation.'
         }
       ]
     };

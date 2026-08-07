@@ -7,7 +7,12 @@ const REQUIRED_TABLES = [
   'payment_callback_events',
   'tool_task_quotes',
   'tool_tasks',
-  'credit_holds'
+  'credit_holds',
+  'agent_runs',
+  'agent_model_checkpoints',
+  'agent_events',
+  'agent_artifacts',
+  'agent_budget_holds'
 ];
 
 const COUNT_CHECKS = [
@@ -69,18 +74,151 @@ const COUNT_CHECKS = [
   },
   {
     name: 'wallet_frozen_matches_held_holds',
-    tables: ['wallets', 'credit_holds'],
+    tables: ['wallets', 'credit_holds', 'agent_budget_holds'],
     sql: `
       WITH held AS (
         SELECT user_id, sum(credits)::bigint AS credits
-          FROM credit_holds
-         WHERE status = 'held'
+          FROM (
+            SELECT user_id, credits
+              FROM credit_holds
+             WHERE status = 'held'
+            UNION ALL
+            SELECT user_id, paid_credits AS credits
+              FROM agent_budget_holds
+             WHERE status = 'held'
+          ) active_holds
          GROUP BY user_id
       )
       SELECT count(*)::text AS violations
         FROM wallets wallet
         FULL JOIN held USING (user_id)
        WHERE coalesce(wallet.frozen_credits, 0) <> coalesce(held.credits, 0)
+    `
+  },
+  {
+    name: 'agent_run_has_exactly_one_hold',
+    tables: ['agent_runs', 'agent_budget_holds'],
+    sql: `
+      SELECT count(*)::text AS violations
+        FROM (
+          SELECT run.id
+            FROM agent_runs run
+            LEFT JOIN agent_budget_holds hold ON hold.run_id = run.id
+           GROUP BY run.id
+          HAVING count(hold.id) <> 1
+        ) invalid
+    `
+  },
+  {
+    name: 'agent_run_hold_state_matrix',
+    tables: ['agent_runs', 'agent_budget_holds'],
+    sql: `
+      SELECT count(*)::text AS violations
+        FROM agent_runs run
+        JOIN agent_budget_holds hold ON hold.run_id = run.id
+       WHERE hold.user_id <> run.user_id
+          OR hold.max_credits <> run.max_credits
+          OR hold.free_credits + hold.paid_credits <> hold.max_credits
+          OR hold.charged_credits <> run.charged_credits
+          OR (
+               hold.status = 'held'
+               AND run.status NOT IN (
+                 'draft','queued','provisioning','running',
+                 'waiting_user','paused','verifying'
+               )
+             )
+          OR (
+               hold.status = 'settled'
+               AND (
+                 run.status NOT IN ('succeeded','failed','cancelled')
+                 OR hold.charged_credits <= 0
+               )
+             )
+          OR (
+               hold.status = 'released'
+               AND (
+                 run.status NOT IN ('failed','cancelled','succeeded')
+                 OR hold.charged_credits <> 0
+               )
+             )
+          OR (hold.status = 'held' AND hold.resolved_at IS NOT NULL)
+          OR (hold.status <> 'held' AND hold.resolved_at IS NULL)
+          OR (
+               run.status IN ('succeeded','failed','cancelled')
+               AND (
+                 run.finished_at IS NULL
+                 OR run.worker_id IS NOT NULL
+                 OR run.lease_expires_at IS NOT NULL
+               )
+             )
+    `
+  },
+  {
+    name: 'agent_run_verified_success',
+    tables: ['agent_runs', 'agent_artifacts'],
+    sql: `
+      SELECT count(*)::text AS violations
+        FROM agent_runs run
+       WHERE run.status = 'succeeded'
+         AND (
+           NOT EXISTS (
+             SELECT 1 FROM agent_artifacts artifact
+              WHERE artifact.run_id = run.id
+                AND artifact.verification_status = 'passed'
+           )
+           OR EXISTS (
+             SELECT 1 FROM agent_artifacts artifact
+              WHERE artifact.run_id = run.id
+                AND artifact.verification_status <> 'passed'
+           )
+           OR NOT EXISTS (
+             SELECT 1 FROM agent_artifacts artifact
+              WHERE artifact.run_id = run.id
+                AND artifact.role IN ('editable','source','website','package')
+           )
+         )
+    `
+  },
+  {
+    name: 'agent_run_single_active',
+    tables: ['agent_runs'],
+    sql: `
+      SELECT count(*)::text AS violations
+        FROM (
+          SELECT user_id
+            FROM agent_runs
+           WHERE status IN (
+             'draft','queued','provisioning','running',
+             'waiting_user','paused','verifying'
+           )
+           GROUP BY user_id
+          HAVING count(*) > 1
+        ) duplicate_active
+    `
+  },
+  {
+    name: 'agent_ledger_has_run',
+    tables: ['agent_runs', 'wallet_ledger'],
+    sql: `
+      SELECT count(*)::text AS violations
+        FROM wallet_ledger ledger
+       WHERE ledger.reference_type = 'agent_run'
+         AND ledger.entry_type IN ('hold', 'charge', 'release')
+         AND NOT EXISTS (
+           SELECT 1
+             FROM agent_runs run
+            WHERE run.id::text = ledger.reference_id
+         )
+    `
+  },
+  {
+    name: 'agent_hold_not_stale',
+    tables: ['agent_budget_holds'],
+    sql: `
+      SELECT count(*)::text AS violations
+        FROM agent_budget_holds
+       WHERE status = 'held'
+         AND expires_at <= clock_timestamp() - interval '5 minutes'
     `
   },
   {
@@ -477,7 +615,8 @@ const COUNT_CHECKS = [
       WITH required(table_name, trigger_name) AS (
         VALUES
           ('wallet_ledger', 'wallet_ledger_append_only'),
-          ('payment_orders', 'payment_order_snapshot_immutable')
+          ('payment_orders', 'payment_order_snapshot_immutable'),
+          ('agent_events', 'agent_events_append_only')
       )
       SELECT count(*)::text AS violations
         FROM required

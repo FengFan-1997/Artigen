@@ -453,6 +453,9 @@ let lastPageViewTs = 0;
 export const trackBackendEvent = async (eventType: string, payload: Record<string, any>) => {
   if (!ANALYTICS_ENABLED) return { success: true, disabled: true as const };
   const authSession = getAuthSessionSnapshot();
+  const businessProjectId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(payload?.projectId || '').trim())
+    ? String(payload.projectId).trim()
+    : '';
 
   const url = buildApiUrl('/api/collection/event');
   const userId = ensureGuestUserId();
@@ -464,7 +467,7 @@ export const trackBackendEvent = async (eventType: string, payload: Record<strin
     userId,
     requestId,
     sessionId: getOrCreateSessionId(),
-    projectId: getOrCreateProjectId(),
+    projectId: businessProjectId || getOrCreateProjectId(),
     pageContext: sanitizeAnalyticsPayload({ elements: getPageContext() }).elements || [],
     requestSource: 'site_analytics',
     path: (() => {

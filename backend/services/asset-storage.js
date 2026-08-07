@@ -12,6 +12,7 @@ const RETENTION_CLASSES = new Set([
   'temporary-input',
   'generated-output',
   'editor-transfer',
+  'project-owned',
   'other'
 ]);
 
@@ -21,6 +22,11 @@ const MIME_ALIASES = new Map([
   ['application/x-zip-compressed', 'application/zip'],
   ['application/x-ico', 'image/x-icon'],
   ['image/vnd.microsoft.icon', 'image/x-icon']
+]);
+const OOXML_MIMES = new Set([
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 ]);
 
 const normalizeMime = (value) => {
@@ -60,7 +66,7 @@ const detectMagicMime = (buffer, declaredMime = '') => {
     startsWithBytes(buffer, [0x50, 0x4b, 0x05, 0x06]) ||
     startsWithBytes(buffer, [0x50, 0x4b, 0x07, 0x08])
   ) {
-    return declared === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    return OOXML_MIMES.has(declared)
       ? declared
       : 'application/zip';
   }
@@ -70,7 +76,10 @@ const detectMagicMime = (buffer, declaredMime = '') => {
     const brand = buffer.subarray(8, 12).toString('ascii');
     return brand === 'qt  ' ? 'video/quicktime' : 'video/mp4';
   }
-  if (declared === 'text/plain' && isProbablyText(buffer)) return 'text/plain';
+  if (
+    ['text/plain', 'text/markdown'].includes(declared) &&
+    isProbablyText(buffer)
+  ) return declared;
   return '';
 };
 
@@ -170,9 +179,12 @@ const extensionForMime = (mimeType) => ({
   'application/pdf': '.pdf',
   'application/zip': '.zip',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
   'video/mp4': '.mp4',
   'video/quicktime': '.mov',
   'video/webm': '.webm',
+  'text/markdown': '.md',
   'text/plain': '.txt'
 }[normalizeMime(mimeType)] || '.bin');
 

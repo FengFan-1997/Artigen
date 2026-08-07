@@ -98,7 +98,10 @@ export const useAgentImgFlow = (opts?: {
     }
   };
   const userInput = ref('');
-  const deepMode = ref(true);
+  // Optimize the first-session path for one confirmed generation. Direction
+  // analysis remains an explicit, optional step instead of an extra default
+  // quote before the user sees a first result.
+  const deepMode = ref(false);
   const loading = ref(false);
   const error = ref('');
   const stage = ref<'idle' | 'directions' | 'final'>('idle');

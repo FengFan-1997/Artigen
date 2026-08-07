@@ -7,7 +7,9 @@ const {
 } = require('../lib/tool-catalog');
 const {
   GENERATION_DIRECTIONS_MODEL,
+  GENERATION_EDIT_MODEL,
   GENERATION_IMAGE_MODEL,
+  PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
   assertGenerationProfile,
   generationRolloutBucket,
@@ -41,6 +43,10 @@ test('ai-design catalog uses operation-level SKUs without exposing client price 
   const tool = getTool('ai-design');
   assert.equal(tool.kind, 'generator');
   assert.equal(resolveOperationSku(tool, 'generate'), 'ai-design.generate.v1');
+  assert.equal(
+    resolveOperationSku(tool, 'generate', { profileId: PRODUCT_REFERENCE_PROFILE_ID }),
+    'ai-design.product-reference.v1'
+  );
   assert.equal(resolveOperationSku(tool, 'directions'), 'ai-design.directions.v1');
   assert.equal(isPaidOperation(tool, 'generate'), true);
   assert.equal(isPaidOperation(tool, 'directions'), true);
@@ -52,17 +58,34 @@ test('public generation profiles expose stable capabilities but no provider or i
     env: enabledEnv,
     providerAvailable: true
   });
-  assert.deepEqual(profiles, [{
-    id: STANDARD_PROFILE_ID,
-    name: { zh: '标准生成', en: 'Standard generation' },
-    available: true,
-    capabilities: ['text-to-image'],
-    maxReferences: 0,
-    aspectRatios: ['1:1', '4:5', '3:4', '16:9', '9:16'],
-    supportsSeed: true
-  }]);
+  assert.deepEqual(profiles, [
+    {
+      id: STANDARD_PROFILE_ID,
+      name: { zh: '标准生成', en: 'Standard generation' },
+      available: true,
+      capabilities: ['text-to-image'],
+      maxReferences: 0,
+      aspectRatios: ['1:1', '4:5', '3:4', '16:9', '9:16'],
+      supportsSeed: true
+    },
+    {
+      id: PRODUCT_REFERENCE_PROFILE_ID,
+      name: { zh: '商品参考生成', en: 'Product reference generation' },
+      available: true,
+      capabilities: [
+        'reference-guided-generation',
+        'product-reference',
+        'style-reference',
+        'scene-reference'
+      ],
+      maxReferences: 3,
+      aspectRatios: ['1:1', '4:5', '3:4', '16:9', '9:16'],
+      supportsSeed: true
+    }
+  ]);
   assert.equal(JSON.stringify(profiles).includes('SiliconFlow'), false);
   assert.equal(JSON.stringify(profiles).includes('Kwai-Kolors'), false);
+  assert.equal(JSON.stringify(profiles).includes('Qwen-Image-Edit'), false);
   assert.equal(
     listPublicGenerationProfiles({ env: enabledEnv, providerAvailable: false })[0].available,
     false
@@ -144,6 +167,49 @@ test('ai-design validators allow only the stable contract and enforce operation 
     }
   });
   assert.equal(generate.seed, 42);
+  const referenceGenerate = validateAiDesignTask({
+    operation: 'generate',
+    inputCount: 3,
+    options: {
+      prompt: 'Preserve the bottle and place it in the supplied scene',
+      profileId: PRODUCT_REFERENCE_PROFILE_ID,
+      aspectRatio: '4:5'
+    }
+  });
+  assert.equal(referenceGenerate.profileId, PRODUCT_REFERENCE_PROFILE_ID);
+  assert.deepEqual(referenceGenerate.referenceRoles, ['product', 'style', 'scene']);
+  const productAndScene = validateAiDesignTask({
+    operation: 'generate',
+    inputCount: 2,
+    options: {
+      prompt: 'Preserve the product in the scene',
+      profileId: PRODUCT_REFERENCE_PROFILE_ID,
+      aspectRatio: '1:1',
+      referenceRoles: ['product', 'scene']
+    }
+  });
+  assert.deepEqual(productAndScene.referenceRoles, ['product', 'scene']);
+  assert.throws(
+    () => validateAiDesignTask({
+      operation: 'generate',
+      inputCount: 1,
+      options: {
+        prompt: 'x',
+        profileId: PRODUCT_REFERENCE_PROFILE_ID,
+        aspectRatio: '1:1',
+        referenceRoles: ['style']
+      }
+    }),
+    { code: 'INVALID_REFERENCE_ROLES', field: 'options.referenceRoles' }
+  );
+  assert.throws(
+    () => validateAiDesignTask({
+      operation: 'generate',
+      inputCount: 0,
+      options: { prompt: 'x', profileId: PRODUCT_REFERENCE_PROFILE_ID, aspectRatio: '1:1' }
+    }),
+    { code: 'REFERENCE_IMAGE_REQUIRED' }
+  );
   assert.throws(
     () => validateAiDesignTask({
       operation: 'generate',
@@ -189,7 +255,7 @@ test('ai-design validators allow only the stable contract and enforce operation 
       inputCount: 4,
       options: { prompt: 'x', profileId: STANDARD_PROFILE_ID, aspectRatio: '1:1' }
     }),
-    { code: 'REFERENCE_IMAGES_NOT_SUPPORTED' }
+    { code: 'TOO_MANY_FILES' }
   );
 });
 
@@ -236,9 +302,19 @@ test('SiliconFlow adapter owns model and image parameters and parses exactly fou
   assert.deepEqual(calls.image.params, { imageSize: '720x1280', seed: 7 });
   assert.equal('steps' in calls.image.params, false);
   assert.equal('guidanceScale' in calls.image.params, false);
+  const referenceProfile = getInternalGenerationProfile(PRODUCT_REFERENCE_PROFILE_ID, enabledEnv);
+  await provider.generateImage({
+    prompt: 'preserve the product identity',
+    profile: referenceProfile,
+    aspectRatio: '1:1',
+    seed: 9,
+    images: ['data:image/png;base64,AAAA']
+  });
+  assert.equal(calls.image.model, GENERATION_EDIT_MODEL);
+  assert.equal(calls.image.images.length, 1);
 });
 
-test('generation provider rejects every model outside the two-model free allowlist', async () => {
+test('generation provider rejects every model outside the fixed production allowlist', async () => {
   const provider = createSiliconFlowGenerationProvider({
     configured: true,
     env: enabledEnv,
@@ -288,6 +364,7 @@ test('SiliconFlow readiness probe validates credentials, endpoint and every inte
         json: async () => ({
           data: [
             { id: GENERATION_IMAGE_MODEL },
+            { id: GENERATION_EDIT_MODEL },
             { id: GENERATION_DIRECTIONS_MODEL }
           ]
         })

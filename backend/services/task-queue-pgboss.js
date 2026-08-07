@@ -210,6 +210,9 @@ class PgBossTaskQueue {
       if (typeof this.maintenance?.sweepExpiredUploadSessions === 'function') {
         await this.maintenance.sweepExpiredUploadSessions();
       }
+      if (typeof this.maintenance?.sweepTrashedProjects === 'function') {
+        await this.maintenance.sweepTrashedProjects();
+      }
     });
   }
 

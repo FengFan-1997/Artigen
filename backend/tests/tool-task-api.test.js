@@ -21,6 +21,9 @@ const {
   validateMagicBytes
 } = require('../services/asset-storage');
 const {
+  inspectBuffer: inspectAssetBuffer
+} = require('../services/file-inspection-service');
+const {
   canonicalize,
   publicTask,
   requestHash,
@@ -53,7 +56,7 @@ const { canUseLegacyJsonBilling } = require('../lib/legacy-finance-policy');
 const { canUseLegacyFileQueryToken } = require('../lib/auth-utils');
 
 test('tool catalog resolves legacy IDs and hybrid operation execution from the server registry', () => {
-  assert.equal(catalogVersion, 4);
+  assert.equal(catalogVersion, 5);
   assert.ok(tools.length >= 13);
   assert.equal(getTool('old_photo').id, 'old-photo');
   const editor = getTool('image-editor');
@@ -170,6 +173,17 @@ test('magic-byte validation rejects MIME spoofing and reads image dimensions', (
   assert.throws(() => validateMagicBytes(Buffer.from('not a file'), 'image/png'), {
     code: 'UNSUPPORTED_FILE_TYPE'
   });
+});
+
+test('Markdown is preserved as text/markdown during asset inspection', async () => {
+  const inspected = await inspectAssetBuffer({
+    buffer: Buffer.from('# Browser smoke\n\nVerified.\n', 'utf8'),
+    declaredMime: 'text/markdown',
+    allowedMimeTypes: ['text/markdown'],
+    maxBytes: 1024
+  });
+  assert.equal(inspected.mimeType, 'text/markdown');
+  assert.equal(inspected.byteSize, 27);
 });
 
 test('uploaded task inputs are fully inspected and fingerprinted before durable storage', async () => {
