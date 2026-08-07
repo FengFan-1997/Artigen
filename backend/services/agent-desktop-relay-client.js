@@ -87,6 +87,9 @@ class AgentDesktopRelayClient {
         [ticket.id]
       ).catch(() => {});
     };
+    const report = (code) => {
+      console.warn(`Agent desktop relay client status: ${String(code || 'UNKNOWN').slice(0, 100)}`);
+    };
     websocket.once('open', () => {
       const timestamp = Date.now();
       const nonce = crypto.randomBytes(24).toString('base64url');
@@ -120,6 +123,7 @@ class AgentDesktopRelayClient {
         try {
           endpoint = await this.sandbox.desktopEndpoint(ticket.sandbox_ref);
         } catch {
+          report('DESKTOP_ENDPOINT_UNAVAILABLE');
           return close();
         }
         const vnc = net.connect({ host: endpoint.host, port: endpoint.port });
@@ -128,16 +132,28 @@ class AgentDesktopRelayClient {
         vnc.on('data', (chunk) => {
           if (websocket.readyState === WebSocket.OPEN) websocket.send(chunk, { binary: true });
         });
-        vnc.on('timeout', close);
-        vnc.on('error', close);
+        vnc.on('timeout', () => {
+          report('VNC_TIMEOUT');
+          close();
+        });
+        vnc.on('error', (error) => {
+          report(`VNC_ERROR_${error?.code || 'UNKNOWN'}`);
+          close();
+        });
         vnc.on('close', close);
         return;
       }
       if (!state.vnc || state.vnc.destroyed) return close();
       state.vnc.write(data);
     });
-    websocket.on('error', close);
-    websocket.on('close', close);
+    websocket.on('error', (error) => {
+      report(`WEBSOCKET_ERROR_${error?.code || 'UNKNOWN'}`);
+      close();
+    });
+    websocket.on('close', (code) => {
+      if (!relayReady) report(`WEBSOCKET_CLOSED_${Number(code || 0)}`);
+      close();
+    });
   }
 
   async start() {

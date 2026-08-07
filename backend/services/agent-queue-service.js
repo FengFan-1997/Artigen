@@ -4,6 +4,21 @@ const { getAgentConfig } = require('./agent-config');
 
 const AGENT_QUEUE = 'artigen-agent-run-v1';
 const AGENT_DEAD_LETTER_QUEUE = 'artigen-agent-run-dlq';
+const instrumentedBosses = new WeakSet();
+
+const attachBossErrorLogging = (boss, label = 'agent') => {
+  if (!boss || (typeof boss !== 'object' && typeof boss !== 'function')) return false;
+  if (instrumentedBosses.has(boss)) return true;
+  if (typeof boss.on !== 'function') return false;
+  boss.on('error', (error) => {
+    console.error(`${label} pg-boss queue error`, error?.code || error?.message || error);
+  });
+  boss.on('warning', (warning) => {
+    console.warn(`${label} pg-boss queue warning`, warning?.code || warning?.message || warning);
+  });
+  instrumentedBosses.add(boss);
+  return true;
+};
 
 const bossConfig = (env = process.env) => {
   const connectionString = String(env.DATABASE_URL || '').trim();
@@ -40,6 +55,7 @@ class AgentQueuePublisher {
   constructor({ env = process.env, boss = null } = {}) {
     this.env = env;
     this.boss = boss || new PgBoss(bossConfig(env));
+    attachBossErrorLogging(this.boss, 'Agent publisher');
     this.started = false;
     this.startPromise = null;
   }
@@ -89,6 +105,7 @@ class AgentQueueWorker {
     this.env = env;
     this.config = getAgentConfig(env);
     this.boss = boss || new PgBoss(bossConfig(env));
+    attachBossErrorLogging(this.boss, 'Agent worker');
     this.started = false;
     this.reconcileTimer = null;
     this.reconcilePromise = null;
@@ -270,6 +287,7 @@ module.exports = {
   AGENT_QUEUE,
   AgentQueuePublisher,
   AgentQueueWorker,
+  attachBossErrorLogging,
   bossConfig,
   queueOptions
 };

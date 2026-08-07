@@ -102,13 +102,13 @@ const getAgentConfig = (env = process.env) => {
     env.AGENT_SILICONFLOW_BASE_URL || env.SILICONFLOW_API_BASE || 'https://api.siliconflow.cn/v1'
   );
   const siliconFlowApiKey = String(
-    env.SILICONFLOW_API_KEY ||
-    env.SILICONFLOW_TOKEN ||
-    env.SILICONFLOW_KEY ||
     readMacOsKeychainSecret({
       service: env.SILICONFLOW_KEYCHAIN_SERVICE,
       account: env.SILICONFLOW_KEYCHAIN_ACCOUNT
     }) ||
+    env.SILICONFLOW_API_KEY ||
+    env.SILICONFLOW_TOKEN ||
+    env.SILICONFLOW_KEY ||
     ''
   ).trim();
   const publicCapabilities = new Set(String(env.AGENT_PUBLIC_CAPABILITIES || 'files,shell')

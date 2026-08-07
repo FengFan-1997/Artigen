@@ -9,6 +9,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 const NONCE_RE = /^[A-Za-z0-9_-]{16,86}$/;
 
+const relayStatus = (code) => {
+  console.warn(`Agent desktop relay status: ${String(code || 'UNKNOWN').slice(0, 100)}`);
+};
+
 const configuredViewerOrigins = (env = process.env) => new Set([
   env.APP_ORIGIN,
   env.PUBLIC_ORIGIN,
@@ -157,6 +161,7 @@ const createAgentDesktopRelay = ({
   const pair = (ticketId, workerSocket) => {
     const waiting = viewers.get(ticketId);
     if (!waiting || waiting.socket.readyState !== WebSocket.OPEN) {
+      relayStatus('WORKER_VIEWER_UNAVAILABLE');
       workerSocket.close(1008, 'viewer unavailable');
       return;
     }
@@ -164,6 +169,7 @@ const createAgentDesktopRelay = ({
     const viewerSocket = waiting.socket;
     const session = { viewer: viewerSocket, worker: workerSocket };
     sessions.set(ticketId, session);
+    relayStatus('SESSION_PAIRED');
     workerSocket.send(JSON.stringify({ type: 'relay.ready', ticketId }));
     const forward = (target) => (data, isBinary) => {
       if (target.readyState === WebSocket.OPEN) target.send(data, { binary: isBinary });
@@ -177,12 +183,19 @@ const createAgentDesktopRelay = ({
   };
 
   const acceptViewer = async (request, socket, head, url) => {
-    if (!pool || !viewerOriginAllowed(request.headers.origin, env)) {
+    if (!pool) {
+      relayStatus('VIEWER_DATABASE_UNAVAILABLE');
+      socket.destroy();
+      return;
+    }
+    if (!viewerOriginAllowed(request.headers.origin, env)) {
+      relayStatus('VIEWER_ORIGIN_REJECTED');
       socket.destroy();
       return;
     }
     const ticket = await consumeViewerTicket(pool, url.searchParams.get('ticket'));
     if (!ticket) {
+      relayStatus('VIEWER_TICKET_REJECTED');
       socket.destroy();
       return;
     }
@@ -216,7 +229,14 @@ const createAgentDesktopRelay = ({
           return workerSocket.close(1008, 'auth invalid');
         }
         const claim = await validateWorkerClaim(pool, message, env).catch(() => null);
-        if (!claim || !viewers.has(claim.id)) return workerSocket.close(1008, 'claim invalid');
+        if (!claim) {
+          relayStatus('WORKER_CLAIM_REJECTED');
+          return workerSocket.close(1008, 'claim invalid');
+        }
+        if (!viewers.has(claim.id)) {
+          relayStatus('WORKER_VIEWER_NOT_WAITING');
+          return workerSocket.close(1008, 'claim invalid');
+        }
         pair(claim.id, workerSocket);
       });
     });

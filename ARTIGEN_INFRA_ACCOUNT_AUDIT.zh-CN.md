@@ -21,7 +21,7 @@ flowchart LR
     V --> CF["Cloudflare Turnstile"]
 ```
 
-目前网站和生产 API 可以访问，生产付费、支付、邮件验证码和标准 AI 能力已开启；但生产数据库迁移落后于开发环境和当前工作区，生产管理后台没有可用管理员，生产数据库备份自动化尚未真正配置，自定义域名也还没有接入。
+目前网站和生产 API 可以访问，生产付费、支付、邮件验证码和标准 AI 能力已开启。Render DEV 已部署 Agent 迁移 020，并由 Mac Worker 完成远程浏览和共享 S3 交付烟测；生产 Agent 仍未部署。生产数据库已有 2026-08-07 手工逻辑备份，但定时备份与恢复演练仍未建立；生产管理后台没有可用管理员，自定义域名也还没有接入。
 
 ## 2. 线上地址与域名
 
@@ -479,7 +479,7 @@ Turnstile 当前文档中登记的 hostname 包括：
 | `Artigen Task Payload Encryption Key` | `fengfan` | 任务载荷加密密钥 |
 | `artigen-agent-dev-relay` | `AGENT_WORKER_RELAY_SECRET` | 本机 DEV 桌面中继 HMAC 密钥 |
 
-Production Agent 使用独立 Keychain service `artigen-agent-production-worker`。计划使用的 account 标签为 `DATABASE_URL`、`AGENT_PAYLOAD_ENCRYPTION_KEY`、`SILICONFLOW_API_KEY`、`AGENT_WORKER_RELAY_SECRET`、`AGENT_WORKER_RELAY_URL` 和各项 `S3_*`。这些 Production 项在正式发布窗口由所有者确认并写入；不能因为脚本支持这些标签就写成“凭据已经配置完成”。
+远程 DEV Agent 使用独立 Keychain service `artigen-agent-dev-worker`；Production Agent 使用 `artigen-agent-production-worker`。两者的 account 标签均为 `DATABASE_URL`、`AGENT_PAYLOAD_ENCRYPTION_KEY`、`SILICONFLOW_API_KEY`、`AGENT_WORKER_RELAY_SECRET`、`AGENT_WORKER_RELAY_URL` 和各项 `S3_*`。Production 项仍必须在正式发布窗口由所有者确认并写入；不能因为脚本支持这些标签就写成“凭据已经配置完成”。
 
 在有权限的本机终端中按需读取，示例：
 
@@ -537,16 +537,16 @@ security find-generic-password -s 'Artigen Dev Access Password' -w
 
 ## 11. 代码版本和部署漂移
 
-目前存在四种状态：
+2026-08-07 更新后存在以下状态：
 
 | 环境 | 代码/数据库状态 |
 |---|---|
 | 生产 Render/Vercel | `codex/artigen-overhaul`，提交 `10c15249...`，迁移 `011` |
-| 开发 Render | `dev`，提交 `95d51da...`，迁移 `014` |
+| 开发 Render | `dev`，迁移 `020_agent_secure_browser_relay`，Agent 四项状态与远程接管均通过；具体提交以 Render 当前 deploy 为准 |
 | 本地数据库 | 迁移 `020_agent_secure_browser_relay` |
-| 当前未提交工作区 | 新增迁移一直到 `020`，并包含 Agent/CUA/Qwen worker、受限浏览器和远程桌面中继改动 |
+| 当前功能分支 | `codex/agent-runtime-local`；主体提交 `3135016` 已通过 PR #8 合入 `dev`，后续 Keychain、远程 Worker、Qwen 顺序调用、接管与恢复补丁由 PR #9 跟踪 |
 
-当前工作区有大量未提交修改。这些修改属于开发中代码，不能视为已经上线。
+PR #9 是否已经合入及 Render 是否完成对应部署，应以 GitHub checks 和 Render deploy commit 为准；不能仅凭本机分支存在补丁就写成已经部署。
 
 尤其是 Agent Beta：
 
@@ -554,22 +554,23 @@ security find-generic-password -s 'Artigen Dev Access Password' -w
 - 没有发现独立 Agent worker 的线上部署证据；
 - 仓库存在 `railway.json`，但没有发现正在运行的 Railway 资源证据。
 
-2026-08-07 本机 DEV 已真实完成受限浏览器 Markdown+PDF run `1dfa16bf-49a4-428b-a942-ef3e090258f3`（`succeeded`、轨迹 100、两份交付物验证通过、容器清理）以及桌面中继 run `3ddfdc37-91d9-462d-af70-e8ebaf812ef2`（真实 `RFB 003.008` 握手、票据 consumed/started/closed、无真实凭据）。这只证明本机 DEV 实现可用，不能替代 DEV Render + 共享 S3 或 Production 验收。
+2026-08-07 本机 DEV 已真实完成受限浏览器 Markdown+PDF run `1dfa16bf-49a4-428b-a942-ef3e090258f3`（`succeeded`、轨迹 100、两份交付物验证通过、容器清理）以及桌面中继 run `3ddfdc37-91d9-462d-af70-e8ebaf812ef2`（真实 `RFB 003.008` 握手、票据 consumed/started/closed、无真实凭据）。同日远程 DEV run `f32c30bf-ed26-4fc9-aa0a-0daaa878ca24` 又证明了 Render DEV/Neon 队列、Mac Worker、restricted-v1 浏览、Qwen3-8B、Markdown/PDF、独立验证、共享 Neon S3 上传及跨进程读回完整可用；run `06035a9d-b19f-4e1d-ba73-c58fa954fff8` 进一步证明 Qwen blocked 审批、60 秒票据、Render WSS 中继和 Mac VNC 握手完整可用。两项远程烟测均未使用真实登录凭据。DEV 网页端真实账号登录/会话复验和 Production 验收仍未完成。
 
 所以当前不能对外宣称 Agent Beta 已部署。
 
 ## 12. 备份现状
 
-生产数据库备份自动化目前没有真正解决：
+生产数据库备份自动化目前没有真正解决，但 2026-08-07 已完成发布前手工备份：
 
 - `~/.config/artigen/neon-backup.env` 不存在；
 - `~/.config/artigen/neon-restore-verify.env` 不存在；
 - 没有对应的 launchd 定时任务；
 - 现有备份位于 `~/Library/Application Support/Artigen/backups/`；
-- 现有 manifest 的来源是本地 `localhost` 数据库 `artigen_dev`，不是 Neon 生产库；
-- 该备份只覆盖到迁移 `001`～`010`。
+- DEV Neon 备份：`artigen-neon-2026-08-07T06-11-11-822Z.dump`，26 张表，附 manifest 与 SHA-256；
+- Production Neon 备份：`artigen-neon-2026-08-07T06-56-38-199Z.dump`，23 张表，附 manifest 与 SHA-256；
+- 两份备份都位于 `~/Library/Application Support/Artigen/backups/`，没有提交 Git。
 
-因此它不能算生产数据库的可恢复备份。
+该生产 dump 已成功生成，但尚未恢复到隔离数据库验证，因此只能作为发布前逻辑备份，不能替代定时、加密、异地保留和恢复演练。
 
 合理的修复顺序：
 
@@ -585,16 +586,16 @@ security find-generic-password -s 'Artigen Dev Access Password' -w
 
 ### P0：生产数据安全
 
-1. **没有生产备份自动化**
-   优先建立真正指向 Neon `neondb` 的备份与恢复演练。
+1. **没有生产备份自动化和恢复演练**
+   已有 2026-08-07 Neon Production 手工 dump；下一步建立定时、加密、异地保留并恢复到隔离数据库验证。
 
 2. **生产没有管理员**
    确认需要成为 owner 的用户，使用授权脚本写入 `administrators`，并通过安全渠道生成和保存 Console 密码及 Token Secret。
 
 ### P1：版本一致性
 
-3. **生产迁移 `011`、开发 `014`、工作区/本地 `020`**
-   先整理并提交当前工作区，逐个审查 `012`～`020` 的兼容性和回滚方案，再通过开发环境验证后部署生产。不要直接在生产数据库手工跳迁移。
+3. **生产迁移 `011`、开发/本地 `020`**
+   DEV 已带锁迁移和烟测通过；仍要在发布窗口从已验收的 `dev` 合入 `main`，让 Render 启动流程顺序执行 `012`～`020`。不要直接在生产数据库手工跳迁移。
 
 4. **生产分支不是默认 `main`**
    当前生产来自 `codex/artigen-overhaul`，而 GitHub 默认分支是 `main`。应决定长期生产分支策略，并把 PR 和部署源统一。
@@ -613,8 +614,8 @@ security find-generic-password -s 'Artigen Dev Access Password' -w
 8. **生产配置不能只看 `render.yaml`**
    建立配置清单，以 Render/Vercel 实际变量和 `/readyz` 为准，并记录每次变更。
 
-9. **Agent Beta 尚未部署到 DEV Render/Production**
-   本机 DEV 已通过受限浏览器和桌面中继烟测；仍要先完成全量测试、DEV 数据库备份、迁移 015–020、共享 S3 下载和线上接管验收，才能逐账号开放。
+9. **Agent Beta 已部署 DEV，尚未部署 Production**
+   DEV 迁移 020、远程 Mac Worker、受限浏览器和共享 S3 下载烟测已通过；仍要完成 DEV 网页端登录接管/会话复验、Production Worker Keychain 和发布窗口验收，才能先对所有者账号开放。
 
 ## 14. 建议的接管检查清单
 
@@ -628,7 +629,7 @@ security find-generic-password -s 'Artigen Dev Access Password' -w
 - [ ] 确认 SiliconFlow 的真实平台登录账号
 - [ ] 确认 Google Cloud OAuth 项目 Owner
 - [ ] 建立生产 Console owner
-- [ ] 建立并验证生产备份
+- [ ] 将现有生产手工备份恢复到隔离库验证，并建立定时备份
 - [ ] 统一生产分支和数据库迁移版本
 - [ ] 为所有平台启用 2FA，并保存恢复码
 - [ ] 把密钥放入统一密码管理器，避免只有单台 Mac 钥匙串可访问

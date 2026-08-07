@@ -28,6 +28,9 @@ const escapeXml = (value) => String(value)
 fs.mkdirSync(launchAgents, { recursive: true, mode: 0o700 });
 fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
 const production = profile === 'production';
+const keychainService = production
+  ? 'artigen-agent-production-worker'
+  : 'artigen-agent-dev-worker';
 const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -50,7 +53,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>ARTIGEN_AGENT_KEYCHAIN_SERVICE</key><string>artigen-agent-production-worker</string>
+    <key>ARTIGEN_AGENT_KEYCHAIN_SERVICE</key><string>${keychainService}</string>
   </dict>
 </dict>
 </plist>
