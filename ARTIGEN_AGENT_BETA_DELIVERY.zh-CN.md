@@ -2,7 +2,9 @@
 
 交付日期：2026-08-07
 
-生产发布提交：`9bcc77d593e0747d5265f96f1f45b1dcb956b0bd`
+首次功能发布与真实烟测基线提交：`9bcc77d593e0747d5265f96f1f45b1dcb956b0bd`
+
+运维加固发布链路：GitHub PR #13（功能分支 → `dev`）与 PR #14（`dev` → `main`）。由于把“最终 SHA”写进提交本身会再次改变 SHA，当前线上精确提交始终以 `/api/meta` 为准。
 
 发布等级：**Production Beta / owner-only**
 
@@ -32,7 +34,8 @@ Artigen 浏览器 Agent 已完成生产部署和真实端到端验收，不再�
 | 生产前端 | 在线 | `https://artigen-fengfan.vercel.app/artigen` 返回 200 |
 | Agent 工作台 | 在线 | `https://artigen-fengfan.vercel.app/artigen/agent` |
 | 生产后端 | 在线 | Render deploy `dep-d9qs08ijnfac73e3icn0` 为 `live` |
-| 生产提交 | 一致 | `/api/meta` 返回完整 SHA `9bcc77d593e0747d5265f96f1f45b1dcb956b0bd` |
+| 烟测基线提交 | 已验证 | 真实生产烟测时 `/api/meta` 返回 `9bcc77d593e0747d5265f96f1f45b1dcb956b0bd` |
+| 当前生产提交 | 发布后核对 | `/api/meta` 必须等于 GitHub `main` 当前部署的完整 SHA |
 | 生产数据库 | 通过 | `/readyz`：`020_agent_secure_browser_relay` |
 | 共享对象存储 | 通过 | `/readyz`：`driver=s3`、`shared=true` |
 | 云端模型 | 通过 | `Qwen/Qwen3-8B`、provider `siliconflow` |
@@ -56,7 +59,7 @@ curl -fsS https://artigen-fengfan.vercel.app/api/agent/status
 健康结果必须同时包含：
 
 ```text
-gitSha=9bcc77d593e0747d5265f96f1f45b1dcb956b0bd
+gitSha=<GitHub main 当前部署的完整 SHA>
 database.migration=020_agent_secure_browser_relay
 storage.driver=s3
 storage.shared=true
@@ -202,7 +205,7 @@ neonctl projects list
 | 前端项目 | `artigen-fengfan` |
 | 邮件中继项目 | `artigen-mail-relay` |
 
-GitHub 对提交 `9bcc77d` 的 `Vercel – artigen-fengfan` 状态为 success。现有资料不能可靠证明网页端具体使用 GitHub还是邮箱登录，因此只使用当前已登录会话；失效时按 Vercel 页面提示完成登录/2FA，不要在文档中保存密码。
+GitHub 对首次功能发布提交 `9bcc77d` 的 `Vercel – artigen-fengfan` 状态为 success；运维加固发布同样要求该检查通过。现有资料不能可靠证明网页端具体使用 GitHub还是邮箱登录，因此只使用当前已登录会话；失效时按 Vercel 页面提示完成登录/2FA，不要在文档中保存密码。
 
 ### 5.6 硅基流动
 
@@ -376,7 +379,7 @@ owner-only 权限校验
 - 前端单元测试：211/211；
 - Agent 质量集：40/40，报告、表格、演示文稿、网站各 10；
 - 本地 Playwright 六项目矩阵：405 通过、3 条条件跳过、0 失败；
-- GitHub PR #11 与发布 PR #12 的 Core quality、浏览器 E2E 和 Release gate 通过；
+- GitHub PR #11、首次发布 PR #12、运维加固 PR #13 与最终发布 PR #14 均要求 Core quality、浏览器 E2E 和 Release gate 通过；
 - 生产 Vercel Artigen 项目部署状态 success；
 - 生产 `/readyz`、`/api/meta`、`/api/agent/status` 通过；
 - 生产真实登录捕获、会话恢复、撤销、4 个 S3 交付物通过。
