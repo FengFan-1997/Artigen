@@ -333,6 +333,21 @@ const createAgentRunService = ({
   }
 
   const config = getAgentConfig(env);
+  const betaUserIds = new Set(config.betaUserIds);
+
+  const assertBetaAccess = (dbUserId) => {
+    if (config.betaMode === 'disabled') return dbUserId;
+    if (config.betaMode === 'owner-only-v1' && betaUserIds.has(String(dbUserId).toLowerCase())) {
+      return dbUserId;
+    }
+    throw new ApiError(403, 'AGENT_BETA_ACCESS_DENIED', {
+      retryable: false
+    });
+  };
+
+  const resolveAgentUserId = async (client, userId) => (
+    assertBetaAccess(await resolveUserId(client, userId))
+  );
 
   const revokeDesktopTickets = (client, runId) => client.query(
     `UPDATE agent_desktop_tickets
@@ -343,7 +358,7 @@ const createAgentRunService = ({
   );
 
   const resolveOwnedRun = async (client, { userId, runId, lock = false }) => {
-    const dbUserId = await resolveUserId(client, userId);
+    const dbUserId = await resolveAgentUserId(client, userId);
     const result = await client.query(
       `SELECT run.*,hold.paid_credits,hold.free_credits AS hold_free_credits,
               hold.charged_credits AS hold_charged,hold.status AS hold_status
@@ -363,6 +378,10 @@ const createAgentRunService = ({
     }
     await queuePublisher.publish(runId);
   };
+
+  const resolveUserAccess = async ({ userId }) => withTransaction(pool, async (client) => (
+    resolveAgentUserId(client, userId)
+  ));
 
   const getServiceStatus = async () => {
     const result = await pool.query(
@@ -400,6 +419,7 @@ const createAgentRunService = ({
       desktopRelayReady: workerOnline && row.desktop_relay_ready === true,
       sandboxImageRef: row.sandbox_image_ref || null,
       browserPublicEnabled: config.publicBrowserEnabled,
+      accessMode: config.betaMode,
       availabilityNote: workerOnline
         ? (queueDepth > 0 ? 'busy' : 'ready')
         : 'worker_offline'
@@ -440,7 +460,7 @@ const createAgentRunService = ({
       : clampCredits(maxCredits, config.hardMaxCredits);
 
     const result = await withTransaction(pool, async (client) => {
-      const dbUserId = await resolveUserId(client, userId);
+      const dbUserId = await resolveAgentUserId(client, userId);
       const usage = await client.query(
         `SELECT reserved_credits,consumed_credits
            FROM agent_daily_free_usage
@@ -578,7 +598,7 @@ const createAgentRunService = ({
     const requestHash = hashRequest(requestIdentity);
 
     const created = await withTransaction(pool, async (client) => {
-      const dbUserId = await resolveUserId(client, userId);
+      const dbUserId = await resolveAgentUserId(client, userId);
       await client.query(
         'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
         [`agent-run:${dbUserId}:${idempotencyKey}`]
@@ -750,7 +770,7 @@ const createAgentRunService = ({
   const listRuns = async ({ userId, limit = 30, cursor = null }) => withTransaction(
     pool,
     async (client) => {
-      const dbUserId = await resolveUserId(client, userId);
+      const dbUserId = await resolveAgentUserId(client, userId);
       const result = await client.query(
         `SELECT run.*,hold.paid_credits,hold.free_credits AS hold_free_credits,
                 hold.charged_credits AS hold_charged,hold.status AS hold_status
@@ -2124,7 +2144,7 @@ const createAgentRunService = ({
   );
 
   const listBrowserProfiles = async ({ userId }) => withTransaction(pool, async (client) => {
-    const dbUserId = await resolveUserId(client, userId);
+    const dbUserId = await resolveAgentUserId(client, userId);
     const result = await client.query(
       `SELECT id,site_origin,label,last_used_at,expires_at,created_at
          FROM agent_browser_profiles
@@ -2145,7 +2165,7 @@ const createAgentRunService = ({
   const deleteBrowserProfile = async ({ userId, profileId }) => withTransaction(
     pool,
     async (client) => {
-      const dbUserId = await resolveUserId(client, userId);
+      const dbUserId = await resolveAgentUserId(client, userId);
       const result = await client.query(
         `UPDATE agent_browser_profiles
             SET revoked_at=now(),ciphertext=$3,iv=$4,auth_tag=$5
@@ -2256,7 +2276,7 @@ const createAgentRunService = ({
   });
 
   const listIntegrations = async ({ userId }) => withTransaction(pool, async (client) => {
-    const dbUserId = await resolveUserId(client, userId);
+    const dbUserId = await resolveAgentUserId(client, userId);
     const result = await client.query(
       `SELECT provider,external_subject,scopes,status,last_used_at,expires_at,created_at
          FROM agent_integrations WHERE user_id=$1 ORDER BY provider`,
@@ -2308,6 +2328,7 @@ const createAgentRunService = ({
     saveBrowserProfile,
     saveModelCheckpoint,
     requestApproval,
+    resolveUserAccess,
     resumeRun,
     savePlan,
     submitInput,

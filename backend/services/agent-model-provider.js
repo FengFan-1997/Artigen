@@ -850,6 +850,10 @@ class OllamaAgentModelProvider {
     let planPublished = durable?.planPublished === true;
     let pendingCall = durable?.pendingCall || null;
     let completedOutput = durable?.completedOutput || null;
+    let unsupportedToolAttempts = Math.max(
+      0,
+      Number(durable?.unsupportedToolAttempts || 0)
+    );
 
     const saveDurableState = async () => {
       messages = compactOllamaMessages(
@@ -865,7 +869,8 @@ class OllamaAgentModelProvider {
         planPublished,
         totalCredits,
         turns,
-        text
+        text,
+        unsupportedToolAttempts
       });
     };
 
@@ -981,17 +986,40 @@ class OllamaAgentModelProvider {
       }
       const fn = calls[0]?.function || {};
       const name = String(fn.name || '').trim();
+      const callId = String(calls[0]?.id || crypto.createHash('sha256')
+        .update(`${turns}:${name}:${JSON.stringify(fn.arguments || '')}`)
+        .digest('hex')
+        .slice(0, 24));
       if (
         !OLLAMA_FILE_TOOL_NAMES.has(name) &&
         !(name === 'browser_dom' && capabilities?.browser === true)
       ) {
-        throw new ApiError(502, 'AGENT_MODEL_TOOL_UNSUPPORTED');
+        unsupportedToolAttempts += 1;
+        turns += 1;
+        assertLoopBudget({ stepCount: turns - 1, maxSteps });
+        if (unsupportedToolAttempts > 2) {
+          throw new ApiError(502, 'AGENT_MODEL_TOOL_UNSUPPORTED', {
+            retryable: false
+          });
+        }
+        messages.push(this.toolResultMessage(
+          { callId, name },
+          {
+            content: JSON.stringify({
+              success: false,
+              errorCode: 'AGENT_MODEL_TOOL_UNSUPPORTED',
+              allowedTools: ollamaFileTools(capabilities)
+                .map((tool) => tool.function.name)
+            })
+          }
+        ));
+        pendingCall = null;
+        completedOutput = null;
+        await saveDurableState();
+        continue;
       }
+      unsupportedToolAttempts = 0;
       const argumentsValue = normalizeOllamaArguments(fn.arguments);
-      const callId = String(calls[0]?.id || crypto.createHash('sha256')
-        .update(`${turns}:${name}:${JSON.stringify(argumentsValue)}`)
-        .digest('hex')
-        .slice(0, 24));
       pendingCall = { callId, name, arguments: argumentsValue };
       completedOutput = null;
       await saveDurableState();

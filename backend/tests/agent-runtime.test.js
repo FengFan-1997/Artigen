@@ -279,6 +279,35 @@ test('Agent run service exposes saved browser session revocation', () => {
   assert.equal(typeof service.deleteBrowserProfile, 'function');
 });
 
+test('owner-only Agent Beta allows configured database users and denies everyone else', async () => {
+  const ownerId = '11111111-1111-4111-8111-111111111111';
+  const outsiderId = '22222222-2222-4222-8222-222222222222';
+  const client = {
+    release() {},
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('SELECT id FROM users WHERE id=')) {
+        return { rows: [{ id: params[0] }], rowCount: 1 };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    }
+  };
+  const service = createAgentRunService({
+    pool: { connect: async () => client },
+    env: {
+      AGENT_BETA_MODE: 'owner-only-v1',
+      AGENT_BETA_USER_IDS: ownerId
+    }
+  });
+  assert.equal(await service.resolveUserAccess({ userId: ownerId }), ownerId);
+  await assert.rejects(service.resolveUserAccess({ userId: outsiderId }), {
+    code: 'AGENT_BETA_ACCESS_DENIED',
+    status: 403
+  });
+});
+
 test('owner run views decrypt only a bounded objective preview and expose the durable plan', () => {
   const runId = '11111111-1111-4111-8111-111111111111';
   const payloadId = '22222222-2222-4222-8222-222222222222';
@@ -582,6 +611,36 @@ test('production Agent runtime fails closed without live credentials and a pinne
     NODE_ENV: 'production',
     AGENT_RUNTIME_DRIVER: 'fixture'
   }), { code: 'AGENT_FIXTURE_RUNTIME_FORBIDDEN' });
+});
+
+test('production Beta runtime fails closed without an owner UUID allowlist', () => {
+  const base = {
+    NODE_ENV: 'production',
+    APP_ENV: 'production',
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    SILICONFLOW_API_KEY: 'test-key',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local',
+    AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
+    AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
+  };
+  assert.throws(() => assertAgentRuntimeReady(base), {
+    code: 'AGENT_BETA_ACCESS_NOT_CONFIGURED'
+  });
+  assert.throws(() => getAgentConfig({
+    ...base,
+    AGENT_BETA_MODE: 'owner-only-v1',
+    AGENT_BETA_USER_IDS: 'not-a-uuid'
+  }), { code: 'AGENT_BETA_USER_IDS_INVALID' });
+  const ownerId = '11111111-1111-4111-8111-111111111111';
+  const config = assertAgentRuntimeReady({
+    ...base,
+    AGENT_BETA_MODE: 'owner-only-v1',
+    AGENT_BETA_USER_IDS: ownerId
+  });
+  assert.equal(config.betaMode, 'owner-only-v1');
+  assert.deepEqual(config.betaUserIds, [ownerId]);
 });
 
 test('production local Agent accepts loopback Ollama and a prebuilt local Cua image', () => {
@@ -1579,6 +1638,96 @@ test('SiliconFlow Qwen3-8B safely synthesizes a plan when the small model starts
   assert.equal(shellCalls, 1);
   assert.equal(plans.length, 1);
   assert.equal(plans[0].steps[0].label, 'Create the note');
+});
+
+test('SiliconFlow corrects a hallucinated tool name without executing it', async () => {
+  const requests = [];
+  const responses = [
+    {
+      id: 'chat-unsupported-tool',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call-unsupported',
+            type: 'function',
+            function: {
+              name: 'artigen_report_pdf',
+              arguments: JSON.stringify({ path: '/tmp/artigen-workspace/report.md' })
+            }
+          }]
+        }
+      }],
+      usage: {}
+    },
+    {
+      id: 'chat-corrected-tool',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call-shell-after-correction',
+            type: 'function',
+            function: {
+              name: 'sandbox_shell',
+              arguments: JSON.stringify({
+                script: "printf '# Report\\n' > /tmp/artigen-workspace/report.md",
+                purpose: 'Create the report with an available tool'
+              })
+            }
+          }]
+        }
+      }],
+      usage: {}
+    },
+    {
+      id: 'chat-final-after-correction',
+      choices: [{ message: { role: 'assistant', content: 'Report created.' } }],
+      usage: {}
+    }
+  ];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  let shellCalls = 0;
+  const result = await provider.execute({
+    objective: 'Create a report',
+    capabilities: { files: true, shell: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      shell: async () => {
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Report created.');
+  assert.equal(shellCalls, 1);
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'tool' &&
+    message.tool_call_id === 'call-unsupported' &&
+    message.name === 'artigen_report_pdf' &&
+    message.content.includes('AGENT_MODEL_TOOL_UNSUPPORTED') &&
+    message.content.includes('sandbox_shell')
+  )));
 });
 
 test('SiliconFlow serializes parallel Qwen tool calls into protocol-valid turns', async () => {

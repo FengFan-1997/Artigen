@@ -452,6 +452,7 @@ const stages = computed(() => {
 const errorText = (error: unknown) => {
   const code = String((error as any)?.code || (error as Error)?.message || error || 'AGENT_REQUEST_FAILED');
   const labels: Record<string, [string, string]> = {
+    AGENT_BETA_ACCESS_DENIED: ['Agent 目前仅对 Beta 所有者账号开放。', 'Agent is currently limited to the Beta owner account.'],
     AGENT_RUN_LOAD_FAILED: ['暂时无法读取任务，请稍后重试。', 'Unable to load this run. Try again shortly.'],
     AGENT_CONTROL_FAILED: ['控制请求没有成功，请刷新后重试。', 'The control request failed. Refresh and try again.'],
     AGENT_INPUT_FAILED: ['补充信息没有发送成功，请重试。', 'Your update was not sent. Try again.'],

@@ -33,7 +33,8 @@
     "eval:agent:trajectory": "node scripts/score-agent-trajectory.js",
     "doctor:agent": "node scripts/doctor-agent.js",
     "smoke:agent:dev-mac": "node scripts/run-agent-dev-smoke.js",
-    "smoke:agent:dev-relay-mac": "node scripts/run-agent-dev-relay-smoke.js"
+    "smoke:agent:dev-relay-mac": "node scripts/run-agent-dev-relay-smoke.js",
+    "smoke:agent:dev-login-mac": "node scripts/run-agent-dev-login-smoke.js"
   },
   "keywords": [],
   "author": "",
