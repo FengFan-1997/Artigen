@@ -100,9 +100,9 @@ Render 只运行程序，不保存长期数据。用户、钱包、订单和任�
 - 运行时：Node.js
 - 用途：Express API、任务 Worker，以及旧站直连备用入口
 - GitHub 仓库：`FengFan-1997/Artigen`
-- 部署分支：`codex/artigen-overhaul`
-- 当前后端代码提交：`10c15249d3a00fe1339a3817fe66fdcc1a4c58d9`
-- 当前生产部署：`dep-d9fhusfavr4c73c9rds0`
+- 部署分支：`main`
+- 已验证后端代码提交：`529b73fffcd2f06323ccd373168a5e009f312b5a`
+- 已验证生产部署：`dep-d9qsuam417fc7383uj70`
 - 当前 `render.yaml` 设置为手动部署，不会因为随便 push 一次就自动上线。
 
 访问 Render：
@@ -130,7 +130,7 @@ Render，也不会再看见 Render 的启动黑屏；当天第一次发送验证
 - Team：`FengFan's projects`
 - Project：`artigen-fengfan`
 - 套餐：Hobby（免费）
-- 生产分支：`codex/artigen-overhaul`
+- 生产分支：`main`
 - 当前生产版本：以 `Deployments` 顶部标记为 `Ready` 的 Production 部署为准
 - 主域名：`artigen-fengfan.vercel.app`
 - 匿名首页：只加载静态文件，不请求 `/api`
@@ -146,8 +146,8 @@ Render，也不会再看见 Render 的启动黑屏；当天第一次发送验证
 5. `Settings → Domains` 查看主域名。
 6. `Settings → Environment Variables` 查看前端构建变量。
 
-Vercel 从 GitHub 仓库 `FengFan-1997/Artigen` 的
-`codex/artigen-overhaul` 分支构建。根目录 `vercel.json` 定义：
+Vercel 从 GitHub 仓库 `FengFan-1997/Artigen` 的 `main` 正式版本构建。根目录
+`vercel.json` 定义：
 
 - 构建 `frontend/dist`。
 - `/api/*`、`/files/*`、`/healthz`、`/readyz` 转发到 Render。
@@ -685,9 +685,8 @@ security find-generic-password -s '服务名' -w
    不要在不了解差异时用 Blueprint 覆盖 Dashboard 环境。
 5. `render.yaml` 中仍有旧模型默认值，而后端生产代码已经把生图和方向模型锁定为
    `Kwai-Kolors/Kolors` 与 `Qwen/Qwen3-8B`。后续应同步清理模板，避免接手者误解。
-6. GitHub 默认分支已经是 `main`，但生产 Vercel/Render 仍跟踪
-   `codex/artigen-overhaul`。必须先完成当前迁移 PR 和 DEV 验证，再把生产来源切到
-   `main`；不能从当前落后的 `main` 直接发布。
+6. 生产来源已经切换到 `main`；后续仍必须从经过 DEV 和 Release gate 验证的不可变
+   `main` SHA 人工发布，并通过 `/api/meta` 和平台 deployment 核对真实线上版本。
 
 ## 12. 一句话记忆
 
