@@ -12,7 +12,8 @@
 | `dev` | 集成与线上测试 | 自动部署到 DEV |
 | `main` | 已验证的正式代码 | 不自动发布；生产需人工确认 |
 
-`test` 已废弃。`codex/artigen-overhaul` 是迁移期生产来源，完成迁移后不再接收日常改动。
+`test` 和 `codex/artigen-overhaul` 已退出日常流程，只保留历史。生产从 `main` 的
+不可变 commit 人工发布；精确线上版本以 `/api/meta` 和平台 deployment 为准。
 
 日常开发：
 
@@ -145,7 +146,6 @@ gh pr create --base main --head dev --fill
 
 - `dev`
 - `hotfix/*`
-- 迁移期一次性允许 `codex/artigen-overhaul`
 
 必要条件：
 
@@ -181,12 +181,39 @@ gh pr create --base main --head dev --fill
 
 生产部署从 `main` 选定不可变 commit，人工发布 Vercel 和 Render，并做生产 smoke。
 
-迁移期生产仍跟踪 `codex/artigen-overhaul`。在 PR #2 和 PR #1 完成前，不从落后的
-`main` 发布，也不擅自修改生产分支设置。
+合并 `main` 不等于自动上线。发布后必须核对 `/api/meta`、`/readyz`、受影响页面/API、
+Render deployment 和 Vercel Production 状态；没有这些证据不能把改动描述为已上线。
 
 详细命令、平台 ID、健康检查和回滚见总手册。
 
-## 9. 禁止事项
+## 9. AI 与 Handoff 纪律
+
+项目使用两层 Handoff：
+
+| 文件 | 是否提交 | 用途 |
+| --- | ---: | --- |
+| `HANDOFF.local.md` | 否 | 当前开发阶段、具体进度、临时尝试、测试、阻塞和下一步 |
+| `PROJECT_HANDOFF.zh-CN.md` | 是 | GitHub 上已经确定的项目状态和持久事实 |
+
+所有以 Artigen 仓库为工作对象的 AI 必须遵守：
+
+1. 任务开始先读根目录 `AGENTS.md`、正式 Handoff 和本地 Handoff，并先检查工作树。
+2. 本地 Handoff 不存在时创建；每个任务结束前更新，长任务在阶段切换或上下文压缩前增加检查点。
+3. 只读分析、诊断、未完成开发、临时实验和已撤销方案只写本地 Handoff。
+4. 代码、配置、文档、迁移、部署或正式决定产生持久影响时，在同一 PR 更新正式 Handoff。
+5. Bug 修复在正式 Handoff 中只写最终问题、最终修复、影响和验证，不记录调试流水账。
+6. 尚未部署的改动必须准确标记阶段；没有线上证据不能写成已上线。
+7. `HANDOFF.local.md` 已被 Git 忽略，禁止使用 `git add -f` 强行提交。
+8. 不以更新 Handoff 为理由混入用户无关文件或未授权改动。
+
+有持久影响的 PR 缺少正式 Handoff 更新，或 Handoff 与代码、迁移、部署证据矛盾时，
+Review 必须阻止合并。确实不需要更新正式 Handoff 的 PR，必须在模板中说明具体原因，
+不能只写“无”。
+
+本地 Handoff 由 PR 作者勾选确认，GitHub 不读取该文件；正式 Handoff 由 Reviewer 检查。
+当前不增加 CI 自动强制脚本。
+
+## 10. 禁止事项
 
 - 提交密码、Token、数据库 URL、API Key 或平台 Environment Export。
 - 直接 push `main` 或绕过 `Release gate`。
@@ -196,8 +223,9 @@ gh pr create --base main --head dev --fill
 - 直接修改生产钱包余额代替账本化补偿。
 - 把 `backend/memory` 当生产业务数据。
 - 在不了解影响时执行破坏性数据库命令。
+- 提交 `HANDOFF.local.md`，或把开发试错写进正式 Handoff。
 
-## 10. 文档同步
+## 11. 文档同步
 
 以下变化必须更新文档：
 
@@ -210,6 +238,7 @@ gh pr create --base main --head dev --fill
 
 总入口：
 
+- `PROJECT_HANDOFF.zh-CN.md`
 - `PROJECT_OPERATIONS_GUIDE.zh-CN.md`
 - `README.md`
 - `PRD.md`

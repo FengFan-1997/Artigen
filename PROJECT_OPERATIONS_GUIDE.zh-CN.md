@@ -1,6 +1,6 @@
 # Artigen 项目、环境与发布总手册
 
-> 状态基线：2026-07-24
+> 状态基线：2026-08-10
 > 仓库：`FengFan-1997/Artigen`
 > 本文回答：项目在哪里运行、如何接入本地/DEV/生产、代码怎么提交、什么时候能进
 > `main`、怎么发布和回滚，以及当前分支是从哪里建立的。
@@ -28,12 +28,13 @@ Artigen 使用三层环境：
   -> 生产 smoke
 ```
 
-四条硬规则：
+五条硬规则：
 
 - 不直接向 `dev` 或 `main` push。
 - DEV 没验证通过，不开 `dev -> main` 的发布 PR。
 - 合并 `main` 不等于自动上线；生产发布是独立的人工动作。
 - 真实密码、Token、数据库 URL、API Key 永远不进 Git、PR、聊天或截图。
+- 每个 Artigen AI 任务维护本地阶段 Handoff；持久改动在同一 PR 更新 GitHub 正式 Handoff。
 
 ## 2. 当前真实状态
 
@@ -41,43 +42,32 @@ Artigen 使用三层环境：
 
 | 分支 | 当前作用 | 当前状态 |
 | --- | --- | --- |
-| `main` | GitHub 默认分支、目标发布分支 | 当前停在 `380a2b1`，尚未完成新架构切换 |
-| `dev` | 云端测试环境集成分支 | 当前基线为 `04f4927` |
-| `codex/artigen-overhaul` | 当前生产代码来源、迁移期发布分支 | 生产 Vercel 和 Render 都跟踪它 |
-| `codex/admin-audit-hardening` | 当前工作分支 | 从 `origin/dev` 的 `04f4927` 建立，目标 PR 为 `dev` |
+| `main` | GitHub 默认分支、正式生产来源 | 已完成新架构与 Agent Beta 发布；精确版本读 `/api/meta` |
+| `dev` | 云端测试环境集成分支 | 功能分支先通过 PR 进入这里并自动部署 DEV |
+| `codex/*`、`feat/*`、`fix/*` 等 | 日常工作分支 | 通过 PR 进入 `dev`，不直接发布生产 |
+| `codex/artigen-overhaul` | 历史迁移分支 | 不再接收日常改动，也不是当前生产来源 |
 | `test` | 旧测试分支 | 已废弃；不要再用于新流程 |
 
-当前工作分支的准确关系：
+文档不固定“当前本地工作分支”，因为它会随任务变化。每个 AI 或开发者必须在任务开始读取
+`git status --short --branch`，把当前 branch、base、HEAD 和用户已有工作树记录到
+被 Git 忽略的 `HANDOFF.local.md`。
+
+### 2.2 当前生产事实
+
+当前生产已经切换到 `main` 的不可变 commit：
 
 ```text
-main @ 380a2b1
-  └─ ... 46 commits ...
-      └─ dev @ 04f4927
-          └─ codex/admin-audit-hardening（当前修改）
+main SHA: 529b73fffcd2f06323ccd373168a5e009f312b5a
+Render service: srv-d9cr73r7uimc73etc4j0
+Render deployment: dep-d9qsuam417fc7383uj70
 ```
 
-- 当前本地分支：`codex/admin-audit-hardening`。
-- 直接基线：`origin/dev` 的 `04f492704df441478cd8b04f5468ac8d2e17d42c`。
-- 基线提交作者：`FengFan-1997 <sorates1997@163.com>`，提交说明是
-  `fix: let dev access coexist with admin auth (#4)`。
-- Git 不保存“谁点击创建分支”；能验证的是本分支由当前工作区从上述 `origin/dev`
-  基线建立。提交后可用 `git merge-base HEAD origin/dev` 再次核对。
-- 本分支只通过 PR 进入 `dev`，不会直接进入 `main` 或触发生产发布。
-
-### 2.2 当前迁移期事实
-
-`main` 已是 GitHub 默认分支，但**当前生产云资源还没有切到 `main`**：
-
-- Vercel `artigen-fengfan` 的 Production Branch 是 `codex/artigen-overhaul`。
-- Render `artigen-app-fengfan` 的部署分支是 `codex/artigen-overhaul`，且自动部署关闭。
-- 因此在完成 PR #2、PR #1 和生产切换前，不能把“合并 main”描述成“自动上线”。
-
-完成这次迁移后，目标状态是：
-
-- DEV：`dev`，自动部署。
-- 正式代码：`main`。
-- 生产：从 `main` 的指定 commit 人工发布。
-- `codex/artigen-overhaul` 和旧 `test` 只保留历史，不再接收新功能。
+- Vercel `artigen-fengfan` 从正式 `main` 版本构建生产前端。
+- Render `artigen-app-fengfan` 从 `main` 的选定 SHA 人工部署，保持生产发布人工确认。
+- `codex/artigen-overhaul` 和 `test` 只保留历史，不再接收新功能。
+- 合并 `main` 仍不等于自动上线；只有生产部署和 smoke 完成后才能描述为已上线。
+- 文档 SHA 可能过时，精确线上版本始终以 `/api/meta`、GitHub `main` 和平台 deployment
+  交叉核验。
 
 ## 3. 系统架构
 
@@ -115,7 +105,7 @@ main @ 380a2b1
 
 | 项目 | 本机 | DEV 测试 | 生产 |
 | --- | --- | --- | --- |
-| Git 分支 | 功能分支 | `dev` | 目标 `main`；迁移期仍是 `codex/artigen-overhaul` |
+| Git 分支 | 功能分支 | `dev` | `main` 的选定不可变 SHA |
 | 前端 | `http://localhost:4000` | Render 同源站点 | Vercel `artigen-fengfan` |
 | 后端 | `http://localhost:8080` | Render `dev-artigen-app-fengfan` | Render `artigen-app-fengfan` |
 | 数据库 | `artigen_dev` | `dev_artigen` | `neondb` |
@@ -379,22 +369,16 @@ gh pr create --base main --head dev --fill
 
 ## 8. main 合并后的生产发布
 
-### 8.1 当前迁移期
+### 8.1 当前发布边界
 
-截至本文日期，生产仍跟踪 `codex/artigen-overhaul`。在 PR #2 和 PR #1 完成前：
+生产来源已经是 `main`，旧迁移分支不再参与发布。发布前必须核对：
 
-- 不直接把 Render/Vercel 生产分支改成 `main`。
-- 不从当前落后的 `main` 发布。
-- PR 合并顺序是：PR #2 先进入 `codex/artigen-overhaul`，PR #1 再进入 `main`。
-
-完成切换时必须一次性核对：
-
-1. `main` 包含已在 DEV 验证的 commit。
-2. Vercel Production Branch 改为 `main`。
-3. Render 生产服务 branch 改为 `main`。
-4. Render 生产保持 `autoDeploy=off`。
-5. Vercel 和 Render 都部署同一 `main` commit。
-6. 完成生产 smoke 后再关闭迁移 PR 和旧分支入口。
+1. `main` 包含已经在 DEV 验证的 commit。
+2. GitHub Release gate 成功。
+3. Render 生产保持人工部署，不因普通 push 自动切流量。
+4. Vercel 和 Render 都对应选定的 `main` SHA。
+5. 数据库迁移已备份并在切流量前带锁执行。
+6. 生产 smoke 完成后再把正式 Handoff 更新为“已上线”。
 
 ### 8.2 目标生产发布方式
 
@@ -659,6 +643,8 @@ gh pr checks <PR号> --repo FengFan-1997/Artigen
 - DEV smoke 证据
 - 风险
 - 回滚方式
+- 本地 Handoff 已更新
+- 正式 Handoff 已更新，或说明不适用原因
 
 高风险改动必须单独标注：
 
@@ -674,6 +660,9 @@ gh pr checks <PR号> --repo FengFan-1997/Artigen
 
 | 文档 | 回答的问题 |
 | --- | --- |
+| `PROJECT_HANDOFF.zh-CN.md` | 当前已经固化到 GitHub 的正式项目状态和持久事实 |
+| `HANDOFF.local.md` | 当前 AI 任务的阶段、具体进度、临时尝试、阻塞和下一步；永不提交 |
+| `AGENTS.md` | 所有 AI 在任务开始、执行、交接和结束时必须遵守的仓库级规则 |
 | `PROJECT_OPERATIONS_GUIDE.zh-CN.md` | 环境、接入、分支、提交、发布、回滚的总入口 |
 | `README.md` | 项目是什么、怎么启动、代码在哪里 |
 | `PRD.md` | 产品、接口、认证、计费和数据契约 |
@@ -681,4 +670,20 @@ gh pr checks <PR号> --repo FengFan-1997/Artigen
 | `DEV_ENVIRONMENT_RUNBOOK.zh-CN.md` | DEV 环境的具体使用和安全边界 |
 | `PRODUCTION_RUNBOOK.zh-CN.md` | 生产账号、平台、故障处理和接管 |
 
-平台、分支、环境变量、发布流程变化时，必须同步更新这六处中受影响的文档。
+平台、分支、环境变量、发布流程变化时，必须同步更新受影响的专题文档和正式 Handoff。
+
+### 15.1 Handoff 生命周期
+
+```text
+AI 任务开始
+→ 读取 AGENTS + 正式 Handoff + 本地 Handoff
+→ 检查并记录工作树
+→ 开发/分析过程中维护本地具体状态
+→ 有持久改动时整理正式结论
+→ 同一 PR 更新 PROJECT_HANDOFF
+→ DEV/生产有证据后再更新部署状态
+→ 最终回复前更新本地 Handoff
+```
+
+纯分析、未采用方案和已撤销实验不进入 GitHub。Bug 修复可以更正正式 Handoff，但只记录
+最终修复和验证结果。正式文档与代码、迁移或部署证据矛盾时，PR 必须阻塞。

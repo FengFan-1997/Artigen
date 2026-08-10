@@ -46,6 +46,19 @@
 - 风险：
 - 回滚 commit / 功能开关 / 操作：
 
+## Handoff
+
+- [ ] 已更新本地 `HANDOFF.local.md`
+- [ ] 本 PR 有持久影响，已更新 `PROJECT_HANDOFF.zh-CN.md`
+- [ ] 本 PR 无需更新远程 Handoff，并已说明原因
+- [ ] 正式 Handoff 只记录最终事实，没有临时方案或敏感信息
+
+“已更新远程 Handoff”和“无需更新远程 Handoff”必须二选一，不能同时勾选。
+
+远程 Handoff 更新摘要：
+
+不适用原因：
+
 ## 发布确认
 
 - [ ] 目标分支正确

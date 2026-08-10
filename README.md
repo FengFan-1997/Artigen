@@ -5,6 +5,9 @@
 
 本机、DEV、生产环境的接入方式，以及从提交代码到发布/回滚的完整流程见
 [《Artigen 项目、环境与发布总手册》](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。
+当前已经固化到 GitHub 的正式项目状态见
+[《Artigen 项目正式 Handoff》](./PROJECT_HANDOFF.zh-CN.md)。AI 开发者还必须读取
+根目录 [`AGENTS.md`](./AGENTS.md) 和只存在本机、永不提交的 `HANDOFF.local.md`。
 生产网站、数据库、邮件、支付、账号和环境变量的接管说明见
 [《Artigen 生产环境小白接管手册》](./PRODUCTION_RUNBOOK.zh-CN.md)。
 DEV 测试环境的隔离边界、启动方式和健康检查见
@@ -955,14 +958,14 @@ pnpm --filter backend admin:grant -- <用户 UUID 或 legacy user id> owner
 | 分支 | 作用 | 部署关系 |
 | --- | --- | --- |
 | `dev` | 云端测试集成分支。 | 自动部署到 Render `dev-artigen-app-fengfan`。 |
-| `codex/artigen-overhaul` | 当前生产分支。 | Vercel 主站自动部署；Render 后端当前使用该分支但保持手动部署。 |
-| `main` | GitHub 默认分支、目标正式分支。 | 迁移完成前仍不是生产来源；合并后也要人工确认才发布。 |
+| `main` | GitHub 默认分支、正式生产来源。 | Vercel 和 Render 发布选定的 `main` SHA；合并后仍要人工确认生产发布。 |
+| `codex/artigen-overhaul` | 历史迁移分支。 | 不再接收日常改动，也不是当前生产来源。 |
 
 当前发布关系：
 
 ```text
-GitHub codex/artigen-overhaul
-  -> Vercel artigen-fengfan（Vue 静态主站，自动部署）
+GitHub main 的选定 SHA
+  -> Vercel artigen-fengfan（Vue 静态主站）
   -> Render artigen-app-fengfan（Express API，手动部署）
 
 GitHub dev
@@ -1067,7 +1070,7 @@ frontend/dist
 - Vercel Team：`FengFan's projects`
 - Project：`artigen-fengfan`
 - Domain：<https://artigen-fengfan.vercel.app>
-- Production Branch：`codex/artigen-overhaul`
+- Production Branch：`main`
 
 根目录 `vercel.json` 已保证：
 
@@ -1094,7 +1097,7 @@ pnpm run start:production
 - Workspace：`artigen`
 - Service：`artigen-app-fengfan`
 - Plan：Free
-- Branch：`codex/artigen-overhaul`
+- Branch：`main`
 - URL：<https://artigen-app-fengfan.onrender.com>
 - Health Check：`/healthz`
 - Auto Deploy：关闭；生产发布人工触发
@@ -1204,6 +1207,9 @@ QQ SMTP 只保留本地兼容。非生产调试还可以使用：
 
 | 文档 | 作用 |
 | --- | --- |
+| `PROJECT_HANDOFF.zh-CN.md` | GitHub 上当前正式项目状态、重大变更、风险和专题文档入口。 |
+| `HANDOFF.local.md` | 当前 AI 任务的具体阶段、测试、临时尝试和下一步；被 Git 忽略，永不提交。 |
+| `AGENTS.md` | 所有 AI 在本仓库工作的任务开始、交接和结束规则。 |
 | `PROJECT_OPERATIONS_GUIDE.zh-CN.md` | 本机、DEV、生产接入，以及分支、提交、发布和回滚的总入口。 |
 | `README.md` | 让新人理解项目、启动项目、知道从哪里读代码。 |
 | `PRD.md` | 给后端协作者看的模块、接口、认证、点数、支付、生成和数据约定。 |
@@ -1212,7 +1218,10 @@ QQ SMTP 只保留本地兼容。非生产调试还可以使用：
 | `PRODUCTION_RUNBOOK.zh-CN.md` | 生产平台、账号、故障排查和接管。 |
 | `frontend/src/console/README_CONSOLE.md` | 控制台局部说明。 |
 
-README 负责回答“这是什么、怎么跑、从哪里看”。总手册负责回答“环境怎么接入、代码怎么从 DEV 进入 main、怎么发布和回滚”。PRD 负责回答“前后端怎么连接、接口怎么约定、数据怎么流动”。CONTRIBUTING 负责日常协作规则。
+README 负责回答“这是什么、怎么跑、从哪里看”。正式 Handoff 负责回答“当前已经确定了
+什么”。本地 Handoff 负责回答“这次具体开发到哪里”。总手册负责回答“环境怎么接入、
+代码怎么从 DEV 进入 main、怎么发布和回滚”。PRD 负责回答“前后端怎么连接、接口怎么约定、
+数据怎么流动”。CONTRIBUTING 负责日常协作和 GitHub 门禁。
 
 ---
 
