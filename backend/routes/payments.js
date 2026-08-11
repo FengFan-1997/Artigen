@@ -268,6 +268,7 @@ const installPaymentRoutes = (app, deps = {}) => {
       currency: order.currency,
       credits: order.credits,
       status: order.status,
+      replayed: Boolean(order.replayed),
       createdAt: order.createdAt,
       payUrl: order.payUrl
     });

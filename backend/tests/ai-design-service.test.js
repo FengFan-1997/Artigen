@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const sharp = require('sharp');
 const {
   getTool,
   isPaidOperation,
@@ -30,6 +31,7 @@ const {
   createAiDesignExecutor,
   deriveTaskSeed,
   normalizeAiDesignFailure,
+  normalizeGeneratedImageAspectRatio,
   persistAiDesignOutput,
   validateAiDesignTask
 } = require('../services/ai-design-service');
@@ -260,7 +262,7 @@ test('ai-design validators allow only the stable contract and enforce operation 
 });
 
 test('SiliconFlow adapter owns model and image parameters and parses exactly four directions', async () => {
-  const calls = { image: null, chat: null };
+  const calls = { image: null, chat: [] };
   const provider = createSiliconFlowGenerationProvider({
     configured: true,
     env: enabledEnv,
@@ -269,7 +271,7 @@ test('SiliconFlow adapter owns model and image parameters and parses exactly fou
       return { data: { images: [{ url: 'https://assets.example/result.png' }] } };
     },
     chatGenerate: async (input) => {
-      calls.chat = input;
+      calls.chat.push(input);
       return {
         text: JSON.stringify({
           directions: Array.from({ length: 4 }, (_, index) => ({
@@ -288,8 +290,17 @@ test('SiliconFlow adapter owns model and image parameters and parses exactly fou
     profile
   });
   assert.equal(directions.length, 4);
-  assert.equal(calls.chat.model, GENERATION_DIRECTIONS_MODEL);
-  assert.match(calls.chat.messages[0].content, /Never invent ingredients/);
+  assert.equal(calls.chat[0].model, GENERATION_DIRECTIONS_MODEL);
+  assert.equal(calls.chat[0].timeoutMs, 120_000);
+  assert.equal(calls.chat[0].enableThinking, false);
+  assert.match(calls.chat[0].messages[0].content, /Never invent ingredients/);
+  await provider.organizeIngredientSource({
+    messages: [{ role: 'user', content: 'water, salt' }],
+    profile
+  });
+  assert.equal(calls.chat[1].model, GENERATION_DIRECTIONS_MODEL);
+  assert.equal(calls.chat[1].timeoutMs, 120_000);
+  assert.equal(calls.chat[1].enableThinking, false);
   await provider.generateImage({
     prompt: 'controlled prompt',
     profile,
@@ -677,4 +688,25 @@ test('output aspect verification rejects provider geometry that violates the sel
     () => assertGenerationProfile({ profileId: STANDARD_PROFILE_ID, aspectRatio: '7:5' }),
     { code: 'INVALID_ASPECT_RATIO' }
   );
+});
+
+test('Qwen edit outputs are normalized to the requested aspect ratio before persistence', async () => {
+  const square = await sharp({
+    create: {
+      width: 64,
+      height: 64,
+      channels: 4,
+      background: { r: 30, g: 60, b: 90, alpha: 1 }
+    }
+  }).png().toBuffer();
+  const normalized = await normalizeGeneratedImageAspectRatio({
+    buffer: square,
+    mimeType: 'image/png',
+    aspectRatio: '4:5'
+  });
+  const metadata = await sharp(normalized.buffer).metadata();
+  assert.equal(normalized.transformed, true);
+  assert.equal(metadata.width, 960);
+  assert.equal(metadata.height, 1200);
+  assert.equal(assertOutputAspectRatio(metadata, '4:5'), true);
 });

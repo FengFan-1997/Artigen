@@ -75,6 +75,15 @@ const inferRequiredDeliverables = (objective) => {
       /(?:不要|不需要|无需|不必|禁止)[^。！？\n]{0,12}(?:创建|制作|开发|构建|搭建|生成|设计|交付|打包)[^。！？\n]{0,100}(?:静态网站|网页|网站|落地页)[^。！？\n]*/gi,
       ' '
     );
+  const imageIntentText = text
+    .replace(
+      /\b(?:do not|don't|dont|must not|without)\s+(?:create|generate|make|design|deliver)\b[^.!?\n]{0,80}\b(?:image|visual|poster|mockup|concept art)\b[^.!?\n]*/gi,
+      ' '
+    )
+    .replace(
+      /(?:不要|不需要|无需|不必|禁止)[^。！？\n]{0,12}(?:创建|制作|生成|设计|交付|出)[^。！？\n]{0,80}(?:图片|设计稿|视觉稿|主视觉|海报|概念图)[^。！？\n]*/gi,
+      ' '
+    );
   const required = [];
   const presentationRequested =
     /(?:\bpptx\b|\bpowerpoint\b|\bslide deck\b|\bpresentation\b|演示文稿|幻灯片|路演稿)/i
@@ -98,6 +107,12 @@ const inferRequiredDeliverables = (objective) => {
   );
   if (websiteRequested) {
     required.push('website');
+  }
+  if (
+    /\b(?:create|generate|make|design|deliver)\b.{0,40}\b(?:image|visual|poster|mockup|concept art)\b/i.test(imageIntentText) ||
+    /(?:生成图片|生成图像|生成设计稿|设计稿|视觉稿|主视觉|海报|概念图|出图)/i.test(imageIntentText)
+  ) {
+    required.push('image');
   }
   return required;
 };
@@ -137,6 +152,13 @@ const requiredDeliverablesSatisfied = (artifacts, requiredDeliverables) => {
       return has((artifact) => (
         ['website', 'package'].includes(artifact.role) &&
         artifact.mime_type === 'application/zip'
+      ));
+    }
+    if (type === 'image') {
+      return has((artifact) => (
+        artifact.role === 'image' &&
+        artifact.verification_status === 'passed' &&
+        ['image/png', 'image/jpeg', 'image/webp'].includes(artifact.mime_type)
       ));
     }
     return false;
@@ -236,7 +258,18 @@ const verificationCommand = ({ path, mimeType, role }) => {
     }
     return ['set -eu', scan, `unzip -t ${target} >/dev/null`].join('\n');
   }
-  if (kind === 'image') return ['set -eu', scan, `identify ${target} >/dev/null`].join('\n');
+  if (kind === 'image') {
+    return [
+      'set -eu',
+      scan,
+      `test -s ${target}`,
+      `dimensions="$(identify -format '%w %h' ${target}[0])"`,
+      'set -- $dimensions',
+      'test "$1" -gt 0 -a "$2" -gt 0',
+      'test "$(( $1 * $2 ))" -le 64000000',
+      `convert ${target}[0] -auto-orient -strip null: >/dev/null`
+    ].join('\n');
+  }
   if (kind === 'text') return ['set -eu', scan, `test -s ${target}`].join('\n');
   throw new ApiError(415, 'AGENT_ARTIFACT_MIME_UNSUPPORTED', { mimeType });
 };
@@ -272,6 +305,9 @@ const assertArtifactDeclaration = (input = {}) => {
   }
   if (!['source', 'editable', 'preview', 'pdf', 'package', 'website', 'image', 'data'].includes(role)) {
     throw new ApiError(400, 'AGENT_ARTIFACT_ROLE_INVALID');
+  }
+  if (role === 'image' && MIME_KINDS[mimeType] !== 'image') {
+    throw new ApiError(400, 'AGENT_ARTIFACT_ROLE_MIME_MISMATCH');
   }
   const sources = Array.isArray(input.sources)
     ? input.sources.slice(0, 100).map((source) => ({

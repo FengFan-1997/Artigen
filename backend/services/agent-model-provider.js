@@ -76,6 +76,7 @@ const FUNCTION_TOOLS = Object.freeze([
     name: 'generate_image',
     description: [
       'Generate a bitmap with Artigen internal image generation.',
+      'Optionally use up to three user-provided input images with unique product, style, or scene roles.',
       'The result is written into the isolated workspace; no GPU model runs in the sandbox.'
     ].join(' '),
     strict: true,
@@ -91,6 +92,25 @@ const FUNCTION_TOOLS = Object.freeze([
         filename: {
           type: 'string',
           pattern: '^[A-Za-z0-9._@+ -]{1,200}\\.(png|jpg|jpeg|webp)$'
+        },
+        references: {
+          type: 'array',
+          maxItems: 3,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              path: {
+                type: 'string',
+                pattern: '^/tmp/artigen-workspace/inputs/[0-9a-fA-F-]{36}\\.(png|jpg|jpeg|webp)$'
+              },
+              role: {
+                type: 'string',
+                enum: ['product', 'style', 'scene']
+              }
+            },
+            required: ['path', 'role']
+          }
         }
       },
       required: ['prompt', 'aspectRatio', 'filename']
@@ -251,6 +271,9 @@ Spreadsheets require XLSX with real data/formulas/charts. Presentations require 
 preview or PDF. Websites require source files, a ZIP, and a buildable static preview. Make the
 website index.html self-contained for preview: inline its CSS and JavaScript and embed local images
 as data URLs. The ZIP must still contain the editable source tree.
+Image design deliverables require generate_image followed by declare_artifact with role=image and the
+exact returned path and MIME type. Image references may use only the exact user-provided inputs paths
+listed in the objective context, with at most one unique product, style, and scene role each.
 Use declare_artifact for every final file. Do not announce completion unless every requested artifact
 has been declared; Artigen's independent verifier, not you, decides success.
 
@@ -329,7 +352,8 @@ const OLLAMA_FILE_TOOL_NAMES = new Set([
 const ollamaFileTools = (capabilities = {}) => FUNCTION_TOOLS
   .filter((tool) => (
     OLLAMA_FILE_TOOL_NAMES.has(tool.name) ||
-    (tool.name === 'browser_dom' && capabilities?.browser === true)
+    (tool.name === 'browser_dom' && capabilities?.browser === true) ||
+    (tool.name === 'generate_image' && capabilities?.generate_images === true)
   ))
   .map((tool) => ({
     type: 'function',
@@ -910,6 +934,9 @@ class OllamaAgentModelProvider {
       if (call.name === 'browser_dom') {
         return callbacks.browserDom(args);
       }
+      if (call.name === 'generate_image') {
+        return callbacks.generateImage(args);
+      }
       if (call.name === 'declare_artifact') {
         const artifact = await callbacks.declareArtifact(args);
         return {
@@ -992,7 +1019,8 @@ class OllamaAgentModelProvider {
         .slice(0, 24));
       if (
         !OLLAMA_FILE_TOOL_NAMES.has(name) &&
-        !(name === 'browser_dom' && capabilities?.browser === true)
+        !(name === 'browser_dom' && capabilities?.browser === true) &&
+        name !== 'generate_image'
       ) {
         unsupportedToolAttempts += 1;
         turns += 1;

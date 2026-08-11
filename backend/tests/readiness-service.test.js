@@ -500,6 +500,37 @@ test('production Agent readiness requires the owner-only Beta gate', async () =>
   assert.equal(ready.checks.agent.betaMode, 'owner-only-v1');
 });
 
+test('production Agent image generation requires the real image provider and output allowlist', async () => {
+  const report = await getReadinessReport({
+    env: {
+      NODE_ENV: 'production',
+      APP_ENV: 'production',
+      AGENT_FEATURE_ENABLED: '1',
+      AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SANDBOX_PROVIDER: 'cua',
+      AGENT_SANDBOX_MODE: 'local',
+      AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
+      AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true',
+      AGENT_PUBLIC_CAPABILITIES: 'files,shell,generate_images',
+      AGENT_BETA_MODE: 'owner-only-v1',
+      AGENT_BETA_USER_IDS: '11111111-1111-4111-8111-111111111111',
+      AI_OUTPUT_ALLOWED_HOSTS: 'cdn.example.com'
+    },
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.agentImageGenerationRequired, true);
+  assert.equal(report.generationRequired, true);
+  assert.equal(report.checks.payload.skipped, true);
+  assert.equal(report.checks.provider.ok, true);
+  assert.equal(report.checks.outputAllowlist.ok, true);
+  assert.equal(report.checks.agent.imageGenerationPublicEnabled, true);
+});
+
 test('production ai-design quote and create share the readiness storage failure without billing side effects', async () => {
   const rootDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'artigen-paid-storage-gate-'));
   const env = {
@@ -837,7 +868,8 @@ test('system meta exposes the deployment environment and Render commit', () => {
     env: {
       NODE_ENV: 'production',
       APP_ENV: 'dev',
-      RENDER_GIT_COMMIT: 'render-commit-sha'
+      RENDER_GIT_COMMIT: 'render-commit-sha',
+      GIT_SHA: 'stale-manual-sha'
     },
     fs,
     path,

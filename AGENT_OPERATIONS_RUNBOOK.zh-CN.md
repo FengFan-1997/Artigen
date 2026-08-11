@@ -189,7 +189,9 @@ AGENT_WORKER_ID=artigen-dev-mac-1
 AGENT_WORKER_RELAY_URL=ws://127.0.0.1:8080/api/agent-desktop/worker
 AGENT_WORKER_CONCURRENCY=1
 AGENT_QUEUE_MAX_WAIT_HOURS=24
-AGENT_PUBLIC_CAPABILITIES=files,shell,browser
+AGENT_PUBLIC_CAPABILITIES=files,shell,browser,generate_images
+AGENT_IMAGE_CREDITS=8
+AGENT_IMAGE_REFERENCE_CREDITS=12
 ```
 
 以下值必须存在，但绝不能复制到文档或提交。硅基流动密钥既可以由环境变量提供，也可以在 macOS 本机通过钥匙串服务名和账户标签读取：

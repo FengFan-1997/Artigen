@@ -16,6 +16,7 @@ const {
   persistAiDesignOutput
 } = require('./ai-design-service');
 const {
+  PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
   getInternalGenerationProfile
 } = require('./generation-profiles');
@@ -217,7 +218,12 @@ const createWorkshopAiExecutor = ({
     throwIfAborted(signal);
     await markRunning({ taskId, leaseOwner });
     throwIfAborted(signal);
-    const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, env);
+    const profile = getInternalGenerationProfile(
+      operation === 'ai-organize-source-text'
+        ? STANDARD_PROFILE_ID
+        : PRODUCT_REFERENCE_PROFILE_ID,
+      env
+    );
 
     if (operation === 'ai-organize-source-text') {
       await markProviderDispatched({ taskId, leaseOwner });
@@ -286,6 +292,7 @@ const createWorkshopAiExecutor = ({
       reference,
       ownerUserId,
       taskId,
+      aspectRatio,
       expiresAt: outputExpiresAt instanceof Date
         ? outputExpiresAt
         : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),

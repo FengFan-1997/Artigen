@@ -242,9 +242,10 @@ const createSiliconFlowGenerationProvider = ({
       try {
         const response = await chatGenerate({
           messages: buildDirectionsMessages({ prompt, locale, productProfile }),
-          timeoutMs: positiveTimeout(env.AI_DIRECTIONS_TIMEOUT_MS, 45_000, 5_000),
+          timeoutMs: positiveTimeout(env.AI_DIRECTIONS_TIMEOUT_MS, 120_000, 5_000),
           maxTokens: 1800,
           model: profile.internalDirectionsModel,
+          enableThinking: false,
           signal
         });
         return parseDirectionsResponse(response?.text);
@@ -288,9 +289,10 @@ const createSiliconFlowGenerationProvider = ({
       try {
         const response = await chatGenerate({
           messages,
-          timeoutMs: positiveTimeout(env.AI_INGREDIENT_TIMEOUT_MS, 60_000, 5_000),
+          timeoutMs: positiveTimeout(env.AI_INGREDIENT_TIMEOUT_MS, 120_000, 5_000),
           maxTokens: 2200,
           model: profile.internalDirectionsModel,
+          enableThinking: false,
           signal
         });
         return parseJsonObjectResponse(response?.text);

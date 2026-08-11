@@ -246,10 +246,14 @@ async def main() -> None:
         sandbox_name = str(request.get("name") or "") or None
         restricted = (
             local
-            and bool(request.get("browserEnabled"))
             and str(request.get("egressPolicy") or "") == "restricted-v1"
         )
-        if local and bool(request.get("browserEnabled")) and not restricted:
+        # Every local Cua sandbox needs the internal network and loopback-only
+        # control sidecar, including image-only runs that never initialize a
+        # browser. Preparing it only for browser-capable runs leaves the Docker
+        # wrapper without the network/image contract required to provision the
+        # sandbox at all.
+        if local and not restricted:
             raise RuntimeError("AGENT_EGRESS_POLICY_UNATTESTED")
         if restricted and sandbox_name:
             os.environ["ARTIGEN_DOCKER_NETWORK"] = prepare_egress(sandbox_name, image_ref)
@@ -389,7 +393,11 @@ async def main() -> None:
             # Shell.run has no stdin/file-upload API. Bounded heredoc chunks avoid
             # command-line argument limits while keeping the provider credential
             # and host filesystem outside the guest.
-            chunk_size = 512 * 1024
+            # The Cua Docker runtime forwards each shell command through the
+            # host process argument vector. Keep every encoded heredoc below
+            # macOS/Docker ARG_MAX; generated images routinely exceed it when
+            # sent as one 512 KiB command.
+            chunk_size = 96 * 1024
             for offset in range(0, len(encoded), chunk_size):
                 chunk = encoded[offset : offset + chunk_size]
                 script = (

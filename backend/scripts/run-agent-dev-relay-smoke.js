@@ -51,7 +51,7 @@ Object.assign(process.env, {
   AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
   AGENT_BROWSER_MODE: 'full-approval-v1',
   AGENT_WORKER_ID: 'artigen-dev-relay-smoke-publisher',
-  AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser',
+  AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser,generate_images',
   AGENT_MAX_MINUTES: '45',
   AGENT_MAX_STEPS: '120'
 });

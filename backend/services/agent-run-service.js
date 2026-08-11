@@ -15,6 +15,7 @@ const {
   settleAgentBudget
 } = require('./agent-billing-service');
 const {
+  inferRequiredDeliverables,
   requiredDeliverablesSatisfied
 } = require('./agent-artifact-service');
 const {
@@ -96,10 +97,10 @@ const normalizeAssetIds = (value) => {
 
 const normalizeDeliverables = (value) => {
   if (value === undefined || value === null) return [];
-  if (!Array.isArray(value) || value.length > 4) {
+  if (!Array.isArray(value) || value.length > 5) {
     throw new ApiError(400, 'AGENT_DELIVERABLES_INVALID', { field: 'deliverables' });
   }
-  const allowed = new Set(['report', 'spreadsheet', 'presentation', 'website']);
+  const allowed = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image']);
   const normalized = [...new Set(value.map((entry) => String(entry || '').trim()))];
   if (normalized.some((entry) => !allowed.has(entry))) {
     throw new ApiError(400, 'AGENT_DELIVERABLES_INVALID', { field: 'deliverables' });
@@ -419,6 +420,7 @@ const createAgentRunService = ({
       desktopRelayReady: workerOnline && row.desktop_relay_ready === true,
       sandboxImageRef: row.sandbox_image_ref || null,
       browserPublicEnabled: config.publicBrowserEnabled,
+      imageGenerationPublicEnabled: config.publicImageGenerationEnabled,
       accessMode: config.betaMode,
       availabilityNote: workerOnline
         ? (queueDepth > 0 ? 'busy' : 'ready')
@@ -436,14 +438,22 @@ const createAgentRunService = ({
   }) => {
     if (!config.enabled) throw new ApiError(404, 'AGENT_FEATURE_DISABLED');
     const normalizedObjective = normalizeObjective(objective);
-    const requestedCapabilities = normalizeCapabilities(capabilities, env);
+    const requestedDeliverables = normalizeDeliverables(deliverables);
+    const imageRequested = requestedDeliverables.includes('image') ||
+      inferRequiredDeliverables(normalizedObjective).includes('image');
+    const requestedCapabilities = normalizeCapabilities({
+      ...(capabilities && typeof capabilities === 'object' ? capabilities : {}),
+      generate_images: imageRequested || capabilities?.generate_images === true
+    }, env);
+    if (imageRequested && requestedCapabilities.generate_images !== true) {
+      throw new ApiError(503, 'AGENT_IMAGE_GENERATION_NOT_PUBLIC', { retryable: false });
+    }
     const requestedBrowser = normalizeBrowserConfig(browserConfig);
     if (requestedCapabilities.browser && requestedBrowser.allowedOrigins.length === 0) {
       throw new ApiError(400, 'AGENT_BROWSER_ORIGIN_REQUIRED', {
         field: 'browserConfig.allowedOrigins'
       });
     }
-    const requestedDeliverables = normalizeDeliverables(deliverables);
     const complexity = Math.min(
       1,
       normalizedObjective.length / 4000 +
@@ -551,8 +561,16 @@ const createAgentRunService = ({
     }
     const normalizedObjective = normalizeObjective(objective);
     const normalizedAssetIds = normalizeAssetIds(assetIds);
-    const normalizedCapabilities = normalizeCapabilities(capabilities, env);
     const normalizedDeliverables = normalizeDeliverables(deliverables);
+    const imageRequested = normalizedDeliverables.includes('image') ||
+      inferRequiredDeliverables(normalizedObjective).includes('image');
+    const normalizedCapabilities = normalizeCapabilities({
+      ...(capabilities && typeof capabilities === 'object' ? capabilities : {}),
+      generate_images: imageRequested || capabilities?.generate_images === true
+    }, env);
+    if (imageRequested && normalizedCapabilities.generate_images !== true) {
+      throw new ApiError(503, 'AGENT_IMAGE_GENERATION_NOT_PUBLIC', { retryable: false });
+    }
     const normalizedBrowser = normalizeBrowserConfig(browserConfig);
     if (normalizedCapabilities.browser && normalizedBrowser.allowedOrigins.length === 0) {
       throw new ApiError(400, 'AGENT_BROWSER_ORIGIN_REQUIRED', {
@@ -1874,7 +1892,11 @@ const createAgentRunService = ({
         artifact.role === 'editable' ||
         artifact.role === 'source' ||
         artifact.role === 'website' ||
-        artifact.role === 'package'
+        artifact.role === 'package' ||
+        (
+          artifact.role === 'image' &&
+          ['image/png', 'image/jpeg', 'image/webp'].includes(artifact.mime_type)
+        )
       ))
     ) {
       throw new ApiError(409, 'AGENT_VERIFICATION_INCOMPLETE');

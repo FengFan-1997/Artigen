@@ -784,25 +784,41 @@ const createPaymentOrder = async ({
   return withTransaction(async (client) => {
     const dbUserId = await resolveUserId(client, userId);
     const row = await resolveActivePaymentPackage(client, packageRef);
-    const created = await client.query(
-      `INSERT INTO payment_orders
-        (user_id, package_id, provider, expected_amount_minor, currency,
-         expected_credits, status)
-       VALUES ($1,$2,$3,$4,$5,$6,'pending')
-       RETURNING *`,
-      [dbUserId, row.id, provider, row.amount_minor, row.currency, row.credits]
+    // A checkout URL is tied to the package rather than a provider-side order
+    // created by this request. Serialize per user and reuse an existing pending
+    // snapshot so response-loss retries and double clicks cannot create a pile
+    // of indistinguishable unpaid orders. Paid/cancelled/expired orders remain
+    // immutable history and a later checkout creates a fresh snapshot.
+    await client.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [dbUserId]);
+    const pending = await client.query(
+      `SELECT * FROM payment_orders
+        WHERE user_id=$1 AND package_id=$2 AND provider=$3 AND status='pending'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1 FOR UPDATE`,
+      [dbUserId, row.id, provider]
     );
+    const created = pending.rowCount
+      ? pending
+      : await client.query(
+          `INSERT INTO payment_orders
+            (user_id, package_id, provider, expected_amount_minor, currency,
+             expected_credits, status)
+           VALUES ($1,$2,$3,$4,$5,$6,'pending')
+           RETURNING *`,
+          [dbUserId, row.id, provider, row.amount_minor, row.currency, row.credits]
+        );
     const order = {
       orderId: created.rows[0].id,
       userId,
       packageId: row.id,
       packageSku: row.sku,
       title: row.title,
-      amountMinor: Number(row.amount_minor),
-      currency: row.currency,
-      credits: Number(row.credits),
+      amountMinor: Number(created.rows[0].expected_amount_minor),
+      currency: created.rows[0].currency,
+      credits: Number(created.rows[0].expected_credits),
       status: created.rows[0].status,
-      createdAt: created.rows[0].created_at
+      createdAt: created.rows[0].created_at,
+      replayed: Boolean(pending.rowCount)
     };
     if (typeof payUrlBuilder === 'function') {
       order.payUrl = await payUrlBuilder(order);
