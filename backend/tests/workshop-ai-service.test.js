@@ -10,6 +10,9 @@ const {
   normalizeIngredientOutput,
   validateWorkshopAiTask
 } = require('../services/workshop-ai-service');
+const {
+  PRODUCT_REFERENCE_PROFILE_ID
+} = require('../services/generation-profiles');
 
 const enabledEnv = {
   NODE_ENV: 'test',
@@ -159,9 +162,11 @@ test('image executor loads input before dispatch and settles only a verified opa
     env: enabledEnv,
     provider: {
       available: true,
-      generateImage: async ({ prompt, aspectRatio, images }) => {
+      generateImage: async ({ prompt, profile, aspectRatio, images }) => {
         calls.push('provider');
         assert.match(prompt, /professional portrait/i);
+        assert.equal(profile.id, PRODUCT_REFERENCE_PROFILE_ID);
+        assert.equal(profile.maxReferences, 3);
         assert.equal(aspectRatio, '3:4');
         assert.equal(images.length, 1);
         return { data: { images: [{ url: 'https://assets.example/output.png' }] } };
