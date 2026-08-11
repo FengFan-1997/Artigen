@@ -97,6 +97,7 @@ const { settleAgentBudget } = require('../services/agent-billing-service');
 const {
   createAgentWorkerService,
   createAgentCostMeter,
+  runWithLeaseHeartbeat,
   resolveStagedImageReferences
 } = require('../services/agent-worker-service');
 const {
@@ -466,6 +467,49 @@ test('agent costs remain cumulative across pause and resume segments', () => {
     generation: 8,
     sandbox: 1.5
   });
+});
+
+test('long sandbox provisioning renews the run lease until work completes', async () => {
+  let heartbeats = 0;
+  let finishWork;
+  const work = new Promise((resolve) => {
+    finishWork = resolve;
+  });
+  const running = runWithLeaseHeartbeat({
+    intervalMs: 100,
+    refresh: async () => {
+      heartbeats += 1;
+    },
+    work: async () => {
+      await work;
+      return { name: 'sandbox-ready' };
+    }
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 240));
+  finishWork();
+  assert.deepEqual(await running, {
+    value: { name: 'sandbox-ready' },
+    leaseError: null
+  });
+  assert.ok(heartbeats >= 3);
+});
+
+test('sandbox provisioning reports a lost lease with its provisioned sandbox for cleanup', async () => {
+  let heartbeats = 0;
+  const outcome = await runWithLeaseHeartbeat({
+    intervalMs: 100,
+    refresh: async () => {
+      heartbeats += 1;
+      if (heartbeats > 1) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    },
+    work: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 140));
+      return { name: 'sandbox-orphan' };
+    }
+  });
+  assert.deepEqual(outcome.value, { name: 'sandbox-orphan' });
+  assert.equal(outcome.leaseError?.code, 'AGENT_LEASE_LOST');
 });
 
 test('worker reconciliation destroys terminal sandboxes and clears their public references', async () => {
