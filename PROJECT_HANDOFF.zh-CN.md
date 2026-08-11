@@ -26,20 +26,21 @@ Artigen 当前使用以下正式交付链：
 
 `main` 是正式生产代码来源；`dev` 是 DEV 集成分支。旧的 `codex/artigen-overhaul` 和 `test` 仅保留历史，不再作为日常开发或生产来源。
 
-截至 2026-08-10 的已验证生产基线：
+截至 2026-08-11 的已验证生产基线：
 
 | 项目 | 正式状态 |
 | --- | --- |
 | GitHub 仓库 | `FengFan-1997/Artigen` |
-| 生产代码 | `main`，SHA `529b73fffcd2f06323ccd373168a5e009f312b5a` |
-| 生产前端 | Vercel `artigen-fengfan` |
+| 生产运行时代码 | `main`，SHA `ca75dce39ef5eebd27154029ef19ad1cc25b5758` |
+| 生产前端 | Vercel `artigen-fengfan`，deployment `dpl_Cvqb4mcjbMXaKzMFqgRZn24K9kj4`，`READY` |
 | 生产后端 | Render `artigen-app-fengfan`，Service `srv-d9cr73r7uimc73etc4j0` |
-| 生产部署 | Render deployment `dep-d9qsuam417fc7383uj70`，`live` |
+| 生产部署 | Render deployment `dep-d9tg6nht0dsc73b7u2k0`，`live` |
 | 生产数据库 | Neon PostgreSQL `neondb` |
 | DEV 数据库 | Neon PostgreSQL `dev_artigen` |
 | 对象存储 | 私有共享 S3 桶 `artigen-assets` |
 | 数据库迁移 | `020_agent_secure_browser_relay` |
-| GitHub 发布流水线 | run `31178240786`，Release gate `success` |
+| GitHub 发布流水线 | run `31484788818`，Release gate `success` |
+| 生产功能开关 | 付费、支付、AI Design、Workshop、Task Worker 与 Agent 生图已开放 |
 
 生产精确 SHA 不能只依赖文档，必须读取 `/api/meta` 并与 GitHub `main` 和平台 deployment 交叉核对。
 
@@ -113,6 +114,10 @@ AI 必须在每个 Artigen 任务结束前更新本地 Handoff。有持久影响
 | 浏览器模式 | `full-approval-v1` |
 | 出口策略 | `restricted-v1` |
 | Beta 模式 | `owner-only-v1` |
+| Agent 图片能力 | 文生图 `Kwai-Kolors/Kolors`；参考图 `Qwen/Qwen-Image-Edit-2509` |
+| Agent 图片计价 | 文生图 8 点；带参考图 12 点；任务总额仍受报价与 `maxCredits` 约束 |
+| 图片参考图边界 | 每 Run 最多 3 张，仅限已扫描进入该 Run `inputs/` 的图片；角色为 `product/style/scene` |
+| 图片交付 | `IMAGE`，PNG/JPEG/WebP；允许独立满足任务完成条件 |
 
 已验证运行状态：
 
@@ -122,6 +127,7 @@ browserReady=true
 egressVerified=true
 desktopRelayReady=true
 browserPublicEnabled=true
+imageGenerationPublicEnabled=true
 accessMode=owner-only-v1
 availabilityNote=ready
 queueDepth=0
@@ -138,6 +144,7 @@ queueDepth=0
 → noVNC 人工登录接管
 → 加密保存并恢复单站会话
 → 生成 Markdown/PDF
+→ 或生成、验证独立 IMAGE 图片设计稿
 → 独立验证
 → 上传共享 S3
 → succeeded
@@ -186,11 +193,35 @@ Agent 的完整架构、安全边界、真实 Run ID、测试、账号和运维�
 治理规则在包含这些文件的提交合入目标分支后生效；未合并的工作分支不能代表 `dev` 或
 `main` 已经采用该规则。实际合入状态以 GitHub 为准。
 
-### 5.3 Agent 生图与付费主业务恢复（开发阶段）
+### 5.3 Agent 生图与付费主业务恢复（已上线）
 
-用户已批准在 `codex/agent-image-generation` 实现以下正式变更：Agent 保持 owner-only，新增文生图、最多三张任务参考图和独立 `IMAGE` 交付；主业务在 readiness 全部通过后恢复 AI Design、Workshop、Task Worker 和爱发电支付，并向所有登录用户开放。`render.yaml` 继续保留安全关闭默认值，生产开关只能通过 Render Dashboard 覆盖。
+Agent 生图、独立 `IMAGE` 交付、主业务付费工具、任务 Worker 和爱发电下单链路已完成 DEV、Release gate 和真实生产验收。运行时代码最终经 PR [#18](https://github.com/FengFan-1997/Artigen/pull/18) 至 [#25](https://github.com/FengFan-1997/Artigen/pull/25) 逐步合入，生产运行 SHA 为 `ca75dce39ef5eebd27154029ef19ad1cc25b5758`。Render 与 Vercel 使用该不可变代码发布，生产 Mac Worker 也从同一 SHA 重新安装并启动。
 
-当前阶段仅为功能分支实现与本地验证，尚未完成 PR、DEV 真实依赖 smoke、`dev → main` Release gate、生产发布或线上验收。当前生产基线、deployment 和开关状态仍以本文第 1 节以及实时 `/api/meta`、`/readyz`、`/api/agent/status`、`/api/generation/models` 为准，不得提前宣称已上线。
+正式生产配置：
+
+- Agent 继续为 `owner-only-v1`；主业务付费工具向所有登录用户开放；
+- `PAID_FEATURES_ENABLED=true`、`PAYMENTS_ENABLED=true`、`AI_DESIGN_TASK_V2_ENABLED=true`、`AI_DESIGN_TASK_V2_ROLLOUT_PERCENT=100`、`WORKSHOP_AI_TASK_V2_ENABLED=true`、`TASK_WORKER_ENABLED=1`；
+- `AGENT_PUBLIC_CAPABILITIES=files,shell,browser,generate_images`，`imageGenerationPublicEnabled=true`；
+- 无参考图使用 `Kwai-Kolors/Kolors`，带参考图使用 `Qwen/Qwen-Image-Edit-2509`；
+- `render.yaml` 仍保留安全关闭默认值，生产值由 Render 环境覆盖；
+- 定价、冻结、结算、退款、幂等和 S3 边界保持服务端控制；没有新增数据库迁移。
+
+DEV 真实依赖验收：
+
+- 七个付费 executor 全部 success；标准文生图、商品参考生成与其他五个既有操作均完成 S3、尺寸、SHA 和单次结算验证；
+- Agent 文生图 Run `cf2af670-074e-4ab4-b4d6-32d0ac478e30`：图片工具 8 点，总计 13 点，1024×1024 PNG，验证 passed；
+- Agent 参考图 Run `30273e85-8445-4baf-9658-601ac6579246`：图片工具 12 点，总计 19 点，960×1200 PNG，验证 passed。
+
+生产真实验收：
+
+- `/api/generation/models` 的 `standard-v1` 与 `product-reference-v1` 均为 `available=true`；`/readyz` 的数据库、S3、payload、模型、输出 allowlist、支付、邮件、Turnstile 和 Agent 检查均通过；
+- 七个主业务 executor 全部 success 且各自只结算一次：视觉方向 `4ad2e104-2ffe-4f36-a0e1-e049123a78a9`、标准文生图 `f9ce713d-5150-4b9d-9813-d902a42afbd8`、商品参考 `51c89f88-1d6b-4f77-868a-566411d7ee98`、老照片 `9ad73581-8961-4651-8473-d2a4ef36a75b`、证件照 `f46e3202-82b3-4a12-a053-7b7af937dd51`、背景场景 `baa8e32b-ec30-468e-a8a2-b43cfeb5c98b`、配料整理 `863a21e3-05e0-4b17-ab64-16b35d3f4168`；合计 100 点；
+- 未支付爱发电订单 `c10996c8-8e20-4c2a-ab4e-a07d0ce84ca4` 已取得跳转链接，保持 `pending`，钱包未入账，幂等重放没有重复建单；没有执行真实付款；
+- Agent 文生图 Run `b277a1d1-1195-4462-8828-89314600878c`：图片工具 8 点，总结算 12 点，1024×1024 PNG，S3 与 SHA-256 验证 passed；
+- Agent 参考图 Run `eaae124b-1064-44e2-b8e4-f7b46a0b39a4`：图片工具 12 点，总结算 18 点，960×1200 PNG，S3 与 SHA-256 验证 passed；
+- 两个生产 Agent Run 均只结算一次，结束后 Worker online、浏览器/出口/桌面中继 ready、queueDepth=0。
+
+最终验证：`pnpm check` 通过；Playwright 411 通过、3 条条件跳过；后端 355 通过、39 条条件跳过；Agent/CUA 定向测试 59/59 通过；PostgreSQL 支付集成测试 7/7 通过。生产发布后再次核验 Render 与 Vercel `/api/meta` 均返回运行 SHA `ca75dce39ef5eebd27154029ef19ad1cc25b5758`。
 
 ## 6. 已知风险与正式后续事项
 
@@ -202,6 +233,7 @@ Agent 的完整架构、安全边界、真实 Run ID、测试、账号和运维�
 - 已有生产发布前逻辑备份，但定时备份和恢复演练仍需建立。
 - 稳定 24×7 需要用户明确同意费用后升级 Render 并迁移 Worker 到专用 Linux 主机。
 - 扩大 Agent Beta 前需要重新验证容量、失败率、S3 用量、沙箱清理和敏感输入隔离。
+- 爱发电本轮只验证了未支付订单创建、跳转、pending、钱包不入账和幂等；真实付款 webhook 入账仍需在单独获批的验收中完成。
 
 ## 7. 正式 Handoff 更新规则
 
