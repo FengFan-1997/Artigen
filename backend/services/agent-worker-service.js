@@ -162,6 +162,48 @@ const createAgentCostMeter = ({
   };
 };
 
+const runWithLeaseHeartbeat = async ({ refresh, work, intervalMs = 30_000 }) => {
+  if (typeof refresh !== 'function' || typeof work !== 'function') {
+    throw new TypeError('AGENT_LEASE_HEARTBEAT_DEPENDENCY_REQUIRED');
+  }
+  const delay = Math.max(100, Number(intervalMs || 0));
+  let heartbeatPromise = null;
+  let timer = null;
+
+  const heartbeat = () => {
+    if (heartbeatPromise) return heartbeatPromise;
+    heartbeatPromise = Promise.resolve()
+      .then(refresh)
+      .catch(() => {})
+      .finally(() => {
+        heartbeatPromise = null;
+      });
+    return heartbeatPromise;
+  };
+
+  await refresh();
+  timer = setInterval(heartbeat, delay);
+  timer.unref?.();
+  let result;
+  let workError = null;
+  try {
+    result = await work();
+  } catch (error) {
+    workError = error;
+  } finally {
+    clearInterval(timer);
+    if (heartbeatPromise) await heartbeatPromise;
+  }
+  if (workError) throw workError;
+  let leaseError = null;
+  try {
+    await refresh();
+  } catch (error) {
+    leaseError = error;
+  }
+  return { value: result, leaseError };
+};
+
 const createAgentWorkerService = ({
   pool,
   runService,
@@ -283,11 +325,24 @@ const createAgentWorkerService = ({
           checkpoint: { phase: 'running', sandboxReady: true }
         });
       } else {
-        const provisioned = await sandbox.provision({
-          runId,
-          browserEnabled: context.run.capabilities?.browser === true
+        const provisioning = await runWithLeaseHeartbeat({
+          intervalMs: Math.max(
+            5_000,
+            Math.min(30_000, Math.floor(config.leaseSeconds * 1_000 / 3))
+          ),
+          refresh: () => runService.saveCheckpoint({
+            runId,
+            workerId,
+            checkpoint: { phase: 'provisioning', sandboxReady: false }
+          }),
+          work: () => sandbox.provision({
+            runId,
+            browserEnabled: context.run.capabilities?.browser === true
+          })
         });
+        const provisioned = provisioning.value;
         sandboxName = provisioned.name;
+        if (provisioning.leaseError) throw provisioning.leaseError;
         await runService.transitionRun({
           runId,
           workerId,
@@ -1103,5 +1158,6 @@ module.exports = {
   createAgentCostMeter,
   createAgentWorkerService,
   firstPayload,
+  runWithLeaseHeartbeat,
   resolveStagedImageReferences
 };

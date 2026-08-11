@@ -239,10 +239,26 @@ async def main() -> None:
         )
         runtime = None
         docker_platform = str(request.get("dockerPlatform") or "")
-        if local and str(request.get("kind") or "") == "container" and docker_platform:
+        if local and str(request.get("kind") or "") == "container":
             from cua import DockerRuntime
+            from cua_sandbox.runtime import docker as cua_docker_runtime
 
-            runtime = DockerRuntime(platform=docker_platform, ephemeral=False)
+            # The Artigen bridge has already verified the exact image and
+            # successfully created the restricted-egress network with the real
+            # Docker binary. Cua otherwise repeats a fixed 10-second `docker
+            # info` probe while the large desktop image is starting; a busy
+            # Docker Desktop can exceed that timeout and be misreported as not
+            # installed. Keep all SDK Docker commands on Artigen's policy
+            # wrapper without repeating that lossy availability probe.
+            docker_wrapper = os.path.join(
+                os.path.dirname(__file__), "docker-bin", "docker"
+            )
+            cua_docker_runtime._has_docker = lambda: True
+            cua_docker_runtime._docker_bin = lambda: docker_wrapper
+            runtime = DockerRuntime(
+                platform=docker_platform or None,
+                ephemeral=False,
+            )
         sandbox_name = str(request.get("name") or "") or None
         restricted = (
             local
