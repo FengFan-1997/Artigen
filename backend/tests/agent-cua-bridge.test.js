@@ -11,10 +11,22 @@ test('image-only local Cua runs still receive the restricted internal network co
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-cua-bridge-test-'));
   const fakeCua = path.join(temporaryRoot, 'cua.py');
   const fakeDocker = path.join(temporaryRoot, 'docker');
+  const fakeCuaSandboxRuntime = path.join(temporaryRoot, 'cua_sandbox', 'runtime');
   try {
+    fs.mkdirSync(fakeCuaSandboxRuntime, { recursive: true });
+    fs.writeFileSync(path.join(temporaryRoot, 'cua_sandbox', '__init__.py'), '', { mode: 0o600 });
+    fs.writeFileSync(path.join(fakeCuaSandboxRuntime, '__init__.py'), '', { mode: 0o600 });
+    fs.writeFileSync(path.join(fakeCuaSandboxRuntime, 'docker.py'), `
+def _has_docker():
+    return False
+
+def _docker_bin():
+    return "untrusted-docker"
+`, { mode: 0o600 });
     fs.writeFileSync(fakeCua, `
 from dataclasses import dataclass
 import os
+from cua_sandbox.runtime import docker as runtime_docker
 
 @dataclass(frozen=True)
 class Image:
@@ -51,6 +63,12 @@ class _Sandbox:
 class Sandbox:
     @staticmethod
     async def create(**kwargs):
+        if not isinstance(kwargs.get("runtime"), DockerRuntime):
+            raise RuntimeError("TEST_EXPLICIT_DOCKER_RUNTIME_MISSING")
+        if runtime_docker._has_docker() is not True:
+            raise RuntimeError("TEST_REDUNDANT_DOCKER_PROBE_NOT_BYPASSED")
+        if not runtime_docker._docker_bin().endswith("agent_runtime/docker-bin/docker"):
+            raise RuntimeError("TEST_POLICY_DOCKER_WRAPPER_MISSING")
         if not os.environ.get("ARTIGEN_DOCKER_NETWORK"):
             raise RuntimeError("TEST_RESTRICTED_NETWORK_NOT_PREPARED")
         if os.environ.get("ARTIGEN_CUA_IMAGE_REF") != "artigen/cua-test:v2":
