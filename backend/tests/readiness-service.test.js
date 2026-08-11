@@ -868,7 +868,8 @@ test('system meta exposes the deployment environment and Render commit', () => {
     env: {
       NODE_ENV: 'production',
       APP_ENV: 'dev',
-      RENDER_GIT_COMMIT: 'render-commit-sha'
+      RENDER_GIT_COMMIT: 'render-commit-sha',
+      GIT_SHA: 'stale-manual-sha'
     },
     fs,
     path,
