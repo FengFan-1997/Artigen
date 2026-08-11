@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const sharp = require('sharp');
 const { z } = require('zod');
 const { ApiError } = require('../lib/api-error');
 const defaultAssets = require('./asset-storage');
@@ -12,6 +13,7 @@ const {
 const {
   PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
+  IMAGE_SIZE_BY_ASPECT_RATIO,
   assertGenerationProfile,
   getInternalGenerationProfile,
   isAiDesignTaskV2Enabled
@@ -23,6 +25,7 @@ const MAX_IMAGE_BYTES = 40 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 32 * 1000 * 1000;
 const OUTPUT_RETENTION_HOURS = 30 * 24;
 const OUTPUT_MIMES = new Set(['image/png', 'image/jpeg']);
+const NORMALIZABLE_OUTPUT_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 const textField = (max) => z.string().trim().min(1).max(max);
 const optionalProfileText = z.string().trim().max(200).optional();
@@ -183,6 +186,7 @@ const persistAiDesignOutput = async ({
   ownerUserId,
   taskId,
   expiresAt,
+  aspectRatio,
   signal,
   assetService = defaultAssets,
   download = downloadProviderImage
@@ -192,10 +196,16 @@ const persistAiDesignOutput = async ({
   if (!OUTPUT_MIMES.has(String(downloaded?.mimeType || '').toLowerCase())) {
     throw new ApiError(502, 'OUTPUT_INVALID', { retryable: true });
   }
+  const normalized = await normalizeGeneratedImageAspectRatio({
+    buffer: downloaded.buffer,
+    mimeType: downloaded.mimeType,
+    aspectRatio,
+    maxPixels: MAX_IMAGE_PIXELS
+  });
   const asset = await assetService.storeAsset({
     ownerUserId,
-    buffer: downloaded.buffer,
-    declaredMime: downloaded.mimeType,
+    buffer: normalized.buffer,
+    declaredMime: normalized.mimeType,
     maxBytes: MAX_IMAGE_BYTES,
     maxPixels: MAX_IMAGE_PIXELS,
     expiresAt,
@@ -209,6 +219,78 @@ const persistAiDesignOutput = async ({
 const ratioValue = (aspectRatio) => {
   const [width, height] = String(aspectRatio || '').split(':').map(Number);
   return width > 0 && height > 0 ? width / height : 0;
+};
+
+const normalizeGeneratedImageAspectRatio = async ({
+  buffer,
+  mimeType,
+  aspectRatio,
+  maxPixels = MAX_IMAGE_PIXELS,
+  tolerance = 0.005
+}) => {
+  const normalizedMime = String(mimeType || '').trim().toLowerCase();
+  if (!Buffer.isBuffer(buffer) || !buffer.length || !NORMALIZABLE_OUTPUT_MIMES.has(normalizedMime)) {
+    throw new ApiError(502, 'OUTPUT_INVALID', { retryable: true });
+  }
+  const targetSize = String(IMAGE_SIZE_BY_ASPECT_RATIO[aspectRatio] || '').trim();
+  if (!targetSize) {
+    if (!aspectRatio) return { buffer, mimeType: normalizedMime, transformed: false };
+    throw new ApiError(400, 'INVALID_ASPECT_RATIO', {
+      field: 'aspectRatio',
+      retryable: false
+    });
+  }
+  const [targetWidth, targetHeight] = targetSize.split('x').map(Number);
+  let metadata;
+  try {
+    metadata = await sharp(buffer, {
+      failOn: 'error',
+      limitInputPixels: Math.max(1, Number(maxPixels || MAX_IMAGE_PIXELS))
+    }).metadata();
+  } catch {
+    throw new ApiError(502, 'OUTPUT_INVALID', { retryable: true });
+  }
+  const width = Number(metadata.width || 0);
+  const height = Number(metadata.height || 0);
+  const expected = targetWidth / targetHeight;
+  const actual = width / height;
+  if (!width || !height || !Number.isFinite(actual)) {
+    throw new ApiError(502, 'OUTPUT_INVALID', { retryable: true });
+  }
+  if (Math.abs(actual - expected) / expected <= tolerance) {
+    return { buffer, mimeType: normalizedMime, width, height, transformed: false };
+  }
+  try {
+    let pipeline = sharp(buffer, {
+      failOn: 'error',
+      limitInputPixels: Math.max(1, Number(maxPixels || MAX_IMAGE_PIXELS))
+    }).rotate().resize(targetWidth, targetHeight, {
+      fit: 'cover',
+      position: 'centre'
+    });
+    if (normalizedMime === 'image/png') pipeline = pipeline.png({ compressionLevel: 9 });
+    else if (normalizedMime === 'image/webp') pipeline = pipeline.webp({ quality: 95 });
+    else pipeline = pipeline.jpeg({ quality: 95, mozjpeg: true });
+    const output = await pipeline.toBuffer({ resolveWithObject: true });
+    if (
+      !output.data.length ||
+      Number(output.info.width) !== targetWidth ||
+      Number(output.info.height) !== targetHeight
+    ) {
+      throw new Error('invalid normalized image');
+    }
+    return {
+      buffer: output.data,
+      mimeType: normalizedMime,
+      width: targetWidth,
+      height: targetHeight,
+      transformed: true,
+      sourceWidth: width,
+      sourceHeight: height
+    };
+  } catch {
+    throw new ApiError(502, 'OUTPUT_INVALID', { retryable: true });
+  }
 };
 
 const assertOutputAspectRatio = (output, aspectRatio, tolerance = 0.035) => {
@@ -388,6 +470,7 @@ const createAiDesignExecutor = ({
         ownerUserId,
         taskId,
         expiresAt,
+        aspectRatio: normalizedOptions.aspectRatio,
         signal
       });
       persistedOutput = output;
@@ -499,6 +582,7 @@ module.exports = {
   deriveTaskSeed,
   normalizeAiDesignFailure,
   normalizeDirections,
+  normalizeGeneratedImageAspectRatio,
   persistAiDesignOutput,
   validateAiDesignTask
 };

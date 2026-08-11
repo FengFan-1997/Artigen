@@ -8,6 +8,9 @@ const {
   createConfiguredGenerationProvider
 } = require('./generation-provider');
 const {
+  normalizeGeneratedImageAspectRatio
+} = require('./ai-design-service');
+const {
   PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
   assertGenerationProfile
@@ -80,7 +83,8 @@ const createAgentImageService = ({
     chatGenerate: callSiliconFlowChat,
     env
   }),
-  download = downloadProviderImage
+  download = downloadProviderImage,
+  normalize = normalizeGeneratedImageAspectRatio
 } = {}) => {
   const generate = async ({ prompt, aspectRatio = '1:1', filename, references }) => {
     const normalizedPrompt = String(prompt || '').trim();
@@ -111,14 +115,20 @@ const createAgentImageService = ({
     const reference = extractProviderImageRefs(generated)[0];
     if (!reference) throw new ApiError(502, 'AGENT_IMAGE_OUTPUT_INVALID');
     const image = await download({ reference, env });
-    const extension = image.mimeType === 'image/png'
+    const normalized = await normalize({
+      buffer: image.buffer,
+      mimeType: image.mimeType,
+      aspectRatio,
+      maxPixels: 64 * 1000 * 1000
+    });
+    const extension = normalized.mimeType === 'image/png'
       ? '.png'
-      : image.mimeType === 'image/webp'
+      : normalized.mimeType === 'image/webp'
         ? '.webp'
         : '.jpg';
     return {
-      buffer: image.buffer,
-      mimeType: image.mimeType,
+      buffer: normalized.buffer,
+      mimeType: normalized.mimeType,
       filename: normalizedFilename.replace(/\.(?:png|jpe?g|webp)$/i, extension),
       costCredits: normalizedReferences.length
         ? configuredImageCredits(env.AGENT_IMAGE_REFERENCE_CREDITS, 12)

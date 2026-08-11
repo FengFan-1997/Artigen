@@ -286,6 +286,7 @@ const createWorkshopAiExecutor = ({
       reference,
       ownerUserId,
       taskId,
+      aspectRatio,
       expiresAt: outputExpiresAt instanceof Date
         ? outputExpiresAt
         : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),

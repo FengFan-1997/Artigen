@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const sharp = require('sharp');
 const {
   getTool,
   isPaidOperation,
@@ -30,6 +31,7 @@ const {
   createAiDesignExecutor,
   deriveTaskSeed,
   normalizeAiDesignFailure,
+  normalizeGeneratedImageAspectRatio,
   persistAiDesignOutput,
   validateAiDesignTask
 } = require('../services/ai-design-service');
@@ -677,4 +679,25 @@ test('output aspect verification rejects provider geometry that violates the sel
     () => assertGenerationProfile({ profileId: STANDARD_PROFILE_ID, aspectRatio: '7:5' }),
     { code: 'INVALID_ASPECT_RATIO' }
   );
+});
+
+test('Qwen edit outputs are normalized to the requested aspect ratio before persistence', async () => {
+  const square = await sharp({
+    create: {
+      width: 64,
+      height: 64,
+      channels: 4,
+      background: { r: 30, g: 60, b: 90, alpha: 1 }
+    }
+  }).png().toBuffer();
+  const normalized = await normalizeGeneratedImageAspectRatio({
+    buffer: square,
+    mimeType: 'image/png',
+    aspectRatio: '4:5'
+  });
+  const metadata = await sharp(normalized.buffer).metadata();
+  assert.equal(normalized.transformed, true);
+  assert.equal(metadata.width, 960);
+  assert.equal(metadata.height, 1200);
+  assert.equal(assertOutputAspectRatio(metadata, '4:5'), true);
 });

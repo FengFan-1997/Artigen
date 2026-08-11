@@ -5,6 +5,7 @@ const test = require('node:test');
 const { getPool } = require('../db/pool');
 const {
   claimAfdianPaymentOrder,
+  createPaymentOrder,
   processAfdianPaymentCallback
 } = require('../services/payment-service');
 
@@ -93,6 +94,53 @@ test('PostgreSQL rejects UUID-shaped legacy IDs and duplicate active package ali
     ),
     { code: '23505', constraint: 'payment_packages_active_alias_unique' }
   );
+});
+
+test('concurrent unpaid checkout retries reuse one pending payment order', {
+  skip: !hasDatabase
+}, async () => {
+  const suffix = crypto.randomUUID();
+  const legacyUserId = `payment_create_${suffix}`;
+  const user = await getPool().query(
+    `INSERT INTO users (legacy_user_id, username, display_name)
+     VALUES ($1::text,$1::citext,$1::text) RETURNING id`,
+    [legacyUserId]
+  );
+  await getPool().query(
+    `INSERT INTO wallets (user_id, available_credits, frozen_credits)
+     VALUES ($1,10,0)`,
+    [user.rows[0].id]
+  );
+  const sku = `credits.create${suffix.replace(/-/g, '')}.v1`;
+  const paymentPackage = await getPool().query(
+    `INSERT INTO payment_packages (sku, title, amount_minor, currency, credits, active)
+     VALUES ($1,'PG checkout fixture',990,'CNY',40,true) RETURNING id`,
+    [sku]
+  );
+
+  const orders = await Promise.all(Array.from({ length: 8 }, () =>
+    createPaymentOrder({
+      userId: user.rows[0].id,
+      packageRef: paymentPackage.rows[0].id,
+      payUrlBuilder: ({ orderId }) => `https://afdian.example/order/${orderId}`
+    })
+  ));
+  assert.equal(new Set(orders.map((order) => String(order.orderId))).size, 1);
+  assert.equal(orders.filter((order) => order.replayed === false).length, 1);
+  assert.equal(orders.filter((order) => order.replayed === true).length, 7);
+
+  const state = await getPool().query(
+    `SELECT w.available_credits, w.frozen_credits,
+            (SELECT count(*)::int FROM payment_orders
+              WHERE user_id=$1 AND package_id=$2 AND status='pending') AS pending_orders
+       FROM wallets w WHERE w.user_id=$1`,
+    [user.rows[0].id, paymentPackage.rows[0].id]
+  );
+  assert.deepEqual({
+    available: Number(state.rows[0].available_credits),
+    frozen: Number(state.rows[0].frozen_credits),
+    pendingOrders: Number(state.rows[0].pending_orders)
+  }, { available: 10, frozen: 0, pendingOrders: 1 });
 });
 
 test('50 PostgreSQL copies of one verified payment event credit exactly once', {
