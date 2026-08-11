@@ -2243,7 +2243,8 @@ test('Agent image generation uses staged references, dedicated models and 8/12 c
     download: async () => ({
       buffer: Buffer.from('generated-image'),
       mimeType: 'image/png'
-    })
+    }),
+    normalize: async ({ buffer, mimeType }) => ({ buffer, mimeType, transformed: false })
   });
   const textResult = await service.generate({
     prompt: 'A restrained campaign visual',

@@ -39,3 +39,12 @@ test('CI configures a distinct session-token hashing secret', () => {
   assert.notEqual(sessionSecret, csrfSecret);
   assert.notEqual(sessionSecret, otpSecret);
 });
+
+test('Mac Agent worker pins image pricing and the SiliconFlow output host', () => {
+  const runner = readRepoFile('backend/scripts/run-agent-worker-macos.js');
+
+  assert.match(runner, /AGENT_PUBLIC_CAPABILITIES:\s*'files,shell,browser,generate_images'/);
+  assert.match(runner, /AGENT_IMAGE_CREDITS:[\s\S]*\|\| '8'/);
+  assert.match(runner, /AGENT_IMAGE_REFERENCE_CREDITS:[\s\S]*\|\| '12'/);
+  assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
+});

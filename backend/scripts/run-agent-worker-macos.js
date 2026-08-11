@@ -76,6 +76,9 @@ const workerEnv = { ...process.env };
     AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser,generate_images',
     AGENT_IMAGE_CREDITS: String(process.env.AGENT_IMAGE_CREDITS || '8'),
     AGENT_IMAGE_REFERENCE_CREDITS: String(process.env.AGENT_IMAGE_REFERENCE_CREDITS || '12'),
+    AI_OUTPUT_ALLOWED_HOSTS: String(
+      process.env.AI_OUTPUT_ALLOWED_HOSTS || 's3.siliconflow.cn'
+    ),
     AGENT_BETA_MODE: profile === 'production' ? 'owner-only-v1' : 'disabled',
     AGENT_MAX_MINUTES: '45',
     AGENT_MAX_STEPS: '120',
