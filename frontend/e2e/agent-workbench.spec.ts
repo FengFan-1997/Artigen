@@ -46,7 +46,10 @@ const baseRun = {
 
 const installAgentApi = async (
   page: Page,
-  options: { onCreate?: (body: Record<string, unknown>) => void } = {}
+  options: {
+    onCreate?: (body: Record<string, unknown>) => void;
+    imageGenerationPublicEnabled?: boolean;
+  } = {}
 ) => {
   await page.route('**/api/agent/status', (route) => route.fulfill({
     status: 200,
@@ -66,6 +69,7 @@ const installAgentApi = async (
         desktopRelayReady: true,
         sandboxImageRef: 'artigen/cua-xfce:0.1.15-tools-v2',
         browserPublicEnabled: true,
+        imageGenerationPublicEnabled: options.imageGenerationPublicEnabled !== false,
         availabilityNote: 'ready'
       }
     })
@@ -135,7 +139,7 @@ test('Agent workbench makes output, capability and current-task choices explicit
   await page.locator('.nav-toggle').click();
 
   await expect(page.getByRole('heading', { name: /^说出你想完成的事/ })).toBeVisible();
-  await expect(page.locator('.deliverable-options label')).toHaveCount(4);
+  await expect(page.locator('.deliverable-options label')).toHaveCount(5);
   await expect(page.locator('.advanced-settings')).toContainText('浏览器需要 HTTPS 白名单');
   await expect(page.locator('.browser-session')).toHaveCount(0);
   await page.locator('.advanced-settings > summary').click();
@@ -162,7 +166,13 @@ test('starting a run requires a visible current quote and one explicit confirmat
   await installAgentApi(page, { onCreate: (body) => created.push(body) });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/artigen/agent');
-  await page.locator('.objective textarea').fill('制作一份带引用的市场报告');
+  await page.locator('.objective textarea').fill('制作一张品牌主视觉设计稿');
+  const imageDeliverable = page.locator('.deliverable-options label').filter({ hasText: 'IMAGE' });
+  await expect(imageDeliverable.locator('input')).toBeEnabled();
+  await imageDeliverable.click();
+  await page.locator('.advanced-settings > summary').click();
+  const imageCapability = page.locator('.capability-grid label').filter({ hasText: 'AI 图片生成' });
+  await expect(imageCapability.locator('input')).toBeChecked();
 
   await page.getByRole('button', { name: '先查看费用' }).click();
   await expect(page.locator('.quote')).toContainText('18–64');
@@ -171,7 +181,21 @@ test('starting a run requires a visible current quote and one explicit confirmat
 
   await page.getByRole('button', { name: '确认并启动' }).click();
   await expect.poll(() => created.length).toBe(1);
+  expect(created[0].deliverables).toEqual(['image']);
+  expect((created[0].capabilities as Record<string, boolean>).generate_images).toBe(true);
   await expect(page).toHaveURL(`/artigen/agent/runs/${baseRun.runId}`);
+});
+
+test('IMAGE deliverable and image capability fail closed when production generation is unavailable', async ({ page }) => {
+  await installAgentApi(page, { imageGenerationPublicEnabled: false });
+  await page.goto('/artigen/agent');
+  const imageDeliverable = page.locator('.deliverable-options label').filter({ hasText: 'IMAGE' });
+  await expect(imageDeliverable).toContainText('生产生图尚未开放');
+  await expect(imageDeliverable.locator('input')).toBeDisabled();
+  await page.locator('.advanced-settings > summary').click();
+  const imageCapability = page.locator('.capability-grid label').filter({ hasText: 'AI 图片生成' });
+  await expect(imageCapability.locator('input')).toBeDisabled();
+  await expect(imageCapability).toContainText('当前环境尚未开放');
 });
 
 test('desktop navigation exposes one Agent entry without a duplicate mobile link', async ({ page }) => {
@@ -181,6 +205,8 @@ test('desktop navigation exposes one Agent entry without a duplicate mobile link
 
   await expect(page.locator('.nav-links a[href="/artigen/agent"]')).toHaveCount(1);
   await expect(page.locator('.nav-links a[href="/artigen/agent"]')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
+    .toBe(true);
 });
 
 test('Agent run detail shows the owner objective and the real durable plan', async ({ page }) => {

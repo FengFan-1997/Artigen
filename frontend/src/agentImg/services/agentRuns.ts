@@ -136,6 +136,7 @@ export type AgentServiceStatus = {
   desktopRelayReady: boolean;
   sandboxImageRef: string | null;
   browserPublicEnabled?: boolean;
+  imageGenerationPublicEnabled: boolean;
   accessMode?: 'disabled' | 'owner-only-v1' | string;
   availabilityNote: 'ready' | 'busy' | 'worker_offline' | string;
 };

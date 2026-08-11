@@ -6,7 +6,9 @@ const { getPool, isDatabaseConfigured } = require('../db/pool');
 const { getAssetAdapter } = require('./asset-storage');
 const {
   GENERATION_DIRECTIONS_MODEL,
+  GENERATION_EDIT_MODEL,
   GENERATION_IMAGE_MODEL,
+  PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
   SUPPORTED_ASPECT_RATIOS,
   getInternalGenerationProfile
@@ -536,6 +538,20 @@ const validProfileShape = (profile) => Boolean(
   profile.internalDirectionsModel === GENERATION_DIRECTIONS_MODEL
 );
 
+const validReferenceProfileShape = (profile) => Boolean(
+  profile?.id === PRODUCT_REFERENCE_PROFILE_ID &&
+  Array.isArray(profile.aspectRatios) &&
+  profile.aspectRatios.length === SUPPORTED_ASPECT_RATIOS.length &&
+  SUPPORTED_ASPECT_RATIOS.every((ratio) => profile.aspectRatios.includes(ratio)) &&
+  profile.aspectRatios.every((ratio) => typeof profile.imageSizes?.[ratio] === 'string') &&
+  Number.isInteger(profile.maxReferences) &&
+  profile.maxReferences === 3 &&
+  profile.supportsSeed === true &&
+  profile.internalTextModel === '' &&
+  profile.internalEditModel === GENERATION_EDIT_MODEL &&
+  profile.internalDirectionsModel === GENERATION_DIRECTIONS_MODEL
+);
+
 const checkGenerationProvider = ({
   provider,
   env = process.env,
@@ -543,6 +559,7 @@ const checkGenerationProvider = ({
   requireWorkshop = false
 } = {}) => {
   const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, env);
+  const referenceProfile = getInternalGenerationProfile(PRODUCT_REFERENCE_PROFILE_ID, env);
   const adapterValid = Boolean(
     provider?.available &&
     typeof provider.generateImage === 'function' &&
@@ -553,7 +570,12 @@ const checkGenerationProvider = ({
   const kindValid = realProviderRequired
     ? provider?.kind === 'siliconflow'
     : ['siliconflow', 'contract-mock'].includes(String(provider?.kind || ''));
-  if (!adapterValid || !kindValid || !validProfileShape(profile)) {
+  if (
+    !adapterValid ||
+    !kindValid ||
+    !validProfileShape(profile) ||
+    !validReferenceProfileShape(referenceProfile)
+  ) {
     return { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' };
   }
   return { ok: true, kind: provider.kind, profile: profile.id };
@@ -631,7 +653,12 @@ const getReadinessReport = async ({
     String(env.CONSOLE_ADMIN_PASSWORD || '').trim()
   );
   const agentEnabled = enabled(env.AGENT_FEATURE_ENABLED);
-  const generationRequired = paidEnabled && (aiDesignEnabled || workshopAiEnabled);
+  const agentConfig = agentEnabled ? getAgentConfig(env) : null;
+  const agentImageGenerationRequired = Boolean(
+    agentEnabled && agentConfig?.publicImageGenerationEnabled
+  );
+  const mainGenerationRequired = paidEnabled && (aiDesignEnabled || workshopAiEnabled);
+  const generationRequired = mainGenerationRequired || agentImageGenerationRequired;
   const productionGeneration = generationRequired && isProduction(env);
   const databaseRequired =
     paidEnabled || authEmailOtpEnabled || behaviorAnalyticsEnabled || adminConsoleEnabled || agentEnabled;
@@ -664,7 +691,6 @@ const getReadinessReport = async ({
     if (paymentEnabled) payment = checkAfdian(env);
   }
   if (agentEnabled) {
-    const agentConfig = getAgentConfig(env);
     let resolvedAdapter = adapter;
     if (resolvedAdapter === undefined) {
       try {
@@ -691,6 +717,13 @@ const getReadinessReport = async ({
       agentConfig.runtimeDriver === 'live' &&
       agentConfig.modelProvider === 'siliconflow' &&
       !agentConfig.siliconFlowApiKey
+    ) {
+      missing.push('SILICONFLOW_API_KEY');
+    }
+    if (
+      agentConfig.publicImageGenerationEnabled &&
+      !agentConfig.siliconFlowApiKey &&
+      !missing.includes('SILICONFLOW_API_KEY')
     ) {
       missing.push('SILICONFLOW_API_KEY');
     }
@@ -747,13 +780,16 @@ const getReadinessReport = async ({
           browserMode: agentConfig.browserMode,
           betaMode: agentConfig.betaMode,
           egressPolicy: agentConfig.sandboxEgressPolicy,
-          desktopRelayConfigured: Boolean(agentConfig.workerRelayUrl)
+          desktopRelayConfigured: Boolean(agentConfig.workerRelayUrl),
+          imageGenerationPublicEnabled: agentConfig.publicImageGenerationEnabled
         };
   }
   if (generationRequired) {
-    payload = hasPayloadKey(env)
-      ? { ok: true }
-      : { ok: false, code: 'TASK_PAYLOAD_KEY_MISSING' };
+    if (mainGenerationRequired) {
+      payload = hasPayloadKey(env)
+        ? { ok: true }
+        : { ok: false, code: 'TASK_PAYLOAD_KEY_MISSING' };
+    }
     provider = await probeGenerationProvider({
       provider: generationProvider,
       env,
@@ -776,7 +812,8 @@ const getReadinessReport = async ({
   if (paidEnabled) requiredChecks.push(storage);
   if (agentEnabled && !paidEnabled) requiredChecks.push(storage);
   if (paymentEnabled) requiredChecks.push(payment);
-  if (generationRequired) requiredChecks.push(payload, provider, outputAllowlist);
+  if (mainGenerationRequired) requiredChecks.push(payload);
+  if (generationRequired) requiredChecks.push(provider, outputAllowlist);
   if (authEmailOtpEnabled) requiredChecks.push(authSecrets, mail, turnstile);
   if (agentEnabled) requiredChecks.push(agent);
   return {
@@ -790,6 +827,7 @@ const getReadinessReport = async ({
     aiDesignEnabled,
     workshopAiEnabled,
     agentEnabled,
+    agentImageGenerationRequired,
     generationRequired,
     checks: {
       database,

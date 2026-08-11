@@ -53,6 +53,9 @@
             ? (zh ? '浏览器、受限出口和桌面接管均已就绪' : 'Browser, restricted egress, and desktop takeover ready')
             : (zh ? '浏览器链路尚未全部就绪' : 'Browser path is not fully ready') }}
         </small>
+        <small v-if="serviceStatus.imageGenerationPublicEnabled" class="browser-health">
+          {{ zh ? 'AI 图片生成已就绪：文生图 8 点，参考图生成 12 点' : 'AI image generation ready: 8 credits for text, 12 with references' }}
+        </small>
       </section>
 
       <div class="workspace-grid">
@@ -105,8 +108,12 @@
               {{ zh ? '明确交付物（不选则由 Agent 判断）' : 'Required deliverables (leave blank for Agent choice)' }}
             </span>
             <div class="deliverable-options">
-              <label v-for="item in deliverableOptions" :key="item.id">
-                <input v-model="form.deliverables[item.id]" type="checkbox" />
+              <label v-for="item in deliverableOptions" :key="item.id" :class="{ 'is-disabled': item.disabled }">
+                <input
+                  v-model="form.deliverables[item.id]"
+                  type="checkbox"
+                  :disabled="item.disabled"
+                />
                 <span>
                   <strong>{{ item.code }} · {{ item.label }}</strong>
                   <small>{{ item.description }}</small>
@@ -127,7 +134,7 @@
             <div class="deliverables">
               <span class="field-label">{{ zh ? '允许使用的能力' : 'Granted capabilities' }}</span>
               <div class="capability-grid">
-                <label v-for="capability in capabilityOptions" :key="capability.id">
+                <label v-for="capability in capabilityOptions" :key="capability.id" :class="{ 'is-disabled': capability.disabled }">
                   <input
                     v-model="form.capabilities[capability.id]"
                     type="checkbox"
@@ -287,7 +294,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
@@ -345,7 +352,8 @@ const form = reactive({
     report: false,
     spreadsheet: false,
     presentation: false,
-    website: false
+    website: false,
+    image: false
   } as Record<string, boolean>
 });
 
@@ -359,8 +367,35 @@ const capabilityOptions = computed(() => [
       ? (zh.value ? '浏览、点击、表单审批和登录接管' : 'Browse, click, approve forms, and take over sign-in')
       : (zh.value ? '当前环境尚未开放' : 'Not enabled in this environment'),
     disabled: !serviceStatus.value?.browserPublicEnabled
+  },
+  {
+    id: 'generate_images',
+    label: zh.value ? 'AI 图片生成' : 'AI image generation',
+    description: serviceStatus.value?.imageGenerationPublicEnabled
+      ? (zh.value ? '生成 PNG、JPEG 或 WebP；可使用最多 3 张任务参考图' : 'Create PNG, JPEG, or WebP with up to 3 run references')
+      : (zh.value ? '当前环境尚未开放' : 'Not enabled in this environment'),
+    disabled: !serviceStatus.value?.imageGenerationPublicEnabled
   }
 ]);
+
+watch(() => form.deliverables.image, (selected) => {
+  if (!selected) return;
+  if (serviceStatus.value?.imageGenerationPublicEnabled !== true) {
+    form.deliverables.image = false;
+    return;
+  }
+  form.capabilities.generate_images = true;
+});
+
+watch(() => form.capabilities.generate_images, (enabled) => {
+  if (!enabled && form.deliverables.image) form.deliverables.image = false;
+});
+
+watch(() => serviceStatus.value?.imageGenerationPublicEnabled, (enabled) => {
+  if (enabled === true) return;
+  form.deliverables.image = false;
+  form.capabilities.generate_images = false;
+});
 
 const allowedOrigins = () => [...new Set(form.browserOrigins
   .split(/[\n,]/)
@@ -400,13 +435,23 @@ const deliverableCards = computed(() => [
   { code: 'PDF', title: zh.value ? '带引用的报告' : 'Cited report', description: zh.value ? '可编辑源文件 + PDF' : 'Editable source + PDF' },
   { code: 'XLSX', title: zh.value ? '数据与图表' : 'Data and charts', description: zh.value ? '公式可计算、图表可编辑' : 'Working formulas and editable charts' },
   { code: 'PPTX', title: zh.value ? '可编辑演示' : 'Editable deck', description: zh.value ? 'PPTX + 渲染预览' : 'PPTX + rendered preview' },
-  { code: 'WEB', title: zh.value ? '静态网站' : 'Static website', description: zh.value ? '在线预览 + 源码 ZIP' : 'Live preview + source ZIP' }
+  { code: 'WEB', title: zh.value ? '静态网站' : 'Static website', description: zh.value ? '在线预览 + 源码 ZIP' : 'Live preview + source ZIP' },
+  { code: 'IMAGE', title: zh.value ? '图片设计稿' : 'Image design', description: zh.value ? '独立验真的 PNG / JPEG / WebP' : 'Independently verified PNG / JPEG / WebP' }
 ]);
 const deliverableOptions = computed(() => [
-  { id: 'report', code: 'PDF', label: zh.value ? '带引用的报告' : 'Cited report', description: zh.value ? '可编辑源文件 + PDF' : 'Editable source + PDF' },
-  { id: 'spreadsheet', code: 'XLSX', label: zh.value ? '数据与图表' : 'Data and charts', description: zh.value ? '公式、数据和可编辑图表' : 'Formulas, data and editable charts' },
-  { id: 'presentation', code: 'PPTX', label: zh.value ? '可编辑演示' : 'Editable deck', description: zh.value ? 'PPTX + 渲染预览' : 'PPTX + rendered preview' },
-  { id: 'website', code: 'WEB', label: zh.value ? '静态网站' : 'Static website', description: zh.value ? '在线预览 + 源码 ZIP' : 'Preview + source ZIP' }
+  { id: 'report', code: 'PDF', label: zh.value ? '带引用的报告' : 'Cited report', description: zh.value ? '可编辑源文件 + PDF' : 'Editable source + PDF', disabled: false },
+  { id: 'spreadsheet', code: 'XLSX', label: zh.value ? '数据与图表' : 'Data and charts', description: zh.value ? '公式、数据和可编辑图表' : 'Formulas, data and editable charts', disabled: false },
+  { id: 'presentation', code: 'PPTX', label: zh.value ? '可编辑演示' : 'Editable deck', description: zh.value ? 'PPTX + 渲染预览' : 'PPTX + rendered preview', disabled: false },
+  { id: 'website', code: 'WEB', label: zh.value ? '静态网站' : 'Static website', description: zh.value ? '在线预览 + 源码 ZIP' : 'Preview + source ZIP', disabled: false },
+  {
+    id: 'image',
+    code: 'IMAGE',
+    label: zh.value ? '图片设计稿' : 'Image design',
+    description: serviceStatus.value?.imageGenerationPublicEnabled
+      ? (zh.value ? '选择后自动启用 AI 图片生成' : 'Automatically grants AI image generation')
+      : (zh.value ? '生产生图尚未开放' : 'Production image generation is unavailable'),
+    disabled: !serviceStatus.value?.imageGenerationPublicEnabled
+  }
 ]);
 const selectedDeliverables = () => Object.entries(form.deliverables)
   .filter(([, selected]) => selected)
@@ -437,7 +482,8 @@ const errorText = (error: unknown) => {
     AGENT_QUEUE_FULL: zh.value ? '当前排队任务已满，请稍后再试。' : 'The Agent queue is full. Try again later.',
     AGENT_BROWSER_ORIGIN_REQUIRED: zh.value ? '开启浏览器后，请填写完整的 HTTPS Origin，例如 https://example.com，不能带路径。' : 'Add a complete HTTPS origin such as https://example.com, without a path.',
     AGENT_BROWSER_SINGLE_ORIGIN_REQUIRED: zh.value ? '保存登录会话时只能填写一个 HTTPS Origin。' : 'A saved browser session can use exactly one HTTPS origin.',
-    AGENT_BROWSER_NOT_PUBLIC: zh.value ? '当前环境尚未开放浏览器能力。' : 'Browser capability is not enabled in this environment.'
+    AGENT_BROWSER_NOT_PUBLIC: zh.value ? '当前环境尚未开放浏览器能力。' : 'Browser capability is not enabled in this environment.',
+    AGENT_IMAGE_GENERATION_NOT_PUBLIC: zh.value ? '当前环境尚未开放 Agent 图片生成。' : 'Agent image generation is not enabled in this environment.'
   };
   return labels[code] || code;
 };
@@ -600,7 +646,7 @@ onBeforeUnmount(() => {
 .hero h1 { max-width: 980px; margin: 0; font-size: clamp(34px, 3.9vw, 54px); line-height: 1.02; letter-spacing: -.05em; }
 .lead { max-width: 820px; margin: 14px 0 0; color: #a4a9af; font-size: 14px; line-height: 1.58; }
 .trust-strip { display: grid; gap: 8px; min-width: 150px; }.trust-strip span { border-left: 2px solid #ccff00; padding: 3px 0 3px 12px; color: #8c9298; font: 600 11px monospace; }
-.worker-status { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 12px 14px; color: #dce8b8; border: 1px solid #465517; background: #131a08; }.worker-status.offline { color: #f0b9b3; border-color: #653831; background: #211210; }.worker-status small { margin-left: auto; color: #858c92; font: 10px/1.4 monospace; }
+.worker-status { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 14px; padding: 12px 14px; color: #dce8b8; border: 1px solid #465517; background: #131a08; }.worker-status.offline { color: #f0b9b3; border-color: #653831; background: #211210; }.worker-status small { margin-left: auto; color: #858c92; font: 10px/1.4 monospace; }
 .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(340px, .7fr); gap: 18px; margin-top: 18px; }
 .panel { border: 1px solid #292c30; background: #111316; }
 .composer, .runs { padding: 26px; }.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 24px; }.panel-head h2 { margin: 0; font-size: 24px; }
@@ -611,7 +657,7 @@ textarea:focus { border-color: #ccff00; box-shadow: 0 0 0 1px #ccff00; }.objecti
 .file-picker { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 14px; padding: 14px 16px; border: 1px dashed #3a4046; background: #0d0f11; cursor: pointer; }.file-picker > span { display: grid; gap: 4px; }.file-picker small { color: #7f858b; font-size: 11px; }.file-picker input { position: absolute; width: 1px; height: 1px; opacity: 0; }.file-picker b { padding: 8px 11px; color: #0a0b0d; background: #ccff00; font-size: 11px; }.selected-files { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }.selected-files span { padding: 6px 8px; color: #b8bec4; background: #181b1e; font: 10px monospace; }.selected-files button { color: #ff897d; border: 0; background: transparent; cursor: pointer; }
 .deliverables { display: grid; gap: 12px; margin-top: 22px; }.capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
 .advanced-settings { margin-top: 18px; border: 1px solid #2b3035; background: #0d0f11; }.advanced-settings > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; list-style: none; cursor: pointer; }.advanced-settings > summary::-webkit-details-marker { display: none; }.advanced-settings > summary span { display: grid; gap: 4px; }.advanced-settings > summary strong { font-size: 12px; }.advanced-settings > summary small { color: #747b82; font-size: 10px; }.advanced-settings > summary b { color: #ccff00; font: 10px monospace; }.advanced-settings[open] > summary { border-bottom: 1px solid #2b3035; }.advanced-settings[open] > summary b { font-size: 0; }.advanced-settings[open] > summary b::after { content: '−'; font-size: 16px; }.advanced-settings > .deliverables,.advanced-settings > .connections,.advanced-settings > .browser-session { margin-right: 14px; margin-left: 14px; }.advanced-settings > .browser-session { margin-bottom: 14px; }
-.deliverable-options { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; }.deliverable-options label { display: flex; gap: 8px; min-height: 58px; padding: 10px; border: 1px solid #2b3035; background: #0d0f11; cursor: pointer; }.deliverable-options input { accent-color: #ccff00; }.deliverable-options span { display: grid; gap: 4px; }.deliverable-options strong { font-size: 11px; }.deliverable-options small { color: #747b82; font-size: 9px; line-height: 1.35; }
+.deliverable-options { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 8px; }.deliverable-options label { display: flex; gap: 8px; min-height: 58px; padding: 10px; border: 1px solid #2b3035; background: #0d0f11; cursor: pointer; }.deliverable-options label.is-disabled,.capability-grid label.is-disabled { opacity: .48; cursor: not-allowed; }.deliverable-options input { accent-color: #ccff00; }.deliverable-options span { display: grid; gap: 4px; }.deliverable-options strong { font-size: 11px; }.deliverable-options small { color: #747b82; font-size: 9px; line-height: 1.35; }
 .browser-session { display: grid; gap: 9px; margin-top: 18px; padding: 14px; border: 1px solid #2b3035; background: #0d0f11; }.browser-session > input,.browser-session select { min-height: 38px; padding: 0 10px; border: 1px solid #353b40; color: #e9ece7; background: #141719; }.browser-session label { display: flex; gap: 8px; align-items: center; color: #b5bbc0; font-size: 11px; }.browser-session small { color: #737a80; font-size: 10px; line-height: 1.5; }.revoke-session { justify-self: start; border: 0; color: #ff8a7f; background: transparent; font-size: 10px; cursor: pointer; }
 .capability-grid label { display: flex; gap: 10px; min-height: 54px; padding: 11px; border: 1px solid #2b3035; background: #15181b; cursor: pointer; }.capability-grid input { accent-color: #ccff00; }
 .capability-grid span { display: grid; gap: 4px; }.capability-grid strong { font-size: 12px; }.capability-grid small { color: #747b82; font-size: 10px; }
@@ -622,7 +668,7 @@ textarea:focus { border-color: #ccff00; box-shadow: 0 0 0 1px #ccff00; }.objecti
 .consent { margin: 14px 0 0; color: #6f767d; font-size: 11px; line-height: 1.6; }.notice { margin-top: 14px; padding: 11px; color: #ccff00; border: 1px solid #596e12; background: #182005; font-size: 12px; }.notice.error { color: #ffaaa2; border-color: #64332e; background: #211210; }
 .icon-button { width: 34px; height: 34px; border: 1px solid #34383c; color: #ccff00; background: transparent; }.empty { display: grid; place-items: center; gap: 8px; min-height: 280px; text-align: center; color: #8c9399; }.empty-mark { color: #ccff00; font-size: 42px; }.empty small { max-width: 240px; color: #62696f; }
 .run-card { display: block; padding: 15px 0; color: inherit; text-decoration: none; border-top: 1px solid #282c30; }.run-card > div,.run-card footer { display: flex; align-items: center; gap: 8px; }.run-card time { margin-left: auto; color: #666c72; font-size: 10px; }.run-card p { margin: 10px 0; color: #858c92; font-size: 12px; }.run-card footer { color: #666d73; font: 10px monospace; }.run-card footer b { margin-left: auto; color: #ccff00; font-size: 16px; }.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #737980; }.status-dot.running,.status-dot.provisioning,.status-dot.verifying { background: #ccff00; box-shadow: 0 0 10px #ccff00; }.status-dot.succeeded { background: #54e391; }.status-dot.failed,.status-dot.cancelled { background: #ff6b61; }.status-dot.waiting_user { background: #ffb84d; }
-.deliverable-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #292c30; border-top: 0; }.deliverable-strip article { display: flex; gap: 13px; padding: 20px; }.deliverable-strip article + article { border-left: 1px solid #292c30; }.deliverable-strip article > span { color: #ccff00; font: 800 11px monospace; }.deliverable-strip div { display: grid; gap: 5px; }.deliverable-strip strong { font-size: 12px; }.deliverable-strip small { color: #6f767c; font-size: 10px; }
-@media (max-width: 960px) { .hero,.workspace-grid { grid-template-columns: 1fr; }.trust-strip { grid-template-columns: repeat(4,1fr); }.deliverable-options { grid-template-columns: repeat(2,minmax(0,1fr)); }.deliverable-strip { grid-template-columns: repeat(2,1fr); }.deliverable-strip article:nth-child(3) { border-top: 1px solid #292c30; border-left: 0; }.deliverable-strip article:nth-child(4) { border-top: 1px solid #292c30; } }
-@media (max-width: 620px) { .agent-shell { width: min(100% - 24px, 1440px); padding-top: 20px; }.mode-switch a { padding: 13px 12px; }.mode-switch small { display: none; }.hero { gap: 20px; padding: 28px 0 22px; }.hero h1 { font-size: 32px; line-height: 1.05; }.lead { font-size: 13px; line-height: 1.55; }.trust-strip { grid-template-columns: repeat(2,1fr); }.composer,.runs { padding: 18px; }.capability-grid,.deliverable-options,.deliverable-strip { grid-template-columns: 1fr; }.deliverable-strip article + article { border-left: 0; border-top: 1px solid #292c30; }.quote { flex-direction: column; }.composer-actions { flex-direction: column; }.primary,.secondary { width: 100%; } }
+.deliverable-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid #292c30; border-top: 0; }.deliverable-strip article { display: flex; gap: 13px; padding: 20px; }.deliverable-strip article + article { border-left: 1px solid #292c30; }.deliverable-strip article > span { color: #ccff00; font: 800 11px monospace; }.deliverable-strip div { display: grid; gap: 5px; }.deliverable-strip strong { font-size: 12px; }.deliverable-strip small { color: #6f767c; font-size: 10px; }
+@media (max-width: 960px) { .hero,.workspace-grid { grid-template-columns: 1fr; }.trust-strip { grid-template-columns: repeat(4,1fr); }.deliverable-options { grid-template-columns: repeat(2,minmax(0,1fr)); }.deliverable-strip { grid-template-columns: repeat(2,1fr); }.deliverable-strip article:nth-child(odd) { border-left: 0; }.deliverable-strip article:nth-child(n+3) { border-top: 1px solid #292c30; } }
+@media (max-width: 620px) { .agent-shell { width: min(100% - 24px, 1440px); padding-top: 20px; }.mode-switch a { padding: 13px 12px; }.mode-switch small { display: none; }.hero { gap: 20px; padding: 28px 0 22px; }.hero h1 { font-size: 32px; line-height: 1.05; }.lead { font-size: 13px; line-height: 1.55; }.trust-strip { grid-template-columns: repeat(2,1fr); }.worker-status { align-items: flex-start; }.worker-status small { width: 100%; margin-left: 16px; }.composer,.runs { padding: 18px; }.capability-grid,.deliverable-options,.deliverable-strip { grid-template-columns: 1fr; }.deliverable-strip article + article { border-left: 0; border-top: 1px solid #292c30; }.browser-session > input,.browser-session select,textarea { font-size: 16px; }.quote { flex-direction: column; }.composer-actions { flex-direction: column; }.primary,.secondary { width: 100%; } }
 </style>

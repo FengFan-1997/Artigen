@@ -73,7 +73,9 @@ const workerEnv = { ...process.env };
     AGENT_WORKER_ID: process.env.AGENT_WORKER_ID || (
       profile === 'production' ? 'artigen-production-mac-1' : 'artigen-dev-mac-1'
     ),
-    AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser',
+    AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser,generate_images',
+    AGENT_IMAGE_CREDITS: String(process.env.AGENT_IMAGE_CREDITS || '8'),
+    AGENT_IMAGE_REFERENCE_CREDITS: String(process.env.AGENT_IMAGE_REFERENCE_CREDITS || '12'),
     AGENT_BETA_MODE: profile === 'production' ? 'owner-only-v1' : 'disabled',
     AGENT_MAX_MINUTES: '45',
     AGENT_MAX_STEPS: '120',

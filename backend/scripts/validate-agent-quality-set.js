@@ -3,12 +3,12 @@ const path = require('path');
 
 const datasetPath = path.resolve(__dirname, '../evaluation/agent-quality-set.json');
 const tasks = JSON.parse(fs.readFileSync(datasetPath, 'utf8'));
-const deliverables = ['report', 'spreadsheet', 'presentation', 'website'];
+const deliverables = ['report', 'spreadsheet', 'presentation', 'website', 'image'];
 const ids = new Set();
 const errors = [];
 
-if (!Array.isArray(tasks) || tasks.length !== 40) {
-  errors.push(`expected 40 tasks, received ${Array.isArray(tasks) ? tasks.length : 'non-array'}`);
+if (!Array.isArray(tasks) || tasks.length !== 50) {
+  errors.push(`expected 50 tasks, received ${Array.isArray(tasks) ? tasks.length : 'non-array'}`);
 }
 for (const task of Array.isArray(tasks) ? tasks : []) {
   if (!task?.id || ids.has(task.id)) errors.push(`duplicate or missing id: ${task?.id || '<empty>'}`);

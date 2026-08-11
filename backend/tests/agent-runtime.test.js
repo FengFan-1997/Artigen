@@ -93,10 +93,16 @@ const {
 const {
   evaluateAgentTrajectory
 } = require('../services/agent-trajectory-evaluator');
+const { settleAgentBudget } = require('../services/agent-billing-service');
 const {
   createAgentWorkerService,
-  createAgentCostMeter
+  createAgentCostMeter,
+  resolveStagedImageReferences
 } = require('../services/agent-worker-service');
+const {
+  createAgentImageService,
+  normalizeAgentImageReferences
+} = require('../services/agent-image-service');
 const {
   AgentQueueWorker,
   attachBossErrorLogging
@@ -356,8 +362,8 @@ test('owner run views decrypt only a bounded objective preview and expose the du
 
 test('explicit deliverables are allowlisted and deduplicated', () => {
   assert.deepEqual(
-    normalizeDeliverables(['report', 'website', 'report']),
-    ['report', 'website']
+    normalizeDeliverables(['report', 'website', 'image', 'report']),
+    ['report', 'website', 'image']
   );
   assert.throws(() => normalizeDeliverables(['executable']), {
     code: 'AGENT_DELIVERABLES_INVALID'
@@ -729,6 +735,12 @@ test('public Agent capability policy removes browser and external account access
   assert.equal(defaults.files, true);
   assert.equal(defaults.shell, false);
   assert.equal(defaults.browser, false);
+  assert.equal(normalizeCapabilities({ generate_images: true }, {
+    AGENT_PUBLIC_CAPABILITIES: 'files,shell,generate_images'
+  }).generate_images, true);
+  assert.equal(normalizeCapabilities({ generate_images: true }, {
+    AGENT_PUBLIC_CAPABILITIES: 'files,shell'
+  }).generate_images, false);
 });
 
 test('shell policy keeps model-authored commands offline and blocks privilege escalation', () => {
@@ -1094,6 +1106,22 @@ test('artifact declarations are workspace-bound and verification is format-aware
   assert.equal(markdown.mimeType, 'text/markdown');
   assert.match(verificationCommand(markdown), /clamscan/);
   assert.match(verificationCommand(markdown), /test -s/);
+  const image = assertArtifactDeclaration({
+    path: 'concept.webp',
+    filename: 'concept.webp',
+    mimeType: 'image/webp',
+    role: 'image'
+  });
+  assert.match(verificationCommand(image), /clamscan/);
+  assert.match(verificationCommand(image), /identify -format/);
+  assert.match(verificationCommand(image), /64000000/);
+  assert.match(verificationCommand(image), /convert/);
+  assert.throws(() => assertArtifactDeclaration({
+    path: 'not-an-image.pdf',
+    filename: 'not-an-image.pdf',
+    mimeType: 'application/pdf',
+    role: 'image'
+  }), { code: 'AGENT_ARTIFACT_ROLE_MIME_MISMATCH' });
   assert.equal(assertArtifactDeclaration({
     filename: 'report.md',
     mimeType: 'text/plain',
@@ -1172,8 +1200,8 @@ test('trajectory verifier blocks unapproved side effects and unconsumed model ch
 });
 
 test('Agent golden quality set contains ten cases for each deliverable', () => {
-  assert.equal(agentQualitySet.length, 40);
-  for (const deliverable of ['report', 'spreadsheet', 'presentation', 'website']) {
+  assert.equal(agentQualitySet.length, 50);
+  for (const deliverable of ['report', 'spreadsheet', 'presentation', 'website', 'image']) {
     assert.equal(
       agentQualitySet.filter((task) => task.deliverable === deliverable).length,
       10
@@ -1206,6 +1234,9 @@ test('deliverable requirements are derived deterministically for independent com
     inferRequiredDeliverables('Build a static website and deliver its source ZIP'),
     ['website']
   );
+  assert.deepEqual(inferRequiredDeliverables('生成一张品牌主视觉设计稿'), ['image']);
+  assert.deepEqual(inferRequiredDeliverables('Generate a campaign poster image'), ['image']);
+  assert.deepEqual(inferRequiredDeliverables('分析参考图片，不要生成图片或视觉稿'), []);
   const artifacts = [
     { role: 'editable', mime_type: 'text/plain' },
     { role: 'pdf', mime_type: 'application/pdf' },
@@ -1218,16 +1249,174 @@ test('deliverable requirements are derived deterministically for independent com
       mime_type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
     },
     { role: 'preview', mime_type: 'application/pdf' },
-    { role: 'website', mime_type: 'application/zip' }
+    { role: 'website', mime_type: 'application/zip' },
+    { role: 'image', mime_type: 'image/png', verification_status: 'passed' }
   ];
   assert.equal(requiredDeliverablesSatisfied(
     artifacts,
-    ['report', 'spreadsheet', 'presentation', 'website']
+    ['report', 'spreadsheet', 'presentation', 'website', 'image']
   ), true);
   assert.equal(requiredDeliverablesSatisfied(
     artifacts.filter((artifact) => artifact.role !== 'website'),
     ['website']
   ), false);
+  assert.equal(requiredDeliverablesSatisfied(
+    [{ role: 'image', mime_type: 'image/jpeg', verification_status: 'passed' }],
+    ['image']
+  ), true);
+  assert.equal(requiredDeliverablesSatisfied(
+    [{ role: 'image', mime_type: 'image/jpeg', verification_status: 'failed' }],
+    ['image']
+  ), false);
+});
+
+test('an image-only run can finish once and settles its budget only once', async () => {
+  let runStatus = 'verifying';
+  let settlementCount = 0;
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const workerId = 'worker-image-test';
+  const query = async (sql) => {
+    if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [], rowCount: 0 };
+    if (/SELECT \* FROM agent_runs WHERE id=\$1 FOR UPDATE/.test(sql)) {
+      return {
+        rows: [{
+          id: runId,
+          status: runStatus,
+          worker_id: workerId,
+          max_credits: 30,
+          step_count: 3,
+          replan_count: 0
+        }],
+        rowCount: 1
+      };
+    }
+    if (/FROM agent_artifacts WHERE run_id/.test(sql)) {
+      return {
+        rows: [{
+          role: 'image',
+          mime_type: 'image/png',
+          verification_status: 'passed',
+          sources: []
+        }],
+        rowCount: 1
+      };
+    }
+    if (/FROM agent_steps WHERE run_id/.test(sql)) {
+      return {
+        rows: [
+          { sequence: 1, role: 'planner', status: 'succeeded', tool_name: 'update_plan' },
+          { sequence: 2, role: 'executor', status: 'succeeded', tool_name: 'artigen_image_generation' },
+          { sequence: 3, role: 'verifier', status: 'succeeded', tool_name: 'declare_artifact' }
+        ],
+        rowCount: 3
+      };
+    }
+    if (/FROM agent_approvals WHERE run_id/.test(sql)) return { rows: [], rowCount: 0 };
+    if (/FROM agent_model_checkpoints/.test(sql)) return { rows: [], rowCount: 0 };
+    if (/SELECT \* FROM agent_budget_holds/.test(sql)) {
+      return {
+        rows: [{
+          run_id: runId,
+          user_id: '22222222-2222-4222-8222-222222222222',
+          status: 'held',
+          max_credits: 30,
+          free_credits: 30,
+          trial_credits: 0,
+          daily_free_credits: 30,
+          paid_credits: 0,
+          created_at: new Date()
+        }],
+        rowCount: 1
+      };
+    }
+    if (/UPDATE agent_budget_holds\s+SET status=/.test(sql)) {
+      settlementCount += 1;
+      return { rows: [], rowCount: 1 };
+    }
+    if (/UPDATE agent_runs\s+SET status='succeeded'/.test(sql)) {
+      runStatus = 'succeeded';
+      return { rows: [{ id: runId, status: runStatus, charged_credits: 9 }], rowCount: 1 };
+    }
+    if (/INSERT INTO agent_events/.test(sql)) {
+      return { rows: [{ id: '1', run_id: runId }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 1 };
+  };
+  const service = createAgentRunService({
+    pool: {
+      connect: async () => ({ query, release() {} })
+    },
+    env: {
+      AGENT_FEATURE_ENABLED: '1',
+      AGENT_PAYLOAD_ENCRYPTION_KEY: encryptionEnv.AGENT_PAYLOAD_ENCRYPTION_KEY
+    }
+  });
+  const finished = await service.finishRun({
+    runId,
+    workerId,
+    actualCredits: 8.2,
+    checklist: { requiredArtifactCount: 1, requiredDeliverables: ['image'] }
+  });
+  assert.equal(finished.status, 'succeeded');
+  assert.equal(settlementCount, 1);
+  await assert.rejects(service.finishRun({
+    runId,
+    workerId,
+    actualCredits: 8.2,
+    checklist: { requiredArtifactCount: 1, requiredDeliverables: ['image'] }
+  }), { code: 'AGENT_NOT_VERIFYING' });
+  assert.equal(settlementCount, 1);
+});
+
+test('a failed image run releases the hold and replay cannot settle twice', async () => {
+  let holdStatus = 'held';
+  let holdUpdates = 0;
+  const client = {
+    query: async (sql) => {
+      if (/SELECT \* FROM agent_budget_holds/.test(sql)) {
+        return {
+          rows: [{
+            status: holdStatus,
+            max_credits: 30,
+            charged_credits: 0,
+            free_credits: 0,
+            paid_credits: 30,
+            trial_credits: 0,
+            daily_free_credits: 0,
+            user_id: '22222222-2222-4222-8222-222222222222'
+          }],
+          rowCount: 1
+        };
+      }
+      if (/UPDATE wallets/.test(sql)) {
+        return { rows: [{ available_credits: 30, frozen_credits: 0 }], rowCount: 1 };
+      }
+      if (/UPDATE agent_budget_holds/.test(sql)) {
+        holdStatus = 'released';
+        holdUpdates += 1;
+      }
+      return { rows: [], rowCount: 1 };
+    }
+  };
+  const first = await settleAgentBudget({
+    client,
+    runId: '11111111-1111-4111-8111-111111111111',
+    actualCredits: 12,
+    refundable: true,
+    reason: 'image_generation_failed'
+  });
+  assert.equal(first.chargedCredits, 0);
+  assert.equal(first.releasedCredits, 30);
+  const replay = await settleAgentBudget({
+    client,
+    runId: '11111111-1111-4111-8111-111111111111',
+    actualCredits: 12,
+    refundable: true,
+    reason: 'image_generation_failed'
+  });
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.chargedCredits, 0);
+  assert.equal(holdUpdates, 1);
 });
 
 test('OpenAI Responses computer loop executes read-only visual actions and returns screenshots', async () => {
@@ -1934,6 +2123,148 @@ test('SiliconFlow exposes browser_dom only when the run grants browser capabilit
       'request_user_approval'
     ]
   );
+  assert.deepEqual(
+    ollamaFileTools({ files: true, generate_images: true }).map((tool) => tool.function.name),
+    [
+      'update_plan',
+      'generate_image',
+      'sandbox_shell',
+      'declare_artifact',
+      'request_user_approval'
+    ]
+  );
+  const imageTool = ollamaFileTools({ generate_images: true })
+    .find((tool) => tool.function.name === 'generate_image');
+  assert.equal(imageTool.function.parameters.properties.references.maxItems, 3);
+  assert.deepEqual(
+    imageTool.function.parameters.properties.references.items.properties.role.enum,
+    ['product', 'style', 'scene']
+  );
+});
+
+test('an ungranted Qwen image tool call stays hidden and fails with the capability gate', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      const request = JSON.parse(init.body);
+      assert.equal(
+        request.tools.some((tool) => tool.function.name === 'generate_image'),
+        false
+      );
+      return new Response(JSON.stringify({
+        id: 'chat-ungranted-image',
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: '',
+            tool_calls: [{
+              id: 'call-ungranted-image',
+              type: 'function',
+              function: {
+                name: 'generate_image',
+                arguments: JSON.stringify({
+                  prompt: 'A campaign visual',
+                  aspectRatio: '1:1',
+                  filename: 'campaign.png'
+                })
+              }
+            }]
+          }
+        }],
+        usage: {}
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  await assert.rejects(provider.execute({
+    objective: 'Create a campaign visual',
+    capabilities: { files: true },
+    maxSteps: 5,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      generateImage: async () => {
+        throw new ApiError(403, 'AGENT_CAPABILITY_NOT_GRANTED', {
+          capability: 'generate_images'
+        });
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  }), { code: 'AGENT_CAPABILITY_NOT_GRANTED' });
+});
+
+test('Agent image generation uses staged references, dedicated models and 8/12 credit pricing', async () => {
+  const inputPath = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
+  const staged = new Map([[inputPath, {
+    mimeType: 'image/png',
+    buffer: Buffer.from('reference-image')
+  }]]);
+  const resolved = resolveStagedImageReferences([
+    { path: inputPath, role: 'product' }
+  ], staged);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].role, 'product');
+  assert.throws(() => resolveStagedImageReferences([
+    { path: '/tmp/artigen-workspace/output.png', role: 'product' }
+  ], staged), { code: 'AGENT_IMAGE_REFERENCE_NOT_STAGED' });
+  assert.throws(() => resolveStagedImageReferences([
+    { path: inputPath, role: 'product' },
+    { path: inputPath, role: 'product' }
+  ], staged), { code: 'AGENT_IMAGE_REFERENCE_ROLE_INVALID' });
+  assert.throws(() => normalizeAgentImageReferences([
+    {
+      path: inputPath,
+      role: 'product',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('not-image')
+    }
+  ]), { code: 'AGENT_IMAGE_REFERENCE_MIME_UNSUPPORTED' });
+
+  const calls = [];
+  const service = createAgentImageService({
+    env: {
+      AGENT_IMAGE_CREDITS: '8',
+      AGENT_IMAGE_REFERENCE_CREDITS: '12'
+    },
+    provider: {
+      generateImage: async (input) => {
+        calls.push(input);
+        return { images: [{ url: 'https://cdn.example.test/generated.png' }] };
+      }
+    },
+    download: async () => ({
+      buffer: Buffer.from('generated-image'),
+      mimeType: 'image/png'
+    })
+  });
+  const textResult = await service.generate({
+    prompt: 'A restrained campaign visual',
+    aspectRatio: '16:9',
+    filename: 'campaign.png'
+  });
+  assert.equal(calls[0].profile.id, 'standard-v1');
+  assert.deepEqual(calls[0].images, []);
+  assert.equal(textResult.costCredits, 8);
+
+  const referenceResult = await service.generate({
+    prompt: 'Place the product in a quiet studio scene',
+    aspectRatio: '4:5',
+    filename: 'product.png',
+    references: resolved
+  });
+  assert.equal(calls[1].profile.id, 'product-reference-v1');
+  assert.equal(calls[1].images.length, 1);
+  assert.match(calls[1].images[0], /^data:image\/png;base64,/);
+  assert.match(calls[1].prompt, /product role/);
+  assert.equal(referenceResult.costCredits, 12);
 });
 
 test('coordinate-mutating computer actions require takeover before execution', async () => {

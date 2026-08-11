@@ -80,7 +80,7 @@ Object.assign(process.env, {
   AGENT_WORKER_ID: PRODUCTION
     ? 'artigen-production-login-smoke-publisher'
     : 'artigen-dev-login-smoke-publisher',
-  AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser',
+  AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser,generate_images',
   AGENT_BETA_MODE: PRODUCTION ? 'owner-only-v1' : 'disabled',
   AGENT_MAX_MINUTES: '45',
   AGENT_MAX_STEPS: '120',
