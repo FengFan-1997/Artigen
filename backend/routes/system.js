@@ -504,10 +504,10 @@ const installSystemRoutes = (app, deps) => {
         rid: String(res.locals.requestId || ""),
         gitSha:
           String(
-            readinessEnv.GIT_SHA ||
-              readinessEnv.RENDER_GIT_COMMIT ||
+            readinessEnv.RENDER_GIT_COMMIT ||
               readinessEnv.VERCEL_GIT_COMMIT_SHA ||
               readinessEnv.RAILWAY_GIT_COMMIT_SHA ||
+              readinessEnv.GIT_SHA ||
               "",
           ).trim() || null,
       });
