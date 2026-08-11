@@ -10,7 +10,11 @@ const {
   browserActionType,
   createAgentBrowserService
 } = require('./agent-browser-service');
-const { createAgentImageService } = require('./agent-image-service');
+const {
+  configuredImageCredits,
+  createAgentImageService,
+  normalizeAgentImageReferences
+} = require('./agent-image-service');
 const {
   AgentWaitingForUser,
   createAgentModelProvider
@@ -85,6 +89,27 @@ const readOpenedAsset = async (opened, maximumBytes = 100 * 1024 * 1024) => {
     chunks.push(Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
+};
+
+const resolveStagedImageReferences = (value, stagedAssetsByPath) => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 3) {
+    throw new ApiError(400, 'AGENT_IMAGE_REFERENCES_INVALID');
+  }
+  const staged = stagedAssetsByPath instanceof Map ? stagedAssetsByPath : new Map();
+  return normalizeAgentImageReferences(value.map((reference) => {
+    const path = String(reference?.path || '').trim();
+    const asset = staged.get(path);
+    if (!asset) {
+      throw new ApiError(403, 'AGENT_IMAGE_REFERENCE_NOT_STAGED');
+    }
+    return {
+      path,
+      role: reference?.role,
+      mimeType: asset.mimeType,
+      buffer: asset.buffer
+    };
+  }));
 };
 
 const createAgentCostMeter = ({
@@ -343,6 +368,7 @@ const createAgentWorkerService = ({
       }
       await pauseIfRequested();
       const inputAssetPaths = [];
+      const stagedAssetsByPath = new Map();
       for (const assetId of objectivePayload.assetIds || []) {
         const opened = await assets.openAsset({
           assetId,
@@ -362,6 +388,10 @@ const createAgentWorkerService = ({
           throw new ApiError(422, 'AGENT_INPUT_ASSET_SCAN_FAILED', { assetId });
         }
         inputAssetPaths.push(inputPath);
+        stagedAssetsByPath.set(inputPath, {
+          mimeType: String(opened.record.mime_type || '').toLowerCase(),
+          buffer: bytes
+        });
       }
       await runService.appendStep({
         runId,
@@ -655,14 +685,20 @@ const createAgentWorkerService = ({
                 capability: 'generate_images'
               });
             }
-            const nextImageCredits = Math.max(0, Number(env.AGENT_IMAGE_CREDITS || 8));
+            const references = resolveStagedImageReferences(
+              request?.references,
+              stagedAssetsByPath
+            );
+            const nextImageCredits = references.length
+              ? configuredImageCredits(env.AGENT_IMAGE_REFERENCE_CREDITS, 12)
+              : configuredImageCredits(env.AGENT_IMAGE_CREDITS, 8);
             if (
               costMeter.total({ additional: nextImageCredits }) >
                 Number(context.run.max_credits || 0)
             ) {
               throw new ApiError(409, 'AGENT_BUDGET_EXCEEDED');
             }
-            const generated = await imageService.generate(request);
+            const generated = await imageService.generate({ ...request, references });
             const outputPath = `/tmp/artigen-workspace/${generated.filename}`;
             await sandbox.writeFile(sandboxName, outputPath, generated.buffer);
             costMeter.addGeneration(generated.costCredits);
@@ -677,7 +713,13 @@ const createAgentWorkerService = ({
                 promptSha256: crypto.createHash('sha256')
                   .update(String(request.prompt || ''))
                   .digest('hex'),
-                aspectRatio: request.aspectRatio
+                aspectRatio: request.aspectRatio,
+                referenceCount: references.length,
+                referenceRoles: references.map((reference) => reference.role),
+                referencePathSha256: references.map((reference) => crypto
+                  .createHash('sha256')
+                  .update(reference.path)
+                  .digest('hex'))
               },
               sanitizedOutput: {
                 path: outputPath,
@@ -923,7 +965,8 @@ const createAgentWorkerService = ({
         report: 2,
         spreadsheet: 1,
         presentation: 2,
-        website: 1
+        website: 1,
+        image: 1
       };
       const finalCosts = costMeter.snapshot({
         accrue: true,
@@ -947,6 +990,9 @@ const createAgentWorkerService = ({
             artifacts.every((artifact) => artifact.verificationStatus === 'passed'),
           editableSourcePresent: artifacts.some((artifact) => (
             artifact.role === 'editable' || artifact.role === 'source'
+          )),
+          primaryArtifactPresent: artifacts.some((artifact) => (
+            ['editable', 'source', 'website', 'package', 'image'].includes(artifact.role)
           )),
           modelClaimIgnoredUntilVerified: true
         }
@@ -1056,5 +1102,6 @@ module.exports = {
   AgentPaused,
   createAgentCostMeter,
   createAgentWorkerService,
-  firstPayload
+  firstPayload,
+  resolveStagedImageReferences
 };

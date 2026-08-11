@@ -1,6 +1,6 @@
 # Artigen 全链路 Agent Handoff
 
-更新时间：2026-08-10（Asia/Shanghai）
+更新时间：2026-08-11（Asia/Shanghai）
 
 文档用途：这是给下一位 AI、工程师或运维接管人的单一入口。即使没有本次聊天记录，也应能从本文理解 Artigen Agent 为什么曾经被判断为“还跑不通”、后来做了什么、现在实际运行在哪里、如何登录和运维、哪些安全边界不能破坏，以及接手后应先检查什么。
 
@@ -346,7 +346,21 @@ browserConfig: {
 | `egressVerified` | `restricted-v1` 已主动探测成功，不是只设置了环境变量 |
 | `desktopRelayReady` | Worker 已能使用配置的 Render WebSocket 中继 |
 | `browserPublicEnabled` | 公共 capability 列表包含 `browser`；仍受 Beta 用户白名单限制 |
+| `imageGenerationPublicEnabled` | 公共 capability 列表包含 `generate_images` 且生图 Provider readiness 已通过；仍受 Beta 用户白名单限制 |
 | `availabilityNote` | `ready` 才表示当前可正常接单 |
+
+### 4.3.1 Agent 图片交付契约（开发阶段）
+
+功能分支 `codex/agent-image-generation` 正在增加正式 `image` deliverable。本文在生产验收前只记录已确定的代码契约，不表示功能已经上线：
+
+- Qwen 只在 run 获得 `generate_images` capability 时看到 `generate_image`；Worker 仍以 `AGENT_CAPABILITY_NOT_GRANTED` 作最终授权门禁；
+- 无参考图使用 `Kwai-Kolors/Kolors`，每次 8 点；带参考图使用 `Qwen/Qwen-Image-Edit-2509`，每次 12 点；
+- 最多三张参考图，角色仅为 `product`、`style`、`scene` 且不能重复；路径必须精确命中本次 run 已扫描并放入 `inputs/` 的用户图片；
+- 正式图片交付使用 `role=image`，仅接受 PNG、JPEG、WebP，并经过病毒扫描、ImageMagick 解码、像素限制、非空校验、S3 持久化和 SHA-256 验证；
+- `image` 可以单独满足完成条件；失败仍走既有冻结释放，成功仍只结算一次；
+- Agent 保持 `owner-only-v1`，本变更不扩大 Agent 用户范围。
+
+在 DEV、Release gate、同 SHA 生产发布和真实 IMAGE run 全部完成前，不得把本节描述成当前生产能力。
 
 网页能打开但 `workerOnline=false` 时，不要重复创建任务。已有任务在 pg-boss/数据库中等待 Worker 恢复。
 

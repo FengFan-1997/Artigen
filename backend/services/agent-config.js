@@ -171,6 +171,7 @@ const getAgentConfig = (env = process.env) => {
     sandboxEgressPolicy: String(env.AGENT_SANDBOX_EGRESS_POLICY || '').trim(),
     browserMode,
     publicBrowserEnabled: publicCapabilities.has('browser'),
+    publicImageGenerationEnabled: publicCapabilities.has('generate_images'),
     workerRelayUrl: String(env.AGENT_WORKER_RELAY_URL || '').trim(),
     workerRelaySecret,
     workerId,
@@ -208,6 +209,9 @@ const assertAgentRuntimeReady = (env = process.env) => {
   }
   if (config.modelProvider === 'siliconflow' && !config.siliconFlowApiKey) {
     throw new ApiError(503, 'AGENT_MODEL_NOT_CONFIGURED', { retryable: false });
+  }
+  if (config.publicImageGenerationEnabled && !config.siliconFlowApiKey) {
+    throw new ApiError(503, 'AGENT_IMAGE_MODEL_NOT_CONFIGURED', { retryable: false });
   }
   if (
     config.sandboxProvider === 'cua' &&

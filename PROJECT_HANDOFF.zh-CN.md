@@ -1,6 +1,6 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-10（Asia/Shanghai）
+更新时间：2026-08-11（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
@@ -185,6 +185,12 @@ Agent 的完整架构、安全边界、真实 Run ID、测试、账号和运维�
 
 治理规则在包含这些文件的提交合入目标分支后生效；未合并的工作分支不能代表 `dev` 或
 `main` 已经采用该规则。实际合入状态以 GitHub 为准。
+
+### 5.3 Agent 生图与付费主业务恢复（开发阶段）
+
+用户已批准在 `codex/agent-image-generation` 实现以下正式变更：Agent 保持 owner-only，新增文生图、最多三张任务参考图和独立 `IMAGE` 交付；主业务在 readiness 全部通过后恢复 AI Design、Workshop、Task Worker 和爱发电支付，并向所有登录用户开放。`render.yaml` 继续保留安全关闭默认值，生产开关只能通过 Render Dashboard 覆盖。
+
+当前阶段仅为功能分支实现与本地验证，尚未完成 PR、DEV 真实依赖 smoke、`dev → main` Release gate、生产发布或线上验收。当前生产基线、deployment 和开关状态仍以本文第 1 节以及实时 `/api/meta`、`/readyz`、`/api/agent/status`、`/api/generation/models` 为准，不得提前宣称已上线。
 
 ## 6. 已知风险与正式后续事项
 
