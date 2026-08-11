@@ -1,7 +1,6 @@
 const {
   API_KEY,
   SILICONFLOW_API_KEY,
-  SILICONFLOW_MESSAGES_URL,
   SILICONFLOW_CHAT_COMPLETIONS_URL,
   SILICONFLOW_IMAGES_GENERATIONS_URL,
   SILICONFLOW_IMAGE_INPUT_FIELD,
@@ -170,8 +169,18 @@ const callGeminiGenerate = async ({ contents, timeoutMs }) => {
   throw err;
 };
 
-const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model, signal }) => {
-  if (!SILICONFLOW_API_KEY) {
+const callSiliconFlowChat = async ({
+  messages,
+  timeoutMs,
+  maxTokens,
+  model,
+  enableThinking,
+  signal,
+  credential = SILICONFLOW_API_KEY,
+  chatUrl = SILICONFLOW_CHAT_COMPLETIONS_URL,
+  fetcher = fetchWithTimeout
+}) => {
+  if (!credential) {
     const err = new Error('MISSING_SILICONFLOW_API_KEY');
     err.code = 'MISSING_SILICONFLOW_API_KEY';
     throw err;
@@ -188,10 +197,13 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model, sign
     }
     const headers = {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${SILICONFLOW_API_KEY}`
+      Authorization: `Bearer ${credential}`
     };
 
-    const tryUrls = [SILICONFLOW_MESSAGES_URL, SILICONFLOW_CHAT_COMPLETIONS_URL];
+    // SiliconFlow's supported OpenAI-compatible chat endpoint is /chat/completions.
+    // The legacy /messages probe could consume the whole request timeout before the
+    // supported endpoint was attempted.
+    const tryUrls = [chatUrl];
     const failures = [];
 
     const isRpmLimit = (raw) => {
@@ -201,7 +213,7 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model, sign
 
     for (const url of tryUrls) {
       try {
-        const response = await fetchWithTimeout(
+        const response = await fetcher(
           url,
           {
             method: 'POST',
@@ -209,7 +221,8 @@ const callSiliconFlowChat = async ({ messages, timeoutMs, maxTokens, model, sign
             body: JSON.stringify({
               model: resolvedModel,
               messages,
-              max_tokens: typeof maxTokens === 'number' ? maxTokens : undefined
+              max_tokens: typeof maxTokens === 'number' ? maxTokens : undefined,
+              enable_thinking: typeof enableThinking === 'boolean' ? enableThinking : undefined
             })
           },
           timeoutMs,
@@ -489,7 +502,8 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFa
       messages: toSiliconflowMessages(),
       timeoutMs: sfTimeoutMs,
       maxTokens: reactionMode ? 512 : 2048,
-      model: resolvedModel
+      model: resolvedModel,
+      enableThinking: false
     });
     return { text, provider: 'siliconflow', usage, model: modelUsed, usedUrl };
   };

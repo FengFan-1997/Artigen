@@ -262,7 +262,7 @@ test('ai-design validators allow only the stable contract and enforce operation 
 });
 
 test('SiliconFlow adapter owns model and image parameters and parses exactly four directions', async () => {
-  const calls = { image: null, chat: null };
+  const calls = { image: null, chat: [] };
   const provider = createSiliconFlowGenerationProvider({
     configured: true,
     env: enabledEnv,
@@ -271,7 +271,7 @@ test('SiliconFlow adapter owns model and image parameters and parses exactly fou
       return { data: { images: [{ url: 'https://assets.example/result.png' }] } };
     },
     chatGenerate: async (input) => {
-      calls.chat = input;
+      calls.chat.push(input);
       return {
         text: JSON.stringify({
           directions: Array.from({ length: 4 }, (_, index) => ({
@@ -290,8 +290,17 @@ test('SiliconFlow adapter owns model and image parameters and parses exactly fou
     profile
   });
   assert.equal(directions.length, 4);
-  assert.equal(calls.chat.model, GENERATION_DIRECTIONS_MODEL);
-  assert.match(calls.chat.messages[0].content, /Never invent ingredients/);
+  assert.equal(calls.chat[0].model, GENERATION_DIRECTIONS_MODEL);
+  assert.equal(calls.chat[0].timeoutMs, 120_000);
+  assert.equal(calls.chat[0].enableThinking, false);
+  assert.match(calls.chat[0].messages[0].content, /Never invent ingredients/);
+  await provider.organizeIngredientSource({
+    messages: [{ role: 'user', content: 'water, salt' }],
+    profile
+  });
+  assert.equal(calls.chat[1].model, GENERATION_DIRECTIONS_MODEL);
+  assert.equal(calls.chat[1].timeoutMs, 120_000);
+  assert.equal(calls.chat[1].enableThinking, false);
   await provider.generateImage({
     prompt: 'controlled prompt',
     profile,
