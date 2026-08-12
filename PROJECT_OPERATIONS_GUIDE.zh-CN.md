@@ -110,12 +110,12 @@ Render deployment: dep-d9qsuam417fc7383uj70
 | 后端 | `http://localhost:8080` | Render `dev-artigen-app-fengfan` | Render `artigen-app-fengfan` |
 | 数据库 | `artigen_dev` | `dev_artigen` | `neondb` |
 | 数据隔离 | 本机 PostgreSQL | 独立数据库；与生产共享 Neon 项目计算资源 | 生产数据库 |
-| 图片 | 本机 file | Render 临时 file | S3 兼容共享对象存储 |
+| 图片 | 本机 file | 独立 DEV 凭据/命名空间的共享 S3 | S3 兼容共享对象存储 |
 | 访问 | 本机 | HTTP Basic 首次认证 + 短时安全 Cookie | 公开站点 |
-| 支付 | 关闭 | 关闭 | 已配置；真实扣款最终验收仍需谨慎 |
+| 支付 | 关闭 | 仅创建未支付订单并验证 pending/幂等，不真实付款 | 已配置；真实扣款最终验收仍需谨慎 |
 | 邮件 OTP | 默认关闭 | 关闭 | 签名 HTTPS 中继 |
-| 收费 AI | 默认关闭 | 关闭 | 通过功能门禁启用 |
-| 自动部署 | 无 | `dev` push 后自动 | 关闭，人工发布 |
+| 收费 AI | 默认关闭 | 真实 SiliconFlow + 合成素材/用户 + DEV 钱包 | 通过功能门禁启用 |
+| 自动部署 | 无 | PR 合入 `dev` 后自动 | 关闭，人工发布 |
 
 ## 5. 接入本机开发环境
 
@@ -228,11 +228,11 @@ Bearer token，不会与 Basic 的 `Authorization` 请求头冲突。
 ### 6.2 DEV 安全边界
 
 - 不连接生产 `neondb`。
-- 不读写生产对象存储桶。
-- 不调用真实支付。
+- 使用独立的 DEV 数据库、S3 凭据与对象命名空间；生成结果必须持久化到共享 S3，不能再假设 Render 临时 file 可作为验收存储。
+- 支付验收只允许创建未支付爱发电订单并检查跳转、pending、钱包不入账和幂等；不执行真实付款。
 - 不发送生产验证码。
-- 不运行收费 AI 任务。
-- DEV 图片使用临时 file 存储，Render 重启后允许丢失。
+- 允许使用合成用户、合成素材和 DEV 钱包运行真实 SiliconFlow 付费任务与 Agent smoke；价格、冻结、结算、退款、S3 和幂等边界必须与生产一致。
+- DEV Mac Agent Worker 使用独立 Keychain profile、DEV 数据库和 DEV relay；不得启动或复用生产 Worker profile。
 - DEV 与生产域名不同，Cookie 不共享。
 
 ### 6.3 DEV 部署
@@ -273,7 +273,8 @@ PR 的 CI 全绿后合并到 `dev`。Render 会自动部署该 commit。
 - `behaviorAnalyticsEnabled=true`
 - `databaseRequired=true`
 - `checks.database.ok=true`
-- `checks.database.migration=014_operational_records`
+- `checks.database.migration=020_agent_secure_browser_relay`
+- 付费、AI Design、Workshop、Task Worker 或 Agent 生图在 DEV 开启时，对应 readiness、SiliconFlow、S3、payload 和队列检查必须全部为 `ok=true`；未开启的能力必须诚实显示为 disabled/skipped。
 
 可用以下命令确认最终部署确实对应目标提交：
 
@@ -309,7 +310,7 @@ unset DEV_PASSWORD
 - 后台和行为日志启用时，`adminConsoleEnabled`、`behaviorAnalyticsEnabled`、
   `databaseRequired` 都必须是 `true`。
 - 数据库检查必须返回 `ok=true` 和当前迁移版本；不能只确认进程存活。
-- 关闭的付费、邮件和 AI 能力必须显示为 disabled/skipped，不能假装通过真实链路。
+- 开启的付费、任务 Worker 和 AI 能力必须通过真实 readiness 与 smoke；关闭的邮件或其他能力必须显示为 disabled/skipped，不能假装通过真实链路。
 
 页面至少检查：
 
