@@ -6,7 +6,6 @@ const { getPool, isDatabaseConfigured } = require('../db/pool');
 const { getAssetAdapter } = require('./asset-storage');
 const {
   GENERATION_DIRECTIONS_MODEL,
-  GENERATION_EDIT_MODEL,
   GENERATION_IMAGE_MODEL,
   PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
@@ -545,10 +544,10 @@ const validReferenceProfileShape = (profile) => Boolean(
   SUPPORTED_ASPECT_RATIOS.every((ratio) => profile.aspectRatios.includes(ratio)) &&
   profile.aspectRatios.every((ratio) => typeof profile.imageSizes?.[ratio] === 'string') &&
   Number.isInteger(profile.maxReferences) &&
-  profile.maxReferences === 3 &&
+  profile.maxReferences === 1 &&
   profile.supportsSeed === true &&
   profile.internalTextModel === '' &&
-  profile.internalEditModel === GENERATION_EDIT_MODEL &&
+  profile.internalEditModel === GENERATION_IMAGE_MODEL &&
   profile.internalDirectionsModel === GENERATION_DIRECTIONS_MODEL
 );
 

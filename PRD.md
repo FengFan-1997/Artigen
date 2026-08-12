@@ -30,7 +30,7 @@
 主生图提供两个稳定产品 profile，不向客户端暴露 Provider 模型 ID：
 
 - `standard-v1`：纯文生图，`maxReferences=0`，使用 `ai-design.generate.v1`（10 点）。
-- `product-reference-v1`：必须提交 1–3 张图片，按商品、风格、场景的固定语义顺序解释，使用 `ai-design.product-reference.v1`（60 点）。
+- `product-reference-v1`：必须提交 1 张商品参考图，使用 `ai-design.product-reference.v1`（60 点）；服务端图片模型与标准生成相同，均固定为 Kolors。
 
 深度模式先用 `ai-design.directions.v1`（5 点）产出四个方向，用户选定后再独立确认生成报价。能力、比例和参考图上限全部来自 profile；前端不得静态承诺服务端未开放的能力。
 
@@ -210,7 +210,7 @@ V1 不承诺 PSD、视频、复杂蒙版、画笔修复、生成式填充、CMYK
 
 生图运营事件进入 PostgreSQL `generation_events`，只接受固定事件名及枚举、布尔、长度、哈希、耗时和 task/quote/session opaque 引用，不保存 prompt、文件名或图片 URL。控制台 `/api/admin/generation/funnel` 汇总成功率、退款率、队列与 Provider p50/p95、资产持久化失败、未结算 hold 和每成功任务成本。
 
-产品北极星指标是“每周完成至少一次生成并进入编辑或导出的项目数”。`behavior_events` 记录项目创建、参考图上传、首次成功、版本复用、收藏、编辑、导出、余额不足、首购和复购的最小化事件；后台按用户和项目聚合漏斗、D1/D7 回访与每成功任务毛利，不保存 prompt 或图片 URL。套餐只展示真实 CNY，并同时换算约可完成的 10 点标准图与 60 点商品参考图；没有真实 USD 通道时不得展示近似汇率。
+产品北极星指标是“每周完成至少一次生成并进入编辑或导出的项目数”。`behavior_events` 记录项目创建、参考图上传、首次成功、版本复用、收藏、编辑、导出、余额不足、首购和复购的最小化事件；后台按用户和项目聚合漏斗、D1/D7 回访与每成功任务毛利，不保存 prompt 或图片 URL。套餐只展示真实 CNY，并同时换算约可完成的 10 点标准图与 60 点单参考图商品图；没有真实 USD 通道时不得展示近似汇率。
 
 ### 运营后台
 

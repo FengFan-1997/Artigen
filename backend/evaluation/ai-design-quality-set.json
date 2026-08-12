@@ -109,15 +109,15 @@
       "manualCriteria": ["scene-integration", "contact-shadow", "scale-consistency"]
     },
     {
-      "id": "zh-triple-cosmetics",
+      "id": "zh-single-cosmetics",
       "locale": "zh",
-      "category": "triple-reference",
-      "prompt": "商品参考中的面霜罐，使用风格参考的奶油柔光，放到场景参考的梳妆台上",
+      "category": "single-reference",
+      "prompt": "保持商品参考中的面霜罐造型和材质，制作奶油柔光梳妆台商业主图",
       "profileId": "standard-v1",
       "aspectRatio": "4:5",
-      "referenceRoles": ["product", "style", "scene"],
-      "hardConstraints": ["product-identity", "style-only", "scene-layout", "no-invented-copy"],
-      "manualCriteria": ["multi-reference-control", "material-fidelity", "commercial-readiness"]
+      "referenceRoles": ["product"],
+      "hardConstraints": ["product-identity", "cream-lighting", "vanity-scene", "no-invented-copy"],
+      "manualCriteria": ["reference-fidelity", "material-fidelity", "commercial-readiness"]
     },
     {
       "id": "zh-logo-preserve-box",
@@ -274,15 +274,15 @@
       "manualCriteria": ["scene-integration", "contact-shadow", "scale-consistency"]
     },
     {
-      "id": "en-triple-running-shoe",
+      "id": "en-single-running-shoe",
       "locale": "en",
-      "category": "triple-reference",
-      "prompt": "Use the product shoe, the style reference's energetic lighting, and the scene reference's running track without changing product colors",
+      "category": "single-reference",
+      "prompt": "Use the reference running shoe in an energetic running-track campaign scene without changing its colors",
       "profileId": "standard-v1",
       "aspectRatio": "16:9",
-      "referenceRoles": ["product", "style", "scene"],
-      "hardConstraints": ["product-color", "product-silhouette", "style-only", "scene-perspective"],
-      "manualCriteria": ["multi-reference-control", "action-energy", "commercial-readiness"]
+      "referenceRoles": ["product"],
+      "hardConstraints": ["product-color", "product-silhouette", "running-track", "scene-perspective"],
+      "manualCriteria": ["reference-fidelity", "action-energy", "commercial-readiness"]
     },
     {
       "id": "en-logo-preserve-tube",

@@ -133,7 +133,7 @@ const isSafeImageRefString = (raw: string) => {
 };
 
 const normalizeImg2ImgImages = (images: Img2ImgImageInput[]) => {
-  const maxItems = 3;
+  const maxItems = 1;
   const maxBase64Len = 25 * 1024 * 1024;
   const out: Img2ImgImageInput[] = [];
   for (const it of images.slice(0, maxItems)) {

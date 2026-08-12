@@ -194,6 +194,8 @@ AGENT_IMAGE_CREDITS=8
 AGENT_IMAGE_REFERENCE_CREDITS=12
 ```
 
+`generate_images` 使用 Kolors，可执行纯文生图或最多 1 张已扫描任务图片的图生图。多参考图必须在供应商派发前失败。
+
 以下值必须存在，但绝不能复制到文档或提交。硅基流动密钥既可以由环境变量提供，也可以在 macOS 本机通过钥匙串服务名和账户标签读取：
 
 ```dotenv

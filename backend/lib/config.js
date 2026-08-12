@@ -15,21 +15,8 @@ const normalizeSecret = (value) => {
   return raw;
 };
 
-const parseUrlList = (raw, fallback) => {
-  const list = (raw || "")
-    .toString()
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return list.length ? list : fallback;
-};
-
 const NODE_ENV = String(process.env.NODE_ENV || "").trim() || "development";
 const isProd = NODE_ENV === "production";
-
-// Gemini is intentionally disabled. Production AI is restricted to the two
-// explicitly approved SiliconFlow models below.
-const API_KEY = "";
 
 const SILICONFLOW_API_KEY = normalizeSecret(
   readMacOsKeychainSecret({
@@ -44,62 +31,13 @@ const SILICONFLOW_API_KEY = normalizeSecret(
 const SILICONFLOW_API_BASE = normalizeUrl(
   process.env.SILICONFLOW_API_BASE || "https://api.siliconflow.cn/v1",
 );
-const SILICONFLOW_MODEL = (
-  "Qwen/Qwen3-8B"
-)
-  .toString()
-  .trim();
 const SILICONFLOW_CHAT_COMPLETIONS_URL = `${SILICONFLOW_API_BASE}/chat/completions`;
 const SILICONFLOW_IMAGES_GENERATIONS_URL = `${SILICONFLOW_API_BASE}/images/generations`;
-const SILICONFLOW_IMAGE_MODEL = (
-  process.env.SILICONFLOW_IMAGE_MODEL || "Kwai-Kolors/Kolors"
-)
-  .toString()
-  .trim();
-const SILICONFLOW_TXT2IMG_MODEL = (
-  process.env.SILICONFLOW_TXT2IMG_MODEL ||
-  process.env.SILICONFLOW_IMAGE_MODEL_TXT2IMG ||
-  "Kwai-Kolors/Kolors"
-)
-  .toString()
-  .trim();
-const SILICONFLOW_IMAGE_INPUT_FIELD = (
-  process.env.SILICONFLOW_IMAGE_INPUT_FIELD || "image"
-)
-  .toString()
-  .trim();
-
 const FIXED_SILICONFLOW_CHAT_MODEL = "Qwen/Qwen3-8B";
 const FIXED_SILICONFLOW_IMAGE_MODEL = "Kwai-Kolors/Kolors";
-const FIXED_SILICONFLOW_EDIT_MODEL = "Qwen/Qwen-Image-Edit-2509";
+const SILICONFLOW_MODEL = FIXED_SILICONFLOW_CHAT_MODEL;
 
-let activeTextProvider = (() => {
-  const preferred = (process.env.TEXT_PROVIDER || "")
-    .toString()
-    .trim()
-    .toLowerCase();
-  if (preferred === "siliconflow") return "siliconflow";
-  if (SILICONFLOW_API_KEY) return "siliconflow";
-  return "offline";
-})();
-
-const GEMINI_API_BASE = normalizeUrl(process.env.GEMINI_API_BASE || "");
-const DEFAULT_GEMINI_GENERATE_PATH =
-  "v1beta/models/gemini-2.5-flash:generateContent";
-const GEMINI_GENERATE_URL =
-  process.env.GEMINI_GENERATE_URL ||
-  (GEMINI_API_BASE
-    ? `${GEMINI_API_BASE}/${DEFAULT_GEMINI_GENERATE_PATH}`
-    : "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent");
-
-const GEMINI_TIMEOUT_MS = (() => {
-  const v = Number.parseInt(process.env.GEMINI_TIMEOUT_MS || "", 10);
-  return Number.isFinite(v) && v > 1000 ? v : 12000;
-})();
-const GEMINI_REACTION_TIMEOUT_MS = (() => {
-  const v = Number.parseInt(process.env.GEMINI_REACTION_TIMEOUT_MS || "", 10);
-  return Number.isFinite(v) && v > 1000 ? v : 6000;
-})();
+const activeTextProvider = SILICONFLOW_API_KEY ? "siliconflow" : "offline";
 const SILICONFLOW_TIMEOUT_MS = (() => {
   const v = Number.parseInt(process.env.SILICONFLOW_TIMEOUT_MS || "", 10);
   return Number.isFinite(v) && v > 1000 ? v : 120000;
@@ -112,32 +50,19 @@ const SILICONFLOW_REACTION_TIMEOUT_MS = (() => {
   return Number.isFinite(v) && v > 1000 ? v : 15000;
 })();
 
-const GEMINI_GENERATE_URLS = parseUrlList(process.env.GEMINI_GENERATE_URLS, [
-  GEMINI_GENERATE_URL,
-]);
-
 module.exports = {
   NODE_ENV,
   isProd,
-  API_KEY,
   SILICONFLOW_API_KEY,
   SILICONFLOW_API_BASE,
   SILICONFLOW_MODEL,
   SILICONFLOW_CHAT_COMPLETIONS_URL,
   SILICONFLOW_IMAGES_GENERATIONS_URL,
-  SILICONFLOW_IMAGE_MODEL,
-  SILICONFLOW_TXT2IMG_MODEL,
-  SILICONFLOW_IMAGE_INPUT_FIELD,
   FIXED_SILICONFLOW_CHAT_MODEL,
-  FIXED_SILICONFLOW_EDIT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
   activeTextProvider,
-  GEMINI_TIMEOUT_MS,
-  GEMINI_REACTION_TIMEOUT_MS,
   SILICONFLOW_TIMEOUT_MS,
   SILICONFLOW_REACTION_TIMEOUT_MS,
-  GEMINI_GENERATE_URLS,
   normalizeUrl,
   normalizeSecret,
-  parseUrlList,
 };

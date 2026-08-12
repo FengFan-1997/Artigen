@@ -2179,7 +2179,7 @@ test('SiliconFlow exposes browser_dom only when the run grants browser capabilit
   );
   const imageTool = ollamaFileTools({ generate_images: true })
     .find((tool) => tool.function.name === 'generate_image');
-  assert.equal(imageTool.function.parameters.properties.references.maxItems, 3);
+  assert.equal(imageTool.function.parameters.properties.references.maxItems, 1);
   assert.deepEqual(
     imageTool.function.parameters.properties.references.items.properties.role.enum,
     ['product', 'style', 'scene']
@@ -2245,7 +2245,7 @@ test('an ungranted Qwen image tool call stays hidden and fails with the capabili
   }), { code: 'AGENT_CAPABILITY_NOT_GRANTED' });
 });
 
-test('Agent image generation uses staged references, dedicated models and 8/12 credit pricing', async () => {
+test('Agent image generation uses Kolors for text or one staged reference with 8/12 pricing', async () => {
   const inputPath = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
   const staged = new Map([[inputPath, {
     mimeType: 'image/png',
@@ -2255,14 +2255,10 @@ test('Agent image generation uses staged references, dedicated models and 8/12 c
     { path: inputPath, role: 'product' }
   ], staged);
   assert.equal(resolved.length, 1);
-  assert.equal(resolved[0].role, 'product');
-  assert.throws(() => resolveStagedImageReferences([
-    { path: '/tmp/artigen-workspace/output.png', role: 'product' }
-  ], staged), { code: 'AGENT_IMAGE_REFERENCE_NOT_STAGED' });
   assert.throws(() => resolveStagedImageReferences([
     { path: inputPath, role: 'product' },
-    { path: inputPath, role: 'product' }
-  ], staged), { code: 'AGENT_IMAGE_REFERENCE_ROLE_INVALID' });
+    { path: inputPath, role: 'style' }
+  ], staged), { code: 'AGENT_IMAGE_REFERENCES_INVALID' });
   assert.throws(() => normalizeAgentImageReferences([
     {
       path: inputPath,
@@ -2306,9 +2302,9 @@ test('Agent image generation uses staged references, dedicated models and 8/12 c
     references: resolved
   });
   assert.equal(calls[1].profile.id, 'product-reference-v1');
+  assert.equal(calls[1].profile.internalEditModel, 'Kwai-Kolors/Kolors');
   assert.equal(calls[1].images.length, 1);
   assert.match(calls[1].images[0], /^data:image\/png;base64,/);
-  assert.match(calls[1].prompt, /product role/);
   assert.equal(referenceResult.costCredits, 12);
 });
 

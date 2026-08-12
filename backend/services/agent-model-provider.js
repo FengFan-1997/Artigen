@@ -75,8 +75,8 @@ const FUNCTION_TOOLS = Object.freeze([
     type: 'function',
     name: 'generate_image',
     description: [
-      'Generate a bitmap with Artigen internal image generation.',
-      'Optionally use up to three user-provided input images with unique product, style, or scene roles.',
+      'Generate a bitmap from text, optionally guided by one user-provided input image.',
+      'The optional image role must be product, style, or scene.',
       'The result is written into the isolated workspace; no GPU model runs in the sandbox.'
     ].join(' '),
     strict: true,
@@ -95,7 +95,7 @@ const FUNCTION_TOOLS = Object.freeze([
         },
         references: {
           type: 'array',
-          maxItems: 3,
+          maxItems: 1,
           items: {
             type: 'object',
             additionalProperties: false,
@@ -104,10 +104,7 @@ const FUNCTION_TOOLS = Object.freeze([
                 type: 'string',
                 pattern: '^/tmp/artigen-workspace/inputs/[0-9a-fA-F-]{36}\\.(png|jpg|jpeg|webp)$'
               },
-              role: {
-                type: 'string',
-                enum: ['product', 'style', 'scene']
-              }
+              role: { type: 'string', enum: ['product', 'style', 'scene'] }
             },
             required: ['path', 'role']
           }
@@ -272,8 +269,8 @@ preview or PDF. Websites require source files, a ZIP, and a buildable static pre
 website index.html self-contained for preview: inline its CSS and JavaScript and embed local images
 as data URLs. The ZIP must still contain the editable source tree.
 Image design deliverables require generate_image followed by declare_artifact with role=image and the
-exact returned path and MIME type. Image references may use only the exact user-provided inputs paths
-listed in the objective context, with at most one unique product, style, and scene role each.
+exact returned path and MIME type. At most one image reference may be used, and it must be an exact
+user-provided input path listed in the objective context with product, style, or scene role.
 Use declare_artifact for every final file. Do not announce completion unless every requested artifact
 has been declared; Artigen's independent verifier, not you, decides success.
 

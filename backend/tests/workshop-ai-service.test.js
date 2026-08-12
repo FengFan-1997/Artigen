@@ -34,14 +34,14 @@ test('workshop AI catalog operations use only server-owned SKUs', () => {
   );
 });
 
-test('workshop validators accept enums only and reject client prompt, model and price authority', () => {
+test('workshop validators accept server enums and reject client prompt, model and price authority', () => {
   assert.deepEqual(validateWorkshopAiTask({
     toolId: 'id-photo',
     operation: 'professional-portrait',
     inputCount: 1,
     options: { style: 'finance' }
   }), { style: 'finance' });
-  assert.deepEqual(validateWorkshopAiTask({
+  assert.equal(validateWorkshopAiTask({
     toolId: 'background',
     operation: 'ai-scene',
     inputCount: 1,
@@ -155,7 +155,7 @@ test('ingredient executor dispatches, source-validates and settles a data-only r
   assert.deepEqual(settled.outputAssetIds, []);
 });
 
-test('image executor loads input before dispatch and settles only a verified opaque asset', async () => {
+test('image executor uses the single-reference Kolors profile and settles a verified asset', async () => {
   const calls = [];
   let settled = null;
   const executor = createWorkshopAiExecutor({
@@ -166,7 +166,8 @@ test('image executor loads input before dispatch and settles only a verified opa
         calls.push('provider');
         assert.match(prompt, /professional portrait/i);
         assert.equal(profile.id, PRODUCT_REFERENCE_PROFILE_ID);
-        assert.equal(profile.maxReferences, 3);
+        assert.equal(profile.maxReferences, 1);
+        assert.equal(profile.internalEditModel, 'Kwai-Kolors/Kolors');
         assert.equal(aspectRatio, '3:4');
         assert.equal(images.length, 1);
         return { data: { images: [{ url: 'https://assets.example/output.png' }] } };
@@ -195,7 +196,10 @@ test('image executor loads input before dispatch and settles only a verified opa
       calls.push('settled');
       return { status: 'success' };
     },
-    releaseTask: async () => ({ status: 'failed' })
+    releaseTask: async () => {
+      calls.push('released');
+      return { status: 'failed' };
+    }
   });
   const outcome = await executor({
     taskId: 'task-portrait',
