@@ -54,7 +54,7 @@
             : (zh ? '浏览器链路尚未全部就绪' : 'Browser path is not fully ready') }}
         </small>
         <small v-if="serviceStatus.imageGenerationPublicEnabled" class="browser-health">
-          {{ zh ? 'AI 图片生成已就绪：文生图 8 点，参考图生成 12 点' : 'AI image generation ready: 8 credits for text, 12 with references' }}
+          {{ zh ? 'AI 图片生成已就绪：文生图 8 点，单参考图生成 12 点' : 'AI image generation ready: 8 credits for text, 12 with one reference' }}
         </small>
       </section>
 
@@ -372,7 +372,7 @@ const capabilityOptions = computed(() => [
     id: 'generate_images',
     label: zh.value ? 'AI 图片生成' : 'AI image generation',
     description: serviceStatus.value?.imageGenerationPublicEnabled
-      ? (zh.value ? '生成 PNG、JPEG 或 WebP；可使用最多 3 张任务参考图' : 'Create PNG, JPEG, or WebP with up to 3 run references')
+      ? (zh.value ? '生成 PNG、JPEG 或 WebP；可使用 1 张任务参考图' : 'Create PNG, JPEG, or WebP with one run reference')
       : (zh.value ? '当前环境尚未开放' : 'Not enabled in this environment'),
     disabled: !serviceStatus.value?.imageGenerationPublicEnabled
   }

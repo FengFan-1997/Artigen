@@ -1164,7 +1164,7 @@ const mockAiDesignModels = async (page: Page) => {
             name: { zh: '标准生成', en: 'Standard generation' },
             available: true,
             capabilities: ['text-to-image', 'image-reference'],
-            maxReferences: 3,
+            maxReferences: 1,
             aspectRatios: ['1:1', '4:5', '3:4', '16:9', '9:16'],
             supportsSeed: true
           }

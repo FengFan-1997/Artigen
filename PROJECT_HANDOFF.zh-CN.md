@@ -114,9 +114,9 @@ AI 必须在每个 Artigen 任务结束前更新本地 Handoff。有持久影响
 | 浏览器模式 | `full-approval-v1` |
 | 出口策略 | `restricted-v1` |
 | Beta 模式 | `owner-only-v1` |
-| Agent 图片能力 | 文生图 `Kwai-Kolors/Kolors`；参考图 `Qwen/Qwen-Image-Edit-2509` |
-| Agent 图片计价 | 文生图 8 点；带参考图 12 点；任务总额仍受报价与 `maxCredits` 约束 |
-| 图片参考图边界 | 每 Run 最多 3 张，仅限已扫描进入该 Run `inputs/` 的图片；角色为 `product/style/scene` |
+| Agent 图片能力 | `Kwai-Kolors/Kolors` 统一承担文生图和单参考图图生图 |
+| Agent 图片计价 | 文生图 8 点；单参考图 12 点；任务总额仍受报价与 `maxCredits` 约束 |
+| 严格模型白名单 | `Qwen/Qwen3-8B` 负责所有文字理解/拆解/工具决策；`Kwai-Kolors/Kolors` 负责所有图片生成；其他模型不得调用 |
 | 图片交付 | `IMAGE`，PNG/JPEG/WebP；允许独立满足任务完成条件 |
 
 已验证运行状态：
@@ -193,7 +193,7 @@ Agent 的完整架构、安全边界、真实 Run ID、测试、账号和运维�
 治理规则在包含这些文件的提交合入目标分支后生效；未合并的工作分支不能代表 `dev` 或
 `main` 已经采用该规则。实际合入状态以 GitHub 为准。
 
-### 5.3 Agent 生图与付费主业务恢复（已上线）
+### 5.3 Agent 生图与付费主业务恢复（历史上线证据）
 
 Agent 生图、独立 `IMAGE` 交付、主业务付费工具、任务 Worker 和爱发电下单链路已完成 DEV、Release gate 和真实生产验收。运行时代码最终经 PR [#18](https://github.com/FengFan-1997/Artigen/pull/18) 至 [#25](https://github.com/FengFan-1997/Artigen/pull/25) 逐步合入，生产运行 SHA 为 `ca75dce39ef5eebd27154029ef19ad1cc25b5758`。Render 与 Vercel 使用该不可变代码发布，生产 Mac Worker 也从同一 SHA 重新安装并启动。
 
@@ -202,7 +202,7 @@ Agent 生图、独立 `IMAGE` 交付、主业务付费工具、任务 Worker 和
 - Agent 继续为 `owner-only-v1`；主业务付费工具向所有登录用户开放；
 - `PAID_FEATURES_ENABLED=true`、`PAYMENTS_ENABLED=true`、`AI_DESIGN_TASK_V2_ENABLED=true`、`AI_DESIGN_TASK_V2_ROLLOUT_PERCENT=100`、`WORKSHOP_AI_TASK_V2_ENABLED=true`、`TASK_WORKER_ENABLED=1`；
 - `AGENT_PUBLIC_CAPABILITIES=files,shell,browser,generate_images`，`imageGenerationPublicEnabled=true`；
-- 无参考图使用 `Kwai-Kolors/Kolors`，带参考图使用 `Qwen/Qwen-Image-Edit-2509`；
+- 当时纯文生图与参考图曾使用不同图片模型；2026-08-12 起两者统一由 Kolors 执行，参考图上限收紧为 1 张，历史 Run 继续作为结算与持久化证据；
 - `render.yaml` 仍保留安全关闭默认值，生产值由 Render 环境覆盖；
 - 定价、冻结、结算、退款、幂等和 S3 边界保持服务端控制；没有新增数据库迁移。
 
@@ -214,7 +214,7 @@ DEV 真实依赖验收：
 
 生产真实验收：
 
-- `/api/generation/models` 的 `standard-v1` 与 `product-reference-v1` 均为 `available=true`；`/readyz` 的数据库、S3、payload、模型、输出 allowlist、支付、邮件、Turnstile 和 Agent 检查均通过；
+- 该次验收时两个 profile 均为 available；严格模型白名单发布后仍保持 `standard-v1.available=true`、`product-reference-v1.available=true`，后者 `maxReferences=1`；
 - 七个主业务 executor 全部 success 且各自只结算一次：视觉方向 `4ad2e104-2ffe-4f36-a0e1-e049123a78a9`、标准文生图 `f9ce713d-5150-4b9d-9813-d902a42afbd8`、商品参考 `51c89f88-1d6b-4f77-868a-566411d7ee98`、老照片 `9ad73581-8961-4651-8473-d2a4ef36a75b`、证件照 `f46e3202-82b3-4a12-a053-7b7af937dd51`、背景场景 `baa8e32b-ec30-468e-a8a2-b43cfeb5c98b`、配料整理 `863a21e3-05e0-4b17-ab64-16b35d3f4168`；合计 100 点；
 - 未支付爱发电订单 `c10996c8-8e20-4c2a-ab4e-a07d0ce84ca4` 已取得跳转链接，保持 `pending`，钱包未入账，幂等重放没有重复建单；没有执行真实付款；
 - Agent 文生图 Run `b277a1d1-1195-4462-8828-89314600878c`：图片工具 8 点，总结算 12 点，1024×1024 PNG，S3 与 SHA-256 验证 passed；
@@ -222,6 +222,14 @@ DEV 真实依赖验收：
 - 两个生产 Agent Run 均只结算一次，结束后 Worker online、浏览器/出口/桌面中继 ready、queueDepth=0。
 
 最终验证：`pnpm check` 通过；Playwright 411 通过、3 条条件跳过；后端 355 通过、39 条条件跳过；Agent/CUA 定向测试 59/59 通过；PostgreSQL 支付集成测试 7/7 通过。生产发布后再次核验 Render 与 Vercel `/api/meta` 均返回运行 SHA `ca75dce39ef5eebd27154029ef19ad1cc25b5758`。
+
+### 5.4 严格模型白名单（2026-08-12）
+
+- 运行时只允许 `Qwen/Qwen3-8B` 与 `Kwai-Kolors/Kolors`：前者负责所有文本理解、任务拆解、提示词与工具决策，后者负责所有图片输出，包括文生图、商品参考、老照片、职业形象和 AI 背景。
+- SiliconFlow 官方 Kolors 契约支持通用 `image` 字段，但额外的 `image2`、`image3` 属于其他编辑模型。因此 Agent 和主业务最多接受 1 张参考图，2 张及以上在供应商派发前返回 `REFERENCE_IMAGES_NOT_SUPPORTED`。
+- `standard-v1.maxReferences=0`，`product-reference-v1.maxReferences=1`；两者运行时内部图片模型均固定为 Kolors。Agent `generate_image.references.maxItems=1`，参考路径仍必须精确命中本次 Run 的已扫描输入。
+- 老照片、职业形象、AI 场景背景继续使用单张输入图并统一调用 Kolors；四方向分析、配料原文整理和 Agent 编排统一调用 Qwen3-8B。
+- 不新增数据库迁移；历史 SKU 与 profile ID 保留。任何客户端模型参数都不能改变服务端双模型白名单。
 
 ## 6. 已知风险与正式后续事项
 

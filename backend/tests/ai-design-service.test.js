@@ -8,7 +8,6 @@ const {
 } = require('../lib/tool-catalog');
 const {
   GENERATION_DIRECTIONS_MODEL,
-  GENERATION_EDIT_MODEL,
   GENERATION_IMAGE_MODEL,
   PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
@@ -80,7 +79,7 @@ test('public generation profiles expose stable capabilities but no provider or i
         'style-reference',
         'scene-reference'
       ],
-      maxReferences: 3,
+      maxReferences: 1,
       aspectRatios: ['1:1', '4:5', '3:4', '16:9', '9:16'],
       supportsSeed: true
     }
@@ -171,39 +170,24 @@ test('ai-design validators allow only the stable contract and enforce operation 
   assert.equal(generate.seed, 42);
   const referenceGenerate = validateAiDesignTask({
     operation: 'generate',
-    inputCount: 3,
+    inputCount: 1,
     options: {
-      prompt: 'Preserve the bottle and place it in the supplied scene',
+      prompt: 'Preserve the bottle and place it in a quiet scene',
       profileId: PRODUCT_REFERENCE_PROFILE_ID,
       aspectRatio: '4:5'
     }
   });
   assert.equal(referenceGenerate.profileId, PRODUCT_REFERENCE_PROFILE_ID);
-  assert.deepEqual(referenceGenerate.referenceRoles, ['product', 'style', 'scene']);
-  const productAndScene = validateAiDesignTask({
+  assert.deepEqual(referenceGenerate.referenceRoles, ['product']);
+  assert.throws(() => validateAiDesignTask({
     operation: 'generate',
     inputCount: 2,
     options: {
-      prompt: 'Preserve the product in the scene',
+      prompt: 'Do not dispatch two references',
       profileId: PRODUCT_REFERENCE_PROFILE_ID,
-      aspectRatio: '1:1',
-      referenceRoles: ['product', 'scene']
+      aspectRatio: '4:5'
     }
-  });
-  assert.deepEqual(productAndScene.referenceRoles, ['product', 'scene']);
-  assert.throws(
-    () => validateAiDesignTask({
-      operation: 'generate',
-      inputCount: 1,
-      options: {
-        prompt: 'x',
-        profileId: PRODUCT_REFERENCE_PROFILE_ID,
-        aspectRatio: '1:1',
-        referenceRoles: ['style']
-      }
-    }),
-    { code: 'INVALID_REFERENCE_ROLES', field: 'options.referenceRoles' }
-  );
+  }), { code: 'TOO_MANY_FILES' });
   assert.throws(
     () => validateAiDesignTask({
       operation: 'generate',
@@ -315,14 +299,20 @@ test('SiliconFlow adapter owns model and image parameters and parses exactly fou
   assert.equal('guidanceScale' in calls.image.params, false);
   const referenceProfile = getInternalGenerationProfile(PRODUCT_REFERENCE_PROFILE_ID, enabledEnv);
   await provider.generateImage({
-    prompt: 'preserve the product identity',
+    prompt: 'preserve the single product reference',
     profile: referenceProfile,
     aspectRatio: '1:1',
     seed: 9,
     images: ['data:image/png;base64,AAAA']
   });
-  assert.equal(calls.image.model, GENERATION_EDIT_MODEL);
-  assert.equal(calls.image.images.length, 1);
+  assert.equal(calls.image.model, GENERATION_IMAGE_MODEL);
+  assert.deepEqual(calls.image.images, ['data:image/png;base64,AAAA']);
+  await assert.rejects(provider.generateImage({
+    prompt: 'do not dispatch multiple references',
+    profile: referenceProfile,
+    aspectRatio: '1:1',
+    images: ['one', 'two']
+  }), { code: 'REFERENCE_IMAGES_NOT_SUPPORTED' });
 });
 
 test('generation provider rejects every model outside the fixed production allowlist', async () => {
@@ -375,7 +365,6 @@ test('SiliconFlow readiness probe validates credentials, endpoint and every inte
         json: async () => ({
           data: [
             { id: GENERATION_IMAGE_MODEL },
-            { id: GENERATION_EDIT_MODEL },
             { id: GENERATION_DIRECTIONS_MODEL }
           ]
         })
@@ -690,7 +679,7 @@ test('output aspect verification rejects provider geometry that violates the sel
   );
 });
 
-test('Qwen edit outputs are normalized to the requested aspect ratio before persistence', async () => {
+test('single-reference outputs are normalized to the requested aspect ratio before persistence', async () => {
   const square = await sharp({
     create: {
       width: 64,

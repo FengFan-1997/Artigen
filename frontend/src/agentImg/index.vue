@@ -1028,7 +1028,7 @@ const {
   getImages: async () => {
     const files: File[] = [];
     for (const f of previewFiles.value) if (f) files.push(f);
-    const list = files.slice(0, 3);
+    const list = files.slice(0, 1);
     if (!list.length) return undefined;
     const inputs = await Promise.all(list.map(fileToGenerateInput));
     const ok = inputs.filter((x): x is GenerateImageInput => !!x && !!x.mimeType && !!x.dataBase64);

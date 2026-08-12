@@ -413,15 +413,14 @@ Turnstile 当前文档中登记的 hostname 包括：
 
 ### 8.1 AI
 
-当前供应商为 SiliconFlow。当前本地代码中锁定的模型包括：
+当前供应商为 SiliconFlow。当前本地代码中严格锁定且仅允许的模型包括：
 
 - `Kwai-Kolors/Kolors`
-- `Qwen/Qwen-Image-Edit-2509`
 - `Qwen/Qwen3-8B`
 
 生成配置见 [`backend/services/generation-profiles.js`](./backend/services/generation-profiles.js)。
 
-生产标准图片生成能力当前关闭；Agent Provider 单独启用并固定为硅基流动 `Qwen/Qwen3-8B`。生产 `/readyz` 和两个真实 `succeeded` run 已验证该 Agent 模型链路，不依赖本地 Qwen 或 OpenAI。
+`Qwen/Qwen3-8B` 用于所有文本理解、结构化输出与工具编排，`Kwai-Kolors/Kolors` 用于所有图片生成。Kolors 接收 0 张图片时执行文生图，接收 1 张图片时执行图生图；多张参考图在调用前拒绝，不依赖本地 Qwen 或 OpenAI。
 
 当前计费大致为：
 

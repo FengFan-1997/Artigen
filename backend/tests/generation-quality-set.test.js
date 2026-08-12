@@ -17,7 +17,7 @@ test('quality cases use only stable product profiles, ratios and semantic refere
   for (const entry of qualitySet.cases) {
     assert.equal(entry.profileId, 'standard-v1', entry.id);
     assert.ok(allowedRatios.has(entry.aspectRatio), entry.id);
-    assert.ok(entry.referenceRoles.length <= 3, entry.id);
+    assert.ok(entry.referenceRoles.length <= 1, entry.id);
     assert.equal(new Set(entry.referenceRoles).size, entry.referenceRoles.length, entry.id);
     assert.ok(entry.referenceRoles.every((role) => allowedRoles.has(role)), entry.id);
     assert.ok(entry.hardConstraints.length >= 3, entry.id);
@@ -29,7 +29,7 @@ test('quality cases use only stable product profiles, ratios and semantic refere
 test('quality set covers references, logo/text, material, hand-held product and all ratios', () => {
   const categories = new Set(qualitySet.cases.map((entry) => entry.category));
   for (const category of [
-    'no-reference', 'single-reference', 'triple-reference', 'logo-text', 'material', 'person-hold'
+    'no-reference', 'single-reference', 'logo-text', 'material', 'person-hold'
   ]) {
     assert.ok(categories.has(category), category);
   }

@@ -4,10 +4,10 @@ const crypto = require('crypto');
 const dns = require('dns');
 const { FILES_DIR, readUserMemory, writeUserMemory } = require('../utils/storage');
 const { ensureUserMemoryShape } = require('./memory-utils');
-const { callTextGenerate, callGeminiGenerate } = require('./ai-providers');
+const { callTextGenerate } = require('./ai-providers');
 const { fetchWithTimeout } = require('./fetch-utils');
 const { dedupeStrings } = require('./user-utils');
-const { API_KEY } = require('./config');
+const { SILICONFLOW_API_KEY, FIXED_SILICONFLOW_CHAT_MODEL } = require('./config');
 const {
   sanitizeAuditHistoryEntry,
   sanitizeImageHistoryEntry,
@@ -117,7 +117,7 @@ const tryParseDataUrl = (raw) => {
 // Summarize Conversation History
 const summarizeHistory = async (oldSummary, newMessages) => {
   try {
-    if (!API_KEY) {
+    if (!SILICONFLOW_API_KEY) {
       return oldSummary;
     }
     const conversationText = newMessages
@@ -136,11 +136,12 @@ const summarizeHistory = async (oldSummary, newMessages) => {
       Output a concise summary paragraph.
     `;
 
-    const { data } = await callGeminiGenerate({
+    const result = await callTextGenerate({
       timeoutMs: 10000,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      model: FIXED_SILICONFLOW_CHAT_MODEL
     });
-    return data?.candidates?.[0]?.content?.parts?.[0]?.text || oldSummary;
+    return String(result?.text || '').trim() || oldSummary;
   } catch (e) {
     console.error("Summarization failed:", e);
     return oldSummary;

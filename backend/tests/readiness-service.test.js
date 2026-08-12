@@ -589,7 +589,11 @@ test('production ai-design quote and create share the readiness storage failure 
   try {
     const quoteRes = routeResponse();
     await routes.get('POST /api/tool-tasks/quote')({
-      body: { toolId: 'ai-design', operation: 'generate' },
+      body: {
+        toolId: 'ai-design',
+        operation: 'generate',
+        options: { profileId: 'standard-v1' }
+      },
       authResolution
     }, quoteRes);
     assert.equal(quoteRes.statusCode, 503);

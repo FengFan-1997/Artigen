@@ -71,12 +71,6 @@ services:
         sync: false
       - key: SILICONFLOW_API_KEY
         sync: false
-      - key: AI_DESIGN_SILICONFLOW_TEXT_MODEL
-        value: Kwai-Kolors/Kolors
-      - key: AI_DESIGN_SILICONFLOW_EDIT_MODEL
-        value: Qwen/Qwen-Image-Edit-2509
-      - key: AI_DESIGN_SILICONFLOW_DIRECTIONS_MODEL
-        value: Qwen/Qwen2.5-7B-Instruct
       - key: S3_ENDPOINT
         sync: false
       - key: S3_BUCKET

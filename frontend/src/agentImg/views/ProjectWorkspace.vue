@@ -76,7 +76,7 @@
                 <p class="eyebrow">{{ zh ? '商品与品牌素材' : 'Product and brand assets' }}</p>
                 <h2>{{ zh ? '语义参考图' : 'Semantic references' }}</h2>
               </div>
-              <span>{{ zh ? '生成时按商品、风格、场景顺序使用' : 'Used in product, style, scene order' }}</span>
+              <span>{{ zh ? '当前每次生成最多使用 1 张商品参考图' : 'Each run currently uses at most one product reference' }}</span>
             </div>
             <div class="asset-grid">
               <article v-for="role in uploadRoles" :key="role.id" class="asset-slot">
@@ -106,8 +106,8 @@
             </div>
 
             <div v-if="!versions.length" class="empty-state">
-              <strong>{{ zh ? '第一个版本从商品参考图开始' : 'Start the first version from a product reference' }}</strong>
-              <span>{{ zh ? '标准文生图 10 点；商品参考生成 60 点。' : 'Standard text generation is 10 credits; product reference is 60.' }}</span>
+              <strong>{{ zh ? '从文字需求或一张商品参考图开始' : 'Start from a text brief or one product reference' }}</strong>
+              <span>{{ zh ? '标准文生图 10 点；单参考图商品生成 60 点。' : 'Standard text generation is 10 credits; single-reference generation is 60.' }}</span>
               <button class="primary" type="button" @click="startGeneration()">{{ zh ? '开始生成' : 'Start generating' }}</button>
             </div>
             <div v-else class="version-grid">
@@ -154,8 +154,7 @@
                   </small>
                   <div v-if="version.status === 'success'" class="version-actions">
                     <button type="button" @click="startGeneration(version)">{{ zh ? '再来一版' : 'New variation' }}</button>
-                    <button type="button" @click="useAsReference(version, 'product')">{{ zh ? '商品参考' : 'Product ref' }}</button>
-                    <button type="button" @click="useAsReference(version, 'style')">{{ zh ? '风格参考' : 'Style ref' }}</button>
+                    <button type="button" @click="useAsReference(version)">{{ zh ? '用作商品参考' : 'Use as product ref' }}</button>
                     <button type="button" @click="editVersion(version)">{{ zh ? '编辑' : 'Edit' }}</button>
                   </div>
                   <div v-if="version.status === 'success'" class="deliver-row">
@@ -236,9 +235,9 @@ const form = reactive({
 });
 
 const uploadRoles = computed(() => [
-  { id: 'product' as ProjectAssetRole, short: 'P', label: zh.value ? '商品参考' : 'Product reference', description: zh.value ? '保持主体外观与结构' : 'Preserve product identity' },
-  { id: 'style' as ProjectAssetRole, short: 'S', label: zh.value ? '风格参考' : 'Style reference', description: zh.value ? '统一色调、材质与构图' : 'Align tone and composition' },
-  { id: 'scene' as ProjectAssetRole, short: 'C', label: zh.value ? '场景参考' : 'Scene reference', description: zh.value ? '指定环境与空间关系' : 'Guide environment and space' },
+  { id: 'product' as ProjectAssetRole, short: 'P', label: zh.value ? '商品参考' : 'Product reference', description: zh.value ? '可作为本次唯一生成参考' : 'May be the single generation reference' },
+  { id: 'style' as ProjectAssetRole, short: 'S', label: zh.value ? '风格素材' : 'Style asset', description: zh.value ? '项目归档与本地编辑使用' : 'For project archive and local editing' },
+  { id: 'scene' as ProjectAssetRole, short: 'C', label: zh.value ? '场景素材' : 'Scene asset', description: zh.value ? '项目归档与本地编辑使用' : 'For project archive and local editing' },
   { id: 'logo' as ProjectAssetRole, short: 'L', label: 'Logo', description: zh.value ? '品牌资料长期保留' : 'Retained in the brand kit' }
 ]);
 
@@ -352,20 +351,17 @@ const uploadAsset = async (role: ProjectAssetRole, event: Event) => {
 
 const startGeneration = (version?: CreativeProjectVersion) => {
   const productAsset = firstAsset('product');
-  const referenceAssets = productAsset
-    ? [productAsset, firstAsset('style'), firstAsset('scene')].filter(Boolean)
-    : [];
   const query: Record<string, string> = {
     projectId: projectId.value,
-    profileId: referenceAssets.length ? 'product-reference-v1' : 'standard-v1'
+    profileId: productAsset ? 'product-reference-v1' : 'standard-v1'
   };
   if (version) {
     query.parentVersionId = version.versionId;
     query.prompt = version.prompt;
   }
-  if (referenceAssets.length) {
+  if (productAsset) {
     window.localStorage.setItem('agentImg:prefillRef_v1', JSON.stringify({
-      items: referenceAssets.map((asset) => ({ kind: 'url', value: asset!.url }))
+      items: [{ kind: 'url', value: productAsset.url }]
     }));
   }
   trackEvent(version ? 'project_version_reuse' : 'project_generation_start', {
@@ -374,6 +370,37 @@ const startGeneration = (version?: CreativeProjectVersion) => {
     profileId: query.profileId
   });
   void router.push({ path: '/artigen/ai', query });
+};
+
+const useAsReference = async (version: CreativeProjectVersion) => {
+  if (!version.outputAssetId || !version.outputUrl) return;
+  try {
+    await linkCreativeProjectAsset(projectId.value, {
+      assetId: version.outputAssetId,
+      role: 'product'
+    });
+    window.localStorage.setItem('agentImg:prefillRef_v1', JSON.stringify({
+      items: [{ kind: 'url', value: version.outputUrl }]
+    }));
+    trackEvent('project_version_reuse', {
+      projectId: projectId.value,
+      versionId: version.versionId,
+      role: 'product'
+    });
+    await router.push({
+      path: '/artigen/ai',
+      query: {
+        projectId: projectId.value,
+        parentVersionId: version.versionId,
+        profileId: 'product-reference-v1',
+        prompt: version.prompt
+      }
+    });
+  } catch {
+    notice.value = zh.value
+      ? '无法把这个版本设为商品参考图，请稍后重试'
+      : 'Could not reuse this version as the product reference. Try again.';
+  }
 };
 
 const toggleCompare = (versionId: string) => {
@@ -391,47 +418,6 @@ const toggleFavorite = async (version: CreativeProjectVersion) => {
   } catch {
     notice.value = zh.value ? '收藏状态同步失败，请稍后重试' : 'Could not sync the favorite. Try again.';
   }
-};
-
-const useAsReference = async (version: CreativeProjectVersion, role: 'product' | 'style') => {
-  if (!version.outputAssetId || !version.outputUrl) return;
-  const productReference = role === 'product'
-    ? { url: version.outputUrl }
-    : firstAsset('product');
-  if (!productReference) {
-    notice.value = zh.value
-      ? '请先上传商品参考图，再把该版本作为风格参考'
-      : 'Add a product reference before using this version as style guidance.';
-    return;
-  }
-  try {
-    await linkCreativeProjectAsset(projectId.value, {
-      assetId: version.outputAssetId,
-      role
-    });
-  } catch {
-    notice.value = zh.value
-      ? '无法把这个版本设为参考图，请稍后重试'
-      : 'Could not reuse this version as a reference. Try again.';
-    return;
-  }
-  const styleReference = role === 'style' ? { url: version.outputUrl } : firstAsset('style');
-  const sceneReference = firstAsset('scene');
-  window.localStorage.setItem('agentImg:prefillRef_v1', JSON.stringify({
-    items: [productReference, styleReference, sceneReference]
-      .filter(Boolean)
-      .map((asset) => ({ kind: 'url', value: asset!.url }))
-  }));
-  trackEvent('project_version_reuse', { projectId: projectId.value, versionId: version.versionId, role });
-  await router.push({
-    path: '/artigen/ai',
-    query: {
-      projectId: projectId.value,
-      parentVersionId: version.versionId,
-      profileId: 'product-reference-v1',
-      prompt: version.prompt
-    }
-  });
 };
 
 const editVersion = async (version: CreativeProjectVersion) => {

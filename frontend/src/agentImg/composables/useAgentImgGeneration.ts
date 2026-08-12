@@ -218,6 +218,10 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
       return currentLang.value === 'zh'
         ? '请先上传一张参考图再出图'
         : 'Please upload a reference image first.';
+    if (c === 'REFERENCE_IMAGES_NOT_SUPPORTED')
+      return currentLang.value === 'zh'
+        ? 'Kolors 最多接收 1 张参考图，请保留商品图或 Logo 其中一张'
+        : 'Kolors accepts at most one reference image. Keep either the product image or the logo.';
     if (c === 'REQUEST_IN_PROGRESS')
       return currentLang.value === 'zh'
         ? '请求处理中，请稍后再试'
@@ -387,7 +391,7 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
     const getImgInputs = async () => {
       const files: File[] = [];
       for (const f of deps.upload.previewFiles.value) if (f) files.push(f);
-      const list = files.slice(0, 3);
+      const list = files.slice(0, 1);
       if (!list.length) return [];
       const inputs = await Promise.all(list.map(deps.upload.fileToGenerateInput));
       const ok = inputs.filter(
@@ -402,10 +406,21 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
         ? await deps.upload.fileToGenerateInput(deps.upload.logoFile.value)
         : null;
       const hasLogo = !!logoInput && !!deps.upload.logoFile.value;
+      if (refImgs.length && hasLogo) {
+        const errorCode = 'REFERENCE_IMAGES_NOT_SUPPORTED';
+        const errorText = humanizeImgError(errorCode);
+        deps.history.setHistoryItemStatus(requestId, {
+          status: 'failed',
+          errorCode,
+          errorText,
+          failedStage: 'generation',
+          image: null
+        });
+        deps.ui.showTopTip(errorText);
+        return { ok: false as const, url: '' };
+      }
       const buildFinalImages = () => {
         if (!hasLogo) return refImgs as Img2ImgImageInput[];
-        if (refImgs.length)
-          return [...refImgs.slice(0, 2), logoInput as GenerateImageInput] as Img2ImgImageInput[];
         return [logoInput as GenerateImageInput] as Img2ImgImageInput[];
       };
 
@@ -609,7 +624,7 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
       const refThumbsRaw = await Promise.all(
         deps.upload.previewFiles.value
           .filter((f: any): f is File => !!f)
-          .slice(0, 3)
+          .slice(0, 1)
           .map((f: File) => deps.upload.fileToThumbDataUrl(f))
       );
       const refThumbs = refThumbsRaw.filter((x: any): x is string => !!x);
@@ -673,7 +688,7 @@ export function useAgentImgGeneration(deps: GenerationDeps) {
     const refThumbsRaw = await Promise.all(
       deps.upload.previewFiles.value
         .filter((f: any): f is File => !!f)
-        .slice(0, 3)
+        .slice(0, 1)
         .map((f: File) => deps.upload.fileToThumbDataUrl(f))
     );
     const refThumbs = refThumbsRaw.filter((x: any): x is string => !!x);

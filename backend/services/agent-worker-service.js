@@ -93,22 +93,15 @@ const readOpenedAsset = async (opened, maximumBytes = 100 * 1024 * 1024) => {
 
 const resolveStagedImageReferences = (value, stagedAssetsByPath) => {
   if (value === undefined || value === null) return [];
-  if (!Array.isArray(value) || value.length > 3) {
+  if (!Array.isArray(value) || value.length > 1) {
     throw new ApiError(400, 'AGENT_IMAGE_REFERENCES_INVALID');
   }
   const staged = stagedAssetsByPath instanceof Map ? stagedAssetsByPath : new Map();
   return normalizeAgentImageReferences(value.map((reference) => {
     const path = String(reference?.path || '').trim();
     const asset = staged.get(path);
-    if (!asset) {
-      throw new ApiError(403, 'AGENT_IMAGE_REFERENCE_NOT_STAGED');
-    }
-    return {
-      path,
-      role: reference?.role,
-      mimeType: asset.mimeType,
-      buffer: asset.buffer
-    };
+    if (!asset) throw new ApiError(403, 'AGENT_IMAGE_REFERENCE_NOT_STAGED');
+    return { path, role: reference?.role, mimeType: asset.mimeType, buffer: asset.buffer };
   }));
 };
 
@@ -740,10 +733,7 @@ const createAgentWorkerService = ({
                 capability: 'generate_images'
               });
             }
-            const references = resolveStagedImageReferences(
-              request?.references,
-              stagedAssetsByPath
-            );
+            const references = resolveStagedImageReferences(request?.references, stagedAssetsByPath);
             const nextImageCredits = references.length
               ? configuredImageCredits(env.AGENT_IMAGE_REFERENCE_CREDITS, 12)
               : configuredImageCredits(env.AGENT_IMAGE_CREDITS, 8);

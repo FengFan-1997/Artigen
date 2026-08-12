@@ -46,5 +46,28 @@ test('Mac Agent worker pins image pricing and the SiliconFlow output host', () =
   assert.match(runner, /AGENT_PUBLIC_CAPABILITIES:\s*'files,shell,browser,generate_images'/);
   assert.match(runner, /AGENT_IMAGE_CREDITS:[\s\S]*\|\| '8'/);
   assert.match(runner, /AGENT_IMAGE_REFERENCE_CREDITS:[\s\S]*\|\| '12'/);
+  assert.match(runner, /AGENT_MODEL_NAME:\s*'Qwen\/Qwen3-8B'/);
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
+});
+
+test('runtime model allowlist contains only Qwen3-8B and Kolors', () => {
+  const runtime = [
+    'backend/lib/config.js',
+    'backend/lib/ai-providers.js',
+    'backend/lib/memory-manager.js',
+    'backend/routes/system.js',
+    'backend/services/agent-config.js',
+    'backend/services/generation-profiles.js',
+    'backend/services/generation-provider.js',
+    'backend/scripts/run-agent-worker-macos.js',
+    'frontend/src/agentImg/services/text.ts',
+    'render.yaml'
+  ].map(readRepoFile).join('\n');
+
+  assert.match(runtime, /Qwen\/Qwen3-8B/);
+  assert.match(runtime, /Kwai-Kolors\/Kolors/);
+  assert.doesNotMatch(runtime, /Qwen\/Qwen-Image-Edit-2509/);
+  assert.doesNotMatch(runtime, /Qwen\/Qwen2\.5/);
+  assert.doesNotMatch(runtime, /FIXED_SILICONFLOW_EDIT_MODEL|GENERATION_EDIT_MODEL/);
+  assert.doesNotMatch(runtime, /callGeminiGenerate|generativelanguage\.googleapis\.com/);
 });

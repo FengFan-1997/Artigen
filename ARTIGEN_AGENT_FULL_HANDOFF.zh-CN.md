@@ -354,8 +354,8 @@ browserConfig: {
 功能分支 `codex/agent-image-generation` 正在增加正式 `image` deliverable。本文在生产验收前只记录已确定的代码契约，不表示功能已经上线：
 
 - Qwen 只在 run 获得 `generate_images` capability 时看到 `generate_image`；Worker 仍以 `AGENT_CAPABILITY_NOT_GRANTED` 作最终授权门禁；
-- 无参考图使用 `Kwai-Kolors/Kolors`，每次 8 点；带参考图使用 `Qwen/Qwen-Image-Edit-2509`，每次 12 点；
-- 最多三张参考图，角色仅为 `product`、`style`、`scene` 且不能重复；路径必须精确命中本次 run 已扫描并放入 `inputs/` 的用户图片；
+- `Kwai-Kolors/Kolors` 统一负责图片生成：文生图每次 8 点，单参考图图生图每次 12 点；
+- `Qwen/Qwen3-8B` 统一负责文字理解、拆解任务和决定工具；Agent 最多使用 1 张已扫描任务参考图，不得调用第三种模型；
 - 正式图片交付使用 `role=image`，仅接受 PNG、JPEG、WebP，并经过病毒扫描、ImageMagick 解码、像素限制、非空校验、S3 持久化和 SHA-256 验证；
 - `image` 可以单独满足完成条件；失败仍走既有冻结释放，成功仍只结算一次；
 - Agent 保持 `owner-only-v1`，本变更不扩大 Agent 用户范围。

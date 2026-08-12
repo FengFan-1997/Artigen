@@ -335,7 +335,7 @@ const ui = computed(() => {
         featFormatDesc:
           '支持浏览器可解码图片的批量转换，以及 PDF、GIF、ICO 等独立工作流；本地与服务器模式会明确标注。',
         featAiTitle: 'AI 设计',
-        featAiDesc: '文生图、图生图、提示词优化。激发无限创意，生成高质量的电商素材与艺术作品。',
+        featAiDesc: '文生图、单参考图图生图、提示词优化。图片任务统一使用 Kolors。',
         featMarketTitle: '算力加速',
         featMarketDesc: '按需购买高性能算力，解锁更快的生成速度与更高分辨率的画质。',
         tryNow: '立即体验',
@@ -414,7 +414,7 @@ const ui = computed(() => {
           'Batch browser-decodable images and use dedicated PDF, GIF, and ICO workflows. Local and server modes are labeled explicitly.',
         featAiTitle: 'AI Design',
         featAiDesc:
-          'Text-to-Image, Image-to-Image, Prompt Optimization. Generate high-quality assets and art instantly.',
+          'Text-to-image, single-reference image-to-image, and prompt optimization. All image tasks use Kolors.',
         featMarketTitle: 'Compute Power',
         featMarketDesc:
           'On-demand high-performance compute for faster generation and higher resolution.',

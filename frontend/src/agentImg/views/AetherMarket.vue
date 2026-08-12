@@ -1347,8 +1347,8 @@ const generationYield = (packageId: PayPackageId) => {
   const standard = Math.floor(credits / 10);
   const reference = Math.floor(credits / 60);
   return currentLang.value === 'zh'
-    ? `约 ${standard} 张标准图 / ${reference} 张商品参考图`
-    : `About ${standard} standard / ${reference} reference images`;
+    ? `约 ${standard} 张标准图 / ${reference} 张单参考图商品图`
+    : `About ${standard} standard / ${reference} single-reference images`;
 };
 
 const payOpen = ref(false);

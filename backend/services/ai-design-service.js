@@ -20,7 +20,7 @@ const {
 } = require('./generation-profiles');
 
 const MAX_PROMPT_LENGTH = 4000;
-const MAX_REFERENCE_IMAGES = 3;
+const MAX_REFERENCE_IMAGES = 1;
 const MAX_IMAGE_BYTES = 40 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 32 * 1000 * 1000;
 const OUTPUT_RETENTION_HOURS = 30 * 24;
@@ -132,8 +132,7 @@ const validateAiDesignTask = ({ operation, options, inputCount = 0, env = proces
       ['product', 'style', 'scene'].slice(0, count);
     if (
       referenceRoles.length !== count ||
-      new Set(referenceRoles).size !== referenceRoles.length ||
-      count > 0 && referenceRoles[0] !== 'product'
+      new Set(referenceRoles).size !== referenceRoles.length
     ) {
       throw new ApiError(400, 'INVALID_REFERENCE_ROLES', {
         field: 'options.referenceRoles',
