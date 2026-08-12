@@ -825,6 +825,8 @@ test('agent instructions require reliable multiline file writes and a content ch
   assert.match(instructions, /reportlab/);
   assert.match(instructions, /Pandoc is not\s+installed/);
   assert.match(instructions, /Never run apt, pip, npm/);
+  assert.match(instructions, /Artifact sources must be an empty array/);
+  assert.match(instructions, /Never invent a source URL/);
 });
 
 test('trusted platform shell is separate from offline model-authored shell', async () => {

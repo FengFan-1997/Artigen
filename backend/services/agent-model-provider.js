@@ -180,6 +180,10 @@ const FUNCTION_TOOLS = Object.freeze([
         mimeType: { type: 'string', minLength: 3, maxLength: 160 },
         sources: {
           type: 'array',
+          description: [
+            'Use an empty array unless this run actually observed each URL through a browser or connector.',
+            'Never cite the model provider, product homepage, or an inferred URL as an artifact source.'
+          ].join(' '),
           maxItems: 100,
           items: {
             type: 'object',
@@ -273,6 +277,9 @@ exact returned path and MIME type. At most one image reference may be used, and 
 user-provided input path listed in the objective context with product, style, or scene role.
 Use declare_artifact for every final file. Do not announce completion unless every requested artifact
 has been declared; Artigen's independent verifier, not you, decides success.
+Artifact sources must be an empty array when the run did not actually observe a supporting HTTPS URL
+through an allowed browser or connector tool. Never invent a source URL, and never cite the model
+provider, Artigen, or a product homepage merely because an image was generated.
 
 Consequential actions require request_user_approval immediately before the action. CAPTCHA, passwords,
 OTP, security-warning bypass, and final password changes require takeover and must never be attempted.
