@@ -26,20 +26,20 @@ Artigen 当前使用以下正式交付链：
 
 `main` 是正式生产代码来源；`dev` 是 DEV 集成分支。旧的 `codex/artigen-overhaul` 和 `test` 仅保留历史，不再作为日常开发或生产来源。
 
-截至 2026-08-11 的已验证生产基线：
+截至 2026-08-12 的已验证生产基线：
 
 | 项目 | 正式状态 |
 | --- | --- |
 | GitHub 仓库 | `FengFan-1997/Artigen` |
-| 生产运行时代码 | `main`，SHA `ca75dce39ef5eebd27154029ef19ad1cc25b5758` |
-| 生产前端 | Vercel `artigen-fengfan`，deployment `dpl_Cvqb4mcjbMXaKzMFqgRZn24K9kj4`，`READY` |
+| 生产运行时代码 | `main`，SHA `49618cf603a1f4f18b5ec4b454fef489dc4c7a39` |
+| 生产前端 | Vercel `artigen-fengfan`，deployment `dpl_BMb4TusD75y2mmQ3EH4L9zQTUE3C`，`READY` |
 | 生产后端 | Render `artigen-app-fengfan`，Service `srv-d9cr73r7uimc73etc4j0` |
-| 生产部署 | Render deployment `dep-d9tg6nht0dsc73b7u2k0`，`live` |
+| 生产部署 | Render deployment `dep-d9u0ntqjobas73e0uho0`，`live` |
 | 生产数据库 | Neon PostgreSQL `neondb` |
 | DEV 数据库 | Neon PostgreSQL `dev_artigen` |
 | 对象存储 | 私有共享 S3 桶 `artigen-assets` |
 | 数据库迁移 | `020_agent_secure_browser_relay` |
-| GitHub 发布流水线 | run `31484788818`，Release gate `success` |
+| GitHub 发布流水线 | run `31567870806`，Release gate `success` |
 | 生产功能开关 | 付费、支付、AI Design、Workshop、Task Worker 与 Agent 生图已开放 |
 
 生产精确 SHA 不能只依赖文档，必须读取 `/api/meta` 并与 GitHub `main` 和平台 deployment 交叉核对。
@@ -114,12 +114,12 @@ AI 必须在每个 Artigen 任务结束前更新本地 Handoff。有持久影响
 | 浏览器模式 | `full-approval-v1` |
 | 出口策略 | `restricted-v1` |
 | Beta 模式 | `owner-only-v1` |
-| Agent 图片能力 | DEV 已验证 `Kwai-Kolors/Kolors` 统一承担文生图和单参考图图生图；生产待本轮 Release |
+| Agent 图片能力 | `Kwai-Kolors/Kolors` 统一承担文生图和单参考图图生图；DEV 与生产均已真实验证 |
 | Agent 图片计价 | 文生图 8 点；单参考图 12 点；任务总额仍受报价与 `maxCredits` 约束 |
-| 严格模型白名单 | DEV 已验证：`Qwen/Qwen3-8B` 负责文字理解/拆解/工具决策，`Kwai-Kolors/Kolors` 负责全部图片；生产待本轮 Release |
+| 严格模型白名单 | `Qwen/Qwen3-8B` 负责文字理解/拆解/工具决策，`Kwai-Kolors/Kolors` 负责全部图片；DEV 与生产均已真实验证 |
 | 图片交付 | `IMAGE`，PNG/JPEG/WebP；允许独立满足任务完成条件 |
 
-上表的双模型两行记录当前已完成的 DEV 发布状态；生产仍以第 1 节列出的不可变运行 SHA 和平台 deployment 为准，只有本轮 `dev → main`、生产部署和生产 smoke 完成后才能改写为生产已生效。
+上表的双模型边界已在第 1 节列出的不可变运行 SHA 上发布，并由生产文生图与单参考图 Run 复核实际模型、点数、S3、SHA-256 和交付验证状态。
 
 已验证运行状态：
 
@@ -238,6 +238,13 @@ DEV 真实依赖验收：
 - 首次 DEV 文生图 Run `ef16b5fd-2022-49c3-bd68-eb595f81510d` 正确使用 Qwen3 与 Kolors，但 Qwen 在交付声明中编造了未观察来源，最终以 `AGENT_ARTIFACT_SOURCE_NOT_OBSERVED` 失败；图片调用 8 点只结算一次，其余冻结释放。PR #30 将“无实际观察 URL 时 sources 必须为空”固化到系统指令、工具 schema 说明和 smoke 目标，随后两条 Run 均通过。
 - 两张成功图片已下载到被 Git 忽略的 `.artifacts/dev-two-model-image-smoke-2026-08-12T05-27-39-597Z/` 并人工查看；无空图、损坏或明显裁切问题。该次单参考图使用合成素材，只证明单图输入、Kolors 路由、角色、持久化和结算，不把真实商品身份保持质量作为本轮通过条件。
 - 上述 smoke 结束后 DEV Worker online，浏览器、受限出口和桌面中继 ready，`queueDepth=0`；活动 Agent Run、工具任务和 held budget 均经数据库复核为 0。
+- Release PR [#32](https://github.com/FengFan-1997/Artigen/pull/32) 的分支策略、Core、八组桌面/移动 E2E 与 Release gate 全绿后合入 `main`；不可变生产运行 SHA 为 `49618cf603a1f4f18b5ec4b454fef489dc4c7a39`。
+- Render deployment `dep-d9u0ntqjobas73e0uho0` 为 `live`，Vercel production deployment `dpl_BMb4TusD75y2mmQ3EH4L9zQTUE3C` 为 `READY` 并 alias 到 `artigen-fengfan.vercel.app`；两者与 `/api/meta` 均对应上述 SHA。生产 `/readyz` 为 `ok=true`，`standard-v1.maxReferences=0`、`product-reference-v1.maxReferences=1` 且两者均 `available=true`。
+- 生产 Mac Worker 已从同一 SHA 重新安装并启动；最终 `workerOnline=true`、`browserReady=true`、`egressVerified=true`、`desktopRelayReady=true`、`imageGenerationPublicEnabled=true`、`queueDepth=0`。
+- 生产文生图 Run `47fd3b28-459e-4e25-97f3-301b363bc097` succeeded：规划模型 `Qwen/Qwen3-8B`，图片模型 `Kwai-Kolors/Kolors`，0 张参考图，图片调用 8 点、总计 14 点；PNG 1024×1024、1927956 bytes、SHA-256 `dd92ed33b1a52deeec9c08bfa2aa755720305c1896aaf582bae925313bf8ee85`，S3 与 verification passed。
+- 生产单参考图 Run `e55352bf-30cd-49b3-b1df-da1c136608f1` succeeded：规划模型 `Qwen/Qwen3-8B`，图片模型 `Kwai-Kolors/Kolors`，1 张 `product` 参考图，图片调用 12 点、总计 17 点；PNG 960×1200、1665333 bytes、SHA-256 `ef52822da46bb0071fa4b97b3acb09f0faf70dcfea998dc3bc8bb33661efb1de`，S3 与 verification passed。
+- 两张生产产物保存在被 Git 忽略的 `.artifacts/production-two-model-image-smoke-2026-08-12T06-09-26-477Z/`，已人工查看且无空图、损坏或明显裁切。参考输入为合成抽象图，本次只把它作为单图输入、Kolors 路由、角色、持久化与结算证据，不把真实商品身份保持质量列为通过项。
+- 生产 smoke 后数据库再次确认活动 Agent Run、活动工具任务、held Agent budget 与 held tool credit 均为 0。源码硬审计未发现 `Qwen/Qwen-Image-Edit-2509`、Gemini 或其他第三模型的生产引用；全部运行时模型字面量仅保留 Qwen3 与 Kolors。
 
 ## 6. 已知风险与正式后续事项
 
