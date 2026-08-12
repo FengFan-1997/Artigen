@@ -32,7 +32,7 @@
       </button>
 
       <nav class="nav-links">
-        <NavItem to="/artigen/ai" item-class="nav-item" :active="activeKey === 'ai'">
+        <NavItem to="/artigen/create" item-class="nav-item" :active="activeKey === 'create'">
           {{ ui.navAiDesign }}
         </NavItem>
         <NavItem to="/artigen/agent" item-class="nav-item" :active="activeKey === 'agent'">
@@ -184,9 +184,9 @@
         class="mobile-menu"
       >
         <NavItem
-          to="/artigen/ai"
+          to="/artigen/create"
           item-class="mobile-item"
-          :active="activeKey === 'ai'"
+          :active="activeKey === 'create'"
           @click="isMobileMenuOpen = false"
         >
           {{ ui.navAiDesign }}
@@ -449,11 +449,12 @@ const cancelCloseToolsMenu = () => {
   }
 };
 
-const activeKey = computed<'format' | 'ai' | 'agent' | 'projects' | 'market' | 'image' | 'home' | 'about'>(() => {
+const activeKey = computed<'format' | 'create' | 'ai' | 'agent' | 'projects' | 'market' | 'image' | 'home' | 'about'>(() => {
   const p = String(route.path || '');
   if (p === '/artigen' || p === '/artigen/') return 'home';
   if (p.startsWith('/artigen/tools') || p.startsWith('/artigen/format-factory')) return 'format';
   if (p.startsWith('/artigen/projects')) return 'projects';
+  if (p.startsWith('/artigen/create')) return 'create';
   if (p.startsWith('/artigen/agent')) return 'agent';
   if (p.startsWith('/artigen/market')) return 'market';
   if (p.startsWith('/artigen/image-workshop')) return 'image';

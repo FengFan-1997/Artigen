@@ -137,7 +137,7 @@ export type AgentServiceStatus = {
   sandboxImageRef: string | null;
   browserPublicEnabled?: boolean;
   imageGenerationPublicEnabled: boolean;
-  accessMode?: 'disabled' | 'owner-only-v1' | string;
+  accessMode?: 'disabled' | 'owner-only-v1' | 'authenticated-v1' | string;
   availabilityNote: 'ready' | 'busy' | 'worker_offline' | string;
 };
 

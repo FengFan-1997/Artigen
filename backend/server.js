@@ -41,6 +41,9 @@ const { installToolTaskRoutes } = require("./routes/tool-tasks");
 const { installPaymentRoutes } = require("./routes/payments");
 const { installProjectRoutes } = require("./routes/projects");
 const { installAgentRoutes } = require("./routes/agent-runs");
+const {
+  installDesignConversationRoutes,
+} = require("./routes/design-conversations");
 const { csrfProtection } = require("./lib/csrf-protection");
 const { installFrontendHosting } = require("./lib/frontend-hosting");
 const { installSessionMiddleware } = require("./middleware/session-auth");
@@ -655,8 +658,14 @@ installProjectRoutes(app, {
   rateLimit,
 });
 
-installAgentRoutes(app, {
+const agentRuntime = installAgentRoutes(app, {
   rateLimit,
+});
+
+installDesignConversationRoutes(app, {
+  rateLimit,
+  callSiliconFlowChat,
+  agentRunService: agentRuntime.service,
 });
 
 installPaymentRoutes(app, {

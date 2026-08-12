@@ -43,7 +43,12 @@ const workerEnv = { ...process.env };
     'S3_ACCESS_KEY_ID',
     'S3_SECRET_ACCESS_KEY'
   ];
-  if (profile === 'production') secretNames.push('AGENT_BETA_USER_IDS');
+  if (
+    profile === 'production' &&
+    String(process.env.AGENT_BETA_MODE || '').trim() === 'owner-only-v1'
+  ) {
+    secretNames.push('AGENT_BETA_USER_IDS');
+  }
   const missing = [];
   for (const name of secretNames) {
     const value = readMacOsKeychainSecret({ service, account: name });
@@ -79,12 +84,14 @@ const workerEnv = { ...process.env };
     AI_OUTPUT_ALLOWED_HOSTS: String(
       process.env.AI_OUTPUT_ALLOWED_HOSTS || 's3.siliconflow.cn'
     ),
-    AGENT_BETA_MODE: profile === 'production' ? 'owner-only-v1' : 'disabled',
+    AGENT_BETA_MODE: String(
+      process.env.AGENT_BETA_MODE || (profile === 'production' ? 'authenticated-v1' : 'disabled')
+    ),
     AGENT_MAX_MINUTES: '45',
     AGENT_MAX_STEPS: '120',
     AGENT_MEMORY_MB: '4096',
     AGENT_DISK_GB: '10',
-    AGENT_WORKER_CONCURRENCY: '1',
+    AGENT_WORKER_CONCURRENCY: String(process.env.AGENT_WORKER_CONCURRENCY || '2'),
     ASSET_STORAGE_DRIVER: 's3',
     S3_FORCE_PATH_STYLE: '1',
     CUA_PYTHON: path.join(backendRoot, '.venv-agent/bin/python'),

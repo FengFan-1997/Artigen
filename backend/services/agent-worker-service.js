@@ -597,7 +597,18 @@ const createAgentWorkerService = ({
                   ? crypto.createHash('sha256').update(request.text).digest('hex')
                   : null
               });
-              const decision = await runService.consumeApproval({ runId, fingerprint });
+              let decision = await runService.consumeApproval({ runId, fingerprint });
+              if (
+                !decision &&
+                classification.decision === 'approval' &&
+                typeof runService.consumeSessionAuthorization === 'function'
+              ) {
+                decision = await runService.consumeSessionAuthorization({
+                  runId,
+                  actionType,
+                  recipient: description?.url || request.url || ''
+                });
+              }
               if (decision?.status === 'denied') {
                 await runService.appendStep({
                   runId,
@@ -798,7 +809,19 @@ const createAgentWorkerService = ({
               body: request.body
             });
             if (connectorAction !== 'read') {
-              const decision = await runService.consumeApproval({ runId, fingerprint });
+              let decision = await runService.consumeApproval({ runId, fingerprint });
+              if (!decision && typeof runService.consumeSessionAuthorization === 'function') {
+                const providerOrigin = request.provider === 'github'
+                  ? 'https://api.github.com'
+                  : request.provider === 'google_drive'
+                    ? 'https://www.googleapis.com'
+                    : '';
+                decision = await runService.consumeSessionAuthorization({
+                  runId,
+                  actionType: connectorAction,
+                  recipient: providerOrigin
+                });
+              }
               if (decision?.status === 'denied') {
                 await runService.appendStep({
                   runId,
@@ -817,7 +840,9 @@ const createAgentWorkerService = ({
                 const approval = await runService.requestApproval({
                   runId,
                   actionType: connectorAction,
-                  recipient: `${request.provider}:${request.path}`,
+                  recipient: request.provider === 'github'
+                    ? `https://api.github.com${request.path}`
+                    : `https://www.googleapis.com${request.path}`,
                   riskLevel: 'high',
                   changeSummary: request.purpose,
                   evidenceSummary: `${request.method} ${request.path}`,
@@ -897,7 +922,19 @@ const createAgentWorkerService = ({
               impactSummary: request.impactSummary,
               rollbackSummary: request.rollbackSummary
             });
-            const approved = await runService.consumeApproval({ runId, fingerprint });
+            let approved = await runService.consumeApproval({ runId, fingerprint });
+            const classification = classifyAction({ type: request.actionType });
+            if (
+              !approved &&
+              classification.decision === 'approval' &&
+              typeof runService.consumeSessionAuthorization === 'function'
+            ) {
+              approved = await runService.consumeSessionAuthorization({
+                runId,
+                actionType: request.actionType,
+                recipient: request.recipient
+              });
+            }
             if (approved) {
               return {
                 ...approved,

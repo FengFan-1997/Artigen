@@ -1310,6 +1310,7 @@ import { trackEvent } from '@/utils/analytics';
 import { getToolDefinition } from '../domain/toolCatalog';
 import { locationForToolEntry } from '../domain/toolEntry';
 import type { ImagePipelineStepType } from '../logic/formatFactory/imagePipeline';
+import { consumeLocalToolHandoff } from '../services/localToolHandoff';
 
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
@@ -1999,6 +2000,23 @@ watch(
     if (requestedOperation !== operation) {
       router.replace({ query: { ...route.query, operation } }).catch(() => {});
     }
+  },
+  { immediate: true }
+);
+
+const lastHandoffToken = ref('');
+watch(
+  () => String(route.query.handoff || '').trim(),
+  async (token) => {
+    if (!token || token === lastHandoffToken.value) return;
+    lastHandoffToken.value = token;
+    const files = consumeLocalToolHandoff(token);
+    if (!files.length) return;
+    await nextTick();
+    onFileChange({ target: { files, value: '' } } as unknown as Event);
+    const query = { ...route.query };
+    delete query.handoff;
+    router.replace({ query }).catch(() => {});
   },
   { immediate: true }
 );
