@@ -1,6 +1,6 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-11（Asia/Shanghai）
+更新时间：2026-08-12（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
@@ -114,10 +114,12 @@ AI 必须在每个 Artigen 任务结束前更新本地 Handoff。有持久影响
 | 浏览器模式 | `full-approval-v1` |
 | 出口策略 | `restricted-v1` |
 | Beta 模式 | `owner-only-v1` |
-| Agent 图片能力 | `Kwai-Kolors/Kolors` 统一承担文生图和单参考图图生图 |
+| Agent 图片能力 | DEV 已验证 `Kwai-Kolors/Kolors` 统一承担文生图和单参考图图生图；生产待本轮 Release |
 | Agent 图片计价 | 文生图 8 点；单参考图 12 点；任务总额仍受报价与 `maxCredits` 约束 |
-| 严格模型白名单 | `Qwen/Qwen3-8B` 负责所有文字理解/拆解/工具决策；`Kwai-Kolors/Kolors` 负责所有图片生成；其他模型不得调用 |
+| 严格模型白名单 | DEV 已验证：`Qwen/Qwen3-8B` 负责文字理解/拆解/工具决策，`Kwai-Kolors/Kolors` 负责全部图片；生产待本轮 Release |
 | 图片交付 | `IMAGE`，PNG/JPEG/WebP；允许独立满足任务完成条件 |
+
+上表的双模型两行记录当前已完成的 DEV 发布状态；生产仍以第 1 节列出的不可变运行 SHA 和平台 deployment 为准，只有本轮 `dev → main`、生产部署和生产 smoke 完成后才能改写为生产已生效。
 
 已验证运行状态：
 
@@ -230,6 +232,12 @@ DEV 真实依赖验收：
 - `standard-v1.maxReferences=0`，`product-reference-v1.maxReferences=1`；两者运行时内部图片模型均固定为 Kolors。Agent `generate_image.references.maxItems=1`，参考路径仍必须精确命中本次 Run 的已扫描输入。
 - 老照片、职业形象、AI 场景背景继续使用单张输入图并统一调用 Kolors；四方向分析、配料原文整理和 Agent 编排统一调用 Qwen3-8B。
 - 不新增数据库迁移；历史 SKU 与 profile ID 保留。任何客户端模型参数都不能改变服务端双模型白名单。
+- 运行时代码经 PR [#28](https://github.com/FengFan-1997/Artigen/pull/28) 合入 `dev`；模型证据与可重复 DEV smoke 经 PR [#29](https://github.com/FengFan-1997/Artigen/pull/29) 合入；图片交付物禁止编造未观察来源的修复经 PR [#30](https://github.com/FengFan-1997/Artigen/pull/30) 合入。当前已验证 DEV SHA 为 `f42152eacd8bb73522409ccb8c3550349b140f86`，Render deployment `dep-d9u0768ae00c73bo0rd0` 为 `live`。
+- DEV 文生图 Run `f4c76b79-acde-412b-901d-2be134c63e12` succeeded：规划模型 `Qwen/Qwen3-8B`，图片模型 `Kwai-Kolors/Kolors`，0 张参考图，图片调用 8 点、总计 12 点；PNG 1024×1024、1838340 bytes、SHA-256 `80dc3ae7ff3904fe337f53ccf773a4af55edf42e62849c2d60a2a29c76a2d417`，S3 与 verification passed。
+- DEV 单参考图 Run `3d849ca5-ec6c-4ba9-8380-ee86240d65e8` succeeded：规划模型 `Qwen/Qwen3-8B`，图片模型 `Kwai-Kolors/Kolors`，1 张 `product` 参考图，图片调用 12 点、总计 19 点；PNG 960×1200、1575449 bytes、SHA-256 `623bef6bc3927a59848997d011b685cbd30f1e6e3b0e0d580b92e7ee9ab7db02`，S3 与 verification passed。
+- 首次 DEV 文生图 Run `ef16b5fd-2022-49c3-bd68-eb595f81510d` 正确使用 Qwen3 与 Kolors，但 Qwen 在交付声明中编造了未观察来源，最终以 `AGENT_ARTIFACT_SOURCE_NOT_OBSERVED` 失败；图片调用 8 点只结算一次，其余冻结释放。PR #30 将“无实际观察 URL 时 sources 必须为空”固化到系统指令、工具 schema 说明和 smoke 目标，随后两条 Run 均通过。
+- 两张成功图片已下载到被 Git 忽略的 `.artifacts/dev-two-model-image-smoke-2026-08-12T05-27-39-597Z/` 并人工查看；无空图、损坏或明显裁切问题。该次单参考图使用合成素材，只证明单图输入、Kolors 路由、角色、持久化和结算，不把真实商品身份保持质量作为本轮通过条件。
+- 上述 smoke 结束后 DEV Worker online，浏览器、受限出口和桌面中继 ready，`queueDepth=0`；活动 Agent Run、工具任务和 held budget 均经数据库复核为 0。
 
 ## 6. 已知风险与正式后续事项
 
