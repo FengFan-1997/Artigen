@@ -7,8 +7,8 @@ export function useAgentImgUpload(
   abortImg2Img: () => void,
   reset: () => void
 ) {
-  const previewUrls = ref<string[]>(['', '', '']);
-  const previewFiles = ref<(File | null)[]>([null, null, null]);
+  const previewUrls = ref<string[]>(['']);
+  const previewFiles = ref<(File | null)[]>([null]);
   const fileInputs = ref<HTMLInputElement[]>([]);
   const hasPreviews = computed(() => previewUrls.value.some((u) => !!u));
 

@@ -25,7 +25,6 @@ const installSystemRoutes = (app, deps) => {
   const APP_ENV = String(readinessEnv.APP_ENV || NODE_ENV || "").trim() || "development";
   const isProd = !!deps?.isProd;
   const requireLlmProvider = !!deps?.requireLlmProvider;
-  const API_KEY = deps?.API_KEY;
   const SILICONFLOW_API_KEY = deps?.SILICONFLOW_API_KEY;
   const activeTextProvider = deps?.activeTextProvider;
   const imgCredits = deps?.imgCredits;
@@ -33,12 +32,9 @@ const installSystemRoutes = (app, deps) => {
   const path = deps?.path;
   const rateLimit = deps?.rateLimit;
   const assertAuthUserMatches = deps?.assertAuthUserMatches;
-  const callGeminiGenerate = deps?.callGeminiGenerate;
   const callSiliconFlowImageGenerate = deps?.callSiliconFlowImageGenerate;
   const callSiliconFlowChat = deps?.callSiliconFlowChat;
   const callTextGenerate = deps?.callTextGenerate;
-  const GEMINI_GENERATE_URLS = deps?.GEMINI_GENERATE_URLS;
-  const GEMINI_TIMEOUT_MS = deps?.GEMINI_TIMEOUT_MS;
   const SILICONFLOW_API_BASE = deps?.SILICONFLOW_API_BASE;
   const SILICONFLOW_MODEL = deps?.SILICONFLOW_MODEL;
   const getClientIp = deps?.getClientIp;
@@ -445,9 +441,8 @@ const installSystemRoutes = (app, deps) => {
   };
 
   app.get("/healthz", (req, res) => {
-    const hasGeminiKey = !!API_KEY;
     const hasSiliconflowKey = !!SILICONFLOW_API_KEY;
-    const hasProvider = hasGeminiKey || hasSiliconflowKey;
+    const hasProvider = hasSiliconflowKey;
     res.status(200).json({
       ok: true,
       nodeEnv: NODE_ENV,
@@ -459,9 +454,8 @@ const installSystemRoutes = (app, deps) => {
   });
 
   app.get("/readyz", async (req, res) => {
-    const hasGeminiKey = !!API_KEY;
     const hasSiliconflowKey = !!SILICONFLOW_API_KEY;
-    const hasAnyProvider = hasGeminiKey || hasSiliconflowKey;
+    const hasAnyProvider = hasSiliconflowKey;
     try {
       const report = await getReadinessReport({
         env: readinessEnv,
@@ -527,26 +521,12 @@ const installSystemRoutes = (app, deps) => {
           rid: String(res.locals.requestId || ""),
         });
       }
-      const hasApiKey = !!API_KEY;
       const hasSiliconflowKey = !!SILICONFLOW_API_KEY;
-      const proxyUrl =
-        process.env.HTTPS_PROXY ||
-        process.env.https_proxy ||
-        process.env.HTTP_PROXY ||
-        process.env.http_proxy ||
-        "";
 
       const result = {
         ok: true,
         serverTime: Date.now(),
-        hasApiKey,
         textProvider: activeTextProvider,
-        gemini: {
-          generateUrls: GEMINI_GENERATE_URLS,
-          timeoutMs: GEMINI_TIMEOUT_MS,
-          proxyConfigured: !!proxyUrl,
-          lastProbe: null,
-        },
         siliconflow: {
           baseUrl: SILICONFLOW_API_BASE,
           model: SILICONFLOW_MODEL,
@@ -572,29 +552,7 @@ const installSystemRoutes = (app, deps) => {
 
       if (probe) {
         const startedAt = Date.now();
-        if (activeTextProvider === "gemini" && hasApiKey) {
-          try {
-            const { usedUrl, failures } = await callGeminiGenerate({
-              timeoutMs: 5000,
-              contents: [{ role: "user", parts: [{ text: "ping" }] }],
-            });
-            result.gemini.lastProbe = {
-              ok: true,
-              usedUrl,
-              elapsedMs: Date.now() - startedAt,
-              failures: Array.isArray(failures) ? failures.slice(0, 3) : [],
-            };
-          } catch (e) {
-            result.gemini.lastProbe = {
-              ok: false,
-              elapsedMs: Date.now() - startedAt,
-              error: String(e?.message || e),
-              failures: Array.isArray(e?.failures)
-                ? e.failures.slice(0, 3)
-                : [],
-            };
-          }
-        } else if (hasSiliconflowKey) {
+        if (hasSiliconflowKey) {
           try {
             const { usedUrl, failures } = await callSiliconFlowChat({
               timeoutMs: 5000,
@@ -729,6 +687,12 @@ const installSystemRoutes = (app, deps) => {
       let prompt = String(req.body.prompt || "").trim();
       const timeoutMs = Number(req.body.timeoutMs) || 0;
       const modelRaw = String(req.body.model || "").trim();
+      if (
+        modelRaw &&
+        modelRaw.toLowerCase() !== String(SILICONFLOW_MODEL || "").trim().toLowerCase()
+      ) {
+        return res.status(400).json({ error: "MODEL_NOT_ALLOWED", requestId });
+      }
       const userId = String(req.body.userId || "").trim();
       const purpose = String(req.body.purpose || "").trim();
       const purposeKey = normalizeReasonKey(purpose);
@@ -873,13 +837,6 @@ const installSystemRoutes = (app, deps) => {
           throw new Error("callTextGenerate is not available");
         }
 
-        const isAllowedTextModel = (raw) => {
-          const k = String(raw || "")
-            .trim()
-            .toLowerCase();
-          return k === "qwen/qwen3-8b";
-        };
-
         const hold = (() => {
           try {
             if (!resolvedCost) return null;
@@ -917,7 +874,7 @@ const installSystemRoutes = (app, deps) => {
           result = await callTextGenerate({
             contents,
             timeoutMs: timeoutMs || 60000,
-            ...(isAllowedTextModel(modelRaw) ? { model: modelRaw } : {}),
+            ...(modelRaw ? { model: SILICONFLOW_MODEL } : {}),
           });
         } catch (e) {
           if (

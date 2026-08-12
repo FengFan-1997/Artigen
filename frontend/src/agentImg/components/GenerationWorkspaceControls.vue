@@ -173,7 +173,7 @@ const copy = computed(() =>
         upload: '上传',
         remove: '移除',
         privacy: props.maxReferences > 0
-          ? '商品参考图必填，风格与场景参考可选；确认 60 点报价后才会提交素材。'
+          ? '上传 1 张商品参考图；确认 60 点报价后才会提交素材。'
           : '标准文生图不接收参考图；确认 10 点报价后才会提交提示词。'
       }
     : {
@@ -184,7 +184,7 @@ const copy = computed(() =>
         upload: 'Upload',
         remove: 'Remove',
         privacy: props.maxReferences > 0
-          ? 'A product reference is required; style and scene are optional. Assets are submitted only after you confirm the 60-credit quote.'
+          ? 'Upload one product reference. The asset is submitted only after you confirm the 60-credit quote.'
           : 'Standard text-to-image accepts no references. Your prompt is submitted only after you confirm the 10-credit quote.'
       }
 );

@@ -228,7 +228,7 @@ test('headers stay separated across compact laptop and mobile widths with langua
   }
 });
 
-test('AI mobile setup keeps references readable, grows long prompts, and stacks product fields', async ({ page }) => {
+test('AI mobile setup keeps its single reference readable, grows long prompts, and stacks product fields', async ({ page }) => {
   await page.route('**/api/generation/models', (route) =>
     route.fulfill({
       status: 200,
@@ -240,7 +240,7 @@ test('AI mobile setup keeps references readable, grows long prompts, and stacks 
           name: { zh: '商品参考生成', en: 'Product reference generation' },
           available: true,
           capabilities: ['text-to-image', 'image-reference'],
-          maxReferences: 3,
+          maxReferences: 1,
           aspectRatios: ['1:1', '4:5', '3:4', '16:9', '9:16'],
           supportsSeed: true
         }]
@@ -261,7 +261,8 @@ test('AI mobile setup keeps references readable, grows long prompts, and stacks 
         (slot) => slot.getBoundingClientRect().width
       )
     }));
-    expect(referenceLayout.scrollWidth).toBeGreaterThan(referenceLayout.clientWidth);
+    expect(referenceLayout.scrollWidth).toBeLessThanOrEqual(referenceLayout.clientWidth + 1);
+    expect(referenceLayout.slotWidths).toHaveLength(1);
     expect(referenceLayout.slotWidths.every((slotWidth) => slotWidth >= 150)).toBe(true);
 
     const textarea = page.locator('textarea.textarea');
@@ -349,7 +350,7 @@ test('AI authentication dialog traps focus and restores it to the generation act
             name: { zh: '商品参考生成', en: 'Product reference generation' },
             available: true,
             capabilities: ['text-to-image', 'image-reference'],
-            maxReferences: 3,
+            maxReferences: 1,
             aspectRatios: ['1:1', '4:5', '3:4', '16:9', '9:16'],
             supportsSeed: true
           }

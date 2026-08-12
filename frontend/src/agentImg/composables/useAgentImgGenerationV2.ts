@@ -142,7 +142,7 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
       CONTENT_POLICY_REJECTED: ['请求未通过内容安全检查，请调整描述', 'The request did not pass the content policy check. Please revise it.'],
       TASK_PAYLOAD_KEY_MISSING: ['付费生图安全配置缺失，任务未创建', 'Secure paid-generation configuration is missing. No task was created.'],
       PROVIDER_TIMEOUT: ['模型服务超时，预占点数将自动释放', 'The model provider timed out. Held credits will be released.'],
-      REFERENCE_IMAGES_NOT_SUPPORTED: ['标准生成仅支持文生图，请移除参考图或切换到商品参考生成', 'Standard generation supports text-to-image only. Remove references or choose product-reference generation.'],
+      REFERENCE_IMAGES_NOT_SUPPORTED: ['当前模型最多支持 1 张参考图', 'The current image model supports at most one reference image.'],
       REFERENCE_IMAGE_REQUIRED: ['商品参考生成必须在第一个槽位上传商品图', 'Product reference generation requires a product image in the first slot.'],
       OUTPUT_INVALID: ['生成结果未通过验证，预占点数将自动释放', 'The output failed validation. Held credits will be released.'],
       TASK_LEASE_LOST: ['任务执行实例已切换，请稍后查看状态', 'The task worker changed. Check the status again shortly.'],
@@ -452,7 +452,7 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
         ? deps.upload.previewFiles.value
             .map((file, index) => ({ file, role: ['product', 'style', 'scene'][index] }))
             .filter((entry): entry is { file: File; role: string } => entry.file instanceof File)
-            .slice(0, 3)
+            .slice(0, 1)
         : [];
       const files = referenceSlots.map((entry) => entry.file);
       const refThumbsRaw = await Promise.all(files.map((file) => deps.upload.fileToThumbDataUrl(file)));

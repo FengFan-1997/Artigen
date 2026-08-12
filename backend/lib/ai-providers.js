@@ -1,14 +1,9 @@
 const {
-  API_KEY,
   SILICONFLOW_API_KEY,
   SILICONFLOW_CHAT_COMPLETIONS_URL,
   SILICONFLOW_IMAGES_GENERATIONS_URL,
-  SILICONFLOW_IMAGE_INPUT_FIELD,
   FIXED_SILICONFLOW_CHAT_MODEL,
-  FIXED_SILICONFLOW_EDIT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
-  activeTextProvider,
-  GEMINI_GENERATE_URLS,
   SILICONFLOW_TIMEOUT_MS,
   SILICONFLOW_REACTION_TIMEOUT_MS
 } = require('./config');
@@ -118,56 +113,6 @@ const IMAGE_GENERATE_MAX_QUEUE = (() => {
   return Number.isFinite(v) && v >= 0 ? v : 40;
 })();
 const imageGenerateLimiter = createSemaphore(IMAGE_GENERATE_MAX_CONCURRENCY, IMAGE_GENERATE_MAX_QUEUE);
-
-const appendApiKey = (url, apiKey) => {
-  if (!apiKey) return url;
-  return url.includes('?') ? `${url}&key=${apiKey}` : `${url}?key=${apiKey}`;
-};
-
-const callGeminiGenerate = async ({ contents, timeoutMs }) => {
-  const failures = [];
-  for (const baseUrl of GEMINI_GENERATE_URLS) {
-    const url = appendApiKey(baseUrl, API_KEY);
-    const startedAt = Date.now();
-    try {
-      const response = await fetchWithTimeout(
-        url,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents })
-        },
-        timeoutMs
-      );
-
-      if (!response.ok) {
-        const errBody = await response.text().catch(() => '');
-        failures.push({
-          url: baseUrl,
-          status: response.status,
-          statusText: response.statusText,
-          elapsedMs: Date.now() - startedAt,
-          bodyPreview: String(errBody || '').slice(0, 1800)
-        });
-        continue;
-      }
-
-      const data = await response.json();
-      return { data, usedUrl: baseUrl, failures };
-    } catch (e) {
-      failures.push({
-        url: baseUrl,
-        status: 0,
-        statusText: '',
-        elapsedMs: Date.now() - startedAt,
-        error: String(e?.message || e)
-      });
-    }
-  }
-  const err = new Error('All Gemini generateContent endpoints failed');
-  err.failures = failures;
-  throw err;
-};
 
 const callSiliconFlowChat = async ({
   messages,
@@ -338,10 +283,13 @@ const callSiliconFlowImageGenerate = async ({
   images,
   timeoutMs,
   model,
-  signal
+  signal,
+  credential = SILICONFLOW_API_KEY,
+  imageUrl = SILICONFLOW_IMAGES_GENERATIONS_URL,
+  fetcher = fetchWithTimeout
 }) => {
   return await imageGenerateLimiter.run(async () => {
-    if (!SILICONFLOW_API_KEY) {
+    if (!credential) {
       const err = new Error('MISSING_SILICONFLOW_API_KEY');
       err.code = 'MISSING_SILICONFLOW_API_KEY';
       throw err;
@@ -350,7 +298,7 @@ const callSiliconFlowImageGenerate = async ({
     const startedAt = Date.now();
     const headers = {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${SILICONFLOW_API_KEY}`
+      Authorization: `Bearer ${credential}`
     };
 
     const p = String(prompt || '').trim();
@@ -360,22 +308,25 @@ const callSiliconFlowImageGenerate = async ({
       throw err;
     }
 
-    const imgs = Array.isArray(images) ? images.map(toSiliconflowImage).filter(Boolean).slice(0, 3) : [];
-    const preferredModel = String(model || '').trim();
-    const allowedModels = new Set([FIXED_SILICONFLOW_IMAGE_MODEL, FIXED_SILICONFLOW_EDIT_MODEL]);
-    if (preferredModel && !allowedModels.has(preferredModel)) {
-      const err = new Error('MODEL_NOT_ALLOWED');
-      err.code = 'MODEL_NOT_ALLOWED';
-      throw err;
-    }
-    const resolvedModel = preferredModel || (imgs.length
-      ? FIXED_SILICONFLOW_EDIT_MODEL
-      : FIXED_SILICONFLOW_IMAGE_MODEL);
-    if (imgs.length && resolvedModel !== FIXED_SILICONFLOW_EDIT_MODEL) {
+    const imageInputs = Array.isArray(images) ? images : [];
+    if (imageInputs.length > 1) {
       const err = new Error('REFERENCE_IMAGES_NOT_SUPPORTED');
       err.code = 'REFERENCE_IMAGES_NOT_SUPPORTED';
       throw err;
     }
+    const imgs = imageInputs.map(toSiliconflowImage).filter(Boolean);
+    if (imgs.length !== imageInputs.length) {
+      const err = new Error('INVALID_REFERENCE_IMAGE');
+      err.code = 'INVALID_REFERENCE_IMAGE';
+      throw err;
+    }
+    const preferredModel = String(model || '').trim();
+    if (preferredModel && preferredModel !== FIXED_SILICONFLOW_IMAGE_MODEL) {
+      const err = new Error('MODEL_NOT_ALLOWED');
+      err.code = 'MODEL_NOT_ALLOWED';
+      throw err;
+    }
+    const resolvedModel = preferredModel || FIXED_SILICONFLOW_IMAGE_MODEL;
     const modelCandidates = [resolvedModel];
 
     const isModelNotFound = (raw) => {
@@ -390,7 +341,6 @@ const callSiliconFlowImageGenerate = async ({
 
     const buildBody = (model) => {
       const m = String(model || '').trim();
-      const isQwenEdit = /(^|\/)qwen-image-edit/i.test(m);
       const body = {
         model: m,
         batch_size: 1,
@@ -401,25 +351,20 @@ const callSiliconFlowImageGenerate = async ({
         seed:
           typeof params?.seed === 'number' && Number.isFinite(params.seed) ? Math.trunc(params.seed) : undefined
       };
-      if (!isQwenEdit) {
-        body.image_size = String(params?.imageSize || '').trim() || '1024x1024';
-        body.guidance_scale =
-          typeof params?.guidanceScale === 'number' && Number.isFinite(params.guidanceScale)
-            ? params.guidanceScale
-            : undefined;
-      }
-
-      if (imgs[0]) body[SILICONFLOW_IMAGE_INPUT_FIELD] = imgs[0];
-      if (imgs[1]) body.image2 = imgs[1];
-      if (imgs[2]) body.image3 = imgs[2];
+      body.image_size = String(params?.imageSize || '').trim() || '1024x1024';
+      body.guidance_scale =
+        typeof params?.guidanceScale === 'number' && Number.isFinite(params.guidanceScale)
+          ? params.guidanceScale
+          : undefined;
+      if (imgs[0]) body.image = imgs[0];
       return body;
     };
 
     let lastErr = null;
     for (const modelName of modelCandidates) {
       const body = buildBody(modelName);
-      const response = await fetchWithTimeout(
-        SILICONFLOW_IMAGES_GENERATIONS_URL,
+      const response = await fetcher(
+        imageUrl,
         {
           method: 'POST',
           headers,
@@ -450,14 +395,6 @@ const callSiliconFlowImageGenerate = async ({
         lastErr = err;
         if (
           response.status === 400 &&
-          !imgs.length &&
-          /image-edit/i.test(String(modelName || '')) &&
-          modelName !== modelCandidates[modelCandidates.length - 1]
-        ) {
-          continue;
-        }
-        if (
-          response.status === 400 &&
           isModelNotFound(raw) &&
           modelName !== modelCandidates[modelCandidates.length - 1]
         ) {
@@ -474,8 +411,7 @@ const callSiliconFlowImageGenerate = async ({
   }, signal);
 };
 
-const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFallback }) => {
-  const canGemini = false;
+const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model }) => {
   const canSiliconflow = !!SILICONFLOW_API_KEY;
   const sfTimeoutMs = Math.max(
     Math.max(1000, Number(timeoutMs || 0) || 0),
@@ -508,26 +444,6 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFa
     return { text, provider: 'siliconflow', usage, model: modelUsed, usedUrl };
   };
 
-  const runGemini = async () => {
-    const { data, usedUrl } = await callGeminiGenerate({ contents, timeoutMs });
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const usageRaw = data?.usageMetadata;
-    const usage =
-      usageRaw && typeof usageRaw === 'object'
-        ? {
-          promptTokens: Number(usageRaw.promptTokenCount ?? 0) || 0,
-          completionTokens: Number(usageRaw.candidatesTokenCount ?? 0) || 0,
-          totalTokens: Number(usageRaw.totalTokenCount ?? 0) || 0
-        }
-        : null;
-    const model = (() => {
-      const u = String(usedUrl || '').trim();
-      const m = u.match(/\/models\/([^:/?]+)(?::|\?|$)/i);
-      return m ? String(m[1] || '').trim() : 'gemini';
-    })();
-    return { text, provider: 'gemini', usage, model, usedUrl };
-  };
-
   const isRetryableSf = (e) => {
     const failures = Array.isArray(e?.failures) ? e.failures : [];
     return failures.some((f) => {
@@ -537,7 +453,7 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFa
   };
 
   return await textGenerateLimiter.run(async () => {
-    if (activeTextProvider === 'siliconflow' && canSiliconflow) {
+    if (canSiliconflow) {
       try {
         return await runSiliconflow();
       } catch (e0) {
@@ -558,28 +474,15 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model, noFa
             err = e2;
           }
         }
-        if (canGemini && !noFallback) return await runGemini();
         throw err;
       }
     }
-
-    if (canGemini) {
-      try {
-        return await runGemini();
-      } catch (e) {
-        if (canSiliconflow) return await runSiliconflow();
-        throw e;
-      }
-    }
-
-    if (canSiliconflow) return await runSiliconflow();
 
     return { text: '', provider: 'offline', usage: null, model: 'offline', usedUrl: '' };
   });
 };
 
 module.exports = {
-  callGeminiGenerate,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate,
   callTextGenerate,

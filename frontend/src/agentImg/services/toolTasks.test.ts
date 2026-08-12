@@ -171,7 +171,7 @@ describe('unified tool task client', () => {
         name: { zh: '标准生成', en: 'Standard generation' },
         available: true,
         capabilities: ['text-to-image', 'image-reference'],
-        maxReferences: 3,
+        maxReferences: 1,
         aspectRatios: ['1:1', '4:5'],
         supportsSeed: true,
         provider: 'must-not-be-consumed'
@@ -183,7 +183,7 @@ describe('unified tool task client', () => {
       name: { zh: '标准生成', en: 'Standard generation' },
       available: true,
       capabilities: ['text-to-image', 'image-reference'],
-      maxReferences: 3,
+      maxReferences: 1,
       aspectRatios: ['1:1', '4:5'],
       supportsSeed: true
     }]);

@@ -58,7 +58,7 @@ DEV 测试环境的隔离边界、启动方式和健康检查见
 5. `backend/routes/auth.js` - 邮箱验证码、密码登录、注册、密码重置、Google 登录。
 6. `backend/routes/admin.js` - 控制台管理接口。
 7. `backend/routes/usage.js` - 行为事件和 usage ledger。
-8. `backend/lib/ai-providers.js` - Gemini 和 SiliconFlow provider 调用。
+8. `backend/lib/ai-providers.js` - SiliconFlow 的 Qwen3-8B 文本与 Kolors 图片调用。
 9. `backend/services/billing-service.js` - PostgreSQL 报价、预占、结算、退款和幂等任务事务。
 10. `backend/routes/tool-tasks.js` - 统一 catalog、quote、task、asset 与 editor transfer API。
 11. `backend/migrations/` - PostgreSQL 16 数据结构和服务端 SKU/套餐种子。
@@ -92,7 +92,7 @@ DEV 测试环境的隔离边界、启动方式和健康检查见
 | pnpm | 是 | 固定 pnpm 10；全仓只有根目录一个 lockfile。 |
 | PostgreSQL | 付费/账户生产必装 | PostgreSQL 16；本地只测免费工具时可不配置，此时付费接口 fail-closed。 |
 | Git | 是 | 用于协作、提交和部署。 |
-| Gemini 或 SiliconFlow API Key | 线上需要 | 本地没有 key 时，AI provider 相关接口返回 offline 或配置错误属于正常现象。 |
+| SiliconFlow API Key | 线上需要 | 本地没有 key 时，AI provider 相关接口返回 offline 或配置错误属于正常现象。 |
 | Brevo API + Turnstile | 生产邮箱验证码需要 | 生产邮件走 HTTPS 443；SMTP 只允许本地兼容，debug 只允许非生产回环/白名单。 |
 | Python 3.12 + Cua SDK | Agent Worker 需要 | 只安装在独立 Worker：`python3 -m pip install -r backend/agent_runtime/requirements.txt`。 |
 
@@ -379,7 +379,7 @@ Artigen 用户端核心目录。
                                 │
 ┌───────────────────────────────▼────────────────────────────┐
 │ Layer 1 - Provider 与运行期存储层                           │
-│ Gemini / SiliconFlow / SMTP / Afdian / MEMORY_DIR / files   │
+│ SiliconFlow / SMTP / Afdian / MEMORY_DIR / files            │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -471,7 +471,7 @@ Vue 页面
   -> POST /api/generate
   -> backend/routes/system.js
   -> callTextGenerate()
-  -> Gemini 或 SiliconFlow
+  -> SiliconFlow Qwen/Qwen3-8B
   -> 返回文本或结构化 prompt
   -> 前端继续进入图片生成或展示结果
 ```
@@ -767,19 +767,9 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 
 | 变量 | 说明 |
 | --- | --- |
-| `TEXT_PROVIDER` | 文本 provider，支持 `gemini`、`siliconflow` 和 offline fallback。 |
 | `REQUIRE_LLM_PROVIDER` | 为 `1` 时，没有 provider 会返回配置错误。 |
-| `GEMINI_API_KEY` | Gemini API key。 |
-| `GEMINI_API_BASE` | Gemini API base。 |
-| `GEMINI_GENERATE_URL` | 单个 Gemini generateContent URL。 |
-| `GEMINI_GENERATE_URLS` | 多个 Gemini generateContent URL，逗号分隔。 |
-| `GEMINI_TIMEOUT_MS` | Gemini 超时。 |
 | `SILICONFLOW_API_KEY` / `SILICONFLOW_TOKEN` / `SILICONFLOW_KEY` | SiliconFlow API key。 |
 | `SILICONFLOW_API_BASE` | SiliconFlow API base。 |
-| `SILICONFLOW_MODEL` | 文本模型。 |
-| `SILICONFLOW_IMAGE_MODEL` | 图生图模型。 |
-| `SILICONFLOW_TXT2IMG_MODEL` | 文生图图片模型。 |
-| `SILICONFLOW_IMAGE_INPUT_FIELD` | 图片输入字段名。 |
 | `SILICONFLOW_TIMEOUT_MS` | 图片接口超时。 |
 | `SILICONFLOW_REACTION_TIMEOUT_MS` | 文本接口反应模式超时。 |
 | `SILICONFLOW_MIN_INTERVAL_MS` | 请求最小间隔。 |
@@ -792,9 +782,6 @@ AI 配料表属于 Artigen 当前主链路，不能当作旧独立 `Ingredient` 
 | `AI_DESIGN_TASK_V2_ROLLOUT_PERCENT` | 主生图稳定用户分桶比例，取值 `0`–`100`；同一数据库用户始终落在同一 cohort。 |
 | `AI_DESIGN_TASK_V2_INTERNAL_USERS` | 逗号分隔的数据库用户 UUID；全局开关开启时，这些内部用户可越过百分比灰度。 |
 | `TASK_PAYLOAD_ENCRYPTION_KEY` | 主生图 prompt/产品资料及配料整理原文的 AES-256-GCM 密钥；接受 32 字节原文、64 位 hex，或 `hex:`/`base64:` 编码。任一对应付费任务开启但密钥缺失时 fail-closed。 |
-| `AI_DESIGN_SILICONFLOW_TEXT_MODEL` | 兼容变量；生产模型 ID 由服务端 allowlist 固定，不由公共模型接口返回。 |
-| `AI_DESIGN_SILICONFLOW_EDIT_MODEL` | 兼容变量；`product-reference-v1` 使用服务端固定参考图编辑模型。 |
-| `AI_DESIGN_SILICONFLOW_DIRECTIONS_MODEL` | 四方向分析的服务端文本模型 ID。 |
 | `AI_IMAGE_TIMEOUT_MS` / `AI_DIRECTIONS_TIMEOUT_MS` | 主生图与方向分析 Provider 超时。 |
 | `AI_GENERATION_CONTRACT_MOCK` | 仅非生产契约测试可设为 `1`；生产始终使用真实 Provider 配置。 |
 | `AI_DESIGN_GENERATE_COST_MINOR` / `AI_DESIGN_REFERENCE_COST_MINOR` / `AI_DESIGN_DIRECTIONS_COST_MINOR` | 可选 Provider 单次成本最小货币单位，仅用于脱敏运营聚合与毛利保护。 |
@@ -925,7 +912,7 @@ Agent 的独立验证器会对输入和输出执行 ClamAV 扫描；PDF 必须�
 
 图片二进制不写入数据库。`ASSET_STORAGE_DRIVER=file` 默认使用 `MEMORY_DIR/assets-v2`，只用于本地开发和单实例契约测试；生产付费生图必须配置 `ASSET_STORAGE_DRIVER=s3`/`r2` 及共享 endpoint、bucket 和 credentials。数据库只保存 opaque URI、magic-byte 校验后的 MIME、大小、尺寸和保留期。对象写入后会重新读取并校验大小与 SHA-256，只有验证通过的生成结果才能结算。过期资产通过 PostgreSQL `SKIP LOCKED` 租约回收；同内容重传、任务/transfer 引用和多实例并发不会绕过二次状态校验。file 适配器还会以游标扫描 inventory，在宽限期后清理“对象写成功但数据库事务未提交”的孤儿文件。
 
-当前统一云端工具执行器开放“AI 老照片增强/上色”、AI 职业形象、AI 场景背景、配料原文整理，以及 `ai-design.generate`/`ai-design.directions`。所有价格只来自服务端 catalog、profile SKU 和 quote：职业形象 5 点、AI 场景背景 5 点、配料整理 10 点、标准主生图 10 点、商品参考生成 60 点、方向分析 5 点；前端不硬编码费用。职业形象和背景请求只提交服务端枚举与主体变换参数，不能提交 prompt，prompt 由服务端构造；配料任务可以提交用户原文，但服务端会在结算前执行逐项来源追溯，新增事实即失败退款。所有 operation 的客户端都不能传 Provider、内部模型、steps、guidance 或价格。其余尚未接入可信 Provider 或 LibreOffice 能力的收费 operation 会明确返回 `TOOL_OPERATION_UNAVAILABLE`/`CONVERTER_UNAVAILABLE`，不会排队、扣费或从本地失败静默降级。Word 保真转换必须由用户勾选上传同意，服务端也会再次校验 consent 与 DOCX 容器。
+当前统一云端 AI 执行器开放标准文生图、单参考图商品生成、AI 老照片增强/上色、AI 职业形象、AI 场景背景、配料原文整理和 `ai-design.directions`。严格模型白名单只允许 `Qwen/Qwen3-8B` 做所有文本理解/拆解/结构化输出/工具决策，只允许 `Kwai-Kolors/Kolors` 做所有图片生成。Kolors 的官方通用 `image` 字段只接收本产品的一张输入图，因此多参考图会在创建或 Provider 边界前拒绝。所有价格只来自服务端 catalog、profile SKU 和 quote，客户端不能传 Provider、内部模型、steps、guidance 或价格。
 
 Word 保真转换在读取 Base64 JSON 前获取单实例并发槽，并对 ZIP central directory、本地文件头、CRC、OOXML 必需部件、entry 数量、单项/累计未压缩大小及压缩比执行预检。每次 LibreOffice 使用独立 profile；请求断开或超时会终止整个 POSIX 进程组，Windows 使用 `taskkill /T /F` fallback。Node `child_process` 没有跨平台可移植的 CPU/内存 rlimit，因此生产部署还必须在 Render/container 层配置 CPU、内存和 PID 上限，不能只依赖应用内并发闸门。
 
@@ -1146,13 +1133,13 @@ curl -sS http://localhost:8080/api/auth/google/config
 
 ### 1. 本地 AI 接口为什么不通
 
-Gemini 和 SiliconFlow 的 key 很可能只配在部署平台。先看：
+SiliconFlow 的 key 很可能只配在部署平台。先看：
 
 ```bash
 curl -sS http://localhost:8080/api/health
 ```
 
-如果 `hasApiKey` 或 `siliconflow.hasApiKey` 是 `false`，本地生成失败是正常的。
+如果 `siliconflow.hasApiKey` 是 `false`，本地生成失败是正常的。
 
 ### 2. 邮箱验证码发不出去
 
@@ -1231,7 +1218,7 @@ README 负责回答“这是什么、怎么跑、从哪里看”。正式 Handof
 | --- | --- |
 | Artigen | 当前产品名，也是本仓库保留的唯一业务边界。 |
 | AI 生图 | `/artigen/ai` 的主工作台，包含 prompt、深度分析和生成链路。 |
-| 图生图 | `/api/img2img`，用于参考图生成、证件照、老照片、背景、图片编辑等。 |
+| 图生图 | `/api/img2img` 是单参考图兼容入口；服务端统一用 Kolors，超过 1 张输入图会在 Provider 调用前拒绝。 |
 | 格式工厂 | `/artigen/tools`，主要是浏览器本地图片处理工具集合。 |
 | AI 配料表 | Artigen 工具链的一部分，由 `IngredientLabel` 页面和 `ingredient_label` 后端 purpose 支撑。 |
 | 点数 | 用户生成和使用 AI 功能消耗的虚拟额度。 |

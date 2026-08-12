@@ -49,7 +49,7 @@ export function useAgentImgLocale() {
         generateThisDirection: '生成',
         welcomeTitle: '欢迎使用 Artigen AI 设计。',
         welcomeSub:
-          '选择 10 点标准文生图，或用商品、风格、场景参考图进行 60 点商品参考生成；确认报价后才会创建任务。',
+          '选择 10 点标准文生图，或用 1 张商品参考图进行 60 点商品参考生成；确认报价后才会创建任务。',
         memory: '历史记录',
         noHistory: '暂无历史记录',
         resultTitle: '生成结果',
@@ -77,7 +77,7 @@ export function useAgentImgLocale() {
         modelComingSoon: '暂未接入',
         costTip: '预计扣费：{n} 点/次',
         deepThinkToggle: '深度思考',
-        deepThinkDisabledTip: '图生图暂不支持深度思考',
+        deepThinkDisabledTip: '单参考图模式暂不支持深度思考',
         productSpecial: '产品专项',
         sendHint: 'Ctrl + Enter 发送',
         inputPlaceholder: '描述你想要的产品图，比如：“一瓶精华液放在冰块上，背景是阳光海滩”...',
@@ -88,7 +88,7 @@ export function useAgentImgLocale() {
           '先补齐产品档案并描述画面。快速生成直接出图；深度思考会先单独生成 4 个视觉方向，选择后再次确认生成。每一步都独立报价。',
         guideKeywords: [
           '4 个视觉方向',
-          '商品语义参考',
+          '商品参考',
           '标准生成',
           '电商产品工作流',
           '失败自动退款'
@@ -96,15 +96,15 @@ export function useAgentImgLocale() {
         guideFaqs: [
           {
             q: '深度思考有什么用？',
-            a: '深度思考会先生成 4 个可编辑视觉方向，这一步单独报价 5 点；选择方向后，再按标准生成 10 点或商品参考生成 60 点确认出图。'
+            a: '深度思考会先生成 4 个可编辑视觉方向，这一步单独报价 5 点；选择方向后，再按标准生成 10 点或单参考图商品生成 60 点确认出图。'
           },
           {
             q: '从哪里开始更快？',
-            a: '没有素材时用 10 点标准文生图；已有商品图时用 60 点商品参考生成，并按商品、风格、场景顺序上传。'
+            a: '没有素材时用 10 点标准文生图；已有商品图时用 60 点单参考图生成。'
           },
           {
             q: '怎么提高一致性与可控性？',
-            a: '把商品图固定为第一张参考，再按需加入风格和场景参考；结果可以保存为项目分支并进入 Editor V2。'
+            a: '把商品图作为唯一参考图，并在产品档案和提示词中固定主体、镜头、色彩与材质；结果可以保存为项目分支并进入 Editor V2。'
           },
           {
             q: '我们的优势是什么？',
@@ -112,7 +112,7 @@ export function useAgentImgLocale() {
           },
           {
             q: '文件会上传到服务器吗？',
-            a: '15 个工具默认在浏览器本地处理；AI 设计只会在你确认报价后，将必要的提示词和参考素材发送到模型服务。'
+            a: '15 个工具默认在浏览器本地处理；AI 设计只会在你确认报价后，将必要的提示词和最多 1 张参考图发送到图片模型。'
           }
         ]
       };
@@ -158,7 +158,7 @@ export function useAgentImgLocale() {
       generateThisDirection: 'Generate',
       welcomeTitle: 'Welcome to Artigen AI Design.',
       welcomeSub:
-        'Choose 10-credit standard text-to-image or 60-credit product-reference generation with product, style, and scene guidance. Nothing starts before quote confirmation.',
+        'Choose 10-credit standard text-to-image or 60-credit generation with one product reference. Nothing starts before quote confirmation.',
       memory: 'History',
       noHistory: 'No history yet',
       resultTitle: 'Result',
@@ -186,7 +186,7 @@ export function useAgentImgLocale() {
       modelComingSoon: 'Coming soon',
       costTip: 'Est. cost: {n} credits/run',
       deepThinkToggle: 'Deep Thinking',
-      deepThinkDisabledTip: 'Deep Thinking is disabled for image-to-image',
+      deepThinkDisabledTip: 'Deep Thinking is disabled for single-reference generation',
       productSpecial: 'Product',
       sendHint: 'Ctrl + Enter to send',
       inputPlaceholder:
@@ -206,15 +206,15 @@ export function useAgentImgLocale() {
       guideFaqs: [
         {
           q: 'What does Deep Thinking do?',
-          a: 'It creates four editable visual directions as a separately quoted 5-credit task. After choosing one, confirm either a 10-credit standard generation or a 60-credit product-reference generation.'
+          a: 'It creates four editable visual directions as a separately quoted 5-credit task. Then confirm either a 10-credit standard generation or a 60-credit single-reference generation.'
         },
         {
           q: 'Where should I start for faster results?',
-          a: 'Use 10-credit standard generation without assets, or 60-credit product-reference generation when you have a product image. Add style and scene guidance only when useful.'
+          a: 'Use 10-credit standard generation without assets, or 60-credit generation when you have one product image.'
         },
         {
           q: 'How to improve consistency and control?',
-          a: 'Keep the product image in the first semantic slot, then optionally add style and scene references. Save good results as project branches and refine them in Editor V2.'
+          a: 'Use the product as the single reference, keep product facts explicit, and lock camera, palette, and materials in the prompt. Save good results as project branches and refine them in Editor V2.'
         },
         {
           q: 'What makes it different?',
@@ -222,7 +222,7 @@ export function useAgentImgLocale() {
         },
         {
           q: 'Do files get uploaded to a server?',
-          a: 'The 15 utility tools run locally by default. AI generation sends only the confirmed prompt and required reference assets to the model service after quote confirmation.'
+          a: 'The 15 utility tools run locally by default. AI generation sends the confirmed prompt and at most one reference image only after quote confirmation.'
         }
       ]
     };

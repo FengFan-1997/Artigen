@@ -1,7 +1,13 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { callSiliconFlowChat } = require('../lib/ai-providers');
-const { GENERATION_DIRECTIONS_MODEL } = require('../services/generation-profiles');
+const {
+  callSiliconFlowChat,
+  callSiliconFlowImageGenerate
+} = require('../lib/ai-providers');
+const {
+  GENERATION_DIRECTIONS_MODEL,
+  GENERATION_IMAGE_MODEL
+} = require('../services/generation-profiles');
 
 test('SiliconFlow chat uses the supported endpoint and serializes non-thinking mode', async () => {
   let request;
@@ -32,4 +38,50 @@ test('SiliconFlow chat uses the supported endpoint and serializes non-thinking m
     enable_thinking: false
   });
   assert.equal(result.text, '{"ok":true}');
+});
+
+test('Kolors handles text-to-image and exactly one generic image input', async () => {
+  const requests = [];
+  const fetcher = async (url, options, timeoutMs) => {
+    requests.push({ url, options, timeoutMs });
+    return {
+      ok: true,
+      text: async () => JSON.stringify({ images: [{ url: 'https://assets.example/output.png' }] })
+    };
+  };
+  const common = {
+    prompt: 'A controlled product scene',
+    params: { imageSize: '960x1200', seed: 7 },
+    timeoutMs: 120_000,
+    model: GENERATION_IMAGE_MODEL,
+    credential: 'test-key',
+    fetcher
+  };
+
+  await callSiliconFlowImageGenerate({ ...common, images: [] });
+  await callSiliconFlowImageGenerate({
+    ...common,
+    images: [{ mimeType: 'image/png', dataBase64: 'YWJj' }]
+  });
+
+  const textBody = JSON.parse(requests[0].options.body);
+  const imageBody = JSON.parse(requests[1].options.body);
+  assert.equal(textBody.model, GENERATION_IMAGE_MODEL);
+  assert.equal(textBody.image, undefined);
+  assert.equal(imageBody.model, GENERATION_IMAGE_MODEL);
+  assert.equal(imageBody.image, 'data:image/png;base64,YWJj');
+  assert.equal(imageBody.image2, undefined);
+  assert.equal(imageBody.image3, undefined);
+  await assert.rejects(callSiliconFlowImageGenerate({
+    ...common,
+    images: [
+      { mimeType: 'image/png', dataBase64: 'YWJj' },
+      { mimeType: 'image/png', dataBase64: 'ZGVm' }
+    ]
+  }), { code: 'REFERENCE_IMAGES_NOT_SUPPORTED' });
+  await assert.rejects(callSiliconFlowImageGenerate({
+    ...common,
+    images: ['not-a-valid-image']
+  }), { code: 'INVALID_REFERENCE_IMAGE' });
+  assert.equal(requests.length, 2);
 });

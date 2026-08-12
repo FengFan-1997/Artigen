@@ -95,10 +95,10 @@ export function useAgentImgModels(
         badge: reference ? 'REFERENCE · 60' : 'STANDARD · 10',
         hint: currentLang.value === 'zh'
           ? reference
-            ? '使用 1–3 张商品、风格或场景参考图'
+            ? '使用 1 张商品参考图生成'
             : '纯文生图，不上传参考图'
           : reference
-            ? 'Use 1–3 product, style, or scene references'
+            ? 'Generate from one product reference image'
             : 'Text-to-image without references',
         requiresPro: false,
         available: profile.available

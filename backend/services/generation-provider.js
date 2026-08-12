@@ -2,7 +2,6 @@ const zlib = require('zlib');
 const { ApiError } = require('../lib/api-error');
 const {
   GENERATION_DIRECTIONS_MODEL,
-  GENERATION_EDIT_MODEL,
   GENERATION_IMAGE_MODEL
 } = require('./generation-profiles');
 
@@ -221,7 +220,6 @@ const createSiliconFlowGenerationProvider = ({
         );
         const requiredModels = [
           GENERATION_IMAGE_MODEL,
-          GENERATION_EDIT_MODEL,
           GENERATION_DIRECTIONS_MODEL
         ];
         if (!modelIds.size || requiredModels.some((model) => !modelIds.has(model))) {
@@ -260,7 +258,7 @@ const createSiliconFlowGenerationProvider = ({
         throw providerError('REFERENCE_IMAGES_NOT_SUPPORTED', 400, false);
       }
       const model = references.length ? profile?.internalEditModel : profile?.internalTextModel;
-      if (![GENERATION_IMAGE_MODEL, GENERATION_EDIT_MODEL].includes(model)) {
+      if (model !== GENERATION_IMAGE_MODEL) {
         throw providerError('MODEL_PROFILE_UNAVAILABLE', 503, false);
       }
       try {

@@ -75,8 +75,8 @@ const FUNCTION_TOOLS = Object.freeze([
     type: 'function',
     name: 'generate_image',
     description: [
-      'Generate a bitmap with Artigen internal image generation.',
-      'Optionally use up to three user-provided input images with unique product, style, or scene roles.',
+      'Generate a bitmap from text, optionally guided by one user-provided input image.',
+      'The optional image role must be product, style, or scene.',
       'The result is written into the isolated workspace; no GPU model runs in the sandbox.'
     ].join(' '),
     strict: true,
@@ -95,7 +95,7 @@ const FUNCTION_TOOLS = Object.freeze([
         },
         references: {
           type: 'array',
-          maxItems: 3,
+          maxItems: 1,
           items: {
             type: 'object',
             additionalProperties: false,
@@ -104,10 +104,7 @@ const FUNCTION_TOOLS = Object.freeze([
                 type: 'string',
                 pattern: '^/tmp/artigen-workspace/inputs/[0-9a-fA-F-]{36}\\.(png|jpg|jpeg|webp)$'
               },
-              role: {
-                type: 'string',
-                enum: ['product', 'style', 'scene']
-              }
+              role: { type: 'string', enum: ['product', 'style', 'scene'] }
             },
             required: ['path', 'role']
           }
@@ -183,6 +180,10 @@ const FUNCTION_TOOLS = Object.freeze([
         mimeType: { type: 'string', minLength: 3, maxLength: 160 },
         sources: {
           type: 'array',
+          description: [
+            'Use an empty array unless this run actually observed each URL through a browser or connector.',
+            'Never cite the model provider, product homepage, or an inferred URL as an artifact source.'
+          ].join(' '),
           maxItems: 100,
           items: {
             type: 'object',
@@ -272,10 +273,13 @@ preview or PDF. Websites require source files, a ZIP, and a buildable static pre
 website index.html self-contained for preview: inline its CSS and JavaScript and embed local images
 as data URLs. The ZIP must still contain the editable source tree.
 Image design deliverables require generate_image followed by declare_artifact with role=image and the
-exact returned path and MIME type. Image references may use only the exact user-provided inputs paths
-listed in the objective context, with at most one unique product, style, and scene role each.
+exact returned path and MIME type. At most one image reference may be used, and it must be an exact
+user-provided input path listed in the objective context with product, style, or scene role.
 Use declare_artifact for every final file. Do not announce completion unless every requested artifact
 has been declared; Artigen's independent verifier, not you, decides success.
+Artifact sources must be an empty array when the run did not actually observe a supporting HTTPS URL
+through an allowed browser or connector tool. Never invent a source URL, and never cite the model
+provider, Artigen, or a product homepage merely because an image was generated.
 
 Consequential actions require request_user_approval immediately before the action. CAPTCHA, passwords,
 OTP, security-warning bypass, and final password changes require takeover and must never be attempted.

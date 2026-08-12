@@ -514,11 +514,6 @@ Render
 - `TASK_WORKER_ENABLED`
 - `TASK_PAYLOAD_ENCRYPTION_KEY`
 - `SILICONFLOW_API_KEY`
-- `AI_DESIGN_SILICONFLOW_TEXT_MODEL`
-- `AI_DESIGN_SILICONFLOW_DIRECTIONS_MODEL`
-- `AI_DESIGN_SILICONFLOW_EDIT_MODEL`
-- `SILICONFLOW_MODEL`
-- `SILICONFLOW_IMAGE_MODEL`
 - `AI_OUTPUT_ALLOWED_HOSTS`
 
 **对象存储**
@@ -683,8 +678,8 @@ security find-generic-password -s '服务名' -w
 3. Render Free 会休眠，不是商业 SLA。
 4. `render.yaml` 是安全关闭功能的模板；Render Dashboard 当前有生产覆盖值。
    不要在不了解差异时用 Blueprint 覆盖 Dashboard 环境。
-5. `render.yaml` 中仍有旧模型默认值，而后端生产代码已经把生图和方向模型锁定为
-   `Kwai-Kolors/Kolors` 与 `Qwen/Qwen3-8B`。后续应同步清理模板，避免接手者误解。
+5. 模型 ID 固定在服务端 allowlist：所有图片任务使用 `Kwai-Kolors/Kolors`，所有文字任务使用
+   `Qwen/Qwen3-8B`；Render 环境不应再覆盖模型 ID。
 6. 生产来源已经切换到 `main`；后续仍必须从经过 DEV 和 Release gate 验证的不可变
    `main` SHA 人工发布，并通过 `/api/meta` 和平台 deployment 核对真实线上版本。
 

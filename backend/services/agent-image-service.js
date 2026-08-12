@@ -11,6 +11,7 @@ const {
   normalizeGeneratedImageAspectRatio
 } = require('./ai-design-service');
 const {
+  GENERATION_IMAGE_MODEL,
   PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
   assertGenerationProfile
@@ -33,10 +34,9 @@ const configuredImageCredits = (value, fallback) => {
 
 const normalizeAgentImageReferences = (value) => {
   if (value === undefined || value === null) return [];
-  if (!Array.isArray(value) || value.length > 3) {
+  if (!Array.isArray(value) || value.length > 1) {
     throw new ApiError(400, 'AGENT_IMAGE_REFERENCES_INVALID');
   }
-  const roles = new Set();
   const paths = new Set();
   return value.map((reference) => {
     const path = String(reference?.path || '').trim();
@@ -46,7 +46,7 @@ const normalizeAgentImageReferences = (value) => {
     if (!SAFE_REFERENCE_PATH.test(path)) {
       throw new ApiError(403, 'AGENT_IMAGE_REFERENCE_PATH_FORBIDDEN');
     }
-    if (!REFERENCE_ROLES.has(role) || roles.has(role)) {
+    if (!REFERENCE_ROLES.has(role)) {
       throw new ApiError(400, 'AGENT_IMAGE_REFERENCE_ROLE_INVALID');
     }
     if (paths.has(path)) {
@@ -58,7 +58,6 @@ const normalizeAgentImageReferences = (value) => {
     if (!Buffer.isBuffer(buffer) || !buffer.length || buffer.length > MAX_REFERENCE_BYTES) {
       throw new ApiError(buffer?.length ? 413 : 422, 'AGENT_IMAGE_REFERENCE_INVALID');
     }
-    roles.add(role);
     paths.add(path);
     return { path, role, mimeType, buffer };
   });
@@ -66,13 +65,10 @@ const normalizeAgentImageReferences = (value) => {
 
 const referencePrompt = (prompt, references) => {
   if (!references.length) return prompt;
-  const roles = references.map((reference, index) => (
-    `Reference image ${index + 1} has the ${reference.role} role.`
-  ));
   return [
     prompt,
-    ...roles,
-    'Use each reference only for its declared role and do not invent product facts or label text.'
+    `The single reference image has the ${references[0].role} role.`,
+    'Use it only for its declared role and do not invent product facts or label text.'
   ].join('\n');
 };
 
@@ -112,6 +108,9 @@ const createAgentImageService = ({
         `data:${reference.mimeType};base64,${reference.buffer.toString('base64')}`
       ))
     });
+    if (String(generated?.modelUsed || '') !== GENERATION_IMAGE_MODEL) {
+      throw new ApiError(502, 'AGENT_IMAGE_MODEL_INVALID');
+    }
     const reference = extractProviderImageRefs(generated)[0];
     if (!reference) throw new ApiError(502, 'AGENT_IMAGE_OUTPUT_INVALID');
     const image = await download({ reference, env });
@@ -130,6 +129,7 @@ const createAgentImageService = ({
       buffer: normalized.buffer,
       mimeType: normalized.mimeType,
       filename: normalizedFilename.replace(/\.(?:png|jpe?g|webp)$/i, extension),
+      model: generated.modelUsed,
       costCredits: normalizedReferences.length
         ? configuredImageCredits(env.AGENT_IMAGE_REFERENCE_CREDITS, 12)
         : configuredImageCredits(env.AGENT_IMAGE_CREDITS, 8),
