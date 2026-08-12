@@ -770,6 +770,7 @@ const createAgentWorkerService = ({
                 path: outputPath,
                 mimeType: generated.mimeType,
                 byteSize: generated.buffer.length,
+                model: generated.model,
                 costCredits: generated.costCredits
               }
             });
@@ -777,6 +778,7 @@ const createAgentWorkerService = ({
             return {
               path: outputPath,
               mimeType: generated.mimeType,
+              model: generated.model,
               costCredits: generated.costCredits
             };
           },

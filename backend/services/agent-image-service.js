@@ -11,6 +11,7 @@ const {
   normalizeGeneratedImageAspectRatio
 } = require('./ai-design-service');
 const {
+  GENERATION_IMAGE_MODEL,
   PRODUCT_REFERENCE_PROFILE_ID,
   STANDARD_PROFILE_ID,
   assertGenerationProfile
@@ -107,6 +108,9 @@ const createAgentImageService = ({
         `data:${reference.mimeType};base64,${reference.buffer.toString('base64')}`
       ))
     });
+    if (String(generated?.modelUsed || '') !== GENERATION_IMAGE_MODEL) {
+      throw new ApiError(502, 'AGENT_IMAGE_MODEL_INVALID');
+    }
     const reference = extractProviderImageRefs(generated)[0];
     if (!reference) throw new ApiError(502, 'AGENT_IMAGE_OUTPUT_INVALID');
     const image = await download({ reference, env });
@@ -125,6 +129,7 @@ const createAgentImageService = ({
       buffer: normalized.buffer,
       mimeType: normalized.mimeType,
       filename: normalizedFilename.replace(/\.(?:png|jpe?g|webp)$/i, extension),
+      model: generated.modelUsed,
       costCredits: normalizedReferences.length
         ? configuredImageCredits(env.AGENT_IMAGE_REFERENCE_CREDITS, 12)
         : configuredImageCredits(env.AGENT_IMAGE_CREDITS, 8),
