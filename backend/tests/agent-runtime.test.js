@@ -2277,7 +2277,10 @@ test('Agent image generation uses Kolors for text or one staged reference with 8
     provider: {
       generateImage: async (input) => {
         calls.push(input);
-        return { images: [{ url: 'https://cdn.example.test/generated.png' }] };
+        return {
+          images: [{ url: 'https://cdn.example.test/generated.png' }],
+          modelUsed: 'Kwai-Kolors/Kolors'
+        };
       }
     },
     download: async () => ({
@@ -2294,6 +2297,7 @@ test('Agent image generation uses Kolors for text or one staged reference with 8
   assert.equal(calls[0].profile.id, 'standard-v1');
   assert.deepEqual(calls[0].images, []);
   assert.equal(textResult.costCredits, 8);
+  assert.equal(textResult.model, 'Kwai-Kolors/Kolors');
 
   const referenceResult = await service.generate({
     prompt: 'Place the product in a quiet studio scene',
@@ -2306,6 +2310,18 @@ test('Agent image generation uses Kolors for text or one staged reference with 8
   assert.equal(calls[1].images.length, 1);
   assert.match(calls[1].images[0], /^data:image\/png;base64,/);
   assert.equal(referenceResult.costCredits, 12);
+  assert.equal(referenceResult.model, 'Kwai-Kolors/Kolors');
+  await assert.rejects(createAgentImageService({
+    provider: {
+      generateImage: async () => ({
+        images: [{ url: 'https://cdn.example.test/generated.png' }],
+        modelUsed: 'Qwen/Qwen-Image-Edit-2509'
+      })
+    }
+  }).generate({
+    prompt: 'Reject an unapproved image model',
+    filename: 'rejected.png'
+  }), { code: 'AGENT_IMAGE_MODEL_INVALID' });
 });
 
 test('coordinate-mutating computer actions require takeover before execution', async () => {
