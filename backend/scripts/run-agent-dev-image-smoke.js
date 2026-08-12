@@ -161,6 +161,7 @@ const objectiveFor = ({ kind, inputAssetId }) => kind === 'reference'
       '保持主体身份和关键外观，置于克制的暖灰工作室场景，留出清晰排版空间。',
       '文件名必须为 artigen-dev-kolors-reference.png。',
       '不要用 Shell 或其他方式伪造图片；生成后检查文件并以 role=image、mimeType=image/png 声明。',
+      '本任务没有观察任何网页，声明交付物时 sources 必须是空数组，不得填写模型、供应商或产品官网。',
       '不需要浏览器，不要填写表单，不要登录，不要改变任何外部状态。'
     ].join('')
   : [
@@ -168,6 +169,7 @@ const objectiveFor = ({ kind, inputAssetId }) => kind === 'reference'
       '具有高端编辑感、清晰视觉焦点和充足留白，不要出现文字、水印或界面截图。',
       '必须调用 generate_image 一次且不使用参考图，文件名必须为 artigen-dev-kolors-text.png。',
       '不要用 Shell 或其他方式伪造图片；生成后检查文件并以 role=image、mimeType=image/png 声明。',
+      '本任务没有观察任何网页，声明交付物时 sources 必须是空数组，不得填写模型、供应商或产品官网。',
       '不需要浏览器，不要填写表单，不要登录，不要改变任何外部状态。'
     ].join('');
 
