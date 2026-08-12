@@ -248,6 +248,13 @@ const checkDatabase = async (pool) => {
          to_regclass('public.agent_trial_usage') IS NOT NULL AS has_agent_trial_usage,
          to_regclass('public.agent_worker_heartbeats') IS NOT NULL AS has_agent_worker_heartbeats,
          to_regclass('public.agent_desktop_tickets') IS NOT NULL AS has_agent_desktop_tickets,
+         to_regclass('public.design_conversations') IS NOT NULL AS has_design_conversations,
+         to_regclass('public.design_messages') IS NOT NULL AS has_design_messages,
+         to_regclass('public.design_executions') IS NOT NULL AS has_design_executions,
+         to_regclass('public.design_conversation_assets') IS NOT NULL AS has_design_conversation_assets,
+         to_regclass('public.design_conversation_events') IS NOT NULL AS has_design_conversation_events,
+         to_regclass('public.design_planning_jobs') IS NOT NULL AS has_design_planning_jobs,
+         to_regclass('public.design_session_authorizations') IS NOT NULL AS has_design_authorizations,
          EXISTS(
            SELECT 1
              FROM public.pgmigrations
@@ -452,6 +459,13 @@ const checkDatabase = async (pool) => {
       row.has_agent_trial_usage &&
       row.has_agent_worker_heartbeats &&
       row.has_agent_desktop_tickets &&
+      row.has_design_conversations &&
+      row.has_design_messages &&
+      row.has_design_executions &&
+      row.has_design_conversation_assets &&
+      row.has_design_conversation_events &&
+      row.has_design_planning_jobs &&
+      row.has_design_authorizations &&
       row.has_latest_migration &&
       row.has_task_columns &&
       row.has_payload_columns &&
@@ -652,6 +666,7 @@ const getReadinessReport = async ({
     String(env.CONSOLE_ADMIN_PASSWORD || '').trim()
   );
   const agentEnabled = enabled(env.AGENT_FEATURE_ENABLED);
+  const conversationEnabled = enabled(env.DESIGN_CONVERSATION_ENABLED);
   const agentConfig = agentEnabled ? getAgentConfig(env) : null;
   const agentImageGenerationRequired = Boolean(
     agentEnabled && agentConfig?.publicImageGenerationEnabled
@@ -660,7 +675,8 @@ const getReadinessReport = async ({
   const generationRequired = mainGenerationRequired || agentImageGenerationRequired;
   const productionGeneration = generationRequired && isProduction(env);
   const databaseRequired =
-    paidEnabled || authEmailOtpEnabled || behaviorAnalyticsEnabled || adminConsoleEnabled || agentEnabled;
+    paidEnabled || authEmailOtpEnabled || behaviorAnalyticsEnabled || adminConsoleEnabled ||
+    agentEnabled || conversationEnabled;
 
   let database = skippedCheck();
   let storage = skippedCheck();
@@ -669,6 +685,7 @@ const getReadinessReport = async ({
   let outputAllowlist = skippedCheck();
   let payment = skippedCheck();
   let agent = skippedCheck();
+  let conversation = skippedCheck();
 
   if (databaseRequired) {
     database = await checkDatabase(
@@ -746,10 +763,17 @@ const getReadinessReport = async ({
     const productionBeta = ['production', 'prod'].includes(
       agentConfig.deploymentEnvironment
     );
-    if (productionBeta && agentConfig.betaMode !== 'owner-only-v1') {
+    if (
+      productionBeta &&
+      !['owner-only-v1', 'authenticated-v1'].includes(agentConfig.betaMode)
+    ) {
       missing.push('AGENT_BETA_MODE');
     }
-    if (productionBeta && agentConfig.betaUserIds.length === 0) {
+    if (
+      productionBeta &&
+      agentConfig.betaMode === 'owner-only-v1' &&
+      agentConfig.betaUserIds.length === 0
+    ) {
       missing.push('AGENT_BETA_USER_IDS');
     }
     if (browserPublic && agentConfig.browserMode !== 'full-approval-v1') {
@@ -781,6 +805,35 @@ const getReadinessReport = async ({
           egressPolicy: agentConfig.sandboxEgressPolicy,
           desktopRelayConfigured: Boolean(agentConfig.workerRelayUrl),
           imageGenerationPublicEnabled: agentConfig.publicImageGenerationEnabled
+        };
+  }
+  if (conversationEnabled) {
+    const missing = [];
+    if (!enabled(env.DESIGN_CONVERSATION_WORKER_ENABLED)) {
+      missing.push('DESIGN_CONVERSATION_WORKER_ENABLED');
+    }
+    if (!hasAgentPayloadKey(env)) missing.push('AGENT_PAYLOAD_ENCRYPTION_KEY');
+    if (!String(env.SILICONFLOW_API_KEY || '').trim()) missing.push('SILICONFLOW_API_KEY');
+    if (!paidEnabled) missing.push('PAID_FEATURES_ENABLED');
+    if (!aiDesignEnabled) missing.push('AI_DESIGN_TASK_V2_ENABLED');
+    if (!workshopAiEnabled) missing.push('WORKSHOP_AI_TASK_V2_ENABLED');
+    if (!agentEnabled) missing.push('AGENT_FEATURE_ENABLED');
+    if (agentConfig?.betaMode !== 'authenticated-v1') missing.push('AGENT_BETA_MODE');
+    if (agentConfig?.publicImageGenerationEnabled !== true) {
+      missing.push('AGENT_IMAGE_GENERATION_PUBLIC_ENABLED');
+    }
+    conversation = missing.length
+      ? { ok: false, code: 'DESIGN_CONVERSATION_NOT_CONFIGURED', missing }
+      : {
+          ok: true,
+          plannerModel: 'Qwen/Qwen3-8B',
+          imageModel: GENERATION_IMAGE_MODEL,
+          autoCreditCap: Math.max(
+            1,
+            Math.min(500, Number.parseInt(env.DESIGN_CONVERSATION_AUTO_CREDIT_CAP || '50', 10) || 50)
+          ),
+          retentionDays: 30,
+          accessMode: agentConfig.betaMode
         };
   }
   if (generationRequired) {
@@ -815,6 +868,7 @@ const getReadinessReport = async ({
   if (generationRequired) requiredChecks.push(provider, outputAllowlist);
   if (authEmailOtpEnabled) requiredChecks.push(authSecrets, mail, turnstile);
   if (agentEnabled) requiredChecks.push(agent);
+  if (conversationEnabled) requiredChecks.push(conversation);
   return {
     ok: requiredChecks.every((check) => check.ok),
     paidEnabled,
@@ -826,6 +880,7 @@ const getReadinessReport = async ({
     aiDesignEnabled,
     workshopAiEnabled,
     agentEnabled,
+    conversationEnabled,
     agentImageGenerationRequired,
     generationRequired,
     checks: {
@@ -838,7 +893,8 @@ const getReadinessReport = async ({
       authSecrets,
       mail,
       turnstile,
-      agent
+      agent,
+      conversation
     }
   };
 };

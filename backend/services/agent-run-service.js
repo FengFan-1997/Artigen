@@ -21,7 +21,11 @@ const {
 const {
   evaluateAgentTrajectory
 } = require('./agent-trajectory-evaluator');
-const { sanitizeLogValue, sanitizeText } = require('./agent-policy-service');
+const {
+  normalizeActionType,
+  sanitizeLogValue,
+  sanitizeText
+} = require('./agent-policy-service');
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const ACTIVE_STATUSES = new Set([
@@ -338,6 +342,7 @@ const createAgentRunService = ({
 
   const assertBetaAccess = (dbUserId) => {
     if (config.betaMode === 'disabled') return dbUserId;
+    if (config.betaMode === 'authenticated-v1') return dbUserId;
     if (config.betaMode === 'owner-only-v1' && betaUserIds.has(String(dbUserId).toLowerCase())) {
       return dbUserId;
     }
@@ -1719,6 +1724,70 @@ const createAgentRunService = ({
     }
   );
 
+  const consumeSessionAuthorization = async ({ runId, actionType, recipient }) => withTransaction(
+    pool,
+    async (client) => {
+      const normalizedAction = normalizeActionType(actionType);
+      const allowed = new Set([
+        'send',
+        'publish',
+        'submit',
+        'delete',
+        'change_permissions',
+        'browser_fill',
+        'browser_interaction'
+      ]);
+      if (!allowed.has(normalizedAction)) return null;
+      let origin;
+      try {
+        const parsed = new URL(String(recipient || '').trim());
+        if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null;
+        origin = parsed.origin;
+      } catch {
+        return null;
+      }
+      const idleMinutes = Math.max(
+        5,
+        Math.min(120, Number.parseInt(env.DESIGN_CONVERSATION_AUTH_IDLE_MINUTES || '30', 10) || 30)
+      );
+      const result = await client.query(
+        `UPDATE design_session_authorizations authorization
+            SET last_used_at=now(),
+                expires_at=clock_timestamp()+($4::text || ' minutes')::interval,
+                updated_at=now()
+          WHERE authorization.id=(
+            SELECT candidate.id
+              FROM design_session_authorizations candidate
+              JOIN design_conversations conversation
+                ON conversation.id=candidate.conversation_id
+              JOIN design_executions execution
+                ON execution.conversation_id=conversation.id
+             WHERE execution.agent_run_id=$1
+               AND candidate.user_id=conversation.user_id
+               AND candidate.site_origin=$2
+               AND candidate.action_type=$3
+               AND candidate.status='active'
+               AND candidate.expires_at>clock_timestamp()
+               AND conversation.expires_at>clock_timestamp()
+             ORDER BY candidate.created_at DESC
+             LIMIT 1
+             FOR UPDATE SKIP LOCKED
+          )
+          RETURNING authorization.*`,
+        [runId, origin, normalizedAction, idleMinutes]
+      );
+      if (!result.rowCount) return null;
+      return {
+        id: result.rows[0].id,
+        status: 'approved',
+        action_type: normalizedAction,
+        recipient: origin,
+        expires_at: result.rows[0].expires_at,
+        sessionAuthorization: true
+      };
+    }
+  );
+
   const createDesktopTicket = async ({
     userId,
     runId,
@@ -2321,6 +2390,7 @@ const createAgentRunService = ({
     claimRun,
     clearModelCheckpoint,
     consumeApproval,
+    consumeSessionAuthorization,
     createDesktopTicket,
     createRun,
     deleteBrowserProfile,

@@ -32,9 +32,9 @@
 
           <div class="cta-row">
             <router-link
-              to="/artigen/projects"
+              to="/artigen/create"
               class="hero-btn btn-primary"
-              @click.prevent="onLandingNav('/artigen/projects', 'projects')"
+              @click.prevent="onLandingNav('/artigen/create', 'create')"
             >
               {{ ctaWorkshop }}
               <span class="arrow"
@@ -60,9 +60,9 @@
               {{ ctaFormatFactory }}
             </router-link>
             <router-link
-              to="/artigen/ai"
+              to="/artigen/create"
               class="hero-btn btn-secondary"
-              @click.prevent="onLandingNav('/artigen/ai', 'ai')"
+              @click.prevent="onLandingNav('/artigen/create', 'create')"
             >
               {{ ctaWorkshop2 }}
             </router-link>
@@ -446,7 +446,7 @@ const consoleStore = useConsoleStore();
 
 const onLandingNav = (
   path: string,
-  target: 'projects' | 'ai' | 'format_factory' | 'market' | 'image_workshop'
+  target: 'create' | 'projects' | 'ai' | 'format_factory' | 'market' | 'image_workshop'
 ) => {
   consoleStore.recordTraffic({
     type: 'conversion',
@@ -468,13 +468,13 @@ const headlineLine2 = computed(() =>
 
 const heroDesc = computed(() =>
   currentLang.value === 'zh'
-    ? '围绕一个商品项目组织主商品图、品牌资料与语义参考，生成多个方向并分支比较，再进入非破坏编辑器完成 1:1、4:5、3:4、16:9 和 9:16 套图交付。'
-    : 'Organize product images, brand rules, and semantic references in one project. Generate and compare branches, then edit non-destructively and deliver 1:1, 4:5, 3:4, 16:9, and 9:16 assets.'
+    ? '先说你想拿到的结果。Artigen 会在快速生图、专项工作流、本地工具和电脑 Agent 之间自动分流，并在同一段对话里展示计划、费用、进度与交付物。'
+    : 'Start with the outcome. Artigen routes the request across quick image generation, specialist workflows, local tools, and the computer agent—then keeps plan, cost, progress, and deliverables in one conversation.'
 );
 
-const ctaWorkshop = computed(() => (currentLang.value === 'zh' ? '创建商品视觉项目' : 'Create a product visual project'));
+const ctaWorkshop = computed(() => (currentLang.value === 'zh' ? '开始对话设计' : 'Start designing in chat'));
 const ctaWorkshop2 = computed(() =>
-  currentLang.value === 'zh' ? '快速生成' : 'Quick generation'
+  currentLang.value === 'zh' ? '交给设计 Agent' : 'Use the design agent'
 );
 const ctaFormatFactory = computed(() => (currentLang.value === 'zh' ? '工具箱' : 'Toolbox'));
 const statusText = computed(() =>
@@ -667,7 +667,7 @@ const carouselSlides = computed<CarouselSlide[]>(() => [
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg>',
     image:
       'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=800&auto=format&fit=crop',
-    route: '/artigen/ai'
+    route: '/artigen/create'
   },
   {
     id: 'format_factory',

@@ -46,6 +46,13 @@ const migratedRow = Object.freeze({
   has_agent_trial_usage: true,
   has_agent_worker_heartbeats: true,
   has_agent_desktop_tickets: true,
+  has_design_conversations: true,
+  has_design_messages: true,
+  has_design_executions: true,
+  has_design_conversation_assets: true,
+  has_design_conversation_events: true,
+  has_design_planning_jobs: true,
+  has_design_authorizations: true,
   has_latest_migration: true,
   has_task_columns: true,
   has_payload_columns: true,
@@ -173,7 +180,7 @@ test('readiness verifies queue, payload, asset, event, inputs_ready and AI SKU m
     code: null,
     migration: LATEST_REPOSITORY_MIGRATION
   });
-  assert.equal(LATEST_REPOSITORY_MIGRATION, '020_agent_secure_browser_relay');
+  assert.equal(LATEST_REPOSITORY_MIGRATION, '021_design_conversations');
   assert.equal(migrationQueryParam, LATEST_REPOSITORY_MIGRATION);
   assert.deepEqual(await checkDatabase({
     query: async () => ({ rows: [{ ...migratedRow, has_task_columns: false }] })
@@ -459,7 +466,7 @@ test('production paid generation is ready only with real provider, shared storag
   assert.equal(report.checks.outputAllowlist.ok, true);
 });
 
-test('production Agent readiness requires the owner-only Beta gate', async () => {
+test('production Agent readiness requires an explicit authenticated access gate', async () => {
   const base = {
     NODE_ENV: 'production',
     APP_ENV: 'production',
@@ -481,10 +488,7 @@ test('production Agent readiness requires the owner-only Beta gate', async () =>
   });
   assert.equal(denied.ok, false);
   assert.equal(denied.checks.agent.code, 'AGENT_RUNTIME_NOT_CONFIGURED');
-  assert.deepEqual(denied.checks.agent.missing, [
-    'AGENT_BETA_MODE',
-    'AGENT_BETA_USER_IDS'
-  ]);
+  assert.deepEqual(denied.checks.agent.missing, ['AGENT_BETA_MODE']);
 
   const ready = await getReadinessReport({
     env: {
@@ -498,6 +502,18 @@ test('production Agent readiness requires the owner-only Beta gate', async () =>
   });
   assert.equal(ready.ok, true);
   assert.equal(ready.checks.agent.betaMode, 'owner-only-v1');
+
+  const publicReady = await getReadinessReport({
+    env: {
+      ...base,
+      AGENT_BETA_MODE: 'authenticated-v1'
+    },
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(publicReady.ok, true);
+  assert.equal(publicReady.checks.agent.betaMode, 'authenticated-v1');
 });
 
 test('production Agent image generation requires the real image provider and output allowlist', async () => {

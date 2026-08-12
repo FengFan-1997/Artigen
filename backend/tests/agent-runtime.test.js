@@ -315,6 +315,27 @@ test('owner-only Agent Beta allows configured database users and denies everyone
   });
 });
 
+test('authenticated-v1 Agent access accepts every resolved active account identity', async () => {
+  const userId = '22222222-2222-4222-8222-222222222222';
+  const client = {
+    release() {},
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('SELECT id FROM users WHERE id=')) {
+        return { rows: [{ id: params[0] }], rowCount: 1 };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    }
+  };
+  const service = createAgentRunService({
+    pool: { connect: async () => client },
+    env: { AGENT_BETA_MODE: 'authenticated-v1' }
+  });
+  assert.equal(await service.resolveUserAccess({ userId }), userId);
+});
+
 test('owner run views decrypt only a bounded objective preview and expose the durable plan', () => {
   const runId = '11111111-1111-4111-8111-111111111111';
   const payloadId = '22222222-2222-4222-8222-222222222222';
