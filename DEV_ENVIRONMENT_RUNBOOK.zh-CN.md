@@ -25,10 +25,14 @@ Basic 认证成功后，服务会签发仅限 DEV 域名的短时
 DEV 默认采用以下安全门：
 
 1. `DATABASE_URL` 与 `DATABASE_MIGRATION_URL` 只连接 `dev_artigen`，不连接生产 `neondb`。
-2. `PAID_FEATURES_ENABLED=false`、`PAYMENTS_ENABLED=false`，不会创建真实支付或入账。
+2. 当前集成验收环境开启 `PAID_FEATURES_ENABLED=true`、`PAYMENTS_ENABLED=true`、
+   `TASK_WORKER_ENABLED=1`，但只使用 DEV 数据库中的合成用户；支付验收只能创建未支付订单，
+   不执行真实付款，也不能把 pending 订单当作钱包入账。
 3. `AUTH_EMAIL_OTP_ENABLED=false`，不会调用生产邮件中继。
-4. `AI_DESIGN_TASK_V2_ENABLED=false`、`WORKSHOP_AI_TASK_V2_ENABLED=false`，不会产生真实模型费用。
-5. `ASSET_STORAGE_DRIVER=file`，不会读写生产对象存储；Render 重启后测试图片可丢弃。
+4. `AI_DESIGN_TASK_V2_ENABLED=true`、`AI_DESIGN_TASK_V2_ROLLOUT_PERCENT=100`、
+   `WORKSHOP_AI_TASK_V2_ENABLED=true`，用于真实 SiliconFlow、任务队列、结算与失败退款 smoke。
+5. `ASSET_STORAGE_DRIVER=s3`，生成结果必须通过共享对象存储、SHA-256 与尺寸验证；DEV 资产和
+   任务记录不得冒充生产数据。
 6. 云端页面固定显示 `DEV 测试环境` 标记，并由独立访问口令保护。
 7. DEV 与生产使用不同域名，因此 HttpOnly Session Cookie 也相互隔离。
 8. 页面行为、模型用量、图片历史和内容审计写入 `dev_artigen` PostgreSQL；它们不依赖
@@ -110,6 +114,11 @@ PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
 
 ## 开启真实集成前
 
-DEV 可以逐项接入独立的模型 Key、邮件发件域、Turnstile 测试站点、对象存储桶和支付
-沙盒，但不得直接复制生产支付回调或生产对象桶。每项能力需先通过 `/readyz` 和对应
-smoke test，再单独打开 feature flag。
+DEV 当前已接入真实 SiliconFlow、PostgreSQL、任务队列和 S3，用于发布前集成 smoke。
+运行时只允许两个模型：所有文字理解、结构化输出和工具决策使用 `Qwen/Qwen3-8B`；所有
+图片输出使用 `Kwai-Kolors/Kolors`。Kolors 接收 0 张图时文生图、接收 1 张图时图生图；
+第二张参考图必须在 Provider 请求前失败。
+
+邮件发件域、Turnstile、对象存储和支付配置仍不得把 DEV 身份或数据混入生产。每项能力
+必须先通过 `/readyz` 和对应 smoke；支付只验证未支付订单、跳转、pending、钱包不入账与
+幂等复用，禁止在 DEV 流程中执行真实付款。
