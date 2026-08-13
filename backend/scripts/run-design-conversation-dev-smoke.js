@@ -793,10 +793,32 @@ const main = async () => {
     if (!finalStatus.workerOnline || finalStatus.queueDepth !== 0) {
       throw new Error('DESIGN_CONVERSATION_SMOKE_WORKER_NOT_IDLE');
     }
-    // The durable planner queue may safely retry a provider call after a lost
-    // response or expired lease. Require at least one Qwen3 response for each
-    // of the three conversations, while bounding retries to one per message.
-    if (plannerCalls.length < 3 || plannerCalls.length > 6 || plannerCalls.some((call) =>
+    // Render DEV and this smoke process intentionally consume the same durable
+    // planner queue. Either worker may claim a message, so local call tracing
+    // is only a subset; the database is the source of truth for all jobs.
+    const planningJobsResult = await pool.query(
+      `SELECT conversation_id,status,attempt_count,COALESCE(error_code,'') AS error_code
+         FROM design_planning_jobs
+        WHERE conversation_id=ANY($1::uuid[])
+        ORDER BY conversation_id`,
+      [[
+        imagePlanned.conversation.conversationId,
+        ...plannedAgents.map((entry) => entry.planned.conversation.conversationId)
+      ]]
+    );
+    const planningJobs = planningJobsResult.rows.map((row) => ({
+      conversationId: row.conversation_id,
+      status: row.status,
+      attemptCount: Number(row.attempt_count || 0),
+      errorCode: row.error_code || null
+    }));
+    if (
+      planningJobs.length !== 3 ||
+      planningJobs.some((job) => job.status !== 'succeeded' || job.attemptCount < 1 || job.attemptCount > 2)
+    ) {
+      throw new Error(`DESIGN_CONVERSATION_SMOKE_PLANNER_JOB_INVALID:${JSON.stringify(planningJobs)}`);
+    }
+    if (plannerCalls.length > 6 || plannerCalls.some((call) =>
       call.requestedModel !== TEXT_MODEL || call.modelUsed !== TEXT_MODEL
     )) {
       throw new Error(
@@ -809,6 +831,7 @@ const main = async () => {
       outputRoot,
       models: { planner: TEXT_MODEL, image: IMAGE_MODEL },
       plannerCalls,
+      planningJobs,
       worker: {
         accessMode: finalStatus.accessMode,
         concurrency: finalStatus.concurrency,
