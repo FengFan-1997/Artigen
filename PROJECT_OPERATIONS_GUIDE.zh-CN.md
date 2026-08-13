@@ -273,8 +273,12 @@ PR 的 CI 全绿后合并到 `dev`。Render 会自动部署该 commit。
 - `behaviorAnalyticsEnabled=true`
 - `databaseRequired=true`
 - `checks.database.ok=true`
-- `checks.database.migration=020_agent_secure_browser_relay`
+- `checks.database.migration=021_design_conversations`
 - 付费、AI Design、Workshop、Task Worker 或 Agent 生图在 DEV 开启时，对应 readiness、SiliconFlow、S3、payload 和队列检查必须全部为 `ok=true`；未开启的能力必须诚实显示为 disabled/skipped。
+- 对话入口开启时必须同时满足 `conversationEnabled=true`、
+  `checks.conversation.ok=true`、固定规划模型 `Qwen/Qwen3-8B`、固定图片模型
+  `Kwai-Kolors/Kolors`，并确认 Agent `accessMode=authenticated-v1`；只部署页面或只开启
+  其中一个开关都不算 DEV 验收通过。
 
 可用以下命令确认最终部署确实对应目标提交：
 

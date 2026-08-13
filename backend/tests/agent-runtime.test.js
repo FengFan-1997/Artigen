@@ -25,6 +25,8 @@ const {
 } = require('../services/agent-config');
 const {
   AgentWaitingForUser,
+  ARTIFACT_MIME_TYPES,
+  FUNCTION_TOOLS,
   OllamaAgentModelProvider,
   OpenAiAgentModelProvider,
   SiliconFlowAgentModelProvider,
@@ -34,6 +36,18 @@ const {
   siliconFlowUsageCredits,
   usageCredits
 } = require('../services/agent-model-provider');
+
+test('artifact tool schema only exposes verifier-supported MIME types', () => {
+  const artifactTool = FUNCTION_TOOLS.find((tool) => tool.name === 'declare_artifact');
+  assert.ok(artifactTool);
+  assert.deepEqual(
+    artifactTool.parameters.properties.mimeType.enum,
+    ARTIFACT_MIME_TYPES
+  );
+  assert.ok(ARTIFACT_MIME_TYPES.includes('text/markdown'));
+  assert.ok(ARTIFACT_MIME_TYPES.includes('application/pdf'));
+  assert.equal(ARTIFACT_MIME_TYPES.includes('markdown/text'), false);
+});
 const {
   assertArtifactDeclaration,
   assertSourcesObserved,

@@ -99,7 +99,7 @@ PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
 
 涉及后台或数据迁移时，还要检查：
 
-- `/readyz` 返回数据库迁移 `014_operational_records` 且 `ok=true`。
+- `/readyz` 返回数据库迁移 `021_design_conversations` 且 `ok=true`。
 - `/readyz` 返回
   `adminConsoleEnabled=true`、`behaviorAnalyticsEnabled=true`、
   `databaseRequired=true`；任一不符都视为配置漂移，不能继续提 `dev -> main`。
@@ -108,6 +108,9 @@ PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
 - `/console/usage` 能读取 PostgreSQL usage 记录。
 - `/console/content-audit` 能读取 PostgreSQL 图片/内容审计元数据。
 - 同一个按钮快速双击只去重同一瞬间事件，隔一段时间再次点击仍会新增记录。
+- 对话入口开启时，`conversationEnabled=true`，且
+  `checks.conversation.ok=true`、`plannerReady=true`、规划队列无异常积压；
+  `AGENT_BETA_MODE` 必须为 `authenticated-v1`，不能只打开前端路由。
 
 完整提交流程和生产发布规则见
 [《Artigen 项目、环境与发布总手册》](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。
