@@ -891,6 +891,12 @@ test('Playwright DOM requests are bounded and consequential clicks are classifie
     selector: '',
     text: ''
   }).action, 'navigate');
+  assert.equal(normalizeBrowserRequest({
+    action: 'snapshot',
+    url: 'https://example.com/report',
+    selector: '',
+    text: ''
+  }).action, 'navigate');
   assert.equal(browserActionType({
     action: 'click',
     selector: 'button.publish',
@@ -920,6 +926,10 @@ test('Playwright DOM requests are bounded and consequential clicks are classifie
   }), 'browser_navigation');
   assert.throws(() => normalizeBrowserRequest({
     action: 'navigate',
+    url: 'http://example.com'
+  }), { code: 'AGENT_BROWSER_URL_FORBIDDEN' });
+  assert.throws(() => normalizeBrowserRequest({
+    action: 'snapshot',
     url: 'http://example.com'
   }), { code: 'AGENT_BROWSER_URL_FORBIDDEN' });
   assert.equal(isPrivateHostname('169.254.169.254'), true);

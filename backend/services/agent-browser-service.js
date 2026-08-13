@@ -27,11 +27,16 @@ const BROWSER_RISK_PATTERNS = Object.freeze([
 ]);
 
 const normalizeRequest = (input = {}) => {
-  const action = String(input.action || '').trim();
+  let action = String(input.action || '').trim();
   if (!ALLOWED_ACTIONS.has(action)) throw new ApiError(400, 'AGENT_BROWSER_ACTION_INVALID');
   const selector = String(input.selector || '').trim();
   const url = String(input.url || '').trim();
   const text = String(input.text || '');
+  // Qwen3 sometimes supplies the requested URL with `snapshot` instead of
+  // issuing a separate `navigate` call. Treat that unambiguous combination as
+  // a top-level navigation so the returned snapshot actually observes the URL.
+  // It still passes through the exact same HTTPS and origin allowlist checks.
+  if (action === 'snapshot' && url) action = 'navigate';
   if (['click', 'fill', 'describe'].includes(action) && (!selector || selector.length > 1000)) {
     throw new ApiError(400, 'AGENT_BROWSER_SELECTOR_INVALID');
   }
