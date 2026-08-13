@@ -177,6 +177,19 @@ const routes = [
     } satisfies RouteSeoMeta
   },
   {
+    path: '/artigen/create',
+    name: 'design-conversation',
+    component: () => import('../agentImg/views/DesignConversation.vue'),
+    meta: {
+      title: { zh: '设计 Agent - Artigen', en: 'Design Agent - Artigen' },
+      description: {
+        zh: '用一句话开始设计，由 Artigen 自动选择生图、专项工作流、本地工具或电脑 Agent。',
+        en: 'Start with one request and let Artigen choose image generation, specialist workflows, local tools, or the computer agent.'
+      },
+      robots: 'noindex,nofollow'
+    } satisfies RouteSeoMeta
+  },
+  {
     path: '/artigen/agent',
     name: 'agent-workbench',
     component: () => import('../agentImg/views/AgentWorkbench.vue'),

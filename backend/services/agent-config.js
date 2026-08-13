@@ -15,6 +15,7 @@ const agentWorkerEnabled = (env = process.env) => (
 const SILICONFLOW_AGENT_MODEL = 'Qwen/Qwen3-8B';
 const AGENT_BROWSER_MODE = 'full-approval-v1';
 const AGENT_BETA_MODE = 'owner-only-v1';
+const AGENT_AUTHENTICATED_MODE = 'authenticated-v1';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const assertLoopbackHttpUrl = (value, code) => {
@@ -135,7 +136,7 @@ const getAgentConfig = (env = process.env) => {
     ''
   ).trim();
   const betaMode = String(env.AGENT_BETA_MODE || 'disabled').trim().toLowerCase();
-  if (!['disabled', AGENT_BETA_MODE].includes(betaMode)) {
+  if (!['disabled', AGENT_BETA_MODE, AGENT_AUTHENTICATED_MODE].includes(betaMode)) {
     throw new ApiError(500, 'AGENT_BETA_MODE_INVALID');
   }
   const betaUserEntries = String(env.AGENT_BETA_USER_IDS || '')
@@ -230,8 +231,8 @@ const assertAgentRuntimeReady = (env = process.env) => {
   if (
     ['production', 'prod'].includes(config.deploymentEnvironment) &&
     (
-      config.betaMode !== AGENT_BETA_MODE ||
-      config.betaUserIds.length === 0
+      ![AGENT_BETA_MODE, AGENT_AUTHENTICATED_MODE].includes(config.betaMode) ||
+      (config.betaMode === AGENT_BETA_MODE && config.betaUserIds.length === 0)
     )
   ) {
     throw new ApiError(503, 'AGENT_BETA_ACCESS_NOT_CONFIGURED', {
@@ -276,6 +277,7 @@ const assertAgentRuntimeReady = (env = process.env) => {
 };
 
 module.exports = {
+  AGENT_AUTHENTICATED_MODE,
   agentFeatureEnabled,
   agentWorkerEnabled,
   assertLoopbackHttpUrl,

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const path = require('path');
+const os = require('node:os');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env'), override: false });
 const { getPool, isDatabaseConfigured } = require('../db/pool');
 const { getAgentConfig, assertAgentRuntimeReady } = require('../services/agent-config');
@@ -10,6 +11,23 @@ const { AgentQueueWorker } = require('../services/agent-queue-service');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const { createAgentSandboxProvider } = require('../services/agent-sandbox-provider');
 const { hasAgentPayloadKey } = require('../services/agent-payload-service');
+
+const resolveWorkerConcurrency = ({ env = process.env, runtimeReadiness, system = os } = {}) => {
+  const requested = Math.max(1, Math.min(2, Number(env.AGENT_WORKER_CONCURRENCY || 1) || 1));
+  if (requested === 1) return { concurrency: 1, fallbackReason: null };
+  const cpuReady = typeof system.availableParallelism === 'function'
+    ? system.availableParallelism() >= 4
+    : system.cpus().length >= 4;
+  const totalMemoryReady = Number(system.totalmem()) >= 12 * 1024 ** 3;
+  const freeMemoryReady = Number(system.freemem()) >= 4 * 1024 ** 3;
+  const runtimeReady = runtimeReadiness?.browserReady === true &&
+    runtimeReadiness?.egressVerified === true &&
+    runtimeReadiness?.desktopRelayReady === true;
+  if (!cpuReady) return { concurrency: 1, fallbackReason: 'CPU_CAPACITY' };
+  if (!totalMemoryReady || !freeMemoryReady) return { concurrency: 1, fallbackReason: 'MEMORY_CAPACITY' };
+  if (!runtimeReady) return { concurrency: 1, fallbackReason: 'RUNTIME_READINESS' };
+  return { concurrency: 2, fallbackReason: null };
+};
 
 const main = async () => {
   const config = getAgentConfig(process.env);
@@ -24,6 +42,11 @@ const main = async () => {
   const sandbox = createAgentSandboxProvider({ env: process.env });
   await model.probe();
   const runtimeReadiness = await sandbox.probe();
+  const workerCapacity = resolveWorkerConcurrency({ env: process.env, runtimeReadiness });
+  process.env.AGENT_WORKER_CONCURRENCY = String(workerCapacity.concurrency);
+  if (workerCapacity.fallbackReason) {
+    console.warn(`AGENT_WORKER_CONCURRENCY_FALLBACK:${workerCapacity.fallbackReason}:1`);
+  }
   const workerService = createAgentWorkerService({
     pool,
     runService,
@@ -59,7 +82,11 @@ const main = async () => {
   process.once('SIGINT', () => void stop('SIGINT'));
 };
 
-main().catch((error) => {
-  console.error(`Artigen Agent worker failed: ${error?.code || error?.message || error}`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`Artigen Agent worker failed: ${error?.code || error?.message || error}`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { resolveWorkerConcurrency };

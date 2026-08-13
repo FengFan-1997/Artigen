@@ -683,8 +683,7 @@ const initGoogleButton = async () => {
             upsertUser({ email: res.email, userId: res.userId });
           }
           setLoggedIn({ userId: res.userId });
-          close();
-          await loginStore.runAfterLogin();
+          await completeLogin();
         } catch (e: any) {
           error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
         } finally {
@@ -741,6 +740,12 @@ const close = () => {
       router.push(to);
     } catch {}
   }
+};
+
+const completeLogin = async () => {
+  const continuation = loginStore.runAfterLogin();
+  close();
+  await continuation;
 };
 
 const onBackdrop = () => {
@@ -898,8 +903,7 @@ const verifyCode = async () => {
     upsertUser({ email: e, userId: res.userId });
     setLoggedIn({ userId: res.userId });
     clearOtpFlow('login');
-    close();
-    await loginStore.runAfterLogin();
+    await completeLogin();
   } catch (err: any) {
     error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
   } finally {
@@ -924,8 +928,7 @@ const login = async () => {
     setLastUsername(u);
     setSavedPassword(u, p);
     setLoggedIn({ userId: res.userId });
-    close();
-    await loginStore.runAfterLogin();
+    await completeLogin();
   } catch (err: any) {
     error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
   } finally {
@@ -969,8 +972,7 @@ const register = async () => {
     upsertUser({ email: e, userId: res.userId });
     setLoggedIn({ userId: res.userId });
     clearOtpFlow('login');
-    close();
-    await loginStore.runAfterLogin();
+    await completeLogin();
   } catch (err: any) {
     error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
   } finally {

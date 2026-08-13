@@ -1,0 +1,1361 @@
+const crypto = require('crypto');
+const { ApiError } = require('../lib/api-error');
+const {
+  assertToolOperation,
+  resolveOperationExecution
+} = require('../lib/tool-catalog');
+const { resolveUserId } = require('./billing-service');
+const {
+  decryptDesignMessage,
+  encryptDesignMessage,
+  hasAgentPayloadKey
+} = require('./agent-payload-service');
+const { normalizeActionType, sanitizeLogValue, sanitizeText } = require('./agent-policy-service');
+
+const TEXT_MODEL = 'Qwen/Qwen3-8B';
+const IMAGE_MODEL = 'Kwai-Kolors/Kolors';
+const ROUTE_KINDS = new Set(['reply', 'local_tool', 'tool_task', 'agent_run']);
+const EXECUTION_STATUSES = new Set([
+  'planning',
+  'waiting_clarification',
+  'waiting_upload',
+  'waiting_budget',
+  'queued',
+  'running',
+  'waiting_authorization',
+  'succeeded',
+  'failed',
+  'cancelled'
+]);
+const CLOUD_TOOLS = new Set([
+  'ai-design:generate',
+  'ai-design:directions',
+  'background:ai-scene',
+  'id-photo:professional-portrait',
+  'ingredient-label:ai-organize-source-text',
+  'old-photo:enhance',
+  'old-photo:enhance-colorize'
+]);
+const SAFE_SESSION_ACTIONS = new Set([
+  'send',
+  'publish',
+  'submit',
+  'delete',
+  'change_permissions',
+  'browser_fill',
+  'browser_interaction'
+]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const URL_RE = /https:\/\/[^\s<>()"']+/gi;
+
+const enabled = (value) => /^(1|true|yes|on)$/i.test(String(value || '').trim());
+const integer = (value, fallback, minimum, maximum) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Math.max(minimum, Math.min(maximum, Number.isFinite(parsed) ? parsed : fallback));
+};
+
+const getDesignConversationConfig = (env = process.env) => Object.freeze({
+  enabled: enabled(env.DESIGN_CONVERSATION_ENABLED),
+  workerEnabled: enabled(env.DESIGN_CONVERSATION_WORKER_ENABLED),
+  autoCreditCap: integer(env.DESIGN_CONVERSATION_AUTO_CREDIT_CAP, 50, 1, 500),
+  retentionDays: integer(env.DESIGN_CONVERSATION_RETENTION_DAYS, 30, 1, 30),
+  authorizationIdleMinutes: integer(env.DESIGN_CONVERSATION_AUTH_IDLE_MINUTES, 30, 5, 120),
+  pollMs: integer(env.DESIGN_CONVERSATION_POLL_MS, 750, 250, 5000),
+  plannerMaxTokens: integer(env.DESIGN_CONVERSATION_PLANNER_MAX_TOKENS, 1800, 512, 4096),
+  model: TEXT_MODEL,
+  imageModel: IMAGE_MODEL
+});
+
+const transaction = async (pool, callback) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const value = await callback(client);
+    await client.query('COMMIT');
+    return value;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+const readTransaction = async (pool, callback) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const value = await callback(client);
+    await client.query('COMMIT');
+    return value;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+const normalizeMessageText = (value) => {
+  const text = String(value || '').trim();
+  if (text.length < 1 || text.length > 20_000) {
+    throw new ApiError(400, 'DESIGN_MESSAGE_INVALID', { field: 'message' });
+  }
+  return text;
+};
+
+const normalizeAttachmentManifest = (value) => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new ApiError(400, 'DESIGN_ATTACHMENTS_INVALID', { field: 'attachments' });
+  }
+  return value.map((entry, index) => {
+    const clientId = sanitizeText(entry?.clientId, 120);
+    const name = sanitizeText(entry?.name, 240);
+    const mimeType = String(entry?.mimeType || '').trim().toLowerCase().slice(0, 160);
+    const byteSize = Number(entry?.byteSize || 0);
+    if (!clientId || !name || !mimeType || !Number.isSafeInteger(byteSize) || byteSize < 1) {
+      throw new ApiError(400, 'DESIGN_ATTACHMENTS_INVALID', {
+        field: `attachments.${index}`
+      });
+    }
+    return { clientId, name, mimeType, byteSize };
+  });
+};
+
+const titleFromText = (value) => {
+  const compact = String(value || '').replace(/\s+/g, ' ').trim();
+  return sanitizeText(compact.slice(0, 42) || '新的设计任务', 160);
+};
+
+const publicConversation = (row) => ({
+  conversationId: row.id,
+  projectId: row.project_id || null,
+  title: row.title,
+  status: row.status,
+  autoCreditCap: Number(row.auto_credit_cap || 50),
+  clarificationRounds: Number(row.clarification_rounds || 0),
+  expiresAt: row.expires_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
+});
+
+const publicMessage = (row, env) => {
+  const value = decryptDesignMessage({
+    conversationId: row.conversation_id,
+    messageId: row.id,
+    role: row.role,
+    record: row,
+    env
+  });
+  return {
+    messageId: row.id,
+    sequence: Number(row.sequence),
+    role: row.role,
+    kind: row.kind,
+    status: row.status,
+    text: String(value?.text || ''),
+    attachments: Array.isArray(value?.attachments) ? value.attachments : [],
+    questions: Array.isArray(value?.questions) ? value.questions : [],
+    assumptions: Array.isArray(value?.assumptions) ? value.assumptions : [],
+    createdAt: row.created_at
+  };
+};
+
+const publicExecution = (row) => ({
+  executionId: row.id,
+  conversationId: row.conversation_id,
+  sourceMessageId: row.source_message_id || null,
+  routeKind: row.route_kind,
+  status: row.derived_status || row.status,
+  toolId: row.tool_id || null,
+  operation: row.operation || null,
+  toolTaskId: row.tool_task_id || null,
+  agentRunId: row.agent_run_id || null,
+  localRoute: row.local_route || null,
+  maxCredits: Number(row.max_credits || 50),
+  quotedCredits: row.quoted_credits === null ? null : Number(row.quoted_credits),
+  plan: row.plan && typeof row.plan === 'object' ? row.plan : {},
+  error: row.error_code ? { code: row.error_code } : null,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  finishedAt: row.finished_at || null
+});
+
+const publicConversationAsset = (row) => ({
+  clientId: row.client_id,
+  assetId: row.asset_id,
+  mimeType: row.mime_type,
+  byteSize: Number(row.byte_size || 0),
+  createdAt: row.created_at
+});
+
+const publicEvent = (row) => ({
+  eventId: String(row.id),
+  conversationId: row.conversation_id,
+  type: row.event_type,
+  summary: row.summary,
+  data: row.data && typeof row.data === 'object' ? row.data : {},
+  createdAt: row.created_at
+});
+
+const safeJsonObject = (raw) => {
+  const text = String(raw || '').trim();
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] || text;
+  const start = fenced.indexOf('{');
+  const end = fenced.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new ApiError(502, 'DESIGN_PLANNER_OUTPUT_INVALID');
+  try {
+    const parsed = JSON.parse(fenced.slice(start, end + 1));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('shape');
+    return parsed;
+  } catch {
+    throw new ApiError(502, 'DESIGN_PLANNER_OUTPUT_INVALID', { retryable: true });
+  }
+};
+
+const explicitHttpsOrigins = (text) => {
+  const found = String(text || '').match(URL_RE) || [];
+  const origins = [];
+  for (const value of found) {
+    try {
+      const url = new URL(value.replace(/[.,;!?，。；！？]+$/u, ''));
+      if (url.protocol === 'https:' && !origins.includes(url.origin)) origins.push(url.origin);
+    } catch {}
+  }
+  return origins.slice(0, 10);
+};
+
+const inferDeliverables = (text, proposed = []) => {
+  const value = String(text || '').toLowerCase();
+  const allowed = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image']);
+  const result = Array.isArray(proposed)
+    ? proposed.map((item) => String(item || '').trim()).filter((item) => allowed.has(item))
+    : [];
+  const add = (kind) => { if (!result.includes(kind)) result.push(kind); };
+  if (/图片|生图|海报|视觉稿|主视觉|image|poster|visual/.test(value)) add('image');
+  if (/报告|方案|审计|pdf|report|proposal|audit/.test(value)) add('report');
+  if (/表格|xlsx|excel|spreadsheet/.test(value)) add('spreadsheet');
+  if (/ppt|演示|提案|presentation|slides?/.test(value)) add('presentation');
+  if (/网站|网页|原型|website|prototype|landing page/.test(value)) add('website');
+  if (!result.length) add('report');
+  return result.slice(0, 5);
+};
+
+const repairPlannerRoute = ({ raw, text }) => {
+  const value = String(text || '').trim();
+  const wantsExecution = /(?:帮我|请|给我|需要|想要|开始|直接|立即|生成|制作|创建|设计|处理|转换|压缩|修复|增强|换|整理|输出|导出|build|create|generate|make|design|convert|compress)/iu.test(value);
+  if (!wantsExecution) return raw;
+  const wantsResearch = /(?:调研|审计|浏览(?:网站|网页)|搜索资料|竞品|shell|脚本|代码|多文件|完整提案|research|audit|browse|website|spreadsheet|xlsx|pptx|presentation)/iu.test(value);
+  const deliverables = inferDeliverables(value, raw.deliverables);
+  if (/(?:图片.*压缩|压缩.*图片|compress image)/iu.test(value)) {
+    return { ...raw, routeKind: 'local_tool', toolId: 'image-batch', operation: 'compress' };
+  }
+  if (/(?:图片.*转.*pdf|images?.*to.*pdf)/iu.test(value)) {
+    return { ...raw, routeKind: 'local_tool', toolId: 'pdf-image', operation: 'images-to-pdf' };
+  }
+  if (/(?:pdf.*转.*图片|pdf.*to.*image)/iu.test(value)) {
+    return { ...raw, routeKind: 'local_tool', toolId: 'pdf-image', operation: 'pdf-page' };
+  }
+  if (wantsResearch || deliverables.length > 1) {
+    return { ...raw, routeKind: 'agent_run', deliverables };
+  }
+  if (/(?:老照片|旧照片|修复照片|上色)/u.test(value)) {
+    return {
+      ...raw,
+      routeKind: 'tool_task',
+      toolId: 'old-photo',
+      operation: /(?:上色|着色|color)/iu.test(value) ? 'enhance-colorize' : 'enhance'
+    };
+  }
+  if (/(?:证件照|职业照|职业头像|professional portrait)/iu.test(value)) {
+    return { ...raw, routeKind: 'tool_task', toolId: 'id-photo', operation: 'professional-portrait' };
+  }
+  if (/(?:换背景|添加背景|场景背景|background scene)/iu.test(value)) {
+    return { ...raw, routeKind: 'tool_task', toolId: 'background', operation: 'ai-scene' };
+  }
+  if (/(?:配料表|成分表|ingredient)/iu.test(value)) {
+    return {
+      ...raw,
+      routeKind: 'tool_task',
+      toolId: 'ingredient-label',
+      operation: 'ai-organize-source-text'
+    };
+  }
+  if (/(?:生图|生成图片|画一张|海报|主视觉|视觉稿|概念图|image|poster|key visual)/iu.test(value)) {
+    return { ...raw, routeKind: 'tool_task', toolId: 'ai-design', operation: 'generate' };
+  }
+  return raw;
+};
+
+const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds, creditCap }) => {
+  const repaired = repairPlannerRoute({ raw, text });
+  raw = repaired;
+  let routeKind = String(raw.routeKind || raw.route || 'reply').trim().toLowerCase();
+  if (!ROUTE_KINDS.has(routeKind)) routeKind = 'reply';
+  const proposedQuestions = Array.isArray(raw.questions)
+    ? raw.questions.map((question) => sanitizeText(question, 240)).filter(Boolean).slice(0, 2)
+    : [];
+  const needsClarification = Boolean(raw.needsClarification) && proposedQuestions.length > 0 && clarificationRounds < 1;
+  const reply = sanitizeText(raw.reply || raw.message || '', 4000) || (
+    needsClarification
+      ? '为了把结果做准，我只需要确认下面两点。'
+      : '我已经整理好执行路线。'
+  );
+  const assumptions = Array.isArray(raw.assumptions)
+    ? raw.assumptions.map((item) => sanitizeText(item, 300)).filter(Boolean).slice(0, 6)
+    : [];
+  if (needsClarification) {
+    return {
+      routeKind: 'reply',
+      status: 'waiting_clarification',
+      reply,
+      questions: proposedQuestions,
+      assumptions,
+      plan: { label: '等待补充', steps: proposedQuestions, executor: 'Qwen3' }
+    };
+  }
+
+  const inputCount = attachments.length;
+  if (routeKind === 'local_tool') {
+    const requestedTool = String(raw.toolId || '').trim();
+    const checked = assertToolOperation(requestedTool, raw.operation);
+    if (!checked.ok || resolveOperationExecution(checked.tool, checked.operation) !== 'local') {
+      routeKind = 'reply';
+    } else {
+      return {
+        routeKind,
+        status: 'queued',
+        reply,
+        assumptions,
+        toolId: checked.tool.id,
+        operation: checked.operation,
+        localRoute: checked.tool.route,
+        plan: {
+          label: checked.tool.name?.zh || checked.tool.id,
+          steps: ['在浏览器中打开本地工具', '载入已选择的本地文件', '处理并下载结果'],
+          executor: 'local_tool',
+          uploadRequired: false,
+          attachmentClientIds: attachments.map((item) => item.clientId)
+        }
+      };
+    }
+  }
+
+  if (routeKind === 'tool_task') {
+    const requestedTool = String(raw.toolId || '').trim();
+    const requestedOperation = String(raw.operation || '').trim();
+    const key = `${requestedTool}:${requestedOperation}`;
+    const checked = assertToolOperation(requestedTool, requestedOperation);
+    if (!checked.ok || !CLOUD_TOOLS.has(key)) {
+      routeKind = 'agent_run';
+    } else {
+      const imageAttachments = attachments.filter((item) => /^image\/(?:png|jpeg|webp)$/i.test(item.mimeType));
+      const singleImageInput = imageAttachments.slice(0, 1);
+      const singleImageTools = new Set([
+        'ai-design:generate',
+        'old-photo:enhance',
+        'old-photo:enhance-colorize',
+        'id-photo:professional-portrait',
+        'background:ai-scene'
+      ]);
+      const selectedAttachments = singleImageTools.has(key) ? singleImageInput : [];
+      const boundedAssumptions = imageAttachments.length > 1 && singleImageTools.has(key)
+        ? [...assumptions, 'Kolors 单参考图流程只使用第一张已选择的图片。'].slice(0, 6)
+        : assumptions;
+      let options = {};
+      if (key === 'ai-design:generate') {
+        options = {
+          prompt: text,
+          profileId: selectedAttachments.length ? 'product-reference-v1' : 'standard-v1',
+          aspectRatio: ['1:1', '4:5', '3:4', '16:9', '9:16'].includes(String(raw.options?.aspectRatio || ''))
+            ? String(raw.options.aspectRatio)
+            : '1:1',
+          ...(selectedAttachments.length ? { referenceRoles: ['product'] } : {})
+        };
+      } else if (key === 'ai-design:directions') {
+        options = { prompt: text, locale: 'zh', productProfile: null };
+      } else if (key === 'id-photo:professional-portrait') {
+        options = { style: ['finance', 'tech', 'scholar', 'creative', 'leader'].includes(raw.options?.style)
+          ? raw.options.style : 'creative' };
+      } else if (key === 'background:ai-scene') {
+        options = { mode: 'add', presetId: sanitizeText(raw.options?.presetId || 'studio-white', 80) };
+      } else if (key === 'ingredient-label:ai-organize-source-text') {
+        options = { sourceText: text, productType: 'Food', locale: 'zh' };
+      } else if (requestedTool === 'old-photo') {
+        options = { colorize: requestedOperation === 'enhance-colorize' };
+      }
+      const inputRequired = new Set([
+        'old-photo:enhance',
+        'old-photo:enhance-colorize',
+        'id-photo:professional-portrait',
+        'background:ai-scene'
+      ]).has(key);
+      return {
+        routeKind,
+        status: selectedAttachments.length || inputRequired ? 'waiting_upload' : 'queued',
+        reply,
+        assumptions: boundedAssumptions,
+        toolId: checked.tool.id,
+        operation: checked.operation,
+        options,
+        plan: {
+          label: checked.tool.name?.zh || checked.tool.id,
+          steps: ['取得服务端报价', '创建受控任务', '验证并交付结果'],
+          executor: 'tool_task',
+          uploadRequired: selectedAttachments.length > 0 || inputRequired,
+          attachmentClientIds: selectedAttachments.map((item) => item.clientId)
+        }
+      };
+    }
+  }
+
+  if (routeKind === 'agent_run') {
+    const origins = explicitHttpsOrigins(text);
+    const deliverables = inferDeliverables(text, raw.deliverables);
+    return {
+      routeKind,
+      status: inputCount ? 'waiting_upload' : 'queued',
+      reply,
+      assumptions,
+      objective: text,
+      capabilities: {
+        files: true,
+        shell: true,
+        browser: origins.length > 0,
+        generate_images: deliverables.includes('image')
+      },
+      deliverables,
+      browserConfig: { allowedOrigins: origins, persistSession: false },
+      plan: {
+        label: 'Computer Agent',
+        steps: Array.isArray(raw.steps)
+          ? raw.steps.map((item) => sanitizeText(item, 200)).filter(Boolean).slice(0, 6)
+          : ['拆解目标与交付物', '在隔离环境中执行', '验证并打包结果'],
+        executor: 'agent_run',
+        uploadRequired: inputCount > 0,
+        attachmentClientIds: attachments.map((item) => item.clientId),
+        maxCredits: creditCap,
+        capabilities: {
+          files: true,
+          shell: true,
+          browser: origins.length > 0,
+          generate_images: deliverables.includes('image')
+        },
+        deliverables,
+        browserConfig: { allowedOrigins: origins, persistSession: false }
+      }
+    };
+  }
+
+  return {
+    routeKind: 'reply',
+    status: 'succeeded',
+    reply,
+    assumptions,
+    plan: { label: '设计建议', steps: [], executor: 'Qwen3' }
+  };
+};
+
+const plannerMessages = ({ history, message, attachmentCount }) => [{
+  role: 'system',
+  content: `You are Artigen's design request router. Use only Qwen/Qwen3-8B for this text task.
+Return one JSON object and no markdown. Schema:
+{"routeKind":"reply|local_tool|tool_task|agent_run","reply":"Chinese answer","needsClarification":false,"questions":[],"assumptions":[],"toolId":"","operation":"","options":{},"deliverables":[],"steps":[]}
+Ask at most two questions only when the missing answer materially changes the result. Choose reply for advice or brainstorming without an execution request. Choose tool_task for: ai-design generate/directions, old-photo enhance/enhance-colorize, id-photo professional-portrait, background ai-scene, ingredient-label ai-organize-source-text. Local tools are strictly: image-batch convert/compress/resize/rotate/filter/pipeline; privacy-redaction redact/export/pdf; video-frame extract; pdf-image pdf-page/pdf-range-zip/pdf-long-image/images-to-pdf; pdf-text-word extract-text-docx; document-pdf txt-local/word-server-faithful; video-gif convert; favicon generate/export/zip. Choose agent_run for research, browser, shell, multiple files, or multiple deliverable formats. Never set prices, models, credentials, or permissions. All image output is handled by Kwai-Kolors/Kolors downstream.`
+}, {
+  role: 'user',
+  content: JSON.stringify({
+    recentConversation: history.slice(-6),
+    currentMessage: message,
+    attachmentCount
+  })
+}];
+
+const createDesignConversationService = ({
+  pool,
+  env = process.env,
+  chatGenerate,
+  workerId = `design-planner:${process.pid}`
+} = {}) => {
+  if (!pool || typeof pool.connect !== 'function') throw new TypeError('DESIGN_CONVERSATION_POOL_REQUIRED');
+  const config = getDesignConversationConfig(env);
+  let timer = null;
+  let processing = false;
+
+  const requireEnabled = () => {
+    if (!config.enabled) throw new ApiError(404, 'DESIGN_CONVERSATION_DISABLED');
+    if (!hasAgentPayloadKey(env)) {
+      throw new ApiError(503, 'AGENT_PAYLOAD_KEY_MISSING', { retryable: false });
+    }
+  };
+
+  const resolveOwnedConversation = async (client, { userId, conversationId, lock = false }) => {
+    const dbUserId = await resolveUserId(client, userId);
+    const result = await client.query(
+      `SELECT * FROM design_conversations
+        WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp()
+        ${lock ? 'FOR UPDATE' : ''}`,
+      [conversationId, dbUserId]
+    );
+    if (!result.rowCount) throw new ApiError(404, 'DESIGN_CONVERSATION_NOT_FOUND');
+    return { dbUserId, row: result.rows[0] };
+  };
+
+  const insertEvent = async (client, { conversationId, type, summary = '', data = {} }) => {
+    const result = await client.query(
+      `INSERT INTO design_conversation_events (conversation_id,event_type,summary,data)
+       VALUES ($1,$2,$3,$4) RETURNING *`,
+      [conversationId, sanitizeText(type, 100), sanitizeText(summary, 500), JSON.stringify(sanitizeLogValue(data))]
+    );
+    await client.query(
+      `SELECT pg_notify('design_conversation_events',$1)`,
+      [JSON.stringify({ conversationId, eventId: String(result.rows[0].id) })]
+    );
+    return publicEvent(result.rows[0]);
+  };
+
+  const insertMessage = async (client, {
+    conversationId,
+    role,
+    kind = 'text',
+    status = 'complete',
+    value,
+    retentionDays = config.retentionDays
+  }) => {
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+      [`design-message:${conversationId}`]
+    );
+    const next = await client.query(
+      'SELECT COALESCE(max(sequence),0)+1 AS sequence FROM design_messages WHERE conversation_id=$1',
+      [conversationId]
+    );
+    const messageId = crypto.randomUUID();
+    const encrypted = encryptDesignMessage({ conversationId, messageId, role, value, env });
+    const inserted = await client.query(
+      `INSERT INTO design_messages
+        (id,conversation_id,sequence,role,kind,status,algorithm,key_version,iv,auth_tag,ciphertext,expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+         clock_timestamp()+($12::text || ' days')::interval)
+       RETURNING *`,
+      [
+        messageId,
+        conversationId,
+        Number(next.rows[0].sequence),
+        role,
+        kind,
+        status,
+        encrypted.algorithm,
+        encrypted.keyVersion,
+        encrypted.iv,
+        encrypted.authTag,
+        encrypted.ciphertext,
+        retentionDays
+      ]
+    );
+    return inserted.rows[0];
+  };
+
+  const createConversation = async ({ userId, projectId = null }) => {
+    requireEnabled();
+    return transaction(pool, async (client) => {
+      const dbUserId = await resolveUserId(client, userId);
+      if (projectId) {
+        if (!UUID_RE.test(String(projectId))) throw new ApiError(400, 'INVALID_ID', { field: 'projectId' });
+        const project = await client.query(
+          `SELECT id FROM creative_projects WHERE id=$1 AND user_id=$2 AND status<>'trashed'`,
+          [projectId, dbUserId]
+        );
+        if (!project.rowCount) throw new ApiError(404, 'PROJECT_NOT_FOUND');
+      }
+      const inserted = await client.query(
+        `INSERT INTO design_conversations
+          (user_id,project_id,auto_credit_cap,expires_at)
+         VALUES ($1,$2,$3,clock_timestamp()+($4::text || ' days')::interval)
+         RETURNING *`,
+        [dbUserId, projectId || null, config.autoCreditCap, config.retentionDays]
+      );
+      await insertEvent(client, {
+        conversationId: inserted.rows[0].id,
+        type: 'conversation.created',
+        summary: '设计会话已创建'
+      });
+      return publicConversation(inserted.rows[0]);
+    });
+  };
+
+  const listConversations = async ({ userId, limit = 30, cursor = null }) => {
+    requireEnabled();
+    return transaction(pool, async (client) => {
+      const dbUserId = await resolveUserId(client, userId);
+      const result = await client.query(
+        `SELECT * FROM design_conversations
+          WHERE user_id=$1 AND expires_at>clock_timestamp()
+            AND ($2::timestamptz IS NULL OR updated_at<$2)
+          ORDER BY updated_at DESC LIMIT $3`,
+        [
+          dbUserId,
+          cursor && !Number.isNaN(new Date(cursor).getTime()) ? new Date(cursor) : null,
+          Math.max(1, Math.min(100, Number(limit) || 30))
+        ]
+      );
+      return result.rows.map(publicConversation);
+    });
+  };
+
+  const getConversation = async ({ userId, conversationId }) => {
+    requireEnabled();
+    return readTransaction(pool, async (client) => {
+      const { row } = await resolveOwnedConversation(client, { userId, conversationId });
+      const messages = await client.query(
+        'SELECT * FROM design_messages WHERE conversation_id=$1 AND expires_at>now() ORDER BY sequence',
+        [conversationId]
+      );
+      const executions = await client.query(
+        `SELECT execution.*,
+          CASE
+            WHEN task.status='success' OR run.status='succeeded' THEN 'succeeded'
+            WHEN task.status='failed' OR run.status='failed' THEN 'failed'
+            WHEN task.status='cancelled' OR run.status='cancelled' THEN 'cancelled'
+            WHEN run.status='waiting_user' THEN 'waiting_authorization'
+            WHEN task.status='running' OR run.status IN ('provisioning','running','verifying') THEN 'running'
+            ELSE execution.status
+          END AS derived_status
+         FROM design_executions execution
+         LEFT JOIN tool_tasks task ON task.id=execution.tool_task_id
+         LEFT JOIN agent_runs run ON run.id=execution.agent_run_id
+         WHERE execution.conversation_id=$1
+         ORDER BY execution.created_at`,
+        [conversationId]
+      );
+      const uploads = await client.query(
+        `SELECT link.*,asset.mime_type,asset.byte_size
+           FROM design_conversation_assets link
+           JOIN assets asset ON asset.id=link.asset_id
+          WHERE link.conversation_id=$1
+          ORDER BY link.created_at`,
+        [conversationId]
+      );
+      return {
+        ...publicConversation(row),
+        messages: messages.rows.map((message) => publicMessage(message, env)),
+        executions: executions.rows.map(publicExecution),
+        uploads: uploads.rows.map(publicConversationAsset)
+      };
+    });
+  };
+
+  const deleteConversation = async ({ userId, conversationId }) => {
+    requireEnabled();
+    return transaction(pool, async (client) => {
+      const { dbUserId } = await resolveOwnedConversation(client, { userId, conversationId, lock: true });
+      const active = await client.query(
+        `SELECT 1 FROM design_executions execution
+         LEFT JOIN tool_tasks task ON task.id=execution.tool_task_id
+         LEFT JOIN agent_runs run ON run.id=execution.agent_run_id
+         WHERE execution.conversation_id=$1
+           AND (task.status IN ('queued','running') OR run.status IN (
+             'draft','queued','provisioning','running','waiting_user','paused','verifying'
+           )) LIMIT 1`,
+        [conversationId]
+      );
+      if (active.rowCount) throw new ApiError(409, 'DESIGN_CONVERSATION_HAS_ACTIVE_EXECUTION');
+      const deleted = await client.query(
+        'DELETE FROM design_conversations WHERE id=$1 AND user_id=$2',
+        [conversationId, dbUserId]
+      );
+      return deleted.rowCount > 0;
+    });
+  };
+
+  const addMessage = async ({ userId, conversationId, message, attachments }) => {
+    requireEnabled();
+    const text = normalizeMessageText(message);
+    const manifest = normalizeAttachmentManifest(attachments);
+    const result = await transaction(pool, async (client) => {
+      const { row } = await resolveOwnedConversation(client, { userId, conversationId, lock: true });
+      if (row.status !== 'active') throw new ApiError(409, 'DESIGN_CONVERSATION_ARCHIVED');
+      const inserted = await insertMessage(client, {
+        conversationId,
+        role: 'user',
+        value: { text, attachments: manifest }
+      });
+      await client.query(
+        `INSERT INTO design_planning_jobs (message_id,conversation_id)
+         VALUES ($1,$2)`,
+        [inserted.id, conversationId]
+      );
+      const title = row.title === '新的设计任务' ? titleFromText(text) : row.title;
+      await client.query(
+        `UPDATE design_conversations
+            SET title=$2,updated_at=now(),expires_at=clock_timestamp()+($3::text || ' days')::interval
+          WHERE id=$1`,
+        [conversationId, title, config.retentionDays]
+      );
+      await insertEvent(client, {
+        conversationId,
+        type: 'message.received',
+        summary: '已收到设计请求',
+        data: { messageId: inserted.id, attachmentCount: manifest.length }
+      });
+      return publicMessage(inserted, env);
+    });
+    void processNextJob().catch(() => {});
+    return result;
+  };
+
+  const claimPlanningJob = async () => transaction(pool, async (client) => {
+    const result = await client.query(
+      `WITH candidate AS (
+         SELECT message_id FROM design_planning_jobs
+          WHERE (
+            status='queued'
+            OR (status='running' AND lease_expires_at<=clock_timestamp())
+          )
+            AND next_attempt_at<=clock_timestamp()
+            AND attempt_count<3
+          ORDER BY created_at
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+       )
+       UPDATE design_planning_jobs job
+          SET status='running',lease_owner=$1,
+              lease_expires_at=clock_timestamp()+interval '90 seconds',
+              attempt_count=attempt_count+1,updated_at=now()
+         FROM candidate
+        WHERE job.message_id=candidate.message_id
+       RETURNING job.*`,
+      [workerId]
+    );
+    return result.rows[0] || null;
+  });
+
+  const loadPlanningContext = async (job) => transaction(pool, async (client) => {
+    const conversation = await client.query(
+      'SELECT * FROM design_conversations WHERE id=$1 AND expires_at>clock_timestamp() FOR SHARE',
+      [job.conversation_id]
+    );
+    if (!conversation.rowCount) throw new ApiError(410, 'DESIGN_CONVERSATION_EXPIRED');
+    const messages = await client.query(
+      `SELECT * FROM design_messages
+        WHERE conversation_id=$1 AND sequence<=(
+          SELECT sequence FROM design_messages WHERE id=$2
+        ) AND expires_at>now()
+        ORDER BY sequence`,
+      [job.conversation_id, job.message_id]
+    );
+    const current = messages.rows.find((message) => message.id === job.message_id);
+    if (!current) throw new ApiError(404, 'DESIGN_MESSAGE_NOT_FOUND');
+    return {
+      conversation: conversation.rows[0],
+      current: publicMessage(current, env),
+      history: messages.rows.map((message) => publicMessage(message, env))
+    };
+  });
+
+  const completePlanningJob = async ({ job, decision }) => transaction(pool, async (client) => {
+    const assistant = await insertMessage(client, {
+      conversationId: job.conversation_id,
+      role: 'assistant',
+      kind: decision.status === 'waiting_clarification' ? 'clarification' : (
+        decision.routeKind === 'reply' ? 'text' : 'execution'
+      ),
+      value: {
+        text: decision.reply,
+        questions: decision.questions || [],
+        assumptions: decision.assumptions || []
+      }
+    });
+    const execution = await client.query(
+      `INSERT INTO design_executions
+        (conversation_id,source_message_id,route_kind,status,tool_id,operation,local_route,
+         max_credits,plan,finished_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING *`,
+      [
+        job.conversation_id,
+        assistant.id,
+        decision.routeKind,
+        decision.status,
+        decision.toolId || null,
+        decision.operation || null,
+        decision.localRoute || null,
+        Number(decision.plan?.maxCredits || config.autoCreditCap),
+        JSON.stringify(sanitizeLogValue({
+          ...decision.plan,
+          options: decision.options || undefined,
+          objective: decision.objective || undefined,
+          capabilities: decision.capabilities || undefined,
+          deliverables: decision.deliverables || undefined,
+          browserConfig: decision.browserConfig || undefined,
+          assumptions: decision.assumptions || []
+        })),
+        decision.status === 'succeeded' ? new Date() : null
+      ]
+    );
+    if (decision.status === 'waiting_clarification') {
+      await client.query(
+        `UPDATE design_conversations
+            SET clarification_rounds=1,updated_at=now()
+          WHERE id=$1`,
+        [job.conversation_id]
+      );
+    } else {
+      await client.query(
+        'UPDATE design_conversations SET updated_at=now() WHERE id=$1',
+        [job.conversation_id]
+      );
+    }
+    await client.query(
+      `UPDATE design_planning_jobs
+          SET status='succeeded',lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
+        WHERE message_id=$1 AND lease_owner=$2`,
+      [job.message_id, workerId]
+    );
+    await insertEvent(client, {
+      conversationId: job.conversation_id,
+      type: decision.status === 'waiting_clarification' ? 'clarification.required' : 'execution.ready',
+      summary: decision.status === 'waiting_clarification' ? '需要补充两项信息' : '执行路线已准备',
+      data: {
+        messageId: assistant.id,
+        executionId: execution.rows[0].id,
+        routeKind: decision.routeKind,
+        status: decision.status
+      }
+    });
+    return publicExecution(execution.rows[0]);
+  });
+
+  const failPlanningJob = async ({ job, error }) => transaction(pool, async (client) => {
+    const code = sanitizeText(error?.code || error?.message || 'DESIGN_PLANNER_FAILED', 100);
+    const state = await client.query(
+      `UPDATE design_planning_jobs
+          SET status=CASE WHEN attempt_count>=3 THEN 'failed' ELSE 'queued' END,
+              next_attempt_at=clock_timestamp()+
+                (CASE WHEN attempt_count>=3 THEN 0 ELSE attempt_count*2 END * interval '1 second'),
+              lease_owner=NULL,lease_expires_at=NULL,error_code=$3,updated_at=now()
+        WHERE message_id=$1 AND lease_owner=$2
+        RETURNING status,attempt_count`,
+      [job.message_id, workerId, code]
+    );
+    if (state.rows[0]?.status !== 'failed') return;
+    const assistant = await insertMessage(client, {
+      conversationId: job.conversation_id,
+      role: 'assistant',
+      kind: 'error',
+      status: 'failed',
+      value: { text: '这次需求没有完成分析。你可以直接重试，系统不会因此创建任务或扣点。' }
+    });
+    await insertEvent(client, {
+      conversationId: job.conversation_id,
+      type: 'planning.failed',
+      summary: '需求分析失败',
+      data: { messageId: assistant.id, errorCode: code }
+    });
+  });
+
+  async function processNextJob() {
+    if (!config.enabled || !config.workerEnabled || processing) return false;
+    processing = true;
+    let job = null;
+    try {
+      job = await claimPlanningJob();
+      if (!job) return false;
+      if (typeof chatGenerate !== 'function') throw new ApiError(503, 'DESIGN_PLANNER_NOT_CONFIGURED');
+      const context = await loadPlanningContext(job);
+      const contextualAttachments = context.current.attachments.length
+        ? context.current.attachments
+        : Number(context.conversation.clarification_rounds || 0) > 0
+          ? context.history
+              .filter((message) => message.role === 'user')
+              .flatMap((message) => message.attachments || [])
+              .filter((item, index, all) => (
+                all.findIndex((candidate) => candidate.clientId === item.clientId) === index
+              ))
+              .slice(-10)
+          : [];
+      const response = await chatGenerate({
+        messages: plannerMessages({
+          history: context.history.map((message) => ({ role: message.role, text: message.text })),
+          message: context.current.text,
+          attachmentCount: contextualAttachments.length
+        }),
+        model: TEXT_MODEL,
+        maxTokens: config.plannerMaxTokens,
+        enableThinking: false,
+        timeoutMs: 60_000
+      });
+      const raw = safeJsonObject(response?.text);
+      const decision = normalizePlannerDecision({
+        raw,
+        text: context.current.text,
+        attachments: contextualAttachments,
+        clarificationRounds: Number(context.conversation.clarification_rounds || 0),
+        creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap)
+      });
+      await completePlanningJob({ job, decision });
+      return true;
+    } catch (error) {
+      if (job) await failPlanningJob({ job, error }).catch(() => {});
+      return false;
+    } finally {
+      processing = false;
+    }
+  }
+
+  const startWorker = () => {
+    if (!config.enabled || !config.workerEnabled || timer) return false;
+    timer = setInterval(() => void processNextJob(), config.pollMs);
+    timer.unref?.();
+    void processNextJob();
+    return true;
+  };
+
+  const stopWorker = () => {
+    if (timer) clearInterval(timer);
+    timer = null;
+  };
+
+  const listEvents = async ({ userId, conversationId, after = 0, limit = 250 }) => {
+    requireEnabled();
+    return transaction(pool, async (client) => {
+      await resolveOwnedConversation(client, { userId, conversationId });
+      const result = await client.query(
+        `SELECT * FROM design_conversation_events
+          WHERE conversation_id=$1 AND id>$2
+          ORDER BY id LIMIT $3`,
+        [conversationId, Math.max(0, Number(after) || 0), Math.max(1, Math.min(500, Number(limit) || 250))]
+      );
+      return result.rows.map(publicEvent);
+    });
+  };
+
+  const recordToolQuote = async ({
+    userId,
+    conversationId,
+    executionId,
+    quoteId
+  }) => {
+    requireEnabled();
+    if (!UUID_RE.test(String(quoteId || ''))) {
+      throw new ApiError(400, 'INVALID_ID', { field: 'quoteId' });
+    }
+    return transaction(pool, async (client) => {
+      const { dbUserId } = await resolveOwnedConversation(client, { userId, conversationId });
+      const execution = await client.query(
+        `SELECT * FROM design_executions
+          WHERE id=$1 AND conversation_id=$2 FOR UPDATE`,
+        [executionId, conversationId]
+      );
+      if (!execution.rowCount) throw new ApiError(404, 'DESIGN_EXECUTION_NOT_FOUND');
+      if (execution.rows[0].route_kind !== 'tool_task') {
+        throw new ApiError(409, 'DESIGN_EXECUTION_ROUTE_MISMATCH');
+      }
+      if (execution.rows[0].tool_task_id || execution.rows[0].agent_run_id) {
+        throw new ApiError(409, 'DESIGN_EXECUTION_ALREADY_STARTED');
+      }
+      const quote = await client.query(
+        `SELECT id,credits,expires_at,consumed_at
+           FROM tool_task_quotes
+          WHERE id=$1 AND user_id=$2 FOR SHARE`,
+        [quoteId, dbUserId]
+      );
+      if (!quote.rowCount) throw new ApiError(404, 'QUOTE_NOT_FOUND', { field: 'quoteId' });
+      if (quote.rows[0].consumed_at) {
+        throw new ApiError(409, 'QUOTE_ALREADY_USED', { field: 'quoteId' });
+      }
+      if (new Date(quote.rows[0].expires_at).getTime() <= Date.now()) {
+        throw new ApiError(409, 'PRICE_CHANGED', { field: 'quoteId', retryable: true });
+      }
+      const quotedCredits = Number(quote.rows[0].credits || 0);
+      const wallet = await client.query(
+        'SELECT available_credits FROM wallets WHERE user_id=$1 FOR SHARE',
+        [dbUserId]
+      );
+      const budgetExceeded = quotedCredits > Number(
+        execution.rows[0].max_credits || config.autoCreditCap
+      );
+      const insufficientCredits = Number(wallet.rows[0]?.available_credits || 0) < quotedCredits;
+      const status = budgetExceeded || insufficientCredits
+        ? 'waiting_budget'
+        : execution.rows[0].status;
+      const errorCode = budgetExceeded
+        ? 'DESIGN_EXECUTION_BUDGET_EXCEEDED'
+        : insufficientCredits
+          ? 'INSUFFICIENT_CREDITS'
+          : null;
+      const updated = await client.query(
+        `UPDATE design_executions
+            SET quoted_credits=$3,status=$4,error_code=$5,updated_at=now()
+          WHERE id=$1 AND conversation_id=$2 RETURNING *`,
+        [executionId, conversationId, quotedCredits, status, errorCode]
+      );
+      await insertEvent(client, {
+        conversationId,
+        type: status === 'waiting_budget' ? 'execution.budget_required' : 'execution.quoted',
+        summary: status === 'waiting_budget' ? '报价超过本次自动预算' : '已取得服务端报价',
+        data: {
+          executionId,
+          quotedCredits,
+          maxCredits: Number(updated.rows[0].max_credits),
+          reason: errorCode
+        }
+      });
+      return publicExecution(updated.rows[0]);
+    });
+  };
+
+  const registerUploadedAssets = async ({ userId, conversationId, uploads }) => {
+    requireEnabled();
+    if (!Array.isArray(uploads) || uploads.length < 1 || uploads.length > 10) {
+      throw new ApiError(400, 'DESIGN_ATTACHMENTS_INVALID', { field: 'uploads' });
+    }
+    return transaction(pool, async (client) => {
+      const { dbUserId } = await resolveOwnedConversation(client, { userId, conversationId });
+      const result = [];
+      for (const upload of uploads) {
+        const clientId = sanitizeText(upload?.clientId, 120);
+        const assetId = String(upload?.assetId || '').trim();
+        if (!clientId || !UUID_RE.test(assetId)) {
+          throw new ApiError(400, 'DESIGN_ATTACHMENTS_INVALID', { field: 'uploads' });
+        }
+        const inserted = await client.query(
+          `INSERT INTO design_conversation_assets (conversation_id,asset_id,client_id)
+           SELECT $1,asset.id,$3 FROM assets asset
+            WHERE asset.id=$2 AND asset.owner_user_id=$4
+              AND asset.gc_state='active' AND asset.delete_requested_at IS NULL
+              AND (asset.expires_at IS NULL OR asset.expires_at>clock_timestamp())
+           ON CONFLICT (conversation_id,client_id)
+           DO UPDATE SET asset_id=EXCLUDED.asset_id
+           RETURNING *`,
+          [conversationId, assetId, clientId, dbUserId]
+        );
+        if (!inserted.rowCount) throw new ApiError(404, 'ASSET_NOT_FOUND');
+        const asset = await client.query(
+          'SELECT mime_type,byte_size FROM assets WHERE id=$1',
+          [assetId]
+        );
+        result.push(publicConversationAsset({ ...inserted.rows[0], ...asset.rows[0] }));
+      }
+      await insertEvent(client, {
+        conversationId,
+        type: 'attachments.uploaded',
+        summary: '附件已按执行路线上传',
+        data: { count: result.length, clientIds: result.map((item) => item.clientId) }
+      });
+      return result;
+    });
+  };
+
+  const attachExecutionTarget = async ({
+    userId,
+    conversationId,
+    executionId,
+    toolTaskId,
+    agentRunId
+  }) => {
+    requireEnabled();
+    if (Boolean(toolTaskId) === Boolean(agentRunId)) {
+      throw new ApiError(400, 'DESIGN_EXECUTION_TARGET_INVALID');
+    }
+    return transaction(pool, async (client) => {
+      const { dbUserId } = await resolveOwnedConversation(client, { userId, conversationId });
+      const execution = await client.query(
+        `SELECT * FROM design_executions
+          WHERE id=$1 AND conversation_id=$2 FOR UPDATE`,
+        [executionId, conversationId]
+      );
+      if (!execution.rowCount) throw new ApiError(404, 'DESIGN_EXECUTION_NOT_FOUND');
+      let quotedCredits = null;
+      let status = 'queued';
+      if (toolTaskId) {
+        const task = await client.query(
+          'SELECT id,status,quoted_credits FROM tool_tasks WHERE id=$1 AND user_id=$2',
+          [toolTaskId, dbUserId]
+        );
+        if (!task.rowCount) throw new ApiError(404, 'TASK_NOT_FOUND');
+        quotedCredits = Number(task.rows[0].quoted_credits || 0);
+        status = task.rows[0].status === 'running' ? 'running' : 'queued';
+      } else {
+        const run = await client.query(
+          'SELECT id,status,max_credits FROM agent_runs WHERE id=$1 AND user_id=$2',
+          [agentRunId, dbUserId]
+        );
+        if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+        quotedCredits = Number(run.rows[0].max_credits || 0);
+        status = ['provisioning', 'running', 'verifying'].includes(run.rows[0].status) ? 'running' : 'queued';
+      }
+      if (quotedCredits > Number(execution.rows[0].max_credits || config.autoCreditCap)) {
+        throw new ApiError(409, 'DESIGN_EXECUTION_BUDGET_EXCEEDED', { retryable: false });
+      }
+      const updated = await client.query(
+        `UPDATE design_executions
+            SET tool_task_id=$3,agent_run_id=$4,quoted_credits=$5,status=$6,updated_at=now()
+          WHERE id=$1 AND conversation_id=$2 RETURNING *`,
+        [executionId, conversationId, toolTaskId || null, agentRunId || null, quotedCredits, status]
+      );
+      await insertEvent(client, {
+        conversationId,
+        type: 'execution.started',
+        summary: '任务已开始',
+        data: { executionId, routeKind: updated.rows[0].route_kind }
+      });
+      return publicExecution(updated.rows[0]);
+    });
+  };
+
+  const getExecution = async ({ userId, conversationId, executionId }) => {
+    requireEnabled();
+    return transaction(pool, async (client) => {
+      await resolveOwnedConversation(client, { userId, conversationId });
+      const result = await client.query(
+        `SELECT execution.*,
+          CASE
+            WHEN task.status='success' OR run.status='succeeded' THEN 'succeeded'
+            WHEN task.status='failed' OR run.status='failed' THEN 'failed'
+            WHEN task.status='cancelled' OR run.status='cancelled' THEN 'cancelled'
+            WHEN task.status='running' OR run.status IN ('provisioning','running','verifying') THEN 'running'
+            WHEN run.status IN ('waiting_user','paused') THEN 'waiting_authorization'
+            ELSE execution.status
+          END AS derived_status
+         FROM design_executions execution
+         LEFT JOIN tool_tasks task ON task.id=execution.tool_task_id
+         LEFT JOIN agent_runs run ON run.id=execution.agent_run_id
+         WHERE execution.id=$1 AND execution.conversation_id=$2`,
+        [executionId, conversationId]
+      );
+      if (!result.rowCount) throw new ApiError(404, 'DESIGN_EXECUTION_NOT_FOUND');
+      return publicExecution(result.rows[0]);
+    });
+  };
+
+  const markExecution = async ({ userId, conversationId, executionId, status, errorCode = null }) => {
+    requireEnabled();
+    if (!EXECUTION_STATUSES.has(status)) throw new ApiError(400, 'DESIGN_EXECUTION_STATUS_INVALID');
+    return transaction(pool, async (client) => {
+      await resolveOwnedConversation(client, { userId, conversationId });
+      const updated = await client.query(
+        `UPDATE design_executions
+            SET status=$3,error_code=$4,updated_at=now(),
+                finished_at=CASE WHEN $3 IN ('succeeded','failed','cancelled') THEN now() ELSE NULL END
+          WHERE id=$1 AND conversation_id=$2 RETURNING *`,
+        [executionId, conversationId, status, errorCode ? sanitizeText(errorCode, 100) : null]
+      );
+      if (!updated.rowCount) throw new ApiError(404, 'DESIGN_EXECUTION_NOT_FOUND');
+      await insertEvent(client, {
+        conversationId,
+        type: `execution.${status}`,
+        summary: status === 'succeeded' ? '任务已完成' : status === 'failed' ? '任务执行失败' : '任务状态已更新',
+        data: { executionId, status, errorCode: errorCode || null }
+      });
+      return publicExecution(updated.rows[0]);
+    });
+  };
+
+  const increaseExecutionBudget = async ({ userId, conversationId, executionId, maxCredits }) => {
+    requireEnabled();
+    const cap = integer(maxCredits, config.autoCreditCap, 1, 500);
+    return transaction(pool, async (client) => {
+      await resolveOwnedConversation(client, { userId, conversationId, lock: true });
+      const updated = await client.query(
+        `UPDATE design_executions
+            SET max_credits=$3,status='queued',error_code=NULL,updated_at=now()
+          WHERE id=$1 AND conversation_id=$2 AND tool_task_id IS NULL AND agent_run_id IS NULL
+          RETURNING *`,
+        [executionId, conversationId, cap]
+      );
+      if (!updated.rowCount) throw new ApiError(409, 'DESIGN_EXECUTION_BUDGET_LOCKED');
+      await insertEvent(client, {
+        conversationId,
+        type: 'execution.budget_updated',
+        summary: '本次自动预算已更新',
+        data: { executionId, maxCredits: cap }
+      });
+      return publicExecution(updated.rows[0]);
+    });
+  };
+
+  const normalizeOrigin = (value) => {
+    try {
+      const url = new URL(String(value || '').trim());
+      if (url.protocol !== 'https:' || url.username || url.password) throw new Error('origin');
+      return url.origin;
+    } catch {
+      throw new ApiError(400, 'DESIGN_AUTHORIZATION_ORIGIN_INVALID', { field: 'siteOrigin' });
+    }
+  };
+
+  const grantAuthorization = async ({ userId, conversationId, siteOrigin, actionType }) => {
+    requireEnabled();
+    const origin = normalizeOrigin(siteOrigin);
+    const action = normalizeActionType(actionType);
+    if (!SAFE_SESSION_ACTIONS.has(action)) {
+      throw new ApiError(403, 'DESIGN_AUTHORIZATION_SCOPE_FORBIDDEN', { field: 'actionType' });
+    }
+    return transaction(pool, async (client) => {
+      const { dbUserId } = await resolveOwnedConversation(client, { userId, conversationId });
+      await client.query(
+        `UPDATE design_session_authorizations
+            SET status='expired',updated_at=now()
+          WHERE conversation_id=$1 AND user_id=$2 AND status='active'
+            AND expires_at<=clock_timestamp()`,
+        [conversationId, dbUserId]
+      );
+      const inserted = await client.query(
+        `INSERT INTO design_session_authorizations
+          (conversation_id,user_id,site_origin,action_type,expires_at)
+         VALUES ($1,$2,$3,$4,clock_timestamp()+($5::text || ' minutes')::interval)
+         RETURNING *`,
+        [conversationId, dbUserId, origin, action, config.authorizationIdleMinutes]
+      );
+      await insertEvent(client, {
+        conversationId,
+        type: 'authorization.granted',
+        summary: '会话授权已开启',
+        data: { authorizationId: inserted.rows[0].id, siteOrigin: origin, actionType: action }
+      });
+      return {
+        authorizationId: inserted.rows[0].id,
+        conversationId,
+        siteOrigin: origin,
+        actionType: action,
+        status: 'active',
+        lastUsedAt: null,
+        expiresAt: inserted.rows[0].expires_at,
+        createdAt: inserted.rows[0].created_at
+      };
+    });
+  };
+
+  const listAuthorizations = async ({ userId, conversationId }) => {
+    requireEnabled();
+    return transaction(pool, async (client) => {
+      const { dbUserId } = await resolveOwnedConversation(client, { userId, conversationId });
+      await client.query(
+        `UPDATE design_session_authorizations SET status='expired',updated_at=now()
+          WHERE conversation_id=$1 AND user_id=$2 AND status='active'
+            AND expires_at<=clock_timestamp()`,
+        [conversationId, dbUserId]
+      );
+      const result = await client.query(
+        `SELECT * FROM design_session_authorizations
+          WHERE conversation_id=$1 AND user_id=$2 ORDER BY created_at DESC`,
+        [conversationId, dbUserId]
+      );
+      return result.rows.map((row) => ({
+        authorizationId: row.id,
+        conversationId: row.conversation_id,
+        siteOrigin: row.site_origin,
+        actionType: row.action_type,
+        status: row.status,
+        lastUsedAt: row.last_used_at,
+        expiresAt: row.expires_at,
+        createdAt: row.created_at
+      }));
+    });
+  };
+
+  const revokeAuthorization = async ({ userId, conversationId, authorizationId }) => {
+    requireEnabled();
+    return transaction(pool, async (client) => {
+      const { dbUserId } = await resolveOwnedConversation(client, { userId, conversationId });
+      const updated = await client.query(
+        `UPDATE design_session_authorizations
+            SET status='revoked',revoked_at=now(),updated_at=now()
+          WHERE id=$1 AND conversation_id=$2 AND user_id=$3 AND status='active'
+          RETURNING id`,
+        [authorizationId, conversationId, dbUserId]
+      );
+      if (!updated.rowCount) throw new ApiError(404, 'DESIGN_AUTHORIZATION_NOT_FOUND');
+      await insertEvent(client, {
+        conversationId,
+        type: 'authorization.revoked',
+        summary: '会话授权已撤销',
+        data: { authorizationId }
+      });
+      return true;
+    });
+  };
+
+  const getStatus = async () => {
+    const counts = config.enabled
+      ? await pool.query(
+          `SELECT
+             count(*) FILTER (WHERE status='queued')::integer AS queued,
+             count(*) FILTER (WHERE status='running')::integer AS running
+           FROM design_planning_jobs`
+        ).catch(() => ({ rows: [{}] }))
+      : { rows: [{}] };
+    return {
+      enabled: config.enabled,
+      workerEnabled: config.workerEnabled,
+      plannerReady: Boolean(config.enabled && hasAgentPayloadKey(env) && typeof chatGenerate === 'function'),
+      model: TEXT_MODEL,
+      imageModel: IMAGE_MODEL,
+      autoCreditCap: config.autoCreditCap,
+      retentionDays: config.retentionDays,
+      authorizationIdleMinutes: config.authorizationIdleMinutes,
+      queued: Number(counts.rows[0]?.queued || 0),
+      running: Number(counts.rows[0]?.running || 0)
+    };
+  };
+
+  const sweepExpired = async ({ limit = 200 } = {}) => {
+    const bounded = Math.max(1, Math.min(1000, Number(limit) || 200));
+    return transaction(pool, async (client) => {
+      const deleted = await client.query(
+        `WITH expired AS (
+           SELECT id FROM design_conversations
+            WHERE expires_at<=clock_timestamp()
+            ORDER BY expires_at LIMIT $1
+         )
+         DELETE FROM design_conversations conversation USING expired
+          WHERE conversation.id=expired.id RETURNING conversation.id`,
+        [bounded]
+      );
+      return deleted.rowCount;
+    });
+  };
+
+  return {
+    addMessage,
+    attachExecutionTarget,
+    createConversation,
+    deleteConversation,
+    getExecution,
+    getConversation,
+    getStatus,
+    grantAuthorization,
+    increaseExecutionBudget,
+    listAuthorizations,
+    listConversations,
+    listEvents,
+    markExecution,
+    processNextJob,
+    recordToolQuote,
+    registerUploadedAssets,
+    revokeAuthorization,
+    startWorker,
+    stopWorker,
+    sweepExpired
+  };
+};
+
+module.exports = {
+  CLOUD_TOOLS,
+  EXECUTION_STATUSES,
+  IMAGE_MODEL,
+  ROUTE_KINDS,
+  SAFE_SESSION_ACTIONS,
+  TEXT_MODEL,
+  createDesignConversationService,
+  explicitHttpsOrigins,
+  getDesignConversationConfig,
+  inferDeliverables,
+  normalizeAttachmentManifest,
+  normalizePlannerDecision,
+  repairPlannerRoute,
+  plannerMessages,
+  safeJsonObject
+};

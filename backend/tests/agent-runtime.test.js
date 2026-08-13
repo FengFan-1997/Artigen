@@ -25,6 +25,8 @@ const {
 } = require('../services/agent-config');
 const {
   AgentWaitingForUser,
+  ARTIFACT_MIME_TYPES,
+  FUNCTION_TOOLS,
   OllamaAgentModelProvider,
   OpenAiAgentModelProvider,
   SiliconFlowAgentModelProvider,
@@ -34,6 +36,18 @@ const {
   siliconFlowUsageCredits,
   usageCredits
 } = require('../services/agent-model-provider');
+
+test('artifact tool schema only exposes verifier-supported MIME types', () => {
+  const artifactTool = FUNCTION_TOOLS.find((tool) => tool.name === 'declare_artifact');
+  assert.ok(artifactTool);
+  assert.deepEqual(
+    artifactTool.parameters.properties.mimeType.enum,
+    ARTIFACT_MIME_TYPES
+  );
+  assert.ok(ARTIFACT_MIME_TYPES.includes('text/markdown'));
+  assert.ok(ARTIFACT_MIME_TYPES.includes('application/pdf'));
+  assert.equal(ARTIFACT_MIME_TYPES.includes('markdown/text'), false);
+});
 const {
   assertArtifactDeclaration,
   assertSourcesObserved,
@@ -313,6 +327,27 @@ test('owner-only Agent Beta allows configured database users and denies everyone
     code: 'AGENT_BETA_ACCESS_DENIED',
     status: 403
   });
+});
+
+test('authenticated-v1 Agent access accepts every resolved active account identity', async () => {
+  const userId = '22222222-2222-4222-8222-222222222222';
+  const client = {
+    release() {},
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('SELECT id FROM users WHERE id=')) {
+        return { rows: [{ id: params[0] }], rowCount: 1 };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    }
+  };
+  const service = createAgentRunService({
+    pool: { connect: async () => client },
+    env: { AGENT_BETA_MODE: 'authenticated-v1' }
+  });
+  assert.equal(await service.resolveUserAccess({ userId }), userId);
 });
 
 test('owner run views decrypt only a bounded objective preview and expose the durable plan', () => {
@@ -856,6 +891,12 @@ test('Playwright DOM requests are bounded and consequential clicks are classifie
     selector: '',
     text: ''
   }).action, 'navigate');
+  assert.equal(normalizeBrowserRequest({
+    action: 'snapshot',
+    url: 'https://example.com/report',
+    selector: '',
+    text: ''
+  }).action, 'navigate');
   assert.equal(browserActionType({
     action: 'click',
     selector: 'button.publish',
@@ -885,6 +926,10 @@ test('Playwright DOM requests are bounded and consequential clicks are classifie
   }), 'browser_navigation');
   assert.throws(() => normalizeBrowserRequest({
     action: 'navigate',
+    url: 'http://example.com'
+  }), { code: 'AGENT_BROWSER_URL_FORBIDDEN' });
+  assert.throws(() => normalizeBrowserRequest({
+    action: 'snapshot',
     url: 'http://example.com'
   }), { code: 'AGENT_BROWSER_URL_FORBIDDEN' });
   assert.equal(isPrivateHostname('169.254.169.254'), true);

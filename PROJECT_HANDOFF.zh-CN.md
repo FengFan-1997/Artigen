@@ -246,6 +246,38 @@ DEV 真实依赖验收：
 - 两张生产产物保存在被 Git 忽略的 `.artifacts/production-two-model-image-smoke-2026-08-12T06-09-26-477Z/`，已人工查看且无空图、损坏或明显裁切。参考输入为合成抽象图，本次只把它作为单图输入、Kolors 路由、角色、持久化与结算证据，不把真实商品身份保持质量列为通过项。
 - 生产 smoke 后数据库再次确认活动 Agent Run、活动工具任务、held Agent budget 与 held tool credit 均为 0。源码硬审计未发现 `Qwen/Qwen-Image-Edit-2509`、Gemini 或其他第三模型的生产引用；全部运行时模型字面量仅保留 Qwen3 与 Kolors。
 
+### 5.5 对话式设计 Agent 主入口（DEV 已验收，生产待发布）
+
+2026-08-12 从 `origin/dev` SHA `ccff8a94450d972bac19d26ec26d056c9e6341c3` 建立 `codex/design-conversation-entry`，实现统一设计入口 `/artigen/create`。运行时代码与 DEV 修复经 PR [#35](https://github.com/FengFan-1997/Artigen/pull/35)、[#36](https://github.com/FengFan-1997/Artigen/pull/36)、[#37](https://github.com/FengFan-1997/Artigen/pull/37) 合入 `dev`；当前已验收 DEV SHA 为 `918ba05c23a7adc1f3140ea03c9b8e1e31b177b8`。本节的 DEV 证据不代表生产已发布；生产状态仍必须在发布窗口重新核验。
+
+持久架构与接口变更：
+
+- 新增迁移 `021_design_conversations`，分别保存 30 天过期的加密会话与消息、执行引用、附件、游标事件、持久化规划队列和会话授权；消息使用实体、行与角色绑定的 AES-256-GCM，不复用仅适用于 Agent 运行载荷的 `agent_run_payloads`。
+- 新增 `/api/design-assistant/status` 与 `/api/design-conversations` 会话、消息、附件、执行、预算、取消、游标 SSE 和授权接口；每个执行只能关联一个 `toolTaskId` 或 `agentRunId`，跨用户读取统一返回资源不存在。
+- 服务端规划模型硬锁为 `Qwen/Qwen3-8B`，所有图片工作流硬锁为 `Kwai-Kolors/Kolors`。路由只允许 `reply | local_tool | tool_task | agent_run` 及服务端工具目录中的合法操作；最多一轮、两项关键澄清。
+- 文生图和单参考图进入现有 AI Design/Kolors 工作流；老照片、背景、证件照和配料整理进入对应专项工作流；图片压缩、PDF 转换等本地任务通过五分钟、单次使用的浏览器内 handoff 打开准确工具；调研、浏览器、Shell 和多格式交付进入 Computer Agent。
+- 附件默认只保留在浏览器，规划确定云端执行后才上传。Kolors 路径只选择第一张兼容 PNG/JPEG/WebP，其余文件保持本地；本地工具不会静默上传。
+- 自动执行默认最高 50 点，先取得服务端真实报价再创建；超预算或余额不足不创建、不冻结。提高预算只影响当前执行，SSE 预算更新只刷新状态，仍需用户再次点击启动。
+- Agent 新增 `authenticated-v1` 访问模式，允许全部已登录且状态正常的账户；继续保留单用户活动任务限制、全局队列、限流和服务端权限校验。Mac Worker 目标并发为 2，但 CPU、内存、浏览器出口或桌面中继不满足条件时自动回退到 1。
+- 第三方写操作授权精确绑定会话、HTTPS origin 和动作类型，30 分钟闲置失效并可撤销；当前动作必须先通过一次性审批，之后才能保存持续授权。密码、OTP、验证码、支付、安全绕过和受监管决定不能被会话授权覆盖。
+- 主导航“创作”和营销首页创作 CTA 指向 `/artigen/create`；游客发送时进入登录，成功后自动续发草稿。现有 `/artigen/ai` 和 `/artigen/agent` 继续作为高级工作台。
+- `render.yaml` 与示例环境中的对话入口、规划 Worker 默认保持关闭；DEV 和生产只能在完成迁移、真实依赖 smoke 和发布门禁后通过平台环境显式开启。
+
+本地验证已覆盖消息加密、跨用户隔离、路由分类、模型硬限制、澄清上限、工具白名单、单参考图上传边界、50 点预算、授权范围、事件清理、Worker 并发回退、登录续发、桌面/移动布局、预算 SSE、失败恢复、焦点管理和无障碍状态。PostgreSQL 迁移集成测试已在本机开发库通过；独立实现与视觉复审最终为 PASS。完整 `pnpm check` 通过，其中 Playwright 为 441 passed / 3 skipped / 0 failed；PR #36 与 #37 的 GitHub Core、全部浏览器分片及 Release gate 均通过。两个不属于必需门禁的 Cloudflare Workers 外部构建仍无注解失败，本次未修改 Cloudflare 服务。
+
+DEV 真实依赖与部署验收（2026-08-13）：
+
+- Render DEV deployment `dep-d9uq4j0ae00c738ktqdg` 为 `live`，`/api/meta.gitSha` 精确等于 `918ba05c23a7adc1f3140ea03c9b8e1e31b177b8`；`/readyz` 为 `ok=true`，数据库迁移为 `021_design_conversations`，共享 S3、对话规划 Worker、Agent Worker、浏览器、受限出口和桌面中继 ready。
+- `/api/design-assistant/status` 显示入口与规划 Worker 开启、自动上限 50 点、保留 30 天、授权闲置 30 分钟；`/api/agent/status` 为 `accessMode=authenticated-v1`、Worker online、queueDepth=0；`/api/generation/models` 显示标准文生图与单参考图均 available，最大参考图分别为 0/1。
+- 跨进程 smoke 暴露并修复了 Render DEV 与 Mac DEV Worker 的 Agent payload key 漂移，以及 DEV Worker 缺少独立 task payload key。密钥通过 macOS Keychain 与 Render Secret 安全同步，未写入仓库或交接文档；生产 Secret 和生产 Worker 未触碰。
+- Mac DEV Worker 目标并发 2，但本机可用内存未达到安全门槛，按设计自动回退并发 1；真实双用户提交观察到一条 active、一条 queued，第一条结束后第二条取得租约，未阻断排队。
+- 对话快速生图 execution `8b6194ca-31e6-4e1e-a334-77db56b856e8` / task `3276901b-ff7b-45b4-9290-c43072e40c4f` succeeded：规划模型 `Qwen/Qwen3-8B`，图片模型 `Kwai-Kolors/Kolors`，标准文生图、10 点且只结算一次；PNG 1024×1024、1769719 bytes、SHA-256 `b2a297c4d02a3e9375235851497c6ba6977239de35d25dba044bdeb9aadb8aa2`，共享 S3 验证通过。
+- 双用户 Computer Agent Run `9d3c3b4b-0ec9-486f-9828-f5d8d900581a` 与 `91a130aa-f7eb-4e2b-ae86-1943d4cc3207` 均 succeeded，模型均为 `Qwen/Qwen3-8B`，各结算 6 点。每条 Run 都交付一份 Markdown source 与一份 PDF，四个产物均 `verificationStatus=passed`、S3、大小与 SHA-256 复核通过；每条 Run 只有一条 settled budget hold、一条 hold 账本事件和一条 release 事件，无重复结算。
+- 完整机器证据保存在被 Git 忽略的 `.artifacts/design-conversation-dev-smoke-2026-08-13T11-15-41-711Z/`，包含 `evidence.json`、Kolors PNG、两份 Markdown 与两份 PDF。smoke 结束后数据库再次确认 active Agent Run=0、active tool task=0、held Agent budget=0、held tool credit=0；Worker online、queueDepth=0。
+- 真实 smoke 还推动了两个小模型契约硬化：`declare_artifact.mimeType` 只能从验证器实际支持的 allowlist 中选择；`browser_dom` 的 `snapshot + 非空 HTTPS URL` 在保持同一 origin allowlist 的前提下规范化为 navigate，避免页面仍停留在 `about:blank`。HTTP、私网和未授权 origin 仍拒绝。
+
+生产尚未在本节重新核验或发布。进入 `dev → main` 前的 DEV 硬门禁已经满足；生产仍须按“同一不可变 main SHA 暗发布 → 重新核验 Render/Vercel/Mac Worker → 再开启入口与 `authenticated-v1` → 真实生产验收”的顺序执行。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。
