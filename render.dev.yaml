@@ -57,6 +57,21 @@ services:
         value: "0"
       - key: TASK_WORKER_ENABLED
         value: "0"
+      # The committed DEV blueprint also fails closed. The existing integration
+      # service may override these values in Render only after migration and
+      # real-dependency readiness have been verified.
+      - key: AGENT_BETA_MODE
+        value: disabled
+      - key: DESIGN_CONVERSATION_ENABLED
+        value: "false"
+      - key: DESIGN_CONVERSATION_WORKER_ENABLED
+        value: "false"
+      - key: DESIGN_CONVERSATION_AUTO_CREDIT_CAP
+        value: "50"
+      - key: DESIGN_CONVERSATION_RETENTION_DAYS
+        value: "30"
+      - key: DESIGN_CONVERSATION_AUTH_IDLE_MINUTES
+        value: "30"
       - key: VITE_ANALYTICS_ENABLED
         value: "1"
       - key: BEHAVIOR_ANALYTICS_ENABLED
