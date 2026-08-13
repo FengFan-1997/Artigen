@@ -241,14 +241,21 @@ const explicitHttpsOrigins = (text) => {
 const inferDeliverables = (text, proposed = []) => {
   const value = String(text || '').toLowerCase();
   const allowed = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image']);
+  const presentationRequested =
+    /pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentation|slides?/.test(value);
   const result = Array.isArray(proposed)
-    ? proposed.map((item) => String(item || '').trim()).filter((item) => allowed.has(item))
+    ? proposed
+      .map((item) => String(item || '').trim())
+      .filter((item) => (
+        allowed.has(item) &&
+        (item !== 'presentation' || presentationRequested)
+      ))
     : [];
   const add = (kind) => { if (!result.includes(kind)) result.push(kind); };
   if (/图片|生图|海报|视觉稿|主视觉|image|poster|visual/.test(value)) add('image');
   if (/报告|方案|审计|pdf|report|proposal|audit/.test(value)) add('report');
   if (/表格|xlsx|excel|spreadsheet/.test(value)) add('spreadsheet');
-  if (/ppt|演示|提案|presentation|slides?/.test(value)) add('presentation');
+  if (presentationRequested) add('presentation');
   if (/网站|网页|原型|website|prototype|landing page/.test(value)) add('website');
   if (!result.length) add('report');
   return result.slice(0, 5);

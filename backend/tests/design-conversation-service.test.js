@@ -139,6 +139,21 @@ test('multiple deliverables route to Computer Agent and never grant implicit thi
   assert.ok(decision.deliverables.includes('presentation'));
 });
 
+test('explicit Markdown and PDF output rejects an unsupported planner presentation guess', () => {
+  const decision = normalizePlannerDecision({
+    raw: {
+      routeKind: 'agent_run',
+      deliverables: ['report', 'presentation']
+    },
+    text: '审计官网并交付 Markdown 和 PDF 品牌改进提案',
+    attachments: [],
+    clarificationRounds: 0,
+    creditCap: 50
+  });
+  assert.deepEqual(decision.deliverables, ['report']);
+  assert.deepEqual(decision.plan.deliverables, ['report']);
+});
+
 test('Computer Agent plan accepts structured Qwen steps without rendering object coercion', () => {
   const decision = normalizePlannerDecision({
     raw: {
