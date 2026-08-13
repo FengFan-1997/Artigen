@@ -139,6 +139,30 @@ test('multiple deliverables route to Computer Agent and never grant implicit thi
   assert.ok(decision.deliverables.includes('presentation'));
 });
 
+test('Computer Agent plan accepts structured Qwen steps without rendering object coercion', () => {
+  const decision = normalizePlannerDecision({
+    raw: {
+      routeKind: 'agent_run',
+      steps: [
+        { label: '审计公开页面' },
+        { title: '整理可追溯证据' },
+        { description: '验证并交付文件' },
+        { unsupported: 'ignored' }
+      ]
+    },
+    text: '审计官网并交付 Markdown 和 PDF',
+    attachments: [],
+    clarificationRounds: 0,
+    creditCap: 50
+  });
+  assert.deepEqual(decision.plan.steps, [
+    '审计公开页面',
+    '整理可追溯证据',
+    '验证并交付文件'
+  ]);
+  assert.doesNotMatch(decision.plan.steps.join(' '), /\[object Object\]/u);
+});
+
 test('clarification is limited to one round and at most two questions', () => {
   const first = normalizePlannerDecision({
     raw: {

@@ -54,6 +54,18 @@ const integer = (value, fallback, minimum, maximum) => {
   return Math.max(minimum, Math.min(maximum, Number.isFinite(parsed) ? parsed : fallback));
 };
 
+const normalizePlannerSteps = (steps) => {
+  if (!Array.isArray(steps)) return [];
+  return steps
+    .map((item) => {
+      if (typeof item === 'string') return sanitizeText(item, 200);
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
+      return sanitizeText(item.label || item.title || item.description || '', 200);
+    })
+    .filter(Boolean)
+    .slice(0, 6);
+};
+
 const getDesignConversationConfig = (env = process.env) => Object.freeze({
   enabled: enabled(env.DESIGN_CONVERSATION_ENABLED),
   workerEnabled: enabled(env.DESIGN_CONVERSATION_WORKER_ENABLED),
@@ -413,6 +425,7 @@ const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds,
   if (routeKind === 'agent_run') {
     const origins = explicitHttpsOrigins(text);
     const deliverables = inferDeliverables(text, raw.deliverables);
+    const plannerSteps = normalizePlannerSteps(raw.steps);
     return {
       routeKind,
       status: inputCount ? 'waiting_upload' : 'queued',
@@ -429,8 +442,8 @@ const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds,
       browserConfig: { allowedOrigins: origins, persistSession: false },
       plan: {
         label: 'Computer Agent',
-        steps: Array.isArray(raw.steps)
-          ? raw.steps.map((item) => sanitizeText(item, 200)).filter(Boolean).slice(0, 6)
+        steps: plannerSteps.length
+          ? plannerSteps
           : ['拆解目标与交付物', '在隔离环境中执行', '验证并打包结果'],
         executor: 'agent_run',
         uploadRequired: inputCount > 0,

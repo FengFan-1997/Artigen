@@ -861,6 +861,8 @@ test('agent instructions require reliable multiline file writes and a content ch
   assert.match(instructions, /Pandoc is not\s+installed/);
   assert.match(instructions, /Never run apt, pip, npm/);
   assert.match(instructions, /Artifact sources must be an empty array/);
+  assert.match(instructions, /empty sources array for role=pdf is rejected/);
+  assert.match(instructions, /Reuse that same observed source list/);
   assert.match(instructions, /Never invent a source URL/);
 });
 
