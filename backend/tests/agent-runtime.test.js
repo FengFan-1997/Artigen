@@ -123,9 +123,23 @@ const { settleAgentBudget } = require('../services/agent-billing-service');
 const {
   createAgentWorkerService,
   createAgentCostMeter,
+  buildSubagentObjective,
   runWithLeaseHeartbeat,
   resolveStagedImageReferences
 } = require('../services/agent-worker-service');
+
+test('subagent objective exposes only virtual workspace paths to Qwen3', () => {
+  const inputPath = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
+  const objective = buildSubagentObjective({
+    role: 'visual analyst',
+    objective: 'Analyze the supplied reference.',
+    expectedOutput: 'A verified Markdown file.',
+    inputPaths: [inputPath]
+  });
+  assert.match(objective, /write every result only under \/workspace/);
+  assert.match(objective, new RegExp(`${inputPath.replaceAll('/', '\\/')} -> \/inputs\/11111111-1111-4111-8111-111111111111\\.png`));
+  assert.doesNotMatch(objective, /\/tmp\/artigen-workspace\/subagents/);
+});
 const {
   createAgentImageService,
   normalizeAgentImageReferences
@@ -1211,6 +1225,174 @@ test('SiliconFlow corrects an invalid Qwen plan and fails closed after two retri
     }
   }), { code: 'AGENT_PLAN_INVALID' });
   assert.equal(rejected, 3);
+});
+
+test('subagent finalizes deterministically after a completed plan and two successful shell steps', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const workingPlan = [
+    { label: 'Create the report', status: 'in_progress' },
+    { label: 'Verify the report', status: 'pending' }
+  ];
+  const completedPlan = workingPlan.map((step) => ({ ...step, status: 'completed' }));
+  const responses = [
+    toolCall('plan', 'update_plan', { explanation: 'Prepare and verify the report.', steps: workingPlan }),
+    toolCall('write', 'sandbox_shell', { script: 'write report', purpose: 'Create report' }),
+    toolCall('verify', 'sandbox_shell', { script: 'verify report', purpose: 'Verify report' }),
+    toolCall('complete', 'update_plan', { explanation: 'The report exists and passed verification.', steps: completedPlan })
+  ];
+  const requests = [];
+  const savedStates = [];
+  let shellCalls = 0;
+  let cleared = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Create a verified report under /workspace.',
+    capabilities: { files: true, shell: true },
+    toolProfile: 'subagent',
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async () => {
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      saveModelState: async (state) => savedStates.push(structuredClone(state)),
+      clearModelState: async () => { cleared += 1; },
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(requests.length, 4);
+  assert.equal(shellCalls, 2);
+  assert.equal(cleared, 1);
+  assert.match(result.text, /Status: completed/);
+  assert.match(result.text, /passed verification/);
+  assert.equal(result.turns, 4);
+  assert.ok(savedStates.some((state) => (
+    state.subagentPlanCompleted === true &&
+    state.subagentSuccessfulShellCalls === 2 &&
+    state.subagentFinalizationRequired === true
+  )));
+});
+
+test('SiliconFlow repairs a missing or invalid artifact before redeclaring it', async () => {
+  const declaration = {
+    path: '/tmp/artigen-workspace/report.pdf',
+    role: 'pdf',
+    filename: 'report.pdf',
+    mimeType: 'application/pdf',
+    sources: []
+  };
+  const call = (id, name, args) => ({
+    id: `chat-artifact-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-artifact-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: {}
+  });
+  const responses = [
+    call('invalid', 'declare_artifact', declaration),
+    call('repair', 'sandbox_shell', {
+      script: 'artigen-report-pdf report.md report.pdf',
+      purpose: 'Create and verify the PDF'
+    }),
+    call('valid', 'declare_artifact', declaration),
+    {
+      id: 'chat-artifact-final',
+      choices: [{ message: { role: 'assistant', content: 'The verified report is ready.' } }],
+      usage: {}
+    }
+  ];
+  const requests = [];
+  const states = [];
+  let declarations = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Create and deliver a PDF report.',
+    capabilities: { files: true, shell: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      declareArtifact: async () => {
+        declarations += 1;
+        if (declarations === 1) {
+          throw new ApiError(422, 'AGENT_ARTIFACT_VERIFICATION_FAILED', {
+            filename: 'report.pdf',
+            verifier: 'file does not exist'
+          });
+        }
+        return { artifactId: 'artifact-1', verificationStatus: 'passed' };
+      },
+      shell: async () => ({ success: true, returnCode: 0, stdout: '', stderr: '' }),
+      saveModelState: async (state) => states.push(structuredClone(state)),
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'The verified report is ready.');
+  assert.equal(declarations, 2);
+  assert.equal(requests.length, 4);
+  assert.deepEqual(requests[1].tool_choice, {
+    type: 'function',
+    function: { name: 'sandbox_shell' }
+  });
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('AGENT_ARTIFACT_VERIFICATION_FAILED') &&
+    message.content.includes('Use sandbox_shell')
+  )));
+  assert.ok(states.some((state) => (
+    state.artifactValidationAttempts === 1 && state.artifactRepairRequired === true
+  )));
 });
 
 test('delegated tasks allow only exact staged inputs and at most three children', () => {

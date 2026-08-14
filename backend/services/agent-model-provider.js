@@ -322,6 +322,12 @@ approval, payment, or artifact-declaration capability. Do not create another sub
 structured summary of findings and the files you created; the parent alone verifies, merges, and delivers them.
 Never run apt, pip, npm, pnpm, yarn, bun, git network commands, curl, wget, ssh, or any installer.
 
+Use /workspace exclusively for every output path. Never guess, inspect, mention, or copy to a host path under
+/tmp/artigen-workspace/subagents. For normal file tasks, publish one valid plan, create the requested output,
+run a separate offline verification command, then mark every plan step completed. Once the expected output
+exists and verification succeeds, stop calling tools and return the final structured summary immediately.
+Do not revise an already completed plan or perform extra cleanup, formatting, or inspection loops.
+
 Maximum tool steps: ${Number(maxSteps || 20)}
 `.trim()
   : `
@@ -1065,6 +1071,18 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.planValidationAttempts || 0)
     );
+    let artifactValidationAttempts = Math.max(
+      0,
+      Number(durable?.artifactValidationAttempts || 0)
+    );
+    let artifactRepairRequired = durable?.artifactRepairRequired === true;
+    let subagentPlanCompleted = durable?.subagentPlanCompleted === true;
+    let subagentSuccessfulShellCalls = Math.max(
+      0,
+      Number(durable?.subagentSuccessfulShellCalls || 0)
+    );
+    let subagentFinalizationRequired = durable?.subagentFinalizationRequired === true;
+    let subagentCompletionSummary = String(durable?.subagentCompletionSummary || '');
 
     const saveDurableState = async () => {
       messages = compactOllamaMessages(
@@ -1085,8 +1103,22 @@ class OllamaAgentModelProvider {
         delegationCompleted,
         delegationNudges,
         delegationValidationAttempts,
-        planValidationAttempts
+        planValidationAttempts,
+        artifactValidationAttempts,
+        artifactRepairRequired,
+        subagentPlanCompleted,
+        subagentSuccessfulShellCalls,
+        subagentFinalizationRequired,
+        subagentCompletionSummary
       });
+    };
+
+    const refreshSubagentFinalization = () => {
+      subagentFinalizationRequired = (
+        toolProfile === 'subagent' &&
+        subagentPlanCompleted &&
+        subagentSuccessfulShellCalls >= 2
+      );
     };
 
     const executeTool = async (call) => {
@@ -1111,6 +1143,18 @@ class OllamaAgentModelProvider {
       if (call.name === 'update_plan') {
         const result = await callbacks.updatePlan(args);
         planPublished = true;
+        if (toolProfile === 'subagent') {
+          const steps = Array.isArray(result?.steps) ? result.steps : args.steps;
+          subagentPlanCompleted = (
+            Array.isArray(steps) &&
+            steps.length >= 2 &&
+            steps.every((step) => step?.status === 'completed')
+          );
+          if (subagentPlanCompleted) {
+            subagentCompletionSummary = String(args.explanation || '').trim().slice(0, 2000);
+          }
+          refreshSubagentFinalization();
+        }
         return result;
       }
       if (call.name === 'delegate_tasks') {
@@ -1120,6 +1164,11 @@ class OllamaAgentModelProvider {
       }
       if (call.name === 'sandbox_shell') {
         const shellResult = await callbacks.shell(args.script, args.purpose);
+        if (shellResult.success) artifactRepairRequired = false;
+        if (toolProfile === 'subagent' && shellResult.success) {
+          subagentSuccessfulShellCalls += 1;
+          refreshSubagentFinalization();
+        }
         return {
           success: shellResult.success,
           returnCode: shellResult.returnCode,
@@ -1164,6 +1213,7 @@ class OllamaAgentModelProvider {
             const result = await executeTool(pendingCall);
             if (pendingCall.name === 'delegate_tasks') delegationValidationAttempts = 0;
             if (pendingCall.name === 'update_plan') planValidationAttempts = 0;
+            if (pendingCall.name === 'declare_artifact') artifactValidationAttempts = 0;
             completedOutput = {
               callId: pendingCall.callId,
               name: pendingCall.name,
@@ -1181,7 +1231,23 @@ class OllamaAgentModelProvider {
               ['AGENT_SUBAGENT_TASK_INVALID', 'AGENT_SUBAGENT_TASKS_INVALID']
                 .includes(error?.code)
             );
-            if (!correctableDelegationError && !correctablePlanError) throw error;
+            const correctableArtifactError = (
+              pendingCall.name === 'declare_artifact' &&
+              [
+                'AGENT_ARTIFACT_FILE_NOT_FOUND',
+                'AGENT_ARTIFACT_VERIFICATION_FAILED',
+                'AGENT_ARTIFACT_EMPTY',
+                'AGENT_ARTIFACT_FILENAME_INVALID',
+                'AGENT_ARTIFACT_MIME_UNSUPPORTED',
+                'AGENT_ARTIFACT_EXTENSION_MISMATCH',
+                'AGENT_ARTIFACT_ROLE_INVALID',
+                'AGENT_ARTIFACT_ROLE_MIME_MISMATCH',
+                'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED'
+              ].includes(error?.code)
+            );
+            if (!correctableDelegationError && !correctablePlanError && !correctableArtifactError) {
+              throw error;
+            }
             if (correctablePlanError) {
               planValidationAttempts += 1;
               if (planValidationAttempts > 2) throw error;
@@ -1199,7 +1265,7 @@ class OllamaAgentModelProvider {
                   ].join(' ')
                 })
               };
-            } else {
+            } else if (correctableDelegationError) {
               delegationValidationAttempts += 1;
               if (delegationValidationAttempts > 2) throw error;
               completedOutput = {
@@ -1216,6 +1282,27 @@ class OllamaAgentModelProvider {
                   ].join(' ')
                 })
               };
+            } else {
+              artifactValidationAttempts += 1;
+              if (artifactValidationAttempts > 2) throw error;
+              artifactRepairRequired = [
+                'AGENT_ARTIFACT_FILE_NOT_FOUND',
+                'AGENT_ARTIFACT_VERIFICATION_FAILED',
+                'AGENT_ARTIFACT_EMPTY'
+              ].includes(error?.code);
+              completedOutput = {
+                callId: pendingCall.callId,
+                name: pendingCall.name,
+                content: JSON.stringify({
+                  success: false,
+                  errorCode: error.code,
+                  filename: String(error?.details?.filename || '').slice(0, 240),
+                  verifier: String(error?.details?.verifier || '').slice(0, 500),
+                  correction: artifactRepairRequired
+                    ? 'Use sandbox_shell to create or repair the file and verify it opens successfully, then call declare_artifact again with the exact path.'
+                    : 'Correct the declaration fields and call declare_artifact again. Use only observed sources and a supported role, MIME type, filename, and extension.'
+                })
+              };
             }
           }
           await saveDurableState();
@@ -1224,6 +1311,22 @@ class OllamaAgentModelProvider {
         pendingCall = null;
         completedOutput = null;
         await saveDurableState();
+      }
+
+      if (subagentFinalizationRequired) {
+        await callbacks.clearModelState?.();
+        const summary = subagentCompletionSummary || 'The delegated plan and its output verification completed.';
+        return {
+          responseId: `${this.providerName}:subagent-complete:${turns}`,
+          text: [
+            'Status: completed',
+            `Summary: ${summary}`,
+            'Outputs: saved in the isolated /workspace directory for parent verification.'
+          ].join('\n'),
+          usage: {},
+          credits: totalCredits,
+          turns
+        };
       }
 
       assertModelDeadline(deadlineAt);
@@ -1235,6 +1338,11 @@ class OllamaAgentModelProvider {
         request.tool_choice = {
           type: 'function',
           function: { name: 'update_plan' }
+        };
+      } else if (artifactRepairRequired) {
+        request.tool_choice = {
+          type: 'function',
+          function: { name: 'sandbox_shell' }
         };
       }
       const response = await this.createChat(request);
