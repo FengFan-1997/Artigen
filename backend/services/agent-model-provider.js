@@ -368,6 +368,9 @@ request approval, change external state, or declare final artifacts. You remain 
 checking, and delivering every final file. Do not delegate the same work twice. If the user's objective
 explicitly requests sub Agents, child roles, or delegate_tasks, you must call delegate_tasks exactly once
 before finishing; a text-only promise or description does not satisfy that requirement.
+For each delegated task, inputPaths must contain only exact read-only input paths listed in the objective.
+When the objective lists no user-provided input files, inputPaths must be an empty array. Never invent a
+placeholder path, UUID, filename, or input that was not staged for this run.
 
 Consequential actions require request_user_approval immediately before the action. CAPTCHA, passwords,
 OTP, security-warning bypass, and final password changes require takeover and must never be attempted.
@@ -1054,6 +1057,10 @@ class OllamaAgentModelProvider {
     );
     let delegationCompleted = durable?.delegationCompleted === true;
     let delegationNudges = Math.max(0, Number(durable?.delegationNudges || 0));
+    let delegationValidationAttempts = Math.max(
+      0,
+      Number(durable?.delegationValidationAttempts || 0)
+    );
 
     const saveDurableState = async () => {
       messages = compactOllamaMessages(
@@ -1072,7 +1079,8 @@ class OllamaAgentModelProvider {
         text,
         unsupportedToolAttempts,
         delegationCompleted,
-        delegationNudges
+        delegationNudges,
+        delegationValidationAttempts
       });
     };
 
@@ -1147,12 +1155,40 @@ class OllamaAgentModelProvider {
         if (!completedOutput) {
           turns += 1;
           await saveDurableState();
-          const result = await executeTool(pendingCall);
-          completedOutput = {
-            callId: pendingCall.callId,
-            name: pendingCall.name,
-            content: JSON.stringify(result)
-          };
+          try {
+            const result = await executeTool(pendingCall);
+            if (pendingCall.name === 'delegate_tasks') delegationValidationAttempts = 0;
+            completedOutput = {
+              callId: pendingCall.callId,
+              name: pendingCall.name,
+              content: JSON.stringify(result)
+            };
+          } catch (error) {
+            const correctableDelegationError = (
+              pendingCall.name === 'delegate_tasks' &&
+              delegationRequired &&
+              !delegationCompleted &&
+              ['AGENT_SUBAGENT_TASK_INVALID', 'AGENT_SUBAGENT_TASKS_INVALID']
+                .includes(error?.code)
+            );
+            if (!correctableDelegationError) throw error;
+            delegationValidationAttempts += 1;
+            if (delegationValidationAttempts > 2) throw error;
+            completedOutput = {
+              callId: pendingCall.callId,
+              name: pendingCall.name,
+              content: JSON.stringify({
+                success: false,
+                errorCode: error.code,
+                field: String(error?.field || 'tasks').slice(0, 80),
+                correction: [
+                  'Retry delegate_tasks with 1-3 valid tasks.',
+                  'Use only exact staged input paths listed in the objective.',
+                  'When no inputs are listed, every inputPaths value must be an empty array.'
+                ].join(' ')
+              })
+            };
+          }
           await saveDurableState();
         }
         messages.push(this.toolResultMessage(pendingCall, completedOutput));
