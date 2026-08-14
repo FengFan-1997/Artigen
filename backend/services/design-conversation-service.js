@@ -241,34 +241,38 @@ const explicitHttpsOrigins = (text) => {
 const inferDeliverables = (text, proposed = []) => {
   const value = String(text || '').toLowerCase();
   const allowed = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image']);
-  const presentationNoun = '(?:pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentation|slides?)';
-  const presentationIntentText = value
-    .replace(new RegExp(
-      `(?:不要|无需|不需要|别|禁止|不含|不包括|排除|无)\\s*(?:制作|生成|交付|提供|包含|输出|任何)?\\s*${presentationNoun}`,
-      'giu'
-    ), ' ')
-    .replace(new RegExp(
-      `\\b(?:do\\s+not|don't|no|without|exclude|excluding)\\s+` +
-        `(?:(?:create|generate|deliver|provide|include|output|any|an?)\\s+)*${presentationNoun}` +
-        `(?:\\s+(?:or|and)\\s+(?:an?\\s+)?${presentationNoun})*\\b`,
-      'giu'
-    ), ' ');
-  const presentationRequested =
-    /pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentation|slides?/.test(presentationIntentText);
+  const nounPatterns = {
+    report: '(?:报告|方案|审计|pdf|markdown|\\bmd\\b|reports?|proposals?|audits?)',
+    spreadsheet: '(?:表格|工作簿|xlsx?|excel|spreadsheets?|workbooks?)',
+    presentation: '(?:pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentations?|slides?)',
+    website: '(?:网站|网页|静态站点|网站原型|网页原型|websites?|webpages?|web\\s+pages?|prototypes?|landing\\s+pages?)',
+    image: '(?:图片|生图|海报|视觉稿|主视觉|概念图|images?|posters?|visuals?|key\\s+visuals?)'
+  };
+  const explicitlyNegated = (kind) => {
+    const noun = nounPatterns[kind];
+    return new RegExp(
+      `(?:不要|无需|不需要|别|禁止|不含|不包括|排除|无)\\s*[^\\n。！？；;,，.]{0,60}?${noun}`,
+      'iu'
+    ).test(value) || new RegExp(
+      `\\b(?:do\\s+not|don't|no|without|exclude|excluding)\\b\\s*[^\\n.!?;,]{0,80}?${noun}`,
+      'iu'
+    ).test(value);
+  };
+  const requested = (kind) => !explicitlyNegated(kind) && new RegExp(nounPatterns[kind], 'iu').test(value);
   const result = Array.isArray(proposed)
     ? proposed
       .map((item) => String(item || '').trim())
       .filter((item) => (
         allowed.has(item) &&
-        (item !== 'presentation' || presentationRequested)
+        requested(item)
       ))
     : [];
   const add = (kind) => { if (!result.includes(kind)) result.push(kind); };
-  if (/图片|生图|海报|视觉稿|主视觉|image|poster|visual/.test(value)) add('image');
-  if (/报告|方案|审计|pdf|report|proposal|audit/.test(value)) add('report');
-  if (/表格|xlsx|excel|spreadsheet/.test(value)) add('spreadsheet');
-  if (presentationRequested) add('presentation');
-  if (/网站|网页|原型|website|prototype|landing page/.test(value)) add('website');
+  if (requested('image')) add('image');
+  if (requested('report')) add('report');
+  if (requested('spreadsheet')) add('spreadsheet');
+  if (requested('presentation')) add('presentation');
+  if (requested('website')) add('website');
   if (!result.length) add('report');
   return result.slice(0, 5);
 };

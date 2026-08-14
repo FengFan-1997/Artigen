@@ -175,6 +175,23 @@ test('explicitly rejecting presentation output cannot be mistaken for presentati
   }
 });
 
+test('negated image and website outputs cannot override an explicit report-only request', () => {
+  const decision = normalizePlannerDecision({
+    raw: {
+      routeKind: 'agent_run',
+      deliverables: ['image', 'report', 'presentation', 'website']
+    },
+    text: '交付 artigen-design-proposal.md 与 artigen-design-proposal.pdf；不要 PPT/PPTX/PowerPoint/幻灯片/演示文稿，也不要图片或网站原型。',
+    attachments: [],
+    clarificationRounds: 0,
+    creditCap: 50
+  });
+  assert.deepEqual(decision.deliverables, ['report']);
+  assert.deepEqual(decision.plan.deliverables, ['report']);
+  assert.equal(decision.capabilities.generate_images, false);
+  assert.equal(decision.plan.capabilities.generate_images, false);
+});
+
 test('Computer Agent plan accepts structured Qwen steps without rendering object coercion', () => {
   const decision = normalizePlannerDecision({
     raw: {
