@@ -537,6 +537,31 @@ const normalizeOllamaArguments = (raw) => {
   return parseArguments(raw);
 };
 
+const normalizeReportPdfToolAlias = ({ name, rawArguments, toolProfile }) => {
+  if (toolProfile !== 'parent' || name !== 'artigen-report-pdf') return null;
+  const args = normalizeOllamaArguments(rawArguments);
+  const inputPath = String(args.inputPath || '').trim();
+  const outputPath = String(args.outputPath || '').trim();
+  const safePath = /^\/tmp\/artigen-workspace\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/;
+  if (
+    !safePath.test(inputPath) ||
+    !safePath.test(outputPath) ||
+    !inputPath.toLowerCase().endsWith('.md') ||
+    !outputPath.toLowerCase().endsWith('.pdf') ||
+    inputPath.split('/').includes('..') ||
+    outputPath.split('/').includes('..')
+  ) {
+    throw new ApiError(400, 'AGENT_MODEL_TOOL_ARGUMENTS_INVALID');
+  }
+  return {
+    name: 'sandbox_shell',
+    arguments: JSON.stringify({
+      script: `artigen-report-pdf ${inputPath} ${outputPath}`,
+      purpose: `Generate and verify ${outputPath.split('/').pop()} with the preinstalled report helper`
+    })
+  };
+};
+
 const compactOllamaMessages = (input, maximumCharacters = 60_000) => {
   const messages = Array.isArray(input) ? input.map((message) => ({ ...message })) : [];
   if (JSON.stringify(messages).length <= maximumCharacters || messages.length <= 8) {
@@ -1597,7 +1622,7 @@ class OllamaAgentModelProvider {
         };
       }
       const fn = calls[0]?.function || {};
-      const name = String(fn.name || '').trim();
+      let name = String(fn.name || '').trim();
       const callId = String(calls[0]?.id || crypto.createHash('sha256')
         .update(`${turns}:${name}:${JSON.stringify(fn.arguments || '')}`)
         .digest('hex')
@@ -1635,6 +1660,16 @@ class OllamaAgentModelProvider {
         throw new ApiError(403, 'AGENT_CAPABILITY_NOT_GRANTED', {
           capability: 'subagents'
         });
+      }
+      const reportPdfAlias = normalizeReportPdfToolAlias({
+        name,
+        rawArguments: fn.arguments,
+        toolProfile
+      });
+      if (reportPdfAlias) {
+        name = reportPdfAlias.name;
+        fn.name = reportPdfAlias.name;
+        fn.arguments = reportPdfAlias.arguments;
       }
       if (!allowedToolNames.has(name)) {
         unsupportedToolAttempts += 1;
@@ -1903,6 +1938,7 @@ module.exports = {
   createAgentModelProvider,
   compactOllamaMessages,
   normalizeOllamaArguments,
+  normalizeReportPdfToolAlias,
   functionToolsForProfile,
   ollamaFileTools,
   ollamaUsageCredits,

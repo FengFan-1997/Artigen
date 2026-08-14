@@ -32,6 +32,7 @@ const {
   SiliconFlowAgentModelProvider,
   buildInstructions,
   functionToolsForProfile,
+  normalizeReportPdfToolAlias,
   ollamaFileTools,
   ollamaUsageCredits,
   siliconFlowRequestTimeoutMs,
@@ -45,6 +46,112 @@ test('SiliconFlow Agent timeout covers real Qwen3 tool latency and stays bounded
   assert.equal(siliconFlowRequestTimeoutMs({ AGENT_SILICONFLOW_TIMEOUT_MS: 'invalid' }), 300_000);
   assert.equal(siliconFlowRequestTimeoutMs({ AGENT_SILICONFLOW_TIMEOUT_MS: '1' }), 30_000);
   assert.equal(siliconFlowRequestTimeoutMs({ AGENT_SILICONFLOW_TIMEOUT_MS: '999999' }), 600_000);
+});
+
+test('parent maps the Qwen report helper alias to one bounded offline shell call', () => {
+  assert.deepEqual(normalizeReportPdfToolAlias({
+    name: 'artigen-report-pdf',
+    rawArguments: JSON.stringify({
+      inputPath: '/tmp/artigen-workspace/report.md',
+      outputPath: '/tmp/artigen-workspace/report.pdf'
+    }),
+    toolProfile: 'parent'
+  }), {
+    name: 'sandbox_shell',
+    arguments: JSON.stringify({
+      script: 'artigen-report-pdf /tmp/artigen-workspace/report.md /tmp/artigen-workspace/report.pdf',
+      purpose: 'Generate and verify report.pdf with the preinstalled report helper'
+    })
+  });
+  assert.equal(normalizeReportPdfToolAlias({
+    name: 'artigen-report-pdf',
+    rawArguments: '{}',
+    toolProfile: 'subagent'
+  }), null);
+  assert.throws(() => normalizeReportPdfToolAlias({
+    name: 'artigen-report-pdf',
+    rawArguments: JSON.stringify({
+      inputPath: '/tmp/artigen-workspace/../secret.md',
+      outputPath: '/tmp/artigen-workspace/report.pdf'
+    }),
+    toolProfile: 'parent'
+  }), /AGENT_MODEL_TOOL_ARGUMENTS_INVALID/);
+});
+
+test('SiliconFlow executes the report helper alias without another model repair turn', async () => {
+  const call = (id, name, args) => ({
+    id,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    call('plan', 'update_plan', {
+      explanation: 'Create and verify the report.',
+      steps: [
+        { label: 'Create PDF', status: 'in_progress' },
+        { label: 'Verify PDF', status: 'pending' }
+      ]
+    }),
+    call('pdf', 'artigen-report-pdf', {
+      inputPath: '/tmp/artigen-workspace/report.md',
+      outputPath: '/tmp/artigen-workspace/report.pdf'
+    }),
+    {
+      id: 'done',
+      choices: [{ message: { role: 'assistant', content: 'Done.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  const shellScripts = [];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Create a Markdown report and PDF.',
+    capabilities: { files: true, shell: true },
+    maxSteps: 8,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async (script) => {
+        shellScripts.push(script);
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(requests.length, 3);
+  assert.deepEqual(shellScripts, [
+    'artigen-report-pdf /tmp/artigen-workspace/report.md /tmp/artigen-workspace/report.pdf'
+  ]);
+  assert.equal(
+    requests[2].messages.at(-2).tool_calls[0].function.name,
+    'sandbox_shell'
+  );
+  assert.equal(requests[2].messages.at(-1).name, 'sandbox_shell');
+  assert.equal(result.text, 'Done.');
 });
 
 test('artifact tool schema only exposes verifier-supported MIME types', () => {
@@ -164,6 +271,27 @@ test('subagent shell repairs Qwen heredoc echo chains without interpreting text'
   assert.match(normalized.script, /^cat > \/workspace\/analysis\.md <<'ARTIGEN_LITERAL_EOF'/);
   assert.match(normalized.script, /# Analysis\n\nThe product's functionality\./);
   assert.doesNotMatch(normalized.script, /&& echo/);
+});
+
+test('subagent shell preserves an unterminated multiline echo in the one expected file', () => {
+  const normalized = normalizeSubagentShellScript(
+    "echo '# Analysis\nComplete framework.\n",
+    {
+      expectedOutput: 'Create a markdown file named analysis.md.',
+      purpose: 'Generate analysis.md with the complete framework.'
+    }
+  );
+  assert.equal(normalized.normalized, true);
+  assert.equal(normalized.kind, 'literal_unterminated_echo_write');
+  assert.match(normalized.script, /^cat > \/workspace\/analysis\.md <<'ARTIGEN_LITERAL_EOF'/);
+  assert.match(normalized.script, /# Analysis\nComplete framework\./);
+  assert.equal(normalizeSubagentShellScript(
+    "echo '# Analysis\nComplete framework.\n",
+    {
+      expectedOutput: 'Create analysis.md and summary.md.',
+      purpose: 'Generate analysis.md.'
+    }
+  ).normalized, false);
 });
 
 test('subagent shell leaves valid commands and unsafe output paths unchanged', () => {
