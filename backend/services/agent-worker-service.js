@@ -742,7 +742,17 @@ const createAgentWorkerService = ({
         }
       };
 
-      const execution = await model.execute({
+      const modelExecution = await runWithLeaseHeartbeat({
+        intervalMs: Math.max(
+          5_000,
+          Math.min(30_000, Math.floor(config.leaseSeconds * 1_000 / 3))
+        ),
+        refresh: () => runService.saveCheckpoint({
+          runId,
+          workerId,
+          checkpoint: { phase: 'running', sandboxReady: true }
+        }),
+        work: () => model.execute({
         objective: [
           objectivePayload.objective,
           userInputs.length
@@ -1277,7 +1287,10 @@ const createAgentWorkerService = ({
             return { ...approval, consumed: false };
           }
         }
+        })
       });
+      const execution = modelExecution.value;
+      if (modelExecution.leaseError) throw modelExecution.leaseError;
       costMeter.setModel(execution.credits);
       await persistCostCheckpoint({ usageItems: { source: 'model_complete' } });
 
