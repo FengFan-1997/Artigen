@@ -1395,6 +1395,113 @@ test('SiliconFlow repairs a missing or invalid artifact before redeclaring it', 
   )));
 });
 
+test('SiliconFlow blocks task-local install approvals and forces an offline PDF recovery', async () => {
+  const call = (id, name, args) => ({
+    id: `chat-install-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-install-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: {}
+  });
+  const responses = [
+    call('plan', 'update_plan', {
+      explanation: 'Create and verify the requested PDF.',
+      steps: [
+        { label: 'Create the PDF', status: 'in_progress' },
+        { label: 'Verify the PDF', status: 'pending' }
+      ]
+    }),
+    call('pandoc', 'sandbox_shell', {
+      script: 'pandoc report.md -o report.pdf',
+      purpose: 'Convert Markdown to PDF'
+    }),
+    call('approval', 'request_user_approval', {
+      actionType: 'tool',
+      recipient: 'user',
+      changeSummary: 'Install pandoc to generate the PDF.',
+      evidenceSummary: 'The pandoc command is missing.',
+      impactSummary: 'Installing the dependency would modify the task environment.',
+      rollbackSummary: 'Remove the installed package.'
+    }),
+    call('recover', 'sandbox_shell', {
+      script: 'artigen-report-pdf report.md report.pdf',
+      purpose: 'Use the preinstalled PDF renderer and verify the PDF'
+    }),
+    {
+      id: 'chat-install-final',
+      choices: [{ message: { role: 'assistant', content: 'PDF created with the preinstalled renderer.' } }],
+      usage: {}
+    }
+  ];
+  const requests = [];
+  const states = [];
+  const shellCalls = [];
+  let approvalCalls = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Create and deliver a PDF report without installing software.',
+    capabilities: { files: true, shell: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async (script) => {
+        shellCalls.push(script);
+        return script.startsWith('pandoc')
+          ? { success: false, returnCode: 127, stdout: '', stderr: 'command not found' }
+          : { success: true, returnCode: 0, stdout: 'verified', stderr: '' };
+      },
+      requestApproval: async () => {
+        approvalCalls += 1;
+        return { id: 'approval-install', consumed: false };
+      },
+      saveModelState: async (state) => states.push(structuredClone(state)),
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'PDF created with the preinstalled renderer.');
+  assert.equal(approvalCalls, 0);
+  assert.deepEqual(shellCalls, [
+    'pandoc report.md -o report.pdf',
+    'artigen-report-pdf report.md report.pdf'
+  ]);
+  assert.deepEqual(requests[3].tool_choice, {
+    type: 'function',
+    function: { name: 'sandbox_shell' }
+  });
+  assert.ok(requests[3].messages.some((message) => (
+    message.role === 'tool' &&
+    message.name === 'request_user_approval' &&
+    message.content.includes('AGENT_SOFTWARE_INSTALL_FORBIDDEN') &&
+    message.content.includes('artigen-report-pdf')
+  )));
+  assert.ok(states.some((state) => (
+    state.approvalRecoveryAttempts === 1 && state.approvalRecoveryRequired === true
+  )));
+});
+
 test('delegated tasks allow only exact staged inputs and at most three children', () => {
   const allowed = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
   const normalized = normalizeDelegatedTasks([{

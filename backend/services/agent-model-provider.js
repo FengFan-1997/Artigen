@@ -259,9 +259,10 @@ const FUNCTION_TOOLS = Object.freeze([
     type: 'function',
     name: 'request_user_approval',
     description: [
-      'Pause before a consequential action.',
-      'Required before send, publish, submit, delete, permission changes, payment, software installation,',
-      'security setting changes, or password changes. CAPTCHA/password/OTP always require user takeover.'
+      'Pause before a consequential action that changes external user or third-party state.',
+      'Required before send, publish, submit, delete, permission changes, payment, security setting changes,',
+      'or password changes. Task-local software and dependency installation is forbidden, not approvable;',
+      'use the preinstalled sandbox tools instead. CAPTCHA/password/OTP always require user takeover.'
     ].join(' '),
     strict: true,
     parameters: {
@@ -349,6 +350,8 @@ plus LibreOffice, Poppler, ImageMagick and FFmpeg. Generate PDFs with Python rep
 CJK-capable font when needed) by running artigen-report-pdf INPUT.md OUTPUT.pdf, or convert supported
 office files with LibreOffice. Pandoc is not installed. Never run apt, pip, npm or another package
 installer during a task.
+Software installation is not an approvable fallback. Never call request_user_approval for a missing
+command, package, dependency, converter, or renderer; use the preinstalled alternatives above.
 Before any execution tool, call update_plan with the concrete steps you will perform. Keep that plan
 current as work progresses; it is shown directly to the user and must not be a generic phase list.
 Research claims must include source URLs. Reports require a cited editable source plus PDF.
@@ -396,6 +399,28 @@ const parseArguments = (raw) => {
     throw new ApiError(502, 'AGENT_MODEL_TOOL_ARGUMENTS_INVALID');
   }
 };
+
+const SOFTWARE_INSTALL_APPROVAL_PATTERN = /(?:\b(?:install|installer|installation|package\s+manager|apt|pip|npm|pnpm|yarn|bun|brew|pandoc)\b|安装|软件包|包管理)/i;
+
+const requestsSoftwareInstallationApproval = (args = {}) => SOFTWARE_INSTALL_APPROVAL_PATTERN.test([
+  args.actionType,
+  args.recipient,
+  args.changeSummary,
+  args.evidenceSummary,
+  args.impactSummary,
+  args.rollbackSummary
+].map((value) => String(value || '')).join('\n'));
+
+const softwareInstallationBlockedResult = () => ({
+  approved: false,
+  blocked: true,
+  errorCode: 'AGENT_SOFTWARE_INSTALL_FORBIDDEN',
+  correction: [
+    'Do not pause or ask the user to install task dependencies.',
+    'Use sandbox_shell with the preinstalled artigen-report-pdf command for Markdown-to-PDF output.',
+    'If that helper fails, use the preinstalled Python reportlab library with a CJK-capable font, then verify the PDF.'
+  ].join(' ')
+});
 
 const usageCredits = (usage, env = process.env) => {
   const inputPerMillion = Math.max(0, Number(env.AGENT_OPENAI_INPUT_CREDITS_PER_MILLION || 20));
@@ -870,12 +895,16 @@ class OpenAiAgentModelProvider {
           } else if (call.name === 'connector_request') {
             result = await callbacks.connectorRequest(args);
           } else if (call.name === 'request_user_approval') {
-            const approval = await callbacks.requestApproval(args);
-            if (!approval?.consumed) throw new AgentWaitingForUser(approval);
-            result = {
-              approved: approval.approved !== false && approval.status !== 'denied',
-              approvalId: approval.id
-            };
+            if (requestsSoftwareInstallationApproval(args)) {
+              result = softwareInstallationBlockedResult();
+            } else {
+              const approval = await callbacks.requestApproval(args);
+              if (!approval?.consumed) throw new AgentWaitingForUser(approval);
+              result = {
+                approved: approval.approved !== false && approval.status !== 'denied',
+                approvalId: approval.id
+              };
+            }
           } else {
             throw new ApiError(502, 'AGENT_MODEL_TOOL_UNSUPPORTED');
           }
@@ -1076,6 +1105,11 @@ class OllamaAgentModelProvider {
       Number(durable?.artifactValidationAttempts || 0)
     );
     let artifactRepairRequired = durable?.artifactRepairRequired === true;
+    let approvalRecoveryAttempts = Math.max(
+      0,
+      Number(durable?.approvalRecoveryAttempts || 0)
+    );
+    let approvalRecoveryRequired = durable?.approvalRecoveryRequired === true;
     let subagentPlanCompleted = durable?.subagentPlanCompleted === true;
     let subagentSuccessfulShellCalls = Math.max(
       0,
@@ -1106,6 +1140,8 @@ class OllamaAgentModelProvider {
         planValidationAttempts,
         artifactValidationAttempts,
         artifactRepairRequired,
+        approvalRecoveryAttempts,
+        approvalRecoveryRequired,
         subagentPlanCompleted,
         subagentSuccessfulShellCalls,
         subagentFinalizationRequired,
@@ -1165,6 +1201,7 @@ class OllamaAgentModelProvider {
       if (call.name === 'sandbox_shell') {
         const shellResult = await callbacks.shell(args.script, args.purpose);
         if (shellResult.success) artifactRepairRequired = false;
+        if (shellResult.success) approvalRecoveryRequired = false;
         if (toolProfile === 'subagent' && shellResult.success) {
           subagentSuccessfulShellCalls += 1;
           refreshSubagentFinalization();
@@ -1191,6 +1228,17 @@ class OllamaAgentModelProvider {
         };
       }
       if (call.name === 'request_user_approval') {
+        if (requestsSoftwareInstallationApproval(args)) {
+          approvalRecoveryAttempts += 1;
+          if (approvalRecoveryAttempts > 2) {
+            throw new ApiError(422, 'AGENT_SOFTWARE_INSTALL_FORBIDDEN', {
+              retryable: false
+            });
+          }
+          approvalRecoveryRequired = true;
+          return softwareInstallationBlockedResult();
+        }
+        approvalRecoveryAttempts = 0;
         const approval = await callbacks.requestApproval(args);
         if (!approval?.consumed) throw new AgentWaitingForUser(approval);
         return {
@@ -1339,7 +1387,7 @@ class OllamaAgentModelProvider {
           type: 'function',
           function: { name: 'update_plan' }
         };
-      } else if (artifactRepairRequired) {
+      } else if (approvalRecoveryRequired || artifactRepairRequired) {
         request.tool_choice = {
           type: 'function',
           function: { name: 'sandbox_shell' }
