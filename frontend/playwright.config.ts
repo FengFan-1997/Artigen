@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const localChrome = process.env.ARTIGEN_E2E_CHROME_CHANNEL === '1'
+  ? { channel: 'chrome' as const }
+  : {};
+
 export default defineConfig({
   testDir: './e2e',
   timeout: 90_000,
@@ -27,7 +31,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium-desktop',
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 960 } }
+      use: { ...devices['Desktop Chrome'], ...localChrome, viewport: { width: 1440, height: 960 } }
     },
     {
       name: 'firefox-desktop',
@@ -39,11 +43,11 @@ export default defineConfig({
     },
     {
       name: 'chromium-mobile-360',
-      use: { ...devices['Pixel 5'], viewport: { width: 360, height: 800 } }
+      use: { ...devices['Pixel 5'], ...localChrome, viewport: { width: 360, height: 800 } }
     },
     {
       name: 'chromium-mobile-390',
-      use: { ...devices['Pixel 7'], viewport: { width: 390, height: 844 } }
+      use: { ...devices['Pixel 7'], ...localChrome, viewport: { width: 390, height: 844 } }
     },
     {
       name: 'webkit-tablet-768',

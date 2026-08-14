@@ -31,6 +31,7 @@ const {
   OpenAiAgentModelProvider,
   SiliconFlowAgentModelProvider,
   buildInstructions,
+  functionToolsForProfile,
   ollamaFileTools,
   ollamaUsageCredits,
   siliconFlowUsageCredits,
@@ -61,7 +62,8 @@ const {
   assertAllowedOrigins,
   assertComputerOrigins,
   assertSafeShell,
-  offlineShellScript
+  offlineShellScript,
+  subagentOfflineShellScript
 } = require('../services/agent-sandbox-provider');
 const {
   installAgentRoutes
@@ -101,6 +103,7 @@ const {
   createAgentRunService,
   normalizeCapabilities,
   normalizeDeliverables,
+  normalizeDelegatedTasks,
   objectivePublicFields,
   publicRun
 } = require('../services/agent-run-service');
@@ -504,6 +507,28 @@ test('agent costs remain cumulative across pause and resume segments', () => {
   });
 });
 
+test('subagent model usage aggregates into the parent run without duplicate sandbox billing', () => {
+  let clock = 0;
+  const meter = createAgentCostMeter({ sandboxCreditsPerMinute: 1, now: () => clock });
+  meter.setModel(1.25);
+  meter.setModelFor('subagent-a', 0.75);
+  meter.setModelFor('subagent-b', 1.5);
+  meter.setModelFor('subagent-c', 0.5);
+  clock = 60_000;
+  assert.deepEqual(meter.snapshot({ accrue: true }), {
+    model: 4,
+    modelByActor: {
+      parent: 1.25,
+      'subagent-a': 0.75,
+      'subagent-b': 1.5,
+      'subagent-c': 0.5
+    },
+    generation: 0,
+    sandbox: 1
+  });
+  assert.equal(meter.total(), 5);
+});
+
 test('long sandbox provisioning renews the run lease until work completes', async () => {
   let heartbeats = 0;
   let finishWork;
@@ -820,6 +845,57 @@ test('public Agent capability policy removes browser and external account access
   assert.equal(normalizeCapabilities({ generate_images: true }, {
     AGENT_PUBLIC_CAPABILITIES: 'files,shell'
   }).generate_images, false);
+  assert.equal(normalizeCapabilities({ subagents: true }, {
+    AGENT_SUBAGENTS_ENABLED: 'true',
+    AGENT_PUBLIC_CAPABILITIES: 'files,shell,subagents'
+  }).subagents, true);
+  assert.equal(normalizeCapabilities({ subagents: true }, {
+    AGENT_SUBAGENTS_ENABLED: 'false',
+    AGENT_PUBLIC_CAPABILITIES: 'files,shell,subagents'
+  }).subagents, false);
+});
+
+test('delegate_tasks stays parent-only and exposes a strict three-child schema', () => {
+  const hidden = functionToolsForProfile({ files: true }, 'parent')
+    .map((tool) => tool.name);
+  assert.equal(hidden.includes('delegate_tasks'), false);
+  const parentTools = functionToolsForProfile({ files: true, subagents: true }, 'parent');
+  const delegate = parentTools.find((tool) => tool.name === 'delegate_tasks');
+  assert.ok(delegate);
+  assert.equal(delegate.strict, true);
+  assert.equal(delegate.parameters.properties.tasks.maxItems, 3);
+  assert.equal(delegate.parameters.properties.tasks.items.additionalProperties, false);
+  assert.deepEqual(
+    functionToolsForProfile({ files: true, shell: true, browser: true, generate_images: true, subagents: true }, 'subagent')
+      .map((tool) => tool.name),
+    ['update_plan', 'sandbox_shell']
+  );
+});
+
+test('delegated tasks allow only exact staged inputs and at most three children', () => {
+  const allowed = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
+  const normalized = normalizeDelegatedTasks([{
+    role: 'visual analyst',
+    label: 'Visual system',
+    objective: 'Analyze the supplied visual reference.',
+    expectedOutput: 'A structured Markdown analysis.',
+    inputPaths: [allowed, allowed]
+  }], { allowedInputPaths: [allowed] });
+  assert.deepEqual(normalized[0].inputPaths, [allowed]);
+  assert.throws(() => normalizeDelegatedTasks(Array.from({ length: 4 }, (_, index) => ({
+    role: `role-${index}`,
+    label: `child-${index}`,
+    objective: 'Do independent analysis.',
+    expectedOutput: 'Markdown notes.',
+    inputPaths: []
+  }))), { code: 'AGENT_SUBAGENT_TASKS_INVALID' });
+  assert.throws(() => normalizeDelegatedTasks([{
+    role: 'reader',
+    label: 'Reader',
+    objective: 'Read an ungranted file.',
+    expectedOutput: 'Notes.',
+    inputPaths: ['/tmp/artigen-workspace/inputs/22222222-2222-4222-8222-222222222222.pdf']
+  }], { allowedInputPaths: [allowed] }), { code: 'AGENT_SUBAGENT_TASK_INVALID' });
 });
 
 test('shell policy keeps model-authored commands offline and blocks privilege escalation', () => {
@@ -850,6 +926,24 @@ test('shell policy keeps model-authored commands offline and blocks privilege es
     [{ type: 'type', text: 'https://evil.example/login' }],
     ['https://docs.example.com']
   ), { code: 'AGENT_BROWSER_ORIGIN_FORBIDDEN' });
+});
+
+test('subagent shell bind-mounts one child workspace and exact inputs without the parent root', () => {
+  const workspacePath = '/tmp/artigen-workspace/subagents/33333333-3333-4333-8333-333333333333';
+  const inputPath = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
+  const wrapped = subagentOfflineShellScript({
+    script: 'pwd && ls /inputs',
+    workspacePath,
+    inputPaths: [inputPath]
+  });
+  assert.match(wrapped, /--unshare-net --unshare-pid --unshare-ipc --unshare-uts/);
+  assert.match(wrapped, new RegExp(`--bind '${workspacePath}' /workspace`));
+  assert.match(wrapped, new RegExp(`--ro-bind '${inputPath}' '/inputs/11111111-1111-4111-8111-111111111111.png'`));
+  assert.doesNotMatch(wrapped, /--bind \/ \/|--ro-bind \/ \/|\/tmp\/artigen-workspace' \/workspace/);
+  assert.throws(() => subagentOfflineShellScript({
+    script: 'pwd',
+    workspacePath: '/tmp/artigen-workspace/subagents/not-a-uuid'
+  }), { code: 'AGENT_SUBAGENT_WORKSPACE_FORBIDDEN' });
 });
 
 test('agent instructions require reliable multiline file writes and a content check', () => {

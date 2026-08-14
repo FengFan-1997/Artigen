@@ -1,56 +1,113 @@
 import { expect, test, type Page } from '@playwright/test';
 
+const runId = '11111111-1111-4111-8111-111111111111';
+const childIds = [
+  '21111111-1111-4111-8111-111111111111',
+  '31111111-1111-4111-8111-111111111111',
+  '41111111-1111-4111-8111-111111111111'
+];
+const now = '2026-08-14T08:00:00.000Z';
+
+const child = (ordinal: number, status: 'running' | 'succeeded' | 'failed' | 'cancelled' = 'running') => ({
+  subagentId: childIds[ordinal - 1],
+  runId,
+  ordinal,
+  role: ['品牌研究', '视觉分析', '体验起草'][ordinal - 1],
+  label: ['竞品定位', '视觉系统', '体验建议'][ordinal - 1],
+  status,
+  progress: { stepCount: status === 'running' ? 7 : 12, maxSteps: 20, cancelRequested: false },
+  usage: { credits: ordinal * 1.25, inputTokens: 600, outputTokens: 320, provider: 'siliconflow' },
+  summary: status === 'running' ? '正在整理独立上下文。' : '已返回可合并的结构化摘要。',
+  outputFiles: status === 'running' ? [] : [{ path: `notes-${ordinal}.md`, byteSize: 1024, sha256: 'a'.repeat(64) }],
+  error: status === 'failed' ? { code: 'AGENT_SUBAGENT_FAILED' } : null,
+  expiresAt: '2026-09-14T08:00:00.000Z',
+  createdAt: now,
+  startedAt: now,
+  finishedAt: status === 'running' ? null : now,
+  updatedAt: now
+});
+
 const baseRun = {
-  runId: '11111111-1111-4111-8111-111111111111',
+  runId,
   projectId: null,
-  objective: '调研独立香氛趋势，并交付报告和演示文稿。',
-  objectivePreview: '调研独立香氛趋势，并交付报告和演示文稿。',
+  objective: '调研三个设计产品，分别分析品牌定位、视觉系统与产品体验，交付报告和演示文稿。',
+  objectivePreview: '三路并行设计产品审计',
   status: 'running',
-  model: { provider: 'openai', name: 'gpt-5.6' },
-  sandbox: { provider: 'cua', version: 'pinned-v1', displayUrl: null },
-  capabilities: { research: true, browser: true, files: true },
-  browserConfig: { allowedOrigins: [], profileId: null, persistSession: false },
+  model: { provider: 'siliconflow', name: 'Qwen/Qwen3-8B' },
+  sandbox: { provider: 'cua', version: 'pinned-v1', takeoverAvailable: false },
+  capabilities: { research: true, browser: true, files: true, shell: true, subagents: true },
+  browserConfig: { allowedOrigins: ['https://example.com'], profileId: null, persistSession: false },
   budget: {
-    maximum: 100,
+    maximum: 50,
     freeReserved: 20,
     used: 12.5,
     charged: 0,
     refunded: 0,
-    frozen: 80,
+    frozen: 30,
     released: 0
   },
   progress: {
-    stepCount: 6,
+    stepCount: 18,
     maxSteps: 120,
     replanCount: 0,
     pauseRequested: false,
     cancelRequested: false,
     checklist: {},
-    planExplanation: '先研究，再制作和验证。',
+    planExplanation: '先并行分析，再由父 Agent 汇总并验证。',
     plan: [
-      { label: '查找并核对权威来源', status: 'completed' },
-      { label: '整理洞察和引用', status: 'in_progress' },
-      { label: '制作并验证交付物', status: 'pending' }
-    ]
+      { label: '建立三路独立分析上下文', status: 'completed' },
+      { label: '汇总品牌、视觉与体验结论', status: 'in_progress' },
+      { label: '制作并验证报告与演示文稿', status: 'pending' }
+    ],
+    durableCheckpointSaved: true
   },
   approvals: [],
-  artifacts: [],
+  artifacts: [{
+    artifactId: '51111111-1111-4111-8111-111111111111',
+    assetId: null,
+    parentArtifactId: null,
+    role: 'pdf',
+    filename: 'artigen-design-audit.pdf',
+    mimeType: 'application/pdf',
+    byteSize: 245760,
+    sha256: 'b'.repeat(64),
+    version: 1,
+    verificationStatus: 'passed',
+    verification: {},
+    sources: [],
+    costCredits: 0,
+    url: `/api/agent-runs/${runId}/artifacts/51111111-1111-4111-8111-111111111111`,
+    expiresAt: '2026-09-14T08:00:00.000Z',
+    createdAt: now
+  }],
+  subagents: [child(1), child(2, 'succeeded'), child(3)],
   error: null,
-  expiresAt: '2026-08-23T00:00:00.000Z',
-  createdAt: '2026-07-24T00:00:00.000Z',
-  queuedAt: '2026-07-24T00:00:00.000Z',
-  startedAt: '2026-07-24T00:00:10.000Z',
+  expiresAt: '2026-09-14T08:00:00.000Z',
+  createdAt: now,
+  queuedAt: now,
+  startedAt: now,
   finishedAt: null,
-  updatedAt: '2026-07-24T00:01:00.000Z'
+  updatedAt: now
 };
 
-const installAgentApi = async (
+const installSharedApi = async (
   page: Page,
   options: {
     onCreate?: (body: Record<string, unknown>) => void;
     imageGenerationPublicEnabled?: boolean;
+    subagentsEnabled?: boolean;
   } = {}
 ) => {
+  await page.route('**/api/auth/session', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, userId: 'agent-e2e', csrfToken: 'csrf-e2e' })
+  }));
+  await page.route('**/api/collection/event', (route) => route.fulfill({
+    status: 202,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true })
+  }));
   await page.route('**/api/agent/status', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -61,7 +118,7 @@ const installAgentApi = async (
         workerOnline: true,
         queueDepth: 0,
         oldestQueuedAt: null,
-        concurrency: 1,
+        concurrency: 2,
         modelFamily: 'Qwen/Qwen3-8B',
         sandboxMode: 'local',
         browserReady: true,
@@ -70,6 +127,10 @@ const installAgentApi = async (
         sandboxImageRef: 'artigen/cua-xfce:0.1.15-tools-v2',
         browserPublicEnabled: true,
         imageGenerationPublicEnabled: options.imageGenerationPublicEnabled !== false,
+        subagentsEnabled: options.subagentsEnabled !== false,
+        subagentMaxConcurrent: 3,
+        subagentSandboxMode: 'shared-v1',
+        accessMode: 'authenticated-v1',
         availabilityNote: 'ready'
       }
     })
@@ -81,19 +142,13 @@ const installAgentApi = async (
       ok: true,
       quote: {
         currency: 'credits',
-        freeCreditsRemaining: 20,
-        estimatedCredits: { minimum: 18, maximum: 64 },
-        maximumCredits: 100,
+        freeCreditsRemaining: 120,
+        estimatedCredits: { minimum: 18, maximum: 42 },
+        maximumCredits: 50,
         hardMaximumCredits: 500,
-        requiredPaidHold: 80,
+        requiredPaidHold: 30,
         canStart: true,
-        limits: {
-          minutes: 45,
-          steps: 120,
-          memoryMb: 4096,
-          diskGb: 10,
-          concurrentRuns: 1
-        },
+        limits: { minutes: 45, steps: 120, memoryMb: 4096, diskGb: 10, concurrentRuns: 1 },
         requirements: {}
       }
     })
@@ -128,224 +183,206 @@ const installAgentApi = async (
   }));
 };
 
-test('Agent workbench makes output, capability and current-task choices explicit', async ({ page }) => {
-  await installAgentApi(page);
-  await page.setViewportSize({ width: 390, height: 844 });
+const installRunApi = async (
+  page: Page,
+  options: {
+    run?: typeof baseRun;
+    onCancelChild?: (subagentId: string) => void;
+    onCancelRun?: () => void;
+  } = {}
+) => {
+  let currentRun = structuredClone(options.run || baseRun);
+  await page.route('**/api/auth/session', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, userId: 'agent-e2e', csrfToken: 'csrf-e2e' })
+  }));
+  await page.route('**/api/collection/event', (route) => route.fulfill({
+    status: 202,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true })
+  }));
+  await page.route('**/api/agent-runs', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, runs: [currentRun] })
+  }));
+  await page.route(`**/api/agent-runs/${runId}`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, run: currentRun })
+  }));
+  await page.route(`**/api/agent-runs/${runId}/events`, (route) => route.abort());
+  await page.route(`**/api/agent-runs/${runId}/subagents/*/cancel`, (route) => {
+    const subagentId = new URL(route.request().url()).pathname.split('/').at(-2) || '';
+    options.onCancelChild?.(subagentId);
+    const target = currentRun.subagents.find((item) => item.subagentId === subagentId)!;
+    target.status = 'cancelled';
+    target.progress.cancelRequested = true;
+    target.finishedAt = now;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, subagent: target })
+    });
+  });
+  await page.route(`**/api/agent-runs/${runId}/cancel`, (route) => {
+    options.onCancelRun?.();
+    currentRun = { ...currentRun, status: 'cancelled', error: { code: 'AGENT_CANCELLED' } } as typeof currentRun;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, run: currentRun })
+    });
+  });
+};
+
+test('computer Agent uses the unified three-lane workspace and five live inspector tabs', async ({ page, browserName }) => {
+  await installSharedApi(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto('/artigen/agent');
 
-  await page.locator('.nav-toggle').click();
-  await expect(page.locator('#artigen-mobile-nav a[href="/artigen/agent"]')).toHaveCount(1);
-  await expect(page.locator('#artigen-mobile-nav a[href="/artigen/agent"]')).toBeVisible();
-  await page.locator('.nav-toggle').click();
-
-  await expect(page.getByRole('heading', { name: /^说出你想完成的事/ })).toBeVisible();
-  await expect(page.locator('.deliverable-options label')).toHaveCount(5);
-  await expect(page.locator('.advanced-settings')).toContainText('浏览器需要 HTTPS 白名单');
-  await expect(page.locator('.browser-session')).toHaveCount(0);
-  await page.locator('.advanced-settings > summary').click();
-  const browserCapability = page.locator('.capability-grid label').filter({ hasText: '安全浏览器 Beta' });
-  await expect(browserCapability).toContainText('登录接管');
-  await browserCapability.click();
-  await page.locator('.browser-session label').filter({ hasText: '加密保存' }).click();
-  await expect(page.locator('.browser-session')).toContainText('密码、OTP 和验证码仍必须由你接管输入');
-  await expect(page.locator('.browser-session input[type="text"]')).toHaveAttribute('placeholder', /https:\/\/example\.com/);
-  await page.locator('.browser-session input[type="text"]').fill('https://example.com');
-  await expect(page.locator('.run-card')).toContainText(baseRun.objectivePreview);
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
-    .toBe(true);
-
-  await page.locator('.objective textarea').fill('制作一份带引用的市场报告');
-  await page.locator('.deliverable-options label').filter({ hasText: 'PDF' }).click();
-  await page.getByRole('button', { name: '估算费用' }).click();
-  await expect(page.locator('.quote')).toContainText('18–64');
-  await expect(page.locator('.quote')).toContainText('80');
+  await expect(page.locator('.agent-workspace-shell')).toBeVisible();
+  await expect(page.locator('.workspace-left')).toContainText('Artigen');
+  await expect(page.getByRole('heading', { name: '告诉我最终要交付什么。' })).toBeVisible();
+  await expect(page.locator('.inspector-tabs').getByRole('tab')).toHaveCount(5);
+  await expect(page.getByRole('tab', { name: '环境' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#workspace-panel-environment')).toContainText('Qwen/Qwen3-8B');
+  await expect(page.locator('#workspace-panel-environment')).toContainText('Kwai-Kolors/Kolors');
+  await expect(page.locator('.history-run')).toContainText('三路并行设计产品审计');
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
+    await page.screenshot({ path: '.impeccable/review/agent-workbench-1440-dark.png', fullPage: true });
+  }
 });
 
-test('starting a run requires a visible current quote and one explicit confirmation', async ({ page }) => {
-  const created: Array<Record<string, unknown>> = [];
-  await installAgentApi(page, { onCreate: (body) => created.push(body) });
-  await page.setViewportSize({ width: 390, height: 844 });
+test('command palette is global, keyboard trapped, and returns focus on Escape', async ({ page }) => {
+  await installSharedApi(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto('/artigen/agent');
-  await page.locator('.objective textarea').fill('制作一张品牌主视觉设计稿');
-  const imageDeliverable = page.locator('.deliverable-options label').filter({ hasText: 'IMAGE' });
-  await expect(imageDeliverable.locator('input')).toBeEnabled();
-  await imageDeliverable.click();
-  await page.locator('.advanced-settings > summary').click();
-  const imageCapability = page.locator('.capability-grid label').filter({ hasText: 'AI 图片生成' });
-  await expect(imageCapability.locator('input')).toBeChecked();
 
-  await page.getByRole('button', { name: '先查看费用' }).click();
-  await expect(page.locator('.quote')).toContainText('18–64');
-  await expect(page.getByRole('button', { name: '确认并启动' })).toBeVisible();
+  const newTask = page.locator('.new-task');
+  await newTask.focus();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByRole('dialog', { name: '命令面板' });
+  await expect(palette).toBeVisible();
+  await expect(palette.getByPlaceholder('搜索页面或动作…')).toBeFocused();
+  await expect(palette).toContainText('电脑 Agent');
+  await page.keyboard.press('Escape');
+  await expect(palette).toBeHidden();
+  await expect(newTask).toBeFocused();
+});
+
+test('image delivery auto-grants Kolors, preserves Qwen and subagent locks, and starts only after a current quote', async ({ page }) => {
+  const created: Array<Record<string, unknown>> = [];
+  await installSharedApi(page, { onCreate: (body) => created.push(body) });
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto('/artigen/agent');
+
+  await page.locator('.objective-composer textarea').fill('为 Artigen 设计一张克制、专业的品牌主视觉');
+  const imageDeliverable = page.locator('.option-grid label').filter({ hasText: 'IMAGE' });
+  await imageDeliverable.click();
+  const imageCapability = page.locator('.capability-list label').filter({ hasText: 'AI 图片生成' });
+  await expect(imageCapability.locator('input')).toBeChecked();
+  await expect(page.locator('.capability-list label').filter({ hasText: '真实子 Agent' }).locator('input')).toBeChecked();
+
+  await page.getByRole('button', { name: '检查费用' }).click();
+  await expect(page.locator('.quote-bar')).toContainText('18–42');
+  await expect(page.getByRole('button', { name: '确认并运行' })).toBeVisible();
   expect(created).toHaveLength(0);
 
-  await page.getByRole('button', { name: '确认并启动' }).click();
+  await page.getByRole('button', { name: '确认并运行' }).click();
   await expect.poll(() => created.length).toBe(1);
   expect(created[0].deliverables).toEqual(['image']);
   expect((created[0].capabilities as Record<string, boolean>).generate_images).toBe(true);
-  await expect(page).toHaveURL(`/artigen/agent/runs/${baseRun.runId}`);
+  expect((created[0].capabilities as Record<string, boolean>).subagents).toBe(true);
+  expect(created[0].maxCredits).toBe(50);
+  await expect(page).toHaveURL(`/artigen/agent/runs/${runId}`);
 });
 
-test('IMAGE deliverable and image capability fail closed when production generation is unavailable', async ({ page }) => {
-  await installAgentApi(page, { imageGenerationPublicEnabled: false });
+test('image and subagent controls fail closed when production flags are unavailable', async ({ page }) => {
+  await installSharedApi(page, { imageGenerationPublicEnabled: false, subagentsEnabled: false });
+  await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto('/artigen/agent');
-  const imageDeliverable = page.locator('.deliverable-options label').filter({ hasText: 'IMAGE' });
-  await expect(imageDeliverable).toContainText('生产生图尚未开放');
+
+  const imageDeliverable = page.locator('.option-grid label').filter({ hasText: 'IMAGE' });
   await expect(imageDeliverable.locator('input')).toBeDisabled();
-  await page.locator('.advanced-settings > summary').click();
-  const imageCapability = page.locator('.capability-grid label').filter({ hasText: 'AI 图片生成' });
+  const imageCapability = page.locator('.capability-list label').filter({ hasText: 'AI 图片生成' });
   await expect(imageCapability.locator('input')).toBeDisabled();
-  await expect(imageCapability).toContainText('当前环境尚未开放');
+  const subagentCapability = page.locator('.capability-list label').filter({ hasText: '真实子 Agent' });
+  await expect(subagentCapability.locator('input')).toBeDisabled();
+  await expect(page.locator('.runtime-pill')).toContainText('单 Agent 就绪');
 });
 
-test('desktop navigation exposes one Agent entry without a duplicate mobile link', async ({ page }) => {
-  await installAgentApi(page);
-  await page.setViewportSize({ width: 1280, height: 900 });
+test('run detail exposes parent plus three isolated subagents and cancels one without stopping the parent', async ({ page, browserName }) => {
+  const cancelled: string[] = [];
+  await installRunApi(page, { onCancelChild: (id) => cancelled.push(id) });
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`/artigen/agent/runs/${runId}`);
+
+  await expect(page.locator('.user-message')).toContainText(baseRun.objective);
+  await page.getByRole('tab', { name: '子 Agent' }).click();
+  await expect(page.locator('.parent-agent-card')).toContainText('父 Agent');
+  await expect(page.locator('.subagent-card')).toHaveCount(3);
+  await expect(page.locator('.subagent-card').nth(0)).toContainText('竞品定位');
+  await expect(page.locator('.subagent-card').nth(1)).toContainText('视觉系统');
+  await expect(page.locator('.subagent-card').nth(2)).toContainText('体验建议');
+  if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
+    await page.screenshot({ path: '.impeccable/review/agent-run-detail-1440-dark.png', fullPage: true });
+  }
+
+  await page.locator('.subagent-card').nth(0).getByRole('button', { name: '取消这个子 Agent' }).click();
+  await expect.poll(() => cancelled).toEqual([childIds[0]]);
+  await expect(page.locator('.subagent-card').nth(0)).toContainText('已取消');
+  await expect(page.locator('.runtime-pill')).toContainText('执行中');
+});
+
+test('run detail keeps real plan, verified files, budget and two-click parent cancellation in one shell', async ({ page }) => {
+  let cancelRequests = 0;
+  await installRunApi(page, { onCancelRun: () => { cancelRequests += 1; } });
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`/artigen/agent/runs/${runId}`);
+
+  await page.getByRole('tab', { name: '计划' }).click();
+  await expect(page.locator('#workspace-panel-plan')).toContainText('建立三路独立分析上下文');
+  await expect(page.locator('#workspace-panel-plan')).toContainText('汇总品牌、视觉与体验结论');
+  await page.getByRole('tab', { name: /文件/ }).click();
+  await expect(page.locator('#workspace-panel-files')).toContainText('artigen-design-audit.pdf');
+  await expect(page.locator('#workspace-panel-files')).toContainText('passed');
+  await page.getByRole('tab', { name: '环境' }).click();
+  await expect(page.locator('.budget-card')).toContainText('12.5 / 50');
+
+  const stop = page.getByRole('button', { name: '停止' });
+  await stop.click();
+  expect(cancelRequests).toBe(0);
+  await expect(page.getByRole('button', { name: '确认停止' })).toBeVisible();
+  await expect(page.locator('.run-notice')).toContainText('未使用冻结点数会释放');
+  await page.getByRole('button', { name: '确认停止' }).click();
+  await expect.poll(() => cancelRequests).toBe(1);
+});
+
+test('mobile workspace uses full-height drawers, restores focus, and never scrolls horizontally', async ({ page, browserName }) => {
+  await installSharedApi(page);
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/artigen/agent');
 
-  await expect(page.locator('.nav-links a[href="/artigen/agent"]')).toHaveCount(1);
-  await expect(page.locator('.nav-links a[href="/artigen/agent"]')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
-    .toBe(true);
-});
+  const historyButton = page.getByRole('button', { name: '打开历史' });
+  await historyButton.click();
+  await expect(page.locator('.agent-workspace-shell')).toHaveClass(/left-drawer-open/);
+  await expect(page.locator('.workspace-left')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-drawer-open/);
+  await expect(historyButton).toBeFocused();
 
-test('Agent run detail shows the owner objective and the real durable plan', async ({ page }) => {
-  await page.route(`**/api/agent-runs/${baseRun.runId}`, (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: true, run: baseRun })
-  }));
-  await page.route(`**/api/agent-runs/${baseRun.runId}/events`, (route) => route.abort());
-  await page.goto(`/artigen/agent/runs/${baseRun.runId}`);
-
-  await expect(page.locator('.objective-card')).toContainText(baseRun.objective);
-  await expect(page.locator('.plan')).toContainText('查找并核对权威来源');
-  await expect(page.locator('.plan')).toContainText('整理洞察和引用');
-  await expect(page.locator('.plan > div.active')).toContainText('正在执行');
-  await expect(page.locator('.plan > div.done')).toContainText('已完成');
-  await expect(page.locator('.budget-bar')).toContainText('12.5');
-});
-
-test('blocked approvals offer takeover instead of a false one-click approval', async ({ page }) => {
-  const takeoverRun = {
-    ...baseRun,
-    status: 'waiting_user',
-    sandbox: {
-      ...baseRun.sandbox,
-      displayUrl: 'https://desktop.example.test/session'
-    },
-    approvals: [{
-      approvalId: '22222222-2222-4222-8222-222222222222',
-      actionType: 'captcha',
-      recipient: 'example.test',
-      riskLevel: 'blocked',
-      changeSummary: '请接管并完成人机验证。',
-      evidenceSummary: '页面显示了需要真人完成的人机验证。',
-      impactSummary: '你将在隔离云电脑中亲自完成人机验证。',
-      rollbackSummary: '接管前 Agent 不会点击或输入；可直接拒绝。',
-      status: 'pending',
-      expiresAt: '2026-08-23T00:00:00.000Z',
-      decidedAt: null,
-      createdAt: '2026-07-24T00:01:00.000Z'
-    }]
-  };
-  await page.route(`**/api/agent-runs/${baseRun.runId}`, (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: true, run: takeoverRun })
-  }));
-  await page.route(`**/api/agent-runs/${baseRun.runId}/events`, (route) => route.abort());
-  await page.goto(`/artigen/agent/runs/${baseRun.runId}`);
-
-  await expect(page.getByRole('button', { name: '接管云电脑' }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: '批准这一次' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '恢复' })).toHaveCount(0);
-  await expect(page.locator('.approval')).toContainText('完成人机验证');
-  await expect(page.locator('.approval')).toContainText('为什么需要');
-  await expect(page.locator('.approval')).toContainText('批准后会发生');
-  await expect(page.locator('.approval')).toContainText('撤销方式');
-  await expect(page.locator('.approval')).toContainText('仅批准这一次');
-});
-
-test('high-risk approval explains the exact action and preserves a denial reason', async ({ page }) => {
-  const approvalId = '33333333-3333-4333-8333-333333333333';
-  const approvalRun = {
-    ...baseRun,
-    status: 'waiting_user',
-    approvals: [{
-      approvalId,
-      actionType: 'publish',
-      recipient: 'github:repos/artigen/site/pages',
-      riskLevel: 'high',
-      changeSummary: '发布已经验证的静态网站。',
-      evidenceSummary: 'dist/index.html 已构建，桌面和移动截图均通过。',
-      impactSummary: 'GitHub Pages 将公开新版本，访问者会立即看到。',
-      rollbackSummary: '可通过一次新的审批将 Pages 回滚到上一部署版本。',
-      status: 'pending',
-      expiresAt: '2026-08-23T00:00:00.000Z',
-      decidedAt: null,
-      createdAt: '2026-07-24T00:01:00.000Z'
-    }]
-  };
-  let submitted: Record<string, unknown> | null = null;
-  await page.route(`**/api/agent-runs/${baseRun.runId}`, (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: true, run: approvalRun })
-  }));
-  await page.route(`**/api/agent-runs/${baseRun.runId}/input`, (route) => {
-    submitted = route.request().postDataJSON();
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ ok: true })
-    });
-  });
-  await page.route(`**/api/agent-runs/${baseRun.runId}/events`, (route) => route.abort());
-  await page.goto(`/artigen/agent/runs/${baseRun.runId}`);
-
-  const approval = page.locator('.approval');
-  await expect(approval).toContainText('发布内容');
-  await expect(approval).toContainText('dist/index.html 已构建');
-  await expect(approval).toContainText('访问者会立即看到');
-  await expect(approval).toContainText('回滚到上一部署版本');
-  await expect(approval).toContainText('到期未处理会停止任务');
-  await approval.locator('.approval-reason').fill('先让我核对域名和公开范围');
-  await approval.getByRole('button', { name: '拒绝' }).click();
-  await expect.poll(() => submitted).not.toBeNull();
-  expect(submitted).toEqual({
-    approvalId,
-    decision: 'denied',
-    decisionReason: '先让我核对域名和公开范围'
-  });
-});
-
-test('stopping an Agent run requires a second explicit click and explains settlement', async ({ page }) => {
-  let cancelRequests = 0;
-  await page.route(`**/api/agent-runs/${baseRun.runId}`, (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: true, run: baseRun })
-  }));
-  await page.route(`**/api/agent-runs/${baseRun.runId}/cancel`, (route) => {
-    cancelRequests += 1;
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        ok: true,
-        run: { ...baseRun, status: 'cancelled', error: { code: 'AGENT_CANCELLED' } }
-      })
-    });
-  });
-  await page.route(`**/api/agent-runs/${baseRun.runId}/events`, (route) => route.abort());
-  await page.goto(`/artigen/agent/runs/${baseRun.runId}`);
-
-  await page.locator('.controls .danger').click();
-  expect(cancelRequests).toBe(0);
-  await expect(page.locator('.controls .danger')).toContainText('再次点击');
-  await expect(page.locator('.notice')).toContainText('未使用冻结点数会释放');
-
-  await page.locator('.controls .danger').click();
-  await expect.poll(() => cancelRequests).toBe(1);
+  const inspectorButton = page.getByRole('button', { name: '打开检查器' });
+  await inspectorButton.click();
+  await expect(page.locator('.agent-workspace-shell')).toHaveClass(/right-drawer-open/);
+  await expect(page.locator('.workspace-right')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/right-drawer-open/);
+  await expect(inspectorButton).toBeFocused();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
+    await page.screenshot({ path: '.impeccable/review/agent-workbench-390-dark.png', fullPage: true });
+  }
 });

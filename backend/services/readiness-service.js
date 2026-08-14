@@ -248,6 +248,9 @@ const checkDatabase = async (pool) => {
          to_regclass('public.agent_trial_usage') IS NOT NULL AS has_agent_trial_usage,
          to_regclass('public.agent_worker_heartbeats') IS NOT NULL AS has_agent_worker_heartbeats,
          to_regclass('public.agent_desktop_tickets') IS NOT NULL AS has_agent_desktop_tickets,
+         to_regclass('public.agent_subagents') IS NOT NULL AS has_agent_subagents,
+         to_regclass('public.agent_subagent_payloads') IS NOT NULL AS has_agent_subagent_payloads,
+         to_regclass('public.agent_subagent_model_checkpoints') IS NOT NULL AS has_agent_subagent_checkpoints,
          to_regclass('public.design_conversations') IS NOT NULL AS has_design_conversations,
          to_regclass('public.design_messages') IS NOT NULL AS has_design_messages,
          to_regclass('public.design_executions') IS NOT NULL AS has_design_executions,
@@ -395,6 +398,22 @@ const checkDatabase = async (pool) => {
             WHERE table_schema='public' AND table_name='agent_budget_holds'
               AND column_name IN ('trial_credits','daily_free_credits')
          ) AS has_agent_budget_split_columns,
+         (
+           SELECT count(*) = 10
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_subagents'
+              AND column_name IN (
+                'run_id','ordinal','role','label','status','request_hash','step_count',
+                'estimated_credits_used','usage','cancel_requested'
+              )
+         ) AS has_agent_subagent_columns,
+         (
+           SELECT count(*) = 2 AND bool_and(data_type='uuid')
+             FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name IN ('agent_steps','agent_events')
+              AND column_name='subagent_id'
+         ) AS has_agent_subagent_links,
          COALESCE((
            SELECT count(*) = 3 AND bool_and(
              (ps.sku='ai-design.generate.v1' AND ps.credits=10 AND ps.metadata->>'operation'='generate')
@@ -459,6 +478,9 @@ const checkDatabase = async (pool) => {
       row.has_agent_trial_usage &&
       row.has_agent_worker_heartbeats &&
       row.has_agent_desktop_tickets &&
+      row.has_agent_subagents &&
+      row.has_agent_subagent_payloads &&
+      row.has_agent_subagent_checkpoints &&
       row.has_design_conversations &&
       row.has_design_messages &&
       row.has_design_executions &&
@@ -481,7 +503,9 @@ const checkDatabase = async (pool) => {
       row.has_agent_run_columns &&
       row.has_agent_relay_run_columns &&
       row.has_agent_worker_readiness_columns &&
-      row.has_agent_budget_split_columns
+      row.has_agent_budget_split_columns &&
+      row.has_agent_subagent_columns &&
+      row.has_agent_subagent_links
     );
     if (!migrated) {
       return {

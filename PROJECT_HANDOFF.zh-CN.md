@@ -287,6 +287,41 @@ DEV 真实依赖与部署验收（2026-08-13）：
 - 上述演示文稿否定修复经 PR [#47](https://github.com/FengFan-1997/Artigen/pull/47) 合入 `dev`，DEV 真实 Qwen3 smoke 的 `plan.deliverables` 精确为 `["report"]`；PR [#48](https://github.com/FengFan-1997/Artigen/pull/48) 的 Core、全部浏览器分片与 Release gate 通过后合入 `main`。生产 SHA `66403864d238cfa487b730d9181e4186c1c12a03` 已发布为 Render `dep-d9v9kau417fc73cffvs0` 和 Vercel `4jTbuAmqLffSjWZ6MVbJ18WhFDHE`，Mac production Worker 同 SHA 重启；`/api/meta`、`/readyz`、Agent、对话入口和两个图片模型状态接口均重新核验通过。
 - 同 SHA 的生产复跑进一步暴露规划器会把“不要图片或网站原型”中的字面量接受为正向 `image` / `website`：conversation `5432162a-350d-447f-bb5c-5bd6ee156a1f` / execution `9772cf59-4867-40ad-8d40-8bf03be634c0` / Run `f53da5f0-5a2c-456c-9456-e0db499dd39a` 在 0/120 步时立即取消，execution 与 Run 均为 `cancelled`、实际消耗 0。后续修复把报告、表格、演示、网站和图片全部改为服务端正向意图 allowlist，并统一过滤中英文否定范围；未正向要求的规划器候选不能再扩大交付物或图片能力。该修复完成发布和生产报告验收前不得把最终文件任务标记为通过。
 
+### 5.6 Codex 式统一工作台与真实子 Agent（实现完成，尚未部署）
+
+2026-08-14 从最新 `origin/dev` SHA `9549cfdc2f49de3ccf5bad9a9a95cb8a1fae58ec`
+建立 `codex/codex-style-agent-workspace`。本节记录已经实现并完成本地验证、但尚未合入
+`dev` 或发布到生产的架构；生产状态必须以本节末尾的实时基线为准。
+
+持久实现：
+
+- `/artigen/create`、`/artigen/agent` 与 `/artigen/agent/runs/:runId` 使用同一个专业三栏工作台壳层：左侧历史与设置，中间持续对话，右侧持续展示环境、计划、子 Agent、电脑和文件。默认暗色，同时支持浅色与系统主题；酸性绿只用于执行状态、主动作和焦点。
+- 桌面左右栏可折叠和调整宽度，本机保存偏好；中等宽度使用右侧覆盖层，移动端使用全高抽屉。命令面板、跳转主内容、焦点恢复、抽屉焦点陷阱、`aria-live`、44px 触控目标和 reduced motion 均已纳入统一组件。
+- 新增迁移 `022_agent_subagents`：保存父 Run 下最多三个子 Agent 的公开状态、实际用量、步骤和文件清单；目标与 Qwen checkpoint 使用独立 AES-256-GCM 表加密保存。`agent_steps` 和 append-only `agent_events` 新增可空 `subagent_id`，旧 Run 返回空数组并保持兼容。
+- 父模型新增严格 Schema 工具 `delegate_tasks`。每个 Run 最多创建三个深度固定为 1 的独立 `Qwen/Qwen3-8B` 上下文；每个子 Agent 最多 20 个工具步骤、10 分钟，使用自己的 UUID 工作目录，并只读挂载服务端确认过的本 Run 输入。
+- 子 Agent 工具目录只包含计划更新与离线 Shell，禁止浏览器、电脑、连接器、图片生成、审批、最终交付声明和再次委派。父 Agent 独占浏览器、电脑、外部写审批、Kolors 和最终文件验证；所有图片继续只能由 `Kwai-Kolors/Kolors` 生成。
+- 父 Run 最多并行三个子任务；单个子 Agent 失败或取消不会自动终止父任务，父 Run 取消会级联取消全部子任务。Worker 从加密 checkpoint 恢复已完成的子任务，避免重复模型调用和重复计费。
+- 子 Agent 没有固定启动费；Qwen3 实际用量按 actor 聚合进父 Run，继续只产生一个预算冻结、一次结算和一次余额释放。服务端继续执行 120 步、运行时长和最高预算边界。
+- Mac Worker 安装器要求通过 `ARTIGEN_AGENT_SUBAGENTS_ENABLED=true` 显式写入 LaunchAgent；运行脚本只有看到该值时才把 `subagents` 加入公共能力。暗发布和普通安装继续默认关闭，避免只开启 Render 入口却让 Worker 权限状态漂移。
+- 公共 Run 类型新增 `AgentSubagent[]`；SSE 新增 `subagent.created|started|progress|succeeded|failed|cancelled`；新增幂等的单独取消接口 `POST /api/agent-runs/:runId/subagents/:subagentId/cancel`。
+- `/api/agent/status` 在本代码发布后将新增 `subagentsEnabled`、`subagentMaxConcurrent` 和 `subagentSandboxMode=shared-v1`。安全开关 `AGENT_SUBAGENTS_ENABLED=false` 以及生产、DEV Render blueprint 默认值保持关闭；仅当服务端开关开启且公共能力包含 `subagents` 时，客户端或模型才能获得委派能力。
+
+本地验证：
+
+- 完整 `pnpm check` 通过；Playwright 六个桌面/移动/平板浏览器项目合计 435 passed / 3 skipped / 0 failed，覆盖三条路由共享壳层、暗色/浅色、右栏五页签、调整宽度、命令面板、审批、电脑接管、子 Agent 取消、文件交付和 360/390/768/1440px 布局。
+- 后端 418 tests：378 passed / 40 条条件跳过 / 0 failed；前端单元 216/216；邮件中继 7/7；Agent 质量集 50/50。
+- 本机 PostgreSQL 迁移、billing、payment、task queue、generation queue、design conversation 与 S3 边界集成共 23 tests：22 passed / 1 条 MinIO 条件跳过 / 0 failed。迁移 `022_agent_subagents` 已通过带锁迁移流程应用到本机开发数据库。
+- 本轮视觉证据保存在 `frontend/.impeccable/review/`；360px 实测曾发现底部输入框遮挡执行卡，已改为消息区与 composer 分离的网格布局，修复后完整浏览器矩阵再次全绿。
+
+2026-08-14 发布前重新核验的生产基线仍是旧代码：GitHub `main`、`/api/meta`、Render live
+deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
+`dpl_CiUTKfiGszkH62R7tZG1San6BfpF` 均对应
+`386e88da4fe04ccf00f0639602bbf3d5afa796e0`。`/readyz`、Agent、对话入口和两种图片
+模式均 HTTP 200，Worker online、浏览器/受限出口/桌面中继 ready、queueDepth=0；当前
+`/api/agent/status` 尚无上述子 Agent 字段，证明本节新代码尚未上线。必须在 PR、DEV 真实
+三子任务 smoke、`dev → main` Release gate、同 SHA 的 Render/Vercel/Mac Worker 发布和
+生产 owner smoke 全部完成后，才能把本节阶段改为“生产已发布”。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。
