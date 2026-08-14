@@ -302,6 +302,13 @@ const FUNCTION_TOOLS = Object.freeze([
   }
 ]);
 
+const explicitlyRequiresSubagentDelegation = (objective) => {
+  const text = String(objective || '');
+  return /delegate[_\s-]*tasks?/i.test(text) ||
+    /sub[\s-]*agents?/i.test(text) ||
+    /子\s*(?:Agent|智能体)/i.test(text);
+};
+
 const buildInstructions = ({ capabilities, maxSteps, toolProfile = 'parent' }) => toolProfile === 'subagent'
   ? `
 You are a depth-1 Artigen sub Agent running in an independent Qwen3 context.
@@ -358,7 +365,9 @@ provider, Artigen, or a product homepage merely because an image was generated.
 When granted subagents, delegate_tasks may create up to three depth-1 Qwen3 contexts for genuinely
 independent offline research, analysis, or drafting. Children cannot browse, use the computer, call Kolors,
 request approval, change external state, or declare final artifacts. You remain responsible for merging,
-checking, and delivering every final file. Do not delegate the same work twice.
+checking, and delivering every final file. Do not delegate the same work twice. If the user's objective
+explicitly requests sub Agents, child roles, or delegate_tasks, you must call delegate_tasks exactly once
+before finishing; a text-only promise or description does not satisfy that requirement.
 
 Consequential actions require request_user_approval immediately before the action. CAPTCHA, passwords,
 OTP, security-warning bypass, and final password changes require takeover and must never be attempted.
@@ -563,6 +572,9 @@ class OpenAiAgentModelProvider {
     deadlineAt = null,
     callbacks
   }) {
+    const delegationRequired = toolProfile === 'parent' &&
+      capabilities?.subagents === true &&
+      explicitlyRequiresSubagentDelegation(objective);
     const tools = toolProfile === 'subagent'
       ? functionToolsForProfile(capabilities, toolProfile)
       : [COMPUTER_TOOL, ...functionToolsForProfile(capabilities, toolProfile)];
@@ -585,6 +597,8 @@ class OpenAiAgentModelProvider {
     let text = String(durable?.text || '');
     let planPublished = durable?.planPublished === true;
     let completedOutput = durable?.completedOutput || null;
+    let delegationCompleted = durable?.delegationCompleted === true;
+    let delegationNudges = Math.max(0, Number(durable?.delegationNudges || 0));
 
     const recordResponse = async (response) => {
       await callbacks.checkpoint?.(response.id);
@@ -603,6 +617,8 @@ class OpenAiAgentModelProvider {
         pendingCall,
         completedOutput: output,
         planPublished,
+        delegationCompleted,
+        delegationNudges,
         totalCredits,
         turns,
         text
@@ -634,6 +650,7 @@ class OpenAiAgentModelProvider {
     } else {
       response = await this.createResponse({
         ...commonRequest,
+        ...(delegationRequired && !delegationCompleted ? { tool_choice: 'required' } : {}),
         ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
         input: previousResponseId
           ? [{
@@ -663,6 +680,30 @@ class OpenAiAgentModelProvider {
         .join('\n')
         .trim() || text;
       if (!calls.length) {
+        if (delegationRequired && !delegationCompleted) {
+          delegationNudges += 1;
+          turns += 1;
+          assertLoopBudget({ stepCount: turns - 1, maxSteps });
+          if (delegationNudges > 2) {
+            throw new ApiError(502, 'AGENT_SUBAGENT_DELEGATION_REQUIRED', {
+              retryable: false
+            });
+          }
+          response = await this.createResponse({
+            ...commonRequest,
+            tool_choice: 'required',
+            previous_response_id: response.id,
+            input: [{
+              role: 'user',
+              content: [{
+                type: 'input_text',
+                text: 'The objective explicitly requires real sub Agents. Call delegate_tasks exactly once now before any completion response.'
+              }]
+            }]
+          });
+          await recordResponse(response);
+          continue;
+        }
         await callbacks.clearModelState?.();
         return {
           responseId: response.id,
@@ -791,6 +832,7 @@ class OpenAiAgentModelProvider {
             planPublished = true;
           } else if (call.name === 'delegate_tasks') {
             result = await callbacks.delegateTasks(args.tasks);
+            delegationCompleted = true;
           } else if (call.name === 'browser_dom') {
             result = await callbacks.browserDom(args);
           } else if (call.name === 'sandbox_shell') {
@@ -842,6 +884,7 @@ class OpenAiAgentModelProvider {
       await callbacks.checkControl?.();
       response = await this.createResponse({
         ...commonRequest,
+        ...(delegationRequired && !delegationCompleted ? { tool_choice: 'required' } : {}),
         previous_response_id: response.id,
         input: [followup]
       });
@@ -977,6 +1020,9 @@ class OllamaAgentModelProvider {
       Array.isArray(resumeState.messages)
     ) ? resumeState : null;
     const instructions = buildInstructions({ capabilities, maxSteps, toolProfile });
+    const delegationRequired = toolProfile === 'parent' &&
+      capabilities?.subagents === true &&
+      explicitlyRequiresSubagentDelegation(objective);
     const allowedToolNames = new Set(
       functionToolsForProfile(capabilities, toolProfile).map((tool) => tool.name)
     );
@@ -996,6 +1042,8 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.unsupportedToolAttempts || 0)
     );
+    let delegationCompleted = durable?.delegationCompleted === true;
+    let delegationNudges = Math.max(0, Number(durable?.delegationNudges || 0));
 
     const saveDurableState = async () => {
       messages = compactOllamaMessages(
@@ -1012,7 +1060,9 @@ class OllamaAgentModelProvider {
         totalCredits,
         turns,
         text,
-        unsupportedToolAttempts
+        unsupportedToolAttempts,
+        delegationCompleted,
+        delegationNudges
       });
     };
 
@@ -1041,7 +1091,9 @@ class OllamaAgentModelProvider {
         return result;
       }
       if (call.name === 'delegate_tasks') {
-        return callbacks.delegateTasks(args.tasks);
+        const result = await callbacks.delegateTasks(args.tasks);
+        delegationCompleted = true;
+        return result;
       }
       if (call.name === 'sandbox_shell') {
         const shellResult = await callbacks.shell(args.script, args.purpose);
@@ -1101,9 +1153,9 @@ class OllamaAgentModelProvider {
 
       assertModelDeadline(deadlineAt);
       await callbacks.checkControl?.();
-      const response = await this.createChat(
-        this.buildChatPayload(messages, capabilities, toolProfile)
-      );
+      const request = this.buildChatPayload(messages, capabilities, toolProfile);
+      if (delegationRequired && !delegationCompleted) request.tool_choice = 'required';
+      const response = await this.createChat(request);
       const { inputTokens, outputTokens, credits } = this.usageDetails(response);
       totalCredits += credits;
       await callbacks.recordUsage?.(totalCredits, {
@@ -1129,6 +1181,22 @@ class OllamaAgentModelProvider {
       text = assistant.content.trim() || text;
 
       if (!calls.length) {
+        if (delegationRequired && !delegationCompleted) {
+          delegationNudges += 1;
+          turns += 1;
+          assertLoopBudget({ stepCount: turns - 1, maxSteps });
+          if (delegationNudges > 2) {
+            throw new ApiError(502, 'AGENT_SUBAGENT_DELEGATION_REQUIRED', {
+              retryable: false
+            });
+          }
+          messages.push({
+            role: 'user',
+            content: 'The objective explicitly requires real sub Agents. Call delegate_tasks exactly once now before any completion response.'
+          });
+          await saveDurableState();
+          continue;
+        }
         await callbacks.clearModelState?.();
         return {
           responseId: String(response.id || `${this.providerName}:${turns}`),

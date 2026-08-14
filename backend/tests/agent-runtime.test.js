@@ -872,6 +872,96 @@ test('delegate_tasks stays parent-only and exposes a strict three-child schema',
   );
 });
 
+test('SiliconFlow requires real delegation when the objective explicitly asks for sub Agents', async () => {
+  const requests = [];
+  const tasks = [
+    ['research', 'Research'],
+    ['analysis', 'Analysis'],
+    ['drafting', 'Drafting']
+  ].map(([role, label]) => ({
+    role,
+    label,
+    objective: `Complete the ${role} work offline.`,
+    expectedOutput: `${label} notes.`,
+    inputPaths: []
+  }));
+  const responses = [
+    {
+      id: 'chat-premature-final',
+      choices: [{ message: { role: 'assistant', content: 'I am done.' } }],
+      usage: {}
+    },
+    {
+      id: 'chat-delegate',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call-delegate',
+            type: 'function',
+            function: {
+              name: 'delegate_tasks',
+              arguments: JSON.stringify({ tasks })
+            }
+          }]
+        }
+      }],
+      usage: {}
+    },
+    {
+      id: 'chat-final-after-delegation',
+      choices: [{ message: { role: 'assistant', content: 'Delegation completed.' } }],
+      usage: {}
+    }
+  ];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const delegated = [];
+  const result = await provider.execute({
+    objective: 'Create exactly three real 子 Agent and then summarize their work.',
+    capabilities: { files: true, shell: true, subagents: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      delegateTasks: async (value) => {
+        delegated.push(value);
+        return { subagents: value.map((task, index) => ({
+          subagentId: `child-${index + 1}`,
+          status: 'succeeded',
+          summary: task.label,
+          files: []
+        })) };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Delegation completed.');
+  assert.equal(delegated.length, 1);
+  assert.equal(delegated[0].length, 3);
+  assert.equal(requests[0].tool_choice, 'required');
+  assert.equal(requests[1].tool_choice, 'required');
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'user' && message.content.includes('Call delegate_tasks exactly once')
+  )));
+  assert.equal(requests[2].tool_choice, undefined);
+});
+
 test('delegated tasks allow only exact staged inputs and at most three children', () => {
   const allowed = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
   const normalized = normalizeDelegatedTasks([{
