@@ -145,14 +145,18 @@ const unwrapLiteralShellArgument = (value) => {
   return argument.slice(1, -1);
 };
 
-const expectedSubagentTextOutputPath = ({ expectedOutput, purpose } = {}) => {
+const expectedSubagentOutputFilename = (expectedOutput) => {
   const filenames = [...new Set(
     [...String(expectedOutput || '').matchAll(
       /\b([A-Za-z0-9][A-Za-z0-9._-]{0,119}\.(?:md|txt|json|csv|html|css|js|svg|ya?ml))\b/gi
     )].map((match) => match[1])
   )];
-  if (filenames.length !== 1) return null;
-  const filename = filenames[0];
+  return filenames.length === 1 ? filenames[0] : null;
+};
+
+const expectedSubagentTextOutputPath = ({ expectedOutput, purpose } = {}) => {
+  const filename = expectedSubagentOutputFilename(expectedOutput);
+  if (!filename) return null;
   if (!String(purpose || '').includes(filename)) return null;
   const path = `/workspace/${filename}`;
   return isSafeSubagentOutputPath(path) ? path : null;
@@ -254,6 +258,25 @@ const inspectSubagentOutputFiles = async ({ sandbox, sandboxName, workspacePath 
   }
 };
 
+const assertExpectedSubagentOutputFiles = ({ expectedOutput, outputFiles }) => {
+  const files = (Array.isArray(outputFiles) ? outputFiles : []).filter((file) => (
+    Number(file?.byteSize || 0) > 0 && String(file?.sha256 || '').length === 64
+  ));
+  if (!files.length) {
+    throw new ApiError(422, 'AGENT_SUBAGENT_OUTPUT_REQUIRED', { retryable: false });
+  }
+  const expectedFilename = expectedSubagentOutputFilename(expectedOutput);
+  if (expectedFilename && !files.some((file) => (
+    String(file.path || '').split('/').pop() === expectedFilename
+  ))) {
+    throw new ApiError(422, 'AGENT_SUBAGENT_EXPECTED_OUTPUT_MISSING', {
+      retryable: false,
+      expectedFilename
+    });
+  }
+  return files;
+};
+
 const buildSubagentObjective = (task = {}) => [
   `Delegated role: ${task.role}`,
   `Objective: ${task.objective}`,
@@ -263,6 +286,8 @@ const buildSubagentObjective = (task = {}) => [
         `${inputPath} -> /inputs/${inputPath.split('/').pop()}`
       )).join(', ')}`
     : 'Read-only inputs: none',
+  'Use a concise plan of 2-4 steps total. Combine related sections into one writing step instead of creating one step per subsection.',
+  'Create the expected file in as few shell calls as practical, inspect it once, then mark every plan step completed.',
   'Inside your tools, write every result only under /workspace. The parent maps that isolated directory internally; never guess, inspect, mention, or use its host path.'
 ].join('\n\n');
 
@@ -706,7 +731,7 @@ const createAgentWorkerService = ({
                 ));
                 if (
                   normalized.length < 2 ||
-                  normalized.length > 12 ||
+                  normalized.length > 4 ||
                   normalized.filter((step) => step.status === 'in_progress').length > 1
                 ) {
                   throw new ApiError(400, 'AGENT_PLAN_INVALID');
@@ -805,10 +830,13 @@ const createAgentWorkerService = ({
           await persistCostCheckpoint({
             usageItems: { source: 'subagent_complete', subagentId }
           });
-          const outputFiles = await inspectSubagentOutputFiles({
-            sandbox,
-            sandboxName,
-            workspacePath
+          const outputFiles = assertExpectedSubagentOutputFiles({
+            expectedOutput: privateContext.task.expectedOutput,
+            outputFiles: await inspectSubagentOutputFiles({
+              sandbox,
+              sandboxName,
+              workspacePath
+            })
           });
           const finished = await runService.finishSubagent({
             runId,
@@ -1632,6 +1660,7 @@ const createAgentWorkerService = ({
 module.exports = {
   AgentCancelled,
   AgentPaused,
+  assertExpectedSubagentOutputFiles,
   buildSubagentObjective,
   createAgentCostMeter,
   createAgentWorkerService,
