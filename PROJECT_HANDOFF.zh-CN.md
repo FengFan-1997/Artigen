@@ -302,6 +302,7 @@ DEV 真实依赖与部署验收（2026-08-13）：
 - 子 Agent 工具目录只包含计划更新与离线 Shell，禁止浏览器、电脑、连接器、图片生成、审批、最终交付声明和再次委派。父 Agent 独占浏览器、电脑、外部写审批、Kolors 和最终文件验证；所有图片继续只能由 `Kwai-Kolors/Kolors` 生成。
 - 父 Run 最多并行三个子任务；单个子 Agent 失败或取消不会自动终止父任务，父 Run 取消会级联取消全部子任务。Worker 从加密 checkpoint 恢复已完成的子任务，避免重复模型调用和重复计费。
 - 子 Agent 没有固定启动费；Qwen3 实际用量按 actor 聚合进父 Run，继续只产生一个预算冻结、一次结算和一次余额释放。服务端继续执行 120 步、运行时长和最高预算边界。
+- Mac Worker 安装器要求通过 `ARTIGEN_AGENT_SUBAGENTS_ENABLED=true` 显式写入 LaunchAgent；运行脚本只有看到该值时才把 `subagents` 加入公共能力。暗发布和普通安装继续默认关闭，避免只开启 Render 入口却让 Worker 权限状态漂移。
 - 公共 Run 类型新增 `AgentSubagent[]`；SSE 新增 `subagent.created|started|progress|succeeded|failed|cancelled`；新增幂等的单独取消接口 `POST /api/agent-runs/:runId/subagents/:subagentId/cancel`。
 - `/api/agent/status` 在本代码发布后将新增 `subagentsEnabled`、`subagentMaxConcurrent` 和 `subagentSandboxMode=shared-v1`。安全开关 `AGENT_SUBAGENTS_ENABLED=false` 以及生产、DEV Render blueprint 默认值保持关闭；仅当服务端开关开启且公共能力包含 `subagents` 时，客户端或模型才能获得委派能力。
 

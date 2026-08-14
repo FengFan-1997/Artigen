@@ -42,12 +42,16 @@ test('CI configures a distinct session-token hashing secret', () => {
 
 test('Mac Agent worker pins image pricing and the SiliconFlow output host', () => {
   const runner = readRepoFile('backend/scripts/run-agent-worker-macos.js');
+  const installer = readRepoFile('backend/scripts/install-agent-worker-launchagent.js');
 
-  assert.match(runner, /AGENT_PUBLIC_CAPABILITIES:\s*'files,shell,browser,generate_images'/);
+  assert.match(runner, /\.\.\.\(subagentsEnabled \? \['subagents'\] : \[\]\)/);
+  assert.match(runner, /AGENT_SUBAGENTS_ENABLED:\s*subagentsEnabled \? 'true' : 'false'/);
   assert.match(runner, /AGENT_IMAGE_CREDITS:[\s\S]*\|\| '8'/);
   assert.match(runner, /AGENT_IMAGE_REFERENCE_CREDITS:[\s\S]*\|\| '12'/);
   assert.match(runner, /AGENT_MODEL_NAME:\s*'Qwen\/Qwen3-8B'/);
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
+  assert.match(installer, /ARTIGEN_AGENT_SUBAGENTS_ENABLED/);
+  assert.match(installer, /<key>AGENT_SUBAGENTS_ENABLED<\/key>/);
 });
 
 test('runtime model allowlist contains only Qwen3-8B and Kolors', () => {

@@ -20,6 +20,9 @@ const launchAgents = path.join(os.homedir(), 'Library/LaunchAgents');
 const logDir = path.join(os.homedir(), 'Library/Logs/Artigen');
 const plistPath = path.join(launchAgents, `${label}.plist`);
 const runner = path.join(root, 'backend/scripts/run-agent-worker-macos.js');
+const subagentsEnabled = /^(1|true|yes|on)$/i.test(
+  String(process.env.ARTIGEN_AGENT_SUBAGENTS_ENABLED || '').trim()
+);
 const escapeXml = (value) => String(value)
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
@@ -55,12 +58,14 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
   <dict>
     <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>ARTIGEN_AGENT_KEYCHAIN_SERVICE</key><string>${keychainService}</string>
+    <key>AGENT_SUBAGENTS_ENABLED</key><string>${subagentsEnabled ? 'true' : 'false'}</string>
   </dict>
 </dict>
 </plist>
 `;
 fs.writeFileSync(plistPath, plist, { mode: 0o600 });
 console.log(plistPath);
+console.log(`Subagents: ${subagentsEnabled ? 'enabled' : 'disabled'}`);
 console.log(production
   ? `Install after Keychain setup: launchctl bootstrap gui/${process.getuid()} ${plistPath}`
   : `Start on demand: launchctl bootstrap gui/${process.getuid()} ${plistPath}; launchctl kickstart -k gui/${process.getuid()}/${label}`);
