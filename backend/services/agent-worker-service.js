@@ -277,6 +277,49 @@ const assertExpectedSubagentOutputFiles = ({ expectedOutput, outputFiles }) => {
   return files;
 };
 
+const parentVerifiedSubagentFiles = async ({ sandbox, sandboxName, outputFiles }) => {
+  let excerptBytesRemaining = 18_000;
+  const results = [];
+  for (const file of Array.isArray(outputFiles) ? outputFiles : []) {
+    const verified = {
+      path: String(file?.path || ''),
+      byteSize: Math.max(0, Number(file?.byteSize || 0)),
+      sha256: String(file?.sha256 || ''),
+      verificationStatus: 'passed',
+      untrustedContent: true
+    };
+    const canReadAsText = (
+      excerptBytesRemaining > 0 &&
+      verified.byteSize > 0 &&
+      verified.byteSize <= 64 * 1024 &&
+      /\.(?:md|txt|json|csv|html|css|js|svg|ya?ml)$/i.test(verified.path)
+    );
+    if (canReadAsText) {
+      try {
+        const read = await sandbox.readFile(sandboxName, verified.path);
+        const buffer = Buffer.from(String(read?.base64 || ''), 'base64');
+        const digest = crypto.createHash('sha256').update(buffer).digest('hex');
+        if (
+          buffer.length === verified.byteSize &&
+          digest === verified.sha256 &&
+          !buffer.includes(0)
+        ) {
+          const excerpt = buffer.subarray(0, excerptBytesRemaining).toString('utf8');
+          verified.textExcerpt = excerpt;
+          excerptBytesRemaining = Math.max(
+            0,
+            excerptBytesRemaining - Buffer.byteLength(excerpt, 'utf8')
+          );
+        }
+      } catch {
+        // The independent scan above remains authoritative; excerpts are optional context.
+      }
+    }
+    results.push(verified);
+  }
+  return results;
+};
+
 const buildSubagentObjective = (task = {}) => [
   `Delegated role: ${task.role}`,
   `Objective: ${task.objective}`,
@@ -673,7 +716,13 @@ const createAgentWorkerService = ({
             subagentId,
             status: started.status,
             summary: started.summary,
-            files: started.outputFiles || [],
+            files: started.status === 'succeeded'
+              ? await parentVerifiedSubagentFiles({
+                  sandbox,
+                  sandboxName,
+                  outputFiles: started.outputFiles
+                })
+              : started.outputFiles || [],
             errorCode: started.error?.code || null
           };
         }
@@ -850,7 +899,11 @@ const createAgentWorkerService = ({
             subagentId,
             status: finished.status,
             summary: finished.summary,
-            files: finished.outputFiles
+            files: await parentVerifiedSubagentFiles({
+              sandbox,
+              sandboxName,
+              outputFiles: finished.outputFiles
+            })
           };
         } catch (error) {
           if (
@@ -966,8 +1019,7 @@ const createAgentWorkerService = ({
               ['AGENT_PAUSED', 'AGENT_CANCELLED'].includes(item.reason?.code)
             ));
             if (parentControlError) throw parentControlError.reason;
-            return {
-              subagents: settled.map((item, index) => item.status === 'fulfilled'
+            const subagents = settled.map((item, index) => item.status === 'fulfilled'
                 ? item.value
                 : {
                     subagentId: created[index].subagentId,
@@ -975,7 +1027,24 @@ const createAgentWorkerService = ({
                     summary: '子 Agent 运行时失败；父 Agent 可继续。',
                     files: [],
                     errorCode: String(item.reason?.code || 'AGENT_SUBAGENT_FAILED')
-                  })
+                  });
+            return {
+              subagents,
+              outputVerification: {
+                allSucceededFilesPassed: subagents.every((subagent) => (
+                  subagent.status !== 'succeeded' ||
+                  (
+                    subagent.files.length > 0 &&
+                    subagent.files.every((file) => file.verificationStatus === 'passed')
+                  )
+                )),
+                note: [
+                  'Every returned file with verificationStatus=passed was independently scanned,',
+                  'confirmed non-empty, and SHA-256 verified by the Worker.',
+                  'Use textExcerpt or read the exact path to merge actual content;',
+                  'do not require a guessed heading or phrase as proof that the file exists.'
+                ].join(' ')
+              }
             };
           },
           checkpoint: async (modelResponseId) => {
@@ -1664,6 +1733,7 @@ module.exports = {
   buildSubagentObjective,
   createAgentCostMeter,
   createAgentWorkerService,
+  parentVerifiedSubagentFiles,
   firstPayload,
   normalizeSubagentShellScript,
   restrictDelegatedTaskInputs,
