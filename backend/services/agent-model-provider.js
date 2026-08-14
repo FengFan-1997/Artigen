@@ -1090,6 +1090,11 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.unsupportedToolAttempts || 0)
     );
+    let toolArgumentValidationAttempts = Math.max(
+      0,
+      Number(durable?.toolArgumentValidationAttempts || 0)
+    );
+    let toolArgumentRetryName = String(durable?.toolArgumentRetryName || '');
     let delegationCompleted = durable?.delegationCompleted === true;
     let delegationNudges = Math.max(0, Number(durable?.delegationNudges || 0));
     let delegationValidationAttempts = Math.max(
@@ -1134,6 +1139,8 @@ class OllamaAgentModelProvider {
         turns,
         text,
         unsupportedToolAttempts,
+        toolArgumentValidationAttempts,
+        toolArgumentRetryName,
         delegationCompleted,
         delegationNudges,
         delegationValidationAttempts,
@@ -1387,7 +1394,21 @@ class OllamaAgentModelProvider {
           type: 'function',
           function: { name: 'update_plan' }
         };
+      } else if (toolArgumentRetryName && allowedToolNames.has(toolArgumentRetryName)) {
+        request.tool_choice = {
+          type: 'function',
+          function: { name: toolArgumentRetryName }
+        };
       } else if (approvalRecoveryRequired || artifactRepairRequired) {
+        request.tool_choice = {
+          type: 'function',
+          function: { name: 'sandbox_shell' }
+        };
+      } else if (
+        toolProfile === 'subagent' &&
+        subagentPlanCompleted &&
+        subagentSuccessfulShellCalls < 2
+      ) {
         request.tool_choice = {
           type: 'function',
           function: { name: 'sandbox_shell' }
@@ -1510,7 +1531,37 @@ class OllamaAgentModelProvider {
         continue;
       }
       unsupportedToolAttempts = 0;
-      const argumentsValue = normalizeOllamaArguments(fn.arguments);
+      let argumentsValue;
+      try {
+        argumentsValue = normalizeOllamaArguments(fn.arguments);
+        toolArgumentValidationAttempts = 0;
+        toolArgumentRetryName = '';
+      } catch (error) {
+        if (error?.code !== 'AGENT_MODEL_TOOL_ARGUMENTS_INVALID') throw error;
+        toolArgumentValidationAttempts += 1;
+        toolArgumentRetryName = name;
+        turns += 1;
+        assertLoopBudget({ stepCount: turns - 1, maxSteps });
+        if (toolArgumentValidationAttempts > 2) throw error;
+        messages.push(this.toolResultMessage(
+          { callId, name },
+          {
+            content: JSON.stringify({
+              success: false,
+              errorCode: error.code,
+              correction: [
+                `Retry ${name} with one valid JSON object.`,
+                'Match the published tool schema exactly.',
+                'Escape every newline and quotation mark inside string values.'
+              ].join(' ')
+            })
+          }
+        ));
+        pendingCall = null;
+        completedOutput = null;
+        await saveDurableState();
+        continue;
+      }
       pendingCall = { callId, name, arguments: argumentsValue };
       completedOutput = null;
       await saveDurableState();
