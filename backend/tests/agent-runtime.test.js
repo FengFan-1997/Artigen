@@ -124,6 +124,7 @@ const {
   createAgentWorkerService,
   createAgentCostMeter,
   buildSubagentObjective,
+  normalizeSubagentShellScript,
   restrictDelegatedTaskInputs,
   runWithLeaseHeartbeat,
   resolveStagedImageReferences
@@ -140,6 +141,44 @@ test('subagent objective exposes only virtual workspace paths to Qwen3', () => {
   assert.match(objective, /write every result only under \/workspace/);
   assert.match(objective, new RegExp(`${inputPath.replaceAll('/', '\\/')} -> \/inputs\/11111111-1111-4111-8111-111111111111\\.png`));
   assert.doesNotMatch(objective, /\/tmp\/artigen-workspace\/subagents/);
+});
+
+test('subagent shell normalizes multiline echo writes as literal workspace heredocs', () => {
+  const normalized = normalizeSubagentShellScript(
+    "echo '# Report\nThe product's accessibility.' > /workspace/report.md"
+  );
+  assert.equal(normalized.normalized, true);
+  assert.equal(normalized.kind, 'literal_echo_write');
+  assert.match(normalized.script, /^cat > \/workspace\/report\.md <<'ARTIGEN_LITERAL_EOF'/);
+  assert.match(normalized.script, /The product's accessibility\./);
+  assert.match(normalized.script, /\nARTIGEN_LITERAL_EOF$/);
+});
+
+test('subagent shell repairs Qwen heredoc echo chains without interpreting text', () => {
+  const normalized = normalizeSubagentShellScript([
+    "cat > /workspace/analysis.md <<'ARTIGEN_EOF' && echo '# Analysis'",
+    "&& echo '' && echo 'The product's functionality.' ARTIGEN_EOF"
+  ].join(' '));
+  assert.equal(normalized.normalized, true);
+  assert.equal(normalized.kind, 'literal_heredoc_echo_chain');
+  assert.match(normalized.script, /^cat > \/workspace\/analysis\.md <<'ARTIGEN_LITERAL_EOF'/);
+  assert.match(normalized.script, /# Analysis\n\nThe product's functionality\./);
+  assert.doesNotMatch(normalized.script, /&& echo/);
+});
+
+test('subagent shell leaves valid commands and unsafe output paths unchanged', () => {
+  const valid = "cat > /workspace/report.md <<'EOF'\nvalid\nEOF";
+  assert.deepEqual(normalizeSubagentShellScript(valid), {
+    script: valid,
+    normalized: false,
+    kind: null
+  });
+  const escaped = "echo 'no' > /workspace/../parent.md";
+  assert.deepEqual(normalizeSubagentShellScript(escaped), {
+    script: escaped,
+    normalized: false,
+    kind: null
+  });
 });
 const {
   createAgentImageService,
