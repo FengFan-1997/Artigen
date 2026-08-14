@@ -102,7 +102,6 @@ const subagentOfflineShellScript = ({ script, workspacePath, inputPaths = [] }) 
     'test ! -d /lib64 || mounts="$mounts --ro-bind /lib64 /lib64"',
     'test ! -d /opt || mounts="$mounts --ro-bind /opt /opt"',
     [
-      'setpriv --reuid cua --regid cua --init-groups --',
       'bwrap --unshare-user --uid 0 --gid 0',
       '--unshare-net --unshare-pid --unshare-ipc --unshare-uts --die-with-parent --new-session',
       '--ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /etc /etc',
