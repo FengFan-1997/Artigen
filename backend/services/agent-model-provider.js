@@ -314,8 +314,12 @@ const explicitlyRequiresSubagentDelegation = (objective) => {
 const planRepeatsCompletedDelegation = (steps) => (
   (Array.isArray(steps) ? steps : []).some((step) => (
     ['pending', 'in_progress'].includes(String(step?.status || '')) &&
-    /(?:delegate[_\s-]*tasks?|sub[\s-]*agents?|子\s*(?:Agent|智能体))/i
-      .test(String(step?.label || ''))
+    (
+      /(?:delegate|create|spawn|launch|start|run|assign|dispatch)\b.{0,48}\bsub[\s-]*agents?/i
+        .test(String(step?.label || '')) ||
+      /(?:创建|启动|委派|分派|运行).{0,16}子\s*(?:Agent|智能体)/i
+        .test(String(step?.label || ''))
+    )
   ))
 );
 
@@ -519,6 +523,26 @@ const functionToolsForProfile = (capabilities = {}, toolProfile = 'parent') => F
         capabilities?.github === true || capabilities?.google_drive === true
       ))
     );
+  })
+  .map((tool) => {
+    if (toolProfile !== 'subagent' || tool.name !== 'update_plan') return tool;
+    return {
+      ...tool,
+      description: [
+        'Publish a concise 2-4 step offline plan and update it when status changes.',
+        'Combine related sections into one writing step. Exactly one step may be in_progress.'
+      ].join(' '),
+      parameters: {
+        ...tool.parameters,
+        properties: {
+          ...tool.parameters.properties,
+          steps: {
+            ...tool.parameters.properties.steps,
+            maxItems: 4
+          }
+        }
+      }
+    };
   });
 
 const ollamaFileTools = (capabilities = {}, toolProfile = 'parent') =>
@@ -1239,7 +1263,7 @@ class OllamaAgentModelProvider {
       subagentFinalizationRequired = (
         toolProfile === 'subagent' &&
         subagentPlanCompleted &&
-        subagentSuccessfulShellCalls >= 2
+        subagentSuccessfulShellCalls >= 1
       );
     };
 
@@ -1439,7 +1463,7 @@ class OllamaAgentModelProvider {
                   errorCode: error.code,
                   field: 'steps',
                   correction: String(error?.details?.correction || [
-                    'Retry update_plan with 2-12 non-empty steps.',
+                    `Retry update_plan with 2-${toolProfile === 'subagent' ? 4 : 12} non-empty steps.`,
                     'Each status must be pending, in_progress, or completed.',
                     'At most one step may be in_progress.'
                   ].join(' '))
@@ -1537,7 +1561,7 @@ class OllamaAgentModelProvider {
       } else if (
         toolProfile === 'subagent' &&
         subagentPlanCompleted &&
-        subagentSuccessfulShellCalls < 2
+        subagentSuccessfulShellCalls < 1
       ) {
         request.tool_choice = {
           type: 'function',

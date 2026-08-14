@@ -228,6 +228,7 @@ const {
 } = require('../services/agent-trajectory-evaluator');
 const { settleAgentBudget } = require('../services/agent-billing-service');
 const {
+  assertExpectedSubagentOutputFiles,
   createAgentWorkerService,
   createAgentCostMeter,
   buildSubagentObjective,
@@ -246,6 +247,7 @@ test('subagent objective exposes only virtual workspace paths to Qwen3', () => {
     inputPaths: [inputPath]
   });
   assert.match(objective, /write every result only under \/workspace/);
+  assert.match(objective, /concise plan of 2-4 steps total/);
   assert.match(objective, new RegExp(`${inputPath.replaceAll('/', '\\/')} -> \/inputs\/11111111-1111-4111-8111-111111111111\\.png`));
   assert.doesNotMatch(objective, /\/tmp\/artigen-workspace\/subagents/);
 });
@@ -307,6 +309,26 @@ test('subagent shell leaves valid commands and unsafe output paths unchanged', (
     normalized: false,
     kind: null
   });
+});
+
+test('subagent completion requires one non-empty scanned output and its expected filename', () => {
+  const valid = {
+    path: '/tmp/artigen-workspace/subagents/child/analysis.md',
+    byteSize: 128,
+    sha256: 'a'.repeat(64)
+  };
+  assert.deepEqual(assertExpectedSubagentOutputFiles({
+    expectedOutput: 'Create analysis.md.',
+    outputFiles: [valid]
+  }), [valid]);
+  assert.throws(() => assertExpectedSubagentOutputFiles({
+    expectedOutput: 'Create analysis.md.',
+    outputFiles: [{ ...valid, path: valid.path.replace('analysis.md', 'notes.md') }]
+  }), { code: 'AGENT_SUBAGENT_EXPECTED_OUTPUT_MISSING' });
+  assert.throws(() => assertExpectedSubagentOutputFiles({
+    expectedOutput: 'Create analysis.md.',
+    outputFiles: [{ ...valid, byteSize: 0 }]
+  }), { code: 'AGENT_SUBAGENT_OUTPUT_REQUIRED' });
 });
 const {
   createAgentImageService,
@@ -1056,6 +1078,12 @@ test('delegate_tasks stays parent-only and exposes a strict three-child schema',
   assert.equal(delegate.strict, true);
   assert.equal(delegate.parameters.properties.tasks.maxItems, 3);
   assert.equal(delegate.parameters.properties.tasks.items.additionalProperties, false);
+  assert.equal(
+    functionToolsForProfile({ files: true, shell: true }, 'subagent')
+      .find((tool) => tool.name === 'update_plan')
+      .parameters.properties.steps.maxItems,
+    4
+  );
   assert.deepEqual(
     functionToolsForProfile({ files: true, shell: true, browser: true, generate_images: true, subagents: true }, 'subagent')
       .map((tool) => tool.name),
@@ -1358,7 +1386,7 @@ test('SiliconFlow corrects an invalid Qwen plan and fails closed after two retri
   assert.ok(requests[1].messages.some((message) => (
     message.role === 'tool' &&
     message.content.includes('AGENT_PLAN_INVALID') &&
-    message.content.includes('2-12')
+    message.content.includes('2-4')
   )));
 
   const invalidResponses = [1, 2, 3].map((index) => (
@@ -1470,7 +1498,87 @@ test('subagent finalizes deterministically after a completed plan and two succes
   )));
 });
 
-test('subagent forces an immediate quoted-heredoc recovery after a failed shell write', async () => {
+test('subagent finalizes after one successful output write without another model request', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-single-shell-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-single-shell-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const workingPlan = [
+    { label: 'Create the report', status: 'in_progress' },
+    { label: 'Complete the task', status: 'pending' }
+  ];
+  const completedPlan = workingPlan.map((step) => ({ ...step, status: 'completed' }));
+  const responses = [
+    toolCall('plan', 'update_plan', { explanation: 'Create the requested report.', steps: workingPlan }),
+    toolCall('write', 'sandbox_shell', {
+      script: "printf '%s\\n' '# Report' > /workspace/report.md",
+      purpose: 'Create report.md'
+    }),
+    toolCall('complete', 'update_plan', {
+      explanation: 'report.md was created successfully.',
+      steps: completedPlan
+    })
+  ];
+  const requests = [];
+  const savedStates = [];
+  let shellCalls = 0;
+  let cleared = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Create report.md under /workspace.',
+    capabilities: { files: true, shell: true },
+    toolProfile: 'subagent',
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async () => {
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      saveModelState: async (state) => savedStates.push(structuredClone(state)),
+      clearModelState: async () => { cleared += 1; },
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(requests.length, 3);
+  assert.equal(shellCalls, 1);
+  assert.equal(cleared, 1);
+  assert.match(result.text, /Status: completed/);
+  assert.match(result.text, /report\.md was created successfully/);
+  assert.equal(result.turns, 3);
+  assert.ok(savedStates.some((state) => (
+    state.subagentPlanCompleted === true &&
+    state.subagentSuccessfulShellCalls === 1 &&
+    state.subagentFinalizationRequired === true
+  )));
+});
+
+test('subagent recovers a failed shell write and completes after one successful replacement', async () => {
   const toolCall = (id, name, args) => ({
     id: `chat-shell-recovery-${id}`,
     choices: [{
@@ -1504,10 +1612,6 @@ test('subagent forces an immediate quoted-heredoc recovery after a failed shell 
     toolCall('complete', 'update_plan', {
       explanation: 'The report exists and is ready for verification.',
       steps: completedPlan
-    }),
-    toolCall('verify', 'sandbox_shell', {
-      script: 'test -s /workspace/report.md',
-      purpose: 'Verify report'
     })
   ];
   const requests = [];
@@ -1546,15 +1650,14 @@ test('subagent forces an immediate quoted-heredoc recovery after a failed shell 
       recordUsage: async () => {}
     }
   });
-  assert.equal(requests.length, 5);
+  assert.equal(requests.length, 4);
   assert.equal(requests[2].tool_choice.function.name, 'sandbox_shell');
   assert.ok(requests[2].messages.some((message) => (
     message.role === 'tool' &&
     message.content.includes('single-quoted heredoc') &&
     message.content.includes('do not call update_plan first')
   )));
-  assert.equal(requests[4].tool_choice.function.name, 'sandbox_shell');
-  assert.equal(shellCalls, 3);
+  assert.equal(shellCalls, 2);
   assert.match(result.text, /Status: completed/);
   assert.ok(savedStates.some((state) => (
     state.subagentShellFailureCount === 1 &&
@@ -1691,7 +1794,7 @@ test('parent corrects a plan that tries to repeat completed delegation', async (
     toolCall('corrected', 'update_plan', {
       explanation: 'Merge the completed child outputs and deliver them.',
       steps: [
-        { label: 'Merge child outputs', status: 'in_progress' },
+        { label: 'Merge Subagent Outputs', status: 'in_progress' },
         { label: 'Verify and declare files', status: 'in_progress' }
       ]
     }),
@@ -1737,7 +1840,7 @@ test('parent corrects a plan that tries to repeat completed delegation', async (
   assert.equal(requests.length, 4);
   assert.equal(requests[2].tool_choice.function.name, 'update_plan');
   assert.equal(acceptedPlans.length, 2);
-  assert.equal(acceptedPlans.at(-1)[0].label, 'Merge child outputs');
+  assert.equal(acceptedPlans.at(-1)[0].label, 'Merge Subagent Outputs');
   assert.deepEqual(acceptedPlans.at(-1).map((step) => step.status), ['in_progress', 'pending']);
   assert.equal(result.text, 'The merge plan is ready.');
   assert.ok(savedStates.some((state) => (
@@ -1849,7 +1952,7 @@ test('parent cannot finish before every required report artifact is declared', a
   )));
 });
 
-test('subagent forces an offline verification step after completing its plan too early', async () => {
+test('subagent does not spend another model turn after one successful write and a completed plan', async () => {
   const toolCall = (id, name, args) => ({
     id: `chat-early-${id}`,
     choices: [{
@@ -1876,8 +1979,7 @@ test('subagent forces an offline verification step after completing its plan too
     toolCall('complete-early', 'update_plan', {
       explanation: 'The report was created.',
       steps: completedPlan
-    }),
-    toolCall('verify', 'sandbox_shell', { script: 'verify report', purpose: 'Verify report' })
+    })
   ];
   const requests = [];
   let shellCalls = 0;
@@ -1912,9 +2014,8 @@ test('subagent forces an offline verification step after completing its plan too
       recordUsage: async () => {}
     }
   });
-  assert.equal(requests.length, 4);
-  assert.equal(requests[3].tool_choice.function.name, 'sandbox_shell');
-  assert.equal(shellCalls, 2);
+  assert.equal(requests.length, 3);
+  assert.equal(shellCalls, 1);
   assert.match(result.text, /Status: completed/);
 });
 
