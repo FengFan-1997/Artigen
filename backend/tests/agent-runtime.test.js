@@ -894,6 +894,10 @@ test('SiliconFlow requires real delegation when the objective explicitly asks fo
     expectedOutput: `${label} notes.`,
     inputPaths: []
   }));
+  const invalidTasks = tasks.map((task) => ({
+    ...task,
+    inputPaths: ['/tmp/artigen-workspace/inputs/123e4567-e89b-12d3-a456-426614174000.html']
+  }));
   const responses = [
     {
       id: 'chat-premature-final',
@@ -918,6 +922,24 @@ test('SiliconFlow requires real delegation when the objective explicitly asks fo
                 text: '',
                 purpose: 'Read the page again'
               })
+            }
+          }]
+        }
+      }],
+      usage: {}
+    },
+    {
+      id: 'chat-invalid-delegate',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call-invalid-delegate',
+            type: 'function',
+            function: {
+              name: 'delegate_tasks',
+              arguments: JSON.stringify({ tasks: invalidTasks })
             }
           }]
         }
@@ -975,6 +997,11 @@ test('SiliconFlow requires real delegation when the objective explicitly asks fo
       },
       delegateTasks: async (value) => {
         delegated.push(value);
+        if (value.some((task) => task.inputPaths.length)) {
+          throw new ApiError(400, 'AGENT_SUBAGENT_TASK_INVALID', {
+            field: 'tasks.0'
+          });
+        }
         return { subagents: value.map((task, index) => ({
           subagentId: `child-${index + 1}`,
           status: 'succeeded',
@@ -988,8 +1015,9 @@ test('SiliconFlow requires real delegation when the objective explicitly asks fo
     }
   });
   assert.equal(result.text, 'Delegation completed.');
-  assert.equal(delegated.length, 1);
-  assert.equal(delegated[0].length, 3);
+  assert.equal(delegated.length, 2);
+  assert.equal(delegated[1].length, 3);
+  assert.ok(delegated[1].every((task) => task.inputPaths.length === 0));
   const requiredDelegation = {
     type: 'function',
     function: { name: 'delegate_tasks' }
@@ -1003,7 +1031,76 @@ test('SiliconFlow requires real delegation when the objective explicitly asks fo
   assert.ok(requests[2].messages.some((message) => (
     message.role === 'tool' && message.content.includes('AGENT_SUBAGENT_DELEGATION_REQUIRED')
   )));
-  assert.equal(requests[3].tool_choice, undefined);
+  assert.deepEqual(requests[3].tool_choice, requiredDelegation);
+  assert.ok(requests[3].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('AGENT_SUBAGENT_TASK_INVALID') &&
+    message.content.includes('inputPaths')
+  )));
+  assert.equal(requests[4].tool_choice, undefined);
+});
+
+test('SiliconFlow stops after two invalid delegation corrections', async () => {
+  const invalidCall = (index) => ({
+    id: `chat-invalid-delegate-${index}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-invalid-delegate-${index}`,
+          type: 'function',
+          function: {
+            name: 'delegate_tasks',
+            arguments: JSON.stringify({
+              tasks: [{
+                role: 'research',
+                label: 'Research',
+                objective: 'Complete offline research.',
+                expectedOutput: 'Research notes.',
+                inputPaths: [
+                  '/tmp/artigen-workspace/inputs/123e4567-e89b-12d3-a456-426614174000.html'
+                ]
+              }]
+            })
+          }
+        }]
+      }
+    }],
+    usage: {}
+  });
+  const responses = [invalidCall(1), invalidCall(2), invalidCall(3)];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async () => new Response(JSON.stringify(responses.shift()), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  let attempts = 0;
+  await assert.rejects(() => provider.execute({
+    objective: 'Create one real sub Agent and summarize its work.',
+    capabilities: { files: true, shell: true, subagents: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      delegateTasks: async () => {
+        attempts += 1;
+        throw new ApiError(400, 'AGENT_SUBAGENT_TASK_INVALID', {
+          field: 'tasks.0'
+        });
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  }), { code: 'AGENT_SUBAGENT_TASK_INVALID' });
+  assert.equal(attempts, 3);
 });
 
 test('delegated tasks allow only exact staged inputs and at most three children', () => {
