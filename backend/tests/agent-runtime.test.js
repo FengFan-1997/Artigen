@@ -1303,6 +1303,168 @@ test('subagent finalizes deterministically after a completed plan and two succes
   )));
 });
 
+test('SiliconFlow retries malformed tool arguments with the same forced tool', async () => {
+  const validPlan = [
+    { label: 'Prepare the report', status: 'in_progress' },
+    { label: 'Verify the report', status: 'pending' }
+  ];
+  const responses = [
+    {
+      id: 'chat-invalid-arguments',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call-invalid-arguments',
+            type: 'function',
+            function: {
+              name: 'update_plan',
+              arguments: '{"explanation":"broken","steps":['
+            }
+          }]
+        }
+      }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    },
+    {
+      id: 'chat-corrected-arguments',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call-corrected-arguments',
+            type: 'function',
+            function: {
+              name: 'update_plan',
+              arguments: JSON.stringify({
+                explanation: 'Prepare and verify the report.',
+                steps: validPlan
+              })
+            }
+          }]
+        }
+      }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    },
+    {
+      id: 'chat-after-correction',
+      choices: [{ message: { role: 'assistant', content: 'The plan is ready.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  const savedStates = [];
+  let planCalls = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Prepare a report plan.',
+    capabilities: { files: true, shell: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async ({ steps }) => {
+        planCalls += 1;
+        return { accepted: true, steps };
+      },
+      saveModelState: async (state) => savedStates.push(structuredClone(state)),
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(requests.length, 3);
+  assert.equal(requests[1].tool_choice.function.name, 'update_plan');
+  assert.equal(planCalls, 1);
+  assert.equal(result.text, 'The plan is ready.');
+  assert.ok(savedStates.some((state) => (
+    state.toolArgumentValidationAttempts === 1 &&
+    state.toolArgumentRetryName === 'update_plan'
+  )));
+});
+
+test('subagent forces an offline verification step after completing its plan too early', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-early-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-early-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const workingPlan = [
+    { label: 'Create the report', status: 'in_progress' },
+    { label: 'Verify the report', status: 'pending' }
+  ];
+  const completedPlan = workingPlan.map((step) => ({ ...step, status: 'completed' }));
+  const responses = [
+    toolCall('plan', 'update_plan', { explanation: 'Create and verify.', steps: workingPlan }),
+    toolCall('write', 'sandbox_shell', { script: 'write report', purpose: 'Create report' }),
+    toolCall('complete-early', 'update_plan', {
+      explanation: 'The report was created.',
+      steps: completedPlan
+    }),
+    toolCall('verify', 'sandbox_shell', { script: 'verify report', purpose: 'Verify report' })
+  ];
+  const requests = [];
+  let shellCalls = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Create a verified report under /workspace.',
+    capabilities: { files: true, shell: true },
+    toolProfile: 'subagent',
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async () => {
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(requests.length, 4);
+  assert.equal(requests[3].tool_choice.function.name, 'sandbox_shell');
+  assert.equal(shellCalls, 2);
+  assert.match(result.text, /Status: completed/);
+});
+
 test('SiliconFlow repairs a missing or invalid artifact before redeclaring it', async () => {
   const declaration = {
     path: '/tmp/artigen-workspace/report.pdf',
