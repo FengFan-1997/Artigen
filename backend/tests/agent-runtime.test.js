@@ -124,6 +124,7 @@ const {
   createAgentWorkerService,
   createAgentCostMeter,
   buildSubagentObjective,
+  restrictDelegatedTaskInputs,
   runWithLeaseHeartbeat,
   resolveStagedImageReferences
 } = require('../services/agent-worker-service');
@@ -1526,6 +1527,27 @@ test('delegated tasks allow only exact staged inputs and at most three children'
     expectedOutput: 'Notes.',
     inputPaths: ['/tmp/artigen-workspace/inputs/22222222-2222-4222-8222-222222222222.pdf']
   }], { allowedInputPaths: [allowed] }), { code: 'AGENT_SUBAGENT_TASK_INVALID' });
+});
+
+test('model-authored delegated inputs are reduced to the exact staged path intersection', () => {
+  const staged = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
+  const invented = '/tmp/artigen-workspace/inputs/123e4567-e89b-12d3-a456-426614174000.html';
+  const task = {
+    role: 'research',
+    label: 'Research',
+    objective: 'Prepare offline notes.',
+    expectedOutput: 'research.md',
+    inputPaths: [invented, staged, staged]
+  };
+  assert.deepEqual(restrictDelegatedTaskInputs([task], [staged]), [{
+    ...task,
+    inputPaths: [staged]
+  }]);
+  assert.deepEqual(restrictDelegatedTaskInputs([task], []), [{
+    ...task,
+    inputPaths: []
+  }]);
+  assert.equal(restrictDelegatedTaskInputs(null, []), null);
 });
 
 test('shell policy keeps model-authored commands offline and blocks privilege escalation', () => {
