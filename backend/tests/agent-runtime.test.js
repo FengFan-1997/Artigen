@@ -538,7 +538,7 @@ test('subagent model usage aggregates into the parent run without duplicate sand
   assert.equal(meter.total(), 5);
 });
 
-test('long sandbox provisioning renews the run lease until work completes', async () => {
+test('long sandbox or model work renews the run lease until work completes', async () => {
   let heartbeats = 0;
   let finishWork;
   const work = new Promise((resolve) => {
