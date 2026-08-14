@@ -420,6 +420,12 @@ const siliconFlowUsageCredits = (usage, env = process.env) => {
   return Math.max(0, (input * inputPerMillion + output * outputPerMillion) / 1_000_000);
 };
 
+const siliconFlowRequestTimeoutMs = (env = process.env) => {
+  const parsed = Number.parseInt(String(env.AGENT_SILICONFLOW_TIMEOUT_MS || ''), 10);
+  const requested = Number.isFinite(parsed) ? parsed : 300_000;
+  return Math.max(30_000, Math.min(10 * 60_000, requested));
+};
+
 let siliconFlowAgentGate = Promise.resolve();
 let siliconFlowAgentNextAt = 0;
 const waitForSiliconFlowAgentSlot = async (env = process.env) => {
@@ -1358,10 +1364,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
     }
     await waitForSiliconFlowAgentSlot(this.env);
     const controller = new AbortController();
-    const timeoutMs = Math.max(
-      30_000,
-      Math.min(10 * 60_000, Number(this.env.AGENT_SILICONFLOW_TIMEOUT_MS || 120_000))
-    );
+    const timeoutMs = siliconFlowRequestTimeoutMs(this.env);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref?.();
     let response;
@@ -1460,6 +1463,7 @@ module.exports = {
   ollamaUsageCredits,
   parseArguments,
   siliconFlowUsageCredits,
+  siliconFlowRequestTimeoutMs,
   waitForSiliconFlowAgentSlot,
   usageCredits
 };

@@ -34,9 +34,18 @@ const {
   functionToolsForProfile,
   ollamaFileTools,
   ollamaUsageCredits,
+  siliconFlowRequestTimeoutMs,
   siliconFlowUsageCredits,
   usageCredits
 } = require('../services/agent-model-provider');
+
+test('SiliconFlow Agent timeout covers real Qwen3 tool latency and stays bounded', () => {
+  assert.equal(siliconFlowRequestTimeoutMs({}), 300_000);
+  assert.equal(siliconFlowRequestTimeoutMs({ AGENT_SILICONFLOW_TIMEOUT_MS: '180000' }), 180_000);
+  assert.equal(siliconFlowRequestTimeoutMs({ AGENT_SILICONFLOW_TIMEOUT_MS: 'invalid' }), 300_000);
+  assert.equal(siliconFlowRequestTimeoutMs({ AGENT_SILICONFLOW_TIMEOUT_MS: '1' }), 30_000);
+  assert.equal(siliconFlowRequestTimeoutMs({ AGENT_SILICONFLOW_TIMEOUT_MS: '999999' }), 600_000);
+});
 
 test('artifact tool schema only exposes verifier-supported MIME types', () => {
   const artifactTool = FUNCTION_TOOLS.find((tool) => tool.name === 'declare_artifact');
