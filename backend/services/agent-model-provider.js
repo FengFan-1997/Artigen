@@ -319,6 +319,18 @@ const planRepeatsCompletedDelegation = (steps) => (
   ))
 );
 
+const normalizePlanProgress = (steps) => {
+  let hasCurrentStep = false;
+  return (Array.isArray(steps) ? steps : []).map((step) => {
+    if (String(step?.status || '') !== 'in_progress') return step;
+    if (!hasCurrentStep) {
+      hasCurrentStep = true;
+      return step;
+    }
+    return { ...step, status: 'pending' };
+  });
+};
+
 const buildInstructions = ({ capabilities, maxSteps, toolProfile = 'parent' }) => toolProfile === 'subagent'
   ? `
 You are a depth-1 Artigen sub Agent running in an independent Qwen3 context.
@@ -337,6 +349,9 @@ Use /workspace exclusively for every output path. Never guess, inspect, mention,
 run a separate offline verification command, then mark every plan step completed. Once the expected output
 exists and verification succeeds, stop calling tools and return the final structured summary immediately.
 Do not revise an already completed plan or perform extra cleanup, formatting, or inspection loops.
+For multiline text, use a single-quoted heredoc whose closing delimiter is alone on its line. Never execute
+Markdown headings, table rows, pipes, backticks, or body text as shell tokens. If a shell write fails, retry
+the write immediately with a quoted heredoc before updating the plan, then verify it in a separate command.
 
 Maximum tool steps: ${Number(maxSteps || 20)}
 `.trim()
@@ -1150,6 +1165,11 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.subagentSuccessfulShellCalls || 0)
     );
+    let subagentShellFailureCount = Math.max(
+      0,
+      Number(durable?.subagentShellFailureCount || 0)
+    );
+    let subagentShellRecoveryRequired = durable?.subagentShellRecoveryRequired === true;
     let subagentFinalizationRequired = durable?.subagentFinalizationRequired === true;
     let subagentCompletionSummary = String(durable?.subagentCompletionSummary || '');
 
@@ -1183,6 +1203,8 @@ class OllamaAgentModelProvider {
         approvalRecoveryRequired,
         subagentPlanCompleted,
         subagentSuccessfulShellCalls,
+        subagentShellFailureCount,
+        subagentShellRecoveryRequired,
         subagentFinalizationRequired,
         subagentCompletionSummary
       });
@@ -1216,10 +1238,14 @@ class OllamaAgentModelProvider {
         planPublished = true;
       }
       if (call.name === 'update_plan') {
+        const planArgs = {
+          ...args,
+          steps: normalizePlanProgress(args.steps)
+        };
         if (
           toolProfile === 'parent' &&
           delegationCompleted &&
-          planRepeatsCompletedDelegation(args.steps)
+          planRepeatsCompletedDelegation(planArgs.steps)
         ) {
           throw new ApiError(400, 'AGENT_PLAN_INVALID', {
             details: {
@@ -1231,17 +1257,17 @@ class OllamaAgentModelProvider {
             }
           });
         }
-        const result = await callbacks.updatePlan(args);
+        const result = await callbacks.updatePlan(planArgs);
         planPublished = true;
         if (toolProfile === 'subagent') {
-          const steps = Array.isArray(result?.steps) ? result.steps : args.steps;
+          const steps = Array.isArray(result?.steps) ? result.steps : planArgs.steps;
           subagentPlanCompleted = (
             Array.isArray(steps) &&
             steps.length >= 2 &&
             steps.every((step) => step?.status === 'completed')
           );
           if (subagentPlanCompleted) {
-            subagentCompletionSummary = String(args.explanation || '').trim().slice(0, 2000);
+            subagentCompletionSummary = String(planArgs.explanation || '').trim().slice(0, 2000);
           }
           refreshSubagentFinalization();
         }
@@ -1258,13 +1284,26 @@ class OllamaAgentModelProvider {
         if (shellResult.success) approvalRecoveryRequired = false;
         if (toolProfile === 'subagent' && shellResult.success) {
           subagentSuccessfulShellCalls += 1;
+          subagentShellFailureCount = 0;
+          subagentShellRecoveryRequired = false;
           refreshSubagentFinalization();
+        } else if (toolProfile === 'subagent') {
+          subagentShellFailureCount += 1;
+          subagentShellRecoveryRequired = true;
         }
         return {
           success: shellResult.success,
           returnCode: shellResult.returnCode,
           stdout: String(shellResult.stdout || '').slice(0, 12_000),
-          stderr: String(shellResult.stderr || '').slice(0, 4_000)
+          stderr: String(shellResult.stderr || '').slice(0, 4_000),
+          correction: toolProfile === 'subagent' && !shellResult.success
+            ? [
+                'Retry sandbox_shell immediately; do not call update_plan first.',
+                "Write multiline text with a single-quoted heredoc such as cat > /workspace/output.md <<'ARTIGEN_EOF'.",
+                'Keep ARTIGEN_EOF alone on the closing line. Never execute Markdown pipes or body text as shell tokens.',
+                'After the write succeeds, run a separate verification command.'
+              ].join(' ')
+            : undefined
         };
       }
       if (call.name === 'browser_dom') {
@@ -1461,6 +1500,11 @@ class OllamaAgentModelProvider {
           function: { name: toolArgumentRetryName }
         };
       } else if (approvalRecoveryRequired || artifactRepairRequired) {
+        request.tool_choice = {
+          type: 'function',
+          function: { name: 'sandbox_shell' }
+        };
+      } else if (toolProfile === 'subagent' && subagentShellRecoveryRequired) {
         request.tool_choice = {
           type: 'function',
           function: { name: 'sandbox_shell' }

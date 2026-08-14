@@ -1303,6 +1303,98 @@ test('subagent finalizes deterministically after a completed plan and two succes
   )));
 });
 
+test('subagent forces an immediate quoted-heredoc recovery after a failed shell write', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-shell-recovery-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-shell-recovery-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const workingPlan = [
+    { label: 'Create the report', status: 'in_progress' },
+    { label: 'Verify the report', status: 'pending' }
+  ];
+  const completedPlan = workingPlan.map((step) => ({ ...step, status: 'completed' }));
+  const responses = [
+    toolCall('plan', 'update_plan', { explanation: 'Create and verify.', steps: workingPlan }),
+    toolCall('bad-write', 'sandbox_shell', {
+      script: 'unquoted markdown | row',
+      purpose: 'Create report'
+    }),
+    toolCall('recovered-write', 'sandbox_shell', {
+      script: "cat > /workspace/report.md <<'ARTIGEN_EOF'\n| Safe | Row |\nARTIGEN_EOF",
+      purpose: 'Retry the report with a quoted heredoc'
+    }),
+    toolCall('complete', 'update_plan', {
+      explanation: 'The report exists and is ready for verification.',
+      steps: completedPlan
+    }),
+    toolCall('verify', 'sandbox_shell', {
+      script: 'test -s /workspace/report.md',
+      purpose: 'Verify report'
+    })
+  ];
+  const requests = [];
+  const savedStates = [];
+  let shellCalls = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Create a verified report under /workspace.',
+    capabilities: { files: true, shell: true },
+    toolProfile: 'subagent',
+    maxSteps: 12,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async () => {
+        shellCalls += 1;
+        return shellCalls === 1
+          ? { success: false, returnCode: 2, stdout: '', stderr: 'syntax error near unexpected token |' }
+          : { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      saveModelState: async (state) => savedStates.push(structuredClone(state)),
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(requests.length, 5);
+  assert.equal(requests[2].tool_choice.function.name, 'sandbox_shell');
+  assert.ok(requests[2].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('single-quoted heredoc') &&
+    message.content.includes('do not call update_plan first')
+  )));
+  assert.equal(requests[4].tool_choice.function.name, 'sandbox_shell');
+  assert.equal(shellCalls, 3);
+  assert.match(result.text, /Status: completed/);
+  assert.ok(savedStates.some((state) => (
+    state.subagentShellFailureCount === 1 &&
+    state.subagentShellRecoveryRequired === true
+  )));
+});
+
 test('SiliconFlow retries malformed tool arguments with the same forced tool', async () => {
   const validPlan = [
     { label: 'Prepare the report', status: 'in_progress' },
@@ -1433,7 +1525,7 @@ test('parent corrects a plan that tries to repeat completed delegation', async (
       explanation: 'Merge the completed child outputs and deliver them.',
       steps: [
         { label: 'Merge child outputs', status: 'in_progress' },
-        { label: 'Verify and declare files', status: 'pending' }
+        { label: 'Verify and declare files', status: 'in_progress' }
       ]
     }),
     {
@@ -1479,6 +1571,7 @@ test('parent corrects a plan that tries to repeat completed delegation', async (
   assert.equal(requests[2].tool_choice.function.name, 'update_plan');
   assert.equal(acceptedPlans.length, 2);
   assert.equal(acceptedPlans.at(-1)[0].label, 'Merge child outputs');
+  assert.deepEqual(acceptedPlans.at(-1).map((step) => step.status), ['in_progress', 'pending']);
   assert.equal(result.text, 'The merge plan is ready.');
   assert.ok(savedStates.some((state) => (
     state.completedOutput?.content?.includes('Delegation already completed')
