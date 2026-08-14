@@ -911,6 +911,10 @@ class OllamaAgentModelProvider {
     return 'ollama';
   }
 
+  delegationToolChoice() {
+    return 'required';
+  }
+
   usageDetails(response) {
     return {
       inputTokens: Number(response.prompt_eval_count || 0),
@@ -1160,7 +1164,9 @@ class OllamaAgentModelProvider {
       assertModelDeadline(deadlineAt);
       await callbacks.checkControl?.();
       const request = this.buildChatPayload(messages, capabilities, toolProfile);
-      if (delegationRequired && !delegationCompleted) request.tool_choice = 'required';
+      if (delegationRequired && !delegationCompleted) {
+        request.tool_choice = this.delegationToolChoice();
+      }
       const response = await this.createChat(request);
       const { inputTokens, outputTokens, credits } = this.usageDetails(response);
       totalCredits += credits;
@@ -1218,6 +1224,30 @@ class OllamaAgentModelProvider {
         .update(`${turns}:${name}:${JSON.stringify(fn.arguments || '')}`)
         .digest('hex')
         .slice(0, 24));
+      if (delegationRequired && !delegationCompleted && name !== 'delegate_tasks') {
+        delegationNudges += 1;
+        turns += 1;
+        assertLoopBudget({ stepCount: turns - 1, maxSteps });
+        if (delegationNudges > 2) {
+          throw new ApiError(502, 'AGENT_SUBAGENT_DELEGATION_REQUIRED', {
+            retryable: false
+          });
+        }
+        messages.push(this.toolResultMessage(
+          { callId, name },
+          {
+            content: JSON.stringify({
+              success: false,
+              errorCode: 'AGENT_SUBAGENT_DELEGATION_REQUIRED',
+              requiredTool: 'delegate_tasks'
+            })
+          }
+        ));
+        pendingCall = null;
+        completedOutput = null;
+        await saveDurableState();
+        continue;
+      }
       if (name === 'generate_image' && capabilities?.generate_images !== true) {
         throw new ApiError(403, 'AGENT_CAPABILITY_NOT_GRANTED', {
           capability: 'generate_images'
@@ -1265,6 +1295,13 @@ class OllamaAgentModelProvider {
 class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
   get providerName() {
     return 'siliconflow';
+  }
+
+  delegationToolChoice() {
+    return {
+      type: 'function',
+      function: { name: 'delegate_tasks' }
+    };
   }
 
   usageDetails(response) {
