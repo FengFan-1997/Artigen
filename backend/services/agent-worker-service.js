@@ -778,6 +778,7 @@ const createAgentWorkerService = ({
             : ''
         ].filter(Boolean).join('\n\n'),
         capabilities: context.run.capabilities,
+        deliverables: context.run.deliverables,
         resumeState: context.modelCheckpoint,
         safetyIdentifier: crypto.createHash('sha256')
           .update(`artigen-agent:${context.run.user_id}`)

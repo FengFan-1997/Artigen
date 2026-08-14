@@ -1396,6 +1396,199 @@ test('SiliconFlow retries malformed tool arguments with the same forced tool', a
   )));
 });
 
+test('parent corrects a plan that tries to repeat completed delegation', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-parent-plan-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-parent-plan-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    toolCall('delegate', 'delegate_tasks', {
+      tasks: [{
+        role: 'research',
+        label: 'Research accessibility',
+        objective: 'Create research.md offline.',
+        expectedOutput: 'research.md',
+        inputPaths: []
+      }]
+    }),
+    toolCall('repeat', 'update_plan', {
+      explanation: 'Create the children next.',
+      steps: [
+        { label: 'Create sub Agents', status: 'in_progress' },
+        { label: 'Deliver the report', status: 'pending' }
+      ]
+    }),
+    toolCall('corrected', 'update_plan', {
+      explanation: 'Merge the completed child outputs and deliver them.',
+      steps: [
+        { label: 'Merge child outputs', status: 'in_progress' },
+        { label: 'Verify and declare files', status: 'pending' }
+      ]
+    }),
+    {
+      id: 'chat-parent-plan-final',
+      choices: [{ message: { role: 'assistant', content: 'The merge plan is ready.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  const savedStates = [];
+  const acceptedPlans = [];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Use delegate_tasks exactly once with real sub Agents, then merge the result.',
+    capabilities: { files: true, shell: true, subagents: true },
+    maxSteps: 12,
+    callbacks: {
+      delegateTasks: async () => [{ status: 'succeeded', files: ['research.md'] }],
+      updatePlan: async ({ steps }) => {
+        acceptedPlans.push(steps);
+        return { accepted: true, steps };
+      },
+      saveModelState: async (state) => savedStates.push(structuredClone(state)),
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(requests.length, 4);
+  assert.equal(requests[2].tool_choice.function.name, 'update_plan');
+  assert.equal(acceptedPlans.length, 2);
+  assert.equal(acceptedPlans.at(-1)[0].label, 'Merge child outputs');
+  assert.equal(result.text, 'The merge plan is ready.');
+  assert.ok(savedStates.some((state) => (
+    state.completedOutput?.content?.includes('Delegation already completed')
+  )));
+});
+
+test('parent cannot finish before every required report artifact is declared', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-delivery-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-delivery-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    {
+      id: 'chat-delivery-too-early-1',
+      choices: [{ message: { role: 'assistant', content: 'The report is complete.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    },
+    toolCall('write-md', 'sandbox_shell', {
+      script: 'write report.md',
+      purpose: 'Create the editable report'
+    }),
+    toolCall('declare-md', 'declare_artifact', {
+      path: '/tmp/artigen-workspace/report.md',
+      role: 'editable',
+      filename: 'report.md',
+      mimeType: 'text/markdown',
+      sources: []
+    }),
+    {
+      id: 'chat-delivery-too-early-2',
+      choices: [{ message: { role: 'assistant', content: 'The source is complete.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    },
+    toolCall('write-pdf', 'sandbox_shell', {
+      script: 'write report.pdf',
+      purpose: 'Create the PDF report'
+    }),
+    toolCall('declare-pdf', 'declare_artifact', {
+      path: '/tmp/artigen-workspace/report.pdf',
+      role: 'pdf',
+      filename: 'report.pdf',
+      mimeType: 'application/pdf',
+      sources: []
+    }),
+    {
+      id: 'chat-delivery-final',
+      choices: [{ message: { role: 'assistant', content: 'Both verified files are ready.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  const savedStates = [];
+  let artifactCount = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Create and declare an editable report and its PDF.',
+    capabilities: { files: true, shell: true },
+    deliverables: ['report'],
+    maxSteps: 20,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async () => ({ success: true, returnCode: 0, stdout: '', stderr: '' }),
+      declareArtifact: async () => {
+        artifactCount += 1;
+        return {
+          artifactId: `artifact-${artifactCount}`,
+          verificationStatus: 'passed'
+        };
+      },
+      saveModelState: async (state) => savedStates.push(structuredClone(state)),
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(requests.length, 7);
+  assert.equal(artifactCount, 2);
+  assert.equal(result.text, 'Both verified files are ready.');
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'user' && message.content.includes('Required deliverables are still incomplete')
+  )));
+  assert.ok(savedStates.some((state) => (
+    state.artifactDeliveryNudges === 2 && state.declaredArtifacts.length === 2
+  )));
+});
+
 test('subagent forces an offline verification step after completing its plan too early', async () => {
   const toolCall = (id, name, args) => ({
     id: `chat-early-${id}`,
