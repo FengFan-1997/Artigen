@@ -149,6 +149,18 @@ const inspectSubagentOutputFiles = async ({ sandbox, sandboxName, workspacePath 
   }
 };
 
+const buildSubagentObjective = (task = {}) => [
+  `Delegated role: ${task.role}`,
+  `Objective: ${task.objective}`,
+  `Expected output: ${task.expectedOutput}`,
+  Array.isArray(task.inputPaths) && task.inputPaths.length
+    ? `Read-only inputs: ${task.inputPaths.map((inputPath) => (
+        `${inputPath} -> /inputs/${inputPath.split('/').pop()}`
+      )).join(', ')}`
+    : 'Read-only inputs: none',
+  'Inside your tools, write every result only under /workspace. The parent maps that isolated directory internally; never guess, inspect, mention, or use its host path.'
+].join('\n\n');
+
 const createAgentCostMeter = ({
   costs = {},
   sandboxCreditsPerMinute = 1,
@@ -568,17 +580,7 @@ const createAgentWorkerService = ({
 
         try {
           const execution = await model.execute({
-            objective: [
-              `Delegated role: ${privateContext.task.role}`,
-              `Objective: ${privateContext.task.objective}`,
-              `Expected output: ${privateContext.task.expectedOutput}`,
-              privateContext.task.inputPaths.length
-                ? `Read-only inputs: ${privateContext.task.inputPaths.map((inputPath) => (
-                    `${inputPath} -> /inputs/${inputPath.split('/').pop()}`
-                  )).join(', ')}`
-                : 'Read-only inputs: none',
-              `Write every result under ${workspacePath}, exposed to you as /workspace.`
-            ].join('\n\n'),
+            objective: buildSubagentObjective(privateContext.task),
             capabilities: { files: true, shell: true },
             toolProfile: 'subagent',
             resumeState: privateContext.checkpoint,
@@ -1515,6 +1517,7 @@ const createAgentWorkerService = ({
 module.exports = {
   AgentCancelled,
   AgentPaused,
+  buildSubagentObjective,
   createAgentCostMeter,
   createAgentWorkerService,
   firstPayload,
