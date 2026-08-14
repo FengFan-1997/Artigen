@@ -1103,6 +1103,116 @@ test('SiliconFlow stops after two invalid delegation corrections', async () => {
   assert.equal(attempts, 3);
 });
 
+test('SiliconFlow corrects an invalid Qwen plan and fails closed after two retries', async () => {
+  const planCall = (index, steps) => ({
+    id: `chat-plan-${index}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-plan-${index}`,
+          type: 'function',
+          function: {
+            name: 'update_plan',
+            arguments: JSON.stringify({ explanation: 'Plan work.', steps })
+          }
+        }]
+      }
+    }],
+    usage: {}
+  });
+  const requests = [];
+  const responses = [
+    planCall(1, [{ label: 'Only one step', status: 'pending' }]),
+    planCall(2, [
+      { label: 'Prepare notes', status: 'in_progress' },
+      { label: 'Write the file', status: 'pending' }
+    ]),
+    {
+      id: 'chat-plan-final',
+      choices: [{ message: { role: 'assistant', content: 'Plan accepted.' } }],
+      usage: {}
+    }
+  ];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  let accepted = 0;
+  const result = await provider.execute({
+    objective: 'Prepare offline notes.',
+    capabilities: { files: true, shell: true },
+    toolProfile: 'subagent',
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async ({ steps }) => {
+        if (steps.length < 2) throw new ApiError(400, 'AGENT_PLAN_INVALID');
+        accepted += 1;
+        return { accepted: true };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Plan accepted.');
+  assert.equal(accepted, 1);
+  assert.deepEqual(requests[1].tool_choice, {
+    type: 'function',
+    function: { name: 'update_plan' }
+  });
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('AGENT_PLAN_INVALID') &&
+    message.content.includes('2-12')
+  )));
+
+  const invalidResponses = [1, 2, 3].map((index) => (
+    planCall(index, [{ label: `Invalid ${index}`, status: 'pending' }])
+  ));
+  const failingProvider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async () => new Response(JSON.stringify(invalidResponses.shift()), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  let rejected = 0;
+  await assert.rejects(() => failingProvider.execute({
+    objective: 'Prepare offline notes.',
+    capabilities: { files: true, shell: true },
+    toolProfile: 'subagent',
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => {
+        rejected += 1;
+        throw new ApiError(400, 'AGENT_PLAN_INVALID');
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  }), { code: 'AGENT_PLAN_INVALID' });
+  assert.equal(rejected, 3);
+});
+
 test('delegated tasks allow only exact staged inputs and at most three children', () => {
   const allowed = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
   const normalized = normalizeDelegatedTasks([{
@@ -1168,7 +1278,7 @@ test('subagent shell bind-mounts one child workspace and exact inputs without th
     inputPaths: [inputPath]
   });
   assert.match(wrapped, /install -d -o cua -g cua -m 700/);
-  assert.match(wrapped, /setpriv --reuid cua --regid cua --init-groups --/);
+  assert.doesNotMatch(wrapped, /setpriv|--reuid|--regid|--init-groups/);
   assert.match(wrapped, /bwrap --unshare-user --uid 0 --gid 0/);
   assert.match(wrapped, /--unshare-net --unshare-pid --unshare-ipc --unshare-uts/);
   assert.match(wrapped, /--dir \/proc/);

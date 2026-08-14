@@ -1061,6 +1061,10 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.delegationValidationAttempts || 0)
     );
+    let planValidationAttempts = Math.max(
+      0,
+      Number(durable?.planValidationAttempts || 0)
+    );
 
     const saveDurableState = async () => {
       messages = compactOllamaMessages(
@@ -1080,7 +1084,8 @@ class OllamaAgentModelProvider {
         unsupportedToolAttempts,
         delegationCompleted,
         delegationNudges,
-        delegationValidationAttempts
+        delegationValidationAttempts,
+        planValidationAttempts
       });
     };
 
@@ -1158,12 +1163,17 @@ class OllamaAgentModelProvider {
           try {
             const result = await executeTool(pendingCall);
             if (pendingCall.name === 'delegate_tasks') delegationValidationAttempts = 0;
+            if (pendingCall.name === 'update_plan') planValidationAttempts = 0;
             completedOutput = {
               callId: pendingCall.callId,
               name: pendingCall.name,
               content: JSON.stringify(result)
             };
           } catch (error) {
+            const correctablePlanError = (
+              pendingCall.name === 'update_plan' &&
+              error?.code === 'AGENT_PLAN_INVALID'
+            );
             const correctableDelegationError = (
               pendingCall.name === 'delegate_tasks' &&
               delegationRequired &&
@@ -1171,23 +1181,42 @@ class OllamaAgentModelProvider {
               ['AGENT_SUBAGENT_TASK_INVALID', 'AGENT_SUBAGENT_TASKS_INVALID']
                 .includes(error?.code)
             );
-            if (!correctableDelegationError) throw error;
-            delegationValidationAttempts += 1;
-            if (delegationValidationAttempts > 2) throw error;
-            completedOutput = {
-              callId: pendingCall.callId,
-              name: pendingCall.name,
-              content: JSON.stringify({
-                success: false,
-                errorCode: error.code,
-                field: String(error?.field || 'tasks').slice(0, 80),
-                correction: [
-                  'Retry delegate_tasks with 1-3 valid tasks.',
-                  'Use only exact staged input paths listed in the objective.',
-                  'When no inputs are listed, every inputPaths value must be an empty array.'
-                ].join(' ')
-              })
-            };
+            if (!correctableDelegationError && !correctablePlanError) throw error;
+            if (correctablePlanError) {
+              planValidationAttempts += 1;
+              if (planValidationAttempts > 2) throw error;
+              completedOutput = {
+                callId: pendingCall.callId,
+                name: pendingCall.name,
+                content: JSON.stringify({
+                  success: false,
+                  errorCode: error.code,
+                  field: 'steps',
+                  correction: [
+                    'Retry update_plan with 2-12 non-empty steps.',
+                    'Each status must be pending, in_progress, or completed.',
+                    'At most one step may be in_progress.'
+                  ].join(' ')
+                })
+              };
+            } else {
+              delegationValidationAttempts += 1;
+              if (delegationValidationAttempts > 2) throw error;
+              completedOutput = {
+                callId: pendingCall.callId,
+                name: pendingCall.name,
+                content: JSON.stringify({
+                  success: false,
+                  errorCode: error.code,
+                  field: String(error?.field || 'tasks').slice(0, 80),
+                  correction: [
+                    'Retry delegate_tasks with 1-3 valid tasks.',
+                    'Use only exact staged input paths listed in the objective.',
+                    'When no inputs are listed, every inputPaths value must be an empty array.'
+                  ].join(' ')
+                })
+              };
+            }
           }
           await saveDurableState();
         }
@@ -1202,6 +1231,11 @@ class OllamaAgentModelProvider {
       const request = this.buildChatPayload(messages, capabilities, toolProfile);
       if (delegationRequired && !delegationCompleted) {
         request.tool_choice = this.delegationToolChoice();
+      } else if (planValidationAttempts > 0) {
+        request.tool_choice = {
+          type: 'function',
+          function: { name: 'update_plan' }
+        };
       }
       const response = await this.createChat(request);
       const { inputTokens, outputTokens, credits } = this.usageDetails(response);
