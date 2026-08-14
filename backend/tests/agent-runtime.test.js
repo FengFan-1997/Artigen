@@ -1070,7 +1070,12 @@ test('subagent shell bind-mounts one child workspace and exact inputs without th
     workspacePath,
     inputPaths: [inputPath]
   });
+  assert.match(wrapped, /install -d -o cua -g cua -m 700/);
+  assert.match(wrapped, /setpriv --reuid cua --regid cua --init-groups --/);
+  assert.match(wrapped, /bwrap --unshare-user --uid 0 --gid 0/);
   assert.match(wrapped, /--unshare-net --unshare-pid --unshare-ipc --unshare-uts/);
+  assert.match(wrapped, /--dir \/proc/);
+  assert.doesNotMatch(wrapped, /--proc \/proc/);
   assert.match(wrapped, new RegExp(`--bind '${workspacePath}' /workspace`));
   assert.match(wrapped, new RegExp(`--ro-bind '${inputPath}' '/inputs/11111111-1111-4111-8111-111111111111.png'`));
   assert.doesNotMatch(wrapped, /--bind \/ \/|--ro-bind \/ \/|\/tmp\/artigen-workspace' \/workspace/);
