@@ -246,9 +246,9 @@ DEV 真实依赖验收：
 - 两张生产产物保存在被 Git 忽略的 `.artifacts/production-two-model-image-smoke-2026-08-12T06-09-26-477Z/`，已人工查看且无空图、损坏或明显裁切。参考输入为合成抽象图，本次只把它作为单图输入、Kolors 路由、角色、持久化与结算证据，不把真实商品身份保持质量列为通过项。
 - 生产 smoke 后数据库再次确认活动 Agent Run、活动工具任务、held Agent budget 与 held tool credit 均为 0。源码硬审计未发现 `Qwen/Qwen-Image-Edit-2509`、Gemini 或其他第三模型的生产引用；全部运行时模型字面量仅保留 Qwen3 与 Kolors。
 
-### 5.5 对话式设计 Agent 主入口（DEV 已验收，生产待发布）
+### 5.5 对话式设计 Agent 主入口（生产已发布）
 
-2026-08-12 从 `origin/dev` SHA `ccff8a94450d972bac19d26ec26d056c9e6341c3` 建立 `codex/design-conversation-entry`，实现统一设计入口 `/artigen/create`。运行时代码与 DEV 修复经 PR [#35](https://github.com/FengFan-1997/Artigen/pull/35)、[#36](https://github.com/FengFan-1997/Artigen/pull/36)、[#37](https://github.com/FengFan-1997/Artigen/pull/37) 合入 `dev`；当前已验收 DEV SHA 为 `918ba05c23a7adc1f3140ea03c9b8e1e31b177b8`。本节的 DEV 证据不代表生产已发布；生产状态仍必须在发布窗口重新核验。
+2026-08-12 从 `origin/dev` SHA `ccff8a94450d972bac19d26ec26d056c9e6341c3` 建立 `codex/design-conversation-entry`，实现统一设计入口 `/artigen/create`。运行时代码与 DEV 修复经 PR [#35](https://github.com/FengFan-1997/Artigen/pull/35)、[#36](https://github.com/FengFan-1997/Artigen/pull/36)、[#37](https://github.com/FengFan-1997/Artigen/pull/37) 合入 `dev`；首轮 DEV 验收 SHA 为 `918ba05c23a7adc1f3140ea03c9b8e1e31b177b8`，最终修复、发布和实时生产证据见本节末尾。
 
 持久架构与接口变更：
 
@@ -276,13 +276,20 @@ DEV 真实依赖与部署验收（2026-08-13）：
 - 完整机器证据保存在被 Git 忽略的 `.artifacts/design-conversation-dev-smoke-2026-08-13T11-15-41-711Z/`，包含 `evidence.json`、Kolors PNG、两份 Markdown 与两份 PDF。smoke 结束后数据库再次确认 active Agent Run=0、active tool task=0、held Agent budget=0、held tool credit=0；Worker online、queueDepth=0。
 - 真实 smoke 还推动了两个小模型契约硬化：`declare_artifact.mimeType` 只能从验证器实际支持的 allowlist 中选择；`browser_dom` 的 `snapshot + 非空 HTTPS URL` 在保持同一 origin allowlist 的前提下规范化为 navigate，避免页面仍停留在 `about:blank`。HTTP、私网和未授权 origin 仍拒绝。
 
-生产尚未在本节重新核验或发布。进入 `dev → main` 前的 DEV 硬门禁已经满足；生产仍须按“同一不可变 main SHA 暗发布 → 重新核验 Render/Vercel/Mac Worker → 再开启入口与 `authenticated-v1` → 真实生产验收”的顺序执行。
+后续修复与生产发布（2026-08-13）：
+
+- 真实 Agent 文件任务发现中文“提案”会被规划器误加为 `presentation`，即使用户只明确要求 Markdown 与 PDF，也会在已生成两个合格文件后因缺少 PPTX 失败。PR [#45](https://github.com/FengFan-1997/Artigen/pull/45) 将演示文稿识别收紧为明确的 PPT/PPTX/PowerPoint/幻灯片/路演稿等意图；规划器擅自增加的 `presentation` 会被服务端过滤。定向回归与完整 `pnpm check` 均通过，其中 Playwright 为 441 passed / 3 skipped / 0 failed。
+- 修复后的 DEV SHA `d1abdb0984a69c49ab5ddf1deae3ed40a7e21d15` 部署为 Render `dep-d9utire7bikc73b8igq0` 并 live；Mac DEV Worker 同 SHA。最终真实 smoke 保存在被 Git 忽略的 `.artifacts/design-conversation-dev-smoke-2026-08-13T15-11-05-537Z/`：Kolors 图片 execution `63851dab-db02-4cb7-a9b0-3187907ca5c9` / task `e6735de3-e353-4035-913e-ecc458cabc7d` succeeded、10 点且只结算一次；Computer Agent Run `76bd01cc-47c2-4ce8-abe0-9b0b750d69b4` 与 `7b18a7ea-49cb-48c3-aa15-67ec09d67c71` 均 succeeded、各 6 点且只结算一次，四个 Markdown/PDF 产物全部 verification passed。并发安全回退为 1 时观察到队列最大深度 1，最终 queueDepth=0。
+- `dev → main` PR [#46](https://github.com/FengFan-1997/Artigen/pull/46) 的 Core、分支策略、Chromium 桌面/移动、Firefox、WebKit 桌面/平板和 Release gate 全部通过；生产不可变 SHA 为 `b4b5b828efed80aeb9d2f5acde632c3de9d63f53`。
+- Render production deployment `dep-d9uu7rijobas73bqesm0` 已核验为 `Deploy succeeded | Live`，来源 SHA 为 `b4b5b828efed80aeb9d2f5acde632c3de9d63f53`；Vercel production deployment `6M5KxnhCdLhpZDarEDv347vbTcXR` 为 `Ready / Production / Current`，同 SHA 并指向 `artigen-fengfan.vercel.app`。生产 Mac Worker 已从同一 SHA 重启。
+- 生产 `/api/meta` 返回上述 SHA；`/readyz` 为 `ok=true`、迁移 `021_design_conversations`、共享 S3、SiliconFlow、支付、Agent 与对话入口全部 ready；`/api/design-assistant/status` 显示 Qwen3 规划、Kolors 图片、50 点自动上限、30 天保留、队列 0；`/api/agent/status` 为 `accessMode=authenticated-v1`、Worker online、浏览器/受限出口/桌面中继 ready、image generation public enabled、并发安全回退 1、queueDepth=0；两个图片生成模式均 `available=true`，参考图上限保持 0/1。
+- 2026-08-14 的最终生产文件任务发现了更窄的否定意图边界：目标明确写“不要 PPT/PPTX/PowerPoint/幻灯片”时，旧归一化逻辑仍会因为这些词出现而接受规划器附加的 `presentation`。会话 `d2f5468c-c75d-4ea8-a206-534af70366b8` / execution `1c0a1ec4-af47-41cd-b81a-dcefb2dc8bfd` 在报价、创建 Run 或冻结前被安全取消，状态为 `cancelled`，点数变化 0。修复会先移除中文“不要/无需/不需要/禁止”等和英文 `no/without/do not` 的演示文稿否定短语，再判断显式 presentation 意图；Qwen 仍可为真正明确要求 PPT 的任务选择 `presentation`。新增中英文回归后完整 `pnpm check` 通过：441 passed / 3 skipped / 0 failed。
 
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。
 - Agent Worker 绑定当前 Mac；关机、合盖、退出登录或 Docker 停止会让任务排队。
-- Agent 单并发，当前只开放给 owner。
+- Agent 已开放给所有状态正常的登录用户；当前 Mac Worker 因本机资源安全门槛自动回退并发 1，额外任务会排队而不是被拒绝。
 - 当前没有自定义域名。
 - 生产管理后台没有可用管理员，行为统计不能仅凭队列状态推断。
 - 已有生产发布前逻辑备份，但定时备份和恢复演练仍需建立。

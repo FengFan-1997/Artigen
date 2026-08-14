@@ -241,8 +241,20 @@ const explicitHttpsOrigins = (text) => {
 const inferDeliverables = (text, proposed = []) => {
   const value = String(text || '').toLowerCase();
   const allowed = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image']);
+  const presentationNoun = '(?:pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentation|slides?)';
+  const presentationIntentText = value
+    .replace(new RegExp(
+      `(?:不要|无需|不需要|别|禁止|不含|不包括|排除|无)\\s*(?:制作|生成|交付|提供|包含|输出|任何)?\\s*${presentationNoun}`,
+      'giu'
+    ), ' ')
+    .replace(new RegExp(
+      `\\b(?:do\\s+not|don't|no|without|exclude|excluding)\\s+` +
+        `(?:(?:create|generate|deliver|provide|include|output|any|an?)\\s+)*${presentationNoun}` +
+        `(?:\\s+(?:or|and)\\s+(?:an?\\s+)?${presentationNoun})*\\b`,
+      'giu'
+    ), ' ');
   const presentationRequested =
-    /pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentation|slides?/.test(value);
+    /pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentation|slides?/.test(presentationIntentText);
   const result = Array.isArray(proposed)
     ? proposed
       .map((item) => String(item || '').trim())
