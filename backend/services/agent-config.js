@@ -119,6 +119,7 @@ const getAgentConfig = (env = process.env) => {
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean));
+  const subagentsEnabled = enabled(env.AGENT_SUBAGENTS_ENABLED);
   const browserMode = String(env.AGENT_BROWSER_MODE || 'disabled').trim().toLowerCase();
   if (!['disabled', AGENT_BROWSER_MODE].includes(browserMode)) {
     throw new ApiError(500, 'AGENT_BROWSER_MODE_INVALID');
@@ -173,6 +174,12 @@ const getAgentConfig = (env = process.env) => {
     browserMode,
     publicBrowserEnabled: publicCapabilities.has('browser'),
     publicImageGenerationEnabled: publicCapabilities.has('generate_images'),
+    subagentsEnabled,
+    publicSubagentsEnabled: subagentsEnabled && publicCapabilities.has('subagents'),
+    subagentMaxConcurrent: integer(env.AGENT_SUBAGENT_MAX_CONCURRENT, 3, 1, 3),
+    subagentMaxSteps: integer(env.AGENT_SUBAGENT_MAX_STEPS, 20, 1, 20),
+    subagentTimeoutMinutes: integer(env.AGENT_SUBAGENT_TIMEOUT_MINUTES, 10, 1, 10),
+    subagentSandboxMode: 'shared-v1',
     workerRelayUrl: String(env.AGENT_WORKER_RELAY_URL || '').trim(),
     workerRelaySecret,
     workerId,

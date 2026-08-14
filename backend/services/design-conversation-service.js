@@ -459,7 +459,8 @@ const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds,
         files: true,
         shell: true,
         browser: origins.length > 0,
-        generate_images: deliverables.includes('image')
+        generate_images: deliverables.includes('image'),
+        subagents: true
       },
       deliverables,
       browserConfig: { allowedOrigins: origins, persistSession: false },
@@ -476,7 +477,8 @@ const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds,
           files: true,
           shell: true,
           browser: origins.length > 0,
-          generate_images: deliverables.includes('image')
+          generate_images: deliverables.includes('image'),
+          subagents: true
         },
         deliverables,
         browserConfig: { allowedOrigins: origins, persistSession: false }

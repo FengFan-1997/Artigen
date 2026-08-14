@@ -105,13 +105,64 @@ const resolveStagedImageReferences = (value, stagedAssetsByPath) => {
   }));
 };
 
+const inspectSubagentOutputFiles = async ({ sandbox, sandboxName, workspacePath }) => {
+  const result = await sandbox.systemShell(
+    sandboxName,
+    [
+      'set -eu',
+      `root='${workspacePath}'`,
+      'test -d "$root"',
+      'clamscan --no-summary -r "$root" >/dev/null',
+      'python3 - "$root" <<\'PY\'',
+      'import hashlib, json, pathlib, sys',
+      'root = pathlib.Path(sys.argv[1]).resolve()',
+      'items = []',
+      'for path in sorted(root.rglob("*")):',
+      '    if path.is_symlink() or not path.is_file():',
+      '        continue',
+      '    resolved = path.resolve()',
+      '    if root not in resolved.parents:',
+      '        raise SystemExit("path escape")',
+      '    size = resolved.stat().st_size',
+      '    if size > 100 * 1024 * 1024:',
+      '        raise SystemExit("file too large")',
+      '    digest = hashlib.sha256(resolved.read_bytes()).hexdigest()',
+      '    items.append({"path": str(resolved), "byteSize": size, "sha256": digest})',
+      '    if len(items) > 100:',
+      '        raise SystemExit("too many files")',
+      'print(json.dumps(items, ensure_ascii=True))',
+      'PY'
+    ].join('\n'),
+    120
+  );
+  if (!result.success) {
+    throw new ApiError(422, 'AGENT_SUBAGENT_OUTPUT_SCAN_FAILED', {
+      detail: String(result.stderr || '').slice(0, 200)
+    });
+  }
+  try {
+    const lines = String(result.stdout || '').trim().split('\n');
+    const parsed = JSON.parse(lines[lines.length - 1] || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    throw new ApiError(422, 'AGENT_SUBAGENT_OUTPUT_SCAN_FAILED');
+  }
+};
+
 const createAgentCostMeter = ({
   costs = {},
   sandboxCreditsPerMinute = 1,
   now = Date.now
 } = {}) => {
   const rate = Math.max(0, Number(sandboxCreditsPerMinute || 0));
-  let model = Math.max(0, Number(costs.model || 0));
+  const restoredActors = costs.modelByActor && typeof costs.modelByActor === 'object'
+    ? Object.entries(costs.modelByActor)
+    : [];
+  const modelByActor = new Map(restoredActors.map(([actor, value]) => [
+    String(actor),
+    Math.max(0, Number(value || 0))
+  ]));
+  if (!modelByActor.size) modelByActor.set('parent', Math.max(0, Number(costs.model || 0)));
   let generation = Math.max(0, Number(costs.generation || 0));
   let sandbox = Math.max(0, Number(costs.sandbox || 0));
   let sandboxMeteredAt = now();
@@ -119,13 +170,22 @@ const createAgentCostMeter = ({
     sandbox + Math.max(0, now() - sandboxMeteredAt) / 60_000 * rate
   );
   const round = (value) => Number(Math.max(0, Number(value || 0)).toFixed(4));
+  const modelTotal = () => [...modelByActor.values()].reduce((total, value) => total + value, 0);
 
   return {
     setModel(value) {
-      model = Math.max(0, Number(value || 0));
+      modelByActor.set('parent', Math.max(0, Number(value || 0)));
+    },
+    setModelFor(actorId, value) {
+      const actor = String(actorId || '').trim();
+      if (!actor) throw new TypeError('AGENT_COST_ACTOR_REQUIRED');
+      modelByActor.set(actor, Math.max(0, Number(value || 0)));
     },
     restoreModelMinimum(value) {
-      model = Math.max(model, Math.max(0, Number(value || 0)));
+      modelByActor.set('parent', Math.max(
+        Number(modelByActor.get('parent') || 0),
+        Math.max(0, Number(value || 0))
+      ));
     },
     addGeneration(value) {
       generation += Math.max(0, Number(value || 0));
@@ -140,8 +200,14 @@ const createAgentCostMeter = ({
         sandbox = pendingSandbox();
         sandboxMeteredAt = now();
       }
+      const modelActors = Object.fromEntries(
+        [...modelByActor.entries()].map(([actor, value]) => [actor, round(value)])
+      );
       return {
-        model: round(model),
+        model: round(modelTotal()),
+        ...(Object.keys(modelActors).some((actor) => actor !== 'parent')
+          ? { modelByActor: modelActors }
+          : {}),
         generation: round(generation),
         sandbox: round(Math.max(
           pendingSandbox(),
@@ -150,7 +216,7 @@ const createAgentCostMeter = ({
       };
     },
     total({ additional = 0 } = {}) {
-      return model + generation + pendingSandbox() + Math.max(0, Number(additional || 0));
+      return modelTotal() + generation + pendingSandbox() + Math.max(0, Number(additional || 0));
     }
   };
 };
@@ -455,6 +521,227 @@ const createAgentWorkerService = ({
         }
       });
 
+      const runDelegatedSubagent = async (entry) => {
+        const subagentId = entry.subagentId;
+        const workspacePath = `/tmp/artigen-workspace/subagents/${subagentId}`;
+        costMeter.setModelFor(subagentId, Number(entry.usage?.credits || 0));
+        const started = await runService.startSubagent({ runId, subagentId, workerId });
+        if (['succeeded', 'failed', 'cancelled'].includes(started.status)) {
+          return {
+            subagentId,
+            status: started.status,
+            summary: started.summary,
+            files: started.outputFiles || [],
+            errorCode: started.error?.code || null
+          };
+        }
+        const privateContext = await runService.loadSubagentContext({
+          runId,
+          subagentId,
+          workerId
+        });
+        costMeter.setModelFor(
+          subagentId,
+          Math.max(
+            Number(entry.usage?.credits || 0),
+            Number(privateContext.checkpoint?.totalCredits || 0)
+          )
+        );
+        const deadlineAt = Date.now() + config.subagentTimeoutMinutes * 60_000;
+
+        const checkSubagentControl = async () => {
+          await pauseIfRequested();
+          const control = await runService.getSubagentControlState({ runId, subagentId });
+          if (
+            control.status === 'cancelled' ||
+            control.cancel_requested ||
+            control.run_status === 'cancelled' ||
+            control.run_cancel_requested
+          ) {
+            throw new ApiError(409, 'AGENT_SUBAGENT_CANCELLED', { retryable: false });
+          }
+          if (Date.now() >= deadlineAt) {
+            throw new ApiError(408, 'AGENT_SUBAGENT_TIMEOUT', { retryable: false });
+          }
+          return control;
+        };
+
+        try {
+          const execution = await model.execute({
+            objective: [
+              `Delegated role: ${privateContext.task.role}`,
+              `Objective: ${privateContext.task.objective}`,
+              `Expected output: ${privateContext.task.expectedOutput}`,
+              privateContext.task.inputPaths.length
+                ? `Read-only inputs: ${privateContext.task.inputPaths.map((inputPath) => (
+                    `${inputPath} -> /inputs/${inputPath.split('/').pop()}`
+                  )).join(', ')}`
+                : 'Read-only inputs: none',
+              `Write every result under ${workspacePath}, exposed to you as /workspace.`
+            ].join('\n\n'),
+            capabilities: { files: true, shell: true },
+            toolProfile: 'subagent',
+            resumeState: privateContext.checkpoint,
+            safetyIdentifier: crypto.createHash('sha256')
+              .update(`artigen-subagent:${context.run.user_id}:${subagentId}`)
+              .digest('hex'),
+            maxSteps: config.subagentMaxSteps,
+            deadlineAt,
+            callbacks: {
+              checkControl: checkSubagentControl,
+              updatePlan: async ({ explanation, steps }) => {
+                await checkSubagentControl();
+                const normalized = (Array.isArray(steps) ? steps : []).map((step) => ({
+                  label: String(step?.label || '').trim().slice(0, 160),
+                  status: String(step?.status || '')
+                })).filter((step) => (
+                  step.label && ['pending', 'in_progress', 'completed'].includes(step.status)
+                ));
+                if (
+                  normalized.length < 2 ||
+                  normalized.length > 12 ||
+                  normalized.filter((step) => step.status === 'in_progress').length > 1
+                ) {
+                  throw new ApiError(400, 'AGENT_PLAN_INVALID');
+                }
+                await runService.appendStep({
+                  runId,
+                  workerId,
+                  subagentId,
+                  role: 'planner',
+                  status: 'succeeded',
+                  toolName: 'update_plan',
+                  summary: String(explanation || '子 Agent 已更新计划').trim().slice(0, 500),
+                  sanitizedOutput: { plan: normalized }
+                });
+                return { accepted: true, steps: normalized };
+              },
+              checkpoint: async () => checkSubagentControl(),
+              saveModelState: async (value) => {
+                await checkSubagentControl();
+                await persistCostCheckpoint();
+                await runService.saveSubagentModelCheckpoint({
+                  runId,
+                  subagentId,
+                  workerId,
+                  value
+                });
+              },
+              clearModelState: async () => runService.clearSubagentModelCheckpoint({
+                runId,
+                subagentId,
+                workerId
+              }),
+              recordUsage: async (credits, usage) => {
+                await checkSubagentControl();
+                costMeter.setModelFor(subagentId, credits);
+                await runService.recordSubagentUsage({
+                  runId,
+                  subagentId,
+                  workerId,
+                  estimatedCredits: credits,
+                  usage
+                });
+                await persistCostCheckpoint({
+                  usageItems: { source: 'subagent_model', subagentId }
+                });
+              },
+              recordStep: async (step) => {
+                await checkSubagentControl();
+                return runService.appendStep({ runId, workerId, subagentId, ...step });
+              },
+              shell: async (script, purpose) => {
+                await checkSubagentControl();
+                const result = await sandbox.subagentShell(sandboxName, script, {
+                  workspacePath,
+                  inputPaths: privateContext.task.inputPaths,
+                  timeoutSeconds: 120
+                });
+                await runService.appendStep({
+                  runId,
+                  workerId,
+                  subagentId,
+                  role: 'executor',
+                  status: result.success ? 'succeeded' : 'failed',
+                  toolName: 'sandbox_shell',
+                  summary: String(purpose || '子 Agent 运行离线命令').slice(0, 500),
+                  actionFingerprint: actionFingerprint({
+                    type: 'subagent_shell',
+                    subagentId,
+                    script
+                  }),
+                  sanitizedInput: {
+                    purpose: String(purpose || '').slice(0, 300),
+                    scriptSha256: crypto.createHash('sha256')
+                      .update(String(script))
+                      .digest('hex')
+                  },
+                  sanitizedOutput: {
+                    success: result.success,
+                    returnCode: result.returnCode
+                  }
+                });
+                return result;
+              }
+            }
+          });
+          costMeter.setModelFor(subagentId, execution.credits);
+          await persistCostCheckpoint({
+            usageItems: { source: 'subagent_complete', subagentId }
+          });
+          const outputFiles = await inspectSubagentOutputFiles({
+            sandbox,
+            sandboxName,
+            workspacePath
+          });
+          const finished = await runService.finishSubagent({
+            runId,
+            subagentId,
+            workerId,
+            status: 'succeeded',
+            summary: String(execution.text || '子 Agent 已完成').slice(0, 4000),
+            outputFiles
+          });
+          return {
+            subagentId,
+            status: finished.status,
+            summary: finished.summary,
+            files: finished.outputFiles
+          };
+        } catch (error) {
+          if (
+            error instanceof AgentPaused ||
+            error instanceof AgentCancelled ||
+            ['AGENT_PAUSED', 'AGENT_CANCELLED'].includes(error?.code)
+          ) {
+            throw error;
+          }
+          if (error?.code === 'AGENT_SUBAGENT_CANCELLED') {
+            return {
+              subagentId,
+              status: 'cancelled',
+              summary: '子 Agent 已取消',
+              files: []
+            };
+          }
+          const failed = await runService.finishSubagent({
+            runId,
+            subagentId,
+            workerId,
+            status: error?.code === 'AGENT_SUBAGENT_CANCELLED' ? 'cancelled' : 'failed',
+            summary: '子 Agent 未完成；父 Agent 可使用其余结果继续。',
+            errorCode: String(error?.code || 'AGENT_SUBAGENT_FAILED').slice(0, 100)
+          });
+          return {
+            subagentId,
+            status: failed.status,
+            summary: failed.summary,
+            files: failed.outputFiles,
+            errorCode: failed.error?.code || null
+          };
+        }
+      };
+
       const execution = await model.execute({
         objective: [
           objectivePayload.objective,
@@ -504,6 +791,37 @@ const createAgentWorkerService = ({
               sanitizedOutput: { plan: normalized }
             });
             return { accepted: true, steps: normalized };
+          },
+          delegateTasks: async (tasks) => {
+            await pauseIfRequested();
+            if (context.run.capabilities?.subagents !== true) {
+              throw new ApiError(403, 'AGENT_CAPABILITY_NOT_GRANTED', {
+                capability: 'subagents'
+              });
+            }
+            const created = await runService.createSubagents({
+              runId,
+              workerId,
+              tasks,
+              allowedInputPaths: inputAssetPaths
+            });
+            const settled = await Promise.allSettled(created.map(runDelegatedSubagent));
+            const parentControlError = settled.find((item) => (
+              item.status === 'rejected' &&
+              ['AGENT_PAUSED', 'AGENT_CANCELLED'].includes(item.reason?.code)
+            ));
+            if (parentControlError) throw parentControlError.reason;
+            return {
+              subagents: settled.map((item, index) => item.status === 'fulfilled'
+                ? item.value
+                : {
+                    subagentId: created[index].subagentId,
+                    status: 'failed',
+                    summary: '子 Agent 运行时失败；父 Agent 可继续。',
+                    files: [],
+                    errorCode: String(item.reason?.code || 'AGENT_SUBAGENT_FAILED')
+                  })
+            };
           },
           checkpoint: async (modelResponseId) => {
             await runService.saveCheckpoint({

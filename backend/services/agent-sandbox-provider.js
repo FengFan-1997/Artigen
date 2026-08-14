@@ -75,6 +75,44 @@ const offlineShellScript = (script) => {
   ].join(' | ');
 };
 
+const subagentOfflineShellScript = ({ script, workspacePath, inputPaths = [] }) => {
+  const workspace = String(workspacePath || '').trim();
+  if (!/^\/tmp\/artigen-workspace\/subagents\/[0-9a-fA-F-]{36}$/.test(workspace)) {
+    throw new ApiError(403, 'AGENT_SUBAGENT_WORKSPACE_FORBIDDEN');
+  }
+  const inputs = [...new Set((Array.isArray(inputPaths) ? inputPaths : [])
+    .map((entry) => String(entry || '').trim())
+    .filter(Boolean))];
+  if (
+    inputs.length > 40 ||
+    inputs.some((entry) => !/^\/tmp\/artigen-workspace\/inputs\/[0-9a-fA-F-]{36}\.[A-Za-z0-9]{1,8}$/.test(entry))
+  ) {
+    throw new ApiError(403, 'AGENT_SUBAGENT_INPUT_PATH_FORBIDDEN');
+  }
+  const encoded = Buffer.from(assertSafeShell(script), 'utf8').toString('base64');
+  const inputMounts = inputs.map((entry) => (
+    `--ro-bind '${entry}' '/inputs/${path.posix.basename(entry)}'`
+  )).join(' ');
+  return [
+    'set -eu',
+    'umask 077',
+    `mkdir -p '${workspace}'`,
+    'mounts=""',
+    'test ! -d /lib || mounts="$mounts --ro-bind /lib /lib"',
+    'test ! -d /lib64 || mounts="$mounts --ro-bind /lib64 /lib64"',
+    'test ! -d /opt || mounts="$mounts --ro-bind /opt /opt"',
+    [
+      'bwrap --unshare-net --unshare-pid --unshare-ipc --unshare-uts --die-with-parent --new-session',
+      '--ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /etc /etc',
+      '$mounts --proc /proc --dev /dev --tmpfs /tmp --dir /inputs',
+      `--bind '${workspace}' /workspace`,
+      inputMounts,
+      '--setenv HOME /workspace --setenv TMPDIR /tmp --chdir /workspace',
+      `/bin/bash -c "printf '%s' '${encoded}' | base64 -d | /bin/bash -se"`
+    ].filter(Boolean).join(' ')
+  ].join('\n');
+};
+
 const runBridge = ({
   payload,
   config,
@@ -251,6 +289,18 @@ class CuaSandboxProvider {
     return this.systemShell(name, offlineShellScript(script), timeoutSeconds);
   }
 
+  subagentShell(name, script, {
+    workspacePath,
+    inputPaths = [],
+    timeoutSeconds = 120
+  } = {}) {
+    return this.systemShell(
+      name,
+      subagentOfflineShellScript({ script, workspacePath, inputPaths }),
+      Math.max(1, Math.min(120, Number(timeoutSeconds) || 120))
+    );
+  }
+
   systemShell(name, script, timeoutSeconds = 30) {
     return this.bridge({
       config: this.config,
@@ -380,6 +430,18 @@ class FixtureSandboxProvider {
     return { ok: true, stdout: '', stderr: '', returnCode: 0, success: true, script };
   }
 
+  async subagentShell(_name, script, options = {}) {
+    return {
+      ok: true,
+      stdout: '',
+      stderr: '',
+      returnCode: 0,
+      success: true,
+      script,
+      options
+    };
+  }
+
   async systemShell(_name, script) {
     return { ok: true, stdout: '', stderr: '', returnCode: 0, success: true, script };
   }
@@ -432,6 +494,7 @@ module.exports = {
   assertAllowedOrigins,
   assertComputerOrigins,
   offlineShellScript,
+  subagentOfflineShellScript,
   createAgentSandboxProvider,
   runBridge
 };

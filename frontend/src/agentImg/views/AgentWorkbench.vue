@@ -1,296 +1,206 @@
 <template>
-  <div class="agent-page">
-    <TitleBar />
-    <main class="agent-shell">
-      <section class="mode-switch" aria-label="Artigen mode">
-        <router-link to="/artigen/ai">
-          <span>01</span>
-          <strong>{{ zh ? '快速生图' : 'Quick image' }}</strong>
-          <small>{{ zh ? '少输入，直接出图' : 'Prompt in, image out' }}</small>
+  <AgentWorkspaceShell
+    :zh="zh"
+    :title="zh ? '电脑 Agent' : 'Computer Agent'"
+    :subtitle="zh ? '目标优先 · 高级执行模式' : 'Outcome first · advanced execution'"
+    :status-label="workspaceStatus.label"
+    :status-tone="workspaceStatus.tone"
+    :credit-label="quoteIsCurrent && quote ? `${quote.freeCreditsRemaining} ${zh ? '点可用' : 'available'}` : '—'"
+    :account-label="serviceStatus?.accessMode || ''"
+    :inspector-subtitle="`${serviceStatus?.modelFamily || 'Qwen/Qwen3-8B'} · Kolors`"
+    default-inspector-tab="environment"
+    :badges="{ subagents: serviceStatus?.subagentsEnabled ? 1 : 0 }"
+    :live-announcement="notice"
+    @new-task="resetRunDraft"
+  >
+    <template #history="{ search }">
+      <div class="history-group">
+        <div class="history-label">
+          <span>{{ zh ? '最近运行' : 'Recent runs' }}</span>
+          <button type="button" :aria-label="zh ? '刷新任务' : 'Refresh runs'" :disabled="loadingRuns" @click="loadRuns">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M18.2 12A6.5 6.5 0 0 0 7 7.5L4 12M5.8 12A6.5 6.5 0 0 0 17 16.5l3-4.5"/></svg>
+          </button>
+        </div>
+        <div v-if="loadingRuns" class="history-empty">{{ zh ? '正在同步…' : 'Syncing…' }}</div>
+        <div v-else-if="!filteredRuns(search).length" class="history-empty">{{ zh ? '没有匹配任务' : 'No matching runs' }}</div>
+        <router-link
+          v-for="run in filteredRuns(search)"
+          v-else
+          :key="run.runId"
+          class="history-run"
+          :to="`/artigen/agent/runs/${run.runId}`"
+        >
+          <i :class="run.status"></i>
+          <span><b>{{ run.objectivePreview || (zh ? '未命名任务' : 'Untitled task') }}</b><small>{{ statusLabel(run.status) }} · {{ formatDate(run.updatedAt) }}</small></span>
         </router-link>
-        <router-link class="active" to="/artigen/agent">
-          <span>02</span>
-          <strong>{{ zh ? '电脑 Agent' : 'Computer Agent' }}</strong>
-          <small>{{ zh ? '研究、操作、验证、交付' : 'Research, operate, verify, deliver' }}</small>
-        </router-link>
-      </section>
+      </div>
+    </template>
 
-      <section class="hero">
+    <section class="agent-compose">
+      <header class="compose-intro">
+        <span class="compose-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="7"/></svg>
+        </span>
         <div>
-          <p class="eyebrow">ARTIGEN LOCAL AGENT / BETA</p>
-          <h1>{{ zh ? '说出你想完成的事，本地 Agent 为你制作文件' : 'Describe the outcome. A local agent builds the files.' }}</h1>
-          <p class="lead">
-            {{
-              zh
-                ? '任务由云端 Qwen 模型和你 Mac 上的隔离 Linux 沙箱执行。浏览器 Beta 支持受限网页访问、逐次审批和由你亲自完成登录。'
-                : 'Cloud Qwen reasoning drives an isolated Linux sandbox on your Mac. Browser Beta supports restricted browsing, one-time approvals, and user-controlled sign-in.'
-            }}
-          </p>
+          <p>{{ zh ? 'COMPUTER AGENT' : 'COMPUTER AGENT' }}</p>
+          <h1>{{ zh ? '告诉我最终要交付什么。' : 'Tell me what must be delivered.' }}</h1>
+          <span>{{ zh ? 'Qwen3 会拆解任务，必要时委派最多 3 个独立子 Agent；浏览器、电脑、Kolors 与最终交付始终由父 Agent 掌控。' : 'Qwen3 plans the work and may delegate up to three isolated subagents. Browser, computer, Kolors, and final delivery stay with the parent Agent.' }}</span>
         </div>
-        <div class="trust-strip">
-          <span>{{ zh ? '本机隔离 Linux' : 'Local isolated Linux' }}</span>
-          <span>45 min</span>
-          <span>120 steps</span>
-          <span>{{ zh ? '失败自动释放' : 'Failure release' }}</span>
+      </header>
+
+      <div class="objective-composer">
+        <label>
+          <span class="sr-only">{{ zh ? '任务目标' : 'Task objective' }}</span>
+          <textarea
+            v-model.trim="form.objective"
+            rows="5"
+            maxlength="20000"
+            :placeholder="zh ? '例如：研究三个竞品，委派子 Agent 分析定位、视觉与信息架构，最后交付带引用的 Markdown 和 PDF。' : 'Example: Research three competitors, delegate positioning, visual, and IA analysis, then deliver a cited Markdown and PDF.'"
+          />
+        </label>
+        <div v-if="selectedFiles.length" class="input-files">
+          <span v-for="file in selectedFiles" :key="`${file.name}:${file.size}`">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h9l5 5v12H5z"/><path d="M14 3.5v5h5"/></svg>
+            {{ file.name }}
+          </span>
+          <button type="button" @click="selectedFiles = []">{{ zh ? '清空' : 'Clear' }}</button>
         </div>
-      </section>
-
-      <section v-if="serviceStatus" class="worker-status" :class="{ offline: !serviceStatus.workerOnline }">
-        <span class="status-dot" :class="serviceStatus.workerOnline ? 'running' : 'failed'"></span>
-        <strong>
-          {{
-            serviceStatus.workerOnline
-              ? (zh ? '本地 Worker 在线' : 'Local worker online')
-              : (zh ? '本地 Worker 离线，任务将排队' : 'Local worker offline; runs will queue')
-          }}
-        </strong>
-        <small>
-          {{ serviceStatus.modelFamily }} ·
-          {{ zh ? `${serviceStatus.queueDepth} 个任务排队 · 单任务串行执行` : `${serviceStatus.queueDepth} queued · one run at a time` }}
-        </small>
-        <small v-if="serviceStatus.browserPublicEnabled" class="browser-health">
-          {{ serviceStatus.browserReady && serviceStatus.egressVerified && serviceStatus.desktopRelayReady
-            ? (zh ? '浏览器、受限出口和桌面接管均已就绪' : 'Browser, restricted egress, and desktop takeover ready')
-            : (zh ? '浏览器链路尚未全部就绪' : 'Browser path is not fully ready') }}
-        </small>
-        <small v-if="serviceStatus.imageGenerationPublicEnabled" class="browser-health">
-          {{ zh ? 'AI 图片生成已就绪：文生图 8 点，单参考图生成 12 点' : 'AI image generation ready: 8 credits for text, 12 with one reference' }}
-        </small>
-      </section>
-
-      <div class="workspace-grid">
-        <section class="composer panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">{{ zh ? '新任务' : 'New run' }}</p>
-              <h2>{{ zh ? '你最终想拿到什么？' : 'What do you want delivered?' }}</h2>
-            </div>
-            <span class="beta">BETA</span>
-          </div>
-
-          <label class="objective">
-            <span>{{ zh ? '目标' : 'Objective' }}</span>
-            <textarea
-              v-model.trim="form.objective"
-              rows="9"
-              maxlength="20000"
-              :placeholder="
-                zh
-                  ? '例如：调研 2026 年独立香氛品牌趋势，做一份有引用的 PDF 报告、一份带图表的 Excel 和一套可编辑路演 PPT。'
-                  : 'Example: Research 2026 indie fragrance trends and deliver a cited PDF report, a charted Excel workbook, and an editable pitch deck.'
-              "
-            />
-            <small>{{ form.objective.length.toLocaleString() }} / 20,000</small>
+        <footer>
+          <label class="attach-control">
+            <input type="file" multiple accept=".pdf,.docx,.xlsx,.pptx,.zip,.txt,.md,.csv,image/png,image/jpeg,image/webp" @change="selectFiles" />
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 5.5-5.5a3 3 0 0 1 4.2 4.2l-7.5 7.5a5 5 0 0 1-7.1-7.1l7-7"/></svg>
+            <span>{{ zh ? '添加参考' : 'Add reference' }}</span>
           </label>
-
-          <label class="file-picker">
-            <span>
-              <strong>{{ zh ? '参考文件' : 'Reference files' }}</strong>
-              <small>{{ zh ? '最多 10 个，每个 40 MiB；进入云电脑前会再次杀毒。' : 'Up to 10 files, 40 MiB each; scanned again before sandbox use.' }}</small>
-            </span>
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.docx,.xlsx,.pptx,.zip,.txt,.md,.csv,image/png,image/jpeg,image/webp"
-              @change="selectFiles"
-            />
-            <b>{{ zh ? '选择文件' : 'Choose files' }}</b>
-          </label>
-          <div v-if="selectedFiles.length" class="selected-files">
-            <span v-for="file in selectedFiles" :key="`${file.name}:${file.size}`">
-              {{ file.name }} · {{ (file.size / 1024 / 1024).toFixed(1) }} MiB
-            </span>
-            <button type="button" @click="selectedFiles = []">{{ zh ? '清空' : 'Clear' }}</button>
-          </div>
-
-          <div class="deliverables">
-            <span class="field-label">
-              {{ zh ? '明确交付物（不选则由 Agent 判断）' : 'Required deliverables (leave blank for Agent choice)' }}
-            </span>
-            <div class="deliverable-options">
-              <label v-for="item in deliverableOptions" :key="item.id" :class="{ 'is-disabled': item.disabled }">
-                <input
-                  v-model="form.deliverables[item.id]"
-                  type="checkbox"
-                  :disabled="item.disabled"
-                />
-                <span>
-                  <strong>{{ item.code }} · {{ item.label }}</strong>
-                  <small>{{ item.description }}</small>
-                </span>
-              </label>
-            </div>
-          </div>
-
-          <details class="advanced-settings">
-            <summary>
-              <span>
-                <strong>{{ zh ? '高级设置（可选）' : 'Advanced settings (optional)' }}</strong>
-                <small>{{ zh ? '浏览器需要 HTTPS 白名单；填写、提交和外部变更会逐次确认。' : 'Browser access requires HTTPS origins; forms and external changes require approval.' }}</small>
-              </span>
-              <b>{{ zh ? '展开' : 'Expand' }}</b>
-            </summary>
-
-            <div class="deliverables">
-              <span class="field-label">{{ zh ? '允许使用的能力' : 'Granted capabilities' }}</span>
-              <div class="capability-grid">
-                <label v-for="capability in capabilityOptions" :key="capability.id" :class="{ 'is-disabled': capability.disabled }">
-                  <input
-                    v-model="form.capabilities[capability.id]"
-                    type="checkbox"
-                    :disabled="capability.disabled"
-                  />
-                  <span>
-                    <strong>{{ capability.label }}</strong>
-                    <small>{{ capability.description }}</small>
-                  </span>
-                </label>
-              </div>
-            </div>
-
-            <div v-if="form.capabilities.browser" class="browser-session">
-              <span class="field-label">{{ zh ? '浏览器安全范围' : 'Browser security scope' }}</span>
-              <input
-                v-model.trim="form.browserOrigins"
-                type="text"
-                :placeholder="zh ? 'https://example.com（多个域名用逗号分隔）' : 'https://example.com (comma-separate multiple origins)'"
-              />
-              <small>
-                {{ zh
-                  ? '只允许 HTTPS Origin，不要填写路径。普通同站链接可自动打开；表单和会改变外部状态的操作需要你确认。'
-                  : 'HTTPS origins only, without paths. Same-site links may open automatically; forms and state-changing actions require your approval.' }}
-              </small>
-              <label>
-                <input v-model="form.persistSession" type="checkbox" />
-                <span>{{ zh ? '加密保存这个站点的登录会话 30 天' : 'Encrypt and save this site session for 30 days' }}</span>
-              </label>
-              <small v-if="form.persistSession">
-                {{ zh ? '保存会话时只能填写一个 Origin。密码、OTP 和验证码仍必须由你接管输入。' : 'Saved sessions allow exactly one origin. Passwords, OTPs, and CAPTCHAs always require takeover.' }}
-              </small>
-              <select v-if="browserProfiles.length" v-model="form.profileId" @change="selectBrowserProfile">
-                <option value="">{{ zh ? '不恢复已保存会话' : 'Do not restore a saved session' }}</option>
-                <option v-for="profile in browserProfiles" :key="profile.profileId" :value="profile.profileId">
-                  {{ profile.label }} · {{ profile.siteOrigin }}
-                </option>
-              </select>
-              <button
-                v-if="form.profileId"
-                class="revoke-session"
-                type="button"
-                @click="revokeSelectedProfile"
-              >
-                {{ zh ? '撤销并删除这个会话' : 'Revoke and delete this session' }}
-              </button>
-            </div>
-
-          </details>
-
-          <label class="budget">
-            <span>
-              <strong>{{ zh ? '最高预算' : 'Maximum budget' }}</strong>
-              <small>{{ zh ? '只按实际使用结算，未使用部分自动释放' : 'Only actual usage is settled; the rest is released' }}</small>
-            </span>
-            <span class="budget-value">{{ form.maxCredits }} {{ zh ? '点' : 'credits' }}</span>
-            <input v-model.number="form.maxCredits" type="range" min="10" max="500" step="10" />
-          </label>
-
-          <div v-if="quoteIsCurrent && quote" class="quote">
-            <span>
-              {{ zh ? '预计' : 'Estimate' }}
-              <strong>{{ quote.estimatedCredits.minimum }}–{{ quote.estimatedCredits.maximum }}</strong>
-              {{ zh ? '点' : 'credits' }}
-            </span>
-            <span>
-              {{ zh ? '体验余额' : 'Trial balance' }}
-              <strong>{{ quote.freeCreditsRemaining }}</strong>
-            </span>
-            <span>
-              {{ zh ? '需冻结' : 'Hold' }}
-              <strong>{{ quote.requiredPaidHold }}</strong>
-            </span>
-          </div>
-
-          <div v-if="notice" class="notice" :class="{ error: noticeIsError }">{{ notice }}</div>
-          <div class="composer-actions">
-            <button
-              class="secondary"
-              type="button"
-              :disabled="busy || form.objective.length < 3"
-              @click="getQuote"
-            >
-              {{ quoting ? (zh ? '估算中…' : 'Estimating…') : (zh ? '估算费用' : 'Estimate') }}
-            </button>
-            <button
-              class="primary"
-              type="button"
-              :disabled="busy || form.objective.length < 3 || (quoteIsCurrent && quote?.canStart === false)"
-              @click="startRun"
-            >
-              {{
-                creating
-                  ? (zh ? '正在创建…' : 'Starting…')
-                  : quoteIsCurrent
-                    ? (zh ? '确认并启动' : 'Confirm and start')
-                    : (zh ? '先查看费用' : 'Review cost first')
-              }}
-            </button>
-          </div>
-          <p class="consent">
-            {{
-              zh
-                ? '购买和绕过安全限制始终禁止。密码、OTP、验证码和安全警告只在你接管桌面时处理，不会交给模型。'
-                : 'Purchases and security bypasses remain forbidden. Passwords, OTPs, CAPTCHAs, and security warnings are handled only during your takeover and are never sent to the model.'
-            }}
-          </p>
-        </section>
-
-        <aside class="runs panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">{{ zh ? '历史运行' : 'Run history' }}</p>
-              <h2>{{ zh ? '最近任务' : 'Recent runs' }}</h2>
-            </div>
-            <button class="icon-button" type="button" :disabled="loadingRuns" @click="loadRuns">↻</button>
-          </div>
-          <div v-if="loadingRuns" class="empty">{{ zh ? '正在读取…' : 'Loading…' }}</div>
-          <div v-else-if="!runs.length" class="empty">
-            <span class="empty-mark">⌁</span>
-            <strong>{{ zh ? '还没有 Agent 任务' : 'No agent runs yet' }}</strong>
-            <small>{{ zh ? '左侧写下目标，第一次运行会出现在这里。' : 'Write an objective to start your first run.' }}</small>
-          </div>
-          <router-link
-            v-for="run in runs"
-            v-else
-            :key="run.runId"
-            class="run-card"
-            :to="`/artigen/agent/runs/${run.runId}`"
-          >
-            <div>
-              <span class="status-dot" :class="run.status"></span>
-              <strong>{{ statusLabel(run.status) }}</strong>
-              <time>{{ formatDate(run.updatedAt) }}</time>
-            </div>
-            <p>{{ run.objectivePreview || run.error?.code || run.progress.checklist?.summary || (zh ? '查看计划、云电脑和交付物' : 'Open plan, desktop, and artifacts') }}</p>
-            <footer>
-              <span>{{ run.progress.stepCount }}/{{ run.progress.maxSteps }} steps</span>
-              <span>{{ run.budget.used.toFixed(1) }}/{{ run.budget.maximum }} {{ zh ? '点' : 'cr' }}</span>
-              <b>→</b>
-            </footer>
-          </router-link>
-        </aside>
+          <span class="objective-count">{{ form.objective.length.toLocaleString() }} / 20,000</span>
+          <button class="estimate-action" type="button" :disabled="busy || form.objective.length < 3" @click="getQuote">
+            {{ quoting ? (zh ? '估算中…' : 'Estimating…') : (zh ? '获取报价' : 'Get quote') }}
+          </button>
+          <button class="run-action" type="button" :disabled="busy || form.objective.length < 3 || (quoteIsCurrent && quote?.canStart === false)" @click="startRun">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>
+            {{ creating ? (zh ? '正在启动…' : 'Starting…') : quoteIsCurrent ? (zh ? '确认并运行' : 'Confirm & run') : (zh ? '检查费用' : 'Review cost') }}
+          </button>
+        </footer>
       </div>
 
-      <section class="deliverable-strip">
-        <article v-for="item in deliverableCards" :key="item.code">
-          <span>{{ item.code }}</span>
-          <div>
-            <strong>{{ item.title }}</strong>
-            <small>{{ item.description }}</small>
+      <div v-if="quoteIsCurrent && quote" class="quote-bar">
+        <div><span>{{ zh ? '预计' : 'Estimate' }}</span><b>{{ quote.estimatedCredits.minimum }}–{{ quote.estimatedCredits.maximum }} {{ zh ? '点' : 'cr' }}</b></div>
+        <div><span>{{ zh ? '冻结' : 'Hold' }}</span><b>{{ quote.requiredPaidHold }} {{ zh ? '点' : 'cr' }}</b></div>
+        <div><span>{{ zh ? '上限' : 'Limit' }}</span><b>{{ form.maxCredits }} {{ zh ? '点' : 'cr' }}</b></div>
+        <div><span>{{ zh ? '结算' : 'Billing' }}</span><b>{{ zh ? '仅一次' : 'Once per run' }}</b></div>
+      </div>
+      <p v-if="notice" class="workspace-notice" :class="{ error: noticeIsError }">{{ notice }}</p>
+      <p class="safety-note">
+        {{ zh ? '密码、OTP、验证码与安全警告只由你在接管桌面时处理。购买、绕过安全限制和未授权外部写操作始终禁止。' : 'Passwords, OTPs, CAPTCHAs, and security warnings stay in user takeover. Purchases, security bypasses, and unauthorized external writes remain prohibited.' }}
+      </p>
+
+      <div class="task-presets">
+        <button type="button" @click="applyPreset(0)"><b>{{ zh ? '研究与提案' : 'Research & proposal' }}</b><span>{{ zh ? '三路分析后合并为报告' : 'Three analyses merged into a report' }}</span></button>
+        <button type="button" @click="applyPreset(1)"><b>{{ zh ? '多格式交付' : 'Multi-format delivery' }}</b><span>{{ zh ? '报告、表格、演示或网站' : 'Report, sheet, deck, or site' }}</span></button>
+        <button type="button" @click="applyPreset(2)"><b>{{ zh ? '图片设计稿' : 'Image design' }}</b><span>{{ zh ? '由父 Agent 使用 Kolors 生成' : 'Generated by the parent with Kolors' }}</span></button>
+      </div>
+    </section>
+
+    <template #environment>
+      <div class="inspector-stack">
+        <section class="inspector-card">
+          <header><span>{{ zh ? '模型锁定' : 'Model lock' }}</span><i class="healthy"></i></header>
+          <dl>
+            <div><dt>{{ zh ? '文本与规划' : 'Text & planning' }}</dt><dd>Qwen/Qwen3-8B</dd></div>
+            <div><dt>{{ zh ? '全部图片' : 'All images' }}</dt><dd>Kwai-Kolors/Kolors</dd></div>
+            <div><dt>{{ zh ? '子 Agent' : 'Subagents' }}</dt><dd>{{ serviceStatus?.subagentsEnabled ? (zh ? '最多 3 个' : 'Up to 3') : (zh ? '已关闭' : 'Off') }}</dd></div>
+          </dl>
+        </section>
+        <section class="inspector-card">
+          <header><span>{{ zh ? '交付物' : 'Deliverables' }}</span></header>
+          <div class="option-grid">
+            <label v-for="item in deliverableOptions" :key="item.id" :class="{ disabled: item.disabled }">
+              <input v-model="form.deliverables[item.id]" type="checkbox" :disabled="item.disabled" />
+              <span><b>{{ item.code }}</b><small>{{ item.label }}</small></span>
+            </label>
           </div>
-        </article>
-      </section>
-    </main>
-  </div>
+        </section>
+        <section class="inspector-card">
+          <header><span>{{ zh ? '能力' : 'Capabilities' }}</span></header>
+          <div class="capability-list">
+            <label v-for="capability in capabilityOptions" :key="capability.id" :class="{ disabled: capability.disabled }">
+              <input v-model="form.capabilities[capability.id]" type="checkbox" :disabled="capability.disabled" />
+              <span><b>{{ capability.label }}</b><small>{{ capability.description }}</small></span>
+            </label>
+          </div>
+        </section>
+        <section v-if="form.capabilities.browser" class="inspector-card browser-scope">
+          <header><span>{{ zh ? '浏览器范围' : 'Browser scope' }}</span></header>
+          <input v-model.trim="form.browserOrigins" type="text" :placeholder="zh ? 'https://example.com' : 'https://example.com'" />
+          <label><input v-model="form.persistSession" type="checkbox" />{{ zh ? '加密保存会话 30 天' : 'Encrypt session for 30 days' }}</label>
+          <select v-if="browserProfiles.length" v-model="form.profileId" @change="selectBrowserProfile">
+            <option value="">{{ zh ? '不恢复已保存会话' : 'No saved session' }}</option>
+            <option v-for="profile in browserProfiles" :key="profile.profileId" :value="profile.profileId">{{ profile.label }} · {{ profile.siteOrigin }}</option>
+          </select>
+          <button v-if="form.profileId" type="button" class="text-danger" @click="revokeSelectedProfile">{{ zh ? '撤销会话' : 'Revoke session' }}</button>
+        </section>
+        <section class="inspector-card">
+          <header><span>{{ zh ? '最高预算' : 'Maximum budget' }}</span><b>{{ form.maxCredits }} {{ zh ? '点' : 'cr' }}</b></header>
+          <input v-model.number="form.maxCredits" class="budget-range" type="range" min="10" max="500" step="10" />
+          <small>{{ zh ? '按实际使用结算，未使用部分自动释放。' : 'Actual usage only; unused hold is released.' }}</small>
+        </section>
+      </div>
+    </template>
+
+    <template #plan>
+      <div class="execution-spine">
+        <article class="complete"><i></i><div><b>{{ zh ? '理解目标' : 'Understand objective' }}</b><span>{{ form.objective.length >= 3 ? (zh ? '目标已就绪' : 'Objective ready') : (zh ? '等待输入' : 'Waiting for input') }}</span></div></article>
+        <article :class="{ complete: quoteIsCurrent }"><i></i><div><b>{{ zh ? '核验预算与权限' : 'Verify budget & grants' }}</b><span>{{ quoteIsCurrent ? (zh ? '报价已锁定' : 'Quote locked') : (zh ? '尚未报价' : 'Not quoted') }}</span></div></article>
+        <article><i></i><div><b>{{ zh ? '规划与委派' : 'Plan & delegate' }}</b><span>{{ zh ? '运行后由父 Agent 决定是否拆出子任务' : 'The parent decides whether to delegate after launch' }}</span></div></article>
+        <article><i></i><div><b>{{ zh ? '验证并交付' : 'Verify & deliver' }}</b><span>{{ zh ? '父 Agent 独占最终声明' : 'Final declarations stay with the parent' }}</span></div></article>
+      </div>
+    </template>
+
+    <template #subagents>
+      <div class="inspector-stack">
+        <section class="inspector-card subagent-overview">
+          <header><span>{{ zh ? '真实子 Agent' : 'Real subagents' }}</span><i :class="{ healthy: serviceStatus?.subagentsEnabled }"></i></header>
+          <strong>{{ serviceStatus?.subagentsEnabled ? (zh ? '可并行 3 个独立上下文' : '3 isolated contexts available') : (zh ? '当前环境未开启' : 'Disabled in this environment') }}</strong>
+          <p>{{ zh ? '每个子 Agent 最多 20 步、10 分钟，共享同一隔离环境但目录互不可写。' : 'Each child gets 20 steps and 10 minutes in a shared isolated environment with write-isolated directories.' }}</p>
+        </section>
+        <section class="boundary-list">
+          <b>{{ zh ? '子 Agent 可以' : 'Children can' }}</b>
+          <span>{{ zh ? '读取授权输入、维护计划、运行离线 Shell' : 'Read granted inputs, update plans, run offline shell' }}</span>
+          <b>{{ zh ? '子 Agent 不可以' : 'Children cannot' }}</b>
+          <span>{{ zh ? '浏览器、电脑、连接器、Kolors、审批、最终交付' : 'Browser, computer, connectors, Kolors, approvals, final delivery' }}</span>
+        </section>
+      </div>
+    </template>
+
+    <template #computer>
+      <div class="inspector-stack">
+        <section class="inspector-card">
+          <header><span>{{ zh ? '安全桌面' : 'Secure desktop' }}</span><i :class="{ healthy: serviceStatus?.desktopRelayReady }"></i></header>
+          <strong>{{ serviceStatus?.desktopRelayReady ? (zh ? '接管中继已就绪' : 'Takeover relay ready') : (zh ? '等待 Worker' : 'Waiting for worker') }}</strong>
+          <dl>
+            <div><dt>Worker</dt><dd>{{ serviceStatus?.workerOnline ? (zh ? '在线' : 'Online') : (zh ? '离线' : 'Offline') }}</dd></div>
+            <div><dt>{{ zh ? '受限出口' : 'Restricted egress' }}</dt><dd>{{ serviceStatus?.egressVerified ? (zh ? '已验证' : 'Verified') : (zh ? '未就绪' : 'Not ready') }}</dd></div>
+            <div><dt>{{ zh ? '队列' : 'Queue' }}</dt><dd>{{ serviceStatus?.queueDepth ?? '—' }}</dd></div>
+          </dl>
+        </section>
+      </div>
+    </template>
+
+    <template #files>
+      <div class="inspector-stack">
+        <section class="inspector-card">
+          <header><span>{{ zh ? '任务输入' : 'Task inputs' }}</span><b>{{ selectedFiles.length }}</b></header>
+          <div v-if="selectedFiles.length" class="file-list">
+            <span v-for="file in selectedFiles" :key="`inspector-${file.name}:${file.size}`"><b>{{ file.name }}</b><small>{{ (file.size / 1024 / 1024).toFixed(1) }} MiB</small></span>
+          </div>
+          <p v-else>{{ zh ? '参考文件仅在启动云端任务时上传。' : 'Reference files upload only when a cloud run starts.' }}</p>
+        </section>
+        <section class="inspector-card">
+          <header><span>{{ zh ? '验证边界' : 'Verification boundary' }}</span></header>
+          <p>{{ zh ? '所有最终文件由父 Agent 声明，通过病毒扫描、格式解析、大小限制与 SHA-256 后才可下载。' : 'Only parent-declared files become deliverables after malware, format, size, and SHA-256 verification.' }}</p>
+        </section>
+      </div>
+    </template>
+  </AgentWorkspaceShell>
 </template>
 
 <script setup lang="ts">
@@ -298,7 +208,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
-import TitleBar from '../components/TitleBar.vue';
+import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import {
   createAgentRun,
   getAgentServiceStatus,
@@ -333,7 +243,7 @@ let statusTimer: ReturnType<typeof setInterval> | null = null;
 const busy = computed(() => quoting.value || creating.value);
 const form = reactive({
   objective: '',
-  maxCredits: 100,
+  maxCredits: 50,
   capabilities: {
     research: false,
     browser: false,
@@ -343,7 +253,8 @@ const form = reactive({
     google_drive: false,
     github: false,
     upload: false,
-    move_files: false
+    move_files: false,
+    subagents: false
   } as Record<string, boolean>,
   browserOrigins: '',
   persistSession: false,
@@ -360,6 +271,14 @@ const form = reactive({
 const capabilityOptions = computed(() => [
   { id: 'files', label: zh.value ? '文件处理' : 'File work', description: zh.value ? '报告、表格、PPT、网站' : 'Reports, sheets, slides, sites', disabled: false },
   { id: 'shell', label: zh.value ? '隔离沙箱命令' : 'Isolated sandbox shell', description: zh.value ? '仅在隔离 Linux 工作区执行' : 'Runs only in the isolated Linux workspace', disabled: false },
+  {
+    id: 'subagents',
+    label: zh.value ? '真实子 Agent' : 'Real subagents',
+    description: serviceStatus.value?.subagentsEnabled
+      ? (zh.value ? '父 Agent 可委派最多 3 个独立 Qwen3 上下文' : 'The parent may delegate up to three isolated Qwen3 contexts')
+      : (zh.value ? '当前环境尚未开放' : 'Not enabled in this environment'),
+    disabled: !serviceStatus.value?.subagentsEnabled
+  },
   {
     id: 'browser',
     label: zh.value ? '安全浏览器 Beta' : 'Secure browser Beta',
@@ -386,6 +305,11 @@ watch(() => form.deliverables.image, (selected) => {
   }
   form.capabilities.generate_images = true;
 });
+
+watch(() => serviceStatus.value?.subagentsEnabled, (enabled) => {
+  if (enabled === true) form.capabilities.subagents = true;
+  else form.capabilities.subagents = false;
+}, { immediate: true });
 
 watch(() => form.capabilities.generate_images, (enabled) => {
   if (!enabled && form.deliverables.image) form.deliverables.image = false;
@@ -431,13 +355,6 @@ const validateBrowserForm = () => {
   }
 };
 
-const deliverableCards = computed(() => [
-  { code: 'PDF', title: zh.value ? '带引用的报告' : 'Cited report', description: zh.value ? '可编辑源文件 + PDF' : 'Editable source + PDF' },
-  { code: 'XLSX', title: zh.value ? '数据与图表' : 'Data and charts', description: zh.value ? '公式可计算、图表可编辑' : 'Working formulas and editable charts' },
-  { code: 'PPTX', title: zh.value ? '可编辑演示' : 'Editable deck', description: zh.value ? 'PPTX + 渲染预览' : 'PPTX + rendered preview' },
-  { code: 'WEB', title: zh.value ? '静态网站' : 'Static website', description: zh.value ? '在线预览 + 源码 ZIP' : 'Live preview + source ZIP' },
-  { code: 'IMAGE', title: zh.value ? '图片设计稿' : 'Image design', description: zh.value ? '独立验真的 PNG / JPEG / WebP' : 'Independently verified PNG / JPEG / WebP' }
-]);
 const deliverableOptions = computed(() => [
   { id: 'report', code: 'PDF', label: zh.value ? '带引用的报告' : 'Cited report', description: zh.value ? '可编辑源文件 + PDF' : 'Editable source + PDF', disabled: false },
   { id: 'spreadsheet', code: 'XLSX', label: zh.value ? '数据与图表' : 'Data and charts', description: zh.value ? '公式、数据和可编辑图表' : 'Formulas, data and editable charts', disabled: false },
@@ -467,6 +384,45 @@ const currentQuoteKey = computed(() => JSON.stringify(quoteRequest()));
 const quoteIsCurrent = computed(() => (
   Boolean(quote.value) && quotedRequestKey.value === currentQuoteKey.value
 ));
+const workspaceStatus = computed<{ label: string; tone: 'ready' | 'busy' | 'warning' | 'offline' }>(() => {
+  if (!serviceStatus.value?.workerOnline) {
+    return { label: zh.value ? 'Worker 离线' : 'Worker offline', tone: 'offline' };
+  }
+  if (creating.value || quoting.value) {
+    return { label: creating.value ? (zh.value ? '正在启动' : 'Starting') : (zh.value ? '正在报价' : 'Quoting'), tone: 'busy' };
+  }
+  if (!serviceStatus.value?.subagentsEnabled) {
+    return { label: zh.value ? '单 Agent 就绪' : 'Single Agent ready', tone: 'warning' };
+  }
+  return { label: zh.value ? 'Agent 就绪' : 'Agent ready', tone: 'ready' };
+});
+const filteredRuns = (search: string) => {
+  const query = search.trim().toLocaleLowerCase();
+  if (!query) return runs.value;
+  return runs.value.filter((run) => `${run.objectivePreview || ''} ${run.status}`.toLocaleLowerCase().includes(query));
+};
+const presets = computed(() => zh.value
+  ? [
+      '研究三个直接竞品。把品牌定位、视觉系统和产品体验分别委派给三个子 Agent，最后交付带来源的 Markdown 与 PDF 提案。',
+      '整理我提供的资料，制定一套完整设计方案，并交付可编辑报告、数据表和演示文稿。',
+      '根据目标受众与品牌气质生成一张可直接评审的主视觉图片设计稿，并说明设计决策。'
+    ]
+  : [
+      'Research three direct competitors. Delegate brand positioning, visual system, and product experience to three subagents, then deliver a cited Markdown and PDF proposal.',
+      'Synthesize my references into a complete design proposal with an editable report, workbook, and presentation.',
+      'Create a review-ready hero visual for the target audience and brand character, then explain the design decisions.'
+    ]);
+const applyPreset = (index: number) => {
+  form.objective = presets.value[index] || '';
+};
+const resetRunDraft = () => {
+  form.objective = '';
+  selectedFiles.value = [];
+  quote.value = null;
+  quotedRequestKey.value = '';
+  notice.value = '';
+  noticeIsError.value = false;
+};
 const errorText = (error: unknown) => {
   const code = String((error as any)?.code || (error as Error)?.message || 'AGENT_REQUEST_FAILED');
   const labels: Record<string, string> = {
@@ -633,42 +589,116 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.agent-page { min-height: 100vh; color: #f6f7f2; background: #0a0b0d; }
-.agent-shell { width: min(1440px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 80px; }
-.mode-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 620px; border: 1px solid #2b2e32; background: #111316; }
-.mode-switch a { display: grid; grid-template-columns: 40px 1fr; gap: 2px 12px; padding: 15px 18px; color: #93999f; text-decoration: none; }
-.mode-switch a + a { border-left: 1px solid #2b2e32; }
-.mode-switch a.active { color: #fff; background: #1a1d20; box-shadow: inset 0 -2px #ccff00; }
-.mode-switch span { grid-row: 1 / 3; align-self: center; color: #ccff00; font: 700 12px/1 monospace; }
-.mode-switch strong { font-size: 14px; }.mode-switch small { font-size: 11px; color: #777e85; }
-.hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 34px; align-items: end; padding: 28px 0 24px; border-bottom: 1px solid #222529; }
-.eyebrow { margin: 0 0 12px; color: #ccff00; font: 700 11px/1.2 monospace; letter-spacing: .12em; text-transform: uppercase; }
-.hero h1 { max-width: 980px; margin: 0; font-size: clamp(34px, 3.9vw, 54px); line-height: 1.02; letter-spacing: -.05em; }
-.lead { max-width: 820px; margin: 14px 0 0; color: #a4a9af; font-size: 14px; line-height: 1.58; }
-.trust-strip { display: grid; gap: 8px; min-width: 150px; }.trust-strip span { border-left: 2px solid #ccff00; padding: 3px 0 3px 12px; color: #8c9298; font: 600 11px monospace; }
-.worker-status { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 14px; padding: 12px 14px; color: #dce8b8; border: 1px solid #465517; background: #131a08; }.worker-status.offline { color: #f0b9b3; border-color: #653831; background: #211210; }.worker-status small { margin-left: auto; color: #858c92; font: 10px/1.4 monospace; }
-.workspace-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(340px, .7fr); gap: 18px; margin-top: 18px; }
-.panel { border: 1px solid #292c30; background: #111316; }
-.composer, .runs { padding: 26px; }.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 24px; }.panel-head h2 { margin: 0; font-size: 24px; }
-.beta { padding: 6px 9px; color: #0a0b0d; background: #ccff00; font: 900 10px monospace; }
-.objective { position: relative; display: grid; gap: 9px; }.objective > span,.field-label { color: #c9cdd0; font-size: 13px; font-weight: 700; }
-textarea { width: 100%; resize: vertical; box-sizing: border-box; border: 1px solid #363b40; border-radius: 0; padding: 16px; color: #f8fafc; background: #0b0d0f; font: inherit; line-height: 1.6; outline: none; }
-textarea:focus { border-color: #ccff00; box-shadow: 0 0 0 1px #ccff00; }.objective > small { position: absolute; right: 10px; bottom: 9px; color: #646a70; font: 10px monospace; }
-.file-picker { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 14px; padding: 14px 16px; border: 1px dashed #3a4046; background: #0d0f11; cursor: pointer; }.file-picker > span { display: grid; gap: 4px; }.file-picker small { color: #7f858b; font-size: 11px; }.file-picker input { position: absolute; width: 1px; height: 1px; opacity: 0; }.file-picker b { padding: 8px 11px; color: #0a0b0d; background: #ccff00; font-size: 11px; }.selected-files { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }.selected-files span { padding: 6px 8px; color: #b8bec4; background: #181b1e; font: 10px monospace; }.selected-files button { color: #ff897d; border: 0; background: transparent; cursor: pointer; }
-.deliverables { display: grid; gap: 12px; margin-top: 22px; }.capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
-.advanced-settings { margin-top: 18px; border: 1px solid #2b3035; background: #0d0f11; }.advanced-settings > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; list-style: none; cursor: pointer; }.advanced-settings > summary::-webkit-details-marker { display: none; }.advanced-settings > summary span { display: grid; gap: 4px; }.advanced-settings > summary strong { font-size: 12px; }.advanced-settings > summary small { color: #747b82; font-size: 10px; }.advanced-settings > summary b { color: #ccff00; font: 10px monospace; }.advanced-settings[open] > summary { border-bottom: 1px solid #2b3035; }.advanced-settings[open] > summary b { font-size: 0; }.advanced-settings[open] > summary b::after { content: '−'; font-size: 16px; }.advanced-settings > .deliverables,.advanced-settings > .connections,.advanced-settings > .browser-session { margin-right: 14px; margin-left: 14px; }.advanced-settings > .browser-session { margin-bottom: 14px; }
-.deliverable-options { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 8px; }.deliverable-options label { display: flex; gap: 8px; min-height: 58px; padding: 10px; border: 1px solid #2b3035; background: #0d0f11; cursor: pointer; }.deliverable-options label.is-disabled,.capability-grid label.is-disabled { opacity: .48; cursor: not-allowed; }.deliverable-options input { accent-color: #ccff00; }.deliverable-options span { display: grid; gap: 4px; }.deliverable-options strong { font-size: 11px; }.deliverable-options small { color: #747b82; font-size: 9px; line-height: 1.35; }
-.browser-session { display: grid; gap: 9px; margin-top: 18px; padding: 14px; border: 1px solid #2b3035; background: #0d0f11; }.browser-session > input,.browser-session select { min-height: 38px; padding: 0 10px; border: 1px solid #353b40; color: #e9ece7; background: #141719; }.browser-session label { display: flex; gap: 8px; align-items: center; color: #b5bbc0; font-size: 11px; }.browser-session small { color: #737a80; font-size: 10px; line-height: 1.5; }.revoke-session { justify-self: start; border: 0; color: #ff8a7f; background: transparent; font-size: 10px; cursor: pointer; }
-.capability-grid label { display: flex; gap: 10px; min-height: 54px; padding: 11px; border: 1px solid #2b3035; background: #15181b; cursor: pointer; }.capability-grid input { accent-color: #ccff00; }
-.capability-grid span { display: grid; gap: 4px; }.capability-grid strong { font-size: 12px; }.capability-grid small { color: #747b82; font-size: 10px; }
-.connections { display: grid; gap: 11px; margin-top: 20px; }.connections > div { display: flex; gap: 8px; }.connections button { display: grid; grid-template-columns: 34px 1fr; gap: 2px 9px; flex: 1; padding: 10px; text-align: left; color: #b9bec2; border: 1px solid #30353a; background: #0d0f11; }.connections button > span { grid-row: 1 / 3; display: grid; place-items: center; color: #ccff00; font: 800 10px monospace; }.connections button small { color: #6d747a; font-size: 9px; }.connections button.connected { border-color: #5d7312; background: #151b09; }
-.budget { display: grid; grid-template-columns: 1fr auto; gap: 12px; margin-top: 22px; padding: 16px; border: 1px solid #2b3035; }.budget > span:first-child { display: grid; gap: 4px; }.budget small { color: #7f858b; font-size: 11px; }.budget-value { color: #ccff00; font: 800 14px monospace; }.budget input { grid-column: 1 / -1; width: 100%; accent-color: #ccff00; }
-.quote { display: flex; gap: 8px; margin-top: 10px; }.quote span { flex: 1; padding: 10px; color: #81878d; background: #0b0d0f; font-size: 10px; }.quote strong { display: block; margin-top: 4px; color: #f6f7f2; font: 700 15px monospace; }
-.composer-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }button { font: inherit; cursor: pointer; }.primary,.secondary { min-height: 44px; padding: 0 18px; border: 1px solid #ccff00; font-weight: 800; }.primary { color: #090a0b; background: #ccff00; }.secondary { color: #ccff00; background: transparent; }.primary:disabled,.secondary:disabled { opacity: .45; cursor: not-allowed; }
-.consent { margin: 14px 0 0; color: #6f767d; font-size: 11px; line-height: 1.6; }.notice { margin-top: 14px; padding: 11px; color: #ccff00; border: 1px solid #596e12; background: #182005; font-size: 12px; }.notice.error { color: #ffaaa2; border-color: #64332e; background: #211210; }
-.icon-button { width: 34px; height: 34px; border: 1px solid #34383c; color: #ccff00; background: transparent; }.empty { display: grid; place-items: center; gap: 8px; min-height: 280px; text-align: center; color: #8c9399; }.empty-mark { color: #ccff00; font-size: 42px; }.empty small { max-width: 240px; color: #62696f; }
-.run-card { display: block; padding: 15px 0; color: inherit; text-decoration: none; border-top: 1px solid #282c30; }.run-card > div,.run-card footer { display: flex; align-items: center; gap: 8px; }.run-card time { margin-left: auto; color: #666c72; font-size: 10px; }.run-card p { margin: 10px 0; color: #858c92; font-size: 12px; }.run-card footer { color: #666d73; font: 10px monospace; }.run-card footer b { margin-left: auto; color: #ccff00; font-size: 16px; }.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #737980; }.status-dot.running,.status-dot.provisioning,.status-dot.verifying { background: #ccff00; box-shadow: 0 0 10px #ccff00; }.status-dot.succeeded { background: #54e391; }.status-dot.failed,.status-dot.cancelled { background: #ff6b61; }.status-dot.waiting_user { background: #ffb84d; }
-.deliverable-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid #292c30; border-top: 0; }.deliverable-strip article { display: flex; gap: 13px; padding: 20px; }.deliverable-strip article + article { border-left: 1px solid #292c30; }.deliverable-strip article > span { color: #ccff00; font: 800 11px monospace; }.deliverable-strip div { display: grid; gap: 5px; }.deliverable-strip strong { font-size: 12px; }.deliverable-strip small { color: #6f767c; font-size: 10px; }
-@media (max-width: 960px) { .hero,.workspace-grid { grid-template-columns: 1fr; }.trust-strip { grid-template-columns: repeat(4,1fr); }.deliverable-options { grid-template-columns: repeat(2,minmax(0,1fr)); }.deliverable-strip { grid-template-columns: repeat(2,1fr); }.deliverable-strip article:nth-child(odd) { border-left: 0; }.deliverable-strip article:nth-child(n+3) { border-top: 1px solid #292c30; } }
-@media (max-width: 620px) { .agent-shell { width: min(100% - 24px, 1440px); padding-top: 20px; }.mode-switch a { padding: 13px 12px; }.mode-switch small { display: none; }.hero { gap: 20px; padding: 28px 0 22px; }.hero h1 { font-size: 32px; line-height: 1.05; }.lead { font-size: 13px; line-height: 1.55; }.trust-strip { grid-template-columns: repeat(2,1fr); }.worker-status { align-items: flex-start; }.worker-status small { width: 100%; margin-left: 16px; }.composer,.runs { padding: 18px; }.capability-grid,.deliverable-options,.deliverable-strip { grid-template-columns: 1fr; }.deliverable-strip article + article { border-left: 0; border-top: 1px solid #292c30; }.browser-session > input,.browser-session select,textarea { font-size: 16px; }.quote { flex-direction: column; }.composer-actions { flex-direction: column; }.primary,.secondary { width: 100%; } }
+.agent-compose {
+  width: min(840px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: clamp(48px, 9vh, 112px) 0 80px;
+}
+.compose-intro { display: flex; gap: 16px; align-items: flex-start; max-width: 720px; margin-bottom: 24px; }
+.compose-mark { display: grid; flex: 0 0 40px; width: 40px; height: 40px; place-items: center; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 36%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--acid) 8%, transparent); }
+.compose-mark svg { width: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.compose-intro p { margin: 2px 0 8px; color: var(--acid-text); font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
+.compose-intro h1 { margin: 0; color: var(--text); font-size: clamp(22px, 3vw, 30px); line-height: 1.18; letter-spacing: -.025em; }
+.compose-intro div > span { display: block; max-width: 680px; margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.objective-composer { overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 18px 50px color-mix(in srgb, var(--bg) 42%, transparent); transition: border-color 180ms ease, box-shadow 180ms ease; }
+.objective-composer:focus-within { border-color: var(--acid); box-shadow: 0 0 0 2px color-mix(in srgb, var(--acid) 18%, transparent), 0 18px 50px color-mix(in srgb, var(--bg) 42%, transparent); }
+.objective-composer textarea { display: block; width: 100%; min-height: 142px; resize: vertical; box-sizing: border-box; padding: 18px 18px 8px; color: var(--text); border: 0; outline: 0; background: transparent; font: 400 15px/1.65 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif; }
+.objective-composer textarea::placeholder { color: var(--muted); }
+.objective-composer footer { display: flex; align-items: center; gap: 9px; padding: 10px; border-top: 1px solid var(--border); }
+.attach-control { position: relative; display: inline-flex; min-height: 36px; align-items: center; gap: 7px; padding: 0 10px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 12px; }
+.attach-control input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.attach-control svg, .run-action svg, .input-files svg, .history-label svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.objective-count { margin-left: auto; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.estimate-action, .run-action { min-height: 36px; padding: 0 12px; border-radius: 8px; font-size: 12px; font-weight: 700; }
+.estimate-action { color: var(--text); border: 1px solid var(--border); background: transparent; }
+.run-action { display: inline-flex; align-items: center; gap: 7px; color: #0e100f; border: 1px solid var(--acid); background: var(--acid); }
+.estimate-action:disabled, .run-action:disabled { opacity: .45; cursor: not-allowed; }
+.input-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 10px; }
+.input-files span { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 6px 8px; overflow: hidden; color: var(--text); border-radius: 7px; background: var(--surface-raised); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.input-files button { color: var(--danger); border: 0; background: transparent; font-size: 11px; }
+.quote-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-top: 12px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--border); }
+.quote-bar div { display: grid; gap: 4px; padding: 10px 12px; background: var(--surface); }
+.quote-bar span { color: var(--muted); font-size: 10px; }
+.quote-bar b { color: var(--text); font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.workspace-notice { margin: 12px 0 0; padding: 10px 12px; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 34%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); font-size: 12px; }
+.workspace-notice.error { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.safety-note { margin: 12px 2px 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.task-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 24px; }
+.task-presets button { display: grid; min-height: 82px; gap: 5px; padding: 13px; text-align: left; color: var(--text); border: 1px solid var(--border); border-radius: 10px; background: var(--surface); transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease; }
+.task-presets button:hover { transform: translateY(-2px); border-color: var(--border); background: var(--surface-raised); }
+.task-presets b { align-self: end; font-size: 12px; }
+.task-presets span { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.history-group { padding: 4px 8px 16px; }
+.history-label { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px 8px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.history-label button { display: grid; width: 28px; height: 28px; place-items: center; color: var(--muted); border: 0; border-radius: 7px; background: transparent; }
+.history-label button:hover { color: var(--text); background: var(--surface-raised); }
+.history-run { display: grid; grid-template-columns: 8px 1fr; gap: 8px; align-items: start; padding: 9px 8px; color: inherit; border-radius: 8px; text-decoration: none; }
+.history-run:hover, .history-run.router-link-active { background: var(--surface-raised); }
+.history-run i { width: 6px; height: 6px; margin-top: 5px; border-radius: 999px; background: var(--muted); }
+.history-run i.running, .history-run i.provisioning, .history-run i.verifying { background: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acid) 14%, transparent); }
+.history-run i.succeeded { background: var(--success); }
+.history-run i.failed, .history-run i.cancelled { background: var(--danger); }
+.history-run span { display: grid; min-width: 0; gap: 3px; }
+.history-run b { overflow: hidden; color: var(--text); font-size: 12px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.history-run small, .history-empty { color: var(--muted); font-size: 10px; }
+.history-empty { padding: 16px 8px; text-align: center; }
+.inspector-stack { display: grid; gap: 10px; }
+.inspector-card { padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.inspector-card header { display: flex; min-height: 22px; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.inspector-card header > span { color: var(--text); font-size: 11px; font-weight: 700; }
+.inspector-card header > b { color: var(--text); font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.inspector-card header > i { width: 7px; height: 7px; border-radius: 999px; background: var(--muted); }
+.inspector-card header > i.healthy, .inspector-card header > i[class*="healthy"] { background: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acid) 12%, transparent); }
+.inspector-card dl { display: grid; gap: 7px; margin: 0; }
+.inspector-card dl div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.inspector-card dt, .inspector-card p, .inspector-card small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.inspector-card dd { margin: 0; color: var(--text); font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.inspector-card > strong { color: var(--text); font-size: 13px; }
+.option-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.option-grid label, .capability-list label { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); }
+.option-grid label.disabled, .capability-list label.disabled { opacity: .45; }
+.option-grid input, .capability-list input, .browser-scope input, .budget-range { accent-color: var(--acid); }
+.option-grid span, .capability-list span { display: grid; gap: 2px; }
+.option-grid b, .capability-list b { color: var(--text); font-size: 10px; }
+.option-grid small, .capability-list small { font-size: 9px; }
+.capability-list { display: grid; gap: 6px; }
+.browser-scope { display: grid; gap: 8px; }
+.browser-scope header { margin-bottom: 2px; }
+.browser-scope > input, .browser-scope select { min-height: 36px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 11px; }
+.browser-scope > label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 10px; }
+.text-danger { justify-self: start; color: var(--danger); border: 0; background: transparent; font-size: 10px; }
+.budget-range { width: 100%; }
+.execution-spine { position: relative; display: grid; gap: 0; }
+.execution-spine::before { position: absolute; top: 16px; bottom: 16px; left: 8px; width: 1px; content: ''; background: var(--border); }
+.execution-spine article { position: relative; display: grid; grid-template-columns: 17px 1fr; gap: 10px; min-height: 62px; }
+.execution-spine i { z-index: 1; width: 9px; height: 9px; margin: 5px 0 0 4px; border: 2px solid var(--border); border-radius: 999px; background: var(--sidebar); }
+.execution-spine article.complete i { border-color: var(--acid); background: var(--acid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acid) 10%, transparent); }
+.execution-spine div { display: grid; align-content: start; gap: 4px; }
+.execution-spine b { color: var(--text); font-size: 11px; }
+.execution-spine span { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.subagent-overview p { margin-bottom: 0; }
+.boundary-list { display: grid; gap: 4px; padding: 4px; }
+.boundary-list b { margin-top: 6px; color: var(--text); font-size: 10px; }
+.boundary-list span { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.file-list { display: grid; gap: 6px; }
+.file-list span { display: grid; gap: 2px; padding: 8px; border-radius: 7px; background: var(--surface-raised); }
+.file-list b { overflow: hidden; color: var(--text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 800px) {
+  .agent-compose { width: min(100% - 28px, 840px); padding: 32px 0 64px; }
+  .compose-intro { gap: 12px; }
+  .compose-mark { flex-basis: 36px; width: 36px; height: 36px; }
+  .objective-composer textarea { min-height: 160px; font-size: 16px; }
+  .objective-composer footer { flex-wrap: wrap; }
+  .objective-count { order: 3; width: 100%; margin: 0; }
+  .estimate-action, .run-action, .attach-control { min-height: 44px; }
+  .estimate-action { margin-left: auto; }
+  .quote-bar { grid-template-columns: repeat(2, 1fr); }
+  .task-presets { grid-template-columns: 1fr; }
+  .task-presets button { min-height: 64px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-presets button { transition: none; }
+  .task-presets button:hover { transform: none; }
+}
 </style>
