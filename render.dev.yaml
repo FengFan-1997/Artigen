@@ -62,6 +62,8 @@ services:
       # real-dependency readiness have been verified.
       - key: AGENT_BETA_MODE
         value: disabled
+      - key: AGENT_SUBAGENTS_ENABLED
+        value: "false"
       - key: DESIGN_CONVERSATION_ENABLED
         value: "false"
       - key: DESIGN_CONVERSATION_WORKER_ENABLED
