@@ -145,7 +145,20 @@ const unwrapLiteralShellArgument = (value) => {
   return argument.slice(1, -1);
 };
 
-const normalizeSubagentShellScript = (value) => {
+const expectedSubagentTextOutputPath = ({ expectedOutput, purpose } = {}) => {
+  const filenames = [...new Set(
+    [...String(expectedOutput || '').matchAll(
+      /\b([A-Za-z0-9][A-Za-z0-9._-]{0,119}\.(?:md|txt|json|csv|html|css|js|svg|ya?ml))\b/gi
+    )].map((match) => match[1])
+  )];
+  if (filenames.length !== 1) return null;
+  const filename = filenames[0];
+  if (!String(purpose || '').includes(filename)) return null;
+  const path = `/workspace/${filename}`;
+  return isSafeSubagentOutputPath(path) ? path : null;
+};
+
+const normalizeSubagentShellScript = (value, context = {}) => {
   const script = String(value || '');
   const multilineEcho = script.match(
     /^\s*echo\s+(['"])([\s\S]*)\1\s*>\s*(\/workspace\/[A-Za-z0-9._\/-]+)\s*$/
@@ -177,6 +190,21 @@ const normalizeSubagentShellScript = (value) => {
         kind: 'literal_heredoc_echo_chain'
       };
     }
+  }
+
+  const unterminatedEcho = script.match(/^\s*echo\s+(['"])([\s\S]*)$/);
+  const inferredPath = expectedSubagentTextOutputPath(context);
+  if (
+    unterminatedEcho &&
+    inferredPath &&
+    unterminatedEcho[2].includes('\n') &&
+    !unterminatedEcho[2].trimEnd().endsWith(unterminatedEcho[1])
+  ) {
+    return {
+      script: literalHeredocScript(inferredPath, unterminatedEcho[2]),
+      normalized: true,
+      kind: 'literal_unterminated_echo_write'
+    };
   }
 
   return { script, normalized: false, kind: null };
@@ -731,7 +759,10 @@ const createAgentWorkerService = ({
               },
               shell: async (script, purpose) => {
                 await checkSubagentControl();
-                const normalizedShell = normalizeSubagentShellScript(script);
+                const normalizedShell = normalizeSubagentShellScript(script, {
+                  expectedOutput: privateContext.task.expectedOutput,
+                  purpose
+                });
                 const result = await sandbox.subagentShell(sandboxName, normalizedShell.script, {
                   workspacePath,
                   inputPaths: privateContext.task.inputPaths,
