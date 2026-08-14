@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { ApiError } = require('../lib/api-error');
 const { getAgentConfig } = require('./agent-config');
+const { requiredDeliverablesSatisfied } = require('./agent-artifact-service');
 const {
   actionFingerprint,
   assertLoopBudget,
@@ -310,6 +311,14 @@ const explicitlyRequiresSubagentDelegation = (objective) => {
     /子\s*(?:Agent|智能体)/i.test(text);
 };
 
+const planRepeatsCompletedDelegation = (steps) => (
+  (Array.isArray(steps) ? steps : []).some((step) => (
+    ['pending', 'in_progress'].includes(String(step?.status || '')) &&
+    /(?:delegate[_\s-]*tasks?|sub[\s-]*agents?|子\s*(?:Agent|智能体))/i
+      .test(String(step?.label || ''))
+  ))
+);
+
 const buildInstructions = ({ capabilities, maxSteps, toolProfile = 'parent' }) => toolProfile === 'subagent'
   ? `
 You are a depth-1 Artigen sub Agent running in an independent Qwen3 context.
@@ -604,6 +613,7 @@ class OpenAiAgentModelProvider {
   async execute({
     objective,
     capabilities,
+    deliverables = [],
     toolProfile = 'parent',
     previousResponseId = null,
     resumeState = null,
@@ -1056,6 +1066,7 @@ class OllamaAgentModelProvider {
   async execute({
     objective,
     capabilities,
+    deliverables = [],
     toolProfile = 'parent',
     resumeState = null,
     maxSteps,
@@ -1109,6 +1120,25 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.artifactValidationAttempts || 0)
     );
+    let artifactDeliveryNudges = Math.max(
+      0,
+      Number(durable?.artifactDeliveryNudges || 0)
+    );
+    let declaredArtifacts = (Array.isArray(durable?.declaredArtifacts)
+      ? durable.declaredArtifacts
+      : [])
+      .map((artifact) => ({
+        artifact_id: String(artifact?.artifact_id || ''),
+        role: String(artifact?.role || ''),
+        mime_type: String(artifact?.mime_type || ''),
+        verification_status: String(artifact?.verification_status || '')
+      }))
+      .filter((artifact) => artifact.role && artifact.mime_type);
+    const requiredDeliverables = [...new Set(
+      (Array.isArray(deliverables) ? deliverables : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    )];
     let artifactRepairRequired = durable?.artifactRepairRequired === true;
     let approvalRecoveryAttempts = Math.max(
       0,
@@ -1146,6 +1176,8 @@ class OllamaAgentModelProvider {
         delegationValidationAttempts,
         planValidationAttempts,
         artifactValidationAttempts,
+        artifactDeliveryNudges,
+        declaredArtifacts,
         artifactRepairRequired,
         approvalRecoveryAttempts,
         approvalRecoveryRequired,
@@ -1184,6 +1216,21 @@ class OllamaAgentModelProvider {
         planPublished = true;
       }
       if (call.name === 'update_plan') {
+        if (
+          toolProfile === 'parent' &&
+          delegationCompleted &&
+          planRepeatsCompletedDelegation(args.steps)
+        ) {
+          throw new ApiError(400, 'AGENT_PLAN_INVALID', {
+            details: {
+              correction: [
+                'Delegation already completed and cannot be planned or run again.',
+                'Replace that step with merging child outputs, verifying required files,',
+                'and declaring every requested artifact.'
+              ].join(' ')
+            }
+          });
+        }
         const result = await callbacks.updatePlan(args);
         planPublished = true;
         if (toolProfile === 'subagent') {
@@ -1228,6 +1275,20 @@ class OllamaAgentModelProvider {
       }
       if (call.name === 'declare_artifact') {
         const artifact = await callbacks.declareArtifact(args);
+        const declared = {
+          artifact_id: String(artifact.artifactId || ''),
+          role: String(args.role || ''),
+          mime_type: String(args.mimeType || ''),
+          verification_status: String(artifact.verificationStatus || '')
+        };
+        declaredArtifacts = [
+          ...declaredArtifacts.filter((entry) => (
+            entry.artifact_id !== declared.artifact_id ||
+            entry.role !== declared.role ||
+            entry.mime_type !== declared.mime_type
+          )),
+          declared
+        ];
         return {
           accepted: true,
           artifactId: artifact.artifactId,
@@ -1313,11 +1374,11 @@ class OllamaAgentModelProvider {
                   success: false,
                   errorCode: error.code,
                   field: 'steps',
-                  correction: [
+                  correction: String(error?.details?.correction || [
                     'Retry update_plan with 2-12 non-empty steps.',
                     'Each status must be pending, in_progress, or completed.',
                     'At most one step may be in_progress.'
-                  ].join(' ')
+                  ].join(' '))
                 })
               };
             } else if (correctableDelegationError) {
@@ -1452,6 +1513,32 @@ class OllamaAgentModelProvider {
           messages.push({
             role: 'user',
             content: 'The objective explicitly requires real sub Agents. Call delegate_tasks exactly once now before any completion response.'
+          });
+          await saveDurableState();
+          continue;
+        }
+        if (
+          toolProfile === 'parent' &&
+          requiredDeliverables.length > 0 &&
+          !requiredDeliverablesSatisfied(declaredArtifacts, requiredDeliverables)
+        ) {
+          artifactDeliveryNudges += 1;
+          turns += 1;
+          assertLoopBudget({ stepCount: turns - 1, maxSteps });
+          if (artifactDeliveryNudges > 2) {
+            throw new ApiError(422, 'AGENT_ARTIFACT_DELIVERY_REQUIRED', {
+              retryable: false,
+              requiredDeliverables
+            });
+          }
+          messages.push({
+            role: 'user',
+            content: [
+              `Required deliverables are still incomplete: ${requiredDeliverables.join(', ')}.`,
+              'Do not announce completion or delegate again.',
+              'Merge the existing child outputs when present, create and verify every required file,',
+              'then call declare_artifact for each required source and preview artifact.'
+            ].join(' ')
           });
           await saveDurableState();
           continue;
