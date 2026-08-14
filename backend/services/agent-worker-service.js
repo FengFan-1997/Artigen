@@ -118,6 +118,70 @@ const restrictDelegatedTaskInputs = (tasks, allowedInputPaths = []) => {
   }));
 };
 
+const isSafeSubagentOutputPath = (value) => {
+  const path = String(value || '').trim();
+  return (
+    /^\/workspace\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(path) &&
+    !path.split('/').includes('..')
+  );
+};
+
+const literalHeredocScript = (path, content) => {
+  let delimiter = 'ARTIGEN_LITERAL_EOF';
+  const lines = String(content || '').replace(/\r\n?/g, '\n').split('\n');
+  while (lines.includes(delimiter)) delimiter += '_SAFE';
+  return [
+    `cat > ${path} <<'${delimiter}'`,
+    ...lines,
+    delimiter
+  ].join('\n');
+};
+
+const unwrapLiteralShellArgument = (value) => {
+  const argument = String(value || '').trim();
+  if (argument.length < 2) return null;
+  const quote = argument[0];
+  if (!['\'', '"'].includes(quote) || argument.at(-1) !== quote) return null;
+  return argument.slice(1, -1);
+};
+
+const normalizeSubagentShellScript = (value) => {
+  const script = String(value || '');
+  const multilineEcho = script.match(
+    /^\s*echo\s+(['"])([\s\S]*)\1\s*>\s*(\/workspace\/[A-Za-z0-9._\/-]+)\s*$/
+  );
+  if (multilineEcho && isSafeSubagentOutputPath(multilineEcho[3])) {
+    return {
+      script: literalHeredocScript(multilineEcho[3], multilineEcho[2]),
+      normalized: true,
+      kind: 'literal_echo_write'
+    };
+  }
+
+  const malformedHeredoc = script.match(
+    /^\s*cat\s*>\s*(\/workspace\/[A-Za-z0-9._\/-]+)\s*<<\s*'([A-Za-z0-9_]+)'\s*&&\s*echo\s+([\s\S]+)$/
+  );
+  if (malformedHeredoc && isSafeSubagentOutputPath(malformedHeredoc[1])) {
+    const delimiter = malformedHeredoc[2];
+    const tail = malformedHeredoc[3].replace(
+      new RegExp(`\\s+${delimiter}\\s*$`),
+      ''
+    );
+    const lines = tail
+      .split(/\s*&&\s*echo\s+/)
+      .map(unwrapLiteralShellArgument);
+    if (lines.length && lines.every((line) => line !== null)) {
+      return {
+        script: literalHeredocScript(malformedHeredoc[1], lines.join('\n')),
+        normalized: true,
+        kind: 'literal_heredoc_echo_chain'
+      };
+    }
+  }
+
+  return { script, normalized: false, kind: null };
+};
+
 const inspectSubagentOutputFiles = async ({ sandbox, sandboxName, workspacePath }) => {
   const result = await sandbox.systemShell(
     sandboxName,
@@ -667,7 +731,8 @@ const createAgentWorkerService = ({
               },
               shell: async (script, purpose) => {
                 await checkSubagentControl();
-                const result = await sandbox.subagentShell(sandboxName, script, {
+                const normalizedShell = normalizeSubagentShellScript(script);
+                const result = await sandbox.subagentShell(sandboxName, normalizedShell.script, {
                   workspacePath,
                   inputPaths: privateContext.task.inputPaths,
                   timeoutSeconds: 120
@@ -683,13 +748,18 @@ const createAgentWorkerService = ({
                   actionFingerprint: actionFingerprint({
                     type: 'subagent_shell',
                     subagentId,
-                    script
+                    script: normalizedShell.script
                   }),
                   sanitizedInput: {
                     purpose: String(purpose || '').slice(0, 300),
                     scriptSha256: crypto.createHash('sha256')
                       .update(String(script))
-                      .digest('hex')
+                      .digest('hex'),
+                    executedScriptSha256: crypto.createHash('sha256')
+                      .update(normalizedShell.script)
+                      .digest('hex'),
+                    normalized: normalizedShell.normalized,
+                    normalizationKind: normalizedShell.kind
                   },
                   sanitizedOutput: {
                     success: result.success,
@@ -1535,6 +1605,7 @@ module.exports = {
   createAgentCostMeter,
   createAgentWorkerService,
   firstPayload,
+  normalizeSubagentShellScript,
   restrictDelegatedTaskInputs,
   runWithLeaseHeartbeat,
   resolveStagedImageReferences
