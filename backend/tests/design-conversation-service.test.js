@@ -154,6 +154,27 @@ test('explicit Markdown and PDF output rejects an unsupported planner presentati
   assert.deepEqual(decision.plan.deliverables, ['report']);
 });
 
+test('explicitly rejecting presentation output cannot be mistaken for presentation intent', () => {
+  for (const text of [
+    '交付 Markdown 和 PDF，不要 PPT、不要 PPTX、不要 PowerPoint、不要幻灯片',
+    '交付 Markdown 和 PDF，无需制作演示文稿',
+    'Deliver Markdown and PDF without slides or a presentation'
+  ]) {
+    const decision = normalizePlannerDecision({
+      raw: {
+        routeKind: 'agent_run',
+        deliverables: ['report', 'presentation']
+      },
+      text,
+      attachments: [],
+      clarificationRounds: 0,
+      creditCap: 50
+    });
+    assert.deepEqual(decision.deliverables, ['report'], text);
+    assert.deepEqual(decision.plan.deliverables, ['report'], text);
+  }
+});
+
 test('Computer Agent plan accepts structured Qwen steps without rendering object coercion', () => {
   const decision = normalizePlannerDecision({
     raw: {
