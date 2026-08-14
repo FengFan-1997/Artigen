@@ -105,6 +105,19 @@ const resolveStagedImageReferences = (value, stagedAssetsByPath) => {
   }));
 };
 
+const restrictDelegatedTaskInputs = (tasks, allowedInputPaths = []) => {
+  if (!Array.isArray(tasks)) return tasks;
+  const allowed = new Set((Array.isArray(allowedInputPaths) ? allowedInputPaths : [])
+    .map((path) => String(path || '').trim())
+    .filter(Boolean));
+  return tasks.map((task) => ({
+    ...task,
+    inputPaths: [...new Set((Array.isArray(task?.inputPaths) ? task.inputPaths : [])
+      .map((path) => String(path || '').trim())
+      .filter((path) => path && allowed.has(path)))]
+  }));
+};
+
 const inspectSubagentOutputFiles = async ({ sandbox, sandboxName, workspacePath }) => {
   const result = await sandbox.systemShell(
     sandboxName,
@@ -814,7 +827,7 @@ const createAgentWorkerService = ({
             const created = await runService.createSubagents({
               runId,
               workerId,
-              tasks,
+              tasks: restrictDelegatedTaskInputs(tasks, inputAssetPaths),
               allowedInputPaths: inputAssetPaths
             });
             const settled = await Promise.allSettled(created.map(runDelegatedSubagent));
@@ -1521,6 +1534,7 @@ module.exports = {
   createAgentCostMeter,
   createAgentWorkerService,
   firstPayload,
+  restrictDelegatedTaskInputs,
   runWithLeaseHeartbeat,
   resolveStagedImageReferences
 };
