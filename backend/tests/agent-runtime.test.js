@@ -901,6 +901,30 @@ test('SiliconFlow requires real delegation when the objective explicitly asks fo
       usage: {}
     },
     {
+      id: 'chat-wrong-tool',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call-browser',
+            type: 'function',
+            function: {
+              name: 'browser_dom',
+              arguments: JSON.stringify({
+                action: 'snapshot',
+                url: '',
+                selector: '',
+                text: '',
+                purpose: 'Read the page again'
+              })
+            }
+          }]
+        }
+      }],
+      usage: {}
+    },
+    {
       id: 'chat-delegate',
       choices: [{
         message: {
@@ -946,6 +970,9 @@ test('SiliconFlow requires real delegation when the objective explicitly asks fo
     maxSteps: 10,
     callbacks: {
       updatePlan: async () => ({ accepted: true }),
+      browserDom: async () => {
+        throw new Error('wrong tool must not execute before delegation');
+      },
       delegateTasks: async (value) => {
         delegated.push(value);
         return { subagents: value.map((task, index) => ({
@@ -963,12 +990,20 @@ test('SiliconFlow requires real delegation when the objective explicitly asks fo
   assert.equal(result.text, 'Delegation completed.');
   assert.equal(delegated.length, 1);
   assert.equal(delegated[0].length, 3);
-  assert.equal(requests[0].tool_choice, 'required');
-  assert.equal(requests[1].tool_choice, 'required');
+  const requiredDelegation = {
+    type: 'function',
+    function: { name: 'delegate_tasks' }
+  };
+  assert.deepEqual(requests[0].tool_choice, requiredDelegation);
+  assert.deepEqual(requests[1].tool_choice, requiredDelegation);
   assert.ok(requests[1].messages.some((message) => (
     message.role === 'user' && message.content.includes('Call delegate_tasks exactly once')
   )));
-  assert.equal(requests[2].tool_choice, undefined);
+  assert.deepEqual(requests[2].tool_choice, requiredDelegation);
+  assert.ok(requests[2].messages.some((message) => (
+    message.role === 'tool' && message.content.includes('AGENT_SUBAGENT_DELEGATION_REQUIRED')
+  )));
+  assert.equal(requests[3].tool_choice, undefined);
 });
 
 test('delegated tasks allow only exact staged inputs and at most three children', () => {
