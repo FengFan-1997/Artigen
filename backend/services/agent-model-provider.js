@@ -1194,6 +1194,11 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.artifactDeliveryNudges || 0)
     );
+    let artifactDuplicateAttempts = Math.max(
+      0,
+      Number(durable?.artifactDuplicateAttempts || 0)
+    );
+    let artifactDuplicateNoticePending = durable?.artifactDuplicateNoticePending === true;
     let declaredArtifacts = (Array.isArray(durable?.declaredArtifacts)
       ? durable.declaredArtifacts
       : [])
@@ -1201,6 +1206,7 @@ class OllamaAgentModelProvider {
         artifact_id: String(artifact?.artifact_id || ''),
         role: String(artifact?.role || ''),
         mime_type: String(artifact?.mime_type || ''),
+        filename: String(artifact?.filename || ''),
         verification_status: String(artifact?.verification_status || '')
       }))
       .filter((artifact) => artifact.role && artifact.mime_type);
@@ -1252,6 +1258,8 @@ class OllamaAgentModelProvider {
         planValidationAttempts,
         artifactValidationAttempts,
         artifactDeliveryNudges,
+        artifactDuplicateAttempts,
+        artifactDuplicateNoticePending,
         declaredArtifacts,
         artifactRepairRequired,
         approvalRecoveryAttempts,
@@ -1335,6 +1343,7 @@ class OllamaAgentModelProvider {
       }
       if (call.name === 'sandbox_shell') {
         const shellResult = await callbacks.shell(args.script, args.purpose);
+        if (shellResult.success) artifactDuplicateAttempts = 0;
         if (shellResult.success) artifactRepairRequired = false;
         if (shellResult.success) approvalRecoveryRequired = false;
         if (toolProfile === 'subagent' && shellResult.success) {
@@ -1365,24 +1374,43 @@ class OllamaAgentModelProvider {
         return callbacks.browserDom(args);
       }
       if (call.name === 'generate_image') {
-        return callbacks.generateImage(args);
+        const image = await callbacks.generateImage(args);
+        artifactDuplicateAttempts = 0;
+        return image;
       }
       if (call.name === 'declare_artifact') {
+        const declarationIdentity = {
+          role: String(args.role || ''),
+          mime_type: String(args.mimeType || ''),
+          filename: String(args.filename || '')
+        };
         const artifact = await callbacks.declareArtifact(args);
         const declared = {
           artifact_id: String(artifact.artifactId || ''),
-          role: String(args.role || ''),
-          mime_type: String(args.mimeType || ''),
+          ...declarationIdentity,
           verification_status: String(artifact.verificationStatus || '')
         };
         declaredArtifacts = [
           ...declaredArtifacts.filter((entry) => (
-            entry.artifact_id !== declared.artifact_id ||
-            entry.role !== declared.role ||
-            entry.mime_type !== declared.mime_type
+            entry.artifact_id !== declared.artifact_id && (
+              entry.filename !== declared.filename ||
+              entry.role !== declared.role ||
+              entry.mime_type !== declared.mime_type
+            )
           )),
           declared
         ];
+        if (artifact.alreadyRegistered) {
+          artifactDuplicateAttempts += 1;
+          artifactDuplicateNoticePending = true;
+          if (artifactDuplicateAttempts > 2) {
+            throw new ApiError(409, 'AGENT_ARTIFACT_DECLARATION_LOOP', {
+              retryable: false
+            });
+          }
+        } else {
+          artifactDuplicateAttempts = 0;
+        }
         return {
           accepted: true,
           artifactId: artifact.artifactId,
@@ -1520,6 +1548,18 @@ class OllamaAgentModelProvider {
         messages.push(this.toolResultMessage(pendingCall, completedOutput));
         pendingCall = null;
         completedOutput = null;
+        if (artifactDuplicateNoticePending) {
+          messages.push({
+            role: 'user',
+            content: [
+              'That exact file content is already registered and verified.',
+              'Do not declare the same unchanged file again.',
+              'Continue any genuinely missing work; if every requested output is complete,',
+              'respond now with one concise completion summary and no tool call.'
+            ].join(' ')
+          });
+          artifactDuplicateNoticePending = false;
+        }
         await saveDurableState();
       }
 

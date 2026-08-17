@@ -2453,6 +2453,41 @@ const createAgentRunService = ({
     return publicArtifact(artifact.rows[0]);
   });
 
+  const findArtifactByContent = async ({
+    runId,
+    role,
+    filename,
+    mimeType,
+    sha256,
+    assetId
+  }) => {
+    const digest = String(sha256 || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(digest)) return null;
+    const result = await pool.query(
+      `SELECT * FROM agent_artifacts
+        WHERE run_id=$1
+          AND role=$2
+          AND filename=$3
+          AND mime_type=$4
+          AND sha256=decode($5,'hex')
+          AND ($6::uuid IS NULL OR asset_id=$6)
+          AND verification_status='passed'
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [
+        runId,
+        sanitizeText(role, 80),
+        sanitizeText(filename, 240),
+        sanitizeText(mimeType, 160),
+        digest,
+        assetId || null
+      ]
+    );
+    return result.rowCount
+      ? { ...publicArtifact(result.rows[0]), alreadyRegistered: true }
+      : null;
+  };
+
   const finishRun = async ({
     runId,
     workerId,
@@ -2974,6 +3009,7 @@ const createAgentRunService = ({
     deleteBrowserProfile,
     failRun,
     expireStaleRuns,
+    findArtifactByContent,
     finishRun,
     finishSubagent,
     getControlState,

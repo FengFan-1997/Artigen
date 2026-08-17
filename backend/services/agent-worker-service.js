@@ -1479,22 +1479,24 @@ const createAgentWorkerService = ({
               sandboxName,
               declaration
             });
-            await runService.appendStep({
-              runId,
-              workerId,
-              role: 'verifier',
-              status: artifact.verificationStatus === 'passed' ? 'succeeded' : 'failed',
-              toolName: 'artifact_verifier',
-              summary: `验证 ${artifact.filename}`,
-              sanitizedInput: {
-                role: artifact.role,
-                mimeType: artifact.mimeType
-              },
-              sanitizedOutput: {
-                verificationStatus: artifact.verificationStatus,
-                byteSize: artifact.byteSize
-              }
-            });
+            if (!artifact.alreadyRegistered) {
+              await runService.appendStep({
+                runId,
+                workerId,
+                role: 'verifier',
+                status: artifact.verificationStatus === 'passed' ? 'succeeded' : 'failed',
+                toolName: 'artifact_verifier',
+                summary: `验证 ${artifact.filename}`,
+                sanitizedInput: {
+                  role: artifact.role,
+                  mimeType: artifact.mimeType
+                },
+                sanitizedOutput: {
+                  verificationStatus: artifact.verificationStatus,
+                  byteSize: artifact.byteSize
+                }
+              });
+            }
             return artifact;
           },
           requestApproval: async (request) => {
