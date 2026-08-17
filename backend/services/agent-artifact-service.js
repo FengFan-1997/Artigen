@@ -380,7 +380,6 @@ const createAgentArtifactService = ({
     });
     const existing = await runService.findArtifactByContent?.({
       runId: run.id,
-      role: normalized.role,
       filename: normalized.filename,
       mimeType: normalized.mimeType,
       sha256,

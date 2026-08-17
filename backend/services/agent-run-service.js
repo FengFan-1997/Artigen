@@ -2415,30 +2415,55 @@ const createAgentRunService = ({
     sources = [],
     costCredits = 0
   }) => withTransaction(pool, async (client) => {
+    const normalizedFilename = sanitizeText(filename, 240);
+    const normalizedMimeType = sanitizeText(mimeType, 160);
+    const normalizedAssetId = assetId || null;
+    const digest = String(sha256 || '').trim().toLowerCase();
+    const run = await client.query(
+      'SELECT id,expires_at FROM agent_runs WHERE id=$1 FOR UPDATE',
+      [runId]
+    );
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    if (verificationStatus === 'passed' && /^[a-f0-9]{64}$/.test(digest)) {
+      const existing = await client.query(
+        `SELECT * FROM agent_artifacts
+          WHERE run_id=$1
+            AND filename=$2
+            AND mime_type=$3
+            AND sha256=decode($4,'hex')
+            AND asset_id IS NOT DISTINCT FROM $5::uuid
+            AND verification_status='passed'
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [runId, normalizedFilename, normalizedMimeType, digest, normalizedAssetId]
+      );
+      if (existing.rowCount) {
+        return { ...publicArtifact(existing.rows[0]), alreadyRegistered: true };
+      }
+    }
     const artifact = await client.query(
       `INSERT INTO agent_artifacts
         (run_id,asset_id,parent_artifact_id,role,filename,mime_type,byte_size,sha256,
          version,verification_status,verification,sources,cost_credits,expires_at)
-       SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,run.expires_at
-         FROM agent_runs run WHERE run.id=$1
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING *`,
       [
         runId,
-        assetId || null,
+        normalizedAssetId,
         parentArtifactId,
         role,
-        sanitizeText(filename, 240),
-        sanitizeText(mimeType, 160),
+        normalizedFilename,
+        normalizedMimeType,
         Math.max(0, Number(byteSize || 0)),
-        sha256 ? Buffer.from(String(sha256), 'hex') : null,
+        digest ? Buffer.from(digest, 'hex') : null,
         Math.max(1, Number(version || 1)),
         verificationStatus,
         JSON.stringify(sanitizeLogValue(verification)),
         JSON.stringify(sanitizeLogValue(sources)),
-        Math.max(0, Math.ceil(Number(costCredits || 0)))
+        Math.max(0, Math.ceil(Number(costCredits || 0))),
+        run.rows[0].expires_at
       ]
     );
-    if (!artifact.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
     await insertEvent(client, {
       runId,
       type: 'artifact.created',
@@ -2455,7 +2480,6 @@ const createAgentRunService = ({
 
   const findArtifactByContent = async ({
     runId,
-    role,
     filename,
     mimeType,
     sha256,
@@ -2466,17 +2490,15 @@ const createAgentRunService = ({
     const result = await pool.query(
       `SELECT * FROM agent_artifacts
         WHERE run_id=$1
-          AND role=$2
-          AND filename=$3
-          AND mime_type=$4
-          AND sha256=decode($5,'hex')
-          AND ($6::uuid IS NULL OR asset_id=$6)
+          AND filename=$2
+          AND mime_type=$3
+          AND sha256=decode($4,'hex')
+          AND asset_id IS NOT DISTINCT FROM $5::uuid
           AND verification_status='passed'
         ORDER BY created_at DESC
         LIMIT 1`,
       [
         runId,
-        sanitizeText(role, 80),
         sanitizeText(filename, 240),
         sanitizeText(mimeType, 160),
         digest,

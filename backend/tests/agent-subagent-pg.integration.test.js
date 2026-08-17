@@ -121,23 +121,47 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
 
     const artifactBytes = Buffer.from('# Verified recovery artifact\n');
     const artifactSha256 = crypto.createHash('sha256').update(artifactBytes).digest('hex');
-    const registeredArtifact = await service.registerArtifact({
-      runId,
-      role: 'editable',
-      filename: 'recovery.md',
-      mimeType: 'text/markdown',
-      byteSize: artifactBytes.length,
-      sha256: artifactSha256,
-      verificationStatus: 'passed'
-    });
+    const [registeredArtifact, duplicateArtifact] = await Promise.all([
+      service.registerArtifact({
+        runId,
+        role: 'editable',
+        filename: 'recovery.md',
+        mimeType: 'text/markdown',
+        byteSize: artifactBytes.length,
+        sha256: artifactSha256,
+        verificationStatus: 'passed'
+      }),
+      service.registerArtifact({
+        runId,
+        role: 'source',
+        filename: 'recovery.md',
+        mimeType: 'text/markdown',
+        byteSize: artifactBytes.length,
+        sha256: artifactSha256,
+        verificationStatus: 'passed'
+      })
+    ]);
+    assert.equal(duplicateArtifact.artifactId, registeredArtifact.artifactId);
+    assert.equal(duplicateArtifact.role, registeredArtifact.role);
+    assert.equal(
+      [registeredArtifact.alreadyRegistered, duplicateArtifact.alreadyRegistered]
+        .filter((value) => value === true).length,
+      1
+    );
+    const artifactCount = await pool.query(
+      'SELECT count(*)::int AS count FROM agent_artifacts WHERE run_id=$1',
+      [runId]
+    );
+    assert.equal(artifactCount.rows[0].count, 1);
     const recoveredArtifact = await service.findArtifactByContent({
       runId,
-      role: 'editable',
+      role: 'source',
       filename: 'recovery.md',
       mimeType: 'text/markdown',
       sha256: artifactSha256
     });
     assert.equal(recoveredArtifact.artifactId, registeredArtifact.artifactId);
+    assert.equal(recoveredArtifact.role, registeredArtifact.role);
     assert.equal(recoveredArtifact.alreadyRegistered, true);
 
     await assert.rejects(
