@@ -119,6 +119,27 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
     );
     assert.equal(Number(usage.rows[0].estimated_credits_used), 7);
 
+    const artifactBytes = Buffer.from('# Verified recovery artifact\n');
+    const artifactSha256 = crypto.createHash('sha256').update(artifactBytes).digest('hex');
+    const registeredArtifact = await service.registerArtifact({
+      runId,
+      role: 'editable',
+      filename: 'recovery.md',
+      mimeType: 'text/markdown',
+      byteSize: artifactBytes.length,
+      sha256: artifactSha256,
+      verificationStatus: 'passed'
+    });
+    const recoveredArtifact = await service.findArtifactByContent({
+      runId,
+      role: 'editable',
+      filename: 'recovery.md',
+      mimeType: 'text/markdown',
+      sha256: artifactSha256
+    });
+    assert.equal(recoveredArtifact.artifactId, registeredArtifact.artifactId);
+    assert.equal(recoveredArtifact.alreadyRegistered, true);
+
     await assert.rejects(
       service.cancelSubagent({ userId: userB, runId, subagentId }),
       { code: 'AGENT_RUN_NOT_FOUND' }

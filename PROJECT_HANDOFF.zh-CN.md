@@ -324,7 +324,7 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 
 ### 5.19 2026-08-17 三遍审核后的运行时与工作台硬化（待 DEV smoke）
 
-阶段：本地实现和完整回归已通过；尚未提交、尚未合入 `dev`、尚未发布。生产与 DEV 状态必须以本轮发布前重新核验为准。
+阶段：PR #69 已合入并发布到 DEV；真实 Qwen3 smoke 已运行并发现崩溃恢复后重复声明同一产物的发布阻断。修复已在本地完成并通过回归，但尚未提交、合入或重新发布，因此不得发起 `dev → main`。生产状态必须以发布前重新核验为准。
 
 - 新增迁移 `023_agent_subagent_runtime_hardening`，为 `agent_subagents` 增加独立 `consecutive_failures`。全局 120 步仍统计父子全部步骤，但子步骤失败只更新对应子 Agent，不再污染父 Run 的重复失败熔断。
 - 并行子 Agent 的模型用量与费用快照改为串行持久化；内存计量、父 Run 数据库费用和恢复下限均采用单调最大值，晚到的旧快照不能覆盖较新的计费状态。
@@ -341,7 +341,16 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 - Playwright 六个桌面/移动/平板浏览器项目共 468 tests：465 passed / 3 条既有条件跳过 / 0 failed，覆盖 1440/1024/768/390/360px、暗色/浅色/系统主题、200% 等效缩放、键盘全流程、reduced motion、移动横屏、长消息和长文件名。
 - Impeccable 最终自动检测为 `[]`；最终截图保存在 `frontend/.impeccable/review/`，已人工检查桌面/移动工作台、Run 详情和设计对话。
 
-发布门槛仍未满足：必须先将本分支经 PR 合入 `dev`，重新恢复与同一不可变 SHA 对齐的 Mac Worker，并完成真实 Qwen3 三子 Agent、单独取消、父任务继续、单次结算、文件验证和队列归零 smoke；随后才能建立 `dev → main` Release PR。
+发布与实时证据：
+
+- PR [#69](https://github.com/FengFan-1997/Artigen/pull/69) 已于 2026-08-17 合入 `dev`，merge SHA 为 `1006fcf5edee5bbe8b99be85ad3c55ece81b2215`。Core、8 路 E2E、Release gate 与两个 Vercel Preview 均通过；两个 Cloudflare Workers Preview 仍为已知非门禁失败。
+- Render DEV deployment `dep-da1ab061egvs73a20bq0` 为 `live`，`/api/meta.gitSha` 精确等于 `1006fcf...`；`/readyz` 为 `ok=true` 且数据库迁移为 `023_agent_subagent_runtime_hardening`。Vercel Preview GitHub deployments `5939911696` 与 `5939902153` 均为 `success` 且对应同一 SHA。
+- 用户确认后只将 Karing 从“规则”临时切为“全局”，未修改节点、分流、DNS、系统代理或 Wi-Fi；DEV Worker 随后恢复 online，浏览器、受限出口、桌面中继、subagents 均 ready，queueDepth=0。全部线上工作完成后必须恢复“规则”并重新核验。
+- 真实 Run `f10e927f-184e-4e39-85f6-447f0daf4276` 的 3 个子 Agent 全部成功，子工具仅为 `update_plan` 与 `sandbox_shell`；父 Agent 实际浏览 `example.com` 并生成 Markdown/PDF。Neon `ECONNRESET` 触发 Worker 恢复后，已完成子任务没有重跑，但父模型重复声明相同产物，产生多条 artifact/verification 记录并继续累计费用。该 Run 已安全取消，最终 charged=17，hold 仅结算一次且剩余额度已释放。
+- 本地后续修复将产物摄取改为内容幂等：对象存储先执行可修复的幂等写入，再按 run、role、filename、MIME、SHA-256 与 asset 查找已通过验证的产物；重复内容不再新增 artifact 或 verifier step。Provider 会纠正重复声明，第三次仍忽略时以 `AGENT_ARTIFACT_DECLARATION_LOOP` fail-closed，不能伪造任务完成。
+- 修复后的最终 `pnpm check:core` 退出码 0：前端 216/216、后端 451 tests（410 passed / 41 个外部环境条件跳过）、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。此前同一修复的完整 Playwright 为 465 passed / 3 skipped / 0 failed；另用本地 PostgreSQL 16 与固定 CI digest 的 MinIO 跑完后端外部集成 450/450、0 skip、0 fail，精确临时数据库与容器已清理。
+
+发布门槛仍未满足：必须先将内容幂等修复经 PR 合入 `dev`，用 Render、Vercel 与 Mac Worker 的同一不可变 SHA 重跑真实 Qwen3 三子 Agent、单独取消、父任务继续、单次结算、恰好两项文件验证和队列归零 smoke；随后才能建立 `dev → main` Release PR。
 
 ## 6. 已知风险与正式后续事项
 

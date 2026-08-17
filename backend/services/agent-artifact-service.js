@@ -331,6 +331,7 @@ const createAgentArtifactService = ({
   pool,
   sandbox,
   runService,
+  assetStorage = assets,
   maxBytes = 100 * 1024 * 1024
 } = {}) => {
   if (!pool || !sandbox || !runService) throw new TypeError('AGENT_ARTIFACT_DEPENDENCY_REQUIRED');
@@ -361,7 +362,7 @@ const createAgentArtifactService = ({
       );
     }
     const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
-    const stored = await assets.storeAsset({
+    const stored = await assetStorage.storeAsset({
       pool,
       ownerUserId: run.user_id,
       buffer,
@@ -377,6 +378,15 @@ const createAgentArtifactService = ({
         artifactRole: normalized.role
       }
     });
+    const existing = await runService.findArtifactByContent?.({
+      runId: run.id,
+      role: normalized.role,
+      filename: normalized.filename,
+      mimeType: normalized.mimeType,
+      sha256,
+      assetId: stored.assetId
+    });
+    if (existing) return existing;
     return runService.registerArtifact({
       runId: run.id,
       assetId: stored.assetId,

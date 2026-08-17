@@ -169,6 +169,7 @@ const {
   assertArtifactDeclaration,
   assertSourcesObserved,
   canonicalSourceUrl,
+  createAgentArtifactService,
   inferRequiredDeliverables,
   requiredDeliverablesSatisfied,
   verificationCommand
@@ -2083,6 +2084,303 @@ test('parent cannot finish before every required report artifact is declared', a
   assert.ok(savedStates.some((state) => (
     state.artifactDeliveryNudges === 2 && state.declaredArtifacts.length === 2
   )));
+});
+
+test('parent stops after storage reports a repeated verified artifact declaration', async () => {
+  const declaration = (filename, role, mimeType) => ({
+    path: `/tmp/artigen-workspace/${filename}`,
+    role,
+    filename,
+    mimeType,
+    sources: []
+  });
+  const call = (id, args) => ({
+    id: `chat-artifact-dedupe-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-artifact-dedupe-${id}`,
+          type: 'function',
+          function: { name: 'declare_artifact', arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    call('md', declaration('report.md', 'editable', 'text/markdown')),
+    call('pdf', declaration('report.pdf', 'pdf', 'application/pdf')),
+    call('md-again', declaration('report.md', 'editable', 'text/markdown')),
+    {
+      id: 'chat-artifact-dedupe-final',
+      choices: [{ message: { role: 'assistant', content: 'Both verified files are ready.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  const savedStates = [];
+  let declarationCalls = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Create an editable report and a PDF report.',
+    capabilities: { files: true, shell: true },
+    deliverables: ['report'],
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      declareArtifact: async (args) => {
+        declarationCalls += 1;
+        return {
+          artifactId: `artifact-${args.role}`,
+          verificationStatus: 'passed',
+          alreadyRegistered: declarationCalls === 3
+        };
+      },
+      saveModelState: async (state) => savedStates.push(structuredClone(state)),
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(declarationCalls, 3);
+  assert.equal(requests.length, 4);
+  assert.equal(requests[3].tool_choice, undefined);
+  assert.ok(requests[3].messages.some((message) => (
+    message.role === 'user' && message.content.includes('already registered and verified')
+  )));
+  assert.equal(result.text, 'Both verified files are ready.');
+  assert.ok(savedStates.some((state) => (
+    state.artifactDuplicateAttempts === 1 &&
+    state.artifactDuplicateNoticePending === false &&
+    state.declaredArtifacts.length === 2
+  )));
+});
+
+test('parent resumes a committed artifact call through storage content idempotency', async () => {
+  const duplicate = {
+    path: '/tmp/artigen-workspace/report.pdf',
+    role: 'pdf',
+    filename: 'report.pdf',
+    mimeType: 'application/pdf',
+    sources: []
+  };
+  const requests = [];
+  let declarationCalls = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({
+        id: 'chat-artifact-resume-final',
+        choices: [{ message: { role: 'assistant', content: 'Recovered files are ready.' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 }
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Create an editable report and a PDF report.',
+    capabilities: { files: true, shell: true },
+    deliverables: ['report'],
+    maxSteps: 10,
+    resumeState: {
+      version: 2,
+      provider: 'siliconflow',
+      messages: [
+        { role: 'system', content: 'Complete the requested report.' },
+        { role: 'user', content: 'Create an editable report and a PDF report.' }
+      ],
+      pendingCall: {
+        callId: 'call-artifact-recovery',
+        name: 'declare_artifact',
+        arguments: duplicate
+      },
+      completedOutput: null,
+      planPublished: true,
+      declaredArtifacts: [
+        {
+          artifact_id: 'artifact-editable',
+          role: 'editable',
+          mime_type: 'text/markdown',
+          filename: 'report.md',
+          verification_status: 'passed'
+        },
+        {
+          artifact_id: 'artifact-pdf',
+          role: 'pdf',
+          mime_type: 'application/pdf',
+          filename: 'report.pdf',
+          verification_status: 'passed'
+        }
+      ]
+    },
+    callbacks: {
+      declareArtifact: async () => {
+        declarationCalls += 1;
+        return {
+          artifactId: 'artifact-pdf',
+          verificationStatus: 'passed',
+          alreadyRegistered: true
+        };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(declarationCalls, 1);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].tool_choice, undefined);
+  assert.ok(requests[0].messages.some((message) => (
+    message.role === 'user' && message.content.includes('already registered and verified')
+  )));
+  assert.equal(result.text, 'Recovered files are ready.');
+});
+
+test('parent fails closed when a model ignores two duplicate artifact corrections', async () => {
+  const declarations = [
+    ['initial-md', 'report.md', 'editable', 'text/markdown'],
+    ['initial-pdf', 'report.pdf', 'pdf', 'application/pdf'],
+    ['repeat-md-1', 'report.md', 'editable', 'text/markdown'],
+    ['repeat-pdf-2', 'report.pdf', 'pdf', 'application/pdf'],
+    ['repeat-md-3', 'report.md', 'editable', 'text/markdown']
+  ];
+  const responses = declarations.map(([id, filename, role, mimeType]) => ({
+    id: `chat-artifact-loop-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-artifact-loop-${id}`,
+          type: 'function',
+          function: {
+            name: 'declare_artifact',
+            arguments: JSON.stringify({
+              path: `/tmp/artigen-workspace/${filename}`,
+              role,
+              filename,
+              mimeType,
+              sources: []
+            })
+          }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  }));
+  let declarationCalls = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async () => new Response(JSON.stringify(responses.shift()), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  await assert.rejects(provider.execute({
+    objective: 'Create an editable report and a PDF report.',
+    capabilities: { files: true, shell: true },
+    deliverables: ['report'],
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      declareArtifact: async (args) => {
+        declarationCalls += 1;
+        return {
+          artifactId: `artifact-${args.role}`,
+          verificationStatus: 'passed',
+          alreadyRegistered: declarationCalls > 2
+        };
+      },
+      saveModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  }), { code: 'AGENT_ARTIFACT_DECLARATION_LOOP' });
+  assert.equal(declarationCalls, 5);
+});
+
+test('artifact ingestion reuses a verified content match after idempotent storage repair', async () => {
+  const bytes = Buffer.from('# Existing report\n');
+  let lookup;
+  let registerCalls = 0;
+  const artifactService = createAgentArtifactService({
+    pool: {},
+    assetStorage: {
+      storeAsset: async () => ({
+        assetId: '33333333-3333-4333-8333-333333333333'
+      })
+    },
+    sandbox: {
+      systemShell: async () => ({ success: true, stdout: '', stderr: '' }),
+      readFile: async () => ({ base64: bytes.toString('base64') })
+    },
+    runService: {
+      findArtifactByContent: async (input) => {
+        lookup = input;
+        return {
+          artifactId: 'existing-artifact',
+          role: 'editable',
+          filename: 'report.md',
+          mimeType: 'text/markdown',
+          byteSize: bytes.length,
+          sha256: input.sha256,
+          verificationStatus: 'passed',
+          alreadyRegistered: true
+        };
+      },
+      registerArtifact: async () => {
+        registerCalls += 1;
+        throw new Error('must not register a duplicate');
+      }
+    }
+  });
+  const artifact = await artifactService.ingest({
+    run: {
+      id: '11111111-1111-4111-8111-111111111111',
+      user_id: '22222222-2222-4222-8222-222222222222',
+      expires_at: new Date(Date.now() + 60_000)
+    },
+    sandboxName: 'sandbox-test',
+    declaration: {
+      path: '/tmp/artigen-workspace/report.md',
+      role: 'editable',
+      filename: 'report.md',
+      mimeType: 'text/markdown',
+      sources: []
+    }
+  });
+  assert.equal(artifact.artifactId, 'existing-artifact');
+  assert.equal(artifact.alreadyRegistered, true);
+  assert.equal(registerCalls, 0);
+  assert.equal(lookup.sha256, crypto.createHash('sha256').update(bytes).digest('hex'));
+  assert.equal(lookup.assetId, '33333333-3333-4333-8333-333333333333');
 });
 
 test('subagent does not spend another model turn after one successful write and a completed plan', async () => {
