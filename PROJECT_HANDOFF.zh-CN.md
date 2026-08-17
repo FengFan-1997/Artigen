@@ -324,7 +324,7 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 
 ### 5.19 2026-08-17 三遍审核后的运行时与工作台硬化（待 DEV smoke）
 
-阶段：PR #69、#70、#71 已合入并发布到 DEV；真实 Qwen3 smoke 继续发现“同一物理文件以不同角色重复登记”的发布阻断。跨角色内容幂等修复已在本地完成并通过 Core 与真实 PostgreSQL 回归，但尚未提交、合入或重新发布，因此不得发起 `dev → main`。生产状态必须以发布前重新核验为准。
+阶段：PR #69–#72 已合入并发布到 DEV；跨角色产物重复已修复，但真实 Qwen3 smoke 又发现服务端完成验收后模型仍继续改写文件并耗尽重规划额度。验证后工具锁定修复已在本地完成并通过定向回归，但尚未提交、合入或重新发布，因此不得发起 `dev → main`。生产状态必须以发布前重新核验为准。
 
 - 新增迁移 `023_agent_subagent_runtime_hardening`，为 `agent_subagents` 增加独立 `consecutive_failures`。全局 120 步仍统计父子全部步骤，但子步骤失败只更新对应子 Agent，不再污染父 Run 的重复失败熔断。
 - 并行子 Agent 的模型用量与费用快照改为串行持久化；内存计量、父 Run 数据库费用和恢复下限均采用单调最大值，晚到的旧快照不能覆盖较新的计费状态。
@@ -356,8 +356,13 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 - 该 Run 的严格 smoke 仍判定失败：Qwen 将同一 Markdown 先后声明为 `editable` / `source`，将同一 PDF 先后声明为 `pdf` / `preview`，数据库因此出现 4 条 artifact；两组分别共享同一 asset、文件名、MIME 与 SHA-256，证明是角色别名重复而不是四份交付物。
 - 当前本地修复将已验证内容匹配收紧为同一 Run 下的 `filename + MIME + SHA-256 + asset`，不再把请求角色作为物理文件身份；对象存储修复仍先执行，第一次通过服务端验证的角色保持权威。最终登记在事务内锁定父 Run 行并再次检查相同内容，旧 Worker 与恢复 Worker 短暂重叠也不能同时插入。不同文件名、不同字节或不同 asset 不会被折叠。Provider 的已声明状态也以服务端返回的角色、MIME 与文件名为准，避免模型用别名覆盖真实记录。
 - 跨角色修复的 Agent runtime 95/95、真实 PostgreSQL `agent-subagent-pg.integration` 1/1 均通过；最终 `pnpm check:core` 退出码 0：前端 216/216、后端 452 tests（411 passed / 41 external skips）、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。精确临时数据库 `artigen_role_dedupe_20260817` 已删除并确认不存在。
+- 跨角色修复经 PR [#72](https://github.com/FengFan-1997/Artigen/pull/72) 的 Core、9 个 E2E 分片和 Release gate 全绿后合入 `dev`，merge SHA `c531db7fdb3abed14ab08bcc70d0612fd82953e0`。Render DEV deployment `dep-da1gcobncjis739e8rig` 为 `live`，两个 Vercel deployment success；`/api/meta`、`/readyz`、Qwen3/Kolors、S3、Agent 与对话入口均重新核验为同一 SHA。Mac Worker 精确 worktree 为 `Artigen-worker-dev-c531db7`，共享 Cua Python 环境链接补齐后 online，浏览器、受限出口、桌面中继和 subagents ready，queue=0。
+- 同 SHA 的成功场景 Run `f8d1aa8a-751c-4084-8542-366a03e9d0bf` 创建 research `0f86b0f2-9db8-4da2-af6f-524b531f192e`、analysis `eaf6684b-ddd7-4437-a6e1-e31c72b67169`、drafting `a1210a48-3ff8-42ff-bc8c-5631efdf0d44`，三者分别 5/3/5 步并全部 succeeded；父 Agent 完成实际浏览与文件生成，数据库恰好只有一份 verified Markdown 和一份 verified PDF，证明跨角色内容幂等已生效。
+- 该 Run 仍未通过严格 smoke：两项交付物已在 step 22/23 验证后，Qwen 又两次更新父计划并重写已交付 Markdown，最终以 `AGENT_REPLAN_LIMIT_REACHED` failed。`replan_count=3`、estimated=`12.9216`、charged=0、50 点 hold 全额 released、queue=0；不能通过提高 replan limit 掩盖“验证后继续改文件”。
+- 当前本地修复只在所有显式交付物均为服务端 `verification_status=passed`、且必需委派已完成后生效：下一模型回合删除整个工具目录并设置 `tool_choice=none`，要求只给最终摘要；若 Provider 仍返回 tool call，则不执行并使用已验证文件名生成确定性摘要。交付物未齐、验证失败或委派未完成时不会触发，现有缺失交付、重复声明和 fail-closed 边界继续保留。
+- 验证后工具锁定修复的 Agent runtime 95/95，最终 `pnpm check:core` 退出码 0：前端 216/216、后端 452 tests（411 passed / 41 external skips）、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。
 
-发布门槛仍未满足：必须先将跨角色内容幂等修复经 PR 合入 `dev`，用 Render、Vercel 与 Mac Worker 的同一不可变 SHA 重跑真实 Qwen3 三子 Agent、单独取消、父任务继续、单次结算、恰好两项文件验证和队列归零 smoke；随后才能建立 `dev → main` Release PR。
+发布门槛仍未满足：必须先将验证后工具锁定修复经 PR 合入 `dev`，用 Render、Vercel 与 Mac Worker 的同一不可变 SHA 重跑真实 Qwen3 三子 Agent、单独取消、父任务继续、单次结算、恰好两项文件验证和队列归零 smoke；随后才能建立 `dev → main` Release PR。
 
 ## 6. 已知风险与正式后续事项
 
