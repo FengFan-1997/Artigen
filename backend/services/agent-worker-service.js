@@ -588,6 +588,10 @@ const createAgentWorkerService = ({
       costMeter.restoreModelMinimum(context.modelCheckpoint?.totalCredits);
       const objectivePayload = firstPayload(context.payloads, 'objective');
       if (!objectivePayload?.objective) throw new ApiError(500, 'AGENT_OBJECTIVE_MISSING');
+      const requiredDeliverables = Array.isArray(objectivePayload.deliverables) &&
+          objectivePayload.deliverables.length
+        ? objectivePayload.deliverables
+        : inferRequiredDeliverables(objectivePayload.objective);
       const userInputs = context.payloads
         .filter((payload) => payload.kind === 'user_input')
         .map((payload) => payload.value)
@@ -1003,7 +1007,7 @@ const createAgentWorkerService = ({
             : ''
         ].filter(Boolean).join('\n\n'),
         capabilities: context.run.capabilities,
-        deliverables: context.run.deliverables,
+        deliverables: requiredDeliverables,
         resumeState: context.modelCheckpoint,
         safetyIdentifier: crypto.createHash('sha256')
           .update(`artigen-agent:${context.run.user_id}`)
@@ -1631,10 +1635,6 @@ const createAgentWorkerService = ({
         userId: context.run.user_id,
         runId
       });
-      const requiredDeliverables = Array.isArray(objectivePayload.deliverables) &&
-          objectivePayload.deliverables.length
-        ? objectivePayload.deliverables
-        : inferRequiredDeliverables(objectivePayload.objective);
       const minimumArtifactCounts = {
         report: 2,
         spreadsheet: 1,

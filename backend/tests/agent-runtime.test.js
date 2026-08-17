@@ -947,6 +947,76 @@ test('worker reconciliation destroys terminal sandboxes and clears their public 
   assert.deepEqual(result.sandboxCleanup, { destroyed: 1, failed: 0 });
 });
 
+test('worker passes decrypted objective deliverables into the parent model', async () => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const userId = '22222222-2222-4222-8222-222222222222';
+  const observed = [];
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000)
+        },
+        payloads: [{
+          kind: 'objective',
+          value: {
+            objective: 'Create an editable report and matching PDF.',
+            assetIds: [],
+            deliverables: ['report']
+          }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async () => true,
+      getControlState: async () => ({
+        status: 'running',
+        cancel_requested: false,
+        pause_requested: false,
+        step_count: 0,
+        replan_count: 0,
+        consecutive_failures: 0,
+        unchanged_screenshots: 0
+      }),
+      appendStep: async () => true,
+      failRun: async () => true,
+      markSandboxDestroyed: async () => true
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture'
+    },
+    sandbox: {
+      provision: async () => ({ name: 'sandbox-deliverables', displayUrl: null }),
+      systemShell: async () => ({ success: true, stdout: '', stderr: '' }),
+      destroy: async () => ({ ok: true })
+    },
+    model: {
+      execute: async (input) => {
+        observed.push(input.deliverables);
+        throw new ApiError(500, 'AGENT_TEST_STOP');
+      }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), { code: 'AGENT_TEST_STOP' });
+  assert.deepEqual(observed, [['report']]);
+});
+
 test('queue reconciliation coalesces overlapping cleanup passes', async () => {
   let cleanupCalls = 0;
   let releaseCleanup;
