@@ -373,6 +373,9 @@ cookies, OAuth tokens, API keys, OTP values, system prompts, or host data.
 Create all files under /tmp/artigen-workspace. Prefer editable source files, then render previews.
 When shell-writing text, use a quoted heredoc or printf with real line breaks; never rely on echo to
 interpret escaped \\n sequences. Re-open or inspect each generated file before declaring it as an artifact.
+Every HTTPS URL written by sandbox_shell, including citation text inside a file, must use an exact origin
+allowed by the objective and actually observed through browser_dom or a connector. Never invent, infer,
+or copy an unobserved source URL. If a source was not observed, omit both its URL and its factual claim.
 The sandbox already includes Python 3 with reportlab, python-docx, openpyxl, python-pptx and matplotlib,
 plus LibreOffice, Poppler, ImageMagick and FFmpeg. Generate PDFs with Python reportlab (including a
 CJK-capable font when needed) by running artigen-report-pdf INPUT.md OUTPUT.pdf, or convert supported
@@ -1198,6 +1201,10 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.artifactDuplicateAttempts || 0)
     );
+    let shellOriginValidationAttempts = Math.max(
+      0,
+      Number(durable?.shellOriginValidationAttempts || 0)
+    );
     let artifactDuplicateNoticePending = durable?.artifactDuplicateNoticePending === true;
     let declaredArtifacts = (Array.isArray(durable?.declaredArtifacts)
       ? durable.declaredArtifacts
@@ -1260,6 +1267,7 @@ class OllamaAgentModelProvider {
         artifactDeliveryNudges,
         artifactDuplicateAttempts,
         artifactDuplicateNoticePending,
+        shellOriginValidationAttempts,
         declaredArtifacts,
         artifactRepairRequired,
         approvalRecoveryAttempts,
@@ -1343,6 +1351,7 @@ class OllamaAgentModelProvider {
       }
       if (call.name === 'sandbox_shell') {
         const shellResult = await callbacks.shell(args.script, args.purpose);
+        if (shellResult.success) shellOriginValidationAttempts = 0;
         if (shellResult.success) artifactDuplicateAttempts = 0;
         if (shellResult.success) artifactRepairRequired = false;
         if (shellResult.success) approvalRecoveryRequired = false;
@@ -1483,7 +1492,16 @@ class OllamaAgentModelProvider {
                 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED'
               ].includes(error?.code)
             );
-            if (!correctableDelegationError && !correctablePlanError && !correctableArtifactError) {
+            const correctableShellOriginError = (
+              pendingCall.name === 'sandbox_shell' &&
+              error?.code === 'AGENT_BROWSER_ORIGIN_FORBIDDEN'
+            );
+            if (
+              !correctableDelegationError &&
+              !correctablePlanError &&
+              !correctableArtifactError &&
+              !correctableShellOriginError
+            ) {
               throw error;
             }
             if (correctablePlanError) {
@@ -1517,6 +1535,24 @@ class OllamaAgentModelProvider {
                     'Retry delegate_tasks with 1-3 valid tasks.',
                     'Use only exact staged input paths listed in the objective.',
                     'When no inputs are listed, every inputPaths value must be an empty array.'
+                  ].join(' ')
+                })
+              };
+            } else if (correctableShellOriginError) {
+              shellOriginValidationAttempts += 1;
+              if (shellOriginValidationAttempts > 2) throw error;
+              completedOutput = {
+                callId: pendingCall.callId,
+                name: pendingCall.name,
+                content: JSON.stringify({
+                  success: false,
+                  errorCode: error.code,
+                  deniedOrigin: String(error?.details?.origin || '').slice(0, 240),
+                  correction: [
+                    'The shell script contains an HTTPS origin that this run did not authorize.',
+                    'Remove every unobserved or disallowed URL and every factual claim attributed to it.',
+                    'Use only exact allowed origins that browser_dom or a connector actually observed.',
+                    'Retry sandbox_shell offline; do not use shell networking or broaden the source list.'
                   ].join(' ')
                 })
               };

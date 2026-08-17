@@ -1557,6 +1557,129 @@ test('SiliconFlow corrects an invalid Qwen plan and fails closed after two retri
   assert.equal(rejected, 3);
 });
 
+test('SiliconFlow removes an unauthorized shell citation and fails closed after two ignored corrections', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-shell-origin-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-shell-origin-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const plan = toolCall('plan', 'update_plan', {
+    explanation: 'Create and verify the report.',
+    steps: [
+      { label: 'Create the report', status: 'in_progress' },
+      { label: 'Verify the report', status: 'pending' }
+    ]
+  });
+  const badShell = (id) => toolCall(id, 'sandbox_shell', {
+    script: "printf '%s' 'Source: https://unobserved.example/report' > /tmp/artigen-workspace/report.md",
+    purpose: 'Create the report'
+  });
+  const goodShell = toolCall('good', 'sandbox_shell', {
+    script: "printf '%s' 'Source: https://example.com/' > /tmp/artigen-workspace/report.md",
+    purpose: 'Create the report with the observed source'
+  });
+  const requests = [];
+  const responses = [
+    plan,
+    badShell('bad'),
+    goodShell,
+    {
+      id: 'chat-shell-origin-final',
+      choices: [{ message: { role: 'assistant', content: 'The report is ready.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  let shellAttempts = 0;
+  const savedStates = [];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Use only the observed source https://example.com/ in an offline report.',
+    capabilities: { files: true, shell: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      shell: async (script) => {
+        shellAttempts += 1;
+        if (script.includes('unobserved.example')) {
+          throw new ApiError(403, 'AGENT_BROWSER_ORIGIN_FORBIDDEN', {
+            origin: 'https://unobserved.example'
+          });
+        }
+        return { success: true, returnCode: 0, stdout: 'ok', stderr: '' };
+      },
+      saveModelState: async (state) => savedStates.push(structuredClone(state)),
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'The report is ready.');
+  assert.equal(shellAttempts, 2);
+  assert.ok(requests[2].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('AGENT_BROWSER_ORIGIN_FORBIDDEN') &&
+    message.content.includes('Remove every unobserved or disallowed URL')
+  )));
+  assert.ok(savedStates.some((state) => state.shellOriginValidationAttempts === 1));
+  assert.equal(savedStates.at(-1).shellOriginValidationAttempts, 0);
+
+  const failingResponses = [plan, badShell('one'), badShell('two'), badShell('three')];
+  const failingProvider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async () => new Response(JSON.stringify(failingResponses.shift()), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  let rejectedShells = 0;
+  await assert.rejects(() => failingProvider.execute({
+    objective: 'Use only the observed source https://example.com/ in an offline report.',
+    capabilities: { files: true, shell: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      shell: async () => {
+        rejectedShells += 1;
+        throw new ApiError(403, 'AGENT_BROWSER_ORIGIN_FORBIDDEN', {
+          origin: 'https://unobserved.example'
+        });
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  }), { code: 'AGENT_BROWSER_ORIGIN_FORBIDDEN' });
+  assert.equal(rejectedShells, 3);
+});
+
 test('subagent finalizes deterministically after a completed plan and two successful shell steps', async () => {
   const toolCall = (id, name, args) => ({
     id: `chat-${id}`,
