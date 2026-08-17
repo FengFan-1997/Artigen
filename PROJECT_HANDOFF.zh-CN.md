@@ -322,9 +322,9 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 三子任务 smoke、`dev → main` Release gate、同 SHA 的 Render/Vercel/Mac Worker 发布和
 生产 owner smoke 全部完成后，才能把本节阶段改为“生产已发布”。
 
-### 5.19 2026-08-17 三遍审核后的运行时与工作台硬化（待 DEV smoke）
+### 5.19 2026-08-17 三遍审核后的运行时与工作台硬化（DEV 验收通过，待生产发布）
 
-阶段：PR #69–#72 已合入并发布到 DEV；跨角色产物重复已修复，但真实 Qwen3 smoke 又发现服务端完成验收后模型仍继续改写文件并耗尽重规划额度。验证后工具锁定修复已在本地完成并通过定向回归，但尚未提交、合入或重新发布，因此不得发起 `dev → main`。生产状态必须以发布前重新核验为准。
+阶段：PR #69–#74 已合入并发布到 DEV；运行时、三栏工作台、验证后工具锁和真实 Worker 交付要求接线均已通过回归。最终 DEV SHA `f89c8bce6e7826681d0589e3bc7197a557398d63` 已完成“3 个子 Agent 全成功”和“单独取消 1 个子 Agent、父任务继续”两场真实 Qwen3 smoke；下一门槛为正式交接 PR、`dev → main` Release gate 和同一不可变 SHA 的生产发布。生产状态必须以发布前重新核验为准。
 
 - 新增迁移 `023_agent_subagent_runtime_hardening`，为 `agent_subagents` 增加独立 `consecutive_failures`。全局 120 步仍统计父子全部步骤，但子步骤失败只更新对应子 Agent，不再污染父 Run 的重复失败熔断。
 - 并行子 Agent 的模型用量与费用快照改为串行持久化；内存计量、父 Run 数据库费用和恢复下限均采用单调最大值，晚到的旧快照不能覆盖较新的计费状态。
@@ -361,8 +361,14 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 - 该 Run 仍未通过严格 smoke：两项交付物已在 step 22/23 验证后，Qwen 又两次更新父计划并重写已交付 Markdown，最终以 `AGENT_REPLAN_LIMIT_REACHED` failed。`replan_count=3`、estimated=`12.9216`、charged=0、50 点 hold 全额 released、queue=0；不能通过提高 replan limit 掩盖“验证后继续改文件”。
 - 当前本地修复只在所有显式交付物均为服务端 `verification_status=passed`、且必需委派已完成后生效：下一模型回合删除整个工具目录并设置 `tool_choice=none`，要求只给最终摘要；若 Provider 仍返回 tool call，则不执行并使用已验证文件名生成确定性摘要。交付物未齐、验证失败或委派未完成时不会触发，现有缺失交付、重复声明和 fail-closed 边界继续保留。
 - 验证后工具锁定修复的 Agent runtime 95/95，最终 `pnpm check:core` 退出码 0：前端 216/216、后端 452 tests（411 passed / 41 external skips）、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。
+- 验证后工具锁经 PR [#73](https://github.com/FengFan-1997/Artigen/pull/73) 全门禁通过后合入 `dev`，merge SHA `fadb9ce4c33b79a9e696f365224413dd03c6c1ac`。同 SHA success Run `ca3e306d-3eb1-475a-b907-c7775dd7e3f5` 的三个子 Agent 全部成功并交付恰好一个 Markdown 与一个 PDF，charged=17、单次结算；cancel Run `d04a0113-f3bb-4371-93b5-424718c52d6b` 虽已形成取消/成功/成功的子任务组合和两个 passed 产物，父模型仍继续重规划而失败。该现象定位到 Worker 误传不存在的 `context.run.deliverables`，真实要求只存在于解密后的 `objectivePayload.deliverables`。
+- Worker 交付要求接线修复经 PR [#74](https://github.com/FengFan-1997/Artigen/pull/74) 的 Core、8 路 E2E 和 Release gate 全绿后合入 `dev`，最终 merge SHA `f89c8bce6e7826681d0589e3bc7197a557398d63`。Agent runtime 96/96，`pnpm check:core` 退出码 0：前端 216/216、后端 412 passed / 41 external skips、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。
+- Render DEV deployment `dep-da1hl4dg1s2s73ca8h60` 为 `live`，`/api/meta`、`/readyz`、`/api/agent/status`、`/api/design-assistant/status` 和 `/api/generation/models` 均 HTTP 200；迁移为 `023_agent_subagent_runtime_hardening`，文本/父子模型锁定 `Qwen/Qwen3-8B`，所有图片锁定 `Kwai-Kolors/Kolors`，Worker、浏览器、受限出口、桌面中继与 `shared-v1` 子 Agent 均 ready，queueDepth=0。
+- Vercel Git/CLI Preview 被 `TEAM_ACCESS_REQUIRED` 阻止：提交作者邮箱 `sorates1997@163.com` 未映射到 Vercel 团队席位。没有伪造提交作者或修改团队配置；改用 `git archive f89c8bc...` 导出的精确 Git tree `17f77e96e8c0cd33520d4aca8a0aac69be49a0b1`，以已认证 owner 发布并写入真实 `artigenGitSha` / `artigenGitRef=dev` 元数据。READY Preview deployment 为 `dpl_6vLcPxdcaks1aNen9tUZgUS56Gjj`；两条 blocked 记录 `dpl_5cEgHjzUz1q1BNKYSJcxoj3aRGYd`、`dpl_3YEf8tGNUmug5TkooMTGLGJR1PPP` 保留为审计证据，不计为通过。
+- 同 SHA cancel Run `bce73714-ef4f-45b8-91d0-3d34b5475c2c` 通过：research `c8edd90f-dacb-43b0-a127-edc663e6d127` cancelled，analysis `3bf3c05e-0e4a-44cb-916f-8539d0ebe157` 与 drafting `02c31436-2a4f-497d-abeb-43195ff61abe` succeeded；Markdown 707 bytes / SHA-256 `deb28b405d6d6dea7c14c4ca9205ab085de5fc24e31fe582d8a980c4124767d7`，PDF 3388 bytes / SHA-256 `9f179b5fa19900b0471b0a09da0a9d926b341bd6eb73734b0f7d9fc7112144a5`，均为 S3 `verificationStatus=passed`。父 Run succeeded、18 步、estimated=12.049、charged=13、一个 hold 只结算一次，子工具仅 `update_plan` / `sandbox_shell`，queue=0、frozen=0。
+- 同 SHA all-success Run `2235d9c4-7e4c-4ff7-89a5-66067023b09f` 通过：research `c7d05e77-bda7-4b53-9843-3fe041d7f641`、analysis `f9cd0ab1-05cd-4cf8-a763-f54fb651d5bd`、drafting `201aa804-e4ae-4d17-9d6f-8d376419d09a` 均 succeeded 且各 3 步；Markdown 565 bytes / SHA-256 `c7790e6f33c6080bd2d4ecaa2421fbc5564023397ec4c5f40d2f6033e62a92c5`，PDF 3272 bytes / SHA-256 `e49959f3c23709fc46ef9a68253307d61af8005ae3b88ab68d3e17549df352fc`，均为 S3 `verificationStatus=passed`。父 Run succeeded、21 步、estimated=14.1765、charged=15、成本序列单调、单次结算，最终 Worker online、queue=0、frozen=0、held budget=0。
 
-发布门槛仍未满足：必须先将验证后工具锁定修复经 PR 合入 `dev`，用 Render、Vercel 与 Mac Worker 的同一不可变 SHA 重跑真实 Qwen3 三子 Agent、单独取消、父任务继续、单次结算、恰好两项文件验证和队列归零 smoke；随后才能建立 `dev → main` Release PR。
+DEV 运行时门槛已经满足。正式交接证据合入 `dev` 后，应让 Render、Vercel 和 Mac Worker 对齐该文档 merge SHA；文档只改变交接记录，运行时代码与已验证的 `f89c8bc...` 相同，因此无需重复消耗真实模型额度，但仍必须重新核验接口、deployment、Worker、队列和 SHA。随后才可建立 `dev → main` Release PR，并在生产发布前再次核验旧生产基线。
 
 ## 6. 已知风险与正式后续事项
 
