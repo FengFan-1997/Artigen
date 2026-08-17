@@ -1491,7 +1491,8 @@ class OllamaAgentModelProvider {
                 'AGENT_ARTIFACT_EXTENSION_MISMATCH',
                 'AGENT_ARTIFACT_ROLE_INVALID',
                 'AGENT_ARTIFACT_ROLE_MIME_MISMATCH',
-                'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED'
+                'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED',
+                'AGENT_REPORT_SOURCES_REQUIRED'
               ].includes(error?.code)
             );
             const correctableShellOriginError = (
@@ -1576,7 +1577,13 @@ class OllamaAgentModelProvider {
                   verifier: String(error?.details?.verifier || '').slice(0, 500),
                   correction: artifactRepairRequired
                     ? 'Use sandbox_shell to create or repair the file and verify it opens successfully, then call declare_artifact again with the exact path.'
-                    : 'Correct the declaration fields and call declare_artifact again. Use only observed sources and a supported role, MIME type, filename, and extension.'
+                    : error?.code === 'AGENT_REPORT_SOURCES_REQUIRED'
+                      ? [
+                          'A PDF report requires a non-empty sources array.',
+                          'Retry declare_artifact with at least one exact HTTPS page this run actually observed through browser_dom or a connector.',
+                          'Reuse the same observed source list as the editable report; never invent a URL.'
+                        ].join(' ')
+                      : 'Correct the declaration fields and call declare_artifact again. Use only observed sources and a supported role, MIME type, filename, and extension.'
                 })
               };
             }

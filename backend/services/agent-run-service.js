@@ -39,6 +39,29 @@ const ACTIVE_STATUSES = new Set([
   'verifying'
 ]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const fingerprintsEqual = (left, right) => {
+  if (left == null || right == null) return left == null && right == null;
+  const leftBuffer = Buffer.isBuffer(left) ? left : Buffer.from(left);
+  const rightBuffer = Buffer.isBuffer(right) ? right : Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length &&
+    crypto.timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+const nextConsecutiveFailureCount = ({
+  currentCount = 0,
+  currentStatus,
+  currentFingerprint = null,
+  previousStatus = null,
+  previousFingerprint = null
+} = {}) => {
+  if (currentStatus === 'succeeded') return 0;
+  if (currentStatus !== 'failed') return Number(currentCount || 0);
+  const repeated = previousStatus === 'failed' &&
+    fingerprintsEqual(previousFingerprint, currentFingerprint);
+  return repeated ? Math.min(2, Number(currentCount || 0) + 1) : 1;
+};
+
 const ALLOWED_TRANSITIONS = Object.freeze({
   draft: new Set(['queued', 'cancelled']),
   queued: new Set(['provisioning', 'paused', 'cancelled', 'failed']),
@@ -1876,6 +1899,27 @@ const createAgentRunService = ({
     }
     const sequence = Number(run.rows[0].step_count || 0) + 1;
     if (sequence > config.maxSteps) throw new ApiError(409, 'AGENT_STEP_LIMIT_REACHED');
+    const previousStep = status === 'failed'
+      ? await client.query(
+          `SELECT status,action_fingerprint
+             FROM agent_steps
+            WHERE run_id=$1
+              AND subagent_id IS NOT DISTINCT FROM $2::uuid
+            ORDER BY sequence DESC
+            LIMIT 1`,
+          [runId, subagentId]
+        )
+      : { rows: [] };
+    const previous = previousStep.rows[0] || {};
+    const nextFailureCount = nextConsecutiveFailureCount({
+      currentCount: subagent
+        ? subagent.consecutive_failures
+        : run.rows[0].consecutive_failures,
+      currentStatus: status,
+      currentFingerprint: actionFingerprint,
+      previousStatus: previous.status,
+      previousFingerprint: previous.action_fingerprint
+    });
     const step = await client.query(
       `INSERT INTO agent_steps
         (run_id,subagent_id,sequence,role,status,tool_name,action_fingerprint,risk_level,
@@ -1901,29 +1945,23 @@ const createAgentRunService = ({
       await client.query(
         `UPDATE agent_subagents
             SET step_count=step_count+1,
-                consecutive_failures=CASE
-                  WHEN $2='failed' THEN LEAST(2,consecutive_failures+1)
-                  WHEN $2='succeeded' THEN 0
-                  ELSE consecutive_failures
-                END,
+                consecutive_failures=$2,
                 updated_at=now()
           WHERE id=$1`,
-        [subagentId, status]
+        [subagentId, nextFailureCount]
       );
     }
     await client.query(
       `UPDATE agent_runs
           SET step_count=$2,
               consecutive_failures=CASE
-                WHEN $5::boolean THEN consecutive_failures
-                WHEN $4='failed' THEN LEAST(2,consecutive_failures+1)
-                WHEN $4='succeeded' THEN 0
-                ELSE consecutive_failures
+                WHEN $4::boolean THEN consecutive_failures
+                ELSE $5
               END,
               lease_expires_at=clock_timestamp()+($3::text || ' seconds')::interval,
               updated_at=now()
         WHERE id=$1`,
-      [runId, sequence, config.leaseSeconds, status, Boolean(subagentId)]
+      [runId, sequence, config.leaseSeconds, Boolean(subagentId), nextFailureCount]
     );
     await insertEvent(client, {
       runId,
@@ -3084,6 +3122,7 @@ module.exports = {
   normalizeDeliverables,
   normalizeObjective,
   normalizeDelegatedTasks,
+  nextConsecutiveFailureCount,
   publicArtifact,
   publicEvent,
   publicRun,
