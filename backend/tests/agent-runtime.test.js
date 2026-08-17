@@ -2235,7 +2235,7 @@ test('parent stops after storage reports a repeated verified artifact declaratio
   const responses = [
     call('md', declaration('report.md', 'editable', 'text/markdown')),
     call('pdf', declaration('report.pdf', 'pdf', 'application/pdf')),
-    call('md-again', declaration('report.md', 'editable', 'text/markdown')),
+    call('md-again', declaration('report.md', 'source', 'text/markdown')),
     {
       id: 'chat-artifact-dedupe-final',
       choices: [{ message: { role: 'assistant', content: 'Both verified files are ready.' } }],
@@ -2269,10 +2269,14 @@ test('parent stops after storage reports a repeated verified artifact declaratio
       updatePlan: async ({ steps }) => ({ accepted: true, steps }),
       declareArtifact: async (args) => {
         declarationCalls += 1;
+        const duplicate = declarationCalls === 3;
         return {
-          artifactId: `artifact-${args.role}`,
+          artifactId: duplicate ? 'artifact-editable' : `artifact-${args.role}`,
+          role: duplicate ? 'editable' : args.role,
+          filename: args.filename,
+          mimeType: args.mimeType,
           verificationStatus: 'passed',
-          alreadyRegistered: declarationCalls === 3
+          alreadyRegistered: duplicate
         };
       },
       saveModelState: async (state) => savedStates.push(structuredClone(state)),
@@ -2493,15 +2497,17 @@ test('artifact ingestion reuses a verified content match after idempotent storag
     sandboxName: 'sandbox-test',
     declaration: {
       path: '/tmp/artigen-workspace/report.md',
-      role: 'editable',
+      role: 'source',
       filename: 'report.md',
       mimeType: 'text/markdown',
       sources: []
     }
   });
   assert.equal(artifact.artifactId, 'existing-artifact');
+  assert.equal(artifact.role, 'editable');
   assert.equal(artifact.alreadyRegistered, true);
   assert.equal(registerCalls, 0);
+  assert.equal(lookup.role, undefined);
   assert.equal(lookup.sha256, crypto.createHash('sha256').update(bytes).digest('hex'));
   assert.equal(lookup.assetId, '33333333-3333-4333-8333-333333333333');
 });

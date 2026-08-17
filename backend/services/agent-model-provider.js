@@ -1396,7 +1396,9 @@ class OllamaAgentModelProvider {
         const artifact = await callbacks.declareArtifact(args);
         const declared = {
           artifact_id: String(artifact.artifactId || ''),
-          ...declarationIdentity,
+          role: String(artifact.role || declarationIdentity.role),
+          mime_type: String(artifact.mimeType || declarationIdentity.mime_type),
+          filename: String(artifact.filename || declarationIdentity.filename),
           verification_status: String(artifact.verificationStatus || '')
         };
         declaredArtifacts = [
