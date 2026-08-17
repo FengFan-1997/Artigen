@@ -221,6 +221,7 @@ const {
   normalizeCapabilities,
   normalizeDeliverables,
   normalizeDelegatedTasks,
+  nextConsecutiveFailureCount,
   objectivePublicFields,
   publicRun,
   publicSubagent
@@ -1083,6 +1084,39 @@ test('loop breakers stop repeated failures, stalled screenshots, replans and ste
   assert.throws(() => assertLoopBudget({ stepCount: 2, replanCount: 3 }), {
     code: 'AGENT_REPLAN_LIMIT_REACHED'
   });
+});
+
+test('failure breaker counts only the same failed action as repeated', () => {
+  const first = crypto.createHash('sha256').update('first action').digest();
+  const second = crypto.createHash('sha256').update('second action').digest();
+  assert.equal(nextConsecutiveFailureCount({
+    currentCount: 1,
+    currentStatus: 'failed',
+    currentFingerprint: second,
+    previousStatus: 'failed',
+    previousFingerprint: first
+  }), 1);
+  assert.equal(nextConsecutiveFailureCount({
+    currentCount: 1,
+    currentStatus: 'failed',
+    currentFingerprint: second,
+    previousStatus: 'failed',
+    previousFingerprint: second
+  }), 2);
+  assert.equal(nextConsecutiveFailureCount({
+    currentCount: 1,
+    currentStatus: 'failed',
+    currentFingerprint: null,
+    previousStatus: 'failed',
+    previousFingerprint: null
+  }), 2);
+  assert.equal(nextConsecutiveFailureCount({
+    currentCount: 2,
+    currentStatus: 'succeeded',
+    currentFingerprint: second,
+    previousStatus: 'failed',
+    previousFingerprint: second
+  }), 0);
 });
 
 test('production Agent runtime fails closed without live credentials and a pinned image', () => {
@@ -2754,6 +2788,93 @@ test('SiliconFlow repairs a missing or invalid artifact before redeclaring it', 
   )));
   assert.ok(states.some((state) => (
     state.artifactValidationAttempts === 1 && state.artifactRepairRequired === true
+  )));
+});
+
+test('SiliconFlow corrects a PDF report declaration that omits observed sources', async () => {
+  const source = {
+    title: 'Observed source',
+    url: 'https://example.com/report'
+  };
+  const declaration = (sources) => ({
+    path: '/tmp/artigen-workspace/report.pdf',
+    role: 'pdf',
+    filename: 'report.pdf',
+    mimeType: 'application/pdf',
+    sources
+  });
+  const call = (id, args) => ({
+    id: `chat-report-sources-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-report-sources-${id}`,
+          type: 'function',
+          function: { name: 'declare_artifact', arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: {}
+  });
+  const responses = [
+    call('missing', declaration([])),
+    call('corrected', declaration([source])),
+    {
+      id: 'chat-report-sources-final',
+      choices: [{ message: { role: 'assistant', content: 'The cited PDF is verified.' } }],
+      usage: {}
+    }
+  ];
+  const requests = [];
+  let declarations = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Deliver the already-created cited PDF report.',
+    capabilities: { files: true, browser: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      declareArtifact: async (args) => {
+        declarations += 1;
+        if (declarations === 1) {
+          throw new ApiError(422, 'AGENT_REPORT_SOURCES_REQUIRED');
+        }
+        return {
+          artifactId: 'artifact-cited-pdf',
+          role: args.role,
+          filename: args.filename,
+          mimeType: args.mimeType,
+          verificationStatus: 'passed'
+        };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'The cited PDF is verified.');
+  assert.equal(declarations, 2);
+  assert.equal(requests.length, 3);
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('AGENT_REPORT_SOURCES_REQUIRED') &&
+    message.content.includes('non-empty sources array')
   )));
 });
 
