@@ -349,8 +349,11 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 - 真实 Run `f10e927f-184e-4e39-85f6-447f0daf4276` 的 3 个子 Agent 全部成功，子工具仅为 `update_plan` 与 `sandbox_shell`；父 Agent 实际浏览 `example.com` 并生成 Markdown/PDF。Neon `ECONNRESET` 触发 Worker 恢复后，已完成子任务没有重跑，但父模型重复声明相同产物，产生多条 artifact/verification 记录并继续累计费用。该 Run 已安全取消，最终 charged=17，hold 仅结算一次且剩余额度已释放。
 - 本地后续修复将产物摄取改为内容幂等：对象存储先执行可修复的幂等写入，再按 run、role、filename、MIME、SHA-256 与 asset 查找已通过验证的产物；重复内容不再新增 artifact 或 verifier step。Provider 会纠正重复声明，第三次仍忽略时以 `AGENT_ARTIFACT_DECLARATION_LOOP` fail-closed，不能伪造任务完成。
 - 修复后的最终 `pnpm check:core` 退出码 0：前端 216/216、后端 451 tests（410 passed / 41 个外部环境条件跳过）、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。此前同一修复的完整 Playwright 为 465 passed / 3 skipped / 0 failed；另用本地 PostgreSQL 16 与固定 CI digest 的 MinIO 跑完后端外部集成 450/450、0 skip、0 fail，精确临时数据库与容器已清理。
+- 内容幂等修复经 PR [#70](https://github.com/FengFan-1997/Artigen/pull/70) 全门禁通过后合入 `dev`，merge SHA `5218a564e27f4c896ee557ffe98e355903a0ff2d`；Render DEV deployment `dep-da1ffu2d0e5s73barg40` 已 `live`，`/api/meta`、`/readyz` 与两个 Vercel deployment 均核验为同一 SHA。Mac Worker 也从精确 worktree `Artigen-worker-dev-5218a56` 启动并恢复全部 readiness。
+- 同 SHA 真实 Run `fd1ec9ab-c982-4fcb-b235-a7f18865e89f` 的 3 个子 Agent 全部成功且只使用 `update_plan`、`sandbox_shell`；父 Agent 实际观察 `example.com`，随后 Qwen 在最终 Markdown 中擅自加入未观察、未授权的 W3C/Wikipedia URL。离线 Shell origin 防线正确以 `AGENT_BROWSER_ORIGIN_FORBIDDEN` 阻止写入；Run failed、charged=0、hold=released、artifacts=0。这证明安全门有效，但也暴露模型缺少受限纠正路径。
+- 后续本地修复不会放宽 origin 或 Shell 权限：安全拒绝仍发生在执行前，只将结构化错误反馈给 Qwen，要求删除未观察 URL 与相应事实；最多纠正两次，第三次仍 fail-closed。新增测试同时覆盖纠正后成功和连续忽略后终止；最终 `pnpm check:core` 再次退出 0，前端 216/216、后端 452 tests（411 passed / 41 external skips）、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。
 
-发布门槛仍未满足：必须先将内容幂等修复经 PR 合入 `dev`，用 Render、Vercel 与 Mac Worker 的同一不可变 SHA 重跑真实 Qwen3 三子 Agent、单独取消、父任务继续、单次结算、恰好两项文件验证和队列归零 smoke；随后才能建立 `dev → main` Release PR。
+发布门槛仍未满足：必须先将受限 Shell origin 纠正修复经 PR 合入 `dev`，用 Render、Vercel 与 Mac Worker 的同一不可变 SHA 重跑真实 Qwen3 三子 Agent、单独取消、父任务继续、单次结算、恰好两项文件验证和队列归零 smoke；随后才能建立 `dev → main` Release PR。
 
 ## 6. 已知风险与正式后续事项
 
