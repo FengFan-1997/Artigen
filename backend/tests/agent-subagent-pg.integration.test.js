@@ -101,6 +101,54 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
       childFailures: 2
     });
 
+    const firstParentFingerprint = crypto.createHash('sha256')
+      .update('missing input conversion')
+      .digest();
+    const recoveryFingerprint = crypto.createHash('sha256')
+      .update('inspect missing input')
+      .digest();
+    await service.appendStep({
+      runId,
+      workerId,
+      role: 'executor',
+      status: 'failed',
+      toolName: 'sandbox_shell',
+      summary: 'Conversion failed because the editable source is missing',
+      actionFingerprint: firstParentFingerprint
+    });
+    await service.appendStep({
+      runId,
+      workerId,
+      role: 'executor',
+      status: 'failed',
+      toolName: 'sandbox_shell',
+      summary: 'A different recovery action checks the missing source',
+      actionFingerprint: recoveryFingerprint
+    });
+    const distinctFailures = await service.getControlState({ runId });
+    assert.equal(Number(distinctFailures.consecutive_failures), 1);
+    await service.appendStep({
+      runId,
+      workerId,
+      role: 'executor',
+      status: 'failed',
+      toolName: 'sandbox_shell',
+      summary: 'The same recovery action failed again',
+      actionFingerprint: recoveryFingerprint
+    });
+    const repeatedFailure = await service.getControlState({ runId });
+    assert.equal(Number(repeatedFailure.consecutive_failures), 2);
+    await service.appendStep({
+      runId,
+      workerId,
+      role: 'planner',
+      status: 'succeeded',
+      toolName: 'update_plan',
+      summary: 'Parent chooses a new recovery plan'
+    });
+    const recovered = await service.getControlState({ runId });
+    assert.equal(Number(recovered.consecutive_failures), 0);
+
     assert.equal((await service.recordUsage({
       runId,
       workerId,
