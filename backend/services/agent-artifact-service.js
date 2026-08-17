@@ -118,7 +118,8 @@ const inferRequiredDeliverables = (objective) => {
 };
 
 const requiredDeliverablesSatisfied = (artifacts, requiredDeliverables) => {
-  const rows = Array.isArray(artifacts) ? artifacts : [];
+  const rows = (Array.isArray(artifacts) ? artifacts : [])
+    .filter((artifact) => artifact?.verification_status === 'passed');
   const required = Array.isArray(requiredDeliverables) ? requiredDeliverables : [];
   const has = (predicate) => rows.some(predicate);
   return required.every((type) => {

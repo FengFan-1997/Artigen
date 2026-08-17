@@ -1619,8 +1619,28 @@ class OllamaAgentModelProvider {
 
       assertModelDeadline(deadlineAt);
       await callbacks.checkControl?.();
+      const deliverablesComplete = (
+        toolProfile === 'parent' &&
+        requiredDeliverables.length > 0 &&
+        (!delegationRequired || delegationCompleted) &&
+        requiredDeliverablesSatisfied(declaredArtifacts, requiredDeliverables)
+      );
+      if (deliverablesComplete) {
+        messages.push({
+          role: 'user',
+          content: [
+            'Every explicitly requested deliverable is already registered and verified by the server.',
+            'Do not update the plan, mutate files, browse, delegate, or call any other tool.',
+            'Respond now with one concise completion summary that names the verified files.'
+          ].join(' ')
+        });
+      }
       const request = this.buildChatPayload(messages, capabilities, toolProfile);
-      if (delegationRequired && !delegationCompleted) {
+      if (deliverablesComplete) {
+        delete request.tools;
+        delete request.parallel_tool_calls;
+        request.tool_choice = 'none';
+      } else if (delegationRequired && !delegationCompleted) {
         request.tool_choice = this.delegationToolChoice();
       } else if (planValidationAttempts > 0) {
         request.tool_choice = {
@@ -1666,16 +1686,28 @@ class OllamaAgentModelProvider {
         role: 'assistant',
         content: String(response.message.content || '')
       };
+      const assistantText = assistant.content.trim();
       const returnedCalls = Array.isArray(response.message.tool_calls)
         ? response.message.tool_calls
         : [];
       // Some OpenAI-compatible providers ignore parallel_tool_calls=false. Keep only
       // the first call in the assistant history so each tool result has a complete,
       // protocol-valid request/response pair and every action is policy-checked in order.
-      const calls = returnedCalls.slice(0, 1);
+      const calls = deliverablesComplete ? [] : returnedCalls.slice(0, 1);
       if (calls.length) assistant.tool_calls = calls;
       messages.push(assistant);
-      text = assistant.content.trim() || text;
+      text = assistantText || text;
+      if (deliverablesComplete && (returnedCalls.length > 0 || !assistantText)) {
+        const filenames = [...new Set(
+          declaredArtifacts
+            .filter((artifact) => artifact.verification_status === 'passed')
+            .map((artifact) => artifact.filename)
+            .filter(Boolean)
+        )];
+        text = filenames.length
+          ? `Completed and verified: ${filenames.join(', ')}.`
+          : 'All requested deliverables are registered and verified.';
+      }
 
       if (!calls.length) {
         if (delegationRequired && !delegationCompleted) {

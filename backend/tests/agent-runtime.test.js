@@ -2209,7 +2209,7 @@ test('parent cannot finish before every required report artifact is declared', a
   )));
 });
 
-test('parent stops after storage reports a repeated verified artifact declaration', async () => {
+test('parent removes every tool after all required artifacts are verified', async () => {
   const declaration = (filename, role, mimeType) => ({
     path: `/tmp/artigen-workspace/${filename}`,
     role,
@@ -2235,10 +2235,26 @@ test('parent stops after storage reports a repeated verified artifact declaratio
   const responses = [
     call('md', declaration('report.md', 'editable', 'text/markdown')),
     call('pdf', declaration('report.pdf', 'pdf', 'application/pdf')),
-    call('md-again', declaration('report.md', 'source', 'text/markdown')),
     {
       id: 'chat-artifact-dedupe-final',
-      choices: [{ message: { role: 'assistant', content: 'Both verified files are ready.' } }],
+      choices: [{ message: {
+        role: 'assistant',
+        content: 'I will rewrite the verified report before finishing.',
+        tool_calls: [{
+          id: 'call-artifact-dedupe-ignored-plan',
+          type: 'function',
+          function: {
+            name: 'update_plan',
+            arguments: JSON.stringify({
+              explanation: 'Unnecessary extra work',
+              steps: [
+                { step: 'Rewrite verified report', status: 'in_progress' },
+                { step: 'Declare it again', status: 'pending' }
+              ]
+            })
+          }
+        }]
+      } }],
       usage: { prompt_tokens: 10, completion_tokens: 5 }
     }
   ];
@@ -2269,14 +2285,13 @@ test('parent stops after storage reports a repeated verified artifact declaratio
       updatePlan: async ({ steps }) => ({ accepted: true, steps }),
       declareArtifact: async (args) => {
         declarationCalls += 1;
-        const duplicate = declarationCalls === 3;
         return {
-          artifactId: duplicate ? 'artifact-editable' : `artifact-${args.role}`,
-          role: duplicate ? 'editable' : args.role,
+          artifactId: `artifact-${args.role}`,
+          role: args.role,
           filename: args.filename,
           mimeType: args.mimeType,
           verificationStatus: 'passed',
-          alreadyRegistered: duplicate
+          alreadyRegistered: false
         };
       },
       saveModelState: async (state) => savedStates.push(structuredClone(state)),
@@ -2284,16 +2299,15 @@ test('parent stops after storage reports a repeated verified artifact declaratio
       recordUsage: async () => {}
     }
   });
-  assert.equal(declarationCalls, 3);
-  assert.equal(requests.length, 4);
-  assert.equal(requests[3].tool_choice, undefined);
-  assert.ok(requests[3].messages.some((message) => (
-    message.role === 'user' && message.content.includes('already registered and verified')
+  assert.equal(declarationCalls, 2);
+  assert.equal(requests.length, 3);
+  assert.equal(requests[2].tool_choice, 'none');
+  assert.equal('tools' in requests[2], false);
+  assert.ok(requests[2].messages.some((message) => (
+    message.role === 'user' && message.content.includes('already registered and verified by the server')
   )));
-  assert.equal(result.text, 'Both verified files are ready.');
+  assert.equal(result.text, 'Completed and verified: report.md, report.pdf.');
   assert.ok(savedStates.some((state) => (
-    state.artifactDuplicateAttempts === 1 &&
-    state.artifactDuplicateNoticePending === false &&
     state.declaredArtifacts.length === 2
   )));
 });
@@ -2379,7 +2393,8 @@ test('parent resumes a committed artifact call through storage content idempoten
   });
   assert.equal(declarationCalls, 1);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].tool_choice, undefined);
+  assert.equal(requests[0].tool_choice, 'none');
+  assert.equal('tools' in requests[0], false);
   assert.ok(requests[0].messages.some((message) => (
     message.role === 'user' && message.content.includes('already registered and verified')
   )));
@@ -2432,9 +2447,9 @@ test('parent fails closed when a model ignores two duplicate artifact correction
     })
   });
   await assert.rejects(provider.execute({
-    objective: 'Create an editable report and a PDF report.',
+    objective: 'Create an editable report, a PDF report, and an offline website package.',
     capabilities: { files: true, shell: true },
-    deliverables: ['report'],
+    deliverables: ['report', 'website'],
     maxSteps: 10,
     callbacks: {
       updatePlan: async ({ steps }) => ({ accepted: true, steps }),
@@ -3361,18 +3376,20 @@ test('deliverable requirements are derived deterministically for independent com
   assert.deepEqual(inferRequiredDeliverables('Generate a campaign poster image'), ['image']);
   assert.deepEqual(inferRequiredDeliverables('分析参考图片，不要生成图片或视觉稿'), []);
   const artifacts = [
-    { role: 'editable', mime_type: 'text/plain' },
-    { role: 'pdf', mime_type: 'application/pdf' },
+    { role: 'editable', mime_type: 'text/plain', verification_status: 'passed' },
+    { role: 'pdf', mime_type: 'application/pdf', verification_status: 'passed' },
     {
       role: 'editable',
-      mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      verification_status: 'passed'
     },
     {
       role: 'editable',
-      mime_type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      mime_type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      verification_status: 'passed'
     },
-    { role: 'preview', mime_type: 'application/pdf' },
-    { role: 'website', mime_type: 'application/zip' },
+    { role: 'preview', mime_type: 'application/pdf', verification_status: 'passed' },
+    { role: 'website', mime_type: 'application/zip', verification_status: 'passed' },
     { role: 'image', mime_type: 'image/png', verification_status: 'passed' }
   ];
   assert.equal(requiredDeliverablesSatisfied(
@@ -3391,6 +3408,10 @@ test('deliverable requirements are derived deterministically for independent com
     [{ role: 'image', mime_type: 'image/jpeg', verification_status: 'failed' }],
     ['image']
   ), false);
+  assert.equal(requiredDeliverablesSatisfied([
+    { role: 'editable', mime_type: 'text/markdown', verification_status: 'passed' },
+    { role: 'pdf', mime_type: 'application/pdf', verification_status: 'failed' }
+  ], ['report']), false);
 });
 
 test('an image-only run can finish once and settles its budget only once', async () => {
