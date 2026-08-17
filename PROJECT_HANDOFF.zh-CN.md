@@ -287,6 +287,89 @@ DEV 真实依赖与部署验收（2026-08-13）：
 - 上述演示文稿否定修复经 PR [#47](https://github.com/FengFan-1997/Artigen/pull/47) 合入 `dev`，DEV 真实 Qwen3 smoke 的 `plan.deliverables` 精确为 `["report"]`；PR [#48](https://github.com/FengFan-1997/Artigen/pull/48) 的 Core、全部浏览器分片与 Release gate 通过后合入 `main`。生产 SHA `66403864d238cfa487b730d9181e4186c1c12a03` 已发布为 Render `dep-d9v9kau417fc73cffvs0` 和 Vercel `4jTbuAmqLffSjWZ6MVbJ18WhFDHE`，Mac production Worker 同 SHA 重启；`/api/meta`、`/readyz`、Agent、对话入口和两个图片模型状态接口均重新核验通过。
 - 同 SHA 的生产复跑进一步暴露规划器会把“不要图片或网站原型”中的字面量接受为正向 `image` / `website`：conversation `5432162a-350d-447f-bb5c-5bd6ee156a1f` / execution `9772cf59-4867-40ad-8d40-8bf03be634c0` / Run `f53da5f0-5a2c-456c-9456-e0db499dd39a` 在 0/120 步时立即取消，execution 与 Run 均为 `cancelled`、实际消耗 0。后续修复把报告、表格、演示、网站和图片全部改为服务端正向意图 allowlist，并统一过滤中英文否定范围；未正向要求的规划器候选不能再扩大交付物或图片能力。该修复完成发布和生产报告验收前不得把最终文件任务标记为通过。
 
+### 5.6 Codex 式统一工作台与真实子 Agent（实现完成，尚未部署）
+
+2026-08-14 从最新 `origin/dev` SHA `9549cfdc2f49de3ccf5bad9a9a95cb8a1fae58ec`
+建立 `codex/codex-style-agent-workspace`。本节记录已经实现并完成本地验证、但尚未合入
+`dev` 或发布到生产的架构；生产状态必须以本节末尾的实时基线为准。
+
+持久实现：
+
+- `/artigen/create`、`/artigen/agent` 与 `/artigen/agent/runs/:runId` 使用同一个专业三栏工作台壳层：左侧历史与设置，中间持续对话，右侧持续展示环境、计划、子 Agent、电脑和文件。默认暗色，同时支持浅色与系统主题；酸性绿只用于执行状态、主动作和焦点。
+- 桌面左右栏可折叠和调整宽度，本机保存偏好；中等宽度使用右侧覆盖层，移动端使用全高抽屉。命令面板、跳转主内容、焦点恢复、抽屉焦点陷阱、`aria-live`、44px 触控目标和 reduced motion 均已纳入统一组件。
+- 新增迁移 `022_agent_subagents`：保存父 Run 下最多三个子 Agent 的公开状态、实际用量、步骤和文件清单；目标与 Qwen checkpoint 使用独立 AES-256-GCM 表加密保存。`agent_steps` 和 append-only `agent_events` 新增可空 `subagent_id`，旧 Run 返回空数组并保持兼容。
+- 父模型新增严格 Schema 工具 `delegate_tasks`。每个 Run 最多创建三个深度固定为 1 的独立 `Qwen/Qwen3-8B` 上下文；每个子 Agent 最多 20 个工具步骤、10 分钟，使用自己的 UUID 工作目录，并只读挂载服务端确认过的本 Run 输入。
+- 子 Agent 工具目录只包含计划更新与离线 Shell，禁止浏览器、电脑、连接器、图片生成、审批、最终交付声明和再次委派。父 Agent 独占浏览器、电脑、外部写审批、Kolors 和最终文件验证；所有图片继续只能由 `Kwai-Kolors/Kolors` 生成。
+- 父 Run 最多并行三个子任务；单个子 Agent 失败或取消不会自动终止父任务，父 Run 取消会级联取消全部子任务。Worker 从加密 checkpoint 恢复已完成的子任务，避免重复模型调用和重复计费。
+- 子 Agent 没有固定启动费；Qwen3 实际用量按 actor 聚合进父 Run，继续只产生一个预算冻结、一次结算和一次余额释放。服务端继续执行 120 步、运行时长和最高预算边界。
+- Mac Worker 安装器要求通过 `ARTIGEN_AGENT_SUBAGENTS_ENABLED=true` 显式写入 LaunchAgent；运行脚本只有看到该值时才把 `subagents` 加入公共能力。暗发布和普通安装继续默认关闭，避免只开启 Render 入口却让 Worker 权限状态漂移。
+- 公共 Run 类型新增 `AgentSubagent[]`；SSE 新增 `subagent.created|started|progress|succeeded|failed|cancelled`；新增幂等的单独取消接口 `POST /api/agent-runs/:runId/subagents/:subagentId/cancel`。
+- `/api/agent/status` 在本代码发布后将新增 `subagentsEnabled`、`subagentMaxConcurrent` 和 `subagentSandboxMode=shared-v1`。安全开关 `AGENT_SUBAGENTS_ENABLED=false` 以及生产、DEV Render blueprint 默认值保持关闭；仅当服务端开关开启且公共能力包含 `subagents` 时，客户端或模型才能获得委派能力。
+
+本地验证：
+
+- 完整 `pnpm check` 通过；Playwright 六个桌面/移动/平板浏览器项目合计 435 passed / 3 skipped / 0 failed，覆盖三条路由共享壳层、暗色/浅色、右栏五页签、调整宽度、命令面板、审批、电脑接管、子 Agent 取消、文件交付和 360/390/768/1440px 布局。
+- 后端 418 tests：378 passed / 40 条条件跳过 / 0 failed；前端单元 216/216；邮件中继 7/7；Agent 质量集 50/50。
+- 本机 PostgreSQL 迁移、billing、payment、task queue、generation queue、design conversation 与 S3 边界集成共 23 tests：22 passed / 1 条 MinIO 条件跳过 / 0 failed。迁移 `022_agent_subagents` 已通过带锁迁移流程应用到本机开发数据库。
+- 本轮视觉证据保存在 `frontend/.impeccable/review/`；360px 实测曾发现底部输入框遮挡执行卡，已改为消息区与 composer 分离的网格布局，修复后完整浏览器矩阵再次全绿。
+
+2026-08-14 发布前重新核验的生产基线仍是旧代码：GitHub `main`、`/api/meta`、Render live
+deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
+`dpl_CiUTKfiGszkH62R7tZG1San6BfpF` 均对应
+`386e88da4fe04ccf00f0639602bbf3d5afa796e0`。`/readyz`、Agent、对话入口和两种图片
+模式均 HTTP 200，Worker online、浏览器/受限出口/桌面中继 ready、queueDepth=0；当前
+`/api/agent/status` 尚无上述子 Agent 字段，证明本节新代码尚未上线。必须在 PR、DEV 真实
+三子任务 smoke、`dev → main` Release gate、同 SHA 的 Render/Vercel/Mac Worker 发布和
+生产 owner smoke 全部完成后，才能把本节阶段改为“生产已发布”。
+
+### 5.19 2026-08-17 三遍审核后的运行时与工作台硬化（DEV 验收通过，待生产发布）
+
+阶段：PR #69–#74 已合入并发布到 DEV；运行时、三栏工作台、验证后工具锁和真实 Worker 交付要求接线均已通过回归。最终 DEV SHA `f89c8bce6e7826681d0589e3bc7197a557398d63` 已完成“3 个子 Agent 全成功”和“单独取消 1 个子 Agent、父任务继续”两场真实 Qwen3 smoke；下一门槛为正式交接 PR、`dev → main` Release gate 和同一不可变 SHA 的生产发布。生产状态必须以发布前重新核验为准。
+
+- 新增迁移 `023_agent_subagent_runtime_hardening`，为 `agent_subagents` 增加独立 `consecutive_failures`。全局 120 步仍统计父子全部步骤，但子步骤失败只更新对应子 Agent，不再污染父 Run 的重复失败熔断。
+- 并行子 Agent 的模型用量与费用快照改为串行持久化；内存计量、父 Run 数据库费用和恢复下限均采用单调最大值，晚到的旧快照不能覆盖较新的计费状态。
+- `publicSubagent.usage` 以服务端数据库核算的 `credits` 为准，不能被加密 checkpoint JSON 中的旧字段覆盖。
+- readiness 已将 `agent_subagents.consecutive_failures` 纳入迁移契约；同时保留 `asset_upload_sessions` 的既有 10 列检查，避免列数误配导致 readiness 假失败。
+- `/artigen/agent` 中间区已从大型 Hero、预设卡和配置表单改为紧凑欢迎语、统一 Composer 和持续对话；能力、交付格式、允许站点和预算继续由右侧 Inspector 渐进配置。
+- 三栏工作台建立统一可读性与交互下限：桌面元数据最小 11px、正文 14px；移动输入 16px、正文 14px、关键触控目标 44px；附件输入退出 Tab 顺序并具备名称；审批拒绝原因使用关联 label；宽度 separator 支持方向键、Shift、Home/End 和 ARIA 数值；reduced motion 在三浏览器中真实归零。
+- 中间对话只显示澄清、审批、关键总结和交付，子 Agent 技术事件归入 Inspector/审计；审批只保留一个酸性绿推荐主动作，其余动作使用明确语义层级。
+
+本地验证证据：
+
+- 第二轮完整 `pnpm check` 退出码 0：前端单元 216/216；后端 447 tests（446 passed / 1 条既有 MinIO 条件跳过）；邮件中继 7/7；Agent 质量集 50/50；生产构建与初始 JS 预算通过。
+- 真实 PostgreSQL `agent-subagent-pg.integration` 与相关集成共 113/113，通过两次子失败不终止父任务、跨用户取消拒绝、单独取消、费用单调增长和迁移 readiness。
+- Playwright 六个桌面/移动/平板浏览器项目共 468 tests：465 passed / 3 条既有条件跳过 / 0 failed，覆盖 1440/1024/768/390/360px、暗色/浅色/系统主题、200% 等效缩放、键盘全流程、reduced motion、移动横屏、长消息和长文件名。
+- Impeccable 最终自动检测为 `[]`；最终截图保存在 `frontend/.impeccable/review/`，已人工检查桌面/移动工作台、Run 详情和设计对话。
+
+发布与实时证据：
+
+- PR [#69](https://github.com/FengFan-1997/Artigen/pull/69) 已于 2026-08-17 合入 `dev`，merge SHA 为 `1006fcf5edee5bbe8b99be85ad3c55ece81b2215`。Core、8 路 E2E、Release gate 与两个 Vercel Preview 均通过；两个 Cloudflare Workers Preview 仍为已知非门禁失败。
+- Render DEV deployment `dep-da1ab061egvs73a20bq0` 为 `live`，`/api/meta.gitSha` 精确等于 `1006fcf...`；`/readyz` 为 `ok=true` 且数据库迁移为 `023_agent_subagent_runtime_hardening`。Vercel Preview GitHub deployments `5939911696` 与 `5939902153` 均为 `success` 且对应同一 SHA。
+- 用户确认后只将 Karing 从“规则”临时切为“全局”，未修改节点、分流、DNS、系统代理或 Wi-Fi；DEV Worker 随后恢复 online，浏览器、受限出口、桌面中继、subagents 均 ready，queueDepth=0。全部线上工作完成后必须恢复“规则”并重新核验。
+- 真实 Run `f10e927f-184e-4e39-85f6-447f0daf4276` 的 3 个子 Agent 全部成功，子工具仅为 `update_plan` 与 `sandbox_shell`；父 Agent 实际浏览 `example.com` 并生成 Markdown/PDF。Neon `ECONNRESET` 触发 Worker 恢复后，已完成子任务没有重跑，但父模型重复声明相同产物，产生多条 artifact/verification 记录并继续累计费用。该 Run 已安全取消，最终 charged=17，hold 仅结算一次且剩余额度已释放。
+- 本地后续修复将产物摄取改为内容幂等：对象存储先执行可修复的幂等写入，再按 run、role、filename、MIME、SHA-256 与 asset 查找已通过验证的产物；重复内容不再新增 artifact 或 verifier step。Provider 会纠正重复声明，第三次仍忽略时以 `AGENT_ARTIFACT_DECLARATION_LOOP` fail-closed，不能伪造任务完成。
+- 修复后的最终 `pnpm check:core` 退出码 0：前端 216/216、后端 451 tests（410 passed / 41 个外部环境条件跳过）、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。此前同一修复的完整 Playwright 为 465 passed / 3 skipped / 0 failed；另用本地 PostgreSQL 16 与固定 CI digest 的 MinIO 跑完后端外部集成 450/450、0 skip、0 fail，精确临时数据库与容器已清理。
+- 内容幂等修复经 PR [#70](https://github.com/FengFan-1997/Artigen/pull/70) 全门禁通过后合入 `dev`，merge SHA `5218a564e27f4c896ee557ffe98e355903a0ff2d`；Render DEV deployment `dep-da1ffu2d0e5s73barg40` 已 `live`，`/api/meta`、`/readyz` 与两个 Vercel deployment 均核验为同一 SHA。Mac Worker 也从精确 worktree `Artigen-worker-dev-5218a56` 启动并恢复全部 readiness。
+- 同 SHA 真实 Run `fd1ec9ab-c982-4fcb-b235-a7f18865e89f` 的 3 个子 Agent 全部成功且只使用 `update_plan`、`sandbox_shell`；父 Agent 实际观察 `example.com`，随后 Qwen 在最终 Markdown 中擅自加入未观察、未授权的 W3C/Wikipedia URL。离线 Shell origin 防线正确以 `AGENT_BROWSER_ORIGIN_FORBIDDEN` 阻止写入；Run failed、charged=0、hold=released、artifacts=0。这证明安全门有效，但也暴露模型缺少受限纠正路径。
+- 上述受限 Shell origin 纠正经 PR [#71](https://github.com/FengFan-1997/Artigen/pull/71) 全门禁通过后合入 `dev`，merge SHA `fc407cae18301303aa76a47ab336d7fc843f4daa`；Render DEV deployment `dep-da1fs3u7bikc73cmk8t0`、两个 Vercel deployment 与 Mac Worker 精确 worktree `Artigen-worker-dev-fc407ca` 均对应同一 SHA。`/api/meta`、`/readyz`、Agent Worker、浏览器、受限出口、桌面中继和队列均重新核验通过。
+- 同 SHA 的真实 Run `4dea52d4-6981-4a9c-bed0-2b5192dd262b` 创建 research `a0c4858e-081a-4f49-98a6-8f6910d87ff3`、analysis `4976715f-d21f-4df2-9010-8fed70170a08`、drafting `bacf9592-eae2-4902-8cfd-64424d59e1e1` 三个子 Agent，全部 succeeded 且只使用 `update_plan`、`sandbox_shell`；父 Agent 完成浏览、Markdown 与 PDF。Run 本身 `succeeded`、estimated=`13.6738`、charged=14（3 点免费 + 11 点钱包），一个 hold 只结算一次并释放剩余 36 点，活动队列最终为 0。
+- 该 Run 的严格 smoke 仍判定失败：Qwen 将同一 Markdown 先后声明为 `editable` / `source`，将同一 PDF 先后声明为 `pdf` / `preview`，数据库因此出现 4 条 artifact；两组分别共享同一 asset、文件名、MIME 与 SHA-256，证明是角色别名重复而不是四份交付物。
+- 当前本地修复将已验证内容匹配收紧为同一 Run 下的 `filename + MIME + SHA-256 + asset`，不再把请求角色作为物理文件身份；对象存储修复仍先执行，第一次通过服务端验证的角色保持权威。最终登记在事务内锁定父 Run 行并再次检查相同内容，旧 Worker 与恢复 Worker 短暂重叠也不能同时插入。不同文件名、不同字节或不同 asset 不会被折叠。Provider 的已声明状态也以服务端返回的角色、MIME 与文件名为准，避免模型用别名覆盖真实记录。
+- 跨角色修复的 Agent runtime 95/95、真实 PostgreSQL `agent-subagent-pg.integration` 1/1 均通过；最终 `pnpm check:core` 退出码 0：前端 216/216、后端 452 tests（411 passed / 41 external skips）、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。精确临时数据库 `artigen_role_dedupe_20260817` 已删除并确认不存在。
+- 跨角色修复经 PR [#72](https://github.com/FengFan-1997/Artigen/pull/72) 的 Core、9 个 E2E 分片和 Release gate 全绿后合入 `dev`，merge SHA `c531db7fdb3abed14ab08bcc70d0612fd82953e0`。Render DEV deployment `dep-da1gcobncjis739e8rig` 为 `live`，两个 Vercel deployment success；`/api/meta`、`/readyz`、Qwen3/Kolors、S3、Agent 与对话入口均重新核验为同一 SHA。Mac Worker 精确 worktree 为 `Artigen-worker-dev-c531db7`，共享 Cua Python 环境链接补齐后 online，浏览器、受限出口、桌面中继和 subagents ready，queue=0。
+- 同 SHA 的成功场景 Run `f8d1aa8a-751c-4084-8542-366a03e9d0bf` 创建 research `0f86b0f2-9db8-4da2-af6f-524b531f192e`、analysis `eaf6684b-ddd7-4437-a6e1-e31c72b67169`、drafting `a1210a48-3ff8-42ff-bc8c-5631efdf0d44`，三者分别 5/3/5 步并全部 succeeded；父 Agent 完成实际浏览与文件生成，数据库恰好只有一份 verified Markdown 和一份 verified PDF，证明跨角色内容幂等已生效。
+- 该 Run 仍未通过严格 smoke：两项交付物已在 step 22/23 验证后，Qwen 又两次更新父计划并重写已交付 Markdown，最终以 `AGENT_REPLAN_LIMIT_REACHED` failed。`replan_count=3`、estimated=`12.9216`、charged=0、50 点 hold 全额 released、queue=0；不能通过提高 replan limit 掩盖“验证后继续改文件”。
+- 当前本地修复只在所有显式交付物均为服务端 `verification_status=passed`、且必需委派已完成后生效：下一模型回合删除整个工具目录并设置 `tool_choice=none`，要求只给最终摘要；若 Provider 仍返回 tool call，则不执行并使用已验证文件名生成确定性摘要。交付物未齐、验证失败或委派未完成时不会触发，现有缺失交付、重复声明和 fail-closed 边界继续保留。
+- 验证后工具锁定修复的 Agent runtime 95/95，最终 `pnpm check:core` 退出码 0：前端 216/216、后端 452 tests（411 passed / 41 external skips）、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。
+- 验证后工具锁经 PR [#73](https://github.com/FengFan-1997/Artigen/pull/73) 全门禁通过后合入 `dev`，merge SHA `fadb9ce4c33b79a9e696f365224413dd03c6c1ac`。同 SHA success Run `ca3e306d-3eb1-475a-b907-c7775dd7e3f5` 的三个子 Agent 全部成功并交付恰好一个 Markdown 与一个 PDF，charged=17、单次结算；cancel Run `d04a0113-f3bb-4371-93b5-424718c52d6b` 虽已形成取消/成功/成功的子任务组合和两个 passed 产物，父模型仍继续重规划而失败。该现象定位到 Worker 误传不存在的 `context.run.deliverables`，真实要求只存在于解密后的 `objectivePayload.deliverables`。
+- Worker 交付要求接线修复经 PR [#74](https://github.com/FengFan-1997/Artigen/pull/74) 的 Core、8 路 E2E 和 Release gate 全绿后合入 `dev`，最终 merge SHA `f89c8bce6e7826681d0589e3bc7197a557398d63`。Agent runtime 96/96，`pnpm check:core` 退出码 0：前端 216/216、后端 412 passed / 41 external skips、邮件 7/7、质量集 50/50、生产构建与 bundle 预算通过。
+- Render DEV deployment `dep-da1hl4dg1s2s73ca8h60` 为 `live`，`/api/meta`、`/readyz`、`/api/agent/status`、`/api/design-assistant/status` 和 `/api/generation/models` 均 HTTP 200；迁移为 `023_agent_subagent_runtime_hardening`，文本/父子模型锁定 `Qwen/Qwen3-8B`，所有图片锁定 `Kwai-Kolors/Kolors`，Worker、浏览器、受限出口、桌面中继与 `shared-v1` 子 Agent 均 ready，queueDepth=0。
+- Vercel Git/CLI Preview 被 `TEAM_ACCESS_REQUIRED` 阻止：提交作者邮箱 `sorates1997@163.com` 未映射到 Vercel 团队席位。没有伪造提交作者或修改团队配置；改用 `git archive f89c8bc...` 导出的精确 Git tree `17f77e96e8c0cd33520d4aca8a0aac69be49a0b1`，以已认证 owner 发布并写入真实 `artigenGitSha` / `artigenGitRef=dev` 元数据。READY Preview deployment 为 `dpl_6vLcPxdcaks1aNen9tUZgUS56Gjj`；两条 blocked 记录 `dpl_5cEgHjzUz1q1BNKYSJcxoj3aRGYd`、`dpl_3YEf8tGNUmug5TkooMTGLGJR1PPP` 保留为审计证据，不计为通过。
+- 同 SHA cancel Run `bce73714-ef4f-45b8-91d0-3d34b5475c2c` 通过：research `c8edd90f-dacb-43b0-a127-edc663e6d127` cancelled，analysis `3bf3c05e-0e4a-44cb-916f-8539d0ebe157` 与 drafting `02c31436-2a4f-497d-abeb-43195ff61abe` succeeded；Markdown 707 bytes / SHA-256 `deb28b405d6d6dea7c14c4ca9205ab085de5fc24e31fe582d8a980c4124767d7`，PDF 3388 bytes / SHA-256 `9f179b5fa19900b0471b0a09da0a9d926b341bd6eb73734b0f7d9fc7112144a5`，均为 S3 `verificationStatus=passed`。父 Run succeeded、18 步、estimated=12.049、charged=13、一个 hold 只结算一次，子工具仅 `update_plan` / `sandbox_shell`，queue=0、frozen=0。
+- 同 SHA all-success Run `2235d9c4-7e4c-4ff7-89a5-66067023b09f` 通过：research `c7d05e77-bda7-4b53-9843-3fe041d7f641`、analysis `f9cd0ab1-05cd-4cf8-a763-f54fb651d5bd`、drafting `201aa804-e4ae-4d17-9d6f-8d376419d09a` 均 succeeded 且各 3 步；Markdown 565 bytes / SHA-256 `c7790e6f33c6080bd2d4ecaa2421fbc5564023397ec4c5f40d2f6033e62a92c5`，PDF 3272 bytes / SHA-256 `e49959f3c23709fc46ef9a68253307d61af8005ae3b88ab68d3e17549df352fc`，均为 S3 `verificationStatus=passed`。父 Run succeeded、21 步、estimated=14.1765、charged=15、成本序列单调、单次结算，最终 Worker online、queue=0、frozen=0、held budget=0。
+
+DEV 运行时门槛已经满足。正式交接证据合入 `dev` 后，应让 Render、Vercel 和 Mac Worker 对齐该文档 merge SHA；文档只改变交接记录，运行时代码与已验证的 `f89c8bc...` 相同，因此无需重复消耗真实模型额度，但仍必须重新核验接口、deployment、Worker、队列和 SHA。随后才可建立 `dev → main` Release PR，并在生产发布前再次核验旧生产基线。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。

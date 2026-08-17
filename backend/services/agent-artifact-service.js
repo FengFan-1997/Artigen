@@ -118,7 +118,8 @@ const inferRequiredDeliverables = (objective) => {
 };
 
 const requiredDeliverablesSatisfied = (artifacts, requiredDeliverables) => {
-  const rows = Array.isArray(artifacts) ? artifacts : [];
+  const rows = (Array.isArray(artifacts) ? artifacts : [])
+    .filter((artifact) => artifact?.verification_status === 'passed');
   const required = Array.isArray(requiredDeliverables) ? requiredDeliverables : [];
   const has = (predicate) => rows.some(predicate);
   return required.every((type) => {
@@ -331,6 +332,7 @@ const createAgentArtifactService = ({
   pool,
   sandbox,
   runService,
+  assetStorage = assets,
   maxBytes = 100 * 1024 * 1024
 } = {}) => {
   if (!pool || !sandbox || !runService) throw new TypeError('AGENT_ARTIFACT_DEPENDENCY_REQUIRED');
@@ -361,7 +363,7 @@ const createAgentArtifactService = ({
       );
     }
     const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
-    const stored = await assets.storeAsset({
+    const stored = await assetStorage.storeAsset({
       pool,
       ownerUserId: run.user_id,
       buffer,
@@ -377,6 +379,14 @@ const createAgentArtifactService = ({
         artifactRole: normalized.role
       }
     });
+    const existing = await runService.findArtifactByContent?.({
+      runId: run.id,
+      filename: normalized.filename,
+      mimeType: normalized.mimeType,
+      sha256,
+      assetId: stored.assetId
+    });
+    if (existing) return existing;
     return runService.registerArtifact({
       runId: run.id,
       assetId: stored.assetId,

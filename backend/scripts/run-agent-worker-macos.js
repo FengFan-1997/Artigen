@@ -24,6 +24,9 @@ if (dockerCheck.status !== 0) {
 }
 
 const workerEnv = { ...process.env };
+const subagentsEnabled = /^(1|true|yes|on)$/i.test(
+  String(process.env.AGENT_SUBAGENTS_ENABLED || '').trim()
+);
 {
   const defaultService = profile === 'production'
     ? 'artigen-agent-production-worker'
@@ -78,7 +81,21 @@ const workerEnv = { ...process.env };
     AGENT_WORKER_ID: process.env.AGENT_WORKER_ID || (
       profile === 'production' ? 'artigen-production-mac-1' : 'artigen-dev-mac-1'
     ),
-    AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser,generate_images',
+    AGENT_PUBLIC_CAPABILITIES: [
+      'files',
+      'shell',
+      'browser',
+      'generate_images',
+      ...(subagentsEnabled ? ['subagents'] : [])
+    ].join(','),
+    AGENT_SUBAGENTS_ENABLED: subagentsEnabled ? 'true' : 'false',
+    AGENT_SUBAGENT_MAX_CONCURRENT: String(
+      process.env.AGENT_SUBAGENT_MAX_CONCURRENT || '3'
+    ),
+    AGENT_SUBAGENT_MAX_STEPS: String(process.env.AGENT_SUBAGENT_MAX_STEPS || '20'),
+    AGENT_SUBAGENT_TIMEOUT_MINUTES: String(
+      process.env.AGENT_SUBAGENT_TIMEOUT_MINUTES || '10'
+    ),
     AGENT_IMAGE_CREDITS: String(process.env.AGENT_IMAGE_CREDITS || '8'),
     AGENT_IMAGE_REFERENCE_CREDITS: String(process.env.AGENT_IMAGE_REFERENCE_CREDITS || '12'),
     AI_OUTPUT_ALLOWED_HOSTS: String(

@@ -6,7 +6,7 @@ const userMessageId = '22222222-2222-4222-8222-222222222222';
 const assistantMessageId = '33333333-3333-4333-8333-333333333333';
 const executionId = '44444444-4444-4444-8444-444444444444';
 const runId = '55555555-5555-4555-8555-555555555555';
-const now = '2026-08-12T08:00:00.000Z';
+const now = '2026-08-14T08:00:00.000Z';
 
 const message = (
   messageId: string,
@@ -116,13 +116,13 @@ const run = {
     impactSummary: '这会改变 brand.example 上的公开内容。',
     rollbackSummary: '可在站点后台恢复上一版本。',
     status: 'pending',
-    expiresAt: '2026-08-12T09:00:00.000Z',
+    expiresAt: '2026-09-14T09:00:00.000Z',
     decidedAt: null,
     createdAt: now
   }],
   artifacts: [],
   error: null,
-  expiresAt: '2026-08-13T08:00:00.000Z',
+  expiresAt: '2026-09-14T08:00:00.000Z',
   createdAt: now,
   queuedAt: now,
   startedAt: now,
@@ -264,7 +264,7 @@ test('guest draft survives email login and sends automatically after verificatio
   });
 
   await page.goto('/artigen/create');
-  await expect(page.getByText('附件先留在你的浏览器；只有确定需要云端执行时才会上传。')).toBeVisible();
+  await expect(page.getByText('附件先保留在浏览器')).toBeVisible();
   const draft = '为新款柚子气泡水设计一张夏日主视觉';
   await page.getByLabel('Design request').fill(draft);
   await page.getByRole('button', { name: 'Send request' }).click();
@@ -306,7 +306,7 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
       actionType: 'publish',
       status: activeAuthorization ? 'active' : 'revoked',
       lastUsedAt: null,
-      expiresAt: '2026-08-12T09:00:00.000Z',
+      expiresAt: '2026-09-14T09:00:00.000Z',
       createdAt: now
     };
     return route.fulfill({
@@ -320,7 +320,7 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto(`/artigen/create?c=${conversationId}`);
 
-  await expect(page.locator('.conversation-title-row')).toContainText('品牌官网体验审计');
+  await expect(page.locator('.conversation-heading')).toContainText('品牌官网体验审计');
   await expect(page.locator('.execution-card')).toContainText('电脑 Agent');
   await expect(page.locator('.execution-card')).toContainText('浏览并记录公开页面证据');
   await expect(page.locator('.execution-card')).toContainText('42');
@@ -329,8 +329,8 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await expect(page.locator('.authorization-scope')).toContainText('https://brand.example');
   await expect(page.locator('.authorization-scope')).toContainText('发布');
   await expect(page.locator('.authorization-scope')).toContainText('30 分钟');
-  await expect(page.locator('.model-lock')).toContainText('Qwen3');
-  await expect(page.locator('.model-lock')).toContainText('Kolors');
+  await expect(page.locator('#workspace-panel-environment')).toContainText('Qwen/Qwen3-8B');
+  await expect(page.locator('#workspace-panel-environment')).toContainText('Kwai-Kolors/Kolors');
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
@@ -341,12 +341,13 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   }
   await page.getByRole('button', { name: '30 分钟内仅自动批准该站点的发布操作' }).click();
   await expect.poll(() => approvalOrder).toEqual(['approve-current', 'persist-scope']);
-  await expect(page.locator('.active-authorizations')).toContainText('https://brand.example');
-  await expect(page.locator('.active-authorizations')).toContainText('发布');
-  await page.locator('.active-authorizations').getByRole('button', { name: '撤销' }).click();
-  await expect(page.locator('.active-authorizations')).toHaveCount(0);
-  await page.locator('.history .icon-button').click();
-  await expect.poll(() => page.locator('.history').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(64);
+  await expect(page.locator('.authorization-strip')).toContainText('https://brand.example');
+  await expect(page.locator('.authorization-strip')).toContainText('发布');
+  await page.locator('.authorization-strip').getByRole('button', { name: '撤销' }).click();
+  await expect(page.locator('.authorization-strip')).toHaveCount(0);
+  await page.getByRole('button', { name: '折叠左栏' }).click();
+  await expect(page.locator('.agent-workspace-shell')).toHaveClass(/left-collapsed/);
+  await expect.poll(() => page.locator('.workspace-left').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(64);
 });
 
 test('mobile chat uses a history drawer and keeps the docked composer reachable', async ({ page, browserName }) => {
@@ -354,7 +355,7 @@ test('mobile chat uses a history drawer and keeps the docked composer reachable'
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/artigen/create?c=${conversationId}`);
 
-  await expect(page.locator('.history')).not.toHaveClass(/open/);
+  await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-drawer-open/);
   await expect(page.getByRole('button', { name: '30 分钟内仅自动批准该站点的发布操作' })).toBeVisible();
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
     await page.screenshot({
@@ -362,22 +363,67 @@ test('mobile chat uses a history drawer and keeps the docked composer reachable'
       fullPage: true
     });
   }
-  const historyButton = page.locator('.mobile-history-button');
+  const historyButton = page.getByRole('button', { name: '打开历史' });
   await historyButton.click();
-  await expect(page.locator('.history')).toHaveClass(/open/);
-  await expect(page.locator('.history .icon-button')).toBeFocused();
+  await expect(page.locator('.agent-workspace-shell')).toHaveClass(/left-drawer-open/);
+  await expect(page.locator('.brand-lockup')).toBeFocused();
   await expect(page.locator('.history-item')).toContainText('品牌官网体验审计');
   await page.keyboard.press('Shift+Tab');
-  await expect(page.locator('.history-foot a').last()).toBeFocused();
+  await expect(page.locator('.workspace-account button').last()).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.locator('.history .icon-button')).toBeFocused();
+  await expect(page.locator('.brand-lockup')).toBeFocused();
   await page.keyboard.press('Escape');
-  await expect(page.locator('.history')).not.toHaveClass(/open/);
+  await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-drawer-open/);
   await expect(historyButton).toBeFocused();
   await expect(page.locator('.docked-composer')).toBeVisible();
   await expect(page.getByLabel('Design request')).toBeEditable();
+  await expect(page.locator('input[type="file"]')).toHaveAttribute('tabindex', '-1');
+  await expect(page.locator('input[type="file"]')).toHaveAttribute('aria-label', '添加参考文件');
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 
+});
+
+test('long messages and verified filenames remain readable without mobile overflow', async ({ page }) => {
+  await installExistingConversation(page);
+  const longText = '请保留品牌调性并说明每一项设计决策。'.repeat(36);
+  const longFilename = `${'artigen-professional-brand-experience-audit-'.repeat(8)}final.pdf`;
+  const longConversation = {
+    ...fullConversation,
+    title: '品牌设计协作与多格式交付验证'.repeat(6),
+    messages: [
+      message(userMessageId, 1, 'user', longText),
+      message(assistantMessageId, 2, 'assistant', longText)
+    ]
+  };
+  const longRun = structuredClone(run) as any;
+  longRun.artifacts = [{
+    artifactId: '88888888-8888-4888-8888-888888888888',
+    role: 'pdf',
+    filename: longFilename,
+    mimeType: 'application/pdf',
+    byteSize: 345678,
+    verificationStatus: 'passed',
+    url: `/api/agent-runs/${runId}/artifacts/88888888-8888-4888-8888-888888888888`
+  }];
+  await page.route(`**/api/design-conversations/${conversationId}`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, conversation: longConversation })
+  }));
+  await page.route(`**/api/agent-runs/${runId}`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, run: longRun })
+  }));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/artigen/create?c=${conversationId}`);
+  await expect(page.locator('.message-body').first()).toContainText('请保留品牌调性');
+  await page.getByRole('button', { name: '打开检查器' }).click();
+  await page.getByRole('tab', { name: /文件/ }).click();
+  await expect(page.locator('.file-panel')).toContainText(longFilename);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await expect.poll(() => page.locator('.workspace-right').evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 });
 
 test('failed executions show the error, credit disposition and an editable retry path', async ({ page }) => {

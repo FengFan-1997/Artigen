@@ -105,13 +105,249 @@ const resolveStagedImageReferences = (value, stagedAssetsByPath) => {
   }));
 };
 
+const restrictDelegatedTaskInputs = (tasks, allowedInputPaths = []) => {
+  if (!Array.isArray(tasks)) return tasks;
+  const allowed = new Set((Array.isArray(allowedInputPaths) ? allowedInputPaths : [])
+    .map((path) => String(path || '').trim())
+    .filter(Boolean));
+  return tasks.map((task) => ({
+    ...task,
+    inputPaths: [...new Set((Array.isArray(task?.inputPaths) ? task.inputPaths : [])
+      .map((path) => String(path || '').trim())
+      .filter((path) => path && allowed.has(path)))]
+  }));
+};
+
+const isSafeSubagentOutputPath = (value) => {
+  const path = String(value || '').trim();
+  return (
+    /^\/workspace\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(path) &&
+    !path.split('/').includes('..')
+  );
+};
+
+const literalHeredocScript = (path, content) => {
+  let delimiter = 'ARTIGEN_LITERAL_EOF';
+  const lines = String(content || '').replace(/\r\n?/g, '\n').split('\n');
+  while (lines.includes(delimiter)) delimiter += '_SAFE';
+  return [
+    `cat > ${path} <<'${delimiter}'`,
+    ...lines,
+    delimiter
+  ].join('\n');
+};
+
+const unwrapLiteralShellArgument = (value) => {
+  const argument = String(value || '').trim();
+  if (argument.length < 2) return null;
+  const quote = argument[0];
+  if (!['\'', '"'].includes(quote) || argument.at(-1) !== quote) return null;
+  return argument.slice(1, -1);
+};
+
+const expectedSubagentOutputFilename = (expectedOutput) => {
+  const filenames = [...new Set(
+    [...String(expectedOutput || '').matchAll(
+      /\b([A-Za-z0-9][A-Za-z0-9._-]{0,119}\.(?:md|txt|json|csv|html|css|js|svg|ya?ml))\b/gi
+    )].map((match) => match[1])
+  )];
+  return filenames.length === 1 ? filenames[0] : null;
+};
+
+const expectedSubagentTextOutputPath = ({ expectedOutput, purpose } = {}) => {
+  const filename = expectedSubagentOutputFilename(expectedOutput);
+  if (!filename) return null;
+  if (!String(purpose || '').includes(filename)) return null;
+  const path = `/workspace/${filename}`;
+  return isSafeSubagentOutputPath(path) ? path : null;
+};
+
+const normalizeSubagentShellScript = (value, context = {}) => {
+  const script = String(value || '');
+  const multilineEcho = script.match(
+    /^\s*echo\s+(['"])([\s\S]*)\1\s*>\s*(\/workspace\/[A-Za-z0-9._\/-]+)\s*$/
+  );
+  if (multilineEcho && isSafeSubagentOutputPath(multilineEcho[3])) {
+    return {
+      script: literalHeredocScript(multilineEcho[3], multilineEcho[2]),
+      normalized: true,
+      kind: 'literal_echo_write'
+    };
+  }
+
+  const malformedHeredoc = script.match(
+    /^\s*cat\s*>\s*(\/workspace\/[A-Za-z0-9._\/-]+)\s*<<\s*'([A-Za-z0-9_]+)'\s*&&\s*echo\s+([\s\S]+)$/
+  );
+  if (malformedHeredoc && isSafeSubagentOutputPath(malformedHeredoc[1])) {
+    const delimiter = malformedHeredoc[2];
+    const tail = malformedHeredoc[3].replace(
+      new RegExp(`\\s+${delimiter}\\s*$`),
+      ''
+    );
+    const lines = tail
+      .split(/\s*&&\s*echo\s+/)
+      .map(unwrapLiteralShellArgument);
+    if (lines.length && lines.every((line) => line !== null)) {
+      return {
+        script: literalHeredocScript(malformedHeredoc[1], lines.join('\n')),
+        normalized: true,
+        kind: 'literal_heredoc_echo_chain'
+      };
+    }
+  }
+
+  const unterminatedEcho = script.match(/^\s*echo\s+(['"])([\s\S]*)$/);
+  const inferredPath = expectedSubagentTextOutputPath(context);
+  if (
+    unterminatedEcho &&
+    inferredPath &&
+    unterminatedEcho[2].includes('\n') &&
+    !unterminatedEcho[2].trimEnd().endsWith(unterminatedEcho[1])
+  ) {
+    return {
+      script: literalHeredocScript(inferredPath, unterminatedEcho[2]),
+      normalized: true,
+      kind: 'literal_unterminated_echo_write'
+    };
+  }
+
+  return { script, normalized: false, kind: null };
+};
+
+const inspectSubagentOutputFiles = async ({ sandbox, sandboxName, workspacePath }) => {
+  const result = await sandbox.systemShell(
+    sandboxName,
+    [
+      'set -eu',
+      `root='${workspacePath}'`,
+      'test -d "$root"',
+      'clamscan --no-summary -r "$root" >/dev/null',
+      'python3 - "$root" <<\'PY\'',
+      'import hashlib, json, pathlib, sys',
+      'root = pathlib.Path(sys.argv[1]).resolve()',
+      'items = []',
+      'for path in sorted(root.rglob("*")):',
+      '    if path.is_symlink() or not path.is_file():',
+      '        continue',
+      '    resolved = path.resolve()',
+      '    if root not in resolved.parents:',
+      '        raise SystemExit("path escape")',
+      '    size = resolved.stat().st_size',
+      '    if size > 100 * 1024 * 1024:',
+      '        raise SystemExit("file too large")',
+      '    digest = hashlib.sha256(resolved.read_bytes()).hexdigest()',
+      '    items.append({"path": str(resolved), "byteSize": size, "sha256": digest})',
+      '    if len(items) > 100:',
+      '        raise SystemExit("too many files")',
+      'print(json.dumps(items, ensure_ascii=True))',
+      'PY'
+    ].join('\n'),
+    120
+  );
+  if (!result.success) {
+    throw new ApiError(422, 'AGENT_SUBAGENT_OUTPUT_SCAN_FAILED', {
+      detail: String(result.stderr || '').slice(0, 200)
+    });
+  }
+  try {
+    const lines = String(result.stdout || '').trim().split('\n');
+    const parsed = JSON.parse(lines[lines.length - 1] || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    throw new ApiError(422, 'AGENT_SUBAGENT_OUTPUT_SCAN_FAILED');
+  }
+};
+
+const assertExpectedSubagentOutputFiles = ({ expectedOutput, outputFiles }) => {
+  const files = (Array.isArray(outputFiles) ? outputFiles : []).filter((file) => (
+    Number(file?.byteSize || 0) > 0 && String(file?.sha256 || '').length === 64
+  ));
+  if (!files.length) {
+    throw new ApiError(422, 'AGENT_SUBAGENT_OUTPUT_REQUIRED', { retryable: false });
+  }
+  const expectedFilename = expectedSubagentOutputFilename(expectedOutput);
+  if (expectedFilename && !files.some((file) => (
+    String(file.path || '').split('/').pop() === expectedFilename
+  ))) {
+    throw new ApiError(422, 'AGENT_SUBAGENT_EXPECTED_OUTPUT_MISSING', {
+      retryable: false,
+      expectedFilename
+    });
+  }
+  return files;
+};
+
+const parentVerifiedSubagentFiles = async ({ sandbox, sandboxName, outputFiles }) => {
+  let excerptBytesRemaining = 18_000;
+  const results = [];
+  for (const file of Array.isArray(outputFiles) ? outputFiles : []) {
+    const verified = {
+      path: String(file?.path || ''),
+      byteSize: Math.max(0, Number(file?.byteSize || 0)),
+      sha256: String(file?.sha256 || ''),
+      verificationStatus: 'passed',
+      untrustedContent: true
+    };
+    const canReadAsText = (
+      excerptBytesRemaining > 0 &&
+      verified.byteSize > 0 &&
+      verified.byteSize <= 64 * 1024 &&
+      /\.(?:md|txt|json|csv|html|css|js|svg|ya?ml)$/i.test(verified.path)
+    );
+    if (canReadAsText) {
+      try {
+        const read = await sandbox.readFile(sandboxName, verified.path);
+        const buffer = Buffer.from(String(read?.base64 || ''), 'base64');
+        const digest = crypto.createHash('sha256').update(buffer).digest('hex');
+        if (
+          buffer.length === verified.byteSize &&
+          digest === verified.sha256 &&
+          !buffer.includes(0)
+        ) {
+          const excerpt = buffer.subarray(0, excerptBytesRemaining).toString('utf8');
+          verified.textExcerpt = excerpt;
+          excerptBytesRemaining = Math.max(
+            0,
+            excerptBytesRemaining - Buffer.byteLength(excerpt, 'utf8')
+          );
+        }
+      } catch {
+        // The independent scan above remains authoritative; excerpts are optional context.
+      }
+    }
+    results.push(verified);
+  }
+  return results;
+};
+
+const buildSubagentObjective = (task = {}) => [
+  `Delegated role: ${task.role}`,
+  `Objective: ${task.objective}`,
+  `Expected output: ${task.expectedOutput}`,
+  Array.isArray(task.inputPaths) && task.inputPaths.length
+    ? `Read-only inputs: ${task.inputPaths.map((inputPath) => (
+        `${inputPath} -> /inputs/${inputPath.split('/').pop()}`
+      )).join(', ')}`
+    : 'Read-only inputs: none',
+  'Use a concise plan of 2-4 steps total. Combine related sections into one writing step instead of creating one step per subsection.',
+  'Create the expected file in as few shell calls as practical, inspect it once, then mark every plan step completed.',
+  'Inside your tools, write every result only under /workspace. The parent maps that isolated directory internally; never guess, inspect, mention, or use its host path.'
+].join('\n\n');
+
 const createAgentCostMeter = ({
   costs = {},
   sandboxCreditsPerMinute = 1,
   now = Date.now
 } = {}) => {
   const rate = Math.max(0, Number(sandboxCreditsPerMinute || 0));
-  let model = Math.max(0, Number(costs.model || 0));
+  const restoredActors = costs.modelByActor && typeof costs.modelByActor === 'object'
+    ? Object.entries(costs.modelByActor)
+    : [];
+  const modelByActor = new Map(restoredActors.map(([actor, value]) => [
+    String(actor),
+    Math.max(0, Number(value || 0))
+  ]));
+  if (!modelByActor.size) modelByActor.set('parent', Math.max(0, Number(costs.model || 0)));
   let generation = Math.max(0, Number(costs.generation || 0));
   let sandbox = Math.max(0, Number(costs.sandbox || 0));
   let sandboxMeteredAt = now();
@@ -119,13 +355,36 @@ const createAgentCostMeter = ({
     sandbox + Math.max(0, now() - sandboxMeteredAt) / 60_000 * rate
   );
   const round = (value) => Number(Math.max(0, Number(value || 0)).toFixed(4));
+  const modelTotal = () => [...modelByActor.values()].reduce((total, value) => total + value, 0);
 
   return {
     setModel(value) {
-      model = Math.max(0, Number(value || 0));
+      modelByActor.set('parent', Math.max(
+        Number(modelByActor.get('parent') || 0),
+        Math.max(0, Number(value || 0))
+      ));
+    },
+    setModelFor(actorId, value) {
+      const actor = String(actorId || '').trim();
+      if (!actor) throw new TypeError('AGENT_COST_ACTOR_REQUIRED');
+      modelByActor.set(actor, Math.max(
+        Number(modelByActor.get(actor) || 0),
+        Math.max(0, Number(value || 0))
+      ));
+    },
+    restoreModelForMinimum(actorId, value) {
+      const actor = String(actorId || '').trim();
+      if (!actor) throw new TypeError('AGENT_COST_ACTOR_REQUIRED');
+      modelByActor.set(actor, Math.max(
+        Number(modelByActor.get(actor) || 0),
+        Math.max(0, Number(value || 0))
+      ));
     },
     restoreModelMinimum(value) {
-      model = Math.max(model, Math.max(0, Number(value || 0)));
+      modelByActor.set('parent', Math.max(
+        Number(modelByActor.get('parent') || 0),
+        Math.max(0, Number(value || 0))
+      ));
     },
     addGeneration(value) {
       generation += Math.max(0, Number(value || 0));
@@ -140,8 +399,14 @@ const createAgentCostMeter = ({
         sandbox = pendingSandbox();
         sandboxMeteredAt = now();
       }
+      const modelActors = Object.fromEntries(
+        [...modelByActor.entries()].map(([actor, value]) => [actor, round(value)])
+      );
       return {
-        model: round(model),
+        model: round(modelTotal()),
+        ...(Object.keys(modelActors).some((actor) => actor !== 'parent')
+          ? { modelByActor: modelActors }
+          : {}),
         generation: round(generation),
         sandbox: round(Math.max(
           pendingSandbox(),
@@ -150,8 +415,33 @@ const createAgentCostMeter = ({
       };
     },
     total({ additional = 0 } = {}) {
-      return model + generation + pendingSandbox() + Math.max(0, Number(additional || 0));
+      return modelTotal() + generation + pendingSandbox() + Math.max(0, Number(additional || 0));
     }
+  };
+};
+
+const createSerializedCostPersister = ({
+  costMeter,
+  saveCheckpoint,
+  recordUsage
+}) => {
+  if (
+    !costMeter || typeof costMeter.snapshot !== 'function' ||
+    typeof saveCheckpoint !== 'function' ||
+    typeof recordUsage !== 'function'
+  ) {
+    throw new TypeError('AGENT_COST_PERSISTER_DEPENDENCY_REQUIRED');
+  }
+  let pending = Promise.resolve();
+  return ({ usageItems = null } = {}) => {
+    const operation = pending.then(async () => {
+      const costs = costMeter.snapshot({ accrue: true });
+      await saveCheckpoint(costs);
+      if (usageItems) await recordUsage(costs, usageItems);
+      return costs;
+    });
+    pending = operation.catch(() => {});
+    return operation;
   };
 };
 
@@ -249,23 +539,20 @@ const createAgentWorkerService = ({
     let terminal = false;
     let browserInitialized = false;
 
-    const persistCostCheckpoint = async ({ usageItems = null } = {}) => {
-      const costs = costMeter.snapshot({ accrue: true });
-      await runService.saveCheckpoint({
+    const persistCostCheckpoint = createSerializedCostPersister({
+      costMeter,
+      saveCheckpoint: (costs) => runService.saveCheckpoint({
         runId,
         workerId,
         checkpoint: { costs }
-      });
-      if (usageItems) {
-        await runService.recordUsage({
-          runId,
-          workerId,
-          estimatedCredits: costs.model + costs.generation + costs.sandbox,
-          items: { ...costs, ...usageItems }
-        });
-      }
-      return costs;
-    };
+      }),
+      recordUsage: (costs, usageItems) => runService.recordUsage({
+        runId,
+        workerId,
+        estimatedCredits: costs.model + costs.generation + costs.sandbox,
+        items: { ...costs, ...usageItems }
+      })
+    });
 
     const pauseIfRequested = async () => {
       if (Date.now() - runStartedAt >= config.maxMinutes * 60_000) {
@@ -301,6 +588,10 @@ const createAgentWorkerService = ({
       costMeter.restoreModelMinimum(context.modelCheckpoint?.totalCredits);
       const objectivePayload = firstPayload(context.payloads, 'objective');
       if (!objectivePayload?.objective) throw new ApiError(500, 'AGENT_OBJECTIVE_MISSING');
+      const requiredDeliverables = Array.isArray(objectivePayload.deliverables) &&
+          objectivePayload.deliverables.length
+        ? objectivePayload.deliverables
+        : inferRequiredDeliverables(objectivePayload.objective);
       const userInputs = context.payloads
         .filter((payload) => payload.kind === 'user_input')
         .map((payload) => payload.value)
@@ -455,7 +746,257 @@ const createAgentWorkerService = ({
         }
       });
 
-      const execution = await model.execute({
+      const runDelegatedSubagent = async (entry) => {
+        const subagentId = entry.subagentId;
+        const workspacePath = `/tmp/artigen-workspace/subagents/${subagentId}`;
+        costMeter.restoreModelForMinimum(subagentId, Number(entry.usage?.credits || 0));
+        const started = await runService.startSubagent({ runId, subagentId, workerId });
+        if (['succeeded', 'failed', 'cancelled'].includes(started.status)) {
+          return {
+            subagentId,
+            status: started.status,
+            summary: started.summary,
+            files: started.status === 'succeeded'
+              ? await parentVerifiedSubagentFiles({
+                  sandbox,
+                  sandboxName,
+                  outputFiles: started.outputFiles
+                })
+              : started.outputFiles || [],
+            errorCode: started.error?.code || null
+          };
+        }
+        const privateContext = await runService.loadSubagentContext({
+          runId,
+          subagentId,
+          workerId
+        });
+        costMeter.restoreModelForMinimum(
+          subagentId,
+          Math.max(
+            Number(entry.usage?.credits || 0),
+            Number(privateContext.checkpoint?.totalCredits || 0)
+          )
+        );
+        const deadlineAt = Date.now() + config.subagentTimeoutMinutes * 60_000;
+
+        const checkSubagentControl = async () => {
+          await pauseIfRequested();
+          const control = await runService.getSubagentControlState({ runId, subagentId });
+          if (
+            control.status === 'cancelled' ||
+            control.cancel_requested ||
+            control.run_status === 'cancelled' ||
+            control.run_cancel_requested
+          ) {
+            throw new ApiError(409, 'AGENT_SUBAGENT_CANCELLED', { retryable: false });
+          }
+          if (Date.now() >= deadlineAt) {
+            throw new ApiError(408, 'AGENT_SUBAGENT_TIMEOUT', { retryable: false });
+          }
+          assertLoopBudget({
+            stepCount: control.step_count,
+            maxSteps: config.subagentMaxSteps,
+            replanCount: 0,
+            consecutiveFailures: control.consecutive_failures,
+            unchangedScreenshots: 0
+          });
+          return control;
+        };
+
+        try {
+          const execution = await model.execute({
+            objective: buildSubagentObjective(privateContext.task),
+            capabilities: { files: true, shell: true },
+            toolProfile: 'subagent',
+            resumeState: privateContext.checkpoint,
+            safetyIdentifier: crypto.createHash('sha256')
+              .update(`artigen-subagent:${context.run.user_id}:${subagentId}`)
+              .digest('hex'),
+            maxSteps: config.subagentMaxSteps,
+            deadlineAt,
+            callbacks: {
+              checkControl: checkSubagentControl,
+              updatePlan: async ({ explanation, steps }) => {
+                await checkSubagentControl();
+                const normalized = (Array.isArray(steps) ? steps : []).map((step) => ({
+                  label: String(step?.label || '').trim().slice(0, 160),
+                  status: String(step?.status || '')
+                })).filter((step) => (
+                  step.label && ['pending', 'in_progress', 'completed'].includes(step.status)
+                ));
+                if (
+                  normalized.length < 2 ||
+                  normalized.length > 4 ||
+                  normalized.filter((step) => step.status === 'in_progress').length > 1
+                ) {
+                  throw new ApiError(400, 'AGENT_PLAN_INVALID');
+                }
+                await runService.appendStep({
+                  runId,
+                  workerId,
+                  subagentId,
+                  role: 'planner',
+                  status: 'succeeded',
+                  toolName: 'update_plan',
+                  summary: String(explanation || '子 Agent 已更新计划').trim().slice(0, 500),
+                  sanitizedOutput: { plan: normalized }
+                });
+                return { accepted: true, steps: normalized };
+              },
+              checkpoint: async () => checkSubagentControl(),
+              saveModelState: async (value) => {
+                await checkSubagentControl();
+                await persistCostCheckpoint();
+                await runService.saveSubagentModelCheckpoint({
+                  runId,
+                  subagentId,
+                  workerId,
+                  value
+                });
+              },
+              clearModelState: async () => runService.clearSubagentModelCheckpoint({
+                runId,
+                subagentId,
+                workerId
+              }),
+              recordUsage: async (credits, usage) => {
+                await checkSubagentControl();
+                costMeter.setModelFor(subagentId, credits);
+                await runService.recordSubagentUsage({
+                  runId,
+                  subagentId,
+                  workerId,
+                  estimatedCredits: credits,
+                  usage
+                });
+                await persistCostCheckpoint({
+                  usageItems: { source: 'subagent_model', subagentId }
+                });
+              },
+              recordStep: async (step) => {
+                await checkSubagentControl();
+                return runService.appendStep({ runId, workerId, subagentId, ...step });
+              },
+              shell: async (script, purpose) => {
+                await checkSubagentControl();
+                const normalizedShell = normalizeSubagentShellScript(script, {
+                  expectedOutput: privateContext.task.expectedOutput,
+                  purpose
+                });
+                const result = await sandbox.subagentShell(sandboxName, normalizedShell.script, {
+                  workspacePath,
+                  inputPaths: privateContext.task.inputPaths,
+                  timeoutSeconds: 120
+                });
+                await runService.appendStep({
+                  runId,
+                  workerId,
+                  subagentId,
+                  role: 'executor',
+                  status: result.success ? 'succeeded' : 'failed',
+                  toolName: 'sandbox_shell',
+                  summary: String(purpose || '子 Agent 运行离线命令').slice(0, 500),
+                  actionFingerprint: actionFingerprint({
+                    type: 'subagent_shell',
+                    subagentId,
+                    script: normalizedShell.script
+                  }),
+                  sanitizedInput: {
+                    purpose: String(purpose || '').slice(0, 300),
+                    scriptSha256: crypto.createHash('sha256')
+                      .update(String(script))
+                      .digest('hex'),
+                    executedScriptSha256: crypto.createHash('sha256')
+                      .update(normalizedShell.script)
+                      .digest('hex'),
+                    normalized: normalizedShell.normalized,
+                    normalizationKind: normalizedShell.kind
+                  },
+                  sanitizedOutput: {
+                    success: result.success,
+                    returnCode: result.returnCode
+                  }
+                });
+                return result;
+              }
+            }
+          });
+          costMeter.setModelFor(subagentId, execution.credits);
+          await persistCostCheckpoint({
+            usageItems: { source: 'subagent_complete', subagentId }
+          });
+          const outputFiles = assertExpectedSubagentOutputFiles({
+            expectedOutput: privateContext.task.expectedOutput,
+            outputFiles: await inspectSubagentOutputFiles({
+              sandbox,
+              sandboxName,
+              workspacePath
+            })
+          });
+          const finished = await runService.finishSubagent({
+            runId,
+            subagentId,
+            workerId,
+            status: 'succeeded',
+            summary: String(execution.text || '子 Agent 已完成').slice(0, 4000),
+            outputFiles
+          });
+          return {
+            subagentId,
+            status: finished.status,
+            summary: finished.summary,
+            files: await parentVerifiedSubagentFiles({
+              sandbox,
+              sandboxName,
+              outputFiles: finished.outputFiles
+            })
+          };
+        } catch (error) {
+          if (
+            error instanceof AgentPaused ||
+            error instanceof AgentCancelled ||
+            ['AGENT_PAUSED', 'AGENT_CANCELLED'].includes(error?.code)
+          ) {
+            throw error;
+          }
+          if (error?.code === 'AGENT_SUBAGENT_CANCELLED') {
+            return {
+              subagentId,
+              status: 'cancelled',
+              summary: '子 Agent 已取消',
+              files: []
+            };
+          }
+          const failed = await runService.finishSubagent({
+            runId,
+            subagentId,
+            workerId,
+            status: error?.code === 'AGENT_SUBAGENT_CANCELLED' ? 'cancelled' : 'failed',
+            summary: '子 Agent 未完成；父 Agent 可使用其余结果继续。',
+            errorCode: String(error?.code || 'AGENT_SUBAGENT_FAILED').slice(0, 100)
+          });
+          return {
+            subagentId,
+            status: failed.status,
+            summary: failed.summary,
+            files: failed.outputFiles,
+            errorCode: failed.error?.code || null
+          };
+        }
+      };
+
+      const modelExecution = await runWithLeaseHeartbeat({
+        intervalMs: Math.max(
+          5_000,
+          Math.min(30_000, Math.floor(config.leaseSeconds * 1_000 / 3))
+        ),
+        refresh: () => runService.saveCheckpoint({
+          runId,
+          workerId,
+          checkpoint: { phase: 'running', sandboxReady: true }
+        }),
+        work: () => model.execute({
         objective: [
           objectivePayload.objective,
           userInputs.length
@@ -466,6 +1007,7 @@ const createAgentWorkerService = ({
             : ''
         ].filter(Boolean).join('\n\n'),
         capabilities: context.run.capabilities,
+        deliverables: requiredDeliverables,
         resumeState: context.modelCheckpoint,
         safetyIdentifier: crypto.createHash('sha256')
           .update(`artigen-agent:${context.run.user_id}`)
@@ -504,6 +1046,53 @@ const createAgentWorkerService = ({
               sanitizedOutput: { plan: normalized }
             });
             return { accepted: true, steps: normalized };
+          },
+          delegateTasks: async (tasks) => {
+            await pauseIfRequested();
+            if (context.run.capabilities?.subagents !== true) {
+              throw new ApiError(403, 'AGENT_CAPABILITY_NOT_GRANTED', {
+                capability: 'subagents'
+              });
+            }
+            const created = await runService.createSubagents({
+              runId,
+              workerId,
+              tasks: restrictDelegatedTaskInputs(tasks, inputAssetPaths),
+              allowedInputPaths: inputAssetPaths
+            });
+            const settled = await Promise.allSettled(created.map(runDelegatedSubagent));
+            const parentControlError = settled.find((item) => (
+              item.status === 'rejected' &&
+              ['AGENT_PAUSED', 'AGENT_CANCELLED'].includes(item.reason?.code)
+            ));
+            if (parentControlError) throw parentControlError.reason;
+            const subagents = settled.map((item, index) => item.status === 'fulfilled'
+                ? item.value
+                : {
+                    subagentId: created[index].subagentId,
+                    status: 'failed',
+                    summary: '子 Agent 运行时失败；父 Agent 可继续。',
+                    files: [],
+                    errorCode: String(item.reason?.code || 'AGENT_SUBAGENT_FAILED')
+                  });
+            return {
+              subagents,
+              outputVerification: {
+                allSucceededFilesPassed: subagents.every((subagent) => (
+                  subagent.status !== 'succeeded' ||
+                  (
+                    subagent.files.length > 0 &&
+                    subagent.files.every((file) => file.verificationStatus === 'passed')
+                  )
+                )),
+                note: [
+                  'Every returned file with verificationStatus=passed was independently scanned,',
+                  'confirmed non-empty, and SHA-256 verified by the Worker.',
+                  'Use textExcerpt or read the exact path to merge actual content;',
+                  'do not require a guessed heading or phrase as proof that the file exists.'
+                ].join(' ')
+              }
+            };
           },
           checkpoint: async (modelResponseId) => {
             await runService.saveCheckpoint({
@@ -894,22 +1483,24 @@ const createAgentWorkerService = ({
               sandboxName,
               declaration
             });
-            await runService.appendStep({
-              runId,
-              workerId,
-              role: 'verifier',
-              status: artifact.verificationStatus === 'passed' ? 'succeeded' : 'failed',
-              toolName: 'artifact_verifier',
-              summary: `验证 ${artifact.filename}`,
-              sanitizedInput: {
-                role: artifact.role,
-                mimeType: artifact.mimeType
-              },
-              sanitizedOutput: {
-                verificationStatus: artifact.verificationStatus,
-                byteSize: artifact.byteSize
-              }
-            });
+            if (!artifact.alreadyRegistered) {
+              await runService.appendStep({
+                runId,
+                workerId,
+                role: 'verifier',
+                status: artifact.verificationStatus === 'passed' ? 'succeeded' : 'failed',
+                toolName: 'artifact_verifier',
+                summary: `验证 ${artifact.filename}`,
+                sanitizedInput: {
+                  role: artifact.role,
+                  mimeType: artifact.mimeType
+                },
+                sanitizedOutput: {
+                  verificationStatus: artifact.verificationStatus,
+                  byteSize: artifact.byteSize
+                }
+              });
+            }
             return artifact;
           },
           requestApproval: async (request) => {
@@ -959,7 +1550,10 @@ const createAgentWorkerService = ({
             return { ...approval, consumed: false };
           }
         }
+        })
       });
+      const execution = modelExecution.value;
+      if (modelExecution.leaseError) throw modelExecution.leaseError;
       costMeter.setModel(execution.credits);
       await persistCostCheckpoint({ usageItems: { source: 'model_complete' } });
 
@@ -1041,10 +1635,6 @@ const createAgentWorkerService = ({
         userId: context.run.user_id,
         runId
       });
-      const requiredDeliverables = Array.isArray(objectivePayload.deliverables) &&
-          objectivePayload.deliverables.length
-        ? objectivePayload.deliverables
-        : inferRequiredDeliverables(objectivePayload.objective);
       const minimumArtifactCounts = {
         report: 2,
         spreadsheet: 1,
@@ -1184,9 +1774,15 @@ const createAgentWorkerService = ({
 module.exports = {
   AgentCancelled,
   AgentPaused,
+  assertExpectedSubagentOutputFiles,
+  buildSubagentObjective,
   createAgentCostMeter,
+  createSerializedCostPersister,
   createAgentWorkerService,
+  parentVerifiedSubagentFiles,
   firstPayload,
+  normalizeSubagentShellScript,
+  restrictDelegatedTaskInputs,
   runWithLeaseHeartbeat,
   resolveStagedImageReferences
 };

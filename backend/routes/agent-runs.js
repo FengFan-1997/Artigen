@@ -300,6 +300,20 @@ const installAgentRoutes = (app, deps = {}) => {
     );
   }
 
+  app.post(
+    '/api/agent-runs/:runId/subagents/:subagentId/cancel',
+    writeLimiter,
+    asyncRoute(async (req, res) => {
+      const auth = requireAuthenticatedUser(req);
+      const subagent = await requireService().cancelSubagent({
+        userId: auth.dbUserId || auth.userId,
+        runId: req.params.runId,
+        subagentId: req.params.subagentId
+      });
+      res.json({ ok: true, subagent });
+    })
+  );
+
   app.post('/api/agent-runs/:runId/input', writeLimiter, asyncRoute(async (req, res) => {
     const auth = requireAuthenticatedUser(req);
     const body = req.body && typeof req.body === 'object' ? req.body : {};

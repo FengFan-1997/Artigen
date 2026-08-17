@@ -46,6 +46,9 @@ const migratedRow = Object.freeze({
   has_agent_trial_usage: true,
   has_agent_worker_heartbeats: true,
   has_agent_desktop_tickets: true,
+  has_agent_subagents: true,
+  has_agent_subagent_payloads: true,
+  has_agent_subagent_checkpoints: true,
   has_design_conversations: true,
   has_design_messages: true,
   has_design_executions: true,
@@ -69,6 +72,8 @@ const migratedRow = Object.freeze({
   has_agent_relay_run_columns: true,
   has_agent_worker_readiness_columns: true,
   has_agent_budget_split_columns: true,
+  has_agent_subagent_columns: true,
+  has_agent_subagent_links: true,
   has_ai_skus: true,
   has_workshop_skus: true
 });
@@ -180,10 +185,19 @@ test('readiness verifies queue, payload, asset, event, inputs_ready and AI SKU m
     code: null,
     migration: LATEST_REPOSITORY_MIGRATION
   });
-  assert.equal(LATEST_REPOSITORY_MIGRATION, '021_design_conversations');
+  assert.equal(LATEST_REPOSITORY_MIGRATION, '023_agent_subagent_runtime_hardening');
   assert.equal(migrationQueryParam, LATEST_REPOSITORY_MIGRATION);
   assert.deepEqual(await checkDatabase({
     query: async () => ({ rows: [{ ...migratedRow, has_task_columns: false }] })
+  }), {
+    ok: false,
+    code: 'DATABASE_MIGRATION_REQUIRED',
+    expectedMigration: LATEST_REPOSITORY_MIGRATION
+  });
+  assert.deepEqual(await checkDatabase({
+    query: async () => ({
+      rows: [{ ...migratedRow, has_agent_subagent_links: false }]
+    })
   }), {
     ok: false,
     code: 'DATABASE_MIGRATION_REQUIRED',

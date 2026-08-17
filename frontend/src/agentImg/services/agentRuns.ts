@@ -48,6 +48,27 @@ export type AgentApproval = {
   createdAt: string;
 };
 
+export type AgentSubagentStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+export type AgentSubagent = {
+  subagentId: string;
+  runId: string;
+  ordinal: number;
+  role: string;
+  label: string;
+  status: AgentSubagentStatus;
+  progress: { stepCount: number; maxSteps: number; cancelRequested: boolean };
+  usage: { credits: number; inputTokens?: number; outputTokens?: number; provider?: string };
+  summary: string;
+  outputFiles: Array<{ path: string; byteSize: number; sha256: string }>;
+  error: { code: string } | null;
+  expiresAt: string;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  updatedAt: string;
+};
+
 export type AgentRun = {
   runId: string;
   objective?: string;
@@ -83,6 +104,7 @@ export type AgentRun = {
   };
   approvals?: AgentApproval[];
   artifacts?: AgentArtifact[];
+  subagents: AgentSubagent[];
   error: { code: string } | null;
   expiresAt: string;
   createdAt: string;
@@ -96,6 +118,7 @@ export type AgentRun = {
 export type AgentEvent = {
   eventId: string;
   runId: string;
+  subagentId: string | null;
   type: string;
   phase: string | null;
   summary: string;
@@ -137,6 +160,9 @@ export type AgentServiceStatus = {
   sandboxImageRef: string | null;
   browserPublicEnabled?: boolean;
   imageGenerationPublicEnabled: boolean;
+  subagentsEnabled?: boolean;
+  subagentMaxConcurrent?: number;
+  subagentSandboxMode?: 'shared-v1' | string;
   accessMode?: 'disabled' | 'owner-only-v1' | 'authenticated-v1' | string;
   availabilityNote: 'ready' | 'busy' | 'worker_offline' | string;
 };
@@ -235,6 +261,13 @@ export const createAgentRun = async (input: {
     body: JSON.stringify(input)
   });
   return result.run;
+};
+
+export const cancelAgentSubagent = async (runId: string, subagentId: string) => {
+  const result = await requestJson<{ subagent: AgentSubagent }>(buildApiUrl(
+    `/api/agent-runs/${encodeURIComponent(runId)}/subagents/${encodeURIComponent(subagentId)}/cancel`
+  ), { method: 'POST' });
+  return result.subagent;
 };
 
 export const uploadAgentAssets = async (files: File[]) => {
@@ -348,7 +381,13 @@ export const openAgentEventStream = (
     'run.failed',
     'run.cancelled',
     'run.input_received',
-    'takeover.ended'
+    'takeover.ended',
+    'subagent.created',
+    'subagent.started',
+    'subagent.progress',
+    'subagent.succeeded',
+    'subagent.failed',
+    'subagent.cancelled'
   ];
   const listener = (raw: MessageEvent) => {
     try {

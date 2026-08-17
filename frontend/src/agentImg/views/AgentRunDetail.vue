@@ -1,319 +1,230 @@
 <template>
-  <div class="run-page">
-    <TitleBar />
-    <main class="run-shell">
-      <header class="run-header">
-        <div>
-          <router-link to="/artigen/agent" class="back">← {{ zh ? '全部 Agent 任务' : 'All agent runs' }}</router-link>
-          <div class="status-line">
-            <span class="pulse" :class="run?.status"></span>
-            <strong>{{ run ? statusLabel(run.status) : (zh ? '读取中' : 'Loading') }}</strong>
-            <code>{{ shortId }}</code>
+  <AgentWorkspaceShell
+    :zh="zh"
+    :title="run?.objectivePreview || (zh ? 'Agent 运行' : 'Agent run')"
+    :subtitle="`#${shortId} · ${run ? statusLabel(run.status) : (zh ? '读取中' : 'Loading')}`"
+    :status-label="run ? statusLabel(run.status) : (zh ? '读取中' : 'Loading')"
+    :status-tone="workspaceTone"
+    :credit-label="run ? `${run.budget.used.toFixed(1)} / ${run.budget.maximum} ${zh ? '点' : 'cr'}` : '—'"
+    :account-label="run?.sandbox.provider || ''"
+    inspector-subtitle="Qwen/Qwen3-8B · Kolors"
+    :badges="{ subagents: activeSubagents, computer: takeoverRequired ? 1 : 0, files: artifacts.length, plan: pendingApprovals.length }"
+    :live-announcement="notice || failureText"
+    @new-task="$router.push('/artigen/agent')"
+  >
+    <template #history="{ search }">
+      <div class="history-group">
+        <div class="history-label">{{ zh ? 'Agent 历史' : 'Agent history' }}</div>
+        <router-link
+          v-for="item in filteredRuns(search)"
+          :key="item.runId"
+          class="history-run"
+          :to="`/artigen/agent/runs/${item.runId}`"
+        >
+          <i :class="item.status"></i>
+          <span><b>{{ item.objectivePreview || (zh ? '未命名任务' : 'Untitled task') }}</b><small>{{ statusLabel(item.status) }} · {{ formatTime(item.updatedAt) }}</small></span>
+        </router-link>
+        <div v-if="!filteredRuns(search).length" class="history-empty">{{ zh ? '没有匹配任务' : 'No matching runs' }}</div>
+      </div>
+    </template>
+
+    <template #topbar-actions>
+      <div v-if="run" class="run-controls">
+        <button v-if="canPause" type="button" :disabled="controlBusy" @click="control('pause')">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12M15 6v12"/></svg>
+          {{ zh ? '暂停' : 'Pause' }}
+        </button>
+        <button v-if="canResume" class="primary-control" type="button" :disabled="controlBusy" @click="control('resume')">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>
+          {{ zh ? '恢复' : 'Resume' }}
+        </button>
+        <button v-if="!terminal" class="danger-control" :class="{ armed: stopArmed }" type="button" :disabled="controlBusy" @click="requestCancel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+          {{ stopArmed ? (zh ? '确认停止' : 'Confirm stop') : (zh ? '停止' : 'Stop') }}
+        </button>
+      </div>
+    </template>
+
+    <section v-if="run" class="conversation-workspace">
+      <div class="conversation-scroll">
+        <article class="message user-message">
+          <header><span>{{ zh ? '你' : 'You' }}</span><time>{{ formatTime(run.createdAt) }}</time></header>
+          <p>{{ run.objective }}</p>
+        </article>
+
+        <article class="message agent-message">
+          <span class="agent-avatar" aria-hidden="true">A</span>
+          <div>
+            <header><span>Artigen Agent</span><small>{{ run.sandbox.provider }} · {{ run.sandbox.version }}</small></header>
+            <p>{{ run.progress.plan?.length ? (zh ? '我已建立执行计划，并会在需要时委派独立子任务。最终文件将由父 Agent 验证和声明。' : 'I built an execution plan and will delegate isolated tasks where useful. The parent Agent will verify and declare final files.') : desktopMessage }}</p>
           </div>
-        </div>
-        <div v-if="run" class="controls">
-          <button
-            v-if="canPause"
-            type="button"
-            :disabled="controlBusy"
-            @click="control('pause')"
-          >
-            Ⅱ {{ zh ? '暂停' : 'Pause' }}
-          </button>
-          <button
-            v-if="canResume"
-            class="resume"
-            type="button"
-            :disabled="controlBusy"
-            @click="control('resume')"
-          >
-            ▶ {{ zh ? '恢复' : 'Resume' }}
-          </button>
-          <button
-            v-if="!terminal"
-            class="danger"
-            :class="{ armed: stopArmed }"
-            type="button"
-            :disabled="controlBusy"
-            @click="requestCancel"
-          >
-            ■ {{
-              stopArmed
-                ? (zh ? '再次点击，确认停止' : 'Click again to stop')
-                : (zh ? '停止' : 'Stop')
-            }}
-          </button>
-        </div>
-      </header>
+        </article>
 
-      <section v-if="run" class="budget-bar">
-        <div>
-          <span>{{ zh ? '已用' : 'Used' }}</span>
-          <strong>{{ run.budget.used.toFixed(1) }}</strong>
-        </div>
-        <div>
-          <span>{{ zh ? '已冻结' : 'Held' }}</span>
-          <strong>{{ run.budget.frozen }}</strong>
-        </div>
-        <div>
-          <span>{{ zh ? '预计剩余' : 'Est. remaining' }}</span>
-          <strong>{{ budgetRemaining.toFixed(1) }}</strong>
-        </div>
-        <div class="budget-track">
-          <span :style="{ width: budgetPercent + '%' }"></span>
-        </div>
-        <div>
-          <span>{{ zh ? '最高预算' : 'Maximum' }}</span>
-          <strong>{{ run.budget.maximum }}</strong>
-        </div>
-      </section>
+        <article v-for="approval in pendingApprovals" :key="approval.approvalId" class="approval-card">
+          <header>
+            <span>{{ zh ? '需要你的确认' : 'Approval required' }}</span>
+            <code>#{{ approval.approvalId.slice(0, 8) }}</code>
+          </header>
+          <h2>{{ actionLabel(approval.actionType) }}</h2>
+          <p>{{ approval.changeSummary }}</p>
+          <dl>
+            <div v-if="approval.evidenceSummary"><dt>{{ zh ? '依据' : 'Evidence' }}</dt><dd>{{ approval.evidenceSummary }}</dd></div>
+            <div v-if="approval.impactSummary"><dt>{{ zh ? '影响' : 'Impact' }}</dt><dd>{{ approval.impactSummary }}</dd></div>
+            <div v-if="approval.rollbackSummary"><dt>{{ zh ? '撤销' : 'Rollback' }}</dt><dd>{{ approval.rollbackSummary }}</dd></div>
+          </dl>
+          <label class="denial-reason" :for="`denial-reason-${approval.approvalId}`">{{ zh ? '拒绝原因（可选）' : 'Reason for denial (optional)' }}</label>
+          <input :id="`denial-reason-${approval.approvalId}`" v-model.trim="approvalReasons[approval.approvalId]" type="text" maxlength="500" :placeholder="zh ? '说明拒绝原因，帮助 Agent 调整计划' : 'Explain the denial so the Agent can replan'" />
+          <footer>
+            <button type="button" :disabled="approvalBusyId === approval.approvalId" @click="decide(approval.approvalId, 'denied')">{{ zh ? '拒绝' : 'Deny' }}</button>
+            <button v-if="approval.riskLevel === 'blocked'" class="approval-primary" type="button" :disabled="approvalBusyId === approval.approvalId" @click="beginTakeover(approval.approvalId)">{{ zh ? '接管电脑' : 'Take over' }}</button>
+            <button v-else class="approval-primary" type="button" :disabled="approvalBusyId === approval.approvalId" @click="decide(approval.approvalId, 'approved')">{{ zh ? '仅批准这一次' : 'Approve once' }}</button>
+          </footer>
+        </article>
 
-      <div v-if="notice || failureText" class="notice">{{ notice || failureText }}</div>
-
-      <section v-if="run" class="run-grid">
-        <aside class="conversation pane">
-          <div class="pane-head">
-            <div>
-              <p>01 / {{ zh ? '任务' : 'TASK' }}</p>
-              <h2>{{ zh ? '对话与审批' : 'Conversation & approvals' }}</h2>
-            </div>
-          </div>
-          <article v-if="run.objective" class="objective-card">
-            <span>{{ zh ? '你的目标' : 'Your objective' }}</span>
-            <p>{{ run.objective }}</p>
-          </article>
-
-          <div class="plan">
-            <div
-              v-for="stage in stages"
-              :key="stage.id"
-              :class="{ active: stage.active, done: stage.done }"
-            >
-              <span>{{ stage.done ? '✓' : stage.index }}</span>
-              <div>
-                <strong>{{ stage.label }}</strong>
-                <small>{{ stage.description }}</small>
-              </div>
-            </div>
-          </div>
-
-          <article
-            v-for="approval in pendingApprovals"
-            :key="approval.approvalId"
-            class="approval"
-          >
-            <span>{{ zh ? '需要确认' : 'Approval required' }}</span>
-            <strong>{{ actionLabel(approval.actionType) }}</strong>
-            <p>{{ approval.changeSummary }}</p>
-            <dl class="approval-context">
-              <div v-if="approval.evidenceSummary">
-                <dt>{{ zh ? '为什么需要' : 'Evidence' }}</dt>
-                <dd>{{ approval.evidenceSummary }}</dd>
-              </div>
-              <div v-if="approval.impactSummary">
-                <dt>{{ zh ? '批准后会发生' : 'Impact' }}</dt>
-                <dd>{{ approval.impactSummary }}</dd>
-              </div>
-              <div v-if="approval.rollbackSummary">
-                <dt>{{ zh ? '撤销方式' : 'Rollback' }}</dt>
-                <dd>{{ approval.rollbackSummary }}</dd>
-              </div>
-            </dl>
-            <small v-if="approval.recipient">
-              {{ zh ? '目标：' : 'Target: ' }}{{ approval.recipient }}
-            </small>
-            <small class="approval-operation">
-              {{ zh ? '仅批准这一次' : 'One-time approval' }}
-              · #{{ approval.approvalId.slice(0, 8) }}
-              · {{ zh ? '到期' : 'expires' }} {{ formatTime(approval.expiresAt) }}
-            </small>
-            <small class="approval-expiry">
-              {{
-                zh
-                  ? '到期未处理会停止任务；保留已实际使用费用，释放剩余冻结点数。'
-                  : 'If this expires, the run stops. Used costs remain and unused held credits are released.'
-              }}
-            </small>
-            <input
-              v-model.trim="approvalReasons[approval.approvalId]"
-              class="approval-reason"
-              type="text"
-              maxlength="500"
-              :placeholder="zh ? '拒绝原因（可选，帮助 Agent 调整）' : 'Reason for denial (optional)'"
-            />
-            <div>
-              <button
-                type="button"
-                :disabled="approvalBusyId === approval.approvalId"
-                @click="decide(approval.approvalId, 'denied')"
-              >
-                {{ zh ? '拒绝' : 'Deny' }}
-              </button>
-              <button
-                v-if="approval.riskLevel === 'blocked'"
-                class="approve"
-                type="button"
-                :disabled="approvalBusyId === approval.approvalId"
-                @click="beginTakeover(approval.approvalId)"
-              >
-                {{ zh ? '接管云电脑' : 'Take over desktop' }}
-              </button>
-              <button
-                v-else
-                class="approve"
-                type="button"
-                :disabled="approvalBusyId === approval.approvalId"
-                @click="decide(approval.approvalId, 'approved')"
-              >
-                {{ zh ? '批准这一次' : 'Approve once' }}
-              </button>
-            </div>
-          </article>
-
-          <div class="messages">
-            <article v-for="event in conversationEvents" :key="event.eventId">
-              <span>{{ event.type.startsWith('run.input') ? (zh ? '你' : 'You') : 'Agent' }}</span>
-              <p>{{ event.summary }}</p>
+        <article v-for="event in conversationEvents" :key="event.eventId" class="message event-message" :class="{ child: event.subagentId }">
+          <span class="agent-avatar" aria-hidden="true">{{ event.subagentId ? 'S' : 'A' }}</span>
+          <div>
+            <header>
+              <span>{{ event.subagentId ? (zh ? '子 Agent' : 'Subagent') : event.type.startsWith('run.input') ? (zh ? '你' : 'You') : 'Artigen Agent' }}</span>
               <time>{{ formatTime(event.createdAt) }}</time>
-            </article>
+            </header>
+            <p>{{ event.summary }}</p>
           </div>
+        </article>
 
-          <form class="input-box" @submit.prevent="sendInput">
-            <textarea
-              v-model.trim="message"
-              rows="3"
-              :disabled="terminal || sending"
-              :placeholder="zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the agent…'"
-            />
-            <button type="submit" :disabled="!message || terminal || sending">↑</button>
-          </form>
-        </aside>
+        <div v-if="terminal && artifacts.length" class="delivery-summary">
+          <header><span>{{ zh ? '交付完成' : 'Delivery complete' }}</span><b>{{ artifacts.length }}</b></header>
+          <a v-for="artifact in artifacts" :key="`center-${artifact.artifactId}`" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
+            <span>{{ fileCode(artifact.mimeType) }}</span>
+            <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · {{ artifact.verificationStatus }}</small></div>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>
+          </a>
+        </div>
+      </div>
 
-        <section class="desktop pane">
-          <div class="pane-head">
-            <div>
-              <p>02 / {{ zh ? '实时云电脑' : 'LIVE DESKTOP' }}</p>
-              <h2>{{ run.sandbox.provider }} · {{ run.sandbox.version }}</h2>
-            </div>
-            <span v-if="takingOver" class="relay-state">{{ zh ? '加密中继已连接' : 'Encrypted relay connected' }}</span>
-          </div>
-          <div class="screen">
-            <div v-show="takingOver" ref="desktopScreen" class="novnc-screen" aria-label="Agent desktop takeover"></div>
-            <div v-if="!takingOver" class="screen-empty">
-              <span>▧</span>
-              <strong>{{ desktopMessage }}</strong>
-              <small>{{ zh ? '画面仅在需要密码、OTP 或验证码时，通过一次性票据临时接通。原始 VNC 地址不会发给浏览器。' : 'The screen connects temporarily with a one-time ticket only for passwords, OTPs, or CAPTCHAs. The raw VNC address is never sent to the browser.' }}</small>
-            </div>
-          </div>
-          <div class="desktop-foot">
-            <span><i></i>{{ run.status === 'running' ? (zh ? '实时' : 'Live') : statusLabel(run.status) }}</span>
-            <span>Linux · 4 GiB · 10 GiB</span>
-            <span v-if="run.progress.durableCheckpointSaved" class="checkpoint-safe">
-              ✓ {{ zh ? '安全检查点已保存' : 'Safe checkpoint saved' }}
-            </span>
-            <button
-              v-if="takeoverRequired && !takingOver"
-              type="button"
-              @click="beginTakeover()"
-            >
-              {{ zh ? '接管云电脑' : 'Take over desktop' }}
-            </button>
-            <button
-              v-else-if="takingOver"
-              class="takeover-done"
-              type="button"
-              @click="finishTakeover"
-            >
-              {{ zh ? '我已完成，交还 Agent' : 'Done, return to Agent' }}
-            </button>
-            <button v-else type="button" disabled>{{ zh ? '无需接管' : 'No takeover needed' }}</button>
+      <p v-if="notice || failureText" class="run-notice">{{ notice || failureText }}</p>
+      <form class="message-composer" @submit.prevent="sendInput">
+        <label>
+          <span class="sr-only">{{ zh ? '补充要求' : 'Additional instructions' }}</span>
+          <textarea v-model.trim="message" rows="2" :disabled="terminal || sending" :placeholder="terminal ? (zh ? '运行已结束' : 'Run completed') : (zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the Agent…')" />
+        </label>
+        <footer>
+          <span>{{ zh ? '外部写操作会先请求审批' : 'External writes require approval' }}</span>
+          <button type="submit" :disabled="!message || terminal || sending" :aria-label="zh ? '发送' : 'Send'">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6z"/></svg>
+          </button>
+        </footer>
+      </form>
+    </section>
+
+    <template #environment>
+      <div v-if="run" class="inspector-stack">
+        <section class="inspector-card">
+          <header><span>{{ zh ? '模型锁定' : 'Model lock' }}</span><i class="healthy"></i></header>
+          <dl>
+            <div><dt>{{ zh ? '父与子文本模型' : 'Parent & child text' }}</dt><dd>Qwen/Qwen3-8B</dd></div>
+            <div><dt>{{ zh ? '所有图片' : 'All images' }}</dt><dd>Kwai-Kolors/Kolors</dd></div>
+            <div><dt>{{ zh ? '沙箱' : 'Sandbox' }}</dt><dd>{{ run.sandbox.provider }} · {{ run.sandbox.version }}</dd></div>
+          </dl>
+        </section>
+        <section class="inspector-card budget-card">
+          <header><span>{{ zh ? '费用' : 'Budget' }}</span><b>{{ run.budget.used.toFixed(1) }} / {{ run.budget.maximum }}</b></header>
+          <div><span :style="{ transform: `scaleX(${budgetPercent / 100})` }"></span></div>
+          <dl>
+            <div><dt>{{ zh ? '冻结' : 'Held' }}</dt><dd>{{ run.budget.frozen }}</dd></div>
+            <div><dt>{{ zh ? '预计剩余' : 'Est. remaining' }}</dt><dd>{{ budgetRemaining.toFixed(1) }}</dd></div>
+            <div><dt>{{ zh ? '结算次数' : 'Settlements' }}</dt><dd>1</dd></div>
+          </dl>
+        </section>
+        <section class="inspector-card">
+          <header><span>{{ zh ? '能力' : 'Capabilities' }}</span></header>
+          <div class="grant-list">
+            <span v-for="(enabled, capability) in run.capabilities" :key="capability" :class="{ enabled }"><i></i>{{ capability }}</span>
           </div>
         </section>
+      </div>
+    </template>
 
-        <aside class="artifacts pane">
-          <div class="pane-head">
-            <div>
-              <p>03 / {{ zh ? '交付物' : 'DELIVERABLES' }}</p>
-              <h2>{{ artifacts.length }} {{ zh ? '个文件' : 'files' }}</h2>
-            </div>
-          </div>
-          <div v-if="!artifacts.length" class="artifact-empty">
-            <span>◇</span>
-            <strong>{{ zh ? '还没有可交付文件' : 'No deliverables yet' }}</strong>
-            <small>{{ zh ? '文件生成后会先验证，再出现在这里。' : 'Files appear here only after verification.' }}</small>
-          </div>
-          <a
-            v-for="artifact in artifacts"
-            v-else
-            :key="artifact.artifactId"
-            class="artifact-card"
-            :href="agentAssetUrl(artifact)"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <span class="file-code">{{ fileCode(artifact.mimeType) }}</span>
-            <div>
-              <strong>{{ artifact.filename }}</strong>
-              <small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small>
-              <em :class="artifact.verificationStatus">
-                {{ artifact.verificationStatus === 'passed' ? '✓ ' + (zh ? '已验证' : 'Verified') : artifact.verificationStatus }}
-              </em>
-            </div>
-            <b>↓</b>
-          </a>
-          <button
-            v-for="artifact in websiteArtifacts"
-            :key="`preview:${artifact.artifactId}`"
-            class="preview-button"
-            type="button"
-            @click="previewWebsite(artifact)"
-          >
-            ◉ {{ zh ? `在线预览 ${artifact.filename}` : `Preview ${artifact.filename}` }}
-          </button>
-          <div v-if="run.progress.checklist && Object.keys(run.progress.checklist).length" class="checklist">
-            <strong>{{ zh ? '完成检查' : 'Completion check' }}</strong>
-            <span v-for="(value, key) in run.progress.checklist" :key="key">
-              <i :class="{ pass: value === true }">{{ value === true ? '✓' : '·' }}</i>
-              {{ checklistLabel(String(key)) }}
-            </span>
-          </div>
-        </aside>
-      </section>
-
-      <section v-if="run" class="timeline pane">
-        <div class="pane-head">
-          <div>
-            <p>04 / {{ zh ? '审计时间线' : 'AUDIT TIMELINE' }}</p>
-            <h2>{{ events.length }} events</h2>
-          </div>
-          <span>{{ run.progress.stepCount }}/{{ run.progress.maxSteps }} steps</span>
-        </div>
-        <div class="event-list">
-          <article v-for="event in events" :key="event.eventId">
+    <template #plan>
+      <div class="execution-spine">
+        <article v-for="stage in stages" :key="stage.id" :class="{ active: stage.active, complete: stage.done }">
+          <i></i>
+          <div><b>{{ stage.label }}</b><span>{{ stage.description }}</span></div>
+        </article>
+      </div>
+      <details class="audit-details">
+        <summary>{{ zh ? '审计记录' : 'Audit log' }} · {{ events.length }}</summary>
+        <div>
+          <article v-for="event in events" :key="`audit-${event.eventId}`">
             <time>{{ formatTime(event.createdAt) }}</time>
-            <span></span>
-            <div>
-              <strong>{{ eventLabel(event.type) }}</strong>
-              <p>{{ event.summary }}</p>
-            </div>
-            <code>#{{ event.eventId }}</code>
+            <span><b>{{ eventLabel(event.type) }}</b><small>{{ event.summary }}</small></span>
           </article>
         </div>
-      </section>
-      <section v-if="previewHtml" class="preview-modal" role="dialog" aria-modal="true">
+      </details>
+    </template>
+
+    <template #subagents>
+      <div v-if="run" class="inspector-stack">
+        <section class="parent-agent-card">
+          <span class="agent-node">P</span>
+          <div><b>{{ zh ? '父 Agent' : 'Parent Agent' }}</b><small>{{ statusLabel(run.status) }} · {{ run.progress.stepCount }}/{{ run.progress.maxSteps }} steps</small></div>
+        </section>
+        <div class="subagent-rail">
+          <article v-for="child in run.subagents" :key="child.subagentId" class="subagent-card">
+            <span class="agent-node">S{{ child.ordinal }}</span>
+            <div>
+              <header><b>{{ child.label || child.role }}</b><i :class="child.status"></i></header>
+              <p>{{ child.summary || child.role }}</p>
+              <small>{{ subagentStatusLabel(child.status) }} · {{ child.progress.stepCount }}/{{ child.progress.maxSteps }} steps · {{ child.usage.credits.toFixed(2) }} cr</small>
+              <button v-if="['queued', 'running'].includes(child.status)" type="button" :disabled="subagentBusyId === child.subagentId" @click="cancelChild(child.subagentId)">{{ zh ? '取消这个子 Agent' : 'Cancel this subagent' }}</button>
+            </div>
+          </article>
+          <div v-if="!run.subagents.length" class="inspector-empty">{{ zh ? '父 Agent 尚未委派子任务。' : 'The parent has not delegated a task.' }}</div>
+        </div>
+      </div>
+    </template>
+
+    <template #computer>
+      <div v-if="run" class="computer-panel">
         <header>
-          <strong>{{ previewName }}</strong>
-          <button type="button" @click="closePreview">×</button>
+          <div><span>{{ zh ? '安全桌面' : 'Secure desktop' }}</span><small>{{ desktopMessage }}</small></div>
+          <i :class="{ healthy: takingOver || run.status === 'running' }"></i>
         </header>
-        <iframe
-          :srcdoc="previewHtml"
-          :title="previewName"
-          sandbox="allow-scripts"
-          referrerpolicy="no-referrer"
-        />
-      </section>
-    </main>
-  </div>
+        <div class="computer-screen">
+          <div v-show="takingOver" ref="desktopScreen" class="novnc-screen" aria-label="Agent desktop takeover"></div>
+          <div v-if="!takingOver" class="screen-placeholder">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            <span>{{ zh ? '画面仅在需要接管时连接' : 'Connects only for takeover' }}</span>
+          </div>
+        </div>
+        <button v-if="takeoverRequired && !takingOver" type="button" @click="beginTakeover()">{{ zh ? '接管电脑' : 'Take over computer' }}</button>
+        <button v-else-if="takingOver" class="return-control" type="button" @click="finishTakeover">{{ zh ? '完成并交还 Agent' : 'Return control to Agent' }}</button>
+        <small>{{ zh ? '密码、OTP、验证码和安全警告不会发送给模型。' : 'Passwords, OTPs, CAPTCHAs, and security warnings never go to the model.' }}</small>
+      </div>
+    </template>
+
+    <template #files>
+      <div class="inspector-stack">
+        <section class="inspector-card">
+          <header><span>{{ zh ? '已验证交付' : 'Verified delivery' }}</span><b>{{ artifacts.length }}</b></header>
+          <div v-if="artifacts.length" class="file-list">
+            <a v-for="artifact in artifacts" :key="artifact.artifactId" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
+              <span>{{ fileCode(artifact.mimeType) }}</span>
+              <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em :class="artifact.verificationStatus">{{ artifact.verificationStatus }}</em></div>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>
+            </a>
+          </div>
+          <div v-else class="inspector-empty">{{ zh ? '文件通过验证后才会显示。' : 'Files appear only after verification.' }}</div>
+        </section>
+        <button v-for="artifact in websiteArtifacts" :key="`preview:${artifact.artifactId}`" class="preview-control" type="button" @click="previewWebsite(artifact)">{{ zh ? `预览 ${artifact.filename}` : `Preview ${artifact.filename}` }}</button>
+      </div>
+    </template>
+
+    <section v-if="previewHtml" class="preview-modal" role="dialog" aria-modal="true">
+      <header><strong>{{ previewName }}</strong><button type="button" :aria-label="zh ? '关闭预览' : 'Close preview'" @click="closePreview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+      <iframe :srcdoc="previewHtml" :title="previewName" sandbox="allow-scripts" referrerpolicy="no-referrer" />
+    </section>
+  </AgentWorkspaceShell>
 </template>
 
 <script setup lang="ts">
@@ -322,12 +233,14 @@ import RFB from '@novnc/novnc/lib/rfb';
 import { useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
-import TitleBar from '../components/TitleBar.vue';
+import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import {
   agentAssetUrl,
+  cancelAgentSubagent,
   controlAgentRun,
   createAgentDesktopTicket,
   getAgentRun,
+  listAgentRuns,
   loadAgentWebsitePreview,
   openAgentEventStream,
   submitAgentInput,
@@ -335,7 +248,8 @@ import {
   type AgentArtifact,
   type AgentEvent,
   type AgentRun,
-  type AgentRunStatus
+  type AgentRunStatus,
+  type AgentSubagentStatus
 } from '../services/agentRuns';
 
 const route = useRoute();
@@ -344,12 +258,14 @@ const { currentLang } = storeToRefs(languageStore);
 const zh = computed(() => currentLang.value === 'zh');
 const runId = computed(() => String(route.params.runId || ''));
 const run = ref<AgentRun | null>(null);
+const runs = ref<AgentRun[]>([]);
 const events = ref<AgentEvent[]>([]);
 const message = ref('');
 const notice = ref('');
 const controlBusy = ref(false);
 const sending = ref(false);
 const approvalBusyId = ref('');
+const subagentBusyId = ref('');
 const approvalReasons = ref<Record<string, string>>({});
 const stopArmed = ref(false);
 const takingOver = ref(false);
@@ -366,6 +282,13 @@ let desktopClient: RFB | null = null;
 const eventIds = new Set<string>();
 
 const terminal = computed(() => ['succeeded', 'failed', 'cancelled'].includes(run.value?.status || ''));
+const workspaceTone = computed<'ready' | 'busy' | 'warning' | 'offline'>(() => {
+  if (!run.value) return 'offline';
+  if (run.value.status === 'waiting_user' || pendingApprovals.value.length) return 'warning';
+  if (['queued', 'provisioning', 'running', 'verifying'].includes(run.value.status)) return 'busy';
+  if (run.value.status === 'succeeded') return 'ready';
+  return 'offline';
+});
 const canPause = computed(() => ['queued', 'provisioning', 'running', 'waiting_user'].includes(run.value?.status || ''));
 const canResume = computed(() => run.value?.status === 'paused');
 const shortId = computed(() => runId.value ? runId.value.slice(0, 8) : '—');
@@ -389,12 +312,19 @@ const takeoverRequired = computed(() =>
 const conversationEvents = computed(() =>
   events.value.filter((event) =>
     event.type.includes('input') ||
-    event.type.includes('approval') ||
     event.type.includes('takeover') ||
+    event.type === 'approval.decided' ||
     event.type === 'run.failed' ||
-    event.type === 'run.succeeded'
+    event.type === 'run.succeeded' ||
+    ['subagent.succeeded', 'subagent.failed', 'subagent.cancelled'].includes(event.type)
   )
 );
+const activeSubagents = computed(() => (run.value?.subagents || []).filter((child) => ['queued', 'running'].includes(child.status)).length);
+const filteredRuns = (search: string) => {
+  const query = search.trim().toLocaleLowerCase();
+  if (!query) return runs.value;
+  return runs.value.filter((item) => `${item.objectivePreview || ''} ${item.status}`.toLocaleLowerCase().includes(query));
+};
 const budgetPercent = computed(() => {
   if (!run.value?.budget.maximum) return 0;
   return Math.min(100, (run.value.budget.used / run.value.budget.maximum) * 100);
@@ -490,6 +420,7 @@ const load = () => {
   loadInFlight = (async () => {
     try {
       run.value = await getAgentRun(runId.value);
+      runs.value = await listAgentRuns();
     } catch (error) {
       notice.value = errorText(error || 'AGENT_RUN_LOAD_FAILED');
     } finally {
@@ -497,6 +428,19 @@ const load = () => {
     }
   })();
   return loadInFlight;
+};
+
+const cancelChild = async (subagentId: string) => {
+  subagentBusyId.value = subagentId;
+  try {
+    await cancelAgentSubagent(runId.value, subagentId);
+    notice.value = '';
+    await load();
+  } catch (error) {
+    notice.value = errorText(error || 'AGENT_SUBAGENT_CANCEL_FAILED');
+  } finally {
+    subagentBusyId.value = '';
+  }
 };
 
 const control = async (action: 'pause' | 'resume' | 'cancel') => {
@@ -674,6 +618,16 @@ const statusLabel = (status: AgentRunStatus) => {
   };
   return labels[status]?.[zh.value ? 0 : 1] || status;
 };
+const subagentStatusLabel = (status: AgentSubagentStatus) => {
+  const labels: Record<AgentSubagentStatus, [string, string]> = {
+    queued: ['排队中', 'Queued'],
+    running: ['执行中', 'Running'],
+    succeeded: ['已完成', 'Completed'],
+    failed: ['失败', 'Failed'],
+    cancelled: ['已取消', 'Cancelled']
+  };
+  return labels[status][zh.value ? 0 : 1];
+};
 const actionLabel = (type: string) => {
   const labels: Record<string, [string, string]> = {
     send: ['发送内容', 'Send content'],
@@ -714,7 +668,13 @@ const eventLabel = (type: string) => {
     'run.failed': ['任务失败', 'Run failed'],
     'run.cancelled': ['任务已停止', 'Run stopped'],
     'run.input_received': ['收到你的补充', 'User input received'],
-    'takeover.ended': ['接管已结束', 'Takeover ended']
+    'takeover.ended': ['接管已结束', 'Takeover ended'],
+    'subagent.created': ['子 Agent 已创建', 'Subagent created'],
+    'subagent.started': ['子 Agent 已启动', 'Subagent started'],
+    'subagent.progress': ['子 Agent 有新进展', 'Subagent progress'],
+    'subagent.succeeded': ['子 Agent 已完成', 'Subagent completed'],
+    'subagent.failed': ['子 Agent 失败', 'Subagent failed'],
+    'subagent.cancelled': ['子 Agent 已取消', 'Subagent cancelled']
   };
   return labels[type]?.[zh.value ? 0 : 1] || type.replace(/\./g, ' / ').toUpperCase();
 };
@@ -735,8 +695,6 @@ const fileCode = (mime: string) => {
   if (mime.startsWith('image/')) return 'IMG';
   return 'FILE';
 };
-const checklistLabel = (key: string) => key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
-
 onMounted(async () => {
   await load();
   closeStream = openAgentEventStream(runId.value, { onEvent });
@@ -752,26 +710,163 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.run-page { min-height: 100vh; color: #f4f6f0; background: #090b0c; }.run-shell { width: min(1600px, calc(100% - 32px)); margin: 0 auto; padding: 25px 0 70px; }
-.run-header { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 18px; }.back { display: inline-block; margin-bottom: 14px; color: #7c8389; font-size: 12px; text-decoration: none; }.status-line { display: flex; align-items: center; gap: 10px; }.status-line strong { font-size: 25px; }.status-line code { color: #666d72; }.pulse { width: 9px; height: 9px; border-radius: 50%; background: #777; }.pulse.running,.pulse.provisioning,.pulse.verifying { background: #ccff00; box-shadow: 0 0 12px #ccff00; }.pulse.succeeded { background: #55e292; }.pulse.failed,.pulse.cancelled { background: #ff6d63; }.pulse.waiting_user { background: #ffb84d; }
-.controls { display: flex; gap: 8px; }.controls button,.desktop-foot button { min-height: 38px; padding: 0 14px; border: 1px solid #383d41; color: #d8dcdf; background: #15181a; }.controls .resume { color: #0a0c0d; border-color: #ccff00; background: #ccff00; }.controls .danger { color: #ff9289; border-color: #66342f; }.controls .danger.armed { color: #0b0c0d; border-color: #ff7f73; background: #ff7f73; }
-.budget-bar { display: flex; align-items: center; gap: 20px; padding: 13px 16px; border: 1px solid #292d30; background: #111416; }.budget-bar > div:not(.budget-track) { display: grid; grid-template-columns: auto auto; gap: 6px; font: 11px monospace; }.budget-bar span { color: #747b80; }.budget-bar strong { color: #f3f5f0; }.budget-track { flex: 1; height: 4px; overflow: hidden; background: #262a2d; }.budget-track span { display: block; height: 100%; background: #ccff00; transition: width .3s ease; }
-.notice { margin-top: 12px; padding: 10px 14px; color: #ff9d94; border: 1px solid #5c302c; background: #21120f; font: 12px monospace; }
-.run-grid { display: grid; grid-template-columns: minmax(260px,.65fr) minmax(500px,1.5fr) minmax(260px,.65fr); gap: 12px; margin-top: 12px; }.pane { border: 1px solid #292d30; background: #111416; }.conversation,.desktop,.artifacts { min-height: 620px; }.conversation,.artifacts { padding: 18px; }.desktop { display: flex; flex-direction: column; padding: 18px; }
-.pane-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid #2a2e31; }.pane-head p { margin: 0 0 7px; color: #ccff00; font: 700 10px monospace; letter-spacing: .08em; }.pane-head h2 { margin: 0; font-size: 15px; }.pane-head a { color: #ccff00; font-size: 11px; text-decoration: none; }
-.objective-card { margin: 14px 0 0; padding: 12px; border: 1px solid #2a2e31; background: #101214; }.objective-card span { color: #ccff00; font: 9px monospace; letter-spacing: .12em; text-transform: uppercase; }.objective-card p { max-height: 132px; margin: 8px 0 0; overflow: auto; color: #c9cdd0; font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
-.plan { display: grid; padding: 14px 0; }.plan > div { display: flex; gap: 10px; padding: 9px 0; opacity: .4; }.plan > div.active,.plan > div.done { opacity: 1; }.plan > div > span { display: grid; place-items: center; flex: 0 0 27px; height: 27px; border: 1px solid #3b4044; color: #787f84; font: 9px monospace; }.plan > div.active > span { color: #080a0b; border-color: #ccff00; background: #ccff00; }.plan > div.done > span { color: #ccff00; border-color: #617711; }.plan div div { display: grid; gap: 3px; }.plan strong { font-size: 11px; }.plan small { color: #6d7479; font-size: 9px; }
-.approval { margin-bottom: 12px; padding: 14px; border: 1px solid #83641c; background: #211c0d; }.approval > span { color: #ffca55; font: 700 9px monospace; text-transform: uppercase; }.approval > strong { display: block; margin-top: 6px; }.approval p { color: #c7bea8; font-size: 11px; line-height: 1.5; }.approval small { display: block; margin-top: 7px; color: #817963; }.approval > div { display: flex; gap: 7px; margin-top: 12px; }.approval button { flex: 1; min-height: 34px; border: 1px solid #554c35; color: #ddd4bd; background: transparent; font-size: 10px; }.approval button:disabled { opacity: .5; cursor: wait; }.approval .approve { color: #101207; border-color: #ccff00; background: #ccff00; }.approval-context { display: grid; gap: 7px; margin: 10px 0 0; }.approval-context div { padding: 8px; border-left: 2px solid #5c5130; background: #19160d; }.approval-context dt { color: #ffca55; font: 700 8px monospace; text-transform: uppercase; }.approval-context dd { margin: 4px 0 0; color: #a9a18e; font-size: 9px; line-height: 1.45; }.approval-operation { font-family: monospace; }.approval-reason { width: 100%; min-height: 34px; box-sizing: border-box; margin-top: 10px; padding: 0 9px; color: #e9e5dc; border: 1px solid #514933; background: #120f09; font-size: 10px; }
-.messages { max-height: 190px; overflow: auto; border-top: 1px solid #292d30; }.messages article { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; padding: 10px 0; border-bottom: 1px solid #222629; }.messages span { color: #ccff00; font: 9px monospace; }.messages p { margin: 0; color: #a5abb0; font-size: 10px; line-height: 1.45; }.messages time { grid-column: 2; color: #555c61; font: 8px monospace; }
-.input-box { position: relative; margin-top: 12px; }.input-box textarea { width: 100%; box-sizing: border-box; resize: none; padding: 11px 40px 11px 11px; border: 1px solid #363b3f; color: #f4f6f0; background: #0a0d0e; font: 11px/1.5 inherit; }.input-box button { position: absolute; right: 7px; bottom: 7px; width: 28px; height: 28px; border: 0; color: #090b0c; background: #ccff00; }
-.screen { position: relative; flex: 1; min-height: 460px; margin-top: 14px; overflow: hidden; border: 1px solid #303538; background: #070909; }.novnc-screen { width: 100%; min-height: 500px; height: 100%; outline: none; }.novnc-screen :deep(canvas) { max-width: 100%; }.screen-empty { display: grid; place-items: center; align-content: center; gap: 10px; height: 100%; min-height: 500px; text-align: center; }.screen-empty > span { color: #ccff00; font-size: 50px; }.screen-empty small { max-width: 360px; color: #61686d; font-size: 10px; line-height: 1.5; }.relay-state { color: #66dd9b; font: 9px monospace; }
-.desktop-foot { display: flex; align-items: center; gap: 18px; padding-top: 12px; color: #777e83; font: 9px monospace; }.desktop-foot span:first-child { color: #cbd0d3; }.desktop-foot i { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: #ccff00; }.desktop-foot button { margin-left: auto; font-size: 9px; opacity: .5; }
-.desktop-foot .checkpoint-safe { color: #66dd9b; }
-.artifact-empty { display: grid; place-items: center; gap: 8px; min-height: 250px; text-align: center; color: #8c9398; }.artifact-empty > span { color: #ccff00; font-size: 40px; }.artifact-empty small { color: #62696e; font-size: 10px; }
-.artifact-card { display: grid; grid-template-columns: 42px 1fr auto; gap: 10px; align-items: center; padding: 13px 0; color: inherit; text-decoration: none; border-bottom: 1px solid #292d30; }.file-code { display: grid; place-items: center; height: 42px; border: 1px solid #3a4044; color: #ccff00; font: 800 9px monospace; }.artifact-card div { min-width: 0; display: grid; gap: 3px; }.artifact-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }.artifact-card small { color: #6f767b; font-size: 9px; }.artifact-card em { color: #858c91; font: normal 9px monospace; }.artifact-card em.passed { color: #64dd98; }.artifact-card b { color: #ccff00; }
-.preview-button { width: 100%; margin-top: 8px; padding: 9px; border: 1px solid #526617; color: #ccff00; background: #121807; font-size: 10px; text-align: left; }.preview-modal { position: fixed; z-index: 10000; inset: 18px; display: grid; grid-template-rows: auto 1fr; border: 1px solid #41474b; background: #090b0c; box-shadow: 0 20px 80px #000c; }.preview-modal header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #303538; }.preview-modal header button { width: 34px; height: 34px; border: 1px solid #454b50; color: #fff; background: #16191b; font-size: 20px; }.preview-modal iframe { width: 100%; height: 100%; border: 0; background: #fff; }
-.checklist { display: grid; gap: 8px; margin-top: 18px; padding: 13px; background: #0c0f10; }.checklist > strong { margin-bottom: 4px; font-size: 11px; }.checklist span { color: #777e83; font-size: 9px; }.checklist i { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-right: 5px; border: 1px solid #34393d; font-style: normal; }.checklist i.pass { color: #ccff00; border-color: #5f7415; }
-.timeline { margin-top: 12px; padding: 18px; }.timeline .pane-head > span { color: #747b80; font: 10px monospace; }.event-list { max-height: 330px; overflow: auto; }.event-list article { display: grid; grid-template-columns: 75px 12px 1fr auto; gap: 12px; align-items: start; padding: 12px 0; border-bottom: 1px solid #25292c; }.event-list time,.event-list code { color: #5f666b; font: 9px monospace; }.event-list article > span { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #ccff00; }.event-list strong { font-size: 10px; }.event-list p { margin: 4px 0 0; color: #838a8f; font-size: 10px; }
-@media (max-width: 1150px) { .run-grid { grid-template-columns: 1fr 1fr; }.desktop { grid-column: 1 / -1; grid-row: 1; }.conversation,.artifacts { min-height: auto; } }
-@media (max-width: 700px) { .run-shell { width: min(100% - 20px,1600px); }.run-header,.budget-bar { align-items: stretch; flex-direction: column; }.controls button { flex: 1; }.budget-bar { gap: 9px; }.run-grid { grid-template-columns: 1fr; }.desktop { grid-column: auto; }.conversation,.desktop,.artifacts { min-height: auto; }.screen,.novnc-screen,.screen-empty { min-height: 360px; }.desktop-foot { flex-wrap: wrap; }.desktop-foot button { width: 100%; margin-left: 0; } }
+.conversation-workspace { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; height: 100%; min-height: 0; }
+.conversation-scroll { width: min(780px, calc(100% - 44px)); margin: 0 auto; padding: 34px 0 48px; overflow: auto; scrollbar-color: var(--border) transparent; }
+.message { margin-bottom: 22px; color: var(--text); }
+.message header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
+.message header span { font-size: 11px; font-weight: 720; }
+.message header time, .message header small { color: var(--muted-2); font-size: 11px; }
+.message p { margin: 0; color: var(--text); font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+.user-message { max-width: 74%; margin-left: auto; padding: 13px 15px; border: 1px solid var(--border); border-radius: 12px 12px 3px 12px; background: var(--surface); }
+.user-message header { justify-content: flex-end; }
+.user-message p { color: var(--text); }
+.agent-message, .event-message { display: grid; grid-template-columns: 30px 1fr; gap: 11px; align-items: start; }
+.agent-avatar { display: grid; width: 30px; height: 30px; place-items: center; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 36%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--acid) 7%, var(--surface)); font-size: 11px; font-weight: 800; }
+.event-message.child .agent-avatar { color: var(--text); border-color: var(--border); background: var(--surface-raised); }
+.event-message p { color: var(--muted); font-size: 12px; }
+.approval-card { margin: 26px 0; padding: 16px; border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); }
+.approval-card > header { display: flex; align-items: center; justify-content: space-between; color: var(--warning); font-size: 11px; font-weight: 720; }
+.approval-card code { color: var(--muted); font-size: 11px; }
+.approval-card h2 { margin: 12px 0 6px; font-size: 14px; }
+.approval-card > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.approval-card dl { display: grid; gap: 7px; margin: 12px 0; }
+.approval-card dl div { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border)); background: color-mix(in srgb, var(--surface) 82%, transparent); }
+.approval-card dt { color: var(--warning); font-size: 11px; font-weight: 700; }
+.approval-card dd { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.denial-reason { display: block; margin-bottom: 6px; color: var(--text); font-size: 11px; font-weight: 620; }
+.approval-card > input { width: 100%; min-height: 38px; box-sizing: border-box; padding: 0 10px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 11px; }
+.approval-card footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.approval-card button { min-height: 36px; padding: 0 12px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 11px; }
+.approval-card .approval-primary { color: var(--acid-ink); border-color: var(--acid); background: var(--acid); font-weight: 720; }
+.delivery-summary { padding: 14px; border: 1px solid color-mix(in srgb, var(--success) 42%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--success) 6%, var(--surface)); }
+.delivery-summary > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--success); font-size: 11px; font-weight: 720; }
+.delivery-summary > header b { font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.delivery-summary a { display: grid; grid-template-columns: 36px 1fr 18px; gap: 10px; align-items: center; padding: 9px; color: inherit; border-radius: 8px; text-decoration: none; }
+.delivery-summary a:hover { background: var(--surface-raised); }
+.delivery-summary a > span { color: var(--acid-text); font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.delivery-summary a div { display: grid; gap: 2px; min-width: 0; }
+.delivery-summary a b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.delivery-summary a small { color: var(--muted); font-size: 11px; }
+.delivery-summary svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.run-notice { width: min(780px, calc(100% - 44px)); margin: 0 auto 8px; padding: 9px 11px; color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 38%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); font-size: 11px; }
+.message-composer { width: min(780px, calc(100% - 44px)); margin: 0 auto 18px; overflow: hidden; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); box-shadow: 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
+.message-composer:focus-within { border-color: var(--acid); box-shadow: 0 0 0 2px color-mix(in srgb, var(--acid) 13%, transparent), 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
+.message-composer textarea { display: block; width: 100%; min-height: 58px; resize: none; box-sizing: border-box; padding: 12px 13px 5px; color: var(--text); border: 0; outline: 0; background: transparent; font: 13px/1.55 inherit; }
+.message-composer footer { display: flex; align-items: center; justify-content: space-between; padding: 6px 7px 7px 12px; }
+.message-composer footer span { color: var(--muted-2); font-size: 11px; }
+.message-composer button { display: grid; width: 32px; height: 32px; place-items: center; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); }
+.message-composer button:disabled { opacity: .4; }
+.message-composer svg, .run-controls svg, .file-list svg, .preview-modal svg { width: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.run-controls { display: flex; gap: 5px; }
+.run-controls button { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; padding: 0 8px; color: var(--muted); border: 1px solid var(--border); border-radius: 7px; background: var(--surface); font-size: 11px; }
+.run-controls .primary-control { color: var(--acid-ink); border-color: var(--acid); background: var(--acid); }
+.run-controls .danger-control { color: var(--danger); }
+.run-controls .danger-control.armed { color: #fff; border-color: var(--danger); background: var(--danger); }
+.history-group { padding: 4px 8px 16px; }
+.history-label { padding: 5px 8px 8px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.history-run { display: grid; grid-template-columns: 8px 1fr; gap: 8px; align-items: start; padding: 9px 8px; color: inherit; border-radius: 8px; text-decoration: none; }
+.history-run:hover, .history-run.router-link-active { background: var(--surface-raised); }
+.history-run i { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--muted); }
+.history-run i.running, .history-run i.provisioning, .history-run i.verifying { background: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acid) 12%, transparent); }
+.history-run i.succeeded { background: var(--success); }
+.history-run i.failed, .history-run i.cancelled { background: var(--danger); }
+.history-run span { display: grid; min-width: 0; gap: 3px; }
+.history-run b { overflow: hidden; color: var(--text); font-size: 11px; font-weight: 580; text-overflow: ellipsis; white-space: nowrap; }
+.history-run small, .history-empty { color: var(--muted); font-size: 11px; }
+.history-empty { padding: 16px 8px; text-align: center; }
+.inspector-stack { display: grid; gap: 10px; }
+.inspector-card { padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.inspector-card header, .computer-panel > header { display: flex; min-height: 22px; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.inspector-card header > span, .computer-panel header span { color: var(--muted); font-size: 11px; font-weight: 720; }
+.inspector-card header > b { color: var(--text); font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.inspector-card header > i, .computer-panel header > i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.inspector-card header > i.healthy, .computer-panel header > i.healthy { background: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acid) 12%, transparent); }
+.inspector-card dl { display: grid; gap: 7px; margin: 0; }
+.inspector-card dl div { display: flex; justify-content: space-between; gap: 10px; }
+.inspector-card dt, .inspector-card p { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.inspector-card dd { margin: 0; color: var(--text); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.budget-card > div { height: 4px; margin: 3px 0 11px; overflow: hidden; border-radius: 4px; background: var(--border); }
+.budget-card > div span { display: block; width: 100%; height: 100%; background: var(--acid); transform-origin: left center; transition: transform 180ms ease; }
+.grant-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.grant-list span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; color: var(--muted-2); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; }
+.grant-list i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }
+.grant-list span.enabled { color: var(--text); }
+.grant-list span.enabled i { background: var(--acid); }
+.execution-spine { position: relative; display: grid; }
+.execution-spine::before { position: absolute; top: 16px; bottom: 16px; left: 8px; width: 1px; content: ''; background: var(--border); }
+.execution-spine article { position: relative; display: grid; grid-template-columns: 17px 1fr; gap: 10px; min-height: 62px; }
+.execution-spine i { z-index: 1; width: 9px; height: 9px; margin: 5px 0 0 4px; border: 2px solid var(--border); border-radius: 50%; background: var(--sidebar); }
+.execution-spine article.complete i { border-color: var(--acid); background: var(--acid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acid) 10%, transparent); }
+.execution-spine article.active i { border-color: var(--acid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acid) 10%, transparent); }
+.execution-spine div { display: grid; align-content: start; gap: 4px; }
+.execution-spine b { color: var(--text); font-size: 11px; }
+.execution-spine span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.audit-details { margin-top: 10px; border-top: 1px solid var(--border); }
+.audit-details summary { padding: 12px 0; color: var(--muted); cursor: pointer; font-size: 11px; }
+.audit-details > div { display: grid; gap: 9px; max-height: 300px; overflow: auto; }
+.audit-details article { display: grid; grid-template-columns: 52px 1fr; gap: 8px; }
+.audit-details time { color: var(--muted-2); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.audit-details article span { display: grid; gap: 2px; }
+.audit-details b { font-size: 11px; }
+.audit-details small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.parent-agent-card, .subagent-card { display: grid; grid-template-columns: 34px 1fr; gap: 9px; align-items: start; padding: 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.agent-node { display: grid; width: 30px; height: 30px; place-items: center; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 38%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); font: 800 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.parent-agent-card div { display: grid; gap: 3px; }
+.parent-agent-card b, .subagent-card b { color: var(--text); font-size: 11px; }
+.parent-agent-card small, .subagent-card small { color: var(--muted); font-size: 11px; }
+.subagent-rail { position: relative; display: grid; gap: 7px; padding-left: 13px; }
+.subagent-rail::before { position: absolute; top: 0; bottom: 0; left: 0; width: 1px; content: ''; background: var(--border); }
+.subagent-card { grid-template-columns: 32px 1fr; }
+.subagent-card > div { display: grid; min-width: 0; justify-items: start; gap: 5px; }
+.subagent-card .agent-node { width: 28px; height: 28px; color: var(--text); border-color: var(--border); background: var(--surface-raised); }
+.subagent-card header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.subagent-card header i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.subagent-card header i.running { background: var(--acid); }
+.subagent-card header i.succeeded { background: var(--success); }
+.subagent-card header i.failed, .subagent-card header i.cancelled { background: var(--danger); }
+.subagent-card p { max-height: 46px; margin: 1px 0; overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.subagent-card small { line-height: 1.45; overflow-wrap: anywhere; }
+.subagent-card button { min-height: 32px; margin-top: 2px; padding: 0 4px; color: var(--danger); border: 0; background: transparent; font-size: 11px; }
+.inspector-empty { padding: 20px 8px; color: var(--muted); text-align: center; font-size: 11px; line-height: 1.5; }
+.computer-panel { display: grid; gap: 10px; }
+.computer-panel > header { margin: 0; }
+.computer-panel header div { display: grid; gap: 2px; }
+.computer-panel header small, .computer-panel > small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.computer-screen { position: relative; min-height: 220px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); }
+.novnc-screen { width: 100%; min-height: 220px; outline: none; }
+.novnc-screen :deep(canvas) { max-width: 100%; }
+.screen-placeholder { display: grid; min-height: 220px; place-content: center; place-items: center; gap: 9px; color: var(--muted); }
+.screen-placeholder svg { width: 30px; fill: none; stroke: var(--acid-text); stroke-width: 1.3; }
+.screen-placeholder span { font-size: 11px; }
+.computer-panel > button, .preview-control { min-height: 36px; color: var(--acid-ink); border: 1px solid var(--acid); border-radius: 8px; background: var(--acid); font-size: 11px; font-weight: 700; }
+.computer-panel > button.return-control { color: var(--text); border-color: var(--border); background: var(--surface); }
+.file-list { display: grid; gap: 4px; }
+.file-list a { display: grid; grid-template-columns: 34px 1fr 16px; gap: 8px; align-items: center; padding: 8px; color: inherit; border-radius: 8px; text-decoration: none; }
+.file-list a:hover { background: var(--surface-raised); }
+.file-list a > span { color: var(--acid-text); font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.file-list a div { display: grid; min-width: 0; gap: 2px; }
+.file-list b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.file-list small, .file-list em { color: var(--muted); font-size: 11px; font-style: normal; }
+.file-list em.passed { color: var(--success); }
+.preview-control { width: 100%; }
+.preview-modal { position: fixed; z-index: 500; inset: 16px; display: grid; grid-template-rows: auto 1fr; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 24px 100px color-mix(in srgb, var(--bg) 70%, transparent); }
+.preview-modal header { display: flex; min-height: 50px; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.preview-modal header button { display: grid; width: 34px; height: 34px; place-items: center; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.preview-modal iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+
+@media (max-width: 800px) {
+  .conversation-scroll, .run-notice, .message-composer { width: min(100% - 24px, 780px); }
+  .conversation-scroll { padding-top: 24px; }
+  .user-message { max-width: 88%; }
+  .message-composer { margin-bottom: 10px; }
+  .message-composer textarea { min-height: 74px; font-size: 16px; }
+  .approval-card > input { min-height: 44px; font-size: 16px; }
+  .message-composer button, .approval-card button, .computer-panel > button, .preview-control, .subagent-card button { min-width: 44px; min-height: 44px; }
+  .run-controls button { width: 44px; padding: 0; justify-content: center; font-size: 0; }
+  .run-controls svg { width: 16px; }
+  .preview-modal { inset: 0; border: 0; border-radius: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .budget-card > div span { transition: none; }
+}
 </style>

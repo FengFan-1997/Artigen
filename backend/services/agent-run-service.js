@@ -28,6 +28,7 @@ const {
 } = require('./agent-policy-service');
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
+const SUBAGENT_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const ACTIVE_STATUSES = new Set([
   'draft',
   'queued',
@@ -121,6 +122,7 @@ const normalizeCapabilities = (value, env = null) => {
     'generate_images',
     'google_drive',
     'github',
+    'subagents',
     'upload',
     'move_files'
   ]);
@@ -128,6 +130,11 @@ const normalizeCapabilities = (value, env = null) => {
   const normalized = Object.fromEntries(
     [...allowed].map((key) => [key, source[key] === true])
   );
+  if (env && !['1', 'true', 'yes', 'on'].includes(
+    String(env.AGENT_SUBAGENTS_ENABLED || '').trim().toLowerCase()
+  )) {
+    normalized.subagents = false;
+  }
   const policy = String(
     env ? (env.AGENT_PUBLIC_CAPABILITIES || 'files,shell') : ''
   ).trim().toLowerCase();
@@ -226,6 +233,7 @@ const publicRun = (row, extras = {}) => ({
     durableCheckpointSaved: row.checkpoint?.durableToolResume === true
   },
   error: row.error_code ? { code: row.error_code } : null,
+  subagents: Array.isArray(extras.subagents) ? extras.subagents : [],
   expiresAt: row.expires_at,
   createdAt: row.created_at,
   queuedAt: row.queued_at,
@@ -238,6 +246,7 @@ const publicRun = (row, extras = {}) => ({
 const publicEvent = (row) => ({
   eventId: String(row.id),
   runId: row.run_id,
+  subagentId: row.subagent_id || null,
   type: row.event_type,
   phase: row.phase || null,
   summary: row.summary || '',
@@ -263,6 +272,62 @@ const publicArtifact = (row) => ({
   expiresAt: row.expires_at,
   createdAt: row.created_at
 });
+
+const publicSubagent = (row) => ({
+  subagentId: row.id,
+  runId: row.run_id,
+  ordinal: Number(row.ordinal || 0),
+  role: row.role,
+  label: row.label,
+  status: row.status,
+  progress: {
+    stepCount: Number(row.step_count || 0),
+    maxSteps: 20,
+    cancelRequested: row.cancel_requested === true
+  },
+  usage: {
+    ...(row.usage && typeof row.usage === 'object' ? row.usage : {}),
+    credits: Number(row.estimated_credits_used || 0)
+  },
+  summary: row.summary || '',
+  outputFiles: Array.isArray(row.output_files) ? row.output_files : [],
+  error: row.error_code ? { code: row.error_code } : null,
+  expiresAt: row.expires_at,
+  createdAt: row.created_at,
+  startedAt: row.started_at,
+  finishedAt: row.finished_at,
+  updatedAt: row.updated_at
+});
+
+const normalizeDelegatedTasks = (value, { allowedInputPaths = [] } = {}) => {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3) {
+    throw new ApiError(400, 'AGENT_SUBAGENT_TASKS_INVALID', { field: 'tasks' });
+  }
+  const allowed = new Set((Array.isArray(allowedInputPaths) ? allowedInputPaths : [])
+    .map((entry) => String(entry || '').trim())
+    .filter(Boolean));
+  return value.map((entry, index) => {
+    const role = String(entry?.role || '').trim();
+    const objective = String(entry?.objective || '').trim();
+    const expectedOutput = String(entry?.expectedOutput || '').trim();
+    const label = String(entry?.label || role || `子 Agent ${index + 1}`).trim();
+    const inputPaths = Array.isArray(entry?.inputPaths)
+      ? [...new Set(entry.inputPaths.map((path) => String(path || '').trim()).filter(Boolean))]
+      : [];
+    if (
+      role.length < 1 || role.length > 80 ||
+      label.length < 1 || label.length > 160 ||
+      objective.length < 3 || objective.length > 12_000 ||
+      expectedOutput.length < 1 || expectedOutput.length > 4_000 ||
+      inputPaths.length > 40 || inputPaths.some((path) => !allowed.has(path))
+    ) {
+      throw new ApiError(400, 'AGENT_SUBAGENT_TASK_INVALID', {
+        field: `tasks.${index}`
+      });
+    }
+    return { role, label, objective, expectedOutput, inputPaths };
+  });
+};
 
 const objectivePublicFields = ({ runId, record, env }) => {
   if (!record) return {};
@@ -304,21 +369,23 @@ const withTransaction = async (pool, callback) => {
 
 const insertEvent = async (client, {
   runId,
+  subagentId = null,
   type,
   phase = null,
   summary = '',
   data = {}
 }) => {
   const event = await client.query(
-    `INSERT INTO agent_events (run_id,event_type,phase,summary,data)
-     VALUES ($1,$2,$3,$4,$5)
+    `INSERT INTO agent_events (run_id,event_type,phase,summary,data,subagent_id)
+     VALUES ($1,$2,$3,$4,$5,$6)
      RETURNING *`,
     [
       runId,
       sanitizeText(type, 100),
       phase ? sanitizeText(phase, 80) : null,
       sanitizeText(summary, 500),
-      JSON.stringify(sanitizeLogValue(data))
+      JSON.stringify(sanitizeLogValue(data)),
+      subagentId
     ]
   );
   await client.query(
@@ -378,6 +445,424 @@ const createAgentRunService = ({
     return { dbUserId, row: result.rows[0] };
   };
 
+  const listSubagentsWithClient = async (client, runId) => {
+    const result = await client.query(
+      'SELECT * FROM agent_subagents WHERE run_id=$1 ORDER BY ordinal',
+      [runId]
+    );
+    return result.rows;
+  };
+
+  const cancelAllSubagentsWithClient = async (client, runId, reason = 'PARENT_RUN_STOPPED') => {
+    const cancelled = await client.query(
+      `UPDATE agent_subagents
+          SET status='cancelled',cancel_requested=true,error_code=$2,
+              finished_at=COALESCE(finished_at,now()),updated_at=now()
+        WHERE run_id=$1 AND status IN ('queued','running')
+        RETURNING *`,
+      [runId, sanitizeText(reason, 100)]
+    );
+    for (const row of cancelled.rows) {
+      await insertEvent(client, {
+        runId,
+        subagentId: row.id,
+        type: 'subagent.cancelled',
+        phase: 'cancelled',
+        summary: '父任务已停止，子 Agent 已取消',
+        data: { reason }
+      });
+    }
+    return cancelled.rows;
+  };
+
+  const createSubagents = async ({
+    runId,
+    workerId,
+    tasks,
+    allowedInputPaths = []
+  }) => withTransaction(pool, async (client) => {
+    if (!config.publicSubagentsEnabled) {
+      throw new ApiError(403, 'AGENT_SUBAGENTS_DISABLED', { retryable: false });
+    }
+    const normalized = normalizeDelegatedTasks(tasks, { allowedInputPaths });
+    if (normalized.length > config.subagentMaxConcurrent) {
+      throw new ApiError(409, 'AGENT_SUBAGENT_LIMIT_REACHED');
+    }
+    const run = await client.query(
+      'SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE',
+      [runId]
+    );
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    if (run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    if (run.rows[0].status !== 'running') {
+      throw new ApiError(409, 'AGENT_STATE_TRANSITION_INVALID');
+    }
+    if (run.rows[0].capabilities?.subagents !== true) {
+      throw new ApiError(403, 'AGENT_CAPABILITY_NOT_GRANTED', { capability: 'subagents' });
+    }
+
+    const existing = await listSubagentsWithClient(client, runId);
+    if (existing.length) {
+      if (
+        existing.length !== normalized.length ||
+        existing.some((row, index) => !secureEqual(row.request_hash, hashRequest(normalized[index])))
+      ) {
+        throw new ApiError(409, 'AGENT_SUBAGENT_DELEGATION_CONFLICT', {
+          retryable: false
+        });
+      }
+      return existing.map((row, index) => ({
+        ...publicSubagent(row),
+        task: normalized[index]
+      }));
+    }
+
+    const created = [];
+    for (let index = 0; index < normalized.length; index += 1) {
+      const task = normalized[index];
+      const subagentId = crypto.randomUUID();
+      const payloadId = crypto.randomUUID();
+      const encrypted = encryptAgentPayload({
+        runId,
+        payloadId,
+        kind: 'subagent_task',
+        value: task,
+        env
+      });
+      const inserted = await client.query(
+        `INSERT INTO agent_subagents
+          (id,run_id,ordinal,role,label,request_hash,expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,
+           clock_timestamp()+($7::text || ' days')::interval)
+         RETURNING *`,
+        [
+          subagentId,
+          runId,
+          index + 1,
+          sanitizeText(task.role, 80),
+          sanitizeText(task.label, 160),
+          hashRequest(task),
+          config.retentionDays
+        ]
+      );
+      await client.query(
+        `INSERT INTO agent_subagent_payloads
+          (id,subagent_id,run_id,algorithm,key_version,iv,auth_tag,ciphertext,expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
+           clock_timestamp()+($9::text || ' days')::interval)`,
+        [
+          payloadId,
+          subagentId,
+          runId,
+          encrypted.algorithm,
+          encrypted.keyVersion,
+          encrypted.iv,
+          encrypted.authTag,
+          encrypted.ciphertext,
+          config.retentionDays
+        ]
+      );
+      await insertEvent(client, {
+        runId,
+        subagentId,
+        type: 'subagent.created',
+        phase: 'running',
+        summary: `已创建 ${task.label}`,
+        data: { ordinal: index + 1, role: task.role }
+      });
+      created.push({ ...publicSubagent(inserted.rows[0]), task });
+    }
+    return created;
+  });
+
+  const loadSubagentContext = async ({ runId, subagentId, workerId }) => withTransaction(
+    pool,
+    async (client) => {
+      const result = await client.query(
+        `SELECT subagent.*,run.worker_id,run.status AS run_status,
+                payload.id AS payload_id,payload.algorithm,payload.key_version,
+                payload.iv,payload.auth_tag,payload.ciphertext,
+                checkpoint.id AS checkpoint_id,
+                checkpoint.algorithm AS checkpoint_algorithm,
+                checkpoint.key_version AS checkpoint_key_version,
+                checkpoint.iv AS checkpoint_iv,
+                checkpoint.auth_tag AS checkpoint_auth_tag,
+                checkpoint.ciphertext AS checkpoint_ciphertext
+           FROM agent_subagents subagent
+           JOIN agent_runs run ON run.id=subagent.run_id
+           JOIN agent_subagent_payloads payload ON payload.subagent_id=subagent.id
+             AND payload.expires_at>clock_timestamp()
+           LEFT JOIN agent_subagent_model_checkpoints checkpoint
+             ON checkpoint.subagent_id=subagent.id
+            AND checkpoint.expires_at>clock_timestamp()
+          WHERE subagent.id=$1 AND subagent.run_id=$2`,
+        [subagentId, runId]
+      );
+      if (!result.rowCount) throw new ApiError(404, 'AGENT_SUBAGENT_NOT_FOUND');
+      const row = result.rows[0];
+      if (workerId && row.worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+      const task = decryptAgentPayload({
+        runId,
+        payloadId: row.payload_id,
+        kind: 'subagent_task',
+        record: row,
+        env
+      });
+      const checkpoint = row.checkpoint_id ? decryptAgentPayload({
+        runId,
+        payloadId: row.checkpoint_id,
+        kind: 'subagent_checkpoint',
+        record: {
+          algorithm: row.checkpoint_algorithm,
+          key_version: row.checkpoint_key_version,
+          iv: row.checkpoint_iv,
+          auth_tag: row.checkpoint_auth_tag,
+          ciphertext: row.checkpoint_ciphertext
+        },
+        env
+      }) : null;
+      return { subagent: publicSubagent(row), task, checkpoint };
+    }
+  );
+
+  const startSubagent = async ({ runId, subagentId, workerId }) => withTransaction(
+    pool,
+    async (client) => {
+      const run = await client.query('SELECT worker_id,status FROM agent_runs WHERE id=$1', [runId]);
+      if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+      if (run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+      const current = await client.query(
+        'SELECT * FROM agent_subagents WHERE id=$1 AND run_id=$2 FOR UPDATE',
+        [subagentId, runId]
+      );
+      if (!current.rowCount) throw new ApiError(404, 'AGENT_SUBAGENT_NOT_FOUND');
+      if (current.rows[0].cancel_requested || current.rows[0].status === 'cancelled') {
+        return publicSubagent(current.rows[0]);
+      }
+      if (SUBAGENT_TERMINAL_STATUSES.has(current.rows[0].status)) {
+        return publicSubagent(current.rows[0]);
+      }
+      const updated = await client.query(
+        `UPDATE agent_subagents
+            SET status='running',started_at=COALESCE(started_at,now()),updated_at=now()
+          WHERE id=$1 RETURNING *`,
+        [subagentId]
+      );
+      if (current.rows[0].status !== 'running') {
+        await insertEvent(client, {
+          runId,
+          subagentId,
+          type: 'subagent.started',
+          phase: 'running',
+          summary: `${updated.rows[0].label} 开始执行`
+        });
+      }
+      return publicSubagent(updated.rows[0]);
+    }
+  );
+
+  const finishSubagent = async ({
+    runId,
+    subagentId,
+    workerId,
+    status,
+    summary = '',
+    outputFiles = [],
+    errorCode = null
+  }) => withTransaction(pool, async (client) => {
+    if (!SUBAGENT_TERMINAL_STATUSES.has(status)) {
+      throw new ApiError(400, 'AGENT_SUBAGENT_STATUS_INVALID');
+    }
+    const run = await client.query('SELECT worker_id FROM agent_runs WHERE id=$1', [runId]);
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    if (run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    const current = await client.query(
+      'SELECT * FROM agent_subagents WHERE id=$1 AND run_id=$2 FOR UPDATE',
+      [subagentId, runId]
+    );
+    if (!current.rowCount) throw new ApiError(404, 'AGENT_SUBAGENT_NOT_FOUND');
+    if (SUBAGENT_TERMINAL_STATUSES.has(current.rows[0].status)) {
+      return publicSubagent(current.rows[0]);
+    }
+    const safeFiles = (Array.isArray(outputFiles) ? outputFiles : []).slice(0, 100).map((file) => ({
+      path: sanitizeText(file?.path, 500),
+      byteSize: Math.max(0, Number(file?.byteSize || 0)),
+      sha256: sanitizeText(file?.sha256, 64)
+    })).filter((file) => file.path);
+    const updated = await client.query(
+      `UPDATE agent_subagents
+          SET status=$3,summary=$4,output_files=$5,error_code=$6,
+              finished_at=now(),updated_at=now()
+        WHERE id=$1 AND run_id=$2 RETURNING *`,
+      [
+        subagentId,
+        runId,
+        status,
+        sanitizeText(summary, 4000),
+        JSON.stringify(sanitizeLogValue(safeFiles)),
+        errorCode ? sanitizeText(errorCode, 100) : null
+      ]
+    );
+    await insertEvent(client, {
+      runId,
+      subagentId,
+      type: `subagent.${status}`,
+      phase: status,
+      summary: status === 'succeeded'
+        ? `${updated.rows[0].label} 已完成`
+        : status === 'failed'
+          ? `${updated.rows[0].label} 执行失败`
+          : `${updated.rows[0].label} 已取消`,
+      data: { errorCode: errorCode || undefined, outputFileCount: safeFiles.length }
+    });
+    return publicSubagent(updated.rows[0]);
+  });
+
+  const recordSubagentUsage = async ({
+    runId,
+    subagentId,
+    workerId,
+    estimatedCredits,
+    usage = {}
+  }) => withTransaction(pool, async (client) => {
+    const run = await client.query('SELECT worker_id,max_credits FROM agent_runs WHERE id=$1', [runId]);
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    if (run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    const credits = Math.max(0, Number(estimatedCredits || 0));
+    if (credits > Number(run.rows[0].max_credits || 0)) {
+      throw new ApiError(409, 'AGENT_BUDGET_EXCEEDED');
+    }
+    const updated = await client.query(
+      `UPDATE agent_subagents
+          SET estimated_credits_used=GREATEST(estimated_credits_used,$3),
+              usage=usage || $4::jsonb,updated_at=now()
+        WHERE id=$1 AND run_id=$2 AND status='running'
+        RETURNING *`,
+      [subagentId, runId, credits, JSON.stringify(sanitizeLogValue(usage))]
+    );
+    if (!updated.rowCount) throw new ApiError(409, 'AGENT_SUBAGENT_NOT_RUNNING');
+    await insertEvent(client, {
+      runId,
+      subagentId,
+      type: 'subagent.progress',
+      phase: 'running',
+      summary: '子 Agent 用量已更新',
+      data: { estimatedCredits: Number(updated.rows[0].estimated_credits_used || 0) }
+    });
+    return publicSubagent(updated.rows[0]);
+  });
+
+  const saveSubagentModelCheckpoint = async ({
+    runId,
+    subagentId,
+    workerId,
+    value
+  }) => withTransaction(pool, async (client) => {
+    const current = await client.query(
+      `SELECT subagent.id,run.worker_id
+         FROM agent_subagents subagent
+         JOIN agent_runs run ON run.id=subagent.run_id
+        WHERE subagent.id=$1 AND subagent.run_id=$2 AND subagent.status='running'
+        FOR UPDATE OF subagent`,
+      [subagentId, runId]
+    );
+    if (!current.rowCount) throw new ApiError(409, 'AGENT_SUBAGENT_NOT_RUNNING');
+    if (current.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    const existing = await client.query(
+      'SELECT id FROM agent_subagent_model_checkpoints WHERE subagent_id=$1 FOR UPDATE',
+      [subagentId]
+    );
+    const payloadId = existing.rows[0]?.id || crypto.randomUUID();
+    const encrypted = encryptAgentPayload({
+      runId,
+      payloadId,
+      kind: 'subagent_checkpoint',
+      value,
+      env
+    });
+    await client.query(
+      `INSERT INTO agent_subagent_model_checkpoints
+        (id,subagent_id,run_id,algorithm,key_version,iv,auth_tag,ciphertext,expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
+         clock_timestamp()+($9::text || ' days')::interval)
+       ON CONFLICT (subagent_id) DO UPDATE SET
+         algorithm=EXCLUDED.algorithm,key_version=EXCLUDED.key_version,
+         iv=EXCLUDED.iv,auth_tag=EXCLUDED.auth_tag,ciphertext=EXCLUDED.ciphertext,
+         expires_at=EXCLUDED.expires_at,updated_at=now()`,
+      [
+        payloadId,
+        subagentId,
+        runId,
+        encrypted.algorithm,
+        encrypted.keyVersion,
+        encrypted.iv,
+        encrypted.authTag,
+        encrypted.ciphertext,
+        config.retentionDays
+      ]
+    );
+    return true;
+  });
+
+  const clearSubagentModelCheckpoint = async ({ runId, subagentId, workerId }) => withTransaction(
+    pool,
+    async (client) => {
+      const run = await client.query('SELECT worker_id FROM agent_runs WHERE id=$1', [runId]);
+      if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+      if (workerId && run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+      await client.query(
+        'DELETE FROM agent_subagent_model_checkpoints WHERE subagent_id=$1 AND run_id=$2',
+        [subagentId, runId]
+      );
+      return true;
+    }
+  );
+
+  const getSubagentControlState = async ({ runId, subagentId }) => {
+    const result = await pool.query(
+      `SELECT subagent.status,subagent.cancel_requested,subagent.step_count,
+              subagent.consecutive_failures,
+              run.status AS run_status,run.cancel_requested AS run_cancel_requested
+         FROM agent_subagents subagent
+         JOIN agent_runs run ON run.id=subagent.run_id
+        WHERE subagent.id=$1 AND subagent.run_id=$2`,
+      [subagentId, runId]
+    );
+    if (!result.rowCount) throw new ApiError(404, 'AGENT_SUBAGENT_NOT_FOUND');
+    return result.rows[0];
+  };
+
+  const cancelSubagent = async ({ userId, runId, subagentId }) => withTransaction(
+    pool,
+    async (client) => {
+      await resolveOwnedRun(client, { userId, runId, lock: true });
+      const current = await client.query(
+        'SELECT * FROM agent_subagents WHERE id=$1 AND run_id=$2 FOR UPDATE',
+        [subagentId, runId]
+      );
+      if (!current.rowCount) throw new ApiError(404, 'AGENT_SUBAGENT_NOT_FOUND');
+      if (SUBAGENT_TERMINAL_STATUSES.has(current.rows[0].status)) {
+        return publicSubagent(current.rows[0]);
+      }
+      const updated = await client.query(
+        `UPDATE agent_subagents
+            SET status='cancelled',cancel_requested=true,error_code='AGENT_SUBAGENT_CANCELLED',
+                finished_at=now(),updated_at=now()
+          WHERE id=$1 RETURNING *`,
+        [subagentId]
+      );
+      await insertEvent(client, {
+        runId,
+        subagentId,
+        type: 'subagent.cancelled',
+        phase: 'cancelled',
+        summary: `${updated.rows[0].label} 已单独取消`,
+        data: { requestedBy: 'user' }
+      });
+      return publicSubagent(updated.rows[0]);
+    }
+  );
+
   const enqueue = async (runId) => {
     if (!queuePublisher || typeof queuePublisher.publish !== 'function') {
       throw new ApiError(503, 'AGENT_QUEUE_NOT_CONFIGURED', { retryable: true });
@@ -426,6 +911,9 @@ const createAgentRunService = ({
       sandboxImageRef: row.sandbox_image_ref || null,
       browserPublicEnabled: config.publicBrowserEnabled,
       imageGenerationPublicEnabled: config.publicImageGenerationEnabled,
+      subagentsEnabled: config.publicSubagentsEnabled,
+      subagentMaxConcurrent: config.subagentMaxConcurrent,
+      subagentSandboxMode: config.subagentSandboxMode,
       accessMode: config.betaMode,
       availabilityNote: workerOnline
         ? (queueDepth > 0 ? 'busy' : 'ready')
@@ -819,6 +1307,18 @@ const createAgentRunService = ({
           )
         : { rows: [] };
       const objectiveByRun = new Map(payloads.rows.map((record) => [record.run_id, record]));
+      const subagents = result.rowCount
+        ? await client.query(
+            'SELECT * FROM agent_subagents WHERE run_id=ANY($1::uuid[]) ORDER BY run_id,ordinal',
+            [result.rows.map((row) => row.id)]
+          )
+        : { rows: [] };
+      const subagentsByRun = new Map();
+      for (const subagent of subagents.rows) {
+        const entries = subagentsByRun.get(subagent.run_id) || [];
+        entries.push(publicSubagent(subagent));
+        subagentsByRun.set(subagent.run_id, entries);
+      }
       return result.rows.map((row) => {
         const objective = objectivePublicFields({
           runId: row.id,
@@ -827,6 +1327,7 @@ const createAgentRunService = ({
         });
         return publicRun(row, {
           maxSteps: config.maxSteps,
+          subagents: subagentsByRun.get(row.id) || [],
           publicFields: objective.objectivePreview
             ? { objectivePreview: objective.objectivePreview }
             : {}
@@ -854,8 +1355,10 @@ const createAgentRunService = ({
         ORDER BY created_at LIMIT 1`,
       [runId]
     );
+    const subagents = await listSubagentsWithClient(client, runId);
     return publicRun(row, {
       maxSteps: config.maxSteps,
+      subagents: subagents.map(publicSubagent),
       publicFields: {
         ...objectivePublicFields({
           runId,
@@ -1014,6 +1517,7 @@ const createAgentRunService = ({
       refundable: false,
       reason: 'user_cancelled'
     });
+    await cancelAllSubagentsWithClient(client, runId, 'PARENT_RUN_CANCELLED');
     await revokeDesktopTickets(client, runId);
     await insertEvent(client, {
       runId,
@@ -1342,6 +1846,7 @@ const createAgentRunService = ({
   const appendStep = async ({
     runId,
     workerId,
+    subagentId = null,
     role,
     status,
     toolName = null,
@@ -1354,17 +1859,33 @@ const createAgentRunService = ({
     const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
     if (workerId && run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    let subagent = null;
+    if (subagentId) {
+      const selected = await client.query(
+        'SELECT * FROM agent_subagents WHERE id=$1 AND run_id=$2 FOR UPDATE',
+        [subagentId, runId]
+      );
+      if (!selected.rowCount) throw new ApiError(404, 'AGENT_SUBAGENT_NOT_FOUND');
+      subagent = selected.rows[0];
+      if (subagent.status !== 'running' || subagent.cancel_requested) {
+        throw new ApiError(409, 'AGENT_SUBAGENT_NOT_RUNNING');
+      }
+      if (Number(subagent.step_count || 0) + 1 > config.subagentMaxSteps) {
+        throw new ApiError(409, 'AGENT_SUBAGENT_STEP_LIMIT_REACHED');
+      }
+    }
     const sequence = Number(run.rows[0].step_count || 0) + 1;
     if (sequence > config.maxSteps) throw new ApiError(409, 'AGENT_STEP_LIMIT_REACHED');
     const step = await client.query(
       `INSERT INTO agent_steps
-        (run_id,sequence,role,status,tool_name,action_fingerprint,risk_level,
+        (run_id,subagent_id,sequence,role,status,tool_name,action_fingerprint,risk_level,
          summary,sanitized_input,sanitized_output,started_at,finished_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),
-         CASE WHEN $4 IN ('succeeded','failed','skipped') THEN now() ELSE NULL END)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now(),
+         CASE WHEN $5 IN ('succeeded','failed','skipped') THEN now() ELSE NULL END)
        RETURNING *`,
       [
         runId,
+        subagentId,
         sequence,
         role,
         status,
@@ -1376,10 +1897,25 @@ const createAgentRunService = ({
         JSON.stringify(sanitizeLogValue(sanitizedOutput))
       ]
     );
+    if (subagent) {
+      await client.query(
+        `UPDATE agent_subagents
+            SET step_count=step_count+1,
+                consecutive_failures=CASE
+                  WHEN $2='failed' THEN LEAST(2,consecutive_failures+1)
+                  WHEN $2='succeeded' THEN 0
+                  ELSE consecutive_failures
+                END,
+                updated_at=now()
+          WHERE id=$1`,
+        [subagentId, status]
+      );
+    }
     await client.query(
       `UPDATE agent_runs
           SET step_count=$2,
               consecutive_failures=CASE
+                WHEN $5::boolean THEN consecutive_failures
                 WHEN $4='failed' THEN LEAST(2,consecutive_failures+1)
                 WHEN $4='succeeded' THEN 0
                 ELSE consecutive_failures
@@ -1387,14 +1923,15 @@ const createAgentRunService = ({
               lease_expires_at=clock_timestamp()+($3::text || ' seconds')::interval,
               updated_at=now()
         WHERE id=$1`,
-      [runId, sequence, config.leaseSeconds, status]
+      [runId, sequence, config.leaseSeconds, status, Boolean(subagentId)]
     );
     await insertEvent(client, {
       runId,
+      subagentId,
       type: 'step.recorded',
       phase: run.rows[0].status,
       summary,
-      data: { sequence, role, status, toolName, riskLevel }
+      data: { sequence, role, status, toolName, riskLevel, subagentId }
     });
     return step.rows[0];
   });
@@ -1424,20 +1961,24 @@ const createAgentRunService = ({
       }
       await client.query(
         `UPDATE agent_runs
-            SET estimated_credits_used=$2,
+            SET estimated_credits_used=GREATEST(estimated_credits_used,$2),
                 lease_expires_at=clock_timestamp()+($3::text || ' seconds')::interval,
                 updated_at=now()
           WHERE id=$1`,
         [runId, estimated, config.leaseSeconds]
+      );
+      const persisted = Math.max(
+        Number(run.rows[0].estimated_credits_used || 0),
+        estimated
       );
       await insertEvent(client, {
         runId,
         type: 'cost.updated',
         phase: run.rows[0].status,
         summary: '费用估算已更新',
-        data: { estimatedCredits: estimated, items }
+        data: { estimatedCredits: persisted, items }
       });
-      return estimated;
+      return persisted;
     }
   );
 
@@ -1874,30 +2415,55 @@ const createAgentRunService = ({
     sources = [],
     costCredits = 0
   }) => withTransaction(pool, async (client) => {
+    const normalizedFilename = sanitizeText(filename, 240);
+    const normalizedMimeType = sanitizeText(mimeType, 160);
+    const normalizedAssetId = assetId || null;
+    const digest = String(sha256 || '').trim().toLowerCase();
+    const run = await client.query(
+      'SELECT id,expires_at FROM agent_runs WHERE id=$1 FOR UPDATE',
+      [runId]
+    );
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    if (verificationStatus === 'passed' && /^[a-f0-9]{64}$/.test(digest)) {
+      const existing = await client.query(
+        `SELECT * FROM agent_artifacts
+          WHERE run_id=$1
+            AND filename=$2
+            AND mime_type=$3
+            AND sha256=decode($4,'hex')
+            AND asset_id IS NOT DISTINCT FROM $5::uuid
+            AND verification_status='passed'
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [runId, normalizedFilename, normalizedMimeType, digest, normalizedAssetId]
+      );
+      if (existing.rowCount) {
+        return { ...publicArtifact(existing.rows[0]), alreadyRegistered: true };
+      }
+    }
     const artifact = await client.query(
       `INSERT INTO agent_artifacts
         (run_id,asset_id,parent_artifact_id,role,filename,mime_type,byte_size,sha256,
          version,verification_status,verification,sources,cost_credits,expires_at)
-       SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,run.expires_at
-         FROM agent_runs run WHERE run.id=$1
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING *`,
       [
         runId,
-        assetId || null,
+        normalizedAssetId,
         parentArtifactId,
         role,
-        sanitizeText(filename, 240),
-        sanitizeText(mimeType, 160),
+        normalizedFilename,
+        normalizedMimeType,
         Math.max(0, Number(byteSize || 0)),
-        sha256 ? Buffer.from(String(sha256), 'hex') : null,
+        digest ? Buffer.from(digest, 'hex') : null,
         Math.max(1, Number(version || 1)),
         verificationStatus,
         JSON.stringify(sanitizeLogValue(verification)),
         JSON.stringify(sanitizeLogValue(sources)),
-        Math.max(0, Math.ceil(Number(costCredits || 0)))
+        Math.max(0, Math.ceil(Number(costCredits || 0))),
+        run.rows[0].expires_at
       ]
     );
-    if (!artifact.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
     await insertEvent(client, {
       runId,
       type: 'artifact.created',
@@ -1911,6 +2477,38 @@ const createAgentRunService = ({
     });
     return publicArtifact(artifact.rows[0]);
   });
+
+  const findArtifactByContent = async ({
+    runId,
+    filename,
+    mimeType,
+    sha256,
+    assetId
+  }) => {
+    const digest = String(sha256 || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(digest)) return null;
+    const result = await pool.query(
+      `SELECT * FROM agent_artifacts
+        WHERE run_id=$1
+          AND filename=$2
+          AND mime_type=$3
+          AND sha256=decode($4,'hex')
+          AND asset_id IS NOT DISTINCT FROM $5::uuid
+          AND verification_status='passed'
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [
+        runId,
+        sanitizeText(filename, 240),
+        sanitizeText(mimeType, 160),
+        digest,
+        assetId || null
+      ]
+    );
+    return result.rowCount
+      ? { ...publicArtifact(result.rows[0]), alreadyRegistered: true }
+      : null;
+  };
 
   const finishRun = async ({
     runId,
@@ -1944,6 +2542,15 @@ const createAgentRunService = ({
       'SELECT 1 FROM agent_model_checkpoints WHERE run_id=$1 LIMIT 1',
       [runId]
     );
+    const activeSubagents = await client.query(
+      `SELECT count(*)::integer AS count
+         FROM agent_subagents
+        WHERE run_id=$1 AND status IN ('queued','running')`,
+      [runId]
+    );
+    if (Number(activeSubagents.rows[0]?.count || 0) > 0) {
+      throw new ApiError(409, 'AGENT_SUBAGENTS_STILL_RUNNING');
+    }
     const requirements = checklist && typeof checklist === 'object' ? checklist : {};
     const requiredCount = Math.max(1, Number(requirements.requiredArtifactCount || 1));
     const requiredDeliverables = Array.isArray(requirements.requiredDeliverables)
@@ -2052,6 +2659,7 @@ const createAgentRunService = ({
         WHERE id=$1 RETURNING *`,
       [runId, sanitizeText(errorCode || 'AGENT_FAILED', 100), settlement.chargedCredits]
     );
+    await cancelAllSubagentsWithClient(client, runId, 'PARENT_RUN_FAILED');
     await revokeDesktopTickets(client, runId);
     await insertEvent(client, {
       runId,
@@ -2221,6 +2829,28 @@ const createAgentRunService = ({
           RETURNING id`,
         [bounded]
       );
+      const subagentPayloads = await client.query(
+        `DELETE FROM agent_subagent_payloads
+          WHERE id IN (
+            SELECT id FROM agent_subagent_payloads
+             WHERE expires_at<=clock_timestamp()
+             ORDER BY expires_at
+             LIMIT $1
+          )
+          RETURNING id`,
+        [bounded]
+      );
+      const subagentCheckpoints = await client.query(
+        `DELETE FROM agent_subagent_model_checkpoints
+          WHERE id IN (
+            SELECT id FROM agent_subagent_model_checkpoints
+             WHERE expires_at<=clock_timestamp()
+             ORDER BY expires_at
+             LIMIT $1
+          )
+          RETURNING id`,
+        [bounded]
+      );
       await client.query(
         `UPDATE agent_approvals
             SET status='expired',decided_at=COALESCE(decided_at,now())
@@ -2229,7 +2859,9 @@ const createAgentRunService = ({
       return {
         browserProfilesDeleted: profiles.rowCount,
         payloadsDeleted: payloads.rowCount,
-        modelCheckpointsDeleted: modelCheckpoints.rowCount
+        modelCheckpointsDeleted: modelCheckpoints.rowCount,
+        subagentPayloadsDeleted: subagentPayloads.rowCount,
+        subagentCheckpointsDeleted: subagentCheckpoints.rowCount
       };
     }
   );
@@ -2387,19 +3019,25 @@ const createAgentRunService = ({
   return {
     appendStep,
     cancelRun,
+    cancelSubagent,
     claimRun,
     clearModelCheckpoint,
+    clearSubagentModelCheckpoint,
     consumeApproval,
     consumeSessionAuthorization,
     createDesktopTicket,
     createRun,
+    createSubagents,
     deleteBrowserProfile,
     failRun,
     expireStaleRuns,
+    findArtifactByContent,
     finishRun,
+    finishSubagent,
     getControlState,
     getRun,
     getServiceStatus,
+    getSubagentControlState,
     listArtifacts,
     listBrowserProfiles,
     listEvents,
@@ -2408,22 +3046,26 @@ const createAgentRunService = ({
     listRuns,
     listTerminalSandboxes,
     loadPrivateContext,
+    loadSubagentContext,
     loadBrowserProfile,
     markSandboxDestroyed,
     pauseRun,
     purgeExpiredPrivateData,
     quote,
     recordUsage,
+    recordSubagentUsage,
     recordScreenshot,
     registerArtifact,
     saveCheckpoint,
     saveBrowserProfile,
     saveModelCheckpoint,
+    saveSubagentModelCheckpoint,
     requestApproval,
     resolveUserAccess,
     resumeRun,
     savePlan,
     submitInput,
+    startSubagent,
     transitionRun
   };
 };
@@ -2441,9 +3083,11 @@ module.exports = {
   normalizeCapabilities,
   normalizeDeliverables,
   normalizeObjective,
+  normalizeDelegatedTasks,
   publicArtifact,
   publicEvent,
   publicRun,
+  publicSubagent,
   objectivePublicFields,
   requireIdempotencyKey
 };
