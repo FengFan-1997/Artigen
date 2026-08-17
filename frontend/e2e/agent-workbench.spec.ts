@@ -1,5 +1,58 @@
 import { expect, test, type Page } from '@playwright/test';
 
+const auditWorkspaceAccessibility = async (page: Page) => page.locator('.agent-workspace-shell').evaluate((root) => {
+  const visible = (element: Element) => {
+    const style = getComputedStyle(element);
+    const box = element.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+  };
+  const accessibleName = (element: Element) => {
+    const labelledBy = element.getAttribute('aria-labelledby');
+    if (labelledBy) return labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent || '').join(' ').trim();
+    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {
+      return element.getAttribute('aria-label') || Array.from(element.labels || []).map((label) => label.textContent || '').join(' ').trim();
+    }
+    return element.getAttribute('aria-label') || element.textContent?.trim() || element.getAttribute('title') || '';
+  };
+  const missingNames = Array.from(root.querySelectorAll('button,a[href],input,textarea,select,[role="tab"],[role="separator"]'))
+    .filter(visible)
+    .filter((element) => !accessibleName(element))
+    .map((element) => element.outerHTML.slice(0, 180));
+
+  const rgb = (value: string) => {
+    const channels = (value.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    return value.startsWith('color(srgb') ? channels.map((channel) => channel * 255) : channels;
+  };
+  const luminance = (channels: number[]) => channels.reduce((sum, channel, index) => {
+    const normalized = channel / 255;
+    const linear = normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    return sum + linear * [0.2126, 0.7152, 0.0722][index];
+  }, 0);
+  const effectiveBackground = (element: Element) => {
+    let current: Element | null = element;
+    while (current) {
+      const value = getComputedStyle(current).backgroundColor;
+      const alpha = Number((value.match(/[\d.]+/g) || [0, 0, 0, 0])[3] ?? 1);
+      if (value !== 'transparent' && alpha >= 0.95) return rgb(value);
+      current = current.parentElement;
+    }
+    return [14, 16, 15];
+  };
+  const lowContrast = Array.from(root.querySelectorAll('p,small,dt,dd,b,strong,label,button,a,span'))
+    .filter(visible)
+    .filter((element) => element.children.length === 0 && Boolean(element.textContent?.trim()))
+    .map((element) => {
+      const foregroundColor = getComputedStyle(element).color;
+      const backgroundColor = effectiveBackground(element);
+      const foreground = luminance(rgb(foregroundColor));
+      const background = luminance(backgroundColor);
+      const ratio = (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+      return { text: element.textContent?.trim().slice(0, 50), ratio, fontSize: Number.parseFloat(getComputedStyle(element).fontSize), foregroundColor, backgroundColor };
+    })
+    .filter((entry) => entry.fontSize < 18 && entry.ratio < 4.5);
+  return { missingNames, lowContrast };
+});
+
 const runId = '11111111-1111-4111-8111-111111111111';
 const childIds = [
   '21111111-1111-4111-8111-111111111111',
@@ -244,7 +297,10 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
 
   await expect(page.locator('.agent-workspace-shell')).toBeVisible();
   await expect(page.locator('.workspace-left')).toContainText('Artigen');
-  await expect(page.getByRole('heading', { name: '告诉我最终要交付什么。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '今天要一起完成什么？' })).toBeVisible();
+  await expect(page.locator('.conversation-empty')).toBeVisible();
+  await expect(page.locator('.objective-composer')).toBeVisible();
+  await expect(page.locator('.task-presets')).toHaveCount(0);
   await expect(page.locator('.inspector-tabs').getByRole('tab')).toHaveCount(5);
   await expect(page.getByRole('tab', { name: '环境' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#workspace-panel-environment')).toContainText('Qwen/Qwen3-8B');
@@ -273,6 +329,28 @@ test('command palette is global, keyboard trapped, and returns focus on Escape',
   await expect(newTask).toBeFocused();
 });
 
+test('desktop panel separators expose values and support arrows plus Home and End', async ({ page }) => {
+  await installSharedApi(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto('/artigen/agent');
+
+  const left = page.getByRole('separator', { name: '调整左栏宽度' });
+  await left.focus();
+  await page.keyboard.press('End');
+  await expect(left).toHaveAttribute('aria-valuenow', '340');
+  await page.keyboard.press('Home');
+  await expect(left).toHaveAttribute('aria-valuenow', '216');
+  await page.keyboard.press('ArrowRight');
+  await expect(left).toHaveAttribute('aria-valuenow', '224');
+
+  const right = page.getByRole('separator', { name: '调整右栏宽度' });
+  await right.focus();
+  await page.keyboard.press('End');
+  await expect(right).toHaveAttribute('aria-valuenow', '480');
+  await page.keyboard.press('ArrowRight');
+  await expect(right).toHaveAttribute('aria-valuenow', '472');
+});
+
 test('image delivery auto-grants Kolors, preserves Qwen and subagent locks, and starts only after a current quote', async ({ page }) => {
   const created: Array<Record<string, unknown>> = [];
   await installSharedApi(page, { onCreate: (body) => created.push(body) });
@@ -286,8 +364,9 @@ test('image delivery auto-grants Kolors, preserves Qwen and subagent locks, and 
   await expect(imageCapability.locator('input')).toBeChecked();
   await expect(page.locator('.capability-list label').filter({ hasText: '真实子 Agent' }).locator('input')).toBeChecked();
 
-  await page.getByRole('button', { name: '检查费用' }).click();
-  await expect(page.locator('.quote-bar')).toContainText('18–42');
+  await page.getByRole('button', { name: '发送任务目标' }).click();
+  await expect(page.locator('.quote-summary')).toContainText('18–42');
+  await expect(page.locator('.conversation-thread')).toContainText('为 Artigen 设计一张克制、专业的品牌主视觉');
   await expect(page.getByRole('button', { name: '确认并运行' })).toBeVisible();
   expect(created).toHaveLength(0);
 
@@ -361,6 +440,33 @@ test('run detail keeps real plan, verified files, budget and two-click parent ca
   await expect.poll(() => cancelRequests).toBe(1);
 });
 
+test('approval denial reason is explicitly labelled and keeps one recommended action', async ({ page }) => {
+  const approvalRun = structuredClone(baseRun) as any;
+  approvalRun.approvals = [{
+    approvalId: '61111111-1111-4111-8111-111111111111',
+    runId,
+    actionType: 'publish',
+    riskLevel: 'high',
+    status: 'pending',
+    recipient: 'https://example.com',
+    changeSummary: '发布一份只读设计审计摘要',
+    evidenceSummary: '已生成并验证摘要',
+    impactSummary: '会写入第三方站点',
+    rollbackSummary: '可以在站点后台删除',
+    expiresAt: '2030-09-14T08:00:00.000Z',
+    createdAt: now
+  }];
+  await installRunApi(page, { run: approvalRun });
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`/artigen/agent/runs/${runId}`);
+
+  const reason = page.getByLabel('拒绝原因（可选）');
+  await expect(reason).toBeVisible();
+  await reason.fill('需要先确认品牌团队意见');
+  await expect(page.locator('.approval-card .approval-primary')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: '拒绝' })).toBeVisible();
+});
+
 test('mobile workspace uses full-height drawers, restores focus, and never scrolls horizontally', async ({ page, browserName }) => {
   await installSharedApi(page);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -385,4 +491,51 @@ test('mobile workspace uses full-height drawers, restores focus, and never scrol
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
     await page.screenshot({ path: '.impeccable/review/agent-workbench-390-dark.png', fullPage: true });
   }
+});
+
+test('workspace reflows across desktop, tablet, mobile, landscape and 200 percent equivalent width', async ({ page }) => {
+  await installSharedApi(page);
+  for (const viewport of [
+    { width: 1440, height: 960 },
+    { width: 1024, height: 900 },
+    { width: 768, height: 900 },
+    { width: 390, height: 844 },
+    { width: 844, height: 390 },
+    { width: 640, height: 900 }
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto('/artigen/agent');
+    await expect(page.locator('.objective-composer')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  }
+});
+
+test('dark, light, system and reduced-motion workspace states keep names and contrast', async ({ page }) => {
+  await installSharedApi(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+  await page.goto('/artigen/agent');
+  const shell = page.locator('.agent-workspace-shell');
+  await expect(shell).toHaveAttribute('data-theme', 'dark');
+  let audit = await auditWorkspaceAccessibility(page);
+  expect(audit.missingNames).toEqual([]);
+  expect(audit.lowContrast).toEqual([]);
+
+  const themeControl = page.locator('.workspace-account button').nth(1);
+  await themeControl.click();
+  await expect(shell).toHaveAttribute('data-theme', 'light');
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  audit = await auditWorkspaceAccessibility(page);
+  expect(audit.missingNames).toEqual([]);
+  expect(audit.lowContrast).toEqual([]);
+
+  await themeControl.click();
+  await expect(shell).toHaveAttribute('data-theme', 'dark');
+  const duration = await page.locator('.prompt-suggestions button').first().evaluate((element) =>
+    Math.max(...getComputedStyle(element).transitionDuration.split(',').map((value) => {
+      const durationValue = value.trim();
+      return Number.parseFloat(durationValue) * (durationValue.endsWith('ms') ? 1 : 1000);
+    }))
+  );
+  expect(duration).toBeLessThanOrEqual(0.02);
 });

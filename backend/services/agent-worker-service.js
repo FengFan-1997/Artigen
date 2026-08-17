@@ -359,12 +359,26 @@ const createAgentCostMeter = ({
 
   return {
     setModel(value) {
-      modelByActor.set('parent', Math.max(0, Number(value || 0)));
+      modelByActor.set('parent', Math.max(
+        Number(modelByActor.get('parent') || 0),
+        Math.max(0, Number(value || 0))
+      ));
     },
     setModelFor(actorId, value) {
       const actor = String(actorId || '').trim();
       if (!actor) throw new TypeError('AGENT_COST_ACTOR_REQUIRED');
-      modelByActor.set(actor, Math.max(0, Number(value || 0)));
+      modelByActor.set(actor, Math.max(
+        Number(modelByActor.get(actor) || 0),
+        Math.max(0, Number(value || 0))
+      ));
+    },
+    restoreModelForMinimum(actorId, value) {
+      const actor = String(actorId || '').trim();
+      if (!actor) throw new TypeError('AGENT_COST_ACTOR_REQUIRED');
+      modelByActor.set(actor, Math.max(
+        Number(modelByActor.get(actor) || 0),
+        Math.max(0, Number(value || 0))
+      ));
     },
     restoreModelMinimum(value) {
       modelByActor.set('parent', Math.max(
@@ -403,6 +417,31 @@ const createAgentCostMeter = ({
     total({ additional = 0 } = {}) {
       return modelTotal() + generation + pendingSandbox() + Math.max(0, Number(additional || 0));
     }
+  };
+};
+
+const createSerializedCostPersister = ({
+  costMeter,
+  saveCheckpoint,
+  recordUsage
+}) => {
+  if (
+    !costMeter || typeof costMeter.snapshot !== 'function' ||
+    typeof saveCheckpoint !== 'function' ||
+    typeof recordUsage !== 'function'
+  ) {
+    throw new TypeError('AGENT_COST_PERSISTER_DEPENDENCY_REQUIRED');
+  }
+  let pending = Promise.resolve();
+  return ({ usageItems = null } = {}) => {
+    const operation = pending.then(async () => {
+      const costs = costMeter.snapshot({ accrue: true });
+      await saveCheckpoint(costs);
+      if (usageItems) await recordUsage(costs, usageItems);
+      return costs;
+    });
+    pending = operation.catch(() => {});
+    return operation;
   };
 };
 
@@ -500,23 +539,20 @@ const createAgentWorkerService = ({
     let terminal = false;
     let browserInitialized = false;
 
-    const persistCostCheckpoint = async ({ usageItems = null } = {}) => {
-      const costs = costMeter.snapshot({ accrue: true });
-      await runService.saveCheckpoint({
+    const persistCostCheckpoint = createSerializedCostPersister({
+      costMeter,
+      saveCheckpoint: (costs) => runService.saveCheckpoint({
         runId,
         workerId,
         checkpoint: { costs }
-      });
-      if (usageItems) {
-        await runService.recordUsage({
-          runId,
-          workerId,
-          estimatedCredits: costs.model + costs.generation + costs.sandbox,
-          items: { ...costs, ...usageItems }
-        });
-      }
-      return costs;
-    };
+      }),
+      recordUsage: (costs, usageItems) => runService.recordUsage({
+        runId,
+        workerId,
+        estimatedCredits: costs.model + costs.generation + costs.sandbox,
+        items: { ...costs, ...usageItems }
+      })
+    });
 
     const pauseIfRequested = async () => {
       if (Date.now() - runStartedAt >= config.maxMinutes * 60_000) {
@@ -709,7 +745,7 @@ const createAgentWorkerService = ({
       const runDelegatedSubagent = async (entry) => {
         const subagentId = entry.subagentId;
         const workspacePath = `/tmp/artigen-workspace/subagents/${subagentId}`;
-        costMeter.setModelFor(subagentId, Number(entry.usage?.credits || 0));
+        costMeter.restoreModelForMinimum(subagentId, Number(entry.usage?.credits || 0));
         const started = await runService.startSubagent({ runId, subagentId, workerId });
         if (['succeeded', 'failed', 'cancelled'].includes(started.status)) {
           return {
@@ -731,7 +767,7 @@ const createAgentWorkerService = ({
           subagentId,
           workerId
         });
-        costMeter.setModelFor(
+        costMeter.restoreModelForMinimum(
           subagentId,
           Math.max(
             Number(entry.usage?.credits || 0),
@@ -754,6 +790,13 @@ const createAgentWorkerService = ({
           if (Date.now() >= deadlineAt) {
             throw new ApiError(408, 'AGENT_SUBAGENT_TIMEOUT', { retryable: false });
           }
+          assertLoopBudget({
+            stepCount: control.step_count,
+            maxSteps: config.subagentMaxSteps,
+            replanCount: 0,
+            consecutiveFailures: control.consecutive_failures,
+            unchangedScreenshots: 0
+          });
           return control;
         };
 
@@ -1732,6 +1775,7 @@ module.exports = {
   assertExpectedSubagentOutputFiles,
   buildSubagentObjective,
   createAgentCostMeter,
+  createSerializedCostPersister,
   createAgentWorkerService,
   parentVerifiedSubagentFiles,
   firstPayload,

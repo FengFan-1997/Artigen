@@ -36,67 +36,94 @@
       </div>
     </template>
 
-    <section class="agent-compose">
-      <header class="compose-intro">
-        <span class="compose-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="7"/></svg>
-        </span>
-        <div>
-          <p>{{ zh ? 'COMPUTER AGENT' : 'COMPUTER AGENT' }}</p>
-          <h1>{{ zh ? '告诉我最终要交付什么。' : 'Tell me what must be delivered.' }}</h1>
-          <span>{{ zh ? 'Qwen3 会拆解任务，必要时委派最多 3 个独立子 Agent；浏览器、电脑、Kolors 与最终交付始终由父 Agent 掌控。' : 'Qwen3 plans the work and may delegate up to three isolated subagents. Browser, computer, Kolors, and final delivery stay with the parent Agent.' }}</span>
-        </div>
-      </header>
-
-      <div class="objective-composer">
-        <label>
-          <span class="sr-only">{{ zh ? '任务目标' : 'Task objective' }}</span>
-          <textarea
-            v-model.trim="form.objective"
-            rows="5"
-            maxlength="20000"
-            :placeholder="zh ? '例如：研究三个竞品，委派子 Agent 分析定位、视觉与信息架构，最后交付带引用的 Markdown 和 PDF。' : 'Example: Research three competitors, delegate positioning, visual, and IA analysis, then deliver a cited Markdown and PDF.'"
-          />
-        </label>
-        <div v-if="selectedFiles.length" class="input-files">
-          <span v-for="file in selectedFiles" :key="`${file.name}:${file.size}`">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h9l5 5v12H5z"/><path d="M14 3.5v5h5"/></svg>
-            {{ file.name }}
+    <section class="agent-conversation" :class="{ active: hasConversation }">
+      <div class="conversation-scroll" aria-live="polite">
+        <div v-if="!hasConversation" class="conversation-empty">
+          <span class="conversation-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="7"/></svg>
           </span>
-          <button type="button" @click="selectedFiles = []">{{ zh ? '清空' : 'Clear' }}</button>
+          <h1>{{ zh ? '今天要一起完成什么？' : 'What should we finish together?' }}</h1>
+          <p>{{ zh ? '描述结果即可。Qwen3 会规划工作；需要调研、文件或多格式交付时，会在安全边界内调用 Computer Agent。' : 'Describe the outcome. Qwen3 plans the work and uses the Computer Agent for research, files, or multi-format delivery within the granted boundaries.' }}</p>
+          <div class="prompt-suggestions" :aria-label="zh ? '任务建议' : 'Task suggestions'">
+            <button v-for="(preset, index) in presets" :key="index" type="button" @click="applyPreset(index)">
+              <span>{{ suggestionLabels[index] }}</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+            </button>
+          </div>
         </div>
-        <footer>
-          <label class="attach-control">
-            <input type="file" multiple accept=".pdf,.docx,.xlsx,.pptx,.zip,.txt,.md,.csv,image/png,image/jpeg,image/webp" @change="selectFiles" />
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 5.5-5.5a3 3 0 0 1 4.2 4.2l-7.5 7.5a5 5 0 0 1-7.1-7.1l7-7"/></svg>
-            <span>{{ zh ? '添加参考' : 'Add reference' }}</span>
+
+        <div v-else class="conversation-thread">
+          <article v-if="submittedObjective" class="conversation-message user-message">
+            <div class="message-avatar">{{ zh ? '你' : 'You' }}</div>
+            <div>
+              <p>{{ submittedObjective }}</p>
+              <span v-if="selectedFiles.length">{{ selectedFiles.length }} {{ zh ? '个参考文件将在启动后上传' : 'reference files upload after launch' }}</span>
+            </div>
+          </article>
+
+          <article class="conversation-message assistant-message">
+            <div class="message-avatar agent-avatar" aria-hidden="true">A</div>
+            <div class="assistant-content">
+              <template v-if="quoting">
+                <strong>{{ zh ? '正在核验执行范围与真实费用…' : 'Checking scope and live cost…' }}</strong>
+                <p>{{ zh ? '我会先确认预算、Worker 和你授予的能力，再创建任务。' : 'I will verify budget, worker capacity, and granted capabilities before creating anything.' }}</p>
+              </template>
+              <template v-else-if="quoteIsCurrent && quote">
+                <strong>{{ quote.canStart ? (zh ? '计划和费用已准备好' : 'Plan and cost are ready') : (zh ? '当前无法启动' : 'Cannot start yet') }}</strong>
+                <p>{{ zh ? '父 Agent 负责外部工具与最终交付；Qwen3 只在有价值时委派最多 3 个隔离子任务。' : 'The parent owns external tools and final delivery; Qwen3 delegates up to three isolated tasks only when useful.' }}</p>
+                <dl class="quote-summary">
+                  <div><dt>{{ zh ? '预计' : 'Estimate' }}</dt><dd>{{ quote.estimatedCredits.minimum }}–{{ quote.estimatedCredits.maximum }} {{ zh ? '点' : 'cr' }}</dd></div>
+                  <div><dt>{{ zh ? '冻结' : 'Hold' }}</dt><dd>{{ quote.requiredPaidHold }} {{ zh ? '点' : 'cr' }}</dd></div>
+                  <div><dt>{{ zh ? '上限' : 'Limit' }}</dt><dd>{{ form.maxCredits }} {{ zh ? '点' : 'cr' }}</dd></div>
+                  <div><dt>{{ zh ? '结算' : 'Billing' }}</dt><dd>{{ zh ? '仅一次' : 'Once' }}</dd></div>
+                </dl>
+                <button class="run-action" type="button" :disabled="busy || quote.canStart === false" @click="startRun">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>
+                  {{ creating ? (zh ? '正在启动…' : 'Starting…') : (zh ? '确认并运行' : 'Confirm and run') }}
+                </button>
+              </template>
+              <template v-else>
+                <strong>{{ noticeIsError ? (zh ? '需要你处理一项问题' : 'One issue needs your attention') : (zh ? '任务内容已更新' : 'The task changed') }}</strong>
+                <p>{{ notice || (zh ? '重新发送后，我会更新报价。' : 'Send again to refresh the quote.') }}</p>
+              </template>
+              <p v-if="notice && quoteIsCurrent" class="workspace-notice" :class="{ error: noticeIsError }">{{ notice }}</p>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <div class="conversation-dock">
+        <div class="objective-composer">
+          <label class="objective-field">
+            <span class="sr-only">{{ zh ? '任务目标' : 'Task objective' }}</span>
+            <textarea
+              v-model="form.objective"
+              rows="2"
+              maxlength="20000"
+              :placeholder="zh ? '描述目标、受众、交付物或参考方向…' : 'Describe the goal, audience, deliverables, or references…'"
+              @keydown.enter.exact.prevent="sendObjective"
+            />
           </label>
-          <span class="objective-count">{{ form.objective.length.toLocaleString() }} / 20,000</span>
-          <button class="estimate-action" type="button" :disabled="busy || form.objective.length < 3" @click="getQuote">
-            {{ quoting ? (zh ? '估算中…' : 'Estimating…') : (zh ? '获取报价' : 'Get quote') }}
-          </button>
-          <button class="run-action" type="button" :disabled="busy || form.objective.length < 3 || (quoteIsCurrent && quote?.canStart === false)" @click="startRun">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>
-            {{ creating ? (zh ? '正在启动…' : 'Starting…') : quoteIsCurrent ? (zh ? '确认并运行' : 'Confirm & run') : (zh ? '检查费用' : 'Review cost') }}
-          </button>
-        </footer>
-      </div>
-
-      <div v-if="quoteIsCurrent && quote" class="quote-bar">
-        <div><span>{{ zh ? '预计' : 'Estimate' }}</span><b>{{ quote.estimatedCredits.minimum }}–{{ quote.estimatedCredits.maximum }} {{ zh ? '点' : 'cr' }}</b></div>
-        <div><span>{{ zh ? '冻结' : 'Hold' }}</span><b>{{ quote.requiredPaidHold }} {{ zh ? '点' : 'cr' }}</b></div>
-        <div><span>{{ zh ? '上限' : 'Limit' }}</span><b>{{ form.maxCredits }} {{ zh ? '点' : 'cr' }}</b></div>
-        <div><span>{{ zh ? '结算' : 'Billing' }}</span><b>{{ zh ? '仅一次' : 'Once per run' }}</b></div>
-      </div>
-      <p v-if="notice" class="workspace-notice" :class="{ error: noticeIsError }">{{ notice }}</p>
-      <p class="safety-note">
-        {{ zh ? '密码、OTP、验证码与安全警告只由你在接管桌面时处理。购买、绕过安全限制和未授权外部写操作始终禁止。' : 'Passwords, OTPs, CAPTCHAs, and security warnings stay in user takeover. Purchases, security bypasses, and unauthorized external writes remain prohibited.' }}
-      </p>
-
-      <div class="task-presets">
-        <button type="button" @click="applyPreset(0)"><b>{{ zh ? '研究与提案' : 'Research & proposal' }}</b><span>{{ zh ? '三路分析后合并为报告' : 'Three analyses merged into a report' }}</span></button>
-        <button type="button" @click="applyPreset(1)"><b>{{ zh ? '多格式交付' : 'Multi-format delivery' }}</b><span>{{ zh ? '报告、表格、演示或网站' : 'Report, sheet, deck, or site' }}</span></button>
-        <button type="button" @click="applyPreset(2)"><b>{{ zh ? '图片设计稿' : 'Image design' }}</b><span>{{ zh ? '由父 Agent 使用 Kolors 生成' : 'Generated by the parent with Kolors' }}</span></button>
+          <div v-if="selectedFiles.length" class="input-files">
+            <span v-for="file in selectedFiles" :key="`${file.name}:${file.size}`">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h9l5 5v12H5z"/><path d="M14 3.5v5h5"/></svg>
+              {{ file.name }}
+            </span>
+            <button type="button" @click="selectedFiles = []">{{ zh ? '清空' : 'Clear' }}</button>
+          </div>
+          <footer>
+            <label class="attach-control">
+              <input type="file" multiple accept=".pdf,.docx,.xlsx,.pptx,.zip,.txt,.md,.csv,image/png,image/jpeg,image/webp" :aria-label="zh ? '添加参考文件' : 'Add reference files'" @change="selectFiles" />
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 5.5-5.5a3 3 0 0 1 4.2 4.2l-7.5 7.5a5 5 0 0 1-7.1-7.1l7-7"/></svg>
+              <span>{{ zh ? '添加参考' : 'Add reference' }}</span>
+            </label>
+            <span class="objective-count">{{ form.objective.length.toLocaleString() }} / 20,000</span>
+            <button class="send-action" type="button" :aria-label="zh ? '发送任务目标' : 'Send task objective'" :disabled="busy || form.objective.trim().length < 3" @click="sendObjective">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6z"/><path d="m12 13 7-8"/></svg>
+            </button>
+          </footer>
+        </div>
+        <p class="safety-note">{{ zh ? 'Enter 发送，Shift + Enter 换行。密码、OTP、验证码、付款和安全警告不会自动处理。' : 'Enter sends; Shift + Enter adds a line. Passwords, OTPs, CAPTCHAs, payments, and security warnings are never handled automatically.' }}</p>
       </div>
     </section>
 
@@ -140,7 +167,7 @@
         </section>
         <section class="inspector-card">
           <header><span>{{ zh ? '最高预算' : 'Maximum budget' }}</span><b>{{ form.maxCredits }} {{ zh ? '点' : 'cr' }}</b></header>
-          <input v-model.number="form.maxCredits" class="budget-range" type="range" min="10" max="500" step="10" />
+          <input v-model.number="form.maxCredits" class="budget-range" type="range" min="10" max="500" step="10" :aria-label="zh ? '最高预算点数' : 'Maximum credit budget'" />
           <small>{{ zh ? '按实际使用结算，未使用部分自动释放。' : 'Actual usage only; unused hold is released.' }}</small>
         </section>
       </div>
@@ -237,10 +264,14 @@ const quoting = ref(false);
 const creating = ref(false);
 const selectedFiles = ref<File[]>([]);
 const browserProfiles = ref<AgentBrowserProfile[]>([]);
+const submittedObjective = ref('');
 const notice = ref('');
 const noticeIsError = ref(false);
 let statusTimer: ReturnType<typeof setInterval> | null = null;
 const busy = computed(() => quoting.value || creating.value);
+const hasConversation = computed(() => Boolean(
+  submittedObjective.value || quoting.value || quote.value || notice.value
+));
 const form = reactive({
   objective: '',
   maxCredits: 50,
@@ -412,11 +443,15 @@ const presets = computed(() => zh.value
       'Synthesize my references into a complete design proposal with an editable report, workbook, and presentation.',
       'Create a review-ready hero visual for the target audience and brand character, then explain the design decisions.'
     ]);
+const suggestionLabels = computed(() => zh.value
+  ? ['研究竞品并交付提案', '整理资料并生成多格式文件', '生成可评审的图片设计稿']
+  : ['Research competitors and deliver a proposal', 'Turn references into editable files', 'Create a review-ready image design']);
 const applyPreset = (index: number) => {
   form.objective = presets.value[index] || '';
 };
 const resetRunDraft = () => {
   form.objective = '';
+  submittedObjective.value = '';
   selectedFiles.value = [];
   quote.value = null;
   quotedRequestKey.value = '';
@@ -462,6 +497,14 @@ const getQuote = async () => {
   } finally {
     quoting.value = false;
   }
+};
+
+const sendObjective = async () => {
+  const objective = form.objective.trim();
+  if (objective.length < 3 || busy.value) return;
+  form.objective = objective;
+  submittedObjective.value = objective;
+  await getQuote();
 };
 
 const startRun = async () => {
@@ -589,47 +632,60 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.agent-compose {
-  width: min(840px, calc(100% - 48px));
-  margin: 0 auto;
-  padding: clamp(48px, 9vh, 112px) 0 80px;
-}
-.compose-intro { display: flex; gap: 16px; align-items: flex-start; max-width: 720px; margin-bottom: 24px; }
-.compose-mark { display: grid; flex: 0 0 40px; width: 40px; height: 40px; place-items: center; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 36%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--acid) 8%, transparent); }
-.compose-mark svg { width: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; }
-.compose-intro p { margin: 2px 0 8px; color: var(--acid-text); font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
-.compose-intro h1 { margin: 0; color: var(--text); font-size: clamp(22px, 3vw, 30px); line-height: 1.18; letter-spacing: -.025em; }
-.compose-intro div > span { display: block; max-width: 680px; margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.65; }
-.objective-composer { overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 18px 50px color-mix(in srgb, var(--bg) 42%, transparent); transition: border-color 180ms ease, box-shadow 180ms ease; }
+.agent-conversation { display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
+.conversation-empty { display: grid; width: min(720px, calc(100% - 48px)); min-height: 100%; margin: 0 auto; padding: clamp(48px, 10vh, 96px) 0 40px; align-content: center; justify-items: start; }
+.conversation-mark { display: grid; width: 34px; height: 34px; margin-bottom: 18px; place-items: center; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 38%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--acid) 8%, transparent); }
+.conversation-mark svg { width: 18px; }
+.conversation-empty h1 { margin: 0; color: var(--text); font-size: clamp(22px, 3vw, 28px); font-weight: 690; line-height: 1.25; letter-spacing: -.025em; }
+.conversation-empty > p { max-width: 650px; margin: 10px 0 22px; color: var(--muted); font-size: 14px; line-height: 1.65; }
+.prompt-suggestions { display: grid; width: min(100%, 600px); gap: 7px; }
+.prompt-suggestions button { display: flex; width: 100%; min-height: 42px; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 9px; text-align: left; background: color-mix(in srgb, var(--surface) 72%, transparent); cursor: pointer; transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease; }
+.prompt-suggestions button:hover { color: var(--text); border-color: color-mix(in srgb, var(--acid) 28%, var(--border)); background: var(--surface); }
+.prompt-suggestions button:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.prompt-suggestions span { font-size: 13px; }
+.prompt-suggestions svg { flex: 0 0 auto; width: 16px; }
+.conversation-thread { display: grid; width: min(780px, calc(100% - 48px)); margin: 0 auto; padding: 36px 0 64px; gap: 28px; }
+.conversation-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; align-items: start; }
+.message-avatar { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 11px; font-weight: 700; background: var(--surface); }
+.agent-avatar { color: var(--acid-ink); border-color: var(--acid); background: var(--acid); }
+.conversation-message p { margin: 0; color: var(--text); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.user-message > div:last-child { padding-top: 3px; }
+.user-message span { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
+.assistant-content { display: grid; justify-items: start; gap: 10px; padding-top: 3px; }
+.assistant-content > strong { color: var(--text); font-size: 14px; font-weight: 680; }
+.assistant-content > p { color: var(--muted); }
+.quote-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; margin: 2px 0 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--border); gap: 1px; }
+.quote-summary div { display: grid; gap: 4px; padding: 10px 11px; background: var(--surface); }
+.quote-summary dt { color: var(--muted); font-size: 11px; }
+.quote-summary dd { margin: 0; color: var(--text); font: 680 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.conversation-dock { position: relative; z-index: 2; width: 100%; padding: 12px 20px max(12px, env(safe-area-inset-bottom)); border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent); background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(12px); }
+.objective-composer { width: min(840px, 100%); margin: 0 auto; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 12px 32px rgb(0 0 0 / 18%); transition: border-color 180ms ease, box-shadow 180ms ease; }
 .objective-composer:focus-within { border-color: var(--acid); box-shadow: 0 0 0 2px color-mix(in srgb, var(--acid) 18%, transparent), 0 18px 50px color-mix(in srgb, var(--bg) 42%, transparent); }
-.objective-composer textarea { display: block; width: 100%; min-height: 142px; resize: vertical; box-sizing: border-box; padding: 18px 18px 8px; color: var(--text); border: 0; outline: 0; background: transparent; font: 400 15px/1.65 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif; }
+.objective-field { display: block; }
+.objective-composer textarea { display: block; width: 100%; min-height: 62px; max-height: 180px; resize: vertical; box-sizing: border-box; padding: 13px 14px 7px; color: var(--text); border: 0; outline: 0; background: transparent; font: 400 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif; }
 .objective-composer textarea::placeholder { color: var(--muted); }
-.objective-composer footer { display: flex; align-items: center; gap: 9px; padding: 10px; border-top: 1px solid var(--border); }
-.attach-control { position: relative; display: inline-flex; min-height: 36px; align-items: center; gap: 7px; padding: 0 10px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 12px; }
-.attach-control input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.attach-control svg, .run-action svg, .input-files svg, .history-label svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
-.objective-count { margin-left: auto; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.estimate-action, .run-action { min-height: 36px; padding: 0 12px; border-radius: 8px; font-size: 12px; font-weight: 700; }
-.estimate-action { color: var(--text); border: 1px solid var(--border); background: transparent; }
+.objective-composer footer { display: flex; align-items: center; gap: 9px; padding: 7px 8px 8px; }
+.attach-control { position: relative; display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 0 9px; color: var(--muted); border: 1px solid transparent; border-radius: 8px; cursor: pointer; font-size: 12px; }
+.attach-control:hover { color: var(--text); background: var(--surface-raised); }
+.attach-control:focus-within { outline: 2px solid var(--acid); outline-offset: 1px; }
+.attach-control input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.attach-control svg, .run-action svg, .send-action svg, .input-files svg, .history-label svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.objective-count { margin-left: auto; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.run-action { min-height: 38px; padding: 0 13px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .run-action { display: inline-flex; align-items: center; gap: 7px; color: #0e100f; border: 1px solid var(--acid); background: var(--acid); }
-.estimate-action:disabled, .run-action:disabled { opacity: .45; cursor: not-allowed; }
+.run-action:disabled, .send-action:disabled { opacity: .45; cursor: not-allowed; }
+.send-action { display: grid; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; place-items: center; color: var(--acid-ink); border: 1px solid var(--acid); border-radius: 9px; background: var(--acid); cursor: pointer; }
+.run-action:focus-visible, .send-action:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
 .input-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 10px; }
 .input-files span { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 6px 8px; overflow: hidden; color: var(--text); border-radius: 7px; background: var(--surface-raised); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .input-files button { color: var(--danger); border: 0; background: transparent; font-size: 11px; }
-.quote-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-top: 12px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--border); }
-.quote-bar div { display: grid; gap: 4px; padding: 10px 12px; background: var(--surface); }
-.quote-bar span { color: var(--muted); font-size: 10px; }
-.quote-bar b { color: var(--text); font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.workspace-notice { margin: 12px 0 0; padding: 10px 12px; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 34%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); font-size: 12px; }
+.workspace-notice { width: 100%; margin: 2px 0 0; padding: 9px 10px; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 34%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); font-size: 12px; }
 .workspace-notice.error { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); background: color-mix(in srgb, var(--danger) 8%, transparent); }
-.safety-note { margin: 12px 2px 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
-.task-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 24px; }
-.task-presets button { display: grid; min-height: 82px; gap: 5px; padding: 13px; text-align: left; color: var(--text); border: 1px solid var(--border); border-radius: 10px; background: var(--surface); transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease; }
-.task-presets button:hover { transform: translateY(-2px); border-color: var(--border); background: var(--surface-raised); }
-.task-presets b { align-self: end; font-size: 12px; }
-.task-presets span { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.safety-note { width: min(840px, 100%); margin: 7px auto 0; color: var(--muted); font-size: 11px; line-height: 1.5; text-align: center; }
+.sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .history-group { padding: 4px 8px 16px; }
-.history-label { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px 8px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.history-label { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px 8px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .history-label button { display: grid; width: 28px; height: 28px; place-items: center; color: var(--muted); border: 0; border-radius: 7px; background: transparent; }
 .history-label button:hover { color: var(--text); background: var(--surface-raised); }
 .history-run { display: grid; grid-template-columns: 8px 1fr; gap: 8px; align-items: start; padding: 9px 8px; color: inherit; border-radius: 8px; text-decoration: none; }
@@ -640,7 +696,7 @@ onBeforeUnmount(() => {
 .history-run i.failed, .history-run i.cancelled { background: var(--danger); }
 .history-run span { display: grid; min-width: 0; gap: 3px; }
 .history-run b { overflow: hidden; color: var(--text); font-size: 12px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
-.history-run small, .history-empty { color: var(--muted); font-size: 10px; }
+.history-run small, .history-empty { color: var(--muted); font-size: 11px; }
 .history-empty { padding: 16px 8px; text-align: center; }
 .inspector-stack { display: grid; gap: 10px; }
 .inspector-card { padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
@@ -651,22 +707,22 @@ onBeforeUnmount(() => {
 .inspector-card header > i.healthy, .inspector-card header > i[class*="healthy"] { background: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acid) 12%, transparent); }
 .inspector-card dl { display: grid; gap: 7px; margin: 0; }
 .inspector-card dl div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.inspector-card dt, .inspector-card p, .inspector-card small { color: var(--muted); font-size: 10px; line-height: 1.5; }
-.inspector-card dd { margin: 0; color: var(--text); font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.inspector-card dt, .inspector-card p, .inspector-card small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.inspector-card dd { margin: 0; color: var(--text); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .inspector-card > strong { color: var(--text); font-size: 13px; }
 .option-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .option-grid label, .capability-list label { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); }
 .option-grid label.disabled, .capability-list label.disabled { opacity: .45; }
 .option-grid input, .capability-list input, .browser-scope input, .budget-range { accent-color: var(--acid); }
 .option-grid span, .capability-list span { display: grid; gap: 2px; }
-.option-grid b, .capability-list b { color: var(--text); font-size: 10px; }
-.option-grid small, .capability-list small { font-size: 9px; }
+.option-grid b, .capability-list b { color: var(--text); font-size: 11px; }
+.option-grid small, .capability-list small { font-size: 11px; }
 .capability-list { display: grid; gap: 6px; }
 .browser-scope { display: grid; gap: 8px; }
 .browser-scope header { margin-bottom: 2px; }
-.browser-scope > input, .browser-scope select { min-height: 36px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 11px; }
-.browser-scope > label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 10px; }
-.text-danger { justify-self: start; color: var(--danger); border: 0; background: transparent; font-size: 10px; }
+.browser-scope > input, .browser-scope select { min-height: 38px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 12px; }
+.browser-scope > label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 11px; }
+.text-danger { justify-self: start; min-height: 36px; color: var(--danger); border: 0; background: transparent; font-size: 11px; }
 .budget-range { width: 100%; }
 .execution-spine { position: relative; display: grid; gap: 0; }
 .execution-spine::before { position: absolute; top: 16px; bottom: 16px; left: 8px; width: 1px; content: ''; background: var(--border); }
@@ -675,30 +731,33 @@ onBeforeUnmount(() => {
 .execution-spine article.complete i { border-color: var(--acid); background: var(--acid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acid) 10%, transparent); }
 .execution-spine div { display: grid; align-content: start; gap: 4px; }
 .execution-spine b { color: var(--text); font-size: 11px; }
-.execution-spine span { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.execution-spine span { color: var(--muted); font-size: 11px; line-height: 1.45; }
 .subagent-overview p { margin-bottom: 0; }
 .boundary-list { display: grid; gap: 4px; padding: 4px; }
-.boundary-list b { margin-top: 6px; color: var(--text); font-size: 10px; }
-.boundary-list span { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.boundary-list b { margin-top: 6px; color: var(--text); font-size: 11px; }
+.boundary-list span { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .file-list { display: grid; gap: 6px; }
 .file-list span { display: grid; gap: 2px; padding: 8px; border-radius: 7px; background: var(--surface-raised); }
-.file-list b { overflow: hidden; color: var(--text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.file-list b { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 800px) {
-  .agent-compose { width: min(100% - 28px, 840px); padding: 32px 0 64px; }
-  .compose-intro { gap: 12px; }
-  .compose-mark { flex-basis: 36px; width: 36px; height: 36px; }
-  .objective-composer textarea { min-height: 160px; font-size: 16px; }
-  .objective-composer footer { flex-wrap: wrap; }
-  .objective-count { order: 3; width: 100%; margin: 0; }
-  .estimate-action, .run-action, .attach-control { min-height: 44px; }
-  .estimate-action { margin-left: auto; }
-  .quote-bar { grid-template-columns: repeat(2, 1fr); }
-  .task-presets { grid-template-columns: 1fr; }
-  .task-presets button { min-height: 64px; }
+  .conversation-empty, .conversation-thread { width: min(100% - 28px, 780px); }
+  .conversation-empty { padding-block: 28px; }
+  .conversation-empty h1 { font-size: 22px; }
+  .conversation-empty > p, .conversation-message p { font-size: 14px; }
+  .prompt-suggestions button { min-height: 44px; }
+  .conversation-thread { padding: 24px 0 40px; gap: 24px; }
+  .conversation-message { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+  .quote-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .conversation-dock { padding: 8px 8px max(8px, env(safe-area-inset-bottom)); }
+  .objective-composer textarea { min-height: 64px; font-size: 16px; }
+  .objective-count { display: none; }
+  .attach-control, .run-action, .send-action, .input-files button { min-height: 44px; }
+  .send-action { width: 44px; height: 44px; }
+  .safety-note { padding-inline: 8px; font-size: 11px; }
+  .option-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .task-presets button { transition: none; }
-  .task-presets button:hover { transform: none; }
+  .prompt-suggestions button, .objective-composer { transition: none; }
 }
 </style>

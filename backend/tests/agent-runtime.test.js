@@ -221,7 +221,8 @@ const {
   normalizeDeliverables,
   normalizeDelegatedTasks,
   objectivePublicFields,
-  publicRun
+  publicRun,
+  publicSubagent
 } = require('../services/agent-run-service');
 const {
   evaluateAgentTrajectory
@@ -231,6 +232,7 @@ const {
   assertExpectedSubagentOutputFiles,
   createAgentWorkerService,
   createAgentCostMeter,
+  createSerializedCostPersister,
   buildSubagentObjective,
   normalizeSubagentShellScript,
   parentVerifiedSubagentFiles,
@@ -766,6 +768,98 @@ test('subagent model usage aggregates into the parent run without duplicate sand
     sandbox: 1
   });
   assert.equal(meter.total(), 5);
+});
+
+test('recovery keeps the maximum of parent checkpoint and each child usage source', () => {
+  const meter = createAgentCostMeter({
+    costs: {
+      model: 6,
+      modelByActor: { parent: 1, 'subagent-a': 3, 'subagent-b': 2 },
+      generation: 0,
+      sandbox: 0
+    },
+    sandboxCreditsPerMinute: 0
+  });
+  meter.restoreModelForMinimum('subagent-a', 2);
+  meter.restoreModelForMinimum('subagent-a', 4);
+  meter.restoreModelForMinimum('subagent-b', 1);
+  meter.restoreModelForMinimum('subagent-b', 3);
+  assert.deepEqual(meter.snapshot(), {
+    model: 8,
+    modelByActor: { parent: 1, 'subagent-a': 4, 'subagent-b': 3 },
+    generation: 0,
+    sandbox: 0
+  });
+});
+
+test('late model usage callbacks cannot move parent or child totals backwards', () => {
+  const meter = createAgentCostMeter({ sandboxCreditsPerMinute: 0 });
+  meter.setModel(4);
+  meter.setModel(2);
+  meter.setModelFor('subagent-a', 3);
+  meter.setModelFor('subagent-a', 1);
+  assert.deepEqual(meter.snapshot(), {
+    model: 7,
+    modelByActor: { parent: 4, 'subagent-a': 3 },
+    generation: 0,
+    sandbox: 0
+  });
+});
+
+test('public subagent usage keeps database credits authoritative over JSON metadata', () => {
+  const result = publicSubagent({
+    id: '11111111-1111-4111-8111-111111111111',
+    run_id: '22222222-2222-4222-8222-222222222222',
+    ordinal: 1,
+    role: 'researcher',
+    label: 'Research',
+    status: 'running',
+    estimated_credits_used: '3.7500',
+    usage: { credits: 0.25, inputTokens: 120 },
+    output_files: []
+  });
+  assert.equal(result.usage.credits, 3.75);
+  assert.equal(result.usage.inputTokens, 120);
+});
+
+test('parallel cost persistence is serialized and snapshots never move backwards', async () => {
+  const meter = createAgentCostMeter({ sandboxCreditsPerMinute: 0 });
+  meter.setModelFor('subagent-a', 1);
+  let releaseFirstSave;
+  let markFirstSaveStarted;
+  const firstSaveStarted = new Promise((resolve) => {
+    markFirstSaveStarted = resolve;
+  });
+  const saved = [];
+  const recorded = [];
+  const persist = createSerializedCostPersister({
+    costMeter: meter,
+    saveCheckpoint: async (costs) => {
+      saved.push(costs.model);
+      if (saved.length === 1) {
+        markFirstSaveStarted();
+        await new Promise((resolve) => {
+          releaseFirstSave = resolve;
+        });
+      }
+    },
+    recordUsage: async (costs, items) => {
+      recorded.push({ model: costs.model, source: items.source });
+    }
+  });
+
+  const first = persist({ usageItems: { source: 'first' } });
+  await firstSaveStarted;
+  meter.setModelFor('subagent-b', 2);
+  const second = persist({ usageItems: { source: 'second' } });
+  releaseFirstSave();
+  await Promise.all([first, second]);
+
+  assert.deepEqual(saved, [1, 3]);
+  assert.deepEqual(recorded, [
+    { model: 1, source: 'first' },
+    { model: 3, source: 'second' }
+  ]);
 });
 
 test('long sandbox or model work renews the run lease until work completes', async () => {

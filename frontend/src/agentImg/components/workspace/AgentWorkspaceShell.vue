@@ -21,7 +21,7 @@
     -->
     <a class="skip-link" href="#artigen-workspace-main">{{ zh ? '跳到主要内容' : 'Skip to main content' }}</a>
 
-    <aside ref="leftPanel" class="workspace-left" aria-label="Workspace history">
+    <aside id="workspace-history-panel" ref="leftPanel" class="workspace-left" :aria-label="zh ? '任务历史' : 'Workspace history'">
       <header class="workspace-brand">
         <router-link to="/artigen/create" class="brand-lockup" aria-label="Artigen">
           <span class="brand-glyph" aria-hidden="true">A</span>
@@ -92,7 +92,19 @@
     </aside>
 
     <button v-if="leftDrawerOpen || rightDrawerOpen" class="drawer-scrim" type="button" tabindex="-1" aria-label="Close panel" @click="closeDrawers"></button>
-    <div class="panel-resizer left-resizer desktop-only" role="separator" aria-orientation="vertical" :aria-label="zh ? '调整左栏宽度' : 'Resize left panel'" @pointerdown="beginResize('left', $event)"></div>
+    <div
+      class="panel-resizer left-resizer desktop-only"
+      role="separator"
+      tabindex="0"
+      aria-orientation="vertical"
+      aria-controls="workspace-history-panel"
+      aria-valuemin="216"
+      aria-valuemax="340"
+      :aria-valuenow="leftWidth"
+      :aria-label="zh ? '调整左栏宽度' : 'Resize left panel'"
+      @pointerdown="beginResize('left', $event)"
+      @keydown="onResizerKeydown('left', $event)"
+    ></div>
 
     <main id="artigen-workspace-main" class="workspace-main" tabindex="-1">
       <header class="workspace-topbar">
@@ -118,8 +130,20 @@
       <div class="main-slot"><slot /></div>
     </main>
 
-    <div class="panel-resizer right-resizer desktop-only" role="separator" aria-orientation="vertical" :aria-label="zh ? '调整右栏宽度' : 'Resize inspector'" @pointerdown="beginResize('right', $event)"></div>
-    <aside ref="rightPanel" class="workspace-right" aria-label="Agent inspector">
+    <div
+      class="panel-resizer right-resizer desktop-only"
+      role="separator"
+      tabindex="0"
+      aria-orientation="vertical"
+      aria-controls="workspace-inspector-panel"
+      aria-valuemin="320"
+      aria-valuemax="480"
+      :aria-valuenow="rightWidth"
+      :aria-label="zh ? '调整右栏宽度' : 'Resize inspector'"
+      @pointerdown="beginResize('right', $event)"
+      @keydown="onResizerKeydown('right', $event)"
+    ></div>
+    <aside id="workspace-inspector-panel" ref="rightPanel" class="workspace-right" :aria-label="zh ? 'Agent 检查器' : 'Agent inspector'">
       <header class="inspector-head">
         <div>
           <span>{{ zh ? '实时上下文' : 'Live context' }}</span>
@@ -355,6 +379,22 @@ const onResize = (event: PointerEvent) => {
   if (resizeTarget === 'left') leftWidth.value = Math.min(340, Math.max(216, event.clientX));
   if (resizeTarget === 'right') rightWidth.value = Math.min(480, Math.max(320, window.innerWidth - event.clientX));
 };
+const onResizerKeydown = (target: ResizeTarget, event: KeyboardEvent) => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const minimum = target === 'left' ? 216 : 320;
+  const maximum = target === 'left' ? 340 : 480;
+  const width = target === 'left' ? leftWidth : rightWidth;
+  if (event.key === 'Home') width.value = minimum;
+  else if (event.key === 'End') width.value = maximum;
+  else {
+    const physicalDirection = event.key === 'ArrowRight' ? 1 : -1;
+    const panelDirection = target === 'left' ? physicalDirection : -physicalDirection;
+    const step = event.shiftKey ? 24 : 8;
+    width.value = Math.min(maximum, Math.max(minimum, width.value + panelDirection * step));
+  }
+  persistPreferences();
+};
 const endResize = () => {
   resizeTarget = null;
   document.body.classList.remove('workspace-resizing');
@@ -443,13 +483,16 @@ onBeforeUnmount(() => {
   --border: #2b2f2a;
   --text: #f2f4ee;
   --muted: #929a8d;
-  --muted-2: #697065;
+  --muted-2: #8a9285;
   --acid: #c8ff3d;
   --acid-text: #c8ff3d;
   --acid-ink: #11140c;
   --danger: #ff6b62;
   --warning: #f1bd4f;
   --success: #69d59a;
+  --font-meta: 11px;
+  --font-control: 12px;
+  --font-body: 14px;
   --left-live: var(--workspace-left-width);
   --right-live: var(--workspace-right-width);
   display: grid;
@@ -471,11 +514,13 @@ onBeforeUnmount(() => {
   --border: #d8ddd3;
   --text: #171a16;
   --muted: #667061;
-  --muted-2: #8b9387;
+  --muted-2: #626b5e;
   --acid-ink: #171a11;
   --acid-text: #426400;
+  color: #171a16;
   color-scheme: light;
 }
+.agent-workspace-shell[data-theme="light"] .brand-lockup { color: #171a16; }
 .agent-workspace-shell.left-collapsed { --left-live: 64px; }
 .agent-workspace-shell.right-collapsed { --right-live: 0px; }
 * { box-sizing: border-box; }
@@ -498,7 +543,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 .new-task:hover { border-color: color-mix(in srgb,var(--acid) 65%,var(--border)); background: color-mix(in srgb,var(--acid) 11%,var(--surface)); }
 .new-task svg { width: 16px; }
 .new-task span { flex: 1; text-align: left; font-size: 12px; font-weight: 690; }
-kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted-2); font-family: inherit; font-size: 9px; font-weight: 560; background: color-mix(in srgb,var(--surface) 75%,transparent); box-shadow: none; }
+kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted-2); font-family: inherit; font-size: var(--font-meta); font-weight: 560; background: color-mix(in srgb,var(--surface) 75%,transparent); box-shadow: none; }
 .history-search { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 36px; margin: 0 10px 8px; padding: 0 9px; border: 1px solid transparent; border-radius: 8px; color: var(--muted); background: color-mix(in srgb,var(--surface) 72%,transparent); }
 .history-search svg { width: 15px; }
 .history-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 11px; background: transparent; }
@@ -512,8 +557,8 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; col
 .workspace-account button { display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 4px 7px; border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; }
 .workspace-account button:hover { background: var(--surface-raised); }
 .workspace-account button > span:last-child { display: grid; min-width: 0; gap: 1px; }
-.workspace-account b { overflow: hidden; font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-account small { overflow: hidden; color: var(--muted-2); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-account b { overflow: hidden; font-size: var(--font-control); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-account small { overflow: hidden; color: var(--muted-2); font-size: var(--font-meta); text-overflow: ellipsis; white-space: nowrap; }
 .account-icon { display: grid; flex: 0 0 auto; width: 26px; height: 26px; place-items: center; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); background: var(--surface); }
 .account-icon svg { width: 14px; }
 .left-collapsed .brand-word,.left-collapsed .workspace-brand .icon-control,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account button > span:last-child { display: none; }
@@ -522,15 +567,17 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; col
 .panel-resizer { position: fixed; top: 0; bottom: 0; z-index: 45; width: 5px; cursor: col-resize; }
 .panel-resizer::after { position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: transparent; content: ""; transition: background 150ms ease; }
 .panel-resizer:hover::after { background: var(--acid); }
+.panel-resizer:focus-visible { outline: 2px solid var(--acid); outline-offset: -1px; }
+.panel-resizer:focus-visible::after { width: 2px; background: var(--acid); }
 .left-resizer { left: calc(var(--left-live) - 2px); }
 .right-resizer { right: calc(var(--right-live) - 2px); }
 .workspace-main { position: relative; display: flex; flex-direction: column; background: var(--bg); }
 .workspace-topbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; min-height: 56px; padding: 8px 12px 8px 18px; border-bottom: 1px solid var(--border); background: color-mix(in srgb,var(--bg) 92%,transparent); }
 .task-heading { display: grid; min-width: 0; gap: 2px; }
 .task-heading strong { overflow: hidden; font-size: 12px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
-.task-heading span { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.task-heading span { overflow: hidden; color: var(--muted); font-size: var(--font-meta); text-overflow: ellipsis; white-space: nowrap; }
 .topbar-actions,.mobile-panel-controls { display: flex; align-items: center; gap: 6px; }
-.runtime-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 9px; font-weight: 620; background: var(--surface); }
+.runtime-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: var(--font-meta); font-weight: 620; background: var(--surface); }
 .runtime-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .runtime-pill.ready i { background: var(--success); }.runtime-pill.busy i { background: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb,var(--acid) 14%,transparent); }.runtime-pill.warning i { background: var(--warning); }.runtime-pill.offline i { background: var(--danger); }
 .main-slot { flex: 1; min-height: 0; overflow: hidden; }
@@ -538,30 +585,28 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; col
 .right-collapsed .workspace-right { visibility: hidden; }
 .inspector-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 56px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--border); }
 .inspector-head > div { display: grid; gap: 2px; }
-.inspector-head span { font-size: 10px; font-weight: 680; }
-.inspector-head small { color: var(--muted); font-size: 9px; }
+.inspector-head span { font-size: var(--font-control); font-weight: 680; }
+.inspector-head small { color: var(--muted); font-size: var(--font-meta); }
 .inspector-tabs { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); flex: 0 0 auto; min-height: 50px; border-bottom: 1px solid var(--border); }
-.inspector-tabs button { position: relative; display: grid; min-width: 0; padding: 7px 2px 6px; place-items: center; gap: 3px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font-size: 8px; background: transparent; cursor: pointer; }
+.inspector-tabs button { position: relative; display: grid; min-width: 0; padding: 7px 2px 6px; place-items: center; gap: 3px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font-size: var(--font-meta); background: transparent; cursor: pointer; }
 .inspector-tabs button:hover { color: var(--text); background: var(--surface); }
 .inspector-tabs button.active { border-bottom-color: var(--acid); color: var(--text); }
 .inspector-tabs svg { width: 15px; height: 15px; }
-.inspector-tabs i { position: absolute; top: 4px; right: calc(50% - 15px); display: grid; min-width: 13px; height: 13px; padding: 0 3px; place-items: center; border-radius: 999px; color: var(--acid-ink); font-size: 7px; font-style: normal; background: var(--acid); }
+.inspector-tabs i { position: absolute; top: 3px; right: calc(50% - 17px); display: grid; min-width: 16px; height: 16px; padding: 0 4px; place-items: center; border-radius: 999px; color: var(--acid-ink); font-size: 11px; font-style: normal; background: var(--acid); }
 .inspector-panel { flex: 1; min-height: 0; overflow: auto; padding: 12px; scrollbar-color: var(--border) transparent; }
 .empty-panel { display: grid; min-height: 180px; place-content: center; place-items: center; gap: 6px; color: var(--muted); text-align: center; }
 .empty-panel span { width: 22px; height: 1px; background: var(--border); }
-.empty-panel b { font-size: 10px; font-weight: 620; }.empty-panel small { max-width: 190px; color: var(--muted-2); font-size: 9px; line-height: 1.5; }
+.empty-panel b { font-size: var(--font-control); font-weight: 620; }.empty-panel small { max-width: 190px; color: var(--muted-2); font-size: var(--font-meta); line-height: 1.5; }
 .drawer-scrim { display: none; }
-.command-layer { position: fixed; inset: 0; z-index: 400; display: grid; padding-top: 15vh; place-items: start center; background: rgb(0 0 0 / 42%); backdrop-filter: blur(3px); animation: layer-in 150ms ease both; }
-.command-palette { width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 1px solid color-mix(in srgb,var(--border) 80%,var(--acid)); border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); animation: palette-in 180ms cubic-bezier(.2,.8,.2,1) both; }
+.command-layer { position: fixed; inset: 0; z-index: 400; display: grid; padding-top: 15vh; place-items: start center; background: rgb(0 0 0 / 42%); backdrop-filter: blur(3px); }
+.command-palette { width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 1px solid color-mix(in srgb,var(--border) 80%,var(--acid)); border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
 .command-palette > label { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 13px; border-bottom: 1px solid var(--border); }
 .command-palette > label svg { width: 17px; color: var(--muted); }.command-palette input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 13px; background: transparent; }
 .command-palette > div { max-height: 320px; overflow: auto; padding: 6px; }
 .command-palette button { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; }
-.command-palette button:hover { background: var(--surface-raised); }.command-palette button > span { display: grid; gap: 2px; }.command-palette b { font-size: 11px; }.command-palette small { color: var(--muted); font-size: 9px; }
+.command-palette button:hover { background: var(--surface-raised); }.command-palette button > span { display: grid; gap: 2px; }.command-palette b { font-size: var(--font-control); }.command-palette small { color: var(--muted); font-size: var(--font-meta); }
 .mobile-only,.mobile-panel-controls { display: none; }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; clip-path: inset(50%); }
-@keyframes layer-in { from { opacity: 0; } }
-@keyframes palette-in { from { opacity: 0; transform: translateY(-6px) scale(.99); } }
 @media (max-width: 1199px) {
   .agent-workspace-shell,.agent-workspace-shell.left-collapsed,.agent-workspace-shell.right-collapsed { --left-live: 0px; --right-live: 0px; grid-template-columns: minmax(0,1fr); }
   .workspace-left,.workspace-right { position: fixed; top: 0; bottom: 0; visibility: visible; transition: transform 190ms cubic-bezier(.2,.8,.2,1); }
@@ -575,10 +620,10 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; col
 }
 @media (max-width: 799px) {
   .workspace-topbar { min-height: 52px; padding-inline: 8px; }.runtime-pill { display: none; }.inspector-toggle,.icon-control { min-width: 44px; min-height: 44px; }.workspace-brand { min-height: 56px; }.new-task,.history-search,.workspace-nav a,.workspace-account button { min-height: 44px; }
-  .workspace-right { width: 100vw; }.inspector-tabs { min-height: 58px; }.inspector-tabs button { min-height: 56px; font-size: 9px; }
+  .workspace-right { width: 100vw; }.inspector-tabs { min-height: 58px; }.inspector-tabs button { min-height: 56px; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  * { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  * { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }
 }
 </style>
 

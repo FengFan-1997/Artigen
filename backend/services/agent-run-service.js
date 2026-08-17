@@ -286,8 +286,8 @@ const publicSubagent = (row) => ({
     cancelRequested: row.cancel_requested === true
   },
   usage: {
-    credits: Number(row.estimated_credits_used || 0),
-    ...(row.usage && typeof row.usage === 'object' ? row.usage : {})
+    ...(row.usage && typeof row.usage === 'object' ? row.usage : {}),
+    credits: Number(row.estimated_credits_used || 0)
   },
   summary: row.summary || '',
   outputFiles: Array.isArray(row.output_files) ? row.output_files : [],
@@ -821,6 +821,7 @@ const createAgentRunService = ({
   const getSubagentControlState = async ({ runId, subagentId }) => {
     const result = await pool.query(
       `SELECT subagent.status,subagent.cancel_requested,subagent.step_count,
+              subagent.consecutive_failures,
               run.status AS run_status,run.cancel_requested AS run_cancel_requested
          FROM agent_subagents subagent
          JOIN agent_runs run ON run.id=subagent.run_id
@@ -1899,15 +1900,22 @@ const createAgentRunService = ({
     if (subagent) {
       await client.query(
         `UPDATE agent_subagents
-            SET step_count=step_count+1,updated_at=now()
+            SET step_count=step_count+1,
+                consecutive_failures=CASE
+                  WHEN $2='failed' THEN LEAST(2,consecutive_failures+1)
+                  WHEN $2='succeeded' THEN 0
+                  ELSE consecutive_failures
+                END,
+                updated_at=now()
           WHERE id=$1`,
-        [subagentId]
+        [subagentId, status]
       );
     }
     await client.query(
       `UPDATE agent_runs
           SET step_count=$2,
               consecutive_failures=CASE
+                WHEN $5::boolean THEN consecutive_failures
                 WHEN $4='failed' THEN LEAST(2,consecutive_failures+1)
                 WHEN $4='succeeded' THEN 0
                 ELSE consecutive_failures
@@ -1915,7 +1923,7 @@ const createAgentRunService = ({
               lease_expires_at=clock_timestamp()+($3::text || ' seconds')::interval,
               updated_at=now()
         WHERE id=$1`,
-      [runId, sequence, config.leaseSeconds, status]
+      [runId, sequence, config.leaseSeconds, status, Boolean(subagentId)]
     );
     await insertEvent(client, {
       runId,
@@ -1953,20 +1961,24 @@ const createAgentRunService = ({
       }
       await client.query(
         `UPDATE agent_runs
-            SET estimated_credits_used=$2,
+            SET estimated_credits_used=GREATEST(estimated_credits_used,$2),
                 lease_expires_at=clock_timestamp()+($3::text || ' seconds')::interval,
                 updated_at=now()
           WHERE id=$1`,
         [runId, estimated, config.leaseSeconds]
+      );
+      const persisted = Math.max(
+        Number(run.rows[0].estimated_credits_used || 0),
+        estimated
       );
       await insertEvent(client, {
         runId,
         type: 'cost.updated',
         phase: run.rows[0].status,
         summary: '费用估算已更新',
-        data: { estimatedCredits: estimated, items }
+        data: { estimatedCredits: persisted, items }
       });
-      return estimated;
+      return persisted;
     }
   );
 

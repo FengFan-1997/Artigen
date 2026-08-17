@@ -399,12 +399,12 @@ const checkDatabase = async (pool) => {
               AND column_name IN ('trial_credits','daily_free_credits')
          ) AS has_agent_budget_split_columns,
          (
-           SELECT count(*) = 10
+           SELECT count(*) = 11
              FROM information_schema.columns
             WHERE table_schema='public' AND table_name='agent_subagents'
               AND column_name IN (
                 'run_id','ordinal','role','label','status','request_hash','step_count',
-                'estimated_credits_used','usage','cancel_requested'
+                'estimated_credits_used','usage','cancel_requested','consecutive_failures'
               )
          ) AS has_agent_subagent_columns,
          (
