@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const {
   IMAGE_MODEL,
@@ -277,6 +278,62 @@ test('conversation routes register the public contract without touching PostgreS
   assert.ok(registered.some(([method, path]) => method === 'GET' && path.endsWith('/:conversationId/events')));
   assert.ok(registered.some(([method, path]) => method === 'POST' && path.endsWith('/:executionId/agent-quote')));
   assert.ok(registered.some(([method, path]) => method === 'POST' && path.endsWith('/:conversationId/authorizations')));
+});
+
+test('conversation event stream resumes from Last-Event-ID and emits durable event ids', async () => {
+  let eventHandler = null;
+  const app = {
+    get(path, ...handlers) {
+      if (path.endsWith('/:conversationId/events')) eventHandler = handlers.at(-1);
+    },
+    post() {},
+    delete() {}
+  };
+  const observedCursors = [];
+  const service = {
+    startWorker() { return true; },
+    async getConversation() { return { conversationId: 'conversation-1' }; },
+    async listEvents({ after }) {
+      observedCursors.push(after);
+      return [{
+        eventId: 42,
+        conversationId: 'conversation-1',
+        type: 'execution.running',
+        data: { executionId: 'execution-1' },
+        createdAt: '2026-08-17T00:00:00.000Z'
+      }];
+    }
+  };
+  installDesignConversationRoutes(app, {
+    env: { DESIGN_CONVERSATION_ENABLED: 'true' },
+    pool: {},
+    designConversationService: service,
+    rateLimit: () => (_req, _res, next) => next()
+  });
+  assert.equal(typeof eventHandler, 'function');
+
+  const req = new EventEmitter();
+  req.headers = { 'last-event-id': '41' };
+  req.query = { after: '7' };
+  req.params = { conversationId: 'conversation-1' };
+  req.authResolution = { ok: true, userId: 'user-1', dbUserId: 'db-user-1' };
+  const chunks = [];
+  const res = {
+    headersSent: false,
+    statusCode: 0,
+    status(code) { this.statusCode = code; return this; },
+    setHeader() {},
+    flushHeaders() { this.headersSent = true; },
+    write(chunk) { chunks.push(String(chunk)); return true; },
+    end() {}
+  };
+  await eventHandler(req, res);
+  req.emit('close');
+
+  assert.deepEqual(observedCursors, [41]);
+  assert.equal(res.statusCode, 200);
+  assert.match(chunks.join(''), /retry: 1500/);
+  assert.match(chunks.join(''), /id: 42\nevent: execution\.running/);
 });
 
 test('Mac worker attempts two runs only when CPU, memory and browser relay are ready', () => {

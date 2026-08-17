@@ -73,29 +73,30 @@ watch(() => props.draft, async () => {
 </script>
 
 <style scoped>
-.composer-box { padding: 13px 14px 12px; border: 1px solid #bfc3b6; border-radius: 22px; background: #fff; box-shadow: 0 16px 50px rgba(16,17,15,.09); }
-.composer-box:focus-within { border-color: #11120f; box-shadow: 0 16px 50px rgba(16,17,15,.12), 0 0 0 3px rgba(199,255,25,.45); }
-textarea { display: block; width: 100%; min-height: 68px; max-height: 180px; padding: 6px 7px; resize: none; border: 0; outline: 0; color: #10110f; font: inherit; font-size: 16px; line-height: 1.55; background: transparent; }
-textarea::placeholder { color: #696d64; }
+.composer-box { padding: 13px 14px 12px; border: 1px solid var(--border); border-radius: 22px; color: var(--text); background: var(--surface); box-shadow: 0 16px 50px rgb(0 0 0 / 12%); }
+.composer-box:focus-within { border-color: var(--acid); box-shadow: 0 16px 50px rgb(0 0 0 / 18%), 0 0 0 3px color-mix(in srgb,var(--acid) 28%,transparent); }
+textarea { display: block; width: 100%; min-height: 68px; max-height: 180px; padding: 6px 7px; resize: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 16px; line-height: 1.55; background: transparent; }
+textarea::placeholder { color: var(--muted); }
 .compact textarea { min-height: 54px; }
 .attachment-list { display: flex; flex-wrap: wrap; gap: 7px; padding: 5px 6px 11px; }
-.attachment-list > span { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 8px; border: 1px solid #d9dcd2; border-radius: 9px; font-size: 11px; background: #f7f8f2; }
+.attachment-list > span { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; background: var(--surface-raised); }
 .attachment-list svg,.attach svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
 .attachment-list b { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attachment-list small { color: #6d7068; white-space: nowrap; }
-.attachment-list button { border: 0; color: #555850; background: transparent; cursor: pointer; }
+.attachment-list small { color: var(--muted); white-space: nowrap; }
+.attachment-list button { border: 0; color: var(--muted); background: transparent; cursor: pointer; }
 .composer-actions { display: flex; align-items: center; gap: 9px; }
-.attach { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 10px; border: 1px solid #d5d8ce; border-radius: 10px; color: #3e413b; font-size: 12px; font-weight: 700; background: #fafbf6; cursor: pointer; }
-.attach:hover { border-color: #9da194; }
-.privacy { color: #83877d; font-size: 9px; font-weight: 820; letter-spacing: .12em; }
-.send { display: grid; place-items: center; width: 42px; height: 42px; margin-left: auto; border: 1px solid #0e0f0d; border-radius: 50%; color: #0e0f0d; background: #c7ff19; cursor: pointer; }
-.send:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 0 #10110f; }
-.send:disabled { border-color: #d0d3c8; color: #a6a99f; background: #eff0e9; cursor: not-allowed; }
+.attach { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-size: 12px; font-weight: 700; background: var(--surface-raised); cursor: pointer; }
+.attach:hover { border-color: var(--acid); }
+.privacy { color: var(--muted); font-size: 11px; font-weight: 820; letter-spacing: .12em; }
+.send { display: grid; place-items: center; width: 42px; height: 42px; margin-left: auto; border: 1px solid var(--acid); border-radius: 50%; color: var(--acid-ink); background: var(--acid); cursor: pointer; }
+.send:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 0 color-mix(in srgb,var(--acid) 24%,var(--bg)); }
+.send:disabled { border-color: var(--border); color: var(--muted); background: var(--surface-raised); cursor: not-allowed; }
 .send svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; }
 @media (max-width: 620px) {
   .composer-box { border-radius: 18px; }
   .privacy { display: none; }
   .attach span { font-size: 0; }
   .attach span::after { content: '附件'; font-size: 12px; }
+  .attach,.send,.attachment-list button { min-width: 44px; min-height: 44px; }
 }
 </style>

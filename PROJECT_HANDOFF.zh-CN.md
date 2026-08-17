@@ -322,6 +322,27 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 三子任务 smoke、`dev → main` Release gate、同 SHA 的 Render/Vercel/Mac Worker 发布和
 生产 owner smoke 全部完成后，才能把本节阶段改为“生产已发布”。
 
+### 5.19 2026-08-17 三遍审核后的运行时与工作台硬化（待 DEV smoke）
+
+阶段：本地实现和完整回归已通过；尚未提交、尚未合入 `dev`、尚未发布。生产与 DEV 状态必须以本轮发布前重新核验为准。
+
+- 新增迁移 `023_agent_subagent_runtime_hardening`，为 `agent_subagents` 增加独立 `consecutive_failures`。全局 120 步仍统计父子全部步骤，但子步骤失败只更新对应子 Agent，不再污染父 Run 的重复失败熔断。
+- 并行子 Agent 的模型用量与费用快照改为串行持久化；内存计量、父 Run 数据库费用和恢复下限均采用单调最大值，晚到的旧快照不能覆盖较新的计费状态。
+- `publicSubagent.usage` 以服务端数据库核算的 `credits` 为准，不能被加密 checkpoint JSON 中的旧字段覆盖。
+- readiness 已将 `agent_subagents.consecutive_failures` 纳入迁移契约；同时保留 `asset_upload_sessions` 的既有 10 列检查，避免列数误配导致 readiness 假失败。
+- `/artigen/agent` 中间区已从大型 Hero、预设卡和配置表单改为紧凑欢迎语、统一 Composer 和持续对话；能力、交付格式、允许站点和预算继续由右侧 Inspector 渐进配置。
+- 三栏工作台建立统一可读性与交互下限：桌面元数据最小 11px、正文 14px；移动输入 16px、正文 14px、关键触控目标 44px；附件输入退出 Tab 顺序并具备名称；审批拒绝原因使用关联 label；宽度 separator 支持方向键、Shift、Home/End 和 ARIA 数值；reduced motion 在三浏览器中真实归零。
+- 中间对话只显示澄清、审批、关键总结和交付，子 Agent 技术事件归入 Inspector/审计；审批只保留一个酸性绿推荐主动作，其余动作使用明确语义层级。
+
+本地验证证据：
+
+- 第二轮完整 `pnpm check` 退出码 0：前端单元 216/216；后端 447 tests（446 passed / 1 条既有 MinIO 条件跳过）；邮件中继 7/7；Agent 质量集 50/50；生产构建与初始 JS 预算通过。
+- 真实 PostgreSQL `agent-subagent-pg.integration` 与相关集成共 113/113，通过两次子失败不终止父任务、跨用户取消拒绝、单独取消、费用单调增长和迁移 readiness。
+- Playwright 六个桌面/移动/平板浏览器项目共 468 tests：465 passed / 3 条既有条件跳过 / 0 failed，覆盖 1440/1024/768/390/360px、暗色/浅色/系统主题、200% 等效缩放、键盘全流程、reduced motion、移动横屏、长消息和长文件名。
+- Impeccable 最终自动检测为 `[]`；最终截图保存在 `frontend/.impeccable/review/`，已人工检查桌面/移动工作台、Run 详情和设计对话。
+
+发布门槛仍未满足：必须先将本分支经 PR 合入 `dev`，重新恢复与同一不可变 SHA 对齐的 Mac Worker，并完成真实 Qwen3 三子 Agent、单独取消、父任务继续、单次结算、文件验证和队列归零 smoke；随后才能建立 `dev → main` Release PR。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。

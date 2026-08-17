@@ -377,8 +377,53 @@ test('mobile chat uses a history drawer and keeps the docked composer reachable'
   await expect(historyButton).toBeFocused();
   await expect(page.locator('.docked-composer')).toBeVisible();
   await expect(page.getByLabel('Design request')).toBeEditable();
+  await expect(page.locator('input[type="file"]')).toHaveAttribute('tabindex', '-1');
+  await expect(page.locator('input[type="file"]')).toHaveAttribute('aria-label', '添加参考文件');
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 
+});
+
+test('long messages and verified filenames remain readable without mobile overflow', async ({ page }) => {
+  await installExistingConversation(page);
+  const longText = '请保留品牌调性并说明每一项设计决策。'.repeat(36);
+  const longFilename = `${'artigen-professional-brand-experience-audit-'.repeat(8)}final.pdf`;
+  const longConversation = {
+    ...fullConversation,
+    title: '品牌设计协作与多格式交付验证'.repeat(6),
+    messages: [
+      message(userMessageId, 1, 'user', longText),
+      message(assistantMessageId, 2, 'assistant', longText)
+    ]
+  };
+  const longRun = structuredClone(run) as any;
+  longRun.artifacts = [{
+    artifactId: '88888888-8888-4888-8888-888888888888',
+    role: 'pdf',
+    filename: longFilename,
+    mimeType: 'application/pdf',
+    byteSize: 345678,
+    verificationStatus: 'passed',
+    url: `/api/agent-runs/${runId}/artifacts/88888888-8888-4888-8888-888888888888`
+  }];
+  await page.route(`**/api/design-conversations/${conversationId}`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, conversation: longConversation })
+  }));
+  await page.route(`**/api/agent-runs/${runId}`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, run: longRun })
+  }));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/artigen/create?c=${conversationId}`);
+  await expect(page.locator('.message-body').first()).toContainText('请保留品牌调性');
+  await page.getByRole('button', { name: '打开检查器' }).click();
+  await page.getByRole('tab', { name: /文件/ }).click();
+  await expect(page.locator('.file-panel')).toContainText(longFilename);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await expect.poll(() => page.locator('.workspace-right').evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 });
 
 test('failed executions show the error, credit disposition and an editable retry path', async ({ page }) => {
