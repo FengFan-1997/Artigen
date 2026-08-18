@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { expectWorkspaceGeometry } from './helpers/workspaceLayoutAudit';
+import { expectWorkspaceGeometry, installDevEnvironmentBadge } from './helpers/workspaceLayoutAudit';
 
 const auditWorkspaceAccessibility = async (page: Page) => page.locator('.agent-workspace-shell').evaluate((root) => {
   const visible = (element: Element) => {
@@ -473,13 +473,7 @@ test('mobile workspace uses full-height drawers, restores focus, and never scrol
   await installSharedApi(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/artigen/agent');
-  await page.evaluate(() => {
-    const badge = document.createElement('div');
-    badge.className = 'dev-environment-badge';
-    badge.textContent = 'DEV 测试环境';
-    badge.setAttribute('role', 'status');
-    document.body.prepend(badge);
-  });
+  await installDevEnvironmentBadge(page);
 
   const historyButton = page.getByRole('button', { name: '打开历史' });
   await historyButton.click();
@@ -520,6 +514,7 @@ test('workspace reflows across desktop, tablet, mobile, landscape and 200 percen
   ]) {
     await page.setViewportSize(viewport);
     await page.goto('/artigen/agent');
+    if (viewport.width < 800) await installDevEnvironmentBadge(page);
     await expect(page.locator('.objective-composer')).toBeVisible();
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
@@ -543,6 +538,7 @@ test('run detail keeps chrome, composer and inspector aligned across extreme vie
   ]) {
     await page.setViewportSize(viewport);
     await page.goto(`/artigen/agent/runs/${runId}`);
+    if (viewport.width < 800) await installDevEnvironmentBadge(page);
     await expect(page.locator('.message-composer')).toBeVisible();
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {

@@ -22,7 +22,8 @@
 - 新增工作台几何审计辅助器，自动检测 document 横向溢出、应用 chrome 裁切、标题/操作区碰撞、底部 composer 越界、徽标/图标重叠、关闭抽屉仍可交互，以及移动端关键触控目标不足。截图矩阵覆盖 1440、1180、1024、768、430、390、360、844/667 横屏与 200% 等效窄视口，三轮共生成 112 张本地审查截图；最终代表性证据同步到 `frontend/.impeccable/review/`。
 - 三遍独立自审依次覆盖基线视觉问题、几何/键盘/响应式回归和六浏览器最终矩阵。最终 Impeccable 机械检测为 `[]`，聚焦工作台回归 120/120；完整 `pnpm check` 退出码 0，其中前端单元 216/216、后端 414 passed / 41 条显式外部跳过、邮件 7/7、Agent 质量集 50/50、Playwright 483 passed / 3 条条件跳过 / 0 failed，生产构建与 87.5 KiB gzip 初始 JS 预算均通过。
 - PR #89 全部仓库门禁通过后合入 `dev`，merge SHA `102d70cde8dae1a907fa66fb79f500792aadbfa2`；Render DEV deployment `dep-da22n8b7uimc73deom30` 为 `live`，Vercel Preview deployment `5960304577` 为 `success`，同 SHA 的五个接口均 HTTP 200、readiness ok、两种生图模式 available、队列为 0。
-- 真实 DEV 的 1440/1024/390/667 横屏截图又发现全局“DEV 测试环境”徽标在 390px 压住 Agent 标题；因此没有放行生产，而是新增真实文本边界碰撞断言，并在窄屏把徽标缩为右侧紧凑 `DEV`。跟进修复的类型、Lint、`git diff --check` 与六浏览器工作台矩阵 120/120 通过，仍须经过独立 PR、同 SHA DEV 截图复核、`dev → main` Release gate、Render/Vercel/Mac Worker 发布和生产页面 smoke。
+- 真实 DEV 的 1440/1024/390/360/667 横屏截图连续发现三处仅在 DEV 徽标存在时暴露的问题：390px 标题、360px Create 副标题和 390px Inspector 关闭按钮曾被徽标覆盖。跟进修复将窄屏徽标缩为右上 `DEV`，只在徽标存在时为顶栏动作和 Inspector 标题分配独立安全槽，低于 400px 隐藏次要顶栏说明，并统一到正式 Warning / 深墨语义色；生产无徽标时不保留空槽。
+- 几何审计同步从容器矩形升级为 DOM Range 的真实文字像素边界，并覆盖全局环境徽标与标题、操作按钮、Inspector 关闭按钮的相交检测。修复期间追加两轮各 40 张截图和多轮 6 浏览器定向复核，最终 120/120；Impeccable 对 App、统一 Shell 与三条核心视图的终检为 0 条。最终完整 `pnpm check` 再次退出码 0：Playwright 483 passed / 3 条既有条件跳过 / 0 failed，耗时 15.8 分钟。当前跟进分支 `codex/dark-workspace-narrow-heading-collision` 仍须经过独立 PR、同 SHA DEV 截图复核、`dev → main` Release gate、Render/Vercel/Mac Worker 发布和生产页面 smoke。
 - 本轮没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点、路由、模型、Agent runtime、数据库、计费或生产开关。`ui-review/` 始终禁止读取、进入、修改、删除、暂存或提交。
 
 ## 1. 新接手者先看结论
