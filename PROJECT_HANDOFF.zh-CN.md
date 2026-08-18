@@ -15,7 +15,7 @@
 - 持久代码回滚必须继续经过 `feature → dev → main` 门禁。完成后应重新以同一个新的 `main` SHA 发布 Vercel、Render 与 Mac Worker，并重新核验 `/api/meta`、`/readyz`、Agent status、模型和页面 smoke。
 - 此次操作没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由配置。
 
-## 2026-08-18 深色工作台布局硬化（DEV 已验收，生产待发布）
+## 2026-08-18 深色工作台布局硬化（DEV 补充硬化进行中，生产待发布）
 
 - 用户确认继续使用恢复后的 Codex 式深色三栏工作台，本轮不改变视觉方向，只修复 `/artigen/create`、`/artigen/agent` 与 `/artigen/agent/runs/:runId` 的遮挡、错位、溢出、短视口、横屏、抽屉、长内容、触控和键盘问题。
 - 分支 `codex/dark-workspace-layout-hardening` 基于 `origin/dev` SHA `024d2827e8011cd09dd3d7475bd37028a3ca27fa`。主要修复包括：三栏 slotted 内容统一 `border-box`、顶部标题与控制区防碰撞、右侧 Inspector 页签与徽标分离、关闭抽屉 `inert`、焦点恢复、短视口紧凑布局、移动安全区与 44px 触控目标、长文本安全换行、附件与审批可访问名称、可见焦点和 reduced-motion 边界。
@@ -23,7 +23,9 @@
 - 三遍独立自审依次覆盖基线视觉问题、几何/键盘/响应式回归和六浏览器最终矩阵。最终 Impeccable 机械检测为 `[]`，聚焦工作台回归 120/120；完整 `pnpm check` 退出码 0，其中前端单元 216/216、后端 414 passed / 41 条显式外部跳过、邮件 7/7、Agent 质量集 50/50、Playwright 483 passed / 3 条条件跳过 / 0 failed，生产构建与 87.5 KiB gzip 初始 JS 预算均通过。
 - PR #89 全部仓库门禁通过后合入 `dev`，merge SHA `102d70cde8dae1a907fa66fb79f500792aadbfa2`；Render DEV deployment `dep-da22n8b7uimc73deom30` 为 `live`，Vercel Preview deployment `5960304577` 为 `success`，同 SHA 的五个接口均 HTTP 200、readiness ok、两种生图模式 available、队列为 0。
 - 真实 DEV 的 1440/1024/390/360/667 横屏截图连续发现三处仅在 DEV 徽标存在时暴露的问题：390px 标题、360px Create 副标题和 390px Inspector 关闭按钮曾被徽标覆盖。跟进修复将窄屏徽标缩为右上 `DEV`，只在徽标存在时为顶栏动作和 Inspector 标题分配独立安全槽，低于 400px 隐藏次要顶栏说明，并统一到正式 Warning / 深墨语义色；生产无徽标时不保留空槽。
-- 几何审计同步从容器矩形升级为 DOM Range 的真实文字像素边界，并覆盖全局环境徽标与标题、操作按钮、Inspector 关闭按钮的相交检测。修复期间追加两轮各 40 张截图和多轮 6 浏览器定向复核，最终 120/120；Impeccable 对 App、统一 Shell 与三条核心视图的终检为 0 条。最终完整 `pnpm check` 再次退出码 0：Playwright 483 passed / 3 条既有条件跳过 / 0 failed，耗时 15.8 分钟。当前跟进分支 `codex/dark-workspace-narrow-heading-collision` 仍须经过独立 PR、同 SHA DEV 截图复核、`dev → main` Release gate、Render/Vercel/Mac Worker 发布和生产页面 smoke。
+- 几何审计同步从容器矩形升级为 DOM Range 的真实文字像素边界，并覆盖全局环境徽标与标题、操作按钮、Inspector 关闭按钮的相交检测。修复期间追加两轮各 40 张截图和多轮 6 浏览器定向复核，最终 120/120；Impeccable 对 App、统一 Shell 与三条核心视图的终检为 0 条。最终完整 `pnpm check` 再次退出码 0：Playwright 483 passed / 3 条既有条件跳过 / 0 failed，耗时 15.8 分钟。
+- 跟进 PR #91 全部门禁通过后合入 `dev`，merge SHA `5ec3f2a78d1d4e5455ceb689529b63343fbf86f1`；Render DEV deployment `dep-da241lou01pc73en49t0` 为 `live`，`/api/meta.gitSha`、`/readyz` 和状态接口已重新核验为同一 SHA。真实 DEV 1440/1024/768/390/360/667 截图又发现 1024px Agent 标题被全局 DEV 徽标遮挡；将该缺口加入全部断点后，又在 1200px 三栏边界发现运行状态胶囊与长版徽标相撞，因此该 SHA 未获发布许可。
+- 当前补充分支 `codex/dark-workspace-tablet-badge-collision` 将 1440px 以下的 DEV 徽标统一为右上角紧凑形式，并只在徽标存在时给顶栏动作与 Inspector 关闭控件保留安全槽。永久回归新增 1439/1440、1199/1200、799/800 与 399/400 成对边界；Chromium、Firefox、WebKit desktop、360、390 和 768 的 24 项聚焦矩阵已通过，截图目录 `pass-7|pass-8` 各包含 71 个布局状态。完整 `pnpm check` 再次退出码 0：Playwright 483 passed / 3 条既有条件跳过 / 0 failed，耗时 16.3 分钟；前端 216、后端 414 passed / 41 explicit skips、邮件 7、Agent 质量 50、构建与 87.5 KiB gzip 预算均通过。补充修复仍须通过独立 PR、同 SHA DEV 实页复核后，才允许 `dev → main` 与生产发布。
 - 本轮没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点、路由、模型、Agent runtime、数据库、计费或生产开关。`ui-review/` 始终禁止读取、进入、修改、删除、暂存或提交。
 
 ## 1. 新接手者先看结论

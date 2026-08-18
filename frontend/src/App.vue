@@ -40,7 +40,7 @@ const isDevEnvironment = appEnvironment === 'dev' || appEnvironment === 'develop
   pointer-events: none;
 }
 
-@media (max-width: 799px) {
+@media (max-width: 1439px) {
   .dev-environment-badge {
     top: 12px;
     right: max(8px, env(safe-area-inset-right));

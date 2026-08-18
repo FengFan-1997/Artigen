@@ -406,10 +406,17 @@ test('zero state stays scrollable and aligned across desktop, zoom, short and la
   const capturePass = process.env.ARTIGEN_CAPTURE_PASS || 'review';
   for (const viewport of [
     { name: 'desktop-1440', width: 1440, height: 960 },
+    { name: 'desktop-edge-1439', width: 1439, height: 900 },
+    { name: 'desktop-edge-1200', width: 1200, height: 800 },
+    { name: 'tablet-edge-1199', width: 1199, height: 800 },
     { name: 'desktop-1180', width: 1180, height: 800 },
     { name: 'tablet-1024-short', width: 1024, height: 700 },
+    { name: 'tablet-edge-800', width: 800, height: 700 },
+    { name: 'mobile-edge-799', width: 799, height: 700 },
     { name: 'tablet-768', width: 768, height: 900 },
     { name: 'mobile-430', width: 430, height: 932 },
+    { name: 'mobile-edge-400', width: 400, height: 844 },
+    { name: 'mobile-edge-399', width: 399, height: 844 },
     { name: 'mobile-390', width: 390, height: 844 },
     { name: 'mobile-360-short', width: 360, height: 640 },
     { name: 'mobile-landscape-844', width: 844, height: 390 },
@@ -418,7 +425,7 @@ test('zero state stays scrollable and aligned across desktop, zoom, short and la
   ]) {
     await page.setViewportSize(viewport);
     await page.goto('/artigen/create');
-    if (viewport.width < 800) await installDevEnvironmentBadge(page);
+    await installDevEnvironmentBadge(page);
     await expect(page.locator('.workspace-zero')).toBeVisible();
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT && viewport.height <= 640) {
@@ -445,17 +452,24 @@ test('active conversation keeps cards, approvals and dock aligned across extreme
   const capturePass = process.env.ARTIGEN_CAPTURE_PASS || 'review';
   for (const viewport of [
     { name: 'desktop-1440', width: 1440, height: 960 },
+    { name: 'desktop-edge-1439', width: 1439, height: 900 },
+    { name: 'desktop-edge-1200', width: 1200, height: 800 },
+    { name: 'tablet-edge-1199', width: 1199, height: 800 },
     { name: 'desktop-1180', width: 1180, height: 800 },
     { name: 'tablet-1024-short', width: 1024, height: 700 },
+    { name: 'tablet-edge-800', width: 800, height: 700 },
+    { name: 'mobile-edge-799', width: 799, height: 700 },
     { name: 'tablet-768', width: 768, height: 900 },
     { name: 'mobile-430', width: 430, height: 932 },
+    { name: 'mobile-edge-400', width: 400, height: 844 },
+    { name: 'mobile-edge-399', width: 399, height: 844 },
     { name: 'mobile-390', width: 390, height: 844 },
     { name: 'mobile-360-short', width: 360, height: 640 },
     { name: 'mobile-landscape-844', width: 844, height: 390 }
   ]) {
     await page.setViewportSize(viewport);
     await page.goto(`/artigen/create?c=${conversationId}`);
-    if (viewport.width < 800) await installDevEnvironmentBadge(page);
+    await installDevEnvironmentBadge(page);
     await expect(page.locator('.execution-card')).toBeVisible();
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
