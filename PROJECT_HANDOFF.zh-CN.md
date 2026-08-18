@@ -15,7 +15,7 @@
 - 持久代码回滚必须继续经过 `feature → dev → main` 门禁。完成后应重新以同一个新的 `main` SHA 发布 Vercel、Render 与 Mac Worker，并重新核验 `/api/meta`、`/readyz`、Agent status、模型和页面 smoke。
 - 此次操作没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由配置。
 
-## 2026-08-18 深色工作台布局硬化（DEV 已验收，生产待发布）
+## 2026-08-18 深色工作台布局硬化（生产已发布）
 
 - 用户确认继续使用恢复后的 Codex 式深色三栏工作台，本轮不改变视觉方向，只修复 `/artigen/create`、`/artigen/agent` 与 `/artigen/agent/runs/:runId` 的遮挡、错位、溢出、短视口、横屏、抽屉、长内容、触控和键盘问题。
 - 分支 `codex/dark-workspace-layout-hardening` 基于 `origin/dev` SHA `024d2827e8011cd09dd3d7475bd37028a3ca27fa`。主要修复包括：三栏 slotted 内容统一 `border-box`、顶部标题与控制区防碰撞、右侧 Inspector 页签与徽标分离、关闭抽屉 `inert`、焦点恢复、短视口紧凑布局、移动安全区与 44px 触控目标、长文本安全换行、附件与审批可访问名称、可见焦点和 reduced-motion 边界。
@@ -27,6 +27,11 @@
 - 跟进 PR #91 全部门禁通过后合入 `dev`，merge SHA `5ec3f2a78d1d4e5455ceb689529b63343fbf86f1`；Render DEV deployment `dep-da241lou01pc73en49t0` 为 `live`，`/api/meta.gitSha`、`/readyz` 和状态接口已重新核验为同一 SHA。真实 DEV 1440/1024/768/390/360/667 截图又发现 1024px Agent 标题被全局 DEV 徽标遮挡；将该缺口加入全部断点后，又在 1200px 三栏边界发现运行状态胶囊与长版徽标相撞，因此该 SHA 未获发布许可。
 - PR #92 已将 1440px 以下 DEV 徽标的紧凑布局与 1439/1440、1199/1200、799/800、399/400 成对边界回归合入 `dev`，merge SHA `a4bf63c990a94b40196b6d783bb0c391234019fa`；Render DEV deployment `dep-da24ka142hec73fbej7g` 为同 SHA `live`，`/api/meta`、`/readyz`、Agent、对话和生图模型接口均 HTTP 200。随后 36 张真实 DEV 静态与抽屉截图发现移动历史抽屉的“刷新任务”仍只有 28×28px：它没有遮挡，但低于 44px 触控下限。跟进分支 `codex/dark-workspace-drawer-touch-target` 将该按钮在移动宽度提升为 44×44px、增加可见焦点，并把打开后的左右抽屉稳定态纳入几何审计；六浏览器定向回归 12/12、完整工作台矩阵 120/120，新增截图批次 `pass-9` 为 71 张。最终 `pnpm check` 退出码 0：Playwright 483 passed / 3 条既有条件跳过 / 0 failed，耗时 16.3 分钟；Impeccable 核心五文件扫描为 `[]`。
 - 跟进 PR #93 的 Core、8 路 E2E 和 Release gate 全绿后合入 `dev`，merge SHA `9399109a607125bcb1ab13c4099f83d7e9578519`。Render DEV deployment `dep-da25a01srm7s738eve50` 为该 SHA `live`，Vercel Preview deployments `5963066625`、`5963082012` 均为 `success`；`/api/meta.gitSha` 精确相同，`/readyz`、Agent、设计对话与生图模型接口均 HTTP 200，迁移仍为 `023_agent_subagent_runtime_hardening`，Qwen3/Kolors 锁定和两种图片模式可用。真实 DEV 生成 43 张 Agent/Create 临界视口、短视口、横屏与 360/390 抽屉截图，自动审计 40 个状态的横向溢出、chrome 裁切、标题/操作区、环境徽标、Inspector、Composer 和移动触控目标均为 0 问题；刷新按钮实测 44×44px。人工复核 1440、1439、1200、1199、1024、800/799、390/360 和四种抽屉稳定态未见遮挡或错位。DEV Worker 延续既有离线状态、队列为 0；本次纯前端验收不冒充真实 Agent smoke，通过 DEV 视觉门槛后方可进入 `dev → main`。
+- 最终 DEV 证据 PR #94 合入后 SHA 为 `64ae78af3d982ee404eae5d4413b34a0556b9fae`；Render DEV deployment `dep-da25hnjncjis73fbumug` 为同 SHA `live`，Vercel Preview deployments `5963361873`、`5963346096` success。Release PR [#95](https://github.com/FengFan-1997/Artigen/pull/95) 的 main 分支策略、Core、8 路 E2E 与 Release gate 全绿后合入，生产不可变 SHA 为 `78577097e71689bb8f20ac09ad655e00abc2de00`。两个 Cloudflare Workers 外部检查仍为已知非门禁失败，没有计作通过。
+- 生产三端已对齐该 SHA：Render deployment `dep-da25tnojo6nc73fn69a0` 为 `live`；Vercel production deployment `dpl_7zLQ6CToeJ9aKGQKVyNSk8k6RPEm` 为 `READY` 并 alias 到 `artigen-fengfan.vercel.app`；Mac Worker 从不可变 worktree `/Users/fengfan/Public/personal/Artigen-worker-production-7857709` 运行，LaunchAgent 的程序与工作目录均精确指向该 worktree。
+- Vercel 的 GitHub main build `dpl_G2vHiFM7cq3J4uAVrZXjs2aFYpEk` 最初被标记为 Preview，生产域名仍指向旧 deployment `dpl_HxXczXrdypHaR5dRz7VhwjCP22LH`。首轮 20 张生产截图因此真实复现旧构建的 Composer content-box 裁切与关闭抽屉未 inert；没有把 Render `/api/meta` 的新 SHA 误当成前端已更新。将该精确 Preview 显式 promote 后生成上述 production deployment，重新确认 production asset hash 已变化，再从零重跑截图矩阵。
+- 最终生产截图位于 `.artifacts/workspace-layout-hardening/prod-7857709/`：Agent/Create 各覆盖 1440、1200、1199、1024、800、799、390、360，并覆盖 390px 历史和 Inspector 抽屉，共 20 张。自动几何审计结果为 0 横向溢出、0 chrome 裁切、0 顶栏碰撞、0 Composer 越界、0 Inspector 徽标重叠、0 未 inert 的关闭抽屉、0 小于 44px 的可见移动触控目标，且生产不存在 DEV 徽标或对应空白占位；20 张均已人工查看。
+- 最终生产 `/api/meta`、`/readyz`、`/api/agent/status`、`/api/design-assistant/status` 与 `/api/generation/models` 均 HTTP 200；迁移为 `023_agent_subagent_runtime_hardening`，Worker、浏览器、受限出口、桌面中继与子 Agent ready，queueDepth=0。文字/规划/父子 Agent 继续锁定 `Qwen/Qwen3-8B`，全部图片继续锁定 `Kwai-Kolors/Kolors`，两个图片模式均 `available=true`。本轮只修改前端与测试，不重复消耗真实模型点数。
 - 本轮没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点、路由、模型、Agent runtime、数据库、计费或生产开关。`ui-review/` 始终禁止读取、进入、修改、删除、暂存或提交。
 
 ## 1. 新接手者先看结论
