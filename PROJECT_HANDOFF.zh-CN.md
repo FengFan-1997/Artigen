@@ -387,11 +387,12 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 
 恢复加固已完成真实 DEV 与生产验收，可以标记为上线。后续若以纯文档提交补充本节证据，只需让 Render、Vercel 和 Mac Worker 对齐最终文档 merge SHA 并重新核验 readiness；运行时代码相同时不重复消耗真实模型额度。Karing 只在全部联网发布与验收结束后从临时“全局”恢复为“规则”，不得修改节点、分流、DNS、系统代理或 Wi-Fi。
 
-### 5.20 2026-08-18 Agent 工作台视觉重设计（本地终审通过，待 PR/DEV）
+### 5.20 2026-08-18 Agent 工作台视觉重设计（DEV 验收通过，待生产发布）
 
-阶段：从最新 `origin/dev` SHA `99ea900d2cf76ec021b500e81b1bb9bb915e0b52` 建立
-`codex/artigen-workspace-visual-redesign`。本节只记录已完成且通过本地终审的前端视觉与交互
-变更；尚未合入 `dev`，也未发布到 DEV 或生产。
+阶段：从 `origin/dev` SHA `99ea900d2cf76ec021b500e81b1bb9bb915e0b52` 建立
+`codex/artigen-workspace-visual-redesign`，经 PR [#82](https://github.com/FengFan-1997/Artigen/pull/82)
+合入 `dev`，merge SHA 为 `5e2990ca71f06962cb4de34dae77b590cd7ad8b2`。本节变更已通过
+CI、Render DEV 与 Vercel Preview 验收，尚未进入 `main` 或生产。
 
 - `/artigen/create`、`/artigen/agent` 与 `/artigen/agent/runs/:runId` 保留统一三栏信息架构和全部真实业务能力，但视觉权威改为“数字打样台”：左侧项目架、中间唯一工作稿、右侧生产控制台。
 - 工作台默认使用冷白浅色纸面，同时完整支持暗色与系统主题。深墨负责结构，cobalt 负责选择与焦点，acid lime 只用于执行状态和套准标记；十字套准图形成为统一 Agent 标记。
@@ -408,8 +409,12 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 - 当前代码再次通过 `pnpm check:core`；两份工作台 E2E 在 Chromium、Firefox、WebKit、360px、390px 与 768px 六个项目中为 108/108。
 - 两轮人工截图 QA 后由全新 Impeccable 终审上下文发现并复核四项修复：折叠恢复、图标轨命名、移动附件边界、执行字号与移动安全警告。最终结论为 `PASS`，机械反模式检测为 `[]`。
 - 最终桌面浅色/暗色、390px、创建零状态、持续对话和 Run 详情证据保存在 `frontend/.impeccable/review/`。
+- PR #82 的 Core、8 路 E2E、Release gate 与两个 Vercel Preview 全绿；Cloudflare 两个既有非门禁 Preview 失败未参与合并门槛。
+- Render DEV deployment `dep-da1ui6ou01pc73eihkmg` 为 `live` 且 commit 精确等于 `5e2990c...`。`/api/meta` 返回 `appEnv=dev` 与同一 SHA；`/readyz` 为 `ok=true`，数据库迁移 `023_agent_subagent_runtime_hardening`、PostgreSQL 与 S3 均正常。
+- DEV Agent status 为 `authenticated-v1`，Worker、浏览器、受限出口、桌面中继与子 Agent 均 ready，queue=0；设计助手使用 `Qwen/Qwen3-8B` 与 `Kwai-Kolors/Kolors`，两个生图模式均 `available=true`。
+- 只读页面 smoke 确认 `/artigen/create` 与 `/artigen/agent` 均 HTTP 200、真实 DOM 加载统一 Shell、无横向溢出和页面异常；Create 标题为“你想完成什么？”。Vercel merge-SHA deployments `5956564214`、`5956554071` 均为 `success`。
 
-后续只能通过功能分支 PR 进入 `dev`，完成 CI 和 DEV 视觉 smoke 后再决定是否进入 `dev → main` 发布流程；未重新核验线上接口与 deployment 前，不得把本节描述为已上线。
+后续只能通过 `dev → main` Release PR 与同一不可变 SHA 的生产发布流程；未重新核验生产接口、Render/Vercel deployment 与页面前，不得把本节描述为已上线。
 
 ## 6. 已知风险与正式后续事项
 
