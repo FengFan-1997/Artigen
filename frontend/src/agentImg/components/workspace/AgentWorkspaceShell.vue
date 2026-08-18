@@ -21,7 +21,14 @@
     -->
     <a class="skip-link" href="#artigen-workspace-main">{{ zh ? '跳到主要内容' : 'Skip to main content' }}</a>
 
-    <aside id="workspace-history-panel" ref="leftPanel" class="workspace-left" :aria-label="zh ? '任务历史' : 'Workspace history'">
+    <aside
+      id="workspace-history-panel"
+      ref="leftPanel"
+      class="workspace-left"
+      :aria-label="zh ? '任务历史' : 'Workspace history'"
+      :aria-hidden="overlayLayout && !leftDrawerOpen ? 'true' : undefined"
+      :inert="commandOpen || rightDrawerOpen || (overlayLayout && !leftDrawerOpen) ? true : undefined"
+    >
       <header class="workspace-brand">
         <router-link to="/artigen/create" class="brand-lockup" aria-label="Artigen">
           <span class="brand-glyph" aria-hidden="true">A</span>
@@ -91,7 +98,7 @@
       </footer>
     </aside>
 
-    <button v-if="leftDrawerOpen || rightDrawerOpen" class="drawer-scrim" type="button" tabindex="-1" aria-label="Close panel" @click="closeDrawers"></button>
+    <button v-if="leftDrawerOpen || rightDrawerOpen" class="drawer-scrim" type="button" tabindex="-1" :aria-label="zh ? '关闭面板' : 'Close panel'" @click="closeDrawers"></button>
     <div
       class="panel-resizer left-resizer desktop-only"
       role="separator"
@@ -106,19 +113,26 @@
       @keydown="onResizerKeydown('left', $event)"
     ></div>
 
-    <main id="artigen-workspace-main" class="workspace-main" tabindex="-1">
+    <main
+      id="artigen-workspace-main"
+      class="workspace-main"
+      tabindex="-1"
+      :inert="commandOpen || leftDrawerOpen || rightDrawerOpen ? true : undefined"
+    >
       <header class="workspace-topbar">
         <div class="mobile-panel-controls">
           <button ref="leftDrawerButton" class="icon-control" type="button" :aria-label="zh ? '打开历史' : 'Open history'" @click="openLeftDrawer">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M9 4v16"/></svg>
           </button>
         </div>
-        <slot name="topbar">
-          <div class="task-heading">
-            <strong>{{ title }}</strong>
-            <span>{{ subtitle }}</span>
-          </div>
-        </slot>
+        <div class="topbar-heading-slot">
+          <slot name="topbar">
+            <div class="task-heading">
+              <strong>{{ title }}</strong>
+              <span>{{ subtitle }}</span>
+            </div>
+          </slot>
+        </div>
         <div class="topbar-actions">
           <span class="runtime-pill" :class="statusTone"><i></i>{{ statusLabel }}</span>
           <slot name="topbar-actions" />
@@ -143,7 +157,14 @@
       @pointerdown="beginResize('right', $event)"
       @keydown="onResizerKeydown('right', $event)"
     ></div>
-    <aside id="workspace-inspector-panel" ref="rightPanel" class="workspace-right" :aria-label="zh ? 'Agent 检查器' : 'Agent inspector'">
+    <aside
+      id="workspace-inspector-panel"
+      ref="rightPanel"
+      class="workspace-right"
+      :aria-label="zh ? 'Agent 检查器' : 'Agent inspector'"
+      :aria-hidden="overlayLayout && !rightDrawerOpen ? 'true' : undefined"
+      :inert="commandOpen || leftDrawerOpen || (overlayLayout && !rightDrawerOpen) ? true : undefined"
+    >
       <header class="inspector-head">
         <div>
           <span>{{ zh ? '实时上下文' : 'Live context' }}</span>
@@ -274,8 +295,10 @@ const theme = ref<ThemeMode>('dark');
 const systemDark = ref(true);
 const commandOpen = ref(false);
 const commandQuery = ref('');
+const overlayLayout = ref(false);
 let resizeTarget: ResizeTarget | null = null;
 let media: MediaQueryList | null = null;
+let layoutMedia: MediaQueryList | null = null;
 let commandReturnFocus: HTMLElement | null = null;
 
 const tabs = computed(() => [
@@ -330,7 +353,7 @@ const persistPreferences = () => {
   }));
 };
 const toggleLeft = () => { leftCollapsed.value = !leftCollapsed.value; persistPreferences(); };
-const isOverlayLayout = () => window.matchMedia('(max-width: 1199px)').matches;
+const isOverlayLayout = () => overlayLayout.value;
 const openLeftDrawer = async () => {
   if (!isOverlayLayout()) return toggleLeft();
   leftDrawerOpen.value = true;
@@ -339,10 +362,11 @@ const openLeftDrawer = async () => {
   leftPanel.value?.querySelector<HTMLElement>('button,a,input')?.focus();
 };
 const closeLeftDrawer = (restore = false) => {
-  if (restore) {
-    (leftDrawerButton.value || root.value?.querySelector<HTMLButtonElement>('.mobile-panel-controls button'))?.focus({ preventScroll: true });
-  }
   leftDrawerOpen.value = false;
+  if (restore) {
+    const target = leftDrawerButton.value || root.value?.querySelector<HTMLButtonElement>('.mobile-panel-controls button');
+    void nextTick(() => target?.focus({ preventScroll: true }));
+  }
 };
 const closeRight = (restore = false) => {
   if (isOverlayLayout()) rightDrawerOpen.value = false;
@@ -462,7 +486,20 @@ onMounted(() => {
   const syncTheme = () => { systemDark.value = media?.matches ?? true; };
   syncTheme();
   media.addEventListener('change', syncTheme);
-  (root.value as HTMLElement & { __themeCleanup?: () => void }).__themeCleanup = () => media?.removeEventListener('change', syncTheme);
+  layoutMedia = window.matchMedia('(max-width: 1199px)');
+  const syncLayout = () => {
+    overlayLayout.value = layoutMedia?.matches ?? false;
+    if (!overlayLayout.value) {
+      leftDrawerOpen.value = false;
+      rightDrawerOpen.value = false;
+    }
+  };
+  syncLayout();
+  layoutMedia.addEventListener('change', syncLayout);
+  (root.value as HTMLElement & { __mediaCleanup?: () => void }).__mediaCleanup = () => {
+    media?.removeEventListener('change', syncTheme);
+    layoutMedia?.removeEventListener('change', syncLayout);
+  };
   window.addEventListener('keydown', onShellKeydown);
 });
 
@@ -470,7 +507,7 @@ watch(() => props.defaultInspectorTab, (value) => { activeTab.value = value; });
 onBeforeUnmount(() => {
   endResize();
   window.removeEventListener('keydown', onShellKeydown);
-  (root.value as (HTMLElement & { __themeCleanup?: () => void }) | null)?.__themeCleanup?.();
+  (root.value as (HTMLElement & { __mediaCleanup?: () => void }) | null)?.__mediaCleanup?.();
 });
 </script>
 
@@ -523,14 +560,15 @@ onBeforeUnmount(() => {
 .agent-workspace-shell[data-theme="light"] .brand-lockup { color: #171a16; }
 .agent-workspace-shell.left-collapsed { --left-live: 64px; }
 .agent-workspace-shell.right-collapsed { --right-live: 0px; }
-* { box-sizing: border-box; }
+*,*::before,*::after { box-sizing: border-box; }
+.agent-workspace-shell :deep(*),.agent-workspace-shell :deep(*::before),.agent-workspace-shell :deep(*::after) { box-sizing: border-box; }
 button,input { font: inherit; }
 button { color: inherit; }
 svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .skip-link { position: fixed; top: 8px; left: 50%; z-index: 500; padding: 9px 14px; border-radius: 8px; color: var(--acid-ink); background: var(--acid); transform: translate(-50%,-150%); transition: transform 160ms ease; }
 .skip-link:focus { transform: translate(-50%,0); }
 .workspace-left,.workspace-right,.workspace-main { min-width: 0; min-height: 0; }
-.workspace-left { z-index: 20; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border); background: var(--sidebar); }
+.workspace-left { z-index: 40; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border); background: var(--sidebar); }
 .workspace-brand { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 56px; padding: 8px 10px 8px 12px; }
 .brand-lockup { display: flex; align-items: center; gap: 10px; min-width: 0; color: inherit; font-size: 14px; font-weight: 720; text-decoration: none; letter-spacing: -.01em; }
 .brand-glyph { display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; border: 1px solid color-mix(in srgb,var(--acid) 55%,var(--border)); border-radius: 8px; color: var(--acid-text); font-size: 12px; font-weight: 820; background: color-mix(in srgb,var(--acid) 7%,transparent); }
@@ -571,28 +609,30 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; col
 .panel-resizer:focus-visible::after { width: 2px; background: var(--acid); }
 .left-resizer { left: calc(var(--left-live) - 2px); }
 .right-resizer { right: calc(var(--right-live) - 2px); }
+.left-collapsed .left-resizer,.right-collapsed .right-resizer { display: none; }
 .workspace-main { position: relative; display: flex; flex-direction: column; background: var(--bg); }
-.workspace-topbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; min-height: 56px; padding: 8px 12px 8px 18px; border-bottom: 1px solid var(--border); background: color-mix(in srgb,var(--bg) 92%,transparent); }
+.workspace-topbar { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; min-height: 56px; padding: 8px 12px 8px 18px; overflow: hidden; border-bottom: 1px solid var(--border); background: color-mix(in srgb,var(--bg) 92%,transparent); }
+.topbar-heading-slot { flex: 1 1 auto; min-width: 0; overflow: hidden; }
 .task-heading { display: grid; min-width: 0; gap: 2px; }
 .task-heading strong { overflow: hidden; font-size: 12px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
 .task-heading span { overflow: hidden; color: var(--muted); font-size: var(--font-meta); text-overflow: ellipsis; white-space: nowrap; }
-.topbar-actions,.mobile-panel-controls { display: flex; align-items: center; gap: 6px; }
-.runtime-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: var(--font-meta); font-weight: 620; background: var(--surface); }
+.topbar-actions,.mobile-panel-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.runtime-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: var(--font-meta); font-weight: 620; white-space: nowrap; background: var(--surface); }
 .runtime-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .runtime-pill.ready i { background: var(--success); }.runtime-pill.busy i { background: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb,var(--acid) 14%,transparent); }.runtime-pill.warning i { background: var(--warning); }.runtime-pill.offline i { background: var(--danger); }
 .main-slot { flex: 1; min-height: 0; overflow: hidden; }
-.workspace-right { z-index: 35; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--border); background: var(--sidebar); }
+.workspace-right { z-index: 40; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--border); background: var(--sidebar); }
 .right-collapsed .workspace-right { visibility: hidden; }
 .inspector-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 56px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--border); }
-.inspector-head > div { display: grid; gap: 2px; }
+.inspector-head > div { display: grid; min-width: 0; gap: 2px; }
 .inspector-head span { font-size: var(--font-control); font-weight: 680; }
-.inspector-head small { color: var(--muted); font-size: var(--font-meta); }
+.inspector-head small { overflow: hidden; color: var(--muted); font-size: var(--font-meta); text-overflow: ellipsis; white-space: nowrap; }
 .inspector-tabs { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); flex: 0 0 auto; min-height: 50px; border-bottom: 1px solid var(--border); }
-.inspector-tabs button { position: relative; display: grid; min-width: 0; padding: 7px 2px 6px; place-items: center; gap: 3px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font-size: var(--font-meta); background: transparent; cursor: pointer; }
+.inspector-tabs button { position: relative; display: grid; min-width: 0; padding: 7px 2px 6px; overflow: hidden; place-items: center; gap: 3px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font-size: var(--font-meta); background: transparent; cursor: pointer; }
 .inspector-tabs button:hover { color: var(--text); background: var(--surface); }
 .inspector-tabs button.active { border-bottom-color: var(--acid); color: var(--text); }
 .inspector-tabs svg { width: 15px; height: 15px; }
-.inspector-tabs i { position: absolute; top: 3px; right: calc(50% - 17px); display: grid; min-width: 16px; height: 16px; padding: 0 4px; place-items: center; border-radius: 999px; color: var(--acid-ink); font-size: 11px; font-style: normal; background: var(--acid); }
+.inspector-tabs i { position: absolute; top: 4px; right: 5px; display: grid; min-width: 16px; height: 16px; padding: 0 4px; place-items: center; border-radius: 999px; color: var(--acid-ink); font-size: 11px; font-style: normal; background: var(--acid); }
 .inspector-panel { flex: 1; min-height: 0; overflow: auto; padding: 12px; scrollbar-color: var(--border) transparent; }
 .empty-panel { display: grid; min-height: 180px; place-content: center; place-items: center; gap: 6px; color: var(--muted); text-align: center; }
 .empty-panel span { width: 22px; height: 1px; background: var(--border); }
@@ -609,18 +649,21 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; col
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; clip-path: inset(50%); }
 @media (max-width: 1199px) {
   .agent-workspace-shell,.agent-workspace-shell.left-collapsed,.agent-workspace-shell.right-collapsed { --left-live: 0px; --right-live: 0px; grid-template-columns: minmax(0,1fr); }
-  .workspace-left,.workspace-right { position: fixed; top: 0; bottom: 0; visibility: visible; transition: transform 190ms cubic-bezier(.2,.8,.2,1); }
+  .workspace-left,.workspace-right { position: fixed; top: 0; bottom: 0; visibility: hidden; pointer-events: none; transition: transform 190ms cubic-bezier(.2,.8,.2,1),visibility 0s linear 190ms; }
   .workspace-left { left: 0; width: min(320px,86vw); transform: translateX(-103%); box-shadow: 24px 0 64px rgb(0 0 0 / 35%); }
   .workspace-right { right: 0; width: min(420px,92vw); transform: translateX(103%); box-shadow: -24px 0 64px rgb(0 0 0 / 35%); }
-  .left-drawer-open .workspace-left,.right-drawer-open .workspace-right { transform: translateX(0); }
+  .left-drawer-open .workspace-left,.right-drawer-open .workspace-right { visibility: visible; pointer-events: auto; transform: translateX(0); transition-delay: 0s; }
   .drawer-scrim { position: fixed; inset: 0; z-index: 30; display: block; border: 0; background: rgb(0 0 0 / 44%); }
   .desktop-only { display: none !important; }.mobile-only,.mobile-panel-controls { display: flex; }
   .left-collapsed .brand-word,.left-collapsed .workspace-brand .icon-control,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account button > span:last-child { display: initial; }
   .left-collapsed .workspace-brand { justify-content: space-between; padding: 8px 10px 8px 12px; }.left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a,.left-collapsed .workspace-account button { justify-content: flex-start; padding-inline: 9px; }
 }
 @media (max-width: 799px) {
-  .workspace-topbar { min-height: 52px; padding-inline: 8px; }.runtime-pill { display: none; }.inspector-toggle,.icon-control { min-width: 44px; min-height: 44px; }.workspace-brand { min-height: 56px; }.new-task,.history-search,.workspace-nav a,.workspace-account button { min-height: 44px; }
+  .workspace-topbar { min-height: 52px; gap: 4px; padding-inline: max(8px,env(safe-area-inset-left)) max(8px,env(safe-area-inset-right)); }.runtime-pill { display: none; }.inspector-toggle,.icon-control { min-width: 44px; min-height: 44px; }.workspace-brand { min-height: 56px; padding-top: max(8px,env(safe-area-inset-top)); }.new-task,.history-search,.workspace-nav a,.workspace-account button { min-height: 44px; }.workspace-account { padding-bottom: max(8px,env(safe-area-inset-bottom)); }
   .workspace-right { width: 100vw; }.inspector-tabs { min-height: 58px; }.inspector-tabs button { min-height: 56px; font-size: 12px; }
+}
+@media (max-width: 399px) {
+  .task-heading span,.topbar-heading-slot :deep(small) { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }

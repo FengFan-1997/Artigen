@@ -28,15 +28,46 @@ const isDevEnvironment = appEnvironment === 'dev' || appEnvironment === 'develop
   z-index: 10050;
   transform: translateX(-50%);
   padding: 5px 12px;
-  border: 1px solid rgba(250, 204, 21, 0.72);
+  border: 1px solid #F1BD4F;
   border-radius: 999px;
-  background: rgba(120, 53, 15, 0.94);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.32);
-  color: #fef3c7;
+  background: #1A1D1A;
+  box-shadow: 0 8px 30px #0E100F;
+  color: #F2F4EE;
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.12em;
   line-height: 1.5;
   pointer-events: none;
+}
+
+@media (max-width: 1439px) {
+  .dev-environment-badge {
+    top: 12px;
+    right: max(8px, env(safe-area-inset-right));
+    left: auto;
+    display: grid;
+    width: 44px;
+    height: 28px;
+    padding: 0;
+    transform: none;
+    place-items: center;
+    font-size: 0;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .dev-environment-badge::after {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    content: 'DEV';
+  }
+
+  body:has(.dev-environment-badge) .agent-workspace-shell .topbar-actions {
+    padding-right: 50px;
+  }
+
+  body:has(.dev-environment-badge) .agent-workspace-shell .inspector-head {
+    padding-right: 60px;
+  }
 }
 </style>
