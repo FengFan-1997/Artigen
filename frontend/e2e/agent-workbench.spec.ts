@@ -479,6 +479,16 @@ test('mobile workspace uses full-height drawers, restores focus, and never scrol
   await historyButton.click();
   await expect(page.locator('.agent-workspace-shell')).toHaveClass(/left-drawer-open/);
   await expect(page.locator('.workspace-left')).toBeVisible();
+  await expect.poll(() => page.locator('.workspace-left').evaluate((element) => Math.round(element.getBoundingClientRect().left))).toBe(0);
+  await expectWorkspaceGeometry(page, { mobile: true });
+  const refreshRunsButton = page.getByRole('button', { name: '刷新任务' });
+  await expect(refreshRunsButton).toHaveCSS('width', '44px');
+  await expect(refreshRunsButton).toHaveCSS('height', '44px');
+  await page.keyboard.press('Tab');
+  await refreshRunsButton.focus();
+  await expect(refreshRunsButton).toBeFocused();
+  await expect.poll(() => refreshRunsButton.evaluate((element) => element.matches(':focus-visible'))).toBe(true);
+  await expect(refreshRunsButton).toHaveCSS('outline-style', 'solid');
   await page.keyboard.press('Escape');
   await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-drawer-open/);
   await expect(historyButton).toBeFocused();
@@ -487,6 +497,8 @@ test('mobile workspace uses full-height drawers, restores focus, and never scrol
   await inspectorButton.click();
   await expect(page.locator('.agent-workspace-shell')).toHaveClass(/right-drawer-open/);
   await expect(page.locator('.workspace-right')).toBeVisible();
+  await expect.poll(() => page.locator('.workspace-right').evaluate((element) => Math.round(element.getBoundingClientRect().right))).toBe(390);
+  await expectWorkspaceGeometry(page, { mobile: true });
   await page.keyboard.press('Escape');
   await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/right-drawer-open/);
   await expect(inspectorButton).toBeFocused();

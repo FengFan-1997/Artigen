@@ -384,6 +384,8 @@ test('mobile chat uses a history drawer and keeps the docked composer reachable'
   const historyButton = page.getByRole('button', { name: '打开历史' });
   await historyButton.click();
   await expect(page.locator('.agent-workspace-shell')).toHaveClass(/left-drawer-open/);
+  await expect.poll(() => page.locator('.workspace-left').evaluate((element) => Math.round(element.getBoundingClientRect().left))).toBe(0);
+  await expectWorkspaceGeometry(page, { mobile: true });
   await expect(page.locator('.brand-lockup')).toBeFocused();
   await expect(page.locator('.history-item')).toContainText('品牌官网体验审计');
   await page.keyboard.press('Shift+Tab');
