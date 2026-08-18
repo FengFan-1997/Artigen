@@ -308,7 +308,7 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
   await expect(page.locator('.history-run')).toContainText('三路并行设计产品审计');
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
-    await page.screenshot({ path: '.impeccable/review/agent-workbench-1440-dark.png', fullPage: true });
+    await page.screenshot({ path: '.impeccable/review/agent-workbench-1440-light.png', fullPage: true });
   }
 });
 
@@ -407,7 +407,7 @@ test('run detail exposes parent plus three isolated subagents and cancels one wi
   await expect(page.locator('.subagent-card').nth(1)).toContainText('视觉系统');
   await expect(page.locator('.subagent-card').nth(2)).toContainText('体验建议');
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
-    await page.screenshot({ path: '.impeccable/review/agent-run-detail-1440-dark.png', fullPage: true });
+    await page.screenshot({ path: '.impeccable/review/agent-run-detail-1440-light.png', fullPage: true });
   }
 
   await page.locator('.subagent-card').nth(0).getByRole('button', { name: '取消这个子 Agent' }).click();
@@ -487,9 +487,10 @@ test('mobile workspace uses full-height drawers, restores focus, and never scrol
   await page.keyboard.press('Escape');
   await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/right-drawer-open/);
   await expect(inspectorButton).toBeFocused();
+  await expect.poll(async () => Number.parseFloat(await page.locator('.safety-note').evaluate((element) => getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
-    await page.screenshot({ path: '.impeccable/review/agent-workbench-390-dark.png', fullPage: true });
+    await page.screenshot({ path: '.impeccable/review/agent-workbench-390-light.png', fullPage: true });
   }
 });
 
@@ -510,20 +511,23 @@ test('workspace reflows across desktop, tablet, mobile, landscape and 200 percen
   }
 });
 
-test('dark, light, system and reduced-motion workspace states keep names and contrast', async ({ page }) => {
+test('light default, dark, system and reduced-motion workspace states keep names and contrast', async ({ page, browserName }) => {
   await installSharedApi(page);
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
   await page.goto('/artigen/agent');
   const shell = page.locator('.agent-workspace-shell');
-  await expect(shell).toHaveAttribute('data-theme', 'dark');
+  await expect(shell).toHaveAttribute('data-theme', 'light');
   let audit = await auditWorkspaceAccessibility(page);
   expect(audit.missingNames).toEqual([]);
   expect(audit.lowContrast).toEqual([]);
 
   const themeControl = page.locator('.workspace-account button').nth(1);
   await themeControl.click();
-  await expect(shell).toHaveAttribute('data-theme', 'light');
+  await expect(shell).toHaveAttribute('data-theme', 'dark');
+  if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
+    await page.screenshot({ path: '.impeccable/review/agent-workbench-1440-dark.png', fullPage: true });
+  }
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   audit = await auditWorkspaceAccessibility(page);
   expect(audit.missingNames).toEqual([]);
@@ -531,6 +535,8 @@ test('dark, light, system and reduced-motion workspace states keep names and con
 
   await themeControl.click();
   await expect(shell).toHaveAttribute('data-theme', 'dark');
+  await themeControl.click();
+  await expect(shell).toHaveAttribute('data-theme', 'light');
   const duration = await page.locator('.prompt-suggestions button').first().evaluate((element) =>
     Math.max(...getComputedStyle(element).transitionDuration.split(',').map((value) => {
       const durationValue = value.trim();

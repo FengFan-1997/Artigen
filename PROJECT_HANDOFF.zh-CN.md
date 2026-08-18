@@ -1,6 +1,6 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-12（Asia/Shanghai）
+更新时间：2026-08-18（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
@@ -386,6 +386,30 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 - 该生产 Run 最终 22 步、estimated=10.8723、charged=11，成本序列单调，单一 hold 只结算一次，`run.succeeded` 恰好一次。S3 passed 交付恰好两项，且 sources 同为实际观察的 Artigen/W3C URL：Markdown 3557 bytes / SHA-256 `ed89ec0daad786df75cebca86608a4769d5153879bee20511d1b109ab0932121`；PDF 6241 bytes / SHA-256 `95cb578389a45a346fddbdc034f3163dc183930ee21c5fe8d0fa2ecc63acaa20`。最终 worker online、queue=0、wallet frozen=0、held budgets=0。
 
 恢复加固已完成真实 DEV 与生产验收，可以标记为上线。后续若以纯文档提交补充本节证据，只需让 Render、Vercel 和 Mac Worker 对齐最终文档 merge SHA 并重新核验 readiness；运行时代码相同时不重复消耗真实模型额度。Karing 只在全部联网发布与验收结束后从临时“全局”恢复为“规则”，不得修改节点、分流、DNS、系统代理或 Wi-Fi。
+
+### 5.20 2026-08-18 Agent 工作台视觉重设计（本地终审通过，待 PR/DEV）
+
+阶段：从最新 `origin/dev` SHA `99ea900d2cf76ec021b500e81b1bb9bb915e0b52` 建立
+`codex/artigen-workspace-visual-redesign`。本节只记录已完成且通过本地终审的前端视觉与交互
+变更；尚未合入 `dev`，也未发布到 DEV 或生产。
+
+- `/artigen/create`、`/artigen/agent` 与 `/artigen/agent/runs/:runId` 保留统一三栏信息架构和全部真实业务能力，但视觉权威改为“数字打样台”：左侧项目架、中间唯一工作稿、右侧生产控制台。
+- 工作台默认使用冷白浅色纸面，同时完整支持暗色与系统主题。深墨负责结构，cobalt 负责选择与焦点，acid lime 只用于执行状态和套准标记；十字套准图形成为统一 Agent 标记。
+- 中间区继续以对话和结果为先，去除黑色配置后台、均匀卡片墙、霓虹装饰和过小灰字；零状态提供紧凑目标输入与真实任务建议，高级能力、模型锁定、预算、交付物、计划、子 Agent、电脑与文件留在持续 Inspector。
+- 建立可读性下限：正文至少 14px、控件至少 12px、元数据至少 11px、移动输入至少 16px；执行标题与计划分别为 15px/14px，移动安全警告为 14px。
+- 左栏折叠工具轨保留可恢复的“展开左栏”入口，新任务、导航、点数、主题和设置图标均有持久可访问名称。附件安全边界在桌面与移动持续显示为“附件先留本机，选定云端执行后才上传”。
+- 键盘分隔条、命令面板、抽屉焦点陷阱、焦点恢复、44px 移动触控目标、200% 等效缩放、长内容和 reduced motion 约束继续保留。
+- 模型与执行事实没有改变：所有文字、规划、父/子 Agent 继续只使用 `Qwen/Qwen3-8B`；所有图片继续只使用 `Kwai-Kolors/Kolors`。本轮没有修改 API、数据库、计费、Worker、Karing、部署或生产开关。
+
+本地验证：
+
+- `pnpm check` 的核心、前端 216/216、后端 414 passed / 41 条环境条件跳过、邮件 7/7、质量集 50/50、生产构建和初始 JS 预算均通过。
+- 完整 Playwright 六环境矩阵为 469 passed / 3 条既有条件跳过；两个旧图片工坊/格式工厂用例在长矩阵中因浏览器进程关闭失败，随后按原项目单独重跑均通过。工作台聚焦矩阵与最终修复回归分别为 18/18、7/7。
+- 当前代码再次通过 `pnpm check:core`；两份工作台 E2E 在 Chromium、Firefox、WebKit、360px、390px 与 768px 六个项目中为 108/108。
+- 两轮人工截图 QA 后由全新 Impeccable 终审上下文发现并复核四项修复：折叠恢复、图标轨命名、移动附件边界、执行字号与移动安全警告。最终结论为 `PASS`，机械反模式检测为 `[]`。
+- 最终桌面浅色/暗色、390px、创建零状态、持续对话和 Run 详情证据保存在 `frontend/.impeccable/review/`。
+
+后续只能通过功能分支 PR 进入 `dev`，完成 CI 和 DEV 视觉 smoke 后再决定是否进入 `dev → main` 发布流程；未重新核验线上接口与 deployment 前，不得把本节描述为已上线。
 
 ## 6. 已知风险与正式后续事项
 
