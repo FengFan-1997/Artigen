@@ -15,7 +15,7 @@
 - 持久代码回滚必须继续经过 `feature → dev → main` 门禁。完成后应重新以同一个新的 `main` SHA 发布 Vercel、Render 与 Mac Worker，并重新核验 `/api/meta`、`/readyz`、Agent status、模型和页面 smoke。
 - 此次操作没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由配置。
 
-## 2026-08-18 深色工作台布局硬化（DEV 补充硬化进行中，生产待发布）
+## 2026-08-18 深色工作台布局硬化（DEV 已验收，生产待发布）
 
 - 用户确认继续使用恢复后的 Codex 式深色三栏工作台，本轮不改变视觉方向，只修复 `/artigen/create`、`/artigen/agent` 与 `/artigen/agent/runs/:runId` 的遮挡、错位、溢出、短视口、横屏、抽屉、长内容、触控和键盘问题。
 - 分支 `codex/dark-workspace-layout-hardening` 基于 `origin/dev` SHA `024d2827e8011cd09dd3d7475bd37028a3ca27fa`。主要修复包括：三栏 slotted 内容统一 `border-box`、顶部标题与控制区防碰撞、右侧 Inspector 页签与徽标分离、关闭抽屉 `inert`、焦点恢复、短视口紧凑布局、移动安全区与 44px 触控目标、长文本安全换行、附件与审批可访问名称、可见焦点和 reduced-motion 边界。
@@ -25,7 +25,8 @@
 - 真实 DEV 的 1440/1024/390/360/667 横屏截图连续发现三处仅在 DEV 徽标存在时暴露的问题：390px 标题、360px Create 副标题和 390px Inspector 关闭按钮曾被徽标覆盖。跟进修复将窄屏徽标缩为右上 `DEV`，只在徽标存在时为顶栏动作和 Inspector 标题分配独立安全槽，低于 400px 隐藏次要顶栏说明，并统一到正式 Warning / 深墨语义色；生产无徽标时不保留空槽。
 - 几何审计同步从容器矩形升级为 DOM Range 的真实文字像素边界，并覆盖全局环境徽标与标题、操作按钮、Inspector 关闭按钮的相交检测。修复期间追加两轮各 40 张截图和多轮 6 浏览器定向复核，最终 120/120；Impeccable 对 App、统一 Shell 与三条核心视图的终检为 0 条。最终完整 `pnpm check` 再次退出码 0：Playwright 483 passed / 3 条既有条件跳过 / 0 failed，耗时 15.8 分钟。
 - 跟进 PR #91 全部门禁通过后合入 `dev`，merge SHA `5ec3f2a78d1d4e5455ceb689529b63343fbf86f1`；Render DEV deployment `dep-da241lou01pc73en49t0` 为 `live`，`/api/meta.gitSha`、`/readyz` 和状态接口已重新核验为同一 SHA。真实 DEV 1440/1024/768/390/360/667 截图又发现 1024px Agent 标题被全局 DEV 徽标遮挡；将该缺口加入全部断点后，又在 1200px 三栏边界发现运行状态胶囊与长版徽标相撞，因此该 SHA 未获发布许可。
-- PR #92 已将 1440px 以下 DEV 徽标的紧凑布局与 1439/1440、1199/1200、799/800、399/400 成对边界回归合入 `dev`，merge SHA `a4bf63c990a94b40196b6d783bb0c391234019fa`；Render DEV deployment `dep-da24ka142hec73fbej7g` 为同 SHA `live`，`/api/meta`、`/readyz`、Agent、对话和生图模型接口均 HTTP 200。随后 36 张真实 DEV 静态与抽屉截图发现移动历史抽屉的“刷新任务”仍只有 28×28px：它没有遮挡，但低于 44px 触控下限。跟进分支 `codex/dark-workspace-drawer-touch-target` 将该按钮在移动宽度提升为 44×44px、增加可见焦点，并把打开后的左右抽屉稳定态纳入几何审计；六浏览器定向回归 12/12、完整工作台矩阵 120/120，新增截图批次 `pass-9` 为 71 张。最终 `pnpm check` 退出码 0：Playwright 483 passed / 3 条既有条件跳过 / 0 failed，耗时 16.3 分钟；Impeccable 核心五文件扫描为 `[]`。该跟进与真实 DEV 复核完成前仍不得 `dev → main` 或发布生产。
+- PR #92 已将 1440px 以下 DEV 徽标的紧凑布局与 1439/1440、1199/1200、799/800、399/400 成对边界回归合入 `dev`，merge SHA `a4bf63c990a94b40196b6d783bb0c391234019fa`；Render DEV deployment `dep-da24ka142hec73fbej7g` 为同 SHA `live`，`/api/meta`、`/readyz`、Agent、对话和生图模型接口均 HTTP 200。随后 36 张真实 DEV 静态与抽屉截图发现移动历史抽屉的“刷新任务”仍只有 28×28px：它没有遮挡，但低于 44px 触控下限。跟进分支 `codex/dark-workspace-drawer-touch-target` 将该按钮在移动宽度提升为 44×44px、增加可见焦点，并把打开后的左右抽屉稳定态纳入几何审计；六浏览器定向回归 12/12、完整工作台矩阵 120/120，新增截图批次 `pass-9` 为 71 张。最终 `pnpm check` 退出码 0：Playwright 483 passed / 3 条既有条件跳过 / 0 failed，耗时 16.3 分钟；Impeccable 核心五文件扫描为 `[]`。
+- 跟进 PR #93 的 Core、8 路 E2E 和 Release gate 全绿后合入 `dev`，merge SHA `9399109a607125bcb1ab13c4099f83d7e9578519`。Render DEV deployment `dep-da25a01srm7s738eve50` 为该 SHA `live`，Vercel Preview deployments `5963066625`、`5963082012` 均为 `success`；`/api/meta.gitSha` 精确相同，`/readyz`、Agent、设计对话与生图模型接口均 HTTP 200，迁移仍为 `023_agent_subagent_runtime_hardening`，Qwen3/Kolors 锁定和两种图片模式可用。真实 DEV 生成 43 张 Agent/Create 临界视口、短视口、横屏与 360/390 抽屉截图，自动审计 40 个状态的横向溢出、chrome 裁切、标题/操作区、环境徽标、Inspector、Composer 和移动触控目标均为 0 问题；刷新按钮实测 44×44px。人工复核 1440、1439、1200、1199、1024、800/799、390/360 和四种抽屉稳定态未见遮挡或错位。DEV Worker 延续既有离线状态、队列为 0；本次纯前端验收不冒充真实 Agent smoke，通过 DEV 视觉门槛后方可进入 `dev → main`。
 - 本轮没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点、路由、模型、Agent runtime、数据库、计费或生产开关。`ui-review/` 始终禁止读取、进入、修改、删除、暂存或提交。
 
 ## 1. 新接手者先看结论
