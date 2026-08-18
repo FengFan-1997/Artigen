@@ -697,8 +697,9 @@ onBeforeUnmount(() => {
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .history-group { padding: 4px 8px 16px; }
 .history-label { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px 8px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.history-label button { display: grid; width: 28px; height: 28px; place-items: center; color: var(--muted); border: 0; border-radius: 7px; background: transparent; }
+.history-label button { display: grid; width: 28px; height: 28px; place-items: center; color: var(--muted); border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
 .history-label button:hover { color: var(--text); background: var(--surface-raised); }
+.history-label button:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
 .history-run { display: grid; grid-template-columns: 8px 1fr; gap: 8px; align-items: start; padding: 9px 8px; color: inherit; border-radius: 8px; text-decoration: none; }
 .history-run:hover, .history-run.router-link-active { background: var(--surface-raised); }
 .history-run i { width: 6px; height: 6px; margin-top: 5px; border-radius: 999px; background: var(--muted); }
@@ -765,6 +766,7 @@ onBeforeUnmount(() => {
   .objective-composer textarea { min-height: 64px; font-size: 16px; }
   .objective-count { display: none; }
   .attach-control, .run-action, .send-action, .input-files button { min-height: 44px; }
+  .history-label button { width: 44px; height: 44px; }
   .send-action { width: 44px; height: 44px; margin-left: auto; }
   .safety-note { max-width: 42rem; padding: 0 8px 2px; font-size: 11px; }
   .option-grid { grid-template-columns: 1fr; }
