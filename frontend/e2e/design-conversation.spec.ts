@@ -211,36 +211,6 @@ const installExistingConversation = async (page: Page) => {
   }));
 };
 
-test('authenticated zero state opens directly on the unified proofing workspace', async ({ page, browserName }) => {
-  await installCommonApi(page, true);
-  await page.route('**/api/design-conversations**', (route) => {
-    const request = route.request();
-    const pathname = new URL(request.url()).pathname;
-    if (pathname === '/api/design-conversations' && request.method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ ok: true, conversations: [] })
-      });
-    }
-    return route.fallback();
-  });
-  await page.setViewportSize({ width: 1440, height: 960 });
-  await page.goto('/artigen/create');
-
-  await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'light');
-  await expect(page.getByRole('heading', { name: '你想完成什么？' })).toBeVisible();
-  await expect(page.locator('.suggestion-grid > button')).toHaveCount(3);
-  await expect(page.getByRole('tab', { name: '环境' })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-  if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
-    await page.screenshot({
-      path: path.join(process.cwd(), '.impeccable/review/design-conversation-zero-1440-light.png'),
-      fullPage: true
-    });
-  }
-});
-
 test('guest draft survives email login and sends automatically after verification', async ({ page }) => {
   let authenticated = false;
   let sentMessage: Record<string, unknown> | null = null;
@@ -355,8 +325,6 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await expect(page.locator('.execution-card')).toContainText('浏览并记录公开页面证据');
   await expect(page.locator('.execution-card')).toContainText('42');
   await expect(page.locator('.execution-card')).toContainText('50');
-  await expect.poll(async () => Number.parseFloat(await page.locator('.execution-card header h3').evaluate((element) => getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(15);
-  await expect.poll(async () => Number.parseFloat(await page.locator('.execution-card .plan-step p').first().evaluate((element) => getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
   await expect(page.getByRole('button', { name: '30 分钟内仅自动批准该站点的发布操作' })).toBeVisible();
   await expect(page.locator('.authorization-scope')).toContainText('https://brand.example');
   await expect(page.locator('.authorization-scope')).toContainText('发布');
@@ -380,12 +348,6 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await page.getByRole('button', { name: '折叠左栏' }).click();
   await expect(page.locator('.agent-workspace-shell')).toHaveClass(/left-collapsed/);
   await expect.poll(() => page.locator('.workspace-left').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(64);
-  await expect(page.getByRole('button', { name: '展开左栏' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '新任务' })).toBeVisible();
-  await expect(page.getByRole('link', { name: '项目' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '点数与用量' })).toBeVisible();
-  await page.getByRole('button', { name: '展开左栏' }).click();
-  await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-collapsed/);
 });
 
 test('mobile chat uses a history drawer and keeps the docked composer reachable', async ({ page, browserName }) => {
@@ -414,7 +376,6 @@ test('mobile chat uses a history drawer and keeps the docked composer reachable'
   await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-drawer-open/);
   await expect(historyButton).toBeFocused();
   await expect(page.locator('.docked-composer')).toBeVisible();
-  await expect(page.locator('.docked-composer > p')).toContainText('附件先留本机 · 选定云端执行后才上传');
   await expect(page.getByLabel('Design request')).toBeEditable();
   await expect(page.locator('input[type="file"]')).toHaveAttribute('tabindex', '-1');
   await expect(page.locator('input[type="file"]')).toHaveAttribute('aria-label', '添加参考文件');

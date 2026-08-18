@@ -98,8 +98,6 @@
             <span class="sr-only">{{ zh ? '任务目标' : 'Task objective' }}</span>
             <textarea
               v-model="form.objective"
-              name="agent-objective"
-              autocomplete="off"
               rows="2"
               maxlength="20000"
               :placeholder="zh ? '描述目标、受众、交付物或参考方向…' : 'Describe the goal, audience, deliverables, or references…'"
@@ -159,9 +157,9 @@
         </section>
         <section v-if="form.capabilities.browser" class="inspector-card browser-scope">
           <header><span>{{ zh ? '浏览器范围' : 'Browser scope' }}</span></header>
-          <input v-model.trim="form.browserOrigins" name="browser-origins" autocomplete="off" type="url" :aria-label="zh ? '允许的浏览器站点' : 'Allowed browser origins'" :placeholder="zh ? 'https://example.com' : 'https://example.com'" />
+          <input v-model.trim="form.browserOrigins" type="text" :placeholder="zh ? 'https://example.com' : 'https://example.com'" />
           <label><input v-model="form.persistSession" type="checkbox" />{{ zh ? '加密保存会话 30 天' : 'Encrypt session for 30 days' }}</label>
-          <select v-if="browserProfiles.length" v-model="form.profileId" name="browser-profile" :aria-label="zh ? '已保存的浏览器会话' : 'Saved browser session'" @change="selectBrowserProfile">
+          <select v-if="browserProfiles.length" v-model="form.profileId" @change="selectBrowserProfile">
             <option value="">{{ zh ? '不恢复已保存会话' : 'No saved session' }}</option>
             <option v-for="profile in browserProfiles" :key="profile.profileId" :value="profile.profileId">{{ profile.label }} · {{ profile.siteOrigin }}</option>
           </select>
@@ -169,7 +167,7 @@
         </section>
         <section class="inspector-card">
           <header><span>{{ zh ? '最高预算' : 'Maximum budget' }}</span><b>{{ form.maxCredits }} {{ zh ? '点' : 'cr' }}</b></header>
-          <input v-model.number="form.maxCredits" class="budget-range" name="maximum-credits" type="range" min="10" max="500" step="10" :aria-label="zh ? '最高预算点数' : 'Maximum credit budget'" />
+          <input v-model.number="form.maxCredits" class="budget-range" type="range" min="10" max="500" step="10" :aria-label="zh ? '最高预算点数' : 'Maximum credit budget'" />
           <small>{{ zh ? '按实际使用结算，未使用部分自动释放。' : 'Actual usage only; unused hold is released.' }}</small>
         </section>
       </div>
@@ -742,48 +740,10 @@ onBeforeUnmount(() => {
 .file-list span { display: grid; gap: 2px; padding: 8px; border-radius: 7px; background: var(--surface-raised); }
 .file-list b { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Computer Agent shares the proofing table instead of presenting a setup form. */
-.conversation-empty { width: min(900px,calc(100% - 64px)); padding: clamp(56px,8vh,92px) 0 44px; }
-.conversation-mark { position: relative; width: 42px; height: 42px; margin: 0 0 28px 6px; border-color: var(--text); border-radius: 50%; color: transparent; background: var(--surface); }
-.conversation-mark::before,.conversation-mark::after { position: absolute; top: 50%; left: 50%; background: var(--text); content: ''; transform: translate(-50%,-50%); }.conversation-mark::before { width: 54px; height: 1px; }.conversation-mark::after { width: 1px; height: 54px; }
-.conversation-mark svg { width: 11px; color: var(--acid); }
-.conversation-empty h1 { max-width: 780px; font-size: clamp(34px,4.2vw,58px); font-weight: 700; letter-spacing: -.045em; line-height: 1.02; }
-.conversation-empty > p { max-width: 690px; margin: 14px 0 32px; font-size: 15px; line-height: 1.7; text-align: left; }
-.prompt-suggestions { width: min(100%,760px); gap: 0; border-top: 1px solid var(--border-strong); }
-.prompt-suggestions button { min-height: 58px; padding: 10px 4px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; color: var(--text); background: transparent; }
-.prompt-suggestions button::before { width: 42px; color: var(--selection); font-size: 12px; font-weight: 750; letter-spacing: .05em; content: 'RUN'; }
-.prompt-suggestions button:hover { padding-left: 12px; border-color: var(--border); background: color-mix(in srgb,var(--selection) 8%,var(--surface)); }
-.prompt-suggestions button:focus-visible { outline-color: var(--focus); }.prompt-suggestions span { flex: 1; font-size: 14px; }
-.conversation-thread { width: min(900px,calc(100% - 64px)); padding-top: 52px; gap: 32px; }
-.conversation-message { grid-template-columns: 32px minmax(0,1fr); gap: 15px; }
-.message-avatar { position: relative; width: 30px; height: 30px; border-color: var(--border-strong); border-radius: 50%; font-size: 12px; background: var(--surface); }
-.agent-avatar { border-color: var(--text); color: transparent; background: var(--surface); }
-.agent-avatar::before,.agent-avatar::after { position: absolute; top: 50%; left: 50%; background: var(--text); content: ''; transform: translate(-50%,-50%); }.agent-avatar::before { width: 38px; height: 1px; }.agent-avatar::after { width: 1px; height: 38px; }
-.conversation-message p,.assistant-content > strong { font-size: 15px; }
-.quote-summary { border-radius: 5px; border-color: var(--border-strong); }.quote-summary div { padding: 13px; }.quote-summary dt { font-size: 12px; }.quote-summary dd { font-family: inherit; font-size: 14px; font-variant-numeric: tabular-nums; }
-.run-action { min-height: 42px; border-color: var(--primary); border-radius: 5px; color: var(--primary-ink); background: var(--primary); }.run-action:hover:not(:disabled) { border-color: var(--selection); color: var(--selection-ink); background: var(--selection); }
-.conversation-dock { padding-block: 18px max(14px,env(safe-area-inset-bottom)); border-top-color: var(--border-strong); background: color-mix(in srgb,var(--bg) 96%,transparent); backdrop-filter: blur(8px); }
-.objective-composer { position: relative; border-color: var(--border-strong); border-radius: 8px; box-shadow: 0 22px 54px rgb(18 31 25 / 11%); }
-.objective-composer::before { position: absolute; top: 15px; bottom: 15px; left: -1px; z-index: 1; width: 2px; background: var(--acid); content: ''; }
-.objective-composer:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb,var(--focus) 15%,transparent),0 24px 58px rgb(18 31 25 / 14%); }
-.send-action { width: 40px; height: 40px; border-color: var(--primary); border-radius: 5px; color: var(--primary-ink); background: var(--primary); }.send-action:hover:not(:disabled) { border-color: var(--selection); color: var(--selection-ink); background: var(--selection); }
-.run-action:focus-visible,.send-action:focus-visible { outline-color: var(--focus); }
-.objective-count,.safety-note { font-family: inherit; font-size: 12px; }
-.history-label { padding-block: 12px 8px; font-size: 12px; letter-spacing: 0; text-transform: none; }.history-run { grid-template-columns: 4px 1fr; min-height: 48px; gap: 10px; border-radius: 5px; }.history-run.router-link-active { color: var(--selection-ink); background: var(--selection); box-shadow: -8px 0 0 var(--selection); }.history-run.router-link-active b,.history-run.router-link-active small { color: inherit; }.history-run i { width: 3px; height: 22px; margin-top: 0; border-radius: 0; }.history-run b { font-size: 13px; }.history-run small,.history-empty { font-size: 12px; }
-.inspector-stack { gap: 0; }
-.inspector-card { padding: 16px 0; border: 0; border-bottom: 1px solid var(--border-strong); border-radius: 0; background: transparent; }
-.inspector-card header { min-height: 26px; margin-bottom: 12px; }.inspector-card header > span { font-size: 13px; }.inspector-card header > b,.inspector-card dt,.inspector-card dd,.inspector-card p,.inspector-card small { font-family: inherit; font-size: 12px; }.inspector-card dt,.inspector-card p { text-align: left; }.inspector-card dd { text-align: right; }
-.inspector-card header > i.healthy,.inspector-card header > i[class*="healthy"] { border-radius: 0; box-shadow: none; }
-.option-grid { gap: 0; border-top: 1px solid var(--border); }.option-grid label,.capability-list label { min-height: 46px; padding: 10px 2px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }.option-grid b,.capability-list b { font-size: 12px; }.option-grid small,.capability-list small { font-size: 12px; }
-.option-grid input,.capability-list input,.browser-scope input,.budget-range { accent-color: var(--selection); }
-.browser-scope > input,.browser-scope select { border-color: var(--border-strong); border-radius: 5px; font-size: 13px; }
-.execution-spine article { min-height: 70px; }.execution-spine i { border-radius: 0; }.execution-spine article.complete i { border-color: var(--acid); background: var(--acid); box-shadow: none; }.execution-spine b { font-size: 13px; }.execution-spine span,.boundary-list b,.boundary-list span { font-size: 12px; }
-.file-list span { padding: 10px 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }.file-list b { font-size: 12px; }
-
 @media (max-width: 800px) {
   .conversation-empty, .conversation-thread { width: min(100% - 28px, 780px); }
   .conversation-empty { padding-block: 28px; }
-  .conversation-empty h1 { font-size: 32px; }
+  .conversation-empty h1 { font-size: 22px; }
   .conversation-empty > p, .conversation-message p { font-size: 14px; }
   .prompt-suggestions button { min-height: 44px; }
   .conversation-thread { padding: 24px 0 40px; gap: 24px; }
@@ -794,7 +754,7 @@ onBeforeUnmount(() => {
   .objective-count { display: none; }
   .attach-control, .run-action, .send-action, .input-files button { min-height: 44px; }
   .send-action { width: 44px; height: 44px; }
-  .safety-note { padding-inline: 8px; font-size: 14px; line-height: 1.5; }
+  .safety-note { padding-inline: 8px; font-size: 11px; }
   .option-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
