@@ -14,6 +14,9 @@ colors:
   light-border: "#D8DDD3"
   light-text: "#171A16"
   execution: "#C8FF3D"
+  danger: "#FF6B62"
+  warning: "#F1BD4F"
+  success: "#69D59A"
 ---
 
 # Artigen Unified Agent Workspace

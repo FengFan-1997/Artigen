@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { expectWorkspaceGeometry } from './helpers/workspaceLayoutAudit';
+import { expectWorkspaceGeometry, installDevEnvironmentBadge } from './helpers/workspaceLayoutAudit';
 
 const conversationId = '11111111-1111-4111-8111-111111111111';
 const userMessageId = '22222222-2222-4222-8222-222222222222';
@@ -418,6 +418,7 @@ test('zero state stays scrollable and aligned across desktop, zoom, short and la
   ]) {
     await page.setViewportSize(viewport);
     await page.goto('/artigen/create');
+    if (viewport.width < 800) await installDevEnvironmentBadge(page);
     await expect(page.locator('.workspace-zero')).toBeVisible();
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT && viewport.height <= 640) {
@@ -454,6 +455,7 @@ test('active conversation keeps cards, approvals and dock aligned across extreme
   ]) {
     await page.setViewportSize(viewport);
     await page.goto(`/artigen/create?c=${conversationId}`);
+    if (viewport.width < 800) await installDevEnvironmentBadge(page);
     await expect(page.locator('.execution-card')).toBeVisible();
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {

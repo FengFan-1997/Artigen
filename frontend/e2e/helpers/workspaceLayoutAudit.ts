@@ -4,6 +4,15 @@ type GeometryOptions = {
   mobile?: boolean;
 };
 
+export const installDevEnvironmentBadge = async (page: Page) => page.evaluate(() => {
+  if (document.querySelector('.dev-environment-badge')) return;
+  const badge = document.createElement('div');
+  badge.className = 'dev-environment-badge';
+  badge.textContent = 'DEV 测试环境';
+  badge.setAttribute('role', 'status');
+  document.body.prepend(badge);
+});
+
 export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptions = {}) => {
   const report = await page.locator('.agent-workspace-shell').evaluate((root, mobile) => {
     const viewport = { width: window.innerWidth, height: window.innerHeight };
@@ -77,7 +86,8 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
         '.conversation-heading strong',
         '.conversation-heading small',
         '.topbar-actions > *',
-        '.mobile-panel-controls > *'
+        '.mobile-panel-controls > *',
+        '.inspector-head button'
       ].join(',')))
         .filter(visible)
         .filter((element) => intersects(box(environmentBadge), contentBox(element)))
