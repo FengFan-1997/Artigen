@@ -15,13 +15,14 @@
 - 持久代码回滚必须继续经过 `feature → dev → main` 门禁。完成后应重新以同一个新的 `main` SHA 发布 Vercel、Render 与 Mac Worker，并重新核验 `/api/meta`、`/readyz`、Agent status、模型和页面 smoke。
 - 此次操作没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由配置。
 
-## 2026-08-18 深色工作台布局硬化（待发布）
+## 2026-08-18 深色工作台布局硬化（DEV 已验收，生产待发布）
 
 - 用户确认继续使用恢复后的 Codex 式深色三栏工作台，本轮不改变视觉方向，只修复 `/artigen/create`、`/artigen/agent` 与 `/artigen/agent/runs/:runId` 的遮挡、错位、溢出、短视口、横屏、抽屉、长内容、触控和键盘问题。
 - 分支 `codex/dark-workspace-layout-hardening` 基于 `origin/dev` SHA `024d2827e8011cd09dd3d7475bd37028a3ca27fa`。主要修复包括：三栏 slotted 内容统一 `border-box`、顶部标题与控制区防碰撞、右侧 Inspector 页签与徽标分离、关闭抽屉 `inert`、焦点恢复、短视口紧凑布局、移动安全区与 44px 触控目标、长文本安全换行、附件与审批可访问名称、可见焦点和 reduced-motion 边界。
 - 新增工作台几何审计辅助器，自动检测 document 横向溢出、应用 chrome 裁切、标题/操作区碰撞、底部 composer 越界、徽标/图标重叠、关闭抽屉仍可交互，以及移动端关键触控目标不足。截图矩阵覆盖 1440、1180、1024、768、430、390、360、844/667 横屏与 200% 等效窄视口，三轮共生成 112 张本地审查截图；最终代表性证据同步到 `frontend/.impeccable/review/`。
 - 三遍独立自审依次覆盖基线视觉问题、几何/键盘/响应式回归和六浏览器最终矩阵。最终 Impeccable 机械检测为 `[]`，聚焦工作台回归 120/120；完整 `pnpm check` 退出码 0，其中前端单元 216/216、后端 414 passed / 41 条显式外部跳过、邮件 7/7、Agent 质量集 50/50、Playwright 483 passed / 3 条条件跳过 / 0 failed，生产构建与 87.5 KiB gzip 初始 JS 预算均通过。
-- 本节代码尚未合入 `dev` 或生产。必须继续经过功能 PR、DEV smoke、`dev → main` Release gate、同一不可变 SHA 的 Render/Vercel/Mac Worker 发布和生产页面 smoke；发布前后的线上状态必须重新核验，不能沿用本文旧 deployment 记录。
+- PR #89 全部仓库门禁通过后合入 `dev`，merge SHA `102d70cde8dae1a907fa66fb79f500792aadbfa2`；Render DEV deployment `dep-da22n8b7uimc73deom30` 为 `live`，Vercel Preview deployment `5960304577` 为 `success`，同 SHA 的五个接口均 HTTP 200、readiness ok、两种生图模式 available、队列为 0。
+- 真实 DEV 的 1440/1024/390/667 横屏截图又发现全局“DEV 测试环境”徽标在 390px 压住 Agent 标题；因此没有放行生产，而是新增真实文本边界碰撞断言，并在窄屏把徽标缩为右侧紧凑 `DEV`。跟进修复的类型、Lint、`git diff --check` 与六浏览器工作台矩阵 120/120 通过，仍须经过独立 PR、同 SHA DEV 截图复核、`dev → main` Release gate、Render/Vercel/Mac Worker 发布和生产页面 smoke。
 - 本轮没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点、路由、模型、Agent runtime、数据库、计费或生产开关。`ui-review/` 始终禁止读取、进入、修改、删除、暂存或提交。
 
 ## 1. 新接手者先看结论

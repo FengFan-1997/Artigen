@@ -25,6 +25,21 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
         height: value.height
       };
     };
+    const contentBox = (element: Element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const value = range.getBoundingClientRect();
+      return value.width > 0 && value.height > 0
+        ? {
+          left: value.left,
+          right: value.right,
+          top: value.top,
+          bottom: value.bottom,
+          width: value.width,
+          height: value.height
+        }
+        : box(element);
+    };
     const intersects = (first: ReturnType<typeof box>, second: ReturnType<typeof box>) => (
       Math.min(first.right, second.right) - Math.max(first.left, second.left) > 0.5 &&
       Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top) > 0.5
@@ -53,6 +68,25 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
     const topbarCollision = visible(topbarHeading) && visible(topbarActions)
       ? box(topbarHeading).right > box(topbarActions).left + 0.75
       : false;
+
+    const environmentBadge = document.querySelector('.dev-environment-badge');
+    const environmentBadgeOverlaps = visible(environmentBadge)
+      ? Array.from(root.querySelectorAll([
+        '.task-heading > strong',
+        '.task-heading > span',
+        '.conversation-heading strong',
+        '.conversation-heading small',
+        '.topbar-actions > *',
+        '.mobile-panel-controls > *'
+      ].join(',')))
+        .filter(visible)
+        .filter((element) => intersects(box(environmentBadge), contentBox(element)))
+        .map((element) => ({
+          target: element.className || element.tagName.toLowerCase(),
+          badge: box(environmentBadge),
+          element: contentBox(element)
+        }))
+      : [];
 
     const main = root.querySelector('.workspace-main');
     const dock = root.querySelector('.conversation-dock,.docked-composer,.message-composer');
@@ -93,6 +127,7 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
       documentOverflow: document.documentElement.scrollWidth > viewport.width + 1,
       clipped,
       topbarCollision,
+      environmentBadgeOverlaps,
       dockOutsideMain,
       tabBadgeOverlaps,
       closedDrawersWithoutInert,
@@ -103,6 +138,7 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
   expect(report.documentOverflow, JSON.stringify(report, null, 2)).toBe(false);
   expect(report.clipped, JSON.stringify(report, null, 2)).toEqual([]);
   expect(report.topbarCollision, JSON.stringify(report, null, 2)).toBe(false);
+  expect(report.environmentBadgeOverlaps, JSON.stringify(report, null, 2)).toEqual([]);
   expect(report.dockOutsideMain, JSON.stringify(report, null, 2)).toBe(false);
   expect(report.tabBadgeOverlaps, JSON.stringify(report, null, 2)).toEqual([]);
   expect(report.closedDrawersWithoutInert, JSON.stringify(report, null, 2)).toEqual([]);

@@ -39,4 +39,27 @@ const isDevEnvironment = appEnvironment === 'dev' || appEnvironment === 'develop
   line-height: 1.5;
   pointer-events: none;
 }
+
+@media (max-width: 799px) {
+  .dev-environment-badge {
+    top: 12px;
+    right: calc(max(8px, env(safe-area-inset-right)) + 48px);
+    left: auto;
+    display: grid;
+    width: 44px;
+    height: 28px;
+    padding: 0;
+    transform: none;
+    place-items: center;
+    font-size: 0;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .dev-environment-badge::after {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    content: 'DEV';
+  }
+}
 </style>

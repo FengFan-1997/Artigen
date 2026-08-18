@@ -473,6 +473,13 @@ test('mobile workspace uses full-height drawers, restores focus, and never scrol
   await installSharedApi(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/artigen/agent');
+  await page.evaluate(() => {
+    const badge = document.createElement('div');
+    badge.className = 'dev-environment-badge';
+    badge.textContent = 'DEV 测试环境';
+    badge.setAttribute('role', 'status');
+    document.body.prepend(badge);
+  });
 
   const historyButton = page.getByRole('button', { name: '打开历史' });
   await historyButton.click();
@@ -490,6 +497,7 @@ test('mobile workspace uses full-height drawers, restores focus, and never scrol
   await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/right-drawer-open/);
   await expect(inspectorButton).toBeFocused();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await expectWorkspaceGeometry(page, { mobile: true });
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
     await page.screenshot({ path: '.impeccable/review/agent-workbench-390-dark.png', fullPage: true });
   }
