@@ -387,7 +387,7 @@ deployment `dep-d9va6rp42hec738hhivg` 和 Vercel production deployment
 
 恢复加固已完成真实 DEV 与生产验收，可以标记为上线。后续若以纯文档提交补充本节证据，只需让 Render、Vercel 和 Mac Worker 对齐最终文档 merge SHA 并重新核验 readiness；运行时代码相同时不重复消耗真实模型额度。Karing 只在全部联网发布与验收结束后从临时“全局”恢复为“规则”，不得修改节点、分流、DNS、系统代理或 Wi-Fi。
 
-### 5.20 2026-08-18 Agent 工作台视觉重设计（DEV 验收通过，待生产发布）
+### 5.20 2026-08-18 Agent 工作台视觉重设计（生产已发布）
 
 阶段：从 `origin/dev` SHA `99ea900d2cf76ec021b500e81b1bb9bb915e0b52` 建立
 `codex/artigen-workspace-visual-redesign`，经 PR [#82](https://github.com/FengFan-1997/Artigen/pull/82)
@@ -413,8 +413,13 @@ CI、Render DEV 与 Vercel Preview 验收，尚未进入 `main` 或生产。
 - Render DEV deployment `dep-da1ui6ou01pc73eihkmg` 为 `live` 且 commit 精确等于 `5e2990c...`。`/api/meta` 返回 `appEnv=dev` 与同一 SHA；`/readyz` 为 `ok=true`，数据库迁移 `023_agent_subagent_runtime_hardening`、PostgreSQL 与 S3 均正常。
 - DEV Agent status 为 `authenticated-v1`，Worker、浏览器、受限出口、桌面中继与子 Agent 均 ready，queue=0；设计助手使用 `Qwen/Qwen3-8B` 与 `Kwai-Kolors/Kolors`，两个生图模式均 `available=true`。
 - 只读页面 smoke 确认 `/artigen/create` 与 `/artigen/agent` 均 HTTP 200、真实 DOM 加载统一 Shell、无横向溢出和页面异常；Create 标题为“你想完成什么？”。Vercel merge-SHA deployments `5956564214`、`5956554071` 均为 `success`。
+- 正式 DEV 证据经 PR #83 合入后形成 SHA `5757c0e431db89b3f9fc8a45e928fa67507a129e`；Render DEV deployment `dep-da1uo7bncjis73f5pke0` 为同 SHA `live`，`/api/meta`、`/readyz` 与数据库迁移 `023_agent_subagent_runtime_hardening` 再次通过。
+- Release PR #84 的 main 分支策略、Core、8 路 E2E 与两条 Release gate 全部成功。DEV push 首轮一个旧格式工厂 WebKit 分片因浏览器进程关闭失败，只重跑该失败 job 后真实通过，没有绕过保护；最终 `main` SHA 为 `c98f7487403330463bd54facf5c194aa1b8ca022`。
+- 生产三端已对齐该不可变 SHA：Render deployment `dep-da1uv8rl550s73arbn5g` 为 `live`；Vercel production deployment `dpl_Eii66JG3oLsRZKdiY8t4hCy13Qim` 为 `READY` 并 alias 到 `artigen-fengfan.vercel.app`；Mac Worker 来自 `/Users/fengfan/Public/personal/Artigen-worker-production-c98f748`，LaunchAgent 的程序与工作目录均精确指向该 worktree。
+- 生产 `/api/meta`、`/readyz`、`/api/agent/status`、`/api/design-assistant/status` 与 `/api/generation/models` 均 HTTP 200；PostgreSQL、S3、SiliconFlow、支付和邮件 ready，Worker、浏览器、受限出口、桌面中继与 `shared-v1` 子 Agent ready，queue=0。Qwen3/Kolors 硬锁和两种图片生成模式 `available=true` 保持不变。
+- 真实生产页面在 1440px 与 390px 复核：`/artigen/create`、`/artigen/agent` 均 HTTP 200、统一 Shell 存在、无横向溢出；Create 无页面或控制台错误。Agent 游客态仅出现预期的账户/运行数据 401，并在界面明确要求登录，没有越权读取或页面崩溃。本轮只变更 UI 与文档，未重复消耗真实模型点数。
 
-后续只能通过 `dev → main` Release PR 与同一不可变 SHA 的生产发布流程；未重新核验生产接口、Render/Vercel deployment 与页面前，不得把本节描述为已上线。
+本轮未修改 Karing 节点、规则、DNS、系统代理、Wi-Fi 或 B2U2/AI 网络配置；发布结束时继续保持既有“规则”模式。
 
 ## 6. 已知风险与正式后续事项
 
