@@ -1,4 +1,6 @@
+import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { expectWorkspaceGeometry } from './helpers/workspaceLayoutAudit';
 
 const auditWorkspaceAccessibility = async (page: Page) => page.locator('.agent-workspace-shell').evaluate((root) => {
   const visible = (element: Element) => {
@@ -495,18 +497,64 @@ test('mobile workspace uses full-height drawers, restores focus, and never scrol
 
 test('workspace reflows across desktop, tablet, mobile, landscape and 200 percent equivalent width', async ({ page }) => {
   await installSharedApi(page);
+  const capturePass = process.env.ARTIGEN_CAPTURE_PASS || 'review';
   for (const viewport of [
-    { width: 1440, height: 960 },
-    { width: 1024, height: 900 },
-    { width: 768, height: 900 },
-    { width: 390, height: 844 },
-    { width: 844, height: 390 },
-    { width: 640, height: 900 }
+    { name: 'desktop-1440', width: 1440, height: 960 },
+    { name: 'desktop-1180', width: 1180, height: 800 },
+    { name: 'tablet-1024-short', width: 1024, height: 700 },
+    { name: 'tablet-768', width: 768, height: 900 },
+    { name: 'mobile-430', width: 430, height: 932 },
+    { name: 'mobile-390', width: 390, height: 844 },
+    { name: 'mobile-360-short', width: 360, height: 640 },
+    { name: 'mobile-landscape-844', width: 844, height: 390 },
+    { name: 'mobile-landscape-667', width: 667, height: 375 },
+    { name: 'zoom-200', width: 640, height: 900 }
   ]) {
     await page.setViewportSize(viewport);
     await page.goto('/artigen/agent');
     await expect(page.locator('.objective-composer')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
+    if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
+      await page.screenshot({
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/agent-zero-${viewport.name}.png`),
+        animations: 'disabled'
+      });
+    }
+  }
+});
+
+test('run detail keeps chrome, composer and inspector aligned across extreme viewports', async ({ page }) => {
+  await installRunApi(page);
+  const capturePass = process.env.ARTIGEN_CAPTURE_PASS || 'review';
+  for (const viewport of [
+    { name: 'desktop-1440', width: 1440, height: 960 },
+    { name: 'desktop-1180', width: 1180, height: 800 },
+    { name: 'tablet-1024-short', width: 1024, height: 700 },
+    { name: 'mobile-390', width: 390, height: 844 },
+    { name: 'mobile-landscape-844', width: 844, height: 390 }
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`/artigen/agent/runs/${runId}`);
+    await expect(page.locator('.message-composer')).toBeVisible();
+    await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
+    if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
+      await page.screenshot({
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/run-detail-${viewport.name}.png`),
+        animations: 'disabled'
+      });
+    }
+    if (viewport.width < 1200) {
+      await page.getByRole('button', { name: '打开检查器' }).click();
+      await page.getByRole('tab', { name: '子 Agent' }).click();
+      await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
+      if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
+        await page.screenshot({
+          path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/run-subagents-${viewport.name}.png`),
+          animations: 'disabled'
+        });
+      }
+      await page.keyboard.press('Escape');
+    }
   }
 });
 
