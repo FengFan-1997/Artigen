@@ -711,12 +711,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .conversation-workspace { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; height: 100%; min-height: 0; }
-.conversation-scroll { width: min(780px, calc(100% - 44px)); margin: 0 auto; padding: 34px 0 48px; overflow: auto; scrollbar-color: var(--border) transparent; }
+.conversation-scroll { width: min(780px, calc(100% - 44px)); margin: 0 auto; padding: 34px 0 48px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
 .message { margin-bottom: 22px; color: var(--text); }
 .message header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
 .message header span { font-size: 11px; font-weight: 720; }
 .message header time, .message header small { color: var(--muted-2); font-size: 11px; }
-.message p { margin: 0; color: var(--text); font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+.message p { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
 .user-message { max-width: 74%; margin-left: auto; padding: 13px 15px; border: 1px solid var(--border); border-radius: 12px 12px 3px 12px; background: var(--surface); }
 .user-message header { justify-content: flex-end; }
 .user-message p { color: var(--text); }
@@ -732,10 +732,10 @@ onBeforeUnmount(() => {
 .approval-card dl { display: grid; gap: 7px; margin: 12px 0; }
 .approval-card dl div { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border)); background: color-mix(in srgb, var(--surface) 82%, transparent); }
 .approval-card dt { color: var(--warning); font-size: 11px; font-weight: 700; }
-.approval-card dd { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.approval-card dd { margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .denial-reason { display: block; margin-bottom: 6px; color: var(--text); font-size: 11px; font-weight: 620; }
 .approval-card > input { width: 100%; min-height: 38px; box-sizing: border-box; padding: 0 10px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 11px; }
-.approval-card footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.approval-card footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .approval-card button { min-height: 36px; padding: 0 12px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 11px; }
 .approval-card .approval-primary { color: var(--acid-ink); border-color: var(--acid); background: var(--acid); font-weight: 720; }
 .delivery-summary { padding: 14px; border: 1px solid color-mix(in srgb, var(--success) 42%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--success) 6%, var(--surface)); }
@@ -749,7 +749,7 @@ onBeforeUnmount(() => {
 .delivery-summary a small { color: var(--muted); font-size: 11px; }
 .delivery-summary svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .run-notice { width: min(780px, calc(100% - 44px)); margin: 0 auto 8px; padding: 9px 11px; color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 38%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); font-size: 11px; }
-.message-composer { width: min(780px, calc(100% - 44px)); margin: 0 auto 18px; overflow: hidden; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); box-shadow: 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
+.message-composer { width: min(780px, calc(100% - 44px)); margin: 0 auto max(18px,env(safe-area-inset-bottom)); overflow: hidden; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); box-shadow: 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
 .message-composer:focus-within { border-color: var(--acid); box-shadow: 0 0 0 2px color-mix(in srgb, var(--acid) 13%, transparent), 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
 .message-composer textarea { display: block; width: 100%; min-height: 58px; resize: none; box-sizing: border-box; padding: 12px 13px 5px; color: var(--text); border: 0; outline: 0; background: transparent; font: 13px/1.55 inherit; }
 .message-composer footer { display: flex; align-items: center; justify-content: space-between; padding: 6px 7px 7px 12px; }
@@ -784,7 +784,7 @@ onBeforeUnmount(() => {
 .inspector-card dl { display: grid; gap: 7px; margin: 0; }
 .inspector-card dl div { display: flex; justify-content: space-between; gap: 10px; }
 .inspector-card dt, .inspector-card p { color: var(--muted); font-size: 11px; line-height: 1.5; }
-.inspector-card dd { margin: 0; color: var(--text); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .budget-card > div { height: 4px; margin: 3px 0 11px; overflow: hidden; border-radius: 4px; background: var(--border); }
 .budget-card > div span { display: block; width: 100%; height: 100%; background: var(--acid); transform-origin: left center; transition: transform 180ms ease; }
 .grant-list { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -819,7 +819,8 @@ onBeforeUnmount(() => {
 .subagent-card { grid-template-columns: 32px 1fr; }
 .subagent-card > div { display: grid; min-width: 0; justify-items: start; gap: 5px; }
 .subagent-card .agent-node { width: 28px; height: 28px; color: var(--text); border-color: var(--border); background: var(--surface-raised); }
-.subagent-card header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.subagent-card header { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.subagent-card header b { min-width: 0; overflow-wrap: anywhere; }
 .subagent-card header i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .subagent-card header i.running { background: var(--acid); }
 .subagent-card header i.succeeded { background: var(--success); }
@@ -858,13 +859,17 @@ onBeforeUnmount(() => {
   .conversation-scroll, .run-notice, .message-composer { width: min(100% - 24px, 780px); }
   .conversation-scroll { padding-top: 24px; }
   .user-message { max-width: 88%; }
-  .message-composer { margin-bottom: 10px; }
+  .message-composer { margin-bottom: max(10px,env(safe-area-inset-bottom)); }
   .message-composer textarea { min-height: 74px; font-size: 16px; }
   .approval-card > input { min-height: 44px; font-size: 16px; }
   .message-composer button, .approval-card button, .computer-panel > button, .preview-control, .subagent-card button { min-width: 44px; min-height: 44px; }
   .run-controls button { width: 44px; padding: 0; justify-content: center; font-size: 0; }
   .run-controls svg { width: 16px; }
   .preview-modal { inset: 0; border: 0; border-radius: 0; }
+}
+@media (max-width: 960px) {
+  .run-controls button { width: 44px; min-height: 44px; padding: 0; justify-content: center; font-size: 0; }
+  .run-controls svg { width: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .budget-card > div span { transition: none; }

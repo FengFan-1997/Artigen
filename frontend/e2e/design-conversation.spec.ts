@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { expectWorkspaceGeometry } from './helpers/workspaceLayoutAudit';
 
 const conversationId = '11111111-1111-4111-8111-111111111111';
 const userMessageId = '22222222-2222-4222-8222-222222222222';
@@ -211,6 +212,23 @@ const installExistingConversation = async (page: Page) => {
   }));
 };
 
+const installEmptyConversation = async (page: Page) => {
+  await installCommonApi(page, true);
+  await page.route('**/api/design-conversations**', (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.endsWith('/events')) return route.abort();
+    if (pathname === '/api/design-conversations' && request.method() === 'GET') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, conversations: [] })
+      });
+    }
+    return route.fallback();
+  });
+};
+
 test('guest draft survives email login and sends automatically after verification', async ({ page }) => {
   let authenticated = false;
   let sentMessage: Record<string, unknown> | null = null;
@@ -379,8 +397,72 @@ test('mobile chat uses a history drawer and keeps the docked composer reachable'
   await expect(page.getByLabel('Design request')).toBeEditable();
   await expect(page.locator('input[type="file"]')).toHaveAttribute('tabindex', '-1');
   await expect(page.locator('input[type="file"]')).toHaveAttribute('aria-label', '添加参考文件');
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await expectWorkspaceGeometry(page, { mobile: true });
 
+});
+
+test('zero state stays scrollable and aligned across desktop, zoom, short and landscape viewports', async ({ page }) => {
+  await installEmptyConversation(page);
+  const capturePass = process.env.ARTIGEN_CAPTURE_PASS || 'review';
+  for (const viewport of [
+    { name: 'desktop-1440', width: 1440, height: 960 },
+    { name: 'desktop-1180', width: 1180, height: 800 },
+    { name: 'tablet-1024-short', width: 1024, height: 700 },
+    { name: 'tablet-768', width: 768, height: 900 },
+    { name: 'mobile-430', width: 430, height: 932 },
+    { name: 'mobile-390', width: 390, height: 844 },
+    { name: 'mobile-360-short', width: 360, height: 640 },
+    { name: 'mobile-landscape-844', width: 844, height: 390 },
+    { name: 'mobile-landscape-667', width: 667, height: 375 },
+    { name: 'zoom-200', width: 640, height: 900 }
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto('/artigen/create');
+    await expect(page.locator('.workspace-zero')).toBeVisible();
+    await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
+    if (process.env.ARTIGEN_CAPTURE_LAYOUT && viewport.height <= 640) {
+      await page.screenshot({
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/create-zero-${viewport.name}-top.png`),
+        animations: 'disabled'
+      });
+    }
+    if (viewport.height <= 640) {
+      await page.locator('.workspace-zero').evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await expect(page.locator('.suggestion-grid > button').last()).toBeInViewport();
+    }
+    if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
+      await page.screenshot({
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/create-zero-${viewport.name}${viewport.height <= 640 ? '-scrolled' : ''}.png`),
+        animations: 'disabled'
+      });
+    }
+  }
+});
+
+test('active conversation keeps cards, approvals and dock aligned across extreme viewports', async ({ page }) => {
+  await installExistingConversation(page);
+  const capturePass = process.env.ARTIGEN_CAPTURE_PASS || 'review';
+  for (const viewport of [
+    { name: 'desktop-1440', width: 1440, height: 960 },
+    { name: 'desktop-1180', width: 1180, height: 800 },
+    { name: 'tablet-1024-short', width: 1024, height: 700 },
+    { name: 'tablet-768', width: 768, height: 900 },
+    { name: 'mobile-430', width: 430, height: 932 },
+    { name: 'mobile-390', width: 390, height: 844 },
+    { name: 'mobile-360-short', width: 360, height: 640 },
+    { name: 'mobile-landscape-844', width: 844, height: 390 }
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`/artigen/create?c=${conversationId}`);
+    await expect(page.locator('.execution-card')).toBeVisible();
+    await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
+    if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
+      await page.screenshot({
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/create-chat-${viewport.name}.png`),
+        animations: 'disabled'
+      });
+    }
+  }
 });
 
 test('long messages and verified filenames remain readable without mobile overflow', async ({ page }) => {
@@ -422,7 +504,7 @@ test('long messages and verified filenames remain readable without mobile overfl
   await page.getByRole('button', { name: '打开检查器' }).click();
   await page.getByRole('tab', { name: /文件/ }).click();
   await expect(page.locator('.file-panel')).toContainText(longFilename);
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await expectWorkspaceGeometry(page, { mobile: true });
   await expect.poll(() => page.locator('.workspace-right').evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 });
 

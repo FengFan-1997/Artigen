@@ -15,7 +15,9 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12.5 14.5 6a3 3 0 0 1 4.2 4.2L10 19a5 5 0 0 1-7-7l9-9" /></svg>
         <b>{{ file.name }}</b>
         <small>{{ formatBytes(file.byteSize) }}</small>
-        <button type="button" :aria-label="`Remove ${file.name}`" @click="emit('remove-attachment', file.clientId)">×</button>
+        <button type="button" :aria-label="`Remove ${file.name}`" @click="emit('remove-attachment', file.clientId)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+        </button>
       </span>
     </div>
     <div class="composer-actions">
@@ -73,18 +75,18 @@ watch(() => props.draft, async () => {
 </script>
 
 <style scoped>
-.composer-box { padding: 13px 14px 12px; border: 1px solid var(--border); border-radius: 22px; color: var(--text); background: var(--surface); box-shadow: 0 16px 50px rgb(0 0 0 / 12%); }
+.composer-box { width: 100%; min-width: 0; padding: 13px 14px 12px; border: 1px solid var(--border); border-radius: 22px; color: var(--text); background: var(--surface); box-shadow: 0 16px 50px rgb(0 0 0 / 12%); }
 .composer-box:focus-within { border-color: var(--acid); box-shadow: 0 16px 50px rgb(0 0 0 / 18%), 0 0 0 3px color-mix(in srgb,var(--acid) 28%,transparent); }
-textarea { display: block; width: 100%; min-height: 68px; max-height: 180px; padding: 6px 7px; resize: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 16px; line-height: 1.55; background: transparent; }
+textarea { display: block; width: 100%; min-height: 68px; max-height: 180px; box-sizing: border-box; padding: 6px 7px; resize: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 16px; line-height: 1.55; background: transparent; }
 textarea::placeholder { color: var(--muted); }
 .compact textarea { min-height: 54px; }
 .attachment-list { display: flex; flex-wrap: wrap; gap: 7px; padding: 5px 6px 11px; }
-.attachment-list > span { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; background: var(--surface-raised); }
+.attachment-list > span { display: inline-flex; min-width: 0; align-items: center; gap: 6px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; background: var(--surface-raised); }
 .attachment-list svg,.attach svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
 .attachment-list b { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-list small { color: var(--muted); white-space: nowrap; }
-.attachment-list button { border: 0; color: var(--muted); background: transparent; cursor: pointer; }
-.composer-actions { display: flex; align-items: center; gap: 9px; }
+.attachment-list button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }.attachment-list button svg { width: 14px; height: 14px; }
+.composer-actions { display: flex; min-width: 0; align-items: center; gap: 9px; }
 .attach { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-size: 12px; font-weight: 700; background: var(--surface-raised); cursor: pointer; }
 .attach:hover { border-color: var(--acid); }
 .privacy { color: var(--muted); font-size: 11px; font-weight: 820; letter-spacing: .12em; }
@@ -92,6 +94,7 @@ textarea::placeholder { color: var(--muted); }
 .send:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 0 color-mix(in srgb,var(--acid) 24%,var(--bg)); }
 .send:disabled { border-color: var(--border); color: var(--muted); background: var(--surface-raised); cursor: not-allowed; }
 .send svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; }
+.attach:focus-visible,.send:focus-visible,.attachment-list button:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
 @media (max-width: 620px) {
   .composer-box { border-radius: 18px; }
   .privacy { display: none; }

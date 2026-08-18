@@ -112,11 +112,10 @@
             <button type="button" @click="selectedFiles = []">{{ zh ? '清空' : 'Clear' }}</button>
           </div>
           <footer>
-            <label class="attach-control">
-              <input type="file" multiple accept=".pdf,.docx,.xlsx,.pptx,.zip,.txt,.md,.csv,image/png,image/jpeg,image/webp" :aria-label="zh ? '添加参考文件' : 'Add reference files'" @change="selectFiles" />
+            <button class="attach-control" type="button" @click="openFilePicker">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 5.5-5.5a3 3 0 0 1 4.2 4.2l-7.5 7.5a5 5 0 0 1-7.1-7.1l7-7"/></svg>
               <span>{{ zh ? '添加参考' : 'Add reference' }}</span>
-            </label>
+            </button>
             <span class="objective-count">{{ form.objective.length.toLocaleString() }} / 20,000</span>
             <button class="send-action" type="button" :aria-label="zh ? '发送任务目标' : 'Send task objective'" :disabled="busy || form.objective.trim().length < 3" @click="sendObjective">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6z"/><path d="m12 13 7-8"/></svg>
@@ -126,6 +125,17 @@
         <p class="safety-note">{{ zh ? 'Enter 发送，Shift + Enter 换行。密码、OTP、验证码、付款和安全警告不会自动处理。' : 'Enter sends; Shift + Enter adds a line. Passwords, OTPs, CAPTCHAs, payments, and security warnings are never handled automatically.' }}</p>
       </div>
     </section>
+
+    <input
+      ref="fileInput"
+      class="visually-hidden"
+      type="file"
+      tabindex="-1"
+      multiple
+      accept=".pdf,.docx,.xlsx,.pptx,.zip,.txt,.md,.csv,image/png,image/jpeg,image/webp"
+      :aria-label="zh ? '添加参考文件' : 'Add reference files'"
+      @change="selectFiles"
+    />
 
     <template #environment>
       <div class="inspector-stack">
@@ -263,6 +273,7 @@ const loadingRuns = ref(false);
 const quoting = ref(false);
 const creating = ref(false);
 const selectedFiles = ref<File[]>([]);
+const fileInput = ref<HTMLInputElement | null>(null);
 const browserProfiles = ref<AgentBrowserProfile[]>([]);
 const submittedObjective = ref('');
 const notice = ref('');
@@ -553,6 +564,7 @@ const selectFiles = (event: Event) => {
   selectedFiles.value = files;
   input.value = '';
 };
+const openFilePicker = () => fileInput.value?.click();
 
 const loadRuns = async () => {
   loadingRuns.value = true;
@@ -634,7 +646,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .agent-conversation { display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
-.conversation-empty { display: grid; width: min(720px, calc(100% - 48px)); min-height: 100%; margin: 0 auto; padding: clamp(48px, 10vh, 96px) 0 40px; align-content: center; justify-items: start; }
+.conversation-empty { display: grid; width: min(720px, calc(100% - 48px)); min-height: 100%; margin: 0 auto; padding: clamp(40px, 9vh, 88px) 0 40px; align-content: center; justify-items: start; }
 .conversation-mark { display: grid; width: 34px; height: 34px; margin-bottom: 18px; place-items: center; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 38%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--acid) 8%, transparent); }
 .conversation-mark svg { width: 18px; }
 .conversation-empty h1 { margin: 0; color: var(--text); font-size: clamp(22px, 3vw, 28px); font-weight: 690; line-height: 1.25; letter-spacing: -.025em; }
@@ -666,10 +678,9 @@ onBeforeUnmount(() => {
 .objective-composer textarea { display: block; width: 100%; min-height: 62px; max-height: 180px; resize: vertical; box-sizing: border-box; padding: 13px 14px 7px; color: var(--text); border: 0; outline: 0; background: transparent; font: 400 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif; }
 .objective-composer textarea::placeholder { color: var(--muted); }
 .objective-composer footer { display: flex; align-items: center; gap: 9px; padding: 7px 8px 8px; }
-.attach-control { position: relative; display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 0 9px; color: var(--muted); border: 1px solid transparent; border-radius: 8px; cursor: pointer; font-size: 12px; }
+.attach-control { display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 0 9px; color: var(--muted); border: 1px solid transparent; border-radius: 8px; cursor: pointer; font-size: 12px; background: transparent; }
 .attach-control:hover { color: var(--text); background: var(--surface-raised); }
-.attach-control:focus-within { outline: 2px solid var(--acid); outline-offset: 1px; }
-.attach-control input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.attach-control:focus-visible { outline: 2px solid var(--acid); outline-offset: 1px; }
 .attach-control svg, .run-action svg, .send-action svg, .input-files svg, .history-label svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .objective-count { margin-left: auto; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .run-action { min-height: 38px; padding: 0 13px; border-radius: 8px; font-size: 12px; font-weight: 700; }
@@ -708,7 +719,7 @@ onBeforeUnmount(() => {
 .inspector-card dl { display: grid; gap: 7px; margin: 0; }
 .inspector-card dl div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .inspector-card dt, .inspector-card p, .inspector-card small { color: var(--muted); font-size: 11px; line-height: 1.5; }
-.inspector-card dd { margin: 0; color: var(--text); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .inspector-card > strong { color: var(--text); font-size: 13px; }
 .option-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .option-grid label, .capability-list label { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); }
@@ -739,6 +750,7 @@ onBeforeUnmount(() => {
 .file-list { display: grid; gap: 6px; }
 .file-list span { display: grid; gap: 2px; padding: 8px; border-radius: 7px; background: var(--surface-raised); }
 .file-list b { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.visually-hidden { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 @media (max-width: 800px) {
   .conversation-empty, .conversation-thread { width: min(100% - 28px, 780px); }
@@ -749,13 +761,24 @@ onBeforeUnmount(() => {
   .conversation-thread { padding: 24px 0 40px; gap: 24px; }
   .conversation-message { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
   .quote-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .conversation-dock { padding: 8px 8px max(8px, env(safe-area-inset-bottom)); }
+  .conversation-dock { padding: 8px 8px max(12px, env(safe-area-inset-bottom)); }
   .objective-composer textarea { min-height: 64px; font-size: 16px; }
   .objective-count { display: none; }
   .attach-control, .run-action, .send-action, .input-files button { min-height: 44px; }
-  .send-action { width: 44px; height: 44px; }
-  .safety-note { padding-inline: 8px; font-size: 11px; }
+  .send-action { width: 44px; height: 44px; margin-left: auto; }
+  .safety-note { max-width: 42rem; padding: 0 8px 2px; font-size: 11px; }
   .option-grid { grid-template-columns: 1fr; }
+}
+@media (max-height: 620px) {
+  .conversation-empty { align-content: start; padding-block: 24px; }
+  .conversation-mark { margin-bottom: 12px; }
+  .conversation-empty > p { margin-bottom: 14px; }
+  .prompt-suggestions { gap: 5px; }
+  .prompt-suggestions button { min-height: 38px; }
+  .conversation-dock { padding: 4px 8px max(8px, env(safe-area-inset-bottom)); }
+  .objective-composer textarea { min-height: 44px; max-height: 92px; padding-top: 9px; }
+  .objective-composer footer { padding-block: 4px; }
+  .safety-note { margin-top: 4px; line-height: 1.4; }
 }
 @media (prefers-reduced-motion: reduce) {
   .prompt-suggestions button, .objective-composer { transition: none; }
