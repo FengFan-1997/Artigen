@@ -8,6 +8,13 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-08-18 数字打样台 UI 回滚决定
+
+- 用户明确否决 PR #82 的浅色“数字打样台”视觉，决定完整恢复此前的 Codex 式深色三栏工作台；本次回滚只覆盖 PR #82 的前端实现、视觉测试、设计规范与截图，不回滚 Agent runtime、子 Agent、迁移 023、计费、安全、模型或 Worker 能力。
+- 为先恢复线上体验，Vercel 生产别名已紧急重新指向上一版已验证 deployment `dpl_9CvQPz1acPPF5fdBYjWMjTwjeKPs`（源 SHA `55296af5d40cff3aefd30fa980ab8b6c1c96aa28`）。Render 与 Mac Worker 继续运行 `b6c1cc6b169dc1694f409a93f7dea4ca2a60f7ac`；这是前端紧急回滚期间的有意短暂版本差异。
+- 持久代码回滚必须继续经过 `feature → dev → main` 门禁。完成后应重新以同一个新的 `main` SHA 发布 Vercel、Render 与 Mac Worker，并重新核验 `/api/meta`、`/readyz`、Agent status、模型和页面 smoke。
+- 此次操作没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由配置。
+
 ## 1. 新接手者先看结论
 
 Artigen 当前使用以下正式交付链：

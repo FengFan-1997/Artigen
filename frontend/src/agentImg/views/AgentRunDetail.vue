@@ -73,7 +73,7 @@
             <div v-if="approval.rollbackSummary"><dt>{{ zh ? '撤销' : 'Rollback' }}</dt><dd>{{ approval.rollbackSummary }}</dd></div>
           </dl>
           <label class="denial-reason" :for="`denial-reason-${approval.approvalId}`">{{ zh ? '拒绝原因（可选）' : 'Reason for denial (optional)' }}</label>
-          <input :id="`denial-reason-${approval.approvalId}`" v-model.trim="approvalReasons[approval.approvalId]" :name="`denial-reason-${approval.approvalId}`" autocomplete="off" type="text" maxlength="500" :placeholder="zh ? '说明拒绝原因，帮助 Agent 调整计划' : 'Explain the denial so the Agent can replan'" />
+          <input :id="`denial-reason-${approval.approvalId}`" v-model.trim="approvalReasons[approval.approvalId]" type="text" maxlength="500" :placeholder="zh ? '说明拒绝原因，帮助 Agent 调整计划' : 'Explain the denial so the Agent can replan'" />
           <footer>
             <button type="button" :disabled="approvalBusyId === approval.approvalId" @click="decide(approval.approvalId, 'denied')">{{ zh ? '拒绝' : 'Deny' }}</button>
             <button v-if="approval.riskLevel === 'blocked'" class="approval-primary" type="button" :disabled="approvalBusyId === approval.approvalId" @click="beginTakeover(approval.approvalId)">{{ zh ? '接管电脑' : 'Take over' }}</button>
@@ -105,8 +105,8 @@
       <p v-if="notice || failureText" class="run-notice">{{ notice || failureText }}</p>
       <form class="message-composer" @submit.prevent="sendInput">
         <label>
-          <span class="composer-label">{{ zh ? '补充要求' : 'Additional instructions' }}</span>
-          <textarea v-model.trim="message" name="agent-run-message" autocomplete="off" rows="2" :disabled="terminal || sending" :placeholder="terminal ? (zh ? '运行已结束' : 'Run completed') : (zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the Agent…')" />
+          <span class="sr-only">{{ zh ? '补充要求' : 'Additional instructions' }}</span>
+          <textarea v-model.trim="message" rows="2" :disabled="terminal || sending" :placeholder="terminal ? (zh ? '运行已结束' : 'Run completed') : (zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the Agent…')" />
         </label>
         <footer>
           <span>{{ zh ? '外部写操作会先请求审批' : 'External writes require approval' }}</span>
@@ -853,27 +853,6 @@ onBeforeUnmount(() => {
 .preview-modal header { display: flex; min-height: 50px; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .preview-modal header button { display: grid; width: 34px; height: 34px; place-items: center; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .preview-modal iframe { width: 100%; height: 100%; border: 0; background: #fff; }
-
-/* Run detail remains the same proof surface, with technical events moved into the production rail. */
-.conversation-scroll { width: min(900px,calc(100% - 64px)); padding: 52px 0 64px; }
-.message { margin-bottom: 28px; }.message header { margin-bottom: 9px; }.message header span { font-size: 13px; }.message header time,.message header small { font-size: 12px; }.message p { font-size: 15px; line-height: 1.7; text-align: left; }
-.user-message { max-width: 72%; padding: 12px 15px; border-color: var(--border-strong); border-radius: 8px 8px 2px 8px; }
-.agent-message,.event-message { grid-template-columns: 32px 1fr; gap: 15px; }
-.agent-avatar { position: relative; width: 30px; height: 30px; border-color: var(--text); border-radius: 50%; color: transparent; background: var(--surface); }
-.agent-avatar::before,.agent-avatar::after { position: absolute; top: 50%; left: 50%; background: var(--text); content: ''; transform: translate(-50%,-50%); }.agent-avatar::before { width: 38px; height: 1px; }.agent-avatar::after { width: 1px; height: 38px; }
-.event-message.child .agent-avatar { color: var(--selection); border-color: var(--selection); background: var(--surface); }.event-message.child .agent-avatar::before,.event-message.child .agent-avatar::after { display: none; }.event-message p { font-size: 13px; }
-.approval-card { padding: 18px; border-color: color-mix(in srgb,var(--warning) 46%,var(--border)); border-radius: 5px; background: var(--surface); }.approval-card > header,.approval-card code,.approval-card dt,.approval-card dd,.denial-reason { font-size: 12px; }.approval-card h2 { font-size: 16px; }.approval-card > p { font-size: 14px; }.approval-card dl div { border: 0; border-top: 1px solid var(--border); background: transparent; }
-.approval-card > input { min-height: 42px; border-color: var(--border-strong); border-radius: 5px; font-size: 13px; }.approval-card button { min-height: 40px; border-radius: 5px; font-size: 12px; }.approval-card .approval-primary { border-color: var(--primary); color: var(--primary-ink); background: var(--primary); }
-.delivery-summary { padding: 16px; border-color: color-mix(in srgb,var(--success) 46%,var(--border)); border-radius: 5px; background: var(--surface); }.delivery-summary > header,.delivery-summary > header b,.delivery-summary a > span,.delivery-summary a b,.delivery-summary a small { font-family: inherit; font-size: 12px; }.delivery-summary a { border-radius: 4px; }
-.run-notice,.message-composer { width: min(900px,calc(100% - 64px)); }.run-notice { border-radius: 5px; font-size: 13px; }
-.message-composer { position: relative; margin-bottom: 18px; border-color: var(--border-strong); border-radius: 8px; box-shadow: 0 22px 54px rgb(18 31 25 / 11%); }.message-composer::before { position: absolute; top: 14px; bottom: 14px; left: -1px; width: 2px; background: var(--acid); content: ''; }.message-composer:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb,var(--focus) 15%,transparent),0 24px 58px rgb(18 31 25 / 14%); }.message-composer > label { display: block; }.composer-label { display: block; padding: 12px 18px 0; color: var(--text); font-size: 12px; font-weight: 680; text-align: left; }.message-composer textarea { min-height: 60px; padding: 6px 18px 5px; font-size: 15px; }.message-composer footer span { font-size: 12px; }.message-composer button { width: 40px; height: 40px; border-radius: 5px; color: var(--primary-ink); background: var(--primary); }
-.run-controls button { min-height: 36px; border-radius: 5px; font-size: 12px; }.run-controls .primary-control { border-color: var(--primary); color: var(--primary-ink); background: var(--primary); }
-.history-label { padding-block: 12px 8px; font-size: 12px; letter-spacing: 0; text-transform: none; }.history-run { grid-template-columns: 4px 1fr; min-height: 48px; gap: 10px; border-radius: 5px; }.history-run.router-link-active { color: var(--selection-ink); background: var(--selection); box-shadow: -8px 0 0 var(--selection); }.history-run.router-link-active b,.history-run.router-link-active small { color: inherit; }.history-run i { width: 3px; height: 22px; margin-top: 0; border-radius: 0; }.history-run b { font-size: 13px; }.history-run small,.history-empty { font-size: 12px; }
-.inspector-stack { gap: 0; }.inspector-card { padding: 16px 0; border: 0; border-bottom: 1px solid var(--border-strong); border-radius: 0; background: transparent; }.inspector-card header,.computer-panel > header { min-height: 26px; }.inspector-card header > span,.computer-panel header span { font-size: 13px; }.inspector-card header > b,.inspector-card dt,.inspector-card dd,.inspector-card p { font-family: inherit; font-size: 12px; }.inspector-card dt,.inspector-card p { text-align: left; }.inspector-card dd { text-align: right; }.inspector-card header > i,.computer-panel header > i,.grant-list i,.execution-spine i { border-radius: 0; }.inspector-card header > i.healthy,.computer-panel header > i.healthy { box-shadow: none; }
-.grant-list span { border-radius: 4px; font-size: 12px; }.execution-spine article { min-height: 70px; }.execution-spine article.complete i { box-shadow: none; }.execution-spine b { font-size: 13px; }.execution-spine span,.audit-details summary,.audit-details time,.audit-details b,.audit-details small { font-family: inherit; font-size: 12px; }
-.parent-agent-card,.subagent-card { padding: 12px 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }.parent-agent-card { box-shadow: inset 3px 0 var(--acid); padding-left: 10px; }.agent-node,.subagent-card .agent-node { border-radius: 4px; }.parent-agent-card b,.subagent-card b { font-size: 13px; }.parent-agent-card small,.subagent-card small,.subagent-card p,.subagent-card button,.inspector-empty,.computer-panel header small,.computer-panel > small,.screen-placeholder span { font-size: 12px; }
-.computer-screen { border-radius: 5px; }.computer-panel > button,.preview-control { min-height: 40px; border-color: var(--primary); border-radius: 5px; color: var(--primary-ink); background: var(--primary); font-size: 12px; }.file-list a { padding: 11px 0; border-bottom: 1px solid var(--border); border-radius: 0; }.file-list a > span,.file-list b,.file-list small,.file-list em { font-family: inherit; font-size: 12px; }
-.preview-modal { border-radius: 7px; }
 
 @media (max-width: 800px) {
   .conversation-scroll, .run-notice, .message-composer { width: min(100% - 24px, 780px); }
