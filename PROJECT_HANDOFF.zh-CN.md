@@ -8,7 +8,7 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
-## 2026-08-19 无边框工作台细节优化（待发布）
+## 2026-08-19 无边框工作台细节优化（生产已发布）
 
 - 用户确认保留已上线的暗色三栏工作台和三条既有路由，只做细节层面的专业化收敛：左、中、右区域改用相邻背景与间距区分，不再依赖常驻装饰边框；酸性绿只承担主动作、执行节点和焦点信号。没有改变产品结构、执行器、报价、冻结、审批、取消、交付或模型边界。
 - 统一 Shell、Create、Computer Agent、Run Detail、Composer 与执行卡已去除重复模型口号、`LOCAL FIRST` 标记、编号建议卡和嵌套描边。中心区只保留目标、关键结论、澄清、审批、费用、错误和交付；计划、文件和审计分别保留在右侧对应页签。
@@ -16,7 +16,13 @@
 - 无障碍与响应式细节同步硬化：8px 可拖拽分隔命中区只在 hover/drag/focus 显示分隔线，键盘方向键/Home/End 能继续调整；表单名称、焦点环、44px 移动触控、附件 local-first 提示、懒加载交付图片和 reduced-motion 均纳入回归。跨浏览器检查真实发现并修复 WebKit 移动历史项仅 42px 的缺口。
 - 三遍本地审核依次覆盖结构/几何、暗浅/系统主题与可用性、代码/全量回归。Impeccable 核心七文件机械检测为 `[]`；工作台专项矩阵在 Chromium、Firefox、WebKit desktop、360、390 与 WebKit 768 为 120/120。完整 `pnpm check` 退出码 0：前端单元 216/216、Playwright 483 passed / 3 条既有条件跳过 / 0 failed（16.3 分钟），后端、邮件、Agent 质量、生产构建和 87.5 KiB gzip 初始 JS 预算全部通过。
 - 本轮只修改前端、E2E、设计规范与 Handoff，不修改后端、API、数据库、模型、Worker、生产开关、Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。`ui-review/` 继续作为用户未跟踪资产，禁止读取、进入、修改、删除、暂存或提交。
-- 当前代码尚未通过 PR 合入 `dev`，也尚未执行 DEV/生产发布；任何部署与线上健康结论必须在发布阶段重新读取实时接口和 deployment，不得从本节推断。
+- 实现经 PR [#98](https://github.com/FengFan-1997/Artigen/pull/98) 的 Core、8 路 E2E 与 Release gate 全绿后合入 `dev`，merge SHA 为 `a7617c40bba0adeff42ff702998177501c893920`。随后 PR [#100](https://github.com/FengFan-1997/Artigen/pull/100) 以零文件差异把上一轮 `main` 历史同步回受保护的 `dev`，最终 DEV SHA 为 `30606409559d4b38c26ec5b781121682ee1c18c1`；没有直接 push 或绕过 up-to-date 保护。
+- Render DEV deployment `dep-da2knpjbc2fs73fqepag` 为精确 `3060640...` 的 `live` 部署；Vercel Preview deployment `5977261691` 为同 SHA `success`。带 DEV 访问门禁重新读取 `/api/meta`、`/readyz`、Agent、设计对话和生图模型接口均 HTTP 200，数据库迁移 023、S3、SiliconFlow、Qwen3/Kolors 与两种图片模式 ready。DEV Mac Worker 延续既有离线状态、queue=0，本轮没有把配置存在误报为 Worker ready。
+- Release PR [#99](https://github.com/FengFan-1997/Artigen/pull/99) 的 main 分支策略、push/PR 两套 Core、全部 E2E 与 Release gate 最终均成功后合入 `main`，生产运行 SHA 为 `ed308b828593fbd20e60fe2e82b0850fa30d0d99`。两个 Cloudflare Workers 外部状态仍是既有非 required failure，未计作通过。
+- 生产三端已对齐该不可变 SHA：Render deployment `dep-da2mns7qj5pc7384p83g` 为 `live`；Vercel 精确 Preview `dpl_87J5vpVGa2wDaCEpGJTZmAqPFxyS` 经 `/api/meta` 与 `/readyz` 验证后显式 promote，production deployment `dpl_Hdvv39w5xjgUwaL3eSstcbDo9xaX` 为 `READY` 并接管 `artigen-fengfan.vercel.app`；Mac Worker 来自 `/Users/fengfan/Public/personal/Artigen-worker-production-ed308b8`，LaunchAgent 的程序与工作目录精确指向该 worktree，并保留 `AGENT_SUBAGENTS_ENABLED=true`。
+- 最终生产 `/api/meta`、`/readyz`、`/api/agent/status`、`/api/design-assistant/status` 与 `/api/generation/models` 均 HTTP 200；`gitSha=ed308b8...`，PostgreSQL、S3、SiliconFlow、爱发电与邮件 ready，Worker、浏览器、受限出口、桌面中继和 `shared-v1` 子 Agent ready，queue=0。文字/规划/父子 Agent 仍只使用 `Qwen/Qwen3-8B`，全部图片仍只使用 `Kwai-Kolors/Kolors`，两种图片模式均 `available=true`。
+- 真实生产 Create/Agent 页面在 1440、1024、768、390px 共 8 个状态重新截图，全部 HTTP 200、统一 Shell 存在、无横向溢出和页面错误；人工逐张复核无边框层级、阅读轴、三栏/抽屉切换、Composer、Inspector 与移动端均无遮挡、裁切或错位。证据保存在被忽略的 `.artifacts/workspace-borderless-polish-prod-ed308b8/`。本轮只改变 UI 与文档，未重复运行付费模型 smoke。
+- Docker Desktop 在 Worker 切换窗口被发现未运行；启动 Docker 后 Worker 正确从 fail-closed 恢复 ready。全过程没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由配置，`ui-review/` 始终未读取、修改、删除、暂存或提交。
 
 ## 2026-08-18 数字打样台 UI 回滚决定
 
