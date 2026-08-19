@@ -6,8 +6,7 @@
     :status-label="run ? statusLabel(run.status) : (zh ? '读取中' : 'Loading')"
     :status-tone="workspaceTone"
     :credit-label="run ? `${run.budget.used.toFixed(1)} / ${run.budget.maximum} ${zh ? '点' : 'cr'}` : '—'"
-    :account-label="run?.sandbox.provider || ''"
-    inspector-subtitle="Qwen/Qwen3-8B · Kolors"
+    :account-label="zh ? '账户与偏好' : 'Account & preferences'"
     :badges="{ subagents: activeSubagents, computer: takeoverRequired ? 1 : 0, files: artifacts.length, plan: pendingApprovals.length }"
     :live-announcement="notice || failureText"
     @new-task="$router.push('/artigen/agent')"
@@ -55,8 +54,8 @@
         <article class="message agent-message">
           <span class="agent-avatar" aria-hidden="true">A</span>
           <div>
-            <header><span>Artigen Agent</span><small>{{ run.sandbox.provider }} · {{ run.sandbox.version }}</small></header>
-            <p>{{ run.progress.plan?.length ? (zh ? '我已建立执行计划，并会在需要时委派独立子任务。最终文件将由父 Agent 验证和声明。' : 'I built an execution plan and will delegate isolated tasks where useful. The parent Agent will verify and declare final files.') : desktopMessage }}</p>
+            <header><span>Artigen Agent</span><small>{{ statusLabel(run.status) }}</small></header>
+            <p>{{ run.progress.plan?.length ? (zh ? '计划已建立，正在按步骤推进。' : 'The plan is ready and moving forward.') : desktopMessage }}</p>
           </div>
         </article>
 
@@ -73,7 +72,7 @@
             <div v-if="approval.rollbackSummary"><dt>{{ zh ? '撤销' : 'Rollback' }}</dt><dd>{{ approval.rollbackSummary }}</dd></div>
           </dl>
           <label class="denial-reason" :for="`denial-reason-${approval.approvalId}`">{{ zh ? '拒绝原因（可选）' : 'Reason for denial (optional)' }}</label>
-          <input :id="`denial-reason-${approval.approvalId}`" v-model.trim="approvalReasons[approval.approvalId]" type="text" maxlength="500" :placeholder="zh ? '说明拒绝原因，帮助 Agent 调整计划' : 'Explain the denial so the Agent can replan'" />
+          <input :id="`denial-reason-${approval.approvalId}`" v-model.trim="approvalReasons[approval.approvalId]" :name="`denial-reason-${approval.approvalId}`" type="text" maxlength="500" autocomplete="off" :placeholder="zh ? '说明拒绝原因，帮助 Agent 调整计划…' : 'Explain the denial so the Agent can replan…'" />
           <footer>
             <button type="button" :disabled="approvalBusyId === approval.approvalId" @click="decide(approval.approvalId, 'denied')">{{ zh ? '拒绝' : 'Deny' }}</button>
             <button v-if="approval.riskLevel === 'blocked'" class="approval-primary" type="button" :disabled="approvalBusyId === approval.approvalId" @click="beginTakeover(approval.approvalId)">{{ zh ? '接管电脑' : 'Take over' }}</button>
@@ -106,7 +105,7 @@
       <form class="message-composer" @submit.prevent="sendInput">
         <label>
           <span class="sr-only">{{ zh ? '补充要求' : 'Additional instructions' }}</span>
-          <textarea v-model.trim="message" rows="2" :disabled="terminal || sending" :placeholder="terminal ? (zh ? '运行已结束' : 'Run completed') : (zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the Agent…')" />
+          <textarea v-model.trim="message" name="agent-run-input" rows="2" autocomplete="off" :disabled="terminal || sending" :placeholder="terminal ? (zh ? '运行已结束' : 'Run completed') : (zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the Agent…')" />
         </label>
         <footer>
           <span>{{ zh ? '外部写操作会先请求审批' : 'External writes require approval' }}</span>
@@ -119,14 +118,6 @@
 
     <template #environment>
       <div v-if="run" class="inspector-stack">
-        <section class="inspector-card">
-          <header><span>{{ zh ? '模型锁定' : 'Model lock' }}</span><i class="healthy"></i></header>
-          <dl>
-            <div><dt>{{ zh ? '父与子文本模型' : 'Parent & child text' }}</dt><dd>Qwen/Qwen3-8B</dd></div>
-            <div><dt>{{ zh ? '所有图片' : 'All images' }}</dt><dd>Kwai-Kolors/Kolors</dd></div>
-            <div><dt>{{ zh ? '沙箱' : 'Sandbox' }}</dt><dd>{{ run.sandbox.provider }} · {{ run.sandbox.version }}</dd></div>
-          </dl>
-        </section>
         <section class="inspector-card budget-card">
           <header><span>{{ zh ? '费用' : 'Budget' }}</span><b>{{ run.budget.used.toFixed(1) }} / {{ run.budget.maximum }}</b></header>
           <div><span :style="{ transform: `scaleX(${budgetPercent / 100})` }"></span></div>
@@ -139,9 +130,17 @@
         <section class="inspector-card">
           <header><span>{{ zh ? '能力' : 'Capabilities' }}</span></header>
           <div class="grant-list">
-            <span v-for="(enabled, capability) in run.capabilities" :key="capability" :class="{ enabled }"><i></i>{{ capability }}</span>
+            <span v-for="(enabled, capability) in run.capabilities" :key="capability" :class="{ enabled }"><i></i>{{ capabilityLabel(String(capability)) }}</span>
           </div>
         </section>
+        <TechnicalDetails :label="zh ? '技术详情' : 'Technical details'">
+          <dl class="technical-list">
+            <div><dt>{{ zh ? '父与子文本模型' : 'Parent & child text' }}</dt><dd>Qwen/Qwen3-8B</dd></div>
+            <div><dt>{{ zh ? '所有图片' : 'All images' }}</dt><dd>Kwai-Kolors/Kolors</dd></div>
+            <div><dt>{{ zh ? '沙箱' : 'Sandbox' }}</dt><dd>{{ run.sandbox.provider }} · {{ run.sandbox.version }}</dd></div>
+            <div><dt>{{ zh ? '最大步骤' : 'Maximum steps' }}</dt><dd>{{ run.progress.maxSteps }}</dd></div>
+          </dl>
+        </TechnicalDetails>
       </div>
     </template>
 
@@ -152,15 +151,14 @@
           <div><b>{{ stage.label }}</b><span>{{ stage.description }}</span></div>
         </article>
       </div>
-      <details class="audit-details">
-        <summary>{{ zh ? '审计记录' : 'Audit log' }} · {{ events.length }}</summary>
+      <TechnicalDetails class="audit-details" :label="`${zh ? '审计记录' : 'Audit log'} · ${events.length}`">
         <div>
           <article v-for="event in events" :key="`audit-${event.eventId}`">
             <time>{{ formatTime(event.createdAt) }}</time>
             <span><b>{{ eventLabel(event.type) }}</b><small>{{ event.summary }}</small></span>
           </article>
         </div>
-      </details>
+      </TechnicalDetails>
     </template>
 
     <template #subagents>
@@ -234,6 +232,7 @@ import { useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
+import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import {
   agentAssetUrl,
   cancelAgentSubagent,
@@ -315,8 +314,7 @@ const conversationEvents = computed(() =>
     event.type.includes('takeover') ||
     event.type === 'approval.decided' ||
     event.type === 'run.failed' ||
-    event.type === 'run.succeeded' ||
-    ['subagent.succeeded', 'subagent.failed', 'subagent.cancelled'].includes(event.type)
+    event.type === 'run.succeeded'
   )
 );
 const activeSubagents = computed(() => (run.value?.subagents || []).filter((child) => ['queued', 'running'].includes(child.status)).length);
@@ -628,6 +626,17 @@ const subagentStatusLabel = (status: AgentSubagentStatus) => {
   };
   return labels[status][zh.value ? 0 : 1];
 };
+const capabilityLabel = (capability: string) => {
+  const labels: Record<string, [string, string]> = {
+    research: ['调研', 'Research'],
+    browser: ['网页操作', 'Web actions'],
+    files: ['文档与文件', 'Documents & files'],
+    shell: ['离线处理', 'Offline processing'],
+    subagents: ['并行处理', 'Parallel work'],
+    generate_images: ['生成图片', 'Generate images']
+  };
+  return labels[capability]?.[zh.value ? 0 : 1] || capability.replace(/_/g, ' ');
+};
 const actionLabel = (type: string) => {
   const labels: Record<string, [string, string]> = {
     send: ['发送内容', 'Send content'],
@@ -711,34 +720,34 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .conversation-workspace { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; height: 100%; min-height: 0; }
-.conversation-scroll { width: min(780px, calc(100% - 44px)); margin: 0 auto; padding: 34px 0 48px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
+.conversation-scroll { width: min(760px, calc(100% - 48px)); margin: 0 auto; padding: 34px 0 48px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
 .message { margin-bottom: 22px; color: var(--text); }
 .message header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
 .message header span { font-size: 11px; font-weight: 720; }
 .message header time, .message header small { color: var(--muted-2); font-size: 11px; }
-.message p { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
-.user-message { max-width: 74%; margin-left: auto; padding: 13px 15px; border: 1px solid var(--border); border-radius: 12px 12px 3px 12px; background: var(--surface); }
+.message p { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+.user-message { max-width: 74%; margin-left: auto; padding: 13px 15px; border: 0; border-radius: 12px 12px 3px 12px; background: var(--surface); }
 .user-message header { justify-content: flex-end; }
 .user-message p { color: var(--text); }
 .agent-message, .event-message { display: grid; grid-template-columns: 30px 1fr; gap: 11px; align-items: start; }
-.agent-avatar { display: grid; width: 30px; height: 30px; place-items: center; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 36%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--acid) 7%, var(--surface)); font-size: 11px; font-weight: 800; }
-.event-message.child .agent-avatar { color: var(--text); border-color: var(--border); background: var(--surface-raised); }
+.agent-avatar { display: grid; width: 30px; height: 30px; place-items: center; color: var(--acid-ink); border: 0; border-radius: 9px; background: var(--acid); font-size: 11px; font-weight: 800; }
+.event-message.child .agent-avatar { color: var(--text); background: var(--surface-raised); }
 .event-message p { color: var(--muted); font-size: 12px; }
-.approval-card { margin: 26px 0; padding: 16px; border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); }
+.approval-card { margin: 26px 0; padding: 16px 16px 16px 19px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); box-shadow: inset 3px 0 var(--warning); }
 .approval-card > header { display: flex; align-items: center; justify-content: space-between; color: var(--warning); font-size: 11px; font-weight: 720; }
 .approval-card code { color: var(--muted); font-size: 11px; }
 .approval-card h2 { margin: 12px 0 6px; font-size: 14px; }
 .approval-card > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .approval-card dl { display: grid; gap: 7px; margin: 12px 0; }
-.approval-card dl div { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border)); background: color-mix(in srgb, var(--surface) 82%, transparent); }
+.approval-card dl div { display: grid; gap: 3px; padding: 8px 10px; border: 0; border-radius: 7px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
 .approval-card dt { color: var(--warning); font-size: 11px; font-weight: 700; }
 .approval-card dd { margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .denial-reason { display: block; margin-bottom: 6px; color: var(--text); font-size: 11px; font-weight: 620; }
 .approval-card > input { width: 100%; min-height: 38px; box-sizing: border-box; padding: 0 10px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 11px; }
 .approval-card footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
-.approval-card button { min-height: 36px; padding: 0 12px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 11px; }
-.approval-card .approval-primary { color: var(--acid-ink); border-color: var(--acid); background: var(--acid); font-weight: 720; }
-.delivery-summary { padding: 14px; border: 1px solid color-mix(in srgb, var(--success) 42%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--success) 6%, var(--surface)); }
+.approval-card button { min-height: 36px; padding: 0 12px; color: var(--text); border: 0; border-radius: 8px; background: var(--surface); font-size: 11px; }
+.approval-card .approval-primary { color: var(--acid-ink); background: var(--acid); font-weight: 720; }
+.delivery-summary { padding: 14px 14px 14px 17px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--success) 6%, var(--surface)); box-shadow: inset 3px 0 var(--success); }
 .delivery-summary > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--success); font-size: 11px; font-weight: 720; }
 .delivery-summary > header b { font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .delivery-summary a { display: grid; grid-template-columns: 36px 1fr 18px; gap: 10px; align-items: center; padding: 9px; color: inherit; border-radius: 8px; text-decoration: none; }
@@ -748,9 +757,9 @@ onBeforeUnmount(() => {
 .delivery-summary a b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .delivery-summary a small { color: var(--muted); font-size: 11px; }
 .delivery-summary svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
-.run-notice { width: min(780px, calc(100% - 44px)); margin: 0 auto 8px; padding: 9px 11px; color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 38%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); font-size: 11px; }
-.message-composer { width: min(780px, calc(100% - 44px)); margin: 0 auto max(18px,env(safe-area-inset-bottom)); overflow: hidden; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); box-shadow: 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
-.message-composer:focus-within { border-color: var(--acid); box-shadow: 0 0 0 2px color-mix(in srgb, var(--acid) 13%, transparent), 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
+.run-notice { width: min(760px, calc(100% - 48px)); margin: 0 auto 8px; padding: 9px 11px 9px 14px; color: var(--danger); border: 0; border-radius: 8px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); box-shadow: inset 3px 0 var(--danger); font-size: 11px; }
+.message-composer { width: min(760px, calc(100% - 48px)); margin: 0 auto max(18px,env(safe-area-inset-bottom)); overflow: hidden; border: 0; border-radius: 15px; background: var(--surface); box-shadow: 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
+.message-composer:focus-within { box-shadow: 0 0 0 2px var(--acid), 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
 .message-composer textarea { display: block; width: 100%; min-height: 58px; resize: none; box-sizing: border-box; padding: 12px 13px 5px; color: var(--text); border: 0; outline: 0; background: transparent; font: 13px/1.55 inherit; }
 .message-composer footer { display: flex; align-items: center; justify-content: space-between; padding: 6px 7px 7px 12px; }
 .message-composer footer span { color: var(--muted-2); font-size: 11px; }
@@ -758,10 +767,10 @@ onBeforeUnmount(() => {
 .message-composer button:disabled { opacity: .4; }
 .message-composer svg, .run-controls svg, .file-list svg, .preview-modal svg { width: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
 .run-controls { display: flex; gap: 5px; }
-.run-controls button { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; padding: 0 8px; color: var(--muted); border: 1px solid var(--border); border-radius: 7px; background: var(--surface); font-size: 11px; }
-.run-controls .primary-control { color: var(--acid-ink); border-color: var(--acid); background: var(--acid); }
+.run-controls button { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; padding: 0 8px; color: var(--muted); border: 0; border-radius: 7px; background: var(--surface); font-size: 11px; }
+.run-controls .primary-control { color: var(--acid-ink); background: var(--acid); }
 .run-controls .danger-control { color: var(--danger); }
-.run-controls .danger-control.armed { color: #fff; border-color: var(--danger); background: var(--danger); }
+.run-controls .danger-control.armed { color: #fff; background: var(--danger); }
 .history-group { padding: 4px 8px 16px; }
 .history-label { padding: 5px 8px 8px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .history-run { display: grid; grid-template-columns: 8px 1fr; gap: 8px; align-items: start; padding: 9px 8px; color: inherit; border-radius: 8px; text-decoration: none; }
@@ -775,7 +784,7 @@ onBeforeUnmount(() => {
 .history-run small, .history-empty { color: var(--muted); font-size: 11px; }
 .history-empty { padding: 16px 8px; text-align: center; }
 .inspector-stack { display: grid; gap: 10px; }
-.inspector-card { padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.inspector-card { padding: 9px 4px; border: 0; border-radius: 10px; background: transparent; }
 .inspector-card header, .computer-panel > header { display: flex; min-height: 22px; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .inspector-card header > span, .computer-panel header span { color: var(--muted); font-size: 11px; font-weight: 720; }
 .inspector-card header > b { color: var(--text); font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -788,7 +797,7 @@ onBeforeUnmount(() => {
 .budget-card > div { height: 4px; margin: 3px 0 11px; overflow: hidden; border-radius: 4px; background: var(--border); }
 .budget-card > div span { display: block; width: 100%; height: 100%; background: var(--acid); transform-origin: left center; transition: transform 180ms ease; }
 .grant-list { display: flex; flex-wrap: wrap; gap: 5px; }
-.grant-list span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; color: var(--muted-2); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; }
+.grant-list span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; color: var(--muted-2); border: 0; border-radius: 6px; background: var(--surface-raised); font-size: 11px; }
 .grant-list i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }
 .grant-list span.enabled { color: var(--text); }
 .grant-list span.enabled i { background: var(--acid); }
@@ -801,16 +810,16 @@ onBeforeUnmount(() => {
 .execution-spine div { display: grid; align-content: start; gap: 4px; }
 .execution-spine b { color: var(--text); font-size: 11px; }
 .execution-spine span { color: var(--muted); font-size: 11px; line-height: 1.5; }
-.audit-details { margin-top: 10px; border-top: 1px solid var(--border); }
-.audit-details summary { padding: 12px 0; color: var(--muted); cursor: pointer; font-size: 11px; }
-.audit-details > div { display: grid; gap: 9px; max-height: 300px; overflow: auto; }
+.audit-details { margin-top: 10px; }
+.audit-details :deep(.technical-details-content) { max-height: 300px; overflow: auto; }
+.audit-details :deep(.technical-details-content) > div { display: grid; gap: 9px; }
 .audit-details article { display: grid; grid-template-columns: 52px 1fr; gap: 8px; }
 .audit-details time { color: var(--muted-2); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .audit-details article span { display: grid; gap: 2px; }
 .audit-details b { font-size: 11px; }
 .audit-details small { color: var(--muted); font-size: 11px; line-height: 1.4; }
-.parent-agent-card, .subagent-card { display: grid; grid-template-columns: 34px 1fr; gap: 9px; align-items: start; padding: 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
-.agent-node { display: grid; width: 30px; height: 30px; place-items: center; color: var(--acid-text); border: 1px solid color-mix(in srgb, var(--acid) 38%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); font: 800 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.parent-agent-card, .subagent-card { display: grid; grid-template-columns: 34px 1fr; gap: 9px; align-items: start; padding: 11px; border: 0; border-radius: 9px; background: var(--surface); }
+.agent-node { display: grid; width: 30px; height: 30px; place-items: center; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font: 800 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .parent-agent-card div { display: grid; gap: 3px; }
 .parent-agent-card b, .subagent-card b { color: var(--text); font-size: 11px; }
 .parent-agent-card small, .subagent-card small { color: var(--muted); font-size: 11px; }
@@ -818,7 +827,7 @@ onBeforeUnmount(() => {
 .subagent-rail::before { position: absolute; top: 0; bottom: 0; left: 0; width: 1px; content: ''; background: var(--border); }
 .subagent-card { grid-template-columns: 32px 1fr; }
 .subagent-card > div { display: grid; min-width: 0; justify-items: start; gap: 5px; }
-.subagent-card .agent-node { width: 28px; height: 28px; color: var(--text); border-color: var(--border); background: var(--surface-raised); }
+.subagent-card .agent-node { width: 28px; height: 28px; color: var(--text); background: var(--surface-raised); }
 .subagent-card header { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
 .subagent-card header b { min-width: 0; overflow-wrap: anywhere; }
 .subagent-card header i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
@@ -835,12 +844,17 @@ onBeforeUnmount(() => {
 .computer-panel header small, .computer-panel > small { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .computer-screen { position: relative; min-height: 220px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); }
 .novnc-screen { width: 100%; min-height: 220px; outline: none; }
+.novnc-screen:focus-visible, .approval-card > input:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
 .novnc-screen :deep(canvas) { max-width: 100%; }
 .screen-placeholder { display: grid; min-height: 220px; place-content: center; place-items: center; gap: 9px; color: var(--muted); }
 .screen-placeholder svg { width: 30px; fill: none; stroke: var(--acid-text); stroke-width: 1.3; }
 .screen-placeholder span { font-size: 11px; }
-.computer-panel > button, .preview-control { min-height: 36px; color: var(--acid-ink); border: 1px solid var(--acid); border-radius: 8px; background: var(--acid); font-size: 11px; font-weight: 700; }
-.computer-panel > button.return-control { color: var(--text); border-color: var(--border); background: var(--surface); }
+.computer-panel > button, .preview-control { min-height: 36px; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font-size: 11px; font-weight: 700; }
+.computer-panel > button.return-control { color: var(--text); background: var(--surface); }
+.technical-list { display: grid; gap: 7px; margin: 0; }
+.technical-list > div { display: flex; justify-content: space-between; gap: 10px; }
+.technical-list dt { color: var(--muted); font-size: 11px; }
+.technical-list dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .file-list { display: grid; gap: 4px; }
 .file-list a { display: grid; grid-template-columns: 34px 1fr 16px; gap: 8px; align-items: center; padding: 8px; color: inherit; border-radius: 8px; text-decoration: none; }
 .file-list a:hover { background: var(--surface-raised); }
@@ -854,6 +868,7 @@ onBeforeUnmount(() => {
 .preview-modal header { display: flex; min-height: 50px; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .preview-modal header button { display: grid; width: 34px; height: 34px; place-items: center; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .preview-modal iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+.sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 @media (max-width: 800px) {
   .conversation-scroll, .run-notice, .message-composer { width: min(100% - 24px, 780px); }

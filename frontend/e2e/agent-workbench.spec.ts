@@ -305,8 +305,12 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
   await expect(page.locator('.task-presets')).toHaveCount(0);
   await expect(page.locator('.inspector-tabs').getByRole('tab')).toHaveCount(5);
   await expect(page.getByRole('tab', { name: '环境' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('#workspace-panel-environment')).toContainText('Qwen/Qwen3-8B');
-  await expect(page.locator('#workspace-panel-environment')).toContainText('Kwai-Kolors/Kolors');
+  const environment = page.locator('#workspace-panel-environment');
+  await expect(environment.getByText('Qwen/Qwen3-8B', { exact: true })).not.toBeVisible();
+  await expect(environment.getByText('Kwai-Kolors/Kolors', { exact: true })).not.toBeVisible();
+  await environment.getByText('技术详情', { exact: true }).click();
+  await expect(environment).toContainText('Qwen/Qwen3-8B');
+  await expect(environment).toContainText('Kwai-Kolors/Kolors');
   await expect(page.locator('.history-run')).toContainText('三路并行设计产品审计');
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
@@ -362,9 +366,9 @@ test('image delivery auto-grants Kolors, preserves Qwen and subagent locks, and 
   await page.locator('.objective-composer textarea').fill('为 Artigen 设计一张克制、专业的品牌主视觉');
   const imageDeliverable = page.locator('.option-grid label').filter({ hasText: 'IMAGE' });
   await imageDeliverable.click();
-  const imageCapability = page.locator('.capability-list label').filter({ hasText: 'AI 图片生成' });
+  const imageCapability = page.locator('.capability-list label').filter({ hasText: '生成图片' });
   await expect(imageCapability.locator('input')).toBeChecked();
-  await expect(page.locator('.capability-list label').filter({ hasText: '真实子 Agent' }).locator('input')).toBeChecked();
+  await expect(page.locator('.capability-list label').filter({ hasText: '并行处理' }).locator('input')).toBeChecked();
 
   await page.getByRole('button', { name: '发送任务目标' }).click();
   await expect(page.locator('.quote-summary')).toContainText('18–42');
@@ -388,9 +392,9 @@ test('image and subagent controls fail closed when production flags are unavaila
 
   const imageDeliverable = page.locator('.option-grid label').filter({ hasText: 'IMAGE' });
   await expect(imageDeliverable.locator('input')).toBeDisabled();
-  const imageCapability = page.locator('.capability-list label').filter({ hasText: 'AI 图片生成' });
+  const imageCapability = page.locator('.capability-list label').filter({ hasText: '生成图片' });
   await expect(imageCapability.locator('input')).toBeDisabled();
-  const subagentCapability = page.locator('.capability-list label').filter({ hasText: '真实子 Agent' });
+  const subagentCapability = page.locator('.capability-list label').filter({ hasText: '并行处理' });
   await expect(subagentCapability.locator('input')).toBeDisabled();
   await expect(page.locator('.runtime-pill')).toContainText('单 Agent 就绪');
 });
@@ -538,7 +542,7 @@ test('workspace reflows across desktop, tablet, mobile, landscape and 200 percen
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
       await page.screenshot({
-        path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/agent-zero-${viewport.name}.png`),
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/agent-zero-${viewport.name}.png`),
         animations: 'disabled'
       });
     }
@@ -568,7 +572,7 @@ test('run detail keeps chrome, composer and inspector aligned across extreme vie
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
       await page.screenshot({
-        path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/run-detail-${viewport.name}.png`),
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/run-detail-${viewport.name}.png`),
         animations: 'disabled'
       });
     }
@@ -578,7 +582,7 @@ test('run detail keeps chrome, composer and inspector aligned across extreme vie
       await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
       if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
         await page.screenshot({
-          path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/run-subagents-${viewport.name}.png`),
+          path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/run-subagents-${viewport.name}.png`),
           animations: 'disabled'
         });
       }
@@ -589,6 +593,7 @@ test('run detail keeps chrome, composer and inspector aligned across extreme vie
 
 test('dark, light, system and reduced-motion workspace states keep names and contrast', async ({ page }) => {
   await installSharedApi(page);
+  const capturePass = process.env.ARTIGEN_CAPTURE_PASS || 'review';
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
   await page.goto('/artigen/agent');
@@ -597,6 +602,9 @@ test('dark, light, system and reduced-motion workspace states keep names and con
   let audit = await auditWorkspaceAccessibility(page);
   expect(audit.missingNames).toEqual([]);
   expect(audit.lowContrast).toEqual([]);
+  if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
+    await page.screenshot({ path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/theme-dark-reduced-motion.png`), animations: 'disabled' });
+  }
 
   const themeControl = page.locator('.workspace-account button').nth(1);
   await themeControl.click();
@@ -605,9 +613,16 @@ test('dark, light, system and reduced-motion workspace states keep names and con
   audit = await auditWorkspaceAccessibility(page);
   expect(audit.missingNames).toEqual([]);
   expect(audit.lowContrast).toEqual([]);
+  if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
+    await page.screenshot({ path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/theme-light.png`), animations: 'disabled' });
+  }
 
   await themeControl.click();
   await expect(shell).toHaveAttribute('data-theme', 'dark');
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('artigen-workspace-preferences') || '{}').theme)).toBe('system');
+  if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
+    await page.screenshot({ path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/theme-system-dark.png`), animations: 'disabled' });
+  }
   const duration = await page.locator('.prompt-suggestions button').first().evaluate((element) =>
     Math.max(...getComputedStyle(element).transitionDuration.split(',').map((value) => {
       const durationValue = value.trim();
