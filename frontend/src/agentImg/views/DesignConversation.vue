@@ -986,7 +986,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-:deep(.agent-workspace-shell) {
+.workspace-zero,.workspace-chat {
   --conversation-max: 760px;
 }
 .history-group { display: grid; gap: 4px; }
