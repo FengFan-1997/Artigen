@@ -14,17 +14,8 @@
     </header>
 
     <div class="execution-body">
-      <div v-if="steps.length" class="plan">
-        <div v-for="(step, index) in steps" :key="`${step}:${index}`" class="plan-step" :class="stepClass(index)">
-          <span>{{ index + 1 }}</span>
-          <p>{{ step }}</p>
-        </div>
-      </div>
-
       <div class="execution-meta" aria-live="polite" aria-atomic="true">
-        <span><b>{{ zh ? '执行器' : 'Executor' }}</b>{{ executorLabel }}</span>
         <span v-if="execution.quotedCredits !== null"><b>{{ zh ? '报价' : 'Quote' }}</b>{{ execution.quotedCredits }} {{ zh ? '点' : 'credits' }}</span>
-        <span><b>{{ zh ? '自动上限' : 'Auto cap' }}</b>{{ execution.maxCredits }} {{ zh ? '点' : 'credits' }}</span>
         <span v-if="run"><b>{{ zh ? '已用' : 'Used' }}</b>{{ run.budget.used }} {{ zh ? '点' : 'credits' }}</span>
       </div>
 
@@ -55,7 +46,7 @@
       <div v-if="task?.status === 'success' && task.assets.length" class="deliverables">
         <p>{{ zh ? '生成结果' : 'Generated result' }}</p>
         <a v-for="asset in task.assets" :key="asset.assetId" :href="taskAssetUrl(asset.assetId)" target="_blank" rel="noopener">
-          <img v-if="asset.mimeType.startsWith('image/')" :src="taskAssetUrl(asset.assetId)" alt="Generated design" width="64" height="56" />
+          <img v-if="asset.mimeType.startsWith('image/')" :src="taskAssetUrl(asset.assetId)" alt="Generated design" width="64" height="56" loading="lazy" />
           <span>{{ zh ? '打开设计结果' : 'Open design result' }}</span>
         </a>
       </div>
@@ -63,7 +54,7 @@
       <div v-if="run?.artifacts?.length" class="deliverables agent-deliverables">
         <p>{{ zh ? '已验证交付物' : 'Verified deliverables' }}</p>
         <a v-for="artifact in run.artifacts" :key="artifact.artifactId" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener">
-          <img v-if="artifact.mimeType.startsWith('image/')" :src="agentAssetUrl(artifact)" :alt="artifact.filename" width="64" height="56" />
+          <img v-if="artifact.mimeType.startsWith('image/')" :src="agentAssetUrl(artifact)" :alt="artifact.filename" width="64" height="56" loading="lazy" />
           <span>
             <b>{{ artifact.filename }}</b>
             <small>{{ artifact.verificationStatus === 'passed' ? (zh ? '验证通过' : 'Verified') : artifact.verificationStatus }}</small>
@@ -136,9 +127,6 @@ const displayStatus = computed(() => {
   if (props.run) return props.run.status === 'waiting_user' ? 'waiting_authorization' : props.run.status;
   return props.execution.status;
 });
-const steps = computed(() => props.run?.progress.plan?.length
-  ? props.run.progress.plan.map((item) => item.label)
-  : props.execution.plan.steps || []);
 const executorLabel = computed(() => {
   const labels: Record<string, [string, string]> = {
     reply: ['设计对话', 'Design conversation'],
@@ -203,13 +191,6 @@ const failureFinancialNote = computed(() => {
   }
   return props.zh ? '任务未创建时不会冻结或扣除点数。' : 'No credits are held or charged when no task was created.';
 });
-const stepClass = (index: number) => {
-  const live = props.run?.progress.plan?.[index]?.status;
-  if (live) return live;
-  const percent = progressPercent.value;
-  const threshold = ((index + 1) / Math.max(1, steps.value.length)) * 100;
-  return percent >= threshold ? 'completed' : percent >= threshold - 30 ? 'in_progress' : 'pending';
-};
 const actionLabel = (action: string) => {
   const labels: Record<string, [string, string]> = {
     send: ['发送', 'send'],
@@ -256,37 +237,37 @@ const authorizationButtonLabel = (approval: AgentApproval) => props.zh
 </script>
 
 <style scoped>
-.execution-card { max-width: 920px; margin: 2px auto 30px; border: 1px solid var(--border); border-radius: 18px; overflow: hidden; color: var(--text); background: var(--surface); box-shadow: 0 10px 30px rgb(0 0 0 / 10%); }
-.execution-card > header { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--border); background: var(--surface-raised); }
+.execution-card { position: relative; max-width: 920px; margin: 4px auto 28px; overflow: hidden; border: 0; border-radius: 12px; color: var(--text); background: color-mix(in srgb,var(--surface) 86%,transparent); box-shadow: none; }
+.execution-card::before { position: absolute; inset: 0 auto 0 0; width: 1px; background: var(--muted-2); content: ''; }
+.status-running::before,.status-queued::before,.status-provisioning::before,.status-verifying::before { background: var(--acid); }
+.status-failed::before { background: var(--danger); }.status-waiting_budget::before,.status-waiting_authorization::before { background: var(--warning); }.status-succeeded::before,.status-success::before { background: var(--success); }
+.execution-card > header { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 13px 14px 9px; border: 0; background: transparent; }
 .execution-card > header > div:nth-child(2) { min-width: 0; }
-.executor-icon { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--acid); border-radius: 10px; color: var(--acid-ink); background: var(--acid); }
-.executor-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; }
-header p { margin: 0 0 2px; color: var(--muted); font-size: 11px; font-weight: 820; letter-spacing: .12em; text-transform: uppercase; }
-header h3 { margin: 0; overflow-wrap: anywhere; font-size: 15px; }
-.status-chip { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; margin-left: auto; padding: 6px 9px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; font-weight: 780; white-space: nowrap; background: var(--surface); }
-.status-chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
-.status-running .status-chip i,.status-queued .status-chip i,.status-provisioning .status-chip i { background: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb,var(--acid) 24%,transparent); }
+.executor-icon { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; color: var(--acid-text); background: var(--surface-raised); }
+.executor-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+header p { margin: 0 0 1px; color: var(--muted); font-size: 11px; font-weight: 620; }
+header h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 660; }
+.status-chip { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; margin-left: auto; padding: 5px 3px; border: 0; border-radius: 0; color: var(--muted); font-size: 11px; font-weight: 620; white-space: nowrap; background: transparent; }
+.status-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.status-running .status-chip i,.status-queued .status-chip i,.status-provisioning .status-chip i { background: var(--acid); }
 .status-failed .status-chip i { background: var(--danger); }.status-waiting_budget .status-chip i,.status-waiting_authorization .status-chip i { background: var(--warning); }.status-succeeded .status-chip i,.status-success .status-chip i { background: var(--success); }
-.execution-body { padding: 18px; }
-.plan { display: grid; gap: 0; }
-.plan-step { position: relative; display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; min-height: 44px; }
-.plan-step:not(:last-child)::after { position: absolute; top: 25px; bottom: 3px; left: 13px; width: 1px; background: var(--border); content: ''; }
-.plan-step > span { position: relative; z-index: 1; display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 50%; color: var(--muted); font-size: 11px; font-weight: 800; background: var(--surface); }
-.plan-step p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-.plan-step.completed > span { border-color: var(--acid); color: var(--acid-ink); background: var(--acid); }.plan-step.completed p { color: var(--text); }.plan-step.in_progress > span { border-color: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb,var(--acid) 24%,transparent); }
-.execution-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 13px; border-top: 1px solid var(--border); }
-.execution-meta span { display: flex; min-width: 0; gap: 6px; padding: 6px 8px; overflow-wrap: anywhere; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 11px; background: var(--surface); }.execution-meta b { flex: 0 0 auto; color: var(--text); }
-.local-note,.upload-note,.budget-block { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); }
+.execution-body { padding: 6px 14px 12px; }
+.execution-meta { display: flex; flex-wrap: wrap; gap: 12px; min-height: 20px; }
+.execution-meta:empty { display: none; }
+.execution-meta span { display: flex; min-width: 0; gap: 5px; overflow-wrap: anywhere; border: 0; color: var(--muted); font-size: 11px; background: transparent; }.execution-meta b { flex: 0 0 auto; color: var(--text); }
+.local-note,.upload-note,.budget-block { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 11px 12px; border: 0; border-radius: 9px; background: var(--surface-raised); }
 .local-note,.upload-note { flex-wrap: wrap; }.local-note b,.upload-note b { font-size: 12px; }.local-note span,.upload-note span { color: var(--muted); font-size: 11px; }
-.upload-note { border-color: color-mix(in srgb,var(--acid) 22%,var(--border)); background: color-mix(in srgb,var(--acid) 4%,var(--surface-raised)); }
-.budget-block { justify-content: space-between; border-color: color-mix(in srgb,var(--warning) 55%,var(--border)); background: color-mix(in srgb,var(--warning) 7%,var(--surface)); }.budget-block div { display: grid; min-width: 0; gap: 3px; }.budget-block b { font-size: 12px; }.budget-block span { overflow-wrap: anywhere; color: var(--muted); font-size: 11px; }.budget-block a { flex: 0 0 auto; color: var(--text); font-size: 12px; font-weight: 800; }
-.failure-block { display: grid; gap: 5px; margin-top: 14px; padding: 12px; border: 1px solid color-mix(in srgb,var(--danger) 48%,var(--border)); border-radius: 10px; background: color-mix(in srgb,var(--danger) 7%,var(--surface)); }.failure-block b { color: var(--danger); font-size: 12px; }.failure-block span { color: var(--muted); font-size: 11px; line-height: 1.5; }
-.deliverables { margin-top: 16px; }.deliverables > p { margin: 0 0 9px; font-size: 11px; font-weight: 820; letter-spacing: .08em; text-transform: uppercase; }
-.deliverables > a { display: inline-flex; align-items: center; gap: 10px; min-width: 180px; max-width: 300px; margin: 0 8px 8px 0; padding: 8px; border: 1px solid var(--border); border-radius: 11px; color: var(--text); text-decoration: none; background: var(--surface); }.deliverables img { width: 64px; height: 56px; border-radius: 7px; object-fit: cover; }.deliverables span { display: grid; gap: 3px; min-width: 0; font-size: 11px; }.deliverables b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.deliverables small { color: var(--success); }
-.approval-list { display: grid; gap: 10px; margin-top: 16px; }.approval-card { min-width: 0; padding: 14px; border: 1px solid color-mix(in srgb,var(--warning) 60%,var(--border)); border-radius: 12px; background: color-mix(in srgb,var(--warning) 7%,var(--surface)); }.approval-kicker { color: var(--warning); font-size: 11px; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }.approval-card h4 { margin: 5px 0; overflow-wrap: anywhere; }.approval-card p { margin: 0 0 6px; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.5; }.approval-card small { display: block; overflow-wrap: anywhere; color: var(--muted); }.approval-card .authorization-scope { margin-top: 10px; padding: 9px; border: 1px solid color-mix(in srgb,var(--warning) 35%,var(--border)); border-radius: 8px; color: var(--text); background: var(--surface); }.approval-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }.approval-actions button,.approval-card a { min-height: 40px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--acid-ink); font-size: 11px; text-decoration: none; background: var(--acid); cursor: pointer; }.approval-actions .session { border-color: var(--warning); color: var(--text); background: transparent; }.approval-actions .deny { border-color: color-mix(in srgb,var(--danger) 52%,var(--border)); color: var(--danger); background: transparent; }
-.execution-card > footer { padding: 0 18px 15px; }.progress-track { height: 3px; overflow: hidden; background: var(--border); }.progress-track span { display: block; height: 100%; background: var(--acid); transform-origin: left center; transition: transform 220ms ease; }.footer-actions { display: flex; align-items: center; gap: 8px; padding-top: 12px; }.footer-actions > span { margin-right: auto; color: var(--muted); font-size: 11px; }.footer-actions button,.footer-actions a { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 11px; text-decoration: none; background: var(--surface-raised); cursor: pointer; }.footer-actions .primary { border-color: var(--acid); color: var(--acid-ink); font-weight: 780; background: var(--acid); }.footer-actions .cancel { color: var(--danger); }
+.upload-note { background: color-mix(in srgb,var(--acid) 5%,var(--surface-raised)); }
+.budget-block { justify-content: space-between; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--warning); }.budget-block div { display: grid; min-width: 0; gap: 3px; }.budget-block b { font-size: 12px; }.budget-block span { overflow-wrap: anywhere; color: var(--muted); font-size: 11px; }.budget-block a { flex: 0 0 auto; color: var(--text); font-size: 12px; font-weight: 720; }
+.failure-block { display: grid; gap: 5px; margin-top: 12px; padding: 11px 12px; border: 0; border-radius: 9px; background: color-mix(in srgb,var(--danger) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--danger); }.failure-block b { color: var(--danger); font-size: 12px; }.failure-block span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.deliverables { margin-top: 14px; }.deliverables > p { margin: 0 0 8px; font-size: 12px; font-weight: 660; }
+.deliverables > a { display: inline-flex; align-items: center; gap: 10px; min-width: 180px; max-width: 300px; margin: 0 8px 8px 0; padding: 8px; border: 0; border-radius: 9px; color: var(--text); text-decoration: none; background: var(--surface-raised); }.deliverables > a:hover { background: var(--surface-hover,var(--surface)); }.deliverables img { width: 64px; height: 56px; border-radius: 7px; object-fit: cover; }.deliverables span { display: grid; gap: 3px; min-width: 0; font-size: 11px; }.deliverables b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.deliverables small { color: var(--success); }
+.approval-list { display: grid; gap: 10px; margin-top: 14px; }.approval-card { min-width: 0; padding: 13px 14px; border: 0; border-radius: 10px; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--warning); }.approval-kicker { color: var(--warning); font-size: 11px; font-weight: 720; }.approval-card h4 { margin: 5px 0; overflow-wrap: anywhere; }.approval-card p { margin: 0 0 6px; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.5; }.approval-card small { display: block; overflow-wrap: anywhere; color: var(--muted); }.approval-card .authorization-scope { margin-top: 10px; padding: 9px; border: 0; border-radius: 8px; color: var(--text); background: color-mix(in srgb,var(--surface) 70%,transparent); }.approval-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }.approval-actions button,.approval-card a { min-height: 40px; padding: 8px 10px; border: 0; border-radius: 8px; color: var(--acid-ink); font-size: 11px; text-decoration: none; background: var(--acid); cursor: pointer; }.approval-actions .session { color: var(--text); background: var(--surface); }.approval-actions .deny { color: var(--danger); background: transparent; }
+.execution-card > footer { padding: 0 14px 13px; }.progress-track { height: 2px; overflow: hidden; border-radius: 2px; background: var(--surface-raised); }.progress-track span { display: block; height: 100%; background: var(--acid); transform-origin: left center; transition: transform 220ms cubic-bezier(.23,1,.32,1); }.footer-actions { display: flex; align-items: center; gap: 8px; padding-top: 10px; }.footer-actions > span { margin-right: auto; color: var(--muted); font-size: 11px; }.footer-actions button,.footer-actions a { padding: 8px 9px; border: 0; border-radius: 8px; color: var(--text); font-size: 11px; text-decoration: none; background: transparent; cursor: pointer; }.footer-actions button:hover,.footer-actions a:hover { background: var(--surface-raised); }.footer-actions .primary { color: var(--acid-ink); font-weight: 720; background: var(--acid); }.footer-actions .cancel { color: var(--danger); }
+.footer-actions button:focus-visible,.footer-actions a:focus-visible,.approval-actions button:focus-visible,.approval-card a:focus-visible,.deliverables a:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.footer-actions button:active,.approval-actions button:active { transform: scale(.97); }
 @media (max-width: 799px) {
-  .execution-card > header,.execution-body { padding: 14px; }.execution-card > header { align-items: flex-start; }.status-chip { max-width: 112px; overflow: hidden; text-overflow: ellipsis; }.execution-meta { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }.budget-block { align-items: flex-start; flex-wrap: wrap; }.approval-actions { display: grid; grid-template-columns: 1fr; }.approval-actions button { min-height: 44px; font-size: 12px; line-height: 1.35; }.footer-actions { flex-wrap: wrap; }.footer-actions > span { width: 100%; }.footer-actions button,.footer-actions a { min-height: 44px; flex: 1; text-align: center; }.deliverables > a { max-width: 100%; width: 100%; }
+  .execution-card > header { align-items: flex-start; padding: 12px; }.execution-body { padding: 6px 12px 12px; }.status-chip { max-width: 112px; overflow: hidden; text-overflow: ellipsis; }.execution-meta { gap: 8px 12px; }.budget-block { align-items: flex-start; flex-wrap: wrap; }.approval-actions { display: grid; grid-template-columns: 1fr; }.approval-actions button { min-height: 44px; font-size: 12px; line-height: 1.35; }.footer-actions { flex-wrap: wrap; }.footer-actions > span { width: 100%; }.footer-actions button,.footer-actions a { min-height: 44px; flex: 1; text-align: center; }.deliverables > a { max-width: 100%; width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { .progress-track span { transition: none; } }
 </style>
