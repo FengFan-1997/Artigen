@@ -14,6 +14,7 @@ related_targets: []
 - Primary action: send the first design request; subsequent primary actions are scoped clarification, cancellation, authorization, and download.
 - Content: real conversation messages, executor identity, plan, queue/progress, credits, approvals, images, files, and precise recovery states. No fabricated proof or SLA.
 - Constraints: Qwen3 for all text/planning; Kolors for all image output; 50-credit automatic cap; local-first attachments; 30-day encrypted history; existing advanced workbenches remain.
-- Direction: a bright working sheet with black structural ink and acid-green execution marks. The interface behaves like a project brief being assembled, not a generic messenger.
-- Memorable moment: after the first message, the centered brief field travels to the bottom while the request opens into an inline execution timeline in the same spatial frame.
+- Direction: a borderless three-lane professional workspace. Adjacent dark surfaces, stable spacing, and a single acid-green execution signal create hierarchy; decorative borders, model slogans, and repeated runtime copy are absent.
+- Progressive disclosure: the default surface shows only goal, status, cost, required action, and final result. Model locks, provider, sandbox, worker, egress, retention, and capability limits remain truthful under an accessible “技术详情” disclosure.
+- Memorable moment: after the first message, the centered brief field settles at the bottom while the request opens into a calm conversation; the plan and operational trace stay anchored in the Inspector instead of becoming chat noise.
 - Unresolved decisions: none for the initial implementation.

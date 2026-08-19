@@ -282,7 +282,8 @@ test('guest draft survives email login and sends automatically after verificatio
   });
 
   await page.goto('/artigen/create');
-  await expect(page.getByText('附件先保留在浏览器')).toBeVisible();
+  await expect(page.getByText('文件会留在当前设备，只有云端任务需要时才上传')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /添加文件: 文件会留在当前设备/ })).toBeVisible();
   const draft = '为新款柚子气泡水设计一张夏日主视觉';
   await page.getByLabel('Design request').fill(draft);
   await page.getByRole('button', { name: 'Send request' }).click();
@@ -340,15 +341,21 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
 
   await expect(page.locator('.conversation-heading')).toContainText('品牌官网体验审计');
   await expect(page.locator('.execution-card')).toContainText('电脑 Agent');
-  await expect(page.locator('.execution-card')).toContainText('浏览并记录公开页面证据');
   await expect(page.locator('.execution-card')).toContainText('42');
-  await expect(page.locator('.execution-card')).toContainText('50');
+  await expect(page.locator('.execution-card')).toContainText('14');
   await expect(page.getByRole('button', { name: '30 分钟内仅自动批准该站点的发布操作' })).toBeVisible();
   await expect(page.locator('.authorization-scope')).toContainText('https://brand.example');
   await expect(page.locator('.authorization-scope')).toContainText('发布');
   await expect(page.locator('.authorization-scope')).toContainText('30 分钟');
-  await expect(page.locator('#workspace-panel-environment')).toContainText('Qwen/Qwen3-8B');
-  await expect(page.locator('#workspace-panel-environment')).toContainText('Kwai-Kolors/Kolors');
+  const environment = page.locator('#workspace-panel-environment');
+  await expect(environment.getByText('Qwen/Qwen3-8B', { exact: true })).not.toBeVisible();
+  await expect(environment.getByText('Kwai-Kolors/Kolors', { exact: true })).not.toBeVisible();
+  await expect(environment).toContainText('50');
+  await environment.getByText('技术详情', { exact: true }).click();
+  await expect(environment).toContainText('Qwen/Qwen3-8B');
+  await expect(environment).toContainText('Kwai-Kolors/Kolors');
+  await page.getByRole('tab', { name: '计划' }).click();
+  await expect(page.locator('#workspace-panel-plan')).toContainText('浏览并记录公开页面证据');
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
@@ -432,7 +439,7 @@ test('zero state stays scrollable and aligned across desktop, zoom, short and la
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT && viewport.height <= 640) {
       await page.screenshot({
-        path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/create-zero-${viewport.name}-top.png`),
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/create-zero-${viewport.name}-top.png`),
         animations: 'disabled'
       });
     }
@@ -442,7 +449,7 @@ test('zero state stays scrollable and aligned across desktop, zoom, short and la
     }
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
       await page.screenshot({
-        path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/create-zero-${viewport.name}${viewport.height <= 640 ? '-scrolled' : ''}.png`),
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/create-zero-${viewport.name}${viewport.height <= 640 ? '-scrolled' : ''}.png`),
         animations: 'disabled'
       });
     }
@@ -476,7 +483,7 @@ test('active conversation keeps cards, approvals and dock aligned across extreme
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
       await page.screenshot({
-        path: path.resolve(process.cwd(), `../.artifacts/workspace-layout-hardening/${capturePass}/create-chat-${viewport.name}.png`),
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/create-chat-${viewport.name}.png`),
         animations: 'disabled'
       });
     }
