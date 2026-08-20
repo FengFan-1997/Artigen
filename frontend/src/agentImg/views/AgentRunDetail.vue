@@ -2,18 +2,17 @@
   <AgentWorkspaceShell
     :zh="zh"
     :title="run?.objectivePreview || (zh ? 'Agent 运行' : 'Agent run')"
-    :subtitle="`#${shortId} · ${run ? statusLabel(run.status) : (zh ? '读取中' : 'Loading')}`"
+    subtitle=""
     :status-label="run ? statusLabel(run.status) : (zh ? '读取中' : 'Loading')"
     :status-tone="workspaceTone"
     :credit-label="run ? `${run.budget.used.toFixed(1)} / ${run.budget.maximum} ${zh ? '点' : 'cr'}` : '—'"
-    :account-label="zh ? '账户与偏好' : 'Account & preferences'"
     :badges="{ subagents: activeSubagents, computer: takeoverRequired ? 1 : 0, files: artifacts.length, plan: pendingApprovals.length }"
     :live-announcement="notice || failureText"
     @new-task="$router.push('/artigen/agent')"
   >
     <template #history="{ search }">
       <div class="history-group">
-        <div class="history-label">{{ zh ? 'Agent 历史' : 'Agent history' }}</div>
+        <div class="history-label">{{ zh ? '运行历史' : 'Run history' }}</div>
         <router-link
           v-for="item in filteredRuns(search)"
           :key="item.runId"
@@ -30,15 +29,15 @@
     <template #topbar-actions>
       <div v-if="run" class="run-controls">
         <button v-if="canPause" type="button" :disabled="controlBusy" @click="control('pause')">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12M15 6v12"/></svg>
+          <WorkspaceIcon name="pause" />
           {{ zh ? '暂停' : 'Pause' }}
         </button>
         <button v-if="canResume" class="primary-control" type="button" :disabled="controlBusy" @click="control('resume')">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>
+          <WorkspaceIcon name="play" />
           {{ zh ? '恢复' : 'Resume' }}
         </button>
         <button v-if="!terminal" class="danger-control" :class="{ armed: stopArmed }" type="button" :disabled="controlBusy" @click="requestCancel">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+          <WorkspaceIcon name="stop" />
           {{ stopArmed ? (zh ? '确认停止' : 'Confirm stop') : (zh ? '停止' : 'Stop') }}
         </button>
       </div>
@@ -96,7 +95,7 @@
           <a v-for="artifact in artifacts" :key="`center-${artifact.artifactId}`" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
             <span>{{ fileCode(artifact.mimeType) }}</span>
             <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · {{ artifact.verificationStatus }}</small></div>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>
+            <WorkspaceIcon name="download" />
           </a>
         </div>
       </div>
@@ -110,7 +109,7 @@
         <footer>
           <span>{{ zh ? '外部写操作会先请求审批' : 'External writes require approval' }}</span>
           <button type="submit" :disabled="!message || terminal || sending" :aria-label="zh ? '发送' : 'Send'">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6z"/></svg>
+            <WorkspaceIcon name="send" :size="18" />
           </button>
         </footer>
       </form>
@@ -191,7 +190,7 @@
         <div class="computer-screen">
           <div v-show="takingOver" ref="desktopScreen" class="novnc-screen" aria-label="Agent desktop takeover"></div>
           <div v-if="!takingOver" class="screen-placeholder">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            <WorkspaceIcon name="monitor" :size="20" />
             <span>{{ zh ? '画面仅在需要接管时连接' : 'Connects only for takeover' }}</span>
           </div>
         </div>
@@ -209,7 +208,7 @@
             <a v-for="artifact in artifacts" :key="artifact.artifactId" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
               <span>{{ fileCode(artifact.mimeType) }}</span>
               <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em :class="artifact.verificationStatus">{{ artifact.verificationStatus }}</em></div>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>
+              <WorkspaceIcon name="download" />
             </a>
           </div>
           <div v-else class="inspector-empty">{{ zh ? '文件通过验证后才会显示。' : 'Files appear only after verification.' }}</div>
@@ -219,7 +218,7 @@
     </template>
 
     <section v-if="previewHtml" class="preview-modal" role="dialog" aria-modal="true">
-      <header><strong>{{ previewName }}</strong><button type="button" :aria-label="zh ? '关闭预览' : 'Close preview'" @click="closePreview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+      <header><strong>{{ previewName }}</strong><button type="button" :aria-label="zh ? '关闭预览' : 'Close preview'" @click="closePreview"><WorkspaceIcon name="close" :size="18" /></button></header>
       <iframe :srcdoc="previewHtml" :title="previewName" sandbox="allow-scripts" referrerpolicy="no-referrer" />
     </section>
   </AgentWorkspaceShell>
@@ -233,6 +232,7 @@ import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
+import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
 import {
   agentAssetUrl,
   cancelAgentSubagent,
@@ -290,7 +290,6 @@ const workspaceTone = computed<'ready' | 'busy' | 'warning' | 'offline'>(() => {
 });
 const canPause = computed(() => ['queued', 'provisioning', 'running', 'waiting_user'].includes(run.value?.status || ''));
 const canResume = computed(() => run.value?.status === 'paused');
-const shortId = computed(() => runId.value ? runId.value.slice(0, 8) : '—');
 const artifacts = computed<AgentArtifact[]>(() => run.value?.artifacts || []);
 const websiteArtifacts = computed(() =>
   artifacts.value.filter((artifact) =>
@@ -756,16 +755,18 @@ onBeforeUnmount(() => {
 .delivery-summary a div { display: grid; gap: 2px; min-width: 0; }
 .delivery-summary a b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .delivery-summary a small { color: var(--muted); font-size: 11px; }
-.delivery-summary svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.delivery-summary svg { width: 16px; height: 16px; }
 .run-notice { width: min(760px, calc(100% - 48px)); margin: 0 auto 8px; padding: 9px 11px 9px 14px; color: var(--danger); border: 0; border-radius: 8px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); box-shadow: inset 3px 0 var(--danger); font-size: 11px; }
 .message-composer { width: min(760px, calc(100% - 48px)); margin: 0 auto max(18px,env(safe-area-inset-bottom)); overflow: hidden; border: 0; border-radius: 15px; background: var(--surface); box-shadow: 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
 .message-composer:focus-within { box-shadow: 0 0 0 2px var(--acid), 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
 .message-composer textarea { display: block; width: 100%; min-height: 58px; resize: none; box-sizing: border-box; padding: 12px 13px 5px; color: var(--text); border: 0; outline: 0; background: transparent; font: 13px/1.55 inherit; }
 .message-composer footer { display: flex; align-items: center; justify-content: space-between; padding: 6px 7px 7px 12px; }
 .message-composer footer span { color: var(--muted-2); font-size: 11px; }
-.message-composer button { display: grid; width: 32px; height: 32px; place-items: center; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); }
+.message-composer button { display: grid; width: 32px; height: 32px; padding: 0; place-items: center; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); }
 .message-composer button:disabled { opacity: .4; }
-.message-composer svg, .run-controls svg, .file-list svg, .preview-modal svg { width: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.message-composer svg { width: 18px; height: 18px; }
+.run-controls svg, .file-list svg { width: 16px; height: 16px; }
+.preview-modal svg { width: 18px; height: 18px; }
 .run-controls { display: flex; gap: 5px; }
 .run-controls button { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; padding: 0 8px; color: var(--muted); border: 0; border-radius: 7px; background: var(--surface); font-size: 11px; }
 .run-controls .primary-control { color: var(--acid-ink); background: var(--acid); }
@@ -847,7 +848,7 @@ onBeforeUnmount(() => {
 .novnc-screen:focus-visible, .approval-card > input:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
 .novnc-screen :deep(canvas) { max-width: 100%; }
 .screen-placeholder { display: grid; min-height: 220px; place-content: center; place-items: center; gap: 9px; color: var(--muted); }
-.screen-placeholder svg { width: 30px; fill: none; stroke: var(--acid-text); stroke-width: 1.3; }
+.screen-placeholder svg { width: 20px; height: 20px; color: var(--acid-text); }
 .screen-placeholder span { font-size: 11px; }
 .computer-panel > button, .preview-control { min-height: 36px; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font-size: 11px; font-weight: 700; }
 .computer-panel > button.return-control { color: var(--text); background: var(--surface); }

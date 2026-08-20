@@ -2,13 +2,15 @@
   <details class="technical-details">
     <summary>
       <span>{{ label }}</span>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4" /></svg>
+      <WorkspaceIcon name="chevron-down" />
     </summary>
     <div class="technical-details-content"><slot /></div>
   </details>
 </template>
 
 <script setup lang="ts">
+import WorkspaceIcon from './WorkspaceIcon.vue';
+
 withDefaults(defineProps<{
   label?: string;
 }>(), {
@@ -41,16 +43,10 @@ withDefaults(defineProps<{
 .technical-details summary::-webkit-details-marker { display: none; }
 .technical-details summary:hover { color: var(--text); }
 .technical-details summary:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
-.technical-details summary svg {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
+.technical-details summary :deep(.workspace-icon) {
   transition: transform 160ms cubic-bezier(.23, 1, .32, 1);
 }
-.technical-details[open] summary svg { transform: rotate(180deg); }
+.technical-details[open] summary :deep(.workspace-icon) { transform: rotate(180deg); }
 .technical-details-content { padding: 0 10px 10px; }
 
 @media (max-width: 799px) {
@@ -58,6 +54,6 @@ withDefaults(defineProps<{
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .technical-details summary svg { transition: none; }
+  .technical-details summary :deep(.workspace-icon) { transition: none; }
 }
 </style>

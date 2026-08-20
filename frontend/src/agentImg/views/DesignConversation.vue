@@ -2,11 +2,10 @@
   <AgentWorkspaceShell
     :zh="zh"
     :title="conversation?.title || (zh ? '设计 Agent' : 'Design Agent')"
-    :subtitle="executorSummary"
+    :subtitle="conversation ? executorSummary : ''"
     :status-label="runtimeLabel"
     :status-tone="workspaceStatusTone"
     :credit-label="zh ? '自动上限 ' + (status?.autoCreditCap ?? 50) + ' 点' : 'Auto cap ' + (status?.autoCreditCap ?? 50)"
-    :account-label="zh ? '账户与偏好' : 'Account & preferences'"
     :badges="inspectorBadges"
     :live-announcement="notice"
     @new-task="newConversation"
@@ -27,7 +26,7 @@
           <span><b>{{ item.title }}</b><small>{{ formatRelative(item.updatedAt) }}</small></span>
         </button>
         <div v-if="!visibleConversations.length" class="history-empty">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg>
+          <WorkspaceIcon name="file" />
           <span>{{ zh ? '任务会保存在这里' : 'Your tasks will appear here' }}</span>
         </div>
       </div>
@@ -38,14 +37,14 @@
         <span class="executor-mark" :class="latestExecution?.routeKind || 'reply'"></span>
         <div>
           <strong>{{ conversation?.title || (zh ? '新的设计任务' : 'New design task') }}</strong>
-          <small>{{ executorSummary }} · {{ currentCostLabel }}</small>
+          <small v-if="latestExecution || activeRun">{{ executorSummary }} · {{ currentCostLabel }}</small>
         </div>
       </div>
     </template>
 
     <template #topbar-actions>
       <button v-if="conversation" class="quiet-action" type="button" @click="removeCurrentConversation">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M8 10v8M12 10v8M16 10v8M6.5 7l1 14h9l1-14"/></svg>
+        <WorkspaceIcon name="trash" />
         <span>{{ zh ? '删除' : 'Delete' }}</span>
       </button>
     </template>
@@ -62,6 +61,9 @@
         :attach-label="zh ? '添加文件' : 'Add files'"
         :attachment-count-label="zh ? '个文件' : 'files'"
         :attachment-hint="zh ? '文件会留在当前设备，只有云端任务需要时才上传' : 'Files stay on this device until a cloud task needs them'"
+        :request-label="zh ? '设计需求' : 'Design request'"
+        :send-label="zh ? '发送需求' : 'Send request'"
+        :remove-attachment-label="zh ? '移除' : 'Remove'"
         @update:draft="draft = $event"
         @submit="submitMessage"
         @attach="openFilePicker()"
@@ -71,12 +73,11 @@
         <header>
           <span>{{ zh ? '试试这些' : 'Try one of these' }}</span>
           <button type="button" :aria-label="zh ? '换一组建议' : 'Rotate suggestions'" @click="rotateSuggestions">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 8.5A7 7 0 0 1 18.5 7M17.9 15.5A7 7 0 0 1 5.5 17"/></svg>
+            <WorkspaceIcon name="refresh" />
           </button>
         </header>
         <button v-for="suggestion in visibleSuggestions" :key="suggestion" type="button" @click="useSuggestion(suggestion)">
           <b>{{ suggestion }}</b>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M14 7l5 5-5 5"/></svg>
         </button>
       </div>
     </section>
@@ -101,7 +102,7 @@
               <p>{{ message.text }}</p>
               <div v-if="message.attachments.length" class="message-files">
                 <span v-for="file in message.attachments" :key="file.clientId">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h9l5 5v12H5zM14 3.5v5h5"/></svg>
+                  <WorkspaceIcon name="file" :size="14" />
                   {{ file.name }} · {{ formatBytes(file.byteSize) }}
                 </span>
               </div>
@@ -150,6 +151,9 @@
           :attach-label="zh ? '添加文件' : 'Add files'"
           :attachment-count-label="zh ? '个文件' : 'files'"
           :attachment-hint="zh ? '文件会留在当前设备，只有云端任务需要时才上传' : 'Files stay on this device until a cloud task needs them'"
+          :request-label="zh ? '设计需求' : 'Design request'"
+          :send-label="zh ? '发送需求' : 'Send request'"
+          :remove-attachment-label="zh ? '移除' : 'Remove'"
           compact
           @update:draft="draft = $event"
           @submit="submitMessage"
@@ -162,9 +166,12 @@
     <template #environment>
       <div class="inspector-stack">
         <section class="inspector-section">
-          <header><span>{{ zh ? '本次任务' : 'This task' }}</span><b class="verified">{{ status?.enabled && status?.plannerReady ? (zh ? '已就绪' : 'Ready') : (zh ? '检查中' : 'Checking') }}</b></header>
+          <header>
+            <span>{{ zh ? '本次任务' : 'This task' }}</span>
+            <b v-if="!status?.enabled || !status?.plannerReady">{{ zh ? '检查中' : 'Checking' }}</b>
+          </header>
           <dl>
-            <div><dt>{{ zh ? '执行器' : 'Executor' }}</dt><dd>{{ executorSummary }}</dd></div>
+            <div v-if="latestExecution || activeRun"><dt>{{ zh ? '执行方式' : 'Executor' }}</dt><dd>{{ executorSummary }}</dd></div>
             <div><dt>{{ zh ? '预算上限' : 'Budget cap' }}</dt><dd>{{ activeRun?.budget.maximum ?? latestExecution?.maxCredits ?? status?.autoCreditCap ?? 50 }} cr</dd></div>
           </dl>
         </section>
@@ -232,7 +239,7 @@
         <div class="computer-screen" :class="{ active: activeRun && ['provisioning','running','waiting_user'].includes(activeRun.status) }">
           <span class="screen-bar"><i></i><i></i><i></i></span>
           <div>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            <WorkspaceIcon name="monitor" :size="20" />
             <b>{{ activeRun?.sandbox.takeoverAvailable ? (zh ? '等待你接管' : 'Waiting for takeover') : (zh ? '安全桌面' : 'Secure desktop') }}</b>
             <small>{{ activeRun ? runStatusLabel(activeRun.status) : (zh ? '任务启动后才会创建' : 'Created only after a run starts') }}</small>
           </div>
@@ -251,7 +258,7 @@
       <div class="file-panel">
         <header><span>{{ zh ? '验证交付物' : 'Verified deliverables' }}</span><b>{{ activeRun?.artifacts?.length || 0 }}</b></header>
         <a v-for="artifact in activeRun?.artifacts || []" :key="artifact.artifactId" :href="artifact.url || undefined" target="_blank" rel="noopener">
-          <span class="file-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h9l5 5v12H5zM14 3.5v5h5"/></svg></span>
+          <span class="file-icon"><WorkspaceIcon name="file" /></span>
           <span><b>{{ artifact.filename }}</b><small>{{ artifact.role }} · {{ formatBytes(artifact.byteSize) }}</small></span>
           <em :class="artifact.verificationStatus">{{ artifact.verificationStatus }}</em>
         </a>
@@ -262,7 +269,7 @@
     <div v-if="notice" class="workspace-notice" role="status">
       <span>{{ notice }}</span>
       <button type="button" :aria-label="zh ? '关闭通知' : 'Dismiss notification'" @click="notice = ''">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        <WorkspaceIcon name="close" :size="14" />
       </button>
     </div>
   </AgentWorkspaceShell>
@@ -286,6 +293,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
+import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import ExecutionCard from '../components/designConversation/ExecutionCard.vue';
 import { useLanguageStore } from '@/stores/language';
@@ -1000,7 +1008,7 @@ onBeforeUnmount(() => {
 .history-item b { overflow: hidden; font-size: 11px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .history-item small { color: var(--muted-2); font-size: 11px; }
 .history-empty { display: grid; min-height: 120px; place-content: center; place-items: center; gap: 8px; color: var(--muted-2); font-size: 11px; }
-.history-empty svg { width: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.history-empty svg { width: 20px; height: 20px; }
 
 .conversation-heading { display: flex; width: 100%; min-width: 0; align-items: center; gap: 9px; }
 .conversation-heading > div { display: grid; min-width: 0; gap: 2px; }
@@ -1010,7 +1018,7 @@ onBeforeUnmount(() => {
 .executor-mark.agent_run,.executor-mark.tool_task { background: var(--acid); }
 .quiet-action { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 8px; border: 0; border-radius: 8px; color: var(--muted); font-size: 11px; background: transparent; cursor: pointer; }
 .quiet-action:hover { color: var(--danger); background: var(--surface-hover); }
-.quiet-action svg { width: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.quiet-action svg { width: 14px; height: 14px; }
 
 .workspace-zero { display: grid; width: min(var(--conversation-max),calc(100% - 40px)); height: 100%; min-height: 0; margin: 0 auto; padding: clamp(54px,9vh,104px) 0 38px; overflow-y: auto; overscroll-behavior: contain; align-content: center; scrollbar-color: var(--border) transparent; }
 .zero-copy { margin: 0 0 20px; }
@@ -1029,14 +1037,14 @@ onBeforeUnmount(() => {
 .suggestion-grid { display: grid; gap: 2px; margin-top: 22px; }
 .suggestion-grid header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; color: var(--muted); font-size: 11px; font-weight: 620; }
 .suggestion-grid header button { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
-.suggestion-grid header button:hover { color: var(--text); background: var(--surface); }.suggestion-grid header svg { width: 14px; }
-.suggestion-grid > button { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; min-height: 38px; padding: 7px 8px; border: 0; border-radius: 8px; color: var(--muted); text-align: left; background: transparent; cursor: pointer; transition: color 170ms ease,background 170ms ease; }
+.suggestion-grid header button:hover { color: var(--text); background: var(--surface); }.suggestion-grid header svg { width: 16px; height: 16px; }
+.suggestion-grid > button { display: block; min-height: 38px; padding: 7px 8px; border: 0; border-radius: 8px; color: var(--muted); text-align: left; background: transparent; cursor: pointer; transition: color 170ms ease,background-color 170ms ease; }
 .suggestion-grid > button:hover { color: var(--text); background: var(--surface-hover); }
 .suggestion-grid > button:active { transform: scale(.995); }
-.suggestion-grid > button b { font-size: 12px; font-weight: 540; line-height: 1.5; }.suggestion-grid > button svg { width: 13px; }
+.suggestion-grid > button b { font-size: 12px; font-weight: 540; line-height: 1.5; }
 
-.workspace-chat { position: relative; display: grid; grid-template-rows: minmax(0,1fr) auto; height: 100%; min-height: 0; }
-.message-scroll { min-height: 0; overflow-y: auto; padding: 38px clamp(20px,5vw,64px) 32px; scrollbar-color: var(--border) transparent; scroll-padding-bottom: 32px; }
+.workspace-chat { --conversation-gutter: clamp(20px,5vw,64px); position: relative; display: grid; grid-template-rows: minmax(0,1fr) auto; height: 100%; min-height: 0; }
+.message-scroll { min-height: 0; overflow-y: auto; padding: 38px var(--conversation-gutter) 32px; scrollbar-color: var(--border) transparent; scroll-padding-bottom: 32px; }
 .authorization-strip { display: grid; width: min(var(--conversation-max),100%); gap: 8px; margin: 0 auto 24px; padding: 12px 12px 12px 15px; border: 0; border-radius: 10px; background: color-mix(in srgb,var(--warning) 8%,var(--surface)); box-shadow: inset 3px 0 var(--warning); }
 .authorization-strip header,.authorization-strip article { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }.authorization-strip header span { font-size: 12px; font-weight: 680; }.authorization-strip small { color: var(--muted); font-size: 11px; }.authorization-strip article { padding-top: 8px; }.authorization-strip article > span { display: grid; min-width: 0; gap: 2px; overflow-wrap: anywhere; }.authorization-strip article b { font-size: 12px; }.authorization-strip button { flex: 0 0 auto; min-height: 32px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--danger); font-size: 11px; background: var(--surface-hover); cursor: pointer; }
 .message { display: flex; width: min(var(--conversation-max),100%); gap: 10px; margin: 0 auto 18px; }
@@ -1049,7 +1057,7 @@ onBeforeUnmount(() => {
 .clarification { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }.clarification button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 8px; color: var(--text); font-size: 11px; background: var(--surface-hover); cursor: pointer; }.clarification button:hover { color: var(--acid-text); }.clarification .recommended { color: var(--acid-ink); background: var(--acid); }
 .planning-message { color: var(--muted); }.planning-line { display: flex; gap: 3px; margin-bottom: 6px; }.planning-line span { width: 5px; height: 5px; border-radius: 50%; background: var(--acid); animation: thinking 800ms ease-in-out infinite alternate; }.planning-line span:nth-child(2) { animation-delay: 120ms; }.planning-line span:nth-child(3) { animation-delay: 240ms; }
 @keyframes thinking { to { opacity: .25; transform: translateY(-2px); } }
-.docked-composer { position: relative; z-index: 12; padding: 16px clamp(20px,5vw,64px) 12px; background: var(--bg); }
+.docked-composer { position: relative; z-index: 12; padding: 16px var(--conversation-gutter) 12px; background: var(--bg); }
 .docked-composer :deep(.composer-box) { max-width: var(--conversation-max); margin: 0 auto; box-shadow: 0 14px 36px rgb(0 0 0 / 24%); }
 .docked-composer > p { max-width: var(--conversation-max); margin: 6px auto 0; color: var(--muted-2); font-size: 11px; text-align: center; }
 
@@ -1091,15 +1099,16 @@ onBeforeUnmount(() => {
 .subagent-card em { padding: 3px 5px; border: 0; border-radius: 5px; color: var(--muted); font-size: 11px; font-style: normal; white-space: nowrap; }.subagent-card em.running,.subagent-card em.queued { color: var(--acid-text); background: color-mix(in srgb,var(--acid) 8%,transparent); }.subagent-card em.succeeded { color: var(--success); }.subagent-card em.failed { color: var(--danger); }
 .subagent-card button { grid-column: 2/-1; justify-self: start; min-height: 30px; padding: 0 8px; border: 0; border-radius: 7px; color: var(--danger); font-size: 11px; background: var(--surface-hover); cursor: pointer; }
 
-.computer-screen { overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); aspect-ratio: 16/10; }.computer-screen.active { border-color: color-mix(in srgb,var(--acid) 34%,var(--border)); }.screen-bar { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border-bottom: 1px solid var(--border); background: var(--surface-raised); }.screen-bar i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }.computer-screen > div { display: grid; height: calc(100% - 22px); place-content: center; place-items: center; gap: 5px; color: var(--muted); text-align: center; }.computer-screen > div svg { width: 26px; }.computer-screen > div b { font-size: 11px; }.computer-screen > div small { color: var(--muted-2); font-size: 11px; }
+.computer-screen { overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); aspect-ratio: 16/10; }.computer-screen.active { border-color: color-mix(in srgb,var(--acid) 34%,var(--border)); }.screen-bar { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border-bottom: 1px solid var(--border); background: var(--surface-raised); }.screen-bar i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }.computer-screen > div { display: grid; height: calc(100% - 22px); place-content: center; place-items: center; gap: 5px; color: var(--muted); text-align: center; }.computer-screen > div svg { width: 20px; height: 20px; }.computer-screen > div b { font-size: 11px; }.computer-screen > div small { color: var(--muted-2); font-size: 11px; }
 
-.file-panel > a { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 9px 10px; border: 0; color: var(--text); text-decoration: none; }.file-panel > a:hover { background: var(--surface-raised); }.file-icon { display: grid; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: var(--surface-raised); }.file-icon svg { width: 13px; }.file-panel > a > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }.file-panel > a b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }.file-panel > a small { color: var(--muted); font-size: 11px; }.file-panel em { font-size: 11px; font-style: normal; }.file-panel em.passed { color: var(--success); }.file-panel em.failed { color: var(--danger); }
+.file-panel > a { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 9px 10px; border: 0; color: var(--text); text-decoration: none; }.file-panel > a:hover { background: var(--surface-raised); }.file-icon { display: grid; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: var(--surface-raised); }.file-icon svg { width: 16px; height: 16px; }.file-panel > a > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }.file-panel > a b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }.file-panel > a small { color: var(--muted); font-size: 11px; }.file-panel em { font-size: 11px; font-style: normal; }.file-panel em.passed { color: var(--success); }.file-panel em.failed { color: var(--danger); }
 .inspector-inline-empty { padding: 18px 12px; color: var(--muted); font-size: 11px; line-height: 1.55; text-align: center; }
 
-.workspace-notice { position: fixed; top: 68px; right: 20px; z-index: 300; display: flex; align-items: center; gap: 12px; max-width: 420px; padding: 10px 11px; border: 0; border-radius: 9px; color: var(--text); font-size: 11px; background: var(--surface); box-shadow: 0 18px 50px rgb(0 0 0 / 30%); }.workspace-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }.workspace-notice button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }.workspace-notice svg { width: 13px; }
+.workspace-notice { position: fixed; top: 68px; right: 20px; z-index: 300; display: flex; align-items: center; gap: 12px; max-width: 420px; padding: 10px 11px; border: 0; border-radius: 9px; color: var(--text); font-size: 11px; background: var(--surface); box-shadow: 0 18px 50px rgb(0 0 0 / 30%); }.workspace-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }.workspace-notice button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }.workspace-notice svg { width: 14px; height: 14px; }
 .visually-hidden { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 @media (max-width: 799px) {
+  .workspace-chat { --conversation-gutter: 12px; }
   .history-item { min-height: 44px; }
   .quiet-action { min-width: 44px; min-height: 44px; justify-content: center; }
   .quiet-action span { display: none; }
@@ -1109,8 +1118,8 @@ onBeforeUnmount(() => {
   .suggestion-grid header button,.authorization-strip button,.clarification button,.subagent-card button,.workspace-notice button { min-width: 44px; min-height: 44px; }
   .zero-meta span:nth-child(n+2) { display: none; }
   .authorization-strip header,.authorization-strip article { align-items: flex-start; flex-wrap: wrap; }.authorization-strip button { margin-left: auto; }
-  .message-scroll { padding: 24px 12px; }.message-body,.message.user .message-body { max-width: 88%; font-size: 14px; }
-  .docked-composer { padding: 10px 8px 8px; }.docked-composer > p { display: none; }
+  .message-scroll { padding-block: 24px; }.message-body,.message.user .message-body { max-width: 88%; font-size: 14px; }
+  .docked-composer { padding-block: 10px 8px; }.docked-composer > p { display: none; }
   :deep(.composer-box textarea) { font-size: 16px; }
   :deep(.composer-box .attach),:deep(.composer-box .send) { min-width: 44px; min-height: 44px; }
   .workspace-notice { top: 62px; right: 10px; left: 10px; max-width: none; }

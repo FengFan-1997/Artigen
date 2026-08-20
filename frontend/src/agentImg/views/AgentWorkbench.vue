@@ -6,7 +6,6 @@
     :status-label="workspaceStatus.label"
     :status-tone="workspaceStatus.tone"
     :credit-label="quoteIsCurrent && quote ? `${quote.freeCreditsRemaining} ${zh ? '点可用' : 'available'}` : '—'"
-    :account-label="zh ? '账户与偏好' : 'Account & preferences'"
     default-inspector-tab="environment"
     :live-announcement="notice"
     @new-task="resetRunDraft"
@@ -16,7 +15,7 @@
         <div class="history-label">
           <span>{{ zh ? '最近运行' : 'Recent runs' }}</span>
           <button type="button" :aria-label="zh ? '刷新任务' : 'Refresh runs'" :disabled="loadingRuns" @click="loadRuns">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M18.2 12A6.5 6.5 0 0 0 7 7.5L4 12M5.8 12A6.5 6.5 0 0 0 17 16.5l3-4.5"/></svg>
+            <WorkspaceIcon name="refresh" />
           </button>
         </div>
         <div v-if="loadingRuns" class="history-empty">{{ zh ? '正在同步…' : 'Syncing…' }}</div>
@@ -41,7 +40,6 @@
           <div class="prompt-suggestions" :aria-label="zh ? '任务建议' : 'Task suggestions'">
             <button v-for="(preset, index) in presets" :key="preset" type="button" @click="applyPreset(index)">
               <span>{{ suggestionLabels[index] }}</span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
             </button>
           </div>
         </div>
@@ -72,7 +70,7 @@
                   <div><dt>{{ zh ? '结算' : 'Billing' }}</dt><dd>{{ zh ? '仅一次' : 'Once' }}</dd></div>
                 </dl>
                 <button class="run-action" type="button" :disabled="busy || quote.canStart === false" @click="startRun">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>
+                  <WorkspaceIcon name="play" />
                   {{ creating ? (zh ? '正在启动…' : 'Starting…') : (zh ? '确认并运行' : 'Confirm and run') }}
                 </button>
               </template>
@@ -91,30 +89,32 @@
           <label class="objective-field">
             <span class="sr-only">{{ zh ? '任务目标' : 'Task objective' }}</span>
             <textarea
+              ref="objectiveTextarea"
               v-model="form.objective"
               name="agent-objective"
               rows="2"
               maxlength="20000"
               autocomplete="off"
               :placeholder="zh ? '描述目标、受众、交付物或参考方向…' : 'Describe the goal, audience, deliverables, or references…'"
+              @input="resizeObjective"
               @keydown.enter.exact.prevent="sendObjective"
             />
           </label>
           <div v-if="selectedFiles.length" class="input-files">
             <span v-for="file in selectedFiles" :key="`${file.name}:${file.size}`">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h9l5 5v12H5z"/><path d="M14 3.5v5h5"/></svg>
+              <WorkspaceIcon name="file" />
               {{ file.name }}
             </span>
             <button type="button" @click="selectedFiles = []">{{ zh ? '清空' : 'Clear' }}</button>
           </div>
           <footer>
             <button class="attach-control" type="button" :title="zh ? '文件会留在当前设备，启动任务后才上传' : 'Files stay on this device until the run starts'" @click="openFilePicker">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 5.5-5.5a3 3 0 0 1 4.2 4.2l-7.5 7.5a5 5 0 0 1-7.1-7.1l7-7"/></svg>
+              <WorkspaceIcon name="attachment" />
               <span>{{ zh ? '添加参考' : 'Add reference' }}</span>
             </button>
             <span class="objective-count">{{ form.objective.length.toLocaleString() }} / 20,000</span>
             <button class="send-action" type="button" :aria-label="zh ? '发送任务目标' : 'Send task objective'" :disabled="busy || form.objective.trim().length < 3" @click="sendObjective">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6z"/><path d="m12 13 7-8"/></svg>
+              <WorkspaceIcon name="send" :size="20" />
             </button>
           </footer>
         </div>
@@ -150,25 +150,27 @@
             </label>
           </div>
         </section>
-        <section class="inspector-card">
-          <header><span>{{ zh ? '能力' : 'Capabilities' }}</span></header>
-          <div class="capability-list">
-            <label v-for="capability in capabilityOptions" :key="capability.id" :class="{ disabled: capability.disabled }">
-              <input v-model="form.capabilities[capability.id]" :name="`capability-${capability.id}`" type="checkbox" :disabled="capability.disabled" />
-              <span><b>{{ capability.label }}</b></span>
-            </label>
-          </div>
-        </section>
-        <section v-if="form.capabilities.browser" class="inspector-card browser-scope">
-          <header><span>{{ zh ? '浏览器范围' : 'Browser scope' }}</span></header>
-          <input v-model.trim="form.browserOrigins" name="allowed-origins" type="text" autocomplete="off" spellcheck="false" :placeholder="zh ? '例如 https://example.com…' : 'For example, https://example.com…'" />
-          <label><input v-model="form.persistSession" name="persist-browser-session" type="checkbox" />{{ zh ? '加密保存会话 30 天' : 'Encrypt session for 30 days' }}</label>
-          <select v-if="browserProfiles.length" v-model="form.profileId" name="browser-profile" @change="selectBrowserProfile">
-            <option value="">{{ zh ? '不恢复已保存会话' : 'No saved session' }}</option>
-            <option v-for="profile in browserProfiles" :key="profile.profileId" :value="profile.profileId">{{ profile.label }} · {{ profile.siteOrigin }}</option>
-          </select>
-          <button v-if="form.profileId" type="button" class="text-danger" @click="revokeSelectedProfile">{{ zh ? '撤销会话' : 'Revoke session' }}</button>
-        </section>
+        <TechnicalDetails :label="zh ? '运行设置' : 'Run settings'">
+          <section class="inspector-card runtime-settings">
+            <header><span>{{ zh ? '能力' : 'Capabilities' }}</span></header>
+            <div class="capability-list">
+              <label v-for="capability in capabilityOptions" :key="capability.id" :class="{ disabled: capability.disabled }">
+                <input v-model="form.capabilities[capability.id]" :name="`capability-${capability.id}`" type="checkbox" :disabled="capability.disabled" />
+                <span><b>{{ capability.label }}</b></span>
+              </label>
+            </div>
+          </section>
+          <section v-if="form.capabilities.browser" class="inspector-card browser-scope runtime-settings">
+            <header><span>{{ zh ? '浏览器范围' : 'Browser scope' }}</span></header>
+            <input v-model.trim="form.browserOrigins" name="allowed-origins" type="text" autocomplete="off" spellcheck="false" :placeholder="zh ? '例如 https://example.com…' : 'For example, https://example.com…'" />
+            <label><input v-model="form.persistSession" name="persist-browser-session" type="checkbox" />{{ zh ? '加密保存会话 30 天' : 'Encrypt session for 30 days' }}</label>
+            <select v-if="browserProfiles.length" v-model="form.profileId" name="browser-profile" @change="selectBrowserProfile">
+              <option value="">{{ zh ? '不恢复已保存会话' : 'No saved session' }}</option>
+              <option v-for="profile in browserProfiles" :key="profile.profileId" :value="profile.profileId">{{ profile.label }} · {{ profile.siteOrigin }}</option>
+            </select>
+            <button v-if="form.profileId" type="button" class="text-danger" @click="revokeSelectedProfile">{{ zh ? '撤销会话' : 'Revoke session' }}</button>
+          </section>
+        </TechnicalDetails>
         <section class="inspector-card">
           <header><span>{{ zh ? '最高预算' : 'Maximum budget' }}</span><b>{{ form.maxCredits }} {{ zh ? '点' : 'cr' }}</b></header>
           <input v-model.number="form.maxCredits" name="max-credits" class="budget-range" type="range" min="10" max="500" step="10" :aria-label="zh ? '最高预算点数' : 'Maximum credit budget'" />
@@ -253,6 +255,7 @@ import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
+import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
 import {
   createAgentRun,
   getAgentServiceStatus,
@@ -281,6 +284,7 @@ const quoting = ref(false);
 const creating = ref(false);
 const selectedFiles = ref<File[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
+const objectiveTextarea = ref<HTMLTextAreaElement | null>(null);
 const browserProfiles = ref<AgentBrowserProfile[]>([]);
 const submittedObjective = ref('');
 const notice = ref('');
@@ -316,6 +320,14 @@ const form = reactive({
     image: false
   } as Record<string, boolean>
 });
+
+const resizeObjective = () => {
+  const element = objectiveTextarea.value;
+  if (!element) return;
+  element.style.height = 'auto';
+  element.style.height = `${Math.min(180, Math.max(62, element.scrollHeight))}px`;
+};
+watch(() => form.objective, resizeObjective, { flush: 'post' });
 
 const capabilityOptions = computed(() => [
   { id: 'files', label: zh.value ? '文档与文件' : 'Documents & files', disabled: false },
@@ -639,18 +651,17 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.agent-conversation { display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.agent-conversation { --conversation-max: 760px; --conversation-gutter: 24px; display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
-.conversation-empty { display: grid; width: min(760px, calc(100% - 48px)); min-height: 100%; margin: 0 auto; padding: clamp(40px, 9vh, 88px) 0 40px; align-content: center; justify-items: start; }
+.conversation-empty { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); min-height: 100%; margin: 0 auto; padding: clamp(40px, 9vh, 88px) 0 40px; align-content: center; justify-items: start; }
 .conversation-empty h1 { margin: 0; color: var(--text); font-size: clamp(22px, 3vw, 28px); font-weight: 690; line-height: 1.25; letter-spacing: -.025em; text-wrap: balance; }
 .prompt-suggestions { display: grid; width: min(100%, 620px); gap: 2px; margin-top: 20px; }
-.prompt-suggestions button { display: flex; width: 100%; min-height: 40px; align-items: center; justify-content: space-between; gap: 12px; padding: 8px; color: var(--muted); border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease; }
+.prompt-suggestions button { display: block; width: 100%; min-height: 40px; padding: 8px; color: var(--muted); border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease; }
 .prompt-suggestions button:hover { color: var(--text); background: var(--surface-hover); }
 .prompt-suggestions button:active { transform: scale(.995); }
 .prompt-suggestions button:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
 .prompt-suggestions span { font-size: 13px; }
-.prompt-suggestions svg { flex: 0 0 auto; width: 16px; }
-.conversation-thread { display: grid; width: min(760px, calc(100% - 48px)); margin: 0 auto; padding: 36px 0 64px; gap: 28px; }
+.conversation-thread { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 36px 0 64px; gap: 28px; }
 .conversation-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; align-items: start; }
 .message-avatar { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; color: var(--muted); font-size: 11px; font-weight: 700; background: var(--surface); }
 .agent-avatar { color: var(--acid-ink); background: var(--acid); }
@@ -664,17 +675,16 @@ onBeforeUnmount(() => {
 .quote-summary div { display: grid; gap: 4px; padding: 10px 11px; background: transparent; }
 .quote-summary dt { color: var(--muted); font-size: 11px; }
 .quote-summary dd { margin: 0; color: var(--text); font: 680 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.conversation-dock { position: relative; z-index: 2; width: 100%; padding: 12px 20px max(12px, env(safe-area-inset-bottom)); background: var(--bg); }
-.objective-composer { width: min(760px, 100%); margin: 0 auto; overflow: hidden; border: 0; border-radius: 15px; background: var(--surface); box-shadow: 0 14px 34px rgb(0 0 0 / 18%); transition: box-shadow 180ms ease; }
+.conversation-dock { position: relative; z-index: 2; width: 100%; padding: 12px var(--conversation-gutter) max(12px, env(safe-area-inset-bottom)); background: var(--bg); }
+.objective-composer { width: min(var(--conversation-max), 100%); margin: 0 auto; overflow: hidden; border: 0; border-radius: 15px; background: var(--surface); box-shadow: 0 14px 34px rgb(0 0 0 / 18%); transition: box-shadow 180ms ease; }
 .objective-composer:focus-within { box-shadow: 0 0 0 2px var(--acid), 0 18px 44px rgb(0 0 0 / 20%); }
 .objective-field { display: block; }
-.objective-composer textarea { display: block; width: 100%; min-height: 62px; max-height: 180px; resize: vertical; box-sizing: border-box; padding: 13px 14px 7px; color: var(--text); border: 0; outline: 0; background: transparent; font: 400 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif; }
+.objective-composer textarea { display: block; width: 100%; min-height: 62px; max-height: 180px; resize: none; box-sizing: border-box; padding: 13px 14px 7px; overflow-y: auto; color: var(--text); border: 0; outline: 0; background: transparent; font: 400 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif; }
 .objective-composer textarea::placeholder { color: var(--muted); }
 .objective-composer footer { display: flex; align-items: center; gap: 9px; padding: 7px 8px 8px; }
 .attach-control { display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 0 9px; color: var(--muted); border: 1px solid transparent; border-radius: 8px; cursor: pointer; font-size: 12px; background: transparent; }
 .attach-control:hover { color: var(--text); background: var(--surface-raised); }
 .attach-control:focus-visible { outline: 2px solid var(--acid); outline-offset: 1px; }
-.attach-control svg, .run-action svg, .send-action svg, .input-files svg, .history-label svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .objective-count { margin-left: auto; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .run-action { min-height: 38px; padding: 0 13px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .run-action { display: inline-flex; align-items: center; gap: 7px; color: #0e100f; border: 0; background: var(--acid); }
@@ -723,6 +733,7 @@ onBeforeUnmount(() => {
 .option-grid b, .capability-list b { color: var(--text); font-size: 11px; }
 .option-grid small, .capability-list small { font-size: 11px; }
 .capability-list { display: grid; gap: 6px; }
+.runtime-settings { padding-inline: 0; }
 .browser-scope { display: grid; gap: 8px; }
 .browser-scope header { margin-bottom: 2px; }
 .browser-scope > input, .browser-scope select { min-height: 38px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 12px; }
@@ -752,7 +763,7 @@ onBeforeUnmount(() => {
 .visually-hidden { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 @media (max-width: 800px) {
-  .conversation-empty, .conversation-thread { width: min(100% - 28px, 780px); }
+  .agent-conversation { --conversation-gutter: 14px; }
   .conversation-empty { padding-block: 28px; }
   .conversation-empty h1 { font-size: 22px; }
   .conversation-empty > p, .conversation-message p { font-size: 14px; }
@@ -760,7 +771,7 @@ onBeforeUnmount(() => {
   .conversation-thread { padding: 24px 0 40px; gap: 24px; }
   .conversation-message { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
   .quote-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .conversation-dock { padding: 8px 8px max(12px, env(safe-area-inset-bottom)); }
+  .conversation-dock { padding-block: 8px max(12px, env(safe-area-inset-bottom)); }
   .objective-composer textarea { min-height: 64px; font-size: 16px; }
   .objective-count { display: none; }
   .attach-control, .run-action, .send-action, .input-files button { min-height: 44px; }
@@ -772,7 +783,7 @@ onBeforeUnmount(() => {
   .conversation-empty { align-content: start; padding-block: 24px; }
   .prompt-suggestions { gap: 5px; }
   .prompt-suggestions button { min-height: 38px; }
-  .conversation-dock { padding: 4px 8px max(8px, env(safe-area-inset-bottom)); }
+  .conversation-dock { padding-block: 4px max(8px, env(safe-area-inset-bottom)); }
   .objective-composer textarea { min-height: 44px; max-height: 92px; padding-top: 9px; }
   .objective-composer footer { padding-block: 4px; }
 }
