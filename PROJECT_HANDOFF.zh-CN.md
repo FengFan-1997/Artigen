@@ -17,6 +17,7 @@
 - 几何审计新增硬门槛：共享图标尺寸不得变形，纯图标按钮中心误差不超过 0.5px，图标/文字基线误差不超过 1px，桌面标题左对齐与移动标题居中必须显式成立，消息/Composer 左右轴误差不超过 1px，同时拒绝可手动拖大 textarea、带意外 padding 的发送动作、DEV 徽标碰撞和不足 44px 的移动触控目标。
 - 三遍审核已完成：Impeccable 对核心八文件机械检测返回 `[]`；类型检查、变更文件 ESLint 与 `git diff --check` 通过；工作台专项矩阵在 Chromium、Firefox、WebKit desktop、360、390 与 WebKit 768 为 120/120。完整 `pnpm check` 退出码 0：前端 216/216、Agent 质量集 50/50、生产构建与 87.5 KiB gzip 初始 JS 预算通过，Playwright 为 483 passed / 3 条既有条件跳过 / 0 failed，耗时 17.3 分钟。
 - 自动截图覆盖 1440、1439、1200、1199、1180、1024、800/799、768、430、400/399、390、360、844/667 横屏、200% 等效窄视口、暗色/浅色/系统主题、运行详情与子 Agent，证据保存在被忽略的 `.artifacts/workspace-micro-alignment-8bdb24b/`；代表性桌面、移动、活跃会话、运行详情和浅色截图已逐张人工复核。
+- 实现提交 `5a66e92` 已通过 feature PR [#103](https://github.com/FengFan-1997/Artigen/pull/103) 提交到 `dev` 审核；不得绕过 Core、跨浏览器 E2E 与 Release gate。本文记录的是已提交实现，不代表已经合入 DEV 或发布生产。
 - 本轮不触碰 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。`ui-review/` 始终作为用户未跟踪资产，禁止读取、进入、修改、删除、暂存或提交。下一步只能通过 feature PR 合入 `dev`，再执行同 SHA DEV smoke；尚未发布到生产。
 
 ## 2026-08-19 无边框工作台细节优化（生产已发布）
