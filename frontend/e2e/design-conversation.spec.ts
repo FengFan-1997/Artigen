@@ -285,12 +285,12 @@ test('guest draft survives email login and sends automatically after verificatio
   await expect(page.getByText('文件会留在当前设备，只有云端任务需要时才上传')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /添加文件: 文件会留在当前设备/ })).toBeVisible();
   const draft = '为新款柚子气泡水设计一张夏日主视觉';
-  await page.getByLabel('Design request').fill(draft);
-  await page.getByRole('button', { name: 'Send request' }).click();
+  await page.getByLabel(/^(?:设计需求|Design request)$/).fill(draft);
+  await page.getByRole('button', { name: /^(?:发送需求|Send request)$/ }).click();
 
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await expect(page.getByLabel('Design request')).toHaveValue(draft);
+  await expect(page.getByLabel(/^(?:设计需求|Design request)$/)).toHaveValue(draft);
   await dialog.getByRole('button', { name: /邮箱登录|Email Login/i }).click();
   await dialog.locator('input[autocomplete="email"]').fill('designer@example.com');
   await dialog.locator('button.primary').click();
@@ -299,7 +299,7 @@ test('guest draft survives email login and sends automatically after verificatio
 
   await expect.poll(() => sentMessage).toMatchObject({ message: draft, attachments: [] });
   await expect(page).toHaveURL(new RegExp(`/artigen/create\\?c=${conversationId}`));
-  await expect(page.getByLabel('Design request')).toHaveValue('');
+  await expect(page.getByLabel(/^(?:设计需求|Design request)$/)).toHaveValue('');
   await expect(page.locator('.message.user')).toContainText(draft);
 });
 
@@ -403,7 +403,7 @@ test('mobile chat uses a history drawer and keeps the docked composer reachable'
   await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-drawer-open/);
   await expect(historyButton).toBeFocused();
   await expect(page.locator('.docked-composer')).toBeVisible();
-  await expect(page.getByLabel('Design request')).toBeEditable();
+  await expect(page.getByLabel(/^(?:设计需求|Design request)$/)).toBeEditable();
   await expect(page.locator('input[type="file"]')).toHaveAttribute('tabindex', '-1');
   await expect(page.locator('input[type="file"]')).toHaveAttribute('aria-label', '添加参考文件');
   await expectWorkspaceGeometry(page, { mobile: true });
@@ -439,7 +439,7 @@ test('zero state stays scrollable and aligned across desktop, zoom, short and la
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT && viewport.height <= 640) {
       await page.screenshot({
-        path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/create-zero-${viewport.name}-top.png`),
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-micro-alignment-${capturePass}/create-zero-${viewport.name}-top.png`),
         animations: 'disabled'
       });
     }
@@ -449,7 +449,7 @@ test('zero state stays scrollable and aligned across desktop, zoom, short and la
     }
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
       await page.screenshot({
-        path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/create-zero-${viewport.name}${viewport.height <= 640 ? '-scrolled' : ''}.png`),
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-micro-alignment-${capturePass}/create-zero-${viewport.name}${viewport.height <= 640 ? '-scrolled' : ''}.png`),
         animations: 'disabled'
       });
     }
@@ -483,7 +483,7 @@ test('active conversation keeps cards, approvals and dock aligned across extreme
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
       await page.screenshot({
-        path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/create-chat-${viewport.name}.png`),
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-micro-alignment-${capturePass}/create-chat-${viewport.name}.png`),
         animations: 'disabled'
       });
     }
@@ -564,7 +564,7 @@ test('failed executions show the error, credit disposition and an editable retry
   await expect(failure).toContainText('已扣 8 点');
   await expect(failure).toContainText('已释放 20 点冻结');
   await page.getByRole('button', { name: '载入原要求并修改' }).click();
-  await expect(page.getByLabel('Design request')).toHaveValue('审计品牌官网，交付 PDF 与可编辑演示文稿。');
+  await expect(page.getByLabel(/^(?:设计需求|Design request)$/)).toHaveValue('审计品牌官网，交付 PDF 与可编辑演示文稿。');
 });
 
 test('raising an over-cap quote changes only this execution and still requires an explicit start', async ({ page }) => {

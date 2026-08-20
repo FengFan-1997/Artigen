@@ -542,7 +542,7 @@ test('workspace reflows across desktop, tablet, mobile, landscape and 200 percen
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
       await page.screenshot({
-        path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/agent-zero-${viewport.name}.png`),
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-micro-alignment-${capturePass}/agent-zero-${viewport.name}.png`),
         animations: 'disabled'
       });
     }
@@ -572,7 +572,7 @@ test('run detail keeps chrome, composer and inspector aligned across extreme vie
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
       await page.screenshot({
-        path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/run-detail-${viewport.name}.png`),
+        path: path.resolve(process.cwd(), `../.artifacts/workspace-micro-alignment-${capturePass}/run-detail-${viewport.name}.png`),
         animations: 'disabled'
       });
     }
@@ -582,7 +582,7 @@ test('run detail keeps chrome, composer and inspector aligned across extreme vie
       await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
       if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
         await page.screenshot({
-          path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/run-subagents-${viewport.name}.png`),
+          path: path.resolve(process.cwd(), `../.artifacts/workspace-micro-alignment-${capturePass}/run-subagents-${viewport.name}.png`),
           animations: 'disabled'
         });
       }
@@ -603,7 +603,7 @@ test('dark, light, system and reduced-motion workspace states keep names and con
   expect(audit.missingNames).toEqual([]);
   expect(audit.lowContrast).toEqual([]);
   if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
-    await page.screenshot({ path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/theme-dark-reduced-motion.png`), animations: 'disabled' });
+    await page.screenshot({ path: path.resolve(process.cwd(), `../.artifacts/workspace-micro-alignment-${capturePass}/theme-dark-reduced-motion.png`), animations: 'disabled' });
   }
 
   const themeControl = page.locator('.workspace-account button').nth(1);
@@ -614,14 +614,14 @@ test('dark, light, system and reduced-motion workspace states keep names and con
   expect(audit.missingNames).toEqual([]);
   expect(audit.lowContrast).toEqual([]);
   if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
-    await page.screenshot({ path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/theme-light.png`), animations: 'disabled' });
+    await page.screenshot({ path: path.resolve(process.cwd(), `../.artifacts/workspace-micro-alignment-${capturePass}/theme-light.png`), animations: 'disabled' });
   }
 
   await themeControl.click();
   await expect(shell).toHaveAttribute('data-theme', 'dark');
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('artigen-workspace-preferences') || '{}').theme)).toBe('system');
   if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
-    await page.screenshot({ path: path.resolve(process.cwd(), `../.artifacts/workspace-borderless-polish-${capturePass}/theme-system-dark.png`), animations: 'disabled' });
+    await page.screenshot({ path: path.resolve(process.cwd(), `../.artifacts/workspace-micro-alignment-${capturePass}/theme-system-dark.png`), animations: 'disabled' });
   }
   const duration = await page.locator('.prompt-suggestions button').first().evaluate((element) =>
     Math.max(...getComputedStyle(element).transitionDuration.split(',').map((value) => {

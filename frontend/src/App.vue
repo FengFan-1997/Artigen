@@ -70,4 +70,31 @@ const isDevEnvironment = appEnvironment === 'dev' || appEnvironment === 'develop
     padding-right: 60px;
   }
 }
+
+@media (min-width: 1440px) {
+  body:has(.agent-workspace-shell) .dev-environment-badge {
+    top: 12px;
+    right: max(8px, env(safe-area-inset-right));
+    left: auto;
+    display: grid;
+    width: 44px;
+    height: 28px;
+    padding: 0;
+    transform: none;
+    place-items: center;
+    font-size: 0;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  body:has(.agent-workspace-shell) .dev-environment-badge::after {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    content: 'DEV';
+  }
+
+  body:has(.dev-environment-badge) .agent-workspace-shell .inspector-head {
+    padding-right: 60px;
+  }
+}
 </style>
