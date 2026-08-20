@@ -8,7 +8,7 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
-## 2026-08-20 Codex 参考工作台视觉精修（本地完成，尚未发布）
+## 2026-08-20 Codex 参考工作台视觉精修（DEV 已验收，待 Release）
 
 - 用户提供 Codex 暗色桌面参考，要求继续提升 Artigen 工作台完成度。借鉴范围限定为安静项目轨、文档式对话阅读轴、悬浮任务上下文、厚实底部 Composer、层叠石墨表面以及一致的图标/文字几何；不复制 OpenAI 品牌、资产、文案或像素级组件。
 - `/artigen/create`、`/artigen/agent` 与 `/artigen/agent/runs/:runId` 继续使用同一三栏产品结构。默认桌面几何调整为 272px 左栏、820px 中央阅读轴和 380px 右栏；Inspector 使用 12px 内缩、18px 圆角与克制阴影形成独立上下文层，酸性绿仍只承担执行状态、主动作和焦点。
@@ -17,7 +17,10 @@
 - 两轮有界截图审核覆盖 1440px 桌面和 390px 移动的 Create、Agent 与 Run Detail。首轮真实捕获并修复 799px 触控尺寸、浅色对比度和关闭 Inspector 闪边；确认轮工作台定向测试 `20/20`。Impeccable 机械检测为 `[]`，type-check、变更文件 ESLint 与 `git diff --check` 通过。
 - 完整 `pnpm check` 退出码 0：前端单元 `216/216`，后端、邮件、Agent 质量、生产构建与 87.5 KiB gzip 初始 JS 预算全部通过；Playwright 为 `483 passed / 3 skipped / 0 failed`，覆盖 Chromium、Firefox、WebKit、360/390px 与 WebKit 768px，耗时 17.4 分钟。
 - 本轮只修改前端、E2E、设计规范与代表性审查截图；不修改后端、API、数据库、模型、Worker、计费、生产开关、Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。`ui-review/` 继续作为用户未跟踪资产，禁止读取、进入、修改、删除、暂存或提交。
-- 当前尚未提交、创建 PR、部署或改变线上状态；任何 DEV/生产结论必须在对应阶段重新核验接口、Render/Vercel deployment 与 Worker，不能沿用本文旧部署记录。
+- 实现提交 `a1bd63f94cd84334476e46da1448252176c126c6` 经 feature PR [#108](https://github.com/FengFan-1997/Artigen/pull/108) 的 Core、8 路跨浏览器 E2E 与 Release gate 全绿后正常合入 `dev`，merge SHA 为 `0a4ec367ff1382b7fa081b8f869c0bbe779ece93`。两个 Cloudflare Workers 外部构建继续为既有非 required failure，没有计作通过或用于绕过保护；Vercel Preview deployments `6001369517` 与 `6001357080` 均为 `success`。
+- Render DEV deployment `dep-da3ebfjm8hqs739nqk6g` 已 `live` 且精确运行 `0a4ec367...`。带 DEV Basic Auth 重新读取 `/api/meta`、`/readyz`、`/api/agent/status`、`/api/design-assistant/status` 与 `/api/generation/models` 全部 HTTP 200：`appEnv=dev`、migration 023、PostgreSQL、S3、Provider、支付、邮件、对话规划和 Agent 配置 ready，Qwen3/Kolors 锁定正确，两种图片模式均 `available=true`，queue=0。
+- DEV Mac Worker 延续既有离线状态，浏览器、受限出口与桌面中继诚实显示未就绪；本次 UI-only smoke 未调用付费模型，也没有把功能配置存在误报为 Worker ready。真实 Render DEV Create/Agent 在 1440、1024、768、390px 生成 8 张基线截图并追加 4 张 1024/390px Inspector 打开态；全部 HTTP 200、无页面错误、无横向溢出、无小于 44px 的可见移动按钮，12 张均已人工复核，证据位于被忽略的 `.artifacts/codex-referenced-workspace-dev-0a4ec36/`。
+- 当前只完成 DEV 验收，尚未进入 `dev → main` Release 或改变生产三端；生产接口、Render/Vercel deployment 与 Worker 必须在发布阶段重新核验，不能沿用本文旧生产记录。
 
 ## 2026-08-20 工作台微对齐与信息蒸馏精修（生产已发布）
 
