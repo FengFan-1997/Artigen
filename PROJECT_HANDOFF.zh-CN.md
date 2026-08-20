@@ -8,7 +8,7 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
-## 2026-08-20 工作台微对齐与信息蒸馏精修（DEV 验收通过，待生产发布）
+## 2026-08-20 工作台微对齐与信息蒸馏精修（生产已发布）
 
 - 分支 `codex/workspace-micro-alignment-polish` 基于最新 `origin/dev` SHA `8bdb24b...`。本轮保留既有暗色无边框三栏结构，只处理图标几何、文字对齐、阅读轴、信息层级和无障碍细节；没有修改后端、API、数据库、模型、Worker、计费、生产开关或网络配置。
 - 新增共享 `WorkspaceIcon`，将 Shell、Create、Computer Agent、Run Detail、Composer 和执行卡的工作台图标统一到 24×24 viewBox、14/16/18/20px 尺寸阶梯、1.75px 圆角描边和固定 flex 几何。发送、附件、刷新、删除、文件、暂停/恢复/停止等动作不再各自携带漂移的 SVG 与 stroke 规则；纯图标按钮显式归零 padding，移动附件动作在隐藏文字后保持真正居中。
@@ -20,7 +20,13 @@
 - 实现提交 `5a66e92` 与文档提交 `10581e2` 经 feature PR [#103](https://github.com/FengFan-1997/Artigen/pull/103) 的 Core、8 路跨浏览器 E2E 与 Release gate 全绿后合入 `dev`，merge SHA 为 `736eef4e5438cb3848d09cd9b3c16b708bd52045`；合并后的 DEV push run `32353871774` 再次完整通过 Core、8 路 E2E 与 Release gate。两个 Cloudflare Workers 外部状态仍为既有非 required failure，没有计作通过或用于绕过保护。
 - Render DEV deployment `dep-da3cgdu7bikc738vjptg` 已 `live` 且精确运行 `736eef4...`；同 SHA 的 Vercel GitHub Preview deployments `5999505911`（Artigen）与 `5999517771`（GitHub Pages 项目）均为 `success`。带 DEV 门禁重新读取 `/api/meta`、`/readyz`、`/api/agent/status`、`/api/design-assistant/status` 与 `/api/generation/models` 全部 HTTP 200：`appEnv=dev`、数据库迁移 023、PostgreSQL、S3、对话规划、Qwen3/Kolors 锁定和两种图片模式均 ready/available，queue=0。
 - DEV Mac Worker 当前仍为既有离线状态，因此浏览器、受限出口和桌面中继诚实显示未就绪；本次纯前端验收未调用付费模型，也没有把功能配置存在误报为 Worker ready。真实 DEV Create/Agent 在 1440、1024、800、768、390、360px 共生成 12 张截图，自动几何报告为 0 横向溢出、0 DEV 徽标/标题碰撞、0 Composer 越界、0 页面异常、0 小于 44px 的可见移动按钮；12 张均已人工复核，证据位于被忽略的 `.artifacts/workspace-micro-alignment-dev-736eef4/`。
-- 本轮不触碰 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。`ui-review/` 始终作为用户未跟踪资产，禁止读取、进入、修改、删除、暂存或提交。下一步只能通过证据 PR 固化本节，再创建 `dev → main` Release PR；尚未发布到生产。
+- DEV 证据经 PR [#104](https://github.com/FengFan-1997/Artigen/pull/104) 合入后，最终 DEV SHA 为 `cca613001f701cfa464549e6bd4a5de53a469539`；Render DEV deployment `dep-da3cnprl550s738354j0` 为同 SHA `live`，合并后 Quality Gate run `32355209398` 的 Core、全部跨浏览器 E2E 与 Release gate 全绿。
+- Release PR [#105](https://github.com/FengFan-1997/Artigen/pull/105) 的 main 分支策略、Core、8 路 E2E 与 Release gate 全绿后正常合入，没有使用 admin 或 bypass；最终不可变生产 SHA 为 `f6b4b8c0cb582fe3a114a53745624f21ef146e6b`。main push Quality Gate run `32356477848` 再次完整通过；两个 Cloudflare Workers 外部状态仍为既有非 required failure，不计作通过。
+- 生产三端已对齐该 SHA：Render deployment `dep-da3d2j8jo6nc73ea890g` 为 `live`；GitHub 为同 SHA 生成的 Vercel Preview `dpl_5ZtM61LVsAwqZBgFbKChK1X2CHn6` 验证为 `READY` 后显式 promote，production deployment `dpl_Do3xojw6QgLYtXZu2t8NduE2YG5k` 为 `READY` 并接管 `artigen-fengfan.vercel.app`；Mac Worker 来自不可变 worktree `/Users/fengfan/Public/personal/Artigen-worker-production-f6b4b8c`，LaunchAgent 的程序与工作目录精确指向该路径。
+- Worker 切换时发现 Docker Desktop 未运行，Runner 按设计以 `AGENT_DOCKER_UNAVAILABLE` fail-closed；启动 Docker 后又发现新 worktree 缺少既有共享 `backend/.venv-agent` 链接，补齐指向 `/Users/fengfan/Public/personal/Artigen/backend/.venv-agent` 的链接后恢复。最终 Worker、浏览器、受限出口、桌面中继与 `shared-v1` 子 Agent 全部 ready，queue=0；没有修改任何 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由配置。
+- 最终生产 `/api/meta`、`/readyz`、`/api/agent/status`、`/api/design-assistant/status` 与 `/api/generation/models` 均 HTTP 200；`gitSha=f6b4b8c...`、migration 023、PostgreSQL、S3、SiliconFlow、支付和邮件 ready。文字/规划/父子 Agent 仍只使用 `Qwen/Qwen3-8B`，全部图片仍只使用 `Kwai-Kolors/Kolors`，两种图片模式均 `available=true`。
+- 真实生产 Create/Agent 在 1440、1024、768、390px 共 8 张基线截图，并追加 4 张 390px 历史/Inspector 抽屉截图。`scrollWidth` 在全部场景精确等于 viewport，关闭抽屉的离屏几何没有造成文档溢出；两种抽屉的 Tab 循环未逃逸到背景，Escape 后焦点精确恢复到原触发按钮。12 张均已人工复核，未见图标偏心、文字轴漂移、遮挡、裁切或错位；证据位于被忽略的 `.artifacts/workspace-micro-alignment-prod-f6b4b8c/`。
+- 本轮为纯前端与设计规范发布，没有再次消耗付费模型点数。`ui-review/` 始终作为用户未跟踪资产，未读取、进入、修改、删除、暂存或提交。
 
 ## 2026-08-19 无边框工作台细节优化（生产已发布）
 
