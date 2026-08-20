@@ -302,6 +302,7 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
   await expect(page.getByRole('heading', { name: '今天要一起完成什么？' })).toBeVisible();
   await expect(page.locator('.conversation-empty')).toBeVisible();
   await expect(page.locator('.objective-composer')).toBeVisible();
+  await expect(page.locator('.objective-composer .composer-box')).toBeVisible();
   await expect(page.locator('.task-presets')).toHaveCount(0);
   await expect(page.locator('.inspector-tabs').getByRole('tab')).toHaveCount(5);
   await expect(page.getByRole('tab', { name: '环境' })).toHaveAttribute('aria-selected', 'true');
@@ -312,6 +313,11 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
   await expect(environment).toContainText('Qwen/Qwen3-8B');
   await expect(environment).toContainText('Kwai-Kolors/Kolors');
   await expect(page.locator('.history-run')).toContainText('三路并行设计产品审计');
+  const inspectorSurface = await page.locator('.workspace-right').evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { borderRadius: style.borderRadius, marginTop: style.marginTop, marginRight: style.marginRight };
+  });
+  expect(inspectorSurface).toEqual({ borderRadius: '18px', marginTop: '12px', marginRight: '12px' });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
     await page.screenshot({ path: '.impeccable/review/agent-workbench-1440-dark.png', fullPage: true });
