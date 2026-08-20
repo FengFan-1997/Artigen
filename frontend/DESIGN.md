@@ -2,14 +2,14 @@
 name: Artigen Unified Agent Workspace
 description: Codex-class three-lane design workspace with Artigen execution signals.
 colors:
-  dark-background: "#0E100F"
-  dark-sidebar: "#151715"
-  dark-surface: "#1A1D1A"
-  dark-border: "#2B2F2A"
-  dark-text: "#F2F4EE"
-  muted: "#929A8D"
-  light-background: "#F7F8F4"
-  light-sidebar: "#EEF0EA"
+  dark-background: "#111311"
+  dark-sidebar: "#1B1E1B"
+  dark-surface: "#232622"
+  dark-border: "#3A3F38"
+  dark-text: "#F3F4EF"
+  muted: "#A1A79B"
+  light-background: "#F4F5F1"
+  light-sidebar: "#E9ECE6"
   light-surface: "#FFFFFF"
   light-border: "#D8DDD3"
   light-text: "#171A16"
@@ -23,7 +23,7 @@ colors:
 
 ## Product thesis
 
-Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置后台或普通聊天软件。用户在左侧管理历史与入口，在中间表达目标并持续对话，在右侧观察真实环境、计划、子 Agent、电脑与文件。`/artigen/create`、`/artigen/agent` 和 `/artigen/agent/runs/:runId` 必须共享这套空间语言和交互骨架。
+Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置后台或普通聊天软件。用户在左侧管理历史与入口，在中间以可持续阅读的文档流表达目标并协作，在右侧观察真实环境、计划、子 Agent、电脑与文件。`/artigen/create`、`/artigen/agent` 和 `/artigen/agent/runs/:runId` 必须共享这套空间语言、Composer 和交互骨架。
 
 它学习 Codex 的信息架构、上下文持续性和专业操作密度，但不复制 OpenAI 的品牌、组件、文字、资产或像素级样式。Artigen 自己的识别点是低噪声石墨表面与一条酸性绿“执行脊柱”：绿色只意味着当前执行、关键动作、焦点或可验证的健康状态。
 
@@ -33,31 +33,31 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - 默认移除装饰性边框，以相邻背景明度、间距、排版和对齐建立层级；焦点、审批、错误、验证与真实屏幕边界仍保留功能性提示。
 - 技术事实不删除也不伪装，但模型、Provider、沙箱、Worker、出口、并发、保留期和能力限制默认进入“技术详情”，不主动打扰普通用户。
 - 系统工作字体：`-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif`。
-- 正文保持 14px，控件 12px，桌面元数据不得小于 11px，主要标题 18–28px。移动输入不小于 16px。
-- 大容器圆角 10–12px，普通卡片 8–10px，控制 7–9px。不要把所有内容做成胶囊。
+- 正文保持 15px，控件 13px，桌面元数据以 12px 为常规下限，主要标题 18–38px。移动输入不小于 16px。
+- Inspector 与 Composer 可使用 18–20px 的大圆角来表达持久工具面；普通信息组 8–10px，控制 7–10px。不要把所有内容做成胶囊。
 - SVG 是唯一图标语言；不在产品 UI 中使用 Emoji。
 
 ## Color system
 
 ### Dark
 
-- Background `#0E100F`
-- Sidebar `#151715`
-- Surface `#1A1D1A`
-- Raised surface `#20231F`
-- Border `#2B2F2A`
-- Text `#F2F4EE`
-- Muted `#929A8D`
+- Background `#111311`
+- Sidebar `#1B1E1B`
+- Surface `#232622`
+- Raised surface `#2A2E29`
+- Border `#3A3F38`
+- Text `#F3F4EF`
+- Muted `#A1A79B`
 
 ### Light
 
-- Background `#F7F8F4`
-- Sidebar `#EEF0EA`
+- Background `#F4F5F1`
+- Sidebar `#E9ECE6`
 - Surface `#FFFFFF`
 - Raised surface `#F5F6F1`
 - Border `#D8DDD3`
 - Text `#171A16`
-- Muted `#667061`
+- Muted `#5B6557`
 
 ### Execution and semantics
 
@@ -71,7 +71,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 ## Three-lane layout
 
 ```text
-248px history  |  minmax(0, 1fr) conversation  |  360px inspector
+272px history  |  minmax(0, 1fr) conversation  |  380px inspector
 ```
 
 - 1200px 以上显示三栏；左栏可在 216–340px 拖拽，右栏可在 320–480px 拖拽。
@@ -79,8 +79,9 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - 800px 以下：左右栏是全高抽屉；主区始终占满视口，不允许横向滚动。
 - 面板宽度、折叠和主题偏好只保存在本机，不写入服务端。
 - 顶栏固定承载标题、必要状态、唯一费用位置和控制；不常驻展示模型副标题或 Runtime 胶囊。
-- 三栏以相邻背景色区分，不使用常驻分隔线。8px 拖拽命中区仅在悬停、拖拽或键盘聚焦时显示分隔线。
+- 三栏以相邻背景色区分，不使用常驻分隔线。桌面 Inspector 在右侧列中留出 12px 呼吸空间，成为有清晰起止的悬浮上下文面板；8px 拖拽命中区仅在悬停、拖拽或键盘聚焦时显示分隔线。
 - 中间输入框在零状态和运行状态中保持同一个心智位置：先表达目标，发送后停靠到底部继续对话。
+- 底部 Composer 是三条路由共享的稳定工具台：20px 左右圆角、两行信息层级、圆形发送动作；不能让 Create、Computer Agent 与 Run Detail 各自漂移成不同组件语言。
 
 ### Alignment grammar
 
@@ -120,7 +121,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 4. 电脑：安全桌面、接管、一次性票据和归还控制。
 5. 文件：生成、验证、预览、来源和下载。
 
-Inspector 使用无装饰边框的扁平信息组，通过标题、留白和对齐区分层级。避免在右栏重复中间消息全文。
+Inspector 使用悬浮的单一大表面与无装饰边框的信息组，通过标题、留白和对齐区分层级。它不是满高后台墙，也不能在右栏重复中间消息全文。
 
 ## Execution spine
 

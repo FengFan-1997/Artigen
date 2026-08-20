@@ -8,6 +8,17 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-08-20 Codex 参考工作台视觉精修（本地完成，尚未发布）
+
+- 用户提供 Codex 暗色桌面参考，要求继续提升 Artigen 工作台完成度。借鉴范围限定为安静项目轨、文档式对话阅读轴、悬浮任务上下文、厚实底部 Composer、层叠石墨表面以及一致的图标/文字几何；不复制 OpenAI 品牌、资产、文案或像素级组件。
+- `/artigen/create`、`/artigen/agent` 与 `/artigen/agent/runs/:runId` 继续使用同一三栏产品结构。默认桌面几何调整为 272px 左栏、820px 中央阅读轴和 380px 右栏；Inspector 使用 12px 内缩、18px 圆角与克制阴影形成独立上下文层，酸性绿仍只承担执行状态、主动作和焦点。
+- Create 与 Computer Agent 已统一使用共享 Composer；输入、附件、文件移除和发送动作的尺寸、基线、焦点环与移动 44px 触控规则一致。左栏历史、顶栏标题、消息正文、费用和 Inspector 元数据同步提升可读字号；移动端关闭抽屉立即离场，不再在退出动画中残留窄条。
+- 浅色弱文本颜色已提高到 WCAG 可读对比；分隔条继续支持鼠标拖拽、方向键与 Home/End；右栏不会因后台事件抢占当前页签。模型、计费、审批、附件 local-first、执行器和交付逻辑没有改变。
+- 两轮有界截图审核覆盖 1440px 桌面和 390px 移动的 Create、Agent 与 Run Detail。首轮真实捕获并修复 799px 触控尺寸、浅色对比度和关闭 Inspector 闪边；确认轮工作台定向测试 `20/20`。Impeccable 机械检测为 `[]`，type-check、变更文件 ESLint 与 `git diff --check` 通过。
+- 完整 `pnpm check` 退出码 0：前端单元 `216/216`，后端、邮件、Agent 质量、生产构建与 87.5 KiB gzip 初始 JS 预算全部通过；Playwright 为 `483 passed / 3 skipped / 0 failed`，覆盖 Chromium、Firefox、WebKit、360/390px 与 WebKit 768px，耗时 17.4 分钟。
+- 本轮只修改前端、E2E、设计规范与代表性审查截图；不修改后端、API、数据库、模型、Worker、计费、生产开关、Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。`ui-review/` 继续作为用户未跟踪资产，禁止读取、进入、修改、删除、暂存或提交。
+- 当前尚未提交、创建 PR、部署或改变线上状态；任何 DEV/生产结论必须在对应阶段重新核验接口、Render/Vercel deployment 与 Worker，不能沿用本文旧部署记录。
+
 ## 2026-08-20 工作台微对齐与信息蒸馏精修（生产已发布）
 
 - 分支 `codex/workspace-micro-alignment-polish` 基于最新 `origin/dev` SHA `8bdb24b...`。本轮保留既有暗色无边框三栏结构，只处理图标几何、文字对齐、阅读轴、信息层级和无障碍细节；没有修改后端、API、数据库、模型、Worker、计费、生产开关或网络配置。
