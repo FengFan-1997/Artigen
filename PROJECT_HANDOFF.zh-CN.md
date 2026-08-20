@@ -8,7 +8,7 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
-## 2026-08-20 工作台微对齐与信息蒸馏精修（已实现，待 PR / DEV）
+## 2026-08-20 工作台微对齐与信息蒸馏精修（DEV 验收通过，待生产发布）
 
 - 分支 `codex/workspace-micro-alignment-polish` 基于最新 `origin/dev` SHA `8bdb24b...`。本轮保留既有暗色无边框三栏结构，只处理图标几何、文字对齐、阅读轴、信息层级和无障碍细节；没有修改后端、API、数据库、模型、Worker、计费、生产开关或网络配置。
 - 新增共享 `WorkspaceIcon`，将 Shell、Create、Computer Agent、Run Detail、Composer 和执行卡的工作台图标统一到 24×24 viewBox、14/16/18/20px 尺寸阶梯、1.75px 圆角描边和固定 flex 几何。发送、附件、刷新、删除、文件、暂停/恢复/停止等动作不再各自携带漂移的 SVG 与 stroke 规则；纯图标按钮显式归零 padding，移动附件动作在隐藏文字后保持真正居中。
@@ -17,8 +17,10 @@
 - 几何审计新增硬门槛：共享图标尺寸不得变形，纯图标按钮中心误差不超过 0.5px，图标/文字基线误差不超过 1px，桌面标题左对齐与移动标题居中必须显式成立，消息/Composer 左右轴误差不超过 1px，同时拒绝可手动拖大 textarea、带意外 padding 的发送动作、DEV 徽标碰撞和不足 44px 的移动触控目标。
 - 三遍审核已完成：Impeccable 对核心八文件机械检测返回 `[]`；类型检查、变更文件 ESLint 与 `git diff --check` 通过；工作台专项矩阵在 Chromium、Firefox、WebKit desktop、360、390 与 WebKit 768 为 120/120。完整 `pnpm check` 退出码 0：前端 216/216、Agent 质量集 50/50、生产构建与 87.5 KiB gzip 初始 JS 预算通过，Playwright 为 483 passed / 3 条既有条件跳过 / 0 failed，耗时 17.3 分钟。
 - 自动截图覆盖 1440、1439、1200、1199、1180、1024、800/799、768、430、400/399、390、360、844/667 横屏、200% 等效窄视口、暗色/浅色/系统主题、运行详情与子 Agent，证据保存在被忽略的 `.artifacts/workspace-micro-alignment-8bdb24b/`；代表性桌面、移动、活跃会话、运行详情和浅色截图已逐张人工复核。
-- 实现提交 `5a66e92` 已通过 feature PR [#103](https://github.com/FengFan-1997/Artigen/pull/103) 提交到 `dev` 审核；不得绕过 Core、跨浏览器 E2E 与 Release gate。本文记录的是已提交实现，不代表已经合入 DEV 或发布生产。
-- 本轮不触碰 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。`ui-review/` 始终作为用户未跟踪资产，禁止读取、进入、修改、删除、暂存或提交。下一步只能通过 feature PR 合入 `dev`，再执行同 SHA DEV smoke；尚未发布到生产。
+- 实现提交 `5a66e92` 与文档提交 `10581e2` 经 feature PR [#103](https://github.com/FengFan-1997/Artigen/pull/103) 的 Core、8 路跨浏览器 E2E 与 Release gate 全绿后合入 `dev`，merge SHA 为 `736eef4e5438cb3848d09cd9b3c16b708bd52045`；合并后的 DEV push run `32353871774` 再次完整通过 Core、8 路 E2E 与 Release gate。两个 Cloudflare Workers 外部状态仍为既有非 required failure，没有计作通过或用于绕过保护。
+- Render DEV deployment `dep-da3cgdu7bikc738vjptg` 已 `live` 且精确运行 `736eef4...`；同 SHA 的 Vercel GitHub Preview deployments `5999505911`（Artigen）与 `5999517771`（GitHub Pages 项目）均为 `success`。带 DEV 门禁重新读取 `/api/meta`、`/readyz`、`/api/agent/status`、`/api/design-assistant/status` 与 `/api/generation/models` 全部 HTTP 200：`appEnv=dev`、数据库迁移 023、PostgreSQL、S3、对话规划、Qwen3/Kolors 锁定和两种图片模式均 ready/available，queue=0。
+- DEV Mac Worker 当前仍为既有离线状态，因此浏览器、受限出口和桌面中继诚实显示未就绪；本次纯前端验收未调用付费模型，也没有把功能配置存在误报为 Worker ready。真实 DEV Create/Agent 在 1440、1024、800、768、390、360px 共生成 12 张截图，自动几何报告为 0 横向溢出、0 DEV 徽标/标题碰撞、0 Composer 越界、0 页面异常、0 小于 44px 的可见移动按钮；12 张均已人工复核，证据位于被忽略的 `.artifacts/workspace-micro-alignment-dev-736eef4/`。
+- 本轮不触碰 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。`ui-review/` 始终作为用户未跟踪资产，禁止读取、进入、修改、删除、暂存或提交。下一步只能通过证据 PR 固化本节，再创建 `dev → main` Release PR；尚未发布到生产。
 
 ## 2026-08-19 无边框工作台细节优化（生产已发布）
 
