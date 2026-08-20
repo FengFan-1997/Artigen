@@ -2,9 +2,9 @@
   <article class="execution-card" :class="[`route-${execution.routeKind}`, `status-${displayStatus}`]">
     <header>
       <div class="executor-icon">
-        <svg v-if="execution.routeKind === 'agent_run'" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8l3 4v8l-3 4H8l-3-4V8l3-4Z"/><path d="M9 10h.01M15 10h.01M9 15h6"/></svg>
-        <svg v-else-if="execution.routeKind === 'local_tool'" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v12H4zM8 4h8v3M8 12h8M8 15h5"/></svg>
-        <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM7 15l3-3 3 2 4-5 3 4"/><path d="M8 9h.01"/></svg>
+        <WorkspaceIcon v-if="execution.routeKind === 'agent_run'" name="agent" />
+        <WorkspaceIcon v-else-if="execution.routeKind === 'local_tool'" name="tools" />
+        <WorkspaceIcon v-else name="image" />
       </div>
       <div>
         <p>{{ executorLabel }}</p>
@@ -99,6 +99,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import WorkspaceIcon from '../workspace/WorkspaceIcon.vue';
 import type { DesignExecution } from '../../services/designConversations';
 import { agentAssetUrl, type AgentApproval, type AgentRun } from '../../services/agentRuns';
 import { taskAssetUrl, type ServerToolTask } from '../../services/toolTasks';
@@ -244,7 +245,7 @@ const authorizationButtonLabel = (approval: AgentApproval) => props.zh
 .execution-card > header { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 13px 14px 9px; border: 0; background: transparent; }
 .execution-card > header > div:nth-child(2) { min-width: 0; }
 .executor-icon { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; color: var(--acid-text); background: var(--surface-raised); }
-.executor-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.executor-icon svg { width: 16px; height: 16px; }
 header p { margin: 0 0 1px; color: var(--muted); font-size: 11px; font-weight: 620; }
 header h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 660; }
 .status-chip { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; margin-left: auto; padding: 5px 3px; border: 0; border-radius: 0; color: var(--muted); font-size: 11px; font-weight: 620; white-space: nowrap; background: transparent; }

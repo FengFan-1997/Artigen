@@ -35,21 +35,21 @@
           <span class="brand-word">Artigen</span>
         </router-link>
         <button class="icon-control desktop-only" type="button" :aria-label="zh ? '折叠左栏' : 'Collapse left panel'" @click="toggleLeft">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M9 4v16"/></svg>
+          <WorkspaceIcon name="panel-left" :size="18" />
         </button>
         <button class="icon-control mobile-only" type="button" :aria-label="zh ? '关闭历史' : 'Close history'" @click="closeLeftDrawer(true)">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          <WorkspaceIcon name="close" :size="18" />
         </button>
       </header>
 
       <button class="new-task" type="button" @click="$emit('new-task')">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <WorkspaceIcon name="plus" />
         <span>{{ zh ? '新任务' : 'New task' }}</span>
         <kbd>⌘N</kbd>
       </button>
 
       <label class="history-search">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+        <WorkspaceIcon name="search" />
         <span class="sr-only">{{ zh ? '搜索任务' : 'Search tasks' }}</span>
         <input v-model="search" name="workspace-search" type="search" autocomplete="off" :placeholder="zh ? '搜索任务' : 'Search tasks'" @input="$emit('search', search)" />
         <kbd>⌘K</kbd>
@@ -61,15 +61,15 @@
 
       <nav class="workspace-nav" :aria-label="zh ? '工作台导航' : 'Workspace navigation'">
         <router-link to="/artigen/projects">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h6l2-2h9v14h-17z"/></svg>
+          <WorkspaceIcon name="folder" />
           <span>{{ zh ? '项目' : 'Projects' }}</span>
         </router-link>
         <router-link to="/artigen/tools">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5a4 4 0 0 0 4.7 5.9l-8.8 8.8-3.6-3.6 8.8-8.8a4 4 0 0 0-1.1-2.3Z"/></svg>
+          <WorkspaceIcon name="tools" />
           <span>{{ zh ? '工具' : 'Tools' }}</span>
         </router-link>
         <router-link to="/artigen/ai">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m7 16 3.5-4 2.5 2.5 2.2-2.5 2.8 4M8.5 8.5h.01"/></svg>
+          <WorkspaceIcon name="image" />
           <span>{{ zh ? '高级生图' : 'Image studio' }}</span>
         </router-link>
       </nav>
@@ -77,23 +77,25 @@
       <footer class="workspace-account">
         <button type="button" @click="$emit('open-credits')">
           <span class="account-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M12 2.8 14.2 9l6.2 2.2-6.2 2.2L12 19.6l-2.2-6.2-6.2-2.2L9.8 9z"/></svg>
+            <WorkspaceIcon name="spark" :size="16" />
           </span>
-          <span><b>{{ creditLabel }}</b><small>{{ zh ? '点数与用量' : 'Credits & usage' }}</small></span>
+          <span class="account-label">{{ zh ? '点数' : 'Credits' }}</span>
+          <b class="account-value">{{ creditLabel }}</b>
         </button>
         <button type="button" @click="cycleTheme">
           <span class="account-icon" aria-hidden="true">
-            <svg v-if="theme === 'dark'" viewBox="0 0 24 24"><path d="M19.5 15.2A8 8 0 0 1 8.8 4.5 8 8 0 1 0 19.5 15.2Z"/></svg>
-            <svg v-else-if="theme === 'light'" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/></svg>
-            <svg v-else viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></svg>
+            <WorkspaceIcon v-if="theme === 'dark'" name="moon" :size="16" />
+            <WorkspaceIcon v-else-if="theme === 'light'" name="sun" :size="16" />
+            <WorkspaceIcon v-else name="monitor" :size="16" />
           </span>
-          <span><b>{{ themeLabel }}</b><small>{{ zh ? '外观' : 'Appearance' }}</small></span>
+          <span class="account-label">{{ zh ? '外观' : 'Appearance' }}</span>
+          <b class="account-value">{{ themeLabel }}</b>
         </button>
         <button type="button" @click="$emit('open-settings')">
           <span class="account-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2-.7-.7-1.7.9-1.9-2.1-2.1-1.9.9-1.7-.7-.7-2h-3l-.7 2-1.7.7-1.9-.9-2.1 2.1.9 1.9-.7 1.7-2 .7v3l2 .7.7 1.7-.9 1.9 2.1 2.1 1.9-.9 1.7.7.7 2h3l.7-2 1.7-.7 1.9.9 2.1-2.1-.9-1.9.7-1.7z"/></svg>
+            <WorkspaceIcon name="settings" :size="16" />
           </span>
-          <span><b>{{ zh ? '设置' : 'Settings' }}</b><small>{{ accountLabel }}</small></span>
+          <span class="account-label">{{ zh ? '设置' : 'Settings' }}</span>
         </button>
       </footer>
     </aside>
@@ -122,7 +124,7 @@
       <header class="workspace-topbar">
         <div class="mobile-panel-controls">
           <button ref="leftDrawerButton" class="icon-control" type="button" :aria-label="zh ? '打开历史' : 'Open history'" @click="openLeftDrawer">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M9 4v16"/></svg>
+            <WorkspaceIcon name="panel-left" :size="18" />
           </button>
         </div>
         <div class="topbar-heading-slot">
@@ -134,10 +136,10 @@
           </slot>
         </div>
         <div class="topbar-actions">
-          <span class="runtime-pill" :class="statusTone"><i></i>{{ statusLabel }}</span>
+          <span v-if="statusTone !== 'ready'" class="runtime-pill" :class="statusTone"><i></i>{{ statusLabel }}</span>
           <slot name="topbar-actions" />
           <button ref="rightDrawerButton" class="icon-control inspector-toggle" type="button" :aria-label="zh ? '打开检查器' : 'Open inspector'" @click="toggleRight">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M15 4v16"/></svg>
+            <WorkspaceIcon name="panel-right" :size="18" />
           </button>
         </div>
       </header>
@@ -170,7 +172,7 @@
           <span>{{ zh ? '任务详情' : 'Task details' }}</span>
         </div>
         <button class="icon-control" type="button" :aria-label="zh ? '关闭检查器' : 'Close inspector'" @click="closeRight(true)">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          <WorkspaceIcon name="close" :size="18" />
         </button>
       </header>
       <div class="inspector-tabs" role="tablist" :aria-label="zh ? '检查器面板' : 'Inspector panels'">
@@ -187,13 +189,7 @@
           @click="activeTab = tab.id"
           @keydown="onTabKeydown(tab.id, $event)"
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <template v-if="tab.id === 'environment'"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="m7 10 2 2-2 2M12 15h5"/></template>
-            <template v-else-if="tab.id === 'plan'"><path d="M5 6h14M5 12h14M5 18h9"/><circle cx="3" cy="6" r=".5"/><circle cx="3" cy="12" r=".5"/><circle cx="3" cy="18" r=".5"/></template>
-            <template v-else-if="tab.id === 'subagents'"><circle cx="12" cy="7" r="3"/><circle cx="6" cy="17" r="2.5"/><circle cx="18" cy="17" r="2.5"/><path d="M12 10v3M7.8 14.8 10 12.5M16.2 14.8 14 12.5"/></template>
-            <template v-else-if="tab.id === 'computer'"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></template>
-            <template v-else><path d="M5 3.5h9l5 5v12H5z"/><path d="M14 3.5v5h5M8 13h8M8 17h6"/></template>
-          </svg>
+          <WorkspaceIcon :name="tabIcons[tab.id]" :size="16" />
           <span>{{ tab.label }}</span>
           <i v-if="badges[tab.id]" :aria-label="`${badges[tab.id]} notifications`">{{ badges[tab.id] }}</i>
         </button>
@@ -218,7 +214,7 @@
     <div v-if="commandOpen" class="command-layer" @mousedown.self="closeCommandPalette">
       <section ref="commandPanel" class="command-palette" role="dialog" aria-modal="true" :aria-label="zh ? '命令面板' : 'Command palette'">
         <label>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+          <WorkspaceIcon name="search" :size="18" />
           <input ref="commandInput" v-model="commandQuery" name="workspace-command" type="search" autocomplete="off" :placeholder="zh ? '搜索页面或动作…' : 'Search pages or actions…'" />
           <kbd>Esc</kbd>
         </label>
@@ -236,10 +232,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import WorkspaceIcon from './WorkspaceIcon.vue';
 
 type InspectorTab = 'environment' | 'plan' | 'subagents' | 'computer' | 'files';
 type ThemeMode = 'dark' | 'light' | 'system';
 type ResizeTarget = 'left' | 'right';
+
+const tabIcons = {
+  environment: 'terminal',
+  plan: 'list',
+  subagents: 'subagents',
+  computer: 'monitor',
+  files: 'file'
+} as const;
 
 const props = withDefaults(defineProps<{
   zh?: boolean;
@@ -248,7 +253,6 @@ const props = withDefaults(defineProps<{
   statusLabel?: string;
   statusTone?: 'ready' | 'busy' | 'warning' | 'offline';
   creditLabel?: string;
-  accountLabel?: string;
   inspectorSubtitle?: string;
   defaultInspectorTab?: InspectorTab;
   badges?: Partial<Record<InspectorTab, number>>;
@@ -260,7 +264,6 @@ const props = withDefaults(defineProps<{
   statusLabel: 'Ready',
   statusTone: 'ready',
   creditLabel: '—',
-  accountLabel: '',
   inspectorSubtitle: '',
   defaultInspectorTab: 'environment',
   badges: () => ({}),
@@ -542,6 +545,7 @@ onBeforeUnmount(() => {
   background: var(--bg);
   color-scheme: dark;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  text-align: left;
 }
 .agent-workspace-shell[data-theme="light"] {
   --bg: #f7f8f4;
@@ -570,7 +574,7 @@ button { color: inherit; }
 .agent-workspace-shell :where(button,a,summary,label) { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 input,textarea { caret-color: var(--acid); }
 .agent-workspace-shell ::selection { color: var(--acid-ink); background: color-mix(in srgb,var(--acid) 78%,transparent); }
-svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+svg { display: block; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .skip-link { position: fixed; top: 8px; left: 50%; z-index: 500; padding: 9px 14px; border-radius: 8px; color: var(--acid-ink); background: var(--acid); transform: translate(-50%,-150%); transition: transform 160ms ease; }
 .skip-link:focus { transform: translate(-50%,0); }
 .workspace-left,.workspace-right,.workspace-main { min-width: 0; min-height: 0; }
@@ -590,7 +594,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 .new-task span { flex: 1; text-align: left; font-size: 12px; font-weight: 690; }
 kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); font-family: inherit; font-size: var(--font-meta); font-weight: 560; background: color-mix(in srgb,var(--surface) 72%,transparent); box-shadow: none; }
 .history-search { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 36px; margin: 0 10px 8px; padding: 0 9px; border: 0; border-radius: 8px; color: var(--muted); background: color-mix(in srgb,var(--surface) 72%,transparent); }
-.history-search svg { width: 15px; }
+.history-search svg { width: 16px; height: 16px; }
 .history-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 11px; background: transparent; }
 .history-search input::placeholder { color: var(--muted-2); }
 .history-slot { flex: 1; min-height: 0; overflow: auto; padding: 2px 8px 10px; scrollbar-color: var(--border) transparent; }
@@ -598,17 +602,16 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .workspace-nav a { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 9px; border-radius: 8px; color: var(--muted); font-size: 11px; text-decoration: none; }
 .workspace-nav a:hover,.workspace-nav a.router-link-active { color: var(--text); background: var(--surface-hover); }
 .workspace-nav svg { flex: 0 0 auto; width: 16px; }
-.workspace-account { display: grid; flex: 0 0 auto; padding: 8px; }
-.workspace-account button { display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 4px 7px; border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; }
+.workspace-account { display: grid; flex: 0 0 auto; gap: 2px; padding: 8px; }
+.workspace-account button { display: grid; grid-template-columns: 20px minmax(0,1fr) auto; align-items: center; gap: 10px; min-height: 38px; padding: 0 8px; border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; }
 .workspace-account button:hover { background: var(--surface-hover); }
-.workspace-account button > span:last-child { display: grid; min-width: 0; gap: 1px; }
-.workspace-account b { overflow: hidden; font-size: var(--font-control); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-account small { overflow: hidden; color: var(--muted-2); font-size: var(--font-meta); text-overflow: ellipsis; white-space: nowrap; }
-.account-icon { display: grid; flex: 0 0 auto; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: var(--surface-raised); }
-.account-icon svg { width: 14px; }
-.left-collapsed .brand-word,.left-collapsed .workspace-brand .icon-control,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account button > span:last-child { display: none; }
+.account-label { min-width: 0; overflow: hidden; color: var(--text); font-size: var(--font-control); font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
+.account-value { max-width: 112px; overflow: hidden; color: var(--muted-2); font-size: var(--font-meta); font-weight: 560; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.account-icon { display: grid; width: 20px; height: 20px; place-items: center; color: var(--muted); }
+.left-collapsed .brand-word,.left-collapsed .workspace-brand .icon-control,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account .account-label,.left-collapsed .workspace-account .account-value { display: none; }
 .left-collapsed .workspace-brand { justify-content: center; padding-inline: 0; }
 .left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a,.left-collapsed .workspace-account button { justify-content: center; padding-inline: 0; }
+.left-collapsed .workspace-account button { grid-template-columns: 20px; }
 .panel-resizer { position: fixed; top: 0; bottom: 0; z-index: 45; width: 8px; cursor: col-resize; }
 .panel-resizer::after { position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; content: ""; transition: background 150ms ease; }
 .panel-resizer:hover::after { background: var(--acid); }
@@ -638,7 +641,7 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .inspector-tabs button { position: relative; display: grid; min-width: 0; padding: 7px 2px 6px; overflow: hidden; place-items: center; gap: 3px; border: 0; border-radius: 8px; color: var(--muted); font-size: var(--font-meta); background: transparent; cursor: pointer; }
 .inspector-tabs button:hover { color: var(--text); background: var(--surface); }
 .inspector-tabs button.active { color: var(--text); background: var(--surface-raised); }
-.inspector-tabs svg { width: 15px; height: 15px; }
+.inspector-tabs svg { width: 16px; height: 16px; }
 .inspector-tabs i { position: absolute; top: 4px; right: 5px; display: grid; min-width: 16px; height: 16px; padding: 0 4px; place-items: center; border-radius: 999px; color: var(--acid-ink); font-size: 11px; font-style: normal; background: var(--acid); }
 .inspector-panel { flex: 1; min-height: 0; overflow: auto; padding: 16px; scrollbar-color: var(--surface-hover) transparent; }
 .empty-panel { display: grid; min-height: 180px; place-content: center; place-items: center; gap: 6px; color: var(--muted); text-align: center; }
@@ -648,7 +651,8 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .command-layer { position: fixed; inset: 0; z-index: 400; display: grid; padding-top: 15vh; place-items: start center; background: rgb(0 0 0 / 42%); backdrop-filter: blur(3px); }
 .command-palette { width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
 .command-palette > label { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 13px; }
-.command-palette > label svg { width: 17px; color: var(--muted); }.command-palette input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 13px; background: transparent; }
+.command-palette > label:focus-within { outline: 2px solid var(--acid); outline-offset: -2px; }
+.command-palette > label svg { width: 18px; height: 18px; color: var(--muted); }.command-palette input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 13px; background: transparent; }
 .command-palette > div { max-height: 320px; overflow: auto; padding: 6px; }
 .command-palette button { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; }
 .command-palette button:hover { background: var(--surface-raised); }.command-palette button > span { display: grid; gap: 2px; }.command-palette b { font-size: var(--font-control); }.command-palette small { color: var(--muted); font-size: var(--font-meta); }
@@ -662,10 +666,11 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
   .left-drawer-open .workspace-left,.right-drawer-open .workspace-right { visibility: visible; pointer-events: auto; transform: translateX(0); transition-delay: 0s; }
   .drawer-scrim { position: fixed; inset: 0; z-index: 30; display: block; border: 0; background: rgb(0 0 0 / 44%); }
   .desktop-only { display: none !important; }.mobile-only,.mobile-panel-controls { display: flex; }
-  .left-collapsed .brand-word,.left-collapsed .workspace-brand .icon-control,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account button > span:last-child { display: initial; }
-  .left-collapsed .workspace-brand { justify-content: space-between; padding: 8px 10px 8px 12px; }.left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a,.left-collapsed .workspace-account button { justify-content: flex-start; padding-inline: 9px; }
+  .left-collapsed .brand-word,.left-collapsed .workspace-brand .icon-control,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account .account-label,.left-collapsed .workspace-account .account-value { display: initial; }
+  .left-collapsed .workspace-brand { justify-content: space-between; padding: 8px 10px 8px 12px; }.left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a { justify-content: flex-start; padding-inline: 9px; }.left-collapsed .workspace-account button { grid-template-columns: 20px minmax(0,1fr) auto; justify-content: stretch; padding-inline: 8px; }
 }
 @media (max-width: 799px) {
+  .task-heading { text-align: center; }
   .workspace-topbar { min-height: 52px; gap: 4px; padding-inline: max(8px,env(safe-area-inset-left)) max(8px,env(safe-area-inset-right)); }.runtime-pill { display: none; }.inspector-toggle,.icon-control { min-width: 44px; min-height: 44px; }.workspace-brand { min-height: 56px; padding-top: max(8px,env(safe-area-inset-top)); }.new-task,.history-search,.workspace-nav a,.workspace-account button { min-height: 44px; }.workspace-account { padding-bottom: max(8px,env(safe-area-inset-bottom)); }
   .workspace-right { width: 100vw; }.inspector-tabs { min-height: 58px; }.inspector-tabs button { min-height: 56px; font-size: 12px; }
 }

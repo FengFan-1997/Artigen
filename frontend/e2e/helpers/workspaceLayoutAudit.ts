@@ -77,6 +77,14 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
     const topbarCollision = visible(topbarHeading) && visible(topbarActions)
       ? box(topbarHeading).right > box(topbarActions).left + 0.75
       : false;
+    const defaultHeadingText = root.querySelector('.task-heading > strong');
+    const topbarTextDrift = visible(topbarHeading) && visible(defaultHeadingText)
+      ? (mobile
+        ? Math.abs((contentBox(defaultHeadingText).left + contentBox(defaultHeadingText).width / 2) - (box(topbarHeading).left + box(topbarHeading).width / 2)) > 1
+        : Math.abs(contentBox(defaultHeadingText).left - box(topbarHeading).left) > 1)
+        ? [{ mode: mobile ? 'center' : 'left', slot: box(topbarHeading), text: contentBox(defaultHeadingText) }]
+        : []
+      : [];
 
     const environmentBadge = document.querySelector('.dev-environment-badge');
     const environmentBadgeOverlaps = visible(environmentBadge)
@@ -116,6 +124,72 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
       .filter((element) => !element.hasAttribute('inert'))
       .map((element) => element.className);
 
+    const workspaceIcons = Array.from(root.querySelectorAll<SVGElement>('.workspace-icon')).filter(visible);
+    const distortedIcons = workspaceIcons.flatMap((icon) => {
+      const rect = box(icon);
+      const expected = Number.parseFloat(getComputedStyle(icon).getPropertyValue('--workspace-icon-size'));
+      return Math.abs(rect.width - rect.height) > 0.5 || (Number.isFinite(expected) && (Math.abs(rect.width - expected) > 0.5 || Math.abs(rect.height - expected) > 0.5))
+        ? [{ name: icon.innerHTML.slice(0, 48), expected, rect }]
+        : [];
+    });
+
+    const offCenterIconButtons = Array.from(root.querySelectorAll<HTMLElement>('button')).flatMap((button) => {
+      const icon = button.querySelector('.workspace-icon');
+      if (!visible(button) || !visible(icon) || button.textContent?.trim()) return [];
+      const control = box(button);
+      const glyph = box(icon);
+      const deltaX = (glyph.left + glyph.width / 2) - (control.left + control.width / 2);
+      const deltaY = (glyph.top + glyph.height / 2) - (control.top + control.height / 2);
+      return Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5
+        ? [{ label: button.getAttribute('aria-label') || button.className, deltaX, deltaY, control, glyph }]
+        : [];
+    });
+
+    const iconLabelMisalignment = Array.from(root.querySelectorAll<HTMLElement>('.new-task,.workspace-nav a,.workspace-account button,.attach-control,.quiet-action')).flatMap((control) => {
+      const icon = control.querySelector('.workspace-icon');
+      const label = control.querySelector(':scope > span:not(.account-icon),:scope > .account-label');
+      if (!visible(control) || !visible(icon) || !visible(label)) return [];
+      const glyph = box(icon);
+      const text = contentBox(label);
+      const deltaY = (glyph.top + glyph.height / 2) - (text.top + text.height / 2);
+      return Math.abs(deltaY) > 1
+        ? [{ label: label.textContent?.trim() || control.className, deltaY, glyph, text }]
+        : [];
+    });
+
+    const axisPairs = [
+      ['.conversation-empty', '.objective-composer'],
+      ['.conversation-thread', '.objective-composer'],
+      ['.message', '.docked-composer .composer-box']
+    ] as const;
+    const contentAxisDrift = axisPairs.flatMap(([contentSelector, composerSelector]) => {
+      const content = root.querySelector(contentSelector);
+      const composer = root.querySelector(composerSelector);
+      if (!visible(content) || !visible(composer)) return [];
+      const contentRect = box(content);
+      const composerRect = box(composer);
+      const leftDelta = contentRect.left - composerRect.left;
+      const rightDelta = contentRect.right - composerRect.right;
+      return Math.abs(leftDelta) > 1 || Math.abs(rightDelta) > 1
+        ? [{ contentSelector, composerSelector, leftDelta, rightDelta, content: contentRect, composer: composerRect }]
+        : [];
+    });
+
+    const resizableTextareas = Array.from(root.querySelectorAll<HTMLTextAreaElement>('textarea'))
+      .filter(visible)
+      .filter((textarea) => getComputedStyle(textarea).resize !== 'none')
+      .map((textarea) => textarea.name || textarea.className || 'textarea');
+
+    const paddedIconActions = Array.from(root.querySelectorAll<HTMLElement>('.send,.send-action,.message-composer button[type="submit"]'))
+      .filter(visible)
+      .flatMap((button) => {
+        const style = getComputedStyle(button);
+        const padding = [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].map(Number.parseFloat);
+        return padding.some((value) => value > 0.1)
+          ? [{ label: button.getAttribute('aria-label') || button.className, padding }]
+          : [];
+      });
+
     const undersizedTouchTargets = mobile
       ? Array.from(root.querySelectorAll([
         '.workspace-topbar button',
@@ -137,10 +211,17 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
       documentOverflow: document.documentElement.scrollWidth > viewport.width + 1,
       clipped,
       topbarCollision,
+      topbarTextDrift,
       environmentBadgeOverlaps,
       dockOutsideMain,
       tabBadgeOverlaps,
       closedDrawersWithoutInert,
+      distortedIcons,
+      offCenterIconButtons,
+      iconLabelMisalignment,
+      contentAxisDrift,
+      resizableTextareas,
+      paddedIconActions,
       undersizedTouchTargets
     };
   }, Boolean(options.mobile));
@@ -148,9 +229,16 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
   expect(report.documentOverflow, JSON.stringify(report, null, 2)).toBe(false);
   expect(report.clipped, JSON.stringify(report, null, 2)).toEqual([]);
   expect(report.topbarCollision, JSON.stringify(report, null, 2)).toBe(false);
+  expect(report.topbarTextDrift, JSON.stringify(report, null, 2)).toEqual([]);
   expect(report.environmentBadgeOverlaps, JSON.stringify(report, null, 2)).toEqual([]);
   expect(report.dockOutsideMain, JSON.stringify(report, null, 2)).toBe(false);
   expect(report.tabBadgeOverlaps, JSON.stringify(report, null, 2)).toEqual([]);
   expect(report.closedDrawersWithoutInert, JSON.stringify(report, null, 2)).toEqual([]);
+  expect(report.distortedIcons, JSON.stringify(report, null, 2)).toEqual([]);
+  expect(report.offCenterIconButtons, JSON.stringify(report, null, 2)).toEqual([]);
+  expect(report.iconLabelMisalignment, JSON.stringify(report, null, 2)).toEqual([]);
+  expect(report.contentAxisDrift, JSON.stringify(report, null, 2)).toEqual([]);
+  expect(report.resizableTextareas, JSON.stringify(report, null, 2)).toEqual([]);
+  expect(report.paddedIconActions, JSON.stringify(report, null, 2)).toEqual([]);
   expect(report.undersizedTouchTargets, JSON.stringify(report, null, 2)).toEqual([]);
 };
