@@ -340,6 +340,7 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await page.goto(`/artigen/create?c=${conversationId}`);
 
   await expect(page.locator('.conversation-heading')).toContainText('品牌官网体验审计');
+  await expect(page.locator('.docked-composer .composer-box')).toBeVisible();
   await expect(page.locator('.execution-card')).toContainText('电脑 Agent');
   await expect(page.locator('.execution-card')).toContainText('42');
   await expect(page.locator('.execution-card')).toContainText('14');

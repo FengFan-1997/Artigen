@@ -719,17 +719,17 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .conversation-workspace { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; height: 100%; min-height: 0; }
-.conversation-scroll { width: min(760px, calc(100% - 48px)); margin: 0 auto; padding: 34px 0 48px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
-.message { margin-bottom: 22px; color: var(--text); }
+.conversation-scroll { width: min(820px, calc(100% - 56px)); margin: 0 auto; padding: 44px 0 56px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
+.message { margin-bottom: 26px; color: var(--text); }
 .message header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
-.message header span { font-size: 11px; font-weight: 720; }
-.message header time, .message header small { color: var(--muted-2); font-size: 11px; }
-.message p { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+.message header span { font-size: 12px; font-weight: 700; }
+.message header time, .message header small { color: var(--muted-2); font-size: 12px; }
+.message p { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 15px; line-height: 1.72; white-space: pre-wrap; }
 .user-message { max-width: 74%; margin-left: auto; padding: 13px 15px; border: 0; border-radius: 12px 12px 3px 12px; background: var(--surface); }
 .user-message header { justify-content: flex-end; }
 .user-message p { color: var(--text); }
 .agent-message, .event-message { display: grid; grid-template-columns: 30px 1fr; gap: 11px; align-items: start; }
-.agent-avatar { display: grid; width: 30px; height: 30px; place-items: center; color: var(--acid-ink); border: 0; border-radius: 9px; background: var(--acid); font-size: 11px; font-weight: 800; }
+.agent-avatar { display: grid; width: 30px; height: 30px; place-items: center; color: var(--text); border: 0; border-radius: 9px; background: var(--surface-raised); font-size: 12px; font-weight: 720; }
 .event-message.child .agent-avatar { color: var(--text); background: var(--surface-raised); }
 .event-message p { color: var(--muted); font-size: 12px; }
 .approval-card { margin: 26px 0; padding: 16px 16px 16px 19px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); box-shadow: inset 3px 0 var(--warning); }
@@ -756,13 +756,14 @@ onBeforeUnmount(() => {
 .delivery-summary a b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .delivery-summary a small { color: var(--muted); font-size: 11px; }
 .delivery-summary svg { width: 16px; height: 16px; }
-.run-notice { width: min(760px, calc(100% - 48px)); margin: 0 auto 8px; padding: 9px 11px 9px 14px; color: var(--danger); border: 0; border-radius: 8px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); box-shadow: inset 3px 0 var(--danger); font-size: 11px; }
-.message-composer { width: min(760px, calc(100% - 48px)); margin: 0 auto max(18px,env(safe-area-inset-bottom)); overflow: hidden; border: 0; border-radius: 15px; background: var(--surface); box-shadow: 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
-.message-composer:focus-within { box-shadow: 0 0 0 2px var(--acid), 0 12px 36px color-mix(in srgb, var(--bg) 48%, transparent); }
-.message-composer textarea { display: block; width: 100%; min-height: 58px; resize: none; box-sizing: border-box; padding: 12px 13px 5px; color: var(--text); border: 0; outline: 0; background: transparent; font: 13px/1.55 inherit; }
-.message-composer footer { display: flex; align-items: center; justify-content: space-between; padding: 6px 7px 7px 12px; }
-.message-composer footer span { color: var(--muted-2); font-size: 11px; }
-.message-composer button { display: grid; width: 32px; height: 32px; padding: 0; place-items: center; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); }
+.run-notice { width: min(820px, calc(100% - 56px)); margin: 0 auto 10px; padding: 10px 12px 10px 15px; color: var(--danger); border: 0; border-radius: 9px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); box-shadow: inset 3px 0 var(--danger); font-size: 12px; }
+.message-composer { width: min(820px, calc(100% - 56px)); margin: 0 auto max(20px,env(safe-area-inset-bottom)); overflow: hidden; border: 0; border-radius: 20px; background: var(--surface); box-shadow: 0 18px 54px rgb(0 0 0 / 24%); transition: box-shadow 180ms cubic-bezier(.23,1,.32,1),background-color 180ms ease; }
+.message-composer:focus-within { background: var(--surface-raised); box-shadow: 0 22px 62px rgb(0 0 0 / 30%),0 0 0 2px var(--acid); }
+.message-composer textarea { display: block; width: 100%; min-height: 72px; resize: none; box-sizing: border-box; padding: 16px 17px 7px; color: var(--text); border: 0; outline: 0; background: transparent; font: 15px/1.58 inherit; }
+.message-composer footer { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px 10px 17px; }
+.message-composer footer span { color: var(--muted-2); font-size: 12px; }
+.message-composer button { display: grid; width: 42px; height: 42px; padding: 0; place-items: center; color: var(--acid-ink); border: 0; border-radius: 999px; background: var(--acid); transition: transform 120ms cubic-bezier(.23,1,.32,1),opacity 120ms ease; }
+.message-composer button:active:not(:disabled) { transform: scale(.96); }
 .message-composer button:disabled { opacity: .4; }
 .message-composer svg { width: 18px; height: 18px; }
 .run-controls svg, .file-list svg { width: 16px; height: 16px; }
@@ -781,20 +782,20 @@ onBeforeUnmount(() => {
 .history-run i.succeeded { background: var(--success); }
 .history-run i.failed, .history-run i.cancelled { background: var(--danger); }
 .history-run span { display: grid; min-width: 0; gap: 3px; }
-.history-run b { overflow: hidden; color: var(--text); font-size: 11px; font-weight: 580; text-overflow: ellipsis; white-space: nowrap; }
-.history-run small, .history-empty { color: var(--muted); font-size: 11px; }
+.history-run b { overflow: hidden; color: var(--text); font-size: 13px; font-weight: 580; text-overflow: ellipsis; white-space: nowrap; }
+.history-run small, .history-empty { color: var(--muted); font-size: 12px; }
 .history-empty { padding: 16px 8px; text-align: center; }
-.inspector-stack { display: grid; gap: 10px; }
+.inspector-stack { display: grid; gap: 14px; }
 .inspector-card { padding: 9px 4px; border: 0; border-radius: 10px; background: transparent; }
 .inspector-card header, .computer-panel > header { display: flex; min-height: 22px; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-.inspector-card header > span, .computer-panel header span { color: var(--muted); font-size: 11px; font-weight: 720; }
-.inspector-card header > b { color: var(--text); font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.inspector-card header > span, .computer-panel header span { color: var(--text); font-size: 13px; font-weight: 680; }
+.inspector-card header > b { color: var(--text); font: 680 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .inspector-card header > i, .computer-panel header > i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .inspector-card header > i.healthy, .computer-panel header > i.healthy { background: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acid) 12%, transparent); }
 .inspector-card dl { display: grid; gap: 7px; margin: 0; }
 .inspector-card dl div { display: flex; justify-content: space-between; gap: 10px; }
-.inspector-card dt, .inspector-card p { color: var(--muted); font-size: 11px; line-height: 1.5; }
-.inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.inspector-card dt, .inspector-card p { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .budget-card > div { height: 4px; margin: 3px 0 11px; overflow: hidden; border-radius: 4px; background: var(--border); }
 .budget-card > div span { display: block; width: 100%; height: 100%; background: var(--acid); transform-origin: left center; transition: transform 180ms ease; }
 .grant-list { display: flex; flex-wrap: wrap; gap: 5px; }

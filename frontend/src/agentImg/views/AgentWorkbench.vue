@@ -86,37 +86,24 @@
 
       <div class="conversation-dock">
         <div class="objective-composer">
-          <label class="objective-field">
-            <span class="sr-only">{{ zh ? '任务目标' : 'Task objective' }}</span>
-            <textarea
-              ref="objectiveTextarea"
-              v-model="form.objective"
-              name="agent-objective"
-              rows="2"
-              maxlength="20000"
-              autocomplete="off"
-              :placeholder="zh ? '描述目标、受众、交付物或参考方向…' : 'Describe the goal, audience, deliverables, or references…'"
-              @input="resizeObjective"
-              @keydown.enter.exact.prevent="sendObjective"
-            />
-          </label>
-          <div v-if="selectedFiles.length" class="input-files">
-            <span v-for="file in selectedFiles" :key="`${file.name}:${file.size}`">
-              <WorkspaceIcon name="file" />
-              {{ file.name }}
-            </span>
-            <button type="button" @click="selectedFiles = []">{{ zh ? '清空' : 'Clear' }}</button>
-          </div>
-          <footer>
-            <button class="attach-control" type="button" :title="zh ? '文件会留在当前设备，启动任务后才上传' : 'Files stay on this device until the run starts'" @click="openFilePicker">
-              <WorkspaceIcon name="attachment" />
-              <span>{{ zh ? '添加参考' : 'Add reference' }}</span>
-            </button>
-            <span class="objective-count">{{ form.objective.length.toLocaleString() }} / 20,000</span>
-            <button class="send-action" type="button" :aria-label="zh ? '发送任务目标' : 'Send task objective'" :disabled="busy || form.objective.trim().length < 3" @click="sendObjective">
-              <WorkspaceIcon name="send" :size="20" />
-            </button>
-          </footer>
+          <ComposerBox
+            :draft="form.objective"
+            :attachments="composerAttachments"
+            :busy="busy"
+            :placeholder="zh ? '描述目标、受众、交付物或参考方向…' : 'Describe the goal, audience, deliverables, or references…'"
+            :attach-label="zh ? '添加参考' : 'Add reference'"
+            :attachment-count-label="zh ? '个文件' : 'files'"
+            :attachment-hint="zh ? '文件会留在当前设备，启动任务后才上传' : 'Files stay on this device until the run starts'"
+            :request-label="zh ? '任务目标' : 'Task objective'"
+            :send-label="zh ? '发送任务目标' : 'Send task objective'"
+            :remove-attachment-label="zh ? '移除' : 'Remove'"
+            input-name="agent-objective"
+            compact
+            @update:draft="form.objective = $event"
+            @submit="sendObjective"
+            @attach="openFilePicker"
+            @remove-attachment="removeSelectedFile"
+          />
         </div>
       </div>
     </section>
@@ -253,6 +240,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
+import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
@@ -284,7 +272,6 @@ const quoting = ref(false);
 const creating = ref(false);
 const selectedFiles = ref<File[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
-const objectiveTextarea = ref<HTMLTextAreaElement | null>(null);
 const browserProfiles = ref<AgentBrowserProfile[]>([]);
 const submittedObjective = ref('');
 const notice = ref('');
@@ -321,13 +308,12 @@ const form = reactive({
   } as Record<string, boolean>
 });
 
-const resizeObjective = () => {
-  const element = objectiveTextarea.value;
-  if (!element) return;
-  element.style.height = 'auto';
-  element.style.height = `${Math.min(180, Math.max(62, element.scrollHeight))}px`;
-};
-watch(() => form.objective, resizeObjective, { flush: 'post' });
+const composerAttachments = computed(() => selectedFiles.value.map((file) => ({
+  clientId: `${file.name}:${file.size}:${file.lastModified}`,
+  name: file.name,
+  mimeType: file.type || 'application/octet-stream',
+  byteSize: file.size
+})));
 
 const capabilityOptions = computed(() => [
   { id: 'files', label: zh.value ? '文档与文件' : 'Documents & files', disabled: false },
@@ -572,6 +558,9 @@ const selectFiles = (event: Event) => {
   input.value = '';
 };
 const openFilePicker = () => fileInput.value?.click();
+const removeSelectedFile = (clientId: string) => {
+  selectedFiles.value = selectedFiles.value.filter((file) => `${file.name}:${file.size}:${file.lastModified}` !== clientId);
+};
 
 const loadRuns = async () => {
   loadingRuns.value = true;
@@ -651,55 +640,43 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.agent-conversation { --conversation-max: 760px; --conversation-gutter: 24px; display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.agent-conversation { --conversation-max: 820px; --conversation-gutter: 28px; display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
-.conversation-empty { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); min-height: 100%; margin: 0 auto; padding: clamp(40px, 9vh, 88px) 0 40px; align-content: center; justify-items: start; }
-.conversation-empty h1 { margin: 0; color: var(--text); font-size: clamp(22px, 3vw, 28px); font-weight: 690; line-height: 1.25; letter-spacing: -.025em; text-wrap: balance; }
+.conversation-empty { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); min-height: 100%; margin: 0 auto; padding: clamp(52px, 10vh, 104px) 0 48px; align-content: center; justify-items: start; }
+.conversation-empty h1 { margin: 0; color: var(--text); font-size: clamp(28px, 3vw, 36px); font-weight: 680; line-height: 1.18; letter-spacing: -.035em; text-wrap: balance; }
 .prompt-suggestions { display: grid; width: min(100%, 620px); gap: 2px; margin-top: 20px; }
-.prompt-suggestions button { display: block; width: 100%; min-height: 40px; padding: 8px; color: var(--muted); border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease; }
+.prompt-suggestions button { display: block; width: 100%; min-height: 42px; padding: 9px 10px; color: var(--muted); border: 0; border-radius: 10px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease, transform 120ms cubic-bezier(.23,1,.32,1); }
 .prompt-suggestions button:hover { color: var(--text); background: var(--surface-hover); }
 .prompt-suggestions button:active { transform: scale(.995); }
 .prompt-suggestions button:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
-.prompt-suggestions span { font-size: 13px; }
+.prompt-suggestions span { font-size: 14px; }
 .conversation-thread { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 36px 0 64px; gap: 28px; }
 .conversation-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; align-items: start; }
 .message-avatar { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; color: var(--muted); font-size: 11px; font-weight: 700; background: var(--surface); }
 .agent-avatar { color: var(--acid-ink); background: var(--acid); }
-.conversation-message p { margin: 0; color: var(--text); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.conversation-message p { margin: 0; color: var(--text); font-size: 15px; line-height: 1.72; overflow-wrap: anywhere; }
 .user-message > div:last-child { padding-top: 3px; }
 .user-message span { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
 .assistant-content { display: grid; justify-items: start; gap: 10px; padding-top: 3px; }
-.assistant-content > strong { color: var(--text); font-size: 14px; font-weight: 680; }
+.assistant-content > strong { color: var(--text); font-size: 15px; font-weight: 680; }
 .assistant-content > p { color: var(--muted); }
 .quote-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; margin: 2px 0 0; overflow: hidden; border: 0; border-radius: 10px; background: var(--surface); }
 .quote-summary div { display: grid; gap: 4px; padding: 10px 11px; background: transparent; }
 .quote-summary dt { color: var(--muted); font-size: 11px; }
 .quote-summary dd { margin: 0; color: var(--text); font: 680 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.conversation-dock { position: relative; z-index: 2; width: 100%; padding: 12px var(--conversation-gutter) max(12px, env(safe-area-inset-bottom)); background: var(--bg); }
-.objective-composer { width: min(var(--conversation-max), 100%); margin: 0 auto; overflow: hidden; border: 0; border-radius: 15px; background: var(--surface); box-shadow: 0 14px 34px rgb(0 0 0 / 18%); transition: box-shadow 180ms ease; }
-.objective-composer:focus-within { box-shadow: 0 0 0 2px var(--acid), 0 18px 44px rgb(0 0 0 / 20%); }
-.objective-field { display: block; }
-.objective-composer textarea { display: block; width: 100%; min-height: 62px; max-height: 180px; resize: none; box-sizing: border-box; padding: 13px 14px 7px; overflow-y: auto; color: var(--text); border: 0; outline: 0; background: transparent; font: 400 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif; }
-.objective-composer textarea::placeholder { color: var(--muted); }
-.objective-composer footer { display: flex; align-items: center; gap: 9px; padding: 7px 8px 8px; }
-.attach-control { display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 0 9px; color: var(--muted); border: 1px solid transparent; border-radius: 8px; cursor: pointer; font-size: 12px; background: transparent; }
-.attach-control:hover { color: var(--text); background: var(--surface-raised); }
-.attach-control:focus-visible { outline: 2px solid var(--acid); outline-offset: 1px; }
-.objective-count { margin-left: auto; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.conversation-dock { position: relative; z-index: 2; width: 100%; padding: 16px var(--conversation-gutter) max(16px, env(safe-area-inset-bottom)); background: var(--bg); }
+.objective-composer { width: min(var(--conversation-max), 100%); margin: 0 auto; }
+.objective-composer :deep(.composer-box) { color: var(--text); background: var(--surface); }
 .run-action { min-height: 38px; padding: 0 13px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .run-action { display: inline-flex; align-items: center; gap: 7px; color: #0e100f; border: 0; background: var(--acid); }
-.run-action:disabled, .send-action:disabled { opacity: .45; cursor: not-allowed; }
-.send-action { display: grid; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; place-items: center; color: var(--acid-ink); border: 0; border-radius: 9px; background: var(--acid); cursor: pointer; }
-.run-action:active,.send-action:active { transform: scale(.98); }
-.run-action:focus-visible, .send-action:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
-.input-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 10px; }
-.input-files span { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 6px 8px; overflow: hidden; color: var(--text); border-radius: 7px; background: var(--surface-raised); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.input-files button { color: var(--danger); border: 0; background: transparent; font-size: 11px; }
+.run-action:disabled { opacity: .45; cursor: not-allowed; }
+.run-action:active { transform: scale(.98); }
+.run-action:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
 .workspace-notice { width: 100%; margin: 2px 0 0; padding: 9px 10px 9px 13px; color: var(--acid-text); border: 0; border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); box-shadow: inset 3px 0 var(--acid); font-size: 12px; }
 .workspace-notice.error { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); box-shadow: inset 3px 0 var(--danger); }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .history-group { padding: 4px 8px 16px; }
-.history-label { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px 8px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.history-label { display: flex; align-items: center; justify-content: space-between; padding: 6px 9px 9px; color: var(--muted); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
 .history-label button { display: grid; width: 28px; height: 28px; place-items: center; color: var(--muted); border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
 .history-label button:hover { color: var(--text); background: var(--surface-raised); }
 .history-label button:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
@@ -710,35 +687,35 @@ onBeforeUnmount(() => {
 .history-run i.succeeded { background: var(--success); }
 .history-run i.failed, .history-run i.cancelled { background: var(--danger); }
 .history-run span { display: grid; min-width: 0; gap: 3px; }
-.history-run b { overflow: hidden; color: var(--text); font-size: 12px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
-.history-run small, .history-empty { color: var(--muted); font-size: 11px; }
+.history-run b { overflow: hidden; color: var(--text); font-size: 13px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
+.history-run small, .history-empty { color: var(--muted); font-size: 12px; }
 .history-empty { padding: 16px 8px; text-align: center; }
 .inspector-stack { display: grid; gap: 10px; }
 .inspector-card { padding: 9px 4px; border: 0; border-radius: 10px; background: transparent; }
 .inspector-card header { display: flex; min-height: 22px; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-.inspector-card header > span { color: var(--text); font-size: 11px; font-weight: 700; }
-.inspector-card header > b { color: var(--text); font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.inspector-card header > span { color: var(--text); font-size: 13px; font-weight: 680; }
+.inspector-card header > b { color: var(--text); font: 680 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .inspector-card header > i { width: 7px; height: 7px; border-radius: 999px; background: var(--muted); }
 .inspector-card header > i.healthy, .inspector-card header > i[class*="healthy"] { background: var(--acid); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acid) 12%, transparent); }
 .inspector-card dl { display: grid; gap: 7px; margin: 0; }
 .inspector-card dl div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.inspector-card dt, .inspector-card p, .inspector-card small { color: var(--muted); font-size: 11px; line-height: 1.5; }
-.inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.inspector-card dt, .inspector-card p, .inspector-card small { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .inspector-card > strong { color: var(--text); font-size: 13px; }
 .option-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .option-grid label, .capability-list label { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 0; border-radius: 8px; background: var(--surface-raised); }
 .option-grid label.disabled, .capability-list label.disabled { opacity: .45; }
 .option-grid input, .capability-list input, .browser-scope input, .budget-range { accent-color: var(--acid); }
 .option-grid span, .capability-list span { display: grid; gap: 2px; }
-.option-grid b, .capability-list b { color: var(--text); font-size: 11px; }
-.option-grid small, .capability-list small { font-size: 11px; }
+.option-grid b, .capability-list b { color: var(--text); font-size: 12px; }
+.option-grid small, .capability-list small { font-size: 12px; }
 .capability-list { display: grid; gap: 6px; }
 .runtime-settings { padding-inline: 0; }
 .browser-scope { display: grid; gap: 8px; }
 .browser-scope header { margin-bottom: 2px; }
 .browser-scope > input, .browser-scope select { min-height: 38px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 12px; }
 .browser-scope > input:focus-visible, .browser-scope select:focus-visible, .budget-range:focus-visible, .option-grid input:focus-visible, .capability-list input:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
-.browser-scope > label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 11px; }
+.browser-scope > label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 12px; }
 .text-danger { justify-self: start; min-height: 36px; color: var(--danger); border: 0; background: transparent; font-size: 11px; }
 .budget-range { width: 100%; }
 .execution-spine { position: relative; display: grid; gap: 0; }
@@ -747,36 +724,33 @@ onBeforeUnmount(() => {
 .execution-spine i { z-index: 1; width: 9px; height: 9px; margin: 5px 0 0 4px; border: 2px solid var(--border); border-radius: 999px; background: var(--sidebar); }
 .execution-spine article.complete i { border-color: var(--acid); background: var(--acid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acid) 10%, transparent); }
 .execution-spine div { display: grid; align-content: start; gap: 4px; }
-.execution-spine b { color: var(--text); font-size: 11px; }
-.execution-spine span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.execution-spine b { color: var(--text); font-size: 12px; }
+.execution-spine span { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .subagent-overview p { margin-bottom: 0; }
 .boundary-list { display: grid; gap: 4px; padding: 4px; }
-.boundary-list b { margin-top: 6px; color: var(--text); font-size: 11px; }
-.boundary-list span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.boundary-list b { margin-top: 6px; color: var(--text); font-size: 12px; }
+.boundary-list span { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .technical-list { display: grid; gap: 7px; margin: 0; }
 .technical-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.technical-list dt { color: var(--muted); font-size: 11px; }
-.technical-list dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.technical-list dt { color: var(--muted); font-size: 12px; }
+.technical-list dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .file-list { display: grid; gap: 6px; }
 .file-list span { display: grid; gap: 2px; padding: 8px; border-radius: 7px; background: var(--surface-raised); }
-.file-list b { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.file-list b { overflow: hidden; color: var(--text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .visually-hidden { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 @media (max-width: 800px) {
   .agent-conversation { --conversation-gutter: 14px; }
   .conversation-empty { padding-block: 28px; }
-  .conversation-empty h1 { font-size: 22px; }
+  .conversation-empty h1 { font-size: 26px; }
   .conversation-empty > p, .conversation-message p { font-size: 14px; }
   .prompt-suggestions button { min-height: 44px; }
   .conversation-thread { padding: 24px 0 40px; gap: 24px; }
   .conversation-message { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
   .quote-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .conversation-dock { padding-block: 8px max(12px, env(safe-area-inset-bottom)); }
-  .objective-composer textarea { min-height: 64px; font-size: 16px; }
-  .objective-count { display: none; }
-  .attach-control, .run-action, .send-action, .input-files button { min-height: 44px; }
+  .run-action { min-height: 44px; }
   .history-label button { width: 44px; height: 44px; }
-  .send-action { width: 44px; height: 44px; margin-left: auto; }
   .option-grid { grid-template-columns: 1fr; }
 }
 @media (max-height: 620px) {
@@ -784,8 +758,7 @@ onBeforeUnmount(() => {
   .prompt-suggestions { gap: 5px; }
   .prompt-suggestions button { min-height: 38px; }
   .conversation-dock { padding-block: 4px max(8px, env(safe-area-inset-bottom)); }
-  .objective-composer textarea { min-height: 44px; max-height: 92px; padding-top: 9px; }
-  .objective-composer footer { padding-block: 4px; }
+  .objective-composer :deep(textarea) { min-height: 54px; max-height: 92px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .prompt-suggestions button, .objective-composer { transition: none; }
