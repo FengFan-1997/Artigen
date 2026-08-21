@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { ApiError } = require('../lib/api-error');
 const assets = require('./asset-storage');
 const { getAgentConfig } = require('./agent-config');
@@ -27,6 +29,7 @@ const {
 const {
   createAgentIntegrationService
 } = require('./agent-integration-service');
+const { createCreativeProjectService } = require('./creative-project-service');
 const {
   AgentDesktopRelayClient
 } = require('./agent-desktop-relay-client');
@@ -40,6 +43,9 @@ const {
   classifyAction,
   TAKEOVER_ACTIONS
 } = require('./agent-policy-service');
+const { SKILLS, compileAgentPrompt } = require('./agent-runtime-v2');
+
+const AGENT_SKILL_REFERENCE_DIR = path.resolve(__dirname, '../agent-skills');
 
 class AgentPaused extends Error {
   constructor() {
@@ -493,6 +499,7 @@ const createAgentWorkerService = ({
   env = process.env,
   sandbox = createAgentSandboxProvider({ env }),
   model = createAgentModelProvider({ env }),
+  modelCallService = null,
   integrationService = createAgentIntegrationService({ pool, env }),
   imageService = createAgentImageService({ env }),
   runtimeReadiness = {}
@@ -506,6 +513,7 @@ const createAgentWorkerService = ({
   });
   const browserService = createAgentBrowserService({ sandbox, env });
   const connectorService = createAgentConnectorService({ integrationService });
+  const projectService = createCreativeProjectService({ pool, env });
   const workerId = config.workerId ||
     `agent-worker-${process.pid}-${crypto.randomBytes(5).toString('hex')}`;
   const desktopRelay = new AgentDesktopRelayClient({
@@ -596,6 +604,26 @@ const createAgentWorkerService = ({
         .filter((payload) => payload.kind === 'user_input')
         .map((payload) => payload.value)
         .slice(-20);
+      const runtimeV2 = Number(context.run.runtime_version || 1) === 2;
+      let modelResumeState = context.modelCheckpoint;
+      let taskSpec = runtimeV2
+        ? (modelResumeState?.taskSpec || objectivePayload.taskSpec || null)
+        : null;
+      let projectMemory = null;
+      let latestSemanticVerification = modelResumeState?.semanticVerificationResult ||
+        modelResumeState?.pendingVerifierResult?.result ||
+        null;
+      let semanticVerifierAttempts = Math.max(
+        0,
+        Number(modelResumeState?.semanticVerificationAttempts || 0)
+      );
+      if (runtimeV2 && config.projectMemoryEnabled && context.run.project_id) {
+        const project = await projectService.getProject({
+          userId: context.run.user_id,
+          projectId: context.run.project_id
+        });
+        projectMemory = project.designMemory || null;
+      }
 
       if (sandboxName) {
         await sandbox.ensureRunning(sandboxName);
@@ -732,16 +760,242 @@ const createAgentWorkerService = ({
           buffer: bytes
         });
       }
+      const runtimeObjective = [
+        objectivePayload.objective,
+        userInputs.length
+          ? `Subsequent user messages and decisions: ${JSON.stringify(userInputs)}`
+          : '',
+        inputAssetPaths.length
+          ? `User-provided files are available at: ${inputAssetPaths.join(', ')}`
+          : ''
+      ].filter(Boolean).join('\n\n');
+      if (runtimeV2 && !taskSpec) {
+        const plannerAbortController = new AbortController();
+        const planning = await runWithLeaseHeartbeat({
+          intervalMs: Math.max(
+            5_000,
+            Math.min(30_000, Math.floor(config.leaseSeconds * 1_000 / 3))
+          ),
+          refresh: async () => {
+            const control = await runService.getControlState({ runId });
+            if (control.status === 'cancelled' || control.cancel_requested) {
+              plannerAbortController.abort();
+              throw new AgentCancelled();
+            }
+            return runService.saveCheckpoint({
+              runId,
+              workerId,
+              checkpoint: { phase: 'planning', sandboxReady: true }
+            });
+          },
+          work: () => model.planTask({
+            objective: runtimeObjective,
+            deliverables: requiredDeliverables,
+            capabilities: context.run.capabilities,
+            allowedOrigins: context.run.browser_config?.allowedOrigins || [],
+            maxCredits: context.run.max_credits,
+            projectMemory,
+            metadata: {
+              runId,
+              userId: context.run.user_id,
+              priority: context.modelCheckpoint ? 'resumed_parent' : 'planner',
+              promptProfile: context.run.prompt_profile,
+              promptHash: Buffer.isBuffer(context.run.prompt_hash)
+                ? context.run.prompt_hash.toString('hex')
+                : null,
+              skillIds: Object.keys(context.run.skill_versions || {}),
+              signal: plannerAbortController.signal,
+              checkpointResult: async (plannedResult) => {
+                const plannedTaskSpec = plannedResult.taskSpec;
+                modelResumeState = {
+                  version: 3,
+                  provider: model.providerName || context.run.model_provider,
+                  messages: [],
+                  taskSpec: plannedTaskSpec,
+                  workingState: {
+                    version: 1,
+                    taskSpec: plannedTaskSpec,
+                    phase: plannedTaskSpec.plan[0]?.phase || 'production',
+                    projectMemory,
+                    sources: [],
+                    files: [],
+                    completedEvidence: [],
+                    failures: [],
+                    pendingApproval: null,
+                    remainingBudget: Number(context.run.max_credits || 0)
+                  },
+                  totalCredits: plannedResult.credits,
+                  turns: 0,
+                  planPublished: true
+                };
+                costMeter.setModel(plannedResult.credits);
+                await runService.saveModelCheckpoint({
+                  runId,
+                  workerId,
+                  value: modelResumeState
+                });
+                await persistCostCheckpoint({
+                  usageItems: { source: 'runtime_v2_planner_checkpoint', ...plannedResult.usage }
+                });
+              }
+            }
+          })
+        });
+        if (planning.leaseError) throw planning.leaseError;
+        const planned = planning.value;
+        taskSpec = planned.taskSpec;
+        if (!modelResumeState?.taskSpec) {
+          modelResumeState = {
+            version: 3,
+            provider: model.providerName || context.run.model_provider,
+            messages: [],
+            taskSpec,
+            workingState: {
+              version: 1,
+              taskSpec,
+              phase: taskSpec.plan[0]?.phase || 'production',
+              projectMemory,
+              sources: [],
+              files: [],
+              completedEvidence: [],
+              failures: [],
+              pendingApproval: null,
+              remainingBudget: Number(context.run.max_credits || 0)
+            },
+            totalCredits: planned.credits,
+            turns: 0,
+            planPublished: true
+          };
+          costMeter.setModel(planned.credits);
+          await runService.saveModelCheckpoint({ runId, workerId, value: modelResumeState });
+          await persistCostCheckpoint({
+            usageItems: { source: 'runtime_v2_planner', ...planned.usage }
+          });
+        }
+        await runService.savePlan({
+          runId,
+          workerId,
+          plan: taskSpec.plan.map((step) => ({
+            label: step.label,
+            status: step.status
+          })),
+          explanation: '已根据目标、约束和交付条件编译执行计划。'
+        });
+        await runService.appendRuntimeEvent({
+          runId,
+          workerId,
+          type: 'plan.compiled',
+          phase: 'planning',
+          summary: 'Runtime V2 已编译执行计划',
+          data: {
+            complexity: taskSpec.complexity,
+            confidence: taskSpec.confidence,
+            skillIds: taskSpec.skillIds,
+            stepCount: taskSpec.plan.length
+          }
+        });
+      }
+      if (runtimeV2 && taskSpec && !modelResumeState) {
+        modelResumeState = {
+          version: 3,
+          provider: model.providerName || context.run.model_provider,
+          messages: [],
+          taskSpec,
+          workingState: {
+            version: 1,
+            taskSpec,
+            phase: taskSpec.plan[0]?.phase || 'production',
+            projectMemory,
+            sources: [],
+            files: [],
+            completedEvidence: [],
+            failures: [],
+            pendingApproval: null,
+            remainingBudget: Number(context.run.max_credits || 0)
+          },
+          totalCredits: 0,
+          turns: 0,
+          planPublished: true
+        };
+        await runService.saveModelCheckpoint({ runId, workerId, value: modelResumeState });
+        await runService.savePlan({
+          runId,
+          workerId,
+          plan: taskSpec.plan.map((step) => ({ label: step.label, status: step.status })),
+          explanation: '已复用对话入口编译并经服务端校验的执行计划。'
+        });
+        await runService.appendRuntimeEvent({
+          runId,
+          workerId,
+          type: 'plan.compiled',
+          phase: 'planning',
+          summary: '已复用对话入口的 Runtime V2 任务规范',
+          data: {
+            source: 'design-router',
+            complexity: taskSpec.complexity,
+            confidence: taskSpec.confidence,
+            skillIds: taskSpec.skillIds,
+            stepCount: taskSpec.plan.length
+          }
+        });
+      }
+      if (runtimeV2) {
+        const runtimeProfile = compileAgentPrompt({
+          objective: runtimeObjective,
+          capabilities: context.run.capabilities,
+          deliverables: requiredDeliverables,
+          taskSpec,
+          phase: taskSpec.plan[0]?.phase || 'production'
+        });
+        await runService.pinRuntimeProfile({ runId, workerId, profile: runtimeProfile });
+        context.run.prompt_profile = runtimeProfile.promptProfile;
+        context.run.prompt_hash = Buffer.from(runtimeProfile.promptHash, 'hex');
+        context.run.skill_versions = Object.fromEntries(
+          runtimeProfile.skills.map((skill) => [skill.id, skill.version])
+        );
+        const selectedSkills = (Array.isArray(taskSpec?.skillIds) ? taskSpec.skillIds : [])
+          .filter((skillId) => Boolean(SKILLS[skillId]));
+        if (selectedSkills.length) {
+          const prepared = await sandbox.systemShell(
+            sandboxName,
+            'mkdir -p /tmp/artigen-workspace/.artigen/skills && chmod u+w /tmp/artigen-workspace/.artigen/skills',
+            30
+          );
+          if (!prepared.success) {
+            throw new ApiError(500, 'AGENT_SKILL_REFERENCE_PREPARE_FAILED');
+          }
+        }
+        for (const skillId of selectedSkills) {
+          const reference = await fs.promises.readFile(
+            path.join(AGENT_SKILL_REFERENCE_DIR, `${skillId}.md`)
+          );
+          await sandbox.writeFile(
+            sandboxName,
+            `/tmp/artigen-workspace/.artigen/skills/${skillId}@${SKILLS[skillId].version}.md`,
+            reference
+          );
+        }
+        if (selectedSkills.length) {
+          const locked = await sandbox.systemShell(
+            sandboxName,
+            "chmod -R a-w /tmp/artigen-workspace/.artigen/skills",
+            30
+          );
+          if (!locked.success) {
+            throw new ApiError(500, 'AGENT_SKILL_REFERENCE_LOCK_FAILED');
+          }
+        }
+      }
       await runService.appendStep({
         runId,
         workerId,
         role: 'planner',
         status: 'succeeded',
-        summary: '已准备输入文件与交付物验证要求，等待模型发布具体计划',
+        summary: runtimeV2 ? '执行计划与输入边界已就绪' : '已准备输入文件与交付物验证要求，等待模型发布具体计划',
         sanitizedInput: {
+          runtimeVersion: runtimeV2 ? 2 : 1,
           assetCount: Array.isArray(objectivePayload.assetIds) ? objectivePayload.assetIds.length : 0,
-          capabilityCount: Object.values(context.run.capabilities || {}).filter(Boolean).length
-          ,
+          capabilityCount: Object.values(context.run.capabilities || {}).filter(Boolean).length,
           inputAssetPaths
         }
       });
@@ -810,6 +1064,30 @@ const createAgentWorkerService = ({
             capabilities: { files: true, shell: true },
             toolProfile: 'subagent',
             resumeState: privateContext.checkpoint,
+            runtimeContext: runtimeV2 ? {
+              runtimeVersion: 2,
+              runId,
+              subagentId,
+              userId: context.run.user_id,
+              taskSpec: {
+                goal: privateContext.task.objective,
+                complexity: 'medium',
+                confidence: 1,
+                constraints: ['Offline-only depth-1 child; parent owns final delivery.'],
+                assumptions: [],
+                deliverables: [],
+                allowedOrigins: [],
+                acceptanceCriteria: [privateContext.task.expectedOutput],
+                skillIds: [],
+                plan: [
+                  { id: 'produce', label: '完成委派输出', phase: 'production' },
+                  { id: 'verify', label: '离线验证输出文件', phase: 'verification' }
+                ],
+                budget: { maxCredits: Number(context.run.max_credits || 0) }
+              },
+              maxCredits: Number(context.run.max_credits || 0),
+              initialModelCredits: Number(privateContext.checkpoint?.totalCredits || 0)
+            } : null,
             safetyIdentifier: crypto.createHash('sha256')
               .update(`artigen-subagent:${context.run.user_id}:${subagentId}`)
               .digest('hex'),
@@ -986,33 +1264,46 @@ const createAgentWorkerService = ({
         }
       };
 
+      const modelAbortController = new AbortController();
       const modelExecution = await runWithLeaseHeartbeat({
         intervalMs: Math.max(
           5_000,
           Math.min(30_000, Math.floor(config.leaseSeconds * 1_000 / 3))
         ),
-        refresh: () => runService.saveCheckpoint({
-          runId,
-          workerId,
-          checkpoint: { phase: 'running', sandboxReady: true }
-        }),
+        refresh: async () => {
+          const control = await runService.getControlState({ runId });
+          if (control.status === 'cancelled' || control.cancel_requested) {
+            modelAbortController.abort();
+            throw new AgentCancelled();
+          }
+          return runService.saveCheckpoint({
+            runId,
+            workerId,
+            checkpoint: { phase: 'running', sandboxReady: true }
+          });
+        },
         work: () => model.execute({
-        objective: [
-          objectivePayload.objective,
-          userInputs.length
-            ? `Subsequent user messages and decisions: ${JSON.stringify(userInputs)}`
-            : '',
-          inputAssetPaths.length
-            ? `User-provided files are available at: ${inputAssetPaths.join(', ')}`
-            : ''
-        ].filter(Boolean).join('\n\n'),
+        objective: runtimeObjective,
         capabilities: context.run.capabilities,
         deliverables: requiredDeliverables,
-        resumeState: context.modelCheckpoint,
+        resumeState: modelResumeState,
+        runtimeContext: runtimeV2 ? {
+          runtimeVersion: 2,
+          runId,
+          userId: context.run.user_id,
+          taskSpec,
+          workingState: modelResumeState?.workingState || null,
+          projectMemory,
+          allowedOrigins: context.run.browser_config?.allowedOrigins || [],
+          maxCredits: Number(context.run.max_credits || 0),
+          initialModelCredits: Number(modelResumeState?.totalCredits || 0),
+          budgetRatio: costMeter.total() / Math.max(1, Number(context.run.max_credits || 0))
+        } : null,
         safetyIdentifier: crypto.createHash('sha256')
           .update(`artigen-agent:${context.run.user_id}`)
           .digest('hex'),
         maxSteps: config.maxSteps,
+        signal: modelAbortController.signal,
         callbacks: {
           updatePlan: async ({ explanation, steps }) => {
             await pauseIfRequested();
@@ -1106,16 +1397,49 @@ const createAgentWorkerService = ({
             });
           },
           saveModelState: async (value) => {
-            await persistCostCheckpoint();
+            modelResumeState = value;
+            if (value?.semanticVerificationResult) {
+              latestSemanticVerification = value.semanticVerificationResult;
+            }
             await runService.saveModelCheckpoint({
               runId,
               workerId,
               value
             });
+            await persistCostCheckpoint();
           },
           clearModelState: async () => {
             await runService.clearModelCheckpoint({ runId, workerId });
           },
+          contextCompacted: async (metrics) => {
+            await runService.appendRuntimeEvent({
+              runId,
+              workerId,
+              type: 'context.compacted',
+              phase: 'running',
+              summary: '已压缩旧工具观察，保留目标、证据与当前失败',
+              data: metrics
+            });
+          },
+          budgetThreshold: async ({ threshold, budgetRatio }) => {
+            const lockdown = Number(threshold) >= 0.9;
+            await runService.appendRuntimeEvent({
+              runId,
+              workerId,
+              type: lockdown ? 'budget.lockdown' : 'budget.warning',
+              phase: lockdown ? 'verifying' : 'running',
+              summary: lockdown
+                ? '预算已进入验证与安全交付阶段'
+                : '预算已收紧，停止可选探索并压缩计划',
+              data: {
+                threshold: Number(threshold),
+                budgetRatio: Math.max(0, Math.min(1, Number(budgetRatio || 0)))
+              }
+            });
+          },
+          currentBudgetRatio: async () => (
+            costMeter.total() / Math.max(1, Number(context.run.max_credits || 0))
+          ),
           recordUsage: async (credits, items) => {
             costMeter.setModel(credits);
             await persistCostCheckpoint({ usageItems: items });
@@ -1123,6 +1447,113 @@ const createAgentWorkerService = ({
           recordStep: async (step) => {
             await pauseIfRequested();
             return runService.appendStep({ runId, workerId, ...step });
+          },
+          verifyDraft: async ({ taskSpec: currentTaskSpec, artifacts, text }) => {
+            await pauseIfRequested();
+            semanticVerifierAttempts += 1;
+            await runService.appendRuntimeEvent({
+              runId,
+              workerId,
+              type: 'verification.started',
+              phase: 'verifying',
+              summary: '正在核对目标、约束、来源和交付完整性',
+              data: { attempt: semanticVerifierAttempts }
+            });
+            const extracted = [];
+            for (const artifact of Array.isArray(artifacts) ? artifacts : []) {
+              const path = String(artifact?.path || '');
+              const mimeType = String(artifact?.mime_type || '');
+              if (!path.startsWith('/tmp/artigen-workspace/')) continue;
+              if (mimeType === 'text/markdown' || mimeType === 'text/plain') {
+                const file = await sandbox.readFile(sandboxName, path);
+                extracted.push(Buffer.from(file.base64 || '', 'base64').toString('utf8').slice(0, 30_000));
+              } else if (mimeType === 'application/pdf') {
+                const pdfText = await sandbox.systemShell(
+                  sandboxName,
+                  `pdftotext '${path.replaceAll("'", '')}' - | head -c 30000`,
+                  60
+                );
+                if (pdfText.success) extracted.push(String(pdfText.stdout || '').slice(0, 30_000));
+              }
+            }
+            const sources = [...new Map(
+              (Array.isArray(artifacts) ? artifacts : [])
+                .flatMap((artifact) => Array.isArray(artifact?.sources) ? artifact.sources : [])
+                .filter((source) => source?.url)
+                .map((source) => [source.url, source])
+            ).values()];
+            const verification = await model.verifyTask({
+              taskSpec: currentTaskSpec,
+              artifacts,
+              sources,
+              extractedContent: [String(text || '').slice(0, 4000), ...extracted].join('\n\n'),
+              metadata: {
+                runId,
+                userId: context.run.user_id,
+                priority: 'verifier',
+                promptProfile: context.run.prompt_profile,
+                promptHash: Buffer.isBuffer(context.run.prompt_hash)
+                  ? context.run.prompt_hash.toString('hex')
+                  : null,
+                skillIds: Object.keys(context.run.skill_versions || {}),
+                signal: modelAbortController.signal
+              }
+            });
+            const verifierModelCredits = Math.max(
+              0,
+              Number(modelResumeState?.totalCredits || 0) + Number(verification.credits || 0)
+            );
+            costMeter.setModel(verifierModelCredits);
+            modelResumeState = {
+              ...modelResumeState,
+              totalCredits: verifierModelCredits,
+              semanticVerificationAttempts: semanticVerifierAttempts,
+              pendingVerifierResult: verification
+            };
+            await runService.saveModelCheckpoint({
+              runId,
+              workerId,
+              value: modelResumeState
+            });
+            await persistCostCheckpoint({
+              usageItems: { source: 'runtime_v2_verifier_checkpoint', ...(verification.usage || {}) }
+            });
+            latestSemanticVerification = verification.result;
+            if (modelCallService) {
+              await modelCallService.recordQualityCheck({
+                runId,
+                checkKind: 'semantic-verifier-v1',
+                status: verification.result.passed ? 'passed' : 'failed',
+                score: verification.result.score,
+                codes: verification.result.issues.map((_, index) => `issue-${index + 1}`),
+                metrics: {
+                  attempt: semanticVerifierAttempts,
+                  unsupportedVisualJudgment: verification.result.unsupportedVisualJudgment
+                }
+              }).catch(() => {});
+            }
+            await runService.appendRuntimeEvent({
+              runId,
+              workerId,
+              type: verification.result.passed
+                ? 'verification.passed'
+                : semanticVerifierAttempts >= 2
+                  ? 'verification.failed'
+                  : 'verification.repair_requested',
+              phase: 'verifying',
+              summary: verification.result.passed
+                ? '目标与交付物语义核对通过'
+                : semanticVerifierAttempts >= 2
+                  ? '定向返修后仍未通过语义核对'
+                  : '已请求一次定向返修',
+              data: {
+                attempt: semanticVerifierAttempts,
+                score: verification.result.score,
+                issueCount: verification.result.issues.length,
+                unsupportedVisualJudgment: verification.result.unsupportedVisualJudgment
+              }
+            });
+            return verification;
           },
           computerActions: async (actions) => {
             await pauseIfRequested();
@@ -1668,6 +2099,11 @@ const createAgentWorkerService = ({
           primaryArtifactPresent: artifacts.some((artifact) => (
             ['editable', 'source', 'website', 'package', 'image'].includes(artifact.role)
           )),
+          ...(runtimeV2 ? {
+            semanticVerificationPassed: latestSemanticVerification?.passed === true,
+            semanticVerificationScore: Number(latestSemanticVerification?.score || 0),
+            visualAestheticReviewAutomated: false
+          } : {}),
           modelClaimIgnoredUntilVerified: true
         }
       });

@@ -26,6 +26,7 @@ const {
   sanitizeLogValue,
   sanitizeText
 } = require('./agent-policy-service');
+const { compileAgentPrompt, normalizeTaskSpec } = require('./agent-runtime-v2');
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const SUBAGENT_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
@@ -210,6 +211,11 @@ const publicRun = (row, extras = {}) => ({
   runId: row.id,
   projectId: row.project_id || null,
   status: row.status,
+  runtime: {
+    version: Number(row.runtime_version || 1),
+    promptProfile: row.prompt_profile || null,
+    skills: Object.entries(row.skill_versions || {}).map(([id, version]) => ({ id, version }))
+  },
   model: {
     provider: row.model_provider,
     name: row.model_name
@@ -920,6 +926,26 @@ const createAgentRunService = ({
     const row = result.rows[0] || {};
     const workerOnline = row.worker_online === true;
     const queueDepth = Number(row.queue_depth || 0);
+    let providerScheduler = {
+      enabled: config.providerSchedulerEnabled,
+      ready: !config.providerSchedulerEnabled,
+      mode: config.providerSchedulerEnabled ? 'postgres-v1' : 'process-local'
+    };
+    if (config.providerSchedulerEnabled) {
+      try {
+        const scheduler = await pool.query(
+          `SELECT to_regclass('public.agent_provider_scheduler') IS NOT NULL AS has_scheduler,
+                  to_regclass('public.agent_provider_requests') IS NOT NULL AS has_requests`
+        );
+        providerScheduler = {
+          ...providerScheduler,
+          ready: scheduler.rows[0]?.has_scheduler === true &&
+            scheduler.rows[0]?.has_requests === true
+        };
+      } catch {
+        providerScheduler = { ...providerScheduler, ready: false };
+      }
+    }
     return {
       enabled: config.enabled,
       workerOnline,
@@ -937,6 +963,11 @@ const createAgentRunService = ({
       subagentsEnabled: config.publicSubagentsEnabled,
       subagentMaxConcurrent: config.subagentMaxConcurrent,
       subagentSandboxMode: config.subagentSandboxMode,
+      runtimeV2Enabled: config.runtimeV2Enabled,
+      promptEngineVersion: config.promptEngineVersion,
+      adaptiveReasoningEnabled: config.adaptiveReasoningEnabled,
+      projectMemoryEnabled: config.projectMemoryEnabled,
+      providerScheduler,
       accessMode: config.betaMode,
       availabilityNote: workerOnline
         ? (queueDepth > 0 ? 'busy' : 'ready')
@@ -1068,6 +1099,7 @@ const createAgentRunService = ({
     capabilities,
     browserConfig,
     deliverables,
+    taskSpec: proposedTaskSpec,
     projectId,
     idempotencyKey: rawIdempotencyKey
   }) => {
@@ -1120,6 +1152,21 @@ const createAgentRunService = ({
       ? liveConfig.defaultMaxCredits
       : clampCredits(maxCredits, liveConfig.hardMaxCredits);
     const idempotencyKey = requireIdempotencyKey(rawIdempotencyKey);
+    const normalizedTaskSpec = liveConfig.runtimeV2Enabled && proposedTaskSpec
+      ? normalizeTaskSpec({
+          ...proposedTaskSpec,
+          goal: normalizedObjective,
+          deliverables: normalizedDeliverables,
+          allowedOrigins: normalizedBrowser.allowedOrigins,
+          budget: { maxCredits: budget }
+        }, {
+          objective: normalizedObjective,
+          deliverables: normalizedDeliverables,
+          capabilities: normalizedCapabilities,
+          allowedOrigins: normalizedBrowser.allowedOrigins,
+          maxCredits: budget
+        })
+      : null;
     const requestIdentity = {
       objective: normalizedObjective,
       assetIds: normalizedAssetIds,
@@ -1127,9 +1174,19 @@ const createAgentRunService = ({
       capabilities: normalizedCapabilities,
       deliverables: normalizedDeliverables,
       browserConfig: normalizedBrowser,
-      projectId: projectId || null
+      projectId: projectId || null,
+      taskSpec: normalizedTaskSpec
     };
     const requestHash = hashRequest(requestIdentity);
+    const promptProfile = liveConfig.runtimeV2Enabled
+      ? compileAgentPrompt({
+          objective: normalizedObjective,
+          capabilities: normalizedCapabilities,
+          deliverables: normalizedDeliverables,
+          taskSpec: normalizedTaskSpec,
+          phase: normalizedCapabilities.browser ? 'research' : 'production'
+        })
+      : null;
 
     const created = await withTransaction(pool, async (client) => {
       const dbUserId = await resolveAgentUserId(client, userId);
@@ -1205,9 +1262,10 @@ const createAgentRunService = ({
         `INSERT INTO agent_runs
           (id,user_id,project_id,status,idempotency_key,request_hash,
            model_provider,model_name,sandbox_provider,sandbox_version,
-           capabilities,browser_config,max_credits,queued_at,queue_expires_at)
-         VALUES ($1,$2,$3,'queued',$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),
-           clock_timestamp()+($13::text || ' hours')::interval)
+           capabilities,browser_config,max_credits,runtime_version,prompt_profile,
+           prompt_hash,skill_versions,queued_at,queue_expires_at)
+         VALUES ($1,$2,$3,'queued',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+           now(),clock_timestamp()+($17::text || ' hours')::interval)
          RETURNING *`,
         [
           runId,
@@ -1222,6 +1280,12 @@ const createAgentRunService = ({
           JSON.stringify(normalizedCapabilities),
           JSON.stringify(normalizedBrowser),
           budget,
+          promptProfile ? 2 : 1,
+          promptProfile?.promptProfile || null,
+          promptProfile ? Buffer.from(promptProfile.promptHash, 'hex') : null,
+          JSON.stringify(Object.fromEntries(
+            (promptProfile?.skills || []).map((skill) => [skill.id, skill.version])
+          )),
           liveConfig.queueMaxWaitHours
         ]
       );
@@ -1234,6 +1298,7 @@ const createAgentRunService = ({
           objective: normalizedObjective,
           assetIds: normalizedAssetIds,
           deliverables: normalizedDeliverables,
+          taskSpec: normalizedTaskSpec,
           createdBy: 'user'
         },
         env
@@ -1272,7 +1337,13 @@ const createAgentRunService = ({
         type: 'run.queued',
         phase: 'queued',
         summary: '任务已进入 Agent 队列',
-        data: { maxCredits: budget, freeCredits: hold.freeCredits }
+        data: {
+          maxCredits: budget,
+          freeCredits: hold.freeCredits,
+          runtimeVersion: promptProfile ? 2 : 1,
+          promptProfile: promptProfile?.promptProfile || null,
+          skillIds: (promptProfile?.skills || []).map((skill) => skill.id)
+        }
       });
       return {
         row: { ...inserted.rows[0], free_credits_reserved: hold.freeCredits },
@@ -2176,6 +2247,59 @@ const createAgentRunService = ({
     }
   );
 
+  const appendRuntimeEvent = async ({
+    runId,
+    workerId,
+    type,
+    phase = null,
+    summary = '',
+    data = {}
+  }) => withTransaction(pool, async (client) => {
+    const lease = await client.query(
+      `SELECT 1 FROM agent_runs
+        WHERE id=$1 AND worker_id=$2 AND status IN ('running','verifying')`,
+      [runId, workerId]
+    );
+    if (!lease.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    return insertEvent(client, {
+      runId,
+      type: sanitizeText(type, 100),
+      phase: phase ? sanitizeText(phase, 80) : null,
+      summary: sanitizeText(summary, 500),
+      data: sanitizeLogValue(data)
+    });
+  });
+
+  const pinRuntimeProfile = async ({ runId, workerId, profile }) => {
+    if (!profile || Number(profile.runtimeVersion) !== 2) {
+      throw new ApiError(400, 'AGENT_RUNTIME_PROFILE_INVALID');
+    }
+    const promptHash = String(profile.promptHash || '').toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(promptHash)) {
+      throw new ApiError(400, 'AGENT_RUNTIME_PROFILE_INVALID');
+    }
+    const updated = await pool.query(
+      `UPDATE agent_runs
+          SET prompt_profile=$3,prompt_hash=$4,skill_versions=$5,updated_at=now()
+        WHERE id=$1 AND worker_id=$2 AND runtime_version=2
+          AND status IN ('running','verifying')
+        RETURNING prompt_profile,prompt_hash,skill_versions`,
+      [
+        runId,
+        workerId,
+        sanitizeText(profile.promptProfile, 80),
+        Buffer.from(promptHash, 'hex'),
+        JSON.stringify(Object.fromEntries(
+          (Array.isArray(profile.skills) ? profile.skills : [])
+            .map((skill) => [sanitizeText(skill.id, 80), Number(skill.version || 0)])
+            .filter(([id, version]) => id && Number.isSafeInteger(version) && version > 0)
+        ))
+      ]
+    );
+    if (!updated.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    return updated.rows[0];
+  };
+
   const recordScreenshot = async ({ runId, workerId, sha256 }) => withTransaction(
     pool,
     async (client) => {
@@ -3056,6 +3180,7 @@ const createAgentRunService = ({
 
   return {
     appendStep,
+    appendRuntimeEvent,
     cancelRun,
     cancelSubagent,
     claimRun,
@@ -3082,6 +3207,7 @@ const createAgentRunService = ({
     listIntegrations,
     listObservedSources,
     listRuns,
+    pinRuntimeProfile,
     listTerminalSandboxes,
     loadPrivateContext,
     loadSubagentContext,

@@ -60,6 +60,10 @@ const {
   upsertOperationalRecord,
   usesOperationalRecordStore,
 } = require("./services/operational-record-service");
+const {
+  createProviderScheduler,
+  createScheduledChatGenerate,
+} = require("./services/agent-model-runtime-service");
 
 const {
   assertAdmin,
@@ -97,6 +101,18 @@ const PORT = process.env.PORT || 8080;
 console.log("Resolved PORT:", PORT);
 const DEBUG_FILES = String(process.env.DEBUG_FILES || "").trim() === "1";
 const FILES_DIR = path.join(MEMORY_DIR, "files");
+const sharedProviderScheduler = isDatabaseConfigured()
+  ? createProviderScheduler({ pool: getPool(), env: process.env })
+  : null;
+const scheduledSiliconFlowChat = createScheduledChatGenerate({
+  scheduler: sharedProviderScheduler,
+  chatGenerate: callSiliconFlowChat,
+  defaultPriority: "actor",
+});
+const scheduledTextGenerate = (input) => callTextGenerate({
+  ...input,
+  chatGenerate: scheduledSiliconFlowChat,
+});
 
 try {
   if (!fs.existsSync(FILES_DIR)) fs.mkdirSync(FILES_DIR, { recursive: true });
@@ -651,7 +667,7 @@ installConvertRoutes(app, {
 installToolTaskRoutes(app, {
   rateLimit,
   callSiliconFlowImageGenerate,
-  callSiliconFlowChat,
+  callSiliconFlowChat: scheduledSiliconFlowChat,
 });
 
 installProjectRoutes(app, {
@@ -665,6 +681,7 @@ const agentRuntime = installAgentRoutes(app, {
 installDesignConversationRoutes(app, {
   rateLimit,
   callSiliconFlowChat,
+  providerScheduler: sharedProviderScheduler,
   agentRunService: agentRuntime.service,
 });
 
@@ -731,8 +748,8 @@ installSystemRoutes(app, {
   rateLimit,
   assertAuthUserMatches,
   callSiliconFlowImageGenerate,
-  callSiliconFlowChat,
-  callTextGenerate,
+  callSiliconFlowChat: scheduledSiliconFlowChat,
+  callTextGenerate: scheduledTextGenerate,
   SILICONFLOW_API_BASE,
   SILICONFLOW_MODEL,
   getClientIp,

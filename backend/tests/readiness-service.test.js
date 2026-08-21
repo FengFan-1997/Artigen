@@ -49,6 +49,10 @@ const migratedRow = Object.freeze({
   has_agent_subagents: true,
   has_agent_subagent_payloads: true,
   has_agent_subagent_checkpoints: true,
+  has_agent_model_calls: true,
+  has_agent_provider_scheduler: true,
+  has_agent_provider_requests: true,
+  has_agent_quality_checks: true,
   has_design_conversations: true,
   has_design_messages: true,
   has_design_executions: true,
@@ -74,6 +78,7 @@ const migratedRow = Object.freeze({
   has_agent_budget_split_columns: true,
   has_agent_subagent_columns: true,
   has_agent_subagent_links: true,
+  has_agent_runtime_v2_columns: true,
   has_ai_skus: true,
   has_workshop_skus: true
 });
@@ -185,7 +190,7 @@ test('readiness verifies queue, payload, asset, event, inputs_ready and AI SKU m
     code: null,
     migration: LATEST_REPOSITORY_MIGRATION
   });
-  assert.equal(LATEST_REPOSITORY_MIGRATION, '023_agent_subagent_runtime_hardening');
+  assert.equal(LATEST_REPOSITORY_MIGRATION, '024_agent_runtime_v2_observability');
   assert.equal(migrationQueryParam, LATEST_REPOSITORY_MIGRATION);
   assert.deepEqual(await checkDatabase({
     query: async () => ({ rows: [{ ...migratedRow, has_task_columns: false }] })

@@ -17,7 +17,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const readiness = await checkDatabase(pool);
   assert.equal(readiness.ok, true);
-  assert.equal(readiness.migration, '023_agent_subagent_runtime_hardening');
+  assert.equal(readiness.migration, '024_agent_runtime_v2_observability');
   const suffix = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const users = await pool.query(
     `INSERT INTO users (legacy_user_id,display_name,status)
@@ -219,7 +219,26 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
     const cancelled = await service.cancelSubagent({ userId: userA, runId, subagentId });
     assert.equal(cancelled.status, 'cancelled');
   } finally {
-    if (runId) await pool.query('DELETE FROM agent_runs WHERE id=$1', [runId]).catch(() => {});
+    if (runId) {
+      await pool.query(
+        `UPDATE agent_subagents
+            SET status=CASE WHEN status IN ('succeeded','failed','cancelled') THEN status ELSE 'cancelled' END,
+                cancel_requested=true,
+                error_code=COALESCE(error_code,'INTEGRATION_TEST_CLEANUP'),
+                finished_at=COALESCE(finished_at,now()),
+                updated_at=now()
+          WHERE run_id=$1`,
+        [runId]
+      );
+      await pool.query(
+        `UPDATE agent_runs
+            SET status='failed',error_code='INTEGRATION_TEST_CLEANUP',
+                worker_id=NULL,lease_expires_at=NULL,
+                finished_at=COALESCE(finished_at,now()),updated_at=now()
+          WHERE id=$1 AND idempotency_key LIKE 'agent-hardening:%'`,
+        [runId]
+      );
+    }
     await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])', [[userA, userB]]).catch(() => {});
     await pool.end();
   }

@@ -47,6 +47,18 @@ services:
         value: "30"
       - key: AGENT_SUBAGENTS_ENABLED
         value: "false"
+      - key: AGENT_RUNTIME_V2_ENABLED
+        value: "false"
+      - key: DESIGN_PLANNER_V2_ENABLED
+        value: "false"
+      - key: AGENT_ADAPTIVE_REASONING_ENABLED
+        value: "false"
+      - key: AGENT_PROJECT_MEMORY_ENABLED
+        value: "false"
+      - key: AGENT_PROVIDER_SCHEDULER_ENABLED
+        value: "false"
+      - key: AGENT_RUNTIME_ACTOR_PROFILE
+        value: "stable-v1"
       - key: VITE_ANALYTICS_ENABLED
         value: "1"
       - key: BEHAVIOR_ANALYTICS_ENABLED

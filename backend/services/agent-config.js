@@ -8,6 +8,11 @@ const integer = (value, fallback, minimum, maximum) => {
   return Math.max(minimum, Math.min(maximum, resolved));
 };
 
+const ACTOR_SAMPLING_PROFILES = Object.freeze({
+  'stable-v1': Object.freeze({ id: 'stable-v1', temperature: 0.2, topP: 0.7 }),
+  'exploratory-v1': Object.freeze({ id: 'exploratory-v1', temperature: 0.4, topP: 0.8 })
+});
+
 const agentFeatureEnabled = (env = process.env) => enabled(env.AGENT_FEATURE_ENABLED);
 const agentWorkerEnabled = (env = process.env) => (
   agentFeatureEnabled(env) && enabled(env.AGENT_WORKER_ENABLED)
@@ -120,6 +125,18 @@ const getAgentConfig = (env = process.env) => {
     .map((entry) => entry.trim())
     .filter(Boolean));
   const subagentsEnabled = enabled(env.AGENT_SUBAGENTS_ENABLED);
+  const runtimeV2Enabled = enabled(env.AGENT_RUNTIME_V2_ENABLED);
+  const designPlannerV2Enabled = enabled(env.DESIGN_PLANNER_V2_ENABLED);
+  const adaptiveReasoningEnabled = enabled(env.AGENT_ADAPTIVE_REASONING_ENABLED);
+  const projectMemoryEnabled = enabled(env.AGENT_PROJECT_MEMORY_ENABLED);
+  const providerSchedulerEnabled = enabled(env.AGENT_PROVIDER_SCHEDULER_ENABLED);
+  const actorSamplingProfileName = String(
+    env.AGENT_RUNTIME_ACTOR_PROFILE || 'stable-v1'
+  ).trim().toLowerCase();
+  const actorSamplingProfile = ACTOR_SAMPLING_PROFILES[actorSamplingProfileName];
+  if (!actorSamplingProfile) {
+    throw new ApiError(500, 'AGENT_RUNTIME_ACTOR_PROFILE_INVALID');
+  }
   const browserMode = String(env.AGENT_BROWSER_MODE || 'disabled').trim().toLowerCase();
   if (!['disabled', AGENT_BROWSER_MODE].includes(browserMode)) {
     throw new ApiError(500, 'AGENT_BROWSER_MODE_INVALID');
@@ -156,13 +173,25 @@ const getAgentConfig = (env = process.env) => {
     runtimeDriver,
     modelProvider,
     modelName,
-    codingModelName: String(env.AGENT_CODING_MODEL_NAME || 'gpt-5.6-sol').trim(),
     ollamaBaseUrl,
     siliconFlowBaseUrl,
     siliconFlowApiKey,
     siliconFlowMaxTokens: integer(env.AGENT_SILICONFLOW_MAX_TOKENS, 4096, 512, 32768),
     siliconFlowThinkingEnabled: enabled(env.AGENT_SILICONFLOW_ENABLE_THINKING),
+    siliconFlowRequestsPerMinute: integer(
+      env.AGENT_SILICONFLOW_REQUESTS_PER_MINUTE,
+      9,
+      1,
+      60
+    ),
     modelContextTokens: integer(env.AGENT_MODEL_CONTEXT_TOKENS, 16384, 4096, 32768),
+    runtimeV2Enabled,
+    designPlannerV2Enabled,
+    adaptiveReasoningEnabled,
+    projectMemoryEnabled,
+    providerSchedulerEnabled,
+    actorSamplingProfile,
+    promptEngineVersion: 'skills-v1',
     sandboxProvider,
     sandboxMode,
     sandboxDockerPlatform,
@@ -211,6 +240,16 @@ const getAgentConfig = (env = process.env) => {
 const assertAgentRuntimeReady = (env = process.env) => {
   const config = getAgentConfig(env);
   if (!config.enabled) throw new ApiError(404, 'AGENT_FEATURE_DISABLED');
+  if (
+    (config.runtimeV2Enabled || config.designPlannerV2Enabled ||
+      config.adaptiveReasoningEnabled || config.projectMemoryEnabled) &&
+    (config.modelProvider !== 'siliconflow' || config.modelName !== SILICONFLOW_AGENT_MODEL)
+  ) {
+    throw new ApiError(503, 'AGENT_RUNTIME_V2_MODEL_NOT_READY', { retryable: false });
+  }
+  if (config.runtimeV2Enabled && config.modelContextTokens < 16_384) {
+    throw new ApiError(503, 'AGENT_RUNTIME_V2_CONTEXT_NOT_READY', { retryable: false });
+  }
   if (config.runtimeDriver === 'fixture') return config;
   if (config.modelProvider === 'openai' && !config.openAiApiKey) {
     throw new ApiError(503, 'AGENT_MODEL_NOT_CONFIGURED', { retryable: false });

@@ -134,6 +134,8 @@
         </section>
         <TechnicalDetails :label="zh ? '技术详情' : 'Technical details'">
           <dl class="technical-list">
+            <div v-if="run.runtime"><dt>{{ zh ? '运行时' : 'Runtime' }}</dt><dd>V{{ run.runtime.version }} · {{ run.runtime.promptProfile || 'legacy' }}</dd></div>
+            <div v-if="run.runtime?.skills?.length"><dt>{{ zh ? '已加载规范' : 'Loaded skills' }}</dt><dd>{{ run.runtime.skills.map((skill) => `${skill.id}@${skill.version}`).join(' · ') }}</dd></div>
             <div><dt>{{ zh ? '父与子文本模型' : 'Parent & child text' }}</dt><dd>Qwen/Qwen3-8B</dd></div>
             <div><dt>{{ zh ? '所有图片' : 'All images' }}</dt><dd>Kwai-Kolors/Kolors</dd></div>
             <div><dt>{{ zh ? '沙箱' : 'Sandbox' }}</dt><dd>{{ run.sandbox.provider }} · {{ run.sandbox.version }}</dd></div>
@@ -682,7 +684,15 @@ const eventLabel = (type: string) => {
     'subagent.progress': ['子 Agent 有新进展', 'Subagent progress'],
     'subagent.succeeded': ['子 Agent 已完成', 'Subagent completed'],
     'subagent.failed': ['子 Agent 失败', 'Subagent failed'],
-    'subagent.cancelled': ['子 Agent 已取消', 'Subagent cancelled']
+    'subagent.cancelled': ['子 Agent 已取消', 'Subagent cancelled'],
+    'plan.compiled': ['计划已编译', 'Plan compiled'],
+    'context.compacted': ['上下文已压缩', 'Context compacted'],
+    'verification.started': ['语义核对开始', 'Semantic verification started'],
+    'verification.repair_requested': ['需要定向返修', 'Targeted repair requested'],
+    'verification.passed': ['语义核对通过', 'Semantic verification passed'],
+    'verification.failed': ['语义核对未通过', 'Semantic verification failed'],
+    'budget.warning': ['预算计划已收紧', 'Budget plan tightened'],
+    'budget.lockdown': ['仅保留验证与交付', 'Verification and delivery only']
   };
   return labels[type]?.[zh.value ? 0 : 1] || type.replace(/\./g, ' / ').toUpperCase();
 };

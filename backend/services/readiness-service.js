@@ -251,6 +251,10 @@ const checkDatabase = async (pool) => {
          to_regclass('public.agent_subagents') IS NOT NULL AS has_agent_subagents,
          to_regclass('public.agent_subagent_payloads') IS NOT NULL AS has_agent_subagent_payloads,
          to_regclass('public.agent_subagent_model_checkpoints') IS NOT NULL AS has_agent_subagent_checkpoints,
+         to_regclass('public.agent_model_calls') IS NOT NULL AS has_agent_model_calls,
+         to_regclass('public.agent_provider_scheduler') IS NOT NULL AS has_agent_provider_scheduler,
+         to_regclass('public.agent_provider_requests') IS NOT NULL AS has_agent_provider_requests,
+         to_regclass('public.agent_quality_checks') IS NOT NULL AS has_agent_quality_checks,
          to_regclass('public.design_conversations') IS NOT NULL AS has_design_conversations,
          to_regclass('public.design_messages') IS NOT NULL AS has_design_messages,
          to_regclass('public.design_executions') IS NOT NULL AS has_design_executions,
@@ -414,6 +418,14 @@ const checkDatabase = async (pool) => {
               AND table_name IN ('agent_steps','agent_events')
               AND column_name='subagent_id'
          ) AS has_agent_subagent_links,
+         (
+           SELECT count(*) = 4
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_runs'
+              AND column_name IN (
+                'runtime_version','prompt_profile','prompt_hash','skill_versions'
+              )
+         ) AS has_agent_runtime_v2_columns,
          COALESCE((
            SELECT count(*) = 3 AND bool_and(
              (ps.sku='ai-design.generate.v1' AND ps.credits=10 AND ps.metadata->>'operation'='generate')
@@ -481,6 +493,10 @@ const checkDatabase = async (pool) => {
       row.has_agent_subagents &&
       row.has_agent_subagent_payloads &&
       row.has_agent_subagent_checkpoints &&
+      row.has_agent_model_calls &&
+      row.has_agent_provider_scheduler &&
+      row.has_agent_provider_requests &&
+      row.has_agent_quality_checks &&
       row.has_design_conversations &&
       row.has_design_messages &&
       row.has_design_executions &&
@@ -505,7 +521,8 @@ const checkDatabase = async (pool) => {
       row.has_agent_worker_readiness_columns &&
       row.has_agent_budget_split_columns &&
       row.has_agent_subagent_columns &&
-      row.has_agent_subagent_links
+      row.has_agent_subagent_links &&
+      row.has_agent_runtime_v2_columns
     );
     if (!migrated) {
       return {

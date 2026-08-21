@@ -1,7 +1,8 @@
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const test = require('node:test');
-const agentQualitySet = require('../evaluation/agent-quality-set.json');
+const agentQualityManifest = require('../evaluation/agent-quality-set.json');
+const agentQualitySet = agentQualityManifest.cases;
 
 const { ApiError } = require('../lib/api-error');
 const {
@@ -1153,7 +1154,6 @@ test('production Agent runtime fails closed without live credentials and a pinne
     AGENT_WORKER_ID: 'mac-production-1'
   });
   assert.equal(config.modelName, 'gpt-5.6');
-  assert.equal(config.codingModelName, 'gpt-5.6-sol');
   assert.equal(config.hardMaxCredits, 500);
   assert.throws(() => getAgentConfig({
     NODE_ENV: 'production',
@@ -4829,6 +4829,68 @@ test('Agent routes can register while disabled without constructing PostgreSQL o
   assert.ok(routes.some(([method, path]) => (
     method === 'DELETE' && path === '/api/agent-browser-profiles/:profileId'
   )));
+});
+
+test('Agent create route preserves the server-validated TaskSpec contract', async () => {
+  let createHandler = null;
+  let received = null;
+  const app = {
+    get() {},
+    post(path, ...handlers) {
+      if (path === '/api/agent-runs') createHandler = handlers.at(-1);
+    },
+    delete() {}
+  };
+  const taskSpec = {
+    version: 1,
+    goal: 'Create a report',
+    complexity: 'medium',
+    confidence: 0.9,
+    constraints: [],
+    assumptions: [],
+    deliverables: ['report'],
+    allowedOrigins: [],
+    acceptanceCriteria: ['The report opens'],
+    skillIds: ['report'],
+    plan: [
+      { id: 'produce', label: 'Create the report', phase: 'production', status: 'in_progress' },
+      { id: 'verify', label: 'Verify the report', phase: 'verification', status: 'pending' }
+    ],
+    budget: { maxCredits: 50 }
+  };
+  installAgentRoutes(app, {
+    env: { AGENT_FEATURE_ENABLED: 'true' },
+    pool: {},
+    queuePublisher: {},
+    agentIntegrationService: {},
+    agentRunService: {
+      async createRun(input) {
+        received = input;
+        return { runId: 'run-1', replayed: false };
+      }
+    }
+  });
+  assert.equal(typeof createHandler, 'function');
+  const req = {
+    authResolution: { ok: true, userId: 'user-1', dbUserId: 'db-user-1' },
+    headers: { 'idempotency-key': 'route-task-spec-contract' },
+    body: {
+      objective: 'Create a report',
+      maxCredits: 50,
+      capabilities: { files: true, shell: true },
+      deliverables: ['report'],
+      taskSpec
+    }
+  };
+  const response = {};
+  const res = {
+    headersSent: false,
+    status(code) { response.status = code; return this; },
+    json(value) { response.body = value; return this; }
+  };
+  await createHandler(req, res);
+  assert.equal(response.status, 202);
+  assert.deepEqual(received.taskSpec, taskSpec);
 });
 
 test('OAuth state is short-lived, signed and bound to the user and provider', () => {

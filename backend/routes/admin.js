@@ -31,6 +31,7 @@ const {
   listOperationalRecords,
   usesOperationalRecordStore
 } = require('../services/operational-record-service');
+const { createModelCallService } = require('../services/agent-model-runtime-service');
 const {
   readJson,
   USERS_FILE,
@@ -771,6 +772,22 @@ const installAdminRoutes = (app, deps = {}) => {
     } catch (e) {
       console.error('Error in GET /api/admin/events:', e);
       return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
+
+  app.get('/api/admin/agent-quality/summary', rateLimit('admin_agent_quality', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      if (!isDatabaseConfigured()) {
+        return res.status(503).json({ error: 'AGENT_QUALITY_DATABASE_REQUIRED' });
+      }
+      const days = clampInt(req.query.days || 7, 1, 30);
+      const service = deps.agentModelCallService || createModelCallService({ pool: getPool() });
+      const summary = await service.summary({ days });
+      return res.json({ ok: true, summary });
+    } catch (error) {
+      console.error('Error in GET /api/admin/agent-quality/summary:', error);
+      return res.status(503).json({ error: 'AGENT_QUALITY_SUMMARY_UNAVAILABLE' });
     }
   });
 

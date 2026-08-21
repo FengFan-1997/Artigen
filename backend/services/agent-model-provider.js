@@ -7,6 +7,18 @@ const {
   assertLoopBudget,
   classifyAction
 } = require('./agent-policy-service');
+const {
+  buildContextMessages,
+  compileAgentPrompt,
+  createWorkingState,
+  normalizeTaskSpec,
+  normalizeVerifierResult,
+  observationEnvelope,
+  summarizeToolObservation,
+  taskPlannerMessages,
+  verifierMessages
+} = require('./agent-runtime-v2');
+const { parseRetryAfterMs } = require('./agent-model-runtime-service');
 
 const COMPUTER_TOOL = Object.freeze({ type: 'computer' });
 const VISUAL_MUTATING_ACTIONS = new Set([
@@ -520,8 +532,13 @@ const OLLAMA_FILE_TOOL_NAMES = new Set([
 
 const SUBAGENT_TOOL_NAMES = new Set(['update_plan', 'sandbox_shell']);
 
-const functionToolsForProfile = (capabilities = {}, toolProfile = 'parent') => FUNCTION_TOOLS
+const functionToolsForProfile = (
+  capabilities = {},
+  toolProfile = 'parent',
+  allowedToolNames = null
+) => FUNCTION_TOOLS
   .filter((tool) => {
+    if (allowedToolNames && !allowedToolNames.has(tool.name)) return false;
     if (toolProfile === 'subagent') return SUBAGENT_TOOL_NAMES.has(tool.name);
     return (
       OLLAMA_FILE_TOOL_NAMES.has(tool.name) ||
@@ -554,8 +571,8 @@ const functionToolsForProfile = (capabilities = {}, toolProfile = 'parent') => F
     };
   });
 
-const ollamaFileTools = (capabilities = {}, toolProfile = 'parent') =>
-  functionToolsForProfile(capabilities, toolProfile)
+const ollamaFileTools = (capabilities = {}, toolProfile = 'parent', allowedToolNames = null) =>
+  functionToolsForProfile(capabilities, toolProfile, allowedToolNames)
   .map((tool) => ({
     type: 'function',
     function: {
@@ -569,6 +586,40 @@ const normalizeOllamaArguments = (raw) => {
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
   return parseArguments(raw);
 };
+
+const parseJsonObject = (raw, errorCode) => {
+  const text = String(raw || '').trim();
+  const unfenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] || text;
+  const start = unfenced.indexOf('{');
+  const end = unfenced.lastIndexOf('}');
+  if (start < 0 || end <= start) {
+    throw new ApiError(502, errorCode, { retryable: true });
+  }
+  try {
+    const value = JSON.parse(unfenced.slice(start, end + 1));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('shape');
+    return value;
+  } catch {
+    throw new ApiError(502, errorCode, { retryable: true });
+  }
+};
+
+const wait = (milliseconds, signal = null) => new Promise((resolve, reject) => {
+  if (signal?.aborted) {
+    reject(new ApiError(499, 'AGENT_CANCELLED', { retryable: false }));
+    return;
+  }
+  const onAbort = () => {
+    clearTimeout(timer);
+    reject(new ApiError(499, 'AGENT_CANCELLED', { retryable: false }));
+  };
+  const timer = setTimeout(() => {
+    signal?.removeEventListener('abort', onAbort);
+    resolve();
+  }, Math.max(0, Number(milliseconds) || 0));
+  timer.unref?.();
+  signal?.addEventListener('abort', onAbort, { once: true });
+});
 
 const normalizeReportPdfToolAlias = ({ name, rawArguments, toolProfile }) => {
   if (toolProfile !== 'parent' || name !== 'artigen-report-pdf') return null;
@@ -1022,10 +1073,17 @@ class OpenAiAgentModelProvider {
 }
 
 class OllamaAgentModelProvider {
-  constructor({ env = process.env, fetchImpl = globalThis.fetch } = {}) {
+  constructor({
+    env = process.env,
+    fetchImpl = globalThis.fetch,
+    providerScheduler = null,
+    modelCallService = null
+  } = {}) {
     this.env = env;
     this.config = getAgentConfig(env);
     this.fetchImpl = fetchImpl;
+    this.providerScheduler = providerScheduler;
+    this.modelCallService = modelCallService;
   }
 
   get providerName() {
@@ -1044,19 +1102,26 @@ class OllamaAgentModelProvider {
     };
   }
 
-  buildChatPayload(messages, capabilities = {}, toolProfile = 'parent') {
+  buildChatPayload(messages, capabilities = {}, toolProfile = 'parent', options = {}) {
+    const allowedToolNames = options.allowedToolNames
+      ? new Set(options.allowedToolNames)
+      : null;
+    const tools = ollamaFileTools(capabilities, toolProfile, allowedToolNames);
     return {
       model: this.config.modelName,
       messages: compactOllamaMessages(
         messages,
         Math.max(24_000, this.config.modelContextTokens * 3)
       ),
-      tools: ollamaFileTools(capabilities, toolProfile),
+      ...(options.toolsEnabled === false || tools.length === 0 ? {} : { tools }),
       stream: false,
-      think: true,
+      think: options.thinkingEnabled === undefined
+        ? true
+        : options.thinkingEnabled === true,
       options: {
         num_ctx: this.config.modelContextTokens,
-        temperature: 0.2
+        temperature: Number(options.temperature ?? 0.2),
+        top_p: Number(options.topP ?? 0.7)
       },
       keep_alive: '10m'
     };
@@ -1136,40 +1201,178 @@ class OllamaAgentModelProvider {
     return body;
   }
 
+  async createStructuredJson({ messages, errorCode, phase, metadata = {} }) {
+    let requestMessages = Array.isArray(messages) ? [...messages] : [];
+    const usage = { inputTokens: 0, outputTokens: 0, credits: 0 };
+    for (let correctionAttempt = 0; correctionAttempt <= 2; correctionAttempt += 1) {
+      const payload = this.buildChatPayload(requestMessages, {}, 'parent', {
+        toolsEnabled: false,
+        thinkingEnabled: this.config.adaptiveReasoningEnabled,
+        temperature: 0.2
+      });
+      const response = await this.createChat(payload, {
+        ...metadata,
+        phase,
+        turn: correctionAttempt,
+        thinkingEnabled: this.config.adaptiveReasoningEnabled,
+        estimatedInputTokens: JSON.stringify(requestMessages).length / 4
+      });
+      const currentUsage = this.usageDetails(response);
+      usage.inputTokens += currentUsage.inputTokens;
+      usage.outputTokens += currentUsage.outputTokens;
+      usage.credits += currentUsage.credits;
+      try {
+        return {
+          value: parseJsonObject(response.message?.content, errorCode),
+          usage
+        };
+      } catch (error) {
+        if (correctionAttempt >= 2) throw error;
+        requestMessages = [
+          ...requestMessages,
+          { role: 'assistant', content: String(response.message?.content || '').slice(0, 4000) },
+          {
+            role: 'user',
+            content: 'The previous output was not one valid JSON object matching the requested schema. Return only a corrected JSON object; do not include markdown or reasoning.'
+          }
+        ];
+      }
+    }
+    throw new ApiError(502, errorCode, { retryable: false });
+  }
+
+  async planTask({
+    objective,
+    deliverables = [],
+    capabilities = {},
+    allowedOrigins = [],
+    maxCredits = 50,
+    projectMemory = null,
+    metadata = {}
+  } = {}) {
+    const messages = taskPlannerMessages({
+      objective,
+      deliverables,
+      capabilities,
+      allowedOrigins,
+      maxCredits,
+      projectMemory
+    });
+    const structured = await this.createStructuredJson({
+      messages,
+      errorCode: 'AGENT_TASK_SPEC_INVALID',
+      phase: 'planner',
+      metadata
+    });
+    const planned = {
+      taskSpec: normalizeTaskSpec(
+        structured.value,
+        { objective, deliverables, capabilities, allowedOrigins, maxCredits }
+      ),
+      usage: structured.usage,
+      credits: structured.usage.credits
+    };
+    await metadata.checkpointResult?.(planned);
+    return planned;
+  }
+
+  async verifyTask({ taskSpec, artifacts = [], sources = [], extractedContent = '', metadata = {} } = {}) {
+    const messages = verifierMessages({ taskSpec, artifacts, sources, extractedContent });
+    const structured = await this.createStructuredJson({
+      messages,
+      errorCode: 'AGENT_VERIFIER_OUTPUT_INVALID',
+      phase: 'verifier',
+      metadata
+    });
+    return {
+      result: normalizeVerifierResult(structured.value),
+      usage: structured.usage,
+      credits: structured.usage.credits
+    };
+  }
+
   async execute({
     objective,
     capabilities,
     deliverables = [],
     toolProfile = 'parent',
     resumeState = null,
+    runtimeContext = null,
     maxSteps,
     deadlineAt = null,
+    signal = null,
     callbacks
   }) {
+    const runtimeV2 = runtimeContext?.runtimeVersion === 2;
+    const durableVersion = runtimeV2 ? 3 : 2;
     const durable = (
-      resumeState?.version === 2 &&
+      resumeState?.version === durableVersion &&
       resumeState?.provider === this.providerName &&
       Array.isArray(resumeState.messages)
     ) ? resumeState : null;
-    const instructions = buildInstructions({ capabilities, maxSteps, toolProfile });
+    const taskSpec = runtimeV2
+      ? normalizeTaskSpec(runtimeContext.taskSpec, {
+          objective,
+          deliverables,
+          capabilities,
+          allowedOrigins: runtimeContext.allowedOrigins,
+          maxCredits: runtimeContext.maxCredits
+        })
+      : null;
+    let workingState = runtimeV2
+      ? createWorkingState({
+          taskSpec,
+          projectMemory: runtimeContext.projectMemory,
+          previous: durable?.workingState || runtimeContext.workingState
+        })
+      : null;
+    let runtimePhase = workingState?.phase || 'production';
+    let prompt = runtimeV2
+      ? compileAgentPrompt({
+          objective,
+          capabilities,
+          deliverables,
+          taskSpec,
+          toolProfile,
+          phase: runtimePhase,
+          budgetRatio: Number(runtimeContext.budgetRatio || 0)
+        })
+      : null;
+    const instructions = prompt?.instructions || buildInstructions({ capabilities, maxSteps, toolProfile });
     const delegationRequired = toolProfile === 'parent' &&
       capabilities?.subagents === true &&
       explicitlyRequiresSubagentDelegation(objective);
-    const allowedToolNames = new Set(
-      functionToolsForProfile(capabilities, toolProfile).map((tool) => tool.name)
+    let allowedToolNames = new Set(
+      functionToolsForProfile(
+        capabilities,
+        toolProfile,
+        prompt ? new Set(prompt.allowedToolNames) : null
+      ).map((tool) => tool.name)
     );
     let messages = durable
       ? durable.messages.map((message) => ({ ...message }))
-      : [
+      : runtimeV2
+        ? []
+        : [
           { role: 'system', content: instructions },
           { role: 'user', content: String(objective || '') }
         ];
-    let totalCredits = Math.max(0, Number(durable?.totalCredits || 0));
+    let totalCredits = Math.max(
+      0,
+      Number(durable?.totalCredits || 0),
+      Number(runtimeContext?.initialModelCredits || 0)
+    );
     let turns = Math.max(0, Number(durable?.turns || 0));
     let text = String(durable?.text || '');
-    let planPublished = durable?.planPublished === true;
+    let planPublished = runtimeV2 || durable?.planPublished === true;
     let pendingCall = durable?.pendingCall || null;
     let completedOutput = durable?.completedOutput || null;
+    let pendingModelResponse = runtimeV2 && durable?.pendingModelResponse
+      ? durable.pendingModelResponse
+      : null;
+    let pendingVerifierResult = runtimeV2 && durable?.pendingVerifierResult
+      ? durable.pendingVerifierResult
+      : null;
     let unsupportedToolAttempts = Math.max(
       0,
       Number(durable?.unsupportedToolAttempts || 0)
@@ -1214,7 +1417,9 @@ class OllamaAgentModelProvider {
         role: String(artifact?.role || ''),
         mime_type: String(artifact?.mime_type || ''),
         filename: String(artifact?.filename || ''),
-        verification_status: String(artifact?.verification_status || '')
+        verification_status: String(artifact?.verification_status || ''),
+        path: String(artifact?.path || ''),
+        sources: Array.isArray(artifact?.sources) ? artifact.sources.slice(0, 100) : []
       }))
       .filter((artifact) => artifact.role && artifact.mime_type);
     const requiredDeliverables = [...new Set(
@@ -1240,18 +1445,45 @@ class OllamaAgentModelProvider {
     let subagentShellRecoveryRequired = durable?.subagentShellRecoveryRequired === true;
     let subagentFinalizationRequired = durable?.subagentFinalizationRequired === true;
     let subagentCompletionSummary = String(durable?.subagentCompletionSummary || '');
+    let compactedAtMessageCount = Math.max(0, Number(durable?.compactedAtMessageCount || 0));
+    let semanticVerificationPassed = durable?.semanticVerificationPassed === true;
+    let semanticRepairRequired = durable?.semanticRepairRequired === true;
+    let semanticVerificationResult = durable?.semanticVerificationResult &&
+        typeof durable.semanticVerificationResult === 'object'
+      ? durable.semanticVerificationResult
+      : null;
+    let semanticVerificationAttempts = Math.max(
+      0,
+      Number(durable?.semanticVerificationAttempts || 0)
+    );
+    let budgetWarningPublished = durable?.budgetWarningPublished === true;
+    let budgetLockdownPublished = durable?.budgetLockdownPublished === true;
+    let lastFailureFingerprint = String(durable?.lastFailureFingerprint || '');
+    let repeatedStateFailures = Math.max(0, Number(durable?.repeatedStateFailures || 0));
 
     const saveDurableState = async () => {
-      messages = compactOllamaMessages(
-        messages,
-        Math.max(24_000, this.config.modelContextTokens * 3)
-      );
+      if (!runtimeV2) {
+        messages = compactOllamaMessages(
+          messages,
+          Math.max(24_000, this.config.modelContextTokens * 3)
+        );
+      }
       await callbacks.saveModelState?.({
-        version: 2,
+        version: durableVersion,
         provider: this.providerName,
         messages,
+        ...(runtimeV2 ? {
+          runtimeVersion: 2,
+          taskSpec,
+          workingState,
+          promptProfile: prompt.promptProfile,
+          promptHash: prompt.promptHash,
+          skillRefs: prompt.skills,
+          runtimePhase
+        } : {}),
         pendingCall,
         completedOutput,
+        ...(runtimeV2 ? { pendingModelResponse, pendingVerifierResult } : {}),
         planPublished,
         totalCredits,
         turns,
@@ -1277,7 +1509,16 @@ class OllamaAgentModelProvider {
         subagentShellFailureCount,
         subagentShellRecoveryRequired,
         subagentFinalizationRequired,
-        subagentCompletionSummary
+        subagentCompletionSummary,
+        compactedAtMessageCount,
+        semanticVerificationPassed,
+        semanticRepairRequired,
+        semanticVerificationResult,
+        semanticVerificationAttempts,
+        budgetWarningPublished,
+        budgetLockdownPublished,
+        lastFailureFingerprint,
+        repeatedStateFailures
       });
     };
 
@@ -1330,6 +1571,37 @@ class OllamaAgentModelProvider {
         }
         const result = await callbacks.updatePlan(planArgs);
         planPublished = true;
+        if (runtimeV2) {
+          const publishedSteps = Array.isArray(result?.steps) ? result.steps : planArgs.steps;
+          const nextIndex = publishedSteps.findIndex((step) => step?.status === 'in_progress');
+          const previousPlan = taskSpec.plan;
+          taskSpec.plan = publishedSteps.slice(0, 12).map((step, index) => ({
+            id: previousPlan[index]?.id || `step-${index + 1}`,
+            label: String(step?.label || previousPlan[index]?.label || '').slice(0, 160),
+            phase: previousPlan[index]?.phase || (nextIndex < 0 ? 'verification' : runtimePhase),
+            status: step?.status || 'pending'
+          }));
+          runtimePhase = nextIndex >= 0
+            ? taskSpec.plan[nextIndex]?.phase || runtimePhase
+            : 'verification';
+          workingState = { ...workingState, taskSpec, phase: runtimePhase };
+          prompt = compileAgentPrompt({
+            objective,
+            capabilities,
+            deliverables,
+            taskSpec,
+            toolProfile,
+            phase: runtimePhase,
+            budgetRatio: Number(runtimeContext.budgetRatio || 0)
+          });
+          allowedToolNames = new Set(
+            functionToolsForProfile(
+              capabilities,
+              toolProfile,
+              new Set(prompt.allowedToolNames)
+            ).map((tool) => tool.name)
+          );
+        }
         if (toolProfile === 'subagent') {
           const steps = Array.isArray(result?.steps) ? result.steps : planArgs.steps;
           subagentPlanCompleted = (
@@ -1399,7 +1671,9 @@ class OllamaAgentModelProvider {
           role: String(artifact.role || declarationIdentity.role),
           mime_type: String(artifact.mimeType || declarationIdentity.mime_type),
           filename: String(artifact.filename || declarationIdentity.filename),
-          verification_status: String(artifact.verificationStatus || '')
+          verification_status: String(artifact.verificationStatus || ''),
+          path: String(args.path || ''),
+          sources: Array.isArray(args.sources) ? args.sources.slice(0, 100) : []
         };
         declaredArtifacts = [
           ...declaredArtifacts.filter((entry) => (
@@ -1421,6 +1695,10 @@ class OllamaAgentModelProvider {
           }
         } else {
           artifactDuplicateAttempts = 0;
+          if (runtimeV2) {
+            semanticRepairRequired = false;
+            semanticVerificationPassed = false;
+          }
         }
         return {
           accepted: true,
@@ -1590,6 +1868,75 @@ class OllamaAgentModelProvider {
           }
           await saveDurableState();
         }
+        if (runtimeV2) {
+          let resultValue = {};
+          try {
+            resultValue = JSON.parse(String(completedOutput?.content || '{}'));
+          } catch {}
+          const evidenceRefs = [
+            resultValue?.url,
+            ...(Array.isArray(resultValue?.sources)
+              ? resultValue.sources.map((source) => source?.url)
+              : [])
+          ].filter(Boolean);
+          const changedFiles = [
+            resultValue?.path,
+            resultValue?.workspacePath,
+            resultValue?.filename
+          ].filter(Boolean);
+          const actionHash = crypto.createHash('sha256').update(JSON.stringify({
+            name: pendingCall?.name || '',
+            arguments: pendingCall?.arguments || {}
+          })).digest('hex');
+          const runtimeFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+            actionHash,
+            code: resultValue?.errorCode || null,
+            returnCode: resultValue?.returnCode ?? null,
+            contentHash: resultValue?.contentHash || null,
+            artifactId: resultValue?.artifactId || null,
+            verificationStatus: resultValue?.verificationStatus || null,
+            evidenceRefs,
+            changedFiles
+          })).digest('hex');
+          const envelope = observationEnvelope({
+            ok: resultValue?.success !== false && !resultValue?.errorCode,
+            code: resultValue?.errorCode || null,
+            summary: summarizeToolObservation(pendingCall?.name, resultValue),
+            stateDelta: {
+              tool: pendingCall?.name,
+              artifactId: resultValue?.artifactId || null,
+              verificationStatus: resultValue?.verificationStatus || null
+            },
+            evidenceRefs,
+            changedFiles,
+            retryHint: resultValue?.correction || null,
+            fingerprint: runtimeFingerprint
+          });
+          workingState = {
+            ...workingState,
+            sources: [...new Set([...(workingState.sources || []), ...evidenceRefs])].slice(-100),
+            files: [...new Set([...(workingState.files || []), ...changedFiles])].slice(-100),
+            completedEvidence: envelope.ok
+              ? [...(workingState.completedEvidence || []), envelope].slice(-100)
+              : workingState.completedEvidence,
+            failures: envelope.ok
+              ? workingState.failures
+              : [...(workingState.failures || []), envelope].slice(-20)
+          };
+          if (envelope.ok) {
+            lastFailureFingerprint = '';
+            repeatedStateFailures = 0;
+          } else if (lastFailureFingerprint === envelope.fingerprint) {
+            repeatedStateFailures += 1;
+          } else {
+            lastFailureFingerprint = envelope.fingerprint;
+            repeatedStateFailures = 1;
+          }
+          completedOutput = {
+            ...completedOutput,
+            content: JSON.stringify(envelope)
+          };
+        }
         messages.push(this.toolResultMessage(pendingCall, completedOutput));
         pendingCall = null;
         completedOutput = null;
@@ -1606,6 +1953,9 @@ class OllamaAgentModelProvider {
           artifactDuplicateNoticePending = false;
         }
         await saveDurableState();
+        if (runtimeV2 && repeatedStateFailures > 1) {
+          throw new ApiError(409, 'AGENT_RUNTIME_STATE_LOOP', { retryable: false });
+        }
       }
 
       if (subagentFinalizationRequired) {
@@ -1626,12 +1976,113 @@ class OllamaAgentModelProvider {
 
       assertModelDeadline(deadlineAt);
       await callbacks.checkControl?.();
-      const deliverablesComplete = (
+      if (
+        runtimeV2 &&
+        toolProfile === 'parent' &&
+        requiredDeliverables.length === 0 &&
+        pendingVerifierResult &&
+        text
+      ) {
+        const verification = pendingVerifierResult;
+        pendingVerifierResult = null;
+        semanticVerificationResult = verification.result;
+        if (verification.result?.passed === true) {
+          semanticVerificationPassed = true;
+          semanticRepairRequired = false;
+          await callbacks.clearModelState?.();
+          return {
+            responseId: `${this.providerName}:verified-text:${turns}`,
+            text,
+            usage: {},
+            credits: totalCredits,
+            turns
+          };
+        }
+        if (semanticVerificationAttempts >= 2) {
+          throw new ApiError(422, 'AGENT_SEMANTIC_VERIFICATION_FAILED', {
+            retryable: false,
+            details: {
+              score: Number(verification.result?.score || 0),
+              issues: verification.result?.issues || []
+            }
+          });
+        }
+        semanticRepairRequired = true;
+        messages.push({
+          role: 'user',
+          content: [
+            'The independent verifier requested one targeted correction to the answer.',
+            JSON.stringify({
+              issues: verification.result?.issues || [],
+              repairInstructions: verification.result?.repairInstructions || []
+            }),
+            'Correct only these findings, preserve the verified evidence, and return the complete revised answer.'
+          ].join('\n')
+        });
+        await saveDurableState();
+        continue;
+      }
+      const artifactsReady = (
         toolProfile === 'parent' &&
         requiredDeliverables.length > 0 &&
         (!delegationRequired || delegationCompleted) &&
         requiredDeliverablesSatisfied(declaredArtifacts, requiredDeliverables)
       );
+      if (
+        runtimeV2 &&
+        artifactsReady &&
+        !semanticVerificationPassed &&
+        !semanticRepairRequired
+      ) {
+        const recoveredVerification = Boolean(pendingVerifierResult);
+        if (!recoveredVerification) semanticVerificationAttempts += 1;
+        const verification = pendingVerifierResult || await callbacks.verifyDraft?.({
+          taskSpec,
+          artifacts: declaredArtifacts,
+          text
+        });
+        if (!verification?.result) {
+          throw new ApiError(500, 'AGENT_VERIFIER_NOT_CONFIGURED', { retryable: false });
+        }
+        pendingVerifierResult = null;
+        if (!recoveredVerification) {
+          totalCredits += Math.max(0, Number(verification?.credits || 0));
+          await callbacks.recordUsage?.(totalCredits, {
+            source: 'runtime_v2_verifier',
+            ...(verification?.usage || {})
+          });
+        }
+        semanticVerificationResult = verification.result;
+        if (verification?.result?.passed === true) {
+          semanticVerificationPassed = true;
+        } else if (semanticVerificationAttempts >= 2) {
+          throw new ApiError(422, 'AGENT_SEMANTIC_VERIFICATION_FAILED', {
+            retryable: false,
+            details: {
+              score: Number(verification?.result?.score || 0),
+              issues: verification?.result?.issues || []
+            }
+          });
+        } else {
+          semanticRepairRequired = true;
+          artifactRepairRequired = true;
+          messages.push({
+            role: 'user',
+            content: [
+              'The independent verifier requested one targeted repair.',
+              JSON.stringify({
+                issues: verification?.result?.issues || [],
+                repairInstructions: verification?.result?.repairInstructions || []
+              }),
+              'Modify only what these findings require, re-run deterministic checks, and declare the repaired files. Do not broaden scope.'
+            ].join('\n')
+          });
+          await saveDurableState();
+          continue;
+        }
+        await saveDurableState();
+      }
+      const deliverablesComplete = artifactsReady && (!runtimeV2 || semanticVerificationPassed);
       if (deliverablesComplete) {
         messages.push({
           role: 'user',
@@ -1642,7 +2093,101 @@ class OllamaAgentModelProvider {
           ].join(' ')
         });
       }
-      const request = this.buildChatPayload(messages, capabilities, toolProfile);
+      const externallyObservedBudgetRatio = runtimeV2
+        ? Math.max(0, Number(await callbacks.currentBudgetRatio?.()) || 0)
+        : 0;
+      const budgetRatio = runtimeV2
+        ? Math.max(
+            totalCredits / Math.max(1, Number(runtimeContext.maxCredits || taskSpec.budget.maxCredits)),
+            externallyObservedBudgetRatio
+          )
+        : 0;
+      if (runtimeV2 && budgetRatio >= 0.7 && !budgetWarningPublished) {
+        budgetWarningPublished = true;
+        taskSpec.plan = taskSpec.plan.filter((step) => (
+          step.status !== 'pending' || step.phase !== 'research'
+        ));
+        workingState = {
+          ...workingState,
+          taskSpec,
+          budgetPolicy: {
+            ...(workingState.budgetPolicy || {}),
+            warning70: true,
+            planCompressed: true
+          }
+        };
+        messages.push({
+          role: 'user',
+          content: 'Budget use reached 70%. Stop optional exploration, keep only required production and verification work, and prepare the smallest complete delivery.'
+        });
+        await callbacks.budgetThreshold?.({ threshold: 0.7, budgetRatio });
+      }
+      if (runtimeV2 && budgetRatio >= 0.9 && !budgetLockdownPublished) {
+        budgetLockdownPublished = true;
+        runtimePhase = 'verification';
+        workingState = {
+          ...workingState,
+          phase: runtimePhase,
+          budgetPolicy: {
+            ...(workingState.budgetPolicy || {}),
+            warning90: true,
+            explorationAllowed: false
+          }
+        };
+        messages.push({
+          role: 'user',
+          content: 'Budget use reached 90%. Exploration is closed. Only verify, declare completed deliverables, or stop safely with an explicit limitation.'
+        });
+        await callbacks.budgetThreshold?.({ threshold: 0.9, budgetRatio });
+      }
+      let requestMessages = messages;
+      if (runtimeV2) {
+        workingState = {
+          ...workingState,
+          remainingBudget: Math.max(
+            0,
+            Number(runtimeContext.maxCredits || taskSpec.budget.maxCredits) - totalCredits
+          )
+        };
+        prompt = compileAgentPrompt({
+          objective,
+          capabilities,
+          deliverables,
+          taskSpec,
+          toolProfile,
+          phase: deliverablesComplete ? 'completion' : runtimePhase,
+          budgetRatio
+        });
+        allowedToolNames = new Set(
+          functionToolsForProfile(
+            capabilities,
+            toolProfile,
+            new Set(prompt.allowedToolNames)
+          ).map((tool) => tool.name)
+        );
+        const context = buildContextMessages({
+          instructions: prompt.instructions,
+          taskSpec,
+          workingState,
+          messages,
+          tools: ollamaFileTools(capabilities, toolProfile, allowedToolNames),
+          contextTokens: this.config.modelContextTokens
+        });
+        requestMessages = context.messages;
+        if (context.compacted && messages.length > compactedAtMessageCount) {
+          compactedAtMessageCount = messages.length;
+          await callbacks.contextCompacted?.({
+            estimatedInputTokens: context.estimatedInputTokens,
+            contextBudgetTokens: context.contextBudgetTokens
+          });
+        }
+      }
+      const request = this.buildChatPayload(requestMessages, capabilities, toolProfile, {
+        allowedToolNames,
+        thinkingEnabled: runtimeV2 ? false : undefined,
+        temperature: runtimeV2 ? this.config.actorSamplingProfile.temperature : undefined,
+        topP: runtimeV2 ? this.config.actorSamplingProfile.topP : undefined
+      });
       if (deliverablesComplete) {
         delete request.tools;
         delete request.parallel_tool_calls;
@@ -1679,15 +2224,37 @@ class OllamaAgentModelProvider {
           function: { name: 'sandbox_shell' }
         };
       }
-      const response = await this.createChat(request);
+      const recoveredModelResponse = Boolean(pendingModelResponse);
+      const response = pendingModelResponse || await this.createChat(request, runtimeV2 ? {
+          runId: runtimeContext.runId,
+          subagentId: runtimeContext.subagentId || null,
+          userId: runtimeContext.userId || null,
+          phase: toolProfile === 'subagent' ? 'subagent' : 'actor',
+          priority: toolProfile === 'subagent'
+            ? 'subagent'
+            : (resumeState ? 'resumed_parent' : 'actor'),
+          turn: turns,
+          promptProfile: `${prompt.promptProfile}/${this.config.actorSamplingProfile.id}`,
+          promptHash: prompt.promptHash,
+          skillIds: prompt.skills.map((skill) => skill.id),
+          thinkingEnabled: false,
+          estimatedInputTokens: JSON.stringify(requestMessages).length / 4,
+          signal
+        } : {});
       const { inputTokens, outputTokens, credits } = this.usageDetails(response);
-      totalCredits += credits;
-      await callbacks.recordUsage?.(totalCredits, {
-        modelName: this.config.modelName,
-        inputTokens,
-        outputTokens,
-        provider: this.providerName
-      });
+      if (!recoveredModelResponse) {
+        totalCredits += credits;
+        if (runtimeV2) {
+          pendingModelResponse = response;
+          await saveDurableState();
+        }
+        await callbacks.recordUsage?.(totalCredits, {
+          modelName: this.config.modelName,
+          inputTokens,
+          outputTokens,
+          provider: this.providerName
+        });
+      }
 
       const assistant = {
         role: 'assistant',
@@ -1703,6 +2270,7 @@ class OllamaAgentModelProvider {
       const calls = deliverablesComplete ? [] : returnedCalls.slice(0, 1);
       if (calls.length) assistant.tool_calls = calls;
       messages.push(assistant);
+      pendingModelResponse = null;
       text = assistantText || text;
       if (deliverablesComplete && (returnedCalls.length > 0 || !assistantText)) {
         const filenames = [...new Set(
@@ -1734,9 +2302,65 @@ class OllamaAgentModelProvider {
           continue;
         }
         if (
+          runtimeV2 &&
+          requiredDeliverables.length === 0 &&
+          !semanticVerificationPassed
+        ) {
+          const recoveredVerification = Boolean(pendingVerifierResult);
+          if (!recoveredVerification) semanticVerificationAttempts += 1;
+          const verification = pendingVerifierResult || await callbacks.verifyDraft?.({
+            taskSpec,
+            artifacts: [],
+            text
+          });
+          if (!verification?.result) {
+            throw new ApiError(500, 'AGENT_VERIFIER_NOT_CONFIGURED', { retryable: false });
+          }
+          pendingVerifierResult = null;
+          if (!recoveredVerification) {
+            totalCredits += Math.max(0, Number(verification?.credits || 0));
+            await callbacks.recordUsage?.(totalCredits, {
+              source: 'runtime_v2_verifier',
+              ...(verification?.usage || {})
+            });
+          }
+          semanticVerificationResult = verification.result;
+          if (verification.result.passed === true) {
+            semanticVerificationPassed = true;
+            semanticRepairRequired = false;
+            await saveDurableState();
+          } else if (semanticVerificationAttempts >= 2) {
+            throw new ApiError(422, 'AGENT_SEMANTIC_VERIFICATION_FAILED', {
+              retryable: false,
+              details: {
+                score: Number(verification.result.score || 0),
+                issues: verification.result.issues || []
+              }
+            });
+          } else {
+            semanticRepairRequired = true;
+            messages.push({
+              role: 'user',
+              content: [
+                'The independent verifier requested one targeted correction to the answer.',
+                JSON.stringify({
+                  issues: verification.result.issues || [],
+                  repairInstructions: verification.result.repairInstructions || []
+                }),
+                'Correct only these findings, preserve the verified evidence, and return the complete revised answer.'
+              ].join('\n')
+            });
+            await saveDurableState();
+            continue;
+          }
+        }
+        if (
           toolProfile === 'parent' &&
           requiredDeliverables.length > 0 &&
-          !requiredDeliverablesSatisfied(declaredArtifacts, requiredDeliverables)
+          (
+            !requiredDeliverablesSatisfied(declaredArtifacts, requiredDeliverables) ||
+            semanticRepairRequired
+          )
         ) {
           artifactDeliveryNudges += 1;
           turns += 1;
@@ -1749,12 +2373,14 @@ class OllamaAgentModelProvider {
           }
           messages.push({
             role: 'user',
-            content: [
-              `Required deliverables are still incomplete: ${requiredDeliverables.join(', ')}.`,
-              'Do not announce completion or delegate again.',
-              'Merge the existing child outputs when present, create and verify every required file,',
-              'then call declare_artifact for each required source and preview artifact.'
-            ].join(' ')
+            content: semanticRepairRequired
+              ? 'The verifier repair is still unresolved. Modify and verify only the affected file, then declare the repaired file before answering.'
+              : [
+                  `Required deliverables are still incomplete: ${requiredDeliverables.join(', ')}.`,
+                  'Do not announce completion or delegate again.',
+                  'Merge the existing child outputs when present, create and verify every required file,',
+                  'then call declare_artifact for each required source and preview artifact.'
+                ].join(' ')
           });
           await saveDurableState();
           continue;
@@ -1833,8 +2459,7 @@ class OllamaAgentModelProvider {
             content: JSON.stringify({
               success: false,
               errorCode: 'AGENT_MODEL_TOOL_UNSUPPORTED',
-              allowedTools: ollamaFileTools(capabilities, toolProfile)
-                .map((tool) => tool.function.name)
+              allowedTools: [...allowedToolNames]
             })
           }
         ));
@@ -1906,20 +2531,26 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
     };
   }
 
-  buildChatPayload(messages, capabilities = {}, toolProfile = 'parent') {
+  buildChatPayload(messages, capabilities = {}, toolProfile = 'parent', options = {}) {
+    const allowedToolNames = options.allowedToolNames
+      ? new Set(options.allowedToolNames)
+      : null;
+    const tools = ollamaFileTools(capabilities, toolProfile, allowedToolNames);
     return {
       model: this.config.modelName,
       messages: compactOllamaMessages(
         messages,
         Math.max(24_000, this.config.modelContextTokens * 3)
       ),
-      tools: ollamaFileTools(capabilities, toolProfile),
+      ...(options.toolsEnabled === false || tools.length === 0 ? {} : { tools }),
       stream: false,
-      enable_thinking: this.config.siliconFlowThinkingEnabled,
+      enable_thinking: options.thinkingEnabled === undefined
+        ? this.config.siliconFlowThinkingEnabled
+        : options.thinkingEnabled === true,
       max_tokens: this.config.siliconFlowMaxTokens,
       parallel_tool_calls: false,
-      temperature: 0.2,
-      top_p: 0.7
+      temperature: Number(options.temperature ?? 0.2),
+      top_p: Number(options.topP ?? 0.7)
     };
   }
 
@@ -1985,56 +2616,128 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
     };
   }
 
-  async createChat(payload) {
+  async createChat(payload, metadata = {}) {
     if (!this.config.siliconFlowApiKey) {
       throw new ApiError(503, 'AGENT_MODEL_NOT_CONFIGURED', { retryable: false });
     }
-    await waitForSiliconFlowAgentSlot(this.env);
-    const controller = new AbortController();
-    const timeoutMs = siliconFlowRequestTimeoutMs(this.env);
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    timer.unref?.();
-    let response;
-    try {
-      response = await this.fetchImpl(`${this.config.siliconFlowBaseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.config.siliconFlowApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-    } catch (error) {
-      throw new ApiError(502, 'AGENT_MODEL_UNAVAILABLE', {
-        retryable: true,
-        cause: String(error?.name || error?.code || '')
-      });
-    } finally {
-      clearTimeout(timer);
+    if (metadata.signal?.aborted) {
+      throw new ApiError(499, 'AGENT_CANCELLED', { retryable: false });
     }
-    const body = await response.json().catch(() => null);
-    if (response.status === 401 || response.status === 403) {
-      throw new ApiError(503, 'AGENT_SILICONFLOW_CREDENTIAL_INVALID', {
-        retryable: false,
-        providerStatus: response.status
-      });
+    let lastError = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const slot = this.providerScheduler && this.config.providerSchedulerEnabled
+        ? await this.providerScheduler.acquire({
+            priority: metadata.priority || metadata.phase || 'actor',
+            signal: metadata.signal || null
+          })
+        : (await waitForSiliconFlowAgentSlot(this.env), {
+            requestId: null,
+            queueWaitMs: 0,
+            mode: 'process-local'
+          });
+      if (metadata.signal?.aborted) {
+        throw new ApiError(499, 'AGENT_CANCELLED', { retryable: false });
+      }
+      const call = this.modelCallService && metadata.phase
+        ? await this.modelCallService.start({
+            ...metadata,
+            provider: this.providerName,
+            modelName: this.config.modelName,
+            attempt
+          }).catch(() => null)
+        : null;
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      metadata.signal?.addEventListener('abort', abort, { once: true });
+      const timeoutMs = siliconFlowRequestTimeoutMs(this.env);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      timer.unref?.();
+      let response;
+      let body;
+      try {
+        response = await this.fetchImpl(`${this.config.siliconFlowBaseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.config.siliconFlowApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+        body = await response.json().catch(() => null);
+        if (response.status === 401 || response.status === 403) {
+          throw new ApiError(503, 'AGENT_SILICONFLOW_CREDENTIAL_INVALID', {
+            retryable: false,
+            providerStatus: response.status
+          });
+        }
+        const message = body?.choices?.[0]?.message;
+        if (!response.ok || !message || typeof message !== 'object') {
+          throw new ApiError(502, 'AGENT_MODEL_FAILED', {
+            retryable: response.status >= 500 || response.status === 429,
+            providerStatus: response.status,
+            providerCode: String(body?.error?.code || body?.code || ''),
+            details: {
+              retryAfter: String(response.headers?.get?.('retry-after') || '')
+            }
+          });
+        }
+        const normalized = {
+          id: String(body.id || ''),
+          message: {
+            role: String(message.role || 'assistant'),
+            content: String(message.content || ''),
+            ...(Array.isArray(message.tool_calls) ? { tool_calls: message.tool_calls } : {})
+          },
+          prompt_eval_count: Number(body.usage?.prompt_tokens || 0),
+          eval_count: Number(body.usage?.completion_tokens || 0),
+          siliconFlowUsage: body.usage || {}
+        };
+        if (call) {
+          await this.modelCallService.finish(call, {
+            outcome: 'succeeded',
+            inputTokens: normalized.prompt_eval_count,
+            outputTokens: normalized.eval_count,
+            queueWaitMs: slot.queueWaitMs,
+            selectedTool: normalized.message.tool_calls?.[0]?.function?.name || null
+          }).catch(() => {});
+        }
+        return normalized;
+      } catch (error) {
+        if (metadata.signal?.aborted) {
+          lastError = new ApiError(499, 'AGENT_CANCELLED', { retryable: false });
+        } else {
+          lastError = error instanceof ApiError
+            ? error
+            : new ApiError(502, 'AGENT_MODEL_UNAVAILABLE', {
+                retryable: true,
+                cause: String(error?.name || error?.code || '')
+              });
+        }
+        if (call) {
+          await this.modelCallService.finish(call, {
+            outcome: metadata.signal?.aborted ? 'cancelled' : 'failed',
+            queueWaitMs: slot.queueWaitMs,
+            errorCode: lastError.code
+          }).catch(() => {});
+        }
+        if (lastError.retryable !== true || attempt >= 3 || metadata.signal?.aborted) {
+          throw lastError;
+        }
+        const retryAfter = parseRetryAfterMs(lastError?.details?.retryAfter);
+        if (retryAfter > 0 && this.providerScheduler?.defer) {
+          await this.providerScheduler.defer(retryAfter);
+        }
+        await wait(
+          Math.max(retryAfter, Math.min(8000, 500 * (2 ** (attempt - 1)))),
+          metadata.signal || null
+        );
+      } finally {
+        clearTimeout(timer);
+        metadata.signal?.removeEventListener('abort', abort);
+      }
     }
-    const message = body?.choices?.[0]?.message;
-    if (!response.ok || !message || typeof message !== 'object') {
-      throw new ApiError(502, 'AGENT_MODEL_FAILED', {
-        retryable: response.status >= 500 || response.status === 429,
-        providerStatus: response.status,
-        providerCode: String(body?.error?.code || body?.code || '')
-      });
-    }
-    return {
-      id: String(body.id || ''),
-      message,
-      prompt_eval_count: Number(body.usage?.prompt_tokens || 0),
-      eval_count: Number(body.usage?.completion_tokens || 0),
-      siliconFlowUsage: body.usage || {}
-    };
+    throw lastError || new ApiError(502, 'AGENT_MODEL_FAILED', { retryable: true });
   }
 }
 
@@ -2056,6 +2759,34 @@ class FixtureAgentModelProvider {
       usage: {},
       credits: 0,
       turns: 1
+    };
+  }
+
+  async planTask({ objective, deliverables = [], capabilities = {}, allowedOrigins = [], maxCredits = 50 }) {
+    return {
+      taskSpec: normalizeTaskSpec({}, {
+        objective,
+        deliverables,
+        capabilities,
+        allowedOrigins,
+        maxCredits
+      }),
+      usage: {},
+      credits: 0
+    };
+  }
+
+  async verifyTask() {
+    return {
+      result: {
+        passed: true,
+        score: 100,
+        issues: [],
+        repairInstructions: [],
+        unsupportedVisualJudgment: false
+      },
+      usage: {},
+      credits: 0
     };
   }
 }

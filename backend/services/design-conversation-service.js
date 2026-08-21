@@ -6,11 +6,22 @@ const {
 } = require('../lib/tool-catalog');
 const { resolveUserId } = require('./billing-service');
 const {
+  decryptDesignExecution,
   decryptDesignMessage,
+  encryptDesignExecution,
   encryptDesignMessage,
   hasAgentPayloadKey
 } = require('./agent-payload-service');
 const { normalizeActionType, sanitizeLogValue, sanitizeText } = require('./agent-policy-service');
+const { getAgentConfig } = require('./agent-config');
+const {
+  classifyRuntimeFailure,
+  normalizeTaskSpec,
+  selectAgentSkills,
+  taskPlannerMessages
+} = require('./agent-runtime-v2');
+const { parseRetryAfterMs } = require('./agent-model-runtime-service');
+const { createCreativeProjectService } = require('./creative-project-service');
 
 const TEXT_MODEL = 'Qwen/Qwen3-8B';
 const IMAGE_MODEL = 'Kwai-Kolors/Kolors';
@@ -54,6 +65,23 @@ const integer = (value, fallback, minimum, maximum) => {
   return Math.max(minimum, Math.min(maximum, Number.isFinite(parsed) ? parsed : fallback));
 };
 
+const waitFor = (milliseconds, signal = null) => new Promise((resolve, reject) => {
+  if (signal?.aborted) {
+    reject(new ApiError(409, 'DESIGN_PLANNING_LEASE_LOST'));
+    return;
+  }
+  const onAbort = () => {
+    clearTimeout(timer);
+    reject(new ApiError(409, 'DESIGN_PLANNING_LEASE_LOST'));
+  };
+  const timer = setTimeout(() => {
+    signal?.removeEventListener('abort', onAbort);
+    resolve();
+  }, Math.max(0, Number(milliseconds) || 0));
+  timer.unref?.();
+  signal?.addEventListener('abort', onAbort, { once: true });
+});
+
 const normalizePlannerSteps = (steps) => {
   if (!Array.isArray(steps)) return [];
   return steps
@@ -73,6 +101,13 @@ const getDesignConversationConfig = (env = process.env) => Object.freeze({
   retentionDays: integer(env.DESIGN_CONVERSATION_RETENTION_DAYS, 30, 1, 30),
   authorizationIdleMinutes: integer(env.DESIGN_CONVERSATION_AUTH_IDLE_MINUTES, 30, 5, 120),
   pollMs: integer(env.DESIGN_CONVERSATION_POLL_MS, 750, 250, 5000),
+  planningLeaseSeconds: integer(env.DESIGN_CONVERSATION_PLANNING_LEASE_SECONDS, 90, 1, 300),
+  planningLeaseHeartbeatMs: integer(
+    env.DESIGN_CONVERSATION_PLANNING_LEASE_HEARTBEAT_MS,
+    20_000,
+    100,
+    60_000
+  ),
   plannerMaxTokens: integer(env.DESIGN_CONVERSATION_PLANNER_MAX_TOKENS, 1800, 512, 4096),
   model: TEXT_MODEL,
   imageModel: IMAGE_MODEL
@@ -170,11 +205,46 @@ const publicMessage = (row, env) => {
     attachments: Array.isArray(value?.attachments) ? value.attachments : [],
     questions: Array.isArray(value?.questions) ? value.questions : [],
     assumptions: Array.isArray(value?.assumptions) ? value.assumptions : [],
+    memoryCandidates: Array.isArray(value?.memoryCandidates) ? value.memoryCandidates : [],
     createdAt: row.created_at
   };
 };
 
-const publicExecution = (row) => ({
+const decodeExecutionPlan = (row, env = process.env) => {
+  const stored = row.plan && typeof row.plan === 'object' && !Array.isArray(row.plan)
+    ? row.plan
+    : {};
+  const { _sealed: sealed, ...publicPlan } = stored;
+  if (!sealed || typeof sealed !== 'object') return publicPlan;
+  const privatePlan = decryptDesignExecution({
+    conversationId: row.conversation_id,
+    executionId: row.id,
+    record: {
+      algorithm: sealed.algorithm,
+      iv: Buffer.from(String(sealed.iv || ''), 'base64'),
+      auth_tag: Buffer.from(String(sealed.authTag || ''), 'base64'),
+      ciphertext: Buffer.from(String(sealed.ciphertext || ''), 'base64')
+    },
+    env
+  });
+  return { ...publicPlan, ...(privatePlan && typeof privatePlan === 'object' ? privatePlan : {}) };
+};
+
+const sealExecutionPlan = ({ conversationId, executionId, publicPlan, privatePlan, env = process.env }) => {
+  const encrypted = encryptDesignExecution({ conversationId, executionId, value: privatePlan, env });
+  return {
+    ...publicPlan,
+    _sealed: {
+      algorithm: encrypted.algorithm,
+      keyVersion: encrypted.keyVersion,
+      iv: encrypted.iv.toString('base64'),
+      authTag: encrypted.authTag.toString('base64'),
+      ciphertext: encrypted.ciphertext.toString('base64')
+    }
+  };
+};
+
+const publicExecution = (row, env = process.env) => ({
   executionId: row.id,
   conversationId: row.conversation_id,
   sourceMessageId: row.source_message_id || null,
@@ -187,7 +257,7 @@ const publicExecution = (row) => ({
   localRoute: row.local_route || null,
   maxCredits: Number(row.max_credits || 50),
   quotedCredits: row.quoted_credits === null ? null : Number(row.quoted_credits),
-  plan: row.plan && typeof row.plan === 'object' ? row.plan : {},
+  plan: decodeExecutionPlan(row, env),
   error: row.error_code ? { code: row.error_code } : null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -495,18 +565,115 @@ const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds,
   };
 };
 
-const plannerMessages = ({ history, message, attachmentCount }) => [{
+const normalizeMemoryCandidates = (value, userText) => {
+  const allowedFields = new Set([
+    'audience',
+    'goals',
+    'tone',
+    'visualKeywords',
+    'mustInclude',
+    'avoid',
+    'outputPreferences',
+    'factualConstraints'
+  ]);
+  const source = String(userText || '').toLocaleLowerCase();
+  const candidates = [];
+  for (const candidate of Array.isArray(value) ? value : []) {
+    const field = String(candidate?.field || '').trim();
+    if (!allowedFields.has(field)) continue;
+    const rawValue = candidate?.value;
+    const leaves = Array.isArray(rawValue)
+      ? rawValue
+      : rawValue && typeof rawValue === 'object'
+        ? Object.values(rawValue).flatMap((entry) => Array.isArray(entry) ? entry : [entry])
+        : [rawValue];
+    const normalizedLeaves = leaves
+      .map((entry) => sanitizeText(entry, 300))
+      .filter(Boolean);
+    if (!normalizedLeaves.length || normalizedLeaves.some((entry) => (
+      !source.includes(entry.toLocaleLowerCase())
+    ))) continue;
+    candidates.push({
+      field,
+      value: Array.isArray(rawValue)
+        ? normalizedLeaves
+        : rawValue && typeof rawValue === 'object'
+          ? sanitizeLogValue(rawValue)
+          : normalizedLeaves[0]
+    });
+    if (candidates.length >= 3) break;
+  }
+  return candidates;
+};
+
+const enrichPlannerDecision = ({ decision, raw, text, creditCap, allowMemory = false }) => {
+  const complexity = ['simple', 'medium', 'high'].includes(raw?.complexity)
+    ? raw.complexity
+    : decision.routeKind === 'agent_run'
+      ? 'high'
+      : decision.routeKind === 'reply'
+        ? 'simple'
+        : 'medium';
+  const confidence = Math.max(0, Math.min(1, Number(raw?.confidence ?? 0.75)));
+  const capabilities = decision.capabilities || {};
+  const deliverables = decision.deliverables || [];
+  const skillIds = selectAgentSkills({
+    objective: text,
+    deliverables,
+    capabilities,
+    requestedSkillIds: raw?.skillIds
+  }).map((skill) => skill.id);
+  const memoryCandidates = allowMemory
+    ? normalizeMemoryCandidates(raw?.memoryCandidates, text)
+    : [];
+  if (decision.routeKind !== 'agent_run') {
+    return { ...decision, complexity, confidence, skillIds, memoryCandidates };
+  }
+  const taskSpec = normalizeTaskSpec({
+    ...(raw?.taskSpec && typeof raw.taskSpec === 'object' ? raw.taskSpec : {}),
+    goal: text,
+    complexity,
+    confidence,
+    deliverables,
+    allowedOrigins: decision.browserConfig?.allowedOrigins || [],
+    skillIds,
+    plan: normalizePlannerSteps(raw?.steps).map((label, index) => ({
+      id: `step-${index + 1}`,
+      label,
+      phase: decision.capabilities?.browser && index === 0 ? 'research' : 'production'
+    })),
+    budget: { maxCredits: creditCap }
+  }, {
+    objective: text,
+    deliverables,
+    capabilities,
+    allowedOrigins: decision.browserConfig?.allowedOrigins || [],
+    maxCredits: creditCap
+  });
+  return {
+    ...decision,
+    complexity,
+    confidence,
+    skillIds: taskSpec.skillIds,
+    taskSpec,
+    memoryCandidates,
+    plan: { ...decision.plan, taskSpec }
+  };
+};
+
+const plannerMessages = ({ history, message, attachmentCount, projectMemory = null }) => [{
   role: 'system',
   content: `You are Artigen's design request router. Use only Qwen/Qwen3-8B for this text task.
 Return one JSON object and no markdown. Schema:
-{"routeKind":"reply|local_tool|tool_task|agent_run","reply":"Chinese answer","needsClarification":false,"questions":[],"assumptions":[],"toolId":"","operation":"","options":{},"deliverables":[],"steps":[]}
+{"routeKind":"reply|local_tool|tool_task|agent_run","complexity":"simple|medium|high","confidence":0.0,"reply":"Chinese answer","needsClarification":false,"questions":[],"assumptions":[],"toolId":"","operation":"","options":{},"deliverables":[],"skillIds":[],"taskSpec":{},"memoryCandidates":[],"steps":[]}
 Ask at most two questions only when the missing answer materially changes the result. Choose reply for advice or brainstorming without an execution request. Choose tool_task for: ai-design generate/directions, old-photo enhance/enhance-colorize, id-photo professional-portrait, background ai-scene, ingredient-label ai-organize-source-text. Local tools are strictly: image-batch convert/compress/resize/rotate/filter/pipeline; privacy-redaction redact/export/pdf; video-frame extract; pdf-image pdf-page/pdf-range-zip/pdf-long-image/images-to-pdf; pdf-text-word extract-text-docx; document-pdf txt-local/word-server-faithful; video-gif convert; favicon generate/export/zip. Choose agent_run for research, browser, shell, multiple files, or multiple deliverable formats. Never set prices, models, credentials, or permissions. All image output is handled by Kwai-Kolors/Kolors downstream.`
 }, {
   role: 'user',
   content: JSON.stringify({
     recentConversation: history.slice(-6),
     currentMessage: message,
-    attachmentCount
+    attachmentCount,
+    projectMemory
   })
 }];
 
@@ -514,12 +681,109 @@ const createDesignConversationService = ({
   pool,
   env = process.env,
   chatGenerate,
+  providerScheduler = null,
+  modelCallService = null,
   workerId = `design-planner:${process.pid}`
 } = {}) => {
   if (!pool || typeof pool.connect !== 'function') throw new TypeError('DESIGN_CONVERSATION_POOL_REQUIRED');
   const config = getDesignConversationConfig(env);
+  const agentConfig = getAgentConfig(env);
+  const projectService = createCreativeProjectService({ pool, env });
   let timer = null;
   let processing = false;
+
+  const generateModelJson = async ({
+    messages,
+    phase,
+    priority,
+    thinkingEnabled,
+    conversation,
+    maxTokens,
+    signal = null
+  }) => {
+    const promptHash = crypto.createHash('sha256')
+      .update(String(messages?.[0]?.content || ''))
+      .digest('hex');
+    let requestMessages = Array.isArray(messages) ? [...messages] : [];
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const slot = providerScheduler && agentConfig.providerSchedulerEnabled
+        ? await providerScheduler.acquire({ priority, signal })
+        : { queueWaitMs: 0 };
+      const call = modelCallService
+        ? await modelCallService.start({
+            conversationId: conversation.id,
+            userId: conversation.user_id,
+            provider: 'siliconflow',
+            modelName: TEXT_MODEL,
+            phase,
+            turn: 0,
+            attempt,
+            promptProfile: phase === 'router' ? 'design-router-v2' : 'design-planner-v2',
+            promptHash,
+            thinkingEnabled,
+            estimatedInputTokens: JSON.stringify(requestMessages).length / 4
+          }).catch(() => null)
+        : null;
+      let response = null;
+      try {
+        response = await chatGenerate({
+          messages: requestMessages,
+          model: TEXT_MODEL,
+          maxTokens,
+          enableThinking: thinkingEnabled,
+          timeoutMs: 60_000,
+          signal,
+          skipRateGate: Boolean(providerScheduler && agentConfig.providerSchedulerEnabled)
+        });
+        const parsed = safeJsonObject(response?.text);
+        if (call) {
+          await modelCallService.finish(call, {
+            outcome: 'succeeded',
+            inputTokens: Number(response?.usage?.promptTokens || 0),
+            outputTokens: Number(response?.usage?.completionTokens || 0),
+            queueWaitMs: slot.queueWaitMs
+          }).catch(() => {});
+        }
+        return parsed;
+      } catch (error) {
+        if (call) {
+          await modelCallService.finish(call, {
+            outcome: 'failed',
+            inputTokens: Number(response?.usage?.promptTokens || 0),
+            outputTokens: Number(response?.usage?.completionTokens || 0),
+            queueWaitMs: slot.queueWaitMs,
+            errorCode: String(error?.code || 'DESIGN_PLANNER_FAILED').slice(0, 100)
+          }).catch(() => {});
+        }
+        const classified = classifyRuntimeFailure(error);
+        const schemaRetry = classified.category === 'validation';
+        const providerRetry = classified.category === 'transient_provider';
+        if ((!schemaRetry && !providerRetry) || attempt >= 3) throw error;
+        if (schemaRetry) {
+          requestMessages = [
+            ...requestMessages,
+            { role: 'assistant', content: String(response?.text || '').slice(0, 4000) },
+            {
+              role: 'user',
+              content: 'The previous output was not one valid JSON object matching the requested schema. Return only a corrected JSON object; do not include markdown or reasoning.'
+            }
+          ];
+          continue;
+        }
+        const retryAfter = parseRetryAfterMs(
+          error?.retryAfter || error?.failures?.find((failure) => failure?.retryAfter)?.retryAfter
+        );
+        if (retryAfter > 0 && providerScheduler?.defer) {
+          await providerScheduler.defer(retryAfter);
+        }
+        await waitFor(
+          Math.max(retryAfter, Math.min(8000, 500 * (2 ** (attempt - 1)))),
+          signal
+        );
+      }
+    }
+    throw new ApiError(502, 'DESIGN_PLANNER_FAILED', { retryable: true });
+  };
 
   const requireEnabled = () => {
     if (!config.enabled) throw new ApiError(404, 'DESIGN_CONVERSATION_DISABLED');
@@ -678,7 +942,7 @@ const createDesignConversationService = ({
       return {
         ...publicConversation(row),
         messages: messages.rows.map((message) => publicMessage(message, env)),
-        executions: executions.rows.map(publicExecution),
+        executions: executions.rows.map((execution) => publicExecution(execution, env)),
         uploads: uploads.rows.map(publicConversationAsset)
       };
     });
@@ -759,15 +1023,57 @@ const createDesignConversationService = ({
        )
        UPDATE design_planning_jobs job
           SET status='running',lease_owner=$1,
-              lease_expires_at=clock_timestamp()+interval '90 seconds',
+              lease_expires_at=clock_timestamp()+($2::text || ' seconds')::interval,
               attempt_count=attempt_count+1,updated_at=now()
          FROM candidate
         WHERE job.message_id=candidate.message_id
        RETURNING job.*`,
-      [workerId]
+      [workerId, config.planningLeaseSeconds]
     );
     return result.rows[0] || null;
   });
+
+  const renewPlanningJobLease = async (job) => {
+    const renewed = await pool.query(
+      `UPDATE design_planning_jobs
+          SET lease_expires_at=clock_timestamp()+($3::text || ' seconds')::interval,
+              updated_at=now()
+        WHERE message_id=$1 AND status='running' AND lease_owner=$2
+        RETURNING message_id`,
+      [job.message_id, workerId, config.planningLeaseSeconds]
+    );
+    if (!renewed.rowCount) throw new ApiError(409, 'DESIGN_PLANNING_LEASE_LOST');
+  };
+
+  const runWithPlanningLease = async (job, work) => {
+    const controller = new AbortController();
+    let leaseError = null;
+    let heartbeat = null;
+    const renew = async () => {
+      try {
+        await renewPlanningJobLease(job);
+      } catch (error) {
+        leaseError = error;
+        controller.abort();
+      }
+    };
+    await renew();
+    if (leaseError) throw leaseError;
+    heartbeat = setInterval(() => void renew(), Math.min(
+      config.planningLeaseHeartbeatMs,
+      Math.max(100, Math.floor(config.planningLeaseSeconds * 1000 / 3))
+    ));
+    heartbeat.unref?.();
+    try {
+      const result = await work(controller.signal);
+      if (leaseError) throw leaseError;
+      await renew();
+      if (leaseError) throw leaseError;
+      return result;
+    } finally {
+      clearInterval(heartbeat);
+    }
+  };
 
   const loadPlanningContext = async (job) => transaction(pool, async (client) => {
     const conversation = await client.query(
@@ -793,6 +1099,13 @@ const createDesignConversationService = ({
   });
 
   const completePlanningJob = async ({ job, decision }) => transaction(pool, async (client) => {
+    const lease = await client.query(
+      `SELECT message_id FROM design_planning_jobs
+        WHERE message_id=$1 AND status='running' AND lease_owner=$2
+        FOR UPDATE`,
+      [job.message_id, workerId]
+    );
+    if (!lease.rowCount) throw new ApiError(409, 'DESIGN_PLANNING_LEASE_LOST');
     const assistant = await insertMessage(client, {
       conversationId: job.conversation_id,
       role: 'assistant',
@@ -802,16 +1115,48 @@ const createDesignConversationService = ({
       value: {
         text: decision.reply,
         questions: decision.questions || [],
-        assumptions: decision.assumptions || []
+        assumptions: decision.assumptions || [],
+        memoryCandidates: decision.memoryCandidates || []
       }
+    });
+    const executionId = crypto.randomUUID();
+    const rawPlan = decision.plan && typeof decision.plan === 'object' ? decision.plan : {};
+    const {
+      taskSpec: _embeddedTaskSpec,
+      objective: _embeddedObjective,
+      options: _embeddedOptions,
+      browserConfig: _embeddedBrowserConfig,
+      assumptions: _embeddedAssumptions,
+      ...displayPlan
+    } = rawPlan;
+    const storedPlan = sealExecutionPlan({
+      conversationId: job.conversation_id,
+      executionId,
+      publicPlan: sanitizeLogValue({
+        ...displayPlan,
+        capabilities: decision.capabilities || undefined,
+        deliverables: decision.deliverables || undefined,
+        complexity: decision.complexity || undefined,
+        confidence: decision.confidence ?? undefined,
+        skillIds: decision.skillIds || []
+      }),
+      privatePlan: {
+        options: decision.options || undefined,
+        objective: decision.objective || undefined,
+        browserConfig: decision.browserConfig || undefined,
+        taskSpec: decision.taskSpec || undefined,
+        assumptions: decision.assumptions || []
+      },
+      env
     });
     const execution = await client.query(
       `INSERT INTO design_executions
-        (conversation_id,source_message_id,route_kind,status,tool_id,operation,local_route,
+        (id,conversation_id,source_message_id,route_kind,status,tool_id,operation,local_route,
          max_credits,plan,finished_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        RETURNING *`,
       [
+        executionId,
         job.conversation_id,
         assistant.id,
         decision.routeKind,
@@ -820,15 +1165,7 @@ const createDesignConversationService = ({
         decision.operation || null,
         decision.localRoute || null,
         Number(decision.plan?.maxCredits || config.autoCreditCap),
-        JSON.stringify(sanitizeLogValue({
-          ...decision.plan,
-          options: decision.options || undefined,
-          objective: decision.objective || undefined,
-          capabilities: decision.capabilities || undefined,
-          deliverables: decision.deliverables || undefined,
-          browserConfig: decision.browserConfig || undefined,
-          assumptions: decision.assumptions || []
-        })),
+        JSON.stringify(storedPlan),
         decision.status === 'succeeded' ? new Date() : null
       ]
     );
@@ -859,10 +1196,14 @@ const createDesignConversationService = ({
         messageId: assistant.id,
         executionId: execution.rows[0].id,
         routeKind: decision.routeKind,
-        status: decision.status
+        status: decision.status,
+        complexity: decision.complexity,
+        confidence: decision.confidence,
+        skillIds: decision.skillIds || [],
+        memoryCandidateCount: decision.memoryCandidates?.length || 0
       }
     });
-    return publicExecution(execution.rows[0]);
+    return publicExecution(execution.rows[0], env);
   });
 
   const failPlanningJob = async ({ job, error }) => transaction(pool, async (client) => {
@@ -901,38 +1242,100 @@ const createDesignConversationService = ({
       job = await claimPlanningJob();
       if (!job) return false;
       if (typeof chatGenerate !== 'function') throw new ApiError(503, 'DESIGN_PLANNER_NOT_CONFIGURED');
-      const context = await loadPlanningContext(job);
-      const contextualAttachments = context.current.attachments.length
-        ? context.current.attachments
-        : Number(context.conversation.clarification_rounds || 0) > 0
-          ? context.history
-              .filter((message) => message.role === 'user')
-              .flatMap((message) => message.attachments || [])
-              .filter((item, index, all) => (
-                all.findIndex((candidate) => candidate.clientId === item.clientId) === index
-              ))
-              .slice(-10)
-          : [];
-      const response = await chatGenerate({
-        messages: plannerMessages({
-          history: context.history.map((message) => ({ role: message.role, text: message.text })),
-          message: context.current.text,
-          attachmentCount: contextualAttachments.length
-        }),
-        model: TEXT_MODEL,
-        maxTokens: config.plannerMaxTokens,
-        enableThinking: false,
-        timeoutMs: 60_000
+      await runWithPlanningLease(job, async (signal) => {
+        const context = await loadPlanningContext(job);
+        const contextualAttachments = context.current.attachments.length
+          ? context.current.attachments
+          : Number(context.conversation.clarification_rounds || 0) > 0
+            ? context.history
+                .filter((message) => message.role === 'user')
+                .flatMap((message) => message.attachments || [])
+                .filter((item, index, all) => (
+                  all.findIndex((candidate) => candidate.clientId === item.clientId) === index
+                ))
+                .slice(-10)
+            : [];
+        const projectMemory = agentConfig.projectMemoryEnabled && context.conversation.project_id
+          ? (await projectService.getProject({
+              userId: context.conversation.user_id,
+              projectId: context.conversation.project_id
+            })).designMemory || null
+          : null;
+        const raw = await generateModelJson({
+          messages: plannerMessages({
+            history: context.history.map((message) => ({ role: message.role, text: message.text })),
+            message: context.current.text,
+            attachmentCount: contextualAttachments.length,
+            projectMemory
+          }),
+          phase: 'router',
+          priority: 'router',
+          thinkingEnabled: false,
+          conversation: context.conversation,
+          maxTokens: config.plannerMaxTokens,
+          signal
+        });
+        const routed = normalizePlannerDecision({
+          raw,
+          text: context.current.text,
+          attachments: contextualAttachments,
+          clarificationRounds: Number(context.conversation.clarification_rounds || 0),
+          creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap)
+        });
+        let decision = enrichPlannerDecision({
+          decision: routed,
+          raw,
+          text: context.current.text,
+          creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
+          allowMemory: agentConfig.projectMemoryEnabled && Boolean(context.conversation.project_id)
+        });
+        if (decision.routeKind === 'agent_run' && agentConfig.designPlannerV2Enabled) {
+          const plannedRaw = await generateModelJson({
+            messages: taskPlannerMessages({
+              objective: context.current.text,
+              deliverables: decision.deliverables,
+              capabilities: decision.capabilities,
+              allowedOrigins: decision.browserConfig?.allowedOrigins || [],
+              maxCredits: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
+              projectMemory
+            }),
+            phase: 'planner',
+            priority: 'planner',
+            thinkingEnabled: agentConfig.adaptiveReasoningEnabled,
+            conversation: context.conversation,
+            maxTokens: config.plannerMaxTokens,
+            signal
+          });
+          const taskSpec = normalizeTaskSpec({
+            ...plannedRaw,
+            goal: context.current.text,
+            deliverables: decision.deliverables,
+            allowedOrigins: decision.browserConfig?.allowedOrigins || [],
+            budget: {
+              maxCredits: Number(context.conversation.auto_credit_cap || config.autoCreditCap)
+            }
+          }, {
+            objective: context.current.text,
+            deliverables: decision.deliverables,
+            capabilities: decision.capabilities,
+            allowedOrigins: decision.browserConfig?.allowedOrigins || [],
+            maxCredits: Number(context.conversation.auto_credit_cap || config.autoCreditCap)
+          });
+          decision = {
+            ...decision,
+            complexity: taskSpec.complexity,
+            confidence: taskSpec.confidence,
+            skillIds: taskSpec.skillIds,
+            taskSpec,
+            plan: {
+              ...decision.plan,
+              steps: taskSpec.plan.map((step) => step.label),
+              taskSpec
+            }
+          };
+        }
+        await completePlanningJob({ job, decision });
       });
-      const raw = safeJsonObject(response?.text);
-      const decision = normalizePlannerDecision({
-        raw,
-        text: context.current.text,
-        attachments: contextualAttachments,
-        clarificationRounds: Number(context.conversation.clarification_rounds || 0),
-        creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap)
-      });
-      await completePlanningJob({ job, decision });
       return true;
     } catch (error) {
       if (job) await failPlanningJob({ job, error }).catch(() => {});
@@ -1040,7 +1443,7 @@ const createDesignConversationService = ({
           reason: errorCode
         }
       });
-      return publicExecution(updated.rows[0]);
+      return publicExecution(updated.rows[0], env);
     });
   };
 
@@ -1139,7 +1542,7 @@ const createDesignConversationService = ({
         summary: '任务已开始',
         data: { executionId, routeKind: updated.rows[0].route_kind }
       });
-      return publicExecution(updated.rows[0]);
+      return publicExecution(updated.rows[0], env);
     });
   };
 
@@ -1164,7 +1567,7 @@ const createDesignConversationService = ({
         [executionId, conversationId]
       );
       if (!result.rowCount) throw new ApiError(404, 'DESIGN_EXECUTION_NOT_FOUND');
-      return publicExecution(result.rows[0]);
+      return publicExecution(result.rows[0], env);
     });
   };
 
@@ -1187,7 +1590,7 @@ const createDesignConversationService = ({
         summary: status === 'succeeded' ? '任务已完成' : status === 'failed' ? '任务执行失败' : '任务状态已更新',
         data: { executionId, status, errorCode: errorCode || null }
       });
-      return publicExecution(updated.rows[0]);
+      return publicExecution(updated.rows[0], env);
     });
   };
 
@@ -1210,7 +1613,7 @@ const createDesignConversationService = ({
         summary: '本次自动预算已更新',
         data: { executionId, maxCredits: cap }
       });
-      return publicExecution(updated.rows[0]);
+      return publicExecution(updated.rows[0], env);
     });
   };
 
@@ -1325,12 +1728,19 @@ const createDesignConversationService = ({
            FROM design_planning_jobs`
         ).catch(() => ({ rows: [{}] }))
       : { rows: [{}] };
+    const scheduler = providerScheduler
+      ? await providerScheduler.readiness()
+      : { ok: !agentConfig.providerSchedulerEnabled, enabled: false, mode: 'unconfigured' };
     return {
       enabled: config.enabled,
       workerEnabled: config.workerEnabled,
       plannerReady: Boolean(config.enabled && hasAgentPayloadKey(env) && typeof chatGenerate === 'function'),
       model: TEXT_MODEL,
       imageModel: IMAGE_MODEL,
+      plannerV2Enabled: agentConfig.designPlannerV2Enabled,
+      adaptiveReasoningEnabled: agentConfig.adaptiveReasoningEnabled,
+      projectMemoryEnabled: agentConfig.projectMemoryEnabled,
+      providerScheduler: scheduler,
       autoCreditCap: config.autoCreditCap,
       retentionDays: config.retentionDays,
       authorizationIdleMinutes: config.authorizationIdleMinutes,
@@ -1388,12 +1798,16 @@ module.exports = {
   SAFE_SESSION_ACTIONS,
   TEXT_MODEL,
   createDesignConversationService,
+  enrichPlannerDecision,
   explicitHttpsOrigins,
   getDesignConversationConfig,
   inferDeliverables,
   normalizeAttachmentManifest,
   normalizePlannerDecision,
+  normalizeMemoryCandidates,
+  decodeExecutionPlan,
   repairPlannerRoute,
   plannerMessages,
-  safeJsonObject
+  safeJsonObject,
+  sealExecutionPlan
 };

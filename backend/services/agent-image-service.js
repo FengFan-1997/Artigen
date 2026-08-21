@@ -74,9 +74,10 @@ const referencePrompt = (prompt, references) => {
 
 const createAgentImageService = ({
   env = process.env,
+  chatGenerate = callSiliconFlowChat,
   provider = createConfiguredGenerationProvider({
     imageGenerate: callSiliconFlowImageGenerate,
-    chatGenerate: callSiliconFlowChat,
+    chatGenerate,
     env
   }),
   download = downloadProviderImage,

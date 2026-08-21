@@ -11,6 +11,10 @@ const {
   cleanupUpload,
   parseMultipartRequest
 } = require('./tool-tasks');
+const {
+  createModelCallService,
+  createProviderScheduler
+} = require('../services/agent-model-runtime-service');
 
 const requireAuthenticatedUser = (req) => {
   const auth = resolveAuthUser(req);
@@ -42,12 +46,20 @@ const installDesignConversationRoutes = (app, deps = {}) => {
     windowMs: 60 * 1000
   });
   const pool = deps.pool || (isDatabaseConfigured() ? getPool() : null);
+  const providerScheduler = deps.providerScheduler || (!deps.designConversationService && pool?.connect
+    ? createProviderScheduler({ pool, env })
+    : null);
+  const modelCallService = deps.modelCallService || (!deps.designConversationService && pool?.query
+    ? createModelCallService({ pool, retentionDays: 30 })
+    : null);
   const service = deps.designConversationService || (
     pool
       ? createDesignConversationService({
           pool,
           env,
-          chatGenerate: deps.callSiliconFlowChat
+          chatGenerate: deps.callSiliconFlowChat,
+          providerScheduler,
+          modelCallService
         })
       : null
   );

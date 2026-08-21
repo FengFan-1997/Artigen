@@ -49,6 +49,21 @@ export type BrandProfile = {
   logoAssetId: string | null;
 };
 
+export type DesignMemory = {
+  audience: string;
+  goals: string[];
+  tone: string[];
+  visualKeywords: string[];
+  mustInclude: string[];
+  avoid: string[];
+  outputPreferences: {
+    deliverables: string[];
+    aspectRatio: string;
+    language: string;
+  };
+  factualConstraints: string[];
+};
+
 export type CreativeProject = {
   projectId: string;
   title: string;
@@ -56,6 +71,7 @@ export type CreativeProject = {
   productName: string;
   brief: string;
   brandProfile: BrandProfile;
+  designMemory: DesignMemory;
   coverAssetId: string | null;
   coverUrl: string | null;
   revision: number;
@@ -101,6 +117,7 @@ export const createCreativeProject = async (input: {
   productName?: string;
   brief?: string;
   brandProfile?: Partial<BrandProfile>;
+  designMemory?: Partial<DesignMemory>;
 }) => {
   const json = await requestJson<{ project: CreativeProject }>(projectsUrl, {
     method: 'POST',
@@ -119,7 +136,7 @@ export const getCreativeProject = async (projectId: string, includeTrashed = fal
 
 export const updateCreativeProject = async (
   projectId: string,
-  input: Partial<Pick<CreativeProject, 'title' | 'productName' | 'brief' | 'brandProfile' | 'status'>> & {
+  input: Partial<Pick<CreativeProject, 'title' | 'productName' | 'brief' | 'brandProfile' | 'designMemory' | 'status'>> & {
     revision: number;
   }
 ) => {

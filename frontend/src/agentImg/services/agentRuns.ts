@@ -50,6 +50,52 @@ export type AgentApproval = {
 
 export type AgentSubagentStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
+export type AgentSkillRef = { id: string; version: number };
+
+export type AgentTaskSpec = {
+  version: 1;
+  goal: string;
+  complexity: 'simple' | 'medium' | 'high';
+  confidence: number;
+  constraints: string[];
+  assumptions: string[];
+  deliverables: Array<'report' | 'spreadsheet' | 'presentation' | 'website' | 'image'>;
+  allowedOrigins: string[];
+  acceptanceCriteria: string[];
+  skillIds: string[];
+  plan: Array<{
+    id: string;
+    label: string;
+    phase: 'research' | 'production' | 'verification' | 'completion';
+    status: 'pending' | 'in_progress' | 'completed';
+  }>;
+  budget: { maxCredits: number };
+};
+
+export type ObservationEnvelope = {
+  ok: boolean;
+  code: string | null;
+  summary: string;
+  stateDelta: Record<string, unknown>;
+  evidenceRefs: string[];
+  changedFiles: string[];
+  retryHint: string | null;
+  fingerprint: string;
+};
+
+export type AgentWorkingState = {
+  version: 1;
+  taskSpec: AgentTaskSpec;
+  phase: AgentTaskSpec['plan'][number]['phase'];
+  projectMemory: Record<string, unknown> | null;
+  sources: string[];
+  files: string[];
+  completedEvidence: ObservationEnvelope[];
+  failures: ObservationEnvelope[];
+  pendingApproval: Record<string, unknown> | null;
+  remainingBudget: number;
+};
+
 export type AgentSubagent = {
   subagentId: string;
   runId: string;
@@ -75,6 +121,11 @@ export type AgentRun = {
   objectivePreview?: string;
   projectId: string | null;
   status: AgentRunStatus;
+  runtime?: {
+    version: number;
+    promptProfile: string | null;
+    skills: AgentSkillRef[];
+  };
   model: { provider: string; name: string };
   sandbox: { provider: string; version: string; takeoverAvailable: boolean };
   capabilities: Record<string, boolean>;
@@ -163,6 +214,15 @@ export type AgentServiceStatus = {
   subagentsEnabled?: boolean;
   subagentMaxConcurrent?: number;
   subagentSandboxMode?: 'shared-v1' | string;
+  runtimeV2Enabled?: boolean;
+  promptEngineVersion?: string;
+  adaptiveReasoningEnabled?: boolean;
+  projectMemoryEnabled?: boolean;
+  providerScheduler?: {
+    enabled: boolean;
+    ready: boolean;
+    mode: string;
+  };
   accessMode?: 'disabled' | 'owner-only-v1' | 'authenticated-v1' | string;
   availabilityNote: 'ready' | 'busy' | 'worker_offline' | string;
 };
@@ -223,6 +283,7 @@ export const quoteAgentRun = async (input: {
   maxCredits?: number;
   capabilities?: Record<string, boolean>;
   deliverables?: string[];
+  taskSpec?: Record<string, unknown> | null;
   browserConfig?: {
     allowedOrigins?: string[];
     profileId?: string | null;
@@ -243,6 +304,7 @@ export const createAgentRun = async (input: {
   maxCredits: number;
   capabilities: Record<string, boolean>;
   deliverables?: string[];
+  taskSpec?: Record<string, unknown> | null;
   browserConfig?: {
     allowedOrigins?: string[];
     profileId?: string | null;
