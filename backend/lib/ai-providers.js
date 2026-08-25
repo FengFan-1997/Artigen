@@ -120,7 +120,13 @@ const callSiliconFlowChat = async ({
   maxTokens,
   model,
   enableThinking,
+  responseFormat,
+  temperature,
+  topP,
+  topK,
+  minP,
   signal,
+  skipRateGate = false,
   credential = SILICONFLOW_API_KEY,
   chatUrl = SILICONFLOW_CHAT_COMPLETIONS_URL,
   fetcher = fetchWithTimeout
@@ -131,7 +137,7 @@ const callSiliconFlowChat = async ({
     throw err;
   }
 
-  return await withSiliconflowRateGate(async () => {
+  const invoke = async () => {
     const startedAt = Date.now();
     const requestedModel = String(model || '').trim();
     const resolvedModel = requestedModel || FIXED_SILICONFLOW_CHAT_MODEL;
@@ -167,7 +173,14 @@ const callSiliconFlowChat = async ({
               model: resolvedModel,
               messages,
               max_tokens: typeof maxTokens === 'number' ? maxTokens : undefined,
-              enable_thinking: typeof enableThinking === 'boolean' ? enableThinking : undefined
+              enable_thinking: typeof enableThinking === 'boolean' ? enableThinking : undefined,
+              response_format: responseFormat === 'json_object'
+                ? { type: 'json_object' }
+                : undefined,
+              temperature: typeof temperature === 'number' ? temperature : undefined,
+              top_p: typeof topP === 'number' ? topP : undefined,
+              top_k: typeof topK === 'number' ? topK : undefined,
+              min_p: typeof minP === 'number' ? minP : undefined
             })
           },
           timeoutMs,
@@ -181,6 +194,7 @@ const callSiliconFlowChat = async ({
             status: response.status,
             statusText: response.statusText,
             elapsedMs: Date.now() - startedAt,
+            retryAfter: String(response.headers?.get?.('retry-after') || ''),
             bodyPreview: String(errBody || '').slice(0, 1800)
           });
           continue;
@@ -248,13 +262,16 @@ const callSiliconFlowChat = async ({
       const err = new Error('SILICONFLOW_RPM_LIMIT');
       err.code = 'SILICONFLOW_RPM_LIMIT';
       err.failures = failures;
+      err.retryAfter = failures.find((failure) => failure.retryAfter)?.retryAfter || '';
       throw err;
     }
 
     const err = new Error('All SiliconFlow endpoints failed');
     err.failures = failures;
+    err.retryAfter = failures.find((failure) => failure.retryAfter)?.retryAfter || '';
     throw err;
-  });
+  };
+  return skipRateGate ? invoke() : withSiliconflowRateGate(invoke);
 };
 
 const toSiliconflowImage = (v) => {
@@ -411,7 +428,13 @@ const callSiliconFlowImageGenerate = async ({
   }, signal);
 };
 
-const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model }) => {
+const callTextGenerate = async ({
+  contents,
+  timeoutMs,
+  reactionMode,
+  model,
+  chatGenerate = callSiliconFlowChat
+}) => {
   const canSiliconflow = !!SILICONFLOW_API_KEY;
   const sfTimeoutMs = Math.max(
     Math.max(1000, Number(timeoutMs || 0) || 0),
@@ -434,7 +457,7 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model }) =>
   const runSiliconflow = async () => {
     const preferredModel = String(model || '').trim();
     const resolvedModel = preferredModel || FIXED_SILICONFLOW_CHAT_MODEL;
-    const { text, usage, model: modelUsed, usedUrl } = await callSiliconFlowChat({
+    const { text, usage, model: modelUsed, usedUrl } = await chatGenerate({
       messages: toSiliconflowMessages(),
       timeoutMs: sfTimeoutMs,
       maxTokens: reactionMode ? 512 : 2048,

@@ -1,12 +1,37 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-21（Asia/Shanghai）
+更新时间：2026-08-25（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
 本文只保留已经确定并产生持久影响的架构、代码、配置、迁移、部署和正式决定。开发中的具体进度、临时尝试、失败调试和下一条命令只记录在被 Git 忽略的 `HANDOFF.local.md`，不进入本文。
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
+
+## 2026-08-25 Agent Runtime V2.1 durability（本地实现完成，未发布）
+
+- Artigen 继续使用现有 Node.js、PostgreSQL、Mac Worker、沙箱、审批和计费体系，没有更换 Agent 框架。迁移 `025_agent_runtime_v2_1_durability` 为 Run 增加 lease epoch、不可变 runtime profile、最终文本 SHA 与语义验证，并新增加密模型调用回执、加密 Shell/Kolors 工具回执和父/子共享预算预留。
+- Worker 的全部写入必须匹配 `worker_id + lease_epoch`，租约丢失后 fail closed；`ready_to_finalize` 由同一事务完成验证、费用、终态和回执消费，模糊调用进入 `waiting_user`，不会自动重发或收取未确认费用。旧 Worker 失去租约后不能继续写库、结算或销毁新 Worker 可复用的确定性沙箱。
+- Shell 与 Kolors 的 durable receipt 绑定请求 SHA-256、预算、scope 与 lease epoch；已经产生副作用但没有可靠回执时只能由用户显式重试。取消事务先结算已收到且可解密的 Qwen 回执和已完成工具回执，再释放其余 reservation；损坏回执的未知成本由平台承担。
+- 预算表通过唯一索引保证一个模型调用只有一条 reservation，并通过 `(model_call_id, run_id)` 复合外键强制模型调用、回执和预算属于同一 Run。迁移 001→025 及这些约束已在全新 PostgreSQL 16 数据库通过；Runtime/Live 定向测试为 `147/147`，固定 digest MinIO 加真实 PostgreSQL 的完整 Harness/V2/subagent 组合为 `37/37`、0 skip。
+- 模型硬边界不变：全部文字、路由、规划、验证与父/子 Agent 只能使用 `Qwen/Qwen3-8B`；全部图片只能使用 `Kwai-Kolors/Kolors`。Runtime V2/V2.1 及新调度功能仍默认关闭，尚未执行 DEV/生产部署或真实 Provider 调用；未读取或操作 `ui-review/`，未修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。
+
+## 2026-08-21 Agent Runtime V2 智能、性能与规范体系（本地实现完成，未发布）
+
+- 分支 `codex/agent-runtime-v2-intelligence` 基于 `origin/dev` SHA `77209368162d08e36645a19ad0c842c2f9ca6070`。本轮保留现有 Node.js Agent、Mac Worker、沙箱、审批、计费、S3 与事件流；没有引入 LangGraph、CrewAI、Embedding、RAG、VLM 或第三个模型。
+- 模型边界在配置、Runtime、路由和测试中同时硬锁：全部文字、路由、规划、验证与父/子 Agent 只能使用 `Qwen/Qwen3-8B`；全部文字生图和参考图只能使用 `Kwai-Kolors/Kolors`。Actor 与快速路由固定 non-thinking，只有无工具 Planner/Verifier 可在显式开关下有限 thinking；思维链不展示、不持久化。
+- 新增迁移 `024_agent_runtime_v2_observability`：Run 固化 Runtime、Prompt profile/hash 与 Skill 版本快照；新增不含用户正文的 `agent_model_calls`、共享 `agent_provider_scheduler` / `agent_provider_requests` 和脱敏 `agent_quality_checks`。TaskSpec、WorkingState、会话执行私有计划与项目记忆继续走既有加密载荷，不把 Prompt、工具正文、凭据或 reasoning 写入分析表。
+- Runtime V2 新增精简 Constitution、七个版本化 Skill、严格 `AgentTaskSpec` / `AgentWorkingState` / `ObservationEnvelope`，工具集合始终取“运行授权能力 ∩ Skill 白名单 ∩ 当前阶段”。上下文固定保留目标、全部约束/验收条件、当前阶段、最近四组工具交互与最后一个未解决失败；工具原文保留在审计/工作区，模型只接收有界 Observation。
+- 中高复杂任务使用 Planner → Actor → Verifier：Planner 先输出严格 TaskSpec，Actor 单工具串行执行并按调研/生产/验证阶段裁剪工具，确定性文件验证后由无工具 Verifier 做语义量表；最多一次针对性修复。文本咨询结果同样必须经过 Verifier；没有 VLM 时图片只声明技术验证，禁止伪装成已完成审美审查。
+- 失败与恢复边界新增结构化分类、参数纠正/Provider 重试上限、动作/DOM/文件/输出联合指纹、70% 预算收缩和 90% 只允许验证/交付。Actor、Planner、Verifier 的付费响应在后续写入前持久化；恢复不重复调用或计费。规划任务增加租约心跳、取消信号和提交前所有权检查，避免 `Retry-After` 跨过 90 秒租约后被第二个进程重复领取。
+- Render 与 Mac Worker 可通过 PostgreSQL 共享 SiliconFlow 调度器协调优先级、RPM、`Retry-After`、指数退避、取消和排队延迟；优先级依次为交互路由、恢复父 Run、父 Actor、Verifier、子 Agent、离线评测。默认继续使用保守速率，性能提升主要来自少回合、小工具 Schema 和确定性上下文压缩。
+- 项目记忆复用加密 `creative_project_payloads`，只允许从用户原话提出最多三条 audience/goals/tone/visualKeywords/mustInclude/avoid/outputPreferences/factualConstraints 建议；必须经用户显式确认和 revision-aware PATCH 才保存，网页、工具输出和模型推断不能静默写入。前端已补 Runtime/Skill/验证状态和记忆确认界面。
+- 现有 50 项质量集已升级为可执行规格，包含期望路由、Skill/工具、禁止工具、回合/时间/点数上限、固定素材与确定性验证器；新增管理员聚合接口仅返回质量、性能、成本和失败类型统计。`/api/agent/status` 和设计入口 readiness 暴露 Runtime V2、Prompt engine、自适应推理、项目记忆与 Provider scheduler 状态，SSE 新增计划编译、上下文压缩和验证事件。
+- 所有新功能默认关闭：`AGENT_RUNTIME_V2_ENABLED=false`、`DESIGN_PLANNER_V2_ENABLED=false`、`AGENT_ADAPTIVE_REASONING_ENABLED=false`、`AGENT_PROJECT_MEMORY_ENABLED=false`、`AGENT_PROVIDER_SCHEDULER_ENABLED=false`。迁移 024 只在本地开发库验证，尚未执行 DEV/生产迁移、开关、部署或真实付费模型调用。
+- 三轮本地审核覆盖模型白名单/隐私、恢复与 exactly-once 计费、跨实例调度/租约，以及全产品回归。新增 Runtime 定向单测 `125/125`；真实 PostgreSQL 规划租约测试 `2/2`；固定 digest MinIO 加本地 PostgreSQL 的最终完整后端外部集成为 `482/482`、0 跳过、0 失败。最终完整 `pnpm check` 退出码 0：前端 `216/216`、默认后端 `439 passed / 43 条明确外部跳过`、邮件 `7/7`、可执行质量集 `50/50`、生产构建与 bundle 预算通过，Playwright `489 passed / 3 skipped / 0 failed`，耗时 18.8 分钟。
+- PostgreSQL 集成测试已补齐夹具生命周期：工具任务通过正式取消/释放路径收尾，子 Agent 测试 Run 保留 append-only 审计并显式终态化。修复后再次运行完整外部集成仍为 `482/482`，最终 `pnpm check:core` 退出码 0；测试结束后的活跃工具任务、活跃 Agent Run、规划任务、Provider 排队、tool/agent holds 和全库冻结点数全部为 `0`。
+- 当前不得发布。仍需按计划拆分可独立审核的 PR，先在 DEV 使用真实 Qwen3、Kolors、PostgreSQL、S3 与 Mac Worker 跑 V1 基线及 V2 同题对照、Actor `.2/.7` 与 `.4/.8` A/B、取消/恢复和父子 Agent smoke；只有达到路由、完成率、延迟、成本和安全门槛后才可 Owner canary，再按 10% → 50% → 100% 放量。发布前必须重新核验 Render、Vercel、Mac Worker 和全部实时接口，并确保三端同一不可变 SHA。
+- 本轮从未读取、进入、修改、删除、暂存或提交 `ui-review/`，也没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。
 
 ## 2026-08-21 Codex 参考工作台视觉精修（生产已发布）
 

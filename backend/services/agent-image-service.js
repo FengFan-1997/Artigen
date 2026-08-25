@@ -74,15 +74,16 @@ const referencePrompt = (prompt, references) => {
 
 const createAgentImageService = ({
   env = process.env,
+  chatGenerate = callSiliconFlowChat,
   provider = createConfiguredGenerationProvider({
     imageGenerate: callSiliconFlowImageGenerate,
-    chatGenerate: callSiliconFlowChat,
+    chatGenerate,
     env
   }),
   download = downloadProviderImage,
   normalize = normalizeGeneratedImageAspectRatio
 } = {}) => {
-  const generate = async ({ prompt, aspectRatio = '1:1', filename, references }) => {
+  const generate = async ({ prompt, aspectRatio = '1:1', filename, references, signal }) => {
     const normalizedPrompt = String(prompt || '').trim();
     const normalizedFilename = String(filename || '').trim();
     if (normalizedPrompt.length < 3 || normalizedPrompt.length > 4000) {
@@ -106,7 +107,8 @@ const createAgentImageService = ({
       seed: crypto.randomInt(1, 2_147_483_647),
       images: normalizedReferences.map((reference) => (
         `data:${reference.mimeType};base64,${reference.buffer.toString('base64')}`
-      ))
+      )),
+      signal
     });
     if (String(generated?.modelUsed || '') !== GENERATION_IMAGE_MODEL) {
       throw new ApiError(502, 'AGENT_IMAGE_MODEL_INVALID');

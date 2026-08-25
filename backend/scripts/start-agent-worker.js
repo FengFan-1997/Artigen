@@ -9,6 +9,13 @@ const { createAgentRunService } = require('../services/agent-run-service');
 const { createAgentWorkerService } = require('../services/agent-worker-service');
 const { AgentQueueWorker } = require('../services/agent-queue-service');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
+const { createAgentImageService } = require('../services/agent-image-service');
+const { callSiliconFlowChat } = require('../lib/ai-providers');
+const {
+  createModelCallService,
+  createProviderScheduler,
+  createScheduledChatGenerate
+} = require('../services/agent-model-runtime-service');
 const { createAgentSandboxProvider } = require('../services/agent-sandbox-provider');
 const { hasAgentPayloadKey } = require('../services/agent-payload-service');
 
@@ -38,7 +45,25 @@ const main = async () => {
 
   const pool = getPool();
   const runService = createAgentRunService({ pool, env: process.env });
-  const model = createAgentModelProvider({ env: process.env });
+  const providerScheduler = createProviderScheduler({ pool, env: process.env });
+  const modelCallService = createModelCallService({
+    pool,
+    retentionDays: config.retentionDays
+  });
+  const model = createAgentModelProvider({
+    env: process.env,
+    providerScheduler,
+    modelCallService
+  });
+  const scheduledSiliconFlowChat = createScheduledChatGenerate({
+    scheduler: providerScheduler,
+    chatGenerate: callSiliconFlowChat,
+    defaultPriority: 'actor'
+  });
+  const imageService = createAgentImageService({
+    env: process.env,
+    chatGenerate: scheduledSiliconFlowChat
+  });
   const sandbox = createAgentSandboxProvider({ env: process.env });
   await model.probe();
   const runtimeReadiness = await sandbox.probe();
@@ -52,6 +77,8 @@ const main = async () => {
     runService,
     env: process.env,
     model,
+    modelCallService,
+    imageService,
     sandbox,
     runtimeReadiness
   });
@@ -62,12 +89,24 @@ const main = async () => {
   });
   await workerService.startInfrastructure();
   await queue.start();
+  const cleanupRuntimeRecords = async () => {
+    await Promise.all([
+      providerScheduler.cleanup(),
+      modelCallService.cleanupExpired({ limit: 1000 })
+    ]).catch((error) => {
+      console.warn(`AGENT_RUNTIME_CLEANUP_FAILED:${error?.code || error?.message || 'unknown'}`);
+    });
+  };
+  await cleanupRuntimeRecords();
+  const cleanupTimer = setInterval(() => void cleanupRuntimeRecords(), 60 * 60 * 1000);
+  cleanupTimer.unref?.();
   console.log(`Artigen Agent worker started: ${workerService.workerId}`);
 
   let stopping = false;
   const stop = async (signal) => {
     if (stopping) return;
     stopping = true;
+    clearInterval(cleanupTimer);
     console.log(`Artigen Agent worker stopping: ${signal}`);
     await queue.stop().catch((error) => {
       console.error('Agent queue shutdown failed', error?.message || error);

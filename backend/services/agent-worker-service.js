@@ -4,7 +4,8 @@ const assets = require('./asset-storage');
 const { getAgentConfig } = require('./agent-config');
 const {
   createAgentArtifactService,
-  inferRequiredDeliverables
+  inferRequiredDeliverables,
+  quoteShell
 } = require('./agent-artifact-service');
 const {
   browserActionType,
@@ -17,6 +18,7 @@ const {
 } = require('./agent-image-service');
 const {
   AgentWaitingForUser,
+  FUNCTION_TOOLS,
   createAgentModelProvider
 } = require('./agent-model-provider');
 const {
@@ -27,6 +29,7 @@ const {
 const {
   createAgentIntegrationService
 } = require('./agent-integration-service');
+const { createCreativeProjectService } = require('./creative-project-service');
 const {
   AgentDesktopRelayClient
 } = require('./agent-desktop-relay-client');
@@ -40,6 +43,15 @@ const {
   classifyAction,
   TAKEOVER_ACTIONS
 } = require('./agent-policy-service');
+const {
+  CHECKPOINT_VERSION,
+  SKILLS,
+  compileAgentPrompt,
+  normalizeTaskSpec,
+  normalizeArtifactEvidenceManifest,
+  normalizeVerifierResult,
+  renderSkillReference
+} = require('./agent-runtime-v2');
 
 class AgentPaused extends Error {
   constructor() {
@@ -55,9 +67,60 @@ class AgentCancelled extends Error {
   }
 }
 
+const normalizeLeaseCleanupRefs = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.freeze(Object.fromEntries(
+    ['sandboxRef', 'browserSessionRef']
+      .map((key) => [key, String(value[key] || '').trim().slice(0, 240)])
+      .filter(([, reference]) => reference)
+  ));
+};
+
+class LeaseLostDuringWorkError extends Error {
+  constructor(cause, { cleanupRefs = {} } = {}) {
+    super('AGENT_LEASE_LOST');
+    this.name = 'LeaseLostDuringWorkError';
+    this.code = 'AGENT_LEASE_LOST';
+    this.status = 409;
+    this.retryable = false;
+    this.causeCode = String(cause?.code || cause?.name || 'AGENT_LEASE_UNPROVEN').slice(0, 100);
+    Object.defineProperty(this, 'cause', {
+      configurable: false,
+      enumerable: false,
+      value: cause,
+      writable: false
+    });
+    this.cleanupRefs = normalizeLeaseCleanupRefs(cleanupRefs);
+  }
+}
+
+const isLeaseLostError = (error) => (
+  error instanceof LeaseLostDuringWorkError || error?.code === 'AGENT_LEASE_LOST'
+);
+
 const firstPayload = (payloads, kind) => (
   payloads.find((payload) => payload.kind === kind)?.value || null
 );
+
+const resolveToolReceiptRequestSha256 = ({
+  priorReceipt,
+  computedRequestSha256,
+  legacyReceipt = false
+}) => {
+  const computed = String(computedRequestSha256 || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(computed)) {
+    throw new ApiError(500, 'AGENT_TOOL_RECEIPT_REQUEST_HASH_INVALID');
+  }
+  const prior = String(priorReceipt?.requestSha256 || '').trim().toLowerCase();
+  if (!prior) return computed;
+  if (!/^[a-f0-9]{64}$/.test(prior)) {
+    throw new ApiError(500, 'AGENT_TOOL_RECEIPT_REQUEST_HASH_INVALID');
+  }
+  if (!legacyReceipt && prior !== computed) {
+    throw new ApiError(409, 'AGENT_TOOL_RECEIPT_CONFLICT', { retryable: false });
+  }
+  return prior;
+};
 
 const INPUT_EXTENSIONS = Object.freeze({
   'application/pdf': '.pdf',
@@ -389,6 +452,9 @@ const createAgentCostMeter = ({
     addGeneration(value) {
       generation += Math.max(0, Number(value || 0));
     },
+    restoreGenerationMinimum(value) {
+      generation = Math.max(generation, Math.max(0, Number(value || 0)));
+    },
     accrueSandbox() {
       sandbox = pendingSandbox();
       sandboxMeteredAt = now();
@@ -445,26 +511,46 @@ const createSerializedCostPersister = ({
   };
 };
 
-const runWithLeaseHeartbeat = async ({ refresh, work, intervalMs = 30_000 }) => {
+const runWithLeaseHeartbeat = async ({
+  refresh,
+  work,
+  intervalMs = 30_000,
+  abortController = null,
+  onLeaseLost = null,
+  cleanupRefsFromResult = null
+}) => {
   if (typeof refresh !== 'function' || typeof work !== 'function') {
     throw new TypeError('AGENT_LEASE_HEARTBEAT_DEPENDENCY_REQUIRED');
   }
   const delay = Math.max(100, Number(intervalMs || 0));
   let heartbeatPromise = null;
   let timer = null;
+  let leaseError = null;
+
+  const recordLeaseError = (error) => {
+    if (leaseError) return;
+    leaseError = error;
+    abortController?.abort(error);
+    onLeaseLost?.(error);
+  };
 
   const heartbeat = () => {
     if (heartbeatPromise) return heartbeatPromise;
     heartbeatPromise = Promise.resolve()
       .then(refresh)
-      .catch(() => {})
+      .catch(recordLeaseError)
       .finally(() => {
         heartbeatPromise = null;
       });
     return heartbeatPromise;
   };
 
-  await refresh();
+  try {
+    await refresh();
+  } catch (error) {
+    recordLeaseError(error);
+    throw new LeaseLostDuringWorkError(error);
+  }
   timer = setInterval(heartbeat, delay);
   timer.unref?.();
   let result;
@@ -477,13 +563,20 @@ const runWithLeaseHeartbeat = async ({ refresh, work, intervalMs = 30_000 }) => 
     clearInterval(timer);
     if (heartbeatPromise) await heartbeatPromise;
   }
-  if (workError) throw workError;
-  let leaseError = null;
+  const cleanupRefs = () => normalizeLeaseCleanupRefs(
+    typeof cleanupRefsFromResult === 'function'
+      ? cleanupRefsFromResult(result)
+      : {}
+  );
   try {
     await refresh();
   } catch (error) {
-    leaseError = error;
+    recordLeaseError(error);
   }
+  if (leaseError) {
+    throw new LeaseLostDuringWorkError(leaseError, { cleanupRefs: cleanupRefs() });
+  }
+  if (workError) throw workError;
   return { value: result, leaseError };
 };
 
@@ -493,19 +586,27 @@ const createAgentWorkerService = ({
   env = process.env,
   sandbox = createAgentSandboxProvider({ env }),
   model = createAgentModelProvider({ env }),
+  modelCallService = null,
   integrationService = createAgentIntegrationService({ pool, env }),
   imageService = createAgentImageService({ env }),
+  assetStorage = undefined,
+  testController = null,
   runtimeReadiness = {}
 } = {}) => {
   if (!pool || !runService) throw new TypeError('AGENT_WORKER_DEPENDENCY_REQUIRED');
+  if (testController && String(env.NODE_ENV || '').trim() !== 'test') {
+    throw new TypeError('AGENT_RUNTIME_TEST_CONTROLLER_FORBIDDEN');
+  }
   const config = getAgentConfig(env);
   const artifactService = createAgentArtifactService({
     pool,
     sandbox,
-    runService
+    runService,
+    ...(assetStorage ? { assetStorage } : {})
   });
   const browserService = createAgentBrowserService({ sandbox, env });
   const connectorService = createAgentConnectorService({ integrationService });
+  const projectService = createCreativeProjectService({ pool, env });
   const workerId = config.workerId ||
     `agent-worker-${process.pid}-${crypto.randomBytes(5).toString('hex')}`;
   const desktopRelay = new AgentDesktopRelayClient({
@@ -525,6 +626,30 @@ const createAgentWorkerService = ({
   const processRun = async (runId) => {
     const claimed = await runService.claimRun({ runId, workerId });
     if (!claimed) return { claimed: false };
+    const leaseEpoch = Number(claimed.lease_epoch || 0);
+    if (!Number.isSafeInteger(leaseEpoch) || leaseEpoch <= 0) {
+      throw new ApiError(409, 'AGENT_LEASE_EPOCH_INVALID');
+    }
+    const runLease = { runId, workerId, leaseEpoch };
+    const verifierReserveCredits = typeof model.maximumCallCredits === 'function'
+      ? model.maximumCallCredits(
+          Math.max(1024, config.modelContextTokens - 5120),
+          Number(config.stageMaxOutputTokens?.verifier || 2048)
+        )
+      : 0;
+    const reserveRuntimeBudget = (reservation) => runService.reserveRuntimeBudget({
+      ...runLease,
+      ...reservation,
+      preserveVerifierCredits: reservation.component === 'verifier' ? 0 : verifierReserveCredits
+    });
+    const consumeRuntimeBudget = (reservation) => runService.consumeRuntimeBudget({
+      ...runLease,
+      ...reservation
+    });
+    const releaseRuntimeBudget = (reservation) => runService.releaseRuntimeBudget({
+      ...runLease,
+      ...reservation
+    });
 
     let sandboxName = claimed.sandbox_ref || null;
     const startedAt = Date.now();
@@ -542,13 +667,11 @@ const createAgentWorkerService = ({
     const persistCostCheckpoint = createSerializedCostPersister({
       costMeter,
       saveCheckpoint: (costs) => runService.saveCheckpoint({
-        runId,
-        workerId,
+        ...runLease,
         checkpoint: { costs }
       }),
       recordUsage: (costs, usageItems) => runService.recordUsage({
-        runId,
-        workerId,
+        ...runLease,
         estimatedCredits: costs.model + costs.generation + costs.sandbox,
         items: { ...costs, ...usageItems }
       })
@@ -573,8 +696,7 @@ const createAgentWorkerService = ({
         await persistCostCheckpoint();
         if (sandboxName) await sandbox.suspend(sandboxName);
         await runService.transitionRun({
-          runId,
-          workerId,
+          ...runLease,
           toStatus: 'paused',
           eventType: 'run.paused',
           summary: '已在安全检查点暂停'
@@ -585,6 +707,106 @@ const createAgentWorkerService = ({
 
     try {
       const context = await runService.loadPrivateContext({ runId });
+      const legacyToolReceiptEntries = Object.entries(
+        context.run.checkpoint?.toolReceipts && typeof context.run.checkpoint.toolReceipts === 'object'
+          ? context.run.checkpoint.toolReceipts
+          : {}
+      );
+      const durableToolReceipts = new Map(legacyToolReceiptEntries);
+      const persistentToolReceipts = typeof runService.listToolReceipts === 'function'
+        ? await runService.listToolReceipts(runLease)
+        : [];
+      for (const receipt of persistentToolReceipts) {
+        durableToolReceipts.set(receipt.key, receipt);
+      }
+      const durableToolReceiptLedger = (
+        typeof runService.persistToolReceipt === 'function' &&
+        typeof runService.removeDispatchedToolReceipt === 'function'
+      );
+      const persistToolReceipt = async (key, value) => {
+        if (durableToolReceiptLedger) {
+          const persisted = await runService.persistToolReceipt({
+            ...runLease,
+            receiptKey: key,
+            ...value
+          });
+          durableToolReceipts.set(key, persisted);
+          return persisted;
+        }
+        durableToolReceipts.set(key, value);
+        const bounded = [...durableToolReceipts.entries()].slice(-16);
+        durableToolReceipts.clear();
+        for (const [receiptKey, receiptValue] of bounded) {
+          durableToolReceipts.set(receiptKey, receiptValue);
+        }
+        await runService.saveCheckpoint({
+          ...runLease,
+          checkpoint: { toolReceipts: Object.fromEntries(durableToolReceipts) }
+        });
+      };
+      const removeToolReceipt = async (key, requestSha256) => {
+        if (durableToolReceiptLedger) {
+          await runService.removeDispatchedToolReceipt({
+            ...runLease,
+            receiptKey: key,
+            requestSha256
+          });
+          durableToolReceipts.delete(key);
+          return;
+        }
+        durableToolReceipts.delete(key);
+        await runService.saveCheckpoint({
+          ...runLease,
+          checkpoint: { toolReceipts: Object.fromEntries(durableToolReceipts) }
+        });
+      };
+      if (
+        durableToolReceiptLedger &&
+        legacyToolReceiptEntries.length > 0 &&
+        typeof runService.clearLegacyToolReceiptCheckpoint === 'function'
+      ) {
+        for (const [key, receipt] of legacyToolReceiptEntries) {
+          const kind = String(receipt?.kind || '');
+          if (!['sandbox_shell', 'kolors'].includes(kind)) {
+            throw new ApiError(500, 'AGENT_LEGACY_TOOL_RECEIPT_INVALID');
+          }
+          const inferredState = receipt?.state || (receipt?.result ? 'consumed' : 'dispatched');
+          if (!['dispatched', 'consumed', 'ambiguous'].includes(inferredState)) {
+            throw new ApiError(500, 'AGENT_LEGACY_TOOL_RECEIPT_INVALID');
+          }
+          const legacySubagentId = key.startsWith('subagent:')
+            ? String(key.split(':')[1] || '')
+            : null;
+          const reservationKey = receipt?.reservationKey || (
+            kind === 'kolors' ? `kolors:${key}` : `sandbox:${key}`
+          );
+          const imported = await runService.persistToolReceipt({
+            ...runLease,
+            subagentId: legacySubagentId,
+            receiptKey: key,
+            kind,
+            state: inferredState,
+            reservationKey,
+            requestSha256: /^[a-f0-9]{64}$/i.test(String(receipt?.requestSha256 || ''))
+              ? String(receipt.requestSha256).toLowerCase()
+              : crypto.createHash('sha256').update(`legacy:${key}`).digest('hex'),
+            actualCredits: inferredState === 'consumed'
+              ? Number(receipt?.actualCredits || receipt?.result?.costCredits || 0)
+              : null,
+            result: inferredState === 'consumed' ? receipt.result : null,
+            legacyImport: true
+          });
+          durableToolReceipts.set(key, imported);
+        }
+        await runService.clearLegacyToolReceiptCheckpoint(runLease);
+      }
+      costMeter.restoreGenerationMinimum(
+        [...durableToolReceipts.values()]
+          .filter((receipt) => receipt?.kind === 'kolors' && receipt?.state === 'consumed')
+          .reduce((total, receipt) => (
+            total + Number(receipt.actualCredits || receipt.result?.costCredits || 0)
+          ), 0)
+      );
       costMeter.restoreModelMinimum(context.modelCheckpoint?.totalCredits);
       const objectivePayload = firstPayload(context.payloads, 'objective');
       if (!objectivePayload?.objective) throw new ApiError(500, 'AGENT_OBJECTIVE_MISSING');
@@ -596,12 +818,127 @@ const createAgentWorkerService = ({
         .filter((payload) => payload.kind === 'user_input')
         .map((payload) => payload.value)
         .slice(-20);
+      const runtimeV2 = Number(context.run.runtime_version || 1) === 2;
+      const parsedToolRetryEpoch = Number(context.run.checkpoint?.toolRetryEpoch || 0);
+      const toolRetryEpoch = Number.isSafeInteger(parsedToolRetryEpoch) && parsedToolRetryEpoch >= 0
+        ? parsedToolRetryEpoch
+        : 0;
+      let modelResumeState = context.modelCheckpoint;
+      if (
+        runtimeV2 &&
+        modelCallService?.adoptLatestReceived &&
+        typeof model.recoverReceivedModelCall === 'function'
+      ) {
+        const adopted = await modelCallService.adoptLatestReceived({
+          ...runLease,
+          subagentId: null
+        });
+        if (adopted) {
+          const recovered = model.recoverReceivedModelCall(adopted);
+          const recoveredUsage = typeof model.usageDetails === 'function'
+            ? model.usageDetails(recovered)
+            : { inputTokens: 0, outputTokens: 0, credits: 0 };
+          if (adopted.intent?.phase === 'planner') {
+            let plannedValue;
+            try {
+              plannedValue = JSON.parse(String(recovered.message?.content || ''));
+            } catch {
+              throw new ApiError(500, 'AGENT_MODEL_RECEIPT_INVALID', { retryable: false });
+            }
+            const plannedTaskSpec = normalizeTaskSpec(plannedValue, {
+              objective: objectivePayload.objective,
+              deliverables: requiredDeliverables,
+              capabilities: context.run.capabilities,
+              allowedOrigins: context.run.browser_config?.allowedOrigins || [],
+              maxCredits: context.run.max_credits
+            });
+            modelResumeState = {
+              ...(modelResumeState || {}),
+              version: CHECKPOINT_VERSION,
+              runtimeVersion: 2,
+              provider: model.providerName || context.run.model_provider,
+              taskSpec: plannedTaskSpec,
+              plannerModelCallReceipt: adopted.call,
+              plannerReservationKey: adopted.reservationKey,
+              plannerReservationActualCredits: recoveredUsage.credits,
+              totalCredits: Math.max(
+                Number(modelResumeState?.totalCredits || 0),
+                Number(recoveredUsage.credits || 0)
+              )
+            };
+          } else if (adopted.intent?.phase === 'verifier') {
+            let verifierValue;
+            try {
+              verifierValue = JSON.parse(String(recovered.message?.content || ''));
+            } catch {
+              throw new ApiError(500, 'AGENT_MODEL_RECEIPT_INVALID', { retryable: false });
+            }
+            const recoveredTaskSpec = modelResumeState?.taskSpec || objectivePayload.taskSpec;
+            modelResumeState = {
+              ...(modelResumeState || {}),
+              version: CHECKPOINT_VERSION,
+              runtimeVersion: 2,
+              totalCredits: Number(modelResumeState?.totalCredits || 0) +
+                Number(recoveredUsage.credits || 0),
+              pendingVerifierResult: {
+                result: normalizeVerifierResult(verifierValue, { taskSpec: recoveredTaskSpec }),
+                usage: recoveredUsage,
+                credits: recoveredUsage.credits,
+                modelCallReceipt: adopted.call,
+                reservationKey: adopted.reservationKey,
+                reservationActualCredits: recoveredUsage.credits
+              }
+            };
+          } else {
+            modelResumeState = {
+              ...(modelResumeState || {}),
+              version: CHECKPOINT_VERSION,
+              runtimeVersion: 2,
+              pendingModelResponse: recovered
+            };
+          }
+          await runService.saveModelCheckpoint({ ...runLease, value: modelResumeState });
+        }
+      }
+      if (runtimeV2 && modelResumeState?.plannerModelCallReceipt) {
+        await consumeRuntimeBudget({
+          reservationKey: modelResumeState.plannerReservationKey,
+          actualCredits: modelResumeState.plannerReservationActualCredits
+        });
+        if (modelCallService) {
+          await modelCallService.consume(modelResumeState.plannerModelCallReceipt);
+        }
+        modelResumeState = {
+          ...modelResumeState,
+          plannerModelCallReceipt: null,
+          plannerReservationKey: null,
+          plannerReservationActualCredits: 0
+        };
+        await runService.saveModelCheckpoint({ ...runLease, value: modelResumeState });
+      }
+      let taskSpec = runtimeV2
+        ? (modelResumeState?.taskSpec || objectivePayload.taskSpec || null)
+        : null;
+      let projectMemory = null;
+      let latestSemanticVerification = modelResumeState?.semanticVerificationResult ||
+        modelResumeState?.pendingVerifierResult?.result ||
+        null;
+      let semanticVerifierAttempts = Math.max(
+        0,
+        Number(modelResumeState?.semanticVerificationAttempts || 0)
+      );
+      if (runtimeV2 && config.projectMemoryEnabled && context.run.project_id) {
+        const project = await projectService.getProject({
+          userId: context.run.user_id,
+          projectId: context.run.project_id
+        });
+        projectMemory = project.designMemory || null;
+      }
 
       if (sandboxName) {
         await sandbox.ensureRunning(sandboxName);
         await runService.transitionRun({
-          runId,
-          workerId,
+          ...runLease,
           toStatus: 'running',
           eventType: 'sandbox.resumed',
           summary: '已恢复隔离云电脑',
@@ -615,21 +952,20 @@ const createAgentWorkerService = ({
             Math.min(30_000, Math.floor(config.leaseSeconds * 1_000 / 3))
           ),
           refresh: () => runService.saveCheckpoint({
-            runId,
-            workerId,
+            ...runLease,
             checkpoint: { phase: 'provisioning', sandboxReady: false }
           }),
           work: () => sandbox.provision({
             runId,
             browserEnabled: context.run.capabilities?.browser === true
-          })
+          }),
+          cleanupRefsFromResult: (value) => ({ sandboxRef: value?.name })
         });
         const provisioned = provisioning.value;
         sandboxName = provisioned.name;
         if (provisioning.leaseError) throw provisioning.leaseError;
         await runService.transitionRun({
-          runId,
-          workerId,
+          ...runLease,
           toStatus: 'running',
           eventType: 'sandbox.ready',
           summary: '隔离云电脑已就绪',
@@ -709,7 +1045,7 @@ const createAgentWorkerService = ({
       const inputAssetPaths = [];
       const stagedAssetsByPath = new Map();
       for (const assetId of objectivePayload.assetIds || []) {
-        const opened = await assets.openAsset({
+        const opened = await (assetStorage?.openAsset || assets.openAsset)({
           assetId,
           ownerUserId: context.run.user_id,
           pool
@@ -732,16 +1068,287 @@ const createAgentWorkerService = ({
           buffer: bytes
         });
       }
+      const runtimeObjective = [
+        objectivePayload.objective,
+        userInputs.length
+          ? `Subsequent user messages and decisions: ${JSON.stringify(userInputs)}`
+          : '',
+        inputAssetPaths.length
+          ? `User-provided files are available at: ${inputAssetPaths.join(', ')}`
+          : ''
+      ].filter(Boolean).join('\n\n');
+      if (runtimeV2 && !taskSpec) {
+        const plannerAbortController = new AbortController();
+        const planning = await runWithLeaseHeartbeat({
+          intervalMs: Math.max(
+            5_000,
+            Math.min(30_000, Math.floor(config.leaseSeconds * 1_000 / 3))
+          ),
+          abortController: plannerAbortController,
+          refresh: async () => {
+            const control = await runService.getControlState({ runId });
+            if (control.status === 'cancelled' || control.cancel_requested) {
+              plannerAbortController.abort();
+              throw new AgentCancelled();
+            }
+            return runService.saveCheckpoint({
+              ...runLease,
+              checkpoint: { phase: 'planning', sandboxReady: true }
+            });
+          },
+          work: () => model.planTask({
+            objective: runtimeObjective,
+            deliverables: requiredDeliverables,
+            capabilities: context.run.capabilities,
+            allowedOrigins: context.run.browser_config?.allowedOrigins || [],
+            maxCredits: context.run.max_credits,
+            projectMemory,
+            metadata: {
+              ...runLease,
+              userId: context.run.user_id,
+              priority: context.modelCheckpoint ? 'resumed_parent' : 'planner',
+              promptProfile: context.run.prompt_profile,
+              promptHash: Buffer.isBuffer(context.run.prompt_hash)
+                ? context.run.prompt_hash.toString('hex')
+                : null,
+              skillIds: Object.keys(context.run.skill_versions || {}),
+              signal: plannerAbortController.signal,
+              reserveBudget: reserveRuntimeBudget,
+              consumeBudget: consumeRuntimeBudget,
+              releaseBudget: releaseRuntimeBudget,
+              checkpointResult: async (plannedResult) => {
+                const plannedTaskSpec = plannedResult.taskSpec;
+                modelResumeState = {
+                  version: CHECKPOINT_VERSION,
+                  provider: model.providerName || context.run.model_provider,
+                  messages: [],
+                  taskSpec: plannedTaskSpec,
+                  workingState: {
+                    version: 2,
+                    taskSpec: plannedTaskSpec,
+                    phase: plannedTaskSpec.plan[0]?.phase || 'production',
+                    projectMemory,
+                    sources: [],
+                    files: [],
+                    completedEvidence: [],
+                    failures: [],
+                    pendingApproval: null,
+                    remainingBudget: Number(context.run.max_credits || 0)
+                  },
+                  totalCredits: plannedResult.credits,
+                  plannerModelCallReceipt: plannedResult.modelCallReceipt || null,
+                  plannerReservationKey: plannedResult.reservationKey || null,
+                  plannerReservationActualCredits: plannedResult.reservationActualCredits || 0,
+                  turns: 0,
+                  planPublished: true
+                };
+                costMeter.setModel(plannedResult.credits);
+                await runService.saveModelCheckpoint({
+                  ...runLease,
+                  value: modelResumeState
+                });
+                await persistCostCheckpoint({
+                  usageItems: { source: 'runtime_v2_planner_checkpoint', ...plannedResult.usage }
+                });
+              }
+            }
+          })
+        });
+        if (planning.leaseError) throw planning.leaseError;
+        const planned = planning.value;
+        taskSpec = planned.taskSpec;
+        if (modelResumeState?.plannerModelCallReceipt) {
+          modelResumeState = {
+            ...modelResumeState,
+            plannerModelCallReceipt: null,
+            plannerReservationKey: null,
+            plannerReservationActualCredits: 0
+          };
+          await runService.saveModelCheckpoint({ ...runLease, value: modelResumeState });
+        }
+        if (!modelResumeState?.taskSpec) {
+          modelResumeState = {
+            version: CHECKPOINT_VERSION,
+            provider: model.providerName || context.run.model_provider,
+            messages: [],
+            taskSpec,
+            workingState: {
+              version: 2,
+              taskSpec,
+              phase: taskSpec.plan[0]?.phase || 'production',
+              projectMemory,
+              sources: [],
+              files: [],
+              completedEvidence: [],
+              failures: [],
+              pendingApproval: null,
+              remainingBudget: Number(context.run.max_credits || 0)
+            },
+            totalCredits: planned.credits,
+            turns: 0,
+            planPublished: true
+          };
+          costMeter.setModel(planned.credits);
+          await runService.saveModelCheckpoint({ ...runLease, value: modelResumeState });
+          await persistCostCheckpoint({
+            usageItems: { source: 'runtime_v2_planner', ...planned.usage }
+          });
+        }
+        await runService.savePlan({
+          ...runLease,
+          plan: taskSpec.plan.map((step) => ({
+            id: step.id,
+            label: step.label,
+            phase: step.phase,
+            status: step.status
+          })),
+          explanation: '已根据目标、约束和交付条件编译执行计划。'
+        });
+        await runService.appendRuntimeEvent({
+          ...runLease,
+          type: 'plan.compiled',
+          phase: 'planning',
+          summary: 'Runtime V2 已编译执行计划',
+          data: {
+            complexity: taskSpec.complexity,
+            confidence: taskSpec.confidence,
+            skillIds: taskSpec.skillIds,
+            stepCount: taskSpec.plan.length
+          }
+        });
+      }
+      if (runtimeV2 && taskSpec && !modelResumeState) {
+        modelResumeState = {
+          version: CHECKPOINT_VERSION,
+          provider: model.providerName || context.run.model_provider,
+          messages: [],
+          taskSpec,
+          workingState: {
+            version: 2,
+            taskSpec,
+            phase: taskSpec.plan[0]?.phase || 'production',
+            projectMemory,
+            sources: [],
+            files: [],
+            completedEvidence: [],
+            failures: [],
+            pendingApproval: null,
+            remainingBudget: Number(context.run.max_credits || 0)
+          },
+          totalCredits: 0,
+          turns: 0,
+          planPublished: true
+        };
+        await runService.saveModelCheckpoint({ ...runLease, value: modelResumeState });
+        await runService.savePlan({
+          ...runLease,
+          plan: taskSpec.plan.map((step) => ({
+            id: step.id,
+            label: step.label,
+            phase: step.phase,
+            status: step.status
+          })),
+          explanation: '已复用对话入口编译并经服务端校验的执行计划。'
+        });
+        await runService.appendRuntimeEvent({
+          ...runLease,
+          type: 'plan.compiled',
+          phase: 'planning',
+          summary: '已复用对话入口的 Runtime V2 任务规范',
+          data: {
+            source: 'design-router',
+            complexity: taskSpec.complexity,
+            confidence: taskSpec.confidence,
+            skillIds: taskSpec.skillIds,
+            stepCount: taskSpec.plan.length
+          }
+        });
+      }
+      if (runtimeV2) {
+        const frozenRuntimePhase = objectivePayload.taskSpec?.plan?.[0]?.phase || (
+          context.run.capabilities?.browser ? 'research' : 'production'
+        );
+        const frozenRuntimeProfile = compileAgentPrompt({
+          objective: runtimeObjective,
+          capabilities: context.run.capabilities,
+          deliverables: requiredDeliverables,
+          taskSpec: objectivePayload.taskSpec || null,
+          phase: frozenRuntimePhase,
+          toolSchemas: FUNCTION_TOOLS,
+          modelConfig: {
+            actorSamplingProfile: config.actorSamplingProfile,
+            adaptiveReasoningEnabled: config.adaptiveReasoningEnabled,
+            stageMaxOutputTokens: config.stageMaxOutputTokens
+          }
+        });
+        await runService.pinRuntimeProfile({ ...runLease, profile: frozenRuntimeProfile });
+        const runtimeProfile = compileAgentPrompt({
+          objective: runtimeObjective,
+          capabilities: context.run.capabilities,
+          deliverables: requiredDeliverables,
+          taskSpec,
+          phase: taskSpec.plan[0]?.phase || 'production',
+          toolSchemas: FUNCTION_TOOLS,
+          modelConfig: {
+            actorSamplingProfile: config.actorSamplingProfile,
+            adaptiveReasoningEnabled: config.adaptiveReasoningEnabled,
+            stageMaxOutputTokens: config.stageMaxOutputTokens
+          }
+        });
+        const frozenSkillIds = new Set(frozenRuntimeProfile.skills.map((skill) => skill.id));
+        const expandedSkill = runtimeProfile.skills.find((skill) => !frozenSkillIds.has(skill.id));
+        if (expandedSkill) {
+          throw new ApiError(409, 'AGENT_RUNTIME_SKILL_NOT_FROZEN', {
+            retryable: false,
+            skillId: expandedSkill.id
+          });
+        }
+        context.run.prompt_profile = frozenRuntimeProfile.promptProfile;
+        context.run.prompt_hash = Buffer.from(frozenRuntimeProfile.promptHash, 'hex');
+        context.run.skill_versions = Object.fromEntries(
+          frozenRuntimeProfile.skills.map((skill) => [skill.id, skill.version])
+        );
+        const selectedSkills = (Array.isArray(taskSpec?.skillIds) ? taskSpec.skillIds : [])
+          .filter((skillId) => Boolean(SKILLS[skillId]));
+        if (selectedSkills.length) {
+          const prepared = await sandbox.systemShell(
+            sandboxName,
+            'mkdir -p /tmp/artigen-workspace/.artigen/skills && chmod u+w /tmp/artigen-workspace/.artigen/skills',
+            30
+          );
+          if (!prepared.success) {
+            throw new ApiError(500, 'AGENT_SKILL_REFERENCE_PREPARE_FAILED');
+          }
+        }
+        for (const skillId of selectedSkills) {
+          const reference = Buffer.from(renderSkillReference(SKILLS[skillId]), 'utf8');
+          await sandbox.writeFile(
+            sandboxName,
+            `/tmp/artigen-workspace/.artigen/skills/${skillId}@${SKILLS[skillId].version}.md`,
+            reference
+          );
+        }
+        if (selectedSkills.length) {
+          const locked = await sandbox.systemShell(
+            sandboxName,
+            "chmod -R a-w /tmp/artigen-workspace/.artigen/skills",
+            30
+          );
+          if (!locked.success) {
+            throw new ApiError(500, 'AGENT_SKILL_REFERENCE_LOCK_FAILED');
+          }
+        }
+      }
       await runService.appendStep({
-        runId,
-        workerId,
+        ...runLease,
         role: 'planner',
         status: 'succeeded',
-        summary: '已准备输入文件与交付物验证要求，等待模型发布具体计划',
+        toolName: 'update_plan',
+        summary: runtimeV2 ? '执行计划与输入边界已就绪' : '已准备输入文件与交付物验证要求，等待模型发布具体计划',
         sanitizedInput: {
+          runtimeVersion: runtimeV2 ? 2 : 1,
           assetCount: Array.isArray(objectivePayload.assetIds) ? objectivePayload.assetIds.length : 0,
-          capabilityCount: Object.values(context.run.capabilities || {}).filter(Boolean).length
-          ,
+          capabilityCount: Object.values(context.run.capabilities || {}).filter(Boolean).length,
           inputAssetPaths
         }
       });
@@ -750,7 +1357,7 @@ const createAgentWorkerService = ({
         const subagentId = entry.subagentId;
         const workspacePath = `/tmp/artigen-workspace/subagents/${subagentId}`;
         costMeter.restoreModelForMinimum(subagentId, Number(entry.usage?.credits || 0));
-        const started = await runService.startSubagent({ runId, subagentId, workerId });
+        const started = await runService.startSubagent({ ...runLease, subagentId });
         if (['succeeded', 'failed', 'cancelled'].includes(started.status)) {
           return {
             subagentId,
@@ -767,15 +1374,38 @@ const createAgentWorkerService = ({
           };
         }
         const privateContext = await runService.loadSubagentContext({
-          runId,
+          ...runLease,
           subagentId,
-          workerId
         });
+        let subagentResumeState = privateContext.checkpoint;
+        if (
+          runtimeV2 &&
+          modelCallService?.adoptLatestReceived &&
+          typeof model.recoverReceivedModelCall === 'function'
+        ) {
+          const adopted = await modelCallService.adoptLatestReceived({
+            ...runLease,
+            subagentId
+          });
+          if (adopted) {
+            subagentResumeState = {
+              ...(subagentResumeState || {}),
+              version: CHECKPOINT_VERSION,
+              runtimeVersion: 2,
+              pendingModelResponse: model.recoverReceivedModelCall(adopted)
+            };
+            await runService.saveSubagentModelCheckpoint({
+              ...runLease,
+              subagentId,
+              value: subagentResumeState
+            });
+          }
+        }
         costMeter.restoreModelForMinimum(
           subagentId,
           Math.max(
             Number(entry.usage?.credits || 0),
-            Number(privateContext.checkpoint?.totalCredits || 0)
+            Number(subagentResumeState?.totalCredits || 0)
           )
         );
         const deadlineAt = Date.now() + config.subagentTimeoutMinutes * 60_000;
@@ -809,21 +1439,49 @@ const createAgentWorkerService = ({
             objective: buildSubagentObjective(privateContext.task),
             capabilities: { files: true, shell: true },
             toolProfile: 'subagent',
-            resumeState: privateContext.checkpoint,
+            resumeState: subagentResumeState,
+            runtimeContext: runtimeV2 ? {
+              runtimeVersion: 2,
+              runId,
+              workerId,
+              leaseEpoch,
+              subagentId,
+              userId: context.run.user_id,
+              taskSpec: {
+                goal: privateContext.task.objective,
+                complexity: 'medium',
+                confidence: 1,
+                constraints: ['Offline-only depth-1 child; parent owns final delivery.'],
+                assumptions: [],
+                deliverables: [],
+                allowedOrigins: [],
+                acceptanceCriteria: [privateContext.task.expectedOutput],
+                skillIds: [],
+                plan: [
+                  { id: 'produce', label: '完成委派输出', phase: 'production' },
+                  { id: 'verify', label: '离线验证输出文件', phase: 'verification' }
+                ],
+                budget: { maxCredits: Number(context.run.max_credits || 0) }
+              },
+              maxCredits: Number(context.run.max_credits || 0),
+              initialModelCredits: Number(subagentResumeState?.totalCredits || 0)
+            } : null,
             safetyIdentifier: crypto.createHash('sha256')
               .update(`artigen-subagent:${context.run.user_id}:${subagentId}`)
               .digest('hex'),
             maxSteps: config.subagentMaxSteps,
             deadlineAt,
+            signal: modelAbortController.signal,
             callbacks: {
               checkControl: checkSubagentControl,
               updatePlan: async ({ explanation, steps }) => {
                 await checkSubagentControl();
                 const normalized = (Array.isArray(steps) ? steps : []).map((step) => ({
+                  id: String(step?.id || '').trim().slice(0, 80),
                   label: String(step?.label || '').trim().slice(0, 160),
                   status: String(step?.status || '')
                 })).filter((step) => (
-                  step.label && ['pending', 'in_progress', 'completed'].includes(step.status)
+                  step.id && step.label && ['pending', 'in_progress', 'completed'].includes(step.status)
                 ));
                 if (
                   normalized.length < 2 ||
@@ -833,8 +1491,7 @@ const createAgentWorkerService = ({
                   throw new ApiError(400, 'AGENT_PLAN_INVALID');
                 }
                 await runService.appendStep({
-                  runId,
-                  workerId,
+                  ...runLease,
                   subagentId,
                   role: 'planner',
                   status: 'succeeded',
@@ -849,24 +1506,24 @@ const createAgentWorkerService = ({
                 await checkSubagentControl();
                 await persistCostCheckpoint();
                 await runService.saveSubagentModelCheckpoint({
-                  runId,
+                  ...runLease,
                   subagentId,
-                  workerId,
                   value
                 });
               },
               clearModelState: async () => runService.clearSubagentModelCheckpoint({
-                runId,
+                ...runLease,
                 subagentId,
-                workerId
               }),
+              reserveBudget: reserveRuntimeBudget,
+              consumeBudget: consumeRuntimeBudget,
+              releaseBudget: releaseRuntimeBudget,
               recordUsage: async (credits, usage) => {
                 await checkSubagentControl();
                 costMeter.setModelFor(subagentId, credits);
                 await runService.recordSubagentUsage({
-                  runId,
+                  ...runLease,
                   subagentId,
-                  workerId,
                   estimatedCredits: credits,
                   usage
                 });
@@ -876,22 +1533,166 @@ const createAgentWorkerService = ({
               },
               recordStep: async (step) => {
                 await checkSubagentControl();
-                return runService.appendStep({ runId, workerId, subagentId, ...step });
+                return runService.appendStep({ ...runLease, subagentId, ...step });
               },
-              shell: async (script, purpose) => {
+              toolCall: async (call) => {
+                testController?.trace?.toolCall({
+                  ...call,
+                  role: 'subagent',
+                  subagentId
+                });
+              },
+              toolObservation: async (observation) => {
+                testController?.trace?.toolObservation({
+                  ...observation,
+                  role: 'subagent',
+                  subagentId
+                });
+              },
+              shell: async (script, purpose, toolMetadata = {}) => {
                 await checkSubagentControl();
+                const receiptIdentity = crypto.createHash('sha256')
+                  .update(String(toolMetadata.callId || script))
+                  .digest('hex')
+                  .slice(0, 32);
+                const currentReceiptKey = `subagent:${subagentId}:shell:${receiptIdentity}:attempt:${toolRetryEpoch}`;
+                const legacyReceiptIdentity = String(toolMetadata.callId || crypto
+                  .createHash('sha256').update(String(script)).digest('hex').slice(0, 24));
+                const legacyReceiptKey = `subagent:${subagentId}:shell:${legacyReceiptIdentity}`;
+                const receiptKey = toolRetryEpoch === 0 && durableToolReceipts.has(legacyReceiptKey)
+                  ? legacyReceiptKey
+                  : currentReceiptKey;
+                const usingLegacyReceipt = receiptKey === legacyReceiptKey;
                 const normalizedShell = normalizeSubagentShellScript(script, {
                   expectedOutput: privateContext.task.expectedOutput,
                   purpose
                 });
-                const result = await sandbox.subagentShell(sandboxName, normalizedShell.script, {
-                  workspacePath,
-                  inputPaths: privateContext.task.inputPaths,
-                  timeoutSeconds: 120
+                const reservationKey = `sandbox:${receiptKey}`;
+                const computedRequestSha256 = crypto.createHash('sha256')
+                  .update(JSON.stringify({
+                    subagentId,
+                    script: normalizedShell.script,
+                    inputPaths: privateContext.task.inputPaths
+                  }))
+                  .digest('hex');
+                const priorReceipt = durableToolReceipts.get(receiptKey);
+                const requestSha256 = resolveToolReceiptRequestSha256({
+                  priorReceipt,
+                  computedRequestSha256,
+                  legacyReceipt: usingLegacyReceipt
                 });
-                await runService.appendStep({
+                if (
+                  priorReceipt?.kind === 'sandbox_shell' &&
+                  (priorReceipt.state === 'consumed' || (!priorReceipt.state && priorReceipt.result))
+                ) {
+                  await consumeRuntimeBudget({
+                    reservationKey: priorReceipt.reservationKey || reservationKey,
+                    actualCredits: Number(priorReceipt.actualCredits || 0)
+                  });
+                  return priorReceipt.result;
+                }
+                if (
+                  priorReceipt?.kind === 'sandbox_shell' &&
+                  ['dispatched', 'ambiguous'].includes(priorReceipt.state)
+                ) {
+                  if (priorReceipt.state === 'dispatched') {
+                    await persistToolReceipt(receiptKey, {
+                      subagentId,
+                      kind: 'sandbox_shell',
+                      state: 'ambiguous',
+                      reservationKey,
+                      requestSha256
+                    });
+                  }
+                  await releaseRuntimeBudget({
+                    reservationKey: priorReceipt.reservationKey || reservationKey
+                  });
+                  throw new ApiError(409, 'AGENT_TOOL_CALL_AMBIGUOUS', {
+                    retryable: false,
+                    callId: String(toolMetadata.callId || '')
+                  });
+                }
+                await reserveRuntimeBudget({
+                  component: 'sandbox',
+                  subagentId,
+                  reservationKey,
+                  maximumCredits: sandboxCreditsPerMinute * 2
+                });
+                await persistToolReceipt(receiptKey, {
+                  subagentId,
+                  kind: 'sandbox_shell',
+                  state: 'dispatched',
+                  reservationKey,
+                  requestSha256
+                });
+                await testController?.hit('after_tool_dispatch', {
                   runId,
-                  workerId,
+                  subagentId,
+                  toolName: 'sandbox_shell'
+                });
+                await checkSubagentControl();
+                await runService.assertWorkerLeaseActive(runLease);
+                const shellStartedAt = Date.now();
+                let actualCredits = 0;
+                let result;
+                let receiptConsumed = false;
+                try {
+                  result = await sandbox.subagentShell(sandboxName, normalizedShell.script, {
+                    workspacePath,
+                    inputPaths: privateContext.task.inputPaths,
+                    timeoutSeconds: 120
+                  });
+                  actualCredits = Math.min(
+                    sandboxCreditsPerMinute * 2,
+                    Math.max(0, Date.now() - shellStartedAt) / 60_000 * sandboxCreditsPerMinute
+                  );
+                  await persistToolReceipt(receiptKey, {
+                    subagentId,
+                    kind: 'sandbox_shell',
+                    state: 'consumed',
+                    reservationKey,
+                    requestSha256,
+                    actualCredits,
+                    result: {
+                      success: result.success,
+                      returnCode: result.returnCode,
+                      stdout: String(result.stdout || '').slice(0, 12_000),
+                      stderr: String(result.stderr || '').slice(0, 4_000)
+                    }
+                  });
+                  receiptConsumed = true;
+                  await testController?.hit('after_tool_receipt', {
+                    runId,
+                    subagentId,
+                    toolName: 'sandbox_shell'
+                  });
+                  await consumeRuntimeBudget({
+                    reservationKey,
+                    actualCredits
+                  });
+                } catch (error) {
+                  if (
+                    receiptConsumed ||
+                    error?.name === 'RuntimeHarnessCrash' ||
+                    isLeaseLostError(error)
+                  ) {
+                    throw error;
+                  }
+                  await persistToolReceipt(receiptKey, {
+                    subagentId,
+                    kind: 'sandbox_shell',
+                    state: 'ambiguous',
+                    reservationKey,
+                    requestSha256
+                  });
+                  await releaseRuntimeBudget({ reservationKey });
+                  throw new ApiError(409, 'AGENT_TOOL_CALL_AMBIGUOUS', {
+                    retryable: false,
+                    callId: String(toolMetadata.callId || '')
+                  });
+                }
+                await runService.appendStep({
+                  ...runLease,
                   subagentId,
                   role: 'executor',
                   status: result.success ? 'succeeded' : 'failed',
@@ -935,13 +1736,13 @@ const createAgentWorkerService = ({
             })
           });
           const finished = await runService.finishSubagent({
-            runId,
+            ...runLease,
             subagentId,
-            workerId,
             status: 'succeeded',
             summary: String(execution.text || '子 Agent 已完成').slice(0, 4000),
             outputFiles
           });
+          await runService.clearSubagentModelCheckpoint({ ...runLease, subagentId });
           return {
             subagentId,
             status: finished.status,
@@ -969,13 +1770,13 @@ const createAgentWorkerService = ({
             };
           }
           const failed = await runService.finishSubagent({
-            runId,
+            ...runLease,
             subagentId,
-            workerId,
             status: error?.code === 'AGENT_SUBAGENT_CANCELLED' ? 'cancelled' : 'failed',
             summary: '子 Agent 未完成；父 Agent 可使用其余结果继续。',
             errorCode: String(error?.code || 'AGENT_SUBAGENT_FAILED').slice(0, 100)
           });
+          await runService.clearSubagentModelCheckpoint({ ...runLease, subagentId });
           return {
             subagentId,
             status: failed.status,
@@ -986,41 +1787,57 @@ const createAgentWorkerService = ({
         }
       };
 
+      const modelAbortController = new AbortController();
       const modelExecution = await runWithLeaseHeartbeat({
         intervalMs: Math.max(
           5_000,
           Math.min(30_000, Math.floor(config.leaseSeconds * 1_000 / 3))
         ),
-        refresh: () => runService.saveCheckpoint({
-          runId,
-          workerId,
-          checkpoint: { phase: 'running', sandboxReady: true }
-        }),
+        abortController: modelAbortController,
+        refresh: async () => {
+          const control = await runService.getControlState({ runId });
+          if (control.status === 'cancelled' || control.cancel_requested) {
+            modelAbortController.abort();
+            throw new AgentCancelled();
+          }
+          return runService.saveCheckpoint({
+            ...runLease,
+            checkpoint: { phase: 'running', sandboxReady: true }
+          });
+        },
         work: () => model.execute({
-        objective: [
-          objectivePayload.objective,
-          userInputs.length
-            ? `Subsequent user messages and decisions: ${JSON.stringify(userInputs)}`
-            : '',
-          inputAssetPaths.length
-            ? `User-provided files are available at: ${inputAssetPaths.join(', ')}`
-            : ''
-        ].filter(Boolean).join('\n\n'),
+        objective: runtimeObjective,
         capabilities: context.run.capabilities,
         deliverables: requiredDeliverables,
-        resumeState: context.modelCheckpoint,
+        resumeState: modelResumeState,
+        runtimeContext: runtimeV2 ? {
+          runtimeVersion: 2,
+          runId,
+          workerId,
+          leaseEpoch,
+          userId: context.run.user_id,
+          taskSpec,
+          workingState: modelResumeState?.workingState || null,
+          projectMemory,
+          allowedOrigins: context.run.browser_config?.allowedOrigins || [],
+          maxCredits: Number(context.run.max_credits || 0),
+          initialModelCredits: Number(modelResumeState?.totalCredits || 0),
+          budgetRatio: costMeter.total() / Math.max(1, Number(context.run.max_credits || 0))
+        } : null,
         safetyIdentifier: crypto.createHash('sha256')
           .update(`artigen-agent:${context.run.user_id}`)
           .digest('hex'),
         maxSteps: config.maxSteps,
+        signal: modelAbortController.signal,
         callbacks: {
           updatePlan: async ({ explanation, steps }) => {
             await pauseIfRequested();
             const normalized = (Array.isArray(steps) ? steps : []).map((step) => ({
+              id: String(step?.id || '').trim().slice(0, 80),
               label: String(step?.label || '').trim().slice(0, 160),
               status: String(step?.status || '')
             })).filter((step) => (
-              step.label &&
+              step.id && step.label &&
               ['pending', 'in_progress', 'completed'].includes(step.status)
             ));
             if (
@@ -1030,22 +1847,20 @@ const createAgentWorkerService = ({
             ) {
               throw new ApiError(400, 'AGENT_PLAN_INVALID');
             }
-            await runService.savePlan({
-              runId,
-              workerId,
+            const savedPlan = await runService.savePlan({
+              ...runLease,
               plan: normalized,
               explanation: String(explanation || '').trim().slice(0, 500)
             });
             await runService.appendStep({
-              runId,
-              workerId,
+              ...runLease,
               role: 'planner',
               status: 'succeeded',
               toolName: 'update_plan',
               summary: String(explanation || '已更新执行计划').trim().slice(0, 500),
               sanitizedOutput: { plan: normalized }
             });
-            return { accepted: true, steps: normalized };
+            return { accepted: true, steps: savedPlan.steps };
           },
           delegateTasks: async (tasks) => {
             await pauseIfRequested();
@@ -1055,8 +1870,7 @@ const createAgentWorkerService = ({
               });
             }
             const created = await runService.createSubagents({
-              runId,
-              workerId,
+              ...runLease,
               tasks: restrictDelegatedTaskInputs(tasks, inputAssetPaths),
               allowedInputPaths: inputAssetPaths
             });
@@ -1096,8 +1910,7 @@ const createAgentWorkerService = ({
           },
           checkpoint: async (modelResponseId) => {
             await runService.saveCheckpoint({
-              runId,
-              workerId,
+              ...runLease,
               checkpoint: {
                 phase: 'running',
                 sandboxReady: true,
@@ -1106,23 +1919,265 @@ const createAgentWorkerService = ({
             });
           },
           saveModelState: async (value) => {
-            await persistCostCheckpoint();
+            modelResumeState = value;
+            if (value?.semanticVerificationResult) {
+              latestSemanticVerification = value.semanticVerificationResult;
+            }
             await runService.saveModelCheckpoint({
-              runId,
-              workerId,
+              ...runLease,
               value
             });
+            await persistCostCheckpoint();
           },
           clearModelState: async () => {
-            await runService.clearModelCheckpoint({ runId, workerId });
+            await runService.clearModelCheckpoint(runLease);
           },
+          contextCompacted: async (metrics) => {
+            await runService.appendRuntimeEvent({
+              ...runLease,
+              type: 'context.compacted',
+              phase: 'running',
+              summary: '已压缩旧工具观察，保留目标、证据与当前失败',
+              data: metrics
+            });
+          },
+          budgetThreshold: async ({ threshold, budgetRatio }) => {
+            const lockdown = Number(threshold) >= 0.9;
+            await runService.appendRuntimeEvent({
+              ...runLease,
+              type: lockdown ? 'budget.lockdown' : 'budget.warning',
+              phase: lockdown ? 'verifying' : 'running',
+              summary: lockdown
+                ? '预算已进入验证与安全交付阶段'
+                : '预算已收紧，停止可选探索并压缩计划',
+              data: {
+                threshold: Number(threshold),
+                budgetRatio: Math.max(0, Math.min(1, Number(budgetRatio || 0)))
+              }
+            });
+          },
+          currentBudgetRatio: async () => (
+            costMeter.total() / Math.max(1, Number(context.run.max_credits || 0))
+          ),
+          reserveBudget: reserveRuntimeBudget,
+          consumeBudget: consumeRuntimeBudget,
+          releaseBudget: releaseRuntimeBudget,
           recordUsage: async (credits, items) => {
             costMeter.setModel(credits);
             await persistCostCheckpoint({ usageItems: items });
           },
           recordStep: async (step) => {
             await pauseIfRequested();
-            return runService.appendStep({ runId, workerId, ...step });
+            return runService.appendStep({ ...runLease, ...step });
+          },
+          toolCall: async (call) => {
+            testController?.trace?.toolCall({
+              ...call,
+              role: 'parent'
+            });
+          },
+          toolObservation: async (observation) => {
+            testController?.trace?.toolObservation({
+              ...observation,
+              role: 'parent'
+            });
+          },
+          verifyDraft: async ({ taskSpec: currentTaskSpec, artifacts, text }) => {
+            await pauseIfRequested();
+            semanticVerifierAttempts += 1;
+            await runService.appendRuntimeEvent({
+              ...runLease,
+              type: 'verification.started',
+              phase: 'verifying',
+              summary: '正在核对目标、约束、来源和交付完整性',
+              data: { attempt: semanticVerifierAttempts }
+            });
+            const registered = await runService.listArtifacts({
+              userId: context.run.user_id,
+              runId
+            });
+            const registeredByName = new Map(registered.map((artifact) => [artifact.filename, artifact]));
+            const evidenceArtifacts = [];
+            for (const artifact of Array.isArray(artifacts) ? artifacts : []) {
+              const workspacePath = String(artifact?.path || '');
+              const mimeType = String(artifact?.mime_type || '');
+              if (!workspacePath.startsWith('/tmp/artigen-workspace/')) continue;
+              const target = quoteShell(workspacePath);
+              let kind = 'other';
+              let evidence = {};
+              if (mimeType === 'text/markdown' || mimeType === 'text/plain') {
+                kind = 'text';
+                const file = await sandbox.readFile(sandboxName, workspacePath);
+                evidence = {
+                  text: Buffer.from(file.base64 || '', 'base64').toString('utf8').slice(0, 30_000)
+                };
+              } else if (mimeType === 'application/pdf') {
+                kind = 'pdf';
+                const inspected = await sandbox.systemShell(
+                  sandboxName,
+                  `set -eu\npdfinfo ${target} | head -c 8000\nprintf '\\n---TEXT---\\n'\npdftotext ${target} - | head -c 30000`,
+                  60
+                );
+                evidence = { inspection: String(inspected.stdout || '').slice(0, 38_000) };
+              } else if (mimeType.includes('spreadsheetml')) {
+                kind = 'xlsx';
+                const inspected = await sandbox.systemShell(
+                  sandboxName,
+                  `set -eu\nunzip -Z1 ${target} | grep -E '^xl/(workbook|worksheets/|charts/|sharedStrings)' | head -c 12000\nprintf '\\n---CONTENT---\\n'\nunzip -p ${target} 'xl/sharedStrings.xml' 'xl/worksheets/*.xml' 2>/dev/null | head -c 30000`,
+                  60
+                );
+                evidence = {
+                  inspection: String(inspected.stdout || '').slice(0, 42_000),
+                  formulaAndErrorScanPassed: registeredByName.get(artifact.filename)?.verification?.formulasAndCharts === true
+                };
+              } else if (mimeType.includes('presentationml')) {
+                kind = 'pptx';
+                const inspected = await sandbox.systemShell(
+                  sandboxName,
+                  `set -eu\nunzip -Z1 ${target} | grep -E '^ppt/(slides|notesSlides)/' | head -c 12000\nprintf '\\n---CONTENT---\\n'\nunzip -p ${target} 'ppt/slides/*.xml' 'ppt/notesSlides/*.xml' 2>/dev/null | head -c 30000`,
+                  60
+                );
+                evidence = {
+                  inspection: String(inspected.stdout || '').slice(0, 42_000),
+                  rendered: registeredByName.get(artifact.filename)?.verification?.rendered === true
+                };
+              } else if (mimeType === 'application/zip') {
+                kind = artifact.role === 'website' ? 'website' : 'zip';
+                const inspected = await sandbox.systemShell(
+                  sandboxName,
+                  `set -eu\nunzip -Z1 ${target} | head -c 16000\nprintf '\\n---HTML---\\n'\nunzip -p ${target} '*index.html' 2>/dev/null | head -c 30000`,
+                  60
+                );
+                evidence = {
+                  inspection: String(inspected.stdout || '').slice(0, 46_000),
+                  desktopAndMobilePreview: registeredByName.get(artifact.filename)?.verification?.desktopAndMobilePreview === true
+                };
+              } else if (mimeType.startsWith('image/')) {
+                kind = 'image';
+                const inspected = await sandbox.systemShell(
+                  sandboxName,
+                  `identify -format '%m %w %h %[colorspace]' ${target}`,
+                  30
+                );
+                evidence = {
+                  technicalInspection: String(inspected.stdout || '').slice(0, 1000),
+                  aestheticAssessment: 'not_assessable',
+                  model: 'Kwai-Kolors/Kolors',
+                  referenceLineage: registeredByName.get(artifact.filename)?.verification?.referenceLineage || []
+                };
+              }
+              const stored = registeredByName.get(artifact.filename) || {};
+              evidenceArtifacts.push({
+                artifactId: stored.artifactId || artifact.artifact_id || null,
+                filename: artifact.filename,
+                kind,
+                mimeType,
+                sha256: stored.sha256 || null,
+                verificationStatus: stored.verificationStatus || artifact.verification_status,
+                evidence,
+                sources: (Array.isArray(artifact.sources) ? artifact.sources : []).map((source) => source?.url).filter(Boolean)
+              });
+            }
+            const sources = [...new Map(
+              (Array.isArray(artifacts) ? artifacts : [])
+                .flatMap((artifact) => Array.isArray(artifact?.sources) ? artifact.sources : [])
+                .filter((source) => source?.url)
+                .map((source) => [source.url, source])
+            ).values()];
+            const evidenceManifest = normalizeArtifactEvidenceManifest({
+              artifacts: evidenceArtifacts,
+              sourceRefs: sources.map((source) => source.url),
+              deterministicPassed: evidenceArtifacts.every((artifact) => artifact.verificationStatus === 'passed')
+            });
+            const verification = await model.verifyTask({
+              taskSpec: currentTaskSpec,
+              evidenceManifest,
+              finalText: String(text || '').slice(0, 20_000),
+              metadata: {
+                ...runLease,
+                userId: context.run.user_id,
+                priority: 'verifier',
+                promptProfile: context.run.prompt_profile,
+                promptHash: Buffer.isBuffer(context.run.prompt_hash)
+                  ? context.run.prompt_hash.toString('hex')
+                  : null,
+                skillIds: Object.keys(context.run.skill_versions || {}),
+                signal: modelAbortController.signal,
+                reserveBudget: reserveRuntimeBudget,
+                consumeBudget: consumeRuntimeBudget,
+                releaseBudget: releaseRuntimeBudget
+              }
+            });
+            const verifierModelCredits = Math.max(
+              0,
+              Number(modelResumeState?.totalCredits || 0) + Number(verification.credits || 0)
+            );
+            costMeter.setModel(verifierModelCredits);
+            modelResumeState = {
+              ...modelResumeState,
+              totalCredits: verifierModelCredits,
+              semanticVerificationAttempts: semanticVerifierAttempts,
+              pendingVerifierResult: verification
+            };
+            await runService.saveModelCheckpoint({
+              ...runLease,
+              value: modelResumeState
+            });
+            await persistCostCheckpoint({
+              usageItems: { source: 'runtime_v2_verifier_checkpoint', ...(verification.usage || {}) }
+            });
+            await consumeRuntimeBudget({
+              reservationKey: verification.reservationKey,
+              actualCredits: verification.reservationActualCredits
+            });
+            if (verification.modelCallReceipt && modelCallService) {
+              await modelCallService.consume(verification.modelCallReceipt);
+              delete verification.modelCallReceipt;
+              modelResumeState = {
+                ...modelResumeState,
+                pendingVerifierResult: verification
+              };
+              await runService.saveModelCheckpoint({ ...runLease, value: modelResumeState });
+            }
+            latestSemanticVerification = verification.result;
+            if (modelCallService) {
+              await modelCallService.recordQualityCheck({
+                runId,
+                checkKind: 'semantic-verifier-v1',
+                status: verification.result.passed ? 'passed' : 'failed',
+                score: verification.result.score,
+                codes: verification.result.issues.map((_, index) => `issue-${index + 1}`),
+                metrics: {
+                  attempt: semanticVerifierAttempts,
+                  unsupportedVisualJudgment: verification.result.unsupportedVisualJudgment
+                }
+              }).catch(() => {});
+            }
+            await runService.appendRuntimeEvent({
+              ...runLease,
+              type: verification.result.passed
+                ? 'verification.passed'
+                : semanticVerifierAttempts >= 2
+                  ? 'verification.failed'
+                  : 'verification.repair_requested',
+              phase: 'verifying',
+              summary: verification.result.passed
+                ? '目标与交付物语义核对通过'
+                : semanticVerifierAttempts >= 2
+                  ? '定向返修后仍未通过语义核对'
+                  : '已请求一次定向返修',
+              data: {
+                attempt: semanticVerifierAttempts,
+                score: verification.result.score,
+                issueCount: verification.result.issues.length,
+                unsupportedVisualJudgment: verification.result.unsupportedVisualJudgment
+              }
+            });
+            await testController?.hit('after_verifier', {
+              runId,
+              status: verification.result.passed ? 'passed' : 'failed'
+            });
+            return verification;
           },
           computerActions: async (actions) => {
             await pauseIfRequested();
@@ -1136,8 +2191,7 @@ const createAgentWorkerService = ({
             await pauseIfRequested();
             const result = await sandbox.screenshot(sandboxName);
             const unchanged = await runService.recordScreenshot({
-              runId,
-              workerId,
+              ...runLease,
               sha256: crypto.createHash('sha256').update(String(result.base64 || '')).digest('hex')
             });
             if (unchanged >= 3) throw new ApiError(409, 'AGENT_SCREEN_STALLED');
@@ -1186,22 +2240,21 @@ const createAgentWorkerService = ({
                   ? crypto.createHash('sha256').update(request.text).digest('hex')
                   : null
               });
-              let decision = await runService.consumeApproval({ runId, fingerprint });
+              let decision = await runService.consumeApproval({ ...runLease, fingerprint });
               if (
                 !decision &&
                 classification.decision === 'approval' &&
                 typeof runService.consumeSessionAuthorization === 'function'
               ) {
                 decision = await runService.consumeSessionAuthorization({
-                  runId,
+                  ...runLease,
                   actionType,
                   recipient: description?.url || request.url || ''
                 });
               }
               if (decision?.status === 'denied') {
                 await runService.appendStep({
-                  runId,
-                  workerId,
+                  ...runLease,
                   role: 'executor',
                   status: 'skipped',
                   toolName: 'browser_dom',
@@ -1223,8 +2276,7 @@ const createAgentWorkerService = ({
                   allowedOrigins: context.run.browser_config?.allowedOrigins || []
                 });
                 await runService.appendStep({
-                  runId,
-                  workerId,
+                  ...runLease,
                   role: 'executor',
                   status: 'succeeded',
                   toolName: 'browser_dom',
@@ -1237,7 +2289,7 @@ const createAgentWorkerService = ({
               if (!decision) {
                 await persistCostCheckpoint();
                 const approval = await runService.requestApproval({
-                  runId,
+                  ...runLease,
                   actionType,
                   recipient: description?.url ||
                     request.url ||
@@ -1266,8 +2318,7 @@ const createAgentWorkerService = ({
               allowedOrigins: context.run.browser_config?.allowedOrigins || []
             });
             await runService.appendStep({
-              runId,
-              workerId,
+              ...runLease,
               role: 'executor',
               status: 'succeeded',
               toolName: 'browser_dom',
@@ -1300,16 +2351,134 @@ const createAgentWorkerService = ({
             });
             return result;
           },
-          shell: async (script, purpose) => {
+          shell: async (script, purpose, toolMetadata = {}) => {
             await pauseIfRequested();
             assertAllowedOrigins(
               script,
               context.run.browser_config?.allowedOrigins || []
             );
-            const result = await sandbox.shell(sandboxName, script, 120);
-            await runService.appendStep({
+            const receiptIdentity = crypto.createHash('sha256')
+              .update(String(toolMetadata.callId || script))
+              .digest('hex')
+              .slice(0, 32);
+            const currentReceiptKey = `parent:shell:${receiptIdentity}:attempt:${toolRetryEpoch}`;
+            const legacyReceiptIdentity = String(toolMetadata.callId || crypto
+              .createHash('sha256').update(String(script)).digest('hex').slice(0, 24));
+            const legacyReceiptKey = `parent:shell:${legacyReceiptIdentity}`;
+            const receiptKey = toolRetryEpoch === 0 && durableToolReceipts.has(legacyReceiptKey)
+              ? legacyReceiptKey
+              : currentReceiptKey;
+            const usingLegacyReceipt = receiptKey === legacyReceiptKey;
+            const priorReceipt = durableToolReceipts.get(receiptKey);
+            const reservationKey = `sandbox:${receiptKey}`;
+            const computedRequestSha256 = crypto.createHash('sha256')
+              .update(JSON.stringify({ script: String(script) }))
+              .digest('hex');
+            const requestSha256 = resolveToolReceiptRequestSha256({
+              priorReceipt,
+              computedRequestSha256,
+              legacyReceipt: usingLegacyReceipt
+            });
+            if (
+              priorReceipt?.kind === 'sandbox_shell' &&
+              (priorReceipt.state === 'consumed' || (!priorReceipt.state && priorReceipt.result))
+            ) {
+              await consumeRuntimeBudget({
+                reservationKey: priorReceipt.reservationKey || reservationKey,
+                actualCredits: Number(priorReceipt.actualCredits || 0)
+              });
+              return priorReceipt.result;
+            }
+            if (
+              priorReceipt?.kind === 'sandbox_shell' &&
+              ['dispatched', 'ambiguous'].includes(priorReceipt.state)
+            ) {
+              if (priorReceipt.state === 'dispatched') {
+                await persistToolReceipt(receiptKey, {
+                  kind: 'sandbox_shell',
+                  state: 'ambiguous',
+                  reservationKey,
+                  requestSha256
+                });
+              }
+              await releaseRuntimeBudget({
+                reservationKey: priorReceipt.reservationKey || reservationKey
+              });
+              throw new ApiError(409, 'AGENT_TOOL_CALL_AMBIGUOUS', {
+                retryable: false,
+                callId: String(toolMetadata.callId || '')
+              });
+            }
+            await reserveRuntimeBudget({
+              component: 'sandbox',
+              reservationKey,
+              maximumCredits: sandboxCreditsPerMinute * 2
+            });
+            await persistToolReceipt(receiptKey, {
+              kind: 'sandbox_shell',
+              state: 'dispatched',
+              reservationKey,
+              requestSha256
+            });
+            await testController?.hit('after_tool_dispatch', {
               runId,
-              workerId,
+              toolName: 'sandbox_shell'
+            });
+            await runService.assertWorkerLeaseActive(runLease);
+            const shellStartedAt = Date.now();
+            let actualCredits = 0;
+            let result;
+            let receiptConsumed = false;
+            try {
+              result = await sandbox.shell(sandboxName, script, 120);
+              actualCredits = Math.min(
+                sandboxCreditsPerMinute * 2,
+                Math.max(0, Date.now() - shellStartedAt) / 60_000 * sandboxCreditsPerMinute
+              );
+              await persistToolReceipt(receiptKey, {
+                kind: 'sandbox_shell',
+                state: 'consumed',
+                reservationKey,
+                requestSha256,
+                actualCredits,
+                result: {
+                  success: result.success,
+                  returnCode: result.returnCode,
+                  stdout: String(result.stdout || '').slice(0, 12_000),
+                  stderr: String(result.stderr || '').slice(0, 4_000)
+                }
+              });
+              receiptConsumed = true;
+              await testController?.hit('after_tool_receipt', {
+                runId,
+                toolName: 'sandbox_shell'
+              });
+              await consumeRuntimeBudget({
+                reservationKey,
+                actualCredits
+              });
+            } catch (error) {
+              if (
+                receiptConsumed ||
+                error?.name === 'RuntimeHarnessCrash' ||
+                isLeaseLostError(error)
+              ) {
+                throw error;
+              }
+              await persistToolReceipt(receiptKey, {
+                kind: 'sandbox_shell',
+                state: 'ambiguous',
+                reservationKey,
+                requestSha256
+              });
+              await releaseRuntimeBudget({ reservationKey });
+              throw new ApiError(409, 'AGENT_TOOL_CALL_AMBIGUOUS', {
+                retryable: false,
+                callId: String(toolMetadata.callId || '')
+              });
+            }
+            await runService.appendStep({
+              ...runLease,
               role: 'executor',
               status: result.success ? 'succeeded' : 'failed',
               toolName: 'sandbox_shell',
@@ -1326,7 +2495,7 @@ const createAgentWorkerService = ({
             });
             return result;
           },
-          generateImage: async (request) => {
+          generateImage: async (request, toolMetadata = {}) => {
             await pauseIfRequested();
             if (context.run.capabilities?.generate_images !== true) {
               throw new ApiError(403, 'AGENT_CAPABILITY_NOT_GRANTED', {
@@ -1337,50 +2506,240 @@ const createAgentWorkerService = ({
             const nextImageCredits = references.length
               ? configuredImageCredits(env.AGENT_IMAGE_REFERENCE_CREDITS, 12)
               : configuredImageCredits(env.AGENT_IMAGE_CREDITS, 8);
-            if (
-              costMeter.total({ additional: nextImageCredits }) >
-                Number(context.run.max_credits || 0)
-            ) {
-              throw new ApiError(409, 'AGENT_BUDGET_EXCEEDED');
-            }
-            const generated = await imageService.generate({ ...request, references });
-            const outputPath = `/tmp/artigen-workspace/${generated.filename}`;
-            await sandbox.writeFile(sandboxName, outputPath, generated.buffer);
-            costMeter.addGeneration(generated.costCredits);
-            await runService.appendStep({
-              runId,
-              workerId,
-              role: 'executor',
-              status: 'succeeded',
-              toolName: 'artigen_image_generation',
-              summary: `生成图片 ${generated.filename}`,
-              sanitizedInput: {
-                promptSha256: crypto.createHash('sha256')
-                  .update(String(request.prompt || ''))
-                  .digest('hex'),
+            const receiptIdentity = crypto.createHash('sha256')
+              .update(String(toolMetadata.callId || JSON.stringify({ request, references })))
+              .digest('hex')
+              .slice(0, 32);
+            const currentReceiptKey = `parent:kolors:${receiptIdentity}:attempt:${toolRetryEpoch}`;
+            const legacyReceiptIdentity = String(toolMetadata.callId || crypto
+              .createHash('sha256')
+              .update(JSON.stringify({ request, references }))
+              .digest('hex')
+              .slice(0, 24));
+            const legacyReceiptKey = `parent:kolors:${legacyReceiptIdentity}:attempt:${toolRetryEpoch}`;
+            const receiptKey = durableToolReceipts.has(legacyReceiptKey)
+              ? legacyReceiptKey
+              : currentReceiptKey;
+            const usingLegacyReceipt = receiptKey === legacyReceiptKey;
+            const priorReceipt = durableToolReceipts.get(receiptKey);
+            const reservationKey = `kolors:${receiptKey}`;
+            const computedRequestSha256 = crypto.createHash('sha256')
+              .update(JSON.stringify({
+                prompt: String(request.prompt || ''),
                 aspectRatio: request.aspectRatio,
-                referenceCount: references.length,
-                referenceRoles: references.map((reference) => reference.role),
-                referencePathSha256: references.map((reference) => crypto
-                  .createHash('sha256')
-                  .update(reference.path)
-                  .digest('hex'))
-              },
-              sanitizedOutput: {
+                filename: request.filename,
+                references: references.map((reference) => ({
+                  path: reference.path,
+                  role: reference.role
+                }))
+              }))
+              .digest('hex');
+            const requestSha256 = resolveToolReceiptRequestSha256({
+              priorReceipt,
+              computedRequestSha256,
+              legacyReceipt: usingLegacyReceipt
+            });
+            if (priorReceipt?.kind === 'kolors' && priorReceipt.state === 'consumed') {
+              const durableResult = priorReceipt.result;
+              if (durableResult?.assetId) {
+                const opened = await (assetStorage?.openAsset || assets.openAsset)({
+                  assetId: durableResult.assetId,
+                  ownerUserId: context.run.user_id,
+                  pool
+                });
+                const buffer = await readOpenedAsset(opened, 100 * 1024 * 1024);
+                const digest = crypto.createHash('sha256').update(buffer).digest('hex');
+                if (
+                  digest !== durableResult.sha256 ||
+                  buffer.length !== Number(durableResult.byteSize || 0) ||
+                  String(opened.record?.mime_type || '') !== durableResult.mimeType ||
+                  !/^\/tmp\/artigen-workspace\/[A-Za-z0-9._@+ -]{1,200}$/.test(
+                    String(durableResult.path || '')
+                  )
+                ) {
+                  throw new ApiError(500, 'AGENT_IMAGE_DURABLE_RESULT_INVALID', {
+                    retryable: false
+                  });
+                }
+                await sandbox.writeFile(sandboxName, durableResult.path, buffer);
+              }
+              await consumeRuntimeBudget({
+                reservationKey: priorReceipt.reservationKey || reservationKey,
+                actualCredits: Number(priorReceipt.actualCredits || durableResult?.costCredits || 0)
+              });
+              return durableResult;
+            }
+            if (
+              priorReceipt?.kind === 'kolors' &&
+              ['dispatched', 'ambiguous'].includes(priorReceipt.state)
+            ) {
+              if (priorReceipt.state === 'dispatched') {
+                await persistToolReceipt(receiptKey, {
+                  kind: 'kolors',
+                  state: 'ambiguous',
+                  reservationKey,
+                  requestSha256
+                });
+              }
+              await releaseRuntimeBudget({
+                reservationKey: priorReceipt.reservationKey || reservationKey
+              });
+              throw new ApiError(409, 'AGENT_IMAGE_CALL_AMBIGUOUS', {
+                retryable: false,
+                callId: String(toolMetadata.callId || '')
+              });
+            }
+            await reserveRuntimeBudget({
+              component: 'kolors',
+              reservationKey,
+              maximumCredits: nextImageCredits
+            });
+            await persistToolReceipt(receiptKey, {
+              kind: 'kolors',
+              state: 'dispatched',
+              reservationKey,
+              requestSha256
+            });
+            await testController?.hit('after_tool_dispatch', {
+              runId,
+              toolName: 'generate_image'
+            });
+            await runService.assertWorkerLeaseActive(runLease);
+            let generated;
+            let providerReturned = false;
+            let receiptConsumed = false;
+            try {
+              generated = await imageService.generate({
+                ...request,
+                references,
+                signal: modelAbortController.signal,
+                runId
+              });
+              providerReturned = true;
+              const outputPath = `/tmp/artigen-workspace/${generated.filename}`;
+              await runService.assertWorkerLeaseActive(runLease);
+              const sha256 = crypto.createHash('sha256').update(generated.buffer).digest('hex');
+              const stored = await (assetStorage?.storeAsset || assets.storeAsset)({
+                pool,
+                ownerUserId: context.run.user_id,
+                buffer: generated.buffer,
+                declaredMime: generated.mimeType,
+                allowedMimeTypes: [generated.mimeType],
+                maxBytes: 100 * 1024 * 1024,
+                maxPixels: 64 * 1000 * 1000,
+                retentionClass: 'generated-output',
+                expiresAt: context.run.expires_at,
+                metadata: {
+                  source: 'agent-kolors-receipt',
+                  runId
+                }
+              });
+              const durableResult = {
                 path: outputPath,
                 mimeType: generated.mimeType,
-                byteSize: generated.buffer.length,
                 model: generated.model,
-                costCredits: generated.costCredits
+                costCredits: generated.costCredits,
+                assetId: stored.assetId,
+                byteSize: generated.buffer.length,
+                sha256
+              };
+              await persistToolReceipt(receiptKey, {
+                kind: 'kolors',
+                state: 'consumed',
+                reservationKey,
+                requestSha256,
+                actualCredits: generated.costCredits,
+                result: durableResult
+              });
+              receiptConsumed = true;
+              await testController?.hit('after_image_provider_response', {
+                runId,
+                toolName: 'generate_image',
+                assetId: stored.assetId
+              });
+              await testController?.hit('after_tool_receipt', {
+                runId,
+                toolName: 'generate_image'
+              });
+              await consumeRuntimeBudget({
+                reservationKey,
+                actualCredits: generated.costCredits
+              });
+              await sandbox.writeFile(sandboxName, outputPath, generated.buffer);
+              costMeter.addGeneration(generated.costCredits);
+              await runService.appendStep({
+                ...runLease,
+                role: 'executor',
+                status: 'succeeded',
+                toolName: 'artigen_image_generation',
+                summary: `生成图片 ${generated.filename}`,
+                sanitizedInput: {
+                  promptSha256: crypto.createHash('sha256')
+                    .update(String(request.prompt || ''))
+                    .digest('hex'),
+                  aspectRatio: request.aspectRatio,
+                  referenceCount: references.length,
+                  referenceRoles: references.map((reference) => reference.role),
+                  referencePathSha256: references.map((reference) => crypto
+                    .createHash('sha256')
+                    .update(reference.path)
+                    .digest('hex'))
+                },
+                sanitizedOutput: {
+                  path: outputPath,
+                  mimeType: generated.mimeType,
+                  byteSize: generated.buffer.length,
+                  model: generated.model,
+                  costCredits: generated.costCredits
+                }
+              });
+              await persistCostCheckpoint({ usageItems: { source: 'image_generation' } });
+              return durableResult;
+            } catch (error) {
+              if (
+                receiptConsumed ||
+                error?.name === 'RuntimeHarnessCrash' ||
+                isLeaseLostError(error)
+              ) {
+                throw error;
               }
-            });
-            await persistCostCheckpoint({ usageItems: { source: 'image_generation' } });
-            return {
-              path: outputPath,
-              mimeType: generated.mimeType,
-              model: generated.model,
-              costCredits: generated.costCredits
-            };
+              if (providerReturned) {
+                await persistToolReceipt(receiptKey, {
+                  kind: 'kolors',
+                  state: 'ambiguous',
+                  reservationKey,
+                  requestSha256
+                });
+                await releaseRuntimeBudget({ reservationKey });
+                throw new ApiError(409, 'AGENT_IMAGE_CALL_AMBIGUOUS', {
+                  retryable: false,
+                  callId: String(toolMetadata.callId || '')
+                });
+              }
+              const providerStatus = Number(error?.status);
+              const knownRejectedRequest = (
+                Number.isInteger(providerStatus) &&
+                providerStatus >= 400 &&
+                providerStatus < 500 &&
+                ![408, 409, 425, 429].includes(providerStatus)
+              );
+              if (knownRejectedRequest) {
+                await removeToolReceipt(receiptKey, requestSha256);
+                await releaseRuntimeBudget({ reservationKey });
+                throw error;
+              }
+              await persistToolReceipt(receiptKey, {
+                kind: 'kolors',
+                state: 'ambiguous',
+                reservationKey,
+                requestSha256
+              });
+              await releaseRuntimeBudget({ reservationKey });
+              throw new ApiError(409, 'AGENT_IMAGE_CALL_AMBIGUOUS', {
+                retryable: false,
+                callId: String(toolMetadata.callId || '')
+              });
+            }
           },
           connectorRequest: async (request) => {
             await pauseIfRequested();
@@ -1398,7 +2757,7 @@ const createAgentWorkerService = ({
               body: request.body
             });
             if (connectorAction !== 'read') {
-              let decision = await runService.consumeApproval({ runId, fingerprint });
+              let decision = await runService.consumeApproval({ ...runLease, fingerprint });
               if (!decision && typeof runService.consumeSessionAuthorization === 'function') {
                 const providerOrigin = request.provider === 'github'
                   ? 'https://api.github.com'
@@ -1406,15 +2765,14 @@ const createAgentWorkerService = ({
                     ? 'https://www.googleapis.com'
                     : '';
                 decision = await runService.consumeSessionAuthorization({
-                  runId,
+                  ...runLease,
                   actionType: connectorAction,
                   recipient: providerOrigin
                 });
               }
               if (decision?.status === 'denied') {
                 await runService.appendStep({
-                  runId,
-                  workerId,
+                  ...runLease,
                   role: 'executor',
                   status: 'skipped',
                   toolName: `${request.provider}_api`,
@@ -1427,7 +2785,7 @@ const createAgentWorkerService = ({
               if (!decision) {
                 await persistCostCheckpoint();
                 const approval = await runService.requestApproval({
-                  runId,
+                  ...runLease,
                   actionType: connectorAction,
                   recipient: request.provider === 'github'
                     ? `https://api.github.com${request.path}`
@@ -1452,8 +2810,7 @@ const createAgentWorkerService = ({
               body: request.body
             });
             await runService.appendStep({
-              runId,
-              workerId,
+              ...runLease,
               role: 'executor',
               status: 'succeeded',
               toolName: `${request.provider}_api`,
@@ -1481,12 +2838,12 @@ const createAgentWorkerService = ({
             const artifact = await artifactService.ingest({
               run: context.run,
               sandboxName,
-              declaration
+              declaration,
+              workerLease: runLease
             });
             if (!artifact.alreadyRegistered) {
               await runService.appendStep({
-                runId,
-                workerId,
+                ...runLease,
                 role: 'verifier',
                 status: artifact.verificationStatus === 'passed' ? 'succeeded' : 'failed',
                 toolName: 'artifact_verifier',
@@ -1513,7 +2870,7 @@ const createAgentWorkerService = ({
               impactSummary: request.impactSummary,
               rollbackSummary: request.rollbackSummary
             });
-            let approved = await runService.consumeApproval({ runId, fingerprint });
+            let approved = await runService.consumeApproval({ ...runLease, fingerprint });
             const classification = classifyAction({ type: request.actionType });
             if (
               !approved &&
@@ -1521,7 +2878,7 @@ const createAgentWorkerService = ({
               typeof runService.consumeSessionAuthorization === 'function'
             ) {
               approved = await runService.consumeSessionAuthorization({
-                runId,
+                ...runLease,
                 actionType: request.actionType,
                 recipient: request.recipient
               });
@@ -1535,7 +2892,7 @@ const createAgentWorkerService = ({
             }
             await persistCostCheckpoint();
             const approval = await runService.requestApproval({
-              runId,
+              ...runLease,
               actionType: request.actionType,
               recipient: request.recipient,
               riskLevel: request.takeover || TAKEOVER_ACTIONS.has(request.actionType)
@@ -1562,6 +2919,7 @@ const createAgentWorkerService = ({
         context.run.browser_config?.persistSession === true &&
         context.run.browser_config?.allowedOrigins?.length === 1
       ) {
+        await runService.assertWorkerLeaseActive(runLease);
         const captured = await sandbox.systemShell(
           sandboxName,
           [
@@ -1585,19 +2943,21 @@ const createAgentWorkerService = ({
           ].join('\n'),
           120
         );
+        await runService.assertWorkerLeaseActive(runLease);
         if (captured.success) {
           const storedProfile = await sandbox.readFile(
             sandboxName,
             '/tmp/artigen-workspace/.artigen/browser-profile.zip'
           );
+          await runService.assertWorkerLeaseActive(runLease);
           await runService.saveBrowserProfile({
+            ...runLease,
             userId: context.run.user_id,
             siteOrigin: context.run.browser_config.allowedOrigins[0],
             archiveBase64: storedProfile.base64
           });
           await runService.appendStep({
-            runId,
-            workerId,
+            ...runLease,
             role: 'packager',
             status: 'succeeded',
             toolName: 'browser_profile',
@@ -1608,8 +2968,7 @@ const createAgentWorkerService = ({
           });
         } else {
           await runService.appendStep({
-            runId,
-            workerId,
+            ...runLease,
             role: 'packager',
             status: 'failed',
             toolName: 'browser_profile',
@@ -1619,9 +2978,18 @@ const createAgentWorkerService = ({
         }
       }
 
+      await runService.appendRuntimeEvent({
+        ...runLease,
+        type: 'run.ready_to_finalize',
+        phase: 'verifying',
+        summary: '模型阶段已结束，后续只允许确定性验证与原子结算',
+        data: {
+          semanticVerificationPassed: latestSemanticVerification?.passed === true
+        }
+      });
+      await testController?.hit('after_ready_to_finalize_event', { runId });
       await runService.transitionRun({
-        runId,
-        workerId,
+        ...runLease,
         toStatus: 'verifying',
         eventType: 'run.verifying',
         summary: '正在执行独立交付物验证',
@@ -1647,12 +3015,11 @@ const createAgentWorkerService = ({
         minimumSandboxSeconds: 1
       });
       await runService.finishRun({
-        runId,
-        workerId,
+        ...runLease,
         actualCredits: finalCosts.model + finalCosts.generation + finalCosts.sandbox,
         checklist: {
           requiredArtifactCount: Math.max(
-            1,
+            0,
             requiredDeliverables.reduce(
               (total, type) => total + minimumArtifactCounts[type],
               0
@@ -1660,23 +3027,99 @@ const createAgentWorkerService = ({
           ),
           requiredDeliverables,
           artifactCount: artifacts.length,
-          allArtifactsPassed: artifacts.length > 0 &&
-            artifacts.every((artifact) => artifact.verificationStatus === 'passed'),
+          allArtifactsPassed: requiredDeliverables.length === 0 || (
+            artifacts.length > 0 && artifacts.every((artifact) => artifact.verificationStatus === 'passed')
+          ),
           editableSourcePresent: artifacts.some((artifact) => (
             artifact.role === 'editable' || artifact.role === 'source'
           )),
           primaryArtifactPresent: artifacts.some((artifact) => (
             ['editable', 'source', 'website', 'package', 'image'].includes(artifact.role)
           )),
+          ...(runtimeV2 ? {
+            semanticVerificationPassed: latestSemanticVerification?.passed === true,
+            semanticVerificationScore: Number(latestSemanticVerification?.score || 0),
+            visualAestheticReviewAutomated: false
+          } : {}),
           modelClaimIgnoredUntilVerified: true
         }
       });
       terminal = true;
       return { claimed: true, status: 'succeeded' };
     } catch (error) {
+      if (testController && error?.name === 'RuntimeHarnessCrash') throw error;
+      if (isLeaseLostError(error)) {
+        return { claimed: true, status: 'lease_lost' };
+      }
+      if ([
+        'AGENT_MODEL_CALL_AMBIGUOUS',
+        'AGENT_IMAGE_CALL_AMBIGUOUS',
+        'AGENT_TOOL_CALL_AMBIGUOUS'
+      ].includes(error?.code)) {
+        const imageCall = error.code === 'AGENT_IMAGE_CALL_AMBIGUOUS';
+        const toolCall = error.code === 'AGENT_TOOL_CALL_AMBIGUOUS';
+        await runService.appendRuntimeEvent({
+          ...runLease,
+          type: imageCall
+            ? 'image.call.ambiguous'
+            : toolCall
+              ? 'tool.call.ambiguous'
+              : 'model.call.ambiguous',
+          phase: 'waiting_user',
+          summary: imageCall
+            ? '本次图片生成状态不确定，系统没有自动重试或计费'
+            : toolCall
+              ? '本次工具执行结果不确定，系统没有自动重试或计费'
+            : '本次模型调用状态不确定，系统没有自动重试或计费',
+          data: { callId: error?.details?.callId || null }
+        });
+        await runService.transitionRun({
+          ...runLease,
+          toStatus: 'waiting_user',
+          eventType: 'run.retry_required',
+          summary: '需要你确认后再安全重试',
+          checkpoint: {
+            phase: 'waiting_user',
+            retryRequired: true,
+            retryReason: imageCall
+              ? 'image_call_ambiguous'
+              : toolCall
+                ? 'tool_call_ambiguous'
+                : 'model_call_ambiguous'
+          }
+        });
+        if (sandboxName) await sandbox.suspend(sandboxName).catch(() => {});
+        return { claimed: true, status: 'waiting_user' };
+      }
       if (error instanceof AgentWaitingForUser || error?.code === 'AGENT_WAITING_FOR_USER') {
         const takeover = error?.approval?.risk_level === 'blocked';
         if (sandboxName && !takeover) await sandbox.suspend(sandboxName).catch(() => {});
+        return { claimed: true, status: 'waiting_user' };
+      }
+      if (['AGENT_CONTEXT_FIXED_BUDGET_EXCEEDED', 'AGENT_TASK_SPEC_CONTEXT_EXCEEDED'].includes(error?.code)) {
+        await runService.appendRuntimeEvent({
+          ...runLease,
+          type: 'run.input_required',
+          phase: 'waiting_user',
+          summary: '关键目标与验收条件超出安全上下文，请缩小范围后继续',
+          data: {
+            field: error?.details?.field || null,
+            estimatedInputTokens: error?.details?.estimatedInputTokens || null,
+            contextBudgetTokens: error?.details?.contextBudgetTokens || null
+          }
+        });
+        await runService.transitionRun({
+          ...runLease,
+          toStatus: 'waiting_user',
+          eventType: 'run.clarification_required',
+          summary: '任务没有删减你的关键要求，正在等待你缩小本次范围',
+          checkpoint: {
+            phase: 'waiting_user',
+            clarificationRequired: true,
+            clarificationReason: 'immutable_context_budget'
+          }
+        });
+        if (sandboxName) await sandbox.suspend(sandboxName).catch(() => {});
         return { claimed: true, status: 'waiting_user' };
       }
       if (error instanceof AgentPaused || error?.code === 'AGENT_PAUSED') {
@@ -1698,15 +3141,22 @@ const createAgentWorkerService = ({
         String(error?.code || 'AGENT_RUNTIME_FAILED').slice(0, 100),
         failureDetail
       );
-      await runService.failRun({
-        runId,
-        errorCode: String(error?.code || 'AGENT_RUNTIME_FAILED').slice(0, 100),
-        refundable: failureCosts.generation <= 0,
-        actualCredits: failureCosts.generation
-      }).catch((failure) => {
+      try {
+        await runService.failRun({
+          ...runLease,
+          errorCode: String(error?.code || 'AGENT_RUNTIME_FAILED').slice(0, 100),
+          refundable: failureCosts.generation <= 0,
+          actualCredits: failureCosts.generation
+        });
+        terminal = true;
+      } catch (failure) {
+        if (isLeaseLostError(failure)) {
+          return { claimed: true, status: 'lease_lost' };
+        }
+        // A failed terminal transaction leaves ownership and settlement unknown.
+        // Keep the sandbox for the next fenced Worker or terminal reconciler.
         console.error('Agent failure settlement failed', runId, failure?.code || failure?.message);
-      });
-      terminal = true;
+      }
       throw error;
     } finally {
       if (terminal && sandboxName) {
@@ -1735,8 +3185,10 @@ const createAgentWorkerService = ({
     let failed = 0;
     for (const entry of pending) {
       try {
-        await sandbox.destroy(entry.sandboxRef);
-        await runService.markSandboxDestroyed(entry);
+        const sandboxRef = entry.sandboxRef || sandbox.referenceForRun?.(entry.runId);
+        if (!sandboxRef) throw new ApiError(500, 'AGENT_SANDBOX_REFERENCE_UNAVAILABLE');
+        await sandbox.destroy(sandboxRef);
+        await runService.markSandboxDestroyed({ ...entry, sandboxRef });
         destroyed += 1;
       } catch (error) {
         failed += 1;
@@ -1774,6 +3226,7 @@ const createAgentWorkerService = ({
 module.exports = {
   AgentCancelled,
   AgentPaused,
+  LeaseLostDuringWorkError,
   assertExpectedSubagentOutputFiles,
   buildSubagentObjective,
   createAgentCostMeter,
@@ -1782,6 +3235,7 @@ module.exports = {
   parentVerifiedSubagentFiles,
   firstPayload,
   normalizeSubagentShellScript,
+  resolveToolReceiptRequestSha256,
   restrictDelegatedTaskInputs,
   runWithLeaseHeartbeat,
   resolveStagedImageReferences

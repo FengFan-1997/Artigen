@@ -173,6 +173,7 @@ const installAgentRoutes = (app, deps = {}) => {
       capabilities: body.capabilities,
       browserConfig: body.browserConfig,
       deliverables: body.deliverables,
+      taskSpec: body.taskSpec,
       maxCredits: body.maxCredits
     });
     res.json({ ok: true, quote });
@@ -188,6 +189,7 @@ const installAgentRoutes = (app, deps = {}) => {
       maxCredits: body.maxCredits,
       capabilities: body.capabilities,
       deliverables: body.deliverables,
+      taskSpec: body.taskSpec,
       browserConfig: body.browserConfig,
       projectId: body.projectId,
       idempotencyKey: req.headers['idempotency-key']

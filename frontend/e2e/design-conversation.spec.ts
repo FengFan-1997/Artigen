@@ -7,6 +7,7 @@ const userMessageId = '22222222-2222-4222-8222-222222222222';
 const assistantMessageId = '33333333-3333-4333-8333-333333333333';
 const executionId = '44444444-4444-4444-8444-444444444444';
 const runId = '55555555-5555-4555-8555-555555555555';
+const projectId = '99999999-9999-4999-8999-999999999999';
 const now = '2026-08-14T08:00:00.000Z';
 
 const message = (
@@ -374,6 +375,82 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await page.getByRole('button', { name: '折叠左栏' }).click();
   await expect(page.locator('.agent-workspace-shell')).toHaveClass(/left-collapsed/);
   await expect.poll(() => page.locator('.workspace-left').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(64);
+});
+
+test('project memory is saved only after the user confirms a literal planner suggestion', async ({ page }) => {
+  await installCommonApi(page, true);
+  const project = {
+    projectId,
+    title: '柚子气泡水',
+    status: 'active',
+    productName: '柚子气泡水',
+    brief: '',
+    brandProfile: {
+      brandName: '', colors: [], styleKeywords: [], prohibitedElements: [], logoAssetId: null
+    },
+    designMemory: {
+      audience: '', goals: [], tone: [], visualKeywords: [], mustInclude: [], avoid: [],
+      outputPreferences: { deliverables: [], aspectRatio: '', language: '' },
+      factualConstraints: []
+    },
+    coverAssetId: null,
+    coverUrl: null,
+    revision: 3,
+    assets: [],
+    versions: [],
+    createdAt: now,
+    updatedAt: now
+  };
+  const memoryMessage = {
+    ...message(assistantMessageId, 2, 'assistant', '我可以把你明确说明的受众保存到项目。'),
+    memoryCandidates: [{ field: 'audience', value: '独立设计师' }]
+  };
+  const memoryConversation = {
+    ...fullConversation,
+    projectId,
+    messages: [
+      message(userMessageId, 1, 'user', '目标受众是独立设计师。'),
+      memoryMessage
+    ],
+    executions: []
+  };
+  let patchBody: Record<string, unknown> | null = null;
+  await page.route(`**/api/projects/${projectId}`, (route) => {
+    if (route.request().method() === 'PATCH') {
+      patchBody = route.request().postDataJSON();
+      project.revision += 1;
+      project.designMemory.audience = '独立设计师';
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, project })
+    });
+  });
+  await page.route('**/api/design-conversations**', (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.endsWith('/events')) return route.abort();
+    if (pathname.endsWith('/authorizations')) {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, authorizations: [] }) });
+    }
+    if (pathname === `/api/design-conversations/${conversationId}`) {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, conversation: memoryConversation }) });
+    }
+    if (pathname === '/api/design-conversations') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, conversations: [memoryConversation] }) });
+    }
+    return route.fallback();
+  });
+
+  await page.goto(`/artigen/create?c=${conversationId}`);
+  await expect(page.locator('.memory-suggestions')).toContainText('独立设计师');
+  await expect.poll(() => patchBody).toBeNull();
+  await page.locator('.memory-suggestions').getByRole('button', { name: '保存' }).click();
+  await expect.poll(() => patchBody).toMatchObject({
+    revision: 3,
+    designMemory: { audience: '独立设计师' }
+  });
+  await expect(page.locator('.memory-suggestions article')).toHaveCount(0);
 });
 
 test('mobile chat uses a history drawer and keeps the docked composer reachable', async ({ page, browserName }) => {

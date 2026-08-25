@@ -60,6 +60,10 @@ const {
   upsertOperationalRecord,
   usesOperationalRecordStore,
 } = require("./services/operational-record-service");
+const {
+  createProviderScheduler,
+  createScheduledChatGenerate,
+} = require("./services/agent-model-runtime-service");
 
 const {
   assertAdmin,
@@ -97,6 +101,18 @@ const PORT = process.env.PORT || 8080;
 console.log("Resolved PORT:", PORT);
 const DEBUG_FILES = String(process.env.DEBUG_FILES || "").trim() === "1";
 const FILES_DIR = path.join(MEMORY_DIR, "files");
+const sharedProviderScheduler = isDatabaseConfigured()
+  ? createProviderScheduler({ pool: getPool(), env: process.env })
+  : null;
+const scheduledSiliconFlowChat = createScheduledChatGenerate({
+  scheduler: sharedProviderScheduler,
+  chatGenerate: callSiliconFlowChat,
+  defaultPriority: "actor",
+});
+const scheduledTextGenerate = (input) => callTextGenerate({
+  ...input,
+  chatGenerate: scheduledSiliconFlowChat,
+});
 
 try {
   if (!fs.existsSync(FILES_DIR)) fs.mkdirSync(FILES_DIR, { recursive: true });
@@ -651,7 +667,7 @@ installConvertRoutes(app, {
 installToolTaskRoutes(app, {
   rateLimit,
   callSiliconFlowImageGenerate,
-  callSiliconFlowChat,
+  callSiliconFlowChat: scheduledSiliconFlowChat,
 });
 
 installProjectRoutes(app, {
@@ -662,9 +678,10 @@ const agentRuntime = installAgentRoutes(app, {
   rateLimit,
 });
 
-installDesignConversationRoutes(app, {
+const designConversationRuntime = installDesignConversationRoutes(app, {
   rateLimit,
   callSiliconFlowChat,
+  providerScheduler: sharedProviderScheduler,
   agentRunService: agentRuntime.service,
 });
 
@@ -731,8 +748,8 @@ installSystemRoutes(app, {
   rateLimit,
   assertAuthUserMatches,
   callSiliconFlowImageGenerate,
-  callSiliconFlowChat,
-  callTextGenerate,
+  callSiliconFlowChat: scheduledSiliconFlowChat,
+  callTextGenerate: scheduledTextGenerate,
   SILICONFLOW_API_BASE,
   SILICONFLOW_MODEL,
   getClientIp,
@@ -752,15 +769,39 @@ if (frontendHosting.enabled) {
 
 const httpServer = http.createServer(app);
 const agentDesktopRelay = createAgentDesktopRelay({ server: httpServer });
+let agentMaintenanceTimer = null;
+const runAgentMaintenance = async () => {
+  if (!isDatabaseConfigured()) return;
+  const jobs = [
+    agentRuntime.service?.purgeExpiredPrivateData?.({ limit: 500 }),
+    designConversationRuntime.service?.sweepExpired?.({ limit: 200 }),
+    designConversationRuntime.modelCallService?.cleanupExpired?.({ limit: 500 }),
+    sharedProviderScheduler?.cleanup?.()
+  ].filter(Boolean);
+  const results = await Promise.allSettled(jobs);
+  for (const result of results) {
+    if (result.status === "rejected") {
+      console.error("Agent maintenance failed", result.reason?.code || result.reason?.message);
+    }
+  }
+};
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);
   if (isDatabaseConfigured()) {
     const behaviorRetention = createBehaviorRetentionService({ pool: getPool() });
     behaviorRetention.start();
     console.log("Behavior retention scheduler: enabled", behaviorRetention.config);
+    void runAgentMaintenance();
+    agentMaintenanceTimer = setInterval(() => void runAgentMaintenance(), 15 * 60 * 1000);
+    agentMaintenanceTimer.unref?.();
+    console.log("Agent privacy retention scheduler: enabled");
   }
 });
 
-const closeAgentRelay = () => agentDesktopRelay.close();
+const closeAgentRelay = () => {
+  if (agentMaintenanceTimer) clearInterval(agentMaintenanceTimer);
+  agentMaintenanceTimer = null;
+  agentDesktopRelay.close();
+};
 process.once("SIGTERM", closeAgentRelay);
 process.once("SIGINT", closeAgentRelay);

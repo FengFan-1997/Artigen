@@ -112,6 +112,15 @@
                 <button v-for="question in message.questions" :key="question" type="button" @click="draft = question">{{ question }}</button>
                 <button class="recommended" type="button" @click="sendRecommended">{{ zh ? '按推荐直接做' : 'Use recommended assumptions' }}</button>
               </div>
+              <div v-if="message.memoryCandidates?.some((candidate, index) => !memoryCandidateHandled(message.messageId, index, candidate))" class="memory-suggestions">
+                <article v-for="(candidate, index) in message.memoryCandidates" :key="`${message.messageId}:${index}`" v-show="!memoryCandidateHandled(message.messageId, index, candidate)">
+                  <span><small>{{ zh ? '保存到项目' : 'Save to project' }}</small><b>{{ formatMemoryCandidate(candidate) }}</b></span>
+                  <div>
+                    <button type="button" @click="dismissMemoryCandidate(message.messageId, index)">{{ zh ? '忽略' : 'Dismiss' }}</button>
+                    <button class="save-memory" type="button" @click="saveMemoryCandidate(message.messageId, index, candidate)">{{ zh ? '保存' : 'Save' }}</button>
+                  </div>
+                </article>
+              </div>
             </div>
           </article>
 
@@ -183,6 +192,8 @@
         </section>
         <TechnicalDetails :label="zh ? '技术详情' : 'Technical details'">
           <dl class="technical-list">
+            <div v-if="activeRun?.runtime"><dt>{{ zh ? '运行时' : 'Runtime' }}</dt><dd>V{{ activeRun.runtime.version }} · {{ activeRun.runtime.promptProfile || 'legacy' }}</dd></div>
+            <div v-if="activeRun?.runtime?.skills?.length"><dt>{{ zh ? '已加载规范' : 'Loaded skills' }}</dt><dd>{{ activeRun.runtime.skills.map((skill) => `${skill.id}@${skill.version}`).join(' · ') }}</dd></div>
             <div><dt>{{ zh ? '理解与规划' : 'Reasoning' }}</dt><dd>Qwen/Qwen3-8B</dd></div>
             <div><dt>{{ zh ? '全部图片' : 'All images' }}</dt><dd>Kwai-Kolors/Kolors</dd></div>
             <div><dt>{{ zh ? '运行环境' : 'Runtime' }}</dt><dd>{{ activeRun?.sandbox.provider || (zh ? '按需创建' : 'On demand') }}</dd></div>
@@ -321,8 +332,15 @@ import {
   type DesignAttachmentManifest,
   type DesignConversation,
   type DesignExecution,
+  type DesignMessage,
   type DesignSessionAuthorization
 } from '../services/designConversations';
+import {
+  getCreativeProject,
+  updateCreativeProject,
+  type CreativeProject,
+  type DesignMemory
+} from '../services/creativeProjects';
 import {
   createAgentRun,
   cancelAgentSubagent,
@@ -356,6 +374,7 @@ const status = ref<DesignAssistantStatus | null>(null);
 const conversations = ref<DesignConversation[]>([]);
 const conversation = ref<DesignConversation | null>(null);
 const authorizations = ref<DesignSessionAuthorization[]>([]);
+const projectSnapshot = ref<CreativeProject | null>(null);
 const draft = ref('');
 const selectedAttachments = ref<SelectedAttachment[]>([]);
 const notice = ref('');
@@ -375,6 +394,7 @@ const executionStreams = new Map<string, () => void>();
 let closeConversationStream: null | (() => void) = null;
 let refreshTimer: number | null = null;
 const scheduledAutoStarts = new Set<string>();
+const handledMemoryCandidates = reactive(new Set<string>());
 
 const suggestionsZh = [
   '为一款柚子气泡水生成夏日主视觉',
@@ -595,11 +615,21 @@ const hydrateExecutionTargets = async (executions: DesignExecution[]) => {
   }
 };
 
+const syncConversationProject = async (projectId: string | null | undefined) => {
+  if (!projectId) {
+    projectSnapshot.value = null;
+    return;
+  }
+  if (projectSnapshot.value?.projectId === projectId) return;
+  projectSnapshot.value = await getCreativeProject(projectId).catch(() => null);
+};
+
 const refreshConversation = async (autoStartExecutionIds: string[] = []) => {
   const id = conversation.value?.conversationId;
   if (!id) return;
   const fresh = await getDesignConversation(id);
   conversation.value = fresh;
+  await syncConversationProject(fresh.projectId);
   await hydrateExecutionTargets(fresh.executions || []);
   if (autoStartExecutionIds.length) {
     const allowed = new Set(autoStartExecutionIds);
@@ -624,6 +654,7 @@ const refreshConversationList = async () => {
 
 const openConversation = async (conversationId: string) => {
   conversation.value = await getDesignConversation(conversationId);
+  await syncConversationProject(conversation.value.projectId);
   authorizations.value = await listDesignSessionAuthorizations(conversationId).catch(() => []);
   connectConversationStream(conversationId);
   await router.replace({ path: '/artigen/create', query: { c: conversationId } });
@@ -635,6 +666,7 @@ const newConversation = async () => {
   closeConversationStream?.();
   closeConversationStream = null;
   conversation.value = null;
+  projectSnapshot.value = null;
   authorizations.value = [];
   draft.value = '';
   selectedAttachments.value = [];
@@ -813,7 +845,9 @@ const runAgentExecution = async (execution: DesignExecution, assetIds: string[])
     maxCredits: execution.maxCredits,
     capabilities: plan.capabilities || { files: true, shell: true },
     deliverables: plan.deliverables || [],
+    taskSpec: plan.taskSpec || null,
     browserConfig: plan.browserConfig || { allowedOrigins: [], persistSession: false },
+    projectId: conversation.value.projectId || null,
     idempotencyKey: `design:${execution.executionId}`
   });
   agentRuns[run.runId] = run;
@@ -965,6 +999,99 @@ const cancelSubagentRun = async (subagentId: string) => {
   }
 };
 
+type MemoryCandidate = DesignMessage['memoryCandidates'][number];
+const memoryCandidateKey = (messageId: string, index: number) => `${messageId}:${index}`;
+const memoryFieldLabel = (field: keyof DesignMemory) => ({
+  audience: zh.value ? '受众' : 'Audience',
+  goals: zh.value ? '目标' : 'Goals',
+  tone: zh.value ? '语气' : 'Tone',
+  visualKeywords: zh.value ? '视觉关键词' : 'Visual keywords',
+  mustInclude: zh.value ? '必须包含' : 'Must include',
+  avoid: zh.value ? '避免' : 'Avoid',
+  outputPreferences: zh.value ? '输出偏好' : 'Output preferences',
+  factualConstraints: zh.value ? '事实约束' : 'Factual constraints'
+}[field] || field);
+const formatMemoryCandidate = (candidate: MemoryCandidate) => {
+  const value = Array.isArray(candidate.value)
+    ? candidate.value.join('、')
+    : candidate.value && typeof candidate.value === 'object'
+      ? Object.values(candidate.value).flat().filter(Boolean).join('、')
+      : String(candidate.value || '');
+  return `${memoryFieldLabel(candidate.field)} · ${value}`;
+};
+const memoryAlreadyStored = (candidate: MemoryCandidate) => {
+  const memory = projectSnapshot.value?.designMemory;
+  if (!memory) return false;
+  const current = memory[candidate.field];
+  if (Array.isArray(current)) {
+    const values = Array.isArray(candidate.value) ? candidate.value : [candidate.value];
+    return values.every((value) => current.includes(String(value)));
+  }
+  if (current && typeof current === 'object' && candidate.value && typeof candidate.value === 'object') {
+    return Object.entries(candidate.value).every(([key, value]) => (
+      JSON.stringify((current as Record<string, unknown>)[key]) === JSON.stringify(value)
+    ));
+  }
+  return String(current || '') === String(candidate.value || '');
+};
+const memoryCandidateHandled = (messageId: string, index: number, candidate: MemoryCandidate) => (
+  !conversation.value?.projectId ||
+  handledMemoryCandidates.has(memoryCandidateKey(messageId, index)) ||
+  memoryAlreadyStored(candidate)
+);
+const dismissMemoryCandidate = (messageId: string, index: number) => {
+  handledMemoryCandidates.add(memoryCandidateKey(messageId, index));
+};
+const mergeMemoryCandidate = (memory: DesignMemory, candidate: MemoryCandidate): DesignMemory => {
+  if (candidate.field === 'audience') {
+    return { ...memory, audience: String(candidate.value || '') };
+  }
+  if (candidate.field === 'outputPreferences') {
+    const value = candidate.value && typeof candidate.value === 'object'
+      ? candidate.value as Partial<DesignMemory['outputPreferences']>
+      : {};
+    return {
+      ...memory,
+      outputPreferences: { ...memory.outputPreferences, ...value }
+    };
+  }
+  const values = (Array.isArray(candidate.value) ? candidate.value : [candidate.value])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  const field = candidate.field as Exclude<keyof DesignMemory, 'audience' | 'outputPreferences'>;
+  return { ...memory, [field]: [...new Set([...(memory[field] || []), ...values])] };
+};
+const saveMemoryCandidate = async (
+  messageId: string,
+  index: number,
+  candidate: MemoryCandidate
+) => {
+  const projectId = conversation.value?.projectId;
+  if (!projectId) return;
+  try {
+    let project = projectSnapshot.value || await getCreativeProject(projectId);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        project = await updateCreativeProject(projectId, {
+          revision: project.revision,
+          designMemory: mergeMemoryCandidate(project.designMemory, candidate)
+        });
+        projectSnapshot.value = project;
+        handledMemoryCandidates.add(memoryCandidateKey(messageId, index));
+        notice.value = zh.value ? '已保存到项目记忆。' : 'Saved to project memory.';
+        return;
+      } catch (error) {
+        if (String((error as { code?: string })?.code || '') !== 'PROJECT_REVISION_CONFLICT' || attempt > 0) {
+          throw error;
+        }
+        project = await getCreativeProject(projectId);
+      }
+    }
+  } catch (error) {
+    notice.value = errorText(error);
+  }
+};
+
 const executionsForMessage = (messageId: string) => (
   conversation.value?.executions?.filter((item) => item.sourceMessageId === messageId) || []
 );
@@ -1055,6 +1182,14 @@ onBeforeUnmount(() => {
 .message-body p { margin: 0; white-space: pre-wrap; }
 .message-files { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }.message-files span { display: inline-flex; max-width: 100%; min-width: 0; align-items: center; gap: 5px; padding: 5px 7px; overflow-wrap: anywhere; border: 0; border-radius: 7px; color: var(--muted); font-size: 11px; background: var(--surface-hover); }.message-files svg { flex: 0 0 auto; width: 12px; }
 .clarification { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }.clarification button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 8px; color: var(--text); font-size: 11px; background: var(--surface-hover); cursor: pointer; }.clarification button:hover { color: var(--acid-text); }.clarification .recommended { color: var(--acid-ink); background: var(--acid); }
+.memory-suggestions { display: grid; gap: 6px; margin-top: 12px; }
+.memory-suggestions article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border-radius: 9px; background: var(--surface-raised); }
+.memory-suggestions article > span { display: grid; min-width: 0; gap: 2px; }
+.memory-suggestions small { color: var(--muted); font-size: 11px; }
+.memory-suggestions b { overflow-wrap: anywhere; font-size: 12px; font-weight: 580; }
+.memory-suggestions article > div { display: flex; flex: 0 0 auto; gap: 4px; }
+.memory-suggestions button { min-height: 32px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--muted); font-size: 11px; background: transparent; cursor: pointer; }
+.memory-suggestions .save-memory { color: var(--acid-ink); background: var(--acid); }
 .planning-message { color: var(--muted); }.planning-line { display: flex; gap: 3px; margin-bottom: 6px; }.planning-line span { width: 5px; height: 5px; border-radius: 50%; background: var(--acid); animation: thinking 800ms ease-in-out infinite alternate; }.planning-line span:nth-child(2) { animation-delay: 120ms; }.planning-line span:nth-child(3) { animation-delay: 240ms; }
 @keyframes thinking { to { opacity: .25; transform: translateY(-2px); } }
 .docked-composer { position: relative; z-index: 12; padding: 18px var(--conversation-gutter) 16px; background: var(--bg); }
@@ -1116,7 +1251,9 @@ onBeforeUnmount(() => {
   .workspace-zero { width: min(100% - 24px,680px); padding: 34px 0 24px; align-content: start; }
   .zero-copy { margin-top: 10px; }.zero-copy h1 { font-size: 27px; }
   .suggestion-grid { grid-template-columns: 1fr; margin-top: 18px; }.suggestion-grid > button { min-height: 52px; }
-  .suggestion-grid header button,.authorization-strip button,.clarification button,.subagent-card button,.workspace-notice button { min-width: 44px; min-height: 44px; }
+  .suggestion-grid header button,.authorization-strip button,.clarification button,.memory-suggestions button,.subagent-card button,.workspace-notice button { min-width: 44px; min-height: 44px; }
+  .memory-suggestions article { align-items: flex-start; flex-direction: column; }
+  .memory-suggestions article > div { align-self: flex-end; }
   .zero-meta span:nth-child(n+2) { display: none; }
   .authorization-strip header,.authorization-strip article { align-items: flex-start; flex-wrap: wrap; }.authorization-strip button { margin-left: auto; }
   .message-scroll { padding-block: 24px; }.message-body,.message.user .message-body { max-width: 88%; font-size: 14px; }

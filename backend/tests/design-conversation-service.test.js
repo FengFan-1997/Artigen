@@ -254,6 +254,8 @@ test('conversation configuration defaults closed with a 50-credit cap and 30-day
     retentionDays: 30,
     authorizationIdleMinutes: 30,
     pollMs: 750,
+    planningLeaseSeconds: 90,
+    planningLeaseHeartbeatMs: 20_000,
     plannerMaxTokens: 1800,
     model: TEXT_MODEL,
     imageModel: IMAGE_MODEL

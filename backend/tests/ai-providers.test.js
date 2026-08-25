@@ -40,6 +40,29 @@ test('SiliconFlow chat uses the supported endpoint and serializes non-thinking m
   assert.equal(result.text, '{"ok":true}');
 });
 
+test('SiliconFlow chat preserves Retry-After for the shared scheduler', async () => {
+  await assert.rejects(callSiliconFlowChat({
+    messages: [{ role: 'user', content: 'Return JSON only.' }],
+    timeoutMs: 120_000,
+    maxTokens: 1800,
+    model: GENERATION_DIRECTIONS_MODEL,
+    enableThinking: false,
+    skipRateGate: true,
+    credential: 'test-key',
+    fetcher: async () => ({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      headers: { get: (name) => name.toLowerCase() === 'retry-after' ? '12' : null },
+      text: async () => '{"message":"rate limited"}'
+    })
+  }), (error) => {
+    assert.equal(error.retryAfter, '12');
+    assert.equal(error.failures[0].retryAfter, '12');
+    return true;
+  });
+});
+
 test('Kolors handles text-to-image and exactly one generic image input', async () => {
   const requests = [];
   const fetcher = async (url, options, timeoutMs) => {
