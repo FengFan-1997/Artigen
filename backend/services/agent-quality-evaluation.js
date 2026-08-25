@@ -83,6 +83,7 @@ const compileQualityCase = ({ manifest, task, evaluationDir }) => {
   });
   return {
     ...task,
+    manifestVersion: Number(manifest?.version || 0),
     expectedRoute: task.expectedRoute || defaults.expectedRoute,
     expectedTerminalStatus: task.expectedTerminalStatus || defaults.expectedTerminalStatus,
     scriptTemplate: task.scriptTemplate || deliverableRule.scriptTemplate,
@@ -143,20 +144,27 @@ const validateCompiledQualityCase = (entry) => {
     if (!input.exists) errors.push(`fixture missing ${input.relativePath}`);
   }
   if (entry.expectedRoute !== 'agent_run') errors.push(`unexpected route ${entry.expectedRoute}`);
-  if (!['succeeded', 'failed', 'cancelled', 'waiting_user'].includes(entry.expectedTerminalStatus)) {
+  const harnessV3 = Number(entry.manifestVersion) >= 3;
+  if (
+    harnessV3 &&
+    !['succeeded', 'failed', 'cancelled', 'waiting_user'].includes(entry.expectedTerminalStatus)
+  ) {
     errors.push(`invalid terminal status ${entry.expectedTerminalStatus}`);
   }
-  if (!entry.scriptTemplate) errors.push('script template missing');
+  if (harnessV3 && !entry.scriptTemplate) errors.push('script template missing');
   if (!entry.deterministicValidators.length) errors.push('deterministic validators missing');
   if (entry.semanticRubric.length < 3) errors.push('semantic rubric incomplete');
   if (!Number.isFinite(entry.maxModelTurns) || entry.maxModelTurns < 1) errors.push('max model turns invalid');
   if (!Number.isFinite(entry.maxDurationMs) || entry.maxDurationMs < 1000) errors.push('max duration invalid');
   if (!Number.isFinite(entry.maxCredits) || entry.maxCredits < 1) errors.push('max credits invalid');
-  if (!Number.isSafeInteger(entry.maxReplans) || entry.maxReplans < 0 || entry.maxReplans > 3) {
+  if (
+    harnessV3 &&
+    (!Number.isSafeInteger(entry.maxReplans) || entry.maxReplans < 0 || entry.maxReplans > 3)
+  ) {
     errors.push('max replans invalid');
   }
-  if (!entry.requiredEvents.length) errors.push('required events missing');
-  if (!entry.snapshotFields.length) errors.push('snapshot fields missing');
+  if (harnessV3 && !entry.requiredEvents.length) errors.push('required events missing');
+  if (harnessV3 && !entry.snapshotFields.length) errors.push('snapshot fields missing');
   return errors;
 };
 
