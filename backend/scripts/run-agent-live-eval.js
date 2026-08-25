@@ -27,6 +27,16 @@ const optionalSecretNames = [
   'AGENT_WORKER_RELAY_URL'
 ];
 
+const positivePricingOrDefault = ({ value, fallback, name }) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return String(fallback);
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${name}_INVALID`);
+  }
+  return parsed > 0 ? raw : String(fallback);
+};
+
 const { AgentLiveEvalHarness } = require('../evaluation/harness/agent-live-eval-harness');
 const {
   LIVE_EVAL_CASES,
@@ -73,10 +83,16 @@ const loadLiveEvalSecrets = ({
     AGENT_LIVE_EVAL_MODE: 'true',
     AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1',
     CUA_PYTHON: path.resolve(__dirname, '../.venv-agent/bin/python'),
-    AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION:
-      runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION || '20',
-    AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION:
-      runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION || '160'
+    AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: positivePricingOrDefault({
+      value: runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION,
+      fallback: 20,
+      name: 'AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION'
+    }),
+    AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: positivePricingOrDefault({
+      value: runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION,
+      fallback: 160,
+      name: 'AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION'
+    })
   });
   return { runtimeEnv, evidenceKeyMaterial };
 };
