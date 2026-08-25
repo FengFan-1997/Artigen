@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
@@ -52,6 +54,67 @@ test('Mac Agent worker pins image pricing and the SiliconFlow output host', () =
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
   assert.match(installer, /ARTIGEN_AGENT_SUBAGENTS_ENABLED/);
   assert.match(installer, /<key>AGENT_SUBAGENTS_ENABLED<\/key>/);
+  assert.match(installer, /<key>\$\{name\}<\/key>/);
+  assert.match(installer, /AGENT_RUNTIME_V2_ENABLED/);
+  assert.match(installer, /AGENT_RUNTIME_V2_ROLLOUT_PERCENT/);
+  assert.match(installer, /DESIGN_PLANNER_V2_ENABLED/);
+  assert.match(installer, /AGENT_ADAPTIVE_REASONING_ENABLED/);
+  assert.match(installer, /AGENT_PROJECT_MEMORY_ENABLED/);
+  assert.match(installer, /AGENT_PROVIDER_SCHEDULER_ENABLED/);
+  assert.match(installer, /AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION/);
+  assert.match(installer, /AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION/);
+  assert.match(installer, /AGENT_RUNTIME_ACTOR_PROFILE/);
+});
+
+test('Mac Agent installer persists the reviewed V2 launch profile', {
+  skip: process.platform === 'darwin' ? false : 'macOS-only LaunchAgent integration'
+}, () => {
+  const temporaryHome = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-launch-profile-'));
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [path.join(repoRoot, 'backend/scripts/install-agent-worker-launchagent.js'), 'dev'],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: temporaryHome,
+          ARTIGEN_AGENT_SUBAGENTS_ENABLED: 'true',
+          AGENT_RUNTIME_V2_ENABLED: 'true',
+          AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0',
+          DESIGN_PLANNER_V2_ENABLED: 'true',
+          AGENT_ADAPTIVE_REASONING_ENABLED: 'true',
+          AGENT_PROJECT_MEMORY_ENABLED: 'false',
+          AGENT_PROVIDER_SCHEDULER_ENABLED: 'true',
+          AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '20',
+          AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '160',
+          AGENT_RUNTIME_ACTOR_PROFILE: 'stable-v1'
+        }
+      }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const plist = fs.readFileSync(path.join(
+      temporaryHome,
+      'Library/LaunchAgents/com.artigen.agent-worker-dev.plist'
+    ), 'utf8');
+    for (const [name, value] of Object.entries({
+      AGENT_SUBAGENTS_ENABLED: 'true',
+      AGENT_RUNTIME_V2_ENABLED: 'true',
+      AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0',
+      DESIGN_PLANNER_V2_ENABLED: 'true',
+      AGENT_ADAPTIVE_REASONING_ENABLED: 'true',
+      AGENT_PROJECT_MEMORY_ENABLED: 'false',
+      AGENT_PROVIDER_SCHEDULER_ENABLED: 'true',
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '20',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '160',
+      AGENT_RUNTIME_ACTOR_PROFILE: 'stable-v1'
+    })) {
+      assert.match(plist, new RegExp(`<key>${name}<\\/key><string>${value}<\\/string>`));
+    }
+  } finally {
+    fs.rmSync(temporaryHome, { recursive: true, force: true });
+  }
 });
 
 test('runtime model allowlist contains only Qwen3-8B and Kolors', () => {

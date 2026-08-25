@@ -23,6 +23,50 @@ const runner = path.join(root, 'backend/scripts/run-agent-worker-macos.js');
 const subagentsEnabled = /^(1|true|yes|on)$/i.test(
   String(process.env.ARTIGEN_AGENT_SUBAGENTS_ENABLED || '').trim()
 );
+const normalizeBoolean = (name, fallback = false) => {
+  const raw = String(process.env[name] ?? '').trim();
+  if (!raw) return fallback ? 'true' : 'false';
+  if (/^(1|true|yes|on)$/i.test(raw)) return 'true';
+  if (/^(0|false|no|off)$/i.test(raw)) return 'false';
+  throw new TypeError(`${name}_INVALID`);
+};
+const normalizePercent = (name, fallback = 0) => {
+  const raw = String(process.env[name] ?? fallback).trim();
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    throw new TypeError(`${name}_INVALID`);
+  }
+  return String(value);
+};
+const normalizePositiveNumber = (name, fallback) => {
+  const raw = String(process.env[name] ?? fallback).trim();
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) throw new TypeError(`${name}_INVALID`);
+  return String(value);
+};
+const actorProfile = String(
+  process.env.AGENT_RUNTIME_ACTOR_PROFILE || 'stable-v1'
+).trim();
+if (!['stable-v1', 'exploratory-v1'].includes(actorProfile)) {
+  throw new TypeError('AGENT_RUNTIME_ACTOR_PROFILE_INVALID');
+}
+const workerRuntimeSettings = Object.freeze({
+  AGENT_RUNTIME_V2_ENABLED: normalizeBoolean('AGENT_RUNTIME_V2_ENABLED'),
+  AGENT_RUNTIME_V2_ROLLOUT_PERCENT: normalizePercent('AGENT_RUNTIME_V2_ROLLOUT_PERCENT'),
+  DESIGN_PLANNER_V2_ENABLED: normalizeBoolean('DESIGN_PLANNER_V2_ENABLED'),
+  AGENT_ADAPTIVE_REASONING_ENABLED: normalizeBoolean('AGENT_ADAPTIVE_REASONING_ENABLED'),
+  AGENT_PROJECT_MEMORY_ENABLED: normalizeBoolean('AGENT_PROJECT_MEMORY_ENABLED'),
+  AGENT_PROVIDER_SCHEDULER_ENABLED: normalizeBoolean('AGENT_PROVIDER_SCHEDULER_ENABLED'),
+  AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: normalizePositiveNumber(
+    'AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION',
+    20
+  ),
+  AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: normalizePositiveNumber(
+    'AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION',
+    160
+  ),
+  AGENT_RUNTIME_ACTOR_PROFILE: actorProfile
+});
 const escapeXml = (value) => String(value)
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
@@ -59,6 +103,9 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
     <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>ARTIGEN_AGENT_KEYCHAIN_SERVICE</key><string>${keychainService}</string>
     <key>AGENT_SUBAGENTS_ENABLED</key><string>${subagentsEnabled ? 'true' : 'false'}</string>
+${Object.entries(workerRuntimeSettings)
+  .map(([name, value]) => `    <key>${name}</key><string>${escapeXml(value)}</string>`)
+  .join('\n')}
   </dict>
 </dict>
 </plist>
@@ -66,6 +113,8 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
 fs.writeFileSync(plistPath, plist, { mode: 0o600 });
 console.log(plistPath);
 console.log(`Subagents: ${subagentsEnabled ? 'enabled' : 'disabled'}`);
+console.log(`Runtime V2: ${workerRuntimeSettings.AGENT_RUNTIME_V2_ENABLED}`);
+console.log(`Runtime V2 rollout: ${workerRuntimeSettings.AGENT_RUNTIME_V2_ROLLOUT_PERCENT}%`);
 console.log(production
   ? `Install after Keychain setup: launchctl bootstrap gui/${process.getuid()} ${plistPath}`
   : `Start on demand: launchctl bootstrap gui/${process.getuid()} ${plistPath}; launchctl kickstart -k gui/${process.getuid()}/${label}`);
