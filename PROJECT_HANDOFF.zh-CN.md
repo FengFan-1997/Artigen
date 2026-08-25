@@ -8,6 +8,15 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-08-25 Agent Live Harness V3.1（本地实现完成，未发布）
+
+- Live Harness V3.1 在确定性 Harness V3 上增加真实 DEV Provider 层。Run 版本只由服务端按 V2 canary allowlist、稳定用户哈希百分比和关闭回退选择，客户端不能提交 `runtimeVersion`；每个 Run 固化 runtime、TaskSpec、Prompt/Profile hash 与 Skill 版本。真实矩阵固定为 12 类任务各跑 V1/V2，共 24 个槽位。
+- Live eval 只能在 `NODE_ENV=test + APP_ENV=dev + AGENT_LIVE_EVAL_MODE=true + AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER=1` 且数据库名精确为 `dev_artigen` 时启动。Keychain 分别保存 gate、证据和最终报告的独立版本化 32 字节密钥；合成原始证据使用 AES-256-GCM 加密并保存在被忽略的 `.artifacts/agent-live-eval-*/private/`，正式报告不保存 Prompt、用户正文、凭据或 reasoning。
+- 真实调用门槛由 24 小时签名 gate 绑定不可变 commit、矩阵 hash、`pnpm check`、PostgreSQL 16/固定 digest MinIO、50/50 质量集、chaos 20 轮、真实双进程租约接管和 Chromium/Firefox/WebKit 报告。单次 campaign 通过 PostgreSQL 锁与持久计数限制最多 200 次实际 Qwen HTTP dispatch、16 次 Kolors dispatch、8 小时；每 Run 仍最多 50 点。
+- 图片盲评固定物化文生图和单参考图的 V1/V2 各 3 张，共 12 个匿名图片资产；自动部分只验证格式、尺寸、哈希、Kolors 模型与参考图血缘。只有完整 24 次报告与人工盲评共同签名后，才允许生成公众 rollout=0、单 owner、四个固定场景的生产 canary 计划。
+- 完整 `pnpm check` 退出码 0：frontend `216/216`、backend `480 passed / 78 条明确环境跳过`、mail `7/7`、manifest/build/bundle budget 通过；Playwright 六项目 `489 passed / 3 条条件跳过 / 0 failed`，覆盖 Chromium、Firefox、WebKit desktop、Chromium 360/390 与 WebKit 768。WebKit 显式取消 GIF Worker 场景的精确本地 module cancellation 已按因果范围收窄，该场景复跑 `5/5`。
+- 当前仍不可发布：签名 gate、GitHub CI、DEV 迁移 024/025、Render/Vercel/Mac Worker 同 SHA 和真实 DEV 24 次 Qwen3/Kolors A/B 尚未执行，因此也没有创建四次生产 owner canary。公众 rollout 保持 0；所有 Runtime V2/V2.1 开关保持关闭。
+
 ## 2026-08-25 Agent Harness V3（本地实现完成，未发布）
 
 - 新增内部 `AgentRuntimeHarness`，实际组装生产 Run service、Worker、Planner/Actor/Verifier、计费、PostgreSQL、S3/MinIO 与沙箱；Scripted Qwen/Kolors DSL 检查模型、thinking、采样、输出上限、Prompt hash、阶段工具和工具/Observation 配对。十二个命名 failpoint、barrier 与 Replay Oracle 可精确验证崩溃、租约接管、预算、回执和 append-only 事件重建。
