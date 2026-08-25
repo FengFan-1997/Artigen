@@ -3174,14 +3174,14 @@ const createAgentWorkerService = ({
     }
   };
 
-  const cleanupTerminalSandboxes = async ({ limit = 100 } = {}) => {
+  const cleanupTerminalSandboxes = async ({ limit = 100, userIds = null } = {}) => {
     if (
       typeof runService.listTerminalSandboxes !== 'function' ||
       typeof runService.markSandboxDestroyed !== 'function'
     ) {
       return { destroyed: 0, failed: 0 };
     }
-    const pending = await runService.listTerminalSandboxes({ limit });
+    const pending = await runService.listTerminalSandboxes({ limit, userIds });
     let destroyed = 0;
     let failed = 0;
     for (const entry of pending) {
@@ -3203,6 +3203,14 @@ const createAgentWorkerService = ({
     return { destroyed, failed };
   };
 
+  const cleanupTerminalState = async ({ limit = 100, userIds = null } = {}) => {
+    const receiptCleanup = typeof runService.reconcileTerminalReceipts === 'function'
+      ? await runService.reconcileTerminalReceipts({ limit, userIds })
+      : { runsReconciled: 0, receiptsResolved: 0 };
+    const sandboxCleanup = await cleanupTerminalSandboxes({ limit, userIds });
+    return { receiptCleanup, sandboxCleanup };
+  };
+
   return {
     processRun,
     workerId,
@@ -3215,11 +3223,12 @@ const createAgentWorkerService = ({
       readiness.desktopRelayReady = false;
       await desktopRelay.stop();
     },
+    cleanupTerminalState,
     expireStaleRuns: async (input) => {
       const expiredRuns = await runService.expireStaleRuns(input);
-      const sandboxCleanup = await cleanupTerminalSandboxes(input);
+      const terminalCleanup = await cleanupTerminalState(input);
       const privateData = await runService.purgeExpiredPrivateData?.(input);
-      return { expiredRuns, sandboxCleanup, privateData };
+      return { expiredRuns, ...terminalCleanup, privateData };
     }
   };
 };

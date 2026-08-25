@@ -314,11 +314,77 @@ test('Live Harness never downgrades an unverified V1 artifact to baseline eviden
 test('Live Harness closes the campaign before infrastructure and does so once', async () => {
   const order = [];
   const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.baselineUserId = '11111111-1111-4111-8111-111111111111';
+  harness.candidateUserId = '22222222-2222-4222-8222-222222222222';
   harness.campaignGuard = { close: async () => order.push('campaign') };
-  harness.worker = { stopInfrastructure: async () => order.push('worker') };
+  harness.worker = {
+    cleanupTerminalState: async ({ userIds }) => {
+      assert.deepEqual(userIds, [harness.baselineUserId, harness.candidateUserId]);
+      order.push('terminal');
+      return {
+        receiptCleanup: { runsReconciled: 1, receiptsResolved: 1 },
+        sandboxCleanup: { destroyed: 1, failed: 0 }
+      };
+    },
+    stopInfrastructure: async () => order.push('worker')
+  };
   harness.assetAdapter = { client: { destroy: () => order.push('s3') } };
   await Promise.all([harness.close(), harness.close()]);
-  assert.deepEqual(order, ['campaign', 'worker', 's3']);
+  assert.deepEqual(order, ['campaign', 'terminal', 'worker', 's3']);
+});
+
+test('Live Harness reports terminal cleanup failure but still stops infrastructure', async () => {
+  const order = [];
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.baselineUserId = '11111111-1111-4111-8111-111111111111';
+  harness.candidateUserId = '22222222-2222-4222-8222-222222222222';
+  harness.campaignGuard = { close: async () => order.push('campaign') };
+  harness.worker = {
+    cleanupTerminalState: async () => {
+      order.push('terminal');
+      return {
+        receiptCleanup: { runsReconciled: 0, receiptsResolved: 0 },
+        sandboxCleanup: { destroyed: 0, failed: 1 }
+      };
+    },
+    stopInfrastructure: async () => order.push('worker')
+  };
+  harness.assetAdapter = { client: { destroy: () => order.push('s3') } };
+  await assert.rejects(harness.close(), /AGENT_LIVE_EVAL_CLOSE_FAILED/);
+  assert.deepEqual(order, ['campaign', 'terminal', 'worker', 's3']);
+});
+
+test('Live Harness drain check keeps ambiguous receipts as audit evidence but rejects active receipt states', async () => {
+  const statements = [];
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.runIds = ['11111111-1111-4111-8111-111111111111'];
+  harness.baselineUserId = '22222222-2222-4222-8222-222222222222';
+  harness.candidateUserId = '33333333-3333-4333-8333-333333333333';
+  harness.queue = [];
+  harness.providerScheduler = { providerKey: 'siliconflow:Qwen/Qwen3-8B' };
+  harness.pool = {
+    async query(statement) {
+      statements.push(String(statement));
+      if (String(statement).includes('FROM wallets')) {
+        return { rows: [
+          { user_id: harness.baselineUserId, frozen_credits: 0 },
+          { user_id: harness.candidateUserId, frozen_credits: 0 }
+        ] };
+      }
+      return { rows: [{ count: 0 }] };
+    }
+  };
+  assert.equal(await harness.assertBatchDrained(), true);
+  const modelReceiptQuery = statements.find((statement) => (
+    statement.includes('agent_model_call_receipts')
+  ));
+  const toolReceiptQuery = statements.find((statement) => (
+    statement.includes('agent_tool_call_receipts')
+  ));
+  assert.match(modelReceiptQuery, /queued.*dispatched.*received/s);
+  assert.doesNotMatch(modelReceiptQuery, /ambiguous/);
+  assert.match(toolReceiptQuery, /state='dispatched'/);
+  assert.doesNotMatch(toolReceiptQuery, /ambiguous/);
 });
 
 test('Live eval cleanup is bounded and still attempts PostgreSQL shutdown', async () => {
