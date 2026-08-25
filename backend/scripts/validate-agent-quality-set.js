@@ -12,8 +12,8 @@ const deliverables = ['report', 'spreadsheet', 'presentation', 'website', 'image
 const ids = new Set();
 const errors = [];
 
-if (manifest?.version !== 2 || manifest?.runtime !== 'agent-runtime-v2') {
-  errors.push('expected executable agent-runtime-v2 quality manifest version 2');
+if (manifest?.version !== 3 || manifest?.runtime !== 'agent-harness-v3') {
+  errors.push('expected executable agent-harness-v3 quality manifest version 3');
 }
 if (tasks.length !== 50) {
   errors.push(`expected 50 tasks, received ${tasks.length}`);
