@@ -606,7 +606,11 @@ class AgentLiveEvalHarness {
       };
       return this.auditor.runQwenRequest(
         payload,
-        { phase: 'router', runtimeVersion },
+        {
+          phase: input.phase || 'router',
+          runtimeVersion,
+          promptHash: input.promptHash
+        },
         () => callSiliconFlowChat({
           ...input,
           credential: this.env.SILICONFLOW_API_KEY,

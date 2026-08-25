@@ -61,7 +61,7 @@ class LiveModelAuditor {
     if (payload.model !== TEXT_MODEL) throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_INVALID');
     this.protocol.validateRequest(payload);
     this.protocol.traceRequestProtocol(payload);
-    const phase = String(metadata.phase || (
+    const phase = String(metadata.runtimeStage || metadata.phase || (
       payload.response_format?.type === 'json_object' ? 'planner' : 'actor'
     ));
     const requestedRuntimeVersion = Number(metadata.runtimeVersion);
@@ -149,11 +149,17 @@ class LiveModelAuditor {
     ) {
       throw new Error(`AGENT_LIVE_EVAL_STRUCTURED_FORMAT_MISSING:${phase}`);
     }
-    if (['actor', 'subagent'].includes(phase) && payload.enable_thinking !== false) {
+    if (
+      ['router', 'planner', 'actor', 'verifier', 'subagent', 'final_summary'].includes(phase) &&
+      String(metadata.promptHash || '') !== requestPromptHash(payload)
+    ) {
+      throw new Error(`AGENT_LIVE_EVAL_PROMPT_HASH_MISMATCH:${phase}`);
+    }
+    if (['actor', 'subagent', 'final_summary'].includes(phase) && payload.enable_thinking !== false) {
       throw new Error(`AGENT_LIVE_EVAL_TOOL_STAGE_THINKING:${phase}`);
     }
     if (
-      ['planner', 'actor', 'verifier', 'subagent'].includes(phase) &&
+      ['router', 'planner', 'actor', 'verifier', 'subagent', 'final_summary'].includes(phase) &&
       !/^[a-f0-9]{64}$/i.test(String(metadata.promptHash || ''))
     ) {
       throw new Error(`AGENT_LIVE_EVAL_PROMPT_HASH_MISSING:${phase}`);

@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const test = require('node:test');
 const { Pool } = require('pg');
@@ -26,18 +27,27 @@ test('PostgreSQL conversation lifecycle encrypts, isolates, plans, authorizes an
     DESIGN_CONVERSATION_WORKER_ENABLED: 'true',
     DESIGN_CONVERSATION_RETENTION_DAYS: '30',
     DESIGN_PLANNER_V2_ENABLED: 'true',
+    AGENT_RUNTIME_V2_ENABLED: 'true',
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: String(userA),
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0',
     AGENT_ADAPTIVE_REASONING_ENABLED: 'true',
     AGENT_MODEL_PROVIDER: 'siliconflow',
     AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
     AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'73'.repeat(32)}`
   };
+  const capturedModelRequests = [];
+  let plannerAttempts = 0;
   const service = createDesignConversationService({
     pool,
     env,
-    chatGenerate: async ({ messages }) => {
+    chatGenerate: async (input) => {
+      const { messages } = input;
+      capturedModelRequests.push(input);
       const system = String(messages?.[0]?.content || '');
       const body = String(messages?.at(-1)?.content || '');
       if (system.includes('planning component')) {
+        plannerAttempts += 1;
+        if (plannerAttempts === 1) return { text: 'null' };
         return { text: JSON.stringify({
           goal: '调研公开资料，制作机密新品报告和演示文稿',
           complexity: 'high',
@@ -115,6 +125,14 @@ test('PostgreSQL conversation lifecycle encrypts, isolates, plans, authorizes an
     assert.equal(hydrated.executions[0].routeKind, 'tool_task');
     assert.equal(hydrated.executions[0].toolId, 'ai-design');
     assert.equal(hydrated.executions[0].sourceMessageId, hydrated.messages[1].messageId);
+    assert.ok(capturedModelRequests.length >= 1);
+    for (const request of capturedModelRequests) {
+      const expectedPromptHash = crypto.createHash('sha256')
+        .update(JSON.stringify({ messages: request.messages, tools: [] }))
+        .digest('hex');
+      assert.equal(request.promptHash, expectedPromptHash);
+      assert.ok(['router', 'planner'].includes(request.phase));
+    }
     const raised = await service.increaseExecutionBudget({
       userId: userA,
       conversationId,
@@ -149,6 +167,16 @@ test('PostgreSQL conversation lifecycle encrypts, isolates, plans, authorizes an
     assert.equal(agentExecution.routeKind, 'agent_run');
     assert.equal(agentExecution.plan.taskSpec.goal, '调研公开资料，制作机密新品报告和演示文稿');
     assert.deepEqual(agentExecution.plan.taskSpec.deliverables, ['report', 'presentation']);
+    const plannerRequests = capturedModelRequests.filter((request) => request.phase === 'planner');
+    assert.equal(plannerRequests.length, 2);
+    assert.deepEqual(plannerRequests.map((request) => request.enableThinking), [true, false]);
+    assert.notEqual(plannerRequests[0].promptHash, plannerRequests[1].promptHash);
+    for (const request of capturedModelRequests) {
+      const expectedPromptHash = crypto.createHash('sha256')
+        .update(JSON.stringify({ messages: request.messages, tools: [] }))
+        .digest('hex');
+      assert.equal(request.promptHash, expectedPromptHash);
+    }
     const storedExecution = await pool.query(
       'SELECT plan::text AS plan FROM design_executions WHERE id=$1',
       [agentExecution.executionId]
