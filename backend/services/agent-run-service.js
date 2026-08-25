@@ -1762,7 +1762,15 @@ const createAgentRunService = ({
     return publicRun(resumed, { maxSteps: config.maxSteps });
   };
 
-  const consumeKnownCancellationCosts = async (client, runId) => {
+  const consumeKnownTerminalCosts = async (client, runId, {
+    outcome = 'cancelled',
+    receiptErrorCode = 'AGENT_CANCELLED_AFTER_RECEIPT',
+    unreadableErrorCode = 'AGENT_CANCELLED_RECEIPT_UNREADABLE',
+    eventPhase = 'cancelled'
+  } = {}) => {
+    const normalizedOutcome = ['succeeded', 'failed', 'cancelled'].includes(outcome)
+      ? outcome
+      : 'failed';
     const receivedModels = await client.query(
       `SELECT receipt.*,reservation.state AS reservation_state,
               reservation.reservation_key,call.subagent_id
@@ -1770,7 +1778,14 @@ const createAgentRunService = ({
          JOIN agent_model_calls call ON call.id=receipt.id
          JOIN agent_budget_reservations reservation
            ON reservation.run_id=receipt.run_id AND reservation.model_call_id=receipt.id
-        WHERE receipt.run_id=$1 AND receipt.state='received'
+        WHERE receipt.run_id=$1
+          AND (
+            receipt.state='received'
+            OR (
+              receipt.state='consumed'
+              AND reservation.state IN ('reserved','released')
+            )
+          )
         FOR UPDATE OF receipt,call,reservation`,
       [runId]
     );
@@ -1791,17 +1806,33 @@ const createAgentRunService = ({
         });
       } catch {
         await client.query(
+          `UPDATE agent_model_call_receipts
+              SET state='consumed',consumed_at=COALESCE(consumed_at,clock_timestamp()),
+                  updated_at=clock_timestamp()
+            WHERE id=$1 AND run_id=$2 AND state='received'`,
+          [receipt.id, runId]
+        );
+        await client.query(
+          `UPDATE agent_budget_reservations
+              SET state='consumed',actual_credits=0,
+                  consumed_at=COALESCE(consumed_at,clock_timestamp()),
+                  released_at=NULL,updated_at=clock_timestamp()
+            WHERE run_id=$1 AND reservation_key=$2
+              AND state IN ('reserved','released')`,
+          [runId, receipt.reservation_key]
+        );
+        await client.query(
           `UPDATE agent_model_calls
-              SET outcome='cancelled',error_code='AGENT_CANCELLED_RECEIPT_UNREADABLE',
+              SET outcome=$2,error_code=$3,
                   finished_at=COALESCE(finished_at,clock_timestamp())
             WHERE id=$1`,
-          [receipt.id]
+          [receipt.id, normalizedOutcome, unreadableErrorCode]
         );
         await insertEvent(client, {
           runId,
           type: 'model.call.receipt_unreadable',
-          phase: 'cancelled',
-          summary: '取消时无法核验已收到的模型回执，未知费用由平台承担',
+          phase: eventPhase,
+          summary: '终态清理时无法解密已收到的模型回执，回执已封存且未知费用由平台承担',
           data: { callId: receipt.id }
         });
         continue;
@@ -1817,32 +1848,34 @@ const createAgentRunService = ({
         inputTokens * config.siliconFlowInputCreditsPerMillion +
         outputTokens * config.siliconFlowOutputCreditsPerMillion
       ) / 1_000_000;
-      if (receipt.reservation_state === 'reserved') {
+      if (['reserved', 'released'].includes(receipt.reservation_state)) {
         await client.query(
           `UPDATE agent_budget_reservations
               SET state='consumed',actual_credits=$3,consumed_at=clock_timestamp(),
-                  updated_at=clock_timestamp()
-            WHERE run_id=$1 AND reservation_key=$2 AND state='reserved'`,
+                  released_at=NULL,updated_at=clock_timestamp()
+            WHERE run_id=$1 AND reservation_key=$2 AND state IN ('reserved','released')`,
           [runId, receipt.reservation_key, actualCredits]
         );
       }
-      if (['reserved', 'consumed'].includes(receipt.reservation_state)) {
-        await client.query(
-          `UPDATE agent_model_call_receipts
-              SET state='consumed',consumed_at=COALESCE(consumed_at,clock_timestamp()),
-                  updated_at=clock_timestamp()
-            WHERE id=$1 AND run_id=$2 AND state='received'`,
-          [receipt.id, runId]
-        );
-      }
+      // A readable received response is a determined Provider result. Restore
+      // its internal reservation even if an older terminal path released it so
+      // replay keeps receipt and budget state consistent; a settled refundable
+      // hold still means the platform, not the user, absorbs the cost.
+      await client.query(
+        `UPDATE agent_model_call_receipts
+            SET state='consumed',consumed_at=COALESCE(consumed_at,clock_timestamp()),
+                updated_at=clock_timestamp()
+          WHERE id=$1 AND run_id=$2 AND state='received'`,
+        [receipt.id, runId]
+      );
       await client.query(
         `UPDATE agent_model_calls
             SET input_tokens=GREATEST(input_tokens,$2),
                 output_tokens=GREATEST(output_tokens,$3),
-                outcome='cancelled',error_code='AGENT_CANCELLED_AFTER_RECEIPT',
+                outcome=$4,error_code=$5,
                 finished_at=COALESCE(finished_at,clock_timestamp())
           WHERE id=$1`,
-        [receipt.id, inputTokens, outputTokens]
+        [receipt.id, inputTokens, outputTokens, normalizedOutcome, receiptErrorCode]
       );
     }
 
@@ -1907,7 +1940,7 @@ const createAgentRunService = ({
         WHERE id=$1 RETURNING *`,
       [runId]
     );
-    const knownActualCredits = await consumeKnownCancellationCosts(client, runId);
+    const knownActualCredits = await consumeKnownTerminalCosts(client, runId);
     await settleAgentBudget({
       client,
       runId,
@@ -3753,10 +3786,16 @@ const createAgentRunService = ({
     if (workerId !== null || leaseEpoch !== null) {
       assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     }
+    const knownActualCredits = await consumeKnownTerminalCosts(client, runId, {
+      outcome: 'failed',
+      receiptErrorCode: 'AGENT_FAILED_AFTER_RECEIPT',
+      unreadableErrorCode: 'AGENT_FAILED_RECEIPT_UNREADABLE',
+      eventPhase: 'failed'
+    });
     const settlement = await settleAgentBudget({
       client,
       runId,
-      actualCredits,
+      actualCredits: Math.max(Number(actualCredits || 0), knownActualCredits),
       refundable,
       reason: sanitizeText(errorCode, 100)
     });
@@ -3792,6 +3831,103 @@ const createAgentRunService = ({
     });
     return result.rows[0];
   });
+
+  const reconcileTerminalReceipts = async ({ limit = 100, userIds = null } = {}) => {
+    const bounded = Math.max(1, Math.min(1000, Number(limit) || 100));
+    const scopedUserIds = Array.isArray(userIds)
+      ? [...new Set(userIds.map((value) => String(value || '').trim()).filter(Boolean))]
+      : [];
+    if (scopedUserIds.some((value) => !UUID_RE.test(value))) {
+      throw new TypeError('AGENT_TERMINAL_RECEIPT_USER_SCOPE_INVALID');
+    }
+    const candidates = await pool.query(
+      `SELECT DISTINCT run.id,run.status
+         FROM agent_runs run
+         JOIN agent_model_call_receipts receipt ON receipt.run_id=run.id
+         JOIN agent_budget_reservations reservation
+           ON reservation.run_id=receipt.run_id AND reservation.model_call_id=receipt.id
+        WHERE run.status IN ('succeeded','failed','cancelled')
+          AND (
+            receipt.state='received'
+            OR (
+              receipt.state='consumed'
+              AND reservation.state IN ('reserved','released')
+            )
+          )
+          AND ($2::uuid[] IS NULL OR run.user_id=ANY($2::uuid[]))
+        ORDER BY run.id
+        LIMIT $1`,
+      [bounded, scopedUserIds.length ? scopedUserIds : null]
+    );
+    let runsReconciled = 0;
+    let receiptsResolved = 0;
+    for (const candidate of candidates.rows) {
+      const reconciled = await withTransaction(pool, async (client) => {
+        const run = await client.query(
+          `SELECT id,status FROM agent_runs WHERE id=$1 FOR UPDATE`,
+          [candidate.id]
+        );
+        if (!run.rowCount || !TERMINAL_STATUSES.has(run.rows[0].status)) return 0;
+        const before = await client.query(
+          `SELECT count(*)::integer AS count
+             FROM agent_model_call_receipts receipt
+             JOIN agent_budget_reservations reservation
+               ON reservation.run_id=receipt.run_id AND reservation.model_call_id=receipt.id
+            WHERE receipt.run_id=$1
+              AND (
+                receipt.state='received'
+                OR (
+                  receipt.state='consumed'
+                  AND reservation.state IN ('reserved','released')
+                )
+              )`,
+          [candidate.id]
+        );
+        if (Number(before.rows[0]?.count || 0) === 0) return 0;
+        const terminalOutcome = run.rows[0].status === 'cancelled'
+          ? 'cancelled'
+          : run.rows[0].status === 'succeeded'
+            ? 'succeeded'
+            : 'failed';
+        await consumeKnownTerminalCosts(client, candidate.id, {
+          outcome: terminalOutcome,
+          receiptErrorCode: terminalOutcome === 'cancelled'
+            ? 'AGENT_CANCELLED_AFTER_RECEIPT'
+            : terminalOutcome === 'succeeded'
+              ? null
+              : 'AGENT_FAILED_AFTER_RECEIPT',
+          unreadableErrorCode: terminalOutcome === 'cancelled'
+            ? 'AGENT_CANCELLED_RECEIPT_UNREADABLE'
+            : 'AGENT_FAILED_RECEIPT_UNREADABLE',
+          eventPhase: run.rows[0].status
+        });
+        const after = await client.query(
+          `SELECT count(*)::integer AS count
+             FROM agent_model_call_receipts receipt
+             JOIN agent_budget_reservations reservation
+               ON reservation.run_id=receipt.run_id AND reservation.model_call_id=receipt.id
+            WHERE receipt.run_id=$1
+              AND (
+                receipt.state='received'
+                OR (
+                  receipt.state='consumed'
+                  AND reservation.state IN ('reserved','released')
+                )
+              )`,
+          [candidate.id]
+        );
+        return Math.max(
+          0,
+          Number(before.rows[0]?.count || 0) - Number(after.rows[0]?.count || 0)
+        );
+      });
+      if (reconciled > 0) {
+        runsReconciled += 1;
+        receiptsResolved += reconciled;
+      }
+    }
+    return { runsReconciled, receiptsResolved };
+  };
 
   const expireStaleRuns = async ({ limit = 100 } = {}) => {
     const bounded = Math.max(1, Math.min(1000, Number(limit) || 100));
@@ -4053,12 +4189,19 @@ const createAgentRunService = ({
     return released + recovered;
   };
 
-  const listTerminalSandboxes = async ({ limit = 100 } = {}) => {
+  const listTerminalSandboxes = async ({ limit = 100, userIds = null } = {}) => {
+    const scopedUserIds = Array.isArray(userIds)
+      ? [...new Set(userIds.map((value) => String(value || '').trim()).filter(Boolean))]
+      : [];
+    if (scopedUserIds.some((value) => !UUID_RE.test(value))) {
+      throw new TypeError('AGENT_TERMINAL_SANDBOX_USER_SCOPE_INVALID');
+    }
     const result = await pool.query(
       `SELECT run.id,run.sandbox_ref,
               CASE WHEN run.sandbox_ref IS NULL THEN true ELSE false END AS derived_reference
          FROM agent_runs run
         WHERE run.status IN ('succeeded','failed','cancelled')
+          AND ($2::uuid[] IS NULL OR run.user_id=ANY($2::uuid[]))
           AND (
             run.sandbox_ref IS NOT NULL
             OR EXISTS(
@@ -4074,7 +4217,10 @@ const createAgentRunService = ({
           )
         ORDER BY run.finished_at NULLS FIRST,run.updated_at
         LIMIT $1`,
-      [Math.max(1, Math.min(1000, Number(limit) || 100))]
+      [
+        Math.max(1, Math.min(1000, Number(limit) || 100)),
+        scopedUserIds.length ? scopedUserIds : null
+      ]
     );
     return result.rows.map((row) => ({
       runId: row.id,
@@ -4411,6 +4557,7 @@ const createAgentRunService = ({
     listRuns,
     listToolReceipts,
     pinRuntimeProfile,
+    reconcileTerminalReceipts,
     listTerminalSandboxes,
     loadPrivateContext,
     loadSubagentContext,

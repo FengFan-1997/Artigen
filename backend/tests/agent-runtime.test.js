@@ -964,10 +964,15 @@ test('lease loss wins over a simultaneous work failure and keeps the underlying 
 test('worker reconciliation destroys terminal sandboxes and clears their public references', async () => {
   const destroyed = [];
   const marked = [];
+  const receiptScopes = [];
   const service = createAgentWorkerService({
     pool: {},
     runService: {
       expireStaleRuns: async () => 1,
+      reconcileTerminalReceipts: async (input) => {
+        receiptScopes.push(input);
+        return { runsReconciled: 1, receiptsResolved: 2 };
+      },
       listTerminalSandboxes: async () => [{
         runId: '11111111-1111-4111-8111-111111111111',
         sandboxRef: null,
@@ -995,7 +1000,8 @@ test('worker reconciliation destroys terminal sandboxes and clears their public 
     imageService: {}
   });
 
-  const result = await service.expireStaleRuns({ limit: 10 });
+  const userIds = ['11111111-1111-4111-8111-111111111119'];
+  const result = await service.expireStaleRuns({ limit: 10, userIds });
   assert.deepEqual(destroyed, ['sandbox-terminal-1']);
   assert.deepEqual(marked, [{
     runId: '11111111-1111-4111-8111-111111111111',
@@ -1003,6 +1009,8 @@ test('worker reconciliation destroys terminal sandboxes and clears their public 
     derivedReference: true
   }]);
   assert.deepEqual(result.sandboxCleanup, { destroyed: 1, failed: 0 });
+  assert.deepEqual(result.receiptCleanup, { runsReconciled: 1, receiptsResolved: 2 });
+  assert.deepEqual(receiptScopes, [{ limit: 10, userIds }]);
 });
 
 test('terminal sandbox reconciliation leaves failed cleanup pending for the next pass', async () => {

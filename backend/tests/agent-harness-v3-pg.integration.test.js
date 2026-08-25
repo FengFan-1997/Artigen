@@ -1493,6 +1493,83 @@ test('Harness V3 cancellation after a model receipt leaves no running call or re
   }
 });
 
+test('Harness V3 failed terminal transaction consumes a readable receipt without charging a refundable failure', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const controller = new RuntimeTestController();
+  controller.setBarrier('after_receipt', {
+    participants: 1,
+    timeoutMs: 5_000,
+    manualRelease: true
+  });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({
+      pool,
+      controller,
+      providerScript: [verifiedTextScript()[0]]
+    });
+    const created = await harness.createRun({
+      objective: '验证失败终态消费已确定模型回执，同时保持可退款失败不向用户扣费。',
+      deliverables: [],
+      capabilities: { files: true, shell: true }
+    });
+    const attempt = harness.worker.processRun(created.runId);
+    await controller.waitForArrivals('after_receipt', { arrivals: 1, timeoutMs: 5_000 });
+    const beforeFailure = await harness.snapshot(created.runId);
+    assert.deepEqual(beforeFailure.persistent.receipts.map((receipt) => receipt.state), ['received']);
+    const failed = await harness.runService.failRun({
+      runId: created.runId,
+      errorCode: 'AGENT_TEST_REFUNDABLE_FAILURE',
+      refundable: true
+    });
+    assert.equal(failed.status, 'failed');
+    controller.releaseBarrier('after_receipt');
+    const workerResult = await attempt;
+    assert.equal(workerResult.status, 'lease_lost');
+    const terminal = await harness.snapshot(created.runId);
+    assert.deepEqual(terminal.persistent.receipts.map((receipt) => receipt.state), ['consumed']);
+    assert.deepEqual(terminal.persistent.modelCalls.map((call) => call.outcome), ['failed']);
+    assert.equal(Number(terminal.persistent.run.charged_credits), 0);
+    assert.equal(Number(terminal.persistent.reservations[0].actual_credits) > 0, true);
+    assert.equal(terminal.persistent.reservations[0].state, 'consumed');
+    assert.equal(terminal.persistent.holds[0].status, 'released');
+    await harness.assertInvariants(created.runId);
+
+    await pool.query(
+      `UPDATE agent_model_call_receipts
+          SET state='received',consumed_at=NULL,updated_at=clock_timestamp()
+        WHERE run_id=$1`,
+      [created.runId]
+    );
+    await pool.query(
+      `UPDATE agent_budget_reservations
+          SET state='released',actual_credits=NULL,consumed_at=NULL,
+              released_at=clock_timestamp(),updated_at=clock_timestamp()
+        WHERE run_id=$1`,
+      [created.runId]
+    );
+    const reconciled = await harness.runService.reconcileTerminalReceipts({
+      limit: 10,
+      userIds: [harness.userId]
+    });
+    assert.deepEqual(reconciled, { runsReconciled: 1, receiptsResolved: 1 });
+    const afterReconcile = await harness.snapshot(created.runId);
+    assert.deepEqual(afterReconcile.persistent.receipts.map((receipt) => receipt.state), ['consumed']);
+    assert.deepEqual(afterReconcile.persistent.reservations.map((entry) => entry.state), ['consumed']);
+    assert.equal(Number(afterReconcile.persistent.reservations[0].actual_credits) > 0, true);
+    assert.equal(Number(afterReconcile.persistent.run.charged_credits), 0);
+  } finally {
+    try {
+      controller.releaseBarrier('after_receipt');
+    } catch {}
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
 test('Harness V3 cancellation survives an unreadable model receipt without charging unknown usage', {
   skip: !enabled,
   timeout: 30_000
@@ -1533,9 +1610,10 @@ test('Harness V3 cancellation survives an unreadable model receipt without charg
     assert.equal(workerResult.status, 'lease_lost');
     const terminal = await harness.snapshot(created.runId);
     assert.equal(Number(terminal.persistent.run.charged_credits), 0);
-    assert.deepEqual(terminal.persistent.receipts.map((receipt) => receipt.state), ['received']);
+    assert.deepEqual(terminal.persistent.receipts.map((receipt) => receipt.state), ['consumed']);
     assert.deepEqual(terminal.persistent.modelCalls.map((call) => call.outcome), ['cancelled']);
-    assert.deepEqual(terminal.persistent.reservations.map((entry) => entry.state), ['released']);
+    assert.deepEqual(terminal.persistent.reservations.map((entry) => entry.state), ['consumed']);
+    assert.deepEqual(terminal.persistent.reservations.map((entry) => Number(entry.actual_credits)), [0]);
     assert.equal(terminal.persistent.holds[0].status, 'released');
     assert.equal(
       terminal.persistent.events.filter((event) => (

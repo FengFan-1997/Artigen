@@ -355,6 +355,13 @@ class AgentLiveEvalHarness {
         runtimeReadiness: instance.runtimeReadiness
       });
       await instance.worker.startInfrastructure();
+      const initialCleanup = await instance.worker.cleanupTerminalState?.({
+        limit: 1000,
+        userIds: [instance.baselineUserId, instance.candidateUserId]
+      });
+      if (Number(initialCleanup?.sandboxCleanup?.failed || 0) > 0) {
+        throw new Error('AGENT_LIVE_EVAL_TERMINAL_CLEANUP_FAILED');
+      }
       instance.oracle = new AgentReplayOracle({ pool, runService: instance.runService });
       return instance;
     } catch (error) {
@@ -888,7 +895,7 @@ class AgentLiveEvalHarness {
       this.pool.query(
         `SELECT count(*)::int AS count FROM agent_model_call_receipts receipt
          WHERE receipt.run_id=ANY($1::uuid[])
-           AND receipt.state IN ('queued','dispatched','received','ambiguous')`,
+           AND receipt.state IN ('queued','dispatched','received')`,
         [runIds]
       ),
       this.pool.query(
@@ -898,7 +905,7 @@ class AgentLiveEvalHarness {
       ),
       this.pool.query(
         `SELECT count(*)::int AS count FROM agent_tool_call_receipts
-          WHERE run_id=ANY($1::uuid[]) AND state IN ('dispatched','ambiguous')`,
+          WHERE run_id=ANY($1::uuid[]) AND state='dispatched'`,
         [runIds]
       ),
       this.pool.query(
@@ -944,6 +951,16 @@ class AgentLiveEvalHarness {
       // Abort the campaign first so no provider or planner callback can acquire
       // new work while infrastructure and sockets are being torn down.
       await this.campaignGuard?.close().catch((error) => failures.push(error));
+      if (typeof this.worker?.cleanupTerminalState === 'function') {
+        await this.worker.cleanupTerminalState({
+          limit: 1000,
+          userIds: [this.baselineUserId, this.candidateUserId].filter(Boolean)
+        }).then((cleanup) => {
+          if (Number(cleanup?.sandboxCleanup?.failed || 0) > 0) {
+            throw new Error('AGENT_LIVE_EVAL_TERMINAL_CLEANUP_FAILED');
+          }
+        }).catch((error) => failures.push(error));
+      }
       await this.worker?.stopInfrastructure().catch((error) => failures.push(error));
       try {
         this.assetAdapter?.client?.destroy?.();
