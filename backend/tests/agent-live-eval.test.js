@@ -118,6 +118,8 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     loaded.runtimeEnv.CUA_PYTHON,
     path.resolve(__dirname, '../.venv-agent/bin/python')
   );
+  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION, '20');
+  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION, '160');
   assert.equal(loaded.evidenceKeyMaterial, secrets.get('AGENT_LIVE_EVAL_EVIDENCE_KEY'));
   assert.throws(
     () => loadLiveEvalSecrets({ service: 'artigen-production', readSecret: () => 'x' }),
@@ -126,6 +128,48 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
   assert.throws(
     () => loadLiveEvalSecrets({ service: 'artigen-agent-dev-worker', readSecret: () => '' }),
     /KEYCHAIN_INCOMPLETE/
+  );
+});
+
+test('Live eval runner replaces stale zero pricing but rejects malformed pricing', () => {
+  const secrets = new Map([
+    ['DATABASE_URL', 'postgres://synthetic/dev_artigen'],
+    ['AGENT_PAYLOAD_ENCRYPTION_KEY', 'payload-key'],
+    ['SILICONFLOW_API_KEY', 'provider-key'],
+    ['S3_ENDPOINT', 'https://s3.invalid'],
+    ['S3_BUCKET', 'dev-bucket'],
+    ['S3_REGION', 'synthetic-region'],
+    ['S3_ACCESS_KEY_ID', 'access-key'],
+    ['S3_SECRET_ACCESS_KEY', 'secret-key'],
+    ['AGENT_LIVE_EVAL_GATE_KEY', `v1:hex:${'ab'.repeat(32)}`],
+    ['AGENT_LIVE_EVAL_EVIDENCE_KEY', `v1:hex:${'ef'.repeat(32)}`]
+  ]);
+  const readSecret = ({ account }) => secrets.get(account) || '';
+  const loaded = loadLiveEvalSecrets({
+    env: {
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0'
+    },
+    service: 'artigen-agent-dev-worker',
+    readSecret
+  });
+  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION, '20');
+  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION, '160');
+  assert.throws(
+    () => loadLiveEvalSecrets({
+      env: { AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: 'not-a-number' },
+      service: 'artigen-agent-dev-worker',
+      readSecret
+    }),
+    /AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION_INVALID/
+  );
+  assert.throws(
+    () => loadLiveEvalSecrets({
+      env: { AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '-1' },
+      service: 'artigen-agent-dev-worker',
+      readSecret
+    }),
+    /AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION_INVALID/
   );
 });
 
