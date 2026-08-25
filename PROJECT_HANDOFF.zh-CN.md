@@ -8,6 +8,14 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-08-25 Agent Harness V3（本地实现完成，未发布）
+
+- 新增内部 `AgentRuntimeHarness`，实际组装生产 Run service、Worker、Planner/Actor/Verifier、计费、PostgreSQL、S3/MinIO 与沙箱；Scripted Qwen/Kolors DSL 检查模型、thinking、采样、输出上限、Prompt hash、阶段工具和工具/Observation 配对。十二个命名 failpoint、barrier 与 Replay Oracle 可精确验证崩溃、租约接管、预算、回执和 append-only 事件重建。
+- 工具 Trace 只记录运行时真正接受的调用与 Observation；`run.ready_to_finalize` 固化当时模型调用数，Replay Oracle 从 append-only 事件、步骤、回执、预算、子 Agent、审批和交付物重建规范状态，拒绝完成边界后新增调用、预算倒退、未验证成功或文本任务缺少 SHA。
+- 50 项质量集已成为真实可执行规格，按报告、表格、演示、网站、图片各 10 项运行完整状态机和确定性验证器。PDF、XLSX、PPTX、网站恶意指令作为不可信证据进入独立 Verifier；图片只自动验证格式、尺寸、哈希、Kolors 模型和参考图血缘。
+- Harness 只允许名称带 `_test` / `_ci` 的私有地址数据库；Teardown 先走正式可退款结算，再删除精确 S3 对象和数据库 fixture。CI 新增 PostgreSQL 16、固定 digest MinIO 的五组质量分片和 chaos job；PG 集成不能静默跳过，失败只上传内容无关 Trace 与数据库摘要。
+- 本地真实状态机质量集 `50/50`；20 轮 chaos 覆盖 27 个租约、回执、取消、恢复、计费与父子预算场景，共 `540/540`、0 flaky；固定 digest MinIO + PostgreSQL 16 的 Harness/V2/subagent 集成为 `37/37`、0 skip。完整远端 GitHub CI 尚未执行，故当前仍不可发布。
+
 ## 2026-08-25 Agent Runtime V2.1 durability（本地实现完成，未发布）
 
 - Artigen 继续使用现有 Node.js、PostgreSQL、Mac Worker、沙箱、审批和计费体系，没有更换 Agent 框架。迁移 `025_agent_runtime_v2_1_durability` 为 Run 增加 lease epoch、不可变 runtime profile、最终文本 SHA 与语义验证，并新增加密模型调用回执、加密 Shell/Kolors 工具回执和父/子共享预算预留。

@@ -278,6 +278,18 @@ test('Project memory suggestions only contain literal user-provided text and are
   assert.equal(candidates.some((candidate) => JSON.stringify(candidate).includes('模型自行推断')), false);
 });
 
+test('The 50-case quality manifest compiles into executable routes, skills, tools and validators', () => {
+  assert.equal(qualityManifest.version, 3);
+  assert.equal(qualityManifest.cases.length, 50);
+  const evaluationDir = path.resolve(__dirname, '../evaluation');
+  for (const task of qualityManifest.cases) {
+    const compiled = compileQualityCase({ manifest: qualityManifest, task, evaluationDir });
+    assert.deepEqual(validateCompiledQualityCase(compiled), [], task.id);
+    assert.equal(compiled.taskSpec.goal, task.objective);
+    assert.ok(compiled.deterministicValidators.length >= 3);
+  }
+});
+
 test('Quality fixtures cannot escape the synthetic fixture and public-asset roots', () => {
   const evaluationDir = path.resolve(__dirname, '../evaluation');
   const manifest = {

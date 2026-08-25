@@ -5,6 +5,8 @@ on:
     branches: [dev, main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "23 17 * * *"
 
 permissions:
   contents: read
@@ -147,6 +149,159 @@ jobs:
       - name: Run ${{ matrix.project }} shard ${{ matrix.shard }}
         run: pnpm --filter personal exec playwright test --project=${{ matrix.project }} --fully-parallel --shard=${{ matrix.shard }}
 
+  harness-deterministic:
+    name: Agent Harness V3 (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [report, spreadsheet, presentation, website, image]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: artigen
+          POSTGRES_PASSWORD: artigen_ci
+          POSTGRES_DB: artigen_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U artigen -d artigen_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CI: true
+      RUN_POSTGRES_INTEGRATION: "1"
+      DATABASE_URL: postgresql://artigen:artigen_ci@127.0.0.1:5432/artigen_test?sslmode=disable
+      TASK_PAYLOAD_ENCRYPTION_KEY: hex:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+      MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+      MINIO_TEST_BUCKET: artigen-harness-${{ matrix.group }}
+      MINIO_ROOT_USER: artigen-minio
+      MINIO_ROOT_PASSWORD: artigen-minio-secret
+      AGENT_QUALITY_GROUP: ${{ matrix.group }}
+      AGENT_QUALITY_CONCURRENCY: "2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start pinned MinIO fixture
+        run: |
+          docker run --detach --name artigen-minio --publish 9000:9000 \
+            --env MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            --env MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs artigen-minio
+          exit 1
+
+      - name: Apply PostgreSQL 16 migrations
+        run: pnpm --filter backend db:migrate
+
+      - name: Execute the real Runtime quality group
+        run: pnpm eval:agent:deterministic
+
+      - name: Upload content-free Harness diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-harness-v3-${{ matrix.group }}
+          path: .artifacts/agent-harness-v3/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  harness-chaos:
+    name: Agent Harness V3 chaos (${{ github.event_name == 'schedule' && '20x' || '1x' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: artigen
+          POSTGRES_PASSWORD: artigen_ci
+          POSTGRES_DB: artigen_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U artigen -d artigen_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CI: true
+      RUN_POSTGRES_INTEGRATION: "1"
+      DATABASE_URL: postgresql://artigen:artigen_ci@127.0.0.1:5432/artigen_test?sslmode=disable
+      TASK_PAYLOAD_ENCRYPTION_KEY: hex:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+      MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+      MINIO_TEST_BUCKET: artigen-harness-chaos
+      MINIO_ROOT_USER: artigen-minio
+      MINIO_ROOT_PASSWORD: artigen-minio-secret
+      AGENT_CHAOS_REPEATS: ${{ github.event_name == 'schedule' && '20' || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start pinned MinIO fixture
+        run: |
+          docker run --detach --name artigen-minio --publish 9000:9000 \
+            --env MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            --env MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs artigen-minio
+          exit 1
+
+      - name: Apply PostgreSQL 16 migrations
+        run: pnpm --filter backend db:migrate
+
+      - name: Execute deterministic crash and concurrency injection
+        run: pnpm test:agent:chaos
+
+      - name: Upload content-free chaos diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-harness-v3-chaos
+          path: .artifacts/agent-harness-v3/
+          if-no-files-found: ignore
+          retention-days: 14
+
   release-policy:
     name: Release branch policy
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
@@ -170,7 +325,7 @@ jobs:
   release-gate:
     name: Release gate
     if: always()
-    needs: [core, e2e, release-policy]
+    needs: [core, e2e, harness-deterministic, harness-chaos, release-policy]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -178,10 +333,14 @@ jobs:
         env:
           CORE_RESULT: ${{ needs.core.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
+          HARNESS_RESULT: ${{ needs.harness-deterministic.result }}
+          CHAOS_RESULT: ${{ needs.harness-chaos.result }}
           POLICY_RESULT: ${{ needs.release-policy.result }}
         run: |
           test "$CORE_RESULT" = "success"
           test "$E2E_RESULT" = "success"
+          test "$HARNESS_RESULT" = "success"
+          test "$CHAOS_RESULT" = "success"
           case "$POLICY_RESULT" in
             success|skipped) ;;
             *) exit 1 ;;
