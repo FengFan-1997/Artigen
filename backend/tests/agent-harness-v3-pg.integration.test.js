@@ -331,6 +331,43 @@ test('Harness V3 drives a zero-file text run through the real PostgreSQL runtime
   }
 });
 
+test('Harness V3 reaches the Runtime V1 text baseline without touching V2 reservations', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({
+      pool,
+      envOverrides: {
+        AGENT_RUNTIME_V2_ENABLED: 'false',
+        AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0'
+      },
+      providerScript: [{ content: '已完成 Runtime V1 的纯文字答复。' }]
+    });
+    const created = await harness.createRun({
+      objective: '只返回一段文字，不创建文件。',
+      deliverables: [],
+      capabilities: { files: true, shell: true }
+    });
+    const terminal = await harness.runToTerminal(created.runId);
+    assert.equal(Number(terminal.snapshot.persistent.run.runtime_version), 1);
+    assert.equal(terminal.snapshot.persistent.run.status, 'failed');
+    assert.equal(terminal.snapshot.persistent.run.error_code, 'AGENT_VERIFICATION_INCOMPLETE');
+    assert.equal(terminal.snapshot.persistent.reservations.length, 0);
+    assert.equal(terminal.snapshot.persistent.holds.length, 1);
+    assert.equal(terminal.snapshot.persistent.holds[0].status, 'released');
+    assert.equal(
+      terminal.snapshot.persistent.events.filter((event) => event.event_type === 'run.failed').length,
+      1
+    );
+  } finally {
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
 test('Harness V3 cleanup releases an unresolved hold before deleting runtime fixtures', {
   skip: !enabled,
   timeout: 30_000

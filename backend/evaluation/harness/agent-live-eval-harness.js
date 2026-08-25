@@ -37,10 +37,48 @@ const { RuntimeTraceSink } = require('./runtime-trace-sink');
 const { keyFromMaterial, writeEncryptedEvidence } = require('./live-eval-evidence');
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'waiting_user', 'paused']);
+const DESIGN_EXECUTION_TERMINAL = new Set([
+  'waiting_clarification',
+  'waiting_upload',
+  'waiting_budget',
+  'waiting_authorization',
+  'succeeded',
+  'failed',
+  'cancelled'
+]);
 const LIVE_EVAL_DATABASE = 'dev_artigen';
 const MAX_WALL_CLOCK_MS = 8 * 60 * 60 * 1000;
 
 const enabled = (value) => /^(1|true|yes|on)$/i.test(String(value || '').trim());
+
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const waitForConversationExecution = async ({
+  service,
+  userId,
+  conversationId,
+  timeoutMs = 120_000,
+  pollMs = 100,
+  now = Date.now,
+  waitImpl = wait
+} = {}) => {
+  if (!service?.getConversation || !service?.processNextJob) {
+    throw new TypeError('AGENT_LIVE_EVAL_CONVERSATION_SERVICE_REQUIRED');
+  }
+  const deadline = now() + Math.max(1_000, Math.min(5 * 60_000, Number(timeoutMs) || 120_000));
+  while (now() < deadline) {
+    const hydrated = await service.getConversation({ userId, conversationId });
+    const execution = hydrated.executions?.at(-1) || null;
+    if (execution && DESIGN_EXECUTION_TERMINAL.has(execution.status)) {
+      return { hydrated, execution };
+    }
+    // addMessage() also starts a background planner. Calling this here is safe:
+    // the database lease makes one caller the owner while the other returns no work.
+    await service.processNextJob().catch(() => {});
+    await waitImpl(Math.max(10, Math.min(1_000, Number(pollMs) || 100)));
+  }
+  throw new Error('AGENT_LIVE_EVAL_CONVERSATION_TIMEOUT');
+};
 
 const liveEvalEnv = (base = {}, overrides = {}) => ({
   ...base,
@@ -593,9 +631,11 @@ class AgentLiveEvalHarness {
       message: entry.objective,
       attachments: []
     });
-    await service.processNextJob();
-    const hydrated = await service.getConversation({ userId, conversationId: created.conversationId });
-    const execution = hydrated.executions.at(-1);
+    const { execution } = await waitForConversationExecution({
+      service,
+      userId,
+      conversationId: created.conversationId
+    });
     if (execution?.routeKind !== 'reply' || execution?.status !== 'succeeded') {
       throw new Error(`AGENT_LIVE_EVAL_CONVERSATION_ROUTE:${execution?.routeKind || 'missing'}`);
     }
@@ -717,7 +757,16 @@ class AgentLiveEvalHarness {
     for (const forbidden of entry.forbiddenTools || []) {
       if (usedTools.has(forbidden)) errors.push(`forbidden_tool:${forbidden}`);
     }
-    if (errors.length) throw new Error(`AGENT_LIVE_EVAL_INVARIANT:${errors.join(',')}`);
+    const baselineTerminalFailure = cohort === 'v1' &&
+      run.status !== entry.expectedStatus &&
+      ['failed', 'cancelled', 'waiting_user', 'paused'].includes(run.status);
+    const fatalBaselineErrors = errors.filter((error) => (
+      ['runtime_version', 'budget', 'hold', 'ledger_exactly_once', 'artifact_verification'].includes(error) ||
+      error.startsWith('forbidden_tool:')
+    ));
+    if (errors.length && (!baselineTerminalFailure || fatalBaselineErrors.length)) {
+      throw new Error(`AGENT_LIVE_EVAL_INVARIANT:${errors.join(',')}`);
+    }
     const inputTokens = snapshot.persistent.modelCalls.reduce(
       (sum, call) => sum + Number(call.input_tokens || 0),
       0
@@ -745,6 +794,7 @@ class AgentLiveEvalHarness {
     const schemaFirstValid = [...structuredPhases.values()]
       .filter((turns) => turns.every((turn) => turn === 0)).length;
     return {
+      ok: !baselineTerminalFailure,
       scenarioId: entry.id,
       cohort,
       runId,
@@ -761,7 +811,16 @@ class AgentLiveEvalHarness {
       steps: snapshot.persistent.steps.length,
       artifactCount: artifacts.length,
       subagentCount: snapshot.persistent.subagents.length,
-      replaySha256: snapshot.reconstructed.digest
+      replaySha256: snapshot.reconstructed.digest,
+      ...(baselineTerminalFailure ? {
+        baselineFailure: {
+          code: /^[A-Z][A-Z0-9_]{2,100}$/.test(String(run.error_code || ''))
+            ? run.error_code
+            : 'AGENT_BASELINE_TERMINAL_FAILURE',
+          status: run.status,
+          invariantCodes: errors.slice(0, 20)
+        }
+      } : {})
     };
   }
 
@@ -875,9 +934,23 @@ class AgentLiveEvalHarness {
   }
 
   async close() {
-    await this.worker?.stopInfrastructure().catch(() => {});
-    this.assetAdapter?.client?.destroy?.();
-    await this.campaignGuard?.close();
+    if (this.closePromise) return this.closePromise;
+    this.closePromise = (async () => {
+      const failures = [];
+      // Abort the campaign first so no provider or planner callback can acquire
+      // new work while infrastructure and sockets are being torn down.
+      await this.campaignGuard?.close().catch((error) => failures.push(error));
+      await this.worker?.stopInfrastructure().catch((error) => failures.push(error));
+      try {
+        this.assetAdapter?.client?.destroy?.();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length) {
+        throw new AggregateError(failures, 'AGENT_LIVE_EVAL_CLOSE_FAILED');
+      }
+    })();
+    return this.closePromise;
   }
 }
 
@@ -890,5 +963,6 @@ module.exports = {
   fixtureForLiveEval,
   liveEvalEnv,
   readBody,
-  syntheticReferenceImage
+  syntheticReferenceImage,
+  waitForConversationExecution
 };
