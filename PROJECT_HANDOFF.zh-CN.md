@@ -1,12 +1,20 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-21（Asia/Shanghai）
+更新时间：2026-08-25（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
 本文只保留已经确定并产生持久影响的架构、代码、配置、迁移、部署和正式决定。开发中的具体进度、临时尝试、失败调试和下一条命令只记录在被 Git 忽略的 `HANDOFF.local.md`，不进入本文。
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
+
+## 2026-08-25 Agent Runtime V2.1 durability（本地实现完成，未发布）
+
+- Artigen 继续使用现有 Node.js、PostgreSQL、Mac Worker、沙箱、审批和计费体系，没有更换 Agent 框架。迁移 `025_agent_runtime_v2_1_durability` 为 Run 增加 lease epoch、不可变 runtime profile、最终文本 SHA 与语义验证，并新增加密模型调用回执、加密 Shell/Kolors 工具回执和父/子共享预算预留。
+- Worker 的全部写入必须匹配 `worker_id + lease_epoch`，租约丢失后 fail closed；`ready_to_finalize` 由同一事务完成验证、费用、终态和回执消费，模糊调用进入 `waiting_user`，不会自动重发或收取未确认费用。旧 Worker 失去租约后不能继续写库、结算或销毁新 Worker 可复用的确定性沙箱。
+- Shell 与 Kolors 的 durable receipt 绑定请求 SHA-256、预算、scope 与 lease epoch；已经产生副作用但没有可靠回执时只能由用户显式重试。取消事务先结算已收到且可解密的 Qwen 回执和已完成工具回执，再释放其余 reservation；损坏回执的未知成本由平台承担。
+- 预算表通过唯一索引保证一个模型调用只有一条 reservation，并通过 `(model_call_id, run_id)` 复合外键强制模型调用、回执和预算属于同一 Run。迁移 001→025 及这些约束已在全新 PostgreSQL 16 数据库通过；Runtime/Live 定向测试为 `147/147`，固定 digest MinIO 加真实 PostgreSQL 的完整 Harness/V2/subagent 组合为 `37/37`、0 skip。
+- 模型硬边界不变：全部文字、路由、规划、验证与父/子 Agent 只能使用 `Qwen/Qwen3-8B`；全部图片只能使用 `Kwai-Kolors/Kolors`。Runtime V2/V2.1 及新调度功能仍默认关闭，尚未执行 DEV/生产部署或真实 Provider 调用；未读取或操作 `ui-review/`，未修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。
 
 ## 2026-08-21 Agent Runtime V2 智能、性能与规范体系（本地实现完成，未发布）
 

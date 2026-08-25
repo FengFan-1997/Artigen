@@ -12,6 +12,10 @@ const capabilityObject = (values) => Object.fromEntries(
 
 const unique = (values) => [...new Set(values.filter(Boolean))];
 
+const isWithin = (root, candidate) => (
+  candidate === root || candidate.startsWith(`${root}${path.sep}`)
+);
+
 const compileQualityCase = ({ manifest, task, evaluationDir }) => {
   const defaults = manifest?.defaults || {};
   const deliverableRule = manifest?.deliverableRules?.[task?.deliverable];
@@ -51,6 +55,11 @@ const compileQualityCase = ({ manifest, task, evaluationDir }) => {
     ])
   );
   const availableTools = unique(Object.values(toolsByPhase).flat());
+  const repositoryRoot = path.resolve(evaluationDir, '../..');
+  const allowedFixtureRoots = [
+    path.resolve(evaluationDir, 'fixtures'),
+    path.resolve(repositoryRoot, 'frontend/public')
+  ];
   const taskSpec = normalizeTaskSpec({
     goal: task.objective,
     complexity: 'high',
@@ -75,6 +84,8 @@ const compileQualityCase = ({ manifest, task, evaluationDir }) => {
   return {
     ...task,
     expectedRoute: task.expectedRoute || defaults.expectedRoute,
+    expectedTerminalStatus: task.expectedTerminalStatus || defaults.expectedTerminalStatus,
+    scriptTemplate: task.scriptTemplate || deliverableRule.scriptTemplate,
     expectedSkillIds,
     expectedTools,
     forbiddenTools: unique([...(defaults.forbiddenTools || []), ...(task.forbiddenTools || [])]),
@@ -86,11 +97,29 @@ const compileQualityCase = ({ manifest, task, evaluationDir }) => {
     maxModelTurns: Number(task.maxModelTurns || defaults.maxModelTurns),
     maxDurationMs: Number(task.maxDurationMs || defaults.maxDurationMs),
     maxCredits: Number(task.maxCredits || defaults.maxCredits),
-    fixedInputs: fixedInputs.map((relativePath) => ({
-      relativePath,
-      absolutePath: path.resolve(evaluationDir, relativePath),
-      exists: fs.existsSync(path.resolve(evaluationDir, relativePath))
-    })),
+    maxReplans: Number(task.maxReplans ?? defaults.maxReplans),
+    requiredEvents: unique([
+      ...(defaults.requiredEvents || []),
+      ...(deliverableRule.requiredEvents || []),
+      ...(task.requiredEvents || []),
+      `run.${task.expectedTerminalStatus || defaults.expectedTerminalStatus}`
+    ]),
+    forbiddenEvents: unique([
+      ...(defaults.forbiddenEvents || []),
+      ...(deliverableRule.forbiddenEvents || []),
+      ...(task.forbiddenEvents || [])
+    ]).filter((event) => event !== `run.${task.expectedTerminalStatus || defaults.expectedTerminalStatus}`),
+    snapshotFields: unique(task.snapshotFields || defaults.snapshotFields || []),
+    allowedVariableFields: unique(task.allowedVariableFields || defaults.allowedVariableFields || []),
+    fixedInputs: fixedInputs.map((relativePath) => {
+      const absolutePath = path.resolve(evaluationDir, relativePath);
+      return {
+        relativePath,
+        absolutePath,
+        safePath: allowedFixtureRoots.some((root) => isWithin(root, absolutePath)),
+        exists: fs.existsSync(absolutePath)
+      };
+    }),
     selectedSkillIds,
     toolsByPhase,
     availableTools,
@@ -110,14 +139,24 @@ const validateCompiledQualityCase = (entry) => {
     if (entry.availableTools.includes(tool)) errors.push(`forbidden tool exposed ${tool}`);
   }
   for (const input of entry.fixedInputs) {
+    if (!input.safePath) errors.push(`fixture path forbidden ${input.relativePath}`);
     if (!input.exists) errors.push(`fixture missing ${input.relativePath}`);
   }
   if (entry.expectedRoute !== 'agent_run') errors.push(`unexpected route ${entry.expectedRoute}`);
+  if (!['succeeded', 'failed', 'cancelled', 'waiting_user'].includes(entry.expectedTerminalStatus)) {
+    errors.push(`invalid terminal status ${entry.expectedTerminalStatus}`);
+  }
+  if (!entry.scriptTemplate) errors.push('script template missing');
   if (!entry.deterministicValidators.length) errors.push('deterministic validators missing');
   if (entry.semanticRubric.length < 3) errors.push('semantic rubric incomplete');
   if (!Number.isFinite(entry.maxModelTurns) || entry.maxModelTurns < 1) errors.push('max model turns invalid');
   if (!Number.isFinite(entry.maxDurationMs) || entry.maxDurationMs < 1000) errors.push('max duration invalid');
   if (!Number.isFinite(entry.maxCredits) || entry.maxCredits < 1) errors.push('max credits invalid');
+  if (!Number.isSafeInteger(entry.maxReplans) || entry.maxReplans < 0 || entry.maxReplans > 3) {
+    errors.push('max replans invalid');
+  }
+  if (!entry.requiredEvents.length) errors.push('required events missing');
+  if (!entry.snapshotFields.length) errors.push('snapshot fields missing');
   return errors;
 };
 

@@ -337,8 +337,9 @@ const createAgentArtifactService = ({
 } = {}) => {
   if (!pool || !sandbox || !runService) throw new TypeError('AGENT_ARTIFACT_DEPENDENCY_REQUIRED');
 
-  const ingest = async ({ run, sandboxName, declaration }) => {
+  const ingest = async ({ run, sandboxName, declaration, workerLease = null }) => {
     const normalized = assertArtifactDeclaration(declaration);
+    if (workerLease) await runService.assertWorkerLeaseActive(workerLease);
     if (normalized.sources.length) {
       const observedUrls = await runService.listObservedSources({ runId: run.id });
       assertSourcesObserved(normalized.sources, observedUrls);
@@ -363,6 +364,7 @@ const createAgentArtifactService = ({
       );
     }
     const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    if (workerLease) await runService.assertWorkerLeaseActive(workerLease);
     const stored = await assetStorage.storeAsset({
       pool,
       ownerUserId: run.user_id,
@@ -387,8 +389,10 @@ const createAgentArtifactService = ({
       assetId: stored.assetId
     });
     if (existing) return existing;
+    if (workerLease) await runService.assertWorkerLeaseActive(workerLease);
     return runService.registerArtifact({
       runId: run.id,
+      ...(workerLease || {}),
       assetId: stored.assetId,
       role: normalized.role,
       filename: normalized.filename,

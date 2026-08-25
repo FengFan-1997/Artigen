@@ -389,7 +389,7 @@ const installDesignConversationRoutes = (app, deps = {}) => {
   }));
 
   service?.startWorker();
-  return { service };
+  return { service, modelCallService };
 };
 
 module.exports = {

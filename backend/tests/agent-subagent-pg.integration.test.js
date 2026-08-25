@@ -17,7 +17,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const readiness = await checkDatabase(pool);
   assert.equal(readiness.ok, true);
-  assert.equal(readiness.migration, '024_agent_runtime_v2_observability');
+  assert.equal(readiness.migration, '025_agent_runtime_v2_1_durability');
   const suffix = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const users = await pool.query(
     `INSERT INTO users (legacy_user_id,display_name,status)
@@ -31,8 +31,10 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
   try {
     const run = await pool.query(
       `INSERT INTO agent_runs
-        (user_id,status,idempotency_key,request_hash,model_name,sandbox_version,max_credits,worker_id)
-       VALUES ($1,'running',$2,$3,'Qwen/Qwen3-8B','shared-v1',50,$4)
+        (user_id,status,idempotency_key,request_hash,model_name,sandbox_version,max_credits,
+         worker_id,runtime_version,lease_epoch,lease_expires_at)
+       VALUES ($1,'running',$2,$3,'Qwen/Qwen3-8B','shared-v1',50,$4,2,1,
+         clock_timestamp()+interval '10 minutes')
        RETURNING id`,
       [userA, `agent-hardening:${suffix}`, crypto.randomBytes(32), workerId]
     );
@@ -58,6 +60,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
       runId,
       subagentId,
       workerId,
+      leaseEpoch: 1,
       role: 'executor',
       status: 'failed',
       toolName: 'sandbox_shell',
@@ -67,6 +70,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
       runId,
       subagentId,
       workerId,
+      leaseEpoch: 1,
       role: 'executor',
       status: 'failed',
       toolName: 'sandbox_shell',
@@ -75,6 +79,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
     await service.appendStep({
       runId,
       workerId,
+      leaseEpoch: 1,
       role: 'planner',
       status: 'succeeded',
       toolName: 'update_plan',
@@ -110,6 +115,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
     await service.appendStep({
       runId,
       workerId,
+      leaseEpoch: 1,
       role: 'executor',
       status: 'failed',
       toolName: 'sandbox_shell',
@@ -119,6 +125,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
     await service.appendStep({
       runId,
       workerId,
+      leaseEpoch: 1,
       role: 'executor',
       status: 'failed',
       toolName: 'sandbox_shell',
@@ -130,6 +137,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
     await service.appendStep({
       runId,
       workerId,
+      leaseEpoch: 1,
       role: 'executor',
       status: 'failed',
       toolName: 'sandbox_shell',
@@ -141,6 +149,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
     await service.appendStep({
       runId,
       workerId,
+      leaseEpoch: 1,
       role: 'planner',
       status: 'succeeded',
       toolName: 'update_plan',
@@ -152,12 +161,14 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
     assert.equal((await service.recordUsage({
       runId,
       workerId,
+      leaseEpoch: 1,
       estimatedCredits: 7,
       items: { source: 'newer' }
     })), 7);
     assert.equal((await service.recordUsage({
       runId,
       workerId,
+      leaseEpoch: 1,
       estimatedCredits: 4,
       items: { source: 'stale' }
     })), 7);
@@ -172,6 +183,8 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
     const [registeredArtifact, duplicateArtifact] = await Promise.all([
       service.registerArtifact({
         runId,
+        workerId,
+        leaseEpoch: 1,
         role: 'editable',
         filename: 'recovery.md',
         mimeType: 'text/markdown',
@@ -181,6 +194,8 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
       }),
       service.registerArtifact({
         runId,
+        workerId,
+        leaseEpoch: 1,
         role: 'source',
         filename: 'recovery.md',
         mimeType: 'text/markdown',

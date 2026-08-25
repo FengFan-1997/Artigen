@@ -145,6 +145,8 @@ export type DesignAssistantStatus = {
   plannerV2Enabled?: boolean;
   adaptiveReasoningEnabled?: boolean;
   projectMemoryEnabled?: boolean;
+  runtimeV2RolloutPercent?: number;
+  runtimeV2CanaryConfigured?: boolean;
   providerScheduler?: { ok: boolean; enabled: boolean; mode: string; intervalMs?: number };
   queued: number;
   running: number;

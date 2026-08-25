@@ -52,16 +52,26 @@ export type AgentSubagentStatus = 'queued' | 'running' | 'succeeded' | 'failed' 
 
 export type AgentSkillRef = { id: string; version: number };
 
+export type AgentRequirement = {
+  id: string;
+  text: string;
+  source: 'user' | 'planner' | 'server';
+  criticality: 'critical' | 'required' | 'optional';
+};
+
 export type AgentTaskSpec = {
-  version: 1;
+  version: 1 | 2;
   goal: string;
+  goalRequirement?: AgentRequirement;
   complexity: 'simple' | 'medium' | 'high';
   confidence: number;
   constraints: string[];
+  constraintRequirements?: AgentRequirement[];
   assumptions: string[];
   deliverables: Array<'report' | 'spreadsheet' | 'presentation' | 'website' | 'image'>;
   allowedOrigins: string[];
   acceptanceCriteria: string[];
+  acceptanceRequirements?: AgentRequirement[];
   skillIds: string[];
   plan: Array<{
     id: string;
@@ -84,7 +94,7 @@ export type ObservationEnvelope = {
 };
 
 export type AgentWorkingState = {
-  version: 1;
+  version: 1 | 2;
   taskSpec: AgentTaskSpec;
   phase: AgentTaskSpec['plan'][number]['phase'];
   projectMemory: Record<string, unknown> | null;
@@ -93,6 +103,7 @@ export type AgentWorkingState = {
   completedEvidence: ObservationEnvelope[];
   failures: ObservationEnvelope[];
   pendingApproval: Record<string, unknown> | null;
+  budgetPolicy?: Record<string, boolean | number>;
   remainingBudget: number;
 };
 
@@ -124,6 +135,9 @@ export type AgentRun = {
   runtime?: {
     version: number;
     promptProfile: string | null;
+    profileHash?: string | null;
+    profileSummary?: Record<string, unknown>;
+    checkpointVersion?: number;
     skills: AgentSkillRef[];
   };
   model: { provider: string; name: string };
@@ -152,11 +166,16 @@ export type AgentRun = {
     }>;
     planExplanation: string;
     durableCheckpointSaved: boolean;
+    retryRequired?: boolean;
+    retryReason?: string | null;
+    clarificationRequired?: boolean;
   };
   approvals?: AgentApproval[];
   artifacts?: AgentArtifact[];
   subagents: AgentSubagent[];
   error: { code: string } | null;
+  finalTextSha256?: string | null;
+  semanticVerification?: Record<string, unknown>;
   expiresAt: string;
   createdAt: string;
   queuedAt: string | null;
@@ -187,6 +206,7 @@ export type AgentQuote = {
   hardMaximumCredits: number;
   requiredPaidHold: number;
   canStart: boolean;
+  runtime?: { version: number };
   limits: {
     minutes: number;
     steps: number;
@@ -215,6 +235,8 @@ export type AgentServiceStatus = {
   subagentMaxConcurrent?: number;
   subagentSandboxMode?: 'shared-v1' | string;
   runtimeV2Enabled?: boolean;
+  runtimeV2RolloutPercent?: number;
+  runtimeV2CanaryConfigured?: boolean;
   promptEngineVersion?: string;
   adaptiveReasoningEnabled?: boolean;
   projectMemoryEnabled?: boolean;
@@ -222,6 +244,26 @@ export type AgentServiceStatus = {
     enabled: boolean;
     ready: boolean;
     mode: string;
+  };
+  runtimeProfile?: {
+    version: string;
+    promptEngineVersion: string;
+    checkpointVersion: number;
+    model: string;
+    actorSamplingProfile: string;
+  };
+  durability?: {
+    checkpointVersion?: number;
+    leaseEpochReady: boolean;
+    modelReceiptsReady: boolean;
+    toolReceiptsReady: boolean;
+    budgetReservationsReady: boolean;
+    pricingReady?: boolean;
+  };
+  fairScheduling?: {
+    enabled: boolean;
+    agingSeconds: number;
+    admissionControl: boolean;
   };
   accessMode?: 'disabled' | 'owner-only-v1' | 'authenticated-v1' | string;
   availabilityNote: 'ready' | 'busy' | 'worker_offline' | string;

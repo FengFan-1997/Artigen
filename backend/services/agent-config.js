@@ -1,3 +1,5 @@
+const crypto = require('node:crypto');
+
 const { ApiError } = require('../lib/api-error');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
 
@@ -12,6 +14,14 @@ const ACTOR_SAMPLING_PROFILES = Object.freeze({
   'stable-v1': Object.freeze({ id: 'stable-v1', temperature: 0.2, topP: 0.7 }),
   'exploratory-v1': Object.freeze({ id: 'exploratory-v1', temperature: 0.4, topP: 0.8 })
 });
+const STAGE_MAX_OUTPUT_TOKENS = Object.freeze({
+  router: 1200,
+  planner: 2048,
+  actor: 1024,
+  verifier: 2048,
+  subagent: 1200,
+  final_summary: 800
+});
 
 const agentFeatureEnabled = (env = process.env) => enabled(env.AGENT_FEATURE_ENABLED);
 const agentWorkerEnabled = (env = process.env) => (
@@ -22,6 +32,36 @@ const AGENT_BROWSER_MODE = 'full-approval-v1';
 const AGENT_BETA_MODE = 'owner-only-v1';
 const AGENT_AUTHENTICATED_MODE = 'authenticated-v1';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const uuidList = (value, { code, maximum = 100 } = {}) => {
+  const entries = String(value || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  if (entries.length > maximum || entries.some((entry) => !UUID_RE.test(entry))) {
+    throw new ApiError(500, code);
+  }
+  return Object.freeze([...new Set(entries)]);
+};
+
+const resolveAgentRuntimeAssignment = (config, userId) => {
+  if (!config?.runtimeV2Enabled) return Object.freeze({ version: 1, reason: 'disabled' });
+  const normalizedUserId = String(userId || '').trim().toLowerCase();
+  if (config.runtimeV2CanaryUserIds?.includes(normalizedUserId)) {
+    return Object.freeze({ version: 2, reason: 'canary' });
+  }
+  const rolloutPercent = Number(config.runtimeV2RolloutPercent || 0);
+  if (rolloutPercent <= 0) return Object.freeze({ version: 1, reason: 'control' });
+  if (rolloutPercent >= 100) return Object.freeze({ version: 2, reason: 'rollout' });
+  const bucket = crypto.createHash('sha256')
+    .update(`artigen-agent-runtime-v2-rollout-v1:${normalizedUserId}`, 'utf8')
+    .digest()
+    .readUInt32BE(0) % 100;
+  return Object.freeze({
+    version: bucket < rolloutPercent ? 2 : 1,
+    reason: bucket < rolloutPercent ? 'rollout' : 'control'
+  });
+};
 
 const assertLoopbackHttpUrl = (value, code) => {
   let url;
@@ -126,10 +166,25 @@ const getAgentConfig = (env = process.env) => {
     .filter(Boolean));
   const subagentsEnabled = enabled(env.AGENT_SUBAGENTS_ENABLED);
   const runtimeV2Enabled = enabled(env.AGENT_RUNTIME_V2_ENABLED);
+  const runtimeV2RolloutPercent = integer(
+    env.AGENT_RUNTIME_V2_ROLLOUT_PERCENT,
+    0,
+    0,
+    100
+  );
+  const runtimeV2CanaryUserIds = uuidList(env.AGENT_RUNTIME_V2_CANARY_USER_IDS, {
+    code: 'AGENT_RUNTIME_V2_CANARY_USER_IDS_INVALID'
+  });
   const designPlannerV2Enabled = enabled(env.DESIGN_PLANNER_V2_ENABLED);
   const adaptiveReasoningEnabled = enabled(env.AGENT_ADAPTIVE_REASONING_ENABLED);
   const projectMemoryEnabled = enabled(env.AGENT_PROJECT_MEMORY_ENABLED);
   const providerSchedulerEnabled = enabled(env.AGENT_PROVIDER_SCHEDULER_ENABLED);
+  const siliconFlowInputCreditsPerMillion = Math.max(0, Number(
+    env.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION || 0
+  ));
+  const siliconFlowOutputCreditsPerMillion = Math.max(0, Number(
+    env.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION || 0
+  ));
   const actorSamplingProfileName = String(
     env.AGENT_RUNTIME_ACTOR_PROFILE || 'stable-v1'
   ).trim().toLowerCase();
@@ -157,14 +212,9 @@ const getAgentConfig = (env = process.env) => {
   if (!['disabled', AGENT_BETA_MODE, AGENT_AUTHENTICATED_MODE].includes(betaMode)) {
     throw new ApiError(500, 'AGENT_BETA_MODE_INVALID');
   }
-  const betaUserEntries = String(env.AGENT_BETA_USER_IDS || '')
-    .split(',')
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean);
-  if (betaUserEntries.length > 100 || betaUserEntries.some((entry) => !UUID_RE.test(entry))) {
-    throw new ApiError(500, 'AGENT_BETA_USER_IDS_INVALID');
-  }
-  const betaUserIds = Object.freeze([...new Set(betaUserEntries)]);
+  const betaUserIds = uuidList(env.AGENT_BETA_USER_IDS, {
+    code: 'AGENT_BETA_USER_IDS_INVALID'
+  });
   const deploymentEnvironment = String(env.APP_ENV || 'development').trim().toLowerCase();
 
   return Object.freeze({
@@ -186,12 +236,18 @@ const getAgentConfig = (env = process.env) => {
     ),
     modelContextTokens: integer(env.AGENT_MODEL_CONTEXT_TOKENS, 16384, 4096, 32768),
     runtimeV2Enabled,
+    runtimeV2RolloutPercent,
+    runtimeV2CanaryUserIds,
     designPlannerV2Enabled,
     adaptiveReasoningEnabled,
     projectMemoryEnabled,
     providerSchedulerEnabled,
     actorSamplingProfile,
-    promptEngineVersion: 'skills-v1',
+    promptEngineVersion: 'skills-v2',
+    checkpointVersion: 4,
+    stageMaxOutputTokens: STAGE_MAX_OUTPUT_TOKENS,
+    siliconFlowInputCreditsPerMillion,
+    siliconFlowOutputCreditsPerMillion,
     sandboxProvider,
     sandboxMode,
     sandboxDockerPlatform,
@@ -249,6 +305,16 @@ const assertAgentRuntimeReady = (env = process.env) => {
   }
   if (config.runtimeV2Enabled && config.modelContextTokens < 16_384) {
     throw new ApiError(503, 'AGENT_RUNTIME_V2_CONTEXT_NOT_READY', { retryable: false });
+  }
+  if (
+    config.runtimeV2Enabled &&
+    config.modelProvider === 'siliconflow' &&
+    (
+      !(config.siliconFlowInputCreditsPerMillion > 0) ||
+      !(config.siliconFlowOutputCreditsPerMillion > 0)
+    )
+  ) {
+    throw new ApiError(503, 'AGENT_RUNTIME_V2_PRICING_NOT_READY', { retryable: false });
   }
   if (config.runtimeDriver === 'fixture') return config;
   if (config.modelProvider === 'openai' && !config.openAiApiKey) {
@@ -330,7 +396,9 @@ module.exports = {
   assertSiliconFlowUrl,
   assertAgentRuntimeReady,
   getAgentConfig,
+  resolveAgentRuntimeAssignment,
   AGENT_BETA_MODE,
   AGENT_BROWSER_MODE,
-  SILICONFLOW_AGENT_MODEL
+  SILICONFLOW_AGENT_MODEL,
+  STAGE_MAX_OUTPUT_TOKENS
 };

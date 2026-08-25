@@ -13,7 +13,7 @@ const {
   hasAgentPayloadKey
 } = require('./agent-payload-service');
 const { normalizeActionType, sanitizeLogValue, sanitizeText } = require('./agent-policy-service');
-const { getAgentConfig } = require('./agent-config');
+const { getAgentConfig, resolveAgentRuntimeAssignment } = require('./agent-config');
 const {
   classifyRuntimeFailure,
   normalizeTaskSpec,
@@ -661,6 +661,21 @@ const enrichPlannerDecision = ({ decision, raw, text, creditCap, allowMemory = f
   };
 };
 
+const requiresDeepPlanner = ({ decision, raw, text }) => {
+  if (!decision || decision.routeKind !== 'agent_run') return false;
+  const objective = String(text || '');
+  const explicitSubagents = raw?.requiresSubagents === true ||
+    /(?:子\s*agent|子代理|并行(?:调研|分析|起草|执行)|delegate)/iu.test(objective);
+  const externalWrite = raw?.requiresExternalWrite === true ||
+    /(?:发布|提交|发送|上传到|写入|删除|修改权限|publish|submit|send|delete)/iu.test(objective);
+  return decision.complexity === 'high' ||
+    Number(decision.confidence || 0) < 0.85 ||
+    (Array.isArray(decision.deliverables) && decision.deliverables.length > 1) ||
+    decision.capabilities?.browser === true ||
+    explicitSubagents ||
+    externalWrite;
+};
+
 const plannerMessages = ({ history, message, attachmentCount, projectMemory = null }) => [{
   role: 'system',
   content: `You are Artigen's design request router. Use only Qwen/Qwen3-8B for this text task.
@@ -731,6 +746,11 @@ const createDesignConversationService = ({
           model: TEXT_MODEL,
           maxTokens,
           enableThinking: thinkingEnabled,
+          responseFormat: 'json_object',
+          temperature: thinkingEnabled ? 0.6 : 0.2,
+          topP: thinkingEnabled ? 0.95 : 0.7,
+          topK: thinkingEnabled ? 20 : undefined,
+          minP: thinkingEnabled ? 0 : undefined,
           timeoutMs: 60_000,
           signal,
           skipRateGate: Boolean(providerScheduler && agentConfig.providerSchedulerEnabled)
@@ -1244,6 +1264,11 @@ const createDesignConversationService = ({
       if (typeof chatGenerate !== 'function') throw new ApiError(503, 'DESIGN_PLANNER_NOT_CONFIGURED');
       await runWithPlanningLease(job, async (signal) => {
         const context = await loadPlanningContext(job);
+        const runtimeAssignment = resolveAgentRuntimeAssignment(
+          agentConfig,
+          context.conversation.user_id
+        );
+        const runtimeV2 = runtimeAssignment.version === 2;
         const contextualAttachments = context.current.attachments.length
           ? context.current.attachments
           : Number(context.conversation.clarification_rounds || 0) > 0
@@ -1255,7 +1280,7 @@ const createDesignConversationService = ({
                 ))
                 .slice(-10)
             : [];
-        const projectMemory = agentConfig.projectMemoryEnabled && context.conversation.project_id
+        const projectMemory = runtimeV2 && agentConfig.projectMemoryEnabled && context.conversation.project_id
           ? (await projectService.getProject({
               userId: context.conversation.user_id,
               projectId: context.conversation.project_id
@@ -1272,7 +1297,7 @@ const createDesignConversationService = ({
           priority: 'router',
           thinkingEnabled: false,
           conversation: context.conversation,
-          maxTokens: config.plannerMaxTokens,
+          maxTokens: agentConfig.stageMaxOutputTokens.router,
           signal
         });
         const routed = normalizePlannerDecision({
@@ -1287,9 +1312,14 @@ const createDesignConversationService = ({
           raw,
           text: context.current.text,
           creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
-          allowMemory: agentConfig.projectMemoryEnabled && Boolean(context.conversation.project_id)
+          allowMemory: runtimeV2 && agentConfig.projectMemoryEnabled && Boolean(context.conversation.project_id)
         });
-        if (decision.routeKind === 'agent_run' && agentConfig.designPlannerV2Enabled) {
+        if (
+          decision.routeKind === 'agent_run' &&
+          runtimeV2 &&
+          agentConfig.designPlannerV2Enabled &&
+          requiresDeepPlanner({ decision, raw, text: context.current.text })
+        ) {
           const plannedRaw = await generateModelJson({
             messages: taskPlannerMessages({
               objective: context.current.text,
@@ -1303,7 +1333,7 @@ const createDesignConversationService = ({
             priority: 'planner',
             thinkingEnabled: agentConfig.adaptiveReasoningEnabled,
             conversation: context.conversation,
-            maxTokens: config.plannerMaxTokens,
+            maxTokens: agentConfig.stageMaxOutputTokens.planner,
             signal
           });
           const taskSpec = normalizeTaskSpec({
@@ -1740,6 +1770,8 @@ const createDesignConversationService = ({
       plannerV2Enabled: agentConfig.designPlannerV2Enabled,
       adaptiveReasoningEnabled: agentConfig.adaptiveReasoningEnabled,
       projectMemoryEnabled: agentConfig.projectMemoryEnabled,
+      runtimeV2RolloutPercent: agentConfig.runtimeV2RolloutPercent,
+      runtimeV2CanaryConfigured: agentConfig.runtimeV2CanaryUserIds.length > 0,
       providerScheduler: scheduler,
       autoCreditCap: config.autoCreditCap,
       retentionDays: config.retentionDays,
@@ -1799,6 +1831,7 @@ module.exports = {
   TEXT_MODEL,
   createDesignConversationService,
   enrichPlannerDecision,
+  requiresDeepPlanner,
   explicitHttpsOrigins,
   getDesignConversationConfig,
   inferDeliverables,

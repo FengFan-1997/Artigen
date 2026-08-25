@@ -223,13 +223,13 @@ class CuaSandboxProvider {
     if (local && (!this.config.sandboxImageRef || !this.config.sandboxImageHasToolchain)) {
       throw new ApiError(503, 'AGENT_SANDBOX_IMAGE_NOT_READY', { retryable: false });
     }
-    const suffix = crypto.createHash('sha256').update(String(runId)).digest('hex').slice(0, 18);
+    const sandboxRef = this.referenceForRun(runId);
     return this.bridge({
       config: this.config,
       payload: {
         command: 'create',
         local,
-        name: `artigen-${suffix}`,
+        name: sandboxRef,
         imageRef: this.config.sandboxImageRef,
         distro: 'ubuntu',
         version: '24.04',
@@ -251,6 +251,11 @@ class CuaSandboxProvider {
       // Docker unpacking and the desktop health check.
       timeoutMs: local ? 15 * 60_000 : 5 * 60_000
     });
+  }
+
+  referenceForRun(runId) {
+    const suffix = crypto.createHash('sha256').update(String(runId)).digest('hex').slice(0, 18);
+    return `artigen-${suffix}`;
   }
 
   desktopEndpoint(name) {
@@ -404,12 +409,16 @@ class FixtureSandboxProvider {
   async provision({ runId }) {
     return {
       ok: true,
-      name: `fixture-${runId}`,
+      name: this.referenceForRun(runId),
       displayUrl: null,
       width: 1440,
       height: 900,
       environment: 'linux'
     };
+  }
+
+  referenceForRun(runId) {
+    return `fixture-${String(runId)}`;
   }
 
   async probe() {

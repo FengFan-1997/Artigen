@@ -120,6 +120,11 @@ const callSiliconFlowChat = async ({
   maxTokens,
   model,
   enableThinking,
+  responseFormat,
+  temperature,
+  topP,
+  topK,
+  minP,
   signal,
   skipRateGate = false,
   credential = SILICONFLOW_API_KEY,
@@ -168,7 +173,14 @@ const callSiliconFlowChat = async ({
               model: resolvedModel,
               messages,
               max_tokens: typeof maxTokens === 'number' ? maxTokens : undefined,
-              enable_thinking: typeof enableThinking === 'boolean' ? enableThinking : undefined
+              enable_thinking: typeof enableThinking === 'boolean' ? enableThinking : undefined,
+              response_format: responseFormat === 'json_object'
+                ? { type: 'json_object' }
+                : undefined,
+              temperature: typeof temperature === 'number' ? temperature : undefined,
+              top_p: typeof topP === 'number' ? topP : undefined,
+              top_k: typeof topK === 'number' ? topK : undefined,
+              min_p: typeof minP === 'number' ? minP : undefined
             })
           },
           timeoutMs,

@@ -255,6 +255,9 @@ const checkDatabase = async (pool) => {
          to_regclass('public.agent_provider_scheduler') IS NOT NULL AS has_agent_provider_scheduler,
          to_regclass('public.agent_provider_requests') IS NOT NULL AS has_agent_provider_requests,
          to_regclass('public.agent_quality_checks') IS NOT NULL AS has_agent_quality_checks,
+         to_regclass('public.agent_model_call_receipts') IS NOT NULL AS has_agent_model_call_receipts,
+         to_regclass('public.agent_tool_call_receipts') IS NOT NULL AS has_agent_tool_call_receipts,
+         to_regclass('public.agent_budget_reservations') IS NOT NULL AS has_agent_budget_reservations,
          to_regclass('public.design_conversations') IS NOT NULL AS has_design_conversations,
          to_regclass('public.design_messages') IS NOT NULL AS has_design_messages,
          to_regclass('public.design_executions') IS NOT NULL AS has_design_executions,
@@ -383,6 +386,46 @@ const checkDatabase = async (pool) => {
               )
          ) AS has_agent_run_columns,
          (
+           SELECT count(*) = 6
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_runs'
+              AND column_name IN (
+                'lease_epoch','runtime_profile_hash','runtime_profile_summary',
+                'final_text_sha256','semantic_verification','platform_overrun_credits'
+              )
+         ) AS has_agent_runtime_v2_1_columns,
+         (
+           SELECT count(*) = 19
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_model_call_receipts'
+              AND column_name IN (
+                'id','run_id','worker_id','lease_epoch','state','algorithm','key_version',
+                'intent_iv','intent_auth_tag','intent_ciphertext','response_iv',
+                'response_auth_tag','response_ciphertext','dispatched_at','received_at',
+                'consumed_at','ambiguous_at','updated_at','expires_at'
+              )
+         ) AS has_agent_model_call_receipt_columns,
+         (
+           SELECT count(*) = 22
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_tool_call_receipts'
+              AND column_name IN (
+                'id','run_id','subagent_id','receipt_key','kind','state','worker_id','lease_epoch',
+                'reservation_key','request_sha256','actual_credits','algorithm','key_version',
+                'result_iv','result_auth_tag','result_ciphertext','dispatched_at','consumed_at',
+                'ambiguous_at','created_at','updated_at','expires_at'
+              )
+         ) AS has_agent_tool_call_receipt_columns,
+         (
+           SELECT count(*) = 12
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_budget_reservations'
+              AND column_name IN (
+                'id','run_id','model_call_id','subagent_id','component','reservation_key',
+                'reserved_credits','actual_credits','state','consumed_at','released_at','updated_at'
+              )
+         ) AS has_agent_budget_reservation_columns,
+         (
            SELECT count(*) = 1
              FROM information_schema.columns
             WHERE table_schema='public' AND table_name='agent_runs'
@@ -497,6 +540,9 @@ const checkDatabase = async (pool) => {
       row.has_agent_provider_scheduler &&
       row.has_agent_provider_requests &&
       row.has_agent_quality_checks &&
+      row.has_agent_model_call_receipts &&
+      row.has_agent_tool_call_receipts &&
+      row.has_agent_budget_reservations &&
       row.has_design_conversations &&
       row.has_design_messages &&
       row.has_design_executions &&
@@ -517,6 +563,10 @@ const checkDatabase = async (pool) => {
       row.has_project_version_columns &&
       row.has_otp_delivery_columns &&
       row.has_agent_run_columns &&
+      row.has_agent_runtime_v2_1_columns &&
+      row.has_agent_model_call_receipt_columns &&
+      row.has_agent_tool_call_receipt_columns &&
+      row.has_agent_budget_reservation_columns &&
       row.has_agent_relay_run_columns &&
       row.has_agent_worker_readiness_columns &&
       row.has_agent_budget_split_columns &&

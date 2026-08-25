@@ -22,7 +22,8 @@ const {
 } = require('../services/agent-policy-service');
 const {
   assertAgentRuntimeReady,
-  getAgentConfig
+  getAgentConfig,
+  resolveAgentRuntimeAssignment
 } = require('../services/agent-config');
 const {
   AgentWaitingForUser,
@@ -237,12 +238,35 @@ const {
   createAgentCostMeter,
   createSerializedCostPersister,
   buildSubagentObjective,
+  LeaseLostDuringWorkError,
   normalizeSubagentShellScript,
+  resolveToolReceiptRequestSha256,
   parentVerifiedSubagentFiles,
   restrictDelegatedTaskInputs,
   runWithLeaseHeartbeat,
   resolveStagedImageReferences
 } = require('../services/agent-worker-service');
+
+test('tool receipts reject changed current-format requests but preserve legacy recovery', () => {
+  const priorHash = crypto.createHash('sha256').update('prior').digest('hex');
+  const changedHash = crypto.createHash('sha256').update('changed').digest('hex');
+  assert.throws(
+    () => resolveToolReceiptRequestSha256({
+      priorReceipt: { requestSha256: priorHash },
+      computedRequestSha256: changedHash
+    }),
+    (error) => error?.code === 'AGENT_TOOL_RECEIPT_CONFLICT' && error?.retryable === false
+  );
+  assert.equal(resolveToolReceiptRequestSha256({
+    priorReceipt: { requestSha256: priorHash },
+    computedRequestSha256: changedHash,
+    legacyReceipt: true
+  }), priorHash);
+  assert.equal(resolveToolReceiptRequestSha256({
+    priorReceipt: null,
+    computedRequestSha256: changedHash
+  }), changedHash);
+});
 
 test('subagent objective exposes only virtual workspace paths to Qwen3', () => {
   const inputPath = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
@@ -893,7 +917,7 @@ test('long sandbox or model work renews the run lease until work completes', asy
 
 test('sandbox provisioning reports a lost lease with its provisioned sandbox for cleanup', async () => {
   let heartbeats = 0;
-  const outcome = await runWithLeaseHeartbeat({
+  await assert.rejects(runWithLeaseHeartbeat({
     intervalMs: 100,
     refresh: async () => {
       heartbeats += 1;
@@ -901,11 +925,40 @@ test('sandbox provisioning reports a lost lease with its provisioned sandbox for
     },
     work: async () => {
       await new Promise((resolve) => setTimeout(resolve, 140));
-      return { name: 'sandbox-orphan' };
-    }
+      return { name: 'sandbox-orphan', secretResult: 'must-not-escape' };
+    },
+    cleanupRefsFromResult: (value) => ({ sandboxRef: value?.name })
+  }), (error) => {
+    assert.ok(error instanceof LeaseLostDuringWorkError);
+    assert.equal(error.code, 'AGENT_LEASE_LOST');
+    assert.deepEqual(error.cleanupRefs, { sandboxRef: 'sandbox-orphan' });
+    assert.equal(JSON.stringify(error).includes('must-not-escape'), false);
+    return true;
   });
-  assert.deepEqual(outcome.value, { name: 'sandbox-orphan' });
-  assert.equal(outcome.leaseError?.code, 'AGENT_LEASE_LOST');
+});
+
+test('lease loss wins over a simultaneous work failure and keeps the underlying code diagnostic-only', async () => {
+  let refreshes = 0;
+  await assert.rejects(runWithLeaseHeartbeat({
+    intervalMs: 5_000,
+    refresh: async () => {
+      refreshes += 1;
+      if (refreshes === 2) {
+        const error = new Error('database timeout');
+        error.code = 'ETIMEDOUT';
+        throw error;
+      }
+    },
+    work: async () => {
+      throw new ApiError(502, 'AGENT_SANDBOX_PROVIDER_FAILED');
+    }
+  }), (error) => {
+    assert.ok(error instanceof LeaseLostDuringWorkError);
+    assert.equal(error.code, 'AGENT_LEASE_LOST');
+    assert.equal(error.causeCode, 'ETIMEDOUT');
+    assert.equal(error.status, 409);
+    return true;
+  });
 });
 
 test('worker reconciliation destroys terminal sandboxes and clears their public references', async () => {
@@ -917,7 +970,8 @@ test('worker reconciliation destroys terminal sandboxes and clears their public 
       expireStaleRuns: async () => 1,
       listTerminalSandboxes: async () => [{
         runId: '11111111-1111-4111-8111-111111111111',
-        sandboxRef: 'sandbox-terminal-1'
+        sandboxRef: null,
+        derivedReference: true
       }],
       markSandboxDestroyed: async (entry) => {
         marked.push(entry);
@@ -930,6 +984,7 @@ test('worker reconciliation destroys terminal sandboxes and clears their public 
       AGENT_SANDBOX_PROVIDER: 'fixture'
     },
     sandbox: {
+      referenceForRun: (runId) => `sandbox-terminal-${runId.endsWith('1') ? '1' : 'x'}`,
       destroy: async (sandboxRef) => {
         destroyed.push(sandboxRef);
         return { ok: true };
@@ -944,20 +999,74 @@ test('worker reconciliation destroys terminal sandboxes and clears their public 
   assert.deepEqual(destroyed, ['sandbox-terminal-1']);
   assert.deepEqual(marked, [{
     runId: '11111111-1111-4111-8111-111111111111',
-    sandboxRef: 'sandbox-terminal-1'
+    sandboxRef: 'sandbox-terminal-1',
+    derivedReference: true
   }]);
   assert.deepEqual(result.sandboxCleanup, { destroyed: 1, failed: 0 });
+});
+
+test('terminal sandbox reconciliation leaves failed cleanup pending for the next pass', async () => {
+  let attempts = 0;
+  let marked = 0;
+  const pending = [{
+    runId: '11111111-1111-4111-8111-111111111112',
+    sandboxRef: null,
+    derivedReference: true
+  }];
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      expireStaleRuns: async () => 0,
+      listTerminalSandboxes: async () => pending,
+      markSandboxDestroyed: async () => {
+        marked += 1;
+        pending.splice(0);
+        return true;
+      },
+      purgeExpiredPrivateData: async () => ({ browserProfilesDeleted: 0 })
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture'
+    },
+    sandbox: {
+      referenceForRun: () => 'sandbox-retry-1',
+      destroy: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new ApiError(503, 'AGENT_SANDBOX_PROVIDER_FAILED');
+        return { ok: true };
+      }
+    },
+    model: {},
+    integrationService: {},
+    imageService: {}
+  });
+
+  assert.deepEqual((await service.expireStaleRuns({ limit: 10 })).sandboxCleanup, {
+    destroyed: 0,
+    failed: 1
+  });
+  assert.equal(marked, 0);
+  assert.deepEqual((await service.expireStaleRuns({ limit: 10 })).sandboxCleanup, {
+    destroyed: 1,
+    failed: 0
+  });
+  assert.equal(marked, 1);
 });
 
 test('worker passes decrypted objective deliverables into the parent model', async () => {
   const runId = '11111111-1111-4111-8111-111111111111';
   const userId = '22222222-2222-4222-8222-222222222222';
+  const workerId = 'worker-deliverables-test';
   const observed = [];
   const service = createAgentWorkerService({
     pool: {},
     runService: {
       claimRun: async () => ({
         id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
         started_at: new Date(),
         checkpoint: {},
         sandbox_ref: null
@@ -998,7 +1107,8 @@ test('worker passes decrypted objective deliverables into the parent model', asy
     },
     env: {
       AGENT_RUNTIME_DRIVER: 'fixture',
-      AGENT_SANDBOX_PROVIDER: 'fixture'
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
     },
     sandbox: {
       provision: async () => ({ name: 'sandbox-deliverables', displayUrl: null }),
@@ -1017,6 +1127,178 @@ test('worker passes decrypted objective deliverables into the parent model', asy
 
   await assert.rejects(service.processRun(runId), { code: 'AGENT_TEST_STOP' });
   assert.deepEqual(observed, [['report']]);
+});
+
+test('worker never destroys a sandbox when failure settlement discovers a lost lease', async () => {
+  const runId = '11111111-1111-4111-8111-111111111121';
+  const userId = '22222222-2222-4222-8222-222222222221';
+  const workerId = 'worker-fenced-failure-test';
+  let destroyed = 0;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 7,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000)
+        },
+        payloads: [{
+          kind: 'objective',
+          value: {
+            objective: 'Create a report.',
+            assetIds: [],
+            deliverables: ['report']
+          }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async () => true,
+      getControlState: async () => ({
+        status: 'running',
+        cancel_requested: false,
+        pause_requested: false,
+        step_count: 0,
+        replan_count: 0,
+        consecutive_failures: 0,
+        unchanged_screenshots: 0
+      }),
+      appendStep: async () => true,
+      failRun: async () => {
+        throw new ApiError(409, 'AGENT_LEASE_LOST');
+      },
+      markSandboxDestroyed: async () => true
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
+    },
+    sandbox: {
+      provision: async () => ({ name: 'sandbox-fenced-failure', displayUrl: null }),
+      systemShell: async () => ({ success: true, stdout: '', stderr: '' }),
+      destroy: async () => {
+        destroyed += 1;
+        return { ok: true };
+      }
+    },
+    model: {
+      execute: async () => {
+        throw new ApiError(500, 'AGENT_TEST_STOP');
+      }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  assert.deepEqual(await service.processRun(runId), {
+    claimed: true,
+    status: 'lease_lost'
+  });
+  assert.equal(destroyed, 0);
+});
+
+test('provisioned sandbox stays available after lease loss and terminal reconciliation retries cleanup', async () => {
+  const runId = '11111111-1111-4111-8111-111111111122';
+  const userId = '22222222-2222-4222-8222-222222222222';
+  const workerId = 'worker-provision-race-test';
+  const sandboxRef = 'sandbox-provision-race';
+  let terminal = false;
+  let destroyAttempts = 0;
+  let markedDestroyed = 0;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 3,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000)
+        },
+        payloads: [{
+          kind: 'objective',
+          value: { objective: 'Create a report.', assetIds: [], deliverables: ['report'] }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async ({ eventType }) => {
+        if (eventType === 'sandbox.ready') throw new ApiError(409, 'AGENT_LEASE_LOST');
+        return true;
+      },
+      expireStaleRuns: async () => {
+        terminal = true;
+        return 1;
+      },
+      listTerminalSandboxes: async () => terminal
+        ? [{ runId, sandboxRef: null, derivedReference: true }]
+        : [],
+      markSandboxDestroyed: async ({ sandboxRef: markedRef }) => {
+        assert.equal(markedRef, sandboxRef);
+        markedDestroyed += 1;
+        return true;
+      },
+      purgeExpiredPrivateData: async () => ({ browserProfilesDeleted: 0 })
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
+    },
+    sandbox: {
+      referenceForRun: () => sandboxRef,
+      provision: async () => ({ name: sandboxRef, displayUrl: null }),
+      destroy: async (reference) => {
+        assert.equal(reference, sandboxRef);
+        destroyAttempts += 1;
+        if (destroyAttempts === 1) throw new ApiError(503, 'AGENT_SANDBOX_PROVIDER_FAILED');
+        return { ok: true };
+      }
+    },
+    model: {},
+    integrationService: {},
+    imageService: {}
+  });
+
+  assert.deepEqual(await service.processRun(runId), {
+    claimed: true,
+    status: 'lease_lost'
+  });
+  assert.equal(destroyAttempts, 0);
+  assert.deepEqual((await service.expireStaleRuns({ limit: 10 })).sandboxCleanup, {
+    destroyed: 0,
+    failed: 1
+  });
+  assert.deepEqual((await service.expireStaleRuns({ limit: 10 })).sandboxCleanup, {
+    destroyed: 1,
+    failed: 0
+  });
+  assert.equal(markedDestroyed, 1);
 });
 
 test('queue reconciliation coalesces overlapping cleanup passes', async () => {
@@ -1256,6 +1538,50 @@ test('SiliconFlow Agent is pinned to the deep-thinking Qwen3-8B model and requir
     AGENT_MODEL_PROVIDER: 'siliconflow',
     AGENT_MODEL_NAME: 'Qwen/Qwen3-32B'
   }), { code: 'AGENT_SILICONFLOW_MODEL_NOT_ALLOWED' });
+});
+
+test('Runtime V2 assignment is server-owned, stable and fails back to V1 when disabled', () => {
+  const canaryUser = '11111111-1111-4111-8111-111111111111';
+  const controlUser = '22222222-2222-4222-8222-222222222222';
+  const canaryConfig = getAgentConfig({
+    AGENT_RUNTIME_V2_ENABLED: 'true',
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0',
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: canaryUser
+  });
+  assert.deepEqual(resolveAgentRuntimeAssignment(canaryConfig, canaryUser), {
+    version: 2,
+    reason: 'canary'
+  });
+  assert.deepEqual(resolveAgentRuntimeAssignment(canaryConfig, controlUser), {
+    version: 1,
+    reason: 'control'
+  });
+
+  const rolloutConfig = getAgentConfig({
+    AGENT_RUNTIME_V2_ENABLED: 'true',
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '100'
+  });
+  assert.deepEqual(resolveAgentRuntimeAssignment(rolloutConfig, controlUser), {
+    version: 2,
+    reason: 'rollout'
+  });
+  assert.deepEqual(
+    resolveAgentRuntimeAssignment(rolloutConfig, controlUser),
+    resolveAgentRuntimeAssignment(rolloutConfig, controlUser)
+  );
+
+  const disabled = getAgentConfig({
+    AGENT_RUNTIME_V2_ENABLED: 'false',
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '100',
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: canaryUser
+  });
+  assert.deepEqual(resolveAgentRuntimeAssignment(disabled, canaryUser), {
+    version: 1,
+    reason: 'disabled'
+  });
+  assert.throws(() => getAgentConfig({
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: 'not-a-user-id'
+  }), { code: 'AGENT_RUNTIME_V2_CANARY_USER_IDS_INVALID' });
 });
 
 test('public Agent capability policy removes browser and external account access', () => {
@@ -3618,6 +3944,8 @@ test('an image-only run can finish once and settles its budget only once', async
           id: runId,
           status: runStatus,
           worker_id: workerId,
+          lease_epoch: 1,
+          lease_expires_at: new Date(Date.now() + 60_000),
           max_credits: 30,
           step_count: 3,
           replan_count: 0
@@ -3689,6 +4017,7 @@ test('an image-only run can finish once and settles its budget only once', async
   const finished = await service.finishRun({
     runId,
     workerId,
+    leaseEpoch: 1,
     actualCredits: 8.2,
     checklist: { requiredArtifactCount: 1, requiredDeliverables: ['image'] }
   });
@@ -3697,6 +4026,7 @@ test('an image-only run can finish once and settles its budget only once', async
   await assert.rejects(service.finishRun({
     runId,
     workerId,
+    leaseEpoch: 1,
     actualCredits: 8.2,
     checklist: { requiredArtifactCount: 1, requiredDeliverables: ['image'] }
   }), { code: 'AGENT_NOT_VERIFYING' });

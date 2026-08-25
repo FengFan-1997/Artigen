@@ -678,7 +678,7 @@ const agentRuntime = installAgentRoutes(app, {
   rateLimit,
 });
 
-installDesignConversationRoutes(app, {
+const designConversationRuntime = installDesignConversationRoutes(app, {
   rateLimit,
   callSiliconFlowChat,
   providerScheduler: sharedProviderScheduler,
@@ -769,15 +769,39 @@ if (frontendHosting.enabled) {
 
 const httpServer = http.createServer(app);
 const agentDesktopRelay = createAgentDesktopRelay({ server: httpServer });
+let agentMaintenanceTimer = null;
+const runAgentMaintenance = async () => {
+  if (!isDatabaseConfigured()) return;
+  const jobs = [
+    agentRuntime.service?.purgeExpiredPrivateData?.({ limit: 500 }),
+    designConversationRuntime.service?.sweepExpired?.({ limit: 200 }),
+    designConversationRuntime.modelCallService?.cleanupExpired?.({ limit: 500 }),
+    sharedProviderScheduler?.cleanup?.()
+  ].filter(Boolean);
+  const results = await Promise.allSettled(jobs);
+  for (const result of results) {
+    if (result.status === "rejected") {
+      console.error("Agent maintenance failed", result.reason?.code || result.reason?.message);
+    }
+  }
+};
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);
   if (isDatabaseConfigured()) {
     const behaviorRetention = createBehaviorRetentionService({ pool: getPool() });
     behaviorRetention.start();
     console.log("Behavior retention scheduler: enabled", behaviorRetention.config);
+    void runAgentMaintenance();
+    agentMaintenanceTimer = setInterval(() => void runAgentMaintenance(), 15 * 60 * 1000);
+    agentMaintenanceTimer.unref?.();
+    console.log("Agent privacy retention scheduler: enabled");
   }
 });
 
-const closeAgentRelay = () => agentDesktopRelay.close();
+const closeAgentRelay = () => {
+  if (agentMaintenanceTimer) clearInterval(agentMaintenanceTimer);
+  agentMaintenanceTimer = null;
+  agentDesktopRelay.close();
+};
 process.once("SIGTERM", closeAgentRelay);
 process.once("SIGINT", closeAgentRelay);

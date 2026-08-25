@@ -8,12 +8,14 @@ const {
   classifyAction
 } = require('./agent-policy-service');
 const {
+  CHECKPOINT_VERSION,
   buildContextMessages,
   compileAgentPrompt,
   createWorkingState,
   normalizeTaskSpec,
   normalizeVerifierResult,
   observationEnvelope,
+  reduceWorkingState,
   summarizeToolObservation,
   taskPlannerMessages,
   verifierMessages
@@ -62,13 +64,14 @@ const FUNCTION_TOOLS = Object.freeze([
             type: 'object',
             additionalProperties: false,
             properties: {
+              id: { type: 'string', pattern: '^[a-z][a-z0-9-]{1,79}$' },
               label: { type: 'string', minLength: 1, maxLength: 160 },
               status: {
                 type: 'string',
                 enum: ['pending', 'in_progress', 'completed']
               }
             },
-            required: ['label', 'status']
+            required: ['id', 'label', 'status']
           }
         }
       },
@@ -1010,7 +1013,9 @@ class OpenAiAgentModelProvider {
           } else if (call.name === 'browser_dom') {
             result = await callbacks.browserDom(args);
           } else if (call.name === 'sandbox_shell') {
-            const shellResult = await callbacks.shell(args.script, args.purpose);
+            const shellResult = await callbacks.shell(args.script, args.purpose, {
+              callId: call.call_id
+            });
             result = {
               success: shellResult.success,
               returnCode: shellResult.returnCode,
@@ -1018,7 +1023,7 @@ class OpenAiAgentModelProvider {
               stderr: String(shellResult.stderr || '').slice(0, 4_000)
             };
           } else if (call.name === 'generate_image') {
-            result = await callbacks.generateImage(args);
+            result = await callbacks.generateImage(args, { callId: call.call_id });
           } else if (call.name === 'declare_artifact') {
             const artifact = await callbacks.declareArtifact(args);
             result = {
@@ -1077,13 +1082,18 @@ class OllamaAgentModelProvider {
     env = process.env,
     fetchImpl = globalThis.fetch,
     providerScheduler = null,
-    modelCallService = null
+    modelCallService = null,
+    testController = null
   } = {}) {
+    if (testController && String(env.NODE_ENV || '').trim() !== 'test') {
+      throw new TypeError('AGENT_RUNTIME_TEST_CONTROLLER_FORBIDDEN');
+    }
     this.env = env;
     this.config = getAgentConfig(env);
     this.fetchImpl = fetchImpl;
     this.providerScheduler = providerScheduler;
     this.modelCallService = modelCallService;
+    this.testController = testController;
   }
 
   get providerName() {
@@ -1100,6 +1110,19 @@ class OllamaAgentModelProvider {
       outputTokens: Number(response.eval_count || 0),
       credits: ollamaUsageCredits(response, this.env)
     };
+  }
+
+  maximumCallCredits(estimatedInputTokens, maximumOutputTokens) {
+    const inputRate = this.providerName === 'siliconflow'
+      ? this.config.siliconFlowInputCreditsPerMillion
+      : Math.max(0, Number(this.env.AGENT_OLLAMA_INPUT_CREDITS_PER_MILLION || 20));
+    const outputRate = this.providerName === 'siliconflow'
+      ? this.config.siliconFlowOutputCreditsPerMillion
+      : Math.max(0, Number(this.env.AGENT_OLLAMA_OUTPUT_CREDITS_PER_MILLION || 160));
+    return Math.max(0, (
+      Math.max(0, Number(estimatedInputTokens) || 0) * inputRate +
+      Math.max(0, Number(maximumOutputTokens) || 0) * outputRate
+    ) / 1_000_000);
   }
 
   buildChatPayload(messages, capabilities = {}, toolProfile = 'parent', options = {}) {
@@ -1121,8 +1144,12 @@ class OllamaAgentModelProvider {
       options: {
         num_ctx: this.config.modelContextTokens,
         temperature: Number(options.temperature ?? 0.2),
-        top_p: Number(options.topP ?? 0.7)
+        top_p: Number(options.topP ?? 0.7),
+        ...(options.topK === undefined ? {} : { top_k: Number(options.topK) }),
+        ...(options.minP === undefined ? {} : { min_p: Number(options.minP) }),
+        ...(options.maxTokens === undefined ? {} : { num_predict: Number(options.maxTokens) })
       },
+      ...(options.responseFormat === 'json_object' ? { format: 'json' } : {}),
       keep_alive: '10m'
     };
   }
@@ -1205,18 +1232,44 @@ class OllamaAgentModelProvider {
     let requestMessages = Array.isArray(messages) ? [...messages] : [];
     const usage = { inputTokens: 0, outputTokens: 0, credits: 0 };
     for (let correctionAttempt = 0; correctionAttempt <= 2; correctionAttempt += 1) {
+      const thinkingEnabled = this.config.adaptiveReasoningEnabled && ['planner', 'verifier'].includes(phase);
+      const maxTokens = Number(this.config.stageMaxOutputTokens?.[phase] || 2048);
+      const estimatedInputTokens = Math.ceil(JSON.stringify(requestMessages).length / 4);
+      const reservationKey = `${phase}:${metadata.turn || 0}:${correctionAttempt}:${crypto.randomUUID()}`;
+      const maximumCredits = this.maximumCallCredits?.(estimatedInputTokens, maxTokens) || 0;
+      await metadata.reserveBudget?.({
+        component: phase,
+        reservationKey,
+        maximumCredits
+      });
       const payload = this.buildChatPayload(requestMessages, {}, 'parent', {
         toolsEnabled: false,
-        thinkingEnabled: this.config.adaptiveReasoningEnabled,
-        temperature: 0.2
+        thinkingEnabled,
+        temperature: thinkingEnabled ? 0.6 : 0.2,
+        topP: thinkingEnabled ? 0.95 : 0.7,
+        topK: thinkingEnabled ? 20 : undefined,
+        minP: thinkingEnabled ? 0 : undefined,
+        maxTokens,
+        responseFormat: 'json_object'
       });
-      const response = await this.createChat(payload, {
-        ...metadata,
-        phase,
-        turn: correctionAttempt,
-        thinkingEnabled: this.config.adaptiveReasoningEnabled,
-        estimatedInputTokens: JSON.stringify(requestMessages).length / 4
-      });
+      let response;
+      try {
+        response = await this.createChat(payload, {
+          ...metadata,
+          phase,
+          turn: correctionAttempt,
+          thinkingEnabled,
+          estimatedInputTokens,
+          reservationKey,
+          maximumCallCredits: maximumCredits,
+          reserveBudget: metadata.reserveBudget,
+          consumeBudget: metadata.consumeBudget,
+          releaseBudget: metadata.releaseBudget
+        });
+      } catch (error) {
+        await metadata.releaseBudget?.({ reservationKey }).catch(() => {});
+        throw error;
+      }
       const currentUsage = this.usageDetails(response);
       usage.inputTokens += currentUsage.inputTokens;
       usage.outputTokens += currentUsage.outputTokens;
@@ -1224,9 +1277,19 @@ class OllamaAgentModelProvider {
       try {
         return {
           value: parseJsonObject(response.message?.content, errorCode),
-          usage
+          usage,
+          modelCallReceipt: response.modelCallReceipt || null,
+          reservationKey: response.budgetReservationKey || reservationKey,
+          callCredits: currentUsage.credits
         };
       } catch (error) {
+        await metadata.consumeBudget?.({
+          reservationKey: response.budgetReservationKey || reservationKey,
+          actualCredits: currentUsage.credits
+        });
+        if (response.modelCallReceipt && this.modelCallService) {
+          await this.modelCallService.consume(response.modelCallReceipt);
+        }
         if (correctionAttempt >= 2) throw error;
         requestMessages = [
           ...requestMessages,
@@ -1270,14 +1333,24 @@ class OllamaAgentModelProvider {
         { objective, deliverables, capabilities, allowedOrigins, maxCredits }
       ),
       usage: structured.usage,
-      credits: structured.usage.credits
+      credits: structured.usage.credits,
+      modelCallReceipt: structured.modelCallReceipt,
+      reservationKey: structured.reservationKey,
+      reservationActualCredits: structured.callCredits
     };
     await metadata.checkpointResult?.(planned);
+    await metadata.consumeBudget?.({
+      reservationKey: structured.reservationKey,
+      actualCredits: structured.callCredits
+    });
+    if (structured.modelCallReceipt && this.modelCallService) {
+      await this.modelCallService.consume(structured.modelCallReceipt);
+    }
     return planned;
   }
 
-  async verifyTask({ taskSpec, artifacts = [], sources = [], extractedContent = '', metadata = {} } = {}) {
-    const messages = verifierMessages({ taskSpec, artifacts, sources, extractedContent });
+  async verifyTask({ taskSpec, evidenceManifest = {}, finalText = '', metadata = {} } = {}) {
+    const messages = verifierMessages({ taskSpec, evidenceManifest, finalText });
     const structured = await this.createStructuredJson({
       messages,
       errorCode: 'AGENT_VERIFIER_OUTPUT_INVALID',
@@ -1285,9 +1358,12 @@ class OllamaAgentModelProvider {
       metadata
     });
     return {
-      result: normalizeVerifierResult(structured.value),
+      result: normalizeVerifierResult(structured.value, { taskSpec }),
       usage: structured.usage,
-      credits: structured.usage.credits
+      credits: structured.usage.credits,
+      modelCallReceipt: structured.modelCallReceipt,
+      reservationKey: structured.reservationKey,
+      reservationActualCredits: structured.callCredits
     };
   }
 
@@ -1304,9 +1380,9 @@ class OllamaAgentModelProvider {
     callbacks
   }) {
     const runtimeV2 = runtimeContext?.runtimeVersion === 2;
-    const durableVersion = runtimeV2 ? 3 : 2;
+    const durableVersions = runtimeV2 ? new Set([3, CHECKPOINT_VERSION]) : new Set([2]);
     const durable = (
-      resumeState?.version === durableVersion &&
+      durableVersions.has(resumeState?.version) &&
       resumeState?.provider === this.providerName &&
       Array.isArray(resumeState.messages)
     ) ? resumeState : null;
@@ -1335,7 +1411,13 @@ class OllamaAgentModelProvider {
           taskSpec,
           toolProfile,
           phase: runtimePhase,
-          budgetRatio: Number(runtimeContext.budgetRatio || 0)
+          budgetRatio: Number(runtimeContext.budgetRatio || 0),
+          toolSchemas: ollamaFileTools(capabilities, toolProfile),
+          modelConfig: {
+            actorSamplingProfile: this.config.actorSamplingProfile,
+            adaptiveReasoningEnabled: this.config.adaptiveReasoningEnabled,
+            stageMaxOutputTokens: this.config.stageMaxOutputTokens
+          }
         })
       : null;
     const instructions = prompt?.instructions || buildInstructions({ capabilities, maxSteps, toolProfile });
@@ -1460,6 +1542,9 @@ class OllamaAgentModelProvider {
     let budgetLockdownPublished = durable?.budgetLockdownPublished === true;
     let lastFailureFingerprint = String(durable?.lastFailureFingerprint || '');
     let repeatedStateFailures = Math.max(0, Number(durable?.repeatedStateFailures || 0));
+    let readyToFinalize = durable?.readyToFinalize && typeof durable.readyToFinalize === 'object'
+      ? durable.readyToFinalize
+      : null;
 
     const saveDurableState = async () => {
       if (!runtimeV2) {
@@ -1469,7 +1554,7 @@ class OllamaAgentModelProvider {
         );
       }
       await callbacks.saveModelState?.({
-        version: durableVersion,
+        version: runtimeV2 ? CHECKPOINT_VERSION : 2,
         provider: this.providerName,
         messages,
         ...(runtimeV2 ? {
@@ -1518,9 +1603,21 @@ class OllamaAgentModelProvider {
         budgetWarningPublished,
         budgetLockdownPublished,
         lastFailureFingerprint,
-        repeatedStateFailures
+        repeatedStateFailures,
+        readyToFinalize
       });
     };
+
+    if (runtimeV2 && readyToFinalize) {
+      return {
+        responseId: String(readyToFinalize.responseId || `${this.providerName}:ready-to-finalize`),
+        text: String(readyToFinalize.text || text),
+        usage: {},
+        credits: totalCredits,
+        turns,
+        readyToFinalize
+      };
+    }
 
     const refreshSubagentFinalization = () => {
       subagentFinalizationRequired = (
@@ -1554,6 +1651,29 @@ class OllamaAgentModelProvider {
           ...args,
           steps: normalizePlanProgress(args.steps)
         };
+        if (runtimeV2) {
+          const canonicalById = new Map(taskSpec.plan.map((step) => [step.id, step]));
+          const requestedIds = planArgs.steps.map((step) => String(step?.id || ''));
+          if (
+            requestedIds.length !== taskSpec.plan.length ||
+            new Set(requestedIds).size !== taskSpec.plan.length ||
+            requestedIds.some((id) => !canonicalById.has(id))
+          ) {
+            throw new ApiError(400, 'AGENT_PLAN_INVALID', {
+              details: {
+                correction: 'Update each existing stable step ID exactly once; do not add, remove, reorder, or replace server-owned phases.'
+              }
+            });
+          }
+          planArgs.steps = taskSpec.plan.map((canonicalStep) => {
+            const requested = planArgs.steps.find((step) => step.id === canonicalStep.id);
+            return {
+              id: canonicalStep.id,
+              label: String(requested?.label || canonicalStep.label).slice(0, 160),
+              status: requested?.status || canonicalStep.status
+            };
+          });
+        }
         if (
           toolProfile === 'parent' &&
           delegationCompleted &&
@@ -1573,14 +1693,14 @@ class OllamaAgentModelProvider {
         planPublished = true;
         if (runtimeV2) {
           const publishedSteps = Array.isArray(result?.steps) ? result.steps : planArgs.steps;
-          const nextIndex = publishedSteps.findIndex((step) => step?.status === 'in_progress');
           const previousPlan = taskSpec.plan;
-          taskSpec.plan = publishedSteps.slice(0, 12).map((step, index) => ({
-            id: previousPlan[index]?.id || `step-${index + 1}`,
-            label: String(step?.label || previousPlan[index]?.label || '').slice(0, 160),
-            phase: previousPlan[index]?.phase || (nextIndex < 0 ? 'verification' : runtimePhase),
-            status: step?.status || 'pending'
+          const publishedById = new Map(publishedSteps.map((step) => [step.id, step]));
+          taskSpec.plan = previousPlan.map((canonicalStep) => ({
+            ...canonicalStep,
+            label: String(publishedById.get(canonicalStep.id)?.label || canonicalStep.label).slice(0, 160),
+            status: publishedById.get(canonicalStep.id)?.status || canonicalStep.status
           }));
+          const nextIndex = taskSpec.plan.findIndex((step) => step.status === 'in_progress');
           runtimePhase = nextIndex >= 0
             ? taskSpec.plan[nextIndex]?.phase || runtimePhase
             : 'verification';
@@ -1592,7 +1712,13 @@ class OllamaAgentModelProvider {
             taskSpec,
             toolProfile,
             phase: runtimePhase,
-            budgetRatio: Number(runtimeContext.budgetRatio || 0)
+            budgetRatio: Number(runtimeContext.budgetRatio || 0),
+            toolSchemas: ollamaFileTools(capabilities, toolProfile),
+            modelConfig: {
+              actorSamplingProfile: this.config.actorSamplingProfile,
+              adaptiveReasoningEnabled: this.config.adaptiveReasoningEnabled,
+              stageMaxOutputTokens: this.config.stageMaxOutputTokens
+            }
           });
           allowedToolNames = new Set(
             functionToolsForProfile(
@@ -1622,7 +1748,9 @@ class OllamaAgentModelProvider {
         return result;
       }
       if (call.name === 'sandbox_shell') {
-        const shellResult = await callbacks.shell(args.script, args.purpose);
+        const shellResult = await callbacks.shell(args.script, args.purpose, {
+          callId: call.callId
+        });
         if (shellResult.success) shellOriginValidationAttempts = 0;
         if (shellResult.success) artifactDuplicateAttempts = 0;
         if (shellResult.success) artifactRepairRequired = false;
@@ -1655,7 +1783,7 @@ class OllamaAgentModelProvider {
         return callbacks.browserDom(args);
       }
       if (call.name === 'generate_image') {
-        const image = await callbacks.generateImage(args);
+        const image = await callbacks.generateImage(args, { callId: call.callId });
         artifactDuplicateAttempts = 0;
         return image;
       }
@@ -1747,6 +1875,21 @@ class OllamaAgentModelProvider {
               content: JSON.stringify(result)
             };
           } catch (error) {
+            // A synthetic process death or a lost lease means this execution
+            // context no longer owns the right to publish an Observation. The
+            // durable tool receipt will be consumed exactly once by recovery.
+            if (
+              error?.name === 'RuntimeHarnessCrash' ||
+              [
+                'AGENT_LEASE_LOST',
+                'AGENT_IMAGE_CALL_AMBIGUOUS',
+                'AGENT_WAITING_FOR_USER',
+                'AGENT_PAUSED',
+                'AGENT_CANCELLED'
+              ].includes(error?.code)
+            ) {
+              throw error;
+            }
             const correctablePlanError = (
               pendingCall.name === 'update_plan' &&
               error?.code === 'AGENT_PLAN_INVALID'
@@ -1783,6 +1926,11 @@ class OllamaAgentModelProvider {
               !correctableArtifactError &&
               !correctableShellOriginError
             ) {
+              await callbacks.toolObservation?.({
+                callId: pendingCall.callId,
+                toolName: pendingCall.name,
+                ok: false
+              });
               throw error;
             }
             if (correctablePlanError) {
@@ -1903,26 +2051,19 @@ class OllamaAgentModelProvider {
             code: resultValue?.errorCode || null,
             summary: summarizeToolObservation(pendingCall?.name, resultValue),
             stateDelta: {
-              tool: pendingCall?.name,
-              artifactId: resultValue?.artifactId || null,
-              verificationStatus: resultValue?.verificationStatus || null
+              sources: evidenceRefs,
+              files: changedFiles
             },
             evidenceRefs,
             changedFiles,
             retryHint: resultValue?.correction || null,
             fingerprint: runtimeFingerprint
           });
-          workingState = {
-            ...workingState,
-            sources: [...new Set([...(workingState.sources || []), ...evidenceRefs])].slice(-100),
-            files: [...new Set([...(workingState.files || []), ...changedFiles])].slice(-100),
-            completedEvidence: envelope.ok
-              ? [...(workingState.completedEvidence || []), envelope].slice(-100)
-              : workingState.completedEvidence,
-            failures: envelope.ok
-              ? workingState.failures
-              : [...(workingState.failures || []), envelope].slice(-20)
-          };
+          workingState = reduceWorkingState(workingState, {
+            ...envelope.stateDelta,
+            completedEvidence: envelope.ok ? [envelope] : [],
+            failures: envelope.ok ? [] : [envelope]
+          });
           if (envelope.ok) {
             lastFailureFingerprint = '';
             repeatedStateFailures = 0;
@@ -1937,7 +2078,19 @@ class OllamaAgentModelProvider {
             content: JSON.stringify(envelope)
           };
         }
-        messages.push(this.toolResultMessage(pendingCall, completedOutput));
+        const observedCall = pendingCall;
+        messages.push(this.toolResultMessage(observedCall, completedOutput));
+        let observedOk = true;
+        try {
+          const observedValue = JSON.parse(String(completedOutput?.content || '{}'));
+          observedOk = observedValue?.success !== false && observedValue?.ok !== false &&
+            !observedValue?.errorCode && observedValue?.code !== 'error';
+        } catch {}
+        await callbacks.toolObservation?.({
+          callId: observedCall.callId,
+          toolName: observedCall.name,
+          ok: observedOk
+        });
         pendingCall = null;
         completedOutput = null;
         if (artifactDuplicateNoticePending) {
@@ -1959,18 +2112,25 @@ class OllamaAgentModelProvider {
       }
 
       if (subagentFinalizationRequired) {
-        await callbacks.clearModelState?.();
         const summary = subagentCompletionSummary || 'The delegated plan and its output verification completed.';
-        return {
+        readyToFinalize = {
+          kind: 'subagent',
           responseId: `${this.providerName}:subagent-complete:${turns}`,
           text: [
             'Status: completed',
             `Summary: ${summary}`,
             'Outputs: saved in the isolated /workspace directory for parent verification.'
-          ].join('\n'),
+          ].join('\n')
+        };
+        if (runtimeV2) await saveDurableState();
+        else await callbacks.clearModelState?.();
+        return {
+          responseId: readyToFinalize.responseId,
+          text: readyToFinalize.text,
           usage: {},
           credits: totalCredits,
-          turns
+          turns,
+          readyToFinalize
         };
       }
 
@@ -1985,17 +2145,34 @@ class OllamaAgentModelProvider {
       ) {
         const verification = pendingVerifierResult;
         pendingVerifierResult = null;
+        if (verification.modelCallReceipt && this.modelCallService) {
+          await callbacks.consumeBudget?.({
+            reservationKey: verification.reservationKey,
+            actualCredits: verification.reservationActualCredits
+          });
+          await this.modelCallService.consume(verification.modelCallReceipt);
+          delete verification.modelCallReceipt;
+          await saveDurableState();
+        }
         semanticVerificationResult = verification.result;
         if (verification.result?.passed === true) {
           semanticVerificationPassed = true;
           semanticRepairRequired = false;
-          await callbacks.clearModelState?.();
-          return {
+          readyToFinalize = {
+            kind: 'text',
             responseId: `${this.providerName}:verified-text:${turns}`,
+            text,
+            finalTextSha256: crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
+            semanticVerification: verification.result
+          };
+          await saveDurableState();
+          return {
+            responseId: readyToFinalize.responseId,
             text,
             usage: {},
             credits: totalCredits,
-            turns
+            turns,
+            readyToFinalize
           };
         }
         if (semanticVerificationAttempts >= 2) {
@@ -2156,7 +2333,13 @@ class OllamaAgentModelProvider {
           taskSpec,
           toolProfile,
           phase: deliverablesComplete ? 'completion' : runtimePhase,
-          budgetRatio
+          budgetRatio,
+          toolSchemas: ollamaFileTools(capabilities, toolProfile),
+          modelConfig: {
+            actorSamplingProfile: this.config.actorSamplingProfile,
+            adaptiveReasoningEnabled: this.config.adaptiveReasoningEnabled,
+            stageMaxOutputTokens: this.config.stageMaxOutputTokens
+          }
         });
         allowedToolNames = new Set(
           functionToolsForProfile(
@@ -2186,7 +2369,16 @@ class OllamaAgentModelProvider {
         allowedToolNames,
         thinkingEnabled: runtimeV2 ? false : undefined,
         temperature: runtimeV2 ? this.config.actorSamplingProfile.temperature : undefined,
-        topP: runtimeV2 ? this.config.actorSamplingProfile.topP : undefined
+        topP: runtimeV2 ? this.config.actorSamplingProfile.topP : undefined,
+        maxTokens: runtimeV2
+          ? Number(this.config.stageMaxOutputTokens?.[
+            toolProfile === 'subagent'
+              ? 'subagent'
+              : deliverablesComplete
+                ? 'final_summary'
+                : 'actor'
+          ] || 1024)
+          : undefined
       });
       if (deliverablesComplete) {
         delete request.tools;
@@ -2225,22 +2417,66 @@ class OllamaAgentModelProvider {
         };
       }
       const recoveredModelResponse = Boolean(pendingModelResponse);
-      const response = pendingModelResponse || await this.createChat(request, runtimeV2 ? {
-          runId: runtimeContext.runId,
-          subagentId: runtimeContext.subagentId || null,
-          userId: runtimeContext.userId || null,
-          phase: toolProfile === 'subagent' ? 'subagent' : 'actor',
-          priority: toolProfile === 'subagent'
-            ? 'subagent'
-            : (resumeState ? 'resumed_parent' : 'actor'),
-          turn: turns,
-          promptProfile: `${prompt.promptProfile}/${this.config.actorSamplingProfile.id}`,
-          promptHash: prompt.promptHash,
-          skillIds: prompt.skills.map((skill) => skill.id),
-          thinkingEnabled: false,
-          estimatedInputTokens: JSON.stringify(requestMessages).length / 4,
-          signal
-        } : {});
+      const modelPhase = toolProfile === 'subagent' ? 'subagent' : 'actor';
+      const estimatedInputTokens = Math.ceil(JSON.stringify(requestMessages).length / 4);
+      const maximumOutputTokens = Number(this.config.stageMaxOutputTokens?.[
+        toolProfile === 'subagent'
+          ? 'subagent'
+          : deliverablesComplete
+            ? 'final_summary'
+            : 'actor'
+      ] || 1024);
+      const reservationKey = pendingModelResponse?.budgetReservationKey || (
+        runtimeV2 ? `${modelPhase}:${turns}:${crypto.randomUUID()}` : null
+      );
+      const maximumCallCredits = this.maximumCallCredits(
+        estimatedInputTokens,
+        maximumOutputTokens
+      );
+      if (runtimeV2 && !recoveredModelResponse) {
+        await callbacks.reserveBudget?.({
+          component: modelPhase,
+          reservationKey,
+          maximumCredits: maximumCallCredits,
+          subagentId: runtimeContext.subagentId || null
+        });
+      }
+      let response = pendingModelResponse;
+      if (!response) {
+        try {
+          response = await this.createChat(request, runtimeV2 ? {
+            runId: runtimeContext.runId,
+            subagentId: runtimeContext.subagentId || null,
+            userId: runtimeContext.userId || null,
+            phase: modelPhase,
+            priority: toolProfile === 'subagent'
+              ? 'subagent'
+              : (resumeState ? 'resumed_parent' : 'actor'),
+            turn: turns,
+            promptProfile: `${prompt.promptProfile}/${this.config.actorSamplingProfile.id}`,
+            promptHash: prompt.promptHash,
+            skillIds: prompt.skills.map((skill) => skill.id),
+            thinkingEnabled: false,
+            estimatedInputTokens,
+            workerId: runtimeContext.workerId,
+            leaseEpoch: runtimeContext.leaseEpoch,
+            reservationKey,
+            maximumCallCredits,
+            reserveBudget: callbacks.reserveBudget,
+            consumeBudget: callbacks.consumeBudget,
+            releaseBudget: callbacks.releaseBudget,
+            signal
+          } : {});
+        } catch (error) {
+          if (runtimeV2 && error?.name !== 'RuntimeHarnessCrash') {
+            await callbacks.releaseBudget?.({ reservationKey }).catch(() => {});
+          }
+          throw error;
+        }
+      }
+      if (runtimeV2 && !response.budgetReservationKey) {
+        response.budgetReservationKey = reservationKey;
+      }
       const { inputTokens, outputTokens, credits } = this.usageDetails(response);
       if (!recoveredModelResponse) {
         totalCredits += credits;
@@ -2254,6 +2490,32 @@ class OllamaAgentModelProvider {
           outputTokens,
           provider: this.providerName
         });
+        await callbacks.consumeBudget?.({
+          reservationKey: response.budgetReservationKey || reservationKey,
+          actualCredits: credits
+        });
+        if (runtimeV2 && response.modelCallReceipt && this.modelCallService) {
+          await this.modelCallService.consume(response.modelCallReceipt);
+          delete response.modelCallReceipt;
+          pendingModelResponse = response;
+          await saveDurableState();
+        }
+      } else if (runtimeV2 && response.modelCallReceipt && this.modelCallService) {
+        await callbacks.recordUsage?.(totalCredits, {
+          modelName: this.config.modelName,
+          inputTokens,
+          outputTokens,
+          provider: this.providerName,
+          recovered: true
+        });
+        await callbacks.consumeBudget?.({
+          reservationKey: response.budgetReservationKey,
+          actualCredits: credits
+        });
+        await this.modelCallService.consume(response.modelCallReceipt);
+        delete response.modelCallReceipt;
+        pendingModelResponse = response;
+        await saveDurableState();
       }
 
       const assistant = {
@@ -2317,6 +2579,15 @@ class OllamaAgentModelProvider {
             throw new ApiError(500, 'AGENT_VERIFIER_NOT_CONFIGURED', { retryable: false });
           }
           pendingVerifierResult = null;
+          if (recoveredVerification && verification.modelCallReceipt && this.modelCallService) {
+            await callbacks.consumeBudget?.({
+              reservationKey: verification.reservationKey,
+              actualCredits: verification.reservationActualCredits
+            });
+            await this.modelCallService.consume(verification.modelCallReceipt);
+            delete verification.modelCallReceipt;
+            await saveDurableState();
+          }
           if (!recoveredVerification) {
             totalCredits += Math.max(0, Number(verification?.credits || 0));
             await callbacks.recordUsage?.(totalCredits, {
@@ -2385,13 +2656,22 @@ class OllamaAgentModelProvider {
           await saveDurableState();
           continue;
         }
-        await callbacks.clearModelState?.();
+        readyToFinalize = runtimeV2 ? {
+          kind: requiredDeliverables.length ? 'artifacts' : 'text',
+          responseId: String(response.id || `${this.providerName}:${turns}`),
+          text,
+          finalTextSha256: crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
+          semanticVerification: semanticVerificationResult
+        } : null;
+        if (runtimeV2) await saveDurableState();
+        else await callbacks.clearModelState?.();
         return {
           responseId: String(response.id || `${this.providerName}:${turns}`),
           text,
           usage: { input_tokens: inputTokens, output_tokens: outputTokens },
           credits: totalCredits,
-          turns
+          turns,
+          ...(readyToFinalize ? { readyToFinalize } : {})
         };
       }
       const fn = calls[0]?.function || {};
@@ -2400,6 +2680,17 @@ class OllamaAgentModelProvider {
         .update(`${turns}:${name}:${JSON.stringify(fn.arguments || '')}`)
         .digest('hex')
         .slice(0, 24));
+      const reportPdfAlias = normalizeReportPdfToolAlias({
+        name,
+        rawArguments: fn.arguments,
+        toolProfile
+      });
+      if (reportPdfAlias) {
+        name = reportPdfAlias.name;
+        fn.name = reportPdfAlias.name;
+        fn.arguments = reportPdfAlias.arguments;
+      }
+      await callbacks.toolCall?.({ callId, toolName: name });
       if (delegationRequired && !delegationCompleted && name !== 'delegate_tasks') {
         delegationNudges += 1;
         turns += 1;
@@ -2419,30 +2710,23 @@ class OllamaAgentModelProvider {
             })
           }
         ));
+        await callbacks.toolObservation?.({ callId, toolName: name, ok: false });
         pendingCall = null;
         completedOutput = null;
         await saveDurableState();
         continue;
       }
       if (name === 'generate_image' && capabilities?.generate_images !== true) {
+        await callbacks.toolObservation?.({ callId, toolName: name, ok: false });
         throw new ApiError(403, 'AGENT_CAPABILITY_NOT_GRANTED', {
           capability: 'generate_images'
         });
       }
       if (name === 'delegate_tasks' && capabilities?.subagents !== true) {
+        await callbacks.toolObservation?.({ callId, toolName: name, ok: false });
         throw new ApiError(403, 'AGENT_CAPABILITY_NOT_GRANTED', {
           capability: 'subagents'
         });
-      }
-      const reportPdfAlias = normalizeReportPdfToolAlias({
-        name,
-        rawArguments: fn.arguments,
-        toolProfile
-      });
-      if (reportPdfAlias) {
-        name = reportPdfAlias.name;
-        fn.name = reportPdfAlias.name;
-        fn.arguments = reportPdfAlias.arguments;
       }
       if (!allowedToolNames.has(name)) {
         unsupportedToolAttempts += 1;
@@ -2463,6 +2747,7 @@ class OllamaAgentModelProvider {
             })
           }
         ));
+        await callbacks.toolObservation?.({ callId, toolName: name, ok: false });
         pendingCall = null;
         completedOutput = null;
         await saveDurableState();
@@ -2495,6 +2780,7 @@ class OllamaAgentModelProvider {
             })
           }
         ));
+        await callbacks.toolObservation?.({ callId, toolName: name, ok: false });
         pendingCall = null;
         completedOutput = null;
         await saveDurableState();
@@ -2510,6 +2796,28 @@ class OllamaAgentModelProvider {
 class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
   get providerName() {
     return 'siliconflow';
+  }
+
+  recoverReceivedModelCall(receipt) {
+    const body = receipt?.response?.response;
+    const message = body?.choices?.[0]?.message;
+    if (!body || !message || typeof message !== 'object') {
+      throw new ApiError(500, 'AGENT_MODEL_RECEIPT_INVALID', { retryable: false });
+    }
+    return {
+      id: String(body.id || receipt.call?.id || ''),
+      message: {
+        role: String(message.role || 'assistant'),
+        content: String(message.content || ''),
+        ...(Array.isArray(message.tool_calls) ? { tool_calls: message.tool_calls } : {})
+      },
+      prompt_eval_count: Number(body.usage?.prompt_tokens || 0),
+      eval_count: Number(body.usage?.completion_tokens || 0),
+      siliconFlowUsage: body.usage || {},
+      modelCallReceipt: receipt.call,
+      budgetReservationKey: receipt.reservationKey || null,
+      recoveredFromReceipt: true
+    };
   }
 
   delegationToolChoice() {
@@ -2547,10 +2855,15 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
       enable_thinking: options.thinkingEnabled === undefined
         ? this.config.siliconFlowThinkingEnabled
         : options.thinkingEnabled === true,
-      max_tokens: this.config.siliconFlowMaxTokens,
+      max_tokens: Number(options.maxTokens ?? this.config.siliconFlowMaxTokens),
       parallel_tool_calls: false,
       temperature: Number(options.temperature ?? 0.2),
-      top_p: Number(options.topP ?? 0.7)
+      top_p: Number(options.topP ?? 0.7),
+      ...(options.topK === undefined ? {} : { top_k: Number(options.topK) }),
+      ...(options.minP === undefined ? {} : { min_p: Number(options.minP) }),
+      ...(options.responseFormat === 'json_object'
+        ? { response_format: { type: 'json_object' } }
+        : {})
     };
   }
 
@@ -2625,6 +2938,19 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
     }
     let lastError = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const attemptReservationKey = metadata.reservationKey
+        ? (attempt === 1
+            ? metadata.reservationKey
+            : `${metadata.reservationKey}:retry:${attempt}`.slice(0, 200))
+        : null;
+      if (attempt > 1 && attemptReservationKey && metadata.reserveBudget) {
+        await metadata.reserveBudget({
+          component: metadata.phase || 'actor',
+          reservationKey: attemptReservationKey,
+          maximumCredits: Math.max(0, Number(metadata.maximumCallCredits || 0)),
+          subagentId: metadata.subagentId || null
+        });
+      }
       const slot = this.providerScheduler && this.config.providerSchedulerEnabled
         ? await this.providerScheduler.acquire({
             priority: metadata.priority || metadata.phase || 'actor',
@@ -2638,13 +2964,22 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
       if (metadata.signal?.aborted) {
         throw new ApiError(499, 'AGENT_CANCELLED', { retryable: false });
       }
-      const call = this.modelCallService && metadata.phase
-        ? await this.modelCallService.start({
+      const startModelCall = () => this.modelCallService.start({
             ...metadata,
             provider: this.providerName,
             modelName: this.config.modelName,
-            attempt
-          }).catch(() => null)
+            attempt,
+            reservationKey: attemptReservationKey,
+            intent: {
+              phase: metadata.phase,
+              turn: metadata.turn || 0,
+              promptHash: metadata.promptHash || null,
+              reservationKey: attemptReservationKey,
+              request: payload
+            }
+          });
+      const call = this.modelCallService && metadata.phase
+        ? (metadata.runId ? await startModelCall() : await startModelCall().catch(() => null))
         : null;
       const controller = new AbortController();
       const abort = () => controller.abort();
@@ -2654,7 +2989,14 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
       timer.unref?.();
       let response;
       let body;
+      let responseReceived = false;
       try {
+        if (call) await this.modelCallService.markDispatched(call);
+        await this.testController?.hit('after_dispatch', {
+          callId: call?.id || null,
+          runId: metadata.runId || null,
+          phase: metadata.phase || 'actor'
+        });
         response = await this.fetchImpl(`${this.config.siliconFlowBaseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
@@ -2665,6 +3007,19 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
           signal: controller.signal
         });
         body = await response.json().catch(() => null);
+        responseReceived = true;
+        await this.testController?.hit('after_provider_response', {
+          callId: call?.id || null,
+          runId: metadata.runId || null,
+          phase: metadata.phase || 'actor',
+          status: response.status
+        });
+        if (call) {
+          await this.modelCallService.markReceived(call, {
+            providerStatus: response.status,
+            response: body
+          });
+        }
         if (response.status === 401 || response.status === 403) {
           throw new ApiError(503, 'AGENT_SILICONFLOW_CREDENTIAL_INVALID', {
             retryable: false,
@@ -2701,9 +3056,13 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
             queueWaitMs: slot.queueWaitMs,
             selectedTool: normalized.message.tool_calls?.[0]?.function?.name || null
           }).catch(() => {});
+          normalized.modelCallReceipt = call;
         }
+        if (attemptReservationKey) normalized.budgetReservationKey = attemptReservationKey;
         return normalized;
       } catch (error) {
+        if (error?.name === 'RuntimeHarnessCrash') throw error;
+        if (error?.code === 'AGENT_LEASE_LOST') throw error;
         if (metadata.signal?.aborted) {
           lastError = new ApiError(499, 'AGENT_CANCELLED', { retryable: false });
         } else {
@@ -2714,12 +3073,41 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
                 cause: String(error?.name || error?.code || '')
               });
         }
-        if (call) {
+        if (call && responseReceived) {
           await this.modelCallService.finish(call, {
             outcome: metadata.signal?.aborted ? 'cancelled' : 'failed',
             queueWaitMs: slot.queueWaitMs,
             errorCode: lastError.code
           }).catch(() => {});
+          await this.modelCallService.consume(call).catch(() => {});
+          if (attemptReservationKey && metadata.consumeBudget) {
+            const failedUsage = {
+              prompt_eval_count: Number(body?.usage?.prompt_tokens || 0),
+              eval_count: Number(body?.usage?.completion_tokens || 0)
+            };
+            await metadata.consumeBudget({
+              reservationKey: attemptReservationKey,
+              actualCredits: this.usageDetails(failedUsage).credits
+            });
+          }
+        } else if (call) {
+          await this.modelCallService.markAmbiguous(call).catch(() => {});
+          await this.modelCallService.finish(call, {
+            outcome: metadata.signal?.aborted ? 'cancelled' : 'failed',
+            queueWaitMs: slot.queueWaitMs,
+            errorCode: 'AGENT_MODEL_CALL_AMBIGUOUS'
+          }).catch(() => {});
+          if (attemptReservationKey && metadata.releaseBudget) {
+            await metadata.releaseBudget({ reservationKey: attemptReservationKey }).catch(() => {});
+          }
+          if (metadata.signal?.aborted) throw lastError;
+          throw new ApiError(409, 'AGENT_MODEL_CALL_AMBIGUOUS', {
+            retryable: false,
+            callId: call.id
+          });
+        }
+        if (!call && !responseReceived && attemptReservationKey && metadata.releaseBudget) {
+          await metadata.releaseBudget({ reservationKey: attemptReservationKey }).catch(() => {});
         }
         if (lastError.retryable !== true || attempt >= 3 || metadata.signal?.aborted) {
           throw lastError;
@@ -2776,14 +3164,25 @@ class FixtureAgentModelProvider {
     };
   }
 
-  async verifyTask() {
+  async verifyTask({ taskSpec } = {}) {
     return {
       result: {
+        version: 2,
         passed: true,
         score: 100,
         issues: [],
         repairInstructions: [],
-        unsupportedVisualJudgment: false
+        unsupportedVisualJudgment: false,
+        criteria: (Array.isArray(taskSpec?.acceptanceRequirements)
+          ? taskSpec.acceptanceRequirements
+          : []).map((requirement) => ({
+          requirementId: requirement.id,
+          status: 'passed',
+          evidenceRefs: ['fixture'],
+          confidence: 1,
+          issue: '',
+          repairTarget: ''
+        }))
       },
       usage: {},
       credits: 0

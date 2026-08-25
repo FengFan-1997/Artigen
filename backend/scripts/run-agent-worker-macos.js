@@ -72,6 +72,31 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
     AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
     AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
+    AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: String(
+      process.env.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION || '0'
+    ),
+    AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: String(
+      process.env.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION || '0'
+    ),
+    AGENT_MODEL_CONTEXT_TOKENS: String(process.env.AGENT_MODEL_CONTEXT_TOKENS || '16384'),
+    AGENT_RUNTIME_V2_ENABLED: String(process.env.AGENT_RUNTIME_V2_ENABLED || 'false'),
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: String(
+      process.env.AGENT_RUNTIME_V2_ROLLOUT_PERCENT || '0'
+    ),
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: String(
+      process.env.AGENT_RUNTIME_V2_CANARY_USER_IDS || ''
+    ),
+    DESIGN_PLANNER_V2_ENABLED: String(process.env.DESIGN_PLANNER_V2_ENABLED || 'false'),
+    AGENT_ADAPTIVE_REASONING_ENABLED: String(
+      process.env.AGENT_ADAPTIVE_REASONING_ENABLED || 'false'
+    ),
+    AGENT_PROJECT_MEMORY_ENABLED: String(process.env.AGENT_PROJECT_MEMORY_ENABLED || 'false'),
+    AGENT_PROVIDER_SCHEDULER_ENABLED: String(
+      process.env.AGENT_PROVIDER_SCHEDULER_ENABLED || 'false'
+    ),
+    AGENT_RUNTIME_ACTOR_PROFILE: String(
+      process.env.AGENT_RUNTIME_ACTOR_PROFILE || 'stable-v1'
+    ),
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local',
     AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',

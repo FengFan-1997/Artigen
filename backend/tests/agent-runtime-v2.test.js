@@ -127,14 +127,14 @@ test('Runtime V2 preserves durable plan progress instead of restarting the first
   assert.deepEqual(taskSpec.plan.map((step) => step.status), ['completed', 'in_progress']);
 });
 
-test('Runtime V2 enforces the fixed context budget before calling the provider', () => {
+test('Runtime V2 refuses to silently truncate immutable requirements that exceed context', () => {
   const taskSpec = normalizeTaskSpec({
     goal: `${'核心目标'.repeat(900)}TAIL_MUST_BE_COMPACTED`,
     deliverables: ['report'],
     constraints: Array.from({ length: 24 }, (_, index) => `约束${index}:${'内容'.repeat(300)}`),
     acceptanceCriteria: Array.from({ length: 24 }, (_, index) => `验收${index}:${'标准'.repeat(300)}`)
   }, { capabilities: { files: true, shell: true }, maxCredits: 50 });
-  const context = buildContextMessages({
+  assert.throws(() => buildContextMessages({
     instructions: 'constitution',
     taskSpec,
     workingState: createWorkingState({ taskSpec }),
@@ -144,12 +144,11 @@ test('Runtime V2 enforces the fixed context budget before calling the provider',
     })),
     tools: [{ name: 'sandbox_shell', schema: 'x'.repeat(5000) }],
     contextTokens: 16_384
-  });
-  assert.ok(context.estimatedInputTokens <= context.contextBudgetTokens);
-  assert.doesNotMatch(context.messages[1].content, /TAIL_MUST_BE_COMPACTED/);
+  }), { code: 'AGENT_CONTEXT_FIXED_BUDGET_EXCEEDED' });
+  assert.match(taskSpec.goal, /TAIL_MUST_BE_COMPACTED/u);
   for (let index = 0; index < 24; index += 1) {
-    assert.match(context.messages[1].content, new RegExp(`约束${index}:`, 'u'));
-    assert.match(context.messages[1].content, new RegExp(`验收${index}:`, 'u'));
+    assert.match(taskSpec.constraintRequirements[index].text, new RegExp(`约束${index}:`, 'u'));
+    assert.match(taskSpec.acceptanceRequirements[index].text, new RegExp(`验收${index}:`, 'u'));
   }
 });
 
@@ -234,11 +233,13 @@ test('Verifier cannot claim image aesthetics without a VLM', () => {
     issues: [],
     unsupportedVisualJudgment: true
   }), {
+    version: 2,
     passed: true,
     score: 95,
     issues: [],
     repairInstructions: [],
-    unsupportedVisualJudgment: true
+    unsupportedVisualJudgment: true,
+    criteria: []
   });
   assert.equal(normalizeVerifierResult({ passed: true, score: 84, issues: [] }).passed, false);
 });
@@ -278,7 +279,7 @@ test('Project memory suggestions only contain literal user-provided text and are
 });
 
 test('The 50-case quality manifest compiles into executable routes, skills, tools and validators', () => {
-  assert.equal(qualityManifest.version, 2);
+  assert.equal(qualityManifest.version, 3);
   assert.equal(qualityManifest.cases.length, 50);
   const evaluationDir = path.resolve(__dirname, '../evaluation');
   for (const task of qualityManifest.cases) {
@@ -287,6 +288,26 @@ test('The 50-case quality manifest compiles into executable routes, skills, tool
     assert.equal(compiled.taskSpec.goal, task.objective);
     assert.ok(compiled.deterministicValidators.length >= 3);
   }
+});
+
+test('Quality fixtures cannot escape the synthetic fixture and public-asset roots', () => {
+  const evaluationDir = path.resolve(__dirname, '../evaluation');
+  const manifest = {
+    ...qualityManifest,
+    fixtureRules: {
+      ...qualityManifest.fixtureRules,
+      forbidden_fixture_escape: ['../../backend/.env']
+    }
+  };
+  const task = {
+    ...qualityManifest.cases[0],
+    acceptance: [...qualityManifest.cases[0].acceptance, 'forbidden_fixture_escape']
+  };
+  const compiled = compileQualityCase({ manifest, task, evaluationDir });
+  assert.equal(
+    validateCompiledQualityCase(compiled).includes('fixture path forbidden ../../backend/.env'),
+    true
+  );
 });
 
 test('Provider scheduler derives a shared conservative interval from RPM', () => {
@@ -624,7 +645,7 @@ test('Runtime V2 resumes a paid text verifier result without another Actor call'
     }
   });
   assert.equal(providerCalls, 0);
-  assert.equal(cleared, 1);
+  assert.equal(cleared, 0);
   assert.equal(result.credits, 2);
   assert.equal(result.text, 'A verified grounded answer.');
 });

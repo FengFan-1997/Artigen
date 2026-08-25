@@ -34,7 +34,7 @@
         </button>
         <button v-if="canResume" class="primary-control" type="button" :disabled="controlBusy" @click="control('resume')">
           <WorkspaceIcon name="play" />
-          {{ zh ? '恢复' : 'Resume' }}
+          {{ retryRequired ? (zh ? '重试' : 'Retry') : (zh ? '恢复' : 'Resume') }}
         </button>
         <button v-if="!terminal" class="danger-control" :class="{ armed: stopArmed }" type="button" :disabled="controlBusy" @click="requestCancel">
           <WorkspaceIcon name="stop" />
@@ -56,6 +56,16 @@
             <header><span>Artigen Agent</span><small>{{ statusLabel(run.status) }}</small></header>
             <p>{{ run.progress.plan?.length ? (zh ? '计划已建立，正在按步骤推进。' : 'The plan is ready and moving forward.') : desktopMessage }}</p>
           </div>
+        </article>
+
+        <article v-if="retryRequired" class="retry-required" role="status">
+          <div>
+            <b>{{ zh ? '这次调用结果无法确认' : 'This call could not be confirmed' }}</b>
+            <p>{{ zh ? '系统没有自动重试，也没有把这次未落账调用计入费用。你可以确认后安全重试。' : 'It was not retried automatically or charged without a receipt. You can explicitly retry it now.' }}</p>
+          </div>
+          <button type="button" :disabled="controlBusy" @click="control('resume')">
+            {{ zh ? '确认重试' : 'Retry now' }}
+          </button>
         </article>
 
         <article v-for="approval in pendingApprovals" :key="approval.approvalId" class="approval-card">
@@ -291,7 +301,8 @@ const workspaceTone = computed<'ready' | 'busy' | 'warning' | 'offline'>(() => {
   return 'offline';
 });
 const canPause = computed(() => ['queued', 'provisioning', 'running', 'waiting_user'].includes(run.value?.status || ''));
-const canResume = computed(() => run.value?.status === 'paused');
+const retryRequired = computed(() => run.value?.status === 'waiting_user' && run.value?.progress.retryRequired === true);
+const canResume = computed(() => run.value?.status === 'paused' || retryRequired.value);
 const artifacts = computed<AgentArtifact[]>(() => run.value?.artifacts || []);
 const websiteArtifacts = computed(() =>
   artifacts.value.filter((artifact) =>
@@ -756,6 +767,11 @@ onBeforeUnmount(() => {
 .approval-card footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .approval-card button { min-height: 36px; padding: 0 12px; color: var(--text); border: 0; border-radius: 8px; background: var(--surface); font-size: 11px; }
 .approval-card .approval-primary { color: var(--acid-ink); background: var(--acid); font-weight: 720; }
+.retry-required { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 26px 0; padding: 15px 16px 15px 19px; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); box-shadow: inset 3px 0 var(--warning); }
+.retry-required div { display: grid; gap: 5px; }
+.retry-required b { color: var(--text); font-size: 13px; }
+.retry-required p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.retry-required button { min-height: 36px; flex: 0 0 auto; padding: 0 12px; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font-size: 11px; font-weight: 720; }
 .delivery-summary { padding: 14px 14px 14px 17px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--success) 6%, var(--surface)); box-shadow: inset 3px 0 var(--success); }
 .delivery-summary > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--success); font-size: 11px; font-weight: 720; }
 .delivery-summary > header b { font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -890,6 +906,8 @@ onBeforeUnmount(() => {
   .message-composer textarea { min-height: 74px; font-size: 16px; }
   .approval-card > input { min-height: 44px; font-size: 16px; }
   .message-composer button, .approval-card button, .computer-panel > button, .preview-control, .subagent-card button { min-width: 44px; min-height: 44px; }
+  .retry-required { align-items: stretch; flex-direction: column; }
+  .retry-required button { min-height: 44px; }
   .run-controls button { width: 44px; padding: 0; justify-content: center; font-size: 0; }
   .run-controls svg { width: 16px; }
   .preview-modal { inset: 0; border: 0; border-radius: 0; }
