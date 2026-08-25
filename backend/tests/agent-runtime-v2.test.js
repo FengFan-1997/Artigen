@@ -56,6 +56,10 @@ test('Runtime V2 skill compilation cannot grant a capability and crops tools by 
   });
   assert.ok(research.allowedToolNames.includes('browser_dom'));
   assert.equal(research.allowedToolNames.includes('declare_artifact'), false);
+  assert.equal(
+    research.runtimeProfileSummary.structuredOutputPolicy,
+    'adaptive-first-nonthinking-correction-v1'
+  );
 
   const verification = compileAgentPrompt({
     objective: '调研来源并生成 PDF 报告',
@@ -442,17 +446,17 @@ test('Planner repairs JSON and strict TaskSpec schema failures without losing us
       modelCallReceipt: { id: `planner-receipt-${requests.length}` },
       message: {
         content: requests.length === 1
-          ? 'not json'
+          ? 'null'
           : requests.length === 2
             ? JSON.stringify({
                 ...validTaskSpec,
                 acceptanceCriteria: '必须验证来源',
-                goalRequirement: {
+                goalRequirement: [{
                   ...validTaskSpec.goalRequirement,
                   id: '目标',
                   source: '用户',
                   criticality: '关键'
-                },
+                }],
                 constraintRequirements: validTaskSpec.constraintRequirements.map((entry) => ({
                   ...entry,
                   id: '约束',
@@ -486,9 +490,13 @@ test('Planner repairs JSON and strict TaskSpec schema failures without losing us
   });
   assert.equal(requests.length, 3);
   assert.equal(requests[0].payload.enable_thinking, true);
+  assert.equal(requests[1].payload.enable_thinking, false);
+  assert.equal(requests[2].payload.enable_thinking, false);
   assert.equal(requests[0].payload.tools, undefined);
   assert.equal(requests[1].metadata.turn, 1);
   assert.equal(requests[2].metadata.turn, 2);
+  assert.equal(new Set(requests.map((entry) => entry.metadata.promptHash)).size, 3);
+  assert.ok(requests.every((entry) => /^[a-f0-9]{64}$/.test(entry.metadata.promptHash)));
   assert.match(requests[1].payload.messages.at(-1).content, /corrected JSON object/);
   assert.match(requests[2].payload.messages.at(-1).content, /Schema errors/);
   assert.equal(planned.usage.inputTokens, 30);
@@ -502,6 +510,68 @@ test('Planner repairs JSON and strict TaskSpec schema failures without losing us
     'planner-receipt-2',
     'planner-receipt-3'
   ]);
+});
+
+test('Planner preserves the authoritative user objective across a valid model restatement', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key',
+      AGENT_ADAPTIVE_REASONING_ENABLED: 'true'
+    }
+  });
+  const authoritativeObjective = '只输出一段中文结论，不创建文件，也不要增加其他交付物。';
+  const candidate = normalizeTaskSpec({
+    goal: authoritativeObjective,
+    constraints: ['不得创建文件'],
+    acceptanceCriteria: ['最终文本清晰完整'],
+    deliverables: [],
+    plan: [
+      { id: 'draft-text', label: '起草文本', phase: 'production' },
+      { id: 'verify-text', label: '验证文本', phase: 'verification' }
+    ]
+  }, {
+    objective: authoritativeObjective,
+    deliverables: [],
+    capabilities: {},
+    maxCredits: 50
+  });
+  provider.createChat = async (payload) => ({
+    message: {
+      content: JSON.stringify({
+        ...candidate,
+        goal: '模型改写后的目标',
+        deliverables: ['image'],
+        allowedOrigins: ['https://unapproved.example'],
+        budget: { maxCredits: 500 },
+        goalRequirement: {
+          ...candidate.goalRequirement,
+          id: 'planner-authored-goal',
+          text: '另一种模型改写',
+          source: 'planner',
+          criticality: 'optional'
+        }
+      })
+    },
+    siliconFlowUsage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+
+  const planned = await provider.planTask({
+    objective: authoritativeObjective,
+    deliverables: [],
+    capabilities: {},
+    maxCredits: 50
+  });
+
+  assert.equal(planned.taskSpec.goal, authoritativeObjective);
+  assert.equal(planned.taskSpec.goalRequirement.text, authoritativeObjective);
+  assert.equal(planned.taskSpec.goalRequirement.source, 'user');
+  assert.equal(planned.taskSpec.goalRequirement.criticality, 'critical');
+  assert.match(planned.taskSpec.goalRequirement.id, /^goal-[a-f0-9]{12}$/);
+  assert.deepEqual(planned.taskSpec.deliverables, []);
+  assert.deepEqual(planned.taskSpec.allowedOrigins, []);
+  assert.equal(planned.taskSpec.budget.maxCredits, 50);
 });
 
 test('Runtime V1 records usage without touching Runtime V2 budget reservations', async () => {

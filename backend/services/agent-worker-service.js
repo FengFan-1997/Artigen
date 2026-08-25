@@ -850,7 +850,8 @@ const createAgentWorkerService = ({
               deliverables: requiredDeliverables,
               capabilities: context.run.capabilities,
               allowedOrigins: context.run.browser_config?.allowedOrigins || [],
-              maxCredits: context.run.max_credits
+              maxCredits: context.run.max_credits,
+              strictPlannerOutput: true
             });
             modelResumeState = {
               ...(modelResumeState || {}),

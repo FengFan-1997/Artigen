@@ -52,6 +52,7 @@ const {
 } = require('../evaluation/harness/live-eval-gate');
 const { RuntimeTestController } = require('../evaluation/harness/runtime-test-controller');
 const { RuntimeTraceSink } = require('../evaluation/harness/runtime-trace-sink');
+const { requestPromptHash } = require('../evaluation/harness/scripted-siliconflow-transport');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const {
   attachCleanupEvidence,
@@ -897,13 +898,21 @@ test('Live model auditor enforces V2 Qwen request contracts and child tool trimm
     temperature: 0.2,
     top_p: 0.7
   };
+  await assert.rejects(
+    auditor.inspectQwenRequest(actor, {
+      runId: '11111111-1111-4111-8111-111111111111',
+      phase: 'actor',
+      promptHash: 'ab'.repeat(32)
+    }),
+    /AGENT_LIVE_EVAL_PROMPT_HASH_MISMATCH:actor/
+  );
   const inspected = await auditor.inspectQwenRequest(actor, {
     runId: '11111111-1111-4111-8111-111111111111',
     phase: 'actor',
-    promptHash: 'ab'.repeat(32)
+    promptHash: requestPromptHash(actor)
   });
   assert.equal(auditor.qwenCalls, 0);
-  assert.equal(auditor.logicalQwenCalls, 1);
+  assert.equal(auditor.logicalQwenCalls, 2);
   assert.match(trace.snapshot()[0].promptHash, /^[a-f0-9]{64}$/);
   const wrappedFetch = auditor.wrapQwenFetch(async () => ({ ok: true }));
   await auditor.requestContext.run(inspected, () => wrappedFetch(
@@ -919,7 +928,11 @@ test('Live model auditor enforces V2 Qwen request contracts and child tool trimm
     }, {
       runId: '11111111-1111-4111-8111-111111111111',
       phase: 'subagent',
-      promptHash: 'cd'.repeat(32)
+      promptHash: requestPromptHash({
+        ...actor,
+        max_tokens: 1200,
+        tools: [{ type: 'function', function: { name: 'generate_image', parameters: {} } }]
+      })
     }),
     /AGENT_LIVE_EVAL_SUBAGENT_TOOL_FORBIDDEN/
   );
@@ -944,17 +957,88 @@ test('Live model auditor enforces an explicit V2 contract for a router without a
     temperature: 0.2,
     top_p: 0.7
   };
+  await assert.rejects(
+    auditor.inspectQwenRequest(router, {
+      phase: 'router',
+      runtimeVersion: 2,
+      promptHash: 'ab'.repeat(32)
+    }),
+    /AGENT_LIVE_EVAL_PROMPT_HASH_MISMATCH:router/
+  );
   const inspected = await auditor.inspectQwenRequest(router, {
     phase: 'router',
-    runtimeVersion: 2
+    runtimeVersion: 2,
+    promptHash: requestPromptHash(router)
   });
   assert.equal(inspected.runtimeVersion, 2);
   await assert.rejects(
     auditor.inspectQwenRequest({ ...router, max_tokens: 1199 }, {
       phase: 'router',
-      runtimeVersion: 2
+      runtimeVersion: 2,
+      promptHash: requestPromptHash({ ...router, max_tokens: 1199 })
     }),
     /AGENT_LIVE_EVAL_STAGE_TOKEN_LIMIT:router/
+  );
+});
+
+test('Live model auditor requires the exact structured request prompt hash', async () => {
+  const auditor = new LiveModelAuditor({ maxQwenCalls: 2 });
+  const planner = {
+    model: 'Qwen/Qwen3-8B',
+    messages: [{ role: 'user', content: 'synthetic planner request' }],
+    stream: false,
+    enable_thinking: true,
+    max_tokens: 2048,
+    parallel_tool_calls: false,
+    response_format: { type: 'json_object' },
+    temperature: 0.6,
+    top_p: 0.95,
+    top_k: 20,
+    min_p: 0
+  };
+  await assert.rejects(
+    auditor.inspectQwenRequest(planner, {
+      phase: 'planner',
+      runtimeVersion: 2,
+      promptHash: 'ab'.repeat(32)
+    }),
+    /AGENT_LIVE_EVAL_PROMPT_HASH_MISMATCH:planner/
+  );
+  const inspected = await auditor.inspectQwenRequest(planner, {
+    phase: 'planner',
+    runtimeVersion: 2,
+    promptHash: requestPromptHash(planner)
+  });
+  assert.equal(inspected.promptHash, requestPromptHash(planner));
+});
+
+test('Live model auditor treats the bounded final summary as its own non-thinking phase', async () => {
+  const auditor = new LiveModelAuditor({ maxQwenCalls: 2 });
+  const finalSummary = {
+    model: 'Qwen/Qwen3-8B',
+    messages: [{ role: 'user', content: 'synthetic final summary request' }],
+    stream: false,
+    enable_thinking: false,
+    max_tokens: 800,
+    parallel_tool_calls: false,
+    temperature: 0.2,
+    top_p: 0.7
+  };
+  const inspected = await auditor.inspectQwenRequest(finalSummary, {
+    phase: 'actor',
+    runtimeStage: 'final_summary',
+    runtimeVersion: 2,
+    promptHash: requestPromptHash(finalSummary)
+  });
+  assert.equal(inspected.phase, 'final_summary');
+  await assert.rejects(
+    auditor.inspectQwenRequest({ ...finalSummary, max_tokens: 1024 }, {
+      phase: 'actor',
+      runtimeStage: 'final_summary',
+      runtimeVersion: 2,
+      promptHash: requestPromptHash({ ...finalSummary, max_tokens: 1024 })
+    }),
+    /AGENT_LIVE_EVAL_STAGE_TOKEN_LIMIT:final_summary/
   );
 });
 

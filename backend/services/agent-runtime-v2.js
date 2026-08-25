@@ -5,6 +5,7 @@ const { ApiError } = require('../lib/api-error');
 const RUNTIME_VERSION = 2;
 const CHECKPOINT_VERSION = 4;
 const PROMPT_ENGINE_VERSION = 'skills-v2';
+const STRUCTURED_OUTPUT_POLICY = 'adaptive-first-nonthinking-correction-v1';
 const TEXT_MODEL = 'Qwen/Qwen3-8B';
 const IMAGE_MODEL = 'Kwai-Kolors/Kolors';
 const DELIVERABLES = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image']);
@@ -427,6 +428,7 @@ const compileAgentPrompt = ({
       toolSchemas: sha256Hex(toolSchemas),
       phasePolicy: sha256Hex(PHASE_TOOL_ALLOWLIST),
       taskSpecSchema: sha256Hex(TASK_SPEC_SCHEMA),
+      structuredOutputPolicy: STRUCTURED_OUTPUT_POLICY,
       model: TEXT_MODEL,
       modelConfig,
       outputLimit: 1200,
@@ -474,6 +476,7 @@ const compileAgentPrompt = ({
       Object.entries(PHASE_TOOL_ALLOWLIST).map(([key, value]) => [key, [...value].sort()])
     )),
     taskSpecSchema: sha256Hex(TASK_SPEC_SCHEMA),
+    structuredOutputPolicy: STRUCTURED_OUTPUT_POLICY,
     model: TEXT_MODEL,
     modelConfig,
     outputLimit: phase === 'verification' ? 2048 : 1024,
@@ -523,23 +526,41 @@ const normalizeTaskSpec = (value, fallback = {}) => {
   if (input.budget?.maxCredits !== undefined) {
     assertFiniteField(input.budget.maxCredits, 'budget.maxCredits');
   }
-  const goal = strictText(input.goal === undefined ? fallback.objective : input.goal, {
-    field: 'goal',
-    maximum: 20000
-  });
-  const goalRequirement = normalizeRequirement(input.goalRequirement || goal, {
+  // The user's objective is immutable. A Planner may restate it in its
+  // candidate JSON, but the server must not let that restatement replace the
+  // authoritative text that was encrypted with the Run payload.
+  const goal = strictText(
+    fallback.strictPlannerOutput === true
+      ? fallback.objective
+      : input.goal === undefined
+        ? fallback.objective
+        : input.goal,
+    {
+      field: 'goal',
+      maximum: 20000
+    }
+  );
+  const goalRequirementInput = fallback.strictPlannerOutput === true
+    ? { text: goal }
+    : input.goalRequirement || goal;
+  const goalRequirement = normalizeRequirement(goalRequirementInput, {
     kind: 'goal',
     index: 0,
     source: goal === String(fallback.objective || '').trim() ? 'user' : 'planner',
     criticality: 'critical'
   });
-  if (goalRequirement.text !== goal) {
+  if (fallback.strictPlannerOutput !== true && goalRequirement.text !== goal) {
     throw new ApiError(502, 'AGENT_TASK_SPEC_INVALID', { field: 'goalRequirement.text' });
   }
   if (input.deliverables !== undefined && !Array.isArray(input.deliverables)) {
     throw new ApiError(502, 'AGENT_TASK_SPEC_INVALID', { field: 'deliverables' });
   }
-  const deliverables = [...new Set((Array.isArray(input.deliverables) ? input.deliverables : fallback.deliverables || [])
+  const deliverableInput = fallback.strictPlannerOutput === true
+    ? fallback.deliverables || []
+    : Array.isArray(input.deliverables)
+      ? input.deliverables
+      : fallback.deliverables || [];
+  const deliverables = [...new Set(deliverableInput
     .map((item) => {
       if (typeof item !== 'string') throw new ApiError(502, 'AGENT_TASK_SPEC_INVALID', { field: 'deliverables' });
       return item.trim();
@@ -553,7 +574,11 @@ const normalizeTaskSpec = (value, fallback = {}) => {
   const complexity = COMPLEXITIES.has(input.complexity) ? input.complexity : (
     deliverables.length > 1 || fallback.capabilities?.browser ? 'high' : 'medium'
   );
-  const originInput = input.allowedOrigins === undefined ? fallback.allowedOrigins : input.allowedOrigins;
+  const originInput = fallback.strictPlannerOutput === true
+    ? fallback.allowedOrigins || []
+    : input.allowedOrigins === undefined
+      ? fallback.allowedOrigins
+      : input.allowedOrigins;
   if (originInput !== undefined && !Array.isArray(originInput)) {
     throw new ApiError(502, 'AGENT_TASK_SPEC_INVALID', { field: 'allowedOrigins' });
   }
@@ -682,7 +707,12 @@ const normalizeTaskSpec = (value, fallback = {}) => {
     skillIds: selectedSkills.map((skill) => skill.id),
     plan,
     budget: {
-      maxCredits: Math.max(1, Math.min(500, input.budget?.maxCredits ?? fallback.maxCredits ?? 50))
+      maxCredits: Math.max(1, Math.min(
+        500,
+        fallback.strictPlannerOutput === true
+          ? fallback.maxCredits ?? 50
+          : input.budget?.maxCredits ?? fallback.maxCredits ?? 50
+      ))
     }
   };
   if (!validateTaskSpecSchema(spec)) {
@@ -1166,7 +1196,7 @@ const taskPlannerMessages = ({ objective, deliverables, capabilities, allowedOri
     `You are Artigen's planning component using ${TEXT_MODEL}. Tools are disabled.`,
     'Return one JSON object only. Do not include reasoning or markdown.',
     'Schema: {version:2,goal,goalRequirement:{id,text,source,criticality},complexity:simple|medium|high,confidence:0..1,constraints:string[],constraintRequirements:[{id,text,source,criticality}],assumptions:string[],deliverables:string[],allowedOrigins:string[],acceptanceCriteria:string[],acceptanceRequirements:[{id,text,source,criticality}],skillIds:string[],plan:[{id,label,phase:research|production|verification|completion,status:pending|in_progress|completed}],budget:{maxCredits:number}}.',
-    'All fields in the schema are required. IDs must be lowercase ASCII kebab-case: requirement IDs start with a letter and contain 8-80 characters; plan IDs contain 2-80 characters. Never use Chinese text, underscores, spaces, or uppercase letters in IDs.',
+    'All fields in the schema are required. goal must exactly equal the input objective and goalRequirement must be one object whose text exactly equals goal. IDs must be lowercase ASCII kebab-case: requirement IDs start with a letter and contain 8-80 characters; plan IDs contain 2-80 characters. Never use Chinese text, underscores, spaces, or uppercase letters in IDs.',
     'Use only the exact English enum values shown in the schema. source is exactly user|planner|server; criticality is exactly critical|required|optional. Every field ending in Criteria, Requirements, Origins, Ids, constraints, assumptions, deliverables, skillIds, or plan must be a JSON array even when empty or containing one item.',
     `Valid skills: ${Object.keys(SKILLS).join(', ')}. Never add a deliverable the user did not positively request.`,
     'Use research only when browser evidence is required. End with verification. Keep 2-8 plan steps.'
@@ -1206,6 +1236,7 @@ module.exports = {
   PROMPT_ENGINE_VERSION,
   RUNTIME_VERSION,
   SKILLS,
+  STRUCTURED_OUTPUT_POLICY,
   TEXT_MODEL,
   allowedToolsForRuntime,
   buildContextMessages,

@@ -42,6 +42,12 @@ const ARTIFACT_MIME_TYPES = Object.freeze([
   'text/markdown',
   'text/plain'
 ]);
+const modelRequestPromptHash = (payload) => crypto.createHash('sha256')
+  .update(JSON.stringify({
+    messages: Array.isArray(payload?.messages) ? payload.messages : [],
+    tools: Array.isArray(payload?.tools) ? payload.tools : []
+  }))
+  .digest('hex');
 const FUNCTION_TOOLS = Object.freeze([
   {
     type: 'function',
@@ -1238,7 +1244,13 @@ class OllamaAgentModelProvider {
     let requestMessages = Array.isArray(messages) ? [...messages] : [];
     const usage = { inputTokens: 0, outputTokens: 0, credits: 0 };
     for (let correctionAttempt = 0; correctionAttempt <= 2; correctionAttempt += 1) {
-      const thinkingEnabled = this.config.adaptiveReasoningEnabled && ['planner', 'verifier'].includes(phase);
+      // Qwen3 can spend the entire structured-output budget in reasoning and
+      // return an empty/null content value. Keep bounded thinking for the
+      // first Planner/Verifier attempt, but make correction attempts
+      // deterministic non-thinking calls so they actually emit the repaired
+      // JSON object instead of repeating the same failure mode.
+      const thinkingEnabled = this.config.adaptiveReasoningEnabled &&
+        ['planner', 'verifier'].includes(phase) && correctionAttempt === 0;
       const maxTokens = Number(this.config.stageMaxOutputTokens?.[phase] || 2048);
       const estimatedInputTokens = Math.ceil(JSON.stringify(requestMessages).length / 4);
       const reservationKey = `${phase}:${metadata.turn || 0}:${correctionAttempt}:${crypto.randomUUID()}`;
@@ -1258,12 +1270,14 @@ class OllamaAgentModelProvider {
         maxTokens,
         responseFormat: 'json_object'
       });
+      const promptHash = modelRequestPromptHash(payload);
       let response;
       try {
         response = await this.createChat(payload, {
           ...metadata,
           phase,
           turn: correctionAttempt,
+          promptHash,
           thinkingEnabled,
           estimatedInputTokens,
           reservationKey,
@@ -2443,6 +2457,11 @@ class OllamaAgentModelProvider {
       }
       const recoveredModelResponse = Boolean(pendingModelResponse);
       const modelPhase = toolProfile === 'subagent' ? 'subagent' : 'actor';
+      const runtimeStage = toolProfile === 'subagent'
+        ? 'subagent'
+        : deliverablesComplete
+          ? 'final_summary'
+          : 'actor';
       const estimatedInputTokens = Math.ceil(JSON.stringify(requestMessages).length / 4);
       const maximumOutputTokens = Number(this.config.stageMaxOutputTokens?.[
         toolProfile === 'subagent'
@@ -2452,7 +2471,7 @@ class OllamaAgentModelProvider {
             : 'actor'
       ] || 1024);
       const reservationKey = pendingModelResponse?.budgetReservationKey || (
-        runtimeV2 ? `${modelPhase}:${turns}:${crypto.randomUUID()}` : null
+        runtimeV2 ? `${runtimeStage}:${turns}:${crypto.randomUUID()}` : null
       );
       const maximumCallCredits = this.maximumCallCredits(
         estimatedInputTokens,
@@ -2460,7 +2479,7 @@ class OllamaAgentModelProvider {
       );
       if (runtimeV2 && !recoveredModelResponse) {
         await callbacks.reserveBudget?.({
-          component: modelPhase,
+          component: runtimeStage,
           reservationKey,
           maximumCredits: maximumCallCredits,
           subagentId: runtimeContext.subagentId || null
@@ -2468,18 +2487,20 @@ class OllamaAgentModelProvider {
       }
       let response = pendingModelResponse;
       if (!response) {
+        const promptHash = modelRequestPromptHash(request);
         try {
           response = await this.createChat(request, runtimeV2 ? {
             runId: runtimeContext.runId,
             subagentId: runtimeContext.subagentId || null,
             userId: runtimeContext.userId || null,
             phase: modelPhase,
+            runtimeStage,
             priority: toolProfile === 'subagent'
               ? 'subagent'
               : (resumeState ? 'resumed_parent' : 'actor'),
             turn: turns,
             promptProfile: `${prompt.promptProfile}/${this.config.actorSamplingProfile.id}`,
-            promptHash: prompt.promptHash,
+            promptHash,
             skillIds: prompt.skills.map((skill) => skill.id),
             thinkingEnabled: false,
             estimatedInputTokens,
@@ -2972,7 +2993,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
         : null;
       if (attempt > 1 && attemptReservationKey && metadata.reserveBudget) {
         await metadata.reserveBudget({
-          component: metadata.phase || 'actor',
+          component: metadata.runtimeStage || metadata.phase || 'actor',
           reservationKey: attemptReservationKey,
           maximumCredits: Math.max(0, Number(metadata.maximumCallCredits || 0)),
           subagentId: metadata.subagentId || null

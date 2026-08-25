@@ -716,11 +716,13 @@ const createDesignConversationService = ({
     maxTokens,
     signal = null
   }) => {
-    const promptHash = crypto.createHash('sha256')
-      .update(String(messages?.[0]?.content || ''))
-      .digest('hex');
     let requestMessages = Array.isArray(messages) ? [...messages] : [];
+    let schemaCorrectionAttempt = 0;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const attemptThinkingEnabled = thinkingEnabled && schemaCorrectionAttempt === 0;
+      const promptHash = crypto.createHash('sha256')
+        .update(JSON.stringify({ messages: requestMessages, tools: [] }))
+        .digest('hex');
       const slot = providerScheduler && agentConfig.providerSchedulerEnabled
         ? await providerScheduler.acquire({ priority, signal })
         : { queueWaitMs: 0 };
@@ -735,22 +737,24 @@ const createDesignConversationService = ({
             attempt,
             promptProfile: phase === 'router' ? 'design-router-v2' : 'design-planner-v2',
             promptHash,
-            thinkingEnabled,
+            thinkingEnabled: attemptThinkingEnabled,
             estimatedInputTokens: JSON.stringify(requestMessages).length / 4
           }).catch(() => null)
         : null;
       let response = null;
       try {
         response = await chatGenerate({
+          phase,
+          promptHash,
           messages: requestMessages,
           model: TEXT_MODEL,
           maxTokens,
-          enableThinking: thinkingEnabled,
+          enableThinking: attemptThinkingEnabled,
           responseFormat: 'json_object',
-          temperature: thinkingEnabled ? 0.6 : 0.2,
-          topP: thinkingEnabled ? 0.95 : 0.7,
-          topK: thinkingEnabled ? 20 : undefined,
-          minP: thinkingEnabled ? 0 : undefined,
+          temperature: attemptThinkingEnabled ? 0.6 : 0.2,
+          topP: attemptThinkingEnabled ? 0.95 : 0.7,
+          topK: attemptThinkingEnabled ? 20 : undefined,
+          minP: attemptThinkingEnabled ? 0 : undefined,
           timeoutMs: 60_000,
           signal,
           skipRateGate: Boolean(providerScheduler && agentConfig.providerSchedulerEnabled)
@@ -780,6 +784,7 @@ const createDesignConversationService = ({
         const providerRetry = classified.category === 'transient_provider';
         if ((!schemaRetry && !providerRetry) || attempt >= 3) throw error;
         if (schemaRetry) {
+          schemaCorrectionAttempt += 1;
           requestMessages = [
             ...requestMessages,
             { role: 'assistant', content: String(response?.text || '').slice(0, 4000) },
