@@ -1228,7 +1228,13 @@ class OllamaAgentModelProvider {
     return body;
   }
 
-  async createStructuredJson({ messages, errorCode, phase, metadata = {} }) {
+  async createStructuredJson({
+    messages,
+    errorCode,
+    phase,
+    metadata = {},
+    normalizeValue = null
+  }) {
     let requestMessages = Array.isArray(messages) ? [...messages] : [];
     const usage = { inputTokens: 0, outputTokens: 0, credits: 0 };
     for (let correctionAttempt = 0; correctionAttempt <= 2; correctionAttempt += 1) {
@@ -1275,8 +1281,9 @@ class OllamaAgentModelProvider {
       usage.outputTokens += currentUsage.outputTokens;
       usage.credits += currentUsage.credits;
       try {
+        const parsed = parseJsonObject(response.message?.content, errorCode);
         return {
-          value: parseJsonObject(response.message?.content, errorCode),
+          value: typeof normalizeValue === 'function' ? normalizeValue(parsed) : parsed,
           usage,
           modelCallReceipt: response.modelCallReceipt || null,
           reservationKey: response.budgetReservationKey || reservationKey,
@@ -1291,12 +1298,24 @@ class OllamaAgentModelProvider {
           await this.modelCallService.consume(response.modelCallReceipt);
         }
         if (correctionAttempt >= 2) throw error;
+        const validation = Array.isArray(error?.details?.validation)
+          ? error.details.validation.slice(0, 24).map((entry) => ({
+              path: String(entry?.path || '').slice(0, 160),
+              keyword: String(entry?.keyword || '').slice(0, 80)
+            }))
+          : [];
+        const field = String(error?.field || '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 160);
         requestMessages = [
           ...requestMessages,
           { role: 'assistant', content: String(response.message?.content || '').slice(0, 4000) },
           {
             role: 'user',
-            content: 'The previous output was not one valid JSON object matching the requested schema. Return only a corrected JSON object; do not include markdown or reasoning.'
+            content: [
+              'The previous output was not one valid JSON object matching the requested schema.',
+              field ? `Invalid field: ${field}.` : '',
+              validation.length ? `Schema errors: ${JSON.stringify(validation)}.` : '',
+              'Correct every schema error in one response. Return only the complete corrected JSON object; do not include markdown or reasoning.'
+            ].filter(Boolean).join(' ')
           }
         ];
       }
@@ -1325,13 +1344,18 @@ class OllamaAgentModelProvider {
       messages,
       errorCode: 'AGENT_TASK_SPEC_INVALID',
       phase: 'planner',
-      metadata
+      metadata,
+      normalizeValue: (value) => normalizeTaskSpec(value, {
+        objective,
+        deliverables,
+        capabilities,
+        allowedOrigins,
+        maxCredits,
+        strictPlannerOutput: true
+      })
     });
     const planned = {
-      taskSpec: normalizeTaskSpec(
-        structured.value,
-        { objective, deliverables, capabilities, allowedOrigins, maxCredits }
-      ),
+      taskSpec: structured.value,
       usage: structured.usage,
       credits: structured.usage.credits,
       modelCallReceipt: structured.modelCallReceipt,
@@ -1355,10 +1379,11 @@ class OllamaAgentModelProvider {
       messages,
       errorCode: 'AGENT_VERIFIER_OUTPUT_INVALID',
       phase: 'verifier',
-      metadata
+      metadata,
+      normalizeValue: (value) => normalizeVerifierResult(value, { taskSpec })
     });
     return {
-      result: normalizeVerifierResult(structured.value, { taskSpec }),
+      result: structured.value,
       usage: structured.usage,
       credits: structured.usage.credits,
       modelCallReceipt: structured.modelCallReceipt,
@@ -2490,10 +2515,12 @@ class OllamaAgentModelProvider {
           outputTokens,
           provider: this.providerName
         });
-        await callbacks.consumeBudget?.({
-          reservationKey: response.budgetReservationKey || reservationKey,
-          actualCredits: credits
-        });
+        if (runtimeV2) {
+          await callbacks.consumeBudget?.({
+            reservationKey: response.budgetReservationKey || reservationKey,
+            actualCredits: credits
+          });
+        }
         if (runtimeV2 && response.modelCallReceipt && this.modelCallService) {
           await this.modelCallService.consume(response.modelCallReceipt);
           delete response.modelCallReceipt;

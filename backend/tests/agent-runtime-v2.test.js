@@ -405,49 +405,134 @@ test('An already-cancelled Runtime V2 model call never reaches SiliconFlow', asy
   assert.equal(fetchCalls, 0);
 });
 
-test('Planner repairs malformed structured output twice without losing usage', async () => {
+test('Planner repairs JSON and strict TaskSpec schema failures without losing usage', async () => {
+  const consumedReceipts = [];
   const provider = new SiliconFlowAgentModelProvider({
     env: {
       AGENT_MODEL_PROVIDER: 'siliconflow',
       AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
       SILICONFLOW_API_KEY: 'test-only-key',
       AGENT_ADAPTIVE_REASONING_ENABLED: 'true'
+    },
+    modelCallService: {
+      async consume(receipt) {
+        consumedReceipts.push(receipt.id);
+      }
     }
   });
-  const requests = [];
-  provider.createChat = async (payload, metadata) => {
-    requests.push({ payload, metadata });
-    const valid = requests.length > 1;
-    return {
-      message: {
-        content: valid
-          ? JSON.stringify({
-              goal: '制作报告',
-              deliverables: ['report'],
-              plan: [
-                { id: 'produce', label: '制作', phase: 'production' },
-                { id: 'verify', label: '验证', phase: 'verification' }
-              ]
-            })
-          : 'not json'
-      },
-      siliconFlowUsage: { prompt_tokens: 10, completion_tokens: 5 }
-    };
-  };
-  const planned = await provider.planTask({
+  const validTaskSpec = normalizeTaskSpec({
+    goal: '制作报告',
+    constraints: ['不得添加未请求的交付物'],
+    acceptanceCriteria: ['报告必须通过验证'],
+    deliverables: ['report'],
+    plan: [
+      { id: 'produce', label: '制作', phase: 'production' },
+      { id: 'verify', label: '验证', phase: 'verification' }
+    ]
+  }, {
     objective: '制作报告',
     deliverables: ['report'],
     capabilities: { files: true, shell: true },
     maxCredits: 50
   });
-  assert.equal(requests.length, 2);
+  const requests = [];
+  provider.createChat = async (payload, metadata) => {
+    requests.push({ payload, metadata });
+    return {
+      modelCallReceipt: { id: `planner-receipt-${requests.length}` },
+      message: {
+        content: requests.length === 1
+          ? 'not json'
+          : requests.length === 2
+            ? JSON.stringify({
+                ...validTaskSpec,
+                acceptanceCriteria: '必须验证来源',
+                goalRequirement: {
+                  ...validTaskSpec.goalRequirement,
+                  id: '目标',
+                  source: '用户',
+                  criticality: '关键'
+                },
+                constraintRequirements: validTaskSpec.constraintRequirements.map((entry) => ({
+                  ...entry,
+                  id: '约束',
+                  source: '用户',
+                  criticality: '关键'
+                })),
+                acceptanceRequirements: validTaskSpec.acceptanceRequirements.map((entry) => ({
+                  ...entry,
+                  id: '验收',
+                  source: '规划器',
+                  criticality: '必需'
+                })),
+                plan: validTaskSpec.plan.map((entry) => ({ ...entry, id: '步骤' }))
+              })
+            : JSON.stringify(validTaskSpec)
+      },
+      siliconFlowUsage: { prompt_tokens: 10, completion_tokens: 5 }
+    };
+  };
+  const reserved = [];
+  const consumed = [];
+  const planned = await provider.planTask({
+    objective: '制作报告',
+    deliverables: ['report'],
+    capabilities: { files: true, shell: true },
+    maxCredits: 50,
+    metadata: {
+      reserveBudget: async (entry) => reserved.push(entry),
+      consumeBudget: async (entry) => consumed.push(entry)
+    }
+  });
+  assert.equal(requests.length, 3);
   assert.equal(requests[0].payload.enable_thinking, true);
   assert.equal(requests[0].payload.tools, undefined);
   assert.equal(requests[1].metadata.turn, 1);
+  assert.equal(requests[2].metadata.turn, 2);
   assert.match(requests[1].payload.messages.at(-1).content, /corrected JSON object/);
-  assert.equal(planned.usage.inputTokens, 20);
-  assert.equal(planned.usage.outputTokens, 10);
+  assert.match(requests[2].payload.messages.at(-1).content, /Schema errors/);
+  assert.equal(planned.usage.inputTokens, 30);
+  assert.equal(planned.usage.outputTokens, 15);
   assert.equal(planned.taskSpec.goal, '制作报告');
+  assert.equal(reserved.length, 3);
+  assert.equal(consumed.length, 3);
+  assert.equal(new Set(consumed.map((entry) => entry.reservationKey)).size, 3);
+  assert.deepEqual(consumedReceipts, [
+    'planner-receipt-1',
+    'planner-receipt-2',
+    'planner-receipt-3'
+  ]);
+});
+
+test('Runtime V1 records usage without touching Runtime V2 budget reservations', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  provider.createChat = async () => ({
+    id: 'runtime-v1-response',
+    message: { role: 'assistant', content: '已完成文字答复。' },
+    siliconFlowUsage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  let budgetConsumes = 0;
+  let usageWrites = 0;
+  const result = await provider.execute({
+    objective: '只返回一段文字',
+    capabilities: {},
+    deliverables: [],
+    runtimeContext: { runtimeVersion: 1 },
+    maxSteps: 10,
+    callbacks: {
+      recordUsage: async () => { usageWrites += 1; },
+      consumeBudget: async () => { budgetConsumes += 1; }
+    }
+  });
+  assert.equal(result.text, '已完成文字答复。');
+  assert.equal(usageWrites, 1);
+  assert.equal(budgetConsumes, 0);
 });
 
 test('Runtime V2 consumes a durably checkpointed model response without calling the provider twice', async () => {

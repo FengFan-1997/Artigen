@@ -500,6 +500,16 @@ const normalizeTaskSpec = (value, fallback = {}) => {
   }
   const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   assertKnownTaskSpecFields(input);
+  if (fallback.strictPlannerOutput === true && !validateTaskSpecSchema(input)) {
+    throw new ApiError(502, 'AGENT_TASK_SPEC_INVALID', {
+      details: {
+        validation: validateTaskSpecSchema.errors?.slice(0, 24).map((error) => ({
+          path: error.instancePath,
+          keyword: error.keyword
+        }))
+      }
+    });
+  }
   if (input.version !== undefined && input.version !== 1 && input.version !== 2) {
     throw new ApiError(502, 'AGENT_TASK_SPEC_INVALID', { field: 'version' });
   }
@@ -1155,7 +1165,9 @@ const taskPlannerMessages = ({ objective, deliverables, capabilities, allowedOri
   content: [
     `You are Artigen's planning component using ${TEXT_MODEL}. Tools are disabled.`,
     'Return one JSON object only. Do not include reasoning or markdown.',
-    'Schema: {version:2,goal,goalRequirement:{id,text,source,criticality},complexity:simple|medium|high,confidence:0..1,constraints:string[],constraintRequirements:[{id,text,source,criticality}],assumptions:string[],deliverables:string[],allowedOrigins:string[],acceptanceCriteria:string[],acceptanceRequirements:[{id,text,source,criticality}],skillIds:string[],plan:[{id,label,phase:research|production|verification,status}],budget:{maxCredits:number}}.',
+    'Schema: {version:2,goal,goalRequirement:{id,text,source,criticality},complexity:simple|medium|high,confidence:0..1,constraints:string[],constraintRequirements:[{id,text,source,criticality}],assumptions:string[],deliverables:string[],allowedOrigins:string[],acceptanceCriteria:string[],acceptanceRequirements:[{id,text,source,criticality}],skillIds:string[],plan:[{id,label,phase:research|production|verification|completion,status:pending|in_progress|completed}],budget:{maxCredits:number}}.',
+    'All fields in the schema are required. IDs must be lowercase ASCII kebab-case: requirement IDs start with a letter and contain 8-80 characters; plan IDs contain 2-80 characters. Never use Chinese text, underscores, spaces, or uppercase letters in IDs.',
+    'Use only the exact English enum values shown in the schema. source is exactly user|planner|server; criticality is exactly critical|required|optional. Every field ending in Criteria, Requirements, Origins, Ids, constraints, assumptions, deliverables, skillIds, or plan must be a JSON array even when empty or containing one item.',
     `Valid skills: ${Object.keys(SKILLS).join(', ')}. Never add a deliverable the user did not positively request.`,
     'Use research only when browser evidence is required. End with verification. Keep 2-8 plan steps.'
   ].join('\n')

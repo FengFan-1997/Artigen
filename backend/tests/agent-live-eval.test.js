@@ -17,7 +17,8 @@ const {
   assertLiveEvalDatabaseSafety,
   assertLiveEvalProcessSafety,
   fixtureForLiveEval,
-  liveEvalEnv
+  liveEvalEnv,
+  waitForConversationExecution
 } = require('../evaluation/harness/agent-live-eval-harness');
 const {
   decryptEvidence,
@@ -53,6 +54,8 @@ const { RuntimeTestController } = require('../evaluation/harness/runtime-test-co
 const { RuntimeTraceSink } = require('../evaluation/harness/runtime-trace-sink');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const {
+  attachCleanupEvidence,
+  closeLiveEvalResources,
   loadLiveEvalSecrets,
   resolveSelection,
   summarize
@@ -193,6 +196,166 @@ test('Live Harness closes partial construction state when initialization fails',
   assert.equal(closeCalls, 1);
 });
 
+test('Live Harness waits through the addMessage planner race before reading a reply', async () => {
+  let reads = 0;
+  let plannerCalls = 0;
+  const execution = { routeKind: 'reply', status: 'succeeded' };
+  const result = await waitForConversationExecution({
+    service: {
+      async getConversation() {
+        reads += 1;
+        return { executions: reads < 3 ? [] : [execution] };
+      },
+      async processNextJob() {
+        plannerCalls += 1;
+        return null;
+      }
+    },
+    userId: 'synthetic-user',
+    conversationId: 'synthetic-conversation',
+    timeoutMs: 2_000,
+    waitImpl: async () => {}
+  });
+  assert.equal(result.execution, execution);
+  assert.equal(reads, 3);
+  assert.equal(plannerCalls, 2);
+});
+
+test('Live Harness records a safe V1 terminal failure as baseline evidence', async () => {
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.oracle = {
+    async assertInvariants() {
+      return {
+        persistent: {
+          run: {
+            runtime_version: 1,
+            status: 'failed',
+            error_code: 'AGENT_VERIFICATION_INCOMPLETE',
+            max_credits: 20,
+            charged_credits: 0
+          },
+          holds: [{ status: 'released' }],
+          artifacts: [],
+          subagents: [],
+          steps: [],
+          modelCalls: []
+        },
+        reconstructed: { digest: 'ab'.repeat(32) }
+      };
+    }
+  };
+  harness.pool = {
+    async query() {
+      return {
+        rows: [
+          { entry_type: 'hold', count: 1 },
+          { entry_type: 'release', count: 1 }
+        ]
+      };
+    }
+  };
+  const result = await harness.assertInvariants({
+    entry: { id: 'text-only-agent', expectedStatus: 'succeeded' },
+    cohort: 'v1',
+    runId: 'synthetic-run'
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.baselineFailure, {
+    code: 'AGENT_VERIFICATION_INCOMPLETE',
+    status: 'failed',
+    invariantCodes: ['terminal:failed']
+  });
+});
+
+test('Live Harness never downgrades an unverified V1 artifact to baseline evidence', async () => {
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.oracle = {
+    async assertInvariants() {
+      return {
+        persistent: {
+          run: {
+            runtime_version: 1,
+            status: 'failed',
+            error_code: 'AGENT_VERIFICATION_INCOMPLETE',
+            max_credits: 20,
+            charged_credits: 0
+          },
+          holds: [{ status: 'released' }],
+          artifacts: [{ verification_status: 'pending' }],
+          subagents: [],
+          steps: [],
+          modelCalls: []
+        },
+        reconstructed: { digest: 'ab'.repeat(32) }
+      };
+    }
+  };
+  harness.pool = {
+    async query() {
+      return {
+        rows: [
+          { entry_type: 'hold', count: 1 },
+          { entry_type: 'release', count: 1 }
+        ]
+      };
+    }
+  };
+  await assert.rejects(
+    harness.assertInvariants({
+      entry: { id: 'text-only-agent', expectedStatus: 'succeeded' },
+      cohort: 'v1',
+      runId: 'synthetic-run'
+    }),
+    /artifact_verification/
+  );
+});
+
+test('Live Harness closes the campaign before infrastructure and does so once', async () => {
+  const order = [];
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.campaignGuard = { close: async () => order.push('campaign') };
+  harness.worker = { stopInfrastructure: async () => order.push('worker') };
+  harness.assetAdapter = { client: { destroy: () => order.push('s3') } };
+  await Promise.all([harness.close(), harness.close()]);
+  assert.deepEqual(order, ['campaign', 'worker', 's3']);
+});
+
+test('Live eval cleanup is bounded and still attempts PostgreSQL shutdown', async () => {
+  let poolEnds = 0;
+  const cleanup = await closeLiveEvalResources({
+    harness: { close: () => new Promise(() => {}) },
+    pool: { end: async () => { poolEnds += 1; } },
+    timeoutMs: 20
+  });
+  assert.equal(cleanup.ok, false);
+  assert.equal(cleanup.results[0].code, 'AGENT_LIVE_EVAL_CLEANUP_TIMEOUT');
+  assert.equal(cleanup.results[1].ok, true);
+  assert.equal(poolEnds, 1);
+});
+
+test('Live eval cleanup failure is persisted and revokes report eligibility', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-live-cleanup-'));
+  const reportPath = path.join(root, 'report.json');
+  try {
+    await fs.promises.writeFile(reportPath, JSON.stringify({
+      version: 'agent-live-eval-v3.1',
+      summary: { automatedGatePassed: true, productionCanaryEligible: true }
+    }));
+    const updated = await attachCleanupEvidence({
+      reportPath,
+      cleanup: {
+        ok: false,
+        results: [{ ok: false, label: 'postgres', code: 'AGENT_LIVE_EVAL_CLEANUP_TIMEOUT' }]
+      }
+    });
+    assert.equal(updated.summary.automatedGatePassed, false);
+    assert.equal(updated.summary.productionCanaryEligible, false);
+    assert.equal(JSON.parse(await fs.promises.readFile(reportPath, 'utf8')).cleanup.ok, false);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('Live eval signed gate binds the exact SHA, matrix and complete release evidence', () => {
   const reportSha256 = crypto.createHash('sha256').update('synthetic-report').digest('hex');
   const keyMaterial = `v1:hex:${'cd'.repeat(32)}`;
@@ -275,6 +438,7 @@ test('Live eval final report cryptographically binds the exact 24-run report and
     gateManifestSha256: crypto.createHash('sha256').update('gate').digest('hex'),
     modelLocks: { text: 'Qwen/Qwen3-8B', image: 'Kwai-Kolors/Kolors' },
     limits: { perRunCredits: 50, qwenCalls: 200, kolorsCalls: 16, wallClockHours: 8 },
+    cleanup: { ok: true, results: [{ ok: true, label: 'harness' }, { ok: true, label: 'postgres' }] },
     results,
     summary: summarize(results),
     blindReview: { definitionSha256 }
@@ -332,6 +496,17 @@ test('Live eval final report cryptographically binds the exact 24-run report and
     }),
     /BLIND_GATE_FAILED/
   );
+  const { cleanup: _cleanup, ...withoutCleanup } = automatedReport;
+  assert.throws(
+    () => createSignedFinalReport({
+      automatedReport: withoutCleanup,
+      automatedReportSha256: crypto.createHash('sha256').update('automated').digest('hex'),
+      blindScore,
+      blindScoreSha256: crypto.createHash('sha256').update('blind-score').digest('hex'),
+      keyMaterial
+    }),
+    /AUTOMATED_GATE_FAILED/
+  );
 });
 
 test('Owner canary plan requires rollout zero, one owner, same immutable SHA and full readiness', () => {
@@ -362,6 +537,7 @@ test('Owner canary plan requires rollout zero, one owner, same immutable SHA and
       gateManifestSha256: crypto.createHash('sha256').update('owner-gate').digest('hex'),
       modelLocks: { text: 'Qwen/Qwen3-8B', image: 'Kwai-Kolors/Kolors' },
       limits: { perRunCredits: 50, qwenCalls: 200, kolorsCalls: 16, wallClockHours: 8 },
+      cleanup: { ok: true, results: [{ ok: true, label: 'harness' }, { ok: true, label: 'postgres' }] },
       results,
       summary: summarize(results),
       blindReview: { definitionSha256 }

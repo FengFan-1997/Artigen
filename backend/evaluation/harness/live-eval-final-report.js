@@ -58,7 +58,10 @@ const validateAutomatedReport = (report) => {
     report.results.some((entry) => entry.cohort === 'v2' && entry.ok !== true) ||
     report.summary?.fullMatrixComplete !== true ||
     report.summary?.automatedGatePassed !== true ||
-    report.summary?.blindReviewPending !== true
+    report.summary?.blindReviewPending !== true ||
+    report.cleanup?.ok !== true ||
+    !Array.isArray(report.cleanup?.results) ||
+    report.cleanup.results.some((entry) => entry?.ok !== true)
   ) {
     throw new Error('AGENT_LIVE_EVAL_FINAL_AUTOMATED_GATE_FAILED');
   }

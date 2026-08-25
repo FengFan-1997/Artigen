@@ -238,6 +238,78 @@ const writeReport = async ({ report, reportDir, reportPath }) => {
   });
 };
 
+const settleCleanup = async ({ label, operation, timeoutMs = 15_000 }) => {
+  let timer = null;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation).then(() => ({ ok: true, label })),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve({ ok: false, label, code: 'AGENT_LIVE_EVAL_CLEANUP_TIMEOUT' }), timeoutMs);
+      })
+    ]);
+  } catch (error) {
+    return {
+      ok: false,
+      label,
+      code: safeFailureCode(error, 'AGENT_LIVE_EVAL_CLEANUP_FAILED'),
+      diagnosticHash: failureFingerprint(error)
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
+const closeLiveEvalResources = async ({ harness = null, pool = null, timeoutMs = 15_000 } = {}) => {
+  const results = [];
+  if (harness) {
+    results.push(await settleCleanup({
+      label: 'harness',
+      operation: () => harness.close(),
+      timeoutMs
+    }));
+  }
+  if (pool) {
+    results.push(await settleCleanup({
+      label: 'postgres',
+      operation: () => pool.end(),
+      timeoutMs
+    }));
+  }
+  return {
+    ok: results.every((entry) => entry.ok),
+    results
+  };
+};
+
+const attachCleanupEvidence = async ({ reportPath, cleanup }) => {
+  const target = path.resolve(String(reportPath || ''));
+  const parsed = JSON.parse(await fs.promises.readFile(target, 'utf8'));
+  const next = {
+    ...parsed,
+    cleanup
+  };
+  if (!cleanup?.ok) {
+    next.ok = false;
+    if (next.summary && typeof next.summary === 'object') {
+      next.summary = {
+        ...next.summary,
+        automatedGatePassed: false,
+        productionCanaryEligible: false
+      };
+    }
+  }
+  await writeReport({ report: next, reportDir: path.dirname(target), reportPath: target });
+  return next;
+};
+
+const flushStandardStreams = async () => {
+  const flush = (stream) => new Promise((resolve) => {
+    if (!stream || stream.destroyed || stream.writableEnded) return resolve();
+    stream.write('', resolve);
+  });
+  await Promise.all([flush(process.stdout), flush(process.stderr)]);
+};
+
 const main = async () => {
   const { runtimeEnv, evidenceKeyMaterial } = loadLiveEvalSecrets();
   Object.assign(process.env, runtimeEnv);
@@ -254,7 +326,11 @@ const main = async () => {
   const reportDir = path.join(artifactRoot, `agent-live-eval-${reportId}`);
   const reportPath = path.join(reportDir, 'report.json');
   await purgeExpiredEvidence({ rootDir: artifactRoot, retentionDays: 30 });
-  const pool = new Pool({ connectionString: runtimeEnv.DATABASE_URL, max: 20 });
+  const pool = new Pool({
+    connectionString: runtimeEnv.DATABASE_URL,
+    max: 20,
+    allowExitOnIdle: true
+  });
   let harness = null;
   const results = [];
   try {
@@ -278,9 +354,10 @@ const main = async () => {
         })}\n`);
         try {
           const result = await harness.runCase(entry, cohort);
-          results.push({ ...result, ok: true });
+          const passed = result.ok !== false;
+          results.push({ ...result, ok: passed });
           process.stdout.write(`${JSON.stringify({
-            event: 'live_eval.case.succeeded',
+            event: passed ? 'live_eval.case.succeeded' : 'live_eval.case.baseline_recorded',
             scenarioId: entry.id,
             cohort,
             runId: result.runId || null,
@@ -369,25 +446,43 @@ const main = async () => {
     error.reportPath = reportPath;
     throw error;
   } finally {
-    await harness?.close().catch(() => {});
-    await pool.end().catch(() => {});
+    const cleanup = await closeLiveEvalResources({ harness, pool });
+    await attachCleanupEvidence({ reportPath, cleanup }).catch(() => {
+      process.exitCode = 1;
+    });
+    if (!cleanup.ok) {
+      process.exitCode = 1;
+      process.stderr.write(`${JSON.stringify({
+        event: 'live_eval.cleanup_failed',
+        results: cleanup.results
+      })}\n`);
+    }
   }
 };
 
 if (require.main === module) {
-  main().catch((error) => {
-    console.error(JSON.stringify({
-      event: 'live_eval.failed',
-      code: safeFailureCode(error, 'AGENT_LIVE_EVAL_FAILED'),
-      diagnosticHash: failureFingerprint(error),
-      reportPath: error?.reportPath || null
-    }));
-    process.exitCode = 1;
-  });
+  void (async () => {
+    try {
+      await main();
+    } catch (error) {
+      process.stderr.write(`${JSON.stringify({
+        event: 'live_eval.failed',
+        code: safeFailureCode(error, 'AGENT_LIVE_EVAL_FAILED'),
+        diagnosticHash: failureFingerprint(error),
+        reportPath: error?.reportPath || null
+      })}\n`);
+      process.exitCode = 1;
+    }
+    await flushStandardStreams();
+    process.exit(process.exitCode || 0);
+  })();
 }
 
 module.exports = {
   loadLiveEvalSecrets,
+  closeLiveEvalResources,
+  attachCleanupEvidence,
+  flushStandardStreams,
   median,
   resolveSelection,
   resolveCurrentCommitSha,
