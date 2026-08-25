@@ -182,142 +182,147 @@ class AgentLiveEvalHarness {
       throw new TypeError('AGENT_LIVE_EVAL_POOL_REQUIRED');
     }
     const instance = new AgentLiveEvalHarness();
-    instance.pool = pool;
-    instance.sessionId = crypto.randomUUID();
-    instance.env = liveEvalEnv(env, envOverrides);
-    assertLiveEvalProcessSafety(instance.env);
-    const identity = await pool.query(
-      'SELECT current_database() AS database_name,inet_server_addr()::text AS server_address'
-    );
-    assertLiveEvalDatabaseSafety({ databaseName: identity.rows[0]?.database_name });
-    const migration = await pool.query('SELECT COALESCE(max(name),\'\') AS name FROM pgmigrations');
-    if (migration.rows[0]?.name !== '025_agent_runtime_v2_1_durability') {
-      throw new Error(`AGENT_LIVE_EVAL_MIGRATION_NOT_READY:${migration.rows[0]?.name || 'none'}`);
-    }
-    instance.trace = trace || new RuntimeTraceSink();
-    instance.controller = controller || new RuntimeTestController({ trace: instance.trace });
-    if (!instance.controller.trace) instance.controller.trace = instance.trace;
-    instance.evidenceRoot = path.resolve(
-      evidenceRoot || path.join(__dirname, '../../../.artifacts', `agent-live-eval-${instance.sessionId}`)
-    );
-    instance.privateDir = path.join(instance.evidenceRoot, 'private');
-    instance.evidenceKeyMaterial = String(evidenceKeyMaterial || '');
-    keyFromMaterial(instance.evidenceKeyMaterial);
-    await fs.promises.mkdir(instance.privateDir, { recursive: true, mode: 0o700 });
-    instance.campaignGuard = new LiveEvalCampaignGuard({
-      pool,
-      campaignId,
-      commitSha,
-      matrixHash,
-      maxQwenCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_QWEN_CALLS || 200),
-      maxKolorsCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_KOLORS_CALLS || 16),
-      maxWallClockMs: Number(
-        instance.env.AGENT_LIVE_EVAL_MAX_WALL_CLOCK_MS || MAX_WALL_CLOCK_MS
-      )
-    });
-    await instance.campaignGuard.initialize();
-    instance.runIds = [];
-    instance.conversationIds = [];
-    instance.assetIds = [];
-    instance.queue = [];
-    await instance.createSyntheticUsers();
-    instance.env.AGENT_RUNTIME_V2_CANARY_USER_IDS = instance.candidateUserId;
-    Object.assign(process.env, instance.env);
-    assertAgentRuntimeReady(instance.env);
-
-    instance.providerScheduler = createProviderScheduler({ pool, env: instance.env });
-    instance.modelCallService = createModelCallService({
-      pool,
-      env: instance.env,
-      retentionDays: 30,
-      testController: instance.controller
-    });
-    instance.runService = createAgentRunService({
-      pool,
-      env: instance.env,
-      testController: instance.controller,
-      queuePublisher: {
-        publish: async (runId) => {
-          instance.queue.push(runId);
-          instance.trace.record('queue.published', { runId, status: 'queued' });
-        }
-      }
-    });
-    instance.auditor = new LiveModelAuditor({
-      trace: instance.trace,
-      pool,
-      campaignGuard: instance.campaignGuard,
-      maxQwenCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_QWEN_CALLS || 200),
-      maxKolorsCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_KOLORS_CALLS || 16)
-    });
-    instance.model = createAgentModelProvider({
-      env: instance.env,
-      fetchImpl: instance.auditor.wrapQwenFetch(globalThis.fetch),
-      providerScheduler: instance.providerScheduler,
-      modelCallService: instance.modelCallService,
-      testController: instance.controller
-    });
-    const originalCreateChat = instance.model.createChat.bind(instance.model);
-    instance.model.createChat = async (payload, metadata = {}) => {
-      return instance.auditor.runQwenRequest(
-        payload,
-        metadata,
-        () => originalCreateChat(payload, metadata)
+    try {
+      instance.pool = pool;
+      instance.sessionId = crypto.randomUUID();
+      instance.env = liveEvalEnv(env, envOverrides);
+      assertLiveEvalProcessSafety(instance.env);
+      const identity = await pool.query(
+        'SELECT current_database() AS database_name,inet_server_addr()::text AS server_address'
       );
-    };
-    const scheduledChat = createScheduledChatGenerate({
-      scheduler: instance.providerScheduler,
-      chatGenerate: callSiliconFlowChat,
-      defaultPriority: 'actor'
-    });
-    const rawImageService = createAgentImageService({
-      env: instance.env,
-      chatGenerate: scheduledChat
-    });
-    instance.imageService = {
-      generate: async (request) => {
-        await instance.auditor.inspectKolorsRequest(request);
-        const output = await rawImageService.generate({
-          ...request,
-          signal: instance.campaignGuard.combinedSignal(request.signal)
-        });
-        return instance.auditor.inspectKolorsResponse(output, request);
+      assertLiveEvalDatabaseSafety({ databaseName: identity.rows[0]?.database_name });
+      const migration = await pool.query('SELECT COALESCE(max(name),\'\') AS name FROM pgmigrations');
+      if (migration.rows[0]?.name !== '025_agent_runtime_v2_1_durability') {
+        throw new Error(`AGENT_LIVE_EVAL_MIGRATION_NOT_READY:${migration.rows[0]?.name || 'none'}`);
       }
-    };
-    instance.assetAdapter = new S3AssetAdapter(instance.env);
-    instance.assetStorage = {
-      storeAsset: async (input) => {
-        const stored = await storeAsset({
+      instance.trace = trace || new RuntimeTraceSink();
+      instance.controller = controller || new RuntimeTestController({ trace: instance.trace });
+      if (!instance.controller.trace) instance.controller.trace = instance.trace;
+      instance.evidenceRoot = path.resolve(
+        evidenceRoot || path.join(__dirname, '../../../.artifacts', `agent-live-eval-${instance.sessionId}`)
+      );
+      instance.privateDir = path.join(instance.evidenceRoot, 'private');
+      instance.evidenceKeyMaterial = String(evidenceKeyMaterial || '');
+      keyFromMaterial(instance.evidenceKeyMaterial);
+      await fs.promises.mkdir(instance.privateDir, { recursive: true, mode: 0o700 });
+      instance.campaignGuard = new LiveEvalCampaignGuard({
+        pool,
+        campaignId,
+        commitSha,
+        matrixHash,
+        maxQwenCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_QWEN_CALLS || 200),
+        maxKolorsCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_KOLORS_CALLS || 16),
+        maxWallClockMs: Number(
+          instance.env.AGENT_LIVE_EVAL_MAX_WALL_CLOCK_MS || MAX_WALL_CLOCK_MS
+        )
+      });
+      await instance.campaignGuard.initialize();
+      instance.runIds = [];
+      instance.conversationIds = [];
+      instance.assetIds = [];
+      instance.queue = [];
+      await instance.createSyntheticUsers();
+      instance.env.AGENT_RUNTIME_V2_CANARY_USER_IDS = instance.candidateUserId;
+      Object.assign(process.env, instance.env);
+      assertAgentRuntimeReady(instance.env);
+
+      instance.providerScheduler = createProviderScheduler({ pool, env: instance.env });
+      instance.modelCallService = createModelCallService({
+        pool,
+        env: instance.env,
+        retentionDays: 30,
+        testController: instance.controller
+      });
+      instance.runService = createAgentRunService({
+        pool,
+        env: instance.env,
+        testController: instance.controller,
+        queuePublisher: {
+          publish: async (runId) => {
+            instance.queue.push(runId);
+            instance.trace.record('queue.published', { runId, status: 'queued' });
+          }
+        }
+      });
+      instance.auditor = new LiveModelAuditor({
+        trace: instance.trace,
+        pool,
+        campaignGuard: instance.campaignGuard,
+        maxQwenCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_QWEN_CALLS || 200),
+        maxKolorsCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_KOLORS_CALLS || 16)
+      });
+      instance.model = createAgentModelProvider({
+        env: instance.env,
+        fetchImpl: instance.auditor.wrapQwenFetch(globalThis.fetch),
+        providerScheduler: instance.providerScheduler,
+        modelCallService: instance.modelCallService,
+        testController: instance.controller
+      });
+      const originalCreateChat = instance.model.createChat.bind(instance.model);
+      instance.model.createChat = async (payload, metadata = {}) => {
+        return instance.auditor.runQwenRequest(
+          payload,
+          metadata,
+          () => originalCreateChat(payload, metadata)
+        );
+      };
+      const scheduledChat = createScheduledChatGenerate({
+        scheduler: instance.providerScheduler,
+        chatGenerate: callSiliconFlowChat,
+        defaultPriority: 'actor'
+      });
+      const rawImageService = createAgentImageService({
+        env: instance.env,
+        chatGenerate: scheduledChat
+      });
+      instance.imageService = {
+        generate: async (request) => {
+          await instance.auditor.inspectKolorsRequest(request);
+          const output = await rawImageService.generate({
+            ...request,
+            signal: instance.campaignGuard.combinedSignal(request.signal)
+          });
+          return instance.auditor.inspectKolorsResponse(output, request);
+        }
+      };
+      instance.assetAdapter = new S3AssetAdapter(instance.env);
+      instance.assetStorage = {
+        storeAsset: async (input) => {
+          const stored = await storeAsset({
+            ...input,
+            pool: instance.pool,
+            adapter: instance.assetAdapter
+          });
+          if (!instance.assetIds.includes(stored.assetId)) instance.assetIds.push(stored.assetId);
+          return stored;
+        },
+        openAsset: (input) => openAsset({
           ...input,
           pool: instance.pool,
           adapter: instance.assetAdapter
-        });
-        if (!instance.assetIds.includes(stored.assetId)) instance.assetIds.push(stored.assetId);
-        return stored;
-      },
-      openAsset: (input) => openAsset({
-        ...input,
-        pool: instance.pool,
-        adapter: instance.assetAdapter
-      })
-    };
-    instance.sandbox = createAgentSandboxProvider({ env: instance.env });
-    await instance.probeReadiness();
-    instance.worker = createAgentWorkerService({
-      pool,
-      runService: instance.runService,
-      env: instance.env,
-      model: instance.model,
-      modelCallService: instance.modelCallService,
-      imageService: instance.imageService,
-      sandbox: instance.sandbox,
-      assetStorage: instance.assetStorage,
-      testController: instance.controller,
-      runtimeReadiness: instance.runtimeReadiness
-    });
-    await instance.worker.startInfrastructure();
-    instance.oracle = new AgentReplayOracle({ pool, runService: instance.runService });
-    return instance;
+        })
+      };
+      instance.sandbox = createAgentSandboxProvider({ env: instance.env });
+      await instance.probeReadiness();
+      instance.worker = createAgentWorkerService({
+        pool,
+        runService: instance.runService,
+        env: instance.env,
+        model: instance.model,
+        modelCallService: instance.modelCallService,
+        imageService: instance.imageService,
+        sandbox: instance.sandbox,
+        assetStorage: instance.assetStorage,
+        testController: instance.controller,
+        runtimeReadiness: instance.runtimeReadiness
+      });
+      await instance.worker.startInfrastructure();
+      instance.oracle = new AgentReplayOracle({ pool, runService: instance.runService });
+      return instance;
+    } catch (error) {
+      await instance.close().catch(() => {});
+      throw error;
+    }
   }
 
   assertWallClock() {

@@ -72,6 +72,7 @@ const loadLiveEvalSecrets = ({
     APP_ENV: 'dev',
     AGENT_LIVE_EVAL_MODE: 'true',
     AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1',
+    CUA_PYTHON: path.resolve(__dirname, '../.venv-agent/bin/python'),
     AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION:
       runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION || '20',
     AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION:

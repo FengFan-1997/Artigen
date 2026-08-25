@@ -11,6 +11,7 @@ const {
   getLiveEvalCase
 } = require('../evaluation/harness/agent-live-eval-matrix');
 const {
+  AgentLiveEvalHarness,
   LIVE_EVAL_DATABASE,
   MAX_WALL_CLOCK_MS,
   assertLiveEvalDatabaseSafety,
@@ -113,6 +114,10 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
   assert.equal(loaded.runtimeEnv.NODE_ENV, 'test');
   assert.equal(loaded.runtimeEnv.APP_ENV, 'dev');
   assert.equal(loaded.runtimeEnv.DATABASE_URL, 'postgres://synthetic/dev_artigen');
+  assert.equal(
+    loaded.runtimeEnv.CUA_PYTHON,
+    path.resolve(__dirname, '../.venv-agent/bin/python')
+  );
   assert.equal(loaded.evidenceKeyMaterial, secrets.get('AGENT_LIVE_EVAL_EVIDENCE_KEY'));
   assert.throws(
     () => loadLiveEvalSecrets({ service: 'artigen-production', readSecret: () => 'x' }),
@@ -122,6 +127,26 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     () => loadLiveEvalSecrets({ service: 'artigen-agent-dev-worker', readSecret: () => '' }),
     /KEYCHAIN_INCOMPLETE/
   );
+});
+
+test('Live Harness closes partial construction state when initialization fails', async (t) => {
+  let closeCalls = 0;
+  t.mock.method(AgentLiveEvalHarness.prototype, 'close', async () => {
+    closeCalls += 1;
+  });
+  await assert.rejects(
+    () => AgentLiveEvalHarness.create({
+      envOverrides: { AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1' },
+      pool: {
+        connect() {},
+        async query() {
+          return { rows: [{ database_name: 'production' }] };
+        }
+      }
+    }),
+    /AGENT_LIVE_EVAL_DATABASE_FORBIDDEN/
+  );
+  assert.equal(closeCalls, 1);
 });
 
 test('Live eval signed gate binds the exact SHA, matrix and complete release evidence', () => {
