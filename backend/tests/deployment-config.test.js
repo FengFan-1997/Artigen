@@ -66,7 +66,9 @@ test('Mac Agent worker pins image pricing and the SiliconFlow output host', () =
   assert.match(installer, /AGENT_RUNTIME_ACTOR_PROFILE/);
 });
 
-test('Mac Agent installer persists the reviewed V2 launch profile', () => {
+test('Mac Agent installer persists the reviewed V2 launch profile', {
+  skip: process.platform === 'darwin' ? false : 'macOS-only LaunchAgent integration'
+}, () => {
   const temporaryHome = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-launch-profile-'));
   try {
     const result = spawnSync(
