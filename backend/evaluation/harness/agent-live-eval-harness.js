@@ -518,8 +518,7 @@ class AgentLiveEvalHarness {
       if (!state.rowCount) throw new Error(`AGENT_LIVE_EVAL_RUN_NOT_FOUND:${runId}`);
       if (TERMINAL.has(state.rows[0].status)) return this.snapshot(runId);
       try {
-        this.queue = this.queue.filter((queuedRunId) => queuedRunId !== runId);
-        last = await this.worker.processRun(runId);
+        last = await this.processRun(runId);
       } catch (error) {
         if (error?.name === 'RuntimeHarnessCrash') throw error;
         const failed = await this.pool.query('SELECT status FROM agent_runs WHERE id=$1', [runId]);
@@ -528,6 +527,15 @@ class AgentLiveEvalHarness {
       }
     }
     throw new Error(`AGENT_LIVE_EVAL_TERMINAL_TIMEOUT:${runId}:${last?.status || 'unknown'}`);
+  }
+
+  async processRun(runId) {
+    // createRun() publishes into the harness queue even when a durability test
+    // intentionally invokes the worker directly. Consume that in-memory queue
+    // entry before every direct invocation so the drain oracle reflects the
+    // durable database state instead of reporting a synthetic stale item.
+    this.queue = this.queue.filter((queuedRunId) => queuedRunId !== runId);
+    return this.worker.processRun(runId);
   }
 
   async resumeAfterCrash(runId) {
@@ -557,7 +565,7 @@ class AgentLiveEvalHarness {
   async runRecoveryScenario(entry, cohort) {
     const created = await this.createRun(entry, cohort);
     this.controller.armCrash('after_receipt');
-    await this.worker.processRun(created.runId).then(
+    await this.processRun(created.runId).then(
       () => { throw new Error('AGENT_LIVE_EVAL_EXPECTED_RECEIPT_CRASH'); },
       (error) => {
         if (error?.name !== 'RuntimeHarnessCrash' || error.point !== 'after_receipt') throw error;
@@ -566,7 +574,7 @@ class AgentLiveEvalHarness {
     const callsAfterReceipt = this.auditor.qwenCalls;
     this.controller.armCrash('after_provider_response');
     await this.resumeAfterCrash(created.runId);
-    await this.worker.processRun(created.runId).then(
+    await this.processRun(created.runId).then(
       () => { throw new Error('AGENT_LIVE_EVAL_EXPECTED_PROVIDER_CRASH'); },
       (error) => {
         if (error?.name !== 'RuntimeHarnessCrash' || error.point !== 'after_provider_response') throw error;
@@ -582,6 +590,84 @@ class AgentLiveEvalHarness {
     await this.retryAmbiguous(created.runId, cohort);
     const terminal = await this.runToTerminal(created.runId);
     return { created, terminal };
+  }
+
+  async captureCaseFailure({ entry, cohort, qwenBefore = 0, kolorsBefore = 0 } = {}) {
+    const userId = this.userForCohort(cohort);
+    const idempotencyKey = `live-eval:${this.sessionId}:${entry.id}:${cohort}`;
+    const result = await this.pool.query(
+      `SELECT id,status,runtime_version,error_code,charged_credits,step_count,
+              lease_epoch,final_text_sha256
+         FROM agent_runs
+        WHERE user_id=$1 AND idempotency_key=$2
+        ORDER BY created_at DESC,id DESC
+        LIMIT 1`,
+      [userId, idempotencyKey]
+    );
+    const run = result.rows[0] || null;
+    const physical = {
+      qwenCalls: Math.max(0, Number(this.auditor?.qwenCalls || 0) - Number(qwenBefore || 0)),
+      kolorsCalls: Math.max(0, Number(this.auditor?.kolorsCalls || 0) - Number(kolorsBefore || 0))
+    };
+    if (!run) {
+      return {
+        scenarioId: entry.id,
+        cohort,
+        runtimeVersion: cohort === 'v2' ? 2 : 1,
+        ...physical
+      };
+    }
+    const [artifactResult, subagentResult, modelResult] = await Promise.all([
+      this.pool.query('SELECT count(*)::int AS count FROM agent_artifacts WHERE run_id=$1', [run.id]),
+      this.pool.query('SELECT count(*)::int AS count FROM agent_subagents WHERE run_id=$1', [run.id]),
+      this.pool.query(
+        `SELECT count(*)::int AS count,
+                COALESCE(sum(input_tokens),0)::bigint AS input_tokens,
+                COALESCE(sum(output_tokens),0)::bigint AS output_tokens,
+                COALESCE(sum(latency_ms),0)::bigint AS latency_ms,
+                COALESCE(sum(queue_wait_ms),0)::bigint AS queue_wait_ms,
+                count(DISTINCT phase) FILTER (WHERE phase IN ('planner','verifier'))::int AS schema_checks,
+                count(DISTINCT phase) FILTER (
+                  WHERE phase IN ('planner','verifier')
+                    AND NOT EXISTS (
+                      SELECT 1 FROM agent_model_calls retry
+                       WHERE retry.run_id=agent_model_calls.run_id
+                         AND retry.phase=agent_model_calls.phase
+                         AND retry.turn<>0
+                    )
+                )::int AS schema_first_valid
+           FROM agent_model_calls
+          WHERE run_id=$1`,
+        [run.id]
+      )
+    ]);
+    const model = modelResult.rows[0] || {};
+    const errorCode = /^[A-Z][A-Z0-9_]{2,100}$/.test(String(run.error_code || ''))
+      ? run.error_code
+      : null;
+    return {
+      scenarioId: entry.id,
+      cohort,
+      runId: run.id,
+      runtimeVersion: Number(run.runtime_version),
+      status: run.status,
+      errorCode,
+      chargedCredits: Number(run.charged_credits || 0),
+      steps: Number(run.step_count || 0),
+      artifactCount: Number(artifactResult.rows[0]?.count || 0),
+      subagentCount: Number(subagentResult.rows[0]?.count || 0),
+      modelCalls: Number(model.count || 0),
+      inputTokens: Number(model.input_tokens || 0),
+      outputTokens: Number(model.output_tokens || 0),
+      modelLatencyMs: Number(model.latency_ms || 0),
+      queueWaitMs: Number(model.queue_wait_ms || 0),
+      schemaChecks: Number(model.schema_checks || 0),
+      schemaFirstValid: Number(model.schema_first_valid || 0),
+      leaseEpoch: Number(run.lease_epoch || 0),
+      finalTextSha256Present: Boolean(run.final_text_sha256),
+      artifacts: [],
+      ...physical
+    };
   }
 
   async runConversationCase(entry, cohort) {

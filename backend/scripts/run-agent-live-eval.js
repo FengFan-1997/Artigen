@@ -310,6 +310,54 @@ const flushStandardStreams = async () => {
   await Promise.all([flush(process.stdout), flush(process.stderr)]);
 };
 
+const buildTerminalFailureReport = ({
+  gate,
+  selectedCase,
+  selectedCohort,
+  results,
+  error,
+  harness = null
+} = {}) => {
+  const summary = {
+    ...summarize(results),
+    automatedGatePassed: false,
+    productionCanaryEligible: false
+  };
+  return {
+    version: 'agent-live-eval-v3.1',
+    createdAt: new Date().toISOString(),
+    campaignId: gate?.campaignId || null,
+    gateManifestSha256: gate?.manifestSha256 || null,
+    commitSha: gate?.commitSha || null,
+    matrixHash: gate?.matrixHash || null,
+    modelLocks: {
+      text: 'Qwen/Qwen3-8B',
+      image: 'Kwai-Kolors/Kolors'
+    },
+    limits: {
+      perRunCredits: 50,
+      qwenCalls: 200,
+      kolorsCalls: 16,
+      wallClockHours: 8
+    },
+    selectedCase: selectedCase || 'all',
+    selectedCohort,
+    ok: false,
+    code: safeFailureCode(error, 'AGENT_LIVE_EVAL_FAILED'),
+    diagnosticHash: failureFingerprint(error),
+    results,
+    summary,
+    blindReview: null,
+    traceSha256: harness?.trace?.digest?.() || null,
+    requestTotals: harness?.auditor
+      ? {
+          qwenCalls: Number(harness.auditor.qwenCalls || 0),
+          kolorsCalls: Number(harness.auditor.kolorsCalls || 0)
+        }
+      : null
+  };
+};
+
 const main = async () => {
   const { runtimeEnv, evidenceKeyMaterial } = loadLiveEvalSecrets();
   Object.assign(process.env, runtimeEnv);
@@ -347,6 +395,8 @@ const main = async () => {
     for (const entry of selected) {
       for (const cohort of cohorts) {
         const startedAt = Date.now();
+        const qwenBefore = Number(harness.auditor?.qwenCalls || 0);
+        const kolorsBefore = Number(harness.auditor?.kolorsCalls || 0);
         process.stdout.write(`${JSON.stringify({
           event: 'live_eval.case.started',
           scenarioId: entry.id,
@@ -365,8 +415,21 @@ const main = async () => {
           })}\n`);
         } catch (error) {
           const failure = contentFreeFailure({ entry, cohort, error });
-          results.push({ ...failure, elapsedMs: Date.now() - startedAt });
           await harness.cancelActiveCohort(cohort);
+          const evidence = await harness.captureCaseFailure({
+            entry,
+            cohort,
+            qwenBefore,
+            kolorsBefore
+          }).catch(() => null);
+          results.push({
+            ...failure,
+            ...(evidence || {}),
+            ok: false,
+            code: failure.code,
+            diagnosticHash: failure.diagnosticHash,
+            elapsedMs: Date.now() - startedAt
+          });
           process.stdout.write(`${JSON.stringify({
             event: 'live_eval.case.failed',
             scenarioId: entry.id,
@@ -434,14 +497,14 @@ const main = async () => {
     await writeReport({
       reportDir,
       reportPath,
-      report: {
-        version: 'agent-live-eval-v3.1',
-        createdAt: new Date().toISOString(),
-        ok: false,
-        code: safeFailureCode(error, 'AGENT_LIVE_EVAL_FAILED'),
-        diagnosticHash: failureFingerprint(error),
-        results
-      }
+      report: buildTerminalFailureReport({
+        gate,
+        selectedCase,
+        selectedCohort,
+        results,
+        error,
+        harness
+      })
     });
     error.reportPath = reportPath;
     throw error;
@@ -488,5 +551,6 @@ module.exports = {
   resolveCurrentCommitSha,
   safeFailureCode,
   failureFingerprint,
+  buildTerminalFailureReport,
   summarize
 };
