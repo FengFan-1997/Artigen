@@ -585,6 +585,18 @@ CI、Render DEV 与 Vercel Preview 验收，尚未进入 `main` 或生产。
 
 本轮未修改 Karing 节点、规则、DNS、系统代理、Wi-Fi 或 B2U2/AI 网络配置；发布结束时继续保持既有“规则”模式。
 
+### 5.21 2026-08-26 Runtime V2 / Harness V3.1 真实恢复硬化（本地候选，未发布）
+
+- 从精确 `origin/dev` SHA `9201fda225fe45d965c848dc251fcdde1e35e6f0` 建立 `codex/agent-live-recovery-hardening`；本地不可变代码候选为 `9feffe51fc2f7c425a0ccdbe23e0f2acdcce490c`。本节没有 push、PR、merge、DEV/生产部署、真实付费矩阵或 owner canary。
+- Runtime V2、公开 rollout 和 owner canary 继续关闭；文字、路由、规划、验证与子 Agent 仍只允许 `Qwen/Qwen3-8B`，所有图片仍只允许 `Kwai-Kolors/Kolors`。没有修改 Karing、Wi-Fi、DNS、代理、节点或网络路由。
+- 恢复路径增加仅限 DEV/test 的精确 Run 接管：真实子进程 `SIGKILL` 后由新进程依据租约 epoch 接管，已 dispatched 的不确定模型调用进入 `ambiguous/waiting_user`，不会自动重发或扣未确认费用；等待用户确认时会延长原 hold，避免同一次过期扫描立即将恢复 Run 误判为预算 hold 过期。
+- Live Harness 现在按每次物理 Qwen/Kolors dispatch 持久化脱敏 slot、状态、token 与延迟，V1/V2 使用同一数据源；并发调用上限通过独立事务与 campaign advisory lock 串行化。slot journal 使用原子写入，`SIGTERM`、`SIGKILL` 重启和普通致命异常都会把所有未完成 slot 明确记为失败，禁止静默续跑或丢失局部证据。
+- Planner 候选与正式 TaskSpec 统一为最多 12 步，首步/后续状态由服务端固定为 `in_progress/pending`；Shell 在创建回执和预算预留前拒绝明显裸 Python/Node，并提供一次安全 heredoc 纠正；新 artifact 调用要求完整叶子路径，旧 checkpoint 的 workspace-root + filename 形式仍可恢复；来源纠错返回本 Run 有界、精确的已观察 HTTPS URL；V2 首次重复发布计划被服务端裁剪。
+- 本地不可变候选验证：`pnpm check` 退出码 0，Playwright `489 passed / 3 skipped`；质量 manifest `50/50`；PostgreSQL 16 + 固定 MinIO deterministic `50/50`；完整 Harness PG integration `43/43`；20 轮 chaos 共 `620/620`，失败、取消、跳过、todo 与 flaky 均为 0。
+- 被忽略的证据：`.artifacts/agent-live-recovery-hardening/final-deterministic/deterministic-all.json`（SHA-256 `b1bd89c952505eb00892bd48eae40a83d349b8be577355a8901e7d1e2bfc6850`）与 `.artifacts/agent-live-recovery-hardening/final-chaos/chaos.json`（SHA-256 `f462d890b8620b40bcfe4386c2ab8e4f14e9b15ffbbb53bbf520061ae8503e0c`）。
+- 最终本地 `artigen_test` 审计中 active Agent Run/Tool Task、冻结钱包、两类 held hold、reserved budget、open model/tool receipt、provider queue 与 active subagent 全部为 0；临时 MinIO 和 Artigen 沙箱容器已删除。14 个 2026-07-17 遗留测试 tool-task hold 通过现有 billing service 正常释放，没有直接修改钱包余额。
+- 此候选尚未执行新的 12 场景 × V1/V2 共 24-slot 真实 Qwen/Kolors DEV 矩阵，也没有图片匿名盲审。因此当前只能进入 DEV 实机验证准备，不能建议 owner canary，更不能宣称 Runtime V2 已发布。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。
