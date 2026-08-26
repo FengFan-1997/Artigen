@@ -1581,6 +1581,7 @@ class OllamaAgentModelProvider {
     let budgetLockdownPublished = durable?.budgetLockdownPublished === true;
     let lastFailureFingerprint = String(durable?.lastFailureFingerprint || '');
     let repeatedStateFailures = Math.max(0, Number(durable?.repeatedStateFailures || 0));
+    let planUpdateSuppressed = durable?.planUpdateSuppressed === true;
     let readyToFinalize = durable?.readyToFinalize && typeof durable.readyToFinalize === 'object'
       ? durable.readyToFinalize
       : null;
@@ -1643,6 +1644,7 @@ class OllamaAgentModelProvider {
         budgetLockdownPublished,
         lastFailureFingerprint,
         repeatedStateFailures,
+        planUpdateSuppressed,
         readyToFinalize
       });
     };
@@ -1739,6 +1741,14 @@ class OllamaAgentModelProvider {
             label: String(publishedById.get(canonicalStep.id)?.label || canonicalStep.label).slice(0, 160),
             status: publishedById.get(canonicalStep.id)?.status || canonicalStep.status
           }));
+          const materialChange = taskSpec.plan.some((step, index) => (
+            step.label !== previousPlan[index]?.label ||
+            step.status !== previousPlan[index]?.status
+          ));
+          // A successful no-op plan call is not progress. Hide update_plan
+          // until another tool makes observable progress so an 8B Actor cannot
+          // spend the whole Run repeatedly restating the server-owned plan.
+          planUpdateSuppressed = !materialChange;
           const nextIndex = taskSpec.plan.findIndex((step) => step.status === 'in_progress');
           runtimePhase = nextIndex >= 0
             ? taskSpec.plan[nextIndex]?.phase || runtimePhase
@@ -1779,11 +1789,19 @@ class OllamaAgentModelProvider {
           }
           refreshSubagentFinalization();
         }
-        return result;
+        return runtimeV2 && planUpdateSuppressed
+          ? {
+              ...(result && typeof result === 'object' ? result : {}),
+              accepted: true,
+              changed: false,
+              correction: 'The published plan is already current. Continue the task or answer; do not update the plan again until another action changes state.'
+            }
+          : result;
       }
       if (call.name === 'delegate_tasks') {
         const result = await callbacks.delegateTasks(args.tasks);
         delegationCompleted = true;
+        if (runtimeV2) planUpdateSuppressed = false;
         return result;
       }
       if (call.name === 'sandbox_shell') {
@@ -1794,6 +1812,7 @@ class OllamaAgentModelProvider {
         if (shellResult.success) artifactDuplicateAttempts = 0;
         if (shellResult.success) artifactRepairRequired = false;
         if (shellResult.success) approvalRecoveryRequired = false;
+        if (runtimeV2 && shellResult.success) planUpdateSuppressed = false;
         if (toolProfile === 'subagent' && shellResult.success) {
           subagentSuccessfulShellCalls += 1;
           subagentShellFailureCount = 0;
@@ -1819,11 +1838,14 @@ class OllamaAgentModelProvider {
         };
       }
       if (call.name === 'browser_dom') {
-        return callbacks.browserDom(args);
+        const result = await callbacks.browserDom(args);
+        if (runtimeV2 && result?.success !== false) planUpdateSuppressed = false;
+        return result;
       }
       if (call.name === 'generate_image') {
         const image = await callbacks.generateImage(args, { callId: call.callId });
         artifactDuplicateAttempts = 0;
+        if (runtimeV2) planUpdateSuppressed = false;
         return image;
       }
       if (call.name === 'declare_artifact') {
@@ -1862,6 +1884,7 @@ class OllamaAgentModelProvider {
           }
         } else {
           artifactDuplicateAttempts = 0;
+          if (runtimeV2) planUpdateSuppressed = false;
           if (runtimeV2) {
             semanticRepairRequired = false;
             semanticVerificationPassed = false;
@@ -1974,21 +1997,39 @@ class OllamaAgentModelProvider {
             }
             if (correctablePlanError) {
               planValidationAttempts += 1;
-              if (planValidationAttempts > 2) throw error;
-              completedOutput = {
-                callId: pendingCall.callId,
-                name: pendingCall.name,
-                content: JSON.stringify({
-                  success: false,
-                  errorCode: error.code,
-                  field: 'steps',
-                  correction: String(error?.details?.correction || [
-                    `Retry update_plan with 2-${toolProfile === 'subagent' ? 4 : 12} non-empty steps.`,
-                    'Each status must be pending, in_progress, or completed.',
-                    'At most one step may be in_progress.'
-                  ].join(' '))
-                })
-              };
+              if (runtimeV2 && planValidationAttempts >= 2) {
+                // The current TaskSpec plan was already server-published. Two
+                // invalid restatements are enough evidence that more forced
+                // plan retries would be a model loop, not useful correction.
+                planValidationAttempts = 0;
+                planUpdateSuppressed = true;
+                completedOutput = {
+                  callId: pendingCall.callId,
+                  name: pendingCall.name,
+                  content: JSON.stringify({
+                    accepted: true,
+                    changed: false,
+                    steps: taskSpec.plan.map(({ id, label, status }) => ({ id, label, status })),
+                    correction: 'The server kept the existing valid plan. Continue the task or answer without calling update_plan again.'
+                  })
+                };
+              } else {
+                if (planValidationAttempts > 2) throw error;
+                completedOutput = {
+                  callId: pendingCall.callId,
+                  name: pendingCall.name,
+                  content: JSON.stringify({
+                    success: false,
+                    errorCode: error.code,
+                    field: 'steps',
+                    correction: String(error?.details?.correction || [
+                      `Retry update_plan with 2-${toolProfile === 'subagent' ? 4 : 12} non-empty steps.`,
+                      'Each status must be pending, in_progress, or completed.',
+                      'At most one step may be in_progress.'
+                    ].join(' '))
+                  })
+                };
+              }
             } else if (correctableDelegationError) {
               delegationValidationAttempts += 1;
               if (delegationValidationAttempts > 2) throw error;
@@ -2385,8 +2426,9 @@ class OllamaAgentModelProvider {
             capabilities,
             toolProfile,
             new Set(prompt.allowedToolNames)
-          ).map((tool) => tool.name)
+            ).map((tool) => tool.name)
         );
+        if (planUpdateSuppressed) allowedToolNames.delete('update_plan');
         const context = buildContextMessages({
           instructions: prompt.instructions,
           taskSpec,
@@ -2425,7 +2467,7 @@ class OllamaAgentModelProvider {
         request.tool_choice = 'none';
       } else if (delegationRequired && !delegationCompleted) {
         request.tool_choice = this.delegationToolChoice();
-      } else if (planValidationAttempts > 0) {
+      } else if (planValidationAttempts > 0 && !planUpdateSuppressed) {
         request.tool_choice = {
           type: 'function',
           function: { name: 'update_plan' }

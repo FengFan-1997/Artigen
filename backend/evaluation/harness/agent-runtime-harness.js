@@ -293,6 +293,7 @@ class AgentRuntimeHarness {
     browserConfig = {},
     maxCredits = 50,
     taskSpec = null,
+    planWithModel = false,
     assetIds = []
   } = {}) {
     const conversation = await this.pool.query(
@@ -302,7 +303,7 @@ class AgentRuntimeHarness {
     );
     const conversationId = conversation.rows[0].id;
     this.conversationIds.add(conversationId);
-    const normalizedTaskSpec = taskSpec || {
+    const normalizedTaskSpec = planWithModel ? null : taskSpec || {
       version: 2,
       goal: objective,
       complexity: deliverables.length > 1 ? 'high' : 'medium',
@@ -335,7 +336,7 @@ class AgentRuntimeHarness {
       `INSERT INTO design_executions
         (conversation_id,route_kind,status,agent_run_id,max_credits,plan)
        VALUES ($1,'agent_run','queued',$2,$3,$4)`,
-      [conversationId, created.runId, maxCredits, JSON.stringify(normalizedTaskSpec.plan)]
+      [conversationId, created.runId, maxCredits, JSON.stringify(normalizedTaskSpec?.plan || [])]
     );
     return { ...created, conversationId };
   }

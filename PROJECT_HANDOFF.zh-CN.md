@@ -8,6 +8,18 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-08-26 Agent Runtime V2 真实失败根因修复（本地完成，未发布）
+
+- 本轮从最新 `origin/dev` SHA `03b8a5ad281deb00bc44f6515c79f79c3ac12675` 创建独立分支 `codex/agent-runtime-real-quality-fixes` 和工作树 `/Users/fengfan/Public/personal/Artigen-runtime-real-quality-fixes`，针对下节真实 DEV campaign 的 V2 `0/11` 失败逐项修复。本节记录的验证阶段没有部署或调用新的真实 Qwen/Kolors；下节记录的失败 campaign 仍是线上放行判断的最新真实证据。
+- Planner 不再复制整份用户任务。模型只返回经过严格 Schema 校验的复杂度、置信度、约束、假设、验收项、Skill 和计划候选；目标、交付物、允许 origin、预算与稳定 requirement ID 由服务端持有并合并。需要 Planner 的 Run 在最终 TaskSpec 验证后才一次性固化不可变 Runtime profile，修复 `AGENT_TASK_SPEC_INVALID` 与 `AGENT_RUNTIME_SKILL_NOT_FROZEN` 根因。
+- Actor 的无实质变化 `update_plan` 会被持久抑制，只有真实动作改变工作状态后才重新暴露；连续两次无效计划复述保留服务端 canonical plan 并继续执行，不再误触发通用状态循环。既有重复失败 Shell 熔断仍保持有效。
+- 已释放的 Runtime 预算只允许在持久化 `received/consumed` 模型回执或已消费工具回执能够证明实际成本时恢复；调用方费用必须与回执匹配，否则拒绝。没有回执、损坏回执和 ambiguous 回执都不能恢复，修复响应已落账但后续写入崩溃导致的 `AGENT_BUDGET_RESERVATION_RELEASED`，同时不放松一次冻结、一次结算和用户冻结上限。
+- Kolors 只对 Provider 明确返回的 HTTP 429 做有界自动重试：最多两次重试、复用同一请求与 seed、遵守有界且可取消的 `Retry-After`。408、5xx、网络和未知错误继续走 fail-closed ambiguity；明确其他 4xx 为确定性输入拒绝。所有图片仍只允许 `Kwai-Kolors/Kolors`。
+- 父 Agent Shell 新增确定性 operation receipt：沙箱在固定 Run 私有路径原子记录 started/done、退出码、受限输出与耗时；同一 operation ID 可以复用完成结果而不重复副作用。Worker 在 stale lease 恢复时只自动探测父 Agent 的 dispatched Shell；已完成则持久化数据库回执、恢复已证明费用并继续，无法证明则进入 `waiting_user`。子 Agent Shell 因尚未实现同等沙箱回执，仍严格保持人工确认路径，不能被父级恢复逻辑错误重放。
+- 三遍本地审核已经完成：第一遍验证租约、回执、预算和终态，第二遍复核父/子 Agent 权限与恢复边界，第三遍执行完整产品回归。真实 PostgreSQL 16 + MinIO Harness 为 `40/40`、0 skip；独立 Runtime V2/subagent/design-conversation PostgreSQL 组为 `5/5`；50 项 executable quality set 为 `50/50`；20 轮 chaos 每轮 31 个场景，共 `620/620`、0 failed/skip/flaky。完整 `pnpm check` 退出码 0：前端 `216/216`，生产构建与 bundle budget 通过，Playwright 六项目 `489 passed / 3 skipped / 0 failed`，覆盖 Chromium、Firefox、WebKit、360/390px 与 WebKit 768px。
+- 本地验证没有使用 Scripted Provider 结果冒充真实模型完成率，也没有创建新的真实 DEV/生产 Run。Runtime V2、owner canary、`dev → main` 与公众 rollout 继续阻断；下一步必须经过 feature PR → `dev` required gates → Render、Vercel、Mac Worker 同一不可变 merge SHA → 新签名 gate → 完整 24 次真实 DEV V1/V2 campaign。旧 campaign 的 V2 `0/11` 不得复用为放行证据，只有新 campaign 达到门槛才可讨论生产 owner canary。
+- 模型边界保持不变：全部文本、路由、规划、验证和父/子 Agent 只能使用 `Qwen/Qwen3-8B`，全部图片只能使用 `Kwai-Kolors/Kolors`。本轮没有读取或操作 `ui-review/`，也没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。
+
 ## 2026-08-26 Agent Live Harness V3.1 真实 DEV A/B（已完成，Runtime V2 发布阻断）
 
 - 签名 campaign `733b461-20260826-0001` 已在不可变 DEV SHA `733b461047ea446ca8d2156662493c5fbad975ef` 完整运行 12 类任务的 V1/V2 对照，共 24 个槽位。运行前 exact-SHA gate 覆盖完整 `pnpm check`、PostgreSQL 16 + 固定 MinIO、50/50 executable quality、20 轮 chaos 540/540 与 GitHub required checks；gate matrix hash 为 `094fbc289c2a6af410ac31a9e35661c21cc3fcf528689aa33d3cd6646acd08cb`。

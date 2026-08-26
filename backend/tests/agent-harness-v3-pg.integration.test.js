@@ -228,6 +228,68 @@ test('Runtime V2 profile is complete at creation and immutable across Worker lea
   }
 });
 
+test('Runtime V2 pins Planner-selected skills only after compiling the final TaskSpec', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({
+      pool,
+      providerScript: [
+        {
+          content: JSON.stringify({
+            complexity: 'medium',
+            confidence: 0.95,
+            constraints: ['不得增加未请求的交付物'],
+            assumptions: [],
+            acceptanceCriteria: ['报告必须通过验证'],
+            skillIds: ['report'],
+            plan: [
+              { id: 'produce-report', label: '制作报告', phase: 'production', status: 'in_progress' },
+              { id: 'verify-report', label: '验证报告', phase: 'verification', status: 'pending' }
+            ]
+          })
+        },
+        { content: '无法在本轮合成场景中创建报告。' },
+        { content: '本轮仍然无法创建必需报告。' },
+        { content: '已确认无法交付必需报告。' }
+      ]
+    });
+    const created = await harness.createRun({
+      objective: '制作一份经过验证的报告。',
+      deliverables: ['report'],
+      capabilities: { files: true, shell: true },
+      planWithModel: true
+    });
+    const before = await pool.query(
+      `SELECT runtime_profile_hash,skill_versions FROM agent_runs WHERE id=$1`,
+      [created.runId]
+    );
+    assert.equal(before.rows[0].runtime_profile_hash, null);
+    assert.deepEqual(before.rows[0].skill_versions, {});
+
+    const terminal = await harness.runToTerminal(created.runId);
+    assert.equal(terminal.snapshot.persistent.run.status, 'failed');
+    const after = await pool.query(
+      `SELECT runtime_profile_hash,skill_versions FROM agent_runs WHERE id=$1`,
+      [created.runId]
+    );
+    assert.equal(after.rows[0].runtime_profile_hash.length, 32);
+    assert.equal(after.rows[0].skill_versions.report, 1);
+    assert.equal(
+      terminal.snapshot.persistent.events.some((event) => (
+        event.data?.code === 'AGENT_RUNTIME_SKILL_NOT_FROZEN'
+      )),
+      false
+    );
+  } finally {
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
 test('Runtime V2 records every Provider retry against an immutable per-attempt reservation', {
   skip: !enabled,
   timeout: 30_000
@@ -820,7 +882,7 @@ test('Harness V3 treats an explicit Kolors 4xx rejection as a normal failed tool
   }
 });
 
-test('Harness V3 treats a Kolors 429 as ambiguous and never retries automatically', {
+test('Harness V3 treats an exhausted explicit Kolors 429 as a determined rejection', {
   skip: !enabled,
   timeout: 30_000
 }, async () => {
@@ -829,29 +891,29 @@ test('Harness V3 treats a Kolors 429 as ambiguous and never retries automaticall
   try {
     harness = await AgentRuntimeHarness.create({
       pool,
-      providerScript: imageDeliveryScript(),
+      providerScript: [imageDeliveryScript()[0]],
       kolorsScript: [{
         throwCode: 'KOLORS_RATE_LIMITED',
         throwStatus: 429
       }]
     });
     const created = await harness.createRun({
-      objective: '验证图片服务限流后的结果未知状态不会触发自动二次生图。',
+      objective: '验证图片服务明确限流且内部重试耗尽后不会进入模糊恢复。',
       deliverables: ['image'],
       capabilities: { files: true, shell: true, generate_images: true }
     });
-    const waiting = await harness.runToTerminal(created.runId);
-    assert.equal(waiting.snapshot.persistent.run.status, 'waiting_user');
+    const terminal = await harness.runToTerminal(created.runId);
+    assert.equal(terminal.snapshot.persistent.run.status, 'failed');
     assert.equal(harness.kolors.calls.length, 1);
     assert.equal(harness.kolors.calls[0].ok, false);
     assert.equal(
-      waiting.snapshot.persistent.events.filter((event) => (
+      terminal.snapshot.persistent.events.filter((event) => (
         event.event_type === 'image.call.ambiguous'
       )).length,
-      1
+      0
     );
     assert.deepEqual(
-      waiting.snapshot.persistent.reservations
+      terminal.snapshot.persistent.reservations
         .filter((reservation) => reservation.component === 'kolors')
         .map((reservation) => reservation.state),
       ['released']
@@ -969,7 +1031,7 @@ for (const failpoint of ['after_dispatch', 'after_provider_response']) {
   });
 }
 
-test('Harness V3 makes a crash after a Shell effect explicit before any retry', {
+test('Harness V3 recovers a completed sandbox Shell receipt without repeating the effect', {
   skip: !enabled,
   timeout: 30_000
 }, async () => {
@@ -1031,29 +1093,7 @@ test('Harness V3 makes a crash after a Shell effect explicit before any retry', 
       (error) => error instanceof RuntimeHarnessCrash && error.point === 'after_tool_effect'
     );
     assert.equal(harness.transport.requests.length, 1);
-    const waiting = await harness.resumeFromCrash(created.runId);
-    assert.equal(waiting.snapshot.persistent.run.status, 'waiting_user');
-    assert.equal(harness.transport.requests.length, 1);
-    assert.deepEqual(
-      waiting.snapshot.persistent.toolReceipts.map((receipt) => receipt.state),
-      ['ambiguous']
-    );
-    assert.deepEqual(
-      waiting.snapshot.persistent.reservations
-        .filter((reservation) => reservation.component === 'sandbox')
-        .map((reservation) => reservation.state),
-      ['released']
-    );
-    assert.equal(
-      waiting.snapshot.persistent.events.filter((event) => (
-        event.event_type === 'tool.call.ambiguous'
-      )).length,
-      1
-    );
-    await harness.assertInvariants(created.runId);
-
-    await harness.runService.resumeRun({ userId: harness.userId, runId: created.runId });
-    const terminal = await harness.runToTerminal(created.runId);
+    const terminal = await harness.resumeFromCrash(created.runId);
     assert.equal(terminal.snapshot.persistent.run.status, 'succeeded');
     assert.equal(harness.transport.requests.length, 4);
     assert.equal(terminal.snapshot.persistent.artifacts.length, 1);
@@ -1062,13 +1102,98 @@ test('Harness V3 makes a crash after a Shell effect explicit before any retry', 
       harness.trace.snapshot().filter((entry) => (
         entry.type === 'failpoint.hit' && entry.point === 'after_tool_effect'
       )).length,
-      2
+      1
     );
     assert.deepEqual(
-      terminal.snapshot.persistent.toolReceipts.map((receipt) => receipt.state).sort(),
-      ['ambiguous', 'consumed']
+      terminal.snapshot.persistent.toolReceipts.map((receipt) => receipt.state),
+      ['consumed']
+    );
+    assert.equal(
+      terminal.snapshot.persistent.events.some((event) => (
+        event.event_type === 'tool.call.ambiguous'
+      )),
+      false
     );
     await harness.assertInvariants(created.runId);
+  } finally {
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
+test('Harness V3 keeps an unresolved subagent Shell receipt on the conservative user-confirmation path', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({
+      pool,
+      providerScript: verifiedTextScript()
+    });
+    const created = await harness.createRun({
+      objective: '验证子 Agent 未决 Shell 操作不会被误判为可自动恢复。',
+      deliverables: [],
+      capabilities: { files: true, shell: true, subagents: true }
+    });
+    const workerId = `subagent-receipt-${crypto.randomUUID()}`;
+    const claimed = await harness.runService.claimRun({ runId: created.runId, workerId });
+    const lease = {
+      runId: created.runId,
+      workerId,
+      leaseEpoch: Number(claimed.lease_epoch)
+    };
+    await harness.runService.transitionRun({
+      ...lease,
+      toStatus: 'running',
+      eventType: 'run.started',
+      summary: 'Subagent Shell receipt recovery probe'
+    });
+    const [subagent] = await harness.runService.createSubagents({
+      ...lease,
+      tasks: [{
+        role: 'analyst',
+        label: 'Receipt probe',
+        objective: 'Create one isolated analysis note.',
+        expectedOutput: 'analysis.md',
+        inputPaths: []
+      }],
+      allowedInputPaths: []
+    });
+    const receiptKey = `subagent:${subagent.subagentId}:shell:probe:attempt:0`;
+    const reservationKey = `sandbox:${receiptKey}`;
+    await harness.runService.reserveRuntimeBudget({
+      ...lease,
+      subagentId: subagent.subagentId,
+      component: 'sandbox',
+      reservationKey,
+      maximumCredits: 2
+    });
+    await harness.runService.persistToolReceipt({
+      ...lease,
+      subagentId: subagent.subagentId,
+      receiptKey,
+      kind: 'sandbox_shell',
+      state: 'dispatched',
+      reservationKey,
+      requestSha256: crypto.createHash('sha256').update('subagent-shell-probe').digest('hex')
+    });
+    await pool.query(
+      `UPDATE agent_runs SET lease_expires_at=clock_timestamp()-interval '1 second'
+        WHERE id=$1`,
+      [created.runId]
+    );
+    assert.equal(await harness.runService.expireStaleRuns({ limit: 10 }), 1);
+    const snapshot = await harness.snapshot(created.runId);
+    assert.equal(snapshot.persistent.run.status, 'waiting_user');
+    assert.deepEqual(snapshot.persistent.toolReceipts.map((receipt) => receipt.state), ['ambiguous']);
+    assert.equal(snapshot.persistent.events.some((event) => (
+      event.event_type === 'tool.call.recovery_probe_queued'
+    )), false);
+    assert.equal(snapshot.persistent.events.some((event) => (
+      event.event_type === 'tool.call.ambiguous'
+    )), true);
   } finally {
     await harness?.cleanup();
     await pool.end();
@@ -1488,6 +1613,116 @@ test('Harness V3 cancellation after a model receipt leaves no running call or re
     try {
       controller.releaseBarrier('after_receipt');
     } catch {}
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
+test('Harness V3 restores a released reservation only from a durable received model receipt', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const controller = new RuntimeTestController();
+  controller.setBarrier('after_receipt', {
+    participants: 1,
+    timeoutMs: 5_000,
+    manualRelease: true
+  });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({
+      pool,
+      controller,
+      providerScript: verifiedTextScript()
+    });
+    const created = await harness.createRun({
+      objective: '验证已收到模型回执后的预算释放竞态可以安全恢复。',
+      deliverables: [],
+      capabilities: { files: true, shell: true }
+    });
+    const attempt = harness.worker.processRun(created.runId);
+    await controller.waitForArrivals('after_receipt', { arrivals: 1, timeoutMs: 5_000 });
+    const released = await pool.query(
+      `UPDATE agent_budget_reservations reservation
+          SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+         FROM agent_model_call_receipts receipt
+        WHERE reservation.run_id=$1 AND reservation.model_call_id=receipt.id
+          AND receipt.state='received' AND reservation.state='reserved'
+        RETURNING reservation.reservation_key`,
+      [created.runId]
+    );
+    assert.equal(released.rowCount, 1);
+    controller.releaseBarrier('after_receipt');
+    const result = await attempt;
+    assert.equal(result.status, 'succeeded');
+    const terminal = await harness.snapshot(created.runId);
+    assert.equal(terminal.persistent.run.status, 'succeeded');
+    assert.equal(
+      terminal.persistent.reservations.some((entry) => entry.state !== 'consumed'),
+      false
+    );
+    assert.equal(
+      terminal.persistent.receipts.every((entry) => entry.state === 'consumed'),
+      true
+    );
+    await harness.assertInvariants(created.runId);
+  } finally {
+    try {
+      controller.releaseBarrier('after_receipt');
+    } catch {}
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
+test('Harness V3 refuses to revive a released reservation without a determined receipt', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({ pool });
+    const created = await harness.createRun({
+      objective: '验证没有确定回执时不能恢复已释放预算。',
+      deliverables: [],
+      capabilities: { files: true, shell: true }
+    });
+    const workerId = `released-budget-${crypto.randomUUID()}`;
+    const claimed = await harness.runService.claimRun({ runId: created.runId, workerId });
+    const lease = {
+      runId: created.runId,
+      workerId,
+      leaseEpoch: Number(claimed.lease_epoch)
+    };
+    await harness.runService.transitionRun({
+      ...lease,
+      toStatus: 'running',
+      eventType: 'run.started',
+      summary: 'Released budget negative probe'
+    });
+    await harness.runService.reserveRuntimeBudget({
+      ...lease,
+      component: 'actor',
+      reservationKey: 'released-without-receipt',
+      maximumCredits: 1
+    });
+    await harness.runService.releaseRuntimeBudget({
+      ...lease,
+      reservationKey: 'released-without-receipt'
+    });
+    await assert.rejects(
+      harness.runService.consumeRuntimeBudget({
+        ...lease,
+        reservationKey: 'released-without-receipt',
+        actualCredits: 0.5
+      }),
+      (error) => error?.code === 'AGENT_BUDGET_RESERVATION_RELEASED'
+    );
+    const snapshot = await harness.snapshot(created.runId);
+    assert.equal(snapshot.persistent.reservations[0].state, 'released');
+  } finally {
     await harness?.cleanup();
     await pool.end();
   }
