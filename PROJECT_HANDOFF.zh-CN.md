@@ -595,6 +595,8 @@ CI、Render DEV 与 Vercel Preview 验收，尚未进入 `main` 或生产。
 - 本地不可变候选验证：`pnpm check` 退出码 0，Playwright `489 passed / 3 skipped`；质量 manifest `50/50`；PostgreSQL 16 + 固定 MinIO deterministic `50/50`；完整 Harness PG integration `43/43`；20 轮 chaos 共 `620/620`，失败、取消、跳过、todo 与 flaky 均为 0。
 - 被忽略的证据：`.artifacts/agent-live-recovery-hardening/final-deterministic/deterministic-all.json`（SHA-256 `b1bd89c952505eb00892bd48eae40a83d349b8be577355a8901e7d1e2bfc6850`）与 `.artifacts/agent-live-recovery-hardening/final-chaos/chaos.json`（SHA-256 `f462d890b8620b40bcfe4386c2ab8e4f14e9b15ffbbb53bbf520061ae8503e0c`）。
 - 最终本地 `artigen_test` 审计中 active Agent Run/Tool Task、冻结钱包、两类 held hold、reserved budget、open model/tool receipt、provider queue 与 active subagent 全部为 0；临时 MinIO 和 Artigen 沙箱容器已删除。14 个 2026-07-17 遗留测试 tool-task hold 通过现有 billing service 正常释放，没有直接修改钱包余额。
+- 2026-08-26 只读 DEV readiness 重新核验：`origin/dev`、Render live deployment `dep-da7847v10e5c738mq8f0` 与 Vercel Preview deployments `6098141970` / `6098133665` 均为旧 SHA `9201fda225fe45d965c848dc251fcdde1e35e6f0`；五个状态接口均 HTTP 200，迁移为 `025_agent_runtime_v2_1_durability`，PostgreSQL、S3、Provider 与两个 Kolors 模式 ready，DEV active Run/hold/reservation/frozen wallet/provider queue 均为 0。一个 failed Run 的 ambiguous model receipt 与 cancelled Runs 的十个 ambiguous tool receipts作为终态审计证据保留，均无活动预算或冻结余额。
+- 当前 DEV 仍不具备执行付费矩阵的条件：Mac DEV LaunchAgent 虽精确指向 `Artigen-dev-live-9201fda`，但状态为 `not running`；`workerOnline`、browser、restricted egress 与 desktop relay 均为 false，且 Runtime V2 durability 的 `pricingReady=false`。本地候选尚未与 Render、Vercel 或 Worker 对齐。
 - 此候选尚未执行新的 12 场景 × V1/V2 共 24-slot 真实 Qwen/Kolors DEV 矩阵，也没有图片匿名盲审。因此当前只能进入 DEV 实机验证准备，不能建议 owner canary，更不能宣称 Runtime V2 已发布。
 
 ## 6. 已知风险与正式后续事项
