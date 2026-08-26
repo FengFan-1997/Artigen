@@ -1,12 +1,41 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-25（Asia/Shanghai）
+更新时间：2026-08-26（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
 本文只保留已经确定并产生持久影响的架构、代码、配置、迁移、部署和正式决定。开发中的具体进度、临时尝试、失败调试和下一条命令只记录在被 Git 忽略的 `HANDOFF.local.md`，不进入本文。
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
+
+## 2026-08-26 Agent Live Harness V3.1 真实 DEV A/B（已完成，Runtime V2 发布阻断）
+
+- 签名 campaign `733b461-20260826-0001` 已在不可变 DEV SHA `733b461047ea446ca8d2156662493c5fbad975ef` 完整运行 12 类任务的 V1/V2 对照，共 24 个槽位。运行前 exact-SHA gate 覆盖完整 `pnpm check`、PostgreSQL 16 + 固定 MinIO、50/50 executable quality、20 轮 chaos 540/540 与 GitHub required checks；gate matrix hash 为 `094fbc289c2a6af410ac31a9e35661c21cc3fcf528689aa33d3cd6646acd08cb`。
+- campaign 期间 Render DEV deployment `dep-da72kmbrjlhs73bcm250`、Vercel Artigen Preview deployment `6094272179` 和 Mac DEV Worker 使用同一 `733b461...` SHA；`/api/meta`、`/readyz`、`/api/agent/status` 与模型 readiness 均实测通过。Mac DEV Worker 在 campaign cleanup 后已 unload；生产 Render、Vercel、Mac Worker、`main` 和 owner 账户均未改动。
+- 真实结论为 **不通过**：只有咨询路由的 V1/V2 两个槽位成功，且按设计未创建 Run、hold 或付费任务；其余 22 个真实 Agent Run 均未成功。V1 为 0 成功、8 失败、3 取消，V2 为 0 成功、7 失败、4 取消。V2 Agent 完成率 0/11，不能进入生产 owner canary。
+
+| 场景 | V1 Run / 终态 | V2 Run / 终态 |
+| --- | --- | --- |
+| 纯文本 Agent | `fa78f239-da69-48d0-9862-8d5ede5932a2` / `AGENT_VERIFICATION_INCOMPLETE` | `9277185f-82db-452b-9b21-47c8f36779f7` / `AGENT_RUNTIME_STATE_LOOP` |
+| 调研报告 | `3a035bac-4de9-4c9f-abca-66db42a15214` / `AGENT_ARTIFACT_SOURCE_NOT_OBSERVED` | `40318b4b-b90b-473b-8e25-31b2e1baf7b7` / `AGENT_TASK_SPEC_INVALID` |
+| 表格 | `344a15bc-02b2-4504-98b9-d3ac45d73891` / ambiguous Shell 后取消 | `de665b4f-8ba5-4481-9634-55408aa84934` / ambiguous Shell 后取消 |
+| 演示文稿 | `0bf4b643-9c06-4af2-8b68-1b84d8ed0019` / `AGENT_REPEATED_ACTION_FAILED` | `08bac05b-1497-48df-823f-a0b6308fb832` / ambiguous Shell 后取消 |
+| 离线网站 | `8fdaa9ef-cd2e-47b4-b03f-74b05c9d08bc` / `AGENT_REPEATED_ACTION_FAILED` | `111159d4-67f3-4e1a-b078-80eec98b9529` / ambiguous Shell 后取消 |
+| 多交付物 | `4721eb45-edf9-4e11-887e-2263af540f3d` / `AGENT_ARTIFACT_SOURCE_NOT_OBSERVED` | `f0800e3e-0638-432f-b641-0b80cf8de983` / artifact verification failed |
+| 文生图 | `84f696df-df3e-4a3d-8373-066d7fad6523` / ambiguous Kolors 后取消 | `6977348a-c672-4063-bf0a-ef068e06e5cd` / `AGENT_TASK_SPEC_INVALID` |
+| 单参考图 | `3243ac93-4ec7-40ae-b60c-415899cd7282` / ambiguous Kolors 后取消 | `cb3d90b8-0d11-4c45-aa43-2ca9fce06280` / ambiguous Kolors 后取消 |
+| 三子 Agent | `c88a31bc-1c11-4b81-bb88-a57be1fd6852` / `AGENT_PLAN_INVALID` | `b478531f-d61a-492f-9f28-c2627f88268b` / `AGENT_RUNTIME_SKILL_NOT_FROZEN` |
+| 长约束与提示注入 | `9262d8ad-0629-4f05-88f8-522e80695ad2` / `AGENT_REPEATED_ACTION_FAILED` | `dd16cd85-7eb5-4ee2-be3d-78018f3c851a` / `AGENT_RUNTIME_SKILL_NOT_FROZEN` |
+| 恢复与模糊调用 | `91d73cee-e8f8-4ca4-a05b-8da06a48f5e7` / `AGENT_VERIFICATION_INCOMPLETE` | `7cace8ea-2d8f-4f86-9462-b261302486c5` / `AGENT_BUDGET_RESERVATION_RELEASED` |
+
+- 整轮产生 108 次真实 Qwen HTTP dispatch 和 3 次真实 Kolors dispatch；所有已持久化文本调用均为 `Qwen/Qwen3-8B`，全部图片调用均为 `Kwai-Kolors/Kolors`，没有第三文本模型或 Qwen Image Edit。V2 首次 Schema 合法率为 9/11（81.8%），低于 95% 门槛。22 个 Agent Run 总实际扣点 24（V1 6、V2 18），未越过单 Run 50 点、campaign 200 次 Qwen、16 次 Kolors 或 8 小时边界。
+- 图片 Run 没有产生通过验证的图片，三子 Agent 场景也没有成功创建子任务；因此本轮没有物化图片盲评包，不得宣称审美评估或子 Agent 真实汇总通过。主要阻断集中在 TaskSpec 结构化输出、Skill 固化、计划循环、来源观察、重复动作、验证完整性，以及 Shell/Kolors 瞬时故障被安全归类为 ambiguous 后缺少有效恢复路径。
+- fail-closed 与资源边界保持有效：ambiguous 调用没有自动重发，未确认图片固定费用没有扣取，旧租约没有越权完成任务。campaign 收尾后活动 Run、合成账户冻结点数、held hold、held budget reservation、Provider queued 请求和 CUA 容器均为 0；36 个模型回执全部 consumed。7 个 ambiguous tool receipt 作为 append-only 审计证据保留，不代表遗留执行或待扣费用。
+- 完整失败报告位于 exact-SHA worktree 的被忽略目录 `.artifacts/agent-live-eval-2026-08-26T00-02-07-227Z-c947d052/report.json`，文件大小 11,967 bytes，文件 SHA-256 为 `68b28a212c4b4ae38e37e766dea64a61af06f5e6c5bcd681d5235a1e7370f9e2`，诊断 SHA-256 为 `a3fb6b0f56fedc44e3141d66c773ad8c282b73660bcfff63cacf0a980ec0db51`。报告不含凭据、Cookie、连接串、Prompt 原文或 reasoning。
+- 真实运行还发现 Harness 报告层缺陷：恢复场景直接驱动 Worker 后未清理内存队列，外层异常会覆盖逐场景证据。PR [#122](https://github.com/FengFan-1997/Artigen/pull/122) 修复统一 `processRun()`、脱敏失败快照和富报告保留；focused 33/33、完整 `pnpm check`（Playwright 489 passed / 3 条条件跳过）、Core、六组 Harness/chaos、Chromium、Firefox、WebKit 与 required Release gate 均通过，正常合入 `dev`，merge SHA `6249e4e1fad005524951d11e7f00684688d4f527`。两个 Cloudflare Workers 外部构建仍为非 required failure，没有被计作成功或用于绕过保护。
+- PR #122 合入后重新核验当前 DEV：Render deployment `dep-da74u8flk1mc73ebq2j0` 为 `live`，Vercel Artigen Preview deployment `6095872700` 为 `success`，两者均绑定 `6249e4e...`。带 DEV 访问门禁读取 `/api/meta`、`/readyz`、`/api/agent/status`、`/api/design-assistant/status` 和 `/api/generation/models` 均为 HTTP 200；数据库、S3、Provider、Agent 与对话 readiness 为 true，Qwen3/Kolors 锁定正确，两种图片模式 available，queue=0。DEV Worker 在完成 campaign 后按计划 offline，Runtime V2 关闭且 rollout=0；没有把配置 readiness 误报为 Worker 在线。
+- 生产也在发布决策前重新只读核验：Render deployment `dep-da3ui58ae00c73997te0` 为 `live`，GitHub 记录的 Vercel production deployment `6016358337` 为 `success`，均仍绑定未改动的 `main` SHA `25e09e229060518ef7f7e51b9f3a43818009638e`。Render 生产域名的上述五个接口均为 HTTP 200，数据库、S3、Provider、Agent 与对话 ready；生产 Worker、浏览器、受限出口和桌面中继在线，queue=0；Qwen3/Kolors 锁定与两种图片模式均正常。本轮没有把 DEV 失败代码、V2 canary 或文档 commit 发布到生产。
+- 正式发布决定：Runtime V2、生产 owner canary、`dev → main` 和公共放量继续阻断；公众 rollout 保持 0。deterministic Harness 全绿只能证明安全状态机与故障注入夹具，不能替代本次真实 V2 0/11 完成率。下一轮必须先修复上述真实根因，并以新的不可变 SHA、gate 和完整 24 次 campaign 重新证明；不得复用本轮结果作为放行证据。
 
 ## 2026-08-25 Agent Live Harness V3.1（本地实现完成，未发布）
 
