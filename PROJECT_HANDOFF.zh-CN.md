@@ -10,7 +10,7 @@
 
 ## 2026-08-26 Agent Runtime V2 真实失败根因修复（本地完成，未发布）
 
-- 本轮从最新 `origin/dev` SHA `03b8a5ad281deb00bc44f6515c79f79c3ac12675` 创建独立分支 `codex/agent-runtime-real-quality-fixes` 和工作树 `/Users/fengfan/Public/personal/Artigen-runtime-real-quality-fixes`，针对下节真实 DEV campaign 的 V2 `0/11` 失败逐项修复。本节记录的验证阶段没有部署或调用新的真实 Qwen/Kolors；下节记录的失败 campaign 仍是线上放行判断的最新真实证据。
+- 本轮从最新 `origin/dev` SHA `03b8a5ad281deb00bc44f6515c79f79c3ac12675` 创建独立分支 `codex/agent-runtime-real-quality-fixes` 和工作树 `/Users/fengfan/Public/personal/Artigen-runtime-real-quality-fixes`，针对下节真实 DEV campaign 的 V2 `0/11` 失败逐项修复；实现提交为 `2c973bbf85b496dacfc605b43d443facfc3e5efb`。本节记录的验证阶段没有部署或调用新的真实 Qwen/Kolors；下节记录的失败 campaign 仍是线上放行判断的最新真实证据。
 - Planner 不再复制整份用户任务。模型只返回经过严格 Schema 校验的复杂度、置信度、约束、假设、验收项、Skill 和计划候选；目标、交付物、允许 origin、预算与稳定 requirement ID 由服务端持有并合并。需要 Planner 的 Run 在最终 TaskSpec 验证后才一次性固化不可变 Runtime profile，修复 `AGENT_TASK_SPEC_INVALID` 与 `AGENT_RUNTIME_SKILL_NOT_FROZEN` 根因。
 - Actor 的无实质变化 `update_plan` 会被持久抑制，只有真实动作改变工作状态后才重新暴露；连续两次无效计划复述保留服务端 canonical plan 并继续执行，不再误触发通用状态循环。既有重复失败 Shell 熔断仍保持有效。
 - 已释放的 Runtime 预算只允许在持久化 `received/consumed` 模型回执或已消费工具回执能够证明实际成本时恢复；调用方费用必须与回执匹配，否则拒绝。没有回执、损坏回执和 ambiguous 回执都不能恢复，修复响应已落账但后续写入崩溃导致的 `AGENT_BUDGET_RESERVATION_RELEASED`，同时不放松一次冻结、一次结算和用户冻结上限。
