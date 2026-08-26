@@ -3990,16 +3990,27 @@ const createAgentRunService = ({
     return { runsReconciled, receiptsResolved };
   };
 
-  const expireStaleRuns = async ({ limit = 100 } = {}) => {
+  const expireStaleRuns = async ({ limit = 100, targetRunId = null } = {}) => {
     const bounded = Math.max(1, Math.min(1000, Number(limit) || 100));
+    const scopedRunId = targetRunId == null ? null : String(targetRunId || '').trim();
+    if (scopedRunId && !UUID_RE.test(scopedRunId)) {
+      throw new TypeError('AGENT_RECOVERY_RUN_ID_INVALID');
+    }
+    if (scopedRunId && !(
+      String(env.NODE_ENV || '').trim() === 'test' ||
+      String(env.APP_ENV || '').trim() === 'dev'
+    )) {
+      throw new TypeError('AGENT_TARGETED_RECOVERY_FORBIDDEN');
+    }
     const expiredLeases = await pool.query(
       `SELECT id FROM agent_runs
         WHERE status IN ('provisioning','running','verifying')
           AND worker_id IS NOT NULL
           AND lease_expires_at<=clock_timestamp()
+          AND ($2::uuid IS NULL OR id=$2)
         ORDER BY lease_expires_at
         LIMIT $1`,
-      [bounded]
+      [bounded, scopedRunId || null]
     );
     let recovered = 0;
     for (const candidate of expiredLeases.rows) {
@@ -4165,6 +4176,17 @@ const createAgentRunService = ({
               retryReason
             })]
           );
+          // A recovery that needs explicit user confirmation must retain its
+          // original hold long enough for the user to decide. Without this
+          // extension, an already-expired hold is selected by the later hold
+          // expiry sweep in this same expireStaleRuns() call and the newly
+          // recovered waiting_user run is immediately failed.
+          await client.query(
+            `UPDATE agent_budget_holds
+                SET expires_at=clock_timestamp()+($2::text || ' minutes')::interval
+              WHERE run_id=$1 AND status='held'`,
+            [candidate.id, config.queueMaxWaitHours * 60 + config.maxMinutes + 15]
+          );
           if (hasModelAmbiguity) {
             await insertEvent(client, {
               runId: candidate.id,
@@ -4228,9 +4250,10 @@ const createAgentRunService = ({
     const expiredQueued = await pool.query(
       `SELECT id FROM agent_runs
         WHERE status='queued' AND queue_expires_at<=clock_timestamp()
+          AND ($2::uuid IS NULL OR id=$2)
         ORDER BY queue_expires_at
         LIMIT $1`,
-      [bounded]
+      [bounded, scopedRunId || null]
     );
     let released = 0;
     for (const row of expiredQueued.rows) {
@@ -4246,6 +4269,7 @@ const createAgentRunService = ({
          FROM agent_runs run
          JOIN agent_budget_holds hold ON hold.run_id=run.id
         WHERE run.status='waiting_user'
+          AND ($2::uuid IS NULL OR run.id=$2)
           AND hold.status='held'
           AND EXISTS (
             SELECT 1 FROM agent_approvals approval
@@ -4261,7 +4285,7 @@ const createAgentRunService = ({
           )
         ORDER BY run.updated_at
         LIMIT $1`,
-      [bounded]
+      [bounded, scopedRunId || null]
     );
     for (const row of expiredApprovals.rows) {
       const result = await failRun({
@@ -4279,11 +4303,12 @@ const createAgentRunService = ({
         WHERE run.status IN (
           'draft','queued','provisioning','running','waiting_user','paused','verifying'
         )
+          AND ($2::uuid IS NULL OR run.id=$2)
           AND hold.status='held'
           AND hold.expires_at<=clock_timestamp()
         ORDER BY hold.expires_at
         LIMIT $1`,
-      [bounded]
+      [bounded, scopedRunId || null]
     );
     for (const row of expired.rows) {
       const result = await failRun({
@@ -4295,6 +4320,14 @@ const createAgentRunService = ({
     }
     return released + recovered;
   };
+
+  // A scoped recovery hook for deterministic and live DEV harnesses. It is
+  // intentionally not exposed through an HTTP route and is fail-closed in any
+  // non-test/non-DEV process.
+  const recoverExpiredRun = async ({ runId } = {}) => expireStaleRuns({
+    limit: 1,
+    targetRunId: runId
+  });
 
   const listTerminalSandboxes = async ({ limit = 100, userIds = null } = {}) => {
     const scopedUserIds = Array.isArray(userIds)
@@ -4672,6 +4705,7 @@ const createAgentRunService = ({
     markSandboxDestroyed,
     pauseRun,
     purgeExpiredPrivateData,
+    recoverExpiredRun,
     quote,
     reserveRuntimeBudget,
     recordUsage,

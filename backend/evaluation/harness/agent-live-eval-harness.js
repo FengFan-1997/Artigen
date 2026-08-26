@@ -315,12 +315,18 @@ class AgentLiveEvalHarness {
       });
       instance.imageService = {
         generate: async (request) => {
-          await instance.auditor.inspectKolorsRequest(request);
-          const output = await rawImageService.generate({
-            ...request,
-            signal: instance.campaignGuard.combinedSignal(request.signal)
-          });
-          return instance.auditor.inspectKolorsResponse(output, request);
+          const dispatch = await instance.auditor.inspectKolorsRequest(request);
+          let output;
+          try {
+            output = await rawImageService.generate({
+              ...request,
+              signal: instance.campaignGuard.combinedSignal(request.signal)
+            });
+          } catch (error) {
+            await instance.auditor.inspectKolorsFailure(error, request, dispatch);
+            throw error;
+          }
+          return instance.auditor.inspectKolorsResponse(output, request, dispatch);
         }
       };
       instance.assetAdapter = new S3AssetAdapter(instance.env);
@@ -544,7 +550,7 @@ class AgentLiveEvalHarness {
         WHERE id=$1 AND status IN ('provisioning','running','verifying')`,
       [runId]
     );
-    await this.runService.expireStaleRuns({ limit: 100 });
+    await this.runService.recoverExpiredRun({ runId });
     return this.pool.query('SELECT status,checkpoint FROM agent_runs WHERE id=$1', [runId])
       .then((result) => result.rows[0] || null);
   }
@@ -592,7 +598,7 @@ class AgentLiveEvalHarness {
     return { created, terminal };
   }
 
-  async captureCaseFailure({ entry, cohort, qwenBefore = 0, kolorsBefore = 0 } = {}) {
+  async captureCaseFailure({ entry, cohort } = {}) {
     const userId = this.userForCohort(cohort);
     const idempotencyKey = `live-eval:${this.sessionId}:${entry.id}:${cohort}`;
     const result = await this.pool.query(
@@ -605,9 +611,16 @@ class AgentLiveEvalHarness {
       [userId, idempotencyKey]
     );
     const run = result.rows[0] || null;
+    const durableDispatches = await this.campaignGuard.dispatchMetrics({
+      slotId: `${entry.id}:${cohort}`
+    });
     const physical = {
-      qwenCalls: Math.max(0, Number(this.auditor?.qwenCalls || 0) - Number(qwenBefore || 0)),
-      kolorsCalls: Math.max(0, Number(this.auditor?.kolorsCalls || 0) - Number(kolorsBefore || 0))
+      qwenCalls: durableDispatches.qwenCalls,
+      kolorsCalls: durableDispatches.kolorsCalls,
+      inputTokens: durableDispatches.inputTokens,
+      outputTokens: durableDispatches.outputTokens,
+      modelLatencyMs: durableDispatches.latencyMs,
+      incompleteDispatches: durableDispatches.incomplete
     };
     if (!run) {
       return {
@@ -656,24 +669,24 @@ class AgentLiveEvalHarness {
       steps: Number(run.step_count || 0),
       artifactCount: Number(artifactResult.rows[0]?.count || 0),
       subagentCount: Number(subagentResult.rows[0]?.count || 0),
-      modelCalls: Number(model.count || 0),
-      inputTokens: Number(model.input_tokens || 0),
-      outputTokens: Number(model.output_tokens || 0),
-      modelLatencyMs: Number(model.latency_ms || 0),
+      modelCalls: durableDispatches.qwenCalls,
+      inputTokens: durableDispatches.inputTokens,
+      outputTokens: durableDispatches.outputTokens,
+      modelLatencyMs: durableDispatches.latencyMs,
       queueWaitMs: Number(model.queue_wait_ms || 0),
       schemaChecks: Number(model.schema_checks || 0),
       schemaFirstValid: Number(model.schema_first_valid || 0),
       leaseEpoch: Number(run.lease_epoch || 0),
       finalTextSha256Present: Boolean(run.final_text_sha256),
       artifacts: [],
-      ...physical
+      ...physical,
+      durableModelCalls: Number(model.count || 0)
     };
   }
 
   async runConversationCase(entry, cohort) {
     const userId = this.userForCohort(cohort);
     const runtimeVersion = cohort === 'v2' ? 2 : 1;
-    const qwenBefore = this.auditor.qwenCalls;
     const startedAt = Date.now();
     const before = await this.pool.query(
       `SELECT
@@ -748,6 +761,9 @@ class AgentLiveEvalHarness {
     ) {
       throw new Error('AGENT_LIVE_EVAL_REPLY_CREATED_PAID_STATE');
     }
+    const physical = await this.campaignGuard.dispatchMetrics({
+      slotId: `${entry.id}:${cohort}`
+    });
     return {
       scenarioId: entry.id,
       cohort,
@@ -755,47 +771,47 @@ class AgentLiveEvalHarness {
       routeKind: execution.routeKind,
       runtimeVersion,
       elapsedMs: Date.now() - startedAt,
-      qwenCalls: this.auditor.qwenCalls - qwenBefore,
-      modelCalls: this.auditor.qwenCalls - qwenBefore,
+      qwenCalls: physical.qwenCalls,
+      modelCalls: physical.qwenCalls,
       schemaChecks: 1,
-      schemaFirstValid: this.auditor.qwenCalls - qwenBefore === 1 ? 1 : 0,
-      kolorsCalls: 0,
-      inputTokens: 0,
-      outputTokens: 0,
+      schemaFirstValid: physical.qwenCalls === 1 ? 1 : 0,
+      kolorsCalls: physical.kolorsCalls,
+      inputTokens: physical.inputTokens,
+      outputTokens: physical.outputTokens,
+      modelLatencyMs: physical.latencyMs,
+      incompleteDispatches: physical.incomplete,
       chargedCredits: 0,
       artifacts: []
     };
   }
 
   async runCase(entry, cohort) {
-    const qwenBefore = this.auditor.qwenCalls;
-    const kolorsBefore = this.auditor.kolorsCalls;
-    const startedAt = Date.now();
-    if (entry.kind === 'conversation') return this.runConversationCase(entry, cohort);
-    const result = entry.recoveryScenario
-      ? await this.runRecoveryScenario(entry, cohort)
-      : await this.createRun(entry, cohort).then(async (created) => ({
-          created,
-          terminal: await this.runToTerminal(created.runId)
-        }));
-    const report = await this.assertInvariants({
-      entry,
-      cohort,
-      runId: result.created.runId
+    return this.auditor.runSlot(`${entry.id}:${cohort}`, async () => {
+      const startedAt = Date.now();
+      if (entry.kind === 'conversation') return this.runConversationCase(entry, cohort);
+      const result = entry.recoveryScenario
+        ? await this.runRecoveryScenario(entry, cohort)
+        : await this.createRun(entry, cohort).then(async (created) => ({
+            created,
+            terminal: await this.runToTerminal(created.runId)
+          }));
+      const report = await this.assertInvariants({
+        entry,
+        cohort,
+        runId: result.created.runId
+      });
+      const artifacts = await this.downloadArtifacts({
+        entry,
+        cohort,
+        runId: result.created.runId,
+        userId: result.created.userId
+      });
+      return {
+        ...report,
+        elapsedMs: Date.now() - startedAt,
+        artifacts
+      };
     });
-    const artifacts = await this.downloadArtifacts({
-      entry,
-      cohort,
-      runId: result.created.runId,
-      userId: result.created.userId
-    });
-    return {
-      ...report,
-      elapsedMs: Date.now() - startedAt,
-      qwenCalls: this.auditor.qwenCalls - qwenBefore,
-      kolorsCalls: this.auditor.kolorsCalls - kolorsBefore,
-      artifacts
-    };
   }
 
   async runPair(entry) {
@@ -817,6 +833,10 @@ class AgentLiveEvalHarness {
     const run = snapshot.persistent.run;
     const expectedVersion = cohort === 'v2' ? 2 : 1;
     const errors = [];
+    const physical = await this.campaignGuard.dispatchMetrics({
+      slotId: `${entry.id}:${cohort}`
+    });
+    if (physical.incomplete !== 0) errors.push('provider_dispatch_incomplete');
     if (Number(run.runtime_version) !== expectedVersion) errors.push('runtime_version');
     if (run.status !== entry.expectedStatus) errors.push(`terminal:${run.status}`);
     if (Number(run.max_credits) > 50 || Number(run.charged_credits) > Number(run.max_credits)) {
@@ -854,28 +874,30 @@ class AgentLiveEvalHarness {
     for (const forbidden of entry.forbiddenTools || []) {
       if (usedTools.has(forbidden)) errors.push(`forbidden_tool:${forbidden}`);
     }
+    if (
+      cohort === 'v2' &&
+      physical.qwenCalls < snapshot.persistent.modelCalls.length
+    ) {
+      errors.push('provider_dispatch_crosscheck');
+    }
     const baselineTerminalFailure = cohort === 'v1' &&
       run.status !== entry.expectedStatus &&
       ['failed', 'cancelled', 'waiting_user', 'paused'].includes(run.status);
     const fatalBaselineErrors = errors.filter((error) => (
-      ['runtime_version', 'budget', 'hold', 'ledger_exactly_once', 'artifact_verification'].includes(error) ||
+      [
+        'runtime_version',
+        'budget',
+        'hold',
+        'ledger_exactly_once',
+        'artifact_verification',
+        'provider_dispatch_incomplete',
+        'provider_dispatch_crosscheck'
+      ].includes(error) ||
       error.startsWith('forbidden_tool:')
     ));
     if (errors.length && (!baselineTerminalFailure || fatalBaselineErrors.length)) {
       throw new Error(`AGENT_LIVE_EVAL_INVARIANT:${errors.join(',')}`);
     }
-    const inputTokens = snapshot.persistent.modelCalls.reduce(
-      (sum, call) => sum + Number(call.input_tokens || 0),
-      0
-    );
-    const outputTokens = snapshot.persistent.modelCalls.reduce(
-      (sum, call) => sum + Number(call.output_tokens || 0),
-      0
-    );
-    const modelLatencyMs = snapshot.persistent.modelCalls.reduce(
-      (sum, call) => sum + Number(call.latency_ms || 0),
-      0
-    );
     const queueWaitMs = snapshot.persistent.modelCalls.reduce(
       (sum, call) => sum + Number(call.queue_wait_ms || 0),
       0
@@ -898,10 +920,14 @@ class AgentLiveEvalHarness {
       runtimeVersion: Number(run.runtime_version),
       status: run.status,
       chargedCredits: Number(run.charged_credits || 0),
-      modelCalls: snapshot.persistent.modelCalls.length,
-      inputTokens,
-      outputTokens,
-      modelLatencyMs,
+      modelCalls: physical.qwenCalls,
+      qwenCalls: physical.qwenCalls,
+      kolorsCalls: physical.kolorsCalls,
+      inputTokens: physical.inputTokens,
+      outputTokens: physical.outputTokens,
+      modelLatencyMs: physical.latencyMs,
+      incompleteDispatches: physical.incomplete,
+      durableModelCalls: snapshot.persistent.modelCalls.length,
       queueWaitMs,
       schemaChecks,
       schemaFirstValid,

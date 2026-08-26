@@ -146,15 +146,28 @@ class LiveEvalCampaignGuard {
     return AbortSignal.any([signal, this.signal]);
   }
 
-  async reserveDispatch(kind, { runId = null } = {}) {
+  async reserveDispatch(kind, {
+    runId = null,
+    slotId = null,
+    runtimeVersion = null,
+    phase = null
+  } = {}) {
     if (!ALLOWED_DISPATCH_KINDS.has(kind)) {
       throw new TypeError('AGENT_LIVE_EVAL_DISPATCH_KIND_INVALID');
     }
     if (!this.lockClient) throw new Error('AGENT_LIVE_EVAL_CAMPAIGN_NOT_INITIALIZED');
     if (this.signal.aborted) throw new Error('AGENT_LIVE_EVAL_WALL_CLOCK_LIMIT');
-    const client = this.lockClient;
-    await client.query('BEGIN');
+    // The session-lock client is intentionally kept idle so it can continue
+    // proving that this is the only campaign runner. Physical Provider calls
+    // can arrive concurrently from parent/child Agents, so each reservation
+    // gets an independent transaction and a campaign-scoped xact lock.
+    const client = await this.pool.connect();
     try {
+      await client.query('BEGIN');
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
+        [`agent-live-eval-dispatch:${this.campaignHash}`]
+      );
       const campaign = await client.query(
         `SELECT metrics,clock_timestamp() AS now
            FROM agent_quality_checks
@@ -193,7 +206,14 @@ class LiveEvalCampaignGuard {
              'campaignHash',$2::text,
              'kind',$3::text,
              'sequence',$4::integer,
-             'runIdHash',$5::text
+             'runIdHash',$5::text,
+             'slotHash',$6::text,
+             'runtimeVersion',$7::integer,
+             'phase',$8::text,
+             'dispatchStatus','dispatched',
+             'inputTokens',0,
+             'outputTokens',0,
+             'latencyMs',0
            ),
            clock_timestamp()+interval '30 days')
          RETURNING id,created_at`,
@@ -202,7 +222,10 @@ class LiveEvalCampaignGuard {
           this.campaignHash,
           kind,
           count + 1,
-          runId ? sha256(runId) : ''
+          runId ? sha256(runId) : '',
+          slotId ? sha256(slotId) : '',
+          [1, 2].includes(Number(runtimeVersion)) ? Number(runtimeVersion) : 0,
+          String(phase || '').slice(0, 80)
         ]
       );
       await client.query('COMMIT');
@@ -215,7 +238,97 @@ class LiveEvalCampaignGuard {
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
+    } finally {
+      client.release();
     }
+  }
+
+  async recordDispatchResult(dispatch, {
+    status,
+    inputTokens = 0,
+    outputTokens = 0,
+    latencyMs = 0,
+    errorCode = null
+  } = {}) {
+    const dispatchId = Number(dispatch?.dispatchId || 0);
+    if (!Number.isSafeInteger(dispatchId) || dispatchId <= 0) {
+      throw new TypeError('AGENT_LIVE_EVAL_DISPATCH_ID_INVALID');
+    }
+    const normalizedStatus = ['succeeded', 'failed', 'cancelled'].includes(status)
+      ? status
+      : 'failed';
+    const normalizedError = /^[A-Z][A-Z0-9_]{2,100}$/.test(String(errorCode || ''))
+      ? String(errorCode)
+      : '';
+    const result = await this.pool.query(
+      `UPDATE agent_quality_checks
+          SET status=CASE WHEN $3='succeeded' THEN 'passed' ELSE 'failed' END,
+              metrics=metrics || jsonb_build_object(
+                'dispatchStatus',$3::text,
+                'inputTokens',$4::integer,
+                'outputTokens',$5::integer,
+                'latencyMs',$6::integer,
+                'errorCode',$7::text,
+                'finishedAt',clock_timestamp()
+              )
+        WHERE id=$1 AND check_kind=$2
+          AND metrics->>'campaignHash'=$8
+          AND metrics->>'dispatchStatus'='dispatched'
+        RETURNING id`,
+      [
+        dispatchId,
+        DISPATCH_CHECK_KIND,
+        normalizedStatus,
+        Math.max(0, Math.ceil(Number(inputTokens) || 0)),
+        Math.max(0, Math.ceil(Number(outputTokens) || 0)),
+        Math.max(0, Math.ceil(Number(latencyMs) || 0)),
+        normalizedError,
+        this.campaignHash
+      ]
+    );
+    if (!result.rowCount) throw new Error('AGENT_LIVE_EVAL_DISPATCH_RESULT_CONFLICT');
+    return true;
+  }
+
+  async dispatchMetrics({ runId = null, slotId = null } = {}) {
+    if (!runId && !slotId) throw new TypeError('AGENT_LIVE_EVAL_DISPATCH_SCOPE_REQUIRED');
+    const result = await this.pool.query(
+      `SELECT id,metrics,created_at
+         FROM agent_quality_checks
+        WHERE check_kind=$1 AND metrics->>'campaignHash'=$2
+          AND (
+            ($3::text<>'' AND metrics->>'runIdHash'=$3)
+            OR ($4::text<>'' AND metrics->>'slotHash'=$4)
+          )
+        ORDER BY (metrics->>'sequence')::integer,id`,
+      [
+        DISPATCH_CHECK_KIND,
+        this.campaignHash,
+        runId ? sha256(runId) : '',
+        slotId ? sha256(slotId) : ''
+      ]
+    );
+    const calls = result.rows.map((row) => ({
+      id: Number(row.id),
+      kind: String(row.metrics?.kind || ''),
+      sequence: Number(row.metrics?.sequence || 0),
+      runtimeVersion: Number(row.metrics?.runtimeVersion || 0),
+      phase: String(row.metrics?.phase || ''),
+      status: String(row.metrics?.dispatchStatus || 'dispatched'),
+      inputTokens: Number(row.metrics?.inputTokens || 0),
+      outputTokens: Number(row.metrics?.outputTokens || 0),
+      latencyMs: Number(row.metrics?.latencyMs || 0),
+      errorCode: String(row.metrics?.errorCode || '')
+    }));
+    return {
+      calls,
+      qwenCalls: calls.filter((call) => call.kind === 'qwen').length,
+      kolorsCalls: calls.filter((call) => call.kind === 'kolors').length,
+      inputTokens: calls.reduce((sum, call) => sum + call.inputTokens, 0),
+      outputTokens: calls.reduce((sum, call) => sum + call.outputTokens, 0),
+      latencyMs: calls.reduce((sum, call) => sum + call.latencyMs, 0),
+      incomplete: calls.filter((call) => call.status === 'dispatched').length
+    };
   }
 
   async counts() {
@@ -239,6 +352,10 @@ class LiveEvalCampaignGuard {
       maxQwenCalls: this.maxQwenCalls,
       maxKolorsCalls: this.maxKolorsCalls
     });
+  }
+
+  abort(reason = new Error('AGENT_LIVE_EVAL_CAMPAIGN_ABORTED')) {
+    this.deadlineController?.abort(reason);
   }
 
   async close() {
