@@ -56,6 +56,7 @@ const { requestPromptHash } = require('../evaluation/harness/scripted-siliconflo
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const {
   attachCleanupEvidence,
+  buildTerminalFailureReport,
   closeLiveEvalResources,
   loadLiveEvalSecrets,
   resolveSelection,
@@ -385,6 +386,91 @@ test('Live Harness drain check keeps ambiguous receipts as audit evidence but re
   assert.doesNotMatch(modelReceiptQuery, /ambiguous/);
   assert.match(toolReceiptQuery, /state='dispatched'/);
   assert.doesNotMatch(toolReceiptQuery, /ambiguous/);
+});
+
+test('Live Harness direct recovery processing consumes the synthetic queue entry', async () => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.queue = [runId, '22222222-2222-4222-8222-222222222222', runId];
+  harness.worker = {
+    processRun: async (receivedRunId) => {
+      assert.equal(receivedRunId, runId);
+      assert.deepEqual(harness.queue, ['22222222-2222-4222-8222-222222222222']);
+      return { claimed: true, status: 'running' };
+    }
+  };
+
+  assert.deepEqual(await harness.processRun(runId), { claimed: true, status: 'running' });
+  assert.deepEqual(harness.queue, ['22222222-2222-4222-8222-222222222222']);
+});
+
+test('Live Harness captures sanitized terminal evidence when a real case throws', async () => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.sessionId = 'synthetic-session';
+  harness.auditor = { qwenCalls: 7, kolorsCalls: 2 };
+  harness.userForCohort = () => '22222222-2222-4222-8222-222222222222';
+  harness.pool = {
+    async query(statement, values) {
+      const sql = String(statement);
+      if (sql.includes('FROM agent_runs')) {
+        assert.equal(values[1], 'live-eval:synthetic-session:spreadsheet:v2');
+        return { rows: [{
+          id: runId,
+          status: 'cancelled',
+          runtime_version: 2,
+          error_code: 'AGENT_CANCELLED',
+          charged_credits: 4,
+          step_count: 2,
+          lease_epoch: 1,
+          final_text_sha256: null
+        }] };
+      }
+      if (sql.includes('FROM agent_artifacts')) return { rows: [{ count: 0 }] };
+      if (sql.includes('FROM agent_subagents')) return { rows: [{ count: 0 }] };
+      if (sql.includes('FROM agent_model_calls')) return { rows: [{
+        count: 3,
+        input_tokens: 1200,
+        output_tokens: 300,
+        latency_ms: 9000,
+        queue_wait_ms: 400,
+        schema_checks: 1,
+        schema_first_valid: 0
+      }] };
+      throw new Error(`unexpected query: ${sql}`);
+    }
+  };
+
+  const captured = await harness.captureCaseFailure({
+    entry: { id: 'spreadsheet' },
+    cohort: 'v2',
+    qwenBefore: 3,
+    kolorsBefore: 1
+  });
+  assert.deepEqual(captured, {
+    scenarioId: 'spreadsheet',
+    cohort: 'v2',
+    runId,
+    runtimeVersion: 2,
+    status: 'cancelled',
+    errorCode: 'AGENT_CANCELLED',
+    chargedCredits: 4,
+    steps: 2,
+    artifactCount: 0,
+    subagentCount: 0,
+    modelCalls: 3,
+    inputTokens: 1200,
+    outputTokens: 300,
+    modelLatencyMs: 9000,
+    queueWaitMs: 400,
+    schemaChecks: 1,
+    schemaFirstValid: 0,
+    leaseEpoch: 1,
+    finalTextSha256Present: false,
+    artifacts: [],
+    qwenCalls: 4,
+    kolorsCalls: 1
+  });
 });
 
 test('Live eval cleanup is bounded and still attempts PostgreSQL shutdown', async () => {
@@ -746,6 +832,54 @@ test('Live eval runner validates selection and reports paired medians without si
   assert.equal(complete.schemaFirstValidRate, 1);
   assert.equal(complete.automatedGatePassed, true);
   assert.equal(complete.productionCanaryEligible, false);
+});
+
+test('Live eval terminal failures preserve the partial matrix, limits and request totals', () => {
+  const error = Object.assign(new Error('synthetic drain failure'), {
+    code: 'AGENT_LIVE_EVAL_BATCH_NOT_DRAINED'
+  });
+  const report = buildTerminalFailureReport({
+    gate: {
+      campaignId: 'campaign-1',
+      manifestSha256: 'aa'.repeat(32),
+      commitSha: 'bb'.repeat(20),
+      matrixHash: 'cc'.repeat(32)
+    },
+    selectedCase: '',
+    selectedCohort: 'both',
+    results: [{
+      ok: false,
+      scenarioId: 'spreadsheet',
+      cohort: 'v2',
+      runId: '11111111-1111-4111-8111-111111111111',
+      status: 'cancelled',
+      errorCode: 'AGENT_CANCELLED',
+      qwenCalls: 3,
+      kolorsCalls: 0
+    }],
+    error,
+    harness: {
+      trace: { digest: () => 'dd'.repeat(32) },
+      auditor: { qwenCalls: 17, kolorsCalls: 2 }
+    }
+  });
+  assert.equal(report.ok, false);
+  assert.equal(report.code, 'AGENT_LIVE_EVAL_BATCH_NOT_DRAINED');
+  assert.equal(report.results.length, 1);
+  assert.equal(report.results[0].runId, '11111111-1111-4111-8111-111111111111');
+  assert.equal(report.summary.automatedGatePassed, false);
+  assert.equal(report.summary.productionCanaryEligible, false);
+  assert.deepEqual(report.requestTotals, { qwenCalls: 17, kolorsCalls: 2 });
+  assert.deepEqual(report.modelLocks, {
+    text: 'Qwen/Qwen3-8B',
+    image: 'Kwai-Kolors/Kolors'
+  });
+  assert.deepEqual(report.limits, {
+    perRunCredits: 50,
+    qwenCalls: 200,
+    kolorsCalls: 16,
+    wallClockHours: 8
+  });
 });
 
 test('Live evaluation matrix contains the exact 12 paired real scenarios and hard safety limits', () => {
