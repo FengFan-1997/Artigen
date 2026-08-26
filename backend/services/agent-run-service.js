@@ -1294,7 +1294,12 @@ const createAgentRunService = ({
         projectId: projectId || null,
         taskSpec: normalizedTaskSpec
       });
-      const promptProfile = runtimeV2
+      // A Run created without a router-compiled TaskSpec still needs the
+      // Planner. Do not freeze an incomplete execution profile before the
+      // Planner has produced a server-validated TaskSpec; the Worker pins the
+      // final capability-intersected profile exactly once afterwards. Runs
+      // that already carry a validated TaskSpec remain immutable at creation.
+      const promptProfile = runtimeV2 && normalizedTaskSpec
         ? compileAgentPrompt({
             objective: normalizedObjective,
             capabilities: normalizedCapabilities,
@@ -2791,7 +2796,7 @@ const createAgentRunService = ({
     const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
     assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
-    const actual = Math.max(0, Number(actualCredits || 0));
+    let actual = Math.max(0, Number(actualCredits || 0));
     if (!Number.isFinite(actual)) throw new ApiError(400, 'AGENT_BUDGET_INVALID');
     const reservation = await client.query(
       'SELECT * FROM agent_budget_reservations WHERE run_id=$1 AND reservation_key=$2 FOR UPDATE',
@@ -2799,12 +2804,68 @@ const createAgentRunService = ({
     );
     if (!reservation.rowCount) throw new ApiError(404, 'AGENT_BUDGET_RESERVATION_NOT_FOUND');
     if (reservation.rows[0].state === 'consumed') return reservation.rows[0];
-    if (reservation.rows[0].state !== 'reserved') {
+    if (reservation.rows[0].state === 'released') {
+      let receiptCredits = null;
+      if (reservation.rows[0].model_call_id) {
+        const receipt = await client.query(
+          `SELECT * FROM agent_model_call_receipts
+            WHERE id=$1 AND run_id=$2 AND state IN ('received','consumed')
+            FOR UPDATE`,
+          [reservation.rows[0].model_call_id, runId]
+        );
+        if (receipt.rowCount && receipt.rows[0].response_ciphertext) {
+          const payload = decryptAgentPayload({
+            runId,
+            payloadId: receipt.rows[0].id,
+            kind: 'model_call_response',
+            record: {
+              algorithm: receipt.rows[0].algorithm,
+              iv: receipt.rows[0].response_iv,
+              auth_tag: receipt.rows[0].response_auth_tag,
+              ciphertext: receipt.rows[0].response_ciphertext
+            },
+            env
+          });
+          const usage = payload?.response?.usage || {};
+          const tokenCount = (value) => {
+            const parsed = Number(value || 0);
+            return Number.isFinite(parsed)
+              ? Math.ceil(Math.max(0, Math.min(1_000_000_000, parsed)))
+              : 0;
+          };
+          receiptCredits = (
+            tokenCount(usage.prompt_tokens || usage.input_tokens) *
+              config.siliconFlowInputCreditsPerMillion +
+            tokenCount(usage.completion_tokens || usage.output_tokens) *
+              config.siliconFlowOutputCreditsPerMillion
+          ) / 1_000_000;
+        }
+      }
+      if (receiptCredits === null) {
+        const receipt = await client.query(
+          `SELECT actual_credits FROM agent_tool_call_receipts
+            WHERE run_id=$1 AND reservation_key=$2 AND state='consumed'
+            FOR UPDATE`,
+          [runId, sanitizeText(reservationKey, 200)]
+        );
+        if (receipt.rowCount) receiptCredits = Number(receipt.rows[0].actual_credits || 0);
+      }
+      if (receiptCredits === null) {
+        throw new ApiError(409, 'AGENT_BUDGET_RESERVATION_RELEASED');
+      }
+      if (Math.abs(actual - receiptCredits) > 0.00011) {
+        throw new ApiError(409, 'AGENT_BUDGET_RECEIPT_COST_MISMATCH', {
+          retryable: false
+        });
+      }
+      actual = receiptCredits;
+    } else if (reservation.rows[0].state !== 'reserved') {
       throw new ApiError(409, 'AGENT_BUDGET_RESERVATION_RELEASED');
     }
     const updated = await client.query(
       `UPDATE agent_budget_reservations
-          SET state='consumed',actual_credits=$3,consumed_at=clock_timestamp(),updated_at=clock_timestamp()
+          SET state='consumed',actual_credits=$3,consumed_at=clock_timestamp(),
+              released_at=NULL,updated_at=clock_timestamp()
         WHERE run_id=$1 AND reservation_key=$2 RETURNING *`,
       [runId, sanitizeText(reservationKey, 200), actual]
     );
@@ -3958,7 +4019,8 @@ const createAgentRunService = ({
           [candidate.id]
         );
         const uncertainTools = await client.query(
-          `SELECT receipt.id,receipt.receipt_key,receipt.kind,receipt.reservation_key,receipt.state
+          `SELECT receipt.id,receipt.subagent_id,receipt.receipt_key,receipt.kind,
+                  receipt.reservation_key,receipt.state
              FROM agent_tool_call_receipts receipt
             WHERE receipt.run_id=$1 AND receipt.state IN ('dispatched','ambiguous')
             FOR UPDATE`,
@@ -3991,6 +4053,56 @@ const createAgentRunService = ({
           );
         }
         if (uncertainModels.rowCount || uncertainTools.rowCount) {
+          const hasModelAmbiguity = uncertainModels.rowCount > 0;
+          const toolKinds = new Set(uncertainTools.rows.map((row) => row.kind));
+          const hasToolAmbiguity = uncertainTools.rowCount > 0;
+          const shellReceiptProbeOnly = !hasModelAmbiguity && hasToolAmbiguity &&
+            toolKinds.size === 1 && toolKinds.has('sandbox_shell') &&
+            uncertainTools.rows.every((row) => (
+              row.state === 'dispatched' && row.subagent_id === null
+            ));
+          const imageOnlyAmbiguity = hasToolAmbiguity &&
+            toolKinds.size === 1 && toolKinds.has('kolors');
+          if (shellReceiptProbeOnly) {
+            await client.query(
+              `UPDATE agent_budget_reservations reservation
+                  SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+                WHERE reservation.run_id=$1 AND reservation.state='reserved'
+                  AND reservation.reservation_key IN (
+                    SELECT receipt.reservation_key FROM agent_tool_call_receipts receipt
+                     WHERE receipt.run_id=$1 AND receipt.state='dispatched'
+                       AND receipt.kind='sandbox_shell'
+                  )`,
+              [candidate.id]
+            );
+            await client.query(
+              `UPDATE agent_runs
+                  SET status='queued',worker_id=NULL,lease_expires_at=NULL,
+                      queued_at=clock_timestamp(),
+                      queue_expires_at=clock_timestamp()+($2::text || ' hours')::interval,
+                      checkpoint=checkpoint || $3::jsonb,updated_at=clock_timestamp()
+                WHERE id=$1`,
+              [candidate.id, config.queueMaxWaitHours, JSON.stringify({
+                phase: 'queued',
+                retryRequired: false,
+                retryReason: null,
+                shellReceiptProbeRequired: true
+              })]
+            );
+            await client.query(
+              `UPDATE agent_budget_holds
+                  SET expires_at=clock_timestamp()+($2::text || ' minutes')::interval
+                WHERE run_id=$1 AND status='held'`,
+              [candidate.id, config.queueMaxWaitHours * 60 + config.maxMinutes + 15]
+            );
+            await insertEvent(client, {
+              runId: candidate.id,
+              type: 'tool.call.recovery_probe_queued',
+              phase: 'queued',
+              summary: '已安全排队探测沙箱 Shell 回执，不会重复执行'
+            });
+            return 'queued';
+          }
           await client.query(
             `UPDATE agent_model_call_receipts
                 SET state='ambiguous',ambiguous_at=COALESCE(ambiguous_at,clock_timestamp()),
@@ -4035,11 +4147,6 @@ const createAgentRunService = ({
               )`,
             [candidate.id]
           );
-          const hasModelAmbiguity = uncertainModels.rowCount > 0;
-          const toolKinds = new Set(uncertainTools.rows.map((row) => row.kind));
-          const hasToolAmbiguity = uncertainTools.rowCount > 0;
-          const imageOnlyAmbiguity = hasToolAmbiguity &&
-            toolKinds.size === 1 && toolKinds.has('kolors');
           const retryReason = hasModelAmbiguity && hasToolAmbiguity
             ? 'runtime_call_ambiguous'
             : hasModelAmbiguity

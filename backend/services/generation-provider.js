@@ -30,6 +30,7 @@ const mapProviderError = (error, signal) => {
   if (error instanceof ApiError) return error;
   const code = String(error?.code || error?.message || '').trim().toUpperCase();
   const preview = String(error?.bodyPreview || '').toLowerCase();
+  const status = Number(error?.status || 0);
   if (
     code.includes('CONTENT_POLICY') ||
     code.includes('SAFETY') ||
@@ -41,16 +42,27 @@ const mapProviderError = (error, signal) => {
     code.includes('TIMEOUT') ||
     error?.name === 'AbortError' ||
     code === 'ABORT_ERR' ||
-    Number(error?.status) === 504
+    status === 408 || status === 504
   ) {
     return providerError('PROVIDER_TIMEOUT', 504, true);
+  }
+  if (status === 429) {
+    return new ApiError(429, 'PROVIDER_RATE_LIMITED', {
+      retryable: true,
+      details: {
+        retryAfter: String(error?.retryAfter || '')
+      }
+    });
   }
   if (
     code.includes('MISSING_SILICONFLOW_API_KEY') ||
     code.includes('MODEL_NOT_FOUND') ||
-    (Number(error?.status) === 400 && /model.*(?:not exist|not found|invalid)/.test(preview))
+    (status === 400 && /model.*(?:not exist|not found|invalid)/.test(preview))
   ) {
     return providerError('MODEL_PROFILE_UNAVAILABLE', 503, true);
+  }
+  if (Number.isInteger(status) && status >= 400 && status < 500) {
+    return providerError('PROVIDER_REJECTED', status, false);
   }
   return providerError('PROVIDER_FAILED', 502, true);
 };

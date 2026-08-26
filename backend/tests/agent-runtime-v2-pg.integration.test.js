@@ -195,8 +195,12 @@ test('PostgreSQL persists server-owned V1/V2 canary assignment across idempotent
     assert.deepEqual(stored.rows.map((row) => Number(row.runtime_version)), [1, 2]);
     assert.equal(stored.rows[0].prompt_profile, null);
     assert.equal(stored.rows[0].prompt_hash, null);
-    assert.ok(stored.rows[1].prompt_profile);
-    assert.equal(stored.rows[1].prompt_hash.length, 32);
+    // The canary assignment is immutable at creation, but the profile cannot
+    // be frozen until Planner has produced the final server-validated
+    // TaskSpec and selected skills. Freezing it here would either omit those
+    // skills or reject the Worker when it pins the authoritative profile.
+    assert.equal(stored.rows[1].prompt_profile, null);
+    assert.equal(stored.rows[1].prompt_hash, null);
 
     const changedRollout = createService({
       ...baseEnv,

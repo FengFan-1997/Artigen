@@ -512,6 +512,58 @@ test('Planner repairs JSON and strict TaskSpec schema failures without losing us
   ]);
 });
 
+test('Planner accepts a compact strict candidate and server-compiles authoritative fields', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key',
+      AGENT_ADAPTIVE_REASONING_ENABLED: 'true'
+    }
+  });
+  const requests = [];
+  provider.createChat = async (payload) => {
+    requests.push(payload);
+    return {
+      message: {
+        content: JSON.stringify({
+          complexity: 'medium',
+          confidence: 0.91,
+          constraints: ['不得增加未请求的交付物'],
+          assumptions: [],
+          acceptanceCriteria: ['报告必须通过确定性验证'],
+          skillIds: ['report'],
+          plan: [
+            { id: 'produce-report', label: '制作报告', phase: 'production', status: 'in_progress' },
+            { id: 'verify-report', label: '验证报告', phase: 'verification', status: 'pending' }
+          ]
+        })
+      },
+      siliconFlowUsage: { prompt_tokens: 10, completion_tokens: 5 }
+    };
+  };
+
+  const planned = await provider.planTask({
+    objective: '制作一份经过验证的报告',
+    deliverables: ['report'],
+    capabilities: { files: true, shell: true },
+    allowedOrigins: ['https://www.w3.org'],
+    maxCredits: 30
+  });
+
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].messages[0].content, /server owns the exact goal/i);
+  assert.equal(planned.taskSpec.goal, '制作一份经过验证的报告');
+  assert.equal(planned.taskSpec.goalRequirement.source, 'user');
+  assert.match(planned.taskSpec.goalRequirement.id, /^goal-[a-f0-9]{12}$/);
+  assert.deepEqual(planned.taskSpec.deliverables, ['report']);
+  assert.deepEqual(planned.taskSpec.allowedOrigins, ['https://www.w3.org']);
+  assert.equal(planned.taskSpec.budget.maxCredits, 30);
+  assert.equal(planned.taskSpec.constraintRequirements[0].source, 'planner');
+  assert.equal(planned.taskSpec.acceptanceRequirements[0].source, 'planner');
+  assert.ok(planned.taskSpec.skillIds.includes('report'));
+});
+
 test('Planner preserves the authoritative user objective across a valid model restatement', async () => {
   const provider = new SiliconFlowAgentModelProvider({
     env: {
@@ -965,6 +1017,98 @@ test('Runtime V2 restores a paid verifier result without re-verifying or losing 
   assert.equal(result.credits, 3);
   assert.equal(lastState.semanticVerificationPassed, true);
   assert.equal(lastState.semanticVerificationResult.score, 93);
+});
+
+test('Runtime V2 keeps the server plan after two invalid restatements and continues text work', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const requests = [];
+  provider.createChat = async (payload) => {
+    requests.push(payload);
+    if (requests.length <= 2) {
+      return {
+        id: `invalid-plan-${requests.length}`,
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: `invalid-plan-call-${requests.length}`,
+            type: 'function',
+            function: {
+              name: 'update_plan',
+              arguments: JSON.stringify({
+                explanation: '重复模型自建计划',
+                steps: [
+                  { id: 'invented-draft', label: '起草', status: 'in_progress' },
+                  { id: 'invented-check', label: '检查', status: 'pending' }
+                ]
+              })
+            }
+          }]
+        },
+        siliconFlowUsage: {}
+      };
+    }
+    return {
+      id: 'text-after-plan-fallback',
+      message: { role: 'assistant', content: '建议聚焦一个清晰目标，并用单一主动作推进。' },
+      siliconFlowUsage: {}
+    };
+  };
+  const taskSpec = normalizeTaskSpec({
+    goal: '给出一段简洁设计建议',
+    deliverables: [],
+    plan: [
+      { id: 'draft-answer', label: '起草建议', phase: 'production', status: 'in_progress' },
+      { id: 'verify-answer', label: '验证建议', phase: 'verification', status: 'pending' }
+    ]
+  }, { capabilities: {}, maxCredits: 50 });
+  let lastState = null;
+  const result = await provider.execute({
+    objective: taskSpec.goal,
+    capabilities: {},
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      saveModelState: async (value) => { lastState = structuredClone(value); },
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {},
+      verifyDraft: async () => ({
+        result: {
+          passed: true,
+          score: 100,
+          issues: [],
+          repairInstructions: [],
+          unsupportedVisualJudgment: false,
+          criteria: []
+        },
+        credits: 0,
+        usage: {}
+      })
+    }
+  });
+
+  assert.equal(requests.length, 3);
+  assert.equal(requests[1].tool_choice.function.name, 'update_plan');
+  assert.equal(
+    requests[2].tools?.some((tool) => tool.function?.name === 'update_plan') || false,
+    false
+  );
+  assert.equal(result.text, '建议聚焦一个清晰目标，并用单一主动作推进。');
+  assert.equal(lastState.planUpdateSuppressed, true);
+  assert.deepEqual(lastState.taskSpec.plan.map((step) => step.id), [
+    'draft-answer',
+    'verify-answer'
+  ]);
+  assert.match(result.readyToFinalize.finalTextSha256, /^[a-f0-9]{64}$/);
 });
 
 test('Runtime V2 stops after one correction when action and observed state repeat unchanged', async () => {

@@ -26,6 +26,7 @@ const SAFE_REFERENCE_PATH = /^\/tmp\/artigen-workspace\/inputs\/[0-9a-f-]{36}\.(
 const REFERENCE_ROLES = new Set(['product', 'style', 'scene']);
 const REFERENCE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const MAX_REFERENCE_BYTES = 40 * 1024 * 1024;
+const MAX_PROVIDER_RATE_LIMIT_RETRIES = 2;
 
 const configuredImageCredits = (value, fallback) => {
   const parsed = Number(value);
@@ -72,6 +73,41 @@ const referencePrompt = (prompt, references) => {
   ].join('\n');
 };
 
+const waitForImageRetry = (milliseconds, signal) => new Promise((resolve, reject) => {
+  if (signal?.aborted) {
+    const error = new Error('TASK_CANCELLED');
+    error.code = 'TASK_CANCELLED';
+    reject(error);
+    return;
+  }
+  let timer = null;
+  const cleanup = () => signal?.removeEventListener('abort', abort);
+  const abort = () => {
+    if (timer) clearTimeout(timer);
+    cleanup();
+    const error = new Error('TASK_CANCELLED');
+    error.code = 'TASK_CANCELLED';
+    reject(error);
+  };
+  signal?.addEventListener('abort', abort, { once: true });
+  timer = setTimeout(() => {
+    cleanup();
+    resolve();
+  }, Math.max(0, Number(milliseconds || 0)));
+  timer.unref?.();
+});
+
+const retryAfterMilliseconds = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return 0;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return Math.max(0, Math.min(8_000, seconds * 1000));
+  const timestamp = Date.parse(raw);
+  return Number.isFinite(timestamp)
+    ? Math.max(0, Math.min(8_000, timestamp - Date.now()))
+    : 0;
+};
+
 const createAgentImageService = ({
   env = process.env,
   chatGenerate = callSiliconFlowChat,
@@ -81,7 +117,8 @@ const createAgentImageService = ({
     env
   }),
   download = downloadProviderImage,
-  normalize = normalizeGeneratedImageAspectRatio
+  normalize = normalizeGeneratedImageAspectRatio,
+  waitForRetry = waitForImageRetry
 } = {}) => {
   const generate = async ({ prompt, aspectRatio = '1:1', filename, references, signal }) => {
     const normalizedPrompt = String(prompt || '').trim();
@@ -100,7 +137,7 @@ const createAgentImageService = ({
       aspectRatio,
       env
     });
-    const generated = await provider.generateImage({
+    const providerRequest = {
       prompt: referencePrompt(normalizedPrompt, normalizedReferences),
       profile,
       aspectRatio,
@@ -109,7 +146,23 @@ const createAgentImageService = ({
         `data:${reference.mimeType};base64,${reference.buffer.toString('base64')}`
       )),
       signal
-    });
+    };
+    let generated;
+    for (let attempt = 0; attempt <= MAX_PROVIDER_RATE_LIMIT_RETRIES; attempt += 1) {
+      try {
+        generated = await provider.generateImage(providerRequest);
+        break;
+      } catch (error) {
+        const explicitRateLimit = Number(error?.status) === 429 &&
+          error?.code === 'PROVIDER_RATE_LIMITED';
+        if (!explicitRateLimit || attempt >= MAX_PROVIDER_RATE_LIMIT_RETRIES) throw error;
+        const retryAfter = retryAfterMilliseconds(error?.details?.retryAfter);
+        await waitForRetry(
+          Math.max(retryAfter, Math.min(8_000, 500 * (2 ** attempt))),
+          signal
+        );
+      }
+    }
     if (String(generated?.modelUsed || '') !== GENERATION_IMAGE_MODEL) {
       throw new ApiError(502, 'AGENT_IMAGE_MODEL_INVALID');
     }
@@ -148,6 +201,7 @@ module.exports = {
   REFERENCE_ROLES,
   SAFE_FILENAME,
   SAFE_REFERENCE_PATH,
+  MAX_PROVIDER_RATE_LIMIT_RETRIES,
   configuredImageCredits,
   normalizeAgentImageReferences,
   createAgentImageService

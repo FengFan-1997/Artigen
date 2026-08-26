@@ -182,6 +182,9 @@ const {
   assertComputerOrigins,
   assertSafeShell,
   offlineShellScript,
+  shellReceiptDirectory,
+  shellReceiptProbeScript,
+  shellWithReceiptScript,
   subagentOfflineShellScript
 } = require('../services/agent-sandbox-provider');
 const {
@@ -3456,6 +3459,47 @@ test('trusted platform shell is separate from offline model-authored shell', asy
   assert.match(payloads[1].script, /127\.0\.0\.1:9222/);
 });
 
+test('sandbox Shell operation receipts are deterministic, atomic and recover bounded output', async () => {
+  const operationId = 'parent:shell:abc123:attempt:0';
+  const receiptDirectory = shellReceiptDirectory(operationId);
+  assert.match(receiptDirectory, /^\/tmp\/artigen-workspace\/\.artigen\/shell-receipts\/[a-f0-9]{64}$/);
+  const wrapped = shellWithReceiptScript('printf "private-output"', operationId);
+  assert.match(wrapped, /AGENT_SHELL_OPERATION_IN_PROGRESS/);
+  assert.match(wrapped, /mv "\$receipt_dir\/done\.tmp" "\$receipt_dir\/done"/);
+  assert.match(wrapped, /head -c 12000/);
+  assert.match(wrapped, /bwrap --unshare-net/);
+  assert.doesNotMatch(wrapped, /private-output/);
+  assert.match(shellReceiptProbeScript(operationId), /duration-ms/);
+
+  const encodedStdout = Buffer.from('recovered stdout').toString('base64');
+  const encodedStderr = Buffer.from('recovered stderr').toString('base64');
+  const sandbox = new CuaSandboxProvider({
+    env: { CUA_API_KEY: 'test-key' },
+    bridge: async ({ payload }) => {
+      assert.equal(payload.command, 'shell');
+      assert.match(payload.script, new RegExp(receiptDirectory.replaceAll('/', '\\/')));
+      return {
+        ok: true,
+        success: true,
+        returnCode: 0,
+        stderr: '',
+        stdout: `consumed\n7\n2300\n${encodedStdout}\n${encodedStderr}\n`
+      };
+    }
+  });
+  const recovered = await sandbox.readShellReceipt('sandbox', operationId);
+  assert.deepEqual(recovered, {
+    state: 'consumed',
+    durationMs: 2300,
+    result: {
+      success: false,
+      returnCode: 7,
+      stdout: 'recovered stdout',
+      stderr: 'recovered stderr'
+    }
+  });
+});
+
 test('Playwright DOM requests are bounded and consequential clicks are classified', () => {
   assert.deepEqual(normalizeBrowserRequest({
     action: 'navigate',
@@ -4951,6 +4995,61 @@ test('Agent image generation uses Kolors for text or one staged reference with 8
     prompt: 'Reject an unapproved image model',
     filename: 'rejected.png'
   }), { code: 'AGENT_IMAGE_MODEL_INVALID' });
+});
+
+test('Agent image generation retries only explicit Kolors rate-limit rejections with one stable request', async () => {
+  const calls = [];
+  const delays = [];
+  const service = createAgentImageService({
+    provider: {
+      generateImage: async (input) => {
+        calls.push(input);
+        if (calls.length < 3) {
+          throw new ApiError(429, 'PROVIDER_RATE_LIMITED', {
+            retryable: true,
+            details: { retryAfter: calls.length === 1 ? '0.001' : '' }
+          });
+        }
+        return {
+          images: [{ url: 'https://cdn.example.test/retried.png' }],
+          modelUsed: 'Kwai-Kolors/Kolors'
+        };
+      }
+    },
+    waitForRetry: async (milliseconds) => { delays.push(milliseconds); },
+    download: async () => ({
+      buffer: Buffer.from('retried-image'),
+      mimeType: 'image/png'
+    }),
+    normalize: async ({ buffer, mimeType }) => ({ buffer, mimeType, transformed: false })
+  });
+
+  const result = await service.generate({
+    prompt: 'A precise editorial product composition',
+    filename: 'retried.png'
+  });
+  assert.equal(calls.length, 3);
+  assert.deepEqual(delays, [500, 1000]);
+  assert.equal(new Set(calls.map((call) => call.seed)).size, 1);
+  assert.equal(calls.every((call) => call.profile.internalTextModel === 'Kwai-Kolors/Kolors'), true);
+  assert.equal(result.model, 'Kwai-Kolors/Kolors');
+
+  let unknownCalls = 0;
+  await assert.rejects(createAgentImageService({
+    provider: {
+      generateImage: async () => {
+        unknownCalls += 1;
+        throw new ApiError(502, 'PROVIDER_FAILED', { retryable: true });
+      }
+    },
+    waitForRetry: async () => {
+      throw new Error('unknown outcomes must not be retried');
+    }
+  }).generate({
+    prompt: 'Do not retry an unknown image outcome',
+    filename: 'unknown.png'
+  }), { code: 'PROVIDER_FAILED' });
+  assert.equal(unknownCalls, 1);
 });
 
 test('coordinate-mutating computer actions require takeover before execution', async () => {

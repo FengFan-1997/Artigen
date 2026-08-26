@@ -1266,24 +1266,12 @@ const createAgentWorkerService = ({
         });
       }
       if (runtimeV2) {
-        const frozenRuntimePhase = objectivePayload.taskSpec?.plan?.[0]?.phase || (
-          context.run.capabilities?.browser ? 'research' : 'production'
-        );
+        // Freeze only after the final TaskSpec has been validated. Freezing a
+        // pre-Planner profile made legitimate Planner-selected skills look like
+        // a privilege expansion even though compileAgentPrompt still applies
+        // the capability intersection. The persisted profile remains immutable
+        // for recovery and cannot grant a capability the Run did not receive.
         const frozenRuntimeProfile = compileAgentPrompt({
-          objective: runtimeObjective,
-          capabilities: context.run.capabilities,
-          deliverables: requiredDeliverables,
-          taskSpec: objectivePayload.taskSpec || null,
-          phase: frozenRuntimePhase,
-          toolSchemas: FUNCTION_TOOLS,
-          modelConfig: {
-            actorSamplingProfile: config.actorSamplingProfile,
-            adaptiveReasoningEnabled: config.adaptiveReasoningEnabled,
-            stageMaxOutputTokens: config.stageMaxOutputTokens
-          }
-        });
-        await runService.pinRuntimeProfile({ ...runLease, profile: frozenRuntimeProfile });
-        const runtimeProfile = compileAgentPrompt({
           objective: runtimeObjective,
           capabilities: context.run.capabilities,
           deliverables: requiredDeliverables,
@@ -1296,20 +1284,14 @@ const createAgentWorkerService = ({
             stageMaxOutputTokens: config.stageMaxOutputTokens
           }
         });
-        const frozenSkillIds = new Set(frozenRuntimeProfile.skills.map((skill) => skill.id));
-        const expandedSkill = runtimeProfile.skills.find((skill) => !frozenSkillIds.has(skill.id));
-        if (expandedSkill) {
-          throw new ApiError(409, 'AGENT_RUNTIME_SKILL_NOT_FROZEN', {
-            retryable: false,
-            skillId: expandedSkill.id
-          });
-        }
+        await runService.pinRuntimeProfile({ ...runLease, profile: frozenRuntimeProfile });
         context.run.prompt_profile = frozenRuntimeProfile.promptProfile;
         context.run.prompt_hash = Buffer.from(frozenRuntimeProfile.promptHash, 'hex');
         context.run.skill_versions = Object.fromEntries(
           frozenRuntimeProfile.skills.map((skill) => [skill.id, skill.version])
         );
-        const selectedSkills = (Array.isArray(taskSpec?.skillIds) ? taskSpec.skillIds : [])
+        const selectedSkills = frozenRuntimeProfile.skills
+          .map((skill) => skill.id)
           .filter((skillId) => Boolean(SKILLS[skillId]));
         if (selectedSkills.length) {
           const prepared = await sandbox.systemShell(
@@ -2380,6 +2362,20 @@ const createAgentWorkerService = ({
               computedRequestSha256,
               legacyReceipt: usingLegacyReceipt
             });
+            const recoverSandboxReceipt = async () => {
+              if (typeof sandbox.readShellReceipt !== 'function') return null;
+              try {
+                return await sandbox.readShellReceipt(sandboxName, receiptKey);
+              } catch {
+                // A failed probe cannot prove whether the prior effect ran.
+                // Keep the call ambiguous rather than guessing or retrying.
+                return null;
+              }
+            };
+            const recoveredShellCredits = (receipt) => Math.min(
+              sandboxCreditsPerMinute * 2,
+              Math.max(0, Number(receipt?.durationMs || 0)) / 60_000 * sandboxCreditsPerMinute
+            );
             if (
               priorReceipt?.kind === 'sandbox_shell' &&
               (priorReceipt.state === 'consumed' || (!priorReceipt.state && priorReceipt.result))
@@ -2394,6 +2390,29 @@ const createAgentWorkerService = ({
               priorReceipt?.kind === 'sandbox_shell' &&
               ['dispatched', 'ambiguous'].includes(priorReceipt.state)
             ) {
+              const recovered = await recoverSandboxReceipt();
+              if (recovered?.state === 'consumed') {
+                const actualCredits = recoveredShellCredits(recovered);
+                const durableResult = {
+                  success: recovered.result.success,
+                  returnCode: recovered.result.returnCode,
+                  stdout: String(recovered.result.stdout || '').slice(0, 12_000),
+                  stderr: String(recovered.result.stderr || '').slice(0, 4_000)
+                };
+                await persistToolReceipt(receiptKey, {
+                  kind: 'sandbox_shell',
+                  state: 'consumed',
+                  reservationKey: priorReceipt.reservationKey || reservationKey,
+                  requestSha256,
+                  actualCredits,
+                  result: durableResult
+                });
+                await consumeRuntimeBudget({
+                  reservationKey: priorReceipt.reservationKey || reservationKey,
+                  actualCredits
+                });
+                return durableResult;
+              }
               if (priorReceipt.state === 'dispatched') {
                 await persistToolReceipt(receiptKey, {
                   kind: 'sandbox_shell',
@@ -2431,7 +2450,9 @@ const createAgentWorkerService = ({
             let result;
             let receiptConsumed = false;
             try {
-              result = await sandbox.shell(sandboxName, script, 120);
+              result = await sandbox.shell(sandboxName, script, 120, {
+                operationId: receiptKey
+              });
               actualCredits = Math.min(
                 sandboxCreditsPerMinute * 2,
                 Math.max(0, Date.now() - shellStartedAt) / 60_000 * sandboxCreditsPerMinute
@@ -2466,17 +2487,46 @@ const createAgentWorkerService = ({
               ) {
                 throw error;
               }
-              await persistToolReceipt(receiptKey, {
-                kind: 'sandbox_shell',
-                state: 'ambiguous',
-                reservationKey,
-                requestSha256
-              });
-              await releaseRuntimeBudget({ reservationKey });
-              throw new ApiError(409, 'AGENT_TOOL_CALL_AMBIGUOUS', {
-                retryable: false,
-                callId: String(toolMetadata.callId || '')
-              });
+              const recovered = await recoverSandboxReceipt();
+              if (recovered?.state === 'consumed') {
+                result = {
+                  success: recovered.result.success,
+                  returnCode: recovered.result.returnCode,
+                  stdout: String(recovered.result.stdout || '').slice(0, 12_000),
+                  stderr: String(recovered.result.stderr || '').slice(0, 4_000)
+                };
+                actualCredits = recoveredShellCredits(recovered);
+                await persistToolReceipt(receiptKey, {
+                  kind: 'sandbox_shell',
+                  state: 'consumed',
+                  reservationKey,
+                  requestSha256,
+                  actualCredits,
+                  result
+                });
+                receiptConsumed = true;
+                await consumeRuntimeBudget({ reservationKey, actualCredits });
+              } else if (error?.code === 'AGENT_SANDBOX_BRIDGE_UNAVAILABLE') {
+                // child_process spawn failed before the Cua bridge could send a
+                // command. This is the only sandbox failure that proves no
+                // remote effect started, so the dispatched receipt is safe to
+                // remove and a later Run attempt may retry normally.
+                await removeToolReceipt(receiptKey, requestSha256);
+                await releaseRuntimeBudget({ reservationKey });
+                throw error;
+              } else {
+                await persistToolReceipt(receiptKey, {
+                  kind: 'sandbox_shell',
+                  state: 'ambiguous',
+                  reservationKey,
+                  requestSha256
+                });
+                await releaseRuntimeBudget({ reservationKey });
+                throw new ApiError(409, 'AGENT_TOOL_CALL_AMBIGUOUS', {
+                  retryable: false,
+                  callId: String(toolMetadata.callId || '')
+                });
+              }
             }
             await runService.appendStep({
               ...runLease,
@@ -2722,7 +2772,7 @@ const createAgentWorkerService = ({
                 Number.isInteger(providerStatus) &&
                 providerStatus >= 400 &&
                 providerStatus < 500 &&
-                ![408, 409, 425, 429].includes(providerStatus)
+                ![408, 409, 425].includes(providerStatus)
               );
               if (knownRejectedRequest) {
                 await removeToolReceipt(receiptKey, requestSha256);

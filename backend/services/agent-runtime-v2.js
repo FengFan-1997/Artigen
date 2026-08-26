@@ -81,6 +81,42 @@ const TASK_SPEC_SCHEMA = Object.freeze({
 });
 const taskSpecAjv = new Ajv({ allErrors: true, strict: true, coerceTypes: false });
 const validateTaskSpecSchema = taskSpecAjv.compile(TASK_SPEC_SCHEMA);
+const TASK_SPEC_CANDIDATE_SCHEMA = Object.freeze({
+  $id: 'artigen-agent-task-spec-candidate-v2',
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'complexity', 'confidence', 'constraints', 'assumptions',
+    'acceptanceCriteria', 'skillIds', 'plan'
+  ],
+  properties: {
+    // Only the compact fields above are Planner responsibilities. Optional
+    // legacy fields keep recovery compatible with full V2 responses already
+    // received before this compiler split; server-owned values still win.
+    version: { enum: [1, 2] },
+    goal: { type: 'string', minLength: 1, maxLength: 20000 },
+    goalRequirement: TASK_SPEC_SCHEMA.properties.goalRequirement,
+    complexity: TASK_SPEC_SCHEMA.properties.complexity,
+    confidence: TASK_SPEC_SCHEMA.properties.confidence,
+    constraints: TASK_SPEC_SCHEMA.properties.constraints,
+    constraintRequirements: TASK_SPEC_SCHEMA.properties.constraintRequirements,
+    assumptions: TASK_SPEC_SCHEMA.properties.assumptions,
+    deliverables: TASK_SPEC_SCHEMA.properties.deliverables,
+    allowedOrigins: TASK_SPEC_SCHEMA.properties.allowedOrigins,
+    acceptanceCriteria: TASK_SPEC_SCHEMA.properties.acceptanceCriteria,
+    acceptanceRequirements: TASK_SPEC_SCHEMA.properties.acceptanceRequirements,
+    skillIds: TASK_SPEC_SCHEMA.properties.skillIds,
+    plan: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 8,
+      items: TASK_SPEC_SCHEMA.properties.plan.items
+    },
+    budget: TASK_SPEC_SCHEMA.properties.budget
+  },
+  $defs: TASK_SPEC_SCHEMA.$defs
+});
+const validateTaskSpecCandidateSchema = taskSpecAjv.compile(TASK_SPEC_CANDIDATE_SCHEMA);
 
 const CONSTITUTION = [
   'You are Artigen Runtime V2. The user objective and server TaskSpec are authoritative.',
@@ -503,10 +539,10 @@ const normalizeTaskSpec = (value, fallback = {}) => {
   }
   const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   assertKnownTaskSpecFields(input);
-  if (fallback.strictPlannerOutput === true && !validateTaskSpecSchema(input)) {
+  if (fallback.strictPlannerOutput === true && !validateTaskSpecCandidateSchema(input)) {
     throw new ApiError(502, 'AGENT_TASK_SPEC_INVALID', {
       details: {
-        validation: validateTaskSpecSchema.errors?.slice(0, 24).map((error) => ({
+        validation: validateTaskSpecCandidateSchema.errors?.slice(0, 24).map((error) => ({
           path: error.instancePath,
           keyword: error.keyword
         }))
@@ -673,14 +709,14 @@ const normalizeTaskSpec = (value, fallback = {}) => {
   const constraintInput = input.constraintRequirements || input.constraints;
   const constraintRequirements = normalizeRequirementList(constraintInput, {
     kind: 'constraint',
-    source: input.constraintRequirements ? 'planner' : 'user',
+    source: fallback.strictPlannerOutput === true || input.constraintRequirements ? 'planner' : 'user',
     criticality: 'critical',
     maximumItems: 24
   });
   const acceptanceInput = input.acceptanceRequirements || input.acceptanceCriteria;
   const acceptanceRequirements = normalizeRequirementList(acceptanceInput, {
     kind: 'acceptance',
-    source: input.acceptanceRequirements ? 'planner' : 'user',
+    source: fallback.strictPlannerOutput === true || input.acceptanceRequirements ? 'planner' : 'user',
     criticality: 'required',
     maximumItems: 24
   });
@@ -1195,9 +1231,10 @@ const taskPlannerMessages = ({ objective, deliverables, capabilities, allowedOri
   content: [
     `You are Artigen's planning component using ${TEXT_MODEL}. Tools are disabled.`,
     'Return one JSON object only. Do not include reasoning or markdown.',
-    'Schema: {version:2,goal,goalRequirement:{id,text,source,criticality},complexity:simple|medium|high,confidence:0..1,constraints:string[],constraintRequirements:[{id,text,source,criticality}],assumptions:string[],deliverables:string[],allowedOrigins:string[],acceptanceCriteria:string[],acceptanceRequirements:[{id,text,source,criticality}],skillIds:string[],plan:[{id,label,phase:research|production|verification|completion,status:pending|in_progress|completed}],budget:{maxCredits:number}}.',
-    'All fields in the schema are required. goal must exactly equal the input objective and goalRequirement must be one object whose text exactly equals goal. IDs must be lowercase ASCII kebab-case: requirement IDs start with a letter and contain 8-80 characters; plan IDs contain 2-80 characters. Never use Chinese text, underscores, spaces, or uppercase letters in IDs.',
-    'Use only the exact English enum values shown in the schema. source is exactly user|planner|server; criticality is exactly critical|required|optional. Every field ending in Criteria, Requirements, Origins, Ids, constraints, assumptions, deliverables, skillIds, or plan must be a JSON array even when empty or containing one item.',
+    'Return exactly these keys: {complexity,confidence,constraints,assumptions,acceptanceCriteria,skillIds,plan}.',
+    'complexity is simple|medium|high. confidence is a number from 0 to 1. constraints, assumptions, acceptanceCriteria, and skillIds are JSON string arrays.',
+    'plan is an array of 2-8 objects: {id,label,phase,status}. id is lowercase ASCII kebab-case with 2-80 characters. phase is research|production|verification|completion. status is pending|in_progress|completed. Use at most one in_progress step.',
+    'The server owns the exact goal, deliverables, allowed origins, budget, requirement sources, and stable requirement IDs. Do not return or restate those fields.',
     `Valid skills: ${Object.keys(SKILLS).join(', ')}. Never add a deliverable the user did not positively request.`,
     'Use research only when browser evidence is required. End with verification. Keep 2-8 plan steps.'
   ].join('\n')
@@ -1256,6 +1293,7 @@ module.exports = {
   renderSkillReference,
   selectAgentSkills,
   summarizeToolObservation,
+  TASK_SPEC_CANDIDATE_SCHEMA,
   TASK_SPEC_SCHEMA,
   taskPlannerMessages,
   verifierMessages

@@ -458,6 +458,22 @@ test('provider timeout and user cancellation remain distinct task outcomes', () 
     name: 'AbortError',
     code: 'ABORT_ERR'
   }), controller.signal), 'TASK_CANCELLED');
+
+  const rateLimited = mapProviderError(Object.assign(new Error('rate limited'), {
+    status: 429,
+    retryAfter: '2'
+  }));
+  assert.equal(rateLimited.code, 'PROVIDER_RATE_LIMITED');
+  assert.equal(rateLimited.status, 429);
+  assert.equal(rateLimited.retryable, true);
+  assert.equal(rateLimited.details.retryAfter, '2');
+
+  const rejected = mapProviderError(Object.assign(new Error('bad input'), {
+    status: 400
+  }));
+  assert.equal(rejected.code, 'PROVIDER_REJECTED');
+  assert.equal(rejected.status, 400);
+  assert.equal(rejected.retryable, false);
 });
 
 test('contract mock is development-only and returns valid aspect-aware PNG payloads', async () => {

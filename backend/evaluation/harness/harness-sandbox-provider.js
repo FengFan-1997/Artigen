@@ -17,6 +17,7 @@ class HarnessSandboxProvider {
     this.controller = controller;
     this.sandboxes = new Map();
     this.destroyed = new Set();
+    this.shellReceipts = new Map();
   }
 
   referenceForRun(runId) {
@@ -59,23 +60,50 @@ class HarnessSandboxProvider {
     return { ok: true, name, alreadyRunning: true };
   }
 
-  async shell(name, script) {
+  async shell(name, script, _timeoutSeconds = 30, { operationId = null } = {}) {
     const text = String(script || '').trim();
+    const receiptKey = operationId ? `${name}:${operationId}` : null;
+    if (receiptKey && this.shellReceipts.has(receiptKey)) {
+      return { ...this.shellReceipts.get(receiptKey).result };
+    }
+    let result;
     if (!text.startsWith(WRITE_PREFIX)) {
-      return { ok: true, success: true, returnCode: 0, stdout: '', stderr: '' };
+      result = { ok: true, success: true, returnCode: 0, stdout: '', stderr: '' };
+    } else {
+      let payload;
+      try {
+        payload = JSON.parse(Buffer.from(text.slice(WRITE_PREFIX.length), 'base64').toString('utf8'));
+      } catch {
+        result = {
+          ok: false,
+          success: false,
+          returnCode: 2,
+          stdout: '',
+          stderr: 'invalid harness write'
+        };
+      }
+      if (payload) {
+        for (const file of Array.isArray(payload?.files) ? payload.files : []) {
+          const buffer = Buffer.from(String(file.base64 || ''), 'base64');
+          await this.writeFile(name, String(file.path || ''), buffer);
+        }
+        result = { ok: true, success: true, returnCode: 0, stdout: 'written', stderr: '' };
+      }
     }
-    let payload;
-    try {
-      payload = JSON.parse(Buffer.from(text.slice(WRITE_PREFIX.length), 'base64').toString('utf8'));
-    } catch {
-      return { ok: false, success: false, returnCode: 2, stdout: '', stderr: 'invalid harness write' };
-    }
-    for (const file of Array.isArray(payload?.files) ? payload.files : []) {
-      const buffer = Buffer.from(String(file.base64 || ''), 'base64');
-      await this.writeFile(name, String(file.path || ''), buffer);
+    if (receiptKey) {
+      this.shellReceipts.set(receiptKey, {
+        state: 'consumed',
+        durationMs: 0,
+        result: { ...result }
+      });
     }
     await this.controller?.hit('after_tool_effect', { toolName: 'sandbox_shell' });
-    return { ok: true, success: true, returnCode: 0, stdout: 'written', stderr: '' };
+    return result;
+  }
+
+  async readShellReceipt(name, operationId) {
+    const receipt = this.shellReceipts.get(`${name}:${operationId}`);
+    return receipt ? structuredClone(receipt) : null;
   }
 
   async subagentShell(name, script, { workspacePath = '' } = {}) {
@@ -279,6 +307,9 @@ class HarnessSandboxProvider {
     const root = this.sandboxes.get(name);
     if (root) await fs.promises.rm(root, { recursive: true, force: true });
     this.sandboxes.delete(name);
+    for (const key of this.shellReceipts.keys()) {
+      if (key.startsWith(`${name}:`)) this.shellReceipts.delete(key);
+    }
     this.destroyed.add(name);
     return { ok: true };
   }
