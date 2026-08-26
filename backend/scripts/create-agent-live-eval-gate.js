@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -8,9 +9,39 @@ const {
   LIVE_EVAL_MATRIX_HASH
 } = require('../evaluation/harness/agent-live-eval-matrix');
 const {
-  createSignedGateManifest
+  createSignedGateManifest,
+  REQUIRED_CHECKS
 } = require('../evaluation/harness/live-eval-gate');
 const { resolveCurrentCommitSha } = require('./run-agent-live-eval');
+
+const assertGateAttestationProvenance = ({
+  attestation,
+  commitSha,
+  commitTimestampMs,
+  statSync = fs.statSync
+} = {}) => {
+  if (!/^[a-f0-9]{40}$/i.test(String(commitSha || '')) || !Number.isFinite(commitTimestampMs)) {
+    throw new TypeError('AGENT_LIVE_EVAL_GATE_PROVENANCE_PROFILE_INVALID');
+  }
+  for (const name of REQUIRED_CHECKS) {
+    const check = attestation?.checks?.[name];
+    if (String(check?.sourceCommitSha || '').toLowerCase() !== String(commitSha).toLowerCase()) {
+      throw new Error(`AGENT_LIVE_EVAL_GATE_EVIDENCE_SHA_MISMATCH:${name}`);
+    }
+    const reportPath = String(check?.reportPath || '').trim();
+    if (!reportPath) throw new Error(`AGENT_LIVE_EVAL_GATE_REPORT_PATH_REQUIRED:${name}`);
+    const stat = statSync(path.resolve(reportPath));
+    if (!stat.isFile() || stat.size < 1 || stat.size > 64 * 1024 * 1024) {
+      throw new Error(`AGENT_LIVE_EVAL_GATE_REPORT_INVALID:${name}`);
+    }
+    // Git commit timestamps have second precision. Allow one second of clock
+    // granularity, but reject evidence produced before the immutable commit.
+    if (Number(stat.mtimeMs) + 1000 < commitTimestampMs) {
+      throw new Error(`AGENT_LIVE_EVAL_GATE_REPORT_PREDATES_COMMIT:${name}`);
+    }
+  }
+  return true;
+};
 
 const main = async () => {
   const service = String(
@@ -30,7 +61,14 @@ const main = async () => {
     service,
     account: 'AGENT_LIVE_EVAL_GATE_KEY'
   });
-  const commitSha = resolveCurrentCommitSha();
+  const repositoryRoot = path.resolve(__dirname, '../..');
+  const commitSha = resolveCurrentCommitSha({ cwd: repositoryRoot });
+  const commitTimestampMs = Number(execFileSync(
+    'git',
+    ['show', '-s', '--format=%ct', commitSha],
+    { cwd: repositoryRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+  ).trim()) * 1000;
+  assertGateAttestationProvenance({ attestation, commitSha, commitTimestampMs });
   const manifest = createSignedGateManifest({
     campaignId: attestation.campaignId,
     commitSha,
@@ -67,4 +105,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main };
+module.exports = { assertGateAttestationProvenance, main };

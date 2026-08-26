@@ -349,7 +349,10 @@ const installLiveEvalSignalHandlers = ({
   };
 };
 
-const findInterruptedJournal = async ({ artifactRoot, gate }) => {
+const findCampaignJournal = async ({ artifactRoot, gate, statuses = null }) => {
+  const allowedStatuses = Array.isArray(statuses) && statuses.length
+    ? new Set(statuses.map((status) => String(status || '').trim()))
+    : null;
   const entries = await fs.promises.readdir(artifactRoot, { withFileTypes: true }).catch(() => []);
   const matches = [];
   for (const entry of entries) {
@@ -362,7 +365,7 @@ const findInterruptedJournal = async ({ artifactRoot, gate }) => {
         journal?.campaignId === gate.campaignId &&
         journal?.commitSha === gate.commitSha &&
         journal?.matrixHash === gate.matrixHash &&
-        journal?.status === 'running'
+        (!allowedStatuses || allowedStatuses.has(String(journal?.status || '')))
       ) {
         matches.push({
           journal,
@@ -376,6 +379,11 @@ const findInterruptedJournal = async ({ artifactRoot, gate }) => {
     .localeCompare(String(left.journal.updatedAt || '')));
   return matches[0] || null;
 };
+
+const findInterruptedJournal = (options) => findCampaignJournal({
+  ...options,
+  statuses: ['running']
+});
 
 const markInterruptedJournal = async ({ found, signal = 'SIGKILL_OR_PROCESS_EXIT' }) => {
   const { journal, journalPath, reportPath } = found;
@@ -530,12 +538,23 @@ const main = async () => {
   });
   const { selectedCase, selectedCohort, selected } = resolveSelection(runtimeEnv);
   const artifactRoot = path.resolve(__dirname, '../../.artifacts');
-  const interrupted = await findInterruptedJournal({ artifactRoot, gate });
-  if (interrupted) {
-    const recovered = await markInterruptedJournal({ found: interrupted });
-    const error = Object.assign(new Error('AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN'), {
-      code: 'AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN',
-      reportPath: recovered.reportPath
+  const existingCampaign = await findCampaignJournal({ artifactRoot, gate });
+  if (existingCampaign) {
+    if (existingCampaign.journal.status === 'running') {
+      const recovered = await markInterruptedJournal({ found: existingCampaign });
+      const error = Object.assign(new Error('AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN'), {
+        code: 'AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN',
+        reportPath: recovered.reportPath
+      });
+      throw error;
+    }
+    // A signed campaign is single-use. A prior failed, interrupted, or
+    // completed journal is terminal evidence, not a checkpoint to resume.
+    // Starting again with the same campaign would repeat paid slots while the
+    // durable Provider counter merely continued from its old value.
+    const error = Object.assign(new Error('AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_FINALIZED'), {
+      code: 'AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_FINALIZED',
+      reportPath: existingCampaign.reportPath
     });
     throw error;
   }
@@ -781,6 +800,7 @@ module.exports = {
   buildTerminalFailureReport,
   createSlotJournal,
   failUnfinishedJournalSlots,
+  findCampaignJournal,
   findInterruptedJournal,
   journalResults,
   installLiveEvalSignalHandlers,

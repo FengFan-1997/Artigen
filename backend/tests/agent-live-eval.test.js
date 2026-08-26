@@ -56,11 +56,15 @@ const { RuntimeTraceSink } = require('../evaluation/harness/runtime-trace-sink')
 const { requestPromptHash } = require('../evaluation/harness/scripted-siliconflow-transport');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const {
+  assertGateAttestationProvenance
+} = require('../scripts/create-agent-live-eval-gate');
+const {
   attachCleanupEvidence,
   buildTerminalFailureReport,
   closeLiveEvalResources,
   createSlotJournal,
   failUnfinishedJournalSlots,
+  findCampaignJournal,
   findInterruptedJournal,
   journalResults,
   loadLiveEvalSecrets,
@@ -690,6 +694,41 @@ test('Live eval restart detects an interrupted slot journal, records every unfin
       await findInterruptedJournal({ artifactRoot: root, gate }),
       null
     );
+    const terminalJournal = await findCampaignJournal({ artifactRoot: root, gate });
+    assert.equal(terminalJournal.journal.status, 'interrupted');
+    assert.equal(terminalJournal.reportPath, recovered.reportPath);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Live eval treats failed and completed campaign journals as single-use terminal evidence', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-live-single-use-'));
+  const gate = {
+    campaignId: 'campaign-single-use-1',
+    commitSha: '56'.repeat(20),
+    matrixHash: '78'.repeat(32)
+  };
+  try {
+    for (const [name, status] of [['failed', 'failed'], ['completed', 'completed']]) {
+      const reportDir = path.join(root, `agent-live-eval-${name}`);
+      await fs.promises.mkdir(reportDir, { recursive: true });
+      const journal = createSlotJournal({
+        gate,
+        selectedCase: 'spreadsheet',
+        selectedCohort: 'v2',
+        selected: [{ id: 'spreadsheet' }]
+      });
+      journal.status = status;
+      journal.updatedAt = new Date(Date.now() + (status === 'completed' ? 1000 : 0)).toISOString();
+      await fs.promises.writeFile(
+        path.join(reportDir, 'slot-journal.json'),
+        JSON.stringify(journal)
+      );
+    }
+    const found = await findCampaignJournal({ artifactRoot: root, gate });
+    assert.equal(found.journal.status, 'completed');
+    assert.equal(await findInterruptedJournal({ artifactRoot: root, gate }), null);
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }
@@ -839,6 +878,50 @@ test('Live eval signed gate binds the exact SHA, matrix and complete release evi
     }),
     /GATE_SHA_MISMATCH/
   );
+});
+
+test('Live eval gate evidence must name the exact commit and postdate it', () => {
+  const commitSha = 'ef'.repeat(20);
+  const checks = Object.fromEntries([
+    'pnpmCheck',
+    'postgresMinio',
+    'qualitySet',
+    'chaos',
+    'crossWorker',
+    'browsers'
+  ].map((name) => [name, {
+    sourceCommitSha: commitSha,
+    reportPath: `/synthetic/${name}.json`
+  }]));
+  const attestation = { checks };
+  const currentStat = () => ({
+    isFile: () => true,
+    size: 100,
+    mtimeMs: 2_000
+  });
+  assert.equal(assertGateAttestationProvenance({
+    attestation,
+    commitSha,
+    commitTimestampMs: 2_000,
+    statSync: currentStat
+  }), true);
+  assert.throws(() => assertGateAttestationProvenance({
+    attestation: {
+      checks: {
+        ...checks,
+        chaos: { ...checks.chaos, sourceCommitSha: 'ab'.repeat(20) }
+      }
+    },
+    commitSha,
+    commitTimestampMs: 2_000,
+    statSync: currentStat
+  }), /EVIDENCE_SHA_MISMATCH:chaos/);
+  assert.throws(() => assertGateAttestationProvenance({
+    attestation,
+    commitSha,
+    commitTimestampMs: 4_001,
+    statSync: currentStat
+  }), /REPORT_PREDATES_COMMIT:pnpmCheck/);
 });
 
 test('Live eval final report cryptographically binds the exact 24-run report and blind score', () => {
