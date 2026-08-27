@@ -3,6 +3,10 @@ const crypto = require('node:crypto');
 const CAMPAIGN_CHECK_KIND = 'agent-live-eval-campaign-v1';
 const DISPATCH_CHECK_KIND = 'agent-live-eval-dispatch-v1';
 const ALLOWED_DISPATCH_KINDS = new Set(['qwen', 'kolors']);
+const DEFAULT_LOCK_KEEPALIVE_MS = 30_000;
+const MIN_LOCK_KEEPALIVE_MS = 5_000;
+const MAX_LOCK_KEEPALIVE_MS = 60_000;
+const LOCK_KEEPALIVE_QUERY_TIMEOUT_MS = 10_000;
 
 const sha256 = (value) => crypto
   .createHash('sha256')
@@ -20,7 +24,10 @@ class LiveEvalCampaignGuard {
     matrixHash,
     maxQwenCalls = 200,
     maxKolorsCalls = 16,
-    maxWallClockMs = 8 * 60 * 60 * 1000
+    maxWallClockMs = 8 * 60 * 60 * 1000,
+    lockKeepaliveMs = DEFAULT_LOCK_KEEPALIVE_MS,
+    scheduleTimeout = setTimeout,
+    cancelTimeout = clearTimeout
   } = {}) {
     if (!pool || typeof pool.connect !== 'function') {
       throw new TypeError('AGENT_LIVE_EVAL_CAMPAIGN_POOL_REQUIRED');
@@ -30,6 +37,9 @@ class LiveEvalCampaignGuard {
     }
     if (!isCommitSha(commitSha) || !isSha256(matrixHash)) {
       throw new TypeError('AGENT_LIVE_EVAL_CAMPAIGN_PROFILE_INVALID');
+    }
+    if (typeof scheduleTimeout !== 'function' || typeof cancelTimeout !== 'function') {
+      throw new TypeError('AGENT_LIVE_EVAL_CAMPAIGN_TIMER_INVALID');
     }
     this.pool = pool;
     this.campaignId = String(campaignId);
@@ -42,12 +52,23 @@ class LiveEvalCampaignGuard {
       60_000,
       Math.min(8 * 60 * 60 * 1000, Number(maxWallClockMs) || 8 * 60 * 60 * 1000)
     );
+    this.lockKeepaliveMs = Math.max(
+      MIN_LOCK_KEEPALIVE_MS,
+      Math.min(MAX_LOCK_KEEPALIVE_MS, Number(lockKeepaliveMs) || DEFAULT_LOCK_KEEPALIVE_MS)
+    );
+    this.scheduleTimeout = scheduleTimeout;
+    this.cancelTimeout = cancelTimeout;
     this.lockClient = null;
     this.deadlineAt = null;
     this.deadlineController = null;
     this.deadlineTimer = null;
     this.lockClientErrorHandler = null;
     this.lockClientFailed = false;
+    this.lockClientClosing = false;
+    this.lockKeepaliveTimer = null;
+    this.lockKeepaliveInFlight = null;
+    this.lockKeepaliveCount = 0;
+    this.lockKeepaliveLastSuccessAt = null;
   }
 
   handleLockClientError(client) {
@@ -58,6 +79,60 @@ class LiveEvalCampaignGuard {
       { code: 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST' }
     );
     this.deadlineController?.abort(error);
+  }
+
+  scheduleLockKeepalive(client) {
+    if (
+      this.lockKeepaliveTimer ||
+      this.lockClient !== client ||
+      this.lockClientFailed ||
+      this.lockClientClosing ||
+      this.deadlineController?.signal?.aborted
+    ) return;
+    this.lockKeepaliveTimer = this.scheduleTimeout(() => {
+      this.lockKeepaliveTimer = null;
+      if (
+        this.lockClient !== client ||
+        this.lockClientFailed ||
+        this.lockClientClosing ||
+        this.deadlineController?.signal?.aborted
+      ) return;
+      const operation = this.runLockKeepalive(client);
+      this.lockKeepaliveInFlight = operation;
+      void operation.finally(() => {
+        if (this.lockKeepaliveInFlight === operation) this.lockKeepaliveInFlight = null;
+        this.scheduleLockKeepalive(client);
+      });
+    }, this.lockKeepaliveMs);
+    this.lockKeepaliveTimer.unref?.();
+  }
+
+  async runLockKeepalive(client) {
+    try {
+      await client.query({
+        text: 'SELECT 1 AS campaign_keepalive',
+        query_timeout: LOCK_KEEPALIVE_QUERY_TIMEOUT_MS
+      });
+      if (
+        this.lockClient === client &&
+        !this.lockClientFailed &&
+        !this.lockClientClosing &&
+        !this.deadlineController?.signal?.aborted
+      ) {
+        this.lockKeepaliveCount += 1;
+        this.lockKeepaliveLastSuccessAt = new Date().toISOString();
+      }
+    } catch {
+      this.handleLockClientError(client);
+    }
+  }
+
+  stopLockKeepalive() {
+    this.lockClientClosing = true;
+    if (this.lockKeepaliveTimer) {
+      this.cancelTimeout(this.lockKeepaliveTimer);
+      this.lockKeepaliveTimer = null;
+    }
   }
 
   assertActive() {
@@ -169,10 +244,12 @@ class LiveEvalCampaignGuard {
       this.lockClient = client;
       this.lockClientErrorHandler = onClientError;
       this.lockClientFailed = false;
+      this.lockClientClosing = false;
       this.deadlineTimer = setTimeout(() => {
         this.deadlineController.abort(new Error('AGENT_LIVE_EVAL_WALL_CLOCK_LIMIT'));
       }, Math.max(1, deadline.getTime() - Date.now()));
       this.deadlineTimer.unref?.();
+      this.scheduleLockKeepalive(client);
       return this.snapshot();
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -399,7 +476,10 @@ class LiveEvalCampaignGuard {
       matrixHash: this.matrixHash,
       deadlineAt: this.deadlineAt,
       maxQwenCalls: this.maxQwenCalls,
-      maxKolorsCalls: this.maxKolorsCalls
+      maxKolorsCalls: this.maxKolorsCalls,
+      lockKeepaliveMs: this.lockKeepaliveMs,
+      lockKeepaliveCount: this.lockKeepaliveCount,
+      lockKeepaliveLastSuccessAt: this.lockKeepaliveLastSuccessAt
     });
   }
 
@@ -408,6 +488,10 @@ class LiveEvalCampaignGuard {
   }
 
   async close() {
+    this.stopLockKeepalive();
+    const keepaliveInFlight = this.lockKeepaliveInFlight;
+    if (keepaliveInFlight) await keepaliveInFlight;
+    this.lockKeepaliveInFlight = null;
     if (!this.lockClient) return;
     clearTimeout(this.deadlineTimer);
     this.deadlineTimer = null;
@@ -444,7 +528,9 @@ class LiveEvalCampaignGuard {
 module.exports = {
   ALLOWED_DISPATCH_KINDS,
   CAMPAIGN_CHECK_KIND,
+  DEFAULT_LOCK_KEEPALIVE_MS,
   DISPATCH_CHECK_KIND,
+  LOCK_KEEPALIVE_QUERY_TIMEOUT_MS,
   LiveEvalCampaignGuard,
   sha256
 };
