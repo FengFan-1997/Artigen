@@ -1612,6 +1612,15 @@ class OllamaAgentModelProvider {
         .filter(Boolean)
     )];
     let artifactRepairRequired = durable?.artifactRepairRequired === true;
+    let artifactDeclarationRetryCode = String(
+      durable?.artifactDeclarationRetryCode || ''
+    ).slice(0, 100);
+    let artifactDeclarationObservedUrls = (Array.isArray(
+      durable?.artifactDeclarationObservedUrls
+    ) ? durable.artifactDeclarationObservedUrls : [])
+      .map((value) => String(value || '').trim().slice(0, 2000))
+      .filter(Boolean)
+      .slice(0, 20);
     let approvalRecoveryAttempts = Math.max(
       0,
       Number(durable?.approvalRecoveryAttempts || 0)
@@ -1644,6 +1653,13 @@ class OllamaAgentModelProvider {
     let budgetLockdownPublished = durable?.budgetLockdownPublished === true;
     let lastFailureFingerprint = String(durable?.lastFailureFingerprint || '');
     let repeatedStateFailures = Math.max(0, Number(durable?.repeatedStateFailures || 0));
+    let lastSuccessfulShellFingerprint = String(
+      durable?.lastSuccessfulShellFingerprint || ''
+    );
+    let repeatedSuccessfulShellActions = Math.max(
+      0,
+      Number(durable?.repeatedSuccessfulShellActions || 0)
+    );
     let planUpdateSuppressed = durable?.planUpdateSuppressed === true;
     let readyToFinalize = durable?.readyToFinalize && typeof durable.readyToFinalize === 'object'
       ? durable.readyToFinalize
@@ -1692,6 +1708,8 @@ class OllamaAgentModelProvider {
         runtimeActionObserved,
         declaredArtifacts,
         artifactRepairRequired,
+        artifactDeclarationRetryCode,
+        artifactDeclarationObservedUrls,
         approvalRecoveryAttempts,
         approvalRecoveryRequired,
         subagentPlanCompleted,
@@ -1709,6 +1727,8 @@ class OllamaAgentModelProvider {
         budgetLockdownPublished,
         lastFailureFingerprint,
         repeatedStateFailures,
+        lastSuccessfulShellFingerprint,
+        repeatedSuccessfulShellActions,
         planUpdateSuppressed,
         readyToFinalize
       });
@@ -1733,8 +1753,47 @@ class OllamaAgentModelProvider {
       );
     };
 
+    const shellActionFingerprint = (argumentsValue = {}) => crypto
+      .createHash('sha256')
+      .update(JSON.stringify({
+        name: 'sandbox_shell',
+        script: String(argumentsValue?.script || '')
+      }))
+      .digest('hex');
+
     const executeTool = async (call) => {
       const args = normalizeOllamaArguments(call.arguments);
+      if (
+        runtimeV2 &&
+        artifactDeclarationRetryCode &&
+        call.name !== 'declare_artifact'
+      ) {
+        return {
+          success: false,
+          errorCode: 'AGENT_ARTIFACT_DECLARATION_RETRY_REQUIRED',
+          priorErrorCode: artifactDeclarationRetryCode,
+          observedUrls: artifactDeclarationObservedUrls,
+          correction: [
+            'Retry declare_artifact now; do not run Shell, update the plan, or inspect the unchanged file again.',
+            artifactDeclarationObservedUrls.length
+              ? 'Use only an exact URL from observedUrls and preserve its full query string.'
+              : 'Remove unsupported source URLs and any claims that depend on them.'
+          ].join(' ')
+        };
+      }
+      if (runtimeV2 && call.name === 'sandbox_shell') {
+        const shellActionHash = shellActionFingerprint(args);
+        if (
+          repeatedSuccessfulShellActions >= 1 &&
+          lastSuccessfulShellFingerprint === shellActionHash
+        ) {
+          return {
+            success: false,
+            errorCode: 'AGENT_RUNTIME_STATE_LOOP',
+            correction: 'The identical Shell action already succeeded and did not require another execution. Stop this unchanged loop and report the remaining limitation.'
+          };
+        }
+      }
       if (!planPublished && call.name !== 'update_plan') {
         const firstAction = call.name === 'sandbox_shell'
           ? String(args.purpose || '').trim().slice(0, 200)
@@ -1943,6 +2002,8 @@ class OllamaAgentModelProvider {
           filename: String(args.filename || '')
         };
         const artifact = await callbacks.declareArtifact(args);
+        artifactDeclarationRetryCode = '';
+        artifactDeclarationObservedUrls = [];
         if (runtimeV2) runtimeActionObserved = true;
         const declared = {
           artifact_id: String(artifact.artifactId || ''),
@@ -2188,6 +2249,26 @@ class OllamaAgentModelProvider {
                 'AGENT_ARTIFACT_VERIFICATION_FAILED',
                 'AGENT_ARTIFACT_EMPTY'
               ].includes(error?.code);
+              const observedUrls = [
+                ...(Array.isArray(error?.details?.observedUrls)
+                  ? error.details.observedUrls
+                  : []),
+                ...declaredArtifacts.flatMap((artifact) => (
+                  Array.isArray(artifact?.sources)
+                    ? artifact.sources.map((source) => source?.url)
+                    : []
+                ))
+              ]
+                .map((value) => String(value || '').trim().slice(0, 2000))
+                .filter(Boolean)
+                .filter((value, index, values) => values.indexOf(value) === index)
+                .slice(0, 20);
+              artifactDeclarationRetryCode = artifactRepairRequired
+                ? ''
+                : String(error?.code || '').slice(0, 100);
+              artifactDeclarationObservedUrls = artifactRepairRequired
+                ? []
+                : observedUrls;
               completedOutput = {
                 callId: pendingCall.callId,
                 name: pendingCall.name,
@@ -2196,9 +2277,7 @@ class OllamaAgentModelProvider {
                   errorCode: error.code,
                   filename: String(error?.details?.filename || '').slice(0, 240),
                   verifier: String(error?.details?.verifier || '').slice(0, 500),
-                  observedUrls: Array.isArray(error?.details?.observedUrls)
-                    ? error.details.observedUrls.slice(0, 20)
-                    : [],
+                  observedUrls,
                   correction: artifactRepairRequired
                     ? 'Use sandbox_shell to create or repair the file and verify it opens successfully, then call declare_artifact again with the exact path.'
                     : error?.code === 'AGENT_REPORT_SOURCES_REQUIRED'
@@ -2220,6 +2299,7 @@ class OllamaAgentModelProvider {
           }
           await saveDurableState();
         }
+        let runtimeTerminalLoopDetected = false;
         if (runtimeV2) {
           let resultValue = {};
           try {
@@ -2229,6 +2309,9 @@ class OllamaAgentModelProvider {
             resultValue?.url,
             ...(Array.isArray(resultValue?.sources)
               ? resultValue.sources.map((source) => source?.url)
+              : []),
+            ...(Array.isArray(resultValue?.observedUrls)
+              ? resultValue.observedUrls
               : [])
           ].filter(Boolean);
           const changedFiles = [
@@ -2263,6 +2346,7 @@ class OllamaAgentModelProvider {
             retryHint: resultValue?.correction || null,
             fingerprint: runtimeFingerprint
           });
+          runtimeTerminalLoopDetected = resultValue?.errorCode === 'AGENT_RUNTIME_STATE_LOOP';
           workingState = reduceWorkingState(workingState, {
             ...envelope.stateDelta,
             completedEvidence: envelope.ok ? [envelope] : [],
@@ -2271,11 +2355,28 @@ class OllamaAgentModelProvider {
           if (envelope.ok) {
             lastFailureFingerprint = '';
             repeatedStateFailures = 0;
+            if (pendingCall?.name === 'sandbox_shell') {
+              lastSuccessfulShellFingerprint = shellActionFingerprint(
+                pendingCall?.arguments
+              );
+              repeatedSuccessfulShellActions = 1;
+            } else {
+              lastSuccessfulShellFingerprint = '';
+              repeatedSuccessfulShellActions = 0;
+            }
+          } else if (runtimeTerminalLoopDetected) {
+            lastFailureFingerprint = envelope.fingerprint;
+            repeatedStateFailures = 1;
+            repeatedSuccessfulShellActions += 1;
           } else if (lastFailureFingerprint === envelope.fingerprint) {
             repeatedStateFailures += 1;
+            lastSuccessfulShellFingerprint = '';
+            repeatedSuccessfulShellActions = 0;
           } else {
             lastFailureFingerprint = envelope.fingerprint;
             repeatedStateFailures = 1;
+            lastSuccessfulShellFingerprint = '';
+            repeatedSuccessfulShellActions = 0;
           }
           completedOutput = {
             ...completedOutput,
@@ -2311,6 +2412,9 @@ class OllamaAgentModelProvider {
         }
         await saveDurableState();
         if (runtimeV2 && repeatedStateFailures > 1) {
+          throw new ApiError(409, 'AGENT_RUNTIME_STATE_LOOP', { retryable: false });
+        }
+        if (runtimeV2 && runtimeTerminalLoopDetected) {
           throw new ApiError(409, 'AGENT_RUNTIME_STATE_LOOP', { retryable: false });
         }
       }
@@ -2600,6 +2704,14 @@ class OllamaAgentModelProvider {
         request.tool_choice = {
           type: 'function',
           function: { name: toolArgumentRetryName }
+        };
+      } else if (
+        artifactDeclarationRetryCode &&
+        allowedToolNames.has('declare_artifact')
+      ) {
+        request.tool_choice = {
+          type: 'function',
+          function: { name: 'declare_artifact' }
         };
       } else if (approvalRecoveryRequired || artifactRepairRequired) {
         request.tool_choice = {
