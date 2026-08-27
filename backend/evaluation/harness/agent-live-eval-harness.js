@@ -377,7 +377,7 @@ class AgentLiveEvalHarness {
   }
 
   assertWallClock() {
-    if (this.campaignGuard.signal.aborted) throw new Error('AGENT_LIVE_EVAL_WALL_CLOCK_LIMIT');
+    this.campaignGuard.assertActive();
   }
 
   async createSyntheticUsers() {

@@ -46,11 +46,57 @@ class LiveEvalCampaignGuard {
     this.deadlineAt = null;
     this.deadlineController = null;
     this.deadlineTimer = null;
+    this.lockClientErrorHandler = null;
+    this.lockClientFailed = false;
+  }
+
+  handleLockClientError(client) {
+    if (this.lockClient !== client || this.lockClientFailed) return;
+    this.lockClientFailed = true;
+    const error = Object.assign(
+      new Error('AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST'),
+      { code: 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST' }
+    );
+    this.deadlineController?.abort(error);
+  }
+
+  assertActive() {
+    if (!this.deadlineController) {
+      throw new Error('AGENT_LIVE_EVAL_CAMPAIGN_NOT_INITIALIZED');
+    }
+    if (this.deadlineController.signal.aborted) {
+      const reason = this.deadlineController.signal.reason;
+      throw reason instanceof Error
+        ? reason
+        : new Error('AGENT_LIVE_EVAL_CAMPAIGN_ABORTED');
+    }
+    if (!this.lockClient || this.lockClientFailed) {
+      throw new Error('AGENT_LIVE_EVAL_CAMPAIGN_NOT_INITIALIZED');
+    }
   }
 
   async initialize() {
-    if (this.lockClient) return this.snapshot();
+    if (this.lockClient) {
+      this.assertActive();
+      return this.snapshot();
+    }
     const client = await this.pool.connect();
+    let initializationConnectionError = null;
+    const onClientError = () => {
+      if (this.lockClient === client) {
+        this.handleLockClientError(client);
+        return;
+      }
+      initializationConnectionError = Object.assign(
+        new Error('AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST'),
+        { code: 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST' }
+      );
+    };
+    // A checked-out pg Client has no pool-level idle error handler. Keep this
+    // listener attached for the full advisory-lock lifetime so a DEV database
+    // restart aborts the campaign instead of becoming an uncaught EventEmitter
+    // error that loses the partial report and cleanup path.
+    client.on('error', onClientError);
     try {
       const locked = await client.query(
         `SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked`,
@@ -117,9 +163,12 @@ class LiveEvalCampaignGuard {
         throw new Error('AGENT_LIVE_EVAL_WALL_CLOCK_LIMIT');
       }
       await client.query('COMMIT');
-      this.lockClient = client;
       this.deadlineAt = deadline.toISOString();
       this.deadlineController = new AbortController();
+      if (initializationConnectionError) throw initializationConnectionError;
+      this.lockClient = client;
+      this.lockClientErrorHandler = onClientError;
+      this.lockClientFailed = false;
       this.deadlineTimer = setTimeout(() => {
         this.deadlineController.abort(new Error('AGENT_LIVE_EVAL_WALL_CLOCK_LIMIT'));
       }, Math.max(1, deadline.getTime() - Date.now()));
@@ -131,7 +180,8 @@ class LiveEvalCampaignGuard {
         `SELECT pg_advisory_unlock(hashtextextended($1,0))`,
         [`agent-live-eval-campaign:${this.campaignHash}`]
       ).catch(() => {});
-      client.release();
+      client.off('error', onClientError);
+      client.release(true);
       throw error;
     }
   }
@@ -155,8 +205,7 @@ class LiveEvalCampaignGuard {
     if (!ALLOWED_DISPATCH_KINDS.has(kind)) {
       throw new TypeError('AGENT_LIVE_EVAL_DISPATCH_KIND_INVALID');
     }
-    if (!this.lockClient) throw new Error('AGENT_LIVE_EVAL_CAMPAIGN_NOT_INITIALIZED');
-    if (this.signal.aborted) throw new Error('AGENT_LIVE_EVAL_WALL_CLOCK_LIMIT');
+    this.assertActive();
     // The session-lock client is intentionally kept idle so it can continue
     // proving that this is the only campaign runner. Physical Provider calls
     // can arrive concurrently from parent/child Agents, so each reservation
@@ -362,14 +411,33 @@ class LiveEvalCampaignGuard {
     if (!this.lockClient) return;
     clearTimeout(this.deadlineTimer);
     this.deadlineTimer = null;
+    const priorAbortReason = this.deadlineController?.signal?.reason;
     this.deadlineController?.abort(new Error('AGENT_LIVE_EVAL_CAMPAIGN_CLOSED'));
     const client = this.lockClient;
+    let connectionFailed = this.lockClientFailed;
+    const onClientError = this.lockClientErrorHandler;
+    if (!connectionFailed) {
+      const unlocked = await client.query(
+        `SELECT pg_advisory_unlock(hashtextextended($1,0))`,
+        [`agent-live-eval-campaign:${this.campaignHash}`]
+      ).catch(() => {
+        connectionFailed = true;
+        return null;
+      });
+      if (unlocked && unlocked.rows[0]?.pg_advisory_unlock !== true) connectionFailed = true;
+    }
     this.lockClient = null;
-    await client.query(
-      `SELECT pg_advisory_unlock(hashtextextended($1,0))`,
-      [`agent-live-eval-campaign:${this.campaignHash}`]
-    ).catch(() => {});
-    client.release();
+    this.lockClientErrorHandler = null;
+    if (onClientError) client.off('error', onClientError);
+    client.release(connectionFailed);
+    if (connectionFailed) {
+      if (priorAbortReason?.code === 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST') {
+        throw priorAbortReason;
+      }
+      const error = new Error('AGENT_LIVE_EVAL_CAMPAIGN_UNLOCK_FAILED');
+      error.code = 'AGENT_LIVE_EVAL_CAMPAIGN_UNLOCK_FAILED';
+      throw error;
+    }
   }
 }
 
