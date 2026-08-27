@@ -121,6 +121,10 @@ const loadLiveEvalSecrets = ({
     APP_ENV: 'dev',
     AGENT_LIVE_EVAL_MODE: 'true',
     AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1',
+    // The DEV object store uses a custom endpoint whose wildcard certificate
+    // covers the endpoint host, not bucket.endpoint virtual-host requests.
+    // Path-style requests preserve normal TLS verification; never disable it.
+    S3_FORCE_PATH_STYLE: String(runtimeEnv.S3_FORCE_PATH_STYLE || '1'),
     CUA_PYTHON: path.resolve(__dirname, '../.venv-agent/bin/python'),
     AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: positivePricingOrDefault({
       value: runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION,
@@ -349,6 +353,7 @@ const installLiveEvalSignalHandlers = ({
   journal,
   abort = () => {},
   persist = async () => {},
+  onInterrupt = async () => {},
   processTarget = process,
   signals = ['SIGINT', 'SIGTERM']
 } = {}) => {
@@ -374,6 +379,8 @@ const installLiveEvalSignalHandlers = ({
         abort(interruptionError);
       } catch {}
       void Promise.resolve()
+        .then(() => persist())
+        .then(() => onInterrupt({ signal, error: interruptionError }))
         .then(() => persist())
         .catch((error) => { persistenceError = error; })
         .finally(() => resolveInterrupted(interruptionError));
@@ -698,7 +705,12 @@ const main = async () => {
   const signalState = installLiveEvalSignalHandlers({
     journal,
     abort: (error) => harness?.campaignGuard?.abort(error),
-    persist: () => writeReport({ report: journal, reportDir, reportPath: journalPath })
+    persist: () => writeReport({ report: journal, reportDir, reportPath: journalPath }),
+    onInterrupt: async () => {
+      if (!harness) return;
+      await harness.cancelActiveCohort('v1');
+      await harness.cancelActiveCohort('v2');
+    }
   });
   try {
     await poolState.assertHealthy();

@@ -320,7 +320,16 @@ const runtimeInvariantErrors = (snapshot, reconstructed = reconstructRuntimeStat
     }
   }
   if (run.status === 'succeeded') {
-    if (run.semantic_verification?.passed !== true) errors.push('semantic_verification_missing');
+    // Runtime V1 predates the semantic-verifier record for artifact runs. Its
+    // baseline is still useful when at least one deterministic artifact and
+    // terminal accounting pass. Zero-file text success always needs semantic
+    // verification, regardless of runtime version.
+    const requiresSemanticVerification = (
+      Number(run.runtime_version || 2) >= 2 || artifacts.length === 0
+    );
+    if (requiresSemanticVerification && run.semantic_verification?.passed !== true) {
+      errors.push('semantic_verification_missing');
+    }
     if (artifacts.some((artifact) => artifact.verification_status !== 'passed')) {
       errors.push('artifact_verification_incomplete');
     }

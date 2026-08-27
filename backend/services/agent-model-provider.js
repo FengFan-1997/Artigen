@@ -224,6 +224,7 @@ const FUNCTION_TOOLS = Object.freeze([
     description: [
       'Run a bounded POSIX Bash script inside the isolated Linux sandbox. The script field is Bash, never raw Python or JavaScript source.',
       'Invoke Python or Node through an explicit quoted heredoc such as python3 <<\'PY\' or node <<\'JS\'.',
+      'JSON-decode multiline scripts to real line breaks; never send literal backslash+n text between heredoc lines.',
       'Use this for file creation, LibreOffice/Python/Node/FFmpeg tooling, and deterministic checks.',
       'Never request credentials or secrets. Work only under /tmp/artigen-workspace.'
     ].join(' '),
@@ -667,6 +668,22 @@ const normalizeReportPdfToolAlias = ({ name, rawArguments, toolProfile }) => {
 
 const assertPosixShellScript = (value) => {
   const script = String(value || '').trim();
+  const escapedHeredocNewline = (
+    !/[\r\n]/u.test(script) &&
+    /<<-?\s*(?:'[^']+'|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\\n/u.test(script)
+  );
+  if (escapedHeredocNewline) {
+    throw new ApiError(400, 'AGENT_SHELL_SCRIPT_ESCAPED_NEWLINES', {
+      details: {
+        expected: 'posix_bash',
+        correction: [
+          'The decoded script contains literal backslash+n text where real line breaks are required.',
+          'Encode each JSON line break once so the decoded script contains an actual newline; do not double-escape it.',
+          'Keep the quoted heredoc closing delimiter alone on its own decoded line.'
+        ].join(' ')
+      }
+    });
+  }
   const firstMeaningfulLine = script
     .split(/\r?\n/u)
     .map((line) => line.trim())
@@ -2056,7 +2073,10 @@ class OllamaAgentModelProvider {
             );
             const correctableShellContractError = (
               pendingCall.name === 'sandbox_shell' &&
-              error?.code === 'AGENT_SHELL_SCRIPT_TYPE_INVALID'
+              [
+                'AGENT_SHELL_SCRIPT_TYPE_INVALID',
+                'AGENT_SHELL_SCRIPT_ESCAPED_NEWLINES'
+              ].includes(error?.code)
             );
             if (
               !correctableDelegationError &&

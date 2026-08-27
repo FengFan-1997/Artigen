@@ -72,6 +72,7 @@ const {
   loadLiveEvalSecrets,
   liveEvalPoolOptions,
   disposeLiveEvalPoolErrorHandlerAfterCleanup,
+  installLiveEvalSignalHandlers,
   installLiveEvalPoolErrorHandler,
   isLiveEvalDatabaseConnectionError,
   markInterruptedJournal,
@@ -281,6 +282,7 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
   );
   assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION, '20');
   assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION, '160');
+  assert.equal(loaded.runtimeEnv.S3_FORCE_PATH_STYLE, '1');
   assert.equal(loaded.evidenceKeyMaterial, secrets.get('AGENT_LIVE_EVAL_EVIDENCE_KEY'));
   assert.throws(
     () => loadLiveEvalSecrets({ service: 'artigen-production', readSecret: () => 'x' }),
@@ -605,6 +607,65 @@ test('Live Harness closes the campaign before infrastructure and does so once', 
   harness.assetAdapter = { client: { destroy: () => order.push('s3') } };
   await Promise.all([harness.close(), harness.close()]);
   assert.deepEqual(order, ['campaign', 'terminal', 'worker', 's3']);
+});
+
+test('Live Harness close cancels both active synthetic cohorts before terminal cleanup', async () => {
+  const order = [];
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.baselineUserId = '11111111-1111-4111-8111-111111111111';
+  harness.candidateUserId = '22222222-2222-4222-8222-222222222222';
+  harness.campaignGuard = { close: async () => order.push('campaign') };
+  harness.pool = {
+    query: async (_statement, [userId]) => ({
+      rows: [{ id: userId === harness.baselineUserId ? 'run-v1' : 'run-v2' }],
+      rowCount: 1
+    })
+  };
+  harness.runService = {
+    cancelRun: async ({ userId, runId }) => order.push(`cancel:${userId}:${runId}`)
+  };
+  harness.worker = {
+    cleanupTerminalState: async () => {
+      order.push('terminal');
+      return { sandboxCleanup: { destroyed: 0, failed: 0 } };
+    },
+    stopInfrastructure: async () => order.push('worker')
+  };
+  harness.assetAdapter = { client: { destroy: () => order.push('s3') } };
+
+  await harness.close();
+
+  assert.deepEqual(order, [
+    'campaign',
+    `cancel:${harness.baselineUserId}:run-v1`,
+    `cancel:${harness.candidateUserId}:run-v2`,
+    'terminal',
+    'worker',
+    's3'
+  ]);
+});
+
+test('Live Harness cleanup fails closed when an active synthetic run cannot be cancelled', async () => {
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.baselineUserId = '11111111-1111-4111-8111-111111111111';
+  harness.candidateUserId = '22222222-2222-4222-8222-222222222222';
+  harness.campaignGuard = { close: async () => {} };
+  harness.pool = {
+    query: async (_statement, [userId]) => ({
+      rows: userId === harness.baselineUserId ? [{ id: 'run-v1' }] : [],
+      rowCount: userId === harness.baselineUserId ? 1 : 0
+    })
+  };
+  harness.runService = {
+    cancelRun: async () => { throw new Error('synthetic cancellation failure'); }
+  };
+  harness.worker = {
+    cleanupTerminalState: async () => ({ sandboxCleanup: { destroyed: 0, failed: 0 } }),
+    stopInfrastructure: async () => {}
+  };
+  harness.assetAdapter = { client: { destroy: () => {} } };
+
+  await assert.rejects(harness.close(), /AGENT_LIVE_EVAL_CLOSE_FAILED/);
 });
 
 test('Live Harness reports terminal cleanup failure but still stops infrastructure', async () => {
@@ -970,6 +1031,32 @@ test('Live eval runner signal handling persists a real child-process SIGTERM int
     if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     await fs.promises.rm(root, { recursive: true, force: true });
   }
+});
+
+test('Live eval signal handling persists before and after active-run cancellation', async () => {
+  const processTarget = new EventEmitter();
+  const journal = {
+    status: 'running',
+    slots: {
+      'signal:v1': { scenarioId: 'signal', cohort: 'v1', status: 'running' }
+    }
+  };
+  const order = [];
+  const state = installLiveEvalSignalHandlers({
+    journal,
+    processTarget,
+    abort: () => order.push('abort'),
+    persist: async () => order.push('persist'),
+    onInterrupt: async ({ signal }) => order.push(`cancel:${signal}`)
+  });
+
+  processTarget.emit('SIGTERM');
+  await state.interrupted;
+
+  assert.deepEqual(order, ['abort', 'persist', 'cancel:SIGTERM', 'persist']);
+  assert.equal(journal.status, 'interrupted');
+  assert.equal(journal.slots['signal:v1'].status, 'failed');
+  state.dispose();
 });
 
 test('Live eval signed gate binds the exact SHA, matrix and complete release evidence', () => {

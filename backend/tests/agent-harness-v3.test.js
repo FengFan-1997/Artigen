@@ -278,6 +278,30 @@ test('Harness V3 replay oracle reconstructs terminal text runs without trusting 
   assert.equal(reconstructed.phaseFromEvents, 'succeeded');
   assert.deepEqual(runtimeInvariantErrors(snapshot, reconstructed), []);
 
+  const legacy = structuredClone(snapshot);
+  legacy.run.runtime_version = 1;
+  legacy.run.semantic_verification = null;
+  legacy.artifacts = [{ id: 'legacy-artifact', verification_status: 'passed' }];
+  assert.equal(
+    runtimeInvariantErrors(legacy).includes('semantic_verification_missing'),
+    false
+  );
+
+  const legacyText = structuredClone(legacy);
+  legacyText.artifacts = [];
+  assert.equal(
+    runtimeInvariantErrors(legacyText).includes('semantic_verification_missing'),
+    true
+  );
+
+  const current = structuredClone(snapshot);
+  current.run.runtime_version = 2;
+  current.run.semantic_verification = null;
+  assert.equal(
+    runtimeInvariantErrors(current).includes('semantic_verification_missing'),
+    true
+  );
+
   const invalid = structuredClone(snapshot);
   invalid.run.status = 'failed';
   invalid.run.final_text_sha256 = finalHash;
