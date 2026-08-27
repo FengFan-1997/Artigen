@@ -3,10 +3,6 @@ const crypto = require('node:crypto');
 const CAMPAIGN_CHECK_KIND = 'agent-live-eval-campaign-v1';
 const DISPATCH_CHECK_KIND = 'agent-live-eval-dispatch-v1';
 const ALLOWED_DISPATCH_KINDS = new Set(['qwen', 'kolors']);
-const DEFAULT_LOCK_KEEPALIVE_MS = 30_000;
-const MIN_LOCK_KEEPALIVE_MS = 5_000;
-const MAX_LOCK_KEEPALIVE_MS = 60_000;
-const LOCK_KEEPALIVE_QUERY_TIMEOUT_MS = 10_000;
 
 const sha256 = (value) => crypto
   .createHash('sha256')
@@ -24,10 +20,7 @@ class LiveEvalCampaignGuard {
     matrixHash,
     maxQwenCalls = 200,
     maxKolorsCalls = 16,
-    maxWallClockMs = 8 * 60 * 60 * 1000,
-    lockKeepaliveMs = DEFAULT_LOCK_KEEPALIVE_MS,
-    scheduleTimeout = setTimeout,
-    cancelTimeout = clearTimeout
+    maxWallClockMs = 8 * 60 * 60 * 1000
   } = {}) {
     if (!pool || typeof pool.connect !== 'function') {
       throw new TypeError('AGENT_LIVE_EVAL_CAMPAIGN_POOL_REQUIRED');
@@ -37,9 +30,6 @@ class LiveEvalCampaignGuard {
     }
     if (!isCommitSha(commitSha) || !isSha256(matrixHash)) {
       throw new TypeError('AGENT_LIVE_EVAL_CAMPAIGN_PROFILE_INVALID');
-    }
-    if (typeof scheduleTimeout !== 'function' || typeof cancelTimeout !== 'function') {
-      throw new TypeError('AGENT_LIVE_EVAL_CAMPAIGN_TIMER_INVALID');
     }
     this.pool = pool;
     this.campaignId = String(campaignId);
@@ -52,87 +42,11 @@ class LiveEvalCampaignGuard {
       60_000,
       Math.min(8 * 60 * 60 * 1000, Number(maxWallClockMs) || 8 * 60 * 60 * 1000)
     );
-    this.lockKeepaliveMs = Math.max(
-      MIN_LOCK_KEEPALIVE_MS,
-      Math.min(MAX_LOCK_KEEPALIVE_MS, Number(lockKeepaliveMs) || DEFAULT_LOCK_KEEPALIVE_MS)
-    );
-    this.scheduleTimeout = scheduleTimeout;
-    this.cancelTimeout = cancelTimeout;
-    this.lockClient = null;
+    this.claimed = false;
+    this.campaignCheckId = null;
     this.deadlineAt = null;
     this.deadlineController = null;
     this.deadlineTimer = null;
-    this.lockClientErrorHandler = null;
-    this.lockClientFailed = false;
-    this.lockClientClosing = false;
-    this.lockKeepaliveTimer = null;
-    this.lockKeepaliveInFlight = null;
-    this.lockKeepaliveCount = 0;
-    this.lockKeepaliveLastSuccessAt = null;
-  }
-
-  handleLockClientError(client) {
-    if (this.lockClient !== client || this.lockClientFailed) return;
-    this.lockClientFailed = true;
-    const error = Object.assign(
-      new Error('AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST'),
-      { code: 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST' }
-    );
-    this.deadlineController?.abort(error);
-  }
-
-  scheduleLockKeepalive(client) {
-    if (
-      this.lockKeepaliveTimer ||
-      this.lockClient !== client ||
-      this.lockClientFailed ||
-      this.lockClientClosing ||
-      this.deadlineController?.signal?.aborted
-    ) return;
-    this.lockKeepaliveTimer = this.scheduleTimeout(() => {
-      this.lockKeepaliveTimer = null;
-      if (
-        this.lockClient !== client ||
-        this.lockClientFailed ||
-        this.lockClientClosing ||
-        this.deadlineController?.signal?.aborted
-      ) return;
-      const operation = this.runLockKeepalive(client);
-      this.lockKeepaliveInFlight = operation;
-      void operation.finally(() => {
-        if (this.lockKeepaliveInFlight === operation) this.lockKeepaliveInFlight = null;
-        this.scheduleLockKeepalive(client);
-      });
-    }, this.lockKeepaliveMs);
-    this.lockKeepaliveTimer.unref?.();
-  }
-
-  async runLockKeepalive(client) {
-    try {
-      await client.query({
-        text: 'SELECT 1 AS campaign_keepalive',
-        query_timeout: LOCK_KEEPALIVE_QUERY_TIMEOUT_MS
-      });
-      if (
-        this.lockClient === client &&
-        !this.lockClientFailed &&
-        !this.lockClientClosing &&
-        !this.deadlineController?.signal?.aborted
-      ) {
-        this.lockKeepaliveCount += 1;
-        this.lockKeepaliveLastSuccessAt = new Date().toISOString();
-      }
-    } catch {
-      this.handleLockClientError(client);
-    }
-  }
-
-  stopLockKeepalive() {
-    this.lockClientClosing = true;
-    if (this.lockKeepaliveTimer) {
-      this.cancelTimeout(this.lockKeepaliveTimer);
-      this.lockKeepaliveTimer = null;
-    }
   }
 
   assertActive() {
@@ -145,42 +59,27 @@ class LiveEvalCampaignGuard {
         ? reason
         : new Error('AGENT_LIVE_EVAL_CAMPAIGN_ABORTED');
     }
-    if (!this.lockClient || this.lockClientFailed) {
+    if (!this.claimed || !Number.isSafeInteger(this.campaignCheckId)) {
       throw new Error('AGENT_LIVE_EVAL_CAMPAIGN_NOT_INITIALIZED');
     }
   }
 
   async initialize() {
-    if (this.lockClient) {
+    if (this.claimed) {
       this.assertActive();
       return this.snapshot();
     }
     const client = await this.pool.connect();
-    let initializationConnectionError = null;
-    const onClientError = () => {
-      if (this.lockClient === client) {
-        this.handleLockClientError(client);
-        return;
-      }
-      initializationConnectionError = Object.assign(
-        new Error('AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST'),
-        { code: 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST' }
-      );
-    };
-    // A checked-out pg Client has no pool-level idle error handler. Keep this
-    // listener attached for the full advisory-lock lifetime so a DEV database
-    // restart aborts the campaign instead of becoming an uncaught EventEmitter
-    // error that loses the partial report and cleanup path.
-    client.on('error', onClientError);
+    let destroyClient = false;
     try {
-      const locked = await client.query(
-        `SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked`,
+      await client.query('BEGIN');
+      // The transaction lock only serializes the one-time claim. The durable
+      // quality-check row is the global claim, so a multi-hour campaign never
+      // depends on one fragile PostgreSQL session staying connected.
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
         [`agent-live-eval-campaign:${this.campaignHash}`]
       );
-      if (locked.rows[0]?.locked !== true) {
-        throw new Error('AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_RUNNING');
-      }
-      await client.query('BEGIN');
       const selected = await client.query(
         `SELECT id,metrics,created_at
            FROM agent_quality_checks
@@ -190,45 +89,34 @@ class LiveEvalCampaignGuard {
         [CAMPAIGN_CHECK_KIND, this.campaignHash]
       );
       if (selected.rowCount > 1) throw new Error('AGENT_LIVE_EVAL_CAMPAIGN_DUPLICATE');
-      let metrics;
-      if (!selected.rowCount) {
-        const inserted = await client.query(
-          `INSERT INTO agent_quality_checks
-            (check_kind,status,score,codes,metrics,expires_at)
-           VALUES ($1,'passed',100,'[]'::jsonb,
-             jsonb_build_object(
-               'campaignHash',$2::text,
-               'commitSha',$3::text,
-               'matrixHash',$4::text,
-               'maxQwenCalls',$5::integer,
-               'maxKolorsCalls',$6::integer,
-               'startedAt',clock_timestamp(),
-               'deadlineAt',clock_timestamp()+($7::bigint * interval '1 millisecond')
-             ),
-             clock_timestamp()+interval '30 days')
-           RETURNING metrics`,
-          [
-            CAMPAIGN_CHECK_KIND,
-            this.campaignHash,
-            this.commitSha,
-            this.matrixHash,
-            this.maxQwenCalls,
-            this.maxKolorsCalls,
-            this.maxWallClockMs
-          ]
-        );
-        metrics = inserted.rows[0].metrics;
-      } else {
-        metrics = selected.rows[0].metrics;
-      }
-      if (
-        String(metrics?.commitSha || '').toLowerCase() !== this.commitSha ||
-        String(metrics?.matrixHash || '').toLowerCase() !== this.matrixHash ||
-        Number(metrics?.maxQwenCalls) !== this.maxQwenCalls ||
-        Number(metrics?.maxKolorsCalls) !== this.maxKolorsCalls
-      ) {
-        throw new Error('AGENT_LIVE_EVAL_CAMPAIGN_PROFILE_MISMATCH');
-      }
+      if (selected.rowCount) throw new Error('AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_CLAIMED');
+      const inserted = await client.query(
+        `INSERT INTO agent_quality_checks
+          (check_kind,status,score,codes,metrics,expires_at)
+         VALUES ($1,'passed',100,'[]'::jsonb,
+           jsonb_build_object(
+             'campaignHash',$2::text,
+             'commitSha',$3::text,
+             'matrixHash',$4::text,
+             'maxQwenCalls',$5::integer,
+             'maxKolorsCalls',$6::integer,
+             'claimMode','durable-once-v1',
+             'startedAt',clock_timestamp(),
+             'deadlineAt',clock_timestamp()+($7::bigint * interval '1 millisecond')
+           ),
+           clock_timestamp()+interval '30 days')
+         RETURNING id,metrics`,
+        [
+          CAMPAIGN_CHECK_KIND,
+          this.campaignHash,
+          this.commitSha,
+          this.matrixHash,
+          this.maxQwenCalls,
+          this.maxKolorsCalls,
+          this.maxWallClockMs
+        ]
+      );
+      const metrics = inserted.rows[0].metrics;
       const deadline = new Date(metrics?.deadlineAt);
       if (!Number.isFinite(deadline.getTime())) {
         throw new Error('AGENT_LIVE_EVAL_CAMPAIGN_DEADLINE_INVALID');
@@ -240,26 +128,19 @@ class LiveEvalCampaignGuard {
       await client.query('COMMIT');
       this.deadlineAt = deadline.toISOString();
       this.deadlineController = new AbortController();
-      if (initializationConnectionError) throw initializationConnectionError;
-      this.lockClient = client;
-      this.lockClientErrorHandler = onClientError;
-      this.lockClientFailed = false;
-      this.lockClientClosing = false;
+      this.claimed = true;
+      this.campaignCheckId = Number(inserted.rows[0].id);
       this.deadlineTimer = setTimeout(() => {
         this.deadlineController.abort(new Error('AGENT_LIVE_EVAL_WALL_CLOCK_LIMIT'));
       }, Math.max(1, deadline.getTime() - Date.now()));
       this.deadlineTimer.unref?.();
-      this.scheduleLockKeepalive(client);
       return this.snapshot();
     } catch (error) {
+      destroyClient = true;
       await client.query('ROLLBACK').catch(() => {});
-      await client.query(
-        `SELECT pg_advisory_unlock(hashtextextended($1,0))`,
-        [`agent-live-eval-campaign:${this.campaignHash}`]
-      ).catch(() => {});
-      client.off('error', onClientError);
-      client.release(true);
       throw error;
+    } finally {
+      client.release(destroyClient);
     }
   }
 
@@ -283,10 +164,10 @@ class LiveEvalCampaignGuard {
       throw new TypeError('AGENT_LIVE_EVAL_DISPATCH_KIND_INVALID');
     }
     this.assertActive();
-    // The session-lock client is intentionally kept idle so it can continue
-    // proving that this is the only campaign runner. Physical Provider calls
-    // can arrive concurrently from parent/child Agents, so each reservation
-    // gets an independent transaction and a campaign-scoped xact lock.
+    // The durable campaign row proves that this signed campaign was claimed.
+    // Physical Provider calls can arrive concurrently from parent/child
+    // Agents, so each reservation gets an independent transaction and a
+    // campaign-scoped xact lock.
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -477,9 +358,8 @@ class LiveEvalCampaignGuard {
       deadlineAt: this.deadlineAt,
       maxQwenCalls: this.maxQwenCalls,
       maxKolorsCalls: this.maxKolorsCalls,
-      lockKeepaliveMs: this.lockKeepaliveMs,
-      lockKeepaliveCount: this.lockKeepaliveCount,
-      lockKeepaliveLastSuccessAt: this.lockKeepaliveLastSuccessAt
+      claimMode: 'durable-once-v1',
+      campaignCheckId: this.campaignCheckId
     });
   }
 
@@ -488,49 +368,18 @@ class LiveEvalCampaignGuard {
   }
 
   async close() {
-    this.stopLockKeepalive();
-    const keepaliveInFlight = this.lockKeepaliveInFlight;
-    if (keepaliveInFlight) await keepaliveInFlight;
-    this.lockKeepaliveInFlight = null;
-    if (!this.lockClient) return;
+    if (!this.claimed) return;
     clearTimeout(this.deadlineTimer);
     this.deadlineTimer = null;
-    const priorAbortReason = this.deadlineController?.signal?.reason;
     this.deadlineController?.abort(new Error('AGENT_LIVE_EVAL_CAMPAIGN_CLOSED'));
-    const client = this.lockClient;
-    let connectionFailed = this.lockClientFailed;
-    const onClientError = this.lockClientErrorHandler;
-    if (!connectionFailed) {
-      const unlocked = await client.query(
-        `SELECT pg_advisory_unlock(hashtextextended($1,0))`,
-        [`agent-live-eval-campaign:${this.campaignHash}`]
-      ).catch(() => {
-        connectionFailed = true;
-        return null;
-      });
-      if (unlocked && unlocked.rows[0]?.pg_advisory_unlock !== true) connectionFailed = true;
-    }
-    this.lockClient = null;
-    this.lockClientErrorHandler = null;
-    if (onClientError) client.off('error', onClientError);
-    client.release(connectionFailed);
-    if (connectionFailed) {
-      if (priorAbortReason?.code === 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST') {
-        throw priorAbortReason;
-      }
-      const error = new Error('AGENT_LIVE_EVAL_CAMPAIGN_UNLOCK_FAILED');
-      error.code = 'AGENT_LIVE_EVAL_CAMPAIGN_UNLOCK_FAILED';
-      throw error;
-    }
+    this.claimed = false;
   }
 }
 
 module.exports = {
   ALLOWED_DISPATCH_KINDS,
   CAMPAIGN_CHECK_KIND,
-  DEFAULT_LOCK_KEEPALIVE_MS,
   DISPATCH_CHECK_KIND,
-  LOCK_KEEPALIVE_QUERY_TIMEOUT_MS,
   LiveEvalCampaignGuard,
   sha256
 };

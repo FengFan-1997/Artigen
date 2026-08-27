@@ -73,6 +73,7 @@ const {
   liveEvalPoolOptions,
   disposeLiveEvalPoolErrorHandlerAfterCleanup,
   installLiveEvalPoolErrorHandler,
+  isLiveEvalDatabaseConnectionError,
   markInterruptedJournal,
   resolveSelection,
   summarize
@@ -124,41 +125,38 @@ test('Live eval database pool fails closed on checkout and query stalls', () => 
   assert.equal(options.application_name, 'artigen-agent-live-eval');
 });
 
-test('Live Harness V3.1 turns an advisory-lock client disconnect into a fail-closed campaign abort', async () => {
-  const client = new EventEmitter();
-  const released = [];
-  client.release = (destroy) => released.push(Boolean(destroy));
-  client.query = async (sql) => {
-    const statement = String(sql);
-    if (statement.includes('pg_try_advisory_lock')) {
-      return { rowCount: 1, rows: [{ locked: true }] };
+test('Live Harness V3.1 claims a signed campaign once in durable PostgreSQL state', async () => {
+  let claimed = false;
+  const releases = [];
+  const queries = [];
+  const createClient = () => ({
+    release: (destroy) => releases.push(Boolean(destroy)),
+    query: async (input) => {
+      const statement = typeof input === 'string' ? input : String(input?.text || '');
+      queries.push(statement);
+      if (statement.includes('SELECT id,metrics,created_at')) {
+        return claimed
+          ? { rowCount: 1, rows: [{ id: 41, metrics: {} }] }
+          : { rowCount: 0, rows: [] };
+      }
+      if (statement.includes('INSERT INTO agent_quality_checks')) {
+        claimed = true;
+        return {
+          rowCount: 1,
+          rows: [{
+            id: 41,
+            metrics: { deadlineAt: new Date(Date.now() + 60_000).toISOString() }
+          }]
+        };
+      }
+      if (statement.includes('clock_timestamp() AS now')) {
+        return { rowCount: 1, rows: [{ now: new Date() }] };
+      }
+      return { rowCount: 1, rows: [{}] };
     }
-    if (statement.includes('SELECT id,metrics,created_at')) {
-      return { rowCount: 0, rows: [] };
-    }
-    if (statement.includes('INSERT INTO agent_quality_checks')) {
-      return {
-        rowCount: 1,
-        rows: [{
-          metrics: {
-            commitSha: 'ab'.repeat(20),
-            matrixHash: 'cd'.repeat(32),
-            maxQwenCalls: 2,
-            maxKolorsCalls: 1,
-            deadlineAt: new Date(Date.now() + 60_000).toISOString()
-          }
-        }]
-      };
-    }
-    if (statement.includes('clock_timestamp() AS now')) {
-      return { rowCount: 1, rows: [{ now: new Date() }] };
-    }
-    return { rowCount: 0, rows: [] };
-  };
-  const pool = {
-    connect: async () => client
-  };
-  const guard = new LiveEvalCampaignGuard({
+  });
+  const pool = { connect: async () => createClient() };
+  const profile = {
     pool,
     campaignId: '11111111-2222-4333-8444-555555555555',
     commitSha: 'ab'.repeat(20),
@@ -166,191 +164,30 @@ test('Live Harness V3.1 turns an advisory-lock client disconnect into a fail-clo
     maxQwenCalls: 2,
     maxKolorsCalls: 1,
     maxWallClockMs: 60_000
-  });
-  await guard.initialize();
-
-  client.emit('error', new Error('synthetic socket loss'));
-
-  assert.equal(guard.signal.aborted, true);
-  assert.equal(guard.signal.reason?.code, 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST');
-  assert.throws(
-    () => guard.assertActive(),
-    /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/
-  );
-  await assert.rejects(
-    guard.initialize(),
-    /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/
-  );
-  assert.throws(
-    () => AgentLiveEvalHarness.prototype.assertWallClock.call({ campaignGuard: guard }),
-    /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/
-  );
-  await assert.rejects(
-    guard.reserveDispatch('qwen'),
-    /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/
-  );
-
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-live-lock-loss-'));
-  const reportPath = path.join(root, 'report.json');
-  await fs.promises.writeFile(reportPath, JSON.stringify({
-    version: 'agent-live-eval-v3.1',
-    summary: { automatedGatePassed: true, productionCanaryEligible: true }
-  }));
-  const cleanup = await closeLiveEvalResources({
-    harness: { close: () => guard.close() },
-    pool: { end: async () => {} }
-  });
-  assert.equal(cleanup.ok, false);
-  assert.equal(cleanup.results[0].code, 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST');
-  const updated = await attachCleanupEvidence({ reportPath, cleanup });
-  assert.equal(updated.summary.automatedGatePassed, false);
-  assert.equal(updated.summary.productionCanaryEligible, false);
-  await fs.promises.rm(root, { recursive: true, force: true });
-  assert.deepEqual(released, [true]);
-});
-
-test('Live Harness V3.1 keeps the advisory-lock session active without overlapping queries', async () => {
-  const client = new EventEmitter();
-  const released = [];
-  const scheduled = [];
-  const cancelled = [];
-  const queries = [];
-  let resolveKeepalive = null;
-  client.release = (destroy) => released.push(Boolean(destroy));
-  client.query = async (input) => {
-    const statement = typeof input === 'string' ? input : String(input?.text || '');
-    queries.push(input);
-    if (statement.includes('pg_try_advisory_lock')) {
-      return { rowCount: 1, rows: [{ locked: true }] };
-    }
-    if (statement.includes('SELECT id,metrics,created_at')) {
-      return { rowCount: 0, rows: [] };
-    }
-    if (statement.includes('INSERT INTO agent_quality_checks')) {
-      return {
-        rowCount: 1,
-        rows: [{
-          metrics: {
-            commitSha: 'ab'.repeat(20),
-            matrixHash: 'cd'.repeat(32),
-            maxQwenCalls: 2,
-            maxKolorsCalls: 1,
-            deadlineAt: new Date(Date.now() + 60_000).toISOString()
-          }
-        }]
-      };
-    }
-    if (statement.includes('clock_timestamp() AS now')) {
-      return { rowCount: 1, rows: [{ now: new Date() }] };
-    }
-    if (statement.includes('campaign_keepalive')) {
-      return new Promise((resolve) => {
-        resolveKeepalive = () => resolve({ rowCount: 1, rows: [{ campaign_keepalive: 1 }] });
-      });
-    }
-    if (statement.includes('pg_advisory_unlock')) {
-      return { rowCount: 1, rows: [{ pg_advisory_unlock: true }] };
-    }
-    return { rowCount: 0, rows: [] };
   };
-  const guard = new LiveEvalCampaignGuard({
-    pool: { connect: async () => client },
-    campaignId: '11111111-2222-4333-8444-666666666666',
-    commitSha: 'ab'.repeat(20),
-    matrixHash: 'cd'.repeat(32),
-    maxQwenCalls: 2,
-    maxKolorsCalls: 1,
-    maxWallClockMs: 60_000,
-    scheduleTimeout: (callback, delay) => {
-      const timer = { callback, delay, unref() {} };
-      scheduled.push(timer);
-      return timer;
-    },
-    cancelTimeout: (timer) => cancelled.push(timer)
-  });
+  const first = new LiveEvalCampaignGuard(profile);
+  await first.initialize();
+  assert.equal(first.snapshot().claimMode, 'durable-once-v1');
+  assert.equal(first.snapshot().campaignCheckId, 41);
+  first.assertActive();
+  await first.close();
 
-  await guard.initialize();
-  assert.equal(scheduled.length, 1);
-  assert.equal(scheduled[0].delay, 30_000);
-  scheduled[0].callback();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(scheduled.length, 1);
-  assert.equal(typeof resolveKeepalive, 'function');
-  resolveKeepalive();
-  await guard.lockKeepaliveInFlight;
-
-  const keepalives = queries.filter((input) => input?.text?.includes('campaign_keepalive'));
-  assert.equal(keepalives.length, 1);
-  assert.equal(keepalives[0].query_timeout, 10_000);
-  assert.equal(guard.snapshot().lockKeepaliveCount, 1);
-  assert.match(guard.snapshot().lockKeepaliveLastSuccessAt, /^\d{4}-\d{2}-\d{2}T/);
-  assert.equal(scheduled.length, 2);
-
-  await guard.close();
-  assert.deepEqual(cancelled, [scheduled[1]]);
-  assert.deepEqual(released, [false]);
+  const second = new LiveEvalCampaignGuard(profile);
+  await assert.rejects(second.initialize(), /AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_CLAIMED/);
+  assert.equal(queries.some((statement) => statement.includes('pg_advisory_xact_lock')), true);
+  assert.equal(queries.some((statement) => statement.includes('campaign_keepalive')), false);
+  assert.deepEqual(releases, [false, true]);
 });
 
-test('Live Harness V3.1 treats a failed advisory-lock keepalive as connection loss', async () => {
-  const client = new EventEmitter();
-  let scheduled = null;
-  const released = [];
-  client.release = (destroy) => released.push(Boolean(destroy));
-  client.query = async (input) => {
-    const statement = typeof input === 'string' ? input : String(input?.text || '');
-    if (statement.includes('pg_try_advisory_lock')) {
-      return { rowCount: 1, rows: [{ locked: true }] };
-    }
-    if (statement.includes('SELECT id,metrics,created_at')) {
-      return { rowCount: 0, rows: [] };
-    }
-    if (statement.includes('INSERT INTO agent_quality_checks')) {
-      return {
-        rowCount: 1,
-        rows: [{
-          metrics: {
-            commitSha: 'ab'.repeat(20),
-            matrixHash: 'cd'.repeat(32),
-            maxQwenCalls: 2,
-            maxKolorsCalls: 1,
-            deadlineAt: new Date(Date.now() + 60_000).toISOString()
-          }
-        }]
-      };
-    }
-    if (statement.includes('clock_timestamp() AS now')) {
-      return { rowCount: 1, rows: [{ now: new Date() }] };
-    }
-    if (statement.includes('campaign_keepalive')) throw new Error('synthetic proxy timeout');
-    return { rowCount: 0, rows: [] };
-  };
-  const guard = new LiveEvalCampaignGuard({
-    pool: { connect: async () => client },
-    campaignId: '11111111-2222-4333-8444-777777777777',
-    commitSha: 'ab'.repeat(20),
-    matrixHash: 'cd'.repeat(32),
-    maxQwenCalls: 2,
-    maxKolorsCalls: 1,
-    maxWallClockMs: 60_000,
-    scheduleTimeout: (callback, delay) => {
-      scheduled = { callback, delay, unref() {} };
-      return scheduled;
-    },
-    cancelTimeout: () => {}
-  });
-
-  await guard.initialize();
-  scheduled.callback();
-  await guard.lockKeepaliveInFlight;
-
-  assert.equal(guard.signal.reason?.code, 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST');
-  assert.throws(() => guard.assertActive(), /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/);
-  await assert.rejects(guard.close(), /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/);
-  assert.deepEqual(released, [true]);
-});
-
-test('Live eval runner catches idle pool connection errors and aborts without leaking driver details', () => {
+test('Live eval runner replaces an evicted idle connection and fails closed only when the boundary probe fails', async () => {
   const pool = new EventEmitter();
+  const probes = [];
+  let probeFailure = null;
+  pool.query = async (query) => {
+    probes.push(query);
+    if (probeFailure) throw probeFailure;
+    return { rowCount: 1, rows: [{ live_eval_database_health: 1 }] };
+  };
   let abortReason = null;
   const state = installLiveEvalPoolErrorHandler({
     pool,
@@ -359,20 +196,45 @@ test('Live eval runner catches idle pool connection errors and aborts without le
 
   pool.emit('error', new Error('synthetic database host and credentials'));
 
+  assert.equal(state.idleDisconnectCount, 1);
+  assert.equal(state.error, null);
+  assert.equal(abortReason, null);
+  assert.equal(await state.assertHealthy(), true);
+  assert.equal(probes[0]?.query_timeout, 10_000);
+  assert.deepEqual(state.snapshot(), {
+    idleDisconnectsRecovered: 1,
+    fatalConnectionLoss: false
+  });
+
+  probeFailure = new Error('synthetic database host and credentials');
+  await assert.rejects(
+    state.assertHealthy(),
+    /AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST/
+  );
   assert.equal(state.error?.code, 'AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST');
   assert.equal(abortReason, state.error);
   assert.equal(state.error.message.includes('synthetic'), false);
-  assert.throws(
-    () => state.assertHealthy(),
-    /AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST/
-  );
+  assert.deepEqual(state.snapshot(), {
+    idleDisconnectsRecovered: 1,
+    fatalConnectionLoss: true
+  });
   state.dispose();
   assert.equal(pool.listenerCount('error'), 0);
+});
+
+test('Live eval runner recognizes only content-free PostgreSQL connection codes as fatal infrastructure loss', () => {
+  for (const code of ['ECONNRESET', 'ETIMEDOUT', '08006', '57P01']) {
+    assert.equal(isLiveEvalDatabaseConnectionError({ code }), true);
+  }
+  assert.equal(isLiveEvalDatabaseConnectionError({ cause: { code: 'EPIPE' } }), true);
+  assert.equal(isLiveEvalDatabaseConnectionError({ code: '23505' }), false);
+  assert.equal(isLiveEvalDatabaseConnectionError(new Error('connection wording is not trusted')), false);
 });
 
 test('Live eval runner keeps the pool error listener after cleanup timeout for late socket errors', async () => {
   const pool = new EventEmitter();
   pool.end = () => new Promise(() => {});
+  pool.query = async () => ({ rowCount: 1, rows: [{ live_eval_database_health: 1 }] });
   let abortReason = null;
   const state = installLiveEvalPoolErrorHandler({
     pool,
@@ -386,9 +248,9 @@ test('Live eval runner keeps the pool error listener after cleanup timeout for l
   assert.equal(disposeLiveEvalPoolErrorHandlerAfterCleanup({ poolState: state, cleanup }), false);
   assert.equal(pool.listenerCount('error'), 1);
   assert.doesNotThrow(() => pool.emit('error', new Error('late socket detail')));
-  assert.equal(state.error?.code, 'AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST');
-  assert.equal(abortReason, state.error);
-  assert.equal(state.error.message.includes('late socket'), false);
+  assert.equal(state.idleDisconnectCount, 1);
+  assert.equal(state.error, null);
+  assert.equal(abortReason, null);
   state.dispose();
 });
 

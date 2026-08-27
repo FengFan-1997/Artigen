@@ -28,6 +28,19 @@ const optionalSecretNames = [
 ];
 const LIVE_EVAL_DB_CONNECTION_TIMEOUT_MS = 15_000;
 const LIVE_EVAL_DB_QUERY_TIMEOUT_MS = 30_000;
+const LIVE_EVAL_DB_HEALTH_QUERY_TIMEOUT_MS = 10_000;
+const LIVE_EVAL_DB_CONNECTION_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EPIPE',
+  'ETIMEDOUT',
+  'PROTOCOL_CONNECTION_LOST',
+  '57P01',
+  '57P02',
+  '57P03'
+]);
 
 const liveEvalPoolOptions = ({ connectionString } = {}) => ({
   connectionString,
@@ -42,6 +55,16 @@ const liveEvalPoolOptions = ({ connectionString } = {}) => ({
   statement_timeout: LIVE_EVAL_DB_QUERY_TIMEOUT_MS,
   application_name: 'artigen-agent-live-eval'
 });
+
+const isLiveEvalDatabaseConnectionError = (input) => {
+  let error = input;
+  for (let depth = 0; error && depth < 4; depth += 1) {
+    const code = String(error.code || '').trim().toUpperCase();
+    if (LIVE_EVAL_DB_CONNECTION_CODES.has(code) || /^08[A-Z0-9]{3}$/.test(code)) return true;
+    error = error.cause;
+  }
+  return false;
+};
 
 const positivePricingOrDefault = ({ value, fallback, name }) => {
   const raw = String(value ?? '').trim();
@@ -374,12 +397,18 @@ const installLiveEvalPoolErrorHandler = ({
   pool,
   abort = () => {}
 } = {}) => {
-  if (!pool || typeof pool.on !== 'function' || typeof pool.off !== 'function') {
+  if (
+    !pool ||
+    typeof pool.on !== 'function' ||
+    typeof pool.off !== 'function' ||
+    typeof pool.query !== 'function'
+  ) {
     throw new TypeError('AGENT_LIVE_EVAL_POOL_REQUIRED');
   }
   let connectionError = null;
-  const handler = () => {
-    if (connectionError) return;
+  let idleDisconnectCount = 0;
+  const failClosed = () => {
+    if (connectionError) return connectionError;
     connectionError = Object.assign(
       new Error('AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST'),
       { code: 'AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST' }
@@ -387,12 +416,39 @@ const installLiveEvalPoolErrorHandler = ({
     try {
       abort(connectionError);
     } catch {}
+    return connectionError;
+  };
+  const handler = () => {
+    // node-postgres emits Pool#error for an idle client that it has already
+    // evicted. That is not proof that the database or campaign state was
+    // lost. Consume the event without driver details, then require the next
+    // boundary health probe to establish a fresh usable connection.
+    idleDisconnectCount += 1;
   };
   pool.on('error', handler);
   return {
     get error() { return connectionError; },
-    assertHealthy() {
+    get idleDisconnectCount() { return idleDisconnectCount; },
+    async assertHealthy() {
       if (connectionError) throw connectionError;
+      try {
+        await pool.query({
+          text: 'SELECT 1 AS live_eval_database_health',
+          query_timeout: LIVE_EVAL_DB_HEALTH_QUERY_TIMEOUT_MS
+        });
+      } catch {
+        throw failClosed();
+      }
+      return true;
+    },
+    failClosed() {
+      throw failClosed();
+    },
+    snapshot() {
+      return Object.freeze({
+        idleDisconnectsRecovered: idleDisconnectCount,
+        fatalConnectionLoss: Boolean(connectionError)
+      });
     },
     dispose() {
       pool.off('error', handler);
@@ -547,7 +603,8 @@ const buildTerminalFailureReport = ({
   selectedCohort,
   results,
   error,
-  harness = null
+  harness = null,
+  databaseConnectivity = null
 } = {}) => {
   const summary = {
     ...summarize(results),
@@ -585,7 +642,8 @@ const buildTerminalFailureReport = ({
           qwenCalls: Number(harness.auditor.qwenCalls || 0),
           kolorsCalls: Number(harness.auditor.kolorsCalls || 0)
         }
-      : null
+      : null,
+    databaseConnectivity
   };
 };
 
@@ -643,7 +701,7 @@ const main = async () => {
     persist: () => writeReport({ report: journal, reportDir, reportPath: journalPath })
   });
   try {
-    poolState.assertHealthy();
+    await poolState.assertHealthy();
     harness = await AgentLiveEvalHarness.create({
       pool,
       env: process.env,
@@ -653,12 +711,12 @@ const main = async () => {
       commitSha: gate.commitSha,
       matrixHash: gate.matrixHash
     });
-    poolState.assertHealthy();
+    await poolState.assertHealthy();
     const cohorts = selectedCohort === 'both' ? ['v1', 'v2'] : [selectedCohort];
     for (const entry of selected) {
       for (const cohort of cohorts) {
         if (signalState.error) throw signalState.error;
-        poolState.assertHealthy();
+        await poolState.assertHealthy();
         const startedAt = Date.now();
         const qwenBefore = Number(harness.auditor?.qwenCalls || 0);
         const kolorsBefore = Number(harness.auditor?.kolorsCalls || 0);
@@ -684,7 +742,8 @@ const main = async () => {
             error: Object.assign(new Error('AGENT_LIVE_EVAL_IN_PROGRESS'), {
               code: 'AGENT_LIVE_EVAL_IN_PROGRESS'
             }),
-            harness
+            harness,
+            databaseConnectivity: poolState.snapshot()
           })
         });
         try {
@@ -707,6 +766,7 @@ const main = async () => {
             elapsedMs: Date.now() - startedAt
           })}\n`);
         } catch (error) {
+          const databaseConnectionLost = isLiveEvalDatabaseConnectionError(error);
           const failure = contentFreeFailure({ entry, cohort, error });
           await harness.cancelActiveCohort(cohort);
           const evidence = await harness.captureCaseFailure({
@@ -737,13 +797,14 @@ const main = async () => {
             cohort,
             code: failure.code
           })}\n`);
+          if (databaseConnectionLost) poolState.failClosed();
         }
         await writeReport({ report: journal, reportDir, reportPath: journalPath });
         if (signalState.error) throw signalState.error;
-        poolState.assertHealthy();
-        // A dropped PostgreSQL advisory-lock connection invalidates the
-        // campaign. Stop at the current slot boundary instead of recording the
-        // remaining paid matrix as a string of synthetic failures.
+        await poolState.assertHealthy();
+        // Every slot boundary proves that a fresh PostgreSQL connection can
+        // read state. A failed probe terminates the campaign before another
+        // paid Provider dispatch; an evicted idle connection alone does not.
         harness.assertWallClock();
       }
       await harness.assertBatchDrained();
@@ -756,7 +817,7 @@ const main = async () => {
           keyMaterial: evidenceKeyMaterial
         })
       : null;
-    poolState.assertHealthy();
+    await poolState.assertHealthy();
     harness.assertWallClock();
     const report = {
       version: 'agent-live-eval-v3.1',
@@ -793,15 +854,16 @@ const main = async () => {
             qwenCalls: harness.auditor.qwenCalls,
             kolorsCalls: harness.auditor.kolorsCalls
           }
-        : null
+        : null,
+      databaseConnectivity: poolState.snapshot()
     };
     await writeReport({ report, reportDir, reportPath });
-    poolState.assertHealthy();
+    await poolState.assertHealthy();
     harness.assertWallClock();
     journal.status = 'completed';
     journal.updatedAt = new Date().toISOString();
     await writeReport({ report: journal, reportDir, reportPath: journalPath });
-    poolState.assertHealthy();
+    await poolState.assertHealthy();
     harness.assertWallClock();
     process.stdout.write(`${JSON.stringify({
       event: 'live_eval.completed',
@@ -827,7 +889,8 @@ const main = async () => {
         selectedCohort,
         results: journalResults(journal),
         error: terminalError,
-        harness
+        harness,
+        databaseConnectivity: poolState.snapshot()
       })
     });
     terminalError.reportPath = reportPath;
@@ -898,6 +961,7 @@ module.exports = {
   liveEvalPoolOptions,
   installLiveEvalSignalHandlers,
   installLiveEvalPoolErrorHandler,
+  isLiveEvalDatabaseConnectionError,
   disposeLiveEvalPoolErrorHandlerAfterCleanup,
   markInterruptedJournal,
   summarize
