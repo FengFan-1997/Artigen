@@ -1,12 +1,21 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-27（Asia/Shanghai）
+更新时间：2026-08-28（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
 本文只保留已经确定并产生持久影响的架构、代码、配置、迁移、部署和正式决定。开发中的具体进度、临时尝试、失败调试和下一条命令只记录在被 Git 忽略的 `HANDOFF.local.md`，不进入本文。
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
+
+## 2026-08-28 首轮 recovery-hardening 实机失败与 Shell/CUA 恢复修复（本地候选，未发布）
+
+- PR #135 已在 required checks 全绿后普通合入 `dev`，merge SHA `7f733c1336ddd1a7663eda01fb36d6527342d14b`；Render DEV、Vercel Preview 与 Mac DEV Worker 曾对齐该 SHA，迁移、数据库、S3、Provider、定价、Worker、浏览器、受限出口和桌面中继均 ready。Runtime V2 公众开关、rollout 和 owner canary 继续关闭。
+- 绑定该 SHA 的真实 24-slot campaign 只完成咨询 V1/V2、纯文本 V1/V2、调研 V1/V2、表格 V1/V2，并开始演示 V1；在 V2 已有两项 candidate failure、整轮不再可能通过后受控停止。局部证据为 32 次真实 Qwen、0 次 Kolors；纯文本 V2 成功，调研与表格未达到候选门槛。重启同一一次性 gate 只做残留收口，没有重新 dispatch；最后一个 Run 通过正式 `cancelRun` 事务取消。该 partial campaign 不得作为完整矩阵或发布证据。
+- 真实 Shell 回执证明三个独立根因：CUA 内 Bubblewrap 复用容器 `/dev` 时普通用户无法重定向 `/dev/null`；本地 Shell policy 拒绝发生在 durable receipt 之后，导致“明确未发生远端副作用”的拒绝被误归类为 ambiguous；pnpm 与终端重复转发 SIGINT/SIGTERM 时，一次性 signal listener 会在收尾中恢复默认终止行为。修复提交 `fb6eac3b0a4fab5ed02110eeaa905879cd904511` 使用 Bubblewrap 最小 `/dev`、在全新 dispatch 的 receipt/reservation 之前执行 Shell policy、在收尾完成前保留幂等 signal handler，并允许 Qwen 对明确的离线工具策略拒绝纠正一次。
+- 独立终审又发现策略预检不能早于旧 receipt 恢复：否则已在旧策略下完成的精确请求会被新策略阻断。最终实现先消费、恢复或 fence durable receipt，仅对没有历史 receipt 的新 dispatch 执行当前 Shell/origin policy；红绿回归证明恢复旧顺序时测试以 `AGENT_SHELL_COMMAND_FORBIDDEN` 失败，最终顺序只消费旧结果且远端 Shell 调用为 0。
+- 最终候选内容重新通过完整 `pnpm check`：前端 `217/217`、后端 `531 passed / 91 条件跳过 / 0 failed`、邮件 `7/7`、manifest `50/50`、生产构建和 bundle budget 通过、Playwright `537 passed / 3 skipped / 0 failed`。PostgreSQL 16 + 固定 MinIO Harness `50/50`、executable quality `50/50`、20 轮 chaos `620/620` 均为 0 failed/cancelled/skipped/todo；测试库 active Run、held hold、reserved budget、Provider queue、active subagent、冻结余额与 open receipt 均为 0，仅保留固定 campaign MinIO 测试容器。
+- 本地候选尚未 push、PR、合入或重新部署；上述本机报告也不是最终 merge SHA 的签名 gate。下一步必须先由 GitHub required CI 验证不可变提交，再以新的 `dev` merge SHA 对齐 Render、Vercel 和 Mac Worker，重签一次性 gate 并从头执行完整 24-slot 与图片匿名盲审。当前结论仍为**暂不可上线**；生产、模型硬锁、网络与代理配置均未改变。
 
 ## 2026-08-27 Agent Live Eval campaign 持久化、DEV 对齐与受限出口阻断
 

@@ -24,6 +24,7 @@ const {
 const {
   assertAllowedOrigins,
   assertComputerOrigins,
+  assertSafeShell,
   createAgentSandboxProvider
 } = require('./agent-sandbox-provider');
 const {
@@ -1595,6 +1596,11 @@ const createAgentWorkerService = ({
                     callId: String(toolMetadata.callId || '')
                   });
                 }
+                // Only validate a new dispatch. A receipt proves an older
+                // policy version already started or completed this exact
+                // request, so recovery must consume/fence it before applying
+                // today's policy and must never replay the effect.
+                assertSafeShell(normalizedShell.script);
                 await reserveRuntimeBudget({
                   component: 'sandbox',
                   subagentId,
@@ -2336,10 +2342,6 @@ const createAgentWorkerService = ({
           },
           shell: async (script, purpose, toolMetadata = {}) => {
             await pauseIfRequested();
-            assertAllowedOrigins(
-              script,
-              context.run.browser_config?.allowedOrigins || []
-            );
             const receiptIdentity = crypto.createHash('sha256')
               .update(String(toolMetadata.callId || script))
               .digest('hex')
@@ -2429,6 +2431,14 @@ const createAgentWorkerService = ({
                 callId: String(toolMetadata.callId || '')
               });
             }
+            // Local policy rejection is correctable only before a new remote
+            // effect begins. Existing receipts remain the durable authority
+            // even if a later deployment tightens the Shell/origin policy.
+            assertAllowedOrigins(
+              script,
+              context.run.browser_config?.allowedOrigins || []
+            );
+            assertSafeShell(script);
             await reserveRuntimeBudget({
               component: 'sandbox',
               reservationKey,

@@ -385,7 +385,11 @@ const installLiveEvalSignalHandlers = ({
         .catch((error) => { persistenceError = error; })
         .finally(() => resolveInterrupted(interruptionError));
     };
-    processTarget.once(signal, handler);
+    // pnpm and an interactive terminal can both forward the same signal to the
+    // child process group. Keep the handler installed until cleanup finishes;
+    // a second SIGINT/SIGTERM must not restore Node's default immediate-exit
+    // behavior while the journal, active Run and budget are being settled.
+    processTarget.on(signal, handler);
     return [signal, handler];
   }));
   return {

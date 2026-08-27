@@ -2075,7 +2075,8 @@ class OllamaAgentModelProvider {
               pendingCall.name === 'sandbox_shell' &&
               [
                 'AGENT_SHELL_SCRIPT_TYPE_INVALID',
-                'AGENT_SHELL_SCRIPT_ESCAPED_NEWLINES'
+                'AGENT_SHELL_SCRIPT_ESCAPED_NEWLINES',
+                'AGENT_SHELL_COMMAND_FORBIDDEN'
               ].includes(error?.code)
             );
             if (
@@ -2154,7 +2155,11 @@ class OllamaAgentModelProvider {
                   success: false,
                   errorCode: error.code,
                   expected: 'posix_bash',
-                  correction: String(error?.details?.correction || "Wrap source in a quoted heredoc: python3 <<'PY'\\n# source\\nPY")
+                  correction: String(error?.details?.correction || (
+                    error.code === 'AGENT_SHELL_COMMAND_FORBIDDEN'
+                      ? 'Use only the preinstalled offline toolchain. Remove network access, package installation, privilege escalation, and host paths, then retry once.'
+                      : "Wrap source in a quoted heredoc: python3 <<'PY'\\n# source\\nPY"
+                  ))
                 })
               };
             } else if (correctableShellOriginError) {

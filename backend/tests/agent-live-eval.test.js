@@ -970,7 +970,7 @@ test('Live eval terminal failures record every pending slot instead of losing th
   }
 });
 
-test('Live eval runner signal handling persists a real child-process SIGTERM interruption', {
+test('Live eval runner survives duplicate process-group SIGTERM while persisting interruption', {
   timeout: 10_000
 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-live-signal-'));
@@ -1002,6 +1002,7 @@ test('Live eval runner signal handling persists a real child-process SIGTERM int
         reject(new Error(`AGENT_SIGNAL_PROBE_EARLY_EXIT:${code}:${signal}`));
       });
     });
+    child.kill('SIGTERM');
     child.kill('SIGTERM');
     const exited = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('AGENT_SIGNAL_PROBE_EXIT_TIMEOUT')), 5_000);
@@ -1051,12 +1052,15 @@ test('Live eval signal handling persists before and after active-run cancellatio
   });
 
   processTarget.emit('SIGTERM');
+  processTarget.emit('SIGTERM');
   await state.interrupted;
 
   assert.deepEqual(order, ['abort', 'persist', 'cancel:SIGTERM', 'persist']);
   assert.equal(journal.status, 'interrupted');
   assert.equal(journal.slots['signal:v1'].status, 'failed');
+  assert.equal(processTarget.listenerCount('SIGTERM'), 1);
   state.dispose();
+  assert.equal(processTarget.listenerCount('SIGTERM'), 0);
 });
 
 test('Live eval signed gate binds the exact SHA, matrix and complete release evidence', () => {

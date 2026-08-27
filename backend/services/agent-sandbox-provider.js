@@ -71,7 +71,12 @@ const offlineShellScript = (script) => {
   return [
     `printf '%s' '${encoded}'`,
     'base64 -d',
-    'bwrap --unshare-net --die-with-parent --new-session --bind / / /bin/bash -se'
+    // Bubblewrap remaps the container user namespace. Rebinding the host-style
+    // /dev tree leaves character devices owned by an unmapped uid; they look
+    // mode 0666 but still reject ordinary redirects such as >/dev/null. Mount
+    // a fresh minimal device tree instead. This is both more isolated and
+    // restores the POSIX shell contract used by the artifact toolchain.
+    'bwrap --unshare-net --die-with-parent --new-session --bind / / --dev /dev /bin/bash -se'
   ].join(' | ');
 };
 
