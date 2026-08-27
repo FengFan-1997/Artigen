@@ -232,10 +232,178 @@ const summarize = (results) => {
 
 const writeReport = async ({ report, reportDir, reportPath }) => {
   await fs.promises.mkdir(reportDir, { recursive: true, mode: 0o700 });
-  await fs.promises.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, {
+  const temporaryPath = `${reportPath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  await fs.promises.writeFile(temporaryPath, `${JSON.stringify(report, null, 2)}\n`, {
     encoding: 'utf8',
     mode: 0o600
   });
+  await fs.promises.rename(temporaryPath, reportPath);
+};
+
+const slotKey = (scenarioId, cohort) => `${scenarioId}:${cohort}`;
+
+const createSlotJournal = ({ gate, selectedCase, selectedCohort, selected }) => ({
+  version: 'agent-live-eval-slot-journal-v1',
+  campaignId: gate.campaignId,
+  commitSha: gate.commitSha,
+  matrixHash: gate.matrixHash,
+  selectedCase: selectedCase || 'all',
+  selectedCohort,
+  status: 'running',
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  slots: Object.fromEntries(selected.flatMap((entry) => (
+    (selectedCohort === 'both' ? ['v1', 'v2'] : [selectedCohort]).map((cohort) => [
+      slotKey(entry.id, cohort),
+      { scenarioId: entry.id, cohort, status: 'pending' }
+    ])
+  )))
+});
+
+const updateSlotJournal = (journal, { scenarioId, cohort, status, result = null, code = null }) => {
+  const key = slotKey(scenarioId, cohort);
+  if (!journal?.slots?.[key]) throw new Error(`AGENT_LIVE_EVAL_SLOT_UNKNOWN:${key}`);
+  journal.slots[key] = {
+    ...journal.slots[key],
+    status,
+    ...(result ? { result } : {}),
+    ...(code ? { code } : {}),
+    updatedAt: new Date().toISOString()
+  };
+  journal.updatedAt = new Date().toISOString();
+  return journal;
+};
+
+const journalResults = (journal) => Object.values(journal?.slots || {})
+  .map((slot) => slot.result)
+  .filter(Boolean);
+
+const failUnfinishedJournalSlots = (
+  journal,
+  { code = 'AGENT_LIVE_EVAL_PROCESS_INTERRUPTED', updatedAt = new Date().toISOString() } = {}
+) => {
+  const safeCode = /^[A-Z][A-Z0-9_]{2,100}$/.test(String(code || ''))
+    ? String(code)
+    : 'AGENT_LIVE_EVAL_CASE_FAILED';
+  for (const slot of Object.values(journal?.slots || {})) {
+    if (['succeeded', 'failed'].includes(slot.status)) continue;
+    slot.status = 'failed';
+    slot.code = safeCode;
+    slot.result = {
+      scenarioId: slot.scenarioId,
+      cohort: slot.cohort,
+      ok: false,
+      code: safeCode
+    };
+    slot.updatedAt = updatedAt;
+  }
+  if (journal) journal.updatedAt = updatedAt;
+  return journal;
+};
+
+const installLiveEvalSignalHandlers = ({
+  journal,
+  abort = () => {},
+  persist = async () => {},
+  processTarget = process,
+  signals = ['SIGINT', 'SIGTERM']
+} = {}) => {
+  let interruptionError = null;
+  let persistenceError = null;
+  let resolveInterrupted;
+  const interrupted = new Promise((resolve) => { resolveInterrupted = resolve; });
+  const handlers = new Map(signals.map((signal) => {
+    const handler = () => {
+      if (interruptionError) return;
+      interruptionError = Object.assign(new Error('AGENT_LIVE_EVAL_PROCESS_INTERRUPTED'), {
+        code: 'AGENT_LIVE_EVAL_PROCESS_INTERRUPTED',
+        signal
+      });
+      const interruptedAt = new Date().toISOString();
+      failUnfinishedJournalSlots(journal, {
+        code: 'AGENT_LIVE_EVAL_PROCESS_INTERRUPTED',
+        updatedAt: interruptedAt
+      });
+      journal.status = 'interrupted';
+      journal.interruption = { signal, detectedAt: interruptedAt };
+      try {
+        abort(interruptionError);
+      } catch {}
+      void Promise.resolve()
+        .then(() => persist())
+        .catch((error) => { persistenceError = error; })
+        .finally(() => resolveInterrupted(interruptionError));
+    };
+    processTarget.once(signal, handler);
+    return [signal, handler];
+  }));
+  return {
+    get error() { return interruptionError; },
+    get persistenceError() { return persistenceError; },
+    interrupted,
+    dispose() {
+      for (const [signal, handler] of handlers) {
+        processTarget.removeListener(signal, handler);
+      }
+    }
+  };
+};
+
+const findCampaignJournal = async ({ artifactRoot, gate, statuses = null }) => {
+  const allowedStatuses = Array.isArray(statuses) && statuses.length
+    ? new Set(statuses.map((status) => String(status || '').trim()))
+    : null;
+  const entries = await fs.promises.readdir(artifactRoot, { withFileTypes: true }).catch(() => []);
+  const matches = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('agent-live-eval-')) continue;
+    const journalPath = path.join(artifactRoot, entry.name, 'slot-journal.json');
+    try {
+      const journal = JSON.parse(await fs.promises.readFile(journalPath, 'utf8'));
+      if (
+        journal?.version === 'agent-live-eval-slot-journal-v1' &&
+        journal?.campaignId === gate.campaignId &&
+        journal?.commitSha === gate.commitSha &&
+        journal?.matrixHash === gate.matrixHash &&
+        (!allowedStatuses || allowedStatuses.has(String(journal?.status || '')))
+      ) {
+        matches.push({
+          journal,
+          journalPath,
+          reportPath: path.join(artifactRoot, entry.name, 'report.json')
+        });
+      }
+    } catch {}
+  }
+  matches.sort((left, right) => String(right.journal.updatedAt || '')
+    .localeCompare(String(left.journal.updatedAt || '')));
+  return matches[0] || null;
+};
+
+const findInterruptedJournal = (options) => findCampaignJournal({
+  ...options,
+  statuses: ['running']
+});
+
+const markInterruptedJournal = async ({ found, signal = 'SIGKILL_OR_PROCESS_EXIT' }) => {
+  const { journal, journalPath, reportPath } = found;
+  failUnfinishedJournalSlots(journal, { code: 'AGENT_LIVE_EVAL_PROCESS_INTERRUPTED' });
+  journal.status = 'interrupted';
+  journal.interruption = { signal: String(signal).slice(0, 40), detectedAt: new Date().toISOString() };
+  journal.updatedAt = new Date().toISOString();
+  await writeReport({ report: journal, reportDir: path.dirname(journalPath), reportPath: journalPath });
+  const error = Object.assign(new Error('AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN'), {
+    code: 'AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN'
+  });
+  const report = buildTerminalFailureReport({
+    gate: journal,
+    selectedCase: journal.selectedCase === 'all' ? '' : journal.selectedCase,
+    selectedCohort: journal.selectedCohort,
+    results: journalResults(journal),
+    error
+  });
+  await writeReport({ report, reportDir: path.dirname(reportPath), reportPath });
+  return { journal, reportPath };
 };
 
 const settleCleanup = async ({ label, operation, timeoutMs = 15_000 }) => {
@@ -370,9 +538,32 @@ const main = async () => {
   });
   const { selectedCase, selectedCohort, selected } = resolveSelection(runtimeEnv);
   const artifactRoot = path.resolve(__dirname, '../../.artifacts');
+  const existingCampaign = await findCampaignJournal({ artifactRoot, gate });
+  if (existingCampaign) {
+    if (existingCampaign.journal.status === 'running') {
+      const recovered = await markInterruptedJournal({ found: existingCampaign });
+      const error = Object.assign(new Error('AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN'), {
+        code: 'AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN',
+        reportPath: recovered.reportPath
+      });
+      throw error;
+    }
+    // A signed campaign is single-use. A prior failed, interrupted, or
+    // completed journal is terminal evidence, not a checkpoint to resume.
+    // Starting again with the same campaign would repeat paid slots while the
+    // durable Provider counter merely continued from its old value.
+    const error = Object.assign(new Error('AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_FINALIZED'), {
+      code: 'AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_FINALIZED',
+      reportPath: existingCampaign.reportPath
+    });
+    throw error;
+  }
   const reportId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomBytes(4).toString('hex')}`;
   const reportDir = path.join(artifactRoot, `agent-live-eval-${reportId}`);
   const reportPath = path.join(reportDir, 'report.json');
+  const journalPath = path.join(reportDir, 'slot-journal.json');
+  const journal = createSlotJournal({ gate, selectedCase, selectedCohort, selected });
+  await writeReport({ report: journal, reportDir, reportPath: journalPath });
   await purgeExpiredEvidence({ rootDir: artifactRoot, retentionDays: 30 });
   const pool = new Pool({
     connectionString: runtimeEnv.DATABASE_URL,
@@ -381,6 +572,11 @@ const main = async () => {
   });
   let harness = null;
   const results = [];
+  const signalState = installLiveEvalSignalHandlers({
+    journal,
+    abort: (error) => harness?.campaignGuard?.abort(error),
+    persist: () => writeReport({ report: journal, reportDir, reportPath: journalPath })
+  });
   try {
     harness = await AgentLiveEvalHarness.create({
       pool,
@@ -394,6 +590,7 @@ const main = async () => {
     const cohorts = selectedCohort === 'both' ? ['v1', 'v2'] : [selectedCohort];
     for (const entry of selected) {
       for (const cohort of cohorts) {
+        if (signalState.error) throw signalState.error;
         const startedAt = Date.now();
         const qwenBefore = Number(harness.auditor?.qwenCalls || 0);
         const kolorsBefore = Number(harness.auditor?.kolorsCalls || 0);
@@ -402,10 +599,38 @@ const main = async () => {
           scenarioId: entry.id,
           cohort
         })}\n`);
+        updateSlotJournal(journal, {
+          scenarioId: entry.id,
+          cohort,
+          status: 'running'
+        });
+        await writeReport({ report: journal, reportDir, reportPath: journalPath });
+        await writeReport({
+          reportDir,
+          reportPath,
+          report: buildTerminalFailureReport({
+            gate,
+            selectedCase,
+            selectedCohort,
+            results,
+            error: Object.assign(new Error('AGENT_LIVE_EVAL_IN_PROGRESS'), {
+              code: 'AGENT_LIVE_EVAL_IN_PROGRESS'
+            }),
+            harness
+          })
+        });
         try {
           const result = await harness.runCase(entry, cohort);
           const passed = result.ok !== false;
-          results.push({ ...result, ok: passed });
+          const completed = { ...result, ok: passed };
+          results.push(completed);
+          updateSlotJournal(journal, {
+            scenarioId: entry.id,
+            cohort,
+            status: passed ? 'succeeded' : 'failed',
+            result: completed,
+            code: passed ? null : String(completed.code || 'AGENT_LIVE_EVAL_BASELINE_FAILED')
+          });
           process.stdout.write(`${JSON.stringify({
             event: passed ? 'live_eval.case.succeeded' : 'live_eval.case.baseline_recorded',
             scenarioId: entry.id,
@@ -422,13 +647,21 @@ const main = async () => {
             qwenBefore,
             kolorsBefore
           }).catch(() => null);
-          results.push({
+          const completed = {
             ...failure,
             ...(evidence || {}),
             ok: false,
             code: failure.code,
             diagnosticHash: failure.diagnosticHash,
             elapsedMs: Date.now() - startedAt
+          };
+          results.push(completed);
+          updateSlotJournal(journal, {
+            scenarioId: entry.id,
+            cohort,
+            status: 'failed',
+            result: completed,
+            code: failure.code
           });
           process.stdout.write(`${JSON.stringify({
             event: 'live_eval.case.failed',
@@ -437,6 +670,8 @@ const main = async () => {
             code: failure.code
           })}\n`);
         }
+        await writeReport({ report: journal, reportDir, reportPath: journalPath });
+        if (signalState.error) throw signalState.error;
       }
       await harness.assertBatchDrained();
     }
@@ -486,6 +721,9 @@ const main = async () => {
         : null
     };
     await writeReport({ report, reportDir, reportPath });
+    journal.status = 'completed';
+    journal.updatedAt = new Date().toISOString();
+    await writeReport({ report: journal, reportDir, reportPath: journalPath });
     process.stdout.write(`${JSON.stringify({
       event: 'live_eval.completed',
       ok: summary.automatedGatePassed,
@@ -494,6 +732,13 @@ const main = async () => {
     })}\n`);
     if (!summary.automatedGatePassed) process.exitCode = 1;
   } catch (error) {
+    const terminalError = signalState.error || error;
+    failUnfinishedJournalSlots(journal, {
+      code: safeFailureCode(terminalError, 'AGENT_LIVE_EVAL_RUNNER_FAILED')
+    });
+    journal.status = signalState.error ? 'interrupted' : 'failed';
+    journal.updatedAt = new Date().toISOString();
+    await writeReport({ report: journal, reportDir, reportPath: journalPath }).catch(() => {});
     await writeReport({
       reportDir,
       reportPath,
@@ -501,13 +746,13 @@ const main = async () => {
         gate,
         selectedCase,
         selectedCohort,
-        results,
-        error,
+        results: journalResults(journal),
+        error: terminalError,
         harness
       })
     });
-    error.reportPath = reportPath;
-    throw error;
+    terminalError.reportPath = reportPath;
+    throw terminalError;
   } finally {
     const cleanup = await closeLiveEvalResources({ harness, pool });
     await attachCleanupEvidence({ reportPath, cleanup }).catch(() => {
@@ -520,6 +765,7 @@ const main = async () => {
         results: cleanup.results
       })}\n`);
     }
+    signalState.dispose();
   }
 };
 
@@ -552,5 +798,12 @@ module.exports = {
   safeFailureCode,
   failureFingerprint,
   buildTerminalFailureReport,
+  createSlotJournal,
+  failUnfinishedJournalSlots,
+  findCampaignJournal,
+  findInterruptedJournal,
+  journalResults,
+  installLiveEvalSignalHandlers,
+  markInterruptedJournal,
   summarize
 };

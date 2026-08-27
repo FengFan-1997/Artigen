@@ -564,6 +564,77 @@ test('Planner accepts a compact strict candidate and server-compiles authoritati
   assert.ok(planned.taskSpec.skillIds.includes('report'));
 });
 
+test('Planner accepts nine steps but server normalizes all unexecuted statuses', () => {
+  const taskSpec = normalizeTaskSpec({
+    complexity: 'high',
+    confidence: 0.9,
+    constraints: ['保持原始目标'],
+    assumptions: [],
+    acceptanceCriteria: ['全部步骤完成后再验证'],
+    skillIds: ['report'],
+    plan: Array.from({ length: 9 }, (_, index) => ({
+      id: `planner-step-${index + 1}`,
+      label: `Planner step ${index + 1}`,
+      phase: index === 8 ? 'verification' : 'production',
+      status: index < 4 ? 'completed' : index === 6 ? 'in_progress' : 'pending'
+    }))
+  }, {
+    objective: '制作九步报告',
+    deliverables: ['report'],
+    capabilities: { files: true, shell: true },
+    allowedOrigins: [],
+    maxCredits: 50,
+    strictPlannerOutput: true
+  });
+
+  assert.equal(taskSpec.plan.length, 9);
+  assert.deepEqual(taskSpec.plan.map((step) => step.status), [
+    'in_progress',
+    'pending',
+    'pending',
+    'pending',
+    'pending',
+    'pending',
+    'pending',
+    'pending',
+    'pending'
+  ]);
+});
+
+test('Planner rejects thirteen steps and unknown fields without truncating or silently repairing them', () => {
+  const fallback = {
+    objective: '严格验证 Planner 契约',
+    deliverables: ['report'],
+    capabilities: { files: true, shell: true },
+    allowedOrigins: [],
+    maxCredits: 50,
+    strictPlannerOutput: true
+  };
+  const candidate = {
+    complexity: 'high',
+    confidence: 0.9,
+    constraints: [],
+    assumptions: [],
+    acceptanceCriteria: ['必须严格验证'],
+    skillIds: ['report'],
+    plan: Array.from({ length: 13 }, (_, index) => ({
+      id: `strict-step-${index + 1}`,
+      label: `Strict step ${index + 1}`,
+      phase: index === 12 ? 'verification' : 'production',
+      status: 'pending'
+    }))
+  };
+
+  assert.throws(
+    () => normalizeTaskSpec(candidate, fallback),
+    { code: 'AGENT_TASK_SPEC_INVALID' }
+  );
+  assert.throws(
+    () => normalizeTaskSpec({ ...candidate, plan: candidate.plan.slice(0, 9), unexpected: true }, fallback),
+    { code: 'AGENT_TASK_SPEC_INVALID' }
+  );
+});
+
 test('Planner preserves the authoritative user objective across a valid model restatement', async () => {
   const provider = new SiliconFlowAgentModelProvider({
     env: {
@@ -1109,6 +1180,96 @@ test('Runtime V2 keeps the server plan after two invalid restatements and contin
     'verify-answer'
   ]);
   assert.match(result.readyToFinalize.finalTextSha256, /^[a-f0-9]{64}$/);
+});
+
+test('Runtime V2 treats the first exact plan restatement as a server-owned no-op', async () => {
+  const taskSpec = normalizeTaskSpec({
+    goal: '给出一句简洁设计建议',
+    deliverables: [],
+    plan: [
+      { id: 'draft-answer', label: '起草建议', phase: 'production' },
+      { id: 'verify-answer', label: '验证建议', phase: 'verification' }
+    ]
+  }, { capabilities: {}, maxCredits: 50 });
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const requests = [];
+  provider.createChat = async (payload) => {
+    requests.push(payload);
+    if (requests.length === 1) {
+      return {
+        id: 'duplicate-server-plan',
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'duplicate-server-plan-call',
+            type: 'function',
+            function: {
+              name: 'update_plan',
+              arguments: JSON.stringify({
+                explanation: '重复已经发布的计划',
+                steps: taskSpec.plan.map(({ id, label, status }) => ({ id, label, status }))
+              })
+            }
+          }]
+        },
+        siliconFlowUsage: {}
+      };
+    }
+    return {
+      id: 'answer-after-server-plan',
+      message: { role: 'assistant', content: '聚焦一个主目标，并让每个视觉元素服务于它。' },
+      siliconFlowUsage: {}
+    };
+  };
+  let updatePlanCalls = 0;
+  let lastState = null;
+  const result = await provider.execute({
+    objective: taskSpec.goal,
+    capabilities: {},
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      updatePlan: async () => { updatePlanCalls += 1; },
+      saveModelState: async (value) => { lastState = structuredClone(value); },
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {},
+      verifyDraft: async () => ({
+        result: {
+          passed: true,
+          score: 100,
+          issues: [],
+          repairInstructions: [],
+          unsupportedVisualJudgment: false,
+          criteria: []
+        },
+        credits: 0,
+        usage: {}
+      })
+    }
+  });
+
+  assert.equal(updatePlanCalls, 0);
+  assert.equal(requests.length, 2);
+  assert.equal(
+    requests[1].tools?.some((tool) => tool.function?.name === 'update_plan') || false,
+    false
+  );
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('server already published the initial plan')
+  )));
+  assert.equal(lastState.planUpdateSuppressed, true);
+  assert.equal(result.text, '聚焦一个主目标，并让每个视觉元素服务于它。');
 });
 
 test('Runtime V2 stops after one correction when action and observed state repeat unchanged', async () => {

@@ -394,7 +394,7 @@ class AgentRuntimeHarness {
         WHERE id=$1 AND status IN ('provisioning','running','verifying')`,
       [runId]
     );
-    await this.runService.expireStaleRuns({ limit: 100 });
+    await this.runService.recoverExpiredRun({ runId });
     this.worker = this.createWorker(workerId);
     return this.runToTerminal(runId);
   }

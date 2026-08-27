@@ -109,7 +109,7 @@ const TASK_SPEC_CANDIDATE_SCHEMA = Object.freeze({
     plan: {
       type: 'array',
       minItems: 2,
-      maxItems: 8,
+      maxItems: 12,
       items: TASK_SPEC_SCHEMA.properties.plan.items
     },
     budget: TASK_SPEC_SCHEMA.properties.budget
@@ -500,7 +500,7 @@ const compileAgentPrompt = ({
   ].join('\n')).join('\n\n');
   const instructions = [
     CONSTITUTION,
-    `Current phase: ${phase}. Follow the server-published TaskSpec and plan; update it only for a material replan.`,
+    `Current phase: ${phase}. The server already published the TaskSpec and initial plan. Do not repeat the plan before the first action. Update it only after a step completes, the phase changes, work is blocked, or a material replan is necessary; never use a plan update to expand permissions, budget, scope, or deliverables.`,
     skillText
   ].filter(Boolean).join('\n\n');
   const skillRefs = skillsPublicRefs(skills);
@@ -675,11 +675,17 @@ const normalizeTaskSpec = (value, fallback = {}) => {
       });
     }
     planIds.add(id);
-    const requestedStatus = ['pending', 'in_progress', 'completed'].includes(step?.status)
-      ? step.status
-      : index === 0
-        ? 'in_progress'
-        : 'pending';
+    // Planner output describes work that has not run yet. It cannot claim a
+    // step was already completed or choose a later active step. Durable
+    // checkpoints continue to preserve their server-recorded status when this
+    // normalizer is used outside strict Planner compilation.
+    const requestedStatus = fallback.strictPlannerOutput === true
+      ? index === 0 ? 'in_progress' : 'pending'
+      : ['pending', 'in_progress', 'completed'].includes(step?.status)
+        ? step.status
+        : index === 0
+          ? 'in_progress'
+          : 'pending';
     const status = requestedStatus === 'in_progress' && activeStepSeen
       ? 'pending'
       : requestedStatus;
@@ -1233,10 +1239,10 @@ const taskPlannerMessages = ({ objective, deliverables, capabilities, allowedOri
     'Return one JSON object only. Do not include reasoning or markdown.',
     'Return exactly these keys: {complexity,confidence,constraints,assumptions,acceptanceCriteria,skillIds,plan}.',
     'complexity is simple|medium|high. confidence is a number from 0 to 1. constraints, assumptions, acceptanceCriteria, and skillIds are JSON string arrays.',
-    'plan is an array of 2-8 objects: {id,label,phase,status}. id is lowercase ASCII kebab-case with 2-80 characters. phase is research|production|verification|completion. status is pending|in_progress|completed. Use at most one in_progress step.',
+    'plan is an array of 2-12 objects: {id,label,phase,status}. id is lowercase ASCII kebab-case with 2-80 characters. phase is research|production|verification|completion. The server ignores model-authored status and starts the first step in_progress with all remaining steps pending.',
     'The server owns the exact goal, deliverables, allowed origins, budget, requirement sources, and stable requirement IDs. Do not return or restate those fields.',
     `Valid skills: ${Object.keys(SKILLS).join(', ')}. Never add a deliverable the user did not positively request.`,
-    'Use research only when browser evidence is required. End with verification. Keep 2-8 plan steps.'
+    'Use research only when browser evidence is required. End with verification. Keep 2-12 plan steps.'
   ].join('\n')
 }, {
   role: 'user',

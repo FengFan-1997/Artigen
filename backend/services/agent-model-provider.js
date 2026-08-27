@@ -222,7 +222,8 @@ const FUNCTION_TOOLS = Object.freeze([
     type: 'function',
     name: 'sandbox_shell',
     description: [
-      'Run a bounded command inside the isolated Linux sandbox.',
+      'Run a bounded POSIX Bash script inside the isolated Linux sandbox. The script field is Bash, never raw Python or JavaScript source.',
+      'Invoke Python or Node through an explicit quoted heredoc such as python3 <<\'PY\' or node <<\'JS\'.',
       'Use this for file creation, LibreOffice/Python/Node/FFmpeg tooling, and deterministic checks.',
       'Never request credentials or secrets. Work only under /tmp/artigen-workspace.'
     ].join(' '),
@@ -231,7 +232,12 @@ const FUNCTION_TOOLS = Object.freeze([
       type: 'object',
       additionalProperties: false,
       properties: {
-        script: { type: 'string', minLength: 1, maxLength: 30000 },
+        script: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 30000,
+          description: 'A complete POSIX Bash script. Wrap Python/Node source in an explicit quoted heredoc.'
+        },
         purpose: { type: 'string', minLength: 1, maxLength: 300 }
       },
       required: ['script', 'purpose']
@@ -249,7 +255,11 @@ const FUNCTION_TOOLS = Object.freeze([
       type: 'object',
       additionalProperties: false,
       properties: {
-        path: { type: 'string', pattern: '^/tmp/artigen-workspace/' },
+        path: {
+          type: 'string',
+          pattern: '^/tmp/artigen-workspace/(?:[^/]+/)*[^/]+$',
+          description: 'The complete leaf file path, for example /tmp/artigen-workspace/report.pdf. Do not pass a directory.'
+        },
         role: {
           type: 'string',
           enum: ['source', 'editable', 'preview', 'pdf', 'package', 'website', 'image', 'data']
@@ -653,6 +663,37 @@ const normalizeReportPdfToolAlias = ({ name, rawArguments, toolProfile }) => {
       purpose: `Generate and verify ${outputPath.split('/').pop()} with the preinstalled report helper`
     })
   };
+};
+
+const assertPosixShellScript = (value) => {
+  const script = String(value || '').trim();
+  const firstMeaningfulLine = script
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith('#')) || '';
+  const rawPython = (
+    /^from\s+[A-Za-z_][\w.]*\s+import\s+/u.test(firstMeaningfulLine) ||
+    /^import\s+[A-Za-z_][\w.]*(?:\s+as\s+[A-Za-z_]\w*)?(?:\s*,\s*[A-Za-z_][\w.]*(?:\s+as\s+[A-Za-z_]\w*)?)*\s*$/u
+      .test(firstMeaningfulLine) ||
+    /^(?:async\s+)?def\s+[A-Za-z_]\w*\s*\([^\n]*\)\s*:/u.test(firstMeaningfulLine) ||
+    /^class\s+[A-Za-z_]\w*(?:\([^\n]*\))?\s*:/u.test(firstMeaningfulLine)
+  );
+  const rawJavaScript = (
+    /^(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*require\s*\(/u.test(firstMeaningfulLine) ||
+    /^import\s+.+\s+from\s+['"][^'"]+['"]\s*;?$/u.test(firstMeaningfulLine) ||
+    /^(?:async\s+)?function\s+[A-Za-z_$][\w$]*\s*\(/u.test(firstMeaningfulLine)
+  );
+  if (rawPython || rawJavaScript) {
+    throw new ApiError(400, 'AGENT_SHELL_SCRIPT_TYPE_INVALID', {
+      details: {
+        expected: 'posix_bash',
+        correction: rawPython
+          ? "Wrap Python source as: python3 <<'PY'\\n# Python source\\nPY"
+          : "Wrap JavaScript source as: node <<'JS'\\n// JavaScript source\\nJS"
+      }
+    });
+  }
+  return script;
 };
 
 const compactOllamaMessages = (input, maximumCharacters = 60_000) => {
@@ -1529,6 +1570,11 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.shellOriginValidationAttempts || 0)
     );
+    let shellContractValidationAttempts = Math.max(
+      0,
+      Number(durable?.shellContractValidationAttempts || 0)
+    );
+    let runtimeActionObserved = durable?.runtimeActionObserved === true;
     let artifactDuplicateNoticePending = durable?.artifactDuplicateNoticePending === true;
     let declaredArtifacts = (Array.isArray(durable?.declaredArtifacts)
       ? durable.declaredArtifacts
@@ -1625,6 +1671,8 @@ class OllamaAgentModelProvider {
         artifactDuplicateAttempts,
         artifactDuplicateNoticePending,
         shellOriginValidationAttempts,
+        shellContractValidationAttempts,
+        runtimeActionObserved,
         declaredArtifacts,
         artifactRepairRequired,
         approvalRecoveryAttempts,
@@ -1714,6 +1762,15 @@ class OllamaAgentModelProvider {
               status: requested?.status || canonicalStep.status
             };
           });
+          if (!runtimeActionObserved) {
+            planUpdateSuppressed = true;
+            return {
+              accepted: true,
+              changed: false,
+              steps: taskSpec.plan.map(({ id, label, status }) => ({ id, label, status })),
+              correction: 'The server already published the initial plan. Execute the current step first; update the plan only after real progress, a phase change, or a blocker.'
+            };
+          }
         }
         if (
           toolProfile === 'parent' &&
@@ -1801,18 +1858,26 @@ class OllamaAgentModelProvider {
       if (call.name === 'delegate_tasks') {
         const result = await callbacks.delegateTasks(args.tasks);
         delegationCompleted = true;
-        if (runtimeV2) planUpdateSuppressed = false;
+        if (runtimeV2) {
+          planUpdateSuppressed = false;
+          runtimeActionObserved = true;
+        }
         return result;
       }
       if (call.name === 'sandbox_shell') {
-        const shellResult = await callbacks.shell(args.script, args.purpose, {
+        const shellScript = assertPosixShellScript(args.script);
+        const shellResult = await callbacks.shell(shellScript, args.purpose, {
           callId: call.callId
         });
         if (shellResult.success) shellOriginValidationAttempts = 0;
+        if (shellResult.success) shellContractValidationAttempts = 0;
         if (shellResult.success) artifactDuplicateAttempts = 0;
         if (shellResult.success) artifactRepairRequired = false;
         if (shellResult.success) approvalRecoveryRequired = false;
-        if (runtimeV2 && shellResult.success) planUpdateSuppressed = false;
+        if (runtimeV2) {
+          runtimeActionObserved = true;
+          if (shellResult.success) planUpdateSuppressed = false;
+        }
         if (toolProfile === 'subagent' && shellResult.success) {
           subagentSuccessfulShellCalls += 1;
           subagentShellFailureCount = 0;
@@ -1839,13 +1904,19 @@ class OllamaAgentModelProvider {
       }
       if (call.name === 'browser_dom') {
         const result = await callbacks.browserDom(args);
-        if (runtimeV2 && result?.success !== false) planUpdateSuppressed = false;
+        if (runtimeV2) {
+          runtimeActionObserved = true;
+          if (result?.success !== false) planUpdateSuppressed = false;
+        }
         return result;
       }
       if (call.name === 'generate_image') {
         const image = await callbacks.generateImage(args, { callId: call.callId });
         artifactDuplicateAttempts = 0;
-        if (runtimeV2) planUpdateSuppressed = false;
+        if (runtimeV2) {
+          planUpdateSuppressed = false;
+          runtimeActionObserved = true;
+        }
         return image;
       }
       if (call.name === 'declare_artifact') {
@@ -1855,6 +1926,7 @@ class OllamaAgentModelProvider {
           filename: String(args.filename || '')
         };
         const artifact = await callbacks.declareArtifact(args);
+        if (runtimeV2) runtimeActionObserved = true;
         const declared = {
           artifact_id: String(artifact.artifactId || ''),
           role: String(artifact.role || declarationIdentity.role),
@@ -1982,11 +2054,16 @@ class OllamaAgentModelProvider {
               pendingCall.name === 'sandbox_shell' &&
               error?.code === 'AGENT_BROWSER_ORIGIN_FORBIDDEN'
             );
+            const correctableShellContractError = (
+              pendingCall.name === 'sandbox_shell' &&
+              error?.code === 'AGENT_SHELL_SCRIPT_TYPE_INVALID'
+            );
             if (
               !correctableDelegationError &&
               !correctablePlanError &&
               !correctableArtifactError &&
-              !correctableShellOriginError
+              !correctableShellOriginError &&
+              !correctableShellContractError
             ) {
               await callbacks.toolObservation?.({
                 callId: pendingCall.callId,
@@ -2047,6 +2124,19 @@ class OllamaAgentModelProvider {
                   ].join(' ')
                 })
               };
+            } else if (correctableShellContractError) {
+              shellContractValidationAttempts += 1;
+              if (shellContractValidationAttempts > 1) throw error;
+              completedOutput = {
+                callId: pendingCall.callId,
+                name: pendingCall.name,
+                content: JSON.stringify({
+                  success: false,
+                  errorCode: error.code,
+                  expected: 'posix_bash',
+                  correction: String(error?.details?.correction || "Wrap source in a quoted heredoc: python3 <<'PY'\\n# source\\nPY")
+                })
+              };
             } else if (correctableShellOriginError) {
               shellOriginValidationAttempts += 1;
               if (shellOriginValidationAttempts > 2) throw error;
@@ -2081,6 +2171,9 @@ class OllamaAgentModelProvider {
                   errorCode: error.code,
                   filename: String(error?.details?.filename || '').slice(0, 240),
                   verifier: String(error?.details?.verifier || '').slice(0, 500),
+                  observedUrls: Array.isArray(error?.details?.observedUrls)
+                    ? error.details.observedUrls.slice(0, 20)
+                    : [],
                   correction: artifactRepairRequired
                     ? 'Use sandbox_shell to create or repair the file and verify it opens successfully, then call declare_artifact again with the exact path.'
                     : error?.code === 'AGENT_REPORT_SOURCES_REQUIRED'
@@ -2089,6 +2182,12 @@ class OllamaAgentModelProvider {
                           'Retry declare_artifact with at least one exact HTTPS page this run actually observed through browser_dom or a connector.',
                           'Reuse the same observed source list as the editable report; never invent a URL.'
                         ].join(' ')
+                      : error?.code === 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED'
+                        ? [
+                            'One or more declared URLs were not observed exactly in this Run.',
+                            'Retry using only an exact URL from observedUrls in this tool result; do not simplify query parameters or substitute a base URL.',
+                            'If observedUrls is empty, remove the unsupported URL and its factual claim.'
+                          ].join(' ')
                       : 'Correct the declaration fields and call declare_artifact again. Use only observed sources and a supported role, MIME type, filename, and extension.'
                 })
               };
@@ -3306,6 +3405,7 @@ module.exports = {
   compactOllamaMessages,
   normalizeOllamaArguments,
   normalizeReportPdfToolAlias,
+  assertPosixShellScript,
   functionToolsForProfile,
   ollamaFileTools,
   ollamaUsageCredits,

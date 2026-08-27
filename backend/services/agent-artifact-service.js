@@ -58,7 +58,10 @@ const assertSourcesObserved = (sources, observedUrls) => {
     .filter((url) => url && !normalizedObserved.has(url));
   if (missing.length) {
     throw new ApiError(422, 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED', {
-      sourceCount: missing.length
+      details: {
+        sourceCount: missing.length,
+        observedUrls: [...normalizedObserved].slice(0, 20)
+      }
     });
   }
   return true;

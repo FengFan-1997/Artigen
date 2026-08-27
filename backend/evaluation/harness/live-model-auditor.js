@@ -45,6 +45,14 @@ class LiveModelAuditor {
     this.kolors = [];
     this.protocol = new ScriptedSiliconFlowTransport({ trace });
     this.requestContext = new AsyncLocalStorage();
+    this.slotContext = new AsyncLocalStorage();
+  }
+
+  runSlot(slotId, operation) {
+    if (typeof operation !== 'function') throw new TypeError('AGENT_LIVE_EVAL_SLOT_OPERATION_REQUIRED');
+    const normalized = String(slotId || '').trim();
+    if (!normalized) throw new TypeError('AGENT_LIVE_EVAL_SLOT_ID_REQUIRED');
+    return this.slotContext.run({ slotId: normalized }, operation);
   }
 
   async runtimeVersion(runId) {
@@ -79,6 +87,7 @@ class LiveModelAuditor {
       thinkingEnabled: payload.enable_thinking === true,
       maxTokens: Number(payload.max_tokens || 0),
       promptHash: requestPromptHash(payload),
+      slotId: String(metadata.slotId || this.slotContext.getStore()?.slotId || ''),
       toolNames: (Array.isArray(payload.tools) ? payload.tools : [])
         .map((tool) => String(tool?.function?.name || ''))
         .filter(Boolean)
@@ -111,29 +120,65 @@ class LiveModelAuditor {
       const isQwenDispatch = String(options.method || 'GET').toUpperCase() === 'POST' &&
         /\/chat\/completions(?:\?|$)/.test(url);
       if (!isQwenDispatch) return fetchImpl(...args);
-      const context = this.requestContext.getStore() || {};
-      const dispatch = this.campaignGuard
-        ? await this.campaignGuard.reserveDispatch('qwen', { runId: context.runId || null })
-        : { dispatchId: null, sequence: this.qwenCalls + 1 };
-      this.qwenCalls += 1;
-      if (this.qwenCalls > this.maxQwenCalls) {
+      if (this.qwenCalls >= this.maxQwenCalls) {
         throw new Error('AGENT_LIVE_EVAL_QWEN_CALL_LIMIT');
       }
-      const currentSignal = args[3] || options.signal || null;
-      const signal = this.campaignGuard
-        ? this.campaignGuard.combinedSignal(currentSignal)
-        : currentSignal;
-      if (args.length >= 4) args[3] = signal;
-      else options.signal = signal;
-      args[1] = options;
-      this.trace?.record('model.provider_dispatch', {
-        attempt: dispatch.sequence,
-        dispatchId: dispatch.dispatchId,
-        model: TEXT_MODEL,
-        phase: context.phase || 'actor',
-        runId: context.runId || null
-      });
-      return fetchImpl(...args);
+      const context = this.requestContext.getStore() || {};
+      const startedAt = Date.now();
+      const dispatch = this.campaignGuard
+        ? await this.campaignGuard.reserveDispatch('qwen', {
+            runId: context.runId || null,
+            slotId: context.slotId || null,
+            runtimeVersion: context.runtimeVersion || null,
+            phase: context.phase || 'actor'
+          })
+        : { dispatchId: null, sequence: this.qwenCalls + 1 };
+      this.qwenCalls += 1;
+      try {
+        const currentSignal = args[3] || options.signal || null;
+        const signal = this.campaignGuard
+          ? this.campaignGuard.combinedSignal(currentSignal)
+          : currentSignal;
+        if (args.length >= 4) args[3] = signal;
+        else options.signal = signal;
+        args[1] = options;
+        this.trace?.record('model.provider_dispatch', {
+          attempt: dispatch.sequence,
+          dispatchId: dispatch.dispatchId,
+          model: TEXT_MODEL,
+          phase: context.phase || 'actor',
+          runId: context.runId || null
+        });
+        const response = await fetchImpl(...args);
+        let usage = {};
+        try {
+          const body = typeof response?.clone === 'function'
+            ? await response.clone().json()
+            : {};
+          usage = body?.usage && typeof body.usage === 'object' ? body.usage : {};
+        } catch {}
+        if (this.campaignGuard) {
+          await this.campaignGuard.recordDispatchResult(dispatch, {
+            status: response?.ok === false ? 'failed' : 'succeeded',
+            inputTokens: Number(usage.prompt_tokens || 0),
+            outputTokens: Number(usage.completion_tokens || 0),
+            latencyMs: Date.now() - startedAt,
+            errorCode: response?.ok === false ? `HTTP_${Number(response.status || 0)}` : null
+          });
+        }
+        return response;
+      } catch (error) {
+        if (this.campaignGuard) {
+          await this.campaignGuard.recordDispatchResult(dispatch, {
+            status: error?.name === 'AbortError' ? 'cancelled' : 'failed',
+            latencyMs: Date.now() - startedAt,
+            errorCode: /^[A-Z][A-Z0-9_]{2,100}$/.test(String(error?.code || ''))
+              ? error.code
+              : 'AGENT_PROVIDER_DISPATCH_FAILED'
+          });
+        }
+        throw error;
+      }
     };
   }
 
@@ -175,36 +220,78 @@ class LiveModelAuditor {
   }
 
   async inspectKolorsRequest(request = {}) {
-    const dispatch = this.campaignGuard
-      ? await this.campaignGuard.reserveDispatch('kolors', { runId: request.runId || null })
-      : { dispatchId: null, sequence: this.kolorsCalls + 1 };
-    this.kolorsCalls += 1;
-    if (this.kolorsCalls > this.maxKolorsCalls) {
+    const referenceCount = Array.isArray(request.references) ? request.references.length : 0;
+    if (referenceCount > 1) throw new Error('AGENT_LIVE_EVAL_REFERENCE_LIMIT');
+    if (this.kolorsCalls >= this.maxKolorsCalls) {
       throw new Error('AGENT_LIVE_EVAL_KOLORS_CALL_LIMIT');
     }
+    const context = this.slotContext.getStore() || {};
+    const dispatch = this.campaignGuard
+      ? await this.campaignGuard.reserveDispatch('kolors', {
+          runId: request.runId || null,
+          slotId: request.slotId || context.slotId || null,
+          runtimeVersion: request.runtimeVersion || null,
+          phase: 'image'
+        })
+      : { dispatchId: null, sequence: this.kolorsCalls + 1 };
+    this.kolorsCalls += 1;
     const entry = Object.freeze({
       sequence: dispatch.sequence,
       dispatchId: dispatch.dispatchId,
-      referenceCount: Array.isArray(request.references) ? request.references.length : 0,
+      startedAt: Date.now(),
+      referenceCount,
       filename: String(request.filename || '').slice(0, 240)
     });
-    if (entry.referenceCount > 1) throw new Error('AGENT_LIVE_EVAL_REFERENCE_LIMIT');
     this.kolors.push(entry);
     return entry;
   }
 
-  inspectKolorsResponse(response = {}, request = {}) {
+  async inspectKolorsResponse(response = {}, request = {}, dispatch = {}) {
     if (String(response.model || '') !== IMAGE_MODEL) {
+      if (this.campaignGuard && dispatch.dispatchId) {
+        await this.campaignGuard.recordDispatchResult(dispatch, {
+          status: 'failed',
+          latencyMs: Date.now() - Number(dispatch.startedAt || Date.now()),
+          errorCode: 'AGENT_LIVE_EVAL_IMAGE_MODEL_INVALID'
+        });
+      }
       throw new Error(`AGENT_LIVE_EVAL_IMAGE_MODEL_INVALID:${response.model || 'missing'}`);
     }
+    if (this.campaignGuard && dispatch.dispatchId) {
+      await this.campaignGuard.recordDispatchResult(dispatch, {
+        status: 'succeeded',
+        latencyMs: Date.now() - Number(dispatch.startedAt || Date.now())
+      });
+    }
     this.trace?.record('image.generated', {
-      attempt: this.kolorsCalls,
+      attempt: Number(dispatch.sequence || this.kolorsCalls),
       credits: Number(response.costCredits || 0),
       model: response.model,
       ok: true,
       runId: request.runId || null
     });
     return response;
+  }
+
+  async inspectKolorsFailure(error, request = {}, dispatch = {}) {
+    if (this.campaignGuard && dispatch.dispatchId) {
+      await this.campaignGuard.recordDispatchResult(dispatch, {
+        status: error?.name === 'AbortError' ? 'cancelled' : 'failed',
+        latencyMs: Date.now() - Number(dispatch.startedAt || Date.now()),
+        errorCode: /^[A-Z][A-Z0-9_]{2,100}$/.test(String(error?.code || ''))
+          ? error.code
+          : 'AGENT_IMAGE_PROVIDER_DISPATCH_FAILED'
+      });
+    }
+    this.trace?.record('image.generated', {
+      attempt: Number(dispatch.sequence || this.kolorsCalls),
+      errorCode: /^[A-Z][A-Z0-9_]{2,100}$/.test(String(error?.code || ''))
+        ? error.code
+        : 'AGENT_IMAGE_PROVIDER_DISPATCH_FAILED',
+      model: IMAGE_MODEL,
+      ok: false,
+      runId: request.runId || null
+    });
   }
 
   snapshot() {

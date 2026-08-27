@@ -32,6 +32,7 @@ const {
   OllamaAgentModelProvider,
   OpenAiAgentModelProvider,
   SiliconFlowAgentModelProvider,
+  assertPosixShellScript,
   buildInstructions,
   functionToolsForProfile,
   normalizeReportPdfToolAlias,
@@ -78,6 +79,29 @@ test('parent maps the Qwen report helper alias to one bounded offline shell call
     }),
     toolProfile: 'parent'
   }), /AGENT_MODEL_TOOL_ARGUMENTS_INVALID/);
+});
+
+test('sandbox_shell rejects obvious raw language source before execution and accepts an explicit Bash wrapper', () => {
+  assert.throws(
+    () => assertPosixShellScript('import pandas\nprint(pandas.__version__)'),
+    { code: 'AGENT_SHELL_SCRIPT_TYPE_INVALID' }
+  );
+  assert.throws(
+    () => assertPosixShellScript('import pandas as pd\ndf = pd.DataFrame()'),
+    (error) => (
+      error.code === 'AGENT_SHELL_SCRIPT_TYPE_INVALID' &&
+      error.details?.expected === 'posix_bash' &&
+      /python3 <<'PY'/u.test(error.details?.correction || '')
+    )
+  );
+  assert.throws(
+    () => assertPosixShellScript("const fs = require('node:fs');\nfs.writeFileSync('x','y');"),
+    { code: 'AGENT_SHELL_SCRIPT_TYPE_INVALID' }
+  );
+  assert.equal(
+    assertPosixShellScript("python3 <<'PY'\nimport pandas as pd\nprint(pd.__version__)\nPY"),
+    "python3 <<'PY'\nimport pandas as pd\nprint(pd.__version__)\nPY"
+  );
 });
 
 test('SiliconFlow executes the report helper alias without another model repair turn', async () => {
@@ -572,6 +596,21 @@ test('Agent run service exposes saved browser session revocation', () => {
   const pool = { connect: async () => { throw new Error('not called'); } };
   const service = createAgentRunService({ pool, env: encryptionEnv });
   assert.equal(typeof service.deleteBrowserProfile, 'function');
+});
+
+test('targeted expired-run recovery remains internal to test and DEV processes', async () => {
+  const pool = {
+    connect: async () => { throw new Error('not called'); },
+    query: async () => { throw new Error('not called'); }
+  };
+  const service = createAgentRunService({
+    pool,
+    env: { ...encryptionEnv, NODE_ENV: 'production', APP_ENV: 'production' }
+  });
+  await assert.rejects(
+    service.recoverExpiredRun({ runId: '11111111-1111-4111-8111-111111111111' }),
+    /AGENT_TARGETED_RECOVERY_FORBIDDEN/
+  );
 });
 
 test('owner-only Agent Beta allows configured database users and denies everyone else', async () => {
@@ -3215,6 +3254,97 @@ test('SiliconFlow corrects a PDF report declaration that omits observed sources'
   )));
 });
 
+test('SiliconFlow returns the exact observed URL when correcting a source declaration', async () => {
+  const observedUrl = 'https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=exact-token';
+  const declaration = (url) => ({
+    path: '/tmp/artigen-workspace/report.pdf',
+    role: 'pdf',
+    filename: 'report.pdf',
+    mimeType: 'application/pdf',
+    sources: [{ title: 'W3C accessibility guidance', url }]
+  });
+  const call = (id, args) => ({
+    id: `chat-exact-source-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-exact-source-${id}`,
+          type: 'function',
+          function: { name: 'declare_artifact', arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: {}
+  });
+  const responses = [
+    call('base', declaration('https://www.w3.org/WAI/standards-guidelines/wcag/')),
+    call('exact', declaration(observedUrl)),
+    {
+      id: 'chat-exact-source-final',
+      choices: [{ message: { role: 'assistant', content: 'The exact cited PDF is verified.' } }],
+      usage: {}
+    }
+  ];
+  const requests = [];
+  let declarations = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Deliver the cited W3C PDF without weakening exact-source matching.',
+    capabilities: { files: true, browser: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      declareArtifact: async (args) => {
+        declarations += 1;
+        if (declarations === 1) {
+          throw new ApiError(422, 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED', {
+            details: {
+              sourceCount: 1,
+              observedUrls: [observedUrl]
+            }
+          });
+        }
+        assert.equal(args.sources[0].url, observedUrl);
+        return {
+          artifactId: 'artifact-exact-source-pdf',
+          role: args.role,
+          filename: args.filename,
+          mimeType: args.mimeType,
+          verificationStatus: 'passed'
+        };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'The exact cited PDF is verified.');
+  assert.equal(declarations, 2);
+  const correction = requests[1].messages.find((message) => (
+    message.role === 'tool' &&
+    message.content.includes('AGENT_ARTIFACT_SOURCE_NOT_OBSERVED')
+  ));
+  assert.ok(correction);
+  assert.match(correction.content, /do not simplify query parameters/i);
+  assert.ok(correction.content.includes(observedUrl));
+});
+
 test('SiliconFlow blocks task-local install approvals and forces an offline PDF recovery', async () => {
   const call = (id, name, args) => ({
     id: `chat-install-${id}`,
@@ -3852,9 +3982,21 @@ test('artifact citations must come from pages actually observed by the agent', (
     ['https://example.com/report/#section']
   ), true);
   assert.throws(() => assertSourcesObserved(
-    [{ title: 'Invented', url: 'https://unseen.example/report' }],
-    ['https://example.com/report']
-  ), { code: 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED' });
+    [{ title: 'Simplified', url: 'https://www.w3.org/WAI/standards-guidelines/wcag/' }],
+    ['https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=exact-token']
+  ), (error) => (
+    error.code === 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED' &&
+    error.details?.sourceCount === 1 &&
+    error.details?.observedUrls?.[0] ===
+      'https://www.w3.org/WAI/standards-guidelines/wcag?__cf_chl_tk=exact-token'
+  ));
+  assert.equal(assertSourcesObserved(
+    [{
+      title: 'Exact observation',
+      url: 'https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=exact-token'
+    }],
+    ['https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=exact-token']
+  ), true);
 });
 
 test('trajectory verifier blocks unapproved side effects and unconsumed model checkpoints', () => {
@@ -4856,6 +4998,21 @@ test('SiliconFlow exposes browser_dom only when the run grants browser capabilit
   assert.deepEqual(
     imageTool.function.parameters.properties.references.items.properties.role.enum,
     ['product', 'style', 'scene']
+  );
+  const fileTools = ollamaFileTools({ files: true });
+  const shellTool = fileTools.find((tool) => tool.function.name === 'sandbox_shell');
+  const artifactTool = fileTools.find((tool) => tool.function.name === 'declare_artifact');
+  assert.match(shellTool.function.description, /POSIX Bash/u);
+  assert.match(shellTool.function.parameters.properties.script.description, /quoted heredoc/u);
+  assert.equal(
+    new RegExp(artifactTool.function.parameters.properties.path.pattern)
+      .test('/tmp/artigen-workspace/report.pdf'),
+    true
+  );
+  assert.equal(
+    new RegExp(artifactTool.function.parameters.properties.path.pattern)
+      .test('/tmp/artigen-workspace/'),
+    false
   );
 });
 

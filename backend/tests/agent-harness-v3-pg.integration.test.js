@@ -108,6 +108,27 @@ const waitForChildMessage = (child, event, timeoutMs = 10_000) => new Promise((r
   child.on('exit', onExit);
 });
 
+const waitForChildExit = (child, timeoutMs = 10_000) => new Promise((resolve, reject) => {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    resolve({ code: child.exitCode, signal: child.signalCode });
+    return;
+  }
+  const timer = setTimeout(() => {
+    cleanup();
+    reject(new Error('AGENT_CROSS_PROCESS_EXIT_TIMEOUT'));
+  }, timeoutMs);
+  timer.unref?.();
+  const onExit = (code, signal) => {
+    cleanup();
+    resolve({ code, signal });
+  };
+  const cleanup = () => {
+    clearTimeout(timer);
+    child.off('exit', onExit);
+  };
+  child.on('exit', onExit);
+});
+
 test('Live Harness V3.1 persists physical provider caps across restart and rejects concurrent runners', {
   skip: !enabled,
   timeout: 30_000
@@ -132,12 +153,38 @@ test('Live Harness V3.1 persists physical provider caps across restart and rejec
     second = new LiveEvalCampaignGuard(profile);
     await assert.rejects(second.initialize(), /CAMPAIGN_ALREADY_RUNNING/);
     const firstDispatch = await first.reserveDispatch('qwen', {
-      runId: crypto.randomUUID()
+      runId: crypto.randomUUID(),
+      slotId: 'restart-metrics:v1',
+      runtimeVersion: 1,
+      phase: 'actor'
     });
     assert.equal(firstDispatch.sequence, 1);
-    await first.reserveDispatch('qwen');
+    await first.recordDispatchResult(firstDispatch, {
+      status: 'succeeded',
+      inputTokens: 11,
+      outputTokens: 7,
+      latencyMs: 23
+    });
+    const secondDispatch = await first.reserveDispatch('qwen', {
+      slotId: 'restart-metrics:v1',
+      runtimeVersion: 1,
+      phase: 'actor'
+    });
+    await first.recordDispatchResult(secondDispatch, {
+      status: 'failed',
+      latencyMs: 31,
+      errorCode: 'AGENT_PROVIDER_DISPATCH_FAILED'
+    });
     await assert.rejects(first.reserveDispatch('qwen'), /QWEN_CALL_LIMIT/);
-    await first.reserveDispatch('kolors');
+    const imageDispatch = await first.reserveDispatch('kolors', {
+      slotId: 'restart-metrics:v1',
+      runtimeVersion: 1,
+      phase: 'production'
+    });
+    await first.recordDispatchResult(imageDispatch, {
+      status: 'succeeded',
+      latencyMs: 47
+    });
     await assert.rejects(first.reserveDispatch('kolors'), /KOLORS_CALL_LIMIT/);
     await first.close();
     first = null;
@@ -145,6 +192,25 @@ test('Live Harness V3.1 persists physical provider caps across restart and rejec
     second = new LiveEvalCampaignGuard(profile);
     await second.initialize();
     assert.deepEqual(await second.counts(), { qwen: 2, kolors: 1 });
+    const durableMetrics = await second.dispatchMetrics({ slotId: 'restart-metrics:v1' });
+    assert.equal(durableMetrics.qwenCalls, 2);
+    assert.equal(durableMetrics.kolorsCalls, 1);
+    assert.equal(durableMetrics.inputTokens, 11);
+    assert.equal(durableMetrics.outputTokens, 7);
+    assert.equal(durableMetrics.latencyMs, 101);
+    assert.equal(durableMetrics.incomplete, 0);
+    assert.equal(
+      durableMetrics.calls.find((call) => call.kind === 'qwen' && call.sequence === 1)?.status,
+      'succeeded'
+    );
+    assert.equal(
+      durableMetrics.calls.find((call) => call.kind === 'qwen' && call.sequence === 2)?.status,
+      'failed'
+    );
+    assert.equal(
+      durableMetrics.calls.find((call) => call.kind === 'kolors' && call.sequence === 1)?.status,
+      'succeeded'
+    );
     await assert.rejects(second.reserveDispatch('qwen'), /QWEN_CALL_LIMIT/);
     const stored = await pool.query(
       `SELECT run_id,metrics FROM agent_quality_checks
@@ -158,6 +224,67 @@ test('Live Harness V3.1 persists physical provider caps across restart and rejec
   } finally {
     await first?.close().catch(() => {});
     await second?.close().catch(() => {});
+    await pool.query(
+      `DELETE FROM agent_quality_checks
+        WHERE check_kind IN ($1,$2) AND metrics->>'campaignHash'=$3`,
+      [CAMPAIGN_CHECK_KIND, DISPATCH_CHECK_KIND, campaignHash]
+    ).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('Live Harness V3.1 serializes concurrent physical dispatch reservations at the hard cap', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const campaignId = crypto.randomUUID();
+  const campaignHash = crypto.createHash('sha256').update(campaignId).digest('hex');
+  const guard = new LiveEvalCampaignGuard({
+    pool,
+    campaignId,
+    commitSha: 'ef'.repeat(20),
+    matrixHash: 'ab'.repeat(32),
+    maxQwenCalls: 7,
+    maxKolorsCalls: 1,
+    maxWallClockMs: 60_000
+  });
+  try {
+    await guard.initialize();
+    const attempts = await Promise.all(Array.from({ length: 20 }, async () => {
+      try {
+        return { ok: true, value: await guard.reserveDispatch('qwen') };
+      } catch (error) {
+        return { ok: false, code: error.message };
+      }
+    }));
+    const accepted = attempts.filter((entry) => entry.ok).map((entry) => entry.value);
+    const rejected = attempts.filter((entry) => !entry.ok);
+    assert.equal(accepted.length, 7);
+    assert.equal(rejected.length, 13);
+    assert.equal(rejected.every((entry) => entry.code === 'AGENT_LIVE_EVAL_QWEN_CALL_LIMIT'), true);
+    assert.deepEqual(
+      accepted.map((entry) => entry.sequence).sort((a, b) => a - b),
+      [1, 2, 3, 4, 5, 6, 7]
+    );
+    const stored = await pool.query(
+      `SELECT count(*)::integer AS total,
+              count(DISTINCT (metrics->>'sequence')::integer)::integer AS unique_sequences,
+              min((metrics->>'sequence')::integer)::integer AS minimum,
+              max((metrics->>'sequence')::integer)::integer AS maximum
+         FROM agent_quality_checks
+        WHERE check_kind=$1 AND metrics->>'campaignHash'=$2
+          AND metrics->>'kind'='qwen'`,
+      [DISPATCH_CHECK_KIND, campaignHash]
+    );
+    assert.deepEqual(stored.rows[0], {
+      total: 7,
+      unique_sequences: 7,
+      minimum: 1,
+      maximum: 7
+    });
+  } finally {
+    await guard.close().catch(() => {});
     await pool.query(
       `DELETE FROM agent_quality_checks
         WHERE check_kind IN ($1,$2) AND metrics->>'campaignHash'=$3`,
@@ -1009,6 +1136,15 @@ for (const failpoint of ['after_dispatch', 'after_provider_response']) {
         harness.worker.processRun(created.runId),
         (error) => error instanceof RuntimeHarnessCrash && error.point === failpoint
       );
+      // Reproduce a real evaluator interruption that outlives both the Worker
+      // lease and the original billing hold. Recovery must not transition to
+      // waiting_user and then fail it in the later hold-expiry sweep.
+      await pool.query(
+        `UPDATE agent_budget_holds
+            SET expires_at=clock_timestamp()-interval '1 second'
+          WHERE run_id=$1 AND status='held'`,
+        [created.runId]
+      );
       const resumed = await harness.resumeFromCrash(created.runId);
       assert.equal(resumed.snapshot.persistent.run.status, 'waiting_user');
       assert.equal(harness.transport.requests.length, 1);
@@ -1021,9 +1157,35 @@ for (const failpoint of ['after_dispatch', 'after_provider_response']) {
         resumed.snapshot.persistent.receipts.filter((receipt) => receipt.state === 'ambiguous').length,
         1
       );
+      assert.equal(
+        resumed.snapshot.persistent.reservations.some((reservation) => (
+          reservation.state === 'reserved'
+        )),
+        false
+      );
+      assert.equal(resumed.snapshot.persistent.holds[0].status, 'held');
+      assert.ok(
+        new Date(resumed.snapshot.persistent.holds[0].expires_at).getTime() > Date.now()
+      );
+      const walletBeforeCancel = await pool.query(
+        'SELECT frozen_credits FROM wallets WHERE user_id=$1',
+        [harness.userId]
+      );
+      assert.ok(Number(walletBeforeCancel.rows[0].frozen_credits) > 0);
       controller.assertDrained();
       harness.trace.assertProtocolInvariants();
       await harness.oracle.assertInvariants(created.runId);
+      const cancelled = await harness.cancel(created.runId);
+      assert.equal(cancelled.status, 'cancelled');
+      const afterCancel = await harness.snapshot(created.runId);
+      assert.equal(afterCancel.persistent.holds[0].status, 'released');
+      assert.equal(harness.transport.requests.length, 1);
+      const walletAfterCancel = await pool.query(
+        'SELECT frozen_credits FROM wallets WHERE user_id=$1',
+        [harness.userId]
+      );
+      assert.equal(Number(walletAfterCancel.rows[0].frozen_credits), 0);
+      await harness.assertInvariants(created.runId);
     } finally {
       await harness?.cleanup();
       await pool.end();
@@ -1274,6 +1436,72 @@ test('Harness V3 reuses an encrypted Shell receipt after a crash without repeati
       ['consumed']
     );
     assert.equal(terminal.snapshot.persistent.run.checkpoint.toolReceipts, undefined);
+    await harness.assertInvariants(created.runId);
+  } finally {
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
+test('Harness V3 rejects raw Python before creating a Shell receipt or sandbox reservation', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({
+      pool,
+      providerScript: [
+        {
+          toolCalls: [functionToolCall({
+            id: 'raw-python-shell-1',
+            name: 'sandbox_shell',
+            arguments: {
+              script: 'import pandas as pd\ndf = pd.DataFrame({"a": [1]})',
+              purpose: 'Create a synthetic analysis file'
+            }
+          })]
+        },
+        {
+          toolCalls: [functionToolCall({
+            id: 'wrapped-python-shell-1',
+            name: 'sandbox_shell',
+            arguments: {
+              script: harnessWriteCommand([{
+                path: '/tmp/artigen-workspace/analysis.txt',
+                buffer: Buffer.from('verified synthetic analysis', 'utf8')
+              }]),
+              purpose: 'Create the synthetic analysis file with Bash'
+            }
+          })]
+        },
+        ...verifiedTextScript()
+      ]
+    });
+    const created = await harness.createRun({
+      objective: '创建一个离线分析文件并返回简短说明。',
+      deliverables: [],
+      capabilities: { files: true, shell: true }
+    });
+    const terminal = await harness.runToTerminal(created.runId);
+    assert.equal(terminal.snapshot.persistent.run.status, 'succeeded');
+    const shellReceipts = terminal.snapshot.persistent.toolReceipts.filter((receipt) => (
+      receipt.kind === 'sandbox_shell'
+    ));
+    assert.equal(shellReceipts.length, 1);
+    assert.equal(shellReceipts[0].state, 'consumed');
+    const sandboxReservations = terminal.snapshot.persistent.reservations.filter((reservation) => (
+      reservation.component === 'sandbox'
+    ));
+    assert.equal(sandboxReservations.length, 1);
+    assert.equal(sandboxReservations[0].state, 'consumed');
+    assert.equal(harness.transport.requests.length, 4);
+    assert.ok(harness.transport.requests[1].messages.some((message) => (
+      message.role === 'tool' &&
+      message.content.includes('AGENT_SHELL_SCRIPT_TYPE_INVALID') &&
+      message.content.includes("python3 <<'PY'")
+    )));
     await harness.assertInvariants(created.runId);
   } finally {
     await harness?.cleanup();
@@ -1996,6 +2224,82 @@ test('Harness V3 fences stale writes across two independent Worker processes', {
       if (child?.connected) child.disconnect();
       if (child && child.exitCode === null) child.kill('SIGTERM');
     }
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
+test('Harness V3 recovers a real SIGKILLed process without Provider replay or premature hold expiry', {
+  skip: !enabled,
+  timeout: 45_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  let harness = null;
+  let child = null;
+  try {
+    harness = await AgentRuntimeHarness.create({ pool, providerScript: [] });
+    const created = await harness.createRun({
+      objective: '验证真实子进程死亡后的显式恢复，不调用 Provider。',
+      deliverables: [],
+      capabilities: { files: true, shell: true }
+    });
+    const probePath = path.join(
+      __dirname,
+      '../evaluation/harness/cross-process-recovery-probe.js'
+    );
+    child = fork(probePath, [], {
+      cwd: path.join(__dirname, '..'),
+      env: {
+        ...process.env,
+        ...harness.env,
+        DATABASE_URL: process.env.DATABASE_URL,
+        AGENT_CROSS_PROCESS_RUN_ID: created.runId,
+        AGENT_CROSS_PROCESS_WORKER_ID: `cross-process-recovery-${crypto.randomUUID()}`
+      },
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+    });
+    const dispatched = await waitForChildMessage(child, 'dispatched');
+    child.kill('SIGKILL');
+    const exited = await waitForChildExit(child);
+    assert.equal(exited.signal, 'SIGKILL');
+    await pool.query(
+      `UPDATE agent_runs SET lease_expires_at=clock_timestamp()-interval '1 second'
+        WHERE id=$1`,
+      [created.runId]
+    );
+    await pool.query(
+      `UPDATE agent_budget_holds
+          SET expires_at=clock_timestamp()-interval '1 second'
+        WHERE run_id=$1 AND status='held'`,
+      [created.runId]
+    );
+    assert.equal(await harness.runService.recoverExpiredRun({ runId: created.runId }), 1);
+    const recovered = await harness.snapshot(created.runId);
+    assert.equal(recovered.persistent.run.status, 'waiting_user');
+    assert.deepEqual(
+      recovered.persistent.receipts.map((receipt) => ({ id: receipt.id, state: receipt.state })),
+      [{ id: dispatched.callId, state: 'ambiguous' }]
+    );
+    assert.equal(
+      recovered.persistent.reservations.some((reservation) => reservation.state === 'reserved'),
+      false
+    );
+    assert.equal(recovered.persistent.holds[0].status, 'held');
+    assert.ok(new Date(recovered.persistent.holds[0].expires_at).getTime() > Date.now());
+    assert.equal(harness.transport.requests.length, 0);
+    const cancelled = await harness.cancel(created.runId);
+    assert.equal(cancelled.status, 'cancelled');
+    const terminal = await harness.snapshot(created.runId);
+    assert.equal(terminal.persistent.holds[0].status, 'released');
+    const wallet = await pool.query(
+      'SELECT frozen_credits FROM wallets WHERE user_id=$1',
+      [harness.userId]
+    );
+    assert.equal(Number(wallet.rows[0].frozen_credits), 0);
+    await harness.assertInvariants(created.runId);
+  } finally {
+    if (child?.connected) child.disconnect();
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     await harness?.cleanup();
     await pool.end();
   }

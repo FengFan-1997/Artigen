@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { fork } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -55,10 +56,19 @@ const { RuntimeTraceSink } = require('../evaluation/harness/runtime-trace-sink')
 const { requestPromptHash } = require('../evaluation/harness/scripted-siliconflow-transport');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const {
+  assertGateAttestationProvenance
+} = require('../scripts/create-agent-live-eval-gate');
+const {
   attachCleanupEvidence,
   buildTerminalFailureReport,
   closeLiveEvalResources,
+  createSlotJournal,
+  failUnfinishedJournalSlots,
+  findCampaignJournal,
+  findInterruptedJournal,
+  journalResults,
   loadLiveEvalSecrets,
+  markInterruptedJournal,
   resolveSelection,
   summarize
 } = require('../scripts/run-agent-live-eval');
@@ -225,6 +235,16 @@ test('Live Harness waits through the addMessage planner race before reading a re
 
 test('Live Harness records a safe V1 terminal failure as baseline evidence', async () => {
   const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.campaignGuard = {
+    dispatchMetrics: async () => ({
+      qwenCalls: 0,
+      kolorsCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      latencyMs: 0,
+      incomplete: 0
+    })
+  };
   harness.oracle = {
     async assertInvariants() {
       return {
@@ -271,6 +291,16 @@ test('Live Harness records a safe V1 terminal failure as baseline evidence', asy
 
 test('Live Harness never downgrades an unverified V1 artifact to baseline evidence', async () => {
   const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.campaignGuard = {
+    dispatchMetrics: async () => ({
+      qwenCalls: 0,
+      kolorsCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      latencyMs: 0,
+      incomplete: 0
+    })
+  };
   harness.oracle = {
     async assertInvariants() {
       return {
@@ -309,6 +339,103 @@ test('Live Harness never downgrades an unverified V1 artifact to baseline eviden
       runId: 'synthetic-run'
     }),
     /artifact_verification/
+  );
+});
+
+test('Live Harness rejects V2 model receipts that lack matching physical dispatch evidence', async () => {
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.campaignGuard = {
+    dispatchMetrics: async () => ({
+      qwenCalls: 1,
+      kolorsCalls: 0,
+      inputTokens: 10,
+      outputTokens: 5,
+      latencyMs: 25,
+      incomplete: 0
+    })
+  };
+  harness.oracle = {
+    async assertInvariants() {
+      return {
+        persistent: {
+          run: {
+            runtime_version: 2,
+            status: 'succeeded',
+            max_credits: 20,
+            charged_credits: 2
+          },
+          holds: [{ status: 'settled' }],
+          artifacts: [],
+          subagents: [],
+          steps: [],
+          modelCalls: [{ phase: 'actor', turn: 0 }, { phase: 'verifier', turn: 0 }]
+        },
+        reconstructed: { digest: 'ab'.repeat(32) }
+      };
+    }
+  };
+  harness.pool = {
+    query: async () => ({
+      rows: [{ entry_type: 'hold', count: 1 }, { entry_type: 'charge', count: 1 }]
+    })
+  };
+
+  await assert.rejects(
+    harness.assertInvariants({
+      entry: { id: 'text-only-agent', expectedStatus: 'succeeded' },
+      cohort: 'v2',
+      runId: '11111111-1111-4111-8111-111111111111'
+    }),
+    /provider_dispatch_crosscheck/
+  );
+});
+
+test('Live Harness never accepts an incomplete physical dispatch as V1 baseline evidence', async () => {
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.campaignGuard = {
+    dispatchMetrics: async () => ({
+      qwenCalls: 1,
+      kolorsCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      latencyMs: 0,
+      incomplete: 1
+    })
+  };
+  harness.oracle = {
+    async assertInvariants() {
+      return {
+        persistent: {
+          run: {
+            runtime_version: 1,
+            status: 'failed',
+            error_code: 'AGENT_PROVIDER_FAILED',
+            max_credits: 20,
+            charged_credits: 0
+          },
+          holds: [{ status: 'released' }],
+          artifacts: [],
+          subagents: [],
+          steps: [],
+          modelCalls: []
+        },
+        reconstructed: { digest: 'ab'.repeat(32) }
+      };
+    }
+  };
+  harness.pool = {
+    query: async () => ({
+      rows: [{ entry_type: 'hold', count: 1 }, { entry_type: 'release', count: 1 }]
+    })
+  };
+
+  await assert.rejects(
+    harness.assertInvariants({
+      entry: { id: 'report', expectedStatus: 'succeeded' },
+      cohort: 'v1',
+      runId: '11111111-1111-4111-8111-111111111111'
+    }),
+    /provider_dispatch_incomplete/
   );
 });
 
@@ -409,6 +536,19 @@ test('Live Harness captures sanitized terminal evidence when a real case throws'
   const harness = Object.create(AgentLiveEvalHarness.prototype);
   harness.sessionId = 'synthetic-session';
   harness.auditor = { qwenCalls: 7, kolorsCalls: 2 };
+  harness.campaignGuard = {
+    dispatchMetrics: async ({ slotId }) => {
+      assert.equal(slotId, 'spreadsheet:v2');
+      return {
+        qwenCalls: 4,
+        kolorsCalls: 1,
+        inputTokens: 1200,
+        outputTokens: 300,
+        latencyMs: 9000,
+        incomplete: 0
+      };
+    }
+  };
   harness.userForCohort = () => '22222222-2222-4222-8222-222222222222';
   harness.pool = {
     async query(statement, values) {
@@ -458,7 +598,7 @@ test('Live Harness captures sanitized terminal evidence when a real case throws'
     steps: 2,
     artifactCount: 0,
     subagentCount: 0,
-    modelCalls: 3,
+    modelCalls: 4,
     inputTokens: 1200,
     outputTokens: 300,
     modelLatencyMs: 9000,
@@ -469,7 +609,9 @@ test('Live Harness captures sanitized terminal evidence when a real case throws'
     finalTextSha256Present: false,
     artifacts: [],
     qwenCalls: 4,
-    kolorsCalls: 1
+    kolorsCalls: 1,
+    incompleteDispatches: 0,
+    durableModelCalls: 3
   });
 });
 
@@ -505,6 +647,177 @@ test('Live eval cleanup failure is persisted and revokes report eligibility', as
     assert.equal(updated.summary.productionCanaryEligible, false);
     assert.equal(JSON.parse(await fs.promises.readFile(reportPath, 'utf8')).cleanup.ok, false);
   } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Live eval restart detects an interrupted slot journal, records every unfinished slot, and never resumes silently', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-live-journal-'));
+  const reportDir = path.join(root, 'agent-live-eval-interrupted');
+  const journalPath = path.join(reportDir, 'slot-journal.json');
+  const gate = {
+    campaignId: 'campaign-interrupted-1',
+    commitSha: 'ab'.repeat(20),
+    matrixHash: 'cd'.repeat(32)
+  };
+  try {
+    await fs.promises.mkdir(reportDir, { recursive: true });
+    const journal = createSlotJournal({
+      gate,
+      selectedCase: 'spreadsheet',
+      selectedCohort: 'both',
+      selected: [{ id: 'spreadsheet' }]
+    });
+    journal.slots['spreadsheet:v1'].status = 'succeeded';
+    journal.slots['spreadsheet:v1'].result = {
+      scenarioId: 'spreadsheet', cohort: 'v1', ok: true
+    };
+    journal.slots['spreadsheet:v2'].status = 'running';
+    await fs.promises.writeFile(journalPath, JSON.stringify(journal));
+
+    const found = await findInterruptedJournal({ artifactRoot: root, gate });
+    assert.equal(found.journalPath, journalPath);
+    const recovered = await markInterruptedJournal({ found, signal: 'SIGKILL' });
+    assert.equal(recovered.journal.status, 'interrupted');
+    assert.equal(recovered.journal.slots['spreadsheet:v1'].status, 'succeeded');
+    assert.equal(recovered.journal.slots['spreadsheet:v2'].status, 'failed');
+    assert.equal(
+      recovered.journal.slots['spreadsheet:v2'].code,
+      'AGENT_LIVE_EVAL_PROCESS_INTERRUPTED'
+    );
+    assert.equal(journalResults(recovered.journal).length, 2);
+    const report = JSON.parse(await fs.promises.readFile(recovered.reportPath, 'utf8'));
+    assert.equal(report.ok, false);
+    assert.equal(report.code, 'AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN');
+    assert.equal(report.results.filter((entry) => entry.ok === false).length, 1);
+    assert.equal(
+      await findInterruptedJournal({ artifactRoot: root, gate }),
+      null
+    );
+    const terminalJournal = await findCampaignJournal({ artifactRoot: root, gate });
+    assert.equal(terminalJournal.journal.status, 'interrupted');
+    assert.equal(terminalJournal.reportPath, recovered.reportPath);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Live eval treats failed and completed campaign journals as single-use terminal evidence', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-live-single-use-'));
+  const gate = {
+    campaignId: 'campaign-single-use-1',
+    commitSha: '56'.repeat(20),
+    matrixHash: '78'.repeat(32)
+  };
+  try {
+    for (const [name, status] of [['failed', 'failed'], ['completed', 'completed']]) {
+      const reportDir = path.join(root, `agent-live-eval-${name}`);
+      await fs.promises.mkdir(reportDir, { recursive: true });
+      const journal = createSlotJournal({
+        gate,
+        selectedCase: 'spreadsheet',
+        selectedCohort: 'v2',
+        selected: [{ id: 'spreadsheet' }]
+      });
+      journal.status = status;
+      journal.updatedAt = new Date(Date.now() + (status === 'completed' ? 1000 : 0)).toISOString();
+      await fs.promises.writeFile(
+        path.join(reportDir, 'slot-journal.json'),
+        JSON.stringify(journal)
+      );
+    }
+    const found = await findCampaignJournal({ artifactRoot: root, gate });
+    assert.equal(found.journal.status, 'completed');
+    assert.equal(await findInterruptedJournal({ artifactRoot: root, gate }), null);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Live eval terminal failures record every pending slot instead of losing the remaining matrix', () => {
+  const gate = {
+    campaignId: 'campaign-terminal-failure',
+    commitSha: '12'.repeat(20),
+    matrixHash: '34'.repeat(32)
+  };
+  const journal = createSlotJournal({
+    gate,
+    selectedCase: '',
+    selectedCohort: 'both',
+    selected: [{ id: 'consultation-route' }, { id: 'spreadsheet' }]
+  });
+  journal.slots['consultation-route:v1'].status = 'succeeded';
+  journal.slots['consultation-route:v1'].result = {
+    scenarioId: 'consultation-route', cohort: 'v1', ok: true
+  };
+  failUnfinishedJournalSlots(journal, { code: 'AGENT_LIVE_EVAL_HARNESS_INIT_FAILED' });
+  assert.equal(journalResults(journal).length, 4);
+  assert.equal(journal.slots['consultation-route:v1'].status, 'succeeded');
+  for (const key of ['consultation-route:v2', 'spreadsheet:v1', 'spreadsheet:v2']) {
+    assert.equal(journal.slots[key].status, 'failed');
+    assert.equal(journal.slots[key].code, 'AGENT_LIVE_EVAL_HARNESS_INIT_FAILED');
+  }
+});
+
+test('Live eval runner signal handling persists a real child-process SIGTERM interruption', {
+  timeout: 10_000
+}, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-live-signal-'));
+  const journalPath = path.join(root, 'slot-journal.json');
+  const probePath = path.join(
+    __dirname,
+    '../evaluation/harness/live-eval-signal-probe.js'
+  );
+  let child = null;
+  try {
+    child = fork(probePath, [], {
+      cwd: path.join(__dirname, '..'),
+      env: {
+        ...process.env,
+        AGENT_LIVE_EVAL_SIGNAL_JOURNAL: journalPath
+      },
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+    });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('AGENT_SIGNAL_PROBE_READY_TIMEOUT')), 5_000);
+      timer.unref?.();
+      child.once('message', (message) => {
+        clearTimeout(timer);
+        if (message?.event === 'ready') resolve();
+        else reject(new Error(String(message?.code || 'AGENT_SIGNAL_PROBE_FAILED')));
+      });
+      child.once('exit', (code, signal) => {
+        clearTimeout(timer);
+        reject(new Error(`AGENT_SIGNAL_PROBE_EARLY_EXIT:${code}:${signal}`));
+      });
+    });
+    child.kill('SIGTERM');
+    const exited = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('AGENT_SIGNAL_PROBE_EXIT_TIMEOUT')), 5_000);
+      timer.unref?.();
+      child.once('exit', (code, signal) => {
+        clearTimeout(timer);
+        resolve({ code, signal });
+      });
+    });
+    assert.deepEqual(exited, { code: 0, signal: null });
+    const journal = JSON.parse(await fs.promises.readFile(journalPath, 'utf8'));
+    assert.equal(journal.status, 'interrupted');
+    assert.equal(journal.interruption.signal, 'SIGTERM');
+    assert.equal(journal.slots['signal-probe:v2'].status, 'failed');
+    assert.equal(
+      journal.slots['signal-probe:v2'].code,
+      'AGENT_LIVE_EVAL_PROCESS_INTERRUPTED'
+    );
+    assert.deepEqual(journal.slots['signal-probe:v2'].result, {
+      scenarioId: 'signal-probe',
+      cohort: 'v2',
+      ok: false,
+      code: 'AGENT_LIVE_EVAL_PROCESS_INTERRUPTED'
+    });
+  } finally {
+    if (child?.connected) child.disconnect();
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     await fs.promises.rm(root, { recursive: true, force: true });
   }
 });
@@ -565,6 +878,50 @@ test('Live eval signed gate binds the exact SHA, matrix and complete release evi
     }),
     /GATE_SHA_MISMATCH/
   );
+});
+
+test('Live eval gate evidence must name the exact commit and postdate it', () => {
+  const commitSha = 'ef'.repeat(20);
+  const checks = Object.fromEntries([
+    'pnpmCheck',
+    'postgresMinio',
+    'qualitySet',
+    'chaos',
+    'crossWorker',
+    'browsers'
+  ].map((name) => [name, {
+    sourceCommitSha: commitSha,
+    reportPath: `/synthetic/${name}.json`
+  }]));
+  const attestation = { checks };
+  const currentStat = () => ({
+    isFile: () => true,
+    size: 100,
+    mtimeMs: 2_000
+  });
+  assert.equal(assertGateAttestationProvenance({
+    attestation,
+    commitSha,
+    commitTimestampMs: 2_000,
+    statSync: currentStat
+  }), true);
+  assert.throws(() => assertGateAttestationProvenance({
+    attestation: {
+      checks: {
+        ...checks,
+        chaos: { ...checks.chaos, sourceCommitSha: 'ab'.repeat(20) }
+      }
+    },
+    commitSha,
+    commitTimestampMs: 2_000,
+    statSync: currentStat
+  }), /EVIDENCE_SHA_MISMATCH:chaos/);
+  assert.throws(() => assertGateAttestationProvenance({
+    attestation,
+    commitSha,
+    commitTimestampMs: 4_001,
+    statSync: currentStat
+  }), /REPORT_PREDATES_COMMIT:pnpmCheck/);
 });
 
 test('Live eval final report cryptographically binds the exact 24-run report and blind score', () => {
@@ -1138,10 +1495,95 @@ test('Live model auditor enforces V2 Qwen request contracts and child tool trimm
   );
   await auditor.inspectKolorsRequest({ references: [] });
   await assert.rejects(auditor.inspectKolorsRequest({ references: [] }), /KOLORS_CALL_LIMIT/);
-  assert.throws(
-    () => auditor.inspectKolorsResponse({ model: 'Qwen/Qwen-Image-Edit-2509' }),
+  await assert.rejects(
+    auditor.inspectKolorsResponse({ model: 'Qwen/Qwen-Image-Edit-2509' }),
     /IMAGE_MODEL_INVALID/
   );
+});
+
+test('Live model auditor durably closes every Kolors physical dispatch', async () => {
+  const reserved = [];
+  const recorded = [];
+  const campaignGuard = {
+    async reserveDispatch(kind, metadata) {
+      reserved.push({ kind, metadata });
+      return { dispatchId: reserved.length, sequence: reserved.length };
+    },
+    async recordDispatchResult(dispatch, result) {
+      recorded.push({ dispatch, result });
+    }
+  };
+  const auditor = new LiveModelAuditor({ campaignGuard, maxKolorsCalls: 3 });
+
+  await assert.rejects(
+    auditor.inspectKolorsRequest({ references: [{}, {}] }),
+    /REFERENCE_LIMIT/
+  );
+  assert.equal(reserved.length, 0);
+
+  const success = await auditor.runSlot('text-to-image:v2', async () => {
+    const dispatch = await auditor.inspectKolorsRequest({
+      runId: '11111111-1111-4111-8111-111111111111',
+      runtimeVersion: 2,
+      references: []
+    });
+    await auditor.inspectKolorsResponse({ model: 'Kwai-Kolors/Kolors' }, {}, dispatch);
+    return dispatch;
+  });
+  assert.equal(reserved[0].metadata.slotId, 'text-to-image:v2');
+  assert.equal(recorded[0].result.status, 'succeeded');
+
+  const failure = await auditor.inspectKolorsRequest({ references: [] });
+  const providerError = Object.assign(new Error('synthetic provider failure'), {
+    code: 'AGENT_IMAGE_PROVIDER_FAILED'
+  });
+  await auditor.inspectKolorsFailure(providerError, {}, failure);
+  assert.equal(recorded[1].result.status, 'failed');
+  assert.equal(recorded[1].result.errorCode, 'AGENT_IMAGE_PROVIDER_FAILED');
+
+  const invalid = await auditor.inspectKolorsRequest({ references: [] });
+  await assert.rejects(
+    auditor.inspectKolorsResponse({ model: 'Qwen/Qwen-Image-Edit-2509' }, {}, invalid),
+    /IMAGE_MODEL_INVALID/
+  );
+  assert.equal(recorded[2].result.status, 'failed');
+  assert.equal(recorded[2].result.errorCode, 'AGENT_LIVE_EVAL_IMAGE_MODEL_INVALID');
+  assert.equal(success.sequence, 1);
+});
+
+test('Live model auditor rejects a local Qwen over-limit before reserving another dispatch', async () => {
+  const reserved = [];
+  const recorded = [];
+  const campaignGuard = {
+    async reserveDispatch(kind, metadata) {
+      reserved.push({ kind, metadata });
+      return { dispatchId: reserved.length, sequence: reserved.length };
+    },
+    combinedSignal(signal) {
+      return signal || new AbortController().signal;
+    },
+    async recordDispatchResult(dispatch, result) {
+      recorded.push({ dispatch, result });
+    }
+  };
+  const auditor = new LiveModelAuditor({ campaignGuard, maxQwenCalls: 1 });
+  const wrapped = auditor.wrapQwenFetch(async () => new Response(JSON.stringify({
+    choices: [],
+    usage: { prompt_tokens: 7, completion_tokens: 3 }
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' }
+  }));
+
+  await wrapped('https://api.siliconflow.cn/v1/chat/completions', { method: 'POST' });
+  await assert.rejects(
+    wrapped('https://api.siliconflow.cn/v1/chat/completions', { method: 'POST' }),
+    /QWEN_CALL_LIMIT/
+  );
+  assert.equal(reserved.length, 1);
+  assert.equal(recorded.length, 1);
+  assert.deepEqual(recorded[0].result.inputTokens, 7);
+  assert.deepEqual(recorded[0].result.outputTokens, 3);
 });
 
 test('Live model auditor enforces an explicit V2 contract for a router without a run id', async () => {

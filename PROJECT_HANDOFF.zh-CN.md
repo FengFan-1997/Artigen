@@ -585,6 +585,31 @@ CI、Render DEV 与 Vercel Preview 验收，尚未进入 `main` 或生产。
 
 本轮未修改 Karing 节点、规则、DNS、系统代理、Wi-Fi 或 B2U2/AI 网络配置；发布结束时继续保持既有“规则”模式。
 
+### 5.21 2026-08-26 Runtime V2 / Harness V3.1 真实恢复硬化（本地候选，未发布）
+
+- 从精确 `origin/dev` SHA `9201fda225fe45d965c848dc251fcdde1e35e6f0` 建立 `codex/agent-live-recovery-hardening`。原始实现提交为 `9feffe51fc2f7c425a0ccdbe23e0f2acdcce490c`；独立终审随后发现并修复两项 Harness 证据真实性问题，最终 exact-SHA 以本地分支 HEAD 为准。本节没有 push、PR、merge、DEV/生产部署、真实付费矩阵或 owner canary。
+- Runtime V2、公开 rollout 和 owner canary 继续关闭；文字、路由、规划、验证与子 Agent 仍只允许 `Qwen/Qwen3-8B`，所有图片仍只允许 `Kwai-Kolors/Kolors`。没有修改 Karing、Wi-Fi、DNS、代理、节点或网络路由。
+- 恢复路径增加仅限 DEV/test 的精确 Run 接管：真实子进程 `SIGKILL` 后由新进程依据租约 epoch 接管，已 dispatched 的不确定模型调用进入 `ambiguous/waiting_user`，不会自动重发或扣未确认费用；等待用户确认时会延长原 hold，避免同一次过期扫描立即将恢复 Run 误判为预算 hold 过期。
+- Live Harness 现在按每次物理 Qwen/Kolors dispatch 持久化脱敏 slot、状态、token 与延迟，V1/V2 使用同一数据源；并发调用上限通过独立事务与 campaign advisory lock 串行化。slot journal 使用原子写入，`SIGTERM`、`SIGKILL` 重启和普通致命异常都会把所有未完成 slot 明确记为失败，禁止静默续跑或丢失局部证据。
+- 独立终审补强了 campaign 与 gate 的一次性、exact-SHA 语义：同一签名 campaign 一旦留下 `failed`、`interrupted` 或 `completed` journal 就不能再次启动付费槽位；创建 gate 时每项 required evidence 必须显式绑定当前 40 位 commit，并且对应非空报告不得早于该 commit。历史报告继续保留为审计资料，但不能通过改写 attestation 被复用为新 SHA 的放行证据。
+- Planner 候选与正式 TaskSpec 统一为最多 12 步，首步/后续状态由服务端固定为 `in_progress/pending`；Shell 在创建回执和预算预留前拒绝明显裸 Python/Node，并提供一次安全 heredoc 纠正；新 artifact 调用要求完整叶子路径，旧 checkpoint 的 workspace-root + filename 形式仍可恢复；来源纠错返回本 Run 有界、精确的已观察 HTTPS URL；V2 首次重复发布计划被服务端裁剪。
+- 原始候选曾通过：`pnpm check` 退出码 0，Playwright `489 passed / 3 skipped`；质量 manifest `50/50`；PostgreSQL 16 + 固定 MinIO deterministic `50/50`；完整 Harness PG integration `43/43`；20 轮 chaos 共 `620/620`，失败、取消、跳过、todo 与 flaky 均为 0。终审确认这些数字和报告文件真实存在，但 deterministic/chaos 报告生成时间早于原始实现 commit，且报告正文没有 commit provenance；因此它们只能作为历史本机证据，不能再称为最终不可变候选的 exact-SHA gate 证据。新的最终 HEAD 必须重新运行正式门禁，并由 GitHub required CI 独立验证。
+- 历史被忽略证据继续保留：`.artifacts/agent-live-recovery-hardening/final-deterministic/deterministic-all.json`（SHA-256 `b1bd89c952505eb00892bd48eae40a83d349b8be577355a8901e7d1e2bfc6850`）与 `.artifacts/agent-live-recovery-hardening/final-chaos/chaos.json`（SHA-256 `f462d890b8620b40bcfe4386c2ab8e4f14e9b15ffbbb53bbf520061ae8503e0c`）；不删除，也不用于签发新 gate。
+- 最终本地 `artigen_test` 审计中 active Agent Run/Tool Task、冻结钱包、两类 held hold、reserved budget、open model/tool receipt、provider queue 与 active subagent 全部为 0；临时 MinIO 和 Artigen 沙箱容器已删除。14 个 2026-07-17 遗留测试 tool-task hold 通过现有 billing service 正常释放，没有直接修改钱包余额。
+- 2026-08-26 只读 DEV readiness 重新核验：`origin/dev`、Render live deployment `dep-da7847v10e5c738mq8f0` 与 Vercel Preview deployments `6098141970` / `6098133665` 均为旧 SHA `9201fda225fe45d965c848dc251fcdde1e35e6f0`；五个状态接口均 HTTP 200，迁移为 `025_agent_runtime_v2_1_durability`，PostgreSQL、S3、Provider 与两个 Kolors 模式 ready，DEV active Run/hold/reservation/frozen wallet/provider queue 均为 0。一个 failed Run 的 ambiguous model receipt 与 cancelled Runs 的十个 ambiguous tool receipts作为终态审计证据保留，均无活动预算或冻结余额。
+- 当前 DEV 仍不具备执行付费矩阵的条件：Mac DEV LaunchAgent 虽精确指向 `Artigen-dev-live-9201fda`，但状态为 `not running`；`workerOnline`、browser、restricted egress 与 desktop relay 均为 false，且 Runtime V2 durability 的 `pricingReady=false`。本地候选尚未与 Render、Vercel 或 Worker 对齐。
+- 此候选尚未执行新的 12 场景 × V1/V2 共 24-slot 真实 Qwen/Kolors DEV 矩阵，也没有图片匿名盲审。因此当前只能进入 DEV 实机验证准备，不能建议 owner canary，更不能宣称 Runtime V2 已发布。
+
+### 5.22 2026-08-27 Agent 工作台上线前 UI/UX 终审（本地候选，未发布）
+
+- 在 exact `d62bc3724da9caaf77bd66f71ef3bf9f9aedd19b` 上，以真实 Vue SPA、Express、PostgreSQL 16、固定 MinIO 和 DEV/test 安全 fixture runtime 完成 `/artigen/create`、`/artigen/agent` 与取消 Run 详情的真实页面审计；没有使用 `page.route` 伪造自家 API 作为视觉证据。
+- 收口 8 类发布级交互与审计问题：页面刷新后 analytics 缺少 CSRF；快速报价/创建可重复提交；明确为 false 或缺失的 readiness 没有统一 fail-closed；报价刷新失败后旧授权仍可残留；短横屏建议项与固定 Composer 重叠；几何检测曾会被外层滚动或后续硬裁切制造假绿。创建、报价、取消等写操作现在同步锁定，报价授权随刷新先失效，所有必需 readiness 必须精确为 true；短横屏保留 44px 触控目标且不再遮挡。
+- `workspaceLayoutAudit` 增加 `elementFromPoint` 实际命中、viewport clipping、透明遮挡、安全采样点与移动触控尺寸断言，并为“纵向滚动掩盖横向裁切”“外层滚动掩盖内层硬裁切”“后续硬裁切覆盖先前可滚动裁切”增加三个负向回归。真实生命周期只产生 1 次创建和 1 次取消，刷新后可恢复历史，最终 active Run、hold、reservation、queue 与冻结余额均为 0。
+- 最终人工逐张检查 12 张暗色/浅色、1440px、390px 与 667×375 短横屏截图：横向溢出、被遮挡控件、低于 44px 的可见移动操作、page error 和不可解释 HTTP 失败均为 0。3 个失败请求均为主动导航时取消的 SSE `events` 连接，不是服务错误。证据保存在被忽略的 `.artifacts/agent-ui-release-audit-d62bc37/`。
+- 以用户提供的当前 Codex 桌面截图为对照，三栏层级、阅读轴、Composer/Inspector 权重、密度、字号、石墨表面、控件克制、长任务可读性、动效与成熟度十项平均 `4.31/5`，最低 `4.1/5`；只借鉴工作台原则，保留 Artigen 酸性绿执行语义，没有复制品牌、资产或专有文案。
+- 独立代码终审先后发现并修复 readiness 字段缺失、报价授权陈旧和三种几何检测假绿；最终复审没有可执行问题。完整 `pnpm check` 退出码 0：前端 Vitest `217/217`，后端 `517 passed / 87 conditional skipped / 0 failed`，邮件 `7/7`，质量 manifest `50/50`，生产构建与 bundle budget 通过，Playwright 六项目 `537 passed / 3 skipped / 0 failed`、耗时 21.3 分钟；`git diff --check` 与 Impeccable mechanical detector 均通过。
+- 以上仅证明本地候选的 UI/UX 与确定性工程质量。候选仍未 push/PR/合入 DEV，DEV 三端未对齐，Mac Worker/browser/egress/desktop 与 durability pricing 尚未就绪，24-slot 真实 Qwen/Kolors 矩阵和图片盲审尚未完成；因此结论仍为“暂不可上线”。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。
