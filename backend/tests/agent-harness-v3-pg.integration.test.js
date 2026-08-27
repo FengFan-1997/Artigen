@@ -130,7 +130,7 @@ const waitForChildExit = (child, timeoutMs = 10_000) => new Promise((resolve, re
   child.on('exit', onExit);
 });
 
-test('Live Harness V3.1 persists physical provider caps across restart and rejects concurrent runners', {
+test('Live Harness V3.1 persists physical provider caps and rejects every repeated campaign claim', {
   skip: !enabled,
   timeout: 30_000
 }, async () => {
@@ -152,7 +152,7 @@ test('Live Harness V3.1 persists physical provider caps across restart and rejec
     first = new LiveEvalCampaignGuard(profile);
     await first.initialize();
     second = new LiveEvalCampaignGuard(profile);
-    await assert.rejects(second.initialize(), /CAMPAIGN_ALREADY_RUNNING/);
+    await assert.rejects(second.initialize(), /CAMPAIGN_ALREADY_CLAIMED/);
     const firstDispatch = await first.reserveDispatch('qwen', {
       runId: crypto.randomUUID(),
       slotId: 'restart-metrics:v1',
@@ -188,12 +188,8 @@ test('Live Harness V3.1 persists physical provider caps across restart and rejec
     });
     await assert.rejects(first.reserveDispatch('kolors'), /KOLORS_CALL_LIMIT/);
     await first.close();
-    first = null;
-
-    second = new LiveEvalCampaignGuard(profile);
-    await second.initialize();
-    assert.deepEqual(await second.counts(), { qwen: 2, kolors: 1 });
-    const durableMetrics = await second.dispatchMetrics({ slotId: 'restart-metrics:v1' });
+    assert.deepEqual(await first.counts(), { qwen: 2, kolors: 1 });
+    const durableMetrics = await first.dispatchMetrics({ slotId: 'restart-metrics:v1' });
     assert.equal(durableMetrics.qwenCalls, 2);
     assert.equal(durableMetrics.kolorsCalls, 1);
     assert.equal(durableMetrics.inputTokens, 11);
@@ -212,7 +208,8 @@ test('Live Harness V3.1 persists physical provider caps across restart and rejec
       durableMetrics.calls.find((call) => call.kind === 'kolors' && call.sequence === 1)?.status,
       'succeeded'
     );
-    await assert.rejects(second.reserveDispatch('qwen'), /QWEN_CALL_LIMIT/);
+    second = new LiveEvalCampaignGuard(profile);
+    await assert.rejects(second.initialize(), /CAMPAIGN_ALREADY_CLAIMED/);
     const stored = await pool.query(
       `SELECT run_id,metrics FROM agent_quality_checks
         WHERE check_kind=$1 AND metrics->>'campaignHash'=$2
@@ -234,7 +231,47 @@ test('Live Harness V3.1 persists physical provider caps across restart and rejec
   }
 });
 
-test('Live Harness V3.1 fails closed when PostgreSQL terminates the campaign lock connection', {
+test('Live Harness V3.1 admits exactly one concurrent claimant for a signed campaign', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 4 });
+  const campaignId = crypto.randomUUID();
+  const campaignHash = crypto.createHash('sha256').update(campaignId).digest('hex');
+  const profile = {
+    pool,
+    campaignId,
+    commitSha: 'af'.repeat(20),
+    matrixHash: 'df'.repeat(32),
+    maxQwenCalls: 2,
+    maxKolorsCalls: 1,
+    maxWallClockMs: 60_000
+  };
+  const guards = [new LiveEvalCampaignGuard(profile), new LiveEvalCampaignGuard(profile)];
+  try {
+    const attempts = await Promise.allSettled(guards.map((guard) => guard.initialize()));
+    assert.equal(attempts.filter((entry) => entry.status === 'fulfilled').length, 1);
+    const rejected = attempts.find((entry) => entry.status === 'rejected');
+    assert.match(String(rejected?.reason?.message || ''), /CAMPAIGN_ALREADY_CLAIMED/);
+    const stored = await pool.query(
+      `SELECT count(*)::integer AS total
+         FROM agent_quality_checks
+        WHERE check_kind=$1 AND metrics->>'campaignHash'=$2`,
+      [CAMPAIGN_CHECK_KIND, campaignHash]
+    );
+    assert.equal(stored.rows[0]?.total, 1);
+  } finally {
+    await Promise.all(guards.map((guard) => guard.close().catch(() => {})));
+    await pool.query(
+      `DELETE FROM agent_quality_checks
+        WHERE check_kind IN ($1,$2) AND metrics->>'campaignHash'=$3`,
+      [CAMPAIGN_CHECK_KIND, DISPATCH_CHECK_KIND, campaignHash]
+    ).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('Live Harness V3.1 has no long-lived campaign lock session to terminate', {
   skip: !enabled,
   timeout: 30_000
 }, async () => {
@@ -252,33 +289,17 @@ test('Live Harness V3.1 fails closed when PostgreSQL terminates the campaign loc
   });
   try {
     await guard.initialize();
-    const backend = await guard.lockClient.query('SELECT pg_backend_pid()::integer AS pid');
-    const terminated = await pool.query(
-      'SELECT pg_terminate_backend($1::integer) AS terminated',
-      [backend.rows[0].pid]
+    assert.equal(guard.lockClient, undefined);
+    assert.equal(guard.snapshot().claimMode, 'durable-once-v1');
+    const sessions = await pool.query(
+      `SELECT count(*)::integer AS total
+         FROM pg_locks
+        WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted`
     );
-    assert.equal(terminated.rows[0]?.terminated, true);
-    if (!guard.signal.aborted) {
-      await new Promise((resolve, reject) => {
-        const timer = setTimeout(
-          () => reject(new Error('AGENT_LIVE_EVAL_CAMPAIGN_ABORT_TIMEOUT')),
-          5_000
-        );
-        guard.signal.addEventListener('abort', () => {
-          clearTimeout(timer);
-          resolve();
-        }, { once: true });
-      });
-    }
-    assert.equal(guard.signal.reason?.code, 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST');
-    await assert.rejects(
-      guard.reserveDispatch('qwen'),
-      /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/
-    );
-    await assert.rejects(
-      guard.close(),
-      /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/
-    );
+    assert.equal(sessions.rows[0]?.total, 0);
+    const dispatch = await guard.reserveDispatch('qwen');
+    await guard.recordDispatchResult(dispatch, { status: 'succeeded' });
+    assert.deepEqual(await guard.counts(), { qwen: 1, kolors: 0 });
   } finally {
     await guard.close().catch(() => {});
     await pool.query(
@@ -290,27 +311,13 @@ test('Live Harness V3.1 fails closed when PostgreSQL terminates the campaign loc
   }
 });
 
-test('Live Harness V3.1 keeps a real PostgreSQL advisory lock alive without releasing exclusivity', {
+test('Live Harness V3.1 keeps the durable one-time campaign claim after close', {
   skip: !enabled,
   timeout: 30_000
 }, async () => {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 6 });
   const campaignId = crypto.randomUUID();
   const campaignHash = crypto.createHash('sha256').update(campaignId).digest('hex');
-  const timers = new Set();
-  const scheduleTimeout = (callback) => {
-    const timer = setTimeout(() => {
-      timers.delete(timer);
-      callback();
-    }, 25);
-    timer.unref?.();
-    timers.add(timer);
-    return timer;
-  };
-  const cancelTimeout = (timer) => {
-    clearTimeout(timer);
-    timers.delete(timer);
-  };
   const profile = {
     pool,
     campaignId,
@@ -318,9 +325,7 @@ test('Live Harness V3.1 keeps a real PostgreSQL advisory lock alive without rele
     matrixHash: 'cf'.repeat(32),
     maxQwenCalls: 2,
     maxKolorsCalls: 1,
-    maxWallClockMs: 60_000,
-    scheduleTimeout,
-    cancelTimeout
+    maxWallClockMs: 60_000
   };
   let first = null;
   let second = null;
@@ -328,26 +333,21 @@ test('Live Harness V3.1 keeps a real PostgreSQL advisory lock alive without rele
   try {
     first = new LiveEvalCampaignGuard(profile);
     await first.initialize();
-    const deadline = Date.now() + 5_000;
-    while (first.snapshot().lockKeepaliveCount < 2 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    assert.ok(first.snapshot().lockKeepaliveCount >= 2);
-    assert.match(first.snapshot().lockKeepaliveLastSuccessAt, /^\d{4}-\d{2}-\d{2}T/);
 
     second = new LiveEvalCampaignGuard(profile);
     await assert.rejects(
       second.initialize(),
-      /AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_RUNNING/
+      /AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_CLAIMED/
     );
 
     await first.close();
     first = null;
     replacement = new LiveEvalCampaignGuard(profile);
-    await replacement.initialize();
-    replacement.assertActive();
+    await assert.rejects(
+      replacement.initialize(),
+      /AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_CLAIMED/
+    );
   } finally {
-    for (const timer of timers) clearTimeout(timer);
     await first?.close().catch(() => {});
     await second?.close().catch(() => {});
     await replacement?.close().catch(() => {});
@@ -360,7 +360,7 @@ test('Live Harness V3.1 keeps a real PostgreSQL advisory lock alive without rele
   }
 });
 
-test('Live Harness V3.1 fails closed when PostgreSQL terminates an idle pooled connection', {
+test('Live Harness V3.1 replaces a terminated idle pooled connection at the next boundary probe', {
   skip: !enabled,
   timeout: 30_000
 }, async () => {
@@ -380,7 +380,7 @@ test('Live Harness V3.1 fails closed when PostgreSQL terminates an idle pooled c
       [backend.rows[0].pid]
     );
     assert.equal(terminated.rows[0]?.terminated, true);
-    if (!state.error) {
+    if (state.idleDisconnectCount < 1) {
       await new Promise((resolve, reject) => {
         const timer = setTimeout(
           () => reject(new Error('AGENT_LIVE_EVAL_POOL_ABORT_TIMEOUT')),
@@ -392,12 +392,12 @@ test('Live Harness V3.1 fails closed when PostgreSQL terminates an idle pooled c
         });
       });
     }
-    assert.equal(state.error?.code, 'AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST');
-    assert.equal(abortReason, state.error);
-    assert.throws(
-      () => state.assertHealthy(),
-      /AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST/
-    );
+    assert.equal(state.idleDisconnectCount, 1);
+    assert.equal(state.error, null);
+    assert.equal(abortReason, null);
+    assert.equal(await state.assertHealthy(), true);
+    const recovered = await evalPool.query('SELECT 1 AS recovered');
+    assert.equal(recovered.rows[0]?.recovered, 1);
   } finally {
     state.dispose();
     await evalPool.end();
