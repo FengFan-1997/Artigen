@@ -1042,8 +1042,13 @@ class AgentLiveEvalHarness {
         ORDER BY created_at,id`,
       [userId]
     );
+    const failures = [];
     for (const row of active.rows) {
-      await this.runService.cancelRun({ userId, runId: row.id }).catch(() => {});
+      await this.runService.cancelRun({ userId, runId: row.id })
+        .catch((error) => failures.push(error));
+    }
+    if (failures.length) {
+      throw new AggregateError(failures, 'AGENT_LIVE_EVAL_ACTIVE_RUN_CANCEL_FAILED');
     }
     return active.rowCount;
   }
@@ -1055,6 +1060,14 @@ class AgentLiveEvalHarness {
       // Abort the campaign first so no provider or planner callback can acquire
       // new work while infrastructure and sockets are being torn down.
       await this.campaignGuard?.close().catch((error) => failures.push(error));
+      // Closing a partial or interrupted campaign is also a billing boundary.
+      // Cancel both synthetic cohorts through the normal service transaction so
+      // a remote Mac Worker cannot keep a run, hold, or frozen balance alive
+      // after the runner has written terminal evidence.
+      if (this.pool && this.runService) {
+        await this.cancelActiveCohort('v1').catch((error) => failures.push(error));
+        await this.cancelActiveCohort('v2').catch((error) => failures.push(error));
+      }
       if (typeof this.worker?.cleanupTerminalState === 'function') {
         await this.worker.cleanupTerminalState({
           limit: 1000,

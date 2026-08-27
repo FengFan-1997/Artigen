@@ -654,6 +654,14 @@ CI、Render DEV 与 Vercel Preview 验收，尚未进入 `main` 或生产。
 - 新分支 `codex/agent-live-keepalive-hardening` 从 exact `62d466c...` 建立。最小修复只在持有原 advisory lock 的同一 Client 上每 30 秒执行一个 10 秒超时的 `SELECT 1`；禁止重连、重新获取锁或自动重跑 slot。查询失败仍沿用现有连接丢失路径立即中止。红绿回归证明移除 keepalive 启动点时测试会失败；恢复实现后单元测试 `47/47`。固定 MinIO + PostgreSQL 16 Harness `46/46`、executable quality set `50/50`、20 轮 chaos `620/620` 和完整 `pnpm check` 均通过；Playwright 为 `537 passed / 3 skipped / 0 failed`。清理前本地测试数据库的 active Run、hold、reservation、provider queue、active subagent、冻结钱包和 open receipt 均为 0；精确命名的临时 MinIO 容器已删除，临时 PostgreSQL 已停止并移入废纸篓。PR、DEV 重对齐、新 exact-SHA gate、24-slot 和图片盲审尚未完成。
 - 因完整 24-slot 和图片盲审仍无通过证据，当前结论继续为“暂不可上线”；不得进入生产、owner canary 或公众 rollout。
 
+### 5.25 2026-08-28 受限出口修复合入与第三轮实机阻断（本地候选）
+
+- campaign keepalive 与后续恢复硬化已通过 PR #127–#133 合入；受限出口 sidecar 的 routine client reset 崩溃修复 PR [#134](https://github.com/FengFan-1997/Artigen/pull/134) 在全部 required checks 全绿后普通合入 `dev`，merge SHA `82ffa3668338ad52383d5ed26fd71d6617d3ec51`。Render DEV deployment `dep-da85pq8ae00c73c6bmqg`、Vercel Preview deployment `6126170741` 与 Mac DEV Worker 曾精确对齐该 SHA。Runtime V2 公众开关、rollout 与 owner canary 均继续关闭。
+- exact-SHA 门禁重新通过：`pnpm check` 537 passed / 3 skip、PostgreSQL 16 + 固定 MinIO Harness 47/47、executable quality 50/50、chaos 20 轮 620/620。签名 campaign `82ffa36-20260828-0001` 真实执行到 6/24 槽位、27 次 Qwen、0 次 Kolors 后，因 V2 调研失败而主动 SIGTERM；报告明确 `fullMatrixComplete=false`、`automatedGatePassed=false`、`productionCanaryEligible=false`。受限出口 sidecar 在真实浏览器任务中越过旧 319 秒崩溃点并持续在线，#134 的目标行为得到真实验证。
+- V2 调研 Run `01775588-1272-444e-bebb-d72a6ea9f04e` 的第一可信根因为 Qwen 把 heredoc 多行脚本双重转义为字面量 `\\n`；Bash 连续 code 2，最终命中相同状态指纹并以 `AGENT_RUNTIME_STATE_LOOP` 失败。中断还暴露 Harness 信号收尾没有立即取消远端 Worker 活动 Run；遗留 40 点 hold/frozen 已通过正式 `cancelRun` 事务释放，随后 active run、hold、reservation、Provider queue、subagent、tool task、冻结余额和 CUA 容器均为 0。
+- V1 调研 Run 实际成功并交付两个 verified S3 artifacts，但 Runtime V1 本来不持久化 V2 semantic verifier row，Replay Oracle 错误把 legacy baseline 判失败；本地 Live Harness 对自定义 DEV S3 endpoint 使用虚拟主机请求，又因 wildcard 证书层级不匹配导致下载失败。新分支 `codex/agent-runtime-state-loop-live-fix` 从 exact dev SHA 建立：dispatch 前 fail-closed 拒绝双重转义 heredoc 并只允许一次明确纠错；Runtime V1 继续强制确定性产物与账务验证但不伪造 V2 semantic row；DEV Live Eval 固定 path-style S3 且保持正常 TLS 校验；SIGTERM 和 `close()` 均通过正式服务事务取消两个合成 cohort，取消失败会使 cleanup 失败并撤销资格。
+- 当前本地候选专项回归 177/177、真实历史 V1 replay 与 S3 下载只读探针通过；尚未完成最终 `pnpm check`、PG/MinIO、50/50、20× chaos、PR/CI、DEV 重对齐、新 24-slot 与图片盲审。因此仍为“修复后再验收”，不可进入生产、owner canary 或公众 rollout。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。
