@@ -1325,7 +1325,9 @@ test('Runtime V2 stops after one correction when action and observed state repea
 });
 
 test('Runtime V2 preserves exact source evidence and blocks Shell detours during declaration repair', async () => {
-  const exactUrl = `https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=${'x'.repeat(900)}`;
+  const exactUrlPrefix = 'https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=';
+  const exactUrl = `${exactUrlPrefix}${'x'.repeat(2000 - exactUrlPrefix.length)}`;
+  assert.equal(exactUrl.length, 2000);
   const baseUrl = 'https://www.w3.org/WAI/standards-guidelines/wcag/';
   const taskSpec = normalizeTaskSpec({
     goal: '交付带有精确来源的 Markdown 与 PDF 调研报告',

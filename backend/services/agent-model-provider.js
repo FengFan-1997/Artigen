@@ -1618,7 +1618,7 @@ class OllamaAgentModelProvider {
     let artifactDeclarationObservedUrls = (Array.isArray(
       durable?.artifactDeclarationObservedUrls
     ) ? durable.artifactDeclarationObservedUrls : [])
-      .map((value) => String(value || '').trim().slice(0, 2048))
+      .map((value) => String(value || '').trim().slice(0, 2000))
       .filter(Boolean)
       .slice(0, 20);
     let approvalRecoveryAttempts = Math.max(
@@ -2259,7 +2259,7 @@ class OllamaAgentModelProvider {
                     : []
                 ))
               ]
-                .map((value) => String(value || '').trim().slice(0, 2048))
+                .map((value) => String(value || '').trim().slice(0, 2000))
                 .filter(Boolean)
                 .filter((value, index, values) => values.indexOf(value) === index)
                 .slice(0, 20);
