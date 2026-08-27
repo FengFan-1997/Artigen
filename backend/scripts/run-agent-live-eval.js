@@ -26,6 +26,22 @@ const optionalSecretNames = [
   'AGENT_WORKER_RELAY_SECRET',
   'AGENT_WORKER_RELAY_URL'
 ];
+const LIVE_EVAL_DB_CONNECTION_TIMEOUT_MS = 15_000;
+const LIVE_EVAL_DB_QUERY_TIMEOUT_MS = 30_000;
+
+const liveEvalPoolOptions = ({ connectionString } = {}) => ({
+  connectionString,
+  max: 20,
+  allowExitOnIdle: true,
+  // A real DEV database can temporarily refuse a new connection while its
+  // existing sessions remain healthy. Never let a signed campaign wait
+  // forever for a pool checkout or a database response: fail closed so the
+  // slot journal, cleanup evidence and Provider counters remain auditable.
+  connectionTimeoutMillis: LIVE_EVAL_DB_CONNECTION_TIMEOUT_MS,
+  query_timeout: LIVE_EVAL_DB_QUERY_TIMEOUT_MS,
+  statement_timeout: LIVE_EVAL_DB_QUERY_TIMEOUT_MS,
+  application_name: 'artigen-agent-live-eval'
+});
 
 const positivePricingOrDefault = ({ value, fallback, name }) => {
   const raw = String(value ?? '').trim();
@@ -607,11 +623,9 @@ const main = async () => {
   const journal = createSlotJournal({ gate, selectedCase, selectedCohort, selected });
   await writeReport({ report: journal, reportDir, reportPath: journalPath });
   await purgeExpiredEvidence({ rootDir: artifactRoot, retentionDays: 30 });
-  const pool = new Pool({
-    connectionString: runtimeEnv.DATABASE_URL,
-    max: 20,
-    allowExitOnIdle: true
-  });
+  const pool = new Pool(liveEvalPoolOptions({
+    connectionString: runtimeEnv.DATABASE_URL
+  }));
   let harness = null;
   const poolState = installLiveEvalPoolErrorHandler({
     pool,
@@ -876,6 +890,7 @@ module.exports = {
   findCampaignJournal,
   findInterruptedJournal,
   journalResults,
+  liveEvalPoolOptions,
   installLiveEvalSignalHandlers,
   installLiveEvalPoolErrorHandler,
   disposeLiveEvalPoolErrorHandlerAfterCleanup,

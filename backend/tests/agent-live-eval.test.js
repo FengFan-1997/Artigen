@@ -70,6 +70,7 @@ const {
   findInterruptedJournal,
   journalResults,
   loadLiveEvalSecrets,
+  liveEvalPoolOptions,
   disposeLiveEvalPoolErrorHandlerAfterCleanup,
   installLiveEvalPoolErrorHandler,
   markInterruptedJournal,
@@ -110,6 +111,17 @@ test('Live Harness V3.1 accepts only the exact dev_artigen database identity', (
     }),
     /AGENT_LIVE_EVAL_DATABASE_FORBIDDEN/
   );
+});
+
+test('Live eval database pool fails closed on checkout and query stalls', () => {
+  const options = liveEvalPoolOptions({ connectionString: 'postgres://synthetic.invalid/dev_artigen' });
+  assert.equal(options.connectionString, 'postgres://synthetic.invalid/dev_artigen');
+  assert.equal(options.max, 20);
+  assert.equal(options.allowExitOnIdle, true);
+  assert.equal(options.connectionTimeoutMillis, 15_000);
+  assert.equal(options.query_timeout, 30_000);
+  assert.equal(options.statement_timeout, 30_000);
+  assert.equal(options.application_name, 'artigen-agent-live-eval');
 });
 
 test('Live Harness V3.1 turns an advisory-lock client disconnect into a fail-closed campaign abort', async () => {
@@ -763,24 +775,28 @@ test('Live Harness drain check keeps ambiguous receipts as audit evidence but re
   harness.queue = [];
   harness.providerScheduler = { providerKey: 'siliconflow:Qwen/Qwen3-8B' };
   harness.pool = {
-    async query(statement) {
+    async query(statement, parameters) {
       statements.push(String(statement));
-      if (String(statement).includes('FROM wallets')) {
-        return { rows: [
-          { user_id: harness.baselineUserId, frozen_credits: 0 },
-          { user_id: harness.candidateUserId, frozen_credits: 0 }
-        ] };
-      }
-      return { rows: [{ count: 0 }] };
+      assert.deepEqual(parameters, [
+        harness.runIds,
+        [harness.baselineUserId, harness.candidateUserId],
+        harness.providerScheduler.providerKey
+      ]);
+      return { rows: [{
+        active_runs: 0,
+        frozen_credits: 0,
+        active_holds: 0,
+        active_model_receipts: 0,
+        active_reservations: 0,
+        active_tool_receipts: 0,
+        queued_provider_requests: 0
+      }] };
     }
   };
   assert.equal(await harness.assertBatchDrained(), true);
-  const modelReceiptQuery = statements.find((statement) => (
-    statement.includes('agent_model_call_receipts')
-  ));
-  const toolReceiptQuery = statements.find((statement) => (
-    statement.includes('agent_tool_call_receipts')
-  ));
+  assert.equal(statements.length, 1);
+  const [modelReceiptQuery] = statements;
+  const [toolReceiptQuery] = statements;
   assert.match(modelReceiptQuery, /queued.*dispatched.*received/s);
   assert.doesNotMatch(modelReceiptQuery, /ambiguous/);
   assert.match(toolReceiptQuery, /state='dispatched'/);
