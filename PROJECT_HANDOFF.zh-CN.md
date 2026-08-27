@@ -10,11 +10,12 @@
 
 ## 2026-08-27 Agent Live Harness 证据完整性硬化与 DEV 实机阻断
 
-- PR #130 已正常合入 `dev`，merge SHA 为 `66c00330b17fc9a860c01620fa2b30bfd1d4bdcc`。该提交修复 Live Eval 数据库连接池在中断收尾时无限等待的问题；对应 GitHub required checks、真实 PostgreSQL 16 + 固定 MinIO Harness `46/46` 以及 20 轮 chaos `620/620` 均通过。Render DEV、Vercel Preview 与 Mac DEV Worker 曾对齐该不可变 SHA；Worker、浏览器、受限出口、桌面中继及 Runtime 定价 readiness 均实测就绪，Runtime V2 的公众 rollout 仍为 `0`。
+- PR #130 已正常合入 `dev`，merge SHA 为 `66c00330b17fc9a860c01620fa2b30bfd1d4bdcc`。该提交修复 Live Eval 数据库连接池在中断收尾时无限等待的问题；对应 GitHub required checks、真实 PostgreSQL 16 + 固定 MinIO Harness `46/46` 以及 20 轮 chaos `620/620` 均通过。
 - exact-SHA 完整实机矩阵没有通过。campaign `66c0033-20260827-0001` 在运行中失去 Docker socket，campaign `66c0033-20260827-0002` 随后失去 PostgreSQL campaign 连接；第二次只执行 4 次真实 Qwen、0 次 Kolors，未形成完整 24-slot 证据，也没有图片可进入匿名盲审。两次均受控终止，没有把局部成功冒充完整矩阵。
-- 第二次中断暴露出 Harness 证据 P1：24 个未启动 slot 被物化为失败占位后，旧汇总仍可能把 `fullMatrixComplete` 标为 `true`。PR #131 在不降低任何门槛的前提下要求每个 slot 都具有真实执行时长；纯合成连接丢失占位即使数量齐全也必须标为未完成。专项回归为 `48/48`，完整 `pnpm check` 退出码 0，Playwright 为 `537 passed / 3 skipped / 0 failed`；PR required CI 必须在最终不可变提交上再次通过后才能合入。
+- 第二次中断暴露出 Harness 证据 P1：24 个未启动 slot 被物化为失败占位后，旧汇总仍可能把 `fullMatrixComplete` 标为 `true`。PR #131 在不降低任何门槛的前提下要求每个 slot 都具有真实执行时长；纯合成连接丢失占位即使数量齐全也必须标为未完成。专项回归为 `48/48`，完整 `pnpm check` 退出码 0，Playwright 为 `537 passed / 3 skipped / 0 failed`。PR #131 的 Core、8 个跨浏览器 E2E、5 个 Harness 分片、chaos 与 Release gate required checks 全绿后正常合入，最终 DEV merge SHA 为 `b113d9b20bd6083694dd6f229633afd6fdf505c1`；两个 Cloudflare Worker preview 继续是非 required failure，没有用于绕过保护。
+- Render DEV `/api/meta`、两个 Vercel Preview 与不可变 Mac DEV Worker worktree `Artigen-worker-dev-b113d9b` 已对齐 `b113d9b...`。重新核验 `/readyz` 与 `/api/agent/status`：迁移 025、PostgreSQL、S3、SiliconFlow、定价、Worker、浏览器、受限出口和桌面中继 ready，queue=0，Runtime V2 public disabled、rollout=0。Worker 切换期间一次 PostgreSQL 连接超时经有界重启恢复，但与实机 campaign 的数据库断连共同构成尚未解决的 DEV 稳定性风险。
 - 独立数据库收尾审计确认 active run、hold、budget reservation、冻结余额、active subagent 与 provider queue 均为 0。2 条 ambiguous model receipt 与 10 条 ambiguous tool receipt 是无活动账务关联的持久审计证据，按 fail-closed 原则保留，不为制造“全零”而删除。
-- 当前发布结论仍为**暂不可上线**：真实用户浏览器旅程、Codex 视觉匹配量表、完整 24-slot V1/V2 实机矩阵和图片匿名盲审均未完成。生产、owner canary、公众 rollout、模型边界、网络与代理配置均未改变；全部文本仍只允许 `Qwen/Qwen3-8B`，全部图片仍只允许 `Kwai-Kolors/Kolors`。
+- 当前 Agent UI 树与已完成真实本地创建/取消/刷新生命周期、12 张人工截图和 Codex 原则对照 `4.31/5` 的 `592abc5...` 完全一致；该证据继续覆盖 UI 代码和本地生命周期，但不替代最终 DEV Provider 用户旅程。当前发布结论仍为**暂不可上线**：完整 24-slot V1/V2 实机矩阵和图片匿名盲审未完成，DEV 数据库稳定性风险未收口。生产、owner canary、公众 rollout、模型边界、网络与代理配置均未改变；全部文本仍只允许 `Qwen/Qwen3-8B`，全部图片仍只允许 `Kwai-Kolors/Kolors`。
 
 ## 2026-08-27 GitHub 双语图文 README 重构（文档与静态素材）
 
