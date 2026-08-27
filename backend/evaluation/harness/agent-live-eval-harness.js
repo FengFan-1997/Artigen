@@ -988,53 +988,45 @@ class AgentLiveEvalHarness {
 
   async assertBatchDrained() {
     const runIds = [...new Set(this.runIds)];
-    const [queue, wallets, holds, receipts, reservations, toolReceipts, providerQueue] = await Promise.all([
-      this.pool.query(
-        `SELECT count(*)::int AS count FROM agent_runs
-          WHERE id=ANY($1::uuid[])
-            AND status IN ('draft','queued','provisioning','running','waiting_user','paused','verifying')`,
-        [runIds]
-      ),
-      this.pool.query(
-        'SELECT user_id,frozen_credits FROM wallets WHERE user_id=ANY($1::uuid[])',
-        [[this.baselineUserId, this.candidateUserId]]
-      ),
-      this.pool.query(
-        `SELECT count(*)::int AS count FROM agent_budget_holds
-          WHERE run_id=ANY($1::uuid[]) AND status='held'`,
-        [runIds]
-      ),
-      this.pool.query(
-        `SELECT count(*)::int AS count FROM agent_model_call_receipts receipt
-         WHERE receipt.run_id=ANY($1::uuid[])
-           AND receipt.state IN ('queued','dispatched','received')`,
-        [runIds]
-      ),
-      this.pool.query(
-        `SELECT count(*)::int AS count FROM agent_budget_reservations
-          WHERE run_id=ANY($1::uuid[]) AND state='reserved'`,
-        [runIds]
-      ),
-      this.pool.query(
-        `SELECT count(*)::int AS count FROM agent_tool_call_receipts
-          WHERE run_id=ANY($1::uuid[]) AND state='dispatched'`,
-        [runIds]
-      ),
-      this.pool.query(
-        `SELECT count(*)::int AS count FROM agent_provider_requests
-          WHERE provider_key=$1 AND status='queued'`,
-        [this.providerScheduler.providerKey]
-      )
-    ]);
+    // One snapshot uses one pool checkout. The previous Promise.all fan-out
+    // could request seven fresh connections at a slot boundary and hang the
+    // signed campaign indefinitely when DEV temporarily stopped accepting
+    // new sessions, even though its existing sessions were still healthy.
+    const drained = await this.pool.query(
+      `SELECT
+         (SELECT count(*)::int FROM agent_runs
+           WHERE id=ANY($1::uuid[])
+             AND status IN ('draft','queued','provisioning','running','waiting_user','paused','verifying'))
+           AS active_runs,
+         (SELECT COALESCE(sum(frozen_credits),0)::bigint FROM wallets
+           WHERE user_id=ANY($2::uuid[])) AS frozen_credits,
+         (SELECT count(*)::int FROM agent_budget_holds
+           WHERE run_id=ANY($1::uuid[]) AND status='held') AS active_holds,
+         (SELECT count(*)::int FROM agent_model_call_receipts receipt
+           WHERE receipt.run_id=ANY($1::uuid[])
+             AND receipt.state IN ('queued','dispatched','received')) AS active_model_receipts,
+         (SELECT count(*)::int FROM agent_budget_reservations
+           WHERE run_id=ANY($1::uuid[]) AND state='reserved') AS active_reservations,
+         (SELECT count(*)::int FROM agent_tool_call_receipts
+           WHERE run_id=ANY($1::uuid[]) AND state='dispatched') AS active_tool_receipts,
+         (SELECT count(*)::int FROM agent_provider_requests
+           WHERE provider_key=$3 AND status='queued') AS queued_provider_requests`,
+      [
+        runIds,
+        [this.baselineUserId, this.candidateUserId],
+        this.providerScheduler.providerKey
+      ]
+    );
+    const snapshot = drained.rows[0] || {};
     if (
-      Number(queue.rows[0]?.count || 0) !== 0 ||
+      Number(snapshot.active_runs || 0) !== 0 ||
       this.queue.some((runId) => runIds.includes(runId)) ||
-      wallets.rows.some((wallet) => Number(wallet.frozen_credits || 0) !== 0) ||
-      Number(holds.rows[0]?.count || 0) !== 0 ||
-      Number(receipts.rows[0]?.count || 0) !== 0 ||
-      Number(reservations.rows[0]?.count || 0) !== 0 ||
-      Number(toolReceipts.rows[0]?.count || 0) !== 0 ||
-      Number(providerQueue.rows[0]?.count || 0) !== 0
+      Number(snapshot.frozen_credits || 0) !== 0 ||
+      Number(snapshot.active_holds || 0) !== 0 ||
+      Number(snapshot.active_model_receipts || 0) !== 0 ||
+      Number(snapshot.active_reservations || 0) !== 0 ||
+      Number(snapshot.active_tool_receipts || 0) !== 0 ||
+      Number(snapshot.queued_provider_requests || 0) !== 0
     ) {
       throw new Error('AGENT_LIVE_EVAL_BATCH_NOT_DRAINED');
     }
