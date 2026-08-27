@@ -28,6 +28,7 @@ const {
 } = require('../evaluation/harness/live-eval-campaign-guard');
 const { functionToolCall } = require('../evaluation/harness/scripted-siliconflow-transport');
 const { checkDatabase } = require('../services/readiness-service');
+const { installLiveEvalPoolErrorHandler } = require('../scripts/run-agent-live-eval');
 
 const enabled = process.env.RUN_POSTGRES_INTEGRATION === '1' && Boolean(process.env.DATABASE_URL);
 const s3Enabled = enabled && Boolean(String(process.env.MINIO_TEST_ENDPOINT || '').trim());
@@ -230,6 +231,107 @@ test('Live Harness V3.1 persists physical provider caps across restart and rejec
       [CAMPAIGN_CHECK_KIND, DISPATCH_CHECK_KIND, campaignHash]
     ).catch(() => {});
     await pool.end();
+  }
+});
+
+test('Live Harness V3.1 fails closed when PostgreSQL terminates the campaign lock connection', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 4 });
+  const campaignId = crypto.randomUUID();
+  const campaignHash = crypto.createHash('sha256').update(campaignId).digest('hex');
+  const guard = new LiveEvalCampaignGuard({
+    pool,
+    campaignId,
+    commitSha: 'ac'.repeat(20),
+    matrixHash: 'ce'.repeat(32),
+    maxQwenCalls: 2,
+    maxKolorsCalls: 1,
+    maxWallClockMs: 60_000
+  });
+  try {
+    await guard.initialize();
+    const backend = await guard.lockClient.query('SELECT pg_backend_pid()::integer AS pid');
+    const terminated = await pool.query(
+      'SELECT pg_terminate_backend($1::integer) AS terminated',
+      [backend.rows[0].pid]
+    );
+    assert.equal(terminated.rows[0]?.terminated, true);
+    if (!guard.signal.aborted) {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('AGENT_LIVE_EVAL_CAMPAIGN_ABORT_TIMEOUT')),
+          5_000
+        );
+        guard.signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          resolve();
+        }, { once: true });
+      });
+    }
+    assert.equal(guard.signal.reason?.code, 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST');
+    await assert.rejects(
+      guard.reserveDispatch('qwen'),
+      /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/
+    );
+    await assert.rejects(
+      guard.close(),
+      /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/
+    );
+  } finally {
+    await guard.close().catch(() => {});
+    await pool.query(
+      `DELETE FROM agent_quality_checks
+        WHERE check_kind IN ($1,$2) AND metrics->>'campaignHash'=$3`,
+      [CAMPAIGN_CHECK_KIND, DISPATCH_CHECK_KIND, campaignHash]
+    ).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('Live Harness V3.1 fails closed when PostgreSQL terminates an idle pooled connection', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const evalPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  const adminPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  let abortReason = null;
+  const state = installLiveEvalPoolErrorHandler({
+    pool: evalPool,
+    abort: (error) => { abortReason = error; }
+  });
+  try {
+    const client = await evalPool.connect();
+    const backend = await client.query('SELECT pg_backend_pid()::integer AS pid');
+    client.release();
+    const terminated = await adminPool.query(
+      'SELECT pg_terminate_backend($1::integer) AS terminated',
+      [backend.rows[0].pid]
+    );
+    assert.equal(terminated.rows[0]?.terminated, true);
+    if (!state.error) {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('AGENT_LIVE_EVAL_POOL_ABORT_TIMEOUT')),
+          5_000
+        );
+        evalPool.once('error', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
+    assert.equal(state.error?.code, 'AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST');
+    assert.equal(abortReason, state.error);
+    assert.throws(
+      () => state.assertHealthy(),
+      /AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST/
+    );
+  } finally {
+    state.dispose();
+    await evalPool.end();
+    await adminPool.end();
   }
 });
 

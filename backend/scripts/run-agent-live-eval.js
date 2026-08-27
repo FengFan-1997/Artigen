@@ -349,6 +349,48 @@ const installLiveEvalSignalHandlers = ({
   };
 };
 
+const installLiveEvalPoolErrorHandler = ({
+  pool,
+  abort = () => {}
+} = {}) => {
+  if (!pool || typeof pool.on !== 'function' || typeof pool.off !== 'function') {
+    throw new TypeError('AGENT_LIVE_EVAL_POOL_REQUIRED');
+  }
+  let connectionError = null;
+  const handler = () => {
+    if (connectionError) return;
+    connectionError = Object.assign(
+      new Error('AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST'),
+      { code: 'AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST' }
+    );
+    try {
+      abort(connectionError);
+    } catch {}
+  };
+  pool.on('error', handler);
+  return {
+    get error() { return connectionError; },
+    assertHealthy() {
+      if (connectionError) throw connectionError;
+    },
+    dispose() {
+      pool.off('error', handler);
+    }
+  };
+};
+
+const disposeLiveEvalPoolErrorHandlerAfterCleanup = ({ poolState, cleanup } = {}) => {
+  if (!poolState || typeof poolState.dispose !== 'function') {
+    throw new TypeError('AGENT_LIVE_EVAL_POOL_STATE_REQUIRED');
+  }
+  const postgres = Array.isArray(cleanup?.results)
+    ? cleanup.results.find((entry) => entry?.label === 'postgres')
+    : null;
+  if (postgres?.ok !== true) return false;
+  poolState.dispose();
+  return true;
+};
+
 const findCampaignJournal = async ({ artifactRoot, gate, statuses = null }) => {
   const allowedStatuses = Array.isArray(statuses) && statuses.length
     ? new Set(statuses.map((status) => String(status || '').trim()))
@@ -571,6 +613,10 @@ const main = async () => {
     allowExitOnIdle: true
   });
   let harness = null;
+  const poolState = installLiveEvalPoolErrorHandler({
+    pool,
+    abort: (error) => harness?.campaignGuard?.abort(error)
+  });
   const results = [];
   const signalState = installLiveEvalSignalHandlers({
     journal,
@@ -578,6 +624,7 @@ const main = async () => {
     persist: () => writeReport({ report: journal, reportDir, reportPath: journalPath })
   });
   try {
+    poolState.assertHealthy();
     harness = await AgentLiveEvalHarness.create({
       pool,
       env: process.env,
@@ -587,10 +634,12 @@ const main = async () => {
       commitSha: gate.commitSha,
       matrixHash: gate.matrixHash
     });
+    poolState.assertHealthy();
     const cohorts = selectedCohort === 'both' ? ['v1', 'v2'] : [selectedCohort];
     for (const entry of selected) {
       for (const cohort of cohorts) {
         if (signalState.error) throw signalState.error;
+        poolState.assertHealthy();
         const startedAt = Date.now();
         const qwenBefore = Number(harness.auditor?.qwenCalls || 0);
         const kolorsBefore = Number(harness.auditor?.kolorsCalls || 0);
@@ -672,6 +721,11 @@ const main = async () => {
         }
         await writeReport({ report: journal, reportDir, reportPath: journalPath });
         if (signalState.error) throw signalState.error;
+        poolState.assertHealthy();
+        // A dropped PostgreSQL advisory-lock connection invalidates the
+        // campaign. Stop at the current slot boundary instead of recording the
+        // remaining paid matrix as a string of synthetic failures.
+        harness.assertWallClock();
       }
       await harness.assertBatchDrained();
     }
@@ -683,6 +737,8 @@ const main = async () => {
           keyMaterial: evidenceKeyMaterial
         })
       : null;
+    poolState.assertHealthy();
+    harness.assertWallClock();
     const report = {
       version: 'agent-live-eval-v3.1',
       createdAt: new Date().toISOString(),
@@ -721,9 +777,13 @@ const main = async () => {
         : null
     };
     await writeReport({ report, reportDir, reportPath });
+    poolState.assertHealthy();
+    harness.assertWallClock();
     journal.status = 'completed';
     journal.updatedAt = new Date().toISOString();
     await writeReport({ report: journal, reportDir, reportPath: journalPath });
+    poolState.assertHealthy();
+    harness.assertWallClock();
     process.stdout.write(`${JSON.stringify({
       event: 'live_eval.completed',
       ok: summary.automatedGatePassed,
@@ -755,6 +815,14 @@ const main = async () => {
     throw terminalError;
   } finally {
     const cleanup = await closeLiveEvalResources({ harness, pool });
+    if (poolState.error) {
+      cleanup.ok = false;
+      cleanup.results.push({
+        ok: false,
+        label: 'postgres-connection',
+        code: poolState.error.code
+      });
+    }
     await attachCleanupEvidence({ reportPath, cleanup }).catch(() => {
       process.exitCode = 1;
     });
@@ -765,6 +833,11 @@ const main = async () => {
         results: cleanup.results
       })}\n`);
     }
+    // A timed-out pool.end() continues closing sockets in the background. Keep
+    // the listener until process exit in that case so a late pg socket error
+    // cannot become an uncaught EventEmitter exception after cleanup evidence
+    // has already been written.
+    disposeLiveEvalPoolErrorHandlerAfterCleanup({ poolState, cleanup });
     signalState.dispose();
   }
 };
@@ -804,6 +877,8 @@ module.exports = {
   findInterruptedJournal,
   journalResults,
   installLiveEvalSignalHandlers,
+  installLiveEvalPoolErrorHandler,
+  disposeLiveEvalPoolErrorHandlerAfterCleanup,
   markInterruptedJournal,
   summarize
 };

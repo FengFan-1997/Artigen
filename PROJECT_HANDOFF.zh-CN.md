@@ -610,6 +610,14 @@ CI、Render DEV 与 Vercel Preview 验收，尚未进入 `main` 或生产。
 - 独立代码终审先后发现并修复 readiness 字段缺失、报价授权陈旧和三种几何检测假绿；最终复审没有可执行问题。完整 `pnpm check` 退出码 0：前端 Vitest `217/217`，后端 `517 passed / 87 conditional skipped / 0 failed`，邮件 `7/7`，质量 manifest `50/50`，生产构建与 bundle budget 通过，Playwright 六项目 `537 passed / 3 skipped / 0 failed`、耗时 21.3 分钟；`git diff --check` 与 Impeccable mechanical detector 均通过。
 - 以上仅证明本地候选的 UI/UX 与确定性工程质量。候选仍未 push/PR/合入 DEV，DEV 三端未对齐，Mac Worker/browser/egress/desktop 与 durability pricing 尚未就绪，24-slot 真实 Qwen/Kolors 矩阵和图片盲审尚未完成；因此结论仍为“暂不可上线”。
 
+### 5.23 2026-08-27 UI 候选合入 DEV、首轮实机中断与 PostgreSQL 断连硬化（修复候选，待 PR）
+
+- 上节候选已由 PR [#125](https://github.com/FengFan-1997/Artigen/pull/125) 正常合入 `dev`，merge SHA 为 `6c44f8efcea72b7ed4c1ff9de88656a6fdc9f1c0`。GitHub Core、8 路 E2E、5 个 Harness 分片、chaos 与 Release gate 必需检查全部通过；两个 Cloudflare 外部 Preview 仍是非 required 失败。Render DEV deployment `dep-da7ts3gu01pc73c0a23g`、Vercel Preview deployment `6117922321` 与 Mac DEV Worker 曾精确对齐该 SHA；迁移 `025_agent_runtime_v2_1_durability`、Provider、S3、定价、Worker、浏览器、受限出口与桌面中继均 ready，公开 V2 和 rollout 仍关闭。工作台人工证据继续保存在被忽略的 `.artifacts/agent-ui-release-audit-d62bc37/`，Codex 体验对照为 `4.31/5`。
+- 绑定 `6c44f8e...` 的首轮 24-slot 真实 DEV campaign 只完成前四个 slot：consultation V1/V2 成功；text-only V1 以真实基线 `AGENT_VERIFICATION_INCOMPLETE` 失败；text-only V2 成功，Run `5d801352-c490-4bc4-9d2e-3cb77497c391`，结算 7 点。research-report V1 开始后，Node 进程因 PostgreSQL `Client` 的未处理连接错误直接退出；该 campaign 已封存为 terminal interrupted，不能重试、续跑或作为通过证据。
+- 根因同时覆盖两类连接：campaign advisory-lock 使用的 checked-out Client 不会由 Pool 的 idle error 事件兜底，而 Pool 内其他 idle Client 也可能独立断开。新分支 `codex/agent-live-pg-disconnect-hardening` 从精确 `6c44f8e...` 建立：锁连接全生命周期捕获断连并以 `AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST` 中止 campaign；runner 捕获 idle Pool 断连并以 `AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST` fail closed。两类错误只记录内容无关代码，不暴露数据库主机、连接串或凭据；后续 slot 和 Provider dispatch 停止，最终化前后重复核验连接；lock-loss、unlock 失败或 cleanup 超时都会永久撤销报告放行资格。损坏连接以 destroy 方式释放；若 `pool.end()` 超时，错误监听器保留到进程退出，避免后台晚到 socket error 再次成为未捕获异常。
+- 回归包含真实 PostgreSQL `pg_terminate_backend`：分别终止 advisory-lock 连接与 idle pooled 连接，验证 campaign 中止、后续 dispatch 拒绝、错误脱敏和连接销毁；另覆盖最终化前丢锁以及 cleanup 超时后的晚到 socket error。最终未提交候选已重新通过完整 `pnpm check`：前端 `217/217`、后端 `519 passed / 89 条件跳过`、邮件 `7/7`、质量集 `50/50`、构建与 bundle budget 通过、Playwright `537 passed / 3 skipped / 0 failed`；PostgreSQL 16 + 固定 MinIO Harness `45/45`、deterministic `50/50`、20 轮 chaos `620/620`，失败、取消、跳过与 flaky 均为 0。测试结束后 active Run、hold、reservation、provider queue、subagent、未结回执与冻结余额均为 0；本轮固定 MinIO 容器与中断测试残留的 Vite 进程已按精确身份删除，证据目录保留。
+- 旧 campaign 的一条 ambiguous model receipt 与十条 ambiguous tool receipts继续作为无活动账务关联的审计证据保留，不为制造“全零”而删除。当前修复仍只在本地候选，尚未提交、push、PR、合入或重新部署；必须在新不可变 SHA 的 required CI、DEV 三端对齐、新签名 gate、完整 24-slot 和图片匿名盲审全部通过后，才能重新评估发布资格。生产、owner canary 与公众 rollout 均未获授权且未触碰。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。
