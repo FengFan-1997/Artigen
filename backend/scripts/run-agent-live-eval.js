@@ -199,7 +199,12 @@ const summarize = (results) => {
   const actualSlots = safeResults.map((entry) => `${entry.scenarioId}:${entry.cohort}`);
   const fullMatrixComplete = safeResults.length === expectedSlots.size &&
     new Set(actualSlots).size === expectedSlots.size &&
-    actualSlots.every((slot) => expectedSlots.has(slot));
+    actualSlots.every((slot) => expectedSlots.has(slot)) &&
+    // Terminal failure reports materialize untouched journal slots so the
+    // signed evidence still contains the complete expected matrix. Those
+    // placeholders have no elapsed time because no real slot execution ever
+    // started. Do not mistake their presence for a completed paid matrix.
+    safeResults.every((entry) => Number.isFinite(entry.elapsedMs) && entry.elapsedMs >= 0);
   const routeResults = safeResults.filter((entry) => entry.scenarioId === 'consultation-route');
   const routeAccuracy = routeResults.length
     ? routeResults.filter((entry) => entry.ok && entry.routeKind === 'reply').length / routeResults.length
