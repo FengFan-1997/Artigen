@@ -618,6 +618,15 @@ CI、Render DEV 与 Vercel Preview 验收，尚未进入 `main` 或生产。
 - 回归包含真实 PostgreSQL `pg_terminate_backend`：分别终止 advisory-lock 连接与 idle pooled 连接，验证 campaign 中止、后续 dispatch 拒绝、错误脱敏和连接销毁；另覆盖最终化前丢锁以及 cleanup 超时后的晚到 socket error。最终未提交候选已重新通过完整 `pnpm check`：前端 `217/217`、后端 `519 passed / 89 条件跳过`、邮件 `7/7`、质量集 `50/50`、构建与 bundle budget 通过、Playwright `537 passed / 3 skipped / 0 failed`；PostgreSQL 16 + 固定 MinIO Harness `45/45`、deterministic `50/50`、20 轮 chaos `620/620`，失败、取消、跳过与 flaky 均为 0。测试结束后 active Run、hold、reservation、provider queue、subagent、未结回执与冻结余额均为 0；本轮固定 MinIO 容器与中断测试残留的 Vite 进程已按精确身份删除，证据目录保留。
 - 旧 campaign 的一条 ambiguous model receipt 与十条 ambiguous tool receipts继续作为无活动账务关联的审计证据保留，不为制造“全零”而删除。断连实现提交为 `b2250fc5339854e3d3b18209b304eb37e61593f8`，当前分支仍未 push、PR、合入或重新部署；必须在新不可变 SHA 的 required CI、DEV 三端对齐、新签名 gate、完整 24-slot 和图片匿名盲审全部通过后，才能重新评估发布资格。生产、owner canary 与公众 rollout 均未获授权且未触碰。
 
+### 5.24 2026-08-27 PostgreSQL 断连修复合入 DEV、第二轮实机中断与 campaign keepalive（本地候选）
+
+- 上节断连修复经 PR [#126](https://github.com/FengFan-1997/Artigen/pull/126) 的 Core、8 路 E2E、5 个 Harness 分片、chaos 与 Release gate 必需检查全绿后合入 `dev`，merge SHA 为 `62d466c89783cc7d2d6f7ae275651cd0a2d97f3f`。两个 Cloudflare 外部 Preview 失败仍为非 required；Vercel Preview 成功。
+- Render DEV deployment `dep-da7vimdbedkc73engi20`、Vercel Preview deployment `6119491042` 与不可变 Mac DEV Worker `Artigen-worker-dev-62d466c` 已对齐同一 SHA。实测 `/api/meta`、`/readyz` 和 Agent status 通过：迁移为 `025_agent_runtime_v2_1_durability`，数据库、S3、Qwen3、Kolors、定价、Worker、浏览器、受限出口与桌面中继均 ready，queue=0；Runtime V2 与公开 rollout 仍关闭。
+- 在该 exact SHA 上重新完成 deterministic `50/50` 与 20 轮 chaos `620/620`，签发单次 gate `62d466c-20260827-0001`。第二轮 24-slot campaign 的 consultation V1/V2 成功，text-only V1 按真实基线失败；text-only V2 Run `e1828208-f7f8-4a03-a613-fd70136a3104` 执行期间，长期空闲的 campaign advisory-lock Client 被云数据库或代理关闭，Harness 以 `AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST` fail-closed，后续 slot 均未运行。该 campaign 已封存，不能重试、续跑或作为通过证据。
+- 中断后只读审计确认 active Run、hold、reservation、provider queue、active subagent、冻结钱包、open model/tool receipt 和 Artigen 临时容器均为 0；历史 ambiguous 回执继续保留为审计证据，不删除。该 campaign 共记录 Qwen succeeded 9 / failed 1，未调用 Kolors。
+- 新分支 `codex/agent-live-keepalive-hardening` 从 exact `62d466c...` 建立。最小修复只在持有原 advisory lock 的同一 Client 上每 30 秒执行一个 10 秒超时的 `SELECT 1`；禁止重连、重新获取锁或自动重跑 slot。查询失败仍沿用现有连接丢失路径立即中止。红绿回归证明移除 keepalive 启动点时测试会失败；恢复实现后单元测试 `47/47`。固定 MinIO + PostgreSQL 16 Harness `46/46`、executable quality set `50/50`、20 轮 chaos `620/620` 和完整 `pnpm check` 均通过；Playwright 为 `537 passed / 3 skipped / 0 failed`。清理前本地测试数据库的 active Run、hold、reservation、provider queue、active subagent、冻结钱包和 open receipt 均为 0；精确命名的临时 MinIO 容器已删除，临时 PostgreSQL 已停止并移入废纸篓。PR、DEV 重对齐、新 exact-SHA gate、24-slot 和图片盲审尚未完成。
+- 因完整 24-slot 和图片盲审仍无通过证据，当前结论继续为“暂不可上线”；不得进入生产、owner canary 或公众 rollout。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。

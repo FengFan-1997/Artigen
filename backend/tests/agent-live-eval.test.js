@@ -197,6 +197,146 @@ test('Live Harness V3.1 turns an advisory-lock client disconnect into a fail-clo
   assert.deepEqual(released, [true]);
 });
 
+test('Live Harness V3.1 keeps the advisory-lock session active without overlapping queries', async () => {
+  const client = new EventEmitter();
+  const released = [];
+  const scheduled = [];
+  const cancelled = [];
+  const queries = [];
+  let resolveKeepalive = null;
+  client.release = (destroy) => released.push(Boolean(destroy));
+  client.query = async (input) => {
+    const statement = typeof input === 'string' ? input : String(input?.text || '');
+    queries.push(input);
+    if (statement.includes('pg_try_advisory_lock')) {
+      return { rowCount: 1, rows: [{ locked: true }] };
+    }
+    if (statement.includes('SELECT id,metrics,created_at')) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (statement.includes('INSERT INTO agent_quality_checks')) {
+      return {
+        rowCount: 1,
+        rows: [{
+          metrics: {
+            commitSha: 'ab'.repeat(20),
+            matrixHash: 'cd'.repeat(32),
+            maxQwenCalls: 2,
+            maxKolorsCalls: 1,
+            deadlineAt: new Date(Date.now() + 60_000).toISOString()
+          }
+        }]
+      };
+    }
+    if (statement.includes('clock_timestamp() AS now')) {
+      return { rowCount: 1, rows: [{ now: new Date() }] };
+    }
+    if (statement.includes('campaign_keepalive')) {
+      return new Promise((resolve) => {
+        resolveKeepalive = () => resolve({ rowCount: 1, rows: [{ campaign_keepalive: 1 }] });
+      });
+    }
+    if (statement.includes('pg_advisory_unlock')) {
+      return { rowCount: 1, rows: [{ pg_advisory_unlock: true }] };
+    }
+    return { rowCount: 0, rows: [] };
+  };
+  const guard = new LiveEvalCampaignGuard({
+    pool: { connect: async () => client },
+    campaignId: '11111111-2222-4333-8444-666666666666',
+    commitSha: 'ab'.repeat(20),
+    matrixHash: 'cd'.repeat(32),
+    maxQwenCalls: 2,
+    maxKolorsCalls: 1,
+    maxWallClockMs: 60_000,
+    scheduleTimeout: (callback, delay) => {
+      const timer = { callback, delay, unref() {} };
+      scheduled.push(timer);
+      return timer;
+    },
+    cancelTimeout: (timer) => cancelled.push(timer)
+  });
+
+  await guard.initialize();
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].delay, 30_000);
+  scheduled[0].callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(scheduled.length, 1);
+  assert.equal(typeof resolveKeepalive, 'function');
+  resolveKeepalive();
+  await guard.lockKeepaliveInFlight;
+
+  const keepalives = queries.filter((input) => input?.text?.includes('campaign_keepalive'));
+  assert.equal(keepalives.length, 1);
+  assert.equal(keepalives[0].query_timeout, 10_000);
+  assert.equal(guard.snapshot().lockKeepaliveCount, 1);
+  assert.match(guard.snapshot().lockKeepaliveLastSuccessAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(scheduled.length, 2);
+
+  await guard.close();
+  assert.deepEqual(cancelled, [scheduled[1]]);
+  assert.deepEqual(released, [false]);
+});
+
+test('Live Harness V3.1 treats a failed advisory-lock keepalive as connection loss', async () => {
+  const client = new EventEmitter();
+  let scheduled = null;
+  const released = [];
+  client.release = (destroy) => released.push(Boolean(destroy));
+  client.query = async (input) => {
+    const statement = typeof input === 'string' ? input : String(input?.text || '');
+    if (statement.includes('pg_try_advisory_lock')) {
+      return { rowCount: 1, rows: [{ locked: true }] };
+    }
+    if (statement.includes('SELECT id,metrics,created_at')) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (statement.includes('INSERT INTO agent_quality_checks')) {
+      return {
+        rowCount: 1,
+        rows: [{
+          metrics: {
+            commitSha: 'ab'.repeat(20),
+            matrixHash: 'cd'.repeat(32),
+            maxQwenCalls: 2,
+            maxKolorsCalls: 1,
+            deadlineAt: new Date(Date.now() + 60_000).toISOString()
+          }
+        }]
+      };
+    }
+    if (statement.includes('clock_timestamp() AS now')) {
+      return { rowCount: 1, rows: [{ now: new Date() }] };
+    }
+    if (statement.includes('campaign_keepalive')) throw new Error('synthetic proxy timeout');
+    return { rowCount: 0, rows: [] };
+  };
+  const guard = new LiveEvalCampaignGuard({
+    pool: { connect: async () => client },
+    campaignId: '11111111-2222-4333-8444-777777777777',
+    commitSha: 'ab'.repeat(20),
+    matrixHash: 'cd'.repeat(32),
+    maxQwenCalls: 2,
+    maxKolorsCalls: 1,
+    maxWallClockMs: 60_000,
+    scheduleTimeout: (callback, delay) => {
+      scheduled = { callback, delay, unref() {} };
+      return scheduled;
+    },
+    cancelTimeout: () => {}
+  });
+
+  await guard.initialize();
+  scheduled.callback();
+  await guard.lockKeepaliveInFlight;
+
+  assert.equal(guard.signal.reason?.code, 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST');
+  assert.throws(() => guard.assertActive(), /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/);
+  await assert.rejects(guard.close(), /AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST/);
+  assert.deepEqual(released, [true]);
+});
+
 test('Live eval runner catches idle pool connection errors and aborts without leaking driver details', () => {
   const pool = new EventEmitter();
   let abortReason = null;

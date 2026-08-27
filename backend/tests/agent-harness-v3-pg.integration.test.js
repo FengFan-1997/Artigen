@@ -290,6 +290,76 @@ test('Live Harness V3.1 fails closed when PostgreSQL terminates the campaign loc
   }
 });
 
+test('Live Harness V3.1 keeps a real PostgreSQL advisory lock alive without releasing exclusivity', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 6 });
+  const campaignId = crypto.randomUUID();
+  const campaignHash = crypto.createHash('sha256').update(campaignId).digest('hex');
+  const timers = new Set();
+  const scheduleTimeout = (callback) => {
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      callback();
+    }, 25);
+    timer.unref?.();
+    timers.add(timer);
+    return timer;
+  };
+  const cancelTimeout = (timer) => {
+    clearTimeout(timer);
+    timers.delete(timer);
+  };
+  const profile = {
+    pool,
+    campaignId,
+    commitSha: 'ae'.repeat(20),
+    matrixHash: 'cf'.repeat(32),
+    maxQwenCalls: 2,
+    maxKolorsCalls: 1,
+    maxWallClockMs: 60_000,
+    scheduleTimeout,
+    cancelTimeout
+  };
+  let first = null;
+  let second = null;
+  let replacement = null;
+  try {
+    first = new LiveEvalCampaignGuard(profile);
+    await first.initialize();
+    const deadline = Date.now() + 5_000;
+    while (first.snapshot().lockKeepaliveCount < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(first.snapshot().lockKeepaliveCount >= 2);
+    assert.match(first.snapshot().lockKeepaliveLastSuccessAt, /^\d{4}-\d{2}-\d{2}T/);
+
+    second = new LiveEvalCampaignGuard(profile);
+    await assert.rejects(
+      second.initialize(),
+      /AGENT_LIVE_EVAL_CAMPAIGN_ALREADY_RUNNING/
+    );
+
+    await first.close();
+    first = null;
+    replacement = new LiveEvalCampaignGuard(profile);
+    await replacement.initialize();
+    replacement.assertActive();
+  } finally {
+    for (const timer of timers) clearTimeout(timer);
+    await first?.close().catch(() => {});
+    await second?.close().catch(() => {});
+    await replacement?.close().catch(() => {});
+    await pool.query(
+      `DELETE FROM agent_quality_checks
+        WHERE check_kind IN ($1,$2) AND metrics->>'campaignHash'=$3`,
+      [CAMPAIGN_CHECK_KIND, DISPATCH_CHECK_KIND, campaignHash]
+    ).catch(() => {});
+    await pool.end();
+  }
+});
+
 test('Live Harness V3.1 fails closed when PostgreSQL terminates an idle pooled connection', {
   skip: !enabled,
   timeout: 30_000
