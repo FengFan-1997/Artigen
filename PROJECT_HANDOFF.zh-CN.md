@@ -600,6 +600,16 @@ CI、Render DEV 与 Vercel Preview 验收，尚未进入 `main` 或生产。
 - 当前 DEV 仍不具备执行付费矩阵的条件：Mac DEV LaunchAgent 虽精确指向 `Artigen-dev-live-9201fda`，但状态为 `not running`；`workerOnline`、browser、restricted egress 与 desktop relay 均为 false，且 Runtime V2 durability 的 `pricingReady=false`。本地候选尚未与 Render、Vercel 或 Worker 对齐。
 - 此候选尚未执行新的 12 场景 × V1/V2 共 24-slot 真实 Qwen/Kolors DEV 矩阵，也没有图片匿名盲审。因此当前只能进入 DEV 实机验证准备，不能建议 owner canary，更不能宣称 Runtime V2 已发布。
 
+### 5.22 2026-08-27 Agent 工作台上线前 UI/UX 终审（本地候选，未发布）
+
+- 在 exact `d62bc3724da9caaf77bd66f71ef3bf9f9aedd19b` 上，以真实 Vue SPA、Express、PostgreSQL 16、固定 MinIO 和 DEV/test 安全 fixture runtime 完成 `/artigen/create`、`/artigen/agent` 与取消 Run 详情的真实页面审计；没有使用 `page.route` 伪造自家 API 作为视觉证据。
+- 收口 8 类发布级交互与审计问题：页面刷新后 analytics 缺少 CSRF；快速报价/创建可重复提交；明确为 false 或缺失的 readiness 没有统一 fail-closed；报价刷新失败后旧授权仍可残留；短横屏建议项与固定 Composer 重叠；几何检测曾会被外层滚动或后续硬裁切制造假绿。创建、报价、取消等写操作现在同步锁定，报价授权随刷新先失效，所有必需 readiness 必须精确为 true；短横屏保留 44px 触控目标且不再遮挡。
+- `workspaceLayoutAudit` 增加 `elementFromPoint` 实际命中、viewport clipping、透明遮挡、安全采样点与移动触控尺寸断言，并为“纵向滚动掩盖横向裁切”“外层滚动掩盖内层硬裁切”“后续硬裁切覆盖先前可滚动裁切”增加三个负向回归。真实生命周期只产生 1 次创建和 1 次取消，刷新后可恢复历史，最终 active Run、hold、reservation、queue 与冻结余额均为 0。
+- 最终人工逐张检查 12 张暗色/浅色、1440px、390px 与 667×375 短横屏截图：横向溢出、被遮挡控件、低于 44px 的可见移动操作、page error 和不可解释 HTTP 失败均为 0。3 个失败请求均为主动导航时取消的 SSE `events` 连接，不是服务错误。证据保存在被忽略的 `.artifacts/agent-ui-release-audit-d62bc37/`。
+- 以用户提供的当前 Codex 桌面截图为对照，三栏层级、阅读轴、Composer/Inspector 权重、密度、字号、石墨表面、控件克制、长任务可读性、动效与成熟度十项平均 `4.31/5`，最低 `4.1/5`；只借鉴工作台原则，保留 Artigen 酸性绿执行语义，没有复制品牌、资产或专有文案。
+- 独立代码终审先后发现并修复 readiness 字段缺失、报价授权陈旧和三种几何检测假绿；最终复审没有可执行问题。完整 `pnpm check` 退出码 0：前端 Vitest `217/217`，后端 `517 passed / 87 conditional skipped / 0 failed`，邮件 `7/7`，质量 manifest `50/50`，生产构建与 bundle budget 通过，Playwright 六项目 `537 passed / 3 skipped / 0 failed`、耗时 21.3 分钟；`git diff --check` 与 Impeccable mechanical detector 均通过。
+- 以上仅证明本地候选的 UI/UX 与确定性工程质量。候选仍未 push/PR/合入 DEV，DEV 三端未对齐，Mac Worker/browser/egress/desktop 与 durability pricing 尚未就绪，24-slot 真实 Qwen/Kolors 矩阵和图片盲审尚未完成；因此结论仍为“暂不可上线”。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。

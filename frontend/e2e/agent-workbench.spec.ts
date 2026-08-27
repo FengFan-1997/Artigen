@@ -149,10 +149,15 @@ const installSharedApi = async (
   page: Page,
   options: {
     onCreate?: (body: Record<string, unknown>) => void;
+    onQuote?: () => void;
+    createDelayMs?: number;
+    failQuoteAt?: number;
     imageGenerationPublicEnabled?: boolean;
     subagentsEnabled?: boolean;
+    quoteRequirements?: Record<string, boolean>;
   } = {}
 ) => {
+  let quoteRequestCount = 0;
   await page.route('**/api/auth/session', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -190,25 +195,42 @@ const installSharedApi = async (
       }
     })
   }));
-  await page.route('**/api/agent-runs/quote', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({
-      ok: true,
-      quote: {
-        currency: 'credits',
-        freeCreditsRemaining: 120,
-        estimatedCredits: { minimum: 18, maximum: 42 },
-        maximumCredits: 50,
-        hardMaximumCredits: 500,
-        requiredPaidHold: 30,
-        canStart: true,
-        limits: { minutes: 45, steps: 120, memoryMb: 4096, diskGb: 10, concurrentRuns: 1 },
-        requirements: {}
-      }
-    })
-  }));
-  await page.route('**/api/agent-runs', (route) => {
+  await page.route('**/api/agent-runs/quote', async (route) => {
+    quoteRequestCount += 1;
+    options.onQuote?.();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    if (options.failQuoteAt === quoteRequestCount) {
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: false, error: { code: 'AGENT_REQUEST_FAILED' } })
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        quote: {
+          currency: 'credits',
+          freeCreditsRemaining: 120,
+          estimatedCredits: { minimum: 18, maximum: 42 },
+          maximumCredits: 50,
+          hardMaximumCredits: 500,
+          requiredPaidHold: 30,
+          canStart: true,
+          limits: { minutes: 45, steps: 120, memoryMb: 4096, diskGb: 10, concurrentRuns: 1 },
+          requirements: options.quoteRequirements || {
+            database: true,
+            payloadEncryption: true,
+            modelProvider: true,
+            sandboxProvider: true
+          }
+        }
+      })
+    });
+  });
+  await page.route('**/api/agent-runs', async (route) => {
     if (route.request().method() === 'GET') {
       return route.fulfill({
         status: 200,
@@ -218,6 +240,9 @@ const installSharedApi = async (
     }
     if (route.request().method() === 'POST' && options.onCreate) {
       options.onCreate(route.request().postDataJSON());
+      if (options.createDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.createDelayMs));
+      }
       return route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -389,6 +414,144 @@ test('image delivery auto-grants Kolors, preserves Qwen and subagent locks, and 
   expect((created[0].capabilities as Record<string, boolean>).subagents).toBe(true);
   expect(created[0].maxCredits).toBe(50);
   await expect(page).toHaveURL(`/artigen/agent/runs/${runId}`);
+});
+
+test('rapid submit produces one quote request before the busy state is painted', async ({ page }) => {
+  let quoteRequests = 0;
+  await installSharedApi(page, { onQuote: () => { quoteRequests += 1; } });
+  await page.goto('/artigen/agent');
+
+  await page.getByRole('textbox', { name: '任务目标' }).fill('生成一份真实报价但不要重复提交');
+  await page.getByRole('button', { name: '发送任务目标' }).dblclick({ delay: 10 });
+
+  await expect(page.locator('.quote-summary')).toContainText('18–42');
+  expect(quoteRequests).toBe(1);
+});
+
+test('quote fails closed when a runtime prerequisite is not ready', async ({ page }) => {
+  const created: Array<Record<string, unknown>> = [];
+  await installSharedApi(page, {
+    onCreate: (body) => created.push(body),
+    quoteRequirements: { database: true, payloadEncryption: true, modelProvider: false, sandboxProvider: true }
+  });
+  await page.goto('/artigen/agent');
+
+  await page.getByRole('textbox', { name: '任务目标' }).fill('运行前先验证模型服务就绪状态');
+  await page.getByRole('button', { name: '发送任务目标' }).click();
+
+  await expect(page.getByText('模型服务尚未就绪，请稍后重试。')).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认并运行' })).toBeDisabled();
+  expect(created).toHaveLength(0);
+});
+
+test('quote fails closed when a required readiness field is omitted', async ({ page }) => {
+  const created: Array<Record<string, unknown>> = [];
+  await installSharedApi(page, {
+    onCreate: (body) => created.push(body),
+    quoteRequirements: { database: true }
+  });
+  await page.goto('/artigen/agent');
+
+  await page.getByRole('textbox', { name: '任务目标' }).fill('缺少 readiness 字段时不要启动');
+  await page.getByRole('button', { name: '发送任务目标' }).click();
+
+  await expect(page.getByRole('button', { name: '确认并运行' })).toBeDisabled();
+  await expect(page.getByText('安全载荷服务尚未就绪，请稍后重试。')).toBeVisible();
+  expect(created).toHaveLength(0);
+});
+
+test('a failed quote refresh invalidates the previous authorization', async ({ page }) => {
+  await installSharedApi(page, { failQuoteAt: 2 });
+  await page.goto('/artigen/agent');
+
+  const objective = page.getByRole('textbox', { name: '任务目标' });
+  await objective.fill('刷新失败后旧报价不得继续使用');
+  await page.getByRole('button', { name: '发送任务目标' }).click();
+  await expect(page.getByRole('button', { name: '确认并运行' })).toBeEnabled();
+
+  await page.getByRole('button', { name: '发送任务目标' }).click();
+  await expect(page.getByText('需要你处理一项问题')).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认并运行' })).toHaveCount(0);
+});
+
+test('rapid run confirmation creates exactly one task', async ({ page }) => {
+  const created: Array<Record<string, unknown>> = [];
+  await installSharedApi(page, {
+    onCreate: (body) => created.push(body),
+    createDelayMs: 120
+  });
+  await page.goto('/artigen/agent');
+
+  await page.getByRole('textbox', { name: '任务目标' }).fill('确认按钮快速点击也只能创建一次');
+  await page.getByRole('button', { name: '发送任务目标' }).click();
+  const confirm = page.getByRole('button', { name: '确认并运行' });
+  await expect(confirm).toBeEnabled();
+  await confirm.dblclick({ delay: 10 });
+
+  await expect(page).toHaveURL(`/artigen/agent/runs/${runId}`);
+  expect(created).toHaveLength(1);
+});
+
+test('geometry audit does not let vertical scrolling mask horizontal clipping', async ({ page }) => {
+  await installSharedApi(page);
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto('/artigen/agent');
+  await page.locator('.conversation-empty').evaluate((container) => {
+    const scroller = document.createElement('div');
+    scroller.style.cssText = 'position:absolute;left:24px;top:80px;width:100px;height:60px;overflow-x:hidden;overflow-y:auto;z-index:20';
+    const control = document.createElement('button');
+    control.type = 'button';
+    control.textContent = 'axis-clipped-control';
+    control.style.cssText = 'display:block;width:180px;height:44px';
+    const filler = document.createElement('div');
+    filler.style.height = '120px';
+    scroller.append(control, filler);
+    container.append(scroller);
+  });
+
+  await expect(expectWorkspaceGeometry(page)).rejects.toThrow(/axis-clipped-control/);
+});
+
+test('geometry audit does not let outer scrolling mask an inner hard clip', async ({ page }) => {
+  await installSharedApi(page);
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto('/artigen/agent');
+  await page.locator('.conversation-empty').evaluate((container) => {
+    const outer = document.createElement('div');
+    outer.style.cssText = 'position:absolute;left:24px;top:80px;width:120px;height:60px;overflow-x:auto;overflow-y:hidden;z-index:20';
+    const inner = document.createElement('div');
+    inner.style.cssText = 'width:200px;overflow-x:hidden';
+    const control = document.createElement('button');
+    control.type = 'button';
+    control.textContent = 'nested-hard-clipped-control';
+    control.style.cssText = 'display:block;width:260px;height:44px';
+    inner.append(control);
+    outer.append(inner);
+    container.append(outer);
+  });
+
+  await expect(expectWorkspaceGeometry(page)).rejects.toThrow(/nested-hard-clipped-control/);
+});
+
+test('geometry audit lets a later hard clip override an inner scrollable clip', async ({ page }) => {
+  await installSharedApi(page);
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto('/artigen/agent');
+  await page.locator('.conversation-empty').evaluate((container) => {
+    const outer = document.createElement('div');
+    outer.style.cssText = 'position:absolute;left:24px;top:80px;width:100px;height:60px;overflow-x:hidden;overflow-y:hidden;z-index:20';
+    const inner = document.createElement('div');
+    inner.style.cssText = 'width:160px;overflow-x:auto';
+    const control = document.createElement('button');
+    control.type = 'button';
+    control.textContent = 'outer-hard-clipped-control';
+    control.style.cssText = 'display:block;width:260px;height:44px';
+    inner.append(control);
+    outer.append(inner);
+    container.append(outer);
+  });
+
+  await expect(expectWorkspaceGeometry(page)).rejects.toThrow(/outer-hard-clipped-control/);
 });
 
 test('image and subagent controls fail closed when production flags are unavailable', async ({ page }) => {
