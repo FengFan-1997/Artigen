@@ -197,6 +197,88 @@ test('SiliconFlow corrects double-escaped heredoc newlines before shell dispatch
   )));
 });
 
+test('SiliconFlow corrects one locally denied shell before any remote effect', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-shell-policy-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-shell-policy-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    toolCall('plan', 'update_plan', {
+      explanation: 'Create and verify the workbook.',
+      steps: [
+        { label: 'Create workbook', status: 'in_progress' },
+        { label: 'Verify workbook', status: 'pending' }
+      ]
+    }),
+    toolCall('denied', 'sandbox_shell', {
+      script: 'pip install openpyxl',
+      purpose: 'Install a package'
+    }),
+    toolCall('offline', 'sandbox_shell', {
+      script: "python3 <<'PY'\nimport openpyxl\nprint(openpyxl.__version__)\nPY",
+      purpose: 'Use the preinstalled package'
+    }),
+    {
+      id: 'chat-shell-policy-final',
+      choices: [{ message: { role: 'assistant', content: 'The workbook is ready.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  let remoteEffects = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+
+  const result = await provider.execute({
+    objective: 'Create a small offline workbook.',
+    capabilities: { files: true, shell: true },
+    maxSteps: 8,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      shell: async (script) => {
+        assertSafeShell(script);
+        remoteEffects += 1;
+        return { success: true, returnCode: 0, stdout: 'ok', stderr: '' };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+
+  assert.equal(result.text, 'The workbook is ready.');
+  assert.equal(remoteEffects, 1);
+  assert.ok(requests[2].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('AGENT_SHELL_COMMAND_FORBIDDEN') &&
+    message.content.includes('preinstalled offline toolchain')
+  )));
+});
+
 test('SiliconFlow executes the report helper alias without another model repair turn', async () => {
   const call = (id, name, args) => ({
     id,
@@ -1270,6 +1352,204 @@ test('worker passes decrypted objective deliverables into the parent model', asy
 
   await assert.rejects(service.processRun(runId), { code: 'AGENT_TEST_STOP' });
   assert.deepEqual(observed, [['report']]);
+});
+
+test('worker rejects a forbidden parent shell before budget reservation or durable dispatch', async () => {
+  const runId = '11111111-1111-4111-8111-111111111131';
+  const userId = '22222222-2222-4222-8222-222222222231';
+  const workerId = 'worker-shell-policy-test';
+  let reservations = 0;
+  let receipts = 0;
+  let remoteShellCalls = 0;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000)
+        },
+        payloads: [{
+          kind: 'objective',
+          value: { objective: 'Create a workbook.', assetIds: [], deliverables: ['spreadsheet'] }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async () => true,
+      getControlState: async () => ({
+        status: 'running',
+        cancel_requested: false,
+        pause_requested: false,
+        step_count: 0,
+        replan_count: 0,
+        consecutive_failures: 0,
+        unchanged_screenshots: 0
+      }),
+      reserveRuntimeBudget: async () => { reservations += 1; },
+      persistToolReceipt: async () => { receipts += 1; },
+      appendStep: async () => true,
+      failRun: async () => true,
+      markSandboxDestroyed: async () => true
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
+    },
+    sandbox: {
+      provision: async () => ({ name: 'sandbox-shell-policy', displayUrl: null }),
+      systemShell: async () => ({ success: true, stdout: '', stderr: '' }),
+      shell: async () => {
+        remoteShellCalls += 1;
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      destroy: async () => ({ ok: true })
+    },
+    model: {
+      execute: async (input) => input.callbacks.shell(
+        'pip install openpyxl',
+        'Install a package',
+        { callId: 'call-shell-policy' }
+      )
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), { code: 'AGENT_SHELL_COMMAND_FORBIDDEN' });
+  assert.equal(reservations, 0);
+  assert.equal(receipts, 0);
+  assert.equal(remoteShellCalls, 0);
+});
+
+test('worker consumes an older forbidden Shell receipt without replaying the effect', async () => {
+  const runId = '11111111-1111-4111-8111-111111111132';
+  const userId = '22222222-2222-4222-8222-222222222232';
+  const workerId = 'worker-shell-receipt-policy-test';
+  const script = 'pip install openpyxl';
+  const callId = 'call-shell-policy-receipt';
+  const receiptIdentity = crypto.createHash('sha256')
+    .update(callId)
+    .digest('hex')
+    .slice(0, 32);
+  const receiptKey = `parent:shell:${receiptIdentity}:attempt:0`;
+  const reservationKey = `sandbox:${receiptKey}`;
+  let consumedReservations = 0;
+  let newReservations = 0;
+  let remoteShellCalls = 0;
+  let observedResult = null;
+  const stop = Object.assign(new Error('AGENT_TEST_AFTER_RECEIPT'), {
+    code: 'AGENT_TEST_AFTER_RECEIPT'
+  });
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000),
+          checkpoint: {
+            toolReceipts: {
+              [receiptKey]: {
+                kind: 'sandbox_shell',
+                state: 'consumed',
+                reservationKey,
+                requestSha256: crypto.createHash('sha256')
+                  .update(JSON.stringify({ script }))
+                  .digest('hex'),
+                actualCredits: 0,
+                result: {
+                  success: true,
+                  returnCode: 0,
+                  stdout: 'older-result',
+                  stderr: ''
+                }
+              }
+            }
+          }
+        },
+        payloads: [{
+          kind: 'objective',
+          value: { objective: 'Continue an older workbook run.', assetIds: [], deliverables: ['spreadsheet'] }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async () => true,
+      getControlState: async () => ({
+        status: 'running',
+        cancel_requested: false,
+        pause_requested: false,
+        step_count: 0,
+        replan_count: 0,
+        consecutive_failures: 0,
+        unchanged_screenshots: 0
+      }),
+      reserveRuntimeBudget: async () => { newReservations += 1; },
+      consumeRuntimeBudget: async ({ reservationKey: consumedKey }) => {
+        assert.equal(consumedKey, reservationKey);
+        consumedReservations += 1;
+      },
+      appendStep: async () => true,
+      failRun: async () => true,
+      markSandboxDestroyed: async () => true
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
+    },
+    sandbox: {
+      provision: async () => ({ name: 'sandbox-shell-receipt-policy', displayUrl: null }),
+      systemShell: async () => ({ success: true, stdout: '', stderr: '' }),
+      shell: async () => {
+        remoteShellCalls += 1;
+        return { success: true, returnCode: 0, stdout: 'new-result', stderr: '' };
+      },
+      destroy: async () => ({ ok: true })
+    },
+    model: {
+      execute: async (input) => {
+        observedResult = await input.callbacks.shell(script, 'Continue prior work', { callId });
+        throw stop;
+      }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), { code: 'AGENT_TEST_AFTER_RECEIPT' });
+  assert.equal(observedResult.stdout, 'older-result');
+  assert.equal(consumedReservations, 1);
+  assert.equal(newReservations, 0);
+  assert.equal(remoteShellCalls, 0);
 });
 
 test('worker never destroys a sandbox when failure settlement discovers a lost lease', async () => {
@@ -3594,7 +3874,9 @@ test('model-authored delegated inputs are reduced to the exact staged path inter
 
 test('shell policy keeps model-authored commands offline and blocks privilege escalation', () => {
   assert.equal(assertSafeShell('python3 build.py'), 'python3 build.py');
-  assert.match(offlineShellScript('python3 build.py'), /bwrap --unshare-net/);
+  const offline = offlineShellScript('python3 build.py');
+  assert.match(offline, /bwrap --unshare-net/);
+  assert.match(offline, /--bind \/ \/ --dev \/dev \/bin\/bash -se/);
   assert.doesNotThrow(() => assertSafeShell(
     'python3 write_report.py --source https://docs.example.com/report'
   ));
