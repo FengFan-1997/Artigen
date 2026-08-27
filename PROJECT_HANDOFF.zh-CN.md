@@ -1,12 +1,22 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-26（Asia/Shanghai）
+更新时间：2026-08-27（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
 本文只保留已经确定并产生持久影响的架构、代码、配置、迁移、部署和正式决定。开发中的具体进度、临时尝试、失败调试和下一条命令只记录在被 Git 忽略的 `HANDOFF.local.md`，不进入本文。
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
+
+## 2026-08-27 GitHub 双语图文 README 重构（文档与静态素材）
+
+- GitHub 默认入口 `README.md` 已从内部操作手册重写为完整中文产品首页，并新增完整英文版 `README.en.md`；两版在首屏互相切换，以“从一句话到可验证交付的统一创作 Agent”为统一叙事，保留在线体验、最小本地启动和深入文档入口。
+- 两版 README 使用同一组稳定素材 `docs/assets/readme/`：公开生产 `/artigen/create` 与 `/artigen/tools` 的当前界面实拍、当前 `main` 确定性 E2E fixture 生成且明确标注“演示数据”的 Agent 路由/计划/子 Agent/验证文件/移动端画面，以及两张既有且有 `Kwai-Kolors/Kolors + verificationStatus=passed` 证据的真实生产结果。本轮没有重新调用模型或消耗点数。
+- 12 秒流程 GIF 为 960×640、10 fps，按“目标与报价 → 计划 → 子 Agent → 已验证文件”展示；全部 UI 静态图采用 lossless WebP，Kolors 图采用有损 WebP。素材不包含邮箱、账号、钱包余额、订单号、真实 Run ID、私有 Prompt 或其他用户信息；受保护的 `ui-review/` 完全排除在素材来源和提交之外。
+- README 新增产品流程与系统架构两张 Mermaid，分别说明统一路由和 Vue/Vite → Express → PostgreSQL/S3/pg-boss → 独立 Worker → CUA/Browser/Shell/LibreOffice 的边界；任务进度继续使用 SSE，WebSocket 只表述为实时桌面/noVNC 中继。
+- README 不再承载历史剔除结果、旧项目说明、角色入口、逐文件阅读路线、全量路由/API/环境变量、迁移编号、备份恢复、部署账号、内部术语表或旧兼容 FAQ；运行、部署、安全和贡献细节改为链接现有正式文档。
+- 本轮只修改 GitHub 文档、README 静态素材和本 Handoff，不修改业务代码、API、公开类型、数据库 Schema、迁移、模型、Worker、计费、运行时配置或生产服务，也不触发 Vercel、Render 或 Worker 人工发布。
+- 本地最终验证确认 `pnpm check:workspace` 与 `git diff --check` 通过；中英文各有 11 个同构章节、2 张 Mermaid 和 11 个共用素材引用，全部相对链接、锚点与 alt 文本有效；GitHub GFM API 可成功转换两版 README，7 个外部入口均返回 HTTP 200。最大静态素材 186,650 bytes，GIF 为 99,626 bytes；独立只读审查发现的唯一余额脱敏问题已通过重新截图和重建 GIF 修复，复核结论为 approved。
 
 ## 2026-08-26 Agent Runtime V2 真实失败根因修复（本地完成，未发布）
 
@@ -90,7 +100,6 @@
 - PostgreSQL 集成测试已补齐夹具生命周期：工具任务通过正式取消/释放路径收尾，子 Agent 测试 Run 保留 append-only 审计并显式终态化。修复后再次运行完整外部集成仍为 `482/482`，最终 `pnpm check:core` 退出码 0；测试结束后的活跃工具任务、活跃 Agent Run、规划任务、Provider 排队、tool/agent holds 和全库冻结点数全部为 `0`。
 - 当前不得发布。仍需按计划拆分可独立审核的 PR，先在 DEV 使用真实 Qwen3、Kolors、PostgreSQL、S3 与 Mac Worker 跑 V1 基线及 V2 同题对照、Actor `.2/.7` 与 `.4/.8` A/B、取消/恢复和父子 Agent smoke；只有达到路由、完成率、延迟、成本和安全门槛后才可 Owner canary，再按 10% → 50% → 100% 放量。发布前必须重新核验 Render、Vercel、Mac Worker 和全部实时接口，并确保三端同一不可变 SHA。
 - 本轮从未读取、进入、修改、删除、暂存或提交 `ui-review/`，也没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。
-
 ## 2026-08-21 Codex 参考工作台视觉精修（生产已发布）
 
 - 用户提供 Codex 暗色桌面参考，要求继续提升 Artigen 工作台完成度。借鉴范围限定为安静项目轨、文档式对话阅读轴、悬浮任务上下文、厚实底部 Composer、层叠石墨表面以及一致的图标/文字几何；不复制 OpenAI 品牌、资产、文案或像素级组件。
