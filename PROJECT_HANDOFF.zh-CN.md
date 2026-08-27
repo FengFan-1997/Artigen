@@ -8,6 +8,15 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-08-28 Runtime V2 来源纠错与成功动作循环硬化（本地候选，未发布）
+
+- 基于 `dev` SHA `ac0cc599d47066513b38c1a2ee530b321e31bfd6` 的 partial live campaign 中，V2 调研报告已成功登记 Markdown，但 PDF 使用基础 URL 代替本次浏览器实际观察到的带查询参数 URL，随后 Actor 连续 18 次运行相同成功 Shell 检查，最终以 `AGENT_ARTIFACT_SOURCE_NOT_OBSERVED` 失败。该 partial campaign 只作失败根因证据，不能作为 24-slot 放行证据。
+- 本地分支 `codex/agent-live-artifact-retry-hardening` 将 artifact declaration 纠错码与精确观察 URL 持久化到加密 checkpoint；纠错未完成时只允许重新调用 `declare_artifact`，任何 Shell、计划或文件复查旁路都在真实工具执行前被拒绝。Runtime V2 Observation 的来源上限统一为工具契约的 2,000 字符，避免不同层截断后破坏精确 URL。
+- 连续两次相同 Shell script 在第一次成功且中间没有其他状态变化时，第二次会在 sandbox effect 之前以 `AGENT_RUNTIME_STATE_LOOP` fail closed；purpose 文案变化不能绕过。文件修复错误仍保留一次受控 Shell 修复路径，ambiguous、回执、预算、租约和 exactly-once 语义未放宽。
+- 独立审查发现初版 durable 状态曾保留 2,048 字符而 Observation 只保留 2,000 字符；已在第二个小提交中统一为 2,000，并用边界长度回归验证。当前代码提交为 `1da4098f4484cb0f2cfdb28bed9528e6474eebfd`；本节文档提交后会产生新的 feature SHA，最终以 GitHub required CI 和 `dev` merge SHA 为远程权威。
+- 本机正式门禁重新通过：`pnpm check` 退出码 0，前端 `217/217`、后端 `533 passed / 91 条件跳过 / 0 failed`、邮件 `7/7`、manifest `50/50`、构建与预算通过、Playwright `537 passed / 3 skipped / 0 failed`；PostgreSQL 16 + 固定 MinIO 集成 `52/52`、executable quality `50/50`、20 轮 chaos `620/620`。测试库在删除前 active Run、hold、reservation、queue、subagent、冻结余额与 open receipt 均为 0，6 个本轮空 MinIO bucket 和 1 个无数据库引用、无挂载的孤儿 CUA 容器已按精确名称清理；固定 campaign MinIO 与历史审计证据保留。
+- 当前候选尚未 push、PR、合入或部署，DEV 三端仍运行 `ac0cc599...`；Runtime V2、公众 rollout 和 owner canary 继续关闭。下一步必须由 required CI 验证最终 feature SHA，合入后让 Render、Vercel、Mac DEV Worker 对齐同一 merge SHA，重新签发一次性 gate，并从头运行完整 24-slot 与图片匿名盲审。当前结论仍为**暂不可上线**。
+
 ## 2026-08-28 首轮 recovery-hardening 实机失败与 Shell/CUA 恢复修复（本地候选，未发布）
 
 - PR #135 已在 required checks 全绿后普通合入 `dev`，merge SHA `7f733c1336ddd1a7663eda01fb36d6527342d14b`；Render DEV、Vercel Preview 与 Mac DEV Worker 曾对齐该 SHA，迁移、数据库、S3、Provider、定价、Worker、浏览器、受限出口和桌面中继均 ready。Runtime V2 公众开关、rollout 和 owner canary 继续关闭。
