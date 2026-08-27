@@ -68,6 +68,11 @@ def cleanup_egress(sandbox_name: str) -> None:
 def prepare_egress(sandbox_name: str, image_ref: str) -> str:
     if not image_ref:
         raise RuntimeError("AGENT_SANDBOX_IMAGE_NOT_READY")
+    egress_proxy_path = os.path.realpath(
+        os.path.join(os.path.dirname(__file__), "egress_proxy.js")
+    )
+    if not os.path.isfile(egress_proxy_path):
+        raise RuntimeError("AGENT_EGRESS_PROXY_SOURCE_MISSING")
     network_name, proxy_name = egress_names(sandbox_name)
     cleanup_egress(sandbox_name)
     docker_run(
@@ -85,6 +90,12 @@ def prepare_egress(sandbox_name: str, image_ref: str) -> str:
             "--label", f"ai.artigen.egress.sandbox={sandbox_name}",
             "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+            # The policy sidecar must execute the proxy implementation from the
+            # immutable Worker worktree, not a stale copy baked into a large CUA
+            # desktop image. The bind is read-only and is not shared with the
+            # user sandbox container.
+            "--mount",
+            f"type=bind,source={egress_proxy_path},target=/opt/artigen/egress_proxy.js,readonly",
             "--user", "cua", "--entrypoint", "node",
             image_ref, "/opt/artigen/egress_proxy.js",
         )
@@ -483,14 +494,15 @@ async def main() -> None:
         await sandbox.disconnect()
 
 
-try:
-    asyncio.run(main())
-except Exception as error:
-    output(
-        {
-            "ok": False,
-            "error": str(error)[:500],
-            "code": getattr(error, "code", None) or error.__class__.__name__,
-        }
-    )
-    sys.exit(1)
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except Exception as error:
+        output(
+            {
+                "ok": False,
+                "error": str(error)[:500],
+                "code": getattr(error, "code", None) or error.__class__.__name__,
+            }
+        )
+        sys.exit(1)

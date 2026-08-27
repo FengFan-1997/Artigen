@@ -8,13 +8,14 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
-## 2026-08-27 Agent Live Eval campaign 持久化与数据库断连硬化（候选待 PR）
+## 2026-08-27 Agent Live Eval campaign 持久化、DEV 对齐与受限出口阻断
 
-- 从精确 `origin/dev` SHA `45fe133fa9a87906295f35256d233e98e3ec3173` 创建分支 `codex/agent-live-eval-campaign-durability`。独立复盘确认：把完整 24-slot campaign 绑定到一条 session advisory-lock 连接，即使增加 keepalive 也无法抵御代理最大连接寿命、数据库重启或网络切换；同时旧协议只靠本机 journal 防止签名 campaign 重放，另一台没有共享证据目录的主机仍可在锁释放后重新执行付费 slot。
-- 候选将长会话锁替换为 PostgreSQL 事务 advisory lock + `agent_quality_checks` 持久一次性 claim。claim 在 campaign 关闭或进程崩溃后仍保留，任意主机再次使用同一签名 campaign 都会 fail-closed；Qwen/Kolors 物理 dispatch 继续使用独立事务、campaign 级锁和持久序号执行精确并发上限，不新增数据库迁移。
-- `node-postgres` 的 Pool `error` 只代表已被连接池淘汰的空闲 client，不再被误判为整个数据库失效。Runner 在启动、每个 slot 前后、最终报告和 journal 完成边界使用 10 秒有界 `SELECT 1` 探针建立可用连接；探针或实际请求返回稳定 PostgreSQL/网络连接错误时立即以内容无关错误终止，禁止进入下一次 Provider dispatch。脱敏报告只记录空闲断连恢复计数与致命连接丢失布尔值，不保存数据库地址、凭据或驱动错误正文。
-- 本地不可变候选前的正式验证全部通过：Live Eval unit `47/47`；全新 PostgreSQL 16 + 固定 digest MinIO Harness `47/47`，覆盖并发 claim 仅 1 个成功、关闭后禁止重认领、真实终止 idle backend 后替换连接、dispatch 上限、SIGKILL、回执恢复和三子 Agent 共享预算；`pnpm check` 退出码 0，其中前端 `217/217`、Playwright `537 passed / 3 skipped / 0 failed`；可执行质量集 `50/50`；20 轮 chaos 共 `620/620`、0 flaky。隔离环境收尾后非终态/带租约 Run、冻结钱包、活动 hold、reservation、queue 与 subagent 均为 0。
-- 当前仍是本地候选，尚未 push、PR、合入或部署，也没有签发新 gate、执行新的真实 Qwen/Kolors 24-slot 或图片盲审。Runtime V2、公众 rollout 和 owner canary 继续关闭；生产与网络配置未改变。只有 required CI、DEV 三端同一 merge SHA、完整矩阵既有阈值、图片匿名盲审及资源闭环全部通过后，才可讨论生产 owner canary。
+- PR #133 已正常合入 `dev`，merge SHA 为 `e9555782634e136dae282b2d5f8ad8c391a62a1b`。它将 24-slot campaign 的长会话 advisory lock 改为 PostgreSQL 持久一次性 claim，并在 runner 边界用有界探针重新建立连接；另一台主机、进程重启或数据库空闲连接被回收后都不能重放同一签名 campaign。Qwen/Kolors 物理 dispatch 继续使用独立事务、campaign 级锁和持久序号限制并发与调用总量。
+- PR #133 的 GitHub required Quality Gate 全绿；Render DEV、Vercel Preview 和不可变 Mac DEV Worker 已对齐 `e955578...`。重新核验迁移 025、PostgreSQL、S3、SiliconFlow、定价、Worker、浏览器、受限出口、桌面中继和子 Agent readiness 均通过；Runtime V2 公众开关、rollout 和 owner canary 继续关闭。
+- exact-SHA 本地 gate 为 `pnpm check` 退出码 0（Playwright `537 passed / 3 skipped / 0 failed`）、PostgreSQL 16 + 固定 MinIO Harness `47/47`、可执行质量集 `50/50`、20 轮 chaos `620/620`。签名 campaign `e955578-20260827-0001` 随后开始真实 24-slot，但没有通过，也没有把部分结果冒充完成。
+- 该 campaign 中咨询 V1/V2 与纯文本 V2 成功；纯文本 V1、调研 V1/V2 失败。调研 V2 的 Chromium 返回 `ERR_PROXY_CONNECTION_FAILED` 后 runner 受控 SIGTERM，共产生 20 次真实 Qwen、0 次 Kolors。Docker 事件证明对应受限出口 sidecar 在约 319 秒后以 exit 1 死亡，而用户沙箱仍运行；根因定位为浏览器重置单个 CONNECT tunnel 时 client socket 没有 error listener，Node 把常规断连升级为未捕获异常并终止整个 sidecar。
+- 本分支修复为每个 CONNECT client 安装错误处理并回收 in-flight upstream；sidecar 通过只读 bind mount 执行当前不可变 Worker worktree 的 `egress_proxy.js`，避免大 CUA 镜像内的过期副本，用户沙箱不获得该挂载。定向回归 `112/112`，后端完整测试 `524 passed / 91 explicit skips / 0 failed`，完整 `pnpm check` 再次通过（Playwright `537/3/0`）。真实本地 CUA 探针连续制造 20 次 reset CONNECT 后仍成功访问 W3C 与 NNGroup，sidecar 保持 `Running=true / ExitCode=0`，临时容器和网络均已清理。
+- 首轮 campaign 收尾后 active Run、hold、budget reservation、未过期 Provider queue、active subagent、冻结钱包和未消费 live dispatch 均为 0；历史 ambiguous receipt 继续保留为 append-only 审计证据。受限出口修复在本节提交时尚未合入或部署，必须以新的 DEV merge SHA 重新生成 gate、完整 24-slot 和图片盲审；当前结论仍为**暂不可上线**。生产、模型边界、Runtime V2 公众开关和网络配置均未改变。
 
 ## 2026-08-27 Agent Live Harness 证据完整性硬化与 DEV 实机阻断
 
