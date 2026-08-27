@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const test = require('node:test');
 
+const { ApiError } = require('../lib/api-error');
 const qualityManifest = require('../evaluation/agent-quality-set.json');
 const {
   buildContextMessages,
@@ -157,13 +158,16 @@ test('Runtime V2 refuses to silently truncate immutable requirements that exceed
 });
 
 test('Observation envelopes are bounded and failure retry classes are explicit', () => {
+  const longObservedUrl = `https://example.com/evidence?token=${'x'.repeat(900)}`;
   const envelope = observationEnvelope({
     ok: false,
     code: 'PDF_RENDER_FAILED',
     summary: 'x'.repeat(5000),
-    retryHint: 'repair the failed page'
+    retryHint: 'repair the failed page',
+    evidenceRefs: [longObservedUrl]
   });
   assert.equal(envelope.summary.length, 2000);
+  assert.equal(envelope.evidenceRefs[0], longObservedUrl);
   assert.match(envelope.fingerprint, /^[a-f0-9]{64}$/);
   assert.deepEqual(classifyRuntimeFailure({ code: 'AGENT_PROVIDER_RATE_LIMITED' }), {
     category: 'transient_provider', retryable: true, maxAttempts: 2
@@ -1318,4 +1322,215 @@ test('Runtime V2 stops after one correction when action and observed state repea
     }
   }), { code: 'AGENT_RUNTIME_STATE_LOOP' });
   assert.equal(calls, 2);
+});
+
+test('Runtime V2 preserves exact source evidence and blocks Shell detours during declaration repair', async () => {
+  const exactUrl = `https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=${'x'.repeat(900)}`;
+  const baseUrl = 'https://www.w3.org/WAI/standards-guidelines/wcag/';
+  const taskSpec = normalizeTaskSpec({
+    goal: '交付带有精确来源的 Markdown 与 PDF 调研报告',
+    deliverables: ['report'],
+    plan: [
+      { id: 'draft', label: '完成报告内容', phase: 'production', status: 'completed' },
+      { id: 'verify', label: '验证并登记报告', phase: 'verification', status: 'in_progress' }
+    ]
+  }, {
+    capabilities: { files: true, shell: true, browser: true },
+    maxCredits: 50
+  });
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const toolResponse = (id, name, argumentsValue) => ({
+    id: `response-${id}`,
+    message: {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: `call-${id}`,
+        type: 'function',
+        function: { name, arguments: JSON.stringify(argumentsValue) }
+      }]
+    },
+    prompt_eval_count: 0,
+    eval_count: 0,
+    siliconFlowUsage: {}
+  });
+  const declaration = ({ path: artifactPath, role, filename, mimeType, url }) => ({
+    path: artifactPath,
+    role,
+    filename,
+    mimeType,
+    sources: [{ title: 'W3C accessibility guidance', url }]
+  });
+  const responses = [
+    toolResponse('markdown', 'declare_artifact', declaration({
+      path: '/tmp/artigen-workspace/report.md',
+      role: 'source',
+      filename: 'report.md',
+      mimeType: 'text/markdown',
+      url: exactUrl
+    })),
+    toolResponse('pdf-base-source', 'declare_artifact', declaration({
+      path: '/tmp/artigen-workspace/report.pdf',
+      role: 'pdf',
+      filename: 'report.pdf',
+      mimeType: 'application/pdf',
+      url: baseUrl
+    })),
+    toolResponse('forbidden-shell-detour', 'sandbox_shell', {
+      script: 'test -f /tmp/artigen-workspace/report.pdf',
+      purpose: '再次检查未变化的 PDF'
+    }),
+    toolResponse('pdf-exact-source', 'declare_artifact', declaration({
+      path: '/tmp/artigen-workspace/report.pdf',
+      role: 'pdf',
+      filename: 'report.pdf',
+      mimeType: 'application/pdf',
+      url: exactUrl
+    })),
+    {
+      id: 'response-final',
+      message: { role: 'assistant', content: 'Markdown 与 PDF 均已验证并交付。' },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    }
+  ];
+  const requests = [];
+  provider.createChat = async (payload) => {
+    requests.push(structuredClone(payload));
+    return responses.shift();
+  };
+  const declarations = [];
+  const states = [];
+  let shellCalls = 0;
+  const result = await provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { files: true, shell: true, browser: true },
+    deliverables: ['report'],
+    maxSteps: 12,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      declareArtifact: async (args) => {
+        declarations.push(structuredClone(args));
+        if (declarations.length === 2) {
+          throw new ApiError(422, 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED', {
+            details: { observedUrls: [exactUrl] }
+          });
+        }
+        return {
+          artifactId: `artifact-${declarations.length}`,
+          role: args.role,
+          filename: args.filename,
+          mimeType: args.mimeType,
+          verificationStatus: 'passed'
+        };
+      },
+      shell: async () => {
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      saveModelState: async (value) => { states.push(structuredClone(value)); },
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {},
+      verifyDraft: async () => ({
+        result: {
+          passed: true,
+          score: 100,
+          issues: [],
+          repairInstructions: [],
+          unsupportedVisualJudgment: false,
+          criteria: []
+        },
+        credits: 0,
+        usage: {}
+      })
+    }
+  });
+
+  assert.equal(result.text, 'Markdown 与 PDF 均已验证并交付。');
+  assert.equal(shellCalls, 0);
+  assert.equal(declarations.length, 3);
+  assert.equal(declarations[2].sources[0].url, exactUrl);
+  assert.equal(requests[2].tool_choice.function.name, 'declare_artifact');
+  assert.equal(requests[3].tool_choice.function.name, 'declare_artifact');
+  assert.ok(JSON.stringify(requests[2]).includes(exactUrl));
+  assert.ok(JSON.stringify(requests[3]).includes(exactUrl));
+  assert.ok(JSON.stringify(requests[3]).includes('AGENT_ARTIFACT_DECLARATION_RETRY_REQUIRED'));
+  assert.ok(states.some((state) => (
+    state.artifactDeclarationRetryCode === 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED' &&
+    state.artifactDeclarationObservedUrls?.includes(exactUrl)
+  )));
+  assert.equal(states.at(-1).artifactDeclarationRetryCode, '');
+  assert.deepEqual(states.at(-1).artifactDeclarationObservedUrls, []);
+});
+
+test('Runtime V2 stops two consecutive identical successful Shell actions', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  let modelCalls = 0;
+  provider.createChat = async () => ({
+    id: `response-success-loop-${++modelCalls}`,
+    message: {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: `call-success-loop-${modelCalls}`,
+        type: 'function',
+        function: {
+          name: 'sandbox_shell',
+          arguments: JSON.stringify({
+            script: 'test -f /tmp/artigen-workspace/report.pdf',
+            purpose: modelCalls === 1
+              ? '验证 PDF 文件是否可以正常打开'
+              : '再次确认 PDF 文件仍然存在'
+          })
+        }
+      }]
+    },
+    prompt_eval_count: 0,
+    eval_count: 0,
+    siliconFlowUsage: {}
+  });
+  const taskSpec = normalizeTaskSpec({
+    goal: '验证工作区中的 PDF',
+    deliverables: []
+  }, { capabilities: { shell: true }, maxCredits: 50 });
+  let shellCalls = 0;
+  const states = [];
+  await assert.rejects(provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      shell: async () => {
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      saveModelState: async (value) => { states.push(structuredClone(value)); },
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {}
+    }
+  }), { code: 'AGENT_RUNTIME_STATE_LOOP' });
+
+  assert.equal(modelCalls, 2);
+  assert.equal(shellCalls, 1);
+  assert.equal(states.at(-1).repeatedSuccessfulShellActions, 2);
+  assert.match(states.at(-1).lastSuccessfulShellFingerprint, /^[a-f0-9]{64}$/);
 });

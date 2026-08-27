@@ -1034,7 +1034,10 @@ const observationEnvelope = ({
     code: code ? cleanText(code, 100) : null,
     summary: cleanText(summary, 2000),
     stateDelta: sanitizeStateDelta(stateDelta),
-    evidenceRefs: uniqueTextList(evidenceRefs, 100, 500),
+    // Source declarations accept exact HTTPS URLs up to 2,000 characters.
+    // Keep the same bound here so a Runtime V2 correction never tells the
+    // Actor to reuse an observed URL after silently truncating that URL.
+    evidenceRefs: uniqueTextList(evidenceRefs, 100, 2000),
     changedFiles: uniqueTextList(changedFiles, 100, 500),
     retryHint: retryHint ? cleanText(retryHint, 500) : null
   };
