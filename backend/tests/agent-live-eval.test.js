@@ -1477,6 +1477,17 @@ test('Live eval runner validates selection and reports paired medians without si
   assert.equal(complete.schemaFirstValidRate, 1);
   assert.equal(complete.automatedGatePassed, true);
   assert.equal(complete.productionCanaryEligible, false);
+
+  const interrupted = summarize(LIVE_EVAL_CASES.flatMap((entry) => ['v1', 'v2'].map((cohort) => ({
+    ok: false,
+    scenarioId: entry.id,
+    cohort,
+    code: 'AGENT_LIVE_EVAL_CAMPAIGN_CONNECTION_LOST'
+  }))));
+  assert.equal(interrupted.v1.cases, 11);
+  assert.equal(interrupted.v2.cases, 11);
+  assert.equal(interrupted.fullMatrixComplete, false);
+  assert.equal(interrupted.automatedGatePassed, false);
 });
 
 test('Live eval terminal failures preserve the partial matrix, limits and request totals', () => {
