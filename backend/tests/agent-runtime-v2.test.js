@@ -82,6 +82,16 @@ test('Runtime V2 skill compilation cannot grant a capability and crops tools by 
   assert.deepEqual(budgetLocked.allowedToolNames.sort(), [
     'declare_artifact', 'sandbox_shell', 'update_plan'
   ]);
+
+  const textOnly = compileAgentPrompt({
+    objective: '只用文字给出设计评审清单，不要创建任何文件',
+    deliverables: [],
+    capabilities: { files: true, shell: true },
+    phase: 'production'
+  });
+  assert.equal(textOnly.allowedToolNames.includes('declare_artifact'), false);
+  assert.ok(textOnly.allowedToolNames.includes('sandbox_shell'));
+  assert.match(textOnly.instructions, /text-only Run/u);
 });
 
 test('Runtime V2 preserves the goal, verification phase and unresolved failure under compaction', () => {
@@ -868,6 +878,65 @@ test('Runtime V2 verifies and repairs a text-only final answer once', async () =
   assert.equal(verifierCalls, 2);
   assert.equal(result.text, 'A corrected grounded answer.');
   assert.equal(answers.length, 0);
+});
+
+test('Runtime V2 never exposes artifact declaration for a text-only final answer', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    }
+  });
+  let capturedRequest = null;
+  provider.createChat = async (request) => {
+    capturedRequest = request;
+    return {
+      id: 'text-only-direct-answer',
+      message: { role: 'assistant', content: '会前、会中、会后的完整执行清单。' },
+      siliconFlowUsage: { prompt_tokens: 1, completion_tokens: 1 }
+    };
+  };
+  const taskSpec = normalizeTaskSpec({
+    goal: '只用文字给出设计评审清单，不要创建任何文件',
+    deliverables: []
+  }, { capabilities: { files: true, shell: true }, maxCredits: 20 });
+  const result = await provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { files: true, shell: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: {
+      runtimeVersion: 2,
+      runId: '11111111-1111-4111-8111-111111111111',
+      userId: '22222222-2222-4222-8222-222222222222',
+      taskSpec,
+      maxCredits: 20
+    },
+    callbacks: {
+      checkControl: async () => {},
+      recordUsage: async () => {},
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      verifyDraft: async ({ text }) => ({
+        result: {
+          passed: text.includes('会前'),
+          score: 100,
+          issues: [],
+          repairInstructions: []
+        },
+        credits: 0,
+        usage: {}
+      })
+    }
+  });
+  assert.equal(result.readyToFinalize.kind, 'text');
+  assert.match(result.readyToFinalize.finalTextSha256, /^[a-f0-9]{64}$/u);
+  assert.equal(
+    capturedRequest.tools.some((tool) => tool.function.name === 'declare_artifact'),
+    false
+  );
 });
 
 test('Runtime V2 resumes a paid text verifier result without another Actor call', async () => {

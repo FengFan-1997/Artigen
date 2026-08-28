@@ -418,7 +418,13 @@ const skillsPublicRefs = (skills) => (Array.isArray(skills) ? skills : []).map((
   contentHash: canonicalSkillHash(skill)
 }));
 
-const allowedToolsForRuntime = ({ capabilities = {}, skills = [], phase = 'production', budgetRatio = 0 } = {}) => {
+const allowedToolsForRuntime = ({
+  capabilities = {},
+  skills = [],
+  deliverables = [],
+  phase = 'production',
+  budgetRatio = 0
+} = {}) => {
   if (!PHASES.has(phase)) throw new ApiError(500, 'AGENT_RUNTIME_PHASE_INVALID');
   const skillTools = new Set((Array.isArray(skills) ? skills : []).flatMap((skill) => skill.allowedTools));
   const phaseTools = PHASE_TOOL_ALLOWLIST[phase];
@@ -436,7 +442,15 @@ const allowedToolsForRuntime = ({ capabilities = {}, skills = [], phase = 'produ
     ? new Set(['sandbox_shell', 'declare_artifact', 'update_plan'])
     : null;
   return [...skillTools].filter((tool) => (
-    phaseTools.has(tool) && capabilityTool[tool] === true && (!restrictedForBudget || restrictedForBudget.has(tool))
+    phaseTools.has(tool) &&
+    capabilityTool[tool] === true &&
+    (!restrictedForBudget || restrictedForBudget.has(tool)) &&
+    // A zero-deliverable parent Run completes with verified text and a
+    // finalTextSha256. Never expose file declaration merely because the user
+    // granted the broader files capability: doing so invites the Actor to
+    // manufacture an unwanted artifact and prevents the text Verifier path
+    // from becoming reachable.
+    (tool !== 'declare_artifact' || deliverables.length > 0)
   ));
 };
 
@@ -501,6 +515,9 @@ const compileAgentPrompt = ({
   const instructions = [
     CONSTITUTION,
     `Current phase: ${phase}. The server already published the TaskSpec and initial plan. Do not repeat the plan before the first action. Update it only after a step completes, the phase changes, work is blocked, or a material replan is necessary; never use a plan update to expand permissions, budget, scope, or deliverables.`,
+    deliverables.length === 0
+      ? 'This is a text-only Run. Return the complete answer in the assistant response. Do not create or declare a final file; the server will verify the text and persist its SHA-256.'
+      : '',
     skillText
   ].filter(Boolean).join('\n\n');
   const skillRefs = skillsPublicRefs(skills);
@@ -527,7 +544,13 @@ const compileAgentPrompt = ({
     runtimeProfileSummary: profileComponents,
     instructions,
     skills: skillRefs,
-    allowedToolNames: allowedToolsForRuntime({ capabilities, skills, phase, budgetRatio })
+    allowedToolNames: allowedToolsForRuntime({
+      capabilities,
+      skills,
+      deliverables,
+      phase,
+      budgetRatio
+    })
   };
 };
 
