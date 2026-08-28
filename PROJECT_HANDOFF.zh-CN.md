@@ -8,6 +8,15 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-08-28 Runtime V2 失败 Shell 重放硬化（本地候选，未发布）
+
+- PR #137 已在 required checks 全绿后普通合入 `dev`，当前 `dev` exact SHA 为 `430a098fde540728e3bbd08b68aec4619056640c`；Render DEV、Vercel Preview 与 Mac DEV Worker 曾对齐该 SHA 并通过数据库、S3、Provider、定价、Worker、浏览器、受限出口和桌面中继 readiness。Runtime V2 公众开关、rollout 和 owner canary 继续关闭。
+- 绑定 `430a098...` 的新 24-slot campaign 在 V2 调研报告槽位出现首个 candidate failure 后受控停止。真实 Qwen 已成功生成并登记 Markdown，但父 Actor 连续两次调用同一不可用 `pandoc` 命令，均返回 127，最终以 `AGENT_RUNTIME_STATE_LOOP` 失败；整轮共 32 次 Qwen、0 次 Kolors。该局部报告只作根因证据，不能作为完整矩阵或图片盲审放行证据。
+- 本地分支 `codex/agent-live-shell-retry-guidance` 对真实执行失败的父 Runtime V2 Shell script 保存有界、规范化 SHA-256 集合；相同脚本即使改变空白或 purpose、或中间有无关成功动作，也不会再次进入沙箱。失败集合随 checkpoint 恢复，ambiguous、租约、回执、预算和计费语义未放宽。
+- `command not found` 会返回有界、可执行的纠错；只有 Markdown→PDF 且命令确实缺失时才提示预装 `artigen-report-pdf`，普通“input file not found”和 `pandoc --version` 不会被误判。artifact declaration 的伪 Shell 纠错不会污染失败集合。
+- 只读存在性探针与可能产生副作用的写命令分开处理：`test`、`stat`、`file`、`sha256sum` 等探针失败后，只有图片生成、子 Agent 汇总或成功的非只读 Shell 明确改变工作区时才可重新验证；失败写命令不会因此获得重放机会。两个失败脚本交替、以及失败阻断与成功脚本交替，都会在第二个连续无进展阻断时终止，不能继续消耗模型回合至步数上限。
+- 定向 Runtime V1/V2 回归为 `157/157`，其中 Runtime V2 专项 `43/43`，backend 语法门禁与 `git diff --check` 通过。终审发现的“无变化计划清空上一成功 Shell 指纹”也已修复：`update_plan changed=false` 不再允许相同的非幂等 Shell 再次进入沙箱。当前候选尚未 push、PR、合入或部署；完整 `pnpm check`、PostgreSQL 16 + 固定 MinIO、50/50 executable quality、20 轮 chaos、required CI、新 exact-SHA gate、完整 24-slot 与图片匿名盲审仍未完成。当前结论继续为**暂不可上线**。
+
 ## 2026-08-28 Runtime V2 来源纠错与成功动作循环硬化（本地候选，未发布）
 
 - 基于 `dev` SHA `ac0cc599d47066513b38c1a2ee530b321e31bfd6` 的 partial live campaign 中，V2 调研报告已成功登记 Markdown，但 PDF 使用基础 URL 代替本次浏览器实际观察到的带查询参数 URL，随后 Actor 连续 18 次运行相同成功 Shell 检查，最终以 `AGENT_ARTIFACT_SOURCE_NOT_OBSERVED` 失败。该 partial campaign 只作失败根因证据，不能作为 24-slot 放行证据。

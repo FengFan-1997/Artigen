@@ -551,6 +551,7 @@ const OLLAMA_FILE_TOOL_NAMES = new Set([
 ]);
 
 const SUBAGENT_TOOL_NAMES = new Set(['update_plan', 'sandbox_shell']);
+const FAILED_SHELL_FINGERPRINT_LIMIT = 128;
 
 const functionToolsForProfile = (
   capabilities = {},
@@ -711,6 +712,46 @@ const assertPosixShellScript = (value) => {
     });
   }
   return script;
+};
+
+const shellFailureCorrection = ({ script = '', purpose = '', returnCode = null, stderr = '' } = {}) => {
+  const normalizedScript = String(script || '');
+  const normalizedPurpose = String(purpose || '');
+  const normalizedStderr = String(stderr || '').slice(0, 4000);
+  const commandNotFound = (
+    Number(returnCode) === 127 ||
+    /(?:^|[\r\n]).{0,240}\bcommand not found\b/iu.test(normalizedStderr)
+  );
+  const markdownToPdf = (
+    /(?:markdown|\.md\b).{0,80}(?:pdf|\.pdf\b)|(?:pdf|\.pdf\b).{0,80}(?:markdown|\.md\b)/iu
+      .test(`${normalizedPurpose}\n${normalizedScript}`)
+  );
+  if (commandNotFound && markdownToPdf) {
+    return [
+      'The requested PDF converter is not installed. Do not repeat this script or install packages.',
+      'Use the preinstalled helper through sandbox_shell instead:',
+      'artigen-report-pdf /tmp/artigen-workspace/path/input.md /tmp/artigen-workspace/path/output.pdf',
+      'Replace both paths with the exact existing Markdown input and required PDF output, then verify the PDF before declaring it.'
+    ].join(' ');
+  }
+  if (commandNotFound) {
+    return [
+      'A command in this Shell script is not installed.',
+      'Do not repeat the identical script or install packages.',
+      'Choose a preinstalled offline tool or report the concrete capability limitation.'
+    ].join(' ');
+  }
+  return [
+    'The Shell action failed deterministically.',
+    'Do not repeat the identical script.',
+    'Use the return code and stderr to change the command or report the concrete limitation.'
+  ].join(' ');
+};
+
+const isReadOnlyShellProbe = (value) => {
+  const script = String(value || '').trim();
+  if (!script || /[;&|><`$(){}\r\n]/u.test(script)) return false;
+  return /^(?:test\s+.+|\[\s+.+\s+\]|stat\s+.+|file\s+.+|sha256sum\s+.+|pdfinfo\s+.+)$/u.test(script);
 };
 
 const compactOllamaMessages = (input, maximumCharacters = 60_000) => {
@@ -1656,6 +1697,28 @@ class OllamaAgentModelProvider {
     let lastSuccessfulShellFingerprint = String(
       durable?.lastSuccessfulShellFingerprint || ''
     );
+    let lastFailedShellFingerprint = String(
+      durable?.lastFailedShellFingerprint || ''
+    );
+    const failedShellFingerprints = new Set(
+      [
+        ...(Array.isArray(durable?.failedShellFingerprints)
+          ? durable.failedShellFingerprints
+          : []),
+        lastFailedShellFingerprint
+      ]
+        .map((value) => String(value || '').trim())
+        .filter((value) => /^[a-f0-9]{64}$/u.test(value))
+        .slice(-FAILED_SHELL_FINGERPRINT_LIMIT)
+    );
+    const readOnlyFailedShellFingerprints = new Set(
+      (Array.isArray(durable?.readOnlyFailedShellFingerprints)
+        ? durable.readOnlyFailedShellFingerprints
+        : [])
+        .map((value) => String(value || '').trim())
+        .filter((value) => failedShellFingerprints.has(value))
+        .slice(-FAILED_SHELL_FINGERPRINT_LIMIT)
+    );
     let repeatedSuccessfulShellActions = Math.max(
       0,
       Number(durable?.repeatedSuccessfulShellActions || 0)
@@ -1728,6 +1791,9 @@ class OllamaAgentModelProvider {
         lastFailureFingerprint,
         repeatedStateFailures,
         lastSuccessfulShellFingerprint,
+        lastFailedShellFingerprint,
+        failedShellFingerprints: [...failedShellFingerprints],
+        readOnlyFailedShellFingerprints: [...readOnlyFailedShellFingerprints],
         repeatedSuccessfulShellActions,
         planUpdateSuppressed,
         readyToFinalize
@@ -1757,9 +1823,37 @@ class OllamaAgentModelProvider {
       .createHash('sha256')
       .update(JSON.stringify({
         name: 'sandbox_shell',
-        script: String(argumentsValue?.script || '')
+        script: String(argumentsValue?.script || '').trim()
       }))
       .digest('hex');
+
+    const rememberFailedShellFingerprint = (argumentsValue = {}) => {
+      const fingerprint = shellActionFingerprint(argumentsValue);
+      failedShellFingerprints.delete(fingerprint);
+      failedShellFingerprints.add(fingerprint);
+      if (isReadOnlyShellProbe(argumentsValue?.script)) {
+        readOnlyFailedShellFingerprints.add(fingerprint);
+      } else {
+        readOnlyFailedShellFingerprints.delete(fingerprint);
+      }
+      while (failedShellFingerprints.size > FAILED_SHELL_FINGERPRINT_LIMIT) {
+        const oldest = failedShellFingerprints.values().next().value;
+        failedShellFingerprints.delete(oldest);
+        readOnlyFailedShellFingerprints.delete(oldest);
+      }
+      lastFailedShellFingerprint = fingerprint;
+      return fingerprint;
+    };
+
+    const releaseReadOnlyShellProbesAfterWorkspaceMutation = () => {
+      for (const fingerprint of readOnlyFailedShellFingerprints) {
+        failedShellFingerprints.delete(fingerprint);
+      }
+      if (readOnlyFailedShellFingerprints.has(lastFailedShellFingerprint)) {
+        lastFailedShellFingerprint = '';
+      }
+      readOnlyFailedShellFingerprints.clear();
+    };
 
     const executeTool = async (call) => {
       const args = normalizeOllamaArguments(call.arguments);
@@ -1783,6 +1877,17 @@ class OllamaAgentModelProvider {
       }
       if (runtimeV2 && call.name === 'sandbox_shell') {
         const shellActionHash = shellActionFingerprint(args);
+        if (failedShellFingerprints.has(shellActionHash)) {
+          return {
+            success: false,
+            errorCode: 'AGENT_SHELL_RETRY_UNCHANGED',
+            correction: [
+              'This exact Shell script already failed and was not executed again.',
+              'Change the script using the prior return code, stderr, and retry hint.',
+              'If no safe preinstalled alternative exists, report the concrete limitation instead of retrying.'
+            ].join(' ')
+          };
+        }
         if (
           repeatedSuccessfulShellActions >= 1 &&
           lastSuccessfulShellFingerprint === shellActionHash
@@ -1935,6 +2040,7 @@ class OllamaAgentModelProvider {
         const result = await callbacks.delegateTasks(args.tasks);
         delegationCompleted = true;
         if (runtimeV2) {
+          if (result?.success !== false) releaseReadOnlyShellProbesAfterWorkspaceMutation();
           planUpdateSuppressed = false;
           runtimeActionObserved = true;
         }
@@ -1951,6 +2057,9 @@ class OllamaAgentModelProvider {
         if (shellResult.success) artifactRepairRequired = false;
         if (shellResult.success) approvalRecoveryRequired = false;
         if (runtimeV2) {
+          if (shellResult.success && !isReadOnlyShellProbe(shellScript)) {
+            releaseReadOnlyShellProbesAfterWorkspaceMutation();
+          }
           runtimeActionObserved = true;
           if (shellResult.success) planUpdateSuppressed = false;
         }
@@ -1965,16 +2074,24 @@ class OllamaAgentModelProvider {
         }
         return {
           success: shellResult.success,
+          shellExecuted: true,
           returnCode: shellResult.returnCode,
           stdout: String(shellResult.stdout || '').slice(0, 12_000),
           stderr: String(shellResult.stderr || '').slice(0, 4_000),
-          correction: toolProfile === 'subagent' && !shellResult.success
-            ? [
-                'Retry sandbox_shell immediately; do not call update_plan first.',
-                "Write multiline text with a single-quoted heredoc such as cat > /workspace/output.md <<'ARTIGEN_EOF'.",
-                'Keep ARTIGEN_EOF alone on the closing line. Never execute Markdown pipes or body text as shell tokens.',
-                'After the write succeeds, run a separate verification command.'
-              ].join(' ')
+          correction: !shellResult.success
+            ? toolProfile === 'subagent'
+              ? [
+                  'Retry sandbox_shell immediately; do not call update_plan first.',
+                  "Write multiline text with a single-quoted heredoc such as cat > /workspace/output.md <<'ARTIGEN_EOF'.",
+                  'Keep ARTIGEN_EOF alone on the closing line. Never execute Markdown pipes or body text as shell tokens.',
+                  'After the write succeeds, run a separate verification command.'
+                ].join(' ')
+              : shellFailureCorrection({
+                  script: shellScript,
+                  purpose: args.purpose,
+                  returnCode: shellResult.returnCode,
+                  stderr: shellResult.stderr
+                })
             : undefined
         };
       }
@@ -1990,6 +2107,7 @@ class OllamaAgentModelProvider {
         const image = await callbacks.generateImage(args, { callId: call.callId });
         artifactDuplicateAttempts = 0;
         if (runtimeV2) {
+          if (image?.success !== false) releaseReadOnlyShellProbesAfterWorkspaceMutation();
           planUpdateSuppressed = false;
           runtimeActionObserved = true;
         }
@@ -2319,10 +2437,14 @@ class OllamaAgentModelProvider {
             resultValue?.workspacePath,
             resultValue?.filename
           ].filter(Boolean);
-          const actionHash = crypto.createHash('sha256').update(JSON.stringify({
-            name: pendingCall?.name || '',
-            arguments: pendingCall?.arguments || {}
-          })).digest('hex');
+          const actionHash = resultValue?.errorCode === 'AGENT_SHELL_RETRY_UNCHANGED'
+            ? 'blocked-failed-shell-retry'
+            : pendingCall?.name === 'sandbox_shell'
+              ? shellActionFingerprint(pendingCall?.arguments)
+            : crypto.createHash('sha256').update(JSON.stringify({
+                name: pendingCall?.name || '',
+                arguments: pendingCall?.arguments || {}
+              })).digest('hex');
           const runtimeFingerprint = crypto.createHash('sha256').update(JSON.stringify({
             actionHash,
             code: resultValue?.errorCode || null,
@@ -2346,6 +2468,27 @@ class OllamaAgentModelProvider {
             retryHint: resultValue?.correction || null,
             fingerprint: runtimeFingerprint
           });
+          const shellExecutionObserved = (
+            pendingCall?.name === 'sandbox_shell' &&
+            (
+              resultValue?.shellExecuted === true ||
+              (
+                resultValue?.shellExecuted !== false &&
+                Object.prototype.hasOwnProperty.call(resultValue, 'returnCode')
+              )
+            )
+          );
+          const shellRetryBlocked = resultValue?.errorCode === 'AGENT_SHELL_RETRY_UNCHANGED';
+          const failedReadOnlyShellProbe = (
+            shellExecutionObserved &&
+            resultValue?.success === false &&
+            isReadOnlyShellProbe(pendingCall?.arguments?.script)
+          );
+          const preserveSuccessfulShellFingerprint = shellRetryBlocked || failedReadOnlyShellProbe;
+          const successfulNoProgressPlan = (
+            pendingCall?.name === 'update_plan' &&
+            resultValue?.changed === false
+          );
           runtimeTerminalLoopDetected = resultValue?.errorCode === 'AGENT_RUNTIME_STATE_LOOP';
           workingState = reduceWorkingState(workingState, {
             ...envelope.stateDelta,
@@ -2355,28 +2498,42 @@ class OllamaAgentModelProvider {
           if (envelope.ok) {
             lastFailureFingerprint = '';
             repeatedStateFailures = 0;
-            if (pendingCall?.name === 'sandbox_shell') {
+            if (shellExecutionObserved) {
+              lastFailedShellFingerprint = '';
               lastSuccessfulShellFingerprint = shellActionFingerprint(
                 pendingCall?.arguments
               );
               repeatedSuccessfulShellActions = 1;
-            } else {
+            } else if (!successfulNoProgressPlan) {
               lastSuccessfulShellFingerprint = '';
               repeatedSuccessfulShellActions = 0;
             }
           } else if (runtimeTerminalLoopDetected) {
             lastFailureFingerprint = envelope.fingerprint;
             repeatedStateFailures = 1;
+            if (shellExecutionObserved) {
+              rememberFailedShellFingerprint(pendingCall?.arguments);
+            }
             repeatedSuccessfulShellActions += 1;
           } else if (lastFailureFingerprint === envelope.fingerprint) {
             repeatedStateFailures += 1;
-            lastSuccessfulShellFingerprint = '';
-            repeatedSuccessfulShellActions = 0;
+            if (shellExecutionObserved) {
+              rememberFailedShellFingerprint(pendingCall?.arguments);
+            }
+            if (!preserveSuccessfulShellFingerprint) {
+              lastSuccessfulShellFingerprint = '';
+              repeatedSuccessfulShellActions = 0;
+            }
           } else {
             lastFailureFingerprint = envelope.fingerprint;
             repeatedStateFailures = 1;
-            lastSuccessfulShellFingerprint = '';
-            repeatedSuccessfulShellActions = 0;
+            if (shellExecutionObserved) {
+              rememberFailedShellFingerprint(pendingCall?.arguments);
+            }
+            if (!preserveSuccessfulShellFingerprint) {
+              lastSuccessfulShellFingerprint = '';
+              repeatedSuccessfulShellActions = 0;
+            }
           }
           completedOutput = {
             ...completedOutput,
@@ -3543,6 +3700,7 @@ module.exports = {
   normalizeOllamaArguments,
   normalizeReportPdfToolAlias,
   assertPosixShellScript,
+  shellFailureCorrection,
   functionToolsForProfile,
   ollamaFileTools,
   ollamaUsageCredits,
