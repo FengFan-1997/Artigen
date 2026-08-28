@@ -223,6 +223,69 @@ test('Live eval runner replaces an evicted idle connection and fails closed only
   assert.equal(pool.listenerCount('error'), 0);
 });
 
+test('Live eval runner consumes checked-out client errors and aborts the campaign fail-closed', async () => {
+  const pool = new EventEmitter();
+  const client = new EventEmitter();
+  let releaseCount = 0;
+  client.release = () => { releaseCount += 1; };
+  const originalConnect = async () => client;
+  pool.connect = originalConnect;
+  pool.query = async () => ({ rowCount: 1, rows: [{ live_eval_database_health: 1 }] });
+  let abortReason = null;
+  const state = installLiveEvalPoolErrorHandler({
+    pool,
+    abort: (error) => { abortReason = error; }
+  });
+
+  const checkedOut = await pool.connect();
+  assert.notEqual(pool.connect, originalConnect);
+  assert.equal(client.listenerCount('error'), 1);
+  assert.doesNotThrow(() => {
+    checkedOut.emit('error', new Error('synthetic connection detail must stay private'));
+  });
+  assert.equal(state.error?.code, 'AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST');
+  assert.equal(abortReason, state.error);
+  assert.equal(state.error.message.includes('synthetic'), false);
+
+  checkedOut.release();
+  assert.equal(releaseCount, 1);
+  assert.equal(client.listenerCount('error'), 0);
+  state.dispose();
+  assert.equal(pool.connect, originalConnect);
+  assert.equal(pool.listenerCount('error'), 0);
+});
+
+test('Live eval checked-out client guard preserves the callback connect contract', async () => {
+  const pool = new EventEmitter();
+  const client = new EventEmitter();
+  let releaseCount = 0;
+  client.release = () => { releaseCount += 1; };
+  const originalConnect = (callback) => callback(null, client, client.release);
+  pool.connect = originalConnect;
+  pool.query = async () => ({ rowCount: 1, rows: [{ live_eval_database_health: 1 }] });
+  const state = installLiveEvalPoolErrorHandler({ pool });
+
+  await new Promise((resolve, reject) => {
+    pool.connect((error, checkedOut, release) => {
+      if (error) return reject(error);
+      try {
+        assert.equal(checkedOut, client);
+        assert.equal(release, checkedOut.release);
+        assert.equal(client.listenerCount('error'), 1);
+        release();
+        assert.equal(releaseCount, 1);
+        assert.equal(client.listenerCount('error'), 0);
+        resolve();
+      } catch (assertionError) {
+        reject(assertionError);
+      }
+    });
+  });
+
+  state.dispose();
+  assert.equal(pool.connect, originalConnect);
+});
+
 test('Live eval runner recognizes only content-free PostgreSQL connection codes as fatal infrastructure loss', () => {
   for (const code of ['ECONNRESET', 'ETIMEDOUT', '08006', '57P01']) {
     assert.equal(isLiveEvalDatabaseConnectionError({ code }), true);

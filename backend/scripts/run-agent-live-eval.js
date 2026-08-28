@@ -418,6 +418,7 @@ const installLiveEvalPoolErrorHandler = ({
   }
   let connectionError = null;
   let idleDisconnectCount = 0;
+  const checkedOutClients = new Set();
   const failClosed = () => {
     if (connectionError) return connectionError;
     connectionError = Object.assign(
@@ -436,6 +437,58 @@ const installLiveEvalPoolErrorHandler = ({
     // boundary health probe to establish a fresh usable connection.
     idleDisconnectCount += 1;
   };
+  // Pool#error only covers clients that are idle inside node-postgres. A
+  // socket can also fail while a service owns Pool.connect()'s checked-out
+  // Client; without a Client#error listener Node treats that as an uncaught
+  // EventEmitter error and exits before the slot journal or billing cleanup.
+  const decorateCheckedOutClient = (client) => {
+    if (
+      !client ||
+      typeof client.on !== 'function' ||
+      typeof client.off !== 'function' ||
+      typeof client.release !== 'function'
+    ) {
+      return client;
+    }
+    let checkedOut = true;
+    const originalRelease = client.release;
+    const clientErrorHandler = () => {
+      if (checkedOut) failClosed();
+    };
+    const record = { client, clientErrorHandler, originalRelease, wrappedRelease: null };
+    const wrappedRelease = function liveEvalRelease(...releaseArgs) {
+      if (checkedOut) {
+        checkedOut = false;
+        client.off('error', clientErrorHandler);
+        checkedOutClients.delete(record);
+      }
+      if (client.release === wrappedRelease) client.release = originalRelease;
+      return originalRelease.apply(client, releaseArgs);
+    };
+    record.wrappedRelease = wrappedRelease;
+    checkedOutClients.add(record);
+    client.on('error', clientErrorHandler);
+    client.release = wrappedRelease;
+    return client;
+  };
+  const originalConnect = typeof pool.connect === 'function' ? pool.connect : null;
+  const wrappedConnect = originalConnect
+    ? function liveEvalConnect(...args) {
+        const callbackIndex = args.length - 1;
+        const callback = args[callbackIndex];
+        if (typeof callback === 'function') {
+          args[callbackIndex] = (error, client) => {
+            if (error) return callback(error, client);
+            const checkedOut = decorateCheckedOutClient(client);
+            return callback(null, checkedOut, checkedOut?.release);
+          };
+          return originalConnect.apply(pool, args);
+        }
+        return Promise.resolve(originalConnect.apply(pool, args))
+          .then(decorateCheckedOutClient);
+      }
+    : null;
+  if (wrappedConnect) pool.connect = wrappedConnect;
   pool.on('error', handler);
   return {
     get error() { return connectionError; },
@@ -462,6 +515,14 @@ const installLiveEvalPoolErrorHandler = ({
       });
     },
     dispose() {
+      if (wrappedConnect && pool.connect === wrappedConnect) pool.connect = originalConnect;
+      for (const record of checkedOutClients) {
+        record.client.off('error', record.clientErrorHandler);
+        if (record.client.release === record.wrappedRelease) {
+          record.client.release = record.originalRelease;
+        }
+      }
+      checkedOutClients.clear();
       pool.off('error', handler);
     }
   };

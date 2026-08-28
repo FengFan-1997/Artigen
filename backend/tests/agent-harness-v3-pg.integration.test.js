@@ -405,6 +405,44 @@ test('Live Harness V3.1 replaces a terminated idle pooled connection at the next
   }
 });
 
+test('Live Harness V3.1 consumes a terminated checked-out client and aborts fail-closed', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const evalPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  const adminPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  let abortReason = null;
+  let client = null;
+  const state = installLiveEvalPoolErrorHandler({
+    pool: evalPool,
+    abort: (error) => { abortReason = error; }
+  });
+  try {
+    client = await evalPool.connect();
+    const backend = await client.query('SELECT pg_backend_pid()::integer AS pid');
+    const terminated = await adminPool.query(
+      'SELECT pg_terminate_backend($1::integer) AS terminated',
+      [backend.rows[0].pid]
+    );
+    assert.equal(terminated.rows[0]?.terminated, true);
+    const deadline = Date.now() + 5_000;
+    while (!state.error && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(state.error?.code, 'AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST');
+    assert.equal(abortReason, state.error);
+    await assert.rejects(
+      state.assertHealthy(),
+      /AGENT_LIVE_EVAL_DATABASE_CONNECTION_LOST/
+    );
+  } finally {
+    client?.release(true);
+    state.dispose();
+    await evalPool.end();
+    await adminPool.end();
+  }
+});
+
 test('Live Harness V3.1 serializes concurrent physical dispatch reservations at the hard cap', {
   skip: !enabled,
   timeout: 30_000
