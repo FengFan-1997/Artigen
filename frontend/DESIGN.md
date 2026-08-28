@@ -54,8 +54,8 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - Background `#F4F5F1`
 - Sidebar `#E9ECE6`
 - Surface `#FFFFFF`
-- Raised surface `#F5F6F1`
-- Border `#D8DDD3`
+- Raised surface `#F0F2ED`
+- Border `#CFD5CA`
 - Text `#171A16`
 - Muted `#5B6557`
 
