@@ -4,6 +4,7 @@ on:
   push:
     branches: [dev, main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
 permissions:
@@ -50,6 +51,8 @@ jobs:
       MINIO_ROOT_PASSWORD: artigen-minio-secret
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
@@ -63,6 +66,10 @@ jobs:
 
       - name: Verify the single workspace lockfile policy
         run: pnpm check:workspace
+
+      - name: Verify pull request Handoff policy
+        if: github.event_name == 'pull_request'
+        run: pnpm check:handoff-policy
 
       - run: pnpm install --frozen-lockfile
 

@@ -1,510 +1,277 @@
-# Artigen Agent 本机运行与上线运维手册
+# Artigen Agent 运维手册
 
-更新日期：2026-08-07
+本文说明 Mac Worker、Docker/CUA、队列、对象存储、图片、子 Agent、Runtime 验收和故障处理。动态生产/DEV 状态以 `/api/meta`、`/readyz` 和 `/api/agent/status` 为准。
 
-## 1. 当前结论
-
-Artigen Agent 已切换为“硅基流动云端模型 + 本机 CUA 沙箱”：模型固定使用深度思考链路同款 `Qwen/Qwen3-8B`，沙箱使用本机 CUA + Docker，任务由 PostgreSQL/pg-boss 持久排队。无需下载本地 Qwen 模型，也不需要 CUA 云账号。
-
-**2026-08-07 Production Beta 更新：** 生产提交 `9bcc77d593e0747d5265f96f1f45b1dcb956b0bd` 已部署到 Render `main`，数据库迁移 020、共享 S3、Production Mac Worker、四项浏览器状态和 owner-only 白名单全部通过。生产登录捕获 run `0bfa9eef-a989-4400-9fcd-0bcb043c211d` 与会话恢复 run `20317cd5-77e8-40ca-ac74-ad845385bf96` 均为 `succeeded`，4 个 Markdown/PDF 交付物验证通过并存入 S3；会话随后撤销并擦除。完整交付与账号登录方式见 [ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md](./ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md)。
-
-当前本机的 `files + shell` Agent 已真实端到端跑通，不再只是单元测试通过。2026-08-06 的内容级烟测 run `e8262300-085b-4db4-b5e7-e2df2919ed56` 最终为 `succeeded`，轨迹评分 100；生成的 `agent-smoke.md` 经回读确认为 5 个真实物理行且不含字面量 `\\n`，并通过文件打开、ClamAV 病毒扫描、SHA-256 和数据库登记，任务结束后沙箱已销毁。
-
-2026-08-07 完成了受限出口后的发布级浏览器烟测 run `1dfa16bf-49a4-428b-a942-ef3e090258f3`：硅基流动 Qwen3-8B 经独立 CONNECT 代理打开 `https://example.com`，读取 DOM，生成 `example-summary.md` 与 `example-summary.pdf`。两份文件都通过打开、ClamAV、SHA-256、来源和格式验证，轨迹评分 100，run 最终 `succeeded`，沙箱/代理/控制 sidecar 和临时网络均已销毁。
-
-同日完成远程桌面真实传输烟测 run `3ddfdc37-91d9-462d-af70-e8ebaf812ef2`：一次性票据只存哈希，viewer 和 Mac Worker 经 Render 同构 WebSocket 中继配对，前端侧收到真实 VNC 握手 `RFB 003.008`；票据状态为 consumed/started/closed，烟测任务取消后沙箱已销毁。该测试没有输入任何真实账号或密码。
-
-单站会话也完成真实生命周期烟测：run `0cc3eca1-a22e-4067-8167-931d660f0b2b` 加密保存 `https://example.com` profile，run `3c203a72-a088-4c5d-9afa-1b60f9d68a40` 恢复后更新时间；随后撤销，密文被覆盖为不可解密占位、profile 不再出现在列表中。测试不含真实 Cookie、账号、密码或 OTP。
-
-2026-08-07 又完成了真正的远程 DEV 分布式烟测 run `f32c30bf-ed26-4fc9-aa0a-0daaa878ca24`：任务和队列位于 Render DEV/Neon，Mac Worker 从同一远程队列领取，Qwen3-8B 经 `restricted-v1` 访问 `https://example.com`，生成 `artigen-dev-smoke.md` 和 `artigen-dev-smoke.pdf`，两项独立验证均为 `passed`。Worker 将文件写入共享 Neon S3，烟测进程再从对象存储读回，逐项比对字节数和 SHA-256；最终 `succeeded`，沙箱、出口代理和临时网络均已清理。第一次远程 run 暴露出 Qwen 会忽略 `parallel_tool_calls=false`，运行时已改为只保留并顺序执行首个调用，并增加回归测试后重跑通过。
-
-同日远程接管 run `06035a9d-b19f-4e1d-ba73-c58fa954fff8` 在 Render DEV + Neon + Mac Worker 上通过：Qwen3-8B 访问允许站点后主动调用 `request_user_approval`，任务停在 `waiting_user`；Render 签发 60 秒一次性票据，viewer 与 Mac Worker 配对并收到本机 VNC `RFB 003.008`。票据依次记录 consumed/relay_started/closed，关闭后任务取消，沙箱、出口代理和临时网络全部清理；测试没有输入真实账号、密码或 OTP。此前一次测试同时验证了 Worker 在 Neon 短时连接超时后可按租约恢复任务；现在 pg-boss 的 `error`/`warning` 事件也已显式监听，瞬时数据库错误只记录状态码，不再因未处理事件退出进程。
-
-PR #9 合入后的 Render DEV 提交 `af50290` 又以 run `d093a36c-37e4-47ff-9f7b-8cc3fb7ecf1f` 重复通过同一远程接管链路，证明结果不是旧实例或一次性偶然状态。第一次复跑在创建任务阶段被 `INSUFFICIENT_CREDITS` 拒绝，原因是共享 S3 与接管烟测共用 DEV 内部账号、当日验收额度已经消耗；两种烟测现使用独立无密码账号，避免相互影响。这次拒绝发生在预算预留阶段，没有创建沙箱或调用模型。
-
-| 检查项 | 当前状态 | 说明 |
-|---|---:|---|
-| Agent 单元/运行时测试 | 通过 | 包括硅基流动工具循环、小模型漏计划兜底、SSRF、票据、中继、路径和交付验证 |
-| 后端完整测试 | 通过 | 381 个测试，343 通过、38 跳过、0 失败 |
-| 前端单元测试 | 通过 | 211/211 |
-| 前端 TypeScript/生产构建 | 通过 | noVNC 按需分包，Agent 工作台可编译并完成 Vite 构建 |
-| 本机数据库 | 通过 | 已迁移到 `020_agent_secure_browser_relay` |
-| 硅基流动 Provider | 通过 | 真实完成规划、文件命令、交付声明三步工具循环 |
-| 硅基流动真实密钥 | 通过 | 从 macOS 钥匙串安全读取，不写入仓库或 `.env` |
-| CUA Python SDK | 通过 | 安装在 `backend/.venv-agent` |
-| Docker/CUA doctor | 通过 | Docker 29.6.2，本机 runtime 可用 |
-| Worker 启动与心跳 | 通过 | 已真实记录 online 心跳，单并发 |
-| CUA 真实容器 | 通过 | 使用官方 `0.1.15` 多架构 arm64 底座和 Artigen v2 工具镜像 |
-| 最小真实 Agent 烟测 | 通过 | 云端模型、队列、CUA、文件执行、病毒扫描、资产登记、结算和销毁全部完成 |
-| 浏览器 Agent 技术链路 | Production Beta 通过 | 受限代理、CDP、`browser_dom`、登录接管、会话恢复、Markdown+PDF、独立验证和销毁均真实通过 |
-| 浏览器 Agent 接管中继 | Render DEV 通过 | 远程票据、HMAC、WebSocket、raw VNC 握手和清理均真实通过 |
-| 浏览器 Agent 公开能力 | Production owner-only 已开启 | `files,shell,browser`；仅 `876458930@qq.com` 对应 UUID 可用，其他用户拒绝 |
-| Playwright 多浏览器矩阵 | 通过 | 本地六项目 405 通过、3 条条件跳过、0 失败；PR #12 Release gate 通过 |
-| DEV Render | 通过核心分布式烟测 | 迁移 020、四项 Worker 状态、浏览、MD/PDF、共享 S3 上传和读回均通过 |
-| 生产 Agent | Production Beta 在线 | Render SHA `9bcc77d`、迁移 020、共享 S3、Mac Worker 和四项状态均通过 |
-
-系统盘当前约有 19.3GB 可用，所需 CUA v2 镜像和 Playwright Chromium 1.61.1 对应浏览器已安装并保留。Hugging Face、Ollama、PostgreSQL/Redis 数据卷和项目环境未被清理。
-
-## 2. 运行架构
+## 1. 运行架构
 
 ```mermaid
 flowchart LR
-    U["Artigen 登录用户"] --> W["Artigen 网页/后端"]
-    W --> DB["PostgreSQL + pg-boss 队列"]
-    DB --> WK["本机 Agent Worker，单并发"]
-    WK --> O["硅基流动 Qwen/Qwen3-8B"]
-    WK --> C["CUA 本地 Docker 沙箱"]
-    C --> E["每任务 restricted-v1 出口代理"]
-    E --> H["公开 HTTPS/WSS 443"]
-    WK -->|"主动 WSS + HMAC"| R["Render 临时桌面中继"]
-    U -->|"一次性票据 + noVNC"| R
-    C --> A["Markdown/PDF/表格/演示文稿/网站交付物"]
-    WK --> DB
+    UI[Vue 工作台] --> API[Express API]
+    API --> PG[(PostgreSQL / pg-boss)]
+    API --> S3[(S3)]
+    W[Mac Agent Worker] --> PG
+    W --> S3
+    W --> SF[SiliconFlow]
+    W --> CUA[Docker/CUA 沙箱]
+    CUA --> EP[受限出口代理]
+    UI <-->|SSE| API
+    UI <-->|桌面 WebSocket| API
+    API <-->|中继| W
 ```
 
-关键点：
+- API 创建报价、冻结预算、Run、审批、事件和桌面票据。
+- PostgreSQL/pg-boss 持久排队；Worker 主动领取，不从公网暴露本机端口。
+- Worker 创建 Run 私有 CUA、出口和控制容器，执行 browser/shell/files/LibreOffice/图片工具。
+- 产物验证后写入共享 S3，数据库保存所有权和校验元数据。
+- 文字与工具决策只使用 `Qwen/Qwen3-8B`；图片只使用 `Kwai-Kolors/Kolors`。
 
-- Agent 模型只允许硅基流动官方地址 `https://api.siliconflow.cn/v1`，并固定为 `Qwen/Qwen3-8B`。
-- Agent 与深度思考/视觉方向分析复用同一个 `SILICONFLOW_API_KEY`，不自动回退到其他硅基流动或收费模型。
-- CUA 运行在本机 Docker，不使用 CUA 云端账户或云端 API Key。
-- 本机 DEV 可获得 `files`、受限 `shell` 和 `browser`；浏览器顶层页面必须属于用户填写的精确 HTTPS Origin，跨 Origin 顶层跳转由服务器和沙箱双重阻断。
-- 浏览器容器没有默认 Docker 出口。所有公网连接经过每任务代理，代理解析全部 A/AAAA、拒绝任一非公网结果并固定已验证 IP；CUA/VNC 端口只绑定 Mac 的 `127.0.0.1`。
-- 密码、OTP、验证码和安全警告只能由所有者通过一次性票据接管；模型暂停且看不到这些值。
-- Worker 并发为 1。Worker 不在线时任务保留在数据库队列，最长等待 24 小时。
-- 新用户一次性体验额度为 20 credits；当前不发每日免费额度。
-- 任务私密输入和模型断点使用独立 AES-256-GCM 密钥加密后存入数据库。
+## 2. 前置条件
 
-## 3. 需要哪些账号，怎样登录
+本机 Worker 需要：
 
-### 3.1 Artigen 用户账号
+- macOS 当前用户保持登录；
+- Node.js 24、pnpm 10；
+- Docker Desktop 正常；
+- 项目指定的 Python/CUA 工具链；
+- 对应环境的 PostgreSQL、S3、payload 加密、Provider 和桌面中继 Secret；
+- 受控网络能够访问数据库、S3、SiliconFlow 和 Render。
 
-需要。用户通过 Artigen 正常登录页登录，Agent 不使用共享账号，也没有“Agent 专用万能账号”。本地开发时使用本地数据库中自己的测试用户；线上使用生产站正常注册/登录的用户。
+不需要 CUA 云账号，也不在文档中保存 Docker、数据库、S3 或 Provider 的真实凭据。
 
-不要把管理员密码、用户密码或登录 Cookie 写进 Agent 提示词、Markdown 文件或 Git。
+生产和 DEV 使用完全独立的数据库、S3 命名空间、Worker ID、relay secret、Keychain 项目和 LaunchAgent 配置。
 
-### 3.2 硅基流动
+## 3. 模型与能力
 
-需要现有硅基流动账号和 API Key。这里复用 Artigen“深度思考/视觉方向分析”已经使用的账号与密钥，不另开模型账号。
+允许能力由 API 配置、Worker readiness 和任务授权交集决定：
 
-- 登录地址：<https://account.siliconflow.cn/zh/login>
-- 控制台：<https://cloud.siliconflow.cn>
-- API 地址：`https://api.siliconflow.cn/v1`
-- 唯一允许的 Agent 模型：`Qwen/Qwen3-8B`
-- 密钥位置：本机 macOS 钥匙串 `Artigen SiliconFlow API Key`；部署平台使用 Secret `SILICONFLOW_API_KEY`
+- `files`
+- `shell`
+- `browser`
+- `generate_images`
+- `subagents`
 
-不要把 API Key 发到前端、Markdown、日志或 Git。模型探针只报告“已配置/无效/不可用”，不会输出密钥。
+环境变量或数据库记录声明能力不等于实际 ready。公开状态只有在 Worker 心跳、CUA 镜像、浏览器、出口探针、桌面中继、对象存储和 Provider 全部满足对应条件时才为真。
 
-Agent 配置中的 `AGENT_SILICONFLOW_ENABLE_THINKING=false` 是为了让多轮工具调用稳定返回结构化 `tool_calls`；它不改变模型 ID，也不代表换掉 Artigen 的“深度思考”产品模型。
+模型硬边界：
 
-### 3.3 CUA 本地沙箱
+- `AGENT_MODEL_PROVIDER=siliconflow`
+- `AGENT_MODEL_NAME=Qwen/Qwen3-8B`
+- 图片模型由服务端 allowlist 固定为 Kolors
+- 客户端不能提交 Runtime 版本或内部模型 ID
 
-不需要 CUA 云账号，不需要 `CUA_API_KEY`。本地模式依赖 Python 3.12 和 Docker Desktop。
+## 4. 配置与秘密
 
-Artigen 使用的 Python 环境：
+可提交的变量名称和默认关闭值以 `backend/.env.example` 为准。关键类别：
 
-```text
-/Users/fengfan/Public/personal/Artigen/backend/.venv-agent/bin/python
-```
+- 数据库与迁移连接；
+- S3 endpoint、bucket、region 与 credentials；
+- payload 加密密钥；
+- SiliconFlow API 与模型 allowlist；
+- Worker ID、relay URL 与 relay secret；
+- CUA 镜像、浏览器模式和出口策略；
+- public capabilities、子 Agent 与 Runtime V2 开关；
+- 定价、预算、并发、租约和保留期。
 
-CUA 官方说明：
+真实值只存部署 Secret 或 macOS Keychain。运行脚本不得打印 Secret、连接串或完整认证请求。
 
-- [本地沙箱教程](https://cua.ai/docs/tutorials/your-first-local-sandbox)
-- [Sandbox SDK 参考](https://cua.ai/docs/reference/sandbox-sdk)
+## 5. 安装与检查
 
-### 3.4 Docker Desktop
-
-本地运行公开镜像不要求登录 Docker Hub。需要启动 Docker Desktop，但不需要把 Docker 账号交给 Agent。
-
-检查：
+安装锁定依赖：
 
 ```bash
-docker info
+pnpm install --frozen-lockfile
 ```
 
-### 3.5 PostgreSQL
-
-本地数据库信息：
-
-| 项目 | 值 |
-|---|---|
-| 地址 | `127.0.0.1:5432` |
-| 数据库 | `artigen_dev` |
-| 本地角色 | `artigen` |
-| 密码位置 | `backend/.env` 的 `LOCAL_PG_PASSWORD`，禁止复制到文档/Git |
-
-如必须手工登录：
+构建/确认项目 CUA 镜像：
 
 ```bash
-psql -h 127.0.0.1 -U artigen -d artigen_dev
-```
-
-日常维护优先使用项目命令，不要在终端历史中粘贴完整数据库 URL：
-
-```bash
-pnpm db:local:setup
-pnpm --filter backend db:migrate
-pnpm db:audit
-```
-
-### 3.6 线上数据库和对象存储
-
-线上本机 Worker 需要连接与网站后端相同的 PostgreSQL 数据库，并使用共享对象存储交付文件。这部分需要已有的部署平台数据库凭据、S3 兼容存储凭据和硅基流动密钥，但不需要 OpenAI/CUA 云账号。
-
-账户归属、域名和现有基础设施审计见 [ARTIGEN_INFRA_ACCOUNT_AUDIT.zh-CN.md](./ARTIGEN_INFRA_ACCOUNT_AUDIT.zh-CN.md)。任何真实密钥只应保存在部署平台 Secret 或本机 `backend/.env`，不能写入该审计文件。
-
-## 4. 本机配置
-
-本机私密配置位于：
-
-```text
-/Users/fengfan/Public/personal/Artigen/backend/.env
-```
-
-可提交的模板位于：
-
-```text
-/Users/fengfan/Public/personal/Artigen/backend/.env.example
-```
-
-当前本机烟测配置重点：
-
-```dotenv
-AGENT_FEATURE_ENABLED=true
-AGENT_WORKER_ENABLED=1
-AGENT_RUNTIME_DRIVER=live
-AGENT_MODEL_PROVIDER=siliconflow
-AGENT_MODEL_NAME=Qwen/Qwen3-8B
-AGENT_SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
-AGENT_SILICONFLOW_MAX_TOKENS=4096
-AGENT_SILICONFLOW_ENABLE_THINKING=false
-AGENT_SILICONFLOW_MIN_INTERVAL_MS=6500
-AGENT_SANDBOX_PROVIDER=cua
-AGENT_SANDBOX_MODE=local
-AGENT_CUA_DOCKER_PLATFORM=
-AGENT_CUA_IMAGE_REF=artigen/cua-xfce:0.1.15-tools-v2
-AGENT_CUA_IMAGE_HAS_TOOLCHAIN=true
-AGENT_BROWSER_MODE=full-approval-v1
-AGENT_SANDBOX_EGRESS_POLICY=restricted-v1
-AGENT_WORKER_ID=artigen-dev-mac-1
-AGENT_WORKER_RELAY_URL=ws://127.0.0.1:8080/api/agent-desktop/worker
-AGENT_WORKER_CONCURRENCY=1
-AGENT_QUEUE_MAX_WAIT_HOURS=24
-AGENT_PUBLIC_CAPABILITIES=files,shell,browser,generate_images
-AGENT_IMAGE_CREDITS=8
-AGENT_IMAGE_REFERENCE_CREDITS=12
-```
-
-`generate_images` 使用 Kolors，可执行纯文生图或最多 1 张已扫描任务图片的图生图。多参考图必须在供应商派发前失败。
-
-以下值必须存在，但绝不能复制到文档或提交。硅基流动密钥既可以由环境变量提供，也可以在 macOS 本机通过钥匙串服务名和账户标签读取：
-
-```dotenv
-SILICONFLOW_API_KEY=
-SILICONFLOW_KEYCHAIN_SERVICE=Artigen SiliconFlow API Key
-SILICONFLOW_KEYCHAIN_ACCOUNT=fengfan
-AGENT_PAYLOAD_ENCRYPTION_KEY=本机独立随机密钥
-DATABASE_URL=本机或目标环境数据库连接
-AGENT_WORKER_RELAY_SECRET=从 macOS Keychain 读取，不写入本文件
-```
-
-本机 DEV 中继密钥的 Keychain service 为 `artigen-agent-dev-relay`，account 为 `AGENT_WORKER_RELAY_SECRET`。Production 使用独立 service `artigen-agent-production-worker`，数据库、S3、加密、硅基流动和中继各自使用变量名作为 account 标签；只记录标签，不记录或打印秘密值。
-
-本机初始化脚本会只填充缺失密钥，不覆盖已有非空密钥：
-
-```bash
-pnpm db:local:setup -- --no-migrate
-```
-
-## 5. 安装与准备
-
-在仓库根目录执行：
-
-```bash
-cd /Users/fengfan/Public/personal/Artigen
-
-python3.12 -m venv backend/.venv-agent
-backend/.venv-agent/bin/python -m pip install -r backend/agent_runtime/requirements.txt
-
-pnpm --filter backend db:migrate
-```
-
-当前机器这些步骤均已完成。
-
-前端 E2E 使用与 `@playwright/test` 完全匹配的浏览器版本。本机已执行：
-
-```bash
-pnpm --filter personal exec playwright install chromium
-```
-
-本次发布已在本机完成 Chromium、Firefox、WebKit 的六项目 Playwright 矩阵：405 通过、3 条条件跳过、0 失败。GitHub PR #12 的分片浏览器 E2E 和 Release gate 也已通过。
-
-本地模式使用基于 Cua 官方 `0.1.15` 多架构 manifest 构建的 Artigen 工具镜像；
-Docker 会自动选择原生 arm64/amd64。先拉取底座，再一次性构建 Chromium、
-LibreOffice、Node、Python 文档工具和 ClamAV 病毒库层：
-
-```bash
-open -a Docker
-docker pull trycua/cua-xfce@sha256:3bf8536d354d4212aa7a2ed6309f63b573f587da50abb42692fc37e230832d91
 pnpm build:cua-image
 ```
 
-不要执行 `ollama pull qwen3:8b`；Agent 模型从硅基流动云端调用。
-
-注意：`trycua/cua-xfce:latest`/`0.2` 压缩约 7.44GB、解压后约 23GB，且当前
-latest 只有 amd64，不适合作为 Apple Silicon 本机默认镜像。固定的 `0.1.15`
-manifest 压缩约 1.39GB并同时提供 arm64/amd64。不要把本机配置改回 `latest`。
-生产云端仍应换成经过独立加固的自定义不可变 digest。
-
-## 6. 一键体检
+运行安全 doctor：
 
 ```bash
 pnpm doctor:agent
 ```
 
-体检包含：
+doctor 用于检查最低本机/浏览器基线，不等于最新迁移、完整 Runtime、账务或发布证据。最终 readiness 必须同时核对目标环境 `/readyz` 和 `/api/agent/status`。
 
-- Agent 功能开关与 Worker 开关；
-- 私密载荷加密密钥；
-- `020_agent_secure_browser_relay` 数据库迁移、Agent 表、票据表和 Worker readiness 字段；
-- restricted-v1 主动探针：代理公网成功、直接出网失败、私网目标失败；
-- 硅基流动密钥、官方 API 地址及 `Qwen/Qwen3-8B` 是否可用；
-- CUA SDK 与 Docker runtime；
-- 首次镜像下载所需磁盘容量；
-- 最近一次 Worker 心跳。
+## 6. 前台启动
 
-只有顶层输出为：
-
-```json
-{"ok": true}
-```
-
-才进入真实任务烟测。Worker 心跳为 `offline` 或 `stopping` 不代表配置失败，只代表 Worker 当前没有运行。
-
-## 7. 启动方法
-
-准备两个终端。硅基流动是云端 API，不需要启动本地模型服务。
-
-终端 1：启动网站前后端。
+本机普通 Worker：
 
 ```bash
-cd /Users/fengfan/Public/personal/Artigen
-pnpm dev
-```
-
-终端 2：启动独立 Worker。
-
-```bash
-cd /Users/fengfan/Public/personal/Artigen
 pnpm start:agent-worker
 ```
 
-成功日志示例：
-
-```text
-Artigen Agent worker started: agent-worker-...
-```
-
-Mac 常驻 Worker 使用 LaunchAgent + `caffeinate`。DEV 只按需启动；Production 只有在 Keychain 凭据完整、DEV 验收通过和生产数据库完成备份后才安装：
+使用环境隔离的 macOS runner：
 
 ```bash
-# DEV：生成按需启动的 plist
-pnpm --filter backend install:agent-worker:dev-mac
+pnpm --filter backend start:agent-worker:dev-mac
+pnpm --filter backend start:agent-worker:production-mac
+```
 
-# Production：仅在发布窗口执行
+首次排障优先前台启动，确认日志不含 Secret、数据库/S3 目标正确、Worker 注册和出口探针成功后，再安装为 LaunchAgent。
+
+## 7. LaunchAgent
+
+```bash
+pnpm --filter backend install:agent-worker:dev-mac
 pnpm --filter backend install:agent-worker:production-mac
 ```
 
-`start:agent-worker:dev-mac` 和 DEV LaunchAgent 从独立的 `artigen-agent-dev-worker` Keychain service 读取远程 DEV Neon、共享 S3、Agent 载荷密钥、硅基流动密钥和桌面中继配置；它不会复用或改写 `backend/.env`。普通的 `pnpm start:agent-worker` 仍是本机数据库/本机中继开发入口。Production 对应 `artigen-agent-production-worker`，两套配置不能混用。
+安装前后检查：
 
-本机显式配置 `SILICONFLOW_KEYCHAIN_SERVICE` 时，Keychain 值优先于 `.env` 中的旧值；本机开发的 Agent 载荷密钥默认优先读取 `artigen-agent-dev-worker / AGENT_PAYLOAD_ENCRYPTION_KEY`。Render/Linux 没有 macOS Keychain，仍只从平台环境变量读取。
+- 程序和 WorkingDirectory 指向目标不可变 worktree；
+- 环境标识、Worker ID、数据库和 S3 属于同一环境；
+- subagents、图片和 Runtime 开关符合本次发布；
+- 生产 runner 不能读取 DEV Secret，DEV runner 不能读取生产 Secret；
+- 旧 Worker 已停止，同一环境没有两个 Worker 使用相同 ID；
+- Docker 可用，CUA 镜像与工具链符合目标代码。
 
-Production runner 会先检查 Docker，再从 `artigen-agent-production-worker` Keychain service 读取数据库、S3、载荷加密、硅基流动和中继配置。缺任何一项会输出错误码并退出，不打印值；LaunchAgent 30 秒后重试。Mac 必须接通电源、保持用户登录且 Docker Desktop 运行，合盖睡眠和关机会让任务继续排队。
+不要把生成的 plist、Environment Export 或 Keychain 值提交仓库。
 
-网页会每 15 秒请求：
+## 8. Readiness
 
-```text
-GET /api/agent/status
+API 深度检查：
+
+```bash
+curl --fail --silent <base-url>/readyz
+curl --fail --silent <base-url>/api/agent/status
 ```
 
-状态接口只返回是否在线、队列深度、最早排队时间、并发数、模型系列和沙箱模式，不暴露密钥、数据库地址或内部 Worker ID。
+重点字段：
 
-## 8. 真实烟测标准
+- `workerOnline`
+- `browserReady`
+- `egressVerified`
+- `desktopRelayReady`
+- `subagentsReady`
+- `queueDepth`
+- Runtime public flag 与 rollout
+- database migration、S3、Provider、pricing 和 payload readiness
 
-本机已经完成的最小真实烟测为：创建 Markdown、声明 source 交付物并由独立验证器验收。结果：
+Worker 在线但 browser/egress/desktop 未就绪时，只能暴露真实可用的能力。queue 为 0 不代表浏览器或模型链路通过。
 
-```text
-run: e8262300-085b-4db4-b5e7-e2df2919ed56
-status: succeeded
-trajectory score: 100
-artifact: agent-smoke.md
-verification_status: passed
-malwareScan: passed
-charged free credits: 3
-sandbox: destroyed
-```
+## 9. 沙箱生命周期
 
-这证明 `files + shell` 主链路真实可用。
+每个 Run 使用独立工作区和容器/网络：
 
-旧的内部只读浏览器链路也曾完成真实烟测：
+1. Worker 领取租约并核对预算、回执和 Runtime profile。
+2. 创建 CUA、受限出口和控制 sidecar。
+3. 只把该 Run 的授权输入放入工作区。
+4. 工具执行记录 started/done 或 ambiguous 回执。
+5. 产物经过格式、来源、病毒、大小和哈希验证后上传 S3。
+6. 成功、失败、取消、超时或恢复收尾后删除容器和临时网络。
 
-```text
-run: 5e8e8558-5cec-4f18-8bee-22eed5780715
-status: succeeded
-model: SiliconFlow Qwen/Qwen3-8B
-browser: browser_dom -> https://example.com
-artifact: browser-smoke.md (text/markdown, 166 bytes)
-verification_status: passed
-malwareScan: passed
-trajectory score: 100
-charged free credits: 2
-sandbox: destroyed
-```
+Worker 重启只恢复能够用持久回执证明的动作；不能证明的副作用进入 waiting_user 或失败，不自动重放。
 
-回读交付物确认包含 3 行真实字段：`Title: Example Domain`、最终 URL，以及以 `This domain` 开头的正文；文件不含字面量 `\\n`。
+## 10. 浏览器与桌面接管
 
-2026-08-07 发布级浏览器烟测已进一步完成：
+- CUA 浏览器只能经受限代理访问公开 HTTPS/WSS。
+- 用户允许的顶层 Origin 与公共子资源分别检查；任一私网/保留 IP 解析都拒绝。
+- 页面外部副作用需要审批；密码、OTP、验证码和付款只能接管。
+- 桌面票据一次性、短时并绑定用户、Run、Worker、沙箱和审批。
+- Worker 主动连接 Render 中继，本机 VNC/CUA 端口只监听回环。
 
-```text
-run: 1dfa16bf-49a4-428b-a942-ef3e090258f3
-status: succeeded
-model: SiliconFlow Qwen/Qwen3-8B
-browser: restricted-v1 -> https://example.com
-artifacts: example-summary.md + example-summary.pdf
-verification_status: passed + passed
-trajectory score: 100
-charged free credits: 3
-sandbox/control/egress/network: destroyed
-```
+详见 [`AGENT_BROWSER_SECURITY_MODEL.zh-CN.md`](./AGENT_BROWSER_SECURITY_MODEL.zh-CN.md)。
 
-远程接管传输烟测：
+## 11. 子 Agent
 
-```text
-run: 3ddfdc37-91d9-462d-af70-e8ebaf812ef2
-viewer handshake: RFB 003.008
-ticket: hash-only, consumed=true, relay_started=true, closed=true
-real credentials entered: none
-sandbox: destroyed
-```
+- 最多三个、深度一层、独立 Qwen3 上下文。
+- 只能读取父 Run 授权输入，使用能力交集内的离线 shell/files/update_plan。
+- 不获得 browser、desktop、integration、Kolors、审批或最终 artifact 声明权。
+- 子 Agent 成本计入父 Run 预算；父 Agent负责合并和最终验证。
+- 取消或失败必须释放对应活动预算，不能重复执行已完成副作用。
 
-远程 DEV + 共享 S3 烟测可重复执行：
+运行前确认 `subagentsReady`，不能只检查前端页签或环境变量。
+
+## 12. 图片与文件交付
+
+图片：
+
+- 只允许 Kolors；
+- 输入资产必须属于当前用户和 Run；
+- Provider 响应先校验 MIME、magic bytes、像素和大小；
+- S3 回读字节数和 SHA-256 后才能结算；
+- 未知网络/Provider 结果保持 ambiguous，只有明确允许的确定性错误可重试。
+
+文件：
+
+- Markdown/PDF、XLSX、PPTX、静态网站和图片使用不同解析/渲染验证器；
+- 来源必须来自本 Run 的实际浏览观察；
+- LibreOffice/浏览器渲染失败不能只凭扩展名判成功；
+- text-only Run 使用独立验收，不强制生成文件。
+
+## 13. DEV smoke
+
+只有在目标 DEV SHA、Render、Vercel Preview 和 Mac Worker 对齐后运行：
 
 ```bash
 pnpm --filter backend smoke:agent:dev-mac
+pnpm --filter backend smoke:agent:dev-subagents-mac
+pnpm --filter backend smoke:agent:dev-image-mac
+pnpm --filter backend smoke:agent:dev-relay-mac
+pnpm --filter backend smoke:agent:dev-login-mac
 ```
 
-远程 DEV 接管中继烟测可重复执行：
+使用 `.invalid` 合成身份和明确预算。未获授权时不调用真实 Provider；fixture/mock 结果必须标明，不得写成真实链路通过。
+
+## 14. Runtime V2 与 Harness
+
+DEV 分支提供：
 
 ```bash
-pnpm --filter backend smoke:agent:dev-relay-mac
+pnpm eval:agent:deterministic
+pnpm test:agent:chaos
+pnpm eval:agent:live:gate
+pnpm eval:agent:live
+pnpm eval:agent:live:prepare-review
+pnpm eval:agent:live:score
+pnpm eval:agent:live:finalize
 ```
 
-该命令让 Qwen 显式请求密码接管，只验证一次性票据、Render WSS 中继、Mac Worker 和本机 VNC 握手，不输入任何真实凭据；成功后自动关闭票据、取消任务并触发沙箱清理。
+正式顺序：
 
-脚本只从 `artigen-agent-dev-worker` Keychain 读取秘密，不接受 Production Keychain service，也不打印账号、连接串或密钥。共享 S3 烟测使用固定内部账号 `agent-smoke@dev.artigen.invalid`，接管中继烟测使用独立的 `agent-relay-smoke@dev.artigen.invalid`，避免两类验收互相消耗当日免费额度；两个账号都没有密码、会话或生产权限，只用于 DEV 服务级验收。
+1. 完整本机检查、PostgreSQL/MinIO Harness、50 项质量集和 chaos；
+2. 三端对齐不可变 DEV SHA；
+3. 签发一次性 exact-SHA gate；
+4. 完整执行 12 类 × V1/V2 的 24-slot campaign；
+5. 准备并完成 12 图匿名盲审；
+6. finalizer 验证自动门槛、人工评分、账务和清理；
+7. 才能讨论生产 canary。
 
-2026-08-07 的通过记录：
+中断、失败或不完整 campaign 不重跑同一 gate，不用合成 slot 补齐。旧 SHA 报告不能为新候选放行。
 
-```text
-run: f32c30bf-ed26-4fc9-aa0a-0daaa878ca24
-status: succeeded
-model: SiliconFlow Qwen/Qwen3-8B
-browser: restricted-v1 -> https://example.com
-artifacts: artigen-dev-smoke.md (246 bytes) + artigen-dev-smoke.pdf (2861 bytes)
-verification_status: passed + passed
-storage_driver: s3 + s3
-download verification: byte size + SHA-256 matched
-sandbox/control/egress/network: destroyed
-```
+## 15. 故障处理
 
-使用正常 Artigen 用户登录，然后提交：
+### Worker 离线
 
-> 创建一个简短中文 Markdown 报告，同时生成 PDF，放入任务沙箱并声明两个交付物。完成后验证文件可打开。
+检查 macOS 登录、Docker、LaunchAgent、工作目录、依赖、数据库、S3 和 Provider。不要启动第二个同 ID Worker或手工重派 Run。
 
-必须完整观察到：
+### 出口代理退出
 
-```text
-创建任务
-→ queued
-→ Worker 领取
-→ provisioning
-→ CUA 本地容器创建
-→ 硅基流动 Qwen3-8B 规划
-→ 沙箱执行文件工具
-→ declare_artifact
-→ 独立格式验证
-→ succeeded
-→ 网页可下载交付物
-```
+保留容器事件和有界错误，停止真实 campaign；检查 client/upstream socket、CUA 网络和 restricted-v1 探针。不要临时改为 DIRECT 或全局代理绕过。
 
-验收要求：
+### 数据库断连
 
-- 数据库中的 run 最终为 `succeeded`；
-- 至少存在 Markdown 和 PDF 两条 `agent_artifacts`；
-- `verification_status=passed`；
-- 文件能实际打开，不是空壳；
-- Worker 心跳保持 fresh；
-- 任务结束后沙箱被回收；
-- 费用/试用额度只结算一次；
-- 日志中没有用户输入全文、密钥或数据库连接串。
+campaign advisory lock 或 checked-out client 丢失时立即 fail-closed。禁止重连后重新获取同一 gate 或继续付费 slot。
 
-只验证“页面能打开”或“Worker 能启动”都不能宣称 Agent 已真实跑通。
+### hold/预算未释放
 
-## 9. 队列与额度规则
+使用正式取消/结算服务，检查 Run 终态、receipt、reservation 和 provider queue。禁止直接改钱包或删审计行。
 
-| 规则 | 当前值 |
-|---|---:|
-| Worker 并发 | 1 |
-| 全局最大排队任务 | 100 |
-| 最长排队等待 | 24 小时 |
-| 新用户一次性试用 | 20 credits |
-| 每日免费额度 | 0 |
-| 默认单任务上限 | 30 credits |
-| 硬上限 | 100 credits |
-| 单任务最长时间 | 45 分钟 |
-| 单任务最大步骤 | 120 |
+### 沙箱残留
 
-Worker 离线时，用户界面会明确显示“本机 Worker 离线，任务将排队”。超过 24 小时仍未领取的任务会失败并释放未使用额度。
+先按 Run/Worker 精确识别，再使用项目清理路径。不要按宽泛名称删除无关 Docker 资源。
 
-## 10. 停止与恢复
+## 16. 停止与回滚
 
-Worker 使用 `Ctrl+C` 或 `SIGTERM` 停止。停止过程中数据库心跳先变成 `stopping`；超时后状态接口也会把旧心跳视为离线。
+1. 关闭新 Agent 能力或 rollout；
+2. 停止目标 Worker，让活动任务走取消/租约收口；
+3. 切回上一不可变 worktree 和匹配配置；
+4. 核对 Worker/browser/egress/desktop/subagents；
+5. 核对 active Run、hold、reservation、queue、receipt、沙箱和冻结余额；
+6. 记录实际回滚证据。
 
-重新启动 Worker 后，它会：
-
-1. 使用密钥探测硅基流动 `Qwen/Qwen3-8B`；
-2. 探测 CUA/Docker；
-3. 启动 pg-boss 消费者；
-4. 修复可恢复的陈旧任务；
-5. 按顺序领取队列任务；
-6. 每 15 秒刷新心跳。
-
-## 11. 上线前置条件
-
-不要在以下任一条件未满足时开启生产 `AGENT_WORKER_ENABLED=1`：
-
-- 本机 `pnpm doctor:agent` 全绿；
-- `SILICONFLOW_API_KEY` 已配置且 `Qwen/Qwen3-8B` 通过模型探针；
-- Cua SDK 本地容器支持与 Docker Runtime 可用；
-- 本机 Markdown + PDF 发布级浏览器烟测和真实 VNC 中继握手已成功；
-- 开发/预发布数据库已执行 020 迁移；
-- `browserReady`、`egressVerified`、`desktopRelayReady` 和 `workerOnline` 同时为 true；
-- 网站后端和本机 Worker 指向同一目标数据库；
-- 文件交付使用共享 S3 兼容对象存储，而不是某台机器的本地目录；DEV 已实测上传、跨进程读回和摘要一致；
-- Worker 机器能长期在线，睡眠/关机策略已处理；
-- 备份、额度释放、24 小时队列过期和 Worker 离线提示已在预发布环境验证；
-- 本地 Chromium、Firefox、WebKit 六项目矩阵 405 通过、3 条条件跳过、0 失败；PR #12 分片 E2E 和 Release gate 通过。
-- Firefox/WebKit 继续与 Chromium 一起纳入发布矩阵，版本升级后必须重跑。
-
-线上采用“云端网页/数据库 + 本机 Worker”时，访问网站的用户不会直接连接你的 Mac。后端只把任务写入数据库；远程接管时 Mac 主动建立临时 WSS，中继结束即关闭。不要给家用路由器开放 Docker、CUA 或 VNC 端口。
-
-## 12. 当前下一步
-
-1. 保持 owner-only Beta，先观察真实使用中的队列长度、任务失败率、S3 使用量和沙箱清理。
-2. 保持 Mac 接通电源、登录状态和 Docker Desktop；定期检查 Production LaunchAgent 与四项 Agent 状态。
-3. 建立 Neon 定时加密备份和隔离恢复演练；当前已有发布前手工 dump 和 SHA-256。
-4. 只有观察稳定后再增加 Beta UUID；不要直接改为公开所有用户。
-5. 需要 24×7 时升级 Render Starter，并把 Worker 迁移到专用 Linux 主机。
-
-当前准确表述是：
-
-> Artigen 浏览器 Agent 已作为 owner-only Production Beta 上线，并完成真实登录接管、加密会话保存/恢复/撤销、Markdown/PDF 独立验证和共享 S3 交付。由于 Render Free 和 Mac Worker 都不提供 24×7 SLA，不能宣称为高可用正式生产服务。
+完整环境发布与生产回滚见 [`PROJECT_OPERATIONS_GUIDE.zh-CN.md`](./PROJECT_OPERATIONS_GUIDE.zh-CN.md) 和 [`PRODUCTION_RUNBOOK.zh-CN.md`](./PRODUCTION_RUNBOOK.zh-CN.md)。

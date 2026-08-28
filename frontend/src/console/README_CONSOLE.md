@@ -41,8 +41,8 @@ PostgreSQL `administrators`，账号被停用或角色被撤销后，已有 toke
 前端初始化后会记录公开产品页面的：
 
 - `page_view`：净化后的页面路径；
-- `ui_click`：显式 `data-analytics-action`，或由 id、aria-label、站内路径和元素类型
-  生成的稳定操作标识；
+- `ui_click`：优先使用显式行为属性或 `data-testid`；否则只以净化后的站内链接、
+  CSS class 和元素类型生成稳定操作标识；
 - 会话、项目、登录用户或匿名访客的 opaque reference；
 - 时间与粗粒度设备类别。
 
