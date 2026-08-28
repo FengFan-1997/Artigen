@@ -19,7 +19,8 @@ const {
   validateCompiledQualityCase
 } = require('../services/agent-quality-evaluation');
 const {
-  SiliconFlowAgentModelProvider
+  SiliconFlowAgentModelProvider,
+  shellFailureCorrection
 } = require('../services/agent-model-provider');
 const { assertAgentRuntimeReady, getAgentConfig } = require('../services/agent-config');
 const {
@@ -1285,6 +1286,7 @@ test('Runtime V2 stops after one correction when action and observed state repea
     }
   });
   let calls = 0;
+  const failedScript = 'test -f /tmp/artigen-workspace/missing';
   provider.createChat = async () => ({
     id: `response-${++calls}`,
     message: {
@@ -1295,7 +1297,10 @@ test('Runtime V2 stops after one correction when action and observed state repea
         type: 'function',
         function: {
           name: 'sandbox_shell',
-          arguments: JSON.stringify({ script: 'test -f /tmp/artigen-workspace/missing', purpose: '检查输入' })
+          arguments: JSON.stringify({
+            script: calls === 1 ? failedScript : `\n  ${failedScript}  \n`,
+            purpose: '检查输入'
+          })
         }
       }]
     },
@@ -1307,6 +1312,8 @@ test('Runtime V2 stops after one correction when action and observed state repea
     goal: '检查工作区中的输入文件',
     deliverables: []
   }, { capabilities: { shell: true }, maxCredits: 50 });
+  let shellCalls = 0;
+  const states = [];
   await assert.rejects(provider.execute({
     objective: taskSpec.goal,
     capabilities: { shell: true },
@@ -1315,13 +1322,809 @@ test('Runtime V2 stops after one correction when action and observed state repea
     runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
     callbacks: {
       checkControl: async () => {},
-      shell: async () => ({ success: false, returnCode: 1, stdout: '', stderr: 'missing' }),
-      saveModelState: async () => {},
+      shell: async () => {
+        shellCalls += 1;
+        return { success: false, returnCode: 1, stdout: '', stderr: 'missing' };
+      },
+      saveModelState: async (value) => { states.push(structuredClone(value)); },
       recordUsage: async () => {},
       currentBudgetRatio: async () => 0
     }
   }), { code: 'AGENT_RUNTIME_STATE_LOOP' });
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
+  assert.equal(shellCalls, 1);
+  assert.match(states.at(-1).lastFailedShellFingerprint, /^[a-f0-9]{64}$/);
+});
+
+test('Runtime V2 does not replay a failed Shell action after a different Shell succeeds', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const failedScript = 'generate-partial-output && exit 1';
+  const otherScript = 'verify-independent-input';
+  const scripts = [failedScript, otherScript, `  ${failedScript}\n`, failedScript];
+  let modelCalls = 0;
+  provider.createChat = async () => {
+    const script = scripts[modelCalls];
+    modelCalls += 1;
+    return {
+      id: `response-interleaved-${modelCalls}`,
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-interleaved-${modelCalls}`,
+          type: 'function',
+          function: {
+            name: 'sandbox_shell',
+            arguments: JSON.stringify({ script, purpose: '验证交错失败保护' })
+          }
+        }]
+      },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    };
+  };
+  const taskSpec = normalizeTaskSpec({
+    goal: '验证失败脚本不会因其他动作而重新执行',
+    deliverables: []
+  }, { capabilities: { shell: true }, maxCredits: 50 });
+  const executedScripts = [];
+  const states = [];
+  await assert.rejects(provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      shell: async (script) => {
+        executedScripts.push(script);
+        return script === failedScript
+          ? { success: false, returnCode: 1, stdout: 'partial', stderr: 'failed after write' }
+          : { success: true, returnCode: 0, stdout: 'ok', stderr: '' };
+      },
+      saveModelState: async (value) => { states.push(structuredClone(value)); },
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {}
+    }
+  }), { code: 'AGENT_RUNTIME_STATE_LOOP' });
+
+  assert.equal(modelCalls, 4);
+  assert.deepEqual(executedScripts, [failedScript, otherScript]);
+  assert.equal(states.at(-1).failedShellFingerprints.length, 1);
+});
+
+test('Runtime V2 stops alternating blocked retries of two failed Shell actions', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const failedA = 'fails-a';
+  const failedB = 'fails-b';
+  const scripts = [failedA, failedB, failedA, failedB];
+  let modelCalls = 0;
+  provider.createChat = async () => {
+    const script = scripts[modelCalls];
+    modelCalls += 1;
+    return {
+      id: `response-alternating-${modelCalls}`,
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-alternating-${modelCalls}`,
+          type: 'function',
+          function: {
+            name: 'sandbox_shell',
+            arguments: JSON.stringify({ script, purpose: '验证交替失败保护' })
+          }
+        }]
+      },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    };
+  };
+  const taskSpec = normalizeTaskSpec({
+    goal: '验证两个失败脚本不能交替绕过循环保护',
+    deliverables: []
+  }, { capabilities: { shell: true }, maxCredits: 50 });
+  const executedScripts = [];
+  await assert.rejects(provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      shell: async (script) => {
+        executedScripts.push(script);
+        return { success: false, returnCode: 1, stdout: '', stderr: `${script} failed` };
+      },
+      saveModelState: async () => {},
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {}
+    }
+  }), { code: 'AGENT_RUNTIME_STATE_LOOP' });
+
+  assert.equal(modelCalls, 4);
+  assert.deepEqual(executedScripts, [failedA, failedB]);
+});
+
+test('Runtime V2 does not let a blocked failed Shell retry hide a repeated successful Shell action', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const failedScript = 'partial-write && exit 1';
+  const successfulScript = 'true';
+  const scripts = [failedScript, successfulScript, failedScript, successfulScript];
+  let modelCalls = 0;
+  provider.createChat = async () => {
+    const script = scripts[modelCalls];
+    modelCalls += 1;
+    return {
+      id: `response-mixed-loop-${modelCalls}`,
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-mixed-loop-${modelCalls}`,
+          type: 'function',
+          function: {
+            name: 'sandbox_shell',
+            arguments: JSON.stringify({ script, purpose: '验证混合循环保护' })
+          }
+        }]
+      },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    };
+  };
+  const taskSpec = normalizeTaskSpec({
+    goal: '验证失败重试不能掩盖重复成功动作',
+    deliverables: []
+  }, { capabilities: { shell: true }, maxCredits: 50 });
+  const executedScripts = [];
+  await assert.rejects(provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      shell: async (script) => {
+        executedScripts.push(script);
+        return script === failedScript
+          ? { success: false, returnCode: 1, stdout: 'partial', stderr: 'failed' }
+          : { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      saveModelState: async () => {},
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {}
+    }
+  }), { code: 'AGENT_RUNTIME_STATE_LOOP' });
+
+  assert.equal(modelCalls, 4);
+  assert.deepEqual(executedScripts, [failedScript, successfulScript]);
+});
+
+test('Runtime V2 does not let a no-op plan update hide a repeated successful Shell action', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const successfulScript = 'generate-non-idempotent-output';
+  const taskSpec = normalizeTaskSpec({
+    goal: '验证无变化计划不能掩盖重复成功动作',
+    deliverables: [],
+    plan: [
+      { id: 'produce', label: '生成输出', phase: 'production' },
+      { id: 'verify', label: '验证输出', phase: 'verification' }
+    ]
+  }, { capabilities: { shell: true }, maxCredits: 50 });
+  const toolResponse = (id, name, argumentsValue) => ({
+    id: `response-${id}`,
+    message: {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: `call-${id}`,
+        type: 'function',
+        function: { name, arguments: JSON.stringify(argumentsValue) }
+      }]
+    },
+    prompt_eval_count: 0,
+    eval_count: 0,
+    siliconFlowUsage: {}
+  });
+  const responses = [
+    toolResponse('first-shell-success', 'sandbox_shell', {
+      script: successfulScript,
+      purpose: '生成一次输出'
+    }),
+    toolResponse('noop-plan', 'update_plan', {
+      explanation: '重复当前计划',
+      steps: taskSpec.plan.map(({ id, label, status }) => ({ id, label, status }))
+    }),
+    toolResponse('repeated-shell-success', 'sandbox_shell', {
+      script: successfulScript,
+      purpose: '再次生成相同输出'
+    })
+  ];
+  let modelCalls = 0;
+  provider.createChat = async () => {
+    modelCalls += 1;
+    return responses.shift();
+  };
+  const executedScripts = [];
+  let updatePlanCalls = 0;
+  await assert.rejects(provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      shell: async (script) => {
+        executedScripts.push(script);
+        return { success: true, returnCode: 0, stdout: 'created', stderr: '' };
+      },
+      updatePlan: async (input) => {
+        updatePlanCalls += 1;
+        return { accepted: true, steps: input.steps };
+      },
+      saveModelState: async () => {},
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {}
+    }
+  }), { code: 'AGENT_RUNTIME_STATE_LOOP' });
+
+  assert.equal(modelCalls, 3);
+  assert.equal(updatePlanCalls, 1);
+  assert.deepEqual(executedScripts, [successfulScript]);
+});
+
+test('Runtime V2 stops a no-op Shell from repeatedly reopening a failed read-only probe', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const probeScript = 'test -s /tmp/artigen-workspace/still-missing.pdf';
+  const noOpScript = 'true';
+  const scripts = [probeScript, noOpScript, probeScript, noOpScript];
+  let modelCalls = 0;
+  provider.createChat = async () => {
+    const script = scripts[modelCalls];
+    modelCalls += 1;
+    return {
+      id: `response-probe-noop-${modelCalls}`,
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-probe-noop-${modelCalls}`,
+          type: 'function',
+          function: {
+            name: 'sandbox_shell',
+            arguments: JSON.stringify({ script, purpose: '验证无进展循环保护' })
+          }
+        }]
+      },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    };
+  };
+  const taskSpec = normalizeTaskSpec({
+    goal: '验证无操作不能反复打开失败探针',
+    deliverables: []
+  }, { capabilities: { shell: true }, maxCredits: 50 });
+  const executedScripts = [];
+  await assert.rejects(provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      shell: async (script) => {
+        executedScripts.push(script);
+        return script === probeScript
+          ? { success: false, returnCode: 1, stdout: '', stderr: 'missing' }
+          : { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      saveModelState: async () => {},
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {}
+    }
+  }), { code: 'AGENT_RUNTIME_STATE_LOOP' });
+
+  assert.equal(modelCalls, 4);
+  assert.deepEqual(executedScripts, [probeScript, noOpScript, probeScript]);
+});
+
+test('Shell failure guidance distinguishes a missing input from a missing command', () => {
+  const missingInput = shellFailureCorrection({
+    script: 'python3 verify.py /tmp/artigen-workspace/missing.pdf',
+    purpose: '检查输入文件',
+    returnCode: 1,
+    stderr: 'input file not found'
+  });
+  assert.match(missingInput, /failed deterministically/u);
+  assert.doesNotMatch(missingInput, /command .* not installed/iu);
+
+  const pandocProbe = shellFailureCorrection({
+    script: 'pandoc --version',
+    purpose: '检查工具版本',
+    returnCode: 127,
+    stderr: 'bash: pandoc: command not found'
+  });
+  assert.match(pandocProbe, /command .* not installed/iu);
+  assert.doesNotMatch(pandocProbe, /artigen-report-pdf/u);
+});
+
+test('Runtime V2 retries a read-only Shell probe after image generation changes the workspace', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const probeScript = 'test -s /tmp/artigen-workspace/hero.png';
+  const responses = [
+    {
+      id: 'response-probe-before-image',
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: 'call-probe-before-image',
+          type: 'function',
+          function: {
+            name: 'sandbox_shell',
+            arguments: JSON.stringify({ script: probeScript, purpose: '检查图片是否存在' })
+          }
+        }]
+      },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    },
+    {
+      id: 'response-generate-image',
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: 'call-generate-image',
+          type: 'function',
+          function: {
+            name: 'generate_image',
+            arguments: JSON.stringify({
+              prompt: 'A restrained Artigen campaign visual',
+              aspectRatio: '1:1',
+              filename: 'hero.png'
+            })
+          }
+        }]
+      },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    },
+    {
+      id: 'response-probe-after-image',
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: 'call-probe-after-image',
+          type: 'function',
+          function: {
+            name: 'sandbox_shell',
+            arguments: JSON.stringify({ script: probeScript, purpose: '验证生成图片' })
+          }
+        }]
+      },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    },
+    {
+      id: 'response-image-final',
+      message: { role: 'assistant', content: '图片已生成并验证。' },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    }
+  ];
+  provider.createChat = async () => responses.shift();
+  const taskSpec = normalizeTaskSpec({
+    goal: '生成并验证一张图片',
+    deliverables: []
+  }, { capabilities: { shell: true, generate_images: true }, maxCredits: 50 });
+  const executedScripts = [];
+  let imageCalls = 0;
+  const states = [];
+  const result = await provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true, generate_images: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      shell: async (script) => {
+        executedScripts.push(script);
+        return executedScripts.length === 1
+          ? { success: false, returnCode: 1, stdout: '', stderr: 'missing' }
+          : { success: true, returnCode: 0, stdout: 'present', stderr: '' };
+      },
+      generateImage: async () => {
+        imageCalls += 1;
+        return {
+          success: true,
+          path: '/tmp/artigen-workspace/hero.png',
+          filename: 'hero.png'
+        };
+      },
+      saveModelState: async (value) => { states.push(structuredClone(value)); },
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {},
+      verifyDraft: async () => ({
+        result: {
+          passed: true,
+          score: 100,
+          issues: [],
+          repairInstructions: [],
+          unsupportedVisualJudgment: true,
+          criteria: []
+        },
+        credits: 0,
+        usage: {}
+      })
+    }
+  });
+
+  assert.equal(result.text, '图片已生成并验证。');
+  assert.deepEqual(executedScripts, [probeScript, probeScript]);
+  assert.equal(imageCalls, 1);
+  assert.deepEqual(states.at(-1).failedShellFingerprints, []);
+  assert.deepEqual(states.at(-1).readOnlyFailedShellFingerprints, []);
+});
+
+test('Runtime V2 retries pdfinfo after a successful Shell action changes the workspace', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const probeScript = 'pdfinfo /tmp/artigen-workspace/report.pdf';
+  const createScript = 'artigen-report-pdf /tmp/artigen-workspace/report.md /tmp/artigen-workspace/report.pdf';
+  const toolResponse = (id, script, purpose) => ({
+    id: `response-${id}`,
+    message: {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: `call-${id}`,
+        type: 'function',
+        function: {
+          name: 'sandbox_shell',
+          arguments: JSON.stringify({ script, purpose })
+        }
+      }]
+    },
+    prompt_eval_count: 0,
+    eval_count: 0,
+    siliconFlowUsage: {}
+  });
+  const responses = [
+    toolResponse('probe-before-create', probeScript, '检查 PDF 是否存在'),
+    toolResponse('create-pdf', createScript, '生成 PDF'),
+    toolResponse('probe-after-create', probeScript, '验证 PDF 已生成'),
+    {
+      id: 'response-shell-mutation-final',
+      message: { role: 'assistant', content: 'PDF 已生成并验证。' },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    }
+  ];
+  provider.createChat = async () => responses.shift();
+  const taskSpec = normalizeTaskSpec({
+    goal: '生成并验证 PDF',
+    deliverables: []
+  }, { capabilities: { shell: true }, maxCredits: 50 });
+  const executedScripts = [];
+  const states = [];
+  const result = await provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      shell: async (script) => {
+        executedScripts.push(script);
+        if (script === probeScript && executedScripts.length === 1) {
+          return { success: false, returnCode: 1, stdout: '', stderr: 'missing' };
+        }
+        return { success: true, returnCode: 0, stdout: 'ok', stderr: '' };
+      },
+      saveModelState: async (value) => { states.push(structuredClone(value)); },
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {},
+      verifyDraft: async () => ({
+        result: {
+          passed: true,
+          score: 100,
+          issues: [],
+          repairInstructions: [],
+          unsupportedVisualJudgment: false,
+          criteria: []
+        },
+        credits: 0,
+        usage: {}
+      })
+    }
+  });
+
+  assert.equal(result.text, 'PDF 已生成并验证。');
+  assert.deepEqual(executedScripts, [probeScript, createScript, probeScript]);
+  assert.deepEqual(states.at(-1).failedShellFingerprints, []);
+  assert.deepEqual(states.at(-1).readOnlyFailedShellFingerprints, []);
+});
+
+test('Runtime V2 guides command-not-found recovery without replaying the failed Shell action', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const pandocScript = 'cd /tmp/artigen-workspace/report && pandoc -f markdown -t pdf -o report.pdf survey.md';
+  const reportPdfScript = 'artigen-report-pdf /tmp/artigen-workspace/report/survey.md /tmp/artigen-workspace/report/report.pdf';
+  const toolResponse = (id, script, purpose) => ({
+    id: `response-${id}`,
+    message: {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: `call-${id}`,
+        type: 'function',
+        function: {
+          name: 'sandbox_shell',
+          arguments: JSON.stringify({ script, purpose })
+        }
+      }]
+    },
+    prompt_eval_count: 0,
+    eval_count: 0,
+    siliconFlowUsage: {}
+  });
+  const responses = [
+    toolResponse('pandoc-1', pandocScript, '将 Markdown 报告转换为 PDF 格式'),
+    toolResponse('pandoc-2', pandocScript, '重试生成 PDF'),
+    toolResponse('report-pdf', reportPdfScript, '使用预装工具生成 PDF'),
+    {
+      id: 'response-final',
+      message: { role: 'assistant', content: 'PDF 已生成并验证。' },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    }
+  ];
+  const requests = [];
+  provider.createChat = async (payload) => {
+    requests.push(structuredClone(payload));
+    return responses.shift();
+  };
+  const taskSpec = normalizeTaskSpec({
+    goal: '把工作区中的 Markdown 报告转换为 PDF',
+    deliverables: []
+  }, { capabilities: { shell: true }, maxCredits: 50 });
+  const executedScripts = [];
+  const states = [];
+  const result = await provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      checkControl: async () => {},
+      shell: async (script) => {
+        executedScripts.push(script);
+        if (script.includes('pandoc')) {
+          return {
+            success: false,
+            returnCode: 127,
+            stdout: '',
+            stderr: '/bin/bash: line 1: pandoc: command not found'
+          };
+        }
+        return { success: true, returnCode: 0, stdout: 'created', stderr: '' };
+      },
+      saveModelState: async (value) => { states.push(structuredClone(value)); },
+      recordUsage: async () => {},
+      currentBudgetRatio: async () => 0,
+      toolObservation: async () => {},
+      verifyDraft: async () => ({
+        result: {
+          passed: true,
+          score: 100,
+          issues: [],
+          repairInstructions: [],
+          unsupportedVisualJudgment: false,
+          criteria: []
+        },
+        credits: 0,
+        usage: {}
+      })
+    }
+  });
+
+  assert.equal(result.text, 'PDF 已生成并验证。');
+  assert.deepEqual(executedScripts, [pandocScript, reportPdfScript]);
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'tool' && message.content.includes('artigen-report-pdf')
+  )));
+  assert.ok(requests[2].messages.some((message) => (
+    message.role === 'tool' && message.content.includes('AGENT_SHELL_RETRY_UNCHANGED')
+  )));
+  assert.equal(states.at(-1).lastFailedShellFingerprint, '');
+});
+
+test('Runtime V2 preserves the failed Shell fingerprint across checkpoint resume', async () => {
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-only-key'
+    }
+  });
+  const failedScript = 'pandoc -o /tmp/artigen-workspace/report.pdf /tmp/artigen-workspace/report.md';
+  const recoveredScript = 'artigen-report-pdf /tmp/artigen-workspace/report.md /tmp/artigen-workspace/report.pdf';
+  const toolResponse = (id, script) => ({
+    id: `response-${id}`,
+    message: {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: `call-${id}`,
+        type: 'function',
+        function: {
+          name: 'sandbox_shell',
+          arguments: JSON.stringify({ script, purpose: '生成 PDF' })
+        }
+      }]
+    },
+    prompt_eval_count: 0,
+    eval_count: 0,
+    siliconFlowUsage: {}
+  });
+  let firstSegment = true;
+  const resumeResponses = [
+    toolResponse('same-after-resume', failedScript),
+    toolResponse('recovered-after-resume', recoveredScript),
+    {
+      id: 'response-resumed-final',
+      message: { role: 'assistant', content: '恢复后已完成 PDF。' },
+      prompt_eval_count: 0,
+      eval_count: 0,
+      siliconFlowUsage: {}
+    }
+  ];
+  provider.createChat = async () => (
+    firstSegment ? toolResponse('initial-failure', failedScript) : resumeResponses.shift()
+  );
+  const taskSpec = normalizeTaskSpec({
+    goal: '生成 PDF 并验证恢复不重复执行',
+    deliverables: []
+  }, { capabilities: { shell: true }, maxCredits: 50 });
+  const executedScripts = [];
+  let resumeState = null;
+  const commonCallbacks = {
+    checkControl: async () => {},
+    shell: async (script) => {
+      executedScripts.push(script);
+      return script.includes('pandoc')
+        ? {
+            success: false,
+            returnCode: 127,
+            stdout: '',
+            stderr: 'pandoc: command not found'
+          }
+        : { success: true, returnCode: 0, stdout: 'created', stderr: '' };
+    },
+    recordUsage: async () => {},
+    currentBudgetRatio: async () => 0,
+    toolObservation: async () => {},
+    verifyDraft: async () => ({
+      result: {
+        passed: true,
+        score: 100,
+        issues: [],
+        repairInstructions: [],
+        unsupportedVisualJudgment: false,
+        criteria: []
+      },
+      credits: 0,
+      usage: {}
+    })
+  };
+  await assert.rejects(provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true },
+    deliverables: [],
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      ...commonCallbacks,
+      saveModelState: async (value) => {
+        if (value.lastFailedShellFingerprint && !value.pendingCall) {
+          resumeState = structuredClone(value);
+          throw new Error('checkpoint-stop');
+        }
+      }
+    }
+  }), /checkpoint-stop/);
+
+  assert.match(resumeState.lastFailedShellFingerprint, /^[a-f0-9]{64}$/);
+  firstSegment = false;
+  const result = await provider.execute({
+    objective: taskSpec.goal,
+    capabilities: { shell: true },
+    deliverables: [],
+    resumeState,
+    maxSteps: 10,
+    runtimeContext: { runtimeVersion: 2, taskSpec, maxCredits: 50 },
+    callbacks: {
+      ...commonCallbacks,
+      saveModelState: async () => {}
+    }
+  });
+
+  assert.equal(result.text, '恢复后已完成 PDF。');
+  assert.deepEqual(executedScripts, [failedScript, recoveredScript]);
 });
 
 test('Runtime V2 preserves exact source evidence and blocks Shell detours during declaration repair', async () => {
@@ -1472,6 +2275,7 @@ test('Runtime V2 preserves exact source evidence and blocks Shell detours during
   )));
   assert.equal(states.at(-1).artifactDeclarationRetryCode, '');
   assert.deepEqual(states.at(-1).artifactDeclarationObservedUrls, []);
+  assert.deepEqual(states.at(-1).failedShellFingerprints, []);
 });
 
 test('Runtime V2 stops two consecutive identical successful Shell actions', async () => {
