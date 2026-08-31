@@ -10,7 +10,7 @@
 
 ## 2026-08-31 PR #143、exact-SHA 本地门禁与外部平台阻断
 
-- PR #143 已在 required checks 全绿后正常合入 `dev`，当前 `origin/dev` exact SHA 为 `2d2d11fa290a37096ea6aaeb76f7540d85084473`。本轮没有运行时代码架构变更：CUA builder 对固定 Node 20.20.2 下载增加有界重试且继续校验固定 SHA-256；配料标签页在报价前复用统一 Cookie 会话 bootstrap。18 个 GitHub required check-runs 全部成功，未绕过保护。
+- PR #143 已在 required checks 全绿后正常合入 `dev`，本节实际审核与本地验证所绑定的运行代码基线 SHA 为 `2d2d11fa290a37096ea6aaeb76f7540d85084473`；后续纯文档合并不会改变这份运行代码证据。本轮没有运行时代码架构变更：CUA builder 对固定 Node 20.20.2 下载增加有界重试且继续校验固定 SHA-256；配料标签页在报价前复用统一 Cookie 会话 bootstrap。18 个 GitHub required check-runs 全部成功，未绕过保护。
 - 固定 CUA 镜像 `artigen/cua-xfce:0.1.15-tools-v2`（本机 image digest `sha256:b7d2d2dc798535eeb8dd22a7a201520022743decd4d4f50b3cc212b0228b3795`）重新通过本地 doctor：工具链 v2、代理 HTTPS、直连阻断、私网阻断与孤儿清理均符合预期。没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。
 - exact merge SHA 的本地 UI 专项矩阵为 `513 passed / 3 skipped / 0 failed`，覆盖三条工作台路由、六个 Playwright 项目、极端断点、真实 pointer 命中、遮挡/裁切、44px 触控、焦点、连击防重、审批、子 Agent、长内容、暗浅/系统主题与 reduced motion；保存 74 张截图并人工抽查桌面、平板、移动、短视口和浅色主题。该矩阵运行真实 SPA，但自家 API 状态含测试 fixture/mock，只能作为 UI 回归证据，不能替代 DEV 真实用户旅程。
 - exact merge SHA 使用独立 PostgreSQL 16、固定 MinIO digest、临时沙箱与真实 Runtime 状态机完成 manifest `50/50`、五组 deterministic quality `50/50` 和 20 轮 chaos/replay `620/620`。结束后直接查询数据库：active Run、agent/tool hold、budget reservation、Provider queue、active subagent、冻结钱包与 active tool task 均为 0；本轮两个临时容器已按精确名称删除，历史 campaign MinIO 与审计证据保留。
