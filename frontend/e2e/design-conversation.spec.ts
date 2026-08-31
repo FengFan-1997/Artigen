@@ -230,6 +230,24 @@ const installEmptyConversation = async (page: Page) => {
   });
 };
 
+test('finishes the executor readiness check when the backend is unavailable', async ({ page }) => {
+  await installEmptyConversation(page);
+  await page.unroute('**/api/design-assistant/status');
+  await page.route('**/api/design-assistant/status', (route) => route.fulfill({
+    status: 503,
+    contentType: 'text/html',
+    body: '<html>Service Suspended</html>'
+  }));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/artigen/create');
+
+  await expect(page.getByText('服务暂时不可用，草稿会保留，请稍后重试。', { exact: true })).toBeVisible();
+  await expect(page.getByText('正在检查执行器', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '打开检查器' }).click();
+  await expect(page.locator('.workspace-right').getByText('暂不可用', { exact: true })).toBeVisible();
+});
+
 test('guest draft survives email login and sends automatically after verification', async ({ page }) => {
   let authenticated = false;
   let sentMessage: Record<string, unknown> | null = null;

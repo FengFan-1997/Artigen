@@ -55,6 +55,10 @@
       <div class="zero-copy">
         <h1>{{ zh ? '你想完成什么？' : 'What should we make?' }}</h1>
       </div>
+      <p v-if="statusUnavailable" class="service-unavailable-note" role="status">
+        <i aria-hidden="true"></i>
+        <span>{{ zh ? '服务暂时不可用，草稿会保留，请稍后重试。' : 'The service is temporarily unavailable. Your draft will stay here—please try again later.' }}</span>
+      </p>
       <ComposerBox
         :draft="draft"
         :attachments="selectedAttachments"
@@ -86,6 +90,10 @@
 
     <section v-else class="workspace-chat">
       <div ref="scrollArea" class="message-scroll">
+        <p v-if="statusUnavailable" class="service-unavailable-note chat-service-note" role="status">
+          <i aria-hidden="true"></i>
+          <span>{{ zh ? '服务暂时不可用。已有内容不会丢失，请稍后重试。' : 'The service is temporarily unavailable. Your existing work is safe—please try again later.' }}</span>
+        </p>
         <section v-if="activeAuthorizations.length" class="authorization-strip" aria-live="polite">
           <header>
             <span>{{ zh ? '会话授权' : 'Session authorization' }}</span>
@@ -179,7 +187,7 @@
         <section class="inspector-section">
           <header>
             <span>{{ zh ? '本次任务' : 'This task' }}</span>
-            <b v-if="!status?.enabled || !status?.plannerReady">{{ zh ? '检查中' : 'Checking' }}</b>
+            <b v-if="environmentStatusLabel">{{ environmentStatusLabel }}</b>
           </header>
           <dl>
             <div v-if="latestExecution || activeRun"><dt>{{ zh ? '执行方式' : 'Executor' }}</dt><dd>{{ executorSummary }}</dd></div>
@@ -371,6 +379,7 @@ const { isAuthed, ensureAuthed, syncAuth } = useAgentImgAuth();
 const zh = computed(() => currentLang.value === 'zh');
 
 const status = ref<DesignAssistantStatus | null>(null);
+const statusUnavailable = ref(false);
 const conversations = ref<DesignConversation[]>([]);
 const conversation = ref<DesignConversation | null>(null);
 const authorizations = ref<DesignSessionAuthorization[]>([]);
@@ -460,6 +469,7 @@ const planProgressLabel = computed(() => {
   return `${complete}/${activePlan.value.length || 0}`;
 });
 const runtimeLabel = computed(() => {
+  if (statusUnavailable.value) return zh.value ? '服务暂不可用' : 'Service unavailable';
   if (!status.value) return zh.value ? '正在检查执行器' : 'Checking executors';
   if (!status.value.enabled) return zh.value ? '对话入口尚未开放' : 'Conversation entry is closed';
   if (!status.value.plannerReady) return zh.value ? '规划器暂不可用' : 'Planner unavailable';
@@ -467,6 +477,13 @@ const runtimeLabel = computed(() => {
   return active
     ? (zh.value ? `${active} 个请求处理中` : `${active} requests in progress`)
     : (zh.value ? '设计 Agent 就绪' : 'Design agent ready');
+});
+const environmentStatusLabel = computed(() => {
+  if (statusUnavailable.value) return zh.value ? '暂不可用' : 'Unavailable';
+  if (!status.value) return zh.value ? '检查中' : 'Checking';
+  if (!status.value.enabled) return zh.value ? '未开放' : 'Closed';
+  if (!status.value.plannerReady) return zh.value ? '规划器不可用' : 'Planner unavailable';
+  return '';
 });
 const executorSummary = computed(() => {
   const latest = latestExecution.value;
@@ -1103,7 +1120,13 @@ const handleAuthChanged = () => {
 
 onMounted(async () => {
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
-  status.value = await getDesignAssistantStatus().catch(() => null);
+  try {
+    status.value = await getDesignAssistantStatus();
+    statusUnavailable.value = false;
+  } catch {
+    status.value = null;
+    statusUnavailable.value = true;
+  }
   syncAuth();
   if (!isAuthed.value) return;
   await refreshConversationList().catch(() => {});
@@ -1151,7 +1174,11 @@ onBeforeUnmount(() => {
 
 .workspace-zero { display: grid; width: min(var(--conversation-max),calc(100% - 56px)); height: 100%; min-height: 0; margin: 0 auto; padding: clamp(64px,10vh,118px) 0 48px; overflow-y: auto; overscroll-behavior: contain; align-content: center; scrollbar-color: var(--border) transparent; }
 .zero-copy { margin: 0 0 20px; }
+.zero-copy:has(+ .service-unavailable-note) { margin-bottom: 10px; }
 .zero-copy h1 { margin: 0; font-size: clamp(30px,3vw,38px); font-weight: 680; letter-spacing: -.04em; line-height: 1.12; text-wrap: balance; }
+.service-unavailable-note { display: flex; width: min(var(--conversation-max),100%); min-width: 0; align-items: flex-start; gap: 8px; margin: 0 auto 14px; color: var(--warning); font-size: 13px; line-height: 1.5; }
+.service-unavailable-note i { flex: 0 0 auto; width: 6px; height: 6px; margin-top: 7px; border-radius: 50%; background: currentColor; }
+.service-unavailable-note span { min-width: 0; overflow-wrap: anywhere; }
 .workspace-zero :deep(.composer-box),.docked-composer :deep(.composer-box) { color: var(--text); background: var(--surface); }
 :deep(.composer-box textarea) { color: var(--text); font-size: 16px; line-height: 1.58; }
 :deep(.composer-box textarea::placeholder) { color: var(--muted-2); }
@@ -1172,6 +1199,7 @@ onBeforeUnmount(() => {
 
 .workspace-chat { --conversation-gutter: clamp(24px,5vw,72px); position: relative; display: grid; grid-template-rows: minmax(0,1fr) auto; height: 100%; min-height: 0; }
 .message-scroll { min-height: 0; overflow-y: auto; padding: 46px var(--conversation-gutter) 40px; scrollbar-color: var(--border) transparent; scroll-padding-bottom: 40px; }
+.chat-service-note { margin-bottom: 24px; }
 .authorization-strip { display: grid; width: min(var(--conversation-max),100%); gap: 8px; margin: 0 auto 24px; padding: 12px 12px 12px 15px; border: 0; border-radius: 10px; background: color-mix(in srgb,var(--warning) 8%,var(--surface)); box-shadow: inset 3px 0 var(--warning); }
 .authorization-strip header,.authorization-strip article { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }.authorization-strip header span { font-size: 12px; font-weight: 680; }.authorization-strip small { color: var(--muted); font-size: 11px; }.authorization-strip article { padding-top: 8px; }.authorization-strip article > span { display: grid; min-width: 0; gap: 2px; overflow-wrap: anywhere; }.authorization-strip article b { font-size: 12px; }.authorization-strip button { flex: 0 0 auto; min-height: 32px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--danger); font-size: 11px; background: var(--surface-hover); cursor: pointer; }
 .message { display: flex; width: min(var(--conversation-max),100%); gap: 12px; margin: 0 auto 24px; }
