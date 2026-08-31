@@ -8,6 +8,15 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-08-28 历史部署连接清理（平台配置）
+
+- 已断开 Cloudflare Workers `fengfan001` 与 `ff1997` 的 Workers Builds Git 仓库连接；刷新两个 Builds 设置页后均只显示 `Connect`，旧仓库与 `Disconnect` 已消失。Worker 本身、历史部署、Cloudflare GitHub App 和 Turnstile 均保留。
+- 已断开 Vercel 旧项目 `feng-fan-1997-github-io` 与 `FengFan-1997/Artigen` 的 Git 连接；项目设置页明确显示该项目未连接 Git 仓库。旧项目及历史部署保留，正式项目 `artigen-fengfan` 不变。
+- 已按精确项目、环境和服务 ID 断开 Railway 两个 `FAILED / stopped` 服务 `FengFan-1997.github.io` 的 source：`diplomatic-inspiration` / `bd8c9a5e-e6c6-4160-928b-c07eec704fe3` 与 `prolific-solace` / `862fa728-d1e2-4e7f-ae39-22d1433d80c1`。CLI 返回两者 `repo=null`、`branch=null`、`image=null`、`disconnected=true`；项目、服务和历史部署未删除。
+- 已关闭仓库 legacy GitHub Pages（原 source 为 `main /`，旧地址为 `https://fengfan-1997.github.io/Artigen/`）；随后 GitHub Pages API 返回 404 disabled。仓库、GitHub 环境和历史检查记录未删除。
+- 本轮只修改仓库外的部署连接与本文档，不修改 `.github/workflows/ci.yml`、业务代码、API、数据库、运行时开关或生产发布链路。GitHub `Quality Gate`、`Vercel – artigen-fengfan`、Render、Mac Worker 与 Cloudflare Turnstile 继续保留；`main` 的唯一 required status check 继续为 `Release gate`。
+- 历史提交上的旧红叉和检查记录不可改写；本轮目标是阻止这些已弃用连接继续对新提交和 PR 发起构建或回报状态。最终以本节文档 PR 的 required CI、合入后新 SHA 的 check runs/status contexts、正式 Vercel/Render HTTP 200 smoke 及 branch protection 复核为验收依据。
+
 ## 2026-08-28 Runtime V2 失败 Shell 重放硬化（本地候选，未发布）
 
 - PR #137 已在 required checks 全绿后普通合入 `dev`，当前 `dev` exact SHA 为 `430a098fde540728e3bbd08b68aec4619056640c`；Render DEV、Vercel Preview 与 Mac DEV Worker 曾对齐该 SHA 并通过数据库、S3、Provider、定价、Worker、浏览器、受限出口和桌面中继 readiness。Runtime V2 公众开关、rollout 和 owner canary 继续关闭。
