@@ -1,12 +1,23 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-28（Asia/Shanghai）
+更新时间：2026-08-31（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
 本文只保留已经确定并产生持久影响的架构、代码、配置、迁移、部署和正式决定。开发中的具体进度、临时尝试、失败调试和下一条命令只记录在被 Git 忽略的 `HANDOFF.local.md`，不进入本文。
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
+
+## 2026-08-31 PR #143、exact-SHA 本地门禁与外部平台阻断
+
+- PR #143 已在 required checks 全绿后正常合入 `dev`，当前 `origin/dev` exact SHA 为 `2d2d11fa290a37096ea6aaeb76f7540d85084473`。本轮没有运行时代码架构变更：CUA builder 对固定 Node 20.20.2 下载增加有界重试且继续校验固定 SHA-256；配料标签页在报价前复用统一 Cookie 会话 bootstrap。18 个 GitHub required check-runs 全部成功，未绕过保护。
+- 固定 CUA 镜像 `artigen/cua-xfce:0.1.15-tools-v2`（本机 image digest `sha256:b7d2d2dc798535eeb8dd22a7a201520022743decd4d4f50b3cc212b0228b3795`）重新通过本地 doctor：工具链 v2、代理 HTTPS、直连阻断、私网阻断与孤儿清理均符合预期。没有修改 Karing、B2U2/AI Wi-Fi、DNS、系统代理、节点或路由。
+- exact merge SHA 的本地 UI 专项矩阵为 `513 passed / 3 skipped / 0 failed`，覆盖三条工作台路由、六个 Playwright 项目、极端断点、真实 pointer 命中、遮挡/裁切、44px 触控、焦点、连击防重、审批、子 Agent、长内容、暗浅/系统主题与 reduced motion；保存 74 张截图并人工抽查桌面、平板、移动、短视口和浅色主题。该矩阵运行真实 SPA，但自家 API 状态含测试 fixture/mock，只能作为 UI 回归证据，不能替代 DEV 真实用户旅程。
+- exact merge SHA 使用独立 PostgreSQL 16、固定 MinIO digest、临时沙箱与真实 Runtime 状态机完成 manifest `50/50`、五组 deterministic quality `50/50` 和 20 轮 chaos/replay `620/620`。结束后直接查询数据库：active Run、agent/tool hold、budget reservation、Provider queue、active subagent、冻结钱包与 active tool task 均为 0；本轮两个临时容器已按精确名称删除，历史 campaign MinIO 与审计证据保留。
+- GitHub 为该 SHA 生成的 Vercel Preview deployment `6177386549` 状态为 `success`。但 Render CLI 在 2026-08-31 重新核验到生产 `artigen-app-fengfan` 和 DEV `dev-artigen-app-fengfan` 均为 `suspended`，suspender 为 `billing`；这一实时平台状态覆盖本文更早章节中的历史 `live` 记录。DEV PostgreSQL 同时以 SQLSTATE `53000` 拒绝 Worker，明确原因是账户/项目 compute time quota 超限。
+- Mac DEV Worker 的程序与工作目录已指向 exact-SHA worktree，但当前未运行；数据库配额错误使其 fail-closed，浏览器、受限出口与桌面中继因而不具备 DEV readiness。Render billing 和数据库 quota 恢复前，不能完成三端对齐、`durability.pricingReady=true`、签名 gate、24-slot Qwen/Kolors 实机矩阵或图片匿名盲审。
+- Runtime V2 公众 rollout 继续为 `0`，owner canary 未启用；生产和 DEV 均未因本轮测试切流。全部文本、规划、验证和父/子 Agent 继续硬锁 `Qwen/Qwen3-8B`，全部图片继续硬锁 `Kwai-Kolors/Kolors`。
+- 当前结论为**暂不可上线**。本地工程和确定性门禁已收口，但只有账户所有者恢复 Render billing 与 DEV PostgreSQL compute quota，并在新的不可变 DEV SHA 上完成 Render/Vercel/Mac Worker 对齐、真实浏览器用户旅程、完整 24-slot 和图片盲审后，才可重新评估 owner canary；不得把本节本地证据冒充生产放行证据。
 
 ## 2026-08-28 历史部署连接清理（平台配置）
 
