@@ -709,6 +709,15 @@ CI、Render DEV 与 Vercel Preview 验收，尚未进入 `main` 或生产。
 - V1 调研 Run 实际成功并交付两个 verified S3 artifacts，但 Runtime V1 本来不持久化 V2 semantic verifier row，Replay Oracle 错误把 legacy baseline 判失败；本地 Live Harness 对自定义 DEV S3 endpoint 使用虚拟主机请求，又因 wildcard 证书层级不匹配导致下载失败。新分支 `codex/agent-runtime-state-loop-live-fix` 从 exact dev SHA 建立：dispatch 前 fail-closed 拒绝双重转义 heredoc 并只允许一次明确纠错；Runtime V1 继续强制确定性产物与账务验证但不伪造 V2 semantic row；DEV Live Eval 固定 path-style S3 且保持正常 TLS 校验；SIGTERM 和 `close()` 均通过正式服务事务取消两个合成 cohort，取消失败会使 cleanup 失败并撤销资格。
 - 当前本地候选专项回归 177/177、真实历史 V1 replay 与 S3 下载只读探针通过；尚未完成最终 `pnpm check`、PG/MinIO、50/50、20× chaos、PR/CI、DEV 重对齐、新 24-slot 与图片盲审。因此仍为“修复后再验收”，不可进入生产、owner canary 或公众 rollout。
 
+### 5.26 2026-08-31 Render 停用时的登录与工作台降级体验（已合入 DEV，云端实机阻断）
+
+- 从精确 `origin/dev` SHA `c5e282579a6a8553fea44d6f3df9a904d1709e7e` 建立 `codex/production-unavailable-ux`。PR [#146](https://github.com/FengFan-1997/Artigen/pull/146) 的 Core、8 路浏览器 E2E、5 个 Harness 分片、chaos、Vercel 与 Release gate 全绿后正常合入 `dev`，merge SHA 为 `2bc1a0b0ef4b65da3d5863add008fbb1a04e90a0`；没有绕过保护，也没有删除留档分支。
+- 登录客户端现在把 502/503/504（包括 Render 返回的 HTML suspension 页面）转换为“服务暂时不可用，请稍后重试”，但稳定业务错误码仍具有更高优先级。`/artigen/create` 的 executor readiness 失败不再永久停在“正在检查执行器”，而是明确显示服务不可用并说明草稿或已有内容不会丢失；Inspector 同步显示“暂不可用”。本轮没有改变认证、计费、API、数据库、模型、Runtime 或执行开关。
+- 本地完整 `pnpm check` 退出码 0：前端 Vitest `218/218`、后端 `547 passed / 92 conditional skipped / 0 failed`、邮件 `7/7`、质量 manifest `50/50`、生产构建与 bundle budget 通过，Playwright `543 passed / 3 skipped / 0 failed`、耗时 19.0 分钟。Impeccable mechanical detector 返回 `[]`，`git diff --check` 通过；桌面与 390px 截图保存在被忽略的 `.artifacts/production-unavailable-ux/` 并已人工复核，无新增遮挡或横向溢出。
+- Vercel exact merge-SHA Preview deployment `6178948621` 为 `success`，环境 URL 绑定上述 `2bc1a0b...`。但生产与 DEV Render 服务在 2026-08-31 重新核验时均为 `suspended`，`suspenders=["billing"]`：生产/DEV `/api/meta`、`/readyz`、`/api/agent/status` 以及生产 Vercel 代理 API 均 HTTP 503；只有生产 Vercel 静态 `/artigen/create` 返回 HTTP 200。Render 控制面最后一次 `live` 记录仍分别是生产 `dep-da3ui58ae00c73997te0` / `25e09e229060518ef7f7e51b9f3a43818009638e` 与 DEV `dep-da8i2a9t0dsc73c5b020` / `a8419036b3dcb4d6378c6f83e1c9d9554f7120c0`，不得把该历史 `live` 字样误报为当前可访问。
+- 真实生产游客流程只尝试一次 OTP：邮箱提交后显示发送失败，未收到验证码、未登录、未创建 Agent Run、未调用 Qwen/Kolors、未产生扣点。Render 恢复前禁止循环重发。当前机器也未发现 DEV/production Worker LaunchAgent，browser、restricted egress、desktop relay 与 durability pricing 均无法达到实机 gate。
+- Runtime V2、公众 rollout 与 owner canary 继续关闭；文字、规划、验证及父/子 Agent 继续硬锁 `Qwen/Qwen3-8B`，所有图片继续硬锁 `Kwai-Kolors/Kolors`。Render billing suspension 解除、DEV 三端重新对齐同一 exact SHA、pricing/Worker 全 ready、完整 24-slot 与图片盲审完成前，正式结论为“暂不可上线”。本轮未触碰生产发布、付款、Karing、B2U2/AI Wi-Fi、DNS、代理、节点或网络路由。
+
 ## 6. 已知风险与正式后续事项
 
 - Render 使用 Free 实例，会休眠或重启，不提供商业级 SLA。
