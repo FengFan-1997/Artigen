@@ -36,6 +36,7 @@ RUN apt-get update -qq \
         *) echo "Unsupported Docker architecture: ${TARGETARCH}" >&2; exit 1 ;; \
        esac \
     && curl --fail --show-error --silent --location \
+        --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 900 \
         "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
         --output /tmp/node.tar.xz \
     && echo "${node_sha}  /tmp/node.tar.xz" | sha256sum --check --strict \

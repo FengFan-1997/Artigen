@@ -138,3 +138,17 @@ test('runtime model allowlist contains only Qwen3-8B and Kolors', () => {
   assert.doesNotMatch(runtime, /FIXED_SILICONFLOW_EDIT_MODEL|GENERATION_EDIT_MODEL/);
   assert.doesNotMatch(runtime, /callGeminiGenerate|generativelanguage\.googleapis\.com/);
 });
+
+test('CUA image downloads the pinned Node archive with bounded retries and checksum verification', () => {
+  const dockerfile = readRepoFile('backend/agent_runtime/Dockerfile.cua-local');
+
+  assert.match(dockerfile, /ARG NODE_VERSION=20\.20\.2/);
+  assert.match(
+    dockerfile,
+    /curl --fail --show-error --silent --location \\\n\s+--retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 900 \\\n\s+"https:\/\/nodejs\.org\/dist\/v\$\{NODE_VERSION\}\/node-v\$\{NODE_VERSION\}-linux-\$\{node_arch\}\.tar\.xz"/
+  );
+  assert.match(
+    dockerfile,
+    /echo "\$\{node_sha\}  \/tmp\/node\.tar\.xz" \| sha256sum --check --strict/
+  );
+});
