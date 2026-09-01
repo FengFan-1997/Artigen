@@ -36,14 +36,14 @@ const assertLiveEvalDatabaseReadiness = async ({
                     AS superuser_reserved_connections,
                   COALESCE(NULLIF(current_setting('reserved_connections', true), ''), '0')::int
                     AS reserved_connections,
-                  -- max_connections limits client backends. Managed PostgreSQL
-                  -- services also expose internal workers in pg_stat_activity;
-                  -- counting those can exceed max_connections and falsely fail
-                  -- a healthy free-tier service. pg_stat_database.numbackends is
-                  -- the server-wide count of client connections, including
-                  -- databases the runtime role cannot inspect session-by-session.
-                  (SELECT COALESCE(sum(numbackends), 0)::int FROM pg_stat_database)
-                    AS used_connections`,
+                  -- max_connections limits client backends. PostgreSQL exposes
+                  -- backend_type to every caller even when activity details for
+                  -- another role are hidden. Filtering here includes connections
+                  -- in startup/authentication while excluding autovacuum,
+                  -- extension and other managed-service background workers.
+                  (SELECT count(*)::int
+                     FROM pg_stat_activity
+                    WHERE backend_type = 'client backend') AS used_connections`,
     query_timeout: 10_000
   });
   const row = result.rows?.[0] || {};
