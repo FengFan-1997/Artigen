@@ -7,7 +7,7 @@
 - 云端服务：`dev-artigen-app-fengfan`
 - 云端地址：`https://dev-artigen-app-fengfan.onrender.com`
 - 部署分支：`dev`（push 后自动部署）
-- 云端数据库：`dev_artigen`
+- 云端数据库：Aiven Free PostgreSQL 16 的独立 `dev_artigen`
 - 本机前端：`http://localhost:4000`
 - 本机后端：`http://localhost:8080`
 - 本机数据库：`artigen_dev`
@@ -37,6 +37,31 @@ DEV 默认采用以下安全门：
 7. DEV 与生产使用不同域名，因此 HttpOnly Session Cookie 也相互隔离。
 8. 页面行为、模型用量、图片历史和内容审计写入 `dev_artigen` PostgreSQL；它们不依赖
    Render 临时磁盘。原始 prompt、文件名、图片地址和输入内容不会写入这些记录。
+9. 生产继续使用原 Neon `neondb`；DEV 不得连接、迁移或回填生产数据库，也不复制旧 DEV
+   历史。Aiven DEV 从空库迁移，只创建合成测试账户。
+
+## Aiven Free PostgreSQL 16
+
+DEV 使用两个数据库身份，连接串和 CA 只保存在 Render Secret 与 macOS Keychain：
+
+- `DATABASE_MIGRATION_URL` 使用 `artigen_migrator`，仅在部署启动时取得迁移锁并管理
+  `public` 中的迁移对象。
+- `DATABASE_URL` 使用 `artigen_runtime`，只拥有应用读写、序列以及其自有 `pgboss`
+  schema 所需权限。
+
+所有连接必须验证 TLS 证书。Aiven CA 以 `PG_SSL_CA_BASE64` 注入；禁止通过
+`PG_SSL_REJECT_UNAUTHORIZED=0`、`NODE_TLS_REJECT_UNAUTHORIZED=0` 或 `sslmode=disable`
+绕过验证。
+
+免费层连接预算固定为：
+
+- Render DEV：`PG_POOL_MAX=3`、`PGBOSS_POOL_MAX=2`、`AGENT_PGBOSS_POOL_MAX=2`。
+- Mac DEV Worker：同样固定为 `3/2/2`；生产 Worker 的现有默认值不变。
+- Live Harness：`AGENT_LIVE_EVAL_PG_POOL_MAX=3`。
+
+签名 Live gate 会在任何真实 Provider dispatch 前核验数据库名、PostgreSQL 主版本和
+连接余量。数据库必须精确为 `dev_artigen`、主版本为 16，且探针执行时至少还有 4 个
+可用连接；不满足时停止测试，不升级套餐，也不通过关闭 TLS 或挤占连接继续运行。
 
 ## 本机启动
 
@@ -99,7 +124,7 @@ PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
 
 涉及后台或数据迁移时，还要检查：
 
-- `/readyz` 返回数据库迁移 `021_design_conversations` 且 `ok=true`。
+- `/readyz` 返回数据库迁移 `025_agent_runtime_v2_1_durability` 且 `ok=true`。
 - `/readyz` 返回
   `adminConsoleEnabled=true`、`behaviorAnalyticsEnabled=true`、
   `databaseRequired=true`；任一不符都视为配置漂移，不能继续提 `dev -> main`。

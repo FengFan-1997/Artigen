@@ -31,6 +31,38 @@ test('Render keeps same-origin frontend bases and uses shallow liveness', () => 
   assert.match(blueprint, /^\s+- key: TURNSTILE_HOSTNAMES\s*\n\s+sync: false\s*$/m);
 });
 
+test('Render DEV blueprint preserves Aiven free-tier connection and TLS boundaries', () => {
+  const blueprint = readRepoFile('render.dev.yaml');
+
+  for (const [name, value] of Object.entries({
+    PG_POOL_MAX: '3',
+    PG_SSL_REJECT_UNAUTHORIZED: '1',
+    PGBOSS_SCHEMA: 'pgboss',
+    PGBOSS_POOL_MAX: '2',
+    AGENT_PGBOSS_POOL_MAX: '2',
+    ASSET_STORAGE_DRIVER: 's3',
+    S3_FORCE_PATH_STYLE: '1'
+  })) {
+    assert.match(
+      blueprint,
+      new RegExp(`^\\s+- key: ${name}\\s*\\n\\s+value: ["']?${value}["']?\\s*$`, 'm')
+    );
+  }
+  for (const name of [
+    'DATABASE_URL',
+    'DATABASE_MIGRATION_URL',
+    'PG_SSL_CA_BASE64',
+    'S3_ENDPOINT',
+    'S3_ACCESS_KEY_ID',
+    'S3_SECRET_ACCESS_KEY'
+  ]) {
+    assert.match(
+      blueprint,
+      new RegExp(`^\\s+- key: ${name}\\s*\\n\\s+sync: false\\s*$`, 'm')
+    );
+  }
+});
+
 test('CI configures a distinct session-token hashing secret', () => {
   const workflow = readRepoFile('.github/workflows/ci.yml');
   const csrfSecret = workflowEnvValue(workflow, 'CSRF_SECRET');
@@ -52,6 +84,10 @@ test('Mac Agent worker pins image pricing and the SiliconFlow output host', () =
   assert.match(runner, /AGENT_IMAGE_REFERENCE_CREDITS:[\s\S]*\|\| '12'/);
   assert.match(runner, /AGENT_MODEL_NAME:\s*'Qwen\/Qwen3-8B'/);
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
+  assert.match(runner, /optionalSecretNames = \['PG_SSL_CA_BASE64'\]/);
+  assert.match(runner, /PG_POOL_MAX:[\s\S]*profile === 'dev' \? '3' : '10'/);
+  assert.match(runner, /PGBOSS_POOL_MAX:[\s\S]*profile === 'dev' \? '2' : '5'/);
+  assert.match(runner, /AGENT_PGBOSS_POOL_MAX:[\s\S]*profile === 'dev' \? '2' : '3'/);
   assert.match(installer, /ARTIGEN_AGENT_SUBAGENTS_ENABLED/);
   assert.match(installer, /<key>AGENT_SUBAGENTS_ENABLED<\/key>/);
   assert.match(installer, /<key>\$\{name\}<\/key>/);
@@ -108,7 +144,10 @@ test('Mac Agent installer persists the reviewed V2 launch profile', {
       AGENT_PROVIDER_SCHEDULER_ENABLED: 'true',
       AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '20',
       AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '160',
-      AGENT_RUNTIME_ACTOR_PROFILE: 'stable-v1'
+      AGENT_RUNTIME_ACTOR_PROFILE: 'stable-v1',
+      PG_POOL_MAX: '3',
+      PGBOSS_POOL_MAX: '2',
+      AGENT_PGBOSS_POOL_MAX: '2'
     })) {
       assert.match(plist, new RegExp(`<key>${name}<\\/key><string>${value}<\\/string>`));
     }

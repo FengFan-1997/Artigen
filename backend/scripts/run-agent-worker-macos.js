@@ -46,6 +46,7 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     'S3_ACCESS_KEY_ID',
     'S3_SECRET_ACCESS_KEY'
   ];
+  const optionalSecretNames = ['PG_SSL_CA_BASE64'];
   if (
     profile === 'production' &&
     String(process.env.AGENT_BETA_MODE || '').trim() === 'owner-only-v1'
@@ -57,6 +58,10 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     const value = readMacOsKeychainSecret({ service, account: name });
     if (!value) missing.push(name);
     else workerEnv[name] = value;
+  }
+  for (const name of optionalSecretNames) {
+    const value = readMacOsKeychainSecret({ service, account: name });
+    if (value) workerEnv[name] = value;
   }
   if (missing.length) {
     console.error(`AGENT_${profile.toUpperCase()}_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
@@ -134,6 +139,11 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     AGENT_MEMORY_MB: '4096',
     AGENT_DISK_GB: '10',
     AGENT_WORKER_CONCURRENCY: String(process.env.AGENT_WORKER_CONCURRENCY || '2'),
+    PG_POOL_MAX: String(process.env.PG_POOL_MAX || (profile === 'dev' ? '3' : '10')),
+    PGBOSS_POOL_MAX: String(process.env.PGBOSS_POOL_MAX || (profile === 'dev' ? '2' : '5')),
+    AGENT_PGBOSS_POOL_MAX: String(
+      process.env.AGENT_PGBOSS_POOL_MAX || (profile === 'dev' ? '2' : '3')
+    ),
     ASSET_STORAGE_DRIVER: 's3',
     S3_FORCE_PATH_STYLE: '1',
     CUA_PYTHON: path.join(backendRoot, '.venv-agent/bin/python'),

@@ -9,6 +9,7 @@ if (!['dev', 'production'].includes(profile)) {
   console.error('Usage: node backend/scripts/install-agent-worker-launchagent.js dev|production');
   process.exit(64);
 }
+const production = profile === 'production';
 if (process.platform !== 'darwin') {
   console.error('AGENT_LAUNCHAGENT_MACOS_ONLY');
   process.exit(64);
@@ -44,6 +45,14 @@ const normalizePositiveNumber = (name, fallback) => {
   if (!Number.isFinite(value) || value <= 0) throw new TypeError(`${name}_INVALID`);
   return String(value);
 };
+const normalizePoolSize = (name, fallback, maximum) => {
+  const raw = String(process.env[name] ?? fallback).trim();
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 2 || value > maximum) {
+    throw new TypeError(`${name}_INVALID`);
+  }
+  return String(value);
+};
 const actorProfile = String(
   process.env.AGENT_RUNTIME_ACTOR_PROFILE || 'stable-v1'
 ).trim();
@@ -65,7 +74,14 @@ const workerRuntimeSettings = Object.freeze({
     'AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION',
     160
   ),
-  AGENT_RUNTIME_ACTOR_PROFILE: actorProfile
+  AGENT_RUNTIME_ACTOR_PROFILE: actorProfile,
+  PG_POOL_MAX: normalizePoolSize('PG_POOL_MAX', production ? 10 : 3, 30),
+  PGBOSS_POOL_MAX: normalizePoolSize('PGBOSS_POOL_MAX', production ? 5 : 2, 20),
+  AGENT_PGBOSS_POOL_MAX: normalizePoolSize(
+    'AGENT_PGBOSS_POOL_MAX',
+    production ? 3 : 2,
+    10
+  )
 });
 const escapeXml = (value) => String(value)
   .replaceAll('&', '&amp;')
@@ -74,7 +90,6 @@ const escapeXml = (value) => String(value)
 
 fs.mkdirSync(launchAgents, { recursive: true, mode: 0o700 });
 fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
-const production = profile === 'production';
 const keychainService = production
   ? 'artigen-agent-production-worker'
   : 'artigen-agent-dev-worker';

@@ -55,6 +55,9 @@ const {
 } = require('../evaluation/harness/live-eval-gate');
 const { RuntimeTestController } = require('../evaluation/harness/runtime-test-controller');
 const { RuntimeTraceSink } = require('../evaluation/harness/runtime-trace-sink');
+const {
+  assertLiveEvalDatabaseReadiness
+} = require('../evaluation/harness/live-eval-database-readiness');
 const { requestPromptHash } = require('../evaluation/harness/scripted-siliconflow-transport');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const {
@@ -115,15 +118,89 @@ test('Live Harness V3.1 accepts only the exact dev_artigen database identity', (
   );
 });
 
-test('Live eval database pool fails closed on checkout and query stalls', () => {
-  const options = liveEvalPoolOptions({ connectionString: 'postgres://synthetic.invalid/dev_artigen' });
-  assert.equal(options.connectionString, 'postgres://synthetic.invalid/dev_artigen');
-  assert.equal(options.max, 20);
+test('Live eval database pool verifies TLS and stays within the free-tier cap', () => {
+  const ca = Buffer.from('fixture-ca').toString('base64');
+  const options = liveEvalPoolOptions({
+    connectionString: 'postgres://synthetic.invalid/dev_artigen?sslmode=verify-full',
+    env: { AGENT_LIVE_EVAL_PG_POOL_MAX: '3', PG_SSL_CA_BASE64: ca }
+  });
+  assert.equal(
+    options.connectionString,
+    'postgres://synthetic.invalid/dev_artigen?sslmode=verify-full'
+  );
+  assert.equal(options.max, 3);
+  assert.deepEqual(options.ssl, { rejectUnauthorized: true, ca: 'fixture-ca' });
   assert.equal(options.allowExitOnIdle, true);
   assert.equal(options.connectionTimeoutMillis, 15_000);
   assert.equal(options.query_timeout, 30_000);
   assert.equal(options.statement_timeout, 30_000);
   assert.equal(options.application_name, 'artigen-agent-live-eval');
+  assert.throws(
+    () => liveEvalPoolOptions({
+      connectionString: 'postgres://synthetic.invalid/dev_artigen',
+      env: { AGENT_LIVE_EVAL_PG_POOL_MAX: '4' }
+    }),
+    /AGENT_LIVE_EVAL_PG_POOL_MAX_INVALID/
+  );
+});
+
+test('Live eval database readiness requires PG16, dev_artigen and four free connections', async () => {
+  const makePool = (row) => ({
+    async query(input) {
+      assert.match(String(input.text), /pg_stat_activity/);
+      assert.equal(input.query_timeout, 10_000);
+      return { rows: [row] };
+    }
+  });
+  const ready = await assertLiveEvalDatabaseReadiness({
+    pool: makePool({
+      database_name: 'dev_artigen',
+      server_version_num: 160010,
+      max_connections: 20,
+      used_connections: 16
+    })
+  });
+  assert.deepEqual(ready, {
+    databaseName: 'dev_artigen',
+    postgresMajor: 16,
+    maxConnections: 20,
+    usedConnections: 16,
+    availableConnections: 4,
+    requiredAvailableConnections: 4
+  });
+  await assert.rejects(
+    assertLiveEvalDatabaseReadiness({
+      pool: makePool({
+        database_name: 'dev_artigen',
+        server_version_num: 160010,
+        max_connections: 20,
+        used_connections: 17
+      })
+    }),
+    /AGENT_LIVE_EVAL_DATABASE_HEADROOM_INSUFFICIENT/
+  );
+  await assert.rejects(
+    assertLiveEvalDatabaseReadiness({
+      pool: makePool({
+        database_name: 'neondb',
+        server_version_num: 160010,
+        max_connections: 20,
+        used_connections: 1
+      })
+    }),
+    /AGENT_LIVE_EVAL_DATABASE_FORBIDDEN/
+  );
+  await assert.rejects(
+    assertLiveEvalDatabaseReadiness({
+      pool: makePool({
+        database_name: 'dev_artigen',
+        server_version_num: 170000,
+        max_connections: 20,
+        used_connections: 1
+      })
+    }),
+    /AGENT_LIVE_EVAL_POSTGRES_VERSION_NOT_READY/
+  );
 });
 
 test('Live Harness V3.1 claims a signed campaign once in durable PostgreSQL state', async () => {
@@ -329,7 +406,8 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     ['S3_ACCESS_KEY_ID', 'access-key'],
     ['S3_SECRET_ACCESS_KEY', 'secret-key'],
     ['AGENT_LIVE_EVAL_GATE_KEY', `v1:hex:${'ab'.repeat(32)}`],
-    ['AGENT_LIVE_EVAL_EVIDENCE_KEY', `v1:hex:${'ef'.repeat(32)}`]
+    ['AGENT_LIVE_EVAL_EVIDENCE_KEY', `v1:hex:${'ef'.repeat(32)}`],
+    ['PG_SSL_CA_BASE64', Buffer.from('fixture-ca').toString('base64')]
   ]);
   const loaded = loadLiveEvalSecrets({
     env: {},
@@ -346,6 +424,11 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
   assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION, '20');
   assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION, '160');
   assert.equal(loaded.runtimeEnv.S3_FORCE_PATH_STYLE, '1');
+  assert.equal(loaded.runtimeEnv.AGENT_LIVE_EVAL_PG_POOL_MAX, '3');
+  assert.equal(loaded.runtimeEnv.PG_POOL_MAX, '3');
+  assert.equal(loaded.runtimeEnv.PGBOSS_POOL_MAX, '2');
+  assert.equal(loaded.runtimeEnv.AGENT_PGBOSS_POOL_MAX, '2');
+  assert.equal(loaded.runtimeEnv.PG_SSL_CA_BASE64, secrets.get('PG_SSL_CA_BASE64'));
   assert.equal(loaded.evidenceKeyMaterial, secrets.get('AGENT_LIVE_EVAL_EVIDENCE_KEY'));
   assert.throws(
     () => loadLiveEvalSecrets({ service: 'artigen-production', readSecret: () => 'x' }),
