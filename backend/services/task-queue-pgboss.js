@@ -34,6 +34,10 @@ const bossConfig = (env = process.env) => {
     connectionString,
     application_name: 'artigen-pgboss',
     schema: String(env.PGBOSS_SCHEMA || 'pgboss').trim() || 'pgboss',
+    // The DEV migrator provisions pgboss and the boundary check proves that
+    // artigen_runtime owns it. Skipping CREATE SCHEMA here preserves least
+    // privilege without changing production's existing bootstrap behavior.
+    createSchema: String(env.APP_ENV || '').trim().toLowerCase() !== 'dev',
     ssl: resolvePoolSsl(connectionString, env),
     max: Math.max(2, Math.min(20, Number(env.PGBOSS_POOL_MAX || 5) || 5)),
     useListenNotify: !['0', 'false', 'no', 'off'].includes(

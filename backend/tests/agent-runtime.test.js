@@ -593,8 +593,18 @@ const {
 } = require('../services/agent-image-service');
 const {
   AgentQueueWorker,
-  attachBossErrorLogging
+  attachBossErrorLogging,
+  bossConfig: agentBossConfig
 } = require('../services/agent-queue-service');
+
+test('DEV Agent queue uses the pre-provisioned pg-boss schema without database CREATE', () => {
+  const databaseUrl = 'postgresql://runtime@localhost:5432/dev_artigen';
+  assert.equal(agentBossConfig({ DATABASE_URL: databaseUrl, APP_ENV: 'dev' }).createSchema, false);
+  assert.equal(
+    agentBossConfig({ DATABASE_URL: databaseUrl, APP_ENV: 'production' }).createSchema,
+    true
+  );
+});
 
 const encryptionEnv = {
   AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`

@@ -31,6 +31,12 @@ const bossConfig = (env = process.env) => {
     connectionString,
     application_name: 'artigen-agent-pgboss',
     schema: String(env.PGBOSS_SCHEMA || 'pgboss').trim() || 'pgboss',
+    // DEV provisions and ownership-checks the pg-boss schema before either
+    // runtime starts. Avoid requiring the restricted runtime role to hold
+    // database-wide CREATE merely so pg-boss can repeat CREATE SCHEMA IF NOT
+    // EXISTS during every startup. Production keeps the historical bootstrap
+    // behavior until its database is moved to the same split-role boundary.
+    createSchema: String(env.APP_ENV || '').trim().toLowerCase() !== 'dev',
     ssl: resolvePoolSsl(connectionString, env),
     max: Math.max(2, Math.min(10, Number(env.AGENT_PGBOSS_POOL_MAX || 3) || 3)),
     useListenNotify: true

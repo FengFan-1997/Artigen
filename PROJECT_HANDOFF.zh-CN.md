@@ -8,12 +8,14 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
-## 2026-09-01 DEV 长期免费数据库隔离决定（候选实现，未切换）
+## 2026-09-01 DEV 长期免费数据库隔离与最小权限收口（DEV 切换中）
 
-- 长期免费是本次数据库选择的第一优先级。生产继续独占现有 Neon PostgreSQL 16 与私有 S3，不迁移、不复制、不改变生产数据；DEV 计划改用独立的 Aiven Free PostgreSQL 18 空库 `dev_artigen`，不复制旧 DEV 历史，也不绑定信用卡或升级付费套餐。
-- Aiven Free 当前只提供 PostgreSQL 18，免费边界为 1 GB、20 个连接且无 SLA，长时间不活跃可能暂停。已在本机 PostgreSQL 18 对迁移 001–025、`pgcrypto`、`citext`、advisory lock、`LISTEN/NOTIFY`、`FOR UPDATE SKIP LOCKED`、JSONB 与 pg-boss schema v37 完成一次性兼容性验证；该本地证据不等同于 Aiven 云端或 DEV 部署验收。
-- 候选代码将 DEV 主版本、目标主机、`dev_artigen`、`artigen_migrator` / `artigen_runtime`、验证 TLS 与 `3/2/2` 连接池设为启动前硬门；Live Harness 每次真实 Provider dispatch 前还要求至少 4 个可用连接。生产迁移、备份与恢复工具继续固定 PostgreSQL 16。
-- 本节记录时 Aiven 数据库尚未创建，Render DEV、Vercel Preview 与 Mac DEV Worker 尚未切换；Runtime V2、公众 rollout 与 owner canary 继续关闭。只有 feature PR required CI 全绿并合入 `dev` 后，才允许创建免费服务、注入 Secret、执行空库迁移和 DEV 实机验收。
+- 长期免费是本次数据库选择的第一优先级。生产继续独占现有 Neon PostgreSQL 16 与私有 S3，不迁移、不复制、不改变生产数据；DEV 已创建独立 Aiven Free PostgreSQL 18 空库 `dev_artigen`，未复制旧 DEV 历史、未添加付款方式，也未升级付费套餐。
+- Aiven 服务 `artigen-dev-pg` 当前为 Running，PostgreSQL 18.6，规格 Free / `$0`、1 GB、20 个连接且无 SLA，长时间不活跃可能暂停。`dev_artigen` 已启用 `pgcrypto` 与 `citext`，使用 `artigen_migrator` / `artigen_runtime` 双角色边界并完成正式迁移 001–025；运行账号不拥有数据库级 `CREATE`，`public` 与 `pgboss` schema 所有权和默认权限已实测核验。凭据与 CA 仅存于 macOS Keychain 和 Render DEV Secret，未进入仓库或本文档。
+- PR #149 与 #150 在 required CI 全绿后正常合入 `dev`，当前已部署基线为 `cdee6285c5a6d55932b6723a69ad3a2c49e9d183`。代码将 DEV 主版本、目标主机、数据库名、角色、验证 TLS 与 `3/2/2` 连接池设为启动前硬门；Live Harness 每次真实 Provider dispatch 前还要求至少 4 个可用连接。生产迁移、备份与恢复工具继续固定 PostgreSQL 16。
+- Render DEV deployment `dep-dab9imf40ujc73a8gqqg` 已 `live` 且精确运行 `cdee628...`；Vercel Preview deployment `6197909236` 为同 SHA `success`。带 DEV 门禁实测 `/healthz`、`/api/meta`、`/readyz`、`/api/agent/status`、设计助手和生图模型接口均 HTTP 200：migration 025、数据库、S3、Provider 和 `durability.pricingReady=true`，Qwen/Kolors 锁定正确，Runtime V2=false、公众 rollout=0。
+- Mac DEV Worker 已指向 exact `cdee628...`，真实启动随后暴露最小权限兼容问题：pg-boss 即使 schema 已存在仍默认执行 `CREATE SCHEMA IF NOT EXISTS`，受限运行账号因此返回 PostgreSQL `42501`。本地候选 `codex/aiven-dev-pgboss-least-privilege` 只在 DEV 为业务队列和 Agent 队列设置 `createSchema=false`，生产继续保留历史 bootstrap 行为；真实 Aiven 探针、专项 `121/121` 与完整 `pnpm check`（Playwright `543 passed / 3 skipped / 0 failed`）已经通过。
+- 上述 pg-boss 候选在本节更新时尚未 push、PR、合入或重新部署，因此 Worker、浏览器、受限出口和桌面中继仍未形成最终 DEV readiness。尚未执行真实 Qwen/Kolors smoke、签名 gate、完整 24-slot 或图片匿名盲审；不得把 Render/Vercel 已切换或本地门禁全绿表述为整个 Agent 已完成上线。
 
 ## 2026-08-31 PR #143、exact-SHA 本地门禁与外部平台阻断
 
