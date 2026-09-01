@@ -14,6 +14,10 @@ const {
   redactDatabaseUrl,
   runMigrations
 } = require('./lib/postgres-ops');
+const {
+  assertDevDatabaseBoundary,
+  assertDevDatabaseUrlProfile
+} = require('./lib/dev-database-boundary');
 
 const HELP = `
 Run all PostgreSQL migrations under an application-specific advisory lock, then start Artigen.
@@ -154,6 +158,11 @@ const main = async () => {
       migrationUrl ? 'DATABASE_MIGRATION_URL' : 'DATABASE_URL'
     );
   }
+  assertDevDatabaseUrlProfile({
+    migrationUrl,
+    runtimeUrl,
+    env: process.env
+  });
   if (hasFlag(argv, '--dry-run')) {
     console.log(
       JSON.stringify(
@@ -174,13 +183,22 @@ const main = async () => {
     throw new Error('DATABASE_MIGRATION_URL or DATABASE_URL is required; production startup is fail-closed');
   }
 
+  await assertDevDatabaseBoundary({
+    migrationUrl,
+    runtimeUrl,
+    env: process.env
+  });
   await migrate(connectionString);
   if (hasFlag(argv, '--migrate-only')) return;
   const exitCode = await startServer();
   process.exitCode = exitCode;
 };
 
-main().catch((error) => {
-  console.error(`[start:production] ${error.message}`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`[start:production] ${error.message}`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { main, migrate };

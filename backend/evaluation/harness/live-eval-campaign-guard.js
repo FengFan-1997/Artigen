@@ -20,7 +20,8 @@ class LiveEvalCampaignGuard {
     matrixHash,
     maxQwenCalls = 200,
     maxKolorsCalls = 16,
-    maxWallClockMs = 8 * 60 * 60 * 1000
+    maxWallClockMs = 8 * 60 * 60 * 1000,
+    beforeDispatch = null
   } = {}) {
     if (!pool || typeof pool.connect !== 'function') {
       throw new TypeError('AGENT_LIVE_EVAL_CAMPAIGN_POOL_REQUIRED');
@@ -42,6 +43,10 @@ class LiveEvalCampaignGuard {
       60_000,
       Math.min(8 * 60 * 60 * 1000, Number(maxWallClockMs) || 8 * 60 * 60 * 1000)
     );
+    if (beforeDispatch !== null && typeof beforeDispatch !== 'function') {
+      throw new TypeError('AGENT_LIVE_EVAL_BEFORE_DISPATCH_INVALID');
+    }
+    this.beforeDispatch = beforeDispatch;
     this.claimed = false;
     this.campaignCheckId = null;
     this.deadlineAt = null;
@@ -175,6 +180,16 @@ class LiveEvalCampaignGuard {
         `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
         [`agent-live-eval-dispatch:${this.campaignHash}`]
       );
+      if (this.beforeDispatch) {
+        await this.beforeDispatch({
+          pool: client,
+          kind,
+          runId,
+          slotId,
+          runtimeVersion,
+          phase
+        });
+      }
       const campaign = await client.query(
         `SELECT metrics,clock_timestamp() AS now
            FROM agent_quality_checks

@@ -3,8 +3,13 @@
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { Pool } = require('pg');
 
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const { resolvePoolSsl } = require('../db/pool');
+const {
+  assertLiveEvalDatabaseReadiness
+} = require('../evaluation/harness/live-eval-database-readiness');
 const {
   LIVE_EVAL_MATRIX_HASH
 } = require('../evaluation/harness/agent-live-eval-matrix');
@@ -69,6 +74,33 @@ const main = async () => {
     { cwd: repositoryRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
   ).trim()) * 1000;
   assertGateAttestationProvenance({ attestation, commitSha, commitTimestampMs });
+  const databaseUrl = readMacOsKeychainSecret({ service, account: 'DATABASE_URL' });
+  if (!databaseUrl) throw new Error('AGENT_LIVE_EVAL_DATABASE_URL_REQUIRED');
+  const caBase64 = readMacOsKeychainSecret({ service, account: 'PG_SSL_CA_BASE64' });
+  const databaseEnv = {
+    ...process.env,
+    PG_SSL_CA: '',
+    PG_SSL_CA_BASE64: '',
+    PG_SSL_REQUIRED: '1',
+    PG_SSL_REJECT_UNAUTHORIZED: '1',
+    ...(caBase64 ? { PG_SSL_CA_BASE64: caBase64 } : {})
+  };
+  const readinessPool = new Pool({
+    connectionString: databaseUrl,
+    max: 1,
+    allowExitOnIdle: true,
+    connectionTimeoutMillis: 15_000,
+    query_timeout: 10_000,
+    statement_timeout: 10_000,
+    application_name: 'artigen-agent-live-eval-gate',
+    ssl: resolvePoolSsl(databaseUrl, databaseEnv)
+  });
+  let databaseReadiness;
+  try {
+    databaseReadiness = await assertLiveEvalDatabaseReadiness({ pool: readinessPool });
+  } finally {
+    await readinessPool.end();
+  }
   const manifest = createSignedGateManifest({
     campaignId: attestation.campaignId,
     commitSha,
@@ -89,6 +121,7 @@ const main = async () => {
     campaignId: manifest.campaignId,
     commitSha: manifest.commitSha,
     matrixHash: manifest.matrixHash,
+    databaseReadiness,
     outputPath
   })}\n`);
 };

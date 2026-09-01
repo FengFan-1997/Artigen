@@ -7,6 +7,10 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const { resolvePoolSsl } = require('../db/pool');
+const {
+  assertLiveEvalDatabaseReadiness
+} = require('../evaluation/harness/live-eval-database-readiness');
 
 const KEYCHAIN_SERVICE = String(
   process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-dev-worker'
@@ -24,7 +28,8 @@ const secretNames = [
 ];
 const optionalSecretNames = [
   'AGENT_WORKER_RELAY_SECRET',
-  'AGENT_WORKER_RELAY_URL'
+  'AGENT_WORKER_RELAY_URL',
+  'PG_SSL_CA_BASE64'
 ];
 const LIVE_EVAL_DB_CONNECTION_TIMEOUT_MS = 15_000;
 const LIVE_EVAL_DB_QUERY_TIMEOUT_MS = 30_000;
@@ -42,19 +47,26 @@ const LIVE_EVAL_DB_CONNECTION_CODES = new Set([
   '57P03'
 ]);
 
-const liveEvalPoolOptions = ({ connectionString } = {}) => ({
-  connectionString,
-  max: 20,
-  allowExitOnIdle: true,
-  // A real DEV database can temporarily refuse a new connection while its
-  // existing sessions remain healthy. Never let a signed campaign wait
-  // forever for a pool checkout or a database response: fail closed so the
-  // slot journal, cleanup evidence and Provider counters remain auditable.
-  connectionTimeoutMillis: LIVE_EVAL_DB_CONNECTION_TIMEOUT_MS,
-  query_timeout: LIVE_EVAL_DB_QUERY_TIMEOUT_MS,
-  statement_timeout: LIVE_EVAL_DB_QUERY_TIMEOUT_MS,
-  application_name: 'artigen-agent-live-eval'
-});
+const liveEvalPoolOptions = ({ connectionString, env = process.env } = {}) => {
+  const poolMax = Number(env.AGENT_LIVE_EVAL_PG_POOL_MAX || 3);
+  if (!Number.isInteger(poolMax) || poolMax < 1 || poolMax > 3) {
+    throw new TypeError('AGENT_LIVE_EVAL_PG_POOL_MAX_INVALID');
+  }
+  return {
+    connectionString,
+    max: poolMax,
+    allowExitOnIdle: true,
+    // A real DEV database can temporarily refuse a new connection while its
+    // existing sessions remain healthy. Never let a signed campaign wait
+    // forever for a pool checkout or a database response: fail closed so the
+    // slot journal, cleanup evidence and Provider counters remain auditable.
+    connectionTimeoutMillis: LIVE_EVAL_DB_CONNECTION_TIMEOUT_MS,
+    query_timeout: LIVE_EVAL_DB_QUERY_TIMEOUT_MS,
+    statement_timeout: LIVE_EVAL_DB_QUERY_TIMEOUT_MS,
+    application_name: 'artigen-agent-live-eval',
+    ssl: resolvePoolSsl(connectionString, env)
+  };
+};
 
 const isLiveEvalDatabaseConnectionError = (input) => {
   let error = input;
@@ -100,6 +112,10 @@ const loadLiveEvalSecrets = ({
     throw new Error('AGENT_LIVE_EVAL_KEYCHAIN_SERVICE_INVALID');
   }
   const runtimeEnv = { ...env };
+  // Local provider/database trust material must come from the dedicated DEV
+  // Keychain service, never from an inherited shell environment.
+  delete runtimeEnv.PG_SSL_CA;
+  delete runtimeEnv.PG_SSL_CA_BASE64;
   const missing = [];
   for (const name of [...secretNames, ...optionalSecretNames]) {
     const value = readSecret({ service, account: name });
@@ -121,6 +137,12 @@ const loadLiveEvalSecrets = ({
     APP_ENV: 'dev',
     AGENT_LIVE_EVAL_MODE: 'true',
     AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1',
+    AGENT_LIVE_EVAL_PG_POOL_MAX: '3',
+    PG_POOL_MAX: '3',
+    PGBOSS_POOL_MAX: '2',
+    AGENT_PGBOSS_POOL_MAX: '2',
+    PG_SSL_REQUIRED: '1',
+    PG_SSL_REJECT_UNAUTHORIZED: '1',
     // The DEV object store uses a custom endpoint whose wildcard certificate
     // covers the endpoint host, not bucket.endpoint virtual-host requests.
     // Path-style requests preserve normal TLS verification; never disable it.
@@ -759,7 +781,8 @@ const main = async () => {
   await writeReport({ report: journal, reportDir, reportPath: journalPath });
   await purgeExpiredEvidence({ rootDir: artifactRoot, retentionDays: 30 });
   const pool = new Pool(liveEvalPoolOptions({
-    connectionString: runtimeEnv.DATABASE_URL
+    connectionString: runtimeEnv.DATABASE_URL,
+    env: runtimeEnv
   }));
   let harness = null;
   const poolState = installLiveEvalPoolErrorHandler({
@@ -779,6 +802,7 @@ const main = async () => {
   });
   try {
     await poolState.assertHealthy();
+    await assertLiveEvalDatabaseReadiness({ pool });
     harness = await AgentLiveEvalHarness.create({
       pool,
       env: process.env,

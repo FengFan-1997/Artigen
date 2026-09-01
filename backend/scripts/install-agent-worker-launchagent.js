@@ -3,12 +3,14 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { resolveAgentWorkerPoolProfile } = require('./lib/agent-worker-pool-profile');
 
 const profile = String(process.argv[2] || '').trim().toLowerCase();
 if (!['dev', 'production'].includes(profile)) {
   console.error('Usage: node backend/scripts/install-agent-worker-launchagent.js dev|production');
   process.exit(64);
 }
+const production = profile === 'production';
 if (process.platform !== 'darwin') {
   console.error('AGENT_LAUNCHAGENT_MACOS_ONLY');
   process.exit(64);
@@ -51,8 +53,15 @@ if (!['stable-v1', 'exploratory-v1'].includes(actorProfile)) {
   throw new TypeError('AGENT_RUNTIME_ACTOR_PROFILE_INVALID');
 }
 const workerRuntimeSettings = Object.freeze({
-  AGENT_RUNTIME_V2_ENABLED: normalizeBoolean('AGENT_RUNTIME_V2_ENABLED'),
-  AGENT_RUNTIME_V2_ROLLOUT_PERCENT: normalizePercent('AGENT_RUNTIME_V2_ROLLOUT_PERCENT'),
+  AGENT_RUNTIME_V2_ENABLED: production
+    ? normalizeBoolean('AGENT_RUNTIME_V2_ENABLED')
+    : 'false',
+  AGENT_RUNTIME_V2_ROLLOUT_PERCENT: production
+    ? normalizePercent('AGENT_RUNTIME_V2_ROLLOUT_PERCENT')
+    : '0',
+  AGENT_RUNTIME_V2_CANARY_USER_IDS: production
+    ? String(process.env.AGENT_RUNTIME_V2_CANARY_USER_IDS || '').trim()
+    : '',
   DESIGN_PLANNER_V2_ENABLED: normalizeBoolean('DESIGN_PLANNER_V2_ENABLED'),
   AGENT_ADAPTIVE_REASONING_ENABLED: normalizeBoolean('AGENT_ADAPTIVE_REASONING_ENABLED'),
   AGENT_PROJECT_MEMORY_ENABLED: normalizeBoolean('AGENT_PROJECT_MEMORY_ENABLED'),
@@ -65,7 +74,8 @@ const workerRuntimeSettings = Object.freeze({
     'AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION',
     160
   ),
-  AGENT_RUNTIME_ACTOR_PROFILE: actorProfile
+  AGENT_RUNTIME_ACTOR_PROFILE: actorProfile,
+  ...resolveAgentWorkerPoolProfile({ profile, env: process.env })
 });
 const escapeXml = (value) => String(value)
   .replaceAll('&', '&amp;')
@@ -74,7 +84,6 @@ const escapeXml = (value) => String(value)
 
 fs.mkdirSync(launchAgents, { recursive: true, mode: 0o700 });
 fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
-const production = profile === 'production';
 const keychainService = production
   ? 'artigen-agent-production-worker'
   : 'artigen-agent-dev-worker';

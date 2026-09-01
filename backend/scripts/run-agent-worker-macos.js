@@ -3,6 +3,7 @@
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const { resolveAgentWorkerPoolProfile } = require('./lib/agent-worker-pool-profile');
 
 const root = path.resolve(__dirname, '../..');
 const backendRoot = path.resolve(__dirname, '..');
@@ -24,9 +25,20 @@ if (dockerCheck.status !== 0) {
 }
 
 const workerEnv = { ...process.env };
+// Local database trust material is sourced only from the selected Keychain
+// service so an inherited shell value cannot change the worker trust root.
+delete workerEnv.PG_SSL_CA;
+delete workerEnv.PG_SSL_CA_BASE64;
 const subagentsEnabled = /^(1|true|yes|on)$/i.test(
   String(process.env.AGENT_SUBAGENTS_ENABLED || '').trim()
 );
+let workerPoolProfile;
+try {
+  workerPoolProfile = resolveAgentWorkerPoolProfile({ profile, env: process.env });
+} catch (error) {
+  console.error(error?.message || 'AGENT_WORKER_POOL_PROFILE_INVALID');
+  process.exit(78);
+}
 {
   const defaultService = profile === 'production'
     ? 'artigen-agent-production-worker'
@@ -46,6 +58,7 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     'S3_ACCESS_KEY_ID',
     'S3_SECRET_ACCESS_KEY'
   ];
+  const optionalSecretNames = ['PG_SSL_CA_BASE64'];
   if (
     profile === 'production' &&
     String(process.env.AGENT_BETA_MODE || '').trim() === 'owner-only-v1'
@@ -57,6 +70,10 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     const value = readMacOsKeychainSecret({ service, account: name });
     if (!value) missing.push(name);
     else workerEnv[name] = value;
+  }
+  for (const name of optionalSecretNames) {
+    const value = readMacOsKeychainSecret({ service, account: name });
+    if (value) workerEnv[name] = value;
   }
   if (missing.length) {
     console.error(`AGENT_${profile.toUpperCase()}_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
@@ -79,13 +96,15 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
       process.env.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION || '0'
     ),
     AGENT_MODEL_CONTEXT_TOKENS: String(process.env.AGENT_MODEL_CONTEXT_TOKENS || '16384'),
-    AGENT_RUNTIME_V2_ENABLED: String(process.env.AGENT_RUNTIME_V2_ENABLED || 'false'),
-    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: String(
-      process.env.AGENT_RUNTIME_V2_ROLLOUT_PERCENT || '0'
-    ),
-    AGENT_RUNTIME_V2_CANARY_USER_IDS: String(
-      process.env.AGENT_RUNTIME_V2_CANARY_USER_IDS || ''
-    ),
+    AGENT_RUNTIME_V2_ENABLED: profile === 'dev'
+      ? 'false'
+      : String(process.env.AGENT_RUNTIME_V2_ENABLED || 'false'),
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: profile === 'dev'
+      ? '0'
+      : String(process.env.AGENT_RUNTIME_V2_ROLLOUT_PERCENT || '0'),
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: profile === 'dev'
+      ? ''
+      : String(process.env.AGENT_RUNTIME_V2_CANARY_USER_IDS || ''),
     DESIGN_PLANNER_V2_ENABLED: String(process.env.DESIGN_PLANNER_V2_ENABLED || 'false'),
     AGENT_ADAPTIVE_REASONING_ENABLED: String(
       process.env.AGENT_ADAPTIVE_REASONING_ENABLED || 'false'
@@ -134,6 +153,11 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     AGENT_MEMORY_MB: '4096',
     AGENT_DISK_GB: '10',
     AGENT_WORKER_CONCURRENCY: String(process.env.AGENT_WORKER_CONCURRENCY || '2'),
+    ...workerPoolProfile,
+    ...(profile === 'dev' ? {
+      PG_SSL_REQUIRED: '1',
+      PG_SSL_REJECT_UNAUTHORIZED: '1'
+    } : {}),
     ASSET_STORAGE_DRIVER: 's3',
     S3_FORCE_PATH_STYLE: '1',
     CUA_PYTHON: path.join(backendRoot, '.venv-agent/bin/python'),
