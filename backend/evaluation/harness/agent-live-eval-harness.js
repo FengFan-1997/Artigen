@@ -33,7 +33,8 @@ const {
 const { LiveModelAuditor } = require('./live-model-auditor');
 const { LiveEvalCampaignGuard } = require('./live-eval-campaign-guard');
 const {
-  assertLiveEvalDatabaseReadiness
+  assertLiveEvalDatabaseReadiness,
+  resolveLiveEvalPostgresMajor
 } = require('./live-eval-database-readiness');
 const { RuntimeTestController } = require('./runtime-test-controller');
 const { RuntimeTraceSink } = require('./runtime-trace-sink');
@@ -87,6 +88,7 @@ const liveEvalEnv = (base = {}, overrides = {}) => ({
   ...base,
   NODE_ENV: 'test',
   APP_ENV: 'dev',
+  DEV_DATABASE_EXPECTED_MAJOR: '18',
   AGENT_LIVE_EVAL_MODE: 'true',
   AGENT_FEATURE_ENABLED: 'true',
   AGENT_WORKER_ENABLED: '1',
@@ -257,7 +259,10 @@ class AgentLiveEvalHarness {
           instance.env.AGENT_LIVE_EVAL_MAX_WALL_CLOCK_MS || MAX_WALL_CLOCK_MS
         ),
         beforeDispatch: ({ pool: dispatchClient }) =>
-          assertLiveEvalDatabaseReadiness({ pool: dispatchClient })
+          assertLiveEvalDatabaseReadiness({
+            pool: dispatchClient,
+            expectedPostgresMajor: resolveLiveEvalPostgresMajor(instance.env)
+          })
       });
       await instance.campaignGuard.initialize();
       instance.runIds = [];

@@ -23,6 +23,7 @@ const {
 } = require('../scripts/setup-local-pg16');
 const {
   assertDevDatabaseBoundary,
+  assertDevRuntimeDatabaseBoundary,
   assertDevDatabaseUrlProfile
 } = require('../scripts/lib/dev-database-boundary');
 
@@ -41,6 +42,7 @@ const runScript = (script, args, env = {}) =>
       RESTORE_VERIFY_DATABASE_URL: '',
       APP_ENV: '',
       DEV_DATABASE_EXPECTED_HOST: '',
+      DEV_DATABASE_EXPECTED_MAJOR: '',
       PG_SSL_REQUIRED: '',
       PG_SSL_REJECT_UNAUTHORIZED: '',
       ...env
@@ -363,6 +365,7 @@ test('DEV startup accepts only the exact Aiven host, database, role split and ve
   const env = {
     APP_ENV: 'dev',
     DEV_DATABASE_EXPECTED_HOST: host,
+    DEV_DATABASE_EXPECTED_MAJOR: '18',
     PG_SSL_REQUIRED: '1',
     PG_SSL_REJECT_UNAUTHORIZED: '1',
     PG_POOL_MAX: '3',
@@ -371,6 +374,7 @@ test('DEV startup accepts only the exact Aiven host, database, role split and ve
   };
   assert.deepEqual(assertDevDatabaseUrlProfile({ migrationUrl, runtimeUrl, env }), {
     databaseName: 'dev_artigen',
+    expectedPostgresMajor: 18,
     hostname: host,
     migrationUser: 'artigen_migrator',
     runtimeUser: 'artigen_runtime'
@@ -382,6 +386,8 @@ test('DEV startup accepts only the exact Aiven host, database, role split and ve
       env
     },
     { migrationUrl, runtimeUrl, env: { ...env, DEV_DATABASE_EXPECTED_HOST: 'other.invalid' } },
+    { migrationUrl, runtimeUrl, env: { ...env, DEV_DATABASE_EXPECTED_MAJOR: '16' } },
+    { migrationUrl, runtimeUrl, env: { ...env, DEV_DATABASE_EXPECTED_MAJOR: '' } },
     {
       migrationUrl,
       runtimeUrl: runtimeUrl.replace('artigen_runtime', 'postgres'),
@@ -426,13 +432,14 @@ test('DEV startup accepts only the exact Aiven host, database, role split and ve
   assert.match(unsafeDryRun.stderr, /approved Aiven dev_artigen host/);
 });
 
-test('DEV migration boundary verifies live PG16 identities and least-privilege schemas', async () => {
+test('DEV migration boundary verifies live PG18 identities and least-privilege schemas', async () => {
   const host = 'pg-artigen-test.aivencloud.com';
   const migrationUrl = `postgresql://artigen_migrator:secret@${host}/dev_artigen`;
   const runtimeUrl = `postgresql://artigen_runtime:secret@${host}/dev_artigen`;
   const env = {
     APP_ENV: 'dev',
     DEV_DATABASE_EXPECTED_HOST: host,
+    DEV_DATABASE_EXPECTED_MAJOR: '18',
     PG_SSL_REQUIRED: '1',
     PG_SSL_REJECT_UNAUTHORIZED: '1',
     PG_POOL_MAX: '3',
@@ -443,7 +450,7 @@ test('DEV migration boundary verifies live PG16 identities and least-privilege s
     artigen_migrator: {
       database_name: 'dev_artigen',
       database_user: 'artigen_migrator',
-      server_version_num: 160010,
+      server_version_num: 180001,
       public_owner: 'artigen_migrator',
       pgboss_owner: 'artigen_runtime',
       public_usage: true,
@@ -452,7 +459,7 @@ test('DEV migration boundary verifies live PG16 identities and least-privilege s
     artigen_runtime: {
       database_name: 'dev_artigen',
       database_user: 'artigen_runtime',
-      server_version_num: 160010,
+      server_version_num: 180001,
       public_owner: 'artigen_migrator',
       pgboss_owner: 'artigen_runtime',
       public_usage: true,
@@ -490,5 +497,63 @@ test('DEV migration boundary verifies live PG16 identities and least-privilege s
   await assert.rejects(
     assertDevDatabaseBoundary({ migrationUrl, runtimeUrl, env, createClientImpl }),
     /runtime identity is not approved/
+  );
+});
+
+test('Mac DEV Worker verifies the Aiven runtime target, PG18 identity and least privilege', async () => {
+  const host = 'pg-artigen-test.aivencloud.com';
+  const runtimeUrl = `postgresql://artigen_runtime:secret@${host}/dev_artigen`;
+  const env = {
+    APP_ENV: 'dev',
+    DEV_DATABASE_EXPECTED_HOST: host,
+    DEV_DATABASE_EXPECTED_MAJOR: '18',
+    PG_SSL_REQUIRED: '1',
+    PG_SSL_REJECT_UNAUTHORIZED: '1',
+    PG_POOL_MAX: '3',
+    PGBOSS_POOL_MAX: '2',
+    AGENT_PGBOSS_POOL_MAX: '2'
+  };
+  const row = {
+    database_name: 'dev_artigen',
+    database_user: 'artigen_runtime',
+    server_version_num: 180001,
+    public_owner: 'artigen_migrator',
+    pgboss_owner: 'artigen_runtime',
+    public_usage: true,
+    public_create: false
+  };
+  let query;
+  const pool = {
+    async query(input) {
+      query = input;
+      return { rows: [{ ...row }] };
+    }
+  };
+  assert.deepEqual(await assertDevRuntimeDatabaseBoundary({ runtimeUrl, env, pool }), {
+    databaseName: 'dev_artigen',
+    expectedPostgresMajor: 18,
+    hostname: host,
+    runtimeUser: 'artigen_runtime'
+  });
+  assert.equal(query.query_timeout, 10_000);
+  assert.match(query.text, /server_version_num/);
+  await assert.rejects(
+    assertDevRuntimeDatabaseBoundary({
+      runtimeUrl: runtimeUrl.replace('artigen_runtime', 'postgres'),
+      env,
+      pool
+    }),
+    /target or role is not approved/
+  );
+  row.server_version_num = 160010;
+  await assert.rejects(
+    assertDevRuntimeDatabaseBoundary({ runtimeUrl, env, pool }),
+    /identity or privileges are not approved/
+  );
+  row.server_version_num = 180001;
+  row.public_create = true;
+  await assert.rejects(
+    assertDevRuntimeDatabaseBoundary({ runtimeUrl, env, pool }),
+    /identity or privileges are not approved/
   );
 });

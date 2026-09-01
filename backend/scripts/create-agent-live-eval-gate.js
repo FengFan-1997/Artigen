@@ -8,6 +8,7 @@ const { Pool } = require('pg');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
 const { resolvePoolSsl } = require('../db/pool');
 const {
+  EXPECTED_POSTGRES_MAJOR,
   assertLiveEvalDatabaseReadiness
 } = require('../evaluation/harness/live-eval-database-readiness');
 const {
@@ -97,7 +98,10 @@ const main = async () => {
   });
   let databaseReadiness;
   try {
-    databaseReadiness = await assertLiveEvalDatabaseReadiness({ pool: readinessPool });
+    databaseReadiness = await assertLiveEvalDatabaseReadiness({
+      pool: readinessPool,
+      expectedPostgresMajor: EXPECTED_POSTGRES_MAJOR
+    });
   } finally {
     await readinessPool.end();
   }

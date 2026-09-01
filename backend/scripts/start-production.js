@@ -6,6 +6,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env'), quiet: true
 
 const {
   BACKEND_ROOT,
+  EXPECTED_POSTGRES_MAJOR,
   assertDirectPostgresUrl,
   assertSamePostgresDatabaseOrigin,
   assertServerMajor,
@@ -72,13 +73,15 @@ const releaseMigrationLock = async (client) => {
   }
 };
 
-const migrate = async (connectionString) => {
+const migrate = async (connectionString, {
+  expectedPostgresMajor = EXPECTED_POSTGRES_MAJOR
+} = {}) => {
   const client = createClient(connectionString);
   await client.connect();
   let lockHeld = false;
   let operationError = null;
   try {
-    await assertServerMajor(client);
+    await assertServerMajor(client, expectedPostgresMajor);
     await acquireMigrationLock(client);
     lockHeld = true;
     const migrations = await runMigrations({ dbClient: client });
@@ -158,7 +161,7 @@ const main = async () => {
       migrationUrl ? 'DATABASE_MIGRATION_URL' : 'DATABASE_URL'
     );
   }
-  assertDevDatabaseUrlProfile({
+  const devDatabaseProfile = assertDevDatabaseUrlProfile({
     migrationUrl,
     runtimeUrl,
     env: process.env
@@ -183,12 +186,20 @@ const main = async () => {
     throw new Error('DATABASE_MIGRATION_URL or DATABASE_URL is required; production startup is fail-closed');
   }
 
-  await assertDevDatabaseBoundary({
+  const verifiedDevProfile = await assertDevDatabaseBoundary({
     migrationUrl,
     runtimeUrl,
     env: process.env
   });
-  await migrate(connectionString);
+  if (
+    Boolean(devDatabaseProfile) !== Boolean(verifiedDevProfile) ||
+    devDatabaseProfile?.expectedPostgresMajor !== verifiedDevProfile?.expectedPostgresMajor
+  ) {
+    throw new Error('DEV database profile verification changed during startup');
+  }
+  await migrate(connectionString, {
+    expectedPostgresMajor: verifiedDevProfile?.expectedPostgresMajor || EXPECTED_POSTGRES_MAJOR
+  });
   if (hasFlag(argv, '--migrate-only')) return;
   const exitCode = await startServer();
   process.exitCode = exitCode;

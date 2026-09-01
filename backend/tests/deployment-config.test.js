@@ -39,6 +39,7 @@ test('Render DEV blueprint preserves Aiven free-tier connection and TLS boundari
 
   for (const [name, value] of Object.entries({
     PG_POOL_MAX: '3',
+    DEV_DATABASE_EXPECTED_MAJOR: '18',
     PG_SSL_REQUIRED: '1',
     PG_SSL_REJECT_UNAUTHORIZED: '1',
     PGBOSS_SCHEMA: 'pgboss',
@@ -127,8 +128,10 @@ test('Mac Agent worker pins image pricing and the SiliconFlow output host', () =
   assert.match(runner, /optionalSecretNames = \['PG_SSL_CA_BASE64'\]/);
   assert.match(runner, /delete workerEnv\.PG_SSL_CA;/);
   assert.match(runner, /delete workerEnv\.PG_SSL_CA_BASE64;/);
+  assert.match(runner, /secretNames\.push\('DEV_DATABASE_EXPECTED_HOST'\)/);
   assert.match(runner, /resolveAgentWorkerPoolProfile/);
   assert.match(runner, /PG_SSL_REQUIRED:\s*'1'/);
+  assert.match(runner, /DEV_DATABASE_EXPECTED_MAJOR:\s*'18'/);
   assert.match(runner, /PG_SSL_REJECT_UNAUTHORIZED:\s*'1'/);
   assert.match(runner, /AGENT_RUNTIME_V2_ENABLED: profile === 'dev'[\s\S]*\? 'false'/);
   assert.match(runner, /AGENT_RUNTIME_V2_ROLLOUT_PERCENT: profile === 'dev'[\s\S]*\? '0'/);
@@ -137,6 +140,8 @@ test('Mac Agent worker pins image pricing and the SiliconFlow output host', () =
   assert.match(installer, /<key>AGENT_SUBAGENTS_ENABLED<\/key>/);
   assert.match(installer, /<key>\$\{name\}<\/key>/);
   assert.match(installer, /AGENT_RUNTIME_V2_ENABLED/);
+  assert.match(installer, /DEV_DATABASE_EXPECTED_MAJOR/);
+  assert.match(readRepoFile('backend/scripts/start-agent-worker.js'), /assertDevRuntimeDatabaseBoundary/);
   assert.match(installer, /AGENT_RUNTIME_V2_ROLLOUT_PERCENT/);
   assert.match(installer, /AGENT_RUNTIME_V2_CANARY_USER_IDS/);
   assert.match(installer, /DESIGN_PLANNER_V2_ENABLED/);

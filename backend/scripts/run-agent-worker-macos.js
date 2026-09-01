@@ -59,6 +59,7 @@ try {
     'S3_SECRET_ACCESS_KEY'
   ];
   const optionalSecretNames = ['PG_SSL_CA_BASE64'];
+  if (profile === 'dev') secretNames.push('DEV_DATABASE_EXPECTED_HOST');
   if (
     profile === 'production' &&
     String(process.env.AGENT_BETA_MODE || '').trim() === 'owner-only-v1'
@@ -155,6 +156,7 @@ try {
     AGENT_WORKER_CONCURRENCY: String(process.env.AGENT_WORKER_CONCURRENCY || '2'),
     ...workerPoolProfile,
     ...(profile === 'dev' ? {
+      DEV_DATABASE_EXPECTED_MAJOR: '18',
       PG_SSL_REQUIRED: '1',
       PG_SSL_REJECT_UNAUTHORIZED: '1'
     } : {}),

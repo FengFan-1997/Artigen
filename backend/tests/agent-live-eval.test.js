@@ -56,7 +56,8 @@ const {
 const { RuntimeTestController } = require('../evaluation/harness/runtime-test-controller');
 const { RuntimeTraceSink } = require('../evaluation/harness/runtime-trace-sink');
 const {
-  assertLiveEvalDatabaseReadiness
+  assertLiveEvalDatabaseReadiness,
+  resolveLiveEvalPostgresMajor
 } = require('../evaluation/harness/live-eval-database-readiness');
 const { requestPromptHash } = require('../evaluation/harness/scripted-siliconflow-transport');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
@@ -165,7 +166,7 @@ test('Live eval database pool verifies TLS and stays within the free-tier cap', 
   );
 });
 
-test('Live eval database readiness requires PG16, dev_artigen and four free connections', async () => {
+test('Live eval database readiness requires explicit PG18, dev_artigen and four free connections', async () => {
   const makePool = (row) => ({
     async query(input) {
       assert.match(String(input.text), /pg_stat_activity/);
@@ -174,9 +175,10 @@ test('Live eval database readiness requires PG16, dev_artigen and four free conn
     }
   });
   const ready = await assertLiveEvalDatabaseReadiness({
+    expectedPostgresMajor: 18,
     pool: makePool({
       database_name: 'dev_artigen',
-      server_version_num: 160010,
+      server_version_num: 180001,
       max_connections: 20,
       superuser_reserved_connections: 3,
       reserved_connections: 0,
@@ -185,7 +187,7 @@ test('Live eval database readiness requires PG16, dev_artigen and four free conn
   });
   assert.deepEqual(ready, {
     databaseName: 'dev_artigen',
-    postgresMajor: 16,
+    postgresMajor: 18,
     maxConnections: 20,
     superuserReservedConnections: 3,
     reservedConnections: 0,
@@ -196,9 +198,10 @@ test('Live eval database readiness requires PG16, dev_artigen and four free conn
   });
   await assert.rejects(
     assertLiveEvalDatabaseReadiness({
+      expectedPostgresMajor: 18,
       pool: makePool({
         database_name: 'dev_artigen',
-        server_version_num: 160010,
+        server_version_num: 180001,
         max_connections: 20,
         superuser_reserved_connections: 3,
         reserved_connections: 0,
@@ -209,9 +212,10 @@ test('Live eval database readiness requires PG16, dev_artigen and four free conn
   );
   await assert.rejects(
     assertLiveEvalDatabaseReadiness({
+      expectedPostgresMajor: 18,
       pool: makePool({
         database_name: 'neondb',
-        server_version_num: 160010,
+        server_version_num: 180001,
         max_connections: 20,
         superuser_reserved_connections: 3,
         reserved_connections: 0,
@@ -222,9 +226,10 @@ test('Live eval database readiness requires PG16, dev_artigen and four free conn
   );
   await assert.rejects(
     assertLiveEvalDatabaseReadiness({
+      expectedPostgresMajor: 18,
       pool: makePool({
         database_name: 'dev_artigen',
-        server_version_num: 170000,
+        server_version_num: 160010,
         max_connections: 20,
         superuser_reserved_connections: 3,
         reserved_connections: 0,
@@ -232,6 +237,26 @@ test('Live eval database readiness requires PG16, dev_artigen and four free conn
       })
     }),
     /AGENT_LIVE_EVAL_POSTGRES_VERSION_NOT_READY/
+  );
+  assert.equal(resolveLiveEvalPostgresMajor({ DEV_DATABASE_EXPECTED_MAJOR: '18' }), 18);
+  for (const value of ['', '16', '17', '19', '18.0']) {
+    assert.throws(
+      () => resolveLiveEvalPostgresMajor({ DEV_DATABASE_EXPECTED_MAJOR: value }),
+      /AGENT_LIVE_EVAL_POSTGRES_MAJOR_PROFILE_INVALID/
+    );
+  }
+  await assert.rejects(
+    assertLiveEvalDatabaseReadiness({
+      pool: makePool({
+        database_name: 'dev_artigen',
+        server_version_num: 180001,
+        max_connections: 20,
+        superuser_reserved_connections: 3,
+        reserved_connections: 0,
+        used_connections: 1
+      })
+    }),
+    /AGENT_LIVE_EVAL_POSTGRES_MAJOR_PROFILE_INVALID/
   );
 });
 
@@ -490,6 +515,7 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
   });
   assert.equal(loaded.runtimeEnv.NODE_ENV, 'test');
   assert.equal(loaded.runtimeEnv.APP_ENV, 'dev');
+  assert.equal(loaded.runtimeEnv.DEV_DATABASE_EXPECTED_MAJOR, '18');
   assert.equal(loaded.runtimeEnv.DATABASE_URL, 'postgres://synthetic/dev_artigen');
   assert.equal(
     loaded.runtimeEnv.CUA_PYTHON,

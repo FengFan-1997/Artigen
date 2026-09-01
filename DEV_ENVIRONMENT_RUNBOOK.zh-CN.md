@@ -7,7 +7,7 @@
 - 云端服务：`dev-artigen-app-fengfan`
 - 云端地址：`https://dev-artigen-app-fengfan.onrender.com`
 - 部署分支：`dev`（push 后自动部署）
-- 云端数据库：Aiven Free PostgreSQL 16 的独立 `dev_artigen`
+- 云端数据库：Aiven Free PostgreSQL 18 的独立 `dev_artigen`
 - 本机前端：`http://localhost:4000`
 - 本机后端：`http://localhost:8080`
 - 本机数据库：`artigen_dev`
@@ -26,7 +26,8 @@ DEV 默认采用以下安全门：
 
 1. `DATABASE_URL` 与 `DATABASE_MIGRATION_URL` 只连接 `dev_artigen`，不连接生产 `neondb`。
    DEV 启动会在迁移前同时核验经过审核的 Aiven 主机、`artigen_migrator` / `artigen_runtime`
-   身份、PostgreSQL 16、schema 所有者和最小权限；任一不符都会拒绝启动。
+   身份、PostgreSQL 18、schema 所有者和最小权限；任一不符都会拒绝启动。生产环境仍严格使用
+   PostgreSQL 16，不会随 DEV 升级。
 2. 当前集成验收环境开启 `PAID_FEATURES_ENABLED=true`、`PAYMENTS_ENABLED=true`、
    `TASK_WORKER_ENABLED=1`，但只使用 DEV 数据库中的合成用户；支付验收只能创建未支付订单，
    不执行真实付款，也不能把 pending 订单当作钱包入账。
@@ -42,9 +43,11 @@ DEV 默认采用以下安全门：
 9. 生产继续使用原 Neon `neondb`；DEV 不得连接、迁移或回填生产数据库，也不复制旧 DEV
    历史。Aiven DEV 从空库迁移，只创建合成测试账户。
 
-## Aiven Free PostgreSQL 16
+## Aiven Free PostgreSQL 18
 
-DEV 使用两个数据库身份，连接串和 CA 只保存在 Render Secret 与 macOS Keychain：
+DEV 使用两个数据库身份；连接串和 CA 只保存在 Render Secret 与 macOS Keychain。Mac DEV
+Worker 还会从专用 Keychain 读取 `DEV_DATABASE_EXPECTED_HOST`，启动前独立核验目标主机、
+数据库、PG18、runtime 角色与 schema 最小权限：
 
 - `DATABASE_MIGRATION_URL` 使用 `artigen_migrator`，仅在部署启动时取得迁移锁并管理
   `public` 中的迁移对象。
@@ -65,10 +68,14 @@ TLS 策略只能来自上述受控环境变量。
 - Live Harness：`AGENT_LIVE_EVAL_PG_POOL_MAX=3`。
 
 签名 Live gate 会先核验数据库；Live Harness 此后还会在每一次真实 Qwen/Kolors
-dispatch 预留落库前重新核验。数据库必须精确为 `dev_artigen`、主版本为 16；计算连接
+dispatch 预留落库前重新核验。数据库必须精确为 `dev_artigen`、主版本为 18；计算连接
 余量时会从 `max_connections` 中扣除 PostgreSQL 的 superuser/reserved slots，并要求
 应用实际仍至少有 4 个可用连接。不满足时停止测试，不升级套餐，也不通过关闭 TLS 或
 挤占连接继续运行。
+
+Aiven Free 是 DEV 的长期免费边界：不绑定信用卡、不升级付费套餐，当前上限为 1 GB 和
+20 个连接，且没有 SLA；长时间不活跃时服务可能暂停。暂停后的 DEV 必须先恢复数据库
+readiness，再运行任何真实 Provider 测试，不能用提高套餐或削弱门禁绕过。
 
 ## 本机启动
 
