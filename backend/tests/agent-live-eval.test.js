@@ -169,7 +169,9 @@ test('Live eval database pool verifies TLS and stays within the free-tier cap', 
 test('Live eval database readiness requires explicit PG18, dev_artigen and four free connections', async () => {
   const makePool = (row) => ({
     async query(input) {
-      assert.match(String(input.text), /pg_stat_activity/);
+      assert.match(String(input.text), /artigen_live_eval_client_connection_count\(\)/);
+      assert.doesNotMatch(String(input.text), /FROM pg_stat_activity/);
+      assert.doesNotMatch(String(input.text), /FROM pg_stat_database/);
       assert.equal(input.query_timeout, 10_000);
       return { rows: [row] };
     }

@@ -32,6 +32,139 @@ const { installLiveEvalPoolErrorHandler } = require('../scripts/run-agent-live-e
 
 const enabled = process.env.RUN_POSTGRES_INTEGRATION === '1' && Boolean(process.env.DATABASE_URL);
 const s3Enabled = enabled && Boolean(String(process.env.MINIO_TEST_ENDPOINT || '').trim());
+const quotePgIdentifier = (value) => `"${String(value).replaceAll('"', '""')}"`;
+
+test('live-eval capacity counter exposes only a cross-role client total', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const adminPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  const suffix = crypto.randomBytes(6).toString('hex');
+  const readerRole = `artigen_capacity_reader_${suffix}`;
+  const otherRole = `artigen_capacity_other_${suffix}`;
+  const noInheritOwnerRole = `artigen_capacity_owner_${suffix}`;
+  const readerPassword = crypto.randomBytes(18).toString('hex');
+  const otherPassword = crypto.randomBytes(18).toString('hex');
+  let databaseName;
+  let originalFunctionOwner;
+  let readerCreated = false;
+  let otherCreated = false;
+  let noInheritOwnerCreated = false;
+  let functionOwnerChanged = false;
+  let readerPool;
+  let otherPool;
+  try {
+    const identity = (await adminPool.query(
+      `SELECT current_database() AS database_name,
+              pg_get_userbyid(proowner) AS function_owner
+         FROM pg_proc
+        WHERE oid = 'public.artigen_live_eval_client_connection_count()'::regprocedure`
+    )).rows[0];
+    databaseName = String(identity.database_name);
+    originalFunctionOwner = String(identity.function_owner);
+    assert.match(databaseName, /^[a-zA-Z0-9_]+$/);
+    assert.ok(originalFunctionOwner);
+    await adminPool.query(`CREATE ROLE ${readerRole} LOGIN PASSWORD '${readerPassword}'`);
+    readerCreated = true;
+    await adminPool.query(`CREATE ROLE ${otherRole} LOGIN PASSWORD '${otherPassword}'`);
+    otherCreated = true;
+    await adminPool.query(`GRANT CONNECT ON DATABASE ${databaseName} TO ${readerRole}, ${otherRole}`);
+
+    const readerUrl = new URL(process.env.DATABASE_URL);
+    readerUrl.username = readerRole;
+    readerUrl.password = readerPassword;
+    const otherUrl = new URL(process.env.DATABASE_URL);
+    otherUrl.username = otherRole;
+    otherUrl.password = otherPassword;
+    readerPool = new Pool({ connectionString: readerUrl.toString(), max: 1 });
+    otherPool = new Pool({ connectionString: otherUrl.toString(), max: 1 });
+    await otherPool.query('SELECT 1');
+    const observed = (await readerPool.query(`
+      SELECT public.artigen_live_eval_client_connection_count() AS privileged_count,
+             (SELECT count(*)::int
+                FROM pg_stat_activity
+               WHERE backend_type = 'client backend') AS invoker_visible_count
+    `)).rows[0];
+    assert.ok(Number(observed.privileged_count) > Number(observed.invoker_visible_count));
+
+    await adminPool.query(`CREATE ROLE ${noInheritOwnerRole} NOLOGIN NOINHERIT`);
+    noInheritOwnerCreated = true;
+    await adminPool.query(`GRANT pg_read_all_stats TO ${noInheritOwnerRole} WITH INHERIT FALSE`);
+    const noInheritOwnerOid = Number((await adminPool.query(
+      'SELECT oid::int AS oid FROM pg_roles WHERE rolname = $1',
+      [noInheritOwnerRole]
+    )).rows[0].oid);
+    assert.ok(Number.isInteger(noInheritOwnerOid) && noInheritOwnerOid > 0);
+    await adminPool.query(
+      `ALTER FUNCTION public.artigen_live_eval_client_connection_count() OWNER TO ${noInheritOwnerRole}`
+    );
+    functionOwnerChanged = true;
+    await readerPool.query('CREATE TEMP TABLE pg_roles (rolname text, rolsuper boolean, oid oid)');
+    await readerPool.query(
+      'INSERT INTO pg_roles (rolname, rolsuper, oid) VALUES ($1, true, $2)',
+      [noInheritOwnerRole, noInheritOwnerOid]
+    );
+    await assert.rejects(
+      readerPool.query('SELECT public.artigen_live_eval_client_connection_count()'),
+      (error) => error?.code === '42501'
+        && error?.message === 'ARTIGEN_LIVE_EVAL_STATS_OWNER_NOT_READY'
+    );
+  } finally {
+    const cleanupErrors = [];
+    const cleanup = async (operation) => {
+      try {
+        await operation();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    };
+    await cleanup(() => readerPool?.end());
+    await cleanup(() => otherPool?.end());
+    if (functionOwnerChanged) {
+      await cleanup(async () => {
+        await adminPool.query(
+          `ALTER FUNCTION public.artigen_live_eval_client_connection_count() OWNER TO ${quotePgIdentifier(originalFunctionOwner)}`
+        );
+        const restored = (await adminPool.query(`
+          SELECT pg_get_userbyid(proowner) AS function_owner,
+                 EXISTS (
+                   SELECT 1
+                     FROM aclexplode(COALESCE(proacl, acldefault('f', proowner)))
+                    WHERE grantee = 0
+                      AND privilege_type = 'EXECUTE'
+                 ) AS public_execute
+            FROM pg_proc
+           WHERE oid = 'public.artigen_live_eval_client_connection_count()'::regprocedure
+        `)).rows[0];
+        assert.equal(restored.function_owner, originalFunctionOwner);
+        assert.equal(restored.public_execute, true);
+      });
+    }
+    if (readerCreated || otherCreated) {
+      const roles = [
+        readerCreated ? readerRole : null,
+        otherCreated ? otherRole : null
+      ].filter(Boolean).join(', ');
+      await cleanup(() => adminPool.query(`REVOKE CONNECT ON DATABASE ${databaseName} FROM ${roles}`));
+    }
+    if (noInheritOwnerCreated) {
+      await cleanup(() => adminPool.query(`REVOKE pg_read_all_stats FROM ${noInheritOwnerRole}`));
+    }
+    if (readerCreated) {
+      await cleanup(() => adminPool.query(`DROP ROLE IF EXISTS ${readerRole}`));
+    }
+    if (otherCreated) {
+      await cleanup(() => adminPool.query(`DROP ROLE IF EXISTS ${otherRole}`));
+    }
+    if (noInheritOwnerCreated) {
+      await cleanup(() => adminPool.query(`DROP ROLE IF EXISTS ${noInheritOwnerRole}`));
+    }
+    await cleanup(() => adminPool.end());
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'Failed to clean live-eval capacity fixtures');
+    }
+  }
+});
 
 const verifiedTextScript = () => [
   { content: '建议保留一个清晰主目标，并用单一主动作完成本次设计决策。' },
@@ -684,7 +817,7 @@ test('Harness V3 drives a zero-file text run through the real PostgreSQL runtime
   try {
     const readiness = await checkDatabase(pool);
     assert.equal(readiness.ok, true);
-    assert.equal(readiness.migration, '025_agent_runtime_v2_1_durability');
+    assert.equal(readiness.migration, '026_agent_live_eval_capacity_counter');
     harness = await AgentRuntimeHarness.create({
       pool,
       providerScript: [
