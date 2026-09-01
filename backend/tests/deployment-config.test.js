@@ -124,6 +124,7 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(runner, /AGENT_IMAGE_CREDITS:[\s\S]*\|\| '8'/);
   assert.match(runner, /AGENT_IMAGE_REFERENCE_CREDITS:[\s\S]*\|\| '12'/);
   assert.match(runner, /AGENT_MODEL_PROVIDER:\s*modelProvider/);
+  assert.match(runner, /profile === 'production' \? 'siliconflow' : 'cloudflare'/);
   assert.match(runner, /\? '@cf\/openai\/gpt-oss-120b'[\s\S]*: 'Qwen\/Qwen3-8B'/);
   assert.match(runner, /secretNames\.push\('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'\)/);
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
@@ -134,6 +135,7 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(runner, /resolveAgentWorkerPoolProfile/);
   assert.match(runner, /PG_SSL_REQUIRED:\s*'1'/);
   assert.match(runner, /DEV_DATABASE_EXPECTED_MAJOR:\s*'18'/);
+  assert.match(readRepoFile('backend/scripts/run-agent-dev-smoke.js'), /026_agent_live_eval_capacity_counter/);
   assert.match(runner, /PG_SSL_REJECT_UNAUTHORIZED:\s*'1'/);
   assert.match(runner, /AGENT_RUNTIME_V2_ENABLED: profile === 'dev'[\s\S]*\? 'false'/);
   assert.match(runner, /AGENT_RUNTIME_V2_ROLLOUT_PERCENT: profile === 'dev'[\s\S]*\? '0'/);
@@ -142,6 +144,7 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(installer, /<key>AGENT_SUBAGENTS_ENABLED<\/key>/);
   assert.match(installer, /<key>\$\{name\}<\/key>/);
   assert.match(installer, /AGENT_RUNTIME_V2_ENABLED/);
+  assert.match(installer, /production \? 'siliconflow' : 'cloudflare'/);
   assert.match(installer, /DEV_DATABASE_EXPECTED_MAJOR/);
   assert.match(readRepoFile('backend/scripts/start-agent-worker.js'), /assertDevRuntimeDatabaseBoundary/);
   assert.match(installer, /AGENT_RUNTIME_V2_ROLLOUT_PERCENT/);
@@ -170,6 +173,8 @@ test('Mac Agent installer persists the reviewed V2 launch profile', {
           ...process.env,
           HOME: temporaryHome,
           ARTIGEN_AGENT_SUBAGENTS_ENABLED: 'true',
+          AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+          AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
           AGENT_RUNTIME_V2_ENABLED: 'true',
           AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0',
           DESIGN_PLANNER_V2_ENABLED: 'true',
@@ -189,6 +194,10 @@ test('Mac Agent installer persists the reviewed V2 launch profile', {
     ), 'utf8');
     for (const [name, value] of Object.entries({
       AGENT_SUBAGENTS_ENABLED: 'true',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
       AGENT_RUNTIME_V2_ENABLED: 'false',
       AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0',
       AGENT_RUNTIME_V2_CANARY_USER_IDS: '',
@@ -210,7 +219,7 @@ test('Mac Agent installer persists the reviewed V2 launch profile', {
   }
 });
 
-test('runtime model allowlist contains only Qwen3-8B and Kolors', () => {
+test('runtime model allowlist contains only the reviewed text models and Kolors', () => {
   const runtime = [
     'backend/lib/config.js',
     'backend/lib/ai-providers.js',
@@ -225,6 +234,7 @@ test('runtime model allowlist contains only Qwen3-8B and Kolors', () => {
   ].map(readRepoFile).join('\n');
 
   assert.match(runtime, /Qwen\/Qwen3-8B/);
+  assert.match(runtime, /@cf\/openai\/gpt-oss-120b/);
   assert.match(runtime, /Kwai-Kolors\/Kolors/);
   assert.doesNotMatch(runtime, /Qwen\/Qwen-Image-Edit-2509/);
   assert.doesNotMatch(runtime, /Qwen\/Qwen2\.5/);

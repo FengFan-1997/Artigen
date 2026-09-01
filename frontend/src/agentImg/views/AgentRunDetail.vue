@@ -146,7 +146,7 @@
           <dl class="technical-list">
             <div v-if="run.runtime"><dt>{{ zh ? '运行时' : 'Runtime' }}</dt><dd>V{{ run.runtime.version }} · {{ run.runtime.promptProfile || 'legacy' }}</dd></div>
             <div v-if="run.runtime?.skills?.length"><dt>{{ zh ? '已加载规范' : 'Loaded skills' }}</dt><dd>{{ run.runtime.skills.map((skill) => `${skill.id}@${skill.version}`).join(' · ') }}</dd></div>
-            <div><dt>{{ zh ? '父与子文本模型' : 'Parent & child text' }}</dt><dd>Qwen/Qwen3-8B</dd></div>
+            <div><dt>{{ zh ? '父与子文本模型' : 'Parent & child text' }}</dt><dd>{{ run.model.name }}</dd></div>
             <div><dt>{{ zh ? '所有图片' : 'All images' }}</dt><dd>Kwai-Kolors/Kolors</dd></div>
             <div><dt>{{ zh ? '沙箱' : 'Sandbox' }}</dt><dd>{{ run.sandbox.provider }} · {{ run.sandbox.version }}</dd></div>
             <div><dt>{{ zh ? '最大步骤' : 'Maximum steps' }}</dt><dd>{{ run.progress.maxSteps }}</dd></div>

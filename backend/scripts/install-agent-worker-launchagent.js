@@ -25,7 +25,9 @@ const runner = path.join(root, 'backend/scripts/run-agent-worker-macos.js');
 const subagentsEnabled = /^(1|true|yes|on)$/i.test(
   String(process.env.ARTIGEN_AGENT_SUBAGENTS_ENABLED || '').trim()
 );
-const modelProvider = String(process.env.AGENT_MODEL_PROVIDER || 'siliconflow')
+const modelProvider = String(
+  process.env.AGENT_MODEL_PROVIDER || (production ? 'siliconflow' : 'cloudflare')
+)
   .trim()
   .toLowerCase();
 if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {

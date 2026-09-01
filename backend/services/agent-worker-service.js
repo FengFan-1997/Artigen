@@ -707,6 +707,20 @@ const createAgentWorkerService = ({
     };
 
     try {
+      const claimedProvider = String(claimed.model_provider || '').trim().toLowerCase();
+      const claimedModel = String(claimed.model_name || '').trim();
+      const workerProvider = String(model.providerName || config.modelProvider || '')
+        .trim()
+        .toLowerCase();
+      const workerModel = String(config.modelName || '').trim();
+      if (
+        (claimedProvider && claimedProvider !== workerProvider) ||
+        (claimedModel && claimedModel !== workerModel)
+      ) {
+        throw new ApiError(409, 'AGENT_RUN_MODEL_PROFILE_MISMATCH', {
+          retryable: false
+        });
+      }
       const context = await runService.loadPrivateContext({ runId });
       const legacyToolReceiptEntries = Object.entries(
         context.run.checkpoint?.toolReceipts && typeof context.run.checkpoint.toolReceipts === 'object'

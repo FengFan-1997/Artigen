@@ -761,7 +761,7 @@ class AgentLiveEvalHarness {
             accountId: this.env.CLOUDFLARE_ACCOUNT_ID,
             credential: this.env.CLOUDFLARE_API_TOKEN,
             freeAccountAttested: true,
-            freeAccountId: this.env.CLOUDFLARE_ACCOUNT_ID,
+            freeAccountId: this.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
             model: this.env.AGENT_MODEL_NAME,
             signal: this.campaignGuard.combinedSignal(input.signal),
             fetcher: this.auditor.wrapQwenFetch(globalThis.fetch)

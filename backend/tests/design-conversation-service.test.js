@@ -52,11 +52,17 @@ test('design messages are encrypted and bound to conversation, row and role', ()
   }), { code: 'AGENT_PAYLOAD_DECRYPT_FAILED' });
 });
 
-test('planner model locks remain Qwen3 for text and Kolors for every image route', () => {
-  const messages = plannerMessages({ history: [], message: '生成海报', attachmentCount: 0 });
+test('planner prompt uses the server-selected text model and keeps Kolors for every image route', () => {
+  const messages = plannerMessages({
+    history: [],
+    message: '生成海报',
+    attachmentCount: 0,
+    textModel: '@cf/openai/gpt-oss-120b'
+  });
   assert.equal(TEXT_MODEL, 'Qwen/Qwen3-8B');
   assert.equal(IMAGE_MODEL, 'Kwai-Kolors/Kolors');
-  assert.match(messages[0].content, /Qwen\/Qwen3-8B/);
+  assert.match(messages[0].content, /@cf\/openai\/gpt-oss-120b/);
+  assert.doesNotMatch(messages[0].content, /Qwen\/Qwen3-8B/);
   assert.match(messages[0].content, /Kwai-Kolors\/Kolors/);
   assert.doesNotMatch(messages[0].content, /Qwen-Image-Edit/);
 });

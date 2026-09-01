@@ -1367,6 +1367,69 @@ test('worker passes decrypted objective deliverables into the parent model', asy
   assert.deepEqual(observed, [['report']]);
 });
 
+test('worker fails a queued run before any execution when its pinned model differs', async () => {
+  const runId = '11111111-1111-4111-8111-111111111121';
+  const workerId = 'worker-model-profile-mismatch';
+  let privateContextLoads = 0;
+  let modelCalls = 0;
+  let sandboxCalls = 0;
+  let failed = null;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null,
+        model_provider: 'siliconflow',
+        model_name: 'Qwen/Qwen3-8B'
+      }),
+      loadPrivateContext: async () => {
+        privateContextLoads += 1;
+        throw new Error('private context must not be loaded');
+      },
+      failRun: async (input) => {
+        failed = input;
+        return true;
+      }
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId,
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32)
+    },
+    sandbox: {
+      provision: async () => { sandboxCalls += 1; },
+      destroy: async () => { sandboxCalls += 1; }
+    },
+    model: {
+      providerName: 'cloudflare',
+      execute: async () => { modelCalls += 1; }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), {
+    code: 'AGENT_RUN_MODEL_PROFILE_MISMATCH'
+  });
+  assert.equal(privateContextLoads, 0);
+  assert.equal(modelCalls, 0);
+  assert.equal(sandboxCalls, 0);
+  assert.equal(failed.errorCode, 'AGENT_RUN_MODEL_PROFILE_MISMATCH');
+  assert.equal(failed.refundable, true);
+  assert.equal(failed.actualCredits, 0);
+});
+
 test('worker rejects a forbidden parent shell before budget reservation or durable dispatch', async () => {
   const runId = '11111111-1111-4111-8111-111111111131';
   const userId = '22222222-2222-4222-8222-222222222231';
@@ -5194,6 +5257,47 @@ test('Cloudflare model-directory probe fails closed for credentials and missing 
     makeProvider({ success: false, errors: [{ code: 1000 }] }, 429).probe(),
     { code: 'AGENT_CLOUDFLARE_UNAVAILABLE' }
   );
+});
+
+test('Cloudflare Agent never retries exhausted free quota or a paid-only model response', async () => {
+  const accountId = 'd'.repeat(32);
+  const makeProvider = ({ status, code }) => {
+    let requests = 0;
+    return {
+      provider: new CloudflareAgentModelProvider({
+        env: {
+          AGENT_MODEL_PROVIDER: 'cloudflare',
+          CLOUDFLARE_ACCOUNT_ID: accountId,
+          CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+          AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+          AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+          AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+        },
+        fetchImpl: async () => {
+          requests += 1;
+          return new Response(JSON.stringify({ errors: [{ code }] }), {
+            status,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }),
+      requests: () => requests
+    };
+  };
+
+  const quota = makeProvider({ status: 429, code: 3036 });
+  await assert.rejects(
+    quota.provider.createChat({ model: '@cf/openai/gpt-oss-120b', messages: [] }),
+    { code: 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED', retryable: false }
+  );
+  assert.equal(quota.requests(), 1);
+
+  const paid = makeProvider({ status: 403, code: 5035 });
+  await assert.rejects(
+    paid.provider.createChat({ model: '@cf/openai/gpt-oss-120b', messages: [] }),
+    { code: 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN', retryable: false }
+  );
+  assert.equal(paid.requests(), 1);
 });
 
 test('Cloudflare GPT-OSS 120B completes an Agent tool-call round trip', async () => {

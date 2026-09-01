@@ -75,7 +75,9 @@ const assertOwnerCanaryPreflight = ({
     canaryUsers.length !== 1 ||
     canaryUsers[0] !== normalizedOwner ||
     !REVIEWED_TEXT_MODELS.has(runtime?.textModel) ||
-    runtime?.imageModel !== 'Kwai-Kolors/Kolors'
+    runtime?.imageModel !== 'Kwai-Kolors/Kolors' ||
+    verifiedReport.modelLocks.text !== runtime.textModel ||
+    verifiedReport.modelLocks.image !== runtime.imageModel
   ) {
     throw new Error('AGENT_OWNER_CANARY_RUNTIME_CONFIG_INVALID');
   }

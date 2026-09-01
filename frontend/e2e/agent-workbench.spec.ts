@@ -179,7 +179,7 @@ const installSharedApi = async (
         queueDepth: 0,
         oldestQueuedAt: null,
         concurrency: 2,
-        modelFamily: 'Qwen/Qwen3-8B',
+        modelFamily: '@cf/openai/gpt-oss-120b',
         sandboxMode: 'local',
         browserReady: true,
         egressVerified: true,
@@ -332,10 +332,10 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
   await expect(page.locator('.inspector-tabs').getByRole('tab')).toHaveCount(5);
   await expect(page.getByRole('tab', { name: '环境' })).toHaveAttribute('aria-selected', 'true');
   const environment = page.locator('#workspace-panel-environment');
-  await expect(environment.getByText('Qwen/Qwen3-8B', { exact: true })).not.toBeVisible();
+  await expect(environment.getByText('@cf/openai/gpt-oss-120b', { exact: true })).not.toBeVisible();
   await expect(environment.getByText('Kwai-Kolors/Kolors', { exact: true })).not.toBeVisible();
   await environment.getByText('技术详情', { exact: true }).click();
-  await expect(environment).toContainText('Qwen/Qwen3-8B');
+  await expect(environment).toContainText('@cf/openai/gpt-oss-120b');
   await expect(environment).toContainText('Kwai-Kolors/Kolors');
   await expect(page.locator('.history-run')).toContainText('三路并行设计产品审计');
   const inspectorSurface = await page.locator('.workspace-right').evaluate((element) => {

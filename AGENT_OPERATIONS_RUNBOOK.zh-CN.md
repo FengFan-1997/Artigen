@@ -1,10 +1,10 @@
 # Artigen Agent 本机运行与上线运维手册
 
-更新日期：2026-09-01
+更新日期：2026-09-02
 
-## 0. 运维账号归属
+## 0. 运维账号与免费边界
 
-- Artigen 对外基础设施、模型 Provider、托管平台和告警服务统一使用 `sorates1997@163.com` 作为官方运维邮箱；新建第三方账号时默认使用该地址，除非账户所有者对某个平台另有明确指示。
+- 平台账号由账户所有者管理；具体邮箱不写入版本库，注册或验证时以当次用户授权和本机安全记录为准。
 - 密码、OTP、恢复码、API Token、Secret 和付款信息不得写入 Git、本文档、Issue、聊天记录或普通 `.env`；本机凭据使用 macOS 钥匙串，云端凭据使用对应平台 Secret 管理。
 - 注册或绑定新服务前必须确认免费/付费边界。Cloudflare 模型链只允许专用 Workers Free 账户，不启用 Workers Paid，也不配置免费额度耗尽后的收费回退。
 
@@ -107,10 +107,10 @@ Agent 配置中的 `AGENT_SILICONFLOW_ENABLE_THINKING=false` 是为了让多轮�
 可选。Cloudflare Workers Free 每天提供自动恢复的免费 Workers AI 配额；Artigen 只允许 `@cf/openai/gpt-oss-120b`，API Base 由 32 位 `CLOUDFLARE_ACCOUNT_ID` 在服务端拼接，不能手填任意地址。为保证绝不产生账单，必须使用专门的 Workers Free 账户（不启用 Workers Paid，也不允许 AI 超额计费），显式设置 `AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED=true`，并令 `AGENT_CLOUDFLARE_FREE_ACCOUNT_ID` 精确等于该账户 ID；否则 Worker 就绪检查失败。这样即使 Keychain 凭据被换成另一个账户，旧声明也不会继续生效。
 
 - 控制台：<https://dash.cloudflare.com>
-- 当前已验证的免费账户 ID：`504205714c623d5c5ef9875548bdede9`，控制台显示 `Free / $0 / Current plan`；该公开标识可以进入配置，不能替代免费账户声明。
+- 当前专用账户已经由账户所有者在控制台确认显示 `Free / $0 / Current plan`；精确账户 ID 只保存在 DEV Secret/Keychain，并通过免费账户声明绑定，不写入本文档。
 - 当前 DEV Token 名称：`artigen-workers-ai-free`，无到期日且只含整个当前账户的 `Workers AI Read`；没有 Workers Edit、DNS、Billing 或其他权限。Token 明文只存于 `artigen-agent-dev-worker / CLOUDFLARE_API_TOKEN`，不得复制到文档或日志。
 - Keychain account 标签：`CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN`
-- 启动探针只调用模型目录查询，不消耗推理配额。免费配额耗尽时 Cloudflare 返回错误；Artigen 必须排队或明确失败，不得静默调用付费模型。
+- 启动探针只调用模型目录查询，不消耗推理配额。免费配额耗尽（Cloudflare `3036`）或模型要求 Paid（`5035`）时必须明确失败且不得自动重试或回退；暂时容量不足（`3040`）才允许有界重试。
 - 生产或公开切换前必须在 DEV 对 GPT-OSS 重新跑完整 Agent 质量矩阵；最小真实全链路烟测只能证明主链可用，不构成公开上线证据。
 
 ### 3.3 CUA 本地沙箱

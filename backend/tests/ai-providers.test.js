@@ -50,6 +50,57 @@ test('Cloudflare chat is pinned to the account API and omits SiliconFlow thinkin
   }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED' });
 });
 
+test('Cloudflare free quota and paid-only failures are terminal while capacity failures remain observable', async () => {
+  const accountId = 'e'.repeat(32);
+  const invoke = async ({ status, code }) => {
+    let requests = 0;
+    const promise = callCloudflareChat({
+      accountId,
+      freeAccountAttested: true,
+      freeAccountId: accountId,
+      credential: 'cloudflare-test-token',
+      messages: [{ role: 'user', content: 'Return JSON only.' }],
+      model: '@cf/openai/gpt-oss-120b',
+      skipRateGate: true,
+      fetcher: async () => {
+        requests += 1;
+        return {
+          ok: false,
+          status,
+          statusText: 'Provider failure',
+          headers: { get: () => null },
+          text: async () => JSON.stringify({ errors: [{ code }] })
+        };
+      }
+    });
+    return { promise, requests: () => requests };
+  };
+
+  const quota = await invoke({ status: 429, code: 3036 });
+  await assert.rejects(quota.promise, (error) => {
+    assert.equal(error.code, 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED');
+    assert.equal(error.retryable, false);
+    return true;
+  });
+  assert.equal(quota.requests(), 1);
+
+  const paid = await invoke({ status: 403, code: 5035 });
+  await assert.rejects(paid.promise, (error) => {
+    assert.equal(error.code, 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN');
+    assert.equal(error.retryable, false);
+    return true;
+  });
+  assert.equal(paid.requests(), 1);
+
+  const capacity = await invoke({ status: 429, code: 3040 });
+  await assert.rejects(capacity.promise, (error) => {
+    assert.equal(error.code, undefined);
+    assert.equal(error.failures[0].status, 429);
+    return true;
+  });
+  assert.equal(capacity.requests(), 1);
+});
+
 test('SiliconFlow chat uses the supported endpoint and serializes non-thinking mode', async () => {
   let request;
   const result = await callSiliconFlowChat({

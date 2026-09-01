@@ -122,6 +122,10 @@ const createSignedFinalReport = ({
     campaignId: automated.campaignId,
     commitSha: automated.commitSha,
     matrixHash: automated.matrixHash,
+    modelLocks: {
+      text: automated.modelLocks.text,
+      image: automated.modelLocks.image
+    },
     gateManifestSha256: automated.gateManifestSha256,
     automatedReportSha256: String(automatedReportSha256).toLowerCase(),
     blindScoreSha256: String(blindScoreSha256).toLowerCase(),
@@ -164,6 +168,8 @@ const verifySignedFinalReport = ({
     !report ||
     report.version !== FINAL_REPORT_VERSION ||
     report.eligibleForOwnerCanary !== true ||
+    !REVIEWED_TEXT_MODELS.has(report.modelLocks?.text) ||
+    report.modelLocks?.image !== 'Kwai-Kolors/Kolors' ||
     String(report.commitSha || '').toLowerCase() !== String(expectedCommitSha || '').toLowerCase() ||
     String(report.matrixHash || '').toLowerCase() !== String(expectedMatrixHash || '').toLowerCase()
   ) {
@@ -184,6 +190,10 @@ const verifySignedFinalReport = ({
     campaignId: report.campaignId,
     commitSha: report.commitSha,
     matrixHash: report.matrixHash,
+    modelLocks: Object.freeze({
+      text: report.modelLocks.text,
+      image: report.modelLocks.image
+    }),
     reportSha256: sha256(Buffer.from(canonicalJson(report), 'utf8')),
     createdAt: report.createdAt
   });

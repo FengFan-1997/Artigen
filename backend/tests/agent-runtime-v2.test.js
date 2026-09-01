@@ -120,6 +120,27 @@ test('Runtime V2 freezes the server-pinned Cloudflare model into prompts and rec
   assert.doesNotMatch(cloudflare.instructions, /Qwen\/Qwen3-8B/);
 });
 
+test('Runtime V2 treats Cloudflare free quota and paid-only responses as terminal', () => {
+  for (const code of [
+    'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED',
+    'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN'
+  ]) {
+    assert.deepEqual(classifyRuntimeFailure({ code }), {
+      category: 'security_terminal',
+      retryable: false,
+      maxAttempts: 0
+    });
+  }
+  assert.deepEqual(classifyRuntimeFailure({
+    code: 'AGENT_CLOUDFLARE_UNAVAILABLE',
+    failures: [{ status: 429 }]
+  }), {
+    category: 'transient_provider',
+    retryable: true,
+    maxAttempts: 2
+  });
+});
+
 test('Runtime V2 preserves the goal, verification phase and unresolved failure under compaction', () => {
   const taskSpec = normalizeTaskSpec({
     goal: '制作一份带来源的报告',

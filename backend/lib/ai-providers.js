@@ -50,6 +50,35 @@ const withCloudflareRateGate = async (fn) => {
   return chained;
 };
 
+const cloudflareFailureCode = (error) => {
+  for (const failure of Array.isArray(error?.failures) ? error.failures : []) {
+    try {
+      const body = JSON.parse(String(failure?.bodyPreview || ''));
+      const code = body?.error?.code ?? body?.errors?.[0]?.code ?? body?.code;
+      if (code !== undefined && code !== null) return String(code).trim();
+    } catch {
+      // Provider previews are untrusted and may not be JSON.
+    }
+  }
+  return '';
+};
+
+const normalizeCloudflareFailure = (error) => {
+  const providerCode = cloudflareFailureCode(error);
+  const code = providerCode === '3036'
+    ? 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED'
+    : providerCode === '5035'
+      ? 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN'
+      : '';
+  if (!code) return error;
+  const normalized = new Error(code);
+  normalized.code = code;
+  normalized.retryable = false;
+  normalized.status = Number(error?.failures?.[0]?.status || 0) || undefined;
+  normalized.providerCode = providerCode;
+  return normalized;
+};
+
 const createSemaphore = (max, maxQueue) => {
   const lim = Number.isFinite(max) && max > 0 ? Math.floor(max) : 4;
   const qMax = Number.isFinite(maxQueue) && maxQueue >= 0 ? Math.floor(maxQueue) : 80;
@@ -328,19 +357,23 @@ const callCloudflareChat = async (input = {}) => {
     throw error;
   }
   const model = '@cf/openai/gpt-oss-120b';
-  return callSiliconFlowChat({
-    ...input,
-    model: input.model || model,
-    minP: undefined,
-    credential: input.credential || process.env.CLOUDFLARE_API_TOKEN ||
-      process.env.CLOUDFLARE_AUTH_TOKEN || '',
-    chatUrl: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`,
-    allowedModel: model,
-    includeThinking: false,
-    providerName: 'Cloudflare',
-    missingCredentialCode: 'MISSING_CLOUDFLARE_API_TOKEN',
-    rateGate: withCloudflareRateGate
-  });
+  try {
+    return await callSiliconFlowChat({
+      ...input,
+      model: input.model || model,
+      minP: undefined,
+      credential: input.credential || process.env.CLOUDFLARE_API_TOKEN ||
+        process.env.CLOUDFLARE_AUTH_TOKEN || '',
+      chatUrl: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`,
+      allowedModel: model,
+      includeThinking: false,
+      providerName: 'Cloudflare',
+      missingCredentialCode: 'MISSING_CLOUDFLARE_API_TOKEN',
+      rateGate: withCloudflareRateGate
+    });
+  } catch (error) {
+    throw normalizeCloudflareFailure(error);
+  }
 };
 
 const toSiliconflowImage = (v) => {

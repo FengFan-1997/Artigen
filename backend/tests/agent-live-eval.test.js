@@ -43,6 +43,7 @@ const {
 } = require('../evaluation/harness/live-eval-final-report');
 const {
   OWNER_CANARY_SCENARIOS,
+  assertOwnerCanaryPreflight,
   createSignedOwnerCanaryPlan,
   verifySignedOwnerCanaryPlan
 } = require('../evaluation/harness/live-eval-owner-canary');
@@ -1506,6 +1507,7 @@ test('Live eval final report cryptographically binds the exact 24-run report and
     expectedMatrixHash: LIVE_EVAL_MATRIX_HASH
   });
   assert.equal(verified.campaignId, automatedReport.campaignId);
+  assert.deepEqual(verified.modelLocks, automatedReport.modelLocks);
   assert.match(verified.reportSha256, /^[a-f0-9]{64}$/);
   const cloudflareReport = createSignedFinalReport({
     automatedReport: {
@@ -1520,12 +1522,29 @@ test('Live eval final report cryptographically binds the exact 24-run report and
     blindScoreSha256: crypto.createHash('sha256').update('cloudflare-blind').digest('hex'),
     keyMaterial
   });
-  assert.equal(verifySignedFinalReport({
+  const verifiedCloudflare = verifySignedFinalReport({
     report: cloudflareReport,
     keyMaterial,
     expectedCommitSha: automatedReport.commitSha,
     expectedMatrixHash: LIVE_EVAL_MATRIX_HASH
-  }).campaignId, automatedReport.campaignId);
+  });
+  assert.equal(verifiedCloudflare.campaignId, automatedReport.campaignId);
+  assert.deepEqual(verifiedCloudflare.modelLocks, {
+    text: '@cf/openai/gpt-oss-120b',
+    image: 'Kwai-Kolors/Kolors'
+  });
+  assert.throws(
+    () => verifySignedFinalReport({
+      report: {
+        ...cloudflareReport,
+        modelLocks: { ...cloudflareReport.modelLocks, text: 'Qwen/Qwen3-8B' }
+      },
+      keyMaterial,
+      expectedCommitSha: automatedReport.commitSha,
+      expectedMatrixHash: LIVE_EVAL_MATRIX_HASH
+    }),
+    /FINAL_SIGNATURE_INVALID/
+  );
   assert.throws(
     () => verifySignedFinalReport({
       report: {
@@ -1587,7 +1606,7 @@ test('Owner canary plan requires rollout zero, one owner, same immutable SHA and
       commitSha,
       matrixHash: LIVE_EVAL_MATRIX_HASH,
       gateManifestSha256: crypto.createHash('sha256').update('owner-gate').digest('hex'),
-      modelLocks: { text: 'Qwen/Qwen3-8B', image: 'Kwai-Kolors/Kolors' },
+      modelLocks: { text: '@cf/openai/gpt-oss-120b', image: 'Kwai-Kolors/Kolors' },
       limits: { perRunCredits: 50, qwenCalls: 200, kolorsCalls: 16, wallClockHours: 8 },
       cleanup: { ok: true, results: [{ ok: true, label: 'harness' }, { ok: true, label: 'postgres' }] },
       results,
@@ -1617,7 +1636,7 @@ test('Owner canary plan requires rollout zero, one owner, same immutable SHA and
     runtimeV2Enabled: true,
     rolloutPercent: 0,
     canaryUserIds: [ownerUserId],
-    textModel: 'Qwen/Qwen3-8B',
+    textModel: '@cf/openai/gpt-oss-120b',
     imageModel: 'Kwai-Kolors/Kolors'
   };
   const deployments = {
@@ -1647,7 +1666,7 @@ test('Owner canary plan requires rollout zero, one owner, same immutable SHA and
           budgetReservationsReady: true,
           pricingReady: true
         },
-        runtimeProfile: { model: 'Qwen/Qwen3-8B', checkpointVersion: 4 }
+        runtimeProfile: { model: '@cf/openai/gpt-oss-120b', checkpointVersion: 4 }
       }
     }
   };
@@ -1681,6 +1700,32 @@ test('Owner canary plan requires rollout zero, one owner, same immutable SHA and
       runtime: { ...runtime, rolloutPercent: 10 },
       deployments,
       probes
+    }),
+    /RUNTIME_CONFIG_INVALID/
+  );
+  assert.throws(
+    () => assertOwnerCanaryPreflight({
+      signedFinalReport,
+      reportKeyMaterial: keyMaterial,
+      ownerUserId,
+      runtime: {
+        ...runtime,
+        textModel: 'Qwen/Qwen3-8B'
+      },
+      deployments,
+      probes: {
+        ...probes,
+        agentStatus: {
+          ...probes.agentStatus,
+          status: {
+            ...probes.agentStatus.status,
+            runtimeProfile: {
+              ...probes.agentStatus.status.runtimeProfile,
+              model: 'Qwen/Qwen3-8B'
+            }
+          }
+        }
+      }
     }),
     /RUNTIME_CONFIG_INVALID/
   );

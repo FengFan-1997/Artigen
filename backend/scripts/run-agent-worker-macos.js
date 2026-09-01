@@ -32,7 +32,9 @@ delete workerEnv.PG_SSL_CA_BASE64;
 const subagentsEnabled = /^(1|true|yes|on)$/i.test(
   String(process.env.AGENT_SUBAGENTS_ENABLED || '').trim()
 );
-const modelProvider = String(process.env.AGENT_MODEL_PROVIDER || 'siliconflow')
+const modelProvider = String(
+  process.env.AGENT_MODEL_PROVIDER || (profile === 'production' ? 'siliconflow' : 'cloudflare')
+)
   .trim()
   .toLowerCase();
 if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {

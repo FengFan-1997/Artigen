@@ -11,7 +11,7 @@ if (KEYCHAIN_SERVICE !== 'artigen-agent-dev-worker') {
   process.exit(64);
 }
 
-const modelProvider = String(process.env.AGENT_MODEL_PROVIDER || 'siliconflow')
+const modelProvider = String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare')
   .trim()
   .toLowerCase();
 if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {
@@ -90,7 +90,7 @@ const { createAgentRunService, TERMINAL_STATUSES } = require('../services/agent-
 const { AgentQueuePublisher } = require('../services/agent-queue-service');
 const assets = require('../services/asset-storage');
 
-const REQUIRED_MIGRATION = '025_agent_runtime_v2_1_durability';
+const REQUIRED_MIGRATION = '026_agent_live_eval_capacity_counter';
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const readBody = async (body, maximumBytes) => {

@@ -137,7 +137,7 @@ export type DesignAssistantStatus = {
   enabled: boolean;
   workerEnabled: boolean;
   plannerReady: boolean;
-  model: 'Qwen/Qwen3-8B';
+  model: 'Qwen/Qwen3-8B' | '@cf/openai/gpt-oss-120b';
   imageModel: 'Kwai-Kolors/Kolors';
   autoCreditCap: number;
   retentionDays: number;

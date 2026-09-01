@@ -202,7 +202,7 @@
           <dl class="technical-list">
             <div v-if="activeRun?.runtime"><dt>{{ zh ? '运行时' : 'Runtime' }}</dt><dd>V{{ activeRun.runtime.version }} · {{ activeRun.runtime.promptProfile || 'legacy' }}</dd></div>
             <div v-if="activeRun?.runtime?.skills?.length"><dt>{{ zh ? '已加载规范' : 'Loaded skills' }}</dt><dd>{{ activeRun.runtime.skills.map((skill) => `${skill.id}@${skill.version}`).join(' · ') }}</dd></div>
-            <div><dt>{{ zh ? '理解与规划' : 'Reasoning' }}</dt><dd>Qwen/Qwen3-8B</dd></div>
+            <div><dt>{{ zh ? '理解与规划' : 'Reasoning' }}</dt><dd>{{ activeRun?.model.name || status?.model || '—' }}</dd></div>
             <div><dt>{{ zh ? '全部图片' : 'All images' }}</dt><dd>Kwai-Kolors/Kolors</dd></div>
             <div><dt>{{ zh ? '运行环境' : 'Runtime' }}</dt><dd>{{ activeRun?.sandbox.provider || (zh ? '按需创建' : 'On demand') }}</dd></div>
             <div><dt>{{ zh ? '保留时间' : 'Retention' }}</dt><dd>{{ status?.retentionDays ?? 30 }} {{ zh ? '天' : 'days' }}</dd></div>

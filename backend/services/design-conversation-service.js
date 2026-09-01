@@ -397,7 +397,14 @@ const repairPlannerRoute = ({ raw, text }) => {
   return raw;
 };
 
-const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds, creditCap }) => {
+const normalizePlannerDecision = ({
+  raw,
+  text,
+  attachments,
+  clarificationRounds,
+  creditCap,
+  textModel = TEXT_MODEL
+}) => {
   const repaired = repairPlannerRoute({ raw, text });
   raw = repaired;
   let routeKind = String(raw.routeKind || raw.route || 'reply').trim().toLowerCase();
@@ -421,7 +428,7 @@ const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds,
       reply,
       questions: proposedQuestions,
       assumptions,
-      plan: { label: '等待补充', steps: proposedQuestions, executor: 'Qwen3' }
+      plan: { label: '等待补充', steps: proposedQuestions, executor: textModel }
     };
   }
 
@@ -565,7 +572,7 @@ const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds,
     status: 'succeeded',
     reply,
     assumptions,
-    plan: { label: '设计建议', steps: [], executor: 'Qwen3' }
+    plan: { label: '设计建议', steps: [], executor: textModel }
   };
 };
 
@@ -680,9 +687,15 @@ const requiresDeepPlanner = ({ decision, raw, text }) => {
     externalWrite;
 };
 
-const plannerMessages = ({ history, message, attachmentCount, projectMemory = null }) => [{
+const plannerMessages = ({
+  history,
+  message,
+  attachmentCount,
+  projectMemory = null,
+  textModel = TEXT_MODEL
+}) => [{
   role: 'system',
-  content: `You are Artigen's design request router. Use only Qwen/Qwen3-8B for this text task.
+  content: `You are Artigen's design request router. The server-pinned text model is ${textModel}; never request or switch models.
 Return one JSON object and no markdown. Schema:
 {"routeKind":"reply|local_tool|tool_task|agent_run","complexity":"simple|medium|high","confidence":0.0,"reply":"Chinese answer","needsClarification":false,"questions":[],"assumptions":[],"toolId":"","operation":"","options":{},"deliverables":[],"skillIds":[],"taskSpec":{},"memoryCandidates":[],"steps":[]}
 Ask at most two questions only when the missing answer materially changes the result. Choose reply for advice or brainstorming without an execution request. Choose tool_task for: ai-design generate/directions, old-photo enhance/enhance-colorize, id-photo professional-portrait, background ai-scene, ingredient-label ai-organize-source-text. Local tools are strictly: image-batch convert/compress/resize/rotate/filter/pipeline; privacy-redaction redact/export/pdf; video-frame extract; pdf-image pdf-page/pdf-range-zip/pdf-long-image/images-to-pdf; pdf-text-word extract-text-docx; document-pdf txt-local/word-server-faithful; video-gif convert; favicon generate/export/zip. Choose agent_run for research, browser, shell, multiple files, or multiple deliverable formats. Never set prices, models, credentials, or permissions. All image output is handled by Kwai-Kolors/Kolors downstream.`
@@ -1300,7 +1313,8 @@ const createDesignConversationService = ({
             history: context.history.map((message) => ({ role: message.role, text: message.text })),
             message: context.current.text,
             attachmentCount: contextualAttachments.length,
-            projectMemory
+            projectMemory,
+            textModel: agentConfig.modelName
           }),
           phase: 'router',
           priority: 'router',
@@ -1314,7 +1328,8 @@ const createDesignConversationService = ({
           text: context.current.text,
           attachments: contextualAttachments,
           clarificationRounds: Number(context.conversation.clarification_rounds || 0),
-          creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap)
+          creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
+          textModel: agentConfig.modelName
         });
         let decision = enrichPlannerDecision({
           decision: routed,
