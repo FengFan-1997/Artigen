@@ -25,6 +25,8 @@ Basic 认证成功后，服务会签发仅限 DEV 域名的短时
 DEV 默认采用以下安全门：
 
 1. `DATABASE_URL` 与 `DATABASE_MIGRATION_URL` 只连接 `dev_artigen`，不连接生产 `neondb`。
+   DEV 启动会在迁移前同时核验经过审核的 Aiven 主机、`artigen_migrator` / `artigen_runtime`
+   身份、PostgreSQL 16、schema 所有者和最小权限；任一不符都会拒绝启动。
 2. 当前集成验收环境开启 `PAID_FEATURES_ENABLED=true`、`PAYMENTS_ENABLED=true`、
    `TASK_WORKER_ENABLED=1`，但只使用 DEV 数据库中的合成用户；支付验收只能创建未支付订单，
    不执行真实付款，也不能把 pending 订单当作钱包入账。
@@ -49,9 +51,12 @@ DEV 使用两个数据库身份，连接串和 CA 只保存在 Render Secret 与
 - `DATABASE_URL` 使用 `artigen_runtime`，只拥有应用读写、序列以及其自有 `pgboss`
   schema 所需权限。
 
-所有连接必须验证 TLS 证书。Aiven CA 以 `PG_SSL_CA_BASE64` 注入；禁止通过
+所有连接必须验证 TLS 证书。Aiven 提供独立 CA 时以 `PG_SSL_CA_BASE64` 注入，否则使用
+系统可信根；该 Keychain 项可选，但证书校验不可选。禁止通过
 `PG_SSL_REJECT_UNAUTHORIZED=0`、`NODE_TLS_REJECT_UNAUTHORIZED=0` 或 `sslmode=disable`
-绕过验证。
+绕过验证。DEV 的数据库 URL 本身不得携带 `ssl`、`sslmode`、`sslrootcert` 或
+`uselibpqcompat` 等 TLS 参数，因为 PostgreSQL 驱动会用它们覆盖应用的受信 SSL 配置；
+TLS 策略只能来自上述受控环境变量。
 
 免费层连接预算固定为：
 
@@ -59,9 +64,11 @@ DEV 使用两个数据库身份，连接串和 CA 只保存在 Render Secret 与
 - Mac DEV Worker：同样固定为 `3/2/2`；生产 Worker 的现有默认值不变。
 - Live Harness：`AGENT_LIVE_EVAL_PG_POOL_MAX=3`。
 
-签名 Live gate 会在任何真实 Provider dispatch 前核验数据库名、PostgreSQL 主版本和
-连接余量。数据库必须精确为 `dev_artigen`、主版本为 16，且探针执行时至少还有 4 个
-可用连接；不满足时停止测试，不升级套餐，也不通过关闭 TLS 或挤占连接继续运行。
+签名 Live gate 会先核验数据库；Live Harness 此后还会在每一次真实 Qwen/Kolors
+dispatch 预留落库前重新核验。数据库必须精确为 `dev_artigen`、主版本为 16；计算连接
+余量时会从 `max_connections` 中扣除 PostgreSQL 的 superuser/reserved slots，并要求
+应用实际仍至少有 4 个可用连接。不满足时停止测试，不升级套餐，也不通过关闭 TLS 或
+挤占连接继续运行。
 
 ## 本机启动
 

@@ -32,6 +32,9 @@ const {
 } = require('./artifact-fixtures');
 const { LiveModelAuditor } = require('./live-model-auditor');
 const { LiveEvalCampaignGuard } = require('./live-eval-campaign-guard');
+const {
+  assertLiveEvalDatabaseReadiness
+} = require('./live-eval-database-readiness');
 const { RuntimeTestController } = require('./runtime-test-controller');
 const { RuntimeTraceSink } = require('./runtime-trace-sink');
 const { keyFromMaterial, writeEncryptedEvidence } = require('./live-eval-evidence');
@@ -252,7 +255,9 @@ class AgentLiveEvalHarness {
         maxKolorsCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_KOLORS_CALLS || 16),
         maxWallClockMs: Number(
           instance.env.AGENT_LIVE_EVAL_MAX_WALL_CLOCK_MS || MAX_WALL_CLOCK_MS
-        )
+        ),
+        beforeDispatch: ({ pool: dispatchClient }) =>
+          assertLiveEvalDatabaseReadiness({ pool: dispatchClient })
       });
       await instance.campaignGuard.initialize();
       instance.runIds = [];

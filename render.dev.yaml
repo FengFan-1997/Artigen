@@ -33,8 +33,12 @@ services:
         sync: false
       - key: DATABASE_MIGRATION_URL
         sync: false
+      - key: DEV_DATABASE_EXPECTED_HOST
+        sync: false
       - key: PG_POOL_MAX
         value: "3"
+      - key: PG_SSL_REQUIRED
+        value: "1"
       - key: PG_SSL_REJECT_UNAUTHORIZED
         value: "1"
       - key: PG_SSL_CA_BASE64
@@ -72,6 +76,12 @@ services:
       # real-dependency readiness have been verified.
       - key: AGENT_BETA_MODE
         value: disabled
+      - key: AGENT_RUNTIME_V2_ENABLED
+        value: "false"
+      - key: AGENT_RUNTIME_V2_ROLLOUT_PERCENT
+        value: "0"
+      - key: AGENT_RUNTIME_V2_CANARY_USER_IDS
+        value: ""
       - key: AGENT_SUBAGENTS_ENABLED
         value: "false"
       - key: DESIGN_CONVERSATION_ENABLED

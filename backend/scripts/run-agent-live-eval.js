@@ -112,6 +112,10 @@ const loadLiveEvalSecrets = ({
     throw new Error('AGENT_LIVE_EVAL_KEYCHAIN_SERVICE_INVALID');
   }
   const runtimeEnv = { ...env };
+  // Local provider/database trust material must come from the dedicated DEV
+  // Keychain service, never from an inherited shell environment.
+  delete runtimeEnv.PG_SSL_CA;
+  delete runtimeEnv.PG_SSL_CA_BASE64;
   const missing = [];
   for (const name of [...secretNames, ...optionalSecretNames]) {
     const value = readSecret({ service, account: name });
@@ -137,6 +141,8 @@ const loadLiveEvalSecrets = ({
     PG_POOL_MAX: '3',
     PGBOSS_POOL_MAX: '2',
     AGENT_PGBOSS_POOL_MAX: '2',
+    PG_SSL_REQUIRED: '1',
+    PG_SSL_REJECT_UNAUTHORIZED: '1',
     // The DEV object store uses a custom endpoint whose wildcard certificate
     // covers the endpoint host, not bucket.endpoint virtual-host requests.
     // Path-style requests preserve normal TLS verification; never disable it.

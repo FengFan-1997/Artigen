@@ -6,6 +6,9 @@ const path = require('node:path');
 const test = require('node:test');
 
 const repoRoot = path.resolve(__dirname, '../..');
+const {
+  resolveAgentWorkerPoolProfile
+} = require('../scripts/lib/agent-worker-pool-profile');
 
 const readRepoFile = (relativePath) =>
   fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
@@ -36,6 +39,7 @@ test('Render DEV blueprint preserves Aiven free-tier connection and TLS boundari
 
   for (const [name, value] of Object.entries({
     PG_POOL_MAX: '3',
+    PG_SSL_REQUIRED: '1',
     PG_SSL_REJECT_UNAUTHORIZED: '1',
     PGBOSS_SCHEMA: 'pgboss',
     PGBOSS_POOL_MAX: '2',
@@ -51,6 +55,7 @@ test('Render DEV blueprint preserves Aiven free-tier connection and TLS boundari
   for (const name of [
     'DATABASE_URL',
     'DATABASE_MIGRATION_URL',
+    'DEV_DATABASE_EXPECTED_HOST',
     'PG_SSL_CA_BASE64',
     'S3_ENDPOINT',
     'S3_ACCESS_KEY_ID',
@@ -61,6 +66,41 @@ test('Render DEV blueprint preserves Aiven free-tier connection and TLS boundari
       new RegExp(`^\\s+- key: ${name}\\s*\\n\\s+sync: false\\s*$`, 'm')
     );
   }
+  assert.match(
+    blueprint,
+    /^\s+- key: AGENT_RUNTIME_V2_ENABLED\s*\n\s+value: "false"\s*$/m
+  );
+  assert.match(
+    blueprint,
+    /^\s+- key: AGENT_RUNTIME_V2_ROLLOUT_PERCENT\s*\n\s+value: "0"\s*$/m
+  );
+  assert.match(
+    blueprint,
+    /^\s+- key: AGENT_RUNTIME_V2_CANARY_USER_IDS\s*\n\s+value: ""\s*$/m
+  );
+});
+
+test('Mac DEV worker connection caps are fixed and cannot be overridden', () => {
+  assert.deepEqual(resolveAgentWorkerPoolProfile({ profile: 'dev', env: {} }), {
+    PG_POOL_MAX: '3',
+    PGBOSS_POOL_MAX: '2',
+    AGENT_PGBOSS_POOL_MAX: '2'
+  });
+  for (const [name, value] of [
+    ['PG_POOL_MAX', '4'],
+    ['PGBOSS_POOL_MAX', '3'],
+    ['AGENT_PGBOSS_POOL_MAX', '3']
+  ]) {
+    assert.throws(
+      () => resolveAgentWorkerPoolProfile({ profile: 'dev', env: { [name]: value } }),
+      new RegExp(`${name}_DEV_FIXED`)
+    );
+  }
+  assert.deepEqual(resolveAgentWorkerPoolProfile({ profile: 'production', env: {} }), {
+    PG_POOL_MAX: '10',
+    PGBOSS_POOL_MAX: '5',
+    AGENT_PGBOSS_POOL_MAX: '3'
+  });
 });
 
 test('CI configures a distinct session-token hashing secret', () => {
@@ -85,14 +125,20 @@ test('Mac Agent worker pins image pricing and the SiliconFlow output host', () =
   assert.match(runner, /AGENT_MODEL_NAME:\s*'Qwen\/Qwen3-8B'/);
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
   assert.match(runner, /optionalSecretNames = \['PG_SSL_CA_BASE64'\]/);
-  assert.match(runner, /PG_POOL_MAX:[\s\S]*profile === 'dev' \? '3' : '10'/);
-  assert.match(runner, /PGBOSS_POOL_MAX:[\s\S]*profile === 'dev' \? '2' : '5'/);
-  assert.match(runner, /AGENT_PGBOSS_POOL_MAX:[\s\S]*profile === 'dev' \? '2' : '3'/);
+  assert.match(runner, /delete workerEnv\.PG_SSL_CA;/);
+  assert.match(runner, /delete workerEnv\.PG_SSL_CA_BASE64;/);
+  assert.match(runner, /resolveAgentWorkerPoolProfile/);
+  assert.match(runner, /PG_SSL_REQUIRED:\s*'1'/);
+  assert.match(runner, /PG_SSL_REJECT_UNAUTHORIZED:\s*'1'/);
+  assert.match(runner, /AGENT_RUNTIME_V2_ENABLED: profile === 'dev'[\s\S]*\? 'false'/);
+  assert.match(runner, /AGENT_RUNTIME_V2_ROLLOUT_PERCENT: profile === 'dev'[\s\S]*\? '0'/);
+  assert.match(runner, /AGENT_RUNTIME_V2_CANARY_USER_IDS: profile === 'dev'[\s\S]*\? ''/);
   assert.match(installer, /ARTIGEN_AGENT_SUBAGENTS_ENABLED/);
   assert.match(installer, /<key>AGENT_SUBAGENTS_ENABLED<\/key>/);
   assert.match(installer, /<key>\$\{name\}<\/key>/);
   assert.match(installer, /AGENT_RUNTIME_V2_ENABLED/);
   assert.match(installer, /AGENT_RUNTIME_V2_ROLLOUT_PERCENT/);
+  assert.match(installer, /AGENT_RUNTIME_V2_CANARY_USER_IDS/);
   assert.match(installer, /DESIGN_PLANNER_V2_ENABLED/);
   assert.match(installer, /AGENT_ADAPTIVE_REASONING_ENABLED/);
   assert.match(installer, /AGENT_PROJECT_MEMORY_ENABLED/);
@@ -136,8 +182,9 @@ test('Mac Agent installer persists the reviewed V2 launch profile', {
     ), 'utf8');
     for (const [name, value] of Object.entries({
       AGENT_SUBAGENTS_ENABLED: 'true',
-      AGENT_RUNTIME_V2_ENABLED: 'true',
+      AGENT_RUNTIME_V2_ENABLED: 'false',
       AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0',
+      AGENT_RUNTIME_V2_CANARY_USER_IDS: '',
       DESIGN_PLANNER_V2_ENABLED: 'true',
       AGENT_ADAPTIVE_REASONING_ENABLED: 'true',
       AGENT_PROJECT_MEMORY_ENABLED: 'false',

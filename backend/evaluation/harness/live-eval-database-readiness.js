@@ -21,6 +21,10 @@ const assertLiveEvalDatabaseReadiness = async ({
     text: `SELECT current_database() AS database_name,
                   current_setting('server_version_num')::int AS server_version_num,
                   current_setting('max_connections')::int AS max_connections,
+                  current_setting('superuser_reserved_connections')::int
+                    AS superuser_reserved_connections,
+                  COALESCE(NULLIF(current_setting('reserved_connections', true), ''), '0')::int
+                    AS reserved_connections,
                   (SELECT count(*)::int FROM pg_stat_activity) AS used_connections`,
     query_timeout: 10_000
   });
@@ -29,6 +33,8 @@ const assertLiveEvalDatabaseReadiness = async ({
   const serverVersionNumber = Number(row.server_version_num);
   const postgresMajor = Math.floor(serverVersionNumber / 10_000);
   const maxConnections = Number(row.max_connections);
+  const superuserReservedConnections = Number(row.superuser_reserved_connections);
+  const reservedConnections = Number(row.reserved_connections);
   const usedConnections = Number(row.used_connections);
   if (databaseName !== expectedDatabaseName) {
     throw readinessError('AGENT_LIVE_EVAL_DATABASE_FORBIDDEN');
@@ -38,12 +44,18 @@ const assertLiveEvalDatabaseReadiness = async ({
   }
   if (
     !Number.isInteger(maxConnections) || maxConnections < 1 ||
+    !Number.isInteger(superuserReservedConnections) || superuserReservedConnections < 0 ||
+    !Number.isInteger(reservedConnections) || reservedConnections < 0 ||
     !Number.isInteger(usedConnections) || usedConnections < 0 ||
+    superuserReservedConnections + reservedConnections >= maxConnections ||
     usedConnections > maxConnections
   ) {
     throw readinessError('AGENT_LIVE_EVAL_DATABASE_CAPACITY_INVALID');
   }
-  const availableConnections = maxConnections - usedConnections;
+  const effectiveMaxConnections = maxConnections
+    - superuserReservedConnections
+    - reservedConnections;
+  const availableConnections = Math.max(0, effectiveMaxConnections - usedConnections);
   if (availableConnections < minimum) {
     throw readinessError('AGENT_LIVE_EVAL_DATABASE_HEADROOM_INSUFFICIENT');
   }
@@ -51,6 +63,9 @@ const assertLiveEvalDatabaseReadiness = async ({
     databaseName,
     postgresMajor,
     maxConnections,
+    superuserReservedConnections,
+    reservedConnections,
+    effectiveMaxConnections,
     usedConnections,
     availableConnections,
     requiredAvailableConnections: minimum

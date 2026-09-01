@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { resolveAgentWorkerPoolProfile } = require('./lib/agent-worker-pool-profile');
 
 const profile = String(process.argv[2] || '').trim().toLowerCase();
 if (!['dev', 'production'].includes(profile)) {
@@ -45,14 +46,6 @@ const normalizePositiveNumber = (name, fallback) => {
   if (!Number.isFinite(value) || value <= 0) throw new TypeError(`${name}_INVALID`);
   return String(value);
 };
-const normalizePoolSize = (name, fallback, maximum) => {
-  const raw = String(process.env[name] ?? fallback).trim();
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 2 || value > maximum) {
-    throw new TypeError(`${name}_INVALID`);
-  }
-  return String(value);
-};
 const actorProfile = String(
   process.env.AGENT_RUNTIME_ACTOR_PROFILE || 'stable-v1'
 ).trim();
@@ -60,8 +53,15 @@ if (!['stable-v1', 'exploratory-v1'].includes(actorProfile)) {
   throw new TypeError('AGENT_RUNTIME_ACTOR_PROFILE_INVALID');
 }
 const workerRuntimeSettings = Object.freeze({
-  AGENT_RUNTIME_V2_ENABLED: normalizeBoolean('AGENT_RUNTIME_V2_ENABLED'),
-  AGENT_RUNTIME_V2_ROLLOUT_PERCENT: normalizePercent('AGENT_RUNTIME_V2_ROLLOUT_PERCENT'),
+  AGENT_RUNTIME_V2_ENABLED: production
+    ? normalizeBoolean('AGENT_RUNTIME_V2_ENABLED')
+    : 'false',
+  AGENT_RUNTIME_V2_ROLLOUT_PERCENT: production
+    ? normalizePercent('AGENT_RUNTIME_V2_ROLLOUT_PERCENT')
+    : '0',
+  AGENT_RUNTIME_V2_CANARY_USER_IDS: production
+    ? String(process.env.AGENT_RUNTIME_V2_CANARY_USER_IDS || '').trim()
+    : '',
   DESIGN_PLANNER_V2_ENABLED: normalizeBoolean('DESIGN_PLANNER_V2_ENABLED'),
   AGENT_ADAPTIVE_REASONING_ENABLED: normalizeBoolean('AGENT_ADAPTIVE_REASONING_ENABLED'),
   AGENT_PROJECT_MEMORY_ENABLED: normalizeBoolean('AGENT_PROJECT_MEMORY_ENABLED'),
@@ -75,13 +75,7 @@ const workerRuntimeSettings = Object.freeze({
     160
   ),
   AGENT_RUNTIME_ACTOR_PROFILE: actorProfile,
-  PG_POOL_MAX: normalizePoolSize('PG_POOL_MAX', production ? 10 : 3, 30),
-  PGBOSS_POOL_MAX: normalizePoolSize('PGBOSS_POOL_MAX', production ? 5 : 2, 20),
-  AGENT_PGBOSS_POOL_MAX: normalizePoolSize(
-    'AGENT_PGBOSS_POOL_MAX',
-    production ? 3 : 2,
-    10
-  )
+  ...resolveAgentWorkerPoolProfile({ profile, env: process.env })
 });
 const escapeXml = (value) => String(value)
   .replaceAll('&', '&amp;')

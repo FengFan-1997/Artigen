@@ -79,6 +79,10 @@ const main = async () => {
   const caBase64 = readMacOsKeychainSecret({ service, account: 'PG_SSL_CA_BASE64' });
   const databaseEnv = {
     ...process.env,
+    PG_SSL_CA: '',
+    PG_SSL_CA_BASE64: '',
+    PG_SSL_REQUIRED: '1',
+    PG_SSL_REJECT_UNAUTHORIZED: '1',
     ...(caBase64 ? { PG_SSL_CA_BASE64: caBase64 } : {})
   };
   const readinessPool = new Pool({
