@@ -53,6 +53,7 @@ if (!['stable-v1', 'exploratory-v1'].includes(actorProfile)) {
   throw new TypeError('AGENT_RUNTIME_ACTOR_PROFILE_INVALID');
 }
 const workerRuntimeSettings = Object.freeze({
+  ...(!production ? { DEV_DATABASE_EXPECTED_MAJOR: '18' } : {}),
   AGENT_RUNTIME_V2_ENABLED: production
     ? normalizeBoolean('AGENT_RUNTIME_V2_ENABLED')
     : 'false',

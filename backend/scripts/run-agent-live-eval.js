@@ -9,7 +9,8 @@ const { Pool } = require('pg');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
 const { resolvePoolSsl } = require('../db/pool');
 const {
-  assertLiveEvalDatabaseReadiness
+  assertLiveEvalDatabaseReadiness,
+  resolveLiveEvalPostgresMajor
 } = require('../evaluation/harness/live-eval-database-readiness');
 
 const KEYCHAIN_SERVICE = String(
@@ -138,6 +139,7 @@ const loadLiveEvalSecrets = ({
     AGENT_LIVE_EVAL_MODE: 'true',
     AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1',
     AGENT_LIVE_EVAL_PG_POOL_MAX: '3',
+    DEV_DATABASE_EXPECTED_MAJOR: '18',
     PG_POOL_MAX: '3',
     PGBOSS_POOL_MAX: '2',
     AGENT_PGBOSS_POOL_MAX: '2',
@@ -802,7 +804,10 @@ const main = async () => {
   });
   try {
     await poolState.assertHealthy();
-    await assertLiveEvalDatabaseReadiness({ pool });
+    await assertLiveEvalDatabaseReadiness({
+      pool,
+      expectedPostgresMajor: resolveLiveEvalPostgresMajor(runtimeEnv)
+    });
     harness = await AgentLiveEvalHarness.create({
       pool,
       env: process.env,

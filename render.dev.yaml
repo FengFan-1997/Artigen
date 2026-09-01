@@ -35,6 +35,8 @@ services:
         sync: false
       - key: DEV_DATABASE_EXPECTED_HOST
         sync: false
+      - key: DEV_DATABASE_EXPECTED_MAJOR
+        value: "18"
       - key: PG_POOL_MAX
         value: "3"
       - key: PG_SSL_REQUIRED

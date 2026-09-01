@@ -1,12 +1,19 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-31（Asia/Shanghai）
+更新时间：2026-09-01（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
 本文只保留已经确定并产生持久影响的架构、代码、配置、迁移、部署和正式决定。开发中的具体进度、临时尝试、失败调试和下一条命令只记录在被 Git 忽略的 `HANDOFF.local.md`，不进入本文。
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
+
+## 2026-09-01 DEV 长期免费数据库隔离决定（候选实现，未切换）
+
+- 长期免费是本次数据库选择的第一优先级。生产继续独占现有 Neon PostgreSQL 16 与私有 S3，不迁移、不复制、不改变生产数据；DEV 计划改用独立的 Aiven Free PostgreSQL 18 空库 `dev_artigen`，不复制旧 DEV 历史，也不绑定信用卡或升级付费套餐。
+- Aiven Free 当前只提供 PostgreSQL 18，免费边界为 1 GB、20 个连接且无 SLA，长时间不活跃可能暂停。已在本机 PostgreSQL 18 对迁移 001–025、`pgcrypto`、`citext`、advisory lock、`LISTEN/NOTIFY`、`FOR UPDATE SKIP LOCKED`、JSONB 与 pg-boss schema v37 完成一次性兼容性验证；该本地证据不等同于 Aiven 云端或 DEV 部署验收。
+- 候选代码将 DEV 主版本、目标主机、`dev_artigen`、`artigen_migrator` / `artigen_runtime`、验证 TLS 与 `3/2/2` 连接池设为启动前硬门；Live Harness 每次真实 Provider dispatch 前还要求至少 4 个可用连接。生产迁移、备份与恢复工具继续固定 PostgreSQL 16。
+- 本节记录时 Aiven 数据库尚未创建，Render DEV、Vercel Preview 与 Mac DEV Worker 尚未切换；Runtime V2、公众 rollout 与 owner canary 继续关闭。只有 feature PR required CI 全绿并合入 `dev` 后，才允许创建免费服务、注入 Secret、执行空库迁移和 DEV 实机验收。
 
 ## 2026-08-31 PR #143、exact-SHA 本地门禁与外部平台阻断
 
@@ -305,7 +312,7 @@ Artigen 当前使用以下正式交付链：
 
 - 前端是 Vue 3 + Vite SPA，生产托管在 Vercel。
 - 后端是 Express/CommonJS，生产托管在 Render。
-- PostgreSQL 16 是账户、任务、订单、钱包、审计和 Agent 状态的业务真相。
+- PostgreSQL 是账户、任务、订单、钱包、审计和 Agent 状态的业务真相；生产固定 PostgreSQL 16，独立 DEV 环境固定 Aiven Free PostgreSQL 18，两个环境不共享数据。
 - 生产文件和 Agent 交付物使用共享 S3；多实例生产不能回退到本地文件。
 - 普通用户鉴权使用同源 HttpOnly Cookie + CSRF，不接受浏览器持久化 bearer token。
 - 生产邮箱登录使用 Turnstile 和一次性邮箱验证码，秘密配置由平台注入。

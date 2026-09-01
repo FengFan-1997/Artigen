@@ -1,17 +1,28 @@
 const EXPECTED_DATABASE_NAME = 'dev_artigen';
-const EXPECTED_POSTGRES_MAJOR = 16;
+const EXPECTED_POSTGRES_MAJOR = 18;
 const MIN_AVAILABLE_CONNECTIONS = 4;
 
 const readinessError = (code) => Object.assign(new Error(code), { code });
 
+const resolveLiveEvalPostgresMajor = (env = process.env) => {
+  const raw = String(env.DEV_DATABASE_EXPECTED_MAJOR || '').trim();
+  if (raw !== String(EXPECTED_POSTGRES_MAJOR)) {
+    throw new TypeError('AGENT_LIVE_EVAL_POSTGRES_MAJOR_PROFILE_INVALID');
+  }
+  return EXPECTED_POSTGRES_MAJOR;
+};
+
 const assertLiveEvalDatabaseReadiness = async ({
   pool,
   expectedDatabaseName = EXPECTED_DATABASE_NAME,
-  expectedPostgresMajor = EXPECTED_POSTGRES_MAJOR,
+  expectedPostgresMajor,
   minAvailableConnections = MIN_AVAILABLE_CONNECTIONS
 } = {}) => {
   if (!pool || typeof pool.query !== 'function') {
     throw new TypeError('AGENT_LIVE_EVAL_POOL_REQUIRED');
+  }
+  if (expectedPostgresMajor !== EXPECTED_POSTGRES_MAJOR) {
+    throw new TypeError('AGENT_LIVE_EVAL_POSTGRES_MAJOR_PROFILE_INVALID');
   }
   const minimum = Number(minAvailableConnections);
   if (!Number.isInteger(minimum) || minimum < 1) {
@@ -76,5 +87,6 @@ module.exports = {
   EXPECTED_DATABASE_NAME,
   EXPECTED_POSTGRES_MAJOR,
   MIN_AVAILABLE_CONNECTIONS,
-  assertLiveEvalDatabaseReadiness
+  assertLiveEvalDatabaseReadiness,
+  resolveLiveEvalPostgresMajor
 };

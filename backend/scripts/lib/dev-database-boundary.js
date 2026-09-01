@@ -6,6 +6,7 @@ const {
 const { resolvePoolSsl } = require('../../db/pool');
 
 const DEV_DATABASE_NAME = 'dev_artigen';
+const DEV_EXPECTED_POSTGRES_MAJOR = 18;
 const DEV_MIGRATION_USER = 'artigen_migrator';
 const DEV_RUNTIME_USER = 'artigen_runtime';
 const DEV_POOL_PROFILE = Object.freeze({
@@ -29,12 +30,24 @@ const normalizedHost = (value) => String(value || '')
   .toLowerCase()
   .replace(/\.$/, '');
 
+const resolveDevExpectedPostgresMajor = (env = process.env) => {
+  if (String(env.APP_ENV || '').trim().toLowerCase() !== 'dev') return null;
+  const raw = String(env.DEV_DATABASE_EXPECTED_MAJOR || '').trim();
+  if (raw !== String(DEV_EXPECTED_POSTGRES_MAJOR)) {
+    throw Object.assign(new Error(
+      `DEV database requires DEV_DATABASE_EXPECTED_MAJOR=${DEV_EXPECTED_POSTGRES_MAJOR}`
+    ), { code: 'DEV_DATABASE_POSTGRES_MAJOR_FORBIDDEN' });
+  }
+  return DEV_EXPECTED_POSTGRES_MAJOR;
+};
+
 const assertDevDatabaseUrlProfile = ({
   migrationUrl,
   runtimeUrl,
   env = process.env
 } = {}) => {
   if (String(env.APP_ENV || '').trim().toLowerCase() !== 'dev') return null;
+  const expectedPostgresMajor = resolveDevExpectedPostgresMajor(env);
   if (!String(migrationUrl || '').trim() || !String(runtimeUrl || '').trim()) {
     throw Object.assign(new Error(
       'DEV requires both DATABASE_MIGRATION_URL and DATABASE_URL'
@@ -82,6 +95,7 @@ const assertDevDatabaseUrlProfile = ({
   }
   return Object.freeze({
     databaseName: identity.database,
+    expectedPostgresMajor,
     hostname: identity.hostname,
     migrationUser,
     runtimeUser
@@ -91,6 +105,7 @@ const assertDevDatabaseUrlProfile = ({
 const inspectIdentity = async ({
   connectionString,
   expectedUser,
+  expectedPostgresMajor,
   env,
   createClientImpl
 }) => {
@@ -112,7 +127,7 @@ const inspectIdentity = async ({
     if (
       String(row.database_name || '') !== DEV_DATABASE_NAME ||
       String(row.database_user || '') !== expectedUser ||
-      Math.floor(Number(row.server_version_num || 0) / 10_000) !== 16
+      Math.floor(Number(row.server_version_num || 0) / 10_000) !== expectedPostgresMajor
     ) {
       throw Object.assign(new Error('DEV database runtime identity is not approved'), {
         code: 'DEV_DATABASE_IDENTITY_FORBIDDEN'
@@ -135,12 +150,14 @@ const assertDevDatabaseBoundary = async ({
   const migration = await inspectIdentity({
     connectionString: migrationUrl,
     expectedUser: DEV_MIGRATION_USER,
+    expectedPostgresMajor: profile.expectedPostgresMajor,
     env,
     createClientImpl
   });
   const runtime = await inspectIdentity({
     connectionString: runtimeUrl,
     expectedUser: DEV_RUNTIME_USER,
+    expectedPostgresMajor: profile.expectedPostgresMajor,
     env,
     createClientImpl
   });
@@ -161,11 +178,95 @@ const assertDevDatabaseBoundary = async ({
   return profile;
 };
 
+const assertDevRuntimeDatabaseBoundary = async ({
+  runtimeUrl,
+  env = process.env,
+  pool
+} = {}) => {
+  if (String(env.APP_ENV || '').trim().toLowerCase() !== 'dev') return null;
+  if (!pool || typeof pool.query !== 'function') {
+    throw new TypeError('DEV_DATABASE_RUNTIME_POOL_REQUIRED');
+  }
+  const expectedPostgresMajor = resolveDevExpectedPostgresMajor(env);
+  const rawRuntimeUrl = String(runtimeUrl || '').trim();
+  if (!rawRuntimeUrl) {
+    throw Object.assign(new Error('DEV requires DATABASE_URL'), {
+      code: 'DEV_DATABASE_URLS_REQUIRED'
+    });
+  }
+  if (!/^(1|true|yes|on)$/i.test(String(env.PG_SSL_REQUIRED || '').trim())) {
+    throw Object.assign(new Error('DEV database requires verified TLS'), {
+      code: 'DEV_DATABASE_VERIFIED_TLS_REQUIRED'
+    });
+  }
+  for (const [name, expected] of Object.entries(DEV_POOL_PROFILE)) {
+    if (String(env[name] || '').trim() !== expected) {
+      throw Object.assign(new Error(`DEV database pool profile requires ${name}=${expected}`), {
+        code: 'DEV_DATABASE_POOL_PROFILE_FORBIDDEN'
+      });
+    }
+  }
+  resolvePoolSsl(rawRuntimeUrl, env);
+  const expectedHost = normalizedHost(env.DEV_DATABASE_EXPECTED_HOST);
+  if (!expectedHost) {
+    throw Object.assign(new Error('DEV_DATABASE_EXPECTED_HOST is required'), {
+      code: 'DEV_DATABASE_EXPECTED_HOST_REQUIRED'
+    });
+  }
+  const runtime = assertDirectPostgresUrl(rawRuntimeUrl, 'DATABASE_URL');
+  const databaseName = decodeUrlPart(runtime.pathname.replace(/^\/+/, ''), 'DATABASE_URL');
+  const runtimeUser = decodeUrlPart(runtime.username, 'DATABASE_URL');
+  if (
+    normalizedHost(runtime.hostname) !== expectedHost ||
+    databaseName !== DEV_DATABASE_NAME ||
+    runtimeUser !== DEV_RUNTIME_USER
+  ) {
+    throw Object.assign(new Error('DEV Worker database target or role is not approved'), {
+      code: 'DEV_DATABASE_TARGET_FORBIDDEN'
+    });
+  }
+  const result = await pool.query({
+    text: `SELECT current_database() AS database_name,
+                  current_user AS database_user,
+                  current_setting('server_version_num')::int AS server_version_num,
+                  (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public')
+                    AS public_owner,
+                  (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='pgboss')
+                    AS pgboss_owner,
+                  has_schema_privilege(current_user,'public','USAGE') AS public_usage,
+                  has_schema_privilege(current_user,'public','CREATE') AS public_create`,
+    query_timeout: 10_000
+  });
+  const row = result.rows?.[0] || {};
+  if (
+    String(row.database_name || '') !== DEV_DATABASE_NAME ||
+    String(row.database_user || '') !== DEV_RUNTIME_USER ||
+    Math.floor(Number(row.server_version_num || 0) / 10_000) !== expectedPostgresMajor ||
+    String(row.public_owner || '') !== DEV_MIGRATION_USER ||
+    String(row.pgboss_owner || '') !== DEV_RUNTIME_USER ||
+    row.public_usage !== true ||
+    row.public_create !== false
+  ) {
+    throw Object.assign(new Error('DEV Worker database identity or privileges are not approved'), {
+      code: 'DEV_DATABASE_RUNTIME_PRIVILEGES_FORBIDDEN'
+    });
+  }
+  return Object.freeze({
+    databaseName: DEV_DATABASE_NAME,
+    expectedPostgresMajor,
+    hostname: expectedHost,
+    runtimeUser
+  });
+};
+
 module.exports = {
   DEV_DATABASE_NAME,
+  DEV_EXPECTED_POSTGRES_MAJOR,
   DEV_MIGRATION_USER,
   DEV_POOL_PROFILE,
   DEV_RUNTIME_USER,
   assertDevDatabaseBoundary,
-  assertDevDatabaseUrlProfile
+  assertDevRuntimeDatabaseBoundary,
+  assertDevDatabaseUrlProfile,
+  resolveDevExpectedPostgresMajor
 };

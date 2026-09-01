@@ -18,6 +18,9 @@ const {
 } = require('../services/agent-model-runtime-service');
 const { createAgentSandboxProvider } = require('../services/agent-sandbox-provider');
 const { hasAgentPayloadKey } = require('../services/agent-payload-service');
+const {
+  assertDevRuntimeDatabaseBoundary
+} = require('./lib/dev-database-boundary');
 
 const resolveWorkerConcurrency = ({ env = process.env, runtimeReadiness, system = os } = {}) => {
   const requested = Math.max(1, Math.min(2, Number(env.AGENT_WORKER_CONCURRENCY || 1) || 1));
@@ -44,6 +47,11 @@ const main = async () => {
   assertAgentRuntimeReady(process.env);
 
   const pool = getPool();
+  await assertDevRuntimeDatabaseBoundary({
+    runtimeUrl: process.env.DATABASE_URL,
+    env: process.env,
+    pool
+  });
   const runService = createAgentRunService({ pool, env: process.env });
   const providerScheduler = createProviderScheduler({ pool, env: process.env });
   const modelCallService = createModelCallService({
