@@ -228,7 +228,7 @@ const main = async () => {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: concurrency * 4 + 2 });
   try {
     const readiness = await checkDatabase(pool);
-    if (!readiness.ok || readiness.migration !== '025_agent_runtime_v2_1_durability') {
+    if (!readiness.ok || readiness.migration !== '026_agent_live_eval_capacity_counter') {
       throw new Error(`AGENT_HARNESS_DATABASE_NOT_READY:${readiness.migration || 'unknown'}`);
     }
     const results = await parallelMap(selected, concurrency, (entry) => runCase(pool, entry));
