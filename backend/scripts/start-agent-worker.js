@@ -53,7 +53,11 @@ const main = async () => {
     pool
   });
   const runService = createAgentRunService({ pool, env: process.env });
-  const providerScheduler = createProviderScheduler({ pool, env: process.env });
+  const providerScheduler = createProviderScheduler({
+    pool,
+    env: process.env,
+    providerKey: `${config.modelProvider}:${config.modelName}`
+  });
   const modelCallService = createModelCallService({
     pool,
     retentionDays: config.retentionDays
@@ -63,8 +67,15 @@ const main = async () => {
     providerScheduler,
     modelCallService
   });
+  const imageProviderScheduler = config.modelProvider === 'siliconflow'
+    ? providerScheduler
+    : createProviderScheduler({
+        pool,
+        env: process.env,
+        providerKey: 'siliconflow:kolors'
+      });
   const scheduledSiliconFlowChat = createScheduledChatGenerate({
-    scheduler: providerScheduler,
+    scheduler: imageProviderScheduler,
     chatGenerate: callSiliconFlowChat,
     defaultPriority: 'actor'
   });

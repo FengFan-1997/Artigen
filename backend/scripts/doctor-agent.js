@@ -66,6 +66,8 @@ const main = async () => {
         ? config.ollamaBaseUrl
         : config.modelProvider === 'siliconflow'
           ? config.siliconFlowBaseUrl
+          : config.modelProvider === 'cloudflare'
+            ? config.cloudflareBaseUrl
           : 'configured-cloud-provider',
       sandboxProvider: config.sandboxProvider,
       sandboxMode: config.sandboxMode,

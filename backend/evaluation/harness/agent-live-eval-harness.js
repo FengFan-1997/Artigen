@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const sharp = require('sharp');
 
-const { callSiliconFlowChat } = require('../../lib/ai-providers');
+const { callCloudflareChat, callSiliconFlowChat } = require('../../lib/ai-providers');
 const { createAdminFinanceService } = require('../../services/admin-finance-service');
 const { assertAgentRuntimeReady } = require('../../services/agent-config');
 const { createAgentImageService } = require('../../services/agent-image-service');
@@ -84,7 +84,22 @@ const waitForConversationExecution = async ({
   throw new Error('AGENT_LIVE_EVAL_CONVERSATION_TIMEOUT');
 };
 
-const liveEvalEnv = (base = {}, overrides = {}) => ({
+const liveEvalEnv = (base = {}, overrides = {}) => {
+  const requestedProvider = String(
+    overrides.AGENT_MODEL_PROVIDER ?? base.AGENT_MODEL_PROVIDER ?? 'siliconflow'
+  ).trim().toLowerCase();
+  const expectedModel = requestedProvider === 'cloudflare'
+    ? '@cf/openai/gpt-oss-120b'
+    : requestedProvider === 'siliconflow'
+      ? 'Qwen/Qwen3-8B'
+      : '';
+  const requestedModel = String(
+    overrides.AGENT_MODEL_NAME ?? base.AGENT_MODEL_NAME ?? expectedModel
+  ).trim();
+  if (!expectedModel || requestedModel !== expectedModel) {
+    throw new Error('AGENT_LIVE_EVAL_MODEL_LOCK_INVALID');
+  }
+  return {
   ...base,
   NODE_ENV: 'test',
   APP_ENV: 'dev',
@@ -101,8 +116,8 @@ const liveEvalEnv = (base = {}, overrides = {}) => ({
   AGENT_PROJECT_MEMORY_ENABLED: 'true',
   AGENT_PROVIDER_SCHEDULER_ENABLED: 'true',
   AGENT_RUNTIME_ACTOR_PROFILE: 'stable-v1',
-  AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: requestedProvider,
+  AGENT_MODEL_NAME: requestedModel,
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
   AGENT_MODEL_CONTEXT_TOKENS: '16384',
@@ -126,8 +141,11 @@ const liveEvalEnv = (base = {}, overrides = {}) => ({
   S3_FORCE_PATH_STYLE: '1',
   DESIGN_CONVERSATION_ENABLED: 'true',
   DESIGN_CONVERSATION_WORKER_ENABLED: 'true',
-  ...overrides
-});
+  ...overrides,
+  AGENT_MODEL_PROVIDER: requestedProvider,
+  AGENT_MODEL_NAME: requestedModel
+  };
+};
 
 const assertLiveEvalProcessSafety = (env = process.env) => {
   if (
@@ -274,7 +292,18 @@ class AgentLiveEvalHarness {
       Object.assign(process.env, instance.env);
       assertAgentRuntimeReady(instance.env);
 
-      instance.providerScheduler = createProviderScheduler({ pool, env: instance.env });
+      instance.providerScheduler = createProviderScheduler({
+        pool,
+        env: instance.env,
+        providerKey: `${instance.env.AGENT_MODEL_PROVIDER}:${instance.env.AGENT_MODEL_NAME}`
+      });
+      instance.imageProviderScheduler = instance.env.AGENT_MODEL_PROVIDER === 'cloudflare'
+        ? createProviderScheduler({
+            pool,
+            env: instance.env,
+            providerKey: 'siliconflow:Kwai-Kolors/Kolors'
+          })
+        : instance.providerScheduler;
       instance.modelCallService = createModelCallService({
         pool,
         env: instance.env,
@@ -297,7 +326,8 @@ class AgentLiveEvalHarness {
         pool,
         campaignGuard: instance.campaignGuard,
         maxQwenCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_QWEN_CALLS || 200),
-        maxKolorsCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_KOLORS_CALLS || 16)
+        maxKolorsCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_KOLORS_CALLS || 16),
+        textModel: instance.env.AGENT_MODEL_NAME
       });
       instance.model = createAgentModelProvider({
         env: instance.env,
@@ -315,7 +345,7 @@ class AgentLiveEvalHarness {
         );
       };
       const scheduledChat = createScheduledChatGenerate({
-        scheduler: instance.providerScheduler,
+        scheduler: instance.imageProviderScheduler,
         chatGenerate: callSiliconFlowChat,
         defaultPriority: 'actor'
       });
@@ -705,6 +735,39 @@ class AgentLiveEvalHarness {
       [userId]
     );
     const chatGenerate = async (input) => {
+      if (this.env.AGENT_MODEL_PROVIDER === 'cloudflare') {
+        const payload = {
+          model: input.model,
+          messages: input.messages,
+          stream: false,
+          max_tokens: input.maxTokens,
+          parallel_tool_calls: false,
+          temperature: input.temperature,
+          top_p: input.topP,
+          ...(input.topK === undefined ? {} : { top_k: input.topK }),
+          ...(input.responseFormat === 'json_object'
+            ? { response_format: { type: 'json_object' } }
+            : {})
+        };
+        return this.auditor.runQwenRequest(
+          payload,
+          {
+            phase: input.phase || 'router',
+            runtimeVersion,
+            promptHash: input.promptHash
+          },
+          () => callCloudflareChat({
+            ...input,
+            accountId: this.env.CLOUDFLARE_ACCOUNT_ID,
+            credential: this.env.CLOUDFLARE_API_TOKEN,
+            freeAccountAttested: true,
+            freeAccountId: this.env.CLOUDFLARE_ACCOUNT_ID,
+            model: this.env.AGENT_MODEL_NAME,
+            signal: this.campaignGuard.combinedSignal(input.signal),
+            fetcher: this.auditor.wrapQwenFetch(globalThis.fetch)
+          })
+        );
+      }
       const payload = {
         model: input.model,
         messages: input.messages,

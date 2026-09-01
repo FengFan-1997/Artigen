@@ -419,6 +419,36 @@ test('Harness V3 replay oracle enforces the model lock and append-only verifier 
   assert.ok(missingBoundary.includes('ready_to_finalize_model_boundary_missing'));
 });
 
+test('Harness V3 replay oracle accepts the immutable Cloudflare provider/model pair', () => {
+  const snapshot = {
+    run: {
+      id: 'run-cloudflare-lock',
+      status: 'running',
+      step_count: 0,
+      lease_epoch: 1,
+      max_credits: 5,
+      model_provider: 'cloudflare',
+      model_name: '@cf/openai/gpt-oss-120b'
+    },
+    events: [],
+    steps: [],
+    receipts: [],
+    reservations: [],
+    artifacts: [],
+    subagents: [],
+    approvals: [],
+    modelCalls: [{
+      id: 'call-cloudflare',
+      provider: 'cloudflare',
+      model_name: '@cf/openai/gpt-oss-120b',
+      phase: 'actor',
+      outcome: 'succeeded',
+      prompt_hash: Buffer.from('cd'.repeat(32), 'hex')
+    }]
+  };
+  assert.equal(runtimeInvariantErrors(snapshot).includes('model_lock_violated'), false);
+});
+
 test('Harness V3 artifact fixtures are deterministic OOXML and offline website archives', () => {
   assert.deepEqual(zipEntryNames(minimalXlsx()).filter((name) => name.startsWith('xl/')), [
     'xl/workbook.xml',

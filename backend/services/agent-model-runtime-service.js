@@ -42,13 +42,21 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
   signal?.addEventListener('abort', onAbort, { once: true });
 });
 
-const schedulerIntervalMs = (env = process.env) => {
+const schedulerIntervalMs = (env = process.env, providerKey = '') => {
+  const normalizedProviderKey = String(providerKey || '').trim().toLowerCase();
+  const cloudflare = normalizedProviderKey
+    ? normalizedProviderKey.startsWith('cloudflare:')
+    : String(env.AGENT_MODEL_PROVIDER || '').trim().toLowerCase() === 'cloudflare';
   const floor = Math.max(0, Number.parseInt(String(
-    env.AGENT_SILICONFLOW_MIN_INTERVAL_MS || '6500'
+    cloudflare
+      ? env.AGENT_CLOUDFLARE_MIN_INTERVAL_MS || '0'
+      : env.AGENT_SILICONFLOW_MIN_INTERVAL_MS || '6500'
   ), 10) || 0);
-  const rpm = Math.max(1, Math.min(600, Number.parseInt(String(
-    env.AGENT_SILICONFLOW_REQUESTS_PER_MINUTE || '9'
-  ), 10) || 9));
+  const rpm = Math.max(1, Math.min(cloudflare ? 120 : 600, Number.parseInt(String(
+    cloudflare
+      ? env.AGENT_CLOUDFLARE_REQUESTS_PER_MINUTE || '30'
+      : env.AGENT_SILICONFLOW_REQUESTS_PER_MINUTE || '9'
+  ), 10) || (cloudflare ? 30 : 9)));
   return Math.max(floor, Math.ceil(60_000 / rpm));
 };
 
@@ -77,7 +85,7 @@ const createProviderScheduler = ({ pool, env = process.env, providerKey = 'silic
   if (!pool || typeof pool.connect !== 'function') {
     throw new TypeError('AGENT_PROVIDER_SCHEDULER_POOL_REQUIRED');
   }
-  const intervalMs = schedulerIntervalMs(env);
+  const intervalMs = schedulerIntervalMs(env, providerKey);
   const requestTtlMs = Math.max(30_000, Math.min(
     10 * 60_000,
     Number.parseInt(String(env.AGENT_PROVIDER_REQUEST_TTL_MS || '600000'), 10) || 600_000

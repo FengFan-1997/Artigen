@@ -11,6 +11,14 @@ if (KEYCHAIN_SERVICE !== 'artigen-agent-dev-worker') {
   process.exit(64);
 }
 
+const modelProvider = String(process.env.AGENT_MODEL_PROVIDER || 'siliconflow')
+  .trim()
+  .toLowerCase();
+if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {
+  console.error('AGENT_DEV_SMOKE_MODEL_PROVIDER_INVALID');
+  process.exit(64);
+}
+
 const secretNames = [
   'DATABASE_URL',
   'AGENT_PAYLOAD_ENCRYPTION_KEY',
@@ -23,12 +31,20 @@ const secretNames = [
   'S3_ACCESS_KEY_ID',
   'S3_SECRET_ACCESS_KEY'
 ];
+if (modelProvider === 'cloudflare') {
+  secretNames.push('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN');
+}
 const missing = [];
 for (const name of secretNames) {
   const value = readMacOsKeychainSecret({ service: KEYCHAIN_SERVICE, account: name });
   if (!value) missing.push(name);
   else process.env[name] = value;
 }
+const pgSslCaBase64 = readMacOsKeychainSecret({
+  service: KEYCHAIN_SERVICE,
+  account: 'PG_SSL_CA_BASE64'
+});
+if (pgSslCaBase64) process.env.PG_SSL_CA_BASE64 = pgSslCaBase64;
 if (missing.length) {
   console.error(`AGENT_DEV_SMOKE_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
   process.exit(78);
@@ -36,11 +52,23 @@ if (missing.length) {
 
 Object.assign(process.env, {
   NODE_ENV: 'production',
+  APP_ENV: 'dev',
+  PG_SSL_REQUIRED: '1',
+  PG_SSL_REJECT_UNAUTHORIZED: '1',
+  DEV_DATABASE_EXPECTED_MAJOR: '18',
   AGENT_FEATURE_ENABLED: 'true',
   AGENT_WORKER_ENABLED: '1',
   AGENT_RUNTIME_DRIVER: 'live',
-  AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: modelProvider,
+  AGENT_MODEL_NAME: modelProvider === 'cloudflare'
+    ? '@cf/openai/gpt-oss-120b'
+    : 'Qwen/Qwen3-8B',
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: modelProvider === 'cloudflare'
+    ? String(process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || 'false')
+    : 'false',
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: modelProvider === 'cloudflare'
+    ? String(process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '').trim()
+    : '',
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
   AGENT_SANDBOX_PROVIDER: 'cua',
@@ -62,6 +90,7 @@ const { createAgentRunService, TERMINAL_STATUSES } = require('../services/agent-
 const { AgentQueuePublisher } = require('../services/agent-queue-service');
 const assets = require('../services/asset-storage');
 
+const REQUIRED_MIGRATION = '025_agent_runtime_v2_1_durability';
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const readBody = async (body, maximumBytes) => {
@@ -128,11 +157,11 @@ const selectSmokeUser = async (pool) => {
 
 const assertRemoteReadiness = async ({ pool, runService }) => {
   const migration = await pool.query(
-    `SELECT COALESCE(max(name),'') AS name FROM pgmigrations`
+    'SELECT EXISTS (SELECT 1 FROM pgmigrations WHERE name=$1) AS applied',
+    [REQUIRED_MIGRATION]
   );
-  const migrationName = String(migration.rows[0]?.name || '');
-  if (!migrationName.startsWith('020_')) {
-    throw new Error(`AGENT_DEV_SMOKE_MIGRATION_NOT_READY:${migrationName || 'none'}`);
+  if (migration.rows[0]?.applied !== true) {
+    throw new Error(`AGENT_DEV_SMOKE_MIGRATION_NOT_READY:${REQUIRED_MIGRATION}`);
   }
   const status = await runService.getServiceStatus();
   const ready = status.enabled && status.workerOnline && status.browserReady &&

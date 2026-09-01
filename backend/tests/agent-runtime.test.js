@@ -28,12 +28,14 @@ const {
 const {
   AgentWaitingForUser,
   ARTIFACT_MIME_TYPES,
+  CloudflareAgentModelProvider,
   FUNCTION_TOOLS,
   OllamaAgentModelProvider,
   OpenAiAgentModelProvider,
   SiliconFlowAgentModelProvider,
   assertPosixShellScript,
   buildInstructions,
+  cloudflareUsageCredits,
   functionToolsForProfile,
   normalizeReportPdfToolAlias,
   ollamaFileTools,
@@ -426,6 +428,7 @@ const {
   normalizeDeliverables,
   normalizeDelegatedTasks,
   nextConsecutiveFailureCount,
+  usageCreditsForRun,
   objectivePublicFields,
   publicRun,
   publicSubagent
@@ -1971,6 +1974,74 @@ test('SiliconFlow Agent is pinned to the deep-thinking Qwen3-8B model and requir
     AGENT_MODEL_PROVIDER: 'siliconflow',
     AGENT_MODEL_NAME: 'Qwen/Qwen3-32B'
   }), { code: 'AGENT_SILICONFLOW_MODEL_NOT_ALLOWED' });
+});
+
+test('Cloudflare Agent is pinned to the free-tier GPT-OSS 120B model and requires account credentials', () => {
+  const accountId = 'a'.repeat(32);
+  assert.throws(() => assertAgentRuntimeReady({
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local'
+  }), { code: 'AGENT_MODEL_NOT_CONFIGURED' });
+  const config = assertAgentRuntimeReady({
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+    AGENT_RUNTIME_V2_ENABLED: 'true',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local',
+    AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
+    AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
+  });
+  assert.equal(config.modelProvider, 'cloudflare');
+  assert.equal(config.modelName, '@cf/openai/gpt-oss-120b');
+  assert.equal(config.cloudflareFreeAccountAttested, true);
+  assert.equal(
+    config.cloudflareBaseUrl,
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`
+  );
+  assert.throws(() => getAgentConfig({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'not-an-account-id'
+  }), { code: 'AGENT_CLOUDFLARE_ACCOUNT_ID_INVALID' });
+  assert.throws(() => getAgentConfig({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_MODEL_NAME: '@cf/qwen/qwen3.8-27b'
+  }), { code: 'AGENT_CLOUDFLARE_MODEL_NOT_ALLOWED' });
+  for (const invalidRate of ['0', '-1', 'not-a-number']) {
+    assert.throws(() => assertAgentRuntimeReady({
+      AGENT_FEATURE_ENABLED: '1',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: invalidRate,
+      AGENT_RUNTIME_V2_ENABLED: 'true',
+      AGENT_SANDBOX_PROVIDER: 'cua',
+      AGENT_SANDBOX_MODE: 'local',
+      AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
+      AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
+    }), { code: 'AGENT_RUNTIME_V2_PRICING_NOT_READY' });
+  }
+  assert.throws(() => assertAgentRuntimeReady({
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local'
+  }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED' });
+  assert.throws(() => getAgentConfig({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'b'.repeat(32)
+  }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_MISMATCH' });
 });
 
 test('Runtime V2 assignment is server-owned, stable and fails back to V1 when disabled', () => {
@@ -5039,6 +5110,182 @@ test('SiliconFlow Qwen3-8B agent executes the durable file-tool loop without loc
     AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '1',
     AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '2'
   }) > 0);
+});
+
+test('Cloudflare GPT-OSS 120B uses the free Workers AI chat endpoint for structured Agent calls', async () => {
+  const accountId = 'b'.repeat(32);
+  const requests = [];
+  const provider = new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (url, init = {}) => {
+      assert.equal(init.headers.Authorization, 'Bearer cloudflare-test-token');
+      if (init.method === 'GET') {
+        assert.equal(
+          url,
+          `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search?search=%40cf%2Fopenai%2Fgpt-oss-120b`
+        );
+        return new Response(JSON.stringify({
+          success: true,
+          result: [{ name: '@cf/openai/gpt-oss-120b' }]
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      assert.equal(
+        url,
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`
+      );
+      const request = JSON.parse(init.body);
+      requests.push(request);
+      return new Response(JSON.stringify({
+        id: 'structured',
+        choices: [{ message: { role: 'assistant', content: '{"ok":true}' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 20 }
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+  });
+  assert.deepEqual(await provider.probe(), {
+    ok: true,
+    provider: 'cloudflare',
+    model: '@cf/openai/gpt-oss-120b'
+  });
+  const result = await provider.createStructuredJson({
+    messages: [{ role: 'user', content: 'Return {"ok":true}.' }],
+    errorCode: 'TEST_STRUCTURED_OUTPUT_INVALID',
+    phase: 'router'
+  });
+  assert.deepEqual(result.value, { ok: true });
+  assert.equal(requests[0].model, '@cf/openai/gpt-oss-120b');
+  assert.deepEqual(requests[0].response_format, { type: 'json_object' });
+  assert.equal(requests[0].enable_thinking, undefined);
+  assert.equal(requests[0].max_tokens, 1200);
+  assert.equal(cloudflareUsageCredits({
+    prompt_tokens: 1_000_000,
+    completion_tokens: 1_000_000
+  }), 1.1);
+});
+
+test('Cloudflare model-directory probe fails closed for credentials and missing model', async () => {
+  const makeProvider = (body, status) => new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: 'd'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token'
+    },
+    fetchImpl: async () => new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  await assert.rejects(
+    makeProvider({ success: false, errors: [{ code: 10000 }] }, 403).probe(),
+    { code: 'AGENT_CLOUDFLARE_CREDENTIAL_INVALID' }
+  );
+  await assert.rejects(
+    makeProvider({ success: true, result: [] }, 200).probe(),
+    { code: 'AGENT_CLOUDFLARE_MODEL_MISSING' }
+  );
+  await assert.rejects(
+    makeProvider({ success: false, errors: [{ code: 1000 }] }, 429).probe(),
+    { code: 'AGENT_CLOUDFLARE_UNAVAILABLE' }
+  );
+});
+
+test('Cloudflare GPT-OSS 120B completes an Agent tool-call round trip', async () => {
+  const responses = [{
+    id: 'cf-plan',
+    choices: [{ message: {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: 'cf-call-plan',
+        type: 'function',
+        function: {
+          name: 'update_plan',
+          arguments: JSON.stringify({
+            explanation: 'Answer directly',
+            steps: [
+              { label: 'Answer', status: 'in_progress' },
+              { label: 'Verify', status: 'pending' }
+            ]
+          })
+        }
+      }]
+    }}],
+    usage: { prompt_tokens: 50, completion_tokens: 10 }
+  }, {
+    id: 'cf-final',
+    choices: [{ message: { role: 'assistant', content: 'Done.' } }],
+    usage: { prompt_tokens: 60, completion_tokens: 5 }
+  }];
+  const requests = [];
+  const provider = new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: 'c'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'c'.repeat(32),
+      AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Answer directly',
+    capabilities: {},
+    maxSteps: 4,
+    callbacks: {
+      updatePlan: async (value) => ({ accepted: true, steps: value.steps }),
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Done.');
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].model, '@cf/openai/gpt-oss-120b');
+  assert.equal(requests[1].messages.at(-1).tool_call_id, 'cf-call-plan');
+});
+
+test('Cloudflare receipt recovery uses the immutable provider pricing snapshot', () => {
+  const credits = usageCreditsForRun({
+    inputTokens: 1_000_000,
+    outputTokens: 1_000_000,
+    config: {
+      modelProvider: 'siliconflow',
+      modelName: 'Qwen/Qwen3-8B',
+      siliconFlowInputCreditsPerMillion: 20,
+      siliconFlowOutputCreditsPerMillion: 160,
+      cloudflareInputCreditsPerMillion: 999,
+      cloudflareOutputCreditsPerMillion: 999
+    },
+    run: {
+      model_provider: 'cloudflare',
+      model_name: '@cf/openai/gpt-oss-120b',
+      runtime_profile_summary: {
+        modelConfig: {
+          pricingSnapshot: {
+            provider: 'cloudflare',
+            model: '@cf/openai/gpt-oss-120b',
+            inputCreditsPerMillion: 0.35,
+            outputCreditsPerMillion: 0.75
+          }
+        }
+      }
+    }
+  });
+  assert.equal(credits, 1.1);
 });
 
 test('SiliconFlow Qwen3-8B safely synthesizes a plan when the small model starts with execution', async () => {

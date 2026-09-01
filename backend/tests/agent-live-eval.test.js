@@ -87,6 +87,16 @@ const {
 test('Live Harness V3.1 is fail-closed outside explicit test + dev + real-provider mode', () => {
   const safe = liveEvalEnv({}, { AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1' });
   assert.equal(assertLiveEvalProcessSafety(safe), true);
+  const cloudflare = liveEvalEnv({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b'
+  }, { AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1' });
+  assert.equal(cloudflare.AGENT_MODEL_PROVIDER, 'cloudflare');
+  assert.equal(cloudflare.AGENT_MODEL_NAME, '@cf/openai/gpt-oss-120b');
+  assert.throws(() => liveEvalEnv({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+  }), /AGENT_LIVE_EVAL_MODEL_LOCK_INVALID/);
   for (const override of [
     { NODE_ENV: 'production' },
     { APP_ENV: 'production' },
@@ -534,6 +544,24 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
   assert.equal(loaded.runtimeEnv.PG_SSL_REJECT_UNAUTHORIZED, '1');
   assert.equal(loaded.runtimeEnv.PG_SSL_CA_BASE64, secrets.get('PG_SSL_CA_BASE64'));
   assert.equal(loaded.evidenceKeyMaterial, secrets.get('AGENT_LIVE_EVAL_EVIDENCE_KEY'));
+  const cloudflareAccountId = 'f'.repeat(32);
+  const cloudflareSecrets = new Map([
+    ...secrets,
+    ['CLOUDFLARE_ACCOUNT_ID', cloudflareAccountId],
+    ['CLOUDFLARE_API_TOKEN', 'cloudflare-provider-key']
+  ]);
+  const cloudflare = loadLiveEvalSecrets({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: cloudflareAccountId
+    },
+    service: 'artigen-agent-dev-worker',
+    readSecret: ({ account }) => cloudflareSecrets.get(account) || ''
+  });
+  assert.equal(cloudflare.runtimeEnv.AGENT_MODEL_PROVIDER, 'cloudflare');
+  assert.equal(cloudflare.runtimeEnv.AGENT_MODEL_NAME, '@cf/openai/gpt-oss-120b');
+  assert.equal(cloudflare.runtimeEnv.CLOUDFLARE_ACCOUNT_ID, cloudflareAccountId);
   assert.throws(
     () => loadLiveEvalSecrets({ service: 'artigen-production', readSecret: () => 'x' }),
     /KEYCHAIN_SERVICE_INVALID/
@@ -1479,6 +1507,25 @@ test('Live eval final report cryptographically binds the exact 24-run report and
   });
   assert.equal(verified.campaignId, automatedReport.campaignId);
   assert.match(verified.reportSha256, /^[a-f0-9]{64}$/);
+  const cloudflareReport = createSignedFinalReport({
+    automatedReport: {
+      ...automatedReport,
+      modelLocks: {
+        text: '@cf/openai/gpt-oss-120b',
+        image: 'Kwai-Kolors/Kolors'
+      }
+    },
+    automatedReportSha256: crypto.createHash('sha256').update('cloudflare-automated').digest('hex'),
+    blindScore,
+    blindScoreSha256: crypto.createHash('sha256').update('cloudflare-blind').digest('hex'),
+    keyMaterial
+  });
+  assert.equal(verifySignedFinalReport({
+    report: cloudflareReport,
+    keyMaterial,
+    expectedCommitSha: automatedReport.commitSha,
+    expectedMatrixHash: LIVE_EVAL_MATRIX_HASH
+  }).campaignId, automatedReport.campaignId);
   assert.throws(
     () => verifySignedFinalReport({
       report: {
@@ -2005,6 +2052,30 @@ test('Live model auditor enforces V2 Qwen request contracts and child tool trimm
     auditor.inspectKolorsResponse({ model: 'Qwen/Qwen-Image-Edit-2509' }),
     /IMAGE_MODEL_INVALID/
   );
+});
+
+test('Live model auditor accepts the reviewed Cloudflare GPT-OSS V2 contract', async () => {
+  const auditor = new LiveModelAuditor({
+    textModel: '@cf/openai/gpt-oss-120b',
+    pool: { query: async () => ({ rows: [{ runtime_version: 2 }] }) }
+  });
+  const payload = {
+    model: '@cf/openai/gpt-oss-120b',
+    messages: [{ role: 'user', content: 'synthetic' }],
+    tools: [{ type: 'function', function: { name: 'sandbox_shell', parameters: {} } }],
+    stream: false,
+    max_tokens: 1024,
+    parallel_tool_calls: false,
+    temperature: 0.2,
+    top_p: 0.7
+  };
+  const request = await auditor.inspectQwenRequest(payload, {
+    runId: '11111111-1111-4111-8111-111111111111',
+    phase: 'actor',
+    promptHash: requestPromptHash(payload)
+  });
+  assert.equal(request.model, '@cf/openai/gpt-oss-120b');
+  assert.equal(request.thinkingEnabled, false);
 });
 
 test('Live model auditor durably closes every Kolors physical dispatch', async () => {

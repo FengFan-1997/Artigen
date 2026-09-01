@@ -828,6 +828,19 @@ const getReadinessReport = async ({
       missing.push('SILICONFLOW_API_KEY');
     }
     if (
+      agentConfig.runtimeDriver === 'live' &&
+      agentConfig.modelProvider === 'cloudflare'
+    ) {
+      if (!agentConfig.cloudflareAccountId) missing.push('CLOUDFLARE_ACCOUNT_ID');
+      if (!agentConfig.cloudflareApiToken) missing.push('CLOUDFLARE_API_TOKEN');
+      if (!agentConfig.cloudflareFreeAccountId) {
+        missing.push('AGENT_CLOUDFLARE_FREE_ACCOUNT_ID');
+      }
+      if (!agentConfig.cloudflareFreeAccountAttested) {
+        missing.push('AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED');
+      }
+    }
+    if (
       agentConfig.publicImageGenerationEnabled &&
       !agentConfig.siliconFlowApiKey &&
       !missing.includes('SILICONFLOW_API_KEY')

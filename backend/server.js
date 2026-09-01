@@ -83,6 +83,7 @@ const {
   activeTextProvider,
 } = require("./lib/config");
 const {
+  callCloudflareChat,
   callSiliconFlowImageGenerate,
   callSiliconFlowChat,
   callTextGenerate,
@@ -102,10 +103,22 @@ console.log("Resolved PORT:", PORT);
 const DEBUG_FILES = String(process.env.DEBUG_FILES || "").trim() === "1";
 const FILES_DIR = path.join(MEMORY_DIR, "files");
 const sharedProviderScheduler = isDatabaseConfigured()
-  ? createProviderScheduler({ pool: getPool(), env: process.env })
+  ? createProviderScheduler({
+      pool: getPool(),
+      env: process.env,
+      providerKey: `${String(process.env.AGENT_MODEL_PROVIDER || 'siliconflow').trim().toLowerCase()}:${String(process.env.AGENT_MODEL_NAME || 'Qwen/Qwen3-8B').trim()}`,
+    })
   : null;
+const sharedSiliconFlowScheduler = isDatabaseConfigured() &&
+  String(process.env.AGENT_MODEL_PROVIDER || '').trim().toLowerCase() === 'cloudflare'
+  ? createProviderScheduler({
+      pool: getPool(),
+      env: process.env,
+      providerKey: 'siliconflow:Qwen/Qwen3-8B',
+    })
+  : sharedProviderScheduler;
 const scheduledSiliconFlowChat = createScheduledChatGenerate({
-  scheduler: sharedProviderScheduler,
+  scheduler: sharedSiliconFlowScheduler,
   chatGenerate: callSiliconFlowChat,
   defaultPriority: "actor",
 });
@@ -680,7 +693,9 @@ const agentRuntime = installAgentRoutes(app, {
 
 const designConversationRuntime = installDesignConversationRoutes(app, {
   rateLimit,
-  callSiliconFlowChat,
+  callSiliconFlowChat: String(process.env.AGENT_MODEL_PROVIDER || '').trim().toLowerCase() === 'cloudflare'
+    ? callCloudflareChat
+    : callSiliconFlowChat,
   providerScheduler: sharedProviderScheduler,
   agentRunService: agentRuntime.service,
 });
@@ -776,7 +791,10 @@ const runAgentMaintenance = async () => {
     agentRuntime.service?.purgeExpiredPrivateData?.({ limit: 500 }),
     designConversationRuntime.service?.sweepExpired?.({ limit: 200 }),
     designConversationRuntime.modelCallService?.cleanupExpired?.({ limit: 500 }),
-    sharedProviderScheduler?.cleanup?.()
+    sharedProviderScheduler?.cleanup?.(),
+    ...(sharedSiliconFlowScheduler !== sharedProviderScheduler
+      ? [sharedSiliconFlowScheduler?.cleanup?.()]
+      : [])
   ].filter(Boolean);
   const results = await Promise.allSettled(jobs);
   for (const result of results) {

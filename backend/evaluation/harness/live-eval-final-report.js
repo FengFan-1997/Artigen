@@ -10,6 +10,10 @@ const { canonicalJson, parseVersionedKey } = require('./live-eval-gate');
 
 const FINAL_REPORT_VERSION = 'artigen-agent-live-eval-final-v1';
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
+const REVIEWED_TEXT_MODELS = new Set([
+  'Qwen/Qwen3-8B',
+  '@cf/openai/gpt-oss-120b'
+]);
 
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const isSha256 = (value) => /^[a-f0-9]{64}$/i.test(String(value || ''));
@@ -66,7 +70,7 @@ const validateAutomatedReport = (report) => {
     throw new Error('AGENT_LIVE_EVAL_FINAL_AUTOMATED_GATE_FAILED');
   }
   if (
-    report.modelLocks?.text !== 'Qwen/Qwen3-8B' ||
+    !REVIEWED_TEXT_MODELS.has(report.modelLocks?.text) ||
     report.modelLocks?.image !== 'Kwai-Kolors/Kolors' ||
     Number(report.limits?.perRunCredits) !== 50 ||
     Number(report.limits?.qwenCalls) !== 200 ||

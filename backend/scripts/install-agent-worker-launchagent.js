@@ -25,6 +25,15 @@ const runner = path.join(root, 'backend/scripts/run-agent-worker-macos.js');
 const subagentsEnabled = /^(1|true|yes|on)$/i.test(
   String(process.env.ARTIGEN_AGENT_SUBAGENTS_ENABLED || '').trim()
 );
+const modelProvider = String(process.env.AGENT_MODEL_PROVIDER || 'siliconflow')
+  .trim()
+  .toLowerCase();
+if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {
+  throw new TypeError('AGENT_LAUNCHAGENT_MODEL_PROVIDER_INVALID');
+}
+const modelName = modelProvider === 'cloudflare'
+  ? '@cf/openai/gpt-oss-120b'
+  : 'Qwen/Qwen3-8B';
 const normalizeBoolean = (name, fallback = false) => {
   const raw = String(process.env[name] ?? '').trim();
   if (!raw) return fallback ? 'true' : 'false';
@@ -46,6 +55,13 @@ const normalizePositiveNumber = (name, fallback) => {
   if (!Number.isFinite(value) || value <= 0) throw new TypeError(`${name}_INVALID`);
   return String(value);
 };
+const normalizeCloudflareAccountId = () => {
+  const value = String(process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '').trim();
+  if (modelProvider === 'cloudflare' && !/^[0-9a-f]{32}$/i.test(value)) {
+    throw new TypeError('AGENT_CLOUDFLARE_FREE_ACCOUNT_ID_INVALID');
+  }
+  return value;
+};
 const actorProfile = String(
   process.env.AGENT_RUNTIME_ACTOR_PROFILE || 'stable-v1'
 ).trim();
@@ -54,6 +70,12 @@ if (!['stable-v1', 'exploratory-v1'].includes(actorProfile)) {
 }
 const workerRuntimeSettings = Object.freeze({
   ...(!production ? { DEV_DATABASE_EXPECTED_MAJOR: '18' } : {}),
+  AGENT_MODEL_PROVIDER: modelProvider,
+  AGENT_MODEL_NAME: modelName,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: modelProvider === 'cloudflare'
+    ? normalizeBoolean('AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED')
+    : 'false',
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: normalizeCloudflareAccountId(),
   AGENT_RUNTIME_V2_ENABLED: production
     ? normalizeBoolean('AGENT_RUNTIME_V2_ENABLED')
     : 'false',
@@ -74,6 +96,14 @@ const workerRuntimeSettings = Object.freeze({
   AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: normalizePositiveNumber(
     'AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION',
     160
+  ),
+  AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: normalizePositiveNumber(
+    'AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION',
+    0.35
+  ),
+  AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: normalizePositiveNumber(
+    'AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION',
+    0.75
   ),
   AGENT_RUNTIME_ACTOR_PROFILE: actorProfile,
   ...resolveAgentWorkerPoolProfile({ profile, env: process.env })

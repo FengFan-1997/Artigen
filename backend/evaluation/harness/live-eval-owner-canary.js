@@ -5,6 +5,10 @@ const { verifySignedFinalReport } = require('./live-eval-final-report');
 
 const OWNER_CANARY_PLAN_VERSION = 'artigen-agent-owner-canary-plan-v1';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REVIEWED_TEXT_MODELS = new Set([
+  'Qwen/Qwen3-8B',
+  '@cf/openai/gpt-oss-120b'
+]);
 const OWNER_CANARY_SCENARIOS = Object.freeze([
   Object.freeze({
     id: 'text-only-agent',
@@ -70,7 +74,7 @@ const assertOwnerCanaryPreflight = ({
     Number(runtime?.rolloutPercent) !== 0 ||
     canaryUsers.length !== 1 ||
     canaryUsers[0] !== normalizedOwner ||
-    runtime?.textModel !== 'Qwen/Qwen3-8B' ||
+    !REVIEWED_TEXT_MODELS.has(runtime?.textModel) ||
     runtime?.imageModel !== 'Kwai-Kolors/Kolors'
   ) {
     throw new Error('AGENT_OWNER_CANARY_RUNTIME_CONFIG_INVALID');
@@ -102,7 +106,7 @@ const assertOwnerCanaryPreflight = ({
     status?.durability?.toolReceiptsReady !== true ||
     status?.durability?.budgetReservationsReady !== true ||
     status?.durability?.pricingReady !== true ||
-    status?.runtimeProfile?.model !== 'Qwen/Qwen3-8B' ||
+    status?.runtimeProfile?.model !== runtime.textModel ||
     Number(status?.runtimeProfile?.checkpointVersion) !== 4
   ) {
     throw new Error('AGENT_OWNER_CANARY_AGENT_NOT_READY');

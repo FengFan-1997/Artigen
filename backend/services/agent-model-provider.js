@@ -523,8 +523,26 @@ const siliconFlowUsageCredits = (usage, env = process.env) => {
   return Math.max(0, (input * inputPerMillion + output * outputPerMillion) / 1_000_000);
 };
 
+const cloudflareUsageCredits = (usage, env = process.env) => {
+  const inputPerMillion = Math.max(0, Number(
+    env.AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION || 0.35
+  ));
+  const outputPerMillion = Math.max(0, Number(
+    env.AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION || 0.75
+  ));
+  const input = Number(usage?.prompt_tokens || usage?.input_tokens || 0);
+  const output = Number(usage?.completion_tokens || usage?.output_tokens || 0);
+  return Math.max(0, (input * inputPerMillion + output * outputPerMillion) / 1_000_000);
+};
+
 const siliconFlowRequestTimeoutMs = (env = process.env) => {
   const parsed = Number.parseInt(String(env.AGENT_SILICONFLOW_TIMEOUT_MS || ''), 10);
+  const requested = Number.isFinite(parsed) ? parsed : 300_000;
+  return Math.max(30_000, Math.min(10 * 60_000, requested));
+};
+
+const cloudflareRequestTimeoutMs = (env = process.env) => {
+  const parsed = Number.parseInt(String(env.AGENT_CLOUDFLARE_TIMEOUT_MS || ''), 10);
   const requested = Number.isFinite(parsed) ? parsed : 300_000;
   return Math.max(30_000, Math.min(10 * 60_000, requested));
 };
@@ -540,6 +558,25 @@ const waitForSiliconFlowAgentSlot = async (env = process.env) => {
     siliconFlowAgentNextAt = Date.now() + minimumIntervalMs;
   });
   siliconFlowAgentGate = chained.catch(() => undefined);
+  await chained;
+};
+
+let cloudflareAgentGate = Promise.resolve();
+let cloudflareAgentNextAt = 0;
+const waitForCloudflareAgentSlot = async (env = process.env) => {
+  const parsed = Number.parseInt(String(env.AGENT_CLOUDFLARE_MIN_INTERVAL_MS || ''), 10);
+  const configuredRpm = Math.max(1, Math.min(120, Number.parseInt(String(
+    env.AGENT_CLOUDFLARE_REQUESTS_PER_MINUTE || '30'
+  ), 10) || 30));
+  const minimumIntervalMs = Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : Math.ceil(60_000 / configuredRpm);
+  const chained = cloudflareAgentGate.then(async () => {
+    const waitMs = Math.max(0, cloudflareAgentNextAt - Date.now());
+    if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    cloudflareAgentNextAt = Date.now() + minimumIntervalMs;
+  });
+  cloudflareAgentGate = chained.catch(() => undefined);
   await chained;
 };
 
@@ -1220,10 +1257,14 @@ class OllamaAgentModelProvider {
   maximumCallCredits(estimatedInputTokens, maximumOutputTokens) {
     const inputRate = this.providerName === 'siliconflow'
       ? this.config.siliconFlowInputCreditsPerMillion
-      : Math.max(0, Number(this.env.AGENT_OLLAMA_INPUT_CREDITS_PER_MILLION || 20));
+      : this.providerName === 'cloudflare'
+        ? this.config.cloudflareInputCreditsPerMillion
+        : Math.max(0, Number(this.env.AGENT_OLLAMA_INPUT_CREDITS_PER_MILLION || 20));
     const outputRate = this.providerName === 'siliconflow'
       ? this.config.siliconFlowOutputCreditsPerMillion
-      : Math.max(0, Number(this.env.AGENT_OLLAMA_OUTPUT_CREDITS_PER_MILLION || 160));
+      : this.providerName === 'cloudflare'
+        ? this.config.cloudflareOutputCreditsPerMillion
+        : Math.max(0, Number(this.env.AGENT_OLLAMA_OUTPUT_CREDITS_PER_MILLION || 160));
     return Math.max(0, (
       Math.max(0, Number(estimatedInputTokens) || 0) * inputRate +
       Math.max(0, Number(maximumOutputTokens) || 0) * outputRate
@@ -1451,7 +1492,8 @@ class OllamaAgentModelProvider {
       capabilities,
       allowedOrigins,
       maxCredits,
-      projectMemory
+      projectMemory,
+      textModel: this.config.modelName
     });
     const structured = await this.createStructuredJson({
       messages,
@@ -1487,7 +1529,12 @@ class OllamaAgentModelProvider {
   }
 
   async verifyTask({ taskSpec, evidenceManifest = {}, finalText = '', metadata = {} } = {}) {
-    const messages = verifierMessages({ taskSpec, evidenceManifest, finalText });
+    const messages = verifierMessages({
+      taskSpec,
+      evidenceManifest,
+      finalText,
+      textModel: this.config.modelName
+    });
     const structured = await this.createStructuredJson({
       messages,
       errorCode: 'AGENT_VERIFIER_OUTPUT_INVALID',
@@ -1554,8 +1601,10 @@ class OllamaAgentModelProvider {
           modelConfig: {
             actorSamplingProfile: this.config.actorSamplingProfile,
             adaptiveReasoningEnabled: this.config.adaptiveReasoningEnabled,
-            stageMaxOutputTokens: this.config.stageMaxOutputTokens
-          }
+            stageMaxOutputTokens: this.config.stageMaxOutputTokens,
+            pricingSnapshot: this.config.modelPricingSnapshot
+          },
+          textModel: this.config.modelName
         })
       : null;
     const instructions = prompt?.instructions || buildInstructions({ capabilities, maxSteps, toolProfile });
@@ -2004,8 +2053,10 @@ class OllamaAgentModelProvider {
             modelConfig: {
               actorSamplingProfile: this.config.actorSamplingProfile,
               adaptiveReasoningEnabled: this.config.adaptiveReasoningEnabled,
-              stageMaxOutputTokens: this.config.stageMaxOutputTokens
-            }
+              stageMaxOutputTokens: this.config.stageMaxOutputTokens,
+              pricingSnapshot: this.config.modelPricingSnapshot
+            },
+            textModel: this.config.modelName
           });
           allowedToolNames = new Set(
             functionToolsForProfile(
@@ -2803,8 +2854,10 @@ class OllamaAgentModelProvider {
           modelConfig: {
             actorSamplingProfile: this.config.actorSamplingProfile,
             adaptiveReasoningEnabled: this.config.adaptiveReasoningEnabled,
-            stageMaxOutputTokens: this.config.stageMaxOutputTokens
-          }
+            stageMaxOutputTokens: this.config.stageMaxOutputTokens,
+            pricingSnapshot: this.config.modelPricingSnapshot
+          },
+          textModel: this.config.modelName
         });
         allowedToolNames = new Set(
           functionToolsForProfile(
@@ -3281,6 +3334,30 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
     return 'siliconflow';
   }
 
+  get apiKey() {
+    return this.config.siliconFlowApiKey;
+  }
+
+  get baseUrl() {
+    return this.config.siliconFlowBaseUrl;
+  }
+
+  get providerErrorCodes() {
+    return {
+      credential: 'AGENT_SILICONFLOW_CREDENTIAL_INVALID',
+      unavailable: 'AGENT_SILICONFLOW_UNAVAILABLE',
+      modelMissing: 'AGENT_SILICONFLOW_MODEL_MISSING'
+    };
+  }
+
+  requestTimeoutMs() {
+    return siliconFlowRequestTimeoutMs(this.env);
+  }
+
+  waitForProviderSlot() {
+    return waitForSiliconFlowAgentSlot(this.env);
+  }
+
   recoverReceivedModelCall(receipt) {
     const body = receipt?.response?.response;
     const message = body?.choices?.[0]?.message;
@@ -3296,6 +3373,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
       },
       prompt_eval_count: Number(body.usage?.prompt_tokens || 0),
       eval_count: Number(body.usage?.completion_tokens || 0),
+      providerUsage: body.usage || {},
       siliconFlowUsage: body.usage || {},
       modelCallReceipt: receipt.call,
       budgetReservationKey: receipt.reservationKey || null,
@@ -3311,7 +3389,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
   }
 
   usageDetails(response) {
-    const usage = response.siliconFlowUsage || {
+    const usage = response.providerUsage || response.siliconFlowUsage || {
       prompt_tokens: response.prompt_eval_count,
       completion_tokens: response.eval_count
     };
@@ -3360,7 +3438,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
   }
 
   async probe() {
-    if (!this.config.siliconFlowApiKey) {
+    if (!this.apiKey) {
       throw new ApiError(503, 'AGENT_MODEL_NOT_CONFIGURED', { retryable: false });
     }
     const controller = new AbortController();
@@ -3368,15 +3446,15 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
     timer.unref?.();
     let response;
     try {
-      response = await this.fetchImpl(`${this.config.siliconFlowBaseUrl}/models`, {
+      response = await this.fetchImpl(`${this.baseUrl}/models`, {
         headers: {
-          Authorization: `Bearer ${this.config.siliconFlowApiKey}`,
+          Authorization: `Bearer ${this.apiKey}`,
           Accept: 'application/json'
         },
         signal: controller.signal
       });
     } catch (error) {
-      throw new ApiError(503, 'AGENT_SILICONFLOW_UNAVAILABLE', {
+      throw new ApiError(503, this.providerErrorCodes.unavailable, {
         retryable: true,
         cause: String(error?.name || error?.code || '')
       });
@@ -3385,13 +3463,13 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
     }
     const body = await response.json().catch(() => null);
     if (response.status === 401 || response.status === 403) {
-      throw new ApiError(503, 'AGENT_SILICONFLOW_CREDENTIAL_INVALID', {
+      throw new ApiError(503, this.providerErrorCodes.credential, {
         retryable: false,
         providerStatus: response.status
       });
     }
     if (!response.ok) {
-      throw new ApiError(503, 'AGENT_SILICONFLOW_UNAVAILABLE', {
+      throw new ApiError(503, this.providerErrorCodes.unavailable, {
         retryable: response.status >= 500 || response.status === 429,
         providerStatus: response.status
       });
@@ -3400,7 +3478,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
       ? body.data.map((entry) => String(entry?.id || ''))
       : [];
     if (!modelIds.includes(this.config.modelName)) {
-      throw new ApiError(503, 'AGENT_SILICONFLOW_MODEL_MISSING', {
+      throw new ApiError(503, this.providerErrorCodes.modelMissing, {
         retryable: false,
         model: this.config.modelName
       });
@@ -3413,7 +3491,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
   }
 
   async createChat(payload, metadata = {}) {
-    if (!this.config.siliconFlowApiKey) {
+    if (!this.apiKey) {
       throw new ApiError(503, 'AGENT_MODEL_NOT_CONFIGURED', { retryable: false });
     }
     if (metadata.signal?.aborted) {
@@ -3439,7 +3517,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
             priority: metadata.priority || metadata.phase || 'actor',
             signal: metadata.signal || null
           })
-        : (await waitForSiliconFlowAgentSlot(this.env), {
+        : (await this.waitForProviderSlot(), {
             requestId: null,
             queueWaitMs: 0,
             mode: 'process-local'
@@ -3467,7 +3545,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
       const controller = new AbortController();
       const abort = () => controller.abort();
       metadata.signal?.addEventListener('abort', abort, { once: true });
-      const timeoutMs = siliconFlowRequestTimeoutMs(this.env);
+      const timeoutMs = this.requestTimeoutMs();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       timer.unref?.();
       let response;
@@ -3480,10 +3558,10 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
           runId: metadata.runId || null,
           phase: metadata.phase || 'actor'
         });
-        response = await this.fetchImpl(`${this.config.siliconFlowBaseUrl}/chat/completions`, {
+        response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${this.config.siliconFlowApiKey}`,
+            Authorization: `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(payload),
@@ -3504,7 +3582,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
           });
         }
         if (response.status === 401 || response.status === 403) {
-          throw new ApiError(503, 'AGENT_SILICONFLOW_CREDENTIAL_INVALID', {
+          throw new ApiError(503, this.providerErrorCodes.credential, {
             retryable: false,
             providerStatus: response.status
           });
@@ -3529,6 +3607,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
           },
           prompt_eval_count: Number(body.usage?.prompt_tokens || 0),
           eval_count: Number(body.usage?.completion_tokens || 0),
+          providerUsage: body.usage || {},
           siliconFlowUsage: body.usage || {}
         };
         if (call) {
@@ -3612,6 +3691,137 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
   }
 }
 
+class CloudflareAgentModelProvider extends SiliconFlowAgentModelProvider {
+  get providerName() {
+    return 'cloudflare';
+  }
+
+  get apiKey() {
+    return this.config.cloudflareApiToken;
+  }
+
+  get baseUrl() {
+    return this.config.cloudflareBaseUrl;
+  }
+
+  get providerErrorCodes() {
+    return {
+      credential: 'AGENT_CLOUDFLARE_CREDENTIAL_INVALID',
+      unavailable: 'AGENT_CLOUDFLARE_UNAVAILABLE',
+      modelMissing: 'AGENT_CLOUDFLARE_MODEL_MISSING'
+    };
+  }
+
+  requestTimeoutMs() {
+    return cloudflareRequestTimeoutMs(this.env);
+  }
+
+  waitForProviderSlot() {
+    return waitForCloudflareAgentSlot(this.env);
+  }
+
+  usageDetails(response) {
+    const usage = response.providerUsage || response.siliconFlowUsage || {
+      prompt_tokens: response.prompt_eval_count,
+      completion_tokens: response.eval_count
+    };
+    return {
+      inputTokens: Number(usage.prompt_tokens || usage.input_tokens || 0),
+      outputTokens: Number(usage.completion_tokens || usage.output_tokens || 0),
+      credits: cloudflareUsageCredits(usage, this.env)
+    };
+  }
+
+  async createChat(payload, metadata = {}) {
+    if (!this.config.cloudflareFreeAccountAttested) {
+      throw new ApiError(503, 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED', {
+        retryable: false
+      });
+    }
+    return super.createChat(payload, metadata);
+  }
+
+  buildChatPayload(messages, capabilities = {}, toolProfile = 'parent', options = {}) {
+    const allowedToolNames = options.allowedToolNames
+      ? new Set(options.allowedToolNames)
+      : null;
+    const tools = ollamaFileTools(capabilities, toolProfile, allowedToolNames);
+    return {
+      model: this.config.modelName,
+      messages: compactOllamaMessages(
+        messages,
+        Math.max(24_000, this.config.modelContextTokens * 3)
+      ),
+      ...(options.toolsEnabled === false || tools.length === 0 ? {} : { tools }),
+      stream: false,
+      max_tokens: Number(options.maxTokens ?? this.config.cloudflareMaxTokens),
+      parallel_tool_calls: false,
+      temperature: Number(options.temperature ?? 0.2),
+      top_p: Number(options.topP ?? 0.7),
+      ...(options.topK === undefined ? {} : { top_k: Number(options.topK) }),
+      ...(options.responseFormat === 'json_object'
+        ? { response_format: { type: 'json_object' } }
+        : {})
+    };
+  }
+
+  async probe() {
+    if (!this.apiKey || !this.config.cloudflareApiBaseUrl) {
+      throw new ApiError(503, 'AGENT_MODEL_NOT_CONFIGURED', { retryable: false });
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    timer.unref?.();
+    let response;
+    let body;
+    try {
+      const url = new URL(`${this.config.cloudflareApiBaseUrl}/ai/models/search`);
+      url.searchParams.set('search', this.config.modelName);
+      response = await this.fetchImpl(url.toString(), {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          Accept: 'application/json'
+        },
+        signal: controller.signal
+      });
+      body = await response.json().catch(() => null);
+    } catch (error) {
+      throw new ApiError(503, this.providerErrorCodes.unavailable, {
+        retryable: true,
+        cause: String(error?.name || error?.code || '')
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new ApiError(503, this.providerErrorCodes.credential, {
+        retryable: false,
+        providerStatus: response.status
+      });
+    }
+    const models = Array.isArray(body?.result) ? body.result : [];
+    const modelPresent = models.some((entry) => (
+      String(entry?.name || entry?.id || entry?.model || '') === this.config.modelName
+    ));
+    if (!response.ok || body?.success === false) {
+      throw new ApiError(503, this.providerErrorCodes.unavailable, {
+        retryable: response.status >= 500 || response.status === 429,
+        providerStatus: response.status,
+        providerCode: String(body?.error?.code || body?.errors?.[0]?.code || '')
+      });
+    }
+    if (!modelPresent) {
+      throw new ApiError(503, this.providerErrorCodes.modelMissing, { retryable: false });
+    }
+    return {
+      ok: true,
+      provider: this.providerName,
+      model: this.config.modelName
+    };
+  }
+}
+
 class FixtureAgentModelProvider {
   async probe() {
     return { ok: true, provider: 'fixture', model: 'fixture' };
@@ -3680,6 +3890,9 @@ const createAgentModelProvider = ({ env = process.env, ...options } = {}) => {
   if (config.modelProvider === 'siliconflow') {
     return new SiliconFlowAgentModelProvider({ env, ...options });
   }
+  if (config.modelProvider === 'cloudflare') {
+    return new CloudflareAgentModelProvider({ env, ...options });
+  }
   return new OpenAiAgentModelProvider({ env, ...options });
 };
 
@@ -3687,6 +3900,7 @@ module.exports = {
   AgentWaitingForUser,
   ARTIFACT_MIME_TYPES,
   COMPUTER_TOOL,
+  CloudflareAgentModelProvider,
   FUNCTION_TOOLS,
   SUBAGENT_TOOL_NAMES,
   VISUAL_MUTATING_ACTIONS,
@@ -3697,6 +3911,7 @@ module.exports = {
   buildInstructions,
   createAgentModelProvider,
   compactOllamaMessages,
+  cloudflareUsageCredits,
   normalizeOllamaArguments,
   normalizeReportPdfToolAlias,
   assertPosixShellScript,

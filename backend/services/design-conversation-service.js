@@ -109,7 +109,11 @@ const getDesignConversationConfig = (env = process.env) => Object.freeze({
     60_000
   ),
   plannerMaxTokens: integer(env.DESIGN_CONVERSATION_PLANNER_MAX_TOKENS, 1800, 512, 4096),
-  model: TEXT_MODEL,
+  model: String(env.AGENT_MODEL_NAME || (
+    String(env.AGENT_MODEL_PROVIDER || '').trim().toLowerCase() === 'cloudflare'
+      ? '@cf/openai/gpt-oss-120b'
+      : TEXT_MODEL
+  )).trim(),
   imageModel: IMAGE_MODEL
 });
 
@@ -730,8 +734,8 @@ const createDesignConversationService = ({
         ? await modelCallService.start({
             conversationId: conversation.id,
             userId: conversation.user_id,
-            provider: 'siliconflow',
-            modelName: TEXT_MODEL,
+            provider: agentConfig.modelProvider,
+            modelName: agentConfig.modelName,
             phase,
             turn: 0,
             attempt,
@@ -747,7 +751,7 @@ const createDesignConversationService = ({
           phase,
           promptHash,
           messages: requestMessages,
-          model: TEXT_MODEL,
+          model: agentConfig.modelName,
           maxTokens,
           enableThinking: attemptThinkingEnabled,
           responseFormat: 'json_object',
@@ -1332,7 +1336,8 @@ const createDesignConversationService = ({
               capabilities: decision.capabilities,
               allowedOrigins: decision.browserConfig?.allowedOrigins || [],
               maxCredits: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
-              projectMemory
+              projectMemory,
+              textModel: agentConfig.modelName
             }),
             phase: 'planner',
             priority: 'planner',
@@ -1770,7 +1775,7 @@ const createDesignConversationService = ({
       enabled: config.enabled,
       workerEnabled: config.workerEnabled,
       plannerReady: Boolean(config.enabled && hasAgentPayloadKey(env) && typeof chatGenerate === 'function'),
-      model: TEXT_MODEL,
+      model: agentConfig.modelName,
       imageModel: IMAGE_MODEL,
       plannerV2Enabled: agentConfig.designPlannerV2Enabled,
       adaptiveReasoningEnabled: agentConfig.adaptiveReasoningEnabled,

@@ -94,6 +94,32 @@ test('Runtime V2 skill compilation cannot grant a capability and crops tools by 
   assert.match(textOnly.instructions, /text-only Run/u);
 });
 
+test('Runtime V2 freezes the server-pinned Cloudflare model into prompts and recovery profile', () => {
+  const cloudflare = compileAgentPrompt({
+    objective: 'Write a concise answer',
+    capabilities: { files: true },
+    deliverables: [],
+    taskSpec: { skillIds: [] },
+    phase: 'production',
+    textModel: '@cf/openai/gpt-oss-120b',
+    modelConfig: {
+      pricingSnapshot: {
+        provider: 'cloudflare',
+        model: '@cf/openai/gpt-oss-120b',
+        inputCreditsPerMillion: 0.35,
+        outputCreditsPerMillion: 0.75
+      }
+    }
+  });
+  assert.equal(cloudflare.runtimeProfileSummary.model, '@cf/openai/gpt-oss-120b');
+  assert.equal(
+    cloudflare.runtimeProfileSummary.modelConfig.pricingSnapshot.provider,
+    'cloudflare'
+  );
+  assert.match(cloudflare.instructions, /@cf\/openai\/gpt-oss-120b/);
+  assert.doesNotMatch(cloudflare.instructions, /Qwen\/Qwen3-8B/);
+});
+
 test('Runtime V2 preserves the goal, verification phase and unresolved failure under compaction', () => {
   const taskSpec = normalizeTaskSpec({
     goal: '制作一份带来源的报告',
@@ -338,6 +364,16 @@ test('Provider scheduler derives a shared conservative interval from RPM', () =>
     AGENT_SILICONFLOW_MIN_INTERVAL_MS: '6500',
     AGENT_SILICONFLOW_REQUESTS_PER_MINUTE: '60'
   }), 6500);
+  assert.equal(schedulerIntervalMs({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0',
+    AGENT_CLOUDFLARE_REQUESTS_PER_MINUTE: '30'
+  }, 'cloudflare:@cf/openai/gpt-oss-120b'), 2000);
+  assert.equal(schedulerIntervalMs({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_SILICONFLOW_MIN_INTERVAL_MS: '6500',
+    AGENT_SILICONFLOW_REQUESTS_PER_MINUTE: '9'
+  }, 'siliconflow:kolors'), 6667);
 });
 
 test('Provider Retry-After accepts seconds and HTTP dates with a bounded delay', () => {

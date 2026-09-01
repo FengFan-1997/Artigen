@@ -78,11 +78,18 @@ const requestPromptHash = (body) => crypto.createHash('sha256')
   .digest('hex');
 
 class ScriptedSiliconFlowTransport {
-  constructor({ script = [], trace = null, controller = null, traceRequestObservations = true } = {}) {
+  constructor({
+    script = [],
+    trace = null,
+    controller = null,
+    traceRequestObservations = true,
+    textModel = 'Qwen/Qwen3-8B'
+  } = {}) {
     this.script = [...script];
     this.trace = trace;
     this.controller = controller;
     this.traceRequestObservations = traceRequestObservations !== false;
+    this.textModel = String(textModel || 'Qwen/Qwen3-8B');
     this.requests = [];
     this.responseIndex = 0;
     this.tracedToolCalls = new Set();
@@ -151,7 +158,7 @@ class ScriptedSiliconFlowTransport {
   };
 
   validateRequest(body) {
-    if (body.model !== 'Qwen/Qwen3-8B') {
+    if (body.model !== this.textModel) {
       throw new Error(`AGENT_HARNESS_PROVIDER_MODEL_INVALID:${body.model || 'missing'}`);
     }
     const tools = Array.isArray(body.tools) ? body.tools : [];
@@ -169,7 +176,11 @@ class ScriptedSiliconFlowTransport {
     if (body.response_format && body.response_format.type !== 'json_object') {
       throw new Error('AGENT_HARNESS_RESPONSE_FORMAT_INVALID');
     }
-    if (tools.length && body.enable_thinking !== false) {
+    if (
+      tools.length &&
+      this.textModel === 'Qwen/Qwen3-8B' &&
+      body.enable_thinking !== false
+    ) {
       throw new Error('AGENT_HARNESS_ACTOR_THINKING_FORBIDDEN');
     }
     if (body.enable_thinking === true) {

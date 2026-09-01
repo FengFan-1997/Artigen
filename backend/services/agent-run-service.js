@@ -48,6 +48,41 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const TOOL_RECEIPT_KINDS = new Set(['sandbox_shell', 'kolors']);
 const TOOL_RECEIPT_STATES = new Set(['dispatched', 'consumed', 'ambiguous']);
 
+const modelPricingRates = (config, run = {}) => {
+  const provider = String(run.model_provider || run.provider || config.modelProvider || '');
+  const model = String(run.model_name || config.modelName || '');
+  const snapshot = run.runtime_profile_summary?.modelConfig?.pricingSnapshot;
+  if (
+    snapshot?.provider === provider &&
+    snapshot?.model === model &&
+    Number(snapshot.inputCreditsPerMillion) > 0 &&
+    Number(snapshot.outputCreditsPerMillion) > 0
+  ) {
+    return {
+      input: Number(snapshot.inputCreditsPerMillion),
+      output: Number(snapshot.outputCreditsPerMillion)
+    };
+  }
+  if (provider === 'cloudflare') {
+    return {
+      input: Number(config.cloudflareInputCreditsPerMillion),
+      output: Number(config.cloudflareOutputCreditsPerMillion)
+    };
+  }
+  return {
+    input: Number(config.siliconFlowInputCreditsPerMillion),
+    output: Number(config.siliconFlowOutputCreditsPerMillion)
+  };
+};
+
+const usageCreditsForRun = ({ inputTokens = 0, outputTokens = 0, config, run }) => {
+  const rates = modelPricingRates(config, run);
+  if (!(rates.input > 0) || !(rates.output > 0)) {
+    throw new ApiError(500, 'AGENT_RUNTIME_V2_PRICING_NOT_READY', { retryable: false });
+  }
+  return (inputTokens * rates.input + outputTokens * rates.output) / 1_000_000;
+};
+
 const assertWorkerLease = (row, { workerId, leaseEpoch }) => {
   if (!workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
   const currentEpoch = Number(row?.lease_epoch || 0);
@@ -1005,9 +1040,15 @@ const createAgentRunService = ({
       modelReceiptsReady: false,
       toolReceiptsReady: false,
       budgetReservationsReady: false,
-      pricingReady: config.modelProvider !== 'siliconflow' || (
-        config.siliconFlowInputCreditsPerMillion > 0 &&
-        config.siliconFlowOutputCreditsPerMillion > 0
+      pricingReady: !['siliconflow', 'cloudflare'].includes(config.modelProvider) || (
+        modelPricingRates(config, {
+          model_provider: config.modelProvider,
+          model_name: config.modelName
+        }).input > 0 &&
+        modelPricingRates(config, {
+          model_provider: config.modelProvider,
+          model_name: config.modelName
+        }).output > 0
       )
     };
     try {
@@ -1196,7 +1237,10 @@ const createAgentRunService = ({
         payloadEncryption: hasAgentPayloadKey(env),
         modelProvider: config.modelProvider === 'ollama' ||
           (config.modelProvider === 'siliconflow' && Boolean(config.siliconFlowApiKey)) ||
-          Boolean(config.openAiApiKey) ||
+          (config.modelProvider === 'cloudflare' && Boolean(
+            config.cloudflareAccountId && config.cloudflareApiToken
+          )) ||
+          (config.modelProvider === 'openai' && Boolean(config.openAiApiKey)) ||
           config.runtimeDriver === 'fixture',
         sandboxProvider: config.sandboxMode === 'local' ||
           Boolean(config.cuaApiKey) ||
@@ -1312,8 +1356,10 @@ const createAgentRunService = ({
             modelConfig: {
               actorSamplingProfile: config.actorSamplingProfile,
               adaptiveReasoningEnabled: config.adaptiveReasoningEnabled,
-              stageMaxOutputTokens: config.stageMaxOutputTokens
-            }
+              stageMaxOutputTokens: config.stageMaxOutputTokens,
+              pricingSnapshot: config.modelPricingSnapshot
+            },
+            textModel: config.modelName
           })
         : null;
       return { normalizedTaskSpec, promptProfile, requestHash, runtimeV2 };
@@ -1778,9 +1824,11 @@ const createAgentRunService = ({
       : 'failed';
     const receivedModels = await client.query(
       `SELECT receipt.*,reservation.state AS reservation_state,
-              reservation.reservation_key,call.subagent_id
+              reservation.reservation_key,call.subagent_id,call.provider,call.model_name,
+              run.runtime_profile_summary
          FROM agent_model_call_receipts receipt
          JOIN agent_model_calls call ON call.id=receipt.id
+         JOIN agent_runs run ON run.id=receipt.run_id
          JOIN agent_budget_reservations reservation
            ON reservation.run_id=receipt.run_id AND reservation.model_call_id=receipt.id
         WHERE receipt.run_id=$1
@@ -1849,10 +1897,12 @@ const createAgentRunService = ({
       };
       const inputTokens = tokenCount(usage.prompt_tokens || usage.input_tokens);
       const outputTokens = tokenCount(usage.completion_tokens || usage.output_tokens);
-      const actualCredits = (
-        inputTokens * config.siliconFlowInputCreditsPerMillion +
-        outputTokens * config.siliconFlowOutputCreditsPerMillion
-      ) / 1_000_000;
+      const actualCredits = usageCreditsForRun({
+        inputTokens,
+        outputTokens,
+        config,
+        run: receipt
+      });
       if (['reserved', 'released'].includes(receipt.reservation_state)) {
         await client.query(
           `UPDATE agent_budget_reservations
@@ -2833,12 +2883,12 @@ const createAgentRunService = ({
               ? Math.ceil(Math.max(0, Math.min(1_000_000_000, parsed)))
               : 0;
           };
-          receiptCredits = (
-            tokenCount(usage.prompt_tokens || usage.input_tokens) *
-              config.siliconFlowInputCreditsPerMillion +
-            tokenCount(usage.completion_tokens || usage.output_tokens) *
-              config.siliconFlowOutputCreditsPerMillion
-          ) / 1_000_000;
+          receiptCredits = usageCreditsForRun({
+            inputTokens: tokenCount(usage.prompt_tokens || usage.input_tokens),
+            outputTokens: tokenCount(usage.completion_tokens || usage.output_tokens),
+            config,
+            run: run.rows[0]
+          });
         }
       }
       if (receiptCredits === null) {
@@ -4745,10 +4795,12 @@ module.exports = {
   normalizeObjective,
   normalizeDelegatedTasks,
   nextConsecutiveFailureCount,
+  modelPricingRates,
   publicArtifact,
   publicEvent,
   publicRun,
   publicSubagent,
   objectivePublicFields,
-  requireIdempotencyKey
+  requireIdempotencyKey,
+  usageCreditsForRun
 };

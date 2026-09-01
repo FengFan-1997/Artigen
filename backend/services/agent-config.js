@@ -28,6 +28,7 @@ const agentWorkerEnabled = (env = process.env) => (
   agentFeatureEnabled(env) && enabled(env.AGENT_WORKER_ENABLED)
 );
 const SILICONFLOW_AGENT_MODEL = 'Qwen/Qwen3-8B';
+const CLOUDFLARE_AGENT_MODEL = '@cf/openai/gpt-oss-120b';
 const AGENT_BROWSER_MODE = 'full-approval-v1';
 const AGENT_BETA_MODE = 'owner-only-v1';
 const AGENT_AUTHENTICATED_MODE = 'authenticated-v1';
@@ -115,7 +116,7 @@ const getAgentConfig = (env = process.env) => {
 
   const modelProvider = String(env.AGENT_MODEL_PROVIDER || 'openai').trim().toLowerCase();
   const sandboxProvider = String(env.AGENT_SANDBOX_PROVIDER || 'cua').trim().toLowerCase();
-  if (!['openai', 'ollama', 'siliconflow'].includes(modelProvider)) {
+  if (!['openai', 'ollama', 'siliconflow', 'cloudflare'].includes(modelProvider)) {
     throw new ApiError(500, 'AGENT_MODEL_PROVIDER_INVALID');
   }
   if (!['cua', 'fixture'].includes(sandboxProvider)) {
@@ -137,10 +138,15 @@ const getAgentConfig = (env = process.env) => {
     ? 'qwen3:8b'
     : modelProvider === 'siliconflow'
       ? SILICONFLOW_AGENT_MODEL
+      : modelProvider === 'cloudflare'
+        ? CLOUDFLARE_AGENT_MODEL
       : 'gpt-5.6';
   const modelName = String(env.AGENT_MODEL_NAME || defaultModelName).trim();
   if (modelProvider === 'siliconflow' && modelName !== SILICONFLOW_AGENT_MODEL) {
     throw new ApiError(500, 'AGENT_SILICONFLOW_MODEL_NOT_ALLOWED');
+  }
+  if (modelProvider === 'cloudflare' && modelName !== CLOUDFLARE_AGENT_MODEL) {
+    throw new ApiError(500, 'AGENT_CLOUDFLARE_MODEL_NOT_ALLOWED');
   }
   const ollamaBaseUrl = assertLoopbackHttpUrl(
     env.AGENT_OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
@@ -159,6 +165,37 @@ const getAgentConfig = (env = process.env) => {
     env.SILICONFLOW_KEY ||
     ''
   ).trim();
+  const cloudflareAccountId = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+  if (cloudflareAccountId && !/^[0-9a-f]{32}$/i.test(cloudflareAccountId)) {
+    throw new ApiError(500, 'AGENT_CLOUDFLARE_ACCOUNT_ID_INVALID');
+  }
+  const cloudflareApiToken = String(
+    env.CLOUDFLARE_API_TOKEN || env.CLOUDFLARE_AUTH_TOKEN || ''
+  ).trim();
+  const cloudflareBaseUrl = cloudflareAccountId
+    ? `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/ai/v1`
+    : '';
+  const cloudflareApiBaseUrl = cloudflareAccountId
+    ? `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}`
+    : '';
+  const cloudflareFreeAccountId = String(
+    env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || ''
+  ).trim();
+  if (cloudflareFreeAccountId && !/^[0-9a-f]{32}$/i.test(cloudflareFreeAccountId)) {
+    throw new ApiError(500, 'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID_INVALID');
+  }
+  if (
+    enabled(env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED) &&
+    cloudflareAccountId &&
+    cloudflareFreeAccountId !== cloudflareAccountId
+  ) {
+    throw new ApiError(500, 'AGENT_CLOUDFLARE_FREE_ACCOUNT_MISMATCH');
+  }
+  const cloudflareFreeAccountAttested = Boolean(
+    enabled(env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED) &&
+    cloudflareAccountId &&
+    cloudflareFreeAccountId === cloudflareAccountId
+  );
   const publicCapabilities = new Set(String(env.AGENT_PUBLIC_CAPABILITIES || 'files,shell')
     .toLowerCase()
     .split(',')
@@ -185,6 +222,22 @@ const getAgentConfig = (env = process.env) => {
   const siliconFlowOutputCreditsPerMillion = Math.max(0, Number(
     env.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION || 0
   ));
+  const cloudflareInputCreditsPerMillion = Math.max(0, Number(
+    env.AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION || 0.35
+  ));
+  const cloudflareOutputCreditsPerMillion = Math.max(0, Number(
+    env.AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION || 0.75
+  ));
+  const modelPricingSnapshot = Object.freeze({
+    provider: modelProvider,
+    model: modelName,
+    inputCreditsPerMillion: modelProvider === 'cloudflare'
+      ? cloudflareInputCreditsPerMillion
+      : siliconFlowInputCreditsPerMillion,
+    outputCreditsPerMillion: modelProvider === 'cloudflare'
+      ? cloudflareOutputCreditsPerMillion
+      : siliconFlowOutputCreditsPerMillion
+  });
   const actorSamplingProfileName = String(
     env.AGENT_RUNTIME_ACTOR_PROFILE || 'stable-v1'
   ).trim().toLowerCase();
@@ -234,6 +287,19 @@ const getAgentConfig = (env = process.env) => {
       1,
       60
     ),
+    cloudflareAccountId,
+    cloudflareApiToken,
+    cloudflareBaseUrl,
+    cloudflareApiBaseUrl,
+    cloudflareFreeAccountId,
+    cloudflareFreeAccountAttested,
+    cloudflareMaxTokens: integer(env.AGENT_CLOUDFLARE_MAX_TOKENS, 4096, 512, 32768),
+    cloudflareRequestsPerMinute: integer(
+      env.AGENT_CLOUDFLARE_REQUESTS_PER_MINUTE,
+      30,
+      1,
+      120
+    ),
     modelContextTokens: integer(env.AGENT_MODEL_CONTEXT_TOKENS, 16384, 4096, 32768),
     runtimeV2Enabled,
     runtimeV2RolloutPercent,
@@ -248,6 +314,9 @@ const getAgentConfig = (env = process.env) => {
     stageMaxOutputTokens: STAGE_MAX_OUTPUT_TOKENS,
     siliconFlowInputCreditsPerMillion,
     siliconFlowOutputCreditsPerMillion,
+    cloudflareInputCreditsPerMillion,
+    cloudflareOutputCreditsPerMillion,
+    modelPricingSnapshot,
     sandboxProvider,
     sandboxMode,
     sandboxDockerPlatform,
@@ -296,24 +365,31 @@ const getAgentConfig = (env = process.env) => {
 const assertAgentRuntimeReady = (env = process.env) => {
   const config = getAgentConfig(env);
   if (!config.enabled) throw new ApiError(404, 'AGENT_FEATURE_DISABLED');
+  const runtimeV2ModelReady = (
+    config.modelProvider === 'siliconflow' && config.modelName === SILICONFLOW_AGENT_MODEL
+  ) || (
+    config.modelProvider === 'cloudflare' && config.modelName === CLOUDFLARE_AGENT_MODEL
+  );
   if (
     (config.runtimeV2Enabled || config.designPlannerV2Enabled ||
       config.adaptiveReasoningEnabled || config.projectMemoryEnabled) &&
-    (config.modelProvider !== 'siliconflow' || config.modelName !== SILICONFLOW_AGENT_MODEL)
+    !runtimeV2ModelReady
   ) {
     throw new ApiError(503, 'AGENT_RUNTIME_V2_MODEL_NOT_READY', { retryable: false });
   }
   if (config.runtimeV2Enabled && config.modelContextTokens < 16_384) {
     throw new ApiError(503, 'AGENT_RUNTIME_V2_CONTEXT_NOT_READY', { retryable: false });
   }
-  if (
-    config.runtimeV2Enabled &&
-    config.modelProvider === 'siliconflow' &&
-    (
+  if (config.runtimeV2Enabled && (
+    (config.modelProvider === 'siliconflow' && (
       !(config.siliconFlowInputCreditsPerMillion > 0) ||
       !(config.siliconFlowOutputCreditsPerMillion > 0)
-    )
-  ) {
+    )) ||
+    (config.modelProvider === 'cloudflare' && (
+      !(config.cloudflareInputCreditsPerMillion > 0) ||
+      !(config.cloudflareOutputCreditsPerMillion > 0)
+    ))
+  )) {
     throw new ApiError(503, 'AGENT_RUNTIME_V2_PRICING_NOT_READY', { retryable: false });
   }
   if (config.runtimeDriver === 'fixture') return config;
@@ -322,6 +398,15 @@ const assertAgentRuntimeReady = (env = process.env) => {
   }
   if (config.modelProvider === 'siliconflow' && !config.siliconFlowApiKey) {
     throw new ApiError(503, 'AGENT_MODEL_NOT_CONFIGURED', { retryable: false });
+  }
+  if (
+    config.modelProvider === 'cloudflare' &&
+    (!config.cloudflareAccountId || !config.cloudflareApiToken)
+  ) {
+    throw new ApiError(503, 'AGENT_MODEL_NOT_CONFIGURED', { retryable: false });
+  }
+  if (config.modelProvider === 'cloudflare' && !config.cloudflareFreeAccountAttested) {
+    throw new ApiError(503, 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED', { retryable: false });
   }
   if (config.publicImageGenerationEnabled && !config.siliconFlowApiKey) {
     throw new ApiError(503, 'AGENT_IMAGE_MODEL_NOT_CONFIGURED', { retryable: false });
@@ -399,6 +484,7 @@ module.exports = {
   resolveAgentRuntimeAssignment,
   AGENT_BETA_MODE,
   AGENT_BROWSER_MODE,
+  CLOUDFLARE_AGENT_MODEL,
   SILICONFLOW_AGENT_MODEL,
   STAGE_MAX_OUTPUT_TOKENS
 };

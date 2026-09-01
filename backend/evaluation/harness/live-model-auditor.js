@@ -31,19 +31,21 @@ class LiveModelAuditor {
     pool,
     campaignGuard = null,
     maxQwenCalls = 200,
-    maxKolorsCalls = 16
+    maxKolorsCalls = 16,
+    textModel = TEXT_MODEL
   } = {}) {
     this.trace = trace;
     this.pool = pool;
     this.campaignGuard = campaignGuard;
     this.maxQwenCalls = Math.max(1, Number(maxQwenCalls) || 200);
     this.maxKolorsCalls = Math.max(1, Number(maxKolorsCalls) || 16);
+    this.textModel = String(textModel || TEXT_MODEL);
     this.qwenCalls = 0;
     this.logicalQwenCalls = 0;
     this.kolorsCalls = 0;
     this.requests = [];
     this.kolors = [];
-    this.protocol = new ScriptedSiliconFlowTransport({ trace });
+    this.protocol = new ScriptedSiliconFlowTransport({ trace, textModel: this.textModel });
     this.requestContext = new AsyncLocalStorage();
     this.slotContext = new AsyncLocalStorage();
   }
@@ -66,7 +68,7 @@ class LiveModelAuditor {
 
   async inspectQwenRequest(payload, metadata = {}) {
     this.logicalQwenCalls += 1;
-    if (payload.model !== TEXT_MODEL) throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_INVALID');
+    if (payload.model !== this.textModel) throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_INVALID');
     this.protocol.validateRequest(payload);
     this.protocol.traceRequestProtocol(payload);
     const phase = String(metadata.runtimeStage || metadata.phase || (
@@ -145,7 +147,7 @@ class LiveModelAuditor {
         this.trace?.record('model.provider_dispatch', {
           attempt: dispatch.sequence,
           dispatchId: dispatch.dispatchId,
-          model: TEXT_MODEL,
+          model: this.textModel,
           phase: context.phase || 'actor',
           runId: context.runId || null
         });
@@ -183,7 +185,7 @@ class LiveModelAuditor {
   }
 
   assertV2Stage(payload, metadata, phase) {
-    if (payload.model !== TEXT_MODEL) throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_INVALID');
+    if (payload.model !== this.textModel) throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_INVALID');
     const expectedLimit = STAGE_LIMITS[phase];
     if (expectedLimit && Number(payload.max_tokens) !== expectedLimit) {
       throw new Error(`AGENT_LIVE_EVAL_STAGE_TOKEN_LIMIT:${phase}:${payload.max_tokens}`);
@@ -200,7 +202,11 @@ class LiveModelAuditor {
     ) {
       throw new Error(`AGENT_LIVE_EVAL_PROMPT_HASH_MISMATCH:${phase}`);
     }
-    if (['actor', 'subagent', 'final_summary'].includes(phase) && payload.enable_thinking !== false) {
+    if (
+      ['actor', 'subagent', 'final_summary'].includes(phase) &&
+      this.textModel === TEXT_MODEL &&
+      payload.enable_thinking !== false
+    ) {
       throw new Error(`AGENT_LIVE_EVAL_TOOL_STAGE_THINKING:${phase}`);
     }
     if (

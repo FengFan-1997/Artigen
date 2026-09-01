@@ -115,7 +115,7 @@ test('CI configures a distinct session-token hashing secret', () => {
   assert.notEqual(sessionSecret, otpSecret);
 });
 
-test('Mac Agent worker pins image pricing and the SiliconFlow output host', () => {
+test('Mac Agent worker pins free text models, image pricing and the SiliconFlow output host', () => {
   const runner = readRepoFile('backend/scripts/run-agent-worker-macos.js');
   const installer = readRepoFile('backend/scripts/install-agent-worker-launchagent.js');
 
@@ -123,7 +123,9 @@ test('Mac Agent worker pins image pricing and the SiliconFlow output host', () =
   assert.match(runner, /AGENT_SUBAGENTS_ENABLED:\s*subagentsEnabled \? 'true' : 'false'/);
   assert.match(runner, /AGENT_IMAGE_CREDITS:[\s\S]*\|\| '8'/);
   assert.match(runner, /AGENT_IMAGE_REFERENCE_CREDITS:[\s\S]*\|\| '12'/);
-  assert.match(runner, /AGENT_MODEL_NAME:\s*'Qwen\/Qwen3-8B'/);
+  assert.match(runner, /AGENT_MODEL_PROVIDER:\s*modelProvider/);
+  assert.match(runner, /\? '@cf\/openai\/gpt-oss-120b'[\s\S]*: 'Qwen\/Qwen3-8B'/);
+  assert.match(runner, /secretNames\.push\('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'\)/);
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
   assert.match(runner, /optionalSecretNames = \['PG_SSL_CA_BASE64'\]/);
   assert.match(runner, /delete workerEnv\.PG_SSL_CA;/);

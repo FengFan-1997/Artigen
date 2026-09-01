@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  callCloudflareChat,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate
 } = require('../lib/ai-providers');
@@ -8,6 +9,46 @@ const {
   GENERATION_DIRECTIONS_MODEL,
   GENERATION_IMAGE_MODEL
 } = require('../services/generation-profiles');
+
+test('Cloudflare chat is pinned to the account API and omits SiliconFlow thinking fields', async () => {
+  let request;
+  const result = await callCloudflareChat({
+    accountId: 'e'.repeat(32),
+    freeAccountAttested: true,
+    freeAccountId: 'e'.repeat(32),
+    credential: 'cloudflare-test-token',
+    messages: [{ role: 'user', content: 'Return JSON only.' }],
+    maxTokens: 1200,
+    model: '@cf/openai/gpt-oss-120b',
+    enableThinking: true,
+    minP: 0,
+    responseFormat: 'json_object',
+    skipRateGate: true,
+    fetcher: async (url, options) => {
+      request = { url, options };
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"ok":true}' } }]
+        })
+      };
+    }
+  });
+  assert.equal(
+    request.url,
+    `https://api.cloudflare.com/client/v4/accounts/${'e'.repeat(32)}/ai/v1/chat/completions`
+  );
+  const payload = JSON.parse(request.options.body);
+  assert.equal(payload.model, '@cf/openai/gpt-oss-120b');
+  assert.equal(payload.enable_thinking, undefined);
+  assert.equal(payload.min_p, undefined);
+  assert.deepEqual(payload.response_format, { type: 'json_object' });
+  assert.equal(result.text, '{"ok":true}');
+  await assert.rejects(callCloudflareChat({
+    accountId: 'e'.repeat(32),
+    credential: 'cloudflare-test-token'
+  }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED' });
+});
 
 test('SiliconFlow chat uses the supported endpoint and serializes non-thinking mode', async () => {
   let request;

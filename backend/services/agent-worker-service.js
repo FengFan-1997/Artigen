@@ -1282,8 +1282,10 @@ const createAgentWorkerService = ({
           modelConfig: {
             actorSamplingProfile: config.actorSamplingProfile,
             adaptiveReasoningEnabled: config.adaptiveReasoningEnabled,
-            stageMaxOutputTokens: config.stageMaxOutputTokens
-          }
+            stageMaxOutputTokens: config.stageMaxOutputTokens,
+            pricingSnapshot: config.modelPricingSnapshot
+          },
+          textModel: config.modelName
         });
         await runService.pinRuntimeProfile({ ...runLease, profile: frozenRuntimeProfile });
         context.run.prompt_profile = frozenRuntimeProfile.promptProfile;

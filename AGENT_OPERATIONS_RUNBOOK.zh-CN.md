@@ -1,10 +1,16 @@
 # Artigen Agent 本机运行与上线运维手册
 
-更新日期：2026-08-07
+更新日期：2026-09-01
+
+## 0. 运维账号归属
+
+- Artigen 对外基础设施、模型 Provider、托管平台和告警服务统一使用 `sorates1997@163.com` 作为官方运维邮箱；新建第三方账号时默认使用该地址，除非账户所有者对某个平台另有明确指示。
+- 密码、OTP、恢复码、API Token、Secret 和付款信息不得写入 Git、本文档、Issue、聊天记录或普通 `.env`；本机凭据使用 macOS 钥匙串，云端凭据使用对应平台 Secret 管理。
+- 注册或绑定新服务前必须确认免费/付费边界。Cloudflare 模型链只允许专用 Workers Free 账户，不启用 Workers Paid，也不配置免费额度耗尽后的收费回退。
 
 ## 1. 当前结论
 
-Artigen Agent 已切换为“硅基流动云端模型 + 本机 CUA 沙箱”：模型固定使用深度思考链路同款 `Qwen/Qwen3-8B`，沙箱使用本机 CUA + Docker，任务由 PostgreSQL/pg-boss 持久排队。无需下载本地 Qwen 模型，也不需要 CUA 云账号。
+Artigen Agent 继续使用“云端文本模型 + 本机 CUA 沙箱”：已发布环境仍固定为硅基流动 `Qwen/Qwen3-8B`，2026-09-01 的候选 DEV Mac Worker 已切换为 Cloudflare Workers AI Free `@cf/openai/gpt-oss-120b`。两者都使用本机 CUA + Docker，任务由 PostgreSQL/pg-boss 持久排队；无需下载本地大模型，也不需要 CUA 云账号。DEV 实机通过不等于生产已经切换。
 
 **2026-08-07 Production Beta 更新：** 生产提交 `9bcc77d593e0747d5265f96f1f45b1dcb956b0bd` 已部署到 Render `main`，数据库迁移 020、共享 S3、Production Mac Worker、四项浏览器状态和 owner-only 白名单全部通过。生产登录捕获 run `0bfa9eef-a989-4400-9fcd-0bcb043c211d` 与会话恢复 run `20317cd5-77e8-40ca-ac74-ad845385bf96` 均为 `succeeded`，4 个 Markdown/PDF 交付物验证通过并存入 S3；会话随后撤销并擦除。完整交付与账号登录方式见 [ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md](./ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md)。
 
@@ -52,7 +58,7 @@ flowchart LR
     U["Artigen 登录用户"] --> W["Artigen 网页/后端"]
     W --> DB["PostgreSQL + pg-boss 队列"]
     DB --> WK["本机 Agent Worker，单并发"]
-    WK --> O["硅基流动 Qwen/Qwen3-8B"]
+    WK --> O["固定文本模型：SiliconFlow Qwen3-8B 或 Cloudflare GPT-OSS 120B"]
     WK --> C["CUA 本地 Docker 沙箱"]
     C --> E["每任务 restricted-v1 出口代理"]
     E --> H["公开 HTTPS/WSS 443"]
@@ -64,8 +70,8 @@ flowchart LR
 
 关键点：
 
-- Agent 模型只允许硅基流动官方地址 `https://api.siliconflow.cn/v1`，并固定为 `Qwen/Qwen3-8B`。
-- Agent 与深度思考/视觉方向分析复用同一个 `SILICONFLOW_API_KEY`，不自动回退到其他硅基流动或收费模型。
+- Agent 文本模型只允许两个服务端固定档：硅基流动 `Qwen/Qwen3-8B`，或 Cloudflare Workers AI 免费层 `@cf/openai/gpt-oss-120b`。两者都不能由客户端传模型名或 API Origin。
+- 图片生成与深度思考/视觉方向分析继续复用 `SILICONFLOW_API_KEY`；切换 Cloudflare 只改变 Agent 文本模型，不改变 Kolors 图片链，也不自动回退到收费模型。
 - CUA 运行在本机 Docker，不使用 CUA 云端账户或云端 API Key。
 - 本机 DEV 可获得 `files`、受限 `shell` 和 `browser`；浏览器顶层页面必须属于用户填写的精确 HTTPS Origin，跨 Origin 顶层跳转由服务器和沙箱双重阻断。
 - 浏览器容器没有默认 Docker 出口。所有公网连接经过每任务代理，代理解析全部 A/AAAA、拒绝任一非公网结果并固定已验证 IP；CUA/VNC 端口只绑定 Mac 的 `127.0.0.1`。
@@ -95,6 +101,17 @@ flowchart LR
 不要把 API Key 发到前端、Markdown、日志或 Git。模型探针只报告“已配置/无效/不可用”，不会输出密钥。
 
 Agent 配置中的 `AGENT_SILICONFLOW_ENABLE_THINKING=false` 是为了让多轮工具调用稳定返回结构化 `tool_calls`；它不改变模型 ID，也不代表换掉 Artigen 的“深度思考”产品模型。
+
+### 3.2.1 Cloudflare Workers AI（长期免费文本升级档）
+
+可选。Cloudflare Workers Free 每天提供自动恢复的免费 Workers AI 配额；Artigen 只允许 `@cf/openai/gpt-oss-120b`，API Base 由 32 位 `CLOUDFLARE_ACCOUNT_ID` 在服务端拼接，不能手填任意地址。为保证绝不产生账单，必须使用专门的 Workers Free 账户（不启用 Workers Paid，也不允许 AI 超额计费），显式设置 `AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED=true`，并令 `AGENT_CLOUDFLARE_FREE_ACCOUNT_ID` 精确等于该账户 ID；否则 Worker 就绪检查失败。这样即使 Keychain 凭据被换成另一个账户，旧声明也不会继续生效。
+
+- 控制台：<https://dash.cloudflare.com>
+- 当前已验证的免费账户 ID：`504205714c623d5c5ef9875548bdede9`，控制台显示 `Free / $0 / Current plan`；该公开标识可以进入配置，不能替代免费账户声明。
+- 当前 DEV Token 名称：`artigen-workers-ai-free`，无到期日且只含整个当前账户的 `Workers AI Read`；没有 Workers Edit、DNS、Billing 或其他权限。Token 明文只存于 `artigen-agent-dev-worker / CLOUDFLARE_API_TOKEN`，不得复制到文档或日志。
+- Keychain account 标签：`CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN`
+- 启动探针只调用模型目录查询，不消耗推理配额。免费配额耗尽时 Cloudflare 返回错误；Artigen 必须排队或明确失败，不得静默调用付费模型。
+- 生产或公开切换前必须在 DEV 对 GPT-OSS 重新跑完整 Agent 质量矩阵；最小真实全链路烟测只能证明主链可用，不构成公开上线证据。
 
 ### 3.3 CUA 本地沙箱
 
@@ -192,6 +209,20 @@ AGENT_QUEUE_MAX_WAIT_HOURS=24
 AGENT_PUBLIC_CAPABILITIES=files,shell,browser,generate_images
 AGENT_IMAGE_CREDITS=8
 AGENT_IMAGE_REFERENCE_CREDITS=12
+```
+
+切换长期免费 Cloudflare 文本模型时，仅替换文本 Provider 配置；`SILICONFLOW_API_KEY` 仍用于 Kolors 图片：
+
+```dotenv
+AGENT_MODEL_PROVIDER=cloudflare
+AGENT_MODEL_NAME=@cf/openai/gpt-oss-120b
+CLOUDFLARE_ACCOUNT_ID=从 Cloudflare 控制台读取
+CLOUDFLARE_API_TOKEN=只通过环境 Secret 或 macOS Keychain 注入
+AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED=true
+AGENT_CLOUDFLARE_FREE_ACCOUNT_ID=与 CLOUDFLARE_ACCOUNT_ID 完全相同
+AGENT_CLOUDFLARE_MAX_TOKENS=4096
+AGENT_CLOUDFLARE_MIN_INTERVAL_MS=2000
+AGENT_CLOUDFLARE_REQUESTS_PER_MINUTE=30
 ```
 
 `generate_images` 使用 Kolors，可执行纯文生图或最多 1 张已扫描任务图片的图生图。多参考图必须在供应商派发前失败。
@@ -415,6 +446,22 @@ storage_driver: s3 + s3
 download verification: byte size + SHA-256 matched
 sandbox/control/egress/network: destroyed
 ```
+
+2026-09-01 Cloudflare Workers AI 免费文本模型的通过记录：
+
+```text
+run: 4f946725-9638-4295-b00f-9b3833b41fec
+status: succeeded
+model: Cloudflare @cf/openai/gpt-oss-120b
+browser: restricted-v1 -> https://example.com
+artifacts: artigen-dev-smoke.md (243 bytes) + artigen-dev-smoke.pdf (2898 bytes)
+verification_status: passed + passed
+storage_driver: s3 + s3
+download verification: byte size + SHA-256 matched
+replan / consecutive failures: 0 / 0
+```
+
+该次烟测的 `AGENT_MODEL_PROVIDER=cloudflare`，免费账户 ID 与 Keychain 中实际账户严格匹配；脚本从同一 DEV Keychain 读取验证 TLS 的 CA、数据库、共享 S3 和 Cloudflare 凭据。免费配额耗尽时仍须 fail closed，不得切回收费文本模型。该记录只覆盖文本 Agent；不要为验证本配置运行 Kolors 图片烟测，因为现有图片链不在 Cloudflare Workers AI 免费文本额度内。
 
 使用正常 Artigen 用户登录，然后提交：
 
