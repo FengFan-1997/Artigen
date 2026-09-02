@@ -10,7 +10,7 @@
 
 ## 1. 当前结论
 
-Artigen Agent 继续使用“云端文本模型 + 本机 CUA 沙箱”：`dev` 已合入 PR [#153](https://github.com/FengFan-1997/Artigen/pull/153)、硬锁修复 PR [#155](https://github.com/FengFan-1997/Artigen/pull/155)、边界补丁 PR [#157](https://github.com/FengFan-1997/Artigen/pull/157) 和文档同步 PR [#158](https://github.com/FengFan-1997/Artigen/pull/158)，当前 `dev` exact SHA 为 `61baf79df4042d7f2099ddbf334580ff0451b7f3`（运行时代码合入 SHA 为 `e3bd831610255733c5a60a379093f4c177af0476`），统一锁定 Cloudflare Workers AI Free `@cf/openai/gpt-oss-120b`，SiliconFlow 仅负责 `Kwai-Kolors/Kolors` 图片生成。两者都使用本机 CUA + Docker，任务由 PostgreSQL/pg-boss 持久排队；无需下载本地大模型，也不需要 CUA 云账号。Render、Vercel 和 Mac Worker 尚未以当前 exact SHA 对齐，完整 DEV 实机矩阵和图片盲审尚未执行，不能把本地门禁当作部署或生产切换证据。
+Artigen Agent 继续使用“云端文本模型 + 本机 CUA 沙箱”：`dev` 已合入 PR [#153](https://github.com/FengFan-1997/Artigen/pull/153)、硬锁修复 PR [#155](https://github.com/FengFan-1997/Artigen/pull/155)、边界补丁 PR [#157](https://github.com/FengFan-1997/Artigen/pull/157)、readiness 部署意图补丁 PR [#160](https://github.com/FengFan-1997/Artigen/pull/160) 和文档同步 PR [#158](https://github.com/FengFan-1997/Artigen/pull/158)，当前 `dev` exact SHA 为 `eb79c1526f1efb4ec850bff1e1b22db042a79d6b`（PR #160 merge commit 为该 SHA），统一锁定 Cloudflare Workers AI Free `@cf/openai/gpt-oss-120b`，SiliconFlow 仅负责 `Kwai-Kolors/Kolors` 图片生成。两者都使用本机 CUA + Docker，任务由 PostgreSQL/pg-boss 持久排队；无需下载本地大模型，也不需要 CUA 云账号。Render、Vercel 和 Mac Worker 尚未以当前 exact SHA 对齐，完整 DEV 实机矩阵和图片盲审尚未执行，不能把本地门禁当作部署或生产切换证据。
 
 > **历史快照（不代表当前候选或线上状态）**：下方 2026-08-07 的 Production Beta 记录、旧模型/迁移号和状态表仅用于审计回溯；当前模型、开关、迁移与部署状态以本节首段、`PROJECT_HANDOFF.zh-CN.md` 顶部和实时 readiness 为准。
 
