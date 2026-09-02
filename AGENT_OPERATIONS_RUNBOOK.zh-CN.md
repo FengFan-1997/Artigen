@@ -10,6 +10,8 @@
 
 ## 1. 当前结论
 
+当前 GitHub `dev` exact SHA 为 `2cbb97fbc0b9b307ce0d0fb336df7e2ecf307217`（文档历史澄清 PR [#163](https://github.com/FengFan-1997/Artigen/pull/163) merge）；运行时代码仍以 PR [#161](https://github.com/FengFan-1997/Artigen/pull/161) merge `7cd1f842ca6e93887d1bd5e5710d4e5a6b6e4d8d` 为不可变证据，文档同步 PR [#162](https://github.com/FengFan-1997/Artigen/pull/162) 已合入。当前 `dev` 未对齐或部署到 Render、Vercel production 或 Mac Worker。
+
 Artigen Agent 继续使用“云端文本模型 + 本机 CUA 沙箱”：`dev` 已合入 PR [#153](https://github.com/FengFan-1997/Artigen/pull/153)、硬锁修复 PR [#155](https://github.com/FengFan-1997/Artigen/pull/155)、边界补丁 PR [#157](https://github.com/FengFan-1997/Artigen/pull/157)、readiness 部署意图补丁 PR [#160](https://github.com/FengFan-1997/Artigen/pull/160)、文档同步 PR [#159](https://github.com/FengFan-1997/Artigen/pull/159) 和 follow-up PR [#161](https://github.com/FengFan-1997/Artigen/pull/161)。运行时硬锁收尾 merge commit 为 `7cd1f842ca6e93887d1bd5e5710d4e5a6b6e4d8d`：所有部署环境文本统一为 Cloudflare Workers AI Free `@cf/openai/gpt-oss-120b`，SiliconFlow 仅负责 `Kwai-Kolors/Kolors` 图片生成。Render、Vercel 和 Mac Worker 尚未以该运行时 exact SHA 对齐，完整 DEV 实机矩阵和图片盲审尚未执行，不能把本地门禁当作部署或生产切换证据。
 
 > 文档合并会让 `origin/dev` 继续生成新的 merge SHA；上面的 `7cd1f842…` 是运行时代码 PR #161 的不可变证据，不代表后续文档合并后的分支尖端。部署前必须重新执行 `git rev-parse origin/dev` 并核验 Render、Vercel、Mac Worker 和 readiness。
