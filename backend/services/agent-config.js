@@ -4,6 +4,23 @@ const { ApiError } = require('../lib/api-error');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
 
 const enabled = (value) => /^(1|true|yes|on)$/i.test(String(value || '').trim());
+const normalizedEnvironment = (value) => String(value || '').trim().toLowerCase();
+const isProductionIntent = (env = process.env) => (
+  ['production', 'prod'].includes(normalizedEnvironment(env.NODE_ENV)) ||
+  ['production', 'prod'].includes(normalizedEnvironment(env.APP_ENV))
+);
+const isTestFixtureRuntime = (env = process.env) => (
+  normalizedEnvironment(env.NODE_ENV) === 'test' &&
+  ['', 'dev', 'development'].includes(normalizedEnvironment(env.APP_ENV))
+);
+const isDeployedRuntime = (env = process.env) => {
+  const nodeEnvironment = normalizedEnvironment(env.NODE_ENV);
+  const appEnvironment = normalizedEnvironment(env.APP_ENV);
+  const declaredDeployment = isProductionIntent(env) ||
+    ['dev', 'development', 'staging'].includes(nodeEnvironment) ||
+    ['dev', 'development', 'staging'].includes(appEnvironment);
+  return declaredDeployment && !isTestFixtureRuntime(env);
+};
 const integer = (value, fallback, minimum, maximum) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   const resolved = Number.isFinite(parsed) ? parsed : fallback;
@@ -105,8 +122,8 @@ const assertSiliconFlowUrl = (value) => {
 };
 
 const getAgentConfig = (env = process.env) => {
-  const nodeEnvironment = String(env.NODE_ENV || '').trim().toLowerCase();
-  const production = nodeEnvironment === 'production';
+  const nodeEnvironment = normalizedEnvironment(env.NODE_ENV);
+  const production = isProductionIntent(env);
   const runtimeDriver = String(env.AGENT_RUNTIME_DRIVER || 'live').trim().toLowerCase();
   if (!['live', 'fixture'].includes(runtimeDriver)) {
     throw new ApiError(500, 'AGENT_RUNTIME_DRIVER_INVALID');
@@ -115,7 +132,7 @@ const getAgentConfig = (env = process.env) => {
   // deployed Agent environment. SiliconFlow remains reserved for images.
   const modelProvider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
   const textModelHardLock = enabled(env.AGENT_TEXT_MODEL_HARD_LOCK);
-  const appEnvironment = String(env.APP_ENV || '').trim().toLowerCase();
+  const appEnvironment = normalizedEnvironment(env.APP_ENV);
   const deploymentIntent = production ||
     ['production', 'dev', 'development', 'staging', 'prod'].includes(appEnvironment) ||
     ['production', 'prod', 'dev', 'development', 'staging'].includes(nodeEnvironment);
@@ -123,8 +140,7 @@ const getAgentConfig = (env = process.env) => {
   // fixture app intent. This keeps NODE_ENV=test + APP_ENV=dev fixtures
   // available, while fail-closing staging/production app intents even when a
   // platform process was accidentally launched with NODE_ENV=test.
-  const testFixtureRuntime = nodeEnvironment === 'test' &&
-    ['', 'dev', 'development'].includes(appEnvironment);
+  const testFixtureRuntime = isTestFixtureRuntime(env);
   // A deployed app intent must never run with fixture providers, even when
   // the platform happens to start the process with NODE_ENV=test/development.
   // The only exception is an explicitly isolated test fixture (test + empty,
@@ -475,7 +491,7 @@ const assertAgentRuntimeReady = (env = process.env) => {
     });
   }
   if (
-    String(env.NODE_ENV || '').trim() === 'production' &&
+    isProductionIntent(env) &&
     config.sandboxProvider === 'cua' &&
     config.sandboxMode === 'cloud' &&
     !config.sandboxImageRef
@@ -498,7 +514,7 @@ const assertAgentRuntimeReady = (env = process.env) => {
     });
   }
   if (
-    String(env.NODE_ENV || '').trim() === 'production' &&
+    isProductionIntent(env) &&
     config.publicBrowserEnabled &&
     (
       Buffer.byteLength(config.workerRelaySecret, 'utf8') < 32 ||
@@ -515,6 +531,9 @@ module.exports = {
   AGENT_AUTHENTICATED_MODE,
   agentFeatureEnabled,
   agentWorkerEnabled,
+  isProductionIntent,
+  isDeployedRuntime,
+  isTestFixtureRuntime,
   assertLoopbackHttpUrl,
   assertSiliconFlowUrl,
   assertAgentRuntimeReady,

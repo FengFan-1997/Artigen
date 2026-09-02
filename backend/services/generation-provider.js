@@ -4,6 +4,7 @@ const {
   GENERATION_DIRECTIONS_MODEL,
   GENERATION_IMAGE_MODEL
 } = require('./generation-profiles');
+const { isDeployedRuntime } = require('./agent-config');
 
 const PLACEHOLDER_SECRET_RE = /^(?:<.*>|changeme|replace_me|your[_-].*|placeholder.*)$/i;
 
@@ -188,18 +189,12 @@ const createSiliconFlowGenerationProvider = ({
   // Deployed environments default to the free Cloudflare text runtime even
   // when the optional provider variable is omitted. Test fixtures may omit it
   // to exercise the legacy SiliconFlow image-only adapter explicitly.
-  const appEnvironment = String(env.APP_ENV || '').trim().toLowerCase();
-  const nodeEnvironment = String(env.NODE_ENV || '').trim().toLowerCase();
-  const deploymentIntent = ['production', 'prod', 'dev', 'development', 'staging'].includes(nodeEnvironment) ||
-    ['production', 'prod', 'dev', 'development', 'staging'].includes(appEnvironment);
   // Only the explicitly local fixture environments may exercise the legacy
   // SiliconFlow text adapter.  Keep this rule in sync with the configured
   // provider wrapper so direct tool-task construction cannot bypass the
   // deployment hard lock when NODE_ENV=test is paired with staging or
   // production deployment intent.
-  const testFixtureRuntime = nodeEnvironment === 'test' &&
-    ['', 'dev', 'development'].includes(appEnvironment);
-  const deployedTextRuntime = deploymentIntent && !testFixtureRuntime;
+  const deployedTextRuntime = isDeployedRuntime(env);
   const configuredProvider = String(
     env.AGENT_MODEL_PROVIDER || (deployedTextRuntime ? 'cloudflare' : '')
   ).trim().toLowerCase();
