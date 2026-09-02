@@ -322,6 +322,16 @@ test('provider readiness validates a callable adapter and stable internal profil
     provider: { kind: 'siliconflow', available: true },
     env: { NODE_ENV: 'production' }
   }), { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' });
+  // A callable legacy adapter must still be rejected when deployment intent
+  // is carried by APP_ENV, including NODE_ENV=test fixture processes.
+  assert.deepEqual(checkGenerationProvider({
+    provider: provider('siliconflow'),
+    env: { NODE_ENV: 'test', APP_ENV: 'production' }
+  }), { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  assert.deepEqual(checkGenerationProvider({
+    provider: provider('siliconflow'),
+    env: { NODE_ENV: 'PRODUCTION' }
+  }), { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
 });
 
 test('production readiness fails closed for revoked provider credentials', async () => {

@@ -105,7 +105,8 @@ const assertSiliconFlowUrl = (value) => {
 };
 
 const getAgentConfig = (env = process.env) => {
-  const production = String(env.NODE_ENV || '').trim() === 'production';
+  const nodeEnvironment = String(env.NODE_ENV || '').trim().toLowerCase();
+  const production = nodeEnvironment === 'production';
   const runtimeDriver = String(env.AGENT_RUNTIME_DRIVER || 'live').trim().toLowerCase();
   if (!['live', 'fixture'].includes(runtimeDriver)) {
     throw new ApiError(500, 'AGENT_RUNTIME_DRIVER_INVALID');
@@ -119,9 +120,15 @@ const getAgentConfig = (env = process.env) => {
   const modelProvider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
   const textModelHardLock = enabled(env.AGENT_TEXT_MODEL_HARD_LOCK);
   const appEnvironment = String(env.APP_ENV || '').trim().toLowerCase();
-  const deployedTextRuntime = String(env.NODE_ENV || '').trim().toLowerCase() !== 'test' && (
-    production || ['dev', 'development', 'staging', 'prod'].includes(appEnvironment) ||
-    ['dev', 'development', 'staging', 'prod'].includes(String(env.NODE_ENV || '').trim().toLowerCase())
+  const deploymentIntent = production ||
+    ['production', 'dev', 'development', 'staging', 'prod'].includes(appEnvironment) ||
+    ['production', 'prod', 'dev', 'development', 'staging'].includes(nodeEnvironment);
+  // Test fixtures remain isolated unless they explicitly carry a production
+  // app intent. This keeps NODE_ENV=test + APP_ENV=dev fixtures available,
+  // while still fail-closing a platform process accidentally launched with
+  // APP_ENV=production (or a case-variant production NODE_ENV).
+  const deployedTextRuntime = deploymentIntent && (
+    nodeEnvironment !== 'test' || ['production', 'prod'].includes(appEnvironment)
   );
   const sandboxProvider = String(env.AGENT_SANDBOX_PROVIDER || 'cua').trim().toLowerCase();
   if (!['openai', 'ollama', 'siliconflow', 'cloudflare'].includes(modelProvider)) {

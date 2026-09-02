@@ -2250,6 +2250,29 @@ test('deployed worker hard-lock rejects legacy text providers while preserving i
     AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b'
   });
   assert.equal(config.textModelHardLock, true);
+  // APP_ENV explicitly declares deployment intent even if the platform starts
+  // the Node process in test mode. Case-variant production values must be
+  // normalized before applying the non-image provider hard lock.
+  for (const nodeEnv of ['test', 'Production', 'PRODUCTION']) {
+    assert.throws(() => getAgentConfig({
+      NODE_ENV: nodeEnv,
+      APP_ENV: nodeEnv === 'test' ? 'production' : '',
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+    }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  }
+  assert.throws(() => assertAgentRuntimeReady({
+    NODE_ENV: 'test',
+    APP_ENV: 'production',
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+    SILICONFLOW_API_KEY: 'test-key',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local',
+    AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
+    AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
   assert.throws(() => getAgentConfig({
     NODE_ENV: 'production',
     APP_ENV: 'dev',
