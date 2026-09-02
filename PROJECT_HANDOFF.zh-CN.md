@@ -11,9 +11,10 @@
 ## 2026-09-02 非生图模型统一切换（当前本地候选，未发布）
 
 - 账户所有者已确认新的硬策略：**所有环境的非生图模型**（对话、路由、规划、验证、父/子 Agent、记忆摘要和工具决策）统一使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；**所有图片生成**继续只使用 SiliconFlow `Kwai-Kolors/Kolors`。不再把 `Qwen/Qwen3-8B` 作为任何部署环境的默认文本模型。
-- 候选分支为 `codex/cloudflare-free-agent-integration`，基于 `origin/dev` `8a67bb632d2aeadfad4f7810ca13f484262a9172`。Render 生产/DEV blueprint、Mac Worker 启动器、通用文本入口、Planner/Runtime、设计对话和健康检查均已写入 Cloudflare/GPT-OSS 文本锁与 Kolors 图片边界；`AGENT_TEXT_MODEL_HARD_LOCK=true` 时非 Cloudflare 文本配置会 fail closed。
-- 旧 Qwen 字样只保留在历史 Handoff、历史真实 Run 和确定性 fixture 兼容测试中，用于审计旧版本，不代表当前部署配置或新的真实调用方向。当前候选未 push、未创建 PR、未部署；Runtime V2、公众 rollout 和 owner canary 继续关闭。
-- 本轮未调用付费 Provider。当前已完成受影响后端测试 `167/167`、`pnpm eval:agent:validate` `50/50`、JS 语法和 `git diff --check`；完整 `pnpm check` 正在当前候选上运行，PostgreSQL/MinIO deterministic、chaos、DEV 对齐、真实 24-slot 和图片盲审尚未执行。
+- 候选分支为 `codex/cloudflare-free-agent-integration`，基于 `origin/dev` `8a67bb632d2aeadfad4f7810ca13f484262a9172`，当前本地不可变提交为 `6f9c2312971a8defe53c00252e5a8e189b90d7df`。Render 生产/DEV blueprint、Mac Worker 启动器、通用文本入口、Planner/Runtime、设计对话和健康检查均已写入 Cloudflare/GPT-OSS 文本锁与 Kolors 图片边界；`AGENT_TEXT_MODEL_HARD_LOCK=true` 时非 Cloudflare 文本配置会 fail closed。
+- 旧 Qwen 字样只保留在历史 Handoff、历史真实 Run 和确定性 fixture 兼容测试中，用于审计旧版本，不代表当前部署配置或新的真实调用方向。当前候选仍未 push、未创建 PR、未部署；Runtime V2、公众 rollout 和 owner canary 继续关闭。
+- 本轮未调用付费 Provider。当前候选受影响后端回归 `315/315`、`pnpm eval:agent:validate` `50/50`、JS 语法和 `git diff --check` 均通过；最终 `pnpm check` 通过，Playwright 为 `543 passed / 3 skipped / 0 failed`（18.5 分钟），前端/后端/邮件/构建与 bundle budget 均通过。测试 WebServer 的自家 API `ECONNREFUSED` 仅来自未启动本地 API 的 fixture 场景，不代表线上健康。
+- `pnpm eval:agent:deterministic` 与 `pnpm test:agent:chaos` 已按正式命令执行并 fail-closed：前者要求 `RUN_POSTGRES_INTEGRATION=1`，后者要求 `DATABASE_URL`；本机没有 PostgreSQL 16/MinIO，因此没有假绿结果。DEV 对齐、真实 24-slot 和图片盲审尚未执行。
 
 ## 2026-09-02 Agent 长期免费大模型升级（统一候选，未发布）
 
