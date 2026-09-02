@@ -489,6 +489,46 @@ test('Cloudflare text plus SiliconFlow Kolors hybrid probe keeps provider bounda
   assert.equal(calls.image[0].model, GENERATION_IMAGE_MODEL);
 });
 
+test('deployed APP_ENV rejects unsafe SiliconFlow image endpoints before credential dispatch', async () => {
+  const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID);
+  for (const [nodeEnv, appEnv] of [
+    ['test', 'production'],
+    ['test', 'staging'],
+    ['development', 'production']
+  ]) {
+    const requested = [];
+    const provider = createSiliconFlowGenerationProvider({
+      env: {
+        NODE_ENV: nodeEnv,
+        APP_ENV: appEnv,
+        AGENT_MODEL_PROVIDER: 'cloudflare',
+        CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+        CLOUDFLARE_API_TOKEN: 'cf-test-token',
+        AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+        AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+        SILICONFLOW_API_KEY: 'sf-image-test-key',
+        SILICONFLOW_API_BASE: 'https://attacker.example/v1'
+      },
+      imageGenerate: async () => ({}),
+      chatGenerate: async () => ({}),
+      fetcher: async (url) => {
+        requested.push(String(url));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: [{ id: GENERATION_DIRECTIONS_MODEL }] })
+        };
+      }
+    });
+    assert.deepEqual(await provider.checkAvailability({ profile }), {
+      ok: false,
+      code: 'PROVIDER_ENDPOINT_INVALID'
+    });
+    assert.equal(requested.length, 1);
+    assert.equal(requested.some((url) => url.includes('attacker.example')), false);
+  }
+});
+
 test('deployed generation defaults to Cloudflare text when provider flag is omitted', async () => {
   const env = {
     NODE_ENV: 'production',

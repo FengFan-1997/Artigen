@@ -111,10 +111,6 @@ const getAgentConfig = (env = process.env) => {
   if (!['live', 'fixture'].includes(runtimeDriver)) {
     throw new ApiError(500, 'AGENT_RUNTIME_DRIVER_INVALID');
   }
-  if (production && runtimeDriver !== 'live') {
-    throw new ApiError(500, 'AGENT_FIXTURE_RUNTIME_FORBIDDEN');
-  }
-
   // Cloudflare's free GPT-OSS 120B is the default text model for every
   // deployed Agent environment. SiliconFlow remains reserved for images.
   const modelProvider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
@@ -129,6 +125,14 @@ const getAgentConfig = (env = process.env) => {
   // platform process was accidentally launched with NODE_ENV=test.
   const testFixtureRuntime = nodeEnvironment === 'test' &&
     ['', 'dev', 'development'].includes(appEnvironment);
+  // A deployed app intent must never run with fixture providers, even when
+  // the platform happens to start the process with NODE_ENV=test/development.
+  // The only exception is an explicitly isolated test fixture (test + empty,
+  // dev, or development APP_ENV), which is never considered deployed.
+  const fixtureRuntimeAllowed = !deploymentIntent || testFixtureRuntime;
+  if (!fixtureRuntimeAllowed && runtimeDriver !== 'live') {
+    throw new ApiError(500, 'AGENT_FIXTURE_RUNTIME_FORBIDDEN');
+  }
   const deployedTextRuntime = deploymentIntent && !testFixtureRuntime;
   const sandboxProvider = String(env.AGENT_SANDBOX_PROVIDER || 'cua').trim().toLowerCase();
   if (!['openai', 'ollama', 'siliconflow', 'cloudflare'].includes(modelProvider)) {
@@ -137,7 +141,7 @@ const getAgentConfig = (env = process.env) => {
   if (!['cua', 'fixture'].includes(sandboxProvider)) {
     throw new ApiError(500, 'AGENT_SANDBOX_PROVIDER_INVALID');
   }
-  if (production && sandboxProvider === 'fixture') {
+  if (!fixtureRuntimeAllowed && sandboxProvider === 'fixture') {
     throw new ApiError(500, 'AGENT_FIXTURE_SANDBOX_FORBIDDEN');
   }
   const sandboxMode = String(env.AGENT_SANDBOX_MODE || 'cloud').trim().toLowerCase();
@@ -392,7 +396,7 @@ const getAgentConfig = (env = process.env) => {
     openAiBaseUrl: String(env.OPENAI_API_BASE || 'https://api.openai.com/v1').trim().replace(/\/+$/, ''),
     cuaApiKey: String(env.CUA_API_KEY || '').trim(),
     cuaPython: String(env.CUA_PYTHON || 'python3').trim(),
-    fixtureAllowed: !production
+    fixtureAllowed: fixtureRuntimeAllowed
   });
 };
 

@@ -262,7 +262,7 @@ const createSiliconFlowGenerationProvider = ({
         }
         if (
           !cloudflareText &&
-          String(env.NODE_ENV || '').trim().toLowerCase() === 'production' &&
+          deployedTextRuntime &&
           (base.origin !== 'https://api.siliconflow.cn' || base.pathname.replace(/\/+$/, '') !== '/v1')
         ) {
           return { ok: false, code: 'PROVIDER_ENDPOINT_INVALID' };
@@ -316,7 +316,7 @@ const createSiliconFlowGenerationProvider = ({
             env.SILICONFLOW_API_BASE || 'https://api.siliconflow.cn/v1'
           ).trim());
           if (
-            String(env.NODE_ENV || '').trim().toLowerCase() === 'production' &&
+            deployedTextRuntime &&
             (imageBase.origin !== 'https://api.siliconflow.cn' || imageBase.pathname.replace(/\/+$/, '') !== '/v1')
           ) {
             return { ok: false, code: 'PROVIDER_ENDPOINT_INVALID' };

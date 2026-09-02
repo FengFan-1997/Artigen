@@ -2287,6 +2287,31 @@ test('deployed worker hard-lock rejects legacy text providers while preserving i
   }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
 });
 
+test('deployment APP_ENV forbids fixture runtime and sandbox outside isolated test fixtures', () => {
+  for (const nodeEnv of ['test', 'development']) {
+    assert.throws(() => getAgentConfig({
+      NODE_ENV: nodeEnv,
+      APP_ENV: 'production',
+      AGENT_RUNTIME_DRIVER: 'fixture'
+    }), { code: 'AGENT_FIXTURE_RUNTIME_FORBIDDEN' });
+
+    assert.throws(() => getAgentConfig({
+      NODE_ENV: nodeEnv,
+      APP_ENV: 'production',
+      AGENT_RUNTIME_DRIVER: 'live',
+      AGENT_SANDBOX_PROVIDER: 'fixture'
+    }), { code: 'AGENT_FIXTURE_SANDBOX_FORBIDDEN' });
+  }
+
+  const isolatedFixture = getAgentConfig({
+    NODE_ENV: 'test',
+    APP_ENV: 'dev',
+    AGENT_RUNTIME_DRIVER: 'fixture',
+    AGENT_SANDBOX_PROVIDER: 'fixture'
+  });
+  assert.equal(isolatedFixture.fixtureAllowed, true);
+});
+
 test('Runtime V2 assignment is server-owned, stable and fails back to V1 when disabled', () => {
   const canaryUser = '11111111-1111-4111-8111-111111111111';
   const controlUser = '22222222-2222-4222-8222-222222222222';
