@@ -330,6 +330,10 @@ test('provider readiness validates a callable adapter and stable internal profil
   }), { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
   assert.deepEqual(checkGenerationProvider({
     provider: provider('siliconflow'),
+    env: { NODE_ENV: 'test', APP_ENV: 'staging' }
+  }), { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  assert.deepEqual(checkGenerationProvider({
+    provider: provider('siliconflow'),
     env: { NODE_ENV: 'PRODUCTION' }
   }), { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
 });
@@ -398,6 +402,14 @@ test('production output allowlist requires valid public DNS hostnames', () => {
     NODE_ENV: 'production',
     AI_OUTPUT_ALLOWED_HOSTS: '*.cdn.example.com,images.example.org'
   }), { ok: true, required: true, hostCount: 2 });
+  assert.deepEqual(checkOutputAllowlist({
+    NODE_ENV: 'test',
+    APP_ENV: 'production'
+  }), {
+    ok: false,
+    code: 'AI_OUTPUT_ALLOWLIST_REQUIRED',
+    hostCount: 0
+  });
 });
 
 test('paid readiness requires provider-verified Afdian reconciliation configuration', () => {
@@ -407,6 +419,12 @@ test('paid readiness requires provider-verified Afdian reconciliation configurat
     packageCount: 4,
     webhookVerification: 'provider-query'
   });
+  assert.equal(checkAfdian({
+    ...baseGenerationEnv,
+    NODE_ENV: 'test',
+    APP_ENV: 'production',
+    AFDIAN_ORDER_CREATE_URL: 'https://attacker.example/order/create'
+  }).code, 'AFDIAN_PAY_URL_INVALID');
   assert.equal(checkAfdian({
     ...baseGenerationEnv,
     AFDIAN_API_TOKEN: ''

@@ -20,17 +20,28 @@ const {
 } = require('../lib/turnstile');
 
 const enabled = (value) => /^(1|true)$/i.test(String(value || '').trim());
-const isProduction = (env) => String(env?.NODE_ENV || '').trim().toLowerCase() === 'production';
+// Treat either process-level or platform-level production intent as
+// production. Render can keep NODE_ENV=development while APP_ENV carries the
+// deployment boundary; security checks must not silently downgrade that
+// process to a local fixture.
+const isProduction = (env = process.env) => {
+  const nodeEnv = String(env?.NODE_ENV || '').trim().toLowerCase();
+  const appEnv = String(env?.APP_ENV || '').trim().toLowerCase();
+  return ['production', 'prod'].includes(nodeEnv) ||
+    ['production', 'prod'].includes(appEnv);
+};
 // APP_ENV is authoritative for deployment intent when a platform launches a
 // development-mode Node process.  Test fixtures remain explicitly isolated so
 // they can still use the contract mock without creating a production bypass.
 const isDeployedRuntime = (env = process.env) => {
   const nodeEnv = String(env?.NODE_ENV || '').trim().toLowerCase();
   const appEnv = String(env?.APP_ENV || '').trim().toLowerCase();
-  // Test fixtures stay isolated unless they explicitly carry a production
-  // app intent. This prevents NODE_ENV=test from becoming a readiness bypass
-  // on a platform process accidentally launched with APP_ENV=production.
-  if (nodeEnv === 'test' && !['production', 'prod'].includes(appEnv)) return false;
+  // Only an explicitly local fixture may bypass deployed-provider checks.
+  // Keep this identical to agent-config/generation-provider so a test process
+  // launched with APP_ENV=staging cannot report a legacy text adapter ready.
+  const testFixtureRuntime = nodeEnv === 'test' &&
+    ['', 'dev', 'development'].includes(appEnv);
+  if (testFixtureRuntime) return false;
   return ['production', 'prod', 'dev', 'development', 'staging'].includes(nodeEnv) ||
     ['production', 'prod', 'dev', 'development', 'staging'].includes(appEnv);
 };
