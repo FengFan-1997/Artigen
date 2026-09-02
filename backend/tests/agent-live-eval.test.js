@@ -43,11 +43,15 @@ const {
 } = require('../evaluation/harness/live-eval-final-report');
 const {
   OWNER_CANARY_SCENARIOS,
+  assertOwnerCanaryPreflight,
   createSignedOwnerCanaryPlan,
   verifySignedOwnerCanaryPlan
 } = require('../evaluation/harness/live-eval-owner-canary');
 const { LiveModelAuditor } = require('../evaluation/harness/live-model-auditor');
-const { LiveEvalCampaignGuard } = require('../evaluation/harness/live-eval-campaign-guard');
+const {
+  LiveEvalCampaignGuard,
+  sha256
+} = require('../evaluation/harness/live-eval-campaign-guard');
 const {
   PINNED_MINIO_DIGEST,
   createSignedGateManifest,
@@ -60,6 +64,7 @@ const {
   resolveLiveEvalPostgresMajor
 } = require('../evaluation/harness/live-eval-database-readiness');
 const { requestPromptHash } = require('../evaluation/harness/scripted-siliconflow-transport');
+const { callSiliconFlowChat } = require('../lib/ai-providers');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const {
   assertGateAttestationProvenance
@@ -80,6 +85,7 @@ const {
   installLiveEvalPoolErrorHandler,
   isLiveEvalDatabaseConnectionError,
   markInterruptedJournal,
+  recoverInterruptedCampaign,
   resolveSelection,
   summarize
 } = require('../scripts/run-agent-live-eval');
@@ -87,6 +93,24 @@ const {
 test('Live Harness V3.1 is fail-closed outside explicit test + dev + real-provider mode', () => {
   const safe = liveEvalEnv({}, { AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1' });
   assert.equal(assertLiveEvalProcessSafety(safe), true);
+  const cloudflare = liveEvalEnv({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b'
+  }, { AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1' });
+  assert.equal(cloudflare.AGENT_MODEL_PROVIDER, 'cloudflare');
+  assert.equal(cloudflare.AGENT_MODEL_NAME, '@cf/openai/gpt-oss-120b');
+  assert.throws(
+    () => assertLiveEvalProcessSafety({
+      ...safe,
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+    }),
+    /AGENT_LIVE_EVAL_TEXT_MODEL_PROVIDER_FORBIDDEN/
+  );
+  assert.throws(() => liveEvalEnv({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+  }), /AGENT_LIVE_EVAL_MODEL_LOCK_INVALID/);
   for (const override of [
     { NODE_ENV: 'production' },
     { APP_ENV: 'production' },
@@ -499,6 +523,10 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     ['DATABASE_URL', 'postgres://synthetic/dev_artigen'],
     ['AGENT_PAYLOAD_ENCRYPTION_KEY', 'payload-key'],
     ['SILICONFLOW_API_KEY', 'provider-key'],
+    ['CLOUDFLARE_ACCOUNT_ID', 'f'.repeat(32)],
+    ['CLOUDFLARE_API_TOKEN', 'cloudflare-provider-key'],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ID', 'f'.repeat(32)],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED', 'true'],
     ['S3_ENDPOINT', 'https://s3.invalid'],
     ['S3_BUCKET', 'dev-bucket'],
     ['S3_REGION', 'synthetic-region'],
@@ -511,7 +539,7 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     ).toString('base64')]
   ]);
   const loaded = loadLiveEvalSecrets({
-    env: {},
+    env: { NODE_ENV: 'test', AGENT_MODEL_PROVIDER: 'cloudflare' },
     service: 'artigen-agent-dev-worker',
     readSecret: ({ account }) => secrets.get(account) || ''
   });
@@ -523,8 +551,8 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     loaded.runtimeEnv.CUA_PYTHON,
     path.resolve(__dirname, '../.venv-agent/bin/python')
   );
-  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION, '20');
-  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION, '160');
+  assert.equal(loaded.runtimeEnv.AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION, '0.35');
+  assert.equal(loaded.runtimeEnv.AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION, '0.75');
   assert.equal(loaded.runtimeEnv.S3_FORCE_PATH_STYLE, '1');
   assert.equal(loaded.runtimeEnv.AGENT_LIVE_EVAL_PG_POOL_MAX, '3');
   assert.equal(loaded.runtimeEnv.PG_POOL_MAX, '3');
@@ -534,6 +562,26 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
   assert.equal(loaded.runtimeEnv.PG_SSL_REJECT_UNAUTHORIZED, '1');
   assert.equal(loaded.runtimeEnv.PG_SSL_CA_BASE64, secrets.get('PG_SSL_CA_BASE64'));
   assert.equal(loaded.evidenceKeyMaterial, secrets.get('AGENT_LIVE_EVAL_EVIDENCE_KEY'));
+  const cloudflareAccountId = 'f'.repeat(32);
+  const cloudflareSecrets = new Map([
+    ...secrets,
+    ['CLOUDFLARE_ACCOUNT_ID', cloudflareAccountId],
+    ['CLOUDFLARE_API_TOKEN', 'cloudflare-provider-key'],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ID', cloudflareAccountId],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED', 'true']
+  ]);
+  const cloudflare = loadLiveEvalSecrets({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: cloudflareAccountId
+    },
+    service: 'artigen-agent-dev-worker',
+    readSecret: ({ account }) => cloudflareSecrets.get(account) || ''
+  });
+  assert.equal(cloudflare.runtimeEnv.AGENT_MODEL_PROVIDER, 'cloudflare');
+  assert.equal(cloudflare.runtimeEnv.AGENT_MODEL_NAME, '@cf/openai/gpt-oss-120b');
+  assert.equal(cloudflare.runtimeEnv.CLOUDFLARE_ACCOUNT_ID, cloudflareAccountId);
   assert.throws(
     () => loadLiveEvalSecrets({ service: 'artigen-production', readSecret: () => 'x' }),
     /KEYCHAIN_SERVICE_INVALID/
@@ -544,11 +592,15 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
   );
 });
 
-test('Live eval runner replaces stale zero pricing but rejects malformed pricing', () => {
+test('Live eval runner rejects explicit zero or malformed pricing', () => {
   const secrets = new Map([
     ['DATABASE_URL', 'postgres://synthetic/dev_artigen'],
     ['AGENT_PAYLOAD_ENCRYPTION_KEY', 'payload-key'],
     ['SILICONFLOW_API_KEY', 'provider-key'],
+    ['CLOUDFLARE_ACCOUNT_ID', 'f'.repeat(32)],
+    ['CLOUDFLARE_API_TOKEN', 'cloudflare-provider-key'],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ID', 'f'.repeat(32)],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED', 'true'],
     ['S3_ENDPOINT', 'https://s3.invalid'],
     ['S3_BUCKET', 'dev-bucket'],
     ['S3_REGION', 'synthetic-region'],
@@ -558,35 +610,55 @@ test('Live eval runner replaces stale zero pricing but rejects malformed pricing
     ['AGENT_LIVE_EVAL_EVIDENCE_KEY', `v1:hex:${'ef'.repeat(32)}`]
   ]);
   const readSecret = ({ account }) => secrets.get(account) || '';
-  const loaded = loadLiveEvalSecrets({
-    env: {
-      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
-      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0',
-      PG_SSL_CA: 'ambient-ca-must-not-survive',
-      PG_SSL_CA_BASE64: 'ambient-base64-must-not-survive'
-    },
-    service: 'artigen-agent-dev-worker',
-    readSecret
-  });
-  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION, '20');
-  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION, '160');
-  assert.equal(loaded.runtimeEnv.PG_SSL_CA, undefined);
-  assert.equal(loaded.runtimeEnv.PG_SSL_CA_BASE64, undefined);
   assert.throws(
     () => loadLiveEvalSecrets({
-      env: { AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: 'not-a-number' },
+      env: {
+        NODE_ENV: 'test',
+        AGENT_MODEL_PROVIDER: 'cloudflare',
+        AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '0',
+        AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '0',
+        PG_SSL_CA: 'ambient-ca-must-not-survive',
+        PG_SSL_CA_BASE64: 'ambient-base64-must-not-survive'
+      },
       service: 'artigen-agent-dev-worker',
       readSecret
     }),
-    /AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION_INVALID/
+    /AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION_INVALID/
   );
   assert.throws(
     () => loadLiveEvalSecrets({
-      env: { AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '-1' },
+      env: {
+        NODE_ENV: 'test',
+        AGENT_MODEL_PROVIDER: 'cloudflare',
+        AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: 'not-a-number'
+      },
       service: 'artigen-agent-dev-worker',
       readSecret
     }),
-    /AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION_INVALID/
+    /AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION_INVALID/
+  );
+  assert.throws(
+    () => loadLiveEvalSecrets({
+      env: {
+        NODE_ENV: 'test',
+        AGENT_MODEL_PROVIDER: 'cloudflare',
+        AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '-1'
+      },
+      service: 'artigen-agent-dev-worker',
+      readSecret
+    }),
+    /AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION_INVALID/
+  );
+});
+
+test('Live eval loader rejects the legacy SiliconFlow text profile even in test mode', () => {
+  assert.throws(
+    () => loadLiveEvalSecrets({
+      env: { NODE_ENV: 'test', AGENT_MODEL_PROVIDER: 'siliconflow' },
+      service: 'artigen-agent-dev-worker',
+      readSecret: () => 'synthetic'
+    }),
+    /AGENT_LIVE_EVAL_TEXT_MODEL_PROVIDER_FORBIDDEN/
   );
 });
 
@@ -792,6 +864,60 @@ test('Live Harness rejects V2 model receipts that lack matching physical dispatc
   );
 });
 
+test('Live Harness accepts V2 physical evidence with bounded Kolors retries', async () => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.campaignGuard = {
+    dispatchMetrics: async () => ({
+      calls: [
+        { kind: 'qwen', runIdHash: sha256(runId), slotHash: sha256('text-only-agent:v2'), runtimeVersion: 2, status: 'succeeded' },
+        { kind: 'kolors', runIdHash: sha256(runId), slotHash: sha256('text-only-agent:v2'), runtimeVersion: 2, status: 'failed' },
+        { kind: 'kolors', runIdHash: sha256(runId), slotHash: sha256('text-only-agent:v2'), runtimeVersion: 2, status: 'succeeded' }
+      ],
+      qwenCalls: 1,
+      kolorsCalls: 2,
+      inputTokens: 10,
+      outputTokens: 5,
+      latencyMs: 25,
+      incomplete: 0
+    })
+  };
+  harness.oracle = {
+    async assertInvariants() {
+      return {
+        persistent: {
+          run: {
+            runtime_version: 2,
+            status: 'succeeded',
+            max_credits: 20,
+            charged_credits: 2
+          },
+          holds: [{ status: 'settled' }],
+          artifacts: [],
+          subagents: [],
+          steps: [],
+          modelCalls: [{ phase: 'actor', turn: 0 }],
+          toolReceipts: [{ kind: 'kolors', state: 'consumed' }]
+        },
+        reconstructed: { digest: 'ab'.repeat(32) }
+      };
+    }
+  };
+  harness.pool = {
+    query: async () => ({
+      rows: [{ entry_type: 'hold', count: 1 }, { entry_type: 'charge', count: 1 }]
+    })
+  };
+  const result = await harness.assertInvariants({
+    entry: { id: 'text-only-agent', expectedStatus: 'succeeded' },
+    cohort: 'v2',
+    runId
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.qwenCalls, 1);
+  assert.equal(result.kolorsCalls, 2);
+});
+
 test('Live Harness never accepts an incomplete physical dispatch as V1 baseline evidence', async () => {
   const harness = Object.create(AgentLiveEvalHarness.prototype);
   harness.campaignGuard = {
@@ -951,13 +1077,17 @@ test('Live Harness drain check keeps ambiguous receipts as audit evidence but re
   harness.candidateUserId = '33333333-3333-4333-8333-333333333333';
   harness.queue = [];
   harness.providerScheduler = { providerKey: 'siliconflow:Qwen/Qwen3-8B' };
+  harness.imageProviderScheduler = { providerKey: 'siliconflow:Kwai-Kolors/Kolors' };
   harness.pool = {
     async query(statement, parameters) {
       statements.push(String(statement));
       assert.deepEqual(parameters, [
         harness.runIds,
         [harness.baselineUserId, harness.candidateUserId],
-        harness.providerScheduler.providerKey
+        [
+          harness.providerScheduler.providerKey,
+          harness.imageProviderScheduler.providerKey
+        ]
       ]);
       return { rows: [{
         active_runs: 0,
@@ -966,7 +1096,8 @@ test('Live Harness drain check keeps ambiguous receipts as audit evidence but re
         active_model_receipts: 0,
         active_reservations: 0,
         active_tool_receipts: 0,
-        queued_provider_requests: 0
+        queued_provider_requests: 0,
+        queued_provider_requests_by_key: {}
       }] };
     }
   };
@@ -978,6 +1109,67 @@ test('Live Harness drain check keeps ambiguous receipts as audit evidence but re
   assert.doesNotMatch(modelReceiptQuery, /ambiguous/);
   assert.match(toolReceiptQuery, /state='dispatched'/);
   assert.doesNotMatch(toolReceiptQuery, /ambiguous/);
+});
+
+test('Live Harness drain check includes a queued Kolors scheduler request', async () => {
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.runIds = [];
+  harness.baselineUserId = '22222222-2222-4222-8222-222222222222';
+  harness.candidateUserId = '33333333-3333-4333-8333-333333333333';
+  harness.queue = [];
+  harness.providerScheduler = { providerKey: 'cloudflare:@cf/openai/gpt-oss-120b' };
+  harness.imageProviderScheduler = { providerKey: 'siliconflow:Kwai-Kolors/Kolors' };
+  harness.pool = {
+    query: async (_statement, parameters) => {
+      assert.deepEqual(parameters, [
+        [],
+        [harness.baselineUserId, harness.candidateUserId],
+        [harness.providerScheduler.providerKey, harness.imageProviderScheduler.providerKey]
+      ]);
+      return { rows: [{
+        active_runs: 0,
+        frozen_credits: 0,
+        active_holds: 0,
+        active_model_receipts: 0,
+        active_reservations: 0,
+        active_tool_receipts: 0,
+        queued_provider_requests: 1,
+        queued_provider_requests_by_key: {
+          'siliconflow:Kwai-Kolors/Kolors': 1
+        }
+      }] };
+    }
+  };
+  await assert.rejects(harness.assertBatchDrained(), /AGENT_LIVE_EVAL_BATCH_NOT_DRAINED/);
+  assert.equal(
+    harness.lastDrainSnapshot.queued_provider_requests_by_key['siliconflow:Kwai-Kolors/Kolors'],
+    1
+  );
+});
+
+test('Live Harness drain check rejects an active subagent even when the parent run is terminal', async () => {
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.runIds = ['11111111-1111-4111-8111-111111111111'];
+  harness.baselineUserId = '22222222-2222-4222-8222-222222222222';
+  harness.candidateUserId = '33333333-3333-4333-8333-333333333333';
+  harness.queue = [];
+  harness.providerScheduler = { providerKey: 'siliconflow:Qwen/Qwen3-8B' };
+  harness.imageProviderScheduler = { providerKey: 'siliconflow:Kwai-Kolors/Kolors' };
+  harness.pool = {
+    query: async () => ({ rows: [{
+      active_runs: 0,
+      frozen_credits: 0,
+      active_holds: 0,
+      active_model_receipts: 0,
+      active_reservations: 0,
+      active_tool_receipts: 0,
+      active_subagents: 1,
+      queued_provider_requests: 0,
+      queued_provider_requests_by_key: {}
+    }] })
+  };
+  await assert.rejects(harness.assertBatchDrained(), /AGENT_LIVE_EVAL_BATCH_NOT_DRAINED/);
+  assert.equal(harness.lastDrainSnapshot.active_subagents, 1);
 });
 
 test('Live Harness direct recovery processing consumes the synthetic queue entry', async () => {
@@ -1165,6 +1357,96 @@ test('Live eval restart detects an interrupted slot journal, records every unfin
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }
+});
+
+test('Live eval residual recovery cancels only synthetic runs and cleans their resources', async () => {
+  const calls = [];
+  const userRows = [
+    { id: '00000000-0000-4000-8000-000000000001', email: 'agent-live-v1@dev.artigen.invalid' },
+    { id: '00000000-0000-4000-8000-000000000002', email: 'agent-live-v2@dev.artigen.invalid' }
+  ];
+  const activeRows = [
+    {
+      id: '10000000-0000-4000-8000-000000000001',
+      user_id: userRows[0].id,
+      idempotency_key: 'live-eval:stale:report:v1',
+      sandbox_ref: 'sandbox-stale'
+    }
+  ];
+  const pool = {
+    query: async (sql) => {
+      calls.push(sql);
+      if (sql.includes('SELECT id,email::text')) return { rows: userRows, rowCount: userRows.length };
+      if (sql.includes('SELECT id,user_id,idempotency_key')) return { rows: activeRows, rowCount: activeRows.length };
+      return { rowCount: 0, rows: [] };
+    }
+  };
+  const cancelled = [];
+  const destroyed = [];
+  const runService = {
+    cancelRun: async ({ userId, runId }) => {
+      cancelled.push({ userId, runId });
+      return { status: 'cancelled' };
+    },
+    reconcileTerminalReceipts: async () => ({ runsReconciled: 1, receiptsResolved: 1 }),
+    listTerminalSandboxes: async () => [{ runId: activeRows[0].id, sandboxRef: activeRows[0].sandbox_ref }],
+    markSandboxDestroyed: async () => true
+  };
+  const result = await recoverInterruptedCampaign({
+    pool,
+    journal: { updatedAt: new Date().toISOString() },
+    env: {
+      NODE_ENV: 'test', APP_ENV: 'dev', AGENT_LIVE_EVAL_MODE: 'true',
+      AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1', AGENT_RUNTIME_DRIVER: 'live'
+    },
+    runServiceFactory: () => runService,
+    sandboxFactory: () => ({
+      destroy: async (ref) => destroyed.push(ref),
+      referenceForRun: () => 'sandbox-stale'
+    })
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(cancelled, [{ userId: activeRows[0].user_id, runId: activeRows[0].id }]);
+  assert.deepEqual(destroyed, ['sandbox-stale']);
+  assert.equal(result.cancelledProviderRequests, 0);
+  assert.equal(calls.some((sql) => sql.includes('agent_provider_requests')), false);
+});
+
+test('Live eval residual recovery fails closed for unrelated active synthetic-user work', async () => {
+  const pool = {
+    query: async (sql) => {
+      if (sql.includes('SELECT id,email::text')) {
+        return {
+          rowCount: 1,
+          rows: [{ id: '00000000-0000-4000-8000-000000000001', email: 'agent-live-v1@dev.artigen.invalid' }]
+        };
+      }
+      if (sql.includes('SELECT id,user_id,idempotency_key')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: '10000000-0000-4000-8000-000000000001',
+            user_id: '00000000-0000-4000-8000-000000000001',
+            idempotency_key: 'user-created-run',
+            sandbox_ref: null
+          }]
+        };
+      }
+      return { rowCount: 0, rows: [] };
+    }
+  };
+  await assert.rejects(
+    recoverInterruptedCampaign({
+      pool,
+      journal: { updatedAt: new Date().toISOString() },
+      env: {
+        NODE_ENV: 'test', APP_ENV: 'dev', AGENT_LIVE_EVAL_MODE: 'true',
+        AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1', AGENT_RUNTIME_DRIVER: 'live'
+      },
+      runServiceFactory: () => ({})
+    }),
+    /AGENT_LIVE_EVAL_RESIDUAL_USER_BUSY/
+  );
 });
 
 test('Live eval treats failed and completed campaign journals as single-use terminal evidence', async () => {
@@ -1441,7 +1723,7 @@ test('Live eval final report cryptographically binds the exact 24-run report and
     commitSha: 'ab'.repeat(20),
     matrixHash: LIVE_EVAL_MATRIX_HASH,
     gateManifestSha256: crypto.createHash('sha256').update('gate').digest('hex'),
-    modelLocks: { text: 'Qwen/Qwen3-8B', image: 'Kwai-Kolors/Kolors' },
+    modelLocks: { text: '@cf/openai/gpt-oss-120b', image: 'Kwai-Kolors/Kolors' },
     limits: { perRunCredits: 50, qwenCalls: 200, kolorsCalls: 16, wallClockHours: 8 },
     cleanup: { ok: true, results: [{ ok: true, label: 'harness' }, { ok: true, label: 'postgres' }] },
     results,
@@ -1478,7 +1760,44 @@ test('Live eval final report cryptographically binds the exact 24-run report and
     expectedMatrixHash: LIVE_EVAL_MATRIX_HASH
   });
   assert.equal(verified.campaignId, automatedReport.campaignId);
+  assert.deepEqual(verified.modelLocks, automatedReport.modelLocks);
   assert.match(verified.reportSha256, /^[a-f0-9]{64}$/);
+  const cloudflareReport = createSignedFinalReport({
+    automatedReport: {
+      ...automatedReport,
+      modelLocks: {
+        text: '@cf/openai/gpt-oss-120b',
+        image: 'Kwai-Kolors/Kolors'
+      }
+    },
+    automatedReportSha256: crypto.createHash('sha256').update('cloudflare-automated').digest('hex'),
+    blindScore,
+    blindScoreSha256: crypto.createHash('sha256').update('cloudflare-blind').digest('hex'),
+    keyMaterial
+  });
+  const verifiedCloudflare = verifySignedFinalReport({
+    report: cloudflareReport,
+    keyMaterial,
+    expectedCommitSha: automatedReport.commitSha,
+    expectedMatrixHash: LIVE_EVAL_MATRIX_HASH
+  });
+  assert.equal(verifiedCloudflare.campaignId, automatedReport.campaignId);
+  assert.deepEqual(verifiedCloudflare.modelLocks, {
+    text: '@cf/openai/gpt-oss-120b',
+    image: 'Kwai-Kolors/Kolors'
+  });
+  assert.throws(
+    () => verifySignedFinalReport({
+      report: {
+        ...cloudflareReport,
+        modelLocks: { ...cloudflareReport.modelLocks, text: 'Qwen/Qwen3-8B' }
+      },
+      keyMaterial,
+      expectedCommitSha: automatedReport.commitSha,
+      expectedMatrixHash: LIVE_EVAL_MATRIX_HASH
+    }),
+    /FINAL_REPORT_MISMATCH|FINAL_SIGNATURE_INVALID/
+  );
   assert.throws(
     () => verifySignedFinalReport({
       report: {
@@ -1540,7 +1859,7 @@ test('Owner canary plan requires rollout zero, one owner, same immutable SHA and
       commitSha,
       matrixHash: LIVE_EVAL_MATRIX_HASH,
       gateManifestSha256: crypto.createHash('sha256').update('owner-gate').digest('hex'),
-      modelLocks: { text: 'Qwen/Qwen3-8B', image: 'Kwai-Kolors/Kolors' },
+      modelLocks: { text: '@cf/openai/gpt-oss-120b', image: 'Kwai-Kolors/Kolors' },
       limits: { perRunCredits: 50, qwenCalls: 200, kolorsCalls: 16, wallClockHours: 8 },
       cleanup: { ok: true, results: [{ ok: true, label: 'harness' }, { ok: true, label: 'postgres' }] },
       results,
@@ -1570,7 +1889,7 @@ test('Owner canary plan requires rollout zero, one owner, same immutable SHA and
     runtimeV2Enabled: true,
     rolloutPercent: 0,
     canaryUserIds: [ownerUserId],
-    textModel: 'Qwen/Qwen3-8B',
+    textModel: '@cf/openai/gpt-oss-120b',
     imageModel: 'Kwai-Kolors/Kolors'
   };
   const deployments = {
@@ -1600,7 +1919,7 @@ test('Owner canary plan requires rollout zero, one owner, same immutable SHA and
           budgetReservationsReady: true,
           pricingReady: true
         },
-        runtimeProfile: { model: 'Qwen/Qwen3-8B', checkpointVersion: 4 }
+        runtimeProfile: { model: '@cf/openai/gpt-oss-120b', checkpointVersion: 4 }
       }
     }
   };
@@ -1634,6 +1953,32 @@ test('Owner canary plan requires rollout zero, one owner, same immutable SHA and
       runtime: { ...runtime, rolloutPercent: 10 },
       deployments,
       probes
+    }),
+    /RUNTIME_CONFIG_INVALID/
+  );
+  assert.throws(
+    () => assertOwnerCanaryPreflight({
+      signedFinalReport,
+      reportKeyMaterial: keyMaterial,
+      ownerUserId,
+      runtime: {
+        ...runtime,
+        textModel: 'Qwen/Qwen3-8B'
+      },
+      deployments,
+      probes: {
+        ...probes,
+        agentStatus: {
+          ...probes.agentStatus,
+          status: {
+            ...probes.agentStatus.status,
+            runtimeProfile: {
+              ...probes.agentStatus.status.runtimeProfile,
+              model: 'Qwen/Qwen3-8B'
+            }
+          }
+        }
+      }
     }),
     /RUNTIME_CONFIG_INVALID/
   );
@@ -1734,7 +2079,7 @@ test('Live eval terminal failures preserve the partial matrix, limits and reques
   assert.equal(report.summary.productionCanaryEligible, false);
   assert.deepEqual(report.requestTotals, { qwenCalls: 17, kolorsCalls: 2 });
   assert.deepEqual(report.modelLocks, {
-    text: 'Qwen/Qwen3-8B',
+    text: '@cf/openai/gpt-oss-120b',
     image: 'Kwai-Kolors/Kolors'
   });
   assert.deepEqual(report.limits, {
@@ -1980,7 +2325,10 @@ test('Live model auditor enforces V2 Qwen request contracts and child tool trimm
   const wrappedFetch = auditor.wrapQwenFetch(async () => ({ ok: true }));
   await auditor.requestContext.run(inspected, () => wrappedFetch(
     'https://api.siliconflow.cn/v1/chat/completions',
-    { method: 'POST' }
+    {
+      method: 'POST',
+      body: JSON.stringify({ model: 'Qwen/Qwen3-8B', messages: [] })
+    }
   ));
   assert.equal(auditor.qwenCalls, 1);
   await assert.rejects(
@@ -2005,6 +2353,78 @@ test('Live model auditor enforces V2 Qwen request contracts and child tool trimm
     auditor.inspectKolorsResponse({ model: 'Qwen/Qwen-Image-Edit-2509' }),
     /IMAGE_MODEL_INVALID/
   );
+});
+
+test('SiliconFlow chat transport can be audited for design-workflow Qwen calls', async () => {
+  const trace = new RuntimeTraceSink();
+  const auditor = new LiveModelAuditor({
+    trace,
+    maxQwenCalls: 2,
+    textModel: 'Qwen/Qwen3-8B'
+  });
+  const payload = {
+    model: 'Qwen/Qwen3-8B',
+    messages: [{ role: 'user', content: 'generate four visual directions' }],
+    stream: false,
+    enable_thinking: false,
+    max_tokens: 1800,
+    response_format: { type: 'json_object' }
+  };
+  const inspected = await auditor.inspectQwenRequest(payload, {
+    phase: 'actor',
+    promptHash: requestPromptHash(payload),
+    runtimeVersion: 1
+  });
+  let forwardedTransport = null;
+  const transportResponse = new Response(JSON.stringify({
+    choices: [{ message: { content: '{"directions":[]}' } }],
+    usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 }
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const baseFetch = async () => transportResponse.clone();
+  const auditedFetch = auditor.wrapQwenFetch(baseFetch);
+  const fetcher = async (url, options, timeoutMs, signal, fetchImpl) => {
+    forwardedTransport = fetchImpl;
+    return fetchImpl(url, { ...options, signal });
+  };
+  await auditor.requestContext.run(inspected, () => callSiliconFlowChat({
+    messages: payload.messages,
+    model: payload.model,
+    maxTokens: payload.max_tokens,
+    enableThinking: false,
+    responseFormat: 'json_object',
+    timeoutMs: 1000,
+    credential: 'synthetic-key',
+    fetcher,
+    fetchImpl: auditedFetch,
+    skipRateGate: true
+  }));
+  assert.equal(forwardedTransport, auditedFetch);
+  assert.equal(auditor.qwenCalls, 1);
+  assert.equal(auditor.requests.at(-1).model, 'Qwen/Qwen3-8B');
+});
+
+test('Live model auditor accepts the reviewed Cloudflare GPT-OSS V2 contract', async () => {
+  const auditor = new LiveModelAuditor({
+    textModel: '@cf/openai/gpt-oss-120b',
+    pool: { query: async () => ({ rows: [{ runtime_version: 2 }] }) }
+  });
+  const payload = {
+    model: '@cf/openai/gpt-oss-120b',
+    messages: [{ role: 'user', content: 'synthetic' }],
+    tools: [{ type: 'function', function: { name: 'sandbox_shell', parameters: {} } }],
+    stream: false,
+    max_tokens: 1024,
+    parallel_tool_calls: false,
+    temperature: 0.2,
+    top_p: 0.7
+  };
+  const request = await auditor.inspectQwenRequest(payload, {
+    runId: '11111111-1111-4111-8111-111111111111',
+    phase: 'actor',
+    promptHash: requestPromptHash(payload)
+  });
+  assert.equal(request.model, '@cf/openai/gpt-oss-120b');
+  assert.equal(request.thinkingEnabled, false);
 });
 
 test('Live model auditor durably closes every Kolors physical dispatch', async () => {
@@ -2057,6 +2477,52 @@ test('Live model auditor durably closes every Kolors physical dispatch', async (
   assert.equal(success.sequence, 1);
 });
 
+test('Live model auditor records one campaign row for every physical Kolors HTTP attempt', async () => {
+  const reserved = [];
+  const recorded = [];
+  const campaignGuard = {
+    async reserveDispatch(kind, metadata) {
+      reserved.push({ kind, metadata });
+      return { dispatchId: reserved.length, sequence: reserved.length };
+    },
+    combinedSignal(signal) {
+      return signal || new AbortController().signal;
+    },
+    async recordDispatchResult(dispatch, result) {
+      recorded.push({ dispatch, result });
+    }
+  };
+  const auditor = new LiveModelAuditor({ campaignGuard, maxKolorsCalls: 2 });
+  const responses = [
+    new Response('rate limited', { status: 429 }),
+    new Response('{"images":[]}', { status: 200 })
+  ];
+  const wrapped = auditor.wrapKolorsFetcher(async () => responses.shift(), {
+    runId: '11111111-1111-4111-8111-111111111111'
+  });
+  await wrapped('https://api.siliconflow.cn/v1/images/generations', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'Kwai-Kolors/Kolors', prompt: 'first' })
+  });
+  await wrapped('https://api.siliconflow.cn/v1/images/generations', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'Kwai-Kolors/Kolors', prompt: 'retry' })
+  });
+  assert.equal(auditor.kolorsCalls, 2);
+  assert.deepEqual(reserved.map((entry) => entry.kind), ['kolors', 'kolors']);
+  assert.deepEqual(recorded.map((entry) => entry.result.status), ['failed', 'failed']);
+  assert.deepEqual(recorded.map((entry) => entry.result.errorCode), ['HTTP_429', 'AGENT_IMAGE_OUTPUT_INVALID']);
+  assert.equal(reserved[0].metadata.runId, '11111111-1111-4111-8111-111111111111');
+  await assert.rejects(
+    wrapped('https://api.siliconflow.cn/v1/images/generations', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'Qwen/Qwen3-8B', prompt: 'wrong model' })
+    }),
+    /IMAGE_MODEL_INVALID/
+  );
+  assert.equal(reserved.length, 2);
+});
+
 test('Live model auditor rejects a local Qwen over-limit before reserving another dispatch', async () => {
   const reserved = [];
   const recorded = [];
@@ -2081,9 +2547,15 @@ test('Live model auditor rejects a local Qwen over-limit before reserving anothe
     headers: { 'Content-Type': 'application/json' }
   }));
 
-  await wrapped('https://api.siliconflow.cn/v1/chat/completions', { method: 'POST' });
+  await wrapped('https://api.siliconflow.cn/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'Qwen/Qwen3-8B', messages: [] })
+  });
   await assert.rejects(
-    wrapped('https://api.siliconflow.cn/v1/chat/completions', { method: 'POST' }),
+    wrapped('https://api.siliconflow.cn/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'Qwen/Qwen3-8B', messages: [] })
+    }),
     /QWEN_CALL_LIMIT/
   );
   assert.equal(reserved.length, 1);

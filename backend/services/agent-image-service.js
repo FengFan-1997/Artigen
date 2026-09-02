@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { ApiError } = require('../lib/api-error');
 const {
+  callCloudflareChat,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate
 } = require('../lib/ai-providers');
@@ -27,6 +28,11 @@ const REFERENCE_ROLES = new Set(['product', 'style', 'scene']);
 const REFERENCE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const MAX_REFERENCE_BYTES = 40 * 1024 * 1024;
 const MAX_PROVIDER_RATE_LIMIT_RETRIES = 2;
+
+const resolveDefaultTextChat = (env = process.env) =>
+  String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'cloudflare'
+    ? callCloudflareChat
+    : callSiliconFlowChat;
 
 const configuredImageCredits = (value, fallback) => {
   const parsed = Number(value);
@@ -110,7 +116,7 @@ const retryAfterMilliseconds = (value) => {
 
 const createAgentImageService = ({
   env = process.env,
-  chatGenerate = callSiliconFlowChat,
+  chatGenerate = resolveDefaultTextChat(env),
   provider = createConfiguredGenerationProvider({
     imageGenerate: callSiliconFlowImageGenerate,
     chatGenerate,
@@ -120,7 +126,15 @@ const createAgentImageService = ({
   normalize = normalizeGeneratedImageAspectRatio,
   waitForRetry = waitForImageRetry
 } = {}) => {
-  const generate = async ({ prompt, aspectRatio = '1:1', filename, references, signal }) => {
+  const generate = async ({
+    prompt,
+    aspectRatio = '1:1',
+    filename,
+    references,
+    signal,
+    runId,
+    runtimeVersion
+  }) => {
     const normalizedPrompt = String(prompt || '').trim();
     const normalizedFilename = String(filename || '').trim();
     if (normalizedPrompt.length < 3 || normalizedPrompt.length > 4000) {
@@ -142,6 +156,8 @@ const createAgentImageService = ({
       profile,
       aspectRatio,
       seed: crypto.randomInt(1, 2_147_483_647),
+      runId: runId || null,
+      runtimeVersion: Number(runtimeVersion) === 2 ? 2 : 1,
       images: normalizedReferences.map((reference) => (
         `data:${reference.mimeType};base64,${reference.buffer.toString('base64')}`
       )),

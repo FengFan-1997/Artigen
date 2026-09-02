@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 
 const crypto = require('node:crypto');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('./lib/agent-dev-model-profile');
 
 const KEYCHAIN_SERVICE = String(
   process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-dev-worker'
@@ -26,6 +31,14 @@ const secretNames = [
   'S3_ACCESS_KEY_ID',
   'S3_SECRET_ACCESS_KEY'
 ];
+if (String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'cloudflare') {
+  secretNames.push(
+    'CLOUDFLARE_ACCOUNT_ID',
+    'CLOUDFLARE_API_TOKEN',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+  );
+}
 const missing = [];
 for (const name of secretNames) {
   const value = readMacOsKeychainSecret({ service: KEYCHAIN_SERVICE, account: name });
@@ -36,6 +49,8 @@ if (missing.length) {
   console.error(`DESIGN_CONVERSATION_DEV_SMOKE_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
   process.exit(78);
 }
+
+const smokeModelProfile = resolveAgentSmokeModelProfile({ env: process.env, production: false });
 
 Object.assign(process.env, {
   NODE_ENV: 'production',
@@ -53,8 +68,8 @@ Object.assign(process.env, {
   AGENT_WORKER_ENABLED: '1',
   AGENT_BETA_MODE: 'authenticated-v1',
   AGENT_RUNTIME_DRIVER: 'live',
-  AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: smokeModelProfile.provider,
+  AGENT_MODEL_NAME: smokeModelProfile.model,
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
   AGENT_SANDBOX_PROVIDER: 'cua',
@@ -63,6 +78,7 @@ Object.assign(process.env, {
   AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true',
   AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
   AGENT_BROWSER_MODE: 'full-approval-v1',
+  AGENT_PROVIDER_SCHEDULER_ENABLED: 'true',
   AGENT_WORKER_ID: 'artigen-design-conversation-dev-smoke-publisher',
   AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser,generate_images',
   AGENT_MAX_MINUTES: '45',
@@ -70,15 +86,17 @@ Object.assign(process.env, {
   ASSET_STORAGE_DRIVER: 's3',
   S3_FORCE_PATH_STYLE: '1'
 });
+applyAgentSmokeModelProfile(process.env, smokeModelProfile);
 
 const { getPool } = require('../db/pool');
 const {
+  callCloudflareChat,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate
 } = require('../lib/ai-providers');
+const { fetch: siliconFlowFetch } = require('../lib/fetch-utils');
 const {
   createDesignConversationService,
-  TEXT_MODEL,
   IMAGE_MODEL
 } = require('../services/design-conversation-service');
 const {
@@ -101,6 +119,16 @@ const {
   TaskLeaseQueue,
   markProviderDispatched
 } = require('../services/task-queue-service');
+const {
+  createProviderScheduler,
+  createScheduledChatGenerate,
+  createScheduledImageGenerate,
+  createModelCallService
+} = require('../services/agent-model-runtime-service');
+const { LiveModelAuditor } = require('../evaluation/harness/live-model-auditor');
+const { requestPromptHash } = require('../evaluation/harness/scripted-siliconflow-transport');
+const { LiveEvalCampaignGuard } = require('../evaluation/harness/live-eval-campaign-guard');
+const { LIVE_EVAL_MATRIX_HASH } = require('../evaluation/harness/agent-live-eval-matrix');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const outputRoot = path.join(
@@ -298,7 +326,8 @@ const runToolImageExecution = async ({
   conversationService,
   userId,
   planned,
-  imageCalls
+  imageCalls,
+  scheduledImageGenerate
 }) => {
   const options = validateAiDesignTask({
     operation: planned.execution.operation,
@@ -352,7 +381,7 @@ const runToolImageExecution = async ({
     };
     imageCalls.push(trace);
     try {
-      const response = await callSiliconFlowImageGenerate(input);
+      const response = await scheduledImageGenerate(input);
       trace.modelUsed = response?.modelUsed || null;
       return response;
     } catch (error) {
@@ -371,7 +400,9 @@ const runToolImageExecution = async ({
   };
   const provider = createConfiguredGenerationProvider({
     imageGenerate: tracedImageGenerate,
-    chatGenerate: callSiliconFlowChat,
+    chatGenerate: smokeModelProfile.provider === 'cloudflare'
+      ? callCloudflareChat
+      : callSiliconFlowChat,
     env: process.env
   });
   const executor = createAiDesignExecutor({
@@ -568,7 +599,7 @@ const verifyAgentRun = async ({ pool, runService, entry, run }) => {
   if (run.status !== 'succeeded') {
     throw new Error(`DESIGN_CONVERSATION_SMOKE_AGENT_FAILED:${entry.runId}:${run.error?.code || run.status}`);
   }
-  if (run.model?.name !== TEXT_MODEL) {
+  if (run.model?.name !== smokeModelProfile.model) {
     throw new Error(`DESIGN_CONVERSATION_SMOKE_AGENT_MODEL_INVALID:${run.model?.name || 'none'}`);
   }
   if (!Array.isArray(run.artifacts) || run.artifacts.length < 2) {
@@ -640,42 +671,139 @@ const verifyAgentRun = async ({ pool, runService, entry, run }) => {
 };
 
 const main = async () => {
-  const pool = getPool();
-  const queuePublisher = new AgentQueuePublisher({ env: process.env });
   const plannerCalls = [];
   const imageCalls = [];
+  const commitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: PROJECT_ROOT,
+    encoding: 'utf8'
+  }).trim().toLowerCase();
+  const trackedChanges = execFileSync(
+    'git',
+    ['status', '--porcelain', '--untracked-files=no'],
+    { cwd: PROJECT_ROOT, encoding: 'utf8' }
+  ).trim();
+  if (trackedChanges) {
+    throw new Error('DESIGN_CONVERSATION_SMOKE_WORKTREE_DIRTY');
+  }
+  const pool = getPool();
+  const queuePublisher = new AgentQueuePublisher({ env: process.env });
+  const campaignGuard = new LiveEvalCampaignGuard({
+    pool,
+    campaignId: `design-conversation-smoke-${process.pid}-${Date.now()}`,
+    commitSha,
+    matrixHash: LIVE_EVAL_MATRIX_HASH,
+    maxQwenCalls: 200,
+    maxKolorsCalls: 16
+  });
+  try {
+    await campaignGuard.initialize();
+  } catch (error) {
+    // Initialization happens before the main try/finally below. Close the
+    // pool here as well so a duplicate/expired campaign cannot leak a socket
+    // or leave the smoke process hanging on a failed startup.
+    await pool.end().catch(() => {});
+    throw error;
+  }
+  const auditor = new LiveModelAuditor({
+    textModel: smokeModelProfile.model,
+    campaignGuard,
+    maxQwenCalls: 200,
+    maxKolorsCalls: 16
+  });
+  const providerScheduler = createProviderScheduler({
+    pool,
+    env: process.env,
+    providerKey: `${smokeModelProfile.provider}:${smokeModelProfile.model}`
+  });
+  const imageProviderScheduler = createProviderScheduler({
+    pool,
+    env: process.env,
+    providerKey: 'siliconflow:Kwai-Kolors/Kolors'
+  });
+  const auditedFetch = auditor.wrapQwenFetch(globalThis.fetch);
   const tracedPlanner = async (input) => {
-    if (input?.model !== TEXT_MODEL) {
+    if (input?.model !== smokeModelProfile.model) {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_PLANNER_MODEL_REQUEST_INVALID:${input?.model}`);
     }
     const startedAt = Date.now();
-    const response = await callSiliconFlowChat(input);
+    const payload = {
+      model: input.model,
+      messages: input.messages,
+      stream: false,
+      enable_thinking: input.enableThinking === true,
+      max_tokens: input.maxTokens,
+      ...(input.responseFormat === 'json_object'
+        ? { response_format: { type: 'json_object' } }
+        : {})
+    };
+    const inspected = await auditor.inspectQwenRequest(payload, {
+      phase: input.phase || 'router',
+      runtimeVersion: 1,
+      slotId: input.slotId || null,
+      promptHash: requestPromptHash(payload)
+    });
+    const response = await auditor.requestContext.run(inspected, () => (
+      smokeModelProfile.provider === 'cloudflare'
+        ? callCloudflareChat({ ...input, fetchImpl: auditedFetch })
+        : callSiliconFlowChat({ ...input, fetchImpl: auditedFetch })
+    ));
     plannerCalls.push({
       requestedModel: input.model,
       modelUsed: response?.model || null,
       elapsedMs: Date.now() - startedAt
     });
-    if (response?.model !== TEXT_MODEL) {
+    if (response?.model !== smokeModelProfile.model) {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_PLANNER_MODEL_RESPONSE_INVALID:${response?.model}`);
     }
     return response;
   };
+  const scheduledPlanner = createScheduledChatGenerate({
+    scheduler: providerScheduler,
+    chatGenerate: tracedPlanner,
+    defaultPriority: 'router'
+  });
+  const scheduledImageGenerate = createScheduledImageGenerate({
+    scheduler: imageProviderScheduler,
+      imageGenerate: async (input = {}) => callSiliconFlowImageGenerate({
+      ...input,
+      fetcher: auditor.wrapKolorsFetcher(siliconFlowFetch, {
+        runId: input.runId || null,
+        runtimeVersion: Number(input.runtimeVersion) === 2 ? 2 : 1,
+        filename: input.filename || ''
+      })
+    }),
+    defaultPriority: 'actor'
+  });
   const conversationService = createDesignConversationService({
     pool,
     env: process.env,
-    chatGenerate: tracedPlanner,
+    chatGenerate: scheduledPlanner,
+    modelCallService: createModelCallService({ pool, retentionDays: 1 }),
     workerId: `design-conversation-dev-smoke:${process.pid}`
   });
   const runService = createAgentRunService({ pool, env: process.env, queuePublisher });
   const activeAgentEntries = [];
   try {
     stage('readiness');
-    const migration = await pool.query('SELECT COALESCE(max(name),\'\') AS name FROM pgmigrations');
-    const migrationName = String(migration.rows[0]?.name || '');
-    if (!migrationName.startsWith('021_')) {
-      throw new Error(`DESIGN_CONVERSATION_SMOKE_MIGRATION_NOT_READY:${migrationName || 'none'}`);
+    const migrationName = '026_agent_live_eval_capacity_counter';
+    const migration = await pool.query(
+      'SELECT EXISTS (SELECT 1 FROM pgmigrations WHERE name=$1) AS applied',
+      [migrationName]
+    );
+    if (migration.rows[0]?.applied !== true) {
+      throw new Error(`DESIGN_CONVERSATION_SMOKE_MIGRATION_NOT_READY:${migrationName}`);
     }
     const worker = await runService.getServiceStatus();
+    const durability = worker.durability || {};
+    const durabilityReady = [
+      'pricingReady',
+      'leaseEpochReady',
+      'modelReceiptsReady',
+      'toolReceiptsReady',
+      'budgetReservationsReady'
+    ].every((key) => durability[key] === true);
+    const imageProviderReady = worker.imageGenerationPublicEnabled === true &&
+      Boolean(String(process.env.SILICONFLOW_API_KEY || '').trim());
     if (
       !worker.enabled ||
       !worker.workerOnline ||
@@ -683,7 +811,10 @@ const main = async () => {
       !worker.egressVerified ||
       !worker.desktopRelayReady ||
       worker.accessMode !== 'authenticated-v1' ||
-      worker.modelFamily !== TEXT_MODEL
+      worker.modelFamily !== smokeModelProfile.model ||
+      worker.providerScheduler?.ready !== true ||
+      durabilityReady !== true ||
+      imageProviderReady !== true
     ) {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_RUNTIME_NOT_READY:${JSON.stringify(worker)}`);
     }
@@ -712,7 +843,8 @@ const main = async () => {
       conversationService,
       userId: users.image,
       planned: imagePlanned,
-      imageCalls
+      imageCalls,
+      scheduledImageGenerate
     });
 
     const agentMessages = [
@@ -757,14 +889,20 @@ const main = async () => {
       });
     }
     stage('start-agents');
-    const startedAgents = await Promise.all(plannedAgents.map((entry) => startAgentExecution({
-      runService,
-      conversationService,
-      userId: entry.userId,
-      planned: entry.planned,
-      label: entry.label
-    })));
-    activeAgentEntries.push(...startedAgents);
+    const startedAgents = [];
+    for (const entry of plannedAgents) {
+      const started = await startAgentExecution({
+        runService,
+        conversationService,
+        userId: entry.userId,
+        planned: entry.planned,
+        label: entry.label
+      });
+      // Register each run before starting the next one so an exception or
+      // signal cannot leave an already-created run outside cleanup scope.
+      startedAgents.push(started);
+      activeAgentEntries.push(started);
+    }
     stage('wait-agents');
     const completed = await waitForAgentRuns({ pool, runService, entries: startedAgents });
     if (worker.concurrency === 1 && !completed.observedQueuedBehindActive) {
@@ -818,8 +956,36 @@ const main = async () => {
     ) {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_PLANNER_JOB_INVALID:${JSON.stringify(planningJobs)}`);
     }
+    const modelCallsResult = await pool.query(
+      `SELECT conversation_id,COUNT(*)::int AS count,
+              ARRAY_AGG(DISTINCT provider ORDER BY provider) AS providers,
+              ARRAY_AGG(DISTINCT model_name ORDER BY model_name) AS models
+         FROM agent_model_calls
+        WHERE conversation_id=ANY($1::uuid[])
+        GROUP BY conversation_id`,
+      [[
+        imagePlanned.conversation.conversationId,
+        ...plannedAgents.map((entry) => entry.planned.conversation.conversationId)
+      ]]
+    );
+    const plannerModelCalls = modelCallsResult.rows.map((row) => ({
+      conversationId: row.conversation_id,
+      count: Number(row.count || 0),
+      providers: Array.isArray(row.providers) ? row.providers : [],
+      models: Array.isArray(row.models) ? row.models : []
+    }));
+    if (
+      plannerModelCalls.length !== 3 ||
+      plannerModelCalls.some((call) => (
+        call.count < 1 ||
+        call.providers.length !== 1 || call.providers[0] !== smokeModelProfile.provider ||
+        call.models.length !== 1 || call.models[0] !== smokeModelProfile.model
+      ))
+    ) {
+      throw new Error(`DESIGN_CONVERSATION_SMOKE_MODEL_CALL_EVIDENCE_INVALID:${JSON.stringify(plannerModelCalls)}`);
+    }
     if (plannerCalls.length > 6 || plannerCalls.some((call) =>
-      call.requestedModel !== TEXT_MODEL || call.modelUsed !== TEXT_MODEL
+      call.requestedModel !== smokeModelProfile.model || call.modelUsed !== smokeModelProfile.model
     )) {
       throw new Error(
         `DESIGN_CONVERSATION_SMOKE_PLANNER_TRACE_INVALID:${plannerCalls.length}`
@@ -829,8 +995,9 @@ const main = async () => {
       event: 'smoke.succeeded',
       migration: migrationName,
       outputRoot,
-      models: { planner: TEXT_MODEL, image: IMAGE_MODEL },
+      models: { planner: smokeModelProfile.model, image: IMAGE_MODEL },
       plannerCalls,
+      plannerModelCalls,
       planningJobs,
       worker: {
         accessMode: finalStatus.accessMode,
@@ -863,6 +1030,7 @@ const main = async () => {
   } finally {
     conversationService.stopWorker();
     await queuePublisher.stop().catch(() => {});
+    await campaignGuard.close().catch(() => {});
     await pool.end().catch(() => {});
   }
 };

@@ -2,6 +2,11 @@
 
 交付日期：2026-08-07
 
+> 历史交付记录：本文记录的是 2026-08-07 的 Qwen/SiliconFlow Production Beta，
+> 仅用于回溯，不能作为当前模型或上线状态依据。自 2026-09-02 起，所有非生图文本
+> 统一为 Cloudflare `@cf/openai/gpt-oss-120b`，图片继续为 `Kwai-Kolors/Kolors`；
+> 当前策略和未发布状态以 `PROJECT_HANDOFF.zh-CN.md` 顶部为准。
+
 首次功能发布与真实烟测基线提交：`9bcc77d593e0747d5265f96f1f45b1dcb956b0bd`
 
 运维加固发布链路：GitHub PR #13（功能分支 → `dev`）与 PR #14（`dev` → `main`）。由于把“最终 SHA”写进提交本身会再次改变 SHA，当前线上精确提交始终以 `/api/meta` 为准。

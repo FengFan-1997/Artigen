@@ -48,6 +48,91 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const TOOL_RECEIPT_KINDS = new Set(['sandbox_shell', 'kolors']);
 const TOOL_RECEIPT_STATES = new Set(['dispatched', 'consumed', 'ambiguous']);
 
+const isConfiguredModelProvider = (config = {}) => {
+  if (config.runtimeDriver === 'fixture') return true;
+  if (config.modelProvider === 'ollama') return true;
+  if (config.modelProvider === 'siliconflow') return Boolean(config.siliconFlowApiKey);
+  if (config.modelProvider === 'openai') return Boolean(config.openAiApiKey);
+  if (config.modelProvider === 'cloudflare') {
+    return Boolean(
+      config.cloudflareAccountId &&
+      config.cloudflareApiToken &&
+      config.cloudflareFreeAccountAttested &&
+      config.cloudflareFreeAccountId === config.cloudflareAccountId
+    );
+  }
+  return false;
+};
+
+const modelPricingRates = (config, run = {}) => {
+  const provider = String(run.model_provider || run.provider || config.modelProvider || '');
+  const model = String(run.model_name || config.modelName || '');
+  const hasRunIdentity = Boolean(
+    run.model_provider || run.provider || run.model_name || run.runtime_profile_summary
+  );
+  const snapshot = hasRunIdentity
+    ? run.runtime_profile_summary?.modelConfig?.pricingSnapshot
+    : config.modelPricingSnapshot;
+  if (
+    snapshot?.provider === provider &&
+    snapshot?.model === model &&
+    Number.isFinite(Number(snapshot.inputCreditsPerMillion)) &&
+    Number.isFinite(Number(snapshot.outputCreditsPerMillion)) &&
+    Number(snapshot.inputCreditsPerMillion) > 0 &&
+    Number(snapshot.outputCreditsPerMillion) > 0
+  ) {
+    return {
+      input: Number(snapshot.inputCreditsPerMillion),
+      output: Number(snapshot.outputCreditsPerMillion)
+    };
+  }
+  throw new ApiError(500, 'AGENT_RUN_PRICING_PROFILE_INVALID', {
+    retryable: false,
+    provider,
+    model
+  });
+};
+
+const usageCreditsForRun = ({ inputTokens = 0, outputTokens = 0, config, run }) => {
+  const rates = modelPricingRates(config, run);
+  if (!(rates.input > 0) || !(rates.output > 0)) {
+    throw new ApiError(500, 'AGENT_RUNTIME_V2_PRICING_NOT_READY', { retryable: false });
+  }
+  return (inputTokens * rates.input + outputTokens * rates.output) / 1_000_000;
+};
+
+// Migrations 024/025 added the immutable pricing profile after older V1/V2
+// runs had already been created. Those rows can have a populated runtime
+// summary (constitution, skills and model metadata) while still lacking the
+// nested pricing snapshot. Terminal reconciliation must not apply today's
+// rate to such a run (that would make the user's charge depend on a later
+// deployment). Instead, the platform absorbs the unknown historical cost and
+// closes the receipt and reservation at zero. New runs always carry a valid
+// snapshot and continue through the strict pricing path above.
+const isLegacyRunWithoutPricingSnapshot = (run = {}) => {
+  const version = Number(run.runtime_version ?? run.runtimeVersion ?? 1);
+  const summary = run.runtime_profile_summary ?? run.runtimeProfileSummary;
+  const snapshot = summary?.modelConfig?.pricingSnapshot;
+  const hasValidSnapshot = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) &&
+    typeof snapshot.provider === 'string' && snapshot.provider.trim() &&
+    typeof snapshot.model === 'string' && snapshot.model.trim() &&
+    Number.isFinite(Number(snapshot.inputCreditsPerMillion)) &&
+    Number.isFinite(Number(snapshot.outputCreditsPerMillion)) &&
+    Number(snapshot.inputCreditsPerMillion) > 0 &&
+    Number(snapshot.outputCreditsPerMillion) > 0;
+  return Number.isInteger(version) && version >= 1 && version <= 2 &&
+    !hasValidSnapshot;
+};
+
+const terminalReceiptCredits = ({ inputTokens, outputTokens, config, run }) => {
+  try {
+    return { credits: usageCreditsForRun({ inputTokens, outputTokens, config, run }), absorbed: false };
+  } catch (error) {
+    if (!isLegacyRunWithoutPricingSnapshot(run)) throw error;
+    return { credits: 0, absorbed: true };
+  }
+};
+
 const assertWorkerLease = (row, { workerId, leaseEpoch }) => {
   if (!workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
   const currentEpoch = Number(row?.lease_epoch || 0);
@@ -993,6 +1078,22 @@ const createAgentRunService = ({
     );
     const row = result.rows[0] || {};
     const workerOnline = row.worker_online === true;
+    const configuredModel = Object.freeze({
+      provider: String(config.modelProvider || ''),
+      model: String(config.modelName || '')
+    });
+    const workerModel = row.model_provider && row.model_name
+      ? Object.freeze({
+          provider: String(row.model_provider),
+          model: String(row.model_name)
+        })
+      : null;
+    const workerModelReady = Boolean(
+      workerOnline &&
+      workerModel &&
+      workerModel.provider === configuredModel.provider &&
+      workerModel.model === configuredModel.model
+    );
     const queueDepth = Number(row.queue_depth || 0);
     let providerScheduler = {
       enabled: config.providerSchedulerEnabled,
@@ -1005,10 +1106,19 @@ const createAgentRunService = ({
       modelReceiptsReady: false,
       toolReceiptsReady: false,
       budgetReservationsReady: false,
-      pricingReady: config.modelProvider !== 'siliconflow' || (
-        config.siliconFlowInputCreditsPerMillion > 0 &&
-        config.siliconFlowOutputCreditsPerMillion > 0
-      )
+      // Status/readiness must remain observable when pricing is misconfigured.
+      // The actual Run/receipt billing paths still call modelPricingRates and
+      // fail closed; this probe only reports false instead of turning /status
+      // into a 500 that hides the actionable readiness error.
+      pricingReady: (() => {
+        if (!['siliconflow', 'cloudflare'].includes(config.modelProvider)) return true;
+        try {
+          const rates = modelPricingRates(config);
+          return rates.input > 0 && rates.output > 0;
+        } catch {
+          return false;
+        }
+      })()
     };
     try {
       const durableSchema = await pool.query(
@@ -1047,14 +1157,17 @@ const createAgentRunService = ({
     return {
       enabled: config.enabled,
       workerOnline,
+      workerModelReady,
+      configuredModel,
+      workerModel,
       queueDepth,
       oldestQueuedAt: row.oldest_queued_at || null,
       concurrency: Number(row.concurrency || 1),
-      modelFamily: row.model_name || config.modelName,
+      modelFamily: workerModel?.model || config.modelName,
       sandboxMode: row.sandbox_mode || config.sandboxMode,
-      browserReady: workerOnline && row.browser_ready === true,
-      egressVerified: workerOnline && row.egress_verified === true,
-      desktopRelayReady: workerOnline && row.desktop_relay_ready === true,
+      browserReady: workerModelReady && row.browser_ready === true,
+      egressVerified: workerModelReady && row.egress_verified === true,
+      desktopRelayReady: workerModelReady && row.desktop_relay_ready === true,
       sandboxImageRef: row.sandbox_image_ref || null,
       browserPublicEnabled: config.publicBrowserEnabled,
       imageGenerationPublicEnabled: config.publicImageGenerationEnabled,
@@ -1083,7 +1196,7 @@ const createAgentRunService = ({
       },
       accessMode: config.betaMode,
       availabilityNote: workerOnline
-        ? (queueDepth > 0 ? 'busy' : 'ready')
+        ? (workerModelReady ? (queueDepth > 0 ? 'busy' : 'ready') : 'worker_model_mismatch')
         : 'worker_offline'
     };
   };
@@ -1194,10 +1307,7 @@ const createAgentRunService = ({
       requirements: {
         database: true,
         payloadEncryption: hasAgentPayloadKey(env),
-        modelProvider: config.modelProvider === 'ollama' ||
-          (config.modelProvider === 'siliconflow' && Boolean(config.siliconFlowApiKey)) ||
-          Boolean(config.openAiApiKey) ||
-          config.runtimeDriver === 'fixture',
+        modelProvider: isConfiguredModelProvider(config),
         sandboxProvider: config.sandboxMode === 'local' ||
           Boolean(config.cuaApiKey) ||
           config.sandboxProvider === 'fixture' ||
@@ -1219,6 +1329,22 @@ const createAgentRunService = ({
     idempotencyKey: rawIdempotencyKey
   }) => {
     const liveConfig = assertAgentRuntimeReady(env);
+    // Billing must be ready before a live run can create a hold.  V2 already
+    // enforces this in assertAgentRuntimeReady; keep the same fail-closed
+    // admission boundary for V1 so a zero/missing pricing profile can never
+    // freeze user credits and only fail later inside the Worker.
+    if (
+      liveConfig.runtimeDriver === 'live' &&
+      ['siliconflow', 'cloudflare'].includes(liveConfig.modelProvider) &&
+      (
+        !Number.isFinite(Number(liveConfig.modelPricingSnapshot?.inputCreditsPerMillion)) ||
+        !Number.isFinite(Number(liveConfig.modelPricingSnapshot?.outputCreditsPerMillion)) ||
+        !(Number(liveConfig.modelPricingSnapshot?.inputCreditsPerMillion) > 0) ||
+        !(Number(liveConfig.modelPricingSnapshot?.outputCreditsPerMillion) > 0)
+      )
+    ) {
+      throw new ApiError(503, 'AGENT_PRICING_NOT_READY', { retryable: false });
+    }
     if (!hasAgentPayloadKey(env)) {
       throw new ApiError(503, 'AGENT_PAYLOAD_KEY_MISSING', { retryable: false });
     }
@@ -1312,11 +1438,27 @@ const createAgentRunService = ({
             modelConfig: {
               actorSamplingProfile: config.actorSamplingProfile,
               adaptiveReasoningEnabled: config.adaptiveReasoningEnabled,
-              stageMaxOutputTokens: config.stageMaxOutputTokens
-            }
+              stageMaxOutputTokens: config.stageMaxOutputTokens,
+              pricingSnapshot: config.modelPricingSnapshot
+            },
+            textModel: config.modelName
           })
         : null;
-      return { normalizedTaskSpec, promptProfile, requestHash, runtimeV2 };
+      const runtimeProfileSummary = promptProfile?.runtimeProfileSummary || {
+        runtimeVersion: runtimeV2 ? 2 : 1,
+        modelProvider: liveConfig.modelProvider,
+        model: liveConfig.modelName,
+        modelConfig: {
+          pricingSnapshot: liveConfig.modelPricingSnapshot
+        }
+      };
+      return {
+        normalizedTaskSpec,
+        promptProfile,
+        requestHash,
+        runtimeProfileSummary,
+        runtimeV2
+      };
     };
 
     const created = await withTransaction(pool, async (client) => {
@@ -1350,6 +1492,7 @@ const createAgentRunService = ({
         normalizedTaskSpec,
         promptProfile,
         requestHash,
+        runtimeProfileSummary,
         runtimeV2
       } = compileRuntimeRequest(runtimeAssignment.version);
       if (replay.rowCount) {
@@ -1428,7 +1571,7 @@ const createAgentRunService = ({
             (promptProfile?.skills || []).map((skill) => [skill.id, skill.version])
           )),
           promptProfile ? Buffer.from(promptProfile.runtimeProfileHash, 'hex') : null,
-          JSON.stringify(sanitizeLogValue(promptProfile?.runtimeProfileSummary || {})),
+          JSON.stringify(sanitizeLogValue(runtimeProfileSummary)),
           liveConfig.queueMaxWaitHours
         ]
       );
@@ -1776,11 +1919,19 @@ const createAgentRunService = ({
     const normalizedOutcome = ['succeeded', 'failed', 'cancelled'].includes(outcome)
       ? outcome
       : 'failed';
+    const runProfile = await client.query(
+      `SELECT runtime_version,runtime_profile_summary
+         FROM agent_runs WHERE id=$1 FOR SHARE`,
+      [runId]
+    );
+    const legacyPricing = isLegacyRunWithoutPricingSnapshot(runProfile.rows[0]);
     const receivedModels = await client.query(
       `SELECT receipt.*,reservation.state AS reservation_state,
-              reservation.reservation_key,call.subagent_id
+              reservation.reservation_key,call.subagent_id,call.provider,call.model_name,
+              run.runtime_version,run.runtime_profile_summary
          FROM agent_model_call_receipts receipt
          JOIN agent_model_calls call ON call.id=receipt.id
+         JOIN agent_runs run ON run.id=receipt.run_id
          JOIN agent_budget_reservations reservation
            ON reservation.run_id=receipt.run_id AND reservation.model_call_id=receipt.id
         WHERE receipt.run_id=$1
@@ -1849,10 +2000,22 @@ const createAgentRunService = ({
       };
       const inputTokens = tokenCount(usage.prompt_tokens || usage.input_tokens);
       const outputTokens = tokenCount(usage.completion_tokens || usage.output_tokens);
-      const actualCredits = (
-        inputTokens * config.siliconFlowInputCreditsPerMillion +
-        outputTokens * config.siliconFlowOutputCreditsPerMillion
-      ) / 1_000_000;
+      const receiptCost = terminalReceiptCredits({
+        inputTokens,
+        outputTokens,
+        config,
+        run: receipt
+      });
+      const actualCredits = receiptCost.credits;
+      if (receiptCost.absorbed) {
+        await insertEvent(client, {
+          runId,
+          type: 'model.call.legacy_pricing_absorbed',
+          phase: eventPhase,
+          summary: '旧运行缺少不可变价格快照，未知历史费用由平台承担',
+          data: { callId: receipt.id, runtimeVersion: Number(receipt.runtime_version || 1) }
+        });
+      }
       if (['reserved', 'released'].includes(receipt.reservation_state)) {
         await client.query(
           `UPDATE agent_budget_reservations
@@ -1904,17 +2067,20 @@ const createAgentRunService = ({
     const consumed = Number(totals.rows[0]?.consumed || 0);
     await client.query(
       `UPDATE agent_runs
-          SET estimated_credits_used=GREATEST(
-                estimated_credits_used,
-                LEAST(max_credits::numeric,$2::numeric)
-              ),
+          SET estimated_credits_used=CASE
+                WHEN $3::boolean THEN LEAST(max_credits::numeric,$2::numeric)
+                ELSE GREATEST(
+                  estimated_credits_used,
+                  LEAST(max_credits::numeric,$2::numeric)
+                )
+              END,
               platform_overrun_credits=GREATEST(
                 platform_overrun_credits,
                 GREATEST(0::numeric,$2::numeric-max_credits::numeric)
               ),
               updated_at=clock_timestamp()
         WHERE id=$1`,
-      [runId, consumed]
+      [runId, consumed, legacyPricing]
     );
     await client.query(
       `UPDATE agent_subagents subagent
@@ -1949,7 +2115,10 @@ const createAgentRunService = ({
     await settleAgentBudget({
       client,
       runId,
-      actualCredits: Math.max(Number(row.estimated_credits_used || 0), knownActualCredits),
+      actualCredits: Math.max(
+        isLegacyRunWithoutPricingSnapshot(row) ? 0 : Number(row.estimated_credits_used || 0),
+        knownActualCredits
+      ),
       refundable: false,
       reason: 'user_cancelled'
     });
@@ -2833,12 +3002,12 @@ const createAgentRunService = ({
               ? Math.ceil(Math.max(0, Math.min(1_000_000_000, parsed)))
               : 0;
           };
-          receiptCredits = (
-            tokenCount(usage.prompt_tokens || usage.input_tokens) *
-              config.siliconFlowInputCreditsPerMillion +
-            tokenCount(usage.completion_tokens || usage.output_tokens) *
-              config.siliconFlowOutputCreditsPerMillion
-          ) / 1_000_000;
+          receiptCredits = terminalReceiptCredits({
+            inputTokens: tokenCount(usage.prompt_tokens || usage.input_tokens),
+            outputTokens: tokenCount(usage.completion_tokens || usage.output_tokens),
+            config,
+            run: run.rows[0]
+          }).credits;
         }
       }
       if (receiptCredits === null) {
@@ -2853,7 +3022,8 @@ const createAgentRunService = ({
       if (receiptCredits === null) {
         throw new ApiError(409, 'AGENT_BUDGET_RESERVATION_RELEASED');
       }
-      if (Math.abs(actual - receiptCredits) > 0.00011) {
+      const legacyPricing = isLegacyRunWithoutPricingSnapshot(run.rows[0]);
+      if (Math.abs(actual - receiptCredits) > 0.00011 && !legacyPricing) {
         throw new ApiError(409, 'AGENT_BUDGET_RECEIPT_COST_MISMATCH', {
           retryable: false
         });
@@ -3552,9 +3722,10 @@ const createAgentRunService = ({
       [runId]
     );
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-    if (Number(run.rows[0].runtime_version || 1) === 2) {
-      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
-    }
+    // Artifact registration is a worker write for both V1 and V2. Checking
+    // only V2 allowed an old V1 worker to register a passed artifact after
+    // takeover and race the new worker's finalization.
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     if (verificationStatus === 'passed' && /^[a-f0-9]{64}$/.test(digest)) {
       const existing = await client.query(
         `SELECT * FROM agent_artifacts
@@ -3856,7 +4027,10 @@ const createAgentRunService = ({
     const settlement = await settleAgentBudget({
       client,
       runId,
-      actualCredits: Math.max(Number(actualCredits || 0), knownActualCredits),
+      actualCredits: Math.max(
+        isLegacyRunWithoutPricingSnapshot(run.rows[0]) ? 0 : Number(actualCredits || 0),
+        knownActualCredits
+      ),
       refundable,
       reason: sanitizeText(errorCode, 100)
     });
@@ -4745,10 +4919,14 @@ module.exports = {
   normalizeObjective,
   normalizeDelegatedTasks,
   nextConsecutiveFailureCount,
+  modelPricingRates,
   publicArtifact,
   publicEvent,
   publicRun,
   publicSubagent,
   objectivePublicFields,
-  requireIdempotencyKey
+  requireIdempotencyKey,
+  usageCreditsForRun,
+  isConfiguredModelProvider,
+  isLegacyRunWithoutPricingSnapshot
 };

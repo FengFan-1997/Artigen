@@ -10,12 +10,18 @@ const { createAgentWorkerService } = require('../services/agent-worker-service')
 const { AgentQueueWorker } = require('../services/agent-queue-service');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const { createAgentImageService } = require('../services/agent-image-service');
-const { callSiliconFlowChat } = require('../lib/ai-providers');
+const {
+  callCloudflareChat,
+  callSiliconFlowChat,
+  callSiliconFlowImageGenerate
+} = require('../lib/ai-providers');
 const {
   createModelCallService,
   createProviderScheduler,
-  createScheduledChatGenerate
+  createScheduledChatGenerate,
+  createScheduledImageGenerate
 } = require('../services/agent-model-runtime-service');
+const { createConfiguredGenerationProvider } = require('../services/generation-provider');
 const { createAgentSandboxProvider } = require('../services/agent-sandbox-provider');
 const { hasAgentPayloadKey } = require('../services/agent-payload-service');
 const {
@@ -39,6 +45,31 @@ const resolveWorkerConcurrency = ({ env = process.env, runtimeReadiness, system 
   return { concurrency: 2, fallbackReason: null };
 };
 
+const cleanupProviderSchedulers = async (schedulers = []) => {
+  const unique = schedulers.filter((scheduler, index, values) => (
+    scheduler && values.indexOf(scheduler) === index
+  ));
+  return Promise.all(unique.map((scheduler) => scheduler.cleanup()));
+};
+
+const resolveImageProviderSchedulers = ({
+  config,
+  pool,
+  env = process.env,
+  providerScheduler
+} = {}) => {
+  if (!config || !providerScheduler) {
+    throw new TypeError('AGENT_IMAGE_PROVIDER_SCHEDULERS_REQUIRED');
+  }
+  const imageTextProviderScheduler = providerScheduler;
+  const imageProviderScheduler = createProviderScheduler({
+    pool,
+    env,
+    providerKey: 'siliconflow:Kwai-Kolors/Kolors'
+  });
+  return { imageTextProviderScheduler, imageProviderScheduler };
+};
+
 const main = async () => {
   const config = getAgentConfig(process.env);
   if (!config.workerEnabled) throw new Error('AGENT_WORKER_DISABLED');
@@ -53,7 +84,11 @@ const main = async () => {
     pool
   });
   const runService = createAgentRunService({ pool, env: process.env });
-  const providerScheduler = createProviderScheduler({ pool, env: process.env });
+  const providerScheduler = createProviderScheduler({
+    pool,
+    env: process.env,
+    providerKey: `${config.modelProvider}:${config.modelName}`
+  });
   const modelCallService = createModelCallService({
     pool,
     retentionDays: config.retentionDays
@@ -63,14 +98,40 @@ const main = async () => {
     providerScheduler,
     modelCallService
   });
-  const scheduledSiliconFlowChat = createScheduledChatGenerate({
-    scheduler: providerScheduler,
-    chatGenerate: callSiliconFlowChat,
+  // Image traffic has a distinct quota and must never share the text model's
+  // scheduler (all deployed text calls are Cloudflare GPT-OSS; SiliconFlow is
+  // image-only). Keeping the
+  // canonical Kolors key here also makes Render, Worker and harness drain
+  // accounting comparable.
+  const {
+    imageTextProviderScheduler,
+    imageProviderScheduler
+  } = resolveImageProviderSchedulers({
+    config,
+    pool,
+    env: process.env,
+    providerScheduler
+  });
+  const scheduledTextChat = createScheduledChatGenerate({
+    scheduler: imageTextProviderScheduler,
+    chatGenerate: config.modelProvider === 'cloudflare'
+      ? callCloudflareChat
+      : callSiliconFlowChat,
+    defaultPriority: 'actor'
+  });
+  const scheduledSiliconFlowImageGenerate = createScheduledImageGenerate({
+    scheduler: imageProviderScheduler,
+    imageGenerate: callSiliconFlowImageGenerate,
     defaultPriority: 'actor'
   });
   const imageService = createAgentImageService({
     env: process.env,
-    chatGenerate: scheduledSiliconFlowChat
+    chatGenerate: scheduledTextChat,
+    provider: createConfiguredGenerationProvider({
+      imageGenerate: scheduledSiliconFlowImageGenerate,
+      chatGenerate: scheduledTextChat,
+      env: process.env
+    })
   });
   const sandbox = createAgentSandboxProvider({ env: process.env });
   await model.probe();
@@ -99,7 +160,11 @@ const main = async () => {
   await queue.start();
   const cleanupRuntimeRecords = async () => {
     await Promise.all([
-      providerScheduler.cleanup(),
+      cleanupProviderSchedulers([
+        providerScheduler,
+        imageTextProviderScheduler,
+        imageProviderScheduler
+      ]),
       modelCallService.cleanupExpired({ limit: 1000 })
     ]).catch((error) => {
       console.warn(`AGENT_RUNTIME_CLEANUP_FAILED:${error?.code || error?.message || 'unknown'}`);
@@ -136,4 +201,8 @@ if (require.main === module) {
   });
 }
 
-module.exports = { resolveWorkerConcurrency };
+module.exports = {
+  resolveWorkerConcurrency,
+  cleanupProviderSchedulers,
+  resolveImageProviderSchedulers
+};

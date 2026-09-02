@@ -35,6 +35,14 @@ services:
         value: "0"
       - key: TASK_WORKER_ENABLED
         value: "0"
+      # All non-image text traffic is pinned to Cloudflare's free GPT-OSS
+      # profile. Kolors remains the separate SiliconFlow image provider.
+      - key: AGENT_MODEL_PROVIDER
+        value: cloudflare
+      - key: AGENT_MODEL_NAME
+        value: "@cf/openai/gpt-oss-120b"
+      - key: AGENT_TEXT_MODEL_HARD_LOCK
+        value: "true"
       - key: DESIGN_CONVERSATION_ENABLED
         value: "false"
       - key: DESIGN_CONVERSATION_WORKER_ENABLED
@@ -94,6 +102,17 @@ services:
       - key: TASK_PAYLOAD_ENCRYPTION_KEY
         sync: false
       - key: SILICONFLOW_API_KEY
+        sync: false
+      # Cloudflare is the only deployed Agent text provider. Keep account
+      # identity, token and free-tier attestation in Render Secret Manager;
+      # readiness rejects missing or mismatched values before dispatch.
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: AGENT_CLOUDFLARE_FREE_ACCOUNT_ID
+        sync: false
+      - key: AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED
         sync: false
       - key: S3_ENDPOINT
         sync: false

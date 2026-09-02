@@ -123,9 +123,9 @@
     <template #environment>
       <div class="inspector-stack">
         <section class="inspector-card">
-          <header><span>{{ zh ? '执行环境' : 'Environment' }}</span><i :class="{ healthy: serviceStatus?.workerOnline }"></i></header>
+          <header><span>{{ zh ? '执行环境' : 'Environment' }}</span><i :class="{ healthy: workerReady }"></i></header>
           <dl>
-            <div><dt>{{ zh ? '状态' : 'Status' }}</dt><dd>{{ serviceStatus?.workerOnline ? (zh ? '已就绪' : 'Ready') : (zh ? '等待 Worker' : 'Waiting for worker') }}</dd></div>
+            <div><dt>{{ zh ? '状态' : 'Status' }}</dt><dd>{{ workerStatusLabel }}</dd></div>
           </dl>
         </section>
         <section class="inspector-card">
@@ -165,9 +165,9 @@
         </section>
         <TechnicalDetails :label="zh ? '技术详情' : 'Technical details'">
           <dl class="technical-list">
-            <div><dt>{{ zh ? '文本与规划' : 'Text & planning' }}</dt><dd>Qwen/Qwen3-8B</dd></div>
+            <div><dt>{{ zh ? '文本与规划' : 'Text & planning' }}</dt><dd>{{ activeTextModel }}</dd></div>
             <div><dt>{{ zh ? '全部图片' : 'All images' }}</dt><dd>Kwai-Kolors/Kolors</dd></div>
-            <div><dt>Worker</dt><dd>{{ serviceStatus?.workerOnline ? (zh ? '在线' : 'Online') : (zh ? '离线' : 'Offline') }}</dd></div>
+            <div><dt>Worker</dt><dd>{{ workerReady ? (zh ? '在线' : 'Online') : (serviceStatus?.workerOnline ? (zh ? '配置不匹配' : 'Model mismatch') : (zh ? '离线' : 'Offline')) }}</dd></div>
             <div><dt>{{ zh ? '受限出口' : 'Restricted egress' }}</dt><dd>{{ serviceStatus?.egressVerified ? (zh ? '已验证' : 'Verified') : (zh ? '未就绪' : 'Not ready') }}</dd></div>
             <div><dt>{{ zh ? '队列' : 'Queue' }}</dt><dd>{{ serviceStatus?.queueDepth ?? '—' }}</dd></div>
             <div><dt>{{ zh ? '子 Agent' : 'Subagents' }}</dt><dd>{{ serviceStatus?.subagentsEnabled ? (zh ? '最多 3 个' : 'Up to 3') : (zh ? '已关闭' : 'Off') }}</dd></div>
@@ -209,7 +209,7 @@
           <header><span>{{ zh ? '安全桌面' : 'Secure desktop' }}</span><i :class="{ healthy: serviceStatus?.desktopRelayReady }"></i></header>
           <strong>{{ serviceStatus?.desktopRelayReady ? (zh ? '接管中继已就绪' : 'Takeover relay ready') : (zh ? '等待 Worker' : 'Waiting for worker') }}</strong>
           <dl>
-            <div><dt>Worker</dt><dd>{{ serviceStatus?.workerOnline ? (zh ? '在线' : 'Online') : (zh ? '离线' : 'Offline') }}</dd></div>
+            <div><dt>Worker</dt><dd>{{ workerReady ? (zh ? '在线' : 'Online') : (serviceStatus?.workerOnline ? (zh ? '配置不匹配' : 'Model mismatch') : (zh ? '离线' : 'Offline')) }}</dd></div>
             <div><dt>{{ zh ? '受限出口' : 'Restricted egress' }}</dt><dd>{{ serviceStatus?.egressVerified ? (zh ? '已验证' : 'Verified') : (zh ? '未就绪' : 'Not ready') }}</dd></div>
             <div><dt>{{ zh ? '队列' : 'Queue' }}</dt><dd>{{ serviceStatus?.queueDepth ?? '—' }}</dd></div>
           </dl>
@@ -447,7 +447,10 @@ const quoteBlockerText = computed(() => {
 let quoteLocked = false;
 let createLocked = false;
 const workspaceStatus = computed<{ label: string; tone: 'ready' | 'busy' | 'warning' | 'offline' }>(() => {
-  if (!serviceStatus.value?.workerOnline) {
+  if (!workerReady.value) {
+    if (serviceStatus.value?.workerOnline) {
+      return { label: zh.value ? 'Worker 模型不匹配' : 'Worker model mismatch', tone: 'offline' };
+    }
     return { label: zh.value ? 'Worker 离线' : 'Worker offline', tone: 'offline' };
   }
   if (creating.value || quoting.value) {
@@ -457,6 +460,20 @@ const workspaceStatus = computed<{ label: string; tone: 'ready' | 'busy' | 'warn
     return { label: zh.value ? '单 Agent 就绪' : 'Single Agent ready', tone: 'warning' };
   }
   return { label: zh.value ? 'Agent 就绪' : 'Agent ready', tone: 'ready' };
+});
+const workerReady = computed(() => Boolean(
+  serviceStatus.value?.workerOnline && serviceStatus.value?.workerModelReady !== false
+));
+const activeTextModel = computed(() => (
+  serviceStatus.value?.workerModel?.model ||
+  serviceStatus.value?.runtimeProfile?.model ||
+  serviceStatus.value?.modelFamily ||
+  '—'
+));
+const workerStatusLabel = computed(() => {
+  if (!serviceStatus.value?.workerOnline) return zh.value ? '等待 Worker' : 'Waiting for worker';
+  if (!workerReady.value) return zh.value ? '模型配置不匹配' : 'Model configuration mismatch';
+  return zh.value ? '已就绪' : 'Ready';
 });
 const filteredRuns = (search: string) => {
   const query = search.trim().toLocaleLowerCase();

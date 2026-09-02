@@ -20,10 +20,13 @@ const {
   selectAgentSkills,
   taskPlannerMessages
 } = require('./agent-runtime-v2');
-const { parseRetryAfterMs } = require('./agent-model-runtime-service');
+const {
+  parseRetryAfterMs,
+  releaseSchedulerGrant
+} = require('./agent-model-runtime-service');
 const { createCreativeProjectService } = require('./creative-project-service');
 
-const TEXT_MODEL = 'Qwen/Qwen3-8B';
+const TEXT_MODEL = '@cf/openai/gpt-oss-120b';
 const IMAGE_MODEL = 'Kwai-Kolors/Kolors';
 const ROUTE_KINDS = new Set(['reply', 'local_tool', 'tool_task', 'agent_run']);
 const EXECUTION_STATUSES = new Set([
@@ -109,7 +112,11 @@ const getDesignConversationConfig = (env = process.env) => Object.freeze({
     60_000
   ),
   plannerMaxTokens: integer(env.DESIGN_CONVERSATION_PLANNER_MAX_TOKENS, 1800, 512, 4096),
-  model: TEXT_MODEL,
+  model: String(env.AGENT_MODEL_NAME || (
+    String(env.AGENT_MODEL_PROVIDER || '').trim().toLowerCase() === 'cloudflare'
+      ? '@cf/openai/gpt-oss-120b'
+      : TEXT_MODEL
+  )).trim(),
   imageModel: IMAGE_MODEL
 });
 
@@ -393,7 +400,14 @@ const repairPlannerRoute = ({ raw, text }) => {
   return raw;
 };
 
-const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds, creditCap }) => {
+const normalizePlannerDecision = ({
+  raw,
+  text,
+  attachments,
+  clarificationRounds,
+  creditCap,
+  textModel = TEXT_MODEL
+}) => {
   const repaired = repairPlannerRoute({ raw, text });
   raw = repaired;
   let routeKind = String(raw.routeKind || raw.route || 'reply').trim().toLowerCase();
@@ -417,7 +431,7 @@ const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds,
       reply,
       questions: proposedQuestions,
       assumptions,
-      plan: { label: '等待补充', steps: proposedQuestions, executor: 'Qwen3' }
+      plan: { label: '等待补充', steps: proposedQuestions, executor: textModel }
     };
   }
 
@@ -561,7 +575,7 @@ const normalizePlannerDecision = ({ raw, text, attachments, clarificationRounds,
     status: 'succeeded',
     reply,
     assumptions,
-    plan: { label: '设计建议', steps: [], executor: 'Qwen3' }
+    plan: { label: '设计建议', steps: [], executor: textModel }
   };
 };
 
@@ -676,9 +690,15 @@ const requiresDeepPlanner = ({ decision, raw, text }) => {
     externalWrite;
 };
 
-const plannerMessages = ({ history, message, attachmentCount, projectMemory = null }) => [{
+const plannerMessages = ({
+  history,
+  message,
+  attachmentCount,
+  projectMemory = null,
+  textModel = TEXT_MODEL
+}) => [{
   role: 'system',
-  content: `You are Artigen's design request router. Use only Qwen/Qwen3-8B for this text task.
+  content: `You are Artigen's design request router. The server-pinned text model is ${textModel}; never request or switch models.
 Return one JSON object and no markdown. Schema:
 {"routeKind":"reply|local_tool|tool_task|agent_run","complexity":"simple|medium|high","confidence":0.0,"reply":"Chinese answer","needsClarification":false,"questions":[],"assumptions":[],"toolId":"","operation":"","options":{},"deliverables":[],"skillIds":[],"taskSpec":{},"memoryCandidates":[],"steps":[]}
 Ask at most two questions only when the missing answer materially changes the result. Choose reply for advice or brainstorming without an execution request. Choose tool_task for: ai-design generate/directions, old-photo enhance/enhance-colorize, id-photo professional-portrait, background ai-scene, ingredient-label ai-organize-source-text. Local tools are strictly: image-batch convert/compress/resize/rotate/filter/pipeline; privacy-redaction redact/export/pdf; video-frame extract; pdf-image pdf-page/pdf-range-zip/pdf-long-image/images-to-pdf; pdf-text-word extract-text-docx; document-pdf txt-local/word-server-faithful; video-gif convert; favicon generate/export/zip. Choose agent_run for research, browser, shell, multiple files, or multiple deliverable formats. Never set prices, models, credentials, or permissions. All image output is handled by Kwai-Kolors/Kolors downstream.`
@@ -730,8 +750,8 @@ const createDesignConversationService = ({
         ? await modelCallService.start({
             conversationId: conversation.id,
             userId: conversation.user_id,
-            provider: 'siliconflow',
-            modelName: TEXT_MODEL,
+            provider: agentConfig.modelProvider,
+            modelName: agentConfig.modelName,
             phase,
             turn: 0,
             attempt,
@@ -743,22 +763,29 @@ const createDesignConversationService = ({
         : null;
       let response = null;
       try {
-        response = await chatGenerate({
-          phase,
-          promptHash,
-          messages: requestMessages,
-          model: TEXT_MODEL,
-          maxTokens,
-          enableThinking: attemptThinkingEnabled,
-          responseFormat: 'json_object',
-          temperature: attemptThinkingEnabled ? 0.6 : 0.2,
-          topP: attemptThinkingEnabled ? 0.95 : 0.7,
-          topK: attemptThinkingEnabled ? 20 : undefined,
-          minP: attemptThinkingEnabled ? 0 : undefined,
-          timeoutMs: 60_000,
-          signal,
-          skipRateGate: Boolean(providerScheduler && agentConfig.providerSchedulerEnabled)
-        });
+        try {
+          response = await chatGenerate({
+            phase,
+            promptHash,
+            messages: requestMessages,
+            model: agentConfig.modelName,
+            maxTokens,
+            enableThinking: attemptThinkingEnabled,
+            responseFormat: 'json_object',
+            temperature: attemptThinkingEnabled ? 0.6 : 0.2,
+            topP: attemptThinkingEnabled ? 0.95 : 0.7,
+            topK: attemptThinkingEnabled ? 20 : undefined,
+            minP: attemptThinkingEnabled ? 0 : undefined,
+            timeoutMs: 60_000,
+            signal,
+            // Keep planner/provider evidence attributable to one durable
+            // conversation job without exposing user text or credentials.
+            slotId: conversation.id,
+            skipRateGate: Boolean(providerScheduler && agentConfig.providerSchedulerEnabled)
+          });
+        } finally {
+          await releaseSchedulerGrant(providerScheduler, slot.requestId);
+        }
         const parsed = safeJsonObject(response?.text);
         if (call) {
           await modelCallService.finish(call, {
@@ -1296,7 +1323,8 @@ const createDesignConversationService = ({
             history: context.history.map((message) => ({ role: message.role, text: message.text })),
             message: context.current.text,
             attachmentCount: contextualAttachments.length,
-            projectMemory
+            projectMemory,
+            textModel: agentConfig.modelName
           }),
           phase: 'router',
           priority: 'router',
@@ -1310,7 +1338,8 @@ const createDesignConversationService = ({
           text: context.current.text,
           attachments: contextualAttachments,
           clarificationRounds: Number(context.conversation.clarification_rounds || 0),
-          creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap)
+          creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
+          textModel: agentConfig.modelName
         });
         let decision = enrichPlannerDecision({
           decision: routed,
@@ -1332,7 +1361,8 @@ const createDesignConversationService = ({
               capabilities: decision.capabilities,
               allowedOrigins: decision.browserConfig?.allowedOrigins || [],
               maxCredits: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
-              projectMemory
+              projectMemory,
+              textModel: agentConfig.modelName
             }),
             phase: 'planner',
             priority: 'planner',
@@ -1766,11 +1796,23 @@ const createDesignConversationService = ({
     const scheduler = providerScheduler
       ? await providerScheduler.readiness()
       : { ok: !agentConfig.providerSchedulerEnabled, enabled: false, mode: 'unconfigured' };
+    const plannerCredentialsReady = agentConfig.modelProvider === 'cloudflare'
+      ? Boolean(
+          agentConfig.cloudflareAccountId &&
+          agentConfig.cloudflareApiToken &&
+          agentConfig.cloudflareFreeAccountAttested
+        )
+      : Boolean(agentConfig.siliconFlowApiKey);
     return {
       enabled: config.enabled,
       workerEnabled: config.workerEnabled,
-      plannerReady: Boolean(config.enabled && hasAgentPayloadKey(env) && typeof chatGenerate === 'function'),
-      model: TEXT_MODEL,
+      plannerReady: Boolean(
+        config.enabled &&
+        hasAgentPayloadKey(env) &&
+        typeof chatGenerate === 'function' &&
+        plannerCredentialsReady
+      ),
+      model: agentConfig.modelName,
       imageModel: IMAGE_MODEL,
       plannerV2Enabled: agentConfig.designPlannerV2Enabled,
       adaptiveReasoningEnabled: agentConfig.adaptiveReasoningEnabled,

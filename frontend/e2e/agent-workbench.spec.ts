@@ -71,7 +71,7 @@ const child = (ordinal: number, status: 'running' | 'succeeded' | 'failed' | 'ca
   label: ['竞品定位', '视觉系统', '体验建议'][ordinal - 1],
   status,
   progress: { stepCount: status === 'running' ? 7 : 12, maxSteps: 20, cancelRequested: false },
-  usage: { credits: ordinal * 1.25, inputTokens: 600, outputTokens: 320, provider: 'siliconflow' },
+  usage: { credits: ordinal * 1.25, inputTokens: 600, outputTokens: 320, provider: 'cloudflare' },
   summary: status === 'running' ? '正在整理独立上下文。' : '已返回可合并的结构化摘要。',
   outputFiles: status === 'running' ? [] : [{ path: `notes-${ordinal}.md`, byteSize: 1024, sha256: 'a'.repeat(64) }],
   error: status === 'failed' ? { code: 'AGENT_SUBAGENT_FAILED' } : null,
@@ -88,7 +88,7 @@ const baseRun = {
   objective: '调研三个设计产品，分别分析品牌定位、视觉系统与产品体验，交付报告和演示文稿。',
   objectivePreview: '三路并行设计产品审计',
   status: 'running',
-  model: { provider: 'siliconflow', name: 'Qwen/Qwen3-8B' },
+  model: { provider: 'cloudflare', name: '@cf/openai/gpt-oss-120b' },
   sandbox: { provider: 'cua', version: 'pinned-v1', takeoverAvailable: false },
   capabilities: { research: true, browser: true, files: true, shell: true, subagents: true },
   browserConfig: { allowedOrigins: ['https://example.com'], profileId: null, persistSession: false },
@@ -179,7 +179,7 @@ const installSharedApi = async (
         queueDepth: 0,
         oldestQueuedAt: null,
         concurrency: 2,
-        modelFamily: 'Qwen/Qwen3-8B',
+        modelFamily: '@cf/openai/gpt-oss-120b',
         sandboxMode: 'local',
         browserReady: true,
         egressVerified: true,
@@ -332,10 +332,10 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
   await expect(page.locator('.inspector-tabs').getByRole('tab')).toHaveCount(5);
   await expect(page.getByRole('tab', { name: '环境' })).toHaveAttribute('aria-selected', 'true');
   const environment = page.locator('#workspace-panel-environment');
-  await expect(environment.getByText('Qwen/Qwen3-8B', { exact: true })).not.toBeVisible();
+  await expect(environment.getByText('@cf/openai/gpt-oss-120b', { exact: true })).not.toBeVisible();
   await expect(environment.getByText('Kwai-Kolors/Kolors', { exact: true })).not.toBeVisible();
   await environment.getByText('技术详情', { exact: true }).click();
-  await expect(environment).toContainText('Qwen/Qwen3-8B');
+  await expect(environment).toContainText('@cf/openai/gpt-oss-120b');
   await expect(environment).toContainText('Kwai-Kolors/Kolors');
   await expect(page.locator('.history-run')).toContainText('三路并行设计产品审计');
   const inspectorSurface = await page.locator('.workspace-right').evaluate((element) => {
@@ -388,7 +388,7 @@ test('desktop panel separators expose values and support arrows plus Home and En
   await expect(right).toHaveAttribute('aria-valuenow', '472');
 });
 
-test('image delivery auto-grants Kolors, preserves Qwen and subagent locks, and starts only after a current quote', async ({ page }) => {
+test('image delivery auto-grants Kolors, preserves Cloudflare text and subagent locks, and starts only after a current quote', async ({ page }) => {
   const created: Array<Record<string, unknown>> = [];
   await installSharedApi(page, { onCreate: (body) => created.push(body) });
   await page.setViewportSize({ width: 1440, height: 960 });

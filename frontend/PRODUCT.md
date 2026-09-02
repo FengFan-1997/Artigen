@@ -29,7 +29,7 @@ Artigen 不是单一聊天机器人或单一生图页面。它用同一段设计
 
 ## Capabilities and Constraints
 
-- 所有文字理解、澄清、规划和工具选择固定使用 `Qwen/Qwen3-8B`。
+- 所有非生图的文字理解、澄清、规划、验证和工具选择固定使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；所有图片生成固定使用 `Kwai-Kolors/Kolors`。
 - 所有图片输出固定使用 `Kwai-Kolors/Kolors`；单次最多一张参考图。
 - 默认自动执行预算上限为 50 点；真实报价、冻结、结算、退款和幂等由服务端控制。
 - 澄清最多一轮、两个关键问题；信息充分时直接执行。

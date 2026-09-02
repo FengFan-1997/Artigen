@@ -632,12 +632,7 @@ const createAgentWorkerService = ({
       throw new ApiError(409, 'AGENT_LEASE_EPOCH_INVALID');
     }
     const runLease = { runId, workerId, leaseEpoch };
-    const verifierReserveCredits = typeof model.maximumCallCredits === 'function'
-      ? model.maximumCallCredits(
-          Math.max(1024, config.modelContextTokens - 5120),
-          Number(config.stageMaxOutputTokens?.verifier || 2048)
-        )
-      : 0;
+    let verifierReserveCredits = 0;
     const reserveRuntimeBudget = (reservation) => runService.reserveRuntimeBudget({
       ...runLease,
       ...reservation,
@@ -707,6 +702,37 @@ const createAgentWorkerService = ({
     };
 
     try {
+      const claimedProvider = String(claimed.model_provider || '').trim().toLowerCase();
+      const claimedModel = String(claimed.model_name || '').trim();
+      const workerProvider = String(model.providerName || config.modelProvider || '')
+        .trim()
+        .toLowerCase();
+      const workerModel = String(config.modelName || '').trim();
+      if (
+        (claimedProvider && claimedProvider !== workerProvider) ||
+        (claimedModel && claimedModel !== workerModel)
+      ) {
+        throw new ApiError(409, 'AGENT_RUN_MODEL_PROFILE_MISMATCH', {
+          retryable: false
+        });
+      }
+      const pricingSnapshot = claimed.runtime_profile_summary?.modelConfig?.pricingSnapshot;
+      // Live runs must carry the immutable pricing profile captured at creation.
+      // Without it, a worker restart could silently bill using a newer rate card.
+      // Fixture/unit drivers intentionally omit this field, so keep their test
+      // setup compatible while failing closed in every real provider path.
+      if (config.runtimeDriver === 'live' && !pricingSnapshot) {
+        throw new ApiError(409, 'AGENT_RUN_PRICING_PROFILE_MISSING', {
+          retryable: false
+        });
+      }
+      if (typeof model.maximumCallCredits === 'function') {
+        verifierReserveCredits = model.maximumCallCredits(
+          Math.max(1024, config.modelContextTokens - 5120),
+          Number(config.stageMaxOutputTokens?.verifier || 2048),
+          pricingSnapshot
+        );
+      }
       const context = await runService.loadPrivateContext({ runId });
       const legacyToolReceiptEntries = Object.entries(
         context.run.checkpoint?.toolReceipts && typeof context.run.checkpoint.toolReceipts === 'object'
@@ -837,7 +863,7 @@ const createAgentWorkerService = ({
         if (adopted) {
           const recovered = model.recoverReceivedModelCall(adopted);
           const recoveredUsage = typeof model.usageDetails === 'function'
-            ? model.usageDetails(recovered)
+            ? model.usageDetails(recovered, pricingSnapshot)
             : { inputTokens: 0, outputTokens: 0, credits: 0 };
           if (adopted.intent?.phase === 'planner') {
             let plannedValue;
@@ -1115,6 +1141,7 @@ const createAgentWorkerService = ({
                 : null,
               skillIds: Object.keys(context.run.skill_versions || {}),
               signal: plannerAbortController.signal,
+              pricingSnapshot,
               reserveBudget: reserveRuntimeBudget,
               consumeBudget: consumeRuntimeBudget,
               releaseBudget: releaseRuntimeBudget,
@@ -1282,8 +1309,10 @@ const createAgentWorkerService = ({
           modelConfig: {
             actorSamplingProfile: config.actorSamplingProfile,
             adaptiveReasoningEnabled: config.adaptiveReasoningEnabled,
-            stageMaxOutputTokens: config.stageMaxOutputTokens
-          }
+            stageMaxOutputTokens: config.stageMaxOutputTokens,
+            pricingSnapshot: config.modelPricingSnapshot
+          },
+          textModel: config.modelName
         });
         await runService.pinRuntimeProfile({ ...runLease, profile: frozenRuntimeProfile });
         context.run.prompt_profile = frozenRuntimeProfile.promptProfile;
@@ -1448,6 +1477,7 @@ const createAgentWorkerService = ({
                 budget: { maxCredits: Number(context.run.max_credits || 0) }
               },
               maxCredits: Number(context.run.max_credits || 0),
+              pricingSnapshot,
               initialModelCredits: Number(subagentResumeState?.totalCredits || 0)
             } : null,
             safetyIdentifier: crypto.createHash('sha256')
@@ -1799,20 +1829,23 @@ const createAgentWorkerService = ({
         capabilities: context.run.capabilities,
         deliverables: requiredDeliverables,
         resumeState: modelResumeState,
-        runtimeContext: runtimeV2 ? {
-          runtimeVersion: 2,
-          runId,
-          workerId,
-          leaseEpoch,
-          userId: context.run.user_id,
-          taskSpec,
-          workingState: modelResumeState?.workingState || null,
-          projectMemory,
-          allowedOrigins: context.run.browser_config?.allowedOrigins || [],
-          maxCredits: Number(context.run.max_credits || 0),
-          initialModelCredits: Number(modelResumeState?.totalCredits || 0),
-          budgetRatio: costMeter.total() / Math.max(1, Number(context.run.max_credits || 0))
-        } : null,
+        runtimeContext: {
+          runtimeVersion: runtimeV2 ? 2 : 1,
+          pricingSnapshot,
+          ...(runtimeV2 ? {
+            runId,
+            workerId,
+            leaseEpoch,
+            userId: context.run.user_id,
+            taskSpec,
+            workingState: modelResumeState?.workingState || null,
+            projectMemory,
+            allowedOrigins: context.run.browser_config?.allowedOrigins || [],
+            maxCredits: Number(context.run.max_credits || 0),
+            initialModelCredits: Number(modelResumeState?.totalCredits || 0),
+            budgetRatio: costMeter.total() / Math.max(1, Number(context.run.max_credits || 0))
+          } : {})
+        },
         safetyIdentifier: crypto.createHash('sha256')
           .update(`artigen-agent:${context.run.user_id}`)
           .digest('hex'),
@@ -2092,6 +2125,7 @@ const createAgentWorkerService = ({
                   : null,
                 skillIds: Object.keys(context.run.skill_versions || {}),
                 signal: modelAbortController.signal,
+                pricingSnapshot,
                 reserveBudget: reserveRuntimeBudget,
                 consumeBudget: consumeRuntimeBudget,
                 releaseBudget: releaseRuntimeBudget
@@ -2674,7 +2708,8 @@ const createAgentWorkerService = ({
                 ...request,
                 references,
                 signal: modelAbortController.signal,
-                runId
+                runId,
+                runtimeVersion: context.run.runtime_version
               });
               providerReturned = true;
               const outputPath = `/tmp/artigen-workspace/${generated.filename}`;

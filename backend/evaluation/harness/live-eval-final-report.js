@@ -10,6 +10,10 @@ const { canonicalJson, parseVersionedKey } = require('./live-eval-gate');
 
 const FINAL_REPORT_VERSION = 'artigen-agent-live-eval-final-v1';
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
+// Signed live-eval evidence is only valid for the currently deployed text
+// runtime.  Historical Qwen fixtures may remain in the repository, but they
+// cannot satisfy a release gate or owner-canary attestation.
+const REVIEWED_TEXT_MODELS = new Set(['@cf/openai/gpt-oss-120b']);
 
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const isSha256 = (value) => /^[a-f0-9]{64}$/i.test(String(value || ''));
@@ -66,7 +70,7 @@ const validateAutomatedReport = (report) => {
     throw new Error('AGENT_LIVE_EVAL_FINAL_AUTOMATED_GATE_FAILED');
   }
   if (
-    report.modelLocks?.text !== 'Qwen/Qwen3-8B' ||
+    !REVIEWED_TEXT_MODELS.has(report.modelLocks?.text) ||
     report.modelLocks?.image !== 'Kwai-Kolors/Kolors' ||
     Number(report.limits?.perRunCredits) !== 50 ||
     Number(report.limits?.qwenCalls) !== 200 ||
@@ -118,6 +122,10 @@ const createSignedFinalReport = ({
     campaignId: automated.campaignId,
     commitSha: automated.commitSha,
     matrixHash: automated.matrixHash,
+    modelLocks: {
+      text: automated.modelLocks.text,
+      image: automated.modelLocks.image
+    },
     gateManifestSha256: automated.gateManifestSha256,
     automatedReportSha256: String(automatedReportSha256).toLowerCase(),
     blindScoreSha256: String(blindScoreSha256).toLowerCase(),
@@ -160,6 +168,8 @@ const verifySignedFinalReport = ({
     !report ||
     report.version !== FINAL_REPORT_VERSION ||
     report.eligibleForOwnerCanary !== true ||
+    !REVIEWED_TEXT_MODELS.has(report.modelLocks?.text) ||
+    report.modelLocks?.image !== 'Kwai-Kolors/Kolors' ||
     String(report.commitSha || '').toLowerCase() !== String(expectedCommitSha || '').toLowerCase() ||
     String(report.matrixHash || '').toLowerCase() !== String(expectedMatrixHash || '').toLowerCase()
   ) {
@@ -180,6 +190,10 @@ const verifySignedFinalReport = ({
     campaignId: report.campaignId,
     commitSha: report.commitSha,
     matrixHash: report.matrixHash,
+    modelLocks: Object.freeze({
+      text: report.modelLocks.text,
+      image: report.modelLocks.image
+    }),
     reportSha256: sha256(Buffer.from(canonicalJson(report), 'utf8')),
     createdAt: report.createdAt
   });

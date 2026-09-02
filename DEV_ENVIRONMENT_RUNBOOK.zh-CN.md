@@ -33,7 +33,7 @@ DEV 默认采用以下安全门：
    不执行真实付款，也不能把 pending 订单当作钱包入账。
 3. `AUTH_EMAIL_OTP_ENABLED=false`，不会调用生产邮件中继。
 4. `AI_DESIGN_TASK_V2_ENABLED=true`、`AI_DESIGN_TASK_V2_ROLLOUT_PERCENT=100`、
-   `WORKSHOP_AI_TASK_V2_ENABLED=true`，用于真实 SiliconFlow、任务队列、结算与失败退款 smoke。
+   `WORKSHOP_AI_TASK_V2_ENABLED=true`，用于真实 Cloudflare 文本、SiliconFlow/Kolors 图片、任务队列、结算与失败退款 smoke；Agent Runtime V2、其 rollout 和 owner canary 仍保持关闭。
 5. `ASSET_STORAGE_DRIVER=s3`，生成结果必须通过共享对象存储、SHA-256 与尺寸验证；DEV 资产和
    任务记录不得冒充生产数据。
 6. 云端页面固定显示 `DEV 测试环境` 标记，并由独立访问口令保护。
@@ -67,7 +67,7 @@ TLS 策略只能来自上述受控环境变量。
 - Mac DEV Worker：同样固定为 `3/2/2`；生产 Worker 的现有默认值不变。
 - Live Harness：`AGENT_LIVE_EVAL_PG_POOL_MAX=3`。
 
-签名 Live gate 会先核验数据库；Live Harness 此后还会在每一次真实 Qwen/Kolors
+签名 Live gate 会先核验数据库；Live Harness 此后还会在每一次真实 Cloudflare/Kolors
 dispatch 预留落库前重新核验。数据库必须精确为 `dev_artigen`、主版本为 18；计算连接
 余量时会从 `max_connections` 中扣除 PostgreSQL 的 superuser/reserved slots，并要求
 应用实际仍至少有 4 个可用连接。不满足时停止测试，不升级套餐，也不通过关闭 TLS 或
@@ -138,7 +138,7 @@ PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
 
 涉及后台或数据迁移时，还要检查：
 
-- `/readyz` 返回数据库迁移 `025_agent_runtime_v2_1_durability` 且 `ok=true`。
+- `/readyz` 返回数据库迁移 `026_agent_live_eval_capacity_counter` 且 `ok=true`。
 - `/readyz` 返回
   `adminConsoleEnabled=true`、`behaviorAnalyticsEnabled=true`、
   `databaseRequired=true`；任一不符都视为配置漂移，不能继续提 `dev -> main`。
@@ -156,9 +156,9 @@ PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
 
 ## 开启真实集成前
 
-DEV 当前已接入真实 SiliconFlow、PostgreSQL、任务队列和 S3，用于发布前集成 smoke。
-运行时只允许两个模型：所有文字理解、结构化输出和工具决策使用 `Qwen/Qwen3-8B`；所有
-图片输出使用 `Kwai-Kolors/Kolors`。Kolors 接收 0 张图时文生图、接收 1 张图时图生图；
+DEV 当前已接入真实 Cloudflare Workers AI 文本、SiliconFlow 图片、PostgreSQL、任务队列和 S3，用于发布前集成 smoke。
+运行时所有非生图文字理解、结构化输出和工具决策统一使用 Cloudflare
+`@cf/openai/gpt-oss-120b`；所有图片输出使用 SiliconFlow 上的 `Kwai-Kolors/Kolors`。Kolors 接收 0 张图时文生图、接收 1 张图时图生图；
 第二张参考图必须在 Provider 请求前失败。
 
 邮件发件域、Turnstile、对象存储和支付配置仍不得把 DEV 身份或数据混入生产。每项能力

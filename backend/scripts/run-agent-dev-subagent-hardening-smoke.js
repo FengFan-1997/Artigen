@@ -4,6 +4,10 @@ const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('./lib/agent-dev-model-profile');
 
 const KEYCHAIN_SERVICE = String(
   process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-dev-worker'
@@ -25,6 +29,14 @@ const secretNames = [
   'S3_ACCESS_KEY_ID',
   'S3_SECRET_ACCESS_KEY'
 ];
+if (String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'cloudflare') {
+  secretNames.push(
+    'CLOUDFLARE_ACCOUNT_ID',
+    'CLOUDFLARE_API_TOKEN',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+  );
+}
 const missing = [];
 for (const name of secretNames) {
   const value = readMacOsKeychainSecret({ service: KEYCHAIN_SERVICE, account: name });
@@ -36,14 +48,16 @@ if (missing.length) {
   process.exit(78);
 }
 
+const smokeModelProfile = resolveAgentSmokeModelProfile({ env: process.env, production: false });
+
 Object.assign(process.env, {
   NODE_ENV: 'production',
   APP_ENV: 'dev',
   AGENT_FEATURE_ENABLED: 'true',
   AGENT_WORKER_ENABLED: '1',
   AGENT_RUNTIME_DRIVER: 'live',
-  AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: smokeModelProfile.provider,
+  AGENT_MODEL_NAME: smokeModelProfile.model,
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
   AGENT_SANDBOX_PROVIDER: 'cua',
@@ -64,6 +78,7 @@ Object.assign(process.env, {
   ASSET_STORAGE_DRIVER: 's3',
   S3_FORCE_PATH_STYLE: '1'
 });
+applyAgentSmokeModelProfile(process.env, smokeModelProfile);
 
 const { getPool } = require('../db/pool');
 const { createAgentRunService, TERMINAL_STATUSES } = require('../services/agent-run-service');
@@ -116,7 +131,7 @@ const selectSmokeUser = async (pool) => {
 const objectiveFor = ({ label, cancelOne }) => {
   const timestamp = new Date().toISOString();
   return [
-    `这是 ${label} 的真实 Qwen3 子 Agent 验收，验证时间 ${timestamp}。`,
+    `这是 ${label} 的真实 Cloudflare GPT-OSS 子 Agent 验收，验证时间 ${timestamp}。`,
     '父 Agent 必须先发布具体计划，然后调用且只调用一次 delegate_tasks，恰好创建三个独立子 Agent：',
     '每个子任务 objective 都必须明确写入这份离线材料：标题是 Example Domain；正文说明该域名用于文档示例，无需事先协调或许可；页面提供 More information 链接。',
     '每个子任务都必须明确禁止访问 URL、获取网页、curl、wget 或任何网络命令，只能分析上述已提供材料。',
@@ -358,7 +373,7 @@ const main = async () => {
       createdAt: new Date().toISOString(),
       requestedScenario,
       gitSha: String(process.env.ARTIGEN_EXPECTED_DEV_SHA || '').trim() || null,
-      model: 'Qwen/Qwen3-8B',
+      model: smokeModelProfile.model,
       imageModel: 'Kwai-Kolors/Kolors',
       runs: []
     };

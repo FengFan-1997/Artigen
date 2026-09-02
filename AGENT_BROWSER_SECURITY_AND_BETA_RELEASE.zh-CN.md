@@ -2,9 +2,15 @@
 
 更新日期：2026-08-07
 
+> 历史记录说明（2026-09-02）：本文记录的 Qwen/SiliconFlow 文本链路属于旧版
+> Production Beta 证据，不是当前部署策略。现在所有环境的非生图文本统一使用
+> Cloudflare `@cf/openai/gpt-oss-120b`，图片仅使用 SiliconFlow `Kwai-Kolors/Kolors`；
+> 当前配置、免费账户绑定和发布状态以 `PROJECT_HANDOFF.zh-CN.md` 与
+> `AGENT_OPERATIONS_RUNBOOK.zh-CN.md` 顶部为准。
+
 ## 1. 发布边界
 
-浏览器 Agent 使用硅基流动云端 `Qwen/Qwen3-8B` 和 Mac 上的 Docker/CUA Worker，不下载本地模型，也不依赖 CUA 云账号。当前发布等级只能称为 **Production Beta**：Render Free 会休眠或重启，Mac 合盖、关机、退出登录或 Docker Desktop 停止时，线上任务只能排队，不能承诺 24×7 可用。
+浏览器 Agent 使用 Cloudflare `@cf/openai/gpt-oss-120b` 文本模型和 Mac 上的 Docker/CUA Worker，不下载本地模型，也不依赖 CUA 云账号。当前发布等级只能称为 **Production Beta**：Render Free 会休眠或重启，Mac 合盖、关机、退出登录或 Docker Desktop 停止时，线上任务只能排队，不能承诺 24×7 可用。
 
 浏览器公开能力只有在以下状态同时为真时才能开启：
 
@@ -91,8 +97,10 @@ Chromium 固定启用代理，且禁用 QUIC、非代理 WebRTC、后台联网�
 可提交的变量名位于 `backend/.env.example`。真实值不得写入 Git、Markdown、聊天或日志。
 
 ```dotenv
-AGENT_MODEL_PROVIDER=siliconflow
-AGENT_MODEL_NAME=Qwen/Qwen3-8B
+AGENT_MODEL_PROVIDER=cloudflare
+AGENT_MODEL_NAME=@cf/openai/gpt-oss-120b
+AGENT_CLOUDFLARE_FREE_ACCOUNT_ID=与 CLOUDFLARE_ACCOUNT_ID 相同的专用免费账户
+AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED=true
 AGENT_BROWSER_MODE=full-approval-v1
 AGENT_SANDBOX_EGRESS_POLICY=restricted-v1
 AGENT_WORKER_ID=稳定且环境唯一的 Worker ID
@@ -105,7 +113,7 @@ AGENT_PUBLIC_CAPABILITIES=files,shell,browser
 
 ## 8. DEV 验收与发布顺序
 
-1. 运行 `pnpm doctor:agent`，确认数据库 020、镜像 `toolchain=v2`、Qwen、Docker、出口探针和 Worker 心跳。
+1. 运行 `pnpm doctor:agent`，确认最新迁移、镜像 `toolchain=v2`、Cloudflare 文本、Docker、出口探针和 Worker 心跳。
 2. 运行后端全量测试、Agent 质量集、前端单元/类型/构建和 Chromium E2E。
 3. 备份 DEV 数据库，部署 `dev`，让 Render 启动流程带 advisory lock 执行迁移至 020；失败就停止部署。
 4. 在 DEV 实测：公开网页读取、跨 Origin 阻断、登录接管、会话保存/恢复/撤销、Markdown+PDF 交付、共享 S3 下载。

@@ -28,6 +28,32 @@ const SILICONFLOW_API_KEY = normalizeSecret(
     process.env.SILICONFLOW_KEY ||
     "",
 );
+// Local macOS processes may use the same dedicated worker Keychain service as
+// the LaunchAgent wrapper. Render/Vercel continue to provide these values as
+// platform secrets; no secret is written back to disk or logged.
+const CLOUDFLARE_KEYCHAIN_SERVICE = normalizeSecret(
+  process.env.CLOUDFLARE_KEYCHAIN_SERVICE || ''
+);
+const readCloudflareKeychainSecret = (account) => CLOUDFLARE_KEYCHAIN_SERVICE
+  ? readMacOsKeychainSecret({ service: CLOUDFLARE_KEYCHAIN_SERVICE, account })
+  : '';
+const CLOUDFLARE_ACCOUNT_ID = normalizeSecret(
+  readCloudflareKeychainSecret('CLOUDFLARE_ACCOUNT_ID') ||
+  process.env.CLOUDFLARE_ACCOUNT_ID || ''
+);
+const CLOUDFLARE_API_TOKEN = normalizeSecret(
+  readCloudflareKeychainSecret('CLOUDFLARE_API_TOKEN') ||
+  process.env.CLOUDFLARE_API_TOKEN ||
+  process.env.CLOUDFLARE_AUTH_TOKEN || ''
+);
+const AGENT_CLOUDFLARE_FREE_ACCOUNT_ID = normalizeSecret(
+  readCloudflareKeychainSecret('AGENT_CLOUDFLARE_FREE_ACCOUNT_ID') ||
+  process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || ''
+);
+const AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED = normalizeSecret(
+  readCloudflareKeychainSecret('AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED') ||
+  process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || ''
+);
 const SILICONFLOW_API_BASE = normalizeUrl(
   process.env.SILICONFLOW_API_BASE || "https://api.siliconflow.cn/v1",
 );
@@ -35,9 +61,24 @@ const SILICONFLOW_CHAT_COMPLETIONS_URL = `${SILICONFLOW_API_BASE}/chat/completio
 const SILICONFLOW_IMAGES_GENERATIONS_URL = `${SILICONFLOW_API_BASE}/images/generations`;
 const FIXED_SILICONFLOW_CHAT_MODEL = "Qwen/Qwen3-8B";
 const FIXED_SILICONFLOW_IMAGE_MODEL = "Kwai-Kolors/Kolors";
-const SILICONFLOW_MODEL = FIXED_SILICONFLOW_CHAT_MODEL;
+const FIXED_CLOUDFLARE_CHAT_MODEL = "@cf/openai/gpt-oss-120b";
+// Legacy endpoints expose one text model field.  In a deployed Agent
+// environment that field must advertise the Cloudflare model; keep the
+// SiliconFlow constant available for isolated backwards-compatibility tests.
+const SILICONFLOW_MODEL = String(process.env.AGENT_MODEL_PROVIDER || "cloudflare")
+  .trim()
+  .toLowerCase() === "cloudflare"
+  ? FIXED_CLOUDFLARE_CHAT_MODEL
+  : FIXED_SILICONFLOW_CHAT_MODEL;
 
-const activeTextProvider = SILICONFLOW_API_KEY ? "siliconflow" : "offline";
+const ACTIVE_MODEL_PROVIDER = String(process.env.AGENT_MODEL_PROVIDER || "cloudflare")
+  .trim()
+  .toLowerCase();
+const activeTextProvider = ACTIVE_MODEL_PROVIDER === "cloudflare"
+  ? (CLOUDFLARE_API_TOKEN
+    ? "cloudflare"
+    : "offline")
+  : (SILICONFLOW_API_KEY ? "siliconflow" : "offline");
 const SILICONFLOW_TIMEOUT_MS = (() => {
   const v = Number.parseInt(process.env.SILICONFLOW_TIMEOUT_MS || "", 10);
   return Number.isFinite(v) && v > 1000 ? v : 120000;
@@ -59,7 +100,13 @@ module.exports = {
   SILICONFLOW_CHAT_COMPLETIONS_URL,
   SILICONFLOW_IMAGES_GENERATIONS_URL,
   FIXED_SILICONFLOW_CHAT_MODEL,
+  FIXED_CLOUDFLARE_CHAT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
+  CLOUDFLARE_KEYCHAIN_SERVICE,
+  CLOUDFLARE_ACCOUNT_ID,
+  CLOUDFLARE_API_TOKEN,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED,
   activeTextProvider,
   SILICONFLOW_TIMEOUT_MS,
   SILICONFLOW_REACTION_TIMEOUT_MS,

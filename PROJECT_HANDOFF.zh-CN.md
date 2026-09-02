@@ -1,6 +1,6 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-09-01（Asia/Shanghai）
+更新时间：2026-09-02（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
@@ -8,14 +8,36 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
-## 2026-09-01 DEV 长期免费数据库隔离与最小权限收口（DEV 切换中）
+## 2026-09-02 非生图模型统一切换（当前本地候选，未发布）
+
+- 账户所有者已确认新的硬策略：**所有环境的非生图模型**（对话、路由、规划、验证、父/子 Agent、记忆摘要和工具决策）统一使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；**所有图片生成**继续只使用 SiliconFlow `Kwai-Kolors/Kolors`。不再把 `Qwen/Qwen3-8B` 作为任何部署环境的默认文本模型。
+- 候选分支为 `codex/cloudflare-free-agent-integration`，基于 `origin/dev` `8a67bb632d2aeadfad4f7810ca13f484262a9172`，当前代码修复提交为 `4bef136`（完整 SHA 以 Git 为准）。Render 生产/DEV blueprint、Mac Worker 启动器、通用文本入口、Planner/Runtime、设计对话和健康检查均已写入 Cloudflare/GPT-OSS 文本锁与 Kolors 图片边界；`AGENT_TEXT_MODEL_HARD_LOCK=true` 时非 Cloudflare 文本配置会 fail closed。
+- 旧 Qwen 字样只保留在历史 Handoff、历史真实 Run 和确定性 fixture 兼容测试中，用于审计旧版本，不代表当前部署配置或新的真实调用方向。当前候选仍未 push、未创建 PR、未部署；Runtime V2、公众 rollout 和 owner canary 继续关闭。
+- 本轮未调用付费 Provider。当前候选受影响后端回归 `315/315`、`pnpm eval:agent:validate` `50/50`、JS 语法和 `git diff --check` 均通过；最终 `pnpm check` 通过，Playwright 为 `543 passed / 3 skipped / 0 failed`（18.5 分钟），前端/后端/邮件/构建与 bundle budget 均通过。测试 WebServer 的自家 API `ECONNREFUSED` 仅来自未启动本地 API 的 fixture 场景，不代表线上健康。
+- `pnpm eval:agent:deterministic` 与 `pnpm test:agent:chaos` 已按正式命令执行并 fail-closed：前者要求 `RUN_POSTGRES_INTEGRATION=1`，后者要求 `DATABASE_URL`；本机没有 PostgreSQL 16/MinIO，因此没有假绿结果。DEV 对齐、真实 24-slot 和图片盲审尚未执行。
+
+## 2026-09-02 Agent 长期免费大模型升级（统一候选，未发布）
+
+- 免费模型筛选以“不是注册送额度、无需绑定付费方式、支持工具调用和结构化输出”为硬门。硅基流动当前永久免费对话模型仍主要为 4B–9B，无法构成对 `Qwen/Qwen3-8B` 的数量级升级；Cerebras 已改成账户注册送 5 美元 credits，属于试用；Gemini Developer API 虽有免费层，但中国大陆不在可用区域；OpenRouter 免费模型总量限制不适合作为 Agent 主链。
+- 当前候选选择 Cloudflare Workers AI Free + `@cf/openai/gpt-oss-120b`。Cloudflare 文档在 2026-09-01 显示 Workers Free 每日 10,000 Neurons 免费配额、每日重置，GPT-OSS 120B 支持 Chat Completions、函数调用和 128K context；该额度适合 owner Beta，不是无限公开容量，也没有生产 SLA。
+- Cloudflare 实现提交已整合到基于 `dev` merge SHA `8a67bb632d2aeadfad4f7810ca13f484262a9172` 的 `codex/cloudflare-free-agent-integration` 候选。新增 `cloudflare` Agent Provider：模型服务端硬锁 GPT-OSS 120B，Cloudflare API Origin 由严格校验的 account ID 拼接，Token 只从 Secret/Keychain 读取；Runtime V2 Prompt/Profile/Replay Oracle、durable model receipts、预算预留、工具白名单与结构化 JSON 纠错均按 Run 的固定 provider/model 工作，费用快照随不可变 Runtime Profile 持久化，终态清理和恢复不再误用 SiliconFlow 费率。
+- Cloudflare 切换只覆盖 Agent 文本链。Kolors 图片生成仍使用现有 `SILICONFLOW_API_KEY`，文本和图片使用独立调度键。启动探针改用只读模型目录查询，不消耗推理额度。零费用边界要求专用 Workers Free 账户、`AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED=true`，并令 `AGENT_CLOUDFLARE_FREE_ACCOUNT_ID` 精确等于 Keychain 中当前 `CLOUDFLARE_ACCOUNT_ID`；任何缺失、换号或不匹配都在就绪与派发前 fail closed，免费额度耗尽后也不得回退到收费文本模型。
+- 独立整合审核发现 Cloudflare `3036` 免费日额度耗尽原本会被通用 429 逻辑自动重试，`5035` Paid-only 也会被误报为凭据失败；统一候选已将二者设为不可重试的明确终止码，只有 `3040` 暂时容量不足继续有界重试。DEV、生产 blueprint、LaunchAgent、直接运行器和 smoke 默认均选择 Cloudflare GPT-OSS 文本链，生产仍需单独部署后才生效；工作台与 Planner 从服务端实际 Run/status 展示模型，不再硬编码 Qwen。对应 Runtime、路由、UI 与部署配置专项回归已通过，完整正式门禁与 required CI 仍待最终候选执行。
+- 第二轮独立审核又关闭两类证据漂移：Live Eval 最终签名现在把实际文本/图片模型一起纳入 HMAC，owner canary 的运行配置必须与该模型锁完全一致；Worker 认领到与自身 provider/model 不同的旧 Run 时，会在读取私有任务、创建沙箱、调用模型或执行 Shell 前失败并释放未用冻结额度，禁止把旧 Qwen Run 静默改由 GPT-OSS 执行。DEV smoke 同时要求当前最新迁移 `026_agent_live_eval_capacity_counter`，不再把只到 025 的数据库误判为就绪。
+- Live Eval 的固定模型门、Auditor、Replay、最终报告和 owner canary 已接受两组精确文本 pair，并保留 Kolors 为唯一图片模型；Cloudflare 设计会话入口复用同一固定模型，过滤供应商不支持的 `min_p`，且只由一层 Provider scheduler 取槽。模拟回归覆盖模型目录探针、401/403/429、结构化 JSON、工具调用回环、Runtime Profile、Replay 和 Cloudflare receipt 费用恢复。
+- 原 Cloudflare 候选的 `pnpm check:core` 退出码 0：frontend `218/218`，backend `563 passed / 92 条明确环境跳过 / 0 failed`，mail relay `7/7`，50 项 quality manifest、生产 build 与 87.5 KiB gzip 初始预算均通过。该证据仍不替代统一候选的完整门禁、required CI 与 live matrix。
+- 账户所有者已在 Cloudflare 控制台确认专用账户为 `Free / $0 / Current plan`，Workers AI 免费项为每日 10,000 Neurons；最小权限凭据仅写入 DEV 钥匙串服务 `artigen-agent-dev-worker`，未写入仓库、日志、Render、Vercel 或 Production Keychain。
+- 真实非推理模型目录 probe 已通过；GPT-OSS 120B 真实最小 JSON smoke 返回预期结构化对象，真实强制函数调用 smoke 正确调用 `finish_test` 并生成有效参数。DEV LaunchAgent 已改指本分支工作树并固定 `cloudflare / @cf/openai/gpt-oss-120b`、免费账户绑定和 subagents=true；Runtime V2/rollout 仍为 0。
+- 真实 DEV 全链路 run `4f946725-9638-4295-b00f-9b3833b41fec` 已由远程队列进入 `queued → provisioning → running → verifying → succeeded`，Mac Worker 实际记录 `cloudflare / @cf/openai/gpt-oss-120b`，通过受限浏览器读取 `https://example.com/`，生成 `artigen-dev-smoke.md`（243 bytes）和 `artigen-dev-smoke.pdf`（2,898 bytes）。两个交付物均写入共享 S3、独立验证为 `passed`，烟测进程从 S3 回读后逐项确认字节数与 SHA-256；全程 0 次 replan、0 次连续失败。该证据证明当前 DEV Worker 的文本 Agent 主链可用，但完整 24-slot campaign、图片盲审、DEV 后端切流、生产部署与 owner canary 仍未执行，不能宣称完整上线；Kolors 图片链也不属于本次免费文本升级的零费用保证。
+
+## 2026-09-01 DEV 长期免费数据库隔离与最小权限收口（统一候选待部署）
 
 - 长期免费是本次数据库选择的第一优先级。生产继续独占现有 Neon PostgreSQL 16 与私有 S3，不迁移、不复制、不改变生产数据；DEV 已创建独立 Aiven Free PostgreSQL 18 空库 `dev_artigen`，未复制旧 DEV 历史、未添加付款方式，也未升级付费套餐。
-- Aiven 服务 `artigen-dev-pg` 当前为 Running，PostgreSQL 18.6，规格 Free / `$0`、1 GB、20 个连接且无 SLA，长时间不活跃可能暂停。`dev_artigen` 已启用 `pgcrypto` 与 `citext`，使用 `artigen_migrator` / `artigen_runtime` 双角色边界并完成正式迁移 001–025；运行账号不拥有数据库级 `CREATE`，`public` 与 `pgboss` schema 所有权和默认权限已实测核验。凭据与 CA 仅存于 macOS Keychain 和 Render DEV Secret，未进入仓库或本文档。
-- PR #149 与 #150 在 required CI 全绿后正常合入 `dev`，当前已部署基线为 `cdee6285c5a6d55932b6723a69ad3a2c49e9d183`。代码将 DEV 主版本、目标主机、数据库名、角色、验证 TLS 与 `3/2/2` 连接池设为启动前硬门；Live Harness 每次真实 Provider dispatch 前还要求至少 4 个可用连接。生产迁移、备份与恢复工具继续固定 PostgreSQL 16。
+- Aiven 服务 `artigen-dev-pg` 已创建为 PostgreSQL 18.6、Free / `$0`、1 GB、20 个连接且无 SLA，长时间不活跃可能暂停。`dev_artigen` 已启用 `pgcrypto` 与 `citext`，使用 `artigen_migrator` / `artigen_runtime` 双角色边界并完成正式迁移 001–025；运行账号不拥有数据库级 `CREATE`，`public` 与 `pgboss` schema 所有权和默认权限已实测核验。`dev` 已包含迁移 026 的受管数据库连接计数函数，但 Aiven 应用该迁移和仅向 migrator 授予 `pg_read_all_stats` 仍属于统一 DEV 切换步骤。凭据与 CA 仅存于 macOS Keychain 和 Render DEV Secret，未进入仓库或本文档。
+- PR #149–#152 均在 required CI 全绿后正常合入 `dev`，当前 GitHub `dev` 基线为 `8a67bb632d2aeadfad4f7810ca13f484262a9172`。代码将 DEV 主版本、目标主机、数据库名、角色、验证 TLS 与 `3/2/2` 连接池设为启动前硬门；PR #151 令两个 pg-boss 队列在预置 schema 下保持最小权限，PR #152 用 SECURITY DEFINER 聚合只统计真实 client backend，并让 Live Harness 在每次 Provider dispatch 前至少保留 4 个可用连接。生产迁移、备份与恢复工具继续固定 PostgreSQL 16。
 - Render DEV deployment `dep-dab9imf40ujc73a8gqqg` 已 `live` 且精确运行 `cdee628...`；Vercel Preview deployment `6197909236` 为同 SHA `success`。带 DEV 门禁实测 `/healthz`、`/api/meta`、`/readyz`、`/api/agent/status`、设计助手和生图模型接口均 HTTP 200：migration 025、数据库、S3、Provider 和 `durability.pricingReady=true`，Qwen/Kolors 锁定正确，Runtime V2=false、公众 rollout=0。
 - Mac DEV Worker 已指向 exact `cdee628...`，真实启动随后暴露最小权限兼容问题：pg-boss 即使 schema 已存在仍默认执行 `CREATE SCHEMA IF NOT EXISTS`，受限运行账号因此返回 PostgreSQL `42501`。本地候选 `codex/aiven-dev-pgboss-least-privilege` 只在 DEV 为业务队列和 Agent 队列设置 `createSchema=false`，生产继续保留历史 bootstrap 行为；真实 Aiven 探针、专项 `121/121` 与完整 `pnpm check`（Playwright `543 passed / 3 skipped / 0 failed`）已经通过。
-- 上述 pg-boss 候选在本节更新时尚未 push、PR、合入或重新部署，因此 Worker、浏览器、受限出口和桌面中继仍未形成最终 DEV readiness。尚未执行真实 Qwen/Kolors smoke、签名 gate、完整 24-slot 或图片匿名盲审；不得把 Render/Vercel 已切换或本地门禁全绿表述为整个 Agent 已完成上线。
+- pg-boss 最小权限与连接容量门禁已经合入 GitHub `dev`，但 Cloudflare/Aiven 统一候选尚未 push、PR、合入或重新部署，因此 Render、Vercel、Mac Worker、浏览器、受限出口和桌面中继尚未形成同一 SHA 的最终 DEV readiness。尚未对统一候选执行签名 gate、完整 24-slot 或图片匿名盲审；不得把早期单 Run 或本地门禁表述为整个 Agent 已完成上线。
 
 ## 2026-08-31 PR #143、exact-SHA 本地门禁与外部平台阻断
 
@@ -343,7 +365,9 @@ AI 必须在每个 Artigen 任务结束前更新本地 Handoff。有持久影响
 
 详细规则见 [`AGENTS.md`](./AGENTS.md) 和 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。
 
-## 4. Agent Production Beta
+## 4. Agent Production Beta（历史 Qwen 版本，非当前候选）
+
+> 本节保留已发布 Qwen 版本的生产证据，供回溯结算与回滚使用；当前非生图模型统一切换以文档顶部的 2026-09-02 候选决策为准。Cloudflare/GPT-OSS 候选尚未部署，因此不能把本节的历史生产模型表述当作当前线上状态。
 
 浏览器 Agent 已完成真实生产端到端验收，不再是只有核心测试、没有环境配置的状态。
 

@@ -31,6 +31,8 @@ const {
 const {
   contentFreeMetrics,
   createScheduledChatGenerate,
+  createScheduledImageGenerate,
+  createProviderScheduler,
   parseRetryAfterMs,
   schedulerIntervalMs
 } = require('../services/agent-model-runtime-service');
@@ -92,6 +94,53 @@ test('Runtime V2 skill compilation cannot grant a capability and crops tools by 
   assert.equal(textOnly.allowedToolNames.includes('declare_artifact'), false);
   assert.ok(textOnly.allowedToolNames.includes('sandbox_shell'));
   assert.match(textOnly.instructions, /text-only Run/u);
+});
+
+test('Runtime V2 freezes the server-pinned Cloudflare model into prompts and recovery profile', () => {
+  const cloudflare = compileAgentPrompt({
+    objective: 'Write a concise answer',
+    capabilities: { files: true },
+    deliverables: [],
+    taskSpec: { skillIds: [] },
+    phase: 'production',
+    textModel: '@cf/openai/gpt-oss-120b',
+    modelConfig: {
+      pricingSnapshot: {
+        provider: 'cloudflare',
+        model: '@cf/openai/gpt-oss-120b',
+        inputCreditsPerMillion: 0.35,
+        outputCreditsPerMillion: 0.75
+      }
+    }
+  });
+  assert.equal(cloudflare.runtimeProfileSummary.model, '@cf/openai/gpt-oss-120b');
+  assert.equal(
+    cloudflare.runtimeProfileSummary.modelConfig.pricingSnapshot.provider,
+    'cloudflare'
+  );
+  assert.match(cloudflare.instructions, /@cf\/openai\/gpt-oss-120b/);
+  assert.doesNotMatch(cloudflare.instructions, /Qwen\/Qwen3-8B/);
+});
+
+test('Runtime V2 treats Cloudflare free quota and paid-only responses as terminal', () => {
+  for (const code of [
+    'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED',
+    'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN'
+  ]) {
+    assert.deepEqual(classifyRuntimeFailure({ code }), {
+      category: 'security_terminal',
+      retryable: false,
+      maxAttempts: 0
+    });
+  }
+  assert.deepEqual(classifyRuntimeFailure({
+    code: 'AGENT_CLOUDFLARE_UNAVAILABLE',
+    failures: [{ status: 429 }]
+  }), {
+    category: 'transient_provider',
+    retryable: true,
+    maxAttempts: 2
+  });
 });
 
 test('Runtime V2 preserves the goal, verification phase and unresolved failure under compaction', () => {
@@ -338,6 +387,24 @@ test('Provider scheduler derives a shared conservative interval from RPM', () =>
     AGENT_SILICONFLOW_MIN_INTERVAL_MS: '6500',
     AGENT_SILICONFLOW_REQUESTS_PER_MINUTE: '60'
   }), 6500);
+  assert.equal(schedulerIntervalMs({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0',
+    AGENT_CLOUDFLARE_REQUESTS_PER_MINUTE: '30'
+  }, 'cloudflare:@cf/openai/gpt-oss-120b'), 2000);
+  assert.equal(schedulerIntervalMs({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_SILICONFLOW_MIN_INTERVAL_MS: '6500',
+    AGENT_SILICONFLOW_REQUESTS_PER_MINUTE: '9'
+  }, 'siliconflow:kolors'), 6667);
+});
+
+test('Provider scheduler defaults to the deployed Cloudflare text key', () => {
+  const scheduler = createProviderScheduler({
+    pool: { connect: () => Promise.reject(new Error('not called')) },
+    env: { AGENT_PROVIDER_SCHEDULER_ENABLED: 'false' }
+  });
+  assert.equal(scheduler.providerKey, 'cloudflare:@cf/openai/gpt-oss-120b');
 });
 
 test('Provider Retry-After accepts seconds and HTTP dates with a bounded delay', () => {
@@ -350,18 +417,21 @@ test('Provider Retry-After accepts seconds and HTTP dates with a bounded delay',
 
 test('Shared chat scheduling bypasses only the process-local gate and quality metrics reject text', async () => {
   const calls = [];
+  const released = [];
   const chat = createScheduledChatGenerate({
     scheduler: {
       acquire: async ({ priority }) => {
         calls.push(priority);
-        return { mode: 'postgres-v1', queueWaitMs: 12 };
-      }
+        return { mode: 'postgres-v1', queueWaitMs: 12, requestId: 'chat-request' };
+      },
+      release: async (requestId) => released.push(requestId)
     },
     chatGenerate: async (input) => input,
     defaultPriority: 'actor'
   });
   const result = await chat({ messages: [], schedulerPriority: 'router' });
   assert.deepEqual(calls, ['router']);
+  assert.deepEqual(released, ['chat-request']);
   assert.equal(result.skipRateGate, true);
   assert.deepEqual(contentFreeMetrics({
     attempt: 2,
@@ -369,6 +439,55 @@ test('Shared chat scheduling bypasses only the process-local gate and quality me
     userText: 'must never be persisted',
     nested: { secret: 'no' }
   }), { attempt: 2, passed: true });
+});
+
+test('Shared image scheduling uses the canonical provider gate and bypasses only its local rate gate', async () => {
+  const priorities = [];
+  const released = [];
+  const image = createScheduledImageGenerate({
+    scheduler: {
+      acquire: async ({ priority }) => {
+        priorities.push(priority);
+        return { mode: 'postgres-v1', queueWaitMs: 7, requestId: 'image-request' };
+      },
+      release: async (requestId) => released.push(requestId)
+    },
+    imageGenerate: async (input) => input,
+    defaultPriority: 'actor'
+  });
+  const result = await image({ prompt: 'poster', schedulerPriority: 'router' });
+  assert.deepEqual(priorities, ['router']);
+  assert.deepEqual(released, ['image-request']);
+  assert.equal(result.skipRateGate, true);
+  assert.equal(result.prompt, 'poster');
+});
+
+test('Scheduler release failures are surfaced without silently reporting provider success', async () => {
+  const chat = createScheduledChatGenerate({
+    scheduler: {
+      acquire: async () => ({ mode: 'postgres-v1', requestId: 'release-fails' }),
+      release: async () => { throw new Error('database unavailable'); }
+    },
+    chatGenerate: async () => ({ text: 'provider returned' })
+  });
+  await assert.rejects(chat({}), {
+    code: 'AGENT_PROVIDER_SCHEDULER_RELEASE_FAILED',
+    status: 503
+  });
+});
+
+test('Image scheduler release failures are fail-closed as well', async () => {
+  const image = createScheduledImageGenerate({
+    scheduler: {
+      acquire: async () => ({ mode: 'postgres-v1', requestId: 'image-release-fails' }),
+      release: async () => { throw new Error('database unavailable'); }
+    },
+    imageGenerate: async () => ({ modelUsed: 'Kwai-Kolors/Kolors' })
+  });
+  await assert.rejects(image({}), {
+    code: 'AGENT_PROVIDER_SCHEDULER_RELEASE_FAILED',
+    status: 503
+  });
 });
 
 test('Model-call tracing is fail-soft and cannot take down an otherwise valid provider response', async () => {

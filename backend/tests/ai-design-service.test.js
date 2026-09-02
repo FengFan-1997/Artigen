@@ -346,41 +346,31 @@ test('generation provider rejects every model outside the fixed production allow
   );
 });
 
-test('SiliconFlow readiness probe validates credentials, endpoint and every internal model', async () => {
+test('legacy SiliconFlow text configuration is rejected in deployed environments', async () => {
   const env = {
     NODE_ENV: 'production',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
     SILICONFLOW_API_KEY: 'sk-production-key'
   };
   const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, env);
-  let request;
   const provider = createSiliconFlowGenerationProvider({
     env,
     imageGenerate: async () => ({}),
     chatGenerate: async () => ({}),
-    fetcher: async (url, options) => {
-      request = { url, options };
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          data: [
-            { id: GENERATION_IMAGE_MODEL },
-            { id: GENERATION_DIRECTIONS_MODEL }
-          ]
-        })
-      };
-    }
+    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: [] }) })
   });
+  assert.equal(provider.available, false);
   assert.deepEqual(await provider.checkAvailability({ profile }), {
-    ok: true,
-    kind: 'siliconflow',
-    profile: STANDARD_PROFILE_ID
+    ok: false,
+    code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED'
   });
-  assert.equal(request.url, 'https://api.siliconflow.cn/v1/models');
-  assert.equal(request.options.headers.authorization, 'Bearer sk-production-key');
+  await assert.rejects(provider.generateDirections({ prompt: 'x', locale: 'zh', profile }), {
+    code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED'
+  });
+  const legacyEnv = { NODE_ENV: 'test', AGENT_MODEL_PROVIDER: 'siliconflow', SILICONFLOW_API_KEY: 'sk-test-key' };
 
   const rejected = createSiliconFlowGenerationProvider({
-    env,
+    env: legacyEnv,
     imageGenerate: async () => ({}),
     chatGenerate: async () => ({}),
     fetcher: async () => ({ ok: false, status: 401 })
@@ -391,7 +381,7 @@ test('SiliconFlow readiness probe validates credentials, endpoint and every inte
   });
 
   const missingModel = createSiliconFlowGenerationProvider({
-    env,
+    env: legacyEnv,
     imageGenerate: async () => ({}),
     chatGenerate: async () => ({}),
     fetcher: async () => ({
@@ -406,15 +396,222 @@ test('SiliconFlow readiness probe validates credentials, endpoint and every inte
   });
 
   const unsafeEndpoint = createSiliconFlowGenerationProvider({
-    env: { ...env, SILICONFLOW_API_BASE: 'https://attacker.example/v1' },
+    env: { ...legacyEnv, SILICONFLOW_API_BASE: 'https://attacker.example/v1' },
     imageGenerate: async () => ({}),
     chatGenerate: async () => ({}),
     fetcher: async () => { throw new Error('must not send credentials'); }
   });
   assert.deepEqual(await unsafeEndpoint.checkAvailability({ profile }), {
     ok: false,
-    code: 'PROVIDER_ENDPOINT_INVALID'
+    code: 'PROVIDER_UNAVAILABLE'
   });
+
+  for (const providerName of ['openai', 'ollama', 'unknown-provider']) {
+    const unsupported = createSiliconFlowGenerationProvider({
+      env: { NODE_ENV: 'production', AGENT_MODEL_PROVIDER: providerName, SILICONFLOW_API_KEY: 'sk-test-key' },
+      imageGenerate: async () => ({}),
+      chatGenerate: async () => ({}),
+      fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: [] }) })
+    });
+    assert.equal(unsupported.available, false);
+    assert.deepEqual(await unsupported.checkAvailability({ profile }), {
+      ok: false,
+      code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED'
+    });
+    await assert.rejects(unsupported.generateDirections({ prompt: 'x', locale: 'zh', profile }), {
+      code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED'
+    });
+  }
+});
+
+test('Cloudflare text plus SiliconFlow Kolors hybrid probe keeps provider boundaries explicit', async () => {
+  const env = {
+    NODE_ENV: 'production',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cf-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    SILICONFLOW_API_KEY: 'sf-image-test-key'
+  };
+  const calls = { chat: [], image: [], probes: [] };
+  const provider = createSiliconFlowGenerationProvider({
+    env,
+    imageGenerate: async (input) => {
+      calls.image.push(input);
+      return { data: { images: [{ url: 'https://assets.example/result.png' }] } };
+    },
+    chatGenerate: async (input) => {
+      calls.chat.push(input);
+      return {
+        text: JSON.stringify({
+          directions: Array.from({ length: 4 }, (_, index) => ({
+            title: `T${index}`,
+            summary: `S${index}`,
+            prompt: `P${index}`
+          }))
+        }),
+        model: input.model
+      };
+    },
+    fetcher: async (url, options) => {
+      calls.probes.push({ url, options });
+      if (url.includes('/ai/models/search')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            result: [{ name: GENERATION_DIRECTIONS_MODEL }]
+          })
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ id: GENERATION_IMAGE_MODEL }] })
+      };
+    }
+  });
+  const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, env);
+  assert.deepEqual(await provider.checkAvailability({ profile }), {
+    ok: true,
+    kind: 'cloudflare-hybrid',
+    profile: STANDARD_PROFILE_ID
+  });
+  assert.equal(calls.probes.length, 2);
+  assert.equal(calls.probes[0].options.headers.authorization, 'Bearer cf-test-token');
+  assert.equal(calls.probes[1].options.headers.authorization, 'Bearer sf-image-test-key');
+
+  await provider.generateDirections({ prompt: 'x', locale: 'zh', profile });
+  await provider.generateImage({ prompt: 'x', profile, aspectRatio: '1:1', images: [] });
+  assert.equal(calls.chat[0].model, GENERATION_DIRECTIONS_MODEL);
+  assert.equal(calls.image[0].model, GENERATION_IMAGE_MODEL);
+});
+
+test('deployed generation defaults to Cloudflare text when provider flag is omitted', async () => {
+  const env = {
+    NODE_ENV: 'production',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cf-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    SILICONFLOW_API_KEY: 'sf-image-test-key'
+  };
+  const provider = createSiliconFlowGenerationProvider({
+    env,
+    imageGenerate: async () => ({}),
+    chatGenerate: async () => ({ text: '{}' }),
+    fetcher: async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () => url.includes('/ai/models/search')
+        ? { result: [{ name: GENERATION_DIRECTIONS_MODEL }] }
+        : { data: [{ id: GENERATION_IMAGE_MODEL }] }
+    })
+  });
+  assert.equal(provider.kind, 'cloudflare-hybrid');
+  assert.deepEqual(await provider.checkAvailability({
+    profile: getInternalGenerationProfile(STANDARD_PROFILE_ID, env)
+  }), {
+    ok: true,
+    kind: 'cloudflare-hybrid',
+    profile: STANDARD_PROFILE_ID
+  });
+});
+
+test('development generation defaults to the Cloudflare text runtime as well', () => {
+  const env = {
+    NODE_ENV: 'development',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cf-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    SILICONFLOW_API_KEY: 'sf-image-test-key'
+  };
+  const provider = createSiliconFlowGenerationProvider({
+    env,
+    imageGenerate: async () => ({}),
+    chatGenerate: async () => ({ text: '{}' })
+  });
+  assert.equal(provider.kind, 'cloudflare-hybrid');
+});
+
+test('Cloudflare hybrid probe fails closed without a matching free-account attestation', async () => {
+  const env = {
+    NODE_ENV: 'production',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cf-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'b'.repeat(32),
+    SILICONFLOW_API_KEY: 'sf-image-test-key'
+  };
+  const provider = createSiliconFlowGenerationProvider({
+    env,
+    fetcher: async () => { throw new Error('must not probe without attestation'); }
+  });
+  const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, env);
+  assert.deepEqual(await provider.checkAvailability({ profile }), {
+    ok: false,
+    code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED'
+  });
+});
+
+test('Cloudflare provider availability stays false before a free-account attestation', async () => {
+  const env = {
+    NODE_ENV: 'production',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cf-test-token',
+    SILICONFLOW_API_KEY: 'sf-image-test-key'
+  };
+  const provider = createSiliconFlowGenerationProvider({
+    env,
+    imageGenerate: async () => ({}),
+    chatGenerate: async () => ({ text: '{}' })
+  });
+  assert.equal(provider.available, false);
+  await assert.rejects(
+    provider.generateDirections({
+      prompt: 'x',
+      locale: 'zh',
+      profile: getInternalGenerationProfile(STANDARD_PROFILE_ID, env)
+    }),
+    { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED' }
+  );
+});
+
+test('Cloudflare terminal quota and paid-model errors stay non-retryable through generation directions', async () => {
+  const env = {
+    NODE_ENV: 'production',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cf-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    SILICONFLOW_API_KEY: 'sf-image-test-key'
+  };
+  const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, env);
+  for (const [code, status] of [
+    ['AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED', 429],
+    ['AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN', 403]
+  ]) {
+    const provider = createSiliconFlowGenerationProvider({
+      env,
+      configured: true,
+      imageGenerate: async () => ({}),
+      chatGenerate: async () => {
+        const error = new Error(code);
+        error.code = code;
+        error.status = status;
+        throw error;
+      }
+    });
+    await assert.rejects(
+      provider.generateDirections({ prompt: 'x', locale: 'zh', profile }),
+      (error) => error.code === code && error.retryable === false && error.status === status
+    );
+  }
 });
 
 test('direction parser rejects prose, partial arrays and malformed direction fields', () => {
@@ -474,6 +671,13 @@ test('provider timeout and user cancellation remain distinct task outcomes', () 
   assert.equal(rejected.code, 'PROVIDER_REJECTED');
   assert.equal(rejected.status, 400);
   assert.equal(rejected.retryable, false);
+
+  assert.equal(normalizeAiDesignFailure(Object.assign(new Error('free quota'), {
+    code: 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED'
+  })), 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED');
+  assert.equal(normalizeAiDesignFailure(Object.assign(new Error('paid model'), {
+    code: 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN'
+  })), 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN');
 });
 
 test('contract mock is development-only and returns valid aspect-aware PNG payloads', async () => {
@@ -490,8 +694,29 @@ test('contract mock is development-only and returns valid aspect-aware PNG paylo
       SILICONFLOW_API_KEY: ''
     }
   });
-  assert.equal(production.kind, 'siliconflow');
+  assert.equal(production.kind, 'cloudflare-hybrid');
   assert.equal(production.available, false);
+  const productionByAppEnv = createConfiguredGenerationProvider({
+    env: {
+      NODE_ENV: 'development',
+      APP_ENV: 'production',
+      AI_GENERATION_CONTRACT_MOCK: '1',
+      SILICONFLOW_API_KEY: ''
+    }
+  });
+  assert.equal(productionByAppEnv.kind, 'cloudflare-hybrid');
+  assert.equal(productionByAppEnv.available, false);
+  const testProcessProductionIntent = createConfiguredGenerationProvider({
+    env: {
+      NODE_ENV: 'test',
+      APP_ENV: 'production',
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AI_GENERATION_CONTRACT_MOCK: '1',
+      SILICONFLOW_API_KEY: 'sk-test-key'
+    }
+  });
+  assert.equal(testProcessProductionIntent.kind, 'siliconflow');
+  assert.equal(testProcessProductionIntent.available, false);
   assert.equal(createContractMockGenerationProvider().available, true);
 });
 

@@ -2247,6 +2247,119 @@ test('Harness V3 restores a released reservation only from a durable received mo
   }
 });
 
+test('Harness V3 absorbs legacy V2 receipts without a pricing snapshot during cancellation', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const controller = new RuntimeTestController();
+  controller.setBarrier('after_receipt', {
+    participants: 1,
+    timeoutMs: 5_000,
+    manualRelease: true
+  });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({
+      pool,
+      controller,
+      providerScript: [verifiedTextScript()[0]]
+    });
+    const created = await harness.createRun({
+      objective: '验证迁移前创建的 Runtime V2 运行可以在没有价格快照时安全取消。',
+      deliverables: [],
+      capabilities: { files: true, shell: true }
+    });
+    const attempt = harness.worker.processRun(created.runId);
+    await controller.waitForArrivals('after_receipt', { arrivals: 1, timeoutMs: 5_000 });
+    await pool.query(
+      `UPDATE agent_runs
+          SET runtime_profile_summary='{"constitution":"legacy-v2","modelConfig":{"provider":"cloudflare","model":"@cf/openai/gpt-oss-120b"}}'::jsonb,
+              runtime_version=2,
+              estimated_credits_used=27
+        WHERE id=$1`,
+      [created.runId]
+    );
+    const released = await pool.query(
+      `UPDATE agent_budget_reservations reservation
+          SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+         FROM agent_model_call_receipts receipt
+        WHERE reservation.run_id=$1 AND reservation.model_call_id=receipt.id
+          AND receipt.state='received' AND reservation.state='reserved'
+        RETURNING reservation.reservation_key`,
+      [created.runId]
+    );
+    assert.equal(released.rowCount, 1);
+    const cancelled = await harness.cancel(created.runId);
+    assert.equal(cancelled.status, 'cancelled');
+    controller.releaseBarrier('after_receipt');
+    const workerResult = await attempt;
+    assert.equal(workerResult.status, 'lease_lost');
+    const terminal = await harness.snapshot(created.runId);
+    assert.equal(terminal.persistent.run.status, 'cancelled');
+    assert.equal(Number(terminal.persistent.run.charged_credits), 0);
+    assert.equal(Number(terminal.persistent.run.estimated_credits_used), 0);
+    assert.equal(terminal.persistent.holds[0].status, 'released');
+    assert.equal(terminal.persistent.reservations[0].state, 'consumed');
+    assert.equal(Number(terminal.persistent.reservations[0].actual_credits), 0);
+    assert.equal(terminal.persistent.receipts[0].state, 'consumed');
+    assert.equal(
+      terminal.persistent.events.some((event) => (
+        event.event_type === 'model.call.legacy_pricing_absorbed'
+      )),
+      true
+    );
+    await harness.assertInvariants(created.runId);
+  } finally {
+    try {
+      controller.releaseBarrier('after_receipt');
+    } catch {}
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
+test('Harness V3 replays a settled legacy V2 run without a pricing snapshot', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({
+      pool,
+      providerScript: verifiedTextScript()
+    });
+    const created = await harness.createRun({
+      objective: '验证迁移前已完成的 Runtime V2 运行可以被回放。',
+      deliverables: [],
+      capabilities: { files: true, shell: true }
+    });
+    const terminal = await harness.runToTerminal(created.runId);
+    assert.equal(terminal.snapshot.persistent.run.status, 'succeeded');
+    await pool.query(
+      `UPDATE agent_runs
+          SET runtime_profile_summary='{"constitution":"legacy-v2","modelConfig":{"provider":"cloudflare","model":"@cf/openai/gpt-oss-120b"}}'::jsonb,
+              runtime_profile_hash=NULL
+        WHERE id=$1`,
+      [created.runId]
+    );
+    const replay = await harness.assertInvariants(created.runId);
+    assert.equal(replay.persistent.run.status, 'succeeded');
+    assert.equal(
+      replay.persistent.reservations.some((entry) => entry.state === 'reserved'),
+      false
+    );
+    assert.equal(
+      replay.persistent.receipts.some((entry) => ['queued', 'dispatched', 'received'].includes(entry.state)),
+      false
+    );
+  } finally {
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
 test('Harness V3 refuses to revive a released reservation without a determined receipt', {
   skip: !enabled,
   timeout: 30_000

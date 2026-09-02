@@ -14,7 +14,11 @@ const {
   encryptDesignMessage
 } = require('../services/agent-payload-service');
 const { installDesignConversationRoutes } = require('../routes/design-conversations');
-const { resolveWorkerConcurrency } = require('../scripts/start-agent-worker');
+const {
+  resolveWorkerConcurrency,
+  cleanupProviderSchedulers,
+  resolveImageProviderSchedulers
+} = require('../scripts/start-agent-worker');
 
 const encryptionEnv = {
   AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`
@@ -52,11 +56,17 @@ test('design messages are encrypted and bound to conversation, row and role', ()
   }), { code: 'AGENT_PAYLOAD_DECRYPT_FAILED' });
 });
 
-test('planner model locks remain Qwen3 for text and Kolors for every image route', () => {
-  const messages = plannerMessages({ history: [], message: '生成海报', attachmentCount: 0 });
-  assert.equal(TEXT_MODEL, 'Qwen/Qwen3-8B');
+test('planner prompt uses the server-selected text model and keeps Kolors for every image route', () => {
+  const messages = plannerMessages({
+    history: [],
+    message: '生成海报',
+    attachmentCount: 0,
+    textModel: '@cf/openai/gpt-oss-120b'
+  });
+  assert.equal(TEXT_MODEL, '@cf/openai/gpt-oss-120b');
   assert.equal(IMAGE_MODEL, 'Kwai-Kolors/Kolors');
-  assert.match(messages[0].content, /Qwen\/Qwen3-8B/);
+  assert.match(messages[0].content, /@cf\/openai\/gpt-oss-120b/);
+  assert.doesNotMatch(messages[0].content, /Qwen\/Qwen3-8B/);
   assert.match(messages[0].content, /Kwai-Kolors\/Kolors/);
   assert.doesNotMatch(messages[0].content, /Qwen-Image-Edit/);
 });
@@ -365,4 +375,39 @@ test('Mac worker attempts two runs only when CPU, memory and browser relay are r
     runtimeReadiness,
     system: { ...readySystem, freemem: () => 2 * 1024 ** 3 }
   }), { concurrency: 1, fallbackReason: 'MEMORY_CAPACITY' });
+});
+
+test('Mac worker cleanup expires both text and Kolors scheduler queues exactly once', async () => {
+  const calls = [];
+  const textScheduler = { cleanup: async () => calls.push('text') };
+  const imageScheduler = { cleanup: async () => calls.push('image') };
+  await cleanupProviderSchedulers([textScheduler, imageScheduler, textScheduler]);
+  assert.deepEqual(calls.sort(), ['image', 'text']);
+});
+
+test('Mac worker keeps Cloudflare text and Kolors image traffic on separate scheduler keys', () => {
+  const providerScheduler = { providerKey: 'cloudflare:@cf/openai/gpt-oss-120b' };
+  const pool = { connect: () => ({}) };
+  const { imageTextProviderScheduler, imageProviderScheduler } = resolveImageProviderSchedulers({
+    config: { modelProvider: 'cloudflare' },
+    pool,
+    env: {
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0',
+      AGENT_SILICONFLOW_REQUESTS_PER_MINUTE: '9'
+    },
+    providerScheduler
+  });
+  assert.equal(imageTextProviderScheduler.providerKey, 'cloudflare:@cf/openai/gpt-oss-120b');
+  assert.equal(imageProviderScheduler.providerKey, 'siliconflow:Kwai-Kolors/Kolors');
+  assert.notEqual(imageTextProviderScheduler.providerKey, imageProviderScheduler.providerKey);
+  const siliconFlowProviderScheduler = { providerKey: 'siliconflow:Qwen/Qwen3-8B' };
+  const siliconFlow = resolveImageProviderSchedulers({
+    config: { modelProvider: 'siliconflow' },
+    pool,
+    env: {},
+    providerScheduler: siliconFlowProviderScheduler
+  });
+  assert.equal(siliconFlow.imageTextProviderScheduler, siliconFlowProviderScheduler);
+  assert.equal(siliconFlow.imageProviderScheduler.providerKey, 'siliconflow:Kwai-Kolors/Kolors');
+  assert.notEqual(siliconFlow.imageTextProviderScheduler, siliconFlow.imageProviderScheduler);
 });

@@ -28,12 +28,14 @@ const {
 const {
   AgentWaitingForUser,
   ARTIFACT_MIME_TYPES,
+  CloudflareAgentModelProvider,
   FUNCTION_TOOLS,
   OllamaAgentModelProvider,
   OpenAiAgentModelProvider,
   SiliconFlowAgentModelProvider,
   assertPosixShellScript,
   buildInstructions,
+  cloudflareUsageCredits,
   functionToolsForProfile,
   normalizeReportPdfToolAlias,
   ollamaFileTools,
@@ -426,10 +428,57 @@ const {
   normalizeDeliverables,
   normalizeDelegatedTasks,
   nextConsecutiveFailureCount,
+  usageCreditsForRun,
+  isConfiguredModelProvider,
+  isLegacyRunWithoutPricingSnapshot,
   objectivePublicFields,
   publicRun,
   publicSubagent
 } = require('../services/agent-run-service');
+
+test('legacy pricing detection covers non-empty pre-migration Runtime V2 summaries', () => {
+  assert.equal(isLegacyRunWithoutPricingSnapshot({
+    runtime_version: 2,
+    runtime_profile_summary: {
+      constitution: 'legacy-v2',
+      modelConfig: { provider: 'cloudflare', model: '@cf/openai/gpt-oss-120b' }
+    }
+  }), true);
+  assert.equal(isLegacyRunWithoutPricingSnapshot({
+    runtime_version: 2,
+    runtime_profile_summary: {
+      modelConfig: {
+        pricingSnapshot: {
+          provider: 'cloudflare',
+          model: '@cf/openai/gpt-oss-120b',
+          inputCreditsPerMillion: 0.35,
+          outputCreditsPerMillion: 0.75
+        }
+      }
+    }
+  }), false);
+});
+
+test('Cloudflare quote readiness requires the attested free account identity', () => {
+  const accountId = 'a'.repeat(32);
+  const base = {
+    runtimeDriver: 'live',
+    modelProvider: 'cloudflare',
+    cloudflareAccountId: accountId,
+    cloudflareApiToken: 'token',
+    cloudflareFreeAccountId: accountId
+  };
+  assert.equal(isConfiguredModelProvider(base), false);
+  assert.equal(isConfiguredModelProvider({
+    ...base,
+    cloudflareFreeAccountAttested: true
+  }), true);
+  assert.equal(isConfiguredModelProvider({
+    ...base,
+    cloudflareFreeAccountAttested: true,
+    cloudflareFreeAccountId: 'b'.repeat(32)
+  }), false);
+});
 const {
   evaluateAgentTrajectory
 } = require('../services/agent-trajectory-evaluator');
@@ -1364,6 +1413,132 @@ test('worker passes decrypted objective deliverables into the parent model', asy
   assert.deepEqual(observed, [['report']]);
 });
 
+test('worker fails a queued run before any execution when its pinned model differs', async () => {
+  const runId = '11111111-1111-4111-8111-111111111121';
+  const workerId = 'worker-model-profile-mismatch';
+  let privateContextLoads = 0;
+  let modelCalls = 0;
+  let sandboxCalls = 0;
+  let failed = null;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null,
+        model_provider: 'siliconflow',
+        model_name: 'Qwen/Qwen3-8B'
+      }),
+      loadPrivateContext: async () => {
+        privateContextLoads += 1;
+        throw new Error('private context must not be loaded');
+      },
+      failRun: async (input) => {
+        failed = input;
+        return true;
+      }
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId,
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32)
+    },
+    sandbox: {
+      provision: async () => { sandboxCalls += 1; },
+      destroy: async () => { sandboxCalls += 1; }
+    },
+    model: {
+      providerName: 'cloudflare',
+      execute: async () => { modelCalls += 1; }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), {
+    code: 'AGENT_RUN_MODEL_PROFILE_MISMATCH'
+  });
+  assert.equal(privateContextLoads, 0);
+  assert.equal(modelCalls, 0);
+  assert.equal(sandboxCalls, 0);
+  assert.equal(failed.errorCode, 'AGENT_RUN_MODEL_PROFILE_MISMATCH');
+  assert.equal(failed.refundable, true);
+  assert.equal(failed.actualCredits, 0);
+});
+
+test('live worker fails closed when a run has no immutable pricing snapshot', async () => {
+  const runId = '11111111-1111-4111-8111-111111111122';
+  const workerId = 'worker-pricing-profile-missing';
+  let privateContextLoads = 0;
+  let failed = null;
+  const accountId = 'b'.repeat(32);
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null,
+        model_provider: 'cloudflare',
+        model_name: '@cf/openai/gpt-oss-120b'
+      }),
+      loadPrivateContext: async () => {
+        privateContextLoads += 1;
+        throw new Error('private context must not be loaded');
+      },
+      failRun: async (input) => {
+        failed = input;
+        return true;
+      }
+    },
+    env: {
+      NODE_ENV: 'test',
+      AGENT_RUNTIME_DRIVER: 'live',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId,
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_ACCOUNT_ID: accountId
+    },
+    sandbox: {
+      provision: async () => {},
+      destroy: async () => {}
+    },
+    model: {
+      providerName: 'cloudflare',
+      execute: async () => {
+        throw new Error('model must not be called');
+      }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), {
+    code: 'AGENT_RUN_PRICING_PROFILE_MISSING'
+  });
+  assert.equal(privateContextLoads, 0);
+  assert.equal(failed.errorCode, 'AGENT_RUN_PRICING_PROFILE_MISSING');
+  assert.equal(failed.refundable, true);
+  assert.equal(failed.actualCredits, 0);
+});
+
 test('worker rejects a forbidden parent shell before budget reservation or durable dispatch', async () => {
   const runId = '11111111-1111-4111-8111-111111111131';
   const userId = '22222222-2222-4222-8222-222222222231';
@@ -1836,6 +2011,13 @@ test('failure breaker counts only the same failed action as repeated', () => {
 });
 
 test('production Agent runtime fails closed without live credentials and a pinned image', () => {
+  const cloudflare = {
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32)
+  };
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1'
@@ -1843,13 +2025,13 @@ test('production Agent runtime fails closed without live credentials and a pinne
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    OPENAI_API_KEY: 'openai-test',
+    ...cloudflare,
     CUA_API_KEY: 'cua-test'
   }), { code: 'AGENT_SANDBOX_IMAGE_NOT_PINNED' });
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    OPENAI_API_KEY: 'openai-test',
+    ...cloudflare,
     CUA_API_KEY: 'cua-test',
     AGENT_CUA_IMAGE_REF: 'ghcr.io/example/agent@sha256:abc',
     AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser',
@@ -1858,7 +2040,7 @@ test('production Agent runtime fails closed without live credentials and a pinne
   const config = assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    OPENAI_API_KEY: 'openai-test',
+    ...cloudflare,
     CUA_API_KEY: 'cua-test',
     AGENT_CUA_IMAGE_REF: 'ghcr.io/example/agent@sha256:abc',
     AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
@@ -1868,7 +2050,8 @@ test('production Agent runtime fails closed without live credentials and a pinne
     AGENT_WORKER_RELAY_URL: 'wss://api.example.com/api/agent-desktop/worker',
     AGENT_WORKER_ID: 'mac-production-1'
   });
-  assert.equal(config.modelName, 'gpt-5.6');
+  assert.equal(config.modelProvider, 'cloudflare');
+  assert.equal(config.modelName, '@cf/openai/gpt-oss-120b');
   assert.equal(config.hardMaxCredits, 500);
   assert.throws(() => getAgentConfig({
     NODE_ENV: 'production',
@@ -1881,8 +2064,11 @@ test('production Beta runtime fails closed without an owner UUID allowlist', () 
     NODE_ENV: 'production',
     APP_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    AGENT_MODEL_PROVIDER: 'siliconflow',
-    SILICONFLOW_API_KEY: 'test-key',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local',
     AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
@@ -1906,28 +2092,34 @@ test('production Beta runtime fails closed without an owner UUID allowlist', () 
   assert.deepEqual(config.betaUserIds, [ownerId]);
 });
 
-test('production local Agent accepts loopback Ollama and a prebuilt local Cua image', () => {
+test('production Agent keeps Cloudflare text lock with a prebuilt local Cua image', () => {
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    AGENT_MODEL_PROVIDER: 'ollama',
-    AGENT_OLLAMA_BASE_URL: 'http://127.0.0.1:11434',
-    AGENT_MODEL_NAME: 'qwen3:8b',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local'
   }), { code: 'AGENT_SANDBOX_IMAGE_NOT_READY' });
   const config = assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    AGENT_MODEL_PROVIDER: 'ollama',
-    AGENT_OLLAMA_BASE_URL: 'http://127.0.0.1:11434',
-    AGENT_MODEL_NAME: 'qwen3:8b',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local',
     AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
     AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
   });
-  assert.equal(config.modelProvider, 'ollama');
+  assert.equal(config.modelProvider, 'cloudflare');
   assert.equal(config.sandboxMode, 'local');
   assert.equal(config.sandboxDockerPlatform, '');
   assert.equal(config.sandboxImageRef, 'artigen/cua-xfce:0.1.15-tools-v1');
@@ -1971,6 +2163,100 @@ test('SiliconFlow Agent is pinned to the deep-thinking Qwen3-8B model and requir
     AGENT_MODEL_PROVIDER: 'siliconflow',
     AGENT_MODEL_NAME: 'Qwen/Qwen3-32B'
   }), { code: 'AGENT_SILICONFLOW_MODEL_NOT_ALLOWED' });
+});
+
+test('Cloudflare Agent is pinned to the free-tier GPT-OSS 120B model and requires account credentials', () => {
+  const accountId = 'a'.repeat(32);
+  assert.throws(() => assertAgentRuntimeReady({
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local'
+  }), { code: 'AGENT_MODEL_NOT_CONFIGURED' });
+  const config = assertAgentRuntimeReady({
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+    AGENT_RUNTIME_V2_ENABLED: 'true',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local',
+    AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
+    AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
+  });
+  assert.equal(config.modelProvider, 'cloudflare');
+  assert.equal(config.modelName, '@cf/openai/gpt-oss-120b');
+  assert.equal(config.cloudflareFreeAccountAttested, true);
+  assert.equal(
+    config.cloudflareBaseUrl,
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`
+  );
+  assert.throws(() => getAgentConfig({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'not-an-account-id'
+  }), { code: 'AGENT_CLOUDFLARE_ACCOUNT_ID_INVALID' });
+  assert.throws(() => getAgentConfig({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_MODEL_NAME: '@cf/qwen/qwen3.8-27b'
+  }), { code: 'AGENT_CLOUDFLARE_MODEL_NOT_ALLOWED' });
+  for (const invalidRate of ['0', '-1', 'not-a-number']) {
+    assert.throws(() => assertAgentRuntimeReady({
+      AGENT_FEATURE_ENABLED: '1',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: invalidRate,
+      AGENT_RUNTIME_V2_ENABLED: 'true',
+      AGENT_SANDBOX_PROVIDER: 'cua',
+      AGENT_SANDBOX_MODE: 'local',
+      AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
+      AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
+    }), { code: 'AGENT_RUNTIME_V2_PRICING_NOT_READY' });
+  }
+  assert.throws(() => assertAgentRuntimeReady({
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local'
+  }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED' });
+  assert.throws(() => getAgentConfig({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'b'.repeat(32)
+  }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_MISMATCH' });
+});
+
+test('deployed worker hard-lock rejects legacy text providers while preserving image-only SiliconFlow', () => {
+  assert.throws(() => getAgentConfig({
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  assert.throws(() => getAgentConfig({
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_MODEL_PROVIDER: 'ollama',
+    AGENT_MODEL_NAME: 'qwen3:8b'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  const config = getAgentConfig({
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b'
+  });
+  assert.equal(config.textModelHardLock, true);
+  assert.throws(() => getAgentConfig({
+    NODE_ENV: 'production',
+    APP_ENV: 'dev',
+    AGENT_TEXT_MODEL_HARD_LOCK: 'false',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
 });
 
 test('Runtime V2 assignment is server-owned, stable and fails back to V1 when disabled', () => {
@@ -4702,6 +4988,7 @@ test('OpenAI Responses computer loop executes read-only visual actions and retur
   ];
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },
@@ -5039,6 +5326,406 @@ test('SiliconFlow Qwen3-8B agent executes the durable file-tool loop without loc
     AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '1',
     AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '2'
   }) > 0);
+});
+
+test('Cloudflare GPT-OSS 120B uses the free Workers AI chat endpoint for structured Agent calls', async () => {
+  const accountId = 'b'.repeat(32);
+  const requests = [];
+  const provider = new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (url, init = {}) => {
+      assert.equal(init.headers.Authorization, 'Bearer cloudflare-test-token');
+      if (init.method === 'GET') {
+        assert.equal(
+          url,
+          `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search?search=%40cf%2Fopenai%2Fgpt-oss-120b`
+        );
+        return new Response(JSON.stringify({
+          success: true,
+          result: [{ name: '@cf/openai/gpt-oss-120b' }]
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      assert.equal(
+        url,
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`
+      );
+      const request = JSON.parse(init.body);
+      requests.push(request);
+      return new Response(JSON.stringify({
+        id: 'structured',
+        choices: [{ message: { role: 'assistant', content: '{"ok":true}' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 20 }
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+  });
+  assert.deepEqual(await provider.probe(), {
+    ok: true,
+    provider: 'cloudflare',
+    model: '@cf/openai/gpt-oss-120b'
+  });
+  const result = await provider.createStructuredJson({
+    messages: [{ role: 'user', content: 'Return {"ok":true}.' }],
+    errorCode: 'TEST_STRUCTURED_OUTPUT_INVALID',
+    phase: 'router'
+  });
+  assert.deepEqual(result.value, { ok: true });
+  assert.equal(requests[0].model, '@cf/openai/gpt-oss-120b');
+  assert.deepEqual(requests[0].response_format, { type: 'json_object' });
+  assert.equal(requests[0].enable_thinking, undefined);
+  assert.equal(requests[0].max_tokens, 1200);
+  assert.equal(cloudflareUsageCredits({
+    prompt_tokens: 1_000_000,
+    completion_tokens: 1_000_000
+  }), 1.1);
+});
+
+test('Cloudflare model-directory probe fails closed for credentials and missing model', async () => {
+  const makeProvider = (body, status) => new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: 'd'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token'
+    },
+    fetchImpl: async () => new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  await assert.rejects(
+    makeProvider({ success: false, errors: [{ code: 10000 }] }, 403).probe(),
+    { code: 'AGENT_CLOUDFLARE_CREDENTIAL_INVALID' }
+  );
+  await assert.rejects(
+    makeProvider({ success: true, result: [] }, 200).probe(),
+    { code: 'AGENT_CLOUDFLARE_MODEL_MISSING' }
+  );
+  await assert.rejects(
+    makeProvider({ success: false, errors: [{ code: 1000 }] }, 429).probe(),
+    { code: 'AGENT_CLOUDFLARE_UNAVAILABLE' }
+  );
+});
+
+test('Cloudflare Agent never retries exhausted free quota or a paid-only model response', async () => {
+  const accountId = 'd'.repeat(32);
+  const makeProvider = ({ status, code }) => {
+    let requests = 0;
+    return {
+      provider: new CloudflareAgentModelProvider({
+        env: {
+          AGENT_MODEL_PROVIDER: 'cloudflare',
+          CLOUDFLARE_ACCOUNT_ID: accountId,
+          CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+          AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+          AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+          AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+        },
+        fetchImpl: async () => {
+          requests += 1;
+          return new Response(JSON.stringify({ errors: [{ code }] }), {
+            status,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }),
+      requests: () => requests
+    };
+  };
+
+  const quota = makeProvider({ status: 429, code: 3036 });
+  await assert.rejects(
+    quota.provider.createChat({ model: '@cf/openai/gpt-oss-120b', messages: [] }),
+    { code: 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED', retryable: false }
+  );
+  assert.equal(quota.requests(), 1);
+
+  const paid = makeProvider({ status: 403, code: 5035 });
+  await assert.rejects(
+    paid.provider.createChat({ model: '@cf/openai/gpt-oss-120b', messages: [] }),
+    { code: 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN', retryable: false }
+  );
+  assert.equal(paid.requests(), 1);
+});
+
+test('Cloudflare GPT-OSS 120B completes an Agent tool-call round trip', async () => {
+  const responses = [{
+    id: 'cf-plan',
+    choices: [{ message: {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: 'cf-call-plan',
+        type: 'function',
+        function: {
+          name: 'update_plan',
+          arguments: JSON.stringify({
+            explanation: 'Answer directly',
+            steps: [
+              { label: 'Answer', status: 'in_progress' },
+              { label: 'Verify', status: 'pending' }
+            ]
+          })
+        }
+      }]
+    }}],
+    usage: { prompt_tokens: 50, completion_tokens: 10 }
+  }, {
+    id: 'cf-final',
+    choices: [{ message: { role: 'assistant', content: 'Done.' } }],
+    usage: { prompt_tokens: 60, completion_tokens: 5 }
+  }];
+  const requests = [];
+  const provider = new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: 'c'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'c'.repeat(32),
+      AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Answer directly',
+    capabilities: {},
+    maxSteps: 4,
+    callbacks: {
+      updatePlan: async (value) => ({ accepted: true, steps: value.steps }),
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Done.');
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].model, '@cf/openai/gpt-oss-120b');
+  assert.equal(requests[1].messages.at(-1).tool_call_id, 'cf-call-plan');
+});
+
+test('Cloudflare receipt recovery uses the immutable provider pricing snapshot', () => {
+  const credits = usageCreditsForRun({
+    inputTokens: 1_000_000,
+    outputTokens: 1_000_000,
+    config: {
+      modelProvider: 'siliconflow',
+      modelName: 'Qwen/Qwen3-8B',
+      siliconFlowInputCreditsPerMillion: 20,
+      siliconFlowOutputCreditsPerMillion: 160,
+      cloudflareInputCreditsPerMillion: 999,
+      cloudflareOutputCreditsPerMillion: 999
+    },
+    run: {
+      model_provider: 'cloudflare',
+      model_name: '@cf/openai/gpt-oss-120b',
+      runtime_profile_summary: {
+        modelConfig: {
+          pricingSnapshot: {
+            provider: 'cloudflare',
+            model: '@cf/openai/gpt-oss-120b',
+            inputCreditsPerMillion: 0.35,
+            outputCreditsPerMillion: 0.75
+          }
+        }
+      }
+    }
+  });
+  assert.equal(credits, 1.1);
+});
+
+test('model pricing requires an immutable run snapshot and rejects incompatible worker rates', () => {
+  assert.throws(() => usageCreditsForRun({
+    inputTokens: 10,
+    outputTokens: 10,
+    config: {
+      modelProvider: 'cloudflare',
+      modelName: '@cf/openai/gpt-oss-120b',
+      cloudflareInputCreditsPerMillion: 0.35,
+      cloudflareOutputCreditsPerMillion: 0.75
+    },
+    run: {
+      model_provider: 'cloudflare',
+      model_name: '@cf/openai/gpt-oss-120b',
+      runtime_profile_summary: {}
+    }
+  }), { code: 'AGENT_RUN_PRICING_PROFILE_INVALID' });
+
+  assert.throws(() => usageCreditsForRun({
+    inputTokens: 10,
+    outputTokens: 10,
+    config: {
+      modelProvider: 'cloudflare',
+      modelName: '@cf/openai/gpt-oss-120b',
+      cloudflareInputCreditsPerMillion: 0.35,
+      cloudflareOutputCreditsPerMillion: 0.75
+    },
+    run: {
+      model_provider: 'cloudflare',
+      model_name: '@cf/openai/gpt-oss-120b',
+      runtime_profile_summary: {
+        modelConfig: {
+          pricingSnapshot: {
+            provider: 'siliconflow',
+            model: 'Qwen/Qwen3-8B',
+            inputCreditsPerMillion: 20,
+            outputCreditsPerMillion: 160
+          }
+        }
+      }
+    }
+  }), { code: 'AGENT_RUN_PRICING_PROFILE_INVALID' });
+});
+
+test('Agent service status does not report a stale Worker model as ready', async () => {
+  const pool = {
+    async query(sql) {
+      if (String(sql).includes('WITH latest_worker')) {
+        return { rows: [{
+          worker_online: true,
+          model_provider: 'siliconflow',
+          model_name: 'Qwen/Qwen3-8B',
+          sandbox_mode: 'local',
+          concurrency: 1,
+          browser_ready: true,
+          egress_verified: true,
+          desktop_relay_ready: true,
+          queue_depth: 0,
+          last_seen_at: new Date()
+        }] };
+      }
+      if (String(sql).includes('has_lease_epoch')) {
+        return { rows: [{
+          has_lease_epoch: true,
+          has_receipts: true,
+          has_tool_receipts: true,
+          has_reservations: true
+        }] };
+      }
+      return { rows: [{ has_scheduler: true, has_requests: true }] };
+    },
+    connect: async () => ({
+      query: async () => ({ rows: [] }),
+      release() {}
+    })
+  };
+  const service = createAgentRunService({
+    pool,
+    env: {
+      NODE_ENV: 'test',
+      AGENT_FEATURE_ENABLED: 'true',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '0.35',
+      AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '0.75',
+      AGENT_BETA_MODE: 'disabled'
+    }
+  });
+  const status = await service.getServiceStatus();
+  assert.equal(status.workerOnline, true);
+  assert.equal(status.workerModelReady, false);
+  assert.equal(status.workerModel.model, 'Qwen/Qwen3-8B');
+  assert.equal(status.browserReady, false);
+  assert.equal(status.availabilityNote, 'worker_model_mismatch');
+});
+
+test('Agent service status stays observable when provider pricing is missing or zero', async () => {
+  const pool = {
+    async query(sql) {
+      if (String(sql).includes('WITH latest_worker')) {
+        return { rows: [{ worker_online: false, queue_depth: 0 }] };
+      }
+      if (String(sql).includes('has_lease_epoch')) {
+        return { rows: [{
+          has_lease_epoch: true,
+          has_receipts: true,
+          has_tool_receipts: true,
+          has_reservations: true
+        }] };
+      }
+      return { rows: [{ has_scheduler: false, has_requests: false }] };
+    },
+    connect: async () => ({
+      query: async () => ({ rows: [] }),
+      release() {}
+    })
+  };
+  for (const profile of [
+    {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '0',
+      AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '0',
+      CLOUDFLARE_ACCOUNT_ID: 'c'.repeat(32),
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'c'.repeat(32),
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true'
+    },
+    {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0'
+    }
+  ]) {
+    const service = createAgentRunService({
+      pool,
+      env: {
+        NODE_ENV: 'test',
+        AGENT_FEATURE_ENABLED: 'true',
+        AGENT_BETA_MODE: 'disabled',
+        ...profile
+      }
+    });
+    const status = await service.getServiceStatus();
+    assert.equal(status.durability.pricingReady, false);
+    assert.equal(status.workerOnline, false);
+  }
+});
+
+test('live V1 createRun rejects zero pricing before opening a hold', async () => {
+  let poolTouched = false;
+  const service = createAgentRunService({
+    pool: {
+      connect: async () => {
+        poolTouched = true;
+        throw new Error('createRun must reject before opening a transaction');
+      }
+    },
+    env: {
+      ...encryptionEnv,
+      NODE_ENV: 'test',
+      APP_ENV: 'dev',
+      AGENT_FEATURE_ENABLED: '1',
+      AGENT_RUNTIME_DRIVER: 'live',
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_PUBLIC_CAPABILITIES: 'files,shell',
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0'
+    }
+  });
+  await assert.rejects(
+    service.createRun({
+      userId: '11111111-1111-4111-8111-111111111111',
+      objective: '生成一份简短说明',
+      idempotencyKey: 'v1-zero-pricing'
+    }),
+    { code: 'AGENT_PRICING_NOT_READY', status: 503 }
+  );
+  assert.equal(poolTouched, false);
 });
 
 test('SiliconFlow Qwen3-8B safely synthesizes a plan when the small model starts with execution', async () => {
@@ -5624,6 +6311,7 @@ test('coordinate-mutating computer actions require takeover before execution', a
   ];
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },
@@ -5659,6 +6347,7 @@ test('durable model checkpoint submits a completed tool receipt without replayin
   let cleared = 0;
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },
@@ -5755,6 +6444,7 @@ test('completed visual takeover is observed without replaying the coordinate act
   ];
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },

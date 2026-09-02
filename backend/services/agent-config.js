@@ -28,6 +28,7 @@ const agentWorkerEnabled = (env = process.env) => (
   agentFeatureEnabled(env) && enabled(env.AGENT_WORKER_ENABLED)
 );
 const SILICONFLOW_AGENT_MODEL = 'Qwen/Qwen3-8B';
+const CLOUDFLARE_AGENT_MODEL = '@cf/openai/gpt-oss-120b';
 const AGENT_BROWSER_MODE = 'full-approval-v1';
 const AGENT_BETA_MODE = 'owner-only-v1';
 const AGENT_AUTHENTICATED_MODE = 'authenticated-v1';
@@ -113,9 +114,17 @@ const getAgentConfig = (env = process.env) => {
     throw new ApiError(500, 'AGENT_FIXTURE_RUNTIME_FORBIDDEN');
   }
 
-  const modelProvider = String(env.AGENT_MODEL_PROVIDER || 'openai').trim().toLowerCase();
+  // Cloudflare's free GPT-OSS 120B is the default text model for every
+  // deployed Agent environment. SiliconFlow remains reserved for images.
+  const modelProvider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
+  const textModelHardLock = enabled(env.AGENT_TEXT_MODEL_HARD_LOCK);
+  const appEnvironment = String(env.APP_ENV || '').trim().toLowerCase();
+  const deployedTextRuntime = String(env.NODE_ENV || '').trim().toLowerCase() !== 'test' && (
+    production || ['dev', 'development', 'staging', 'prod'].includes(appEnvironment) ||
+    ['dev', 'development', 'staging', 'prod'].includes(String(env.NODE_ENV || '').trim().toLowerCase())
+  );
   const sandboxProvider = String(env.AGENT_SANDBOX_PROVIDER || 'cua').trim().toLowerCase();
-  if (!['openai', 'ollama', 'siliconflow'].includes(modelProvider)) {
+  if (!['openai', 'ollama', 'siliconflow', 'cloudflare'].includes(modelProvider)) {
     throw new ApiError(500, 'AGENT_MODEL_PROVIDER_INVALID');
   }
   if (!['cua', 'fixture'].includes(sandboxProvider)) {
@@ -137,10 +146,21 @@ const getAgentConfig = (env = process.env) => {
     ? 'qwen3:8b'
     : modelProvider === 'siliconflow'
       ? SILICONFLOW_AGENT_MODEL
+      : modelProvider === 'cloudflare'
+        ? CLOUDFLARE_AGENT_MODEL
       : 'gpt-5.6';
   const modelName = String(env.AGENT_MODEL_NAME || defaultModelName).trim();
   if (modelProvider === 'siliconflow' && modelName !== SILICONFLOW_AGENT_MODEL) {
     throw new ApiError(500, 'AGENT_SILICONFLOW_MODEL_NOT_ALLOWED');
+  }
+  if (modelProvider === 'cloudflare' && modelName !== CLOUDFLARE_AGENT_MODEL) {
+    throw new ApiError(500, 'AGENT_CLOUDFLARE_MODEL_NOT_ALLOWED');
+  }
+  // The hard lock is a deployment invariant, not an opt-in safety switch.
+  // Unit and historical fixture tests run with NODE_ENV=test; every real
+  // environment (including DEV) must use Cloudflare GPT-OSS for text.
+  if ((textModelHardLock || deployedTextRuntime) && modelProvider !== 'cloudflare') {
+    throw new ApiError(500, 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED');
   }
   const ollamaBaseUrl = assertLoopbackHttpUrl(
     env.AGENT_OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
@@ -159,6 +179,37 @@ const getAgentConfig = (env = process.env) => {
     env.SILICONFLOW_KEY ||
     ''
   ).trim();
+  const cloudflareAccountId = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+  if (cloudflareAccountId && !/^[0-9a-f]{32}$/i.test(cloudflareAccountId)) {
+    throw new ApiError(500, 'AGENT_CLOUDFLARE_ACCOUNT_ID_INVALID');
+  }
+  const cloudflareApiToken = String(
+    env.CLOUDFLARE_API_TOKEN || env.CLOUDFLARE_AUTH_TOKEN || ''
+  ).trim();
+  const cloudflareBaseUrl = cloudflareAccountId
+    ? `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/ai/v1`
+    : '';
+  const cloudflareApiBaseUrl = cloudflareAccountId
+    ? `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}`
+    : '';
+  const cloudflareFreeAccountId = String(
+    env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || ''
+  ).trim();
+  if (cloudflareFreeAccountId && !/^[0-9a-f]{32}$/i.test(cloudflareFreeAccountId)) {
+    throw new ApiError(500, 'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID_INVALID');
+  }
+  if (
+    enabled(env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED) &&
+    cloudflareAccountId &&
+    cloudflareFreeAccountId !== cloudflareAccountId
+  ) {
+    throw new ApiError(500, 'AGENT_CLOUDFLARE_FREE_ACCOUNT_MISMATCH');
+  }
+  const cloudflareFreeAccountAttested = Boolean(
+    enabled(env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED) &&
+    cloudflareAccountId &&
+    cloudflareFreeAccountId === cloudflareAccountId
+  );
   const publicCapabilities = new Set(String(env.AGENT_PUBLIC_CAPABILITIES || 'files,shell')
     .toLowerCase()
     .split(',')
@@ -179,12 +230,40 @@ const getAgentConfig = (env = process.env) => {
   const adaptiveReasoningEnabled = enabled(env.AGENT_ADAPTIVE_REASONING_ENABLED);
   const projectMemoryEnabled = enabled(env.AGENT_PROJECT_MEMORY_ENABLED);
   const providerSchedulerEnabled = enabled(env.AGENT_PROVIDER_SCHEDULER_ENABLED);
-  const siliconFlowInputCreditsPerMillion = Math.max(0, Number(
-    env.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION || 0
-  ));
-  const siliconFlowOutputCreditsPerMillion = Math.max(0, Number(
-    env.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION || 0
-  ));
+  const finiteNonNegative = (value, fallback) => {
+    const raw = String(value ?? '').trim();
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    // A configured-but-invalid rate must stay invalid so readiness fails closed;
+    // silently replacing it with a default could make billing non-reproducible.
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : Number.NaN;
+  };
+  const siliconFlowInputCreditsPerMillion = finiteNonNegative(
+    env.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION,
+    0
+  );
+  const siliconFlowOutputCreditsPerMillion = finiteNonNegative(
+    env.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION,
+    0
+  );
+  const cloudflareInputCreditsPerMillion = finiteNonNegative(
+    env.AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION,
+    0.35
+  );
+  const cloudflareOutputCreditsPerMillion = finiteNonNegative(
+    env.AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION,
+    0.75
+  );
+  const modelPricingSnapshot = Object.freeze({
+    provider: modelProvider,
+    model: modelName,
+    inputCreditsPerMillion: modelProvider === 'cloudflare'
+      ? cloudflareInputCreditsPerMillion
+      : siliconFlowInputCreditsPerMillion,
+    outputCreditsPerMillion: modelProvider === 'cloudflare'
+      ? cloudflareOutputCreditsPerMillion
+      : siliconFlowOutputCreditsPerMillion
+  });
   const actorSamplingProfileName = String(
     env.AGENT_RUNTIME_ACTOR_PROFILE || 'stable-v1'
   ).trim().toLowerCase();
@@ -223,6 +302,7 @@ const getAgentConfig = (env = process.env) => {
     runtimeDriver,
     modelProvider,
     modelName,
+    textModelHardLock,
     ollamaBaseUrl,
     siliconFlowBaseUrl,
     siliconFlowApiKey,
@@ -233,6 +313,19 @@ const getAgentConfig = (env = process.env) => {
       9,
       1,
       60
+    ),
+    cloudflareAccountId,
+    cloudflareApiToken,
+    cloudflareBaseUrl,
+    cloudflareApiBaseUrl,
+    cloudflareFreeAccountId,
+    cloudflareFreeAccountAttested,
+    cloudflareMaxTokens: integer(env.AGENT_CLOUDFLARE_MAX_TOKENS, 4096, 512, 32768),
+    cloudflareRequestsPerMinute: integer(
+      env.AGENT_CLOUDFLARE_REQUESTS_PER_MINUTE,
+      30,
+      1,
+      120
     ),
     modelContextTokens: integer(env.AGENT_MODEL_CONTEXT_TOKENS, 16384, 4096, 32768),
     runtimeV2Enabled,
@@ -248,6 +341,9 @@ const getAgentConfig = (env = process.env) => {
     stageMaxOutputTokens: STAGE_MAX_OUTPUT_TOKENS,
     siliconFlowInputCreditsPerMillion,
     siliconFlowOutputCreditsPerMillion,
+    cloudflareInputCreditsPerMillion,
+    cloudflareOutputCreditsPerMillion,
+    modelPricingSnapshot,
     sandboxProvider,
     sandboxMode,
     sandboxDockerPlatform,
@@ -296,24 +392,31 @@ const getAgentConfig = (env = process.env) => {
 const assertAgentRuntimeReady = (env = process.env) => {
   const config = getAgentConfig(env);
   if (!config.enabled) throw new ApiError(404, 'AGENT_FEATURE_DISABLED');
+  const runtimeV2ModelReady = (
+    config.modelProvider === 'siliconflow' && config.modelName === SILICONFLOW_AGENT_MODEL
+  ) || (
+    config.modelProvider === 'cloudflare' && config.modelName === CLOUDFLARE_AGENT_MODEL
+  );
   if (
     (config.runtimeV2Enabled || config.designPlannerV2Enabled ||
       config.adaptiveReasoningEnabled || config.projectMemoryEnabled) &&
-    (config.modelProvider !== 'siliconflow' || config.modelName !== SILICONFLOW_AGENT_MODEL)
+    !runtimeV2ModelReady
   ) {
     throw new ApiError(503, 'AGENT_RUNTIME_V2_MODEL_NOT_READY', { retryable: false });
   }
   if (config.runtimeV2Enabled && config.modelContextTokens < 16_384) {
     throw new ApiError(503, 'AGENT_RUNTIME_V2_CONTEXT_NOT_READY', { retryable: false });
   }
-  if (
-    config.runtimeV2Enabled &&
-    config.modelProvider === 'siliconflow' &&
-    (
+  if (config.runtimeV2Enabled && (
+    (config.modelProvider === 'siliconflow' && (
       !(config.siliconFlowInputCreditsPerMillion > 0) ||
       !(config.siliconFlowOutputCreditsPerMillion > 0)
-    )
-  ) {
+    )) ||
+    (config.modelProvider === 'cloudflare' && (
+      !(config.cloudflareInputCreditsPerMillion > 0) ||
+      !(config.cloudflareOutputCreditsPerMillion > 0)
+    ))
+  )) {
     throw new ApiError(503, 'AGENT_RUNTIME_V2_PRICING_NOT_READY', { retryable: false });
   }
   if (config.runtimeDriver === 'fixture') return config;
@@ -322,6 +425,15 @@ const assertAgentRuntimeReady = (env = process.env) => {
   }
   if (config.modelProvider === 'siliconflow' && !config.siliconFlowApiKey) {
     throw new ApiError(503, 'AGENT_MODEL_NOT_CONFIGURED', { retryable: false });
+  }
+  if (
+    config.modelProvider === 'cloudflare' &&
+    (!config.cloudflareAccountId || !config.cloudflareApiToken)
+  ) {
+    throw new ApiError(503, 'AGENT_MODEL_NOT_CONFIGURED', { retryable: false });
+  }
+  if (config.modelProvider === 'cloudflare' && !config.cloudflareFreeAccountAttested) {
+    throw new ApiError(503, 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED', { retryable: false });
   }
   if (config.publicImageGenerationEnabled && !config.siliconFlowApiKey) {
     throw new ApiError(503, 'AGENT_IMAGE_MODEL_NOT_CONFIGURED', { retryable: false });
@@ -399,6 +511,7 @@ module.exports = {
   resolveAgentRuntimeAssignment,
   AGENT_BETA_MODE,
   AGENT_BROWSER_MODE,
+  CLOUDFLARE_AGENT_MODEL,
   SILICONFLOW_AGENT_MODEL,
   STAGE_MAX_OUTPUT_TOKENS
 };

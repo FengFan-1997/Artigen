@@ -31,6 +31,15 @@ const mapProviderError = (error, signal) => {
   const code = String(error?.code || error?.message || '').trim().toUpperCase();
   const preview = String(error?.bodyPreview || '').toLowerCase();
   const status = Number(error?.status || 0);
+  // Cloudflare's free-tier terminal responses carry HTTP statuses that would
+  // otherwise be normalized into generic retryable errors. Preserve the
+  // provider-specific fail-closed codes before broad status handling.
+  if (code === 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED') {
+    return providerError(code, status === 403 ? 403 : 429, false);
+  }
+  if (code === 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN') {
+    return providerError(code, status >= 400 && status < 500 ? status : 403, false);
+  }
   if (
     code.includes('CONTENT_POLICY') ||
     code.includes('SAFETY') ||
@@ -173,20 +182,62 @@ const createSiliconFlowGenerationProvider = ({
   configured,
   fetcher = globalThis.fetch
 } = {}) => {
-  const credential = String(
+  const imageCredential = String(
     env.SILICONFLOW_API_KEY || env.SILICONFLOW_TOKEN || env.SILICONFLOW_KEY || ''
   ).trim();
+  // Deployed environments default to the free Cloudflare text runtime even
+  // when the optional provider variable is omitted. Test fixtures may omit it
+  // to exercise the legacy SiliconFlow image-only adapter explicitly.
+  const appEnvironment = String(env.APP_ENV || '').trim().toLowerCase();
+  const nodeEnvironment = String(env.NODE_ENV || '').trim().toLowerCase();
+  const deploymentIntent = ['production', 'prod', 'dev', 'development', 'staging'].includes(nodeEnvironment) ||
+    ['production', 'prod', 'dev', 'development', 'staging'].includes(appEnvironment);
+  const deployedTextRuntime = deploymentIntent && (
+    nodeEnvironment !== 'test' || ['production', 'prod'].includes(appEnvironment)
+  );
+  const configuredProvider = String(
+    env.AGENT_MODEL_PROVIDER || (deployedTextRuntime ? 'cloudflare' : '')
+  ).trim().toLowerCase();
+  const cloudflareText = configuredProvider === 'cloudflare';
+  const forbiddenDeployedTextProvider = deployedTextRuntime && configuredProvider !== 'cloudflare';
+  const cloudflareFreeAccountId = String(env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '').trim();
+  const cloudflareAccountId = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+  const cloudflareFreeAccountAttested = /^(1|true|yes|on)$/i.test(
+    String(env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || '')
+  ) && /^[0-9a-f]{32}$/i.test(cloudflareAccountId) &&
+    cloudflareFreeAccountId === cloudflareAccountId;
+  const textCredential = cloudflareText
+    ? String(env.CLOUDFLARE_API_TOKEN || env.CLOUDFLARE_AUTH_TOKEN || '').trim()
+    : imageCredential;
   const hasCredential = typeof configured === 'boolean'
     ? configured
-    : configuredSecret(credential);
-  const available = Boolean(hasCredential && imageGenerate && chatGenerate);
+    : configuredSecret(textCredential) && configuredSecret(imageCredential);
+  const available = Boolean(
+    hasCredential && imageGenerate && chatGenerate &&
+    (!cloudflareText || cloudflareFreeAccountAttested) &&
+    !forbiddenDeployedTextProvider
+  );
   const assertAvailable = () => {
+    if (forbiddenDeployedTextProvider) {
+      throw providerError('AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED', 503, false);
+    }
+    if (cloudflareText && !cloudflareFreeAccountAttested) {
+      throw providerError('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED', 503, false);
+    }
     if (!available) throw providerError('MODEL_PROFILE_UNAVAILABLE', 503, true);
   };
   return Object.freeze({
-    kind: 'siliconflow',
+    // The adapter remains the image-generation boundary, but its text side is
+    // Cloudflare when the deployment selects the free GPT-OSS profile.
+    kind: cloudflareText ? 'cloudflare-hybrid' : 'siliconflow',
     available,
     async checkAvailability({ profile } = {}) {
+      if (forbiddenDeployedTextProvider) {
+        return { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' };
+      }
+      if (cloudflareText && !cloudflareFreeAccountAttested) {
+        return { ok: false, code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED' };
+      }
       assertAvailable();
       if (typeof fetcher !== 'function') {
         return { ok: false, code: 'PROVIDER_HEALTHCHECK_UNAVAILABLE' };
@@ -194,15 +245,29 @@ const createSiliconFlowGenerationProvider = ({
       let endpoint;
       try {
         const base = new URL(String(
-          env.SILICONFLOW_API_BASE || 'https://api.siliconflow.cn/v1'
+          cloudflareText
+            ? `https://api.cloudflare.com/client/v4/accounts/${String(env.CLOUDFLARE_ACCOUNT_ID || '').trim()}`
+            : (env.SILICONFLOW_API_BASE || 'https://api.siliconflow.cn/v1')
         ).trim());
         if (
+          cloudflareText &&
+          !/^[0-9a-f]{32}$/i.test(String(env.CLOUDFLARE_ACCOUNT_ID || '').trim())
+        ) {
+          return { ok: false, code: 'PROVIDER_ENDPOINT_INVALID' };
+        }
+        if (
+          !cloudflareText &&
           String(env.NODE_ENV || '').trim().toLowerCase() === 'production' &&
           (base.origin !== 'https://api.siliconflow.cn' || base.pathname.replace(/\/+$/, '') !== '/v1')
         ) {
           return { ok: false, code: 'PROVIDER_ENDPOINT_INVALID' };
         }
-        endpoint = new URL(`${base.pathname.replace(/\/+$/, '')}/models`, base.origin);
+        if (cloudflareText) {
+          endpoint = new URL(`${base.pathname.replace(/\/+$/, '')}/ai/models/search`, base.origin);
+          endpoint.searchParams.set('search', GENERATION_DIRECTIONS_MODEL);
+        } else {
+          endpoint = new URL(`${base.pathname.replace(/\/+$/, '')}/models`, base.origin);
+        }
       } catch {
         return { ok: false, code: 'PROVIDER_ENDPOINT_INVALID' };
       }
@@ -216,7 +281,7 @@ const createSiliconFlowGenerationProvider = ({
           redirect: 'error',
           headers: {
             accept: 'application/json',
-            authorization: `Bearer ${credential}`
+            authorization: `Bearer ${textCredential}`
           },
           signal: controller.signal
         });
@@ -228,16 +293,56 @@ const createSiliconFlowGenerationProvider = ({
         const modelIds = new Set(
           Array.isArray(body?.data)
             ? body.data.map((item) => String(item?.id || '').trim()).filter(Boolean)
-            : []
+            : Array.isArray(body?.result)
+              ? body.result.map((item) => String(item?.id || item?.name || item?.model || '').trim()).filter(Boolean)
+              : []
         );
-        const requiredModels = [
-          GENERATION_IMAGE_MODEL,
-          GENERATION_DIRECTIONS_MODEL
-        ];
-        if (!modelIds.size || requiredModels.some((model) => !modelIds.has(model))) {
+        const requiredTextModels = cloudflareText
+          ? [GENERATION_DIRECTIONS_MODEL]
+          : [GENERATION_DIRECTIONS_MODEL, GENERATION_IMAGE_MODEL];
+        if (!modelIds.size || requiredTextModels.some((model) => !modelIds.has(model))) {
           return { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' };
         }
-        return { ok: true, kind: 'siliconflow', profile: profile?.id || null };
+        if (cloudflareText) {
+          // Image generation remains on SiliconFlow/Kolors. Probe that model
+          // separately so a healthy text endpoint cannot mask an unavailable
+          // image provider.
+          const imageBase = new URL(String(
+            env.SILICONFLOW_API_BASE || 'https://api.siliconflow.cn/v1'
+          ).trim());
+          if (
+            String(env.NODE_ENV || '').trim().toLowerCase() === 'production' &&
+            (imageBase.origin !== 'https://api.siliconflow.cn' || imageBase.pathname.replace(/\/+$/, '') !== '/v1')
+          ) {
+            return { ok: false, code: 'PROVIDER_ENDPOINT_INVALID' };
+          }
+          const imageResponse = await fetcher(
+            new URL(`${imageBase.pathname.replace(/\/+$/, '')}/models`, imageBase.origin).toString(),
+            {
+              method: 'GET',
+              redirect: 'error',
+              headers: {
+                accept: 'application/json',
+                authorization: `Bearer ${imageCredential}`
+              },
+              signal: controller.signal
+            }
+          );
+          if ([401, 403].includes(Number(imageResponse?.status || 0))) {
+            return { ok: false, code: 'PROVIDER_CREDENTIAL_INVALID' };
+          }
+          if (!imageResponse?.ok) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
+          const imageBody = await imageResponse.json().catch(() => null);
+          const imageIds = new Set(
+            Array.isArray(imageBody?.data)
+              ? imageBody.data.map((item) => String(item?.id || '').trim()).filter(Boolean)
+              : []
+          );
+          if (!imageIds.has(GENERATION_IMAGE_MODEL)) {
+            return { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' };
+          }
+        }
+        return { ok: true, kind: cloudflareText ? 'cloudflare-hybrid' : 'siliconflow', profile: profile?.id || null };
       } catch {
         return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
       } finally {
@@ -263,7 +368,7 @@ const createSiliconFlowGenerationProvider = ({
         throw mapProviderError(error, signal);
       }
     },
-    async generateImage({ prompt, profile, aspectRatio, seed, images, signal }) {
+    async generateImage({ prompt, profile, aspectRatio, seed, images, signal, runId, runtimeVersion }) {
       assertAvailable();
       const references = Array.isArray(images) ? images.filter(Boolean) : [];
       if (references.length > Number(profile?.maxReferences || 0)) {
@@ -287,6 +392,8 @@ const createSiliconFlowGenerationProvider = ({
           images: references,
           timeoutMs: positiveTimeout(env.AI_IMAGE_TIMEOUT_MS, 120_000, 10_000),
           model,
+          runId: runId || null,
+          runtimeVersion: Number(runtimeVersion) === 2 ? 2 : 1,
           allowModelFallback: false,
           signal
         });
@@ -423,7 +530,14 @@ const createConfiguredGenerationProvider = ({
   configured,
   fetcher
 } = {}) => {
-  const useMock = String(env.NODE_ENV || 'development').toLowerCase() !== 'production' &&
+  // Contract mocks are for isolated test fixtures only.  APP_ENV is part of
+  // the deployment boundary as well: a development-mode process pointed at a
+  // production/dev deployment must never silently expose the mock provider.
+  const nodeEnv = String(env.NODE_ENV || 'development').trim().toLowerCase();
+  const appEnv = String(env.APP_ENV || '').trim().toLowerCase();
+  const deployedEnvironment = ['production', 'prod', 'dev', 'development', 'staging'].includes(nodeEnv) ||
+    ['production', 'prod', 'dev', 'development', 'staging'].includes(appEnv);
+  const useMock = nodeEnv !== 'production' && !deployedEnvironment &&
     /^(1|true)$/i.test(String(env.AI_GENERATION_CONTRACT_MOCK || '').trim());
   if (useMock) return createContractMockGenerationProvider();
   return createSiliconFlowGenerationProvider({

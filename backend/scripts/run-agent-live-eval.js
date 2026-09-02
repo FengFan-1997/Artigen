@@ -8,6 +8,8 @@ const { Pool } = require('pg');
 
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
 const { resolvePoolSsl } = require('../db/pool');
+const { createAgentRunService } = require('../services/agent-run-service');
+const { createAgentSandboxProvider } = require('../services/agent-sandbox-provider');
 const {
   assertLiveEvalDatabaseReadiness,
   resolveLiveEvalPostgresMajor
@@ -47,6 +49,13 @@ const LIVE_EVAL_DB_CONNECTION_CODES = new Set([
   '57P02',
   '57P03'
 ]);
+const LIVE_EVAL_SYNTHETIC_EMAILS = Object.freeze([
+  'agent-live-v1@dev.artigen.invalid',
+  'agent-live-v2@dev.artigen.invalid'
+]);
+const LIVE_EVAL_ACTIVE_RUN_STATUSES = Object.freeze([
+  'draft', 'queued', 'provisioning', 'running', 'waiting_user', 'paused', 'verifying'
+]);
 
 const liveEvalPoolOptions = ({ connectionString, env = process.env } = {}) => {
   const poolMax = Number(env.AGENT_LIVE_EVAL_PG_POOL_MAX || 3);
@@ -83,13 +92,19 @@ const positivePricingOrDefault = ({ value, fallback, name }) => {
   const raw = String(value ?? '').trim();
   if (!raw) return String(fallback);
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  // An explicit zero is a configuration failure, not a stale value to
+  // replace. Silently substituting a rate would make the signed gate run with
+  // a pricing profile different from the one the deployment advertised.
+  if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`${name}_INVALID`);
   }
-  return parsed > 0 ? raw : String(fallback);
+  return raw;
 };
 
-const { AgentLiveEvalHarness } = require('../evaluation/harness/agent-live-eval-harness');
+const {
+  AgentLiveEvalHarness,
+  assertLiveEvalProcessSafety
+} = require('../evaluation/harness/agent-live-eval-harness');
 const {
   LIVE_EVAL_CASES,
   LIVE_EVAL_MATRIX_HASH
@@ -103,6 +118,10 @@ const {
   parseVersionedKey,
   readAndVerifyGateManifest
 } = require('../evaluation/harness/live-eval-gate');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('./lib/agent-dev-model-profile');
 
 const loadLiveEvalSecrets = ({
   env = process.env,
@@ -117,10 +136,29 @@ const loadLiveEvalSecrets = ({
   // Keychain service, never from an inherited shell environment.
   delete runtimeEnv.PG_SSL_CA;
   delete runtimeEnv.PG_SSL_CA_BASE64;
+  const smokeModelProfile = resolveAgentSmokeModelProfile({ env: runtimeEnv, production: false });
+  // A live campaign is always a deployed-style evaluation: text must use the
+  // attested free Cloudflare model. SiliconFlow remains image-only and is
+  // allowed only by deterministic fixture callers outside this loader.
+  if (smokeModelProfile.provider !== 'cloudflare') {
+    throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_PROVIDER_FORBIDDEN');
+  }
+  const modelProvider = smokeModelProfile.provider;
+  const requiredSecretNames = [
+    ...secretNames,
+    ...(modelProvider === 'cloudflare'
+      ? [
+          'CLOUDFLARE_ACCOUNT_ID',
+          'CLOUDFLARE_API_TOKEN',
+          'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+          'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+        ]
+      : [])
+  ];
   const missing = [];
-  for (const name of [...secretNames, ...optionalSecretNames]) {
+  for (const name of [...requiredSecretNames, ...optionalSecretNames]) {
     const value = readSecret({ service, account: name });
-    if (!value && secretNames.includes(name)) missing.push(name);
+    if (!value && requiredSecretNames.includes(name)) missing.push(name);
     else if (value) runtimeEnv[name] = value;
   }
   const evidenceKeyMaterial = readSecret({
@@ -150,6 +188,8 @@ const loadLiveEvalSecrets = ({
     // Path-style requests preserve normal TLS verification; never disable it.
     S3_FORCE_PATH_STYLE: String(runtimeEnv.S3_FORCE_PATH_STYLE || '1'),
     CUA_PYTHON: path.resolve(__dirname, '../.venv-agent/bin/python'),
+    AGENT_MODEL_PROVIDER: smokeModelProfile.provider,
+    AGENT_MODEL_NAME: smokeModelProfile.model,
     AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: positivePricingOrDefault({
       value: runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION,
       fallback: 20,
@@ -159,10 +199,39 @@ const loadLiveEvalSecrets = ({
       value: runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION,
       fallback: 160,
       name: 'AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION'
+    }),
+    AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: positivePricingOrDefault({
+      value: runtimeEnv.AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION,
+      fallback: 0.35,
+      name: 'AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION'
+    }),
+    AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: positivePricingOrDefault({
+      value: runtimeEnv.AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION,
+      fallback: 0.75,
+      name: 'AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION'
     })
   });
+  applyAgentSmokeModelProfile(runtimeEnv, smokeModelProfile);
+  if (
+    modelProvider === 'cloudflare' &&
+    (
+      !/^(1|true|yes|on)$/i.test(String(runtimeEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || '')) ||
+      String(runtimeEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '').trim() !==
+        String(runtimeEnv.CLOUDFLARE_ACCOUNT_ID || '').trim()
+    )
+  ) {
+    throw new Error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
+  }
   return { runtimeEnv, evidenceKeyMaterial };
 };
+
+const currentLiveTextModel = () => String(
+  process.env.AGENT_MODEL_NAME || (
+    String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'siliconflow'
+      ? 'Qwen/Qwen3-8B'
+      : '@cf/openai/gpt-oss-120b'
+  )
+).trim();
 
 const resolveCurrentCommitSha = ({ cwd = path.resolve(__dirname, '../..') } = {}) => {
   const commitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -600,11 +669,16 @@ const findInterruptedJournal = (options) => findCampaignJournal({
   statuses: ['running']
 });
 
-const markInterruptedJournal = async ({ found, signal = 'SIGKILL_OR_PROCESS_EXIT' }) => {
+const markInterruptedJournal = async ({
+  found,
+  signal = 'SIGKILL_OR_PROCESS_EXIT',
+  cleanup = null
+}) => {
   const { journal, journalPath, reportPath } = found;
   failUnfinishedJournalSlots(journal, { code: 'AGENT_LIVE_EVAL_PROCESS_INTERRUPTED' });
   journal.status = 'interrupted';
   journal.interruption = { signal: String(signal).slice(0, 40), detectedAt: new Date().toISOString() };
+  if (cleanup) journal.cleanup = cleanup;
   journal.updatedAt = new Date().toISOString();
   await writeReport({ report: journal, reportDir: path.dirname(journalPath), reportPath: journalPath });
   const error = Object.assign(new Error('AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN'), {
@@ -617,8 +691,103 @@ const markInterruptedJournal = async ({ found, signal = 'SIGKILL_OR_PROCESS_EXIT
     results: journalResults(journal),
     error
   });
+  if (cleanup) report.cleanup = cleanup;
   await writeReport({ report, reportDir: path.dirname(reportPath), reportPath });
   return { journal, reportPath };
+};
+
+// A SIGKILL cannot run the normal harness finally block.  On the next DEV
+// invocation, close only the evaluator's two reserved synthetic identities
+// before refusing to reuse the signed campaign.  The idempotency prefix check
+// is deliberate: if another kind of run is using either identity we fail
+// closed instead of cancelling unrelated user work.
+const recoverInterruptedCampaign = async ({
+  pool,
+  journal,
+  env = process.env,
+  runServiceFactory = createAgentRunService,
+  sandboxFactory = createAgentSandboxProvider
+} = {}) => {
+  if (!pool || typeof pool.query !== 'function') throw new TypeError('AGENT_LIVE_EVAL_RECOVERY_POOL_REQUIRED');
+  const normalizedEnv = {
+    ...env,
+    NODE_ENV: 'test',
+    APP_ENV: 'dev',
+    AGENT_LIVE_EVAL_MODE: 'true',
+    AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1',
+    AGENT_RUNTIME_DRIVER: 'live'
+  };
+  assertLiveEvalProcessSafety(normalizedEnv);
+  const users = await pool.query(
+    'SELECT id,email::text FROM users WHERE email=ANY($1::text[])',
+    [LIVE_EVAL_SYNTHETIC_EMAILS]
+  );
+  const userByEmail = new Map(users.rows.map((row) => [String(row.email), row.id]));
+  const userIds = [...userByEmail.values()];
+  if (!userIds.length) {
+    return { ok: true, activeRuns: 0, cancelledRuns: 0, destroyedSandboxes: 0, cancelledProviderRequests: 0 };
+  }
+  const active = await pool.query(
+    `SELECT id,user_id,idempotency_key,sandbox_ref
+       FROM agent_runs
+      WHERE user_id=ANY($1::uuid[])
+        AND status=ANY($2::text[])
+      ORDER BY created_at,id`,
+    [userIds, LIVE_EVAL_ACTIVE_RUN_STATUSES]
+  );
+  const unsafe = active.rows.filter((row) => !String(row.idempotency_key || '').startsWith('live-eval:'));
+  if (unsafe.length) {
+    const error = new Error('AGENT_LIVE_EVAL_RESIDUAL_USER_BUSY');
+    error.code = 'AGENT_LIVE_EVAL_RESIDUAL_USER_BUSY';
+    error.runIds = unsafe.map((row) => row.id);
+    throw error;
+  }
+  const runService = runServiceFactory({ pool, env: normalizedEnv });
+  const cancelledRuns = [];
+  for (const row of active.rows) {
+    const result = await runService.cancelRun({ userId: row.user_id, runId: row.id });
+    cancelledRuns.push({ runId: row.id, status: result?.status || 'cancelled' });
+  }
+  const terminalCleanup = typeof runService.reconcileTerminalReceipts === 'function'
+    ? await runService.reconcileTerminalReceipts({ limit: 1000, userIds })
+    : { runsReconciled: 0, receiptsResolved: 0 };
+  let destroyedSandboxes = 0;
+  let failedSandboxes = 0;
+  if (
+    typeof runService.listTerminalSandboxes === 'function' &&
+    typeof runService.markSandboxDestroyed === 'function'
+  ) {
+    const sandbox = sandboxFactory({ env: normalizedEnv });
+    const pending = await runService.listTerminalSandboxes({ limit: 1000, userIds });
+    for (const entry of pending) {
+      const sandboxRef = entry.sandboxRef || sandbox.referenceForRun?.(entry.runId);
+      if (!sandboxRef) {
+        failedSandboxes += 1;
+        continue;
+      }
+      try {
+        await sandbox.destroy(sandboxRef);
+        if (await runService.markSandboxDestroyed({ ...entry, sandboxRef })) destroyedSandboxes += 1;
+      } catch {
+        failedSandboxes += 1;
+      }
+    }
+  }
+  // Provider requests have no Run/user foreign key. Never bulk-cancel by
+  // timestamp: that could terminate another evaluator's queued request in a
+  // shared DEV database. The scheduler's bounded TTL/cleanup owns orphaned
+  // requests until request IDs are journaled by a future schema revision.
+  const cancelledProviderRequests = 0;
+  return {
+    ok: failedSandboxes === 0,
+    activeRuns: active.rowCount,
+    cancelledRuns: cancelledRuns.length,
+    cancelledRunIds: cancelledRuns.map((entry) => entry.runId),
+    terminalCleanup,
+    destroyedSandboxes,
+    failedSandboxes,
+    cancelledProviderRequests
+  };
 };
 
 const settleCleanup = async ({ label, operation, timeoutMs = 15_000 }) => {
@@ -715,7 +884,7 @@ const buildTerminalFailureReport = ({
     commitSha: gate?.commitSha || null,
     matrixHash: gate?.matrixHash || null,
     modelLocks: {
-      text: 'Qwen/Qwen3-8B',
+      text: currentLiveTextModel(),
       image: 'Kwai-Kolors/Kolors'
     },
     limits: {
@@ -758,10 +927,39 @@ const main = async () => {
   const existingCampaign = await findCampaignJournal({ artifactRoot, gate });
   if (existingCampaign) {
     if (existingCampaign.journal.status === 'running') {
-      const recovered = await markInterruptedJournal({ found: existingCampaign });
+      let cleanup = null;
+      let recoveryPool = null;
+      try {
+        recoveryPool = new Pool(liveEvalPoolOptions({
+          connectionString: runtimeEnv.DATABASE_URL,
+          env: runtimeEnv
+        }));
+        await assertLiveEvalDatabaseReadiness({
+          pool: recoveryPool,
+          expectedPostgresMajor: resolveLiveEvalPostgresMajor(runtimeEnv)
+        });
+        cleanup = await recoverInterruptedCampaign({
+          pool: recoveryPool,
+          journal: existingCampaign.journal,
+          env: runtimeEnv
+        });
+      } catch (error) {
+        cleanup = {
+          ok: false,
+          code: safeFailureCode(error, 'AGENT_LIVE_EVAL_RESIDUAL_CLEANUP_FAILED'),
+          diagnosticHash: failureFingerprint(error)
+        };
+      } finally {
+        await recoveryPool?.end().catch(() => {});
+      }
+      const recovered = await markInterruptedJournal({
+        found: existingCampaign,
+        cleanup
+      });
       const error = Object.assign(new Error('AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN'), {
         code: 'AGENT_LIVE_EVAL_RESIDUAL_CAMPAIGN',
-        reportPath: recovered.reportPath
+        reportPath: recovered.reportPath,
+        cleanup
       });
       throw error;
     }
@@ -933,7 +1131,7 @@ const main = async () => {
       commitSha: gate.commitSha,
       matrixHash: gate.matrixHash,
       modelLocks: {
-        text: 'Qwen/Qwen3-8B',
+        text: currentLiveTextModel(),
         image: 'Kwai-Kolors/Kolors'
       },
       limits: {
@@ -1069,6 +1267,7 @@ module.exports = {
   installLiveEvalPoolErrorHandler,
   isLiveEvalDatabaseConnectionError,
   disposeLiveEvalPoolErrorHandlerAfterCleanup,
+  recoverInterruptedCampaign,
   markInterruptedJournal,
   summarize
 };

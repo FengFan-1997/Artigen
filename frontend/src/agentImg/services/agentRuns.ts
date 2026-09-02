@@ -220,6 +220,9 @@ export type AgentQuote = {
 export type AgentServiceStatus = {
   enabled: boolean;
   workerOnline: boolean;
+  workerModelReady?: boolean;
+  configuredModel?: { provider: string; model: string } | null;
+  workerModel?: { provider: string; model: string } | null;
   queueDepth: number;
   oldestQueuedAt: string | null;
   concurrency: number;

@@ -3,15 +3,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 const sharp = require('sharp');
 
-const { callSiliconFlowChat } = require('../../lib/ai-providers');
+const {
+  callCloudflareChat,
+  callSiliconFlowChat,
+  callSiliconFlowImageGenerate
+} = require('../../lib/ai-providers');
 const { createAdminFinanceService } = require('../../services/admin-finance-service');
 const { assertAgentRuntimeReady } = require('../../services/agent-config');
 const { createAgentImageService } = require('../../services/agent-image-service');
+const { createConfiguredGenerationProvider } = require('../../services/generation-provider');
+const { fetch: siliconFlowFetch } = require('../../lib/fetch-utils');
 const { createAgentModelProvider } = require('../../services/agent-model-provider');
 const {
   createModelCallService,
   createProviderScheduler,
-  createScheduledChatGenerate
+  createScheduledChatGenerate,
+  createScheduledImageGenerate
 } = require('../../services/agent-model-runtime-service');
 const { createAgentRunService } = require('../../services/agent-run-service');
 const { createAgentSandboxProvider } = require('../../services/agent-sandbox-provider');
@@ -31,7 +38,8 @@ const {
   minimalXlsx
 } = require('./artifact-fixtures');
 const { LiveModelAuditor } = require('./live-model-auditor');
-const { LiveEvalCampaignGuard } = require('./live-eval-campaign-guard');
+const { requestPromptHash } = require('./scripted-siliconflow-transport');
+const { LiveEvalCampaignGuard, sha256 } = require('./live-eval-campaign-guard');
 const {
   assertLiveEvalDatabaseReadiness,
   resolveLiveEvalPostgresMajor
@@ -84,7 +92,22 @@ const waitForConversationExecution = async ({
   throw new Error('AGENT_LIVE_EVAL_CONVERSATION_TIMEOUT');
 };
 
-const liveEvalEnv = (base = {}, overrides = {}) => ({
+const liveEvalEnv = (base = {}, overrides = {}) => {
+  const requestedProvider = String(
+    overrides.AGENT_MODEL_PROVIDER ?? base.AGENT_MODEL_PROVIDER ?? 'cloudflare'
+  ).trim().toLowerCase();
+  const expectedModel = requestedProvider === 'cloudflare'
+    ? '@cf/openai/gpt-oss-120b'
+    : requestedProvider === 'siliconflow'
+      ? 'Qwen/Qwen3-8B'
+      : '';
+  const requestedModel = String(
+    overrides.AGENT_MODEL_NAME ?? base.AGENT_MODEL_NAME ?? expectedModel
+  ).trim();
+  if (!expectedModel || requestedModel !== expectedModel) {
+    throw new Error('AGENT_LIVE_EVAL_MODEL_LOCK_INVALID');
+  }
+  return {
   ...base,
   NODE_ENV: 'test',
   APP_ENV: 'dev',
@@ -101,8 +124,8 @@ const liveEvalEnv = (base = {}, overrides = {}) => ({
   AGENT_PROJECT_MEMORY_ENABLED: 'true',
   AGENT_PROVIDER_SCHEDULER_ENABLED: 'true',
   AGENT_RUNTIME_ACTOR_PROFILE: 'stable-v1',
-  AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: requestedProvider,
+  AGENT_MODEL_NAME: requestedModel,
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
   AGENT_MODEL_CONTEXT_TOKENS: '16384',
@@ -126,8 +149,11 @@ const liveEvalEnv = (base = {}, overrides = {}) => ({
   S3_FORCE_PATH_STYLE: '1',
   DESIGN_CONVERSATION_ENABLED: 'true',
   DESIGN_CONVERSATION_WORKER_ENABLED: 'true',
-  ...overrides
-});
+  ...overrides,
+  AGENT_MODEL_PROVIDER: requestedProvider,
+  AGENT_MODEL_NAME: requestedModel
+  };
+};
 
 const assertLiveEvalProcessSafety = (env = process.env) => {
   if (
@@ -140,6 +166,16 @@ const assertLiveEvalProcessSafety = (env = process.env) => {
   }
   if (String(env.AGENT_RUNTIME_DRIVER || '') !== 'live') {
     throw new Error('AGENT_LIVE_EVAL_FIXTURE_RUNTIME_FORBIDDEN');
+  }
+  // Real evaluation traffic must exercise the deployed free text runtime;
+  // SiliconFlow is image-only in current environments. Historical fixtures
+  // may still describe the legacy provider, but never dispatch it live.
+  const provider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
+  const model = String(
+    env.AGENT_MODEL_NAME || (provider === 'cloudflare' ? '@cf/openai/gpt-oss-120b' : '')
+  ).trim();
+  if (provider !== 'cloudflare' || model !== '@cf/openai/gpt-oss-120b') {
+    throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_PROVIDER_FORBIDDEN');
   }
   return true;
 };
@@ -274,7 +310,27 @@ class AgentLiveEvalHarness {
       Object.assign(process.env, instance.env);
       assertAgentRuntimeReady(instance.env);
 
-      instance.providerScheduler = createProviderScheduler({ pool, env: instance.env });
+      instance.providerScheduler = createProviderScheduler({
+        pool,
+        env: instance.env,
+        providerKey: `${instance.env.AGENT_MODEL_PROVIDER}:${instance.env.AGENT_MODEL_NAME}`
+      });
+      // The Agent text provider and the design workflow's directions share a
+      // scheduler only when they are the same physical provider/model.  The
+      // Cloudflare deployment must never consume a SiliconFlow/Qwen slot.
+      // Kolors always gets its own canonical quota key.
+      instance.imageTextProviderScheduler = instance.env.AGENT_MODEL_PROVIDER === 'siliconflow'
+        ? instance.providerScheduler
+        : createProviderScheduler({
+            pool,
+            env: instance.env,
+            providerKey: `${instance.env.AGENT_MODEL_PROVIDER}:${instance.env.AGENT_MODEL_NAME}`
+          });
+      instance.imageProviderScheduler = createProviderScheduler({
+        pool,
+        env: instance.env,
+        providerKey: 'siliconflow:Kwai-Kolors/Kolors'
+      });
       instance.modelCallService = createModelCallService({
         pool,
         env: instance.env,
@@ -297,7 +353,8 @@ class AgentLiveEvalHarness {
         pool,
         campaignGuard: instance.campaignGuard,
         maxQwenCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_QWEN_CALLS || 200),
-        maxKolorsCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_KOLORS_CALLS || 16)
+        maxKolorsCalls: Number(instance.env.AGENT_LIVE_EVAL_MAX_KOLORS_CALLS || 16),
+        textModel: instance.env.AGENT_MODEL_NAME
       });
       instance.model = createAgentModelProvider({
         env: instance.env,
@@ -315,17 +372,72 @@ class AgentLiveEvalHarness {
         );
       };
       const scheduledChat = createScheduledChatGenerate({
-        scheduler: instance.providerScheduler,
-        chatGenerate: callSiliconFlowChat,
+        scheduler: instance.imageTextProviderScheduler,
+        chatGenerate: async (input = {}) => {
+          // Directions and ingredient extraction are paid text calls too.
+          // Route them through the selected physical provider, never a
+          // hard-coded SiliconFlow/Qwen transport.
+          const payload = {
+            model: input.model,
+            messages: input.messages,
+            stream: false,
+            enable_thinking: input.enableThinking === true,
+            max_tokens: input.maxTokens,
+            ...(input.responseFormat === 'json_object'
+              ? { response_format: { type: 'json_object' } }
+              : {})
+          };
+          const inspected = await instance.auditor.inspectQwenRequest(payload, {
+            phase: 'evaluation',
+            runtimeVersion: 1,
+            promptHash: requestPromptHash(payload)
+          });
+          if (instance.env.AGENT_MODEL_PROVIDER === 'cloudflare') {
+            return instance.auditor.requestContext.run(inspected, () => callCloudflareChat({
+              ...input,
+              accountId: instance.env.CLOUDFLARE_ACCOUNT_ID,
+              credential: instance.env.CLOUDFLARE_API_TOKEN,
+              freeAccountAttested: true,
+              freeAccountId: instance.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+              model: instance.env.AGENT_MODEL_NAME,
+              signal: instance.campaignGuard.combinedSignal(input.signal),
+              fetcher: instance.auditor.wrapQwenFetch(globalThis.fetch)
+            }));
+          }
+          return instance.auditor.requestContext.run(inspected, () => callSiliconFlowChat({
+            ...input,
+            fetchImpl: instance.auditor.wrapQwenFetch(siliconFlowFetch)
+          }));
+        },
+        defaultPriority: 'actor'
+      });
+      const scheduledImageGenerate = createScheduledImageGenerate({
+        scheduler: instance.imageProviderScheduler,
+        imageGenerate: async (input = {}) => callSiliconFlowImageGenerate({
+          ...input,
+          fetcher: instance.auditor.wrapKolorsFetcher(siliconFlowFetch, {
+            runId: input.runId || null,
+            runtimeVersion: input.runtimeVersion || null,
+            filename: input.filename || ''
+          })
+        }),
         defaultPriority: 'actor'
       });
       const rawImageService = createAgentImageService({
         env: instance.env,
-        chatGenerate: scheduledChat
+        chatGenerate: scheduledChat,
+        provider: createConfiguredGenerationProvider({
+          imageGenerate: scheduledImageGenerate,
+          chatGenerate: scheduledChat,
+          env: instance.env
+        })
       });
       instance.imageService = {
         generate: async (request) => {
-          const dispatch = await instance.auditor.inspectKolorsRequest(request);
+          const dispatch = await instance.auditor.inspectKolorsRequest({
+            ...request,
+            reservePhysical: false
+          });
           let output;
           try {
             output = await rawImageService.generate({
@@ -705,6 +817,39 @@ class AgentLiveEvalHarness {
       [userId]
     );
     const chatGenerate = async (input) => {
+      if (this.env.AGENT_MODEL_PROVIDER === 'cloudflare') {
+        const payload = {
+          model: input.model,
+          messages: input.messages,
+          stream: false,
+          max_tokens: input.maxTokens,
+          parallel_tool_calls: false,
+          temperature: input.temperature,
+          top_p: input.topP,
+          ...(input.topK === undefined ? {} : { top_k: input.topK }),
+          ...(input.responseFormat === 'json_object'
+            ? { response_format: { type: 'json_object' } }
+            : {})
+        };
+        return this.auditor.runQwenRequest(
+          payload,
+          {
+            phase: input.phase || 'router',
+            runtimeVersion,
+            promptHash: input.promptHash
+          },
+          () => callCloudflareChat({
+            ...input,
+            accountId: this.env.CLOUDFLARE_ACCOUNT_ID,
+            credential: this.env.CLOUDFLARE_API_TOKEN,
+            freeAccountAttested: true,
+            freeAccountId: this.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+            model: this.env.AGENT_MODEL_NAME,
+            signal: this.campaignGuard.combinedSignal(input.signal),
+            fetcher: this.auditor.wrapQwenFetch(globalThis.fetch)
+          })
+        );
+      }
       const payload = {
         model: input.model,
         messages: input.messages,
@@ -731,7 +876,7 @@ class AgentLiveEvalHarness {
           ...input,
           credential: this.env.SILICONFLOW_API_KEY,
           signal: this.campaignGuard.combinedSignal(input.signal),
-          fetcher: this.auditor.wrapQwenFetch(globalThis.fetch)
+          fetchImpl: this.auditor.wrapQwenFetch(siliconFlowFetch)
         })
       );
     };
@@ -884,10 +1029,47 @@ class AgentLiveEvalHarness {
     for (const forbidden of entry.forbiddenTools || []) {
       if (usedTools.has(forbidden)) errors.push(`forbidden_tool:${forbidden}`);
     }
-    if (
+    if (Array.isArray(physical.calls) && runId) {
+      // A V2 run's durable model records and physical campaign dispatches must
+      // be one-to-one; Kolors tool receipts may have bounded physical retries.
+      // V1 does not persist model-call rows and its actor
+      // metadata intentionally has no run id; it is still checked for foreign
+      // non-empty run hashes, while its physical attempts remain the source
+      // of comparable baseline usage. Image calls carry run ids in both
+      // versions and therefore participate in this same strict check.
+      const runHash = sha256(runId);
+      const associated = physical.calls.filter((call) => call.runIdHash === runHash);
+      const foreign = physical.calls.filter((call) => call.runIdHash && call.runIdHash !== runHash);
+      const durableQwen = snapshot.persistent.modelCalls.length;
+      const durableKolors = (snapshot.persistent.toolReceipts || [])
+        .filter((receipt) => receipt.kind === 'kolors').length;
+      if (foreign.length) errors.push('provider_dispatch_unassociated');
+      const expectedRuntimeVersion = expectedVersion;
+      if (associated.some((call) => (
+        Number(call.runtimeVersion || 0) !== expectedRuntimeVersion ||
+        !/^[a-f0-9]{64}$/i.test(String(call.runIdHash || '')) ||
+        !/^[a-f0-9]{64}$/i.test(String(call.slotHash || ''))
+      ))) {
+        errors.push('provider_dispatch_metadata');
+      }
+      if (
+        cohort === 'v2' && (
+          associated.filter((call) => call.kind === 'qwen').length !== durableQwen ||
+          // One image tool receipt may legitimately contain bounded provider
+          // retries. Every logical Kolors receipt still needs at least one
+          // physical attempt, but retries must not look like duplicate tools.
+          associated.filter((call) => call.kind === 'kolors').length < durableKolors
+        )
+      ) {
+        errors.push('provider_dispatch_crosscheck');
+      }
+    } else if (
       cohort === 'v2' &&
       physical.qwenCalls < snapshot.persistent.modelCalls.length
     ) {
+      // Compatibility for focused unit fixtures that predate the durable
+      // dispatch rows.  Real campaign rows always include `calls` and take the
+      // strict branch above.
       errors.push('provider_dispatch_crosscheck');
     }
     const baselineTerminalFailure = cohort === 'v1' &&
@@ -903,6 +1085,7 @@ class AgentLiveEvalHarness {
         'provider_dispatch_incomplete',
         'provider_dispatch_crosscheck'
       ].includes(error) ||
+      error === 'provider_dispatch_unassociated' ||
       error.startsWith('forbidden_tool:')
     ));
     if (errors.length && (!baselineTerminalFailure || fatalBaselineErrors.length)) {
@@ -998,6 +1181,11 @@ class AgentLiveEvalHarness {
 
   async assertBatchDrained() {
     const runIds = [...new Set(this.runIds)];
+    const providerKeys = [...new Set([
+      this.providerScheduler?.providerKey,
+      this.imageTextProviderScheduler?.providerKey,
+      this.imageProviderScheduler?.providerKey
+    ].map((key) => String(key || '').trim()).filter(Boolean))];
     // One snapshot uses one pool checkout. The previous Promise.all fan-out
     // could request seven fresh connections at a slot boundary and hang the
     // signed campaign indefinitely when DEV temporarily stopped accepting
@@ -1019,15 +1207,43 @@ class AgentLiveEvalHarness {
            WHERE run_id=ANY($1::uuid[]) AND state='reserved') AS active_reservations,
          (SELECT count(*)::int FROM agent_tool_call_receipts
            WHERE run_id=ANY($1::uuid[]) AND state='dispatched') AS active_tool_receipts,
-         (SELECT count(*)::int FROM agent_provider_requests
-           WHERE provider_key=$3 AND status='queued') AS queued_provider_requests`,
+         (SELECT count(*)::int FROM agent_subagents
+           WHERE run_id=ANY($1::uuid[]) AND status IN ('queued','running')) AS active_subagents,
+         (SELECT COALESCE(sum(provider_counts.active_count),0)::int
+            FROM (
+              SELECT provider_key,count(*)::int AS active_count
+                FROM agent_provider_requests
+               WHERE provider_key=ANY($3::text[]) AND status IN ('queued','granted')
+               GROUP BY provider_key
+            ) provider_counts) AS active_provider_requests,
+         (SELECT COALESCE(jsonb_object_agg(provider_counts.provider_key,provider_counts.active_count),'{}'::jsonb)
+            FROM (
+              SELECT provider_key,count(*)::int AS active_count
+                FROM agent_provider_requests
+               WHERE provider_key=ANY($3::text[]) AND status IN ('queued','granted')
+               GROUP BY provider_key
+            ) provider_counts) AS active_provider_requests_by_key`,
       [
         runIds,
         [this.baselineUserId, this.candidateUserId],
-        this.providerScheduler.providerKey
+        providerKeys
       ]
     );
     const snapshot = drained.rows[0] || {};
+    const activeProviderRequests = Number(
+      snapshot.active_provider_requests ?? snapshot.queued_provider_requests ?? 0
+    );
+    const activeProviderRequestsByKey = snapshot.active_provider_requests_by_key ||
+      snapshot.queued_provider_requests_by_key || {};
+    this.lastDrainSnapshot = {
+      ...snapshot,
+      active_provider_requests: activeProviderRequests,
+      active_provider_requests_by_key: activeProviderRequestsByKey,
+      // Keep the legacy public diagnostic names for existing reports while
+      // the underlying query now includes granted leases as active work.
+      queued_provider_requests: activeProviderRequests,
+      queued_provider_requests_by_key: activeProviderRequestsByKey
+    };
     if (
       Number(snapshot.active_runs || 0) !== 0 ||
       this.queue.some((runId) => runIds.includes(runId)) ||
@@ -1036,7 +1252,8 @@ class AgentLiveEvalHarness {
       Number(snapshot.active_model_receipts || 0) !== 0 ||
       Number(snapshot.active_reservations || 0) !== 0 ||
       Number(snapshot.active_tool_receipts || 0) !== 0 ||
-      Number(snapshot.queued_provider_requests || 0) !== 0
+      Number(snapshot.active_subagents || 0) !== 0 ||
+      activeProviderRequests !== 0
     ) {
       throw new Error('AGENT_LIVE_EVAL_BATCH_NOT_DRAINED');
     }

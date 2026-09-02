@@ -15,6 +15,7 @@ const {
   createModelCallService,
   createProviderScheduler
 } = require('../services/agent-model-runtime-service');
+const { FIXED_CLOUDFLARE_CHAT_MODEL } = require('../lib/config');
 
 const requireAuthenticatedUser = (req) => {
   const auth = resolveAuthUser(req);
@@ -99,7 +100,11 @@ const installDesignConversationRoutes = (app, deps = {}) => {
           enabled: config.enabled,
           workerEnabled: config.workerEnabled,
           plannerReady: false,
-          model: 'Qwen/Qwen3-8B',
+          // A database-less response must not echo an old or untrusted text
+          // model from the environment. Deployed text is hard-locked to
+          // Cloudflare GPT-OSS; readiness reports missing credentials
+          // separately and fails closed before any task is created.
+          model: FIXED_CLOUDFLARE_CHAT_MODEL,
           imageModel: 'Kwai-Kolors/Kolors',
           autoCreditCap: config.autoCreditCap,
           retentionDays: config.retentionDays,

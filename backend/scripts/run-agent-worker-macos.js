@@ -32,6 +32,19 @@ delete workerEnv.PG_SSL_CA_BASE64;
 const subagentsEnabled = /^(1|true|yes|on)$/i.test(
   String(process.env.AGENT_SUBAGENTS_ENABLED || '').trim()
 );
+const modelProvider = String(
+  process.env.AGENT_MODEL_PROVIDER || 'cloudflare'
+)
+  .trim()
+  .toLowerCase();
+if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {
+  console.error('AGENT_WORKER_MODEL_PROVIDER_INVALID');
+  process.exit(78);
+}
+if (modelProvider !== 'cloudflare') {
+  console.error('AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED');
+  process.exit(78);
+}
 let workerPoolProfile;
 try {
   workerPoolProfile = resolveAgentWorkerPoolProfile({ profile, env: process.env });
@@ -59,6 +72,14 @@ try {
     'S3_SECRET_ACCESS_KEY'
   ];
   const optionalSecretNames = ['PG_SSL_CA_BASE64'];
+  if (modelProvider === 'cloudflare') {
+    secretNames.push(
+      'CLOUDFLARE_ACCOUNT_ID',
+      'CLOUDFLARE_API_TOKEN',
+      'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+      'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+    );
+  }
   if (profile === 'dev') secretNames.push('DEV_DATABASE_EXPECTED_HOST');
   if (
     profile === 'production' &&
@@ -80,14 +101,32 @@ try {
     console.error(`AGENT_${profile.toUpperCase()}_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
     process.exit(78);
   }
+  if (modelProvider === 'cloudflare') {
+    const accountId = String(workerEnv.CLOUDFLARE_ACCOUNT_ID || '').trim();
+    const freeAccountId = String(workerEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '').trim();
+    const attested = /^(1|true|yes|on)$/i.test(
+      String(workerEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || '').trim()
+    );
+    if (!/^[0-9a-f]{32}$/i.test(accountId) || !attested || freeAccountId !== accountId) {
+      console.error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
+      process.exit(78);
+    }
+  }
   Object.assign(workerEnv, {
     NODE_ENV: 'production',
     APP_ENV: profile === 'production' ? 'production' : 'dev',
     AGENT_FEATURE_ENABLED: 'true',
     AGENT_WORKER_ENABLED: '1',
     AGENT_RUNTIME_DRIVER: 'live',
-    AGENT_MODEL_PROVIDER: 'siliconflow',
-    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+    AGENT_MODEL_PROVIDER: modelProvider,
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: modelProvider === 'cloudflare'
+      ? String(workerEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || 'false')
+      : 'false',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: modelProvider === 'cloudflare'
+      ? String(workerEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '')
+      : '',
     AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
     AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
     AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: String(
@@ -95,6 +134,15 @@ try {
     ),
     AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: String(
       process.env.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION || '0'
+    ),
+    AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: String(
+      process.env.AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION || '0.35'
+    ),
+    AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: String(
+      process.env.AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION || '0.75'
+    ),
+    AGENT_CLOUDFLARE_MIN_INTERVAL_MS: String(
+      process.env.AGENT_CLOUDFLARE_MIN_INTERVAL_MS || '2000'
     ),
     AGENT_MODEL_CONTEXT_TOKENS: String(process.env.AGENT_MODEL_CONTEXT_TOKENS || '16384'),
     AGENT_RUNTIME_V2_ENABLED: profile === 'dev'

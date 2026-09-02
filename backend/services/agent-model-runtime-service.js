@@ -42,13 +42,39 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
   signal?.addEventListener('abort', onAbort, { once: true });
 });
 
-const schedulerIntervalMs = (env = process.env) => {
+// Scheduler grants are capacity leases.  A failed release is itself a
+// runtime failure: swallowing it makes the provider call look successful while
+// leaving a granted row that can block or distort later work.  Keep the error
+// non-retryable so callers do not dispatch the provider a second time.
+const releaseSchedulerGrant = async (scheduler, requestId) => {
+  if (!scheduler?.release || !requestId) return false;
+  try {
+    return await scheduler.release(requestId);
+  } catch (error) {
+    const failure = new ApiError(503, 'AGENT_PROVIDER_SCHEDULER_RELEASE_FAILED', {
+      retryable: false,
+      cause: error
+    });
+    failure.cause = error;
+    throw failure;
+  }
+};
+
+const schedulerIntervalMs = (env = process.env, providerKey = '') => {
+  const normalizedProviderKey = String(providerKey || '').trim().toLowerCase();
+  const cloudflare = normalizedProviderKey
+    ? normalizedProviderKey.startsWith('cloudflare:')
+    : String(env.AGENT_MODEL_PROVIDER || '').trim().toLowerCase() === 'cloudflare';
   const floor = Math.max(0, Number.parseInt(String(
-    env.AGENT_SILICONFLOW_MIN_INTERVAL_MS || '6500'
+    cloudflare
+      ? env.AGENT_CLOUDFLARE_MIN_INTERVAL_MS || '0'
+      : env.AGENT_SILICONFLOW_MIN_INTERVAL_MS || '6500'
   ), 10) || 0);
-  const rpm = Math.max(1, Math.min(600, Number.parseInt(String(
-    env.AGENT_SILICONFLOW_REQUESTS_PER_MINUTE || '9'
-  ), 10) || 9));
+  const rpm = Math.max(1, Math.min(cloudflare ? 120 : 600, Number.parseInt(String(
+    cloudflare
+      ? env.AGENT_CLOUDFLARE_REQUESTS_PER_MINUTE || '30'
+      : env.AGENT_SILICONFLOW_REQUESTS_PER_MINUTE || '9'
+  ), 10) || (cloudflare ? 30 : 9)));
   return Math.max(floor, Math.ceil(60_000 / rpm));
 };
 
@@ -66,18 +92,55 @@ const createScheduledChatGenerate = ({
       priority: input.schedulerPriority || defaultPriority,
       signal: input.signal || null
     });
-    return chatGenerate({
-      ...input,
-      skipRateGate: slot.mode === 'postgres-v1' ? true : input.skipRateGate
-    });
+    try {
+      return await chatGenerate({
+        ...input,
+        skipRateGate: slot.mode === 'postgres-v1' ? true : input.skipRateGate
+      });
+    } finally {
+      await releaseSchedulerGrant(scheduler, slot.requestId);
+    }
   };
 };
 
-const createProviderScheduler = ({ pool, env = process.env, providerKey = 'siliconflow:qwen3-8b' } = {}) => {
+const createScheduledImageGenerate = ({
+  scheduler = null,
+  imageGenerate,
+  defaultPriority = 'actor'
+} = {}) => {
+  if (typeof imageGenerate !== 'function') {
+    throw new TypeError('AGENT_SCHEDULED_IMAGE_GENERATE_REQUIRED');
+  }
+  return async (input = {}) => {
+    if (!scheduler) return imageGenerate(input);
+    const slot = await scheduler.acquire({
+      priority: input.schedulerPriority || defaultPriority,
+      signal: input.signal || null
+    });
+    try {
+      return await imageGenerate({
+        ...input,
+        // The Postgres scheduler is the authoritative gate. The underlying
+        // provider semaphore remains enabled as a local last line of defence.
+        skipRateGate: slot.mode === 'postgres-v1' ? true : input.skipRateGate
+      });
+    } finally {
+      await releaseSchedulerGrant(scheduler, slot.requestId);
+    }
+  };
+};
+
+// Deployed text traffic is Cloudflare GPT-OSS. Callers that schedule images
+// must pass the separate canonical Kolors key explicitly.
+const createProviderScheduler = ({
+  pool,
+  env = process.env,
+  providerKey = 'cloudflare:@cf/openai/gpt-oss-120b'
+} = {}) => {
   if (!pool || typeof pool.connect !== 'function') {
     throw new TypeError('AGENT_PROVIDER_SCHEDULER_POOL_REQUIRED');
   }
-  const intervalMs = schedulerIntervalMs(env);
+  const intervalMs = schedulerIntervalMs(env, providerKey);
   const requestTtlMs = Math.max(30_000, Math.min(
     10 * 60_000,
     Number.parseInt(String(env.AGENT_PROVIDER_REQUEST_TTL_MS || '600000'), 10) || 600_000
@@ -87,9 +150,26 @@ const createProviderScheduler = ({ pool, env = process.env, providerKey = 'silic
     await pool.query(
       `UPDATE agent_provider_requests
           SET status=$2,updated_at=clock_timestamp()
-        WHERE id=$1 AND status='queued'`,
+        WHERE id=$1 AND status IN ('queued','granted')`,
       [requestId, status]
     ).catch(() => {});
+  };
+
+  // A grant is a short-lived execution lease, not a historical active
+  // request. Mark it expired as soon as the provider callback returns so
+  // scheduler rows cannot accumulate as apparently granted work for seven
+  // days. The row remains available for audit/cleanup and is idempotent.
+  const release = async (requestId) => {
+    const normalized = String(requestId || '').trim();
+    if (!normalized) return false;
+    const result = await pool.query(
+      `UPDATE agent_provider_requests
+          SET status='expired',updated_at=clock_timestamp()
+        WHERE id=$1 AND status='granted'
+        RETURNING id`,
+      [normalized]
+    );
+    return result.rowCount === 1;
   };
 
   const defer = async (delayMs) => {
@@ -248,7 +328,7 @@ const createProviderScheduler = ({ pool, env = process.env, providerKey = 'silic
     await pool.query(
       `UPDATE agent_provider_requests
           SET status='expired',updated_at=clock_timestamp()
-        WHERE status='queued' AND expires_at<=clock_timestamp()`
+        WHERE status IN ('queued','granted') AND expires_at<=clock_timestamp()`
     );
     const result = await pool.query(
       `DELETE FROM agent_provider_requests
@@ -277,7 +357,7 @@ const createProviderScheduler = ({ pool, env = process.env, providerKey = 'silic
     }
   };
 
-  return { acquire, cancel, cleanup, defer, readiness, intervalMs, providerKey };
+  return { acquire, cancel, cleanup, defer, release, readiness, intervalMs, providerKey };
 };
 
 const cleanText = (value, maximum) => {
@@ -910,6 +990,8 @@ module.exports = {
   createModelCallService,
   createProviderScheduler,
   createScheduledChatGenerate,
+  createScheduledImageGenerate,
   parseRetryAfterMs,
+  releaseSchedulerGrant,
   schedulerIntervalMs
 };

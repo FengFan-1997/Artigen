@@ -27,6 +27,7 @@ const installSystemRoutes = (app, deps) => {
   const requireLlmProvider = !!deps?.requireLlmProvider;
   const SILICONFLOW_API_KEY = deps?.SILICONFLOW_API_KEY;
   const activeTextProvider = deps?.activeTextProvider;
+  const hasCloudflareProvider = deps?.hasCloudflareProvider === true || activeTextProvider === 'cloudflare';
   const imgCredits = deps?.imgCredits;
   const fs = deps?.fs;
   const path = deps?.path;
@@ -34,9 +35,12 @@ const installSystemRoutes = (app, deps) => {
   const assertAuthUserMatches = deps?.assertAuthUserMatches;
   const callSiliconFlowImageGenerate = deps?.callSiliconFlowImageGenerate;
   const callSiliconFlowChat = deps?.callSiliconFlowChat;
+  const callCloudflareChat = deps?.callCloudflareChat;
   const callTextGenerate = deps?.callTextGenerate;
   const SILICONFLOW_API_BASE = deps?.SILICONFLOW_API_BASE;
   const SILICONFLOW_MODEL = deps?.SILICONFLOW_MODEL;
+  const CLOUDFLARE_MODEL = deps?.CLOUDFLARE_MODEL || '@cf/openai/gpt-oss-120b';
+  const SILICONFLOW_IMAGE_MODEL = deps?.SILICONFLOW_IMAGE_MODEL || 'Kwai-Kolors/Kolors';
   const getClientIp = deps?.getClientIp;
   const upsertUsageLedgerItem = deps?.upsertUsageLedgerItem;
   const computeCreditsDelta = deps?.computeCreditsDelta;
@@ -442,7 +446,9 @@ const installSystemRoutes = (app, deps) => {
 
   app.get("/healthz", (req, res) => {
     const hasSiliconflowKey = !!SILICONFLOW_API_KEY;
-    const hasProvider = hasSiliconflowKey;
+    // Cloudflare is the text provider for deployed Agent environments; a
+    // SiliconFlow image key is not required for a text-only health signal.
+    const hasProvider = hasSiliconflowKey || hasCloudflareProvider;
     res.status(200).json({
       ok: true,
       nodeEnv: NODE_ENV,
@@ -455,7 +461,7 @@ const installSystemRoutes = (app, deps) => {
 
   app.get("/readyz", async (req, res) => {
     const hasSiliconflowKey = !!SILICONFLOW_API_KEY;
-    const hasAnyProvider = hasSiliconflowKey;
+    const hasAnyProvider = hasSiliconflowKey || hasCloudflareProvider;
     try {
       const report = await getReadinessReport({
         env: readinessEnv,
@@ -527,9 +533,14 @@ const installSystemRoutes = (app, deps) => {
         ok: true,
         serverTime: Date.now(),
         textProvider: activeTextProvider,
+        cloudflare: {
+          model: CLOUDFLARE_MODEL,
+          hasApiKey: hasCloudflareProvider,
+          lastProbe: null,
+        },
         siliconflow: {
           baseUrl: SILICONFLOW_API_BASE,
-          model: SILICONFLOW_MODEL,
+          model: SILICONFLOW_IMAGE_MODEL,
           hasApiKey: hasSiliconflowKey,
           lastProbe: null,
         },
@@ -552,21 +563,26 @@ const installSystemRoutes = (app, deps) => {
 
       if (probe) {
         const startedAt = Date.now();
-        if (hasSiliconflowKey) {
+        if (hasCloudflareProvider) {
           try {
-            const { usedUrl, failures } = await callSiliconFlowChat({
-              timeoutMs: 5000,
-              messages: [{ role: "user", content: "ping" }],
-              maxTokens: 32,
-            });
-            result.siliconflow.lastProbe = {
+            // Health probes must never consume inference quota. Validate the
+            // immutable free-account binding locally; readiness performs the
+            // provider's non-inference catalog probe when explicitly asked.
+            const accountId = String(readinessEnv.CLOUDFLARE_ACCOUNT_ID || '').trim();
+            const freeAccountId = String(readinessEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '').trim();
+            const attested = /^(1|true|yes|on)$/i.test(
+              String(readinessEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || '').trim()
+            );
+            if (!/^[0-9a-f]{32}$/i.test(accountId) || freeAccountId !== accountId || !attested) {
+              throw new Error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
+            }
+            result.cloudflare.lastProbe = {
               ok: true,
-              usedUrl,
               elapsedMs: Date.now() - startedAt,
-              failures: Array.isArray(failures) ? failures.slice(0, 3) : [],
+              mode: 'credential-config',
             };
           } catch (e) {
-            result.siliconflow.lastProbe = {
+            result.cloudflare.lastProbe = {
               ok: false,
               elapsedMs: Date.now() - startedAt,
               error: String(e?.message || e),
@@ -1173,6 +1189,8 @@ const installSystemRoutes = (app, deps) => {
         })();
         const status = (() => {
           if (errorCode === "RATE_LIMITED") return 429;
+          if (errorCode === "AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED") return 429;
+          if (errorCode === "AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN") return 403;
           if (errorCode === "SERVER_BUSY") return 503;
           if (errorCode === "MISSING_SILICONFLOW_API_KEY") return 503;
           if (errorCode === "UPSTREAM_TIMEOUT") return 504;
