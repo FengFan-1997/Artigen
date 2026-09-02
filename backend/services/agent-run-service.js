@@ -60,6 +60,8 @@ const modelPricingRates = (config, run = {}) => {
   if (
     snapshot?.provider === provider &&
     snapshot?.model === model &&
+    Number.isFinite(Number(snapshot.inputCreditsPerMillion)) &&
+    Number.isFinite(Number(snapshot.outputCreditsPerMillion)) &&
     Number(snapshot.inputCreditsPerMillion) > 0 &&
     Number(snapshot.outputCreditsPerMillion) > 0
   ) {
@@ -1310,6 +1312,22 @@ const createAgentRunService = ({
     idempotencyKey: rawIdempotencyKey
   }) => {
     const liveConfig = assertAgentRuntimeReady(env);
+    // Billing must be ready before a live run can create a hold.  V2 already
+    // enforces this in assertAgentRuntimeReady; keep the same fail-closed
+    // admission boundary for V1 so a zero/missing pricing profile can never
+    // freeze user credits and only fail later inside the Worker.
+    if (
+      liveConfig.runtimeDriver === 'live' &&
+      ['siliconflow', 'cloudflare'].includes(liveConfig.modelProvider) &&
+      (
+        !Number.isFinite(Number(liveConfig.modelPricingSnapshot?.inputCreditsPerMillion)) ||
+        !Number.isFinite(Number(liveConfig.modelPricingSnapshot?.outputCreditsPerMillion)) ||
+        !(Number(liveConfig.modelPricingSnapshot?.inputCreditsPerMillion) > 0) ||
+        !(Number(liveConfig.modelPricingSnapshot?.outputCreditsPerMillion) > 0)
+      )
+    ) {
+      throw new ApiError(503, 'AGENT_PRICING_NOT_READY', { retryable: false });
+    }
     if (!hasAgentPayloadKey(env)) {
       throw new ApiError(503, 'AGENT_PAYLOAD_KEY_MISSING', { retryable: false });
     }
@@ -3687,9 +3705,10 @@ const createAgentRunService = ({
       [runId]
     );
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-    if (Number(run.rows[0].runtime_version || 1) === 2) {
-      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
-    }
+    // Artifact registration is a worker write for both V1 and V2. Checking
+    // only V2 allowed an old V1 worker to register a passed artifact after
+    // takeover and race the new worker's finalization.
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     if (verificationStatus === 'passed' && /^[a-f0-9]{64}$/.test(digest)) {
       const existing = await client.query(
         `SELECT * FROM agent_artifacts

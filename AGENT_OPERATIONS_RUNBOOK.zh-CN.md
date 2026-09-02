@@ -10,7 +10,7 @@
 
 ## 1. 当前结论
 
-Artigen Agent 继续使用“云端文本模型 + 本机 CUA 沙箱”：已发布环境仍固定为硅基流动 `Qwen/Qwen3-8B`，2026-09-01 的候选 DEV Mac Worker 已切换为 Cloudflare Workers AI Free `@cf/openai/gpt-oss-120b`。两者都使用本机 CUA + Docker，任务由 PostgreSQL/pg-boss 持久排队；无需下载本地大模型，也不需要 CUA 云账号。DEV 实机通过不等于生产已经切换。
+Artigen Agent 继续使用“云端文本模型 + 本机 CUA 沙箱”：当前候选和部署入口已统一锁定 Cloudflare Workers AI Free `@cf/openai/gpt-oss-120b`，SiliconFlow 仅负责 `Kwai-Kolors/Kolors` 图片生成。两者都使用本机 CUA + Docker，任务由 PostgreSQL/pg-boss 持久排队；无需下载本地大模型，也不需要 CUA 云账号。该统一模型候选尚未完成 push、部署或完整实机矩阵，不能把本地门禁当作生产已切换证据。
 
 **2026-08-07 Production Beta 更新：** 生产提交 `9bcc77d593e0747d5265f96f1f45b1dcb956b0bd` 已部署到 Render `main`，数据库迁移 020、共享 S3、Production Mac Worker、四项浏览器状态和 owner-only 白名单全部通过。生产登录捕获 run `0bfa9eef-a989-4400-9fcd-0bcb043c211d` 与会话恢复 run `20317cd5-77e8-40ca-ac74-ad845385bf96` 均为 `succeeded`，4 个 Markdown/PDF 交付物验证通过并存入 S3；会话随后撤销并擦除。完整交付与账号登录方式见 [ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md](./ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md)。
 
@@ -58,7 +58,7 @@ flowchart LR
     U["Artigen 登录用户"] --> W["Artigen 网页/后端"]
     W --> DB["PostgreSQL + pg-boss 队列"]
     DB --> WK["本机 Agent Worker，单并发"]
-    WK --> O["固定文本模型：SiliconFlow Qwen3-8B 或 Cloudflare GPT-OSS 120B"]
+    WK --> O["固定文本模型：Cloudflare GPT-OSS 120B"]
     WK --> C["CUA 本地 Docker 沙箱"]
     C --> E["每任务 restricted-v1 出口代理"]
     E --> H["公开 HTTPS/WSS 443"]
@@ -70,8 +70,8 @@ flowchart LR
 
 关键点：
 
-- Agent 文本模型只允许两个服务端固定档：硅基流动 `Qwen/Qwen3-8B`，或 Cloudflare Workers AI 免费层 `@cf/openai/gpt-oss-120b`。两者都不能由客户端传模型名或 API Origin。
-- 图片生成与深度思考/视觉方向分析继续复用 `SILICONFLOW_API_KEY`；切换 Cloudflare 只改变 Agent 文本模型，不改变 Kolors 图片链，也不自动回退到收费模型。
+- 所有部署环境的 Agent 文本模型唯一固定为 Cloudflare Workers AI 免费层 `@cf/openai/gpt-oss-120b`，不能由客户端传模型名或 API Origin；旧 Qwen 配置只保留在隔离的历史 fixture 中，禁止部署。
+- 图片生成与视觉方向分析继续复用 `SILICONFLOW_API_KEY`，唯一图片模型为 `Kwai-Kolors/Kolors`；Cloudflare 免费额度耗尽时 fail closed，不回退到收费文本模型。
 - CUA 运行在本机 Docker，不使用 CUA 云端账户或云端 API Key。
 - 本机 DEV 可获得 `files`、受限 `shell` 和 `browser`；浏览器顶层页面必须属于用户填写的精确 HTTPS Origin，跨 Origin 顶层跳转由服务器和沙箱双重阻断。
 - 浏览器容器没有默认 Docker 出口。所有公网连接经过每任务代理，代理解析全部 A/AAAA、拒绝任一非公网结果并固定已验证 IP；CUA/VNC 端口只绑定 Mac 的 `127.0.0.1`。
@@ -95,7 +95,7 @@ flowchart LR
 - 登录地址：<https://account.siliconflow.cn/zh/login>
 - 控制台：<https://cloud.siliconflow.cn>
 - API 地址：`https://api.siliconflow.cn/v1`
-- 唯一允许的 Agent 模型：`Qwen/Qwen3-8B`
+- 当前唯一允许的图片模型：`Kwai-Kolors/Kolors`（SiliconFlow 仅作为图片 Provider）
 - 密钥位置：本机 macOS 钥匙串 `Artigen SiliconFlow API Key`；部署平台使用 Secret `SILICONFLOW_API_KEY`
 
 不要把 API Key 发到前端、Markdown、日志或 Git。模型探针只报告“已配置/无效/不可用”，不会输出密钥。
@@ -104,7 +104,7 @@ Agent 配置中的 `AGENT_SILICONFLOW_ENABLE_THINKING=false` 是为了让多轮�
 
 ### 3.2.1 Cloudflare Workers AI（长期免费文本升级档）
 
-可选。Cloudflare Workers Free 每天提供自动恢复的免费 Workers AI 配额；Artigen 只允许 `@cf/openai/gpt-oss-120b`，API Base 由 32 位 `CLOUDFLARE_ACCOUNT_ID` 在服务端拼接，不能手填任意地址。为保证绝不产生账单，必须使用专门的 Workers Free 账户（不启用 Workers Paid，也不允许 AI 超额计费），显式设置 `AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED=true`，并令 `AGENT_CLOUDFLARE_FREE_ACCOUNT_ID` 精确等于该账户 ID；否则 Worker 就绪检查失败。这样即使 Keychain 凭据被换成另一个账户，旧声明也不会继续生效。
+Cloudflare Workers Free 每天提供自动恢复的免费 Workers AI 配额；Artigen 所有部署环境只允许 `@cf/openai/gpt-oss-120b`，API Base 由 32 位 `CLOUDFLARE_ACCOUNT_ID` 在服务端拼接，不能手填任意地址。为保证绝不产生账单，必须使用专门的 Workers Free 账户（不启用 Workers Paid，也不允许 AI 超额计费），显式设置 `AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED=true`，并令 `AGENT_CLOUDFLARE_FREE_ACCOUNT_ID` 精确等于该账户 ID；否则 Worker 就绪检查失败。这样即使 Keychain 凭据被换成另一个账户，旧声明也不会继续生效。
 
 - 控制台：<https://dash.cloudflare.com>
 - 当前专用账户已经由账户所有者在控制台确认显示 `Free / $0 / Current plan`；精确账户 ID 只保存在 DEV Secret/Keychain，并通过免费账户声明绑定，不写入本文档。
@@ -189,9 +189,9 @@ pnpm db:audit
 AGENT_FEATURE_ENABLED=true
 AGENT_WORKER_ENABLED=1
 AGENT_RUNTIME_DRIVER=live
-AGENT_MODEL_PROVIDER=siliconflow
-AGENT_MODEL_NAME=Qwen/Qwen3-8B
-AGENT_SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
+AGENT_MODEL_PROVIDER=cloudflare
+AGENT_MODEL_NAME=@cf/openai/gpt-oss-120b
+AGENT_TEXT_MODEL_HARD_LOCK=true
 AGENT_SILICONFLOW_MAX_TOKENS=4096
 AGENT_SILICONFLOW_ENABLE_THINKING=false
 AGENT_SILICONFLOW_MIN_INTERVAL_MS=6500
@@ -211,11 +211,12 @@ AGENT_IMAGE_CREDITS=8
 AGENT_IMAGE_REFERENCE_CREDITS=12
 ```
 
-切换长期免费 Cloudflare 文本模型时，仅替换文本 Provider 配置；`SILICONFLOW_API_KEY` 仍用于 Kolors 图片：
+长期免费 Cloudflare 文本模型是默认且唯一的文本配置；`SILICONFLOW_API_KEY` 仍只用于 Kolors 图片：
 
 ```dotenv
 AGENT_MODEL_PROVIDER=cloudflare
 AGENT_MODEL_NAME=@cf/openai/gpt-oss-120b
+AGENT_TEXT_MODEL_HARD_LOCK=true
 CLOUDFLARE_ACCOUNT_ID=从 Cloudflare 控制台读取
 CLOUDFLARE_API_TOKEN=只通过环境 Secret 或 macOS Keychain 注入
 AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED=true
@@ -298,7 +299,7 @@ pnpm doctor:agent
 - 私密载荷加密密钥；
 - `020_agent_secure_browser_relay` 数据库迁移、Agent 表、票据表和 Worker readiness 字段；
 - restricted-v1 主动探针：代理公网成功、直接出网失败、私网目标失败；
-- 硅基流动密钥、官方 API 地址及 `Qwen/Qwen3-8B` 是否可用；
+- Cloudflare GPT-OSS 120B 凭据、官方 API 地址及免费账户绑定是否可用；
 - CUA SDK 与 Docker runtime；
 - 首次镜像下载所需磁盘容量；
 - 最近一次 Worker 心跳。
@@ -475,7 +476,7 @@ replan / consecutive failures: 0 / 0
 → Worker 领取
 → provisioning
 → CUA 本地容器创建
-→ 硅基流动 Qwen3-8B 规划
+→ Cloudflare GPT-OSS-120B 规划
 → 沙箱执行文件工具
 → declare_artifact
 → 独立格式验证
@@ -518,7 +519,7 @@ Worker 使用 `Ctrl+C` 或 `SIGTERM` 停止。停止过程中数据库心跳先�
 
 重新启动 Worker 后，它会：
 
-1. 使用密钥探测硅基流动 `Qwen/Qwen3-8B`；
+1. 使用密钥探测 Cloudflare `@cf/openai/gpt-oss-120b`；
 2. 探测 CUA/Docker；
 3. 启动 pg-boss 消费者；
 4. 修复可恢复的陈旧任务；
@@ -530,7 +531,7 @@ Worker 使用 `Ctrl+C` 或 `SIGTERM` 停止。停止过程中数据库心跳先�
 不要在以下任一条件未满足时开启生产 `AGENT_WORKER_ENABLED=1`：
 
 - 本机 `pnpm doctor:agent` 全绿；
-- `SILICONFLOW_API_KEY` 已配置且 `Qwen/Qwen3-8B` 通过模型探针；
+- Cloudflare GPT-OSS 120B 凭据已配置且通过模型探针；`SILICONFLOW_API_KEY` 仅用于 Kolors 图片；
 - Cua SDK 本地容器支持与 Docker Runtime 可用；
 - 本机 Markdown + PDF 发布级浏览器烟测和真实 VNC 中继握手已成功；
 - 开发/预发布数据库已执行 020 迁移；

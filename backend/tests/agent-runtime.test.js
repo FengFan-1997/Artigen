@@ -1965,6 +1965,13 @@ test('failure breaker counts only the same failed action as repeated', () => {
 });
 
 test('production Agent runtime fails closed without live credentials and a pinned image', () => {
+  const cloudflare = {
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32)
+  };
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1'
@@ -1972,13 +1979,13 @@ test('production Agent runtime fails closed without live credentials and a pinne
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    OPENAI_API_KEY: 'openai-test',
+    ...cloudflare,
     CUA_API_KEY: 'cua-test'
   }), { code: 'AGENT_SANDBOX_IMAGE_NOT_PINNED' });
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    OPENAI_API_KEY: 'openai-test',
+    ...cloudflare,
     CUA_API_KEY: 'cua-test',
     AGENT_CUA_IMAGE_REF: 'ghcr.io/example/agent@sha256:abc',
     AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser',
@@ -1987,7 +1994,7 @@ test('production Agent runtime fails closed without live credentials and a pinne
   const config = assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    OPENAI_API_KEY: 'openai-test',
+    ...cloudflare,
     CUA_API_KEY: 'cua-test',
     AGENT_CUA_IMAGE_REF: 'ghcr.io/example/agent@sha256:abc',
     AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
@@ -1997,7 +2004,8 @@ test('production Agent runtime fails closed without live credentials and a pinne
     AGENT_WORKER_RELAY_URL: 'wss://api.example.com/api/agent-desktop/worker',
     AGENT_WORKER_ID: 'mac-production-1'
   });
-  assert.equal(config.modelName, 'gpt-5.6');
+  assert.equal(config.modelProvider, 'cloudflare');
+  assert.equal(config.modelName, '@cf/openai/gpt-oss-120b');
   assert.equal(config.hardMaxCredits, 500);
   assert.throws(() => getAgentConfig({
     NODE_ENV: 'production',
@@ -2168,6 +2176,25 @@ test('Cloudflare Agent is pinned to the free-tier GPT-OSS 120B model and require
     AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
     AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'b'.repeat(32)
   }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_MISMATCH' });
+});
+
+test('deployed worker hard-lock rejects legacy text providers while preserving image-only SiliconFlow', () => {
+  assert.throws(() => getAgentConfig({
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  assert.throws(() => getAgentConfig({
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_MODEL_PROVIDER: 'ollama',
+    AGENT_MODEL_NAME: 'qwen3:8b'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  const config = getAgentConfig({
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b'
+  });
+  assert.equal(config.textModelHardLock, true);
 });
 
 test('Runtime V2 assignment is server-owned, stable and fails back to V1 when disabled', () => {
@@ -4899,6 +4926,7 @@ test('OpenAI Responses computer loop executes read-only visual actions and retur
   ];
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },
@@ -5603,6 +5631,41 @@ test('Agent service status stays observable when provider pricing is missing or 
   }
 });
 
+test('live V1 createRun rejects zero pricing before opening a hold', async () => {
+  let poolTouched = false;
+  const service = createAgentRunService({
+    pool: {
+      connect: async () => {
+        poolTouched = true;
+        throw new Error('createRun must reject before opening a transaction');
+      }
+    },
+    env: {
+      ...encryptionEnv,
+      NODE_ENV: 'test',
+      APP_ENV: 'dev',
+      AGENT_FEATURE_ENABLED: '1',
+      AGENT_RUNTIME_DRIVER: 'live',
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_PUBLIC_CAPABILITIES: 'files,shell',
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0'
+    }
+  });
+  await assert.rejects(
+    service.createRun({
+      userId: '11111111-1111-4111-8111-111111111111',
+      objective: '生成一份简短说明',
+      idempotencyKey: 'v1-zero-pricing'
+    }),
+    { code: 'AGENT_PRICING_NOT_READY', status: 503 }
+  );
+  assert.equal(poolTouched, false);
+});
+
 test('SiliconFlow Qwen3-8B safely synthesizes a plan when the small model starts with execution', async () => {
   const responses = [
     {
@@ -6186,6 +6249,7 @@ test('coordinate-mutating computer actions require takeover before execution', a
   ];
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },
@@ -6221,6 +6285,7 @@ test('durable model checkpoint submits a completed tool receipt without replayin
   let cleared = 0;
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },
@@ -6317,6 +6382,7 @@ test('completed visual takeover is observed without replaying the coordinate act
   ];
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },

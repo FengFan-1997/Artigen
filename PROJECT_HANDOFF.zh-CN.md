@@ -8,13 +8,20 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-09-02 非生图模型统一切换（当前本地候选，未发布）
+
+- 账户所有者已确认新的硬策略：**所有环境的非生图模型**（对话、路由、规划、验证、父/子 Agent、记忆摘要和工具决策）统一使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；**所有图片生成**继续只使用 SiliconFlow `Kwai-Kolors/Kolors`。不再把 `Qwen/Qwen3-8B` 作为任何部署环境的默认文本模型。
+- 候选分支为 `codex/cloudflare-free-agent-integration`，基于 `origin/dev` `8a67bb632d2aeadfad4f7810ca13f484262a9172`。Render 生产/DEV blueprint、Mac Worker 启动器、通用文本入口、Planner/Runtime、设计对话和健康检查均已写入 Cloudflare/GPT-OSS 文本锁与 Kolors 图片边界；`AGENT_TEXT_MODEL_HARD_LOCK=true` 时非 Cloudflare 文本配置会 fail closed。
+- 旧 Qwen 字样只保留在历史 Handoff、历史真实 Run 和确定性 fixture 兼容测试中，用于审计旧版本，不代表当前部署配置或新的真实调用方向。当前候选未 push、未创建 PR、未部署；Runtime V2、公众 rollout 和 owner canary 继续关闭。
+- 本轮未调用付费 Provider。当前已完成受影响后端测试 `167/167`、`pnpm eval:agent:validate` `50/50`、JS 语法和 `git diff --check`；完整 `pnpm check` 正在当前候选上运行，PostgreSQL/MinIO deterministic、chaos、DEV 对齐、真实 24-slot 和图片盲审尚未执行。
+
 ## 2026-09-02 Agent 长期免费大模型升级（统一候选，未发布）
 
 - 免费模型筛选以“不是注册送额度、无需绑定付费方式、支持工具调用和结构化输出”为硬门。硅基流动当前永久免费对话模型仍主要为 4B–9B，无法构成对 `Qwen/Qwen3-8B` 的数量级升级；Cerebras 已改成账户注册送 5 美元 credits，属于试用；Gemini Developer API 虽有免费层，但中国大陆不在可用区域；OpenRouter 免费模型总量限制不适合作为 Agent 主链。
 - 当前候选选择 Cloudflare Workers AI Free + `@cf/openai/gpt-oss-120b`。Cloudflare 文档在 2026-09-01 显示 Workers Free 每日 10,000 Neurons 免费配额、每日重置，GPT-OSS 120B 支持 Chat Completions、函数调用和 128K context；该额度适合 owner Beta，不是无限公开容量，也没有生产 SLA。
 - Cloudflare 实现提交已整合到基于 `dev` merge SHA `8a67bb632d2aeadfad4f7810ca13f484262a9172` 的 `codex/cloudflare-free-agent-integration` 候选。新增 `cloudflare` Agent Provider：模型服务端硬锁 GPT-OSS 120B，Cloudflare API Origin 由严格校验的 account ID 拼接，Token 只从 Secret/Keychain 读取；Runtime V2 Prompt/Profile/Replay Oracle、durable model receipts、预算预留、工具白名单与结构化 JSON 纠错均按 Run 的固定 provider/model 工作，费用快照随不可变 Runtime Profile 持久化，终态清理和恢复不再误用 SiliconFlow 费率。
 - Cloudflare 切换只覆盖 Agent 文本链。Kolors 图片生成仍使用现有 `SILICONFLOW_API_KEY`，文本和图片使用独立调度键。启动探针改用只读模型目录查询，不消耗推理额度。零费用边界要求专用 Workers Free 账户、`AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED=true`，并令 `AGENT_CLOUDFLARE_FREE_ACCOUNT_ID` 精确等于 Keychain 中当前 `CLOUDFLARE_ACCOUNT_ID`；任何缺失、换号或不匹配都在就绪与派发前 fail closed，免费额度耗尽后也不得回退到收费文本模型。
-- 独立整合审核发现 Cloudflare `3036` 免费日额度耗尽原本会被通用 429 逻辑自动重试，`5035` Paid-only 也会被误报为凭据失败；统一候选已将二者设为不可重试的明确终止码，只有 `3040` 暂时容量不足继续有界重试。DEV LaunchAgent、直接运行器和 smoke 默认选择 Cloudflare，生产默认值不变；工作台与 Planner 从服务端实际 Run/status 展示模型，不再硬编码 Qwen。对应 Runtime、路由、UI 与部署配置专项回归已通过，完整正式门禁与 required CI 仍待最终候选执行。
+- 独立整合审核发现 Cloudflare `3036` 免费日额度耗尽原本会被通用 429 逻辑自动重试，`5035` Paid-only 也会被误报为凭据失败；统一候选已将二者设为不可重试的明确终止码，只有 `3040` 暂时容量不足继续有界重试。DEV、生产 blueprint、LaunchAgent、直接运行器和 smoke 默认均选择 Cloudflare GPT-OSS 文本链，生产仍需单独部署后才生效；工作台与 Planner 从服务端实际 Run/status 展示模型，不再硬编码 Qwen。对应 Runtime、路由、UI 与部署配置专项回归已通过，完整正式门禁与 required CI 仍待最终候选执行。
 - 第二轮独立审核又关闭两类证据漂移：Live Eval 最终签名现在把实际文本/图片模型一起纳入 HMAC，owner canary 的运行配置必须与该模型锁完全一致；Worker 认领到与自身 provider/model 不同的旧 Run 时，会在读取私有任务、创建沙箱、调用模型或执行 Shell 前失败并释放未用冻结额度，禁止把旧 Qwen Run 静默改由 GPT-OSS 执行。DEV smoke 同时要求当前最新迁移 `026_agent_live_eval_capacity_counter`，不再把只到 025 的数据库误判为就绪。
 - Live Eval 的固定模型门、Auditor、Replay、最终报告和 owner canary 已接受两组精确文本 pair，并保留 Kolors 为唯一图片模型；Cloudflare 设计会话入口复用同一固定模型，过滤供应商不支持的 `min_p`，且只由一层 Provider scheduler 取槽。模拟回归覆盖模型目录探针、401/403/429、结构化 JSON、工具调用回环、Runtime Profile、Replay 和 Cloudflare receipt 费用恢复。
 - 原 Cloudflare 候选的 `pnpm check:core` 退出码 0：frontend `218/218`，backend `563 passed / 92 条明确环境跳过 / 0 failed`，mail relay `7/7`，50 项 quality manifest、生产 build 与 87.5 KiB gzip 初始预算均通过。该证据仍不替代统一候选的完整门禁、required CI 与 live matrix。
@@ -357,7 +364,9 @@ AI 必须在每个 Artigen 任务结束前更新本地 Handoff。有持久影响
 
 详细规则见 [`AGENTS.md`](./AGENTS.md) 和 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。
 
-## 4. Agent Production Beta
+## 4. Agent Production Beta（历史 Qwen 版本，非当前候选）
+
+> 本节保留已发布 Qwen 版本的生产证据，供回溯结算与回滚使用；当前非生图模型统一切换以文档顶部的 2026-09-02 候选决策为准。Cloudflare/GPT-OSS 候选尚未部署，因此不能把本节的历史生产模型表述当作当前线上状态。
 
 浏览器 Agent 已完成真实生产端到端验收，不再是只有核心测试、没有环境配置的状态。
 

@@ -32,6 +32,7 @@ const {
   contentFreeMetrics,
   createScheduledChatGenerate,
   createScheduledImageGenerate,
+  createProviderScheduler,
   parseRetryAfterMs,
   schedulerIntervalMs
 } = require('../services/agent-model-runtime-service');
@@ -398,6 +399,14 @@ test('Provider scheduler derives a shared conservative interval from RPM', () =>
   }, 'siliconflow:kolors'), 6667);
 });
 
+test('Provider scheduler defaults to the deployed Cloudflare text key', () => {
+  const scheduler = createProviderScheduler({
+    pool: { connect: () => Promise.reject(new Error('not called')) },
+    env: { AGENT_PROVIDER_SCHEDULER_ENABLED: 'false' }
+  });
+  assert.equal(scheduler.providerKey, 'cloudflare:@cf/openai/gpt-oss-120b');
+});
+
 test('Provider Retry-After accepts seconds and HTTP dates with a bounded delay', () => {
   const now = Date.parse('2026-08-21T00:00:00.000Z');
   assert.equal(parseRetryAfterMs('2.5', { now }), 2500);
@@ -408,18 +417,21 @@ test('Provider Retry-After accepts seconds and HTTP dates with a bounded delay',
 
 test('Shared chat scheduling bypasses only the process-local gate and quality metrics reject text', async () => {
   const calls = [];
+  const released = [];
   const chat = createScheduledChatGenerate({
     scheduler: {
       acquire: async ({ priority }) => {
         calls.push(priority);
-        return { mode: 'postgres-v1', queueWaitMs: 12 };
-      }
+        return { mode: 'postgres-v1', queueWaitMs: 12, requestId: 'chat-request' };
+      },
+      release: async (requestId) => released.push(requestId)
     },
     chatGenerate: async (input) => input,
     defaultPriority: 'actor'
   });
   const result = await chat({ messages: [], schedulerPriority: 'router' });
   assert.deepEqual(calls, ['router']);
+  assert.deepEqual(released, ['chat-request']);
   assert.equal(result.skipRateGate, true);
   assert.deepEqual(contentFreeMetrics({
     attempt: 2,
@@ -431,20 +443,51 @@ test('Shared chat scheduling bypasses only the process-local gate and quality me
 
 test('Shared image scheduling uses the canonical provider gate and bypasses only its local rate gate', async () => {
   const priorities = [];
+  const released = [];
   const image = createScheduledImageGenerate({
     scheduler: {
       acquire: async ({ priority }) => {
         priorities.push(priority);
-        return { mode: 'postgres-v1', queueWaitMs: 7 };
-      }
+        return { mode: 'postgres-v1', queueWaitMs: 7, requestId: 'image-request' };
+      },
+      release: async (requestId) => released.push(requestId)
     },
     imageGenerate: async (input) => input,
     defaultPriority: 'actor'
   });
   const result = await image({ prompt: 'poster', schedulerPriority: 'router' });
   assert.deepEqual(priorities, ['router']);
+  assert.deepEqual(released, ['image-request']);
   assert.equal(result.skipRateGate, true);
   assert.equal(result.prompt, 'poster');
+});
+
+test('Scheduler release failures are surfaced without silently reporting provider success', async () => {
+  const chat = createScheduledChatGenerate({
+    scheduler: {
+      acquire: async () => ({ mode: 'postgres-v1', requestId: 'release-fails' }),
+      release: async () => { throw new Error('database unavailable'); }
+    },
+    chatGenerate: async () => ({ text: 'provider returned' })
+  });
+  await assert.rejects(chat({}), {
+    code: 'AGENT_PROVIDER_SCHEDULER_RELEASE_FAILED',
+    status: 503
+  });
+});
+
+test('Image scheduler release failures are fail-closed as well', async () => {
+  const image = createScheduledImageGenerate({
+    scheduler: {
+      acquire: async () => ({ mode: 'postgres-v1', requestId: 'image-release-fails' }),
+      release: async () => { throw new Error('database unavailable'); }
+    },
+    imageGenerate: async () => ({ modelUsed: 'Kwai-Kolors/Kolors' })
+  });
+  await assert.rejects(image({}), {
+    code: 'AGENT_PROVIDER_SCHEDULER_RELEASE_FAILED',
+    status: 503
+  });
 });
 
 test('Model-call tracing is fail-soft and cannot take down an otherwise valid provider response', async () => {

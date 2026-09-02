@@ -81,6 +81,8 @@ const {
   SILICONFLOW_API_KEY,
   SILICONFLOW_API_BASE,
   SILICONFLOW_MODEL,
+  FIXED_CLOUDFLARE_CHAT_MODEL,
+  FIXED_SILICONFLOW_IMAGE_MODEL,
   activeTextProvider,
 } = require("./lib/config");
 const {
@@ -107,24 +109,22 @@ const sharedProviderScheduler = isDatabaseConfigured()
   ? createProviderScheduler({
       pool: getPool(),
       env: process.env,
-      providerKey: `${String(process.env.AGENT_MODEL_PROVIDER || 'siliconflow').trim().toLowerCase()}:${String(process.env.AGENT_MODEL_NAME || 'Qwen/Qwen3-8B').trim()}`,
+      providerKey: `${String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase()}:${String(process.env.AGENT_MODEL_NAME || '@cf/openai/gpt-oss-120b').trim()}`,
     })
   : null;
-const sharedSiliconFlowScheduler = isDatabaseConfigured() &&
-  String(process.env.AGENT_MODEL_PROVIDER || '').trim().toLowerCase() === 'cloudflare'
-  ? createProviderScheduler({
-      pool: getPool(),
-      env: process.env,
-      providerKey: 'siliconflow:Qwen/Qwen3-8B',
-    })
-  : sharedProviderScheduler;
+const textProviderIsCloudflare = String(
+  process.env.AGENT_MODEL_PROVIDER || 'cloudflare'
+).trim().toLowerCase() === 'cloudflare';
+const sharedSiliconFlowScheduler = sharedProviderScheduler;
 const scheduledSiliconFlowChat = createScheduledChatGenerate({
   scheduler: sharedSiliconFlowScheduler,
-  chatGenerate: callSiliconFlowChat,
+  chatGenerate: textProviderIsCloudflare ? callCloudflareChat : callSiliconFlowChat,
   defaultPriority: "actor",
 });
 const scheduledTextGenerate = (input) => callTextGenerate({
   ...input,
+  model: input?.model || (textProviderIsCloudflare ? '@cf/openai/gpt-oss-120b' : SILICONFLOW_MODEL),
+  providerName: textProviderIsCloudflare ? 'cloudflare' : 'siliconflow',
   chatGenerate: scheduledSiliconFlowChat,
 });
 const sharedSiliconFlowImageScheduler = isDatabaseConfigured()
@@ -780,6 +780,9 @@ installSystemRoutes(app, {
   callTextGenerate: scheduledTextGenerate,
   SILICONFLOW_API_BASE,
   SILICONFLOW_MODEL,
+  CLOUDFLARE_MODEL: FIXED_CLOUDFLARE_CHAT_MODEL,
+  SILICONFLOW_IMAGE_MODEL: FIXED_SILICONFLOW_IMAGE_MODEL,
+  hasCloudflareProvider: activeTextProvider === 'cloudflare',
   getClientIp,
   MEMORY_DIR,
   upsertUsageLedgerItem: upsertPersistentUsageLedgerItem,

@@ -454,6 +454,10 @@ const createAiDesignExecutor = ({
         aspectRatio: normalizedOptions.aspectRatio,
         seed,
         images: inputs,
+        // Tool tasks are V1 execution records; keep their physical provider
+        // evidence attributable to the durable task id as well.
+        runId: taskId,
+        runtimeVersion: 1,
         signal
       });
       const providerMs = Date.now() - providerStartedAt;

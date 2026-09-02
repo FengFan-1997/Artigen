@@ -81,7 +81,7 @@ const run = {
   objective: '审计品牌官网，交付 PDF 与可编辑演示文稿。',
   objectivePreview: '审计品牌官网，交付 PDF 与可编辑演示文稿。',
   status: 'waiting_user',
-  model: { provider: 'siliconflow', name: 'Qwen/Qwen3-8B' },
+  model: { provider: 'cloudflare', name: '@cf/openai/gpt-oss-120b' },
   sandbox: { provider: 'cua', version: 'pinned-v1', displayUrl: 'https://desktop.example/session' },
   capabilities: { browser: true, files: true, shell: true },
   browserConfig: { allowedOrigins: ['https://brand.example'], profileId: null, persistSession: false },
@@ -149,7 +149,7 @@ const installCommonApi = async (page: Page, authenticated = true) => {
         enabled: true,
         workerEnabled: true,
         plannerReady: true,
-        model: 'Qwen/Qwen3-8B',
+        model: '@cf/openai/gpt-oss-120b',
         imageModel: 'Kwai-Kolors/Kolors',
         autoCreditCap: 50,
         retentionDays: 30,
@@ -368,11 +368,11 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await expect(page.locator('.authorization-scope')).toContainText('发布');
   await expect(page.locator('.authorization-scope')).toContainText('30 分钟');
   const environment = page.locator('#workspace-panel-environment');
-  await expect(environment.getByText('Qwen/Qwen3-8B', { exact: true })).not.toBeVisible();
+  await expect(environment.getByText('@cf/openai/gpt-oss-120b', { exact: true })).not.toBeVisible();
   await expect(environment.getByText('Kwai-Kolors/Kolors', { exact: true })).not.toBeVisible();
   await expect(environment).toContainText('50');
   await environment.getByText('技术详情', { exact: true }).click();
-  await expect(environment).toContainText('Qwen/Qwen3-8B');
+  await expect(environment).toContainText('@cf/openai/gpt-oss-120b');
   await expect(environment).toContainText('Kwai-Kolors/Kolors');
   await page.getByRole('tab', { name: '计划' }).click();
   await expect(page.locator('#workspace-panel-plan')).toContainText('浏览并记录公开页面证据');

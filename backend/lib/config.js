@@ -35,9 +35,24 @@ const SILICONFLOW_CHAT_COMPLETIONS_URL = `${SILICONFLOW_API_BASE}/chat/completio
 const SILICONFLOW_IMAGES_GENERATIONS_URL = `${SILICONFLOW_API_BASE}/images/generations`;
 const FIXED_SILICONFLOW_CHAT_MODEL = "Qwen/Qwen3-8B";
 const FIXED_SILICONFLOW_IMAGE_MODEL = "Kwai-Kolors/Kolors";
-const SILICONFLOW_MODEL = FIXED_SILICONFLOW_CHAT_MODEL;
+const FIXED_CLOUDFLARE_CHAT_MODEL = "@cf/openai/gpt-oss-120b";
+// Legacy endpoints expose one text model field.  In a deployed Agent
+// environment that field must advertise the Cloudflare model; keep the
+// SiliconFlow constant available for isolated backwards-compatibility tests.
+const SILICONFLOW_MODEL = String(process.env.AGENT_MODEL_PROVIDER || "cloudflare")
+  .trim()
+  .toLowerCase() === "cloudflare"
+  ? FIXED_CLOUDFLARE_CHAT_MODEL
+  : FIXED_SILICONFLOW_CHAT_MODEL;
 
-const activeTextProvider = SILICONFLOW_API_KEY ? "siliconflow" : "offline";
+const ACTIVE_MODEL_PROVIDER = String(process.env.AGENT_MODEL_PROVIDER || "cloudflare")
+  .trim()
+  .toLowerCase();
+const activeTextProvider = ACTIVE_MODEL_PROVIDER === "cloudflare"
+  ? (normalizeSecret(process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_AUTH_TOKEN)
+    ? "cloudflare"
+    : "offline")
+  : (SILICONFLOW_API_KEY ? "siliconflow" : "offline");
 const SILICONFLOW_TIMEOUT_MS = (() => {
   const v = Number.parseInt(process.env.SILICONFLOW_TIMEOUT_MS || "", 10);
   return Number.isFinite(v) && v > 1000 ? v : 120000;
@@ -59,6 +74,7 @@ module.exports = {
   SILICONFLOW_CHAT_COMPLETIONS_URL,
   SILICONFLOW_IMAGES_GENERATIONS_URL,
   FIXED_SILICONFLOW_CHAT_MODEL,
+  FIXED_CLOUDFLARE_CHAT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
   activeTextProvider,
   SILICONFLOW_TIMEOUT_MS,

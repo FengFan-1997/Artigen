@@ -20,10 +20,13 @@ const {
   selectAgentSkills,
   taskPlannerMessages
 } = require('./agent-runtime-v2');
-const { parseRetryAfterMs } = require('./agent-model-runtime-service');
+const {
+  parseRetryAfterMs,
+  releaseSchedulerGrant
+} = require('./agent-model-runtime-service');
 const { createCreativeProjectService } = require('./creative-project-service');
 
-const TEXT_MODEL = 'Qwen/Qwen3-8B';
+const TEXT_MODEL = '@cf/openai/gpt-oss-120b';
 const IMAGE_MODEL = 'Kwai-Kolors/Kolors';
 const ROUTE_KINDS = new Set(['reply', 'local_tool', 'tool_task', 'agent_run']);
 const EXECUTION_STATUSES = new Set([
@@ -760,22 +763,29 @@ const createDesignConversationService = ({
         : null;
       let response = null;
       try {
-        response = await chatGenerate({
-          phase,
-          promptHash,
-          messages: requestMessages,
-          model: agentConfig.modelName,
-          maxTokens,
-          enableThinking: attemptThinkingEnabled,
-          responseFormat: 'json_object',
-          temperature: attemptThinkingEnabled ? 0.6 : 0.2,
-          topP: attemptThinkingEnabled ? 0.95 : 0.7,
-          topK: attemptThinkingEnabled ? 20 : undefined,
-          minP: attemptThinkingEnabled ? 0 : undefined,
-          timeoutMs: 60_000,
-          signal,
-          skipRateGate: Boolean(providerScheduler && agentConfig.providerSchedulerEnabled)
-        });
+        try {
+          response = await chatGenerate({
+            phase,
+            promptHash,
+            messages: requestMessages,
+            model: agentConfig.modelName,
+            maxTokens,
+            enableThinking: attemptThinkingEnabled,
+            responseFormat: 'json_object',
+            temperature: attemptThinkingEnabled ? 0.6 : 0.2,
+            topP: attemptThinkingEnabled ? 0.95 : 0.7,
+            topK: attemptThinkingEnabled ? 20 : undefined,
+            minP: attemptThinkingEnabled ? 0 : undefined,
+            timeoutMs: 60_000,
+            signal,
+            // Keep planner/provider evidence attributable to one durable
+            // conversation job without exposing user text or credentials.
+            slotId: conversation.id,
+            skipRateGate: Boolean(providerScheduler && agentConfig.providerSchedulerEnabled)
+          });
+        } finally {
+          await releaseSchedulerGrant(providerScheduler, slot.requestId);
+        }
         const parsed = safeJsonObject(response?.text);
         if (call) {
           await modelCallService.finish(call, {

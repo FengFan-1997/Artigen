@@ -48,7 +48,10 @@ const {
   verifySignedOwnerCanaryPlan
 } = require('../evaluation/harness/live-eval-owner-canary');
 const { LiveModelAuditor } = require('../evaluation/harness/live-model-auditor');
-const { LiveEvalCampaignGuard } = require('../evaluation/harness/live-eval-campaign-guard');
+const {
+  LiveEvalCampaignGuard,
+  sha256
+} = require('../evaluation/harness/live-eval-campaign-guard');
 const {
   PINNED_MINIO_DIGEST,
   createSignedGateManifest,
@@ -829,6 +832,60 @@ test('Live Harness rejects V2 model receipts that lack matching physical dispatc
   );
 });
 
+test('Live Harness accepts V2 physical evidence with bounded Kolors retries', async () => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.campaignGuard = {
+    dispatchMetrics: async () => ({
+      calls: [
+        { kind: 'qwen', runIdHash: sha256(runId), slotHash: sha256('text-only-agent:v2'), runtimeVersion: 2, status: 'succeeded' },
+        { kind: 'kolors', runIdHash: sha256(runId), slotHash: sha256('text-only-agent:v2'), runtimeVersion: 2, status: 'failed' },
+        { kind: 'kolors', runIdHash: sha256(runId), slotHash: sha256('text-only-agent:v2'), runtimeVersion: 2, status: 'succeeded' }
+      ],
+      qwenCalls: 1,
+      kolorsCalls: 2,
+      inputTokens: 10,
+      outputTokens: 5,
+      latencyMs: 25,
+      incomplete: 0
+    })
+  };
+  harness.oracle = {
+    async assertInvariants() {
+      return {
+        persistent: {
+          run: {
+            runtime_version: 2,
+            status: 'succeeded',
+            max_credits: 20,
+            charged_credits: 2
+          },
+          holds: [{ status: 'settled' }],
+          artifacts: [],
+          subagents: [],
+          steps: [],
+          modelCalls: [{ phase: 'actor', turn: 0 }],
+          toolReceipts: [{ kind: 'kolors', state: 'consumed' }]
+        },
+        reconstructed: { digest: 'ab'.repeat(32) }
+      };
+    }
+  };
+  harness.pool = {
+    query: async () => ({
+      rows: [{ entry_type: 'hold', count: 1 }, { entry_type: 'charge', count: 1 }]
+    })
+  };
+  const result = await harness.assertInvariants({
+    entry: { id: 'text-only-agent', expectedStatus: 'succeeded' },
+    cohort: 'v2',
+    runId
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.qwenCalls, 1);
+  assert.equal(result.kolorsCalls, 2);
+});
+
 test('Live Harness never accepts an incomplete physical dispatch as V1 baseline evidence', async () => {
   const harness = Object.create(AgentLiveEvalHarness.prototype);
   harness.campaignGuard = {
@@ -1056,6 +1113,31 @@ test('Live Harness drain check includes a queued Kolors scheduler request', asyn
     harness.lastDrainSnapshot.queued_provider_requests_by_key['siliconflow:Kwai-Kolors/Kolors'],
     1
   );
+});
+
+test('Live Harness drain check rejects an active subagent even when the parent run is terminal', async () => {
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.runIds = ['11111111-1111-4111-8111-111111111111'];
+  harness.baselineUserId = '22222222-2222-4222-8222-222222222222';
+  harness.candidateUserId = '33333333-3333-4333-8333-333333333333';
+  harness.queue = [];
+  harness.providerScheduler = { providerKey: 'siliconflow:Qwen/Qwen3-8B' };
+  harness.imageProviderScheduler = { providerKey: 'siliconflow:Kwai-Kolors/Kolors' };
+  harness.pool = {
+    query: async () => ({ rows: [{
+      active_runs: 0,
+      frozen_credits: 0,
+      active_holds: 0,
+      active_model_receipts: 0,
+      active_reservations: 0,
+      active_tool_receipts: 0,
+      active_subagents: 1,
+      queued_provider_requests: 0,
+      queued_provider_requests_by_key: {}
+    }] })
+  };
+  await assert.rejects(harness.assertBatchDrained(), /AGENT_LIVE_EVAL_BATCH_NOT_DRAINED/);
+  assert.equal(harness.lastDrainSnapshot.active_subagents, 1);
 });
 
 test('Live Harness direct recovery processing consumes the synthetic queue entry', async () => {
@@ -2211,7 +2293,10 @@ test('Live model auditor enforces V2 Qwen request contracts and child tool trimm
   const wrappedFetch = auditor.wrapQwenFetch(async () => ({ ok: true }));
   await auditor.requestContext.run(inspected, () => wrappedFetch(
     'https://api.siliconflow.cn/v1/chat/completions',
-    { method: 'POST' }
+    {
+      method: 'POST',
+      body: JSON.stringify({ model: 'Qwen/Qwen3-8B', messages: [] })
+    }
   ));
   assert.equal(auditor.qwenCalls, 1);
   await assert.rejects(
@@ -2360,6 +2445,52 @@ test('Live model auditor durably closes every Kolors physical dispatch', async (
   assert.equal(success.sequence, 1);
 });
 
+test('Live model auditor records one campaign row for every physical Kolors HTTP attempt', async () => {
+  const reserved = [];
+  const recorded = [];
+  const campaignGuard = {
+    async reserveDispatch(kind, metadata) {
+      reserved.push({ kind, metadata });
+      return { dispatchId: reserved.length, sequence: reserved.length };
+    },
+    combinedSignal(signal) {
+      return signal || new AbortController().signal;
+    },
+    async recordDispatchResult(dispatch, result) {
+      recorded.push({ dispatch, result });
+    }
+  };
+  const auditor = new LiveModelAuditor({ campaignGuard, maxKolorsCalls: 2 });
+  const responses = [
+    new Response('rate limited', { status: 429 }),
+    new Response('{"images":[]}', { status: 200 })
+  ];
+  const wrapped = auditor.wrapKolorsFetcher(async () => responses.shift(), {
+    runId: '11111111-1111-4111-8111-111111111111'
+  });
+  await wrapped('https://api.siliconflow.cn/v1/images/generations', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'Kwai-Kolors/Kolors', prompt: 'first' })
+  });
+  await wrapped('https://api.siliconflow.cn/v1/images/generations', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'Kwai-Kolors/Kolors', prompt: 'retry' })
+  });
+  assert.equal(auditor.kolorsCalls, 2);
+  assert.deepEqual(reserved.map((entry) => entry.kind), ['kolors', 'kolors']);
+  assert.deepEqual(recorded.map((entry) => entry.result.status), ['failed', 'failed']);
+  assert.deepEqual(recorded.map((entry) => entry.result.errorCode), ['HTTP_429', 'AGENT_IMAGE_OUTPUT_INVALID']);
+  assert.equal(reserved[0].metadata.runId, '11111111-1111-4111-8111-111111111111');
+  await assert.rejects(
+    wrapped('https://api.siliconflow.cn/v1/images/generations', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'Qwen/Qwen3-8B', prompt: 'wrong model' })
+    }),
+    /IMAGE_MODEL_INVALID/
+  );
+  assert.equal(reserved.length, 2);
+});
+
 test('Live model auditor rejects a local Qwen over-limit before reserving another dispatch', async () => {
   const reserved = [];
   const recorded = [];
@@ -2384,9 +2515,15 @@ test('Live model auditor rejects a local Qwen over-limit before reserving anothe
     headers: { 'Content-Type': 'application/json' }
   }));
 
-  await wrapped('https://api.siliconflow.cn/v1/chat/completions', { method: 'POST' });
+  await wrapped('https://api.siliconflow.cn/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'Qwen/Qwen3-8B', messages: [] })
+  });
   await assert.rejects(
-    wrapped('https://api.siliconflow.cn/v1/chat/completions', { method: 'POST' }),
+    wrapped('https://api.siliconflow.cn/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'Qwen/Qwen3-8B', messages: [] })
+    }),
     /QWEN_CALL_LIMIT/
   );
   assert.equal(reserved.length, 1);

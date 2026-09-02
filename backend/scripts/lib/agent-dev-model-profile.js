@@ -4,9 +4,10 @@ const DEV_CLOUDFLARE_MODEL = '@cf/openai/gpt-oss-120b';
 const DEV_SILICONFLOW_MODEL = 'Qwen/Qwen3-8B';
 
 const resolveAgentSmokeModelProfile = ({ env = process.env, production = false } = {}) => {
-  const provider = String(
-    env.AGENT_MODEL_PROVIDER || (production ? 'siliconflow' : 'cloudflare')
-  ).trim().toLowerCase();
+  // GPT-OSS is the only text model used by deployed Agent environments.
+  // SiliconFlow remains an image-only provider; the legacy branch is kept
+  // solely so historical deterministic fixtures can still describe old runs.
+  const provider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
   const model = String(
     env.AGENT_MODEL_NAME || (
       provider === 'cloudflare' ? DEV_CLOUDFLARE_MODEL : DEV_SILICONFLOW_MODEL
@@ -21,7 +22,7 @@ const resolveAgentSmokeModelProfile = ({ env = process.env, production = false }
     error.code = 'AGENT_SMOKE_MODEL_PROFILE_INVALID';
     throw error;
   }
-  if (production && provider !== 'siliconflow') {
+  if (production && provider !== 'cloudflare') {
     const error = new Error('AGENT_PRODUCTION_MODEL_PROFILE_INVALID');
     error.code = 'AGENT_PRODUCTION_MODEL_PROFILE_INVALID';
     throw error;

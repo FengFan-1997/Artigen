@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const crypto = require('node:crypto');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
@@ -72,6 +73,7 @@ Object.assign(process.env, {
   AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true',
   AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
   AGENT_BROWSER_MODE: 'full-approval-v1',
+  AGENT_PROVIDER_SCHEDULER_ENABLED: 'true',
   AGENT_WORKER_ID: 'artigen-design-conversation-dev-smoke-publisher',
   AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser,generate_images',
   AGENT_MAX_MINUTES: '45',
@@ -87,6 +89,7 @@ const {
   callSiliconFlowChat,
   callSiliconFlowImageGenerate
 } = require('../lib/ai-providers');
+const { fetch: siliconFlowFetch } = require('../lib/fetch-utils');
 const {
   createDesignConversationService,
   IMAGE_MODEL
@@ -111,6 +114,16 @@ const {
   TaskLeaseQueue,
   markProviderDispatched
 } = require('../services/task-queue-service');
+const {
+  createProviderScheduler,
+  createScheduledChatGenerate,
+  createScheduledImageGenerate,
+  createModelCallService
+} = require('../services/agent-model-runtime-service');
+const { LiveModelAuditor } = require('../evaluation/harness/live-model-auditor');
+const { requestPromptHash } = require('../evaluation/harness/scripted-siliconflow-transport');
+const { LiveEvalCampaignGuard } = require('../evaluation/harness/live-eval-campaign-guard');
+const { LIVE_EVAL_MATRIX_HASH } = require('../evaluation/harness/agent-live-eval-matrix');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const outputRoot = path.join(
@@ -308,7 +321,8 @@ const runToolImageExecution = async ({
   conversationService,
   userId,
   planned,
-  imageCalls
+  imageCalls,
+  scheduledImageGenerate
 }) => {
   const options = validateAiDesignTask({
     operation: planned.execution.operation,
@@ -362,7 +376,7 @@ const runToolImageExecution = async ({
     };
     imageCalls.push(trace);
     try {
-      const response = await callSiliconFlowImageGenerate(input);
+      const response = await scheduledImageGenerate(input);
       trace.modelUsed = response?.modelUsed || null;
       return response;
     } catch (error) {
@@ -652,20 +666,82 @@ const verifyAgentRun = async ({ pool, runService, entry, run }) => {
 };
 
 const main = async () => {
-  const pool = getPool();
-  const queuePublisher = new AgentQueuePublisher({ env: process.env });
   const plannerCalls = [];
   const imageCalls = [];
+  const commitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: PROJECT_ROOT,
+    encoding: 'utf8'
+  }).trim().toLowerCase();
+  const trackedChanges = execFileSync(
+    'git',
+    ['status', '--porcelain', '--untracked-files=no'],
+    { cwd: PROJECT_ROOT, encoding: 'utf8' }
+  ).trim();
+  if (trackedChanges) {
+    throw new Error('DESIGN_CONVERSATION_SMOKE_WORKTREE_DIRTY');
+  }
+  const pool = getPool();
+  const queuePublisher = new AgentQueuePublisher({ env: process.env });
+  const campaignGuard = new LiveEvalCampaignGuard({
+    pool,
+    campaignId: `design-conversation-smoke-${process.pid}-${Date.now()}`,
+    commitSha,
+    matrixHash: LIVE_EVAL_MATRIX_HASH,
+    maxQwenCalls: 200,
+    maxKolorsCalls: 16
+  });
+  try {
+    await campaignGuard.initialize();
+  } catch (error) {
+    // Initialization happens before the main try/finally below. Close the
+    // pool here as well so a duplicate/expired campaign cannot leak a socket
+    // or leave the smoke process hanging on a failed startup.
+    await pool.end().catch(() => {});
+    throw error;
+  }
+  const auditor = new LiveModelAuditor({
+    textModel: smokeModelProfile.model,
+    campaignGuard,
+    maxQwenCalls: 200,
+    maxKolorsCalls: 16
+  });
+  const providerScheduler = createProviderScheduler({
+    pool,
+    env: process.env,
+    providerKey: `${smokeModelProfile.provider}:${smokeModelProfile.model}`
+  });
+  const imageProviderScheduler = createProviderScheduler({
+    pool,
+    env: process.env,
+    providerKey: 'siliconflow:Kwai-Kolors/Kolors'
+  });
+  const auditedFetch = auditor.wrapQwenFetch(globalThis.fetch);
   const tracedPlanner = async (input) => {
     if (input?.model !== smokeModelProfile.model) {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_PLANNER_MODEL_REQUEST_INVALID:${input?.model}`);
     }
     const startedAt = Date.now();
-    const response = await (
+    const payload = {
+      model: input.model,
+      messages: input.messages,
+      stream: false,
+      enable_thinking: input.enableThinking === true,
+      max_tokens: input.maxTokens,
+      ...(input.responseFormat === 'json_object'
+        ? { response_format: { type: 'json_object' } }
+        : {})
+    };
+    const inspected = await auditor.inspectQwenRequest(payload, {
+      phase: input.phase || 'router',
+      runtimeVersion: 1,
+      slotId: input.slotId || null,
+      promptHash: requestPromptHash(payload)
+    });
+    const response = await auditor.requestContext.run(inspected, () => (
       smokeModelProfile.provider === 'cloudflare'
-        ? callCloudflareChat(input)
-        : callSiliconFlowChat(input)
-    );
+        ? callCloudflareChat({ ...input, fetchImpl: auditedFetch })
+        : callSiliconFlowChat({ ...input, fetchImpl: auditedFetch })
+    ));
     plannerCalls.push({
       requestedModel: input.model,
       modelUsed: response?.model || null,
@@ -676,22 +752,41 @@ const main = async () => {
     }
     return response;
   };
+  const scheduledPlanner = createScheduledChatGenerate({
+    scheduler: providerScheduler,
+    chatGenerate: tracedPlanner,
+    defaultPriority: 'router'
+  });
+  const scheduledImageGenerate = createScheduledImageGenerate({
+    scheduler: imageProviderScheduler,
+      imageGenerate: async (input = {}) => callSiliconFlowImageGenerate({
+      ...input,
+      fetcher: auditor.wrapKolorsFetcher(siliconFlowFetch, {
+        runId: input.runId || null,
+        runtimeVersion: Number(input.runtimeVersion) === 2 ? 2 : 1,
+        filename: input.filename || ''
+      })
+    }),
+    defaultPriority: 'actor'
+  });
   const conversationService = createDesignConversationService({
     pool,
     env: process.env,
-    chatGenerate: tracedPlanner,
+    chatGenerate: scheduledPlanner,
+    modelCallService: createModelCallService({ pool, retentionDays: 1 }),
     workerId: `design-conversation-dev-smoke:${process.pid}`
   });
   const runService = createAgentRunService({ pool, env: process.env, queuePublisher });
   const activeAgentEntries = [];
   try {
     stage('readiness');
+    const migrationName = '026_agent_live_eval_capacity_counter';
     const migration = await pool.query(
       'SELECT EXISTS (SELECT 1 FROM pgmigrations WHERE name=$1) AS applied',
-      ['026_agent_live_eval_capacity_counter']
+      [migrationName]
     );
     if (migration.rows[0]?.applied !== true) {
-      throw new Error('DESIGN_CONVERSATION_SMOKE_MIGRATION_NOT_READY:026_agent_live_eval_capacity_counter');
+      throw new Error(`DESIGN_CONVERSATION_SMOKE_MIGRATION_NOT_READY:${migrationName}`);
     }
     const worker = await runService.getServiceStatus();
     const durability = worker.durability || {};
@@ -743,7 +838,8 @@ const main = async () => {
       conversationService,
       userId: users.image,
       planned: imagePlanned,
-      imageCalls
+      imageCalls,
+      scheduledImageGenerate
     });
 
     const agentMessages = [
@@ -788,14 +884,20 @@ const main = async () => {
       });
     }
     stage('start-agents');
-    const startedAgents = await Promise.all(plannedAgents.map((entry) => startAgentExecution({
-      runService,
-      conversationService,
-      userId: entry.userId,
-      planned: entry.planned,
-      label: entry.label
-    })));
-    activeAgentEntries.push(...startedAgents);
+    const startedAgents = [];
+    for (const entry of plannedAgents) {
+      const started = await startAgentExecution({
+        runService,
+        conversationService,
+        userId: entry.userId,
+        planned: entry.planned,
+        label: entry.label
+      });
+      // Register each run before starting the next one so an exception or
+      // signal cannot leave an already-created run outside cleanup scope.
+      startedAgents.push(started);
+      activeAgentEntries.push(started);
+    }
     stage('wait-agents');
     const completed = await waitForAgentRuns({ pool, runService, entries: startedAgents });
     if (worker.concurrency === 1 && !completed.observedQueuedBehindActive) {
@@ -849,6 +951,34 @@ const main = async () => {
     ) {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_PLANNER_JOB_INVALID:${JSON.stringify(planningJobs)}`);
     }
+    const modelCallsResult = await pool.query(
+      `SELECT conversation_id,COUNT(*)::int AS count,
+              ARRAY_AGG(DISTINCT provider ORDER BY provider) AS providers,
+              ARRAY_AGG(DISTINCT model_name ORDER BY model_name) AS models
+         FROM agent_model_calls
+        WHERE conversation_id=ANY($1::uuid[])
+        GROUP BY conversation_id`,
+      [[
+        imagePlanned.conversation.conversationId,
+        ...plannedAgents.map((entry) => entry.planned.conversation.conversationId)
+      ]]
+    );
+    const plannerModelCalls = modelCallsResult.rows.map((row) => ({
+      conversationId: row.conversation_id,
+      count: Number(row.count || 0),
+      providers: Array.isArray(row.providers) ? row.providers : [],
+      models: Array.isArray(row.models) ? row.models : []
+    }));
+    if (
+      plannerModelCalls.length !== 3 ||
+      plannerModelCalls.some((call) => (
+        call.count < 1 ||
+        call.providers.length !== 1 || call.providers[0] !== smokeModelProfile.provider ||
+        call.models.length !== 1 || call.models[0] !== smokeModelProfile.model
+      ))
+    ) {
+      throw new Error(`DESIGN_CONVERSATION_SMOKE_MODEL_CALL_EVIDENCE_INVALID:${JSON.stringify(plannerModelCalls)}`);
+    }
     if (plannerCalls.length > 6 || plannerCalls.some((call) =>
       call.requestedModel !== smokeModelProfile.model || call.modelUsed !== smokeModelProfile.model
     )) {
@@ -862,6 +992,7 @@ const main = async () => {
       outputRoot,
       models: { planner: smokeModelProfile.model, image: IMAGE_MODEL },
       plannerCalls,
+      plannerModelCalls,
       planningJobs,
       worker: {
         accessMode: finalStatus.accessMode,
@@ -894,6 +1025,7 @@ const main = async () => {
   } finally {
     conversationService.stopWorker();
     await queuePublisher.stop().catch(() => {});
+    await campaignGuard.close().catch(() => {});
     await pool.end().catch(() => {});
   }
 };

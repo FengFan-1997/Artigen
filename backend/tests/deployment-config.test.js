@@ -108,7 +108,7 @@ test('Mac DEV worker connection caps are fixed and cannot be overridden', () => 
   });
 });
 
-test('DEV smoke model resolution defaults to the free Cloudflare pair and never upgrades production', () => {
+test('All smoke environments default to the free Cloudflare text model and reject legacy production text', () => {
   const profile = resolveAgentSmokeModelProfile({ env: {}, production: false });
   assert.deepEqual(profile.expected, {
     provider: 'cloudflare',
@@ -122,11 +122,12 @@ test('DEV smoke model resolution defaults to the free Cloudflare pair and never 
   applyAgentSmokeModelProfile(env, profile);
   assert.equal(env.AGENT_MODEL_PROVIDER, 'cloudflare');
   assert.equal(env.AGENT_MODEL_NAME, '@cf/openai/gpt-oss-120b');
+  assert.deepEqual(
+    resolveAgentSmokeModelProfile({ env: { AGENT_MODEL_PROVIDER: 'cloudflare' }, production: true }).expected,
+    { provider: 'cloudflare', model: '@cf/openai/gpt-oss-120b' }
+  );
   assert.throws(
-    () => resolveAgentSmokeModelProfile({
-      env: { AGENT_MODEL_PROVIDER: 'cloudflare' },
-      production: true
-    }),
+    () => resolveAgentSmokeModelProfile({ env: { AGENT_MODEL_PROVIDER: 'siliconflow' }, production: true }),
     { code: 'AGENT_PRODUCTION_MODEL_PROFILE_INVALID' }
   );
 });
@@ -151,8 +152,9 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(runner, /AGENT_IMAGE_CREDITS:[\s\S]*\|\| '8'/);
   assert.match(runner, /AGENT_IMAGE_REFERENCE_CREDITS:[\s\S]*\|\| '12'/);
   assert.match(runner, /AGENT_MODEL_PROVIDER:\s*modelProvider/);
-  assert.match(runner, /profile === 'production' \? 'siliconflow' : 'cloudflare'/);
-  assert.match(runner, /\? '@cf\/openai\/gpt-oss-120b'[\s\S]*: 'Qwen\/Qwen3-8B'/);
+  assert.match(runner, /process\.env\.AGENT_MODEL_PROVIDER \|\| 'cloudflare'/);
+  assert.match(runner, /AGENT_MODEL_NAME:\s*'@cf\/openai\/gpt-oss-120b'/);
+  assert.match(runner, /AGENT_TEXT_MODEL_HARD_LOCK:\s*'true'/);
   assert.match(runner, /secretNames\.push\('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'\)/);
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
   assert.match(runner, /optionalSecretNames = \['PG_SSL_CA_BASE64'\]/);
@@ -171,7 +173,8 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(installer, /<key>AGENT_SUBAGENTS_ENABLED<\/key>/);
   assert.match(installer, /<key>\$\{name\}<\/key>/);
   assert.match(installer, /AGENT_RUNTIME_V2_ENABLED/);
-  assert.match(installer, /production \? 'siliconflow' : 'cloudflare'/);
+  assert.match(installer, /process\.env\.AGENT_MODEL_PROVIDER \|\| 'cloudflare'/);
+  assert.match(installer, /AGENT_TEXT_MODEL_HARD_LOCK:\s*'true'/);
   assert.match(installer, /DEV_DATABASE_EXPECTED_MAJOR/);
   assert.match(readRepoFile('backend/scripts/start-agent-worker.js'), /assertDevRuntimeDatabaseBoundary/);
   assert.match(installer, /AGENT_RUNTIME_V2_ROLLOUT_PERCENT/);
@@ -262,6 +265,7 @@ test('runtime model allowlist contains only the reviewed text models and Kolors'
 
   assert.match(runtime, /Qwen\/Qwen3-8B/);
   assert.match(runtime, /@cf\/openai\/gpt-oss-120b/);
+  assert.match(runtime, /AGENT_TEXT_MODEL_HARD_LOCK/);
   assert.match(runtime, /Kwai-Kolors\/Kolors/);
   assert.doesNotMatch(runtime, /Qwen\/Qwen-Image-Edit-2509/);
   assert.doesNotMatch(runtime, /Qwen\/Qwen2\.5/);

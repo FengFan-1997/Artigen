@@ -114,7 +114,10 @@ const getAgentConfig = (env = process.env) => {
     throw new ApiError(500, 'AGENT_FIXTURE_RUNTIME_FORBIDDEN');
   }
 
-  const modelProvider = String(env.AGENT_MODEL_PROVIDER || 'openai').trim().toLowerCase();
+  // Cloudflare's free GPT-OSS 120B is the default text model for every
+  // deployed Agent environment. SiliconFlow remains reserved for images.
+  const modelProvider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
+  const textModelHardLock = enabled(env.AGENT_TEXT_MODEL_HARD_LOCK);
   const sandboxProvider = String(env.AGENT_SANDBOX_PROVIDER || 'cua').trim().toLowerCase();
   if (!['openai', 'ollama', 'siliconflow', 'cloudflare'].includes(modelProvider)) {
     throw new ApiError(500, 'AGENT_MODEL_PROVIDER_INVALID');
@@ -147,6 +150,9 @@ const getAgentConfig = (env = process.env) => {
   }
   if (modelProvider === 'cloudflare' && modelName !== CLOUDFLARE_AGENT_MODEL) {
     throw new ApiError(500, 'AGENT_CLOUDFLARE_MODEL_NOT_ALLOWED');
+  }
+  if (textModelHardLock && modelProvider !== 'cloudflare') {
+    throw new ApiError(500, 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED');
   }
   const ollamaBaseUrl = assertLoopbackHttpUrl(
     env.AGENT_OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
@@ -216,18 +222,30 @@ const getAgentConfig = (env = process.env) => {
   const adaptiveReasoningEnabled = enabled(env.AGENT_ADAPTIVE_REASONING_ENABLED);
   const projectMemoryEnabled = enabled(env.AGENT_PROJECT_MEMORY_ENABLED);
   const providerSchedulerEnabled = enabled(env.AGENT_PROVIDER_SCHEDULER_ENABLED);
-  const siliconFlowInputCreditsPerMillion = Math.max(0, Number(
-    env.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION || 0
-  ));
-  const siliconFlowOutputCreditsPerMillion = Math.max(0, Number(
-    env.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION || 0
-  ));
-  const cloudflareInputCreditsPerMillion = Math.max(0, Number(
-    env.AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION || 0.35
-  ));
-  const cloudflareOutputCreditsPerMillion = Math.max(0, Number(
-    env.AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION || 0.75
-  ));
+  const finiteNonNegative = (value, fallback) => {
+    const raw = String(value ?? '').trim();
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    // A configured-but-invalid rate must stay invalid so readiness fails closed;
+    // silently replacing it with a default could make billing non-reproducible.
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : Number.NaN;
+  };
+  const siliconFlowInputCreditsPerMillion = finiteNonNegative(
+    env.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION,
+    0
+  );
+  const siliconFlowOutputCreditsPerMillion = finiteNonNegative(
+    env.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION,
+    0
+  );
+  const cloudflareInputCreditsPerMillion = finiteNonNegative(
+    env.AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION,
+    0.35
+  );
+  const cloudflareOutputCreditsPerMillion = finiteNonNegative(
+    env.AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION,
+    0.75
+  );
   const modelPricingSnapshot = Object.freeze({
     provider: modelProvider,
     model: modelName,
@@ -276,6 +294,7 @@ const getAgentConfig = (env = process.env) => {
     runtimeDriver,
     modelProvider,
     modelName,
+    textModelHardLock,
     ollamaBaseUrl,
     siliconFlowBaseUrl,
     siliconFlowApiKey,

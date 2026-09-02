@@ -334,6 +334,8 @@ class LiveEvalCampaignGuard {
       id: Number(row.id),
       kind: String(row.metrics?.kind || ''),
       sequence: Number(row.metrics?.sequence || 0),
+      runIdHash: String(row.metrics?.runIdHash || ''),
+      slotHash: String(row.metrics?.slotHash || ''),
       runtimeVersion: Number(row.metrics?.runtimeVersion || 0),
       phase: String(row.metrics?.phase || ''),
       status: String(row.metrics?.dispatchStatus || 'dispatched'),

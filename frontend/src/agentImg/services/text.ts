@@ -10,14 +10,14 @@ import { authFetch } from '@/login/authFetch';
 const API_URL = buildApiUrl('/api/generate');
 const IMG2IMG_URL = buildApiUrl('/api/img2img');
 
-const FIXED_TEXT_MODEL = 'Qwen/Qwen3-8B';
+const FIXED_TEXT_MODEL = '@cf/openai/gpt-oss-120b';
 const FIXED_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
 
 const isAllowedTextModel = (raw: string) => {
   const k = String(raw || '')
     .trim()
     .toLowerCase();
-  return k === 'qwen/qwen3-8b';
+  return k === '@cf/openai/gpt-oss-120b';
 };
 
 const shouldLogAiRequest = (): boolean => {

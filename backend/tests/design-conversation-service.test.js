@@ -63,7 +63,7 @@ test('planner prompt uses the server-selected text model and keeps Kolors for ev
     attachmentCount: 0,
     textModel: '@cf/openai/gpt-oss-120b'
   });
-  assert.equal(TEXT_MODEL, 'Qwen/Qwen3-8B');
+  assert.equal(TEXT_MODEL, '@cf/openai/gpt-oss-120b');
   assert.equal(IMAGE_MODEL, 'Kwai-Kolors/Kolors');
   assert.match(messages[0].content, /@cf\/openai\/gpt-oss-120b/);
   assert.doesNotMatch(messages[0].content, /Qwen\/Qwen3-8B/);
@@ -385,7 +385,7 @@ test('Mac worker cleanup expires both text and Kolors scheduler queues exactly o
   assert.deepEqual(calls.sort(), ['image', 'text']);
 });
 
-test('Mac worker keeps Qwen directions and Kolors image traffic on separate scheduler keys', () => {
+test('Mac worker keeps Cloudflare text and Kolors image traffic on separate scheduler keys', () => {
   const providerScheduler = { providerKey: 'cloudflare:@cf/openai/gpt-oss-120b' };
   const pool = { connect: () => ({}) };
   const { imageTextProviderScheduler, imageProviderScheduler } = resolveImageProviderSchedulers({
@@ -397,7 +397,7 @@ test('Mac worker keeps Qwen directions and Kolors image traffic on separate sche
     },
     providerScheduler
   });
-  assert.equal(imageTextProviderScheduler.providerKey, 'siliconflow:Qwen/Qwen3-8B');
+  assert.equal(imageTextProviderScheduler.providerKey, 'cloudflare:@cf/openai/gpt-oss-120b');
   assert.equal(imageProviderScheduler.providerKey, 'siliconflow:Kwai-Kolors/Kolors');
   assert.notEqual(imageTextProviderScheduler.providerKey, imageProviderScheduler.providerKey);
   const siliconFlowProviderScheduler = { providerKey: 'siliconflow:Qwen/Qwen3-8B' };

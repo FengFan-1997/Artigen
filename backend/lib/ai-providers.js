@@ -3,6 +3,7 @@ const {
   SILICONFLOW_CHAT_COMPLETIONS_URL,
   SILICONFLOW_IMAGES_GENERATIONS_URL,
   FIXED_SILICONFLOW_CHAT_MODEL,
+  FIXED_CLOUDFLARE_CHAT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
   SILICONFLOW_TIMEOUT_MS,
   SILICONFLOW_REACTION_TIMEOUT_MS
@@ -538,10 +539,17 @@ const callTextGenerate = async ({
   contents,
   timeoutMs,
   reactionMode,
-  model,
-  chatGenerate = callSiliconFlowChat
+  model = FIXED_CLOUDFLARE_CHAT_MODEL,
+  chatGenerate = callCloudflareChat,
+  providerName = 'cloudflare'
 }) => {
-  const canSiliconflow = !!SILICONFLOW_API_KEY;
+  const requestedProvider = String(providerName || '').trim().toLowerCase();
+  const canSiliconflow = requestedProvider === 'siliconflow' && !!SILICONFLOW_API_KEY;
+  const cloudflareText = String(providerName || '').trim().toLowerCase() === 'cloudflare' ||
+    String(model || '').trim() === '@cf/openai/gpt-oss-120b';
+  const canCloudflare = cloudflareText && Boolean(
+    process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_AUTH_TOKEN
+  );
   const sfTimeoutMs = Math.max(
     Math.max(1000, Number(timeoutMs || 0) || 0),
     reactionMode ? SILICONFLOW_REACTION_TIMEOUT_MS : SILICONFLOW_TIMEOUT_MS
@@ -562,7 +570,11 @@ const callTextGenerate = async ({
 
   const runSiliconflow = async () => {
     const preferredModel = String(model || '').trim();
-    const resolvedModel = preferredModel || FIXED_SILICONFLOW_CHAT_MODEL;
+    const cloudflareText = String(providerName || '').trim().toLowerCase() === 'cloudflare' ||
+      String(preferredModel || '').trim() === '@cf/openai/gpt-oss-120b';
+    const resolvedModel = preferredModel || (cloudflareText
+      ? '@cf/openai/gpt-oss-120b'
+      : FIXED_SILICONFLOW_CHAT_MODEL);
     const { text, usage, model: modelUsed, usedUrl } = await chatGenerate({
       messages: toSiliconflowMessages(),
       timeoutMs: sfTimeoutMs,
@@ -570,7 +582,13 @@ const callTextGenerate = async ({
       model: resolvedModel,
       enableThinking: false
     });
-    return { text, provider: 'siliconflow', usage, model: modelUsed, usedUrl };
+    return {
+      text,
+      provider: cloudflareText ? 'cloudflare' : 'siliconflow',
+      usage,
+      model: modelUsed,
+      usedUrl
+    };
   };
 
   const isRetryableSf = (e) => {
@@ -582,7 +600,7 @@ const callTextGenerate = async ({
   };
 
   return await textGenerateLimiter.run(async () => {
-    if (canSiliconflow) {
+    if (canSiliconflow || canCloudflare) {
       try {
         return await runSiliconflow();
       } catch (e0) {

@@ -39,7 +39,7 @@ const {
 } = require('./artifact-fixtures');
 const { LiveModelAuditor } = require('./live-model-auditor');
 const { requestPromptHash } = require('./scripted-siliconflow-transport');
-const { LiveEvalCampaignGuard } = require('./live-eval-campaign-guard');
+const { LiveEvalCampaignGuard, sha256 } = require('./live-eval-campaign-guard');
 const {
   assertLiveEvalDatabaseReadiness,
   resolveLiveEvalPostgresMajor
@@ -94,7 +94,7 @@ const waitForConversationExecution = async ({
 
 const liveEvalEnv = (base = {}, overrides = {}) => {
   const requestedProvider = String(
-    overrides.AGENT_MODEL_PROVIDER ?? base.AGENT_MODEL_PROVIDER ?? 'siliconflow'
+    overrides.AGENT_MODEL_PROVIDER ?? base.AGENT_MODEL_PROVIDER ?? 'cloudflare'
   ).trim().toLowerCase();
   const expectedModel = requestedProvider === 'cloudflare'
     ? '@cf/openai/gpt-oss-120b'
@@ -390,7 +390,14 @@ class AgentLiveEvalHarness {
       });
       const scheduledImageGenerate = createScheduledImageGenerate({
         scheduler: instance.imageProviderScheduler,
-        imageGenerate: callSiliconFlowImageGenerate,
+        imageGenerate: async (input = {}) => callSiliconFlowImageGenerate({
+          ...input,
+          fetcher: instance.auditor.wrapKolorsFetcher(siliconFlowFetch, {
+            runId: input.runId || null,
+            runtimeVersion: input.runtimeVersion || null,
+            filename: input.filename || ''
+          })
+        }),
         defaultPriority: 'actor'
       });
       const rawImageService = createAgentImageService({
@@ -404,7 +411,10 @@ class AgentLiveEvalHarness {
       });
       instance.imageService = {
         generate: async (request) => {
-          const dispatch = await instance.auditor.inspectKolorsRequest(request);
+          const dispatch = await instance.auditor.inspectKolorsRequest({
+            ...request,
+            reservePhysical: false
+          });
           let output;
           try {
             output = await rawImageService.generate({
@@ -996,10 +1006,47 @@ class AgentLiveEvalHarness {
     for (const forbidden of entry.forbiddenTools || []) {
       if (usedTools.has(forbidden)) errors.push(`forbidden_tool:${forbidden}`);
     }
-    if (
+    if (Array.isArray(physical.calls) && runId) {
+      // A V2 run's durable model records and physical campaign dispatches must
+      // be one-to-one; Kolors tool receipts may have bounded physical retries.
+      // V1 does not persist model-call rows and its actor
+      // metadata intentionally has no run id; it is still checked for foreign
+      // non-empty run hashes, while its physical attempts remain the source
+      // of comparable baseline usage. Image calls carry run ids in both
+      // versions and therefore participate in this same strict check.
+      const runHash = sha256(runId);
+      const associated = physical.calls.filter((call) => call.runIdHash === runHash);
+      const foreign = physical.calls.filter((call) => call.runIdHash && call.runIdHash !== runHash);
+      const durableQwen = snapshot.persistent.modelCalls.length;
+      const durableKolors = (snapshot.persistent.toolReceipts || [])
+        .filter((receipt) => receipt.kind === 'kolors').length;
+      if (foreign.length) errors.push('provider_dispatch_unassociated');
+      const expectedRuntimeVersion = expectedVersion;
+      if (associated.some((call) => (
+        Number(call.runtimeVersion || 0) !== expectedRuntimeVersion ||
+        !/^[a-f0-9]{64}$/i.test(String(call.runIdHash || '')) ||
+        !/^[a-f0-9]{64}$/i.test(String(call.slotHash || ''))
+      ))) {
+        errors.push('provider_dispatch_metadata');
+      }
+      if (
+        cohort === 'v2' && (
+          associated.filter((call) => call.kind === 'qwen').length !== durableQwen ||
+          // One image tool receipt may legitimately contain bounded provider
+          // retries. Every logical Kolors receipt still needs at least one
+          // physical attempt, but retries must not look like duplicate tools.
+          associated.filter((call) => call.kind === 'kolors').length < durableKolors
+        )
+      ) {
+        errors.push('provider_dispatch_crosscheck');
+      }
+    } else if (
       cohort === 'v2' &&
       physical.qwenCalls < snapshot.persistent.modelCalls.length
     ) {
+      // Compatibility for focused unit fixtures that predate the durable
+      // dispatch rows.  Real campaign rows always include `calls` and take the
+      // strict branch above.
       errors.push('provider_dispatch_crosscheck');
     }
     const baselineTerminalFailure = cohort === 'v1' &&
@@ -1015,6 +1062,7 @@ class AgentLiveEvalHarness {
         'provider_dispatch_incomplete',
         'provider_dispatch_crosscheck'
       ].includes(error) ||
+      error === 'provider_dispatch_unassociated' ||
       error.startsWith('forbidden_tool:')
     ));
     if (errors.length && (!baselineTerminalFailure || fatalBaselineErrors.length)) {
@@ -1136,20 +1184,22 @@ class AgentLiveEvalHarness {
            WHERE run_id=ANY($1::uuid[]) AND state='reserved') AS active_reservations,
          (SELECT count(*)::int FROM agent_tool_call_receipts
            WHERE run_id=ANY($1::uuid[]) AND state='dispatched') AS active_tool_receipts,
-         (SELECT COALESCE(sum(provider_counts.queued_count),0)::int
+         (SELECT count(*)::int FROM agent_subagents
+           WHERE run_id=ANY($1::uuid[]) AND status IN ('queued','running')) AS active_subagents,
+         (SELECT COALESCE(sum(provider_counts.active_count),0)::int
             FROM (
-              SELECT provider_key,count(*)::int AS queued_count
+              SELECT provider_key,count(*)::int AS active_count
                 FROM agent_provider_requests
-               WHERE provider_key=ANY($3::text[]) AND status='queued'
+               WHERE provider_key=ANY($3::text[]) AND status IN ('queued','granted')
                GROUP BY provider_key
-            ) provider_counts) AS queued_provider_requests,
-         (SELECT COALESCE(jsonb_object_agg(provider_counts.provider_key,provider_counts.queued_count),'{}'::jsonb)
+            ) provider_counts) AS active_provider_requests,
+         (SELECT COALESCE(jsonb_object_agg(provider_counts.provider_key,provider_counts.active_count),'{}'::jsonb)
             FROM (
-              SELECT provider_key,count(*)::int AS queued_count
+              SELECT provider_key,count(*)::int AS active_count
                 FROM agent_provider_requests
-               WHERE provider_key=ANY($3::text[]) AND status='queued'
+               WHERE provider_key=ANY($3::text[]) AND status IN ('queued','granted')
                GROUP BY provider_key
-            ) provider_counts) AS queued_provider_requests_by_key`,
+            ) provider_counts) AS active_provider_requests_by_key`,
       [
         runIds,
         [this.baselineUserId, this.candidateUserId],
@@ -1157,9 +1207,19 @@ class AgentLiveEvalHarness {
       ]
     );
     const snapshot = drained.rows[0] || {};
+    const activeProviderRequests = Number(
+      snapshot.active_provider_requests ?? snapshot.queued_provider_requests ?? 0
+    );
+    const activeProviderRequestsByKey = snapshot.active_provider_requests_by_key ||
+      snapshot.queued_provider_requests_by_key || {};
     this.lastDrainSnapshot = {
       ...snapshot,
-      queued_provider_requests_by_key: snapshot.queued_provider_requests_by_key || {}
+      active_provider_requests: activeProviderRequests,
+      active_provider_requests_by_key: activeProviderRequestsByKey,
+      // Keep the legacy public diagnostic names for existing reports while
+      // the underlying query now includes granted leases as active work.
+      queued_provider_requests: activeProviderRequests,
+      queued_provider_requests_by_key: activeProviderRequestsByKey
     };
     if (
       Number(snapshot.active_runs || 0) !== 0 ||
@@ -1169,7 +1229,8 @@ class AgentLiveEvalHarness {
       Number(snapshot.active_model_receipts || 0) !== 0 ||
       Number(snapshot.active_reservations || 0) !== 0 ||
       Number(snapshot.active_tool_receipts || 0) !== 0 ||
-      Number(snapshot.queued_provider_requests || 0) !== 0
+      Number(snapshot.active_subagents || 0) !== 0 ||
+      activeProviderRequests !== 0
     ) {
       throw new Error('AGENT_LIVE_EVAL_BATCH_NOT_DRAINED');
     }

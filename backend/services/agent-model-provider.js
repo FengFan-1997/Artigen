@@ -20,7 +20,10 @@ const {
   taskPlannerMessages,
   verifierMessages
 } = require('./agent-runtime-v2');
-const { parseRetryAfterMs } = require('./agent-model-runtime-service');
+const {
+  parseRetryAfterMs,
+  releaseSchedulerGrant
+} = require('./agent-model-runtime-service');
 
 const COMPUTER_TOOL = Object.freeze({ type: 'computer' });
 const VISUAL_MUTATING_ACTIONS = new Set([
@@ -3616,6 +3619,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
             mode: 'process-local'
           });
       if (metadata.signal?.aborted) {
+        await releaseSchedulerGrant(this.providerScheduler, slot.requestId);
         throw new ApiError(499, 'AGENT_CANCELLED', { retryable: false });
       }
       const startModelCall = () => this.modelCallService.start({
@@ -3632,9 +3636,18 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
               request: payload
             }
           });
-      const call = this.modelCallService && metadata.phase
-        ? (metadata.runId ? await startModelCall() : await startModelCall().catch(() => null))
-        : null;
+      let call = null;
+      try {
+        call = this.modelCallService && metadata.phase
+          ? (metadata.runId ? await startModelCall() : await startModelCall().catch(() => null))
+          : null;
+      } catch (error) {
+        // A durable intent failure occurs after the scheduler grant but before
+        // the provider dispatch try/finally below. Release that grant here so
+        // a database/lease error cannot strand scheduler capacity.
+        await releaseSchedulerGrant(this.providerScheduler, slot.requestId);
+        throw error;
+      }
       const controller = new AbortController();
       const abort = () => controller.abort();
       metadata.signal?.addEventListener('abort', abort, { once: true });
@@ -3783,6 +3796,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
       } finally {
         clearTimeout(timer);
         metadata.signal?.removeEventListener('abort', abort);
+        await releaseSchedulerGrant(this.providerScheduler, slot.requestId);
       }
     }
     throw lastError || new ApiError(502, 'AGENT_MODEL_FAILED', { retryable: true });

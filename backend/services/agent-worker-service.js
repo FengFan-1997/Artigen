@@ -2708,7 +2708,8 @@ const createAgentWorkerService = ({
                 ...request,
                 references,
                 signal: modelAbortController.signal,
-                runId
+                runId,
+                runtimeVersion: context.run.runtime_version
               });
               providerReturned = true;
               const outputPath = `/tmp/artigen-workspace/${generated.filename}`;

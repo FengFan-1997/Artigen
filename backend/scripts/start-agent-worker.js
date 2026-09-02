@@ -11,6 +11,7 @@ const { AgentQueueWorker } = require('../services/agent-queue-service');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const { createAgentImageService } = require('../services/agent-image-service');
 const {
+  callCloudflareChat,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate
 } = require('../lib/ai-providers');
@@ -60,13 +61,7 @@ const resolveImageProviderSchedulers = ({
   if (!config || !providerScheduler) {
     throw new TypeError('AGENT_IMAGE_PROVIDER_SCHEDULERS_REQUIRED');
   }
-  const imageTextProviderScheduler = config.modelProvider === 'siliconflow'
-    ? providerScheduler
-    : createProviderScheduler({
-        pool,
-        env,
-        providerKey: 'siliconflow:Qwen/Qwen3-8B'
-      });
+  const imageTextProviderScheduler = providerScheduler;
   const imageProviderScheduler = createProviderScheduler({
     pool,
     env,
@@ -116,9 +111,11 @@ const main = async () => {
     env: process.env,
     providerScheduler
   });
-  const scheduledSiliconFlowChat = createScheduledChatGenerate({
+  const scheduledTextChat = createScheduledChatGenerate({
     scheduler: imageTextProviderScheduler,
-    chatGenerate: callSiliconFlowChat,
+    chatGenerate: config.modelProvider === 'cloudflare'
+      ? callCloudflareChat
+      : callSiliconFlowChat,
     defaultPriority: 'actor'
   });
   const scheduledSiliconFlowImageGenerate = createScheduledImageGenerate({
@@ -128,10 +125,10 @@ const main = async () => {
   });
   const imageService = createAgentImageService({
     env: process.env,
-    chatGenerate: scheduledSiliconFlowChat,
+    chatGenerate: scheduledTextChat,
     provider: createConfiguredGenerationProvider({
       imageGenerate: scheduledSiliconFlowImageGenerate,
-      chatGenerate: scheduledSiliconFlowChat,
+      chatGenerate: scheduledTextChat,
       env: process.env
     })
   });

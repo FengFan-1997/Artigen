@@ -509,6 +509,8 @@ test('production Agent readiness requires an explicit authenticated access gate'
     AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
     AGENT_MODEL_PROVIDER: 'siliconflow',
     SILICONFLOW_API_KEY: 'test-key',
+    AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '20',
+    AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '160',
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local',
     AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
@@ -560,6 +562,8 @@ test('production Agent image generation requires the real image provider and out
       AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
       AGENT_MODEL_PROVIDER: 'siliconflow',
       SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '20',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '160',
       AGENT_SANDBOX_PROVIDER: 'cua',
       AGENT_SANDBOX_MODE: 'local',
       AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
@@ -580,6 +584,45 @@ test('production Agent image generation requires the real image provider and out
   assert.equal(report.checks.provider.ok, true);
   assert.equal(report.checks.outputAllowlist.ok, true);
   assert.equal(report.checks.agent.imageGenerationPublicEnabled, true);
+});
+
+test('live Agent readiness fails closed when pricing is missing or the scheduler schema is absent', async () => {
+  const base = {
+    NODE_ENV: 'test',
+    APP_ENV: 'dev',
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+    SILICONFLOW_API_KEY: 'test-key',
+    AGENT_SANDBOX_PROVIDER: 'fixture',
+    AGENT_PUBLIC_CAPABILITIES: 'files,shell',
+    AGENT_BETA_MODE: 'authenticated-v1'
+  };
+  const missingPricing = await getReadinessReport({
+    env: base,
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(missingPricing.ok, false);
+  assert.equal(missingPricing.checks.agentPricing.code, 'AGENT_PRICING_NOT_READY');
+  assert.equal(missingPricing.checks.agentScheduler.skipped, true);
+
+  const missingScheduler = await getReadinessReport({
+    env: {
+      ...base,
+      AGENT_PROVIDER_SCHEDULER_ENABLED: 'true',
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '20',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '160'
+    },
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(missingScheduler.ok, false);
+  assert.equal(missingScheduler.checks.agentPricing.ok, true);
+  assert.equal(missingScheduler.checks.agentScheduler.code, 'AGENT_PROVIDER_SCHEDULER_NOT_READY');
 });
 
 test('design conversation readiness reports the configured Cloudflare planner model', async () => {

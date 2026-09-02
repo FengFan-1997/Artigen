@@ -3,7 +3,8 @@ const test = require('node:test');
 const {
   callCloudflareChat,
   callSiliconFlowChat,
-  callSiliconFlowImageGenerate
+  callSiliconFlowImageGenerate,
+  callTextGenerate
 } = require('../lib/ai-providers');
 const {
   GENERATION_DIRECTIONS_MODEL,
@@ -101,13 +102,39 @@ test('Cloudflare free quota and paid-only failures are terminal while capacity f
   assert.equal(capacity.requests(), 1);
 });
 
+test('generic text generation dispatches Cloudflare when SiliconFlow is absent', async () => {
+  const previous = process.env.CLOUDFLARE_API_TOKEN;
+  process.env.CLOUDFLARE_API_TOKEN = 'cloudflare-test-token';
+  const calls = [];
+  try {
+    const result = await callTextGenerate({
+      providerName: 'cloudflare',
+      model: '@cf/openai/gpt-oss-120b',
+      contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+      chatGenerate: async (input) => {
+        calls.push(input);
+        return { text: 'ok', model: input.model, usage: { promptTokens: 1, completionTokens: 1 } };
+      }
+    });
+    assert.equal(result.provider, 'cloudflare');
+    assert.equal(result.model, '@cf/openai/gpt-oss-120b');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].model, '@cf/openai/gpt-oss-120b');
+  } finally {
+    if (previous === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
+    else process.env.CLOUDFLARE_API_TOKEN = previous;
+  }
+});
+
 test('SiliconFlow chat uses the supported endpoint and serializes non-thinking mode', async () => {
   let request;
   const result = await callSiliconFlowChat({
     messages: [{ role: 'user', content: 'Return JSON only.' }],
     timeoutMs: 120_000,
     maxTokens: 1800,
-    model: GENERATION_DIRECTIONS_MODEL,
+    // Legacy transport contract is retained only for historical fixtures;
+    // deployed text calls use Cloudflare GPT-OSS.
+    model: 'Qwen/Qwen3-8B',
     enableThinking: false,
     credential: 'test-key',
     fetcher: async (url, options, timeoutMs) => {
@@ -124,7 +151,7 @@ test('SiliconFlow chat uses the supported endpoint and serializes non-thinking m
   assert.equal(request.url, 'https://api.siliconflow.cn/v1/chat/completions');
   assert.equal(request.timeoutMs, 120_000);
   assert.deepEqual(JSON.parse(request.options.body), {
-    model: GENERATION_DIRECTIONS_MODEL,
+    model: 'Qwen/Qwen3-8B',
     messages: [{ role: 'user', content: 'Return JSON only.' }],
     max_tokens: 1800,
     enable_thinking: false
@@ -137,7 +164,7 @@ test('SiliconFlow chat preserves Retry-After for the shared scheduler', async ()
     messages: [{ role: 'user', content: 'Return JSON only.' }],
     timeoutMs: 120_000,
     maxTokens: 1800,
-    model: GENERATION_DIRECTIONS_MODEL,
+    model: 'Qwen/Qwen3-8B',
     enableThinking: false,
     skipRateGate: true,
     credential: 'test-key',

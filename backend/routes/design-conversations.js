@@ -15,6 +15,7 @@ const {
   createModelCallService,
   createProviderScheduler
 } = require('../services/agent-model-runtime-service');
+const { FIXED_CLOUDFLARE_CHAT_MODEL } = require('../lib/config');
 
 const requireAuthenticatedUser = (req) => {
   const auth = resolveAuthUser(req);
@@ -99,7 +100,7 @@ const installDesignConversationRoutes = (app, deps = {}) => {
           enabled: config.enabled,
           workerEnabled: config.workerEnabled,
           plannerReady: false,
-          model: 'Qwen/Qwen3-8B',
+          model: String(env.AGENT_MODEL_NAME || FIXED_CLOUDFLARE_CHAT_MODEL),
           imageModel: 'Kwai-Kolors/Kolors',
           autoCreditCap: config.autoCreditCap,
           retentionDays: config.retentionDays,

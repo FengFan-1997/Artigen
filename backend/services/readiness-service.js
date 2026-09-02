@@ -672,7 +672,7 @@ const checkGenerationProvider = ({
   );
   const realProviderRequired = isProduction(env);
   const kindValid = realProviderRequired
-    ? provider?.kind === 'siliconflow'
+    ? ['siliconflow', 'cloudflare-hybrid'].includes(String(provider?.kind || ''))
     : ['siliconflow', 'contract-mock'].includes(String(provider?.kind || ''));
   if (
     !adapterValid ||
@@ -738,6 +738,57 @@ const checkOutputAllowlist = (env = process.env, { required = isProduction(env) 
   return { ok: true, required, hostCount: hosts.length };
 };
 
+const checkAgentPricing = (agentConfig) => {
+  if (!agentConfig || agentConfig.runtimeDriver !== 'live') {
+    return skippedCheck('AGENT_LIVE_RUNTIME_DISABLED');
+  }
+  const provider = String(agentConfig.modelProvider || '').trim().toLowerCase();
+  if (!['siliconflow', 'cloudflare'].includes(provider)) {
+    return { ok: true, provider, model: agentConfig.modelName };
+  }
+  const snapshot = agentConfig.modelPricingSnapshot || {};
+  const input = Number(snapshot.inputCreditsPerMillion);
+  const output = Number(snapshot.outputCreditsPerMillion);
+  if (!Number.isFinite(input) || !Number.isFinite(output) || !(input > 0) || !(output > 0)) {
+    return {
+      ok: false,
+      code: 'AGENT_PRICING_NOT_READY',
+      provider,
+      model: agentConfig.modelName,
+      inputCreditsPerMillion: Number.isFinite(input) ? input : 0,
+      outputCreditsPerMillion: Number.isFinite(output) ? output : 0
+    };
+  }
+  return {
+    ok: true,
+    provider,
+    model: agentConfig.modelName,
+    inputCreditsPerMillion: input,
+    outputCreditsPerMillion: output
+  };
+};
+
+const checkAgentProviderScheduler = async ({ pool, agentConfig } = {}) => {
+  if (!agentConfig?.providerSchedulerEnabled) {
+    return skippedCheck('AGENT_PROVIDER_SCHEDULER_DISABLED');
+  }
+  if (!pool || typeof pool.query !== 'function') {
+    return { ok: false, code: 'AGENT_PROVIDER_SCHEDULER_DATABASE_REQUIRED' };
+  }
+  try {
+    const result = await pool.query(
+      `SELECT to_regclass('public.agent_provider_scheduler') IS NOT NULL AS has_scheduler,
+              to_regclass('public.agent_provider_requests') IS NOT NULL AS has_requests`
+    );
+    const row = result.rows[0] || {};
+    return row.has_scheduler === true && row.has_requests === true
+      ? { ok: true, enabled: true, mode: 'postgres-v1' }
+      : { ok: false, enabled: true, mode: 'postgres-v1', code: 'AGENT_PROVIDER_SCHEDULER_NOT_READY' };
+  } catch {
+    return { ok: false, enabled: true, mode: 'postgres-v1', code: 'AGENT_PROVIDER_SCHEDULER_UNAVAILABLE' };
+  }
+};
+
 const getReadinessReport = async ({
   env = process.env,
   pool,
@@ -776,6 +827,8 @@ const getReadinessReport = async ({
   let outputAllowlist = skippedCheck();
   let payment = skippedCheck();
   let agent = skippedCheck();
+  let agentPricing = skippedCheck();
+  let agentScheduler = skippedCheck();
   let conversation = skippedCheck();
 
   if (databaseRequired) {
@@ -910,6 +963,8 @@ const getReadinessReport = async ({
           desktopRelayConfigured: Boolean(agentConfig.workerRelayUrl),
           imageGenerationPublicEnabled: agentConfig.publicImageGenerationEnabled
         };
+    agentPricing = checkAgentPricing(agentConfig);
+    agentScheduler = await checkAgentProviderScheduler({ pool, agentConfig });
   }
   if (conversationEnabled) {
     const missing = [];
@@ -973,6 +1028,7 @@ const getReadinessReport = async ({
   if (generationRequired) requiredChecks.push(provider, outputAllowlist);
   if (authEmailOtpEnabled) requiredChecks.push(authSecrets, mail, turnstile);
   if (agentEnabled) requiredChecks.push(agent);
+  if (agentEnabled) requiredChecks.push(agentPricing, agentScheduler);
   if (conversationEnabled) requiredChecks.push(conversation);
   return {
     ok: requiredChecks.every((check) => check.ok),
@@ -999,6 +1055,8 @@ const getReadinessReport = async ({
       mail,
       turnstile,
       agent,
+      agentPricing,
+      agentScheduler,
       conversation
     }
   };
@@ -1016,6 +1074,8 @@ module.exports = {
   checkGenerationProvider,
   probeGenerationProvider,
   checkOutputAllowlist,
+  checkAgentPricing,
+  checkAgentProviderScheduler,
   checkStorage,
   checkTurnstile,
   getReadinessReport

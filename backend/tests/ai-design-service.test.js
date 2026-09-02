@@ -417,6 +417,69 @@ test('SiliconFlow readiness probe validates credentials, endpoint and every inte
   });
 });
 
+test('Cloudflare text plus SiliconFlow Kolors hybrid probe keeps provider boundaries explicit', async () => {
+  const env = {
+    NODE_ENV: 'production',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cf-test-token',
+    SILICONFLOW_API_KEY: 'sf-image-test-key'
+  };
+  const calls = { chat: [], image: [], probes: [] };
+  const provider = createSiliconFlowGenerationProvider({
+    env,
+    imageGenerate: async (input) => {
+      calls.image.push(input);
+      return { data: { images: [{ url: 'https://assets.example/result.png' }] } };
+    },
+    chatGenerate: async (input) => {
+      calls.chat.push(input);
+      return {
+        text: JSON.stringify({
+          directions: Array.from({ length: 4 }, (_, index) => ({
+            title: `T${index}`,
+            summary: `S${index}`,
+            prompt: `P${index}`
+          }))
+        }),
+        model: input.model
+      };
+    },
+    fetcher: async (url, options) => {
+      calls.probes.push({ url, options });
+      if (url.includes('/ai/models/search')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            result: [{ name: GENERATION_DIRECTIONS_MODEL }]
+          })
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ id: GENERATION_IMAGE_MODEL }] })
+      };
+    }
+  });
+  const profile = getInternalGenerationProfile(STANDARD_PROFILE_ID, env);
+  assert.deepEqual(await provider.checkAvailability({ profile }), {
+    ok: true,
+    kind: 'cloudflare-hybrid',
+    profile: STANDARD_PROFILE_ID
+  });
+  assert.equal(calls.probes.length, 2);
+  assert.equal(calls.probes[0].options.headers.authorization, 'Bearer cf-test-token');
+  assert.equal(calls.probes[1].options.headers.authorization, 'Bearer sf-image-test-key');
+
+  await provider.generateDirections({ prompt: 'x', locale: 'zh', profile });
+  await provider.generateImage({ prompt: 'x', profile, aspectRatio: '1:1', images: [] });
+  assert.equal(calls.chat[0].model, GENERATION_DIRECTIONS_MODEL);
+  assert.equal(calls.image[0].model, GENERATION_IMAGE_MODEL);
+});
+
 test('direction parser rejects prose, partial arrays and malformed direction fields', () => {
   assert.equal(parseDirectionsResponse(JSON.stringify({
     directions: Array.from({ length: 4 }, (_, index) => ({

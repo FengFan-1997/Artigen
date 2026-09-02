@@ -73,6 +73,14 @@ services:
         value: "0"
       - key: TASK_WORKER_ENABLED
         value: "0"
+      # All non-image text traffic is pinned to Cloudflare GPT-OSS; only
+      # Kolors image traffic uses the SiliconFlow secret below.
+      - key: AGENT_MODEL_PROVIDER
+        value: cloudflare
+      - key: AGENT_MODEL_NAME
+        value: "@cf/openai/gpt-oss-120b"
+      - key: AGENT_TEXT_MODEL_HARD_LOCK
+        value: "true"
       # The committed DEV blueprint also fails closed. The existing integration
       # service may override these values in Render only after migration and
       # real-dependency readiness have been verified.

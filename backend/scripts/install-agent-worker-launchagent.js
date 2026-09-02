@@ -26,16 +26,17 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
   String(process.env.ARTIGEN_AGENT_SUBAGENTS_ENABLED || '').trim()
 );
 const modelProvider = String(
-  process.env.AGENT_MODEL_PROVIDER || (production ? 'siliconflow' : 'cloudflare')
+  process.env.AGENT_MODEL_PROVIDER || 'cloudflare'
 )
   .trim()
   .toLowerCase();
 if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {
   throw new TypeError('AGENT_LAUNCHAGENT_MODEL_PROVIDER_INVALID');
 }
-const modelName = modelProvider === 'cloudflare'
-  ? '@cf/openai/gpt-oss-120b'
-  : 'Qwen/Qwen3-8B';
+if (modelProvider !== 'cloudflare') {
+  throw new TypeError('AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED');
+}
+const modelName = '@cf/openai/gpt-oss-120b';
 const normalizeBoolean = (name, fallback = false) => {
   const raw = String(process.env[name] ?? '').trim();
   if (!raw) return fallback ? 'true' : 'false';
@@ -74,6 +75,7 @@ const workerRuntimeSettings = Object.freeze({
   ...(!production ? { DEV_DATABASE_EXPECTED_MAJOR: '18' } : {}),
   AGENT_MODEL_PROVIDER: modelProvider,
   AGENT_MODEL_NAME: modelName,
+  AGENT_TEXT_MODEL_HARD_LOCK: 'true',
   AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: modelProvider === 'cloudflare'
     ? normalizeBoolean('AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED')
     : 'false',

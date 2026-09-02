@@ -4,6 +4,7 @@ const {
   ScriptedSiliconFlowTransport,
   requestPromptHash
 } = require('./scripted-siliconflow-transport');
+const { fetchWithTimeout } = require('../../lib/fetch-utils');
 
 const TEXT_MODEL = 'Qwen/Qwen3-8B';
 const IMAGE_MODEL = 'Kwai-Kolors/Kolors';
@@ -122,6 +123,11 @@ class LiveModelAuditor {
       const isQwenDispatch = String(options.method || 'GET').toUpperCase() === 'POST' &&
         /\/chat\/completions(?:\?|$)/.test(url);
       if (!isQwenDispatch) return fetchImpl(...args);
+      let body = {};
+      try { body = JSON.parse(String(options.body || '{}')); } catch {}
+      if (String(body.model || '') !== this.textModel) {
+        throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_INVALID');
+      }
       if (this.qwenCalls >= this.maxQwenCalls) {
         throw new Error('AGENT_LIVE_EVAL_QWEN_CALL_LIMIT');
       }
@@ -151,7 +157,8 @@ class LiveModelAuditor {
           phase: context.phase || 'actor',
           runId: context.runId || null
         });
-        const response = await fetchImpl(...args);
+        const timeoutMs = args[2];
+        const response = await fetchWithTimeout(url, options, timeoutMs, signal, fetchImpl);
         let usage = {};
         try {
           const body = typeof response?.clone === 'function'
@@ -228,28 +235,129 @@ class LiveModelAuditor {
   async inspectKolorsRequest(request = {}) {
     const referenceCount = Array.isArray(request.references) ? request.references.length : 0;
     if (referenceCount > 1) throw new Error('AGENT_LIVE_EVAL_REFERENCE_LIMIT');
-    if (this.kolorsCalls >= this.maxKolorsCalls) {
-      throw new Error('AGENT_LIVE_EVAL_KOLORS_CALL_LIMIT');
+    // Keep this method as the logical request contract.  Physical accounting
+    // happens in wrapKolorsFetcher, once the HTTP request is actually sent.
+    // The default retains the legacy unit-test behavior; live harness wiring
+    // passes reservePhysical:false so validation failures never consume quota.
+    const reservePhysical = request.reservePhysical !== false;
+    if (reservePhysical) {
+      if (this.kolorsCalls >= this.maxKolorsCalls) {
+        throw new Error('AGENT_LIVE_EVAL_KOLORS_CALL_LIMIT');
+      }
+      const context = this.slotContext.getStore() || {};
+      const dispatch = this.campaignGuard
+        ? await this.campaignGuard.reserveDispatch('kolors', {
+            runId: request.runId || null,
+            slotId: request.slotId || context.slotId || null,
+            runtimeVersion: request.runtimeVersion || null,
+            phase: 'image'
+          })
+        : { dispatchId: null, sequence: this.kolorsCalls + 1 };
+      this.kolorsCalls += 1;
+      const entry = Object.freeze({
+        sequence: dispatch.sequence,
+        dispatchId: dispatch.dispatchId,
+        startedAt: Date.now(),
+        referenceCount,
+        filename: String(request.filename || '').slice(0, 240),
+        logical: true
+      });
+      this.kolors.push(entry);
+      return entry;
     }
-    const context = this.slotContext.getStore() || {};
-    const dispatch = this.campaignGuard
-      ? await this.campaignGuard.reserveDispatch('kolors', {
-          runId: request.runId || null,
-          slotId: request.slotId || context.slotId || null,
-          runtimeVersion: request.runtimeVersion || null,
-          phase: 'image'
-        })
-      : { dispatchId: null, sequence: this.kolorsCalls + 1 };
-    this.kolorsCalls += 1;
     const entry = Object.freeze({
-      sequence: dispatch.sequence,
-      dispatchId: dispatch.dispatchId,
+      sequence: 0,
+      dispatchId: null,
       startedAt: Date.now(),
       referenceCount,
-      filename: String(request.filename || '').slice(0, 240)
+      filename: String(request.filename || '').slice(0, 240),
+      logical: true
     });
-    this.kolors.push(entry);
     return entry;
+  }
+
+  wrapKolorsFetcher(fetchImpl, metadata = {}) {
+    if (typeof fetchImpl !== 'function') throw new TypeError('AGENT_LIVE_EVAL_IMAGE_FETCH_REQUIRED');
+    return async (...inputArgs) => {
+      const args = [...inputArgs];
+      const url = String(args[0] || '');
+      const options = { ...(args[1] || {}) };
+      const isImageDispatch = String(options.method || 'GET').toUpperCase() === 'POST' &&
+        /\/images\/generations(?:\?|$)/.test(url);
+      if (!isImageDispatch) return fetchImpl(...inputArgs);
+      let body = {};
+      try { body = JSON.parse(String(options.body || '{}')); } catch {}
+      if (String(body.model || '') !== IMAGE_MODEL) {
+        throw new Error('AGENT_LIVE_EVAL_IMAGE_MODEL_INVALID');
+      }
+      if (this.kolorsCalls >= this.maxKolorsCalls) {
+        throw new Error('AGENT_LIVE_EVAL_KOLORS_CALL_LIMIT');
+      }
+      const context = this.slotContext.getStore() || {};
+      const dispatch = this.campaignGuard
+        ? await this.campaignGuard.reserveDispatch('kolors', {
+            runId: metadata.runId || null,
+            slotId: metadata.slotId || context.slotId || null,
+            runtimeVersion: metadata.runtimeVersion || null,
+            phase: 'image'
+          })
+        : { dispatchId: null, sequence: this.kolorsCalls + 1 };
+      this.kolorsCalls += 1;
+      const startedAt = Date.now();
+      this.kolors.push(Object.freeze({
+        sequence: dispatch.sequence,
+        dispatchId: dispatch.dispatchId,
+        startedAt,
+        referenceCount: Array.isArray(body.image) ? body.image.length : (body.image ? 1 : 0),
+        filename: String(metadata.filename || '').slice(0, 240)
+      }));
+      try {
+        const currentSignal = args[3] || options.signal || null;
+        const signal = this.campaignGuard
+          ? this.campaignGuard.combinedSignal(currentSignal)
+          : currentSignal;
+        if (args.length >= 4) args[3] = signal;
+        else options.signal = signal;
+        args[1] = options;
+        // Preserve the provider helper's four-argument fetcher contract. The
+        // previous wrapper forwarded timeoutMs as an ignored third argument
+        // to node-fetch, so a hung image request could occupy a campaign for
+        // its entire wall-clock budget.
+        const timeoutMs = args[2];
+        const response = await fetchWithTimeout(url, options, timeoutMs, signal, fetchImpl);
+        if (this.campaignGuard) {
+          let parsed = null;
+          try {
+            parsed = typeof response?.clone === 'function'
+              ? await response.clone().json()
+              : null;
+          } catch {}
+          const validImageBody = response?.ok !== false && (
+            parsed === null ||
+            (Array.isArray(parsed?.images) && parsed.images.length > 0)
+          );
+          await this.campaignGuard.recordDispatchResult(dispatch, {
+            status: response?.ok === false || !validImageBody ? 'failed' : 'succeeded',
+            latencyMs: Date.now() - startedAt,
+            errorCode: response?.ok === false
+              ? `HTTP_${Number(response.status || 0)}`
+              : (!validImageBody ? 'AGENT_IMAGE_OUTPUT_INVALID' : null)
+          });
+        }
+        return response;
+      } catch (error) {
+        if (this.campaignGuard) {
+          await this.campaignGuard.recordDispatchResult(dispatch, {
+            status: error?.name === 'AbortError' ? 'cancelled' : 'failed',
+            latencyMs: Date.now() - startedAt,
+            errorCode: /^[A-Z][A-Z0-9_]{2,100}$/.test(String(error?.code || ''))
+              ? error.code
+              : 'AGENT_IMAGE_PROVIDER_DISPATCH_FAILED'
+          });
+        }
+        throw error;
+      }
+    };
   }
 
   async inspectKolorsResponse(response = {}, request = {}, dispatch = {}) {
