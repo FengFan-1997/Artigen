@@ -48,6 +48,22 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const TOOL_RECEIPT_KINDS = new Set(['sandbox_shell', 'kolors']);
 const TOOL_RECEIPT_STATES = new Set(['dispatched', 'consumed', 'ambiguous']);
 
+const isConfiguredModelProvider = (config = {}) => {
+  if (config.runtimeDriver === 'fixture') return true;
+  if (config.modelProvider === 'ollama') return true;
+  if (config.modelProvider === 'siliconflow') return Boolean(config.siliconFlowApiKey);
+  if (config.modelProvider === 'openai') return Boolean(config.openAiApiKey);
+  if (config.modelProvider === 'cloudflare') {
+    return Boolean(
+      config.cloudflareAccountId &&
+      config.cloudflareApiToken &&
+      config.cloudflareFreeAccountAttested &&
+      config.cloudflareFreeAccountId === config.cloudflareAccountId
+    );
+  }
+  return false;
+};
+
 const modelPricingRates = (config, run = {}) => {
   const provider = String(run.model_provider || run.provider || config.modelProvider || '');
   const model = String(run.model_name || config.modelName || '');
@@ -86,19 +102,26 @@ const usageCreditsForRun = ({ inputTokens = 0, outputTokens = 0, config, run }) 
 };
 
 // Migrations 024/025 added the immutable pricing profile after older V1/V2
-// runs had already been created. Those rows carry the new columns' empty
-// defaults, but their durable receipts still describe a real Provider result.
-// Terminal reconciliation must not apply today's rate to such a run (that
-// would make the user's charge depend on a later deployment). Instead, the
-// platform absorbs the unknown historical cost and closes the receipt and
-// reservation at zero. New runs always have a non-empty profile and continue
-// through the strict pricing path above.
+// runs had already been created. Those rows can have a populated runtime
+// summary (constitution, skills and model metadata) while still lacking the
+// nested pricing snapshot. Terminal reconciliation must not apply today's
+// rate to such a run (that would make the user's charge depend on a later
+// deployment). Instead, the platform absorbs the unknown historical cost and
+// closes the receipt and reservation at zero. New runs always carry a valid
+// snapshot and continue through the strict pricing path above.
 const isLegacyRunWithoutPricingSnapshot = (run = {}) => {
   const version = Number(run.runtime_version ?? run.runtimeVersion ?? 1);
   const summary = run.runtime_profile_summary ?? run.runtimeProfileSummary;
+  const snapshot = summary?.modelConfig?.pricingSnapshot;
+  const hasValidSnapshot = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) &&
+    typeof snapshot.provider === 'string' && snapshot.provider.trim() &&
+    typeof snapshot.model === 'string' && snapshot.model.trim() &&
+    Number.isFinite(Number(snapshot.inputCreditsPerMillion)) &&
+    Number.isFinite(Number(snapshot.outputCreditsPerMillion)) &&
+    Number(snapshot.inputCreditsPerMillion) > 0 &&
+    Number(snapshot.outputCreditsPerMillion) > 0;
   return Number.isInteger(version) && version >= 1 && version <= 2 &&
-    summary && typeof summary === 'object' && !Array.isArray(summary) &&
-    Object.keys(summary).length === 0;
+    !hasValidSnapshot;
 };
 
 const terminalReceiptCredits = ({ inputTokens, outputTokens, config, run }) => {
@@ -1284,13 +1307,7 @@ const createAgentRunService = ({
       requirements: {
         database: true,
         payloadEncryption: hasAgentPayloadKey(env),
-        modelProvider: config.modelProvider === 'ollama' ||
-          (config.modelProvider === 'siliconflow' && Boolean(config.siliconFlowApiKey)) ||
-          (config.modelProvider === 'cloudflare' && Boolean(
-            config.cloudflareAccountId && config.cloudflareApiToken
-          )) ||
-          (config.modelProvider === 'openai' && Boolean(config.openAiApiKey)) ||
-          config.runtimeDriver === 'fixture',
+        modelProvider: isConfiguredModelProvider(config),
         sandboxProvider: config.sandboxMode === 'local' ||
           Boolean(config.cuaApiKey) ||
           config.sandboxProvider === 'fixture' ||
@@ -4909,5 +4926,7 @@ module.exports = {
   publicSubagent,
   objectivePublicFields,
   requireIdempotencyKey,
-  usageCreditsForRun
+  usageCreditsForRun,
+  isConfiguredModelProvider,
+  isLegacyRunWithoutPricingSnapshot
 };

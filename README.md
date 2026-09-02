@@ -157,7 +157,7 @@ flowchart TB
     Q --> W["独立 Agent Worker"]
 
     W <-->|"事件与加密检查点"| PG
-    W --> MODEL["Qwen3 规划 / 父子 Agent"]
+    W --> MODEL["Cloudflare GPT-OSS 120B 文本规划 / 父子 Agent"]
     W --> IMAGE["Kolors 图片生成"]
     W --> CUA["CUA Docker 沙箱"]
 
@@ -213,7 +213,7 @@ pnpm check
 | 数据与队列 | PostgreSQL 16、pg-boss |
 | 存储 | 私有 S3 兼容对象存储 |
 | Agent runtime | 独立 Worker、Docker/CUA、Chromium/noVNC、LibreOffice |
-| 模型 | Qwen3-8B、Kwai-Kolors/Kolors |
+| 模型 | Cloudflare `@cf/openai/gpt-oss-120b`（所有非生图文本）、Kwai-Kolors/Kolors（所有图片） |
 | 质量 | Vitest、Node test runner、Playwright、GitHub Actions |
 
 ## 仓库结构

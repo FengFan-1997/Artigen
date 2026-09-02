@@ -7,9 +7,17 @@ const {
   buildBackgroundPrompt,
   buildPortraitPrompt,
   createWorkshopAiExecutor,
+  normalizeFailure,
   normalizeIngredientOutput,
   validateWorkshopAiTask
 } = require('../services/workshop-ai-service');
+
+test('Cloudflare free-tier terminal errors remain actionable workshop failures', () => {
+  assert.equal(normalizeFailure({ code: 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED' }),
+    'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED');
+  assert.equal(normalizeFailure({ code: 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN' }),
+    'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN');
+});
 const {
   PRODUCT_REFERENCE_PROFILE_ID
 } = require('../services/generation-profiles');

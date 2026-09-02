@@ -2274,7 +2274,7 @@ test('Harness V3 absorbs legacy V2 receipts without a pricing snapshot during ca
     await controller.waitForArrivals('after_receipt', { arrivals: 1, timeoutMs: 5_000 });
     await pool.query(
       `UPDATE agent_runs
-          SET runtime_profile_summary='{}'::jsonb,
+          SET runtime_profile_summary='{"constitution":"legacy-v2","modelConfig":{"provider":"cloudflare","model":"@cf/openai/gpt-oss-120b"}}'::jsonb,
               runtime_version=2,
               estimated_credits_used=27
         WHERE id=$1`,
@@ -2339,7 +2339,7 @@ test('Harness V3 replays a settled legacy V2 run without a pricing snapshot', {
     assert.equal(terminal.snapshot.persistent.run.status, 'succeeded');
     await pool.query(
       `UPDATE agent_runs
-          SET runtime_profile_summary='{}'::jsonb,
+          SET runtime_profile_summary='{"constitution":"legacy-v2","modelConfig":{"provider":"cloudflare","model":"@cf/openai/gpt-oss-120b"}}'::jsonb,
               runtime_profile_hash=NULL
         WHERE id=$1`,
       [created.runId]

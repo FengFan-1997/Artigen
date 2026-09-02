@@ -116,7 +116,7 @@ const classifyProvider = (value) => {
 
 const classifyModel = (value) => {
   const raw = String(value || '').toLowerCase();
-  const families = ['gemini', 'qwen', 'flux', 'kolors', 'stable-diffusion', 'sdxl', 'deepseek'];
+  const families = ['gpt-oss', 'cloudflare', 'gemini', 'qwen', 'flux', 'kolors', 'stable-diffusion', 'sdxl', 'deepseek'];
   return families.find((family) => raw.includes(family)) || (raw ? 'other' : '');
 };
 

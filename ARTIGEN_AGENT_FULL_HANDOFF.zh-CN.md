@@ -4,6 +4,11 @@
 
 文档用途：这是给下一位 AI、工程师或运维接管人的单一入口。即使没有本次聊天记录，也应能从本文理解 Artigen Agent 为什么曾经被判断为“还跑不通”、后来做了什么、现在实际运行在哪里、如何登录和运维、哪些安全边界不能破坏，以及接手后应先检查什么。
 
+> 历史文档说明（2026-09-02）：本文主体形成于 Cloudflare 切换前，文中的
+> Qwen/SiliconFlow Agent 文本配置、部署和线上结论均为历史记录。当前非生图文本
+> 统一使用 Cloudflare `@cf/openai/gpt-oss-120b`，图片仅使用 `Kwai-Kolors/Kolors`；
+> 以 `PROJECT_HANDOFF.zh-CN.md` 和 `AGENT_OPERATIONS_RUNBOOK.zh-CN.md` 的当前章节为准。
+
 项目级正式状态和 Handoff 治理见 [`PROJECT_HANDOFF.zh-CN.md`](./PROJECT_HANDOFF.zh-CN.md)。本文只负责 Agent 专题。
 
 发布等级：**Production Beta / owner-only**
@@ -11,6 +16,10 @@
 > 安全说明：本文只记录账号标识、平台入口、资源 ID、配置项名称和密钥存放位置，不包含任何密码、API Key、数据库连接串、OTP、恢复码或真实 Secret。接管时也不要把这些值打印到终端、日志、聊天或 Markdown。
 
 ## 0. 下一位 AI 先读这里
+
+> 当前状态（2026-09-02）：以下 0.1 表格是 2026-08-10 的历史快照，不能作为当前部署或
+> 模型依据。当前非生图文本统一为 Cloudflare `@cf/openai/gpt-oss-120b`，图片统一为
+> SiliconFlow `Kwai-Kolors/Kolors`；当前候选未发布，详见 `PROJECT_HANDOFF.zh-CN.md` 顶部。
 
 ### 0.1 当前结论
 

@@ -1796,10 +1796,22 @@ const createDesignConversationService = ({
     const scheduler = providerScheduler
       ? await providerScheduler.readiness()
       : { ok: !agentConfig.providerSchedulerEnabled, enabled: false, mode: 'unconfigured' };
+    const plannerCredentialsReady = agentConfig.modelProvider === 'cloudflare'
+      ? Boolean(
+          agentConfig.cloudflareAccountId &&
+          agentConfig.cloudflareApiToken &&
+          agentConfig.cloudflareFreeAccountAttested
+        )
+      : Boolean(agentConfig.siliconFlowApiKey);
     return {
       enabled: config.enabled,
       workerEnabled: config.workerEnabled,
-      plannerReady: Boolean(config.enabled && hasAgentPayloadKey(env) && typeof chatGenerate === 'function'),
+      plannerReady: Boolean(
+        config.enabled &&
+        hasAgentPayloadKey(env) &&
+        typeof chatGenerate === 'function' &&
+        plannerCredentialsReady
+      ),
       model: agentConfig.modelName,
       imageModel: IMAGE_MODEL,
       plannerV2Enabled: agentConfig.designPlannerV2Enabled,

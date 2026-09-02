@@ -10,6 +10,7 @@ const { getAgentConfig, assertAgentRuntimeReady } = require('../services/agent-c
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const { hasAgentPayloadKey } = require('../services/agent-payload-service');
 const { createAgentSandboxProvider } = require('../services/agent-sandbox-provider');
+const { LATEST_REPOSITORY_MIGRATION } = require('../services/readiness-service');
 
 const REQUIRED_TABLES = Object.freeze([
   'agent_runs',
@@ -18,9 +19,19 @@ const REQUIRED_TABLES = Object.freeze([
   'agent_artifacts',
   'agent_trial_usage',
   'agent_worker_heartbeats',
-  'agent_desktop_tickets'
+  'agent_desktop_tickets',
+  'agent_subagents',
+  'agent_subagent_payloads',
+  'agent_subagent_model_checkpoints',
+  'agent_model_calls',
+  'agent_provider_scheduler',
+  'agent_provider_requests',
+  'agent_quality_checks',
+  'agent_model_call_receipts',
+  'agent_tool_call_receipts',
+  'agent_budget_reservations'
 ]);
-const REQUIRED_MIGRATION = '020_agent_secure_browser_relay';
+const REQUIRED_MIGRATION = LATEST_REPOSITORY_MIGRATION;
 const dockerDesktopBin = '/Applications/Docker.app/Contents/Resources/bin';
 
 const checked = async (name, operation) => {
@@ -95,10 +106,16 @@ const main = async () => {
     );
     const missing = tables.rows.filter((row) => !row.present).map((row) => row.table_name);
     const migration = await pool.query(
-      'SELECT EXISTS (SELECT 1 FROM pgmigrations WHERE name=$1) AS applied',
+      `SELECT EXISTS (SELECT 1 FROM pgmigrations WHERE name=$1) AS applied,
+              to_regprocedure('public.artigen_live_eval_client_connection_count()') IS NOT NULL
+                AS has_live_eval_capacity_fn`,
       [REQUIRED_MIGRATION]
     );
-    if (missing.length || !migration.rows[0]?.applied) {
+    if (
+      missing.length ||
+      !migration.rows[0]?.applied ||
+      !migration.rows[0]?.has_live_eval_capacity_fn
+    ) {
       const error = new Error('DATABASE_MIGRATION_REQUIRED');
       error.code = 'DATABASE_MIGRATION_REQUIRED';
       throw error;
@@ -107,7 +124,8 @@ const main = async () => {
     return {
       database: database.rows[0]?.name || 'configured',
       migration: REQUIRED_MIGRATION,
-      tables: REQUIRED_TABLES.length
+      tables: REQUIRED_TABLES.length,
+      liveEvalCapacityFunction: true
     };
   }));
 

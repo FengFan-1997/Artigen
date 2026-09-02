@@ -254,10 +254,13 @@ const runtimeInvariantErrors = (snapshot, reconstructed = reconstructRuntimeStat
   }
   const modelCallIds = modelCalls.map((entry) => String(entry.id || ''));
   if (new Set(modelCallIds).size !== modelCallIds.length) errors.push('model_call_duplicate');
-  const pinnedModelName = String(run.model_name || 'Qwen/Qwen3-8B');
+  const pinnedModelName = String(run.model_name || '').trim();
   const pinnedModelProvider = String(run.model_provider || '');
+  if (modelCalls.length > 0 && !pinnedModelName) {
+    errors.push('model_lock_missing');
+  }
   if (modelCalls.some((entry) => (
-    entry.model_name !== pinnedModelName ||
+    pinnedModelName && entry.model_name !== pinnedModelName ||
     (pinnedModelProvider && entry.provider !== pinnedModelProvider)
   ))) {
     errors.push('model_lock_violated');

@@ -130,6 +130,13 @@ test('All smoke environments default to the free Cloudflare text model and rejec
     () => resolveAgentSmokeModelProfile({ env: { AGENT_MODEL_PROVIDER: 'siliconflow' }, production: true }),
     { code: 'AGENT_PRODUCTION_MODEL_PROFILE_INVALID' }
   );
+  assert.throws(
+    () => applyAgentSmokeModelProfile({
+      CLOUDFLARE_ACCOUNT_ID: 'b'.repeat(32),
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true'
+    }, profile),
+    { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED' }
+  );
 });
 
 test('CI configures a distinct session-token hashing secret', () => {
@@ -155,7 +162,9 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(runner, /process\.env\.AGENT_MODEL_PROVIDER \|\| 'cloudflare'/);
   assert.match(runner, /AGENT_MODEL_NAME:\s*'@cf\/openai\/gpt-oss-120b'/);
   assert.match(runner, /AGENT_TEXT_MODEL_HARD_LOCK:\s*'true'/);
-  assert.match(runner, /secretNames\.push\('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'\)/);
+  assert.match(runner, /secretNames\.push\([\s\S]*'CLOUDFLARE_ACCOUNT_ID',[\s\S]*'CLOUDFLARE_API_TOKEN',[\s\S]*'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID'/);
+  assert.match(runner, /workerEnv\.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED/);
+  assert.match(runner, /freeAccountId !== accountId/);
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
   assert.match(runner, /optionalSecretNames = \['PG_SSL_CA_BASE64'\]/);
   assert.match(runner, /delete workerEnv\.PG_SSL_CA;/);
@@ -175,6 +184,8 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(installer, /AGENT_RUNTIME_V2_ENABLED/);
   assert.match(installer, /process\.env\.AGENT_MODEL_PROVIDER \|\| 'cloudflare'/);
   assert.match(installer, /AGENT_TEXT_MODEL_HARD_LOCK:\s*'true'/);
+  assert.match(installer, /readMacOsKeychainSecret/);
+  assert.match(installer, /AGENT_CLOUDFLARE_FREE_ACCOUNT_MISMATCH/);
   assert.match(installer, /DEV_DATABASE_EXPECTED_MAJOR/);
   assert.match(readRepoFile('backend/scripts/start-agent-worker.js'), /assertDevRuntimeDatabaseBoundary/);
   assert.match(installer, /AGENT_RUNTIME_V2_ROLLOUT_PERCENT/);
@@ -186,6 +197,23 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(installer, /AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION/);
   assert.match(installer, /AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION/);
   assert.match(installer, /AGENT_RUNTIME_ACTOR_PROFILE/);
+  const server = readRepoFile('backend/server.js');
+  assert.match(server, /const resolvedProviderEnv = \{/);
+  assert.match(server, /installToolTaskRoutes\(app, \{\s*env: resolvedProviderEnv/);
+  assert.match(server, /installToolTaskRoutes\(app, \{[\s\S]*?callCloudflareChat/);
+  assert.match(server, /installSystemRoutes\(app, \{\s*NODE_ENV,\s*isProd,\s*env: resolvedProviderEnv/);
+  assert.match(server, /installSystemRoutes\(app, \{[\s\S]*?callCloudflareChat/);
+  for (const blueprint of ['render.yaml', 'render.dev.yaml']) {
+    const source = readRepoFile(blueprint);
+    for (const name of [
+      'CLOUDFLARE_ACCOUNT_ID',
+      'CLOUDFLARE_API_TOKEN',
+      'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+      'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+    ]) {
+      assert.match(source, new RegExp(`key: ${name}[^\\n]*\\n\\s+sync: false`));
+    }
+  }
 });
 
 test('Mac Agent installer persists the reviewed V2 launch profile', {
@@ -201,8 +229,10 @@ test('Mac Agent installer persists the reviewed V2 launch profile', {
         encoding: 'utf8',
         env: {
           ...process.env,
+          NODE_ENV: 'test',
           HOME: temporaryHome,
           ARTIGEN_AGENT_SUBAGENTS_ENABLED: 'true',
+          CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
           AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
           AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
           AGENT_RUNTIME_V2_ENABLED: 'true',

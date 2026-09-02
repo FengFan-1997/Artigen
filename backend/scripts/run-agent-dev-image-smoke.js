@@ -39,7 +39,12 @@ const secretNames = [
   'S3_SECRET_ACCESS_KEY'
 ];
 if (String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'cloudflare') {
-  secretNames.push('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN');
+  secretNames.push(
+    'CLOUDFLARE_ACCOUNT_ID',
+    'CLOUDFLARE_API_TOKEN',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+  );
 }
 const missing = [];
 for (const name of secretNames) {

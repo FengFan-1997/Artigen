@@ -429,10 +429,56 @@ const {
   normalizeDelegatedTasks,
   nextConsecutiveFailureCount,
   usageCreditsForRun,
+  isConfiguredModelProvider,
+  isLegacyRunWithoutPricingSnapshot,
   objectivePublicFields,
   publicRun,
   publicSubagent
 } = require('../services/agent-run-service');
+
+test('legacy pricing detection covers non-empty pre-migration Runtime V2 summaries', () => {
+  assert.equal(isLegacyRunWithoutPricingSnapshot({
+    runtime_version: 2,
+    runtime_profile_summary: {
+      constitution: 'legacy-v2',
+      modelConfig: { provider: 'cloudflare', model: '@cf/openai/gpt-oss-120b' }
+    }
+  }), true);
+  assert.equal(isLegacyRunWithoutPricingSnapshot({
+    runtime_version: 2,
+    runtime_profile_summary: {
+      modelConfig: {
+        pricingSnapshot: {
+          provider: 'cloudflare',
+          model: '@cf/openai/gpt-oss-120b',
+          inputCreditsPerMillion: 0.35,
+          outputCreditsPerMillion: 0.75
+        }
+      }
+    }
+  }), false);
+});
+
+test('Cloudflare quote readiness requires the attested free account identity', () => {
+  const accountId = 'a'.repeat(32);
+  const base = {
+    runtimeDriver: 'live',
+    modelProvider: 'cloudflare',
+    cloudflareAccountId: accountId,
+    cloudflareApiToken: 'token',
+    cloudflareFreeAccountId: accountId
+  };
+  assert.equal(isConfiguredModelProvider(base), false);
+  assert.equal(isConfiguredModelProvider({
+    ...base,
+    cloudflareFreeAccountAttested: true
+  }), true);
+  assert.equal(isConfiguredModelProvider({
+    ...base,
+    cloudflareFreeAccountAttested: true,
+    cloudflareFreeAccountId: 'b'.repeat(32)
+  }), false);
+});
 const {
   evaluateAgentTrajectory
 } = require('../services/agent-trajectory-evaluator');
@@ -2018,8 +2064,11 @@ test('production Beta runtime fails closed without an owner UUID allowlist', () 
     NODE_ENV: 'production',
     APP_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    AGENT_MODEL_PROVIDER: 'siliconflow',
-    SILICONFLOW_API_KEY: 'test-key',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local',
     AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
@@ -2043,28 +2092,34 @@ test('production Beta runtime fails closed without an owner UUID allowlist', () 
   assert.deepEqual(config.betaUserIds, [ownerId]);
 });
 
-test('production local Agent accepts loopback Ollama and a prebuilt local Cua image', () => {
+test('production Agent keeps Cloudflare text lock with a prebuilt local Cua image', () => {
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    AGENT_MODEL_PROVIDER: 'ollama',
-    AGENT_OLLAMA_BASE_URL: 'http://127.0.0.1:11434',
-    AGENT_MODEL_NAME: 'qwen3:8b',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local'
   }), { code: 'AGENT_SANDBOX_IMAGE_NOT_READY' });
   const config = assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    AGENT_MODEL_PROVIDER: 'ollama',
-    AGENT_OLLAMA_BASE_URL: 'http://127.0.0.1:11434',
-    AGENT_MODEL_NAME: 'qwen3:8b',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local',
     AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
     AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
   });
-  assert.equal(config.modelProvider, 'ollama');
+  assert.equal(config.modelProvider, 'cloudflare');
   assert.equal(config.sandboxMode, 'local');
   assert.equal(config.sandboxDockerPlatform, '');
   assert.equal(config.sandboxImageRef, 'artigen/cua-xfce:0.1.15-tools-v1');
@@ -2195,6 +2250,13 @@ test('deployed worker hard-lock rejects legacy text providers while preserving i
     AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b'
   });
   assert.equal(config.textModelHardLock, true);
+  assert.throws(() => getAgentConfig({
+    NODE_ENV: 'production',
+    APP_ENV: 'dev',
+    AGENT_TEXT_MODEL_HARD_LOCK: 'false',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
 });
 
 test('Runtime V2 assignment is server-owned, stable and fails back to V1 when disabled', () => {

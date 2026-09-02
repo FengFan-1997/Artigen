@@ -24,7 +24,12 @@ const workerSecretNames = [
   'AGENT_WORKER_RELAY_URL'
 ];
 if (String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'cloudflare') {
-  workerSecretNames.push('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN');
+  workerSecretNames.push(
+    'CLOUDFLARE_ACCOUNT_ID',
+    'CLOUDFLARE_API_TOKEN',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+  );
 }
 const missing = [];
 for (const name of workerSecretNames) {

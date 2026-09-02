@@ -81,6 +81,14 @@ services:
         value: "@cf/openai/gpt-oss-120b"
       - key: AGENT_TEXT_MODEL_HARD_LOCK
         value: "true"
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: AGENT_CLOUDFLARE_FREE_ACCOUNT_ID
+        sync: false
+      - key: AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED
+        sync: false
       # The committed DEV blueprint also fails closed. The existing integration
       # service may override these values in Render only after migration and
       # real-dependency readiness have been verified.

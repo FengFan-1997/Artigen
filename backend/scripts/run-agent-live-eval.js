@@ -137,11 +137,22 @@ const loadLiveEvalSecrets = ({
   delete runtimeEnv.PG_SSL_CA;
   delete runtimeEnv.PG_SSL_CA_BASE64;
   const smokeModelProfile = resolveAgentSmokeModelProfile({ env: runtimeEnv, production: false });
+  // A live campaign is always a deployed-style evaluation: text must use the
+  // attested free Cloudflare model. SiliconFlow remains image-only and is
+  // allowed only by deterministic fixture callers outside this loader.
+  if (smokeModelProfile.provider !== 'cloudflare') {
+    throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_PROVIDER_FORBIDDEN');
+  }
   const modelProvider = smokeModelProfile.provider;
   const requiredSecretNames = [
     ...secretNames,
     ...(modelProvider === 'cloudflare'
-      ? ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN']
+      ? [
+          'CLOUDFLARE_ACCOUNT_ID',
+          'CLOUDFLARE_API_TOKEN',
+          'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+          'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+        ]
       : [])
   ];
   const missing = [];

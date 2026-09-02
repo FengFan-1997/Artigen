@@ -28,6 +28,32 @@ const SILICONFLOW_API_KEY = normalizeSecret(
     process.env.SILICONFLOW_KEY ||
     "",
 );
+// Local macOS processes may use the same dedicated worker Keychain service as
+// the LaunchAgent wrapper. Render/Vercel continue to provide these values as
+// platform secrets; no secret is written back to disk or logged.
+const CLOUDFLARE_KEYCHAIN_SERVICE = normalizeSecret(
+  process.env.CLOUDFLARE_KEYCHAIN_SERVICE || ''
+);
+const readCloudflareKeychainSecret = (account) => CLOUDFLARE_KEYCHAIN_SERVICE
+  ? readMacOsKeychainSecret({ service: CLOUDFLARE_KEYCHAIN_SERVICE, account })
+  : '';
+const CLOUDFLARE_ACCOUNT_ID = normalizeSecret(
+  readCloudflareKeychainSecret('CLOUDFLARE_ACCOUNT_ID') ||
+  process.env.CLOUDFLARE_ACCOUNT_ID || ''
+);
+const CLOUDFLARE_API_TOKEN = normalizeSecret(
+  readCloudflareKeychainSecret('CLOUDFLARE_API_TOKEN') ||
+  process.env.CLOUDFLARE_API_TOKEN ||
+  process.env.CLOUDFLARE_AUTH_TOKEN || ''
+);
+const AGENT_CLOUDFLARE_FREE_ACCOUNT_ID = normalizeSecret(
+  readCloudflareKeychainSecret('AGENT_CLOUDFLARE_FREE_ACCOUNT_ID') ||
+  process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || ''
+);
+const AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED = normalizeSecret(
+  readCloudflareKeychainSecret('AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED') ||
+  process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || ''
+);
 const SILICONFLOW_API_BASE = normalizeUrl(
   process.env.SILICONFLOW_API_BASE || "https://api.siliconflow.cn/v1",
 );
@@ -49,7 +75,7 @@ const ACTIVE_MODEL_PROVIDER = String(process.env.AGENT_MODEL_PROVIDER || "cloudf
   .trim()
   .toLowerCase();
 const activeTextProvider = ACTIVE_MODEL_PROVIDER === "cloudflare"
-  ? (normalizeSecret(process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_AUTH_TOKEN)
+  ? (CLOUDFLARE_API_TOKEN
     ? "cloudflare"
     : "offline")
   : (SILICONFLOW_API_KEY ? "siliconflow" : "offline");
@@ -76,6 +102,11 @@ module.exports = {
   FIXED_SILICONFLOW_CHAT_MODEL,
   FIXED_CLOUDFLARE_CHAT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
+  CLOUDFLARE_KEYCHAIN_SERVICE,
+  CLOUDFLARE_ACCOUNT_ID,
+  CLOUDFLARE_API_TOKEN,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED,
   activeTextProvider,
   SILICONFLOW_TIMEOUT_MS,
   SILICONFLOW_REACTION_TIMEOUT_MS,

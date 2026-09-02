@@ -167,6 +167,16 @@ const assertLiveEvalProcessSafety = (env = process.env) => {
   if (String(env.AGENT_RUNTIME_DRIVER || '') !== 'live') {
     throw new Error('AGENT_LIVE_EVAL_FIXTURE_RUNTIME_FORBIDDEN');
   }
+  // Real evaluation traffic must exercise the deployed free text runtime;
+  // SiliconFlow is image-only in current environments. Historical fixtures
+  // may still describe the legacy provider, but never dispatch it live.
+  const provider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
+  const model = String(
+    env.AGENT_MODEL_NAME || (provider === 'cloudflare' ? '@cf/openai/gpt-oss-120b' : '')
+  ).trim();
+  if (provider !== 'cloudflare' || model !== '@cf/openai/gpt-oss-120b') {
+    throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_PROVIDER_FORBIDDEN');
+  }
   return true;
 };
 
@@ -305,15 +315,16 @@ class AgentLiveEvalHarness {
         env: instance.env,
         providerKey: `${instance.env.AGENT_MODEL_PROVIDER}:${instance.env.AGENT_MODEL_NAME}`
       });
-      // The Agent text provider and the design workflow's Qwen directions
-      // share a scheduler only when they are actually the same SiliconFlow
-      // model.  Kolors always gets its own canonical quota key.
+      // The Agent text provider and the design workflow's directions share a
+      // scheduler only when they are the same physical provider/model.  The
+      // Cloudflare deployment must never consume a SiliconFlow/Qwen slot.
+      // Kolors always gets its own canonical quota key.
       instance.imageTextProviderScheduler = instance.env.AGENT_MODEL_PROVIDER === 'siliconflow'
         ? instance.providerScheduler
         : createProviderScheduler({
             pool,
             env: instance.env,
-            providerKey: 'siliconflow:Qwen/Qwen3-8B'
+            providerKey: `${instance.env.AGENT_MODEL_PROVIDER}:${instance.env.AGENT_MODEL_NAME}`
           });
       instance.imageProviderScheduler = createProviderScheduler({
         pool,
@@ -363,9 +374,9 @@ class AgentLiveEvalHarness {
       const scheduledChat = createScheduledChatGenerate({
         scheduler: instance.imageTextProviderScheduler,
         chatGenerate: async (input = {}) => {
-          // Directions and ingredient extraction are paid SiliconFlow Qwen
-          // calls too. Record their request contract and route the transport
-          // through the same physical-dispatch auditor as Planner/Actor.
+          // Directions and ingredient extraction are paid text calls too.
+          // Route them through the selected physical provider, never a
+          // hard-coded SiliconFlow/Qwen transport.
           const payload = {
             model: input.model,
             messages: input.messages,
@@ -381,6 +392,18 @@ class AgentLiveEvalHarness {
             runtimeVersion: 1,
             promptHash: requestPromptHash(payload)
           });
+          if (instance.env.AGENT_MODEL_PROVIDER === 'cloudflare') {
+            return instance.auditor.requestContext.run(inspected, () => callCloudflareChat({
+              ...input,
+              accountId: instance.env.CLOUDFLARE_ACCOUNT_ID,
+              credential: instance.env.CLOUDFLARE_API_TOKEN,
+              freeAccountAttested: true,
+              freeAccountId: instance.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+              model: instance.env.AGENT_MODEL_NAME,
+              signal: instance.campaignGuard.combinedSignal(input.signal),
+              fetcher: instance.auditor.wrapQwenFetch(globalThis.fetch)
+            }));
+          }
           return instance.auditor.requestContext.run(inspected, () => callSiliconFlowChat({
             ...input,
             fetchImpl: instance.auditor.wrapQwenFetch(siliconFlowFetch)

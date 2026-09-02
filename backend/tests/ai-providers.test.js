@@ -126,6 +126,33 @@ test('generic text generation dispatches Cloudflare when SiliconFlow is absent',
   }
 });
 
+test('generic text generation honors a Keychain-resolved provider readiness attestation', async () => {
+  const calls = [];
+  const result = await callTextGenerate({
+    providerName: 'cloudflare',
+    model: '@cf/openai/gpt-oss-120b',
+    providerReady: true,
+    contents: [{ role: 'user', parts: [{ text: 'keychain-backed request' }] }],
+    chatGenerate: async (input) => {
+      calls.push(input);
+      return { text: 'ok', model: input.model, usage: { promptTokens: 2, completionTokens: 1 } };
+    }
+  });
+  assert.equal(result.provider, 'cloudflare');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].model, '@cf/openai/gpt-oss-120b');
+});
+
+test('generic Cloudflare text generation fails closed when readiness is explicitly false', async () => {
+  await assert.rejects(callTextGenerate({
+    providerName: 'cloudflare',
+    model: '@cf/openai/gpt-oss-120b',
+    providerReady: false,
+    contents: [{ role: 'user', parts: [{ text: 'should not dispatch' }] }],
+    chatGenerate: async () => { throw new Error('must not dispatch'); }
+  }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED', status: 503 });
+});
+
 test('SiliconFlow chat uses the supported endpoint and serializes non-thinking mode', async () => {
   let request;
   const result = await callSiliconFlowChat({

@@ -47,9 +47,16 @@ const secretNames = [
   'S3_SECRET_ACCESS_KEY'
 ];
 if (PRODUCTION) secretNames.push('AGENT_BETA_USER_IDS');
-if (!PRODUCTION && String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'cloudflare') {
-  secretNames.push('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN');
-}
+// Every deployed smoke profile uses Cloudflare for text, including the
+// owner-only production login probe. Load and attest the same four secrets in
+// both environments so a production smoke cannot silently exercise legacy
+// SiliconFlow text.
+secretNames.push(
+  'CLOUDFLARE_ACCOUNT_ID',
+  'CLOUDFLARE_API_TOKEN',
+  'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+  'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+);
 const missing = [];
 for (const name of secretNames) {
   const value = readMacOsKeychainSecret({ service: KEYCHAIN_SERVICE, account: name });

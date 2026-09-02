@@ -99,7 +99,8 @@ const main = async () => {
     modelCallService
   });
   // Image traffic has a distinct quota and must never share the text model's
-  // scheduler (the text provider may be Cloudflare or Qwen). Keeping the
+  // scheduler (all deployed text calls are Cloudflare GPT-OSS; SiliconFlow is
+  // image-only). Keeping the
   // canonical Kolors key here also makes Render, Worker and harness drain
   // accounting comparable.
   const {

@@ -99,6 +99,14 @@ test('Live Harness V3.1 is fail-closed outside explicit test + dev + real-provid
   }, { AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1' });
   assert.equal(cloudflare.AGENT_MODEL_PROVIDER, 'cloudflare');
   assert.equal(cloudflare.AGENT_MODEL_NAME, '@cf/openai/gpt-oss-120b');
+  assert.throws(
+    () => assertLiveEvalProcessSafety({
+      ...safe,
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+    }),
+    /AGENT_LIVE_EVAL_TEXT_MODEL_PROVIDER_FORBIDDEN/
+  );
   assert.throws(() => liveEvalEnv({
     AGENT_MODEL_PROVIDER: 'cloudflare',
     AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
@@ -515,6 +523,10 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     ['DATABASE_URL', 'postgres://synthetic/dev_artigen'],
     ['AGENT_PAYLOAD_ENCRYPTION_KEY', 'payload-key'],
     ['SILICONFLOW_API_KEY', 'provider-key'],
+    ['CLOUDFLARE_ACCOUNT_ID', 'f'.repeat(32)],
+    ['CLOUDFLARE_API_TOKEN', 'cloudflare-provider-key'],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ID', 'f'.repeat(32)],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED', 'true'],
     ['S3_ENDPOINT', 'https://s3.invalid'],
     ['S3_BUCKET', 'dev-bucket'],
     ['S3_REGION', 'synthetic-region'],
@@ -527,7 +539,7 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     ).toString('base64')]
   ]);
   const loaded = loadLiveEvalSecrets({
-    env: { AGENT_MODEL_PROVIDER: 'siliconflow' },
+    env: { NODE_ENV: 'test', AGENT_MODEL_PROVIDER: 'cloudflare' },
     service: 'artigen-agent-dev-worker',
     readSecret: ({ account }) => secrets.get(account) || ''
   });
@@ -539,8 +551,8 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     loaded.runtimeEnv.CUA_PYTHON,
     path.resolve(__dirname, '../.venv-agent/bin/python')
   );
-  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION, '20');
-  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION, '160');
+  assert.equal(loaded.runtimeEnv.AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION, '0.35');
+  assert.equal(loaded.runtimeEnv.AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION, '0.75');
   assert.equal(loaded.runtimeEnv.S3_FORCE_PATH_STYLE, '1');
   assert.equal(loaded.runtimeEnv.AGENT_LIVE_EVAL_PG_POOL_MAX, '3');
   assert.equal(loaded.runtimeEnv.PG_POOL_MAX, '3');
@@ -554,7 +566,9 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
   const cloudflareSecrets = new Map([
     ...secrets,
     ['CLOUDFLARE_ACCOUNT_ID', cloudflareAccountId],
-    ['CLOUDFLARE_API_TOKEN', 'cloudflare-provider-key']
+    ['CLOUDFLARE_API_TOKEN', 'cloudflare-provider-key'],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ID', cloudflareAccountId],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED', 'true']
   ]);
   const cloudflare = loadLiveEvalSecrets({
     env: {
@@ -583,6 +597,10 @@ test('Live eval runner rejects explicit zero or malformed pricing', () => {
     ['DATABASE_URL', 'postgres://synthetic/dev_artigen'],
     ['AGENT_PAYLOAD_ENCRYPTION_KEY', 'payload-key'],
     ['SILICONFLOW_API_KEY', 'provider-key'],
+    ['CLOUDFLARE_ACCOUNT_ID', 'f'.repeat(32)],
+    ['CLOUDFLARE_API_TOKEN', 'cloudflare-provider-key'],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ID', 'f'.repeat(32)],
+    ['AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED', 'true'],
     ['S3_ENDPOINT', 'https://s3.invalid'],
     ['S3_BUCKET', 'dev-bucket'],
     ['S3_REGION', 'synthetic-region'],
@@ -595,38 +613,52 @@ test('Live eval runner rejects explicit zero or malformed pricing', () => {
   assert.throws(
     () => loadLiveEvalSecrets({
       env: {
-        AGENT_MODEL_PROVIDER: 'siliconflow',
-        AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
-        AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0',
+        NODE_ENV: 'test',
+        AGENT_MODEL_PROVIDER: 'cloudflare',
+        AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '0',
+        AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '0',
         PG_SSL_CA: 'ambient-ca-must-not-survive',
         PG_SSL_CA_BASE64: 'ambient-base64-must-not-survive'
       },
       service: 'artigen-agent-dev-worker',
       readSecret
     }),
-    /AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION_INVALID/
+    /AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION_INVALID/
   );
   assert.throws(
     () => loadLiveEvalSecrets({
       env: {
-        AGENT_MODEL_PROVIDER: 'siliconflow',
-        AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: 'not-a-number'
+        NODE_ENV: 'test',
+        AGENT_MODEL_PROVIDER: 'cloudflare',
+        AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: 'not-a-number'
       },
       service: 'artigen-agent-dev-worker',
       readSecret
     }),
-    /AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION_INVALID/
+    /AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION_INVALID/
   );
   assert.throws(
     () => loadLiveEvalSecrets({
       env: {
-        AGENT_MODEL_PROVIDER: 'siliconflow',
-        AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '-1'
+        NODE_ENV: 'test',
+        AGENT_MODEL_PROVIDER: 'cloudflare',
+        AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '-1'
       },
       service: 'artigen-agent-dev-worker',
       readSecret
     }),
-    /AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION_INVALID/
+    /AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION_INVALID/
+  );
+});
+
+test('Live eval loader rejects the legacy SiliconFlow text profile even in test mode', () => {
+  assert.throws(
+    () => loadLiveEvalSecrets({
+      env: { NODE_ENV: 'test', AGENT_MODEL_PROVIDER: 'siliconflow' },
+      service: 'artigen-agent-dev-worker',
+      readSecret: () => 'synthetic'
+    }),
+    /AGENT_LIVE_EVAL_TEXT_MODEL_PROVIDER_FORBIDDEN/
   );
 });
 
@@ -1691,7 +1723,7 @@ test('Live eval final report cryptographically binds the exact 24-run report and
     commitSha: 'ab'.repeat(20),
     matrixHash: LIVE_EVAL_MATRIX_HASH,
     gateManifestSha256: crypto.createHash('sha256').update('gate').digest('hex'),
-    modelLocks: { text: 'Qwen/Qwen3-8B', image: 'Kwai-Kolors/Kolors' },
+    modelLocks: { text: '@cf/openai/gpt-oss-120b', image: 'Kwai-Kolors/Kolors' },
     limits: { perRunCredits: 50, qwenCalls: 200, kolorsCalls: 16, wallClockHours: 8 },
     cleanup: { ok: true, results: [{ ok: true, label: 'harness' }, { ok: true, label: 'postgres' }] },
     results,
@@ -1764,7 +1796,7 @@ test('Live eval final report cryptographically binds the exact 24-run report and
       expectedCommitSha: automatedReport.commitSha,
       expectedMatrixHash: LIVE_EVAL_MATRIX_HASH
     }),
-    /FINAL_SIGNATURE_INVALID/
+    /FINAL_REPORT_MISMATCH|FINAL_SIGNATURE_INVALID/
   );
   assert.throws(
     () => verifySignedFinalReport({

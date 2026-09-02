@@ -84,6 +84,10 @@ const {
   FIXED_CLOUDFLARE_CHAT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
   activeTextProvider,
+  CLOUDFLARE_ACCOUNT_ID,
+  CLOUDFLARE_API_TOKEN,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED,
 } = require("./lib/config");
 const {
   callCloudflareChat,
@@ -105,6 +109,21 @@ const PORT = process.env.PORT || 8080;
 console.log("Resolved PORT:", PORT);
 const DEBUG_FILES = String(process.env.DEBUG_FILES || "").trim() === "1";
 const FILES_DIR = path.join(MEMORY_DIR, "files");
+// Keep every provider adapter on the same resolved credential view. This is
+// especially important on macOS, where Kolors/Cloudflare secrets may come
+// from Keychain rather than appearing in the inherited process environment.
+const resolvedProviderEnv = {
+  ...process.env,
+  ...(SILICONFLOW_API_KEY ? { SILICONFLOW_API_KEY } : {}),
+  ...(CLOUDFLARE_ACCOUNT_ID ? { CLOUDFLARE_ACCOUNT_ID } : {}),
+  ...(CLOUDFLARE_API_TOKEN ? { CLOUDFLARE_API_TOKEN } : {}),
+  ...(AGENT_CLOUDFLARE_FREE_ACCOUNT_ID
+    ? { AGENT_CLOUDFLARE_FREE_ACCOUNT_ID }
+    : {}),
+  ...(AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED
+    ? { AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED }
+    : {})
+};
 const sharedProviderScheduler = isDatabaseConfigured()
   ? createProviderScheduler({
       pool: getPool(),
@@ -112,21 +131,53 @@ const sharedProviderScheduler = isDatabaseConfigured()
       providerKey: `${String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase()}:${String(process.env.AGENT_MODEL_NAME || '@cf/openai/gpt-oss-120b').trim()}`,
     })
   : null;
-const textProviderIsCloudflare = String(
-  process.env.AGENT_MODEL_PROVIDER || 'cloudflare'
-).trim().toLowerCase() === 'cloudflare';
+const configuredTextProvider = String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare')
+  .trim().toLowerCase();
+const textProviderIsCloudflare = configuredTextProvider === 'cloudflare';
+const textProviderMisconfigured = !textProviderIsCloudflare;
+const rejectMisconfiguredTextProvider = async () => {
+  const error = new Error('AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED');
+  error.code = 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED';
+  error.status = 503;
+  error.retryable = false;
+  throw error;
+};
+const resolvedCloudflareChat = (input = {}) => callCloudflareChat({
+  ...input,
+  accountId: input.accountId || resolvedProviderEnv.CLOUDFLARE_ACCOUNT_ID,
+  credential: input.credential || resolvedProviderEnv.CLOUDFLARE_API_TOKEN,
+  freeAccountId: input.freeAccountId || resolvedProviderEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+  freeAccountAttested: input.freeAccountAttested ??
+    resolvedProviderEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED
+});
 const sharedSiliconFlowScheduler = sharedProviderScheduler;
 const scheduledSiliconFlowChat = createScheduledChatGenerate({
   scheduler: sharedSiliconFlowScheduler,
-  chatGenerate: textProviderIsCloudflare ? callCloudflareChat : callSiliconFlowChat,
+  // Text is Cloudflare-only in every deployed environment.  A misspelled or
+  // legacy provider must fail closed instead of silently falling back to the
+  // paid SiliconFlow text endpoint.
+  chatGenerate: textProviderMisconfigured
+    ? rejectMisconfiguredTextProvider
+    : resolvedCloudflareChat,
   defaultPriority: "actor",
 });
-const scheduledTextGenerate = (input) => callTextGenerate({
-  ...input,
-  model: input?.model || (textProviderIsCloudflare ? '@cf/openai/gpt-oss-120b' : SILICONFLOW_MODEL),
-  providerName: textProviderIsCloudflare ? 'cloudflare' : 'siliconflow',
-  chatGenerate: scheduledSiliconFlowChat,
-});
+const scheduledTextGenerate = (input) => {
+  if (textProviderMisconfigured) return rejectMisconfiguredTextProvider();
+  return callTextGenerate({
+    ...input,
+    model: input?.model || '@cf/openai/gpt-oss-120b',
+    providerName: 'cloudflare',
+    providerReady: Boolean(
+      resolvedProviderEnv.CLOUDFLARE_ACCOUNT_ID &&
+      resolvedProviderEnv.CLOUDFLARE_API_TOKEN &&
+      resolvedProviderEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID &&
+      /^(1|true|yes|on)$/i.test(String(
+        resolvedProviderEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || ''
+      ).trim())
+    ),
+    chatGenerate: scheduledSiliconFlowChat,
+  });
+};
 const sharedSiliconFlowImageScheduler = isDatabaseConfigured()
   ? createProviderScheduler({
       pool: getPool(),
@@ -691,9 +742,11 @@ installConvertRoutes(app, {
 });
 
 installToolTaskRoutes(app, {
+  env: resolvedProviderEnv,
   rateLimit,
   callSiliconFlowImageGenerate: scheduledSiliconFlowImageGenerate,
   callSiliconFlowChat: scheduledSiliconFlowChat,
+  callCloudflareChat: resolvedCloudflareChat,
 });
 
 installProjectRoutes(app, {
@@ -701,14 +754,16 @@ installProjectRoutes(app, {
 });
 
 const agentRuntime = installAgentRoutes(app, {
+  env: resolvedProviderEnv,
   rateLimit,
 });
 
 const designConversationRuntime = installDesignConversationRoutes(app, {
+  env: resolvedProviderEnv,
   rateLimit,
-  callSiliconFlowChat: String(process.env.AGENT_MODEL_PROVIDER || '').trim().toLowerCase() === 'cloudflare'
-    ? callCloudflareChat
-    : callSiliconFlowChat,
+  callSiliconFlowChat: textProviderIsCloudflare
+    ? resolvedCloudflareChat
+    : rejectMisconfiguredTextProvider,
   providerScheduler: sharedProviderScheduler,
   agentRunService: agentRuntime.service,
 });
@@ -767,6 +822,7 @@ const requireLlmProvider =
 installSystemRoutes(app, {
   NODE_ENV,
   isProd,
+  env: resolvedProviderEnv,
   requireLlmProvider,
   SILICONFLOW_API_KEY,
   activeTextProvider,
@@ -777,6 +833,7 @@ installSystemRoutes(app, {
   assertAuthUserMatches,
   callSiliconFlowImageGenerate: scheduledSiliconFlowImageGenerate,
   callSiliconFlowChat: scheduledSiliconFlowChat,
+  callCloudflareChat: resolvedCloudflareChat,
   callTextGenerate: scheduledTextGenerate,
   SILICONFLOW_API_BASE,
   SILICONFLOW_MODEL,

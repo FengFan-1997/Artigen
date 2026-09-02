@@ -10,7 +10,11 @@ const { dedupeStrings } = require('./user-utils');
 const {
   SILICONFLOW_API_KEY,
   FIXED_SILICONFLOW_CHAT_MODEL,
-  FIXED_CLOUDFLARE_CHAT_MODEL
+  FIXED_CLOUDFLARE_CHAT_MODEL,
+  CLOUDFLARE_ACCOUNT_ID,
+  CLOUDFLARE_API_TOKEN,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED
 } = require('./config');
 const {
   sanitizeAuditHistoryEntry,
@@ -118,6 +122,14 @@ const tryParseDataUrl = (raw) => {
   }
 };
 
+const cloudflareTextReady = Boolean(
+  CLOUDFLARE_ACCOUNT_ID &&
+  CLOUDFLARE_API_TOKEN &&
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED &&
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID === CLOUDFLARE_ACCOUNT_ID &&
+  /^(1|true|yes|on)$/i.test(String(AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED))
+);
+
 // Summarize Conversation History
 const summarizeHistory = async (oldSummary, newMessages) => {
   try {
@@ -126,7 +138,7 @@ const summarizeHistory = async (oldSummary, newMessages) => {
     const textModel = cloudflareText ? FIXED_CLOUDFLARE_CHAT_MODEL : FIXED_SILICONFLOW_CHAT_MODEL;
     const textChat = cloudflareText ? callCloudflareChat : undefined;
     if (
-      (cloudflareText && !process.env.CLOUDFLARE_API_TOKEN) ||
+      (cloudflareText && !cloudflareTextReady) ||
       (!cloudflareText && !SILICONFLOW_API_KEY)
     ) {
       return oldSummary;
@@ -151,6 +163,7 @@ const summarizeHistory = async (oldSummary, newMessages) => {
       timeoutMs: 10000,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       model: textModel,
+      providerReady: cloudflareText ? cloudflareTextReady : Boolean(SILICONFLOW_API_KEY),
       ...(textChat ? { chatGenerate: textChat, providerName: 'cloudflare' } : {})
     });
     return String(result?.text || '').trim() || oldSummary;
@@ -502,6 +515,7 @@ const extractCoreFacts = async (input) => {
     timeoutMs: 8000,
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     model: cloudflareText ? FIXED_CLOUDFLARE_CHAT_MODEL : FIXED_SILICONFLOW_CHAT_MODEL,
+    providerReady: cloudflareText ? cloudflareTextReady : Boolean(SILICONFLOW_API_KEY),
     ...(cloudflareText ? { chatGenerate: callCloudflareChat, providerName: 'cloudflare' } : {})
   });
   const parsed = tryParseJsonStringArray(text);

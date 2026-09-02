@@ -1,12 +1,18 @@
 # Artigen 浏览器 Agent Production Beta 最终发布回执
 
+> 历史回执免责声明（2026-09-02）：本文描述的是 2026-08-07 的旧版 Production
+> Beta，旧的 SiliconFlow/Qwen、迁移与 deployment 信息已被后续变更取代，仅供审计留档。
+> 当前模型、开关与发布状态以 `PROJECT_HANDOFF.zh-CN.md` 和 `HANDOFF.local.md` 为准。
+
 生成时间：2026-08-07（Asia/Shanghai）
 
 发布等级：**Production Beta / owner-only**
 
-## 最终结论
+## 2026-08-07 历史快照（不代表当前线上状态）
 
-Artigen 浏览器 Agent 已完成代码合并、生产部署和真实端到端验收。当前不是“只有代码、没有配置”的状态：生产后端、共享 S3、Neon 数据库、硅基流动 Qwen、Mac CUA Worker、受限浏览器出口和远程接管中继均已连通。
+Artigen 浏览器 Agent 当时已完成代码合并、生产部署和真实端到端验收。该段描述的是旧版
+SiliconFlow/Qwen 文本链路；当前非生图文本已切换为 Cloudflare GPT-OSS，图片仍为 Kolors，
+且统一候选尚未发布。
 
 这不是 24×7 商业 SLA。Render 仍是 Free 实例，实际 Worker 在当前 Mac 上；Render 休眠、Mac 关机/合盖/退出登录或 Docker Desktop 停止时，新任务会排队。
 

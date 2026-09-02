@@ -248,6 +248,8 @@ test('Harness V3 replay oracle reconstructs terminal text runs without trusting 
       charged_credits: 2,
       platform_overrun_credits: 0,
       final_text_sha256: finalHash,
+      model_provider: 'siliconflow',
+      model_name: 'Qwen/Qwen3-8B',
       semantic_verification: { passed: true },
       checkpoint: { phase: 'stale-cache-value' }
     },
@@ -258,7 +260,7 @@ test('Harness V3 replay oracle reconstructs terminal text runs without trusting 
     steps: [{ sequence: 1, role: 'verifier', status: 'succeeded', tool_name: null }],
     receipts: [{ id: 'call-1', state: 'consumed', lease_epoch: 2 }],
     modelCalls: [{
-      id: 'call-1', model_name: 'Qwen/Qwen3-8B', phase: 'actor', outcome: 'succeeded',
+      id: 'call-1', provider: 'siliconflow', model_name: 'Qwen/Qwen3-8B', phase: 'actor', outcome: 'succeeded',
       prompt_hash: Buffer.from('01'.repeat(32), 'hex')
     }],
     reservations: [{
@@ -390,7 +392,10 @@ test('Harness V3 replay oracle rejects TaskSpec plan and acceptance drift', () =
 
 test('Harness V3 replay oracle enforces the model lock and append-only verifier boundary', () => {
   const snapshot = {
-    run: { id: 'run-model-lock', status: 'running', step_count: 0, lease_epoch: 1, max_credits: 5 },
+    run: {
+      id: 'run-model-lock', status: 'running', step_count: 0, lease_epoch: 1,
+      max_credits: 5, model_provider: 'cloudflare', model_name: '@cf/openai/gpt-oss-120b'
+    },
     events: [{
       id: 1,
       event_type: 'run.ready_to_finalize',

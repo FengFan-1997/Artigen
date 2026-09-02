@@ -118,6 +118,11 @@ const getAgentConfig = (env = process.env) => {
   // deployed Agent environment. SiliconFlow remains reserved for images.
   const modelProvider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
   const textModelHardLock = enabled(env.AGENT_TEXT_MODEL_HARD_LOCK);
+  const appEnvironment = String(env.APP_ENV || '').trim().toLowerCase();
+  const deployedTextRuntime = String(env.NODE_ENV || '').trim().toLowerCase() !== 'test' && (
+    production || ['dev', 'development', 'staging', 'prod'].includes(appEnvironment) ||
+    ['dev', 'development', 'staging', 'prod'].includes(String(env.NODE_ENV || '').trim().toLowerCase())
+  );
   const sandboxProvider = String(env.AGENT_SANDBOX_PROVIDER || 'cua').trim().toLowerCase();
   if (!['openai', 'ollama', 'siliconflow', 'cloudflare'].includes(modelProvider)) {
     throw new ApiError(500, 'AGENT_MODEL_PROVIDER_INVALID');
@@ -151,7 +156,10 @@ const getAgentConfig = (env = process.env) => {
   if (modelProvider === 'cloudflare' && modelName !== CLOUDFLARE_AGENT_MODEL) {
     throw new ApiError(500, 'AGENT_CLOUDFLARE_MODEL_NOT_ALLOWED');
   }
-  if (textModelHardLock && modelProvider !== 'cloudflare') {
+  // The hard lock is a deployment invariant, not an opt-in safety switch.
+  // Unit and historical fixture tests run with NODE_ENV=test; every real
+  // environment (including DEV) must use Cloudflare GPT-OSS for text.
+  if ((textModelHardLock || deployedTextRuntime) && modelProvider !== 'cloudflare') {
     throw new ApiError(500, 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED');
   }
   const ollamaBaseUrl = assertLoopbackHttpUrl(

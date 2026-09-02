@@ -378,10 +378,10 @@ Vercel 中继当前保存 6 个生产变量：
 
 ## 6. 生图和编辑器
 
-生产生图 Provider 是 SiliconFlow。核心代码还做了模型白名单锁定：
+生产图片 Provider 是 SiliconFlow；Agent 的非生图文本 Provider 是 Cloudflare Workers AI。核心代码还做了模型白名单锁定：
 
 - 生图只能使用 `Kwai-Kolors/Kolors`。
-- 深度思考/方向生成只能使用 `Qwen/Qwen3-8B`。
+- 对话、规划、方向生成、验证和 Agent 文本只能使用 Cloudflare `@cf/openai/gpt-oss-120b`。
 - 不允许客户端传内部模型 ID。
 - 不允许客户端传价格。
 - 当前不启用第三个模型。
@@ -394,7 +394,7 @@ Vercel 中继当前保存 6 个生产变量：
   -> 用户确认
   -> 预占点数
   -> PostgreSQL 队列
-  -> SiliconFlow
+  -> Cloudflare 文本 / SiliconFlow Kolors 图片
   -> 校验 MIME/尺寸/来源
   -> 保存对象存储
   -> 成功结算
@@ -403,8 +403,8 @@ Vercel 中继当前保存 6 个生产变量：
   -> Editor V2
 ```
 
-SiliconFlow API Key 只保存在 Render 环境变量和 macOS 钥匙串中。该 Key 来自一个
-单独的 SiliconFlow 账号；目前没有在本手册中记录该平台的登录账号，因此不要猜测账号。
+SiliconFlow 图片 API Key 与 Cloudflare 文本凭据只保存在 Render 环境变量和 macOS 钥匙串中；
+Cloudflare 必须绑定已确认的免费账户声明，禁止回退到收费文本模型。不要把任何平台账号或密钥写入文档。
 
 ## 7. 支付是什么状态
 
@@ -678,8 +678,8 @@ security find-generic-password -s '服务名' -w
 3. Render Free 会休眠，不是商业 SLA。
 4. `render.yaml` 是安全关闭功能的模板；Render Dashboard 当前有生产覆盖值。
    不要在不了解差异时用 Blueprint 覆盖 Dashboard 环境。
-5. 模型 ID 固定在服务端 allowlist：所有图片任务使用 `Kwai-Kolors/Kolors`，所有文字任务使用
-   `Qwen/Qwen3-8B`；Render 环境不应再覆盖模型 ID。
+5. 模型 ID 固定在服务端 allowlist：所有图片任务使用 `Kwai-Kolors/Kolors`，所有非生图文字任务使用
+   Cloudflare `@cf/openai/gpt-oss-120b`；Render 环境不应再覆盖模型 ID。
 6. 生产来源已经切换到 `main`；后续仍必须从经过 DEV 和 Release gate 验证的不可变
    `main` SHA 人工发布，并通过 `/api/meta` 和平台 deployment 核对真实线上版本。
 
@@ -691,6 +691,6 @@ security find-generic-password -s '服务名' -w
 - 图片在 Neon S3 兼容对象存储。
 - 验证码由 Render 通过 HTTPS 交给 Vercel `artigen-mail-relay`，再由 163 SMTP 发出。
 - Turnstile 在 Cloudflare。
-- 生图在 SiliconFlow，只允许两个指定模型。
+- 文本在 Cloudflare `@cf/openai/gpt-oss-120b`，图片在 SiliconFlow `Kwai-Kolors/Kolors`。
 - 支付在爱发电，但真实扣款尚未执行。
 - 生产密钥主要在 Render/Vercel，安全副本在 macOS 钥匙串，绝不进 Git。

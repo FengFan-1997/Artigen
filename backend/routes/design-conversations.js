@@ -100,7 +100,11 @@ const installDesignConversationRoutes = (app, deps = {}) => {
           enabled: config.enabled,
           workerEnabled: config.workerEnabled,
           plannerReady: false,
-          model: String(env.AGENT_MODEL_NAME || FIXED_CLOUDFLARE_CHAT_MODEL),
+          // A database-less response must not echo an old or untrusted text
+          // model from the environment. Deployed text is hard-locked to
+          // Cloudflare GPT-OSS; readiness reports missing credentials
+          // separately and fails closed before any task is created.
+          model: FIXED_CLOUDFLARE_CHAT_MODEL,
           imageModel: 'Kwai-Kolors/Kolors',
           autoCreditCap: config.autoCreditCap,
           retentionDays: config.retentionDays,

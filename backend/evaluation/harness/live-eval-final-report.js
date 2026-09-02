@@ -10,10 +10,10 @@ const { canonicalJson, parseVersionedKey } = require('./live-eval-gate');
 
 const FINAL_REPORT_VERSION = 'artigen-agent-live-eval-final-v1';
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
-const REVIEWED_TEXT_MODELS = new Set([
-  'Qwen/Qwen3-8B',
-  '@cf/openai/gpt-oss-120b'
-]);
+// Signed live-eval evidence is only valid for the currently deployed text
+// runtime.  Historical Qwen fixtures may remain in the repository, but they
+// cannot satisfy a release gate or owner-canary attestation.
+const REVIEWED_TEXT_MODELS = new Set(['@cf/openai/gpt-oss-120b']);
 
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const isSha256 = (value) => /^[a-f0-9]{64}$/i.test(String(value || ''));

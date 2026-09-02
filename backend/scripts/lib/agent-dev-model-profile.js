@@ -7,7 +7,16 @@ const resolveAgentSmokeModelProfile = ({ env = process.env, production = false }
   // GPT-OSS is the only text model used by deployed Agent environments.
   // SiliconFlow remains an image-only provider; the legacy branch is kept
   // solely so historical deterministic fixtures can still describe old runs.
-  const provider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
+  const requestedProvider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
+  const runtimeEnvironment = String(env.NODE_ENV || '').trim().toLowerCase();
+  const fixtureOnly = runtimeEnvironment === 'test' ||
+    String(env.AGENT_RUNTIME_DRIVER || '').trim().toLowerCase() === 'fixture';
+  if (requestedProvider === 'siliconflow' && !fixtureOnly && !production) {
+    const error = new Error('AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED');
+    error.code = 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED';
+    throw error;
+  }
+  const provider = requestedProvider;
   const model = String(
     env.AGENT_MODEL_NAME || (
       provider === 'cloudflare' ? DEV_CLOUDFLARE_MODEL : DEV_SILICONFLOW_MODEL
@@ -52,11 +61,11 @@ const applyAgentSmokeModelProfile = (env, profile) => {
       error.code = 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED';
       throw error;
     }
-    env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID = String(
-      env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || env.CLOUDFLARE_ACCOUNT_ID || ''
-    );
-    if (!/^[0-9a-f]{32}$/i.test(String(env.CLOUDFLARE_ACCOUNT_ID || '')) ||
-        env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID !== env.CLOUDFLARE_ACCOUNT_ID) {
+    const accountId = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+    const freeAccountId = String(env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '').trim();
+    if (!/^[0-9a-f]{32}$/i.test(accountId) ||
+        !/^[0-9a-f]{32}$/i.test(freeAccountId) ||
+        freeAccountId.toLowerCase() !== accountId.toLowerCase()) {
       const error = new Error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
       error.code = 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED';
       throw error;

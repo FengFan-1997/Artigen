@@ -388,7 +388,7 @@ test('desktop panel separators expose values and support arrows plus Home and En
   await expect(right).toHaveAttribute('aria-valuenow', '472');
 });
 
-test('image delivery auto-grants Kolors, preserves Qwen and subagent locks, and starts only after a current quote', async ({ page }) => {
+test('image delivery auto-grants Kolors, preserves Cloudflare text and subagent locks, and starts only after a current quote', async ({ page }) => {
   const created: Array<Record<string, unknown>> = [];
   await installSharedApi(page, { onCreate: (body) => created.push(body) });
   await page.setViewportSize({ width: 1440, height: 960 });

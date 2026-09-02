@@ -610,14 +610,18 @@ const waitForSiliconFlowAgentSlot = async (env = process.env) => {
 
 let cloudflareAgentGate = Promise.resolve();
 let cloudflareAgentNextAt = 0;
-const waitForCloudflareAgentSlot = async (env = process.env) => {
+const cloudflareAgentMinimumIntervalMs = (env = process.env) => {
   const parsed = Number.parseInt(String(env.AGENT_CLOUDFLARE_MIN_INTERVAL_MS || ''), 10);
   const configuredRpm = Math.max(1, Math.min(120, Number.parseInt(String(
     env.AGENT_CLOUDFLARE_REQUESTS_PER_MINUTE || '30'
   ), 10) || 30));
-  const minimumIntervalMs = Number.isFinite(parsed) && parsed >= 0
-    ? parsed
-    : Math.ceil(60_000 / configuredRpm);
+  const rpmInterval = Math.ceil(60_000 / configuredRpm);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? Math.max(parsed, rpmInterval)
+    : rpmInterval;
+};
+const waitForCloudflareAgentSlot = async (env = process.env) => {
+  const minimumIntervalMs = cloudflareAgentMinimumIntervalMs(env);
   const chained = cloudflareAgentGate.then(async () => {
     const waitMs = Math.max(0, cloudflareAgentNextAt - Date.now());
     if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
@@ -4049,5 +4053,6 @@ module.exports = {
   siliconFlowUsageCredits,
   siliconFlowRequestTimeoutMs,
   waitForSiliconFlowAgentSlot,
+  cloudflareAgentMinimumIntervalMs,
   usageCredits
 };

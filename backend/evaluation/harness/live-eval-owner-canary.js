@@ -5,10 +5,7 @@ const { verifySignedFinalReport } = require('./live-eval-final-report');
 
 const OWNER_CANARY_PLAN_VERSION = 'artigen-agent-owner-canary-plan-v1';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const REVIEWED_TEXT_MODELS = new Set([
-  'Qwen/Qwen3-8B',
-  '@cf/openai/gpt-oss-120b'
-]);
+const REVIEWED_TEXT_MODELS = new Set(['@cf/openai/gpt-oss-120b']);
 const OWNER_CANARY_SCENARIOS = Object.freeze([
   Object.freeze({
     id: 'text-only-agent',

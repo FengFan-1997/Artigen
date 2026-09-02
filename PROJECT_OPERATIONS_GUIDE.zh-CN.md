@@ -79,7 +79,8 @@ Render deployment: dep-d9qsuam417fc7383uj70
           -> Render / artigen-app-fengfan
                -> Neon PostgreSQL / neondb
                -> S3 兼容对象存储 / artigen-assets
-               -> SiliconFlow
+               -> Cloudflare Workers AI（文本）
+               -> SiliconFlow/Kolors（图片）
                -> Vercel 邮件中继 / artigen-mail-relay
                -> Cloudflare Turnstile
                -> 爱发电
@@ -87,7 +88,7 @@ Render deployment: dep-d9qsuam417fc7383uj70
 测试人员
   -> Render / dev-artigen-app-fengfan
        -> 同源 Vue + Express
-       -> Neon PostgreSQL / dev_artigen
+       -> Aiven PostgreSQL / dev_artigen
        -> file 临时图片存储
        -> 真实支付、邮件、收费 AI 默认关闭
 ```
@@ -114,7 +115,7 @@ Render deployment: dep-d9qsuam417fc7383uj70
 | 访问 | 本机 | HTTP Basic 首次认证 + 短时安全 Cookie | 公开站点 |
 | 支付 | 关闭 | 仅创建未支付订单并验证 pending/幂等，不真实付款 | 已配置；真实扣款最终验收仍需谨慎 |
 | 邮件 OTP | 默认关闭 | 关闭 | 签名 HTTPS 中继 |
-| 收费 AI | 默认关闭 | 真实 SiliconFlow + 合成素材/用户 + DEV 钱包 | 通过功能门禁启用 |
+| 收费 AI | 默认关闭 | 文本使用 Cloudflare GPT-OSS 免费账户；图片使用 SiliconFlow/Kolors，均以合成素材/用户和 DEV 钱包验收 | 通过功能门禁启用 |
 | 自动部署 | 无 | PR 合入 `dev` 后自动 | 关闭，人工发布 |
 
 ## 5. 接入本机开发环境
@@ -231,7 +232,7 @@ Bearer token，不会与 Basic 的 `Authorization` 请求头冲突。
 - 使用独立的 DEV 数据库、S3 凭据与对象命名空间；生成结果必须持久化到共享 S3，不能再假设 Render 临时 file 可作为验收存储。
 - 支付验收只允许创建未支付爱发电订单并检查跳转、pending、钱包不入账和幂等；不执行真实付款。
 - 不发送生产验证码。
-- 允许使用合成用户、合成素材和 DEV 钱包运行真实 SiliconFlow 付费任务与 Agent smoke；价格、冻结、结算、退款、S3 和幂等边界必须与生产一致。
+- 允许使用合成用户、合成素材和 DEV 钱包运行真实 Cloudflare 文本任务与 SiliconFlow/Kolors 图片任务及 Agent smoke；价格、冻结、结算、退款、S3 和幂等边界必须与生产一致。非生图文本不得回退到 SiliconFlow、Qwen 或其他模型。
 - DEV Mac Agent Worker 使用独立 Keychain profile、DEV 数据库和 DEV relay；不得启动或复用生产 Worker profile。
 - DEV 与生产域名不同，Cookie 不共享。
 
@@ -273,10 +274,10 @@ PR 的 CI 全绿后合并到 `dev`。Render 会自动部署该 commit。
 - `behaviorAnalyticsEnabled=true`
 - `databaseRequired=true`
 - `checks.database.ok=true`
-- `checks.database.migration=021_design_conversations`
-- 付费、AI Design、Workshop、Task Worker 或 Agent 生图在 DEV 开启时，对应 readiness、SiliconFlow、S3、payload 和队列检查必须全部为 `ok=true`；未开启的能力必须诚实显示为 disabled/skipped。
+- `checks.database.migration=026_agent_live_eval_capacity_counter`
+- 付费、AI Design、Workshop、Task Worker 或 Agent 生图在 DEV 开启时，对应 readiness、Cloudflare 文本/Kolors 图片 provider、S3、payload 和队列检查必须全部为 `ok=true`；未开启的能力必须诚实显示为 disabled/skipped。
 - 对话入口开启时必须同时满足 `conversationEnabled=true`、
-  `checks.conversation.ok=true`、固定规划模型 `Qwen/Qwen3-8B`、固定图片模型
+  `checks.conversation.ok=true`、固定规划模型 `@cf/openai/gpt-oss-120b`、固定图片模型
   `Kwai-Kolors/Kolors`，并确认 Agent `accessMode=authenticated-v1`；只部署页面或只开启
   其中一个开关都不算 DEV 验收通过。
 
@@ -547,8 +548,9 @@ unset DATABASE_URL
 
 规则：
 
-- 当前最新迁移是 `014_operational_records`：新增最小化的 usage、图片历史和内容审计
-  PostgreSQL 存储；`/readyz` 会同时检查该表及必需列。
+- 当前最新迁移是 `026_agent_live_eval_capacity_counter`：在既有 Agent、对话、计费、回执和
+  评测表上补齐容量计数与运行观测约束；`/readyz` 会同时检查该表及必需列。生产与 DEV
+  的迁移版本必须以实际 readiness 返回为准，不能按旧文档猜测。
 - 迁移只新增、兼容旧版本，默认不做破坏性回滚。
 - 先在本机 `artigen_test` 验证。
 - 再由 DEV `dev_artigen` 的启动锁幂等应用。

@@ -5,6 +5,10 @@ const {
   FIXED_SILICONFLOW_CHAT_MODEL,
   FIXED_CLOUDFLARE_CHAT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
+  CLOUDFLARE_ACCOUNT_ID,
+  CLOUDFLARE_API_TOKEN,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED,
   SILICONFLOW_TIMEOUT_MS,
   SILICONFLOW_REACTION_TIMEOUT_MS
 } = require('./config');
@@ -339,7 +343,7 @@ const callSiliconFlowChat = async ({
 
 const callCloudflareChat = async (input = {}) => {
   const accountId = String(
-    input.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || ''
+    input.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || CLOUDFLARE_ACCOUNT_ID || ''
   ).trim();
   if (!/^[0-9a-f]{32}$/i.test(accountId)) {
     const error = new Error('CLOUDFLARE_ACCOUNT_ID_INVALID');
@@ -347,12 +351,14 @@ const callCloudflareChat = async (input = {}) => {
     throw error;
   }
   const attestedAccountId = String(
-    input.freeAccountId || process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || ''
+    input.freeAccountId || process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID ||
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || ''
   ).trim();
+  const freeAccountAttested = input.freeAccountAttested ??
+    process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED ??
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED;
   if (
-    !/^(1|true|yes|on)$/i.test(String(
-      input.freeAccountAttested ?? process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED ?? ''
-    )) ||
+    !/^(1|true|yes|on)$/i.test(String(freeAccountAttested || '')) ||
     attestedAccountId !== accountId
   ) {
     const error = new Error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
@@ -366,7 +372,7 @@ const callCloudflareChat = async (input = {}) => {
       model: input.model || model,
       minP: undefined,
       credential: input.credential || process.env.CLOUDFLARE_API_TOKEN ||
-        process.env.CLOUDFLARE_AUTH_TOKEN || '',
+        process.env.CLOUDFLARE_AUTH_TOKEN || CLOUDFLARE_API_TOKEN || '',
       chatUrl: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`,
       allowedModel: model,
       includeThinking: false,
@@ -541,14 +547,22 @@ const callTextGenerate = async ({
   reactionMode,
   model = FIXED_CLOUDFLARE_CHAT_MODEL,
   chatGenerate = callCloudflareChat,
-  providerName = 'cloudflare'
+  providerName = 'cloudflare',
+  // Server-side wrappers may resolve credentials from macOS Keychain rather
+  // than process.env.  Let the caller attest readiness without leaking the
+  // credential itself; legacy callers continue to use env-based detection.
+  providerReady
 }) => {
   const requestedProvider = String(providerName || '').trim().toLowerCase();
-  const canSiliconflow = requestedProvider === 'siliconflow' && !!SILICONFLOW_API_KEY;
+  const canSiliconflow = requestedProvider === 'siliconflow' && (
+    providerReady === undefined ? Boolean(SILICONFLOW_API_KEY) : providerReady === true
+  );
   const cloudflareText = String(providerName || '').trim().toLowerCase() === 'cloudflare' ||
     String(model || '').trim() === '@cf/openai/gpt-oss-120b';
-  const canCloudflare = cloudflareText && Boolean(
-    process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_AUTH_TOKEN
+  const canCloudflare = cloudflareText && (
+    providerReady === undefined
+      ? Boolean(process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_AUTH_TOKEN || CLOUDFLARE_API_TOKEN)
+      : providerReady === true
   );
   const sfTimeoutMs = Math.max(
     Math.max(1000, Number(timeoutMs || 0) || 0),
@@ -600,6 +614,13 @@ const callTextGenerate = async ({
   };
 
   return await textGenerateLimiter.run(async () => {
+    if (cloudflareText && providerReady === false) {
+      const error = new Error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
+      error.code = 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED';
+      error.status = 503;
+      error.retryable = false;
+      throw error;
+    }
     if (canSiliconflow || canCloudflare) {
       try {
         return await runSiliconflow();

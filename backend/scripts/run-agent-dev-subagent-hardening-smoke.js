@@ -30,7 +30,12 @@ const secretNames = [
   'S3_SECRET_ACCESS_KEY'
 ];
 if (String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'cloudflare') {
-  secretNames.push('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN');
+  secretNames.push(
+    'CLOUDFLARE_ACCOUNT_ID',
+    'CLOUDFLARE_API_TOKEN',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+  );
 }
 const missing = [];
 for (const name of secretNames) {
@@ -126,7 +131,7 @@ const selectSmokeUser = async (pool) => {
 const objectiveFor = ({ label, cancelOne }) => {
   const timestamp = new Date().toISOString();
   return [
-    `这是 ${label} 的真实 Qwen3 子 Agent 验收，验证时间 ${timestamp}。`,
+    `这是 ${label} 的真实 Cloudflare GPT-OSS 子 Agent 验收，验证时间 ${timestamp}。`,
     '父 Agent 必须先发布具体计划，然后调用且只调用一次 delegate_tasks，恰好创建三个独立子 Agent：',
     '每个子任务 objective 都必须明确写入这份离线材料：标题是 Example Domain；正文说明该域名用于文档示例，无需事先协调或许可；页面提供 More information 链接。',
     '每个子任务都必须明确禁止访问 URL、获取网页、curl、wget 或任何网络命令，只能分析上述已提供材料。',

@@ -103,6 +103,17 @@ services:
         sync: false
       - key: SILICONFLOW_API_KEY
         sync: false
+      # Cloudflare is the only deployed Agent text provider. Keep account
+      # identity, token and free-tier attestation in Render Secret Manager;
+      # readiness rejects missing or mismatched values before dispatch.
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: AGENT_CLOUDFLARE_FREE_ACCOUNT_ID
+        sync: false
+      - key: AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED
+        sync: false
       - key: S3_ENDPOINT
         sync: false
       - key: S3_BUCKET
