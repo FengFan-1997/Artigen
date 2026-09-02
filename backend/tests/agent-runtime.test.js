@@ -2253,10 +2253,15 @@ test('deployed worker hard-lock rejects legacy text providers while preserving i
   // APP_ENV explicitly declares deployment intent even if the platform starts
   // the Node process in test mode. Case-variant production values must be
   // normalized before applying the non-image provider hard lock.
-  for (const nodeEnv of ['test', 'Production', 'PRODUCTION']) {
+  for (const [nodeEnv, appEnv] of [
+    ['test', 'production'],
+    ['test', 'staging'],
+    ['Production', ''],
+    ['PRODUCTION', '']
+  ]) {
     assert.throws(() => getAgentConfig({
       NODE_ENV: nodeEnv,
-      APP_ENV: nodeEnv === 'test' ? 'production' : '',
+      APP_ENV: appEnv,
       AGENT_MODEL_PROVIDER: 'siliconflow',
       AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
     }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
