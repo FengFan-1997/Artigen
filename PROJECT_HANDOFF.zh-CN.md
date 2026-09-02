@@ -11,9 +11,9 @@
 ## 2026-09-02 非生图模型统一切换（已合入 dev，硬锁已加固，尚未部署）
 
 - 账户所有者已确认新的硬策略：**所有环境的非生图模型**（对话、路由、规划、验证、父/子 Agent、记忆摘要和工具决策）统一使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；**所有图片生成**继续只使用 SiliconFlow `Kwai-Kolors/Kolors`。不再把 `Qwen/Qwen3-8B` 作为任何部署环境的默认文本模型。
-- 该实现已通过 PR [#153](https://github.com/FengFan-1997/Artigen/pull/153) 正常合入，并由硬锁修复 PR [#155](https://github.com/FengFan-1997/Artigen/pull/155) 补强；当前 `dev` merge SHA 为 `2e1870a1328c9ac0b9a6ab8aa61c5c440010abed`。Render/Vercel/Mac Worker 尚未以该 SHA 对齐或部署；Runtime V2、公众 rollout 和 owner canary 继续关闭。
+- 该实现已通过 PR [#153](https://github.com/FengFan-1997/Artigen/pull/153) 正常合入，并由硬锁修复 PR [#155](https://github.com/FengFan-1997/Artigen/pull/155) 与边界补丁 PR [#157](https://github.com/FengFan-1997/Artigen/pull/157) 补强；当前 `dev` merge SHA 为 `e3bd831610255733c5a60a379093f4c177af0476`。Render/Vercel/Mac Worker 尚未以该 SHA 对齐或部署；Runtime V2、公众 rollout 和 owner canary 继续关闭。
 - 旧 Qwen 字样只保留在历史 Handoff、历史真实 Run 和确定性 fixture 兼容测试中，用于审计旧版本，不代表当前部署配置或新的真实调用方向。本轮未调用付费 Provider，也未执行 DEV/生产切换。
-- PR #153 required checks 全部通过：Core quality、Harness report/spreadsheet/presentation/website/image、chaos、Chromium/Firefox/WebKit 全部成功，Release gate 成功；Vercel Preview 成功。PR #155 的同类 required checks 与 Release gate 也全部成功；硬锁修复候选的定向 Agent/runtime/readiness/deployment 回归为 `167/167`，类型检查与 JS 语法检查通过。
+- PR #153、#155 和 #157 的 required checks 与 Release gate 均全部成功；#157 在 GitHub 更新到包含文档同步的最新 dev 基线后重新验证，覆盖 Core、Harness 五组、chaos、Chromium/Firefox/WebKit 与 Vercel。硬锁修复候选的定向 Agent/runtime/readiness/deployment 回归为 `167/167`，并额外覆盖 `NODE_ENV=test + APP_ENV=staging`，类型检查与 JS 语法检查通过。
 - `pnpm eval:agent:deterministic` 与 `pnpm test:agent:chaos` 已按正式命令执行并 fail-closed：前者要求 `RUN_POSTGRES_INTEGRATION=1`，后者要求 `DATABASE_URL`；本机没有 PostgreSQL 16/MinIO，因此没有假绿结果。DEV 对齐、真实 24-slot 和图片盲审尚未执行。
 
 ## 2026-09-02 Agent 长期免费大模型升级（已合入 dev，尚未部署）
