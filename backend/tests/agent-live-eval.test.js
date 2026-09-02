@@ -522,7 +522,7 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     ).toString('base64')]
   ]);
   const loaded = loadLiveEvalSecrets({
-    env: {},
+    env: { AGENT_MODEL_PROVIDER: 'siliconflow' },
     service: 'artigen-agent-dev-worker',
     readSecret: ({ account }) => secrets.get(account) || ''
   });
@@ -589,6 +589,7 @@ test('Live eval runner replaces stale zero pricing but rejects malformed pricing
   const readSecret = ({ account }) => secrets.get(account) || '';
   const loaded = loadLiveEvalSecrets({
     env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
       AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
       AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0',
       PG_SSL_CA: 'ambient-ca-must-not-survive',
@@ -603,7 +604,10 @@ test('Live eval runner replaces stale zero pricing but rejects malformed pricing
   assert.equal(loaded.runtimeEnv.PG_SSL_CA_BASE64, undefined);
   assert.throws(
     () => loadLiveEvalSecrets({
-      env: { AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: 'not-a-number' },
+      env: {
+        AGENT_MODEL_PROVIDER: 'siliconflow',
+        AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: 'not-a-number'
+      },
       service: 'artigen-agent-dev-worker',
       readSecret
     }),
@@ -611,7 +615,10 @@ test('Live eval runner replaces stale zero pricing but rejects malformed pricing
   );
   assert.throws(
     () => loadLiveEvalSecrets({
-      env: { AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '-1' },
+      env: {
+        AGENT_MODEL_PROVIDER: 'siliconflow',
+        AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '-1'
+      },
       service: 'artigen-agent-dev-worker',
       readSecret
     }),
@@ -1826,7 +1833,7 @@ test('Live eval terminal failures preserve the partial matrix, limits and reques
   assert.equal(report.summary.productionCanaryEligible, false);
   assert.deepEqual(report.requestTotals, { qwenCalls: 17, kolorsCalls: 2 });
   assert.deepEqual(report.modelLocks, {
-    text: 'Qwen/Qwen3-8B',
+    text: '@cf/openai/gpt-oss-120b',
     image: 'Kwai-Kolors/Kolors'
   });
   assert.deepEqual(report.limits, {

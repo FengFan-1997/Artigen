@@ -5550,6 +5550,59 @@ test('Agent service status does not report a stale Worker model as ready', async
   assert.equal(status.availabilityNote, 'worker_model_mismatch');
 });
 
+test('Agent service status stays observable when provider pricing is missing or zero', async () => {
+  const pool = {
+    async query(sql) {
+      if (String(sql).includes('WITH latest_worker')) {
+        return { rows: [{ worker_online: false, queue_depth: 0 }] };
+      }
+      if (String(sql).includes('has_lease_epoch')) {
+        return { rows: [{
+          has_lease_epoch: true,
+          has_receipts: true,
+          has_tool_receipts: true,
+          has_reservations: true
+        }] };
+      }
+      return { rows: [{ has_scheduler: false, has_requests: false }] };
+    },
+    connect: async () => ({
+      query: async () => ({ rows: [] }),
+      release() {}
+    })
+  };
+  for (const profile of [
+    {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '0',
+      AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '0',
+      CLOUDFLARE_ACCOUNT_ID: 'c'.repeat(32),
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'c'.repeat(32),
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true'
+    },
+    {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0'
+    }
+  ]) {
+    const service = createAgentRunService({
+      pool,
+      env: {
+        NODE_ENV: 'test',
+        AGENT_FEATURE_ENABLED: 'true',
+        AGENT_BETA_MODE: 'disabled',
+        ...profile
+      }
+    });
+    const status = await service.getServiceStatus();
+    assert.equal(status.durability.pricingReady, false);
+    assert.equal(status.workerOnline, false);
+  }
+});
+
 test('SiliconFlow Qwen3-8B safely synthesizes a plan when the small model starts with execution', async () => {
   const responses = [
     {

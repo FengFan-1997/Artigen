@@ -1056,10 +1056,19 @@ const createAgentRunService = ({
       modelReceiptsReady: false,
       toolReceiptsReady: false,
       budgetReservationsReady: false,
-      pricingReady: !['siliconflow', 'cloudflare'].includes(config.modelProvider) || (
-        modelPricingRates(config).input > 0 &&
-        modelPricingRates(config).output > 0
-      )
+      // Status/readiness must remain observable when pricing is misconfigured.
+      // The actual Run/receipt billing paths still call modelPricingRates and
+      // fail closed; this probe only reports false instead of turning /status
+      // into a 500 that hides the actionable readiness error.
+      pricingReady: (() => {
+        if (!['siliconflow', 'cloudflare'].includes(config.modelProvider)) return true;
+        try {
+          const rates = modelPricingRates(config);
+          return rates.input > 0 && rates.output > 0;
+        } catch {
+          return false;
+        }
+      })()
     };
     try {
       const durableSchema = await pool.query(
