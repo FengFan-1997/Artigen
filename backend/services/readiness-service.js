@@ -695,13 +695,10 @@ const checkGenerationProvider = ({
   ) {
     return { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' };
   }
-  if (
-    !['test', ''].includes(String(env.NODE_ENV || '').trim().toLowerCase()) &&
-    ['production', 'prod', 'dev', 'development', 'staging'].includes(
-      String(env.APP_ENV || env.NODE_ENV || '').trim().toLowerCase()
-    ) &&
-    String(provider?.kind || '').trim() === 'siliconflow'
-  ) {
+  // In every deployed runtime the generation adapter must be the hybrid
+  // Cloudflare-text/SiliconFlow-image boundary.  Do not let NODE_ENV=test
+  // bypass this check when APP_ENV explicitly declares a deployment.
+  if (realProviderRequired && String(provider?.kind || '').trim() === 'siliconflow') {
     return { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' };
   }
   // Cloudflare is the deployed text runtime, including DEV.  Do not report a

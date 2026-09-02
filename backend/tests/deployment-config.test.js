@@ -130,6 +130,16 @@ test('All smoke environments default to the free Cloudflare text model and rejec
     () => resolveAgentSmokeModelProfile({ env: { AGENT_MODEL_PROVIDER: 'siliconflow' }, production: true }),
     { code: 'AGENT_PRODUCTION_MODEL_PROFILE_INVALID' }
   );
+  for (const env of [
+    { NODE_ENV: 'test', APP_ENV: 'production', AGENT_MODEL_PROVIDER: 'siliconflow' },
+    { NODE_ENV: 'Production', AGENT_MODEL_PROVIDER: 'siliconflow' },
+    { NODE_ENV: 'dev', AGENT_MODEL_PROVIDER: 'siliconflow' }
+  ]) {
+    assert.throws(
+      () => resolveAgentSmokeModelProfile({ env, production: false }),
+      { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' }
+    );
+  }
   assert.throws(
     () => applyAgentSmokeModelProfile({
       CLOUDFLARE_ACCOUNT_ID: 'b'.repeat(32),

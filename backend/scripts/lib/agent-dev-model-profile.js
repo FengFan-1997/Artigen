@@ -9,8 +9,14 @@ const resolveAgentSmokeModelProfile = ({ env = process.env, production = false }
   // solely so historical deterministic fixtures can still describe old runs.
   const requestedProvider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
   const runtimeEnvironment = String(env.NODE_ENV || '').trim().toLowerCase();
-  const fixtureOnly = runtimeEnvironment === 'test' ||
-    String(env.AGENT_RUNTIME_DRIVER || '').trim().toLowerCase() === 'fixture';
+  const appEnvironment = String(env.APP_ENV || '').trim().toLowerCase();
+  const deploymentIntent = production ||
+    ['production', 'prod', 'dev', 'development', 'staging'].includes(runtimeEnvironment) ||
+    ['production', 'prod', 'dev', 'development', 'staging'].includes(appEnvironment);
+  const fixtureOnly = !deploymentIntent && (
+    runtimeEnvironment === 'test' ||
+    String(env.AGENT_RUNTIME_DRIVER || '').trim().toLowerCase() === 'fixture'
+  );
   if (requestedProvider === 'siliconflow' && !fixtureOnly && !production) {
     const error = new Error('AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED');
     error.code = 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED';
