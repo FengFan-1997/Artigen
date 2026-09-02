@@ -25,6 +25,8 @@ const {
   getAgentConfig,
   resolveAgentRuntimeAssignment
 } = require('../services/agent-config');
+const { desktopViewerEndpoint } = require('../routes/agent-runs');
+const { relayEndpoint } = require('../services/agent-desktop-relay-client');
 const {
   AgentWaitingForUser,
   ARTIFACT_MIME_TYPES,
@@ -2285,6 +2287,71 @@ test('deployed worker hard-lock rejects legacy text providers while preserving i
     AGENT_MODEL_PROVIDER: 'siliconflow',
     AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
   }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+});
+
+test('deployment APP_ENV forbids fixture runtime and sandbox outside isolated test fixtures', () => {
+  for (const nodeEnv of ['test', 'development']) {
+    assert.throws(() => getAgentConfig({
+      NODE_ENV: nodeEnv,
+      APP_ENV: 'production',
+      AGENT_RUNTIME_DRIVER: 'fixture'
+    }), { code: 'AGENT_FIXTURE_RUNTIME_FORBIDDEN' });
+
+    assert.throws(() => getAgentConfig({
+      NODE_ENV: nodeEnv,
+      APP_ENV: 'production',
+      AGENT_RUNTIME_DRIVER: 'live',
+      AGENT_SANDBOX_PROVIDER: 'fixture'
+    }), { code: 'AGENT_FIXTURE_SANDBOX_FORBIDDEN' });
+  }
+
+  const isolatedFixture = getAgentConfig({
+    NODE_ENV: 'test',
+    APP_ENV: 'dev',
+    AGENT_RUNTIME_DRIVER: 'fixture',
+    AGENT_SANDBOX_PROVIDER: 'fixture'
+  });
+  assert.equal(isolatedFixture.fixtureAllowed, true);
+});
+
+test('production APP_ENV applies secure image and desktop readiness gates', () => {
+  const cloudflare = {
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    CUA_API_KEY: 'cua-test',
+    AGENT_PUBLIC_CAPABILITIES: 'files,browser',
+    AGENT_BROWSER_MODE: 'full-approval-v1',
+    AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
+    AGENT_BETA_MODE: 'authenticated-v1'
+  };
+  for (const nodeEnv of ['test', 'development']) {
+    assert.throws(() => assertAgentRuntimeReady({
+      NODE_ENV: nodeEnv,
+      APP_ENV: 'production',
+      AGENT_FEATURE_ENABLED: '1',
+      ...cloudflare
+    }), { code: 'AGENT_SANDBOX_IMAGE_NOT_PINNED' });
+    assert.throws(() => assertAgentRuntimeReady({
+      NODE_ENV: nodeEnv,
+      APP_ENV: 'production',
+      AGENT_FEATURE_ENABLED: '1',
+      ...cloudflare,
+      AGENT_CUA_IMAGE_REF: 'ghcr.io/example/agent@sha256:abc'
+    }), { code: 'AGENT_DESKTOP_RELAY_NOT_CONFIGURED' });
+  }
+  assert.equal(relayEndpoint('ws://relay.example/worker', { production: true }), null);
+  assert.equal(relayEndpoint('wss://relay.example/worker', { production: true }), 'wss://relay.example/worker');
+  const request = { headers: { 'x-forwarded-proto': 'http' }, secure: false, get: () => 'example.test' };
+  assert.throws(() => desktopViewerEndpoint({ APP_ENV: 'production' }, request), {
+    code: 'AGENT_DESKTOP_RELAY_NOT_CONFIGURED'
+  });
+  assert.equal(
+    desktopViewerEndpoint({ APP_ENV: 'production', AGENT_DESKTOP_RELAY_PUBLIC_URL: 'wss://relay.example/worker' }, request),
+    'wss://relay.example/viewer'
+  );
 });
 
 test('Runtime V2 assignment is server-owned, stable and fails back to V1 when disabled', () => {
