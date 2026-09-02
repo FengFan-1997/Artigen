@@ -8,9 +8,9 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
-## 2026-09-02 Cloudflare 文本硬锁收尾（PR #161/#163 已合入 dev，尚未部署）
+## 2026-09-02 Cloudflare 文本硬锁收尾（PR #161/#163/#164 已合入 dev，尚未部署）
 
-- 当前 GitHub `dev` exact SHA 为 `2cbb97fbc0b9b307ce0d0fb336df7e2ecf307217`（PR [#163](https://github.com/FengFan-1997/Artigen/pull/163) 文档澄清合并）。运行时代码以 PR [#161](https://github.com/FengFan-1997/Artigen/pull/161) merge `7cd1f842ca6e93887d1bd5e5710d4e5a6b6e4d8d` 为不可变证据，文档同步以 PR [#162](https://github.com/FengFan-1997/Artigen/pull/162) merge `87a4957836d9affce89d3dcda5e7388729eaa650` 为证据；当前 `dev` 仍未对齐或部署到 Render、Vercel production 或 Mac Worker。
+- PR [#164](https://github.com/FengFan-1997/Artigen/pull/164) 已将当前 dev 状态文档正常合入，merge commit 为 `69dad6ff2922f568d823dd4318e3a48f198d7051`。运行时代码以 PR [#161](https://github.com/FengFan-1997/Artigen/pull/161) merge `7cd1f842ca6e93887d1bd5e5710d4e5a6b6e4d8d` 为不可变证据，文档同步以 PR [#162](https://github.com/FengFan-1997/Artigen/pull/162) merge `87a4957836d9affce89d3dcda5e7388729eaa650` 和 PR [#163](https://github.com/FengFan-1997/Artigen/pull/163) merge `2cbb97fbc0b9b307ce0d0fb336df7e2ecf307217` 为证据；当前 `dev` 仍未对齐或部署到 Render、Vercel production 或 Mac Worker。
 
 - PR [#161](https://github.com/FengFan-1997/Artigen/pull/161) 已在 required CI 与 Release gate 全绿后正常合入 `dev`，merge commit 为 `7cd1f842ca6e93887d1bd5e5710d4e5a6b6e4d8d`。该提交继续保持所有部署环境的非生图模型硬锁为 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`，图片唯一使用 SiliconFlow `Kwai-Kolors/Kolors`；没有切换 Runtime V2、公众 rollout 或 owner canary。
 - 本轮新增的部署意图边界覆盖 fixture runtime/sandbox、CUA 图片镜像与桌面中继、AI Design 共享存储，以及 SiliconFlow/Kolors endpoint 与 readiness probe：只要 `APP_ENV` 或 `NODE_ENV` 表示已部署环境，异常配置会在创建沙箱、发送凭据或执行 Provider 请求前 fail closed。定向回归 `210/210`，并由该 exact SHA 的 Core、Harness 五组、chaos、Chromium/Firefox/WebKit、Release gate 与 Vercel required CI 全部通过。
