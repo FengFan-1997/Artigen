@@ -8,6 +8,13 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-09-02 Cloudflare 文本硬锁收尾（PR #161 已合入 dev，尚未部署）
+
+- PR [#161](https://github.com/FengFan-1997/Artigen/pull/161) 已在 required CI 与 Release gate 全绿后正常合入 `dev`，merge commit 为 `7cd1f842ca6e93887d1bd5e5710d4e5a6b6e4d8d`。该提交继续保持所有部署环境的非生图模型硬锁为 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`，图片唯一使用 SiliconFlow `Kwai-Kolors/Kolors`；没有切换 Runtime V2、公众 rollout 或 owner canary。
+- 本轮新增的部署意图边界覆盖 fixture runtime/sandbox、CUA 图片镜像与桌面中继、AI Design 共享存储，以及 SiliconFlow/Kolors endpoint 与 readiness probe：只要 `APP_ENV` 或 `NODE_ENV` 表示已部署环境，异常配置会在创建沙箱、发送凭据或执行 Provider 请求前 fail closed。定向回归 `210/210`，并由该 exact SHA 的 Core、Harness 五组、chaos、Chromium/Firefox/WebKit、Release gate 与 Vercel required CI 全部通过。
+- 文档同步 PR [#159](https://github.com/FengFan-1997/Artigen/pull/159) 已先行合入；本节记录的是运行时 PR #161 的合并证据。Render、Vercel production、Mac Worker、DEV 数据库切换、真实 24-slot 付费矩阵、图片匿名盲审和生产部署均未执行，不能将本地/CI 证据表述为线上上线。
+- 当前 GitHub `dev` 的最新提交可能因后续文档合并继续前进；运行时代码证据以 `7cd1f842…` 及其 PR #161 checks 为准，部署前仍需重新核验三端 exact SHA 和 readiness。`ui-review/` 仅保留在根工作树，未读取、进入、修改、删除、暂存或提交。
+
 ## 2026-09-02 非生图模型统一切换（已合入 dev，硬锁已加固，尚未部署）
 
 - 账户所有者已确认新的硬策略：**所有环境的非生图模型**（对话、路由、规划、验证、父/子 Agent、记忆摘要和工具决策）统一使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；**所有图片生成**继续只使用 SiliconFlow `Kwai-Kolors/Kolors`。不再把 `Qwen/Qwen3-8B` 作为任何部署环境的默认文本模型。
