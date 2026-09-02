@@ -192,9 +192,14 @@ const createSiliconFlowGenerationProvider = ({
   const nodeEnvironment = String(env.NODE_ENV || '').trim().toLowerCase();
   const deploymentIntent = ['production', 'prod', 'dev', 'development', 'staging'].includes(nodeEnvironment) ||
     ['production', 'prod', 'dev', 'development', 'staging'].includes(appEnvironment);
-  const deployedTextRuntime = deploymentIntent && (
-    nodeEnvironment !== 'test' || ['production', 'prod'].includes(appEnvironment)
-  );
+  // Only the explicitly local fixture environments may exercise the legacy
+  // SiliconFlow text adapter.  Keep this rule in sync with the configured
+  // provider wrapper so direct tool-task construction cannot bypass the
+  // deployment hard lock when NODE_ENV=test is paired with staging or
+  // production deployment intent.
+  const testFixtureRuntime = nodeEnvironment === 'test' &&
+    ['', 'dev', 'development'].includes(appEnvironment);
+  const deployedTextRuntime = deploymentIntent && !testFixtureRuntime;
   const configuredProvider = String(
     env.AGENT_MODEL_PROVIDER || (deployedTextRuntime ? 'cloudflare' : '')
   ).trim().toLowerCase();

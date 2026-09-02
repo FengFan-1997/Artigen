@@ -717,6 +717,23 @@ test('contract mock is development-only and returns valid aspect-aware PNG paylo
   });
   assert.equal(testProcessProductionIntent.kind, 'siliconflow');
   assert.equal(testProcessProductionIntent.available, false);
+  const testProcessStagingIntent = createConfiguredGenerationProvider({
+    env: {
+      NODE_ENV: 'test',
+      APP_ENV: 'staging',
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AI_GENERATION_CONTRACT_MOCK: '1',
+      SILICONFLOW_API_KEY: 'sk-test-key'
+    },
+    imageGenerate: async () => ({}),
+    chatGenerate: async () => ({})
+  });
+  assert.equal(testProcessStagingIntent.kind, 'siliconflow');
+  assert.equal(testProcessStagingIntent.available, false);
+  assert.deepEqual(await testProcessStagingIntent.checkAvailability(), {
+    ok: false,
+    code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED'
+  });
   assert.equal(createContractMockGenerationProvider().available, true);
 });
 
