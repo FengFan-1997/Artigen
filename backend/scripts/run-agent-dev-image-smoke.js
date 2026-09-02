@@ -5,6 +5,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
 const { GENERATION_IMAGE_MODEL } = require('../services/generation-profiles');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('./lib/agent-dev-model-profile');
 
 const KEYCHAIN_SERVICE = String(
   process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-dev-worker'
@@ -34,6 +38,9 @@ const secretNames = [
   'S3_ACCESS_KEY_ID',
   'S3_SECRET_ACCESS_KEY'
 ];
+if (String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'cloudflare') {
+  secretNames.push('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN');
+}
 const missing = [];
 for (const name of secretNames) {
   const value = readMacOsKeychainSecret({ service: KEYCHAIN_SERVICE, account: name });
@@ -45,14 +52,16 @@ if (missing.length) {
   process.exit(78);
 }
 
+const smokeModelProfile = resolveAgentSmokeModelProfile({ env: process.env, production: false });
+
 Object.assign(process.env, {
   NODE_ENV: 'production',
   APP_ENV: 'dev',
   AGENT_FEATURE_ENABLED: 'true',
   AGENT_WORKER_ENABLED: '1',
   AGENT_RUNTIME_DRIVER: 'live',
-  AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: smokeModelProfile.provider,
+  AGENT_MODEL_NAME: smokeModelProfile.model,
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
   AGENT_SANDBOX_PROVIDER: 'cua',
@@ -68,6 +77,7 @@ Object.assign(process.env, {
   ASSET_STORAGE_DRIVER: 's3',
   S3_FORCE_PATH_STYLE: '1'
 });
+applyAgentSmokeModelProfile(process.env, smokeModelProfile);
 
 const { getPool } = require('../db/pool');
 const { createAgentRunService, TERMINAL_STATUSES } = require('../services/agent-run-service');
@@ -209,7 +219,7 @@ const runImageSmoke = async ({ pool, runService, userId, kind, inputAsset }) => 
   if (run.status !== 'succeeded') {
     throw new Error(`AGENT_DEV_IMAGE_SMOKE_RUN_FAILED:${runId}:${run.error?.code || run.status}`);
   }
-  if (run.model?.name !== 'Qwen/Qwen3-8B') {
+  if (run.model?.name !== smokeModelProfile.model) {
     throw new Error(`AGENT_DEV_IMAGE_SMOKE_PLANNER_MODEL_INVALID:${run.model?.name || 'none'}`);
   }
 

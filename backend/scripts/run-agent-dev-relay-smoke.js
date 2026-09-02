@@ -3,6 +3,10 @@
 const crypto = require('node:crypto');
 const { WebSocket } = require('ws');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('./lib/agent-dev-model-profile');
 
 const KEYCHAIN_SERVICE = String(
   process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-dev-worker'
@@ -19,6 +23,9 @@ const workerSecretNames = [
   'AGENT_WORKER_RELAY_SECRET',
   'AGENT_WORKER_RELAY_URL'
 ];
+if (String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'cloudflare') {
+  workerSecretNames.push('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN');
+}
 const missing = [];
 for (const name of workerSecretNames) {
   const value = readMacOsKeychainSecret({ service: KEYCHAIN_SERVICE, account: name });
@@ -34,14 +41,15 @@ if (missing.length) {
   console.error(`AGENT_DEV_RELAY_SMOKE_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
   process.exit(78);
 }
+const smokeModelProfile = resolveAgentSmokeModelProfile({ env: process.env, production: false });
 
 Object.assign(process.env, {
   NODE_ENV: 'production',
   AGENT_FEATURE_ENABLED: 'true',
   AGENT_WORKER_ENABLED: '1',
   AGENT_RUNTIME_DRIVER: 'live',
-  AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: smokeModelProfile.provider,
+  AGENT_MODEL_NAME: smokeModelProfile.model,
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
   AGENT_SANDBOX_PROVIDER: 'cua',
@@ -51,10 +59,11 @@ Object.assign(process.env, {
   AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
   AGENT_BROWSER_MODE: 'full-approval-v1',
   AGENT_WORKER_ID: 'artigen-dev-relay-smoke-publisher',
-  AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser,generate_images',
+  AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser',
   AGENT_MAX_MINUTES: '45',
   AGENT_MAX_STEPS: '120'
 });
+applyAgentSmokeModelProfile(process.env, smokeModelProfile);
 
 const { getPool } = require('../db/pool');
 const { createAgentRunService, TERMINAL_STATUSES } = require('../services/agent-run-service');

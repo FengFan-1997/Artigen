@@ -103,6 +103,10 @@ const {
   parseVersionedKey,
   readAndVerifyGateManifest
 } = require('../evaluation/harness/live-eval-gate');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('./lib/agent-dev-model-profile');
 
 const loadLiveEvalSecrets = ({
   env = process.env,
@@ -117,12 +121,8 @@ const loadLiveEvalSecrets = ({
   // Keychain service, never from an inherited shell environment.
   delete runtimeEnv.PG_SSL_CA;
   delete runtimeEnv.PG_SSL_CA_BASE64;
-  const modelProvider = String(runtimeEnv.AGENT_MODEL_PROVIDER || 'siliconflow')
-    .trim()
-    .toLowerCase();
-  if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {
-    throw new Error('AGENT_LIVE_EVAL_MODEL_PROVIDER_INVALID');
-  }
+  const smokeModelProfile = resolveAgentSmokeModelProfile({ env: runtimeEnv, production: false });
+  const modelProvider = smokeModelProfile.provider;
   const requiredSecretNames = [
     ...secretNames,
     ...(modelProvider === 'cloudflare'
@@ -162,10 +162,8 @@ const loadLiveEvalSecrets = ({
     // Path-style requests preserve normal TLS verification; never disable it.
     S3_FORCE_PATH_STYLE: String(runtimeEnv.S3_FORCE_PATH_STYLE || '1'),
     CUA_PYTHON: path.resolve(__dirname, '../.venv-agent/bin/python'),
-    AGENT_MODEL_PROVIDER: modelProvider,
-    AGENT_MODEL_NAME: modelProvider === 'cloudflare'
-      ? '@cf/openai/gpt-oss-120b'
-      : 'Qwen/Qwen3-8B',
+    AGENT_MODEL_PROVIDER: smokeModelProfile.provider,
+    AGENT_MODEL_NAME: smokeModelProfile.model,
     AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: positivePricingOrDefault({
       value: runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION,
       fallback: 20,
@@ -187,6 +185,7 @@ const loadLiveEvalSecrets = ({
       name: 'AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION'
     })
   });
+  applyAgentSmokeModelProfile(runtimeEnv, smokeModelProfile);
   if (
     modelProvider === 'cloudflare' &&
     (
@@ -199,6 +198,14 @@ const loadLiveEvalSecrets = ({
   }
   return { runtimeEnv, evidenceKeyMaterial };
 };
+
+const currentLiveTextModel = () => String(
+  process.env.AGENT_MODEL_NAME || (
+    String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'siliconflow'
+      ? 'Qwen/Qwen3-8B'
+      : '@cf/openai/gpt-oss-120b'
+  )
+).trim();
 
 const resolveCurrentCommitSha = ({ cwd = path.resolve(__dirname, '../..') } = {}) => {
   const commitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -751,7 +758,7 @@ const buildTerminalFailureReport = ({
     commitSha: gate?.commitSha || null,
     matrixHash: gate?.matrixHash || null,
     modelLocks: {
-      text: String(process.env.AGENT_MODEL_NAME || 'Qwen/Qwen3-8B'),
+      text: currentLiveTextModel(),
       image: 'Kwai-Kolors/Kolors'
     },
     limits: {
@@ -969,7 +976,7 @@ const main = async () => {
       commitSha: gate.commitSha,
       matrixHash: gate.matrixHash,
       modelLocks: {
-        text: String(process.env.AGENT_MODEL_NAME || 'Qwen/Qwen3-8B'),
+        text: currentLiveTextModel(),
         image: 'Kwai-Kolors/Kolors'
       },
       limits: {

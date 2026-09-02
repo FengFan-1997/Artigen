@@ -554,6 +554,31 @@ const cloudflareUsageCredits = (usage, env = process.env) => {
   return Math.max(0, (input * inputPerMillion + output * outputPerMillion) / 1_000_000);
 };
 
+const usageCreditsWithPricingSnapshot = (usage, pricingSnapshot, fallback) => {
+  if (!pricingSnapshot) return fallback();
+  const inputRate = Number(pricingSnapshot.inputCreditsPerMillion);
+  const outputRate = Number(pricingSnapshot.outputCreditsPerMillion);
+  if (!(inputRate > 0) || !(outputRate > 0)) {
+    throw new ApiError(500, 'AGENT_RUN_PRICING_PROFILE_INVALID', { retryable: false });
+  }
+  const input = Number(usage?.prompt_tokens || usage?.input_tokens || usage?.prompt_eval_count || 0);
+  const output = Number(usage?.completion_tokens || usage?.output_tokens || usage?.eval_count || 0);
+  if (!Number.isFinite(input) || !Number.isFinite(output)) {
+    throw new ApiError(500, 'AGENT_MODEL_USAGE_INVALID', { retryable: false });
+  }
+  return Math.max(0, (Math.max(0, input) * inputRate + Math.max(0, output) * outputRate) / 1_000_000);
+};
+
+const assertPricingSnapshotCompatibility = (snapshot, { provider, model }) => {
+  if (!snapshot) return;
+  if (
+    String(snapshot.provider || '') !== String(provider || '') ||
+    String(snapshot.model || '') !== String(model || '')
+  ) {
+    throw new ApiError(409, 'AGENT_RUN_PRICING_PROFILE_MISMATCH', { retryable: false });
+  }
+};
+
 const siliconFlowRequestTimeoutMs = (env = process.env) => {
   const parsed = Number.parseInt(String(env.AGENT_SILICONFLOW_TIMEOUT_MS || ''), 10);
   const requested = Number.isFinite(parsed) ? parsed : 300_000;
@@ -1265,15 +1290,44 @@ class OllamaAgentModelProvider {
     return 'required';
   }
 
-  usageDetails(response) {
+  usageDetails(response, pricingSnapshot = null) {
+    assertPricingSnapshotCompatibility(pricingSnapshot, {
+      provider: this.providerName,
+      model: this.config.modelName
+    });
+    const usage = {
+      prompt_eval_count: response.prompt_eval_count,
+      eval_count: response.eval_count,
+      input_tokens: response.input_tokens,
+      output_tokens: response.output_tokens
+    };
     return {
       inputTokens: Number(response.prompt_eval_count || 0),
       outputTokens: Number(response.eval_count || 0),
-      credits: ollamaUsageCredits(response, this.env)
+      credits: usageCreditsWithPricingSnapshot(
+        usage,
+        pricingSnapshot,
+        () => ollamaUsageCredits(response, this.env)
+      )
     };
   }
 
-  maximumCallCredits(estimatedInputTokens, maximumOutputTokens) {
+  maximumCallCredits(estimatedInputTokens, maximumOutputTokens, pricingSnapshot = null) {
+    if (pricingSnapshot) {
+      assertPricingSnapshotCompatibility(pricingSnapshot, {
+        provider: this.providerName,
+        model: this.config.modelName
+      });
+      const inputRate = Number(pricingSnapshot.inputCreditsPerMillion);
+      const outputRate = Number(pricingSnapshot.outputCreditsPerMillion);
+      if (!(inputRate > 0) || !(outputRate > 0)) {
+        throw new ApiError(500, 'AGENT_RUN_PRICING_PROFILE_INVALID', { retryable: false });
+      }
+      return Math.max(0, (
+        Math.max(0, Number(estimatedInputTokens) || 0) * inputRate +
+        Math.max(0, Number(maximumOutputTokens) || 0) * outputRate
+      ) / 1_000_000);
+    }
     const inputRate = this.providerName === 'siliconflow'
       ? this.config.siliconFlowInputCreditsPerMillion
       : this.providerName === 'cloudflare'
@@ -1413,7 +1467,11 @@ class OllamaAgentModelProvider {
       const maxTokens = Number(this.config.stageMaxOutputTokens?.[phase] || 2048);
       const estimatedInputTokens = Math.ceil(JSON.stringify(requestMessages).length / 4);
       const reservationKey = `${phase}:${metadata.turn || 0}:${correctionAttempt}:${crypto.randomUUID()}`;
-      const maximumCredits = this.maximumCallCredits?.(estimatedInputTokens, maxTokens) || 0;
+      const maximumCredits = this.maximumCallCredits?.(
+        estimatedInputTokens,
+        maxTokens,
+        metadata.pricingSnapshot
+      ) || 0;
       await metadata.reserveBudget?.({
         component: phase,
         reservationKey,
@@ -1449,7 +1507,7 @@ class OllamaAgentModelProvider {
         await metadata.releaseBudget?.({ reservationKey }).catch(() => {});
         throw error;
       }
-      const currentUsage = this.usageDetails(response);
+      const currentUsage = this.usageDetails(response, metadata.pricingSnapshot);
       usage.inputTokens += currentUsage.inputTokens;
       usage.outputTokens += currentUsage.outputTokens;
       usage.credits += currentUsage.credits;
@@ -2982,7 +3040,8 @@ class OllamaAgentModelProvider {
       );
       const maximumCallCredits = this.maximumCallCredits(
         estimatedInputTokens,
-        maximumOutputTokens
+        maximumOutputTokens,
+        runtimeContext?.pricingSnapshot
       );
       if (runtimeV2 && !recoveredModelResponse) {
         await callbacks.reserveBudget?.({
@@ -3030,7 +3089,10 @@ class OllamaAgentModelProvider {
       if (runtimeV2 && !response.budgetReservationKey) {
         response.budgetReservationKey = reservationKey;
       }
-      const { inputTokens, outputTokens, credits } = this.usageDetails(response);
+      const { inputTokens, outputTokens, credits } = this.usageDetails(
+        response,
+        runtimeContext?.pricingSnapshot
+      );
       if (!recoveredModelResponse) {
         totalCredits += credits;
         if (runtimeV2) {
@@ -3411,7 +3473,11 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
     };
   }
 
-  usageDetails(response) {
+  usageDetails(response, pricingSnapshot = null) {
+    assertPricingSnapshotCompatibility(pricingSnapshot, {
+      provider: this.providerName,
+      model: this.config.modelName
+    });
     const usage = response.providerUsage || response.siliconFlowUsage || {
       prompt_tokens: response.prompt_eval_count,
       completion_tokens: response.eval_count
@@ -3419,7 +3485,11 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
     return {
       inputTokens: Number(usage.prompt_tokens || usage.input_tokens || 0),
       outputTokens: Number(usage.completion_tokens || usage.output_tokens || 0),
-      credits: siliconFlowUsageCredits(usage, this.env)
+      credits: usageCreditsWithPricingSnapshot(
+        usage,
+        pricingSnapshot,
+        () => siliconFlowUsageCredits(usage, this.env)
+      )
     };
   }
 
@@ -3674,7 +3744,10 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
             };
             await metadata.consumeBudget({
               reservationKey: attemptReservationKey,
-              actualCredits: this.usageDetails(failedUsage).credits
+              actualCredits: this.usageDetails(
+                failedUsage,
+                metadata.pricingSnapshot
+              ).credits
             });
           }
         } else if (call) {
@@ -3749,7 +3822,11 @@ class CloudflareAgentModelProvider extends SiliconFlowAgentModelProvider {
     return waitForCloudflareAgentSlot(this.env);
   }
 
-  usageDetails(response) {
+  usageDetails(response, pricingSnapshot = null) {
+    assertPricingSnapshotCompatibility(pricingSnapshot, {
+      provider: this.providerName,
+      model: this.config.modelName
+    });
     const usage = response.providerUsage || response.siliconFlowUsage || {
       prompt_tokens: response.prompt_eval_count,
       completion_tokens: response.eval_count
@@ -3757,7 +3834,11 @@ class CloudflareAgentModelProvider extends SiliconFlowAgentModelProvider {
     return {
       inputTokens: Number(usage.prompt_tokens || usage.input_tokens || 0),
       outputTokens: Number(usage.completion_tokens || usage.output_tokens || 0),
-      credits: cloudflareUsageCredits(usage, this.env)
+      credits: usageCreditsWithPricingSnapshot(
+        usage,
+        pricingSnapshot,
+        () => cloudflareUsageCredits(usage, this.env)
+      )
     };
   }
 

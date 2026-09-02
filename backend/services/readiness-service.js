@@ -930,7 +930,8 @@ const getReadinessReport = async ({
       ? { ok: false, code: 'DESIGN_CONVERSATION_NOT_CONFIGURED', missing }
       : {
           ok: true,
-          plannerModel: 'Qwen/Qwen3-8B',
+          plannerProvider: agentConfig.modelProvider,
+          plannerModel: agentConfig.modelName,
           imageModel: GENERATION_IMAGE_MODEL,
           autoCreditCap: Math.max(
             1,

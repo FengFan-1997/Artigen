@@ -67,7 +67,7 @@ const main = async () => {
         : config.modelProvider === 'siliconflow'
           ? config.siliconFlowBaseUrl
           : config.modelProvider === 'cloudflare'
-            ? config.cloudflareBaseUrl
+            ? 'https://api.cloudflare.com/client/v4/accounts/[redacted]/ai/v1'
           : 'configured-cloud-provider',
       sandboxProvider: config.sandboxProvider,
       sandboxMode: config.sandboxMode,

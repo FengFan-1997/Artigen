@@ -51,7 +51,12 @@ const TOOL_RECEIPT_STATES = new Set(['dispatched', 'consumed', 'ambiguous']);
 const modelPricingRates = (config, run = {}) => {
   const provider = String(run.model_provider || run.provider || config.modelProvider || '');
   const model = String(run.model_name || config.modelName || '');
-  const snapshot = run.runtime_profile_summary?.modelConfig?.pricingSnapshot;
+  const hasRunIdentity = Boolean(
+    run.model_provider || run.provider || run.model_name || run.runtime_profile_summary
+  );
+  const snapshot = hasRunIdentity
+    ? run.runtime_profile_summary?.modelConfig?.pricingSnapshot
+    : config.modelPricingSnapshot;
   if (
     snapshot?.provider === provider &&
     snapshot?.model === model &&
@@ -63,16 +68,11 @@ const modelPricingRates = (config, run = {}) => {
       output: Number(snapshot.outputCreditsPerMillion)
     };
   }
-  if (provider === 'cloudflare') {
-    return {
-      input: Number(config.cloudflareInputCreditsPerMillion),
-      output: Number(config.cloudflareOutputCreditsPerMillion)
-    };
-  }
-  return {
-    input: Number(config.siliconFlowInputCreditsPerMillion),
-    output: Number(config.siliconFlowOutputCreditsPerMillion)
-  };
+  throw new ApiError(500, 'AGENT_RUN_PRICING_PROFILE_INVALID', {
+    retryable: false,
+    provider,
+    model
+  });
 };
 
 const usageCreditsForRun = ({ inputTokens = 0, outputTokens = 0, config, run }) => {
@@ -1028,6 +1028,22 @@ const createAgentRunService = ({
     );
     const row = result.rows[0] || {};
     const workerOnline = row.worker_online === true;
+    const configuredModel = Object.freeze({
+      provider: String(config.modelProvider || ''),
+      model: String(config.modelName || '')
+    });
+    const workerModel = row.model_provider && row.model_name
+      ? Object.freeze({
+          provider: String(row.model_provider),
+          model: String(row.model_name)
+        })
+      : null;
+    const workerModelReady = Boolean(
+      workerOnline &&
+      workerModel &&
+      workerModel.provider === configuredModel.provider &&
+      workerModel.model === configuredModel.model
+    );
     const queueDepth = Number(row.queue_depth || 0);
     let providerScheduler = {
       enabled: config.providerSchedulerEnabled,
@@ -1041,14 +1057,8 @@ const createAgentRunService = ({
       toolReceiptsReady: false,
       budgetReservationsReady: false,
       pricingReady: !['siliconflow', 'cloudflare'].includes(config.modelProvider) || (
-        modelPricingRates(config, {
-          model_provider: config.modelProvider,
-          model_name: config.modelName
-        }).input > 0 &&
-        modelPricingRates(config, {
-          model_provider: config.modelProvider,
-          model_name: config.modelName
-        }).output > 0
+        modelPricingRates(config).input > 0 &&
+        modelPricingRates(config).output > 0
       )
     };
     try {
@@ -1088,14 +1098,17 @@ const createAgentRunService = ({
     return {
       enabled: config.enabled,
       workerOnline,
+      workerModelReady,
+      configuredModel,
+      workerModel,
       queueDepth,
       oldestQueuedAt: row.oldest_queued_at || null,
       concurrency: Number(row.concurrency || 1),
-      modelFamily: row.model_name || config.modelName,
+      modelFamily: workerModel?.model || config.modelName,
       sandboxMode: row.sandbox_mode || config.sandboxMode,
-      browserReady: workerOnline && row.browser_ready === true,
-      egressVerified: workerOnline && row.egress_verified === true,
-      desktopRelayReady: workerOnline && row.desktop_relay_ready === true,
+      browserReady: workerModelReady && row.browser_ready === true,
+      egressVerified: workerModelReady && row.egress_verified === true,
+      desktopRelayReady: workerModelReady && row.desktop_relay_ready === true,
       sandboxImageRef: row.sandbox_image_ref || null,
       browserPublicEnabled: config.publicBrowserEnabled,
       imageGenerationPublicEnabled: config.publicImageGenerationEnabled,
@@ -1124,7 +1137,7 @@ const createAgentRunService = ({
       },
       accessMode: config.betaMode,
       availabilityNote: workerOnline
-        ? (queueDepth > 0 ? 'busy' : 'ready')
+        ? (workerModelReady ? (queueDepth > 0 ? 'busy' : 'ready') : 'worker_model_mismatch')
         : 'worker_offline'
     };
   };
@@ -1362,7 +1375,21 @@ const createAgentRunService = ({
             textModel: config.modelName
           })
         : null;
-      return { normalizedTaskSpec, promptProfile, requestHash, runtimeV2 };
+      const runtimeProfileSummary = promptProfile?.runtimeProfileSummary || {
+        runtimeVersion: runtimeV2 ? 2 : 1,
+        modelProvider: liveConfig.modelProvider,
+        model: liveConfig.modelName,
+        modelConfig: {
+          pricingSnapshot: liveConfig.modelPricingSnapshot
+        }
+      };
+      return {
+        normalizedTaskSpec,
+        promptProfile,
+        requestHash,
+        runtimeProfileSummary,
+        runtimeV2
+      };
     };
 
     const created = await withTransaction(pool, async (client) => {
@@ -1396,6 +1423,7 @@ const createAgentRunService = ({
         normalizedTaskSpec,
         promptProfile,
         requestHash,
+        runtimeProfileSummary,
         runtimeV2
       } = compileRuntimeRequest(runtimeAssignment.version);
       if (replay.rowCount) {
@@ -1474,7 +1502,7 @@ const createAgentRunService = ({
             (promptProfile?.skills || []).map((skill) => [skill.id, skill.version])
           )),
           promptProfile ? Buffer.from(promptProfile.runtimeProfileHash, 'hex') : null,
-          JSON.stringify(sanitizeLogValue(promptProfile?.runtimeProfileSummary || {})),
+          JSON.stringify(sanitizeLogValue(runtimeProfileSummary)),
           liveConfig.queueMaxWaitHours
         ]
       );

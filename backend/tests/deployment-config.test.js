@@ -9,6 +9,10 @@ const repoRoot = path.resolve(__dirname, '../..');
 const {
   resolveAgentWorkerPoolProfile
 } = require('../scripts/lib/agent-worker-pool-profile');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('../scripts/lib/agent-dev-model-profile');
 
 const readRepoFile = (relativePath) =>
   fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
@@ -102,6 +106,29 @@ test('Mac DEV worker connection caps are fixed and cannot be overridden', () => 
     PGBOSS_POOL_MAX: '5',
     AGENT_PGBOSS_POOL_MAX: '3'
   });
+});
+
+test('DEV smoke model resolution defaults to the free Cloudflare pair and never upgrades production', () => {
+  const profile = resolveAgentSmokeModelProfile({ env: {}, production: false });
+  assert.deepEqual(profile.expected, {
+    provider: 'cloudflare',
+    model: '@cf/openai/gpt-oss-120b'
+  });
+  const env = {
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true'
+  };
+  applyAgentSmokeModelProfile(env, profile);
+  assert.equal(env.AGENT_MODEL_PROVIDER, 'cloudflare');
+  assert.equal(env.AGENT_MODEL_NAME, '@cf/openai/gpt-oss-120b');
+  assert.throws(
+    () => resolveAgentSmokeModelProfile({
+      env: { AGENT_MODEL_PROVIDER: 'cloudflare' },
+      production: true
+    }),
+    { code: 'AGENT_PRODUCTION_MODEL_PROFILE_INVALID' }
+  );
 });
 
 test('CI configures a distinct session-token hashing secret', () => {

@@ -1,0 +1,74 @@
+'use strict';
+
+const DEV_CLOUDFLARE_MODEL = '@cf/openai/gpt-oss-120b';
+const DEV_SILICONFLOW_MODEL = 'Qwen/Qwen3-8B';
+
+const resolveAgentSmokeModelProfile = ({ env = process.env, production = false } = {}) => {
+  const provider = String(
+    env.AGENT_MODEL_PROVIDER || (production ? 'siliconflow' : 'cloudflare')
+  ).trim().toLowerCase();
+  const model = String(
+    env.AGENT_MODEL_NAME || (
+      provider === 'cloudflare' ? DEV_CLOUDFLARE_MODEL : DEV_SILICONFLOW_MODEL
+    )
+  ).trim();
+  if (
+    (provider === 'cloudflare' && model !== DEV_CLOUDFLARE_MODEL) ||
+    (provider === 'siliconflow' && model !== DEV_SILICONFLOW_MODEL) ||
+    !['cloudflare', 'siliconflow'].includes(provider)
+  ) {
+    const error = new Error('AGENT_SMOKE_MODEL_PROFILE_INVALID');
+    error.code = 'AGENT_SMOKE_MODEL_PROFILE_INVALID';
+    throw error;
+  }
+  if (production && provider !== 'siliconflow') {
+    const error = new Error('AGENT_PRODUCTION_MODEL_PROFILE_INVALID');
+    error.code = 'AGENT_PRODUCTION_MODEL_PROFILE_INVALID';
+    throw error;
+  }
+  return Object.freeze({
+    provider,
+    model,
+    expected: Object.freeze({ provider, model }),
+    requiredKeychainSecrets: Object.freeze(
+      provider === 'cloudflare'
+        ? ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN']
+        : ['SILICONFLOW_API_KEY']
+    )
+  });
+};
+
+const applyAgentSmokeModelProfile = (env, profile) => {
+  if (!env || !profile) throw new TypeError('AGENT_SMOKE_MODEL_PROFILE_REQUIRED');
+  env.AGENT_MODEL_PROVIDER = profile.provider;
+  env.AGENT_MODEL_NAME = profile.model;
+  if (profile.provider === 'cloudflare') {
+    const attested = /^(1|true|yes|on)$/i.test(
+      String(env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || '')
+    );
+    if (!attested) {
+      const error = new Error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
+      error.code = 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED';
+      throw error;
+    }
+    env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID = String(
+      env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || env.CLOUDFLARE_ACCOUNT_ID || ''
+    );
+    if (!/^[0-9a-f]{32}$/i.test(String(env.CLOUDFLARE_ACCOUNT_ID || '')) ||
+        env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID !== env.CLOUDFLARE_ACCOUNT_ID) {
+      const error = new Error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
+      error.code = 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED';
+      throw error;
+    }
+  } else {
+    env.AGENT_SILICONFLOW_BASE_URL = 'https://api.siliconflow.cn/v1';
+  }
+  return env;
+};
+
+module.exports = {
+  DEV_CLOUDFLARE_MODEL,
+  DEV_SILICONFLOW_MODEL,
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+};

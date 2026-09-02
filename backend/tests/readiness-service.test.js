@@ -582,6 +582,36 @@ test('production Agent image generation requires the real image provider and out
   assert.equal(report.checks.agent.imageGenerationPublicEnabled, true);
 });
 
+test('design conversation readiness reports the configured Cloudflare planner model', async () => {
+  const report = await getReadinessReport({
+    env: {
+      NODE_ENV: 'test',
+      APP_ENV: 'dev',
+      DESIGN_CONVERSATION_ENABLED: 'true',
+      DESIGN_CONVERSATION_WORKER_ENABLED: 'true',
+      PAID_FEATURES_ENABLED: 'true',
+      AI_DESIGN_TASK_V2_ENABLED: 'true',
+      WORKSHOP_AI_TASK_V2_ENABLED: 'true',
+      AGENT_FEATURE_ENABLED: 'true',
+      AGENT_BETA_MODE: 'authenticated-v1',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_PUBLIC_CAPABILITIES: 'files,shell,generate_images',
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+      AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
+      SILICONFLOW_API_KEY: 'siliconflow-image-provider-test-key'
+    },
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(report.checks.conversation.plannerProvider, 'cloudflare');
+  assert.equal(report.checks.conversation.plannerModel, '@cf/openai/gpt-oss-120b');
+});
+
 test('production ai-design quote and create share the readiness storage failure without billing side effects', async () => {
   const rootDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'artigen-paid-storage-gate-'));
   const env = {

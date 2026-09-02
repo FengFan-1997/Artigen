@@ -2,6 +2,10 @@
 
 const crypto = require('node:crypto');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('./lib/agent-dev-model-profile');
 
 const KEYCHAIN_SERVICE = String(
   process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-dev-worker'
@@ -11,13 +15,8 @@ if (KEYCHAIN_SERVICE !== 'artigen-agent-dev-worker') {
   process.exit(64);
 }
 
-const modelProvider = String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare')
-  .trim()
-  .toLowerCase();
-if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {
-  console.error('AGENT_DEV_SMOKE_MODEL_PROVIDER_INVALID');
-  process.exit(64);
-}
+const smokeModelProfile = resolveAgentSmokeModelProfile({ env: process.env, production: false });
+const modelProvider = smokeModelProfile.provider;
 
 const secretNames = [
   'DATABASE_URL',
@@ -59,10 +58,8 @@ Object.assign(process.env, {
   AGENT_FEATURE_ENABLED: 'true',
   AGENT_WORKER_ENABLED: '1',
   AGENT_RUNTIME_DRIVER: 'live',
-  AGENT_MODEL_PROVIDER: modelProvider,
-  AGENT_MODEL_NAME: modelProvider === 'cloudflare'
-    ? '@cf/openai/gpt-oss-120b'
-    : 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: smokeModelProfile.provider,
+  AGENT_MODEL_NAME: smokeModelProfile.model,
   AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: modelProvider === 'cloudflare'
     ? String(process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || 'false')
     : 'false',
@@ -84,6 +81,7 @@ Object.assign(process.env, {
   ASSET_STORAGE_DRIVER: 's3',
   S3_FORCE_PATH_STYLE: '1'
 });
+applyAgentSmokeModelProfile(process.env, smokeModelProfile);
 
 const { getPool } = require('../db/pool');
 const { createAgentRunService, TERMINAL_STATUSES } = require('../services/agent-run-service');
@@ -281,7 +279,7 @@ const main = async () => {
       event: 'smoke.succeeded',
       runId,
       status: run.status,
-      model: run.model?.name || 'Qwen/Qwen3-8B',
+      model: run.model?.name || smokeModelProfile.model,
       artifacts: verified
     }));
   } finally {

@@ -4,6 +4,10 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('./lib/agent-dev-model-profile');
 
 const KEYCHAIN_SERVICE = String(
   process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-dev-worker'
@@ -26,6 +30,9 @@ const secretNames = [
   'S3_ACCESS_KEY_ID',
   'S3_SECRET_ACCESS_KEY'
 ];
+if (String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'cloudflare') {
+  secretNames.push('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN');
+}
 const missing = [];
 for (const name of secretNames) {
   const value = readMacOsKeychainSecret({ service: KEYCHAIN_SERVICE, account: name });
@@ -36,6 +43,8 @@ if (missing.length) {
   console.error(`DESIGN_CONVERSATION_DEV_SMOKE_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
   process.exit(78);
 }
+
+const smokeModelProfile = resolveAgentSmokeModelProfile({ env: process.env, production: false });
 
 Object.assign(process.env, {
   NODE_ENV: 'production',
@@ -53,8 +62,8 @@ Object.assign(process.env, {
   AGENT_WORKER_ENABLED: '1',
   AGENT_BETA_MODE: 'authenticated-v1',
   AGENT_RUNTIME_DRIVER: 'live',
-  AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: smokeModelProfile.provider,
+  AGENT_MODEL_NAME: smokeModelProfile.model,
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
   AGENT_SANDBOX_PROVIDER: 'cua',
@@ -70,15 +79,16 @@ Object.assign(process.env, {
   ASSET_STORAGE_DRIVER: 's3',
   S3_FORCE_PATH_STYLE: '1'
 });
+applyAgentSmokeModelProfile(process.env, smokeModelProfile);
 
 const { getPool } = require('../db/pool');
 const {
+  callCloudflareChat,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate
 } = require('../lib/ai-providers');
 const {
   createDesignConversationService,
-  TEXT_MODEL,
   IMAGE_MODEL
 } = require('../services/design-conversation-service');
 const {
@@ -371,7 +381,9 @@ const runToolImageExecution = async ({
   };
   const provider = createConfiguredGenerationProvider({
     imageGenerate: tracedImageGenerate,
-    chatGenerate: callSiliconFlowChat,
+    chatGenerate: smokeModelProfile.provider === 'cloudflare'
+      ? callCloudflareChat
+      : callSiliconFlowChat,
     env: process.env
   });
   const executor = createAiDesignExecutor({
@@ -568,7 +580,7 @@ const verifyAgentRun = async ({ pool, runService, entry, run }) => {
   if (run.status !== 'succeeded') {
     throw new Error(`DESIGN_CONVERSATION_SMOKE_AGENT_FAILED:${entry.runId}:${run.error?.code || run.status}`);
   }
-  if (run.model?.name !== TEXT_MODEL) {
+  if (run.model?.name !== smokeModelProfile.model) {
     throw new Error(`DESIGN_CONVERSATION_SMOKE_AGENT_MODEL_INVALID:${run.model?.name || 'none'}`);
   }
   if (!Array.isArray(run.artifacts) || run.artifacts.length < 2) {
@@ -645,17 +657,21 @@ const main = async () => {
   const plannerCalls = [];
   const imageCalls = [];
   const tracedPlanner = async (input) => {
-    if (input?.model !== TEXT_MODEL) {
+    if (input?.model !== smokeModelProfile.model) {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_PLANNER_MODEL_REQUEST_INVALID:${input?.model}`);
     }
     const startedAt = Date.now();
-    const response = await callSiliconFlowChat(input);
+    const response = await (
+      smokeModelProfile.provider === 'cloudflare'
+        ? callCloudflareChat(input)
+        : callSiliconFlowChat(input)
+    );
     plannerCalls.push({
       requestedModel: input.model,
       modelUsed: response?.model || null,
       elapsedMs: Date.now() - startedAt
     });
-    if (response?.model !== TEXT_MODEL) {
+    if (response?.model !== smokeModelProfile.model) {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_PLANNER_MODEL_RESPONSE_INVALID:${response?.model}`);
     }
     return response;
@@ -683,7 +699,7 @@ const main = async () => {
       !worker.egressVerified ||
       !worker.desktopRelayReady ||
       worker.accessMode !== 'authenticated-v1' ||
-      worker.modelFamily !== TEXT_MODEL
+      worker.modelFamily !== smokeModelProfile.model
     ) {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_RUNTIME_NOT_READY:${JSON.stringify(worker)}`);
     }
@@ -819,7 +835,7 @@ const main = async () => {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_PLANNER_JOB_INVALID:${JSON.stringify(planningJobs)}`);
     }
     if (plannerCalls.length > 6 || plannerCalls.some((call) =>
-      call.requestedModel !== TEXT_MODEL || call.modelUsed !== TEXT_MODEL
+      call.requestedModel !== smokeModelProfile.model || call.modelUsed !== smokeModelProfile.model
     )) {
       throw new Error(
         `DESIGN_CONVERSATION_SMOKE_PLANNER_TRACE_INVALID:${plannerCalls.length}`
@@ -829,7 +845,7 @@ const main = async () => {
       event: 'smoke.succeeded',
       migration: migrationName,
       outputRoot,
-      models: { planner: TEXT_MODEL, image: IMAGE_MODEL },
+      models: { planner: smokeModelProfile.model, image: IMAGE_MODEL },
       plannerCalls,
       planningJobs,
       worker: {
