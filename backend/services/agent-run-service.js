@@ -83,6 +83,31 @@ const usageCreditsForRun = ({ inputTokens = 0, outputTokens = 0, config, run }) 
   return (inputTokens * rates.input + outputTokens * rates.output) / 1_000_000;
 };
 
+// Migrations 024/025 added the immutable pricing profile after older V1/V2
+// runs had already been created. Those rows carry the new columns' empty
+// defaults, but their durable receipts still describe a real Provider result.
+// Terminal reconciliation must not apply today's rate to such a run (that
+// would make the user's charge depend on a later deployment). Instead, the
+// platform absorbs the unknown historical cost and closes the receipt and
+// reservation at zero. New runs always have a non-empty profile and continue
+// through the strict pricing path above.
+const isLegacyRunWithoutPricingSnapshot = (run = {}) => {
+  const version = Number(run.runtime_version ?? run.runtimeVersion ?? 1);
+  const summary = run.runtime_profile_summary ?? run.runtimeProfileSummary;
+  return Number.isInteger(version) && version >= 1 && version <= 2 &&
+    summary && typeof summary === 'object' && !Array.isArray(summary) &&
+    Object.keys(summary).length === 0;
+};
+
+const terminalReceiptCredits = ({ inputTokens, outputTokens, config, run }) => {
+  try {
+    return { credits: usageCreditsForRun({ inputTokens, outputTokens, config, run }), absorbed: false };
+  } catch (error) {
+    if (!isLegacyRunWithoutPricingSnapshot(run)) throw error;
+    return { credits: 0, absorbed: true };
+  }
+};
+
 const assertWorkerLease = (row, { workerId, leaseEpoch }) => {
   if (!workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
   const currentEpoch = Number(row?.lease_epoch || 0);
@@ -1862,7 +1887,7 @@ const createAgentRunService = ({
     const receivedModels = await client.query(
       `SELECT receipt.*,reservation.state AS reservation_state,
               reservation.reservation_key,call.subagent_id,call.provider,call.model_name,
-              run.runtime_profile_summary
+              run.runtime_version,run.runtime_profile_summary
          FROM agent_model_call_receipts receipt
          JOIN agent_model_calls call ON call.id=receipt.id
          JOIN agent_runs run ON run.id=receipt.run_id
@@ -1934,12 +1959,22 @@ const createAgentRunService = ({
       };
       const inputTokens = tokenCount(usage.prompt_tokens || usage.input_tokens);
       const outputTokens = tokenCount(usage.completion_tokens || usage.output_tokens);
-      const actualCredits = usageCreditsForRun({
+      const receiptCost = terminalReceiptCredits({
         inputTokens,
         outputTokens,
         config,
         run: receipt
       });
+      const actualCredits = receiptCost.credits;
+      if (receiptCost.absorbed) {
+        await insertEvent(client, {
+          runId,
+          type: 'model.call.legacy_pricing_absorbed',
+          phase: eventPhase,
+          summary: '旧运行缺少不可变价格快照，未知历史费用由平台承担',
+          data: { callId: receipt.id, runtimeVersion: Number(receipt.runtime_version || 1) }
+        });
+      }
       if (['reserved', 'released'].includes(receipt.reservation_state)) {
         await client.query(
           `UPDATE agent_budget_reservations
@@ -2920,12 +2955,12 @@ const createAgentRunService = ({
               ? Math.ceil(Math.max(0, Math.min(1_000_000_000, parsed)))
               : 0;
           };
-          receiptCredits = usageCreditsForRun({
+          receiptCredits = terminalReceiptCredits({
             inputTokens: tokenCount(usage.prompt_tokens || usage.input_tokens),
             outputTokens: tokenCount(usage.completion_tokens || usage.output_tokens),
             config,
             run: run.rows[0]
-          });
+          }).credits;
         }
       }
       if (receiptCredits === null) {
@@ -2940,7 +2975,8 @@ const createAgentRunService = ({
       if (receiptCredits === null) {
         throw new ApiError(409, 'AGENT_BUDGET_RESERVATION_RELEASED');
       }
-      if (Math.abs(actual - receiptCredits) > 0.00011) {
+      const legacyPricing = isLegacyRunWithoutPricingSnapshot(run.rows[0]);
+      if (Math.abs(actual - receiptCredits) > 0.00011 && !legacyPricing) {
         throw new ApiError(409, 'AGENT_BUDGET_RECEIPT_COST_MISMATCH', {
           retryable: false
         });

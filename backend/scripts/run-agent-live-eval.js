@@ -83,10 +83,13 @@ const positivePricingOrDefault = ({ value, fallback, name }) => {
   const raw = String(value ?? '').trim();
   if (!raw) return String(fallback);
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  // An explicit zero is a configuration failure, not a stale value to
+  // replace. Silently substituting a rate would make the signed gate run with
+  // a pricing profile different from the one the deployment advertised.
+  if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`${name}_INVALID`);
   }
-  return parsed > 0 ? raw : String(fallback);
+  return raw;
 };
 
 const { AgentLiveEvalHarness } = require('../evaluation/harness/agent-live-eval-harness');

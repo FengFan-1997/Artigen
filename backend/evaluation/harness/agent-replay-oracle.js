@@ -265,7 +265,12 @@ const runtimeInvariantErrors = (snapshot, reconstructed = reconstructRuntimeStat
   if (modelCalls.some((entry) => entry.prompt_hash && hex(entry.prompt_hash).length !== 64)) {
     errors.push('model_prompt_hash_invalid');
   }
-  if (number(run.runtime_version) === 2 && (
+  const legacyPricingAbsorbed = terminal &&
+    Number(run.runtime_version || 1) <= 2 &&
+    run.runtime_profile_summary &&
+    Object.keys(run.runtime_profile_summary).length === 0 &&
+    events.some((event) => event.event_type === 'model.call.legacy_pricing_absorbed');
+  if (number(run.runtime_version) === 2 && !legacyPricingAbsorbed && (
     hex(run.runtime_profile_hash).length !== 64 ||
     hex(run.prompt_hash).length !== 64 ||
     !run.prompt_profile ||

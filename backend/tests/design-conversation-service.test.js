@@ -14,7 +14,10 @@ const {
   encryptDesignMessage
 } = require('../services/agent-payload-service');
 const { installDesignConversationRoutes } = require('../routes/design-conversations');
-const { resolveWorkerConcurrency } = require('../scripts/start-agent-worker');
+const {
+  resolveWorkerConcurrency,
+  cleanupProviderSchedulers
+} = require('../scripts/start-agent-worker');
 
 const encryptionEnv = {
   AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`
@@ -371,4 +374,12 @@ test('Mac worker attempts two runs only when CPU, memory and browser relay are r
     runtimeReadiness,
     system: { ...readySystem, freemem: () => 2 * 1024 ** 3 }
   }), { concurrency: 1, fallbackReason: 'MEMORY_CAPACITY' });
+});
+
+test('Mac worker cleanup expires both text and Kolors scheduler queues exactly once', async () => {
+  const calls = [];
+  const textScheduler = { cleanup: async () => calls.push('text') };
+  const imageScheduler = { cleanup: async () => calls.push('image') };
+  await cleanupProviderSchedulers([textScheduler, imageScheduler, textScheduler]);
+  assert.deepEqual(calls.sort(), ['image', 'text']);
 });

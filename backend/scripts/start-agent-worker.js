@@ -39,6 +39,13 @@ const resolveWorkerConcurrency = ({ env = process.env, runtimeReadiness, system 
   return { concurrency: 2, fallbackReason: null };
 };
 
+const cleanupProviderSchedulers = async (schedulers = []) => {
+  const unique = schedulers.filter((scheduler, index, values) => (
+    scheduler && values.indexOf(scheduler) === index
+  ));
+  return Promise.all(unique.map((scheduler) => scheduler.cleanup()));
+};
+
 const main = async () => {
   const config = getAgentConfig(process.env);
   if (!config.workerEnabled) throw new Error('AGENT_WORKER_DISABLED');
@@ -72,7 +79,7 @@ const main = async () => {
     : createProviderScheduler({
         pool,
         env: process.env,
-        providerKey: 'siliconflow:kolors'
+        providerKey: 'siliconflow:Kwai-Kolors/Kolors'
       });
   const scheduledSiliconFlowChat = createScheduledChatGenerate({
     scheduler: imageProviderScheduler,
@@ -110,7 +117,7 @@ const main = async () => {
   await queue.start();
   const cleanupRuntimeRecords = async () => {
     await Promise.all([
-      providerScheduler.cleanup(),
+      cleanupProviderSchedulers([providerScheduler, imageProviderScheduler]),
       modelCallService.cleanupExpired({ limit: 1000 })
     ]).catch((error) => {
       console.warn(`AGENT_RUNTIME_CLEANUP_FAILED:${error?.code || error?.message || 'unknown'}`);
@@ -147,4 +154,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { resolveWorkerConcurrency };
+module.exports = { resolveWorkerConcurrency, cleanupProviderSchedulers };

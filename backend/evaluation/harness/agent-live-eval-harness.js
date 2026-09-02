@@ -1061,6 +1061,10 @@ class AgentLiveEvalHarness {
 
   async assertBatchDrained() {
     const runIds = [...new Set(this.runIds)];
+    const providerKeys = [...new Set([
+      this.providerScheduler?.providerKey,
+      this.imageProviderScheduler?.providerKey
+    ].map((key) => String(key || '').trim()).filter(Boolean))];
     // One snapshot uses one pool checkout. The previous Promise.all fan-out
     // could request seven fresh connections at a slot boundary and hang the
     // signed campaign indefinitely when DEV temporarily stopped accepting
@@ -1082,15 +1086,31 @@ class AgentLiveEvalHarness {
            WHERE run_id=ANY($1::uuid[]) AND state='reserved') AS active_reservations,
          (SELECT count(*)::int FROM agent_tool_call_receipts
            WHERE run_id=ANY($1::uuid[]) AND state='dispatched') AS active_tool_receipts,
-         (SELECT count(*)::int FROM agent_provider_requests
-           WHERE provider_key=$3 AND status='queued') AS queued_provider_requests`,
+         (SELECT COALESCE(sum(provider_counts.queued_count),0)::int
+            FROM (
+              SELECT provider_key,count(*)::int AS queued_count
+                FROM agent_provider_requests
+               WHERE provider_key=ANY($3::text[]) AND status='queued'
+               GROUP BY provider_key
+            ) provider_counts) AS queued_provider_requests,
+         (SELECT COALESCE(jsonb_object_agg(provider_counts.provider_key,provider_counts.queued_count),'{}'::jsonb)
+            FROM (
+              SELECT provider_key,count(*)::int AS queued_count
+                FROM agent_provider_requests
+               WHERE provider_key=ANY($3::text[]) AND status='queued'
+               GROUP BY provider_key
+            ) provider_counts) AS queued_provider_requests_by_key`,
       [
         runIds,
         [this.baselineUserId, this.candidateUserId],
-        this.providerScheduler.providerKey
+        providerKeys
       ]
     );
     const snapshot = drained.rows[0] || {};
+    this.lastDrainSnapshot = {
+      ...snapshot,
+      queued_provider_requests_by_key: snapshot.queued_provider_requests_by_key || {}
+    };
     if (
       Number(snapshot.active_runs || 0) !== 0 ||
       this.queue.some((runId) => runIds.includes(runId)) ||

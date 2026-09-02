@@ -573,7 +573,7 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
   );
 });
 
-test('Live eval runner replaces stale zero pricing but rejects malformed pricing', () => {
+test('Live eval runner rejects explicit zero or malformed pricing', () => {
   const secrets = new Map([
     ['DATABASE_URL', 'postgres://synthetic/dev_artigen'],
     ['AGENT_PAYLOAD_ENCRYPTION_KEY', 'payload-key'],
@@ -587,21 +587,20 @@ test('Live eval runner replaces stale zero pricing but rejects malformed pricing
     ['AGENT_LIVE_EVAL_EVIDENCE_KEY', `v1:hex:${'ef'.repeat(32)}`]
   ]);
   const readSecret = ({ account }) => secrets.get(account) || '';
-  const loaded = loadLiveEvalSecrets({
-    env: {
-      AGENT_MODEL_PROVIDER: 'siliconflow',
-      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
-      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0',
-      PG_SSL_CA: 'ambient-ca-must-not-survive',
-      PG_SSL_CA_BASE64: 'ambient-base64-must-not-survive'
-    },
-    service: 'artigen-agent-dev-worker',
-    readSecret
-  });
-  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION, '20');
-  assert.equal(loaded.runtimeEnv.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION, '160');
-  assert.equal(loaded.runtimeEnv.PG_SSL_CA, undefined);
-  assert.equal(loaded.runtimeEnv.PG_SSL_CA_BASE64, undefined);
+  assert.throws(
+    () => loadLiveEvalSecrets({
+      env: {
+        AGENT_MODEL_PROVIDER: 'siliconflow',
+        AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
+        AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0',
+        PG_SSL_CA: 'ambient-ca-must-not-survive',
+        PG_SSL_CA_BASE64: 'ambient-base64-must-not-survive'
+      },
+      service: 'artigen-agent-dev-worker',
+      readSecret
+    }),
+    /AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION_INVALID/
+  );
   assert.throws(
     () => loadLiveEvalSecrets({
       env: {
@@ -987,13 +986,17 @@ test('Live Harness drain check keeps ambiguous receipts as audit evidence but re
   harness.candidateUserId = '33333333-3333-4333-8333-333333333333';
   harness.queue = [];
   harness.providerScheduler = { providerKey: 'siliconflow:Qwen/Qwen3-8B' };
+  harness.imageProviderScheduler = { providerKey: 'siliconflow:Kwai-Kolors/Kolors' };
   harness.pool = {
     async query(statement, parameters) {
       statements.push(String(statement));
       assert.deepEqual(parameters, [
         harness.runIds,
         [harness.baselineUserId, harness.candidateUserId],
-        harness.providerScheduler.providerKey
+        [
+          harness.providerScheduler.providerKey,
+          harness.imageProviderScheduler.providerKey
+        ]
       ]);
       return { rows: [{
         active_runs: 0,
@@ -1002,7 +1005,8 @@ test('Live Harness drain check keeps ambiguous receipts as audit evidence but re
         active_model_receipts: 0,
         active_reservations: 0,
         active_tool_receipts: 0,
-        queued_provider_requests: 0
+        queued_provider_requests: 0,
+        queued_provider_requests_by_key: {}
       }] };
     }
   };
@@ -1014,6 +1018,42 @@ test('Live Harness drain check keeps ambiguous receipts as audit evidence but re
   assert.doesNotMatch(modelReceiptQuery, /ambiguous/);
   assert.match(toolReceiptQuery, /state='dispatched'/);
   assert.doesNotMatch(toolReceiptQuery, /ambiguous/);
+});
+
+test('Live Harness drain check includes a queued Kolors scheduler request', async () => {
+  const harness = Object.create(AgentLiveEvalHarness.prototype);
+  harness.runIds = [];
+  harness.baselineUserId = '22222222-2222-4222-8222-222222222222';
+  harness.candidateUserId = '33333333-3333-4333-8333-333333333333';
+  harness.queue = [];
+  harness.providerScheduler = { providerKey: 'cloudflare:@cf/openai/gpt-oss-120b' };
+  harness.imageProviderScheduler = { providerKey: 'siliconflow:Kwai-Kolors/Kolors' };
+  harness.pool = {
+    query: async (_statement, parameters) => {
+      assert.deepEqual(parameters, [
+        [],
+        [harness.baselineUserId, harness.candidateUserId],
+        [harness.providerScheduler.providerKey, harness.imageProviderScheduler.providerKey]
+      ]);
+      return { rows: [{
+        active_runs: 0,
+        frozen_credits: 0,
+        active_holds: 0,
+        active_model_receipts: 0,
+        active_reservations: 0,
+        active_tool_receipts: 0,
+        queued_provider_requests: 1,
+        queued_provider_requests_by_key: {
+          'siliconflow:Kwai-Kolors/Kolors': 1
+        }
+      }] };
+    }
+  };
+  await assert.rejects(harness.assertBatchDrained(), /AGENT_LIVE_EVAL_BATCH_NOT_DRAINED/);
+  assert.equal(
+    harness.lastDrainSnapshot.queued_provider_requests_by_key['siliconflow:Kwai-Kolors/Kolors'],
+    1
+  );
 });
 
 test('Live Harness direct recovery processing consumes the synthetic queue entry', async () => {
