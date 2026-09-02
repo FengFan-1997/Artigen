@@ -12,6 +12,8 @@
 
 Artigen Agent 继续使用“云端文本模型 + 本机 CUA 沙箱”：当前候选和部署入口已统一锁定 Cloudflare Workers AI Free `@cf/openai/gpt-oss-120b`，SiliconFlow 仅负责 `Kwai-Kolors/Kolors` 图片生成。两者都使用本机 CUA + Docker，任务由 PostgreSQL/pg-boss 持久排队；无需下载本地大模型，也不需要 CUA 云账号。该统一模型候选尚未完成 push、部署或完整实机矩阵，不能把本地门禁当作生产已切换证据。
 
+> **历史快照（不代表当前候选或线上状态）**：下方 2026-08-07 的 Production Beta 记录、旧模型/迁移号和状态表仅用于审计回溯；当前模型、开关、迁移与部署状态以本节首段、`PROJECT_HANDOFF.zh-CN.md` 顶部和实时 readiness 为准。
+
 **2026-08-07 Production Beta 更新：** 生产提交 `9bcc77d593e0747d5265f96f1f45b1dcb956b0bd` 已部署到 Render `main`，数据库迁移 020、共享 S3、Production Mac Worker、四项浏览器状态和 owner-only 白名单全部通过。生产登录捕获 run `0bfa9eef-a989-4400-9fcd-0bcb043c211d` 与会话恢复 run `20317cd5-77e8-40ca-ac74-ad845385bf96` 均为 `succeeded`，4 个 Markdown/PDF 交付物验证通过并存入 S3；会话随后撤销并擦除。完整交付与账号登录方式见 [ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md](./ARTIGEN_AGENT_BETA_DELIVERY.zh-CN.md)。
 
 当前本机的 `files + shell` Agent 已真实端到端跑通，不再只是单元测试通过。2026-08-06 的内容级烟测 run `e8262300-085b-4db4-b5e7-e2df2919ed56` 最终为 `succeeded`，轨迹评分 100；生成的 `agent-smoke.md` 经回读确认为 5 个真实物理行且不含字面量 `\\n`，并通过文件打开、ClamAV 病毒扫描、SHA-256 和数据库登记，任务结束后沙箱已销毁。
