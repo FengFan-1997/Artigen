@@ -1884,6 +1884,12 @@ const createAgentRunService = ({
     const normalizedOutcome = ['succeeded', 'failed', 'cancelled'].includes(outcome)
       ? outcome
       : 'failed';
+    const runProfile = await client.query(
+      `SELECT runtime_version,runtime_profile_summary
+         FROM agent_runs WHERE id=$1 FOR SHARE`,
+      [runId]
+    );
+    const legacyPricing = isLegacyRunWithoutPricingSnapshot(runProfile.rows[0]);
     const receivedModels = await client.query(
       `SELECT receipt.*,reservation.state AS reservation_state,
               reservation.reservation_key,call.subagent_id,call.provider,call.model_name,
@@ -2026,17 +2032,20 @@ const createAgentRunService = ({
     const consumed = Number(totals.rows[0]?.consumed || 0);
     await client.query(
       `UPDATE agent_runs
-          SET estimated_credits_used=GREATEST(
-                estimated_credits_used,
-                LEAST(max_credits::numeric,$2::numeric)
-              ),
+          SET estimated_credits_used=CASE
+                WHEN $3::boolean THEN LEAST(max_credits::numeric,$2::numeric)
+                ELSE GREATEST(
+                  estimated_credits_used,
+                  LEAST(max_credits::numeric,$2::numeric)
+                )
+              END,
               platform_overrun_credits=GREATEST(
                 platform_overrun_credits,
                 GREATEST(0::numeric,$2::numeric-max_credits::numeric)
               ),
               updated_at=clock_timestamp()
         WHERE id=$1`,
-      [runId, consumed]
+      [runId, consumed, legacyPricing]
     );
     await client.query(
       `UPDATE agent_subagents subagent
@@ -2071,7 +2080,10 @@ const createAgentRunService = ({
     await settleAgentBudget({
       client,
       runId,
-      actualCredits: Math.max(Number(row.estimated_credits_used || 0), knownActualCredits),
+      actualCredits: Math.max(
+        isLegacyRunWithoutPricingSnapshot(row) ? 0 : Number(row.estimated_credits_used || 0),
+        knownActualCredits
+      ),
       refundable: false,
       reason: 'user_cancelled'
     });
@@ -3979,7 +3991,10 @@ const createAgentRunService = ({
     const settlement = await settleAgentBudget({
       client,
       runId,
-      actualCredits: Math.max(Number(actualCredits || 0), knownActualCredits),
+      actualCredits: Math.max(
+        isLegacyRunWithoutPricingSnapshot(run.rows[0]) ? 0 : Number(actualCredits || 0),
+        knownActualCredits
+      ),
       refundable,
       reason: sanitizeText(errorCode, 100)
     });

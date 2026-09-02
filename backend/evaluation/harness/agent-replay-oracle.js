@@ -270,7 +270,20 @@ const runtimeInvariantErrors = (snapshot, reconstructed = reconstructRuntimeStat
     run.runtime_profile_summary &&
     Object.keys(run.runtime_profile_summary).length === 0 &&
     events.some((event) => event.event_type === 'model.call.legacy_pricing_absorbed');
-  if (number(run.runtime_version) === 2 && !legacyPricingAbsorbed && (
+  // A successful pre-025 V2 run may have settled before the pricing profile
+  // columns existed.  There is no absorption event in those historical rows,
+  // so accept the empty profile only when all receipts/reservations are
+  // terminal and no model call is still running.  Non-terminal runs continue
+  // to fail closed and require a complete profile before recovery.
+  const legacyPricingUnknown = terminal &&
+    Number(run.runtime_version || 1) <= 2 &&
+    run.runtime_profile_summary &&
+    Object.keys(run.runtime_profile_summary).length === 0 &&
+    !receipts.some((entry) => ['queued', 'dispatched', 'received'].includes(entry.state)) &&
+    !reservations.some((entry) => entry.state === 'reserved') &&
+    !modelCalls.some((entry) => entry.outcome === 'running');
+  const legacyProfileAccepted = legacyPricingAbsorbed || legacyPricingUnknown;
+  if (number(run.runtime_version) === 2 && !legacyProfileAccepted && (
     hex(run.runtime_profile_hash).length !== 64 ||
     hex(run.prompt_hash).length !== 64 ||
     !run.prompt_profile ||

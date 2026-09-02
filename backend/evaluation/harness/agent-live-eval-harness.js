@@ -3,15 +3,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 const sharp = require('sharp');
 
-const { callCloudflareChat, callSiliconFlowChat } = require('../../lib/ai-providers');
+const {
+  callCloudflareChat,
+  callSiliconFlowChat,
+  callSiliconFlowImageGenerate
+} = require('../../lib/ai-providers');
 const { createAdminFinanceService } = require('../../services/admin-finance-service');
 const { assertAgentRuntimeReady } = require('../../services/agent-config');
 const { createAgentImageService } = require('../../services/agent-image-service');
+const { createConfiguredGenerationProvider } = require('../../services/generation-provider');
+const { fetch: siliconFlowFetch } = require('../../lib/fetch-utils');
 const { createAgentModelProvider } = require('../../services/agent-model-provider');
 const {
   createModelCallService,
   createProviderScheduler,
-  createScheduledChatGenerate
+  createScheduledChatGenerate,
+  createScheduledImageGenerate
 } = require('../../services/agent-model-runtime-service');
 const { createAgentRunService } = require('../../services/agent-run-service');
 const { createAgentSandboxProvider } = require('../../services/agent-sandbox-provider');
@@ -31,6 +38,7 @@ const {
   minimalXlsx
 } = require('./artifact-fixtures');
 const { LiveModelAuditor } = require('./live-model-auditor');
+const { requestPromptHash } = require('./scripted-siliconflow-transport');
 const { LiveEvalCampaignGuard } = require('./live-eval-campaign-guard');
 const {
   assertLiveEvalDatabaseReadiness,
@@ -297,13 +305,21 @@ class AgentLiveEvalHarness {
         env: instance.env,
         providerKey: `${instance.env.AGENT_MODEL_PROVIDER}:${instance.env.AGENT_MODEL_NAME}`
       });
-      instance.imageProviderScheduler = instance.env.AGENT_MODEL_PROVIDER === 'cloudflare'
-        ? createProviderScheduler({
+      // The Agent text provider and the design workflow's Qwen directions
+      // share a scheduler only when they are actually the same SiliconFlow
+      // model.  Kolors always gets its own canonical quota key.
+      instance.imageTextProviderScheduler = instance.env.AGENT_MODEL_PROVIDER === 'siliconflow'
+        ? instance.providerScheduler
+        : createProviderScheduler({
             pool,
             env: instance.env,
-            providerKey: 'siliconflow:Kwai-Kolors/Kolors'
-          })
-        : instance.providerScheduler;
+            providerKey: 'siliconflow:Qwen/Qwen3-8B'
+          });
+      instance.imageProviderScheduler = createProviderScheduler({
+        pool,
+        env: instance.env,
+        providerKey: 'siliconflow:Kwai-Kolors/Kolors'
+      });
       instance.modelCallService = createModelCallService({
         pool,
         env: instance.env,
@@ -345,13 +361,46 @@ class AgentLiveEvalHarness {
         );
       };
       const scheduledChat = createScheduledChatGenerate({
+        scheduler: instance.imageTextProviderScheduler,
+        chatGenerate: async (input = {}) => {
+          // Directions and ingredient extraction are paid SiliconFlow Qwen
+          // calls too. Record their request contract and route the transport
+          // through the same physical-dispatch auditor as Planner/Actor.
+          const payload = {
+            model: input.model,
+            messages: input.messages,
+            stream: false,
+            enable_thinking: input.enableThinking === true,
+            max_tokens: input.maxTokens,
+            ...(input.responseFormat === 'json_object'
+              ? { response_format: { type: 'json_object' } }
+              : {})
+          };
+          const inspected = await instance.auditor.inspectQwenRequest(payload, {
+            phase: 'evaluation',
+            runtimeVersion: 1,
+            promptHash: requestPromptHash(payload)
+          });
+          return instance.auditor.requestContext.run(inspected, () => callSiliconFlowChat({
+            ...input,
+            fetchImpl: instance.auditor.wrapQwenFetch(siliconFlowFetch)
+          }));
+        },
+        defaultPriority: 'actor'
+      });
+      const scheduledImageGenerate = createScheduledImageGenerate({
         scheduler: instance.imageProviderScheduler,
-        chatGenerate: callSiliconFlowChat,
+        imageGenerate: callSiliconFlowImageGenerate,
         defaultPriority: 'actor'
       });
       const rawImageService = createAgentImageService({
         env: instance.env,
-        chatGenerate: scheduledChat
+        chatGenerate: scheduledChat,
+        provider: createConfiguredGenerationProvider({
+          imageGenerate: scheduledImageGenerate,
+          chatGenerate: scheduledChat,
+          env: instance.env
+        })
       });
       instance.imageService = {
         generate: async (request) => {
@@ -794,7 +843,7 @@ class AgentLiveEvalHarness {
           ...input,
           credential: this.env.SILICONFLOW_API_KEY,
           signal: this.campaignGuard.combinedSignal(input.signal),
-          fetcher: this.auditor.wrapQwenFetch(globalThis.fetch)
+          fetchImpl: this.auditor.wrapQwenFetch(siliconFlowFetch)
         })
       );
     };
@@ -1063,6 +1112,7 @@ class AgentLiveEvalHarness {
     const runIds = [...new Set(this.runIds)];
     const providerKeys = [...new Set([
       this.providerScheduler?.providerKey,
+      this.imageTextProviderScheduler?.providerKey,
       this.imageProviderScheduler?.providerKey
     ].map((key) => String(key || '').trim()).filter(Boolean))];
     // One snapshot uses one pool checkout. The previous Promise.all fan-out

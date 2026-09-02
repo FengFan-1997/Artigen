@@ -61,6 +61,7 @@ const {
   resolveLiveEvalPostgresMajor
 } = require('../evaluation/harness/live-eval-database-readiness');
 const { requestPromptHash } = require('../evaluation/harness/scripted-siliconflow-transport');
+const { callSiliconFlowChat } = require('../lib/ai-providers');
 const { createAgentModelProvider } = require('../services/agent-model-provider');
 const {
   assertGateAttestationProvenance
@@ -81,6 +82,7 @@ const {
   installLiveEvalPoolErrorHandler,
   isLiveEvalDatabaseConnectionError,
   markInterruptedJournal,
+  recoverInterruptedCampaign,
   resolveSelection,
   summarize
 } = require('../scripts/run-agent-live-eval');
@@ -1243,6 +1245,96 @@ test('Live eval restart detects an interrupted slot journal, records every unfin
   }
 });
 
+test('Live eval residual recovery cancels only synthetic runs and cleans their resources', async () => {
+  const calls = [];
+  const userRows = [
+    { id: '00000000-0000-4000-8000-000000000001', email: 'agent-live-v1@dev.artigen.invalid' },
+    { id: '00000000-0000-4000-8000-000000000002', email: 'agent-live-v2@dev.artigen.invalid' }
+  ];
+  const activeRows = [
+    {
+      id: '10000000-0000-4000-8000-000000000001',
+      user_id: userRows[0].id,
+      idempotency_key: 'live-eval:stale:report:v1',
+      sandbox_ref: 'sandbox-stale'
+    }
+  ];
+  const pool = {
+    query: async (sql) => {
+      calls.push(sql);
+      if (sql.includes('SELECT id,email::text')) return { rows: userRows, rowCount: userRows.length };
+      if (sql.includes('SELECT id,user_id,idempotency_key')) return { rows: activeRows, rowCount: activeRows.length };
+      return { rowCount: 0, rows: [] };
+    }
+  };
+  const cancelled = [];
+  const destroyed = [];
+  const runService = {
+    cancelRun: async ({ userId, runId }) => {
+      cancelled.push({ userId, runId });
+      return { status: 'cancelled' };
+    },
+    reconcileTerminalReceipts: async () => ({ runsReconciled: 1, receiptsResolved: 1 }),
+    listTerminalSandboxes: async () => [{ runId: activeRows[0].id, sandboxRef: activeRows[0].sandbox_ref }],
+    markSandboxDestroyed: async () => true
+  };
+  const result = await recoverInterruptedCampaign({
+    pool,
+    journal: { updatedAt: new Date().toISOString() },
+    env: {
+      NODE_ENV: 'test', APP_ENV: 'dev', AGENT_LIVE_EVAL_MODE: 'true',
+      AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1', AGENT_RUNTIME_DRIVER: 'live'
+    },
+    runServiceFactory: () => runService,
+    sandboxFactory: () => ({
+      destroy: async (ref) => destroyed.push(ref),
+      referenceForRun: () => 'sandbox-stale'
+    })
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(cancelled, [{ userId: activeRows[0].user_id, runId: activeRows[0].id }]);
+  assert.deepEqual(destroyed, ['sandbox-stale']);
+  assert.equal(result.cancelledProviderRequests, 0);
+  assert.equal(calls.some((sql) => sql.includes('agent_provider_requests')), false);
+});
+
+test('Live eval residual recovery fails closed for unrelated active synthetic-user work', async () => {
+  const pool = {
+    query: async (sql) => {
+      if (sql.includes('SELECT id,email::text')) {
+        return {
+          rowCount: 1,
+          rows: [{ id: '00000000-0000-4000-8000-000000000001', email: 'agent-live-v1@dev.artigen.invalid' }]
+        };
+      }
+      if (sql.includes('SELECT id,user_id,idempotency_key')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: '10000000-0000-4000-8000-000000000001',
+            user_id: '00000000-0000-4000-8000-000000000001',
+            idempotency_key: 'user-created-run',
+            sandbox_ref: null
+          }]
+        };
+      }
+      return { rowCount: 0, rows: [] };
+    }
+  };
+  await assert.rejects(
+    recoverInterruptedCampaign({
+      pool,
+      journal: { updatedAt: new Date().toISOString() },
+      env: {
+        NODE_ENV: 'test', APP_ENV: 'dev', AGENT_LIVE_EVAL_MODE: 'true',
+        AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1', AGENT_RUNTIME_DRIVER: 'live'
+      },
+      runServiceFactory: () => ({})
+    }),
+    /AGENT_LIVE_EVAL_RESIDUAL_USER_BUSY/
+  );
+});
+
 test('Live eval treats failed and completed campaign journals as single-use terminal evidence', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-live-single-use-'));
   const gate = {
@@ -2144,6 +2236,54 @@ test('Live model auditor enforces V2 Qwen request contracts and child tool trimm
     auditor.inspectKolorsResponse({ model: 'Qwen/Qwen-Image-Edit-2509' }),
     /IMAGE_MODEL_INVALID/
   );
+});
+
+test('SiliconFlow chat transport can be audited for design-workflow Qwen calls', async () => {
+  const trace = new RuntimeTraceSink();
+  const auditor = new LiveModelAuditor({
+    trace,
+    maxQwenCalls: 2,
+    textModel: 'Qwen/Qwen3-8B'
+  });
+  const payload = {
+    model: 'Qwen/Qwen3-8B',
+    messages: [{ role: 'user', content: 'generate four visual directions' }],
+    stream: false,
+    enable_thinking: false,
+    max_tokens: 1800,
+    response_format: { type: 'json_object' }
+  };
+  const inspected = await auditor.inspectQwenRequest(payload, {
+    phase: 'actor',
+    promptHash: requestPromptHash(payload),
+    runtimeVersion: 1
+  });
+  let forwardedTransport = null;
+  const transportResponse = new Response(JSON.stringify({
+    choices: [{ message: { content: '{"directions":[]}' } }],
+    usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 }
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const baseFetch = async () => transportResponse.clone();
+  const auditedFetch = auditor.wrapQwenFetch(baseFetch);
+  const fetcher = async (url, options, timeoutMs, signal, fetchImpl) => {
+    forwardedTransport = fetchImpl;
+    return fetchImpl(url, { ...options, signal });
+  };
+  await auditor.requestContext.run(inspected, () => callSiliconFlowChat({
+    messages: payload.messages,
+    model: payload.model,
+    maxTokens: payload.max_tokens,
+    enableThinking: false,
+    responseFormat: 'json_object',
+    timeoutMs: 1000,
+    credential: 'synthetic-key',
+    fetcher,
+    fetchImpl: auditedFetch,
+    skipRateGate: true
+  }));
+  assert.equal(forwardedTransport, auditedFetch);
+  assert.equal(auditor.qwenCalls, 1);
+  assert.equal(auditor.requests.at(-1).model, 'Qwen/Qwen3-8B');
 });
 
 test('Live model auditor accepts the reviewed Cloudflare GPT-OSS V2 contract', async () => {

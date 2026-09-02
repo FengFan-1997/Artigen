@@ -686,12 +686,24 @@ const main = async () => {
   const activeAgentEntries = [];
   try {
     stage('readiness');
-    const migration = await pool.query('SELECT COALESCE(max(name),\'\') AS name FROM pgmigrations');
-    const migrationName = String(migration.rows[0]?.name || '');
-    if (!migrationName.startsWith('021_')) {
-      throw new Error(`DESIGN_CONVERSATION_SMOKE_MIGRATION_NOT_READY:${migrationName || 'none'}`);
+    const migration = await pool.query(
+      'SELECT EXISTS (SELECT 1 FROM pgmigrations WHERE name=$1) AS applied',
+      ['026_agent_live_eval_capacity_counter']
+    );
+    if (migration.rows[0]?.applied !== true) {
+      throw new Error('DESIGN_CONVERSATION_SMOKE_MIGRATION_NOT_READY:026_agent_live_eval_capacity_counter');
     }
     const worker = await runService.getServiceStatus();
+    const durability = worker.durability || {};
+    const durabilityReady = [
+      'pricingReady',
+      'leaseEpochReady',
+      'modelReceiptsReady',
+      'toolReceiptsReady',
+      'budgetReservationsReady'
+    ].every((key) => durability[key] === true);
+    const imageProviderReady = worker.imageGenerationPublicEnabled === true &&
+      Boolean(String(process.env.SILICONFLOW_API_KEY || '').trim());
     if (
       !worker.enabled ||
       !worker.workerOnline ||
@@ -699,7 +711,10 @@ const main = async () => {
       !worker.egressVerified ||
       !worker.desktopRelayReady ||
       worker.accessMode !== 'authenticated-v1' ||
-      worker.modelFamily !== smokeModelProfile.model
+      worker.modelFamily !== smokeModelProfile.model ||
+      worker.providerScheduler?.ready !== true ||
+      durabilityReady !== true ||
+      imageProviderReady !== true
     ) {
       throw new Error(`DESIGN_CONVERSATION_SMOKE_RUNTIME_NOT_READY:${JSON.stringify(worker)}`);
     }

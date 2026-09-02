@@ -16,7 +16,8 @@ const {
 const { installDesignConversationRoutes } = require('../routes/design-conversations');
 const {
   resolveWorkerConcurrency,
-  cleanupProviderSchedulers
+  cleanupProviderSchedulers,
+  resolveImageProviderSchedulers
 } = require('../scripts/start-agent-worker');
 
 const encryptionEnv = {
@@ -382,4 +383,31 @@ test('Mac worker cleanup expires both text and Kolors scheduler queues exactly o
   const imageScheduler = { cleanup: async () => calls.push('image') };
   await cleanupProviderSchedulers([textScheduler, imageScheduler, textScheduler]);
   assert.deepEqual(calls.sort(), ['image', 'text']);
+});
+
+test('Mac worker keeps Qwen directions and Kolors image traffic on separate scheduler keys', () => {
+  const providerScheduler = { providerKey: 'cloudflare:@cf/openai/gpt-oss-120b' };
+  const pool = { connect: () => ({}) };
+  const { imageTextProviderScheduler, imageProviderScheduler } = resolveImageProviderSchedulers({
+    config: { modelProvider: 'cloudflare' },
+    pool,
+    env: {
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0',
+      AGENT_SILICONFLOW_REQUESTS_PER_MINUTE: '9'
+    },
+    providerScheduler
+  });
+  assert.equal(imageTextProviderScheduler.providerKey, 'siliconflow:Qwen/Qwen3-8B');
+  assert.equal(imageProviderScheduler.providerKey, 'siliconflow:Kwai-Kolors/Kolors');
+  assert.notEqual(imageTextProviderScheduler.providerKey, imageProviderScheduler.providerKey);
+  const siliconFlowProviderScheduler = { providerKey: 'siliconflow:Qwen/Qwen3-8B' };
+  const siliconFlow = resolveImageProviderSchedulers({
+    config: { modelProvider: 'siliconflow' },
+    pool,
+    env: {},
+    providerScheduler: siliconFlowProviderScheduler
+  });
+  assert.equal(siliconFlow.imageTextProviderScheduler, siliconFlowProviderScheduler);
+  assert.equal(siliconFlow.imageProviderScheduler.providerKey, 'siliconflow:Kwai-Kolors/Kolors');
+  assert.notEqual(siliconFlow.imageTextProviderScheduler, siliconFlow.imageProviderScheduler);
 });

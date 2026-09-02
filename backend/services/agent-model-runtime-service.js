@@ -81,6 +81,29 @@ const createScheduledChatGenerate = ({
   };
 };
 
+const createScheduledImageGenerate = ({
+  scheduler = null,
+  imageGenerate,
+  defaultPriority = 'actor'
+} = {}) => {
+  if (typeof imageGenerate !== 'function') {
+    throw new TypeError('AGENT_SCHEDULED_IMAGE_GENERATE_REQUIRED');
+  }
+  return async (input = {}) => {
+    if (!scheduler) return imageGenerate(input);
+    const slot = await scheduler.acquire({
+      priority: input.schedulerPriority || defaultPriority,
+      signal: input.signal || null
+    });
+    return imageGenerate({
+      ...input,
+      // The Postgres scheduler is the authoritative gate. The underlying
+      // provider semaphore remains enabled as a local last line of defence.
+      skipRateGate: slot.mode === 'postgres-v1' ? true : input.skipRateGate
+    });
+  };
+};
+
 const createProviderScheduler = ({ pool, env = process.env, providerKey = 'siliconflow:qwen3-8b' } = {}) => {
   if (!pool || typeof pool.connect !== 'function') {
     throw new TypeError('AGENT_PROVIDER_SCHEDULER_POOL_REQUIRED');
@@ -918,6 +941,7 @@ module.exports = {
   createModelCallService,
   createProviderScheduler,
   createScheduledChatGenerate,
+  createScheduledImageGenerate,
   parseRetryAfterMs,
   schedulerIntervalMs
 };

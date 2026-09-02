@@ -8,7 +8,7 @@ const {
   SILICONFLOW_REACTION_TIMEOUT_MS
 } = require('./config');
 
-const { fetchWithTimeout } = require('./fetch-utils');
+const { fetchWithTimeout, fetch: siliconFlowFetch } = require('./fetch-utils');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -183,7 +183,8 @@ const callSiliconFlowChat = async ({
   includeThinking = true,
   providerName = 'SiliconFlow',
   missingCredentialCode = 'MISSING_SILICONFLOW_API_KEY',
-  rateGate = withSiliconflowRateGate
+  rateGate = withSiliconflowRateGate,
+  fetchImpl = siliconFlowFetch
 }) => {
   if (!credential) {
     const err = new Error(missingCredentialCode);
@@ -240,7 +241,8 @@ const callSiliconFlowChat = async ({
             })
           },
           timeoutMs,
-          signal
+          signal,
+          fetchImpl
         );
 
         if (!response.ok) {

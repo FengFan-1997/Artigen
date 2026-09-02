@@ -31,6 +31,7 @@ const {
 const {
   contentFreeMetrics,
   createScheduledChatGenerate,
+  createScheduledImageGenerate,
   parseRetryAfterMs,
   schedulerIntervalMs
 } = require('../services/agent-model-runtime-service');
@@ -426,6 +427,24 @@ test('Shared chat scheduling bypasses only the process-local gate and quality me
     userText: 'must never be persisted',
     nested: { secret: 'no' }
   }), { attempt: 2, passed: true });
+});
+
+test('Shared image scheduling uses the canonical provider gate and bypasses only its local rate gate', async () => {
+  const priorities = [];
+  const image = createScheduledImageGenerate({
+    scheduler: {
+      acquire: async ({ priority }) => {
+        priorities.push(priority);
+        return { mode: 'postgres-v1', queueWaitMs: 7 };
+      }
+    },
+    imageGenerate: async (input) => input,
+    defaultPriority: 'actor'
+  });
+  const result = await image({ prompt: 'poster', schedulerPriority: 'router' });
+  assert.deepEqual(priorities, ['router']);
+  assert.equal(result.skipRateGate, true);
+  assert.equal(result.prompt, 'poster');
 });
 
 test('Model-call tracing is fail-soft and cannot take down an otherwise valid provider response', async () => {

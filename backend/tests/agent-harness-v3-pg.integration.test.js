@@ -2273,7 +2273,11 @@ test('Harness V3 absorbs legacy V2 receipts without a pricing snapshot during ca
     const attempt = harness.worker.processRun(created.runId);
     await controller.waitForArrivals('after_receipt', { arrivals: 1, timeoutMs: 5_000 });
     await pool.query(
-      `UPDATE agent_runs SET runtime_profile_summary='{}'::jsonb,runtime_version=2 WHERE id=$1`,
+      `UPDATE agent_runs
+          SET runtime_profile_summary='{}'::jsonb,
+              runtime_version=2,
+              estimated_credits_used=27
+        WHERE id=$1`,
       [created.runId]
     );
     const released = await pool.query(
@@ -2294,6 +2298,7 @@ test('Harness V3 absorbs legacy V2 receipts without a pricing snapshot during ca
     const terminal = await harness.snapshot(created.runId);
     assert.equal(terminal.persistent.run.status, 'cancelled');
     assert.equal(Number(terminal.persistent.run.charged_credits), 0);
+    assert.equal(Number(terminal.persistent.run.estimated_credits_used), 0);
     assert.equal(terminal.persistent.holds[0].status, 'released');
     assert.equal(terminal.persistent.reservations[0].state, 'consumed');
     assert.equal(Number(terminal.persistent.reservations[0].actual_credits), 0);
@@ -2309,6 +2314,47 @@ test('Harness V3 absorbs legacy V2 receipts without a pricing snapshot during ca
     try {
       controller.releaseBarrier('after_receipt');
     } catch {}
+    await harness?.cleanup();
+    await pool.end();
+  }
+});
+
+test('Harness V3 replays a settled legacy V2 run without a pricing snapshot', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({
+      pool,
+      providerScript: verifiedTextScript()
+    });
+    const created = await harness.createRun({
+      objective: '验证迁移前已完成的 Runtime V2 运行可以被回放。',
+      deliverables: [],
+      capabilities: { files: true, shell: true }
+    });
+    const terminal = await harness.runToTerminal(created.runId);
+    assert.equal(terminal.snapshot.persistent.run.status, 'succeeded');
+    await pool.query(
+      `UPDATE agent_runs
+          SET runtime_profile_summary='{}'::jsonb,
+              runtime_profile_hash=NULL
+        WHERE id=$1`,
+      [created.runId]
+    );
+    const replay = await harness.assertInvariants(created.runId);
+    assert.equal(replay.persistent.run.status, 'succeeded');
+    assert.equal(
+      replay.persistent.reservations.some((entry) => entry.state === 'reserved'),
+      false
+    );
+    assert.equal(
+      replay.persistent.receipts.some((entry) => ['queued', 'dispatched', 'received'].includes(entry.state)),
+      false
+    );
+  } finally {
     await harness?.cleanup();
     await pool.end();
   }

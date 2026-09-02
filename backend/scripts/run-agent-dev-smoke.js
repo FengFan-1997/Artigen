@@ -162,8 +162,24 @@ const assertRemoteReadiness = async ({ pool, runService }) => {
     throw new Error(`AGENT_DEV_SMOKE_MIGRATION_NOT_READY:${REQUIRED_MIGRATION}`);
   }
   const status = await runService.getServiceStatus();
+  const durability = status.durability || {};
+  const durabilityReady = [
+    'pricingReady',
+    'leaseEpochReady',
+    'modelReceiptsReady',
+    'toolReceiptsReady',
+    'budgetReservationsReady'
+  ].every((key) => durability[key] === true);
+  const providerSchedulerReady = status.providerScheduler?.ready === true;
+  // Image output is always SiliconFlow/Kolors even when Agent text is
+  // Cloudflare. Require its public capability and credential before creating
+  // a paid smoke Run so a text-only readiness result cannot mask a broken
+  // image path.
+  const imageProviderReady = status.imageGenerationPublicEnabled === true &&
+    Boolean(String(process.env.SILICONFLOW_API_KEY || '').trim());
   const ready = status.enabled && status.workerOnline && status.browserReady &&
-    status.egressVerified && status.desktopRelayReady && status.browserPublicEnabled;
+    status.egressVerified && status.desktopRelayReady && status.browserPublicEnabled &&
+    durabilityReady && providerSchedulerReady && imageProviderReady;
   if (!ready) {
     throw new Error(`AGENT_DEV_SMOKE_RUNTIME_NOT_READY:${JSON.stringify({
       enabled: status.enabled,
@@ -171,7 +187,11 @@ const assertRemoteReadiness = async ({ pool, runService }) => {
       browserReady: status.browserReady,
       egressVerified: status.egressVerified,
       desktopRelayReady: status.desktopRelayReady,
-      browserPublicEnabled: status.browserPublicEnabled
+      browserPublicEnabled: status.browserPublicEnabled,
+      imageGenerationPublicEnabled: status.imageGenerationPublicEnabled,
+      imageProviderReady,
+      providerScheduler: status.providerScheduler,
+      durability
     })}`);
   }
   return status;

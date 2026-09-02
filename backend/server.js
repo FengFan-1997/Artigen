@@ -63,6 +63,7 @@ const {
 const {
   createProviderScheduler,
   createScheduledChatGenerate,
+  createScheduledImageGenerate,
 } = require("./services/agent-model-runtime-service");
 
 const {
@@ -125,6 +126,18 @@ const scheduledSiliconFlowChat = createScheduledChatGenerate({
 const scheduledTextGenerate = (input) => callTextGenerate({
   ...input,
   chatGenerate: scheduledSiliconFlowChat,
+});
+const sharedSiliconFlowImageScheduler = isDatabaseConfigured()
+  ? createProviderScheduler({
+      pool: getPool(),
+      env: process.env,
+      providerKey: 'siliconflow:Kwai-Kolors/Kolors',
+    })
+  : null;
+const scheduledSiliconFlowImageGenerate = createScheduledImageGenerate({
+  scheduler: sharedSiliconFlowImageScheduler,
+  imageGenerate: callSiliconFlowImageGenerate,
+  defaultPriority: 'actor',
 });
 
 try {
@@ -679,7 +692,7 @@ installConvertRoutes(app, {
 
 installToolTaskRoutes(app, {
   rateLimit,
-  callSiliconFlowImageGenerate,
+  callSiliconFlowImageGenerate: scheduledSiliconFlowImageGenerate,
   callSiliconFlowChat: scheduledSiliconFlowChat,
 });
 
@@ -733,7 +746,7 @@ installImgagentRoutes(app, {
   getUserMemoryFile,
   ensureUserMemoryShape,
   FILES_DIR,
-  callSiliconFlowImageGenerate,
+  callSiliconFlowImageGenerate: scheduledSiliconFlowImageGenerate,
   persistImageRefForUser,
   persistGenerateImageInputForUser,
   appendUserImageHistory: appendPersistentUserImageHistory,
@@ -762,7 +775,7 @@ installSystemRoutes(app, {
   path,
   rateLimit,
   assertAuthUserMatches,
-  callSiliconFlowImageGenerate,
+  callSiliconFlowImageGenerate: scheduledSiliconFlowImageGenerate,
   callSiliconFlowChat: scheduledSiliconFlowChat,
   callTextGenerate: scheduledTextGenerate,
   SILICONFLOW_API_BASE,
@@ -794,6 +807,9 @@ const runAgentMaintenance = async () => {
     sharedProviderScheduler?.cleanup?.(),
     ...(sharedSiliconFlowScheduler !== sharedProviderScheduler
       ? [sharedSiliconFlowScheduler?.cleanup?.()]
+      : []),
+    ...(sharedSiliconFlowImageScheduler
+      ? [sharedSiliconFlowImageScheduler.cleanup()]
       : [])
   ].filter(Boolean);
   const results = await Promise.allSettled(jobs);
