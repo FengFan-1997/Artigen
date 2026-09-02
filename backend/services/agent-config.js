@@ -124,12 +124,12 @@ const getAgentConfig = (env = process.env) => {
     ['production', 'dev', 'development', 'staging', 'prod'].includes(appEnvironment) ||
     ['production', 'prod', 'dev', 'development', 'staging'].includes(nodeEnvironment);
   // Test fixtures remain isolated unless they explicitly carry a production
-  // app intent. This keeps NODE_ENV=test + APP_ENV=dev fixtures available,
-  // while still fail-closing a platform process accidentally launched with
-  // APP_ENV=production (or a case-variant production NODE_ENV).
-  const deployedTextRuntime = deploymentIntent && (
-    nodeEnvironment !== 'test' || ['production', 'prod'].includes(appEnvironment)
-  );
+  // fixture app intent. This keeps NODE_ENV=test + APP_ENV=dev fixtures
+  // available, while fail-closing staging/production app intents even when a
+  // platform process was accidentally launched with NODE_ENV=test.
+  const testFixtureRuntime = nodeEnvironment === 'test' &&
+    ['', 'dev', 'development'].includes(appEnvironment);
+  const deployedTextRuntime = deploymentIntent && !testFixtureRuntime;
   const sandboxProvider = String(env.AGENT_SANDBOX_PROVIDER || 'cua').trim().toLowerCase();
   if (!['openai', 'ollama', 'siliconflow', 'cloudflare'].includes(modelProvider)) {
     throw new ApiError(500, 'AGENT_MODEL_PROVIDER_INVALID');
