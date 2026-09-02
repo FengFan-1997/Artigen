@@ -10,7 +10,7 @@
 
 ## 1. 当前结论
 
-当前 GitHub `dev` exact SHA 为 `2cbb97fbc0b9b307ce0d0fb336df7e2ecf307217`（文档历史澄清 PR [#163](https://github.com/FengFan-1997/Artigen/pull/163) merge）；运行时代码仍以 PR [#161](https://github.com/FengFan-1997/Artigen/pull/161) merge `7cd1f842ca6e93887d1bd5e5710d4e5a6b6e4d8d` 为不可变证据，文档同步 PR [#162](https://github.com/FengFan-1997/Artigen/pull/162) 已合入。当前 `dev` 未对齐或部署到 Render、Vercel production 或 Mac Worker。
+PR [#164](https://github.com/FengFan-1997/Artigen/pull/164) 已将当前 dev 状态文档正常合入，merge commit 为 `69dad6ff2922f568d823dd4318e3a48f198d7051`；运行时代码仍以 PR [#161](https://github.com/FengFan-1997/Artigen/pull/161) merge `7cd1f842ca6e93887d1bd5e5710d4e5a6b6e4d8d` 为不可变证据，文档历史澄清以 PR [#163](https://github.com/FengFan-1997/Artigen/pull/163) merge `2cbb97fbc0b9b307ce0d0fb336df7e2ecf307217` 为证据。文档合并后的下一个 `dev` tip 不作为部署 SHA 固定值；部署前始终执行 `git rev-parse origin/dev`，并核验 Render、Vercel、Mac Worker 与 readiness。当前 `dev` 未对齐或部署到 Render、Vercel production 或 Mac Worker。
 
 Artigen Agent 继续使用“云端文本模型 + 本机 CUA 沙箱”：`dev` 已合入 PR [#153](https://github.com/FengFan-1997/Artigen/pull/153)、硬锁修复 PR [#155](https://github.com/FengFan-1997/Artigen/pull/155)、边界补丁 PR [#157](https://github.com/FengFan-1997/Artigen/pull/157)、readiness 部署意图补丁 PR [#160](https://github.com/FengFan-1997/Artigen/pull/160)、文档同步 PR [#159](https://github.com/FengFan-1997/Artigen/pull/159) 和 follow-up PR [#161](https://github.com/FengFan-1997/Artigen/pull/161)。运行时硬锁收尾 merge commit 为 `7cd1f842ca6e93887d1bd5e5710d4e5a6b6e4d8d`：所有部署环境文本统一为 Cloudflare Workers AI Free `@cf/openai/gpt-oss-120b`，SiliconFlow 仅负责 `Kwai-Kolors/Kolors` 图片生成。Render、Vercel 和 Mac Worker 尚未以该运行时 exact SHA 对齐，完整 DEV 实机矩阵和图片盲审尚未执行，不能把本地门禁当作部署或生产切换证据。
 
