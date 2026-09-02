@@ -14,6 +14,7 @@ const {
 } = require('./config');
 
 const { fetchWithTimeout, fetch: siliconFlowFetch } = require('./fetch-utils');
+const { isDeployedRuntime } = require('../services/agent-config');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -414,7 +415,8 @@ const callSiliconFlowImageGenerate = async ({
   signal,
   credential = SILICONFLOW_API_KEY,
   imageUrl = SILICONFLOW_IMAGES_GENERATIONS_URL,
-  fetcher = fetchWithTimeout
+  fetcher = fetchWithTimeout,
+  env = process.env
 }) => {
   return await imageGenerateLimiter.run(async () => {
     if (!credential) {
@@ -455,6 +457,28 @@ const callSiliconFlowImageGenerate = async ({
       throw err;
     }
     const resolvedModel = preferredModel || FIXED_SILICONFLOW_IMAGE_MODEL;
+    if (isDeployedRuntime(env)) {
+      let parsedImageUrl;
+      try {
+        parsedImageUrl = new URL(String(imageUrl || '').trim());
+      } catch {
+        parsedImageUrl = null;
+      }
+      if (
+        !parsedImageUrl ||
+        parsedImageUrl.protocol !== 'https:' ||
+        parsedImageUrl.origin !== 'https://api.siliconflow.cn' ||
+        parsedImageUrl.pathname.replace(/\/+$/, '') !== '/v1/images/generations' ||
+        parsedImageUrl.username ||
+        parsedImageUrl.password ||
+        parsedImageUrl.search ||
+        parsedImageUrl.hash
+      ) {
+        const err = new Error('PROVIDER_ENDPOINT_INVALID');
+        err.code = 'PROVIDER_ENDPOINT_INVALID';
+        throw err;
+      }
+    }
     const modelCandidates = [resolvedModel];
 
     const isModelNotFound = (raw) => {

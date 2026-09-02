@@ -254,3 +254,20 @@ test('Kolors handles text-to-image and exactly one generic image input', async (
   }), { code: 'INVALID_REFERENCE_IMAGE' });
   assert.equal(requests.length, 2);
 });
+
+test('deployed Kolors generation rejects an unsafe endpoint before sending credentials', async () => {
+  let calls = 0;
+  await assert.rejects(callSiliconFlowImageGenerate({
+    prompt: 'A controlled product scene',
+    params: { imageSize: '960x1200' },
+    model: GENERATION_IMAGE_MODEL,
+    credential: 'siliconflow-secret',
+    imageUrl: 'https://attacker.example/v1/images/generations',
+    env: { NODE_ENV: 'test', APP_ENV: 'production' },
+    fetcher: async () => {
+      calls += 1;
+      throw new Error('must not dispatch');
+    }
+  }), { code: 'PROVIDER_ENDPOINT_INVALID' });
+  assert.equal(calls, 0);
+});
