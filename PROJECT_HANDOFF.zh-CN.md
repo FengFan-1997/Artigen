@@ -15,10 +15,10 @@
 - 文档同步 PR [#159](https://github.com/FengFan-1997/Artigen/pull/159) 已先行合入；本节记录的是运行时 PR #161 的合并证据。Render、Vercel production、Mac Worker、DEV 数据库切换、真实 24-slot 付费矩阵、图片匿名盲审和生产部署均未执行，不能将本地/CI 证据表述为线上上线。
 - 当前 GitHub `dev` 的最新提交可能因后续文档合并继续前进；运行时代码证据以 `7cd1f842…` 及其 PR #161 checks 为准，部署前仍需重新核验三端 exact SHA 和 readiness。`ui-review/` 仅保留在根工作树，未读取、进入、修改、删除、暂存或提交。
 
-## 2026-09-02 非生图模型统一切换（已合入 dev，硬锁已加固，尚未部署）
+## 2026-09-02 非生图模型统一切换（历史基线；后续由 PR #161/#162 收口）
 
 - 账户所有者已确认新的硬策略：**所有环境的非生图模型**（对话、路由、规划、验证、父/子 Agent、记忆摘要和工具决策）统一使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；**所有图片生成**继续只使用 SiliconFlow `Kwai-Kolors/Kolors`。不再把 `Qwen/Qwen3-8B` 作为任何部署环境的默认文本模型。
-- 该实现已通过 PR [#153](https://github.com/FengFan-1997/Artigen/pull/153) 正常合入，并由硬锁修复 PR [#155](https://github.com/FengFan-1997/Artigen/pull/155)、边界补丁 PR [#157](https://github.com/FengFan-1997/Artigen/pull/157) 和 readiness 部署意图补丁 PR [#160](https://github.com/FengFan-1997/Artigen/pull/160) 补强；文档同步 PR [#158](https://github.com/FengFan-1997/Artigen/pull/158) 随后合入，当前 `dev` exact SHA 为 `eb79c1526f1efb4ec850bff1e1b22db042a79d6b`（运行时修复提交 `5401cec`，PR #160 merge commit 为该 SHA）。Render/Vercel/Mac Worker 尚未以当前 exact SHA 对齐或部署；Runtime V2、公众 rollout 和 owner canary 继续关闭。
+- 该实现已通过 PR [#153](https://github.com/FengFan-1997/Artigen/pull/153) 正常合入，并由硬锁修复 PR [#155](https://github.com/FengFan-1997/Artigen/pull/155)、边界补丁 PR [#157](https://github.com/FengFan-1997/Artigen/pull/157) 和 readiness 部署意图补丁 PR [#160](https://github.com/FengFan-1997/Artigen/pull/160) 补强；文档同步 PR [#158](https://github.com/FengFan-1997/Artigen/pull/158) 随后合入。`eb79c152…` 是 PR #160 的历史 merge SHA，之后运行时 follow-up PR [#161](https://github.com/FengFan-1997/Artigen/pull/161) 合并为 `7cd1f842…`，文档同步 PR [#162](https://github.com/FengFan-1997/Artigen/pull/162) 合并为 `87a49578…`；Render/Vercel/Mac Worker 尚未以最新 exact SHA 对齐或部署，Runtime V2、公众 rollout 和 owner canary 继续关闭。
 - 旧 Qwen 字样只保留在历史 Handoff、历史真实 Run 和确定性 fixture 兼容测试中，用于审计旧版本，不代表当前部署配置或新的真实调用方向。本轮未调用付费 Provider，也未执行 DEV/生产切换。
 - PR #153、#155、#157 和 #160 的 required checks 与 Release gate 均全部成功；#157 在 GitHub 更新到包含文档同步的最新 dev 基线后重新验证，#160 又在 readiness 部署意图补丁后重新跑完 Core、Harness 五组、chaos、Chromium/Firefox/WebKit 与 Vercel。硬锁修复候选的定向 Agent/runtime/readiness/deployment 回归为 `190/190`，并额外覆盖 `NODE_ENV=test + APP_ENV=staging/production`，类型检查与 JS 语法检查通过。
 - `pnpm eval:agent:deterministic` 与 `pnpm test:agent:chaos` 已按正式命令执行并 fail-closed：前者要求 `RUN_POSTGRES_INTEGRATION=1`，后者要求 `DATABASE_URL`；本机没有 PostgreSQL 16/MinIO，因此没有假绿结果。DEV 对齐、真实 24-slot 和图片盲审尚未执行。
