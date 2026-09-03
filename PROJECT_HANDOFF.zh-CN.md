@@ -1,6 +1,6 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-09-02（Asia/Shanghai）
+更新时间：2026-09-03（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态 / 持久事实总入口**
 
@@ -8,11 +8,12 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
-## 2026-09-03 Cloudflare 模型目录 readiness 兼容修复（候选，待合入与部署）
+## 2026-09-03 Cloudflare 模型目录 readiness 兼容修复（已合入 dev，DEV 已验证）
 
-- 候选分支 `codex/cloudflare-model-readiness-fix` 基于 GitHub `origin/dev` exact SHA `5a84bac59cf30f6100efb780e8eb9b4a641c42a8`。修复 `generation-provider` 的只读模型目录解析：Cloudflare 返回 opaque UUID `id` 时，同时保留可调用的 `name`/`model`，避免把健康的 `@cf/openai/gpt-oss-120b` 误判为 `MODEL_PROFILE_UNAVAILABLE`；SiliconFlow/Kolors 目录解析同步保持三种标识兼容。
-- 该候选只改变 readiness 识别与对应 fixture，不改变文本模型硬锁、图片模型硬锁、计费、Runtime V2、公众 rollout、Worker 或网络配置。定向 `ai-design-service` 回归为 `24/24`；完整 `pnpm check` 的 Playwright 首次运行出现 1 个 Firefox 进程收尾 channel error，随后同一场景独立重跑 `1/1` 通过，其他 545 项已通过。required CI、PR 合入和 DEV 新 SHA 部署尚未完成。
-- Render DEV 当前部署仍是旧 `5a84bac…`，因此 readiness 需要在候选合入后的新部署上重新核验；生产、Vercel production、Mac Worker、真实付费矩阵和图片盲审均未因本候选切换。`ui-review/` 未读取、进入、修改、删除、暂存或提交。
+- PR [#166](https://github.com/FengFan-1997/Artigen/pull/166) 已在 required CI 与 Release gate 全绿后正常合入 `dev`；最终 `dev` exact SHA 为 `1d23f9d622ac0145a184b26c9a4a9e41c17deebb`。修复 Cloudflare 只读模型目录返回 opaque UUID `id` 时丢失 callable `name`/`model` 的问题，避免健康的 `@cf/openai/gpt-oss-120b` 被误判为 `MODEL_PROFILE_UNAVAILABLE`；SiliconFlow/Kolors 目录解析仍保持兼容。
+- Render DEV deployment `dep-dacgsg6q1p3s73eljlrg` 已 `live` 且 `/api/meta`、`/readyz`、`/api/agent/status` 均 HTTP 200，`gitSha` 精确等于上述 SHA；数据库迁移为 `026_agent_live_eval_capacity_counter`，Aiven DEV、共享私有 S3、Cloudflare 文本 Provider、定价与对话 readiness 均通过。
+- Mac DEV Worker 已从不可变 worktree `Artigen-worker-dev-1d23f9d` 启动并持续在线；状态接口实测 `workerOnline=true`、`workerModelReady=true`、`browserReady=true`、`egressVerified=true`、`desktopRelayReady=true`、`queueDepth=0`、`durability.pricingReady=true`。Worker 文本模型锁定 Cloudflare `@cf/openai/gpt-oss-120b`，图片链继续锁定 `Kwai-Kolors/Kolors`；Runtime V2 与公开 rollout 保持关闭。
+- 本节证据只覆盖 DEV 应用与 Worker readiness；生产仍运行独立的旧 `main` SHA，尚未切换 Cloudflare 文本模型。完整 24-slot 真实付费矩阵、图片盲审与生产 owner canary 未执行；`ui-review/` 未读取、进入、修改、删除、暂存或提交，网络/Karing 配置未修改。
 
 ## 2026-09-02 Cloudflare 文本硬锁收尾（PR #161/#163/#164 已合入 dev，尚未部署）
 
