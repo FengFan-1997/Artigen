@@ -462,7 +462,9 @@ test('Cloudflare text plus SiliconFlow Kolors hybrid probe keeps provider bounda
           status: 200,
           json: async () => ({
             success: true,
-            result: [{ name: GENERATION_DIRECTIONS_MODEL }]
+            // Cloudflare returns an opaque UUID alongside the callable model
+            // name; readiness must retain both identifiers.
+            result: [{ id: 'f9f2250b-1048-4a52-9910-d0bf976616a1', name: GENERATION_DIRECTIONS_MODEL }]
           })
         };
       }
