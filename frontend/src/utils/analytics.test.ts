@@ -1,11 +1,18 @@
 import { readFile } from 'node:fs/promises';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { clearCsrfToken } from '../login/authFetch';
 import {
   isSensitiveAnalyticsQueryKey,
   sanitizeAnalyticsPayload,
   sanitizeAnalyticsUrl,
-  shouldRecordClickSignature
+  shouldRecordClickSignature,
+  trackBackendEvent
 } from './analytics';
+
+afterEach(() => {
+  clearCsrfToken();
+  vi.unstubAllGlobals();
+});
 
 describe('analytics privacy guards', () => {
   it('recognizes encoded and differently formatted credential query keys', () => {
@@ -80,6 +87,43 @@ describe('analytics privacy guards', () => {
     expect(source).not.toContain('el as any).textContent');
     expect(source).not.toContain("el.getAttribute('aria-label')");
     expect(source).toContain("el.getAttribute('data-analytics-action')");
+    expect(source).not.toContain('navigator as any)?.sendBeacon');
+    expect(source).toContain('const resp = await authFetch(url');
+  });
+
+  it('refreshes CSRF before an analytics write when only the HttpOnly session remains', async () => {
+    const storage = { getItem: () => null, setItem: () => undefined, removeItem: () => undefined };
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'https://app.example',
+        hostname: 'app.example',
+        host: 'app.example',
+        pathname: '/artigen/agent',
+        search: ''
+      },
+      localStorage: storage,
+      sessionStorage: storage
+    });
+    vi.stubGlobal('document', { querySelectorAll: () => [], referrer: '' });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ authenticated: true, csrfToken: 'csrf-restored' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), {
+        status: 202,
+        headers: { 'Content-Type': 'application/json' }
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await trackBackendEvent('page_view', { pagePath: '/artigen/agent' });
+
+    expect(result.success).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/auth/session');
+    const write = fetchMock.mock.calls[1];
+    expect(write?.[0]).toBe('/api/collection/event');
+    expect(new Headers((write?.[1] as RequestInit)?.headers).get('X-CSRF-Token')).toBe('csrf-restored');
   });
 
   it('deduplicates only a short burst and records the same control again later', () => {

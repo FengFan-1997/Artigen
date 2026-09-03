@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const net = require('net');
 const { WebSocket } = require('ws');
-const { getAgentConfig } = require('./agent-config');
+const { getAgentConfig, isProductionIntent } = require('./agent-config');
 const { workerSignature } = require('./agent-desktop-relay-service');
 
 const relayEndpoint = (value, { production = false } = {}) => {
@@ -28,7 +28,7 @@ class AgentDesktopRelayClient {
     this.env = env;
     this.config = getAgentConfig(env);
     this.endpoint = relayEndpoint(this.config.workerRelayUrl, {
-      production: String(env.NODE_ENV || '').trim() === 'production'
+      production: isProductionIntent(env)
     });
     this.ready = Boolean(
       this.pool &&

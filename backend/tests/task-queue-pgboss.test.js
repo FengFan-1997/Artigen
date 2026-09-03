@@ -8,6 +8,7 @@ const {
   RECONCILE_QUEUE,
   TASK_DEAD_LETTER_QUEUE,
   TASK_QUEUE,
+  bossConfig,
   taskQueueDriver
 } = require('../services/task-queue-pgboss');
 
@@ -94,6 +95,12 @@ test('queue driver defaults to legacy and rejects misspelled rollout flags', () 
   assert.throws(() => taskQueueDriver({ TASK_QUEUE_DRIVER: 'redis' }), {
     code: 'INVALID_TASK_QUEUE_DRIVER'
   });
+});
+
+test('DEV pg-boss startup uses the pre-provisioned schema without database CREATE', () => {
+  const databaseUrl = 'postgresql://runtime@localhost:5432/dev_artigen';
+  assert.equal(bossConfig({ DATABASE_URL: databaseUrl, APP_ENV: 'dev' }).createSchema, false);
+  assert.equal(bossConfig({ DATABASE_URL: databaseUrl, APP_ENV: 'production' }).createSchema, true);
 });
 
 test('pg-boss dispatch uses task id as job id and task id as the only payload', async () => {

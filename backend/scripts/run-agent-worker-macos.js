@@ -3,6 +3,7 @@
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const { resolveAgentWorkerPoolProfile } = require('./lib/agent-worker-pool-profile');
 
 const root = path.resolve(__dirname, '../..');
 const backendRoot = path.resolve(__dirname, '..');
@@ -24,9 +25,33 @@ if (dockerCheck.status !== 0) {
 }
 
 const workerEnv = { ...process.env };
+// Local database trust material is sourced only from the selected Keychain
+// service so an inherited shell value cannot change the worker trust root.
+delete workerEnv.PG_SSL_CA;
+delete workerEnv.PG_SSL_CA_BASE64;
 const subagentsEnabled = /^(1|true|yes|on)$/i.test(
   String(process.env.AGENT_SUBAGENTS_ENABLED || '').trim()
 );
+const modelProvider = String(
+  process.env.AGENT_MODEL_PROVIDER || 'cloudflare'
+)
+  .trim()
+  .toLowerCase();
+if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {
+  console.error('AGENT_WORKER_MODEL_PROVIDER_INVALID');
+  process.exit(78);
+}
+if (modelProvider !== 'cloudflare') {
+  console.error('AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED');
+  process.exit(78);
+}
+let workerPoolProfile;
+try {
+  workerPoolProfile = resolveAgentWorkerPoolProfile({ profile, env: process.env });
+} catch (error) {
+  console.error(error?.message || 'AGENT_WORKER_POOL_PROFILE_INVALID');
+  process.exit(78);
+}
 {
   const defaultService = profile === 'production'
     ? 'artigen-agent-production-worker'
@@ -46,6 +71,16 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     'S3_ACCESS_KEY_ID',
     'S3_SECRET_ACCESS_KEY'
   ];
+  const optionalSecretNames = ['PG_SSL_CA_BASE64'];
+  if (modelProvider === 'cloudflare') {
+    secretNames.push(
+      'CLOUDFLARE_ACCOUNT_ID',
+      'CLOUDFLARE_API_TOKEN',
+      'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+      'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+    );
+  }
+  if (profile === 'dev') secretNames.push('DEV_DATABASE_EXPECTED_HOST');
   if (
     profile === 'production' &&
     String(process.env.AGENT_BETA_MODE || '').trim() === 'owner-only-v1'
@@ -58,9 +93,24 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     if (!value) missing.push(name);
     else workerEnv[name] = value;
   }
+  for (const name of optionalSecretNames) {
+    const value = readMacOsKeychainSecret({ service, account: name });
+    if (value) workerEnv[name] = value;
+  }
   if (missing.length) {
     console.error(`AGENT_${profile.toUpperCase()}_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
     process.exit(78);
+  }
+  if (modelProvider === 'cloudflare') {
+    const accountId = String(workerEnv.CLOUDFLARE_ACCOUNT_ID || '').trim();
+    const freeAccountId = String(workerEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '').trim();
+    const attested = /^(1|true|yes|on)$/i.test(
+      String(workerEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || '').trim()
+    );
+    if (!/^[0-9a-f]{32}$/i.test(accountId) || !attested || freeAccountId !== accountId) {
+      console.error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
+      process.exit(78);
+    }
   }
   Object.assign(workerEnv, {
     NODE_ENV: 'production',
@@ -68,10 +118,53 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     AGENT_FEATURE_ENABLED: 'true',
     AGENT_WORKER_ENABLED: '1',
     AGENT_RUNTIME_DRIVER: 'live',
-    AGENT_MODEL_PROVIDER: 'siliconflow',
-    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+    AGENT_MODEL_PROVIDER: modelProvider,
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: modelProvider === 'cloudflare'
+      ? String(workerEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || 'false')
+      : 'false',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: modelProvider === 'cloudflare'
+      ? String(workerEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '')
+      : '',
     AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
     AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
+    AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: String(
+      process.env.AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION || '0'
+    ),
+    AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: String(
+      process.env.AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION || '0'
+    ),
+    AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: String(
+      process.env.AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION || '0.35'
+    ),
+    AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: String(
+      process.env.AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION || '0.75'
+    ),
+    AGENT_CLOUDFLARE_MIN_INTERVAL_MS: String(
+      process.env.AGENT_CLOUDFLARE_MIN_INTERVAL_MS || '2000'
+    ),
+    AGENT_MODEL_CONTEXT_TOKENS: String(process.env.AGENT_MODEL_CONTEXT_TOKENS || '16384'),
+    AGENT_RUNTIME_V2_ENABLED: profile === 'dev'
+      ? 'false'
+      : String(process.env.AGENT_RUNTIME_V2_ENABLED || 'false'),
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: profile === 'dev'
+      ? '0'
+      : String(process.env.AGENT_RUNTIME_V2_ROLLOUT_PERCENT || '0'),
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: profile === 'dev'
+      ? ''
+      : String(process.env.AGENT_RUNTIME_V2_CANARY_USER_IDS || ''),
+    DESIGN_PLANNER_V2_ENABLED: String(process.env.DESIGN_PLANNER_V2_ENABLED || 'false'),
+    AGENT_ADAPTIVE_REASONING_ENABLED: String(
+      process.env.AGENT_ADAPTIVE_REASONING_ENABLED || 'false'
+    ),
+    AGENT_PROJECT_MEMORY_ENABLED: String(process.env.AGENT_PROJECT_MEMORY_ENABLED || 'false'),
+    AGENT_PROVIDER_SCHEDULER_ENABLED: String(
+      process.env.AGENT_PROVIDER_SCHEDULER_ENABLED || 'false'
+    ),
+    AGENT_RUNTIME_ACTOR_PROFILE: String(
+      process.env.AGENT_RUNTIME_ACTOR_PROFILE || 'stable-v1'
+    ),
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local',
     AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
@@ -109,6 +202,12 @@ const subagentsEnabled = /^(1|true|yes|on)$/i.test(
     AGENT_MEMORY_MB: '4096',
     AGENT_DISK_GB: '10',
     AGENT_WORKER_CONCURRENCY: String(process.env.AGENT_WORKER_CONCURRENCY || '2'),
+    ...workerPoolProfile,
+    ...(profile === 'dev' ? {
+      DEV_DATABASE_EXPECTED_MAJOR: '18',
+      PG_SSL_REQUIRED: '1',
+      PG_SSL_REJECT_UNAUTHORIZED: '1'
+    } : {}),
     ASSET_STORAGE_DRIVER: 's3',
     S3_FORCE_PATH_STYLE: '1',
     CUA_PYTHON: path.join(backendRoot, '.venv-agent/bin/python'),

@@ -319,6 +319,8 @@ const normalizeAiDesignFailure = (error, signal) => {
     'CONTENT_POLICY_REJECTED',
     'INVALID_ASPECT_RATIO',
     'MODEL_PROFILE_UNAVAILABLE',
+    'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED',
+    'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN',
     'OUTPUT_INVALID',
     'OUTPUT_PERSIST_FAILED',
     'PROVIDER_TIMEOUT',
@@ -454,6 +456,10 @@ const createAiDesignExecutor = ({
         aspectRatio: normalizedOptions.aspectRatio,
         seed,
         images: inputs,
+        // Tool tasks are V1 execution records; keep their physical provider
+        // evidence attributable to the durable task id as well.
+        runId: taskId,
+        runtimeVersion: 1,
         signal
       });
       const providerMs = Date.now() - providerStartedAt;

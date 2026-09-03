@@ -30,7 +30,14 @@
     "eval:generation:blind": "node scripts/create-generation-blind-review.js",
     "eval:generation:score": "node scripts/score-generation-blind-review.js",
     "eval:agent:validate": "node scripts/validate-agent-quality-set.js",
+    "eval:agent:deterministic": "node scripts/run-agent-quality-set-deterministic.js",
+    "eval:agent:live": "node scripts/run-agent-live-eval.js",
+    "eval:agent:live:gate": "node scripts/create-agent-live-eval-gate.js",
+    "eval:agent:live:prepare-review": "node scripts/prepare-agent-live-blind-review.js",
+    "eval:agent:live:score": "node scripts/score-agent-live-blind-review.js",
+    "eval:agent:live:finalize": "node scripts/finalize-agent-live-eval.js",
     "eval:agent:trajectory": "node scripts/score-agent-trajectory.js",
+    "test:agent:chaos": "node scripts/run-agent-chaos.js",
     "doctor:agent": "node scripts/doctor-agent.js",
     "smoke:agent:dev-mac": "node scripts/run-agent-dev-smoke.js",
     "smoke:agent:dev-subagents-mac": "node scripts/run-agent-dev-subagent-hardening-smoke.js",
@@ -45,6 +52,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1087.0",
     "@aws-sdk/s3-request-presigner": "3.1087.0",
+    "ajv": "8.18.0",
     "busboy": "^1.6.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
@@ -53,11 +61,11 @@
     "https-proxy-agent": "^7.0.6",
     "node-fetch": "^3.3.2",
     "node-pg-migrate": "^8.0.4",
-    "nodemailer": "^6.10.0",
+    "nodemailer": "9.0.1",
     "pg": "^8.22.0",
     "pg-boss": "12.26.2",
     "sharp": "0.35.3",
-    "ws": "8.18.3",
+    "ws": "8.21.1",
     "zod": "^4.4.3"
   }
 }

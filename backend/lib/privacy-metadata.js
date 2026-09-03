@@ -106,6 +106,7 @@ const opaqueReference = (value, prefix = 'ref') => {
 const classifyProvider = (value) => {
   const raw = String(value || '').toLowerCase();
   if (raw.includes('siliconflow')) return 'siliconflow';
+  if (raw.includes('cloudflare')) return 'cloudflare';
   if (raw.includes('gemini') || raw.includes('google')) return 'gemini';
   if (raw.includes('openai')) return 'openai';
   if (raw.includes('local') || raw.includes('browser')) return 'local';
@@ -115,7 +116,7 @@ const classifyProvider = (value) => {
 
 const classifyModel = (value) => {
   const raw = String(value || '').toLowerCase();
-  const families = ['gemini', 'qwen', 'flux', 'kolors', 'stable-diffusion', 'sdxl', 'deepseek'];
+  const families = ['gpt-oss', 'cloudflare', 'gemini', 'qwen', 'flux', 'kolors', 'stable-diffusion', 'sdxl', 'deepseek'];
   return families.find((family) => raw.includes(family)) || (raw ? 'other' : '');
 };
 

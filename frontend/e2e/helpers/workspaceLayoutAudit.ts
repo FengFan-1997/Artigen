@@ -16,12 +16,79 @@ export const installDevEnvironmentBadge = async (page: Page) => page.evaluate(()
 export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptions = {}) => {
   const report = await page.locator('.agent-workspace-shell').evaluate((root, mobile) => {
     const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const visibleRegion = (element: Element) => {
+      const elementRect = element.getBoundingClientRect();
+      let left = elementRect.left;
+      let right = elementRect.right;
+      let top = elementRect.top;
+      let bottom = elementRect.bottom;
+      let xClipCause: 'none' | 'scrollable' | 'blocked' = 'none';
+      let yClipCause: 'none' | 'scrollable' | 'blocked' = 'none';
+      const clipX = (clipLeft: number, clipRight: number, scrollable: boolean) => {
+        const tightens = clipLeft > left + 0.5 || clipRight < right - 0.5;
+        if (tightens) {
+          if (xClipCause === 'none') xClipCause = scrollable ? 'scrollable' : 'blocked';
+          else if (xClipCause === 'scrollable' && !scrollable) xClipCause = 'blocked';
+        }
+        left = Math.max(left, clipLeft);
+        right = Math.min(right, clipRight);
+      };
+      const clipY = (clipTop: number, clipBottom: number, scrollable: boolean) => {
+        const tightens = clipTop > top + 0.5 || clipBottom < bottom - 0.5;
+        if (tightens) {
+          if (yClipCause === 'none') yClipCause = scrollable ? 'scrollable' : 'blocked';
+          else if (yClipCause === 'scrollable' && !scrollable) yClipCause = 'blocked';
+        }
+        top = Math.max(top, clipTop);
+        bottom = Math.min(bottom, clipBottom);
+      };
+      let ancestor = element.parentElement;
+      while (ancestor && ancestor !== root.parentElement) {
+        const style = getComputedStyle(ancestor);
+        const ancestorRect = ancestor.getBoundingClientRect();
+        if (['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)) {
+          clipX(
+            ancestorRect.left,
+            ancestorRect.right,
+            ['auto', 'scroll'].includes(style.overflowX) && ancestor.scrollWidth > ancestor.clientWidth + 1
+          );
+        }
+        if (['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)) {
+          clipY(
+            ancestorRect.top,
+            ancestorRect.bottom,
+            ['auto', 'scroll'].includes(style.overflowY) && ancestor.scrollHeight > ancestor.clientHeight + 1
+          );
+        }
+        ancestor = ancestor.parentElement;
+      }
+      clipX(0, viewport.width, false);
+      clipY(0, viewport.height, false);
+      return {
+        left,
+        right,
+        top,
+        bottom,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top),
+        recoverablyScrollableX: xClipCause === 'scrollable',
+        recoverablyScrollableY: yClipCause === 'scrollable',
+        xClipCause,
+        yClipCause
+      };
+    };
     const visible = (element: Element | null): element is HTMLElement => {
       if (!(element instanceof HTMLElement)) return false;
       if (element.closest('[inert], [aria-hidden="true"]')) return false;
+      if (typeof element.checkVisibility === 'function' && !element.checkVisibility({
+        checkOpacity: true,
+        checkVisibilityCSS: true
+      })) return false;
       const style = getComputedStyle(element);
       const box = element.getBoundingClientRect();
-      return style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+      const region = visibleRegion(element);
+      return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' &&
+        box.width > 0 && box.height > 0 && region.width > 0 && region.height > 0;
     };
     const box = (element: Element) => {
       const value = element.getBoundingClientRect();
@@ -207,6 +274,60 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
         .filter(({ rect }) => rect.width < 43.5 || rect.height < 43.5)
       : [];
 
+    const interactiveSelectors = [
+      'button:not([disabled]):not([tabindex="-1"])',
+      'a[href]',
+      'input:not([disabled]):not([type="hidden"])',
+      'textarea:not([disabled])',
+      '[role="tab"]:not([aria-disabled="true"])',
+      '[role="separator"][tabindex="0"]'
+    ].join(',');
+    const blockedInteractiveTargets = Array.from(root.querySelectorAll<HTMLElement>(interactiveSelectors))
+      .filter(visible)
+      .flatMap((control) => {
+        const rect = box(control);
+        const visibleRect = visibleRegion(control);
+        const visibleWidth = visibleRect.width;
+        const visibleHeight = visibleRect.height;
+        const widthCoverage = rect.width > 0 ? visibleWidth / rect.width : 0;
+        const heightCoverage = rect.height > 0 ? visibleHeight / rect.height : 0;
+        const viewportCoverage = widthCoverage * heightCoverage;
+        const insetX = Math.min(8, visibleWidth / 3);
+        const insetY = Math.min(8, visibleHeight / 3);
+        const points = [
+          [visibleRect.left + visibleWidth / 2, visibleRect.top + visibleHeight / 2],
+          [visibleRect.left + insetX, visibleRect.top + visibleHeight / 2],
+          [visibleRect.right - insetX, visibleRect.top + visibleHeight / 2],
+          [visibleRect.left + visibleWidth / 2, visibleRect.top + insetY],
+          [visibleRect.left + visibleWidth / 2, visibleRect.bottom - insetY]
+        ].filter(([x, y]) => x >= 0 && y >= 0 && x < viewport.width && y < viewport.height);
+        const label = control.closest('label');
+        const accepted = (hit: Element | null) => Boolean(
+          hit && (hit === control || control.contains(hit) || (label && label.contains(hit)))
+        );
+        const hits = points.map(([x, y]) => accepted(document.elementFromPoint(x, y)));
+        return points.length !== 5 ||
+          (widthCoverage < 0.98 && !visibleRect.recoverablyScrollableX) ||
+          (heightCoverage < 0.98 && !visibleRect.recoverablyScrollableY) ||
+          hits.some((hit) => !hit)
+          ? [{
+            label: control.getAttribute('aria-label') || control.textContent?.trim() || control.tagName.toLowerCase(),
+            rect,
+            viewportCoverage,
+            widthCoverage,
+            heightCoverage,
+            recoverablyScrollableX: visibleRect.recoverablyScrollableX,
+            recoverablyScrollableY: visibleRect.recoverablyScrollableY,
+            xClipCause: visibleRect.xClipCause,
+            yClipCause: visibleRect.yClipCause,
+            hitTags: points.map(([x, y]) => {
+              const hit = document.elementFromPoint(x, y);
+              return hit ? `${hit.tagName.toLowerCase()}.${String((hit as HTMLElement).className || '').slice(0, 80)}` : 'none';
+            })
+          }]
+          : [];
+      });
+
     return {
       documentOverflow: document.documentElement.scrollWidth > viewport.width + 1,
       clipped,
@@ -222,7 +343,8 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
       contentAxisDrift,
       resizableTextareas,
       paddedIconActions,
-      undersizedTouchTargets
+      undersizedTouchTargets,
+      blockedInteractiveTargets
     };
   }, Boolean(options.mobile));
 
@@ -241,4 +363,5 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
   expect(report.resizableTextareas, JSON.stringify(report, null, 2)).toEqual([]);
   expect(report.paddedIconActions, JSON.stringify(report, null, 2)).toEqual([]);
   expect(report.undersizedTouchTargets, JSON.stringify(report, null, 2)).toEqual([]);
+  expect(report.blockedInteractiveTargets, JSON.stringify(report, null, 2)).toEqual([]);
 };

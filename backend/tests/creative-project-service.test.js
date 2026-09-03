@@ -80,6 +80,20 @@ test('project and version contracts bound brand colors, lists and private prompt
       styleKeywords: ['clean'],
       prohibitedElements: ['watermarks'],
       logoAssetId: null
+    },
+    designMemory: {
+      audience: '',
+      goals: [],
+      tone: [],
+      visualKeywords: [],
+      mustInclude: [],
+      avoid: [],
+      outputPreferences: {
+        deliverables: [],
+        aspectRatio: '',
+        language: ''
+      },
+      factualConstraints: []
     }
   });
   assert.throws(() => cleanBrandProfile({ colors: ['#112233', '#445566'] }), {

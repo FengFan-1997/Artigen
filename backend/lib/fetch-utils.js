@@ -33,7 +33,7 @@ const buildFetchAgent = (targetUrl) => {
   }
 };
 
-const fetchWithTimeout = async (url, options, timeoutMs, signal) => {
+const fetchWithTimeout = async (url, options, timeoutMs, signal, fetchImpl = fetch) => {
   const controller = new AbortController();
   const resolvedTimeoutMs = (() => {
     const n = Number(timeoutMs);
@@ -61,7 +61,8 @@ const fetchWithTimeout = async (url, options, timeoutMs, signal) => {
     const agent = disableProxy
       ? requestOptions.agent
       : buildFetchAgent(url) || requestOptions.agent;
-    const res = await fetch(url, { ...requestOptions, signal: controller.signal, agent });
+    const transport = typeof fetchImpl === 'function' ? fetchImpl : fetch;
+    const res = await transport(url, { ...requestOptions, signal: controller.signal, agent });
     return res;
   } finally {
     clearTimeout(timeoutId);

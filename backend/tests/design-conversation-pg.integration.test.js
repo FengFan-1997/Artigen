@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const test = require('node:test');
 const { Pool } = require('pg');
@@ -25,19 +26,63 @@ test('PostgreSQL conversation lifecycle encrypts, isolates, plans, authorizes an
     DESIGN_CONVERSATION_ENABLED: 'true',
     DESIGN_CONVERSATION_WORKER_ENABLED: 'true',
     DESIGN_CONVERSATION_RETENTION_DAYS: '30',
+    DESIGN_PLANNER_V2_ENABLED: 'true',
+    AGENT_RUNTIME_V2_ENABLED: 'true',
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: String(userA),
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0',
+    AGENT_ADAPTIVE_REASONING_ENABLED: 'true',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
     AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'73'.repeat(32)}`
   };
+  const capturedModelRequests = [];
+  let plannerAttempts = 0;
   const service = createDesignConversationService({
     pool,
     env,
-    chatGenerate: async () => ({
-      text: JSON.stringify({
+    chatGenerate: async (input) => {
+      const { messages } = input;
+      capturedModelRequests.push(input);
+      const system = String(messages?.[0]?.content || '');
+      const body = String(messages?.at(-1)?.content || '');
+      if (system.includes('planning component')) {
+        plannerAttempts += 1;
+        if (plannerAttempts === 1) return { text: 'null' };
+        return { text: JSON.stringify({
+          goal: '调研公开资料，制作机密新品报告和演示文稿',
+          complexity: 'high',
+          confidence: 0.95,
+          constraints: ['不发布到外部平台'],
+          assumptions: [],
+          deliverables: ['report', 'presentation'],
+          allowedOrigins: [],
+          acceptanceCriteria: ['可编辑报告', 'PDF', 'PPTX'],
+          skillIds: ['report', 'presentation'],
+          plan: [
+            { id: 'produce', label: '制作报告和演示文稿', phase: 'production' },
+            { id: 'verify', label: '验证全部文件', phase: 'verification' }
+          ],
+          budget: { maxCredits: 50 }
+        }) };
+      }
+      if (body.includes('机密新品')) {
+        return { text: JSON.stringify({
+          routeKind: 'agent_run',
+          complexity: 'high',
+          confidence: 0.95,
+          reply: '已整理执行计划。',
+          deliverables: ['report', 'presentation'],
+          skillIds: ['report', 'presentation'],
+          steps: ['制作报告和演示文稿', '验证全部文件']
+        }) };
+      }
+      return { text: JSON.stringify({
         routeKind: 'tool_task',
         toolId: 'ai-design',
         operation: 'generate',
         reply: '信息已经足够，我会直接生成主视觉。'
-      })
-    })
+      }) };
+    }
   });
   let conversationId = null;
   try {
@@ -80,6 +125,14 @@ test('PostgreSQL conversation lifecycle encrypts, isolates, plans, authorizes an
     assert.equal(hydrated.executions[0].routeKind, 'tool_task');
     assert.equal(hydrated.executions[0].toolId, 'ai-design');
     assert.equal(hydrated.executions[0].sourceMessageId, hydrated.messages[1].messageId);
+    assert.ok(capturedModelRequests.length >= 1);
+    for (const request of capturedModelRequests) {
+      const expectedPromptHash = crypto.createHash('sha256')
+        .update(JSON.stringify({ messages: request.messages, tools: [] }))
+        .digest('hex');
+      assert.equal(request.promptHash, expectedPromptHash);
+      assert.ok(['router', 'planner'].includes(request.phase));
+    }
     const raised = await service.increaseExecutionBudget({
       userId: userA,
       conversationId,
@@ -97,6 +150,39 @@ test('PostgreSQL conversation lifecycle encrypts, isolates, plans, authorizes an
     );
     assert.equal(storedMessage.rowCount, 1);
     assert.doesNotMatch(storedMessage.rows[0].ciphertext.toString('utf8'), /柚子|主视觉/u);
+
+    await service.addMessage({
+      userId: userA,
+      conversationId,
+      message: '调研公开资料，制作机密新品报告和演示文稿',
+      attachments: []
+    });
+    let planned = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      planned = await service.getConversation({ userId: userA, conversationId });
+      if (planned.executions.length >= 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const agentExecution = planned.executions.at(-1);
+    assert.equal(agentExecution.routeKind, 'agent_run');
+    assert.equal(agentExecution.plan.taskSpec.goal, '调研公开资料，制作机密新品报告和演示文稿');
+    assert.deepEqual(agentExecution.plan.taskSpec.deliverables, ['report', 'presentation']);
+    const plannerRequests = capturedModelRequests.filter((request) => request.phase === 'planner');
+    assert.equal(plannerRequests.length, 2);
+    assert.deepEqual(plannerRequests.map((request) => request.enableThinking), [true, false]);
+    assert.notEqual(plannerRequests[0].promptHash, plannerRequests[1].promptHash);
+    for (const request of capturedModelRequests) {
+      const expectedPromptHash = crypto.createHash('sha256')
+        .update(JSON.stringify({ messages: request.messages, tools: [] }))
+        .digest('hex');
+      assert.equal(request.promptHash, expectedPromptHash);
+    }
+    const storedExecution = await pool.query(
+      'SELECT plan::text AS plan FROM design_executions WHERE id=$1',
+      [agentExecution.executionId]
+    );
+    assert.match(storedExecution.rows[0].plan, /_sealed/);
+    assert.doesNotMatch(storedExecution.rows[0].plan, /机密新品|不发布/u);
 
     const authorization = await service.grantAuthorization({
       userId: userA,
@@ -136,6 +222,94 @@ test('PostgreSQL conversation lifecycle encrypts, isolates, plans, authorizes an
       await pool.query('DELETE FROM design_conversations WHERE id=$1', [conversationId]).catch(() => {});
     }
     await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])', [[userA, userB]]).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('PostgreSQL planning lease heartbeat prevents a second worker from reclaiming a slow model call', {
+  skip: !enabled,
+  timeout: 10_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const inserted = await pool.query(
+    `INSERT INTO users (legacy_user_id,display_name,status)
+     VALUES ($1,$2,'active') RETURNING id`,
+    [`design-lease-${suffix}`, 'Design planner lease']
+  );
+  const userId = inserted.rows[0].id;
+  const env = {
+    ...process.env,
+    DESIGN_CONVERSATION_ENABLED: 'true',
+    DESIGN_CONVERSATION_WORKER_ENABLED: 'true',
+    DESIGN_CONVERSATION_PLANNING_LEASE_SECONDS: '1',
+    DESIGN_CONVERSATION_PLANNING_LEASE_HEARTBEAT_MS: '100',
+    AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'74'.repeat(32)}`
+  };
+  let modelCalls = 0;
+  const service = createDesignConversationService({
+    pool,
+    env,
+    workerId: `lease-owner-a:${suffix}`,
+    chatGenerate: async () => {
+      modelCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1400));
+      return { text: JSON.stringify({ routeKind: 'reply', reply: '已完成。' }) };
+    }
+  });
+  let conversationId = null;
+  try {
+    const conversation = await service.createConversation({ userId });
+    conversationId = conversation.conversationId;
+    const message = await service.addMessage({
+      userId,
+      conversationId,
+      message: '帮我判断这个视觉方向是否清晰',
+      attachments: []
+    });
+    let running = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const state = await pool.query(
+        `SELECT status,lease_expires_at,attempt_count
+           FROM design_planning_jobs WHERE message_id=$1`,
+        [message.messageId]
+      );
+      if (state.rows[0]?.status === 'running') {
+        running = state.rows[0];
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(running?.status, 'running');
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const stolen = await pool.query(
+      `UPDATE design_planning_jobs
+          SET lease_owner=$2,attempt_count=attempt_count+1
+        WHERE message_id=$1 AND status='running' AND lease_expires_at<=clock_timestamp()
+        RETURNING message_id`,
+      [message.messageId, `lease-owner-b:${suffix}`]
+    );
+    assert.equal(stolen.rowCount, 0);
+    let hydrated = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      hydrated = await service.getConversation({ userId, conversationId });
+      if (hydrated.executions.length) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const finalJob = await pool.query(
+      'SELECT status,attempt_count FROM design_planning_jobs WHERE message_id=$1',
+      [message.messageId]
+    );
+    assert.equal(hydrated.executions.length, 1);
+    assert.equal(finalJob.rows[0].status, 'succeeded');
+    assert.equal(Number(finalJob.rows[0].attempt_count), 1);
+    assert.equal(modelCalls, 1);
+  } finally {
+    service.stopWorker();
+    if (conversationId) {
+      await pool.query('DELETE FROM design_conversations WHERE id=$1', [conversationId]).catch(() => {});
+    }
+    await pool.query('DELETE FROM users WHERE id=$1', [userId]).catch(() => {});
     await pool.end();
   }
 });

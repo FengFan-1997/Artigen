@@ -71,8 +71,84 @@ const offlineShellScript = (script) => {
   return [
     `printf '%s' '${encoded}'`,
     'base64 -d',
-    'bwrap --unshare-net --die-with-parent --new-session --bind / / /bin/bash -se'
+    // Bubblewrap remaps the container user namespace. Rebinding the host-style
+    // /dev tree leaves character devices owned by an unmapped uid; they look
+    // mode 0666 but still reject ordinary redirects such as >/dev/null. Mount
+    // a fresh minimal device tree instead. This is both more isolated and
+    // restores the POSIX shell contract used by the artifact toolchain.
+    'bwrap --unshare-net --die-with-parent --new-session --bind / / --dev /dev /bin/bash -se'
   ].join(' | ');
+};
+
+const shellReceiptDirectory = (operationId) => {
+  const digest = crypto.createHash('sha256')
+    .update(String(operationId || ''))
+    .digest('hex');
+  return `/tmp/artigen-workspace/.artigen/shell-receipts/${digest}`;
+};
+
+const shellWithReceiptScript = (script, operationId) => {
+  const receiptDir = shellReceiptDirectory(operationId);
+  const offlineCommand = offlineShellScript(script);
+  return [
+    'set -u',
+    `receipt_dir='${receiptDir}'`,
+    'install -d -m 700 "$receipt_dir"',
+    'if test -f "$receipt_dir/done"; then',
+    '  base64 -d < "$receipt_dir/stdout.b64"',
+    '  base64 -d < "$receipt_dir/stderr.b64" >&2',
+    '  exit "$(cat "$receipt_dir/return-code")"',
+    'fi',
+    'if test -f "$receipt_dir/started"; then',
+    '  printf "%s\\n" "AGENT_SHELL_OPERATION_IN_PROGRESS" >&2',
+    '  exit 75',
+    'fi',
+    'printf "%s\\n" "started" > "$receipt_dir/started.tmp"',
+    'mv "$receipt_dir/started.tmp" "$receipt_dir/started"',
+    'started_epoch="$(date +%s)"',
+    'stdout_tmp="$receipt_dir/stdout.$$"',
+    'stderr_tmp="$receipt_dir/stderr.$$"',
+    'set +e',
+    `( ${offlineCommand} ) >"$stdout_tmp" 2>"$stderr_tmp"`,
+    'return_code=$?',
+    'set -e',
+    'finished_epoch="$(date +%s)"',
+    'duration_ms=$(( (finished_epoch - started_epoch) * 1000 ))',
+    'test "$duration_ms" -ge 0 || duration_ms=0',
+    'head -c 12000 "$stdout_tmp" | base64 | tr -d "\\n" > "$receipt_dir/stdout.b64.tmp"',
+    'head -c 4000 "$stderr_tmp" | base64 | tr -d "\\n" > "$receipt_dir/stderr.b64.tmp"',
+    'printf "%s\\n" "$return_code" > "$receipt_dir/return-code.tmp"',
+    'printf "%s\\n" "$duration_ms" > "$receipt_dir/duration-ms.tmp"',
+    'mv "$receipt_dir/stdout.b64.tmp" "$receipt_dir/stdout.b64"',
+    'mv "$receipt_dir/stderr.b64.tmp" "$receipt_dir/stderr.b64"',
+    'mv "$receipt_dir/return-code.tmp" "$receipt_dir/return-code"',
+    'mv "$receipt_dir/duration-ms.tmp" "$receipt_dir/duration-ms"',
+    'printf "%s\\n" "done" > "$receipt_dir/done.tmp"',
+    'mv "$receipt_dir/done.tmp" "$receipt_dir/done"',
+    'rm -f "$stdout_tmp" "$stderr_tmp"',
+    'base64 -d < "$receipt_dir/stdout.b64"',
+    'base64 -d < "$receipt_dir/stderr.b64" >&2',
+    'exit "$return_code"'
+  ].join('\n');
+};
+
+const shellReceiptProbeScript = (operationId) => {
+  const receiptDir = shellReceiptDirectory(operationId);
+  return [
+    'set -eu',
+    `receipt_dir='${receiptDir}'`,
+    'if test -f "$receipt_dir/done"; then',
+    '  printf "%s\\n" "consumed"',
+    '  cat "$receipt_dir/return-code"',
+    '  cat "$receipt_dir/duration-ms"',
+    '  cat "$receipt_dir/stdout.b64"; printf "\\n"',
+    '  cat "$receipt_dir/stderr.b64"; printf "\\n"',
+    'elif test -f "$receipt_dir/started"; then',
+    '  printf "%s\\n" "started"',
+    'else',
+    '  printf "%s\\n" "missing"',
+    'fi'
+  ].join('\n');
 };
 
 const subagentOfflineShellScript = ({ script, workspacePath, inputPaths = [] }) => {
@@ -223,13 +299,13 @@ class CuaSandboxProvider {
     if (local && (!this.config.sandboxImageRef || !this.config.sandboxImageHasToolchain)) {
       throw new ApiError(503, 'AGENT_SANDBOX_IMAGE_NOT_READY', { retryable: false });
     }
-    const suffix = crypto.createHash('sha256').update(String(runId)).digest('hex').slice(0, 18);
+    const sandboxRef = this.referenceForRun(runId);
     return this.bridge({
       config: this.config,
       payload: {
         command: 'create',
         local,
-        name: `artigen-${suffix}`,
+        name: sandboxRef,
         imageRef: this.config.sandboxImageRef,
         distro: 'ubuntu',
         version: '24.04',
@@ -251,6 +327,11 @@ class CuaSandboxProvider {
       // Docker unpacking and the desktop health check.
       timeoutMs: local ? 15 * 60_000 : 5 * 60_000
     });
+  }
+
+  referenceForRun(runId) {
+    const suffix = crypto.createHash('sha256').update(String(runId)).digest('hex').slice(0, 18);
+    return `artigen-${suffix}`;
   }
 
   desktopEndpoint(name) {
@@ -286,8 +367,45 @@ class CuaSandboxProvider {
     });
   }
 
-  shell(name, script, timeoutSeconds = 30) {
-    return this.systemShell(name, offlineShellScript(script), timeoutSeconds);
+  shell(name, script, timeoutSeconds = 30, { operationId = null } = {}) {
+    return this.systemShell(
+      name,
+      operationId
+        ? shellWithReceiptScript(script, operationId)
+        : offlineShellScript(script),
+      timeoutSeconds
+    );
+  }
+
+  async readShellReceipt(name, operationId) {
+    const result = await this.systemShell(name, shellReceiptProbeScript(operationId), 30);
+    if (!result?.success) {
+      throw new ApiError(502, 'AGENT_SHELL_RECEIPT_PROBE_FAILED', {
+        retryable: true
+      });
+    }
+    const lines = String(result.stdout || '').split(/\r?\n/);
+    const state = lines[0];
+    if (state === 'missing') return null;
+    if (state === 'started') return { state };
+    if (state !== 'consumed') {
+      throw new ApiError(502, 'AGENT_SHELL_RECEIPT_INVALID', { retryable: false });
+    }
+    const returnCode = Number(lines[1]);
+    const durationMs = Number(lines[2]);
+    if (!Number.isInteger(returnCode) || !Number.isFinite(durationMs) || durationMs < 0) {
+      throw new ApiError(502, 'AGENT_SHELL_RECEIPT_INVALID', { retryable: false });
+    }
+    return {
+      state,
+      durationMs: Math.min(120_000, durationMs),
+      result: {
+        success: returnCode === 0,
+        returnCode,
+        stdout: Buffer.from(String(lines[3] || ''), 'base64').toString('utf8').slice(0, 12_000),
+        stderr: Buffer.from(String(lines[4] || ''), 'base64').toString('utf8').slice(0, 4_000)
+      }
+    };
   }
 
   subagentShell(name, script, {
@@ -404,12 +522,16 @@ class FixtureSandboxProvider {
   async provision({ runId }) {
     return {
       ok: true,
-      name: `fixture-${runId}`,
+      name: this.referenceForRun(runId),
       displayUrl: null,
       width: 1440,
       height: 900,
       environment: 'linux'
     };
+  }
+
+  referenceForRun(runId) {
+    return `fixture-${String(runId)}`;
   }
 
   async probe() {
@@ -495,6 +617,9 @@ module.exports = {
   assertAllowedOrigins,
   assertComputerOrigins,
   offlineShellScript,
+  shellReceiptDirectory,
+  shellReceiptProbeScript,
+  shellWithReceiptScript,
   subagentOfflineShellScript,
   createAgentSandboxProvider,
   runBridge

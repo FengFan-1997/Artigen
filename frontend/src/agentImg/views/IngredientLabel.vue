@@ -12,7 +12,7 @@ import {
 } from '../logic/formatFactory/ingredientLabel';
 import { exportPdf } from '@/utils/export';
 import { validateIngredientSourceTrace } from '../logic/ingredientSourceTrace';
-import { getCurrentUserId, isLocalLoggedIn } from '@/login/session';
+import { bootstrapAuthSession, getCurrentUserId, isLocalLoggedIn } from '@/login/session';
 import {
   cancelToolTask,
   quoteToolTask,
@@ -310,13 +310,18 @@ const loadIngredientQuote = async () => {
   ingredientQuote.value = null;
   quoteError.value = '';
   uploadConsent.value = false;
-  if (!isAuthenticated()) {
-    quoteLoading.value = false;
-    quoteError.value = 'LOGIN_REQUIRED';
-    return;
-  }
   quoteLoading.value = true;
   try {
+    // The modal can open before the app-wide HttpOnly Cookie bootstrap has
+    // finished. Wait for that single shared bootstrap before deciding that the
+    // user is a guest; otherwise a fast click leaves an authenticated user with
+    // a permanently disabled quote action.
+    await bootstrapAuthSession();
+    if (controller.signal.aborted || quoteController !== controller) return;
+    if (!isAuthenticated()) {
+      quoteError.value = 'LOGIN_REQUIRED';
+      return;
+    }
     ingredientQuote.value = await quoteToolTask({
       toolId: 'ingredient-label',
       operation: 'ai-organize-source-text'

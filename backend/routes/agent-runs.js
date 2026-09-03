@@ -7,7 +7,7 @@ const {
   parseMultipartRequest
 } = require('./tool-tasks');
 const { getPool, isDatabaseConfigured } = require('../db/pool');
-const { agentFeatureEnabled } = require('../services/agent-config');
+const { agentFeatureEnabled, isProductionIntent } = require('../services/agent-config');
 const { createAgentRunService } = require('../services/agent-run-service');
 const { AgentQueuePublisher } = require('../services/agent-queue-service');
 const {
@@ -39,7 +39,7 @@ const desktopViewerEndpoint = (env, req) => {
   }
   if (
     !['ws:', 'wss:'].includes(parsed.protocol) ||
-    (String(env.NODE_ENV || '').trim() === 'production' && parsed.protocol !== 'wss:') ||
+    (isProductionIntent(env) && parsed.protocol !== 'wss:') ||
     parsed.username ||
     parsed.password ||
     parsed.search ||
@@ -173,6 +173,7 @@ const installAgentRoutes = (app, deps = {}) => {
       capabilities: body.capabilities,
       browserConfig: body.browserConfig,
       deliverables: body.deliverables,
+      taskSpec: body.taskSpec,
       maxCredits: body.maxCredits
     });
     res.json({ ok: true, quote });
@@ -188,6 +189,7 @@ const installAgentRoutes = (app, deps = {}) => {
       maxCredits: body.maxCredits,
       capabilities: body.capabilities,
       deliverables: body.deliverables,
+      taskSpec: body.taskSpec,
       browserConfig: body.browserConfig,
       projectId: body.projectId,
       idempotencyKey: req.headers['idempotency-key']

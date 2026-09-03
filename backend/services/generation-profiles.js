@@ -4,7 +4,7 @@ const { ApiError } = require('../lib/api-error');
 const STANDARD_PROFILE_ID = 'standard-v1';
 const PRODUCT_REFERENCE_PROFILE_ID = 'product-reference-v1';
 const GENERATION_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
-const GENERATION_DIRECTIONS_MODEL = 'Qwen/Qwen3-8B';
+const GENERATION_DIRECTIONS_MODEL = '@cf/openai/gpt-oss-120b';
 const SUPPORTED_ASPECT_RATIOS = Object.freeze(['1:1', '4:5', '3:4', '16:9', '9:16']);
 const IMAGE_SIZE_BY_ASPECT_RATIO = Object.freeze({
   '1:1': '1024x1024',

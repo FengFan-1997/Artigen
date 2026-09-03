@@ -3,12 +3,18 @@ const {
   SILICONFLOW_CHAT_COMPLETIONS_URL,
   SILICONFLOW_IMAGES_GENERATIONS_URL,
   FIXED_SILICONFLOW_CHAT_MODEL,
+  FIXED_CLOUDFLARE_CHAT_MODEL,
   FIXED_SILICONFLOW_IMAGE_MODEL,
+  CLOUDFLARE_ACCOUNT_ID,
+  CLOUDFLARE_API_TOKEN,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED,
   SILICONFLOW_TIMEOUT_MS,
   SILICONFLOW_REACTION_TIMEOUT_MS
 } = require('./config');
 
-const { fetchWithTimeout } = require('./fetch-utils');
+const { fetchWithTimeout, fetch: siliconFlowFetch } = require('./fetch-utils');
+const { isDeployedRuntime } = require('../services/agent-config');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -28,6 +34,55 @@ const withSiliconflowRateGate = async (fn) => {
   });
   siliconflowGate = chained.catch(() => undefined);
   return chained;
+};
+
+let cloudflareGate = Promise.resolve();
+let cloudflareNextAt = 0;
+const withCloudflareRateGate = async (fn) => {
+  const rpm = Math.max(1, Math.min(120, Number.parseInt(String(
+    process.env.AGENT_CLOUDFLARE_REQUESTS_PER_MINUTE || '30'
+  ), 10) || 30));
+  const configuredFloor = Math.max(0, Number.parseInt(String(
+    process.env.AGENT_CLOUDFLARE_MIN_INTERVAL_MS || '2000'
+  ), 10) || 0);
+  const intervalMs = Math.max(configuredFloor, Math.ceil(60_000 / rpm));
+  const chained = cloudflareGate.then(async () => {
+    const waitMs = Math.max(0, cloudflareNextAt - Date.now());
+    if (waitMs) await sleep(waitMs);
+    cloudflareNextAt = Date.now() + intervalMs;
+    return fn();
+  });
+  cloudflareGate = chained.catch(() => undefined);
+  return chained;
+};
+
+const cloudflareFailureCode = (error) => {
+  for (const failure of Array.isArray(error?.failures) ? error.failures : []) {
+    try {
+      const body = JSON.parse(String(failure?.bodyPreview || ''));
+      const code = body?.error?.code ?? body?.errors?.[0]?.code ?? body?.code;
+      if (code !== undefined && code !== null) return String(code).trim();
+    } catch {
+      // Provider previews are untrusted and may not be JSON.
+    }
+  }
+  return '';
+};
+
+const normalizeCloudflareFailure = (error) => {
+  const providerCode = cloudflareFailureCode(error);
+  const code = providerCode === '3036'
+    ? 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED'
+    : providerCode === '5035'
+      ? 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN'
+      : '';
+  if (!code) return error;
+  const normalized = new Error(code);
+  normalized.code = code;
+  normalized.retryable = false;
+  normalized.status = Number(error?.failures?.[0]?.status || 0) || undefined;
+  normalized.providerCode = providerCode;
+  return normalized;
 };
 
 const createSemaphore = (max, maxQueue) => {
@@ -120,22 +175,34 @@ const callSiliconFlowChat = async ({
   maxTokens,
   model,
   enableThinking,
+  responseFormat,
+  temperature,
+  topP,
+  topK,
+  minP,
   signal,
+  skipRateGate = false,
   credential = SILICONFLOW_API_KEY,
   chatUrl = SILICONFLOW_CHAT_COMPLETIONS_URL,
-  fetcher = fetchWithTimeout
+  fetcher = fetchWithTimeout,
+  allowedModel = FIXED_SILICONFLOW_CHAT_MODEL,
+  includeThinking = true,
+  providerName = 'SiliconFlow',
+  missingCredentialCode = 'MISSING_SILICONFLOW_API_KEY',
+  rateGate = withSiliconflowRateGate,
+  fetchImpl = siliconFlowFetch
 }) => {
   if (!credential) {
-    const err = new Error('MISSING_SILICONFLOW_API_KEY');
-    err.code = 'MISSING_SILICONFLOW_API_KEY';
+    const err = new Error(missingCredentialCode);
+    err.code = missingCredentialCode;
     throw err;
   }
 
-  return await withSiliconflowRateGate(async () => {
+  const invoke = async () => {
     const startedAt = Date.now();
     const requestedModel = String(model || '').trim();
-    const resolvedModel = requestedModel || FIXED_SILICONFLOW_CHAT_MODEL;
-    if (resolvedModel !== FIXED_SILICONFLOW_CHAT_MODEL) {
+    const resolvedModel = requestedModel || allowedModel;
+    if (resolvedModel !== allowedModel) {
       const err = new Error('MODEL_NOT_ALLOWED');
       err.code = 'MODEL_NOT_ALLOWED';
       throw err;
@@ -167,11 +234,21 @@ const callSiliconFlowChat = async ({
               model: resolvedModel,
               messages,
               max_tokens: typeof maxTokens === 'number' ? maxTokens : undefined,
-              enable_thinking: typeof enableThinking === 'boolean' ? enableThinking : undefined
+              enable_thinking: includeThinking && typeof enableThinking === 'boolean'
+                ? enableThinking
+                : undefined,
+              response_format: responseFormat === 'json_object'
+                ? { type: 'json_object' }
+                : undefined,
+              temperature: typeof temperature === 'number' ? temperature : undefined,
+              top_p: typeof topP === 'number' ? topP : undefined,
+              top_k: typeof topK === 'number' ? topK : undefined,
+              min_p: typeof minP === 'number' ? minP : undefined
             })
           },
           timeoutMs,
-          signal
+          signal,
+          fetchImpl
         );
 
         if (!response.ok) {
@@ -181,6 +258,7 @@ const callSiliconFlowChat = async ({
             status: response.status,
             statusText: response.statusText,
             elapsedMs: Date.now() - startedAt,
+            retryAfter: String(response.headers?.get?.('retry-after') || ''),
             bodyPreview: String(errBody || '').slice(0, 1800)
           });
           continue;
@@ -244,17 +322,68 @@ const callSiliconFlowChat = async ({
       }
     }
 
-    if (failures.length && failures.every((f) => Number(f?.status || 0) === 403 && isRpmLimit(f?.bodyPreview))) {
+    if (
+      providerName === 'SiliconFlow' &&
+      failures.length &&
+      failures.every((f) => Number(f?.status || 0) === 403 && isRpmLimit(f?.bodyPreview))
+    ) {
       const err = new Error('SILICONFLOW_RPM_LIMIT');
       err.code = 'SILICONFLOW_RPM_LIMIT';
       err.failures = failures;
+      err.retryAfter = failures.find((failure) => failure.retryAfter)?.retryAfter || '';
       throw err;
     }
 
-    const err = new Error('All SiliconFlow endpoints failed');
+    const err = new Error(`All ${providerName} endpoints failed`);
     err.failures = failures;
+    err.retryAfter = failures.find((failure) => failure.retryAfter)?.retryAfter || '';
     throw err;
-  });
+  };
+  return skipRateGate ? invoke() : rateGate(invoke);
+};
+
+const callCloudflareChat = async (input = {}) => {
+  const accountId = String(
+    input.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || CLOUDFLARE_ACCOUNT_ID || ''
+  ).trim();
+  if (!/^[0-9a-f]{32}$/i.test(accountId)) {
+    const error = new Error('CLOUDFLARE_ACCOUNT_ID_INVALID');
+    error.code = 'CLOUDFLARE_ACCOUNT_ID_INVALID';
+    throw error;
+  }
+  const attestedAccountId = String(
+    input.freeAccountId || process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID ||
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || ''
+  ).trim();
+  const freeAccountAttested = input.freeAccountAttested ??
+    process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED ??
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED;
+  if (
+    !/^(1|true|yes|on)$/i.test(String(freeAccountAttested || '')) ||
+    attestedAccountId !== accountId
+  ) {
+    const error = new Error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
+    error.code = 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED';
+    throw error;
+  }
+  const model = '@cf/openai/gpt-oss-120b';
+  try {
+    return await callSiliconFlowChat({
+      ...input,
+      model: input.model || model,
+      minP: undefined,
+      credential: input.credential || process.env.CLOUDFLARE_API_TOKEN ||
+        process.env.CLOUDFLARE_AUTH_TOKEN || CLOUDFLARE_API_TOKEN || '',
+      chatUrl: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`,
+      allowedModel: model,
+      includeThinking: false,
+      providerName: 'Cloudflare',
+      missingCredentialCode: 'MISSING_CLOUDFLARE_API_TOKEN',
+      rateGate: withCloudflareRateGate
+    });
+  } catch (error) {
+    throw normalizeCloudflareFailure(error);
+  }
 };
 
 const toSiliconflowImage = (v) => {
@@ -286,7 +415,8 @@ const callSiliconFlowImageGenerate = async ({
   signal,
   credential = SILICONFLOW_API_KEY,
   imageUrl = SILICONFLOW_IMAGES_GENERATIONS_URL,
-  fetcher = fetchWithTimeout
+  fetcher = fetchWithTimeout,
+  env = process.env
 }) => {
   return await imageGenerateLimiter.run(async () => {
     if (!credential) {
@@ -327,6 +457,28 @@ const callSiliconFlowImageGenerate = async ({
       throw err;
     }
     const resolvedModel = preferredModel || FIXED_SILICONFLOW_IMAGE_MODEL;
+    if (isDeployedRuntime(env)) {
+      let parsedImageUrl;
+      try {
+        parsedImageUrl = new URL(String(imageUrl || '').trim());
+      } catch {
+        parsedImageUrl = null;
+      }
+      if (
+        !parsedImageUrl ||
+        parsedImageUrl.protocol !== 'https:' ||
+        parsedImageUrl.origin !== 'https://api.siliconflow.cn' ||
+        parsedImageUrl.pathname.replace(/\/+$/, '') !== '/v1/images/generations' ||
+        parsedImageUrl.username ||
+        parsedImageUrl.password ||
+        parsedImageUrl.search ||
+        parsedImageUrl.hash
+      ) {
+        const err = new Error('PROVIDER_ENDPOINT_INVALID');
+        err.code = 'PROVIDER_ENDPOINT_INVALID';
+        throw err;
+      }
+    }
     const modelCandidates = [resolvedModel];
 
     const isModelNotFound = (raw) => {
@@ -380,6 +532,7 @@ const callSiliconFlowImageGenerate = async ({
           const err = new Error('SILICONFLOW_RPM_LIMIT');
           err.code = 'SILICONFLOW_RPM_LIMIT';
           err.status = 429;
+          err.retryAfter = String(response.headers?.get?.('retry-after') || '');
           err.bodyPreview = String(raw || '').slice(0, 1800);
           err.elapsedMs = Date.now() - startedAt;
           err.modelTried = String(modelName || '').trim();
@@ -389,6 +542,7 @@ const callSiliconFlowImageGenerate = async ({
         const err = new Error(`SILICONFLOW_IMAGE_${response.status}`);
         err.code = `SILICONFLOW_IMAGE_${response.status}`;
         err.status = response.status;
+        err.retryAfter = String(response.headers?.get?.('retry-after') || '');
         err.bodyPreview = String(raw || '').slice(0, 1800);
         err.elapsedMs = Date.now() - startedAt;
         err.modelTried = String(modelName || '').trim();
@@ -411,8 +565,29 @@ const callSiliconFlowImageGenerate = async ({
   }, signal);
 };
 
-const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model }) => {
-  const canSiliconflow = !!SILICONFLOW_API_KEY;
+const callTextGenerate = async ({
+  contents,
+  timeoutMs,
+  reactionMode,
+  model = FIXED_CLOUDFLARE_CHAT_MODEL,
+  chatGenerate = callCloudflareChat,
+  providerName = 'cloudflare',
+  // Server-side wrappers may resolve credentials from macOS Keychain rather
+  // than process.env.  Let the caller attest readiness without leaking the
+  // credential itself; legacy callers continue to use env-based detection.
+  providerReady
+}) => {
+  const requestedProvider = String(providerName || '').trim().toLowerCase();
+  const canSiliconflow = requestedProvider === 'siliconflow' && (
+    providerReady === undefined ? Boolean(SILICONFLOW_API_KEY) : providerReady === true
+  );
+  const cloudflareText = String(providerName || '').trim().toLowerCase() === 'cloudflare' ||
+    String(model || '').trim() === '@cf/openai/gpt-oss-120b';
+  const canCloudflare = cloudflareText && (
+    providerReady === undefined
+      ? Boolean(process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_AUTH_TOKEN || CLOUDFLARE_API_TOKEN)
+      : providerReady === true
+  );
   const sfTimeoutMs = Math.max(
     Math.max(1000, Number(timeoutMs || 0) || 0),
     reactionMode ? SILICONFLOW_REACTION_TIMEOUT_MS : SILICONFLOW_TIMEOUT_MS
@@ -433,15 +608,25 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model }) =>
 
   const runSiliconflow = async () => {
     const preferredModel = String(model || '').trim();
-    const resolvedModel = preferredModel || FIXED_SILICONFLOW_CHAT_MODEL;
-    const { text, usage, model: modelUsed, usedUrl } = await callSiliconFlowChat({
+    const cloudflareText = String(providerName || '').trim().toLowerCase() === 'cloudflare' ||
+      String(preferredModel || '').trim() === '@cf/openai/gpt-oss-120b';
+    const resolvedModel = preferredModel || (cloudflareText
+      ? '@cf/openai/gpt-oss-120b'
+      : FIXED_SILICONFLOW_CHAT_MODEL);
+    const { text, usage, model: modelUsed, usedUrl } = await chatGenerate({
       messages: toSiliconflowMessages(),
       timeoutMs: sfTimeoutMs,
       maxTokens: reactionMode ? 512 : 2048,
       model: resolvedModel,
       enableThinking: false
     });
-    return { text, provider: 'siliconflow', usage, model: modelUsed, usedUrl };
+    return {
+      text,
+      provider: cloudflareText ? 'cloudflare' : 'siliconflow',
+      usage,
+      model: modelUsed,
+      usedUrl
+    };
   };
 
   const isRetryableSf = (e) => {
@@ -453,7 +638,14 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model }) =>
   };
 
   return await textGenerateLimiter.run(async () => {
-    if (canSiliconflow) {
+    if (cloudflareText && providerReady === false) {
+      const error = new Error('AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED');
+      error.code = 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED';
+      error.status = 503;
+      error.retryable = false;
+      throw error;
+    }
+    if (canSiliconflow || canCloudflare) {
       try {
         return await runSiliconflow();
       } catch (e0) {
@@ -483,6 +675,7 @@ const callTextGenerate = async ({ contents, timeoutMs, reactionMode, model }) =>
 };
 
 module.exports = {
+  callCloudflareChat,
   callSiliconFlowChat,
   callSiliconFlowImageGenerate,
   callTextGenerate,

@@ -161,7 +161,7 @@ flowchart TB
     Q --> W["Independent Agent Worker"]
 
     W <-->|"events + encrypted checkpoints"| PG
-    W --> MODEL["Qwen3 planner / parent / children"]
+    W --> MODEL["Cloudflare GPT-OSS 120B text planner / parent / children"]
     W --> IMAGE["Kolors image generation"]
     W --> CUA["CUA Docker sandbox"]
 
@@ -219,7 +219,7 @@ pnpm check
 | Data and queue | PostgreSQL 16, pg-boss |
 | Storage | Private S3-compatible object storage |
 | Agent runtime | Independent Worker, Docker/CUA, Chromium/noVNC, LibreOffice |
-| Models | Qwen3-8B, Kwai-Kolors/Kolors |
+| Models | Cloudflare `@cf/openai/gpt-oss-120b` (all non-image text), Kwai-Kolors/Kolors (all images) |
 | Quality | Vitest, Node test runner, Playwright, GitHub Actions |
 
 ## Repository layout

@@ -2,6 +2,10 @@
 
 const crypto = require('node:crypto');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('./lib/agent-dev-model-profile');
 
 const KEYCHAIN_SERVICE = String(
   process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-dev-worker'
@@ -10,6 +14,9 @@ if (KEYCHAIN_SERVICE !== 'artigen-agent-dev-worker') {
   console.error('AGENT_DEV_SMOKE_KEYCHAIN_SERVICE_INVALID');
   process.exit(64);
 }
+
+const smokeModelProfile = resolveAgentSmokeModelProfile({ env: process.env, production: false });
+const modelProvider = smokeModelProfile.provider;
 
 const secretNames = [
   'DATABASE_URL',
@@ -23,12 +30,25 @@ const secretNames = [
   'S3_ACCESS_KEY_ID',
   'S3_SECRET_ACCESS_KEY'
 ];
+if (modelProvider === 'cloudflare') {
+  secretNames.push(
+    'CLOUDFLARE_ACCOUNT_ID',
+    'CLOUDFLARE_API_TOKEN',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+  );
+}
 const missing = [];
 for (const name of secretNames) {
   const value = readMacOsKeychainSecret({ service: KEYCHAIN_SERVICE, account: name });
   if (!value) missing.push(name);
   else process.env[name] = value;
 }
+const pgSslCaBase64 = readMacOsKeychainSecret({
+  service: KEYCHAIN_SERVICE,
+  account: 'PG_SSL_CA_BASE64'
+});
+if (pgSslCaBase64) process.env.PG_SSL_CA_BASE64 = pgSslCaBase64;
 if (missing.length) {
   console.error(`AGENT_DEV_SMOKE_KEYCHAIN_INCOMPLETE:${missing.join(',')}`);
   process.exit(78);
@@ -36,11 +56,21 @@ if (missing.length) {
 
 Object.assign(process.env, {
   NODE_ENV: 'production',
+  APP_ENV: 'dev',
+  PG_SSL_REQUIRED: '1',
+  PG_SSL_REJECT_UNAUTHORIZED: '1',
+  DEV_DATABASE_EXPECTED_MAJOR: '18',
   AGENT_FEATURE_ENABLED: 'true',
   AGENT_WORKER_ENABLED: '1',
   AGENT_RUNTIME_DRIVER: 'live',
-  AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: smokeModelProfile.provider,
+  AGENT_MODEL_NAME: smokeModelProfile.model,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: modelProvider === 'cloudflare'
+    ? String(process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || 'false')
+    : 'false',
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: modelProvider === 'cloudflare'
+    ? String(process.env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '').trim()
+    : '',
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
   AGENT_SANDBOX_PROVIDER: 'cua',
@@ -56,12 +86,14 @@ Object.assign(process.env, {
   ASSET_STORAGE_DRIVER: 's3',
   S3_FORCE_PATH_STYLE: '1'
 });
+applyAgentSmokeModelProfile(process.env, smokeModelProfile);
 
 const { getPool } = require('../db/pool');
 const { createAgentRunService, TERMINAL_STATUSES } = require('../services/agent-run-service');
 const { AgentQueuePublisher } = require('../services/agent-queue-service');
 const assets = require('../services/asset-storage');
 
+const REQUIRED_MIGRATION = '026_agent_live_eval_capacity_counter';
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const readBody = async (body, maximumBytes) => {
@@ -128,15 +160,31 @@ const selectSmokeUser = async (pool) => {
 
 const assertRemoteReadiness = async ({ pool, runService }) => {
   const migration = await pool.query(
-    `SELECT COALESCE(max(name),'') AS name FROM pgmigrations`
+    'SELECT EXISTS (SELECT 1 FROM pgmigrations WHERE name=$1) AS applied',
+    [REQUIRED_MIGRATION]
   );
-  const migrationName = String(migration.rows[0]?.name || '');
-  if (!migrationName.startsWith('020_')) {
-    throw new Error(`AGENT_DEV_SMOKE_MIGRATION_NOT_READY:${migrationName || 'none'}`);
+  if (migration.rows[0]?.applied !== true) {
+    throw new Error(`AGENT_DEV_SMOKE_MIGRATION_NOT_READY:${REQUIRED_MIGRATION}`);
   }
   const status = await runService.getServiceStatus();
+  const durability = status.durability || {};
+  const durabilityReady = [
+    'pricingReady',
+    'leaseEpochReady',
+    'modelReceiptsReady',
+    'toolReceiptsReady',
+    'budgetReservationsReady'
+  ].every((key) => durability[key] === true);
+  const providerSchedulerReady = status.providerScheduler?.ready === true;
+  // Image output is always SiliconFlow/Kolors even when Agent text is
+  // Cloudflare. Require its public capability and credential before creating
+  // a paid smoke Run so a text-only readiness result cannot mask a broken
+  // image path.
+  const imageProviderReady = status.imageGenerationPublicEnabled === true &&
+    Boolean(String(process.env.SILICONFLOW_API_KEY || '').trim());
   const ready = status.enabled && status.workerOnline && status.browserReady &&
-    status.egressVerified && status.desktopRelayReady && status.browserPublicEnabled;
+    status.egressVerified && status.desktopRelayReady && status.browserPublicEnabled &&
+    durabilityReady && providerSchedulerReady && imageProviderReady;
   if (!ready) {
     throw new Error(`AGENT_DEV_SMOKE_RUNTIME_NOT_READY:${JSON.stringify({
       enabled: status.enabled,
@@ -144,7 +192,11 @@ const assertRemoteReadiness = async ({ pool, runService }) => {
       browserReady: status.browserReady,
       egressVerified: status.egressVerified,
       desktopRelayReady: status.desktopRelayReady,
-      browserPublicEnabled: status.browserPublicEnabled
+      browserPublicEnabled: status.browserPublicEnabled,
+      imageGenerationPublicEnabled: status.imageGenerationPublicEnabled,
+      imageProviderReady,
+      providerScheduler: status.providerScheduler,
+      durability
     })}`);
   }
   return status;
@@ -252,7 +304,7 @@ const main = async () => {
       event: 'smoke.succeeded',
       runId,
       status: run.status,
-      model: run.model?.name || 'Qwen/Qwen3-8B',
+      model: run.model?.name || smokeModelProfile.model,
       artifacts: verified
     }));
   } finally {

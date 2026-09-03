@@ -42,6 +42,7 @@ const { markProviderDispatched } = require('../services/task-queue-service');
 const { createTaskQueue } = require('../services/task-queue-pgboss');
 const { hasPayloadKey, resolvePayloadKey } = require('../services/task-payload-service');
 const { checkStorage } = require('../services/readiness-service');
+const { isProductionIntent } = require('../services/agent-config');
 
 const GLOBAL_MAX_FILES = 50;
 const GLOBAL_MAX_FILE_BYTES = 200 * 1024 * 1024;
@@ -399,7 +400,7 @@ const assertProductionAiDesignStorageReady = async ({
   adapter
 }) => {
   if (
-    String(env.NODE_ENV || '').trim().toLowerCase() !== 'production' ||
+    !isProductionIntent(env) ||
     String(tool?.id || '').trim() !== 'ai-design' ||
     !isPaidOperation(tool, operation)
   ) {

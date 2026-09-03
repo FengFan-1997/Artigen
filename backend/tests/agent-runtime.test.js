@@ -1,7 +1,8 @@
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const test = require('node:test');
-const agentQualitySet = require('../evaluation/agent-quality-set.json');
+const agentQualityManifest = require('../evaluation/agent-quality-set.json');
+const agentQualitySet = agentQualityManifest.cases;
 
 const { ApiError } = require('../lib/api-error');
 const {
@@ -21,16 +22,22 @@ const {
 } = require('../services/agent-policy-service');
 const {
   assertAgentRuntimeReady,
-  getAgentConfig
+  getAgentConfig,
+  resolveAgentRuntimeAssignment
 } = require('../services/agent-config');
+const { desktopViewerEndpoint } = require('../routes/agent-runs');
+const { relayEndpoint } = require('../services/agent-desktop-relay-client');
 const {
   AgentWaitingForUser,
   ARTIFACT_MIME_TYPES,
+  CloudflareAgentModelProvider,
   FUNCTION_TOOLS,
   OllamaAgentModelProvider,
   OpenAiAgentModelProvider,
   SiliconFlowAgentModelProvider,
+  assertPosixShellScript,
   buildInstructions,
+  cloudflareUsageCredits,
   functionToolsForProfile,
   normalizeReportPdfToolAlias,
   ollamaFileTools,
@@ -76,6 +83,204 @@ test('parent maps the Qwen report helper alias to one bounded offline shell call
     }),
     toolProfile: 'parent'
   }), /AGENT_MODEL_TOOL_ARGUMENTS_INVALID/);
+});
+
+test('sandbox_shell rejects obvious raw language source before execution and accepts an explicit Bash wrapper', () => {
+  assert.throws(
+    () => assertPosixShellScript("mkdir -p /tmp/artigen-workspace/report\\npython3 <<'PY'\\nimport pathlib\\nPY"),
+    (error) => (
+      error.code === 'AGENT_SHELL_SCRIPT_ESCAPED_NEWLINES' &&
+      /literal backslash\+n/u.test(error.details?.correction || '') &&
+      /do not double-escape/u.test(error.details?.correction || '')
+    )
+  );
+  assert.throws(
+    () => assertPosixShellScript('import pandas\nprint(pandas.__version__)'),
+    { code: 'AGENT_SHELL_SCRIPT_TYPE_INVALID' }
+  );
+  assert.throws(
+    () => assertPosixShellScript('import pandas as pd\ndf = pd.DataFrame()'),
+    (error) => (
+      error.code === 'AGENT_SHELL_SCRIPT_TYPE_INVALID' &&
+      error.details?.expected === 'posix_bash' &&
+      /python3 <<'PY'/u.test(error.details?.correction || '')
+    )
+  );
+  assert.throws(
+    () => assertPosixShellScript("const fs = require('node:fs');\nfs.writeFileSync('x','y');"),
+    { code: 'AGENT_SHELL_SCRIPT_TYPE_INVALID' }
+  );
+  assert.equal(
+    assertPosixShellScript("python3 <<'PY'\nimport pandas as pd\nprint(pd.__version__)\nPY"),
+    "python3 <<'PY'\nimport pandas as pd\nprint(pd.__version__)\nPY"
+  );
+  assert.equal(
+    assertPosixShellScript("printf '%s\\n' 'one' 'two'"),
+    "printf '%s\\n' 'one' 'two'"
+  );
+});
+
+test('SiliconFlow corrects double-escaped heredoc newlines before shell dispatch', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-escaped-shell-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-escaped-shell-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    toolCall('plan', 'update_plan', {
+      explanation: 'Create and verify the report.',
+      steps: [
+        { label: 'Create the report', status: 'in_progress' },
+        { label: 'Verify the report', status: 'pending' }
+      ]
+    }),
+    toolCall('bad', 'sandbox_shell', {
+      script: "mkdir -p /tmp/artigen-workspace/report\\npython3 <<'PY'\\nprint('report')\\nPY",
+      purpose: 'Create the report'
+    }),
+    toolCall('good', 'sandbox_shell', {
+      script: "mkdir -p /tmp/artigen-workspace/report\npython3 <<'PY'\nprint('report')\nPY",
+      purpose: 'Create the report'
+    }),
+    {
+      id: 'chat-escaped-shell-final',
+      choices: [{ message: { role: 'assistant', content: 'The report is ready.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  let shellCalls = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+
+  const result = await provider.execute({
+    objective: 'Create a small offline report.',
+    capabilities: { files: true, shell: true },
+    maxSteps: 8,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      shell: async () => {
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: 'ok', stderr: '' };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+
+  assert.equal(result.text, 'The report is ready.');
+  assert.equal(shellCalls, 1);
+  assert.ok(requests[2].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('AGENT_SHELL_SCRIPT_ESCAPED_NEWLINES') &&
+    message.content.includes('do not double-escape')
+  )));
+});
+
+test('SiliconFlow corrects one locally denied shell before any remote effect', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-shell-policy-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-shell-policy-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    toolCall('plan', 'update_plan', {
+      explanation: 'Create and verify the workbook.',
+      steps: [
+        { label: 'Create workbook', status: 'in_progress' },
+        { label: 'Verify workbook', status: 'pending' }
+      ]
+    }),
+    toolCall('denied', 'sandbox_shell', {
+      script: 'pip install openpyxl',
+      purpose: 'Install a package'
+    }),
+    toolCall('offline', 'sandbox_shell', {
+      script: "python3 <<'PY'\nimport openpyxl\nprint(openpyxl.__version__)\nPY",
+      purpose: 'Use the preinstalled package'
+    }),
+    {
+      id: 'chat-shell-policy-final',
+      choices: [{ message: { role: 'assistant', content: 'The workbook is ready.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  let remoteEffects = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+
+  const result = await provider.execute({
+    objective: 'Create a small offline workbook.',
+    capabilities: { files: true, shell: true },
+    maxSteps: 8,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      shell: async (script) => {
+        assertSafeShell(script);
+        remoteEffects += 1;
+        return { success: true, returnCode: 0, stdout: 'ok', stderr: '' };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+
+  assert.equal(result.text, 'The workbook is ready.');
+  assert.equal(remoteEffects, 1);
+  assert.ok(requests[2].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('AGENT_SHELL_COMMAND_FORBIDDEN') &&
+    message.content.includes('preinstalled offline toolchain')
+  )));
 });
 
 test('SiliconFlow executes the report helper alias without another model repair turn', async () => {
@@ -180,6 +385,9 @@ const {
   assertComputerOrigins,
   assertSafeShell,
   offlineShellScript,
+  shellReceiptDirectory,
+  shellReceiptProbeScript,
+  shellWithReceiptScript,
   subagentOfflineShellScript
 } = require('../services/agent-sandbox-provider');
 const {
@@ -222,10 +430,57 @@ const {
   normalizeDeliverables,
   normalizeDelegatedTasks,
   nextConsecutiveFailureCount,
+  usageCreditsForRun,
+  isConfiguredModelProvider,
+  isLegacyRunWithoutPricingSnapshot,
   objectivePublicFields,
   publicRun,
   publicSubagent
 } = require('../services/agent-run-service');
+
+test('legacy pricing detection covers non-empty pre-migration Runtime V2 summaries', () => {
+  assert.equal(isLegacyRunWithoutPricingSnapshot({
+    runtime_version: 2,
+    runtime_profile_summary: {
+      constitution: 'legacy-v2',
+      modelConfig: { provider: 'cloudflare', model: '@cf/openai/gpt-oss-120b' }
+    }
+  }), true);
+  assert.equal(isLegacyRunWithoutPricingSnapshot({
+    runtime_version: 2,
+    runtime_profile_summary: {
+      modelConfig: {
+        pricingSnapshot: {
+          provider: 'cloudflare',
+          model: '@cf/openai/gpt-oss-120b',
+          inputCreditsPerMillion: 0.35,
+          outputCreditsPerMillion: 0.75
+        }
+      }
+    }
+  }), false);
+});
+
+test('Cloudflare quote readiness requires the attested free account identity', () => {
+  const accountId = 'a'.repeat(32);
+  const base = {
+    runtimeDriver: 'live',
+    modelProvider: 'cloudflare',
+    cloudflareAccountId: accountId,
+    cloudflareApiToken: 'token',
+    cloudflareFreeAccountId: accountId
+  };
+  assert.equal(isConfiguredModelProvider(base), false);
+  assert.equal(isConfiguredModelProvider({
+    ...base,
+    cloudflareFreeAccountAttested: true
+  }), true);
+  assert.equal(isConfiguredModelProvider({
+    ...base,
+    cloudflareFreeAccountAttested: true,
+    cloudflareFreeAccountId: 'b'.repeat(32)
+  }), false);
+});
 const {
   evaluateAgentTrajectory
 } = require('../services/agent-trajectory-evaluator');
@@ -236,12 +491,35 @@ const {
   createAgentCostMeter,
   createSerializedCostPersister,
   buildSubagentObjective,
+  LeaseLostDuringWorkError,
   normalizeSubagentShellScript,
+  resolveToolReceiptRequestSha256,
   parentVerifiedSubagentFiles,
   restrictDelegatedTaskInputs,
   runWithLeaseHeartbeat,
   resolveStagedImageReferences
 } = require('../services/agent-worker-service');
+
+test('tool receipts reject changed current-format requests but preserve legacy recovery', () => {
+  const priorHash = crypto.createHash('sha256').update('prior').digest('hex');
+  const changedHash = crypto.createHash('sha256').update('changed').digest('hex');
+  assert.throws(
+    () => resolveToolReceiptRequestSha256({
+      priorReceipt: { requestSha256: priorHash },
+      computedRequestSha256: changedHash
+    }),
+    (error) => error?.code === 'AGENT_TOOL_RECEIPT_CONFLICT' && error?.retryable === false
+  );
+  assert.equal(resolveToolReceiptRequestSha256({
+    priorReceipt: { requestSha256: priorHash },
+    computedRequestSha256: changedHash,
+    legacyReceipt: true
+  }), priorHash);
+  assert.equal(resolveToolReceiptRequestSha256({
+    priorReceipt: null,
+    computedRequestSha256: changedHash
+  }), changedHash);
+});
 
 test('subagent objective exposes only virtual workspace paths to Qwen3', () => {
   const inputPath = '/tmp/artigen-workspace/inputs/11111111-1111-4111-8111-111111111111.png';
@@ -366,8 +644,18 @@ const {
 } = require('../services/agent-image-service');
 const {
   AgentQueueWorker,
-  attachBossErrorLogging
+  attachBossErrorLogging,
+  bossConfig: agentBossConfig
 } = require('../services/agent-queue-service');
+
+test('DEV Agent queue uses the pre-provisioned pg-boss schema without database CREATE', () => {
+  const databaseUrl = 'postgresql://runtime@localhost:5432/dev_artigen';
+  assert.equal(agentBossConfig({ DATABASE_URL: databaseUrl, APP_ENV: 'dev' }).createSchema, false);
+  assert.equal(
+    agentBossConfig({ DATABASE_URL: databaseUrl, APP_ENV: 'production' }).createSchema,
+    true
+  );
+});
 
 const encryptionEnv = {
   AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`
@@ -544,6 +832,21 @@ test('Agent run service exposes saved browser session revocation', () => {
   const pool = { connect: async () => { throw new Error('not called'); } };
   const service = createAgentRunService({ pool, env: encryptionEnv });
   assert.equal(typeof service.deleteBrowserProfile, 'function');
+});
+
+test('targeted expired-run recovery remains internal to test and DEV processes', async () => {
+  const pool = {
+    connect: async () => { throw new Error('not called'); },
+    query: async () => { throw new Error('not called'); }
+  };
+  const service = createAgentRunService({
+    pool,
+    env: { ...encryptionEnv, NODE_ENV: 'production', APP_ENV: 'production' }
+  });
+  await assert.rejects(
+    service.recoverExpiredRun({ runId: '11111111-1111-4111-8111-111111111111' }),
+    /AGENT_TARGETED_RECOVERY_FORBIDDEN/
+  );
 });
 
 test('owner-only Agent Beta allows configured database users and denies everyone else', async () => {
@@ -892,7 +1195,7 @@ test('long sandbox or model work renews the run lease until work completes', asy
 
 test('sandbox provisioning reports a lost lease with its provisioned sandbox for cleanup', async () => {
   let heartbeats = 0;
-  const outcome = await runWithLeaseHeartbeat({
+  await assert.rejects(runWithLeaseHeartbeat({
     intervalMs: 100,
     refresh: async () => {
       heartbeats += 1;
@@ -900,23 +1203,58 @@ test('sandbox provisioning reports a lost lease with its provisioned sandbox for
     },
     work: async () => {
       await new Promise((resolve) => setTimeout(resolve, 140));
-      return { name: 'sandbox-orphan' };
-    }
+      return { name: 'sandbox-orphan', secretResult: 'must-not-escape' };
+    },
+    cleanupRefsFromResult: (value) => ({ sandboxRef: value?.name })
+  }), (error) => {
+    assert.ok(error instanceof LeaseLostDuringWorkError);
+    assert.equal(error.code, 'AGENT_LEASE_LOST');
+    assert.deepEqual(error.cleanupRefs, { sandboxRef: 'sandbox-orphan' });
+    assert.equal(JSON.stringify(error).includes('must-not-escape'), false);
+    return true;
   });
-  assert.deepEqual(outcome.value, { name: 'sandbox-orphan' });
-  assert.equal(outcome.leaseError?.code, 'AGENT_LEASE_LOST');
+});
+
+test('lease loss wins over a simultaneous work failure and keeps the underlying code diagnostic-only', async () => {
+  let refreshes = 0;
+  await assert.rejects(runWithLeaseHeartbeat({
+    intervalMs: 5_000,
+    refresh: async () => {
+      refreshes += 1;
+      if (refreshes === 2) {
+        const error = new Error('database timeout');
+        error.code = 'ETIMEDOUT';
+        throw error;
+      }
+    },
+    work: async () => {
+      throw new ApiError(502, 'AGENT_SANDBOX_PROVIDER_FAILED');
+    }
+  }), (error) => {
+    assert.ok(error instanceof LeaseLostDuringWorkError);
+    assert.equal(error.code, 'AGENT_LEASE_LOST');
+    assert.equal(error.causeCode, 'ETIMEDOUT');
+    assert.equal(error.status, 409);
+    return true;
+  });
 });
 
 test('worker reconciliation destroys terminal sandboxes and clears their public references', async () => {
   const destroyed = [];
   const marked = [];
+  const receiptScopes = [];
   const service = createAgentWorkerService({
     pool: {},
     runService: {
       expireStaleRuns: async () => 1,
+      reconcileTerminalReceipts: async (input) => {
+        receiptScopes.push(input);
+        return { runsReconciled: 1, receiptsResolved: 2 };
+      },
       listTerminalSandboxes: async () => [{
         runId: '11111111-1111-4111-8111-111111111111',
-        sandboxRef: 'sandbox-terminal-1'
+        sandboxRef: null,
+        derivedReference: true
       }],
       markSandboxDestroyed: async (entry) => {
         marked.push(entry);
@@ -929,6 +1267,7 @@ test('worker reconciliation destroys terminal sandboxes and clears their public 
       AGENT_SANDBOX_PROVIDER: 'fixture'
     },
     sandbox: {
+      referenceForRun: (runId) => `sandbox-terminal-${runId.endsWith('1') ? '1' : 'x'}`,
       destroy: async (sandboxRef) => {
         destroyed.push(sandboxRef);
         return { ok: true };
@@ -939,24 +1278,81 @@ test('worker reconciliation destroys terminal sandboxes and clears their public 
     imageService: {}
   });
 
-  const result = await service.expireStaleRuns({ limit: 10 });
+  const userIds = ['11111111-1111-4111-8111-111111111119'];
+  const result = await service.expireStaleRuns({ limit: 10, userIds });
   assert.deepEqual(destroyed, ['sandbox-terminal-1']);
   assert.deepEqual(marked, [{
     runId: '11111111-1111-4111-8111-111111111111',
-    sandboxRef: 'sandbox-terminal-1'
+    sandboxRef: 'sandbox-terminal-1',
+    derivedReference: true
   }]);
   assert.deepEqual(result.sandboxCleanup, { destroyed: 1, failed: 0 });
+  assert.deepEqual(result.receiptCleanup, { runsReconciled: 1, receiptsResolved: 2 });
+  assert.deepEqual(receiptScopes, [{ limit: 10, userIds }]);
+});
+
+test('terminal sandbox reconciliation leaves failed cleanup pending for the next pass', async () => {
+  let attempts = 0;
+  let marked = 0;
+  const pending = [{
+    runId: '11111111-1111-4111-8111-111111111112',
+    sandboxRef: null,
+    derivedReference: true
+  }];
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      expireStaleRuns: async () => 0,
+      listTerminalSandboxes: async () => pending,
+      markSandboxDestroyed: async () => {
+        marked += 1;
+        pending.splice(0);
+        return true;
+      },
+      purgeExpiredPrivateData: async () => ({ browserProfilesDeleted: 0 })
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture'
+    },
+    sandbox: {
+      referenceForRun: () => 'sandbox-retry-1',
+      destroy: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new ApiError(503, 'AGENT_SANDBOX_PROVIDER_FAILED');
+        return { ok: true };
+      }
+    },
+    model: {},
+    integrationService: {},
+    imageService: {}
+  });
+
+  assert.deepEqual((await service.expireStaleRuns({ limit: 10 })).sandboxCleanup, {
+    destroyed: 0,
+    failed: 1
+  });
+  assert.equal(marked, 0);
+  assert.deepEqual((await service.expireStaleRuns({ limit: 10 })).sandboxCleanup, {
+    destroyed: 1,
+    failed: 0
+  });
+  assert.equal(marked, 1);
 });
 
 test('worker passes decrypted objective deliverables into the parent model', async () => {
   const runId = '11111111-1111-4111-8111-111111111111';
   const userId = '22222222-2222-4222-8222-222222222222';
+  const workerId = 'worker-deliverables-test';
   const observed = [];
   const service = createAgentWorkerService({
     pool: {},
     runService: {
       claimRun: async () => ({
         id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
         started_at: new Date(),
         checkpoint: {},
         sandbox_ref: null
@@ -997,7 +1393,8 @@ test('worker passes decrypted objective deliverables into the parent model', asy
     },
     env: {
       AGENT_RUNTIME_DRIVER: 'fixture',
-      AGENT_SANDBOX_PROVIDER: 'fixture'
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
     },
     sandbox: {
       provision: async () => ({ name: 'sandbox-deliverables', displayUrl: null }),
@@ -1016,6 +1413,502 @@ test('worker passes decrypted objective deliverables into the parent model', asy
 
   await assert.rejects(service.processRun(runId), { code: 'AGENT_TEST_STOP' });
   assert.deepEqual(observed, [['report']]);
+});
+
+test('worker fails a queued run before any execution when its pinned model differs', async () => {
+  const runId = '11111111-1111-4111-8111-111111111121';
+  const workerId = 'worker-model-profile-mismatch';
+  let privateContextLoads = 0;
+  let modelCalls = 0;
+  let sandboxCalls = 0;
+  let failed = null;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null,
+        model_provider: 'siliconflow',
+        model_name: 'Qwen/Qwen3-8B'
+      }),
+      loadPrivateContext: async () => {
+        privateContextLoads += 1;
+        throw new Error('private context must not be loaded');
+      },
+      failRun: async (input) => {
+        failed = input;
+        return true;
+      }
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId,
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32)
+    },
+    sandbox: {
+      provision: async () => { sandboxCalls += 1; },
+      destroy: async () => { sandboxCalls += 1; }
+    },
+    model: {
+      providerName: 'cloudflare',
+      execute: async () => { modelCalls += 1; }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), {
+    code: 'AGENT_RUN_MODEL_PROFILE_MISMATCH'
+  });
+  assert.equal(privateContextLoads, 0);
+  assert.equal(modelCalls, 0);
+  assert.equal(sandboxCalls, 0);
+  assert.equal(failed.errorCode, 'AGENT_RUN_MODEL_PROFILE_MISMATCH');
+  assert.equal(failed.refundable, true);
+  assert.equal(failed.actualCredits, 0);
+});
+
+test('live worker fails closed when a run has no immutable pricing snapshot', async () => {
+  const runId = '11111111-1111-4111-8111-111111111122';
+  const workerId = 'worker-pricing-profile-missing';
+  let privateContextLoads = 0;
+  let failed = null;
+  const accountId = 'b'.repeat(32);
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null,
+        model_provider: 'cloudflare',
+        model_name: '@cf/openai/gpt-oss-120b'
+      }),
+      loadPrivateContext: async () => {
+        privateContextLoads += 1;
+        throw new Error('private context must not be loaded');
+      },
+      failRun: async (input) => {
+        failed = input;
+        return true;
+      }
+    },
+    env: {
+      NODE_ENV: 'test',
+      AGENT_RUNTIME_DRIVER: 'live',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId,
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_ACCOUNT_ID: accountId
+    },
+    sandbox: {
+      provision: async () => {},
+      destroy: async () => {}
+    },
+    model: {
+      providerName: 'cloudflare',
+      execute: async () => {
+        throw new Error('model must not be called');
+      }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), {
+    code: 'AGENT_RUN_PRICING_PROFILE_MISSING'
+  });
+  assert.equal(privateContextLoads, 0);
+  assert.equal(failed.errorCode, 'AGENT_RUN_PRICING_PROFILE_MISSING');
+  assert.equal(failed.refundable, true);
+  assert.equal(failed.actualCredits, 0);
+});
+
+test('worker rejects a forbidden parent shell before budget reservation or durable dispatch', async () => {
+  const runId = '11111111-1111-4111-8111-111111111131';
+  const userId = '22222222-2222-4222-8222-222222222231';
+  const workerId = 'worker-shell-policy-test';
+  let reservations = 0;
+  let receipts = 0;
+  let remoteShellCalls = 0;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000)
+        },
+        payloads: [{
+          kind: 'objective',
+          value: { objective: 'Create a workbook.', assetIds: [], deliverables: ['spreadsheet'] }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async () => true,
+      getControlState: async () => ({
+        status: 'running',
+        cancel_requested: false,
+        pause_requested: false,
+        step_count: 0,
+        replan_count: 0,
+        consecutive_failures: 0,
+        unchanged_screenshots: 0
+      }),
+      reserveRuntimeBudget: async () => { reservations += 1; },
+      persistToolReceipt: async () => { receipts += 1; },
+      appendStep: async () => true,
+      failRun: async () => true,
+      markSandboxDestroyed: async () => true
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
+    },
+    sandbox: {
+      provision: async () => ({ name: 'sandbox-shell-policy', displayUrl: null }),
+      systemShell: async () => ({ success: true, stdout: '', stderr: '' }),
+      shell: async () => {
+        remoteShellCalls += 1;
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      destroy: async () => ({ ok: true })
+    },
+    model: {
+      execute: async (input) => input.callbacks.shell(
+        'pip install openpyxl',
+        'Install a package',
+        { callId: 'call-shell-policy' }
+      )
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), { code: 'AGENT_SHELL_COMMAND_FORBIDDEN' });
+  assert.equal(reservations, 0);
+  assert.equal(receipts, 0);
+  assert.equal(remoteShellCalls, 0);
+});
+
+test('worker consumes an older forbidden Shell receipt without replaying the effect', async () => {
+  const runId = '11111111-1111-4111-8111-111111111132';
+  const userId = '22222222-2222-4222-8222-222222222232';
+  const workerId = 'worker-shell-receipt-policy-test';
+  const script = 'pip install openpyxl';
+  const callId = 'call-shell-policy-receipt';
+  const receiptIdentity = crypto.createHash('sha256')
+    .update(callId)
+    .digest('hex')
+    .slice(0, 32);
+  const receiptKey = `parent:shell:${receiptIdentity}:attempt:0`;
+  const reservationKey = `sandbox:${receiptKey}`;
+  let consumedReservations = 0;
+  let newReservations = 0;
+  let remoteShellCalls = 0;
+  let observedResult = null;
+  const stop = Object.assign(new Error('AGENT_TEST_AFTER_RECEIPT'), {
+    code: 'AGENT_TEST_AFTER_RECEIPT'
+  });
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000),
+          checkpoint: {
+            toolReceipts: {
+              [receiptKey]: {
+                kind: 'sandbox_shell',
+                state: 'consumed',
+                reservationKey,
+                requestSha256: crypto.createHash('sha256')
+                  .update(JSON.stringify({ script }))
+                  .digest('hex'),
+                actualCredits: 0,
+                result: {
+                  success: true,
+                  returnCode: 0,
+                  stdout: 'older-result',
+                  stderr: ''
+                }
+              }
+            }
+          }
+        },
+        payloads: [{
+          kind: 'objective',
+          value: { objective: 'Continue an older workbook run.', assetIds: [], deliverables: ['spreadsheet'] }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async () => true,
+      getControlState: async () => ({
+        status: 'running',
+        cancel_requested: false,
+        pause_requested: false,
+        step_count: 0,
+        replan_count: 0,
+        consecutive_failures: 0,
+        unchanged_screenshots: 0
+      }),
+      reserveRuntimeBudget: async () => { newReservations += 1; },
+      consumeRuntimeBudget: async ({ reservationKey: consumedKey }) => {
+        assert.equal(consumedKey, reservationKey);
+        consumedReservations += 1;
+      },
+      appendStep: async () => true,
+      failRun: async () => true,
+      markSandboxDestroyed: async () => true
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
+    },
+    sandbox: {
+      provision: async () => ({ name: 'sandbox-shell-receipt-policy', displayUrl: null }),
+      systemShell: async () => ({ success: true, stdout: '', stderr: '' }),
+      shell: async () => {
+        remoteShellCalls += 1;
+        return { success: true, returnCode: 0, stdout: 'new-result', stderr: '' };
+      },
+      destroy: async () => ({ ok: true })
+    },
+    model: {
+      execute: async (input) => {
+        observedResult = await input.callbacks.shell(script, 'Continue prior work', { callId });
+        throw stop;
+      }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), { code: 'AGENT_TEST_AFTER_RECEIPT' });
+  assert.equal(observedResult.stdout, 'older-result');
+  assert.equal(consumedReservations, 1);
+  assert.equal(newReservations, 0);
+  assert.equal(remoteShellCalls, 0);
+});
+
+test('worker never destroys a sandbox when failure settlement discovers a lost lease', async () => {
+  const runId = '11111111-1111-4111-8111-111111111121';
+  const userId = '22222222-2222-4222-8222-222222222221';
+  const workerId = 'worker-fenced-failure-test';
+  let destroyed = 0;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 7,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000)
+        },
+        payloads: [{
+          kind: 'objective',
+          value: {
+            objective: 'Create a report.',
+            assetIds: [],
+            deliverables: ['report']
+          }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async () => true,
+      getControlState: async () => ({
+        status: 'running',
+        cancel_requested: false,
+        pause_requested: false,
+        step_count: 0,
+        replan_count: 0,
+        consecutive_failures: 0,
+        unchanged_screenshots: 0
+      }),
+      appendStep: async () => true,
+      failRun: async () => {
+        throw new ApiError(409, 'AGENT_LEASE_LOST');
+      },
+      markSandboxDestroyed: async () => true
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
+    },
+    sandbox: {
+      provision: async () => ({ name: 'sandbox-fenced-failure', displayUrl: null }),
+      systemShell: async () => ({ success: true, stdout: '', stderr: '' }),
+      destroy: async () => {
+        destroyed += 1;
+        return { ok: true };
+      }
+    },
+    model: {
+      execute: async () => {
+        throw new ApiError(500, 'AGENT_TEST_STOP');
+      }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  assert.deepEqual(await service.processRun(runId), {
+    claimed: true,
+    status: 'lease_lost'
+  });
+  assert.equal(destroyed, 0);
+});
+
+test('provisioned sandbox stays available after lease loss and terminal reconciliation retries cleanup', async () => {
+  const runId = '11111111-1111-4111-8111-111111111122';
+  const userId = '22222222-2222-4222-8222-222222222222';
+  const workerId = 'worker-provision-race-test';
+  const sandboxRef = 'sandbox-provision-race';
+  let terminal = false;
+  let destroyAttempts = 0;
+  let markedDestroyed = 0;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 3,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000)
+        },
+        payloads: [{
+          kind: 'objective',
+          value: { objective: 'Create a report.', assetIds: [], deliverables: ['report'] }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async ({ eventType }) => {
+        if (eventType === 'sandbox.ready') throw new ApiError(409, 'AGENT_LEASE_LOST');
+        return true;
+      },
+      expireStaleRuns: async () => {
+        terminal = true;
+        return 1;
+      },
+      listTerminalSandboxes: async () => terminal
+        ? [{ runId, sandboxRef: null, derivedReference: true }]
+        : [],
+      markSandboxDestroyed: async ({ sandboxRef: markedRef }) => {
+        assert.equal(markedRef, sandboxRef);
+        markedDestroyed += 1;
+        return true;
+      },
+      purgeExpiredPrivateData: async () => ({ browserProfilesDeleted: 0 })
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
+    },
+    sandbox: {
+      referenceForRun: () => sandboxRef,
+      provision: async () => ({ name: sandboxRef, displayUrl: null }),
+      destroy: async (reference) => {
+        assert.equal(reference, sandboxRef);
+        destroyAttempts += 1;
+        if (destroyAttempts === 1) throw new ApiError(503, 'AGENT_SANDBOX_PROVIDER_FAILED');
+        return { ok: true };
+      }
+    },
+    model: {},
+    integrationService: {},
+    imageService: {}
+  });
+
+  assert.deepEqual(await service.processRun(runId), {
+    claimed: true,
+    status: 'lease_lost'
+  });
+  assert.equal(destroyAttempts, 0);
+  assert.deepEqual((await service.expireStaleRuns({ limit: 10 })).sandboxCleanup, {
+    destroyed: 0,
+    failed: 1
+  });
+  assert.deepEqual((await service.expireStaleRuns({ limit: 10 })).sandboxCleanup, {
+    destroyed: 1,
+    failed: 0
+  });
+  assert.equal(markedDestroyed, 1);
 });
 
 test('queue reconciliation coalesces overlapping cleanup passes', async () => {
@@ -1120,6 +2013,13 @@ test('failure breaker counts only the same failed action as repeated', () => {
 });
 
 test('production Agent runtime fails closed without live credentials and a pinned image', () => {
+  const cloudflare = {
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32)
+  };
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1'
@@ -1127,13 +2027,13 @@ test('production Agent runtime fails closed without live credentials and a pinne
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    OPENAI_API_KEY: 'openai-test',
+    ...cloudflare,
     CUA_API_KEY: 'cua-test'
   }), { code: 'AGENT_SANDBOX_IMAGE_NOT_PINNED' });
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    OPENAI_API_KEY: 'openai-test',
+    ...cloudflare,
     CUA_API_KEY: 'cua-test',
     AGENT_CUA_IMAGE_REF: 'ghcr.io/example/agent@sha256:abc',
     AGENT_PUBLIC_CAPABILITIES: 'files,shell,browser',
@@ -1142,7 +2042,7 @@ test('production Agent runtime fails closed without live credentials and a pinne
   const config = assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    OPENAI_API_KEY: 'openai-test',
+    ...cloudflare,
     CUA_API_KEY: 'cua-test',
     AGENT_CUA_IMAGE_REF: 'ghcr.io/example/agent@sha256:abc',
     AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
@@ -1152,8 +2052,8 @@ test('production Agent runtime fails closed without live credentials and a pinne
     AGENT_WORKER_RELAY_URL: 'wss://api.example.com/api/agent-desktop/worker',
     AGENT_WORKER_ID: 'mac-production-1'
   });
-  assert.equal(config.modelName, 'gpt-5.6');
-  assert.equal(config.codingModelName, 'gpt-5.6-sol');
+  assert.equal(config.modelProvider, 'cloudflare');
+  assert.equal(config.modelName, '@cf/openai/gpt-oss-120b');
   assert.equal(config.hardMaxCredits, 500);
   assert.throws(() => getAgentConfig({
     NODE_ENV: 'production',
@@ -1166,8 +2066,11 @@ test('production Beta runtime fails closed without an owner UUID allowlist', () 
     NODE_ENV: 'production',
     APP_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    AGENT_MODEL_PROVIDER: 'siliconflow',
-    SILICONFLOW_API_KEY: 'test-key',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local',
     AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
@@ -1191,28 +2094,34 @@ test('production Beta runtime fails closed without an owner UUID allowlist', () 
   assert.deepEqual(config.betaUserIds, [ownerId]);
 });
 
-test('production local Agent accepts loopback Ollama and a prebuilt local Cua image', () => {
+test('production Agent keeps Cloudflare text lock with a prebuilt local Cua image', () => {
   assert.throws(() => assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    AGENT_MODEL_PROVIDER: 'ollama',
-    AGENT_OLLAMA_BASE_URL: 'http://127.0.0.1:11434',
-    AGENT_MODEL_NAME: 'qwen3:8b',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local'
   }), { code: 'AGENT_SANDBOX_IMAGE_NOT_READY' });
   const config = assertAgentRuntimeReady({
     NODE_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
-    AGENT_MODEL_PROVIDER: 'ollama',
-    AGENT_OLLAMA_BASE_URL: 'http://127.0.0.1:11434',
-    AGENT_MODEL_NAME: 'qwen3:8b',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local',
     AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
     AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
   });
-  assert.equal(config.modelProvider, 'ollama');
+  assert.equal(config.modelProvider, 'cloudflare');
   assert.equal(config.sandboxMode, 'local');
   assert.equal(config.sandboxDockerPlatform, '');
   assert.equal(config.sandboxImageRef, 'artigen/cua-xfce:0.1.15-tools-v1');
@@ -1256,6 +2165,237 @@ test('SiliconFlow Agent is pinned to the deep-thinking Qwen3-8B model and requir
     AGENT_MODEL_PROVIDER: 'siliconflow',
     AGENT_MODEL_NAME: 'Qwen/Qwen3-32B'
   }), { code: 'AGENT_SILICONFLOW_MODEL_NOT_ALLOWED' });
+});
+
+test('Cloudflare Agent is pinned to the free-tier GPT-OSS 120B model and requires account credentials', () => {
+  const accountId = 'a'.repeat(32);
+  assert.throws(() => assertAgentRuntimeReady({
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local'
+  }), { code: 'AGENT_MODEL_NOT_CONFIGURED' });
+  const config = assertAgentRuntimeReady({
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+    AGENT_RUNTIME_V2_ENABLED: 'true',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local',
+    AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
+    AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
+  });
+  assert.equal(config.modelProvider, 'cloudflare');
+  assert.equal(config.modelName, '@cf/openai/gpt-oss-120b');
+  assert.equal(config.cloudflareFreeAccountAttested, true);
+  assert.equal(
+    config.cloudflareBaseUrl,
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`
+  );
+  assert.throws(() => getAgentConfig({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'not-an-account-id'
+  }), { code: 'AGENT_CLOUDFLARE_ACCOUNT_ID_INVALID' });
+  assert.throws(() => getAgentConfig({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_MODEL_NAME: '@cf/qwen/qwen3.8-27b'
+  }), { code: 'AGENT_CLOUDFLARE_MODEL_NOT_ALLOWED' });
+  for (const invalidRate of ['0', '-1', 'not-a-number']) {
+    assert.throws(() => assertAgentRuntimeReady({
+      AGENT_FEATURE_ENABLED: '1',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: invalidRate,
+      AGENT_RUNTIME_V2_ENABLED: 'true',
+      AGENT_SANDBOX_PROVIDER: 'cua',
+      AGENT_SANDBOX_MODE: 'local',
+      AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
+      AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
+    }), { code: 'AGENT_RUNTIME_V2_PRICING_NOT_READY' });
+  }
+  assert.throws(() => assertAgentRuntimeReady({
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local'
+  }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED' });
+  assert.throws(() => getAgentConfig({
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'b'.repeat(32)
+  }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_MISMATCH' });
+});
+
+test('deployed worker hard-lock rejects legacy text providers while preserving image-only SiliconFlow', () => {
+  assert.throws(() => getAgentConfig({
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  assert.throws(() => getAgentConfig({
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_MODEL_PROVIDER: 'ollama',
+    AGENT_MODEL_NAME: 'qwen3:8b'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  const config = getAgentConfig({
+    AGENT_TEXT_MODEL_HARD_LOCK: 'true',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b'
+  });
+  assert.equal(config.textModelHardLock, true);
+  // APP_ENV explicitly declares deployment intent even if the platform starts
+  // the Node process in test mode. Case-variant production values must be
+  // normalized before applying the non-image provider hard lock.
+  for (const [nodeEnv, appEnv] of [
+    ['test', 'production'],
+    ['test', 'staging'],
+    ['Production', ''],
+    ['PRODUCTION', '']
+  ]) {
+    assert.throws(() => getAgentConfig({
+      NODE_ENV: nodeEnv,
+      APP_ENV: appEnv,
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+    }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  }
+  assert.throws(() => assertAgentRuntimeReady({
+    NODE_ENV: 'test',
+    APP_ENV: 'production',
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+    SILICONFLOW_API_KEY: 'test-key',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local',
+    AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v1',
+    AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  assert.throws(() => getAgentConfig({
+    NODE_ENV: 'production',
+    APP_ENV: 'dev',
+    AGENT_TEXT_MODEL_HARD_LOCK: 'false',
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B'
+  }), { code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+});
+
+test('deployment APP_ENV forbids fixture runtime and sandbox outside isolated test fixtures', () => {
+  for (const nodeEnv of ['test', 'development']) {
+    assert.throws(() => getAgentConfig({
+      NODE_ENV: nodeEnv,
+      APP_ENV: 'production',
+      AGENT_RUNTIME_DRIVER: 'fixture'
+    }), { code: 'AGENT_FIXTURE_RUNTIME_FORBIDDEN' });
+
+    assert.throws(() => getAgentConfig({
+      NODE_ENV: nodeEnv,
+      APP_ENV: 'production',
+      AGENT_RUNTIME_DRIVER: 'live',
+      AGENT_SANDBOX_PROVIDER: 'fixture'
+    }), { code: 'AGENT_FIXTURE_SANDBOX_FORBIDDEN' });
+  }
+
+  const isolatedFixture = getAgentConfig({
+    NODE_ENV: 'test',
+    APP_ENV: 'dev',
+    AGENT_RUNTIME_DRIVER: 'fixture',
+    AGENT_SANDBOX_PROVIDER: 'fixture'
+  });
+  assert.equal(isolatedFixture.fixtureAllowed, true);
+});
+
+test('production APP_ENV applies secure image and desktop readiness gates', () => {
+  const cloudflare = {
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    CUA_API_KEY: 'cua-test',
+    AGENT_PUBLIC_CAPABILITIES: 'files,browser',
+    AGENT_BROWSER_MODE: 'full-approval-v1',
+    AGENT_SANDBOX_EGRESS_POLICY: 'restricted-v1',
+    AGENT_BETA_MODE: 'authenticated-v1'
+  };
+  for (const nodeEnv of ['test', 'development']) {
+    assert.throws(() => assertAgentRuntimeReady({
+      NODE_ENV: nodeEnv,
+      APP_ENV: 'production',
+      AGENT_FEATURE_ENABLED: '1',
+      ...cloudflare
+    }), { code: 'AGENT_SANDBOX_IMAGE_NOT_PINNED' });
+    assert.throws(() => assertAgentRuntimeReady({
+      NODE_ENV: nodeEnv,
+      APP_ENV: 'production',
+      AGENT_FEATURE_ENABLED: '1',
+      ...cloudflare,
+      AGENT_CUA_IMAGE_REF: 'ghcr.io/example/agent@sha256:abc'
+    }), { code: 'AGENT_DESKTOP_RELAY_NOT_CONFIGURED' });
+  }
+  assert.equal(relayEndpoint('ws://relay.example/worker', { production: true }), null);
+  assert.equal(relayEndpoint('wss://relay.example/worker', { production: true }), 'wss://relay.example/worker');
+  const request = { headers: { 'x-forwarded-proto': 'http' }, secure: false, get: () => 'example.test' };
+  assert.throws(() => desktopViewerEndpoint({ APP_ENV: 'production' }, request), {
+    code: 'AGENT_DESKTOP_RELAY_NOT_CONFIGURED'
+  });
+  assert.equal(
+    desktopViewerEndpoint({ APP_ENV: 'production', AGENT_DESKTOP_RELAY_PUBLIC_URL: 'wss://relay.example/worker' }, request),
+    'wss://relay.example/viewer'
+  );
+});
+
+test('Runtime V2 assignment is server-owned, stable and fails back to V1 when disabled', () => {
+  const canaryUser = '11111111-1111-4111-8111-111111111111';
+  const controlUser = '22222222-2222-4222-8222-222222222222';
+  const canaryConfig = getAgentConfig({
+    AGENT_RUNTIME_V2_ENABLED: 'true',
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0',
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: canaryUser
+  });
+  assert.deepEqual(resolveAgentRuntimeAssignment(canaryConfig, canaryUser), {
+    version: 2,
+    reason: 'canary'
+  });
+  assert.deepEqual(resolveAgentRuntimeAssignment(canaryConfig, controlUser), {
+    version: 1,
+    reason: 'control'
+  });
+
+  const rolloutConfig = getAgentConfig({
+    AGENT_RUNTIME_V2_ENABLED: 'true',
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '100'
+  });
+  assert.deepEqual(resolveAgentRuntimeAssignment(rolloutConfig, controlUser), {
+    version: 2,
+    reason: 'rollout'
+  });
+  assert.deepEqual(
+    resolveAgentRuntimeAssignment(rolloutConfig, controlUser),
+    resolveAgentRuntimeAssignment(rolloutConfig, controlUser)
+  );
+
+  const disabled = getAgentConfig({
+    AGENT_RUNTIME_V2_ENABLED: 'false',
+    AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '100',
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: canaryUser
+  });
+  assert.deepEqual(resolveAgentRuntimeAssignment(disabled, canaryUser), {
+    version: 1,
+    reason: 'disabled'
+  });
+  assert.throws(() => getAgentConfig({
+    AGENT_RUNTIME_V2_CANARY_USER_IDS: 'not-a-user-id'
+  }), { code: 'AGENT_RUNTIME_V2_CANARY_USER_IDS_INVALID' });
 });
 
 test('public Agent capability policy removes browser and external account access', () => {
@@ -2878,6 +4018,97 @@ test('SiliconFlow corrects a PDF report declaration that omits observed sources'
   )));
 });
 
+test('SiliconFlow returns the exact observed URL when correcting a source declaration', async () => {
+  const observedUrl = 'https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=exact-token';
+  const declaration = (url) => ({
+    path: '/tmp/artigen-workspace/report.pdf',
+    role: 'pdf',
+    filename: 'report.pdf',
+    mimeType: 'application/pdf',
+    sources: [{ title: 'W3C accessibility guidance', url }]
+  });
+  const call = (id, args) => ({
+    id: `chat-exact-source-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-exact-source-${id}`,
+          type: 'function',
+          function: { name: 'declare_artifact', arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: {}
+  });
+  const responses = [
+    call('base', declaration('https://www.w3.org/WAI/standards-guidelines/wcag/')),
+    call('exact', declaration(observedUrl)),
+    {
+      id: 'chat-exact-source-final',
+      choices: [{ message: { role: 'assistant', content: 'The exact cited PDF is verified.' } }],
+      usage: {}
+    }
+  ];
+  const requests = [];
+  let declarations = 0;
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Deliver the cited W3C PDF without weakening exact-source matching.',
+    capabilities: { files: true, browser: true },
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      declareArtifact: async (args) => {
+        declarations += 1;
+        if (declarations === 1) {
+          throw new ApiError(422, 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED', {
+            details: {
+              sourceCount: 1,
+              observedUrls: [observedUrl]
+            }
+          });
+        }
+        assert.equal(args.sources[0].url, observedUrl);
+        return {
+          artifactId: 'artifact-exact-source-pdf',
+          role: args.role,
+          filename: args.filename,
+          mimeType: args.mimeType,
+          verificationStatus: 'passed'
+        };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'The exact cited PDF is verified.');
+  assert.equal(declarations, 2);
+  const correction = requests[1].messages.find((message) => (
+    message.role === 'tool' &&
+    message.content.includes('AGENT_ARTIFACT_SOURCE_NOT_OBSERVED')
+  ));
+  assert.ok(correction);
+  assert.match(correction.content, /do not simplify query parameters/i);
+  assert.ok(correction.content.includes(observedUrl));
+});
+
 test('SiliconFlow blocks task-local install approvals and forces an offline PDF recovery', async () => {
   const call = (id, name, args) => ({
     id: `chat-install-${id}`,
@@ -3034,7 +4265,9 @@ test('model-authored delegated inputs are reduced to the exact staged path inter
 
 test('shell policy keeps model-authored commands offline and blocks privilege escalation', () => {
   assert.equal(assertSafeShell('python3 build.py'), 'python3 build.py');
-  assert.match(offlineShellScript('python3 build.py'), /bwrap --unshare-net/);
+  const offline = offlineShellScript('python3 build.py');
+  assert.match(offline, /bwrap --unshare-net/);
+  assert.match(offline, /--bind \/ \/ --dev \/dev \/bin\/bash -se/);
   assert.doesNotThrow(() => assertSafeShell(
     'python3 write_report.py --source https://docs.example.com/report'
   ));
@@ -3120,6 +4353,47 @@ test('trusted platform shell is separate from offline model-authored shell', asy
   assert.equal(payloads.length, 2);
   assert.match(payloads[0].script, /bwrap --unshare-net/);
   assert.match(payloads[1].script, /127\.0\.0\.1:9222/);
+});
+
+test('sandbox Shell operation receipts are deterministic, atomic and recover bounded output', async () => {
+  const operationId = 'parent:shell:abc123:attempt:0';
+  const receiptDirectory = shellReceiptDirectory(operationId);
+  assert.match(receiptDirectory, /^\/tmp\/artigen-workspace\/\.artigen\/shell-receipts\/[a-f0-9]{64}$/);
+  const wrapped = shellWithReceiptScript('printf "private-output"', operationId);
+  assert.match(wrapped, /AGENT_SHELL_OPERATION_IN_PROGRESS/);
+  assert.match(wrapped, /mv "\$receipt_dir\/done\.tmp" "\$receipt_dir\/done"/);
+  assert.match(wrapped, /head -c 12000/);
+  assert.match(wrapped, /bwrap --unshare-net/);
+  assert.doesNotMatch(wrapped, /private-output/);
+  assert.match(shellReceiptProbeScript(operationId), /duration-ms/);
+
+  const encodedStdout = Buffer.from('recovered stdout').toString('base64');
+  const encodedStderr = Buffer.from('recovered stderr').toString('base64');
+  const sandbox = new CuaSandboxProvider({
+    env: { CUA_API_KEY: 'test-key' },
+    bridge: async ({ payload }) => {
+      assert.equal(payload.command, 'shell');
+      assert.match(payload.script, new RegExp(receiptDirectory.replaceAll('/', '\\/')));
+      return {
+        ok: true,
+        success: true,
+        returnCode: 0,
+        stderr: '',
+        stdout: `consumed\n7\n2300\n${encodedStdout}\n${encodedStderr}\n`
+      };
+    }
+  });
+  const recovered = await sandbox.readShellReceipt('sandbox', operationId);
+  assert.deepEqual(recovered, {
+    state: 'consumed',
+    durationMs: 2300,
+    result: {
+      success: false,
+      returnCode: 7,
+      stdout: 'recovered stdout',
+      stderr: 'recovered stderr'
+    }
+  });
 });
 
 test('Playwright DOM requests are bounded and consequential clicks are classified', () => {
@@ -3474,9 +4748,21 @@ test('artifact citations must come from pages actually observed by the agent', (
     ['https://example.com/report/#section']
   ), true);
   assert.throws(() => assertSourcesObserved(
-    [{ title: 'Invented', url: 'https://unseen.example/report' }],
-    ['https://example.com/report']
-  ), { code: 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED' });
+    [{ title: 'Simplified', url: 'https://www.w3.org/WAI/standards-guidelines/wcag/' }],
+    ['https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=exact-token']
+  ), (error) => (
+    error.code === 'AGENT_ARTIFACT_SOURCE_NOT_OBSERVED' &&
+    error.details?.sourceCount === 1 &&
+    error.details?.observedUrls?.[0] ===
+      'https://www.w3.org/WAI/standards-guidelines/wcag?__cf_chl_tk=exact-token'
+  ));
+  assert.equal(assertSourcesObserved(
+    [{
+      title: 'Exact observation',
+      url: 'https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=exact-token'
+    }],
+    ['https://www.w3.org/WAI/standards-guidelines/wcag/?__cf_chl_tk=exact-token']
+  ), true);
 });
 
 test('trajectory verifier blocks unapproved side effects and unconsumed model checkpoints', () => {
@@ -3618,6 +4904,8 @@ test('an image-only run can finish once and settles its budget only once', async
           id: runId,
           status: runStatus,
           worker_id: workerId,
+          lease_epoch: 1,
+          lease_expires_at: new Date(Date.now() + 60_000),
           max_credits: 30,
           step_count: 3,
           replan_count: 0
@@ -3689,6 +4977,7 @@ test('an image-only run can finish once and settles its budget only once', async
   const finished = await service.finishRun({
     runId,
     workerId,
+    leaseEpoch: 1,
     actualCredits: 8.2,
     checklist: { requiredArtifactCount: 1, requiredDeliverables: ['image'] }
   });
@@ -3697,6 +4986,7 @@ test('an image-only run can finish once and settles its budget only once', async
   await assert.rejects(service.finishRun({
     runId,
     workerId,
+    leaseEpoch: 1,
     actualCredits: 8.2,
     checklist: { requiredArtifactCount: 1, requiredDeliverables: ['image'] }
   }), { code: 'AGENT_NOT_VERIFYING' });
@@ -3793,6 +5083,7 @@ test('OpenAI Responses computer loop executes read-only visual actions and retur
   ];
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },
@@ -4130,6 +5421,406 @@ test('SiliconFlow Qwen3-8B agent executes the durable file-tool loop without loc
     AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '1',
     AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '2'
   }) > 0);
+});
+
+test('Cloudflare GPT-OSS 120B uses the free Workers AI chat endpoint for structured Agent calls', async () => {
+  const accountId = 'b'.repeat(32);
+  const requests = [];
+  const provider = new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (url, init = {}) => {
+      assert.equal(init.headers.Authorization, 'Bearer cloudflare-test-token');
+      if (init.method === 'GET') {
+        assert.equal(
+          url,
+          `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search?search=%40cf%2Fopenai%2Fgpt-oss-120b`
+        );
+        return new Response(JSON.stringify({
+          success: true,
+          result: [{ name: '@cf/openai/gpt-oss-120b' }]
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      assert.equal(
+        url,
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`
+      );
+      const request = JSON.parse(init.body);
+      requests.push(request);
+      return new Response(JSON.stringify({
+        id: 'structured',
+        choices: [{ message: { role: 'assistant', content: '{"ok":true}' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 20 }
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+  });
+  assert.deepEqual(await provider.probe(), {
+    ok: true,
+    provider: 'cloudflare',
+    model: '@cf/openai/gpt-oss-120b'
+  });
+  const result = await provider.createStructuredJson({
+    messages: [{ role: 'user', content: 'Return {"ok":true}.' }],
+    errorCode: 'TEST_STRUCTURED_OUTPUT_INVALID',
+    phase: 'router'
+  });
+  assert.deepEqual(result.value, { ok: true });
+  assert.equal(requests[0].model, '@cf/openai/gpt-oss-120b');
+  assert.deepEqual(requests[0].response_format, { type: 'json_object' });
+  assert.equal(requests[0].enable_thinking, undefined);
+  assert.equal(requests[0].max_tokens, 1200);
+  assert.equal(cloudflareUsageCredits({
+    prompt_tokens: 1_000_000,
+    completion_tokens: 1_000_000
+  }), 1.1);
+});
+
+test('Cloudflare model-directory probe fails closed for credentials and missing model', async () => {
+  const makeProvider = (body, status) => new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: 'd'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token'
+    },
+    fetchImpl: async () => new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  await assert.rejects(
+    makeProvider({ success: false, errors: [{ code: 10000 }] }, 403).probe(),
+    { code: 'AGENT_CLOUDFLARE_CREDENTIAL_INVALID' }
+  );
+  await assert.rejects(
+    makeProvider({ success: true, result: [] }, 200).probe(),
+    { code: 'AGENT_CLOUDFLARE_MODEL_MISSING' }
+  );
+  await assert.rejects(
+    makeProvider({ success: false, errors: [{ code: 1000 }] }, 429).probe(),
+    { code: 'AGENT_CLOUDFLARE_UNAVAILABLE' }
+  );
+});
+
+test('Cloudflare Agent never retries exhausted free quota or a paid-only model response', async () => {
+  const accountId = 'd'.repeat(32);
+  const makeProvider = ({ status, code }) => {
+    let requests = 0;
+    return {
+      provider: new CloudflareAgentModelProvider({
+        env: {
+          AGENT_MODEL_PROVIDER: 'cloudflare',
+          CLOUDFLARE_ACCOUNT_ID: accountId,
+          CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+          AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+          AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+          AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+        },
+        fetchImpl: async () => {
+          requests += 1;
+          return new Response(JSON.stringify({ errors: [{ code }] }), {
+            status,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }),
+      requests: () => requests
+    };
+  };
+
+  const quota = makeProvider({ status: 429, code: 3036 });
+  await assert.rejects(
+    quota.provider.createChat({ model: '@cf/openai/gpt-oss-120b', messages: [] }),
+    { code: 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED', retryable: false }
+  );
+  assert.equal(quota.requests(), 1);
+
+  const paid = makeProvider({ status: 403, code: 5035 });
+  await assert.rejects(
+    paid.provider.createChat({ model: '@cf/openai/gpt-oss-120b', messages: [] }),
+    { code: 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN', retryable: false }
+  );
+  assert.equal(paid.requests(), 1);
+});
+
+test('Cloudflare GPT-OSS 120B completes an Agent tool-call round trip', async () => {
+  const responses = [{
+    id: 'cf-plan',
+    choices: [{ message: {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: 'cf-call-plan',
+        type: 'function',
+        function: {
+          name: 'update_plan',
+          arguments: JSON.stringify({
+            explanation: 'Answer directly',
+            steps: [
+              { label: 'Answer', status: 'in_progress' },
+              { label: 'Verify', status: 'pending' }
+            ]
+          })
+        }
+      }]
+    }}],
+    usage: { prompt_tokens: 50, completion_tokens: 10 }
+  }, {
+    id: 'cf-final',
+    choices: [{ message: { role: 'assistant', content: 'Done.' } }],
+    usage: { prompt_tokens: 60, completion_tokens: 5 }
+  }];
+  const requests = [];
+  const provider = new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: 'c'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'c'.repeat(32),
+      AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective: 'Answer directly',
+    capabilities: {},
+    maxSteps: 4,
+    callbacks: {
+      updatePlan: async (value) => ({ accepted: true, steps: value.steps }),
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Done.');
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].model, '@cf/openai/gpt-oss-120b');
+  assert.equal(requests[1].messages.at(-1).tool_call_id, 'cf-call-plan');
+});
+
+test('Cloudflare receipt recovery uses the immutable provider pricing snapshot', () => {
+  const credits = usageCreditsForRun({
+    inputTokens: 1_000_000,
+    outputTokens: 1_000_000,
+    config: {
+      modelProvider: 'siliconflow',
+      modelName: 'Qwen/Qwen3-8B',
+      siliconFlowInputCreditsPerMillion: 20,
+      siliconFlowOutputCreditsPerMillion: 160,
+      cloudflareInputCreditsPerMillion: 999,
+      cloudflareOutputCreditsPerMillion: 999
+    },
+    run: {
+      model_provider: 'cloudflare',
+      model_name: '@cf/openai/gpt-oss-120b',
+      runtime_profile_summary: {
+        modelConfig: {
+          pricingSnapshot: {
+            provider: 'cloudflare',
+            model: '@cf/openai/gpt-oss-120b',
+            inputCreditsPerMillion: 0.35,
+            outputCreditsPerMillion: 0.75
+          }
+        }
+      }
+    }
+  });
+  assert.equal(credits, 1.1);
+});
+
+test('model pricing requires an immutable run snapshot and rejects incompatible worker rates', () => {
+  assert.throws(() => usageCreditsForRun({
+    inputTokens: 10,
+    outputTokens: 10,
+    config: {
+      modelProvider: 'cloudflare',
+      modelName: '@cf/openai/gpt-oss-120b',
+      cloudflareInputCreditsPerMillion: 0.35,
+      cloudflareOutputCreditsPerMillion: 0.75
+    },
+    run: {
+      model_provider: 'cloudflare',
+      model_name: '@cf/openai/gpt-oss-120b',
+      runtime_profile_summary: {}
+    }
+  }), { code: 'AGENT_RUN_PRICING_PROFILE_INVALID' });
+
+  assert.throws(() => usageCreditsForRun({
+    inputTokens: 10,
+    outputTokens: 10,
+    config: {
+      modelProvider: 'cloudflare',
+      modelName: '@cf/openai/gpt-oss-120b',
+      cloudflareInputCreditsPerMillion: 0.35,
+      cloudflareOutputCreditsPerMillion: 0.75
+    },
+    run: {
+      model_provider: 'cloudflare',
+      model_name: '@cf/openai/gpt-oss-120b',
+      runtime_profile_summary: {
+        modelConfig: {
+          pricingSnapshot: {
+            provider: 'siliconflow',
+            model: 'Qwen/Qwen3-8B',
+            inputCreditsPerMillion: 20,
+            outputCreditsPerMillion: 160
+          }
+        }
+      }
+    }
+  }), { code: 'AGENT_RUN_PRICING_PROFILE_INVALID' });
+});
+
+test('Agent service status does not report a stale Worker model as ready', async () => {
+  const pool = {
+    async query(sql) {
+      if (String(sql).includes('WITH latest_worker')) {
+        return { rows: [{
+          worker_online: true,
+          model_provider: 'siliconflow',
+          model_name: 'Qwen/Qwen3-8B',
+          sandbox_mode: 'local',
+          concurrency: 1,
+          browser_ready: true,
+          egress_verified: true,
+          desktop_relay_ready: true,
+          queue_depth: 0,
+          last_seen_at: new Date()
+        }] };
+      }
+      if (String(sql).includes('has_lease_epoch')) {
+        return { rows: [{
+          has_lease_epoch: true,
+          has_receipts: true,
+          has_tool_receipts: true,
+          has_reservations: true
+        }] };
+      }
+      return { rows: [{ has_scheduler: true, has_requests: true }] };
+    },
+    connect: async () => ({
+      query: async () => ({ rows: [] }),
+      release() {}
+    })
+  };
+  const service = createAgentRunService({
+    pool,
+    env: {
+      NODE_ENV: 'test',
+      AGENT_FEATURE_ENABLED: 'true',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '0.35',
+      AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '0.75',
+      AGENT_BETA_MODE: 'disabled'
+    }
+  });
+  const status = await service.getServiceStatus();
+  assert.equal(status.workerOnline, true);
+  assert.equal(status.workerModelReady, false);
+  assert.equal(status.workerModel.model, 'Qwen/Qwen3-8B');
+  assert.equal(status.browserReady, false);
+  assert.equal(status.availabilityNote, 'worker_model_mismatch');
+});
+
+test('Agent service status stays observable when provider pricing is missing or zero', async () => {
+  const pool = {
+    async query(sql) {
+      if (String(sql).includes('WITH latest_worker')) {
+        return { rows: [{ worker_online: false, queue_depth: 0 }] };
+      }
+      if (String(sql).includes('has_lease_epoch')) {
+        return { rows: [{
+          has_lease_epoch: true,
+          has_receipts: true,
+          has_tool_receipts: true,
+          has_reservations: true
+        }] };
+      }
+      return { rows: [{ has_scheduler: false, has_requests: false }] };
+    },
+    connect: async () => ({
+      query: async () => ({ rows: [] }),
+      release() {}
+    })
+  };
+  for (const profile of [
+    {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '0',
+      AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '0',
+      CLOUDFLARE_ACCOUNT_ID: 'c'.repeat(32),
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'c'.repeat(32),
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true'
+    },
+    {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0'
+    }
+  ]) {
+    const service = createAgentRunService({
+      pool,
+      env: {
+        NODE_ENV: 'test',
+        AGENT_FEATURE_ENABLED: 'true',
+        AGENT_BETA_MODE: 'disabled',
+        ...profile
+      }
+    });
+    const status = await service.getServiceStatus();
+    assert.equal(status.durability.pricingReady, false);
+    assert.equal(status.workerOnline, false);
+  }
+});
+
+test('live V1 createRun rejects zero pricing before opening a hold', async () => {
+  let poolTouched = false;
+  const service = createAgentRunService({
+    pool: {
+      connect: async () => {
+        poolTouched = true;
+        throw new Error('createRun must reject before opening a transaction');
+      }
+    },
+    env: {
+      ...encryptionEnv,
+      NODE_ENV: 'test',
+      APP_ENV: 'dev',
+      AGENT_FEATURE_ENABLED: '1',
+      AGENT_RUNTIME_DRIVER: 'live',
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_PUBLIC_CAPABILITIES: 'files,shell',
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '0',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '0'
+    }
+  });
+  await assert.rejects(
+    service.createRun({
+      userId: '11111111-1111-4111-8111-111111111111',
+      objective: '生成一份简短说明',
+      idempotencyKey: 'v1-zero-pricing'
+    }),
+    { code: 'AGENT_PRICING_NOT_READY', status: 503 }
+  );
+  assert.equal(poolTouched, false);
 });
 
 test('SiliconFlow Qwen3-8B safely synthesizes a plan when the small model starts with execution', async () => {
@@ -4475,6 +6166,21 @@ test('SiliconFlow exposes browser_dom only when the run grants browser capabilit
     imageTool.function.parameters.properties.references.items.properties.role.enum,
     ['product', 'style', 'scene']
   );
+  const fileTools = ollamaFileTools({ files: true });
+  const shellTool = fileTools.find((tool) => tool.function.name === 'sandbox_shell');
+  const artifactTool = fileTools.find((tool) => tool.function.name === 'declare_artifact');
+  assert.match(shellTool.function.description, /POSIX Bash/u);
+  assert.match(shellTool.function.parameters.properties.script.description, /quoted heredoc/u);
+  assert.equal(
+    new RegExp(artifactTool.function.parameters.properties.path.pattern)
+      .test('/tmp/artigen-workspace/report.pdf'),
+    true
+  );
+  assert.equal(
+    new RegExp(artifactTool.function.parameters.properties.path.pattern)
+      .test('/tmp/artigen-workspace/'),
+    false
+  );
 });
 
 test('an ungranted Qwen image tool call stays hidden and fails with the capability gate', async () => {
@@ -4615,6 +6321,61 @@ test('Agent image generation uses Kolors for text or one staged reference with 8
   }), { code: 'AGENT_IMAGE_MODEL_INVALID' });
 });
 
+test('Agent image generation retries only explicit Kolors rate-limit rejections with one stable request', async () => {
+  const calls = [];
+  const delays = [];
+  const service = createAgentImageService({
+    provider: {
+      generateImage: async (input) => {
+        calls.push(input);
+        if (calls.length < 3) {
+          throw new ApiError(429, 'PROVIDER_RATE_LIMITED', {
+            retryable: true,
+            details: { retryAfter: calls.length === 1 ? '0.001' : '' }
+          });
+        }
+        return {
+          images: [{ url: 'https://cdn.example.test/retried.png' }],
+          modelUsed: 'Kwai-Kolors/Kolors'
+        };
+      }
+    },
+    waitForRetry: async (milliseconds) => { delays.push(milliseconds); },
+    download: async () => ({
+      buffer: Buffer.from('retried-image'),
+      mimeType: 'image/png'
+    }),
+    normalize: async ({ buffer, mimeType }) => ({ buffer, mimeType, transformed: false })
+  });
+
+  const result = await service.generate({
+    prompt: 'A precise editorial product composition',
+    filename: 'retried.png'
+  });
+  assert.equal(calls.length, 3);
+  assert.deepEqual(delays, [500, 1000]);
+  assert.equal(new Set(calls.map((call) => call.seed)).size, 1);
+  assert.equal(calls.every((call) => call.profile.internalTextModel === 'Kwai-Kolors/Kolors'), true);
+  assert.equal(result.model, 'Kwai-Kolors/Kolors');
+
+  let unknownCalls = 0;
+  await assert.rejects(createAgentImageService({
+    provider: {
+      generateImage: async () => {
+        unknownCalls += 1;
+        throw new ApiError(502, 'PROVIDER_FAILED', { retryable: true });
+      }
+    },
+    waitForRetry: async () => {
+      throw new Error('unknown outcomes must not be retried');
+    }
+  }).generate({
+    prompt: 'Do not retry an unknown image outcome',
+    filename: 'unknown.png'
+  }), { code: 'PROVIDER_FAILED' });
+  assert.equal(unknownCalls, 1);
+});
+
 test('coordinate-mutating computer actions require takeover before execution', async () => {
   const responses = [
     {
@@ -4645,6 +6406,7 @@ test('coordinate-mutating computer actions require takeover before execution', a
   ];
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },
@@ -4680,6 +6442,7 @@ test('durable model checkpoint submits a completed tool receipt without replayin
   let cleared = 0;
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },
@@ -4776,6 +6539,7 @@ test('completed visual takeover is observed without replaying the coordinate act
   ];
   const provider = new OpenAiAgentModelProvider({
     env: {
+      AGENT_MODEL_PROVIDER: 'openai',
       OPENAI_API_KEY: 'test-key',
       AGENT_MODEL_NAME: 'gpt-5.6'
     },
@@ -4829,6 +6593,68 @@ test('Agent routes can register while disabled without constructing PostgreSQL o
   assert.ok(routes.some(([method, path]) => (
     method === 'DELETE' && path === '/api/agent-browser-profiles/:profileId'
   )));
+});
+
+test('Agent create route preserves the server-validated TaskSpec contract', async () => {
+  let createHandler = null;
+  let received = null;
+  const app = {
+    get() {},
+    post(path, ...handlers) {
+      if (path === '/api/agent-runs') createHandler = handlers.at(-1);
+    },
+    delete() {}
+  };
+  const taskSpec = {
+    version: 1,
+    goal: 'Create a report',
+    complexity: 'medium',
+    confidence: 0.9,
+    constraints: [],
+    assumptions: [],
+    deliverables: ['report'],
+    allowedOrigins: [],
+    acceptanceCriteria: ['The report opens'],
+    skillIds: ['report'],
+    plan: [
+      { id: 'produce', label: 'Create the report', phase: 'production', status: 'in_progress' },
+      { id: 'verify', label: 'Verify the report', phase: 'verification', status: 'pending' }
+    ],
+    budget: { maxCredits: 50 }
+  };
+  installAgentRoutes(app, {
+    env: { AGENT_FEATURE_ENABLED: 'true' },
+    pool: {},
+    queuePublisher: {},
+    agentIntegrationService: {},
+    agentRunService: {
+      async createRun(input) {
+        received = input;
+        return { runId: 'run-1', replayed: false };
+      }
+    }
+  });
+  assert.equal(typeof createHandler, 'function');
+  const req = {
+    authResolution: { ok: true, userId: 'user-1', dbUserId: 'db-user-1' },
+    headers: { 'idempotency-key': 'route-task-spec-contract' },
+    body: {
+      objective: 'Create a report',
+      maxCredits: 50,
+      capabilities: { files: true, shell: true },
+      deliverables: ['report'],
+      taskSpec
+    }
+  };
+  const response = {};
+  const res = {
+    headersSent: false,
+    status(code) { response.status = code; return this; },
+    json(value) { response.body = value; return this; }
+  };
+  await createHandler(req, res);
+  assert.equal(response.status, 202);
+  assert.deepEqual(received.taskSpec, taskSpec);
 });
 
 test('OAuth state is short-lived, signed and bound to the user and provider', () => {

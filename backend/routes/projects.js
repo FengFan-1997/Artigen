@@ -75,7 +75,8 @@ const installProjectRoutes = (app, deps = {}) => {
       payload: {
         productName: body.productName,
         brief: body.brief,
-        brandProfile: body.brandProfile
+        brandProfile: body.brandProfile,
+        designMemory: body.designMemory
       }
     });
     res.status(201).json({ ok: true, project });
@@ -109,6 +110,9 @@ const installProjectRoutes = (app, deps = {}) => {
           : {}),
         ...(Object.prototype.hasOwnProperty.call(body, 'brandProfile')
           ? { brandProfile: body.brandProfile }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(body, 'designMemory')
+          ? { designMemory: body.designMemory }
           : {})
       }
     });

@@ -20,7 +20,31 @@ const {
 } = require('../lib/turnstile');
 
 const enabled = (value) => /^(1|true)$/i.test(String(value || '').trim());
-const isProduction = (env) => String(env?.NODE_ENV || '').trim().toLowerCase() === 'production';
+// Treat either process-level or platform-level production intent as
+// production. Render can keep NODE_ENV=development while APP_ENV carries the
+// deployment boundary; security checks must not silently downgrade that
+// process to a local fixture.
+const isProduction = (env = process.env) => {
+  const nodeEnv = String(env?.NODE_ENV || '').trim().toLowerCase();
+  const appEnv = String(env?.APP_ENV || '').trim().toLowerCase();
+  return ['production', 'prod'].includes(nodeEnv) ||
+    ['production', 'prod'].includes(appEnv);
+};
+// APP_ENV is authoritative for deployment intent when a platform launches a
+// development-mode Node process.  Test fixtures remain explicitly isolated so
+// they can still use the contract mock without creating a production bypass.
+const isDeployedRuntime = (env = process.env) => {
+  const nodeEnv = String(env?.NODE_ENV || '').trim().toLowerCase();
+  const appEnv = String(env?.APP_ENV || '').trim().toLowerCase();
+  // Only an explicitly local fixture may bypass deployed-provider checks.
+  // Keep this identical to agent-config/generation-provider so a test process
+  // launched with APP_ENV=staging cannot report a legacy text adapter ready.
+  const testFixtureRuntime = nodeEnv === 'test' &&
+    ['', 'dev', 'development'].includes(appEnv);
+  if (testFixtureRuntime) return false;
+  return ['production', 'prod', 'dev', 'development', 'staging'].includes(nodeEnv) ||
+    ['production', 'prod', 'dev', 'development', 'staging'].includes(appEnv);
+};
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SECRET_PLACEHOLDER_RE = /(?:change[-_ ]?me|default|example|password|placeholder|test[-_ ]?secret)/i;
 const MIGRATION_FILE_RE = /^(\d{3}_.+)\.js$/;
@@ -251,6 +275,13 @@ const checkDatabase = async (pool) => {
          to_regclass('public.agent_subagents') IS NOT NULL AS has_agent_subagents,
          to_regclass('public.agent_subagent_payloads') IS NOT NULL AS has_agent_subagent_payloads,
          to_regclass('public.agent_subagent_model_checkpoints') IS NOT NULL AS has_agent_subagent_checkpoints,
+         to_regclass('public.agent_model_calls') IS NOT NULL AS has_agent_model_calls,
+         to_regclass('public.agent_provider_scheduler') IS NOT NULL AS has_agent_provider_scheduler,
+         to_regclass('public.agent_provider_requests') IS NOT NULL AS has_agent_provider_requests,
+         to_regclass('public.agent_quality_checks') IS NOT NULL AS has_agent_quality_checks,
+         to_regclass('public.agent_model_call_receipts') IS NOT NULL AS has_agent_model_call_receipts,
+         to_regclass('public.agent_tool_call_receipts') IS NOT NULL AS has_agent_tool_call_receipts,
+         to_regclass('public.agent_budget_reservations') IS NOT NULL AS has_agent_budget_reservations,
          to_regclass('public.design_conversations') IS NOT NULL AS has_design_conversations,
          to_regclass('public.design_messages') IS NOT NULL AS has_design_messages,
          to_regclass('public.design_executions') IS NOT NULL AS has_design_executions,
@@ -379,6 +410,46 @@ const checkDatabase = async (pool) => {
               )
          ) AS has_agent_run_columns,
          (
+           SELECT count(*) = 6
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_runs'
+              AND column_name IN (
+                'lease_epoch','runtime_profile_hash','runtime_profile_summary',
+                'final_text_sha256','semantic_verification','platform_overrun_credits'
+              )
+         ) AS has_agent_runtime_v2_1_columns,
+         (
+           SELECT count(*) = 19
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_model_call_receipts'
+              AND column_name IN (
+                'id','run_id','worker_id','lease_epoch','state','algorithm','key_version',
+                'intent_iv','intent_auth_tag','intent_ciphertext','response_iv',
+                'response_auth_tag','response_ciphertext','dispatched_at','received_at',
+                'consumed_at','ambiguous_at','updated_at','expires_at'
+              )
+         ) AS has_agent_model_call_receipt_columns,
+         (
+           SELECT count(*) = 22
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_tool_call_receipts'
+              AND column_name IN (
+                'id','run_id','subagent_id','receipt_key','kind','state','worker_id','lease_epoch',
+                'reservation_key','request_sha256','actual_credits','algorithm','key_version',
+                'result_iv','result_auth_tag','result_ciphertext','dispatched_at','consumed_at',
+                'ambiguous_at','created_at','updated_at','expires_at'
+              )
+         ) AS has_agent_tool_call_receipt_columns,
+         (
+           SELECT count(*) = 12
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_budget_reservations'
+              AND column_name IN (
+                'id','run_id','model_call_id','subagent_id','component','reservation_key',
+                'reserved_credits','actual_credits','state','consumed_at','released_at','updated_at'
+              )
+         ) AS has_agent_budget_reservation_columns,
+         (
            SELECT count(*) = 1
              FROM information_schema.columns
             WHERE table_schema='public' AND table_name='agent_runs'
@@ -414,6 +485,14 @@ const checkDatabase = async (pool) => {
               AND table_name IN ('agent_steps','agent_events')
               AND column_name='subagent_id'
          ) AS has_agent_subagent_links,
+         (
+           SELECT count(*) = 4
+             FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='agent_runs'
+              AND column_name IN (
+                'runtime_version','prompt_profile','prompt_hash','skill_versions'
+              )
+         ) AS has_agent_runtime_v2_columns,
          COALESCE((
            SELECT count(*) = 3 AND bool_and(
              (ps.sku='ai-design.generate.v1' AND ps.credits=10 AND ps.metadata->>'operation'='generate')
@@ -481,6 +560,13 @@ const checkDatabase = async (pool) => {
       row.has_agent_subagents &&
       row.has_agent_subagent_payloads &&
       row.has_agent_subagent_checkpoints &&
+      row.has_agent_model_calls &&
+      row.has_agent_provider_scheduler &&
+      row.has_agent_provider_requests &&
+      row.has_agent_quality_checks &&
+      row.has_agent_model_call_receipts &&
+      row.has_agent_tool_call_receipts &&
+      row.has_agent_budget_reservations &&
       row.has_design_conversations &&
       row.has_design_messages &&
       row.has_design_executions &&
@@ -501,11 +587,16 @@ const checkDatabase = async (pool) => {
       row.has_project_version_columns &&
       row.has_otp_delivery_columns &&
       row.has_agent_run_columns &&
+      row.has_agent_runtime_v2_1_columns &&
+      row.has_agent_model_call_receipt_columns &&
+      row.has_agent_tool_call_receipt_columns &&
+      row.has_agent_budget_reservation_columns &&
       row.has_agent_relay_run_columns &&
       row.has_agent_worker_readiness_columns &&
       row.has_agent_budget_split_columns &&
       row.has_agent_subagent_columns &&
-      row.has_agent_subagent_links
+      row.has_agent_subagent_links &&
+      row.has_agent_runtime_v2_columns
     );
     if (!migrated) {
       return {
@@ -603,10 +694,10 @@ const checkGenerationProvider = ({
     (!requireDirections || typeof provider.generateDirections === 'function') &&
     (!requireWorkshop || typeof provider.organizeIngredientSource === 'function')
   );
-  const realProviderRequired = isProduction(env);
+  const realProviderRequired = isDeployedRuntime(env);
   const kindValid = realProviderRequired
-    ? provider?.kind === 'siliconflow'
-    : ['siliconflow', 'contract-mock'].includes(String(provider?.kind || ''));
+    ? ['siliconflow', 'cloudflare-hybrid'].includes(String(provider?.kind || ''))
+    : ['siliconflow', 'cloudflare-hybrid', 'contract-mock'].includes(String(provider?.kind || ''));
   if (
     !adapterValid ||
     !kindValid ||
@@ -615,13 +706,33 @@ const checkGenerationProvider = ({
   ) {
     return { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' };
   }
+  // In every deployed runtime the generation adapter must be the hybrid
+  // Cloudflare-text/SiliconFlow-image boundary.  Do not let NODE_ENV=test
+  // bypass this check when APP_ENV explicitly declares a deployment.
+  if (realProviderRequired && String(provider?.kind || '').trim() === 'siliconflow') {
+    return { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' };
+  }
+  // Cloudflare is the deployed text runtime, including DEV.  Do not report a
+  // healthy adapter when the zero-cost account binding is absent; the first
+  // request would otherwise fail only after a task/hold has been created.
+  if (String(provider?.kind || '').trim() === 'cloudflare-hybrid') {
+    const accountId = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+    const freeAccountId = String(env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ID || '').trim();
+    const attested = enabled(env.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED);
+    if (!/^[0-9a-f]{32}$/i.test(accountId) || freeAccountId !== accountId || !attested) {
+      return { ok: false, code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED' };
+    }
+  }
   return { ok: true, kind: provider.kind, profile: profile.id };
 };
 
 const probeGenerationProvider = async (options = {}) => {
   const local = checkGenerationProvider(options);
   if (!local.ok) return local;
-  if (!isProduction(options.env || process.env)) return local;
+  const providerKind = String(options.provider?.kind || '').trim();
+  if (!isDeployedRuntime(options.env || process.env) && providerKind !== 'cloudflare-hybrid') {
+    return local;
+  }
   if (typeof options.provider?.checkAvailability !== 'function') {
     return { ok: false, code: 'PROVIDER_HEALTHCHECK_UNAVAILABLE' };
   }
@@ -671,6 +782,57 @@ const checkOutputAllowlist = (env = process.env, { required = isProduction(env) 
   return { ok: true, required, hostCount: hosts.length };
 };
 
+const checkAgentPricing = (agentConfig) => {
+  if (!agentConfig || agentConfig.runtimeDriver !== 'live') {
+    return skippedCheck('AGENT_LIVE_RUNTIME_DISABLED');
+  }
+  const provider = String(agentConfig.modelProvider || '').trim().toLowerCase();
+  if (!['siliconflow', 'cloudflare'].includes(provider)) {
+    return { ok: true, provider, model: agentConfig.modelName };
+  }
+  const snapshot = agentConfig.modelPricingSnapshot || {};
+  const input = Number(snapshot.inputCreditsPerMillion);
+  const output = Number(snapshot.outputCreditsPerMillion);
+  if (!Number.isFinite(input) || !Number.isFinite(output) || !(input > 0) || !(output > 0)) {
+    return {
+      ok: false,
+      code: 'AGENT_PRICING_NOT_READY',
+      provider,
+      model: agentConfig.modelName,
+      inputCreditsPerMillion: Number.isFinite(input) ? input : 0,
+      outputCreditsPerMillion: Number.isFinite(output) ? output : 0
+    };
+  }
+  return {
+    ok: true,
+    provider,
+    model: agentConfig.modelName,
+    inputCreditsPerMillion: input,
+    outputCreditsPerMillion: output
+  };
+};
+
+const checkAgentProviderScheduler = async ({ pool, agentConfig } = {}) => {
+  if (!agentConfig?.providerSchedulerEnabled) {
+    return skippedCheck('AGENT_PROVIDER_SCHEDULER_DISABLED');
+  }
+  if (!pool || typeof pool.query !== 'function') {
+    return { ok: false, code: 'AGENT_PROVIDER_SCHEDULER_DATABASE_REQUIRED' };
+  }
+  try {
+    const result = await pool.query(
+      `SELECT to_regclass('public.agent_provider_scheduler') IS NOT NULL AS has_scheduler,
+              to_regclass('public.agent_provider_requests') IS NOT NULL AS has_requests`
+    );
+    const row = result.rows[0] || {};
+    return row.has_scheduler === true && row.has_requests === true
+      ? { ok: true, enabled: true, mode: 'postgres-v1' }
+      : { ok: false, enabled: true, mode: 'postgres-v1', code: 'AGENT_PROVIDER_SCHEDULER_NOT_READY' };
+  } catch {
+    return { ok: false, enabled: true, mode: 'postgres-v1', code: 'AGENT_PROVIDER_SCHEDULER_UNAVAILABLE' };
+  }
+};
+
 const getReadinessReport = async ({
   env = process.env,
   pool,
@@ -709,6 +871,8 @@ const getReadinessReport = async ({
   let outputAllowlist = skippedCheck();
   let payment = skippedCheck();
   let agent = skippedCheck();
+  let agentPricing = skippedCheck();
+  let agentScheduler = skippedCheck();
   let conversation = skippedCheck();
 
   if (databaseRequired) {
@@ -759,6 +923,19 @@ const getReadinessReport = async ({
       !agentConfig.siliconFlowApiKey
     ) {
       missing.push('SILICONFLOW_API_KEY');
+    }
+    if (
+      agentConfig.runtimeDriver === 'live' &&
+      agentConfig.modelProvider === 'cloudflare'
+    ) {
+      if (!agentConfig.cloudflareAccountId) missing.push('CLOUDFLARE_ACCOUNT_ID');
+      if (!agentConfig.cloudflareApiToken) missing.push('CLOUDFLARE_API_TOKEN');
+      if (!agentConfig.cloudflareFreeAccountId) {
+        missing.push('AGENT_CLOUDFLARE_FREE_ACCOUNT_ID');
+      }
+      if (!agentConfig.cloudflareFreeAccountAttested) {
+        missing.push('AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED');
+      }
     }
     if (
       agentConfig.publicImageGenerationEnabled &&
@@ -830,6 +1007,8 @@ const getReadinessReport = async ({
           desktopRelayConfigured: Boolean(agentConfig.workerRelayUrl),
           imageGenerationPublicEnabled: agentConfig.publicImageGenerationEnabled
         };
+    agentPricing = checkAgentPricing(agentConfig);
+    agentScheduler = await checkAgentProviderScheduler({ pool, agentConfig });
   }
   if (conversationEnabled) {
     const missing = [];
@@ -837,7 +1016,12 @@ const getReadinessReport = async ({
       missing.push('DESIGN_CONVERSATION_WORKER_ENABLED');
     }
     if (!hasAgentPayloadKey(env)) missing.push('AGENT_PAYLOAD_ENCRYPTION_KEY');
-    if (!String(env.SILICONFLOW_API_KEY || '').trim()) missing.push('SILICONFLOW_API_KEY');
+    // The image credential may be supplied through the documented Keychain
+    // lookup or one of the supported SiliconFlow aliases.  `getAgentConfig`
+    // resolves those sources into `siliconFlowApiKey`; checking the raw
+    // process environment here made a valid local/worker setup look
+    // unconfigured even though generation would succeed.
+    if (!String(agentConfig?.siliconFlowApiKey || '').trim()) missing.push('SILICONFLOW_API_KEY');
     if (!paidEnabled) missing.push('PAID_FEATURES_ENABLED');
     if (!aiDesignEnabled) missing.push('AI_DESIGN_TASK_V2_ENABLED');
     if (!workshopAiEnabled) missing.push('WORKSHOP_AI_TASK_V2_ENABLED');
@@ -850,7 +1034,8 @@ const getReadinessReport = async ({
       ? { ok: false, code: 'DESIGN_CONVERSATION_NOT_CONFIGURED', missing }
       : {
           ok: true,
-          plannerModel: 'Qwen/Qwen3-8B',
+          plannerProvider: agentConfig.modelProvider,
+          plannerModel: agentConfig.modelName,
           imageModel: GENERATION_IMAGE_MODEL,
           autoCreditCap: Math.max(
             1,
@@ -892,6 +1077,7 @@ const getReadinessReport = async ({
   if (generationRequired) requiredChecks.push(provider, outputAllowlist);
   if (authEmailOtpEnabled) requiredChecks.push(authSecrets, mail, turnstile);
   if (agentEnabled) requiredChecks.push(agent);
+  if (agentEnabled) requiredChecks.push(agentPricing, agentScheduler);
   if (conversationEnabled) requiredChecks.push(conversation);
   return {
     ok: requiredChecks.every((check) => check.ok),
@@ -918,6 +1104,8 @@ const getReadinessReport = async ({
       mail,
       turnstile,
       agent,
+      agentPricing,
+      agentScheduler,
       conversation
     }
   };
@@ -935,6 +1123,8 @@ module.exports = {
   checkGenerationProvider,
   probeGenerationProvider,
   checkOutputAllowlist,
+  checkAgentPricing,
+  checkAgentProviderScheduler,
   checkStorage,
   checkTurnstile,
   getReadinessReport

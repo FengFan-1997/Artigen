@@ -162,11 +162,16 @@ const humanizeAuthError = (raw: any) => {
   return msg;
 };
 
-const humanizeAuthResponseError = (json: any, fallback: string) => {
+const humanizeAuthResponseError = (json: any, fallback: string, status = 0) => {
   const errorCode = normalizeErr(json?.error);
   if (errorCode) {
     const humanizedCode = humanizeAuthError(errorCode);
     if (humanizedCode.toLowerCase() !== errorCode.toLowerCase()) return humanizedCode;
+  }
+  if ([502, 503, 504].includes(status)) {
+    return isZh()
+      ? '服务暂时不可用，请稍后重试'
+      : 'The service is temporarily unavailable. Please try again later.';
   }
   return humanizeAuthError(json?.message || errorCode || fallback);
 };
@@ -218,7 +223,7 @@ export const sendLoginCode = async (
     const errorCode = String(json?.error || '').trim();
     return {
       ok: false,
-      message: humanizeAuthResponseError(json, '发送失败'),
+      message: humanizeAuthResponseError(json, '发送失败', res.status),
       ...(errorCode ? { errorCode } : {}),
       cooldownSec: Number(json?.cooldownSec || json?.retryAfterSec || 0) || undefined
     };
@@ -267,7 +272,7 @@ export const verifyLoginCode = async (email: string, code: string): Promise<Veri
   });
   const json = await parseJson(res);
   if (!res.ok)
-    return { ok: false, message: humanizeAuthResponseError(json, '验证失败') };
+    return { ok: false, message: humanizeAuthResponseError(json, '验证失败', res.status) };
   const userId = String(json?.userId || '').trim();
   if (!userId) return { ok: false, message: '验证失败' };
   return { ok: true, userId };
@@ -304,7 +309,7 @@ export const loginWithPassword = async (
   });
   const json = await parseJson(res);
   if (!res.ok) {
-    return { ok: false, message: humanizeAuthResponseError(json, '登录失败') };
+    return { ok: false, message: humanizeAuthResponseError(json, '登录失败', res.status) };
   }
   const userId = String(json?.userId || '').trim();
   const name = typeof json?.name === 'string' ? String(json.name).trim() : '';
@@ -368,7 +373,7 @@ export const registerWithEmailCode = async (input: {
   });
   const json = await parseJson(res);
   if (!res.ok) {
-    return { ok: false, message: humanizeAuthResponseError(json, '注册失败') };
+    return { ok: false, message: humanizeAuthResponseError(json, '注册失败', res.status) };
   }
   const userId = String(json?.userId || '').trim();
   const name = typeof json?.name === 'string' ? String(json.name).trim() : '';
@@ -403,7 +408,7 @@ export const loginWithGoogleIdToken = async (idToken: string): Promise<GoogleAut
   });
   const json = await parseJson(res);
   if (!res.ok) {
-    return { ok: false, message: humanizeAuthResponseError(json, '登录失败') };
+    return { ok: false, message: humanizeAuthResponseError(json, '登录失败', res.status) };
   }
   const userId = String(json?.userId || '').trim();
   const name = typeof json?.name === 'string' ? String(json.name).trim() : '';
@@ -441,7 +446,7 @@ export const sendPasswordResetCode = async (
     const errorCode = String(json?.error || '').trim();
     return {
       ok: false,
-      message: humanizeAuthResponseError(json, '发送失败'),
+      message: humanizeAuthResponseError(json, '发送失败', res.status),
       ...(errorCode ? { errorCode } : {}),
       cooldownSec: Number(json?.cooldownSec || json?.retryAfterSec || 0) || undefined
     };
@@ -482,7 +487,7 @@ export const resetPasswordWithCode = async (input: {
   });
   const json = await parseJson(res);
   if (!res.ok) {
-    return { ok: false, message: humanizeAuthResponseError(json, '重置失败') };
+    return { ok: false, message: humanizeAuthResponseError(json, '重置失败', res.status) };
   }
   const msg = typeof json?.message === 'string' ? String(json.message) : '';
   return { ok: true, ...(msg ? { message: msg } : {}) };

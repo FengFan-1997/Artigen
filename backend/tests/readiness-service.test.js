@@ -23,6 +23,7 @@ const {
 const billing = require('../services/billing-service');
 const { installSystemRoutes } = require('../routes/system');
 const { installToolTaskRoutes } = require('../routes/tool-tasks');
+const { getAgentConfig } = require('../services/agent-config');
 
 const migratedRow = Object.freeze({
   has_tasks: true,
@@ -49,6 +50,13 @@ const migratedRow = Object.freeze({
   has_agent_subagents: true,
   has_agent_subagent_payloads: true,
   has_agent_subagent_checkpoints: true,
+  has_agent_model_calls: true,
+  has_agent_provider_scheduler: true,
+  has_agent_provider_requests: true,
+  has_agent_quality_checks: true,
+  has_agent_model_call_receipts: true,
+  has_agent_tool_call_receipts: true,
+  has_agent_budget_reservations: true,
   has_design_conversations: true,
   has_design_messages: true,
   has_design_executions: true,
@@ -74,6 +82,11 @@ const migratedRow = Object.freeze({
   has_agent_budget_split_columns: true,
   has_agent_subagent_columns: true,
   has_agent_subagent_links: true,
+  has_agent_runtime_v2_columns: true,
+  has_agent_runtime_v2_1_columns: true,
+  has_agent_model_call_receipt_columns: true,
+  has_agent_tool_call_receipt_columns: true,
+  has_agent_budget_reservation_columns: true,
   has_ai_skus: true,
   has_workshop_skus: true
 });
@@ -185,10 +198,19 @@ test('readiness verifies queue, payload, asset, event, inputs_ready and AI SKU m
     code: null,
     migration: LATEST_REPOSITORY_MIGRATION
   });
-  assert.equal(LATEST_REPOSITORY_MIGRATION, '023_agent_subagent_runtime_hardening');
+  assert.equal(LATEST_REPOSITORY_MIGRATION, '026_agent_live_eval_capacity_counter');
   assert.equal(migrationQueryParam, LATEST_REPOSITORY_MIGRATION);
   assert.deepEqual(await checkDatabase({
     query: async () => ({ rows: [{ ...migratedRow, has_task_columns: false }] })
+  }), {
+    ok: false,
+    code: 'DATABASE_MIGRATION_REQUIRED',
+    expectedMigration: LATEST_REPOSITORY_MIGRATION
+  });
+  assert.deepEqual(await checkDatabase({
+    query: async () => ({
+      rows: [{ ...migratedRow, has_agent_tool_call_receipts: false }]
+    })
   }), {
     ok: false,
     code: 'DATABASE_MIGRATION_REQUIRED',
@@ -286,31 +308,80 @@ test('provider readiness validates a callable adapter and stable internal profil
     env: { NODE_ENV: 'production' }
   }), { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' });
   assert.deepEqual(checkGenerationProvider({
+    provider: provider('contract-mock'),
+    env: { NODE_ENV: 'development', APP_ENV: 'production' }
+  }), { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' });
+  // A platform may accidentally keep NODE_ENV=test while declaring a
+  // production app intent. That combination must still reject the fixture
+  // adapter instead of creating a readiness bypass.
+  assert.deepEqual(checkGenerationProvider({
+    provider: provider('contract-mock'),
+    env: { NODE_ENV: 'test', APP_ENV: 'production' }
+  }), { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' });
+  assert.deepEqual(checkGenerationProvider({
     provider: { kind: 'siliconflow', available: true },
     env: { NODE_ENV: 'production' }
   }), { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' });
+  // A callable legacy adapter must still be rejected when deployment intent
+  // is carried by APP_ENV, including NODE_ENV=test fixture processes.
+  assert.deepEqual(checkGenerationProvider({
+    provider: provider('siliconflow'),
+    env: { NODE_ENV: 'test', APP_ENV: 'production' }
+  }), { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  assert.deepEqual(checkGenerationProvider({
+    provider: provider('siliconflow'),
+    env: { NODE_ENV: 'test', APP_ENV: 'staging' }
+  }), { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
+  assert.deepEqual(checkGenerationProvider({
+    provider: provider('siliconflow'),
+    env: { NODE_ENV: 'PRODUCTION' }
+  }), { ok: false, code: 'AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED' });
 });
 
 test('production readiness fails closed for revoked provider credentials', async () => {
-  const invalid = provider('siliconflow');
+  const cloudflareEnv = {
+    NODE_ENV: 'production',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true'
+  };
+  const invalid = provider('cloudflare-hybrid');
   invalid.checkAvailability = async () => ({
     ok: false,
     code: 'PROVIDER_CREDENTIAL_INVALID'
   });
   assert.deepEqual(await probeGenerationProvider({
     provider: invalid,
-    env: { NODE_ENV: 'production' }
+    env: cloudflareEnv
   }), { ok: false, code: 'PROVIDER_CREDENTIAL_INVALID' });
   assert.deepEqual(await probeGenerationProvider({
     provider: {
-      kind: 'siliconflow',
+      kind: 'cloudflare-hybrid',
       available: true,
       generateDirections: async () => [],
       generateImage: async () => ({}),
       organizeIngredientSource: async () => ({})
     },
-    env: { NODE_ENV: 'production' }
+    env: cloudflareEnv
   }), { ok: false, code: 'PROVIDER_HEALTHCHECK_UNAVAILABLE' });
+});
+
+test('DEV Cloudflare generation readiness fails closed before free-account attestation', async () => {
+  const result = await probeGenerationProvider({
+    provider: provider('cloudflare-hybrid'),
+    env: {
+      NODE_ENV: 'test',
+      APP_ENV: 'dev',
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'test-key',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32)
+    }
+  });
+  assert.deepEqual(result, {
+    ok: false,
+    code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED'
+  });
 });
 
 test('production output allowlist requires valid public DNS hostnames', () => {
@@ -331,6 +402,14 @@ test('production output allowlist requires valid public DNS hostnames', () => {
     NODE_ENV: 'production',
     AI_OUTPUT_ALLOWED_HOSTS: '*.cdn.example.com,images.example.org'
   }), { ok: true, required: true, hostCount: 2 });
+  assert.deepEqual(checkOutputAllowlist({
+    NODE_ENV: 'test',
+    APP_ENV: 'production'
+  }), {
+    ok: false,
+    code: 'AI_OUTPUT_ALLOWLIST_REQUIRED',
+    hostCount: 0
+  });
 });
 
 test('paid readiness requires provider-verified Afdian reconciliation configuration', () => {
@@ -340,6 +419,12 @@ test('paid readiness requires provider-verified Afdian reconciliation configurat
     packageCount: 4,
     webhookVerification: 'provider-query'
   });
+  assert.equal(checkAfdian({
+    ...baseGenerationEnv,
+    NODE_ENV: 'test',
+    APP_ENV: 'production',
+    AFDIAN_ORDER_CREATE_URL: 'https://attacker.example/order/create'
+  }).code, 'AFDIAN_PAY_URL_INVALID');
   assert.equal(checkAfdian({
     ...baseGenerationEnv,
     AFDIAN_API_TOKEN: ''
@@ -466,11 +551,16 @@ test('production paid generation is ready only with real provider, shared storag
     env: {
       ...baseGenerationEnv,
       NODE_ENV: 'production',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'cf-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
       AI_OUTPUT_ALLOWED_HOSTS: 'cdn.example.com'
     },
     pool: migratedPool,
     adapter: sharedAdapter(),
-    generationProvider: provider('siliconflow')
+    generationProvider: provider('cloudflare-hybrid')
   });
   assert.equal(report.ok, true);
   assert.equal(report.checks.database.ok, true);
@@ -486,8 +576,13 @@ test('production Agent readiness requires an explicit authenticated access gate'
     APP_ENV: 'production',
     AGENT_FEATURE_ENABLED: '1',
     AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
-    AGENT_MODEL_PROVIDER: 'siliconflow',
-    SILICONFLOW_API_KEY: 'test-key',
+    AGENT_MODEL_PROVIDER: 'cloudflare',
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '0.35',
+    AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '0.75',
     AGENT_SANDBOX_PROVIDER: 'cua',
     AGENT_SANDBOX_MODE: 'local',
     AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
@@ -498,7 +593,7 @@ test('production Agent readiness requires an explicit authenticated access gate'
     env: base,
     pool: migratedPool,
     adapter: sharedAdapter(),
-    generationProvider: provider('siliconflow')
+    generationProvider: provider('cloudflare-hybrid')
   });
   assert.equal(denied.ok, false);
   assert.equal(denied.checks.agent.code, 'AGENT_RUNTIME_NOT_CONFIGURED');
@@ -512,7 +607,7 @@ test('production Agent readiness requires an explicit authenticated access gate'
     },
     pool: migratedPool,
     adapter: sharedAdapter(),
-    generationProvider: provider('siliconflow')
+    generationProvider: provider('cloudflare-hybrid')
   });
   assert.equal(ready.ok, true);
   assert.equal(ready.checks.agent.betaMode, 'owner-only-v1');
@@ -524,10 +619,41 @@ test('production Agent readiness requires an explicit authenticated access gate'
     },
     pool: migratedPool,
     adapter: sharedAdapter(),
-    generationProvider: provider('siliconflow')
+    generationProvider: provider('cloudflare-hybrid')
   });
   assert.equal(publicReady.ok, true);
   assert.equal(publicReady.checks.agent.betaMode, 'authenticated-v1');
+});
+
+test('production Agent readiness defaults an omitted provider to Cloudflare text', async () => {
+  const env = {
+    NODE_ENV: 'production',
+    APP_ENV: 'production',
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+    CLOUDFLARE_API_TOKEN: 'test-key',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+    AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+    AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '0.35',
+    AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '0.75',
+    AGENT_SANDBOX_PROVIDER: 'cua',
+    AGENT_SANDBOX_MODE: 'local',
+    AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
+    AGENT_CUA_IMAGE_HAS_TOOLCHAIN: 'true',
+    AGENT_PUBLIC_CAPABILITIES: 'files,shell',
+    AGENT_BETA_MODE: 'authenticated-v1'
+  };
+  const config = getAgentConfig(env);
+  assert.equal(config.modelProvider, 'cloudflare');
+  const report = await getReadinessReport({
+    env,
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('cloudflare-hybrid')
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.checks.agent.modelProvider, 'cloudflare');
 });
 
 test('production Agent image generation requires the real image provider and output allowlist', async () => {
@@ -537,8 +663,14 @@ test('production Agent image generation requires the real image provider and out
       APP_ENV: 'production',
       AGENT_FEATURE_ENABLED: '1',
       AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
-      AGENT_MODEL_PROVIDER: 'siliconflow',
-      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'test-key',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '0.35',
+      AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '0.75',
+      SILICONFLOW_API_KEY: 'siliconflow-image-provider-test-key',
       AGENT_SANDBOX_PROVIDER: 'cua',
       AGENT_SANDBOX_MODE: 'local',
       AGENT_CUA_IMAGE_REF: 'artigen/cua-xfce:0.1.15-tools-v2',
@@ -550,7 +682,7 @@ test('production Agent image generation requires the real image provider and out
     },
     pool: migratedPool,
     adapter: sharedAdapter(),
-    generationProvider: provider('siliconflow')
+    generationProvider: provider('cloudflare-hybrid')
   });
   assert.equal(report.ok, true);
   assert.equal(report.agentImageGenerationRequired, true);
@@ -559,6 +691,105 @@ test('production Agent image generation requires the real image provider and out
   assert.equal(report.checks.provider.ok, true);
   assert.equal(report.checks.outputAllowlist.ok, true);
   assert.equal(report.checks.agent.imageGenerationPublicEnabled, true);
+});
+
+test('live Agent readiness fails closed when pricing is missing or the scheduler schema is absent', async () => {
+  const base = {
+    NODE_ENV: 'test',
+    APP_ENV: 'dev',
+    AGENT_FEATURE_ENABLED: '1',
+    AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
+    AGENT_MODEL_PROVIDER: 'siliconflow',
+    AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+    SILICONFLOW_API_KEY: 'test-key',
+    AGENT_SANDBOX_PROVIDER: 'fixture',
+    AGENT_PUBLIC_CAPABILITIES: 'files,shell',
+    AGENT_BETA_MODE: 'authenticated-v1'
+  };
+  const missingPricing = await getReadinessReport({
+    env: base,
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(missingPricing.ok, false);
+  assert.equal(missingPricing.checks.agentPricing.code, 'AGENT_PRICING_NOT_READY');
+  assert.equal(missingPricing.checks.agentScheduler.skipped, true);
+
+  const missingScheduler = await getReadinessReport({
+    env: {
+      ...base,
+      AGENT_PROVIDER_SCHEDULER_ENABLED: 'true',
+      AGENT_SILICONFLOW_INPUT_CREDITS_PER_MILLION: '20',
+      AGENT_SILICONFLOW_OUTPUT_CREDITS_PER_MILLION: '160'
+    },
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(missingScheduler.ok, false);
+  assert.equal(missingScheduler.checks.agentPricing.ok, true);
+  assert.equal(missingScheduler.checks.agentScheduler.code, 'AGENT_PROVIDER_SCHEDULER_NOT_READY');
+});
+
+test('design conversation readiness reports the configured Cloudflare planner model', async () => {
+  const report = await getReadinessReport({
+    env: {
+      NODE_ENV: 'test',
+      APP_ENV: 'dev',
+      DESIGN_CONVERSATION_ENABLED: 'true',
+      DESIGN_CONVERSATION_WORKER_ENABLED: 'true',
+      PAID_FEATURES_ENABLED: 'true',
+      AI_DESIGN_TASK_V2_ENABLED: 'true',
+      WORKSHOP_AI_TASK_V2_ENABLED: 'true',
+      AGENT_FEATURE_ENABLED: 'true',
+      AGENT_BETA_MODE: 'authenticated-v1',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_PUBLIC_CAPABILITIES: 'files,shell,generate_images',
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+      AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
+      SILICONFLOW_API_KEY: 'siliconflow-image-provider-test-key'
+    },
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(report.checks.conversation.plannerProvider, 'cloudflare');
+  assert.equal(report.checks.conversation.plannerModel, '@cf/openai/gpt-oss-120b');
+});
+
+test('design conversation readiness accepts the documented SiliconFlow image credential aliases', async () => {
+  const report = await getReadinessReport({
+    env: {
+      NODE_ENV: 'test',
+      APP_ENV: 'dev',
+      DESIGN_CONVERSATION_ENABLED: 'true',
+      DESIGN_CONVERSATION_WORKER_ENABLED: 'true',
+      PAID_FEATURES_ENABLED: 'true',
+      AI_DESIGN_TASK_V2_ENABLED: 'true',
+      WORKSHOP_AI_TASK_V2_ENABLED: 'true',
+      AGENT_FEATURE_ENABLED: 'true',
+      AGENT_BETA_MODE: 'authenticated-v1',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      AGENT_PUBLIC_CAPABILITIES: 'files,shell,generate_images',
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+      AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`,
+      SILICONFLOW_TOKEN: 'siliconflow-image-provider-test-key'
+    },
+    pool: migratedPool,
+    adapter: sharedAdapter(),
+    generationProvider: provider('siliconflow')
+  });
+  assert.equal(report.checks.conversation.ok, true);
+  assert.deepEqual(report.checks.conversation.missing || [], []);
 });
 
 test('production ai-design quote and create share the readiness storage failure without billing side effects', async () => {
@@ -892,6 +1123,48 @@ test('system healthz stays shallow and does not inspect readiness dependencies',
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.ok, true);
   assert.equal(dependencyReads, 0);
+});
+
+test('Cloudflare health probe validates free binding without spending inference quota', async () => {
+  const { app, routes } = routeApp();
+  const calls = [];
+  const previousDebug = process.env.DEBUG_ROUTES;
+  process.env.DEBUG_ROUTES = '1';
+  try {
+    installSystemRoutes(app, {
+      NODE_ENV: 'test',
+      isProd: false,
+      env: {
+        NODE_ENV: 'test',
+        AGENT_MODEL_PROVIDER: 'cloudflare',
+        CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+        CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+        AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: 'a'.repeat(32),
+        AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true'
+      },
+      activeTextProvider: 'cloudflare',
+      hasCloudflareProvider: true,
+      CLOUDFLARE_MODEL: '@cf/openai/gpt-oss-120b',
+      callCloudflareChat: async (input) => {
+        calls.push(input);
+        return { usedUrl: 'https://api.cloudflare.com/client/v4/accounts/test/ai/v1/chat/completions' };
+      },
+      callSiliconFlowChat: async () => { throw new Error('SILICONFLOW_MUST_NOT_BE_USED'); },
+      fs,
+      path,
+      rateLimit: () => (_req, _res, next) => next(),
+      getClientIp: () => '127.0.0.1'
+    });
+    const res = routeResponse();
+    res.locals = { requestId: 'health-probe-test' };
+    await routes.get('GET /api/health')({ query: { probe: '1' } }, res);
+    assert.equal(res.payload.cloudflare.lastProbe.ok, true);
+    assert.equal(res.payload.cloudflare.lastProbe.mode, 'credential-config');
+    assert.equal(calls.length, 0);
+  } finally {
+    if (previousDebug === undefined) delete process.env.DEBUG_ROUTES;
+    else process.env.DEBUG_ROUTES = previousDebug;
+  }
 });
 
 test('system meta exposes the deployment environment and Render commit', () => {

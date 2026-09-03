@@ -54,12 +54,44 @@ const cleanBrandProfile = (value) => {
   };
 };
 
+const cleanDesignMemory = (value) => {
+  const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const preferences = input.outputPreferences &&
+      typeof input.outputPreferences === 'object' &&
+      !Array.isArray(input.outputPreferences)
+    ? input.outputPreferences
+    : {};
+  const deliverables = cleanList(preferences.deliverables, 5, 40)
+    .filter((entry) => ['report', 'spreadsheet', 'presentation', 'website', 'image'].includes(entry));
+  const aspectRatio = cleanText(preferences.aspectRatio, 16);
+  if (aspectRatio && !/^\d{1,3}:\d{1,3}$/.test(aspectRatio)) {
+    throw new ApiError(400, 'INVALID_PROJECT_FIELD', {
+      field: 'designMemory.outputPreferences.aspectRatio'
+    });
+  }
+  return {
+    audience: cleanText(input.audience, 1000),
+    goals: cleanList(input.goals, 12, 300),
+    tone: cleanList(input.tone, 12, 100),
+    visualKeywords: cleanList(input.visualKeywords, 20, 100),
+    mustInclude: cleanList(input.mustInclude, 20, 300),
+    avoid: cleanList(input.avoid, 20, 300),
+    outputPreferences: {
+      deliverables,
+      aspectRatio,
+      language: cleanText(preferences.language, 40)
+    },
+    factualConstraints: cleanList(input.factualConstraints, 20, 500)
+  };
+};
+
 const cleanProjectPayload = (value) => {
   const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
     productName: cleanText(input.productName, 160),
     brief: cleanText(input.brief, 4000),
-    brandProfile: cleanBrandProfile(input.brandProfile)
+    brandProfile: cleanBrandProfile(input.brandProfile),
+    designMemory: cleanDesignMemory(input.designMemory)
   };
 };
 
@@ -807,6 +839,7 @@ module.exports = {
   assertUuid,
   cleanBrandProfile,
   cleanProjectPayload,
+  cleanDesignMemory,
   cleanVersionPayload,
   createCreativeProjectService,
   createPendingProjectVersion,

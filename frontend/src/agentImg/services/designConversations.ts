@@ -22,6 +22,41 @@ export type DesignAttachmentManifest = {
   byteSize: number;
 };
 
+export type DesignMemory = {
+  audience: string;
+  goals: string[];
+  tone: string[];
+  visualKeywords: string[];
+  mustInclude: string[];
+  avoid: string[];
+  outputPreferences: {
+    deliverables: string[];
+    aspectRatio: string;
+    language: string;
+  };
+  factualConstraints: string[];
+};
+
+export type AgentTaskSpec = {
+  version: 1;
+  goal: string;
+  complexity: 'simple' | 'medium' | 'high';
+  confidence: number;
+  constraints: string[];
+  assumptions: string[];
+  deliverables: string[];
+  allowedOrigins: string[];
+  acceptanceCriteria: string[];
+  skillIds: string[];
+  plan: Array<{
+    id: string;
+    label: string;
+    phase: 'research' | 'production' | 'verification' | 'completion';
+    status: 'pending' | 'in_progress' | 'completed';
+  }>;
+  budget: { maxCredits: number };
+};
+
 export type DesignMessage = {
   messageId: string;
   sequence: number;
@@ -32,6 +67,7 @@ export type DesignMessage = {
   attachments: DesignAttachmentManifest[];
   questions: string[];
   assumptions: string[];
+  memoryCandidates: Array<{ field: keyof DesignMemory; value: unknown }>;
   createdAt: string;
 };
 
@@ -50,6 +86,10 @@ export type DesignExecutionPlan = {
     persistSession?: boolean;
   };
   assumptions?: string[];
+  complexity?: 'simple' | 'medium' | 'high';
+  confidence?: number;
+  skillIds?: string[];
+  taskSpec?: AgentTaskSpec;
 };
 
 export type DesignExecution = {
@@ -97,11 +137,17 @@ export type DesignAssistantStatus = {
   enabled: boolean;
   workerEnabled: boolean;
   plannerReady: boolean;
-  model: 'Qwen/Qwen3-8B';
+  model: '@cf/openai/gpt-oss-120b';
   imageModel: 'Kwai-Kolors/Kolors';
   autoCreditCap: number;
   retentionDays: number;
   authorizationIdleMinutes: number;
+  plannerV2Enabled?: boolean;
+  adaptiveReasoningEnabled?: boolean;
+  projectMemoryEnabled?: boolean;
+  runtimeV2RolloutPercent?: number;
+  runtimeV2CanaryConfigured?: boolean;
+  providerScheduler?: { ok: boolean; enabled: boolean; mode: string; intervalMs?: number };
   queued: number;
   running: number;
 };

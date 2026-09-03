@@ -26,6 +26,7 @@ const {
   appendUserImageHistory
 } = require('../lib/memory-manager');
 const {
+  classifyModel,
   sanitizeAuditHistoryEntry,
   sanitizeImageHistoryEntry
 } = require('../lib/privacy-metadata');
@@ -109,6 +110,10 @@ test('history metadata sanitizers are content-free and idempotent', () => {
 
   assert.deepEqual(sanitizeImageHistoryEntry(image), image);
   assert.deepEqual(sanitizeAuditHistoryEntry(audit), audit);
+});
+
+test('privacy metadata keeps the Cloudflare GPT-OSS model family observable', () => {
+  assert.equal(classifyModel('@cf/openai/gpt-oss-120b'), 'gpt-oss');
 });
 
 test('memory history append sanitizes both the new entry and legacy entries before persistence', () => {
