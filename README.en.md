@@ -246,15 +246,15 @@ docs/          README assets and project documentation
 - Paid workflows quote and hold a maximum credit amount before execution, then settle actual use.
   CI uses mocks with paid features disabled.
 
-See [Agent browser security and beta release](./AGENT_BROWSER_SECURITY_AND_BETA_RELEASE.zh-CN.md)
-for the security model, browser boundaries, and release constraints.
+See [Agent browser security model](./AGENT_BROWSER_SECURITY_MODEL.zh-CN.md) for the security model,
+browser boundaries, and release constraints.
 
 ## Documentation
 
 - [Product requirements and acceptance criteria](./PRD.md)
 - [Development environment and local setup](./DEV_ENVIRONMENT_RUNBOOK.zh-CN.md)
 - [Project operations guide](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)
-- [Agent browser security and beta release](./AGENT_BROWSER_SECURITY_AND_BETA_RELEASE.zh-CN.md)
+- [Agent browser security model](./AGENT_BROWSER_SECURITY_MODEL.zh-CN.md)
 - [Contributing guide](./CONTRIBUTING.md)
 
 ## Contributing

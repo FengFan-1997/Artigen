@@ -236,15 +236,15 @@ docs/          README 素材与项目文档
 - Agent 产物使用私有对象存储、SHA-256 与服务端独立验证；下载 URL 有时效。
 - 付费工作流先报价并冻结点数上限，再按实际使用结算；CI 使用 Mock 并关闭付费功能。
 
-安全模型、浏览器边界和 Beta 发布约束见
-[Agent 浏览器安全说明](./AGENT_BROWSER_SECURITY_AND_BETA_RELEASE.zh-CN.md)。
+安全模型、浏览器边界和发布约束见
+[Agent 浏览器安全模型](./AGENT_BROWSER_SECURITY_MODEL.zh-CN.md)。
 
 ## 深入文档
 
 - [产品需求与验收口径](./PRD.md)
 - [开发环境与本地运行](./DEV_ENVIRONMENT_RUNBOOK.zh-CN.md)
 - [项目运维指南](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)
-- [Agent 浏览器安全与 Beta 发布](./AGENT_BROWSER_SECURITY_AND_BETA_RELEASE.zh-CN.md)
+- [Agent 浏览器安全模型](./AGENT_BROWSER_SECURITY_MODEL.zh-CN.md)
 - [贡献指南](./CONTRIBUTING.md)
 
 ## 贡献
