@@ -1,6 +1,6 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-08-28（Asia/Shanghai）
+更新时间：2026-09-03（Asia/Shanghai）
 
 文档性质：**GitHub 正式项目状态与持久事实总入口**
 
@@ -49,6 +49,7 @@ DEV 当前边界：
 
 - Runtime V2 代码和 durability 已进入 `dev`，但公众开关、rollout 与生产 canary 继续关闭。
 - 子 Agent、图片交付、Harness V3、受限出口和桌面中继已接线。
+- DEV 当前非生图文本链路使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；图片链路继续固定使用 `Kwai-Kolors/Kolors`。这项环境切换已在 DEV readiness 中验证，生产仍须等待受保护发布后重新核验。
 - DEV 使用独立数据库和 S3 命名空间，邮件 OTP 关闭；支付只允许安全的未付款/幂等验证，不执行真实付款。
 - 生产仍运行已发布的 Runtime V1 基线，DEV 的未发布改动不得被 README 或生产文档描述为已上线。
 
