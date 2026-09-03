@@ -14,7 +14,7 @@
 
 | 项目 | 已验证状态 |
 | --- | --- |
-| 生产运行提交 | `8a4c2f8f1567fa2939da4272841bc7b7a3e1a490` |
+| 生产运行提交 | `952b624e9013d9bbb6a54d9a112a584191c9a098` |
 | 数据库迁移 | `026_agent_live_eval_capacity_counter` |
 | 访问模式 | `authenticated-v1` |
 | 存储 | PostgreSQL + 共享 S3 |
