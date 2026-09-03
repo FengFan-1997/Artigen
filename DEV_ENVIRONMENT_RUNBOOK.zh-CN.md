@@ -1,166 +1,153 @@
 # Artigen DEV 测试环境
 
-> DEV 是线上可访问的测试环境，不是生产环境，也不承载真实用户数据。
+DEV 是受保护的线上集成环境，不是生产，不承载正式用户数据。动态提交、迁移和能力状态必须从实时接口读取。
 
-## 地址与命名
+## 1. 地址与边界
 
-- 云端服务：`dev-artigen-app-fengfan`
-- 云端地址：`https://dev-artigen-app-fengfan.onrender.com`
-- 部署分支：`dev`（push 后自动部署）
-- 云端数据库：Aiven Free PostgreSQL 18 的独立 `dev_artigen`
-- 本机前端：`http://localhost:4000`
-- 本机后端：`http://localhost:8080`
-- 本机数据库：`artigen_dev`
+- 服务：`dev-artigen-app-fengfan`
+- 地址：<https://dev-artigen-app-fengfan.onrender.com>
+- 部署分支：`dev`
+- 数据库：独立 DEV PostgreSQL
+- 资产：独立 DEV S3 命名空间
+- 访问：HTTP Basic 首次认证后签发短时安全 Cookie
 
-打开云端地址时，浏览器会先要求 HTTP Basic 认证。用户名固定为
-`artigen-dev`；密码只保存在 Render 环境变量和 macOS 钥匙串
-`Artigen Dev Access Password` 中，不写入 Git。
+DEV 口令只存 Render Secret 和本机安全存储，不写入 Git、文档、命令历史或截图。
 
-Basic 认证成功后，服务会签发仅限 DEV 域名的短时
-`HttpOnly + Secure + SameSite=Strict` 访问 Cookie。这样后台自己的 Bearer token
-可以继续使用 `Authorization` 请求头，不会与外层 DEV 访问门禁冲突。
+## 2. 安全配置
 
-## 隔离边界
+DEV 当前用于真实集成 smoke，因此部分能力可以开启，但必须满足：
 
-DEV 默认采用以下安全门：
+- 只使用合成用户、合成输入和 DEV 钱包；
+- 邮件 OTP 关闭，不调用生产邮件中继；
+- 支付只验证套餐、未付款订单、跳转、pending、幂等和钱包不入账，禁止真实付款；
+- Qwen/Kolors 可以用于获批的真实 Provider smoke，但不得冒充生产结果；
+- 数据库、S3、Cookie、加密密钥和 Worker 身份与生产隔离；
+- 页面显式显示 DEV 标记，外层访问门禁始终开启。
 
-1. `DATABASE_URL` 与 `DATABASE_MIGRATION_URL` 只连接 `dev_artigen`，不连接生产 `neondb`。
-   DEV 启动会在迁移前同时核验经过审核的 Aiven 主机、`artigen_migrator` / `artigen_runtime`
-   身份、PostgreSQL 18、schema 所有者和最小权限；任一不符都会拒绝启动。生产环境仍严格使用
-   PostgreSQL 16，不会随 DEV 升级。
-2. 当前集成验收环境开启 `PAID_FEATURES_ENABLED=true`、`PAYMENTS_ENABLED=true`、
-   `TASK_WORKER_ENABLED=1`，但只使用 DEV 数据库中的合成用户；支付验收只能创建未支付订单，
-   不执行真实付款，也不能把 pending 订单当作钱包入账。
-3. `AUTH_EMAIL_OTP_ENABLED=false`，不会调用生产邮件中继。
-4. `AI_DESIGN_TASK_V2_ENABLED=true`、`AI_DESIGN_TASK_V2_ROLLOUT_PERCENT=100`、
-   `WORKSHOP_AI_TASK_V2_ENABLED=true`，用于真实 Cloudflare 文本、SiliconFlow/Kolors 图片、任务队列、结算与失败退款 smoke；Agent Runtime V2、其 rollout 和 owner canary 仍保持关闭。
-5. `ASSET_STORAGE_DRIVER=s3`，生成结果必须通过共享对象存储、SHA-256 与尺寸验证；DEV 资产和
-   任务记录不得冒充生产数据。
-6. 云端页面固定显示 `DEV 测试环境` 标记，并由独立访问口令保护。
-7. DEV 与生产使用不同域名，因此 HttpOnly Session Cookie 也相互隔离。
-8. 页面行为、模型用量、图片历史和内容审计写入 `dev_artigen` PostgreSQL；它们不依赖
-   Render 临时磁盘。原始 prompt、文件名、图片地址和输入内容不会写入这些记录。
-9. 生产继续使用原 Neon `neondb`；DEV 不得连接、迁移或回填生产数据库，也不复制旧 DEV
-   历史。Aiven DEV 从空库迁移，只创建合成测试账户。
+Render Dashboard 的实际变量可能覆盖 `render.dev.yaml` 的安全默认值。变更变量后必须重新部署，并以 `/readyz` 而不是模板推断状态。
 
-## Aiven Free PostgreSQL 18
-
-DEV 使用两个数据库身份；连接串和 CA 只保存在 Render Secret 与 macOS Keychain。Mac DEV
-Worker 还会从专用 Keychain 读取 `DEV_DATABASE_EXPECTED_HOST`，启动前独立核验目标主机、
-数据库、PG18、runtime 角色与 schema 最小权限：
-
-- `DATABASE_MIGRATION_URL` 使用 `artigen_migrator`，仅在部署启动时取得迁移锁并管理
-  `public` 中的迁移对象。
-- `DATABASE_URL` 使用 `artigen_runtime`，只拥有应用读写、序列以及其自有 `pgboss`
-  schema 所需权限。
-
-所有连接必须验证 TLS 证书。Aiven 提供独立 CA 时以 `PG_SSL_CA_BASE64` 注入，否则使用
-系统可信根；该 Keychain 项可选，但证书校验不可选。禁止通过
-`PG_SSL_REJECT_UNAUTHORIZED=0`、`NODE_TLS_REJECT_UNAUTHORIZED=0` 或 `sslmode=disable`
-绕过验证。DEV 的数据库 URL 本身不得携带 `ssl`、`sslmode`、`sslrootcert` 或
-`uselibpqcompat` 等 TLS 参数，因为 PostgreSQL 驱动会用它们覆盖应用的受信 SSL 配置；
-TLS 策略只能来自上述受控环境变量。
-
-免费层连接预算固定为：
-
-- Render DEV：`PG_POOL_MAX=3`、`PGBOSS_POOL_MAX=2`、`AGENT_PGBOSS_POOL_MAX=2`。
-- Mac DEV Worker：同样固定为 `3/2/2`；生产 Worker 的现有默认值不变。
-- Live Harness：`AGENT_LIVE_EVAL_PG_POOL_MAX=3`。
-
-签名 Live gate 会先核验数据库；Live Harness 此后还会在每一次真实 Cloudflare/Kolors
-dispatch 预留落库前重新核验。数据库必须精确为 `dev_artigen`、主版本为 18；计算连接
-余量时会从 `max_connections` 中扣除 PostgreSQL 的 superuser/reserved slots，并要求
-应用实际仍至少有 4 个可用连接。不满足时停止测试，不升级套餐，也不通过关闭 TLS 或
-挤占连接继续运行。
-
-Aiven Free 是 DEV 的长期免费边界：不绑定信用卡、不升级付费套餐，当前上限为 1 GB 和
-20 个连接，且没有 SLA；长时间不活跃时服务可能暂停。暂停后的 DEV 必须先恢复数据库
-readiness，再运行任何真实 Provider 测试，不能用提高套餐或削弱门禁绕过。
-
-## 本机启动
-
-首次或需要重建本机数据库时：
+## 3. 本机开发
 
 ```bash
-pnpm run db:local:setup
+pnpm install --frozen-lockfile
+pnpm db:local:setup
+pnpm dev
 ```
 
-启动前后端：
-
 ```bash
-pnpm run dev
+curl --fail --silent http://localhost:8080/healthz
+curl --fail --silent http://localhost:8080/readyz
 ```
 
-健康检查：
+本机数据库与 DEV/生产都隔离。除专门的只读审计外，不把云端连接串复制进普通本机开发环境。
+
+## 4. 云端只读核验
+
+浅健康检查无需 DEV 口令：
 
 ```bash
-curl http://localhost:8080/healthz
-curl http://localhost:8080/readyz
+curl --fail --silent \
+  https://dev-artigen-app-fengfan.onrender.com/healthz
 ```
 
-## 云端检查
-
-浅健康检查不需要密码，供 Render 使用：
+受保护接口使用从安全存储读取的短时变量：
 
 ```bash
-curl https://dev-artigen-app-fengfan.onrender.com/healthz
-```
+curl --fail --silent --user '<dev-user>:<dev-password>' \
+  https://dev-artigen-app-fengfan.onrender.com/api/meta
 
-深健康检查和页面需要 DEV 访问账号：
-
-```bash
-DEV_PASSWORD="$(security find-generic-password -s 'Artigen Dev Access Password' -w)"
-curl --user "artigen-dev:${DEV_PASSWORD}" \
+curl --fail --silent --user '<dev-user>:<dev-password>' \
   https://dev-artigen-app-fengfan.onrender.com/readyz
-unset DEV_PASSWORD
 ```
 
-## 发布到 DEV
+期望：
 
-DEV 服务只跟踪远端 `dev` 分支；更新该分支会自动构建并部署，生产分支和生产服务
-不会被触发。
+- `appEnv=dev`；
+- `gitSha` 等于本次 `dev` 目标提交；
+- `readyz.ok=true`；
+- database、storage、payload、provider 和受影响能力符合本次配置；
+- 当前 migration 与目标代码的 pending migration 集合一致；
+- 关闭的 auth/mail/Turnstile 能力明确 skipped，而不是伪造通过。
+
+## 5. 当前 Agent DEV 姿态
+
+- Agent 访问模式为已登录用户模式。
+- files、shell、browser、图片生成和子 Agent 可按 readiness 暴露。
+- 子 Agent 使用独立 Qwen3 上下文，权限仍受父 Run、预算和沙箱交集约束。
+- Runtime V2 durability Schema 已存在，但公众 Runtime V2、rollout 与生产 canary 保持关闭。
+- Worker、browser、egress、desktop relay、subagents 和 queue 状态必须从 `/api/agent/status` 读取；环境变量存在不等于 Worker ready。
+
+## 6. 发布到 DEV
 
 ```bash
-git fetch origin
+git fetch --prune origin
 git switch -c feat/short-name origin/dev
 git push -u origin feat/short-name
 gh pr create --base dev --head feat/short-name
 ```
 
-PR 的 GitHub CI 通过后合并到 `dev`。以后不直接 push `dev`。
+required checks 通过后合并。等待 Render 自动部署，再确认 `/api/meta.gitSha` 对齐。未对齐时不要启动 smoke、Worker 或 Provider campaign。
 
-部署完成后，`/api/meta` 的 `appEnv` 必须是 `dev`，`gitSha` 必须等于本次
-`dev` commit；随后完成页面和 `/readyz` smoke，才能创建 `dev -> main` PR。
+## 7. smoke 矩阵
 
-注意：仓库中的 `render.dev.yaml` 表示期望配置，但已存在的 Render 服务不保证自动同步
-后来新增的环境变量。凡是改动环境变量，都要在 DEV 服务的 Environment 页面核对实际值、
-重新部署，并以 `/readyz` 的运行时结果为准。
+按影响范围选择：
 
-涉及后台或数据迁移时，还要检查：
+### 通用
 
-- `/readyz` 返回数据库迁移 `026_agent_live_eval_capacity_counter` 且 `ok=true`。
-- `/readyz` 返回
-  `adminConsoleEnabled=true`、`behaviorAnalyticsEnabled=true`、
-  `databaseRequired=true`；任一不符都视为配置漂移，不能继续提 `dev -> main`。
-- `/console/users` 的行为、点数、订单、会话任一接口失败时显示错误与“重试”，不能显示
-  成一张无数据空表。
-- `/console/usage` 能读取 PostgreSQL usage 记录。
-- `/console/content-audit` 能读取 PostgreSQL 图片/内容审计元数据。
-- 同一个按钮快速双击只去重同一瞬间事件，隔一段时间再次点击仍会新增记录。
-- 对话入口开启时，`conversationEnabled=true`，且
-  `checks.conversation.ok=true`、`plannerReady=true`、规划队列无异常积压；
-  `AGENT_BETA_MODE` 必须为 `authenticated-v1`，不能只打开前端路由。
+- `/artigen`、`/artigen/create`、`/artigen/agent` 和受影响页面；
+- `/api/meta`、`/readyz`；
+- 登录/权限、控制台错误、移动端溢出；
+- 数据库和 S3 写入是否只落 DEV。
 
-完整提交流程和生产发布规则见
-[《Artigen 项目、环境与发布总手册》](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。
+### 图片与工具
 
-## 开启真实集成前
+- `GET /api/generation/models` capability；
+- 标准图 0 参考、商品图 1 参考，额外参考在 Provider 前拒绝；
+- 报价、hold、单次结算、失败退款和资产回读；
+- 本地工具不上传、不扣点。
 
-DEV 当前已接入真实 Cloudflare Workers AI 文本、SiliconFlow 图片、PostgreSQL、任务队列和 S3，用于发布前集成 smoke。
-运行时所有非生图文字理解、结构化输出和工具决策统一使用 Cloudflare
-`@cf/openai/gpt-oss-120b`；所有图片输出使用 SiliconFlow 上的 `Kwai-Kolors/Kolors`。Kolors 接收 0 张图时文生图、接收 1 张图时图生图；
-第二张参考图必须在 Provider 请求前失败。
+### Agent
 
-邮件发件域、Turnstile、对象存储和支付配置仍不得把 DEV 身份或数据混入生产。每项能力
-必须先通过 `/readyz` 和对应 smoke；支付只验证未支付订单、跳转、pending、钱包不入账与
-幂等复用，禁止在 DEV 流程中执行真实付款。
+- `GET /api/agent/status`；
+- files/shell、受限浏览器、桌面接管、图片与子 Agent；
+- Markdown/PDF、XLSX、PPTX、网站或图片按任务验证；
+- 取消、恢复、租约、回执、预算和沙箱清理；
+- 最终 active Run、hold、reservation、queue、subagent 和冻结余额一致。
+
+仓库提供的 DEV smoke/评测入口以 `backend/package.json` 和根 `package.json` 为准，包括 Agent、relay、login、image、subagent、Design Conversation 与 live-eval 工具。没有凭据或授权时使用 fixture/mock，不把 skipped 写成真实通过。
+
+## 8. Runtime V2 发布前证据
+
+Runtime V2 候选必须额外具备：
+
+1. 同一不可变 SHA 的 Render、Vercel Preview 与 Mac Worker；
+2. `pnpm check`；
+3. PostgreSQL 16 + 固定 MinIO Harness；
+4. 50/50 executable quality；
+5. chaos；
+6. 一次性 exact-SHA live gate；
+7. 完整 24-slot V1/V2 campaign；
+8. 图片匿名盲审；
+9. 账务、回执、队列、沙箱和冻结余额收尾。
+
+局部 report、合成占位、旧 SHA 报告或中断 campaign 不能通过放行门槛。
+
+## 9. 数据与清理
+
+- 测试数据使用明确前缀或合成身份；合成邮箱只使用 `.invalid` 域。
+- 任务清理走正式取消、结算、过期和 GC 服务，不直接删账本或钱包行。
+- ambiguous receipt 是审计证据；只要没有活动 hold/reservation 就不为制造“全零”而删除。
+- 临时 Docker/MinIO 资源按精确身份清理，不使用宽泛递归命令。
+
+## 10. DEV 证据记录
+
+记录到 PR/Handoff 的只有：
+
+- 目标 commit 与部署对齐结论；
+- `/api/meta`、`/readyz` 和受影响状态；
+- 实际执行的 smoke、结果和未验证项；
+- 风险、回滚与是否产生真实 Provider 成本。
+
+不记录口令、真实账号、Run UUID、部署资源 ID、余额、订单或本机绝对路径。
+
+完整流程见 [`PROJECT_OPERATIONS_GUIDE.zh-CN.md`](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。
