@@ -10,20 +10,20 @@
 
 ### 1.1 生产
 
-2026-08-28 的只读核验结果：
+2026-09-03 生产发布后重新核验结果：
 
 | 项目 | 已验证状态 |
 | --- | --- |
-| 生产运行提交 | `25e09e229060518ef7f7e51b9f3a43818009638e` |
-| 数据库迁移 | `023_agent_subagent_runtime_hardening` |
+| 生产运行提交 | `8a4c2f8f1567fa2939da4272841bc7b7a3e1a490` |
+| 数据库迁移 | `026_agent_live_eval_capacity_counter` |
 | 访问模式 | `authenticated-v1` |
 | 存储 | PostgreSQL + 共享 S3 |
-| 文字模型 | `Qwen/Qwen3-8B` |
+| 文字模型 | Cloudflare Workers AI `@cf/openai/gpt-oss-120b` |
 | 图片模型 | `Kwai-Kolors/Kolors` |
-| Agent | Worker、浏览器、受限出口、桌面中继和子 Agent 已配置 |
+| Agent | Worker、浏览器、受限出口、桌面中继和子 Agent 已配置并在线 |
 | 运营后台 | 生产关闭 |
 
-GitHub `main` 在该运行提交之后只有 README、文档和静态展示素材变化；没有因此人工发布 Render、Vercel 或 Mac Worker。合并到 `main` 不等于生产部署。
+本次发布使用 Render 手动部署 `dep-dacivaon74is73dc1c2g`，并将 Mac Worker 切换到同一 SHA；Vercel 生产域名实测返回同一 SHA。后续如 `main` 继续前进，仍必须重新核验三端，不得把合并自动等同于生产部署。
 
 生产精确状态始终重新读取：
 
@@ -49,9 +49,9 @@ DEV 当前边界：
 
 - Runtime V2 代码和 durability 已进入 `dev`，但公众开关、rollout 与生产 canary 继续关闭。
 - 子 Agent、图片交付、Harness V3、受限出口和桌面中继已接线。
-- DEV 当前非生图文本链路使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；图片链路继续固定使用 `Kwai-Kolors/Kolors`。这项环境切换已在 DEV readiness 中验证，生产仍须等待受保护发布后重新核验。
+- DEV 与生产当前非生图文本链路均使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；图片链路继续固定使用 `Kwai-Kolors/Kolors`。两端 readiness 均已重新核验。
 - DEV 使用独立数据库和 S3 命名空间，邮件 OTP 关闭；支付只允许安全的未付款/幂等验证，不执行真实付款。
-- 生产仍运行已发布的 Runtime V1 基线，DEV 的未发布改动不得被 README 或生产文档描述为已上线。
+- Runtime V2、公众 rollout 与 owner canary 继续关闭；本次生产发布仅切换已验证的文本 Provider/模型环境，不代表完整 24-slot 实机矩阵或图片盲审已通过。
 
 ## 2. 产品与模型边界
 
@@ -65,7 +65,7 @@ Artigen 的定位是“从一句话到可验证交付的统一创作 Agent”。
 
 稳定模型边界：
 
-- 文字理解、路由、规划、父 Agent、子 Agent 和验证只允许 `Qwen/Qwen3-8B`。
+- 文字理解、路由、规划、父 Agent、子 Agent 和验证只允许 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`。
 - 图片输出只允许 `Kwai-Kolors/Kolors`。
 - 客户端使用产品 profile，不得提交或切换内部 Provider 模型 ID。
 - Runtime V2、Planner、自适应推理和项目记忆均由服务端开关控制；关闭时不能通过客户端参数绕过。
