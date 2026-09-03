@@ -3321,11 +3321,22 @@ test('format factory runs video tools with a generated WebM fixture', async ({ p
     .toBeGreaterThan(workerBaseline.constructed);
   const cancelButton = outputPanel.locator('.btn.danger');
   await expect(cancelButton).toBeVisible();
+  const requestFailureCountBeforeCancel = issues.requestFailures.length;
   await cancelButton.evaluate((button: HTMLButtonElement) => button.click());
   await expect(page.locator('.tool-modal-panel .error-box')).toContainText('Cancelled');
   await expect
     .poll(async () => page.evaluate(() => (window as any).__formatWorkerStats.terminated))
     .toBeGreaterThan(workerBaseline.terminated);
+  const cancellationFailures = issues.requestFailures.splice(requestFailureCountBeforeCancel);
+  expect(
+    cancellationFailures.filter(
+      (failure) =>
+        !/^GET http:\/\/127\.0\.0\.1:\d+\/(?:@fs\/.*\/vite\/dist\/client\/env\.mjs|node_modules\/\.vite\/deps\/gifenc\.js\?[^ ]+) cancelled$/.test(
+          failure
+        )
+    ),
+    'Only the explicitly terminated GIF worker may cancel its pending local module loads'
+  ).toEqual([]);
   await page.waitForTimeout(1200);
   await expect(outputPanel.locator('.meta-row').filter({ hasText: 'OUTPUT' })).toHaveCount(0);
   await saveScreenshot(page, testInfo, 'format-video-gif-success');

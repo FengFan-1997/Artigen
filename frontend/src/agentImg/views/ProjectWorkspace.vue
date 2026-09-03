@@ -67,6 +67,63 @@
               <input v-model="form.prohibitedElements" :placeholder="zh ? '水印、人物、虚构文字' : 'watermarks, people, invented text'" />
             </label>
           </section>
+
+          <details class="panel memory-panel">
+            <summary>
+              <span>
+                <span class="eyebrow">{{ zh ? '项目记忆' : 'Project memory' }}</span>
+                <strong>{{ zh ? '查看与管理已确认偏好' : 'Review confirmed preferences' }}</strong>
+              </span>
+              <small>{{ zh ? '只保存你确认的内容' : 'Only confirmed details are saved' }}</small>
+            </summary>
+            <p class="memory-note">
+              {{ zh
+                ? 'Agent 不会把网页内容、工具输出或自己的推测静默写入这里。清空字段并保存即可删除。'
+                : 'The Agent never silently saves webpages, tool output, or its own assumptions. Clear a field and save to remove it.' }}
+            </p>
+            <label>
+              <span>{{ zh ? '目标受众' : 'Audience' }}</span>
+              <input v-model.trim="form.memoryAudience" maxlength="500" />
+            </label>
+            <label>
+              <span>{{ zh ? '项目目标（逗号分隔）' : 'Goals (comma-separated)' }}</span>
+              <input v-model="form.memoryGoals" maxlength="1200" />
+            </label>
+            <label>
+              <span>{{ zh ? '语气（逗号分隔）' : 'Tone (comma-separated)' }}</span>
+              <input v-model="form.memoryTone" maxlength="800" />
+            </label>
+            <label>
+              <span>{{ zh ? '视觉关键词（逗号分隔）' : 'Visual keywords (comma-separated)' }}</span>
+              <input v-model="form.memoryVisualKeywords" maxlength="1200" />
+            </label>
+            <label>
+              <span>{{ zh ? '必须包含（逗号分隔）' : 'Must include (comma-separated)' }}</span>
+              <input v-model="form.memoryMustInclude" maxlength="1200" />
+            </label>
+            <label>
+              <span>{{ zh ? '避免内容（逗号分隔）' : 'Avoid (comma-separated)' }}</span>
+              <input v-model="form.memoryAvoid" maxlength="1200" />
+            </label>
+            <label>
+              <span>{{ zh ? '事实约束（逗号分隔）' : 'Factual constraints (comma-separated)' }}</span>
+              <input v-model="form.memoryFactualConstraints" maxlength="1600" />
+            </label>
+            <label>
+              <span>{{ zh ? '偏好交付物（逗号分隔）' : 'Preferred deliverables (comma-separated)' }}</span>
+              <input v-model="form.memoryDeliverables" maxlength="500" placeholder="image, report, presentation" />
+            </label>
+            <div class="memory-preferences">
+              <label>
+                <span>{{ zh ? '常用比例' : 'Aspect ratio' }}</span>
+                <input v-model.trim="form.memoryAspectRatio" maxlength="20" placeholder="1:1" />
+              </label>
+              <label>
+                <span>{{ zh ? '输出语言' : 'Output language' }}</span>
+                <input v-model.trim="form.memoryLanguage" maxlength="40" :placeholder="zh ? '简体中文' : 'English'" />
+              </label>
+            </div>
+          </details>
         </aside>
 
         <div class="project-main">
@@ -231,7 +288,17 @@ const form = reactive({
   brandName: '',
   colors: ['#CCFF00', '#111111', '#FFFFFF'],
   styleKeywords: '',
-  prohibitedElements: ''
+  prohibitedElements: '',
+  memoryAudience: '',
+  memoryGoals: '',
+  memoryTone: '',
+  memoryVisualKeywords: '',
+  memoryMustInclude: '',
+  memoryAvoid: '',
+  memoryFactualConstraints: '',
+  memoryDeliverables: '',
+  memoryAspectRatio: '',
+  memoryLanguage: ''
 });
 
 const uploadRoles = computed(() => [
@@ -277,6 +344,16 @@ const hydrateForm = (value: CreativeProject) => {
     : ['#CCFF00', '#111111', '#FFFFFF'];
   form.styleKeywords = (value.brandProfile?.styleKeywords || []).join('，');
   form.prohibitedElements = (value.brandProfile?.prohibitedElements || []).join('，');
+  form.memoryAudience = value.designMemory?.audience || '';
+  form.memoryGoals = (value.designMemory?.goals || []).join('，');
+  form.memoryTone = (value.designMemory?.tone || []).join('，');
+  form.memoryVisualKeywords = (value.designMemory?.visualKeywords || []).join('，');
+  form.memoryMustInclude = (value.designMemory?.mustInclude || []).join('，');
+  form.memoryAvoid = (value.designMemory?.avoid || []).join('，');
+  form.memoryFactualConstraints = (value.designMemory?.factualConstraints || []).join('，');
+  form.memoryDeliverables = (value.designMemory?.outputPreferences?.deliverables || []).join('，');
+  form.memoryAspectRatio = value.designMemory?.outputPreferences?.aspectRatio || '';
+  form.memoryLanguage = value.designMemory?.outputPreferences?.language || '';
 };
 
 const loadProject = async () => {
@@ -309,6 +386,20 @@ const saveProject = async () => {
         styleKeywords: listFromText(form.styleKeywords),
         prohibitedElements: listFromText(form.prohibitedElements),
         logoAssetId: firstAsset('logo')?.assetId || null
+      },
+      designMemory: {
+        audience: form.memoryAudience,
+        goals: listFromText(form.memoryGoals),
+        tone: listFromText(form.memoryTone),
+        visualKeywords: listFromText(form.memoryVisualKeywords),
+        mustInclude: listFromText(form.memoryMustInclude),
+        avoid: listFromText(form.memoryAvoid),
+        factualConstraints: listFromText(form.memoryFactualConstraints),
+        outputPreferences: {
+          deliverables: listFromText(form.memoryDeliverables, 8),
+          aspectRatio: form.memoryAspectRatio,
+          language: form.memoryLanguage
+        }
       }
     });
     project.value = { ...project.value, ...updated };
@@ -527,6 +618,12 @@ button { font: inherit; cursor: pointer; }
 .project-main { display: grid; gap: 18px; min-width: 0; }
 .panel { padding: 22px; border: 1px solid #262d27; border-radius: 18px; background: #101411; }
 .panel label { display: grid; gap: 7px; margin-top: 16px; color: #c7cec8; font-size: 12px; font-weight: 750; }
+.memory-panel summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+.memory-panel summary > span { display: grid; gap: 5px; }
+.memory-panel summary strong { font-size: 14px; }
+.memory-panel summary small,.memory-note { color: #879188; font-size: 11px; line-height: 1.5; }
+.memory-note { margin: 16px 0 0; }
+.memory-preferences { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 input,textarea { box-sizing: border-box; width: 100%; border: 1px solid #333b34; border-radius: 10px; outline: 0; background: #080b09; color: #fff; padding: 11px 12px; font: inherit; }
 input:focus,textarea:focus { border-color: #ccff00; }
 textarea { resize: vertical; }

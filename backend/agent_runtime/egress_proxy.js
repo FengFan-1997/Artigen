@@ -11,7 +11,6 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 60_000;
 const MAX_CONNECTIONS = 128;
 const MAX_TUNNEL_BYTES = 100 * 1024 * 1024;
-let activeConnections = 0;
 
 const reject = (socket, status = 403, reason = 'Forbidden') => {
   if (!socket || socket.destroyed) return;
@@ -35,65 +34,95 @@ const parseAuthority = (raw) => {
   return { hostname: parsed.hostname, port };
 };
 
-const server = http.createServer((_request, response) => {
-  response.writeHead(403, { Connection: 'close', 'Content-Length': '0' });
-  response.end();
-});
+const createEgressProxyServer = ({
+  resolveHost = resolvePublicHost,
+  connect = net.connect
+} = {}) => {
+  let activeConnections = 0;
+  const server = http.createServer((_request, response) => {
+    response.writeHead(403, { Connection: 'close', 'Content-Length': '0' });
+    response.end();
+  });
 
-server.on('connect', async (request, clientSocket, head) => {
-  if (activeConnections >= MAX_CONNECTIONS) return reject(clientSocket, 503, 'Busy');
-  activeConnections += 1;
-  let settled = false;
-  const finish = () => {
-    if (settled) return;
-    settled = true;
-    activeConnections = Math.max(0, activeConnections - 1);
-  };
-  clientSocket.once('close', finish);
-  try {
-    const target = parseAuthority(request.url);
-    const resolved = await resolvePublicHost(target.hostname);
-    const upstream = net.connect({
-      host: resolved.selected.address,
-      port: target.port,
-      family: resolved.selected.family
-    });
-    upstream.setTimeout(IDLE_TIMEOUT_MS);
-    clientSocket.setTimeout(IDLE_TIMEOUT_MS);
-    const timer = setTimeout(() => upstream.destroy(new Error('CONNECT_TIMEOUT')), CONNECT_TIMEOUT_MS);
-    timer.unref?.();
-    let bytes = 0;
-    const countBytes = (chunk) => {
-      bytes += chunk.length;
-      if (bytes > MAX_TUNNEL_BYTES) {
-        upstream.destroy(new Error('TUNNEL_LIMIT'));
-        clientSocket.destroy();
-      }
+  server.on('connect', async (request, clientSocket, head) => {
+    if (activeConnections >= MAX_CONNECTIONS) {
+      clientSocket.once('error', () => {});
+      return reject(clientSocket, 503, 'Busy');
+    }
+    activeConnections += 1;
+    let settled = false;
+    let upstream = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      activeConnections = Math.max(0, activeConnections - 1);
     };
-    upstream.once('connect', () => {
-      clearTimeout(timer);
-      clientSocket.write('HTTP/1.1 200 Connection Established\r\nProxy-Agent: Artigen-Egress/1\r\n\r\n');
-      if (head?.length) upstream.write(head);
-      clientSocket.on('data', countBytes);
-      upstream.on('data', countBytes);
-      clientSocket.pipe(upstream);
-      upstream.pipe(clientSocket);
+    clientSocket.once('close', finish);
+    // A browser may reset an individual CONNECT tunnel while DNS or the
+    // upstream socket is still in flight. Without an error listener Node treats
+    // that routine socket reset as an uncaught exception and terminates the
+    // entire restricted-egress sidecar, breaking every later browser action.
+    clientSocket.once('error', () => {
+      finish();
+      if (upstream && !upstream.destroyed) upstream.destroy();
     });
-    upstream.on('timeout', () => upstream.destroy());
-    clientSocket.on('timeout', () => clientSocket.destroy());
-    upstream.once('error', () => {
-      clearTimeout(timer);
-      if (!clientSocket.destroyed) reject(clientSocket, 502, 'Bad Gateway');
-    });
-    upstream.once('close', () => {
-      if (!clientSocket.destroyed) clientSocket.destroy();
-    });
-  } catch (error) {
-    reject(clientSocket, error?.code === 'DNS_FAILED' ? 502 : 403, 'Forbidden');
-  }
-});
+    try {
+      const target = parseAuthority(request.url);
+      const resolved = await resolveHost(target.hostname);
+      if (clientSocket.destroyed) return;
+      upstream = connect({
+        host: resolved.selected.address,
+        port: target.port,
+        family: resolved.selected.family
+      });
+      upstream.setTimeout(IDLE_TIMEOUT_MS);
+      clientSocket.setTimeout(IDLE_TIMEOUT_MS);
+      const timer = setTimeout(() => upstream.destroy(new Error('CONNECT_TIMEOUT')), CONNECT_TIMEOUT_MS);
+      timer.unref?.();
+      let bytes = 0;
+      const countBytes = (chunk) => {
+        bytes += chunk.length;
+        if (bytes > MAX_TUNNEL_BYTES) {
+          upstream.destroy(new Error('TUNNEL_LIMIT'));
+          clientSocket.destroy();
+        }
+      };
+      upstream.once('connect', () => {
+        clearTimeout(timer);
+        if (clientSocket.destroyed) {
+          upstream.destroy();
+          return;
+        }
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\nProxy-Agent: Artigen-Egress/1\r\n\r\n');
+        if (head?.length) upstream.write(head);
+        clientSocket.on('data', countBytes);
+        upstream.on('data', countBytes);
+        clientSocket.pipe(upstream);
+        upstream.pipe(clientSocket);
+      });
+      upstream.on('timeout', () => upstream.destroy());
+      clientSocket.on('timeout', () => clientSocket.destroy());
+      upstream.once('error', () => {
+        clearTimeout(timer);
+        if (!clientSocket.destroyed) reject(clientSocket, 502, 'Bad Gateway');
+      });
+      upstream.once('close', () => {
+        if (!clientSocket.destroyed) clientSocket.destroy();
+      });
+    } catch (error) {
+      reject(clientSocket, error?.code === 'DNS_FAILED' ? 502 : 403, 'Forbidden');
+    }
+  });
 
-server.on('clientError', (_error, socket) => reject(socket, 400, 'Bad Request'));
-server.listen(PORT, HOST, () => {
-  process.stdout.write(`Artigen restricted egress listening on ${HOST}:${PORT}\n`);
-});
+  server.on('clientError', (_error, socket) => reject(socket, 400, 'Bad Request'));
+  return server;
+};
+
+if (require.main === module) {
+  const server = createEgressProxyServer();
+  server.listen(PORT, HOST, () => {
+    process.stdout.write(`Artigen restricted egress listening on ${HOST}:${PORT}\n`);
+  });
+}
+
+module.exports = { createEgressProxyServer, parseAuthority };

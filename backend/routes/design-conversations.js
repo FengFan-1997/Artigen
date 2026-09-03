@@ -11,6 +11,11 @@ const {
   cleanupUpload,
   parseMultipartRequest
 } = require('./tool-tasks');
+const {
+  createModelCallService,
+  createProviderScheduler
+} = require('../services/agent-model-runtime-service');
+const { FIXED_CLOUDFLARE_CHAT_MODEL } = require('../lib/config');
 
 const requireAuthenticatedUser = (req) => {
   const auth = resolveAuthUser(req);
@@ -42,12 +47,20 @@ const installDesignConversationRoutes = (app, deps = {}) => {
     windowMs: 60 * 1000
   });
   const pool = deps.pool || (isDatabaseConfigured() ? getPool() : null);
+  const providerScheduler = deps.providerScheduler || (!deps.designConversationService && pool?.connect
+    ? createProviderScheduler({ pool, env })
+    : null);
+  const modelCallService = deps.modelCallService || (!deps.designConversationService && pool?.query
+    ? createModelCallService({ pool, retentionDays: 30 })
+    : null);
   const service = deps.designConversationService || (
     pool
       ? createDesignConversationService({
           pool,
           env,
-          chatGenerate: deps.callSiliconFlowChat
+          chatGenerate: deps.callSiliconFlowChat,
+          providerScheduler,
+          modelCallService
         })
       : null
   );
@@ -87,7 +100,11 @@ const installDesignConversationRoutes = (app, deps = {}) => {
           enabled: config.enabled,
           workerEnabled: config.workerEnabled,
           plannerReady: false,
-          model: 'Qwen/Qwen3-8B',
+          // A database-less response must not echo an old or untrusted text
+          // model from the environment. Deployed text is hard-locked to
+          // Cloudflare GPT-OSS; readiness reports missing credentials
+          // separately and fails closed before any task is created.
+          model: FIXED_CLOUDFLARE_CHAT_MODEL,
           imageModel: 'Kwai-Kolors/Kolors',
           autoCreditCap: config.autoCreditCap,
           retentionDays: config.retentionDays,
@@ -377,7 +394,7 @@ const installDesignConversationRoutes = (app, deps = {}) => {
   }));
 
   service?.startWorker();
-  return { service };
+  return { service, modelCallService };
 };
 
 module.exports = {

@@ -32,6 +32,7 @@ const {
 } = require('../services/billing-service');
 const {
   assertPaidFeatureAvailable,
+  assertProductionAiDesignStorageReady,
   assertServerTaskImplemented,
   buildStoredTaskOptions,
   containsClientAuthority,
@@ -343,6 +344,28 @@ test('free/local backend routes can boot without PostgreSQL or constructing a le
   }));
   assert.ok(registered.some(([method, path]) => method === 'GET' && path === '/api/tools/catalog'));
   assert.ok(registered.some(([method, path]) => method === 'POST' && path === '/api/tool-tasks'));
+});
+
+test('AI design storage gate honors APP_ENV production intent', async () => {
+  const tool = getTool('ai-design');
+  await assert.rejects(
+    assertProductionAiDesignStorageReady({
+      tool,
+      operation: 'generate',
+      env: { NODE_ENV: 'test', APP_ENV: 'production' },
+      adapter: { driver: 'file', rootDir: os.tmpdir() }
+    }),
+    { code: 'SHARED_ASSET_STORAGE_REQUIRED' }
+  );
+  assert.equal(
+    await assertProductionAiDesignStorageReady({
+      tool,
+      operation: 'generate',
+      env: { NODE_ENV: 'test', APP_ENV: 'dev' },
+      adapter: { driver: 'file', rootDir: os.tmpdir() }
+    }),
+    true
+  );
 });
 
 test('task workers and financial sweepers require both paid features and the worker gate', () => {

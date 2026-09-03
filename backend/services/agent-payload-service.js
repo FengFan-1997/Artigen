@@ -65,6 +65,11 @@ const designMessageAad = ({ conversationId, messageId, role }) => Buffer.from(
   'utf8'
 );
 
+const designExecutionAad = ({ conversationId, executionId }) => Buffer.from(
+  `artigen:design-execution:v1:${conversationId}:${executionId}`,
+  'utf8'
+);
+
 const serialize = (value, maxBytes = MAX_PAYLOAD_BYTES) => {
   const plaintext = Buffer.from(JSON.stringify(value), 'utf8');
   if (!plaintext.length || plaintext.length > maxBytes) {
@@ -196,14 +201,38 @@ const decryptDesignMessage = ({
   env
 });
 
+const encryptDesignExecution = ({
+  conversationId,
+  executionId,
+  value,
+  env = process.env
+}) => seal({
+  plaintext: serialize(value),
+  aad: designExecutionAad({ conversationId, executionId }),
+  env
+});
+
+const decryptDesignExecution = ({
+  conversationId,
+  executionId,
+  record,
+  env = process.env
+}) => open({
+  record,
+  aad: designExecutionAad({ conversationId, executionId }),
+  env
+});
+
 module.exports = {
   ALGORITHM,
   decryptAgentPayload,
   decryptBrowserProfile,
+  decryptDesignExecution,
   decryptDesignMessage,
   decryptIntegrationSecret,
   encryptAgentPayload,
   encryptBrowserProfile,
+  encryptDesignExecution,
   encryptDesignMessage,
   encryptIntegrationSecret,
   hasAgentPayloadKey,

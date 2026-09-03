@@ -3,6 +3,10 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const {
+  applyAgentSmokeModelProfile,
+  resolveAgentSmokeModelProfile
+} = require('./lib/agent-dev-model-profile');
 const { CuaSandboxProvider } = require('../services/agent-sandbox-provider');
 const { createAgentBrowserService } = require('../services/agent-browser-service');
 const {
@@ -43,6 +47,16 @@ const secretNames = [
   'S3_SECRET_ACCESS_KEY'
 ];
 if (PRODUCTION) secretNames.push('AGENT_BETA_USER_IDS');
+// Every deployed smoke profile uses Cloudflare for text, including the
+// owner-only production login probe. Load and attest the same four secrets in
+// both environments so a production smoke cannot silently exercise legacy
+// SiliconFlow text.
+secretNames.push(
+  'CLOUDFLARE_ACCOUNT_ID',
+  'CLOUDFLARE_API_TOKEN',
+  'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID',
+  'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED'
+);
 const missing = [];
 for (const name of secretNames) {
   const value = readMacOsKeychainSecret({ service: KEYCHAIN_SERVICE, account: name });
@@ -60,14 +74,16 @@ if (missing.length) {
   process.exit(78);
 }
 
+const smokeModelProfile = resolveAgentSmokeModelProfile({ env: process.env, production: PRODUCTION });
+
 Object.assign(process.env, {
   NODE_ENV: 'production',
   APP_ENV: PRODUCTION ? 'production' : 'dev',
   AGENT_FEATURE_ENABLED: 'true',
   AGENT_WORKER_ENABLED: '1',
   AGENT_RUNTIME_DRIVER: 'live',
-  AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_PROVIDER: smokeModelProfile.provider,
+  AGENT_MODEL_NAME: smokeModelProfile.model,
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   AGENT_SILICONFLOW_ENABLE_THINKING: 'false',
   AGENT_SANDBOX_PROVIDER: 'cua',
@@ -87,6 +103,7 @@ Object.assign(process.env, {
   ASSET_STORAGE_DRIVER: 's3',
   S3_FORCE_PATH_STYLE: '1'
 });
+applyAgentSmokeModelProfile(process.env, smokeModelProfile);
 
 const { getPool } = require('../db/pool');
 const { createAgentRunService, TERMINAL_STATUSES } = require('../services/agent-run-service');

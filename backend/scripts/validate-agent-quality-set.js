@@ -1,16 +1,24 @@
 const fs = require('fs');
 const path = require('path');
+const {
+  compileQualityCase,
+  validateCompiledQualityCase
+} = require('../services/agent-quality-evaluation');
 
 const datasetPath = path.resolve(__dirname, '../evaluation/agent-quality-set.json');
-const tasks = JSON.parse(fs.readFileSync(datasetPath, 'utf8'));
+const manifest = JSON.parse(fs.readFileSync(datasetPath, 'utf8'));
+const tasks = Array.isArray(manifest?.cases) ? manifest.cases : [];
 const deliverables = ['report', 'spreadsheet', 'presentation', 'website', 'image'];
 const ids = new Set();
 const errors = [];
 
-if (!Array.isArray(tasks) || tasks.length !== 50) {
-  errors.push(`expected 50 tasks, received ${Array.isArray(tasks) ? tasks.length : 'non-array'}`);
+if (manifest?.version !== 3 || manifest?.runtime !== 'agent-harness-v3') {
+  errors.push('expected executable agent-harness-v3 quality manifest version 3');
 }
-for (const task of Array.isArray(tasks) ? tasks : []) {
+if (tasks.length !== 50) {
+  errors.push(`expected 50 tasks, received ${tasks.length}`);
+}
+for (const task of tasks) {
   if (!task?.id || ids.has(task.id)) errors.push(`duplicate or missing id: ${task?.id || '<empty>'}`);
   ids.add(task?.id);
   if (!['zh', 'en'].includes(task?.locale)) errors.push(`${task?.id}: invalid locale`);
@@ -21,6 +29,18 @@ for (const task of Array.isArray(tasks) ? tasks : []) {
   }
   if (!Array.isArray(task?.acceptance) || task.acceptance.length < 4) {
     errors.push(`${task?.id}: acceptance criteria incomplete`);
+  }
+  try {
+    const compiled = compileQualityCase({
+      manifest,
+      task,
+      evaluationDir: path.dirname(datasetPath)
+    });
+    for (const error of validateCompiledQualityCase(compiled)) {
+      errors.push(`${task?.id}: ${error}`);
+    }
+  } catch (error) {
+    errors.push(`${task?.id}: ${String(error?.message || error)}`);
   }
 }
 for (const deliverable of deliverables) {

@@ -98,6 +98,25 @@ describe('email OTP API client', () => {
     });
   });
 
+  it('maps an upstream outage even when the proxy returns a non-JSON body', async () => {
+    authFetchMock.mockResolvedValue(
+      new Response('<html>Service Suspended</html>', {
+        status: 503,
+        headers: { 'Content-Type': 'text/html' }
+      })
+    );
+
+    await expect(
+      sendLoginCode('friend@example.com', {
+        idempotencyKey: 'otp:durable-outage',
+        turnstileToken: 'turnstile-token'
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      message: '服务暂时不可用，请稍后重试'
+    });
+  });
+
   it('prioritizes the stable error code over provider text and keeps retry cooldowns', async () => {
     vi.stubGlobal('window', {
       localStorage: { getItem: () => 'en' }

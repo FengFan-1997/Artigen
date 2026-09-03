@@ -171,6 +171,8 @@ const normalizeFailure = (error, signal) => {
     'INGREDIENT_SOURCE_MISMATCH',
     'INVALID_INGREDIENT_OUTPUT',
     'MODEL_PROFILE_UNAVAILABLE',
+    'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED',
+    'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN',
     'OUTPUT_INVALID',
     'OUTPUT_PERSIST_FAILED',
     'PROVIDER_TIMEOUT',
@@ -365,6 +367,7 @@ module.exports = {
   buildPortraitPrompt,
   createWorkshopAiExecutor,
   normalizeIngredientOutput,
+  normalizeFailure,
   validateWorkshopAiTask,
   workshopAiEnabled
 };

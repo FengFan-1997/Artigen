@@ -1,7 +1,11 @@
 const crypto = require('crypto');
 const { ApiError } = require('../lib/api-error');
 const { resolveUserId } = require('./billing-service');
-const { getAgentConfig, assertAgentRuntimeReady } = require('./agent-config');
+const {
+  getAgentConfig,
+  assertAgentRuntimeReady,
+  resolveAgentRuntimeAssignment
+} = require('./agent-config');
 const {
   decryptBrowserProfile,
   decryptAgentPayload,
@@ -18,6 +22,7 @@ const {
   inferRequiredDeliverables,
   requiredDeliverablesSatisfied
 } = require('./agent-artifact-service');
+const { FUNCTION_TOOLS } = require('./agent-model-provider');
 const {
   evaluateAgentTrajectory
 } = require('./agent-trajectory-evaluator');
@@ -26,6 +31,7 @@ const {
   sanitizeLogValue,
   sanitizeText
 } = require('./agent-policy-service');
+const { PHASES, compileAgentPrompt, normalizeTaskSpec } = require('./agent-runtime-v2');
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const SUBAGENT_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
@@ -39,6 +45,108 @@ const ACTIVE_STATUSES = new Set([
   'verifying'
 ]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TOOL_RECEIPT_KINDS = new Set(['sandbox_shell', 'kolors']);
+const TOOL_RECEIPT_STATES = new Set(['dispatched', 'consumed', 'ambiguous']);
+
+const isConfiguredModelProvider = (config = {}) => {
+  if (config.runtimeDriver === 'fixture') return true;
+  if (config.modelProvider === 'ollama') return true;
+  if (config.modelProvider === 'siliconflow') return Boolean(config.siliconFlowApiKey);
+  if (config.modelProvider === 'openai') return Boolean(config.openAiApiKey);
+  if (config.modelProvider === 'cloudflare') {
+    return Boolean(
+      config.cloudflareAccountId &&
+      config.cloudflareApiToken &&
+      config.cloudflareFreeAccountAttested &&
+      config.cloudflareFreeAccountId === config.cloudflareAccountId
+    );
+  }
+  return false;
+};
+
+const modelPricingRates = (config, run = {}) => {
+  const provider = String(run.model_provider || run.provider || config.modelProvider || '');
+  const model = String(run.model_name || config.modelName || '');
+  const hasRunIdentity = Boolean(
+    run.model_provider || run.provider || run.model_name || run.runtime_profile_summary
+  );
+  const snapshot = hasRunIdentity
+    ? run.runtime_profile_summary?.modelConfig?.pricingSnapshot
+    : config.modelPricingSnapshot;
+  if (
+    snapshot?.provider === provider &&
+    snapshot?.model === model &&
+    Number.isFinite(Number(snapshot.inputCreditsPerMillion)) &&
+    Number.isFinite(Number(snapshot.outputCreditsPerMillion)) &&
+    Number(snapshot.inputCreditsPerMillion) > 0 &&
+    Number(snapshot.outputCreditsPerMillion) > 0
+  ) {
+    return {
+      input: Number(snapshot.inputCreditsPerMillion),
+      output: Number(snapshot.outputCreditsPerMillion)
+    };
+  }
+  throw new ApiError(500, 'AGENT_RUN_PRICING_PROFILE_INVALID', {
+    retryable: false,
+    provider,
+    model
+  });
+};
+
+const usageCreditsForRun = ({ inputTokens = 0, outputTokens = 0, config, run }) => {
+  const rates = modelPricingRates(config, run);
+  if (!(rates.input > 0) || !(rates.output > 0)) {
+    throw new ApiError(500, 'AGENT_RUNTIME_V2_PRICING_NOT_READY', { retryable: false });
+  }
+  return (inputTokens * rates.input + outputTokens * rates.output) / 1_000_000;
+};
+
+// Migrations 024/025 added the immutable pricing profile after older V1/V2
+// runs had already been created. Those rows can have a populated runtime
+// summary (constitution, skills and model metadata) while still lacking the
+// nested pricing snapshot. Terminal reconciliation must not apply today's
+// rate to such a run (that would make the user's charge depend on a later
+// deployment). Instead, the platform absorbs the unknown historical cost and
+// closes the receipt and reservation at zero. New runs always carry a valid
+// snapshot and continue through the strict pricing path above.
+const isLegacyRunWithoutPricingSnapshot = (run = {}) => {
+  const version = Number(run.runtime_version ?? run.runtimeVersion ?? 1);
+  const summary = run.runtime_profile_summary ?? run.runtimeProfileSummary;
+  const snapshot = summary?.modelConfig?.pricingSnapshot;
+  const hasValidSnapshot = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) &&
+    typeof snapshot.provider === 'string' && snapshot.provider.trim() &&
+    typeof snapshot.model === 'string' && snapshot.model.trim() &&
+    Number.isFinite(Number(snapshot.inputCreditsPerMillion)) &&
+    Number.isFinite(Number(snapshot.outputCreditsPerMillion)) &&
+    Number(snapshot.inputCreditsPerMillion) > 0 &&
+    Number(snapshot.outputCreditsPerMillion) > 0;
+  return Number.isInteger(version) && version >= 1 && version <= 2 &&
+    !hasValidSnapshot;
+};
+
+const terminalReceiptCredits = ({ inputTokens, outputTokens, config, run }) => {
+  try {
+    return { credits: usageCreditsForRun({ inputTokens, outputTokens, config, run }), absorbed: false };
+  } catch (error) {
+    if (!isLegacyRunWithoutPricingSnapshot(run)) throw error;
+    return { credits: 0, absorbed: true };
+  }
+};
+
+const assertWorkerLease = (row, { workerId, leaseEpoch }) => {
+  if (!workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+  const currentEpoch = Number(row?.lease_epoch || 0);
+  const expectedEpoch = Number(leaseEpoch || 0);
+  if (
+    row?.worker_id !== workerId ||
+    !Number.isSafeInteger(expectedEpoch) ||
+    expectedEpoch <= 0 ||
+    currentEpoch !== expectedEpoch ||
+    (row?.lease_expires_at && new Date(row.lease_expires_at).getTime() <= Date.now())
+  ) {
+    throw new ApiError(409, 'AGENT_LEASE_LOST');
+  }
+};
 
 const fingerprintsEqual = (left, right) => {
   if (left == null || right == null) return left == null && right == null;
@@ -101,6 +209,20 @@ const requireIdempotencyKey = (value) => {
     throw new ApiError(400, 'INVALID_IDEMPOTENCY_KEY', { field: 'Idempotency-Key' });
   }
   return key;
+};
+
+const normalizeToolReceiptKey = (value) => {
+  const key = String(value || '').trim();
+  if (key.length < 1 || key.length > 240 || /[\u0000-\u001f\u007f]/.test(key)) {
+    throw new ApiError(400, 'AGENT_TOOL_RECEIPT_KEY_INVALID');
+  }
+  return key;
+};
+
+const normalizeSha256 = (value, code = 'AGENT_TOOL_RECEIPT_HASH_INVALID') => {
+  const digest = String(value || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(digest)) throw new ApiError(400, code);
+  return digest;
 };
 
 const normalizeObjective = (value) => {
@@ -210,6 +332,16 @@ const publicRun = (row, extras = {}) => ({
   runId: row.id,
   projectId: row.project_id || null,
   status: row.status,
+  runtime: {
+    version: Number(row.runtime_version || 1),
+    promptProfile: row.prompt_profile || null,
+    profileHash: Buffer.isBuffer(row.runtime_profile_hash)
+      ? row.runtime_profile_hash.toString('hex')
+      : null,
+    profileSummary: row.runtime_profile_summary || {},
+    checkpointVersion: Number(row.checkpoint?.version || (Number(row.runtime_version || 1) === 2 ? 4 : 1)),
+    skills: Object.entries(row.skill_versions || {}).map(([id, version]) => ({ id, version }))
+  },
   model: {
     provider: row.model_provider,
     name: row.model_name
@@ -253,9 +385,16 @@ const publicRun = (row, extras = {}) => ({
     checklist: row.completion_checklist || {},
     plan: Array.isArray(row.checkpoint?.plan) ? row.checkpoint.plan : [],
     planExplanation: String(row.checkpoint?.planExplanation || ''),
-    durableCheckpointSaved: row.checkpoint?.durableToolResume === true
+    durableCheckpointSaved: row.checkpoint?.durableToolResume === true,
+    retryRequired: row.checkpoint?.retryRequired === true,
+    retryReason: row.checkpoint?.retryReason || null,
+    clarificationRequired: row.checkpoint?.clarificationRequired === true
   },
   error: row.error_code ? { code: row.error_code } : null,
+  finalTextSha256: Buffer.isBuffer(row.final_text_sha256)
+    ? row.final_text_sha256.toString('hex')
+    : null,
+  semanticVerification: row.semantic_verification || {},
   subagents: Array.isArray(extras.subagents) ? extras.subagents : [],
   expiresAt: row.expires_at,
   createdAt: row.created_at,
@@ -421,10 +560,14 @@ const insertEvent = async (client, {
 const createAgentRunService = ({
   pool,
   env = process.env,
-  queuePublisher = null
+  queuePublisher = null,
+  testController = null
 } = {}) => {
   if (!pool || typeof pool.connect !== 'function') {
     throw new TypeError('AGENT_RUN_POOL_REQUIRED');
+  }
+  if (testController && String(env.NODE_ENV || '').trim() !== 'test') {
+    throw new TypeError('AGENT_RUNTIME_TEST_CONTROLLER_FORBIDDEN');
   }
 
   const config = getAgentConfig(env);
@@ -501,6 +644,7 @@ const createAgentRunService = ({
   const createSubagents = async ({
     runId,
     workerId,
+    leaseEpoch,
     tasks,
     allowedInputPaths = []
   }) => withTransaction(pool, async (client) => {
@@ -516,7 +660,7 @@ const createAgentRunService = ({
       [runId]
     );
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-    if (run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     if (run.rows[0].status !== 'running') {
       throw new ApiError(409, 'AGENT_STATE_TRANSITION_INVALID');
     }
@@ -598,11 +742,11 @@ const createAgentRunService = ({
     return created;
   });
 
-  const loadSubagentContext = async ({ runId, subagentId, workerId }) => withTransaction(
+  const loadSubagentContext = async ({ runId, subagentId, workerId, leaseEpoch }) => withTransaction(
     pool,
     async (client) => {
       const result = await client.query(
-        `SELECT subagent.*,run.worker_id,run.status AS run_status,
+        `SELECT subagent.*,run.worker_id,run.lease_epoch,run.lease_expires_at,run.status AS run_status,
                 payload.id AS payload_id,payload.algorithm,payload.key_version,
                 payload.iv,payload.auth_tag,payload.ciphertext,
                 checkpoint.id AS checkpoint_id,
@@ -623,7 +767,7 @@ const createAgentRunService = ({
       );
       if (!result.rowCount) throw new ApiError(404, 'AGENT_SUBAGENT_NOT_FOUND');
       const row = result.rows[0];
-      if (workerId && row.worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+      assertWorkerLease(row, { workerId, leaseEpoch });
       const task = decryptAgentPayload({
         runId,
         payloadId: row.payload_id,
@@ -648,12 +792,15 @@ const createAgentRunService = ({
     }
   );
 
-  const startSubagent = async ({ runId, subagentId, workerId }) => withTransaction(
+  const startSubagent = async ({ runId, subagentId, workerId, leaseEpoch }) => withTransaction(
     pool,
     async (client) => {
-      const run = await client.query('SELECT worker_id,status FROM agent_runs WHERE id=$1', [runId]);
+      const run = await client.query(
+        'SELECT worker_id,lease_epoch,lease_expires_at,status FROM agent_runs WHERE id=$1 FOR UPDATE',
+        [runId]
+      );
       if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-      if (run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
       const current = await client.query(
         'SELECT * FROM agent_subagents WHERE id=$1 AND run_id=$2 FOR UPDATE',
         [subagentId, runId]
@@ -688,6 +835,7 @@ const createAgentRunService = ({
     runId,
     subagentId,
     workerId,
+    leaseEpoch,
     status,
     summary = '',
     outputFiles = [],
@@ -696,9 +844,12 @@ const createAgentRunService = ({
     if (!SUBAGENT_TERMINAL_STATUSES.has(status)) {
       throw new ApiError(400, 'AGENT_SUBAGENT_STATUS_INVALID');
     }
-    const run = await client.query('SELECT worker_id FROM agent_runs WHERE id=$1', [runId]);
+    const run = await client.query(
+      'SELECT worker_id,lease_epoch,lease_expires_at FROM agent_runs WHERE id=$1 FOR UPDATE',
+      [runId]
+    );
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-    if (run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     const current = await client.query(
       'SELECT * FROM agent_subagents WHERE id=$1 AND run_id=$2 FOR UPDATE',
       [subagentId, runId]
@@ -745,12 +896,16 @@ const createAgentRunService = ({
     runId,
     subagentId,
     workerId,
+    leaseEpoch,
     estimatedCredits,
     usage = {}
   }) => withTransaction(pool, async (client) => {
-    const run = await client.query('SELECT worker_id,max_credits FROM agent_runs WHERE id=$1', [runId]);
+    const run = await client.query(
+      'SELECT worker_id,lease_epoch,lease_expires_at,max_credits FROM agent_runs WHERE id=$1 FOR UPDATE',
+      [runId]
+    );
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-    if (run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     const credits = Math.max(0, Number(estimatedCredits || 0));
     if (credits > Number(run.rows[0].max_credits || 0)) {
       throw new ApiError(409, 'AGENT_BUDGET_EXCEEDED');
@@ -779,18 +934,19 @@ const createAgentRunService = ({
     runId,
     subagentId,
     workerId,
+    leaseEpoch,
     value
   }) => withTransaction(pool, async (client) => {
     const current = await client.query(
-      `SELECT subagent.id,run.worker_id
+      `SELECT subagent.id,run.worker_id,run.lease_epoch,run.lease_expires_at
          FROM agent_subagents subagent
          JOIN agent_runs run ON run.id=subagent.run_id
         WHERE subagent.id=$1 AND subagent.run_id=$2 AND subagent.status='running'
-        FOR UPDATE OF subagent`,
+        FOR UPDATE OF subagent,run`,
       [subagentId, runId]
     );
     if (!current.rowCount) throw new ApiError(409, 'AGENT_SUBAGENT_NOT_RUNNING');
-    if (current.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    assertWorkerLease(current.rows[0], { workerId, leaseEpoch });
     const existing = await client.query(
       'SELECT id FROM agent_subagent_model_checkpoints WHERE subagent_id=$1 FOR UPDATE',
       [subagentId]
@@ -827,12 +983,15 @@ const createAgentRunService = ({
     return true;
   });
 
-  const clearSubagentModelCheckpoint = async ({ runId, subagentId, workerId }) => withTransaction(
+  const clearSubagentModelCheckpoint = async ({ runId, subagentId, workerId, leaseEpoch }) => withTransaction(
     pool,
     async (client) => {
-      const run = await client.query('SELECT worker_id FROM agent_runs WHERE id=$1', [runId]);
+      const run = await client.query(
+        'SELECT worker_id,lease_epoch,lease_expires_at FROM agent_runs WHERE id=$1 FOR UPDATE',
+        [runId]
+      );
       if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-      if (workerId && run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
       await client.query(
         'DELETE FROM agent_subagent_model_checkpoints WHERE subagent_id=$1 AND run_id=$2',
         [subagentId, runId]
@@ -919,27 +1078,125 @@ const createAgentRunService = ({
     );
     const row = result.rows[0] || {};
     const workerOnline = row.worker_online === true;
+    const configuredModel = Object.freeze({
+      provider: String(config.modelProvider || ''),
+      model: String(config.modelName || '')
+    });
+    const workerModel = row.model_provider && row.model_name
+      ? Object.freeze({
+          provider: String(row.model_provider),
+          model: String(row.model_name)
+        })
+      : null;
+    const workerModelReady = Boolean(
+      workerOnline &&
+      workerModel &&
+      workerModel.provider === configuredModel.provider &&
+      workerModel.model === configuredModel.model
+    );
     const queueDepth = Number(row.queue_depth || 0);
+    let providerScheduler = {
+      enabled: config.providerSchedulerEnabled,
+      ready: !config.providerSchedulerEnabled,
+      mode: config.providerSchedulerEnabled ? 'postgres-v1' : 'process-local'
+    };
+    let durability = {
+      checkpointVersion: config.checkpointVersion,
+      leaseEpochReady: false,
+      modelReceiptsReady: false,
+      toolReceiptsReady: false,
+      budgetReservationsReady: false,
+      // Status/readiness must remain observable when pricing is misconfigured.
+      // The actual Run/receipt billing paths still call modelPricingRates and
+      // fail closed; this probe only reports false instead of turning /status
+      // into a 500 that hides the actionable readiness error.
+      pricingReady: (() => {
+        if (!['siliconflow', 'cloudflare'].includes(config.modelProvider)) return true;
+        try {
+          const rates = modelPricingRates(config);
+          return rates.input > 0 && rates.output > 0;
+        } catch {
+          return false;
+        }
+      })()
+    };
+    try {
+      const durableSchema = await pool.query(
+        `SELECT
+           EXISTS(
+             SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='agent_runs' AND column_name='lease_epoch'
+           ) AS has_lease_epoch,
+           to_regclass('public.agent_model_call_receipts') IS NOT NULL AS has_receipts,
+           to_regclass('public.agent_tool_call_receipts') IS NOT NULL AS has_tool_receipts,
+           to_regclass('public.agent_budget_reservations') IS NOT NULL AS has_reservations`
+      );
+      durability = {
+        ...durability,
+        leaseEpochReady: durableSchema.rows[0]?.has_lease_epoch === true,
+        modelReceiptsReady: durableSchema.rows[0]?.has_receipts === true,
+        toolReceiptsReady: durableSchema.rows[0]?.has_tool_receipts === true,
+        budgetReservationsReady: durableSchema.rows[0]?.has_reservations === true
+      };
+    } catch {}
+    if (config.providerSchedulerEnabled) {
+      try {
+        const scheduler = await pool.query(
+          `SELECT to_regclass('public.agent_provider_scheduler') IS NOT NULL AS has_scheduler,
+                  to_regclass('public.agent_provider_requests') IS NOT NULL AS has_requests`
+        );
+        providerScheduler = {
+          ...providerScheduler,
+          ready: scheduler.rows[0]?.has_scheduler === true &&
+            scheduler.rows[0]?.has_requests === true
+        };
+      } catch {
+        providerScheduler = { ...providerScheduler, ready: false };
+      }
+    }
     return {
       enabled: config.enabled,
       workerOnline,
+      workerModelReady,
+      configuredModel,
+      workerModel,
       queueDepth,
       oldestQueuedAt: row.oldest_queued_at || null,
       concurrency: Number(row.concurrency || 1),
-      modelFamily: row.model_name || config.modelName,
+      modelFamily: workerModel?.model || config.modelName,
       sandboxMode: row.sandbox_mode || config.sandboxMode,
-      browserReady: workerOnline && row.browser_ready === true,
-      egressVerified: workerOnline && row.egress_verified === true,
-      desktopRelayReady: workerOnline && row.desktop_relay_ready === true,
+      browserReady: workerModelReady && row.browser_ready === true,
+      egressVerified: workerModelReady && row.egress_verified === true,
+      desktopRelayReady: workerModelReady && row.desktop_relay_ready === true,
       sandboxImageRef: row.sandbox_image_ref || null,
       browserPublicEnabled: config.publicBrowserEnabled,
       imageGenerationPublicEnabled: config.publicImageGenerationEnabled,
       subagentsEnabled: config.publicSubagentsEnabled,
       subagentMaxConcurrent: config.subagentMaxConcurrent,
       subagentSandboxMode: config.subagentSandboxMode,
+      runtimeV2Enabled: config.runtimeV2Enabled,
+      runtimeV2RolloutPercent: config.runtimeV2RolloutPercent,
+      runtimeV2CanaryConfigured: config.runtimeV2CanaryUserIds.length > 0,
+      promptEngineVersion: config.promptEngineVersion,
+      adaptiveReasoningEnabled: config.adaptiveReasoningEnabled,
+      projectMemoryEnabled: config.projectMemoryEnabled,
+      providerScheduler,
+      runtimeProfile: {
+        version: 'v2.1',
+        promptEngineVersion: config.promptEngineVersion,
+        checkpointVersion: config.checkpointVersion,
+        model: config.modelName,
+        actorSamplingProfile: config.actorSamplingProfile.id
+      },
+      durability,
+      fairScheduling: {
+        enabled: config.providerSchedulerEnabled,
+        agingSeconds: 30,
+        admissionControl: true
+      },
       accessMode: config.betaMode,
       availabilityNote: workerOnline
-        ? (queueDepth > 0 ? 'busy' : 'ready')
+        ? (workerModelReady ? (queueDepth > 0 ? 'busy' : 'ready') : 'worker_model_mismatch')
         : 'worker_offline'
     };
   };
@@ -1024,7 +1281,8 @@ const createAgentRunService = ({
         trialRemaining,
         dailyRemaining,
         freeRemaining: trialRemaining + dailyRemaining,
-        walletAvailable: Number(wallet.rows[0]?.available_credits || 0)
+        walletAvailable: Number(wallet.rows[0]?.available_credits || 0),
+        runtimeAssignment: resolveAgentRuntimeAssignment(config, dbUserId)
       };
     });
     const requiredPaidHold = Math.max(0, chosenMaximum - result.freeRemaining);
@@ -1038,6 +1296,7 @@ const createAgentRunService = ({
       hardMaximumCredits: config.hardMaxCredits,
       requiredPaidHold,
       canStart: result.walletAvailable >= requiredPaidHold,
+      runtime: { version: result.runtimeAssignment.version },
       limits: {
         minutes: config.maxMinutes,
         steps: config.maxSteps,
@@ -1048,10 +1307,7 @@ const createAgentRunService = ({
       requirements: {
         database: true,
         payloadEncryption: hasAgentPayloadKey(env),
-        modelProvider: config.modelProvider === 'ollama' ||
-          (config.modelProvider === 'siliconflow' && Boolean(config.siliconFlowApiKey)) ||
-          Boolean(config.openAiApiKey) ||
-          config.runtimeDriver === 'fixture',
+        modelProvider: isConfiguredModelProvider(config),
         sandboxProvider: config.sandboxMode === 'local' ||
           Boolean(config.cuaApiKey) ||
           config.sandboxProvider === 'fixture' ||
@@ -1068,10 +1324,27 @@ const createAgentRunService = ({
     capabilities,
     browserConfig,
     deliverables,
+    taskSpec: proposedTaskSpec,
     projectId,
     idempotencyKey: rawIdempotencyKey
   }) => {
     const liveConfig = assertAgentRuntimeReady(env);
+    // Billing must be ready before a live run can create a hold.  V2 already
+    // enforces this in assertAgentRuntimeReady; keep the same fail-closed
+    // admission boundary for V1 so a zero/missing pricing profile can never
+    // freeze user credits and only fail later inside the Worker.
+    if (
+      liveConfig.runtimeDriver === 'live' &&
+      ['siliconflow', 'cloudflare'].includes(liveConfig.modelProvider) &&
+      (
+        !Number.isFinite(Number(liveConfig.modelPricingSnapshot?.inputCreditsPerMillion)) ||
+        !Number.isFinite(Number(liveConfig.modelPricingSnapshot?.outputCreditsPerMillion)) ||
+        !(Number(liveConfig.modelPricingSnapshot?.inputCreditsPerMillion) > 0) ||
+        !(Number(liveConfig.modelPricingSnapshot?.outputCreditsPerMillion) > 0)
+      )
+    ) {
+      throw new ApiError(503, 'AGENT_PRICING_NOT_READY', { retryable: false });
+    }
     if (!hasAgentPayloadKey(env)) {
       throw new ApiError(503, 'AGENT_PAYLOAD_KEY_MISSING', { retryable: false });
     }
@@ -1120,16 +1393,73 @@ const createAgentRunService = ({
       ? liveConfig.defaultMaxCredits
       : clampCredits(maxCredits, liveConfig.hardMaxCredits);
     const idempotencyKey = requireIdempotencyKey(rawIdempotencyKey);
-    const requestIdentity = {
-      objective: normalizedObjective,
-      assetIds: normalizedAssetIds,
-      maxCredits: budget,
-      capabilities: normalizedCapabilities,
-      deliverables: normalizedDeliverables,
-      browserConfig: normalizedBrowser,
-      projectId: projectId || null
+    const compileRuntimeRequest = (runtimeVersion) => {
+      const runtimeV2 = Number(runtimeVersion) === 2;
+      const normalizedTaskSpec = runtimeV2 && proposedTaskSpec
+        ? normalizeTaskSpec({
+            ...proposedTaskSpec,
+            goal: normalizedObjective,
+            deliverables: normalizedDeliverables,
+            allowedOrigins: normalizedBrowser.allowedOrigins,
+            budget: { maxCredits: budget }
+          }, {
+            objective: normalizedObjective,
+            deliverables: normalizedDeliverables,
+            capabilities: normalizedCapabilities,
+            allowedOrigins: normalizedBrowser.allowedOrigins,
+            maxCredits: budget
+          })
+        : null;
+      const requestHash = hashRequest({
+        objective: normalizedObjective,
+        assetIds: normalizedAssetIds,
+        maxCredits: budget,
+        capabilities: normalizedCapabilities,
+        deliverables: normalizedDeliverables,
+        browserConfig: normalizedBrowser,
+        projectId: projectId || null,
+        taskSpec: normalizedTaskSpec
+      });
+      // A Run created without a router-compiled TaskSpec still needs the
+      // Planner. Do not freeze an incomplete execution profile before the
+      // Planner has produced a server-validated TaskSpec; the Worker pins the
+      // final capability-intersected profile exactly once afterwards. Runs
+      // that already carry a validated TaskSpec remain immutable at creation.
+      const promptProfile = runtimeV2 && normalizedTaskSpec
+        ? compileAgentPrompt({
+            objective: normalizedObjective,
+            capabilities: normalizedCapabilities,
+            deliverables: normalizedDeliverables,
+            taskSpec: normalizedTaskSpec,
+            phase: normalizedTaskSpec?.plan?.[0]?.phase || (
+              normalizedCapabilities.browser ? 'research' : 'production'
+            ),
+            toolSchemas: FUNCTION_TOOLS,
+            modelConfig: {
+              actorSamplingProfile: config.actorSamplingProfile,
+              adaptiveReasoningEnabled: config.adaptiveReasoningEnabled,
+              stageMaxOutputTokens: config.stageMaxOutputTokens,
+              pricingSnapshot: config.modelPricingSnapshot
+            },
+            textModel: config.modelName
+          })
+        : null;
+      const runtimeProfileSummary = promptProfile?.runtimeProfileSummary || {
+        runtimeVersion: runtimeV2 ? 2 : 1,
+        modelProvider: liveConfig.modelProvider,
+        model: liveConfig.modelName,
+        modelConfig: {
+          pricingSnapshot: liveConfig.modelPricingSnapshot
+        }
+      };
+      return {
+        normalizedTaskSpec,
+        promptProfile,
+        requestHash,
+        runtimeProfileSummary,
+        runtimeV2
+      };
     };
-    const requestHash = hashRequest(requestIdentity);
 
     const created = await withTransaction(pool, async (client) => {
       const dbUserId = await resolveAgentUserId(client, userId);
@@ -1155,6 +1485,16 @@ const createAgentRunService = ({
         'SELECT * FROM agent_runs WHERE user_id=$1 AND idempotency_key=$2 FOR UPDATE',
         [dbUserId, idempotencyKey]
       );
+      const runtimeAssignment = replay.rowCount
+        ? { version: Number(replay.rows[0].runtime_version || 1), reason: 'replay' }
+        : resolveAgentRuntimeAssignment(liveConfig, dbUserId);
+      const {
+        normalizedTaskSpec,
+        promptProfile,
+        requestHash,
+        runtimeProfileSummary,
+        runtimeV2
+      } = compileRuntimeRequest(runtimeAssignment.version);
       if (replay.rowCount) {
         if (!secureEqual(replay.rows[0].request_hash, requestHash)) {
           throw new ApiError(409, 'IDEMPOTENCY_CONFLICT');
@@ -1205,9 +1545,11 @@ const createAgentRunService = ({
         `INSERT INTO agent_runs
           (id,user_id,project_id,status,idempotency_key,request_hash,
            model_provider,model_name,sandbox_provider,sandbox_version,
-           capabilities,browser_config,max_credits,queued_at,queue_expires_at)
-         VALUES ($1,$2,$3,'queued',$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),
-           clock_timestamp()+($13::text || ' hours')::interval)
+           capabilities,browser_config,max_credits,runtime_version,prompt_profile,
+           prompt_hash,skill_versions,runtime_profile_hash,runtime_profile_summary,
+           queued_at,queue_expires_at)
+         VALUES ($1,$2,$3,'queued',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+           $17,$18,now(),clock_timestamp()+($19::text || ' hours')::interval)
          RETURNING *`,
         [
           runId,
@@ -1222,6 +1564,14 @@ const createAgentRunService = ({
           JSON.stringify(normalizedCapabilities),
           JSON.stringify(normalizedBrowser),
           budget,
+          runtimeV2 ? 2 : 1,
+          promptProfile?.promptProfile || null,
+          promptProfile ? Buffer.from(promptProfile.promptHash, 'hex') : null,
+          JSON.stringify(Object.fromEntries(
+            (promptProfile?.skills || []).map((skill) => [skill.id, skill.version])
+          )),
+          promptProfile ? Buffer.from(promptProfile.runtimeProfileHash, 'hex') : null,
+          JSON.stringify(sanitizeLogValue(runtimeProfileSummary)),
           liveConfig.queueMaxWaitHours
         ]
       );
@@ -1234,6 +1584,7 @@ const createAgentRunService = ({
           objective: normalizedObjective,
           assetIds: normalizedAssetIds,
           deliverables: normalizedDeliverables,
+          taskSpec: normalizedTaskSpec,
           createdBy: 'user'
         },
         env
@@ -1272,7 +1623,14 @@ const createAgentRunService = ({
         type: 'run.queued',
         phase: 'queued',
         summary: '任务已进入 Agent 队列',
-        data: { maxCredits: budget, freeCredits: hold.freeCredits }
+        data: {
+          maxCredits: budget,
+          freeCredits: hold.freeCredits,
+          runtimeVersion: runtimeV2 ? 2 : 1,
+          runtimeAssignment: runtimeAssignment.reason,
+          promptProfile: promptProfile?.promptProfile || null,
+          skillIds: (promptProfile?.skills || []).map((skill) => skill.id)
+        }
       });
       return {
         row: { ...inserted.rows[0], free_credits_reserved: hold.freeCredits },
@@ -1491,14 +1849,43 @@ const createAgentRunService = ({
         [runId]
       );
       if (pending.rowCount) throw new ApiError(409, 'AGENT_APPROVAL_PENDING');
+      const resumableCheckpoint = { ...(row.checkpoint || {}) };
+      if ([
+        'image_call_ambiguous',
+        'model_call_ambiguous',
+        'tool_call_ambiguous',
+        'runtime_call_ambiguous'
+      ].includes(resumableCheckpoint.retryReason)) {
+        const receipts = resumableCheckpoint.toolReceipts &&
+          typeof resumableCheckpoint.toolReceipts === 'object'
+          ? resumableCheckpoint.toolReceipts
+          : {};
+        resumableCheckpoint.toolReceipts = Object.fromEntries(
+          Object.entries(receipts).filter(([, receipt]) => !(
+            ['kolors', 'sandbox_shell'].includes(receipt?.kind) &&
+            ['dispatched', 'ambiguous'].includes(receipt?.state)
+          ))
+        );
+        const parsedToolRetryEpoch = Number(resumableCheckpoint.toolRetryEpoch || 0);
+        resumableCheckpoint.toolRetryEpoch = (
+          Number.isSafeInteger(parsedToolRetryEpoch) && parsedToolRetryEpoch >= 0
+            ? parsedToolRetryEpoch
+            : 0
+        ) + 1;
+      }
+      delete resumableCheckpoint.retryRequired;
+      delete resumableCheckpoint.retryReason;
+      delete resumableCheckpoint.clarificationRequired;
+      delete resumableCheckpoint.clarificationReason;
       const result = await client.query(
         `UPDATE agent_runs
             SET status='queued',pause_requested=false,cancel_requested=false,
                 queued_at=now(),
                 queue_expires_at=clock_timestamp()+($2::text || ' hours')::interval,
+                checkpoint=$3::jsonb,
                 worker_id=NULL,lease_expires_at=NULL,updated_at=now()
           WHERE id=$1 RETURNING *`,
-        [runId, config.queueMaxWaitHours]
+        [runId, config.queueMaxWaitHours, JSON.stringify(resumableCheckpoint)]
       );
       await client.query(
         `UPDATE agent_budget_holds
@@ -1523,6 +1910,197 @@ const createAgentRunService = ({
     return publicRun(resumed, { maxSteps: config.maxSteps });
   };
 
+  const consumeKnownTerminalCosts = async (client, runId, {
+    outcome = 'cancelled',
+    receiptErrorCode = 'AGENT_CANCELLED_AFTER_RECEIPT',
+    unreadableErrorCode = 'AGENT_CANCELLED_RECEIPT_UNREADABLE',
+    eventPhase = 'cancelled'
+  } = {}) => {
+    const normalizedOutcome = ['succeeded', 'failed', 'cancelled'].includes(outcome)
+      ? outcome
+      : 'failed';
+    const runProfile = await client.query(
+      `SELECT runtime_version,runtime_profile_summary
+         FROM agent_runs WHERE id=$1 FOR SHARE`,
+      [runId]
+    );
+    const legacyPricing = isLegacyRunWithoutPricingSnapshot(runProfile.rows[0]);
+    const receivedModels = await client.query(
+      `SELECT receipt.*,reservation.state AS reservation_state,
+              reservation.reservation_key,call.subagent_id,call.provider,call.model_name,
+              run.runtime_version,run.runtime_profile_summary
+         FROM agent_model_call_receipts receipt
+         JOIN agent_model_calls call ON call.id=receipt.id
+         JOIN agent_runs run ON run.id=receipt.run_id
+         JOIN agent_budget_reservations reservation
+           ON reservation.run_id=receipt.run_id AND reservation.model_call_id=receipt.id
+        WHERE receipt.run_id=$1
+          AND (
+            receipt.state='received'
+            OR (
+              receipt.state='consumed'
+              AND reservation.state IN ('reserved','released')
+            )
+          )
+        FOR UPDATE OF receipt,call,reservation`,
+      [runId]
+    );
+    for (const receipt of receivedModels.rows) {
+      let payload;
+      try {
+        payload = decryptAgentPayload({
+          runId,
+          payloadId: receipt.id,
+          kind: 'model_call_response',
+          record: {
+            algorithm: receipt.algorithm,
+            iv: receipt.response_iv,
+            auth_tag: receipt.response_auth_tag,
+            ciphertext: receipt.response_ciphertext
+          },
+          env
+        });
+      } catch {
+        await client.query(
+          `UPDATE agent_model_call_receipts
+              SET state='consumed',consumed_at=COALESCE(consumed_at,clock_timestamp()),
+                  updated_at=clock_timestamp()
+            WHERE id=$1 AND run_id=$2 AND state='received'`,
+          [receipt.id, runId]
+        );
+        await client.query(
+          `UPDATE agent_budget_reservations
+              SET state='consumed',actual_credits=0,
+                  consumed_at=COALESCE(consumed_at,clock_timestamp()),
+                  released_at=NULL,updated_at=clock_timestamp()
+            WHERE run_id=$1 AND reservation_key=$2
+              AND state IN ('reserved','released')`,
+          [runId, receipt.reservation_key]
+        );
+        await client.query(
+          `UPDATE agent_model_calls
+              SET outcome=$2,error_code=$3,
+                  finished_at=COALESCE(finished_at,clock_timestamp())
+            WHERE id=$1`,
+          [receipt.id, normalizedOutcome, unreadableErrorCode]
+        );
+        await insertEvent(client, {
+          runId,
+          type: 'model.call.receipt_unreadable',
+          phase: eventPhase,
+          summary: '终态清理时无法解密已收到的模型回执，回执已封存且未知费用由平台承担',
+          data: { callId: receipt.id }
+        });
+        continue;
+      }
+      const usage = payload?.response?.usage || {};
+      const tokenCount = (value) => {
+        const parsed = Number(value || 0);
+        return Number.isFinite(parsed) ? Math.ceil(Math.max(0, Math.min(1_000_000_000, parsed))) : 0;
+      };
+      const inputTokens = tokenCount(usage.prompt_tokens || usage.input_tokens);
+      const outputTokens = tokenCount(usage.completion_tokens || usage.output_tokens);
+      const receiptCost = terminalReceiptCredits({
+        inputTokens,
+        outputTokens,
+        config,
+        run: receipt
+      });
+      const actualCredits = receiptCost.credits;
+      if (receiptCost.absorbed) {
+        await insertEvent(client, {
+          runId,
+          type: 'model.call.legacy_pricing_absorbed',
+          phase: eventPhase,
+          summary: '旧运行缺少不可变价格快照，未知历史费用由平台承担',
+          data: { callId: receipt.id, runtimeVersion: Number(receipt.runtime_version || 1) }
+        });
+      }
+      if (['reserved', 'released'].includes(receipt.reservation_state)) {
+        await client.query(
+          `UPDATE agent_budget_reservations
+              SET state='consumed',actual_credits=$3,consumed_at=clock_timestamp(),
+                  released_at=NULL,updated_at=clock_timestamp()
+            WHERE run_id=$1 AND reservation_key=$2 AND state IN ('reserved','released')`,
+          [runId, receipt.reservation_key, actualCredits]
+        );
+      }
+      // A readable received response is a determined Provider result. Restore
+      // its internal reservation even if an older terminal path released it so
+      // replay keeps receipt and budget state consistent; a settled refundable
+      // hold still means the platform, not the user, absorbs the cost.
+      await client.query(
+        `UPDATE agent_model_call_receipts
+            SET state='consumed',consumed_at=COALESCE(consumed_at,clock_timestamp()),
+                updated_at=clock_timestamp()
+          WHERE id=$1 AND run_id=$2 AND state='received'`,
+        [receipt.id, runId]
+      );
+      await client.query(
+        `UPDATE agent_model_calls
+            SET input_tokens=GREATEST(input_tokens,$2),
+                output_tokens=GREATEST(output_tokens,$3),
+                outcome=$4,error_code=$5,
+                finished_at=COALESCE(finished_at,clock_timestamp())
+          WHERE id=$1`,
+        [receipt.id, inputTokens, outputTokens, normalizedOutcome, receiptErrorCode]
+      );
+    }
+
+    await client.query(
+      `UPDATE agent_budget_reservations reservation
+          SET state='consumed',actual_credits=receipt.actual_credits,
+              consumed_at=clock_timestamp(),updated_at=clock_timestamp()
+         FROM agent_tool_call_receipts receipt
+        WHERE reservation.run_id=$1 AND reservation.state='reserved'
+          AND receipt.run_id=reservation.run_id
+          AND receipt.reservation_key=reservation.reservation_key
+          AND receipt.state='consumed'`,
+      [runId]
+    );
+    const totals = await client.query(
+      `SELECT COALESCE(sum(actual_credits),0)::numeric AS consumed
+         FROM agent_budget_reservations
+        WHERE run_id=$1 AND state='consumed'`,
+      [runId]
+    );
+    const consumed = Number(totals.rows[0]?.consumed || 0);
+    await client.query(
+      `UPDATE agent_runs
+          SET estimated_credits_used=CASE
+                WHEN $3::boolean THEN LEAST(max_credits::numeric,$2::numeric)
+                ELSE GREATEST(
+                  estimated_credits_used,
+                  LEAST(max_credits::numeric,$2::numeric)
+                )
+              END,
+              platform_overrun_credits=GREATEST(
+                platform_overrun_credits,
+                GREATEST(0::numeric,$2::numeric-max_credits::numeric)
+              ),
+              updated_at=clock_timestamp()
+        WHERE id=$1`,
+      [runId, consumed, legacyPricing]
+    );
+    await client.query(
+      `UPDATE agent_subagents subagent
+          SET estimated_credits_used=GREATEST(
+                subagent.estimated_credits_used,
+                totals.consumed
+              ),
+              updated_at=clock_timestamp()
+         FROM (
+           SELECT subagent_id,COALESCE(sum(actual_credits),0)::numeric AS consumed
+             FROM agent_budget_reservations
+            WHERE run_id=$1 AND state='consumed' AND subagent_id IS NOT NULL
+            GROUP BY subagent_id
+         ) totals
+        WHERE subagent.id=totals.subagent_id AND subagent.run_id=$1`,
+      [runId]
+    );
+    return consumed;
+  };
+
   const cancelRun = async ({ userId, runId }) => withTransaction(pool, async (client) => {
     const { row } = await resolveOwnedRun(client, { userId, runId, lock: true });
     if (TERMINAL_STATUSES.has(row.status)) return publicRun(row, { maxSteps: config.maxSteps });
@@ -1533,13 +2111,96 @@ const createAgentRunService = ({
         WHERE id=$1 RETURNING *`,
       [runId]
     );
+    const knownActualCredits = await consumeKnownTerminalCosts(client, runId);
     await settleAgentBudget({
       client,
       runId,
-      actualCredits: Number(row.estimated_credits_used || 0),
+      actualCredits: Math.max(
+        isLegacyRunWithoutPricingSnapshot(row) ? 0 : Number(row.estimated_credits_used || 0),
+        knownActualCredits
+      ),
       refundable: false,
       reason: 'user_cancelled'
     });
+    await client.query(
+      `UPDATE agent_budget_reservations
+          SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+        WHERE run_id=$1 AND state='reserved'`,
+      [runId]
+    );
+    const cancelledQueuedModels = await client.query(
+      `DELETE FROM agent_model_call_receipts
+        WHERE run_id=$1 AND state='queued'
+        RETURNING id`,
+      [runId]
+    );
+    if (cancelledQueuedModels.rowCount) {
+      await client.query(
+        `UPDATE agent_model_calls
+            SET outcome='cancelled',error_code='AGENT_CANCELLED_BEFORE_DISPATCH',
+                finished_at=COALESCE(finished_at,clock_timestamp())
+          WHERE id=ANY($1::uuid[])`,
+        [cancelledQueuedModels.rows.map((entry) => entry.id)]
+      );
+    }
+    const ambiguousModels = await client.query(
+      `UPDATE agent_model_call_receipts
+          SET state='ambiguous',ambiguous_at=COALESCE(ambiguous_at,clock_timestamp()),
+              updated_at=clock_timestamp()
+        WHERE run_id=$1 AND state='dispatched'
+        RETURNING id`,
+      [runId]
+    );
+    if (ambiguousModels.rowCount) {
+      await client.query(
+        `UPDATE agent_model_calls
+            SET outcome='cancelled',error_code='AGENT_CANCELLED_DURING_DISPATCH',
+                finished_at=COALESCE(finished_at,clock_timestamp())
+          WHERE id=ANY($1::uuid[])`,
+        [ambiguousModels.rows.map((entry) => entry.id)]
+      );
+      await insertEvent(client, {
+        runId,
+        type: 'model.call.ambiguous',
+        phase: 'cancelled',
+        summary: '取消发生在模型请求派发后，未知结果未计费也不会自动重试',
+        data: { callIds: ambiguousModels.rows.map((entry) => entry.id) }
+      });
+    }
+    await client.query(
+      `UPDATE agent_model_calls
+          SET outcome='cancelled',error_code='AGENT_CANCELLED_AFTER_RECEIPT',
+              finished_at=COALESCE(finished_at,clock_timestamp())
+        WHERE id IN (
+          SELECT id FROM agent_model_call_receipts
+           WHERE run_id=$1 AND state='received'
+        )
+          AND outcome='running'`,
+      [runId]
+    );
+    const ambiguousTools = await client.query(
+      `UPDATE agent_tool_call_receipts
+          SET state='ambiguous',ambiguous_at=COALESCE(ambiguous_at,clock_timestamp()),
+              updated_at=clock_timestamp()
+        WHERE run_id=$1 AND state='dispatched'
+        RETURNING id,kind`,
+      [runId]
+    );
+    if (ambiguousTools.rowCount) {
+      const kinds = [...new Set(ambiguousTools.rows.map((entry) => entry.kind))];
+      await insertEvent(client, {
+        runId,
+        type: kinds.length === 1 && kinds[0] === 'kolors'
+          ? 'image.call.ambiguous'
+          : 'tool.call.ambiguous',
+        phase: 'cancelled',
+        summary: '取消发生在工具派发后，未知结果未计费也不会自动重试',
+        data: {
+          receiptIds: ambiguousTools.rows.map((entry) => entry.id),
+          kinds
+        }
+      });
+    }
     await cancelAllSubagentsWithClient(client, runId, 'PARENT_RUN_CANCELLED');
     await revokeDesktopTickets(client, runId);
     await insertEvent(client, {
@@ -1743,7 +2404,7 @@ const createAgentRunService = ({
   const claimRun = async ({ runId, workerId }) => withTransaction(pool, async (client) => {
     const result = await client.query(
       `UPDATE agent_runs
-          SET status='provisioning',worker_id=$2,
+          SET status='provisioning',worker_id=$2,lease_epoch=lease_epoch+1,
               lease_expires_at=clock_timestamp()+($3::text || ' seconds')::interval,
               started_at=COALESCE(started_at,now()),updated_at=now()
         WHERE id=$1 AND status='queued' AND pause_requested=false AND cancel_requested=false
@@ -1806,9 +2467,218 @@ const createAgentRunService = ({
     };
   });
 
+  const decodeToolReceipt = (row) => ({
+    id: row.id,
+    key: row.receipt_key,
+    kind: row.kind,
+    state: row.state,
+    subagentId: row.subagent_id || null,
+    reservationKey: row.reservation_key,
+    requestSha256: Buffer.from(row.request_sha256).toString('hex'),
+    actualCredits: row.actual_credits === null ? null : Number(row.actual_credits),
+    result: row.result_ciphertext
+      ? decryptAgentPayload({
+          runId: row.run_id,
+          payloadId: row.id,
+          kind: 'tool_call_result',
+          record: {
+            algorithm: row.algorithm,
+            iv: row.result_iv,
+            auth_tag: row.result_auth_tag,
+            ciphertext: row.result_ciphertext
+          },
+          env
+        })
+      : null,
+    leaseEpoch: Number(row.lease_epoch || 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  });
+
+  const listToolReceipts = async ({ runId, workerId, leaseEpoch }) => withTransaction(
+    pool,
+    async (client) => {
+      const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
+      if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+      const result = await client.query(
+        `SELECT * FROM agent_tool_call_receipts
+          WHERE run_id=$1 AND expires_at>clock_timestamp()
+          ORDER BY created_at,id`,
+        [runId]
+      );
+      return result.rows.map(decodeToolReceipt);
+    }
+  );
+
+  const persistToolReceipt = async ({
+    runId,
+    workerId,
+    leaseEpoch,
+    subagentId = null,
+    receiptKey,
+    kind,
+    state,
+    reservationKey,
+    requestSha256,
+    actualCredits = null,
+    result = null,
+    legacyImport = false
+  }) => {
+    const normalizedKey = normalizeToolReceiptKey(receiptKey);
+    const normalizedReservationKey = normalizeToolReceiptKey(reservationKey);
+    const normalizedKind = String(kind || '').trim();
+    const normalizedState = String(state || '').trim();
+    const normalizedHash = normalizeSha256(requestSha256);
+    if (!TOOL_RECEIPT_KINDS.has(normalizedKind)) {
+      throw new ApiError(400, 'AGENT_TOOL_RECEIPT_KIND_INVALID');
+    }
+    if (!TOOL_RECEIPT_STATES.has(normalizedState)) {
+      throw new ApiError(400, 'AGENT_TOOL_RECEIPT_STATE_INVALID');
+    }
+    if (subagentId !== null && !UUID_RE.test(String(subagentId || ''))) {
+      throw new ApiError(400, 'AGENT_TOOL_RECEIPT_SUBAGENT_INVALID');
+    }
+    const normalizedCredits = actualCredits === null ? null : Number(actualCredits);
+    if (
+      normalizedState === 'consumed' &&
+      (!Number.isFinite(normalizedCredits) || normalizedCredits < 0 || result === null)
+    ) {
+      throw new ApiError(400, 'AGENT_TOOL_RECEIPT_RESULT_INVALID');
+    }
+    if (normalizedState !== 'consumed' && (normalizedCredits !== null || result !== null)) {
+      throw new ApiError(400, 'AGENT_TOOL_RECEIPT_RESULT_INVALID');
+    }
+
+    return withTransaction(pool, async (client) => {
+      const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
+      if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+      if (!['provisioning', 'running', 'verifying'].includes(run.rows[0].status)) {
+        throw new ApiError(409, 'AGENT_STATE_TRANSITION_INVALID');
+      }
+      if (subagentId) {
+        const subagent = await client.query(
+          'SELECT 1 FROM agent_subagents WHERE id=$1 AND run_id=$2',
+          [subagentId, runId]
+        );
+        if (!subagent.rowCount) throw new ApiError(404, 'AGENT_SUBAGENT_NOT_FOUND');
+      }
+      const existing = await client.query(
+        `SELECT * FROM agent_tool_call_receipts
+          WHERE run_id=$1 AND receipt_key=$2
+          FOR UPDATE`,
+        [runId, normalizedKey]
+      );
+      const prior = existing.rows[0] || null;
+      const hashBuffer = Buffer.from(normalizedHash, 'hex');
+      if (prior && (
+        prior.kind !== normalizedKind ||
+        String(prior.subagent_id || '') !== String(subagentId || '') ||
+        prior.reservation_key !== normalizedReservationKey ||
+        !secureEqual(prior.request_sha256, hashBuffer)
+      )) {
+        throw new ApiError(409, 'AGENT_TOOL_RECEIPT_CONFLICT', { retryable: false });
+      }
+      if (prior?.state === normalizedState) return decodeToolReceipt(prior);
+      if (
+        (!prior && normalizedState !== 'dispatched' && legacyImport !== true) ||
+        (prior && prior.state !== 'dispatched') ||
+        (prior && !['consumed', 'ambiguous'].includes(normalizedState))
+      ) {
+        throw new ApiError(409, 'AGENT_TOOL_RECEIPT_TRANSITION_INVALID', {
+          from: prior?.state || null,
+          to: normalizedState,
+          retryable: false
+        });
+      }
+      const receiptId = prior?.id || crypto.randomUUID();
+      const encrypted = normalizedState === 'consumed'
+        ? encryptAgentPayload({
+            runId,
+            payloadId: receiptId,
+            kind: 'tool_call_result',
+            value: result,
+            env
+          })
+        : null;
+      const updated = prior
+        ? await client.query(
+            `UPDATE agent_tool_call_receipts
+                SET state=$3,worker_id=$4,lease_epoch=$5,actual_credits=$6,
+                    result_iv=$7,result_auth_tag=$8,result_ciphertext=$9,
+                    consumed_at=CASE WHEN $3='consumed' THEN clock_timestamp() ELSE NULL END,
+                    ambiguous_at=CASE WHEN $3='ambiguous' THEN clock_timestamp() ELSE NULL END,
+                    updated_at=clock_timestamp()
+              WHERE id=$1 AND run_id=$2
+              RETURNING *`,
+            [
+              receiptId, runId, normalizedState, workerId, Number(leaseEpoch), normalizedCredits,
+              encrypted?.iv || null, encrypted?.authTag || null, encrypted?.ciphertext || null
+            ]
+          )
+        : await client.query(
+            `INSERT INTO agent_tool_call_receipts
+              (id,run_id,subagent_id,receipt_key,kind,state,worker_id,lease_epoch,
+               reservation_key,request_sha256,actual_credits,algorithm,key_version,
+               result_iv,result_auth_tag,result_ciphertext,consumed_at,ambiguous_at,expires_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+               COALESCE($12,'aes-256-gcm-v1'),COALESCE($13,1),$14,$15,$16,
+               CASE WHEN $6='consumed' THEN clock_timestamp() ELSE NULL END,
+               CASE WHEN $6='ambiguous' THEN clock_timestamp() ELSE NULL END,
+               clock_timestamp()+($17::text || ' days')::interval)
+             RETURNING *`,
+            [
+              receiptId, runId, subagentId, normalizedKey, normalizedKind, normalizedState,
+              workerId, Number(leaseEpoch), normalizedReservationKey, hashBuffer, normalizedCredits,
+              encrypted?.algorithm || null, encrypted?.keyVersion || null, encrypted?.iv || null,
+              encrypted?.authTag || null, encrypted?.ciphertext || null, config.retentionDays
+            ]
+          );
+      return decodeToolReceipt(updated.rows[0]);
+    });
+  };
+
+  const removeDispatchedToolReceipt = async ({
+    runId,
+    workerId,
+    leaseEpoch,
+    receiptKey,
+    requestSha256
+  }) => withTransaction(pool, async (client) => {
+    const normalizedKey = normalizeToolReceiptKey(receiptKey);
+    const normalizedHash = normalizeSha256(requestSha256);
+    const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+    const removed = await client.query(
+      `DELETE FROM agent_tool_call_receipts
+        WHERE run_id=$1 AND receipt_key=$2 AND state='dispatched'
+          AND request_sha256=$3
+        RETURNING id`,
+      [runId, normalizedKey, Buffer.from(normalizedHash, 'hex')]
+    );
+    return removed.rowCount > 0;
+  });
+
+  const clearLegacyToolReceiptCheckpoint = async ({ runId, workerId, leaseEpoch }) => {
+    const result = await pool.query(
+      `UPDATE agent_runs
+          SET checkpoint=checkpoint-'toolReceipts',updated_at=clock_timestamp()
+        WHERE id=$1 AND worker_id=$2 AND lease_epoch=$3
+          AND lease_expires_at>clock_timestamp()
+          AND status IN ('provisioning','running','verifying')
+        RETURNING id`,
+      [runId, workerId, Number(leaseEpoch || 0)]
+    );
+    if (!result.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    return true;
+  };
+
   const transitionRun = async ({
     runId,
     workerId,
+    leaseEpoch,
     toStatus,
     eventType,
     summary,
@@ -1819,7 +2689,7 @@ const createAgentRunService = ({
     const current = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
     if (!current.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
     const row = current.rows[0];
-    if (workerId && row.worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    assertWorkerLease(row, { workerId, leaseEpoch });
     if (!ALLOWED_TRANSITIONS[row.status]?.has(toStatus) && row.status !== toStatus) {
       throw new ApiError(409, 'AGENT_STATE_TRANSITION_INVALID', {
         from: row.status,
@@ -1829,7 +2699,10 @@ const createAgentRunService = ({
     const result = await client.query(
       `UPDATE agent_runs
           SET status=$2,
-              checkpoint=COALESCE($3::jsonb,checkpoint),
+              checkpoint=CASE
+                WHEN $3::jsonb IS NULL THEN checkpoint
+                ELSE checkpoint || $3::jsonb
+              END,
               sandbox_ref=COALESCE($4,sandbox_ref),
               display_url=COALESCE($5,display_url),
               sandbox_worker_id=CASE
@@ -1869,6 +2742,7 @@ const createAgentRunService = ({
   const appendStep = async ({
     runId,
     workerId,
+    leaseEpoch,
     subagentId = null,
     role,
     status,
@@ -1881,7 +2755,7 @@ const createAgentRunService = ({
   }) => withTransaction(pool, async (client) => {
     const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-    if (workerId && run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     let subagent = null;
     if (subagentId) {
       const selected = await client.query(
@@ -1985,14 +2859,24 @@ const createAgentRunService = ({
     return result.rows[0];
   };
 
-  const recordUsage = async ({ runId, workerId, estimatedCredits, items = {} }) => withTransaction(
+  const assertWorkerLeaseActive = async ({ runId, workerId, leaseEpoch }) => {
+    const result = await pool.query(
+      `SELECT 1 FROM agent_runs
+        WHERE id=$1 AND worker_id=$2 AND lease_epoch=$3
+          AND lease_expires_at>clock_timestamp()
+          AND status IN ('provisioning','running','verifying')`,
+      [runId, workerId, Number(leaseEpoch || 0)]
+    );
+    if (!result.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    return true;
+  };
+
+  const recordUsage = async ({ runId, workerId, leaseEpoch, estimatedCredits, items = {} }) => withTransaction(
     pool,
     async (client) => {
       const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
       if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-      if (workerId && run.rows[0].worker_id !== workerId) {
-        throw new ApiError(409, 'AGENT_LEASE_LOST');
-      }
+      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
       const estimated = Math.max(0, Number(estimatedCredits || 0));
       if (estimated > Number(run.rows[0].max_credits || 0)) {
         throw new ApiError(409, 'AGENT_BUDGET_EXCEEDED');
@@ -2020,7 +2904,189 @@ const createAgentRunService = ({
     }
   );
 
-  const saveCheckpoint = async ({ runId, workerId, checkpoint }) => withTransaction(
+  const reserveRuntimeBudget = async ({
+    runId,
+    workerId,
+    leaseEpoch,
+    component,
+    reservationKey,
+    maximumCredits,
+    subagentId = null,
+    modelCallId = null,
+    preserveVerifierCredits = 0
+  }) => withTransaction(pool, async (client) => {
+    const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+    const requested = Math.max(0, Number(maximumCredits || 0));
+    if (!Number.isFinite(requested)) throw new ApiError(400, 'AGENT_BUDGET_INVALID');
+    const key = sanitizeText(reservationKey, 200);
+    if (!key) throw new ApiError(400, 'AGENT_BUDGET_RESERVATION_KEY_INVALID');
+    const existing = await client.query(
+      'SELECT * FROM agent_budget_reservations WHERE run_id=$1 AND reservation_key=$2 FOR UPDATE',
+      [runId, key]
+    );
+    if (existing.rowCount) return existing.rows[0];
+    const totals = await client.query(
+      `SELECT
+         COALESCE(sum(CASE WHEN state='reserved' THEN reserved_credits ELSE 0 END),0)::numeric AS reserved,
+         COALESCE(sum(CASE WHEN state='consumed' THEN actual_credits ELSE 0 END),0)::numeric AS consumed
+       FROM agent_budget_reservations WHERE run_id=$1`,
+      [runId]
+    );
+    const committed = Number(totals.rows[0]?.reserved || 0) + Number(totals.rows[0]?.consumed || 0);
+    const verifierReserve = component === 'verifier'
+      ? 0
+      : Math.max(0, Number(preserveVerifierCredits || 0));
+    if (committed + requested + verifierReserve > Number(run.rows[0].max_credits || 0) + 1e-9) {
+      throw new ApiError(409, 'AGENT_BUDGET_EXCEEDED', {
+        requestedCredits: requested,
+        remainingCredits: Math.max(0, Number(run.rows[0].max_credits || 0) - committed),
+        verifierReserveCredits: verifierReserve
+      });
+    }
+    const inserted = await client.query(
+      `INSERT INTO agent_budget_reservations
+        (run_id,model_call_id,subagent_id,component,reservation_key,reserved_credits)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [runId, modelCallId, subagentId, component, key, requested]
+    );
+    return inserted.rows[0];
+  });
+
+  const consumeRuntimeBudget = async ({
+    runId,
+    workerId,
+    leaseEpoch,
+    reservationKey,
+    actualCredits
+  }) => {
+    const consumedReservation = await withTransaction(pool, async (client) => {
+    const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+    let actual = Math.max(0, Number(actualCredits || 0));
+    if (!Number.isFinite(actual)) throw new ApiError(400, 'AGENT_BUDGET_INVALID');
+    const reservation = await client.query(
+      'SELECT * FROM agent_budget_reservations WHERE run_id=$1 AND reservation_key=$2 FOR UPDATE',
+      [runId, sanitizeText(reservationKey, 200)]
+    );
+    if (!reservation.rowCount) throw new ApiError(404, 'AGENT_BUDGET_RESERVATION_NOT_FOUND');
+    if (reservation.rows[0].state === 'consumed') return reservation.rows[0];
+    if (reservation.rows[0].state === 'released') {
+      let receiptCredits = null;
+      if (reservation.rows[0].model_call_id) {
+        const receipt = await client.query(
+          `SELECT * FROM agent_model_call_receipts
+            WHERE id=$1 AND run_id=$2 AND state IN ('received','consumed')
+            FOR UPDATE`,
+          [reservation.rows[0].model_call_id, runId]
+        );
+        if (receipt.rowCount && receipt.rows[0].response_ciphertext) {
+          const payload = decryptAgentPayload({
+            runId,
+            payloadId: receipt.rows[0].id,
+            kind: 'model_call_response',
+            record: {
+              algorithm: receipt.rows[0].algorithm,
+              iv: receipt.rows[0].response_iv,
+              auth_tag: receipt.rows[0].response_auth_tag,
+              ciphertext: receipt.rows[0].response_ciphertext
+            },
+            env
+          });
+          const usage = payload?.response?.usage || {};
+          const tokenCount = (value) => {
+            const parsed = Number(value || 0);
+            return Number.isFinite(parsed)
+              ? Math.ceil(Math.max(0, Math.min(1_000_000_000, parsed)))
+              : 0;
+          };
+          receiptCredits = terminalReceiptCredits({
+            inputTokens: tokenCount(usage.prompt_tokens || usage.input_tokens),
+            outputTokens: tokenCount(usage.completion_tokens || usage.output_tokens),
+            config,
+            run: run.rows[0]
+          }).credits;
+        }
+      }
+      if (receiptCredits === null) {
+        const receipt = await client.query(
+          `SELECT actual_credits FROM agent_tool_call_receipts
+            WHERE run_id=$1 AND reservation_key=$2 AND state='consumed'
+            FOR UPDATE`,
+          [runId, sanitizeText(reservationKey, 200)]
+        );
+        if (receipt.rowCount) receiptCredits = Number(receipt.rows[0].actual_credits || 0);
+      }
+      if (receiptCredits === null) {
+        throw new ApiError(409, 'AGENT_BUDGET_RESERVATION_RELEASED');
+      }
+      const legacyPricing = isLegacyRunWithoutPricingSnapshot(run.rows[0]);
+      if (Math.abs(actual - receiptCredits) > 0.00011 && !legacyPricing) {
+        throw new ApiError(409, 'AGENT_BUDGET_RECEIPT_COST_MISMATCH', {
+          retryable: false
+        });
+      }
+      actual = receiptCredits;
+    } else if (reservation.rows[0].state !== 'reserved') {
+      throw new ApiError(409, 'AGENT_BUDGET_RESERVATION_RELEASED');
+    }
+    const updated = await client.query(
+      `UPDATE agent_budget_reservations
+          SET state='consumed',actual_credits=$3,consumed_at=clock_timestamp(),
+              released_at=NULL,updated_at=clock_timestamp()
+        WHERE run_id=$1 AND reservation_key=$2 RETURNING *`,
+      [runId, sanitizeText(reservationKey, 200), actual]
+    );
+    const totals = await client.query(
+      `SELECT COALESCE(sum(actual_credits),0)::numeric AS consumed
+         FROM agent_budget_reservations WHERE run_id=$1 AND state='consumed'`,
+      [runId]
+    );
+    const consumed = Number(totals.rows[0]?.consumed || 0);
+    await client.query(
+      `UPDATE agent_runs
+          SET estimated_credits_used=GREATEST(
+                estimated_credits_used,
+                LEAST(max_credits::numeric,$2::numeric)
+              ),
+              platform_overrun_credits=GREATEST(
+                platform_overrun_credits,
+                GREATEST(0::numeric,$2::numeric-max_credits::numeric)
+              ),
+              lease_expires_at=clock_timestamp()+($3::text || ' seconds')::interval,
+              updated_at=now()
+        WHERE id=$1`,
+      [runId, consumed, config.leaseSeconds]
+    );
+      return updated.rows[0];
+    });
+    await testController?.hit('after_budget_consume', {
+      runId,
+      reservationKey: sanitizeText(reservationKey, 200)
+    });
+    return consumedReservation;
+  };
+
+  const releaseRuntimeBudget = async ({ runId, workerId, leaseEpoch, reservationKey }) => withTransaction(
+    pool,
+    async (client) => {
+      const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
+      if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+      const result = await client.query(
+      `UPDATE agent_budget_reservations
+          SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+        WHERE run_id=$1 AND reservation_key=$2 AND state='reserved'
+        RETURNING *`,
+      [runId, sanitizeText(reservationKey, 200)]
+      );
+      return result.rows[0] || null;
+    }
+  );
+
+  const saveCheckpoint = async ({ runId, workerId, leaseEpoch, checkpoint }) => withTransaction(
     pool,
     async (client) => {
       const result = await client.query(
@@ -2030,13 +3096,16 @@ const createAgentRunService = ({
                 updated_at=now()
           WHERE id=$1
             AND worker_id=$2
+            AND lease_epoch=$5
+            AND lease_expires_at>clock_timestamp()
             AND status IN ('provisioning','running','verifying')
           RETURNING checkpoint`,
         [
           runId,
           workerId,
           JSON.stringify(sanitizeLogValue(checkpoint || {})),
-          config.leaseSeconds
+          config.leaseSeconds,
+          Number(leaseEpoch || 0)
         ]
       );
       if (!result.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
@@ -2047,14 +3116,15 @@ const createAgentRunService = ({
   const saveModelCheckpoint = async ({
     runId,
     workerId,
+    leaseEpoch,
     value
   }) => withTransaction(pool, async (client) => {
     const run = await client.query(
-      'SELECT id,status,worker_id FROM agent_runs WHERE id=$1 FOR UPDATE',
+      'SELECT id,status,worker_id,lease_epoch,lease_expires_at FROM agent_runs WHERE id=$1 FOR UPDATE',
       [runId]
     );
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-    if (run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     if (!['provisioning', 'running', 'verifying'].includes(run.rows[0].status)) {
       throw new ApiError(409, 'AGENT_STATE_TRANSITION_INVALID');
     }
@@ -2113,17 +3183,15 @@ const createAgentRunService = ({
     return true;
   });
 
-  const clearModelCheckpoint = async ({ runId, workerId }) => withTransaction(
+  const clearModelCheckpoint = async ({ runId, workerId, leaseEpoch }) => withTransaction(
     pool,
     async (client) => {
       const run = await client.query(
-        'SELECT status,worker_id FROM agent_runs WHERE id=$1 FOR UPDATE',
+        'SELECT status,worker_id,lease_epoch,lease_expires_at FROM agent_runs WHERE id=$1 FOR UPDATE',
         [runId]
       );
       if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-      if (workerId && run.rows[0].worker_id !== workerId) {
-        throw new ApiError(409, 'AGENT_LEASE_LOST');
-      }
+      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
       await client.query('DELETE FROM agent_model_checkpoints WHERE run_id=$1', [runId]);
       await client.query(
         `UPDATE agent_runs
@@ -2135,48 +3203,220 @@ const createAgentRunService = ({
     }
   );
 
-  const savePlan = async ({ runId, workerId, plan, explanation }) => withTransaction(
+  const savePlan = async ({ runId, workerId, leaseEpoch, plan, explanation }) => withTransaction(
     pool,
     async (client) => {
+      const locked = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
+      if (!locked.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+      assertWorkerLease(locked.rows[0], { workerId, leaseEpoch });
+      if (locked.rows[0].status !== 'running') throw new ApiError(409, 'AGENT_RUN_NOT_RUNNING');
+      const requested = Array.isArray(plan) ? plan : [];
+      const prior = Array.isArray(locked.rows[0].checkpoint?.plan)
+        ? locked.rows[0].checkpoint.plan
+        : [];
+      if (!requested.length || requested.length > 12) {
+        throw new ApiError(400, 'AGENT_PLAN_INVALID');
+      }
+      const priorById = new Map(prior.map((step) => [String(step?.id || ''), step]));
+      if (prior.length && (
+        requested.length !== prior.length ||
+        requested.some((step, index) => (
+          String(step?.id || '') !== String(prior[index]?.id || '') ||
+          !priorById.has(String(step?.id || ''))
+        ))
+      )) {
+        throw new ApiError(400, 'AGENT_PLAN_INVALID', { reason: 'stable_step_ids_required' });
+      }
+      let pendingSeen = false;
+      let inProgressCount = 0;
+      const normalized = requested.map((step, index) => {
+        const id = sanitizeText(step?.id, 80);
+        const label = sanitizeText(step?.label, 160);
+        const status = String(step?.status || '');
+        const priorStep = priorById.get(id);
+        if (!id || !label || !['pending', 'in_progress', 'completed'].includes(status)) {
+          throw new ApiError(400, 'AGENT_PLAN_INVALID');
+        }
+        if (priorStep?.status === 'completed' && status !== 'completed') {
+          throw new ApiError(400, 'AGENT_PLAN_INVALID', { reason: 'completed_step_is_immutable' });
+        }
+        if (status === 'in_progress') inProgressCount += 1;
+        if (status === 'pending') pendingSeen = true;
+        if (pendingSeen && status === 'completed') {
+          throw new ApiError(400, 'AGENT_PLAN_INVALID', { reason: 'completed_steps_must_be_prefix' });
+        }
+        const requestedPhase = String(step?.phase || '');
+        if (
+          !priorStep &&
+          Number(locked.rows[0].runtime_version || 1) === 2 &&
+          !PHASES.has(requestedPhase)
+        ) {
+          throw new ApiError(400, 'AGENT_PLAN_INVALID', {
+            reason: 'server_phase_required'
+          });
+        }
+        return {
+          id,
+          label,
+          phase: priorStep?.phase || String(requestedPhase || (index === requested.length - 1
+            ? 'verification'
+            : 'production')),
+          status
+        };
+      });
+      if (inProgressCount > 1) throw new ApiError(400, 'AGENT_PLAN_INVALID');
+      const substantiveReplan = prior.length > 0 && normalized.some((step, index) => (
+        step.label !== String(prior[index]?.label || '')
+      ));
+      if (substantiveReplan && Number(locked.rows[0].replan_count || 0) >= 3) {
+        throw new ApiError(409, 'AGENT_REPLAN_LIMIT_REACHED');
+      }
       const result = await client.query(
         `UPDATE agent_runs
             SET checkpoint=checkpoint || $3::jsonb,
-                replan_count=CASE
-                  WHEN checkpoint ? 'plan' THEN replan_count+1
-                  ELSE replan_count
-                END,
+                replan_count=replan_count+$6,
                 lease_expires_at=clock_timestamp()+($4::text || ' seconds')::interval,
                 updated_at=now()
           WHERE id=$1
             AND worker_id=$2
+            AND lease_epoch=$5
+            AND lease_expires_at>clock_timestamp()
             AND status='running'
-            AND (NOT (checkpoint ? 'plan') OR replan_count<3)
           RETURNING checkpoint,replan_count`,
         [
           runId,
           workerId,
           JSON.stringify(sanitizeLogValue({
-            plan,
+            plan: normalized,
             planExplanation: explanation
           })),
-          config.leaseSeconds
+          config.leaseSeconds,
+          Number(leaseEpoch || 0),
+          substantiveReplan ? 1 : 0
         ]
       );
       if (!result.rowCount) {
-        const state = await client.query(
-          'SELECT replan_count FROM agent_runs WHERE id=$1 AND worker_id=$2',
-          [runId, workerId]
-        );
-        if (Number(state.rows[0]?.replan_count || 0) >= 3) {
-          throw new ApiError(409, 'AGENT_REPLAN_LIMIT_REACHED');
-        }
         throw new ApiError(409, 'AGENT_LEASE_LOST');
       }
-      return result.rows[0];
+      return { ...result.rows[0], steps: normalized };
     }
   );
 
-  const recordScreenshot = async ({ runId, workerId, sha256 }) => withTransaction(
+  const appendRuntimeEvent = async ({
+    runId,
+    workerId,
+    leaseEpoch,
+    type,
+    phase = null,
+    summary = '',
+    data = {}
+  }) => withTransaction(pool, async (client) => {
+    const eventType = sanitizeText(type, 100);
+    const lease = await client.query(
+      `SELECT 1 FROM agent_runs
+        WHERE id=$1 AND worker_id=$2 AND lease_epoch=$3
+          AND lease_expires_at>clock_timestamp()
+          AND status IN ('running','verifying')
+        FOR UPDATE`,
+      [runId, workerId, Number(leaseEpoch || 0)]
+    );
+    if (!lease.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    const sanitizedData = sanitizeLogValue(data);
+    let eventData = sanitizedData && typeof sanitizedData === 'object' && !Array.isArray(sanitizedData)
+      ? sanitizedData
+      : {};
+    if (eventType === 'run.ready_to_finalize') {
+      const existingBoundary = await client.query(
+        `SELECT * FROM agent_events
+          WHERE run_id=$1 AND event_type='run.ready_to_finalize'
+          ORDER BY id
+          LIMIT 1`,
+        [runId]
+      );
+      if (existingBoundary.rowCount) return publicEvent(existingBoundary.rows[0]);
+      const modelCallBoundary = await client.query(
+        'SELECT count(*)::integer AS count FROM agent_model_calls WHERE run_id=$1',
+        [runId]
+      );
+      eventData = {
+        ...eventData,
+        modelCallCount: Number(modelCallBoundary.rows[0]?.count || 0)
+      };
+    }
+    return insertEvent(client, {
+      runId,
+      type: eventType,
+      phase: phase ? sanitizeText(phase, 80) : null,
+      summary: sanitizeText(summary, 500),
+      data: eventData
+    });
+  });
+
+  const pinRuntimeProfile = async ({ runId, workerId, leaseEpoch, profile }) => {
+    if (!profile || Number(profile.runtimeVersion) !== 2) {
+      throw new ApiError(400, 'AGENT_RUNTIME_PROFILE_INVALID');
+    }
+    const promptHash = String(profile.promptHash || '').toLowerCase();
+    const runtimeProfileHash = String(profile.runtimeProfileHash || '').toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(promptHash) || !/^[a-f0-9]{64}$/.test(runtimeProfileHash)) {
+      throw new ApiError(400, 'AGENT_RUNTIME_PROFILE_INVALID');
+    }
+    const profileValues = {
+      promptProfile: sanitizeText(profile.promptProfile, 80),
+      promptHash: Buffer.from(promptHash, 'hex'),
+      skillVersions: Object.fromEntries(
+        (Array.isArray(profile.skills) ? profile.skills : [])
+          .map((skill) => [sanitizeText(skill.id, 80), Number(skill.version || 0)])
+          .filter(([id, version]) => id && Number.isSafeInteger(version) && version > 0)
+      ),
+      runtimeProfileHash: Buffer.from(runtimeProfileHash, 'hex'),
+      runtimeProfileSummary: sanitizeLogValue(profile.runtimeProfileSummary || {})
+    };
+    const updated = await pool.query(
+      `UPDATE agent_runs
+          SET prompt_profile=$3,prompt_hash=$4,skill_versions=$5,
+              runtime_profile_hash=$6,runtime_profile_summary=$7,updated_at=now()
+        WHERE id=$1 AND worker_id=$2 AND runtime_version=2
+          AND lease_epoch=$8 AND lease_expires_at>clock_timestamp()
+          AND runtime_profile_hash IS NULL
+          AND status IN ('running','verifying')
+        RETURNING prompt_profile,prompt_hash,skill_versions,runtime_profile_hash,runtime_profile_summary`,
+      [
+        runId,
+        workerId,
+        profileValues.promptProfile,
+        profileValues.promptHash,
+        JSON.stringify(profileValues.skillVersions),
+        profileValues.runtimeProfileHash,
+        JSON.stringify(profileValues.runtimeProfileSummary),
+        Number(leaseEpoch || 0)
+      ]
+    );
+    if (updated.rowCount) return updated.rows[0];
+    const existing = await pool.query(
+      `SELECT prompt_profile,prompt_hash,skill_versions,runtime_profile_hash,runtime_profile_summary
+         FROM agent_runs
+        WHERE id=$1 AND worker_id=$2 AND runtime_version=2
+          AND lease_epoch=$3 AND lease_expires_at>clock_timestamp()
+          AND status IN ('running','verifying')`,
+      [runId, workerId, Number(leaseEpoch || 0)]
+    );
+    if (!existing.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    const row = existing.rows[0];
+    const stableJson = (value) => JSON.stringify(canonicalize(value || {}));
+    if (
+      row.prompt_profile !== profileValues.promptProfile ||
+      !secureEqual(row.prompt_hash, profileValues.promptHash) ||
+      !secureEqual(row.runtime_profile_hash, profileValues.runtimeProfileHash) ||
+      stableJson(row.skill_versions) !== stableJson(profileValues.skillVersions) ||
+      stableJson(row.runtime_profile_summary) !== stableJson(profileValues.runtimeProfileSummary)
+    ) {
+      throw new ApiError(409, 'AGENT_RUNTIME_PROFILE_MISMATCH', { retryable: false });
+    }
+    return row;
+  };
+
+  const recordScreenshot = async ({ runId, workerId, leaseEpoch, sha256 }) => withTransaction(
     pool,
     async (client) => {
       const result = await client.query(
@@ -2194,9 +3434,10 @@ const createAgentRunService = ({
                 ),
                 lease_expires_at=clock_timestamp()+($4::text || ' seconds')::interval,
                 updated_at=now()
-          WHERE id=$1 AND worker_id=$2 AND status='running'
+          WHERE id=$1 AND worker_id=$2 AND lease_epoch=$5
+            AND lease_expires_at>clock_timestamp() AND status='running'
           RETURNING unchanged_screenshots`,
-        [runId, workerId, String(sha256 || ''), config.leaseSeconds]
+        [runId, workerId, String(sha256 || ''), config.leaseSeconds, Number(leaseEpoch || 0)]
       );
       if (!result.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
       return Number(result.rows[0].unchanged_screenshots || 0);
@@ -2205,6 +3446,8 @@ const createAgentRunService = ({
 
   const requestApproval = async ({
     runId,
+    workerId,
+    leaseEpoch,
     stepId = null,
     actionType,
     recipient = '',
@@ -2215,6 +3458,9 @@ const createAgentRunService = ({
     rollbackSummary = '',
     fingerprint
   }) => withTransaction(pool, async (client) => {
+    const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     const actionHash = Buffer.isBuffer(fingerprint)
       ? fingerprint
       : crypto.createHash('sha256').update(JSON.stringify({
@@ -2277,9 +3523,12 @@ const createAgentRunService = ({
     return approval.rows[0];
   });
 
-  const consumeApproval = async ({ runId, fingerprint }) => withTransaction(
+  const consumeApproval = async ({ runId, workerId, leaseEpoch, fingerprint }) => withTransaction(
     pool,
     async (client) => {
+      const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
+      if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
       const actionHash = Buffer.isBuffer(fingerprint)
         ? fingerprint
         : Buffer.from(String(fingerprint || ''), 'hex');
@@ -2303,9 +3552,18 @@ const createAgentRunService = ({
     }
   );
 
-  const consumeSessionAuthorization = async ({ runId, actionType, recipient }) => withTransaction(
+  const consumeSessionAuthorization = async ({
+    runId,
+    workerId,
+    leaseEpoch,
+    actionType,
+    recipient
+  }) => withTransaction(
     pool,
     async (client) => {
+      const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
+      if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
       const normalizedAction = normalizeActionType(actionType);
       const allowed = new Set([
         'send',
@@ -2440,6 +3698,8 @@ const createAgentRunService = ({
 
   const registerArtifact = async ({
     runId,
+    workerId,
+    leaseEpoch,
     assetId,
     parentArtifactId = null,
     role,
@@ -2458,10 +3718,14 @@ const createAgentRunService = ({
     const normalizedAssetId = assetId || null;
     const digest = String(sha256 || '').trim().toLowerCase();
     const run = await client.query(
-      'SELECT id,expires_at FROM agent_runs WHERE id=$1 FOR UPDATE',
+      'SELECT id,expires_at,runtime_version,worker_id,lease_epoch,lease_expires_at FROM agent_runs WHERE id=$1 FOR UPDATE',
       [runId]
     );
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    // Artifact registration is a worker write for both V1 and V2. Checking
+    // only V2 allowed an old V1 worker to register a passed artifact after
+    // takeover and race the new worker's finalization.
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     if (verificationStatus === 'passed' && /^[a-f0-9]{64}$/.test(digest)) {
       const existing = await client.query(
         `SELECT * FROM agent_artifacts
@@ -2551,12 +3815,14 @@ const createAgentRunService = ({
   const finishRun = async ({
     runId,
     workerId,
+    leaseEpoch,
     actualCredits,
     checklist
-  }) => withTransaction(pool, async (client) => {
+  }) => {
+    const finished = await withTransaction(pool, async (client) => {
     const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
-    if (workerId && run.rows[0].worker_id !== workerId) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     if (run.rows[0].status !== 'verifying') {
       throw new ApiError(409, 'AGENT_NOT_VERIFYING');
     }
@@ -2577,9 +3843,22 @@ const createAgentRunService = ({
       [runId]
     );
     const modelCheckpoint = await client.query(
-      'SELECT 1 FROM agent_model_checkpoints WHERE run_id=$1 LIMIT 1',
+      'SELECT * FROM agent_model_checkpoints WHERE run_id=$1 LIMIT 1 FOR UPDATE',
       [runId]
     );
+    const durableState = modelCheckpoint.rowCount && Number(run.rows[0].runtime_version || 1) === 2
+      ? decryptAgentPayload({
+          runId,
+          payloadId: modelCheckpoint.rows[0].id,
+          kind: 'model_checkpoint',
+          record: modelCheckpoint.rows[0],
+          env
+        })
+      : null;
+    const readyToFinalize = durableState?.readyToFinalize &&
+      typeof durableState.readyToFinalize === 'object'
+      ? durableState.readyToFinalize
+      : null;
     const activeSubagents = await client.query(
       `SELECT count(*)::integer AS count
          FROM agent_subagents
@@ -2590,7 +3869,18 @@ const createAgentRunService = ({
       throw new ApiError(409, 'AGENT_SUBAGENTS_STILL_RUNNING');
     }
     const requirements = checklist && typeof checklist === 'object' ? checklist : {};
-    const requiredCount = Math.max(1, Number(requirements.requiredArtifactCount || 1));
+    const budgetUsage = await client.query(
+      `SELECT COALESCE(sum(actual_credits),0)::numeric AS consumed
+         FROM agent_budget_reservations
+        WHERE run_id=$1 AND state='consumed'`,
+      [runId]
+    );
+    const effectiveActualCredits = Math.max(
+      0,
+      Number(actualCredits || 0),
+      Number(budgetUsage.rows[0]?.consumed || 0)
+    );
+    const requiredCount = Math.max(0, Number(requirements.requiredArtifactCount || 0));
     const requiredDeliverables = Array.isArray(requirements.requiredDeliverables)
       ? requirements.requiredDeliverables
       : [];
@@ -2598,11 +3888,19 @@ const createAgentRunService = ({
       artifacts.rows,
       requiredDeliverables
     );
+    const textOnly = requiredCount === 0 && requiredDeliverables.length === 0;
+    const finalTextHash = String(readyToFinalize?.finalTextSha256 || '').toLowerCase();
+    const semanticVerification = readyToFinalize?.semanticVerification &&
+      typeof readyToFinalize.semanticVerification === 'object'
+      ? readyToFinalize.semanticVerification
+      : null;
+    const textOnlyVerified = textOnly && readyToFinalize?.kind === 'text' &&
+      /^[a-f0-9]{64}$/.test(finalTextHash) && semanticVerification?.passed === true;
     if (
-      artifacts.rowCount < requiredCount ||
+      (!textOnly && artifacts.rowCount < requiredCount) ||
       artifacts.rows.some((artifact) => artifact.verification_status !== 'passed') ||
       !deliverablesComplete ||
-      !artifacts.rows.some((artifact) => (
+      (!textOnly && !artifacts.rows.some((artifact) => (
         artifact.role === 'editable' ||
         artifact.role === 'source' ||
         artifact.role === 'website' ||
@@ -2611,6 +3909,10 @@ const createAgentRunService = ({
           artifact.role === 'image' &&
           ['image/png', 'image/jpeg', 'image/webp'].includes(artifact.mime_type)
         )
+      ))) ||
+      (textOnly && !textOnlyVerified) ||
+      (Number(run.rows[0].runtime_version || 1) === 2 && (
+        !readyToFinalize || semanticVerification?.passed !== true
       ))
     ) {
       throw new ApiError(409, 'AGENT_VERIFICATION_INCOMPLETE');
@@ -2621,7 +3923,9 @@ const createAgentRunService = ({
       approvals: approvals.rows,
       artifacts: artifacts.rows,
       modelCheckpointPresent: modelCheckpoint.rowCount > 0,
-      actualCredits,
+      modelCheckpointReadyToFinalize: Boolean(readyToFinalize),
+      textOnlyVerified,
+      actualCredits: effectiveActualCredits,
       maxSteps: config.maxSteps
     });
     if (!trajectory.passed) {
@@ -2632,10 +3936,11 @@ const createAgentRunService = ({
       });
     }
     requirements.trajectory = trajectory;
+    if (semanticVerification) requirements.semanticVerification = semanticVerification;
     const settlement = await settleAgentBudget({
       client,
       runId,
-      actualCredits,
+      actualCredits: effectiveActualCredits,
       refundable: false,
       reason: 'verified_success'
     });
@@ -2654,14 +3959,35 @@ const createAgentRunService = ({
                 true
               ),
               error_code=NULL,
-              charged_credits=$3,worker_id=NULL,lease_expires_at=NULL,
+              charged_credits=$3,
+              final_text_sha256=$4,
+              semantic_verification=$5,
+              platform_overrun_credits=GREATEST(0,$6::numeric - max_credits),
+              worker_id=NULL,lease_expires_at=NULL,
               finished_at=now(),updated_at=now()
         WHERE id=$1 RETURNING *`,
       [
         runId,
         JSON.stringify(sanitizeLogValue(requirements)),
-        settlement.chargedCredits
+        settlement.chargedCredits,
+        finalTextHash ? Buffer.from(finalTextHash, 'hex') : null,
+        JSON.stringify(sanitizeLogValue(semanticVerification || {})),
+        effectiveActualCredits
       ]
+    );
+    await client.query('DELETE FROM agent_model_checkpoints WHERE run_id=$1', [runId]);
+    await client.query(
+      `UPDATE agent_budget_reservations
+          SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+        WHERE run_id=$1 AND state='reserved'`,
+      [runId]
+    );
+    await client.query(
+      `UPDATE agent_model_call_receipts
+          SET state='consumed',consumed_at=COALESCE(consumed_at,clock_timestamp()),
+              updated_at=clock_timestamp()
+        WHERE run_id=$1 AND state='received'`,
+      [runId]
     );
     await revokeDesktopTickets(client, runId);
     await insertEvent(client, {
@@ -2671,11 +3997,17 @@ const createAgentRunService = ({
       summary: '验证器已确认全部交付物',
       data: { chargedCredits: settlement.chargedCredits }
     });
-    return result.rows[0];
-  });
+      await testController?.hit('before_finish_commit', { runId, status: 'succeeded' });
+      return result.rows[0];
+    });
+    await testController?.hit('after_finish_commit', { runId, status: 'succeeded' });
+    return finished;
+  };
 
   const failRun = async ({
     runId,
+    workerId = null,
+    leaseEpoch = null,
     errorCode,
     refundable = true,
     actualCredits = 0
@@ -2683,13 +4015,31 @@ const createAgentRunService = ({
     const run = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [runId]);
     if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
     if (TERMINAL_STATUSES.has(run.rows[0].status)) return run.rows[0];
+    if (workerId !== null || leaseEpoch !== null) {
+      assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+    }
+    const knownActualCredits = await consumeKnownTerminalCosts(client, runId, {
+      outcome: 'failed',
+      receiptErrorCode: 'AGENT_FAILED_AFTER_RECEIPT',
+      unreadableErrorCode: 'AGENT_FAILED_RECEIPT_UNREADABLE',
+      eventPhase: 'failed'
+    });
     const settlement = await settleAgentBudget({
       client,
       runId,
-      actualCredits,
+      actualCredits: Math.max(
+        isLegacyRunWithoutPricingSnapshot(run.rows[0]) ? 0 : Number(actualCredits || 0),
+        knownActualCredits
+      ),
       refundable,
       reason: sanitizeText(errorCode, 100)
     });
+    await client.query(
+      `UPDATE agent_budget_reservations
+          SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+        WHERE run_id=$1 AND state='reserved'`,
+      [runId]
+    ).catch(() => {});
     const result = await client.query(
       `UPDATE agent_runs
           SET status='failed',error_code=$2,charged_credits=$3,
@@ -2717,14 +4067,367 @@ const createAgentRunService = ({
     return result.rows[0];
   });
 
-  const expireStaleRuns = async ({ limit = 100 } = {}) => {
+  const reconcileTerminalReceipts = async ({ limit = 100, userIds = null } = {}) => {
     const bounded = Math.max(1, Math.min(1000, Number(limit) || 100));
+    const scopedUserIds = Array.isArray(userIds)
+      ? [...new Set(userIds.map((value) => String(value || '').trim()).filter(Boolean))]
+      : [];
+    if (scopedUserIds.some((value) => !UUID_RE.test(value))) {
+      throw new TypeError('AGENT_TERMINAL_RECEIPT_USER_SCOPE_INVALID');
+    }
+    const candidates = await pool.query(
+      `SELECT DISTINCT run.id,run.status
+         FROM agent_runs run
+         JOIN agent_model_call_receipts receipt ON receipt.run_id=run.id
+         JOIN agent_budget_reservations reservation
+           ON reservation.run_id=receipt.run_id AND reservation.model_call_id=receipt.id
+        WHERE run.status IN ('succeeded','failed','cancelled')
+          AND (
+            receipt.state='received'
+            OR (
+              receipt.state='consumed'
+              AND reservation.state IN ('reserved','released')
+            )
+          )
+          AND ($2::uuid[] IS NULL OR run.user_id=ANY($2::uuid[]))
+        ORDER BY run.id
+        LIMIT $1`,
+      [bounded, scopedUserIds.length ? scopedUserIds : null]
+    );
+    let runsReconciled = 0;
+    let receiptsResolved = 0;
+    for (const candidate of candidates.rows) {
+      const reconciled = await withTransaction(pool, async (client) => {
+        const run = await client.query(
+          `SELECT id,status FROM agent_runs WHERE id=$1 FOR UPDATE`,
+          [candidate.id]
+        );
+        if (!run.rowCount || !TERMINAL_STATUSES.has(run.rows[0].status)) return 0;
+        const before = await client.query(
+          `SELECT count(*)::integer AS count
+             FROM agent_model_call_receipts receipt
+             JOIN agent_budget_reservations reservation
+               ON reservation.run_id=receipt.run_id AND reservation.model_call_id=receipt.id
+            WHERE receipt.run_id=$1
+              AND (
+                receipt.state='received'
+                OR (
+                  receipt.state='consumed'
+                  AND reservation.state IN ('reserved','released')
+                )
+              )`,
+          [candidate.id]
+        );
+        if (Number(before.rows[0]?.count || 0) === 0) return 0;
+        const terminalOutcome = run.rows[0].status === 'cancelled'
+          ? 'cancelled'
+          : run.rows[0].status === 'succeeded'
+            ? 'succeeded'
+            : 'failed';
+        await consumeKnownTerminalCosts(client, candidate.id, {
+          outcome: terminalOutcome,
+          receiptErrorCode: terminalOutcome === 'cancelled'
+            ? 'AGENT_CANCELLED_AFTER_RECEIPT'
+            : terminalOutcome === 'succeeded'
+              ? null
+              : 'AGENT_FAILED_AFTER_RECEIPT',
+          unreadableErrorCode: terminalOutcome === 'cancelled'
+            ? 'AGENT_CANCELLED_RECEIPT_UNREADABLE'
+            : 'AGENT_FAILED_RECEIPT_UNREADABLE',
+          eventPhase: run.rows[0].status
+        });
+        const after = await client.query(
+          `SELECT count(*)::integer AS count
+             FROM agent_model_call_receipts receipt
+             JOIN agent_budget_reservations reservation
+               ON reservation.run_id=receipt.run_id AND reservation.model_call_id=receipt.id
+            WHERE receipt.run_id=$1
+              AND (
+                receipt.state='received'
+                OR (
+                  receipt.state='consumed'
+                  AND reservation.state IN ('reserved','released')
+                )
+              )`,
+          [candidate.id]
+        );
+        return Math.max(
+          0,
+          Number(before.rows[0]?.count || 0) - Number(after.rows[0]?.count || 0)
+        );
+      });
+      if (reconciled > 0) {
+        runsReconciled += 1;
+        receiptsResolved += reconciled;
+      }
+    }
+    return { runsReconciled, receiptsResolved };
+  };
+
+  const expireStaleRuns = async ({ limit = 100, targetRunId = null } = {}) => {
+    const bounded = Math.max(1, Math.min(1000, Number(limit) || 100));
+    const scopedRunId = targetRunId == null ? null : String(targetRunId || '').trim();
+    if (scopedRunId && !UUID_RE.test(scopedRunId)) {
+      throw new TypeError('AGENT_RECOVERY_RUN_ID_INVALID');
+    }
+    if (scopedRunId && !(
+      String(env.NODE_ENV || '').trim() === 'test' ||
+      String(env.APP_ENV || '').trim() === 'dev'
+    )) {
+      throw new TypeError('AGENT_TARGETED_RECOVERY_FORBIDDEN');
+    }
+    const expiredLeases = await pool.query(
+      `SELECT id FROM agent_runs
+        WHERE status IN ('provisioning','running','verifying')
+          AND worker_id IS NOT NULL
+          AND lease_expires_at<=clock_timestamp()
+          AND ($2::uuid IS NULL OR id=$2)
+        ORDER BY lease_expires_at
+        LIMIT $1`,
+      [bounded, scopedRunId || null]
+    );
+    let recovered = 0;
+    for (const candidate of expiredLeases.rows) {
+      const decision = await withTransaction(pool, async (client) => {
+        const locked = await client.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', [candidate.id]);
+        if (!locked.rowCount ||
+            !['provisioning', 'running', 'verifying'].includes(locked.rows[0].status) ||
+            !locked.rows[0].lease_expires_at ||
+            new Date(locked.rows[0].lease_expires_at).getTime() > Date.now()) {
+          return 'skipped';
+        }
+        const uncertainModels = await client.query(
+          `SELECT receipt.id,receipt.state
+             FROM agent_model_call_receipts receipt
+            WHERE receipt.run_id=$1 AND receipt.state IN ('dispatched','ambiguous')
+            FOR UPDATE`,
+          [candidate.id]
+        );
+        const uncertainTools = await client.query(
+          `SELECT receipt.id,receipt.subagent_id,receipt.receipt_key,receipt.kind,
+                  receipt.reservation_key,receipt.state
+             FROM agent_tool_call_receipts receipt
+            WHERE receipt.run_id=$1 AND receipt.state IN ('dispatched','ambiguous')
+            FOR UPDATE`,
+          [candidate.id]
+        );
+        const unsent = await client.query(
+          `SELECT id FROM agent_model_call_receipts
+            WHERE run_id=$1 AND state='queued'
+            FOR UPDATE`,
+          [candidate.id]
+        );
+        if (unsent.rowCount) {
+          await client.query(
+            `UPDATE agent_budget_reservations
+                SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+              WHERE run_id=$1 AND state='reserved'
+                AND model_call_id=ANY($2::uuid[])`,
+            [candidate.id, unsent.rows.map((row) => row.id)]
+          );
+          await client.query(
+            `UPDATE agent_model_calls
+                SET outcome='cancelled',error_code='AGENT_WORKER_LEASE_EXPIRED_BEFORE_DISPATCH',
+                    finished_at=COALESCE(finished_at,clock_timestamp())
+              WHERE id=ANY($1::uuid[])`,
+            [unsent.rows.map((row) => row.id)]
+          );
+          await client.query(
+            `DELETE FROM agent_model_call_receipts WHERE id=ANY($1::uuid[])`,
+            [unsent.rows.map((row) => row.id)]
+          );
+        }
+        if (uncertainModels.rowCount || uncertainTools.rowCount) {
+          const hasModelAmbiguity = uncertainModels.rowCount > 0;
+          const toolKinds = new Set(uncertainTools.rows.map((row) => row.kind));
+          const hasToolAmbiguity = uncertainTools.rowCount > 0;
+          const shellReceiptProbeOnly = !hasModelAmbiguity && hasToolAmbiguity &&
+            toolKinds.size === 1 && toolKinds.has('sandbox_shell') &&
+            uncertainTools.rows.every((row) => (
+              row.state === 'dispatched' && row.subagent_id === null
+            ));
+          const imageOnlyAmbiguity = hasToolAmbiguity &&
+            toolKinds.size === 1 && toolKinds.has('kolors');
+          if (shellReceiptProbeOnly) {
+            await client.query(
+              `UPDATE agent_budget_reservations reservation
+                  SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+                WHERE reservation.run_id=$1 AND reservation.state='reserved'
+                  AND reservation.reservation_key IN (
+                    SELECT receipt.reservation_key FROM agent_tool_call_receipts receipt
+                     WHERE receipt.run_id=$1 AND receipt.state='dispatched'
+                       AND receipt.kind='sandbox_shell'
+                  )`,
+              [candidate.id]
+            );
+            await client.query(
+              `UPDATE agent_runs
+                  SET status='queued',worker_id=NULL,lease_expires_at=NULL,
+                      queued_at=clock_timestamp(),
+                      queue_expires_at=clock_timestamp()+($2::text || ' hours')::interval,
+                      checkpoint=checkpoint || $3::jsonb,updated_at=clock_timestamp()
+                WHERE id=$1`,
+              [candidate.id, config.queueMaxWaitHours, JSON.stringify({
+                phase: 'queued',
+                retryRequired: false,
+                retryReason: null,
+                shellReceiptProbeRequired: true
+              })]
+            );
+            await client.query(
+              `UPDATE agent_budget_holds
+                  SET expires_at=clock_timestamp()+($2::text || ' minutes')::interval
+                WHERE run_id=$1 AND status='held'`,
+              [candidate.id, config.queueMaxWaitHours * 60 + config.maxMinutes + 15]
+            );
+            await insertEvent(client, {
+              runId: candidate.id,
+              type: 'tool.call.recovery_probe_queued',
+              phase: 'queued',
+              summary: '已安全排队探测沙箱 Shell 回执，不会重复执行'
+            });
+            return 'queued';
+          }
+          await client.query(
+            `UPDATE agent_model_call_receipts
+                SET state='ambiguous',ambiguous_at=COALESCE(ambiguous_at,clock_timestamp()),
+                    updated_at=clock_timestamp()
+              WHERE run_id=$1 AND state='dispatched'`,
+            [candidate.id]
+          );
+          await client.query(
+            `UPDATE agent_tool_call_receipts
+                SET state='ambiguous',ambiguous_at=COALESCE(ambiguous_at,clock_timestamp()),
+                    updated_at=clock_timestamp()
+              WHERE run_id=$1 AND state='dispatched'`,
+            [candidate.id]
+          );
+          await client.query(
+            `UPDATE agent_budget_reservations reservation
+                SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+              WHERE reservation.run_id=$1 AND reservation.state='reserved'
+                AND reservation.model_call_id IN (
+                  SELECT id FROM agent_model_call_receipts
+                   WHERE run_id=$1 AND state='ambiguous'
+                )`,
+            [candidate.id]
+          );
+          await client.query(
+            `UPDATE agent_budget_reservations reservation
+                SET state='released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+              WHERE reservation.run_id=$1 AND reservation.state='reserved'
+                AND reservation.reservation_key IN (
+                  SELECT receipt.reservation_key FROM agent_tool_call_receipts receipt
+                   WHERE receipt.run_id=$1 AND receipt.state='ambiguous'
+                )`,
+            [candidate.id]
+          );
+          await client.query(
+            `UPDATE agent_model_calls
+                SET outcome='failed',error_code='AGENT_MODEL_CALL_AMBIGUOUS',
+                    finished_at=COALESCE(finished_at,clock_timestamp())
+              WHERE id IN (
+                SELECT id FROM agent_model_call_receipts
+                 WHERE run_id=$1 AND state='ambiguous'
+              )`,
+            [candidate.id]
+          );
+          const retryReason = hasModelAmbiguity && hasToolAmbiguity
+            ? 'runtime_call_ambiguous'
+            : hasModelAmbiguity
+              ? 'model_call_ambiguous'
+              : imageOnlyAmbiguity
+                ? 'image_call_ambiguous'
+                : 'tool_call_ambiguous';
+          await client.query(
+            `UPDATE agent_runs
+                SET status='waiting_user',worker_id=NULL,lease_expires_at=NULL,
+                    checkpoint=checkpoint || $2::jsonb,updated_at=clock_timestamp()
+              WHERE id=$1`,
+            [candidate.id, JSON.stringify({
+              phase: 'waiting_user',
+              retryRequired: true,
+              retryReason
+            })]
+          );
+          // A recovery that needs explicit user confirmation must retain its
+          // original hold long enough for the user to decide. Without this
+          // extension, an already-expired hold is selected by the later hold
+          // expiry sweep in this same expireStaleRuns() call and the newly
+          // recovered waiting_user run is immediately failed.
+          await client.query(
+            `UPDATE agent_budget_holds
+                SET expires_at=clock_timestamp()+($2::text || ' minutes')::interval
+              WHERE run_id=$1 AND status='held'`,
+            [candidate.id, config.queueMaxWaitHours * 60 + config.maxMinutes + 15]
+          );
+          if (hasModelAmbiguity) {
+            await insertEvent(client, {
+              runId: candidate.id,
+              type: 'model.call.ambiguous',
+              phase: 'waiting_user',
+              summary: 'Worker 中断时模型请求状态不确定，系统没有自动重试或计费',
+              data: { callIds: uncertainModels.rows.map((row) => row.id) }
+            });
+          }
+          if (hasToolAmbiguity) {
+            await insertEvent(client, {
+              runId: candidate.id,
+              type: imageOnlyAmbiguity ? 'image.call.ambiguous' : 'tool.call.ambiguous',
+              phase: 'waiting_user',
+              summary: imageOnlyAmbiguity
+                ? 'Worker 中断时图片生成状态不确定，系统没有自动重试或计费'
+                : 'Worker 中断时工具执行结果不确定，系统没有自动重试或计费',
+              data: {
+                receiptIds: uncertainTools.rows.map((row) => row.id),
+                kinds: [...toolKinds]
+              }
+            });
+          }
+          await insertEvent(client, {
+            runId: candidate.id,
+            type: 'run.retry_required',
+            phase: 'waiting_user',
+            summary: '需要用户确认后再安全重试'
+          });
+          return 'waiting_user';
+        }
+        await client.query(
+          `UPDATE agent_runs
+              SET status='queued',worker_id=NULL,lease_expires_at=NULL,queued_at=clock_timestamp(),
+                  queue_expires_at=clock_timestamp()+($2::text || ' hours')::interval,
+                  updated_at=clock_timestamp()
+            WHERE id=$1`,
+          [candidate.id, config.queueMaxWaitHours]
+        );
+        await client.query(
+          `UPDATE agent_budget_holds
+              SET expires_at=clock_timestamp()+($2::text || ' minutes')::interval
+            WHERE run_id=$1 AND status='held'`,
+          [candidate.id, config.queueMaxWaitHours * 60 + config.maxMinutes + 15]
+        );
+        await insertEvent(client, {
+          runId: candidate.id,
+          type: 'run.lease_recovered',
+          phase: 'queued',
+          summary: 'Worker 租约中断，任务已从持久化检查点安全恢复排队'
+        });
+        return 'queued';
+      });
+      if (decision === 'queued') {
+        await enqueue(candidate.id);
+        recovered += 1;
+      } else if (decision === 'waiting_user') {
+        recovered += 1;
+      }
+    }
     const expiredQueued = await pool.query(
       `SELECT id FROM agent_runs
         WHERE status='queued' AND queue_expires_at<=clock_timestamp()
+          AND ($2::uuid IS NULL OR id=$2)
         ORDER BY queue_expires_at
         LIMIT $1`,
-      [bounded]
+      [bounded, scopedRunId || null]
     );
     let released = 0;
     for (const row of expiredQueued.rows) {
@@ -2740,6 +4443,7 @@ const createAgentRunService = ({
          FROM agent_runs run
          JOIN agent_budget_holds hold ON hold.run_id=run.id
         WHERE run.status='waiting_user'
+          AND ($2::uuid IS NULL OR run.id=$2)
           AND hold.status='held'
           AND EXISTS (
             SELECT 1 FROM agent_approvals approval
@@ -2755,7 +4459,7 @@ const createAgentRunService = ({
           )
         ORDER BY run.updated_at
         LIMIT $1`,
-      [bounded]
+      [bounded, scopedRunId || null]
     );
     for (const row of expiredApprovals.rows) {
       const result = await failRun({
@@ -2773,11 +4477,12 @@ const createAgentRunService = ({
         WHERE run.status IN (
           'draft','queued','provisioning','running','waiting_user','paused','verifying'
         )
+          AND ($2::uuid IS NULL OR run.id=$2)
           AND hold.status='held'
           AND hold.expires_at<=clock_timestamp()
         ORDER BY hold.expires_at
         LIMIT $1`,
-      [bounded]
+      [bounded, scopedRunId || null]
     );
     for (const row of expired.rows) {
       const result = await failRun({
@@ -2787,22 +4492,54 @@ const createAgentRunService = ({
       });
       if (result?.status === 'failed') released += 1;
     }
-    return released;
+    return released + recovered;
   };
 
-  const listTerminalSandboxes = async ({ limit = 100 } = {}) => {
+  // A scoped recovery hook for deterministic and live DEV harnesses. It is
+  // intentionally not exposed through an HTTP route and is fail-closed in any
+  // non-test/non-DEV process.
+  const recoverExpiredRun = async ({ runId } = {}) => expireStaleRuns({
+    limit: 1,
+    targetRunId: runId
+  });
+
+  const listTerminalSandboxes = async ({ limit = 100, userIds = null } = {}) => {
+    const scopedUserIds = Array.isArray(userIds)
+      ? [...new Set(userIds.map((value) => String(value || '').trim()).filter(Boolean))]
+      : [];
+    if (scopedUserIds.some((value) => !UUID_RE.test(value))) {
+      throw new TypeError('AGENT_TERMINAL_SANDBOX_USER_SCOPE_INVALID');
+    }
     const result = await pool.query(
-      `SELECT id,sandbox_ref
-         FROM agent_runs
-        WHERE status IN ('succeeded','failed','cancelled')
-          AND sandbox_ref IS NOT NULL
-        ORDER BY finished_at NULLS FIRST,updated_at
+      `SELECT run.id,run.sandbox_ref,
+              CASE WHEN run.sandbox_ref IS NULL THEN true ELSE false END AS derived_reference
+         FROM agent_runs run
+        WHERE run.status IN ('succeeded','failed','cancelled')
+          AND ($2::uuid[] IS NULL OR run.user_id=ANY($2::uuid[]))
+          AND (
+            run.sandbox_ref IS NOT NULL
+            OR EXISTS(
+              SELECT 1 FROM agent_events provisioning
+               WHERE provisioning.run_id=run.id
+                 AND provisioning.event_type='run.provisioning'
+            )
+          )
+          AND NOT EXISTS(
+            SELECT 1 FROM agent_events destroyed
+             WHERE destroyed.run_id=run.id
+               AND destroyed.event_type='sandbox.destroyed'
+          )
+        ORDER BY run.finished_at NULLS FIRST,run.updated_at
         LIMIT $1`,
-      [Math.max(1, Math.min(1000, Number(limit) || 100))]
+      [
+        Math.max(1, Math.min(1000, Number(limit) || 100)),
+        scopedUserIds.length ? scopedUserIds : null
+      ]
     );
     return result.rows.map((row) => ({
       runId: row.id,
-      sandboxRef: row.sandbox_ref
+      sandboxRef: row.sandbox_ref,
+      derivedReference: row.derived_reference === true
     }));
   };
 
@@ -2813,8 +4550,13 @@ const createAgentRunService = ({
         `UPDATE agent_runs
             SET sandbox_ref=NULL,display_url=NULL,updated_at=now()
           WHERE id=$1
-            AND sandbox_ref=$2
             AND status IN ('succeeded','failed','cancelled')
+            AND (sandbox_ref=$2 OR sandbox_ref IS NULL)
+            AND NOT EXISTS(
+              SELECT 1 FROM agent_events destroyed
+               WHERE destroyed.run_id=agent_runs.id
+                 AND destroyed.event_type='sandbox.destroyed'
+            )
           RETURNING id,status`,
         [runId, sandboxRef]
       );
@@ -2848,9 +4590,11 @@ const createAgentRunService = ({
       const payloads = await client.query(
         `DELETE FROM agent_run_payloads
           WHERE id IN (
-            SELECT id FROM agent_run_payloads
-             WHERE expires_at<=clock_timestamp()
-             ORDER BY expires_at
+            SELECT payload.id FROM agent_run_payloads payload
+             JOIN agent_runs run ON run.id=payload.run_id
+             WHERE payload.expires_at<=clock_timestamp()
+               AND run.status IN ('succeeded','failed','cancelled')
+             ORDER BY payload.expires_at
              LIMIT $1
           )
           RETURNING id`,
@@ -2859,9 +4603,11 @@ const createAgentRunService = ({
       const modelCheckpoints = await client.query(
         `DELETE FROM agent_model_checkpoints
           WHERE id IN (
-            SELECT id FROM agent_model_checkpoints
-             WHERE expires_at<=clock_timestamp()
-             ORDER BY expires_at
+            SELECT checkpoint.id FROM agent_model_checkpoints checkpoint
+             JOIN agent_runs run ON run.id=checkpoint.run_id
+             WHERE checkpoint.expires_at<=clock_timestamp()
+               AND run.status IN ('succeeded','failed','cancelled')
+             ORDER BY checkpoint.expires_at
              LIMIT $1
           )
           RETURNING id`,
@@ -2870,9 +4616,11 @@ const createAgentRunService = ({
       const subagentPayloads = await client.query(
         `DELETE FROM agent_subagent_payloads
           WHERE id IN (
-            SELECT id FROM agent_subagent_payloads
-             WHERE expires_at<=clock_timestamp()
-             ORDER BY expires_at
+            SELECT payload.id FROM agent_subagent_payloads payload
+             JOIN agent_runs run ON run.id=payload.run_id
+             WHERE payload.expires_at<=clock_timestamp()
+               AND run.status IN ('succeeded','failed','cancelled')
+             ORDER BY payload.expires_at
              LIMIT $1
           )
           RETURNING id`,
@@ -2881,9 +4629,11 @@ const createAgentRunService = ({
       const subagentCheckpoints = await client.query(
         `DELETE FROM agent_subagent_model_checkpoints
           WHERE id IN (
-            SELECT id FROM agent_subagent_model_checkpoints
-             WHERE expires_at<=clock_timestamp()
-             ORDER BY expires_at
+            SELECT checkpoint.id FROM agent_subagent_model_checkpoints checkpoint
+             JOIN agent_runs run ON run.id=checkpoint.run_id
+             WHERE checkpoint.expires_at<=clock_timestamp()
+               AND run.status IN ('succeeded','failed','cancelled')
+             ORDER BY checkpoint.expires_at
              LIMIT $1
           )
           RETURNING id`,
@@ -2894,12 +4644,37 @@ const createAgentRunService = ({
             SET status='expired',decided_at=COALESCE(decided_at,now())
           WHERE status='pending' AND expires_at<=clock_timestamp()`
       );
+      const receipts = await client.query(
+        `DELETE FROM agent_model_call_receipts receipt
+          USING agent_runs run
+          WHERE receipt.run_id=run.id
+            AND receipt.expires_at<=clock_timestamp()
+            AND run.status IN ('succeeded','failed','cancelled')`
+      );
+      const toolReceipts = await client.query(
+        `DELETE FROM agent_tool_call_receipts receipt
+          USING agent_runs run
+          WHERE receipt.run_id=run.id
+            AND receipt.expires_at<=clock_timestamp()
+            AND run.status IN ('succeeded','failed','cancelled')`
+      );
+      const reservations = await client.query(
+        `DELETE FROM agent_budget_reservations reservation
+          USING agent_runs run
+          WHERE reservation.run_id=run.id
+            AND reservation.state IN ('consumed','released')
+            AND run.status IN ('succeeded','failed','cancelled')
+            AND run.finished_at<clock_timestamp()-interval '30 days'`
+      );
       return {
         browserProfilesDeleted: profiles.rowCount,
         payloadsDeleted: payloads.rowCount,
         modelCheckpointsDeleted: modelCheckpoints.rowCount,
         subagentPayloadsDeleted: subagentPayloads.rowCount,
-        subagentCheckpointsDeleted: subagentCheckpoints.rowCount
+        subagentCheckpointsDeleted: subagentCheckpoints.rowCount,
+        modelCallReceiptsDeleted: receipts.rowCount,
+        toolCallReceiptsDeleted: toolReceipts.rowCount,
+        budgetReservationsDeleted: reservations.rowCount
       };
     }
   );
@@ -2979,11 +4754,20 @@ const createAgentRunService = ({
   );
 
   const saveBrowserProfile = async ({
+    runId,
+    workerId,
+    leaseEpoch,
     userId,
     siteOrigin,
     archiveBase64,
     label = ''
   }) => withTransaction(pool, async (client) => {
+    const run = await client.query(
+      'SELECT worker_id,lease_epoch,lease_expires_at FROM agent_runs WHERE id=$1 FOR UPDATE',
+      [runId]
+    );
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
     let origin;
     try {
       const parsed = new URL(String(siteOrigin || ''));
@@ -3056,9 +4840,12 @@ const createAgentRunService = ({
 
   return {
     appendStep,
+    appendRuntimeEvent,
+    assertWorkerLeaseActive,
     cancelRun,
     cancelSubagent,
     claimRun,
+    clearLegacyToolReceiptCheckpoint,
     clearModelCheckpoint,
     clearSubagentModelCheckpoint,
     consumeApproval,
@@ -3082,6 +4869,9 @@ const createAgentRunService = ({
     listIntegrations,
     listObservedSources,
     listRuns,
+    listToolReceipts,
+    pinRuntimeProfile,
+    reconcileTerminalReceipts,
     listTerminalSandboxes,
     loadPrivateContext,
     loadSubagentContext,
@@ -3089,11 +4879,15 @@ const createAgentRunService = ({
     markSandboxDestroyed,
     pauseRun,
     purgeExpiredPrivateData,
+    recoverExpiredRun,
     quote,
+    reserveRuntimeBudget,
     recordUsage,
     recordSubagentUsage,
     recordScreenshot,
     registerArtifact,
+    releaseRuntimeBudget,
+    removeDispatchedToolReceipt,
     saveCheckpoint,
     saveBrowserProfile,
     saveModelCheckpoint,
@@ -3102,6 +4896,8 @@ const createAgentRunService = ({
     resolveUserAccess,
     resumeRun,
     savePlan,
+    persistToolReceipt,
+    consumeRuntimeBudget,
     submitInput,
     startSubagent,
     transitionRun
@@ -3123,10 +4919,14 @@ module.exports = {
   normalizeObjective,
   normalizeDelegatedTasks,
   nextConsecutiveFailureCount,
+  modelPricingRates,
   publicArtifact,
   publicEvent,
   publicRun,
   publicSubagent,
   objectivePublicFields,
-  requireIdempotencyKey
+  requireIdempotencyKey,
+  usageCreditsForRun,
+  isConfiguredModelProvider,
+  isLegacyRunWithoutPricingSnapshot
 };

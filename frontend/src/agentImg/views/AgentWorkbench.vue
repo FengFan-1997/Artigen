@@ -61,15 +61,15 @@
                 <p>{{ zh ? '确认后才会创建任务。' : 'Nothing is created until you confirm.' }}</p>
               </template>
               <template v-else-if="quoteIsCurrent && quote">
-                <strong>{{ quote.canStart ? (zh ? '真实报价已准备好' : 'Live quote is ready') : (zh ? '当前无法启动' : 'Cannot start yet') }}</strong>
-                <p>{{ quote.canStart ? (zh ? '确认后开始执行。' : 'Confirm to start.') : (zh ? '请先处理下面的问题。' : 'Resolve the issue below first.') }}</p>
+                <strong>{{ quoteCanStart ? (zh ? '真实报价已准备好' : 'Live quote is ready') : (zh ? '当前无法启动' : 'Cannot start yet') }}</strong>
+                <p>{{ quoteCanStart ? (zh ? '确认后开始执行。' : 'Confirm to start.') : quoteBlockerText }}</p>
                 <dl class="quote-summary">
                   <div><dt>{{ zh ? '预计' : 'Estimate' }}</dt><dd>{{ quote.estimatedCredits.minimum }}–{{ quote.estimatedCredits.maximum }} {{ zh ? '点' : 'cr' }}</dd></div>
                   <div><dt>{{ zh ? '冻结' : 'Hold' }}</dt><dd>{{ quote.requiredPaidHold }} {{ zh ? '点' : 'cr' }}</dd></div>
                   <div><dt>{{ zh ? '上限' : 'Limit' }}</dt><dd>{{ form.maxCredits }} {{ zh ? '点' : 'cr' }}</dd></div>
                   <div><dt>{{ zh ? '结算' : 'Billing' }}</dt><dd>{{ zh ? '仅一次' : 'Once' }}</dd></div>
                 </dl>
-                <button class="run-action" type="button" :disabled="busy || quote.canStart === false" @click="startRun">
+                <button class="run-action" type="button" :disabled="busy || !quoteCanStart" @click="startRun">
                   <WorkspaceIcon name="play" />
                   {{ creating ? (zh ? '正在启动…' : 'Starting…') : (zh ? '确认并运行' : 'Confirm and run') }}
                 </button>
@@ -123,9 +123,9 @@
     <template #environment>
       <div class="inspector-stack">
         <section class="inspector-card">
-          <header><span>{{ zh ? '执行环境' : 'Environment' }}</span><i :class="{ healthy: serviceStatus?.workerOnline }"></i></header>
+          <header><span>{{ zh ? '执行环境' : 'Environment' }}</span><i :class="{ healthy: workerReady }"></i></header>
           <dl>
-            <div><dt>{{ zh ? '状态' : 'Status' }}</dt><dd>{{ serviceStatus?.workerOnline ? (zh ? '已就绪' : 'Ready') : (zh ? '等待 Worker' : 'Waiting for worker') }}</dd></div>
+            <div><dt>{{ zh ? '状态' : 'Status' }}</dt><dd>{{ workerStatusLabel }}</dd></div>
           </dl>
         </section>
         <section class="inspector-card">
@@ -165,9 +165,9 @@
         </section>
         <TechnicalDetails :label="zh ? '技术详情' : 'Technical details'">
           <dl class="technical-list">
-            <div><dt>{{ zh ? '文本与规划' : 'Text & planning' }}</dt><dd>Qwen/Qwen3-8B</dd></div>
+            <div><dt>{{ zh ? '文本与规划' : 'Text & planning' }}</dt><dd>{{ activeTextModel }}</dd></div>
             <div><dt>{{ zh ? '全部图片' : 'All images' }}</dt><dd>Kwai-Kolors/Kolors</dd></div>
-            <div><dt>Worker</dt><dd>{{ serviceStatus?.workerOnline ? (zh ? '在线' : 'Online') : (zh ? '离线' : 'Offline') }}</dd></div>
+            <div><dt>Worker</dt><dd>{{ workerReady ? (zh ? '在线' : 'Online') : (serviceStatus?.workerOnline ? (zh ? '配置不匹配' : 'Model mismatch') : (zh ? '离线' : 'Offline')) }}</dd></div>
             <div><dt>{{ zh ? '受限出口' : 'Restricted egress' }}</dt><dd>{{ serviceStatus?.egressVerified ? (zh ? '已验证' : 'Verified') : (zh ? '未就绪' : 'Not ready') }}</dd></div>
             <div><dt>{{ zh ? '队列' : 'Queue' }}</dt><dd>{{ serviceStatus?.queueDepth ?? '—' }}</dd></div>
             <div><dt>{{ zh ? '子 Agent' : 'Subagents' }}</dt><dd>{{ serviceStatus?.subagentsEnabled ? (zh ? '最多 3 个' : 'Up to 3') : (zh ? '已关闭' : 'Off') }}</dd></div>
@@ -209,7 +209,7 @@
           <header><span>{{ zh ? '安全桌面' : 'Secure desktop' }}</span><i :class="{ healthy: serviceStatus?.desktopRelayReady }"></i></header>
           <strong>{{ serviceStatus?.desktopRelayReady ? (zh ? '接管中继已就绪' : 'Takeover relay ready') : (zh ? '等待 Worker' : 'Waiting for worker') }}</strong>
           <dl>
-            <div><dt>Worker</dt><dd>{{ serviceStatus?.workerOnline ? (zh ? '在线' : 'Online') : (zh ? '离线' : 'Offline') }}</dd></div>
+            <div><dt>Worker</dt><dd>{{ workerReady ? (zh ? '在线' : 'Online') : (serviceStatus?.workerOnline ? (zh ? '配置不匹配' : 'Model mismatch') : (zh ? '离线' : 'Offline')) }}</dd></div>
             <div><dt>{{ zh ? '受限出口' : 'Restricted egress' }}</dt><dd>{{ serviceStatus?.egressVerified ? (zh ? '已验证' : 'Verified') : (zh ? '未就绪' : 'Not ready') }}</dd></div>
             <div><dt>{{ zh ? '队列' : 'Queue' }}</dt><dd>{{ serviceStatus?.queueDepth ?? '—' }}</dd></div>
           </dl>
@@ -419,8 +419,38 @@ const currentQuoteKey = computed(() => JSON.stringify(quoteRequest()));
 const quoteIsCurrent = computed(() => (
   Boolean(quote.value) && quotedRequestKey.value === currentQuoteKey.value
 ));
+const requiredQuoteRequirements = ['database', 'payloadEncryption', 'modelProvider', 'sandboxProvider'] as const;
+const missingQuoteRequirements = computed(() => {
+  const requirements = quote.value?.requirements || {};
+  const knownMissing = requiredQuoteRequirements.filter((requirement) => requirements[requirement] !== true);
+  const reportedMissing = Object.entries(requirements)
+    .filter(([, ready]) => ready !== true)
+    .map(([requirement]) => requirement);
+  return Array.from(new Set([...knownMissing, ...reportedMissing]));
+});
+const quoteCanStart = computed(() => (
+  quote.value?.canStart === true && missingQuoteRequirements.value.length === 0
+));
+const quoteBlockerText = computed(() => {
+  if (quote.value?.canStart === false) {
+    return zh.value ? '点数不足，请降低上限或充值后再试。' : 'Not enough credits. Lower the cap or top up first.';
+  }
+  const labels: Record<string, [string, string]> = {
+    database: ['数据库尚未就绪，请稍后重试。', 'The database is not ready. Try again shortly.'],
+    payloadEncryption: ['安全载荷服务尚未就绪，请稍后重试。', 'Secure payload storage is not ready. Try again shortly.'],
+    modelProvider: ['模型服务尚未就绪，请稍后重试。', 'The model service is not ready. Try again shortly.'],
+    sandboxProvider: ['运行环境尚未就绪，请稍后重试。', 'The execution environment is not ready. Try again shortly.']
+  };
+  const first = missingQuoteRequirements.value[0];
+  return labels[first]?.[zh.value ? 0 : 1] || (zh.value ? '运行环境尚未就绪，请稍后重试。' : 'The runtime is not ready. Try again shortly.');
+});
+let quoteLocked = false;
+let createLocked = false;
 const workspaceStatus = computed<{ label: string; tone: 'ready' | 'busy' | 'warning' | 'offline' }>(() => {
-  if (!serviceStatus.value?.workerOnline) {
+  if (!workerReady.value) {
+    if (serviceStatus.value?.workerOnline) {
+      return { label: zh.value ? 'Worker 模型不匹配' : 'Worker model mismatch', tone: 'offline' };
+    }
     return { label: zh.value ? 'Worker 离线' : 'Worker offline', tone: 'offline' };
   }
   if (creating.value || quoting.value) {
@@ -430,6 +460,20 @@ const workspaceStatus = computed<{ label: string; tone: 'ready' | 'busy' | 'warn
     return { label: zh.value ? '单 Agent 就绪' : 'Single Agent ready', tone: 'warning' };
   }
   return { label: zh.value ? 'Agent 就绪' : 'Agent ready', tone: 'ready' };
+});
+const workerReady = computed(() => Boolean(
+  serviceStatus.value?.workerOnline && serviceStatus.value?.workerModelReady !== false
+));
+const activeTextModel = computed(() => (
+  serviceStatus.value?.workerModel?.model ||
+  serviceStatus.value?.runtimeProfile?.model ||
+  serviceStatus.value?.modelFamily ||
+  '—'
+));
+const workerStatusLabel = computed(() => {
+  if (!serviceStatus.value?.workerOnline) return zh.value ? '等待 Worker' : 'Waiting for worker';
+  if (!workerReady.value) return zh.value ? '模型配置不匹配' : 'Model configuration mismatch';
+  return zh.value ? '已就绪' : 'Ready';
 });
 const filteredRuns = (search: string) => {
   const query = search.trim().toLocaleLowerCase();
@@ -484,8 +528,14 @@ const errorText = (error: unknown) => {
 };
 
 const getQuote = async () => {
+  if (quoteLocked) return null;
+  quoteLocked = true;
   quoting.value = true;
   notice.value = '';
+  // A quote is a point-in-time authorization and price decision. Invalidate it
+  // before any refresh so a failed request can never leave an older quote runnable.
+  quote.value = null;
+  quotedRequestKey.value = '';
   try {
     validateBrowserForm();
     const request = quoteRequest();
@@ -500,32 +550,41 @@ const getQuote = async () => {
     return null;
   } finally {
     quoting.value = false;
+    quoteLocked = false;
   }
 };
 
 const sendObjective = async () => {
   const objective = form.objective.trim();
-  if (objective.length < 3 || busy.value) return;
+  if (objective.length < 3 || busy.value || quoteLocked || createLocked) return;
   form.objective = objective;
   submittedObjective.value = objective;
   await getQuote();
 };
 
 const startRun = async () => {
-  if (!quoteIsCurrent.value) {
-    const latestQuote = await getQuote();
-    if (latestQuote) {
-      notice.value = zh.value
-        ? '费用已更新。请确认交付物、预计点数和冻结金额后，再点击“确认并启动”。'
-        : 'Cost updated. Review the deliverables, estimate, and hold, then choose “Confirm and start”.';
-      noticeIsError.value = false;
-    }
-    return;
-  }
-  creating.value = true;
-  notice.value = '';
+  if (createLocked || quoteLocked) return;
+  createLocked = true;
   try {
-    if (quote.value?.canStart === false) throw new Error('INSUFFICIENT_CREDITS');
+    if (!quoteIsCurrent.value) {
+      const latestQuote = await getQuote();
+      if (latestQuote) {
+        notice.value = zh.value
+          ? '费用已更新。请确认交付物、预计点数和冻结金额后，再点击“确认并启动”。'
+          : 'Cost updated. Review the deliverables, estimate, and hold, then choose “Confirm and start”.';
+        noticeIsError.value = false;
+      }
+      return;
+    }
+    creating.value = true;
+    notice.value = '';
+    if (!quoteCanStart.value) {
+      if (quote.value?.canStart === false) throw new Error('INSUFFICIENT_CREDITS');
+      if (missingQuoteRequirements.value.includes('payloadEncryption')) throw new Error('AGENT_PAYLOAD_KEY_MISSING');
+      if (missingQuoteRequirements.value.includes('modelProvider')) throw new Error('AGENT_MODEL_NOT_CONFIGURED');
+      if (missingQuoteRequirements.value.includes('sandboxProvider')) throw new Error('AGENT_SANDBOX_NOT_CONFIGURED');
+      throw new Error('API_ERROR_500');
+    }
     const confirmed = quoteRequest();
     const assetIds = await uploadAgentAssets(selectedFiles.value);
     const run = await createAgentRun({
@@ -542,6 +601,7 @@ const startRun = async () => {
     noticeIsError.value = true;
   } finally {
     creating.value = false;
+    createLocked = false;
   }
 };
 
@@ -756,9 +816,14 @@ onBeforeUnmount(() => {
 @media (max-height: 620px) {
   .conversation-empty { align-content: start; padding-block: 24px; }
   .prompt-suggestions { gap: 5px; }
-  .prompt-suggestions button { min-height: 38px; }
+  .prompt-suggestions button { min-height: 44px; }
   .conversation-dock { padding-block: 4px max(8px, env(safe-area-inset-bottom)); }
   .objective-composer :deep(textarea) { min-height: 54px; max-height: 92px; }
+}
+@media (max-width: 900px) and (max-height: 620px) {
+  .conversation-empty { padding-block: 12px 20px; }
+  .prompt-suggestions { margin-top: 10px; }
+  .prompt-suggestions button:nth-child(n + 3) { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .prompt-suggestions button, .objective-composer { transition: none; }

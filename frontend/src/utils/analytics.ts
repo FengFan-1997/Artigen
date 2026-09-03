@@ -1,6 +1,5 @@
 import {
   ensureGuestUserId,
-  getAuthSessionSnapshot,
   getOrCreateProjectId,
   getOrCreateSessionId
 } from '../login/session';
@@ -452,7 +451,6 @@ let lastPageViewTs = 0;
  */
 export const trackBackendEvent = async (eventType: string, payload: Record<string, any>) => {
   if (!ANALYTICS_ENABLED) return { success: true, disabled: true as const };
-  const authSession = getAuthSessionSnapshot();
   const businessProjectId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(payload?.projectId || '').trim())
     ? String(payload.projectId).trim()
     : '';
@@ -494,20 +492,12 @@ export const trackBackendEvent = async (eventType: string, payload: Record<strin
     text = safeJsonStringify(sanitizedBody);
   }
 
-  const mayHaveCookieSession = authSession.authenticated || !authSession.verified;
-
   try {
-    const beacon = (navigator as any)?.sendBeacon;
-    if (!mayHaveCookieSession && typeof beacon === 'function' && text && text.length < 58000) {
-      const blob = new Blob([text], { type: 'application/json' });
-      const ok = beacon.call(navigator, url, blob);
-      if (ok) return { success: true, via: 'beacon' as const };
-    }
-  } catch {}
-
-  try {
-    const request = mayHaveCookieSession ? authFetch : fetch;
-    const resp = await request(url, {
+    // The HttpOnly session cookie can exist before client auth bootstrap has
+    // restored the local identity. Always use authFetch so an unsafe analytics
+    // write first refreshes its CSRF token when that cookie is present. A raw
+    // beacon cannot attach the token and produced a visible 403 during reload.
+    const resp = await authFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: text,

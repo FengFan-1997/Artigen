@@ -4,10 +4,18 @@ const crypto = require('crypto');
 const dns = require('dns');
 const { FILES_DIR, readUserMemory, writeUserMemory } = require('../utils/storage');
 const { ensureUserMemoryShape } = require('./memory-utils');
-const { callTextGenerate } = require('./ai-providers');
+const { callCloudflareChat, callTextGenerate } = require('./ai-providers');
 const { fetchWithTimeout } = require('./fetch-utils');
 const { dedupeStrings } = require('./user-utils');
-const { SILICONFLOW_API_KEY, FIXED_SILICONFLOW_CHAT_MODEL } = require('./config');
+const {
+  SILICONFLOW_API_KEY,
+  FIXED_SILICONFLOW_CHAT_MODEL,
+  FIXED_CLOUDFLARE_CHAT_MODEL,
+  CLOUDFLARE_ACCOUNT_ID,
+  CLOUDFLARE_API_TOKEN,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID,
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED
+} = require('./config');
 const {
   sanitizeAuditHistoryEntry,
   sanitizeImageHistoryEntry,
@@ -114,10 +122,25 @@ const tryParseDataUrl = (raw) => {
   }
 };
 
+const cloudflareTextReady = Boolean(
+  CLOUDFLARE_ACCOUNT_ID &&
+  CLOUDFLARE_API_TOKEN &&
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED &&
+  AGENT_CLOUDFLARE_FREE_ACCOUNT_ID === CLOUDFLARE_ACCOUNT_ID &&
+  /^(1|true|yes|on)$/i.test(String(AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED))
+);
+
 // Summarize Conversation History
 const summarizeHistory = async (oldSummary, newMessages) => {
   try {
-    if (!SILICONFLOW_API_KEY) {
+    const cloudflareText = String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare')
+      .trim().toLowerCase() === 'cloudflare';
+    const textModel = cloudflareText ? FIXED_CLOUDFLARE_CHAT_MODEL : FIXED_SILICONFLOW_CHAT_MODEL;
+    const textChat = cloudflareText ? callCloudflareChat : undefined;
+    if (
+      (cloudflareText && !cloudflareTextReady) ||
+      (!cloudflareText && !SILICONFLOW_API_KEY)
+    ) {
       return oldSummary;
     }
     const conversationText = newMessages
@@ -139,7 +162,9 @@ const summarizeHistory = async (oldSummary, newMessages) => {
     const result = await callTextGenerate({
       timeoutMs: 10000,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      model: FIXED_SILICONFLOW_CHAT_MODEL
+      model: textModel,
+      providerReady: cloudflareText ? cloudflareTextReady : Boolean(SILICONFLOW_API_KEY),
+      ...(textChat ? { chatGenerate: textChat, providerName: 'cloudflare' } : {})
     });
     return String(result?.text || '').trim() || oldSummary;
   } catch (e) {
@@ -484,9 +509,14 @@ const extractCoreFacts = async (input) => {
         `只输出严格 JSON 字符串数组，不要输出任何多余文字。`
       ].join('\n\n');
 
+  const cloudflareText = String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare')
+    .trim().toLowerCase() === 'cloudflare';
   const { text } = await callTextGenerate({
     timeoutMs: 8000,
-    contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    model: cloudflareText ? FIXED_CLOUDFLARE_CHAT_MODEL : FIXED_SILICONFLOW_CHAT_MODEL,
+    providerReady: cloudflareText ? cloudflareTextReady : Boolean(SILICONFLOW_API_KEY),
+    ...(cloudflareText ? { chatGenerate: callCloudflareChat, providerName: 'cloudflare' } : {})
   });
   const parsed = tryParseJsonStringArray(text);
   if (parsed && parsed.length) return dedupeStrings(parsed, 6);
