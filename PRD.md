@@ -1,268 +1,183 @@
-# Artigen 产品与接口契约
+# Artigen 产品与运行契约
 
-本文记录 Artigen 2.0 当前实现的产品、认证、计费、任务、资产和编辑器契约。它是协作基线，不是未来功能清单；没有可信执行器或外部环境的能力必须明确 fail-closed。
+本文记录当前已实现的产品、路由、执行、认证、计费、资产和 Agent 契约。它不是未来功能清单；未通过配置、执行器和发布门禁的能力必须 fail-closed。
 
-## 1. 产品范围
+## 1. 产品定位与入口
 
-稳定入口：
+Artigen 是“从一句话到可验证交付的统一创作 Agent”。用户描述目标并可附带图片、文档或网页范围，系统负责澄清、选择执行路径、展示费用与进度，并返回可下载或可继续编辑的成果。
 
-- `/artigen`：产品首页。
-- `/artigen/projects`、`/artigen/projects/:id`：商品视觉项目列表与项目工作台。
-- `/artigen/ai`：AI 生图工作台；旧 `/api/generate`、`/api/img2img` 只作一版兼容。
-- `/artigen/image-workshop/:toolId`：5 个工坊入口。
-- `/artigen/tools/:toolId`：8 个工作流下的 15 个稳定工具入口。
-- `/artigen/image-workshop/image-editor`：图片编辑器 2.0；`?editor=legacy` 可回退一版。
-- `/artigen/market`、`/artigen/orders`、`/artigen/usage`：套餐、订单和用量。
-- `/console/*`：运营控制台，未登录不会展示伪造财务数据或模拟生成结果。
+主要入口：
 
-唯一目录是 `shared/tools.catalog.json`。前后端路由、名称、能力、隐私、限制、operation、输出格式和 SKU 都由它派生。旧 `?tool=` 与旧 ID canonical redirect 到稳定子路由。
+| 路由 | 用途 |
+| --- | --- |
+| `/artigen/create` | 统一创作入口与持续设计会话 |
+| `/artigen/agent` | Computer Agent 高级入口 |
+| `/artigen/agent/runs/:runId` | 计划、审批、电脑、子 Agent 与文件详情 |
+| `/artigen/projects`、`/artigen/projects/:id` | Creative Project 与版本工作台 |
+| `/artigen/ai` | AI 图片高级工作台 |
+| `/artigen/image-workshop/:toolId` | 证件照、老照片、配料、背景和编辑器 |
+| `/artigen/tools/:toolId` | 本地图片、PDF、文档、视频与 favicon 工具 |
+| `/artigen/market`、`/artigen/orders`、`/artigen/usage` | 套餐、订单和用量 |
+| `/console/*` | 受角色保护的运营与审计后台 |
 
-工坊：
+旧 URL 只在代码明确提供兼容重定向时存在，不能继续作为新文档或新依赖的主入口。
 
-1. `id-photo`：标准证件照完全本地免费；AI 职业形象是独立、需确认的收费 operation。
-2. `old-photo`：服务端付费增强/上色，支持结果版本、对比和真实取消，不声称历史事实复原。
-3. `ingredient-label`：只整理用户原文，不补全、不发明、不提供 FDA 或其他合规结论。
-4. `background`：本地免费换色/换图与收费 AI 场景生成分开，不允许本地失败后静默上云。
-5. `image-editor`：本地非破坏编辑器 2.0。
+## 2. 统一执行路径
 
-工具工作流：`image-batch`、`privacy-redaction`、`video-frame`、`pdf-image`、`pdf-text-word`、`document-pdf`、`video-gif`、`favicon`。本地任务不要求登录、不上传、不扣点；Word 保真模式是例外，必须明确同意上传并通过 LibreOffice 能力检查。
+Design Conversation 首先理解目标，并在以下路径中选择最短、真实可用的执行器：
 
-主生图提供两个稳定产品 profile，不向客户端暴露 Provider 模型 ID：
+1. **直接回答**：咨询、澄清或无需文件的结果。
+2. **本地工具**：浏览器内完成，不上传、不登录、不扣点。
+3. **图片生成**：服务端报价后由 Kolors 生成并验证图片。
+4. **专项工作流**：证件照、老照片、背景和配料等受约束 operation。
+5. **Computer Agent**：研究、浏览器、Shell、多步骤或多格式交付。
 
-- `standard-v1`：纯文生图，`maxReferences=0`，使用 `ai-design.generate.v1`（10 点）。
-- `product-reference-v1`：必须提交 1 张商品参考图，使用 `ai-design.product-reference.v1`（60 点）；服务端图片模型与标准生成相同，均固定为 Kolors。
+执行卡必须如实标明实际执行器，不能把快速工作流、脚本或确定性演示伪装成 Computer Agent。
 
-深度模式先用 `ai-design.directions.v1`（5 点）产出四个方向，用户选定后再独立确认生成报价。能力、比例和参考图上限全部来自 profile；前端不得静态承诺服务端未开放的能力。
+Design Conversation 默认最多进行一轮、两个关键澄清问题。信息充分时直接给出执行计划；需要收费时先返回报价和预算影响，用户确认后才创建任务或 Run。
 
-## 2. 运行架构
+## 3. 模型与能力边界
 
-- 前端：Vue 3、Vite、Pinia；按路由懒加载 Fabric、PDF、ECharts、GIF/WebP 处理代码。
-- 后端：Express 5/CommonJS、`pg`、`node-pg-migrate`、`zod`，不使用 ORM。
-- 数据：PostgreSQL 16 是用户、会话、钱包、账本、订单、任务和资产元数据的唯一生产写源。
-- 二进制：本地/单实例测试可用 file，生产付费生图必须使用多实例共享的 S3/R2 兼容适配器；数据库不保存 Base64/BLOB。
-- 发布：DEV 使用 Render 同源站点并跟踪 `dev`；生产前端在 Vercel、后端在 Render。
-  `main` 合并与生产上线是两个独立动作，生产发布必须人工确认。
+- 所有文字理解、路由、规划、父/子 Agent 和验证固定使用 `Qwen/Qwen3-8B`。
+- 所有图片输出固定使用 `Kwai-Kolors/Kolors`。
+- 图片产品 profile 由服务端返回能力、比例和参考图上限；客户端不得提交内部模型 ID。
+- 标准图片生成不接收参考图；商品参考模式必须恰好使用一张授权图片。
+- 子 Agent 最多三个、深度一层，只能使用授权输入和离线能力；浏览器、图片、外部连接、审批与最终交付权归父 Agent。
+- Runtime V2、Planner、项目记忆和调度优化由服务端开关控制。当前只在 DEV 硬化，未通过真实发布门禁前不得描述为生产能力。
 
-没有 `DATABASE_URL`，或 `PAID_FEATURES_ENABLED` 不等于 `true` 时，收费能力返回 `DATABASE_NOT_CONFIGURED` 或 `PAID_FEATURES_DISABLED`。这是一项安全门禁。
+## 4. 会话与 Design Conversation
 
-## 3. 认证与安全
+会话在 `/artigen/create` 中持续存在，第一条消息后进入共享三栏工作台。服务端保存净化后的消息、执行选择、审批和结果引用；默认保留 30 天，用户可提前删除。
 
-普通用户使用同源 Cookie 会话：
+核心接口：
 
-- Cookie 名为 `auth_token`，`HttpOnly`、`SameSite=Lax`，生产增加 `Secure`。
-- 普通用户前端不读取或接收 bearer token；密码和所有 token 均不持久化。管理员登录只把短时 Bearer token 保存在内存中。
-- `GET /api/auth/session` 返回当前用户和派生 CSRF token。
-- Cookie 认证的写请求必须通过 Origin 校验并发送 `X-CSRF-Token`。
-- `POST /api/auth/logout` 撤销服务端会话并清 Cookie。
-- `SESSION_NOT_BEFORE` 可强制旧会话整体失效。
-- 用户切换必须重新登录；访客内容可显式合并，访客点数不能合并。
-
-OTP 只保存 HMAC，10 分钟有效、60 秒发送冷却、最多 5 次尝试。密码使用异步 scrypt。Google credential 的不安全解码只允许非生产且显式开启。
-
-管理员使用 `/api/admin/login` 签发的短时 Bearer token。生产拒绝默认 `admin/admin123456`，并始终禁用静态 `ADMIN_KEY`；后者只用于非生产显式兼容。生产登录必须绑定 active PostgreSQL `administrators` 记录，每个管理请求都重新检查角色；`operator` 可读，`admin`/`owner` 才能调账、停用/恢复用户或补偿支付，财务与账号状态审计保存真实 `actor_user_id`。停用用户时必须在同一事务撤销其有效会话。管理员通过 `pnpm --filter backend admin:grant -- <userId> <role>` 显式授权。
-
-远程图片代理和 provider 结果持久化执行协议、host allowlist、DNS/IP、跳转、大小、magic bytes 与 MIME 校验，并固定验证后的 DNS 地址。`/files` 不会向任意外域拼接 token。产品页访问与点击进入 PostgreSQL `behavior_events`：只保存净化页面路径、稳定操作标识、时间和 opaque 用户/会话/项目引用；不读取按钮文案、`aria-label` 或 DOM `id`，不保存输入文字、prompt、模型输出、图片/文件 URL、密码或密钥，IP 只保存哈希，UA 只保存设备类别，默认 90 天并由独立调度器清理。usage、图片历史与内容审计采用同样的严格白名单并写入 `operational_records`；旧 JSON 只在无数据库非生产兼容模式使用，读取时再次净化并写回。
-
-## 4. 任务、报价与计费
-
-统一状态：
-
-```text
-idle -> validating -> awaiting_confirmation -> queued -> running
-                                             -> success | failed | cancelled
-```
-
-本地 operation 进入浏览器 Worker；服务端 operation 使用统一任务 API。当前可信收费执行器开放老照片增强/上色、AI 职业形象、AI 场景背景、配料原文整理与 `ai-design.generate`/`ai-design.directions`。职业形象和背景客户端只能传服务端枚举及主体变换参数，prompt 由服务端构造；配料任务只允许整理用户原文，结算前必须通过来源追溯。其他未接入 operation 返回 `TOOL_OPERATION_UNAVAILABLE`，不会排队或扣费。
-
-任务请求只能包含：
-
-```text
-toolId / operation / options / inputAssets / quoteId
-可选 projectId / parentVersionId
-```
-
-客户端禁止传 `cost`、`price`、`credits`、`sku` 或其嵌套变体。`POST /api/tool-tasks` 必须使用 multipart 和 `Idempotency-Key`。
-
-财务事务：
-
-1. 报价锁定服务端 SKU、价格版本和有效期。
-2. 创建任务时锁钱包与报价，原子减少 available、增加 frozen，并写 task、hold、ledger。
-3. 输出通过校验且资产已持久化后，只结算一次。
-4. 失败、取消、超时、空结果、无效输出或持久化失败，原子释放全部 hold。
-5. 相同幂等键与相同请求只执行/收费一次；同键不同请求返回 `409 IDEMPOTENCY_CONFLICT`。
-6. 钱包更新带约束和行锁，可用与冻结余额不能为负。
-
-服务端任务由 PostgreSQL 租约队列认领：`FOR UPDATE SKIP LOCKED`、90 秒默认租约、心跳续约和最多一次派发前重领。`provider_dispatched_at` 是重试栅栏；一旦已派发而结果不明，只能失败退款。hold 过期会在输入完成、任务认领、心跳、Provider 派发和结算阶段 fail-closed，不能由迟到结果重新变成收费成功。DELETE 先在数据库标记取消并释放 hold，再通过 PG `NOTIFY` 和本机 `AbortController` 中断执行；取消后的迟到结果不能结算。
-
-主生图 prompt/产品档案与配料整理原文仅写入 AES-256-GCM 短期 payload，AAD 绑定 task ID，密钥来自 `TASK_PAYLOAD_ENCRYPTION_KEY`。普通任务 options 只保存必要枚举、文本长度和 SHA-256，不保存原文；缺少密钥时对应报价与创建 fail-closed，任务终态删除 payload。
-
-工坊付费 AI 使用独立熔断开关 `WORKSHOP_AI_TASK_V2_ENABLED`。关闭时职业形象、AI 场景背景和配料 AI 整理均不可报价或创建，但本地证件照、本地换背景和本地配料排版继续可用且不扣费。`/readyz` 在开关开启且付费能力启用时要求 PostgreSQL 迁移、对象存储、payload 密钥和完整 Provider adapter 全部就绪。
-
-生图发布使用稳定用户 cohort：全局 `AI_DESIGN_TASK_V2_ENABLED` 开启后，`AI_DESIGN_TASK_V2_INTERNAL_USERS` 内部用户优先放行，再按数据库用户 UUID 的确定性哈希执行 `AI_DESIGN_TASK_V2_ROLLOUT_PERCENT` 10% → 50% → 100% 灰度。财务或资产指标越界时关闭全局开关立即熔断，不能依赖浏览器随机数或会漂移的 session 分桶。
-
-结果统一为 `{ assets, receipt, warnings }`。`receipt` 包含 SKU、报价、实扣、退款和余额。错误统一包含 `code`、可选 `field`、`messageKey` 与 `retryable`。
-
-## 5. 支付契约
-
-前端先读 `GET /api/pay/packages`，创建订单时发送目录返回的套餐 UUID，不发送金额、点数、币种或用户 ID。服务端创建本地 pending 订单并锁定套餐版本、金额、币种和点数。
-
-爱发电回调流程：
-
-1. 标准支付回调在所有环境强制验签；缺签、伪造签名直接拒绝。
-2. 使用服务端 API 凭证按 provider order id 查询规范订单。
-3. 只认本地 pending 订单及其已锁定用户、套餐、金额和点数。
-4. provider event、provider order、ledger idempotency key 都有唯一约束；并发和重放只能入账一次。
-5. 已验签但未知订单、错金额、错套餐等事件进入 dead letter，不入账。
-6. 管理员 reconciliation 会再次查询 provider 规范订单；不能用请求体修改用户、套餐、金额或点数。
-
-PostgreSQL UUID 是内部规范用户标识，legacy user id 被数据库约束为不得伪装成 UUID。active 套餐短别名具有唯一约束；UUID/完整 SKU 为规范引用。
-
-## 6. 资产与保留
-
-资产行记录所有者、opaque URI、SHA-256、magic-byte 校验后的 MIME、大小、尺寸、创建时间、过期时间和 GC 状态。读取 `/api/assets/:assetId` 必须校验所有权。
-
-写入使用 URI advisory transaction lock 与 `writing -> active` 状态；数据库提交失败会尽力补偿删除对象。同内容重传会安全取消正在删除的旧 claim。回收器通过 `SKIP LOCKED` 租约认领，删除前再次检查状态以及 active transfer、queued/running task 引用。失败使用退避重试。
-
-file 适配器还执行带游标的 inventory reconciliation，在宽限期后清理数据库不存在的孤儿对象。S3/R2 第一阶段使用过期资产行回收；生产应同时配置 bucket 生命周期规则作为兜底。生成结果写入后必须重新读取并校验字节数和 SHA-256，只有通过验证的 opaque asset 才能结算。
-
-### 6.1 商品视觉项目与版本
-
-`creative_projects` 是核心业务对象；敏感内容放在 `creative_project_payloads`，复用任务 payload 的 AES-256-GCM 密钥，但 AAD 分别绑定 project/version ID。项目保存商品名称、需求、品牌名称、3–6 个品牌色、风格关键词和禁用元素。Logo、商品、风格、场景、结果和导出通过 `project_asset_links` 关联，所有关联都检查登录用户所有权。
-
-`project_versions` 保存父版本、任务、profile、比例、种子、点数、收藏状态和输出资产。创建收费生成任务时在同一账务事务创建 pending 版本；成功结算在同一事务挂接输出并把资产改为 `project-owned`，失败、取消和退款保持既有逻辑并同步版本终态。旧生成历史只提供“保存到项目”，不自动迁移。
-
-项目删除是 7 天可恢复的软删除。到期清理器先解除任务的项目引用，再删除项目、版本和关联；没有被其他项目引用的资产恢复为有期限的生成资产并交给现有 GC。项目编辑使用 revision 乐观并发控制。
-
-## 7. 图片编辑器 2.0
-
-`fabric@7.4.0` 只负责交互投影；`EditorDocumentV2` 和 Pinia/domain store 是业务真源，Fabric 对象只保存 `layerId`。legacy 的 `ImageEditor.vue` 不再继续堆功能。
-
-模块：
-
-- `domain/store`：像素/sRGB 文档、图层顺序、选择、工具状态和命令。
-- `engine`：Fabric 投影、viewport、多选、控制柄、对齐、分布和吸附。
-- `assets`：IndexedDB Blob、ObjectURL/ImageBitmap 生命周期与可达性 GC。
-- `history`：事务式 Undo/Redo，最多 100 条。
-- `workers`：滤镜、去背景、手动多边形抠图、增强、2x 放大和导出，均带 revision stale-result guard。
-- `export`：预览与导出共享 render description。
-
-首版支持图片、文字、矩形/圆角矩形、椭圆、直线，多选，变换，翻转，锁定/显隐/排序，非破坏 crop 和 adjustments，PNG/JPEG/WebP 1x/2x/3x 导出。导入永远先创建普通单层，不会隐式拆前景/背景。本地去背景、抠图、增强和放大明确标注为实验能力。
-
-项目在变更后 750ms 自动保存到 IndexedDB，支持崩溃草稿恢复和存储失败提示。取消、Undo、切层、切项目或离开页面后，旧 Worker 结果不能提交。移动端裁剪/抠图会收起大面板并保留紧凑控制条。
-
-V1 不承诺 PSD、视频、复杂蒙版、画笔修复、生成式填充、CMYK、多人协作。
-
-## 8. 公共 API
-
-### 认证
-
-| Method | Path | 说明 |
+| Method | Path | 契约 |
 | --- | --- | --- |
-| `GET` | `/api/auth/session` | 当前 Cookie 会话与 CSRF token。 |
-| `POST` | `/api/auth/logout` | 撤销会话。 |
-| `POST` | `/api/login/send-code` | 发送 OTP。 |
-| `POST` | `/api/login/verify` | OTP 登录。 |
-| `POST` | `/api/auth/login` | 密码登录。 |
-| `POST` | `/api/auth/register` | 注册。 |
+| `GET` | `/api/design-assistant/status` | 当前会话规划、模型和执行器 readiness |
+| `POST` | `/api/design-conversations` | 创建本人会话 |
+| `GET` | `/api/design-conversations` | 列出本人会话 |
+| `GET/DELETE` | `/api/design-conversations/:conversationId` | 读取或删除本人会话 |
+| `POST` | `/api/design-conversations/:conversationId/messages` | 发送消息并触发受控路由 |
+| `POST` | `/api/design-conversations/:conversationId/attachments` | 仅为选中的云端执行路径上传附件 |
+| `GET` | `/api/design-conversations/:conversationId/events` | SSE 进度、澄清、报价、审批和结果 |
+| `POST` | `/api/design-conversations/:conversationId/executions/:executionId/quote` | 获取专项/图片执行报价 |
+| `POST` | `/api/design-conversations/:conversationId/executions/:executionId/agent-quote` | 获取 Agent Run 报价 |
+| `POST` | `/api/design-conversations/:conversationId/executions/:executionId/target` | 选择明确执行目标 |
+| `POST` | `/api/design-conversations/:conversationId/executions/:executionId/budget` | 确认预算 |
+| `POST` | `/api/design-conversations/:conversationId/executions/:executionId/cancel` | 取消执行并走正式释放路径 |
+| `GET/POST/DELETE` | `/api/design-conversations/:conversationId/authorizations/*` | 管理绑定会话、Origin 和动作类型的授权 |
 
-### 工具与资产
+附件默认 local-first。只有路由确定需要服务端模型、专项任务或 Computer Agent 后，才进行受所有权保护的上传；本地工具失败不能静默改为上传。
 
-| Method | Path | 说明 |
+## 5. Computer Agent
+
+Computer Agent 使用 PostgreSQL 队列和独立 Worker，在每个 Run 私有的 CUA 沙箱中执行。任务进度通过 SSE 返回；WebSocket 只用于远程桌面/noVNC 中继。
+
+核心接口：
+
+| Method | Path | 契约 |
 | --- | --- | --- |
-| `GET` | `/api/tools/catalog` | 统一 `ToolDefinition` 目录。 |
-| `GET` | `/api/generation/models` | 稳定产品 profile 与真实 capability，不暴露内部模型。 |
-| `POST` | `/api/tool-tasks/quote` | 服务端报价。 |
-| `POST` | `/api/tool-tasks` | multipart + `Idempotency-Key` 创建任务。 |
-| `GET` | `/api/tool-tasks/:taskId` | 本人任务结果。 |
-| `DELETE` | `/api/tool-tasks/:taskId` | 取消并退款未结算任务。 |
-| `GET/POST` | `/api/projects` | 列出或创建本人项目。 |
-| `GET/PATCH/DELETE` | `/api/projects/:projectId` | 本人项目详情、乐观并发更新和 7 天软删除。 |
-| `POST` | `/api/projects/:projectId/restore` | 在保留期内恢复项目。 |
-| `POST` | `/api/projects/:projectId/assets` | 上传或关联本人项目资产。 |
-| `DELETE` | `/api/projects/:projectId/assets/:assetId` | 按语义角色移除本人项目资产。 |
-| `POST` | `/api/projects/:projectId/versions/import` | 将本人旧生成结果显式保存为项目版本。 |
-| `PATCH` | `/api/projects/:projectId/versions/:versionId` | 收藏或取消收藏项目版本。 |
-| `POST` | `/api/asset-uploads` | 创建登录用户专属的单 PUT / multipart S3 直传会话。 |
-| `GET` | `/api/asset-uploads/:id/parts` | 恢复本人已上传分片。 |
-| `POST` | `/api/asset-uploads/:id/parts/:part/sign` | 签发本人分片上传 URL。 |
-| `POST` | `/api/asset-uploads/:id/complete` | 幂等完成、校验并返回既有 asset 结构。 |
-| `DELETE` | `/api/asset-uploads/:id` | 取消并清理暂存对象。 |
-| `GET` | `/api/assets/:assetId` | 本人资产。 |
-| `DELETE` | `/api/assets/:assetId` | 提前删除本人资产。 |
-| `POST` | `/api/editor/transfers` | 创建短时编辑器 transfer。 |
-| `POST` | `/api/editor/transfers/:transferId/consume` | 本人一次性消费 transfer。 |
+| `GET` | `/api/agent/status` | Worker、浏览器、出口、桌面、子 Agent 与队列状态 |
+| `POST` | `/api/agent-assets` | 上传本人 Run 输入资产 |
+| `POST` | `/api/agent-runs/quote` | 服务端报价与能力检查 |
+| `POST` | `/api/agent-runs` | 创建本人 Run；客户端不能指定 Runtime 版本 |
+| `GET` | `/api/agent-runs` | 列出本人 Run |
+| `GET` | `/api/agent-runs/:runId` | Run、计划、审批、成本与终态 |
+| `GET` | `/api/agent-runs/:runId/events` | SSE 事件流 |
+| `POST` | `/api/agent-runs/:runId/input` | waiting_user 时补充用户输入 |
+| `POST` | `/api/agent-runs/:runId/desktop-ticket` | 签发一次性桌面票据 |
+| `GET` | `/api/agent-runs/:runId/artifacts` | 本人已验证交付物 |
+| `GET/DELETE` | `/api/agent-browser-profiles/*` | 列出或撤销本人单 Origin 会话 |
+| `GET/POST/DELETE` | `/api/integrations/*` | 管理受支持的外部集成授权 |
 
-### 支付与点数
+### 5.1 计划、审批与副作用
 
-| Method | Path | 说明 |
+- 真实计划必须先于工具执行，并以稳定 step/criterion ID 持久化。
+- 发送、发布、删除、购买、权限修改和其他外部副作用必须获得绑定具体动作的一次性审批。
+- 密码、OTP、验证码、安全警告和最终付款不能由普通审批放行，只能由用户远程接管。
+- 同一副作用不能因为 Worker 重启、租约回收或模型重试而重复执行。
+- ambiguous 模型或工具回执进入人工恢复或失败路径，不能自动重放。
+
+### 5.2 子 Agent
+
+- 子 Agent 使用独立 Qwen3 上下文，但共享父 Run 的授权输入、预算上限和沙箱边界。
+- 子 Agent 不获得浏览器、桌面、连接器、Kolors、审批或最终产物声明权。
+- 父 Agent 汇总结果并对最终来源、格式和验收负责。
+- 单个子 Agent 失败或取消不得伪造父任务成功，也不应无条件污染其他子任务。
+
+### 5.3 文件与验证
+
+支持的交付类别包括报告、XLSX、PPTX、离线网站和图片。Run 成功前至少验证：
+
+- 文件存在、非空、MIME/扩展名与声明一致；
+- 可由对应解析器或 LibreOffice 打开；
+- 来源 URL 来自本 Run 实际浏览记录；
+- 病毒、大小、像素、SHA-256 与对象存储回读通过；
+- 计划验收项、预算、审批和回执完整；
+- S3 资产属于当前用户且可下载。
+
+零文件的 text-only Run 使用独立文本验收契约，不得被文件交付规则错误要求声明 artifact。
+
+## 6. 工具、图片与 Creative Project
+
+`shared/tools.catalog.json` 是工具名称、路由、operation、隐私、限制、输出格式和 SKU 的唯一目录来源。
+
+统一工具任务接口：
+
+| Method | Path | 契约 |
 | --- | --- | --- |
-| `GET` | `/api/pay/packages` | active 套餐与服务端价格。 |
-| `POST` | `/api/pay/create-order` | 创建本地支付订单。 |
-| `GET` | `/api/pay/orders/:orderId` | 本人订单。 |
-| `POST` | `/api/pay/afdian/webhook` | 强制验签、provider reconciliation 回调。 |
-| `GET` | `/api/credits/balance` | 本人钱包余额。 |
-| `GET` | `/api/credits/orders` | 本人已支付订单。 |
-| `GET` | `/api/credits/holds` | 本人任务冻结记录。 |
-| `GET` | `/api/admin/payments/dead-letters` | 管理员查看支付异常事件。 |
-| `POST` | `/api/admin/payments/reconcile/:eventId` | 管理员补偿处理。 |
+| `GET` | `/api/tools/catalog` | 服务端工具目录 |
+| `GET` | `/api/generation/models` | 稳定图片 profile 与真实 capability |
+| `POST` | `/api/tool-tasks/quote` | 服务端报价 |
+| `POST` | `/api/tool-tasks` | multipart + `Idempotency-Key` 创建任务 |
+| `GET/DELETE` | `/api/tool-tasks/:taskId` | 读取或取消本人任务 |
+| `POST` | `/api/asset-uploads` | 创建本人 S3 上传会话 |
+| `GET/POST/DELETE` | `/api/asset-uploads/:id/*` | 恢复、签名、完成或取消 multipart |
+| `GET/DELETE` | `/api/assets/:assetId` | 读取或删除本人资产 |
+| `POST` | `/api/editor/transfers` | 创建短时编辑器 transfer |
+| `POST` | `/api/editor/transfers/:transferId/consume` | 本人一次性消费 transfer |
 
-`/api/generate`、`/api/img2img`、`/api/credits/costs` 保留一个兼容周期，忽略客户端价格。收费能力稳定迁移前不可新增对这些旧入口的直接依赖。
+Creative Project 保存品牌、需求、资产关联和生成版本。项目删除采用可恢复软删除；项目和版本更新检查所有权，敏感 payload 加密。旧生成结果只通过用户明确操作保存到项目，不自动迁移。
 
-生图运营事件进入 PostgreSQL `generation_events`，只接受固定事件名及枚举、布尔、长度、哈希、耗时和 task/quote/session opaque 引用，不保存 prompt、文件名或图片 URL。控制台 `/api/admin/generation/funnel` 汇总成功率、退款率、队列与 Provider p50/p95、资产持久化失败、未结算 hold 和每成功任务成本。
+## 7. 认证、隐私与后台
 
-产品北极星指标是“每周完成至少一次生成并进入编辑或导出的项目数”。`behavior_events` 记录项目创建、参考图上传、首次成功、版本复用、收藏、编辑、导出、余额不足、首购和复购的最小化事件；后台按用户和项目聚合漏斗、D1/D7 回访与每成功任务毛利，不保存 prompt 或图片 URL。套餐只展示真实 CNY，并同时换算约可完成的 10 点标准图与 60 点单参考图商品图；没有真实 USD 通道时不得展示近似汇率。
+- 普通用户使用 `HttpOnly`、`SameSite=Lax` Cookie；生产增加 `Secure`。
+- Cookie 写请求必须通过 Origin 和 CSRF 校验。
+- 管理员使用短时内存 Bearer token，生产每次请求重新检查 PostgreSQL 角色。
+- 用户、管理员、资产、项目、会话、Run 和订单接口都执行服务端所有权/角色检查。
+- 行为和模型用量只保存白名单元数据，不保存 prompt、输入文字、模型输出、密码、Token、图片 URL 或原始 IP。
+- 停用用户在同一事务撤销有效会话；钱包调整只能通过不可变账本。
+- 生产运营后台是否启用以 `/readyz` 为准，不能通过前端路由存在推断。
 
-### 运营后台
+认证入口包括 `/api/auth/session`、`/api/auth/logout`、验证码、密码和 Google 登录接口；精确请求 Schema 以路由与测试为准。
 
-| Method | Path | 说明 |
-| --- | --- | --- |
-| `POST` | `/api/admin/login` | 服务端管理员账号密码登录，签发短时 token。 |
-| `GET` | `/api/admin/me` | 当前管理员和角色。 |
-| `GET` | `/api/admin/overview` | 用户、点数、订单、任务、行为和审计聚合。 |
-| `GET` | `/api/admin/users` | 用户、状态、钱包、最近活跃和访问次数。 |
-| `POST` | `/api/admin/users/status` | admin/owner 停用或恢复用户。 |
-| `POST` | `/api/admin/users/credits` | admin/owner 账本化调整用户可用点数。 |
-| `GET` | `/api/admin/credits/ledger` | 不可变钱包流水筛选与分页。 |
-| `GET` | `/api/admin/behavior/events` | 页面访问和点击行为筛选与分页。 |
-| `GET` | `/api/admin/behavior/summary` | 行为总量、趋势、热门页面和操作。 |
-| `GET` | `/api/admin/audit/events` | PostgreSQL 管理和系统审计。 |
-| `GET` | `/api/admin/usage/ledger` | PostgreSQL 最小化模型用量。 |
-| `GET` | `/api/admin/images/history` | PostgreSQL 最小化图片任务历史。 |
-| `GET` | `/api/admin/audit/history` | PostgreSQL 最小化内容审计历史。 |
+## 8. 报价、钱包与支付
 
-后台页面信息架构固定为运营总览、用户管理、点数账本、行为轨迹、系统审计、内容审计、
-模型用量和系统设置。旧 `/console/billing`、`/console/playground` 仅保留重定向，不再
-展示模拟充值、模拟生成或浏览器本地业务数据。
+任务请求不能提交 `cost`、`price`、`credits`、`sku` 或嵌套变体。服务端流程：
 
-## 9. 数据迁移与发布门禁
+1. 报价锁定 SKU、价格版本、能力和有效期。
+2. 创建任务时锁钱包并原子冻结预算。
+3. Provider 派发和工具副作用记录幂等/回执栅栏。
+4. 产物持久化并验证后只结算一次。
+5. 失败、取消、超时、空结果或无效输出释放全部未结算 hold。
 
-迁移文件位于 `backend/migrations/`。财务 JSON 导入使用 `backend/scripts/import-json-to-postgres.js`，迁移核对使用 `audit-json-postgres.js`。切换后旧财务快照只读保留，不是回退源；产品行为写入 `behavior_events`，最小化 usage、图片历史和内容审计写入 `operational_records`。旧 JSON analytics/usage/history 仅用于无数据库非生产兼容。钱包与不可变账本余额使用 bigint，避免合法购买在 32 位整数边界回滚。
+支付订单由服务端套餐 UUID 创建；客户端不能提交金额、币种、点数或用户 ID。支付回调强制验签并向 Provider 查询规范订单，未知、错金额或重放事件不入账。
 
-灰度顺序固定为内部账号 → 10% 用户 48 小时 → 50% 用户 48 小时 → 100%。任务成功率较基线下降超过 2 个百分点、出现不完整退款或资产归属异常时停止扩量。模型或价格调整必须按最高折扣点数包验证预计毛利不低于 50%。
+## 9. 数据、迁移与发布门禁
 
-Render 从仓库根目录安装完整 workspace。`pnpm start:production` 在监听端口前持有
-PostgreSQL advisory lock 并应用全部迁移；迁移失败时新版本不得启动。托管 PostgreSQL
-默认校验证书；生产应配置 `PG_SSL_CA`/`PG_SSL_CA_BASE64`，只有已评估的私有网络兼容
-场景才可显式设置 `PG_SSL_REJECT_UNAUTHORIZED=0`。
+- PostgreSQL 迁移位于 `backend/migrations/`，生产启动在监听端口前持有 advisory lock 并应用 pending migration。
+- “最新迁移”不写死在长期手册；DEV/生产均以 `/readyz.checks.database.migration` 与当前代码交叉验证。
+- 生产付费能力需要 PostgreSQL、共享 S3、payload 密钥、Provider、价格和对应执行器全部 ready。
+- 常规代码先进入 `dev` 并完成 smoke，再通过 PR 进入 `main`；合并 `main` 后仍需独立生产发布确认。
 
-完整门禁：
+最低本地门禁：
 
 ```bash
 pnpm check
 ```
 
-它执行只读 lint、类型检查、前后端单测、六组 Playwright 项目（Chromium/Firefox/WebKit 桌面与移动视口）、生产构建和首页 250 KiB gzip 预算。CI 使用 PostgreSQL 16 并先应用全部迁移；任一 P0/财务测试失败时保持 `PAID_FEATURES_ENABLED=false`。
+GitHub Quality Gate 的具体 job 以当前 `.github/workflows/ci.yml` 为准。DEV Runtime 变更还必须通过五组 deterministic Harness、chaos、50 项 executable quality、真实 exact-SHA campaign 和对应人工审核。
 
-Provider、内部模型或 prompt 模板变更还必须用 `backend/evaluation/ai-design-quality-set.json` 的同一组 30 个中英文电商案例生成 baseline/candidate manifest，再运行 `pnpm --filter backend eval:generation:blind -- ...` 创建去标识盲评表。完成盲评后以 `pnpm --filter backend eval:generation:score -- --review <file>` 验证：candidate 硬约束通过率不少于 90%，且平均分与偏好胜负均不得劣于旧链路。没有测试 Provider 凭证时只运行契约 mock，不伪造质量结论。
+50 项 Agent 固定质量集分为 report、spreadsheet、presentation、website、image 五组，每组 10 项；覆盖提示注入、来源冲突、禁止外部写入、低预算、恢复和离线渲染。确定性 Harness 通过不等于真实 Provider campaign 通过。
 
-Agent 使用 `backend/evaluation/agent-quality-set.json` 的 40 个固定任务作为最低回归集，
-报告、XLSX、PPTX、网站各 10 个，并覆盖提示注入、禁止外部写入、低预算、来源冲突和
-离线网站渲染。每次运行成功结算前必须通过确定性轨迹验证：真实计划先于执行、费用不超
-预算、禁止动作未执行、所有高风险副作用存在一次性已消费审批、相同副作用未重复、PDF
-引用来自实际访问页面、全部产物验证通过、模型耐久工具回执已经消费。恢复使用加密的
-`call_id` 与工具回执继续 Responses 会话，不得以重新提示模型代替精确续跑。
-
-外部 AI、SMTP、爱发电和对象存储先使用契约 mock/fixture。没有独立 DEV 凭证时不得
-发起真实支付或收费 Provider 请求。代码先进入 `dev` 并完成 smoke，再通过 PR 进入
-`main`；合并 `main` 后仍需独立的生产发布确认。完整流程见
-`PROJECT_OPERATIONS_GUIDE.zh-CN.md`。
+完整分支、环境和发布流程见 [`PROJECT_OPERATIONS_GUIDE.zh-CN.md`](./PROJECT_OPERATIONS_GUIDE.zh-CN.md)。

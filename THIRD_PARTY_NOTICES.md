@@ -1,28 +1,67 @@
 # Third-party notices
 
-Artigen uses the following direct open-source foundations in this upgrade. No source of unknown provenance was copied into the repository. Package license texts remain available in their distributed npm packages and upstream repositories.
+This document lists Artigen's direct runtime dependencies across the frontend, backend and mail-relay workspaces. Exact installed versions are governed by `pnpm-lock.yaml`; this table intentionally avoids duplicating version numbers that would drift from the lockfile.
 
-| Package / project | Pinned version | License | Use | Source |
-| --- | ---: | --- | --- | --- |
-| pg-boss | 12.26.2 | MIT | PostgreSQL-backed task delivery, retry, dead letter and schedules | <https://github.com/timgit/pg-boss> |
-| Uppy Core / AWS S3 | 5.2.0 / 5.1.0 | MIT | Headless single and multipart S3/R2 uploads | <https://github.com/transloadit/uppy> |
-| TanStack Vue Query | 5.101.4 | MIT | Browser server-state cache, retries and refetch | <https://github.com/TanStack/query> |
-| Dexie | 4.4.4 | Apache-2.0 | IndexedDB access while preserving existing databases | <https://github.com/dexie/Dexie.js> |
-| jSquash JPEG / PNG / WebP | 1.6.0 / 3.1.1 / 1.5.0 | Apache-2.0 | Lazy Worker image encoding based on Squoosh codecs | <https://github.com/jamsinclair/jSquash> |
-| file-type | 22.0.1 | MIT | Server-side file signature detection | <https://github.com/sindresorhus/file-type> |
-| sharp | 0.35.3 | Apache-2.0 | Trusted image metadata and pixel limits | <https://github.com/lovell/sharp> |
-| AWS SDK S3 request presigner | 3.1087.0 | Apache-2.0 | Short-lived S3/R2 upload URLs | <https://github.com/aws/aws-sdk-js-v3> |
+License identifiers come from the installed package metadata and upstream project notices. GSAP uses its upstream standard license rather than an SPDX open-source identifier. This file documents third-party components; it does not grant a license for Artigen itself and is not a complete transitive SBOM.
 
-Existing retained foundations:
+## Frontend runtime
 
-| Package / project | Version | License | Source |
-| --- | ---: | --- | --- |
-| Fabric.js | 7.4.0 | MIT | <https://github.com/fabricjs/fabric.js> |
-| PDF.js (`pdfjs-dist`) | 4.10.38 | Apache-2.0 | <https://github.com/mozilla/pdf.js> |
+| Package | License | Source |
+| --- | --- | --- |
+| `@ant-design/icons-vue` | MIT | <https://github.com/ant-design/ant-design-icons> |
+| `@fortawesome/fontawesome-free` | CC-BY-4.0 AND OFL-1.1 AND MIT | <https://fontawesome.com> |
+| `@jsquash/jpeg` | Apache-2.0 | <https://github.com/jamsinclair/jSquash> |
+| `@jsquash/png` | Apache-2.0 | <https://github.com/jamsinclair/jSquash> |
+| `@jsquash/webp` | Apache-2.0 | <https://github.com/jamsinclair/jSquash> |
+| `@novnc/novnc` | MPL-2.0 | <https://github.com/novnc/noVNC> |
+| `@tanstack/vue-query` | MIT | <https://tanstack.com/query> |
+| `@uppy/aws-s3` | MIT | <https://uppy.io> |
+| `@uppy/core` | MIT | <https://uppy.io> |
+| `ant-design-vue` | MIT | <https://www.antdv.com> |
+| `dexie` | Apache-2.0 | <https://dexie.org> |
+| `echarts` | Apache-2.0 | <https://echarts.apache.org> |
+| `fabric` | MIT | <https://github.com/fabricjs/fabric.js> |
+| `fflate` | MIT | <https://github.com/101arrowz/fflate> |
+| `gifenc` | MIT | <https://github.com/mattdesl/gifenc> |
+| `gsap` | GSAP Standard License | <https://gsap.com/standard-license> |
+| `pdfjs-dist` | Apache-2.0 | <https://github.com/mozilla/pdf.js> |
+| `pinia` | MIT | <https://pinia.vuejs.org> |
+| `serve` | MIT | <https://github.com/vercel/serve> |
+| `vue` | MIT | <https://vuejs.org> |
+| `vue-echarts` | MIT | <https://github.com/ecomfe/vue-echarts> |
+| `vue-router` | MIT | <https://router.vuejs.org> |
 
-Test-only tooling:
+## Backend and mail runtime
 
-- `fake-indexeddb` 6.2.4 (Apache-2.0) is a development dependency used for browser database compatibility tests.
-- A pinned MinIO container is started only as an ephemeral CI S3-compatibility fixture. MinIO is not linked, copied, bundled, deployed, or used as an Artigen runtime dependency.
+| Package | License | Source |
+| --- | --- | --- |
+| `@aws-sdk/client-s3` | Apache-2.0 | <https://github.com/aws/aws-sdk-js-v3> |
+| `@aws-sdk/s3-request-presigner` | Apache-2.0 | <https://github.com/aws/aws-sdk-js-v3> |
+| `ajv` | MIT | <https://ajv.js.org> |
+| `busboy` | MIT | <https://github.com/mscdex/busboy> |
+| `cors` | MIT | <https://github.com/expressjs/cors> |
+| `dotenv` | BSD-2-Clause | <https://github.com/motdotla/dotenv> |
+| `express` | MIT | <https://expressjs.com> |
+| `file-type` | MIT | <https://github.com/sindresorhus/file-type> |
+| `https-proxy-agent` | MIT | <https://github.com/TooTallNate/proxy-agents> |
+| `node-fetch` | MIT | <https://github.com/node-fetch/node-fetch> |
+| `node-pg-migrate` | MIT | <https://github.com/salsita/node-pg-migrate> |
+| `nodemailer` | MIT-0 | <https://nodemailer.com> |
+| `pg` | MIT | <https://github.com/brianc/node-postgres> |
+| `pg-boss` | MIT | <https://github.com/timgit/pg-boss> |
+| `sharp` | Apache-2.0 | <https://github.com/lovell/sharp> |
+| `ws` | MIT | <https://github.com/websockets/ws> |
+| `zod` | MIT | <https://zod.dev> |
 
-AGPL `background-removal-js` and the long-unmaintained TUI Image Editor are intentionally not included.
+`ajv` is used by the Runtime V2 validation path present on the development branch. It remains listed here so the notice stays valid when the docs hotfix is synchronized from `main` back to `dev`.
+
+## Verification and maintenance
+
+When a workspace adds or removes a direct runtime dependency:
+
+1. update this table in the same PR;
+2. verify package metadata with `pnpm licenses list --prod --json`;
+3. review non-standard or composite licenses separately;
+4. run `pnpm check:docs`, which ensures every declared direct runtime dependency has a row.
+
+Transitive license texts remain available in installed packages and their upstream repositories. Distribution and attribution obligations must be evaluated from the exact lockfile for each release artifact.
