@@ -290,12 +290,15 @@ const createSiliconFlowGenerationProvider = ({
         }
         if (!response?.ok) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
         const body = await response.json().catch(() => null);
+        // Cloudflare's model directory exposes an opaque UUID in `id` and the
+        // callable model name in `name`. Keep every advertised identifier so
+        // readiness does not mistake a healthy GPT-OSS profile for a missing
+        // model merely because the UUID happens to be present first.
         const modelIds = new Set(
-          Array.isArray(body?.data)
-            ? body.data.map((item) => String(item?.id || '').trim()).filter(Boolean)
-            : Array.isArray(body?.result)
-              ? body.result.map((item) => String(item?.id || item?.name || item?.model || '').trim()).filter(Boolean)
-              : []
+          (Array.isArray(body?.data) ? body.data : Array.isArray(body?.result) ? body.result : [])
+            .flatMap((item) => [item?.id, item?.name, item?.model])
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)
         );
         const requiredTextModels = cloudflareText
           ? [GENERATION_DIRECTIONS_MODEL]
@@ -334,9 +337,10 @@ const createSiliconFlowGenerationProvider = ({
           if (!imageResponse?.ok) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
           const imageBody = await imageResponse.json().catch(() => null);
           const imageIds = new Set(
-            Array.isArray(imageBody?.data)
-              ? imageBody.data.map((item) => String(item?.id || '').trim()).filter(Boolean)
-              : []
+            (Array.isArray(imageBody?.data) ? imageBody.data : [])
+              .flatMap((item) => [item?.id, item?.name, item?.model])
+              .map((value) => String(value || '').trim())
+              .filter(Boolean)
           );
           if (!imageIds.has(GENERATION_IMAGE_MODEL)) {
             return { ok: false, code: 'MODEL_PROFILE_UNAVAILABLE' };

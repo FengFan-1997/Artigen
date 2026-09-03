@@ -8,6 +8,12 @@
 
 > 本文不保存密码、API Key、Token、数据库连接串、OTP、恢复码或平台 Secret。账号标识、公开资源 ID、环境变量名称和密钥存放位置可以记录，秘密值不可以。
 
+## 2026-09-03 Cloudflare 模型目录 readiness 兼容修复（候选，待合入与部署）
+
+- 候选分支 `codex/cloudflare-model-readiness-fix` 基于 GitHub `origin/dev` exact SHA `5a84bac59cf30f6100efb780e8eb9b4a641c42a8`。修复 `generation-provider` 的只读模型目录解析：Cloudflare 返回 opaque UUID `id` 时，同时保留可调用的 `name`/`model`，避免把健康的 `@cf/openai/gpt-oss-120b` 误判为 `MODEL_PROFILE_UNAVAILABLE`；SiliconFlow/Kolors 目录解析同步保持三种标识兼容。
+- 该候选只改变 readiness 识别与对应 fixture，不改变文本模型硬锁、图片模型硬锁、计费、Runtime V2、公众 rollout、Worker 或网络配置。定向 `ai-design-service` 回归为 `24/24`；完整 `pnpm check` 的 Playwright 首次运行出现 1 个 Firefox 进程收尾 channel error，随后同一场景独立重跑 `1/1` 通过，其他 545 项已通过。required CI、PR 合入和 DEV 新 SHA 部署尚未完成。
+- Render DEV 当前部署仍是旧 `5a84bac…`，因此 readiness 需要在候选合入后的新部署上重新核验；生产、Vercel production、Mac Worker、真实付费矩阵和图片盲审均未因本候选切换。`ui-review/` 未读取、进入、修改、删除、暂存或提交。
+
 ## 2026-09-02 Cloudflare 文本硬锁收尾（PR #161/#163/#164 已合入 dev，尚未部署）
 
 - PR [#164](https://github.com/FengFan-1997/Artigen/pull/164) 已将当前 dev 状态文档正常合入，merge commit 为 `69dad6ff2922f568d823dd4318e3a48f198d7051`。运行时代码以 PR [#161](https://github.com/FengFan-1997/Artigen/pull/161) merge `7cd1f842ca6e93887d1bd5e5710d4e5a6b6e4d8d` 为不可变证据，文档同步以 PR [#162](https://github.com/FengFan-1997/Artigen/pull/162) merge `87a4957836d9affce89d3dcda5e7388729eaa650` 和 PR [#163](https://github.com/FengFan-1997/Artigen/pull/163) merge `2cbb97fbc0b9b307ce0d0fb336df7e2ecf307217` 为证据；当前 `dev` 仍未对齐或部署到 Render、Vercel production 或 Mac Worker。
