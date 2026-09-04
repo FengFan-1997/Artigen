@@ -93,7 +93,7 @@ const { createAgentRunService, TERMINAL_STATUSES } = require('../services/agent-
 const { AgentQueuePublisher } = require('../services/agent-queue-service');
 const assets = require('../services/asset-storage');
 
-const REQUIRED_MIGRATION = '026_agent_live_eval_capacity_counter';
+const REQUIRED_MIGRATION = '027_agent_live_eval_capacity_aggregate';
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const readBody = async (body, maximumBytes) => {

@@ -271,7 +271,7 @@ class AgentLiveEvalHarness {
       );
       assertLiveEvalDatabaseSafety({ databaseName: identity.rows[0]?.database_name });
       const migration = await pool.query('SELECT COALESCE(max(name),\'\') AS name FROM pgmigrations');
-      if (migration.rows[0]?.name !== '026_agent_live_eval_capacity_counter') {
+      if (migration.rows[0]?.name !== '027_agent_live_eval_capacity_aggregate') {
         throw new Error(`AGENT_LIVE_EVAL_MIGRATION_NOT_READY:${migration.rows[0]?.name || 'none'}`);
       }
       instance.trace = trace || new RuntimeTraceSink();

@@ -183,7 +183,7 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(runner, /resolveAgentWorkerPoolProfile/);
   assert.match(runner, /PG_SSL_REQUIRED:\s*'1'/);
   assert.match(runner, /DEV_DATABASE_EXPECTED_MAJOR:\s*'18'/);
-  assert.match(readRepoFile('backend/scripts/run-agent-dev-smoke.js'), /026_agent_live_eval_capacity_counter/);
+  assert.match(readRepoFile('backend/scripts/run-agent-dev-smoke.js'), /027_agent_live_eval_capacity_aggregate/);
   assert.match(runner, /PG_SSL_REJECT_UNAUTHORIZED:\s*'1'/);
   assert.match(runner, /AGENT_RUNTIME_V2_ENABLED: profile === 'dev'[\s\S]*\? 'false'/);
   assert.match(runner, /AGENT_RUNTIME_V2_ROLLOUT_PERCENT: profile === 'dev'[\s\S]*\? '0'/);

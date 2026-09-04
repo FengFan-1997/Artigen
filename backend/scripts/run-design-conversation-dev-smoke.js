@@ -785,7 +785,7 @@ const main = async () => {
   const activeAgentEntries = [];
   try {
     stage('readiness');
-    const migrationName = '026_agent_live_eval_capacity_counter';
+    const migrationName = '027_agent_live_eval_capacity_aggregate';
     const migration = await pool.query(
       'SELECT EXISTS (SELECT 1 FROM pgmigrations WHERE name=$1) AS applied',
       [migrationName]

@@ -116,6 +116,12 @@ Runtime V2 进入生产前必须同时满足：
 
 任一条件缺失时，公众 rollout、owner canary 和生产发布继续关闭。
 
+## 5.1 当前未发布候选（2026-09-04）
+
+- 分支 `codex/live-gate-stats-role-fix` 在 `origin/dev` `9e5cbfc...` 上新增迁移 `027_agent_live_eval_capacity_aggregate`，以 `pg_stat_database.numbackends` 提供仅聚合、无会话内容的容量探针，兼容 Aiven 受限运行角色。
+- 该迁移和对应代码尚未 push、创建 PR、合并或部署；生产与 DEV 当前仍以迁移 `026_agent_live_eval_capacity_counter` 运行。新 exact-SHA gate、24-slot 实机矩阵和图片盲审尚未重新执行。
+- 原有 `026` 跨角色统计函数及其 `pg_read_all_stats` 安全回归保留，不能通过修改权限或删除审计记录绕过门禁。
+
 ## 6. 发布与分支规则
 
 常规代码流：

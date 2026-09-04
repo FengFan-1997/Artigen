@@ -17,7 +17,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const readiness = await checkDatabase(pool);
   assert.equal(readiness.ok, true);
-  assert.equal(readiness.migration, '026_agent_live_eval_capacity_counter');
+  assert.equal(readiness.migration, '027_agent_live_eval_capacity_aggregate');
   const suffix = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const users = await pool.query(
     `INSERT INTO users (legacy_user_id,display_name,status)
