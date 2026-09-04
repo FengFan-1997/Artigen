@@ -132,7 +132,7 @@ Runtime V2 进入生产前必须同时满足：
 ## 5.1 DEV GPT-OSS 强制工具回执兼容修复（2026-09-04）
 
 - PR #179 已在 required CI 与 Release gate 全绿后合入 `dev`，merge SHA 为 `ccdcc055bb51f8ac6814fd30a8272f353053b9ed`。修复针对 Cloudflare GPT-OSS 在强制工具选择时把合法 JSON 放入 `message.content`、却返回空 `tool_calls` 的上游兼容问题；服务端仅在 `name` 精确匹配当前 allowlist 与被强制工具时恢复调用，不匹配继续 fail-closed。
-- GitHub push Quality Gate `33864510151` 的 Core、Harness/chaos、Chromium/Firefox/WebKit desktop 与移动/平板分片、Release gate 均成功；Render DEV deployment `dep-dada17rl550s73ae8ce0` 与 Vercel Preview deployment `6262678416` 均已实测对应该 SHA。DEV `/api/meta`、`/readyz`、`/api/agent/status` 返回 200，迁移 `027_agent_live_eval_capacity_aggregate`、Cloudflare `@cf/openai/gpt-oss-120b`、Kolors、数据库/S3、Worker/browser/egress/desktop relay 与 pricing 均 ready。
+- GitHub push Quality Gate `33864510151` 的 Core、Harness/chaos、Chromium/Firefox/WebKit desktop 与移动/平板分片、Release gate 均成功；Render DEV live deployment 与 Vercel Preview deployment `6262678416` 均已实测对应该 SHA。DEV `/api/meta`、`/readyz`、`/api/agent/status` 返回 200，迁移 `027_agent_live_eval_capacity_aggregate`、Cloudflare `@cf/openai/gpt-oss-120b`、Kolors、数据库/S3、Worker/browser/egress/desktop relay 与 pricing 均 ready。
 - Runtime V2 仍关闭、rollout=0，生产部署与 Worker 未修改。新 SHA 尚未签发新的 live-eval gate，完整 24-slot V1/V2、真实 Kolors 和图片匿名盲审仍未完成，因此本节不构成生产放行或 owner canary 证据。
 - 先前真实失败 Run 的 ambiguous/失败审计回执继续保留；相关活动 Run、hold、reservation、queue 和冻结余额已按正式清理路径归零，不能通过删除审计记录制造“全零”。
 
