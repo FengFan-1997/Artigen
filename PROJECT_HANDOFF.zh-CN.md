@@ -131,14 +131,10 @@ Runtime V2 进入生产前必须同时满足：
 
 ## 5.1 DEV GPT-OSS 强制工具回执兼容修复（2026-09-04）
 
-- Runtime V2 仍关闭、rollout=0，生产部署与 Worker 未修改。新 SHA 尚未签发新的 live-eval gate，完整 24-slot V1/V2、真实 Kolors 和图片匿名盲审仍未完成，因此本节不构成生产放行或 owner canary 证据。
-- 先前真实失败 Run 的 ambiguous/失败审计回执继续保留；相关活动 Run、hold、reservation、queue 和冻结余额已按正式清理路径归零，不能通过删除审计记录制造“全零”。
 - PR #179 已在 required CI 与 Release gate 全绿后合入 `dev`，merge SHA 为 `ccdcc055bb51f8ac6814fd30a8272f353053b9ed`。修复针对 Cloudflare GPT-OSS 在强制工具选择时把合法 JSON 放入 `message.content`、却返回空 `tool_calls` 的上游兼容问题；服务端仅在 `name` 精确匹配当前 allowlist 与被强制工具时恢复调用，不匹配继续 fail-closed。
-- 随后 PR #180（本节交接文档修正）也已通过 required CI 与 Release gate 后合入 `dev`，最终不可变 DEV SHA 为 `b5121eb9b1ef8c08347619d26ed95b72f97187f4`。其 Core、Harness/chaos、Chromium/Firefox/WebKit 桌面与移动分片均成功；Vercel Preview deployment `6262980126` 状态为 `success`，Render DEV `/api/meta`、`/readyz`、`/api/agent/status` 已重新实测 HTTP 200 且精确运行该 SHA。迁移 `027_agent_live_eval_capacity_aggregate`、Cloudflare `@cf/openai/gpt-oss-120b`、Kolors、数据库/S3、Worker/browser/egress/desktop relay 与 pricing 均 ready。
-- Mac DEV Worker 使用 exact-SHA worktree 保持单实例运行，`workerOnline=true`、`browserReady=true`、`egressVerified=true`、`desktopRelayReady=true`、`queueDepth=0`、`concurrency=1`。LaunchAgent 仍存在 Docker readiness 竞态，因此不将 LaunchAgent 本身当作在线证据；生产 Worker 与部署未修改。
-- Runtime V2 仍关闭、rollout=0；`b5121eb9…` 尚未签发新的 live-eval gate，完整 24-slot V1/V2、真实 Kolors 和图片匿名盲审仍未完成，因此本节不构成生产放行或 owner canary 证据。先前真实失败/ambiguous 审计回执继续保留，活动 Run、hold、reservation、queue 与冻结余额已按正式清理路径归零。
-- Runtime V2 仍关闭、rollout=0，生产部署与 Worker 未修改。新 SHA 尚未签发新的 live-eval gate，完整 24-slot V1/V2、真实 Kolors 和图片匿名盲审仍未完成，因此本节不构成生产放行或 owner canary 证据。
-- 先前真实失败 Run 的 ambiguous/失败审计回执继续保留；相关活动 Run、hold、reservation、queue 和冻结余额已按正式清理路径归零，不能通过删除审计记录制造“全零”。
+- PR #180 与 PR #181 已在 required CI 与 Release gate 全绿后合入 `dev`；当前最终不可变 DEV SHA 为 `650388a73061e4a2bdce0da33a94b381f70a625f`。Render DEV `/api/meta`、`/readyz`、`/api/agent/status` 实测 HTTP 200 且精确运行该 SHA；Vercel Preview deployment `6263239827` 状态为 `success`。迁移 `027_agent_live_eval_capacity_aggregate`、Cloudflare `@cf/openai/gpt-oss-120b`、Kolors、数据库/S3、Worker/browser/egress/desktop relay 与 pricing 均 ready。
+- Mac DEV Worker 使用 exact-SHA worktree 保持单实例运行，`workerOnline=true`、`browserReady=true`、`egressVerified=true`、`desktopRelayReady=true`、`queueDepth=0`、`concurrency=1`；LaunchAgent 仍存在 Docker readiness 竞态，不将 LaunchAgent 本身当作在线证据。生产 Worker 与部署未修改。
+- Runtime V2 仍关闭、rollout=0；`650388a…` 尚未签发新的 live-eval gate，完整 24-slot V1/V2、真实 Kolors 和图片匿名盲审仍未完成，因此本节不构成生产放行或 owner canary 证据。先前真实失败/ambiguous 审计回执继续保留，活动 Run、hold、reservation、queue 与冻结余额已按正式清理路径归零。
 
 ## 6. 发布与分支规则
 
