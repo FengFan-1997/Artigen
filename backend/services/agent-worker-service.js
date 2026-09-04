@@ -2335,11 +2335,30 @@ const createAgentWorkerService = ({
                 throw new AgentWaitingForUser(approval);
               }
             }
-            const result = await browserService.execute({
-              sandboxName,
-              request,
-              allowedOrigins: context.run.browser_config?.allowedOrigins || []
-            });
+            const allowedOrigins = context.run.browser_config?.allowedOrigins || [];
+            let result;
+            try {
+              result = await browserService.execute({
+                sandboxName,
+                request,
+                allowedOrigins
+              });
+            } catch (error) {
+              // Keep the strict HTTPS/origin boundary, but expose a bounded
+              // correction envelope so the model can repair one malformed
+              // URL without turning a safe denial into a terminal run failure.
+              if (['AGENT_BROWSER_URL_FORBIDDEN', 'AGENT_BROWSER_ORIGIN_FORBIDDEN']
+                .includes(error?.code)) {
+                throw new ApiError(error.status || 403, error.code, {
+                  retryable: false,
+                  details: {
+                    ...(error.details && typeof error.details === 'object' ? error.details : {}),
+                    allowedOrigins: allowedOrigins.slice(0, 10)
+                  }
+                });
+              }
+              throw error;
+            }
             await runService.appendStep({
               ...runLease,
               role: 'executor',

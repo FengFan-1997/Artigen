@@ -2,6 +2,13 @@
 
 更新时间：2026-09-03（Asia/Shanghai）
 
+## 2026-09-04 DEV 实机验收与来源边界修复（候选）
+
+- PR #177 已合入 `dev`，DEV 当前可部署基线为 `69af78db2b27fe0956e48d9b300ca42b9cb7049f`；Render、Vercel Preview 与 Mac DEV Worker 已按该 SHA 对齐，迁移为 027，文本模型为 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`，图片模型为 `Kwai-Kolors/Kolors`。Runtime V2 与公众 rollout 继续关闭。
+- exact-SHA live gate 已通过数据库连接容量检查（Aiven `dev_artigen`，PostgreSQL 18，max_connections=20，实测可用连接 6，门槛 4）。完整 24-slot 实机矩阵尚未通过：V2 纯文本定向重测成功；完整矩阵在调研报告槽位因真实 `AGENT_BROWSER_URL_FORBIDDEN` 中止，图片盲审未执行，因此不得宣称可进入 owner canary。
+- 后续候选 `codex/browser-origin-correction`（基于上述 SHA，尚未合入/部署）严格保持 HTTPS 与 origin allowlist，并为被拒浏览器 URL 增加一次 bounded 纠错 Observation，携带本 Run 已观察的精确 URL；新增回归测试已通过。该候选待 required CI 与新的 exact-SHA 实机证据后再决定是否合入。
+- 生产环境未在本轮修改或切流；不得将 DEV 的局部真实成功等同于生产 Agent 或 24-slot 门禁通过。`ui-review/`、网络代理与 Karing/B2U2 配置均未读取或修改。
+
 文档性质：**GitHub 正式项目状态与持久事实总入口**
 
 本文只记录已经确定并产生持久影响的产品、架构、安全、发布和运行决策。开发中的候选方案、调试过程、临时分支、逐次 Run 和下一条命令只写入被 Git 忽略的 `HANDOFF.local.md`。

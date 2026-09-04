@@ -2924,6 +2924,98 @@ test('SiliconFlow removes an unauthorized shell citation and fails closed after 
   assert.equal(rejectedShells, 3);
 });
 
+test('browser origin denials return a bounded HTTPS correction with observed URLs', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    toolCall('plan', 'update_plan', {
+      explanation: 'Inspect the allowed source.',
+      steps: [{ label: 'Inspect source', status: 'in_progress' }]
+    }),
+    toolCall('first', 'browser_dom', {
+      action: 'navigate',
+      url: 'https://www.w3.org/WAI/standards-guidelines/wcag/',
+      purpose: 'Open the allowed source'
+    }),
+    toolCall('bad', 'browser_dom', {
+      action: 'navigate',
+      url: 'http://www.w3.org/WAI/standards-guidelines/wcag/quickref/',
+      purpose: 'Open the quick reference'
+    }),
+    toolCall('second', 'browser_dom', {
+      action: 'navigate',
+      url: 'https://www.w3.org/WAI/standards-guidelines/wcag/quickref/',
+      purpose: 'Open the quick reference over HTTPS'
+    }),
+    {
+      id: 'chat-final',
+      choices: [{ message: { role: 'assistant', content: 'Source inspected.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  let browserCalls = 0;
+  const result = await provider.execute({
+    objective: 'Inspect the allowed source.',
+    capabilities: { browser: true },
+    allowedOrigins: ['https://www.w3.org'],
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      browserDom: async (request) => {
+        browserCalls += 1;
+        if (browserCalls === 2) {
+          throw new ApiError(403, 'AGENT_BROWSER_URL_FORBIDDEN', {
+            details: { allowedOrigins: ['https://www.w3.org'] }
+          });
+        }
+        return { ok: true, url: request.url, text: 'Observed source', untrusted: true };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Source inspected.');
+  assert.equal(browserCalls, 3);
+  const correction = requests
+    .flatMap((request) => request.messages || [])
+    .find((message) => (
+      message.role === 'tool' && message.content.includes('AGENT_BROWSER_URL_FORBIDDEN')
+    ));
+  assert.ok(correction);
+  assert.match(correction.content, /HTTPS only/);
+  assert.match(correction.content, /https:\/\/www\.w3\.org\/WAI\/standards-guidelines\/wcag\//);
+});
+
 test('subagent finalizes deterministically after a completed plan and two successful shell steps', async () => {
   const toolCall = (id, name, args) => ({
     id: `chat-${id}`,
