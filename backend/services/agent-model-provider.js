@@ -1765,6 +1765,17 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.shellContractValidationAttempts || 0)
     );
+    let browserOriginValidationAttempts = Math.max(
+      0,
+      Number(durable?.browserOriginValidationAttempts || 0)
+    );
+    let observedBrowserUrls = (Array.isArray(durable?.observedBrowserUrls)
+      ? durable.observedBrowserUrls
+      : [])
+      .map((value) => String(value || '').trim().slice(0, 2000))
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .slice(-20);
     let runtimeActionObserved = durable?.runtimeActionObserved === true;
     let artifactDuplicateNoticePending = durable?.artifactDuplicateNoticePending === true;
     let declaredArtifacts = (Array.isArray(durable?.declaredArtifacts)
@@ -1901,6 +1912,8 @@ class OllamaAgentModelProvider {
         artifactDuplicateNoticePending,
         shellOriginValidationAttempts,
         shellContractValidationAttempts,
+        browserOriginValidationAttempts,
+        observedBrowserUrls,
         runtimeActionObserved,
         declaredArtifacts,
         artifactRepairRequired,
@@ -2334,6 +2347,13 @@ class OllamaAgentModelProvider {
             if (pendingCall.name === 'delegate_tasks') delegationValidationAttempts = 0;
             if (pendingCall.name === 'update_plan') planValidationAttempts = 0;
             if (pendingCall.name === 'declare_artifact') artifactValidationAttempts = 0;
+            if (pendingCall.name === 'browser_dom') {
+              browserOriginValidationAttempts = 0;
+              const observedUrl = String(result?.url || '').trim().slice(0, 2000);
+              if (observedUrl && /^https:\/\//i.test(observedUrl)) {
+                observedBrowserUrls = [...new Set([...observedBrowserUrls, observedUrl])].slice(-20);
+              }
+            }
             completedOutput = {
               callId: pendingCall.callId,
               name: pendingCall.name,
@@ -2393,12 +2413,18 @@ class OllamaAgentModelProvider {
                 'AGENT_SHELL_COMMAND_FORBIDDEN'
               ].includes(error?.code)
             );
+            const correctableBrowserOriginError = (
+              pendingCall.name === 'browser_dom' &&
+              ['AGENT_BROWSER_URL_FORBIDDEN', 'AGENT_BROWSER_ORIGIN_FORBIDDEN']
+                .includes(error?.code)
+            );
             if (
               !correctableDelegationError &&
               !correctablePlanError &&
               !correctableArtifactError &&
               !correctableShellOriginError &&
-              !correctableShellContractError
+              !correctableShellContractError &&
+              !correctableBrowserOriginError
             ) {
               await callbacks.toolObservation?.({
                 callId: pendingCall.callId,
@@ -2491,6 +2517,34 @@ class OllamaAgentModelProvider {
                     'Remove every unobserved or disallowed URL and every factual claim attributed to it.',
                     'Use only exact allowed origins that browser_dom or a connector actually observed.',
                     'Retry sandbox_shell offline; do not use shell networking or broaden the source list.'
+                  ].join(' ')
+                })
+              };
+            } else if (correctableBrowserOriginError) {
+              browserOriginValidationAttempts += 1;
+              if (browserOriginValidationAttempts > 2) throw error;
+              const allowedOrigins = (Array.isArray(error?.details?.allowedOrigins)
+                ? error.details.allowedOrigins
+                : [])
+                .map((value) => String(value || '').trim())
+                .filter((value) => /^https:\/\//i.test(value))
+                .slice(0, 10);
+              completedOutput = {
+                callId: pendingCall.callId,
+                name: pendingCall.name,
+                content: JSON.stringify({
+                  success: false,
+                  errorCode: error.code,
+                  deniedOrigin: String(error?.details?.origin || '').slice(0, 240),
+                  observedUrls: observedBrowserUrls,
+                  allowedOrigins,
+                  correction: [
+                    'The browser request was rejected and no navigation or external effect occurred.',
+                    'Use HTTPS only and navigate only to an exact URL already observed in this Run or an allowed origin listed here.',
+                    'Do not replace an observed URL with a guessed homepage, change its scheme, or broaden the allowlist.',
+                    observedBrowserUrls.length
+                      ? `Observed exact URLs: ${observedBrowserUrls.join(', ')}`
+                      : 'No exact URL has been observed yet; use the HTTPS URL from the task objective once, then continue.'
                   ].join(' ')
                 })
               };
