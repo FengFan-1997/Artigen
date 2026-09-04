@@ -2,7 +2,7 @@
 
 更新时间：2026-09-03（Asia/Shanghai）
 
-## 2026-09-04 Cloudflare GPT-OSS 强制工具 envelope 兼容修复（候选 PR #179）
+## 2026-09-04 Cloudflare GPT-OSS 强制工具 envelope 兼容修复（候选 PR #179，required CI 待完成）
 
 - Cloudflare Workers AI 的 `@cf/openai/gpt-oss-120b` 在服务端强制指定工具时，偶发将精确工具名与参数序列化到 `message.content`，而不是结构化 `tool_calls`；此前真实 Agent 任务可能因此在参数解析阶段以 `AGENT_MODEL_TOOL_ARGUMENTS_INVALID` fail-closed。
 - 候选修复只在三项同时成立时恢复一次工具调用：响应是 JSON envelope、`name` 精确等于服务端刚选择的函数名、该函数仍属于当前阶段白名单。其他内容不恢复为调用，继续按普通文本/安全失败处理；原 envelope 不会写回对话上下文。
