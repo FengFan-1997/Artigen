@@ -129,11 +129,12 @@ Runtime V2 进入生产前必须同时满足：
 
 任一条件缺失时，公众 rollout、owner canary 和生产发布继续关闭。
 
-## 5.1 当前未发布候选（2026-09-04）
+## 5.1 DEV GPT-OSS 强制工具回执兼容修复（2026-09-04）
 
-- 分支 `codex/live-gate-stats-role-fix` 在 `origin/dev` `9e5cbfc...` 上新增迁移 `027_agent_live_eval_capacity_aggregate`，以 `pg_stat_database.numbackends` 提供仅聚合、无会话内容的容量探针，兼容 Aiven 受限运行角色。
-- 该迁移和对应代码尚未 push、创建 PR、合并或部署；生产与 DEV 当前仍以迁移 `026_agent_live_eval_capacity_counter` 运行。新 exact-SHA gate、24-slot 实机矩阵和图片盲审尚未重新执行。
-- 原有 `026` 跨角色统计函数及其 `pg_read_all_stats` 安全回归保留，不能通过修改权限或删除审计记录绕过门禁。
+- PR #179 已在 required CI 与 Release gate 全绿后合入 `dev`，merge SHA 为 `ccdcc055bb51f8ac6814fd30a8272f353053b9ed`。修复针对 Cloudflare GPT-OSS 在强制工具选择时把合法 JSON 放入 `message.content`、却返回空 `tool_calls` 的上游兼容问题；服务端仅在 `name` 精确匹配当前 allowlist 与被强制工具时恢复调用，不匹配继续 fail-closed。
+- GitHub push Quality Gate `33864510151` 的 Core、Harness/chaos、Chromium/Firefox/WebKit desktop 与移动/平板分片、Release gate 均成功；Render DEV live deployment 与 Vercel Preview deployment `6262678416` 均已实测对应该 SHA。DEV `/api/meta`、`/readyz`、`/api/agent/status` 返回 200，迁移 `027_agent_live_eval_capacity_aggregate`、Cloudflare `@cf/openai/gpt-oss-120b`、Kolors、数据库/S3、Worker/browser/egress/desktop relay 与 pricing 均 ready。
+- Runtime V2 仍关闭、rollout=0，生产部署与 Worker 未修改。新 SHA 尚未签发新的 live-eval gate，完整 24-slot V1/V2、真实 Kolors 和图片匿名盲审仍未完成，因此本节不构成生产放行或 owner canary 证据。
+- 先前真实失败 Run 的 ambiguous/失败审计回执继续保留；相关活动 Run、hold、reservation、queue 和冻结余额已按正式清理路径归零，不能通过删除审计记录制造“全零”。
 
 ## 6. 发布与分支规则
 
