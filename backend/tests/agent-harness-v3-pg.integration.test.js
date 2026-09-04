@@ -38,7 +38,7 @@ test('live-eval capacity counter exposes only a cross-role client total', {
   skip: !enabled,
   timeout: 30_000
 }, async () => {
-  const adminPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  const adminPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
   const suffix = crypto.randomBytes(6).toString('hex');
   const readerRole = `artigen_capacity_reader_${suffix}`;
   const otherRole = `artigen_capacity_other_${suffix}`;
@@ -51,8 +51,8 @@ test('live-eval capacity counter exposes only a cross-role client total', {
   let otherCreated = false;
   let noInheritOwnerCreated = false;
   let functionOwnerChanged = false;
-  let readerPool;
-  let otherPool;
+  let readerClient;
+  let otherClient;
   try {
     const identity = (await adminPool.query(
       `SELECT current_database() AS database_name,
@@ -70,16 +70,15 @@ test('live-eval capacity counter exposes only a cross-role client total', {
     otherCreated = true;
     await adminPool.query(`GRANT CONNECT ON DATABASE ${databaseName} TO ${readerRole}, ${otherRole}`);
 
-    const readerUrl = new URL(process.env.DATABASE_URL);
-    readerUrl.username = readerRole;
-    readerUrl.password = readerPassword;
-    const otherUrl = new URL(process.env.DATABASE_URL);
-    otherUrl.username = otherRole;
-    otherUrl.password = otherPassword;
-    readerPool = new Pool({ connectionString: readerUrl.toString(), max: 1 });
-    otherPool = new Pool({ connectionString: otherUrl.toString(), max: 1 });
-    await otherPool.query('SELECT 1');
-    const observed = (await readerPool.query(`
+    // Keep both role identities on checked-out clients so Unix-socket CI URLs
+    // and TCP URLs exercise the same cross-role visibility without rebuilding
+    // a credential-bearing URL.
+    otherClient = await adminPool.connect();
+    await otherClient.query(`SET ROLE ${quotePgIdentifier(otherRole)}`);
+    await otherClient.query('SELECT 1');
+    readerClient = await adminPool.connect();
+    await readerClient.query(`SET ROLE ${quotePgIdentifier(readerRole)}`);
+    const observed = (await readerClient.query(`
       SELECT public.artigen_live_eval_client_connection_count() AS privileged_count,
              (SELECT count(*)::int
                 FROM pg_stat_activity
@@ -99,13 +98,13 @@ test('live-eval capacity counter exposes only a cross-role client total', {
       `ALTER FUNCTION public.artigen_live_eval_client_connection_count() OWNER TO ${noInheritOwnerRole}`
     );
     functionOwnerChanged = true;
-    await readerPool.query('CREATE TEMP TABLE pg_roles (rolname text, rolsuper boolean, oid oid)');
-    await readerPool.query(
+    await readerClient.query('CREATE TEMP TABLE pg_roles (rolname text, rolsuper boolean, oid oid)');
+    await readerClient.query(
       'INSERT INTO pg_roles (rolname, rolsuper, oid) VALUES ($1, true, $2)',
       [noInheritOwnerRole, noInheritOwnerOid]
     );
     await assert.rejects(
-      readerPool.query('SELECT public.artigen_live_eval_client_connection_count()'),
+      readerClient.query('SELECT public.artigen_live_eval_client_connection_count()'),
       (error) => error?.code === '42501'
         && error?.message === 'ARTIGEN_LIVE_EVAL_STATS_OWNER_NOT_READY'
     );
@@ -118,8 +117,13 @@ test('live-eval capacity counter exposes only a cross-role client total', {
         cleanupErrors.push(error);
       }
     };
-    await cleanup(() => readerPool?.end());
-    await cleanup(() => otherPool?.end());
+    await cleanup(() => readerClient?.query('RESET ROLE'));
+    await cleanup(() => otherClient?.query('RESET ROLE'));
+    // Destroy these sessions instead of returning them to the pool: the
+    // reader session owns a temporary pg_roles fixture that otherwise keeps
+    // the synthetic role alive during cleanup.
+    await cleanup(() => readerClient?.release(true));
+    await cleanup(() => otherClient?.release(true));
     if (functionOwnerChanged) {
       await cleanup(async () => {
         await adminPool.query(
@@ -163,6 +167,44 @@ test('live-eval capacity counter exposes only a cross-role client total', {
     if (cleanupErrors.length > 0) {
       throw new AggregateError(cleanupErrors, 'Failed to clean live-eval capacity fixtures');
     }
+  }
+});
+
+test('aggregate live-eval capacity counter works for a restricted role without session access', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const adminPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  const suffix = crypto.randomBytes(6).toString('hex');
+  const restrictedRole = `artigen_capacity_aggregate_${suffix}`;
+  const restrictedPassword = crypto.randomBytes(18).toString('hex');
+  let databaseName;
+  let roleCreated = false;
+  let adminClient;
+  try {
+    databaseName = String((await adminPool.query('SELECT current_database() AS database_name')).rows[0].database_name);
+    await adminPool.query(`CREATE ROLE ${restrictedRole} LOGIN PASSWORD '${restrictedPassword}'`);
+    roleCreated = true;
+    await adminPool.query(`GRANT CONNECT ON DATABASE ${databaseName} TO ${restrictedRole}`);
+    // Use SET ROLE so Unix-socket CI URLs and TCP URLs exercise the same
+    // restricted identity without reconstructing a credential-bearing URL.
+    adminClient = await adminPool.connect();
+    await adminClient.query(`SET ROLE ${quotePgIdentifier(restrictedRole)}`);
+    const observed = (await adminClient.query(`
+      SELECT public.artigen_live_eval_client_connection_count_aggregate() AS aggregate_count,
+             pg_has_role(current_user, 'pg_read_all_stats', 'USAGE') AS has_stats
+    `)).rows[0];
+    await adminClient.query('RESET ROLE');
+    assert.equal(observed.has_stats, false);
+    assert.ok(Number.isInteger(Number(observed.aggregate_count)));
+    assert.ok(Number(observed.aggregate_count) >= 1);
+  } finally {
+    adminClient?.release();
+    if (roleCreated) {
+      await adminPool.query(`REVOKE CONNECT ON DATABASE ${databaseName} FROM ${restrictedRole}`).catch(() => {});
+      await adminPool.query(`DROP ROLE IF EXISTS ${restrictedRole}`).catch(() => {});
+    }
+    await adminPool.end();
   }
 });
 
@@ -817,7 +859,7 @@ test('Harness V3 drives a zero-file text run through the real PostgreSQL runtime
   try {
     const readiness = await checkDatabase(pool);
     assert.equal(readiness.ok, true);
-    assert.equal(readiness.migration, '026_agent_live_eval_capacity_counter');
+    assert.equal(readiness.migration, '027_agent_live_eval_capacity_aggregate');
     harness = await AgentRuntimeHarness.create({
       pool,
       providerScript: [

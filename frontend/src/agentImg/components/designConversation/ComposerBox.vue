@@ -1,5 +1,5 @@
 <template>
-  <form class="composer-box" :class="{ compact }" @submit.prevent="emit('submit')">
+  <form class="composer-box" :class="{ compact }" @submit="onSubmit">
     <textarea
       ref="textarea"
       :value="draft"
@@ -28,7 +28,7 @@
         <span>{{ attachments.length ? `${attachments.length} ${attachmentCountLabel}` : attachLabel }}</span>
       </button>
       <span v-if="attachments.length" class="privacy">{{ attachmentHint }}</span>
-      <button class="send" type="submit" :disabled="busy || !draft.trim()" :aria-label="sendLabel">
+      <button class="send" type="submit" :disabled="busy || !draft.trim()" :aria-label="sendLabel" @click="onSendClick">
         <WorkspaceIcon name="send" :size="20" />
       </button>
     </div>
@@ -77,6 +77,16 @@ const onKeydown = (event: KeyboardEvent) => {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
   event.preventDefault();
   if (!props.busy && props.draft.trim()) emit('submit');
+};
+const onSubmit = (event: SubmitEvent) => {
+  event.preventDefault();
+  emit('submit');
+};
+// A native double-click can dispatch a second submit after a very fast
+// request has already resolved. Suppress only that second pointer activation;
+// an intentional later click must still be allowed to refresh the quote.
+const onSendClick = (event: MouseEvent) => {
+  if (event.detail > 1) event.preventDefault();
 };
 const formatBytes = (bytes: number) => bytes < 1024 * 1024
   ? `${Math.max(1, Math.round(bytes / 1024))} KB`
