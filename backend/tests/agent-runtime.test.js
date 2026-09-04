@@ -41,11 +41,43 @@ const {
   functionToolsForProfile,
   normalizeReportPdfToolAlias,
   ollamaFileTools,
+  recoverForcedToolCallFromContent,
   ollamaUsageCredits,
   siliconFlowRequestTimeoutMs,
   siliconFlowUsageCredits,
   usageCredits
 } = require('../services/agent-model-provider');
+
+test('Cloudflare GPT-OSS forced tool envelopes are salvaged only for an exact allowlisted tool', () => {
+  const allowed = new Set(['sandbox_shell', 'update_plan']);
+  const call = recoverForcedToolCallFromContent({
+    content: JSON.stringify({
+      name: 'sandbox_shell',
+      script: "printf '%s' 'ok'",
+      purpose: 'write a small file'
+    }),
+    toolChoice: { type: 'function', function: { name: 'sandbox_shell' } },
+    allowedToolNames: allowed,
+    callIdSeed: 'test-run:1'
+  });
+  assert.equal(call?.function?.name, 'sandbox_shell');
+  assert.deepEqual(JSON.parse(call.function.arguments), {
+    script: "printf '%s' 'ok'",
+    purpose: 'write a small file'
+  });
+  assert.match(call.id, /^salvaged-[a-f0-9]{24}$/u);
+
+  assert.equal(recoverForcedToolCallFromContent({
+    content: JSON.stringify({ name: 'analysis', path: 'not-a-tool' }),
+    toolChoice: { type: 'function', function: { name: 'sandbox_shell' } },
+    allowedToolNames: allowed
+  }), null);
+  assert.equal(recoverForcedToolCallFromContent({
+    content: JSON.stringify({ name: 'sandbox_shell', script: 'x' }),
+    toolChoice: { type: 'function', function: { name: 'sandbox_shell' } },
+    allowedToolNames: new Set(['update_plan'])
+  }), null);
+});
 
 test('SiliconFlow Agent timeout covers real Qwen3 tool latency and stays bounded', () => {
   assert.equal(siliconFlowRequestTimeoutMs({}), 300_000);

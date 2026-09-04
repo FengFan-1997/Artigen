@@ -696,6 +696,53 @@ const normalizeOllamaArguments = (raw) => {
   return parseArguments(raw);
 };
 
+// Cloudflare's GPT-OSS harmony adapter can occasionally serialize a forced
+// function call into message.content instead of message.tool_calls.  Salvage
+// only the unambiguous case: a JSON object whose `name` exactly matches the
+// server-selected function and is present in the already-filtered allowlist.
+// Everything else remains ordinary text and therefore follows the normal
+// fail-closed path.
+const recoverForcedToolCallFromContent = ({
+  content,
+  toolChoice,
+  allowedToolNames,
+  callIdSeed = ''
+} = {}) => {
+  const forcedName = String(toolChoice?.function?.name || '').trim();
+  if (
+    toolChoice?.type !== 'function' ||
+    !forcedName ||
+    !(allowedToolNames instanceof Set) ||
+    !allowedToolNames.has(forcedName)
+  ) return null;
+  const raw = String(content || '').trim();
+  if (!raw || (!raw.startsWith('{') && !/^```(?:json)?\s*\{/i.test(raw))) return null;
+  let candidate;
+  try {
+    candidate = parseJsonObject(raw, 'AGENT_MODEL_TOOL_ARGUMENTS_INVALID');
+  } catch {
+    return null;
+  }
+  if (String(candidate?.name || '').trim() !== forcedName) return null;
+  const nested = candidate.arguments;
+  const args = nested && typeof nested === 'object' && !Array.isArray(nested)
+    ? nested
+    : Object.fromEntries(Object.entries(candidate).filter(([key]) => key !== 'name'));
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
+  const id = crypto.createHash('sha256')
+    .update(`gptoss-forced-tool:${callIdSeed}:${forcedName}:${JSON.stringify(args)}`, 'utf8')
+    .digest('hex')
+    .slice(0, 24);
+  return {
+    id: `salvaged-${id}`,
+    type: 'function',
+    function: {
+      name: forcedName,
+      arguments: JSON.stringify(args)
+    }
+  };
+};
+
 const parseJsonObject = (raw, errorCode) => {
   const text = String(raw || '').trim();
   const unfenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] || text;
@@ -3207,7 +3254,21 @@ class OllamaAgentModelProvider {
       // Some OpenAI-compatible providers ignore parallel_tool_calls=false. Keep only
       // the first call in the assistant history so each tool result has a complete,
       // protocol-valid request/response pair and every action is policy-checked in order.
-      const calls = deliverablesComplete ? [] : returnedCalls.slice(0, 1);
+      let calls = deliverablesComplete ? [] : returnedCalls.slice(0, 1);
+      if (!calls.length && !deliverablesComplete) {
+        const salvagedCall = recoverForcedToolCallFromContent({
+          content: assistantText,
+          toolChoice: request.tool_choice,
+          allowedToolNames,
+          callIdSeed: `${runtimeContext?.runId || 'run'}:${turns}`
+        });
+        if (salvagedCall) {
+          calls = [salvagedCall];
+          // Do not leak the provider's envelope JSON as an assistant answer or
+          // feed it back into the next context window as prose.
+          assistant.content = '';
+        }
+      }
       if (calls.length) assistant.tool_calls = calls;
       messages.push(assistant);
       pendingModelResponse = null;
@@ -4096,6 +4157,7 @@ module.exports = {
   createAgentModelProvider,
   compactOllamaMessages,
   cloudflareUsageCredits,
+  recoverForcedToolCallFromContent,
   normalizeOllamaArguments,
   normalizeReportPdfToolAlias,
   assertPosixShellScript,
