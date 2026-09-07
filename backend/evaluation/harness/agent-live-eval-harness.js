@@ -78,6 +78,11 @@ const waitForConversationExecution = async ({
     throw new TypeError('AGENT_LIVE_EVAL_CONVERSATION_SERVICE_REQUIRED');
   }
   const deadline = now() + Math.max(1_000, Math.min(5 * 60_000, Number(timeoutMs) || 120_000));
+  // Keep the polling loop alive even when a background planner call loses its
+  // socket/lease and leaves an unresolved Promise. Awaiting that Promise can
+  // let Node exit with journal status=running because no event-loop handle
+  // remains. A single in-flight call is enough; the DB lease serializes work.
+  let processNextJobInFlight = null;
   while (now() < deadline) {
     const hydrated = await service.getConversation({ userId, conversationId });
     const execution = hydrated.executions?.at(-1) || null;
@@ -86,7 +91,13 @@ const waitForConversationExecution = async ({
     }
     // addMessage() also starts a background planner. Calling this here is safe:
     // the database lease makes one caller the owner while the other returns no work.
-    await service.processNextJob().catch(() => {});
+    // Do not await an unresolved provider/queue Promise: the polling timer below
+    // must remain the liveness handle for this harness process.
+    if (!processNextJobInFlight) {
+      processNextJobInFlight = Promise.resolve(service.processNextJob())
+        .catch(() => {})
+        .finally(() => { processNextJobInFlight = null; });
+    }
     await waitImpl(Math.max(10, Math.min(1_000, Number(pollMs) || 100)));
   }
   throw new Error('AGENT_LIVE_EVAL_CONVERSATION_TIMEOUT');

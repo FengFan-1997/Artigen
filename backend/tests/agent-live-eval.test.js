@@ -707,6 +707,31 @@ test('Live Harness waits through the addMessage planner race before reading a re
   assert.equal(plannerCalls, 2);
 });
 
+test('Live Harness keeps polling when processNextJob never settles', async () => {
+  let reads = 0;
+  let plannerCalls = 0;
+  const execution = { routeKind: 'reply', status: 'succeeded' };
+  const result = await waitForConversationExecution({
+    service: {
+      async getConversation() {
+        reads += 1;
+        return { executions: reads < 3 ? [] : [execution] };
+      },
+      processNextJob() {
+        plannerCalls += 1;
+        return new Promise(() => {});
+      }
+    },
+    userId: 'synthetic-user',
+    conversationId: 'synthetic-conversation',
+    timeoutMs: 2_000,
+    waitImpl: async () => {}
+  });
+  assert.equal(result.execution, execution);
+  assert.equal(reads, 3);
+  assert.equal(plannerCalls, 1);
+});
+
 test('Live Harness records a safe V1 terminal failure as baseline evidence', async () => {
   const harness = Object.create(AgentLiveEvalHarness.prototype);
   harness.campaignGuard = {

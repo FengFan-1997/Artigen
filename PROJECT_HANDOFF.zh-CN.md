@@ -1,6 +1,12 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-09-03（Asia/Shanghai）
+更新时间：2026-09-07（Asia/Shanghai）
+
+## 2026-09-07 Live Harness 进程存活修复（候选 PR #183，未合入）
+
+- 候选分支 `codex/live-eval-process-liveness` 基于 DEV `7ddbb38eb97a6a67d4c15a80c99f5f31e7251ebf`，提交 `8464904e1ba0b2cf5adbe2e9558f8507a97b47fc`。修复长时间未收敛的 Planner job 使 Live Harness 进程无声退出、slot journal 停留 `running` 的问题：保留单飞处理 Promise，同时持续执行数据库轮询和有界超时；不改变 Provider 重试、回执、租约或计费语义。
+- 新增回归确认永不 resolve 的 `processNextJob()` 不会阻断轮询，Planner 不会重复调用。候选本地 `pnpm check:core` 退出码 0，`pnpm test:integration` 为 `543 passed / 3 skipped / 0 failed`；PostgreSQL 16 + 固定 MinIO deterministic `50/50`、chaos `31/31`。
+- 本提交尚未合入 `dev` 或部署；DEV 当前仍运行 `7ddbb38...`，Runtime V2 与 rollout 继续关闭。完整 24-slot 真实 Qwen/Kolors 矩阵、图片盲审与生产 canary 仍未完成，不能据此宣称上线。
 
 ## 2026-09-04 Cloudflare GPT-OSS 强制工具 envelope 兼容修复（候选 PR #179，required CI 待完成）
 
