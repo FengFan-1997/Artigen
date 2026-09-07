@@ -104,6 +104,7 @@
                 type="email"
                 :placeholder="t('login.email_placeholder')"
                 autocomplete="email"
+                @keyup.enter="sendCode"
               />
             </div>
 
@@ -129,6 +130,37 @@
                     : t('login.send_code')
               }}
             </button>
+          </div>
+
+          <div v-else-if="loginMethod === 'email_verify'">
+            <div class="sub">{{ t('login.verify_subtitle', { email }) }}</div>
+            <div class="field">
+              <div class="label">{{ t('login.code_label') }}</div>
+              <input
+                v-model.trim="code"
+                class="control"
+                inputmode="numeric"
+                maxlength="6"
+                :placeholder="t('login.code_placeholder')"
+                autocomplete="one-time-code"
+                @keyup.enter="verifyCode"
+              />
+            </div>
+
+            <button
+              class="nth-login-btn primary"
+              :disabled="verifying || !email || code.length < 6"
+              type="button"
+              @click="verifyCode"
+            >
+              {{ verifying ? t('login.verifying') : t('login.verify_btn') }}
+            </button>
+
+            <div class="row verify-actions">
+              <button class="link-btn" type="button" @click="goMethod('email')">
+                {{ t('login.back_to_resend') }}
+              </button>
+            </div>
           </div>
 
           <div v-else-if="loginMethod === 'password'">
@@ -231,7 +263,8 @@ import {
   resolveGoogleClientId,
   loginWithGoogleIdToken,
   loginWithPassword,
-  sendLoginCode
+  sendLoginCode,
+  verifyLoginCode
 } from '../api';
 import {
   getLastEmail,
@@ -249,6 +282,7 @@ import TurnstileWidget from '../components/TurnstileWidget.vue';
 import { loadGoogleIdentityScript, resetGoogleIdentityScript } from '../googleIdentity';
 import {
   beginOtpSend,
+  clearOtpFlow,
   completeOtpSend,
   failOtpSend,
   getOtpCooldownSeconds,
@@ -298,20 +332,25 @@ const googleStatusText = computed(() => {
 });
 
 const close = () => {
-  router.push('/');
+  router.push(redirectTarget.value || '/');
 };
 
 const redirectTarget = computed(() => String(route.query.redirect || '').trim());
-const loginMethod = ref<'select' | 'google' | 'email' | 'password'>('select');
+const loginMethod = ref<'select' | 'google' | 'email' | 'email_verify' | 'password'>('select');
+const code = ref('');
+const verifying = ref(false);
+const deliveryUnknown = ref(restoredLoginFlow?.deliveryStatus === 'unknown');
 
 const titleText = computed(() => {
   if (loginMethod.value === 'select') return t('login.choose_method_title');
+  if (loginMethod.value === 'email_verify') return t('login.verify_title');
   return t('login.title');
 });
 
 const subText = computed(() => {
   if (loginMethod.value === 'select') return t('login.choose_method_sub');
   if (loginMethod.value === 'google') return t('login.google_sub');
+  if (loginMethod.value === 'email_verify') return t('login.verify_subtitle', { email: email.value });
   if (loginMethod.value === 'password') return t('login.password_login_sub');
   return t('login.sub');
 });
@@ -321,6 +360,11 @@ const hintText = computed(() => {
     return t('login.choose_method_hint');
   }
   if (loginMethod.value === 'google') return t('login.google_hint');
+  if (loginMethod.value === 'email_verify' && deliveryUnknown.value) {
+    return currentLang.value === 'zh'
+      ? '邮件可能已提交发送；若已收到验证码可继续验证，否则请稍后重发。'
+      : 'The email may have been submitted. Use the code if it arrives, or resend later.';
+  }
   return t('login.hint');
 });
 
@@ -401,11 +445,9 @@ const sendCode = async () => {
     });
     turnstileRef.value?.reset();
     startCooldown(res.cooldownSec);
-    const redirect = redirectTarget.value;
-    router.push({
-      path: '/login/verify',
-      query: { ...(redirect ? { redirect } : {}) }
-    });
+    code.value = '';
+    deliveryUnknown.value = res.deliveryStatus === 'unknown';
+    loginMethod.value = 'email_verify';
   } catch (e: any) {
     turnstileRef.value?.reset();
     error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
@@ -431,7 +473,7 @@ const loginWithPasswordSubmit = async () => {
     setSavedPassword(u, p);
     setLoggedIn({ userId: res.userId });
     const redirect = redirectTarget.value;
-    router.replace(redirect || '/login/account');
+    router.replace(redirect || '/artigen');
   } catch (e: any) {
     error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
   } finally {
@@ -465,7 +507,7 @@ const renderGoogleButton = () => {
         }
         setLoggedIn({ userId: res.userId });
         const redirect = redirectTarget.value;
-        router.replace(redirect || '/login/account');
+        router.replace(redirect || '/artigen');
       } catch (e: any) {
         error.value = typeof e?.message === 'string' ? e.message : t('login.failed');
       } finally {
@@ -502,6 +544,39 @@ const retryGoogleLogin = async () => {
   if (googleSdkFailed.value) showTopTip(t('login.google_load_failed'));
 };
 
+const verifyCode = async () => {
+  if (verifying.value || sending.value) return;
+  error.value = '';
+  const e = String(email.value || '').trim().toLowerCase();
+  const c = String(code.value || '').trim();
+  if (!e) {
+    error.value = t('login.enter_email');
+    return;
+  }
+  if (!/^\d{6}$/.test(c)) {
+    error.value = t('login.invalid_code');
+    return;
+  }
+
+  verifying.value = true;
+  try {
+    const res = await verifyLoginCode(e, c);
+    if (!res.ok) {
+      error.value = res.message;
+      return;
+    }
+    setLastEmail(e);
+    upsertUser({ email: e, userId: res.userId });
+    setLoggedIn({ userId: res.userId });
+    clearOtpFlow('login');
+    router.replace(redirectTarget.value || '/artigen');
+  } catch (err: any) {
+    error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
+  } finally {
+    verifying.value = false;
+  }
+};
+
 const setMethod = (method: 'google' | 'email' | 'password' | 'select') => {
   loginMethod.value = method;
   try {
@@ -511,10 +586,12 @@ const setMethod = (method: 'google' | 'email' | 'password' | 'select') => {
 };
 
 const goMethod = (method: 'google' | 'email' | 'password') => {
+  if (method === 'email') deliveryUnknown.value = false;
   setMethod(method);
 };
 
 const backToMethods = () => {
+  code.value = '';
   setMethod('select');
 };
 
@@ -551,6 +628,12 @@ onMounted(() => {
   } catch {}
   if (entry === 'google' || entry === 'email' || entry === 'password') {
     loginMethod.value = entry;
+  }
+  if (
+    restoredLoginFlow?.challengeId &&
+    (restoredLoginFlow.deliveryStatus === 'accepted' || restoredLoginFlow.deliveryStatus === 'unknown')
+  ) {
+    loginMethod.value = 'email_verify';
   }
   const restoredCooldown = getOtpCooldownSeconds(readOtpFlow('login'));
   if (restoredCooldown > 0) startCooldown(restoredCooldown);
