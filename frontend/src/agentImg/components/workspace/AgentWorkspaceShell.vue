@@ -34,7 +34,7 @@
           <span class="brand-glyph" aria-hidden="true">A</span>
           <span class="brand-word">Artigen</span>
         </router-link>
-        <button class="icon-control desktop-only" type="button" :aria-label="zh ? '折叠左栏' : 'Collapse left panel'" @click="toggleLeft">
+        <button class="icon-control desktop-only" type="button" :aria-label="leftCollapsed ? (zh ? '展开左栏' : 'Expand left panel') : (zh ? '折叠左栏' : 'Collapse left panel')" @click="toggleLeft">
           <WorkspaceIcon name="panel-left" :size="18" />
         </button>
         <button class="icon-control mobile-only" type="button" :aria-label="zh ? '关闭历史' : 'Close history'" @click="closeLeftDrawer(true)">
@@ -614,8 +614,10 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .account-label { min-width: 0; overflow: hidden; color: var(--text); font-size: var(--font-control); font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
 .account-value { max-width: 112px; overflow: hidden; color: var(--muted-2); font-size: var(--font-meta); font-weight: 560; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .account-icon { display: grid; width: 20px; height: 20px; place-items: center; color: var(--muted); }
-.left-collapsed .brand-word,.left-collapsed .workspace-brand .icon-control,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account .account-label,.left-collapsed .workspace-account .account-value { display: none; }
-.left-collapsed .workspace-brand { justify-content: center; padding-inline: 0; }
+.left-collapsed .brand-word,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account .account-label,.left-collapsed .workspace-account .account-value { display: none; }
+.left-collapsed .workspace-brand { justify-content: space-between; gap: 2px; padding-inline: 2px; }
+.left-collapsed .workspace-brand .brand-glyph { width: 28px; height: 28px; }
+.left-collapsed .workspace-brand .icon-control { width: 30px; height: 30px; }
 .left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a,.left-collapsed .workspace-account button { justify-content: center; padding-inline: 0; }
 .left-collapsed .workspace-account button { grid-template-columns: 20px; }
 .panel-resizer { position: fixed; top: 0; bottom: 0; z-index: 45; width: 8px; cursor: col-resize; }
