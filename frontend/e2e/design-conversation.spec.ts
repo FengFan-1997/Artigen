@@ -393,6 +393,10 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await page.getByRole('button', { name: '折叠左栏' }).click();
   await expect(page.locator('.agent-workspace-shell')).toHaveClass(/left-collapsed/);
   await expect.poll(() => page.locator('.workspace-left').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(64);
+  await expect(page.getByRole('button', { name: '展开左栏' })).toBeVisible();
+  await page.getByRole('button', { name: '展开左栏' }).click();
+  await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-collapsed/);
+  await expect.poll(() => page.locator('.workspace-left').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBeGreaterThan(64);
 });
 
 test('project memory is saved only after the user confirms a literal planner suggestion', async ({ page }) => {
