@@ -36,7 +36,7 @@
 - PR [#186](https://github.com/FengFan-1997/Artigen/pull/186) 修复桌面左栏收起后隐藏唯一展开入口的问题：收起状态保留可访问的“展开左栏”按钮，并调整窄栏内品牌标记与按钮尺寸避免遮挡。
 - PR #186 required CI run `34205303773` 全部通过；本地完整 `pnpm check` 为 Playwright `543 passed / 3 skipped / 0 failed`，目标 Chromium Design Conversation 为 `10 passed`，lint、type-check 与 `git diff --check` 均通过。
 - DEV Render `/api/meta` 实测 exact SHA 为 `e5a12bb806daf69eb3a7e7c473cb736814d06c43`；`/readyz` 与 `/api/agent/status` 均 HTTP 200，Worker、浏览器、受限出口、桌面中继、GPT-OSS-120B、Kolors、pricing 与队列均 ready/0，Runtime V2 与 rollout 仍为关闭/0。
-- DEV Mac Worker 已从 `/Users/fengfan/Public/personal/Artigen-worker-dev-e5a12bb` 启动并与该 SHA 对齐。真实 Chrome 回归确认：左栏收起后“展开左栏”可见且可点击，展开后恢复完整历史栏；同一 DEV 会话完成一次免费设计咨询（未创建付费任务）和一次 IMAGE Agent Run `2ef96218-a8d7-4633-a944-f6f5985af9e1`，交付物验证通过、结算次数为 1、最终冻结为 0。
+- DEV Mac Worker 已从与该 SHA 对齐的独立 worktree 启动。真实 Chrome 回归确认：左栏收起后“展开左栏”可见且可点击，展开后恢复完整历史栏；同一 DEV 会话完成一次免费设计咨询（未创建付费任务）和一次 IMAGE Agent Run，交付物验证通过、结算次数为 1、最终冻结为 0。
 - 本节不构成生产发布、完整 24-slot V1/V2 实机矩阵或图片匿名盲审证据；生产/main、owner canary 与公众 rollout 未修改。
 
 ## 2026-09-07 登录验证码流程修复（已提交，待 DEV 验收）
