@@ -233,6 +233,20 @@ const normalizeObjective = (value) => {
   return objective;
 };
 
+// V1 Computer Agent runs are artifact-oriented. An explicit request to only
+// answer in chat must not be admitted to that runtime: without a deliverable
+// contract the model can otherwise invent files and freeze user credits before
+// completion verification rejects the run. The conversation route handles
+// these requests without creating a paid run; Runtime V2 has its own durable
+// text-only verifier and remains eligible when enabled.
+const explicitlyRequestsNoArtifact = (value) => {
+  const objective = String(value || '');
+  return /(?:不|不要|无需|无需再|无需生成|请勿)\s*(?:创建|生成|输出|交付|制作)\s*(?:任何)?\s*(?:文件|文档|产物|附件)/u.test(objective) ||
+    /(?:只|仅|只需|仅需)\s*(?:返回|回答|给出)\s*(?:文字|文本|一句话|答案)/u.test(objective) ||
+    /\b(?:no|without|don't|do not)\s+(?:create|make|generate|produce)\s+(?:any\s+)?(?:files?|artifacts?|documents?)/iu.test(objective) ||
+    /\b(?:text|answer|reply)\s*[- ]?only\b/iu.test(objective);
+};
+
 const normalizeAssetIds = (value) => {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value) || value.length > 40) {
@@ -1244,6 +1258,7 @@ const createAgentRunService = ({
 
     const result = await withTransaction(pool, async (client) => {
       const dbUserId = await resolveAgentUserId(client, userId);
+      const runtimeAssignment = resolveAgentRuntimeAssignment(config, dbUserId);
       const usage = await client.query(
         `SELECT reserved_credits,consumed_credits
            FROM agent_daily_free_usage
@@ -1282,9 +1297,16 @@ const createAgentRunService = ({
         dailyRemaining,
         freeRemaining: trialRemaining + dailyRemaining,
         walletAvailable: Number(wallet.rows[0]?.available_credits || 0),
-        runtimeAssignment: resolveAgentRuntimeAssignment(config, dbUserId)
+        runtimeAssignment
       };
     });
+    if (
+      requestedDeliverables.length === 0 &&
+      explicitlyRequestsNoArtifact(normalizedObjective) &&
+      Number(result.runtimeAssignment?.version || 1) !== 2
+    ) {
+      throw new ApiError(409, 'AGENT_TEXT_ONLY_USE_DESIGN_CHAT', { retryable: false });
+    }
     const requiredPaidHold = Math.max(0, chosenMaximum - result.freeRemaining);
     return {
       currency: 'credits',
@@ -1351,6 +1373,13 @@ const createAgentRunService = ({
     const normalizedObjective = normalizeObjective(objective);
     const normalizedAssetIds = normalizeAssetIds(assetIds);
     const normalizedDeliverables = normalizeDeliverables(deliverables);
+    if (
+      normalizedDeliverables.length === 0 &&
+      explicitlyRequestsNoArtifact(normalizedObjective) &&
+      liveConfig.runtimeV2Enabled !== true
+    ) {
+      throw new ApiError(409, 'AGENT_TEXT_ONLY_USE_DESIGN_CHAT', { retryable: false });
+    }
     const imageRequested = normalizedDeliverables.includes('image') ||
       inferRequiredDeliverables(normalizedObjective).includes('image');
     const normalizedCapabilities = normalizeCapabilities({
@@ -1500,6 +1529,13 @@ const createAgentRunService = ({
           throw new ApiError(409, 'IDEMPOTENCY_CONFLICT');
         }
         return { row: replay.rows[0], replayed: true };
+      }
+      if (
+        normalizedDeliverables.length === 0 &&
+        explicitlyRequestsNoArtifact(normalizedObjective) &&
+        !runtimeV2
+      ) {
+        throw new ApiError(409, 'AGENT_TEXT_ONLY_USE_DESIGN_CHAT', { retryable: false });
       }
       await client.query(
         'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
@@ -4917,6 +4953,7 @@ module.exports = {
   normalizeCapabilities,
   normalizeDeliverables,
   normalizeObjective,
+  explicitlyRequestsNoArtifact,
   normalizeDelegatedTasks,
   nextConsecutiveFailureCount,
   modelPricingRates,

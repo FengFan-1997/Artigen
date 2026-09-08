@@ -23,6 +23,12 @@
 
 文档性质：**GitHub 正式项目状态与持久事实总入口**
 
+## 2026-09-08 V1 纯文字意图安全收口（feature 候选，待合入 DEV）
+
+- 真实 DEV 浏览器运行确认：V1 Computer Agent 在用户明确要求“只返回文字、不生成文件”时，模型仍生成了网站源文件和预览文件；该运行已由用户停止，点数已释放，作为失败审计证据保留。
+- 候选修复在报价和创建入口增加服务端 fail-closed 意图门禁：V1 且无交付物时，明确纯文字目标直接返回 `AGENT_TEXT_ONLY_USE_DESIGN_CHAT`，不启动数据库事务、不上传附件、不冻结点数；V2 的受验证文本终态不受影响。前端提供对应引导文案。
+- 候选回归：`node --test backend/tests/agent-runtime.test.js` 为 `136/136`；`pnpm check` 为 `543 passed / 3 conditional skipped / 0 failed`。该修复尚未 push、创建 PR、合入或重新部署 DEV，不能视为线上已生效。
+
 ## 2026-09-07 登录验证码流程修复（已提交，待 DEV 验收）
 
 - 邮箱登录发送验证码后，验证码输入现在留在同一 `/login` 页面面板内，不再跳转到独立验证页；验证码会话在刷新后仍可恢复，`accepted` 与 `unknown` 交付状态均保留对应提示。

@@ -25,6 +25,7 @@ const {
   getAgentConfig,
   resolveAgentRuntimeAssignment
 } = require('../services/agent-config');
+const { explicitlyRequestsNoArtifact } = require('../services/agent-run-service');
 const { desktopViewerEndpoint } = require('../routes/agent-runs');
 const { relayEndpoint } = require('../services/agent-desktop-relay-client');
 const {
@@ -47,6 +48,13 @@ const {
   siliconFlowUsageCredits,
   usageCredits
 } = require('../services/agent-model-provider');
+
+test('explicit text-only objectives are recognized before V1 artifact admission', () => {
+  assert.equal(explicitlyRequestsNoArtifact('只返回文字，不生成任何文件。'), true);
+  assert.equal(explicitlyRequestsNoArtifact('Please answer text only; do not create any files.'), true);
+  assert.equal(explicitlyRequestsNoArtifact('生成一份品牌报告并导出 PDF。'), false);
+  assert.equal(explicitlyRequestsNoArtifact('帮我分析这个品牌的定位。'), false);
+});
 
 test('Cloudflare GPT-OSS forced tool envelopes are salvaged only for an exact allowlisted tool', () => {
   const allowed = new Set(['sandbox_shell', 'update_plan']);
@@ -5943,6 +5951,45 @@ test('live V1 createRun rejects zero pricing before opening a hold', async () =>
       idempotencyKey: 'v1-zero-pricing'
     }),
     { code: 'AGENT_PRICING_NOT_READY', status: 503 }
+  );
+  assert.equal(poolTouched, false);
+});
+
+test('live V1 text-only request is redirected before any hold or database work', async () => {
+  let poolTouched = false;
+  const accountId = 'a'.repeat(32);
+  const service = createAgentRunService({
+    pool: {
+      connect: async () => {
+        poolTouched = true;
+        throw new Error('text-only V1 request must not open a transaction');
+      }
+    },
+    env: {
+      ...encryptionEnv,
+      NODE_ENV: 'test',
+      APP_ENV: 'dev',
+      AGENT_FEATURE_ENABLED: '1',
+      AGENT_RUNTIME_DRIVER: 'live',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '1',
+      AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '1',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_PUBLIC_CAPABILITIES: 'files,shell'
+    }
+  });
+  await assert.rejects(
+    service.createRun({
+      userId: '11111111-1111-4111-8111-111111111111',
+      objective: '请只返回文字，不生成任何文件。',
+      idempotencyKey: 'v1-text-only-redirect'
+    }),
+    { code: 'AGENT_TEXT_ONLY_USE_DESIGN_CHAT', status: 409 }
   );
   assert.equal(poolTouched, false);
 });
