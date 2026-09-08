@@ -31,6 +31,14 @@
 - 回归证据：候选 `node --test backend/tests/agent-runtime.test.js` 为 `136/136`；完整 required CI run `34198576728` 全部通过（包括 Playwright `543 passed / 3 skipped`、quality `50/50`、chaos `620/620` 和 Release gate）。V1 纯文字目标现在在报价/创建前 fail-closed，转入免费设计对话，不冻结点数；有交付物的 V1 任务行为不变。
 - DEV Mac Worker 已从与上述 SHA 对齐的新隔离 worktree 启动，`workerOnline=true`、`workerModelReady=true`、`queueDepth=0`、`pricingReady=true`；本节不构成生产发布、24-slot 实机矩阵或图片盲审证据。
 
+## 2026-09-08 DEV 工作台左栏可恢复展开（已合入 DEV）
+
+- PR [#186](https://github.com/FengFan-1997/Artigen/pull/186) 修复桌面左栏收起后隐藏唯一展开入口的问题：收起状态保留可访问的“展开左栏”按钮，并调整窄栏内品牌标记与按钮尺寸避免遮挡。
+- PR #186 required CI run `34205303773` 全部通过；本地完整 `pnpm check` 为 Playwright `543 passed / 3 skipped / 0 failed`，目标 Chromium Design Conversation 为 `10 passed`，lint、type-check 与 `git diff --check` 均通过。
+- DEV Render `/api/meta` 实测 exact SHA 为 `e5a12bb806daf69eb3a7e7c473cb736814d06c43`；`/readyz` 与 `/api/agent/status` 均 HTTP 200，Worker、浏览器、受限出口、桌面中继、GPT-OSS-120B、Kolors、pricing 与队列均 ready/0，Runtime V2 与 rollout 仍为关闭/0。
+- DEV Mac Worker 已从与该 SHA 对齐的独立 worktree 启动。真实 Chrome 回归确认：左栏收起后“展开左栏”可见且可点击，展开后恢复完整历史栏；同一 DEV 会话完成一次免费设计咨询（未创建付费任务）和一次 IMAGE Agent Run，交付物验证通过、结算次数为 1、最终冻结为 0。
+- 本节不构成生产发布、完整 24-slot V1/V2 实机矩阵或图片匿名盲审证据；生产/main、owner canary 与公众 rollout 未修改。
+
 ## 2026-09-07 登录验证码流程修复（已提交，待 DEV 验收）
 
 - 邮箱登录发送验证码后，验证码输入现在留在同一 `/login` 页面面板内，不再跳转到独立验证页；验证码会话在刷新后仍可恢复，`accepted` 与 `unknown` 交付状态均保留对应提示。
