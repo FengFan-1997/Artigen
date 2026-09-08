@@ -38,7 +38,7 @@
 
 - 真实 DEV 浏览器运行确认：V1 Computer Agent 在用户明确要求“只返回文字、不生成文件”时，模型仍生成了网站源文件和预览文件；该运行已由用户停止，点数已释放，作为失败审计证据保留。
 - 候选修复在报价和创建入口增加服务端 fail-closed 意图门禁：V1 且无交付物时，明确纯文字目标直接返回 `AGENT_TEXT_ONLY_USE_DESIGN_CHAT`，不启动数据库事务、不上传附件、不冻结点数；V2 的受验证文本终态不受影响。前端提供对应引导文案。
-- 修复已通过 PR [#185](https://github.com/FengFan-1997/Artigen/pull/185) 合入 `dev`，当前 DEV exact SHA 为 `3b08adca58130540b66f088cd6e0ac33a1459f5f`；Render `/api/meta` 实测返回该 SHA，`/readyz` 与 `/api/agent/status` 均 HTTP 200，数据库、S3、Cloudflare GPT-OSS-120B、Kolors、浏览器、受限出口、桌面中继和定价均 ready，队列为 0，Runtime V2 与 rollout 均为 0。
+- 修复已通过 PR [#185](https://github.com/FengFan-1997/Artigen/pull/185) 合入 `dev`；当时 Render `/api/meta` 实测返回 `3b08adca…`，`/readyz` 与 `/api/agent/status` 均 HTTP 200，数据库、S3、Cloudflare GPT-OSS-120B、Kolors、浏览器、受限出口、桌面中继和定价均 ready，队列为 0，Runtime V2 与 rollout 均为 0。
 - 回归证据：候选 `node --test backend/tests/agent-runtime.test.js` 为 `136/136`；完整 required CI run `34198576728` 全部通过（包括 Playwright `543 passed / 3 skipped`、quality `50/50`、chaos `620/620` 和 Release gate）。V1 纯文字目标现在在报价/创建前 fail-closed，转入免费设计对话，不冻结点数；有交付物的 V1 任务行为不变。
 - DEV Mac Worker 已从与上述 SHA 对齐的新隔离 worktree 启动，`workerOnline=true`、`workerModelReady=true`、`queueDepth=0`、`pricingReady=true`；本节不构成生产发布、24-slot 实机矩阵或图片盲审证据。
 
@@ -46,7 +46,7 @@
 
 - PR [#186](https://github.com/FengFan-1997/Artigen/pull/186) 修复桌面左栏收起后隐藏唯一展开入口的问题：收起状态保留可访问的“展开左栏”按钮，并调整窄栏内品牌标记与按钮尺寸避免遮挡。
 - PR #186 required CI run `34205303773` 全部通过；本地完整 `pnpm check` 为 Playwright `543 passed / 3 skipped / 0 failed`，目标 Chromium Design Conversation 为 `10 passed`，lint、type-check 与 `git diff --check` 均通过。
-- DEV Render `/api/meta` 实测 exact SHA 为 `e5a12bb806daf69eb3a7e7c473cb736814d06c43`；`/readyz` 与 `/api/agent/status` 均 HTTP 200，Worker、浏览器、受限出口、桌面中继、GPT-OSS-120B、Kolors、pricing 与队列均 ready/0，Runtime V2 与 rollout 仍为关闭/0。
+- PR #186 合入后的 DEV Render `/api/meta` 实测返回 `e5a12bb…`；`/readyz` 与 `/api/agent/status` 均 HTTP 200，Worker、浏览器、受限出口、桌面中继、GPT-OSS-120B、Kolors、pricing 与队列均 ready/0，Runtime V2 与 rollout 仍为关闭/0。后续文档提交使 `dev` 继续前进，当前值以每次 `/api/meta` 核验为准。
 - DEV Mac Worker 已从与该 SHA 对齐的独立 worktree 启动。真实 Chrome 回归确认：左栏收起后“展开左栏”可见且可点击，展开后恢复完整历史栏；同一 DEV 会话完成一次免费设计咨询（未创建付费任务）和一次 IMAGE Agent Run，交付物验证通过、结算次数为 1、最终冻结为 0。
 - 本节不构成生产发布、完整 24-slot V1/V2 实机矩阵或图片匿名盲审证据；生产/main、owner canary 与公众 rollout 未修改。
 
