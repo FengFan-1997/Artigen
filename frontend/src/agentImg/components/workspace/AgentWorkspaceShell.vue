@@ -585,7 +585,7 @@ svg { display: block; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-w
 .workspace-left,.workspace-right { overscroll-behavior: contain; }
 .workspace-left { z-index: 40; display: flex; flex-direction: column; overflow: hidden; background: var(--sidebar); }
 .workspace-brand { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 64px; padding: 10px 14px 8px 16px; }
-.brand-lockup { display: flex; align-items: center; gap: 11px; min-width: 0; color: inherit; font-size: 16px; font-weight: 700; text-decoration: none; letter-spacing: -.015em; }
+.brand-lockup { display: flex; align-items: center; gap: 11px; min-width: 0; min-height: 44px; padding: 6px 0; color: inherit; font-size: 16px; font-weight: 700; text-decoration: none; letter-spacing: -.015em; }
 .brand-glyph { display: grid; flex: 0 0 auto; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; font-weight: 760; background: var(--surface-raised); }
 .brand-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-control { display: inline-grid; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; transition: color 150ms ease,background-color 150ms ease,transform 120ms cubic-bezier(.23,1,.32,1); }
