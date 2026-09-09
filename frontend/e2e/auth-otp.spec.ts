@@ -44,13 +44,20 @@ test.describe('email OTP flow', () => {
         })
       });
     });
+    await page.route('**/api/login/verify', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, userId: 'otp-user', csrfToken: 'csrf-otp' })
+      })
+    );
 
     await page.goto('/login');
     await page.getByRole('button', { name: /邮箱登录|Email Login/i }).click();
     await page.locator('input[type="email"]').fill('friend@example.com');
     await page.locator('button.primary').click();
 
-    await expect(page).toHaveURL(/\/login\/verify(?:\?.*)?$/);
+    await expect(page).toHaveURL(/\/login(?:\?.*)?$/);
     expect(new URL(page.url()).searchParams.has('email')).toBe(false);
     expect(sendHeaders['idempotency-key']).toMatch(/^otp:/);
     expect(sendBody).toMatchObject({
@@ -64,6 +71,8 @@ test.describe('email OTP flow', () => {
     await expect(page.locator('button.primary')).toBeDisabled();
     await page.locator('input[autocomplete="one-time-code"]').fill('123456');
     await expect(page.locator('button.primary')).toBeEnabled();
+    await page.locator('button.primary').click();
+    await expect(page).toHaveURL(/\/artigen(?:\/)?$/);
   });
 
   test('keeps a delivery-unknown challenge usable after a response-loss style result', async ({
@@ -87,7 +96,7 @@ test.describe('email OTP flow', () => {
     await page.locator('input[type="email"]').fill('friend@example.com');
     await page.locator('button.primary').click();
 
-    await expect(page).toHaveURL(/\/login\/verify(?:\?.*)?$/);
+    await expect(page).toHaveURL(/\/login(?:\?.*)?$/);
     await expect(page.locator('.hint')).toContainText(/可能|may have been submitted/i);
     await page.locator('input[autocomplete="one-time-code"]').fill('123456');
     await expect(page.locator('button.primary')).toBeEnabled();

@@ -3,7 +3,7 @@
     <TitleBar />
     <main class="projects-shell">
       <section class="projects-hero">
-        <div>
+        <div class="projects-hero-copy">
           <p class="eyebrow">{{ zh ? '专业电商视觉工作台' : 'Commerce visual workspace' }}</p>
           <h1>{{ zh ? '把一套商品素材，做成一组可投放视觉' : 'Turn one product kit into a launch-ready visual set' }}</h1>
           <p>
@@ -14,7 +14,7 @@
               }}
           </p>
         </div>
-        <button class="primary" type="button" @click="openComposer">
+        <button class="project-primary-action" type="button" @click="openComposer">
           {{ zh ? '创建商品视觉项目' : 'Create product visual project' }}
         </button>
       </section>
@@ -25,7 +25,7 @@
             <p class="eyebrow">{{ zh ? '新项目' : 'New project' }}</p>
             <h2 id="new-project-title">{{ zh ? '先写需求，确认生成时再登录' : 'Start the brief; sign in when you generate' }}</h2>
           </div>
-          <button class="text-button" type="button" @click="composerOpen = false">
+          <button class="project-text-action" type="button" @click="composerOpen = false">
             {{ zh ? '收起' : 'Close' }}
           </button>
         </div>
@@ -49,8 +49,8 @@
           </label>
         </div>
         <div class="composer-actions">
-          <span class="status" role="status">{{ statusText }}</span>
-          <button class="primary" type="button" :disabled="creating || !draft.title" @click="submitProject">
+          <span class="project-status" role="status">{{ statusText }}</span>
+          <button class="project-primary-action" type="button" :disabled="creating || !draft.title" @click="submitProject">
             {{ creating ? (zh ? '正在创建…' : 'Creating…') : (zh ? '进入项目工作台' : 'Open project workspace') }}
           </button>
         </div>
@@ -63,10 +63,10 @@
             <h2>{{ zh ? '继续你的创作' : 'Continue creating' }}</h2>
           </div>
           <div v-if="isAuthed" class="list-actions">
-            <button class="text-button" type="button" :disabled="loading" @click="toggleTrash">
+            <button class="project-text-action" type="button" :disabled="loading" @click="toggleTrash">
               {{ showTrashed ? (zh ? '返回项目' : 'Active projects') : (zh ? '回收站' : 'Trash') }}
             </button>
-            <button class="text-button" type="button" :disabled="loading" @click="loadProjects">
+            <button class="project-text-action" type="button" :disabled="loading" @click="loadProjects">
               {{ zh ? '刷新' : 'Refresh' }}
             </button>
           </div>
@@ -76,7 +76,7 @@
         <div v-else-if="!isAuthed" class="empty-state">
           <strong>{{ zh ? '无需登录也能先写需求' : 'Draft without signing in' }}</strong>
           <span>{{ zh ? '项目同步、生成报价和长期资产保存需要登录。' : 'Sign in to sync projects, quote generations, and retain assets.' }}</span>
-          <button class="secondary" type="button" @click="requestLogin">{{ zh ? '登录查看项目' : 'Sign in to view projects' }}</button>
+          <button class="project-secondary-action" type="button" @click="requestLogin">{{ zh ? '登录查看项目' : 'Sign in to view projects' }}</button>
         </div>
         <div v-else-if="!projects.length" class="empty-state">
           <strong>{{ zh ? '还没有项目' : 'No projects yet' }}</strong>
@@ -347,17 +347,19 @@ onBeforeUnmount(() => window.removeEventListener('app-auth-changed', handleAuthC
 </script>
 
 <style scoped>
-.projects-page { min-height: 100vh; background: #080a0d; color: #f7f8f2; }
+.projects-page { min-height: 100vh; color: #f7f8f2; text-align: left; background: #080a0d; }
 .projects-shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 56px 0 96px; }
 .projects-hero { display: flex; justify-content: space-between; gap: 48px; align-items: end; padding: 48px; border: 1px solid #2a302d; border-radius: 28px; background: radial-gradient(circle at 82% 0, rgba(204,255,0,.16), transparent 34%), #111512; }
+.projects-hero-copy { flex: 1 1 0; min-width: 0; }
 .projects-hero h1 { max-width: 760px; margin: 8px 0 14px; font-size: clamp(36px, 5vw, 68px); line-height: .98; letter-spacing: -.055em; }
 .projects-hero p:not(.eyebrow) { max-width: 680px; color: #aeb7af; font-size: 17px; line-height: 1.7; }
 .eyebrow { margin: 0; color: #ccff00; font-size: 12px; font-weight: 850; letter-spacing: .16em; text-transform: uppercase; }
-.primary,.secondary,.text-button { border: 0; cursor: pointer; font: inherit; font-weight: 800; }
-.primary { flex: 0 0 auto; min-height: 48px; padding: 0 22px; border-radius: 14px; background: #ccff00; color: #111; }
-.primary:disabled { opacity: .45; cursor: not-allowed; }
-.secondary { padding: 11px 16px; border: 1px solid #3d493e; border-radius: 12px; background: #181d19; color: #fff; }
-.text-button { background: none; color: #c9d0ca; }
+.project-primary-action,.project-secondary-action,.project-text-action { display: inline-flex; width: auto; height: auto; align-items: center; justify-content: center; border: 0; box-shadow: none; cursor: pointer; font: inherit; font-weight: 800; }
+.project-primary-action { flex: 0 0 auto; min-height: 48px; padding: 0 22px; border-radius: 14px; color: #111; background: #ccff00; }
+.project-primary-action:disabled { opacity: .45; cursor: not-allowed; }
+.project-secondary-action { min-height: 44px; padding: 11px 16px; border: 1px solid #3d493e; border-radius: 12px; color: #fff; background: #181d19; }
+.project-text-action { min-height: 44px; padding: 0 8px; color: #c9d0ca; background: none; }
+.project-primary-action:focus-visible,.project-secondary-action:focus-visible,.project-text-action:focus-visible,.card-text-button:focus-visible,.open-link:focus-visible { outline: 2px solid #ccff00; outline-offset: 3px; }
 .composer-card,.projects-section { margin-top: 28px; padding: 32px; border: 1px solid #242b26; border-radius: 24px; background: #101411; }
 .section-heading { display: flex; justify-content: space-between; gap: 20px; align-items: start; margin-bottom: 26px; }
 .section-heading h2 { margin: 5px 0 0; font-size: 26px; }
@@ -370,7 +372,7 @@ input:focus,textarea:focus { border-color: #ccff00; box-shadow: 0 0 0 3px rgba(2
 textarea { resize: vertical; }
 .upload small { color: #8e998f; font-weight: 500; }
 .composer-actions { display: flex; justify-content: flex-end; align-items: center; gap: 18px; margin-top: 22px; }
-.status { flex: 1; color: #f4c766; font-size: 13px; }
+.project-status { flex: 1; color: #f4c766; font-size: 13px; }
 .project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .project-card { overflow: hidden; border: 1px solid #293029; border-radius: 18px; background: #0b0e0c; }
 .cover { display: grid; place-items: center; aspect-ratio: 4 / 3; overflow: hidden; background: #181f19; color: #ccff00; font-size: 56px; font-weight: 900; text-decoration: none; }
@@ -383,6 +385,6 @@ textarea { resize: vertical; }
 .card-text-button { border: 0; padding: 0; background: none; color: #838d85; cursor: pointer; font: inherit; font-size: 12px; font-weight: 750; }
 .empty-state { display: grid; justify-items: start; gap: 10px; padding: 42px; border: 1px dashed #343d35; border-radius: 16px; color: #919b93; }
 .empty-state strong { color: #fff; font-size: 18px; }
-@media (max-width: 900px) { .projects-hero { align-items: start; flex-direction: column; padding: 32px; } .project-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 620px) { .projects-shell { width: min(100% - 24px, 1180px); padding-top: 24px; } .projects-hero,.composer-card,.projects-section { padding: 22px; border-radius: 18px; } .form-grid,.project-grid { grid-template-columns: 1fr; } .form-grid .full { grid-column: auto; } .composer-actions { align-items: stretch; flex-direction: column; } }
+@media (max-width: 900px) { .projects-hero { align-items: start; flex-direction: column; padding: 32px; } .projects-hero-copy { width: 100%; } .project-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 620px) { .projects-shell { width: min(100% - 24px, 1180px); padding-top: 24px; } .projects-hero,.composer-card,.projects-section { padding: 22px; border-radius: 18px; } .form-grid,.project-grid { grid-template-columns: 1fr; } .form-grid .full { grid-column: auto; } .composer-actions { align-items: stretch; flex-direction: column; } .composer-actions .project-primary-action { width: 100%; } }
 </style>

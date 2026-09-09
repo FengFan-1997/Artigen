@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 
 const { ApiError } = require('../lib/api-error');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const { TEXT_MODEL, LEGACY_SILICONFLOW_TEXT_MODEL } = require('../lib/agent-models');
 
 const enabled = (value) => /^(1|true|yes|on)$/i.test(String(value || '').trim());
 const normalizedEnvironment = (value) => String(value || '').trim().toLowerCase();
@@ -44,8 +45,8 @@ const agentFeatureEnabled = (env = process.env) => enabled(env.AGENT_FEATURE_ENA
 const agentWorkerEnabled = (env = process.env) => (
   agentFeatureEnabled(env) && enabled(env.AGENT_WORKER_ENABLED)
 );
-const SILICONFLOW_AGENT_MODEL = 'Qwen/Qwen3-8B';
-const CLOUDFLARE_AGENT_MODEL = '@cf/openai/gpt-oss-120b';
+const SILICONFLOW_AGENT_MODEL = LEGACY_SILICONFLOW_TEXT_MODEL;
+const CLOUDFLARE_AGENT_MODEL = TEXT_MODEL;
 const AGENT_BROWSER_MODE = 'full-approval-v1';
 const AGENT_BETA_MODE = 'owner-only-v1';
 const AGENT_AUTHENTICATED_MODE = 'authenticated-v1';

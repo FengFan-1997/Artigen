@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { ApiError } = require('../../lib/api-error');
+const { LEGACY_SILICONFLOW_TEXT_MODEL } = require('../../lib/agent-models');
 
 const jsonResponse = (body, { status = 200, headers = {} } = {}) => new Response(
   JSON.stringify(body),
@@ -83,13 +84,13 @@ class ScriptedSiliconFlowTransport {
     trace = null,
     controller = null,
     traceRequestObservations = true,
-    textModel = 'Qwen/Qwen3-8B'
+    textModel = LEGACY_SILICONFLOW_TEXT_MODEL
   } = {}) {
     this.script = [...script];
     this.trace = trace;
     this.controller = controller;
     this.traceRequestObservations = traceRequestObservations !== false;
-    this.textModel = String(textModel || 'Qwen/Qwen3-8B');
+    this.textModel = String(textModel || LEGACY_SILICONFLOW_TEXT_MODEL);
     this.requests = [];
     this.responseIndex = 0;
     this.tracedToolCalls = new Set();
@@ -178,7 +179,7 @@ class ScriptedSiliconFlowTransport {
     }
     if (
       tools.length &&
-      this.textModel === 'Qwen/Qwen3-8B' &&
+      this.textModel === LEGACY_SILICONFLOW_TEXT_MODEL &&
       body.enable_thinking !== false
     ) {
       throw new Error('AGENT_HARNESS_ACTOR_THINKING_FORBIDDEN');

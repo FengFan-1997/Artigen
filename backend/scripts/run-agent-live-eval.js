@@ -7,6 +7,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const { TEXT_MODEL, LEGACY_SILICONFLOW_TEXT_MODEL } = require('../lib/agent-models');
 const { resolvePoolSsl } = require('../db/pool');
 const { createAgentRunService } = require('../services/agent-run-service');
 const { createAgentSandboxProvider } = require('../services/agent-sandbox-provider');
@@ -228,8 +229,8 @@ const loadLiveEvalSecrets = ({
 const currentLiveTextModel = () => String(
   process.env.AGENT_MODEL_NAME || (
     String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'siliconflow'
-      ? 'Qwen/Qwen3-8B'
-      : '@cf/openai/gpt-oss-120b'
+      ? LEGACY_SILICONFLOW_TEXT_MODEL
+      : TEXT_MODEL
   )
 ).trim();
 

@@ -273,15 +273,24 @@ const runtimeInvariantErrors = (snapshot, reconstructed = reconstructRuntimeStat
     run.runtime_profile_summary &&
     Object.keys(run.runtime_profile_summary).length === 0 &&
     events.some((event) => event.event_type === 'model.call.legacy_pricing_absorbed');
-  // A successful pre-025 V2 run may have settled before the pricing profile
-  // columns existed.  There is no absorption event in those historical rows,
-  // so accept the empty profile only when all receipts/reservations are
-  // terminal and no model call is still running.  Non-terminal runs continue
-  // to fail closed and require a complete profile before recovery.
+  // A pre-025 V1/V2 run may have settled before the immutable pricing profile
+  // existed. Its summary can be populated with legacy model/skill metadata,
+  // so the absence of a nested pricing snapshot (rather than an empty object
+  // specifically) is the compatibility signal. Accept it only after every
+  // receipt/reservation is terminal and no model call is running. Non-terminal
+  // runs continue to fail closed and require a complete profile before recovery.
+  const pricingSnapshot = run.runtime_profile_summary?.modelConfig?.pricingSnapshot;
+  const hasValidPricingSnapshot = pricingSnapshot && typeof pricingSnapshot === 'object' &&
+    !Array.isArray(pricingSnapshot) &&
+    typeof pricingSnapshot.provider === 'string' && pricingSnapshot.provider.trim() &&
+    typeof pricingSnapshot.model === 'string' && pricingSnapshot.model.trim() &&
+    Number.isFinite(Number(pricingSnapshot.inputCreditsPerMillion)) &&
+    Number.isFinite(Number(pricingSnapshot.outputCreditsPerMillion)) &&
+    Number(pricingSnapshot.inputCreditsPerMillion) > 0 &&
+    Number(pricingSnapshot.outputCreditsPerMillion) > 0;
   const legacyPricingUnknown = terminal &&
     Number(run.runtime_version || 1) <= 2 &&
-    run.runtime_profile_summary &&
-    Object.keys(run.runtime_profile_summary).length === 0 &&
+    !hasValidPricingSnapshot &&
     !receipts.some((entry) => ['queued', 'dispatched', 'received'].includes(entry.state)) &&
     !reservations.some((entry) => entry.state === 'reserved') &&
     !modelCalls.some((entry) => entry.outcome === 'running');

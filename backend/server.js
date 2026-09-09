@@ -11,6 +11,7 @@ require("dotenv").config({
   override: false,
 });
 const { fetchWithTimeout } = require("./lib/fetch-utils");
+const { TEXT_MODEL } = require("./lib/agent-models");
 const {
   fetchRemoteImageWithPinnedDns,
   validateRemoteImageMime,
@@ -128,7 +129,7 @@ const sharedProviderScheduler = isDatabaseConfigured()
   ? createProviderScheduler({
       pool: getPool(),
       env: process.env,
-      providerKey: `${String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase()}:${String(process.env.AGENT_MODEL_NAME || '@cf/openai/gpt-oss-120b').trim()}`,
+      providerKey: `${String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase()}:${String(process.env.AGENT_MODEL_NAME || TEXT_MODEL).trim()}`,
     })
   : null;
 const configuredTextProvider = String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare')
@@ -165,7 +166,7 @@ const scheduledTextGenerate = (input) => {
   if (textProviderMisconfigured) return rejectMisconfiguredTextProvider();
   return callTextGenerate({
     ...input,
-    model: input?.model || '@cf/openai/gpt-oss-120b',
+    model: input?.model || TEXT_MODEL,
     providerName: 'cloudflare',
     providerReady: Boolean(
       resolvedProviderEnv.CLOUDFLARE_ACCOUNT_ID &&

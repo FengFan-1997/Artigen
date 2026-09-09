@@ -349,6 +349,67 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
   }
 });
 
+test('every visible workspace chrome control performs its advertised action', async ({ page }) => {
+  let runListRequests = 0;
+  await installSharedApi(page);
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/agent-runs' && request.method() === 'GET') runListRequests += 1;
+  });
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto('/artigen/agent');
+  await expectWorkspaceGeometry(page);
+
+  const initialRequests = runListRequests;
+  await page.getByRole('button', { name: '刷新任务' }).click();
+  await expect.poll(() => runListRequests).toBeGreaterThan(initialRequests);
+
+  const objective = page.getByRole('textbox', { name: '任务目标' });
+  await objective.fill('这段草稿应被新任务按钮清空');
+  await page.locator('.new-task').click();
+  await expect(objective).toHaveValue('');
+
+  await page.getByRole('button', { name: '折叠左栏' }).click();
+  await page.reload();
+  const expandLeft = page.getByRole('button', { name: '展开左栏' });
+  await expect(expandLeft).toBeVisible();
+  await expandLeft.click();
+  await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-collapsed/);
+
+  await page.getByRole('link', { name: /点数：/ }).click();
+  await expect(page).toHaveURL('/artigen/usage');
+  await page.goBack();
+  await expect(page).toHaveURL('/artigen/agent');
+
+  const shell = page.locator('.agent-workspace-shell');
+  await page.getByRole('button', { name: '外观：深色' }).click();
+  await expect(shell).toHaveAttribute('data-theme', 'light');
+
+  await page.getByRole('link', { name: '账户设置' }).click();
+  await expect(page).toHaveURL('/login/account');
+  await page.goBack();
+  await expect(page).toHaveURL('/artigen/agent');
+
+  await page.getByRole('button', { name: '关闭检查器' }).click();
+  await expect(shell).toHaveClass(/right-collapsed/);
+  await page.getByRole('button', { name: '打开检查器' }).click();
+  await expect(shell).not.toHaveClass(/right-collapsed/);
+  for (const name of ['环境', '计划', '子 Agent', '电脑', '文件']) {
+    const tab = page.getByRole('tab', { name });
+    await tab.click();
+    await expect(tab).toHaveAttribute('aria-selected', 'true');
+  }
+
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: /添加参考:/ }).click();
+  await chooserPromise;
+
+  await expect(page.getByRole('button', { name: '发送任务目标' })).toBeDisabled();
+  await objective.fill('验证发送按钮只请求一次报价');
+  await page.getByRole('button', { name: '发送任务目标' }).click();
+  await expect(page.locator('.quote-summary')).toContainText('18–42');
+});
+
 test('command palette is global, keyboard trapped, and returns focus on Escape', async ({ page }) => {
   await installSharedApi(page);
   await page.setViewportSize({ width: 1440, height: 960 });
@@ -775,7 +836,7 @@ test('dark, light, system and reduced-motion workspace states keep names and con
     await page.screenshot({ path: path.resolve(process.cwd(), `../.artifacts/workspace-micro-alignment-${capturePass}/theme-dark-reduced-motion.png`), animations: 'disabled' });
   }
 
-  const themeControl = page.locator('.workspace-account button').nth(1);
+  const themeControl = page.getByRole('button', { name: /外观：/ });
   await themeControl.click();
   await expect(shell).toHaveAttribute('data-theme', 'light');
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));

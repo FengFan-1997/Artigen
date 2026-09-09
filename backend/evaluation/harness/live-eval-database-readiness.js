@@ -1,6 +1,7 @@
 const EXPECTED_DATABASE_NAME = 'dev_artigen';
 const EXPECTED_POSTGRES_MAJOR = 18;
 const MIN_AVAILABLE_CONNECTIONS = 4;
+const LIVE_EVAL_CAPACITY_MIGRATION = '027_agent_live_eval_capacity_aggregate';
 
 const readinessError = (code) => Object.assign(new Error(code), { code });
 
@@ -36,7 +37,7 @@ const assertLiveEvalDatabaseReadiness = async ({
                     AS superuser_reserved_connections,
                   COALESCE(NULLIF(current_setting('reserved_connections', true), ''), '0')::int
                     AS reserved_connections,
-                  public.artigen_live_eval_client_connection_count()
+                  public.artigen_live_eval_client_connection_count_aggregate()
                     AS used_connections`,
     query_timeout: 10_000
   });
@@ -87,6 +88,7 @@ const assertLiveEvalDatabaseReadiness = async ({
 module.exports = {
   EXPECTED_DATABASE_NAME,
   EXPECTED_POSTGRES_MAJOR,
+  LIVE_EVAL_CAPACITY_MIGRATION,
   MIN_AVAILABLE_CONNECTIONS,
   assertLiveEvalDatabaseReadiness,
   resolveLiveEvalPostgresMajor

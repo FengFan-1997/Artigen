@@ -23,7 +23,7 @@ test('PostgreSQL Runtime V2 scheduler prioritizes interactive work and exposes c
   try {
     const readiness = await checkDatabase(pool);
     assert.equal(readiness.ok, true);
-    assert.equal(readiness.migration, '026_agent_live_eval_capacity_counter');
+    assert.equal(readiness.migration, '027_agent_live_eval_capacity_aggregate');
 
     const modelCalls = createModelCallService({ pool, retentionDays: 1 });
     const call = await modelCalls.start({

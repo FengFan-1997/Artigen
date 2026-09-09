@@ -107,7 +107,7 @@ const main = async () => {
     const missing = tables.rows.filter((row) => !row.present).map((row) => row.table_name);
     const migration = await pool.query(
       `SELECT EXISTS (SELECT 1 FROM pgmigrations WHERE name=$1) AS applied,
-              to_regprocedure('public.artigen_live_eval_client_connection_count()') IS NOT NULL
+                to_regprocedure('public.artigen_live_eval_client_connection_count_aggregate()') IS NOT NULL
                 AS has_live_eval_capacity_fn`,
       [REQUIRED_MIGRATION]
     );

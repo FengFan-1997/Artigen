@@ -670,6 +670,7 @@ watch(() => isAuthed.value, handleAuthChanged);
 .logo {
   text-decoration: none;
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
   flex: 0 0 auto;
 }

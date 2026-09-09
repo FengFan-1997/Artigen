@@ -1,13 +1,13 @@
 const crypto = require('crypto');
 const Ajv = require('ajv');
 const { ApiError } = require('../lib/api-error');
+const { SKILLS: CANONICAL_SKILLS } = require('./agent-skill-compiler');
+const { TEXT_MODEL, IMAGE_MODEL } = require('../lib/agent-models');
 
 const RUNTIME_VERSION = 2;
 const CHECKPOINT_VERSION = 4;
 const PROMPT_ENGINE_VERSION = 'skills-v2';
 const STRUCTURED_OUTPUT_POLICY = 'adaptive-first-nonthinking-correction-v1';
-const TEXT_MODEL = '@cf/openai/gpt-oss-120b';
-const IMAGE_MODEL = 'Kwai-Kolors/Kolors';
 const DELIVERABLES = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image']);
 const PHASES = new Set(['research', 'production', 'verification', 'completion']);
 const COMPLEXITIES = new Set(['simple', 'medium', 'high']);
@@ -130,7 +130,9 @@ const constitutionForModel = (textModel = TEXT_MODEL) => [
 ].join('\n');
 const CONSTITUTION = constitutionForModel(TEXT_MODEL);
 
-const SKILLS = Object.freeze({
+// Kept only as a migration reference for old checkpoints. Runtime selection
+// below always uses the canonical manifest compiled from agent-skills/manifest.json.
+const LEGACY_SKILLS = Object.freeze({
   'design-brief': Object.freeze({
     id: 'design-brief',
     version: 1,
@@ -239,6 +241,8 @@ const SKILLS = Object.freeze({
     negativeExample: 'Do not use a text model or another image model for pixels.'
   })
 });
+
+const SKILLS = CANONICAL_SKILLS;
 
 const PHASE_TOOL_ALLOWLIST = Object.freeze({
   research: new Set(['update_plan', 'delegate_tasks', 'browser_dom', 'connector_request', 'sandbox_shell']),

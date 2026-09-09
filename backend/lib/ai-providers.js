@@ -12,6 +12,7 @@ const {
   SILICONFLOW_TIMEOUT_MS,
   SILICONFLOW_REACTION_TIMEOUT_MS
 } = require('./config');
+const { TEXT_MODEL } = require('./agent-models');
 
 const { fetchWithTimeout, fetch: siliconFlowFetch } = require('./fetch-utils');
 const { isDeployedRuntime } = require('../services/agent-config');
@@ -366,7 +367,7 @@ const callCloudflareChat = async (input = {}) => {
     error.code = 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED';
     throw error;
   }
-  const model = '@cf/openai/gpt-oss-120b';
+  const model = TEXT_MODEL;
   try {
     return await callSiliconFlowChat({
       ...input,
@@ -582,7 +583,7 @@ const callTextGenerate = async ({
     providerReady === undefined ? Boolean(SILICONFLOW_API_KEY) : providerReady === true
   );
   const cloudflareText = String(providerName || '').trim().toLowerCase() === 'cloudflare' ||
-    String(model || '').trim() === '@cf/openai/gpt-oss-120b';
+    String(model || '').trim() === TEXT_MODEL;
   const canCloudflare = cloudflareText && (
     providerReady === undefined
       ? Boolean(process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_AUTH_TOKEN || CLOUDFLARE_API_TOKEN)
@@ -609,9 +610,9 @@ const callTextGenerate = async ({
   const runSiliconflow = async () => {
     const preferredModel = String(model || '').trim();
     const cloudflareText = String(providerName || '').trim().toLowerCase() === 'cloudflare' ||
-      String(preferredModel || '').trim() === '@cf/openai/gpt-oss-120b';
+    String(preferredModel || '').trim() === TEXT_MODEL;
     const resolvedModel = preferredModel || (cloudflareText
-      ? '@cf/openai/gpt-oss-120b'
+      ? TEXT_MODEL
       : FIXED_SILICONFLOW_CHAT_MODEL);
     const { text, usage, model: modelUsed, usedUrl } = await chatGenerate({
       messages: toSiliconflowMessages(),

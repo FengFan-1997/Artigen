@@ -25,6 +25,7 @@ const {
   getAgentConfig,
   resolveAgentRuntimeAssignment
 } = require('../services/agent-config');
+const { explicitlyRequestsNoArtifact } = require('../services/agent-run-service');
 const { desktopViewerEndpoint } = require('../routes/agent-runs');
 const { relayEndpoint } = require('../services/agent-desktop-relay-client');
 const {
@@ -41,11 +42,50 @@ const {
   functionToolsForProfile,
   normalizeReportPdfToolAlias,
   ollamaFileTools,
+  recoverForcedToolCallFromContent,
   ollamaUsageCredits,
   siliconFlowRequestTimeoutMs,
   siliconFlowUsageCredits,
   usageCredits
 } = require('../services/agent-model-provider');
+
+test('explicit text-only objectives are recognized before V1 artifact admission', () => {
+  assert.equal(explicitlyRequestsNoArtifact('只返回文字，不生成任何文件。'), true);
+  assert.equal(explicitlyRequestsNoArtifact('Please answer text only; do not create any files.'), true);
+  assert.equal(explicitlyRequestsNoArtifact('生成一份品牌报告并导出 PDF。'), false);
+  assert.equal(explicitlyRequestsNoArtifact('帮我分析这个品牌的定位。'), false);
+});
+
+test('Cloudflare GPT-OSS forced tool envelopes are salvaged only for an exact allowlisted tool', () => {
+  const allowed = new Set(['sandbox_shell', 'update_plan']);
+  const call = recoverForcedToolCallFromContent({
+    content: JSON.stringify({
+      name: 'sandbox_shell',
+      script: "printf '%s' 'ok'",
+      purpose: 'write a small file'
+    }),
+    toolChoice: { type: 'function', function: { name: 'sandbox_shell' } },
+    allowedToolNames: allowed,
+    callIdSeed: 'test-run:1'
+  });
+  assert.equal(call?.function?.name, 'sandbox_shell');
+  assert.deepEqual(JSON.parse(call.function.arguments), {
+    script: "printf '%s' 'ok'",
+    purpose: 'write a small file'
+  });
+  assert.match(call.id, /^salvaged-[a-f0-9]{24}$/u);
+
+  assert.equal(recoverForcedToolCallFromContent({
+    content: JSON.stringify({ name: 'analysis', path: 'not-a-tool' }),
+    toolChoice: { type: 'function', function: { name: 'sandbox_shell' } },
+    allowedToolNames: allowed
+  }), null);
+  assert.equal(recoverForcedToolCallFromContent({
+    content: JSON.stringify({ name: 'sandbox_shell', script: 'x' }),
+    toolChoice: { type: 'function', function: { name: 'sandbox_shell' } },
+    allowedToolNames: new Set(['update_plan'])
+  }), null);
+});
 
 test('SiliconFlow Agent timeout covers real Qwen3 tool latency and stays bounded', () => {
   assert.equal(siliconFlowRequestTimeoutMs({}), 300_000);
@@ -2922,6 +2962,98 @@ test('SiliconFlow removes an unauthorized shell citation and fails closed after 
     }
   }), { code: 'AGENT_BROWSER_ORIGIN_FORBIDDEN' });
   assert.equal(rejectedShells, 3);
+});
+
+test('browser origin denials return a bounded HTTPS correction with observed URLs', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    toolCall('plan', 'update_plan', {
+      explanation: 'Inspect the allowed source.',
+      steps: [{ label: 'Inspect source', status: 'in_progress' }]
+    }),
+    toolCall('first', 'browser_dom', {
+      action: 'navigate',
+      url: 'https://www.w3.org/WAI/standards-guidelines/wcag/',
+      purpose: 'Open the allowed source'
+    }),
+    toolCall('bad', 'browser_dom', {
+      action: 'navigate',
+      url: 'http://www.w3.org/WAI/standards-guidelines/wcag/quickref/',
+      purpose: 'Open the quick reference'
+    }),
+    toolCall('second', 'browser_dom', {
+      action: 'navigate',
+      url: 'https://www.w3.org/WAI/standards-guidelines/wcag/quickref/',
+      purpose: 'Open the quick reference over HTTPS'
+    }),
+    {
+      id: 'chat-final',
+      choices: [{ message: { role: 'assistant', content: 'Source inspected.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  let browserCalls = 0;
+  const result = await provider.execute({
+    objective: 'Inspect the allowed source.',
+    capabilities: { browser: true },
+    allowedOrigins: ['https://www.w3.org'],
+    maxSteps: 10,
+    callbacks: {
+      updatePlan: async () => ({ accepted: true }),
+      browserDom: async (request) => {
+        browserCalls += 1;
+        if (browserCalls === 2) {
+          throw new ApiError(403, 'AGENT_BROWSER_URL_FORBIDDEN', {
+            details: { allowedOrigins: ['https://www.w3.org'] }
+          });
+        }
+        return { ok: true, url: request.url, text: 'Observed source', untrusted: true };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Source inspected.');
+  assert.equal(browserCalls, 3);
+  const correction = requests
+    .flatMap((request) => request.messages || [])
+    .find((message) => (
+      message.role === 'tool' && message.content.includes('AGENT_BROWSER_URL_FORBIDDEN')
+    ));
+  assert.ok(correction);
+  assert.match(correction.content, /HTTPS only/);
+  assert.match(correction.content, /https:\/\/www\.w3\.org\/WAI\/standards-guidelines\/wcag\//);
 });
 
 test('subagent finalizes deterministically after a completed plan and two successful shell steps', async () => {
@@ -5819,6 +5951,45 @@ test('live V1 createRun rejects zero pricing before opening a hold', async () =>
       idempotencyKey: 'v1-zero-pricing'
     }),
     { code: 'AGENT_PRICING_NOT_READY', status: 503 }
+  );
+  assert.equal(poolTouched, false);
+});
+
+test('live V1 text-only request is redirected before any hold or database work', async () => {
+  let poolTouched = false;
+  const accountId = 'a'.repeat(32);
+  const service = createAgentRunService({
+    pool: {
+      connect: async () => {
+        poolTouched = true;
+        throw new Error('text-only V1 request must not open a transaction');
+      }
+    },
+    env: {
+      ...encryptionEnv,
+      NODE_ENV: 'test',
+      APP_ENV: 'dev',
+      AGENT_FEATURE_ENABLED: '1',
+      AGENT_RUNTIME_DRIVER: 'live',
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_INPUT_CREDITS_PER_MILLION: '1',
+      AGENT_CLOUDFLARE_OUTPUT_CREDITS_PER_MILLION: '1',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_PUBLIC_CAPABILITIES: 'files,shell'
+    }
+  });
+  await assert.rejects(
+    service.createRun({
+      userId: '11111111-1111-4111-8111-111111111111',
+      objective: '请只返回文字，不生成任何文件。',
+      idempotencyKey: 'v1-text-only-redirect'
+    }),
+    { code: 'AGENT_TEXT_ONLY_USE_DESIGN_CHAT', status: 409 }
   );
   assert.equal(poolTouched, false);
 });

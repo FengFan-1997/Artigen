@@ -5,9 +5,7 @@ const {
   requestPromptHash
 } = require('./scripted-siliconflow-transport');
 const { fetchWithTimeout } = require('../../lib/fetch-utils');
-
-const TEXT_MODEL = 'Qwen/Qwen3-8B';
-const IMAGE_MODEL = 'Kwai-Kolors/Kolors';
+const { TEXT_MODEL, IMAGE_MODEL, LEGACY_SILICONFLOW_TEXT_MODEL } = require('../../lib/agent-models');
 const STAGE_LIMITS = Object.freeze({
   router: 1200,
   planner: 2048,
@@ -33,7 +31,9 @@ class LiveModelAuditor {
     campaignGuard = null,
     maxQwenCalls = 200,
     maxKolorsCalls = 16,
-    textModel = TEXT_MODEL
+    // Historical deterministic fixtures may explicitly use the legacy
+    // SiliconFlow model; real live harnesses pass the Cloudflare model.
+    textModel = LEGACY_SILICONFLOW_TEXT_MODEL
   } = {}) {
     this.trace = trace;
     this.pool = pool;
@@ -212,7 +212,7 @@ class LiveModelAuditor {
     if (
       ['actor', 'subagent', 'final_summary'].includes(phase) &&
       this.textModel === TEXT_MODEL &&
-      payload.enable_thinking !== false
+      payload.enable_thinking === true
     ) {
       throw new Error(`AGENT_LIVE_EVAL_TOOL_STAGE_THINKING:${phase}`);
     }

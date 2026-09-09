@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const { TEXT_MODEL } = require('../lib/agent-models');
 const { resolveAgentWorkerPoolProfile } = require('./lib/agent-worker-pool-profile');
 
 const profile = String(process.argv[2] || '').trim().toLowerCase();
@@ -50,7 +51,7 @@ if (!['siliconflow', 'cloudflare'].includes(modelProvider)) {
 if (modelProvider !== 'cloudflare') {
   throw new TypeError('AGENT_CLOUDFLARE_TEXT_MODEL_REQUIRED');
 }
-const modelName = '@cf/openai/gpt-oss-120b';
+const modelName = TEXT_MODEL;
 if (modelProvider === 'cloudflare') {
   const keychainAccountId = readRequiredKeychainSecret('CLOUDFLARE_ACCOUNT_ID');
   const keychainFreeAccountId = readRequiredKeychainSecret('AGENT_CLOUDFLARE_FREE_ACCOUNT_ID');

@@ -1,8 +1,55 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-09-03（Asia/Shanghai）
+更新时间：2026-09-08（Asia/Shanghai）
+
+## 2026-09-07 Live Harness 进程存活修复（候选 PR #183，未合入）
+
+- 候选分支 `codex/live-eval-process-liveness` 基于 DEV `7ddbb38eb97a6a67d4c15a80c99f5f31e7251ebf`，提交 `8464904e1ba0b2cf5adbe2e9558f8507a97b47fc`。修复长时间未收敛的 Planner job 使 Live Harness 进程无声退出、slot journal 停留 `running` 的问题：保留单飞处理 Promise，同时持续执行数据库轮询和有界超时；不改变 Provider 重试、回执、租约或计费语义。
+- 新增回归确认永不 resolve 的 `processNextJob()` 不会阻断轮询，Planner 不会重复调用。候选本地 `pnpm check:core` 退出码 0，`pnpm test:integration` 为 `543 passed / 3 skipped / 0 failed`；PostgreSQL 16 + 固定 MinIO deterministic `50/50`、chaos `31/31`。
+- 本提交尚未合入 `dev` 或部署；DEV 当前仍运行 `7ddbb38...`，Runtime V2 与 rollout 继续关闭。完整 24-slot 真实 Qwen/Kolors 矩阵、图片盲审与生产 canary 仍未完成，不能据此宣称上线。
+
+## 2026-09-04 Cloudflare GPT-OSS 强制工具 envelope 兼容修复（候选 PR #179，required CI 待完成）
+
+- Cloudflare Workers AI 的 `@cf/openai/gpt-oss-120b` 在服务端强制指定工具时，偶发将精确工具名与参数序列化到 `message.content`，而不是结构化 `tool_calls`；此前真实 Agent 任务可能因此在参数解析阶段以 `AGENT_MODEL_TOOL_ARGUMENTS_INVALID` fail-closed。
+- 候选修复只在三项同时成立时恢复一次工具调用：响应是 JSON envelope、`name` 精确等于服务端刚选择的函数名、该函数仍属于当前阶段白名单。其他内容不恢复为调用，继续按普通文本/安全失败处理；原 envelope 不会写回对话上下文。
+- PR #179 仅包含该兼容逻辑及 Runtime 回归测试，模型硬锁、Shell 禁止策略、预算、回执和模糊调用边界均未改变。required CI 与合入前，该修复不得视为 DEV 或生产已发布。
+
+## 2026-09-04 DEV 实机验收与来源边界修复（候选）
+
+- PR #177 已合入 `dev`，DEV 当前可部署基线为 `69af78db2b27fe0956e48d9b300ca42b9cb7049f`；Render、Vercel Preview 与 Mac DEV Worker 已按该 SHA 对齐，迁移为 027，文本模型为 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`，图片模型为 `Kwai-Kolors/Kolors`。Runtime V2 与公众 rollout 继续关闭。
+- exact-SHA live gate 已通过数据库连接容量检查（Aiven `dev_artigen`，PostgreSQL 18，max_connections=20，实测可用连接 6，门槛 4）。完整 24-slot 实机矩阵尚未通过：V2 纯文本定向重测成功；完整矩阵在调研报告槽位因真实 `AGENT_BROWSER_URL_FORBIDDEN` 中止，图片盲审未执行，因此不得宣称可进入 owner canary。
+- 后续候选 `codex/browser-origin-correction`（基于上述 SHA，尚未合入/部署）严格保持 HTTPS 与 origin allowlist，并为被拒浏览器 URL 增加一次 bounded 纠错 Observation，携带本 Run 已观察的精确 URL；新增回归测试已通过。该候选待 required CI 与新的 exact-SHA 实机证据后再决定是否合入。
+- 生产环境未在本轮修改或切流；不得将 DEV 的局部真实成功等同于生产 Agent 或 24-slot 门禁通过。`ui-review/`、网络代理与 Karing/B2U2 配置均未读取或修改。
 
 文档性质：**GitHub 正式项目状态与持久事实总入口**
+
+## 2026-09-09 UI 工作台交互硬化（候选 PR #190，未合入）
+
+- 候选分支 `codex/ui-interaction-hardening` 基于最新 DEV；改动覆盖工作台左栏可恢复展开、动态无障碍状态、项目页样式隔离、点数/账户语义链接和项目页交互回归。
+- 候选本地验证已通过前端 type-check 与 218/218 单元测试；PR required CI、DEV smoke 和生产发布尚未完成。
+- 本节不构成 DEV 或生产已发布证据；生产 SHA、模型、计费、数据库和 Worker 未因该候选改变。
+
+## 2026-09-08 V1 纯文字意图安全收口（已合入 DEV）
+
+- 真实 DEV 浏览器运行确认：V1 Computer Agent 在用户明确要求“只返回文字、不生成文件”时，模型仍生成了网站源文件和预览文件；该运行已由用户停止，点数已释放，作为失败审计证据保留。
+- 候选修复在报价和创建入口增加服务端 fail-closed 意图门禁：V1 且无交付物时，明确纯文字目标直接返回 `AGENT_TEXT_ONLY_USE_DESIGN_CHAT`，不启动数据库事务、不上传附件、不冻结点数；V2 的受验证文本终态不受影响。前端提供对应引导文案。
+- 修复已通过 PR [#185](https://github.com/FengFan-1997/Artigen/pull/185) 合入 `dev`，当前 DEV exact SHA 为 `3b08adca58130540b66f088cd6e0ac33a1459f5f`；Render `/api/meta` 实测返回该 SHA，`/readyz` 与 `/api/agent/status` 均 HTTP 200，数据库、S3、Cloudflare GPT-OSS-120B、Kolors、浏览器、受限出口、桌面中继和定价均 ready，队列为 0，Runtime V2 与 rollout 均为 0。
+- 回归证据：候选 `node --test backend/tests/agent-runtime.test.js` 为 `136/136`；完整 required CI run `34198576728` 全部通过（包括 Playwright `543 passed / 3 skipped`、quality `50/50`、chaos `620/620` 和 Release gate）。V1 纯文字目标现在在报价/创建前 fail-closed，转入免费设计对话，不冻结点数；有交付物的 V1 任务行为不变。
+- DEV Mac Worker 已从与上述 SHA 对齐的新隔离 worktree 启动，`workerOnline=true`、`workerModelReady=true`、`queueDepth=0`、`pricingReady=true`；本节不构成生产发布、24-slot 实机矩阵或图片盲审证据。
+
+## 2026-09-08 DEV 工作台左栏可恢复展开（已合入 DEV）
+
+- PR [#186](https://github.com/FengFan-1997/Artigen/pull/186) 修复桌面左栏收起后隐藏唯一展开入口的问题：收起状态保留可访问的“展开左栏”按钮，并调整窄栏内品牌标记与按钮尺寸避免遮挡。
+- PR #186 required CI run `34205303773` 全部通过；本地完整 `pnpm check` 为 Playwright `543 passed / 3 skipped / 0 failed`，目标 Chromium Design Conversation 为 `10 passed`，lint、type-check 与 `git diff --check` 均通过。
+- DEV Render `/api/meta` 实测 exact SHA 为 `e5a12bb806daf69eb3a7e7c473cb736814d06c43`；`/readyz` 与 `/api/agent/status` 均 HTTP 200，Worker、浏览器、受限出口、桌面中继、GPT-OSS-120B、Kolors、pricing 与队列均 ready/0，Runtime V2 与 rollout 仍为关闭/0。
+- DEV Mac Worker 已从与该 SHA 对齐的独立 worktree 启动。真实 Chrome 回归确认：左栏收起后“展开左栏”可见且可点击，展开后恢复完整历史栏；同一 DEV 会话完成一次免费设计咨询（未创建付费任务）和一次 IMAGE Agent Run，交付物验证通过、结算次数为 1、最终冻结为 0。
+- 本节不构成生产发布、完整 24-slot V1/V2 实机矩阵或图片匿名盲审证据；生产/main、owner canary 与公众 rollout 未修改。
+
+## 2026-09-07 登录验证码流程修复（已提交，待 DEV 验收）
+
+- 邮箱登录发送验证码后，验证码输入现在留在同一 `/login` 页面面板内，不再跳转到独立验证页；验证码会话在刷新后仍可恢复，`accepted` 与 `unknown` 交付状态均保留对应提示。
+- 验证码、密码和 Google 登录成功后，默认回到 `/artigen`；若入口带有 `redirect`，继续回到原触发页面。独立 `/login/verify` 深链接保留兼容，但成功后也不再自动打开账户页。
+- 前端回归覆盖同页验证码、刷新恢复、未知投递状态和成功跳转，共 `4/4` Chromium OTP 用例通过；`vue-tsc`、前端单测 `218/218` 和生产构建通过。该修复尚未部署生产，需随 feature→dev PR 完成 DEV 验收。
 
 本文只记录已经确定并产生持久影响的产品、架构、安全、发布和运行决策。开发中的候选方案、调试过程、临时分支、逐次 Run 和下一条命令只写入被 Git 忽略的 `HANDOFF.local.md`。
 
@@ -115,6 +162,13 @@ Runtime V2 进入生产前必须同时满足：
 7. required GitHub checks 与人工证据审核通过。
 
 任一条件缺失时，公众 rollout、owner canary 和生产发布继续关闭。
+
+## 5.1 DEV GPT-OSS 强制工具回执兼容修复（2026-09-04）
+
+- PR #179 已在 required CI 与 Release gate 全绿后合入 `dev`，merge SHA 为 `ccdcc055bb51f8ac6814fd30a8272f353053b9ed`。修复针对 Cloudflare GPT-OSS 在强制工具选择时把合法 JSON 放入 `message.content`、却返回空 `tool_calls` 的上游兼容问题；服务端仅在 `name` 精确匹配当前 allowlist 与被强制工具时恢复调用，不匹配继续 fail-closed。
+- PR #180 与 PR #181 已在 required CI 与 Release gate 全绿后合入 `dev`；当前最终不可变 DEV SHA 为 `650388a73061e4a2bdce0da33a94b381f70a625f`。Render DEV `/api/meta`、`/readyz`、`/api/agent/status` 实测 HTTP 200 且精确运行该 SHA；Vercel Preview deployment `6263239827` 状态为 `success`。迁移 `027_agent_live_eval_capacity_aggregate`、Cloudflare `@cf/openai/gpt-oss-120b`、Kolors、数据库/S3、Worker/browser/egress/desktop relay 与 pricing 均 ready。
+- Mac DEV Worker 使用 exact-SHA worktree 保持单实例运行，`workerOnline=true`、`browserReady=true`、`egressVerified=true`、`desktopRelayReady=true`、`queueDepth=0`、`concurrency=1`；LaunchAgent 仍存在 Docker readiness 竞态，不将 LaunchAgent 本身当作在线证据。生产 Worker 与部署未修改。
+- Runtime V2 仍关闭、rollout=0；`650388a…` 尚未签发新的 live-eval gate，完整 24-slot V1/V2、真实 Kolors 和图片匿名盲审仍未完成，因此本节不构成生产放行或 owner canary 证据。先前真实失败/ambiguous 审计回执继续保留，活动 Run、hold、reservation、queue 与冻结余额已按正式清理路径归零。
 
 ## 6. 发布与分支规则
 

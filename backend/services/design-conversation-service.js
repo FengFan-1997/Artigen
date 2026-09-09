@@ -25,9 +25,8 @@ const {
   releaseSchedulerGrant
 } = require('./agent-model-runtime-service');
 const { createCreativeProjectService } = require('./creative-project-service');
+const { TEXT_MODEL, IMAGE_MODEL } = require('../lib/agent-models');
 
-const TEXT_MODEL = '@cf/openai/gpt-oss-120b';
-const IMAGE_MODEL = 'Kwai-Kolors/Kolors';
 const ROUTE_KINDS = new Set(['reply', 'local_tool', 'tool_task', 'agent_run']);
 const EXECUTION_STATUSES = new Set([
   'planning',
@@ -114,7 +113,7 @@ const getDesignConversationConfig = (env = process.env) => Object.freeze({
   plannerMaxTokens: integer(env.DESIGN_CONVERSATION_PLANNER_MAX_TOKENS, 1800, 512, 4096),
   model: String(env.AGENT_MODEL_NAME || (
     String(env.AGENT_MODEL_PROVIDER || '').trim().toLowerCase() === 'cloudflare'
-      ? '@cf/openai/gpt-oss-120b'
+      ? TEXT_MODEL
       : TEXT_MODEL
   )).trim(),
   imageModel: IMAGE_MODEL

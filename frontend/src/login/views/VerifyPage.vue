@@ -111,7 +111,7 @@ const verify = async () => {
     setLoggedIn({ userId: res.userId });
     clearOtpFlow('login');
     const redirect = String(route.query.redirect || '').trim();
-    router.replace(redirect || '/login/account');
+    router.replace(redirect || '/artigen');
   } catch (err: any) {
     error.value = typeof err?.message === 'string' ? err.message : t('login.failed');
   } finally {

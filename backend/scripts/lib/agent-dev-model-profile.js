@@ -1,7 +1,9 @@
 'use strict';
 
-const DEV_CLOUDFLARE_MODEL = '@cf/openai/gpt-oss-120b';
-const DEV_SILICONFLOW_MODEL = 'Qwen/Qwen3-8B';
+const {
+  TEXT_MODEL: DEV_CLOUDFLARE_MODEL,
+  LEGACY_SILICONFLOW_TEXT_MODEL: DEV_SILICONFLOW_MODEL
+} = require('../../lib/agent-models');
 
 const resolveAgentSmokeModelProfile = ({ env = process.env, production = false } = {}) => {
   // GPT-OSS is the only text model used by deployed Agent environments.

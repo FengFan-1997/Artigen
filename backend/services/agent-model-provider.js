@@ -696,6 +696,53 @@ const normalizeOllamaArguments = (raw) => {
   return parseArguments(raw);
 };
 
+// Cloudflare's GPT-OSS harmony adapter can occasionally serialize a forced
+// function call into message.content instead of message.tool_calls.  Salvage
+// only the unambiguous case: a JSON object whose `name` exactly matches the
+// server-selected function and is present in the already-filtered allowlist.
+// Everything else remains ordinary text and therefore follows the normal
+// fail-closed path.
+const recoverForcedToolCallFromContent = ({
+  content,
+  toolChoice,
+  allowedToolNames,
+  callIdSeed = ''
+} = {}) => {
+  const forcedName = String(toolChoice?.function?.name || '').trim();
+  if (
+    toolChoice?.type !== 'function' ||
+    !forcedName ||
+    !(allowedToolNames instanceof Set) ||
+    !allowedToolNames.has(forcedName)
+  ) return null;
+  const raw = String(content || '').trim();
+  if (!raw || (!raw.startsWith('{') && !/^```(?:json)?\s*\{/i.test(raw))) return null;
+  let candidate;
+  try {
+    candidate = parseJsonObject(raw, 'AGENT_MODEL_TOOL_ARGUMENTS_INVALID');
+  } catch {
+    return null;
+  }
+  if (String(candidate?.name || '').trim() !== forcedName) return null;
+  const nested = candidate.arguments;
+  const args = nested && typeof nested === 'object' && !Array.isArray(nested)
+    ? nested
+    : Object.fromEntries(Object.entries(candidate).filter(([key]) => key !== 'name'));
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
+  const id = crypto.createHash('sha256')
+    .update(`gptoss-forced-tool:${callIdSeed}:${forcedName}:${JSON.stringify(args)}`, 'utf8')
+    .digest('hex')
+    .slice(0, 24);
+  return {
+    id: `salvaged-${id}`,
+    type: 'function',
+    function: {
+      name: forcedName,
+      arguments: JSON.stringify(args)
+    }
+  };
+};
+
 const parseJsonObject = (raw, errorCode) => {
   const text = String(raw || '').trim();
   const unfenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] || text;
@@ -1765,6 +1812,17 @@ class OllamaAgentModelProvider {
       0,
       Number(durable?.shellContractValidationAttempts || 0)
     );
+    let browserOriginValidationAttempts = Math.max(
+      0,
+      Number(durable?.browserOriginValidationAttempts || 0)
+    );
+    let observedBrowserUrls = (Array.isArray(durable?.observedBrowserUrls)
+      ? durable.observedBrowserUrls
+      : [])
+      .map((value) => String(value || '').trim().slice(0, 2000))
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .slice(-20);
     let runtimeActionObserved = durable?.runtimeActionObserved === true;
     let artifactDuplicateNoticePending = durable?.artifactDuplicateNoticePending === true;
     let declaredArtifacts = (Array.isArray(durable?.declaredArtifacts)
@@ -1901,6 +1959,8 @@ class OllamaAgentModelProvider {
         artifactDuplicateNoticePending,
         shellOriginValidationAttempts,
         shellContractValidationAttempts,
+        browserOriginValidationAttempts,
+        observedBrowserUrls,
         runtimeActionObserved,
         declaredArtifacts,
         artifactRepairRequired,
@@ -2334,6 +2394,13 @@ class OllamaAgentModelProvider {
             if (pendingCall.name === 'delegate_tasks') delegationValidationAttempts = 0;
             if (pendingCall.name === 'update_plan') planValidationAttempts = 0;
             if (pendingCall.name === 'declare_artifact') artifactValidationAttempts = 0;
+            if (pendingCall.name === 'browser_dom') {
+              browserOriginValidationAttempts = 0;
+              const observedUrl = String(result?.url || '').trim().slice(0, 2000);
+              if (observedUrl && /^https:\/\//i.test(observedUrl)) {
+                observedBrowserUrls = [...new Set([...observedBrowserUrls, observedUrl])].slice(-20);
+              }
+            }
             completedOutput = {
               callId: pendingCall.callId,
               name: pendingCall.name,
@@ -2393,12 +2460,18 @@ class OllamaAgentModelProvider {
                 'AGENT_SHELL_COMMAND_FORBIDDEN'
               ].includes(error?.code)
             );
+            const correctableBrowserOriginError = (
+              pendingCall.name === 'browser_dom' &&
+              ['AGENT_BROWSER_URL_FORBIDDEN', 'AGENT_BROWSER_ORIGIN_FORBIDDEN']
+                .includes(error?.code)
+            );
             if (
               !correctableDelegationError &&
               !correctablePlanError &&
               !correctableArtifactError &&
               !correctableShellOriginError &&
-              !correctableShellContractError
+              !correctableShellContractError &&
+              !correctableBrowserOriginError
             ) {
               await callbacks.toolObservation?.({
                 callId: pendingCall.callId,
@@ -2491,6 +2564,34 @@ class OllamaAgentModelProvider {
                     'Remove every unobserved or disallowed URL and every factual claim attributed to it.',
                     'Use only exact allowed origins that browser_dom or a connector actually observed.',
                     'Retry sandbox_shell offline; do not use shell networking or broaden the source list.'
+                  ].join(' ')
+                })
+              };
+            } else if (correctableBrowserOriginError) {
+              browserOriginValidationAttempts += 1;
+              if (browserOriginValidationAttempts > 2) throw error;
+              const allowedOrigins = (Array.isArray(error?.details?.allowedOrigins)
+                ? error.details.allowedOrigins
+                : [])
+                .map((value) => String(value || '').trim())
+                .filter((value) => /^https:\/\//i.test(value))
+                .slice(0, 10);
+              completedOutput = {
+                callId: pendingCall.callId,
+                name: pendingCall.name,
+                content: JSON.stringify({
+                  success: false,
+                  errorCode: error.code,
+                  deniedOrigin: String(error?.details?.origin || '').slice(0, 240),
+                  observedUrls: observedBrowserUrls,
+                  allowedOrigins,
+                  correction: [
+                    'The browser request was rejected and no navigation or external effect occurred.',
+                    'Use HTTPS only and navigate only to an exact URL already observed in this Run or an allowed origin listed here.',
+                    'Do not replace an observed URL with a guessed homepage, change its scheme, or broaden the allowlist.',
+                    observedBrowserUrls.length
+                      ? `Observed exact URLs: ${observedBrowserUrls.join(', ')}`
+                      : 'No exact URL has been observed yet; use the HTTPS URL from the task objective once, then continue.'
                   ].join(' ')
                 })
               };
@@ -3153,7 +3254,21 @@ class OllamaAgentModelProvider {
       // Some OpenAI-compatible providers ignore parallel_tool_calls=false. Keep only
       // the first call in the assistant history so each tool result has a complete,
       // protocol-valid request/response pair and every action is policy-checked in order.
-      const calls = deliverablesComplete ? [] : returnedCalls.slice(0, 1);
+      let calls = deliverablesComplete ? [] : returnedCalls.slice(0, 1);
+      if (!calls.length && !deliverablesComplete) {
+        const salvagedCall = recoverForcedToolCallFromContent({
+          content: assistantText,
+          toolChoice: request.tool_choice,
+          allowedToolNames,
+          callIdSeed: `${runtimeContext?.runId || 'run'}:${turns}`
+        });
+        if (salvagedCall) {
+          calls = [salvagedCall];
+          // Do not leak the provider's envelope JSON as an assistant answer or
+          // feed it back into the next context window as prose.
+          assistant.content = '';
+        }
+      }
       if (calls.length) assistant.tool_calls = calls;
       messages.push(assistant);
       pendingModelResponse = null;
@@ -4042,6 +4157,7 @@ module.exports = {
   createAgentModelProvider,
   compactOllamaMessages,
   cloudflareUsageCredits,
+  recoverForcedToolCallFromContent,
   normalizeOllamaArguments,
   normalizeReportPdfToolAlias,
   assertPosixShellScript,

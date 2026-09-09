@@ -34,7 +34,7 @@
           <span class="brand-glyph" aria-hidden="true">A</span>
           <span class="brand-word">Artigen</span>
         </router-link>
-        <button class="icon-control desktop-only" type="button" :aria-label="zh ? '折叠左栏' : 'Collapse left panel'" @click="toggleLeft">
+        <button class="icon-control desktop-only" type="button" :aria-label="leftCollapsed ? (zh ? '展开左栏' : 'Expand left panel') : (zh ? '折叠左栏' : 'Collapse left panel')" :aria-expanded="!leftCollapsed" aria-controls="workspace-history-panel" @click="toggleLeft">
           <WorkspaceIcon name="panel-left" :size="18" />
         </button>
         <button class="icon-control mobile-only" type="button" :aria-label="zh ? '关闭历史' : 'Close history'" @click="closeLeftDrawer(true)">
@@ -75,14 +75,14 @@
       </nav>
 
       <footer class="workspace-account">
-        <button type="button" @click="$emit('open-credits')">
+        <router-link to="/artigen/usage" class="account-action" :aria-label="zh ? `点数：${creditLabel}` : `Credits: ${creditLabel}`">
           <span class="account-icon" aria-hidden="true">
             <WorkspaceIcon name="spark" :size="16" />
           </span>
           <span class="account-label">{{ zh ? '点数' : 'Credits' }}</span>
           <b class="account-value">{{ creditLabel }}</b>
-        </button>
-        <button type="button" @click="cycleTheme">
+        </router-link>
+        <button type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme">
           <span class="account-icon" aria-hidden="true">
             <WorkspaceIcon v-if="theme === 'dark'" name="moon" :size="16" />
             <WorkspaceIcon v-else-if="theme === 'light'" name="sun" :size="16" />
@@ -91,12 +91,12 @@
           <span class="account-label">{{ zh ? '外观' : 'Appearance' }}</span>
           <b class="account-value">{{ themeLabel }}</b>
         </button>
-        <button type="button" @click="$emit('open-settings')">
+        <router-link to="/login/account" class="account-action" :aria-label="zh ? '账户设置' : 'Account settings'">
           <span class="account-icon" aria-hidden="true">
             <WorkspaceIcon name="settings" :size="16" />
           </span>
           <span class="account-label">{{ zh ? '设置' : 'Settings' }}</span>
-        </button>
+        </router-link>
       </footer>
     </aside>
 
@@ -585,13 +585,13 @@ svg { display: block; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-w
 .workspace-left,.workspace-right { overscroll-behavior: contain; }
 .workspace-left { z-index: 40; display: flex; flex-direction: column; overflow: hidden; background: var(--sidebar); }
 .workspace-brand { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 64px; padding: 10px 14px 8px 16px; }
-.brand-lockup { display: flex; align-items: center; gap: 11px; min-width: 0; color: inherit; font-size: 16px; font-weight: 700; text-decoration: none; letter-spacing: -.015em; }
+.brand-lockup { display: flex; align-items: center; gap: 11px; min-width: 0; min-height: 44px; padding: 6px 0; color: inherit; font-size: 16px; font-weight: 700; text-decoration: none; letter-spacing: -.015em; }
 .brand-glyph { display: grid; flex: 0 0 auto; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; font-weight: 760; background: var(--surface-raised); }
 .brand-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-control { display: inline-grid; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; transition: color 150ms ease,background-color 150ms ease,transform 120ms cubic-bezier(.23,1,.32,1); }
 .icon-control:hover { color: var(--text); background: var(--surface-hover); }
 .icon-control:active { transform: scale(.96); }
-.icon-control:focus-visible,.new-task:focus-visible,.history-search:focus-within,.workspace-nav a:focus-visible,.workspace-account button:focus-visible,.inspector-tabs button:focus-visible,.command-palette button:focus-visible { outline: 2px solid var(--acid); outline-offset: 1px; }
+.icon-control:focus-visible,.new-task:focus-visible,.history-search:focus-within,.workspace-nav a:focus-visible,.workspace-account :is(button,.account-action):focus-visible,.inspector-tabs button:focus-visible,.command-palette button:focus-visible { outline: 2px solid var(--acid); outline-offset: 1px; }
 .icon-control svg { width: 18px; height: 18px; }
 .new-task { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; min-height: 42px; margin: 2px 12px 8px; padding: 0 11px; border: 0; border-radius: 10px; color: var(--text); background: var(--surface-raised); cursor: pointer; transition: background-color 150ms ease,transform 120ms cubic-bezier(.23,1,.32,1); }
 .new-task:hover { background: var(--surface-hover); }
@@ -609,15 +609,17 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .workspace-nav a:hover,.workspace-nav a.router-link-active { color: var(--text); background: var(--surface-hover); }
 .workspace-nav svg { flex: 0 0 auto; width: 16px; }
 .workspace-account { display: grid; flex: 0 0 auto; gap: 3px; padding: 8px 10px 12px; }
-.workspace-account button { display: grid; grid-template-columns: 20px minmax(0,1fr) auto; align-items: center; gap: 11px; min-height: 42px; padding: 0 10px; border: 0; border-radius: 9px; text-align: left; background: transparent; cursor: pointer; }
-.workspace-account button:hover { background: var(--surface-hover); }
+.workspace-account :is(button,.account-action) { display: grid; grid-template-columns: 20px minmax(0,1fr) auto; align-items: center; gap: 11px; min-height: 42px; padding: 0 10px; border: 0; border-radius: 9px; color: inherit; text-align: left; text-decoration: none; background: transparent; cursor: pointer; }
+.workspace-account :is(button,.account-action):hover { background: var(--surface-hover); }
 .account-label { min-width: 0; overflow: hidden; color: var(--text); font-size: var(--font-control); font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
 .account-value { max-width: 112px; overflow: hidden; color: var(--muted-2); font-size: var(--font-meta); font-weight: 560; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .account-icon { display: grid; width: 20px; height: 20px; place-items: center; color: var(--muted); }
-.left-collapsed .brand-word,.left-collapsed .workspace-brand .icon-control,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account .account-label,.left-collapsed .workspace-account .account-value { display: none; }
-.left-collapsed .workspace-brand { justify-content: center; padding-inline: 0; }
-.left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a,.left-collapsed .workspace-account button { justify-content: center; padding-inline: 0; }
-.left-collapsed .workspace-account button { grid-template-columns: 20px; }
+.left-collapsed .brand-word,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account .account-label,.left-collapsed .workspace-account .account-value { display: none; }
+.left-collapsed .workspace-brand { justify-content: space-between; gap: 2px; padding-inline: 2px; }
+.left-collapsed .workspace-brand .brand-glyph { width: 28px; height: 28px; }
+.left-collapsed .workspace-brand .icon-control { width: 30px; height: 30px; }
+.left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a,.left-collapsed .workspace-account :is(button,.account-action) { justify-content: center; padding-inline: 0; }
+.left-collapsed .workspace-account :is(button,.account-action) { grid-template-columns: 20px; }
 .panel-resizer { position: fixed; top: 0; bottom: 0; z-index: 45; width: 8px; cursor: col-resize; }
 .panel-resizer::after { position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; content: ""; transition: background 150ms ease; }
 .panel-resizer:hover::after { background: var(--acid); }
@@ -675,12 +677,12 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
   .drawer-scrim { position: fixed; inset: 0; z-index: 30; display: block; border: 0; background: rgb(0 0 0 / 44%); }
   .desktop-only { display: none !important; }.mobile-only,.mobile-panel-controls { display: flex; }
   .left-collapsed .brand-word,.left-collapsed .workspace-brand .icon-control,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account .account-label,.left-collapsed .workspace-account .account-value { display: initial; }
-  .left-collapsed .workspace-brand { justify-content: space-between; padding: 10px 14px 8px 16px; }.left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a { justify-content: flex-start; padding-inline: 10px; }.left-collapsed .workspace-account button { grid-template-columns: 20px minmax(0,1fr) auto; justify-content: stretch; padding-inline: 10px; }
+  .left-collapsed .workspace-brand { justify-content: space-between; padding: 10px 14px 8px 16px; }.left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a { justify-content: flex-start; padding-inline: 10px; }.left-collapsed .workspace-account :is(button,.account-action) { grid-template-columns: 20px minmax(0,1fr) auto; justify-content: stretch; padding-inline: 10px; }
 }
 @media (max-width: 799px) {
   .task-heading { justify-content: center; text-align: center; }
   .task-heading-icon { display: none; }
-  .workspace-topbar { min-height: 52px; gap: 4px; padding-inline: max(8px,env(safe-area-inset-left)) max(8px,env(safe-area-inset-right)); }.runtime-pill { display: none; }.inspector-toggle,.icon-control { min-width: 44px; min-height: 44px; }.workspace-brand { min-height: 56px; padding-top: max(8px,env(safe-area-inset-top)); }.new-task,.history-search,.workspace-nav a,.workspace-account button { min-height: 44px; }.workspace-account { padding-bottom: max(8px,env(safe-area-inset-bottom)); }
+  .workspace-topbar { min-height: 52px; gap: 4px; padding-inline: max(8px,env(safe-area-inset-left)) max(8px,env(safe-area-inset-right)); }.runtime-pill { display: none; }.inspector-toggle,.icon-control { min-width: 44px; min-height: 44px; }.workspace-brand { min-height: 56px; padding-top: max(8px,env(safe-area-inset-top)); }.new-task,.history-search,.workspace-nav a,.workspace-account :is(button,.account-action) { min-height: 44px; }.workspace-account { padding-bottom: max(8px,env(safe-area-inset-bottom)); }
   .workspace-right { width: 100vw; border-radius: 0; }.inspector-tabs { min-height: 58px; }.inspector-tabs button { min-height: 56px; font-size: 12px; }
 }
 @media (max-width: 399px) {
