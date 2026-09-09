@@ -82,7 +82,7 @@
           <span class="account-label">{{ zh ? '点数' : 'Credits' }}</span>
           <b class="account-value">{{ creditLabel }}</b>
         </button>
-        <button type="button" @click="cycleTheme">
+        <button type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme">
           <span class="account-icon" aria-hidden="true">
             <WorkspaceIcon v-if="theme === 'dark'" name="moon" :size="16" />
             <WorkspaceIcon v-else-if="theme === 'light'" name="sun" :size="16" />
