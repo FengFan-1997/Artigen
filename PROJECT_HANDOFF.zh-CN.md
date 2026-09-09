@@ -1,6 +1,14 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-09-08（Asia/Shanghai）
+更新时间：2026-09-09（Asia/Shanghai）
+
+## 2026-09-09 提示词优化与 Canonical Skill（已合入 DEV，实机评测阻断）
+
+- PR [#191](https://github.com/FengFan-1997/Artigen/pull/191) 已通过 required CI 并合入 `dev`，merge SHA 为 `fb4b205170b0ba10a9d629fcc7837113abd94eb8`。变更加入内置提示词优化器、训练/验证集 gate、canonical Skill manifest/compiler，并将运行时文本模型统一为 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`，图片固定 `Kwai-Kolors/Kolors`；未引入第三方生产依赖。
+- `dev-artigen-app-fengfan.onrender.com` `/api/meta` 实测返回上述 SHA；`/readyz`、`/api/agent/status` HTTP 200。DEV Aiven `dev_artigen`、迁移 027、S3、Cloudflare、Kolors、Worker、浏览器、受限出口、桌面中继、pricing 均 ready，队列为 0；Runtime V2 与 rollout 仍关闭/0。
+- 本地 exact-SHA deterministic 使用 PostgreSQL 16 + 固定 MinIO 为 `50/50`，20× chaos 为 `620/620`；PR #191 push/merge 对应 GitHub Quality Gate 全部通过（Core、Harness 五组、E2E Chromium/Firefox/WebKit、Vercel、Release gate）。
+- 新建签名 gate `a191202609090003` 后，真实 DEV V2 纯文本定向槽位再次收到 `model.call.ambiguous`，按 fail-closed 规则进入 `waiting_user` 并安全取消；该槽位扣费 2 点、无交付物，hold/reservation 已归零。完整 24-slot 矩阵因此未完成，不能宣称 prompt 候选或 Runtime V2 达到生产门槛；图片盲审未执行。
+- 证据保存在本机被忽略目录 `.artifacts/agent-live-eval-*`，包含 gate、deterministic、chaos、slot journal 和实机报告；未保存 Prompt、reasoning、凭据或私人数据。公众 rollout、生产部署和 owner canary 未执行。
 
 ## 2026-09-07 Live Harness 进程存活修复（候选 PR #183，未合入）
 
