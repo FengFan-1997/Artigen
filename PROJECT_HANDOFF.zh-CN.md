@@ -1,14 +1,6 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-09-09（Asia/Shanghai）
-
-## 2026-09-09 提示词优化与 Canonical Skill（已合入 DEV，实机评测阻断）
-
-- PR [#191](https://github.com/FengFan-1997/Artigen/pull/191) 已通过 required CI 并合入 `dev`，merge SHA 为 `fb4b205170b0ba10a9d629fcc7837113abd94eb8`。变更加入内置提示词优化器、训练/验证集 gate、canonical Skill manifest/compiler，并将运行时文本模型统一为 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`，图片固定 `Kwai-Kolors/Kolors`；未引入第三方生产依赖。
-- `dev-artigen-app-fengfan.onrender.com` `/api/meta` 实测返回上述 SHA；`/readyz`、`/api/agent/status` HTTP 200。DEV Aiven `dev_artigen`、迁移 027、S3、Cloudflare、Kolors、Worker、浏览器、受限出口、桌面中继、pricing 均 ready，队列为 0；Runtime V2 与 rollout 仍关闭/0。
-- 本地 exact-SHA deterministic 使用 PostgreSQL 16 + 固定 MinIO 为 `50/50`，20× chaos 为 `620/620`；PR #191 push/merge 对应 GitHub Quality Gate 全部通过（Core、Harness 五组、E2E Chromium/Firefox/WebKit、Vercel、Release gate）。
-- 新建签名 gate `a191202609090003` 后，真实 DEV V2 纯文本定向槽位再次收到 `model.call.ambiguous`，按 fail-closed 规则进入 `waiting_user` 并安全取消；该槽位扣费 2 点、无交付物，hold/reservation 已归零。完整 24-slot 矩阵因此未完成，不能宣称 prompt 候选或 Runtime V2 达到生产门槛；图片盲审未执行。
-- 证据保存在本机被忽略目录 `.artifacts/agent-live-eval-*`，包含 gate、deterministic、chaos、slot journal 和实机报告；未保存 Prompt、reasoning、凭据或私人数据。公众 rollout、生产部署和 owner canary 未执行。
+更新时间：2026-09-08（Asia/Shanghai）
 
 ## 2026-09-07 Live Harness 进程存活修复（候选 PR #183，未合入）
 
@@ -31,12 +23,11 @@
 
 文档性质：**GitHub 正式项目状态与持久事实总入口**
 
-## 2026-09-09 提示词优化与 Canonical Skill（本地候选，未发布）
+## 2026-09-09 UI 工作台交互硬化（候选 PR #190，未合入）
 
-- 从 `origin/dev` SHA `7f96fe9c9cb93430b69551d7aca2bcb76297cf2f` 创建独立分支 `codex/prompt-skill-optimization`，加入内置提示词优化器、确定性训练/验证集拆分、失败 Trace 候选生成与安全 gate；未引入 Promptfoo、DSPy 或其他第三方生产依赖。
-- `backend/agent-skills/manifest.json` 现为八个 Skill 的 canonical 元数据来源，编译器生成内容哈希并校验工具、阶段、触发器和渐进披露引用；新增 `agent-quality` Skill，能力仍只能由服务端授权。
-- 文本模型契约统一记录为 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`，图片模型为 `Kwai-Kolors/Kolors`。旧 `Qwen/Qwen3-8B` 仅作为集中管理的历史 SiliconFlow fixture 常量，不得用于部署运行时。
-- 已通过 Skill manifest、提示词优化器、Runtime V2、Harness V3/V3.1 定向回归，以及 backend lint、frontend type-check、`eval:agent:validate`。候选尚未 push、PR、合并、部署或执行真实 DEV 评测，Runtime V2 与公众 rollout 继续关闭。
+- 候选分支 `codex/ui-interaction-hardening` 基于最新 DEV；改动覆盖工作台左栏可恢复展开、动态无障碍状态、项目页样式隔离、点数/账户语义链接和项目页交互回归。
+- 候选本地验证已通过前端 type-check 与 218/218 单元测试；PR required CI、DEV smoke 和生产发布尚未完成。
+- 本节不构成 DEV 或生产已发布证据；生产 SHA、模型、计费、数据库和 Worker 未因该候选改变。
 
 ## 2026-09-08 V1 纯文字意图安全收口（已合入 DEV）
 
