@@ -18,6 +18,7 @@ const {
   MAX_WALL_CLOCK_MS,
   assertLiveEvalDatabaseSafety,
   assertLiveEvalProcessSafety,
+  buildWaitingUserEvidence,
   fixtureForLiveEval,
   liveEvalEnv,
   waitForConversationExecution
@@ -89,6 +90,88 @@ const {
   resolveSelection,
   summarize
 } = require('../scripts/run-agent-live-eval');
+
+test('live harness preserves an ambiguous waiting_user slot instead of cancelling it', () => {
+  const evidence = buildWaitingUserEvidence({
+    entry: { id: 'text-only-agent' },
+    cohort: 'v2',
+    created: { runId: 'run-ambiguous' },
+    terminal: {
+      snapshot: {
+        persistent: {
+          run: {
+            runtime_version: 2,
+            status: 'waiting_user',
+            error_code: 'AGENT_MODEL_CALL_AMBIGUOUS',
+            charged_credits: 0,
+            checkpoint: {
+              retryRequired: true,
+              retryReason: 'model_call_ambiguous'
+            }
+          }
+        }
+      }
+    },
+    physical: {
+      qwenCalls: 2,
+      kolorsCalls: 0,
+      inputTokens: 100,
+      outputTokens: 20,
+      latencyMs: 1234,
+      queueWaitMs: 40,
+      incomplete: 0
+    },
+    startedAt: Date.now() - 100
+  });
+  assert.equal(evidence.ok, false);
+  assert.equal(evidence.status, 'waiting_user');
+  assert.equal(evidence.errorCode, 'AGENT_MODEL_CALL_AMBIGUOUS');
+  assert.equal(evidence.retryRequired, true);
+  assert.equal(evidence.retryReason, 'model_call_ambiguous');
+  assert.equal(evidence.qwenCalls, 2);
+  assert.equal(evidence.chargedCredits, 0);
+});
+
+test('live harness does not invoke artifact verification or cleanup for waiting_user evidence', async () => {
+  const harness = {
+    auditor: { runSlot: async (_slot, operation) => operation() },
+    createRun: async () => ({ runId: 'run-ambiguous', userId: 'candidate-user' }),
+    runToTerminal: async () => ({
+      snapshot: {
+        persistent: {
+          run: {
+            runtime_version: 2,
+            status: 'waiting_user',
+            error_code: 'AGENT_MODEL_CALL_AMBIGUOUS',
+            charged_credits: 0,
+            checkpoint: { retryRequired: true, retryReason: 'model_call_ambiguous' }
+          }
+        }
+      }
+    }),
+    campaignGuard: {
+      dispatchMetrics: async () => ({
+        qwenCalls: 1,
+        kolorsCalls: 0,
+        inputTokens: 10,
+        outputTokens: 5,
+        latencyMs: 100,
+        queueWaitMs: 2,
+        incomplete: 0
+      })
+    },
+    assertInvariants: () => { throw new Error('must not verify waiting_user as success'); },
+    downloadArtifacts: () => { throw new Error('must not download waiting_user artifacts'); }
+  };
+  const result = await AgentLiveEvalHarness.prototype.runCase.call(
+    harness,
+    { id: 'text-only-agent', kind: 'agent', expectedStatus: 'succeeded' },
+    'v2'
+  );
+  assert.equal(result.status, 'waiting_user');
+  assert.equal(result.ok, false);
+  assert.equal(result.retryRequired, true);
+});
 
 test('Live Harness V3.1 is fail-closed outside explicit test + dev + real-provider mode', () => {
   const safe = liveEvalEnv({}, { AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1' });

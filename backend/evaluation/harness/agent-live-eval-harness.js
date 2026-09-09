@@ -104,6 +104,44 @@ const waitForConversationExecution = async ({
   throw new Error('AGENT_LIVE_EVAL_CONVERSATION_TIMEOUT');
 };
 
+// An ambiguous Provider call is a durable user decision point, not an
+// infrastructure cleanup failure. Keep that state visible in live-eval
+// evidence so the campaign records the real waiting_user outcome instead of
+// cancelling it and losing the retry boundary.
+const buildWaitingUserEvidence = ({
+  entry,
+  cohort,
+  created,
+  terminal,
+  physical,
+  startedAt = Date.now()
+} = {}) => {
+  const run = terminal?.snapshot?.persistent?.run || {};
+  return {
+    scenarioId: entry?.id || null,
+    cohort,
+    ok: false,
+    code: 'AGENT_LIVE_EVAL_WAITING_USER',
+    runId: created?.runId || null,
+    runtimeVersion: Number(run.runtime_version || (cohort === 'v2' ? 2 : 1)),
+    status: String(run.status || 'waiting_user'),
+    errorCode: String(run.error_code || 'AGENT_MODEL_CALL_AMBIGUOUS'),
+    elapsedMs: Math.max(0, Date.now() - Number(startedAt || Date.now())),
+    qwenCalls: Number(physical?.qwenCalls || 0),
+    modelCalls: Number(physical?.qwenCalls || 0),
+    kolorsCalls: Number(physical?.kolorsCalls || 0),
+    inputTokens: Number(physical?.inputTokens || 0),
+    outputTokens: Number(physical?.outputTokens || 0),
+    modelLatencyMs: Number(physical?.latencyMs || 0),
+    queueWaitMs: Number(physical?.queueWaitMs || 0),
+    incompleteDispatches: Number(physical?.incomplete || 0),
+    chargedCredits: Number(run.charged_credits || 0),
+    artifacts: [],
+    retryRequired: run.checkpoint?.retryRequired === true,
+    retryReason: run.checkpoint?.retryReason || 'model_call_ambiguous'
+  };
+};
+
 const liveEvalEnv = (base = {}, overrides = {}) => {
   const requestedProvider = String(
     overrides.AGENT_MODEL_PROVIDER ?? base.AGENT_MODEL_PROVIDER ?? 'cloudflare'
@@ -962,6 +1000,19 @@ class AgentLiveEvalHarness {
             created,
             terminal: await this.runToTerminal(created.runId)
           }));
+      if (result.terminal?.snapshot?.persistent?.run?.status === 'waiting_user') {
+        const physical = await this.campaignGuard.dispatchMetrics({
+          slotId: `${entry.id}:${cohort}`
+        });
+        return buildWaitingUserEvidence({
+          entry,
+          cohort,
+          created: result.created,
+          terminal: result.terminal,
+          physical,
+          startedAt
+        });
+      }
       const report = await this.assertInvariants({
         entry,
         cohort,
@@ -1341,5 +1392,6 @@ module.exports = {
   liveEvalEnv,
   readBody,
   syntheticReferenceImage,
+  buildWaitingUserEvidence,
   waitForConversationExecution
 };
