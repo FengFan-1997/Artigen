@@ -34,7 +34,7 @@
           <span class="brand-glyph" aria-hidden="true">A</span>
           <span class="brand-word">Artigen</span>
         </router-link>
-        <button class="icon-control desktop-only" type="button" :aria-label="leftCollapsed ? (zh ? '展开左栏' : 'Expand left panel') : (zh ? '折叠左栏' : 'Collapse left panel')" @click="toggleLeft">
+        <button class="icon-control desktop-only" type="button" :aria-label="leftCollapsed ? (zh ? '展开左栏' : 'Expand left panel') : (zh ? '折叠左栏' : 'Collapse left panel')" :aria-expanded="!leftCollapsed" aria-controls="workspace-history-panel" @click="toggleLeft">
           <WorkspaceIcon name="panel-left" :size="18" />
         </button>
         <button class="icon-control mobile-only" type="button" :aria-label="zh ? '关闭历史' : 'Close history'" @click="closeLeftDrawer(true)">

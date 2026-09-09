@@ -212,7 +212,7 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
         : [];
     });
 
-    const iconLabelMisalignment = Array.from(root.querySelectorAll<HTMLElement>('.new-task,.workspace-nav a,.workspace-account button,.attach-control,.quiet-action')).flatMap((control) => {
+    const iconLabelMisalignment = Array.from(root.querySelectorAll<HTMLElement>('.new-task,.workspace-nav a,.workspace-account button,.workspace-account a,.attach-control,.quiet-action')).flatMap((control) => {
       const icon = control.querySelector('.workspace-icon');
       const label = control.querySelector(':scope > span:not(.account-icon),:scope > .account-label');
       if (!visible(control) || !visible(icon) || !visible(label)) return [];
@@ -266,8 +266,8 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
         '.approval-actions button',
         '.workspace-notice button',
         '.inspector-tabs button',
-        '.workspace-left button',
-        '.workspace-right button'
+        '.workspace-left :is(button,a[href])',
+        '.workspace-right :is(button,a[href])'
       ].join(',')))
         .filter(visible)
         .map((element) => ({ label: element.getAttribute('aria-label') || element.textContent?.trim() || element.className, rect: box(element) }))
