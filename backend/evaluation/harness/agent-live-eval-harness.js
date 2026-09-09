@@ -10,6 +10,7 @@ const {
 } = require('../../lib/ai-providers');
 const { createAdminFinanceService } = require('../../services/admin-finance-service');
 const { assertAgentRuntimeReady } = require('../../services/agent-config');
+const { TEXT_MODEL, LEGACY_SILICONFLOW_TEXT_MODEL } = require('../../lib/agent-models');
 const { createAgentImageService } = require('../../services/agent-image-service');
 const { createConfiguredGenerationProvider } = require('../../services/generation-provider');
 const { fetch: siliconFlowFetch } = require('../../lib/fetch-utils');
@@ -108,9 +109,9 @@ const liveEvalEnv = (base = {}, overrides = {}) => {
     overrides.AGENT_MODEL_PROVIDER ?? base.AGENT_MODEL_PROVIDER ?? 'cloudflare'
   ).trim().toLowerCase();
   const expectedModel = requestedProvider === 'cloudflare'
-    ? '@cf/openai/gpt-oss-120b'
+    ? TEXT_MODEL
     : requestedProvider === 'siliconflow'
-      ? 'Qwen/Qwen3-8B'
+      ? LEGACY_SILICONFLOW_TEXT_MODEL
       : '';
   const requestedModel = String(
     overrides.AGENT_MODEL_NAME ?? base.AGENT_MODEL_NAME ?? expectedModel
@@ -183,9 +184,9 @@ const assertLiveEvalProcessSafety = (env = process.env) => {
   // may still describe the legacy provider, but never dispatch it live.
   const provider = String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase();
   const model = String(
-    env.AGENT_MODEL_NAME || (provider === 'cloudflare' ? '@cf/openai/gpt-oss-120b' : '')
+    env.AGENT_MODEL_NAME || (provider === 'cloudflare' ? TEXT_MODEL : '')
   ).trim();
-  if (provider !== 'cloudflare' || model !== '@cf/openai/gpt-oss-120b') {
+  if (provider !== 'cloudflare' || model !== TEXT_MODEL) {
     throw new Error('AGENT_LIVE_EVAL_TEXT_MODEL_PROVIDER_FORBIDDEN');
   }
   return true;

@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { TEXT_MODEL, IMAGE_MODEL, LEGACY_SILICONFLOW_TEXT_MODEL } = require('../../lib/agent-models');
 
 const SAFE_KEYS = new Set([
   'artifactCount', 'attempt', 'callId', 'component', 'credits', 'dispatchId', 'elapsedMs', 'inputTokens',
@@ -63,8 +64,8 @@ class RuntimeTraceSink {
   }
 
   assertProtocolInvariants({
-    textModel = 'Qwen/Qwen3-8B',
-    imageModel = 'Kwai-Kolors/Kolors',
+    textModel = null,
+    imageModel = IMAGE_MODEL,
     allowIncompleteToolCalls = false,
     subagentForbiddenTools = [
       'browser_dom', 'computer', 'generate_image', 'request_user_approval',
@@ -97,8 +98,11 @@ class RuntimeTraceSink {
         throw new Error(`AGENT_HARNESS_ORPHAN_OBSERVATION:${observation.callId || 'missing'}`);
       }
     }
+    const acceptedTextModels = textModel
+      ? new Set([textModel])
+      : new Set([TEXT_MODEL, LEGACY_SILICONFLOW_TEXT_MODEL]);
     for (const request of this.entries.filter((entry) => entry.type === 'model.request')) {
-      if (request.model !== textModel) {
+      if (!acceptedTextModels.has(request.model)) {
         throw new Error(`AGENT_HARNESS_TEXT_MODEL_INVALID:${request.model || 'missing'}`);
       }
       if (request.phase === 'actor' && request.thinkingEnabled === true) {

@@ -6,12 +6,13 @@ import {
   getOrCreateSessionId
 } from '@/login/session';
 import { authFetch } from '@/login/authFetch';
+import { TEXT_MODEL, IMAGE_MODEL } from '../constants/models';
 
 const API_URL = buildApiUrl('/api/generate');
 const IMG2IMG_URL = buildApiUrl('/api/img2img');
 
-const FIXED_TEXT_MODEL = '@cf/openai/gpt-oss-120b';
-const FIXED_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
+const FIXED_TEXT_MODEL = TEXT_MODEL;
+const FIXED_IMAGE_MODEL = IMAGE_MODEL;
 
 const isAllowedTextModel = (raw: string) => {
   const k = String(raw || '')

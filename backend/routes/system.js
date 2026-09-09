@@ -18,6 +18,7 @@ const {
   networkMetadata,
   opaqueReference
 } = require('../lib/privacy-metadata');
+const { TEXT_MODEL, IMAGE_MODEL } = require('../lib/agent-models');
 
 const installSystemRoutes = (app, deps) => {
   const NODE_ENV = deps?.NODE_ENV;
@@ -39,8 +40,8 @@ const installSystemRoutes = (app, deps) => {
   const callTextGenerate = deps?.callTextGenerate;
   const SILICONFLOW_API_BASE = deps?.SILICONFLOW_API_BASE;
   const SILICONFLOW_MODEL = deps?.SILICONFLOW_MODEL;
-  const CLOUDFLARE_MODEL = deps?.CLOUDFLARE_MODEL || '@cf/openai/gpt-oss-120b';
-  const SILICONFLOW_IMAGE_MODEL = deps?.SILICONFLOW_IMAGE_MODEL || 'Kwai-Kolors/Kolors';
+  const CLOUDFLARE_MODEL = deps?.CLOUDFLARE_MODEL || TEXT_MODEL;
+  const SILICONFLOW_IMAGE_MODEL = deps?.SILICONFLOW_IMAGE_MODEL || IMAGE_MODEL;
   const getClientIp = deps?.getClientIp;
   const upsertUsageLedgerItem = deps?.upsertUsageLedgerItem;
   const computeCreditsDelta = deps?.computeCreditsDelta;
