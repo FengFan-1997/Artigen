@@ -91,12 +91,12 @@
           <span class="account-label">{{ zh ? '外观' : 'Appearance' }}</span>
           <b class="account-value">{{ themeLabel }}</b>
         </button>
-        <button type="button" @click="$emit('open-settings')">
+        <router-link to="/login/account" class="account-action" :aria-label="zh ? '账户设置' : 'Account settings'">
           <span class="account-icon" aria-hidden="true">
             <WorkspaceIcon name="settings" :size="16" />
           </span>
           <span class="account-label">{{ zh ? '设置' : 'Settings' }}</span>
-        </button>
+        </router-link>
       </footer>
     </aside>
 
