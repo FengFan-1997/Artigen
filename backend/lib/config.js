@@ -1,6 +1,11 @@
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 const { readMacOsKeychainSecret } = require("./local-keychain");
+const {
+  TEXT_MODEL,
+  IMAGE_MODEL,
+  LEGACY_SILICONFLOW_TEXT_MODEL
+} = require("./agent-models");
 
 const normalizeUrl = (url) => {
   const s = (url || "").toString().trim();
@@ -59,9 +64,9 @@ const SILICONFLOW_API_BASE = normalizeUrl(
 );
 const SILICONFLOW_CHAT_COMPLETIONS_URL = `${SILICONFLOW_API_BASE}/chat/completions`;
 const SILICONFLOW_IMAGES_GENERATIONS_URL = `${SILICONFLOW_API_BASE}/images/generations`;
-const FIXED_SILICONFLOW_CHAT_MODEL = "Qwen/Qwen3-8B";
-const FIXED_SILICONFLOW_IMAGE_MODEL = "Kwai-Kolors/Kolors";
-const FIXED_CLOUDFLARE_CHAT_MODEL = "@cf/openai/gpt-oss-120b";
+const FIXED_SILICONFLOW_CHAT_MODEL = LEGACY_SILICONFLOW_TEXT_MODEL;
+const FIXED_SILICONFLOW_IMAGE_MODEL = IMAGE_MODEL;
+const FIXED_CLOUDFLARE_CHAT_MODEL = TEXT_MODEL;
 // Legacy endpoints expose one text model field.  In a deployed Agent
 // environment that field must advertise the Cloudflare model; keep the
 // SiliconFlow constant available for isolated backwards-compatibility tests.

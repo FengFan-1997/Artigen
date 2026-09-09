@@ -4,6 +4,7 @@ const {
   decryptAgentPayload,
   encryptAgentPayload
 } = require('./agent-payload-service');
+const { TEXT_MODEL } = require('../lib/agent-models');
 
 const PRIORITIES = Object.freeze({
   router: 1,
@@ -135,7 +136,7 @@ const createScheduledImageGenerate = ({
 const createProviderScheduler = ({
   pool,
   env = process.env,
-  providerKey = 'cloudflare:@cf/openai/gpt-oss-120b'
+  providerKey = `cloudflare:${TEXT_MODEL}`
 } = {}) => {
   if (!pool || typeof pool.connect !== 'function') {
     throw new TypeError('AGENT_PROVIDER_SCHEDULER_POOL_REQUIRED');

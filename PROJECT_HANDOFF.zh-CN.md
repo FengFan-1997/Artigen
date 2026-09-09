@@ -23,6 +23,13 @@
 
 文档性质：**GitHub 正式项目状态与持久事实总入口**
 
+## 2026-09-09 提示词优化与 Canonical Skill（本地候选，未发布）
+
+- 从 `origin/dev` SHA `7f96fe9c9cb93430b69551d7aca2bcb76297cf2f` 创建独立分支 `codex/prompt-skill-optimization`，加入内置提示词优化器、确定性训练/验证集拆分、失败 Trace 候选生成与安全 gate；未引入 Promptfoo、DSPy 或其他第三方生产依赖。
+- `backend/agent-skills/manifest.json` 现为八个 Skill 的 canonical 元数据来源，编译器生成内容哈希并校验工具、阶段、触发器和渐进披露引用；新增 `agent-quality` Skill，能力仍只能由服务端授权。
+- 文本模型契约统一记录为 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`，图片模型为 `Kwai-Kolors/Kolors`。旧 `Qwen/Qwen3-8B` 仅作为集中管理的历史 SiliconFlow fixture 常量，不得用于部署运行时。
+- 已通过 Skill manifest、提示词优化器、Runtime V2、Harness V3/V3.1 定向回归，以及 backend lint、frontend type-check、`eval:agent:validate`。候选尚未 push、PR、合并、部署或执行真实 DEV 评测，Runtime V2 与公众 rollout 继续关闭。
+
 ## 2026-09-08 V1 纯文字意图安全收口（已合入 DEV）
 
 - 真实 DEV 浏览器运行确认：V1 Computer Agent 在用户明确要求“只返回文字、不生成文件”时，模型仍生成了网站源文件和预览文件；该运行已由用户停止，点数已释放，作为失败审计证据保留。

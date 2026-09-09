@@ -1,5 +1,6 @@
 import { authFetch } from '@/login/authFetch';
 import { buildApiUrl } from '@/utils/api';
+import { TEXT_MODEL, IMAGE_MODEL } from '../constants/models';
 import type { AgentQuote } from './agentRuns';
 
 export type DesignRouteKind = 'reply' | 'local_tool' | 'tool_task' | 'agent_run';
@@ -137,8 +138,8 @@ export type DesignAssistantStatus = {
   enabled: boolean;
   workerEnabled: boolean;
   plannerReady: boolean;
-  model: '@cf/openai/gpt-oss-120b';
-  imageModel: 'Kwai-Kolors/Kolors';
+  model: typeof TEXT_MODEL;
+  imageModel: typeof IMAGE_MODEL;
   autoCreditCap: number;
   retentionDays: number;
   authorizationIdleMinutes: number;

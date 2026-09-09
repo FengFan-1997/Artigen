@@ -2,6 +2,7 @@ const { Pool } = require('pg');
 
 const { createModelCallService } = require('../../services/agent-model-runtime-service');
 const { createAgentRunService } = require('../../services/agent-run-service');
+const { LEGACY_SILICONFLOW_TEXT_MODEL } = require('../../lib/agent-models');
 
 const stableCode = (error) => (/^[A-Z][A-Z0-9_]{2,100}$/.test(String(error?.code || ''))
   ? String(error.code)
@@ -36,7 +37,7 @@ const main = async () => {
     const call = await modelCalls.start({
       ...lease,
       provider: 'siliconflow',
-      modelName: 'Qwen/Qwen3-8B',
+      modelName: LEGACY_SILICONFLOW_TEXT_MODEL,
       phase: 'actor',
       turn: 1,
       promptProfile: 'cross-process-recovery-probe',

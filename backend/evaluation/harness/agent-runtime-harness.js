@@ -25,6 +25,7 @@ const {
   ScriptedSiliconFlowTransport
 } = require('./scripted-siliconflow-transport');
 const { RuntimeTraceSink } = require('./runtime-trace-sink');
+const { LEGACY_SILICONFLOW_TEXT_MODEL } = require('../../lib/agent-models');
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'waiting_user', 'paused']);
 
@@ -69,7 +70,7 @@ const harnessEnv = (base = {}, overrides = {}) => ({
   AGENT_PROJECT_MEMORY_ENABLED: 'false',
   AGENT_PROVIDER_SCHEDULER_ENABLED: 'false',
   AGENT_MODEL_PROVIDER: 'siliconflow',
-  AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+  AGENT_MODEL_NAME: LEGACY_SILICONFLOW_TEXT_MODEL,
   AGENT_SILICONFLOW_BASE_URL: 'https://api.siliconflow.cn/v1',
   SILICONFLOW_API_KEY: 'harness-v3-scripted-provider',
   AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0',

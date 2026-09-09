@@ -170,7 +170,8 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(runner, /AGENT_IMAGE_REFERENCE_CREDITS:[\s\S]*\|\| '12'/);
   assert.match(runner, /AGENT_MODEL_PROVIDER:\s*modelProvider/);
   assert.match(runner, /process\.env\.AGENT_MODEL_PROVIDER \|\| 'cloudflare'/);
-  assert.match(runner, /AGENT_MODEL_NAME:\s*'@cf\/openai\/gpt-oss-120b'/);
+  assert.match(runner, /require\('\.\.\/lib\/agent-models'\)/);
+  assert.match(runner, /AGENT_MODEL_NAME:\s*TEXT_MODEL/);
   assert.match(runner, /AGENT_TEXT_MODEL_HARD_LOCK:\s*'true'/);
   assert.match(runner, /secretNames\.push\([\s\S]*'CLOUDFLARE_ACCOUNT_ID',[\s\S]*'CLOUDFLARE_API_TOKEN',[\s\S]*'AGENT_CLOUDFLARE_FREE_ACCOUNT_ID'/);
   assert.match(runner, /workerEnv\.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED/);
@@ -303,8 +304,11 @@ test('runtime model allowlist contains only the reviewed text models and Kolors'
     'render.yaml'
   ].map(readRepoFile).join('\n');
 
-  assert.match(runtime, /Qwen\/Qwen3-8B/);
   assert.match(runtime, /@cf\/openai\/gpt-oss-120b/);
+  // Qwen3 remains available only as an explicitly named legacy fixture
+  // constant outside the deployed runtime allowlist.  No production-facing
+  // config or UI may advertise it after the Cloudflare model decision.
+  assert.doesNotMatch(runtime, /Qwen\/Qwen3-8B/);
   assert.match(runtime, /AGENT_TEXT_MODEL_HARD_LOCK/);
   assert.match(runtime, /Kwai-Kolors\/Kolors/);
   assert.doesNotMatch(runtime, /Qwen\/Qwen-Image-Edit-2509/);

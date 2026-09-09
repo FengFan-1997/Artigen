@@ -3,6 +3,7 @@
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
+const { TEXT_MODEL } = require('../lib/agent-models');
 const { resolveAgentWorkerPoolProfile } = require('./lib/agent-worker-pool-profile');
 
 const root = path.resolve(__dirname, '../..');
@@ -119,7 +120,7 @@ try {
     AGENT_WORKER_ENABLED: '1',
     AGENT_RUNTIME_DRIVER: 'live',
     AGENT_MODEL_PROVIDER: modelProvider,
-    AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b',
+    AGENT_MODEL_NAME: TEXT_MODEL,
     AGENT_TEXT_MODEL_HARD_LOCK: 'true',
     AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: modelProvider === 'cloudflare'
       ? String(workerEnv.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED || 'false')
