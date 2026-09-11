@@ -1173,6 +1173,12 @@ const createAgentRunService = ({
       workerOnline,
       workerModelReady,
       configuredModel,
+      fallbackModel: config.modelProvider === 'cloudflare' ? {
+        provider: 'siliconflow',
+        model: config.fallbackModelName,
+        configured: Boolean(config.siliconFlowApiKey),
+        trigger: 'cloudflare_free_quota_exhausted'
+      } : null,
       workerModel,
       queueDepth,
       oldestQueuedAt: row.oldest_queued_at || null,
