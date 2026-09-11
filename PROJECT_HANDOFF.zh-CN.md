@@ -2,6 +2,11 @@
 
 更新时间：2026-09-08（Asia/Shanghai）
 
+## 2026-09-11 Cloudflare 配额降级候选（待 DEV 验证）
+
+- 候选分支 `codex/release-readiness-20260911` 实现：Cloudflare GPT-OSS 仅在明确返回免费额度耗尽（错误码 3036）时，最多切换一次到 SiliconFlow `Qwen/Qwen3-8B`；容量不足、5xx、超时、认证失败和模糊回执不触发跨供应商重放。
+- 该变更已通过本地静态检查、前端/后端/邮件中继测试和 Agent 质量集，但尚未进入 DEV，尚未完成真实 Provider fallback、Worker 对齐或生产发布；Runtime V2 继续关闭。
+
 ## 2026-09-07 Live Harness 进程存活修复（候选 PR #183，未合入）
 
 - 候选分支 `codex/live-eval-process-liveness` 基于 DEV `7ddbb38eb97a6a67d4c15a80c99f5f31e7251ebf`，提交 `8464904e1ba0b2cf5adbe2e9558f8507a97b47fc`。修复长时间未收敛的 Planner job 使 Live Harness 进程无声退出、slot journal 停留 `running` 的问题：保留单飞处理 Promise，同时持续执行数据库轮询和有界超时；不改变 Provider 重试、回执、租约或计费语义。
