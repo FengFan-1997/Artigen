@@ -400,10 +400,12 @@ const toolTasks = reactive<Record<string, ServerToolTask>>({});
 const agentRuns = reactive<Record<string, AgentRun>>({});
 const startingExecutions = reactive(new Set<string>());
 const executionStreams = new Map<string, () => void>();
+const toolTaskTimers = new Map<string, number>();
 let closeConversationStream: null | (() => void) = null;
 let refreshTimer: number | null = null;
 const scheduledAutoStarts = new Set<string>();
 const handledMemoryCandidates = reactive(new Set<string>());
+const LAST_CONVERSATION_KEY = 'artigen:last-design-conversation';
 
 const suggestionsZh = [
   '为一款柚子气泡水生成夏日主视觉',
@@ -621,12 +623,35 @@ const monitorRun = (runId: string) => {
   void loadRun(runId).catch(() => {});
 };
 
+const monitorToolTask = (taskId: string) => {
+  if (toolTaskTimers.has(taskId)) return;
+  const poll = async () => {
+    try {
+      const task = await getToolTask(taskId);
+      toolTasks[taskId] = task;
+      if (['succeeded', 'failed', 'cancelled'].includes(task.status)) {
+        toolTaskTimers.delete(taskId);
+        await refreshConversation();
+        return;
+      }
+    } catch {}
+    const timer = window.setTimeout(() => {
+      toolTaskTimers.delete(taskId);
+      void poll();
+    }, document.visibilityState === 'visible' ? 1500 : 5000);
+    toolTaskTimers.set(taskId, timer);
+  };
+  void poll();
+};
+
 const hydrateExecutionTargets = async (executions: DesignExecution[]) => {
   for (const execution of executions) {
     if (execution.toolTaskId && !toolTasks[execution.toolTaskId]) {
       void getToolTask(execution.toolTaskId)
-        .then((task) => { toolTasks[task.taskId] = task; })
+        .then((task) => { toolTasks[task.taskId] = task; monitorToolTask(task.taskId); })
         .catch(() => {});
+    } else if (execution.toolTaskId) {
+      monitorToolTask(execution.toolTaskId);
     }
     if (execution.agentRunId) monitorRun(execution.agentRunId);
   }
@@ -670,11 +695,14 @@ const refreshConversationList = async () => {
 };
 
 const openConversation = async (conversationId: string) => {
-  conversation.value = await getDesignConversation(conversationId);
+  const normalizedId = String(conversationId || '').trim();
+  if (!normalizedId) return;
+  conversation.value = await getDesignConversation(normalizedId);
+  try { window.localStorage.setItem(LAST_CONVERSATION_KEY, normalizedId); } catch {}
   await syncConversationProject(conversation.value.projectId);
-  authorizations.value = await listDesignSessionAuthorizations(conversationId).catch(() => []);
-  connectConversationStream(conversationId);
-  await router.replace({ path: '/artigen/create', query: { c: conversationId } });
+  authorizations.value = await listDesignSessionAuthorizations(normalizedId).catch(() => []);
+  connectConversationStream(normalizedId);
+  await router.replace({ path: '/artigen/create', query: { c: normalizedId } });
   await hydrateExecutionTargets(conversation.value.executions || []);
   await scrollToBottom();
 };
@@ -687,6 +715,7 @@ const newConversation = async () => {
   authorizations.value = [];
   draft.value = '';
   selectedAttachments.value = [];
+  try { window.localStorage.removeItem(LAST_CONVERSATION_KEY); } catch {}
   await router.replace('/artigen/create');
 };
 
@@ -1130,8 +1159,18 @@ onMounted(async () => {
   syncAuth();
   if (!isAuthed.value) return;
   await refreshConversationList().catch(() => {});
-  const requested = String(route.query.c || '').trim();
+  const requested = String(route.query.c || '').trim() || (() => {
+    try { return String(window.localStorage.getItem(LAST_CONVERSATION_KEY) || '').trim(); } catch { return ''; }
+  })();
   if (requested) await openConversation(requested).catch(() => router.replace('/artigen/create'));
+  const onVisible = () => {
+    if (document.visibilityState === 'visible' && conversation.value) {
+      void refreshConversation().catch(() => {});
+      void refreshConversationList().catch(() => {});
+    }
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  (window as any).__artigenDesignVisibilityCleanup = () => document.removeEventListener('visibilitychange', onVisible);
 });
 
 watch(() => conversation.value?.messages?.length, () => void scrollToBottom());
@@ -1141,7 +1180,15 @@ onBeforeUnmount(() => {
   closeConversationStream?.();
   executionStreams.forEach((close) => close());
   executionStreams.clear();
+  toolTaskTimers.forEach((timer) => window.clearTimeout(timer));
+  toolTaskTimers.clear();
   if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+  try { (window as any).__artigenDesignVisibilityCleanup?.(); } catch {}
+  try {
+    if (conversation.value?.conversationId) {
+      window.localStorage.setItem(LAST_CONVERSATION_KEY, conversation.value.conversationId);
+    }
+  } catch {}
 });
 </script>
 

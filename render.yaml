@@ -50,7 +50,7 @@ services:
       - key: DESIGN_CONVERSATION_AUTO_CREDIT_CAP
         value: "50"
       - key: DESIGN_CONVERSATION_RETENTION_DAYS
-        value: "30"
+        value: "0"
       - key: DESIGN_CONVERSATION_AUTH_IDLE_MINUTES
         value: "30"
       - key: AGENT_SUBAGENTS_ENABLED

@@ -100,7 +100,9 @@ const getDesignConversationConfig = (env = process.env) => Object.freeze({
   enabled: enabled(env.DESIGN_CONVERSATION_ENABLED),
   workerEnabled: enabled(env.DESIGN_CONVERSATION_WORKER_ENABLED),
   autoCreditCap: integer(env.DESIGN_CONVERSATION_AUTO_CREDIT_CAP, 50, 1, 500),
-  retentionDays: integer(env.DESIGN_CONVERSATION_RETENTION_DAYS, 30, 1, 30),
+  // Permanent user-owned history is the default. A positive value opts into
+  // an explicit retention policy for controlled environments.
+  retentionDays: integer(env.DESIGN_CONVERSATION_RETENTION_DAYS, 0, 0, 3650),
   authorizationIdleMinutes: integer(env.DESIGN_CONVERSATION_AUTH_IDLE_MINUTES, 30, 5, 120),
   pollMs: integer(env.DESIGN_CONVERSATION_POLL_MS, 750, 250, 5000),
   planningLeaseSeconds: integer(env.DESIGN_CONVERSATION_PLANNING_LEASE_SECONDS, 90, 1, 300),
@@ -847,7 +849,8 @@ const createDesignConversationService = ({
     const dbUserId = await resolveUserId(client, userId);
     const result = await client.query(
       `SELECT * FROM design_conversations
-        WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp()
+        WHERE id=$1 AND user_id=$2
+          AND (expires_at IS NULL OR expires_at>clock_timestamp())
         ${lock ? 'FOR UPDATE' : ''}`,
       [conversationId, dbUserId]
     );
@@ -890,7 +893,8 @@ const createDesignConversationService = ({
       `INSERT INTO design_messages
         (id,conversation_id,sequence,role,kind,status,algorithm,key_version,iv,auth_tag,ciphertext,expires_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
-         clock_timestamp()+($12::text || ' days')::interval)
+         CASE WHEN $12::integer<=0 THEN NULL
+              ELSE clock_timestamp()+($12::text || ' days')::interval END)
        RETURNING *`,
       [
         messageId,
@@ -925,9 +929,11 @@ const createDesignConversationService = ({
       const inserted = await client.query(
         `INSERT INTO design_conversations
           (user_id,project_id,auto_credit_cap,expires_at)
-         VALUES ($1,$2,$3,clock_timestamp()+($4::text || ' days')::interval)
+         VALUES ($1,$2,$3,CASE WHEN $4::integer<=0 THEN NULL
+           ELSE clock_timestamp()+($4::text || ' days')::interval END)
          RETURNING *`,
-        [dbUserId, projectId || null, config.autoCreditCap, config.retentionDays]
+        [dbUserId, projectId || null, config.autoCreditCap,
+          config.retentionDays > 0 ? config.retentionDays : null]
       );
       await insertEvent(client, {
         conversationId: inserted.rows[0].id,
@@ -944,7 +950,7 @@ const createDesignConversationService = ({
       const dbUserId = await resolveUserId(client, userId);
       const result = await client.query(
         `SELECT * FROM design_conversations
-          WHERE user_id=$1 AND expires_at>clock_timestamp()
+          WHERE user_id=$1 AND (expires_at IS NULL OR expires_at>clock_timestamp())
             AND ($2::timestamptz IS NULL OR updated_at<$2)
           ORDER BY updated_at DESC LIMIT $3`,
         [
@@ -962,7 +968,7 @@ const createDesignConversationService = ({
     return readTransaction(pool, async (client) => {
       const { row } = await resolveOwnedConversation(client, { userId, conversationId });
       const messages = await client.query(
-        'SELECT * FROM design_messages WHERE conversation_id=$1 AND expires_at>now() ORDER BY sequence',
+        'SELECT * FROM design_messages WHERE conversation_id=$1 AND (expires_at IS NULL OR expires_at>now()) ORDER BY sequence',
         [conversationId]
       );
       const executions = await client.query(
@@ -1042,7 +1048,8 @@ const createDesignConversationService = ({
       const title = row.title === '新的设计任务' ? titleFromText(text) : row.title;
       await client.query(
         `UPDATE design_conversations
-            SET title=$2,updated_at=now(),expires_at=clock_timestamp()+($3::text || ' days')::interval
+            SET title=$2,updated_at=now(),expires_at=CASE WHEN $3::integer<=0 THEN NULL
+              ELSE clock_timestamp()+($3::text || ' days')::interval END
           WHERE id=$1`,
         [conversationId, title, config.retentionDays]
       );
@@ -1128,7 +1135,8 @@ const createDesignConversationService = ({
 
   const loadPlanningContext = async (job) => transaction(pool, async (client) => {
     const conversation = await client.query(
-      'SELECT * FROM design_conversations WHERE id=$1 AND expires_at>clock_timestamp() FOR SHARE',
+      `SELECT * FROM design_conversations WHERE id=$1
+        AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE`,
       [job.conversation_id]
     );
     if (!conversation.rowCount) throw new ApiError(410, 'DESIGN_CONVERSATION_EXPIRED');
@@ -1136,7 +1144,7 @@ const createDesignConversationService = ({
       `SELECT * FROM design_messages
         WHERE conversation_id=$1 AND sequence<=(
           SELECT sequence FROM design_messages WHERE id=$2
-        ) AND expires_at>now()
+        ) AND (expires_at IS NULL OR expires_at>now())
         ORDER BY sequence`,
       [job.conversation_id, job.message_id]
     );
