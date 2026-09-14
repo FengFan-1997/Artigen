@@ -27,7 +27,7 @@ const {
   LiveEvalCampaignGuard
 } = require('../evaluation/harness/live-eval-campaign-guard');
 const { functionToolCall } = require('../evaluation/harness/scripted-siliconflow-transport');
-const { checkDatabase } = require('../services/readiness-service');
+const { checkDatabase, LATEST_REPOSITORY_MIGRATION } = require('../services/readiness-service');
 const { installLiveEvalPoolErrorHandler } = require('../scripts/run-agent-live-eval');
 
 const enabled = process.env.RUN_POSTGRES_INTEGRATION === '1' && Boolean(process.env.DATABASE_URL);
@@ -859,7 +859,7 @@ test('Harness V3 drives a zero-file text run through the real PostgreSQL runtime
   try {
     const readiness = await checkDatabase(pool);
     assert.equal(readiness.ok, true);
-    assert.equal(readiness.migration, '027_agent_live_eval_capacity_aggregate');
+    assert.equal(readiness.migration, LATEST_REPOSITORY_MIGRATION);
     harness = await AgentRuntimeHarness.create({
       pool,
       providerScript: [
