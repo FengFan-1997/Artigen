@@ -234,3 +234,6 @@ latest main → hotfix/* → PR to main → main → dev 同步 PR
 6. 历史归档、聊天和旧分支。
 
 发现冲突时必须在同一修复任务中更正文档，不能只修改更新时间。
+
+### 2026-09-14 migration 028 deployment compatibility
+Migration 028 now explicitly drops legacy `expires_at` NOT NULL constraints before moving design conversation and message expiry to `NULL`, allowing existing DEV/production schemas to adopt permanent history safely during startup migration.
