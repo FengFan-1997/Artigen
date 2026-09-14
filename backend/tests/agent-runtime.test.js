@@ -5680,6 +5680,49 @@ test('Cloudflare Agent never retries exhausted free quota or a paid-only model r
   assert.equal(paid.requests(), 1);
 });
 
+test('Cloudflare Agent falls back once on quota exhaustion to SiliconFlow Qwen3-8B', async () => {
+  const requests = [];
+  const accountId = 'd'.repeat(32);
+  const provider = new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+      ,SILICONFLOW_API_KEY: 'siliconflow-test-token'
+    },
+    fetchImpl: async (_url, options) => {
+      const payload = JSON.parse(options.body);
+      requests.push(payload.model);
+      if (requests.length === 1) {
+        return new Response(JSON.stringify({ errors: [{ code: 3036 }] }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      return new Response(JSON.stringify({
+        id: 'fallback-response',
+        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        usage: { prompt_tokens: 4, completion_tokens: 2 }
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.createChat({
+    model: '@cf/openai/gpt-oss-120b',
+    messages: []
+  });
+  assert.deepEqual(requests, [
+    '@cf/openai/gpt-oss-120b',
+    'Qwen/Qwen3-8B'
+  ]);
+  assert.equal(result.modelUsed, 'Qwen/Qwen3-8B');
+});
+
 test('Cloudflare GPT-OSS 120B completes an Agent tool-call round trip', async () => {
   const responses = [{
     id: 'cf-plan',

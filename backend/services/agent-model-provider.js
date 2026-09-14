@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { ApiError } = require('../lib/api-error');
 const { getAgentConfig } = require('./agent-config');
+const { TEXT_MODEL } = require('../lib/agent-models');
 const { requiredDeliverablesSatisfied } = require('./agent-artifact-service');
 const {
   actionFingerprint,
@@ -64,6 +65,12 @@ const cloudflareTerminalProviderError = (response, body) => {
   }
   if (providerCode === '5035') {
     return new ApiError(403, 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN', {
+      retryable: false,
+      details: { providerStatus: response.status, providerCode }
+    });
+  }
+  if (providerCode === '3040') {
+    return new ApiError(429, 'AGENT_CLOUDFLARE_OUT_OF_CAPACITY', {
       retryable: false,
       details: { providerStatus: response.status, providerCode }
     });
@@ -1347,7 +1354,9 @@ class OllamaAgentModelProvider {
   usageDetails(response, pricingSnapshot = null) {
     assertPricingSnapshotCompatibility(pricingSnapshot, {
       provider: this.providerName,
-      model: this.config.modelName
+      model: this.config.modelName === this.config.fallbackModelName
+        ? TEXT_MODEL
+        : this.config.modelName
     });
     const usage = {
       prompt_eval_count: response.prompt_eval_count,
@@ -3827,6 +3836,7 @@ class SiliconFlowAgentModelProvider extends OllamaAgentModelProvider {
         }
         const normalized = {
           id: String(body.id || ''),
+          modelUsed: this.config.modelName,
           message: {
             role: String(message.role || 'assistant'),
             content: String(message.content || ''),
@@ -3981,7 +3991,45 @@ class CloudflareAgentModelProvider extends SiliconFlowAgentModelProvider {
         retryable: false
       });
     }
-    return super.createChat(payload, metadata);
+    try {
+      return await super.createChat(payload, metadata);
+    } catch (error) {
+      // A 3040 capacity response is safe to retry on the account's explicitly
+      // probed fallback model.  Quota exhaustion (3036), auth failures, time
+      // outs and ambiguous calls remain terminal and are never replayed.
+      if (
+        error?.code !== 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED' ||
+        !this.config.fallbackModelName ||
+        !this.config.siliconFlowApiKey ||
+        metadata.fallbackAttempted
+      ) {
+        throw error;
+      }
+      const fallbackProvider = Object.create(SiliconFlowAgentModelProvider.prototype);
+      fallbackProvider.env = this.env;
+      fallbackProvider.config = Object.freeze({
+        ...this.config,
+        modelProvider: 'siliconflow',
+        modelName: this.config.fallbackModelName
+      });
+      fallbackProvider.fetchImpl = this.fetchImpl;
+      fallbackProvider.providerScheduler = this.providerScheduler;
+      fallbackProvider.modelCallService = this.modelCallService;
+      fallbackProvider.testController = this.testController;
+      const fallbackPayload = {
+        ...payload,
+        model: this.config.fallbackModelName
+      };
+      const fallbackMetadata = {
+        ...metadata,
+        fallbackAttempted: true,
+        fallbackReason: 'cloudflare_quota_exhausted',
+        reservationKey: metadata.reservationKey
+          ? `${metadata.reservationKey}:fallback`.slice(0, 200)
+          : null
+      };
+      return fallbackProvider.createChat(fallbackPayload, fallbackMetadata);
+    }
   }
 
   buildChatPayload(messages, capabilities = {}, toolProfile = 'parent', options = {}) {
@@ -4046,9 +4094,14 @@ class CloudflareAgentModelProvider extends SiliconFlowAgentModelProvider {
       });
     }
     const models = Array.isArray(body?.result) ? body.result : [];
-    const modelPresent = models.some((entry) => (
-      String(entry?.name || entry?.id || entry?.model || '') === this.config.modelName
-    ));
+    const expectedModels = [this.config.modelName].filter(Boolean);
+    const modelPresence = expectedModels.map((expected) => ({
+      model: expected,
+      present: models.some((entry) => (
+        String(entry?.name || entry?.id || entry?.model || '') === expected
+      ))
+    }));
+    const modelPresent = modelPresence.every((entry) => entry.present);
     if (!response.ok || body?.success === false) {
       throw new ApiError(503, this.providerErrorCodes.unavailable, {
         retryable: response.status >= 500 || response.status === 429,
@@ -4057,7 +4110,10 @@ class CloudflareAgentModelProvider extends SiliconFlowAgentModelProvider {
       });
     }
     if (!modelPresent) {
-      throw new ApiError(503, this.providerErrorCodes.modelMissing, { retryable: false });
+      throw new ApiError(503, this.providerErrorCodes.modelMissing, {
+        retryable: false,
+        model: modelPresence.find((entry) => !entry.present)?.model || this.config.modelName
+      });
     }
     return {
       ok: true,

@@ -2,7 +2,10 @@ const crypto = require('node:crypto');
 
 const { ApiError } = require('../lib/api-error');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
-const { TEXT_MODEL, LEGACY_SILICONFLOW_TEXT_MODEL } = require('../lib/agent-models');
+const {
+  TEXT_MODEL,
+  LEGACY_SILICONFLOW_TEXT_MODEL
+} = require('../lib/agent-models');
 
 const enabled = (value) => /^(1|true|yes|on)$/i.test(String(value || '').trim());
 const normalizedEnvironment = (value) => String(value || '').trim().toLowerCase();
@@ -178,11 +181,15 @@ const getAgentConfig = (env = process.env) => {
         ? CLOUDFLARE_AGENT_MODEL
       : 'gpt-5.6';
   const modelName = String(env.AGENT_MODEL_NAME || defaultModelName).trim();
+  const fallbackModelName = String(env.AGENT_MODEL_FALLBACK_NAME || LEGACY_SILICONFLOW_TEXT_MODEL).trim();
   if (modelProvider === 'siliconflow' && modelName !== SILICONFLOW_AGENT_MODEL) {
     throw new ApiError(500, 'AGENT_SILICONFLOW_MODEL_NOT_ALLOWED');
   }
   if (modelProvider === 'cloudflare' && modelName !== CLOUDFLARE_AGENT_MODEL) {
     throw new ApiError(500, 'AGENT_CLOUDFLARE_MODEL_NOT_ALLOWED');
+  }
+  if (modelProvider === 'cloudflare' && fallbackModelName !== LEGACY_SILICONFLOW_TEXT_MODEL) {
+    throw new ApiError(500, 'AGENT_SILICONFLOW_FALLBACK_MODEL_NOT_ALLOWED');
   }
   // The hard lock is a deployment invariant, not an opt-in safety switch.
   // Unit and historical fixture tests run with NODE_ENV=test; every real
@@ -330,6 +337,7 @@ const getAgentConfig = (env = process.env) => {
     runtimeDriver,
     modelProvider,
     modelName,
+    fallbackModelName,
     textModelHardLock,
     ollamaBaseUrl,
     siliconFlowBaseUrl,
