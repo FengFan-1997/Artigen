@@ -10,7 +10,7 @@ const {
   compileQualityCase,
   validateCompiledQualityCase
 } = require('../services/agent-quality-evaluation');
-const { checkDatabase } = require('../services/readiness-service');
+const { checkDatabase, LATEST_REPOSITORY_MIGRATION } = require('../services/readiness-service');
 
 const datasetPath = path.resolve(__dirname, '../evaluation/agent-quality-set.json');
 const manifest = JSON.parse(fs.readFileSync(datasetPath, 'utf8'));
@@ -228,7 +228,7 @@ const main = async () => {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: concurrency * 4 + 2 });
   try {
     const readiness = await checkDatabase(pool);
-    if (!readiness.ok || readiness.migration !== '027_agent_live_eval_capacity_aggregate') {
+    if (!readiness.ok || readiness.migration !== LATEST_REPOSITORY_MIGRATION) {
       throw new Error(`AGENT_HARNESS_DATABASE_NOT_READY:${readiness.migration || 'unknown'}`);
     }
     const results = await parallelMap(selected, concurrency, (entry) => runCase(pool, entry));
