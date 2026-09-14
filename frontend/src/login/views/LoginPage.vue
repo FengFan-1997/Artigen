@@ -950,7 +950,7 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
   width: 100%;
-  max-width: 400px;
+  max-width: none;
   margin-inline: auto;
   overflow: hidden;
   border-radius: 999px;

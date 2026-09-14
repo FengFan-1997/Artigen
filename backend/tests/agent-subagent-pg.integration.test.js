@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
 const { createAgentRunService } = require('../services/agent-run-service');
-const { checkDatabase } = require('../services/readiness-service');
+const { checkDatabase, LATEST_REPOSITORY_MIGRATION } = require('../services/readiness-service');
 
 const enabled = process.env.RUN_POSTGRES_INTEGRATION === '1' && Boolean(process.env.DATABASE_URL);
 
@@ -17,7 +17,7 @@ test('PostgreSQL subagent counters, ownership and run costs remain isolated and 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const readiness = await checkDatabase(pool);
   assert.equal(readiness.ok, true);
-  assert.equal(readiness.migration, '027_agent_live_eval_capacity_aggregate');
+  assert.equal(readiness.migration, LATEST_REPOSITORY_MIGRATION);
   const suffix = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const users = await pool.query(
     `INSERT INTO users (legacy_user_id,display_name,status)
