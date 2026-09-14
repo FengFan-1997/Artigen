@@ -6,6 +6,7 @@ const {
   applyAgentSmokeModelProfile,
   resolveAgentSmokeModelProfile
 } = require('./lib/agent-dev-model-profile');
+const { LATEST_REPOSITORY_MIGRATION } = require('../services/readiness-service');
 
 const KEYCHAIN_SERVICE = String(
   process.env.ARTIGEN_AGENT_KEYCHAIN_SERVICE || 'artigen-agent-dev-worker'
@@ -93,7 +94,7 @@ const { createAgentRunService, TERMINAL_STATUSES } = require('../services/agent-
 const { AgentQueuePublisher } = require('../services/agent-queue-service');
 const assets = require('../services/asset-storage');
 
-const REQUIRED_MIGRATION = '027_agent_live_eval_capacity_aggregate';
+const REQUIRED_MIGRATION = LATEST_REPOSITORY_MIGRATION;
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const readBody = async (body, maximumBytes) => {

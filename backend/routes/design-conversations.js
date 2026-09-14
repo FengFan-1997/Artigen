@@ -205,7 +205,9 @@ const installDesignConversationRoutes = (app, deps = {}) => {
           maxBytes: 40 * 1024 * 1024,
           maxPixels: 32 * 1000 * 1000,
           retentionClass: 'temporary-input',
-          expiresAt: new Date(Date.now() + config.retentionDays * 24 * 60 * 60 * 1000),
+          expiresAt: config.retentionDays > 0
+            ? new Date(Date.now() + config.retentionDays * 24 * 60 * 60 * 1000)
+            : null,
           metadata: { source: 'design-conversation', clientId: clientIds[index] }
         });
         uploaded.push({ clientId: clientIds[index], assetId: stored.assetId });

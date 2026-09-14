@@ -11,7 +11,7 @@ const {
   createProviderScheduler
 } = require('../services/agent-model-runtime-service');
 const { createAgentRunService } = require('../services/agent-run-service');
-const { checkDatabase } = require('../services/readiness-service');
+const { checkDatabase, LATEST_REPOSITORY_MIGRATION } = require('../services/readiness-service');
 
 const enabled = process.env.RUN_POSTGRES_INTEGRATION === '1' && Boolean(process.env.DATABASE_URL);
 
@@ -23,7 +23,7 @@ test('PostgreSQL Runtime V2 scheduler prioritizes interactive work and exposes c
   try {
     const readiness = await checkDatabase(pool);
     assert.equal(readiness.ok, true);
-    assert.equal(readiness.migration, '027_agent_live_eval_capacity_aggregate');
+    assert.equal(readiness.migration, LATEST_REPOSITORY_MIGRATION);
 
     const modelCalls = createModelCallService({ pool, retentionDays: 1 });
     const call = await modelCalls.start({

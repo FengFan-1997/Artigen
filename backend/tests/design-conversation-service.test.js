@@ -256,12 +256,12 @@ test('clarification is limited to one round and at most two questions', () => {
   assert.equal(second.questions, undefined);
 });
 
-test('conversation configuration defaults closed with a 50-credit cap and 30-day retention', () => {
+test('conversation configuration defaults closed with a 50-credit cap and permanent retention', () => {
   assert.deepEqual(getDesignConversationConfig({}), {
     enabled: false,
     workerEnabled: false,
     autoCreditCap: 50,
-    retentionDays: 30,
+    retentionDays: 0,
     authorizationIdleMinutes: 30,
     pollMs: 750,
     planningLeaseSeconds: 90,

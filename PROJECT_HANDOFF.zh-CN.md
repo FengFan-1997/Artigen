@@ -1,6 +1,12 @@
 # Artigen 项目正式 Handoff
 
-更新时间：2026-09-08（Asia/Shanghai）
+更新时间：2026-09-14（Asia/Shanghai）
+
+## 2026-09-14 后台任务恢复与永久会话历史（候选，待 DEV/生产验收）
+
+- 候选提交 `6180a3f`（后续发布候选 SHA 以 DEV 合并后的不可变提交为准）新增页面离开后的会话恢复：路由切换、窗口切换、刷新或关闭浏览器不会主动取消服务端任务；重新进入工作台会恢复最近会话、Agent Run 事件流和 tool task 轮询。
+- 新增迁移 `028_design_conversation_permanent_history`：设计会话和消息默认永久保存，直到用户主动删除；Render DEV/生产配置 `DESIGN_CONVERSATION_RETENTION_DAYS=0`，上传资产仍遵循资产自身生命周期。
+- 本地证据：后端设计会话测试 `18/18`、前端相关测试 `8/8`、前端 type-check、生产构建、ESLint、后端语法检查均通过。该候选尚未进入 `dev`、尚未完成 DEV smoke、尚未生产部署，不能视为已上线；Runtime V2 继续关闭。
 
 ## 2026-09-11 Cloudflare 配额降级候选（待 DEV 验证）
 
@@ -228,3 +234,6 @@ latest main → hotfix/* → PR to main → main → dev 同步 PR
 6. 历史归档、聊天和旧分支。
 
 发现冲突时必须在同一修复任务中更正文档，不能只修改更新时间。
+
+### 2026-09-14 migration 028 deployment compatibility
+Migration 028 now explicitly drops legacy `expires_at` NOT NULL constraints before moving design conversation and message expiry to `NULL`, allowing existing DEV/production schemas to adopt permanent history safely during startup migration.
