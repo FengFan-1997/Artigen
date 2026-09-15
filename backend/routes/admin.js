@@ -32,6 +32,7 @@ const {
   usesOperationalRecordStore
 } = require('../services/operational-record-service');
 const { createModelCallService } = require('../services/agent-model-runtime-service');
+const { createAuthService } = require('../services/auth-service');
 const {
   readJson,
   USERS_FILE,
@@ -256,6 +257,22 @@ const installAdminRoutes = (app, deps = {}) => {
       });
     } catch (error) {
       return respondAdminOperationsError(res, error, 'GET /api/admin/me');
+    }
+  });
+
+  app.post('/api/admin/secure-test-session', rateLimit('admin_secure_test_session', { max: 10, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      const principal = await requireActiveAdministrator({ req, minimumRole: 'admin' });
+      const email = String(process.env.SECURE_TEST_USER_EMAIL || '').trim().toLowerCase();
+      if (!email) return res.status(503).json({ error: 'SECURE_TEST_USER_NOT_CONFIGURED' });
+      const pool = getPool();
+      const user = (await pool.query("SELECT id FROM users WHERE lower(email)=lower($1) AND status='active' LIMIT 1", [email])).rows[0];
+      if (!user) return res.status(404).json({ error: 'SECURE_TEST_USER_NOT_FOUND' });
+      const service = createAuthService({ pool });
+      const issued = await service.createSecureTestSession({ adminPrincipal: principal.username, testUserId: user.id, userAgent: req.headers['user-agent'] });
+      return res.json({ ok: true, token: issued.token, expiresAt: issued.expiresAt, testUserId: issued.testUserId });
+    } catch (error) {
+      return respondAdminOperationsError(res, error, 'POST /api/admin/secure-test-session');
     }
   });
 

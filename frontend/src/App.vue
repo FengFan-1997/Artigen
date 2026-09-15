@@ -1,14 +1,23 @@
 <script setup lang="ts">
+import { onMounted, ref } from 'vue';
 import LoginModal from './login/components/LoginModal.vue';
+import { buildApiUrl } from './utils/api';
 
 const appEnvironment = String(import.meta.env.VITE_APP_ENV || '').trim().toLowerCase();
 const isDevEnvironment = appEnvironment === 'dev' || appEnvironment === 'development';
+const secureTest = ref<any>(null);
+onMounted(async () => {
+  const response = await fetch(buildApiUrl('/api/auth/session'), { credentials: 'include' }).catch(() => null);
+  const json: any = await response?.json().catch(() => null);
+  if (json?.authMode === 'secure-test') secureTest.value = json;
+});
 </script>
 
 <template>
   <div v-if="isDevEnvironment" class="dev-environment-badge" role="status">
     DEV 测试环境
   </div>
+  <div v-if="secureTest" class="secure-test-banner" role="status">安全测试模式 · 测试用户 · 无限测试额度</div>
   <router-view></router-view>
   <LoginModal />
   <!-- <Agent /> -->
@@ -39,6 +48,8 @@ const isDevEnvironment = appEnvironment === 'dev' || appEnvironment === 'develop
   line-height: 1.5;
   pointer-events: none;
 }
+
+.secure-test-banner { position: fixed; top: 0; left: 50%; z-index: 10060; transform: translateX(-50%); padding: 6px 14px; border-radius: 0 0 10px 10px; background: #7c2d12; color: #ffedd5; font-size: 12px; font-weight: 800; pointer-events: none; }
 
 @media (max-width: 1439px) {
   .dev-environment-badge {

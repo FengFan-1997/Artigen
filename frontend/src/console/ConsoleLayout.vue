@@ -44,6 +44,10 @@
           <HomeOutlined class="nav-icon" />
           <span v-if="!collapsed">{{ ui.backToHome }}</span>
         </button>
+        <button v-if="!collapsed && consoleStore.adminPrincipal && ['admin','owner'].includes(consoleStore.adminPrincipal.role)" class="nav-item" type="button" @click="enterSecureTest">
+          <SafetyCertificateOutlined class="nav-icon" />
+          <span>进入安全测试工作区</span>
+        </button>
         <div v-if="!collapsed" class="retention-note">
           <SafetyCertificateOutlined />
           <span>{{ ui.retention }}</span>
@@ -398,6 +402,16 @@ const handleLogout = () => {
   consoleStore.clearAdminKey();
   syncLoginTick();
   void router.replace('/console');
+};
+
+const enterSecureTest = async () => {
+  try {
+    await consoleStore.enterSecureTestWorkspace();
+    message.success('安全测试会话已建立');
+    await router.push('/artigen/create');
+  } catch (error: any) {
+    message.error(`安全测试会话失败（${String(error?.apiError || error?.message || 'UNKNOWN')}）`);
+  }
 };
 
 let authTimer: number | null = null;
