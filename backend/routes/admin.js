@@ -263,8 +263,7 @@ const installAdminRoutes = (app, deps = {}) => {
   app.post('/api/admin/secure-test-session', rateLimit('admin_secure_test_session', { max: 10, windowMs: 60 * 1000 }), async (req, res) => {
     try {
       const principal = await requireActiveAdministrator({ req, minimumRole: 'admin' });
-      const email = String(process.env.SECURE_TEST_USER_EMAIL || '').trim().toLowerCase();
-      if (!email) return res.status(503).json({ error: 'SECURE_TEST_USER_NOT_CONFIGURED' });
+      const email = String(process.env.SECURE_TEST_USER_EMAIL || 'secure-test@airhemp.com').trim().toLowerCase();
       const pool = getPool();
       let user = (await pool.query("SELECT id FROM users WHERE lower(email)=lower($1) AND status='active' LIMIT 1", [email])).rows[0];
       if (!user) {
