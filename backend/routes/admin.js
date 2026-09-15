@@ -266,8 +266,17 @@ const installAdminRoutes = (app, deps = {}) => {
       const email = String(process.env.SECURE_TEST_USER_EMAIL || '').trim().toLowerCase();
       if (!email) return res.status(503).json({ error: 'SECURE_TEST_USER_NOT_CONFIGURED' });
       const pool = getPool();
-      const user = (await pool.query("SELECT id FROM users WHERE lower(email)=lower($1) AND status='active' LIMIT 1", [email])).rows[0];
-      if (!user) return res.status(404).json({ error: 'SECURE_TEST_USER_NOT_FOUND' });
+      let user = (await pool.query("SELECT id FROM users WHERE lower(email)=lower($1) AND status='active' LIMIT 1", [email])).rows[0];
+      if (!user) {
+        const inserted = await pool.query(
+          `INSERT INTO users (legacy_user_id,username,email,display_name,status)
+           VALUES ($1,$2,$3,'Secure Test User','active')
+           ON CONFLICT (email) DO UPDATE SET status='active' RETURNING id`,
+          [`secure-test:${email}`, `secure_test_${crypto.createHash('sha256').update(email).digest('hex').slice(0, 12)}`, email]
+        );
+        user = inserted.rows[0];
+        await pool.query(`INSERT INTO wallets (user_id,available_credits,frozen_credits) VALUES ($1,0,0) ON CONFLICT (user_id) DO NOTHING`, [user.id]);
+      }
       const service = createAuthService({ pool });
       const issued = await service.createSecureTestSession({ adminPrincipal: principal.username, testUserId: user.id, userAgent: req.headers['user-agent'] });
       return res.json({ ok: true, token: issued.token, expiresAt: issued.expiresAt, testUserId: issued.testUserId });
