@@ -284,6 +284,25 @@ const installAdminRoutes = (app, deps = {}) => {
     }
   });
 
+  app.post('/api/admin/secure-test-session/revoke', rateLimit('admin_secure_test_revoke', { max: 20, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      const principal = await requireActiveAdministrator({ req, minimumRole: 'admin' });
+      const id = String(req.body?.id || '').trim();
+      if (!id) return res.status(400).json({ error: 'SECURE_TEST_SESSION_ID_REQUIRED' });
+      const pool = getPool();
+      const result = await pool.query(
+        `UPDATE secure_test_sessions SET revoked_at=COALESCE(revoked_at, now()) WHERE id=$1 RETURNING test_user_id`,
+        [id]
+      );
+      if (!result.rowCount) return res.status(404).json({ error: 'SECURE_TEST_SESSION_NOT_FOUND' });
+      await pool.query(`UPDATE sessions SET revoked_at=COALESCE(revoked_at, now()) WHERE user_id=$1 AND auth_mode='secure-test' AND revoked_at IS NULL`, [result.rows[0].test_user_id]);
+      await pool.query(`UPDATE user_entitlements SET enabled=false, updated_at=now() WHERE user_id=$1 AND entitlement='secure_test_unlimited'`, [result.rows[0].test_user_id]);
+      return res.json({ ok: true, revoked: true, adminPrincipal: principal.username });
+    } catch (error) {
+      return respondAdminOperationsError(res, error, 'POST /api/admin/secure-test-session/revoke');
+    }
+  });
+
   app.get('/api/admin/overview', rateLimit('admin_overview', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
     try {
       if (!assertAdmin(req, res)) return;
