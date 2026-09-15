@@ -32,6 +32,7 @@ const {
   usesOperationalRecordStore
 } = require('../services/operational-record-service');
 const { createModelCallService } = require('../services/agent-model-runtime-service');
+const { createAuthService } = require('../services/auth-service');
 const {
   readJson,
   USERS_FILE,
@@ -256,6 +257,49 @@ const installAdminRoutes = (app, deps = {}) => {
       });
     } catch (error) {
       return respondAdminOperationsError(res, error, 'GET /api/admin/me');
+    }
+  });
+
+  app.post('/api/admin/secure-test-session', rateLimit('admin_secure_test_session', { max: 10, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      const principal = await requireActiveAdministrator({ req, minimumRole: 'admin' });
+      const email = String(process.env.SECURE_TEST_USER_EMAIL || 'secure-test@airhemp.com').trim().toLowerCase();
+      const pool = getPool();
+      let user = (await pool.query("SELECT id FROM users WHERE lower(email)=lower($1) AND status='active' LIMIT 1", [email])).rows[0];
+      if (!user) {
+        const inserted = await pool.query(
+          `INSERT INTO users (legacy_user_id,username,email,display_name,status)
+           VALUES ($1,$2,$3,'Secure Test User','active')
+           ON CONFLICT (email) DO UPDATE SET status='active' RETURNING id`,
+          [`secure-test:${email}`, `secure_test_${crypto.createHash('sha256').update(email).digest('hex').slice(0, 12)}`, email]
+        );
+        user = inserted.rows[0];
+        await pool.query(`INSERT INTO wallets (user_id,available_credits,frozen_credits) VALUES ($1,0,0) ON CONFLICT (user_id) DO NOTHING`, [user.id]);
+      }
+      const service = createAuthService({ pool });
+      const issued = await service.createSecureTestSession({ adminPrincipal: principal.username, testUserId: user.id, userAgent: req.headers['user-agent'] });
+      return res.json({ ok: true, token: issued.token, expiresAt: issued.expiresAt, testUserId: issued.testUserId });
+    } catch (error) {
+      return respondAdminOperationsError(res, error, 'POST /api/admin/secure-test-session');
+    }
+  });
+
+  app.post('/api/admin/secure-test-session/revoke', rateLimit('admin_secure_test_revoke', { max: 20, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      const principal = await requireActiveAdministrator({ req, minimumRole: 'admin' });
+      const id = String(req.body?.id || '').trim();
+      if (!id) return res.status(400).json({ error: 'SECURE_TEST_SESSION_ID_REQUIRED' });
+      const pool = getPool();
+      const result = await pool.query(
+        `UPDATE secure_test_sessions SET revoked_at=COALESCE(revoked_at, now()) WHERE id=$1 RETURNING test_user_id`,
+        [id]
+      );
+      if (!result.rowCount) return res.status(404).json({ error: 'SECURE_TEST_SESSION_NOT_FOUND' });
+      await pool.query(`UPDATE sessions SET revoked_at=COALESCE(revoked_at, now()) WHERE user_id=$1 AND auth_mode='secure-test' AND revoked_at IS NULL`, [result.rows[0].test_user_id]);
+      await pool.query(`UPDATE user_entitlements SET enabled=false, updated_at=now() WHERE user_id=$1 AND entitlement='secure_test_unlimited'`, [result.rows[0].test_user_id]);
+      return res.json({ ok: true, revoked: true, adminPrincipal: principal.username });
+    } catch (error) {
+      return respondAdminOperationsError(res, error, 'POST /api/admin/secure-test-session/revoke');
     }
   });
 

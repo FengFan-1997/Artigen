@@ -648,6 +648,20 @@ export const useConsoleStore = defineStore('console', {
       return { ok: true as const, principal };
     },
 
+    async enterSecureTestWorkspace() {
+      const adminKey = String(this.adminKey || '').trim();
+      const headers = buildAdminHeaders(adminKey, this.adminAuthMode);
+      if (!headers) throw new Error('ADMIN_AUTH_REQUIRED');
+      const issued: any = await fetchAdminJson(buildApiUrl('/api/admin/secure-test-session'), headers, () => this.clearAdminKey());
+      const exchange = await fetch(buildApiUrl('/api/auth/secure-test-session/exchange'), {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: String(issued.token || '') })
+      });
+      const result: any = await exchange.json().catch(() => null);
+      if (!exchange.ok || !result?.ok) throw toAdminRequestError(exchange, result);
+      return result;
+    },
+
     async fetchAdminOverview() {
       const adminKey = String(this.adminKey || '').trim();
       if (!adminKey) throw new Error('ADMIN_AUTH_REQUIRED');

@@ -99,6 +99,8 @@ services:
         generateValue: true
       - key: CONSOLE_ADMIN_TOKEN_SECRET
         generateValue: true
+      - key: SECURE_TEST_USER_EMAIL
+        sync: false
       - key: TASK_PAYLOAD_ENCRYPTION_KEY
         sync: false
       - key: SILICONFLOW_API_KEY

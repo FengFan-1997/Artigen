@@ -871,6 +871,7 @@ const installAuthRoutes = (app, options = {}) => {
         userId: resolved.userId,
         user,
         csrfToken: String(resolved.csrfToken || ""),
+        ...(resolved.authMode === 'secure-test' ? { authMode: 'secure-test', testUser: true, entitlement: 'secure_test_unlimited' } : {}),
       });
     }
     const users = readUsersMap();
@@ -896,6 +897,18 @@ const installAuthRoutes = (app, options = {}) => {
       user,
       csrfToken: deriveCsrfToken(resolved.token),
     });
+  });
+
+  app.post('/api/auth/secure-test-session/exchange', async (req, res) => {
+    try {
+      const token = String(req.body?.token || '').trim();
+      if (!token) return res.status(400).json({ ok: false, error: 'SECURE_TEST_TOKEN_REQUIRED' });
+      const result = await getAuthService().exchangeSecureTestSession({ token, userAgent: userAgent(req) });
+      setAuthCookie(res, result.session.token);
+      return res.json({ ok: true, userId: result.user.userId, authMode: 'secure-test', testUser: true, entitlement: 'secure_test_unlimited', expiresAt: result.session.expiresAt, csrfToken: result.session.csrfToken });
+    } catch (error) {
+      return respondAuthError(res, error, 'SECURE_TEST_SESSION_EXCHANGE_FAILED');
+    }
   });
 
   app.post("/api/auth/logout", async (req, res) => {

@@ -2,6 +2,12 @@
 
 更新时间：2026-09-14（Asia/Shanghai）
 
+## 2026-09-15 安全测试工作区（候选，待 DEV/生产验收）
+
+- 新增迁移 `029_secure_console_test_sessions`，控制台管理员可为固定测试用户签发 5 分钟一次性票据，兑换为 30 分钟 HttpOnly 主站 Session。
+- 安全测试用户默认标识为 `secure-test@artigen.invalid`（可由 `SECURE_TEST_USER_EMAIL` 覆盖），使用 `secure_test_unlimited` entitlement，不修改钱包余额或充值账本；模型、任务、资产和审计仍按真实链路记录。
+- 主站显示安全测试模式标识；该能力仅限管理员控制台签发，Runtime V2 继续关闭。候选尚未完成 DEV/生产 smoke，不代表已上线。
+
 ## 2026-09-14 后台任务恢复与永久会话历史（候选，待 DEV/生产验收）
 
 - 候选提交 `6180a3f`（后续发布候选 SHA 以 DEV 合并后的不可变提交为准）新增页面离开后的会话恢复：路由切换、窗口切换、刷新或关闭浏览器不会主动取消服务端任务；重新进入工作台会恢复最近会话、Agent Run 事件流和 tool task 轮询。
