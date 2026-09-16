@@ -1,5 +1,9 @@
 # Artigen 项目正式 Handoff
 
+## 2026-09-16 安全测试工作区发布基线
+
+- 发布候选包含迁移 `029_secure_console_test_sessions`、管理员签发/撤销一次性测试会话、受控 `secure_test_unlimited` entitlement，以及安全测试模式前端标识。生产发布前已完成 DEV 部署和自动化检查；生产上线后仍需重新读取 readiness 接口确认。
+
 更新时间：2026-09-14（Asia/Shanghai）
 
 ## 2026-09-14 后台任务恢复与永久会话历史（候选，待 DEV/生产验收）
