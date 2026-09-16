@@ -184,15 +184,15 @@ const createAuthService = ({ pool, env = process.env, now = () => new Date() } =
     };
   };
 
-  const createSession = async (client, user, { userAgent = '' } = {}) => {
+  const createSession = async (client, user, { userAgent = '', authMode = 'standard', entitlement = null } = {}) => {
     const token = generateSessionToken();
     const csrfToken = deriveCsrfToken(token, env);
     const issuedAt = now();
     const expiresAt = new Date(issuedAt.getTime() + sessionTtlMs(env));
     const inserted = await client.query(
       `INSERT INTO sessions
-        (user_id, token_hash, csrf_hash, user_agent_hash, expires_at, created_at, last_seen_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$6)
+        (user_id, token_hash, csrf_hash, user_agent_hash, expires_at, created_at, last_seen_at, auth_mode, entitlement)
+       VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8)
        RETURNING id, created_at, expires_at`,
       [
         user.id,
@@ -200,7 +200,9 @@ const createAuthService = ({ pool, env = process.env, now = () => new Date() } =
         hashCsrfToken(csrfToken, env),
         hashUserAgent(userAgent),
         expiresAt,
-        issuedAt
+        issuedAt,
+        String(authMode || 'standard'),
+        entitlement ? String(entitlement) : null
       ]
     );
     if (!inserted.rowCount) throw new AuthServiceError('SESSION_CREATE_FAILED', 500);
@@ -366,7 +368,7 @@ const createAuthService = ({ pool, env = process.env, now = () => new Date() } =
     if (!raw) return { ok: false, status: 401, error: 'LOGIN_REQUIRED' };
     const found = await pool.query(
       `SELECT s.id AS session_id, s.user_id, s.created_at AS session_created_at,
-              s.expires_at, s.revoked_at, u.id, u.legacy_user_id, u.username,
+              s.expires_at, s.revoked_at, s.auth_mode, s.entitlement, u.id, u.legacy_user_id, u.username,
               u.email, u.display_name, u.status
        FROM sessions s JOIN users u ON u.id=s.user_id
        WHERE s.token_hash=$1 LIMIT 1`,
@@ -408,6 +410,8 @@ const createAuthService = ({ pool, env = process.env, now = () => new Date() } =
       sessionCreatedAt: createdAt,
       expiresAt,
       csrfToken: deriveCsrfToken(raw, env)
+      ,authMode: String(row.auth_mode || 'standard'),
+      entitlement: row.entitlement ? String(row.entitlement) : null
     };
   };
 
@@ -419,6 +423,40 @@ const createAuthService = ({ pool, env = process.env, now = () => new Date() } =
         [sessionId]
       );
       return Boolean(revoked.rowCount);
+    });
+
+  const createSecureTestSession = async ({ adminPrincipal, testUserId, userAgent = '' } = {}) =>
+    withClientTransaction(pool, async (client) => {
+      const user = (await client.query('SELECT * FROM users WHERE id=$1 AND status=\'active\'', [testUserId])).rows[0];
+      if (!user) throw new AuthServiceError('SECURE_TEST_USER_NOT_FOUND', 404);
+      const token = generateSessionToken();
+      const issuedAt = now();
+      const expiresAt = new Date(issuedAt.getTime() + 5 * 60 * 1000);
+      await client.query(
+        `INSERT INTO secure_test_sessions (admin_principal,test_user_id,token_hash,expires_at,metadata)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [String(adminPrincipal || 'admin'), user.id, hashSessionToken(token, env), expiresAt, JSON.stringify({ userAgent: String(userAgent).slice(0, 120) })]
+      );
+      await client.query(
+        `INSERT INTO user_entitlements (user_id,entitlement,enabled,expires_at,source)
+         VALUES ($1,'secure_test_unlimited',true,$2,'admin_console')
+         ON CONFLICT (user_id) DO UPDATE SET entitlement=EXCLUDED.entitlement,enabled=true,expires_at=EXCLUDED.expires_at,source=EXCLUDED.source,updated_at=now()`,
+        [user.id, new Date(issuedAt.getTime() + 30 * 60 * 1000)]
+      );
+      return { token, expiresAt, testUserId: String(user.id) };
+    });
+
+  const exchangeSecureTestSession = async ({ token, userAgent = '' } = {}) =>
+    withClientTransaction(pool, async (client) => {
+      const row = (await client.query(
+        `SELECT s.*,u.* FROM secure_test_sessions s JOIN users u ON u.id=s.test_user_id
+         WHERE s.token_hash=$1 AND s.redeemed_at IS NULL AND s.revoked_at IS NULL AND s.expires_at>now() FOR UPDATE`,
+        [hashSessionToken(token, env)]
+      )).rows[0];
+      if (!row) throw new AuthServiceError('SECURE_TEST_TOKEN_INVALID', 401);
+      await client.query('UPDATE secure_test_sessions SET redeemed_at=now() WHERE id=$1', [row.id]);
+      const session = await createSession(client, row, { userAgent, authMode: 'secure-test', entitlement: 'secure_test_unlimited' });
+      return { user: normalizeDbUser(row), session };
     });
 
   const findUserByEmail = async (email) => {
@@ -467,6 +505,8 @@ const createAuthService = ({ pool, env = process.env, now = () => new Date() } =
     authenticatePassword,
     resolveSession,
     revokeSession,
+    createSecureTestSession,
+    exchangeSecureTestSession,
     findUserByEmail,
     checkRegistrationAvailability,
     resetPassword

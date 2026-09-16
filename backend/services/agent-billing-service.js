@@ -8,6 +8,16 @@ const clampCredits = (value, maximum = 500) => {
   return parsed;
 };
 
+const hasSecureTestUnlimited = async (client, userId) => {
+  const result = await client.query(
+    `SELECT 1 FROM user_entitlements
+      WHERE user_id=$1 AND entitlement='secure_test_unlimited' AND enabled=true
+        AND (expires_at IS NULL OR expires_at>now()) LIMIT 1`,
+    [userId]
+  );
+  return Boolean(result.rowCount);
+};
+
 const reserveAgentBudget = async ({
   client,
   runId,
@@ -66,7 +76,8 @@ const reserveAgentBudget = async ({
     remainingDaily
   );
   const freeCredits = trialFreeCredits + dailyFreeReserved;
-  const paidCredits = budget - freeCredits;
+  const unlimited = await hasSecureTestUnlimited(client, userId);
+  const paidCredits = unlimited ? 0 : budget - freeCredits;
 
   let wallet = null;
   if (paidCredits > 0) {
