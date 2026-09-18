@@ -49,8 +49,10 @@ current `main` code with deterministic demo data; it is not a concept animation.
 | **Isolated computer** | Complex tasks run in an on-demand CUA/Docker sandbox with a restricted browser, isolated shell, and LibreOffice. Sensitive actions remain approval-gated. |
 | **Sub-agent delegation** | The parent can delegate research, analysis, and drafting to up to three depth-one contexts while retaining responsibility for synthesis and delivery. |
 | **Verified deliverables** | Files are marked `passed` only after format, structure, malware, openability or rendering checks, followed by storage-integrity verification. |
+| **Resumable tasks and history** | Background design tasks and Agent Runs recover after navigation, refresh, or browser restart; design conversations and messages remain until the user deletes them. |
 | **Private local tools** | Image batching, redaction, PDF/image conversion, frame picking, GIF, and ICO workflows run in the browser without uploading source files. Faithful Word conversion is an explicit opt-in server exception. |
 | **AI image generation** | `Kwai-Kolors/Kolors` handles text-to-image and single-reference generation. Quotes and credit caps are shown before cloud execution, and results are stored as verified private assets. |
+| **Controlled test workspace** | Administrators can issue one-time secure test sessions with a controlled entitlement for synthetic users; this does not represent real payment or wallet credit. |
 
 ## Real product UI, not a concept render
 
@@ -219,7 +221,7 @@ pnpm check
 | Data and queue | PostgreSQL 16, pg-boss |
 | Storage | Private S3-compatible object storage |
 | Agent runtime | Independent Worker, Docker/CUA, Chromium/noVNC, LibreOffice |
-| Models | Cloudflare `@cf/openai/gpt-oss-120b` (all non-image text), Kwai-Kolors/Kolors (all images) |
+| Models | Cloudflare `@cf/openai/gpt-oss-120b` (all non-image text; one fallback to SiliconFlow `Qwen/Qwen3-8B` only on explicit free-quota exhaustion), Kwai-Kolors/Kolors (all images) |
 | Quality | Vitest, Node test runner, Playwright, GitHub Actions |
 
 ## Repository layout

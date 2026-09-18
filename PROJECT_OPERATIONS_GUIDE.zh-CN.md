@@ -46,7 +46,7 @@ feature/fix branch
 
 ```text
 latest main
-  → hotfix/*
+  → 紧急生产修复分支
   → PR to main
   → Release gate
   → merge main
@@ -56,6 +56,9 @@ latest main
 hotfix 禁止通过 `dev → main` 发布，否则会把尚未获批的开发提交一并带入生产来源。同步回 `dev` 时必须保留 DEV 的 Runtime、测试和 workflow 增量，并核对最终 diff。
 
 不直接 push `dev` 或 `main`，不强推，不用管理员绕过 required checks。
+
+分支名严格使用 `<改动或用途>-YYYYMMDD`，只写改动或用途和创建日期；使用小写英文字母、
+数字和短横线，不使用 `codex/`、类型前缀、随机字符串或其他无关信息。
 
 ## 3. 本机接入
 
@@ -89,10 +92,10 @@ pnpm dev
 ```bash
 git fetch --prune origin
 git status --short --branch
-git switch -c feat/short-name origin/dev
+git switch -c feature-name-20260918 origin/dev
 ```
 
-hotfix 改为从 `origin/main` 建立 `hotfix/short-name`。开始任何任务前读取：
+紧急生产修复从 `origin/main` 建立 `urgent-production-fix-20260918`。开始任何任务前读取：
 
 1. `AGENTS.md`
 2. `PROJECT_HANDOFF.zh-CN.md`
@@ -225,3 +228,7 @@ pnpm db:restore:verify
 平台、域名、分支、CI、环境变量、迁移、模型、登录、计费、文件、Agent 或发布流程变化时，同一 PR 更新对应 living documents。动态状态只记录为带日期证据，并提供重新查询方式。
 
 文档总入口见 [`docs/README.md`](./docs/README.md)。
+
+当前生产已包含 migration 028（设计会话和消息永久保存，用户主动删除前不自动过期）与
+029（管理员签发的一次性安全测试会话）。安全测试 entitlement 仅限受控测试用户，不能
+用于真实用户、支付或钱包入账。

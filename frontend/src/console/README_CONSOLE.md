@@ -27,6 +27,10 @@
 后台只接受 `/api/admin/login` 返回的短时 Bearer token。生产环境还会在每次请求时查询
 PostgreSQL `administrators`，账号被停用或角色被撤销后，已有 token 也立即失效。
 
+安全测试工作区使用独立的一次性会话：管理员签发带有效期的测试票据，用户只能兑换一次，
+兑换后得到短时会话和受控 `secure_test_unlimited` entitlement。该 entitlement 只用于受控
+测试，不代表真实支付、钱包余额或生产用户权益；管理员可以撤销未使用或已签发的测试会话。
+
 | 角色 | 能力 |
 | --- | --- |
 | `operator` | 读取总览、用户、点数、行为、用量和审计 |
@@ -83,6 +87,9 @@ curl --user "artigen-dev:${DEV_PASSWORD}" \
 
 生产启动通过 `start:production` 在监听端口前获取 advisory lock 并执行 pending
 migration；失败时服务不会带着旧 schema 启动。
+
+安全测试会话由 `backend/migrations/029_secure_console_test_sessions.js` 创建；设计会话永久
+历史由 migration 028 提供。发布后必须从 `/readyz` 确认两项迁移均已应用。
 
 ## 开发与验证
 

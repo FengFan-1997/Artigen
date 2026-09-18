@@ -320,11 +320,11 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
         run: |
           case "$HEAD_REF" in
-            dev|hotfix/*|codex/artigen-overhaul)
+            dev|urgent-production-fix-20[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9])
               echo "Allowed release source: $HEAD_REF"
               ;;
             *)
-              echo "::error::main only accepts dev, hotfix/*, or the one-time codex/artigen-overhaul migration branch"
+              echo "::error::main only accepts dev or an urgent-production-fix-YYYYMMDD branch"
               exit 1
               ;;
           esac

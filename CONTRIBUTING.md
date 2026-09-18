@@ -8,8 +8,8 @@
 
 | 目标 | 正常来源 | 用途 |
 | --- | --- | --- |
-| `dev` | `feat/*`、`fix/*`、`docs/*`、`refactor/*`、`chore/*` | 集成、DEV 部署和验证 |
-| `main` | 已验证的 `dev`，或范围明确的 `hotfix/*` | 生产候选代码 |
+| `dev` | `<改动或用途>-YYYYMMDD` | 集成、DEV 部署和验证 |
+| `main` | 已验证的 `dev`，或范围明确的生产修复分支 | 生产候选代码 |
 
 不要直接 push `dev` 或 `main`，也不要绕过受保护分支门禁。
 
@@ -17,8 +17,11 @@
 
 ```bash
 git fetch origin
-git switch -c feat/short-name origin/dev
+git switch -c secure-test-session-20260918 origin/dev
 ```
+
+分支名严格只写改动或用途和创建日期，格式为 `<改动或用途>-YYYYMMDD`。只使用小写英文字母、
+数字和短横线；不得使用 `codex/`、类型前缀、随机字符串或其他无关信息。
 
 标准路径为：
 
@@ -27,7 +30,7 @@ git switch -c feat/short-name origin/dev
          → dev 到 main 的发布 PR → Release gate → 人工生产发布
 ```
 
-仅当修复必须避开 `dev` 中尚未发布的改动时，才从最新 `main` 创建 `hotfix/*` 并向
+仅当修复必须避开 `dev` 中尚未发布的改动时，才从最新 `main` 创建符合日期格式的生产修复分支并向
 `main` 提交 PR。hotfix 合并后必须立即创建 `main → dev` 同步 PR；禁止用
 `dev → main` 代替这次回同步。
 
