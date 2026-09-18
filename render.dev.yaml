@@ -62,7 +62,7 @@ services:
       - key: SECURE_TEST_USER_EMAIL
         sync: false
       - key: PAID_FEATURES_ENABLED
-        value: "false"
+        value: "true"
       - key: PAYMENTS_ENABLED
         value: "false"
       - key: AUTH_EMAIL_OTP_ENABLED
@@ -74,7 +74,7 @@ services:
       - key: AI_DESIGN_TASK_V2_ROLLOUT_PERCENT
         value: "0"
       - key: TASK_WORKER_ENABLED
-        value: "0"
+        value: "1"
       # All non-image text traffic is pinned to Cloudflare GPT-OSS; only
       # Kolors image traffic uses the SiliconFlow secret below.
       - key: AGENT_MODEL_PROVIDER

@@ -26,7 +26,7 @@ services:
       - key: PG_POOL_MAX
         value: "5"
       - key: PAID_FEATURES_ENABLED
-        value: "false"
+        value: "true"
       - key: AI_DESIGN_TASK_V2_ENABLED
         value: "false"
       - key: WORKSHOP_AI_TASK_V2_ENABLED
@@ -34,7 +34,7 @@ services:
       - key: AI_DESIGN_TASK_V2_ROLLOUT_PERCENT
         value: "0"
       - key: TASK_WORKER_ENABLED
-        value: "0"
+        value: "1"
       # All non-image text traffic is pinned to Cloudflare's free GPT-OSS
       # profile. Kolors remains the separate SiliconFlow image provider.
       - key: AGENT_MODEL_PROVIDER
