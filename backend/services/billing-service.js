@@ -396,6 +396,20 @@ const createTaskWithHold = async ({
       lockedSku = quoted.sku;
     }
 
+    // Secure console sessions use a dedicated entitlement for smoke testing.
+    // Keep quotes and SKU validation intact for auditability, but do not
+    // create a wallet hold or ledger entry for the fixed test user.
+    if (quotedCredits > 0) {
+      const entitlement = await client.query(
+        `SELECT 1 FROM user_entitlements
+          WHERE user_id=$1 AND entitlement='secure_test_unlimited' AND enabled=true
+            AND (expires_at IS NULL OR expires_at>now())
+          LIMIT 1`,
+        [dbUserId]
+      );
+      if (entitlement.rowCount) quotedCredits = 0;
+    }
+
     let balance = null;
     if (quotedCredits > 0) {
       const wallet = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [dbUserId]);
