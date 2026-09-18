@@ -449,12 +449,12 @@ const createAuthService = ({ pool, env = process.env, now = () => new Date() } =
   const exchangeSecureTestSession = async ({ token, userAgent = '' } = {}) =>
     withClientTransaction(pool, async (client) => {
       const row = (await client.query(
-        `SELECT s.*,u.* FROM secure_test_sessions s JOIN users u ON u.id=s.test_user_id
+        `SELECT s.id AS secure_session_id,s.*,u.* FROM secure_test_sessions s JOIN users u ON u.id=s.test_user_id
          WHERE s.token_hash=$1 AND s.redeemed_at IS NULL AND s.revoked_at IS NULL AND s.expires_at>now() FOR UPDATE`,
         [hashSessionToken(token, env)]
       )).rows[0];
       if (!row) throw new AuthServiceError('SECURE_TEST_TOKEN_INVALID', 401);
-      await client.query('UPDATE secure_test_sessions SET redeemed_at=now() WHERE id=$1', [row.id]);
+      await client.query('UPDATE secure_test_sessions SET redeemed_at=now() WHERE id=$1', [row.secure_session_id]);
       const session = await createSession(client, row, { userAgent, authMode: 'secure-test', entitlement: 'secure_test_unlimited' });
       return { user: normalizeDbUser(row), session };
     });
