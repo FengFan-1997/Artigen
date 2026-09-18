@@ -38,7 +38,7 @@ Design Conversation 默认最多进行一轮、两个关键澄清问题。信息
 
 ## 3. 模型与能力边界
 
-- 所有文字理解、路由、规划、父/子 Agent 和验证固定使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`。
+- 所有文字理解、路由、规划、父/子 Agent 和验证默认使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；仅在明确免费配额耗尽（错误码 `3036`）时最多回退一次到 SiliconFlow `Qwen/Qwen3-8B`。
 - 所有图片输出固定使用 `Kwai-Kolors/Kolors`。
 - 图片产品 profile 由服务端返回能力、比例和参考图上限；客户端不得提交内部模型 ID。
 - 标准图片生成不接收参考图；商品参考模式必须恰好使用一张授权图片。
@@ -47,7 +47,7 @@ Design Conversation 默认最多进行一轮、两个关键澄清问题。信息
 
 ## 4. 会话与 Design Conversation
 
-会话在 `/artigen/create` 中持续存在，第一条消息后进入共享三栏工作台。服务端保存净化后的消息、执行选择、审批和结果引用；默认保留 30 天，用户可提前删除。
+会话在 `/artigen/create` 中持续存在，第一条消息后进入共享三栏工作台。服务端保存净化后的消息、执行选择、审批和结果引用；设计会话和消息默认永久保存，直到用户主动删除。上传资产仍遵循资产自身生命周期。
 
 核心接口：
 

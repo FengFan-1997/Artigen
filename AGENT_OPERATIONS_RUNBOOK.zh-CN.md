@@ -23,7 +23,7 @@ flowchart LR
 - PostgreSQL/pg-boss 持久排队；Worker 主动领取，不从公网暴露本机端口。
 - Worker 创建 Run 私有 CUA、出口和控制容器，执行 browser/shell/files/LibreOffice/图片工具。
 - 产物验证后写入共享 S3，数据库保存所有权和校验元数据。
-- 文字与工具决策只使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；图片只使用 `Kwai-Kolors/Kolors`。
+- 文字与工具决策默认使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；明确免费配额耗尽（错误码 `3036`）时最多回退一次到 SiliconFlow `Qwen/Qwen3-8B`；图片只使用 `Kwai-Kolors/Kolors`。
 
 ## 2. 前置条件
 
@@ -54,8 +54,9 @@ flowchart LR
 
 模型硬边界：
 
-- `AGENT_MODEL_PROVIDER=siliconflow`
+- `AGENT_MODEL_PROVIDER=cloudflare`
 - `AGENT_MODEL_NAME=@cf/openai/gpt-oss-120b`
+- `AGENT_MODEL_FALLBACK_NAME=Qwen/Qwen3-8B`（只用于 Cloudflare 免费配额耗尽）
 - 图片模型由服务端 allowlist 固定为 Kolors
 - 客户端不能提交 Runtime 版本或内部模型 ID
 

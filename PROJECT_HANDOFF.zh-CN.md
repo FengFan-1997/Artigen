@@ -1,48 +1,56 @@
 # Artigen 项目正式 Handoff
 
-## 2026-09-16 安全测试工作区发布基线
+## 2026-09-18 当前发布汇总
 
-- 发布候选包含迁移 `029_secure_console_test_sessions`、管理员签发/撤销一次性测试会话、受控 `secure_test_unlimited` entitlement，以及安全测试模式前端标识。生产发布前已完成 DEV 部署和自动化检查；生产上线后仍需重新读取 readiness 接口确认。
+- `main` 已合入 PR #203、#205、#206：后台设计任务可跨页面、刷新和浏览器重启恢复；设计会话和消息由 migration `028_design_conversation_permanent_history` 永久保存，直到用户主动删除；安全测试工作区由 migration `029_secure_console_test_sessions` 提供管理员签发、一次性兑换和撤销能力。
+- PR #206 修复安全测试票据兑换时用户 id 覆盖会话 id 的问题，票据现在只能成功兑换一次；受控 `secure_test_unlimited` entitlement 只适用于合成测试用户，不代表真实支付、钱包余额或生产用户权益。
+- Cloudflare GPT-OSS 在明确返回免费配额耗尽（错误码 `3036`）时最多回退一次到 SiliconFlow `Qwen/Qwen3-8B`；容量不足、超时、5xx、认证失败和模糊错误不触发跨供应商重放。
+- PR #179、#183、#190、#196 已进入发布主线，分别覆盖 GPT-OSS 工具回执兼容、Live Harness 轮询存活、工作台交互、Provider 配额回退。具体生产部署状态仍须以 `/api/meta`、`/readyz` 和平台 deployment 实时核验。
 
-更新时间：2026-09-14（Asia/Shanghai）
+以下较早章节保留为历史证据；其中的候选、DEV SHA 和部署判断不覆盖本节的当前发布汇总。
 
-## 2026-09-14 后台任务恢复与永久会话历史（候选，待 DEV/生产验收）
+## 2026-09-16 安全测试工作区发布基线（历史记录）
+
+- 发布候选包含迁移 `029_secure_console_test_sessions`、管理员签发/撤销一次性测试会话、受控 `secure_test_unlimited` entitlement，以及安全测试模式前端标识；后续 PR #203、#205 已将其纳入 `main` 发布线。
+
+更新时间：2026-09-18（Asia/Shanghai）
+
+## 2026-09-14 后台任务恢复与永久会话历史（历史候选，已由后续发布列车覆盖）
 
 - 候选提交 `6180a3f`（后续发布候选 SHA 以 DEV 合并后的不可变提交为准）新增页面离开后的会话恢复：路由切换、窗口切换、刷新或关闭浏览器不会主动取消服务端任务；重新进入工作台会恢复最近会话、Agent Run 事件流和 tool task 轮询。
 - 新增迁移 `028_design_conversation_permanent_history`：设计会话和消息默认永久保存，直到用户主动删除；Render DEV/生产配置 `DESIGN_CONVERSATION_RETENTION_DAYS=0`，上传资产仍遵循资产自身生命周期。
-- 本地证据：后端设计会话测试 `18/18`、前端相关测试 `8/8`、前端 type-check、生产构建、ESLint、后端语法检查均通过。该候选尚未进入 `dev`、尚未完成 DEV smoke、尚未生产部署，不能视为已上线；Runtime V2 继续关闭。
+- 原候选已通过 PR #199、#200、#201 和 #203 进入 `dev` 与 `main`；发布验证继续以目标提交的 DEV smoke、`/readyz` 和平台 deployment 为准。Runtime V2 继续关闭。
 
-## 2026-09-11 Cloudflare 配额降级候选（待 DEV 验证）
+## 2026-09-11 Cloudflare 配额降级（历史候选，已由后续发布列车覆盖）
 
-- 候选分支 `codex/release-readiness-20260911` 实现：Cloudflare GPT-OSS 仅在明确返回免费额度耗尽（错误码 3036）时，最多切换一次到 SiliconFlow `Qwen/Qwen3-8B`；容量不足、5xx、超时、认证失败和模糊回执不触发跨供应商重放。
-- 该变更已通过本地静态检查、前端/后端/邮件中继测试和 Agent 质量集，但尚未进入 DEV，尚未完成真实 Provider fallback、Worker 对齐或生产发布；Runtime V2 继续关闭。
+- 候选分支 `release-readiness-20260911` 实现：Cloudflare GPT-OSS 仅在明确返回免费额度耗尽（错误码 3036）时，最多切换一次到 SiliconFlow `Qwen/Qwen3-8B`；容量不足、5xx、超时、认证失败和模糊回执不触发跨供应商重放。
+- 该变更已通过本地静态检查、前端/后端/邮件中继测试和 Agent 质量集，并通过 PR #196 进入发布主线；真实 Provider fallback、Worker 对齐和生产状态仍以实时接口核验，Runtime V2 继续关闭。
 
-## 2026-09-07 Live Harness 进程存活修复（候选 PR #183，未合入）
+## 2026-09-07 Live Harness 进程存活修复（历史 PR #183）
 
-- 候选分支 `codex/live-eval-process-liveness` 基于 DEV `7ddbb38eb97a6a67d4c15a80c99f5f31e7251ebf`，提交 `8464904e1ba0b2cf5adbe2e9558f8507a97b47fc`。修复长时间未收敛的 Planner job 使 Live Harness 进程无声退出、slot journal 停留 `running` 的问题：保留单飞处理 Promise，同时持续执行数据库轮询和有界超时；不改变 Provider 重试、回执、租约或计费语义。
+- 候选分支 `live-eval-process-liveness` 基于 DEV `7ddbb38eb97a6a67d4c15a80c99f5f31e7251ebf`，提交 `8464904e1ba0b2cf5adbe2e9558f8507a97b47fc`。修复长时间未收敛的 Planner job 使 Live Harness 进程无声退出、slot journal 停留 `running` 的问题：保留单飞处理 Promise，同时持续执行数据库轮询和有界超时；不改变 Provider 重试、回执、租约或计费语义。
 - 新增回归确认永不 resolve 的 `processNextJob()` 不会阻断轮询，Planner 不会重复调用。候选本地 `pnpm check:core` 退出码 0，`pnpm test:integration` 为 `543 passed / 3 skipped / 0 failed`；PostgreSQL 16 + 固定 MinIO deterministic `50/50`、chaos `31/31`。
-- 本提交尚未合入 `dev` 或部署；DEV 当前仍运行 `7ddbb38...`，Runtime V2 与 rollout 继续关闭。完整 24-slot 真实 Qwen/Kolors 矩阵、图片盲审与生产 canary 仍未完成，不能据此宣称上线。
+- PR #183 已合入 `dev`，并随后续发布列车进入 `main`；完整 24-slot 真实 Qwen/Kolors 矩阵、图片盲审与生产 canary 仍是独立门禁，不能用该修复单独宣称通过。
 
-## 2026-09-04 Cloudflare GPT-OSS 强制工具 envelope 兼容修复（候选 PR #179，required CI 待完成）
+## 2026-09-04 Cloudflare GPT-OSS 强制工具 envelope 兼容修复（历史 PR #179）
 
 - Cloudflare Workers AI 的 `@cf/openai/gpt-oss-120b` 在服务端强制指定工具时，偶发将精确工具名与参数序列化到 `message.content`，而不是结构化 `tool_calls`；此前真实 Agent 任务可能因此在参数解析阶段以 `AGENT_MODEL_TOOL_ARGUMENTS_INVALID` fail-closed。
 - 候选修复只在三项同时成立时恢复一次工具调用：响应是 JSON envelope、`name` 精确等于服务端刚选择的函数名、该函数仍属于当前阶段白名单。其他内容不恢复为调用，继续按普通文本/安全失败处理；原 envelope 不会写回对话上下文。
-- PR #179 仅包含该兼容逻辑及 Runtime 回归测试，模型硬锁、Shell 禁止策略、预算、回执和模糊调用边界均未改变。required CI 与合入前，该修复不得视为 DEV 或生产已发布。
+- PR #179 仅包含该兼容逻辑及 Runtime 回归测试，模型硬锁、Shell 禁止策略、预算、回执和模糊调用边界均未改变；已随后续发布列车进入 `main`。
 
 ## 2026-09-04 DEV 实机验收与来源边界修复（候选）
 
 - PR #177 已合入 `dev`，DEV 当前可部署基线为 `69af78db2b27fe0956e48d9b300ca42b9cb7049f`；Render、Vercel Preview 与 Mac DEV Worker 已按该 SHA 对齐，迁移为 027，文本模型为 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`，图片模型为 `Kwai-Kolors/Kolors`。Runtime V2 与公众 rollout 继续关闭。
 - exact-SHA live gate 已通过数据库连接容量检查（Aiven `dev_artigen`，PostgreSQL 18，max_connections=20，实测可用连接 6，门槛 4）。完整 24-slot 实机矩阵尚未通过：V2 纯文本定向重测成功；完整矩阵在调研报告槽位因真实 `AGENT_BROWSER_URL_FORBIDDEN` 中止，图片盲审未执行，因此不得宣称可进入 owner canary。
-- 后续候选 `codex/browser-origin-correction`（基于上述 SHA，尚未合入/部署）严格保持 HTTPS 与 origin allowlist，并为被拒浏览器 URL 增加一次 bounded 纠错 Observation，携带本 Run 已观察的精确 URL；新增回归测试已通过。该候选待 required CI 与新的 exact-SHA 实机证据后再决定是否合入。
+- 后续候选 `browser-origin-correction`（基于上述 SHA，尚未合入/部署）严格保持 HTTPS 与 origin allowlist，并为被拒浏览器 URL 增加一次 bounded 纠错 Observation，携带本 Run 已观察的精确 URL；新增回归测试已通过。该候选待 required CI 与新的 exact-SHA 实机证据后再决定是否合入。
 - 生产环境未在本轮修改或切流；不得将 DEV 的局部真实成功等同于生产 Agent 或 24-slot 门禁通过。`ui-review/`、网络代理与 Karing/B2U2 配置均未读取或修改。
 
 文档性质：**GitHub 正式项目状态与持久事实总入口**
 
-## 2026-09-09 UI 工作台交互硬化（候选 PR #190，未合入）
+## 2026-09-09 UI 工作台交互硬化（历史 PR #190）
 
-- 候选分支 `codex/ui-interaction-hardening` 基于最新 DEV；改动覆盖工作台左栏可恢复展开、动态无障碍状态、项目页样式隔离、点数/账户语义链接和项目页交互回归。
-- 候选本地验证已通过前端 type-check 与 218/218 单元测试；PR required CI、DEV smoke 和生产发布尚未完成。
-- 本节不构成 DEV 或生产已发布证据；生产 SHA、模型、计费、数据库和 Worker 未因该候选改变。
+- 候选分支 `ui-interaction-hardening` 基于最新 DEV；改动覆盖工作台左栏可恢复展开、动态无障碍状态、项目页样式隔离、点数/账户语义链接和项目页交互回归。
+- 候选本地验证已通过前端 type-check 与 218/218 单元测试，PR #190 已进入发布主线；生产 SHA、模型、计费、数据库和 Worker 的实时状态仍按发布门禁核验。
 
 ## 2026-09-08 V1 纯文字意图安全收口（已合入 DEV）
 
