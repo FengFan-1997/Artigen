@@ -47,8 +47,10 @@
 | **隔离电脑** | 复杂任务进入按需创建的 CUA/Docker 沙箱，通过受限浏览器、隔离 Shell 与 LibreOffice 完成调研、网页操作和文件制作；敏感动作保留审批。 |
 | **子 Agent 协作** | 父 Agent 可将调研、分析和起草拆给最多 3 个、深度为 1 的独立上下文，最终仍由父 Agent 汇总和交付。 |
 | **可验证交付** | 文件必须通过格式、结构、恶意文件扫描、可打开性或可渲染性检查，并在对象存储中校验完整性后才显示为 `passed`。 |
+| **持续任务与历史** | 页面切换、刷新或浏览器重启后，后台设计任务和 Agent Run 可从服务端恢复；设计会话和消息默认永久保存，直到用户主动删除。 |
 | **本地隐私工具** | 图片批处理、隐私遮挡、PDF/图片互转、视频选帧、GIF 与 ICO 等工作流在浏览器中执行，不上传原文件。Word 保真转换是明确同意后的服务端例外。 |
 | **AI 图片生成** | `Kwai-Kolors/Kolors` 负责文生图和单参考图生成；云端执行前展示报价与点数上限，结果作为经过校验的私有资产保存。 |
+| **受控测试工作区** | 管理员可签发一次性安全测试会话和受控 entitlement；它只服务合成测试用户，不代表真实支付或钱包余额。 |
 
 ## 真实界面，不是概念图
 
@@ -213,7 +215,7 @@ pnpm check
 | 数据与队列 | PostgreSQL 16、pg-boss |
 | 存储 | 私有 S3 兼容对象存储 |
 | Agent runtime | 独立 Worker、Docker/CUA、Chromium/noVNC、LibreOffice |
-| 模型 | Cloudflare `@cf/openai/gpt-oss-120b`（所有非生图文本）、Kwai-Kolors/Kolors（所有图片） |
+| 模型 | Cloudflare `@cf/openai/gpt-oss-120b`（所有非生图文本，明确免费配额耗尽时最多回退一次到 SiliconFlow `Qwen/Qwen3-8B`）、Kwai-Kolors/Kolors（所有图片） |
 | 质量 | Vitest、Node test runner、Playwright、GitHub Actions |
 
 ## 仓库结构

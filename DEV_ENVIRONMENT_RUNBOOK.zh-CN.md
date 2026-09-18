@@ -21,6 +21,8 @@ DEV 当前用于真实集成 smoke，因此部分能力可以开启，但必须�
 - 邮件 OTP 关闭，不调用生产邮件中继；
 - 支付只验证套餐、未付款订单、跳转、pending、幂等和钱包不入账，禁止真实付款；
 - Qwen/Kolors 可以用于获批的真实 Provider smoke，但不得冒充生产结果；
+- Cloudflare GPT-OSS 明确返回免费配额耗尽（错误码 `3036`）时，服务端最多回退一次到
+  SiliconFlow `Qwen/Qwen3-8B`；容量不足、超时、5xx、认证失败或模糊错误不触发回退；
 - 数据库、S3、Cookie、加密密钥和 Worker 身份与生产隔离；
 - 页面显式显示 DEV 标记，外层访问门禁始终开启。
 
@@ -65,6 +67,8 @@ curl --fail --silent --user '<dev-user>:<dev-password>' \
 - `appEnv=dev`；
 - `gitSha` 等于本次 `dev` 目标提交；
 - `readyz.ok=true`；
+- migration `028_design_conversation_permanent_history` 与
+  `029_secure_console_test_sessions` 已成功应用；
 - database、storage、payload、provider 和受影响能力符合本次配置；
 - 当前 migration 与目标代码的 pending migration 集合一致；
 - 关闭的 auth/mail/Turnstile 能力明确 skipped，而不是伪造通过。
@@ -81,10 +85,13 @@ curl --fail --silent --user '<dev-user>:<dev-password>' \
 
 ```bash
 git fetch --prune origin
-git switch -c feat/short-name origin/dev
-git push -u origin feat/short-name
-gh pr create --base dev --head feat/short-name
+git switch -c secure-test-session-20260918 origin/dev
+git push -u origin secure-test-session-20260918
+gh pr create --base dev --head secure-test-session-20260918
 ```
+
+分支名严格使用 `<改动或用途>-YYYYMMDD`，只写清楚改动或用途和创建日期；不得使用
+`codex/`、类型前缀、随机字符串或其他无关信息。
 
 required checks 通过后合并。等待 Render 自动部署，再确认 `/api/meta.gitSha` 对齐。未对齐时不要启动 smoke、Worker 或 Provider campaign。
 

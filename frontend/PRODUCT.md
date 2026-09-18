@@ -29,11 +29,11 @@ Artigen 不是单一聊天机器人或单一生图页面。它用同一段设计
 
 ## Capabilities and Constraints
 
-- 所有非生图的文字理解、澄清、规划、验证和工具选择固定使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；所有图片生成固定使用 `Kwai-Kolors/Kolors`。
+- 所有非生图的文字理解、澄清、规划、验证和工具选择默认使用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；明确免费配额耗尽（错误码 `3036`）时最多回退一次到 SiliconFlow `Qwen/Qwen3-8B`；所有图片生成固定使用 `Kwai-Kolors/Kolors`。
 - 所有图片输出固定使用 `Kwai-Kolors/Kolors`；单次最多一张参考图。
 - 默认自动执行预算上限为 50 点；真实报价、冻结、结算、退款和幂等由服务端控制。
 - 澄清最多一轮、两个关键问题；信息充分时直接执行。
-- 会话和消息加密保存 30 天，用户可提前删除；长期成果可保存为 Creative Project。
+- 设计会话和消息加密保存，默认直到用户主动删除；上传资产仍遵循资产自身生命周期，长期成果可保存为 Creative Project。
 - 第三方写操作的会话授权绑定会话、origin 和动作类型，30 分钟无操作失效；密码、OTP、验证码、付款和受禁止决定不可被授权绕过。
 - Agent 同一用户最多一个活动运行；首期 Worker 目标并发为 2，无法通过容量验证时回退到 1。
 
