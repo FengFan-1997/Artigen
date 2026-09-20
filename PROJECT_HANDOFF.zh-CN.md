@@ -1,5 +1,15 @@
 # Artigen 项目正式 Handoff
 
+## 2026-09-20 Owner Canary 受控路由候选（未发布）
+
+- 候选分支 `owner-canary-20260920` 基于最新 `dev`，当前实现提交 `4034faf`；PR #212 待重新推送后复跑 Quality Gate。生产和 DEV 均未切换，Runtime V2、公众 rollout、Provider fallback 与 Canary 熔断开关保持关闭。
+- 默认文本 Provider 仍为 Cloudflare `@cf/openai/gpt-oss-120b`。Owner-Canary 路由只允许在 Run 启动前 readiness 明确判定 Provider 不可用时切换固定 `siliconflow/Qwen/Qwen3-8B`；模糊回执、工具契约、权限/安全拒绝、已产生副作用和 TaskSpec/Verifier 失败保持 fail-closed，不自动重试或切换。
+- Worker 先完成无副作用 Provider 探测，再把最终 Provider/model 写入 Run 和 `model.route.selected` 事件；硬安全事件可打开进程内 Canary 熔断，新 Run 被阻断，恢复必须带人工操作者标识。跨进程持久化熔断仍是上线前工作。
+- 本轮验证：Agent runtime `140 passed / 0 failed`，前端 `218/218`、type-check、lint、后端语法检查通过。启用本地 PostgreSQL 集成时因测试库未执行迁移、缺少 `user_entitlements` 等表而阻断，不能作为集成门禁通过证据；DEV exact-SHA、24-slot V1/V2、图片盲审、真实主备故障切换、cleanup=0 和 Owner Canary 演练仍未完成。
+- `ui-review/` 沿用仓库边界，未读取、进入、修改、删除、暂存或提交。
+
+更新时间：2026-09-20（Asia/Shanghai）
+
 ## 2026-09-18 当前发布汇总
 
 - `main` 已合入 PR #203、#205、#206：后台设计任务可跨页面、刷新和浏览器重启恢复；设计会话和消息由 migration `028_design_conversation_permanent_history` 永久保存，直到用户主动删除；安全测试工作区由 migration `029_secure_console_test_sessions` 提供管理员签发、一次性兑换和撤销能力。
