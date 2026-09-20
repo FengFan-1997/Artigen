@@ -81,12 +81,15 @@
         ></button>
         <button
           class="favorite-tool"
+          :class="{ 'is-active': favoriteToolIds.includes(tool.id) }"
           type="button"
           :aria-pressed="favoriteToolIds.includes(tool.id)"
           :aria-label="favoriteToolIds.includes(tool.id) ? (currentLang === 'zh' ? '取消收藏' : 'Remove favorite') : (currentLang === 'zh' ? '收藏工具' : 'Favorite tool')"
           @click.stop="toggleToolFavorite(tool.id)"
         >
-          {{ favoriteToolIds.includes(tool.id) ? '★' : '☆' }}
+          <svg class="favorite-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="m12 3.5 2.7 5.47 6.04.88-4.37 4.26 1.03 6.02L12 17.28l-5.4 2.85 1.03-6.02-4.37-4.26 6.04-.88L12 3.5Z" />
+          </svg>
         </button>
 
         <div class="icon-box">
@@ -2461,17 +2464,47 @@ const runTool = async () => {
 
 .favorite-tool {
   position: absolute;
+  box-sizing: border-box;
+  display: grid;
   z-index: 2;
   top: 18px;
   right: 18px;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 50%;
   background: rgba(5, 5, 5, 0.7);
   color: #ccff00;
-  font-size: 19px;
+  line-height: 1;
   cursor: pointer;
+}
+
+.favorite-tool:hover {
+  border-color: rgba(204, 255, 0, 0.6);
+  background: rgba(204, 255, 0, 0.08);
+}
+
+.favorite-tool:focus-visible {
+  outline: 2px solid #ccff00;
+  outline-offset: 3px;
+}
+
+.favorite-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.favorite-tool.is-active .favorite-icon {
+  fill: currentColor;
 }
 
 .tool-empty {

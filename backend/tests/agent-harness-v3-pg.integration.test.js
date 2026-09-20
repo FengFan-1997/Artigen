@@ -2186,7 +2186,10 @@ test('Harness V3 cancellation after a model receipt leaves no running call or re
   const controller = new RuntimeTestController();
   controller.setBarrier('after_receipt', {
     participants: 1,
-    timeoutMs: 5_000,
+    // The arrival is detected quickly, but cancellation must still have time
+    // to acquire the same Run/ledger locks before the worker is released.
+    // Five seconds made this gate flaky under repeated PostgreSQL chaos load.
+    timeoutMs: 30_000,
     manualRelease: true
   });
   let harness = null;
@@ -2539,7 +2542,7 @@ test('Harness V3 cancellation survives an unreadable model receipt without charg
   const controller = new RuntimeTestController();
   controller.setBarrier('after_receipt', {
     participants: 1,
-    timeoutMs: 5_000,
+    timeoutMs: 30_000,
     manualRelease: true
   });
   let harness = null;
@@ -2650,6 +2653,45 @@ test('Harness V3 hides runs, events, artifacts, receipts and budget state from a
   } finally {
     await harness?.cleanup();
     if (otherUserId) await pool.query('DELETE FROM users WHERE id=$1', [otherUserId]).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('Harness V3 replays SSE events strictly after the last cursor', {
+  skip: !enabled,
+  timeout: 30_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  let harness = null;
+  try {
+    harness = await AgentRuntimeHarness.create({ pool, providerScript: verifiedTextScript() });
+    const created = await harness.createRun({
+      objective: '验证 SSE 断线后可以从游标继续接收事件。',
+      deliverables: [],
+      capabilities: { files: true, shell: true }
+    });
+    const terminal = await harness.runToTerminal(created.runId);
+    assert.equal(terminal.snapshot.persistent.run.status, 'succeeded');
+    const first = await harness.runService.listEvents({
+      userId: harness.userId,
+      runId: created.runId,
+      after: 0,
+      limit: 2
+    });
+    assert.equal(first.length, 2);
+    const cursor = Number(first.at(-1).eventId);
+    const replay = await harness.runService.listEvents({
+      userId: harness.userId,
+      runId: created.runId,
+      after: cursor,
+      limit: 500
+    });
+    assert.ok(replay.every((event) => Number(event.eventId) > cursor));
+    assert.equal(new Set([...first, ...replay].map((event) => event.eventId)).size,
+      terminal.snapshot.persistent.events.length);
+    await harness.assertInvariants(created.runId);
+  } finally {
+    await harness?.cleanup();
     await pool.end();
   }
 });

@@ -169,6 +169,15 @@ export type AgentRun = {
     retryRequired?: boolean;
     retryReason?: string | null;
     clarificationRequired?: boolean;
+    clarificationReason?: string | null;
+    clarification?: {
+      id: string;
+      question: string;
+      options?: string[];
+      allowFreeform?: boolean;
+      allowAttachments?: boolean;
+      required?: boolean;
+    } | null;
   };
   approvals?: AgentApproval[];
   artifacts?: AgentArtifact[];
@@ -215,6 +224,31 @@ export type AgentQuote = {
     concurrentRuns: number;
   };
   requirements: Record<string, boolean>;
+};
+
+export type AgentPlanStep = {
+  id: string;
+  label: string;
+  description: string;
+  phase: 'research' | 'production' | 'verification' | 'completion';
+  status: 'pending' | 'active' | 'completed';
+};
+
+export type AgentPlanDraft = {
+  goal: string;
+  summary: string;
+  steps: AgentPlanStep[];
+  deliverables: string[];
+  assumptions: string[];
+  questions: Array<{ id: string; question: string; options?: string[]; required: boolean }>;
+  risks: string[];
+};
+
+export type AgentPlanResponse = {
+  plan: AgentPlanDraft;
+  quotePreview?: AgentQuote;
+  planToken: string;
+  planRevision: number;
 };
 
 export type AgentServiceStatus = {
@@ -343,9 +377,27 @@ export const quoteAgentRun = async (input: {
   return result.quote;
 };
 
+export const createAgentPlan = async (input: {
+  objective: string;
+  maxCredits?: number;
+  capabilities?: Record<string, boolean>;
+  deliverables?: string[];
+  browserConfig?: {
+    allowedOrigins?: string[];
+    profileId?: string | null;
+    persistSession?: boolean;
+  };
+}) => requestJson<AgentPlanResponse>(buildApiUrl('/api/agent-plans'), {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(input)
+});
+
 export const createAgentRun = async (input: {
   objective: string;
   assetIds?: string[];
+  planToken?: string;
+  planRevision?: number;
   maxCredits: number;
   capabilities: Record<string, boolean>;
   deliverables?: string[];
