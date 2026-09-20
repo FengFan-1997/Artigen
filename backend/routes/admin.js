@@ -32,6 +32,7 @@ const {
   usesOperationalRecordStore
 } = require('../services/operational-record-service');
 const { createModelCallService } = require('../services/agent-model-runtime-service');
+const { createPersistentAgentCanaryCircuit } = require('../services/agent-canary-circuit');
 const { createAuthService } = require('../services/auth-service');
 const {
   readJson,
@@ -832,6 +833,48 @@ const installAdminRoutes = (app, deps = {}) => {
     } catch (error) {
       console.error('Error in GET /api/admin/agent-quality/summary:', error);
       return res.status(503).json({ error: 'AGENT_QUALITY_SUMMARY_UNAVAILABLE' });
+    }
+  });
+
+  app.get('/api/admin/agent/canary-circuit', rateLimit('admin_agent_canary_circuit', { max: 60, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      const pool = deps.pool || (isDatabaseConfigured() ? getPool() : null);
+      if (!pool) return res.status(503).json({ error: 'AGENT_CANARY_DATABASE_REQUIRED' });
+      const circuit = deps.agentCanaryCircuit || createPersistentAgentCanaryCircuit({
+        pool,
+        enabled: true
+      });
+      const snapshot = await circuit.ready();
+      return res.json({ ok: true, circuit: snapshot });
+    } catch (error) {
+      console.error('Error in GET /api/admin/agent/canary-circuit:', error);
+      return res.status(error?.status || 503).json({ error: error?.code || 'AGENT_CANARY_STATE_UNAVAILABLE' });
+    }
+  });
+
+  app.post('/api/admin/agent/canary-circuit/recover', rateLimit('admin_agent_canary_recover', { max: 10, windowMs: 60 * 1000 }), async (req, res) => {
+    try {
+      if (!assertAdmin(req, res)) return;
+      const pool = deps.pool || (isDatabaseConfigured() ? getPool() : null);
+      if (!pool) return res.status(503).json({ error: 'AGENT_CANARY_DATABASE_REQUIRED' });
+      let actor = resolveAdminActor(req);
+      if (isProductionRuntime(process.env)) {
+        const principal = await requireActiveAdministrator({ req, minimumRole: 'admin' });
+        actor = String(principal.username || actor);
+      }
+      const circuit = deps.agentCanaryCircuit || createPersistentAgentCanaryCircuit({
+        pool,
+        enabled: true
+      });
+      const snapshot = await circuit.recover({ actor });
+      return res.json({ ok: true, recovered: true, actor, circuit: snapshot });
+    } catch (error) {
+      if (error instanceof AdminAuthorizationError) {
+        return res.status(error.status || 403).json({ error: error.code || 'ADMIN_AUTH_FORBIDDEN' });
+      }
+      console.error('Error in POST /api/admin/agent/canary-circuit/recover:', error);
+      return res.status(error?.status || 503).json({ error: error?.code || 'AGENT_CANARY_RECOVERY_FAILED' });
     }
   });
 

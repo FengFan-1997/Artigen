@@ -57,6 +57,7 @@ const migratedRow = Object.freeze({
   has_agent_model_call_receipts: true,
   has_agent_tool_call_receipts: true,
   has_agent_budget_reservations: true,
+  has_agent_canary_circuit: true,
   has_design_conversations: true,
   has_design_messages: true,
   has_design_executions: true,
@@ -198,7 +199,7 @@ test('readiness verifies queue, payload, asset, event, inputs_ready and AI SKU m
     code: null,
     migration: LATEST_REPOSITORY_MIGRATION
   });
-  assert.equal(LATEST_REPOSITORY_MIGRATION, '029_secure_console_test_sessions');
+  assert.equal(LATEST_REPOSITORY_MIGRATION, '030_agent_canary_circuit_state');
   assert.equal(migrationQueryParam, LATEST_REPOSITORY_MIGRATION);
   assert.deepEqual(await checkDatabase({
     query: async () => ({ rows: [{ ...migratedRow, has_task_columns: false }] })

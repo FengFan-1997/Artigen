@@ -34,7 +34,10 @@ const { createCreativeProjectService } = require('./creative-project-service');
 const {
   AgentDesktopRelayClient
 } = require('./agent-desktop-relay-client');
-const { createAgentCanaryCircuit } = require('./agent-canary-circuit');
+const {
+  createAgentCanaryCircuit,
+  createPersistentAgentCanaryCircuit
+} = require('./agent-canary-circuit');
 const {
   connectorActionType,
   createAgentConnectorService
@@ -601,10 +604,19 @@ const createAgentWorkerService = ({
     throw new TypeError('AGENT_RUNTIME_TEST_CONTROLLER_FORBIDDEN');
   }
   const config = getAgentConfig(env);
-  const resolvedCanaryCircuit = canaryCircuit || createAgentCanaryCircuit({
-    enabled: /^(1|true|yes|on)$/i.test(String(env.AGENT_CANARY_ENABLED || '')),
-    ambiguityThreshold: env.AGENT_CANARY_AMBIGUOUS_THRESHOLD
-  });
+  const canaryEnabled = /^(1|true|yes|on)$/i.test(String(env.AGENT_CANARY_ENABLED || ''));
+  const resolvedCanaryCircuit = canaryCircuit || (
+    canaryEnabled && pool && typeof pool.connect === 'function'
+      ? createPersistentAgentCanaryCircuit({
+        pool,
+        enabled: true,
+        ambiguityThreshold: env.AGENT_CANARY_AMBIGUOUS_THRESHOLD
+      })
+      : createAgentCanaryCircuit({
+        enabled: canaryEnabled,
+        ambiguityThreshold: env.AGENT_CANARY_AMBIGUOUS_THRESHOLD
+      })
+  );
   const artifactService = createAgentArtifactService({
     pool,
     sandbox,
@@ -631,7 +643,10 @@ const createAgentWorkerService = ({
   };
 
   const processRun = async (runId) => {
-    resolvedCanaryCircuit.assertClosed();
+    if (typeof resolvedCanaryCircuit.ready === 'function') {
+      await resolvedCanaryCircuit.ready();
+    }
+    await resolvedCanaryCircuit.assertClosed();
     const claimed = await runService.claimRun({ runId, workerId });
     if (!claimed) return { claimed: false };
     const leaseEpoch = Number(claimed.lease_epoch || 0);
@@ -3189,7 +3204,7 @@ const createAgentWorkerService = ({
       return { claimed: true, status: 'succeeded' };
     } catch (error) {
       if (testController && error?.name === 'RuntimeHarnessCrash') throw error;
-      resolvedCanaryCircuit.record({ code: error?.code, runId });
+      await resolvedCanaryCircuit.record({ code: error?.code, runId });
       if (isLeaseLostError(error)) {
         return { claimed: true, status: 'lease_lost' };
       }

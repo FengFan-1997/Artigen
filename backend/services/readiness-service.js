@@ -282,6 +282,7 @@ const checkDatabase = async (pool) => {
          to_regclass('public.agent_model_call_receipts') IS NOT NULL AS has_agent_model_call_receipts,
          to_regclass('public.agent_tool_call_receipts') IS NOT NULL AS has_agent_tool_call_receipts,
          to_regclass('public.agent_budget_reservations') IS NOT NULL AS has_agent_budget_reservations,
+         to_regclass('public.agent_canary_circuit_state') IS NOT NULL AS has_agent_canary_circuit,
          to_regclass('public.design_conversations') IS NOT NULL AS has_design_conversations,
          to_regclass('public.design_messages') IS NOT NULL AS has_design_messages,
          to_regclass('public.design_executions') IS NOT NULL AS has_design_executions,
@@ -591,6 +592,7 @@ const checkDatabase = async (pool) => {
       row.has_agent_model_call_receipt_columns &&
       row.has_agent_tool_call_receipt_columns &&
       row.has_agent_budget_reservation_columns &&
+      row.has_agent_canary_circuit &&
       row.has_agent_relay_run_columns &&
       row.has_agent_worker_readiness_columns &&
       row.has_agent_budget_split_columns &&

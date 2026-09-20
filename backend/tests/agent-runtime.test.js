@@ -25,7 +25,10 @@ const {
   getAgentConfig,
   resolveAgentRuntimeAssignment
 } = require('../services/agent-config');
-const { createAgentCanaryCircuit } = require('../services/agent-canary-circuit');
+const {
+  createAgentCanaryCircuit,
+  createPersistentAgentCanaryCircuit
+} = require('../services/agent-canary-circuit');
 const { explicitlyRequestsNoArtifact } = require('../services/agent-run-service');
 const { desktopViewerEndpoint } = require('../routes/agent-runs');
 const { relayEndpoint } = require('../services/agent-desktop-relay-client');
@@ -124,6 +127,73 @@ test('owner canary circuit requires manual recovery after hard incidents', () =>
   assert.throws(() => circuit.recover(), { code: 'AGENT_CANARY_MANUAL_RECOVERY_REQUIRED' });
   circuit.recover({ actor: 'owner' });
   assert.equal(circuit.snapshot().open, false);
+});
+
+test('owner canary circuit survives worker restart through durable state and admin recovery', async () => {
+  const row = {
+    is_open: false,
+    opened_at: null,
+    opened_by: '',
+    incidents: 0,
+    ambiguous_incidents: 0,
+    last_code: '',
+    last_run_id: ''
+  };
+  const pool = {
+    async connect() {
+      return {
+        async query(sql, params = []) {
+          const normalized = String(sql).replace(/\s+/g, ' ').trim();
+          if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(normalized)) return { rows: [] };
+          if (normalized.startsWith('INSERT INTO agent_canary_circuit_state')) return { rows: [] };
+          if (normalized.startsWith('SELECT is_open')) return { rows: [{ ...row }] };
+          if (normalized.startsWith('UPDATE agent_canary_circuit_state')) {
+            if (normalized.includes('SET incidents=incidents+1')) {
+              row.incidents += 1;
+              row.last_code = params[1];
+              row.last_run_id = params[2];
+              if (String(params[1]).includes('AMBIGUOUS')) row.ambiguous_incidents += 1;
+            } else if (normalized.includes('SET is_open=true')) {
+              row.is_open = true;
+              row.opened_at = new Date(Number(params[1]) || Date.now()).toISOString();
+              row.opened_by = params[2] || 'automatic';
+              if (params[3]) row.last_code = params[3];
+              if (params[4]) row.last_run_id = params[4];
+            } else if (normalized.includes('SET is_open=false')) {
+              row.is_open = false;
+              row.opened_at = null;
+              row.opened_by = params[1];
+              row.ambiguous_incidents = 0;
+              row.last_code = '';
+              row.last_run_id = '';
+            }
+            return { rows: [{ ...row }] };
+          }
+          throw new Error(`unexpected SQL: ${normalized}`);
+        },
+        release() {}
+      };
+    }
+  };
+  const firstWorker = createPersistentAgentCanaryCircuit({
+    pool,
+    enabled: true,
+    ambiguityThreshold: 2
+  });
+  await firstWorker.ready();
+  await firstWorker.record({ code: 'AGENT_MODEL_CALL_AMBIGUOUS', runId: 'run-1' });
+  await firstWorker.record({ code: 'AGENT_MODEL_CALL_AMBIGUOUS', runId: 'run-2' });
+  assert.equal(firstWorker.snapshot().open, true);
+
+  const restartedWorker = createPersistentAgentCanaryCircuit({ pool, enabled: true, ambiguityThreshold: 2 });
+  await restartedWorker.ready();
+  await assert.rejects(() => restartedWorker.assertClosed(), { code: 'AGENT_CANARY_CIRCUIT_OPEN' });
+  await restartedWorker.recover({ actor: 'admin@example.invalid' });
+
+  const recoveredWorker = createPersistentAgentCanaryCircuit({ pool, enabled: true, ambiguityThreshold: 2 });
+  await recoveredWorker.ready();
+  assert.equal(recoveredWorker.snapshot().open, false);
+  assert.equal(recoveredWorker.snapshot().incidents, 2);
 });
 
 test('explicit text-only objectives are recognized before V1 artifact admission', () => {
