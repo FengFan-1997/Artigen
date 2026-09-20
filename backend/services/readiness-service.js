@@ -937,6 +937,9 @@ const getReadinessReport = async ({
         missing.push('AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED');
       }
     }
+    if (agentConfig.providerFallbackEnabled && !agentConfig.siliconFlowApiKey) {
+      missing.push('SILICONFLOW_API_KEY');
+    }
     if (
       agentConfig.publicImageGenerationEnabled &&
       !agentConfig.siliconFlowApiKey &&
@@ -998,6 +1001,9 @@ const getReadinessReport = async ({
           ok: true,
           model: agentConfig.modelName,
           modelProvider: agentConfig.modelProvider,
+          providerFallbackEnabled: agentConfig.providerFallbackEnabled,
+          fallbackModel: agentConfig.fallbackModelName || null,
+          fallbackModelProvider: agentConfig.fallbackModelProvider || null,
           sandbox: agentConfig.sandboxProvider,
           sandboxMode: agentConfig.sandboxMode,
           image: agentConfig.sandboxImageRef || agentConfig.sandboxVersion,

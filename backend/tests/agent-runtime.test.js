@@ -25,6 +25,7 @@ const {
   getAgentConfig,
   resolveAgentRuntimeAssignment
 } = require('../services/agent-config');
+const { createAgentCanaryCircuit } = require('../services/agent-canary-circuit');
 const { explicitlyRequestsNoArtifact } = require('../services/agent-run-service');
 const { desktopViewerEndpoint } = require('../routes/agent-runs');
 const { relayEndpoint } = require('../services/agent-desktop-relay-client');
@@ -35,6 +36,7 @@ const {
   FUNCTION_TOOLS,
   OllamaAgentModelProvider,
   OpenAiAgentModelProvider,
+  RoutedAgentModelProvider,
   SiliconFlowAgentModelProvider,
   assertPosixShellScript,
   buildInstructions,
@@ -48,6 +50,81 @@ const {
   siliconFlowUsageCredits,
   usageCredits
 } = require('../services/agent-model-provider');
+
+test('provider routing uses the pinned fallback only when primary readiness is unavailable', async () => {
+  const calls = [];
+  const primary = {
+    providerName: 'openai',
+    config: { modelName: 'gpt-primary' },
+    probe: async () => {
+      throw new ApiError(503, 'AGENT_MODEL_UNAVAILABLE', {
+        retryable: true,
+        details: { providerStatus: 503 }
+      });
+    },
+    execute: async () => ({ provider: 'openai' })
+  };
+  const fallback = {
+    providerName: 'siliconflow',
+    config: { modelName: 'Qwen/Qwen3-8B' },
+    probe: async () => ({ ok: true, provider: 'siliconflow', model: 'Qwen/Qwen3-8B' }),
+    execute: async () => {
+      calls.push('fallback');
+      return { provider: 'siliconflow', model: 'Qwen/Qwen3-8B' };
+    }
+  };
+  const routed = new RoutedAgentModelProvider({
+    primary,
+    fallback,
+    primaryConfig: { modelProvider: 'openai', modelName: 'gpt-primary' },
+    fallbackConfig: { modelProvider: 'siliconflow', modelName: 'Qwen/Qwen3-8B' }
+  });
+  const readiness = await routed.probe();
+  assert.equal(readiness.route, 'fallback');
+  assert.equal(routed.providerName, 'siliconflow');
+  assert.equal(routed.modelName, 'Qwen/Qwen3-8B');
+  await routed.execute({});
+  assert.deepEqual(calls, ['fallback']);
+});
+
+test('provider routing never switches after an ambiguous model call', async () => {
+  let fallbackCalls = 0;
+  const primary = {
+    providerName: 'openai',
+    config: { modelName: 'gpt-primary' },
+    probe: async () => ({ ok: true, provider: 'openai', model: 'gpt-primary' }),
+    execute: async () => {
+      throw new ApiError(409, 'AGENT_MODEL_CALL_AMBIGUOUS', { retryable: false });
+    }
+  };
+  const fallback = {
+    providerName: 'siliconflow',
+    config: { modelName: 'Qwen/Qwen3-8B' },
+    probe: async () => ({ ok: true, provider: 'siliconflow', model: 'Qwen/Qwen3-8B' }),
+    execute: async () => { fallbackCalls += 1; return {}; }
+  };
+  const routed = new RoutedAgentModelProvider({
+    primary,
+    fallback,
+    primaryConfig: { modelProvider: 'openai', modelName: 'gpt-primary' },
+    fallbackConfig: { modelProvider: 'siliconflow', modelName: 'Qwen/Qwen3-8B' }
+  });
+  await routed.probe();
+  await assert.rejects(() => routed.execute({}), { code: 'AGENT_MODEL_CALL_AMBIGUOUS' });
+  assert.equal(fallbackCalls, 0);
+});
+
+test('owner canary circuit requires manual recovery after hard incidents', () => {
+  const circuit = createAgentCanaryCircuit({ enabled: true, ambiguityThreshold: 2 });
+  circuit.record({ code: 'AGENT_MODEL_CALL_AMBIGUOUS', runId: 'run-1' });
+  assert.equal(circuit.snapshot().open, false);
+  circuit.record({ code: 'AGENT_MODEL_CALL_AMBIGUOUS', runId: 'run-2' });
+  assert.equal(circuit.snapshot().open, true);
+  assert.throws(() => circuit.assertClosed(), { code: 'AGENT_CANARY_CIRCUIT_OPEN' });
+  assert.throws(() => circuit.recover(), { code: 'AGENT_CANARY_MANUAL_RECOVERY_REQUIRED' });
+  circuit.recover({ actor: 'owner' });
+  assert.equal(circuit.snapshot().open, false);
+});
 
 test('explicit text-only objectives are recognized before V1 artifact admission', () => {
   assert.equal(explicitlyRequestsNoArtifact('只返回文字，不生成任何文件。'), true);

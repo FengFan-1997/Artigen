@@ -34,6 +34,7 @@ const { createCreativeProjectService } = require('./creative-project-service');
 const {
   AgentDesktopRelayClient
 } = require('./agent-desktop-relay-client');
+const { createAgentCanaryCircuit } = require('./agent-canary-circuit');
 const {
   connectorActionType,
   createAgentConnectorService
@@ -592,13 +593,18 @@ const createAgentWorkerService = ({
   imageService = createAgentImageService({ env }),
   assetStorage = undefined,
   testController = null,
-  runtimeReadiness = {}
+  runtimeReadiness = {},
+  canaryCircuit = null
 } = {}) => {
   if (!pool || !runService) throw new TypeError('AGENT_WORKER_DEPENDENCY_REQUIRED');
   if (testController && String(env.NODE_ENV || '').trim() !== 'test') {
     throw new TypeError('AGENT_RUNTIME_TEST_CONTROLLER_FORBIDDEN');
   }
   const config = getAgentConfig(env);
+  const resolvedCanaryCircuit = canaryCircuit || createAgentCanaryCircuit({
+    enabled: /^(1|true|yes|on)$/i.test(String(env.AGENT_CANARY_ENABLED || '')),
+    ambiguityThreshold: env.AGENT_CANARY_AMBIGUOUS_THRESHOLD
+  });
   const artifactService = createAgentArtifactService({
     pool,
     sandbox,
@@ -625,6 +631,7 @@ const createAgentWorkerService = ({
   };
 
   const processRun = async (runId) => {
+    resolvedCanaryCircuit.assertClosed();
     const claimed = await runService.claimRun({ runId, workerId });
     if (!claimed) return { claimed: false };
     const leaseEpoch = Number(claimed.lease_epoch || 0);
@@ -632,6 +639,25 @@ const createAgentWorkerService = ({
       throw new ApiError(409, 'AGENT_LEASE_EPOCH_INVALID');
     }
     const runLease = { runId, workerId, leaseEpoch };
+    // Resolve provider availability before any model call. Once a call has
+    // started, errors stay fail-closed so an ambiguous receipt is never replayed.
+    if (typeof model?.ensureActive === 'function') await model.ensureActive();
+    if (
+      typeof runService.recordProviderRoute === 'function' &&
+      model?.providerName &&
+      model?.modelName &&
+      (
+        String(claimed.model_provider || '') !== String(model.providerName) ||
+        String(claimed.model_name || '') !== String(model.modelName)
+      )
+    ) {
+      await runService.recordProviderRoute({
+        ...runLease,
+        provider: model.providerName,
+        model: model.modelName,
+        reason: model.routeReason || 'provider_route'
+      });
+    }
     let verifierReserveCredits = 0;
     const reserveRuntimeBudget = (reservation) => runService.reserveRuntimeBudget({
       ...runLease,
@@ -3163,6 +3189,7 @@ const createAgentWorkerService = ({
       return { claimed: true, status: 'succeeded' };
     } catch (error) {
       if (testController && error?.name === 'RuntimeHarnessCrash') throw error;
+      resolvedCanaryCircuit.record({ code: error?.code, runId });
       if (isLeaseLostError(error)) {
         return { claimed: true, status: 'lease_lost' };
       }
@@ -3328,6 +3355,8 @@ const createAgentWorkerService = ({
   return {
     processRun,
     workerId,
+    model,
+    canaryCircuit: resolvedCanaryCircuit,
     readiness,
     startInfrastructure: async () => {
       readiness.desktopRelayReady = await desktopRelay.start();
