@@ -665,7 +665,7 @@ test('run detail keeps real plan, verified files, budget and two-click parent ca
   await expect(page.locator('#workspace-panel-files')).toContainText('artigen-design-audit.pdf');
   await expect(page.locator('#workspace-panel-files')).toContainText('passed');
   await page.getByRole('tab', { name: '环境' }).click();
-  await expect(page.locator('.budget-card')).toContainText('12.5 / 50');
+  await expect(page.getByRole('link', { name: /点数.*12\.5 \/ 50/ })).toBeVisible();
 
   const stop = page.getByRole('button', { name: '停止' });
   await stop.click();
