@@ -1,3 +1,4 @@
+const { mayCreateAccount } = require('./signup-policy');
 const crypto = require('crypto');
 const { promisify } = require('util');
 
@@ -260,6 +261,7 @@ const createAuthService = ({ pool, env = process.env, now = () => new Date() } =
         user = byEmail.rows[0] || null;
       }
       if (!user) {
+        if (!mayCreateAccount(normalizedEmail, env)) throw new AuthServiceError('INVITE_REQUIRED', 403);
         try {
           const inserted = await client.query(
             `INSERT INTO users
@@ -303,6 +305,7 @@ const createAuthService = ({ pool, env = process.env, now = () => new Date() } =
     password,
     userAgent
   }) => {
+    if (!mayCreateAccount(email, env)) throw new AuthServiceError('INVITE_REQUIRED', 403);
     const encoded = await encodePassword(password);
     return withClientTransaction(pool, async (client) => {
       let user;

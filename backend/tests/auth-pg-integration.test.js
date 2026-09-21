@@ -28,7 +28,7 @@ test('verified PostgreSQL email login provisions wallet, ledger and session atom
   const suffix = crypto.randomUUID();
   const email = `auth-pg-${suffix}@example.test`;
   const legacyUserId = `auth_pg_${suffix}`;
-  const service = createAuthService({ pool: getPool(), env });
+  const service = createAuthService({ pool: getPool(), env: { ...env, ARTIGEN_INVITE_EMAILS: email } });
   const result = await service.loginWithVerifiedIdentity({
     legacyUserId,
     email,

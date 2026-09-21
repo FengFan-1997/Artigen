@@ -1,3 +1,4 @@
+const { paymentsEnabled } = require('./payment-config');
 const crypto = require('crypto');
 const fs = require('fs');
 const net = require('net');
@@ -844,9 +845,7 @@ const getReadinessReport = async ({
   const aiDesignEnabled = enabled(env.AI_DESIGN_TASK_V2_ENABLED);
   const workshopAiEnabled = enabled(env.WORKSHOP_AI_TASK_V2_ENABLED);
   const paidEnabled = enabled(env.PAID_FEATURES_ENABLED);
-  const paymentEnabled = paidEnabled &&
-    (!Object.prototype.hasOwnProperty.call(env, 'PAYMENTS_ENABLED') ||
-      enabled(env.PAYMENTS_ENABLED));
+  const paymentEnabled = paymentsEnabled(env);
   const authEmailOtpEnabled = enabled(env.AUTH_EMAIL_OTP_ENABLED);
   const behaviorAnalyticsEnabled =
     enabled(env.BEHAVIOR_ANALYTICS_ENABLED) || enabled(env.VITE_ANALYTICS_ENABLED);

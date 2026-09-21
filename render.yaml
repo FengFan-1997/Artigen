@@ -2,7 +2,7 @@ services:
   - type: web
     name: artigen-app-fengfan
     runtime: node
-    plan: free
+    plan: starter
     region: virginia
     # Render serves frontend and API from one origin. Override any dashboard-level
     # legacy API base during Vite compilation so cookies and CSRF remain same-origin.
@@ -21,10 +21,14 @@ services:
         value: 24.14.1
       - key: NODE_ENV
         value: production
+      - key: APP_ENV
+        value: production
       - key: TRUST_PROXY
         value: "1"
       - key: PG_POOL_MAX
         value: "5"
+      - key: PAYMENTS_ENABLED
+        value: "false"
       - key: PAID_FEATURES_ENABLED
         value: "false"
       - key: AI_DESIGN_TASK_V2_ENABLED
@@ -64,6 +68,12 @@ services:
       - key: AGENT_PROJECT_MEMORY_ENABLED
         value: "false"
       - key: AGENT_PROVIDER_SCHEDULER_ENABLED
+        value: "false"
+      # Beta release policy: keep public signup and self-serve payment closed
+      # until invite-only smoke and recovery evidence is complete.
+      - key: ARTIGEN_INVITE_EMAILS
+        sync: false
+      - key: ARTIGEN_PUBLIC_SIGNUP_ENABLED
         value: "false"
       - key: AGENT_RUNTIME_ACTOR_PROFILE
         value: "stable-v1"

@@ -1,3 +1,4 @@
+const { mayCreateAccount } = require('../services/signup-policy');
 const crypto = require("crypto");
 const { rateLimit, getClientIp } = require("../lib/rateLimit");
 const {
@@ -301,6 +302,8 @@ const verifyEmailCode = async (
 
 const installAuthRoutes = (app, options = {}) => {
   const env = options.env || process.env;
+  const googleFetch = options.googleFetch || fetchWithTimeout;
+  const mayRegister = (email) => mayCreateAccount(email, env);
   const databaseMode = () =>
     typeof options.databaseMode === "boolean"
       ? options.databaseMode
@@ -980,7 +983,7 @@ const installAuthRoutes = (app, options = {}) => {
         const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`;
         let payload = null;
         try {
-          const response = await fetchWithTimeout(
+          const response = await googleFetch(
             url,
             { method: "GET" },
             10000,
@@ -1056,6 +1059,9 @@ const installAuthRoutes = (app, options = {}) => {
         const existingByEmail = Object.values(users).find(
           (u) => normalizeEmail(u?.email) === email,
         );
+        if (!existingByGoogle && !existingByEmail && !mayRegister(email)) {
+          throw new AuthServiceError('INVITE_REQUIRED', 403);
+        }
         const userId = existingByGoogle?.id
           ? String(existingByGoogle.id).trim()
           : existingByEmail?.id
@@ -1133,6 +1139,7 @@ const installAuthRoutes = (app, options = {}) => {
           csrfToken: deriveCsrfToken(token),
         });
       } catch (e) {
+        if (e instanceof AuthServiceError) return respondAuthError(res, e);
         console.error("Error in /api/auth/google/verify:", e);
         return res
           .status(500)
@@ -1152,6 +1159,13 @@ const installAuthRoutes = (app, options = {}) => {
         const email = normalizeEmail(body.email);
         if (!email || email.length > 254 || !LOGIN_EMAIL_RE.test(email)) {
           return res.status(400).json({ ok: false, message: "邮箱格式不正确" });
+        }
+        if (String(body.requestSource || '').trim() === 'register_email_code' && !mayRegister(email)) {
+          return res.status(403).json({
+            ok: false,
+            error: "INVITE_REQUIRED",
+            message: "当前 Beta 仅限受邀邮箱注册",
+          });
         }
 
         const outcome = await deliverOtpCode({
@@ -1227,6 +1241,9 @@ const installAuthRoutes = (app, options = {}) => {
         const existingUser = Object.values(users).find(
           (u) => normalizeEmail(u?.email) === email,
         );
+        if (!existingUser && !mayRegister(email)) {
+          throw new AuthServiceError('INVITE_REQUIRED', 403);
+        }
         const userId = existingUser?.id
           ? String(existingUser.id).trim()
           : emailToUserId(email);
@@ -1296,6 +1313,7 @@ const installAuthRoutes = (app, options = {}) => {
         });
       } catch (e) {
         if (sendOtpConfigurationError(res, e)) return;
+        if (e instanceof AuthServiceError) return respondAuthError(res, e);
         console.error("Error in /api/login/verify:", e);
         return res.status(500).json({ ok: false, message: "验证失败" });
       }
@@ -1591,6 +1609,13 @@ const installAuthRoutes = (app, options = {}) => {
         ) {
           return res.status(400).json({ error: "Invalid email format" });
         }
+        if (!mayRegister(mail)) {
+          return res.status(403).json({
+            ok: false,
+            error: "INVITE_REQUIRED",
+            message: "当前 Beta 仅限受邀邮箱注册",
+          });
+        }
         if (!/^\d{6}$/.test(c)) {
           return res.status(400).json({
             error: "OTP_FORMAT_INVALID",
@@ -1705,6 +1730,7 @@ const installAuthRoutes = (app, options = {}) => {
         });
       } catch (e) {
         if (sendOtpConfigurationError(res, e)) return;
+        if (e instanceof AuthServiceError) return respondAuthError(res, e);
         console.error("Error in /api/auth/register:", e);
         res.status(500).json({ error: "Internal Server Error" });
       }

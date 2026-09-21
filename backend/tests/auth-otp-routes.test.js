@@ -12,7 +12,7 @@ delete process.env.DATABASE_URL;
 delete process.env.DATABASE_MIGRATION_URL;
 
 const { installAuthRoutes } = require('../routes/auth');
-const { writeUsersMap } = require('../lib/auth-utils');
+const { writeUsersMap, readUsersMap } = require('../lib/auth-utils');
 const { TurnstileError } = require('../lib/turnstile');
 const { MailDeliveryError } = require('../services/mail-service');
 
@@ -64,11 +64,13 @@ const install = ({
   mailService,
   otpService,
   otpDeliveryService,
-  turnstileVerifier
+  turnstileVerifier,
+  googleFetch
 } = {}) => {
   const app = buildFakeApp();
   installAuthRoutes(app, {
     databaseMode,
+    googleFetch,
     authCleanupService: { maybeRun() {} },
     env: env || {
       NODE_ENV: 'development',
@@ -171,6 +173,46 @@ test('production email OTP endpoints fail closed while the feature flag is disab
   await send(request({ email: 'disabled@example.com' }), sendRes);
   assert.equal(sendRes.state.status, 503);
   assert.equal(sendRes.state.body.error, 'OTP_DELIVERY_UNAVAILABLE');
+});
+
+test('invite-only registration rejects non-invited emails before OTP consumption', async () => {
+  const app = install({
+    env: {
+      NODE_ENV: 'production',
+      AUTH_EMAIL_OTP_ENABLED: 'true',
+      OTP_HMAC_SECRET: 'auth-otp-route-test-secret',
+      ARTIGEN_PUBLIC_SIGNUP_ENABLED: 'false',
+      ARTIGEN_INVITE_EMAILS: 'invited@example.com'
+    }
+  });
+  const send = app.routes.get('POST /api/login/send-code');
+  const sendRes = response();
+  await send(request({
+    email: 'not-invited@example.com',
+    requestSource: 'register_email_code'
+  }), sendRes);
+  assert.equal(sendRes.state.status, 403);
+  assert.equal(sendRes.state.body.error, 'INVITE_REQUIRED');
+
+  const register = app.routes.get('POST /api/auth/register');
+  const res = response();
+  await register(request({
+    username: 'blocked',
+    password: 'StrongPass1',
+    email: 'not-invited@example.com',
+    code: '123456'
+  }), res);
+  assert.equal(res.state.status, 403);
+  assert.equal(res.state.body.error, 'INVITE_REQUIRED');
+
+  const invitedRes = response();
+  await register(request({
+    username: 'invited',
+    password: 'StrongPass1',
+    email: 'invited@example.com',
+    code: '123456'
+  }), invitedRes);
+  assert.notEqual(invitedRes.state.status, 403);
 });
 
 test('production OTP sends require a browser-provided Idempotency-Key', async () => {
@@ -493,4 +535,49 @@ test('database quota maps global budget separately from target and IP throttles'
 
 test.after(() => {
   fs.rmSync(tempMemory, { recursive: true, force: true });
+});
+
+test('OTP auto-signup cannot bypass an invitation by omitting requestSource', async () => {
+  writeUsersMap({});
+  let code;
+  const app = install({ env: {
+    NODE_ENV: 'development', ARTIGEN_PUBLIC_SIGNUP_ENABLED: 'false', OTP_HMAC_SECRET: 'auth-otp-route-test-secret'
+  }, mailService: { async sendOtp(input) { code = input.code; return { state: 'accepted', provider: 'test' }; } } });
+  await app.routes.get('POST /api/login/send-code')(request({ email: 'bypass@example.test' }), response());
+  const res = response();
+  await app.routes.get('POST /api/login/verify')(request({ email: 'bypass@example.test', code }), res);
+  assert.equal(res.state.status, 403);
+  assert.equal(res.state.body.error, 'INVITE_REQUIRED');
+  assert.equal(Object.values(readUsersMap()).some((u) => u.email === 'bypass@example.test'), false);
+  assert.equal(res.state.headers['set-cookie'], undefined);
+});
+
+test('invited OTP user can sign in again after removal from invitation list', async () => {
+  let code;
+  const env = { NODE_ENV: 'development', ARTIGEN_PUBLIC_SIGNUP_ENABLED: 'false', ARTIGEN_INVITE_EMAILS: 'returning@example.test' };
+  const app = install({ env, mailService: { async sendOtp(input) { code = input.code; return { state: 'accepted', provider: 'test' }; } } });
+  for (const first of [true, false]) {
+    if (!first) delete env.ARTIGEN_INVITE_EMAILS;
+    await app.routes.get('POST /api/login/send-code')(request({ email: 'returning@example.test' }), response());
+    const res = response();
+    await app.routes.get('POST /api/login/verify')(request({ email: 'returning@example.test', code }), res);
+    assert.equal(res.state.status, 200);
+    assert.equal(res.state.body.ok, true);
+  }
+});
+
+test('Google verified identity cannot auto-create an uninvited account', async (t) => {
+  const clientId = 'invite-gate-test.apps.googleusercontent.com';
+  const old = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  process.env.GOOGLE_OAUTH_CLIENT_ID = clientId;
+  t.after(() => { if (old === undefined) delete process.env.GOOGLE_OAUTH_CLIENT_ID; else process.env.GOOGLE_OAUTH_CLIENT_ID = old; });
+  const app = install({
+    env: { NODE_ENV: 'development', ARTIGEN_PUBLIC_SIGNUP_ENABLED: 'false' },
+    googleFetch: async () => ({ ok: true, json: async () => ({ aud: clientId, sub: 'verified-google', email: 'google-bypass@example.test', email_verified: true }) })
+  });
+  const res = response();
+  await app.routes.get('POST /api/auth/google/verify')(request({ idToken: 'synthetic-verified-token' }), res);
+  assert.equal(res.state.status, 403);
+  assert.equal(res.state.body.error, 'INVITE_REQUIRED');
+  assert.equal(res.state.headers['set-cookie'], undefined);
 });
