@@ -121,6 +121,32 @@ test('Google config exposes the same client ID used for token audience verificat
   }
 });
 
+test('session store failures preserve the cookie and allow the next request to recover', async () => {
+  const app = buildFakeApp();
+  installAuthRoutes(app);
+  const session = app.routes.get('GET /api/auth/session');
+  for (const error of ['SESSION_STORE_UNAVAILABLE', 'SESSION_NOT_CONFIGURED', 'SESSION_MIDDLEWARE_REQUIRED']) {
+    const unavailable = response();
+    await session({ authResolution: { ok: false, status: 503, error } }, unavailable);
+    assert.equal(unavailable.state.status, 503);
+    assert.deepEqual(unavailable.state.body, { ok: false, error: 'SESSION_STORE_UNAVAILABLE' });
+    assert.equal(unavailable.state.headers['set-cookie'], undefined);
+    assert.equal(unavailable.state.headers['cache-control'], 'no-store');
+  }
+
+  writeUsersMap({ user_recovery: { id: 'user_recovery', sessionToken: 'recovery-cookie', sessionTokenIssuedAt: Date.now() } });
+  const recovered = response();
+  await session({ headers: { cookie: 'auth_token=recovery-cookie' } }, recovered);
+  assert.equal(recovered.state.body.authenticated, true);
+  assert.equal(recovered.state.headers['set-cookie'], undefined);
+
+  const expired = response();
+  await session({ authResolution: { ok: false, status: 401, error: 'SESSION_EXPIRED' } }, expired);
+  assert.equal(expired.state.status, 200);
+  assert.equal(expired.state.body.authenticated, false);
+  assert.match(expired.state.headers['set-cookie'], /Max-Age=0/);
+});
+
 test.after(() => {
   resetDevelopmentUsers();
   fs.rmSync(tempMemory, { recursive: true, force: true });

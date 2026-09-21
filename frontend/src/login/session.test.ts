@@ -231,6 +231,34 @@ describe('cookie-session client compatibility', () => {
     );
   });
 
+  it('retains identity during a session-store outage and recovers on the next check', async () => {
+    const localStorage = createStorage();
+    vi.stubGlobal('window', {
+      localStorage,
+      location: { origin: 'https://app.example', protocol: 'https:', host: 'app.example' },
+      dispatchEvent: vi.fn()
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(
+      JSON.stringify({ ok: false, error: 'SESSION_STORE_UNAVAILABLE' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } }
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    setLoggedIn({ userId: 'user_recovery' });
+    const unavailable = await bootstrapAuthSession({ force: true });
+    expect(unavailable.authenticated).toBe(true);
+    expect(getCurrentUserId()).toBe('user_recovery');
+    expect(localStorage.values.get('app_user_id')).toBe('user_recovery');
+
+    fetchMock.mockImplementation(async () => new Response(
+      JSON.stringify({ ok: true, authenticated: true, userId: 'user_recovery', csrfToken: 'recovered-csrf' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    ));
+    expect(await bootstrapAuthSession({ force: true })).toEqual({
+      authenticated: true, userId: 'user_recovery', verified: true
+    });
+    expect(getCsrfToken()).toBe('recovered-csrf');
+  });
+
   it('logs out through the server and clears local identity', async () => {
     const localStorage = createStorage({ app_user_id: 'user_cookie', agent_user_id: 'user_cookie' });
     vi.stubGlobal('window', {
