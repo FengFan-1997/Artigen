@@ -45,6 +45,32 @@
 
     <section v-if="run" class="conversation-workspace">
       <div class="conversation-scroll">
+        <section class="run-progress-panel" aria-live="polite">
+          <div class="run-progress-header">
+            <div><span class="progress-kicker">{{ zh ? '实时进度' : 'Live progress' }}</span><strong>{{ currentAction }}</strong></div>
+            <span>{{ run.progress.stepCount }} / {{ run.progress.maxSteps }} {{ zh ? '步' : 'steps' }}</span>
+          </div>
+          <div class="phase-track">
+            <span v-for="stage in phaseStages" :key="stage.id" :class="{ active: stage.active, done: stage.done }"><i></i>{{ stage.label }}</span>
+          </div>
+          <div class="recent-actions">
+            <button type="button" :aria-expanded="showEventStream" aria-controls="run-event-stream" @click="showEventStream = !showEventStream">
+              <span>{{ zh ? '最近动作' : 'Recent actions' }}</span><small>{{ recentEvents.length }} {{ zh ? '条' : 'events' }}</small><span class="event-chevron" aria-hidden="true">{{ showEventStream ? '⌃' : '⌄' }}</span>
+            </button>
+            <div v-if="showEventStream" id="run-event-stream" class="event-stream">
+              <article v-for="event in recentEvents" :key="`stream-${event.eventId}`">
+                <i :class="eventTone(event)"></i><time>{{ formatTime(event.createdAt) }}</time><span>{{ event.summary }}</span>
+              </article>
+            </div>
+          </div>
+        </section>
+        <section v-if="run.progress.clarificationRequired && run.progress.clarification" class="clarification-card" aria-live="assertive">
+          <span class="progress-kicker">{{ zh ? '需要你的输入' : 'Needs your input' }}</span>
+          <h2>{{ run.progress.clarification.question }}</h2>
+          <div class="quick-answers">
+            <button v-for="option in run.progress.clarification.options || []" :key="option" type="button" @click="submitClarification(option)">{{ option }}</button>
+          </div>
+        </section>
         <article class="message user-message">
           <header><span>{{ zh ? '你' : 'You' }}</span><time>{{ formatTime(run.createdAt) }}</time></header>
           <p>{{ run.objective }}</p>
@@ -110,15 +136,15 @@
         </div>
       </div>
 
-      <p v-if="notice || failureText" class="run-notice">{{ notice || failureText }}</p>
+      <p v-if="notice || failureText" class="run-notice" :role="failureText ? 'alert' : 'status'" aria-live="polite">{{ notice || failureText }}</p>
       <form class="message-composer" @submit.prevent="sendInput">
         <label>
           <span class="sr-only">{{ zh ? '补充要求' : 'Additional instructions' }}</span>
-          <textarea v-model.trim="message" name="agent-run-input" rows="2" autocomplete="off" :disabled="terminal || sending" :placeholder="terminal ? (zh ? '运行已结束' : 'Run completed') : (zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the Agent…')" />
+        <textarea v-model.trim="message" name="agent-run-input" rows="2" autocomplete="off" :disabled="terminal || sending" :placeholder="terminal ? (zh ? '运行已结束' : 'Run completed') : (zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the Agent…')" />
         </label>
         <footer>
           <span>{{ zh ? '外部写操作会先请求审批' : 'External writes require approval' }}</span>
-          <button type="submit" :disabled="!message || terminal || sending" :aria-label="zh ? '发送' : 'Send'">
+          <button type="submit" :disabled="!message || terminal || sending" :aria-label="run.progress.clarificationRequired ? (zh ? '回复并继续' : 'Reply and continue') : (zh ? '发送' : 'Send')">
             <WorkspaceIcon name="send" :size="18" />
           </button>
         </footer>
@@ -127,13 +153,12 @@
 
     <template #environment>
       <div v-if="run" class="inspector-stack">
-        <section class="inspector-card budget-card">
-          <header><span>{{ zh ? '费用' : 'Budget' }}</span><b>{{ run.budget.used.toFixed(1) }} / {{ run.budget.maximum }}</b></header>
-          <div><span :style="{ transform: `scaleX(${budgetPercent / 100})` }"></span></div>
+        <section class="inspector-card run-overview-card">
+          <header><span>{{ zh ? '运行概览' : 'Run overview' }}</span><i :class="{ healthy: workspaceTone === 'ready' }"></i></header>
           <dl>
-            <div><dt>{{ zh ? '冻结' : 'Held' }}</dt><dd>{{ run.budget.frozen }}</dd></div>
-            <div><dt>{{ zh ? '预计剩余' : 'Est. remaining' }}</dt><dd>{{ budgetRemaining.toFixed(1) }}</dd></div>
-            <div><dt>{{ zh ? '结算次数' : 'Settlements' }}</dt><dd>1</dd></div>
+            <div><dt>{{ zh ? '状态' : 'Status' }}</dt><dd>{{ statusLabel(run.status) }}</dd></div>
+            <div><dt>{{ zh ? '执行进度' : 'Progress' }}</dt><dd>{{ run.progress.stepCount }} / {{ run.progress.maxSteps }}</dd></div>
+            <div><dt>{{ zh ? '已验证交付' : 'Verified files' }}</dt><dd>{{ artifacts.length }}</dd></div>
           </dl>
         </section>
         <section class="inspector-card">
@@ -225,12 +250,12 @@
           </div>
           <div v-else class="inspector-empty">{{ zh ? '文件通过验证后才会显示。' : 'Files appear only after verification.' }}</div>
         </section>
-        <button v-for="artifact in websiteArtifacts" :key="`preview:${artifact.artifactId}`" class="preview-control" type="button" @click="previewWebsite(artifact)">{{ zh ? `预览 ${artifact.filename}` : `Preview ${artifact.filename}` }}</button>
+        <button v-for="artifact in websiteArtifacts" :key="`preview:${artifact.artifactId}`" class="preview-control" type="button" @click="previewWebsite(artifact, $event)">{{ zh ? `预览 ${artifact.filename}` : `Preview ${artifact.filename}` }}</button>
       </div>
     </template>
 
-    <section v-if="previewHtml" class="preview-modal" role="dialog" aria-modal="true">
-      <header><strong>{{ previewName }}</strong><button type="button" :aria-label="zh ? '关闭预览' : 'Close preview'" @click="closePreview"><WorkspaceIcon name="close" :size="18" /></button></header>
+    <section v-if="previewHtml" ref="previewModal" class="preview-modal" role="dialog" aria-modal="true" aria-labelledby="preview-modal-title" @keydown="onPreviewKeydown">
+      <header><strong id="preview-modal-title">{{ previewName }}</strong><button ref="previewCloseButton" type="button" :aria-label="zh ? '关闭预览' : 'Close preview'" @click="closePreview"><WorkspaceIcon name="close" :size="18" /></button></header>
       <iframe :srcdoc="previewHtml" :title="previewName" sandbox="allow-scripts" referrerpolicy="no-referrer" />
     </section>
   </AgentWorkspaceShell>
@@ -269,6 +294,7 @@ const { currentLang } = storeToRefs(languageStore);
 const zh = computed(() => currentLang.value === 'zh');
 const runId = computed(() => String(route.params.runId || ''));
 const run = ref<AgentRun | null>(null);
+const showEventStream = ref(false);
 const runs = ref<AgentRun[]>([]);
 const events = ref<AgentEvent[]>([]);
 const message = ref('');
@@ -284,6 +310,9 @@ const activeTakeoverApprovalId = ref('');
 const desktopScreen = ref<HTMLDivElement | null>(null);
 const previewHtml = ref('');
 const previewName = ref('');
+const previewModal = ref<HTMLElement | null>(null);
+const previewCloseButton = ref<HTMLButtonElement | null>(null);
+let previewReturnFocus: HTMLElement | null = null;
 let closeStream: (() => void) | null = null;
 let pollTimer: number | null = null;
 let eventRefreshTimer: number | null = null;
@@ -329,20 +358,35 @@ const conversationEvents = computed(() =>
     event.type === 'run.succeeded'
   )
 );
+const recentEvents = computed(() => events.value.slice(-8).reverse());
+const currentAction = computed(() => {
+  if (run.value?.progress.clarificationRequired) return zh.value ? '等待你的补充' : 'Waiting for your input';
+  if (run.value?.status === 'queued') return zh.value ? '等待执行容量' : 'Waiting for capacity';
+  if (run.value?.status === 'provisioning') return zh.value ? '正在准备隔离环境' : 'Preparing isolated environment';
+  if (run.value?.status === 'verifying') return zh.value ? '正在验证交付结果' : 'Verifying deliverables';
+  if (run.value?.status === 'succeeded') return zh.value ? '交付已完成' : 'Delivery complete';
+  if (run.value?.status === 'failed') return zh.value ? '任务需要处理' : 'Run needs attention';
+  return recentEvents.value[0]?.summary || (zh.value ? 'Agent 正在执行' : 'Agent is working');
+});
+const phaseStages = computed(() => {
+  const labels = [
+    ['planning', zh.value ? '规划' : 'Plan'],
+    ['preparing', zh.value ? '准备' : 'Prepare'],
+    ['executing', zh.value ? '执行' : 'Execute'],
+    ['verifying', zh.value ? '验证' : 'Verify'],
+    ['delivering', zh.value ? '交付' : 'Deliver']
+  ];
+  const status = run.value?.status || 'queued';
+  const index = status === 'queued' || status === 'provisioning' ? 1 : status === 'running' || status === 'waiting_user' || status === 'paused' ? 2 : status === 'verifying' ? 3 : ['succeeded', 'failed', 'cancelled'].includes(status) ? 4 : 0;
+  return labels.map(([id, label], itemIndex) => ({ id, label, active: itemIndex === index && !terminal.value, done: itemIndex < index || status === 'succeeded' }));
+});
+const eventTone = (event: AgentEvent) => event.type.includes('failed') ? 'failed' : event.type.includes('waiting') || event.type.includes('approval') ? 'waiting' : event.type.includes('succeeded') || event.type.includes('completed') ? 'done' : 'active';
 const activeSubagents = computed(() => (run.value?.subagents || []).filter((child) => ['queued', 'running'].includes(child.status)).length);
 const filteredRuns = (search: string) => {
   const query = search.trim().toLocaleLowerCase();
   if (!query) return runs.value;
   return runs.value.filter((item) => `${item.objectivePreview || ''} ${item.status}`.toLocaleLowerCase().includes(query));
 };
-const budgetPercent = computed(() => {
-  if (!run.value?.budget.maximum) return 0;
-  return Math.min(100, (run.value.budget.used / run.value.budget.maximum) * 100);
-});
-const budgetRemaining = computed(() => Math.max(
-  0,
-  Number(run.value?.budget.maximum || 0) - Number(run.value?.budget.used || 0)
-));
 const desktopMessage = computed(() => {
   if (!run.value) return '';
   if (run.value.status === 'queued') return zh.value ? '等待可用容量' : 'Waiting for capacity';
@@ -499,6 +543,11 @@ const sendInput = async () => {
   }
 };
 
+const submitClarification = async (answer: string) => {
+  message.value = answer;
+  await sendInput();
+};
+
 const decide = async (approvalId: string, decision: 'approved' | 'denied') => {
   approvalBusyId.value = approvalId;
   try {
@@ -593,10 +642,17 @@ const finishTakeover = async () => {
   }
 };
 
-const previewWebsite = async (artifact: AgentArtifact) => {
+const previewWebsite = async (artifact: AgentArtifact, event?: MouseEvent) => {
+  previewReturnFocus = event?.currentTarget instanceof HTMLElement
+    ? event.currentTarget
+    : document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
   try {
     previewHtml.value = await loadAgentWebsitePreview(artifact);
     previewName.value = artifact.filename;
+    await nextTick();
+    previewCloseButton.value?.focus({ preventScroll: true });
   } catch (error) {
     notice.value = errorText(error || 'AGENT_WEBSITE_PREVIEW_FAILED');
   }
@@ -604,6 +660,35 @@ const previewWebsite = async (artifact: AgentArtifact) => {
 const closePreview = () => {
   previewHtml.value = '';
   previewName.value = '';
+  const target = previewReturnFocus;
+  previewReturnFocus = null;
+  if (target?.isConnected) void nextTick(() => target.focus({ preventScroll: true }));
+};
+const previewFocusable = () => Array.from(
+  previewModal.value?.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],iframe,[tabindex]:not([tabindex="-1"])') || []
+).filter((item) => item.offsetParent !== null);
+const onPreviewKeydown = (event: KeyboardEvent) => {
+  if (!previewModal.value) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closePreview();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const focusable = previewFocusable();
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+};
+const onPreviewWindowKeydown = (event: KeyboardEvent) => {
+  if (previewHtml.value && event.key === 'Escape') onPreviewKeydown(event);
 };
 
 const onEvent = (event: AgentEvent) => {
@@ -725,11 +810,13 @@ const fileCode = (mime: string) => {
   return 'FILE';
 };
 onMounted(async () => {
+  window.addEventListener('keydown', onPreviewWindowKeydown);
   await load();
   closeStream = openAgentEventStream(runId.value, { onEvent });
   pollTimer = window.setInterval(() => void load(), 5000);
 });
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onPreviewWindowKeydown);
   disconnectDesktop();
   closeStream?.();
   if (pollTimer !== null) window.clearInterval(pollTimer);
@@ -741,6 +828,36 @@ onBeforeUnmount(() => {
 <style scoped>
 .conversation-workspace { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; height: 100%; min-height: 0; }
 .conversation-scroll { width: min(820px, calc(100% - 56px)); margin: 0 auto; padding: 44px 0 56px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
+.run-progress-panel { display: grid; gap: 13px; margin-bottom: 26px; padding: 15px 16px; border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
+.run-progress-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.run-progress-header div { display: grid; gap: 4px; }
+.progress-kicker { color: var(--acid-text); font-size: 10px; font-weight: 760; letter-spacing: .06em; text-transform: uppercase; }
+.run-progress-header strong { color: var(--text); font-size: 14px; }
+.run-progress-header > span { color: var(--muted); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.phase-track { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.phase-track span { display: grid; gap: 6px; color: var(--muted); font-size: 10px; }
+.phase-track i { display: block; height: 3px; border-radius: 99px; background: var(--border); }
+.phase-track span.active { color: var(--text); }
+.phase-track span.active i { background: var(--acid); box-shadow: 0 0 12px color-mix(in srgb, var(--acid) 44%, transparent); animation: progress-flow 1.6s ease-in-out infinite; }
+.phase-track span.done i { background: var(--success); }
+.recent-actions { border-top: 1px solid var(--border); }
+.recent-actions > button { display: flex; width: 100%; min-height: 34px; align-items: center; gap: 7px; padding: 8px 0 0; color: var(--text); border: 0; background: transparent; font-size: 11px; font-weight: 680; cursor: pointer; }
+.recent-actions > button small { margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 500; }
+.event-chevron { margin-left: 2px; color: var(--muted); font-size: 14px; line-height: 1; }
+.event-stream { display: grid; gap: 8px; max-height: 190px; margin-top: 10px; overflow: auto; }
+.event-stream article { display: grid; grid-template-columns: 6px 54px 1fr; gap: 8px; align-items: baseline; }
+.event-stream article > i { width: 6px; height: 6px; border-radius: 50%; background: var(--acid); }
+.event-stream article > i.done { background: var(--success); }
+.event-stream article > i.waiting { background: var(--warning); }
+.event-stream article > i.failed { background: var(--danger); }
+.event-stream time { color: var(--muted-2); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.event-stream article > span { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.clarification-card { display: grid; gap: 10px; margin: 0 0 26px; padding: 16px; border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
+.clarification-card h2 { margin: 0; color: var(--text); font-size: 15px; line-height: 1.45; }
+.quick-answers { display: flex; flex-wrap: wrap; gap: 7px; }
+.quick-answers button { min-height: 34px; padding: 0 11px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 11px; cursor: pointer; }
+.quick-answers button:hover, .quick-answers button:focus-visible { border-color: var(--acid); }
+@keyframes progress-flow { 50% { opacity: .45; } }
 .message { margin-bottom: 26px; color: var(--text); }
 .message header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
 .message header span { font-size: 12px; font-weight: 700; }
@@ -782,7 +899,7 @@ onBeforeUnmount(() => {
 .delivery-summary a b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .delivery-summary a small { color: var(--muted); font-size: 11px; }
 .delivery-summary svg { width: 16px; height: 16px; }
-.run-notice { width: min(820px, calc(100% - 56px)); margin: 0 auto 10px; padding: 10px 12px 10px 15px; color: var(--danger); border: 0; border-radius: 9px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); box-shadow: inset 3px 0 var(--danger); font-size: 12px; }
+.run-notice { width: min(820px, calc(100% - 56px)); margin: 0 auto 10px; padding: 10px 12px; color: var(--danger); border: 0; border-radius: 9px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); font-size: 12px; }
 .message-composer { width: min(820px, calc(100% - 56px)); margin: 0 auto max(20px,env(safe-area-inset-bottom)); overflow: hidden; border: 0; border-radius: 20px; background: var(--surface); box-shadow: 0 18px 54px rgb(0 0 0 / 24%); transition: box-shadow 180ms cubic-bezier(.23,1,.32,1),background-color 180ms ease; }
 .message-composer:focus-within { background: var(--surface-raised); box-shadow: 0 22px 62px rgb(0 0 0 / 30%),0 0 0 2px var(--acid); }
 .message-composer textarea { display: block; width: 100%; min-height: 72px; resize: none; box-sizing: border-box; padding: 16px 17px 7px; color: var(--text); border: 0; outline: 0; background: transparent; font: 15px/1.58 inherit; }
@@ -822,8 +939,6 @@ onBeforeUnmount(() => {
 .inspector-card dl div { display: flex; justify-content: space-between; gap: 10px; }
 .inspector-card dt, .inspector-card p { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
-.budget-card > div { height: 4px; margin: 3px 0 11px; overflow: hidden; border-radius: 4px; background: var(--border); }
-.budget-card > div span { display: block; width: 100%; height: 100%; background: var(--acid); transform-origin: left center; transition: transform 180ms ease; }
 .grant-list { display: flex; flex-wrap: wrap; gap: 5px; }
 .grant-list span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; color: var(--muted-2); border: 0; border-radius: 6px; background: var(--surface-raised); font-size: 11px; }
 .grant-list i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }
@@ -905,7 +1020,7 @@ onBeforeUnmount(() => {
   .message-composer { margin-bottom: max(10px,env(safe-area-inset-bottom)); }
   .message-composer textarea { min-height: 74px; font-size: 16px; }
   .approval-card > input { min-height: 44px; font-size: 16px; }
-  .message-composer button, .approval-card button, .computer-panel > button, .preview-control, .subagent-card button { min-width: 44px; min-height: 44px; }
+  .message-composer button, .approval-card button, .computer-panel > button, .preview-control, .subagent-card button, .quick-answers button, .preview-modal header button { min-width: 44px; min-height: 44px; }
   .retry-required { align-items: stretch; flex-direction: column; }
   .retry-required button { min-height: 44px; }
   .run-controls button { width: 44px; padding: 0; justify-content: center; font-size: 0; }
@@ -917,6 +1032,6 @@ onBeforeUnmount(() => {
   .run-controls svg { width: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .budget-card > div span { transition: none; }
+  .phase-track span.active i { animation: none; }
 }
 </style>

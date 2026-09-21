@@ -146,8 +146,8 @@ class AgentQueueWorker {
       [
         workerId,
         status,
-        this.config.modelProvider,
-        this.config.modelName,
+        this.workerService?.model?.providerName || this.config.modelProvider,
+        this.workerService?.model?.modelName || this.config.modelName,
         this.config.sandboxProvider,
         this.config.sandboxProvider === 'fixture' ? 'fixture' : this.config.sandboxMode,
         concurrency,

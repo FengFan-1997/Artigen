@@ -1,21 +1,30 @@
 <template>
-  <details class="technical-details">
-    <summary>
+  <details class="technical-details" @toggle="syncOpen">
+    <summary :aria-expanded="open" :aria-controls="contentId">
       <span>{{ label }}</span>
       <WorkspaceIcon name="chevron-down" />
     </summary>
-    <div class="technical-details-content"><slot /></div>
+    <div :id="contentId" class="technical-details-content"><slot /></div>
   </details>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
 import WorkspaceIcon from './WorkspaceIcon.vue';
+
+let nextDetailsId = 0;
 
 withDefaults(defineProps<{
   label?: string;
 }>(), {
   label: '技术详情'
 });
+
+const open = ref(false);
+const contentId = `technical-details-content-${++nextDetailsId}`;
+const syncOpen = (event: Event) => {
+  open.value = (event.currentTarget as HTMLDetailsElement).open;
+};
 </script>
 
 <style scoped>

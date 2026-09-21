@@ -9,10 +9,12 @@ const {
 const { getPool, isDatabaseConfigured } = require('../db/pool');
 const { agentFeatureEnabled, isProductionIntent } = require('../services/agent-config');
 const { createAgentRunService } = require('../services/agent-run-service');
+const { issueAgentPlanToken } = require('../services/agent-plan-token');
 const { AgentQueuePublisher } = require('../services/agent-queue-service');
 const {
   createAgentIntegrationService
 } = require('../services/agent-integration-service');
+const crypto = require('node:crypto');
 
 const requireAuthenticatedUser = (req) => {
   const auth = resolveAuthUser(req);
@@ -179,6 +181,56 @@ const installAgentRoutes = (app, deps = {}) => {
     res.json({ ok: true, quote });
   }));
 
+  app.post('/api/agent-plans', writeLimiter, asyncRoute(async (req, res) => {
+    const auth = requireAuthenticatedUser(req);
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const objective = String(body.objective || '').trim();
+    if (objective.length < 3) throw new ApiError(400, 'AGENT_OBJECTIVE_REQUIRED', { field: 'objective' });
+    const capabilities = body.capabilities && typeof body.capabilities === 'object' ? body.capabilities : {};
+    const deliverables = Array.isArray(body.deliverables) ? body.deliverables.map(String).filter(Boolean) : [];
+    const quotePreview = await requireService().quote({
+      userId: auth.dbUserId || auth.userId,
+      objective,
+      capabilities,
+      browserConfig: body.browserConfig,
+      deliverables,
+      maxCredits: body.maxCredits
+    });
+    const hasResearch = capabilities.research === true || capabilities.browser === true;
+    const hasFiles = capabilities.files === true || deliverables.length > 0;
+    const steps = [
+      ...(hasResearch ? [{ id: 'research', label: '研究与收集', description: '整理目标、参考资料和必要来源。', phase: 'research', status: 'pending' }] : []),
+      { id: 'prepare', label: '准备执行', description: hasFiles ? '检查输入文件、权限和交付边界。' : '确认执行范围和交付边界。', phase: 'production', status: 'pending' },
+      { id: 'execute', label: '执行任务', description: '按步骤完成工作并持续回报最近动作。', phase: 'production', status: 'pending' },
+      { id: 'verify', label: '验证结果', description: '检查格式、完整性和验收条件。', phase: 'verification', status: 'pending' },
+      { id: 'deliver', label: '整理交付', description: '整理已验证的最终文件和结论。', phase: 'completion', status: 'pending' }
+    ];
+    const questions = [];
+    if (!objective.match(/受众|用户|客户|面向|audience|user|customer/i)) {
+      questions.push({ id: 'audience', question: '这项工作主要面向谁？', options: ['设计团队', '业务客户', '内部团队'], required: false });
+    }
+    res.json({
+      ok: true,
+      plan: {
+        goal: objective,
+        summary: `我会分 ${steps.length} 个阶段完成这项任务，并在关键节点向你确认。`,
+        steps,
+        deliverables,
+        assumptions: hasResearch ? ['研究结果只使用已授权的来源和输入。'] : ['按当前目标和已选交付物执行。'],
+        questions,
+        risks: quotePreview.requiredPaidHold > 0 ? ['任务可能需要冻结部分付费点数。'] : []
+      },
+      quotePreview,
+      planToken: issueAgentPlanToken({
+        env,
+        userId: auth.dbUserId || auth.userId,
+        objective,
+        revision: 1
+      }),
+      planRevision: 1
+    });
+  }));
+
   app.post('/api/agent-runs', writeLimiter, asyncRoute(async (req, res) => {
     const auth = requireAuthenticatedUser(req);
     const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -190,6 +242,8 @@ const installAgentRoutes = (app, deps = {}) => {
       capabilities: body.capabilities,
       deliverables: body.deliverables,
       taskSpec: body.taskSpec,
+      planToken: body.planToken,
+      planRevision: body.planRevision,
       browserConfig: body.browserConfig,
       projectId: body.projectId,
       idempotencyKey: req.headers['idempotency-key']
@@ -327,7 +381,8 @@ const installAgentRoutes = (app, deps = {}) => {
       decision: body.decision,
       decisionReason: body.decisionReason,
       takeoverEnded: body.takeoverEnded === true,
-      takeoverApprovalId: body.takeoverApprovalId
+      takeoverApprovalId: body.takeoverApprovalId,
+      inputId: req.headers['idempotency-key'] || body.inputId
     });
     res.json({ ok: true });
   }));

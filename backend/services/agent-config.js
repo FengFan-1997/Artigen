@@ -182,6 +182,13 @@ const getAgentConfig = (env = process.env) => {
       : 'gpt-5.6';
   const modelName = String(env.AGENT_MODEL_NAME || defaultModelName).trim();
   const fallbackModelName = String(env.AGENT_MODEL_FALLBACK_NAME || LEGACY_SILICONFLOW_TEXT_MODEL).trim();
+  const providerFallbackEnabled = enabled(env.AGENT_PROVIDER_FALLBACK_ENABLED);
+  const fallbackModelProvider = String(
+    env.AGENT_FALLBACK_MODEL_PROVIDER || 'siliconflow'
+  ).trim().toLowerCase();
+  const configuredFallbackModelName = String(
+    env.AGENT_FALLBACK_MODEL_NAME || fallbackModelName
+  ).trim();
   if (modelProvider === 'siliconflow' && modelName !== SILICONFLOW_AGENT_MODEL) {
     throw new ApiError(500, 'AGENT_SILICONFLOW_MODEL_NOT_ALLOWED');
   }
@@ -190,6 +197,12 @@ const getAgentConfig = (env = process.env) => {
   }
   if (modelProvider === 'cloudflare' && fallbackModelName !== LEGACY_SILICONFLOW_TEXT_MODEL) {
     throw new ApiError(500, 'AGENT_SILICONFLOW_FALLBACK_MODEL_NOT_ALLOWED');
+  }
+  if (providerFallbackEnabled && fallbackModelProvider !== 'siliconflow') {
+    throw new ApiError(500, 'AGENT_FALLBACK_MODEL_PROVIDER_NOT_ALLOWED');
+  }
+  if (providerFallbackEnabled && configuredFallbackModelName !== SILICONFLOW_AGENT_MODEL) {
+    throw new ApiError(500, 'AGENT_FALLBACK_MODEL_NOT_ALLOWED');
   }
   // The hard lock is a deployment invariant, not an opt-in safety switch.
   // Unit and historical fixture tests run with NODE_ENV=test; every real
@@ -337,7 +350,9 @@ const getAgentConfig = (env = process.env) => {
     runtimeDriver,
     modelProvider,
     modelName,
-    fallbackModelName,
+    providerFallbackEnabled,
+    fallbackModelProvider: providerFallbackEnabled ? fallbackModelProvider : '',
+    fallbackModelName: providerFallbackEnabled ? configuredFallbackModelName : fallbackModelName,
     textModelHardLock,
     ollamaBaseUrl,
     siliconFlowBaseUrl,
@@ -470,6 +485,9 @@ const assertAgentRuntimeReady = (env = process.env) => {
   }
   if (config.modelProvider === 'cloudflare' && !config.cloudflareFreeAccountAttested) {
     throw new ApiError(503, 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED', { retryable: false });
+  }
+  if (config.providerFallbackEnabled && !config.siliconFlowApiKey) {
+    throw new ApiError(503, 'AGENT_FALLBACK_MODEL_NOT_CONFIGURED', { retryable: false });
   }
   if (config.publicImageGenerationEnabled && !config.siliconFlowApiKey) {
     throw new ApiError(503, 'AGENT_IMAGE_MODEL_NOT_CONFIGURED', { retryable: false });

@@ -165,6 +165,17 @@ Inspector 使用悬浮的单一大表面与无装饰边框的信息组，通过�
 - 永不隐藏：冻结/扣费/退款、审批目标与后果、Worker 离线等阻断、失败与恢复、文件来源和验证状态。
 - “Ready”“智能路由”“未创建付费任务”等无行动价值的常驻文案默认不出现；状态只有在运行、等待、阻断、失败或需要用户处理时进入顶栏。
 
+## Interaction state matrix
+
+| Surface | Closed / idle | Open / active | Escape or cancel | Focus contract |
+| --- | --- | --- | --- | --- |
+| Left history panel | Desktop collapsible; mobile hidden and `inert` | Desktop expands in place; mobile drawer opens with scrim | Close button, scrim, or Escape closes | Restore focus to the history opener; collapse control exposes `aria-expanded` and `aria-controls` |
+| Right Inspector | Desktop collapsible; mobile hidden and `inert` | Active tab and live state remain visible | Close button, scrim, or Escape closes | Restore focus to the Inspector opener; tabs keep roving focus and `aria-selected` |
+| Command palette | Not mounted | Dialog focuses search and traps Tab | Escape closes and returns focus | `role=dialog`, labelled search, no background focus |
+| Website preview | Not mounted | Dialog focuses close affordance and traps Tab | Close button or Escape closes | `aria-labelledby`, focus returns to the preview trigger |
+| Run controls | Pause, resume, retry, stop reflect the current status | Busy state disables duplicate submissions | Stop requires a second explicit activation | Status and failure text are announced through live regions |
+| Reduced motion | — | No looping or positional animation | — | All state changes remain understandable from text and color |
+
 ## Do / Don't
 
 Do:

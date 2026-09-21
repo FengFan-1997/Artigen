@@ -32,6 +32,7 @@ const {
   sanitizeText
 } = require('./agent-policy-service');
 const { PHASES, compileAgentPrompt, normalizeTaskSpec } = require('./agent-runtime-v2');
+const { verifyAgentPlanToken } = require('./agent-plan-token');
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const SUBAGENT_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
@@ -402,7 +403,9 @@ const publicRun = (row, extras = {}) => ({
     durableCheckpointSaved: row.checkpoint?.durableToolResume === true,
     retryRequired: row.checkpoint?.retryRequired === true,
     retryReason: row.checkpoint?.retryReason || null,
-    clarificationRequired: row.checkpoint?.clarificationRequired === true
+    clarificationRequired: row.checkpoint?.clarificationRequired === true,
+    clarificationReason: row.checkpoint?.clarificationReason || null,
+    clarification: row.checkpoint?.clarification || null
   },
   error: row.error_code ? { code: row.error_code } : null,
   finalTextSha256: Buffer.isBuffer(row.final_text_sha256)
@@ -1231,6 +1234,15 @@ const createAgentRunService = ({
   }) => {
     if (!config.enabled) throw new ApiError(404, 'AGENT_FEATURE_DISABLED');
     const normalizedObjective = normalizeObjective(objective);
+    if (planToken) {
+      verifyAgentPlanToken({
+        env,
+        token: planToken,
+        userId,
+        objective: normalizedObjective,
+        revision: Number(planRevision) || 1
+      });
+    }
     const requestedDeliverables = normalizeDeliverables(deliverables);
     const imageRequested = requestedDeliverables.includes('image') ||
       inferRequiredDeliverables(normalizedObjective).includes('image');
@@ -1353,6 +1365,8 @@ const createAgentRunService = ({
     browserConfig,
     deliverables,
     taskSpec: proposedTaskSpec,
+    planToken = null,
+    planRevision = 0,
     projectId,
     idempotencyKey: rawIdempotencyKey
   }) => {
@@ -1674,6 +1688,15 @@ const createAgentRunService = ({
           skillIds: (promptProfile?.skills || []).map((skill) => skill.id)
         }
       });
+      if (planToken) {
+        await insertEvent(client, {
+          runId,
+          type: 'plan.confirmed',
+          phase: 'planning',
+          summary: '用户已确认执行计划',
+          data: { planRevision: Number(planRevision) || 1 }
+        });
+      }
       return {
         row: { ...inserted.rows[0], free_credits_reserved: hold.freeCredits },
         replayed: false
@@ -2263,12 +2286,23 @@ const createAgentRunService = ({
     decision,
     decisionReason,
     takeoverEnded = false,
-    takeoverApprovalId = null
+    takeoverApprovalId = null,
+    inputId = null
   }) => {
     let shouldEnqueue = false;
     const result = await withTransaction(pool, async (client) => {
       const { dbUserId, row } = await resolveOwnedRun(client, { userId, runId, lock: true });
       if (TERMINAL_STATUSES.has(row.status)) throw new ApiError(409, 'AGENT_RUN_TERMINAL');
+      const normalizedInputId = String(inputId || '').trim().slice(0, 120);
+      if (normalizedInputId) {
+        const duplicate = await client.query(
+          `SELECT 1 FROM agent_events
+            WHERE run_id=$1 AND data->>'inputId'=$2
+            LIMIT 1`,
+          [runId, normalizedInputId]
+        );
+        if (duplicate.rowCount) return false;
+      }
       let eventType = 'run.input_received';
       let summary = '已收到补充信息';
       if (approvalId) {
@@ -2434,7 +2468,8 @@ const createAgentRunService = ({
           ? { approvalId, decision }
           : {
               takeoverEnded: Boolean(takeoverEnded),
-              takeoverApprovalId: takeoverEnded ? takeoverApprovalId : undefined
+              takeoverApprovalId: takeoverEnded ? takeoverApprovalId : undefined,
+              inputId: normalizedInputId || undefined
             }
       });
       return true;
@@ -2468,6 +2503,47 @@ const createAgentRunService = ({
       summary: '正在创建隔离云电脑'
     });
     return result.rows[0];
+  });
+
+  const recordProviderRoute = async ({
+    runId,
+    workerId,
+    leaseEpoch,
+    provider,
+    model,
+    reason = 'primary_ready'
+  }) => withTransaction(pool, async (client) => {
+    const current = await client.query(
+      'SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE',
+      [runId]
+    );
+    if (!current.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    assertWorkerLease(current.rows[0], { workerId, leaseEpoch });
+    const nextProvider = String(provider || '').trim().slice(0, 120);
+    const nextModel = String(model || '').trim().slice(0, 160);
+    if (!nextProvider || !nextModel) {
+      throw new ApiError(500, 'AGENT_PROVIDER_ROUTE_INVALID', { retryable: false });
+    }
+    if (
+      String(current.rows[0].model_provider || '') === nextProvider &&
+      String(current.rows[0].model_name || '') === nextModel
+    ) return current.rows[0];
+    const updated = await client.query(
+      `UPDATE agent_runs
+          SET model_provider=$2,model_name=$3,updated_at=now()
+        WHERE id=$1 AND worker_id=$4 AND lease_epoch=$5
+        RETURNING *`,
+      [runId, nextProvider, nextModel, workerId, leaseEpoch]
+    );
+    if (!updated.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST', { retryable: false });
+    await insertEvent(client, {
+      runId,
+      type: 'model.route.selected',
+      phase: 'provisioning',
+      summary: `已选择 ${nextProvider}/${nextModel}`,
+      data: { provider: nextProvider, model: nextModel, reason: String(reason).slice(0, 120) }
+    });
+    return updated.rows[0];
   });
 
   const loadPrivateContext = async ({ runId }) => withTransaction(pool, async (client) => {
@@ -4887,6 +4963,7 @@ const createAgentRunService = ({
     cancelRun,
     cancelSubagent,
     claimRun,
+    recordProviderRoute,
     clearLegacyToolReceiptCheckpoint,
     clearModelCheckpoint,
     clearSubagentModelCheckpoint,

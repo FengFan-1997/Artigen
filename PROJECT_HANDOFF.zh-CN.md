@@ -1,5 +1,16 @@
 # Artigen 项目正式 Handoff
 
+## 2026-09-21 Owner Canary 受控路由候选（未发布）
+
+- 候选分支 `owner-canary-20260920` 基于最新 `dev`，当前 exact SHA 为 `8f78d2514972c4fe0b929afc109915ff8e60fb58`，已推送到 PR #212。生产和 DEV 均未切换，Runtime V2、公众 rollout、Provider fallback 与 Canary 熔断开关保持关闭。
+- 默认文本 Provider 仍为 Cloudflare `@cf/openai/gpt-oss-120b`。Owner-Canary 路由只允许在 Run 启动前 readiness 明确判定 Provider 不可用时切换固定 `siliconflow/Qwen/Qwen3-8B`；模糊回执、工具契约、权限/安全拒绝、已产生副作用和 TaskSpec/Verifier 失败保持 fail-closed，不自动重试或切换。
+- Worker 先完成无副作用 Provider 探测，再把最终 Provider/model 写入 Run 和 `model.route.selected` 事件；硬安全事件可打开 Canary 熔断，新 Run 被阻断，恢复必须带人工操作者标识。
+- 本轮后续修复已将 Owner Canary 熔断持久化到迁移 `030_agent_canary_circuit_state`：Worker 在每次领取前从 PostgreSQL 刷新状态，硬事件以事务方式计数/打开，重启或多 Worker 不会丢失；受保护的 `/api/admin/agent/canary-circuit` 查询与 `/recover` 恢复接口要求管理员身份，并记录恢复操作者与时间。开关仍默认关闭。
+- 本轮验证：Agent runtime `141 passed / 0 failed`（含跨 Worker 重启持久熔断回归），readiness 定向回归 `28 passed / 0 failed`，前端 type-check/lint、后端 lint、workspace 检查和 deterministic quality `50/50` 通过；GitHub Quality Gate run `35562838044` 对 exact SHA 的核心门禁、5 类 Harness、Chaos、Chromium/Firefox/WebKit 桌面与移动/平板矩阵、Release gate 和 Vercel 全部成功。启用本地 PostgreSQL 集成时因测试库未执行完整迁移、缺少 `user_entitlements` 等表而阻断，不能作为本地集成门禁通过证据；DEV exact-SHA、24-slot V1/V2、图片盲审、真实主备故障切换、cleanup=0 和 Owner Canary 演练仍未完成。
+- `ui-review/` 沿用仓库边界，未读取、进入、修改、删除、暂存或提交。
+
+更新时间：2026-09-21（Asia/Shanghai）
+
 ## 2026-09-18 当前发布汇总
 
 - `main` 已合入 PR #203、#205、#206：后台设计任务可跨页面、刷新和浏览器重启恢复；设计会话和消息由 migration `028_design_conversation_permanent_history` 永久保存，直到用户主动删除；安全测试工作区由 migration `029_secure_console_test_sessions` 提供管理员签发、一次性兑换和撤销能力。

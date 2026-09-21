@@ -4123,6 +4123,109 @@ class CloudflareAgentModelProvider extends SiliconFlowAgentModelProvider {
   }
 }
 
+const PROVIDER_AVAILABILITY_CODES = new Set([
+  'AGENT_MODEL_UNAVAILABLE',
+  'AGENT_OPENAI_UNAVAILABLE',
+  'AGENT_OLLAMA_UNAVAILABLE',
+  'AGENT_SILICONFLOW_UNAVAILABLE',
+  'AGENT_CLOUDFLARE_UNAVAILABLE',
+  'AGENT_PROVIDER_UNAVAILABLE'
+]);
+
+const isProviderAvailabilityError = (error) => {
+  const code = String(error?.code || '').trim();
+  if (!code || code.includes('AMBIGUOUS') || code.includes('TOOL_ARGUMENTS')) return false;
+  if (PROVIDER_AVAILABILITY_CODES.has(code)) return true;
+  const status = Number(error?.details?.providerStatus || error?.providerStatus || 0);
+  return status === 429 || status >= 500;
+};
+
+/** Probe and select a backup before the Run dispatches a model call. */
+class RoutedAgentModelProvider {
+  constructor({ primary, fallback, primaryConfig, fallbackConfig }) {
+    if (!primary || !fallback) throw new TypeError('AGENT_PROVIDER_ROUTE_REQUIRED');
+    this.primary = primary;
+    this.fallback = fallback;
+    this.primaryConfig = primaryConfig;
+    this.fallbackConfig = fallbackConfig;
+    this.active = null;
+    this.routeReason = null;
+  }
+
+  get providerName() {
+    return this.active?.providerName || this.primary.providerName || this.primaryConfig.modelProvider;
+  }
+
+  get modelName() {
+    return this.active?.config?.modelName || this.primaryConfig.modelName;
+  }
+
+  async probe() {
+    try {
+      const result = await this.primary.probe();
+      this.active = this.primary;
+      this.routeReason = 'primary_ready';
+      return { ...result, route: 'primary' };
+    } catch (error) {
+      if (!isProviderAvailabilityError(error)) throw error;
+      const result = await this.fallback.probe();
+      this.active = this.fallback;
+      this.routeReason = `fallback:${String(error?.code || 'provider_unavailable')}`;
+      return {
+        ...result,
+        route: 'fallback',
+        fallbackFrom: this.primaryConfig.modelProvider,
+        fallbackReason: String(error?.code || 'provider_unavailable')
+      };
+    }
+  }
+
+  async ensureActive() {
+    if (this.active) return this.active;
+    await this.probe();
+    return this.active;
+  }
+
+  async execute(args) { return (await this.ensureActive()).execute(args); }
+
+  async planTask(args) {
+    const provider = await this.ensureActive();
+    if (typeof provider.planTask !== 'function') {
+      throw new ApiError(501, 'AGENT_MODEL_PLANNER_UNSUPPORTED', { retryable: false });
+    }
+    return provider.planTask(args);
+  }
+
+  async verifyTask(args) {
+    const provider = await this.ensureActive();
+    if (typeof provider.verifyTask !== 'function') {
+      throw new ApiError(501, 'AGENT_MODEL_VERIFIER_UNSUPPORTED', { retryable: false });
+    }
+    return provider.verifyTask(args);
+  }
+
+  maximumCallCredits(...args) {
+    const provider = this.active || this.primary;
+    return typeof provider.maximumCallCredits === 'function'
+      ? provider.maximumCallCredits(...args)
+      : 0;
+  }
+
+  usageDetails(...args) {
+    const provider = this.active || this.primary;
+    if (typeof provider.usageDetails !== 'function') return {};
+    return provider.usageDetails(...args);
+  }
+
+  recoverReceivedModelCall(receipt) {
+    const provider = this.active || this.primary;
+    if (typeof provider.recoverReceivedModelCall !== 'function') {
+      throw new ApiError(500, 'AGENT_MODEL_RECEIPT_RECOVERY_UNSUPPORTED', { retryable: false });
+    }
+    return provider.recoverReceivedModelCall(receipt);
+  }
+}
+
 class FixtureAgentModelProvider {
   async probe() {
     return { ok: true, provider: 'fixture', model: 'fixture' };
@@ -4187,14 +4290,33 @@ class FixtureAgentModelProvider {
 const createAgentModelProvider = ({ env = process.env, ...options } = {}) => {
   const config = getAgentConfig(env);
   if (config.runtimeDriver === 'fixture') return new FixtureAgentModelProvider();
-  if (config.modelProvider === 'ollama') return new OllamaAgentModelProvider({ env, ...options });
-  if (config.modelProvider === 'siliconflow') {
-    return new SiliconFlowAgentModelProvider({ env, ...options });
-  }
-  if (config.modelProvider === 'cloudflare') {
-    return new CloudflareAgentModelProvider({ env, ...options });
-  }
-  return new OpenAiAgentModelProvider({ env, ...options });
+  const instantiate = (provider, providerEnv) => {
+    if (provider === 'ollama') return new OllamaAgentModelProvider({ env: providerEnv, ...options });
+    if (provider === 'siliconflow') {
+      return new SiliconFlowAgentModelProvider({ env: providerEnv, ...options });
+    }
+    if (provider === 'cloudflare') {
+      return new CloudflareAgentModelProvider({ env: providerEnv, ...options });
+    }
+    return new OpenAiAgentModelProvider({ env: providerEnv, ...options });
+  };
+  const primary = instantiate(config.modelProvider, env);
+  if (!config.providerFallbackEnabled) return primary;
+  const fallbackEnv = {
+    ...env,
+    NODE_ENV: 'test',
+    APP_ENV: '',
+    AGENT_MODEL_PROVIDER: config.fallbackModelProvider,
+    AGENT_MODEL_NAME: config.fallbackModelName,
+    AGENT_PROVIDER_FALLBACK_ENABLED: 'false'
+  };
+  const fallback = instantiate(config.fallbackModelProvider, fallbackEnv);
+  return new RoutedAgentModelProvider({
+    primary,
+    fallback,
+    primaryConfig: config,
+    fallbackConfig: getAgentConfig(fallbackEnv)
+  });
 };
 
 module.exports = {
@@ -4208,6 +4330,7 @@ module.exports = {
   FixtureAgentModelProvider,
   OllamaAgentModelProvider,
   OpenAiAgentModelProvider,
+  RoutedAgentModelProvider,
   SiliconFlowAgentModelProvider,
   buildInstructions,
   createAgentModelProvider,
@@ -4226,5 +4349,6 @@ module.exports = {
   siliconFlowRequestTimeoutMs,
   waitForSiliconFlowAgentSlot,
   cloudflareAgentMinimumIntervalMs,
-  usageCredits
+  usageCredits,
+  isProviderAvailabilityError
 };

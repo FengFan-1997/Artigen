@@ -35,6 +35,10 @@ const {
   AgentDesktopRelayClient
 } = require('./agent-desktop-relay-client');
 const {
+  createAgentCanaryCircuit,
+  createPersistentAgentCanaryCircuit
+} = require('./agent-canary-circuit');
+const {
   connectorActionType,
   createAgentConnectorService
 } = require('./agent-connector-service');
@@ -592,13 +596,27 @@ const createAgentWorkerService = ({
   imageService = createAgentImageService({ env }),
   assetStorage = undefined,
   testController = null,
-  runtimeReadiness = {}
+  runtimeReadiness = {},
+  canaryCircuit = null
 } = {}) => {
   if (!pool || !runService) throw new TypeError('AGENT_WORKER_DEPENDENCY_REQUIRED');
   if (testController && String(env.NODE_ENV || '').trim() !== 'test') {
     throw new TypeError('AGENT_RUNTIME_TEST_CONTROLLER_FORBIDDEN');
   }
   const config = getAgentConfig(env);
+  const canaryEnabled = /^(1|true|yes|on)$/i.test(String(env.AGENT_CANARY_ENABLED || ''));
+  const resolvedCanaryCircuit = canaryCircuit || (
+    canaryEnabled && pool && typeof pool.connect === 'function'
+      ? createPersistentAgentCanaryCircuit({
+        pool,
+        enabled: true,
+        ambiguityThreshold: env.AGENT_CANARY_AMBIGUOUS_THRESHOLD
+      })
+      : createAgentCanaryCircuit({
+        enabled: canaryEnabled,
+        ambiguityThreshold: env.AGENT_CANARY_AMBIGUOUS_THRESHOLD
+      })
+  );
   const artifactService = createAgentArtifactService({
     pool,
     sandbox,
@@ -625,13 +643,36 @@ const createAgentWorkerService = ({
   };
 
   const processRun = async (runId) => {
-    const claimed = await runService.claimRun({ runId, workerId });
+    if (typeof resolvedCanaryCircuit.ready === 'function') {
+      await resolvedCanaryCircuit.ready();
+    }
+    await resolvedCanaryCircuit.assertClosed();
+    let claimed = await runService.claimRun({ runId, workerId });
     if (!claimed) return { claimed: false };
     const leaseEpoch = Number(claimed.lease_epoch || 0);
     if (!Number.isSafeInteger(leaseEpoch) || leaseEpoch <= 0) {
       throw new ApiError(409, 'AGENT_LEASE_EPOCH_INVALID');
     }
     const runLease = { runId, workerId, leaseEpoch };
+    // Resolve provider availability before any model call. Once a call has
+    // started, errors stay fail-closed so an ambiguous receipt is never replayed.
+    if (typeof model?.ensureActive === 'function') await model.ensureActive();
+    if (
+      typeof runService.recordProviderRoute === 'function' &&
+      model?.providerName &&
+      model?.modelName &&
+      (
+        String(claimed.model_provider || '') !== String(model.providerName) ||
+        String(claimed.model_name || '') !== String(model.modelName)
+      )
+    ) {
+      claimed = await runService.recordProviderRoute({
+        ...runLease,
+        provider: model.providerName,
+        model: model.modelName,
+        reason: model.routeReason || 'provider_route'
+      });
+    }
     let verifierReserveCredits = 0;
     const reserveRuntimeBudget = (reservation) => runService.reserveRuntimeBudget({
       ...runLease,
@@ -707,7 +748,7 @@ const createAgentWorkerService = ({
       const workerProvider = String(model.providerName || config.modelProvider || '')
         .trim()
         .toLowerCase();
-      const workerModel = String(config.modelName || '').trim();
+      const workerModel = String(model.modelName || config.modelName || '').trim();
       if (
         (claimedProvider && claimedProvider !== workerProvider) ||
         (claimedModel && claimedModel !== workerModel)
@@ -3163,6 +3204,7 @@ const createAgentWorkerService = ({
       return { claimed: true, status: 'succeeded' };
     } catch (error) {
       if (testController && error?.name === 'RuntimeHarnessCrash') throw error;
+      await resolvedCanaryCircuit.record({ code: error?.code, runId });
       if (isLeaseLostError(error)) {
         return { claimed: true, status: 'lease_lost' };
       }
@@ -3328,6 +3370,8 @@ const createAgentWorkerService = ({
   return {
     processRun,
     workerId,
+    model,
+    canaryCircuit: resolvedCanaryCircuit,
     readiness,
     startInfrastructure: async () => {
       readiness.desktopRelayReady = await desktopRelay.start();
