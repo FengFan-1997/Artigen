@@ -81,6 +81,8 @@ curl --fail --silent https://artigen-app-fengfan.onrender.com/healthz
 pnpm smoke:beta https://artigen-fengfan.vercel.app <完整40位main-SHA> production
 ```
 
+DEV 有 Basic Auth 时，从安全存储向当前进程注入 `BETA_SMOKE_DEV_USER` 和 `BETA_SMOKE_DEV_PASSWORD` 后，使用 DEV origin、完整 DEV SHA 与 `dev` 参数运行同一命令；不把口令写进命令参数或 URL。工具拒绝跟随重定向，也拒绝把 DEV 凭据用于 production。
+
 该命令检查 API SHA、环境、能力范围、健康状态及数据库/存储/模型/邮件的非 skipped 检查。失败返回非零退出码，输出不包含远程响应正文或凭据。它不检查前端构建 SHA，也不替代真实用户流程、Worker 心跳或恢复演练。
 
 随后使用固定测试账号完成：登录、创建项目、文本生成、图片生成、文件上传、产物下载、刷新页面、失败重试和退出后重新登录。

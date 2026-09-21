@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url';
 
-export async function checkBetaSmoke({ origin, sha, environment, fetchImpl = fetch }) {
+export async function checkBetaSmoke({ origin, sha, environment, devAuth, fetchImpl = fetch }) {
   const url = new URL(origin);
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password ||
       url.search || url.hash || url.pathname !== '/' ||
@@ -9,11 +9,18 @@ export async function checkBetaSmoke({ origin, sha, environment, fetchImpl = fet
   }
   if (!/^[a-f0-9]{40}$/i.test(sha || '')) throw new Error('Expected full Git SHA is required.');
   if (!['dev', 'production'].includes(environment)) throw new Error('Expected environment must be dev or production.');
+  const headers = {};
+  if (devAuth) {
+    if (environment !== 'dev' || !devAuth.username || !devAuth.password || devAuth.username.includes(':')) {
+      throw new Error('DEV Basic authentication requires both username and password for the dev environment.');
+    }
+    headers.Authorization = `Basic ${Buffer.from(`${devAuth.username}:${devAuth.password}`).toString('base64')}`;
+  }
   const failures = [];
   const reports = {};
   for (const endpoint of ['/healthz', '/readyz', '/api/meta']) {
     try {
-      const response = await fetchImpl(new URL(endpoint, url), { redirect: 'error', signal: AbortSignal.timeout(15000) });
+      const response = await fetchImpl(new URL(endpoint, url), { headers, redirect: 'error', signal: AbortSignal.timeout(15000) });
       if (!response.ok) { failures.push(`${endpoint}: HTTP ${response.status}`); continue; }
       const body = await response.json();
       if (body?.ok !== true) failures.push(`${endpoint}: not healthy`);
@@ -56,7 +63,10 @@ export async function checkBetaSmoke({ origin, sha, environment, fetchImpl = fet
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const [origin, sha, environment] = process.argv.slice(2);
-    const report = await checkBetaSmoke({ origin, sha, environment });
+    const devAuth = process.env.BETA_SMOKE_DEV_USER || process.env.BETA_SMOKE_DEV_PASSWORD
+      ? { username: process.env.BETA_SMOKE_DEV_USER, password: process.env.BETA_SMOKE_DEV_PASSWORD }
+      : undefined;
+    const report = await checkBetaSmoke({ origin, sha, environment, devAuth });
     console.log(JSON.stringify(report, null, 2));
     process.exitCode = report.ok ? 0 : 1;
   } catch {

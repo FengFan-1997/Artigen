@@ -29,3 +29,29 @@ test('requires a full SHA and refuses credential-bearing origins', async () => {
   await assert.rejects(checkBetaSmoke({ origin: 'https://user:secret@example.invalid', sha, environment: 'dev' }));
   await assert.rejects(checkBetaSmoke({ origin: 'https://example.invalid', sha: 'main', environment: 'dev' }));
 });
+
+test('authenticated DEV smoke protects credentials and refuses redirects', async () => {
+  const bodies = fixture();
+  let calls = 0;
+  const r = await checkBetaSmoke({ origin: 'https://beta.example.invalid', sha, environment: 'dev',
+    devAuth: { username: 'fixture-user', password: 'fixture-password' },
+    fetchImpl: async (url, options) => {
+      calls += 1;
+      assert.equal(options.headers.Authorization, `Basic ${Buffer.from('fixture-user:fixture-password').toString('base64')}`);
+      assert.equal(options.redirect, 'error');
+      return { ok: true, json: async () => bodies[url.pathname] };
+    }
+  });
+  assert.equal(r.ok, true); assert.equal(calls, 3);
+  assert.ok(!JSON.stringify(r).includes('fixture-password'));
+  assert.ok(!JSON.stringify(r).includes('Basic'));
+});
+test('DEV credentials cannot be accidentally used for production or left incomplete', async () => {
+  for (const [environment, devAuth] of [
+    ['production', { username: 'fixture-user', password: 'fixture-password' }],
+    ['dev', { username: 'fixture-user' }]
+  ]) {
+    await assert.rejects(checkBetaSmoke({ origin: 'https://beta.example.invalid', sha, environment, devAuth,
+      fetchImpl: async () => assert.fail('invalid authentication must fail before making a request') }));
+  }
+});
