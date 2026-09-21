@@ -102,6 +102,10 @@ services:
         value: "0"
       - key: AGENT_RUNTIME_V2_CANARY_USER_IDS
         value: ""
+      - key: ARTIGEN_INVITE_EMAILS
+        sync: false
+      - key: ARTIGEN_PUBLIC_SIGNUP_ENABLED
+        value: "false"
       - key: AGENT_SUBAGENTS_ENABLED
         value: "false"
       - key: DESIGN_CONVERSATION_ENABLED

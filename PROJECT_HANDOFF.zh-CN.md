@@ -58,6 +58,16 @@
 
 文档性质：**GitHub 正式项目状态与持久事实总入口**
 
+## 2026-09-21 邀请制 Web Beta 发布契约（PR 候选，未部署）
+
+- 首阶段为邀请制 Web Beta；密码注册、OTP 与 Google 自动建号都在账户创建层检查邀请，现有用户仍可登录，停用账号使用管理员入口。生产、DEV 与未知环境的公开注册默认关闭，环境变量不能越过发布策略开启。
+- `/api/meta` 区分发布策略与实际配置：返回版本、API SHA、环境、配置能力与 `releasePolicy.violations`。配置不等于 readiness，也不能证明前端和 Worker 已部署相同 SHA。
+- 自助支付统一使用已有 `PAYMENTS_ENABLED`；支付 API、readiness 与 metadata 共用解析器。删除此前只用于展示、未接入运行时的同义开关。Runtime V2 沿用 `AGENT_RUNTIME_V2_ENABLED`，实验能力若被实际开启会出现在策略漂移中。
+- 蓝图增加邀请 Secret 声明、关闭支付并固定浅探针，生产使用常驻 starter。生成和 OTP 等开关仍待真实依赖验证后开启，蓝图不代表已完成供应商配置。
+- `pnpm check:release-config` 检查蓝图并运行 smoke 工具回归；`pnpm smoke:beta` 按完整 SHA、环境与非 skipped readiness 进行只读检查。发布、管理员操作和恢复记录模板见 `docs/RELEASE_V0_CHECKLIST.zh-CN.md`。
+- 验证：独立工作树未复制本地 `.env`，`pnpm check:core` 通过（前端 218、后端 645、邮件 7 项测试通过，后端 97 项依赖外部环境的测试跳过）；认证/支付/元数据定向 98/98、smoke 工具 6/6、OTP 浏览器回归 4/4。真实恢复、Worker 重启、生产部署和邀请用户任务尚未执行。
+- 本轮生产只读复核：Vercel 与 Render 的 `/healthz`、`/readyz` 正常，API 元数据均为 `47cc56b1e6f94713119e806220ac598c79362435`，仍是旧契约；不包含本 PR，也不证明前端构建或 Worker 的 SHA。
+
 ## 2026-09-09 UI 工作台交互硬化（历史 PR #190）
 
 - 候选分支 `ui-interaction-hardening` 基于最新 DEV；改动覆盖工作台左栏可恢复展开、动态无障碍状态、项目页样式隔离、点数/账户语义链接和项目页交互回归。

@@ -20,6 +20,7 @@
 | [`PROJECT_OPERATIONS_GUIDE.zh-CN.md`](../PROJECT_OPERATIONS_GUIDE.zh-CN.md) | 本机、DEV、分支、CI、发布和回滚总流程 |
 | [`DEV_ENVIRONMENT_RUNBOOK.zh-CN.md`](../DEV_ENVIRONMENT_RUNBOOK.zh-CN.md) | DEV 环境安全边界与 smoke |
 | [`PRODUCTION_RUNBOOK.zh-CN.md`](../PRODUCTION_RUNBOOK.zh-CN.md) | 生产发布、核验、排障、备份和回滚 |
+| [`RELEASE_V0_CHECKLIST.zh-CN.md`](./RELEASE_V0_CHECKLIST.zh-CN.md) | 邀请制 Web Beta 的能力范围、提交门禁、部署 smoke 和恢复验收 |
 | [`AGENT_OPERATIONS_RUNBOOK.zh-CN.md`](../AGENT_OPERATIONS_RUNBOOK.zh-CN.md) | Mac Worker、Docker/CUA、状态、清理和 Runtime 验收 |
 | [`AGENT_BROWSER_SECURITY_MODEL.zh-CN.md`](../AGENT_BROWSER_SECURITY_MODEL.zh-CN.md) | 浏览器 Agent 威胁模型与安全不变量 |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | 分支、提交、Review、门禁和 Handoff 纪律 |

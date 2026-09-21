@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "production": {
+    "name": "invite-only-beta",
+    "capabilities": {
+      "auth": true,
+      "projects": true,
+      "generation": true,
+      "fileUpload": true,
+      "artifactDownload": true,
+      "publicSignup": false,
+      "selfServePayments": false,
+      "agentRuntimeV2": false,
+      "agentSubagents": false,
+      "providerScheduler": false
+    }
+  },
+  "dev": {
+    "name": "private-dev",
+    "capabilities": {
+      "auth": true,
+      "projects": true,
+      "generation": true,
+      "fileUpload": true,
+      "artifactDownload": true,
+      "publicSignup": false,
+      "selfServePayments": false,
+      "agentRuntimeV2": false,
+      "agentSubagents": false,
+      "providerScheduler": false
+    }
+  },
+  "development": {
+    "name": "local-development",
+    "capabilities": {
+      "auth": true,
+      "projects": true,
+      "generation": true,
+      "fileUpload": true,
+      "artifactDownload": true,
+      "publicSignup": true,
+      "selfServePayments": false,
+      "agentRuntimeV2": false,
+      "agentSubagents": false,
+      "providerScheduler": false
+    }
+  }
+}

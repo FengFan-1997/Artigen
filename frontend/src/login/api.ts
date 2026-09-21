@@ -124,6 +124,11 @@ const humanizeAuthError = (raw: any) => {
   if (m.includes('invalid email')) {
     return zh ? '邮箱格式不正确' : 'Invalid email format.';
   }
+  if (m === 'invite_required' || m.includes('仅限受邀') || m.includes('invite only')) {
+    return zh
+      ? '当前 Beta 仅限受邀邮箱，请使用邀请邮箱或联系管理员。'
+      : 'This Beta is invite-only. Use your invited email or contact the administrator.';
+  }
   if (m.includes('invalid username')) {
     return zh ? '账号格式不正确' : 'Invalid username.';
   }

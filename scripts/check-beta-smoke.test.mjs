@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { checkBetaSmoke } from './check-beta-smoke.mjs';
+const sha = 'a'.repeat(40);
+const fixture = () => ({
+  '/healthz': { ok: true },
+  '/readyz': { ok: true, checks: Object.fromEntries(['database','storage','provider','mail','authSecrets','turnstile'].map(k => [k, { ok: true }])) },
+  '/api/meta': { ok: true, gitSha: sha, version: '1.0.0', environment: 'dev', capabilitySemantics: 'configured-not-readiness', releasePolicy: { violations: [] }, capabilities: { auth: true, projects: true, generation: true, fileUpload: true, artifactDownload: true, publicSignup: false, selfServePayments: false, agentRuntimeV2: false, agentSubagents: false, providerScheduler: false } }
+});
+const run = (bodies) => checkBetaSmoke({ origin: 'https://beta.example.invalid', sha, environment: 'dev', fetchImpl: async url => ({ ok: true, json: async () => bodies[url.pathname] }) });
+test('accepts matching version and verified dependencies', async () => assert.equal((await run(fixture())).ok, true));
+test('rejects stale SHA, environment and drift', async () => {
+  const b = fixture(); b['/api/meta'].gitSha = 'b'.repeat(40); b['/api/meta'].environment = 'production'; b['/api/meta'].capabilities.selfServePayments = true;
+  const r = await run(b); assert.equal(r.ok, false); assert.equal(r.failures.length, 3);
+});
+test('disabled readiness checks cannot make a Beta pass', async () => {
+  const b = fixture(); b['/readyz'].checks.mail.skipped = true;
+  assert.deepEqual((await run(b)).failures, ['/readyz: mail not verified']);
+});
+test('old metadata cannot pass without the capability contract', async () => {
+  const b = fixture(); b['/api/meta'] = { ok: true, gitSha: sha };
+  assert.equal((await run(b)).ok, false);
+});
+test('transport errors are redacted and fail closed', async () => {
+  const r = await checkBetaSmoke({ origin: 'https://beta.example.invalid', sha, environment: 'dev', fetchImpl: async () => { throw Error('synthetic-secret'); } });
+  assert.equal(r.ok, false); assert.equal(r.failures.length, 3); assert.ok(!JSON.stringify(r).includes('synthetic-secret'));
+});
+test('requires a full SHA and refuses credential-bearing origins', async () => {
+  await assert.rejects(checkBetaSmoke({ origin: 'https://user:secret@example.invalid', sha, environment: 'dev' }));
+  await assert.rejects(checkBetaSmoke({ origin: 'https://example.invalid', sha: 'main', environment: 'dev' }));
+});

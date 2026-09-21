@@ -34,8 +34,9 @@
     "build:cua-image": "docker build --progress=plain --pull=false -f backend/agent_runtime/Dockerfile.cua-local -t artigen/cua-xfce:0.1.15-tools-v2 backend/agent_runtime",
     "test:integration": "pnpm --filter personal test:e2e",
     "check:docs": "node --test scripts/check-docs.test.mjs scripts/check-handoff-policy.test.mjs && node scripts/check-docs.mjs",
+    "check:release-config": "node --test scripts/check-beta-smoke.test.mjs && node scripts/check-release-config.mjs",
     "check:handoff-policy": "node scripts/check-handoff-policy.mjs",
-    "check:workspace": "node scripts/check-workspace-lockfile.mjs && pnpm check:docs",
+    "check:workspace": "node scripts/check-workspace-lockfile.mjs && pnpm check:docs && pnpm check:release-config",
     "check:core": "pnpm check:workspace && pnpm lint && pnpm type-check && pnpm test && pnpm eval:agent:validate && pnpm build && pnpm --filter personal test:budget",
     "check": "pnpm check:core && pnpm test:integration",
     "install:all": "pnpm install --frozen-lockfile",
@@ -47,7 +48,8 @@
     "db:backup:neon": "pnpm --filter backend db:backup:neon",
     "db:restore:verify": "pnpm --filter backend db:restore:verify",
     "db:audit": "pnpm --filter backend db:audit",
-    "prepare": "husky"
+    "prepare": "husky",
+    "smoke:beta": "node scripts/check-beta-smoke.mjs"
   },
   "keywords": [],
   "author": "",
