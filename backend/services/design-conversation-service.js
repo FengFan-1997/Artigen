@@ -316,27 +316,41 @@ const explicitHttpsOrigins = (text) => {
   return origins.slice(0, 10);
 };
 
-const inferDeliverables = (text, proposed = []) => {
+const DELIVERABLE_NOUNS = {
+  report: '(?:报告|方案|审计|pdf|markdown|\\bmd\\b|reports?|proposals?|audits?)',
+  spreadsheet: '(?:表格|工作簿|xlsx?|excel|spreadsheets?|workbooks?)',
+  presentation: '(?:pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentations?|slides?)',
+  website: '(?:网站|网页|静态站点|网站原型|网页原型|websites?|webpages?|web\\s+pages?|prototypes?|landing\\s+pages?)',
+  image: '(?:图片|生图|海报|视觉稿|主视觉|概念图|images?|posters?|visuals?|key\\s+visuals?)'
+};
+const explicitlyNegatesDeliverable = (text, kind) => {
+  const value = String(text || '');
+  const noun = DELIVERABLE_NOUNS[kind];
+  // Preserve list exclusions for existing non-image deliverables (for example
+  // “不要图片或网站”), while image execution requires a direct output exclusion.
+  if (kind !== 'image') {
+    return new RegExp(`(?:不要|无需|不需要|请勿|别|禁止|不含|不包括|排除|无|不(?:生成|创建|制作|输出|导出))\\s*[^\\n。！？；;,，.]{0,60}?${noun}`, 'iu').test(value) ||
+      new RegExp(`\\b(?:do\\s+not|don't|no|without|exclude|excluding)\\b\\s*[^\\n.!?;,]{0,80}?${noun}`, 'iu').test(value);
+  }
+  return new RegExp(
+    `(?:不要|无需|不需要|请勿|勿|别|禁止|不含|不包括|排除|不(?:生成|创建|制作|输出|导出|画))\\s*(?:(?:再|额外|自动|直接|帮我|为我)\\s*)?(?:(?:生成|创建|制作|输出|导出|交付|绘制|画|包含|提供|附带)\\s*)?(?:任何|一张|新的|额外的|实际的|这些|那些)?\\s*${noun}`,
+    'iu'
+  ).test(value) || new RegExp(`无\\s*${noun}`, 'iu').test(value) || new RegExp(
+    `\\b(?:do\\s+not|don't|no|without|exclude|excluding)\\b\\s+(?:(?:automatically\\s+)?(?:generat(?:e|ing)|creat(?:e|ing)|produc(?:e|ing)|mak(?:e|ing)|draw(?:ing)?|includ(?:e|ing)|add(?:ing)?|render(?:ing)?)\\s+)?(?:(?:any|an?|the|new|extra)\\s+){0,2}${noun}\\b`,
+    'iu'
+  ).test(value);
+};
+
+const requestsTextOnly = (text) => (
+  /(?:只|仅)(?:需|需要)?(?:做|提供|返回|回答|输出|给出|要)?\s*(?:纯)?(?:文字|文本|文案)(?:咨询|建议|回答|输出)?/u.test(text) ||
+  /(?:纯文字|纯文本)(?:咨询|回答|输出|建议)/u.test(text) ||
+  /\b(?:text[- ]only|(?:only\s+(?:reply|respond|answer)(?:\s+in)?\s+(?:plain\s+)?text))\b/iu.test(text)
+);
+
+const inferDeliverables = (text, proposed = [], defaultReport = true) => {
   const value = String(text || '').toLowerCase();
-  const allowed = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image']);
-  const nounPatterns = {
-    report: '(?:报告|方案|审计|pdf|markdown|\\bmd\\b|reports?|proposals?|audits?)',
-    spreadsheet: '(?:表格|工作簿|xlsx?|excel|spreadsheets?|workbooks?)',
-    presentation: '(?:pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentations?|slides?)',
-    website: '(?:网站|网页|静态站点|网站原型|网页原型|websites?|webpages?|web\\s+pages?|prototypes?|landing\\s+pages?)',
-    image: '(?:图片|生图|海报|视觉稿|主视觉|概念图|images?|posters?|visuals?|key\\s+visuals?)'
-  };
-  const explicitlyNegated = (kind) => {
-    const noun = nounPatterns[kind];
-    return new RegExp(
-      `(?:不要|无需|不需要|别|禁止|不含|不包括|排除|无)\\s*[^\\n。！？；;,，.]{0,60}?${noun}`,
-      'iu'
-    ).test(value) || new RegExp(
-      `\\b(?:do\\s+not|don't|no|without|exclude|excluding)\\b\\s*[^\\n.!?;,]{0,80}?${noun}`,
-      'iu'
-    ).test(value);
-  };
-  const requested = (kind) => !explicitlyNegated(kind) && new RegExp(nounPatterns[kind], 'iu').test(value);
+  const allowed = new Set(Object.keys(DELIVERABLE_NOUNS));
+  const requested = (kind) => !explicitlyNegatesDeliverable(value, kind) && new RegExp(DELIVERABLE_NOUNS[kind], 'iu').test(value);
   const result = Array.isArray(proposed)
     ? proposed
       .map((item) => String(item || '').trim())
@@ -351,12 +365,24 @@ const inferDeliverables = (text, proposed = []) => {
   if (requested('spreadsheet')) add('spreadsheet');
   if (requested('presentation')) add('presentation');
   if (requested('website')) add('website');
-  if (!result.length) add('report');
+  if (!result.length && defaultReport) add('report');
   return result.slice(0, 5);
 };
 
 const repairPlannerRoute = ({ raw, text }) => {
   const value = String(text || '').trim();
+  // User constraints outrank both model output and keyword-based route repair.
+  // Attachments and mentions of tools are not permission to start an executor.
+  if (requestsTextOnly(value)) return { ...raw, routeKind: 'reply' };
+  const imageExcluded = explicitlyNegatesDeliverable(value, 'image');
+  if (imageExcluded) {
+    const permitted = inferDeliverables(value, raw.deliverables, false);
+    raw = {
+      ...raw,
+      routeKind: (raw.routeKind || raw.route) === 'agent_run' && permitted.length ? 'agent_run' : 'reply',
+      deliverables: permitted
+    };
+  }
   const wantsExecution = /(?:帮我|请|给我|需要|想要|开始|直接|立即|生成|制作|创建|设计|处理|转换|压缩|修复|增强|换|整理|输出|导出|build|create|generate|make|design|convert|compress)/iu.test(value);
   if (!wantsExecution) return raw;
   const wantsResearch = /(?:调研|审计|浏览(?:网站|网页)|搜索资料|竞品|shell|脚本|代码|多文件|完整提案|research|audit|browse|website|spreadsheet|xlsx|pptx|presentation)/iu.test(value);
@@ -370,6 +396,9 @@ const repairPlannerRoute = ({ raw, text }) => {
   if (/(?:pdf.*转.*图片|pdf.*to.*image)/iu.test(value)) {
     return { ...raw, routeKind: 'local_tool', toolId: 'pdf-image', operation: 'pdf-page' };
   }
+  // Keep local conversion available, but never revive an excluded cloud image
+  // route or fabricate a report merely because the default deliverable is report.
+  if (imageExcluded) return raw;
   if (wantsResearch || deliverables.length > 1) {
     return { ...raw, routeKind: 'agent_run', deliverables };
   }
@@ -702,7 +731,7 @@ const plannerMessages = ({
   content: `You are Artigen's design request router. The server-pinned text model is ${textModel}; never request or switch models.
 Return one JSON object and no markdown. Schema:
 {"routeKind":"reply|local_tool|tool_task|agent_run","complexity":"simple|medium|high","confidence":0.0,"reply":"Chinese answer","needsClarification":false,"questions":[],"assumptions":[],"toolId":"","operation":"","options":{},"deliverables":[],"skillIds":[],"taskSpec":{},"memoryCandidates":[],"steps":[]}
-Ask at most two questions only when the missing answer materially changes the result. Choose reply for advice or brainstorming without an execution request. Choose tool_task for: ai-design generate/directions, old-photo enhance/enhance-colorize, id-photo professional-portrait, background ai-scene, ingredient-label ai-organize-source-text. Local tools are strictly: image-batch convert/compress/resize/rotate/filter/pipeline; privacy-redaction redact/export/pdf; video-frame extract; pdf-image pdf-page/pdf-range-zip/pdf-long-image/images-to-pdf; pdf-text-word extract-text-docx; document-pdf txt-local/word-server-faithful; video-gif convert; favicon generate/export/zip. Choose agent_run for research, browser, shell, multiple files, or multiple deliverable formats. Never set prices, models, credentials, or permissions. All image output is handled by Kwai-Kolors/Kolors downstream.`
+Ask at most two questions only when the missing answer materially changes the result. Choose reply for advice or brainstorming without an execution request. Explicit text-only instructions take precedence over every executor. Negative instructions such as "不生成图片" or "do not generate images" are exclusions, never execution requests; do not invent other deliverables to replace an excluded output. Choose tool_task for: ai-design generate/directions, old-photo enhance/enhance-colorize, id-photo professional-portrait, background ai-scene, ingredient-label ai-organize-source-text. Local tools are strictly: image-batch convert/compress/resize/rotate/filter/pipeline; privacy-redaction redact/export/pdf; video-frame extract; pdf-image pdf-page/pdf-range-zip/pdf-long-image/images-to-pdf; pdf-text-word extract-text-docx; document-pdf txt-local/word-server-faithful; video-gif convert; favicon generate/export/zip. Choose agent_run for research, browser, shell, multiple files, or multiple deliverable formats. Never set prices, models, credentials, or permissions. All image output is handled by Kwai-Kolors/Kolors downstream.`
 }, {
   role: 'user',
   content: JSON.stringify({
