@@ -6,7 +6,8 @@ const { normalizePlannerDecision } = require('../../backend/services/design-conv
 
 // Exercise the actual server normalizer and the browser auto-start boundary together.
 // All HTTP is mocked: no real account, model, quote, task or credit operation.
-test('text-only advice stays a reply after execution.ready and never requests a paid executor', async ({ page }) => {
+for (const earlyEvent of [false, true]) {
+ test(`text-only advice never requests a paid executor (event ${earlyEvent ? 'before' : 'after'} message response)`, async ({ page }) => {
   const id = '11111111-1111-4111-8111-111111111111';
   const executionId = '44444444-4444-4444-8444-444444444444';
   const text = '只做文字咨询，不创建文件、不生成图片、不启动电脑任务。请为虚构咖啡店写 3 条周末活动宣传文案。';
@@ -17,8 +18,11 @@ test('text-only advice stays a reply after execution.ready and never requests a 
   });
   const now = '2026-09-21T08:00:00.000Z';
   let sent = false;
+  let eventDelivered = false;
   let publish = () => {};
   const planned = new Promise<void>((resolve) => { publish = resolve; });
+  let releaseMessage = () => {};
+  const messageGate = new Promise<void>((resolve) => { releaseMessage = resolve; });
   const paidRequests: string[] = [];
   const snapshot = () => ({
     conversationId: id, title: '咖啡店文字咨询', status: 'active', autoCreditCap: 50,
@@ -44,7 +48,9 @@ test('text-only advice stays a reply after execution.ready and never requests a 
     if (pathname === '/api/design-assistant/status') return respond({ status: { enabled: true, workerEnabled: true, plannerReady: true, autoCreditCap: 50 } });
     if (pathname.endsWith('/authorizations')) return respond({ authorizations: [] });
     if (pathname.endsWith('/events')) {
+      if (eventDelivered) return route.abort();
       await planned;
+      eventDelivered = true;
       return route.fulfill({ status: 200, contentType: 'text/event-stream', body:
         `event: execution.ready\ndata: ${JSON.stringify({ eventId: '1', conversationId: id, type: 'execution.ready', data: { executionId }, createdAt: now })}\n\n`
       });
@@ -52,6 +58,10 @@ test('text-only advice stays a reply after execution.ready and never requests a 
     if (pathname.endsWith('/messages') && request.method() === 'POST') {
       expect(request.postDataJSON().message).toBe(text);
       sent = true;
+      if (earlyEvent) {
+        publish();
+        await messageGate;
+      }
       return respond({ message: snapshot().messages[0] });
     }
     if (pathname === '/api/design-conversations') {
@@ -64,13 +74,19 @@ test('text-only advice stays a reply after execution.ready and never requests a 
   await expect(page.getByText('正在检查执行器', { exact: true })).toHaveCount(0);
   await page.getByLabel(/^(?:设计需求|Design request)$/).fill(text);
   await page.getByRole('button', { name: /^(?:发送需求|Send request)$/ }).click();
+  if (earlyEvent) {
+    await expect(page.locator('.message.assistant:not(.planning-message)')).toContainText(answer);
+    releaseMessage();
+  }
   await expect(page.getByLabel(/^(?:设计需求|Design request)$/)).toHaveValue('');
-  publish();
+  if (!earlyEvent) publish();
   await expect(page.locator('.message.assistant:not(.planning-message)')).toContainText(answer);
   await expect(page.locator('.planning-message')).toHaveCount(0);
   await expect(page.locator('.execution-card.route-tool_task, .execution-card.route-agent_run, .execution-card.route-local_tool')).toHaveCount(0);
+  await expect(page.locator('.message.user')).toHaveCount(1);
   expect(sent).toBe(true);
   expect(paidRequests).toEqual([]);
   expect(decision.routeKind).toBe('reply');
   expect(decision.status).toBe('succeeded');
 });
+}

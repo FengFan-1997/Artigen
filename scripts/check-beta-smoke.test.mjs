@@ -10,7 +10,7 @@ const fixture = () => ({
 const run = (bodies) => checkBetaSmoke({ origin: 'https://beta.example.invalid', sha, environment: 'dev', fetchImpl: async url => ({ ok: true, json: async () => bodies[url.pathname] }) });
 test('accepts matching version and verified dependencies', async () => assert.equal((await run(fixture())).ok, true));
 test('rejects stale SHA, environment and drift', async () => {
-  const b = fixture(); b['/api/meta'].gitSha = 'b'.repeat(40); b['/api/meta'].environment = 'production'; b['/api/meta'].capabilities.selfServePayments = true;
+  const b = fixture(); b['/api/meta'].gitSha = 'b'.repeat(40); b['/api/meta'].environment = 'production'; b['/api/meta'].capabilities.agentRuntimeV2 = true;
   const r = await run(b); assert.equal(r.ok, false); assert.equal(r.failures.length, 3);
 });
 test('disabled readiness checks cannot make a Beta pass', async () => {
@@ -53,5 +53,21 @@ test('DEV credentials cannot be accidentally used for production or left incompl
   ]) {
     await assert.rejects(checkBetaSmoke({ origin: 'https://beta.example.invalid', sha, environment, devAuth,
       fetchImpl: async () => assert.fail('invalid authentication must fail before making a request') }));
+  }
+});
+
+test('existing payments may stay enabled without running payment transactions', async () => {
+  for (const enabled of [true, false]) {
+    const bodies = fixture();
+    bodies['/api/meta'].capabilities.selfServePayments = enabled;
+    const requested = [];
+    const result = await checkBetaSmoke({ origin: 'https://beta.example.invalid', sha, environment: 'dev',
+      fetchImpl: async (url) => {
+        requested.push(url.pathname);
+        return { ok: true, json: async () => bodies[url.pathname] };
+      }
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(requested, ['/healthz', '/readyz', '/api/meta']);
   }
 });

@@ -64,7 +64,7 @@ services:
       - key: PAID_FEATURES_ENABLED
         value: "false"
       - key: PAYMENTS_ENABLED
-        value: "false"
+        sync: false
       - key: AUTH_EMAIL_OTP_ENABLED
         value: "false"
       - key: AI_DESIGN_TASK_V2_ENABLED

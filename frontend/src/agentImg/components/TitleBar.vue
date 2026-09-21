@@ -355,7 +355,8 @@ const onDocMouseDown = (e: MouseEvent) => {
 onMounted(() => {
   document.addEventListener('mousedown', onDocMouseDown);
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
-  void refreshCredits();
+  // Catch a session that finished restoring between setup and subscription.
+  handleAuthChanged();
 });
 
 onBeforeUnmount(() => {

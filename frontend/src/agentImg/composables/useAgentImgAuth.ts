@@ -12,6 +12,9 @@ export function useAgentImgAuth() {
 
   const syncAuth = () => {
     authUserId.value = getCurrentUserId();
+    // Cookie verification can change while the stored identity stays the same.
+    // Invalidate consumers even when assigning the same user ID is a Vue no-op.
+    authTick.value += 1;
   };
 
   const isAuthed = computed(() => {

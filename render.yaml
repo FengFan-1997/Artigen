@@ -28,7 +28,7 @@ services:
       - key: PG_POOL_MAX
         value: "5"
       - key: PAYMENTS_ENABLED
-        value: "false"
+        sync: false
       - key: PAID_FEATURES_ENABLED
         value: "false"
       - key: AI_DESIGN_TASK_V2_ENABLED
