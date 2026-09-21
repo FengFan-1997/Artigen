@@ -120,7 +120,10 @@ test('negative image instructions cannot trigger paid image routing or an invent
     '请勿生成海报，帮我想三个活动标题。',
     '不要生成图片，给我一句宣传文案。',
     'Please do not generate images; write three coffee shop slogans.',
-    'No images, please give me three slogans.'
+    'No images, please give me three slogans.',
+    '不要网站或图片，请写三条宣传文案。',
+    'Please create no website or images; write three slogans.',
+    'Please never generate images; write three slogans.'
   ]) {
     for (const raw of [
       { routeKind: 'reply' },

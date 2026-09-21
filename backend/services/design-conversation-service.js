@@ -326,17 +326,18 @@ const DELIVERABLE_NOUNS = {
 const explicitlyNegatesDeliverable = (text, kind) => {
   const value = String(text || '');
   const noun = DELIVERABLE_NOUNS[kind];
+  const outputNoun = `(?:${Object.values(DELIVERABLE_NOUNS).join('|')})`;
   // Preserve list exclusions for existing non-image deliverables (for example
-  // “不要图片或网站”), while image execution requires a direct output exclusion.
+  // “不要图片或网站”); image exclusions require output words, not style adjectives.
   if (kind !== 'image') {
     return new RegExp(`(?:不要|无需|不需要|请勿|别|禁止|不含|不包括|排除|无|不(?:生成|创建|制作|输出|导出))\\s*[^\\n。！？；;,，.]{0,60}?${noun}`, 'iu').test(value) ||
       new RegExp(`\\b(?:do\\s+not|don't|no|without|exclude|excluding)\\b\\s*[^\\n.!?;,]{0,80}?${noun}`, 'iu').test(value);
   }
   return new RegExp(
-    `(?:不要|无需|不需要|请勿|勿|别|禁止|不含|不包括|排除|不(?:生成|创建|制作|输出|导出|画))\\s*(?:(?:再|额外|自动|直接|帮我|为我)\\s*)?(?:(?:生成|创建|制作|输出|导出|交付|绘制|画|包含|提供|附带)\\s*)?(?:任何|一张|新的|额外的|实际的|这些|那些)?\\s*${noun}`,
+    `(?:不要|无需|不需要|请勿|勿|别|禁止|不含|不包括|排除|不(?:生成|创建|制作|输出|导出|画))\\s*(?:(?:再|额外|自动|直接|帮我|为我)\\s*)?(?:(?:生成|创建|制作|输出|导出|交付|绘制|画|包含|提供|附带)\\s*)?(?:任何|一张|新的|额外的|实际的|这些|那些)?\\s*(?:${outputNoun}\\s*(?:或|和|、|以及)\\s*){0,5}${noun}`,
     'iu'
   ).test(value) || new RegExp(`无\\s*${noun}`, 'iu').test(value) || new RegExp(
-    `\\b(?:do\\s+not|don't|no|without|exclude|excluding)\\b\\s+(?:(?:automatically\\s+)?(?:generat(?:e|ing)|creat(?:e|ing)|produc(?:e|ing)|mak(?:e|ing)|draw(?:ing)?|includ(?:e|ing)|add(?:ing)?|render(?:ing)?)\\s+)?(?:(?:any|an?|the|new|extra)\\s+){0,2}${noun}\\b`,
+    `\\b(?:do\\s+not|don't|never|no|without|exclude|excluding)\\b\\s+(?:(?:automatically\\s+)?(?:generat(?:e|ing)|creat(?:e|ing)|produc(?:e|ing)|mak(?:e|ing)|draw(?:ing)?|includ(?:e|ing)|add(?:ing)?|render(?:ing)?)\\s+)?(?:(?:any|an?|the|new|extra)\\s+){0,2}(?:${outputNoun}\\s*(?:,?\\s*(?:or|and)|,)\\s*){0,5}${noun}\\b`,
     'iu'
   ).test(value);
 };
