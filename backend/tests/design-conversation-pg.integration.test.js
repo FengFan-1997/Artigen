@@ -313,3 +313,66 @@ test('PostgreSQL planning lease heartbeat prevents a second worker from reclaimi
     await pool.end();
   }
 });
+
+
+test('PostgreSQL text-only planning persists a terminal reply and rejects a tool quote', {
+  skip: !enabled,
+  timeout: 10_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const inserted = await pool.query(
+    `INSERT INTO users (legacy_user_id,display_name,status)
+     VALUES ($1,'Text-only regression','active') RETURNING id`,
+    [`design-text-only-${crypto.randomUUID()}`]
+  );
+  const userId = inserted.rows[0].id;
+  const service = createDesignConversationService({
+    pool,
+    env: {
+      ...process.env,
+      DESIGN_CONVERSATION_ENABLED: 'true',
+      DESIGN_CONVERSATION_WORKER_ENABLED: 'true',
+      AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'73'.repeat(32)}`
+    },
+    chatGenerate: async () => ({ text: JSON.stringify({
+      routeKind: 'tool_task', toolId: 'ai-design', operation: 'generate',
+      reply: '周六 14:00–17:00，冰拿铁第二杯半价。'
+    }) })
+  });
+  let conversationId;
+  try {
+    ({ conversationId } = await service.createConversation({ userId }));
+    await service.addMessage({
+      userId, conversationId,
+      message: '只做文字咨询，不创建文件、不生成图片、不启动电脑任务。请写咖啡店周末活动文案。',
+      attachments: []
+    });
+    let hydrated;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      hydrated = await service.getConversation({ userId, conversationId });
+      if (hydrated.executions.length) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(hydrated.executions.length, 1);
+    const execution = hydrated.executions[0];
+    assert.equal(execution.routeKind, 'reply');
+    assert.equal(execution.status, 'succeeded');
+    assert.equal(execution.toolTaskId, null);
+    assert.equal(execution.agentRunId, null);
+    assert.equal(execution.quotedCredits, null);
+    assert.equal(hydrated.messages.at(-1).kind, 'text');
+    assert.equal(hydrated.messages.at(-1).text, '周六 14:00–17:00，冰拿铁第二杯半价。');
+    await assert.rejects(service.recordToolQuote({
+      userId, conversationId, executionId: execution.executionId,
+      quoteId: crypto.randomUUID()
+    }), { code: 'DESIGN_EXECUTION_ROUTE_MISMATCH' });
+    const events = await service.listEvents({ userId, conversationId });
+    assert.ok(events.some((event) => event.type === 'execution.ready'));
+    assert.ok(events.every((event) => !['execution.quoted', 'execution.started'].includes(event.type)));
+  } finally {
+    service.stopWorker();
+    if (conversationId) await pool.query('DELETE FROM design_conversations WHERE id=$1', [conversationId]);
+    await pool.query('DELETE FROM users WHERE id=$1', [userId]);
+    await pool.end();
+  }
+});

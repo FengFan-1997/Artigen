@@ -85,6 +85,89 @@ test('deterministic route repair keeps simple image tasks in the Kolors workflow
   assert.equal(decision.options.profileId, 'standard-v1');
 });
 
+const textOnlyReproduction = '只做文字咨询，不创建文件、不生成图片、不启动电脑任务。请为虚构咖啡店「慢半拍咖啡」写 3 条不超过 35 字的周末活动宣传文案，准确包含：周六 14:00–17:00，冰拿铁第二杯半价。风格温暖简洁，不要编造地址、联系方式或其他优惠。';
+
+test('explicit text-only constraints override every planner executor without granting attachment consent', () => {
+  for (const text of [
+    textOnlyReproduction,
+    '仅提供文字建议：请解释海报设计、图片压缩和 PDF 导出的区别。',
+    '只输出文案，帮我写海报标题。',
+    'Text-only: please research poster design and give advice; do not generate images.',
+    'Only reply in text. Explain how to create a website.'
+  ]) {
+    for (const routeKind of ['reply', 'tool_task', 'local_tool', 'agent_run']) {
+      const decision = normalizePlannerDecision({
+        raw: { routeKind, toolId: 'ai-design', operation: 'generate', reply: '周六来喝咖啡。', deliverables: ['image', 'website'] },
+        text,
+        attachments: [{ clientId: 'local-reference', name: 'reference.png', mimeType: 'image/png', byteSize: 100 }],
+        clarificationRounds: 0,
+        creditCap: 50
+      });
+      assert.equal(decision.routeKind, 'reply', `${routeKind}: ${text}`);
+      assert.equal(decision.status, 'succeeded');
+      assert.equal(decision.reply, '周六来喝咖啡。');
+      assert.deepEqual(decision.plan.steps, []);
+      for (const field of ['toolId', 'operation', 'options', 'capabilities', 'deliverables']) {
+        assert.equal(decision[field], undefined, field);
+      }
+    }
+  }
+});
+
+test('negative image instructions cannot trigger paid image routing or an invented agent report', () => {
+  for (const text of [
+    '不生成图片。请写三条咖啡店宣传文案。',
+    '请勿生成海报，帮我想三个活动标题。',
+    '不要生成图片，给我一句宣传文案。',
+    'Please do not generate images; write three coffee shop slogans.',
+    'No images, please give me three slogans.',
+    '不要网站或图片，请写三条宣传文案。',
+    'Please create no website or images; write three slogans.',
+    'Please never generate images; write three slogans.'
+  ]) {
+    for (const raw of [
+      { routeKind: 'reply' },
+      { routeKind: 'tool_task', toolId: 'ai-design', operation: 'generate' },
+      { routeKind: 'agent_run', deliverables: ['image'] }
+    ]) {
+      const decision = normalizePlannerDecision({ raw, text, attachments: [], clarificationRounds: 0, creditCap: 50 });
+      assert.equal(decision.routeKind, 'reply', text);
+      assert.equal(decision.status, 'succeeded');
+    }
+  }
+});
+
+test('image exclusion preserves explicitly requested non-image deliverables', () => {
+  for (const text of ['请生成 Markdown 报告，不生成图片。', '请交付 PDF 报告，请勿生成海报。']) {
+    const decision = normalizePlannerDecision({
+      raw: { routeKind: 'agent_run', deliverables: ['report', 'image'] },
+      text, attachments: [], clarificationRounds: 0, creditCap: 50
+    });
+    assert.equal(decision.routeKind, 'agent_run');
+    assert.deepEqual(decision.deliverables, ['report']);
+    assert.equal(decision.capabilities.generate_images, false);
+  }
+});
+
+test('image exclusions do not promote advice containing report vocabulary into an agent run', () => {
+  const decision = normalizePlannerDecision({
+    raw: { routeKind: 'reply', reply: '这里有三条品牌建议。' },
+    text: '不生成图片，请给品牌方案提三条建议。',
+    attachments: [], clarificationRounds: 0, creditCap: 50
+  });
+  assert.equal(decision.routeKind, 'reply');
+});
+
+test('affirmative image requests are not rejected because an adjective or watermark constraint resembles an exclusion', () => {
+  for (const text of ['请生成一张无限想象力的海报。', '请生成别致的海报。', '请生成不要水印的海报。', 'Please generate a no watermark poster.']) {
+    const decision = normalizePlannerDecision({
+      raw: { routeKind: 'reply' }, text,
+      attachments: [], clarificationRounds: 0, creditCap: 50
+    });
+    assert.equal(decision.routeKind, 'tool_task', text);
+  }
+});
+
 test('reference image generation waits for explicit upload and uses the existing Kolors profile', () => {
   const decision = normalizePlannerDecision({
     raw: { routeKind: 'tool_task', toolId: 'ai-design', operation: 'generate' },
