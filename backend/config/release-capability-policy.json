@@ -9,7 +9,7 @@
       "fileUpload": true,
       "artifactDownload": true,
       "publicSignup": false,
-      "selfServePayments": false,
+      "selfServePayments": true,
       "agentRuntimeV2": false,
       "agentSubagents": false,
       "providerScheduler": false
@@ -24,7 +24,7 @@
       "fileUpload": true,
       "artifactDownload": true,
       "publicSignup": false,
-      "selfServePayments": false,
+      "selfServePayments": true,
       "agentRuntimeV2": false,
       "agentSubagents": false,
       "providerScheduler": false
@@ -39,7 +39,7 @@
       "fileUpload": true,
       "artifactDownload": true,
       "publicSignup": true,
-      "selfServePayments": false,
+      "selfServePayments": true,
       "agentRuntimeV2": false,
       "agentSubagents": false,
       "providerScheduler": false

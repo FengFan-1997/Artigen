@@ -1267,7 +1267,7 @@ test('metadata exposes active configuration drift instead of claiming disabled c
   assert.equal(metadata.capabilities.selfServePayments, true);
   assert.equal(metadata.capabilities.agentRuntimeV2, true);
   assert.equal(metadata.releasePolicy.allowedCapabilities.agentRuntimeV2, false);
-  assert.deepEqual(metadata.releasePolicy.violations, ['selfServePayments', 'agentRuntimeV2', 'agentSubagents', 'providerScheduler']);
+  assert.deepEqual(metadata.releasePolicy.violations, ['agentRuntimeV2', 'agentSubagents', 'providerScheduler']);
   assert.equal(buildReleaseMetadata({ env: { APP_ENV: 'production' } }).capabilities.generation, false);
   assert.equal(buildReleaseMetadata({ env: { APP_ENV: 'preview', ARTIGEN_PUBLIC_SIGNUP_ENABLED: 'true' } }).capabilities.publicSignup, false);
 });
