@@ -694,13 +694,18 @@ const refreshConversationList = async () => {
   conversations.value = await listDesignConversations();
 };
 
-const openConversation = async (conversationId: string) => {
+let conversationSelectionVersion = 0;
+const openConversation = async (conversationId: string, canApply: () => boolean = () => true) => {
   const normalizedId = String(conversationId || '').trim();
   if (!normalizedId) return;
-  conversation.value = await getDesignConversation(normalizedId);
+  const selectionVersion = ++conversationSelectionVersion;
+  const fresh = await getDesignConversation(normalizedId);
+  if (disposed || selectionVersion !== conversationSelectionVersion || !canApply()) return;
+  conversation.value = fresh;
   try { window.localStorage.setItem(LAST_CONVERSATION_KEY, normalizedId); } catch {}
   await syncConversationProject(conversation.value.projectId);
   authorizations.value = await listDesignSessionAuthorizations(normalizedId).catch(() => []);
+  if (disposed || selectionVersion !== conversationSelectionVersion) return;
   connectConversationStream(normalizedId);
   await router.replace({ path: '/artigen/create', query: { c: normalizedId } });
   await hydrateExecutionTargets(conversation.value.executions || []);
@@ -708,6 +713,7 @@ const openConversation = async (conversationId: string) => {
 };
 
 const newConversation = async () => {
+  conversationSelectionVersion += 1;
   closeConversationStream?.();
   closeConversationStream = null;
   conversation.value = null;
@@ -1142,13 +1148,44 @@ const executionsForMessage = (messageId: string) => (
   conversation.value?.executions?.filter((item) => item.sourceMessageId === messageId) || []
 );
 
-const handleAuthChanged = () => {
+let disposed = false;
+let restoringConversation: Promise<void> | null = null;
+
+const restoreAuthenticatedConversation = () => {
   syncAuth();
-  if (isAuthed.value) void refreshConversationList();
+  if (!isAuthed.value || disposed) return Promise.resolve();
+  if (restoringConversation) return restoringConversation;
+  restoringConversation = (async () => {
+    await refreshConversationList().catch(() => {});
+    // Login can finish after mount. Restore once, without replacing an active
+    // conversation or a draft that is currently being submitted after login.
+    if (disposed || !isAuthed.value || conversation.value || sending.value) return;
+    const requested = String(route.query.c || '').trim() || (() => {
+      try { return String(window.localStorage.getItem(LAST_CONVERSATION_KEY) || '').trim(); } catch { return ''; }
+    })();
+    if (requested) {
+      try {
+        await openConversation(requested, () => !conversation.value && !sending.value && isAuthed.value);
+      } catch (error) {
+        // A temporary read failure must not erase the requested conversation URL.
+        if (!disposed) notice.value = errorText(error);
+      }
+    }
+  })().finally(() => { restoringConversation = null; });
+  return restoringConversation;
+};
+
+const handleAuthChanged = () => { void restoreAuthenticatedConversation(); };
+const onVisible = () => {
+  if (document.visibilityState === 'visible' && conversation.value) {
+    void refreshConversation().catch(() => {});
+    void refreshConversationList().catch(() => {});
+  }
 };
 
 onMounted(async () => {
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
+  document.addEventListener('visibilitychange', onVisible);
   try {
     status.value = await getDesignAssistantStatus();
     statusUnavailable.value = false;
@@ -1156,26 +1193,14 @@ onMounted(async () => {
     status.value = null;
     statusUnavailable.value = true;
   }
-  syncAuth();
-  if (!isAuthed.value) return;
-  await refreshConversationList().catch(() => {});
-  const requested = String(route.query.c || '').trim() || (() => {
-    try { return String(window.localStorage.getItem(LAST_CONVERSATION_KEY) || '').trim(); } catch { return ''; }
-  })();
-  if (requested) await openConversation(requested).catch(() => router.replace('/artigen/create'));
-  const onVisible = () => {
-    if (document.visibilityState === 'visible' && conversation.value) {
-      void refreshConversation().catch(() => {});
-      void refreshConversationList().catch(() => {});
-    }
-  };
-  document.addEventListener('visibilitychange', onVisible);
-  (window as any).__artigenDesignVisibilityCleanup = () => document.removeEventListener('visibilitychange', onVisible);
+  await restoreAuthenticatedConversation();
 });
 
 watch(() => conversation.value?.messages?.length, () => void scrollToBottom());
 
 onBeforeUnmount(() => {
+  disposed = true;
+  document.removeEventListener('visibilitychange', onVisible);
   window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
   closeConversationStream?.();
   executionStreams.forEach((close) => close());
@@ -1183,7 +1208,6 @@ onBeforeUnmount(() => {
   toolTaskTimers.forEach((timer) => window.clearTimeout(timer));
   toolTaskTimers.clear();
   if (refreshTimer !== null) window.clearTimeout(refreshTimer);
-  try { (window as any).__artigenDesignVisibilityCleanup?.(); } catch {}
   try {
     if (conversation.value?.conversationId) {
       window.localStorage.setItem(LAST_CONVERSATION_KEY, conversation.value.conversationId);
