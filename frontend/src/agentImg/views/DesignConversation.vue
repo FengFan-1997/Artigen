@@ -792,16 +792,19 @@ const submitAuthenticated = async () => {
     }
     const manifest = selectedAttachments.value.map(({ file: _file, ...item }) => item);
     for (const item of selectedAttachments.value) localFiles.set(item.clientId, item.file);
+    // The durable completion event can arrive before the POST response.
+    planning.value = true;
     const message = await sendDesignMessage(active.conversationId, text, manifest);
-    if (conversation.value) {
-      conversation.value.messages = [...(conversation.value.messages || []), message];
+    if (conversation.value?.conversationId === active.conversationId &&
+        !conversation.value.messages.some((item) => item.messageId === message.messageId)) {
+      conversation.value.messages = [...conversation.value.messages, message];
     }
     draft.value = '';
     selectedAttachments.value = [];
-    planning.value = true;
     await refreshConversationList();
     await scrollToBottom();
   } catch (error) {
+    planning.value = false;
     notice.value = errorText(error);
   } finally {
     sending.value = false;
