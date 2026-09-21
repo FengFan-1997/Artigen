@@ -60,7 +60,8 @@
 
 ## 2026-09-21 会话存储异常恢复（已部署 DEV，未发布生产）
 
-- PR #214 完整 CI 全绿并合入 dev，Render DEV 已部署 `828db5dce3561be2761d34b58f117eae7ea722fb`，稳定后版本/健康/依赖/能力策略 smoke 通过；不代表 Worker 已在线。
+- PR #214 已合入 `dev`，部署验收记录确认 Render 与 `/api/meta` SHA 为 `828db5dce3561be2761d34b58f117eae7ea722fb`，稳定后 `checkBetaSmoke` 通过；部署切换时一次 `/readyz` 502 后复核正常。该证据不包含 Worker 在线证明，DEV 数据库直连与 Worker 切换仍未完成，生产未发布。
+
 - `/api/auth/session` 原先把会话存储暂时不可用也返回为匿名会话并清除 Cookie；现在服务端解析失败为 5xx 时返回 `503 SESSION_STORE_UNAVAILABLE` 并保留 Cookie，下一次检查可以正常恢复。真实失效或过期仍清除 Cookie，不改变权限检查。
 - 后端会话回归 3/3、前端会话回归 10/10 通过；完整 core 通过（前端 219、后端 646、邮件 7；后端 97 跳过），隔离端口 OTP Chromium 回归 4/4 通过。默认 `pnpm check` 的浏览器阶段被已占用端口阻断，完整浏览器矩阵以本 PR CI 为准；覆盖暂时不可用、下一次恢复与真实过期；不将此问题认定为本轮浏览器短暂显示未登录的已确认根因。
 
