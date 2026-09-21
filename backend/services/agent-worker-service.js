@@ -647,7 +647,7 @@ const createAgentWorkerService = ({
       await resolvedCanaryCircuit.ready();
     }
     await resolvedCanaryCircuit.assertClosed();
-    const claimed = await runService.claimRun({ runId, workerId });
+    let claimed = await runService.claimRun({ runId, workerId });
     if (!claimed) return { claimed: false };
     const leaseEpoch = Number(claimed.lease_epoch || 0);
     if (!Number.isSafeInteger(leaseEpoch) || leaseEpoch <= 0) {
@@ -666,7 +666,7 @@ const createAgentWorkerService = ({
         String(claimed.model_name || '') !== String(model.modelName)
       )
     ) {
-      await runService.recordProviderRoute({
+      claimed = await runService.recordProviderRoute({
         ...runLease,
         provider: model.providerName,
         model: model.modelName,
@@ -748,7 +748,7 @@ const createAgentWorkerService = ({
       const workerProvider = String(model.providerName || config.modelProvider || '')
         .trim()
         .toLowerCase();
-      const workerModel = String(config.modelName || '').trim();
+      const workerModel = String(model.modelName || config.modelName || '').trim();
       if (
         (claimedProvider && claimedProvider !== workerProvider) ||
         (claimedModel && claimedModel !== workerModel)

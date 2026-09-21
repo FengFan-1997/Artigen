@@ -1665,6 +1665,68 @@ test('worker fails a queued run before any execution when its pinned model diffe
   assert.equal(failed.actualCredits, 0);
 });
 
+test('worker accepts the provider route selected by a preflight fallback probe', async () => {
+  const runId = '11111111-1111-4111-8111-111111111123';
+  const workerId = 'worker-provider-fallback-route';
+  const routeUpdates = [];
+  let activeFallback = false;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: {},
+        sandbox_ref: null,
+        model_provider: 'cloudflare',
+        model_name: '@cf/openai/gpt-oss-120b'
+      }),
+      recordProviderRoute: async (input) => {
+        routeUpdates.push(input);
+        return {
+          id: runId,
+          worker_id: workerId,
+          lease_epoch: 1,
+          lease_expires_at: new Date(Date.now() + 60_000),
+          started_at: new Date(),
+          checkpoint: {},
+          sandbox_ref: null,
+          model_provider: 'siliconflow',
+          model_name: 'Qwen/Qwen3-8B'
+        };
+      },
+      loadPrivateContext: async () => {
+        throw new ApiError(500, 'AGENT_TEST_STOP');
+      },
+      failRun: async () => true
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId,
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b'
+    },
+    sandbox: {},
+    model: {
+      get providerName() { return activeFallback ? 'siliconflow' : 'cloudflare'; },
+      get modelName() { return activeFallback ? 'Qwen/Qwen3-8B' : '@cf/openai/gpt-oss-120b'; },
+      ensureActive: async () => { activeFallback = true; }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), { code: 'AGENT_TEST_STOP' });
+  assert.deepEqual(routeUpdates.map(({ provider, model }) => ({ provider, model })), [{
+    provider: 'siliconflow',
+    model: 'Qwen/Qwen3-8B'
+  }]);
+});
+
 test('live worker fails closed when a run has no immutable pricing snapshot', async () => {
   const runId = '11111111-1111-4111-8111-111111111122';
   const workerId = 'worker-pricing-profile-missing';
