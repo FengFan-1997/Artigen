@@ -58,8 +58,9 @@
 
 文档性质：**GitHub 正式项目状态与持久事实总入口**
 
-## 2026-09-21 会话存储异常恢复（已提交候选，未部署）
+## 2026-09-21 会话存储异常恢复（已部署 DEV，未发布生产）
 
+- PR #214 完整 CI 全绿并合入 dev，Render DEV 已部署 `828db5dce3561be2761d34b58f117eae7ea722fb`，稳定后版本/健康/依赖/能力策略 smoke 通过；不代表 Worker 已在线。
 - `/api/auth/session` 原先把会话存储暂时不可用也返回为匿名会话并清除 Cookie；现在服务端解析失败为 5xx 时返回 `503 SESSION_STORE_UNAVAILABLE` 并保留 Cookie，下一次检查可以正常恢复。真实失效或过期仍清除 Cookie，不改变权限检查。
 - 后端会话回归 3/3、前端会话回归 10/10 通过；完整 core 通过（前端 219、后端 646、邮件 7；后端 97 跳过），隔离端口 OTP Chromium 回归 4/4 通过。默认 `pnpm check` 的浏览器阶段被已占用端口阻断，完整浏览器矩阵以本 PR CI 为准；覆盖暂时不可用、下一次恢复与真实过期；不将此问题认定为本轮浏览器短暂显示未登录的已确认根因。
 
@@ -68,11 +69,18 @@
 - 首阶段为邀请制 Web Beta；密码注册、OTP 与 Google 自动建号都在账户创建层检查邀请，现有用户仍可登录，停用账号使用管理员入口。生产、DEV 与未知环境的公开注册默认关闭，环境变量不能越过发布策略开启。
 - `/api/meta` 区分发布策略与实际配置：返回版本、API SHA、环境、配置能力与 `releasePolicy.violations`。配置不等于 readiness，也不能证明前端和 Worker 已部署相同 SHA。
 - 自助支付统一使用已有 `PAYMENTS_ENABLED`；支付 API、readiness 与 metadata 共用解析器。删除此前只用于展示、未接入运行时的同义开关。Runtime V2 沿用 `AGENT_RUNTIME_V2_ENABLED`，实验能力若被实际开启会出现在策略漂移中。
-- 蓝图增加邀请 Secret 声明、关闭支付并固定浅探针，生产使用常驻 starter。生成和 OTP 等开关仍待真实依赖验证后开启，蓝图不代表已完成供应商配置。
+- 蓝图增加邀请 Secret 声明，支付开关由平台管理、不由 Beta 模板强制关闭，并固定浅探针，生产使用常驻 starter。生成和 OTP 等开关仍待真实依赖验证后开启，蓝图不代表已完成供应商配置。
 - `pnpm check:release-config` 检查蓝图并运行 smoke 工具回归；`pnpm smoke:beta` 按完整 SHA、环境与非 skipped readiness 进行只读检查。发布、管理员操作和恢复记录模板见 `docs/RELEASE_V0_CHECKLIST.zh-CN.md`。
-- PR #213 已合入 `dev`，Render DEV 已部署 `9890ac57651a4d60fec2b7f1ac42a5796becbcfd`；平台 deployment 与 `/api/meta` 一致。DEV 显式关闭 `PAYMENTS_ENABLED` 和 `AGENT_SUBAGENTS_ENABLED` 后，版本/依赖/能力策略 smoke 全部通过；非受邀注册实测返回 `403 INVITE_REQUIRED`。已配置受邀测试账户并完成 OTP 登录、项目创建、资料保存和重新加载；标准文生图实际生成成功，图片结果已进入项目版本列表，下载文件为有效 1024×1024 PNG；该文件作为风格素材重新上传成功，页面刷新后素材及版本仍在。仍不代表 Agent Worker 或恢复演练通过。
+- PR #213 已合入 `dev`，Render DEV 已部署 `9890ac57651a4d60fec2b7f1ac42a5796becbcfd`；平台 deployment 与 `/api/meta` 一致。该版本曾按旧范围关闭支付与子 Agent 并通过 smoke；当前支付决定见本节下方更新，子 Agent 仍关闭；非受邀注册实测返回 `403 INVITE_REQUIRED`。已配置受邀测试账户并完成 OTP 登录、项目创建、资料保存和重新加载；标准文生图实际生成成功，图片结果已进入项目版本列表，下载文件为有效 1024×1024 PNG；该文件作为风格素材重新上传成功，页面刷新后素材及版本仍在。仍不代表 Agent Worker 或恢复演练通过。
 - 验证：独立工作树未复制本地 `.env`，`pnpm check:core` 通过（前端 218、后端 645、邮件 7 项测试通过，后端 97 项依赖外部环境的测试跳过）；认证/支付/元数据定向 98/98、smoke 工具 8/8、OTP 浏览器回归 4/4。真实恢复、Worker 重启、生产部署和邀请用户完整任务仍未验收。
 - 本轮生产只读复核：Vercel 与 Render 的 `/healthz`、`/readyz` 正常，API 元数据均为 `47cc56b1e6f94713119e806220ac598c79362435`，仍是旧契约；不包含本 PR，也不证明前端构建或 Worker 的 SHA。
+
+## 2026-09-21 保留既有支付能力（已提交候选，未部署）
+
+- 用户确认既有爱支付能力保留，本轮仅不执行真实付款测试。Beta 策略与只读 smoke 不再要求 `selfServePayments=false`；DEV 与生产蓝图的 `PAYMENTS_ENABLED` 使用平台管理值，防止后续部署再次因 Beta 计划关闭支付。
+- 商城移除整条“付费功能当前不可用”横幅；套餐读取期间与真实不可用时，购买按钮仍按服务端状态显示并禁用，不绕过支付校验。支付供应商、下单、回调和入账逻辑保持不变。
+- 验证：`pnpm check:core` 通过，发布 smoke 回归 9/9；真实付款测试未执行。
+- 仅恢复先前关闭的 DEV 支付开关；生产配置不变。本轮不创建付款订单，不发起真实支付，也不把套餐可读取表述为付款链路已重新验收。
 
 ## 2026-09-09 UI 工作台交互硬化（历史 PR #190）
 

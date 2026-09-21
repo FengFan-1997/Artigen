@@ -12,7 +12,7 @@
 4. 查看、下载生成产物；
 5. 刷新、重新登录或短暂断线后可以看到任务状态。
 
-公开注册、自助支付、Runtime V2、子 Agent、Provider Scheduler 和高并发 campaign 在本 Beta 中保持关闭。支付和数据库相关 readiness 仍然可以存在，但 readiness 不等于用户流量已经开放。
+公开注册、Runtime V2、子 Agent、Provider Scheduler 和高并发 campaign 在本 Beta 中保持关闭。既有爱支付能力保留，本轮不执行真实下单或付款测试；“不测试支付”不等于关闭支付。支付仍由平台实际配置控制，readiness 不代表真实付款验收。
 
 ## 环境真相
 
@@ -34,7 +34,7 @@
 | --- | --- | --- | --- |
 | 环境名 | DEV API 使用 `APP_ENV=dev`，Preview 只指向 DEV | `APP_ENV=production` | meta.environment |
 | 公开注册 | 关闭；真实名单只放平台 Secret | 关闭；真实名单只放平台 Secret | 非受邀密码/OTP/Google 创建均 403 |
-| 自助支付 | `PAYMENTS_ENABLED=false` | `PAYMENTS_ENABLED=false` | API、readiness、meta 共用同一解析函数 |
+| 既有爱支付 | 恢复原有开启配置，本轮不测试付款 | 保持已有平台配置 | `PAYMENTS_ENABLED` 由平台管理，蓝图不覆盖；API、readiness、meta 共用解析器 |
 | 生成与钱包 | `PAID_FEATURES_ENABLED` 与生成开关验收后开启 | DEV 验收后设置同等配置 | 不能为了关闭支付而关闭生成/钱包 |
 | Runtime V2 | `AGENT_RUNTIME_V2_ENABLED=false` | 同左 | 原有真实开关，不新增同义开关 |
 | 数据库/对象存储 | DEV 库与 DEV bucket/prefix | 独立生产库与生产 bucket/prefix | 隔离检查、上传/读取/删除 |
@@ -43,7 +43,7 @@
 
 蓝图目前仍保守关闭生成、OTP 等依赖能力；这表示“待配置验收”，不表示直接套用蓝图就能交付 MVP。不要批量打开开关。先核对 Secret、迁移与存储隔离，再逐项开启并测试。
 
-上轮引入但未接入运行时的 `ARTIGEN_SELF_SERVE_PAYMENTS_ENABLED`、`ARTIGEN_AGENT_RUNTIME_V2_ENABLED` 已删除，统一使用现有 `PAYMENTS_ENABLED`、`AGENT_RUNTIME_V2_ENABLED`。支付关闭不改变已有账务记录，也不删除钱包余额。
+上轮引入但未接入运行时的 `ARTIGEN_SELF_SERVE_PAYMENTS_ENABLED`、`ARTIGEN_AGENT_RUNTIME_V2_ENABLED` 已删除，统一使用现有 `PAYMENTS_ENABLED`、`AGENT_RUNTIME_V2_ENABLED`。发布门禁允许既有支付开启，不要求通过关闭支付来跳过付款测试；不改变账务记录或钱包余额。
 
 ## 提交门禁
 

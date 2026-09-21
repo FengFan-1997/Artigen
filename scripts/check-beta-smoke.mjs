@@ -36,7 +36,7 @@ export async function checkBetaSmoke({ origin, sha, environment, devAuth, fetchI
     if (meta.environment !== environment) failures.push('/api/meta: environment mismatch');
     if (!meta.version) failures.push('/api/meta: missing version');
     if (meta.capabilitySemantics !== 'configured-not-readiness') failures.push('/api/meta: unsupported capability contract');
-    for (const flag of ['publicSignup', 'selfServePayments', 'agentRuntimeV2', 'agentSubagents', 'providerScheduler']) {
+    for (const flag of ['publicSignup', 'agentRuntimeV2', 'agentSubagents', 'providerScheduler']) {
       if (meta.capabilities?.[flag] !== false) failures.push(`/api/meta: ${flag} must be closed`);
     }
     for (const flag of ['auth', 'projects', 'generation', 'fileUpload', 'artifactDownload']) {

@@ -31,10 +31,6 @@
         </div>
       </header>
 
-      <p v-if="packagesLoading || packagesError" class="package-status" role="status" aria-live="polite">
-        {{ packagesLoading ? ui.loadingPackages : ui.paidUnavailable }}
-      </p>
-
       <div class="pricing-grid">
         <!-- Starter Pack -->
         <div class="pricing-card" v-if="!proOnly">
@@ -1289,18 +1285,15 @@ const PACKAGE_UUIDS = reactive<Record<PayPackageId, string>>({
   ultimate: ''
 });
 const packagesLoading = ref(true);
-const packagesError = ref(false);
 
 const loadPackageCatalogue = async () => {
   packagesLoading.value = true;
-  packagesError.value = false;
   for (const key of Object.keys(PACKAGE_AVAILABLE) as PayPackageId[]) {
     PACKAGE_AVAILABLE[key] = false;
     PACKAGE_UUIDS[key] = '';
   }
   const packages = await getPayPackages();
   if (!packages) {
-    packagesError.value = true;
     packagesLoading.value = false;
     return;
   }
@@ -2105,18 +2098,6 @@ const packageButtonLabel = (packageId: PayPackageId) => {
   font-size: 18px;
   margin: 0;
   max-width: 860px;
-}
-
-.package-status {
-  min-height: 44px;
-  margin: 0 auto 16px;
-  padding: 10px 16px;
-  border: 1px solid rgba(245, 158, 11, 0.45);
-  border-radius: 10px;
-  color: #fbbf24;
-  background: rgba(120, 53, 15, 0.18);
-  text-align: center;
-  line-height: 24px;
 }
 
 .generation-yield {
