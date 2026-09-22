@@ -4006,7 +4006,9 @@ const createAgentRunService = ({
       artifacts.rows,
       requiredDeliverables
     );
-    const textOnly = requiredCount === 0 && requiredDeliverables.length === 0;
+    // A missing preset (for example CSV/TXT) does not make a file run text-only.
+    const textOnly = Number(run.rows[0].runtime_version || 1) === 2 &&
+      requiredCount === 0 && requiredDeliverables.length === 0 && artifacts.rowCount === 0;
     const finalTextHash = String(readyToFinalize?.finalTextSha256 || '').toLowerCase();
     const semanticVerification = readyToFinalize?.semanticVerification &&
       typeof readyToFinalize.semanticVerification === 'object'
