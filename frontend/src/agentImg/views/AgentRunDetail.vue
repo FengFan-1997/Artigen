@@ -801,6 +801,11 @@ watch(runId, () => {
   closeStream?.();
   disconnectDesktop();
   run.value = null;
+  stopArmed.value = false;
+  if (stopArmTimer !== null) window.clearTimeout(stopArmTimer);
+  stopArmTimer = null;
+  previewHtml.value = '';
+  previewName.value = '';
   message.value = '';
   notice.value = '';
   closeStream = openAgentEventStream(runId.value, { onEvent });

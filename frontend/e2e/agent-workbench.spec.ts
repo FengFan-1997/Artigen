@@ -910,3 +910,31 @@ test('terminal activity drains older history pages even without a live event str
   await expect(page.getByRole('region', { name: '协作记录' }).getByText('历史尾页的交付说明')).toBeVisible();
   expect(cursors).toContain('500');
 });
+
+
+test('switching history isolates task activity and clears the prior stop confirmation', async ({ page }) => {
+  await installRunApi(page);
+  const secondId = '99999999-9999-4999-8999-999999999999';
+  const second = { ...baseRun, runId: secondId, objective: '第二个独立任务', objectivePreview: '第二个独立任务' };
+  await page.route('**/api/agent-runs', (route) => route.fulfill({ json: { ok: true, runs: [baseRun, second] } }));
+  await page.route(`**/api/agent-runs/${secondId}`, (route) => route.fulfill({ json: { ok: true, run: second } }));
+  await page.route(`**/api/agent-runs/${secondId}/events`, (route) => route.abort());
+  for (const id of [runId, secondId]) {
+    await page.route(`**/api/agent-runs/${id}/history?*`, (route) => route.fulfill({ json: { ok: true,
+      events: new URL(route.request().url()).searchParams.get('after') === '0' ? [
+        { eventId: id === runId ? '1' : '2', runId: id, type: 'assistant.message', summary: id === runId ? '第一个任务的记录' : '第二个任务的记录', data: {}, createdAt: now }
+      ] : []
+    } }));
+  }
+  await page.goto(`/artigen/agent/runs/${runId}`);
+  const activity = page.getByRole('region', { name: '协作记录' });
+  await expect(activity).toContainText('第一个任务的记录');
+  await page.getByRole('button', { name: '停止', exact: true }).click();
+  await expect(page.getByRole('button', { name: '确认停止', exact: true })).toBeVisible();
+  const next = page.locator(`a[href="/artigen/agent/runs/${secondId}"]`);
+  if (!await next.isVisible()) await page.getByRole('button', { name: '打开历史' }).click();
+  await next.click();
+  await expect(activity).toContainText('第二个任务的记录');
+  await expect(activity).not.toContainText('第一个任务的记录');
+  await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
+});
