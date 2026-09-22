@@ -272,7 +272,7 @@ const installAgentRoutes = (app, deps = {}) => {
 
   app.get('/api/agent-runs/:runId/history', readLimiter, asyncRoute(async (req, res) => {
     const auth = requireAuthenticatedUser(req);
-    const events = await runService.listEvents({
+    const events = await requireService().listEvents({
       userId: auth.dbUserId || auth.userId,
       runId: req.params.runId,
       after: req.query?.after || 0,

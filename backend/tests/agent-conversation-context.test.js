@@ -154,3 +154,22 @@ test('a resumed V2 final answer is invalidated by a newly accepted requirement',
   assert.equal(updated.semanticVerificationResult, null);
   assert.equal(updated.readyToFinalize, null);
 });
+
+test('history route resolves its service, enforces login and forwards the durable cursor', async () => {
+  const { installAgentRoutes } = require('../routes/agent-runs');
+  let handler;
+  const calls = [];
+  installAgentRoutes({ get(path, ...handlers) { if (path === '/api/agent-runs/:runId/history') handler = handlers.at(-1); }, post() {}, delete() {} }, {
+    env, pool: {}, queuePublisher: {}, agentIntegrationService: {},
+    agentRunService: { listEvents: async (input) => { calls.push(input); return [{ eventId: '8', summary: '真实记录' }]; } }
+  });
+  const response = {};
+  const res = { headersSent: false, setHeader(key, value) { response[key] = value; }, status(value) { response.status = value; return this; }, json(value) { response.body = value; return this; } };
+  await handler({ authResolution: { ok: true, userId: 'public-user', dbUserId: userId }, headers: {}, params: { runId }, query: { after: '7' } }, res);
+  assert.deepEqual(calls, [{ userId, runId, after: '7', limit: 500 }]);
+  assert.equal(response['Cache-Control'], 'private, no-store');
+  assert.equal(response.body.events[0].summary, '真实记录');
+  await handler({ authResolution: { ok: false, status: 401, error: 'LOGIN_REQUIRED' }, headers: {}, params: { runId }, query: {} }, res);
+  assert.equal(response.status, 401);
+  assert.equal(calls.length, 1);
+});
