@@ -1,11 +1,13 @@
 # Artigen 项目正式 Handoff
 
-## 2026-09-22 DEV Worker 启动路径恢复（待命，未恢复在线）
+## 2026-09-22 DEV Worker 恢复与报价修复（报价修复候选，未发布生产）
 
-- DEV 启动项的工作目录及 runner 路径失效，launchctl 无 PID 且报 `EX_CONFIG`。已保存私有回滚副本，将独立 Worker checkout 对齐已验证的 DEV `d1bc100d39059d498ac24020a360504f857f6259`，修复路径并以 `RunAtLoad=false`、`KeepAlive=false` 加载待命，停止无效重试；未启动任务处理。
-- 该版本的 Node/Python 依赖清单与原备用环境一致；Python 3.12 / CUA 导入及固定 Docker 镜像存在检查通过。工作目录、runner、plist 语法和加载后无 PID 已核验；不能据此宣称 Worker 心跳、出口或真实任务已恢复。
-- 同版本 DEV live smoke 通过，API 可连接数据库；本机域名 / IP TCP 和严格 TLS PostgreSQL 连接仍超时，具体原因未定位。Worker 状态仍离线。未修改数据库凭据、网络设置、生产部署、支付或线上 S3 前缀。
-- 数据库连接恢复后须先检查活动 Run / 租约 / 预算，再以前台及唯一 Worker 验收。账号与凭据存放机制不变；运维手册修正了将 S3 目标隔离状态写成现状的旧描述。
+- DEV 启动项的工作目录及 runner 路径失效，launchctl 无 PID 且报 `EX_CONFIG`。已保留私有回滚副本，修复路径，独立 Worker checkout 对齐已验证 DEV `d1bc100d39059d498ac24020a360504f857f6259`；按 DEV 原有按需启动策略保持 `RunAtLoad=false`、`KeepAlive=false`。
+- 本机普通直连数据库超时，原有网络客户端缺少有效线路；经用户授权，从本机备份仅恢复原有线路并保留当前配置副本及其他设置。严格 TLS PostgreSQL 18 只读查询通过，没有更改数据库凭据、白名单、证书校验或防火墙保护。该证据证明连接已恢复，不足以确定直连路径上具体故障点。
+- 启动前活动 Run、未过期租约、held / reserved 预算和近期在线 Worker 均为零。前台验证成功并正常退出后，启动唯一 DEV LaunchAgent；实际 API 确认 workerOnline、browserReady、egressVerified、desktopRelayReady 全为 true，同版本 DEV live smoke 通过。因可用内存不足，按既有策略降为并发 1；未开放 Runtime V2、subagents 或 scheduler。
+- 真实任务在报价阶段暴露 `planToken` 未定义：校验代码误放在不接收该参数的 `quote` 中，导致普通报价 500，实际创建任务反而没有校验所提交的计划令牌。修复将令牌验证移到 `createRun`，在数据库访问和预算冻结前校验签名、用户、目标、修订与有效期；无令牌的既有入口保持兼容。
+- 新增回归先复现普通报价失败及无效计划进入数据库的问题，覆盖报价与可负担性、无写入、伪造 / 过期 / 跨用户 / 目标或修订变化令牌拒绝，以及有效令牌和无令牌入口。定向回归 151/151、pnpm check:core 均通过；修复代码连接真实 DEV 数据库的只读报价验证通过。真实浏览器任务仍需候选部署后复验，不能将 Worker 就绪等同于端到端任务完成。
+- 生产、支付和线上 S3 前缀未变；账号接管报告与运维手册已同步实际网络依赖和恢复方式。
 
 ## 2026-09-22 S3 新文件命名空间（开发候选，未启用）
 

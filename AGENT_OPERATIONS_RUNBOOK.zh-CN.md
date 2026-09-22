@@ -142,6 +142,12 @@ pnpm --filter backend install:agent-worker:production-mac
 4. 严格 TLS 数据库连接通过后，核对活动 Run、租约和预算状态，先前台验证，再启动唯一的 DEV Worker。以 `/api/agent/status` 的新心跳和对应能力检查为准，不能用加载 plist 成功替代验收。
 5. 回滚前先停止并核验新进程，再恢复私有 plist 副本。若旧目录仍不存在，恢复副本只能回退配置，不能恢复服务，保持停机并修正目录后再启动。
 
+### 数据库连接的分层检查
+
+控制台能打开、API 能连数据库、Mac Worker 能连数据库是不同证据。依次核验目标环境身份、域名解析、TCP、严格 TLS / CA、只读 PostgreSQL 查询和 Worker 心跳。TCP 超时尚未进入密码验证，不应因此重置账号或关闭证书校验。
+
+本机依赖原有网络客户端时，先确认其确实存在有效线路并已连接；TUN 本地接受 TCP 连接不代表远端 PostgreSQL 已连通，必须完成严格 TLS 查询。线路缺失时只从项目所有者的现有可信备份恢复所需条目，保留修复前副本，不把节点凭据写进日志或仓库。当前 DEV 本机依赖和核验状态见[账号接管报告](docs/INFRA_ACCOUNT_REGISTER.zh-CN.md#本机-worker-的网络依赖)。
+
 ## 8. Readiness
 
 API 深度检查：
