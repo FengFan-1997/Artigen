@@ -9,7 +9,7 @@
 | 平台与入口 | Artigen 用途 / 环境 | 登录方式与接管位置 | 核验状态 |
 | --- | --- | --- | --- |
 | [GitHub](https://github.com/login) | 代码、PR、CI；DEV / 生产发布来源 | 现有 Chrome 会话或已认证 `gh` CLI；平台 Owner 由项目所有者管理 | 本轮确认 Chrome 和 CLI 均已登录；不据此推断其他平台的绑定关系 |
-| [Aiven](https://console.aiven.io/login) | DEV PostgreSQL 18 | Chrome 控制台；用户提供的控制台登录资料存于 macOS Keychain 的 `Artigen Aiven Console` 条目；Worker 连接配置与控制台凭据分开，API 使用 Render Secret | 当前 DEV 连接域名属于 Aiven；2026-09-04 正式记录已有同一供应商。控制台凭据已安全保存，但注册 / 登录尚未完成验证；GitHub SSO 绑定未证实 |
+| [Aiven](https://console.aiven.io/login) | DEV PostgreSQL 18 | Chrome 控制台使用 Aiven Password 邮箱密码认证；用户提供的资料存于 macOS Keychain 的 `Artigen Aiven Console` 条目；数据库与控制台凭据分开 | 2026-09-22 已通过现有 Chrome 会话核实认证页面及现有 DEV 项目；服务为 PostgreSQL 18.6、Free 套餐、Running，主机及端口与 Worker 配置一致；未创建新账号或新服务 |
 | [Neon](https://console.neon.tech/) | 旧报告记载生产 PostgreSQL 和 S3 对象存储 | 旧记录称绑定 GitHub，并曾有 Neon CLI 会话 | 历史信息，当前生产数据库所属项目、控制台身份与认证方式需重新核验；不得再据旧报告把 DEV 数据库标为 Neon |
 | [Render](https://dashboard.render.com/) | DEV 同源 Web/API、生产 API 与平台 Secret | 本机已认证 CLI；旧报告记载 GitHub 登录，网页绑定待复核 | 本轮已通过平台只读配置核对 DEV 数据库与 Worker 配置一致；没有修改平台权限 |
 | [Vercel](https://vercel.com/login) | 生产前端、Preview、邮件中继 | 既有 CLI / 浏览器会话；具体网页认证方式待核验 | 用途沿用现行部署文档；本轮未核验平台账号 |
@@ -22,7 +22,7 @@
 
 ## 数据与凭据边界
 
-- DEV 数据库已确认属于 Aiven；本机原生及 Docker TCP 连接超时，API 配置与 Worker Keychain 身份一致。根因未确定，不能据此宣称密码错误或 IP 白名单拦截。
+- DEV 数据库已确认属于 Aiven；控制台显示公网部署、IP allowlist 为 Open to all，服务 Running。本机 TCP 连接仍超时，API 配置与 Worker Keychain 身份一致；不能把故障归因于该服务的 IP 白名单或密码，也未修改网络访问规则。
 - DEV 与生产的 S3 endpoint、bucket 当前相同，资产键没有环境前缀。文件存储尚未实现环境隔离；更换 bucket 前必须核对历史资产 URI 和兼容读取，不能直接切换导致旧文件失效。
 - S3 合成对象的上传、备份、删除、恢复与授权下载已验收并清理；这不等于整桶灾备或真实业务数据恢复完成。
 - 数据库连接串、CA、API Key、SMTP 授权凭据、支付密钥只存于平台 Secret、系统钥匙串或被忽略的本地环境文件。报告只记录变量名称、存储机制和接管步骤，不复制秘密值。
@@ -30,9 +30,9 @@
 
 ### Aiven 控制台凭据取用
 
-在 macOS“钥匙串访问”中搜索 `Artigen Aiven Console`，条目的通用账户标签为 `console-login`，加密内容保存控制台邮箱与用户提供的密码，并标注认证未核验。通过系统授权查看；不要把内容复制到本报告、Handoff、PR 或终端输出。保存已通过内存回读一致性校验，但不代表 Aiven 已注册成功、已登录或已有数据库归属已确认。
+在 macOS“钥匙串访问”中搜索 `Artigen Aiven Console`，条目的通用账户标签为 `console-login`，加密内容保存控制台邮箱与用户提供的密码，并标注该密码尚未重新登录验证。通过系统授权查看；不要把内容复制到本报告、Handoff、PR 或终端输出。保存已通过内存回读一致性校验；现有 Chrome 会话已核实为邮箱密码认证，但没有通过注销再登录验证钥匙串中的密码值。
 
-控制台注册页提供 GitHub 入口；输入邮箱后的登录页只显示密码表单。不能仅据页面入口推断现有账号绑定关系。数据库连接凭据与控制台登录凭据是两套独立凭据，不互相替换。
+控制台注册页提供 GitHub 入口，但当前认证设置显示 Aiven Password；不能把注册入口当成已有 GitHub 绑定。数据库连接凭据与控制台登录凭据是两套独立凭据，不互相替换。
 
 ## 账号或平台变更时必须同步
 

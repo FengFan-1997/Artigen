@@ -304,6 +304,11 @@ class FileAssetAdapter {
 class S3AssetAdapter {
   constructor(env = process.env) {
     this.driver = 's3';
+    const prefix = String(env.S3_KEY_PREFIX || '').trim();
+    if (prefix && (prefix.length > 128 || !/^(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\/?$/.test(prefix))) {
+      throw new ApiError(503, 'S3_KEY_PREFIX_INVALID');
+    }
+    this.keyPrefix = prefix ? `${prefix.replace(/\/$/, '')}/` : '';
     this.bucket = String(env.S3_BUCKET || env.ASSET_S3_BUCKET || env.R2_BUCKET || '').trim();
     if (!this.bucket) throw new ApiError(503, 'S3_NOT_CONFIGURED', { retryable: true });
     let sdk;
@@ -345,11 +350,25 @@ class S3AssetAdapter {
     return `s3://${this.bucket}/${clean}`;
   }
 
+  namespaceKey(key) {
+    // Apply only when allocating a new asset/session, never when reading a saved URI.
+    return this.keyFromUri(this.uriForKey(`${this.keyPrefix}${key}`));
+  }
+
+  assertWritableKey(key) {
+    const clean = this.keyFromUri(this.uriForKey(key));
+    if (this.keyPrefix && !clean.startsWith(this.keyPrefix)) {
+      throw new ApiError(409, 'ASSET_NAMESPACE_WRITE_FORBIDDEN');
+    }
+    return clean;
+  }
+
   async putFile({ key, filePath, mimeType, byteSize }) {
+    key = this.assertWritableKey(key);
     const body = fs.createReadStream(filePath);
     await this.client.send(new this.commands.PutObjectCommand({
       Bucket: this.bucket,
-      Key: key,
+      Key: this.assertWritableKey(key),
       Body: body,
       ContentType: mimeType,
       ContentLength: byteSize
@@ -360,7 +379,7 @@ class S3AssetAdapter {
   async putBuffer({ key, buffer, mimeType }) {
     await this.client.send(new this.commands.PutObjectCommand({
       Bucket: this.bucket,
-      Key: key,
+      Key: this.assertWritableKey(key),
       Body: buffer,
       ContentType: mimeType,
       ContentLength: buffer.length
@@ -372,7 +391,7 @@ class S3AssetAdapter {
     const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
     const command = new this.commands.PutObjectCommand({
       Bucket: this.bucket,
-      Key: key,
+      Key: this.assertWritableKey(key),
       ContentType: mimeType,
       ContentLength: byteSize
     });
@@ -382,7 +401,7 @@ class S3AssetAdapter {
   async createMultipart({ key, mimeType }) {
     const response = await this.client.send(new this.commands.CreateMultipartUploadCommand({
       Bucket: this.bucket,
-      Key: key,
+      Key: this.assertWritableKey(key),
       ContentType: mimeType
     }));
     if (!response.UploadId) throw new ApiError(502, 'MULTIPART_CREATE_FAILED', { retryable: true });
@@ -393,7 +412,7 @@ class S3AssetAdapter {
     const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
     const command = new this.commands.UploadPartCommand({
       Bucket: this.bucket,
-      Key: key,
+      Key: this.assertWritableKey(key),
       UploadId: uploadId,
       PartNumber: partNumber
     });
@@ -403,7 +422,7 @@ class S3AssetAdapter {
   async listParts({ key, uploadId }) {
     const response = await this.client.send(new this.commands.ListPartsCommand({
       Bucket: this.bucket,
-      Key: key,
+      Key: this.assertWritableKey(key),
       UploadId: uploadId,
       MaxParts: 1000
     }));
@@ -417,7 +436,7 @@ class S3AssetAdapter {
   async completeMultipart({ key, uploadId, parts }) {
     await this.client.send(new this.commands.CompleteMultipartUploadCommand({
       Bucket: this.bucket,
-      Key: key,
+      Key: this.assertWritableKey(key),
       UploadId: uploadId,
       MultipartUpload: {
         Parts: parts.map((part) => ({
@@ -432,7 +451,7 @@ class S3AssetAdapter {
     if (!uploadId) return;
     await this.client.send(new this.commands.AbortMultipartUploadCommand({
       Bucket: this.bucket,
-      Key: key,
+      Key: this.assertWritableKey(key),
       UploadId: uploadId
     }));
   }
@@ -448,7 +467,7 @@ class S3AssetAdapter {
   async copyKey({ sourceKey, key, mimeType }) {
     await this.client.send(new this.commands.CopyObjectCommand({
       Bucket: this.bucket,
-      Key: key,
+      Key: this.assertWritableKey(key),
       CopySource: `${this.bucket}/${sourceKey}`,
       ContentType: mimeType,
       MetadataDirective: 'REPLACE'
@@ -479,7 +498,7 @@ class S3AssetAdapter {
   async delete(uri) {
     await this.client.send(new this.commands.DeleteObjectCommand({
       Bucket: this.bucket,
-      Key: this.keyFromUri(uri)
+      Key: this.assertWritableKey(this.keyFromUri(uri))
     }));
   }
 }
@@ -649,7 +668,8 @@ const storeAsset = async (input = {}) => {
 
   const owner = input.ownerUserId ? String(input.ownerUserId) : 'guest';
   const shaHex = sha256.toString('hex');
-  const key = `${owner}/${shaHex.slice(0, 2)}/${shaHex}${extensionForMime(mimeType)}`;
+  const unscopedKey = `${owner}/${shaHex.slice(0, 2)}/${shaHex}${extensionForMime(mimeType)}`;
+  const key = adapter.namespaceKey ? adapter.namespaceKey(unscopedKey) : unscopedKey;
   const pool = input.pool || getPool();
   const metadata = safeMetadata(input.metadata);
   const expiresAt = input.expiresAt || null;
