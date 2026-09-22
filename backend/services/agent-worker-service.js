@@ -3175,7 +3175,7 @@ const createAgentWorkerService = ({
         actualCredits: finalCosts.model + finalCosts.generation + finalCosts.sandbox,
         checklist: {
           requiredArtifactCount: Math.max(
-            0,
+            runtimeV2 ? 0 : 1,
             requiredDeliverables.reduce(
               (total, type) => total + minimumArtifactCounts[type],
               0
