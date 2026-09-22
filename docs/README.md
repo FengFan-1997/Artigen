@@ -17,6 +17,7 @@
 | 文档 | 用途 |
 | --- | --- |
 | [`PROJECT_HANDOFF.zh-CN.md`](../PROJECT_HANDOFF.zh-CN.md) | 当前正式状态、持久决策和发布姿态 |
+| [`INFRA_ACCOUNT_REGISTER.zh-CN.md`](./INFRA_ACCOUNT_REGISTER.zh-CN.md) | 开发必读：平台账号接管、登录方式、环境归属和变更同步 |
 | [`PROJECT_OPERATIONS_GUIDE.zh-CN.md`](../PROJECT_OPERATIONS_GUIDE.zh-CN.md) | 本机、DEV、分支、CI、发布和回滚总流程 |
 | [`DEV_ENVIRONMENT_RUNBOOK.zh-CN.md`](../DEV_ENVIRONMENT_RUNBOOK.zh-CN.md) | DEV 环境安全边界与 smoke |
 | [`PRODUCTION_RUNBOOK.zh-CN.md`](../PRODUCTION_RUNBOOK.zh-CN.md) | 生产发布、核验、排障、备份和回滚 |
@@ -39,6 +40,7 @@
 ## 维护规则
 
 - 修改代码、配置、迁移、部署或正式决定时，同一 PR 更新受影响的 living documents 和正式 Handoff。
+- 新增或更新平台、账号、登录方式、权限、凭据位置或环境归属时，同步账号接管报告；发现旧记录过期也必须修正，未核验的信息明确标注。
 - 不把动态 SHA、部署 ID、余额、订单、真实用户、Run ID或本机路径写进长期手册。
 - `pnpm check:docs` 验证链接、锚点、归档警告、重复文档、公开信息、README 工具链版本和直接依赖覆盖。
 - 外部网站可用性在发布前只读核验，不作为每次 CI 的联网依赖。

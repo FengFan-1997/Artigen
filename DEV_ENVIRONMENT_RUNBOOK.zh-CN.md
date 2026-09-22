@@ -7,8 +7,8 @@ DEV 是受保护的线上集成环境，不是生产，不承载正式用户数�
 - 服务：`dev-artigen-app-fengfan`
 - 地址：<https://dev-artigen-app-fengfan.onrender.com>
 - 部署分支：`dev`
-- 数据库：独立 DEV PostgreSQL
-- 资产：独立 DEV S3 命名空间
+- 数据库：Aiven DEV PostgreSQL 18；账号接管见[平台账号报告](./docs/INFRA_ACCOUNT_REGISTER.zh-CN.md)
+- 资产：当前与生产共用 S3 endpoint / bucket，尚未实现环境命名空间隔离
 - 访问：HTTP Basic 首次认证后签发短时安全 Cookie
 
 DEV 口令只存 Render Secret 和本机安全存储，不写入 Git、文档、命令历史或截图。
@@ -17,13 +17,13 @@ DEV 口令只存 Render Secret 和本机安全存储，不写入 Git、文档、
 
 DEV 当前用于真实集成 smoke，因此部分能力可以开启，但必须满足：
 
-- 只使用合成用户、合成输入和 DEV 钱包；
-- 邮件 OTP 关闭，不调用生产邮件中继；
-- 支付只验证套餐、未付款订单、跳转、pending、幂等和钱包不入账，禁止真实付款；
+- 使用合成输入和 DEV 钱包；真实登录只使用项目所有者指定并授权的测试账号；
+- 邮件 OTP 在获批的登录验收中使用；默认模板不代表线上开关，当前状态从 `/api/meta` 和 `/readyz` 核验；
+- 支付保持既有配置；当前 Beta 验收只做只读检查，不创建订单或执行真实付款；
 - Qwen/Kolors 可以用于获批的真实 Provider smoke，但不得冒充生产结果；
 - Cloudflare GPT-OSS 明确返回免费配额耗尽（错误码 `3036`）时，服务端最多回退一次到
   SiliconFlow `Qwen/Qwen3-8B`；容量不足、超时、5xx、认证失败或模糊错误不触发回退；
-- 数据库、S3、Cookie、加密密钥和 Worker 身份与生产隔离；
+- 数据库、Cookie、加密密钥和 Worker 身份必须与生产隔离；S3 隔离尚未完成，禁止桶级清理和生产对象操作，恢复演练只允许使用唯一临时前缀下的合成对象；
 - 页面显式显示 DEV 标记，外层访问门禁始终开启。
 
 Render Dashboard 的实际变量可能覆盖 `render.dev.yaml` 的安全默认值。变更变量后必须重新部署，并以 `/readyz` 而不是模板推断状态。
@@ -104,7 +104,7 @@ required checks 通过后合并。等待 Render 自动部署，再确认 `/api/m
 - `/artigen`、`/artigen/create`、`/artigen/agent` 和受影响页面；
 - `/api/meta`、`/readyz`；
 - 登录/权限、控制台错误、移动端溢出；
-- 数据库和 S3 写入是否只落 DEV。
+- 数据库写入是否只落 DEV；S3 测试是否只触碰本次创建的合成对象，不能把共桶测试通过写成环境隔离完成。
 
 ### 图片与工具
 
