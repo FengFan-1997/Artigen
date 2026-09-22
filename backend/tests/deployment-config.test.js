@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 
 const repoRoot = path.resolve(__dirname, '../..');
 const {
@@ -16,6 +17,44 @@ const {
 
 const readRepoFile = (relativePath) =>
   fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+
+test('Worker storage namespace comes only from the selected profile Keychain', () => {
+  for (const [profile, configuredPrefix] of [['dev', 'dev/assets'], ['production', '']]) {
+    let launched;
+    const usedServices = new Set();
+    const fakeProcess = {
+      argv: ['node', 'runner', profile], execPath: '/synthetic/node',
+      env: { S3_KEY_PREFIX: 'wrong-shell/assets' }, once() {},
+      exit(code) { throw new Error(`Unexpected runner exit: ${code}`); }
+    };
+    vm.runInNewContext(readRepoFile('backend/scripts/run-agent-worker-macos.js'), {
+      __dirname: path.join(repoRoot, 'backend/scripts'), process: fakeProcess, console,
+      require(name) {
+        if (name === 'node:path') return path;
+        if (name === 'node:child_process') return {
+          spawnSync: () => ({ status: 0 }),
+          spawn: (_command, _args, options) => { launched = options.env; return { once() {} }; }
+        };
+        if (name === '../lib/local-keychain') return {
+          readMacOsKeychainSecret({ service, account }) {
+            usedServices.add(service);
+            if (account === 'S3_KEY_PREFIX') return configuredPrefix;
+            if (account === 'PG_SSL_CA_BASE64') return '';
+            if (account === 'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED') return 'true';
+            if (account.endsWith('ACCOUNT_ID')) return 'a'.repeat(32);
+            return 'synthetic';
+          }
+        };
+        if (name === '../lib/agent-models') return { TEXT_MODEL: '@cf/openai/gpt-oss-120b' };
+        if (name === './lib/agent-worker-pool-profile') return { resolveAgentWorkerPoolProfile: () => ({}) };
+        throw new Error(`Unexpected runner import: ${name}`);
+      }
+    });
+    assert.ok(launched);
+    assert.equal(launched.S3_KEY_PREFIX, configuredPrefix || undefined);
+    assert.deepEqual([...usedServices], [`artigen-agent-${profile}-worker`]);
+  }
+});
 
 const workflowEnvValue = (workflow, name) => {
   const match = workflow.match(

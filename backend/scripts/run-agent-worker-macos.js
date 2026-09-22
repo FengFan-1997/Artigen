@@ -30,6 +30,8 @@ const workerEnv = { ...process.env };
 // service so an inherited shell value cannot change the worker trust root.
 delete workerEnv.PG_SSL_CA;
 delete workerEnv.PG_SSL_CA_BASE64;
+// A DEV shell must not carry its storage namespace into a production worker.
+delete workerEnv.S3_KEY_PREFIX;
 const subagentsEnabled = /^(1|true|yes|on)$/i.test(
   String(process.env.AGENT_SUBAGENTS_ENABLED || '').trim()
 );
