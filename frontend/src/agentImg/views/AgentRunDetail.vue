@@ -76,14 +76,6 @@
           <p>{{ run.objective }}</p>
         </article>
 
-        <article class="message agent-message">
-          <span class="agent-avatar" aria-hidden="true">A</span>
-          <div>
-            <header><span>Artigen Agent</span><small>{{ statusLabel(run.status) }}</small></header>
-            <p>{{ run.progress.plan?.length ? (zh ? '计划已建立，正在按步骤推进。' : 'The plan is ready and moving forward.') : desktopMessage }}</p>
-          </div>
-        </article>
-
         <article v-if="retryRequired" class="retry-required" role="status">
           <div>
             <b>{{ zh ? '这次调用结果无法确认' : 'This call could not be confirmed' }}</b>
@@ -115,19 +107,10 @@
           </footer>
         </article>
 
-        <article v-for="event in conversationEvents" :key="event.eventId" class="message event-message" :class="{ child: event.subagentId }">
-          <span class="agent-avatar" aria-hidden="true">{{ event.subagentId ? 'S' : 'A' }}</span>
-          <div>
-            <header>
-              <span>{{ event.subagentId ? (zh ? '子 Agent' : 'Subagent') : event.type.startsWith('run.input') ? (zh ? '你' : 'You') : 'Artigen Agent' }}</span>
-              <time>{{ formatTime(event.createdAt) }}</time>
-            </header>
-            <p>{{ event.summary }}</p>
-          </div>
-        </article>
+        <AgentConversationTimeline :events="events" :zh="zh" :loading="activity.loading[runId]" :error="activity.errors[runId]" />
 
         <div v-if="terminal && artifacts.length" class="delivery-summary">
-          <header><span>{{ zh ? '交付完成' : 'Delivery complete' }}</span><b>{{ artifacts.length }}</b></header>
+          <header><span>{{ run.status === 'succeeded' ? (zh ? '交付完成' : 'Delivery complete') : (zh ? '已生成的文件' : 'Generated files') }}</span><b>{{ artifacts.length }}</b></header>
           <a v-for="artifact in artifacts" :key="`center-${artifact.artifactId}`" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
             <span>{{ fileCode(artifact.mimeType) }}</span>
             <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · {{ artifact.verificationStatus }}</small></div>
@@ -262,12 +245,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import RFB from '@novnc/novnc/lib/rfb';
 import { useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
+import AgentConversationTimeline from '../components/workspace/AgentConversationTimeline.vue';
+import { useAgentActivity } from '../composables/useAgentActivity';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
 import {
@@ -296,7 +281,8 @@ const runId = computed(() => String(route.params.runId || ''));
 const run = ref<AgentRun | null>(null);
 const showEventStream = ref(false);
 const runs = ref<AgentRun[]>([]);
-const events = ref<AgentEvent[]>([]);
+const activity = useAgentActivity();
+const events = computed(() => activity.records[runId.value] || []);
 const message = ref('');
 const notice = ref('');
 const controlBusy = ref(false);
@@ -317,9 +303,10 @@ let closeStream: (() => void) | null = null;
 let pollTimer: number | null = null;
 let eventRefreshTimer: number | null = null;
 let stopArmTimer: number | null = null;
-let loadInFlight: Promise<void> | null = null;
+const loadsInFlight = new Map<string, Promise<void>>();
+let disposed = false;
 let desktopClient: RFB | null = null;
-const eventIds = new Set<string>();
+
 
 const terminal = computed(() => ['succeeded', 'failed', 'cancelled'].includes(run.value?.status || ''));
 const workspaceTone = computed<'ready' | 'busy' | 'warning' | 'offline'>(() => {
@@ -348,15 +335,6 @@ const failureText = computed(() => run.value?.error?.code ? errorText(run.value.
 const takeoverRequired = computed(() =>
   Boolean(run.value?.sandbox.takeoverAvailable) &&
   pendingApprovals.value.some((approval) => approval.riskLevel === 'blocked')
-);
-const conversationEvents = computed(() =>
-  events.value.filter((event) =>
-    event.type.includes('input') ||
-    event.type.includes('takeover') ||
-    event.type === 'approval.decided' ||
-    event.type === 'run.failed' ||
-    event.type === 'run.succeeded'
-  )
 );
 const recentEvents = computed(() => events.value.slice(-8).reverse());
 const currentAction = computed(() => {
@@ -439,6 +417,7 @@ const errorText = (error: unknown) => {
     AGENT_BETA_ACCESS_DENIED: ['Agent 目前仅对 Beta 所有者账号开放。', 'Agent is currently limited to the Beta owner account.'],
     AGENT_RUN_LOAD_FAILED: ['暂时无法读取任务，请稍后重试。', 'Unable to load this run. Try again shortly.'],
     AGENT_CONTROL_FAILED: ['控制请求没有成功，请刷新后重试。', 'The control request failed. Refresh and try again.'],
+    AGENT_INPUT_FINALIZING: ['本轮已进入最终验证，请等交付后在设计对话中继续修改。', 'Final verification has started. Continue in the design conversation after delivery.'],
     AGENT_INPUT_FAILED: ['补充信息没有发送成功，请重试。', 'Your update was not sent. Try again.'],
     AGENT_APPROVAL_FAILED: ['这项审批已经失效或被处理，请刷新任务。', 'This approval expired or was already handled. Refresh the run.'],
     AGENT_APPROVAL_NOT_AVAILABLE: ['这项审批已经失效或被处理，请刷新任务。', 'This approval expired or was already handled. Refresh the run.'],
@@ -470,18 +449,24 @@ const errorText = (error: unknown) => {
 };
 
 const load = () => {
-  if (loadInFlight) return loadInFlight;
-  loadInFlight = (async () => {
+  const target = runId.value;
+  const existing = loadsInFlight.get(target);
+  if (existing) return existing;
+  const pending = (async () => {
     try {
-      run.value = await getAgentRun(runId.value);
-      runs.value = await listAgentRuns();
+      const [loaded, history] = await Promise.all([getAgentRun(target), listAgentRuns()]);
+      if (disposed || runId.value !== target) return;
+      run.value = loaded;
+      runs.value = history;
+      await activity.refresh(target);
     } catch (error) {
-      notice.value = errorText(error || 'AGENT_RUN_LOAD_FAILED');
+      if (!disposed && runId.value === target) notice.value = errorText(error || 'AGENT_RUN_LOAD_FAILED');
     } finally {
-      loadInFlight = null;
+      loadsInFlight.delete(target);
     }
   })();
-  return loadInFlight;
+  loadsInFlight.set(target, pending);
+  return pending;
 };
 
 const cancelChild = async (subagentId: string) => {
@@ -529,15 +514,22 @@ const requestCancel = async () => {
   await control('cancel');
 };
 
+let pendingInput: { runId: string; message: string; inputId: string } | null = null;
 const sendInput = async () => {
-  if (!message.value) return;
+  const text = message.value.trim();
+  const target = runId.value;
+  if (!text || sending.value) return;
+  if (pendingInput?.runId !== target || pendingInput.message !== text) {
+    pendingInput = { runId: target, message: text, inputId: crypto.randomUUID() };
+  }
   sending.value = true;
   try {
-    await submitAgentInput(runId.value, { message: message.value });
-    message.value = '';
+    await submitAgentInput(target, { message: text, inputId: pendingInput.inputId });
+    pendingInput = null;
+    if (runId.value === target && message.value.trim() === text) message.value = '';
     await load();
   } catch (error) {
-    notice.value = errorText(error || 'AGENT_INPUT_FAILED');
+    if (runId.value === target) notice.value = errorText(error || 'AGENT_INPUT_FAILED');
   } finally {
     sending.value = false;
   }
@@ -692,11 +684,7 @@ const onPreviewWindowKeydown = (event: KeyboardEvent) => {
 };
 
 const onEvent = (event: AgentEvent) => {
-  if (!eventIds.has(event.eventId)) {
-    eventIds.add(event.eventId);
-    events.value.push(event);
-    events.value.sort((a, b) => Number(a.eventId) - Number(b.eventId));
-  }
+  activity.receive(event);
   if (eventRefreshTimer === null) {
     eventRefreshTimer = window.setTimeout(() => {
       eventRefreshTimer = null;
@@ -809,13 +797,23 @@ const fileCode = (mime: string) => {
   if (mime.startsWith('image/')) return 'IMG';
   return 'FILE';
 };
-onMounted(async () => {
-  window.addEventListener('keydown', onPreviewWindowKeydown);
-  await load();
+watch(runId, () => {
+  closeStream?.();
+  disconnectDesktop();
+  run.value = null;
+  message.value = '';
+  notice.value = '';
   closeStream = openAgentEventStream(runId.value, { onEvent });
+  void load();
+});
+onMounted(() => {
+  window.addEventListener('keydown', onPreviewWindowKeydown);
+  closeStream = openAgentEventStream(runId.value, { onEvent });
+  void load();
   pollTimer = window.setInterval(() => void load(), 5000);
 });
 onBeforeUnmount(() => {
+  disposed = true;
   window.removeEventListener('keydown', onPreviewWindowKeydown);
   disconnectDesktop();
   closeStream?.();

@@ -8,6 +8,7 @@
 | --- | --- |
 | [`README.md`](../README.md) / [`README.en.md`](../README.en.md) | 中文/英文产品首页、能力概览与快速开始 |
 | [`PRD.md`](../PRD.md) | 产品、执行路径、认证、计费、资产、Agent 与验收契约 |
+| [`AGENT_CONVERSATION_WORKFLOW.zh-CN.md`](./AGENT_CONVERSATION_WORKFLOW.zh-CN.md) | 主工作流：进展、工具调用、记录、执行中补充与上下文边界 |
 | [`frontend/PRODUCT.md`](../frontend/PRODUCT.md) | 统一创作入口的用户、定位和产品原则 |
 | [`frontend/DESIGN.md`](../frontend/DESIGN.md) | Agent 工作台视觉、布局、交互和无障碍规范 |
 | [`frontend/src/console/README_CONSOLE.md`](../frontend/src/console/README_CONSOLE.md) | 运营后台页面、权限、数据和隐私边界 |

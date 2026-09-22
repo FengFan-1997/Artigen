@@ -474,6 +474,7 @@ export const controlAgentRun = async (
 export const submitAgentInput = async (
   runId: string,
   input: {
+    inputId?: string;
     message?: string;
     approvalId?: string;
     decision?: 'approved' | 'denied';
@@ -507,6 +508,14 @@ export const createAgentDesktopTicket = async (
   return result.ticket;
 };
 
+// Read durable history independently of the live stream, including terminal runs.
+export const listAgentEventHistory = async (runId: string, after = '0') => {
+  const result = await requestJson<{ events: AgentEvent[] }>(
+    buildApiUrl(`/api/agent-runs/${encodeURIComponent(runId)}/history?after=${encodeURIComponent(after)}`)
+  );
+  return result.events;
+};
+
 export const openAgentEventStream = (
   runId: string,
   handlers: {
@@ -524,6 +533,11 @@ export const openAgentEventStream = (
     'sandbox.ready',
     'sandbox.resumed',
     'step.recorded',
+    'assistant.message',
+    'context.input_applied',
+    'context.compacted',
+    'plan.updated',
+    'run.input_required',
     'artifact.created',
     'cost.updated',
     'approval.required',

@@ -292,6 +292,7 @@ const installRunApi = async (
     contentType: 'application/json',
     body: JSON.stringify({ ok: true, run: currentRun })
   }));
+  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => route.fulfill({ json: { ok: true, events: [] } }));
   await page.route(`**/api/agent-runs/${runId}/events`, (route) => route.abort());
   await page.route(`**/api/agent-runs/${runId}/subagents/*/cancel`, (route) => {
     const subagentId = new URL(route.request().url()).pathname.split('/').at(-2) || '';
@@ -860,4 +861,52 @@ test('dark, light, system and reduced-motion workspace states keep names and con
     }))
   );
   expect(duration).toBeLessThanOrEqual(0.02);
+});
+
+test('conversation activity restores commentary, tool calls and user updates after reload', async ({ page }, testInfo) => {
+  await installRunApi(page);
+  const events = Array.from({ length: 12 }, (_, index) => ({
+    eventId: String(index + 2), runId, subagentId: null, type: 'step.recorded', phase: 'running',
+    summary: `检查文件内容 ${index + 1}`, data: { toolName: 'sandbox_shell', status: index === 11 ? 'failed' : 'succeeded' }, createdAt: now
+  }));
+  const history = [
+    { eventId: '1', runId, subagentId: null, type: 'assistant.message', phase: 'running', summary: '我先查看已有菜单，再调整价格。', data: {}, createdAt: now },
+    ...events,
+    { eventId: '14', runId, subagentId: null, type: 'run.input_received', phase: 'running', summary: '已收到补充信息', data: { messageText: '保留原来的名称，只改价格。' }, createdAt: now },
+    { eventId: '15', runId, subagentId: null, type: 'context.input_applied', phase: 'running', summary: '你的补充要求已加入当前执行上下文。', data: {}, createdAt: now }
+  ];
+  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => route.fulfill({
+    json: { ok: true, events: new URL(route.request().url()).searchParams.get('after') === '0' ? history : [] }
+  }));
+  await page.goto(`/artigen/agent/runs/${runId}`);
+  const timeline = page.getByRole('region', { name: '协作记录' });
+  await expect(timeline.getByText('我先查看已有菜单，再调整价格。')).toBeVisible();
+  await expect(timeline.locator('.tool-entry')).toHaveCount(12);
+  await timeline.locator('.tool-entry').first().locator('summary').click();
+  await expect(timeline.locator('.tool-entry').first().locator('dd').filter({ hasText: 'sandbox_shell' })).toBeVisible();
+  await expect(timeline.locator('.tool-entry.failed')).toHaveCount(1);
+  if (process.env.ARTIGEN_TIMELINE_SCREENSHOT_DIR) {
+    await page.screenshot({ path: path.join(process.env.ARTIGEN_TIMELINE_SCREENSHOT_DIR, `timeline-${testInfo.project.name}.png`), fullPage: true });
+  }
+  await expect(timeline.getByText('保留原来的名称，只改价格。')).toBeVisible();
+  await page.reload();
+  await expect(timeline.locator('.tool-entry')).toHaveCount(12);
+  await expect(timeline.getByText('保留原来的名称，只改价格。')).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+});
+
+test('terminal activity drains older history pages even without a live event stream', async ({ page }) => {
+  await installRunApi(page, { run: { ...baseRun, status: 'succeeded' } });
+  const cursors: string[] = [];
+  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => {
+    const after = new URL(route.request().url()).searchParams.get('after') || '0';
+    cursors.push(after);
+    const events = after === '0' ? Array.from({ length: 500 }, (_, i) => ({
+      eventId: String(i + 1), runId, type: 'cost.updated', summary: 'usage', data: {}, createdAt: now
+    })) : after === '500' ? [{ eventId: '501', runId, type: 'assistant.message', summary: '历史尾页的交付说明', data: {}, createdAt: now }] : [];
+    return route.fulfill({ json: { ok: true, events } });
+  });
+  await page.goto(`/artigen/agent/runs/${runId}`);
+  await expect(page.getByRole('region', { name: '协作记录' }).getByText('历史尾页的交付说明')).toBeVisible();
+  expect(cursors).toContain('500');
 });

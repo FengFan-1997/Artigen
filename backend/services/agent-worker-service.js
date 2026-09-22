@@ -891,6 +891,7 @@ const createAgentWorkerService = ({
       const toolRetryEpoch = Number.isSafeInteger(parsedToolRetryEpoch) && parsedToolRetryEpoch >= 0
         ? parsedToolRetryEpoch
         : 0;
+      const appliedInputIds = new Set(context.modelCheckpoint?.appliedInputIds || []);
       let modelResumeState = context.modelCheckpoint;
       if (
         runtimeV2 &&
@@ -1893,6 +1894,19 @@ const createAgentWorkerService = ({
         maxSteps: config.maxSteps,
         signal: modelAbortController.signal,
         callbacks: {
+          readUserInputs: () => runService.readUserInputs(runLease),
+          inputApplied: async (messageKey) => {
+            appliedInputIds.add(messageKey);
+            return runService.appendRuntimeEvent({
+              ...runLease, type: 'context.input_applied', phase: 'running',
+              summary: '你的补充要求已加入当前执行上下文，接下来会按更新后的要求继续。',
+              data: { messageKey }
+            });
+          },
+          onCommentary: ({ text, messageKey }) => runService.appendRuntimeEvent({
+            ...runLease, type: 'assistant.message', phase: 'running', summary: text,
+            data: { messageKey }
+          }),
           updatePlan: async ({ explanation, steps }) => {
             await pauseIfRequested();
             const normalized = (Array.isArray(steps) ? steps : []).map((step) => ({
@@ -1983,7 +1997,8 @@ const createAgentWorkerService = ({
           },
           saveModelState: async (value) => {
             modelResumeState = value;
-            if (value?.semanticVerificationResult) {
+            for (const id of value?.appliedInputIds || []) appliedInputIds.add(id);
+            if (Object.hasOwn(value || {}, 'semanticVerificationResult')) {
               latestSemanticVerification = value.semanticVerificationResult;
             }
             await runService.saveModelCheckpoint({
@@ -3140,7 +3155,8 @@ const createAgentWorkerService = ({
         phase: 'verifying',
         summary: '模型阶段已结束，后续只允许确定性验证与原子结算',
         data: {
-          semanticVerificationPassed: latestSemanticVerification?.passed === true
+          semanticVerificationPassed: latestSemanticVerification?.passed === true,
+          appliedInputIds: [...appliedInputIds]
         }
       });
       await testController?.hit('after_ready_to_finalize_event', { runId });
@@ -3207,6 +3223,14 @@ const createAgentWorkerService = ({
       await resolvedCanaryCircuit.record({ code: error?.code, runId });
       if (isLeaseLostError(error)) {
         return { claimed: true, status: 'lease_lost' };
+      }
+      if (error?.code === 'AGENT_INPUT_PENDING') {
+        await runService.transitionRun({
+          ...runLease, toStatus: 'paused', eventType: 'run.paused',
+          summary: '最终验证前收到了新的补充。任务已暂停，请恢复后按新要求继续。'
+        });
+        if (sandboxName) await sandbox.suspend(sandboxName).catch(() => {});
+        return { claimed: true, status: 'paused' };
       }
       if ([
         'AGENT_MODEL_CALL_AMBIGUOUS',

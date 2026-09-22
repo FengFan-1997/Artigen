@@ -81,6 +81,8 @@
       </div>
     </div>
 
+    <AgentConversationTimeline class="execution-timeline" v-if="execution.agentRunId" :events="events || []" :zh="zh" :loading="historyLoading" :error="historyError" />
+
     <footer>
       <div class="progress-track" aria-hidden="true"><span :style="{ transform: `scaleX(${progressPercent / 100})` }"></span></div>
       <div class="footer-actions">
@@ -99,15 +101,19 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import AgentConversationTimeline from '../workspace/AgentConversationTimeline.vue';
 import WorkspaceIcon from '../workspace/WorkspaceIcon.vue';
 import type { DesignExecution } from '../../services/designConversations';
-import { agentAssetUrl, type AgentApproval, type AgentRun } from '../../services/agentRuns';
+import { agentAssetUrl, type AgentApproval, type AgentRun, type AgentEvent } from '../../services/agentRuns';
 import { taskAssetUrl, type ServerToolTask } from '../../services/toolTasks';
 
 const props = defineProps<{
   execution: DesignExecution;
   task?: ServerToolTask;
   run?: AgentRun;
+  events?: AgentEvent[];
+  historyLoading?: boolean;
+  historyError?: boolean;
   busy: boolean;
   zh: boolean;
 }>();
@@ -238,6 +244,7 @@ const authorizationButtonLabel = (approval: AgentApproval) => props.zh
 </script>
 
 <style scoped>
+.execution-timeline { margin: 16px 20px; }
 .execution-card { position: relative; max-width: 920px; margin: 4px auto 28px; overflow: hidden; border: 0; border-radius: 12px; color: var(--text); background: color-mix(in srgb,var(--surface) 86%,transparent); box-shadow: none; }
 .execution-card::before { position: absolute; inset: 0 auto 0 0; width: 1px; background: var(--muted-2); content: ''; }
 .status-running::before,.status-queued::before,.status-provisioning::before,.status-verifying::before { background: var(--acid); }
