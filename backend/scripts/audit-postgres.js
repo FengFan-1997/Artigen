@@ -9,11 +9,13 @@ const {
   assertServerMajor,
   createClient,
   hasFlag,
-  redactDatabaseUrl
+  redactDatabaseUrl,
+  resolvePostgresOpsMajor
 } = require('./lib/postgres-ops');
 
 const HELP = `
-Run a read-only PostgreSQL 16 schema and financial invariant audit.
+Run a read-only PostgreSQL schema and financial invariant audit.
+PG_OPS_EXPECTED_MAJOR=16 (default) or 18 selects the exact server major.
 
 Usage:
   pnpm --filter backend db:audit
@@ -34,6 +36,7 @@ const main = async () => {
     return;
   }
 
+  const expectedMajor = resolvePostgresOpsMajor();
   const connectionString = String(
     process.env.AUDIT_DATABASE_URL ||
       process.env.RESTORE_VERIFY_DATABASE_URL ||
@@ -49,6 +52,7 @@ const main = async () => {
       JSON.stringify(
         {
           dryRun: true,
+          expectedPostgresMajor: expectedMajor,
           database: connectionString
             ? redactDatabaseUrl(connectionString)
             : '(database audit URL not set)',
@@ -70,7 +74,7 @@ const main = async () => {
   const client = createClient(connectionString);
   await client.connect();
   try {
-    const server = await assertServerMajor(client);
+    const server = await assertServerMajor(client, expectedMajor);
     const audit = await runDatabaseAudit(client);
     console.log(
       JSON.stringify(

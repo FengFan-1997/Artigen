@@ -11,6 +11,22 @@ const BACKEND_ROOT = path.resolve(__dirname, '../..');
 const REPO_ROOT = path.resolve(BACKEND_ROOT, '..');
 const MIGRATIONS_DIR = path.join(BACKEND_ROOT, 'migrations');
 const EXPECTED_POSTGRES_MAJOR = 16;
+const SUPPORTED_OPS_POSTGRES_MAJORS = [16, 18];
+
+const assertOpsPostgresMajor = (major) => {
+  if (!SUPPORTED_OPS_POSTGRES_MAJORS.includes(major)) {
+    throw new Error('Database backup/audit/restore supports PostgreSQL 16 or 18 only');
+  }
+  return major;
+};
+
+const resolvePostgresOpsMajor = (env = process.env) => {
+  const raw = String(env.PG_OPS_EXPECTED_MAJOR || '').trim() || '16';
+  if (!/^(16|18)$/.test(raw)) {
+    throw new Error('PG_OPS_EXPECTED_MAJOR must be 16 or 18');
+  }
+  return Number(raw);
+};
 
 const parseOption = (argv, name) => {
   const directIndex = argv.indexOf(name);
@@ -156,7 +172,7 @@ const parsePostgresMajor = (versionText) => {
   return match ? Number(match[1]) : 0;
 };
 
-const resolvePostgresBinary = (binary, env = process.env) => {
+const resolvePostgresBinary = (binary, env = process.env, expected = EXPECTED_POSTGRES_MAJOR) => {
   const configuredDirectory = String(env.PG_BIN_DIR || '').trim();
   if (configuredDirectory) {
     const configuredPath = path.resolve(configuredDirectory, binary);
@@ -168,8 +184,8 @@ const resolvePostgresBinary = (binary, env = process.env) => {
     }
   }
   const candidates = [
-    `/opt/homebrew/opt/postgresql@16/bin/${binary}`,
-    `/usr/local/opt/postgresql@16/bin/${binary}`,
+    `/opt/homebrew/opt/postgresql@${expected}/bin/${binary}`,
+    `/usr/local/opt/postgresql@${expected}/bin/${binary}`,
     `/opt/homebrew/opt/libpq/bin/${binary}`,
     `/usr/local/opt/libpq/bin/${binary}`
   ];
@@ -237,11 +253,11 @@ const runProcess = (command, args, options = {}) =>
     });
   });
 
-const assertPostgresBinaryMajor = async (binary, expected = EXPECTED_POSTGRES_MAJOR) => {
-  const command = resolvePostgresBinary(binary);
+const assertPostgresBinaryMajor = async (binary, expected = EXPECTED_POSTGRES_MAJOR, env = process.env) => {
+  const command = resolvePostgresBinary(binary, env, expected);
   let result;
   try {
-    result = await runProcess(command, ['--version'], { capture: true });
+    result = await runProcess(command, ['--version'], { capture: true, env });
   } catch (error) {
     if (error.code === 'ENOENT') {
       throw new Error(
@@ -258,6 +274,14 @@ const assertPostgresBinaryMajor = async (binary, expected = EXPECTED_POSTGRES_MA
     );
   }
   return { command, version: versionText };
+};
+
+const resolveRestorePostgresMajor = (manifest) => {
+  const major = assertOpsPostgresMajor(manifest.postgres?.major);
+  if (parsePostgresMajor(manifest.postgres?.pgDumpVersion) !== major) {
+    throw new Error('Backup manifest pg_dump version must match its PostgreSQL server major');
+  }
+  return major;
 };
 
 const decodeCa = (env = process.env) => {
@@ -446,6 +470,8 @@ module.exports = {
   quoteLiteral,
   redactDatabaseUrl,
   resolvePostgresBinary,
+  resolvePostgresOpsMajor,
+  resolveRestorePostgresMajor,
   runMigrations,
   runProcess,
   sha256File,

@@ -75,6 +75,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Exercise PostgreSQL 16 and 18 isolated backup and restore
+        run: node --test backend/tests/postgres-restore.integration.test.js
+        env:
+          RUN_POSTGRES_RESTORE_DRILL: "1"
+
       - name: Start pinned MinIO S3 compatibility fixture
         run: |
           docker run --detach --name artigen-minio --publish 9000:9000 \
