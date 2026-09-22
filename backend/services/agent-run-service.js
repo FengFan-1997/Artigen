@@ -1234,15 +1234,6 @@ const createAgentRunService = ({
   }) => {
     if (!config.enabled) throw new ApiError(404, 'AGENT_FEATURE_DISABLED');
     const normalizedObjective = normalizeObjective(objective);
-    if (planToken) {
-      verifyAgentPlanToken({
-        env,
-        token: planToken,
-        userId,
-        objective: normalizedObjective,
-        revision: Number(planRevision) || 1
-      });
-    }
     const requestedDeliverables = normalizeDeliverables(deliverables);
     const imageRequested = requestedDeliverables.includes('image') ||
       inferRequiredDeliverables(normalizedObjective).includes('image');
@@ -1391,6 +1382,15 @@ const createAgentRunService = ({
       throw new ApiError(503, 'AGENT_PAYLOAD_KEY_MISSING', { retryable: false });
     }
     const normalizedObjective = normalizeObjective(objective);
+    if (planToken) {
+      verifyAgentPlanToken({
+        env,
+        token: planToken,
+        userId,
+        objective: normalizedObjective,
+        revision: Number(planRevision) || 1
+      });
+    }
     const normalizedAssetIds = normalizeAssetIds(assetIds);
     const normalizedDeliverables = normalizeDeliverables(deliverables);
     if (
