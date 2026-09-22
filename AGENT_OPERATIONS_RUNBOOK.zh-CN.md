@@ -38,7 +38,7 @@ flowchart LR
 
 不需要 CUA 云账号，也不在文档中保存 Docker、数据库、S3 或 Provider 的真实凭据。
 
-生产和 DEV 使用完全独立的数据库、S3 命名空间、Worker ID、relay secret、Keychain 项目和 LaunchAgent 配置。
+生产和 DEV 必须使用各自的数据库、Worker ID、relay secret、Keychain 项目和 LaunchAgent 配置。S3 当前仍共用 endpoint / bucket，命名空间代码已部署 DEV，但线上前缀尚未启用；不能把目标隔离状态当作已完成事实，详见[账号接管报告](docs/INFRA_ACCOUNT_REGISTER.zh-CN.md)。
 
 ## 3. 模型与能力
 
@@ -131,6 +131,16 @@ pnpm --filter backend install:agent-worker:production-mac
 - Docker 可用，CUA 镜像与工具链符合目标代码。
 
 不要把生成的 plist、Environment Export 或 Keychain 值提交仓库。
+
+### 工作目录丢失后的恢复
+
+临时 worktree 被移动或清理后，LaunchAgent 可能保留已失效的 `WorkingDirectory` 和 runner 路径，出现 `EX_CONFIG`；它与数据库 TCP 超时是两个独立故障。先查看当前 launchctl 状态和日志时间，不能把旧日志当成正在运行的进程证据。
+
+1. 保存私有 plist 回滚副本，确认是否存在活跃 Worker；有活跃进程时先核对 Run、租约和预算状态，再按停机流程处理。
+2. 在不会随开发任务清理的独立目录准备已验证的 DEV SHA，检查工作树、Node 依赖、Python/CUA 和固定 Docker 镜像。保持凭据位于环境专属 Keychain。
+3. 如果启动项没有 PID 且路径已经失效，可卸载这个空闲启动项，修复工作目录和 runner 路径，以 `RunAtLoad=false`、`KeepAlive=false` 重新加载待命，停止无效重试；这一步不启动 Worker，不等于服务恢复。
+4. 严格 TLS 数据库连接通过后，核对活动 Run、租约和预算状态，先前台验证，再启动唯一的 DEV Worker。以 `/api/agent/status` 的新心跳和对应能力检查为准，不能用加载 plist 成功替代验收。
+5. 回滚前先停止并核验新进程，再恢复私有 plist 副本。若旧目录仍不存在，恢复副本只能回退配置，不能恢复服务，保持停机并修正目录后再启动。
 
 ## 8. Readiness
 

@@ -1,5 +1,12 @@
 # Artigen 项目正式 Handoff
 
+## 2026-09-22 DEV Worker 启动路径恢复（待命，未恢复在线）
+
+- DEV 启动项的工作目录及 runner 路径失效，launchctl 无 PID 且报 `EX_CONFIG`。已保存私有回滚副本，将独立 Worker checkout 对齐已验证的 DEV `d1bc100d39059d498ac24020a360504f857f6259`，修复路径并以 `RunAtLoad=false`、`KeepAlive=false` 加载待命，停止无效重试；未启动任务处理。
+- 该版本的 Node/Python 依赖清单与原备用环境一致；Python 3.12 / CUA 导入及固定 Docker 镜像存在检查通过。工作目录、runner、plist 语法和加载后无 PID 已核验；不能据此宣称 Worker 心跳、出口或真实任务已恢复。
+- 同版本 DEV live smoke 通过，API 可连接数据库；本机域名 / IP TCP 和严格 TLS PostgreSQL 连接仍超时，具体原因未定位。Worker 状态仍离线。未修改数据库凭据、网络设置、生产部署、支付或线上 S3 前缀。
+- 数据库连接恢复后须先检查活动 Run / 租约 / 预算，再以前台及唯一 Worker 验收。账号与凭据存放机制不变；运维手册修正了将 S3 目标隔离状态写成现状的旧描述。
+
 ## 2026-09-22 S3 新文件命名空间（开发候选，未启用）
 
 - 新增可选 `S3_KEY_PREFIX`：新资产与直传 staging 同步使用配置前缀，保存的旧 URI 仍可读取；默认空值保持现有键格式。S3 适配器阻止前缀外的覆盖、删除和分片操作，避免 DEV 写操作触碰旧共桶对象；不替代独立存储凭据或 IAM。
