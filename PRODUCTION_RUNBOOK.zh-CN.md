@@ -76,6 +76,31 @@ pnpm db:backup:neon
 - 定期使用隔离数据库执行 `pnpm db:restore:verify`；
 - 没有恢复验证的备份不能被描述为完整灾备。
 
+备份与只读 `db:audit` 使用 `PG_OPS_EXPECTED_MAJOR`：生产/本地默认 `16`，托管 DEV
+显式设为 `18`。`pg_dump` 与源库必须匹配该主版本；`PG_BIN_DIR` 可指向相应客户端目录。
+脚本名保留 `neon` 以兼容既有命令，也支持直连 Aiven PostgreSQL。
+
+恢复从 manifest 的 `postgres.major` 与 `pgDumpVersion` 校验版本，要求 `pg_restore` 和
+隔离目标库同主版本；不能用环境变量跳过检查，也不承担跨版本迁移。恢复前校验文件大小、
+SHA-256、归档可读性与目标版本；不匹配时不清空目标。目标还必须区别于
+`DATABASE_URL`、`DATABASE_MIGRATION_URL`、`NEON_DATABASE_URL` 及 manifest 源库。
+版本校验通过后才会清空目标 public schema；后续恢复失败的目标仍应视为不可用，修复原因后重跑。
+
+可重复的工具演练（要求 Docker，不读取应用数据库凭据）：
+
+```bash
+RUN_POSTGRES_RESTORE_DRILL=1 node --test backend/tests/postgres-restore.integration.test.js
+```
+
+演练只创建本机回环地址可访问的 PostgreSQL 16/18 临时容器，运行完整迁移并填入合成数据，
+验证数据、二进制内容、序列、额外 schema、账务不变量以及损坏备份不会清空目标；结束后删除
+本次容器和临时文件。Core CI 执行同一演练。普通 `pnpm test` 默认跳过这两项，不能据此声称演练通过。
+
+实际环境仍须使用受限 Secret 注入源连接串，在仓库外生成备份，再恢复到独立、同版本且授权可清空的
+专用目标库。分别记录开始/结束时间、迁移数量、表数量、校验与审计结果；仅合成数据演练不代表线上
+数据已经有可恢复备份，也不覆盖 S3 文件内容、数据库角色/权限、定时备份、PITR 或 Worker 恢复。
+`pg_dump` 范围和版本兼容规则见 [PostgreSQL 官方说明](https://www.postgresql.org/docs/18/app-pgdump.html)。
+
 定时备份与隔离恢复演练仍是需要持续维护的运维能力；发现未配置时在正式 Handoff 中记录风险，不伪装为已启用。
 
 ## 5. Render API 发布

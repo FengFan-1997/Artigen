@@ -9,12 +9,16 @@ const {
   REPO_ROOT,
   assertDirectPostgresUrl,
   assertPathOutsideRepo,
+  assertPostgresBinaryMajor,
+  assertServerMajor,
   assertSafeIdentifier,
   assertSamePostgresDatabaseOrigin,
   parseOption,
   pruneBackupGroups,
   redactDatabaseUrl,
   resolvePostgresBinary,
+  resolvePostgresOpsMajor,
+  resolveRestorePostgresMajor,
   withPgCliEnvironment
 } = require('../scripts/lib/postgres-ops');
 const {
@@ -45,6 +49,7 @@ const runScript = (script, args, env = {}) =>
       DEV_DATABASE_EXPECTED_MAJOR: '',
       PG_SSL_REQUIRED: '',
       PG_SSL_REJECT_UNAUTHORIZED: '',
+      PG_OPS_EXPECTED_MAJOR: '',
       ...env
     },
     encoding: 'utf8'
@@ -70,6 +75,62 @@ test('postgres ops parse inline and separate CLI values', () => {
   assert.equal(parseOption(['--dump', '/tmp/a.dump'], '--dump'), '/tmp/a.dump');
   assert.equal(parseOption(['--dump=/tmp/b.dump'], '--dump'), '/tmp/b.dump');
   assert.equal(parseOption(['--dump', '--dry-run'], '--dump'), '');
+});
+
+test('backup/audit major is explicit while restore follows the backup manifest', () => {
+  assert.equal(resolvePostgresOpsMajor({}), 16);
+  assert.equal(resolvePostgresOpsMajor({ PG_OPS_EXPECTED_MAJOR: '18' }), 18);
+  for (const major of ['17', '19', '18.1', '18x', '0']) {
+    assert.throws(() => resolvePostgresOpsMajor({ PG_OPS_EXPECTED_MAJOR: major }));
+  }
+  for (const major of [16, 18]) {
+    assert.equal(resolveRestorePostgresMajor({ postgres: { major, pgDumpVersion: `pg_dump (PostgreSQL) ${major}.4` } }), major);
+  }
+  for (const postgres of [undefined, { major: 18 }, { major: '18', pgDumpVersion: '18.4' }, { major: 18, pgDumpVersion: '16.4' }]) {
+    assert.throws(() => resolveRestorePostgresMajor({ postgres }));
+  }
+});
+
+test('client and server major mismatches fail before any destructive query', async () => {
+  const queries = [];
+  const client = { query: async (...args) => {
+    queries.push(args);
+    return { rows: [{ version_num: '180004', version: 'PostgreSQL 18.4' }] };
+  } };
+  await assert.rejects(assertServerMajor(client, 16), /PostgreSQL 16 is required/);
+  assert.equal((await assertServerMajor(client, 18)).major, 18);
+  assert.equal(queries.every(([sql]) => sql.startsWith('SELECT ')), true);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-pg-version-'));
+  try {
+    fs.writeFileSync(path.join(directory, 'pg_restore'), '#!/bin/sh\nprintf "pg_restore (PostgreSQL) 18.4\\n"\n', { mode: 0o700 });
+    const env = { ...process.env, PG_BIN_DIR: directory };
+    await assert.rejects(assertPostgresBinaryMajor('pg_restore', 16, env), /PostgreSQL 16 is required/);
+    assert.match((await assertPostgresBinaryMajor('pg_restore', 18, env)).version, /18\.4/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('backup and audit dry-runs show the expected major and reject unknown profiles', () => {
+  for (const script of ['neon-backup.js', 'audit-postgres.js']) {
+    const result = runScript(script, ['--dry-run'], { PG_OPS_EXPECTED_MAJOR: '18' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).expectedPostgresMajor, 18);
+    assert.equal(runScript(script, ['--dry-run'], { PG_OPS_EXPECTED_MAJOR: '18x' }).status, 1);
+  }
+});
+
+test('restore rejects every configured source even when its name contains restore', () => {
+  for (const source of ['DATABASE_URL', 'DATABASE_MIGRATION_URL', 'NEON_DATABASE_URL']) {
+    const result = runScript('neon-restore-verify.js', ['--dump', '/tmp/unused.dump'], {
+      [source]: 'postgresql://source:secret@db.example.com/artigen_restore',
+      RESTORE_VERIFY_DATABASE_URL: 'postgresql://other:secret@db.example.com:5432/artigen_restore',
+      NEON_VERIFY_ALLOW_RESET: '1'
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /must not point at/);
+    assert.equal(result.stderr.includes('secret'), false);
+  }
 });
 
 test('database operations reject Neon pooler URLs and require one database origin', () => {

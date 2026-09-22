@@ -16,13 +16,15 @@ const {
   pruneBackupGroups,
   quoteIdentifier,
   redactDatabaseUrl,
+  resolvePostgresOpsMajor,
   runProcess,
   sha256File,
   withPgCliEnvironment
 } = require('./lib/postgres-ops');
 
 const HELP = `
-Create a consistent PostgreSQL 16 custom-format backup and verification manifest.
+Create a consistent PostgreSQL custom-format backup and verification manifest.
+PG_OPS_EXPECTED_MAJOR=16 (default) or 18 selects the exact server and pg_dump major.
 
 Usage:
   pnpm --filter backend db:backup:neon
@@ -68,6 +70,7 @@ const main = async () => {
     return;
   }
 
+  const expectedMajor = resolvePostgresOpsMajor();
   const sourceUrl = String(
     process.env.NEON_DATABASE_URL ||
       process.env.DATABASE_MIGRATION_URL ||
@@ -86,6 +89,7 @@ const main = async () => {
       JSON.stringify(
         {
           dryRun: true,
+          expectedPostgresMajor: expectedMajor,
           source: sourceUrl ? redactDatabaseUrl(sourceUrl) : '(NEON_DATABASE_URL not set)',
           outputDirectory,
           retentionGroups: 14,
@@ -101,7 +105,7 @@ const main = async () => {
     throw new Error('NEON_DATABASE_URL, DATABASE_MIGRATION_URL, or DATABASE_URL is required');
   }
 
-  const pgDump = await assertPostgresBinaryMajor('pg_dump');
+  const pgDump = await assertPostgresBinaryMajor('pg_dump', expectedMajor);
   fs.mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
   assertPathOutsideRepo(outputDirectory);
   fs.chmodSync(outputDirectory, 0o700);
@@ -115,7 +119,7 @@ const main = async () => {
   let backupComplete = false;
   try {
     await source.connect();
-    const server = await assertServerMajor(source);
+    const server = await assertServerMajor(source, expectedMajor);
     await source.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     transactionOpen = true;
     const snapshotResult = await source.query('SELECT pg_export_snapshot() AS snapshot');

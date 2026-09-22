@@ -15,13 +15,16 @@ const {
   postgresConnectionIdentity,
   quoteIdentifier,
   redactDatabaseUrl,
+  resolveRestorePostgresMajor,
   runProcess,
   sha256File,
   withPgCliEnvironment
 } = require('./lib/postgres-ops');
 
 const HELP = `
-Restore a backup into a disposable PostgreSQL 16 database and verify its manifest.
+Restore a backup into a disposable PostgreSQL database and verify its manifest.
+The manifest selects PostgreSQL 16 or 18; pg_restore and the target must match.
+This is a same-major recovery drill, not a database version upgrade.
 
 Usage:
   RESTORE_VERIFY_DATABASE_URL=... NEON_VERIFY_ALLOW_RESET=1 \\
@@ -30,7 +33,7 @@ Usage:
 Safety rules:
   - the target database name must contain "verify", "restore", or "drill";
   - NEON_VERIFY_ALLOW_RESET must equal 1;
-  - the target must not equal DATABASE_URL or DATABASE_MIGRATION_URL;
+  - the target must not equal DATABASE_URL, DATABASE_MIGRATION_URL or NEON_DATABASE_URL;
   - the target public schema is dropped and recreated.
   - RESTORE_VERIFY_DATABASE_URL is preferred; NEON_VERIFY_DATABASE_URL is a compatibility alias.
 `.trim();
@@ -164,13 +167,13 @@ const main = async () => {
   const targetIdentity = connectionIdentityKey(
     postgresConnectionIdentity(targetUrl, 'Restore verification database URL')
   );
-  for (const sourceUrl of [process.env.DATABASE_URL, process.env.DATABASE_MIGRATION_URL]) {
+  for (const sourceUrl of [process.env.DATABASE_URL, process.env.DATABASE_MIGRATION_URL, process.env.NEON_DATABASE_URL]) {
     if (
       sourceUrl &&
       connectionIdentityKey(postgresConnectionIdentity(sourceUrl)) === targetIdentity
     ) {
       throw new Error(
-        'RESTORE_VERIFY_DATABASE_URL must not point at DATABASE_URL or DATABASE_MIGRATION_URL'
+        'RESTORE_VERIFY_DATABASE_URL must not point at DATABASE_URL, DATABASE_MIGRATION_URL or NEON_DATABASE_URL'
       );
     }
   }
@@ -184,6 +187,7 @@ const main = async () => {
   if (manifest.formatVersion !== 1 || manifest.dump?.format !== 'custom') {
     throw new Error('Unsupported or invalid backup manifest');
   }
+  const expectedMajor = resolveRestorePostgresMajor(manifest);
   const sourceIdentity = manifest.source
     ? `${String(manifest.source.hostname || '').toLowerCase()}:${String(
         manifest.source.port || '5432'
@@ -201,11 +205,13 @@ const main = async () => {
     throw new Error(`Backup size mismatch: expected ${manifest.dump?.bytes}, got ${bytes}`);
   }
 
-  const pgRestore = await assertPostgresBinaryMajor('pg_restore');
+  const pgRestore = await assertPostgresBinaryMajor('pg_restore', expectedMajor);
+  // Reject unreadable archives before connecting to or clearing the target.
+  await runProcess(pgRestore.command, ['--list', dumpPath], { capture: true });
   let targetClient = createClient(targetUrl);
   await targetClient.connect();
   try {
-    await assertServerMajor(targetClient);
+    await assertServerMajor(targetClient, expectedMajor);
     await targetClient.query('DROP SCHEMA IF EXISTS public CASCADE');
     await targetClient.query('CREATE SCHEMA public');
     await targetClient.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
@@ -233,7 +239,7 @@ const main = async () => {
   targetClient = createClient(targetUrl);
   await targetClient.connect();
   try {
-    const server = await assertServerMajor(targetClient);
+    const server = await assertServerMajor(targetClient, expectedMajor);
     const verification = await verifyRestoredDatabase(targetClient, manifest);
     const databaseAudit = await runDatabaseAudit(targetClient);
     const result = {
