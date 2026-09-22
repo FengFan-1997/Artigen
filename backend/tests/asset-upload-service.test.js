@@ -11,6 +11,7 @@ const {
   inspectStagedObject,
   normalizeParts
 } = require('../services/asset-upload-service');
+const { S3AssetAdapter } = require('../services/asset-storage');
 
 const OWNER_ID = '22222222-2222-4222-8222-222222222222';
 
@@ -60,6 +61,27 @@ test('direct upload rollout requires both the feature flag and shared object sto
   assert.equal(directAssetUploadsEnabled({ DIRECT_ASSET_UPLOADS: '1' }, { driver: 'file' }), false);
   assert.equal(directAssetUploadsEnabled({ DIRECT_ASSET_UPLOADS: '0', ASSET_STORAGE_DRIVER: 's3' }), false);
   assert.equal(directAssetUploadsEnabled({ DIRECT_ASSET_UPLOADS: '1' }, { driver: 's3' }), true);
+});
+
+test('single and multipart sessions persist the namespaced staging key', async () => {
+  const pool = createSessionPool();
+  const adapter = new S3AssetAdapter({ S3_BUCKET: 'synthetic', S3_KEY_PREFIX: 'dev/assets' });
+  const keys = [];
+  adapter.signPut = async ({ key }) => { keys.push(key); return 'https://storage.invalid/put'; };
+  adapter.createMultipart = async ({ key }) => { keys.push(key); return 'synthetic-upload'; };
+  for (const size of [100, SINGLE_PUT_LIMIT + 1]) {
+    await createAssetUploadSession({
+      pool, adapter, env: { DIRECT_ASSET_UPLOADS: '1' }, ownerUserId: OWNER_ID,
+      idempotencyKey: `namespace-${size}`, toolId: 'old-photo', operation: 'enhance',
+      declaredMime: 'image/png', declaredSize: size, maxBytes: 40 * 1024 * 1024,
+      allowedMimeTypes: ['image/png']
+    });
+  }
+  assert.equal(keys.length, 2);
+  for (let i = 0; i < keys.length; i += 1) {
+    assert.ok(keys[i].startsWith(`dev/assets/staging/${OWNER_ID}/`));
+    assert.equal(pool.rows[i].object_key, keys[i]);
+  }
 });
 
 test('upload sessions choose single PUT below 16 MiB and 8 MiB multipart chunks above it', async () => {

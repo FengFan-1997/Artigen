@@ -72,7 +72,7 @@ try {
     'S3_ACCESS_KEY_ID',
     'S3_SECRET_ACCESS_KEY'
   ];
-  const optionalSecretNames = ['PG_SSL_CA_BASE64'];
+  const optionalSecretNames = ['PG_SSL_CA_BASE64', 'S3_KEY_PREFIX'];
   if (modelProvider === 'cloudflare') {
     secretNames.push(
       'CLOUDFLARE_ACCOUNT_ID',

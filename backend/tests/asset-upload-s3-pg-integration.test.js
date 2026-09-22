@@ -62,6 +62,7 @@ test('MinIO exercises single, multipart, resume, cancel, authorization and valid
     ASSET_STORAGE_DRIVER: 's3',
     S3_ENDPOINT: process.env.MINIO_TEST_ENDPOINT,
     S3_BUCKET: process.env.MINIO_TEST_BUCKET || 'artigen-ci',
+    S3_KEY_PREFIX: 'dev-integration/assets',
     S3_REGION: 'us-east-1',
     S3_ACCESS_KEY_ID: process.env.MINIO_ROOT_USER || 'artigen-minio',
     S3_SECRET_ACCESS_KEY: process.env.MINIO_ROOT_PASSWORD || 'artigen-minio-secret',
@@ -71,6 +72,16 @@ test('MinIO exercises single, multipart, resume, cancel, authorization and valid
   await adapter.client.send(new CreateBucketCommand({ Bucket: adapter.bucket })).catch((error) => {
     if (!['BucketAlreadyOwnedByYou', 'BucketAlreadyExists'].includes(error?.name)) throw error;
   });
+  const legacyAdapter = new S3AssetAdapter({ ...env, S3_KEY_PREFIX: '' });
+  const legacy = await legacyAdapter.putBuffer({
+    key: `legacy/${crypto.randomUUID()}.png`, buffer: PNG, mimeType: 'image/png'
+  });
+  const legacyRead = await adapter.open(legacy.uri);
+  const legacyChunks = [];
+  for await (const chunk of legacyRead.body) legacyChunks.push(Buffer.from(chunk));
+  assert.deepEqual(Buffer.concat(legacyChunks), PNG);
+  await assert.rejects(adapter.delete(legacy.uri), { code: 'ASSET_NAMESPACE_WRITE_FORBIDDEN' });
+  await legacyAdapter.delete(legacy.uri);
   const ownerUserId = await createUser();
   const foreignUserId = await createUser();
 
@@ -85,6 +96,8 @@ test('MinIO exercises single, multipart, resume, cancel, authorization and valid
     pool: getPool(), adapter, env: { DIRECT_ASSET_UPLOADS: '1' }, ownerUserId, sessionId: single.id
   });
   assert.equal(singleAsset.mimeType, 'image/png');
+  const persisted = await getPool().query('SELECT uri FROM assets WHERE id=$1', [singleAsset.assetId]);
+  assert.ok(persisted.rows[0].uri.startsWith(`s3://${adapter.bucket}/dev-integration/assets/`));
   assert.deepEqual([singleAsset.width, singleAsset.height], [1, 1]);
   const replay = await completeAssetUpload({
     pool: getPool(), adapter, env: { DIRECT_ASSET_UPLOADS: '1' }, ownerUserId, sessionId: single.id

@@ -177,7 +177,8 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(runner, /workerEnv\.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED/);
   assert.match(runner, /freeAccountId !== accountId/);
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
-  assert.match(runner, /optionalSecretNames = \['PG_SSL_CA_BASE64'\]/);
+  assert.match(runner, /optionalSecretNames = \[[^\]]*'PG_SSL_CA_BASE64'/);
+  assert.match(runner, /optionalSecretNames = \[[^\]]*'S3_KEY_PREFIX'/);
   assert.match(runner, /delete workerEnv\.PG_SSL_CA;/);
   assert.match(runner, /delete workerEnv\.PG_SSL_CA_BASE64;/);
   assert.match(runner, /secretNames\.push\('DEV_DATABASE_EXPECTED_HOST'\)/);
