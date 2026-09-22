@@ -56,6 +56,8 @@ fix: prevent duplicate credit settlement
 
 新增配置项时，只提交无秘密的 `.env.example` 占位符，并同步对应 runbook。
 
+[平台账号与接管报告](./docs/INFRA_ACCOUNT_REGISTER.zh-CN.md)是开发必读文档。新增或更新平台、账号、登录方式、权限、凭据位置、数据库 / 存储环境归属，以及发现旧记录过期时，必须在同一 PR 同步该报告、受影响的 runbook 和正式 Handoff。仅记录核验状态、脱敏事实和接管机制；没有相关变化时在 PR 中填写不适用原因。
+
 ## 本地验证
 
 完整代码改动运行：
