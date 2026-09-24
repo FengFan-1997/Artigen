@@ -2940,7 +2940,7 @@ test('SiliconFlow stops after two invalid delegation corrections', async () => {
   assert.equal(attempts, 3);
 });
 
-test('SiliconFlow corrects an invalid Qwen plan and fails closed after two retries', async () => {
+test('SiliconFlow corrects invalid Qwen plans and preserves the last valid plan after repeated bad updates', async () => {
   const planCall = (index, steps) => ({
     id: `chat-plan-${index}`,
     choices: [{
@@ -3016,38 +3016,75 @@ test('SiliconFlow corrects an invalid Qwen plan and fails closed after two retri
     message.content.includes('2-4')
   )));
 
-  const invalidResponses = [1, 2, 3].map((index) => (
-    planCall(index, [{ label: `Invalid ${index}`, status: 'pending' }])
-  ));
-  const failingProvider = new SiliconFlowAgentModelProvider({
+  const recoveryRequests = [];
+  const recoveryResponses = [
+    planCall('recovery-valid', [
+      { id: 'prepare', label: 'Prepare notes', status: 'in_progress' },
+      { id: 'write', label: 'Write the file', status: 'pending' }
+    ]),
+    planCall('recovery-invalid-one', [
+      { id: 'prepare', label: 'Prepare notes', status: 'in_progress' }
+    ]),
+    planCall('recovery-invalid-two', [
+      { id: 'replacement', label: 'Replace the plan', status: 'in_progress' },
+      { id: 'write', label: 'Write the file', status: 'pending' }
+    ]),
+    {
+      id: 'chat-plan-recovery-final',
+      choices: [{ message: { role: 'assistant', content: 'Continued with the last valid plan.' } }],
+      usage: {}
+    }
+  ];
+  const recoveryProvider = new SiliconFlowAgentModelProvider({
     env: {
       AGENT_MODEL_PROVIDER: 'siliconflow',
       AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
       SILICONFLOW_API_KEY: 'test-key',
       AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
     },
-    fetchImpl: async () => new Response(JSON.stringify(invalidResponses.shift()), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    })
+    fetchImpl: async (_url, init = {}) => {
+      recoveryRequests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(recoveryResponses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
   });
   let rejected = 0;
-  await assert.rejects(() => failingProvider.execute({
+  let preserved = 0;
+  const recovered = await recoveryProvider.execute({
     objective: 'Prepare offline notes.',
     capabilities: { files: true, shell: true },
-    toolProfile: 'subagent',
+    toolProfile: 'parent',
     maxSteps: 10,
     callbacks: {
-      updatePlan: async () => {
-        rejected += 1;
-        throw new ApiError(400, 'AGENT_PLAN_INVALID');
+      updatePlan: async ({ steps }) => {
+        const allowedIds = new Set(['prepare', 'write']);
+        if (steps.length !== 2 || steps.some((step) => !allowedIds.has(step.id))) {
+          rejected += 1;
+          throw new ApiError(400, 'AGENT_PLAN_INVALID');
+        }
+        preserved += 1;
+        return { accepted: true, steps };
       },
       saveModelState: async () => {},
       clearModelState: async () => {},
       recordUsage: async () => {}
     }
-  }), { code: 'AGENT_PLAN_INVALID' });
-  assert.equal(rejected, 3);
+  });
+  assert.equal(recovered.text, 'Continued with the last valid plan.');
+  assert.equal(preserved, 1);
+  assert.equal(rejected, 2);
+  assert.equal(recoveryRequests.length, 4);
+  assert.equal(recoveryRequests[2].tool_choice.function.name, 'update_plan');
+  assert.ok(
+    !recoveryRequests[3].tools.some((tool) => tool.function?.name === 'update_plan'),
+    JSON.stringify(recoveryRequests[3].tools.map((tool) => tool.function?.name))
+  );
+  assert.ok(recoveryRequests[3].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('last valid server-published plan is preserved')
+  )));
 });
 
 test('SiliconFlow removes an unauthorized shell citation and fails closed after two ignored corrections', async () => {
