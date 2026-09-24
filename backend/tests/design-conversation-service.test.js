@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   IMAGE_MODEL,
   TEXT_MODEL,
+  buildAgentExecutionObjective,
   createExplicitPlannerFallback,
   getDesignConversationConfig,
   isTerminalCloudflareFailure,
@@ -89,6 +90,64 @@ test('planner context names prior verified files without embedding user file con
   });
   assert.match(messages.at(-1).content, /brand-proposal\.md/u);
   assert.doesNotMatch(messages.at(-1).content, /do-not-leak/u);
+});
+
+test('Agent objectives carry bounded prior conversation context without duplicating the current request', () => {
+  const current = { messageId: 'current', role: 'user', text: '按刚才说的受众修改方案。' };
+  const context = buildAgentExecutionObjective({
+    currentObjective: current.text,
+    currentMessageId: current.messageId,
+    history: [
+      { messageId: 'old', role: 'user', text: '无关的旧请求。' },
+      { messageId: 'audience', role: 'user', text: '目标受众是第一次开店的小餐馆老板。' },
+      { messageId: 'clarification', role: 'assistant', text: '我会按小餐馆老板的阅读习惯来写。' },
+      current
+    ]
+  });
+  assert.equal(context.messageCount, 3);
+  assert.match(context.objective, /^按刚才说的受众修改方案。/u);
+  assert.match(context.objective, /\[用户\] 目标受众是第一次开店的小餐馆老板/u);
+  assert.match(context.objective, /\[助手\] 我会按小餐馆老板的阅读习惯来写/u);
+  assert.match(context.objective, /如与本轮目标冲突，以本轮目标为准/u);
+  assert.equal(context.objective.split(current.text).length - 1, 1);
+});
+
+test('Agent objective context stays within the run payload limit and preserves long current requests', () => {
+  const currentObjective = '当前任务目标。';
+  const context = buildAgentExecutionObjective({
+    currentObjective,
+    currentMessageId: 'current',
+    history: [
+      { messageId: 'large', role: 'user', text: '限制'.repeat(10_000) },
+      { messageId: 'current', role: 'user', text: currentObjective }
+    ]
+  });
+  assert.ok(context.objective.length <= 20_000);
+  assert.equal(context.objective.slice(0, currentObjective.length), currentObjective);
+  assert.match(context.objective, /本条历史消息已截断/u);
+  assert.equal(context.messageCount, 1);
+
+  const longCurrent = '本轮'.repeat(10_000);
+  assert.deepEqual(buildAgentExecutionObjective({
+    currentObjective: longCurrent,
+    currentMessageId: 'current',
+    history: [{ messageId: 'prior', role: 'user', text: '重要背景' }]
+  }), { objective: longCurrent, messageCount: 0 });
+});
+
+test('Agent objective keeps the six newest context messages and tolerates histories without message IDs', () => {
+  const context = buildAgentExecutionObjective({
+    currentObjective: '继续按上面的内容做。',
+    history: Array.from({ length: 8 }, (_, index) => ({
+      role: index % 2 ? 'assistant' : 'user',
+      text: `背景 ${index + 1}`
+    }))
+  });
+  assert.equal(context.messageCount, 6);
+  assert.doesNotMatch(context.objective, /背景 1(?:\n|$)/u);
+  assert.doesNotMatch(context.objective, /背景 2(?:\n|$)/u);
+  assert.match(context.objective, /背景 3/u);
+  assert.match(context.objective, /背景 8/u);
 });
 
 test('malformed planner fallback only creates an Agent route for explicit execution requests', () => {

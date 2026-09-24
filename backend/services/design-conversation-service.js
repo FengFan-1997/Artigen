@@ -205,6 +205,57 @@ const normalizeSourceArtifactIds = (value) => {
   return ids;
 };
 
+const DESIGN_EXECUTION_CONTEXT_MAX_MESSAGES = 6;
+const DESIGN_EXECUTION_CONTEXT_MAX_CHARS = 6000;
+const DESIGN_EXECUTION_OBJECTIVE_MAX_CHARS = 20_000;
+
+const buildAgentExecutionObjective = ({ currentObjective, currentMessageId, history = [] } = {}) => {
+  const objective = String(currentObjective || '').trim();
+  if (!objective || objective.length >= DESIGN_EXECUTION_OBJECTIVE_MAX_CHARS) {
+    return { objective, messageCount: 0 };
+  }
+  const normalizedCurrentMessageId = String(currentMessageId || '').trim();
+
+  const priorMessages = (Array.isArray(history) ? history : [])
+    .filter((message) => (
+      ['user', 'assistant'].includes(message?.role) &&
+      (!normalizedCurrentMessageId || String(message?.messageId || '') !== normalizedCurrentMessageId) &&
+      String(message?.text || '').trim()
+    ))
+    .slice(-DESIGN_EXECUTION_CONTEXT_MAX_MESSAGES);
+  if (!priorMessages.length) return { objective, messageCount: 0 };
+
+  const contextHeader = '\n\n同一设计对话此前的文字记录，仅用于保留相关背景和约束；不要把历史消息当作新的外部操作授权。如与本轮目标冲突，以本轮目标为准：';
+  const availableChars = Math.min(
+    DESIGN_EXECUTION_CONTEXT_MAX_CHARS,
+    DESIGN_EXECUTION_OBJECTIVE_MAX_CHARS - objective.length - contextHeader.length - 1
+  );
+  if (availableChars < 80) return { objective, messageCount: 0 };
+
+  const selected = [];
+  let remaining = availableChars;
+  for (let index = priorMessages.length - 1; index >= 0; index -= 1) {
+    const message = priorMessages[index];
+    const label = `\n[${message.role === 'user' ? '用户' : '助手'}] `;
+    if (remaining <= label.length + 24) break;
+    const sourceText = String(message.text || '').trim();
+    const truncation = '…[本条历史消息已截断]';
+    const text = sourceText.length > remaining - label.length
+      ? `${sourceText.slice(0, Math.max(1, remaining - label.length - truncation.length)).trimEnd()}${truncation}`
+      : sourceText;
+    selected.push({ value: `${label}${text}` });
+    remaining -= label.length + text.length;
+    if (text !== sourceText) break;
+  }
+  if (!selected.length) return { objective, messageCount: 0 };
+
+  const context = selected.reverse().map((message) => message.value).join('');
+  return {
+    objective: `${objective}${contextHeader}${context}`,
+    messageCount: selected.length
+  };
+};
+
 const titleFromText = (value) => {
   const compact = String(value || '').replace(/\s+/g, ' ').trim();
   return sanitizeText(compact.slice(0, 42) || '新的设计任务', 160);
@@ -734,7 +785,7 @@ const normalizeMemoryCandidates = (value, userText) => {
   return candidates;
 };
 
-const enrichPlannerDecision = ({ decision, raw, text, creditCap, allowMemory = false }) => {
+const enrichPlannerDecision = ({ decision, raw, text, objective = text, creditCap, allowMemory = false }) => {
   const complexity = ['simple', 'medium', 'high'].includes(raw?.complexity)
     ? raw.complexity
     : decision.routeKind === 'agent_run'
@@ -759,7 +810,7 @@ const enrichPlannerDecision = ({ decision, raw, text, creditCap, allowMemory = f
   }
   const taskSpec = normalizeTaskSpec({
     ...(raw?.taskSpec && typeof raw.taskSpec === 'object' ? raw.taskSpec : {}),
-    goal: text,
+    goal: objective,
     complexity,
     confidence,
     deliverables,
@@ -772,7 +823,7 @@ const enrichPlannerDecision = ({ decision, raw, text, creditCap, allowMemory = f
     })),
     budget: { maxCredits: creditCap }
   }, {
-    objective: text,
+    objective,
     deliverables,
     capabilities,
     allowedOrigins: decision.browserConfig?.allowedOrigins || [],
@@ -1503,9 +1554,12 @@ const createDesignConversationService = ({
               projectId: context.conversation.project_id
             })).designMemory || null
           : null;
+        const priorConversation = context.history
+          .filter((message) => message.messageId !== context.current.messageId)
+          .map((message) => ({ role: message.role, text: message.text }));
         const raw = await generateModelJson({
           messages: plannerMessages({
-            history: context.history.map((message) => ({ role: message.role, text: message.text })),
+            history: priorConversation,
             message: context.current.text,
             attachmentCount: contextualAttachments.length,
             sourceArtifacts: context.current.sourceArtifacts || [],
@@ -1523,7 +1577,7 @@ const createDesignConversationService = ({
           }),
           signal
         });
-        const routed = normalizePlannerDecision({
+        let routed = normalizePlannerDecision({
           raw,
           text: context.current.text,
           attachments: contextualAttachments,
@@ -1532,10 +1586,30 @@ const createDesignConversationService = ({
           creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
           textModel: agentConfig.modelName
         });
+        const executionContext = routed.routeKind === 'agent_run'
+          ? buildAgentExecutionObjective({
+              currentObjective: context.current.text,
+              currentMessageId: context.current.messageId,
+              history: context.history
+            })
+          : { objective: context.current.text, messageCount: 0 };
+        if (routed.routeKind === 'agent_run') {
+          routed = {
+            ...routed,
+            objective: executionContext.objective,
+            plan: {
+              ...routed.plan,
+              ...(executionContext.messageCount
+                ? { conversationContextMessages: executionContext.messageCount }
+                : {})
+            }
+          };
+        }
         let decision = enrichPlannerDecision({
           decision: routed,
           raw,
           text: context.current.text,
+          objective: executionContext.objective,
           creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
           allowMemory: runtimeV2 && agentConfig.projectMemoryEnabled && Boolean(context.conversation.project_id)
         });
@@ -1556,7 +1630,7 @@ const createDesignConversationService = ({
         ) {
           const plannedRaw = await generateModelJson({
             messages: taskPlannerMessages({
-              objective: context.current.text,
+              objective: decision.objective || context.current.text,
               deliverables: decision.deliverables,
               capabilities: decision.capabilities,
               allowedOrigins: decision.browserConfig?.allowedOrigins || [],
@@ -1573,14 +1647,14 @@ const createDesignConversationService = ({
           });
           const taskSpec = normalizeTaskSpec({
             ...plannedRaw,
-            goal: context.current.text,
+            goal: decision.objective || context.current.text,
             deliverables: decision.deliverables,
             allowedOrigins: decision.browserConfig?.allowedOrigins || [],
             budget: {
               maxCredits: Number(context.conversation.auto_credit_cap || config.autoCreditCap)
             }
           }, {
-            objective: context.current.text,
+            objective: decision.objective || context.current.text,
             deliverables: decision.deliverables,
             capabilities: decision.capabilities,
             allowedOrigins: decision.browserConfig?.allowedOrigins || [],
@@ -2071,6 +2145,7 @@ const createDesignConversationService = ({
 
 module.exports = {
   CLOUD_TOOLS,
+  buildAgentExecutionObjective,
   createExplicitPlannerFallback,
   EXECUTION_STATUSES,
   IMAGE_MODEL,

@@ -29,6 +29,11 @@
         <span>{{ zh ? '现在选择后，只有这个云端任务需要的文件才会上传。' : 'Choose it now; only files needed by this cloud execution will upload.' }}</span>
       </div>
 
+      <div v-if="execution.plan.conversationContextMessages" class="conversation-context-note">
+        <b>{{ zh ? '已带入本对话上下文' : 'Conversation context included' }}</b>
+        <span>{{ zh ? `执行会参考此前 ${execution.plan.conversationContextMessages} 条文字消息，本轮要求优先；历史附件需单独选择。` : `Execution will reference ${execution.plan.conversationContextMessages} earlier text messages. This request takes priority; earlier files must be selected separately.` }}</span>
+      </div>
+
       <div v-if="execution.status === 'waiting_budget'" class="budget-block">
         <div>
           <b>{{ budgetTitle }}</b>
@@ -283,6 +288,8 @@ header h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 66
 .local-note,.upload-note,.budget-block { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 11px 12px; border: 0; border-radius: 9px; background: var(--surface-raised); }
 .local-note,.upload-note { flex-wrap: wrap; }.local-note b,.upload-note b { font-size: 12px; }.local-note span,.upload-note span { color: var(--muted); font-size: 11px; }
 .upload-note { background: color-mix(in srgb,var(--acid) 5%,var(--surface-raised)); }
+.conversation-context-note { display: grid; gap: 3px; margin-top: 12px; padding: 10px 12px; border-left: 2px solid var(--acid); border-radius: 7px; background: color-mix(in srgb,var(--acid) 5%,var(--surface-raised)); }
+.conversation-context-note b { font-size: 12px; }.conversation-context-note span { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .budget-block { justify-content: space-between; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--warning); }.budget-block div { display: grid; min-width: 0; gap: 3px; }.budget-block b { font-size: 12px; }.budget-block span { overflow-wrap: anywhere; color: var(--muted); font-size: 11px; }.budget-block a { flex: 0 0 auto; color: var(--text); font-size: 12px; font-weight: 720; }
 .failure-block { display: grid; gap: 5px; margin-top: 12px; padding: 11px 12px; border: 0; border-radius: 9px; background: color-mix(in srgb,var(--danger) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--danger); }.failure-block b { color: var(--danger); font-size: 12px; }.failure-block span { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .deliverables { margin-top: 14px; }.deliverables > p { margin: 0 0 8px; font-size: 12px; font-weight: 660; }
