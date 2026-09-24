@@ -1747,7 +1747,8 @@ class OllamaAgentModelProvider {
           textModel: this.config.modelName
         })
       : null;
-    const instructions = prompt?.instructions || buildInstructions({ capabilities, maxSteps, toolProfile });
+    const progressInstructions = '\nSpeak to the user in the same language as their request. Alongside tool calls, give brief public progress updates about what you are doing, what you observed and what comes next. Do not expose private reasoning, credentials, raw tool arguments or unverified success. Keep each update within 500 characters. Tool purposes and plan explanations should use the user language too.';
+    const instructions = (prompt?.instructions || buildInstructions({ capabilities, maxSteps, toolProfile })) + progressInstructions;
     const delegationRequired = toolProfile === 'parent' &&
       capabilities?.subagents === true &&
       explicitlyRequiresSubagentDelegation(objective);
@@ -1772,6 +1773,7 @@ class OllamaAgentModelProvider {
       Number(runtimeContext?.initialModelCredits || 0)
     );
     let turns = Math.max(0, Number(durable?.turns || 0));
+    const appliedInputIds = new Set(Array.isArray(durable?.appliedInputIds) ? durable.appliedInputIds : []);
     let text = String(durable?.text || '');
     let planPublished = runtimeV2 || durable?.planPublished === true;
     let pendingCall = durable?.pendingCall || null;
@@ -1938,6 +1940,7 @@ class OllamaAgentModelProvider {
       await callbacks.saveModelState?.({
         version: runtimeV2 ? CHECKPOINT_VERSION : 2,
         provider: this.providerName,
+        appliedInputIds: [...appliedInputIds],
         messages,
         ...(runtimeV2 ? {
           runtimeVersion: 2,
@@ -2002,6 +2005,13 @@ class OllamaAgentModelProvider {
       });
     };
 
+    if (runtimeV2 && readyToFinalize) {
+      const updates = await callbacks.readUserInputs?.() || [];
+      if (updates.some((input) => input.id && typeof input.message === 'string' && !appliedInputIds.has(input.id))) {
+        readyToFinalize = null;
+        pendingVerifierResult = null;
+      }
+    }
     if (runtimeV2 && readyToFinalize) {
       return {
         responseId: String(readyToFinalize.responseId || `${this.providerName}:ready-to-finalize`),
@@ -2821,6 +2831,34 @@ class OllamaAgentModelProvider {
         }
       }
 
+      if (toolProfile === 'parent' && !pendingModelResponse) {
+        const updates = await callbacks.readUserInputs?.() || [];
+        const fresh = updates.filter((input) => input.id && typeof input.message === 'string' && !appliedInputIds.has(input.id));
+        if (fresh.length) {
+          for (const input of fresh) {
+            messages.push({ role: 'user', content: input.message });
+            appliedInputIds.add(input.id);
+            if (taskSpec) {
+              taskSpec.constraints.push(input.message);
+              taskSpec.constraintRequirements = [...(taskSpec.constraintRequirements || []), {
+                id: `input-${input.id}`, text: input.message, source: 'user', criticality: 'required'
+              }];
+            }
+          }
+          // A new requirement must be checked against a fresh delivery, even if
+          // the old revision already had verified artifacts.
+          declaredArtifacts = [];
+          semanticVerificationPassed = false;
+          semanticVerificationAttempts = 0;
+          semanticVerificationResult = null;
+          semanticRepairRequired = false;
+          pendingVerifierResult = null;
+          readyToFinalize = null;
+          await saveDurableState();
+          for (const input of fresh) await callbacks.inputApplied?.(input.id);
+        }
+      }
+
       if (subagentFinalizationRequired) {
         const summary = subagentCompletionSummary || 'The delegated plan and its output verification completed.';
         readyToFinalize = {
@@ -3062,7 +3100,7 @@ class OllamaAgentModelProvider {
         );
         if (planUpdateSuppressed) allowedToolNames.delete('update_plan');
         const context = buildContextMessages({
-          instructions: prompt.instructions,
+          instructions: prompt.instructions + progressInstructions,
           taskSpec,
           workingState,
           messages,
@@ -3278,6 +3316,12 @@ class OllamaAgentModelProvider {
           assistant.content = '';
         }
       }
+      if (assistant.content.trim()) {
+        await callbacks.onCommentary?.({
+          text: assistant.content.trim().slice(0, 500),
+          messageKey: crypto.createHash('sha256').update(`${turns}:${assistant.content}`).digest('hex')
+        });
+      }
       if (calls.length) assistant.tool_calls = calls;
       messages.push(assistant);
       pendingModelResponse = null;
@@ -3411,7 +3455,9 @@ class OllamaAgentModelProvider {
           finalTextSha256: crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
           semanticVerification: semanticVerificationResult
         } : null;
-        if (runtimeV2) await saveDurableState();
+        // Keep parent context until the Worker commits finalization: a late input
+        // may still require pausing and resuming this exact conversation.
+        if (runtimeV2 || (toolProfile === 'parent' && callbacks.readUserInputs)) await saveDurableState();
         else await callbacks.clearModelState?.();
         return {
           responseId: String(response.id || `${this.providerName}:${turns}`),

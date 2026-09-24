@@ -270,6 +270,18 @@ const installAgentRoutes = (app, deps = {}) => {
     res.json({ ok: true, run });
   }));
 
+  app.get('/api/agent-runs/:runId/history', readLimiter, asyncRoute(async (req, res) => {
+    const auth = requireAuthenticatedUser(req);
+    const events = await requireService().listEvents({
+      userId: auth.dbUserId || auth.userId,
+      runId: req.params.runId,
+      after: req.query?.after || 0,
+      limit: 500
+    });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, events });
+  }));
+
   app.get('/api/agent-runs/:runId/events', readLimiter, asyncRoute(async (req, res) => {
     const auth = requireAuthenticatedUser(req);
     const runService = requireService();

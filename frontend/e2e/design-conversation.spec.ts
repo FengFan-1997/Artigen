@@ -205,6 +205,7 @@ const installExistingConversation = async (page: Page) => {
     }
     return route.fallback();
   });
+  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => route.fulfill({ json: { ok: true, events: [] } }));
   await page.route(`**/api/agent-runs/${runId}/events`, (route) => route.abort());
   await page.route(`**/api/agent-runs/${runId}`, (route) => route.fulfill({
     status: 200,
@@ -755,4 +756,64 @@ test('raising an over-cap quote changes only this execution and still requires a
   await expect(page.getByRole('button', { name: '启动任务' })).toBeVisible();
   await page.waitForTimeout(350);
   expect(taskRequests).toBe(0);
+});
+
+test('design conversation shows durable tool activity inline without opening advanced details', async ({ page }) => {
+  await installExistingConversation(page);
+  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => route.fulfill({ json: {
+    ok: true, events: new URL(route.request().url()).searchParams.get('after') === '0' ? [
+      { eventId: '1', runId, type: 'assistant.message', summary: '页面证据已记录，我接下来整理提案。', data: {}, createdAt: now },
+      { eventId: '2', runId, type: 'step.recorded', summary: '读取品牌首页', data: { toolName: 'browser', status: 'succeeded' }, createdAt: now }
+    ] : []
+  } }));
+  await page.goto(`/artigen/create?c=${conversationId}`);
+  const timeline = page.getByRole('region', { name: '协作记录' });
+  await expect(timeline.getByText('页面证据已记录，我接下来整理提案。')).toBeVisible();
+  await timeline.locator('summary').click();
+  await expect(timeline.getByText('读取品牌首页', { exact: true }).last()).toBeVisible();
+  await page.reload();
+  await expect(timeline.getByText('页面证据已记录，我接下来整理提案。')).toHaveCount(1);
+});
+
+
+test('main composer steers the existing run and preserves rejected updates', async ({ page }) => {
+  await installExistingConversation(page);
+  const accepted: string[] = [];
+  let reject = true;
+  let inputId = '';
+  await page.route(`**/api/agent-runs/${runId}/input`, (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.message).toBe('保留上下文，把提案改为三页。');
+    expect(body.inputId).toBeTruthy();
+    if (reject) {
+      inputId = body.inputId;
+      return route.fulfill({ status: 503, json: { ok: false, error: { code: 'TEMPORARILY_UNAVAILABLE' } } });
+    }
+    expect(body.inputId).toBe(inputId);
+    accepted.push(body.message);
+    return route.fulfill({ json: { ok: true, run } });
+  });
+  let newPlanningRequests = 0;
+  await page.route('**/api/design-conversations/*/messages', (route) => {
+    newPlanningRequests++;
+    return route.abort();
+  });
+  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => route.fulfill({ json: {
+    ok: true, events: new URL(route.request().url()).searchParams.get('after') === '0' && accepted.length ? [
+      { eventId: '1', runId, type: 'run.input_received', summary: '已收到补充信息', data: { messageText: accepted[0] }, createdAt: now }
+    ] : []
+  } }));
+  await page.goto(`/artigen/create?c=${conversationId}`);
+  const composer = page.getByRole('textbox', { name: '设计需求' });
+  await expect(composer).toHaveAttribute('placeholder', '补充当前任务的要求…');
+  await composer.fill('保留上下文，把提案改为三页。');
+  await page.getByRole('button', { name: '发送需求', exact: true }).click();
+  await expect(page.locator('.workspace-notice')).toBeVisible();
+  await expect(composer).toHaveValue('保留上下文，把提案改为三页。');
+  reject = false;
+  await page.getByRole('button', { name: '发送需求', exact: true }).click();
+  await expect(page.getByRole('region', { name: '协作记录' })).toContainText('保留上下文，把提案改为三页。');
+  await expect(composer).toHaveValue('');
+  expect(newPlanningRequests).toBe(0);
+  expect(accepted).toHaveLength(1);
 });

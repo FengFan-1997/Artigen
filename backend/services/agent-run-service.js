@@ -1842,7 +1842,25 @@ const createAgentRunService = ({
           LIMIT $3`,
         [runId, cursor, Math.max(1, Math.min(500, Number(limit) || 250))]
       );
-      return result.rows.map(publicEvent);
+      const events = result.rows.map(publicEvent);
+      const payloadIds = events.filter((event) => event.type === 'run.input_received')
+        .map((event) => event.data.messagePayloadId).filter((id) => UUID_RE.test(String(id || '')));
+      if (payloadIds.length) {
+        const payloads = await client.query(
+          `SELECT * FROM agent_run_payloads WHERE run_id=$1 AND kind='user_input'
+            AND id=ANY($2::uuid[]) AND expires_at>now()`, [runId, payloadIds]
+        );
+        const text = new Map(payloads.rows.map((record) => [record.id, decryptAgentPayload({
+          runId, payloadId: record.id, kind: 'user_input', record, env
+        }).message]));
+        for (const event of events) {
+          const message = text.get(event.data.messagePayloadId);
+          if (event.type === 'run.input_received' && typeof message === 'string') {
+            event.data = { ...event.data, messageText: message };
+          }
+        }
+      }
+      return events;
     }
   );
 
@@ -2303,6 +2321,7 @@ const createAgentRunService = ({
         );
         if (duplicate.rowCount) return false;
       }
+      let messagePayloadId = null;
       let eventType = 'run.input_received';
       let summary = '已收到补充信息';
       if (approvalId) {
@@ -2361,7 +2380,13 @@ const createAgentRunService = ({
           throw new ApiError(413, 'AGENT_INPUT_TOO_LARGE', { field: 'message' });
         }
         if (normalizedMessage) {
+          if (row.status === 'verifying') throw new ApiError(409, 'AGENT_INPUT_FINALIZING');
+          const finalizing = await client.query(
+            `SELECT 1 FROM agent_events WHERE run_id=$1 AND event_type='run.ready_to_finalize' LIMIT 1`, [runId]
+          );
+          if (finalizing.rowCount) throw new ApiError(409, 'AGENT_INPUT_FINALIZING');
           const payloadId = crypto.randomUUID();
+          messagePayloadId = payloadId;
           const encrypted = encryptAgentPayload({
             runId,
             payloadId,
@@ -2469,6 +2494,7 @@ const createAgentRunService = ({
           : {
               takeoverEnded: Boolean(takeoverEnded),
               takeoverApprovalId: takeoverEnded ? takeoverApprovalId : undefined,
+              messagePayloadId: messagePayloadId || undefined,
               inputId: normalizedInputId || undefined
             }
       });
@@ -2544,6 +2570,20 @@ const createAgentRunService = ({
       data: { provider: nextProvider, model: nextModel, reason: String(reason).slice(0, 120) }
     });
     return updated.rows[0];
+  });
+
+  const readUserInputs = async ({ runId, workerId, leaseEpoch }) => withTransaction(pool, async (client) => {
+    const run = await client.query('SELECT * FROM agent_runs WHERE id=$1', [runId]);
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+    const result = await client.query(
+      `SELECT * FROM agent_run_payloads WHERE run_id=$1 AND kind='user_input'
+        AND expires_at>now() ORDER BY created_at,id`, [runId]
+    );
+    return result.rows.flatMap((record) => {
+      const value = decryptAgentPayload({ runId, payloadId: record.id, kind: 'user_input', record, env });
+      return typeof value.message === 'string' && !value.type ? [{ id: record.id, message: value.message }] : [];
+    });
   });
 
   const loadPrivateContext = async ({ runId }) => withTransaction(pool, async (client) => {
@@ -3439,11 +3479,32 @@ const createAgentRunService = ({
       [runId, workerId, Number(leaseEpoch || 0)]
     );
     if (!lease.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    if (['assistant.message', 'context.input_applied'].includes(eventType) && data.messageKey) {
+      const existing = await client.query(
+        `SELECT * FROM agent_events WHERE run_id=$1 AND event_type=$2 AND data->>'messageKey'=$3 LIMIT 1`,
+        [runId, eventType, sanitizeText(data.messageKey, 120)]
+      );
+      if (existing.rowCount) return publicEvent(existing.rows[0]);
+    }
     const sanitizedData = sanitizeLogValue(data);
     let eventData = sanitizedData && typeof sanitizedData === 'object' && !Array.isArray(sanitizedData)
       ? sanitizedData
       : {};
     if (eventType === 'run.ready_to_finalize') {
+      if (Array.isArray(data.appliedInputIds)) {
+        const inputs = await client.query(
+          `SELECT * FROM agent_run_payloads WHERE run_id=$1 AND kind='user_input' AND expires_at>now()`, [runId]
+        );
+        const applied = new Set(data.appliedInputIds);
+        const pending = inputs.rows.some((record) => {
+          if (applied.has(record.id)) return false;
+          const value = decryptAgentPayload({ runId, payloadId: record.id, kind: 'user_input', record, env });
+          return typeof value.message === 'string' && !value.type;
+        });
+        if (pending) throw new ApiError(409, 'AGENT_INPUT_PENDING');
+        delete eventData.appliedInputIds;
+      }
+
       const existingBoundary = await client.query(
         `SELECT * FROM agent_events
           WHERE run_id=$1 AND event_type='run.ready_to_finalize'
@@ -4961,6 +5022,7 @@ const createAgentRunService = ({
   return {
     appendStep,
     appendRuntimeEvent,
+    readUserInputs,
     assertWorkerLeaseActive,
     cancelRun,
     cancelSubagent,

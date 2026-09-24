@@ -138,6 +138,9 @@
             :execution="execution"
             :task="execution.toolTaskId ? toolTasks[execution.toolTaskId] : undefined"
             :run="execution.agentRunId ? agentRuns[execution.agentRunId] : undefined"
+            :events="activity.records[execution.agentRunId || ''] || []"
+            :history-loading="activity.loading[execution.agentRunId || '']"
+            :history-error="activity.errors[execution.agentRunId || '']"
             :busy="startingExecutions.has(execution.executionId)"
             :zh="zh"
             @start="startExecution(execution)"
@@ -166,7 +169,7 @@
           :draft="draft"
           :attachments="selectedAttachments"
           :busy="sending"
-          :placeholder="zh ? '继续对话，或提出一个新的设计任务…' : 'Continue, or describe a new design task…'"
+          :placeholder="openAgentRuns.length ? (zh ? '补充当前任务的要求…' : 'Add instructions to the current task…') : (zh ? '继续对话，或提出一个新的设计任务…' : 'Continue, or describe a new design task…')"
           :attach-label="zh ? '添加文件' : 'Add files'"
           :attachment-count-label="zh ? '个文件' : 'files'"
           :attachment-hint="zh ? '文件会留在当前设备，只有云端任务需要时才上传' : 'Files stay on this device until a cloud task needs them'"
@@ -179,6 +182,7 @@
           @attach="openFilePicker()"
           @remove-attachment="removeAttachment"
         />
+        <p v-if="openAgentRuns.length">{{ zh ? '补充要求会发给当前任务，并记录在上方；新任务可从侧栏创建。' : 'Updates go to the current task and appear above. Start a new task from the sidebar.' }}</p>
       </div>
     </section>
 
@@ -367,6 +371,7 @@ import {
   waitForToolTask,
   type ServerToolTask
 } from '../services/toolTasks';
+import { useAgentActivity } from '../composables/useAgentActivity';
 import { createLocalToolHandoff } from '../services/localToolHandoff';
 
 type SelectedAttachment = DesignAttachmentManifest & { file: File };
@@ -397,12 +402,14 @@ const suggestionOffset = ref(0);
 const localFiles = new Map<string, File>();
 const executionFileIds = reactive<Record<string, string[]>>({});
 const toolTasks = reactive<Record<string, ServerToolTask>>({});
+const activity = useAgentActivity();
 const agentRuns = reactive<Record<string, AgentRun>>({});
 const startingExecutions = reactive(new Set<string>());
 const executionStreams = new Map<string, () => void>();
 const toolTaskTimers = new Map<string, number>();
 let closeConversationStream: null | (() => void) = null;
 let refreshTimer: number | null = null;
+let activityPollTimer: number | null = null;
 const scheduledAutoStarts = new Set<string>();
 const handledMemoryCandidates = reactive(new Set<string>());
 const LAST_CONVERSATION_KEY = 'artigen:last-design-conversation';
@@ -441,6 +448,10 @@ const activeRun = computed(() => {
     .filter((run): run is AgentRun => Boolean(run)) || [];
   return runs.at(-1) || null;
 });
+const openAgentRuns = computed(() => (conversation.value?.executions || [])
+  .map((execution) => execution.agentRunId ? agentRuns[execution.agentRunId] : null)
+  .filter((run): run is AgentRun => Boolean(run && !['succeeded', 'failed', 'cancelled'].includes(run.status))));
+const pendingRunInput = ref<{ runId: string; text: string; inputId: string } | null>(null);
 const workspaceStatusTone = computed<'ready' | 'busy' | 'warning' | 'offline'>(() => {
   if (!status.value?.enabled || !status.value?.plannerReady) return 'offline';
   if (planning.value || ['queued', 'provisioning', 'running', 'verifying'].includes(activeRun.value?.status || '')) return 'busy';
@@ -559,6 +570,9 @@ const formatAuthorizationExpiry = (value: string) => {
 const errorText = (error: unknown) => {
   const code = String((error as { code?: string })?.code || error || 'UNKNOWN_ERROR');
   const labels: Record<string, [string, string]> = {
+    AGENT_INPUT_FINALIZING: ['任务正在验证交付，草稿已保留，请完成后发送下一轮要求。', 'The task is verifying delivery. Your draft is saved; send it after completion.'],
+    AGENT_INPUT_TARGET_REQUIRED: ['有多个任务正在执行，请在对应任务的高级详情中补充要求。', 'Several tasks are running. Add instructions in the intended task’s details.'],
+    AGENT_INPUT_ATTACHMENTS_UNSUPPORTED: ['执行中暂不支持新增附件；请移除附件后发送文字，或创建新任务。草稿已保留。', 'New attachments are not supported during execution. Remove them to send text, or start a new task. Your draft is saved.'],
     LOGIN_REQUIRED: ['请先登录，登录后会自动发送当前草稿。', 'Sign in first; your draft will send automatically.'],
     DESIGN_CONVERSATION_DISABLED: ['对话入口尚未开放，现有 AI 与 Agent 工作台仍可使用。', 'The conversation entry is not open yet; the existing workbenches remain available.'],
     INSUFFICIENT_CREDITS: ['点数不足，任务没有创建，也没有冻结点数。', 'Not enough credits. No task was created or held.'],
@@ -599,23 +613,37 @@ const connectConversationStream = (conversationId: string) => {
   });
 };
 
-const loadRun = async (runId: string) => {
-  const previous = agentRuns[runId];
-  const run = await getAgentRun(runId);
-  agentRuns[runId] = run;
-  const previousPending = previous?.approvals?.filter((item) => item.status === 'pending').length || 0;
-  const nextPending = run.approvals?.filter((item) => item.status === 'pending').length || 0;
-  const becameTerminal = previous && previous.status !== run.status && ['succeeded', 'failed', 'cancelled'].includes(run.status);
-  if (!previous || nextPending > previousPending || becameTerminal) await scrollToBottom();
-  if (!['succeeded', 'failed', 'cancelled'].includes(run.status)) return;
-  executionStreams.get(runId)?.();
-  executionStreams.delete(runId);
+const runLoads = new Map<string, Promise<void>>();
+const loadRun = (runId: string): Promise<void> => {
+  const existing = runLoads.get(runId);
+  if (existing) return existing;
+  const pending = (async () => {
+    const previous = agentRuns[runId];
+    const run = await getAgentRun(runId);
+    if (disposed) return;
+    agentRuns[runId] = run;
+    await activity.refresh(runId);
+    const previousPending = previous?.approvals?.filter((item) => item.status === 'pending').length || 0;
+    const nextPending = run.approvals?.filter((item) => item.status === 'pending').length || 0;
+    const becameTerminal = previous && previous.status !== run.status && ['succeeded', 'failed', 'cancelled'].includes(run.status);
+    if (!previous || nextPending > previousPending || becameTerminal) await scrollToBottom();
+    if (!['succeeded', 'failed', 'cancelled'].includes(run.status)) return;
+    executionStreams.get(runId)?.();
+    executionStreams.delete(runId);
+  })().finally(() => runLoads.delete(runId));
+  runLoads.set(runId, pending);
+  return pending;
 };
 
 const monitorRun = (runId: string) => {
   if (executionStreams.has(runId)) return;
+  if (agentRuns[runId] && ['succeeded', 'failed', 'cancelled'].includes(agentRuns[runId].status)) {
+    void activity.refresh(runId);
+    return;
+  }
   const close = openAgentEventStream(runId, {
-    onEvent: () => {
+    onEvent: (event) => {
+      activity.receive(event);
       void loadRun(runId).then(() => scheduleRefresh()).catch(() => {});
     }
   });
@@ -783,6 +811,25 @@ const submitAuthenticated = async () => {
   sending.value = true;
   notice.value = '';
   try {
+    // Resolve still-loading runs before deciding whether this is steering or a new request.
+    await Promise.all((conversation.value?.executions || [])
+      .filter((execution) => execution.agentRunId && !agentRuns[execution.agentRunId])
+      .map((execution) => loadRun(execution.agentRunId!)));
+    if (openAgentRuns.value.length) {
+      if (openAgentRuns.value.length !== 1) throw { code: 'AGENT_INPUT_TARGET_REQUIRED' };
+      if (selectedAttachments.value.length) throw { code: 'AGENT_INPUT_ATTACHMENTS_UNSUPPORTED' };
+      const target = openAgentRuns.value[0];
+      if (target.status === 'verifying') throw { code: 'AGENT_INPUT_FINALIZING' };
+      if (pendingRunInput.value?.runId !== target.runId || pendingRunInput.value.text !== text) {
+        pendingRunInput.value = { runId: target.runId, text, inputId: crypto.randomUUID() };
+      }
+      await submitAgentInput(target.runId, { message: text, inputId: pendingRunInput.value.inputId });
+      pendingRunInput.value = null;
+      if (draft.value.trim() === text) draft.value = '';
+      await loadRun(target.runId);
+      await scrollToBottom();
+      return;
+    }
     let active = conversation.value;
     if (!active) {
       active = await createDesignConversation();
@@ -1187,6 +1234,15 @@ const onVisible = () => {
 };
 
 onMounted(async () => {
+  activityPollTimer = window.setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    for (const execution of conversation.value?.executions || []) {
+      const id = execution.agentRunId;
+      if (id && (!agentRuns[id] || !['succeeded', 'failed', 'cancelled'].includes(agentRuns[id].status) || activity.errors[id])) {
+        void loadRun(id).catch(() => {});
+      }
+    }
+  }, 5000);
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
   document.addEventListener('visibilitychange', onVisible);
   try {
@@ -1203,6 +1259,7 @@ watch(() => conversation.value?.messages?.length, () => void scrollToBottom());
 
 onBeforeUnmount(() => {
   disposed = true;
+  if (activityPollTimer !== null) window.clearInterval(activityPollTimer);
   document.removeEventListener('visibilitychange', onVisible);
   window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
   closeConversationStream?.();
