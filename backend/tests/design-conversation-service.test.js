@@ -6,6 +6,7 @@ const {
   TEXT_MODEL,
   createExplicitPlannerFallback,
   getDesignConversationConfig,
+  isTerminalCloudflareFailure,
   normalizePlannerDecision,
   plannerMessages,
   repairPlannerRoute
@@ -425,6 +426,31 @@ test('conversation configuration defaults closed with a 50-credit cap and perman
     model: TEXT_MODEL,
     imageModel: IMAGE_MODEL
   });
+});
+
+test('planner stops retrying terminal Cloudflare configuration and request failures', () => {
+  for (const code of [
+    'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED',
+    'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN',
+    'AGENT_CLOUDFLARE_CREDENTIAL_INVALID',
+    'AGENT_CLOUDFLARE_FORBIDDEN',
+    'AGENT_CLOUDFLARE_ENDPOINT_NOT_FOUND',
+    'AGENT_CLOUDFLARE_REQUEST_REJECTED',
+    'AGENT_CLOUDFLARE_ACCOUNT_ID_INVALID',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED'
+  ]) {
+    assert.equal(isTerminalCloudflareFailure({ code }), true, code);
+  }
+  assert.equal(isTerminalCloudflareFailure({
+    code: 'AGENT_CLOUDFLARE_RATE_LIMITED', retryable: true
+  }), false);
+  assert.equal(isTerminalCloudflareFailure({
+    code: 'AGENT_CLOUDFLARE_UPSTREAM_UNAVAILABLE', retryable: true
+  }), false);
+  assert.equal(isTerminalCloudflareFailure({
+    code: 'AGENT_CLOUDFLARE_REQUEST_FAILED'
+  }), true);
+  assert.equal(isTerminalCloudflareFailure({ code: 'DESIGN_PLANNER_FAILED' }), false);
 });
 
 test('conversation routes register the public contract without touching PostgreSQL when injected', () => {

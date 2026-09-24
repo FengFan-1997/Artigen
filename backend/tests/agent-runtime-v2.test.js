@@ -141,6 +141,16 @@ test('Runtime V2 treats Cloudflare free quota and paid-only responses as termina
     retryable: true,
     maxAttempts: 2
   });
+  for (const code of [
+    'AGENT_CLOUDFLARE_CREDENTIAL_INVALID',
+    'AGENT_CLOUDFLARE_ENDPOINT_NOT_FOUND'
+  ]) {
+    assert.deepEqual(classifyRuntimeFailure({ code }), {
+      category: 'security_terminal',
+      retryable: false,
+      maxAttempts: 0
+    });
+  }
 });
 
 test('Runtime V2 preserves the goal, verification phase and unresolved failure under compaction', () => {
