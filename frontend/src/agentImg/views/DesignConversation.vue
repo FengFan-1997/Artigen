@@ -391,6 +391,10 @@ import {
 } from '../services/toolTasks';
 import { useAgentActivity } from '../composables/useAgentActivity';
 import { createLocalToolHandoff } from '../services/localToolHandoff';
+import {
+  prepareDesignExecutionAssetIds,
+  type DesignExecutionAssetLink
+} from '../domain/designExecutionAssets';
 
 type SelectedAttachment = DesignAttachmentManifest & { file: File };
 
@@ -926,17 +930,27 @@ const executionInputFiles = (execution: DesignExecution) => {
 };
 
 const ensureUploadedAssets = async (execution: DesignExecution) => {
-  const expected = executionInputFiles(execution);
-  if (execution.plan.uploadRequired && !expected.length) {
+  if (!conversation.value) return [];
+  const selectedClientIds = executionFileIds[execution.executionId];
+  const clientIds = selectedClientIds?.length
+    ? selectedClientIds
+    : execution.plan.attachmentClientIds || [];
+  if (execution.plan.uploadRequired && !clientIds.length) {
     throw Object.assign(new Error('DESIGN_ATTACHMENTS_REQUIRED'), { code: 'DESIGN_ATTACHMENTS_REQUIRED' });
   }
-  const existing = new Map((conversation.value?.uploads || []).map((item) => [item.clientId, item.assetId]));
-  const missing = expected.filter((item) => !existing.has(item.clientId));
-  if (missing.length && conversation.value) {
-    const uploaded = await uploadDesignAttachments(conversation.value.conversationId, missing);
-    uploaded.forEach((item) => existing.set(item.clientId, item.assetId));
-  }
-  return expected.map((item) => existing.get(item.clientId)).filter((value): value is string => Boolean(value));
+  const uploads: DesignExecutionAssetLink[] = conversation.value.uploads || [];
+  return prepareDesignExecutionAssetIds({
+    clientIds,
+    uploads,
+    availableClientIds: [...localFiles.keys()],
+    uploadMissing: (clientIdsToUpload) => uploadDesignAttachments(
+      conversation.value!.conversationId,
+      clientIdsToUpload.map((clientId) => ({
+        clientId,
+        file: localFiles.get(clientId)!
+      }))
+    )
+  });
 };
 
 const runToolExecution = async (execution: DesignExecution, assetIds: string[]) => {
