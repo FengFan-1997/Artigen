@@ -110,6 +110,20 @@
             <div v-if="message.role === 'assistant'" class="assistant-mark" aria-hidden="true">A</div>
             <div class="message-body">
               <p>{{ message.text }}</p>
+              <small
+                v-if="message.role === 'user' && ['queued', 'running'].includes(message.planningStatus || '')"
+                class="planning-state"
+                role="status"
+              >{{ zh ? '正在分析这条需求…' : 'Analyzing this request…' }}</small>
+              <button
+                v-if="canRetryPlanning(message)"
+                class="planning-retry"
+                type="button"
+                :disabled="retryingPlanningMessageId === message.retryableMessageId"
+                @click="retryFailedPlanning(message)"
+              >{{ retryingPlanningMessageId === message.retryableMessageId
+                ? (zh ? '正在重新提交…' : 'Retrying…')
+                : (zh ? '重新分析原需求' : 'Retry this request') }}</button>
               <div v-if="message.attachments.length" class="message-files">
                 <span v-for="file in message.attachments" :key="file.clientId">
                   <WorkspaceIcon name="file" :size="14" />
@@ -355,6 +369,7 @@ import {
   quoteDesignAgentExecution,
   recordDesignToolQuote,
   revokeDesignSessionAuthorization,
+  retryDesignPlanning,
   sendDesignMessage,
   uploadDesignAttachments,
   type DesignAssistantStatus,
@@ -417,6 +432,7 @@ const selectedSourceArtifacts = ref<DesignSourceArtifact[]>([]);
 const notice = ref('');
 const sending = ref(false);
 const planning = ref(false);
+const retryingPlanningMessageId = ref('');
 const workspaceSearch = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
 const scrollArea = ref<HTMLElement | null>(null);
@@ -600,7 +616,10 @@ const errorText = (error: unknown) => {
     DESIGN_CONVERSATION_DISABLED: ['对话入口尚未开放，现有 AI 与 Agent 工作台仍可使用。', 'The conversation entry is not open yet; the existing workbenches remain available.'],
     INSUFFICIENT_CREDITS: ['点数不足，任务没有创建，也没有冻结点数。', 'Not enough credits. No task was created or held.'],
     DESIGN_EXECUTION_BUDGET_EXCEEDED: ['真实报价超过当前上限，任务尚未创建。', 'The verified quote exceeds this limit. No task was created.'],
-    DESIGN_ATTACHMENTS_REQUIRED: ['这个任务需要附件，请选择文件后继续。', 'This task needs an attachment. Choose a file to continue.']
+    DESIGN_ATTACHMENTS_REQUIRED: ['这个任务需要附件，请选择文件后继续。', 'This task needs an attachment. Choose a file to continue.'],
+    DESIGN_PLANNING_RETRY_LIMIT: ['这条需求最近已重试 3 次，请一小时后再试。', 'This request has been retried three times recently. Try again in an hour.'],
+    DESIGN_CONVERSATION_HAS_ACTIVE_EXECUTION: ['当前会话还有 Agent 任务正在执行。请等它结束后再重试规划。', 'An Agent run is still active in this conversation. Wait for it to finish before retrying.'],
+    DESIGN_PLANNING_NOT_RETRYABLE: ['这条需求当前不能重试，请刷新会话查看状态。', 'This request cannot be retried in its current state. Refresh to see the latest status.']
   };
   return labels[code]?.[zh.value ? 0 : 1] || (zh.value ? `暂时无法继续：${code}` : `Unable to continue: ${code}`);
 };
@@ -913,6 +932,47 @@ const submitMessage = () => {
   if (!draft.value.trim()) return;
   if (!ensureAuthed(submitAuthenticated)) return;
   void submitAuthenticated();
+};
+
+const canRetryPlanning = (message: DesignMessage) => {
+  if (message.kind !== 'error' || !message.retryableMessageId || !conversation.value) return false;
+  const latestFailure = [...conversation.value.messages].reverse().find((candidate) => (
+    candidate.kind === 'error' && candidate.retryableMessageId === message.retryableMessageId
+  ));
+  if (latestFailure?.messageId !== message.messageId) return false;
+  return conversation.value.messages.some((candidate) => (
+    candidate.messageId === message.retryableMessageId &&
+    candidate.role === 'user' &&
+    candidate.planningStatus === 'failed'
+  ));
+};
+
+const retryFailedPlanning = async (errorMessage: DesignMessage) => {
+  const sourceMessage = conversation.value?.messages.find((message) => (
+    message.messageId === errorMessage.retryableMessageId && message.role === 'user'
+  ));
+  const conversationId = conversation.value?.conversationId;
+  if (!conversationId || !sourceMessage || retryingPlanningMessageId.value) return;
+  if (openAgentRuns.value.length) {
+    notice.value = zh.value
+      ? '当前会话还有 Agent 任务正在执行。请等它结束后再重试规划，避免把原需求发进正在运行的任务。'
+      : 'An Agent run is still active in this conversation. Wait for it to finish before retrying, so this request is not sent into that run.';
+    return;
+  }
+  retryingPlanningMessageId.value = sourceMessage.messageId;
+  planning.value = true;
+  notice.value = '';
+  try {
+    const result = await retryDesignPlanning(conversationId, sourceMessage.messageId);
+    sourceMessage.planningStatus = result.status;
+    await refreshConversation();
+  } catch (error) {
+    planning.value = false;
+    notice.value = errorText(error);
+    await refreshConversation().catch(() => {});
+  } finally {
+    retryingPlanningMessageId.value = '';
+  }
 };
 
 const sendRecommended = () => {
@@ -1402,6 +1462,9 @@ onBeforeUnmount(() => {
 .message-body { min-width: 0; max-width: 82%; padding: 2px 0; overflow-wrap: anywhere; color: var(--text); font-size: 15px; line-height: 1.72; }
 .message.user .message-body { max-width: 74%; padding: 10px 13px; border: 0; border-radius: 13px 13px 4px 13px; background: var(--surface-raised); }
 .message-body p { margin: 0; white-space: pre-wrap; }
+.planning-state { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
+.planning-retry { min-height: 32px; margin-top: 9px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--acid-text); font-size: 11px; background: color-mix(in srgb,var(--acid) 10%,var(--surface)); cursor: pointer; }
+.planning-retry:disabled { opacity: .6; cursor: wait; }
 .message-files { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }.message-files span { display: inline-flex; max-width: 100%; min-width: 0; align-items: center; gap: 5px; padding: 5px 7px; overflow-wrap: anywhere; border: 0; border-radius: 7px; color: var(--muted); font-size: 11px; background: var(--surface-hover); }.message-files svg { flex: 0 0 auto; width: 12px; }
 .source-message-files span { color: var(--acid-text); background: color-mix(in srgb,var(--acid) 10%,var(--surface-hover)); }
 .clarification { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }.clarification button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 8px; color: var(--text); font-size: 11px; background: var(--surface-hover); cursor: pointer; }.clarification button:hover { color: var(--acid-text); }.clarification .recommended { color: var(--acid-ink); background: var(--acid); }

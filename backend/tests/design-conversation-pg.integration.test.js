@@ -376,3 +376,109 @@ test('PostgreSQL text-only planning persists a terminal reply and rejects a tool
     await pool.end();
   }
 });
+
+test('PostgreSQL failed planning can be retried in place without losing the original request', {
+  skip: !enabled,
+  timeout: 10_000
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const suffix = crypto.randomUUID();
+  const inserted = await pool.query(
+    `INSERT INTO users (legacy_user_id,display_name,status)
+     VALUES ($1,'Planning retry owner','active'),($2,'Planning retry stranger','active') RETURNING id`,
+    [`design-retry-owner-${suffix}`, `design-retry-stranger-${suffix}`]
+  );
+  const [userId, strangerId] = inserted.rows.map((row) => row.id);
+  let providerAvailable = false;
+  let modelCalls = 0;
+  const service = createDesignConversationService({
+    pool,
+    env: {
+      ...process.env,
+      DESIGN_CONVERSATION_ENABLED: 'true',
+      DESIGN_CONVERSATION_WORKER_ENABLED: 'true',
+      AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'75'.repeat(32)}`
+    },
+    chatGenerate: async () => {
+      modelCalls += 1;
+      if (!providerAvailable) {
+        throw Object.assign(new Error('provider unavailable'), {
+          code: 'AGENT_CLOUDFLARE_RATE_LIMITED',
+          retryable: true
+        });
+      }
+      return { text: JSON.stringify({ routeKind: 'reply', reply: '已重新分析原始需求。' }) };
+    }
+  });
+  let conversationId;
+  try {
+    ({ conversationId } = await service.createConversation({ userId }));
+    const original = await service.addMessage({
+      userId,
+      conversationId,
+      message: '请简单评价这份品牌资料的视觉风格。',
+      attachments: [{
+        clientId: 'brand-guide-1',
+        name: 'brand-guide.pdf',
+        mimeType: 'application/pdf',
+        byteSize: 128
+      }]
+    });
+
+    let jobStatus = '';
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const result = await pool.query(
+        'SELECT status FROM design_planning_jobs WHERE message_id=$1',
+        [original.messageId]
+      );
+      jobStatus = result.rows[0]?.status || '';
+      if (jobStatus === 'failed') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(jobStatus, 'failed');
+    const failed = await service.getConversation({ userId, conversationId });
+    const failedRequest = failed.messages.find((message) => message.messageId === original.messageId);
+    const failure = failed.messages.find((message) => message.kind === 'error');
+    assert.equal(failedRequest.planningStatus, 'failed');
+    assert.deepEqual(failedRequest.attachments, original.attachments);
+    assert.equal(failure.retryableMessageId, original.messageId);
+    assert.match(failure.text, /没有创建 Agent 任务或冻结点数/u);
+    await assert.rejects(service.retryPlanning({
+      userId: strangerId,
+      conversationId,
+      messageId: original.messageId
+    }), { code: 'DESIGN_CONVERSATION_NOT_FOUND' });
+
+    providerAvailable = true;
+    const queued = await service.retryPlanning({ userId, conversationId, messageId: original.messageId });
+    assert.deepEqual(queued, { messageId: original.messageId, status: 'queued' });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await service.processNextJob();
+
+    let completed = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      completed = await service.getConversation({ userId, conversationId });
+      if (completed.messages.find((message) => message.messageId === original.messageId)?.planningStatus === 'succeeded') break;
+      await service.processNextJob();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const completedRequest = completed.messages.find((message) => message.messageId === original.messageId);
+    assert.equal(completedRequest.planningStatus, 'succeeded');
+    assert.deepEqual(completedRequest.attachments, original.attachments);
+    assert.equal(completed.messages.filter((message) => message.role === 'user').length, 1);
+    assert.ok(completed.messages.some((message) => message.text === '已重新分析原始需求。'));
+    assert.equal(modelCalls, 2);
+    const retryEvents = await pool.query(
+      `SELECT data FROM design_conversation_events
+        WHERE conversation_id=$1 AND event_type='planning.retry_requested'`,
+      [conversationId]
+    );
+    assert.equal(retryEvents.rowCount, 1);
+    assert.equal(retryEvents.rows[0].data.messageId, original.messageId);
+  } finally {
+    service.stopWorker();
+    if (conversationId) await pool.query('DELETE FROM design_conversations WHERE id=$1', [conversationId]).catch(() => {});
+    await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])', [[userId, strangerId]]).catch(() => {});
+    await pool.end();
+  }
+});

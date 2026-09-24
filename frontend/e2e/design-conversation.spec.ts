@@ -671,6 +671,90 @@ test('failed executions show the error, credit disposition and an editable retry
   await expect(page.getByLabel(/^(?:设计需求|Design request)$/)).toHaveValue('审计品牌官网，交付 PDF 与可编辑演示文稿。');
 });
 
+test('failed planning retries the original stored request only after an explicit click', async ({ page }) => {
+  await installCommonApi(page, true);
+  const original = {
+    ...message(userMessageId, 1, 'user', '请按上一条资料的约束给我一个设计建议。'),
+    planningStatus: 'failed',
+    attachments: [{
+      clientId: 'brand-guide-1',
+      name: 'brand-guide.pdf',
+      mimeType: 'application/pdf',
+      byteSize: 128
+    }]
+  };
+  const failure = {
+    ...message('88888888-8888-4888-8888-888888888888', 2, 'assistant', '文本模型当前受到限流或容量限制。规划阶段没有创建 Agent 任务或冻结点数；请稍后重试。'),
+    kind: 'error',
+    status: 'failed',
+    retryableMessageId: userMessageId
+  };
+  const retryConversation = {
+    ...fullConversation,
+    executions: [],
+    messages: [original, failure]
+  };
+  let retryRequests = 0;
+  let ordinaryMessageRequests = 0;
+  let storedPlanningStatus: 'failed' | 'queued' = 'failed';
+  await page.route('**/api/design-conversations**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.endsWith('/events')) return route.abort();
+    if (pathname.endsWith('/authorizations')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, authorizations: [] })
+      });
+    }
+    if (pathname.endsWith(`/messages/${userMessageId}/retry`) && request.method() === 'POST') {
+      retryRequests += 1;
+      storedPlanningStatus = 'queued';
+      return route.fulfill({
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, messageId: userMessageId, status: 'queued' })
+      });
+    }
+    if (pathname.endsWith('/messages') && request.method() === 'POST') ordinaryMessageRequests += 1;
+    if (pathname === `/api/design-conversations/${conversationId}`) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          conversation: {
+            ...retryConversation,
+            messages: retryConversation.messages.map((item) => item.messageId === userMessageId
+              ? { ...item, planningStatus: storedPlanningStatus }
+              : item)
+          }
+        })
+      });
+    }
+    if (pathname === '/api/design-conversations' && request.method() === 'GET') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, conversations: [retryConversation] })
+      });
+    }
+    return route.fallback();
+  });
+
+  await page.goto(`/artigen/create?c=${conversationId}`);
+  await expect(page.getByText(original.text, { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '重新分析原需求' })).toBeVisible();
+  await expect(page.getByText('正在分析这条需求…')).toHaveCount(0);
+  await page.getByRole('button', { name: '重新分析原需求' }).click();
+  await expect.poll(() => retryRequests).toBe(1);
+  await expect(page.getByText('正在分析这条需求…')).toBeVisible();
+  await expect.poll(() => ordinaryMessageRequests).toBe(0);
+  await expect(page.locator('.message.user')).toHaveCount(1);
+  await expect(page.locator('.message-files')).toContainText('brand-guide.pdf');
+});
+
 test('raising an over-cap quote changes only this execution and still requires an explicit start', async ({ page }) => {
   await installCommonApi(page, true);
   let raised = false;

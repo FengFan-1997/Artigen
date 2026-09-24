@@ -287,6 +287,12 @@ const publicMessage = (row, env) => {
     role: row.role,
     kind: row.kind,
     status: row.status,
+    ...(row.role === 'assistant' && row.kind === 'error' && UUID_RE.test(String(value?.retryableMessageId || ''))
+      ? { retryableMessageId: String(value.retryableMessageId) }
+      : {}),
+    ...(typeof row.planning_status === 'string'
+      ? { planningStatus: row.planning_status }
+      : {}),
     text: String(value?.text || ''),
     attachments: Array.isArray(value?.attachments) ? value.attachments : [],
     sourceArtifacts: Array.isArray(value?.sourceArtifacts) ? value.sourceArtifacts : [],
@@ -1149,7 +1155,12 @@ const createDesignConversationService = ({
     return readTransaction(pool, async (client) => {
       const { row } = await resolveOwnedConversation(client, { userId, conversationId });
       const messages = await client.query(
-        'SELECT * FROM design_messages WHERE conversation_id=$1 AND (expires_at IS NULL OR expires_at>now()) ORDER BY sequence',
+        `SELECT message.*,job.status AS planning_status
+           FROM design_messages message
+           LEFT JOIN design_planning_jobs job ON job.message_id=message.id
+          WHERE message.conversation_id=$1
+            AND (message.expires_at IS NULL OR message.expires_at>now())
+          ORDER BY message.sequence`,
         [conversationId]
       );
       const executions = await client.query(
@@ -1282,7 +1293,73 @@ const createDesignConversationService = ({
         summary: '已收到设计请求',
         data: { messageId: inserted.id, attachmentCount: manifest.length, sourceArtifactCount: sourceArtifacts.length }
       });
-      return publicMessage(inserted, env);
+      return publicMessage({ ...inserted, planning_status: 'queued' }, env);
+    });
+    void processNextJob().catch(() => {});
+    return result;
+  };
+
+  const retryPlanning = async ({ userId, conversationId, messageId }) => {
+    requireEnabled();
+    if (!UUID_RE.test(String(messageId || ''))) {
+      throw new ApiError(400, 'INVALID_ID', { field: 'messageId' });
+    }
+    const result = await transaction(pool, async (client) => {
+      const { row } = await resolveOwnedConversation(client, { userId, conversationId, lock: true });
+      if (row.status !== 'active') throw new ApiError(409, 'DESIGN_CONVERSATION_ARCHIVED');
+      if (!config.workerEnabled || typeof chatGenerate !== 'function') {
+        throw new ApiError(503, 'DESIGN_PLANNER_NOT_CONFIGURED', { retryable: true });
+      }
+      const activeRun = await client.query(
+        `SELECT 1
+           FROM design_executions execution
+           JOIN agent_runs run ON run.id=execution.agent_run_id
+          WHERE execution.conversation_id=$1
+            AND run.status IN ('draft','queued','provisioning','running','waiting_user','paused','verifying')
+          LIMIT 1`,
+        [conversationId]
+      );
+      if (activeRun.rowCount) {
+        throw new ApiError(409, 'DESIGN_CONVERSATION_HAS_ACTIVE_EXECUTION');
+      }
+      const job = await client.query(
+        `SELECT job.status
+           FROM design_planning_jobs job
+           JOIN design_messages message ON message.id=job.message_id
+          WHERE job.message_id=$1 AND job.conversation_id=$2 AND message.role='user'`,
+        [messageId, conversationId]
+      );
+      if (!job.rowCount) throw new ApiError(404, 'DESIGN_PLANNING_JOB_NOT_FOUND');
+      if (job.rows[0].status !== 'failed') {
+        throw new ApiError(409, 'DESIGN_PLANNING_NOT_RETRYABLE');
+      }
+      const recentRetries = await client.query(
+        `SELECT count(*)::integer AS count
+           FROM design_conversation_events
+          WHERE conversation_id=$1 AND event_type='planning.retry_requested'
+            AND data->>'messageId'=$2
+            AND created_at>=clock_timestamp()-interval '1 hour'`,
+        [conversationId, messageId]
+      );
+      if (Number(recentRetries.rows[0]?.count || 0) >= 3) {
+        throw new ApiError(429, 'DESIGN_PLANNING_RETRY_LIMIT', { retryable: false });
+      }
+      const updated = await client.query(
+        `UPDATE design_planning_jobs
+            SET status='queued',attempt_count=0,next_attempt_at=clock_timestamp(),
+                lease_owner=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=now()
+          WHERE message_id=$1 AND conversation_id=$2 AND status='failed'
+          RETURNING message_id`,
+        [messageId, conversationId]
+      );
+      if (!updated.rowCount) throw new ApiError(409, 'DESIGN_PLANNING_NOT_RETRYABLE');
+      await insertEvent(client, {
+        conversationId,
+        type: 'planning.retry_requested',
+        summary: '用户重新提交了需求分析',
+        data: { messageId }
+      });
+      return { messageId, status: 'queued' };
     });
     void processNextJob().catch(() => {});
     return result;
@@ -1512,7 +1589,7 @@ const createDesignConversationService = ({
       role: 'assistant',
       kind: 'error',
       status: 'failed',
-      value: { text: userMessage }
+      value: { text: userMessage, retryableMessageId: job.message_id }
     });
     await insertEvent(client, {
       conversationId: job.conversation_id,
@@ -2136,6 +2213,7 @@ const createDesignConversationService = ({
     processNextJob,
     recordToolQuote,
     registerUploadedAssets,
+    retryPlanning,
     revokeAuthorization,
     startWorker,
     stopWorker,

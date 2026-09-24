@@ -9,6 +9,7 @@ import {
   increaseDesignExecutionBudget,
   quoteDesignAgentExecution,
   recordDesignToolQuote,
+  retryDesignPlanning,
   sendDesignMessage,
   uploadDesignAttachments
 } from './designConversations';
@@ -81,6 +82,20 @@ describe('design conversation client contract', () => {
       attachments: [],
       sourceArtifactIds: ['artifact-1']
     });
+  });
+
+  it('retries the stored planning job without resending prompt text or file bytes', async () => {
+    authFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      messageId: 'message-1',
+      status: 'queued'
+    }, 202));
+    await expect(retryDesignPlanning('conversation-1', 'message-1')).resolves.toEqual({
+      messageId: 'message-1',
+      status: 'queued'
+    });
+    expect(authFetch.mock.calls[0][0]).toContain('/messages/message-1/retry');
+    expect(authFetch.mock.calls[0][1]).toEqual({ method: 'POST' });
   });
 
   it('records a verified quote before a tool target can be associated', async () => {
