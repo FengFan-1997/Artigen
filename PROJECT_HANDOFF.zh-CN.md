@@ -1,10 +1,11 @@
 # Artigen 项目正式 Handoff
 
-## 2026-09-24 Agent 会话附件刷新恢复（开发候选，尚未部署）
+## 2026-09-24 Agent 会话附件刷新恢复（已部署 DEV，未发布生产）
 
 - 设计对话已上传的输入文件会保存在会话资产关联中；刷新后浏览器内的原始 `File` 对象消失。此前执行准备只遍历本机内存 `File`，因此即便对象存储资产仍可用，也可能错误地要求重新选择文件或没有把已有资产交给任务。
-- 候选修复根据执行计划中的客户端文件 ID，优先复用当前会话已登记的资产 ID；仅对尚未登记且本机仍有文件对象的输入上传；已有服务端资产和本机文件都缺失、或上传回执没有覆盖全部输入时，任务保持未启动并要求补全附件。输入次序和去重由独立解析函数确定。
-- 本候选仅改前端执行准备与纯逻辑测试，不改后端 API、数据库/迁移、对象存储协议、预算/报价、权限、账号、环境变量、支付或生产配置。本地 `pnpm --filter personal test` 通过（63 个文件、233/233）；前端 type-check、变更文件 ESLint、production build、`pnpm check:docs`、`pnpm check:workspace` 和 `git diff --check` 全通过。required CI、DEV 部署及真实带附件任务验证尚未完成。
+- 执行准备根据执行计划中的客户端文件 ID，优先复用当前会话已登记的资产 ID；仅对尚未登记且本机仍有文件对象的输入上传；已有服务端资产和本机文件都缺失、或上传回执没有覆盖全部输入时，任务保持未启动并要求补全附件。输入次序和去重由独立解析函数确定。
+- PR [#230](https://github.com/FengFan-1997/Artigen/pull/230) 已通过 required CI（核心质量门、Chromium/Firefox/WebKit 桌面与移动/平板 E2E、Agent Harness 和 Release gate）及 Vercel Preview，并于 2026-09-24 合入 `dev`。Render DEV `/api/meta` 精确返回 SHA `4572c7be261fbf192ec108be63712fff61da2901`；部署状态为 live，`/healthz` 与 `/readyz` 返回正常，数据库、S3、Provider、Agent 和设计对话 readiness 均通过。
+- 本地 `pnpm --filter personal test` 通过（63 个文件、233/233）；资产恢复与设计对话 service 定向测试 13/13；前端 type-check、变更文件 ESLint、production build、`pnpm check:docs`、`pnpm check:workspace`、`git diff --check` 全通过。规划 Provider 当前限流，本次没有执行真实带附件任务，因此实际在线附件执行/下载链路仍待 Provider 恢复后验收。该变更未发布生产，未做支付测试，也未调整账号、凭据或平台配置。
 
 ## 2026-09-24 同会话跨运行文件续做（已部署 DEV，未发布生产）
 
