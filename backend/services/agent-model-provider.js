@@ -2501,10 +2501,10 @@ class OllamaAgentModelProvider {
             }
             if (correctablePlanError) {
               planValidationAttempts += 1;
-              if (runtimeV2 && planValidationAttempts >= 2) {
-                // The current TaskSpec plan was already server-published. Two
-                // invalid restatements are enough evidence that more forced
-                // plan retries would be a model loop, not useful correction.
+              if (planValidationAttempts >= 2 && (runtimeV2 || planPublished)) {
+                // Keep the last server-published plan when a model repeatedly
+                // emits an invalid update. Plan progress is advisory; a bad
+                // restatement must not discard completed work or fail delivery.
                 planValidationAttempts = 0;
                 planUpdateSuppressed = true;
                 completedOutput = {
@@ -2513,8 +2513,10 @@ class OllamaAgentModelProvider {
                   content: JSON.stringify({
                     accepted: true,
                     changed: false,
-                    steps: taskSpec.plan.map(({ id, label, status }) => ({ id, label, status })),
-                    correction: 'The server kept the existing valid plan. Continue the task or answer without calling update_plan again.'
+                    ...(runtimeV2 ? {
+                      steps: taskSpec.plan.map(({ id, label, status }) => ({ id, label, status }))
+                    } : {}),
+                    correction: 'The last valid server-published plan is preserved. Continue the task and deliver its required outputs without calling update_plan again.'
                   })
                 };
               } else {
@@ -3116,6 +3118,7 @@ class OllamaAgentModelProvider {
           });
         }
       }
+      if (!runtimeV2 && planUpdateSuppressed) allowedToolNames.delete('update_plan');
       const request = this.buildChatPayload(requestMessages, capabilities, toolProfile, {
         allowedToolNames,
         thinkingEnabled: runtimeV2 ? false : undefined,
