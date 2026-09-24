@@ -763,6 +763,7 @@ const eventLabel = (type: string) => {
     'run.cancelled': ['任务已停止', 'Run stopped'],
     'run.input_received': ['收到你的补充', 'User input received'],
     'takeover.ended': ['接管已结束', 'Takeover ended'],
+    'plan.update.ignored': ['无效计划更新已忽略', 'Invalid plan update ignored'],
     'subagent.created': ['子 Agent 已创建', 'Subagent created'],
     'subagent.started': ['子 Agent 已启动', 'Subagent started'],
     'subagent.progress': ['子 Agent 有新进展', 'Subagent progress'],

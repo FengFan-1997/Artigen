@@ -989,6 +989,14 @@ const createAgentWorkerService = ({
       let taskSpec = runtimeV2
         ? (modelResumeState?.taskSpec || objectivePayload.taskSpec || null)
         : null;
+      let lastPersistedPlan = Array.isArray(context.run.checkpoint?.plan)
+        ? context.run.checkpoint.plan
+        : [];
+      const savePublishedPlan = async (input) => {
+        const saved = await runService.savePlan(input);
+        lastPersistedPlan = Array.isArray(saved?.steps) ? saved.steps : input.plan;
+        return saved;
+      };
       let projectMemory = null;
       let latestSemanticVerification = modelResumeState?.semanticVerificationResult ||
         modelResumeState?.pendingVerifierResult?.result ||
@@ -1265,7 +1273,7 @@ const createAgentWorkerService = ({
             usageItems: { source: 'runtime_v2_planner', ...planned.usage }
           });
         }
-        await runService.savePlan({
+        await savePublishedPlan({
           ...runLease,
           plan: taskSpec.plan.map((step) => ({
             id: step.id,
@@ -1311,7 +1319,7 @@ const createAgentWorkerService = ({
           planPublished: true
         };
         await runService.saveModelCheckpoint({ ...runLease, value: modelResumeState });
-        await runService.savePlan({
+        await savePublishedPlan({
           ...runLease,
           plan: taskSpec.plan.map((step) => ({
             id: step.id,
@@ -1917,18 +1925,40 @@ const createAgentWorkerService = ({
               step.id && step.label &&
               ['pending', 'in_progress', 'completed'].includes(step.status)
             ));
-            if (
-              normalized.length < 2 ||
-              normalized.length > 12 ||
-              normalized.filter((step) => step.status === 'in_progress').length > 1
-            ) {
-              throw new ApiError(400, 'AGENT_PLAN_INVALID');
+            let savedPlan;
+            try {
+              if (
+                normalized.length < 2 ||
+                normalized.length > 12 ||
+                normalized.filter((step) => step.status === 'in_progress').length > 1
+              ) {
+                throw new ApiError(400, 'AGENT_PLAN_INVALID');
+              }
+              savedPlan = await savePublishedPlan({
+                ...runLease,
+                plan: normalized,
+                explanation: String(explanation || '').trim().slice(0, 500)
+              });
+            } catch (error) {
+              if (error?.code !== 'AGENT_PLAN_INVALID' || lastPersistedPlan.length < 2) {
+                throw error;
+              }
+              if (typeof runService.appendRuntimeEvent === 'function') {
+                await runService.appendRuntimeEvent({
+                  ...runLease,
+                  type: 'plan.update.ignored',
+                  phase: 'running',
+                  summary: '计划更新无效，已保留最近一份有效计划并继续任务',
+                  data: { errorCode: 'AGENT_PLAN_INVALID' }
+                }).catch(() => {});
+              }
+              return {
+                accepted: true,
+                changed: false,
+                steps: lastPersistedPlan,
+                correction: 'The latest plan update was invalid. The last valid plan remains active; continue the task without replacing it.'
+              };
             }
-            const savedPlan = await runService.savePlan({
-              ...runLease,
-              plan: normalized,
-              explanation: String(explanation || '').trim().slice(0, 500)
-            });
             await runService.appendStep({
               ...runLease,
               role: 'planner',

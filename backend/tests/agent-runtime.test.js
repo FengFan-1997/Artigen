@@ -1602,6 +1602,116 @@ test('worker passes decrypted objective deliverables into the parent model', asy
   assert.deepEqual(observed, [['report']]);
 });
 
+test('worker preserves the persisted plan when a later update is invalid', async () => {
+  const runId = '11111111-1111-4111-8111-111111111141';
+  const userId = '22222222-2222-4222-8222-222222222241';
+  const workerId = 'worker-plan-update-recovery-test';
+  const persistedPlan = [
+    { id: 'prepare', label: 'Create the requested files', phase: 'production', status: 'completed' },
+    { id: 'verify', label: 'Verify and deliver the files', phase: 'verification', status: 'in_progress' }
+  ];
+  let planUpdateResult = null;
+  let malformedPlanResult = null;
+  let ignoredEvent = null;
+  let failure = null;
+  let savePlanCalls = 0;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: { plan: persistedPlan },
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          checkpoint: { plan: persistedPlan },
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000)
+        },
+        payloads: [{
+          kind: 'objective',
+          value: { objective: 'Create and verify two files.', assetIds: [], deliverables: ['report'] }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async () => true,
+      getControlState: async () => ({
+        status: 'running',
+        cancel_requested: false,
+        pause_requested: false,
+        step_count: 0,
+        replan_count: 0,
+        consecutive_failures: 0,
+        unchanged_screenshots: 0
+      }),
+      savePlan: async () => {
+        savePlanCalls += 1;
+        throw new ApiError(400, 'AGENT_PLAN_INVALID');
+      },
+      appendRuntimeEvent: async (event) => {
+        if (event.type === 'plan.update.ignored') ignoredEvent = event;
+        return true;
+      },
+      appendStep: async () => true,
+      failRun: async (input) => {
+        failure = input;
+        return true;
+      },
+      markSandboxDestroyed: async () => true
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
+    },
+    sandbox: {
+      provision: async () => ({ name: 'sandbox-plan-update-recovery', displayUrl: null }),
+      systemShell: async () => ({ success: true, stdout: '', stderr: '' }),
+      destroy: async () => ({ ok: true })
+    },
+    model: {
+      execute: async (input) => {
+        planUpdateResult = await input.callbacks.updatePlan({
+          explanation: 'Replace the completed plan.',
+          steps: [
+            { id: 'replacement', label: 'Start over', status: 'in_progress' },
+            { id: 'verify', label: 'Verify and deliver the files', status: 'pending' }
+          ]
+        });
+        malformedPlanResult = await input.callbacks.updatePlan({
+          explanation: 'Replace the completed plan.',
+          steps: [{ id: 'only-one', label: 'Incomplete replacement', status: 'in_progress' }]
+        });
+        throw new ApiError(500, 'AGENT_TEST_STOP');
+      }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), { code: 'AGENT_TEST_STOP' });
+  assert.equal(savePlanCalls, 1);
+  assert.deepEqual(planUpdateResult, {
+    accepted: true,
+    changed: false,
+    steps: persistedPlan,
+    correction: 'The latest plan update was invalid. The last valid plan remains active; continue the task without replacing it.'
+  });
+  assert.deepEqual(malformedPlanResult, planUpdateResult);
+  assert.equal(ignoredEvent?.type, 'plan.update.ignored');
+  assert.equal(failure?.errorCode, 'AGENT_TEST_STOP');
+});
+
 test('worker fails a queued run before any execution when its pinned model differs', async () => {
   const runId = '11111111-1111-4111-8111-111111111121';
   const workerId = 'worker-model-profile-mismatch';

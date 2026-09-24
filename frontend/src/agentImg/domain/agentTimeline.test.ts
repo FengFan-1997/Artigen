@@ -12,6 +12,10 @@ describe('durable conversation timeline', () => {
     expect(conversationTimeline([...events.reverse(), event('21', 'cost.updated')])).toHaveLength(20);
     expect(conversationTimeline(events)[0].eventId).toBe('1');
   });
+  it('keeps ignored plan updates visible so task recovery is transparent', () => {
+    const ignored = event('22', 'plan.update.ignored');
+    expect(conversationTimeline([ignored])).toEqual([ignored]);
+  });
   it('renders the owned user message verbatim and supports older generic receipts', () => {
     expect(eventText(event('1', 'run.input_received', { messageText: '保留蓝色\n只修改标题' }))).toBe('保留蓝色\n只修改标题');
     expect(eventText(event('2', 'run.input_received'))).toBe('公开动作摘要');
