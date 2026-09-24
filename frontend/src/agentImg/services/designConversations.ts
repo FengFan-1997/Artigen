@@ -99,6 +99,7 @@ export type DesignExecutionPlan = {
     persistSession?: boolean;
   };
   assumptions?: string[];
+  conversationContextMessages?: number;
   complexity?: 'simple' | 'medium' | 'high';
   confidence?: number;
   skillIds?: string[];
