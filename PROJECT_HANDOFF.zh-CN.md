@@ -16,12 +16,14 @@
 - PR #226 的 Worker 级回归覆盖持久计划存在时的稳定 ID 无效与步骤数不足两类更新；两者都保留旧计划并继续执行，没有有效计划时仍保持拒绝。PR #226 已通过完整 required CI 并合入 `dev`，DEV API 与 Worker 已按同一精确 SHA 对齐。
 - 真实工作流尚未通过终态、刷新恢复和产物下载验收：当前阻塞出现在创建任务前的 Cloudflare 规划调用；没有创建 Agent Run、没有冻结点数。未修改数据库迁移、账号、平台配置、支付或生产。
 
-## 2026-09-24 规划 Provider 错误分类（PR #227 已部署 DEV）
+## 2026-09-24 规划 Provider 限流重试保护（已部署 DEV，主要任务仍受 Provider 限制）
 
-- PR #227 已通过 required CI 并合入 `dev`，Render DEV 已部署 merge SHA `77116c301286c158e56a2f3348c3b16d7db256d2`。它为规划调用保留通用失败分类、HTTP 状态与耗时，但不会持久化上游响应正文、URL 或传输原文。
-- DEV 真实规划在短时间内连续得到 `AGENT_CLOUDFLARE_RATE_LIMITED`。该分类此前仍按可重试瞬时错误处理，导致一次用户提交在模型层和规划队列两层叠加最多 9 次调用。内部调用记录没有 Cloudflare 的具体状态码，不能断言是免费额度耗尽、临时容量不足或网络故障。
-- 本 PR 候选让 Cloudflare `AGENT_CLOUDFLARE_RATE_LIMITED` 对单次设计规划立即停止模型重试，并终止该规划任务的自动队列重放；用户会看到可理解的限流/容量提示，说明尚未创建 Agent 任务或冻结点数。超时、传输与上游 5xx 的原有限次重试、其他 Agent Runtime 策略以及 Provider/模型配置保持不变。该候选无迁移、环境变量、账号、密钥、支付或生产配置变化。
-- 本 PR 定向 Provider 回归 `9/9`、设计会话回归 `28/28`、workspace / 文档检查和预算检查通过。`pnpm check:core` 的 lint、类型、前端 `226/226`、后端 `694/694`（另有 `100` 项按策略跳过）、邮件 `7/7`、质量集 `50/50` 均通过；整条命令在 Vite 已产出构建文件后遇到本机进程段错误 `139`。单独重跑 `pnpm build` 成功，因此这是一次本机工具进程异常而非复现的构建失败。required CI、合并后的 DEV 状态与真实工作流复验仍待完成；在这些证据完成前不宣称修复已部署，也不再发起新的真实模型任务。
+- PR #227 已通过 required CI 并合入 `dev`，Render DEV 部署 SHA 为 `77116c301286c158e56a2f3348c3b16d7db256d2`；保留不含上游响应正文、URL 与传输原文的规划错误分类和筛选后的状态/耗时。
+- DEV 真实规划曾在约 20 秒内得到 9 次 `AGENT_CLOUDFLARE_RATE_LIMITED` 失败调用：模型内部重试与规划队列重放相乘。数据库未保留 Cloudflare 内部状态码，不能断言是每日免费配额耗尽还是暂时容量不足。
+- PR #228 将 `AGENT_CLOUDFLARE_RATE_LIMITED` 作为当前规划 job 的终止错误：不重试当前模型请求，也不自动重排 durable planning job；超时、传输和上游 5xx 仍保留既有限次重试。规划错误提示用户模型受到限流或容量限制，并明确规划阶段没有创建 Agent Run 或冻结点数。未改变 Agent Runtime、Provider/model 配置、fallback、环境变量、迁移、账号、支付或生产。
+- PR #228 已通过 required CI run `35976458398`（Core、Agent Harness、chaos、全部 Chromium/Firefox/WebKit E2E 与 Release gate），并于 2026-09-24 合入 `dev`。Render DEV `/api/meta` 精确为 `41842d2fa1171c11b8702a300cfdcd92dfb8e6a2`；`/readyz` 全部检查通过，迁移 `031_agent_run_artifact_lineage`，Cloudflare GPT-OSS 与 Kolors readiness 通过，Provider fallback 仍关闭；`/api/agent/status` 显示 Worker / 模型 / browser / egress / desktop relay 在线、queue=0。
+- 合并后仅提交了一次虚构文本文件需求。页面显示限流/容量提示，未产生 plan/quote 或 Agent Run，也未冻结点数；真实任务仍没有成功。此请求未能验证 5 点报价边界、Worker 沙箱、文件登记、刷新恢复、下载或最终账务，因为规划调用在任务创建前就失败。
+- Cloudflare 实际限流原因仍不确定，公开状态正常不能证明单一账号配额或容量情况。没有登录/修改 Cloudflare 账户、开通付费或启用 Provider fallback；Production 未触碰。
 
 ## 2026-09-22 主工作流协作记录与执行中补充（开发候选，未部署）
 
