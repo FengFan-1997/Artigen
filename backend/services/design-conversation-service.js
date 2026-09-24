@@ -29,8 +29,18 @@ const { TEXT_MODEL, IMAGE_MODEL } = require('../lib/agent-models');
 
 const isTerminalCloudflareFailure = (error) => {
   const code = String(error?.code || '');
+  // Rate limits can be transient for a human, but automatically replaying a
+  // durable planning job multiplies provider calls across both retry layers.
+  // Fail this submission once and let the user retry later instead.
+  if (code === 'AGENT_CLOUDFLARE_RATE_LIMITED') return true;
   return /^AGENT_CLOUDFLARE_/.test(code) && error?.retryable !== true;
 };
+
+const shouldRetryDesignPlannerProviderFailure = (error, attempt) => (
+  Number(attempt) < 3 &&
+  String(error?.code || '') !== 'AGENT_CLOUDFLARE_RATE_LIMITED' &&
+  classifyRuntimeFailure(error).category === 'transient_provider'
+);
 
 const ROUTE_KINDS = new Set(['reply', 'local_tool', 'tool_task', 'agent_run']);
 const EXECUTION_STATUSES = new Set([
@@ -919,7 +929,7 @@ const createDesignConversationService = ({
         }
         const classified = classifyRuntimeFailure(error);
         const schemaRetry = classified.category === 'validation';
-        const providerRetry = classified.category === 'transient_provider';
+        const providerRetry = shouldRetryDesignPlannerProviderFailure(error, attempt);
         if (
           schemaRetry &&
           phase === 'router' &&
@@ -1443,12 +1453,15 @@ const createDesignConversationService = ({
       [job.message_id, workerId, code, terminalCloudflareFailure]
     );
     if (state.rows[0]?.status !== 'failed') return;
+    const userMessage = error?.code === 'AGENT_CLOUDFLARE_RATE_LIMITED'
+      ? '文本模型当前受到限流或容量限制，暂时无法分析这次需求。规划阶段没有创建 Agent 任务或冻结点数；请稍后重试。'
+      : '这次需求没有完成分析。你可以直接重试，系统不会因此创建任务或扣点。';
     const assistant = await insertMessage(client, {
       conversationId: job.conversation_id,
       role: 'assistant',
       kind: 'error',
       status: 'failed',
-      value: { text: '这次需求没有完成分析。你可以直接重试，系统不会因此创建任务或扣点。' }
+      value: { text: userMessage }
     });
     await insertEvent(client, {
       conversationId: job.conversation_id,
@@ -2076,6 +2089,7 @@ module.exports = {
   normalizePlannerDecision,
   normalizeMemoryCandidates,
   isTerminalCloudflareFailure,
+  shouldRetryDesignPlannerProviderFailure,
   decodeExecutionPlan,
   explicitlyContinuesArtifact,
   repairPlannerRoute,

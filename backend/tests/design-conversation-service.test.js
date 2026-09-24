@@ -9,7 +9,8 @@ const {
   isTerminalCloudflareFailure,
   normalizePlannerDecision,
   plannerMessages,
-  repairPlannerRoute
+  repairPlannerRoute,
+  shouldRetryDesignPlannerProviderFailure
 } = require('../services/design-conversation-service');
 const {
   decryptDesignMessage,
@@ -443,7 +444,7 @@ test('planner stops retrying terminal Cloudflare configuration and request failu
   }
   assert.equal(isTerminalCloudflareFailure({
     code: 'AGENT_CLOUDFLARE_RATE_LIMITED', retryable: true
-  }), false);
+  }), true);
   assert.equal(isTerminalCloudflareFailure({
     code: 'AGENT_CLOUDFLARE_UPSTREAM_UNAVAILABLE', retryable: true
   }), false);
@@ -451,6 +452,23 @@ test('planner stops retrying terminal Cloudflare configuration and request failu
     code: 'AGENT_CLOUDFLARE_REQUEST_FAILED'
   }), true);
   assert.equal(isTerminalCloudflareFailure({ code: 'DESIGN_PLANNER_FAILED' }), false);
+});
+
+test('planner does not automatically replay Cloudflare rate limits', () => {
+  assert.equal(shouldRetryDesignPlannerProviderFailure({
+    code: 'AGENT_CLOUDFLARE_RATE_LIMITED', retryable: true
+  }, 1), false);
+  assert.equal(shouldRetryDesignPlannerProviderFailure({
+    code: 'AGENT_CLOUDFLARE_UPSTREAM_UNAVAILABLE', retryable: true,
+    failures: [{ status: 503 }]
+  }, 1), true);
+  assert.equal(shouldRetryDesignPlannerProviderFailure({
+    code: 'AGENT_CLOUDFLARE_UPSTREAM_UNAVAILABLE', retryable: true,
+    failures: [{ status: 503 }]
+  }, 3), false);
+  assert.equal(shouldRetryDesignPlannerProviderFailure({
+    code: 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN', retryable: false
+  }, 1), false);
 });
 
 test('conversation routes register the public contract without touching PostgreSQL when injected', () => {
