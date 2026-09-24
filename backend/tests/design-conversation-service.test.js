@@ -545,9 +545,57 @@ test('conversation routes register the public contract without touching PostgreS
     rateLimit: () => (_req, _res, next) => next()
   }));
   assert.ok(registered.some(([method, path]) => method === 'POST' && path === '/api/design-conversations'));
+  assert.ok(registered.some(([method, path]) => method === 'POST' && path.endsWith('/:messageId/retry')));
   assert.ok(registered.some(([method, path]) => method === 'GET' && path.endsWith('/:conversationId/events')));
   assert.ok(registered.some(([method, path]) => method === 'POST' && path.endsWith('/:executionId/agent-quote')));
   assert.ok(registered.some(([method, path]) => method === 'POST' && path.endsWith('/:conversationId/authorizations')));
+});
+
+test('conversation retry route forwards the authenticated owner and original message ID', async () => {
+  let retryHandler = null;
+  let captured = null;
+  const app = {
+    get() {},
+    post(path, ...handlers) {
+      if (path.endsWith('/:messageId/retry')) retryHandler = handlers.at(-1);
+    },
+    delete() {}
+  };
+  installDesignConversationRoutes(app, {
+    env: { DESIGN_CONVERSATION_ENABLED: 'true' },
+    pool: {},
+    designConversationService: {
+      startWorker() { return true; },
+      async retryPlanning(input) {
+        captured = input;
+        return { messageId: input.messageId, status: 'queued' };
+      }
+    },
+    rateLimit: () => (_req, _res, next) => next()
+  });
+  const req = {
+    authResolution: { ok: true, userId: 'user-1', dbUserId: 'db-user-1' },
+    params: { conversationId: 'conversation-1', messageId: 'message-1' }
+  };
+  const res = {
+    statusCode: 0,
+    body: null,
+    status(code) { this.statusCode = code; return this; },
+    json(value) { this.body = value; }
+  };
+  assert.equal(typeof retryHandler, 'function');
+  await retryHandler(req, res);
+  assert.deepEqual(captured, {
+    userId: 'db-user-1',
+    conversationId: 'conversation-1',
+    messageId: 'message-1'
+  });
+  assert.equal(res.statusCode, 202);
+  assert.deepEqual(res.body, {
+    ok: true,
+    messageId: 'message-1',
+    status: 'queued'
+  });
 });
 
 test('conversation event stream resumes from Last-Event-ID and emits durable event ids', async () => {

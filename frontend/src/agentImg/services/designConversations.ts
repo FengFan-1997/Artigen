@@ -74,6 +74,8 @@ export type DesignMessage = {
   role: 'user' | 'assistant';
   kind: 'text' | 'clarification' | 'execution' | 'error';
   status: 'pending' | 'complete' | 'failed';
+  retryableMessageId?: string;
+  planningStatus?: 'queued' | 'running' | 'succeeded' | 'failed';
   text: string;
   attachments: DesignAttachmentManifest[];
   sourceArtifacts: DesignSourceArtifact[];
@@ -277,6 +279,14 @@ export const sendDesignMessage = async (
   return result.message;
 };
 
+export const retryDesignPlanning = async (conversationId: string, messageId: string) => {
+  const result = await requestJson<{ ok: boolean; messageId: string; status: 'queued' }>(
+    `/api/design-conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/retry`,
+    { method: 'POST' }
+  );
+  return { messageId: result.messageId, status: result.status };
+};
+
 export const uploadDesignAttachments = async (
   conversationId: string,
   files: Array<{ clientId: string; file: File }>
@@ -408,6 +418,7 @@ export const openDesignEventStream = (
   const known = [
     'conversation.created',
     'message.received',
+    'planning.retry_requested',
     'clarification.required',
     'execution.ready',
     'planning.failed',
