@@ -238,6 +238,8 @@ const installAgentRoutes = (app, deps = {}) => {
       userId: auth.dbUserId || auth.userId,
       objective: body.objective,
       assetIds: body.assetIds,
+      sourceArtifactIds: body.sourceArtifactIds,
+      sourceConversationId: body.sourceConversationId,
       maxCredits: body.maxCredits,
       capabilities: body.capabilities,
       deliverables: body.deliverables,

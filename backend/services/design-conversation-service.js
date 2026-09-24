@@ -178,6 +178,18 @@ const normalizeAttachmentManifest = (value) => {
   });
 };
 
+const normalizeSourceArtifactIds = (value) => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new ApiError(400, 'DESIGN_SOURCE_ARTIFACTS_INVALID', { field: 'sourceArtifactIds' });
+  }
+  const ids = [...new Set(value.map((entry) => String(entry || '').trim()))];
+  if (ids.some((id) => !UUID_RE.test(id))) {
+    throw new ApiError(400, 'DESIGN_SOURCE_ARTIFACTS_INVALID', { field: 'sourceArtifactIds' });
+  }
+  return ids;
+};
+
 const titleFromText = (value) => {
   const compact = String(value || '').replace(/\s+/g, ' ').trim();
   return sanitizeText(compact.slice(0, 42) || '新的设计任务', 160);
@@ -211,6 +223,7 @@ const publicMessage = (row, env) => {
     status: row.status,
     text: String(value?.text || ''),
     attachments: Array.isArray(value?.attachments) ? value.attachments : [],
+    sourceArtifacts: Array.isArray(value?.sourceArtifacts) ? value.sourceArtifacts : [],
     questions: Array.isArray(value?.questions) ? value.questions : [],
     assumptions: Array.isArray(value?.assumptions) ? value.assumptions : [],
     memoryCandidates: Array.isArray(value?.memoryCandidates) ? value.memoryCandidates : [],
@@ -370,17 +383,51 @@ const inferDeliverables = (text, proposed = [], defaultReport = true) => {
   return result.slice(0, 5);
 };
 
-const repairPlannerRoute = ({ raw, text }) => {
+const resolveDeliverables = (text, proposed = [], sourceArtifacts = []) => {
+  const requested = inferDeliverables(text, Object.keys(DELIVERABLE_NOUNS), false);
+  const planned = inferDeliverables(text, proposed, false);
+  const inherited = sourceArtifacts.flatMap((artifact) => {
+    const filename = String(artifact.filename || '').toLowerCase();
+    const mimeType = String(artifact.mimeType || '').toLowerCase();
+    const kinds = [];
+    if (artifact.role === 'website') kinds.push('website');
+    if (/^image\//u.test(mimeType) || /\.(?:png|jpe?g|webp|gif)$/u.test(filename)) kinds.push('image');
+    if (/(?:spreadsheet|excel|csv)/u.test(mimeType) || /\.(?:csv|xlsx?)$/u.test(filename)) kinds.push('spreadsheet');
+    if (/(?:presentation|powerpoint)/u.test(mimeType) || /\.(?:pptx?)$/u.test(filename)) kinds.push('presentation');
+    if (
+      mimeType === 'application/pdf' ||
+      /^text\//u.test(mimeType) ||
+      /wordprocessingml/u.test(mimeType) ||
+      /\.(?:md|txt|pdf|docx?)$/u.test(filename)
+    ) kinds.push('report');
+    return kinds;
+  }).filter((kind) => !explicitlyNegatesDeliverable(text, kind));
+  const result = [...new Set([...requested, ...planned, ...inherited])];
+  if (result.length) return result.slice(0, 5);
+  if (sourceArtifacts.length && explicitlyNegatesDeliverable(text, 'image')) return [];
+  return inferDeliverables(text, proposed);
+};
+
+const explicitlyContinuesArtifact = (text, sourceArtifacts = []) => (
+  sourceArtifacts.length > 0 &&
+  /(?:修改|修订|完善|更新|续做|继续(?:做|修改|完善|制作|生成|编辑|输出)|改写|导出|交付|创建|生成|保存|revise|edit|continue\s+(?:editing|revising|creating|generating)|export|deliver|create|generate)/iu.test(String(text || ''))
+);
+
+const repairPlannerRoute = ({ raw, text, sourceArtifacts = [] }) => {
   const value = String(text || '').trim();
   // User constraints outrank both model output and keyword-based route repair.
   // Attachments and mentions of tools are not permission to start an executor.
   if (requestsTextOnly(value)) return { ...raw, routeKind: 'reply' };
+  if (explicitlyContinuesArtifact(value, sourceArtifacts)) {
+    raw = { ...raw, routeKind: 'agent_run' };
+  }
   const imageExcluded = explicitlyNegatesDeliverable(value, 'image');
   if (imageExcluded) {
     const permitted = inferDeliverables(value, raw.deliverables, false);
     raw = {
       ...raw,
-      routeKind: (raw.routeKind || raw.route) === 'agent_run' && permitted.length ? 'agent_run' : 'reply',
+      routeKind: (raw.routeKind || raw.route) === 'agent_run' &&
+        (permitted.length || explicitlyContinuesArtifact(value, sourceArtifacts)) ? 'agent_run' : 'reply',
       deliverables: permitted
     };
   }
@@ -431,15 +478,36 @@ const repairPlannerRoute = ({ raw, text }) => {
   return raw;
 };
 
+const createExplicitPlannerFallback = ({ text, sourceArtifacts = [] }) => {
+  const value = String(text || '');
+  if (requestsTextOnly(value)) return null;
+  const asksForAction = /(?:请|帮我|需要|开始|直接|创建|生成|制作|修改|修订|完善|保存|输出|导出|交付|运行|验证|build|create|generate|revise|edit|export|deliver|run|verify)/iu.test(value);
+  const asksForFileWork = /(?:创建|生成|制作|修改|修订|完善|保存|输出|导出|交付|create|generate|revise|edit|save|export|deliver)[\s\S]{0,80}(?:文件|文档|多文件|多个文件|两个文件|\.(?:md|txt|pdf|xlsx?|pptx?))|(?:文件|文档|多文件|多个文件|两个文件|\.(?:md|txt|pdf|xlsx?|pptx?))[\s\S]{0,80}(?:创建|生成|制作|修改|修订|完善|保存|输出|导出|交付|create|generate|revise|edit|save|export|deliver)/iu.test(value);
+  const asksForScriptWork = /(?:运行|执行|启动|run|execute)[\s\S]{0,35}(?:脚本|代码|命令|验证|检查|script|code|command|validation|check)|(?:脚本|代码|命令|script|code|command)[\s\S]{0,35}(?:运行|执行|run|execute)/iu.test(value);
+  const asksForResearchWork = /(?:调研|审计|检索并整理|收集资料并|research and|audit and|browse and)[\s\S]{0,60}(?:报告|文件|网页|网站|report|file|website|web page)/iu.test(value);
+  const asksForComputerWork = asksForFileWork || asksForScriptWork || asksForResearchWork;
+  const continuesArtifact = explicitlyContinuesArtifact(value, sourceArtifacts);
+  if (!asksForAction || (!asksForComputerWork && !continuesArtifact)) return null;
+  return {
+    routeKind: 'agent_run',
+    complexity: 'medium',
+    confidence: 0.45,
+    reply: '我已按你明确提出的文件执行要求整理出一个 Agent 计划。你可以先查看计划和服务端实时报价，再选择是否启动；规划本身不会创建运行或冻结点数。',
+    deliverables: resolveDeliverables(value, [], sourceArtifacts),
+    steps: ['读取本轮要求与选中的上一版文件', '完成文件修改或生成', '运行交付检查并提供可下载文件']
+  };
+};
+
 const normalizePlannerDecision = ({
   raw,
   text,
   attachments,
+  sourceArtifacts = [],
   clarificationRounds,
   creditCap,
   textModel = TEXT_MODEL
 }) => {
-  const repaired = repairPlannerRoute({ raw, text });
+  const repaired = repairPlannerRoute({ raw, text, sourceArtifacts });
   raw = repaired;
   let routeKind = String(raw.routeKind || raw.route || 'reply').trim().toLowerCase();
   if (!ROUTE_KINDS.has(routeKind)) routeKind = 'reply';
@@ -562,7 +630,7 @@ const normalizePlannerDecision = ({
 
   if (routeKind === 'agent_run') {
     const origins = explicitHttpsOrigins(text);
-    const deliverables = inferDeliverables(text, raw.deliverables);
+    const deliverables = resolveDeliverables(text, raw.deliverables, sourceArtifacts);
     const plannerSteps = normalizePlannerSteps(raw.steps);
     return {
       routeKind,
@@ -725,6 +793,7 @@ const plannerMessages = ({
   history,
   message,
   attachmentCount,
+  sourceArtifacts = [],
   projectMemory = null,
   textModel = TEXT_MODEL
 }) => [{
@@ -739,6 +808,11 @@ Ask at most two questions only when the missing answer materially changes the re
     recentConversation: history.slice(-6),
     currentMessage: message,
     attachmentCount,
+    sourceArtifacts: sourceArtifacts.map((source) => ({
+      filename: source.filename,
+      mimeType: source.mimeType,
+      byteSize: source.byteSize
+    })),
     projectMemory
   })
 }];
@@ -765,6 +839,7 @@ const createDesignConversationService = ({
     thinkingEnabled,
     conversation,
     maxTokens,
+    malformedFallback = null,
     signal = null
   }) => {
     let requestMessages = Array.isArray(messages) ? [...messages] : [];
@@ -840,6 +915,16 @@ const createDesignConversationService = ({
         const classified = classifyRuntimeFailure(error);
         const schemaRetry = classified.category === 'validation';
         const providerRetry = classified.category === 'transient_provider';
+        if (
+          schemaRetry &&
+          phase === 'router' &&
+          attempt >= 2 &&
+          error?.code === 'DESIGN_PLANNER_OUTPUT_INVALID' &&
+          typeof malformedFallback === 'function'
+        ) {
+          const fallback = malformedFallback();
+          if (fallback) return fallback;
+        }
         if ((!schemaRetry && !providerRetry) || attempt >= 3) throw error;
         if (schemaRetry) {
           schemaCorrectionAttempt += 1;
@@ -1058,17 +1143,59 @@ const createDesignConversationService = ({
     });
   };
 
-  const addMessage = async ({ userId, conversationId, message, attachments }) => {
+  const addMessage = async ({ userId, conversationId, message, attachments, sourceArtifactIds }) => {
     requireEnabled();
     const text = normalizeMessageText(message);
     const manifest = normalizeAttachmentManifest(attachments);
+    const sourceIds = normalizeSourceArtifactIds(sourceArtifactIds);
+    if (manifest.length + sourceIds.length > 10) {
+      throw new ApiError(400, 'DESIGN_ATTACHMENTS_INVALID', { field: 'attachments' });
+    }
     const result = await transaction(pool, async (client) => {
-      const { row } = await resolveOwnedConversation(client, { userId, conversationId, lock: true });
+      const { row, dbUserId } = await resolveOwnedConversation(client, { userId, conversationId, lock: true });
       if (row.status !== 'active') throw new ApiError(409, 'DESIGN_CONVERSATION_ARCHIVED');
+      let sourceArtifacts = [];
+      if (sourceIds.length) {
+        const sources = await client.query(
+          `SELECT DISTINCT artifact.id AS artifact_id,artifact.filename,artifact.mime_type,
+                  artifact.byte_size,artifact.version,artifact.role,source_run.id AS source_run_id
+             FROM design_executions execution
+             JOIN agent_runs source_run ON source_run.id=execution.agent_run_id
+             JOIN agent_artifacts artifact ON artifact.run_id=source_run.id
+             JOIN assets asset ON asset.id=artifact.asset_id
+            WHERE execution.conversation_id=$1
+              AND source_run.user_id=$2
+              AND source_run.status='succeeded'
+              AND artifact.id=ANY($3::uuid[])
+              AND artifact.asset_id IS NOT NULL
+              AND artifact.verification_status='passed'
+              AND (artifact.expires_at IS NULL OR artifact.expires_at>clock_timestamp())
+              AND asset.owner_user_id=$2
+              AND asset.gc_state='active' AND asset.delete_requested_at IS NULL
+              AND (asset.expires_at IS NULL OR asset.expires_at>clock_timestamp())`,
+          [conversationId, dbUserId, sourceIds]
+        );
+        if (sources.rowCount !== sourceIds.length) {
+          throw new ApiError(404, 'DESIGN_SOURCE_ARTIFACT_NOT_FOUND');
+        }
+        const filenames = sources.rows.map((source) => String(source.filename || '').trim().toLowerCase());
+        if (new Set(filenames).size !== filenames.length) {
+          throw new ApiError(400, 'DESIGN_SOURCE_ARTIFACT_FILENAME_DUPLICATE');
+        }
+        sourceArtifacts = sources.rows.map((source) => ({
+          artifactId: source.artifact_id,
+          filename: sanitizeText(source.filename, 240),
+          mimeType: sanitizeText(source.mime_type, 160),
+          byteSize: Number(source.byte_size || 0),
+          version: Number(source.version || 1),
+          role: source.role,
+          sourceRunId: source.source_run_id
+        }));
+      }
       const inserted = await insertMessage(client, {
         conversationId,
         role: 'user',
-        value: { text, attachments: manifest }
+        value: { text, attachments: manifest, sourceArtifacts }
       });
       await client.query(
         `INSERT INTO design_planning_jobs (message_id,conversation_id)
@@ -1087,7 +1214,7 @@ const createDesignConversationService = ({
         conversationId,
         type: 'message.received',
         summary: '已收到设计请求',
-        data: { messageId: inserted.id, attachmentCount: manifest.length }
+        data: { messageId: inserted.id, attachmentCount: manifest.length, sourceArtifactCount: sourceArtifacts.length }
       });
       return publicMessage(inserted, env);
     });
@@ -1216,6 +1343,7 @@ const createDesignConversationService = ({
       options: _embeddedOptions,
       browserConfig: _embeddedBrowserConfig,
       assumptions: _embeddedAssumptions,
+      sourceArtifactIds: _embeddedSourceArtifactIds,
       ...displayPlan
     } = rawPlan;
     const storedPlan = sealExecutionPlan({
@@ -1234,7 +1362,8 @@ const createDesignConversationService = ({
         objective: decision.objective || undefined,
         browserConfig: decision.browserConfig || undefined,
         taskSpec: decision.taskSpec || undefined,
-        assumptions: decision.assumptions || []
+        assumptions: decision.assumptions || [],
+        sourceArtifactIds: decision.plan?.sourceArtifactIds || []
       },
       env
     });
@@ -1360,6 +1489,7 @@ const createDesignConversationService = ({
             history: context.history.map((message) => ({ role: message.role, text: message.text })),
             message: context.current.text,
             attachmentCount: contextualAttachments.length,
+            sourceArtifacts: context.current.sourceArtifacts || [],
             projectMemory,
             textModel: agentConfig.modelName
           }),
@@ -1368,12 +1498,17 @@ const createDesignConversationService = ({
           thinkingEnabled: false,
           conversation: context.conversation,
           maxTokens: agentConfig.stageMaxOutputTokens.router,
+          malformedFallback: () => createExplicitPlannerFallback({
+            text: context.current.text,
+            sourceArtifacts: context.current.sourceArtifacts || []
+          }),
           signal
         });
         const routed = normalizePlannerDecision({
           raw,
           text: context.current.text,
           attachments: contextualAttachments,
+          sourceArtifacts: context.current.sourceArtifacts || [],
           clarificationRounds: Number(context.conversation.clarification_rounds || 0),
           creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
           textModel: agentConfig.modelName
@@ -1385,6 +1520,15 @@ const createDesignConversationService = ({
           creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
           allowMemory: runtimeV2 && agentConfig.projectMemoryEnabled && Boolean(context.conversation.project_id)
         });
+        if (decision.routeKind === 'agent_run' && context.current.sourceArtifacts?.length) {
+          decision = {
+            ...decision,
+            plan: {
+              ...(decision.plan || {}),
+              sourceArtifactIds: context.current.sourceArtifacts.map((source) => source.artifactId)
+            }
+          };
+        }
         if (
           decision.routeKind === 'agent_run' &&
           runtimeV2 &&
@@ -1908,6 +2052,7 @@ const createDesignConversationService = ({
 
 module.exports = {
   CLOUD_TOOLS,
+  createExplicitPlannerFallback,
   EXECUTION_STATUSES,
   IMAGE_MODEL,
   ROUTE_KINDS,
@@ -1919,10 +2064,13 @@ module.exports = {
   explicitHttpsOrigins,
   getDesignConversationConfig,
   inferDeliverables,
+  resolveDeliverables,
   normalizeAttachmentManifest,
+  normalizeSourceArtifactIds,
   normalizePlannerDecision,
   normalizeMemoryCandidates,
   decodeExecutionPlan,
+  explicitlyContinuesArtifact,
   repairPlannerRoute,
   plannerMessages,
   safeJsonObject,

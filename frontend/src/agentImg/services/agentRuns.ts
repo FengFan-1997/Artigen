@@ -181,6 +181,7 @@ export type AgentRun = {
   };
   approvals?: AgentApproval[];
   artifacts?: AgentArtifact[];
+  sourceArtifacts?: Array<AgentArtifact & { sourceRunId: string }>;
   subagents: AgentSubagent[];
   error: { code: string } | null;
   finalTextSha256?: string | null;
@@ -396,6 +397,8 @@ export const createAgentPlan = async (input: {
 export const createAgentRun = async (input: {
   objective: string;
   assetIds?: string[];
+  sourceArtifactIds?: string[];
+  sourceConversationId?: string;
   planToken?: string;
   planRevision?: number;
   maxCredits: number;

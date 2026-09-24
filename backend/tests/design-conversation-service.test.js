@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   IMAGE_MODEL,
   TEXT_MODEL,
+  createExplicitPlannerFallback,
   getDesignConversationConfig,
   normalizePlannerDecision,
   plannerMessages,
@@ -69,6 +70,77 @@ test('planner prompt uses the server-selected text model and keeps Kolors for ev
   assert.doesNotMatch(messages[0].content, /Qwen\/Qwen3-8B/);
   assert.match(messages[0].content, /Kwai-Kolors\/Kolors/);
   assert.doesNotMatch(messages[0].content, /Qwen-Image-Edit/);
+});
+
+test('planner context names prior verified files without embedding user file contents', () => {
+  const messages = plannerMessages({
+    history: [],
+    message: '请修改选中的提案',
+    attachmentCount: 0,
+    sourceArtifacts: [{
+      artifactId: 'do-not-leak-id',
+      filename: 'brand-proposal.md',
+      mimeType: 'text/markdown',
+      byteSize: 2048,
+      sourceRunId: 'do-not-leak-run-id'
+    }]
+  });
+  assert.match(messages.at(-1).content, /brand-proposal\.md/u);
+  assert.doesNotMatch(messages.at(-1).content, /do-not-leak/u);
+});
+
+test('malformed planner fallback only creates an Agent route for explicit execution requests', () => {
+  const value = createExplicitPlannerFallback({
+    text: '请在工作区创建 brand-proposal.md 和 brand-check.txt 两个文件，运行脚本验证后交付。'
+  });
+  assert.equal(value.routeKind, 'agent_run');
+  assert.equal(value.steps.length, 3);
+  assert.equal(createExplicitPlannerFallback({
+    text: '只做文字咨询，不创建文件。请写三条咖啡店活动文案。'
+  }), null);
+  assert.equal(createExplicitPlannerFallback({
+    text: '这个方案怎么样？',
+    sourceArtifacts: [{ filename: 'proposal.md' }]
+  }), null);
+  assert.equal(createExplicitPlannerFallback({
+    text: '请解释 shell 脚本通常有什么用途。'
+  }), null);
+  assert.equal(createExplicitPlannerFallback({
+    text: '请继续完善选中的文件并运行检查。',
+    sourceArtifacts: [{ filename: 'proposal.md' }]
+  }).routeKind, 'agent_run');
+});
+
+test('explicitly selected prior files route edit requests to a new Agent run', () => {
+  const decision = normalizePlannerDecision({
+    raw: { routeKind: 'reply', reply: '我来解释一下。' },
+    text: '请基于选中的上一版文件继续修改，并生成可下载的新版本。',
+    sourceArtifacts: [{ artifactId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }],
+    attachments: [],
+    clarificationRounds: 0,
+    creditCap: 50
+  });
+  assert.equal(decision.routeKind, 'agent_run');
+  assert.equal(decision.status, 'queued');
+  const noImageEdit = normalizePlannerDecision({
+    raw: { routeKind: 'reply', reply: '我只提供解释。' },
+    text: '请继续修改选中的上一版文件，不要生成图片。',
+    sourceArtifacts: [{ artifactId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }],
+    attachments: [],
+    clarificationRounds: 0,
+    creditCap: 50
+  });
+  assert.equal(noImageEdit.routeKind, 'agent_run');
+  assert.deepEqual(noImageEdit.deliverables, []);
+  const spreadsheetEdit = normalizePlannerDecision({
+    raw: { routeKind: 'reply', reply: '我会给出修改建议。' },
+    text: '请基于选中的上一版文件继续修改。',
+    sourceArtifacts: [{ artifactId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', filename: 'budget.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', role: 'editable' }],
+    attachments: [],
+    clarificationRounds: 0,
+    creditCap: 50
+  });
+  assert.deepEqual(spreadsheetEdit.deliverables, ['spreadsheet']);
 });
 
 test('deterministic route repair keeps simple image tasks in the Kolors workflow', () => {
