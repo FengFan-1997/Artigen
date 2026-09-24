@@ -775,6 +775,60 @@ test('design conversation shows durable tool activity inline without opening adv
   await expect(timeline.getByText('页面证据已记录，我接下来整理提案。')).toHaveCount(1);
 });
 
+test('a completed verified artifact can be selected as the next run context', async ({ page }) => {
+  await installExistingConversation(page);
+  const artifact = {
+    artifactId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    assetId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    parentArtifactId: null,
+    role: 'editable',
+    filename: 'brand-proposal.md',
+    mimeType: 'text/markdown',
+    byteSize: 2048,
+    sha256: 'c'.repeat(64),
+    version: 1,
+    verificationStatus: 'passed',
+    verification: { opened: true },
+    sources: [],
+    costCredits: 0,
+    url: `/api/assets/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb`,
+    expiresAt: '2026-09-30T08:00:00.000Z',
+    createdAt: now
+  };
+  await page.route(`**/api/agent-runs/${runId}`, (route) => route.fulfill({ json: {
+    ok: true,
+    run: { ...run, status: 'succeeded', artifacts: [artifact], sourceArtifacts: [] }
+  } }));
+  let postedBody: Record<string, unknown> | null = null;
+  await page.route(`**/api/design-conversations/${conversationId}/messages`, (route) => {
+    postedBody = route.request().postDataJSON();
+    return route.fulfill({ status: 202, json: { ok: true, message: {
+      ...message('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 3, 'user', '请基于选中的上一版文件继续修改。'),
+      sourceArtifacts: [{
+        artifactId: artifact.artifactId,
+        filename: artifact.filename,
+        mimeType: artifact.mimeType,
+        byteSize: artifact.byteSize,
+        version: artifact.version,
+        sourceRunId: runId
+      }]
+    } } });
+  });
+  await page.goto(`/artigen/create?c=${conversationId}`);
+  await page.getByRole('button', { name: '基于 brand-proposal.md · v1 继续' }).click();
+  const composer = page.getByRole('textbox', { name: '设计需求' });
+  await expect(composer).toHaveValue('请基于选中的上一版文件继续修改，并生成可下载的新版本。');
+  await composer.fill('请基于选中的上一版文件继续修改，并核对全部事实。');
+  await expect(page.locator('.selected-source-artifacts')).toContainText('brand-proposal.md · v1');
+  await page.getByRole('button', { name: '发送需求', exact: true }).click();
+  await expect(page.locator('.source-message-files')).toContainText('brand-proposal.md · v1');
+  expect(postedBody).toEqual({
+    message: '请基于选中的上一版文件继续修改，并核对全部事实。',
+    attachments: [],
+    sourceArtifactIds: [artifact.artifactId]
+  });
+});
+
 
 test('main composer steers the existing run and preserves rejected updates', async ({ page }) => {
   await installExistingConversation(page);

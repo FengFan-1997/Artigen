@@ -153,7 +153,8 @@ const installDesignConversationRoutes = (app, deps = {}) => {
       userId: authIdentity(req),
       conversationId: req.params.conversationId,
       message: req.body?.message,
-      attachments: req.body?.attachments
+      attachments: req.body?.attachments,
+      sourceArtifactIds: req.body?.sourceArtifactIds
     });
     res.status(202).json({ ok: true, message });
   }));

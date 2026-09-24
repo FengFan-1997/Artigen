@@ -260,6 +260,18 @@ const normalizeAssetIds = (value) => {
   return ids;
 };
 
+const normalizeSourceArtifactIds = (value) => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new ApiError(400, 'AGENT_SOURCE_ARTIFACTS_INVALID', { field: 'sourceArtifactIds' });
+  }
+  const ids = [...new Set(value.map((entry) => String(entry || '').trim()))];
+  if (ids.some((id) => !UUID_RE.test(id))) {
+    throw new ApiError(400, 'AGENT_SOURCE_ARTIFACTS_INVALID', { field: 'sourceArtifactIds' });
+  }
+  return ids;
+};
+
 const normalizeDeliverables = (value) => {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value) || value.length > 5) {
@@ -634,6 +646,22 @@ const createAgentRunService = ({
       [runId]
     );
     return result.rows;
+  };
+
+  const listSourceArtifactsWithClient = async (client, runId) => {
+    const result = await client.query(
+      `SELECT artifact.*,source_run.id AS source_run_id
+         FROM agent_run_source_artifacts relation
+         JOIN agent_artifacts artifact ON artifact.id=relation.source_artifact_id
+         JOIN agent_runs source_run ON source_run.id=artifact.run_id
+        WHERE relation.run_id=$1
+        ORDER BY relation.created_at,artifact.filename`,
+      [runId]
+    );
+    return result.rows.map((row) => ({
+      ...publicArtifact(row),
+      sourceRunId: row.source_run_id
+    }));
   };
 
   const cancelAllSubagentsWithClient = async (client, runId, reason = 'PARENT_RUN_STOPPED') => {
@@ -1351,6 +1379,8 @@ const createAgentRunService = ({
     userId,
     objective,
     assetIds,
+    sourceArtifactIds,
+    sourceConversationId,
     maxCredits,
     capabilities,
     browserConfig,
@@ -1392,6 +1422,16 @@ const createAgentRunService = ({
       });
     }
     const normalizedAssetIds = normalizeAssetIds(assetIds);
+    const normalizedSourceArtifactIds = normalizeSourceArtifactIds(sourceArtifactIds);
+    const normalizedSourceConversationId = sourceConversationId === undefined || sourceConversationId === null
+      ? null
+      : String(sourceConversationId).trim();
+    if (
+      (normalizedSourceArtifactIds.length && !UUID_RE.test(normalizedSourceConversationId || '')) ||
+      (!normalizedSourceArtifactIds.length && normalizedSourceConversationId)
+    ) {
+      throw new ApiError(400, 'AGENT_SOURCE_ARTIFACTS_INVALID', { field: 'sourceConversationId' });
+    }
     const normalizedDeliverables = normalizeDeliverables(deliverables);
     if (
       normalizedDeliverables.length === 0 &&
@@ -1462,6 +1502,8 @@ const createAgentRunService = ({
       const requestHash = hashRequest({
         objective: normalizedObjective,
         assetIds: normalizedAssetIds,
+        sourceArtifactIds: normalizedSourceArtifactIds,
+        sourceConversationId: normalizedSourceConversationId,
         maxCredits: budget,
         capabilities: normalizedCapabilities,
         deliverables: normalizedDeliverables,
@@ -1548,7 +1590,11 @@ const createAgentRunService = ({
         if (!secureEqual(replay.rows[0].request_hash, requestHash)) {
           throw new ApiError(409, 'IDEMPOTENCY_CONFLICT');
         }
-        return { row: replay.rows[0], replayed: true };
+        return {
+          row: replay.rows[0],
+          sourceArtifacts: await listSourceArtifactsWithClient(client, replay.rows[0].id),
+          replayed: true
+        };
       }
       if (
         normalizedDeliverables.length === 0 &&
@@ -1575,13 +1621,47 @@ const createAgentRunService = ({
         );
         if (!project.rowCount) throw new ApiError(404, 'PROJECT_NOT_FOUND');
       }
-      if (normalizedAssetIds.length) {
+      let sourceArtifactRows = [];
+      if (normalizedSourceArtifactIds.length) {
+        const sources = await client.query(
+          `SELECT DISTINCT artifact.id AS artifact_id,artifact.asset_id,artifact.filename,
+                  artifact.mime_type,artifact.byte_size
+             FROM design_conversations conversation
+             JOIN design_executions execution ON execution.conversation_id=conversation.id
+             JOIN agent_runs source_run ON source_run.id=execution.agent_run_id
+             JOIN agent_artifacts artifact ON artifact.run_id=source_run.id
+             JOIN assets asset ON asset.id=artifact.asset_id
+            WHERE conversation.id=$1 AND conversation.user_id=$2
+              AND source_run.user_id=$2 AND source_run.status='succeeded'
+              AND artifact.id=ANY($3::uuid[])
+              AND artifact.verification_status='passed'
+              AND artifact.asset_id IS NOT NULL
+              AND (artifact.expires_at IS NULL OR artifact.expires_at>clock_timestamp())
+              AND asset.owner_user_id=$2
+              AND asset.gc_state='active' AND asset.delete_requested_at IS NULL
+              AND (asset.expires_at IS NULL OR asset.expires_at>clock_timestamp())`,
+          [normalizedSourceConversationId, dbUserId, normalizedSourceArtifactIds]
+        );
+        if (sources.rowCount !== normalizedSourceArtifactIds.length) {
+          throw new ApiError(404, 'AGENT_SOURCE_ARTIFACT_NOT_FOUND');
+        }
+        const filenames = sources.rows.map((source) => String(source.filename || '').trim().toLowerCase());
+        if (new Set(filenames).size !== filenames.length) {
+          throw new ApiError(400, 'AGENT_SOURCE_ARTIFACT_FILENAME_DUPLICATE');
+        }
+        sourceArtifactRows = sources.rows;
+      }
+      const inputAssetIds = [...new Set([
+        ...normalizedAssetIds,
+        ...sourceArtifactRows.map((source) => source.asset_id).filter(Boolean)
+      ])];
+      if (inputAssetIds.length) {
         const owned = await client.query(
           `SELECT id FROM assets
             WHERE owner_user_id=$1 AND id=ANY($2::uuid[])`,
-          [dbUserId, normalizedAssetIds]
+          [dbUserId, inputAssetIds]
         );
-        if (owned.rowCount !== normalizedAssetIds.length) {
+        if (owned.rowCount !== inputAssetIds.length) {
           throw new ApiError(404, 'AGENT_INPUT_ASSET_NOT_FOUND');
         }
       }
@@ -1631,6 +1711,15 @@ const createAgentRunService = ({
           liveConfig.queueMaxWaitHours
         ]
       );
+      if (normalizedSourceArtifactIds.length) {
+        for (const sourceArtifactId of normalizedSourceArtifactIds) {
+          await client.query(
+            `INSERT INTO agent_run_source_artifacts (run_id,source_artifact_id)
+             VALUES ($1,$2)`,
+            [runId, sourceArtifactId]
+          );
+        }
+      }
       const payloadId = crypto.randomUUID();
       const encrypted = encryptAgentPayload({
         runId,
@@ -1638,7 +1727,8 @@ const createAgentRunService = ({
         kind: 'objective',
         value: {
           objective: normalizedObjective,
-          assetIds: normalizedAssetIds,
+          assetIds: inputAssetIds,
+          sourceArtifactIds: normalizedSourceArtifactIds,
           deliverables: normalizedDeliverables,
           taskSpec: normalizedTaskSpec,
           createdBy: 'user'
@@ -1697,8 +1787,10 @@ const createAgentRunService = ({
           data: { planRevision: Number(planRevision) || 1 }
         });
       }
+      const sourceArtifacts = await listSourceArtifactsWithClient(client, runId);
       return {
         row: { ...inserted.rows[0], free_credits_reserved: hold.freeCredits },
+        sourceArtifacts,
         replayed: false
       };
     }).catch((error) => {
@@ -1721,7 +1813,13 @@ const createAgentRunService = ({
         throw error;
       }
     }
-    return { ...publicRun(created.row, { maxSteps: liveConfig.maxSteps }), replayed: created.replayed };
+    return {
+      ...publicRun(created.row, {
+        maxSteps: liveConfig.maxSteps,
+        publicFields: { sourceArtifacts: created.sourceArtifacts || [] }
+      }),
+      replayed: created.replayed
+    };
   };
 
   const listRuns = async ({ userId, limit = 30, cursor = null }) => withTransaction(
@@ -1802,6 +1900,7 @@ const createAgentRunService = ({
       [runId]
     );
     const subagents = await listSubagentsWithClient(client, runId);
+    const sourceArtifacts = await listSourceArtifactsWithClient(client, runId);
     return publicRun(row, {
       maxSteps: config.maxSteps,
       subagents: subagents.map(publicSubagent),
@@ -1825,7 +1924,8 @@ const createAgentRunService = ({
           decidedAt: approval.decided_at,
           createdAt: approval.created_at
         })),
-        artifacts: artifacts.rows.map(publicArtifact)
+        artifacts: artifacts.rows.map(publicArtifact),
+        sourceArtifacts
       }
     });
   });
@@ -3886,7 +3986,7 @@ const createAgentRunService = ({
     mimeType,
     byteSize,
     sha256,
-    version = 1,
+    version = null,
     verificationStatus = 'pending',
     verification = {},
     sources = [],
@@ -3905,6 +4005,21 @@ const createAgentRunService = ({
     // only V2 allowed an old V1 worker to register a passed artifact after
     // takeover and race the new worker's finalization.
     assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+    if (!parentArtifactId) {
+      const sources = await client.query(
+        `SELECT artifact.id,artifact.version
+           FROM agent_run_source_artifacts relation
+           JOIN agent_artifacts artifact ON artifact.id=relation.source_artifact_id
+          WHERE relation.run_id=$1 AND lower(artifact.filename)=lower($2)
+          ORDER BY relation.created_at,artifact.id
+          LIMIT 2`,
+        [runId, normalizedFilename]
+      );
+      if (sources.rowCount === 1) {
+        parentArtifactId = sources.rows[0].id;
+        if (version === null || version === undefined) version = Number(sources.rows[0].version || 1) + 1;
+      }
+    }
     if (verificationStatus === 'passed' && /^[a-f0-9]{64}$/.test(digest)) {
       const existing = await client.query(
         `SELECT * FROM agent_artifacts

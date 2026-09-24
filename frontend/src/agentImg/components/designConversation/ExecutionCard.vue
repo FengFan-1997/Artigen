@@ -57,9 +57,25 @@
           <img v-if="artifact.mimeType.startsWith('image/')" :src="agentAssetUrl(artifact)" :alt="artifact.filename" width="64" height="56" loading="lazy" />
           <span>
             <b>{{ artifact.filename }}</b>
-            <small>{{ artifact.verificationStatus === 'passed' ? (zh ? '验证通过' : 'Verified') : artifact.verificationStatus }}</small>
+            <small>{{ artifact.verificationStatus === 'passed' ? (zh ? `验证通过 · v${artifact.version}` : `Verified · v${artifact.version}`) : artifact.verificationStatus }}</small>
           </span>
         </a>
+        <button
+          v-for="artifact in run.status === 'succeeded' ? run.artifacts.filter((item) => item.verificationStatus === 'passed' && item.assetId) : []"
+          :key="`continue-${artifact.artifactId}`"
+          class="continue-artifact"
+          type="button"
+          @click="emit('continue-from-artifact', { artifactId: artifact.artifactId, filename: artifact.filename, mimeType: artifact.mimeType, byteSize: artifact.byteSize, version: artifact.version, role: artifact.role, sourceRunId: run.runId })"
+        >
+          {{ zh ? `基于 ${artifact.filename} · v${artifact.version} 继续` : `Continue from ${artifact.filename} · v${artifact.version}` }}
+        </button>
+      </div>
+
+      <div v-if="run?.sourceArtifacts?.length" class="source-artifact-note">
+        {{ zh ? '本轮沿用了上一轮：' : 'Continued from: ' }}
+        <span v-for="(artifact, index) in run.sourceArtifacts" :key="artifact.artifactId">
+          {{ index ? ' · ' : '' }}{{ artifact.filename }} · v{{ artifact.version }}
+        </span>
       </div>
 
       <div v-if="pendingApprovals.length" class="approval-list" aria-live="assertive">
@@ -104,7 +120,7 @@ import { computed } from 'vue';
 import AgentConversationTimeline from '../workspace/AgentConversationTimeline.vue';
 import WorkspaceIcon from '../workspace/WorkspaceIcon.vue';
 import type { DesignExecution } from '../../services/designConversations';
-import { agentAssetUrl, type AgentApproval, type AgentRun, type AgentEvent } from '../../services/agentRuns';
+import { agentAssetUrl, type AgentApproval, type AgentArtifact, type AgentRun, type AgentEvent } from '../../services/agentRuns';
 import { taskAssetUrl, type ServerToolTask } from '../../services/toolTasks';
 
 const props = defineProps<{
@@ -127,6 +143,7 @@ const emit = defineEmits<{
   approve: [approval: AgentApproval];
   authorize: [approval: AgentApproval];
   deny: [approval: AgentApproval];
+  'continue-from-artifact': [artifact: { artifactId: string; filename: string; mimeType: string; byteSize: number; version: number; role: AgentArtifact['role']; sourceRunId: string }];
 }>();
 
 const displayStatus = computed(() => {

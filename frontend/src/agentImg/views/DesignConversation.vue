@@ -116,6 +116,12 @@
                   {{ file.name }} · {{ formatBytes(file.byteSize) }}
                 </span>
               </div>
+              <div v-if="message.sourceArtifacts?.length" class="message-files source-message-files">
+                <span v-for="artifact in message.sourceArtifacts" :key="artifact.artifactId">
+                  <WorkspaceIcon name="file" :size="14" />
+                  {{ zh ? '沿用上一轮' : 'Continued from' }} · {{ artifact.filename }} · v{{ artifact.version }}
+                </span>
+              </div>
               <div v-if="message.questions.length" class="clarification">
                 <button v-for="question in message.questions" :key="question" type="button" @click="draft = question">{{ question }}</button>
                 <button class="recommended" type="button" @click="sendRecommended">{{ zh ? '按推荐直接做' : 'Use recommended assumptions' }}</button>
@@ -152,6 +158,7 @@
             @approve="approveAgentAction(execution, $event, false)"
             @authorize="approveAgentAction(execution, $event, true)"
             @deny="denyAgentAction(execution, $event)"
+            @continue-from-artifact="selectSourceArtifact"
           />
         </template>
 
@@ -165,6 +172,14 @@
       </div>
 
       <div class="docked-composer">
+        <div v-if="selectedSourceArtifacts.length" class="selected-source-artifacts">
+          <span class="source-context-label">{{ zh ? '本轮会参考上一轮文件' : 'Using files from an earlier run' }}</span>
+          <span v-for="artifact in selectedSourceArtifacts" :key="artifact.artifactId" class="source-context-chip">
+            <WorkspaceIcon name="file" :size="14" />
+            <b>{{ artifact.filename }} · v{{ artifact.version }}</b>
+            <button type="button" :aria-label="zh ? `移除 ${artifact.filename}` : `Remove ${artifact.filename}`" @click="removeSourceArtifact(artifact.artifactId)">×</button>
+          </span>
+        </div>
         <ComposerBox
           :draft="draft"
           :attachments="selectedAttachments"
@@ -182,7 +197,9 @@
           @attach="openFilePicker()"
           @remove-attachment="removeAttachment"
         />
-        <p v-if="openAgentRuns.length">{{ zh ? '补充要求会发给当前任务，并记录在上方；新任务可从侧栏创建。' : 'Updates go to the current task and appear above. Start a new task from the sidebar.' }}</p>
+        <p v-if="openAgentRuns.length">{{ selectedSourceArtifacts.length
+          ? (zh ? '当前任务结束后，选中的上一版文件会用于下一轮；执行中的任务无法切换输入文件。' : 'The selected files will be used for the next run after this task ends; inputs cannot be switched during a run.')
+          : (zh ? '补充要求会发给当前任务，并记录在上方；新任务可从侧栏创建。' : 'Updates go to the current task and appear above. Start a new task from the sidebar.') }}</p>
       </div>
     </section>
 
@@ -345,6 +362,7 @@ import {
   type DesignConversation,
   type DesignExecution,
   type DesignMessage,
+  type DesignSourceArtifact,
   type DesignSessionAuthorization
 } from '../services/designConversations';
 import {
@@ -391,6 +409,7 @@ const authorizations = ref<DesignSessionAuthorization[]>([]);
 const projectSnapshot = ref<CreativeProject | null>(null);
 const draft = ref('');
 const selectedAttachments = ref<SelectedAttachment[]>([]);
+const selectedSourceArtifacts = ref<DesignSourceArtifact[]>([]);
 const notice = ref('');
 const sending = ref(false);
 const planning = ref(false);
@@ -729,6 +748,7 @@ const openConversation = async (conversationId: string, canApply: () => boolean 
   const selectionVersion = ++conversationSelectionVersion;
   const fresh = await getDesignConversation(normalizedId);
   if (disposed || selectionVersion !== conversationSelectionVersion || !canApply()) return;
+  if (conversation.value?.conversationId !== normalizedId) selectedSourceArtifacts.value = [];
   conversation.value = fresh;
   try { window.localStorage.setItem(LAST_CONVERSATION_KEY, normalizedId); } catch {}
   await syncConversationProject(conversation.value.projectId);
@@ -749,6 +769,7 @@ const newConversation = async () => {
   authorizations.value = [];
   draft.value = '';
   selectedAttachments.value = [];
+  selectedSourceArtifacts.value = [];
   try { window.localStorage.removeItem(LAST_CONVERSATION_KEY); } catch {}
   await router.replace('/artigen/create');
 };
@@ -817,6 +838,12 @@ const submitAuthenticated = async () => {
       .map((execution) => loadRun(execution.agentRunId!)));
     if (openAgentRuns.value.length) {
       if (openAgentRuns.value.length !== 1) throw { code: 'AGENT_INPUT_TARGET_REQUIRED' };
+      if (selectedSourceArtifacts.value.length) {
+        notice.value = zh.value
+          ? '当前任务结束后，再用已选文件开始下一轮；文件选择和执行中补充不能混在一起。'
+          : 'Start the next run with the selected files after this task ends. File selection cannot be combined with an in-run update.';
+        return;
+      }
       if (selectedAttachments.value.length) throw { code: 'AGENT_INPUT_ATTACHMENTS_UNSUPPORTED' };
       const target = openAgentRuns.value[0];
       if (target.status === 'verifying') throw { code: 'AGENT_INPUT_FINALIZING' };
@@ -841,13 +868,19 @@ const submitAuthenticated = async () => {
     for (const item of selectedAttachments.value) localFiles.set(item.clientId, item.file);
     // The durable completion event can arrive before the POST response.
     planning.value = true;
-    const message = await sendDesignMessage(active.conversationId, text, manifest);
+    const message = await sendDesignMessage(
+      active.conversationId,
+      text,
+      manifest,
+      selectedSourceArtifacts.value.map((artifact) => artifact.artifactId)
+    );
     if (conversation.value?.conversationId === active.conversationId &&
         !conversation.value.messages.some((item) => item.messageId === message.messageId)) {
       conversation.value.messages = [...conversation.value.messages, message];
     }
     draft.value = '';
     selectedAttachments.value = [];
+    selectedSourceArtifacts.value = [];
     await refreshConversationList();
     await scrollToBottom();
   } catch (error) {
@@ -856,6 +889,20 @@ const submitAuthenticated = async () => {
   } finally {
     sending.value = false;
   }
+};
+
+const selectSourceArtifact = (artifact: DesignSourceArtifact) => {
+  const current = selectedSourceArtifacts.value.filter((item) => item.artifactId !== artifact.artifactId);
+  selectedSourceArtifacts.value = [...current, artifact].slice(-10);
+  if (!draft.value.trim()) {
+    draft.value = zh.value
+      ? '请基于选中的上一版文件继续修改，并生成可下载的新版本。'
+      : 'Please continue editing the selected previous file and deliver a downloadable new version.';
+  }
+};
+
+const removeSourceArtifact = (artifactId: string) => {
+  selectedSourceArtifacts.value = selectedSourceArtifacts.value.filter((item) => item.artifactId !== artifactId);
 };
 
 const submitMessage = () => {
@@ -944,6 +991,8 @@ const runAgentExecution = async (execution: DesignExecution, assetIds: string[])
   const run = await createAgentRun({
     objective: String(plan.objective || ''),
     assetIds,
+    sourceArtifactIds: plan.sourceArtifactIds || [],
+    sourceConversationId: plan.sourceArtifactIds?.length ? conversation.value.conversationId : undefined,
     maxCredits: execution.maxCredits,
     capabilities: plan.capabilities || { files: true, shell: true },
     deliverables: plan.deliverables || [],
@@ -1340,6 +1389,7 @@ onBeforeUnmount(() => {
 .message.user .message-body { max-width: 74%; padding: 10px 13px; border: 0; border-radius: 13px 13px 4px 13px; background: var(--surface-raised); }
 .message-body p { margin: 0; white-space: pre-wrap; }
 .message-files { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }.message-files span { display: inline-flex; max-width: 100%; min-width: 0; align-items: center; gap: 5px; padding: 5px 7px; overflow-wrap: anywhere; border: 0; border-radius: 7px; color: var(--muted); font-size: 11px; background: var(--surface-hover); }.message-files svg { flex: 0 0 auto; width: 12px; }
+.source-message-files span { color: var(--acid-text); background: color-mix(in srgb,var(--acid) 10%,var(--surface-hover)); }
 .clarification { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }.clarification button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 8px; color: var(--text); font-size: 11px; background: var(--surface-hover); cursor: pointer; }.clarification button:hover { color: var(--acid-text); }.clarification .recommended { color: var(--acid-ink); background: var(--acid); }
 .memory-suggestions { display: grid; gap: 6px; margin-top: 12px; }
 .memory-suggestions article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border-radius: 9px; background: var(--surface-raised); }
@@ -1354,6 +1404,12 @@ onBeforeUnmount(() => {
 .docked-composer { position: relative; z-index: 12; padding: 18px var(--conversation-gutter) 16px; background: var(--bg); }
 .docked-composer :deep(.composer-box) { max-width: var(--conversation-max); margin: 0 auto; }
 .docked-composer > p { max-width: var(--conversation-max); margin: 6px auto 0; color: var(--muted-2); font-size: 11px; text-align: center; }
+.selected-source-artifacts { display: flex; width: min(var(--conversation-max),100%); flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 auto 8px; }
+.source-context-label { width: 100%; color: var(--muted); font-size: 11px; }
+.source-context-chip { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: 6px; padding: 5px 7px 5px 9px; border-radius: 7px; color: var(--acid-text); background: color-mix(in srgb,var(--acid) 10%,var(--surface)); }
+.source-context-chip b { overflow: hidden; font-size: 11px; font-weight: 580; text-overflow: ellipsis; white-space: nowrap; }
+.source-context-chip button { display: grid; flex: 0 0 auto; width: 22px; height: 22px; place-items: center; border: 0; border-radius: 5px; color: var(--muted); font-size: 16px; background: transparent; cursor: pointer; }
+.source-context-chip button:hover { color: var(--danger); background: var(--surface-hover); }
 
 :deep(.execution-card) { max-width: var(--conversation-max); margin: 4px auto 22px; border: 0; border-radius: 12px; color: var(--text); background: var(--surface); box-shadow: none; }
 :deep(.execution-card > header) { padding: 11px 13px; border: 0; background: transparent; }
@@ -1368,6 +1424,9 @@ onBeforeUnmount(() => {
 :deep(.execution-card .approval-actions button:first-child),:deep(.execution-card .approval-card a),:deep(.execution-card .footer-actions .primary) { border-color: var(--acid); color: var(--acid-ink); background: var(--acid); }
 :deep(.execution-card .approval-actions .session) { border-color: color-mix(in srgb,var(--warning) 55%,var(--border)); color: var(--text); background: transparent; }
 :deep(.execution-card .approval-actions .deny),:deep(.execution-card .footer-actions .cancel) { border-color: color-mix(in srgb,var(--danger) 50%,var(--border)); color: var(--danger); background: transparent; }
+:deep(.execution-card .continue-artifact) { min-height: 34px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--acid-text); font-size: 11px; background: color-mix(in srgb,var(--acid) 10%,var(--surface)); cursor: pointer; }
+:deep(.execution-card .continue-artifact:hover) { background: color-mix(in srgb,var(--acid) 17%,var(--surface)); }
+:deep(.execution-card .source-artifact-note) { margin-top: 9px; color: var(--muted); font-size: 11px; }
 :deep(.execution-card > footer) { padding-inline: 13px; }:deep(.execution-card .progress-track) { background: var(--border); }:deep(.execution-card .progress-track span) { background: var(--acid); }
 
 .inspector-stack,.computer-panel { display: grid; gap: 14px; }

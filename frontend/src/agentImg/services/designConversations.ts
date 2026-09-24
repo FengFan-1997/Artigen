@@ -1,7 +1,7 @@
 import { authFetch } from '@/login/authFetch';
 import { buildApiUrl } from '@/utils/api';
 import { TEXT_MODEL, IMAGE_MODEL } from '../constants/models';
-import type { AgentQuote } from './agentRuns';
+import type { AgentArtifact, AgentQuote } from './agentRuns';
 
 export type DesignRouteKind = 'reply' | 'local_tool' | 'tool_task' | 'agent_run';
 export type DesignExecutionStatus =
@@ -21,6 +21,16 @@ export type DesignAttachmentManifest = {
   name: string;
   mimeType: string;
   byteSize: number;
+};
+
+export type DesignSourceArtifact = {
+  artifactId: string;
+  filename: string;
+  mimeType: string;
+  byteSize: number;
+  version: number;
+  role: AgentArtifact['role'];
+  sourceRunId: string;
 };
 
 export type DesignMemory = {
@@ -66,6 +76,7 @@ export type DesignMessage = {
   status: 'pending' | 'complete' | 'failed';
   text: string;
   attachments: DesignAttachmentManifest[];
+  sourceArtifacts: DesignSourceArtifact[];
   questions: string[];
   assumptions: string[];
   memoryCandidates: Array<{ field: keyof DesignMemory; value: unknown }>;
@@ -78,6 +89,7 @@ export type DesignExecutionPlan = {
   executor?: string;
   uploadRequired?: boolean;
   attachmentClientIds?: string[];
+  sourceArtifactIds?: string[];
   options?: Record<string, unknown>;
   objective?: string;
   capabilities?: Record<string, boolean>;
@@ -246,14 +258,19 @@ export const deleteDesignConversation = async (conversationId: string) => {
 export const sendDesignMessage = async (
   conversationId: string,
   message: string,
-  attachments: DesignAttachmentManifest[] = []
+  attachments: DesignAttachmentManifest[] = [],
+  sourceArtifactIds: string[] = []
 ) => {
   const result = await requestJson<{ message: DesignMessage }>(
     `/api/design-conversations/${encodeURIComponent(conversationId)}/messages`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, attachments })
+      body: JSON.stringify({
+        message,
+        attachments,
+        ...(sourceArtifactIds.length ? { sourceArtifactIds } : {})
+      })
     }
   );
   return result.message;

@@ -82,3 +82,44 @@ for (const fixture of cases) {
     }
   });
 }
+
+test('a new artifact version links to the uniquely selected prior file', async () => {
+  const sourceArtifactId = '22222222-2222-4222-8222-222222222222';
+  const createdArtifactId = '33333333-3333-4333-8333-333333333333';
+  let insertedValues;
+  const client = {
+    release() {},
+    async query(sql, values) {
+      if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [], rowCount: 0 };
+      if (sql.includes('SELECT id,expires_at,runtime_version,worker_id')) {
+        return { rows: [{ id: runId, expires_at: new Date(Date.now() + 60_000),
+          worker_id: workerId, lease_epoch: 1, lease_expires_at: new Date(Date.now() + 60_000) }], rowCount: 1 };
+      }
+      if (sql.includes('FROM agent_run_source_artifacts')) return { rows: [{ id: sourceArtifactId, version: 1 }], rowCount: 1 };
+      if (sql.includes('INSERT INTO agent_artifacts')) {
+        insertedValues = values;
+        return { rows: [{ id: createdArtifactId, run_id: runId, asset_id: null,
+          parent_artifact_id: values[2], role: values[3], filename: values[4], mime_type: values[5],
+          byte_size: values[6], sha256: null, version: values[8], verification_status: values[9],
+          verification: {}, sources: [], cost_credits: 0, expires_at: new Date(), created_at: new Date() }], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO agent_events')) return { rows: [{ id: '1' }], rowCount: 1 };
+      if (sql.includes("pg_notify('agent_run_events'")) return { rows: [], rowCount: 1 };
+      throw Error(sql);
+    }
+  };
+  const service = createAgentRunService({ pool: { connect: async () => client }, env });
+  const result = await service.registerArtifact({
+    runId,
+    workerId,
+    leaseEpoch: 1,
+    role: 'editable',
+    filename: 'brand-proposal.md',
+    mimeType: 'text/markdown',
+    byteSize: 128,
+    verificationStatus: 'pending'
+  });
+  assert.equal(insertedValues[2], sourceArtifactId);
+  assert.equal(insertedValues[8], 2);
+  assert.equal(result.parentArtifactId, sourceArtifactId);
+});
