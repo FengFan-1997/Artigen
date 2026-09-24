@@ -14,7 +14,7 @@ export const mergeAgentEvents = (current: AgentEvent[], incoming: AgentEvent[]) 
 const visibleTypes = new Set([
   'assistant.message', 'step.recorded', 'run.queued', 'run.provisioning', 'sandbox.ready',
   'sandbox.resumed', 'artifact.created', 'run.input_received', 'context.input_applied',
-  'context.compacted', 'plan.updated', 'approval.required', 'approval.approved', 'approval.denied',
+  'context.compacted', 'plan.updated', 'plan.update.ignored', 'approval.required', 'approval.approved', 'approval.denied',
   'takeover.required', 'takeover.ended', 'run.pause_requested', 'run.paused', 'run.resumed',
   'run.recovered', 'run.verifying', 'run.succeeded', 'run.failed', 'run.cancelled', 'run.input_required',
   'subagent.created', 'subagent.started', 'subagent.progress', 'subagent.succeeded', 'subagent.failed', 'subagent.cancelled'

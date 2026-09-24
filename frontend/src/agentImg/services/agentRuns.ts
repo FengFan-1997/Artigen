@@ -540,6 +540,7 @@ export const openAgentEventStream = (
     'context.input_applied',
     'context.compacted',
     'plan.updated',
+    'plan.update.ignored',
     'run.input_required',
     'artifact.created',
     'cost.updated',
