@@ -51,7 +51,7 @@ test('Cloudflare chat is pinned to the account API and omits SiliconFlow thinkin
   }), { code: 'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED' });
 });
 
-test('Cloudflare free quota and paid-only failures are terminal while capacity failures remain observable', async () => {
+test('Cloudflare provider failures retain safe HTTP classifications without response bodies', async () => {
   const accountId = 'e'.repeat(32);
   const invoke = async ({ status, code }) => {
     let requests = 0;
@@ -95,11 +95,34 @@ test('Cloudflare free quota and paid-only failures are terminal while capacity f
 
   const capacity = await invoke({ status: 429, code: 3040 });
   await assert.rejects(capacity.promise, (error) => {
-    assert.equal(error.code, undefined);
+    assert.equal(error.code, 'AGENT_CLOUDFLARE_RATE_LIMITED');
+    assert.equal(error.retryable, true);
+    assert.equal(error.status, 429);
     assert.equal(error.failures[0].status, 429);
+    assert.equal(error.failures[0].bodyPreview, undefined);
     return true;
   });
   assert.equal(capacity.requests(), 1);
+
+  const rejected = await invoke({ status: 401, code: 10000 });
+  await assert.rejects(rejected.promise, (error) => {
+    assert.equal(error.code, 'AGENT_CLOUDFLARE_CREDENTIAL_INVALID');
+    assert.equal(error.retryable, false);
+    assert.equal(error.status, 401);
+    assert.equal(error.failures[0].bodyPreview, undefined);
+    return true;
+  });
+  assert.equal(rejected.requests(), 1);
+
+  const unavailable = await invoke({ status: 503, code: 10000 });
+  await assert.rejects(unavailable.promise, (error) => {
+    assert.equal(error.code, 'AGENT_CLOUDFLARE_UPSTREAM_UNAVAILABLE');
+    assert.equal(error.retryable, true);
+    assert.equal(error.status, 503);
+    assert.equal(error.failures[0].bodyPreview, undefined);
+    return true;
+  });
+  assert.equal(unavailable.requests(), 1);
 });
 
 test('generic text generation dispatches Cloudflare when SiliconFlow is absent', async () => {

@@ -27,6 +27,11 @@ const {
 const { createCreativeProjectService } = require('./creative-project-service');
 const { TEXT_MODEL, IMAGE_MODEL } = require('../lib/agent-models');
 
+const isTerminalCloudflareFailure = (error) => {
+  const code = String(error?.code || '');
+  return /^AGENT_CLOUDFLARE_/.test(code) && error?.retryable !== true;
+};
+
 const ROUTE_KINDS = new Set(['reply', 'local_tool', 'tool_task', 'agent_run']);
 const EXECUTION_STATUSES = new Set([
   'planning',
@@ -1426,15 +1431,16 @@ const createDesignConversationService = ({
 
   const failPlanningJob = async ({ job, error }) => transaction(pool, async (client) => {
     const code = sanitizeText(error?.code || error?.message || 'DESIGN_PLANNER_FAILED', 100);
+    const terminalCloudflareFailure = isTerminalCloudflareFailure(error);
     const state = await client.query(
       `UPDATE design_planning_jobs
-          SET status=CASE WHEN attempt_count>=3 THEN 'failed' ELSE 'queued' END,
+          SET status=CASE WHEN attempt_count>=3 OR $4::boolean THEN 'failed' ELSE 'queued' END,
               next_attempt_at=clock_timestamp()+
-                (CASE WHEN attempt_count>=3 THEN 0 ELSE attempt_count*2 END * interval '1 second'),
+                (CASE WHEN attempt_count>=3 OR $4::boolean THEN 0 ELSE attempt_count*2 END * interval '1 second'),
               lease_owner=NULL,lease_expires_at=NULL,error_code=$3,updated_at=now()
         WHERE message_id=$1 AND lease_owner=$2
         RETURNING status,attempt_count`,
-      [job.message_id, workerId, code]
+      [job.message_id, workerId, code, terminalCloudflareFailure]
     );
     if (state.rows[0]?.status !== 'failed') return;
     const assistant = await insertMessage(client, {
@@ -2069,6 +2075,7 @@ module.exports = {
   normalizeSourceArtifactIds,
   normalizePlannerDecision,
   normalizeMemoryCandidates,
+  isTerminalCloudflareFailure,
   decodeExecutionPlan,
   explicitlyContinuesArtifact,
   repairPlannerRoute,

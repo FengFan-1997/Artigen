@@ -1164,7 +1164,8 @@ const summarizeToolObservation = (toolName, value) => {
 const classifyRuntimeFailure = (error) => {
   const code = String(error?.code || 'AGENT_RUNTIME_FAILED');
   if (
-    /FORBIDDEN|NOT_GRANTED|APPROVAL|SECURITY|OTP|CAPTCHA|PASSWORD/.test(code) ||
+    /FORBIDDEN|NOT_GRANTED|APPROVAL|SECURITY|OTP|CAPTCHA|PASSWORD|CREDENTIAL/.test(code) ||
+    /AUTHENTICATION|UNAUTHORIZED|ENDPOINT_NOT_FOUND/.test(code) ||
     /CLOUDFLARE_FREE_QUOTA_EXHAUSTED|CLOUDFLARE_PAID_MODEL/.test(code)
   ) {
     return { category: 'security_terminal', retryable: false, maxAttempts: 0 };
