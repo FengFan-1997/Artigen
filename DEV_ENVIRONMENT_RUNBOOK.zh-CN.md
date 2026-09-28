@@ -13,6 +13,14 @@ DEV 是受保护的线上集成环境，不是生产，不承载正式用户数�
 
 DEV 口令只存 Render Secret 和本机安全存储，不写入 Git、文档、命令历史或截图。
 
+### 当前托管状态（2026-09-28）
+
+Render Hobby 工作区当月 Free Instance Hours 已使用 `749.98 / 750` 小时；账单页显示没有付款方式，Render CLI 显示工作区的 4 个 Web 服务均因 billing 暂停。DEV 的 `/api/meta`、`/healthz`、`/readyz` 当前都返回 HTTP 503。此状态是托管额度，不是应用或 Aiven 故障；服务暂停期间不要运行云端 smoke、Worker 或 Provider 任务。
+
+DEV 的 `render.dev.yaml` 目前仍声明 `plan: free`。恢复常驻 DEV Web 服务需要项目所有者先在 Render Billing 添加付款方式，再只将 DEV Web 服务改为 Starter（当前官网标价 `$7/月`）；无需升级整个 Hobby 工作区。修改前重新读取账单、服务用量和当前 Starter 价格；不要代录银行卡或修改其他服务。工作区账单页最后显示带宽 `4.17 / 5 GB`，恢复后需复核实际用量与可能产生的超额费用。Production 服务的 CLI 状态也显示暂停；本 Runbook 不授权其恢复、升级或部署。
+
+如不升级，Free Instance Hours 在新计费月重置后可能恢复免费服务，但这不构成持续可用保证；重新测试前仍须核对平台服务状态、精确 SHA、`/healthz` 和 `/readyz`。Render Free 服务的限额说明见[官方文档](https://render.com/docs/free)。
+
 ## 2. 安全配置
 
 DEV 当前用于真实集成 smoke，因此部分能力可以开启，但必须满足：

@@ -1,5 +1,16 @@
 # Artigen 项目正式 Handoff
 
+## 2026-09-28 DEV 通道因 Render 免费额度暂停（待恢复）
+
+- 用户继续推进主要工作流开发与测试。本轮只读核实 Render Hobby 工作区本月 Free Instance Hours 为 `749.98 / 750`，带宽为 `4.17 / 5 GB`，无付款方式、未出账费用 `$0`；Render CLI 显示工作区的 4 个 Web 服务均被 billing 暂停。Artigen DEV `/api/meta`、`/healthz`、`/readyz` 均为 HTTP 503；这是托管额度状态，不是代码部署、数据库或 Aiven 连接错误。
+- 无法进行 DEV 登录、Worker、Provider、上传/下载或真实任务验收。没有调用真实 Provider、创建 Agent Run、冻结点数、做支付或修改 Production。
+- 项目所有者先在 Render Billing 自行添加付款方式后，可只把 DEV Web 服务升级到 Starter；本次核验的官方标价为 `$7/月`，工作区 Hobby 无需升级。未录入卡片、升级服务、支付费用或触碰任何服务配置。Production 服务目前也显示暂停，仍保持不操作。
+- Render 账号与状态的只读证据、认证状态及当前额度已同步到 `docs/INFRA_ACCOUNT_REGISTER.zh-CN.md`；DEV 恢复步骤与边界已写入 `DEV_ENVIRONMENT_RUNBOOK.zh-CN.md`。恢复后需要重新核对账单、服务真实状态、部署 SHA 与健康探针，不能把额度重置或付款方式添加视为服务已恢复。
+- 本机 `pnpm check:core` 全部通过。Chromium 桌面主要工作流定向回归 `4/4` 通过，覆盖失败规划原位重试、时间线真实工具活动、跨运行产物上下文、执行中用户补充；这些是本地 mock UI/接口验证，不等同于 DEV Provider 真实调用。
+- GitHub CI 原先从 Quay 拉取固定 MinIO 镜像时被拒绝（HTTP `401`）；Bitnami legacy MinIO 镜像可以启动，但完整 CI 两次在不同的对象上传与故障恢复用例中出现随机 `ECONNRESET`。三个临时 S3 fixture 已改为固定 RustFS `1.0.0` manifest digest `sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff`，使用官方 `/health` 检查及独立测试凭据。CI run `36380620094` 中其它 Agent Harness、chaos 和浏览器分片通过，PostgreSQL + RustFS 集成唯一失败是 multipart 预签名 PUT 的 `BadDigest`：AWS SDK 默认校验会在生成链接时把空正文 CRC32 带入 URL，真实分片到达后校验不符。
+- 修复提交 `5265c02d709b9f7208c678f4d383ed30d885ea3d` 在 GitHub Actions run `36381579038` 上通过完整 CI：Core、6 组 Agent Harness/chaos、全部 Chromium/Firefox/WebKit E2E 分片、Release gate 和 Vercel Preview 均通过（16 个作业通过；release branch policy 按 `dev` PR 条件跳过）。本机资产命名空间与上传服务定向测试 `10/10`、`pnpm check:workspace`、`git diff --check`、提交钩子前端类型检查和后端语法检查也通过。AWS SDK 官方文档说明其默认 CRC32 上传校验行为从 JavaScript SDK `3.729.0` 起启用，并支持 `WHEN_REQUIRED` 设置（[校验和指南](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/s3-checksums.html)、[AWS 配置指南](https://docs.aws.amazon.com/sdkref/latest/guide/feature-dataintegrity.html)）。
+- PR #236 仍需以新完整 CI 全绿作为合入前提。该候选未修改数据库迁移、环境变量、账号权限、远程存储或线上服务配置；Production 未部署。
+
 ## 2026-09-24 规划失败请求原位重试（已部署 DEV，未发布生产）
 
 - DEV 实际流程曾遇到规划 Provider 限流：系统明确说明“未创建 Agent 任务、未冻结点数”，但只让用户稍后重试，没有保留原请求的直接恢复动作。用户手动重发时容易重复消息，并可能丢失附件或已选产物上下文。

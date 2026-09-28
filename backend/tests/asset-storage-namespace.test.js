@@ -71,6 +71,10 @@ test('presigned single and multipart uploads target the exact namespace once', a
   assert.equal(put.pathname, '/namespace-test/dev/assets/staging/owner/session');
   assert.equal(part.pathname, put.pathname);
   assert.equal(part.searchParams.get('partNumber'), '1');
+  for (const url of [put, part]) {
+    assert.equal(url.searchParams.has('x-amz-sdk-checksum-algorithm'), false);
+    assert.equal(url.searchParams.has('x-amz-checksum-crc32'), false);
+  }
 });
 
 test('same owner and bytes in shared storage produce distinct persisted DEV and legacy assets', async () => {

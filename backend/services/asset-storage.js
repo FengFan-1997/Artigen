@@ -325,13 +325,22 @@ class S3AssetAdapter {
     const secretAccessKey = String(
       env.S3_SECRET_ACCESS_KEY || env.R2_SECRET_ACCESS_KEY || env.AWS_SECRET_ACCESS_KEY || ''
     ).trim();
-    this.client = new sdk.S3Client({
+    const clientConfig = {
       region: String(env.S3_REGION || env.AWS_REGION || 'auto').trim(),
       ...(endpoint ? { endpoint } : {}),
       forcePathStyle: String(env.S3_FORCE_PATH_STYLE || '').trim() === '1',
       ...(accessKeyId && secretAccessKey
         ? { credentials: { accessKeyId, secretAccessKey } }
         : {})
+    };
+    this.client = new sdk.S3Client(clientConfig);
+    // A presigner has no upload body to checksum. The SDK's default CRC32
+    // middleware can otherwise sign the empty-body checksum into a URL that
+    // browsers later use for real bytes. Keep automatic checksums on regular
+    // SDK requests and disable optional checksums only for presigned requests.
+    this.presignerClient = new sdk.S3Client({
+      ...clientConfig,
+      requestChecksumCalculation: 'WHEN_REQUIRED'
     });
   }
 
@@ -395,7 +404,7 @@ class S3AssetAdapter {
       ContentType: mimeType,
       ContentLength: byteSize
     });
-    return getSignedUrl(this.client, command, { expiresIn });
+    return getSignedUrl(this.presignerClient, command, { expiresIn });
   }
 
   async createMultipart({ key, mimeType }) {
@@ -416,7 +425,7 @@ class S3AssetAdapter {
       UploadId: uploadId,
       PartNumber: partNumber
     });
-    return getSignedUrl(this.client, command, { expiresIn });
+    return getSignedUrl(this.presignerClient, command, { expiresIn });
   }
 
   async listParts({ key, uploadId }) {
