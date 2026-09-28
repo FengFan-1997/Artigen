@@ -85,8 +85,7 @@ jobs:
           docker run --detach --name artigen-minio --publish 9000:9000 \
             --env MINIO_ROOT_USER="$MINIO_ROOT_USER" \
             --env MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
-            server /data
+            docker.io/bitnamilegacy/minio@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
               exit 0
@@ -214,8 +213,7 @@ jobs:
           docker run --detach --name artigen-minio --publish 9000:9000 \
             --env MINIO_ROOT_USER="$MINIO_ROOT_USER" \
             --env MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
-            server /data
+            docker.io/bitnamilegacy/minio@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
               exit 0
@@ -288,8 +286,7 @@ jobs:
           docker run --detach --name artigen-minio --publish 9000:9000 \
             --env MINIO_ROOT_USER="$MINIO_ROOT_USER" \
             --env MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
-            server /data
+            docker.io/bitnamilegacy/minio@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
               exit 0
