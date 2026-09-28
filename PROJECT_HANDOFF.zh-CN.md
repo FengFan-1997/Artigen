@@ -7,8 +7,8 @@
 - 项目所有者先在 Render Billing 自行添加付款方式后，可只把 DEV Web 服务升级到 Starter；本次核验的官方标价为 `$7/月`，工作区 Hobby 无需升级。未录入卡片、升级服务、支付费用或触碰任何服务配置。Production 服务目前也显示暂停，仍保持不操作。
 - Render 账号与状态的只读证据、认证状态及当前额度已同步到 `docs/INFRA_ACCOUNT_REGISTER.zh-CN.md`；DEV 恢复步骤与边界已写入 `DEV_ENVIRONMENT_RUNBOOK.zh-CN.md`。恢复后需要重新核对账单、服务真实状态、部署 SHA 与健康探针，不能把额度重置或付款方式添加视为服务已恢复。
 - 本机 `pnpm check:core` 全部通过。Chromium 桌面主要工作流定向回归 `4/4` 通过，覆盖失败规划原位重试、时间线真实工具活动、跨运行产物上下文、执行中用户补充；这些是本地 mock UI/接口验证，不等同于 DEV Provider 真实调用。
-- GitHub CI 原先从 Quay 拉取固定 MinIO 镜像时被拒绝（HTTP `401`）；同一公开 manifest 的匿名拉取也失败。CI 的三个临时 S3 fixture 现在改用 Docker Hub `bitnamilegacy/minio` 的固定 manifest digest `sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20`。镜像仅用于销毁式 CI，未用于 DEV/Production；它是 Bitnami 的 legacy 镜像，后续更新需重新验证来源、digest 和 MinIO API 回归。
-- 本次修改账号报告、DEV 运维手册、正式 Handoff 和 CI fixture；没有应用代码、数据库迁移、环境变量、账号权限、存储或线上服务配置变更。PR #236 的完整 CI 正在重跑，合入前还须证明镜像可以启动且相关质量门全绿。Production 未部署。
+- GitHub CI 原先从 Quay 拉取固定 MinIO 镜像时被拒绝（HTTP `401`）；Bitnami legacy MinIO 镜像可以启动，但完整 CI 两次在不同的对象上传与故障恢复用例中出现随机 `ECONNRESET`。三个临时 S3 fixture 已改为固定 RustFS `1.0.0` manifest digest `sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff`，使用官方 `/health` 检查及独立测试凭据。它仅用于销毁式 CI；还须由新 CI 运行验证上传、读取、删除和完整质量门，不代表 DEV 或 Production 存储有任何变化。
+- 本次修改正式 Handoff 和 CI fixture；没有应用代码、数据库迁移、环境变量、账号权限、存储或线上服务配置变更。PR #236 需要新的完整 CI 运行证明该 S3 fixture 稳定后，才能合入。Production 未部署。
 
 ## 2026-09-24 规划失败请求原位重试（已部署 DEV，未发布生产）
 
