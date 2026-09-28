@@ -7,8 +7,9 @@
 - 项目所有者先在 Render Billing 自行添加付款方式后，可只把 DEV Web 服务升级到 Starter；本次核验的官方标价为 `$7/月`，工作区 Hobby 无需升级。未录入卡片、升级服务、支付费用或触碰任何服务配置。Production 服务目前也显示暂停，仍保持不操作。
 - Render 账号与状态的只读证据、认证状态及当前额度已同步到 `docs/INFRA_ACCOUNT_REGISTER.zh-CN.md`；DEV 恢复步骤与边界已写入 `DEV_ENVIRONMENT_RUNBOOK.zh-CN.md`。恢复后需要重新核对账单、服务真实状态、部署 SHA 与健康探针，不能把额度重置或付款方式添加视为服务已恢复。
 - 本机 `pnpm check:core` 全部通过。Chromium 桌面主要工作流定向回归 `4/4` 通过，覆盖失败规划原位重试、时间线真实工具活动、跨运行产物上下文、执行中用户补充；这些是本地 mock UI/接口验证，不等同于 DEV Provider 真实调用。
-- GitHub CI 原先从 Quay 拉取固定 MinIO 镜像时被拒绝（HTTP `401`）；Bitnami legacy MinIO 镜像可以启动，但完整 CI 两次在不同的对象上传与故障恢复用例中出现随机 `ECONNRESET`。三个临时 S3 fixture 已改为固定 RustFS `1.0.0` manifest digest `sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff`，使用官方 `/health` 检查及独立测试凭据。它仅用于销毁式 CI；还须由新 CI 运行验证上传、读取、删除和完整质量门，不代表 DEV 或 Production 存储有任何变化。
-- 本次修改正式 Handoff 和 CI fixture；没有应用代码、数据库迁移、环境变量、账号权限、存储或线上服务配置变更。PR #236 需要新的完整 CI 运行证明该 S3 fixture 稳定后，才能合入。Production 未部署。
+- GitHub CI 原先从 Quay 拉取固定 MinIO 镜像时被拒绝（HTTP `401`）；Bitnami legacy MinIO 镜像可以启动，但完整 CI 两次在不同的对象上传与故障恢复用例中出现随机 `ECONNRESET`。三个临时 S3 fixture 已改为固定 RustFS `1.0.0` manifest digest `sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff`，使用官方 `/health` 检查及独立测试凭据。CI run `36380620094` 中其它 Agent Harness、chaos 和浏览器分片通过，PostgreSQL + RustFS 集成唯一失败是 multipart 预签名 PUT 的 `BadDigest`：AWS SDK 默认校验会在生成链接时把空正文 CRC32 带入 URL，真实分片到达后校验不符。
+- 当前候选修复在资产适配器中单独创建预签名客户端，并设置 `requestChecksumCalculation: WHEN_REQUIRED`；常规 S3 SDK 请求仍使用默认校验。命名空间测试断言单文件与分片 URL 都不含空正文 CRC32 参数。资产命名空间与上传服务本地定向测试 `10/10` 通过；`node --check`、`git diff --check` 通过，完整 CI 待重跑。AWS SDK 官方文档说明其默认 CRC32 上传校验行为从 JavaScript SDK `3.729.0` 起启用，并支持 `WHEN_REQUIRED` 设置（[校验和指南](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/s3-checksums.html)、[AWS 配置指南](https://docs.aws.amazon.com/sdkref/latest/guide/feature-dataintegrity.html)）。
+- PR #236 仍需以新完整 CI 全绿作为合入前提。该候选未修改数据库迁移、环境变量、账号权限、远程存储或线上服务配置；Production 未部署。
 
 ## 2026-09-24 规划失败请求原位重试（已部署 DEV，未发布生产）
 
