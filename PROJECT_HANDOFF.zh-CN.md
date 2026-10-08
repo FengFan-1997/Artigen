@@ -1,5 +1,14 @@
 # Artigen 项目正式 Handoff
 
+## 2026-10-08 恢复 Artigen DEV 主工作流
+
+- 用户需要立即启动 Artigen。Aiven 现有 DEV PostgreSQL Free 服务原为 Powered off；通过服务自身的 Power on 操作恢复，没有升级套餐或录入付款方式。随后从本机确认 PostgreSQL 接受连接，DEV `/readyz` 数据库检查通过。
+- Render CLI 当前显示 Artigen DEV 与 Production 均为 `not_suspended`，实际服务方案均为 Free；本轮没有读取账单用量。生产 `render.yaml` 仍声明 Starter，实际 Free 与模板存在漂移；不在本次修正，Production 未重启、部署或改配置。
+- DEV 仅重启现有 Web 服务，没有发布新代码。线上 `/healthz`、`/api/meta`、`/readyz` 均 HTTP 200；`/api/meta.gitSha` 为 `ba96b521f43e7edc3bd0d1995d56ef84e9578e6b`。readiness 的 database、S3、payload、Provider、payments、auth/mail、Agent、pricing 和 design-conversation 检查均通过；Worker scheduler 关闭且按非必需项跳过。
+- 将专用 DEV Mac Worker checkout 对齐到同一 SHA，并在 Docker Desktop 已可用后启动 Worker。`/api/agent/status` 确认 `workerOnline`、`workerModelReady`、`browserReady`、`egressVerified` 和 `desktopRelayReady` 均为 true，`queueDepth=0`；Runtime V2 和 subagents 仍关闭。启动 Worker 仅恢复服务心跳，本轮没有创建 Agent Run、调用真实 Provider、消费点数或测试支付。
+- 本机 `pnpm dev` 也已运行：前端 `http://localhost:4000/`、API `http://localhost:8080/healthz`。本机仅使用既有本地 PostgreSQL；没有本地 Provider / S3 配置，因此本机 `/api/meta` 的 generation 与 fileUpload 能力关闭。本机可用于开发页面，线上 DEV 才具备完整集成 readiness。
+- DEV 页面已在 Chrome 打开。接下来若要验收一条真实 Agent 任务，需要完成 DEV 测试账号邮箱验证码登录；浏览器控制在点击“发送验证码”前中断，是否发出验证码未确认。不得把 readiness 或主页 HTTP 200 表述为真实生成任务已验收。
+
 ## 2026-09-28 DEV 通道因 Render 免费额度暂停（待恢复）
 
 - 用户继续推进主要工作流开发与测试。本轮只读核实 Render Hobby 工作区本月 Free Instance Hours 为 `749.98 / 750`，带宽为 `4.17 / 5 GB`，无付款方式、未出账费用 `$0`；Render CLI 显示工作区的 4 个 Web 服务均被 billing 暂停。Artigen DEV `/api/meta`、`/healthz`、`/readyz` 均为 HTTP 503；这是托管额度状态，不是代码部署、数据库或 Aiven 连接错误。

@@ -13,13 +13,20 @@ DEV 是受保护的线上集成环境，不是生产，不承载正式用户数�
 
 DEV 口令只存 Render Secret 和本机安全存储，不写入 Git、文档、命令历史或截图。
 
-### 当前托管状态（2026-09-28）
+### 历史事件：Render Free 限额暂停（2026-09-28）
 
 Render Hobby 工作区当月 Free Instance Hours 已使用 `749.98 / 750` 小时；账单页显示没有付款方式，Render CLI 显示工作区的 4 个 Web 服务均因 billing 暂停。DEV 的 `/api/meta`、`/healthz`、`/readyz` 当前都返回 HTTP 503。此状态是托管额度，不是应用或 Aiven 故障；服务暂停期间不要运行云端 smoke、Worker 或 Provider 任务。
 
-DEV 的 `render.dev.yaml` 目前仍声明 `plan: free`。恢复常驻 DEV Web 服务需要项目所有者先在 Render Billing 添加付款方式，再只将 DEV Web 服务改为 Starter（当前官网标价 `$7/月`）；无需升级整个 Hobby 工作区。修改前重新读取账单、服务用量和当前 Starter 价格；不要代录银行卡或修改其他服务。工作区账单页最后显示带宽 `4.17 / 5 GB`，恢复后需复核实际用量与可能产生的超额费用。Production 服务的 CLI 状态也显示暂停；本 Runbook 不授权其恢复、升级或部署。
+该快照仅代表 2026-09-28，不作为当前服务状态。
 
-如不升级，Free Instance Hours 在新计费月重置后可能恢复免费服务，但这不构成持续可用保证；重新测试前仍须核对平台服务状态、精确 SHA、`/healthz` 和 `/readyz`。Render Free 服务的限额说明见[官方文档](https://render.com/docs/free)。
+### 当前托管状态（2026-10-08）
+
+- Render CLI 显示 Artigen DEV 与 Production 均未暂停，实际服务方案均为 Free；本次没有读取账单页、月度实例时数或带宽用量，不能据此断言剩余额度已重置。DEV 服务仅做 restart，没有发布代码；Production 未操作。Production 的实际 Free 方案与仓库 `render.yaml` 的 Starter 声明存在配置漂移，暂不调整。
+- Aiven 既有 DEV PostgreSQL Free 服务此前为 Powered off；通过服务自己的 Power on 操作恢复，未升级或添加付款方式。随后从 Mac 确认 PostgreSQL 接受连接，且 DEV `/readyz` 数据库迁移检查通过。
+- DEV `/healthz`、`/api/meta` 与 `/readyz` 均 HTTP 200；部署 SHA 为 `ba96b521f43e7edc3bd0d1995d56ef84e9578e6b`，迁移为 `031_agent_run_artifact_lineage`，database、S3、payload、Provider、payment、auth/mail、Agent、pricing 和 design-conversation readiness 均通过。
+- 专用 DEV Mac Worker 已对齐同一 SHA 并启动；`/api/agent/status` 的 Worker、模型、浏览器、受限出口、桌面中继状态全部 ready，队列深度为 0。Runtime V2 与 subagents 仍关闭。本次没有运行真实 Provider 任务或支付测试。
+
+恢复服务不等于月度额度余量、完整用户任务或生产环境都已验收。每次发布或重启后仍要核对服务状态、精确 SHA、`/healthz` 和 `/readyz`；Render Free 限额说明见[官方文档](https://render.com/docs/free)。
 
 ## 2. 安全配置
 
