@@ -67,6 +67,8 @@ services:
         sync: false
       - key: AUTH_EMAIL_OTP_ENABLED
         value: "false"
+      - key: AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED
+        value: "true"
       - key: AI_DESIGN_TASK_V2_ENABLED
         value: "false"
       - key: WORKSHOP_AI_TASK_V2_ENABLED

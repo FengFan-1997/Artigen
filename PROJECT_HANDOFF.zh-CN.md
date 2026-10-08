@@ -1,5 +1,12 @@
 # Artigen 项目正式 Handoff
 
+## 2026-10-08 邮箱验证码登录的 Turnstile 备用通道（开发候选，未部署）
+
+- 登录与邀请注册验证码流程在 Turnstile 控件下提供“验证不可用？直接发送验证码”备用按钮。用户主动选择后，前端发送 `turnstileFallback=true`；服务端只在 `login` 用途、请求未携带 Turnstile token 且 `AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED` 未关闭时接受。提供有效 token 时仍执行正常 Turnstile 校验；密码重置不支持此备用通道。
+- 备用通道不替代自动化滥用防护。生产投递仍通过 OTP 数据库配额、目标邮箱冷却、IP / 全局日配额与请求速率限制；已有邀请注册限制不变。部署模板将 fallback 默认设为启用，可用变量值 `false` 紧急关闭。
+- 本地回归：认证 OTP 与 Render 配置 Node 测试通过；邮箱 OTP 前端 API 与 Turnstile loader 单测通过；Chromium 邮箱登录浏览器回归通过，Turnstile 脚本加载失败时登录页与应用登录弹窗都可选择备用通道并正确提交标记。类型检查通过。上述是本地候选验证，不代表 DEV 或生产已部署。
+- 无数据库迁移、账号/Secret 改动或真实邮件发送。尚未创建 PR、合并或触碰任何远程环境；后续按 `codex/* → dev → main` 发布流程运行 required CI，先在 DEV 验证，再单独发布生产。
+
 ## 2026-09-24 规划失败请求原位重试（已部署 DEV，未发布生产）
 
 - DEV 实际流程曾遇到规划 Provider 限流：系统明确说明“未创建 Agent 任务、未冻结点数”，但只让用户稍后重试，没有保留原请求的直接恢复动作。用户手动重发时容易重复消息，并可能丢失附件或已选产物上下文。

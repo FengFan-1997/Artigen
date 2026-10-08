@@ -59,6 +59,25 @@ describe('email OTP API client', () => {
     });
   });
 
+  it('marks the user-requested direct-send fallback on login OTP requests', async () => {
+    authFetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ ok: true, challengeId: 'challenge-fallback', cooldownSec: 60 }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    await sendLoginCode('friend@example.com', {
+      idempotencyKey: 'otp:fallback',
+      turnstileFallback: true
+    });
+    const [, init] = authFetchMock.mock.calls[0];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      email: 'friend@example.com',
+      turnstileToken: '',
+      turnstileFallback: true
+    });
+  });
+
   it('treats HTTP 202 as delivery unknown while keeping the verification flow usable', async () => {
     authFetchMock.mockResolvedValue(
       new Response(JSON.stringify({ ok: true, challengeId: 'challenge-2', cooldownSec: 60 }), {

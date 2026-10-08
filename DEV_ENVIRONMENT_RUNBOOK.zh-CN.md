@@ -26,6 +26,8 @@ DEV 当前用于真实集成 smoke，因此部分能力可以开启，但必须�
 - 数据库、Cookie、加密密钥和 Worker 身份必须与生产隔离；S3 隔离尚未完成，禁止桶级清理和生产对象操作，恢复演练只允许使用唯一临时前缀下的合成对象；
 - 页面显式显示 DEV 标记，外层访问门禁始终开启。
 
+登录 / 注册验证码处若 Cloudflare Turnstile 无法加载，用户可以主动选“验证不可用？直接发送验证码”。此备用参数只对邮箱登录验证码有效，仍受 OTP 数据库配额约束；密码重置继续要求 Turnstile。设置 `AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED=false` 可停用此备用通道。配置边界与 Production 相同，见[生产运行手册](./PRODUCTION_RUNBOOK.zh-CN.md#邮箱登录与人机验证备用通道)。
+
 Render Dashboard 的实际变量可能覆盖 `render.dev.yaml` 的安全默认值。变更变量后必须重新部署，并以 `/readyz` 而不是模板推断状态。
 
 ### S3 新文件命名空间的启用与回滚

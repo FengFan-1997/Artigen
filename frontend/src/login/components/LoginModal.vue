@@ -157,7 +157,9 @@
               <TurnstileWidget
                 ref="turnstileRef"
                 v-model="turnstileToken"
+                v-model:fallback-selected="turnstileFallback"
                 :action="EMAIL_OTP_TURNSTILE_ACTION"
+                :allow-fallback="true"
               />
               <div class="hint" :class="{ error: !!error }">
                 {{ error || info }}
@@ -168,7 +170,7 @@
                   sending ||
                   !emailLocal ||
                   cooldownLeft > 0 ||
-                  (turnstileRequired && !turnstileToken)
+                  (turnstileRequired && !turnstileToken && !turnstileFallback)
                 "
                 type="button"
                 @click="sendCode"
@@ -314,7 +316,9 @@
               <TurnstileWidget
                 ref="turnstileRef"
                 v-model="turnstileToken"
+                v-model:fallback-selected="turnstileFallback"
                 :action="EMAIL_OTP_TURNSTILE_ACTION"
+                :allow-fallback="true"
               />
 
               <div class="grid">
@@ -337,7 +341,7 @@
                     sending ||
                     !emailLocal ||
                     cooldownLeft > 0 ||
-                    (turnstileRequired && !turnstileToken)
+                    (turnstileRequired && !turnstileToken && !turnstileFallback)
                   "
                   type="button"
                   @click="sendCode"
@@ -477,6 +481,7 @@ const googleSdkLoading = ref(false);
 const googleSdkFailed = ref(false);
 let returnFocusElement: HTMLElement | null = null;
 const turnstileToken = ref('');
+const turnstileFallback = ref(false);
 const turnstileRequired = isTurnstileConfigured();
 const turnstileRef = ref<{ reset: () => void } | null>(null);
 
@@ -559,6 +564,7 @@ watch(
     error.value = '';
     info.value = '';
     turnstileToken.value = '';
+    turnstileFallback.value = false;
     if (timer) {
       window.clearInterval(timer);
       timer = null;
@@ -632,6 +638,7 @@ const resetOtpUi = () => {
   error.value = '';
   info.value = '';
   turnstileToken.value = '';
+  turnstileFallback.value = false;
   void nextTick(() => turnstileRef.value?.reset());
 };
 
@@ -813,7 +820,7 @@ const sendCode = async () => {
     loggingIn.value ||
     registering.value ||
     cooldownLeft.value > 0 ||
-    (turnstileRequired && !turnstileToken.value)
+    (turnstileRequired && !turnstileToken.value && !turnstileFallback.value)
   ) {
     return;
   }
@@ -843,7 +850,8 @@ const sendCode = async () => {
   try {
     const res = await sendLoginCode(e, {
       idempotencyKey: attempt.idempotencyKey,
-      turnstileToken: turnstileToken.value
+      turnstileToken: turnstileFallback.value ? '' : turnstileToken.value,
+      turnstileFallback: turnstileFallback.value
     });
     if (!res.ok) {
       failOtpSend('login', attempt.idempotencyKey, { cooldownSec: res.cooldownSec });
@@ -860,6 +868,7 @@ const sendCode = async () => {
       cooldownSec: res.cooldownSec
     });
     turnstileRef.value?.reset();
+    turnstileFallback.value = false;
     info.value =
       res.deliveryStatus === 'unknown'
         ? currentLang.value === 'zh'

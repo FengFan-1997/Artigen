@@ -195,6 +195,7 @@ const parseJson = async (res: Response) => {
 export type SendCodeOptions = {
   idempotencyKey?: string;
   turnstileToken?: string;
+  turnstileFallback?: boolean;
 };
 
 const fallbackIdempotencyKey = () => {
@@ -217,6 +218,7 @@ export const sendLoginCode = async (
     body: JSON.stringify({
       email,
       turnstileToken: String(options.turnstileToken || '').trim(),
+      turnstileFallback: options.turnstileFallback === true,
       sessionId: getOrCreateSessionId(),
       projectId: getOrCreateProjectId(),
       pageContext: getPageContext(),

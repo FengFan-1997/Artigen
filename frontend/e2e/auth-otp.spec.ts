@@ -102,6 +102,84 @@ test.describe('email OTP flow', () => {
     await expect(page.locator('button.primary')).toBeEnabled();
   });
 
+  test('lets the user explicitly send a login code when Turnstile cannot load', async ({ page }) => {
+    test.skip(
+      process.env.ARTIGEN_E2E_WITH_TURNSTILE !== '1',
+      'Set ARTIGEN_E2E_WITH_TURNSTILE=1 and a test site key to exercise the configured widget.'
+    );
+    let sendBody: Record<string, unknown> = {};
+    await page.route('https://challenges.cloudflare.com/**', (route) => route.abort());
+    await page.route('**/api/login/send-code', async (route) => {
+      sendBody = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          challengeId: 'challenge-no-turnstile',
+          cooldownSec: 60,
+          deliveryStatus: 'accepted'
+        })
+      });
+    });
+
+    await page.goto('/login');
+    await page.getByRole('button', { name: /邮箱登录|Email Login/i }).click();
+    await page.locator('input[type="email"]').fill('friend@example.com');
+    const fallback = page.getByRole('button', { name: '验证不可用？直接发送验证码' });
+    await expect(fallback).toBeVisible();
+    await fallback.click();
+    await expect(page.locator('.turnstile-fallback')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('button.primary')).toBeEnabled();
+    await page.locator('button.primary').click();
+
+    expect(sendBody).toMatchObject({
+      email: 'friend@example.com',
+      turnstileToken: '',
+      turnstileFallback: true
+    });
+  });
+
+  test('uses the same Turnstile fallback from the in-app login modal', async ({ page }) => {
+    test.skip(
+      process.env.ARTIGEN_E2E_WITH_TURNSTILE !== '1',
+      'Set ARTIGEN_E2E_WITH_TURNSTILE=1 and a test site key to exercise the configured widget.'
+    );
+    let sendBody: Record<string, unknown> = {};
+    await page.route('https://challenges.cloudflare.com/**', (route) => route.abort());
+    await page.route('**/api/login/send-code', async (route) => {
+      sendBody = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          challengeId: 'challenge-modal-no-turnstile',
+          cooldownSec: 60,
+          deliveryStatus: 'accepted'
+        })
+      });
+    });
+
+    await page.goto('/artigen/ai');
+    await page.getByRole('button', { name: /登录.*注册|Login.*Register/i }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: /邮箱登录|Email Login/i }).click();
+    await dialog.locator('input[autocomplete="email"]').fill('friend@example.com');
+    const fallback = dialog.getByRole('button', { name: '验证不可用？直接发送验证码' });
+    await expect(fallback).toBeVisible();
+    await fallback.click();
+    await expect(dialog.locator('.turnstile-fallback')).toHaveAttribute('aria-pressed', 'true');
+    await expect(dialog.locator('button.primary')).toBeEnabled();
+    await dialog.locator('button.primary').click();
+
+    expect(sendBody).toMatchObject({
+      email: 'friend@example.com',
+      turnstileToken: '',
+      turnstileFallback: true
+    });
+  });
+
   test('resets registration state before returning to modal email login', async ({ page }) => {
     await page.route('**/api/login/send-code', (route) =>
       route.fulfill({
