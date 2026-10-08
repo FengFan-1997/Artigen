@@ -1,18 +1,44 @@
 <template>
   <div
-    v-if="siteKey"
+    v-if="siteKey || allowFallback"
     class="turnstile-wrap"
     :class="{ failed: loadFailed }"
     aria-live="polite"
   >
-    <div ref="containerRef"></div>
-    <div v-if="loadFailed" class="turnstile-error" role="alert">
+    <div v-if="siteKey" ref="containerRef"></div>
+    <div v-if="siteKey && loadFailed" class="turnstile-error" role="alert">
       <span>
         {{ isZh ? '安全验证加载失败，请检查网络后重试' : 'Security check failed to load.' }}
       </span>
       <button type="button" class="turnstile-retry" :disabled="loading" @click="retry">
         {{ isZh ? '重新加载' : 'Retry' }}
       </button>
+    </div>
+    <div v-if="allowFallback" class="turnstile-fallback-row">
+      <button
+        class="turnstile-fallback"
+        :class="{ selected: fallbackSelected }"
+        type="button"
+        :aria-pressed="fallbackSelected"
+        @click="emit('update:fallbackSelected', !fallbackSelected)"
+      >
+        {{
+          fallbackSelected
+            ? isZh
+              ? '已选择直接发送验证码'
+              : 'Direct email-code fallback selected'
+            : isZh
+              ? '验证不可用？直接发送验证码'
+              : 'Can’t verify? Send the email code directly'
+        }}
+      </button>
+      <small v-if="fallbackSelected">
+        {{
+          isZh
+            ? '仍受邮箱、IP 和全局发送限额保护。'
+            : 'Email, IP, and global sending limits still apply.'
+        }}
+      </small>
     </div>
   </div>
 </template>
@@ -26,12 +52,15 @@ const props = withDefaults(
   defineProps<{
     modelValue: string;
     action?: string;
+    allowFallback?: boolean;
+    fallbackSelected?: boolean;
   }>(),
-  { action: 'email_otp' }
+  { action: 'email_otp', allowFallback: false, fallbackSelected: false }
 );
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
+  'update:fallbackSelected': [value: boolean];
 }>();
 
 const siteKey = turnstileSiteKey();
@@ -148,5 +177,39 @@ defineExpose({ reset, retry });
 .turnstile-retry:disabled {
   cursor: wait;
   opacity: 0.6;
+}
+
+.turnstile-fallback-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 0 0 12px;
+}
+
+.turnstile-fallback {
+  min-height: 28px;
+  padding: 2px 0;
+  border: 0;
+  color: #9ca3af;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.turnstile-fallback:hover,
+.turnstile-fallback.selected {
+  color: #d1d5db;
+}
+
+.turnstile-fallback-row small {
+  flex-basis: 100%;
+  color: #9ca3af;
+  font-size: 11px;
+  line-height: 1.45;
 }
 </style>

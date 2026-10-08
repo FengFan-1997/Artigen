@@ -75,6 +75,10 @@ test('Render keeps same-origin frontend bases and uses shallow liveness', () => 
   assert.match(blueprint, /^\s+- key: APP_ORIGIN\s*\n\s+sync: false\s*$/m);
   assert.match(blueprint, /^\s+- key: GOOGLE_OAUTH_CLIENT_ID\s*\n\s+sync: false\s*$/m);
   assert.match(blueprint, /^\s+- key: TURNSTILE_HOSTNAMES\s*\n\s+sync: false\s*$/m);
+  assert.match(
+    blueprint,
+    /^\s+- key: AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED\s*\n\s+value: "true"\s*$/m
+  );
 });
 
 test('Render DEV blueprint preserves Aiven free-tier connection and TLS boundaries', () => {
@@ -121,6 +125,10 @@ test('Render DEV blueprint preserves Aiven free-tier connection and TLS boundari
   assert.match(
     blueprint,
     /^\s+- key: AGENT_RUNTIME_V2_CANARY_USER_IDS\s*\n\s+value: ""\s*$/m
+  );
+  assert.match(
+    blueprint,
+    /^\s+- key: AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED\s*\n\s+value: "true"\s*$/m
   );
 });
 

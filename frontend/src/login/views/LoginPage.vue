@@ -111,13 +111,18 @@
             <TurnstileWidget
               ref="turnstileRef"
               v-model="turnstileToken"
+              v-model:fallback-selected="turnstileFallback"
               :action="EMAIL_OTP_TURNSTILE_ACTION"
+              :allow-fallback="true"
             />
 
             <button
               class="nth-login-btn primary"
               :disabled="
-                sending || !email || cooldownLeft > 0 || (turnstileRequired && !turnstileToken)
+                sending ||
+                !email ||
+                cooldownLeft > 0 ||
+                (turnstileRequired && !turnstileToken && !turnstileFallback)
               "
               type="button"
               @click="sendCode"
@@ -314,6 +319,7 @@ const googleButtonReady = ref(false);
 const googleSdkLoading = ref(false);
 const googleSdkFailed = ref(false);
 const turnstileToken = ref('');
+const turnstileFallback = ref(false);
 const turnstileRequired = isTurnstileConfigured();
 const turnstileRef = ref<{ reset: () => void } | null>(null);
 
@@ -398,7 +404,7 @@ const sendCode = async () => {
     sending.value ||
     loggingIn.value ||
     cooldownLeft.value > 0 ||
-    (turnstileRequired && !turnstileToken.value)
+    (turnstileRequired && !turnstileToken.value && !turnstileFallback.value)
   ) {
     return;
   }
@@ -427,7 +433,8 @@ const sendCode = async () => {
   try {
     const res = await sendLoginCode(e, {
       idempotencyKey: attempt.idempotencyKey,
-      turnstileToken: turnstileToken.value
+      turnstileToken: turnstileFallback.value ? '' : turnstileToken.value,
+      turnstileFallback: turnstileFallback.value
     });
     if (!res.ok) {
       failOtpSend('login', attempt.idempotencyKey, { cooldownSec: res.cooldownSec });
@@ -444,6 +451,7 @@ const sendCode = async () => {
       cooldownSec: res.cooldownSec
     });
     turnstileRef.value?.reset();
+    turnstileFallback.value = false;
     startCooldown(res.cooldownSec);
     code.value = '';
     deliveryUnknown.value = res.deliveryStatus === 'unknown';

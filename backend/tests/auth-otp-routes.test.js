@@ -378,6 +378,160 @@ test('login OTP verifies the shared email_otp Turnstile action', async () => {
   assert.equal(sendRes.state.body.challengeId, 'memory');
 });
 
+test('login OTP allows an explicit Turnstile fallback without weakening token validation', async () => {
+  let turnstileChecks = 0;
+  let deliveries = 0;
+  const app = install({
+    env: {
+      NODE_ENV: 'development',
+      OTP_HMAC_SECRET: 'auth-otp-route-test-secret',
+      AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED: 'true'
+    },
+    turnstileVerifier: async () => {
+      turnstileChecks += 1;
+      throw new Error('explicit fallback must not call Turnstile');
+    },
+    mailService: {
+      async sendOtp() {
+        deliveries += 1;
+        return { state: 'accepted', provider: 'test', messageId: 'message-id' };
+      }
+    }
+  });
+  const send = app.routes.get('POST /api/login/send-code');
+  const sendRes = response();
+  await send(request({
+    email: 'fallback@example.com',
+    turnstileFallback: true
+  }), sendRes);
+
+  assert.equal(sendRes.state.status, 200);
+  assert.equal(sendRes.state.body.deliveryStatus, 'accepted');
+  assert.equal(deliveries, 1);
+  assert.equal(turnstileChecks, 0);
+});
+
+test('an explicit Turnstile fallback is still stopped by durable OTP quotas', async () => {
+  let turnstileChecks = 0;
+  let deliveries = 0;
+  let quotaChecks = 0;
+  const app = install({
+    databaseMode: true,
+    env: {
+      NODE_ENV: 'production',
+      AUTH_EMAIL_OTP_ENABLED: 'true',
+      AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED: 'true',
+      OTP_HMAC_SECRET: 'auth-otp-route-test-secret'
+    },
+    otpDeliveryService: {
+      async findAttempt() {
+        return null;
+      },
+      async beginAttempt() {
+        quotaChecks += 1;
+        return {
+          ok: false,
+          error: 'OTP_SEND_QUOTA_EXCEEDED',
+          scope: 'target_day',
+          retryAfterSec: 3600
+        };
+      }
+    },
+    turnstileVerifier: async () => {
+      turnstileChecks += 1;
+      return { ok: true };
+    },
+    mailService: {
+      async sendOtp() {
+        deliveries += 1;
+        return { state: 'accepted', provider: 'test', messageId: 'message-id' };
+      }
+    }
+  });
+  const send = app.routes.get('POST /api/login/send-code');
+  const sendRes = response();
+  await send(request({
+    email: 'quota-limited@example.com',
+    turnstileFallback: true
+  }, { 'idempotency-key': 'otp:quota-limited-fallback' }), sendRes);
+
+  assert.equal(sendRes.state.status, 429);
+  assert.equal(sendRes.state.body.error, 'OTP_PROVIDER_THROTTLED');
+  assert.equal(quotaChecks, 1);
+  assert.equal(deliveries, 0);
+  assert.equal(turnstileChecks, 0);
+});
+
+test('a disabled Turnstile fallback rejects the client request', async () => {
+  let turnstileChecks = 0;
+  const app = install({
+    env: {
+      NODE_ENV: 'development',
+      OTP_HMAC_SECRET: 'auth-otp-route-test-secret',
+      AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED: 'false'
+    },
+    turnstileVerifier: async () => {
+      turnstileChecks += 1;
+      throw new TurnstileError('TURNSTILE_REQUIRED', { status: 400 });
+    }
+  });
+  const sendLogin = app.routes.get('POST /api/login/send-code');
+  const loginRes = response();
+  await sendLogin(request({
+    email: 'fallback-disabled@example.com',
+    turnstileFallback: true
+  }), loginRes);
+  assert.equal(loginRes.state.status, 400);
+  assert.equal(loginRes.state.body.error, 'TURNSTILE_REQUIRED');
+  assert.equal(turnstileChecks, 1);
+});
+
+test('login fallback cannot bypass password-reset Turnstile verification', async () => {
+  let turnstileChecks = 0;
+  const app = install({
+    env: {
+      NODE_ENV: 'development',
+      OTP_HMAC_SECRET: 'auth-otp-route-test-secret',
+      AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED: 'true'
+    },
+    turnstileVerifier: async ({ expectedAction }) => {
+      turnstileChecks += 1;
+      assert.equal(expectedAction, 'password_reset_otp');
+      throw new TurnstileError('TURNSTILE_REQUIRED', { status: 400 });
+    }
+  });
+  const sendReset = app.routes.get('POST /api/auth/password-reset/send-code');
+  const resetRes = response();
+  await sendReset(request({
+    email: 'reset-fallback@example.com',
+    turnstileFallback: true
+  }), resetRes);
+  assert.equal(resetRes.state.status, 400);
+  assert.equal(resetRes.state.body.error, 'TURNSTILE_REQUIRED');
+  assert.equal(turnstileChecks, 1);
+});
+
+test('a supplied Turnstile token is validated even when the fallback option is selected', async () => {
+  let turnstileChecks = 0;
+  const app = install({
+    turnstileVerifier: async ({ token }) => {
+      turnstileChecks += 1;
+      assert.equal(token, 'invalid-token');
+      throw new TurnstileError('TURNSTILE_FAILED', { status: 400 });
+    }
+  });
+  const send = app.routes.get('POST /api/login/send-code');
+  const sendRes = response();
+  await send(request({
+    email: 'fallback-token@example.com',
+    turnstileToken: 'invalid-token',
+    turnstileFallback: true
+  }), sendRes);
+  assert.equal(sendRes.state.status, 400);
+  assert.equal(sendRes.state.body.error, 'TURNSTILE_INVALID');
+  assert.equal(turnstileChecks, 1);
+});
+
 test('database idempotency replay does not require a consumed Turnstile token again', async () => {
   let turnstileChecks = 0;
   let deliveries = 0;
