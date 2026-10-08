@@ -5,7 +5,7 @@
 - 登录与邀请注册验证码流程在 Turnstile 控件下提供“验证不可用？直接发送验证码”备用按钮。用户主动选择后，前端发送 `turnstileFallback=true`；服务端只在 `login` 用途、请求未携带 Turnstile token 且 `AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED` 未关闭时接受。提供有效 token 时仍执行正常 Turnstile 校验；密码重置不支持此备用通道。
 - 备用通道不替代自动化滥用防护。生产投递仍通过 OTP 数据库配额、目标邮箱冷却、IP / 全局日配额与请求速率限制；已有邀请注册限制不变。部署模板将 fallback 默认设为启用，可用变量值 `false` 紧急关闭。
 - 本地 `pnpm check:core` 通过：前端 235 项、后端 703 passed / 101 skipped、邮件服务 7 项；认证 OTP / Render 配置定向 Node 测试 32/32，登录 API / Turnstile 单测 10/10，Chromium 认证 E2E 标准场景 4/4，加上带测试 Key 的 Turnstile fallback 两个入口 2/2。测试浏览器阻断了 Cloudflare 调用并 mock 邮件 API，没有发出真实验证码。
-- PR [#237](https://github.com/FengFan-1997/Artigen/pull/237) 已创建并以 `dev` 为目标；GitHub CI 和 Vercel Preview 当前待完成。本地提交 SHA `913ff54cf565bb9e7bba104fa63a77202876de34` 尚未合入 `dev`，故没有 DEV / Production 部署。无数据库迁移、账号 / Secret 改动或真实邮件发送；合入后先完成 DEV smoke，再按 `用途-日期 → dev → main` 流程发布生产。
+- PR [#237](https://github.com/FengFan-1997/Artigen/pull/237) 已创建并以 `dev` 为目标。本地提交 SHA `913ff54cf565bb9e7bba104fa63a77202876de34` 尚未合入 `dev`，故没有 DEV / Production 部署。GitHub Actions run [37733404827](https://github.com/FengFan-1997/Artigen/actions/runs/37733404827) 的全部桌面、移动和平板 E2E 均通过，Vercel Preview 部署完成；Core quality gate、Agent Harness 与 chaos job 在应用测试前启动固定 MinIO 镜像时因 `quay.io` 返回 `unauthorized: access to the requested resource is not authorized` 失败，Release gate 因依赖检查失败。故 required CI 未通过，PR 仍被阻止合并。无数据库迁移、账号 / Secret 改动或真实邮件发送；解决 CI 镜像拉取问题并通过门禁后，先完成 DEV smoke，再按 `用途-日期 → dev → main` 流程发布生产。
 
 ## 2026-09-24 规划失败请求原位重试（已部署 DEV，未发布生产）
 
