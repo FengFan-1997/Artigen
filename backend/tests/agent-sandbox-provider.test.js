@@ -10,6 +10,7 @@ test('CUA bridge PATH includes its Python venv for launchd workers', async () =>
     cuaPython: '/worker/backend/.venv-agent/bin/python',
     cuaApiKey: ''
   };
+  const dockerConfigDir = '/worker/tmp/artigen-agent-dev-docker-config-fixture';
   let childEnvironment;
   const spawnImpl = (_command, _args, options) => {
     childEnvironment = options.env;
@@ -31,11 +32,13 @@ test('CUA bridge PATH includes its Python venv for launchd workers', async () =>
   const result = await runBridge({
     payload: { command: 'doctor' },
     config,
+    dockerConfigDir,
     spawnImpl
   });
 
   const pathEntries = childEnvironment.PATH.split(path.delimiter);
   assert.equal(pathEntries[0], path.dirname(config.cuaPython));
   assert.ok(pathEntries.includes(path.resolve(__dirname, '../agent_runtime/docker-bin')));
+  assert.equal(childEnvironment.DOCKER_CONFIG, dockerConfigDir);
   assert.equal(result.ok, true);
 });

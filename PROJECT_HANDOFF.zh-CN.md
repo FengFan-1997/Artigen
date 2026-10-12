@@ -2,18 +2,25 @@
 
 ## 2026-10-12 DEV 发布与主要工作流状态
 
-- PR #237 的登录 OTP Turnstile fallback、PR #238 的 CUA Sandbox SDK 依赖收敛、PR #239 的 LaunchAgent CUA Python PATH 修复、PR #240 的 Runtime V1 检查点修复和 PR #241 的“不生成图片”意图修复均已通过 required CI 并合入 `dev`。截至本记录，Render DEV `/api/meta.gitSha` 精确匹配 PR #241 merge SHA `d9fe104e22d2dfd650ee0a0360cf93a544d7cb8b`；此前部署检查 `/healthz`、`/readyz` 均 HTTP 200、readiness 全绿。
+- PR #237 的登录 OTP Turnstile fallback、PR #238 的 CUA Sandbox SDK 依赖收敛、PR #239 的 LaunchAgent CUA Python PATH 修复、PR #240 的 Runtime V1 检查点修复、PR #241 的“不生成图片”意图修复和 PR #242 的普通文本文件交付恢复均已通过 required CI 并合入 `dev`。Render DEV `/api/meta.gitSha` 精确匹配 PR #242 merge SHA `1edff8c143787c853d6d996ddb01dec46ca8f0bd`；部署后的 `/healthz`、`/readyz` 均 HTTP 200，readiness 全绿。
 - PR #236 的完整 required CI run `38227438432` 全部通过并合入 `dev`；后续 DEV 版本已包含该改动。generation、fileUpload 和 artifactDownload 已配置启用。
-- DEV LaunchAgent `com.artigen.agent-worker-dev` 当前没有运行的 PID，最近状态为退出码 `75`；用于真实测试的前台 Worker 已停止。Worker 自动常驻启动仍未解决，不能据 API readiness 声称主流程可用。
+- PR #242 部署后，DEV `/api/agent/status` 仍显示 Worker offline、queue depth 为 0；不要把 API readiness 当成 Agent 主流程已就绪。LaunchAgent 的 Docker CLI 探针在加载用户 CLI 插件 metadata 时挂住并退出 `75`，当前由 PR #243 候选隔离 DEV Worker 的临时 `DOCKER_CONFIG` 修复；详见下一节。
 - 两次用户授权的 DEV 真实 Run 共消耗 5.3 点。第一次因服务端把“不生成图片”误判成图片要求而被停止，产生的一个 46 字节文本产物仍在 DEV 对象存储；第二次在 PR #241 部署后，计划已正确排除图片，但模型返回格式错误的纯文本、没有调用工具或创建文件，Run 以 `AGENT_VERIFICATION_INCOMPLETE` 结束并产生 1.5 点费用。都没有下载到本机；目前没有新的真实 Run 在运行，不继续产生测试费用。
 - Production 只读探针此前确认 `/api/meta` 与 `/readyz` 均为 HTTP 200，SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`，数据库迁移为 `029_secure_console_test_sessions`；没有部署或修改 Production。Runtime V2、Provider fallback、Owner Canary 仍关闭，本轮未测试付款。
 
-## 2026-10-12 普通文本文件交付恢复（PR #242 候选）
+## 2026-10-12 普通文本文件交付恢复（PR #242，已部署 DEV）
 
 - PR #241 部署后的真实 Run 已不再错误要求图片，但普通文本文件请求没有命中 `inferRequiredDeliverables` 支持的五种类型。Provider 因而没有触发缺少交付物时的重试提示；模型即使只返回口头完成文字，Runtime V1 最后仍会因没有可验证文件而失败。
-- 当前候选新增服务端推导的 `text_file` 交付类型：只在没有更具体交付类型时识别用户明确要求的 TXT、Markdown 或 CSV 文件；否定句不触发要求。必须有经服务端验证、角色为 `source` / `editable` 且 MIME 为 `text/plain` / `text/markdown` 的产物才算完成。V1 Worker 仍至少要求一个文件，Runtime V2 的任务规格也允许该服务端交付类型。
-- Provider 回归模拟模型先口头宣布完成，随后收到明确提示，调用 Shell 创建文件并声明已验证产物；另覆盖图片不能满足文本文件、中文和英文否定请求不触发交付要求。Agent runtime、Runtime V2 与文件完成检查共 `205 passed / 0 failed`；`pnpm --filter backend lint`、`pnpm check:workspace`、`git diff --check` 均通过。真实模型及 DEV Run 尚未复测。
+- PR #242 新增服务端推导的 `text_file` 交付类型：只在没有更具体交付类型时识别用户明确要求的 TXT、Markdown 或 CSV 文件；否定句不触发要求。必须有经服务端验证、角色为 `source` / `editable` 且 MIME 为 `text/plain` / `text/markdown` 的产物才算完成。V1 Worker 仍至少要求一个文件，Runtime V2 的任务规格也允许该服务端交付类型。
+- Provider 回归模拟模型先口头宣布完成，随后收到明确提示，调用 Shell 创建文件并声明已验证产物；另覆盖图片不能满足文本文件、中文和英文否定请求不触发交付要求。Agent runtime、Runtime V2 与文件完成检查共 `205 passed / 0 failed`；`pnpm --filter backend lint`、`pnpm check:workspace`、`git diff --check` 均通过。PR #242 required CI 全部通过并合入 `dev`；Render 已部署并精确报告 merge SHA `1edff8c143787c853d6d996ddb01dec46ca8f0bd`。没有在此修复后再创建真实 Run。
 - 账号报告不更新：本 PR 只改变 Agent 交付物解析和验证，不改变平台、账号、认证、权限、凭据位置或资源归属。
+
+## 2026-10-12 DEV Worker Docker CLI headless 启动修复（PR #243 候选）
+
+- PR #242 API 已部署且健康，但 `/api/agent/status` 仍显示 Worker offline、queue depth 为 0。终端的 Docker daemon 检查通过；LaunchAgent 的 `docker info` 会并发启动用户 Docker CLI 插件目录中的 metadata 命令，插件进程在无交互启动中持续运行，Docker 探针最终退出 `75`。
+- 候选仅对 DEV runner 创建带随机后缀的临时空 `DOCKER_CONFIG`，供 daemon 探针和 CUA bridge 内的 Docker 命令共用；runner 退出时仅清理自己创建的临时目录，不读取或修改用户 Docker 插件、登录凭据或 Production Worker 设置。DEV CUA 镜像在本机已存在。
+- PR #243 验证与部署状态待补。此阶段没有创建新的真实 Agent Run；此前两次真实 Run 共消耗 5.3 点。
+- 账号报告不更新：这项改动只隔离 DEV 本机 Worker 的 Docker CLI 配置，不改变平台账号、权限、凭据内容、服务端环境变量、远端存储或资源归属。
 
 ## 2026-10-12“不生成图片”交付物误判修复（PR #241，已部署 DEV）
 

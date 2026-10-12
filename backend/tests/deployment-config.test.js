@@ -18,21 +18,33 @@ const {
 const readRepoFile = (relativePath) =>
   fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 
-test('Worker storage namespace comes only from the selected profile Keychain', () => {
+test('Mac worker isolates the DEV Docker config and keeps profile storage namespaces', () => {
   for (const [profile, configuredPrefix] of [['dev', 'dev/assets'], ['production', '']]) {
     let launched;
+    let dockerCheck;
+    let removedDockerConfig;
+    const processListeners = [];
     const usedServices = new Set();
     const fakeProcess = {
       argv: ['node', 'runner', profile], execPath: '/synthetic/node',
-      env: { S3_KEY_PREFIX: 'wrong-shell/assets' }, once() {},
+      env: { S3_KEY_PREFIX: 'wrong-shell/assets' },
+      once(event, listener) { processListeners.push({ event, listener }); },
       exit(code) { throw new Error(`Unexpected runner exit: ${code}`); }
     };
     vm.runInNewContext(readRepoFile('backend/scripts/run-agent-worker-macos.js'), {
       __dirname: path.join(repoRoot, 'backend/scripts'), process: fakeProcess, console,
       require(name) {
         if (name === 'node:path') return path;
+        if (name === 'node:fs') return {
+          mkdtempSync(prefix) { return `${prefix}fixture`; },
+          rmSync(target, options) { removedDockerConfig = { target, options }; }
+        };
+        if (name === 'node:os') return { tmpdir: () => '/synthetic/tmp' };
         if (name === 'node:child_process') return {
-          spawnSync: () => ({ status: 0 }),
+          spawnSync: (command, args, options) => {
+            dockerCheck = { command, args, env: options.env };
+            return { status: 0 };
+          },
           spawn: (_command, _args, options) => { launched = options.env; return { once() {} }; }
         };
         if (name === '../lib/local-keychain') return {
@@ -51,6 +63,23 @@ test('Worker storage namespace comes only from the selected profile Keychain', (
       }
     });
     assert.ok(launched);
+    assert.equal(dockerCheck.command, '/Applications/Docker.app/Contents/Resources/bin/docker');
+    assert.deepEqual(Array.from(dockerCheck.args), ['info', '--format', '{{.ServerVersion}}']);
+    if (profile === 'dev') {
+      const dockerConfigDir = '/synthetic/tmp/artigen-agent-dev-docker-config-fixture';
+      assert.equal(dockerCheck.env.DOCKER_CONFIG, dockerConfigDir);
+      assert.equal(launched.DOCKER_CONFIG, dockerConfigDir);
+      assert.equal(launched.ARTIGEN_AGENT_DOCKER_CONFIG_DIR, dockerConfigDir);
+      processListeners.find(({ event }) => event === 'exit').listener();
+      assert.equal(removedDockerConfig.target, dockerConfigDir);
+      assert.equal(removedDockerConfig.options.recursive, true);
+      assert.equal(removedDockerConfig.options.force, true);
+    } else {
+      assert.equal(dockerCheck.env.DOCKER_CONFIG, undefined);
+      assert.equal(launched.DOCKER_CONFIG, undefined);
+      assert.equal(launched.ARTIGEN_AGENT_DOCKER_CONFIG_DIR, undefined);
+      assert.equal(processListeners.some(({ event }) => event === 'exit'), false);
+    }
     assert.equal(launched.S3_KEY_PREFIX, configuredPrefix || undefined);
     assert.deepEqual([...usedServices], [`artigen-agent-${profile}-worker`]);
   }

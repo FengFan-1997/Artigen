@@ -32,6 +32,7 @@ flowchart LR
 - macOS 当前用户保持登录；
 - Node.js 24、pnpm 10；
 - Docker Desktop 正常；
+- DEV Worker 通过临时、独立的 `DOCKER_CONFIG` 启动 Docker CLI，避免 headless LaunchAgent 等待用户 CLI 插件的 metadata；该临时目录随 Worker 退出清理，不改用户交互式 Docker 配置。使用的 CUA 镜像应已存在本机或可匿名拉取；
 - 项目指定的 Python/CUA 工具链；
 - 对应环境的 PostgreSQL、S3、payload 加密、Provider 和桌面中继 Secret；
 - 受控网络能够访问数据库、S3、SiliconFlow 和 Render。
@@ -265,6 +266,8 @@ pnpm eval:agent:live:finalize
 ### Worker 离线
 
 检查 macOS 登录、Docker、LaunchAgent、工作目录、依赖、数据库、S3 和 Provider。不要启动第二个同 ID Worker或手工重派 Run。
+
+DEV runner 会隔离用户 `~/.docker/cli-plugins`，不应为此删除或移动用户 Docker 插件。若 Docker daemon 在终端可用而 LaunchAgent 仍报 `AGENT_DOCKER_UNAVAILABLE`，确认当前 DEV runner 已包含临时 `DOCKER_CONFIG` 探针与传给 CUA bridge 的配置；修复前不要重复启动 Worker。
 
 ### 出口代理退出
 
