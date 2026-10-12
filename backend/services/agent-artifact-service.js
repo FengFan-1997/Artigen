@@ -117,6 +117,20 @@ const inferRequiredDeliverables = (objective) => {
   ) {
     required.push('image');
   }
+  const textFileTarget = String.raw`(?:\b(?:plain\s+text|text|markdown|md|txt|csv)\s+(?:file|document)\b|\.(?:txt|md|markdown|csv)\b|(?:纯文本|文本|markdown|md|txt|csv)\s*(?:文件|文档))`;
+  const textFileAction = String.raw`(?:\b(?:create|write|save|export|deliver|provide|generate|make|produce)\b|(?:创建|写入|写|保存|导出|交付|提供|生成|制作|输出|整理到))`;
+  const textFileNegation = String.raw`(?:\b(?:do not|don't|dont|must not|never|without)\s+(?:create|creating|write|writing|save|saving|export|exporting|deliver|delivering|provide|providing|generate|generating|make|making|produce|producing)\b|(?:不要|别|不需要|无需|不必|禁止|不(?=(?:创建|写入|写|保存|导出|交付|提供|生成|制作|输出|整理到)))\s*(?:创建|写入|写|保存|导出|交付|提供|生成|制作|输出|整理到))`;
+  const textFileIntentClauses = text.split(
+    /[,，;；。！？\n]+|[.!?](?=\s|$)|\b(?:but|however|and then)\b|(?:但是|而是|不过|可是|然后|并且|并|但)/iu
+  );
+  const textFileRequested = textFileIntentClauses.some((clause) => {
+    const requested = new RegExp(`${textFileAction}.{0,40}${textFileTarget}`, 'iu').test(clause);
+    const negated = new RegExp(`${textFileNegation}.{0,100}${textFileTarget}`, 'iu').test(clause);
+    return requested && !negated;
+  });
+  if (required.length === 0 && textFileRequested) {
+    required.push('text_file');
+  }
   return required;
 };
 
@@ -163,6 +177,12 @@ const requiredDeliverablesSatisfied = (artifacts, requiredDeliverables) => {
         artifact.role === 'image' &&
         artifact.verification_status === 'passed' &&
         ['image/png', 'image/jpeg', 'image/webp'].includes(artifact.mime_type)
+      ));
+    }
+    if (type === 'text_file') {
+      return has((artifact) => (
+        ['source', 'editable'].includes(artifact.role) &&
+        ['text/markdown', 'text/plain'].includes(artifact.mime_type)
       ));
     }
     return false;

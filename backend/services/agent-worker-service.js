@@ -3210,7 +3210,8 @@ const createAgentWorkerService = ({
         spreadsheet: 1,
         presentation: 2,
         website: 1,
-        image: 1
+        image: 1,
+        text_file: 1
       };
       const finalCosts = costMeter.snapshot({
         accrue: true,

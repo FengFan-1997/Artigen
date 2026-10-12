@@ -190,6 +190,18 @@ test('Runtime V2 preserves the goal, verification phase and unresolved failure u
   assert.ok(compacted.contextBudgetTokens <= 1880);
 });
 
+test('Runtime V2 accepts the server-inferred text-file deliverable', () => {
+  const taskSpec = normalizeTaskSpec({
+    goal: '创建并验证一个 TXT 文件',
+    deliverables: ['text_file'],
+    plan: [
+      { id: 'create', label: '创建文本文件', phase: 'production' },
+      { id: 'verify', label: '验证文本文件', phase: 'verification' }
+    ]
+  }, { capabilities: { files: true, shell: true }, maxCredits: 10 });
+  assert.deepEqual(taskSpec.deliverables, ['text_file']);
+});
+
 test('Runtime V2 preserves durable plan progress instead of restarting the first step', () => {
   const taskSpec = normalizeTaskSpec({
     goal: '继续验证已生成的报告',

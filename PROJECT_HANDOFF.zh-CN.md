@@ -2,17 +2,24 @@
 
 ## 2026-10-12 DEV 发布与主要工作流状态
 
-- PR #237 的登录 OTP Turnstile fallback、PR #238 的 CUA Sandbox SDK 依赖收敛，以及 PR #239 的 LaunchAgent CUA Python PATH 修复均已通过 required CI 并合入 `dev`。PR #240 的 Runtime V1 检查点修复也已合入并部署到 Render DEV，当前 API 部署与 `/api/meta.gitSha` 精确匹配 merge SHA `b2cf932c2651feb1b75be116e6eac70ae684c0a4`；`/healthz`、`/readyz` 均 HTTP 200、readiness 全绿。Worker 曾在受控前台进程下在线并完成真实 Run，测试结束后已正常停止；LaunchAgent 自动启动仍未验收，不能据此前台结果声称常驻启动问题解决。
+- PR #237 的登录 OTP Turnstile fallback、PR #238 的 CUA Sandbox SDK 依赖收敛、PR #239 的 LaunchAgent CUA Python PATH 修复、PR #240 的 Runtime V1 检查点修复和 PR #241 的“不生成图片”意图修复均已通过 required CI 并合入 `dev`。截至本记录，Render DEV `/api/meta.gitSha` 精确匹配 PR #241 merge SHA `d9fe104e22d2dfd650ee0a0360cf93a544d7cb8b`；此前部署检查 `/healthz`、`/readyz` 均 HTTP 200、readiness 全绿。
 - PR #236 的完整 required CI run `38227438432` 全部通过并合入 `dev`；后续 DEV 版本已包含该改动。generation、fileUpload 和 artifactDownload 已配置启用。
-- Production 只读探针 `/api/meta` 与 `/readyz` 均为 HTTP 200，当前 SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`，数据库迁移为 `029_secure_console_test_sessions`；没有部署或修改 Production。
-- 用户授权的 DEV 真实 Run（单次预算上限 10 点）已验证文本文件写入、SHA-256 和产物声明。Run 随后因服务端把任务里的“不生成图片”误判为必需图片而由用户停止；UI 确认未用冻结额度已释放，已产生 3.8 点费用。没有生成图片或下载文件，唯一 46 字节文本产物保留在 DEV 对象存储中；本机无此次任务文件。该问题的修复见下方新章节，修复尚未部署，主要工作流仍需再次验收。
-- PR #237 合并 Quality Gate run `38230970564` 全部通过。PR #238 required CI run `38232692223` 全部通过。PR #239 required CI run `38235481383` 与合并后的 Release gate `38237467756` 通过。本轮未测试付款，也未部署或修改 Production；Runtime V2、Provider fallback、Owner Canary 仍关闭。
+- DEV LaunchAgent `com.artigen.agent-worker-dev` 当前没有运行的 PID，最近状态为退出码 `75`；用于真实测试的前台 Worker 已停止。Worker 自动常驻启动仍未解决，不能据 API readiness 声称主流程可用。
+- 两次用户授权的 DEV 真实 Run 共消耗 5.3 点。第一次因服务端把“不生成图片”误判成图片要求而被停止，产生的一个 46 字节文本产物仍在 DEV 对象存储；第二次在 PR #241 部署后，计划已正确排除图片，但模型返回格式错误的纯文本、没有调用工具或创建文件，Run 以 `AGENT_VERIFICATION_INCOMPLETE` 结束并产生 1.5 点费用。都没有下载到本机；目前没有新的真实 Run 在运行，不继续产生测试费用。
+- Production 只读探针此前确认 `/api/meta` 与 `/readyz` 均为 HTTP 200，SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`，数据库迁移为 `029_secure_console_test_sessions`；没有部署或修改 Production。Runtime V2、Provider fallback、Owner Canary 仍关闭，本轮未测试付款。
 
-## 2026-10-12“不生成图片”交付物误判修复（PR #241 候选，待部署 DEV）
+## 2026-10-12 普通文本文件交付恢复（PR #242 候选）
 
-- PR #240 部署后的真实 DEV Run 明确只要求创建文本文件、计算 SHA-256 并声明产物；这三项已完成，但服务端从目标中推导出必需 `image`，Provider 随后被自动提示图片仍未交付。用户据此停止任务，未生成图片；实际费用 3.8/10 点，剩余冻结额度已释放。文本文件仍在 DEV 远程对象存储中，本机没有测试产物。
-- 根因在 `inferRequiredDeliverables`：图片关键词的否定预处理涵盖“不要/不需要/无需/不必/禁止”，却漏掉直接写法“不生成图片”，导致正向关键词匹配否定句。候选修复仅把紧邻图片动作的“不”视为否定，并新增该真实任务句式回归，不扩大其他普通“不……”表达的匹配范围。
-- `node --test backend/tests/agent-runtime.test.js`：143/143 通过；`pnpm --filter backend lint`、`pnpm check:workspace`、`git diff --check` 均通过。PR 与 CI 及 DEV 复测待完成。
+- PR #241 部署后的真实 Run 已不再错误要求图片，但普通文本文件请求没有命中 `inferRequiredDeliverables` 支持的五种类型。Provider 因而没有触发缺少交付物时的重试提示；模型即使只返回口头完成文字，Runtime V1 最后仍会因没有可验证文件而失败。
+- 当前候选新增服务端推导的 `text_file` 交付类型：只在没有更具体交付类型时识别用户明确要求的 TXT、Markdown 或 CSV 文件；否定句不触发要求。必须有经服务端验证、角色为 `source` / `editable` 且 MIME 为 `text/plain` / `text/markdown` 的产物才算完成。V1 Worker 仍至少要求一个文件，Runtime V2 的任务规格也允许该服务端交付类型。
+- Provider 回归模拟模型先口头宣布完成，随后收到明确提示，调用 Shell 创建文件并声明已验证产物；另覆盖图片不能满足文本文件、中文和英文否定请求不触发交付要求。Agent runtime、Runtime V2 与文件完成检查共 `205 passed / 0 failed`；`pnpm --filter backend lint`、`pnpm check:workspace`、`git diff --check` 均通过。真实模型及 DEV Run 尚未复测。
+- 账号报告不更新：本 PR 只改变 Agent 交付物解析和验证，不改变平台、账号、认证、权限、凭据位置或资源归属。
+
+## 2026-10-12“不生成图片”交付物误判修复（PR #241，已部署 DEV）
+
+- PR #240 部署后的真实 DEV Run 明确只要求创建文本文件、计算 SHA-256 并声明产物；服务端从目标中推导出必需 `image`，Provider 自动提示图片未交付。用户据此停止任务，未生成图片；实际费用 3.8 点，剩余冻结额度已释放。文本文件仍在 DEV 远程对象存储，本机没有测试产物。
+- 根因在 `inferRequiredDeliverables`：图片关键词否定预处理漏掉直接写法“不生成图片”。修复仅把紧邻图片动作的“不”视为否定；新增回归覆盖该真实句式，不扩大其他普通“不……”表达的匹配范围。PR #241 required CI run `38246032167` 全部通过并合入 `dev`，当前 DEV API SHA 已精确匹配 merge SHA `d9fe104e22d2dfd650ee0a0360cf93a544d7cb8b`。
+- PR #241 部署后计划正确地没有图片，但模型输出格式错误的纯文本，没有调用 Shell 或声明文件；Run 以 `AGENT_VERIFICATION_INCOMPLETE` 结束，消耗 1.5 点。这确认图片误判已修复，也暴露普通文本文件尚未被识别为必需交付物，见上方 PR #242 候选。
 - 账号报告不更新：本次只修复用户目标的交付物意图解析，不改变任何平台、账号、登录方式、权限、凭据位置或资源归属。
 
 ## 2026-10-12 Runtime V1 检查点轨迹校验修复（PR #240，已部署 DEV）
