@@ -180,7 +180,7 @@ async def main() -> None:
     command = str(request.get("command") or "")
     local = bool(request.get("local"))
     try:
-        from cua import Image, Sandbox, check_local_support
+        from cua_sandbox import Image, Sandbox, check_local_support
     except Exception as error:
         raise RuntimeError("CUA_SDK_NOT_INSTALLED") from error
 
@@ -251,7 +251,7 @@ async def main() -> None:
         runtime = None
         docker_platform = str(request.get("dockerPlatform") or "")
         if local and str(request.get("kind") or "") == "container":
-            from cua import DockerRuntime
+            from cua_sandbox.runtime.docker import DockerRuntime
             from cua_sandbox.runtime import docker as cua_docker_runtime
 
             # The Artigen bridge has already verified the exact image and
