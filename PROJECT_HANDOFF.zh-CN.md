@@ -2,18 +2,25 @@
 
 ## 2026-10-12 DEV 发布与主要工作流状态
 
-- PR #237 的登录 OTP Turnstile fallback、PR #238 的 CUA Sandbox SDK 依赖收敛，以及 PR #239 的 LaunchAgent CUA Python PATH 修复均已通过 required CI 并合入 `dev`。当前 Render DEV deployment 与 `/api/meta.gitSha` 精确匹配 PR #239 merge SHA `05940a81d38b378134f7f40771a912ca8d5b8885`；`/healthz`、`/readyz`、`/api/agent/status` 均 HTTP 200，DEV API readiness 检查全绿，Worker、模型、浏览器、受限出口和桌面中继均 ready，队列深度为 0。
+- PR #237 的登录 OTP Turnstile fallback、PR #238 的 CUA Sandbox SDK 依赖收敛，以及 PR #239 的 LaunchAgent CUA Python PATH 修复均已通过 required CI 并合入 `dev`。PR #240 的 Runtime V1 检查点修复也已合入并部署到 Render DEV，当前 API 部署与 `/api/meta.gitSha` 精确匹配 merge SHA `b2cf932c2651feb1b75be116e6eac70ae684c0a4`；`/healthz`、`/readyz` 均 HTTP 200、readiness 全绿。Worker 曾在受控前台进程下在线并完成真实 Run，测试结束后已正常停止；LaunchAgent 自动启动仍未验收，不能据此前台结果声称常驻启动问题解决。
 - PR #236 的完整 required CI run `38227438432` 全部通过并合入 `dev`；后续 DEV 版本已包含该改动。generation、fileUpload 和 artifactDownload 已配置启用。
 - Production 只读探针 `/api/meta` 与 `/readyz` 均为 HTTP 200，当前 SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`，数据库迁移为 `029_secure_console_test_sessions`；没有部署或修改 Production。
-- 用户授权的低预算 DEV 真实 Run 已生成两份文本文件并通过独立产物验证，但最终被轨迹安全校验拒绝；UI 显示模型与沙箱冻结费用已释放。该失败暴露 Runtime V1 检查点与 V2 专用最终化检查的版本判断错配，修复见下方新章节；Agent 端到端主流程仍未通过。
+- 用户授权的 DEV 真实 Run（单次预算上限 10 点）已验证文本文件写入、SHA-256 和产物声明。Run 随后因服务端把任务里的“不生成图片”误判为必需图片而由用户停止；UI 确认未用冻结额度已释放，已产生 3.8 点费用。没有生成图片或下载文件，唯一 46 字节文本产物保留在 DEV 对象存储中；本机无此次任务文件。该问题的修复见下方新章节，修复尚未部署，主要工作流仍需再次验收。
 - PR #237 合并 Quality Gate run `38230970564` 全部通过。PR #238 required CI run `38232692223` 全部通过。PR #239 required CI run `38235481383` 与合并后的 Release gate `38237467756` 通过。本轮未测试付款，也未部署或修改 Production；Runtime V2、Provider fallback、Owner Canary 仍关闭。
 
-## 2026-10-12 Runtime V1 检查点轨迹校验修复（当前候选）
+## 2026-10-12“不生成图片”交付物误判修复（PR #241 候选，待部署 DEV）
+
+- PR #240 部署后的真实 DEV Run 明确只要求创建文本文件、计算 SHA-256 并声明产物；这三项已完成，但服务端从目标中推导出必需 `image`，Provider 随后被自动提示图片仍未交付。用户据此停止任务，未生成图片；实际费用 3.8/10 点，剩余冻结额度已释放。文本文件仍在 DEV 远程对象存储中，本机没有测试产物。
+- 根因在 `inferRequiredDeliverables`：图片关键词的否定预处理涵盖“不要/不需要/无需/不必/禁止”，却漏掉直接写法“不生成图片”，导致正向关键词匹配否定句。候选修复仅把紧邻图片动作的“不”视为否定，并新增该真实任务句式回归，不扩大其他普通“不……”表达的匹配范围。
+- `node --test backend/tests/agent-runtime.test.js`：143/143 通过；`pnpm --filter backend lint`、`pnpm check:workspace`、`git diff --check` 均通过。PR 与 CI 及 DEV 复测待完成。
+- 账号报告不更新：本次只修复用户目标的交付物意图解析，不改变任何平台、账号、登录方式、权限、凭据位置或资源归属。
+
+## 2026-10-12 Runtime V1 检查点轨迹校验修复（PR #240，已部署 DEV）
 
 - DEV Run 的两份文本文件均已生成并由 Worker 独立验证通过，但 Run 最终以 `AGENT_TRAJECTORY_VERIFICATION_FAILED` 失败，UI 显示模型与沙箱冻结费用已释放。
 - 源码路径确认：Runtime V1 的模型执行器会保存用于续跑的 `agent_model_checkpoints`；终结逻辑只为 Runtime V2 解密 `readyToFinalize`，而轨迹校验此前对任意版本的检查点都要求该 V2 专用标记，造成 V1 检查点被误判。修复仅将该项限制为 Runtime V2，不放宽 V2 检查点必须完成最终化的要求。
 - 回归测试覆盖 Runtime V1 有检查点时可通过、Runtime V2 未最终化仍失败、Runtime V2 已最终化可通过，并保留未审批高风险操作仍失败的断言。定向测试 1/1、`pnpm --filter backend lint` 已通过；完整质量门禁待 PR CI。
-- 两个产物仅存在于 DEV Agent 运行的远程交付存储；未下载到本机，也未在本地仓库或桌面创建测试文件。Production 未修改。
+- 修复 PR #240 已通过 required CI 并合入 `dev`，Render DEV `/api/meta.gitSha` 精确匹配 `b2cf932c2651feb1b75be116e6eac70ae684c0a4`；本次之后的真实 Run 验证 V1 检查点修复已不再报轨迹校验错误。Run 后续暴露“不生成图片”被误判为必需图片，见上方 PR #241 候选。Production 未修改。
 
 ## 2026-10-12 LaunchAgent CUA Python PATH 修复（PR #239，已部署 DEV）
 

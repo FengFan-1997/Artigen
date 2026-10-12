@@ -5353,6 +5353,11 @@ test('deliverable requirements are derived deterministically for independent com
   assert.deepEqual(inferRequiredDeliverables('生成一张品牌主视觉设计稿'), ['image']);
   assert.deepEqual(inferRequiredDeliverables('Generate a campaign poster image'), ['image']);
   assert.deepEqual(inferRequiredDeliverables('分析参考图片，不要生成图片或视觉稿'), []);
+  assert.deepEqual(inferRequiredDeliverables('不但要生成图片，还要交付可编辑文件'), ['image']);
+  assert.deepEqual(
+    inferRequiredDeliverables('只创建文本文件，不生成图片、不安装软件或创建其他文件'),
+    []
+  );
   const artifacts = [
     { role: 'editable', mime_type: 'text/plain', verification_status: 'passed' },
     { role: 'pdf', mime_type: 'application/pdf', verification_status: 'passed' },
