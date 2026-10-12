@@ -2,9 +2,9 @@
 
 ## 2026-10-12 DEV 发布与主要工作流状态
 
-- PR #237 的登录 OTP Turnstile fallback、PR #238 的 CUA Sandbox SDK 依赖收敛、PR #239 的 LaunchAgent CUA Python PATH 修复、PR #240 的 Runtime V1 检查点修复、PR #241 的“不生成图片”意图修复和 PR #242 的普通文本文件交付恢复均已通过 required CI 并合入 `dev`。Render DEV `/api/meta.gitSha` 精确匹配 PR #242 merge SHA `1edff8c143787c853d6d996ddb01dec46ca8f0bd`；部署后的 `/healthz`、`/readyz` 均 HTTP 200，readiness 全绿。
+- PR #237 的登录 OTP Turnstile fallback、PR #238 的 CUA Sandbox SDK 依赖收敛、PR #239 的 LaunchAgent CUA Python PATH 修复、PR #240 的 Runtime V1 检查点修复、PR #241 的“不生成图片”意图修复、PR #242 的普通文本文件交付恢复和 PR #243 的 DEV Worker Docker CLI 隔离均已通过 required CI 并合入 `dev`。Render DEV `/api/meta.gitSha`、DEV Worker checkout 与 Worker 代码精确匹配 PR #243 merge SHA `13ab03d93cbf2177fb29d0dddd26e45082930da4`；`/healthz`、`/readyz`、`/api/agent/status` 均 HTTP 200，readiness 全绿。
 - PR #236 的完整 required CI run `38227438432` 全部通过并合入 `dev`；后续 DEV 版本已包含该改动。generation、fileUpload 和 artifactDownload 已配置启用。
-- PR #242 部署后，DEV `/api/agent/status` 仍显示 Worker offline、queue depth 为 0；不要把 API readiness 当成 Agent 主流程已就绪。LaunchAgent 的 Docker CLI 探针在加载用户 CLI 插件 metadata 时挂住并退出 `75`，当前由 PR #243 候选隔离 DEV Worker 的临时 `DOCKER_CONFIG` 修复；详见下一节。
+- PR #243 为 DEV LaunchAgent 使用随机临时空 `DOCKER_CONFIG`，并把同一配置传给 CUA bridge，使 headless Docker 探针不再启动用户 CLI 插件 metadata 子进程。部署后 DEV Worker 已在线，model/browser/egress/desktop relay 均 ready，queue depth 为 0；PR #243 只解决 Worker 启动与基础 readiness，不等于真实 Agent 生成/文件交付闭环已复验，见下一节。
 - 两次用户授权的 DEV 真实 Run 共消耗 5.3 点。第一次因服务端把“不生成图片”误判成图片要求而被停止，产生的一个 46 字节文本产物仍在 DEV 对象存储；第二次在 PR #241 部署后，计划已正确排除图片，但模型返回格式错误的纯文本、没有调用工具或创建文件，Run 以 `AGENT_VERIFICATION_INCOMPLETE` 结束并产生 1.5 点费用。都没有下载到本机；目前没有新的真实 Run 在运行，不继续产生测试费用。
 - Production 只读探针此前确认 `/api/meta` 与 `/readyz` 均为 HTTP 200，SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`，数据库迁移为 `029_secure_console_test_sessions`；没有部署或修改 Production。Runtime V2、Provider fallback、Owner Canary 仍关闭，本轮未测试付款。
 
@@ -15,11 +15,13 @@
 - Provider 回归模拟模型先口头宣布完成，随后收到明确提示，调用 Shell 创建文件并声明已验证产物；另覆盖图片不能满足文本文件、中文和英文否定请求不触发交付要求。Agent runtime、Runtime V2 与文件完成检查共 `205 passed / 0 failed`；`pnpm --filter backend lint`、`pnpm check:workspace`、`git diff --check` 均通过。PR #242 required CI 全部通过并合入 `dev`；Render 已部署并精确报告 merge SHA `1edff8c143787c853d6d996ddb01dec46ca8f0bd`。没有在此修复后再创建真实 Run。
 - 账号报告不更新：本 PR 只改变 Agent 交付物解析和验证，不改变平台、账号、认证、权限、凭据位置或资源归属。
 
-## 2026-10-12 DEV Worker Docker CLI headless 启动修复（PR #243 候选）
+## 2026-10-12 DEV Worker Docker CLI headless 启动修复（PR #243，已部署 DEV）
 
-- PR #242 API 已部署且健康，但 `/api/agent/status` 仍显示 Worker offline、queue depth 为 0。终端的 Docker daemon 检查通过；LaunchAgent 的 `docker info` 会并发启动用户 Docker CLI 插件目录中的 metadata 命令，插件进程在无交互启动中持续运行，Docker 探针最终退出 `75`。
-- 候选仅对 DEV runner 创建带随机后缀的临时空 `DOCKER_CONFIG`，供 daemon 探针和 CUA bridge 内的 Docker 命令共用；runner 退出时仅清理自己创建的临时目录，不读取或修改用户 Docker 插件、登录凭据或 Production Worker 设置。DEV CUA 镜像在本机已存在。
-- PR #243 验证与部署状态待补。此阶段没有创建新的真实 Agent Run；此前两次真实 Run 共消耗 5.3 点。
+- 根因为 macOS LaunchAgent 的无交互 `docker info` 会加载用户默认 Docker CLI 插件并等待其 metadata 子进程，最终以 `75` 退出；交互终端的探针曾通过，因此没有覆盖 headless 启动路径。
+- PR #243 仅对 DEV runner 创建随机临时空 `DOCKER_CONFIG`，同时供 daemon 探针与 CUA bridge 的 Docker 命令使用；runner 退出时只清理自己创建的目录。Production runner、用户 Docker 配置、Docker 登录凭据和平台 Secret 均未改动。
+- PR #243 已通过 Core quality gate、Agent Harness、chaos、Chromium/Firefox/WebKit 桌面、移动和平板 E2E、Vercel Preview 与 Release gate，并合入 `dev`。首次 WebKit tablet 分片的格式工厂用例遇到页面崩溃；重跑失败分片后该分片和 Release gate 均通过。定向部署/Provider/bridge 测试 13/13、`pnpm --filter backend lint`、`pnpm check:workspace`、`git diff --check` 通过。隔离 checkout 缺少 `vue-tsc`，本地前端 type-check 未能运行；完整 required CI 全绿。
+- Render DEV 自动部署并精确报告 merge SHA `13ab03d93cbf2177fb29d0dddd26e45082930da4`。`/api/meta`、`/healthz`、`/readyz`、`/api/agent/status` 均 HTTP 200；数据库、S3、Provider、Agent 等 readiness 全绿；Mac DEV Worker checkout 同 SHA，Worker、model、browser、egress、desktop relay 均 ready，queue depth 为 0。临时 Docker config 是当前 Worker 的运行时资源，Worker 退出时自动删除。
+- 本次没有新建真实 Agent Run；此前两次真实 Run 共消耗 5.3 点。基础服务与 Worker readiness 已恢复，但实际模型生成、文件交付和下载闭环仍待在确认余额和预算后完成一次受控 DEV 验收。
 - 账号报告不更新：这项改动只隔离 DEV 本机 Worker 的 Docker CLI 配置，不改变平台账号、权限、凭据内容、服务端环境变量、远端存储或资源归属。
 
 ## 2026-10-12“不生成图片”交付物误判修复（PR #241，已部署 DEV）
