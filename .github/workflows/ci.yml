@@ -49,7 +49,7 @@ jobs:
       TASK_PAYLOAD_ENCRYPTION_KEY: hex:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
       MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
       MINIO_TEST_BUCKET: artigen-ci
-      MINIO_ROOT_USER: artigen-minio
+      MINIO_ROOT_USER: ARTIGENMINIO
       MINIO_ROOT_PASSWORD: artigen-minio-secret
     steps:
       - uses: actions/checkout@v4
@@ -80,20 +80,20 @@ jobs:
         env:
           RUN_POSTGRES_RESTORE_DRILL: "1"
 
-      - name: Start pinned MinIO S3 compatibility fixture
+      - name: Start pinned RustFS S3 compatibility fixture
         run: |
-          docker run --detach --name artigen-minio --publish 9000:9000 \
-            --env MINIO_ROOT_USER="$MINIO_ROOT_USER" \
-            --env MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
-            server /data
+          docker run --detach --name artigen-s3-fixture --publish 9000:9000 \
+            --env RUSTFS_ACCESS_KEY="$MINIO_ROOT_USER" \
+            --env RUSTFS_SECRET_KEY="$MINIO_ROOT_PASSWORD" \
+            --env RUSTFS_OBS_LOGGER_LEVEL=error \
+            docker.io/rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+            if curl --fail --silent http://127.0.0.1:9000/health >/dev/null; then
               exit 0
             fi
             sleep 1
           done
-          docker logs artigen-minio
+          docker logs artigen-s3-fixture
           exit 1
 
       - name: Apply PostgreSQL 16 migrations
@@ -190,7 +190,7 @@ jobs:
       TASK_PAYLOAD_ENCRYPTION_KEY: hex:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
       MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
       MINIO_TEST_BUCKET: artigen-harness-${{ matrix.group }}
-      MINIO_ROOT_USER: artigen-minio
+      MINIO_ROOT_USER: ARTIGENMINIO
       MINIO_ROOT_PASSWORD: artigen-minio-secret
       AGENT_QUALITY_GROUP: ${{ matrix.group }}
       AGENT_QUALITY_CONCURRENCY: "2"
@@ -209,20 +209,20 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Start pinned MinIO fixture
+      - name: Start pinned RustFS fixture
         run: |
-          docker run --detach --name artigen-minio --publish 9000:9000 \
-            --env MINIO_ROOT_USER="$MINIO_ROOT_USER" \
-            --env MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
-            server /data
+          docker run --detach --name artigen-s3-fixture --publish 9000:9000 \
+            --env RUSTFS_ACCESS_KEY="$MINIO_ROOT_USER" \
+            --env RUSTFS_SECRET_KEY="$MINIO_ROOT_PASSWORD" \
+            --env RUSTFS_OBS_LOGGER_LEVEL=error \
+            docker.io/rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+            if curl --fail --silent http://127.0.0.1:9000/health >/dev/null; then
               exit 0
             fi
             sleep 1
           done
-          docker logs artigen-minio
+          docker logs artigen-s3-fixture
           exit 1
 
       - name: Apply PostgreSQL 16 migrations
@@ -265,7 +265,7 @@ jobs:
       TASK_PAYLOAD_ENCRYPTION_KEY: hex:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
       MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
       MINIO_TEST_BUCKET: artigen-harness-chaos
-      MINIO_ROOT_USER: artigen-minio
+      MINIO_ROOT_USER: ARTIGENMINIO
       MINIO_ROOT_PASSWORD: artigen-minio-secret
       AGENT_CHAOS_REPEATS: ${{ github.event_name == 'schedule' && '20' || '1' }}
     steps:
@@ -283,20 +283,20 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Start pinned MinIO fixture
+      - name: Start pinned RustFS fixture
         run: |
-          docker run --detach --name artigen-minio --publish 9000:9000 \
-            --env MINIO_ROOT_USER="$MINIO_ROOT_USER" \
-            --env MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
-            server /data
+          docker run --detach --name artigen-s3-fixture --publish 9000:9000 \
+            --env RUSTFS_ACCESS_KEY="$MINIO_ROOT_USER" \
+            --env RUSTFS_SECRET_KEY="$MINIO_ROOT_PASSWORD" \
+            --env RUSTFS_OBS_LOGGER_LEVEL=error \
+            docker.io/rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+            if curl --fail --silent http://127.0.0.1:9000/health >/dev/null; then
               exit 0
             fi
             sleep 1
           done
-          docker logs artigen-minio
+          docker logs artigen-s3-fixture
           exit 1
 
       - name: Apply PostgreSQL 16 migrations
