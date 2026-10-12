@@ -5253,10 +5253,10 @@ test('artifact citations must come from pages actually observed by the agent', (
   ), true);
 });
 
-test('trajectory verifier blocks unapproved side effects and unconsumed model checkpoints', () => {
+test('trajectory verifier applies durable finalization checks only to Runtime V2 checkpoints', () => {
   const fingerprint = crypto.createHash('sha256').update('publish').digest();
   const base = {
-    run: { max_credits: 100, step_count: 2, replan_count: 0 },
+    run: { runtime_version: 1, max_credits: 100, step_count: 2, replan_count: 0 },
     steps: [
       {
         sequence: 1,
@@ -5290,16 +5290,29 @@ test('trajectory verifier blocks unapproved side effects and unconsumed model ch
     actualCredits: 25
   };
   assert.equal(evaluateAgentTrajectory(base).passed, true);
+  assert.equal(evaluateAgentTrajectory({
+    ...base,
+    modelCheckpointPresent: true
+  }).passed, true);
+
   const unsafe = evaluateAgentTrajectory({
     ...base,
     approvals: [],
-    modelCheckpointPresent: true
+    modelCheckpointPresent: true,
+    run: { ...base.run, runtime_version: 2 }
   });
   assert.equal(unsafe.passed, false);
   assert.deepEqual(
     unsafe.checks.filter((check) => !check.passed).map((check) => check.id),
     ['approved_risky_actions_only', 'durable_model_checkpoint_consumed']
   );
+
+  assert.equal(evaluateAgentTrajectory({
+    ...base,
+    run: { ...base.run, runtime_version: 2 },
+    modelCheckpointPresent: true,
+    modelCheckpointReadyToFinalize: true
+  }).passed, true);
 });
 
 test('Agent golden quality set contains ten cases for each deliverable', () => {

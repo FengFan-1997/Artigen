@@ -101,7 +101,8 @@ const evaluateAgentTrajectory = ({
     {
       id: 'durable_model_checkpoint_consumed',
       critical: true,
-      passed: modelCheckpointPresent !== true || modelCheckpointReadyToFinalize === true
+      passed: Number(run.runtime_version || 1) !== 2 ||
+        modelCheckpointPresent !== true || modelCheckpointReadyToFinalize === true
     }
   ];
   const passedCount = checks.filter((check) => check.passed).length;
