@@ -3941,6 +3941,100 @@ test('parent cannot finish before every required report artifact is declared', a
   )));
 });
 
+test('parent recovers an explicit text-file request after a premature text answer', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-text-file-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-text-file-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    {
+      id: 'chat-text-file-premature',
+      choices: [{ message: { role: 'assistant', content: 'The requested text file is ready.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    },
+    toolCall('write', 'sandbox_shell', {
+      script: "printf 'verified note\\n' > /tmp/artigen-workspace/note.txt",
+      purpose: 'Create the requested text file'
+    }),
+    toolCall('declare', 'declare_artifact', {
+      path: '/tmp/artigen-workspace/note.txt',
+      role: 'editable',
+      filename: 'note.txt',
+      mimeType: 'text/plain',
+      sources: []
+    }),
+    {
+      id: 'chat-text-file-final',
+      choices: [{ message: { role: 'assistant', content: 'Created and verified note.txt.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  let shellCalls = 0;
+  let declarationCalls = 0;
+  const objective = '只创建文本文件，不生成图片；计算 SHA-256 并声明文件。';
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective,
+    capabilities: { files: true, shell: true },
+    deliverables: inferRequiredDeliverables(objective),
+    maxSteps: 12,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async () => {
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      declareArtifact: async (args) => {
+        declarationCalls += 1;
+        return {
+          artifactId: 'artifact-note',
+          role: args.role,
+          filename: args.filename,
+          mimeType: args.mimeType,
+          verificationStatus: 'passed'
+        };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(shellCalls, 1);
+  assert.equal(declarationCalls, 1);
+  assert.equal(requests.length, 4);
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'user' &&
+    message.content.includes('Required deliverables are still incomplete: text_file')
+  )));
+  assert.equal(result.text, 'Created and verified note.txt.');
+});
+
 test('parent removes every tool after all required artifacts are verified', async () => {
   const declaration = (filename, role, mimeType) => ({
     path: `/tmp/artigen-workspace/${filename}`,
@@ -5336,7 +5430,7 @@ test('deliverable requirements are derived deterministically for independent com
   assert.deepEqual(inferRequiredDeliverables('整理我的想法并选择最佳交付形式'), []);
   assert.deepEqual(
     inferRequiredDeliverables('访问这个网站并把页面标题整理到 Markdown 文件'),
-    []
+    ['text_file']
   );
   assert.deepEqual(
     inferRequiredDeliverables('访问这个网站，把标题写入 Markdown；不要创建网站或网页源码。'),
@@ -5356,7 +5450,13 @@ test('deliverable requirements are derived deterministically for independent com
   assert.deepEqual(inferRequiredDeliverables('不但要生成图片，还要交付可编辑文件'), ['image']);
   assert.deepEqual(
     inferRequiredDeliverables('只创建文本文件，不生成图片、不安装软件或创建其他文件'),
-    []
+    ['text_file']
+  );
+  assert.deepEqual(inferRequiredDeliverables('不要创建文本文件，只计算并返回 SHA-256'), []);
+  assert.deepEqual(inferRequiredDeliverables('Do not create a Markdown file; summarize it in chat.'), []);
+  assert.deepEqual(
+    inferRequiredDeliverables("Don't create an image, but save the result to output.txt."),
+    ['text_file']
   );
   const artifacts = [
     { role: 'editable', mime_type: 'text/plain', verification_status: 'passed' },
@@ -5395,6 +5495,12 @@ test('deliverable requirements are derived deterministically for independent com
     { role: 'editable', mime_type: 'text/markdown', verification_status: 'passed' },
     { role: 'pdf', mime_type: 'application/pdf', verification_status: 'failed' }
   ], ['report']), false);
+  assert.equal(requiredDeliverablesSatisfied([
+    { role: 'image', mime_type: 'image/png', verification_status: 'passed' }
+  ], ['text_file']), false);
+  assert.equal(requiredDeliverablesSatisfied([
+    { role: 'editable', mime_type: 'text/plain', verification_status: 'passed' }
+  ], ['text_file']), true);
 });
 
 test('an image-only run can finish once and settles its budget only once', async () => {
