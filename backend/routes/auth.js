@@ -504,13 +504,32 @@ const installAuthRoutes = (app, options = {}) => {
             env.TURNSTILE_ACTION ||
             "email_otp",
     ).trim();
-  const verifyOtpTurnstile = async ({ req, body, purpose }) =>
-    turnstileVerifier({
-      token: readTurnstileToken(body),
+  const emailOtpTurnstileFallbackEnabled = () => {
+    const configured = String(
+      env.AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED ?? "true",
+    )
+      .trim()
+      .toLowerCase();
+    return /^(1|true|yes|on)$/.test(configured);
+  };
+  const verifyOtpTurnstile = async ({ req, body, purpose }) => {
+    const token = readTurnstileToken(body);
+    const fallbackRequested = body?.turnstileFallback === true;
+    if (
+      purpose === "login" &&
+      !token &&
+      fallbackRequested &&
+      emailOtpTurnstileFallbackEnabled()
+    ) {
+      return { ok: true, skipped: true, reason: "USER_REQUESTED_LOGIN_FALLBACK" };
+    }
+    return turnstileVerifier({
+      token,
       remoteIp: getClientIp(req),
       expectedAction: turnstileAction(purpose),
       env,
     });
+  };
   const setRetryAfter = (res, seconds) => {
     const value = Math.max(0, Math.ceil(Number(seconds) || 0));
     if (value > 0) res.setHeader("Retry-After", String(value));

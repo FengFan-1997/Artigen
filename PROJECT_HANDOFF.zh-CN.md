@@ -1,5 +1,21 @@
 # Artigen 项目正式 Handoff
 
+## 2026-10-12 DEV 发布与主要工作流状态
+
+- PR #236 的完整 required CI run `38227438432` 全部通过，随后合入 `dev`，merge SHA 为 `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`。Render DEV 的 `/api/meta.gitSha` 已精确返回该 SHA；`/readyz` 为 HTTP 200 且全部必需检查通过，generation、fileUpload 和 artifactDownload 已配置启用。
+- Production 只读探针 `/api/meta` 与 `/readyz` 均为 HTTP 200，当前 SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`，数据库迁移为 `029_secure_console_test_sessions`；没有部署或修改 Production。
+- DEV 与 Production 的 `/api/agent/status` 均为 `workerOnline=false`、`queueDepth=0`，DEV 的模型、browser、egress、desktop relay 未就绪；Runtime V2 关闭。API readiness 通过不代表 Agent 任务可执行，主工作流尚未端到端验收。
+- PR #237 仍是登录 OTP Turnstile fallback 候选，head 为 merge commit `00debd1178de4571fa723bf34d0ba3f3d5ef6530`，已包含 #236 的已验收 S3 上传修复。最新 CI run `38229190909` 中 RustFS Agent Harness 与 chaos 作业成功、Vercel Preview 完成；Core quality gate 与浏览器 E2E 矩阵尚在运行，Release branch policy 按该 `dev` PR 条件跳过。此前旧基线 S3 PUT HTTP 400 的失败由缺失 #236 修复导致，不代表当前候选的最新 CI 结果。
+- 本轮未调用真实 OTP、Provider、生成任务或支付，也未修改 Production。Agent 真实流程待 Worker 在目标 DEV 环境恢复并通过状态检查后验收。
+
+## 2026-10-08 邮箱验证码登录的 Turnstile 备用通道（PR #237，候选待验收）
+
+- 登录与邀请注册验证码流程在 Turnstile 控件下提供“验证不可用？直接发送验证码”备用按钮。用户主动选择后，前端发送 `turnstileFallback=true`；服务端只在 `login` 用途、请求未携带 Turnstile token 且 `AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED` 未关闭时接受。提供有效 token 时仍执行正常 Turnstile 校验；密码重置不支持此备用通道。
+- 备用通道不替代自动化滥用防护。生产投递仍通过 OTP 数据库配额、目标邮箱冷却、IP / 全局日配额与请求速率限制；已有邀请注册限制不变。部署模板将 fallback 默认设为启用，可用变量值 `false` 紧急关闭。
+- 为修复 GitHub Actions 拉取 Quay MinIO 镜像时的 `unauthorized`，本 PR 的三个隔离 S3 CI job 也统一到固定 digest 的 RustFS 1.0.0 fixture，使用其 `/health` 探针和兼容的测试凭据。此项只改变 GitHub Actions 临时测试环境，不改变 DEV / Production 的对象存储服务或凭据。
+- 本地 `pnpm check:core` 通过：前端 235 项、后端 703 passed / 101 skipped、邮件服务 7 项；认证 OTP / Render 配置定向 Node 测试 32/32，登录 API / Turnstile 单测 10/10，Chromium 认证 E2E 标准场景 4/4，加上带测试 Key 的 Turnstile fallback 两个入口 2/2。测试浏览器阻断了 Cloudflare 调用并 mock 邮件 API，没有发出真实验证码。
+- PR [#237](https://github.com/FengFan-1997/Artigen/pull/237) 以 `dev` 为目标，尚未合入或部署。最初的 Quay fixture 拉取问题已通过固定 RustFS fixture 解决；旧基线另一次 S3 PUT HTTP 400 是因为分支未包含 #236 上传修复。当前 head 已合入 `dev` 最新 SHA `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`；最新 required CI 仍在运行，精确结果见本节顶部的 run `38229190909`。无数据库迁移、账号 / Secret 改动或真实邮件发送；门禁通过后先完成 DEV OTP smoke，再按 `用途-日期 → dev → main` 流程发布生产。
+
 ## 2026-10-08 恢复 Artigen DEV 主工作流
 
 - 用户需要立即启动 Artigen。Aiven 现有 DEV PostgreSQL Free 服务原为 Powered off；通过服务自身的 Power on 操作恢复，没有升级套餐或录入付款方式。随后从本机确认 PostgreSQL 接受连接，DEV `/readyz` 数据库检查通过。
@@ -18,7 +34,7 @@
 - 本机 `pnpm check:core` 全部通过。Chromium 桌面主要工作流定向回归 `4/4` 通过，覆盖失败规划原位重试、时间线真实工具活动、跨运行产物上下文、执行中用户补充；这些是本地 mock UI/接口验证，不等同于 DEV Provider 真实调用。
 - GitHub CI 原先从 Quay 拉取固定 MinIO 镜像时被拒绝（HTTP `401`）；Bitnami legacy MinIO 镜像可以启动，但完整 CI 两次在不同的对象上传与故障恢复用例中出现随机 `ECONNRESET`。三个临时 S3 fixture 已改为固定 RustFS `1.0.0` manifest digest `sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff`，使用官方 `/health` 检查及独立测试凭据。CI run `36380620094` 中其它 Agent Harness、chaos 和浏览器分片通过，PostgreSQL + RustFS 集成唯一失败是 multipart 预签名 PUT 的 `BadDigest`：AWS SDK 默认校验会在生成链接时把空正文 CRC32 带入 URL，真实分片到达后校验不符。
 - 修复提交 `5265c02d709b9f7208c678f4d383ed30d885ea3d` 在 GitHub Actions run `36381579038` 上通过完整 CI：Core、6 组 Agent Harness/chaos、全部 Chromium/Firefox/WebKit E2E 分片、Release gate 和 Vercel Preview 均通过（16 个作业通过；release branch policy 按 `dev` PR 条件跳过）。本机资产命名空间与上传服务定向测试 `10/10`、`pnpm check:workspace`、`git diff --check`、提交钩子前端类型检查和后端语法检查也通过。AWS SDK 官方文档说明其默认 CRC32 上传校验行为从 JavaScript SDK `3.729.0` 起启用，并支持 `WHEN_REQUIRED` 设置（[校验和指南](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/s3-checksums.html)、[AWS 配置指南](https://docs.aws.amazon.com/sdkref/latest/guide/feature-dataintegrity.html)）。
-- PR #236 仍需以新完整 CI 全绿作为合入前提。该候选未修改数据库迁移、环境变量、账号权限、远程存储或线上服务配置；Production 未部署。
+- PR #236 已于 2026-10-12 通过完整 CI run `38227438432` 并合入 `dev`，merge SHA 为 `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`。该候选未修改数据库迁移、环境变量、账号权限、远程存储或 Production 配置。Render DEV 正在部署该 SHA；合并后首次探针仍返回旧 SHA `ba96b521f43e7edc3bd0d1995d56ef84e9578e6b`，因此部署尚未验收。
 
 ## 2026-09-24 规划失败请求原位重试（已部署 DEV，未发布生产）
 

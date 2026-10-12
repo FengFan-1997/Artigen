@@ -27,6 +27,13 @@ flowchart LR
 
 Vercel 托管前端并代理服务端路径；Render 运行 API、队列协调和系统任务；PostgreSQL 是业务写源，S3 保存二进制；独立 Mac Worker 提供 Computer Agent 的 CUA、浏览器、Shell、LibreOffice 和图片交付能力。
 
+## 邮箱登录与人机验证备用通道
+
+- 邮箱登录 / 注册验证码区域提供“验证不可用？直接发送验证码”选项；用户主动选择后，服务端只对 `login` 用途允许本次请求不带 Turnstile token。若请求已带 token，仍会照常校验。
+- `AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED` 控制这条备用通道，部署模板默认 `true`；紧急停用时设为 `false` 并重新部署。密码重置验证码不接受此备用参数，仍要求 Turnstile 验证。
+- 备用通道不是自动化滥用防护；公开 API 调用者也能表达同样选择。Production 仍由 OTP 数据库配额、邮箱冷却、IP / 全局日配额和路由速率限制约束邮件投递。默认配额为每邮箱 5 次/小时、10 次/天；每 IP 20 次/小时、50 次/天；全局 250 次/天，可由 `OTP_SEND_*_LIMIT` 调整。
+- 若邮件异常增加，先把 fallback 开关设为 `false`，核对 OTP 投递记录与 `/readyz`，再检查 Turnstile 前端 Key 和服务端 Secret / hostname 是否一致。不要通过改密码重置接口来绕过验证。
+
 ## 2. 发布前条件
 
 生产发布前必须具备：
