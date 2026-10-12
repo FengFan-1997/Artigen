@@ -2,12 +2,17 @@
 
 ## 2026-10-12 DEV 发布与主要工作流状态
 
-- PR #237 的登录 OTP Turnstile fallback 已通过 required CI 并合入 `dev`，merge SHA 为 `ed1a7f053dcc7acbce1b5e423bf7ad21e8f714c6`。Render DEV deployment 与 `/api/meta.gitSha` 均精确匹配该 SHA，`/readyz` HTTP 200 且全部必需检查通过。用户批准后，通过备用入口发送测试登录验证码并完成真实 DEV 邮箱登录；尚未运行真实 Agent 任务。
-- PR #236 的完整 required CI run `38227438432` 全部通过，随后合入 `dev`，merge SHA 为 `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`；随后由 #237 覆盖到上述 SHA。generation、fileUpload 和 artifactDownload 已配置启用。
+- PR #237 的登录 OTP Turnstile fallback 与 PR #238 的 CUA Sandbox SDK 依赖收敛均已通过 required CI 并合入 `dev`。当前 Render DEV deployment 与 `/api/meta.gitSha` 精确匹配 PR #238 merge SHA `8e700ae6ba0677e73305f15d42d63e9e97a29131`，`/readyz` HTTP 200 且必需检查通过。
+- PR #236 的完整 required CI run `38227438432` 全部通过并合入 `dev`；后续 DEV 版本已包含该改动。generation、fileUpload 和 artifactDownload 已配置启用。
 - Production 只读探针 `/api/meta` 与 `/readyz` 均为 HTTP 200，当前 SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`，数据库迁移为 `029_secure_console_test_sessions`；没有部署或修改 Production。
-- DEV 与 Production 的 `/api/agent/status` 均为 `workerOnline=false`、`queueDepth=0`；DEV 的模型、browser、egress、desktop relay 当前未就绪，Runtime V2 关闭。Docker Desktop 已运行；DEV LaunchAgent 尚未启动 Worker，Production 旧 checkout 的 LaunchAgent 暂时 booted out，等待按 main SHA 准备安全的专用 checkout。API readiness 通过不代表 Agent 任务可执行，主工作流尚未端到端验收。
-- PR #237 已包含 #236 的 S3 上传修复，并通过最终 required CI 后合并；合并到 `dev` 的 Quality Gate run `38230970564` 以 success 完成，核心、Harness、混沌、全部浏览器分片和 Release gate 均成功。
-- 本轮按用户确认完成一次 DEV 邮箱验证码登录；尚未调用真实 Agent Provider、创建 Run、消费点数或测试支付，也未修改 Production。Agent 真实流程待 DEV Worker 恢复并通过状态检查后验收。
+- DEV `/api/agent/status` 当前 `workerOnline=false`、`queueDepth=0`，真实 Agent 主流程尚未验收；Production Worker 未启动。DEV 专用 LaunchAgent 曾启动后以 `AGENT_SANDBOX_PROVIDER_FAILED` 退出。调查确认 launchd 的继承 `PATH` 为空，而 Docker 安全包装器依赖 `#!/usr/bin/env python3`；本轮候选修复是在 CUA bridge 子进程的 `PATH` 中加入所配置虚拟环境的 `bin` 目录。该修复待 PR CI 与 LaunchAgent 实测。
+- PR #237 合并 Quality Gate run `38230970564` 以 success 完成，包含核心、Harness、混沌、全部浏览器分片和 Release gate。PR #238 的 required CI run `38232692223` 全部通过后合并；此轮没有创建 Agent Run、消费点数、测试支付或改动 Production。
+
+## 2026-10-12 LaunchAgent CUA Python PATH 修复（候选）
+
+- DEV Worker 从 launchd 启动时拿到空 `PATH`。`agent-sandbox-provider` 为隔离的 CUA bridge 设置子进程环境时没有加入 CUA 虚拟环境目录；Docker 包装器使用 `/usr/bin/env python3`，因此 CUA doctor 在 LaunchAgent 环境里失败并令 Worker 退出。交互式终端的 PATH 不为空，手动 doctor 通过无法覆盖这个启动场景。
+- 修复在 CUA Python 路径为绝对路径时，将其 `bin` 目录加入仅供 bridge 使用的 `PATH`，同时保留 Docker 包装器、继承路径和 Docker Desktop CLI 路径。新增回归断言验证此环境契约，不改变认证、Provider、数据库、沙箱出口策略或服务配置。
+- 本机隔离环境 `pip check` 通过；用实际 provider 在模拟空 `PATH` 的 LaunchAgent 条件下执行 Docker / CUA doctor 通过，受限 HTTPS egress 检查也通过。`node --test backend/tests/agent-sandbox-provider.test.js backend/tests/agent-cua-bridge.test.js` 为 3/3，`pnpm --filter backend lint` 与 `pnpm check:workspace` 通过。该修复仍在候选分支，尚未部署；DEV Worker 及真实 Agent 闭环待 PR CI、精确 SHA 部署和 LaunchAgent 实测。Production 保持不变。
 
 ## 2026-10-08 邮箱验证码登录的 Turnstile 备用通道（PR #237，已部署 DEV）
 
@@ -17,10 +22,10 @@
 - 本地 `pnpm check:core` 通过：前端 235 项、后端 703 passed / 101 skipped、邮件服务 7 项；认证 OTP / Render 配置定向 Node 测试 32/32，登录 API / Turnstile 单测 10/10，Chromium 认证 E2E 标准场景 4/4，加上带测试 Key 的 Turnstile fallback 两个入口 2/2。测试浏览器阻断了 Cloudflare 调用并 mock 邮件 API，没有发出真实验证码。
 - PR [#237](https://github.com/FengFan-1997/Artigen/pull/237) 以 `dev` 为目标，已通过 required CI 并合入，DEV 当前部署 SHA 为 `ed1a7f053dcc7acbce1b5e423bf7ad21e8f714c6`。合并 commit 的 Quality Gate run `38230970564` 以 success 完成。用户批准后通过备用入口完成 DEV 邮箱验证码登录；尚未创建 Agent Run，Production 未部署或改动。
 
-## 2026-10-12 Worker CUA 依赖收敛（候选，未部署）
+## 2026-10-12 Worker CUA 依赖收敛（PR #238，已部署 DEV）
 
 - Worker bridge 直接调用 CUA 的 Sandbox、Image、`check_local_support` 与 `DockerRuntime`。此前 requirements 安装 `cua==0.1.6` 统一总包，会额外安装 Artigen 未用到的 `cua-agent[cloud]` 与 `cua-cli`。候选改为直接 pin 解析到的 `cua-sandbox==0.1.28`，并将 bridge 改为其原生模块导入；沙箱 API 行为不变。
-- 更新 Python Agent Runtime 的第三方许可清单和 bridge fake-module 回归，使测试在未安装 CUA 总包时仍验证本地受限网络行为。候选尚未安装到 Worker、没有部署或创建 Agent Run；完整验证及依赖安装结论以 PR CI 与 DEV Worker smoke 为准。
+- 更新 Python Agent Runtime 的第三方许可清单和 bridge fake-module 回归，使测试验证本地受限网络行为。PR #238 的完整 required CI run `38232692223` 通过；Render DEV 已部署精确 merge SHA `8e700ae6ba0677e73305f15d42d63e9e97a29131`。Worker 依赖在新的隔离虚拟环境安装且 `pip check` 通过；这还不能证明 launchd Worker 或真实任务可用。
 - 官方 CUA 文档将 `cua-sandbox` 描述为 Python Sandbox / Image 高层 API，示例直接从 `cua_sandbox` 导入；当前 pin 是仓库已有 resolver 选中的兼容版本，不代表上游最新版本。[官方 GitHub 文档](https://github.com/trycua/cua)
 
 ## 2026-10-08 恢复 Artigen DEV 主工作流
