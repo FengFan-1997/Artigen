@@ -193,6 +193,7 @@ const subagentOfflineShellScript = ({ script, workspacePath, inputPaths = [] }) 
 const runBridge = ({
   payload,
   config,
+  dockerConfigDir = process.env.ARTIGEN_AGENT_DOCKER_CONFIG_DIR,
   timeoutMs = 120_000,
   spawnImpl = spawn
 }) => new Promise((resolve, reject) => {
@@ -214,7 +215,8 @@ const runBridge = ({
       ARTIGEN_REAL_DOCKER: process.env.ARTIGEN_REAL_DOCKER || realDockerBin,
       PYTHONPATH: process.env.PYTHONPATH || '',
       CUA_API_KEY: config.cuaApiKey,
-      CUA_TELEMETRY_ENABLED: 'false'
+      CUA_TELEMETRY_ENABLED: 'false',
+      ...(dockerConfigDir ? { DOCKER_CONFIG: dockerConfigDir } : {})
     },
     stdio: ['pipe', 'pipe', 'pipe']
   });

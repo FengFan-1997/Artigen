@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 const { spawn, spawnSync } = require('node:child_process');
 const { readMacOsKeychainSecret } = require('../lib/local-keychain');
 const { TEXT_MODEL } = require('../lib/agent-models');
@@ -15,9 +17,33 @@ if (!['dev', 'production'].includes(profile)) {
 }
 
 const docker = '/Applications/Docker.app/Contents/Resources/bin/docker';
+const workerEnv = { ...process.env };
+let dockerConfigDir;
+if (profile === 'dev') {
+  try {
+    // A headless DEV LaunchAgent must not load interactive Docker CLI plugins;
+    // their metadata probes can hang before the daemon check completes. DEV
+    // uses the local engine and its CUA image is already present, so give this
+    // worker a private, empty config instead of the user's credentials/plugins.
+    dockerConfigDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'artigen-agent-dev-docker-config-')
+    );
+  } catch {
+    console.error('AGENT_DOCKER_CONFIG_UNAVAILABLE');
+    process.exit(75);
+  }
+  workerEnv.DOCKER_CONFIG = dockerConfigDir;
+  workerEnv.ARTIGEN_AGENT_DOCKER_CONFIG_DIR = dockerConfigDir;
+  process.once('exit', () => {
+    try {
+      fs.rmSync(dockerConfigDir, { recursive: true, force: true });
+    } catch {}
+  });
+}
 const dockerCheck = spawnSync(docker, ['info', '--format', '{{.ServerVersion}}'], {
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'ignore'],
+  env: workerEnv,
   timeout: 10_000
 });
 if (dockerCheck.status !== 0) {
@@ -25,7 +51,6 @@ if (dockerCheck.status !== 0) {
   process.exit(75);
 }
 
-const workerEnv = { ...process.env };
 // Local database trust material is sourced only from the selected Keychain
 // service so an inherited shell value cannot change the worker trust root.
 delete workerEnv.PG_SSL_CA;
