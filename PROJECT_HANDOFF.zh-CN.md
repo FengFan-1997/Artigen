@@ -2,17 +2,24 @@
 
 ## 2026-10-12 DEV 发布与主要工作流状态
 
-- PR #237 的登录 OTP Turnstile fallback 与 PR #238 的 CUA Sandbox SDK 依赖收敛均已通过 required CI 并合入 `dev`。当前 Render DEV deployment 与 `/api/meta.gitSha` 精确匹配 PR #238 merge SHA `8e700ae6ba0677e73305f15d42d63e9e97a29131`，`/readyz` HTTP 200 且必需检查通过。
+- PR #237 的登录 OTP Turnstile fallback、PR #238 的 CUA Sandbox SDK 依赖收敛，以及 PR #239 的 LaunchAgent CUA Python PATH 修复均已通过 required CI 并合入 `dev`。当前 Render DEV deployment 与 `/api/meta.gitSha` 精确匹配 PR #239 merge SHA `05940a81d38b378134f7f40771a912ca8d5b8885`；`/healthz`、`/readyz`、`/api/agent/status` 均 HTTP 200，DEV API readiness 检查全绿，Worker、模型、浏览器、受限出口和桌面中继均 ready，队列深度为 0。
 - PR #236 的完整 required CI run `38227438432` 全部通过并合入 `dev`；后续 DEV 版本已包含该改动。generation、fileUpload 和 artifactDownload 已配置启用。
 - Production 只读探针 `/api/meta` 与 `/readyz` 均为 HTTP 200，当前 SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`，数据库迁移为 `029_secure_console_test_sessions`；没有部署或修改 Production。
-- DEV `/api/agent/status` 当前 `workerOnline=false`、`queueDepth=0`，真实 Agent 主流程尚未验收；Production Worker 未启动。DEV 专用 LaunchAgent 曾启动后以 `AGENT_SANDBOX_PROVIDER_FAILED` 退出。调查确认 launchd 的继承 `PATH` 为空，而 Docker 安全包装器依赖 `#!/usr/bin/env python3`；本轮候选修复是在 CUA bridge 子进程的 `PATH` 中加入所配置虚拟环境的 `bin` 目录。该修复待 PR CI 与 LaunchAgent 实测。
-- PR #237 合并 Quality Gate run `38230970564` 以 success 完成，包含核心、Harness、混沌、全部浏览器分片和 Release gate。PR #238 的 required CI run `38232692223` 全部通过后合并；此轮没有创建 Agent Run、消费点数、测试支付或改动 Production。
+- 用户授权的低预算 DEV 真实 Run 已生成两份文本文件并通过独立产物验证，但最终被轨迹安全校验拒绝；UI 显示模型与沙箱冻结费用已释放。该失败暴露 Runtime V1 检查点与 V2 专用最终化检查的版本判断错配，修复见下方新章节；Agent 端到端主流程仍未通过。
+- PR #237 合并 Quality Gate run `38230970564` 全部通过。PR #238 required CI run `38232692223` 全部通过。PR #239 required CI run `38235481383` 与合并后的 Release gate `38237467756` 通过。本轮未测试付款，也未部署或修改 Production；Runtime V2、Provider fallback、Owner Canary 仍关闭。
 
-## 2026-10-12 LaunchAgent CUA Python PATH 修复（候选）
+## 2026-10-12 Runtime V1 检查点轨迹校验修复（当前候选）
+
+- DEV Run 的两份文本文件均已生成并由 Worker 独立验证通过，但 Run 最终以 `AGENT_TRAJECTORY_VERIFICATION_FAILED` 失败，UI 显示模型与沙箱冻结费用已释放。
+- 源码路径确认：Runtime V1 的模型执行器会保存用于续跑的 `agent_model_checkpoints`；终结逻辑只为 Runtime V2 解密 `readyToFinalize`，而轨迹校验此前对任意版本的检查点都要求该 V2 专用标记，造成 V1 检查点被误判。修复仅将该项限制为 Runtime V2，不放宽 V2 检查点必须完成最终化的要求。
+- 回归测试覆盖 Runtime V1 有检查点时可通过、Runtime V2 未最终化仍失败、Runtime V2 已最终化可通过，并保留未审批高风险操作仍失败的断言。定向测试 1/1、`pnpm --filter backend lint` 已通过；完整质量门禁待 PR CI。
+- 两个产物仅存在于 DEV Agent 运行的远程交付存储；未下载到本机，也未在本地仓库或桌面创建测试文件。Production 未修改。
+
+## 2026-10-12 LaunchAgent CUA Python PATH 修复（PR #239，已部署 DEV）
 
 - DEV Worker 从 launchd 启动时拿到空 `PATH`。`agent-sandbox-provider` 为隔离的 CUA bridge 设置子进程环境时没有加入 CUA 虚拟环境目录；Docker 包装器使用 `/usr/bin/env python3`，因此 CUA doctor 在 LaunchAgent 环境里失败并令 Worker 退出。交互式终端的 PATH 不为空，手动 doctor 通过无法覆盖这个启动场景。
 - 修复在 CUA Python 路径为绝对路径时，将其 `bin` 目录加入仅供 bridge 使用的 `PATH`，同时保留 Docker 包装器、继承路径和 Docker Desktop CLI 路径。新增回归断言验证此环境契约，不改变认证、Provider、数据库、沙箱出口策略或服务配置。
-- 本机隔离环境 `pip check` 通过；用实际 provider 在模拟空 `PATH` 的 LaunchAgent 条件下执行 Docker / CUA doctor 通过，受限 HTTPS egress 检查也通过。`node --test backend/tests/agent-sandbox-provider.test.js backend/tests/agent-cua-bridge.test.js` 为 3/3，`pnpm --filter backend lint` 与 `pnpm check:workspace` 通过。该修复仍在候选分支，尚未部署；DEV Worker 及真实 Agent 闭环待 PR CI、精确 SHA 部署和 LaunchAgent 实测。Production 保持不变。
+- 本机隔离环境 `pip check` 通过；用实际 provider 在模拟空 `PATH` 的 LaunchAgent 条件下执行 Docker / CUA doctor 通过，受限 HTTPS egress 检查也通过。`node --test backend/tests/agent-sandbox-provider.test.js backend/tests/agent-cua-bridge.test.js` 为 3/3，`pnpm --filter backend lint` 与 `pnpm check:workspace` 通过。PR #239 已合入；Render DEV 精确运行 merge SHA `05940a81d38b378134f7f40771a912ca8d5b8885`，Worker 在线，模型、浏览器、egress、桌面中继 ready。真实 Agent 交付验证尚有下方 Runtime V1 修复待部署并重测。Production 保持不变。
 
 ## 2026-10-08 邮箱验证码登录的 Turnstile 备用通道（PR #237，已部署 DEV）
 
