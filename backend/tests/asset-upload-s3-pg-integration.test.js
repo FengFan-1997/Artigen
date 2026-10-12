@@ -50,11 +50,18 @@ const sessionInput = ({ adapter, ownerUserId, size, mimeType = 'image/png', suff
 
 const put = async (url, body, headers = {}) => {
   const response = await fetch(url, { method: 'PUT', headers, body });
-  assert.equal(response.ok, true, `S3 PUT failed with ${response.status}`);
+  if (!response.ok) {
+    // Keep CI diagnostics useful without printing the presigned URL or raw response.
+    const errorBody = await response.text();
+    const errorCode = errorBody.match(/<Code>([^<]*)<\/Code>/i)?.[1];
+    const errorMessage = errorBody.match(/<Message>([^<]*)<\/Message>/i)?.[1];
+    const details = [errorCode, errorMessage].filter(Boolean).join(': ').slice(0, 240);
+    assert.fail(`S3 PUT failed with ${response.status}${details ? ` (${details})` : ''}`);
+  }
   return response;
 };
 
-test('MinIO exercises single, multipart, resume, cancel, authorization and validation fences', {
+test('S3-compatible fixture exercises single, multipart, resume, cancel, authorization and validation fences', {
   skip: !hasMinio,
   timeout: 120_000
 }, async () => {

@@ -1,5 +1,13 @@
 # Artigen 项目正式 Handoff
 
+## 2026-10-12 DEV 发布与主要工作流状态
+
+- PR #236 的完整 required CI run `38227438432` 全部通过（Core、RustFS S3 集成、Agent Harness、chaos、浏览器 E2E、Release gate 与 Vercel Preview），随后合入 `dev`，merge SHA 为 `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`。Render DEV 已开始构建该 SHA；合并后首次 `/api/meta` 仍返回旧 SHA `ba96b521f43e7edc3bd0d1995d56ef84e9578e6b`，本次尚未验证新部署完成。
+- 此次只读核验时 DEV 与 Production 的 `/healthz`、`/readyz` 都已返回成功，`/readyz.ok=true`；DEV 当前元数据显示 generation、fileUpload、artifactDownload 可用。Production `/api/meta.gitSha` 为 `47cc56b1e6f94713119e806220ac598c79362435`。Readiness 仅证明依赖检查，不代表任务已经可以执行。
+- DEV 与 Production 的 `/api/agent/status` 均为 `workerOnline=false`、模型、browser、egress、desktop relay 未就绪、`queueDepth=0`、Runtime V2=false。Agent 主工作流当前不能据此算作端到端可用；Production 未修改。
+- PR #237 的登录 OTP Turnstile fallback 仍未合并。提交 `bb71bd570861e721f232bca6b8ee065f5f439d8c` 的 CI 已从 Quay 切到固定 RustFS 镜像，Harness 与 chaos 通过；Core 在旧 `dev` 基线上因 S3 单文件预签名 PUT 收到 HTTP 400 而失败。根因是该测试基线没有 PR #236 的上传兼容修复；当前本地分支已合并最新 `origin/dev`，包含该已验收修复，需以新 SHA 的 required CI 重新验证。
+- 本轮未调用真实 OTP、Provider、生成任务、支付或 Production 写操作。真实 Agent 流程仍待 DEV Worker 恢复后验收。
+
 ## 2026-10-08 邮箱验证码登录的 Turnstile 备用通道（PR #237，未部署）
 
 - 登录与邀请注册验证码流程在 Turnstile 控件下提供“验证不可用？直接发送验证码”备用按钮。用户主动选择后，前端发送 `turnstileFallback=true`；服务端只在 `login` 用途、请求未携带 Turnstile token 且 `AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED` 未关闭时接受。提供有效 token 时仍执行正常 Turnstile 校验；密码重置不支持此备用通道。
@@ -7,6 +15,26 @@
 - 为修复 GitHub Actions 拉取 Quay MinIO 镜像时的 `unauthorized`，本 PR 的三个隔离 S3 CI job 也统一到固定 digest 的 RustFS 1.0.0 fixture，使用其 `/health` 探针和兼容的测试凭据。此项只改变 GitHub Actions 临时测试环境，不改变 DEV / Production 的对象存储服务或凭据。
 - 本地 `pnpm check:core` 通过：前端 235 项、后端 703 passed / 101 skipped、邮件服务 7 项；认证 OTP / Render 配置定向 Node 测试 32/32，登录 API / Turnstile 单测 10/10，Chromium 认证 E2E 标准场景 4/4，加上带测试 Key 的 Turnstile fallback 两个入口 2/2。测试浏览器阻断了 Cloudflare 调用并 mock 邮件 API，没有发出真实验证码。
 - PR [#237](https://github.com/FengFan-1997/Artigen/pull/237) 已创建并以 `dev` 为目标。本地提交 SHA `913ff54cf565bb9e7bba104fa63a77202876de34` 尚未合入 `dev`，故没有 DEV / Production 部署。GitHub Actions run [37733404827](https://github.com/FengFan-1997/Artigen/actions/runs/37733404827) 的全部桌面、移动和平板 E2E 均通过，Vercel Preview 部署完成；Core quality gate、Agent Harness 与 chaos job 在应用测试前启动固定 MinIO 镜像时因 `quay.io` 返回 `unauthorized: access to the requested resource is not authorized` 失败，Release gate 因依赖检查失败。故 required CI 未通过，PR 仍被阻止合并。无数据库迁移、账号 / Secret 改动或真实邮件发送；解决 CI 镜像拉取问题并通过门禁后，先完成 DEV smoke，再按 `用途-日期 → dev → main` 流程发布生产。
+
+## 2026-10-08 恢复 Artigen DEV 主工作流
+
+- 用户需要立即启动 Artigen。Aiven 现有 DEV PostgreSQL Free 服务原为 Powered off；通过服务自身的 Power on 操作恢复，没有升级套餐或录入付款方式。随后从本机确认 PostgreSQL 接受连接，DEV `/readyz` 数据库检查通过。
+- Render CLI 当前显示 Artigen DEV 与 Production 均为 `not_suspended`，实际服务方案均为 Free；本轮没有读取账单用量。生产 `render.yaml` 仍声明 Starter，实际 Free 与模板存在漂移；不在本次修正，Production 未重启、部署或改配置。
+- DEV 仅重启现有 Web 服务，没有发布新代码。线上 `/healthz`、`/api/meta`、`/readyz` 均 HTTP 200；`/api/meta.gitSha` 为 `ba96b521f43e7edc3bd0d1995d56ef84e9578e6b`。readiness 的 database、S3、payload、Provider、payments、auth/mail、Agent、pricing 和 design-conversation 检查均通过；Worker scheduler 关闭且按非必需项跳过。
+- 将专用 DEV Mac Worker checkout 对齐到同一 SHA，并在 Docker Desktop 已可用后启动 Worker。`/api/agent/status` 确认 `workerOnline`、`workerModelReady`、`browserReady`、`egressVerified` 和 `desktopRelayReady` 均为 true，`queueDepth=0`；Runtime V2 和 subagents 仍关闭。启动 Worker 仅恢复服务心跳，本轮没有创建 Agent Run、调用真实 Provider、消费点数或测试支付。
+- 本机 `pnpm dev` 也已运行：前端 `http://localhost:4000/`、API `http://localhost:8080/healthz`。本机仅使用既有本地 PostgreSQL；没有本地 Provider / S3 配置，因此本机 `/api/meta` 的 generation 与 fileUpload 能力关闭。本机可用于开发页面，线上 DEV 才具备完整集成 readiness。
+- DEV 页面已在 Chrome 打开。接下来若要验收一条真实 Agent 任务，需要完成 DEV 测试账号邮箱验证码登录；浏览器控制在点击“发送验证码”前中断，是否发出验证码未确认。不得把 readiness 或主页 HTTP 200 表述为真实生成任务已验收。
+
+## 2026-09-28 DEV 通道因 Render 免费额度暂停（待恢复）
+
+- 用户继续推进主要工作流开发与测试。本轮只读核实 Render Hobby 工作区本月 Free Instance Hours 为 `749.98 / 750`，带宽为 `4.17 / 5 GB`，无付款方式、未出账费用 `$0`；Render CLI 显示工作区的 4 个 Web 服务均被 billing 暂停。Artigen DEV `/api/meta`、`/healthz`、`/readyz` 均为 HTTP 503；这是托管额度状态，不是代码部署、数据库或 Aiven 连接错误。
+- 无法进行 DEV 登录、Worker、Provider、上传/下载或真实任务验收。没有调用真实 Provider、创建 Agent Run、冻结点数、做支付或修改 Production。
+- 项目所有者先在 Render Billing 自行添加付款方式后，可只把 DEV Web 服务升级到 Starter；本次核验的官方标价为 `$7/月`，工作区 Hobby 无需升级。未录入卡片、升级服务、支付费用或触碰任何服务配置。Production 服务目前也显示暂停，仍保持不操作。
+- Render 账号与状态的只读证据、认证状态及当前额度已同步到 `docs/INFRA_ACCOUNT_REGISTER.zh-CN.md`；DEV 恢复步骤与边界已写入 `DEV_ENVIRONMENT_RUNBOOK.zh-CN.md`。恢复后需要重新核对账单、服务真实状态、部署 SHA 与健康探针，不能把额度重置或付款方式添加视为服务已恢复。
+- 本机 `pnpm check:core` 全部通过。Chromium 桌面主要工作流定向回归 `4/4` 通过，覆盖失败规划原位重试、时间线真实工具活动、跨运行产物上下文、执行中用户补充；这些是本地 mock UI/接口验证，不等同于 DEV Provider 真实调用。
+- GitHub CI 原先从 Quay 拉取固定 MinIO 镜像时被拒绝（HTTP `401`）；Bitnami legacy MinIO 镜像可以启动，但完整 CI 两次在不同的对象上传与故障恢复用例中出现随机 `ECONNRESET`。三个临时 S3 fixture 已改为固定 RustFS `1.0.0` manifest digest `sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff`，使用官方 `/health` 检查及独立测试凭据。CI run `36380620094` 中其它 Agent Harness、chaos 和浏览器分片通过，PostgreSQL + RustFS 集成唯一失败是 multipart 预签名 PUT 的 `BadDigest`：AWS SDK 默认校验会在生成链接时把空正文 CRC32 带入 URL，真实分片到达后校验不符。
+- 修复提交 `5265c02d709b9f7208c678f4d383ed30d885ea3d` 在 GitHub Actions run `36381579038` 上通过完整 CI：Core、6 组 Agent Harness/chaos、全部 Chromium/Firefox/WebKit E2E 分片、Release gate 和 Vercel Preview 均通过（16 个作业通过；release branch policy 按 `dev` PR 条件跳过）。本机资产命名空间与上传服务定向测试 `10/10`、`pnpm check:workspace`、`git diff --check`、提交钩子前端类型检查和后端语法检查也通过。AWS SDK 官方文档说明其默认 CRC32 上传校验行为从 JavaScript SDK `3.729.0` 起启用，并支持 `WHEN_REQUIRED` 设置（[校验和指南](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/s3-checksums.html)、[AWS 配置指南](https://docs.aws.amazon.com/sdkref/latest/guide/feature-dataintegrity.html)）。
+- PR #236 已于 2026-10-12 通过完整 CI run `38227438432` 并合入 `dev`，merge SHA 为 `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`。该候选未修改数据库迁移、环境变量、账号权限、远程存储或 Production 配置。Render DEV 正在部署该 SHA；合并后首次探针仍返回旧 SHA `ba96b521f43e7edc3bd0d1995d56ef84e9578e6b`，因此部署尚未验收。
 
 ## 2026-09-24 规划失败请求原位重试（已部署 DEV，未发布生产）
 
