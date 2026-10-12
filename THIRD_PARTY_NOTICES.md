@@ -1,6 +1,6 @@
 # Third-party notices
 
-This document lists Artigen's direct runtime dependencies across the frontend, backend and mail-relay workspaces. Exact installed versions are governed by `pnpm-lock.yaml`; this table intentionally avoids duplicating version numbers that would drift from the lockfile.
+This document lists Artigen's direct runtime dependencies across the frontend, backend, mail-relay and Python Agent Runtime workspaces. JavaScript versions are governed by `pnpm-lock.yaml`; the Python Agent Runtime pins its direct dependency in `backend/agent_runtime/requirements.txt`.
 
 License identifiers come from the installed package metadata and upstream project notices. GSAP uses its upstream standard license rather than an SPDX open-source identifier. This file documents third-party components; it does not grant a license for Artigen itself and is not a complete transitive SBOM.
 
@@ -54,6 +54,12 @@ License identifiers come from the installed package metadata and upstream projec
 | `zod` | MIT | <https://zod.dev> |
 
 `ajv` is used by the Runtime V2 validation path present on the development branch. It remains listed here so the notice stays valid when the docs hotfix is synchronized from `main` back to `dev`.
+
+## Python Agent Runtime
+
+| Package | License | Source |
+| --- | --- | --- |
+| `cua-sandbox` | MIT | <https://github.com/trycua/cua> |
 
 ## Verification and maintenance
 

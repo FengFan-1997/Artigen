@@ -2,19 +2,26 @@
 
 ## 2026-10-12 DEV 发布与主要工作流状态
 
-- PR #236 的完整 required CI run `38227438432` 全部通过，随后合入 `dev`，merge SHA 为 `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`。Render DEV 的 `/api/meta.gitSha` 已精确返回该 SHA；`/readyz` 为 HTTP 200 且全部必需检查通过，generation、fileUpload 和 artifactDownload 已配置启用。
+- PR #237 的登录 OTP Turnstile fallback 已通过 required CI 并合入 `dev`，merge SHA 为 `ed1a7f053dcc7acbce1b5e423bf7ad21e8f714c6`。Render DEV deployment 与 `/api/meta.gitSha` 均精确匹配该 SHA，`/readyz` HTTP 200 且全部必需检查通过。用户批准后，通过备用入口发送测试登录验证码并完成真实 DEV 邮箱登录；尚未运行真实 Agent 任务。
+- PR #236 的完整 required CI run `38227438432` 全部通过，随后合入 `dev`，merge SHA 为 `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`；随后由 #237 覆盖到上述 SHA。generation、fileUpload 和 artifactDownload 已配置启用。
 - Production 只读探针 `/api/meta` 与 `/readyz` 均为 HTTP 200，当前 SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`，数据库迁移为 `029_secure_console_test_sessions`；没有部署或修改 Production。
-- DEV 与 Production 的 `/api/agent/status` 均为 `workerOnline=false`、`queueDepth=0`，DEV 的模型、browser、egress、desktop relay 未就绪；Runtime V2 关闭。API readiness 通过不代表 Agent 任务可执行，主工作流尚未端到端验收。
-- PR #237 仍是登录 OTP Turnstile fallback 候选，head 为 merge commit `00debd1178de4571fa723bf34d0ba3f3d5ef6530`，已包含 #236 的已验收 S3 上传修复。最新 CI run `38229190909` 中 RustFS Agent Harness 与 chaos 作业成功、Vercel Preview 完成；Core quality gate 与浏览器 E2E 矩阵尚在运行，Release branch policy 按该 `dev` PR 条件跳过。此前旧基线 S3 PUT HTTP 400 的失败由缺失 #236 修复导致，不代表当前候选的最新 CI 结果。
-- 本轮未调用真实 OTP、Provider、生成任务或支付，也未修改 Production。Agent 真实流程待 Worker 在目标 DEV 环境恢复并通过状态检查后验收。
+- DEV 与 Production 的 `/api/agent/status` 均为 `workerOnline=false`、`queueDepth=0`；DEV 的模型、browser、egress、desktop relay 当前未就绪，Runtime V2 关闭。Docker Desktop 已运行；DEV LaunchAgent 尚未启动 Worker，Production 旧 checkout 的 LaunchAgent 暂时 booted out，等待按 main SHA 准备安全的专用 checkout。API readiness 通过不代表 Agent 任务可执行，主工作流尚未端到端验收。
+- PR #237 已包含 #236 的 S3 上传修复，并通过最终 required CI 后合并；合并到 `dev` 的 Quality Gate run `38230970564` 以 success 完成，核心、Harness、混沌、全部浏览器分片和 Release gate 均成功。
+- 本轮按用户确认完成一次 DEV 邮箱验证码登录；尚未调用真实 Agent Provider、创建 Run、消费点数或测试支付，也未修改 Production。Agent 真实流程待 DEV Worker 恢复并通过状态检查后验收。
 
-## 2026-10-08 邮箱验证码登录的 Turnstile 备用通道（PR #237，候选待验收）
+## 2026-10-08 邮箱验证码登录的 Turnstile 备用通道（PR #237，已部署 DEV）
 
 - 登录与邀请注册验证码流程在 Turnstile 控件下提供“验证不可用？直接发送验证码”备用按钮。用户主动选择后，前端发送 `turnstileFallback=true`；服务端只在 `login` 用途、请求未携带 Turnstile token 且 `AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED` 未关闭时接受。提供有效 token 时仍执行正常 Turnstile 校验；密码重置不支持此备用通道。
 - 备用通道不替代自动化滥用防护。生产投递仍通过 OTP 数据库配额、目标邮箱冷却、IP / 全局日配额与请求速率限制；已有邀请注册限制不变。部署模板将 fallback 默认设为启用，可用变量值 `false` 紧急关闭。
 - 为修复 GitHub Actions 拉取 Quay MinIO 镜像时的 `unauthorized`，本 PR 的三个隔离 S3 CI job 也统一到固定 digest 的 RustFS 1.0.0 fixture，使用其 `/health` 探针和兼容的测试凭据。此项只改变 GitHub Actions 临时测试环境，不改变 DEV / Production 的对象存储服务或凭据。
 - 本地 `pnpm check:core` 通过：前端 235 项、后端 703 passed / 101 skipped、邮件服务 7 项；认证 OTP / Render 配置定向 Node 测试 32/32，登录 API / Turnstile 单测 10/10，Chromium 认证 E2E 标准场景 4/4，加上带测试 Key 的 Turnstile fallback 两个入口 2/2。测试浏览器阻断了 Cloudflare 调用并 mock 邮件 API，没有发出真实验证码。
-- PR [#237](https://github.com/FengFan-1997/Artigen/pull/237) 以 `dev` 为目标，尚未合入或部署。最初的 Quay fixture 拉取问题已通过固定 RustFS fixture 解决；旧基线另一次 S3 PUT HTTP 400 是因为分支未包含 #236 上传修复。当前 head 已合入 `dev` 最新 SHA `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`；最新 required CI 仍在运行，精确结果见本节顶部的 run `38229190909`。无数据库迁移、账号 / Secret 改动或真实邮件发送；门禁通过后先完成 DEV OTP smoke，再按 `用途-日期 → dev → main` 流程发布生产。
+- PR [#237](https://github.com/FengFan-1997/Artigen/pull/237) 以 `dev` 为目标，已通过 required CI 并合入，DEV 当前部署 SHA 为 `ed1a7f053dcc7acbce1b5e423bf7ad21e8f714c6`。合并 commit 的 Quality Gate run `38230970564` 以 success 完成。用户批准后通过备用入口完成 DEV 邮箱验证码登录；尚未创建 Agent Run，Production 未部署或改动。
+
+## 2026-10-12 Worker CUA 依赖收敛（候选，未部署）
+
+- Worker bridge 直接调用 CUA 的 Sandbox、Image、`check_local_support` 与 `DockerRuntime`。此前 requirements 安装 `cua==0.1.6` 统一总包，会额外安装 Artigen 未用到的 `cua-agent[cloud]` 与 `cua-cli`。候选改为直接 pin 解析到的 `cua-sandbox==0.1.28`，并将 bridge 改为其原生模块导入；沙箱 API 行为不变。
+- 更新 Python Agent Runtime 的第三方许可清单和 bridge fake-module 回归，使测试在未安装 CUA 总包时仍验证本地受限网络行为。候选尚未安装到 Worker、没有部署或创建 Agent Run；完整验证及依赖安装结论以 PR CI 与 DEV Worker smoke 为准。
+- 官方 CUA 文档将 `cua-sandbox` 描述为 Python Sandbox / Image 高层 API，示例直接从 `cua_sandbox` 导入；当前 pin 是仓库已有 resolver 选中的兼容版本，不代表上游最新版本。[官方 GitHub 文档](https://github.com/trycua/cua)
 
 ## 2026-10-08 恢复 Artigen DEV 主工作流
 

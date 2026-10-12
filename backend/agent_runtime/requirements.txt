@@ -1,2 +1,3 @@
-# Official unified SDK; Artigen uses only its local Sandbox/Image surface.
-cua==0.1.6
+# Artigen uses the sandbox API directly; avoid installing the unified SDK's
+# unrelated Agent and CLI distributions on the DEV Mac Worker.
+cua-sandbox==0.1.28

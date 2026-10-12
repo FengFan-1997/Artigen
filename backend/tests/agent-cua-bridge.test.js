@@ -9,12 +9,11 @@ const BRIDGE = path.resolve(__dirname, '../agent_runtime/cua_bridge.py');
 
 test('image-only local Cua runs still receive the restricted internal network contract', () => {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-cua-bridge-test-'));
-  const fakeCua = path.join(temporaryRoot, 'cua.py');
+  const fakeCua = path.join(temporaryRoot, 'cua_sandbox', '__init__.py');
   const fakeDocker = path.join(temporaryRoot, 'docker');
   const fakeCuaSandboxRuntime = path.join(temporaryRoot, 'cua_sandbox', 'runtime');
   try {
     fs.mkdirSync(fakeCuaSandboxRuntime, { recursive: true });
-    fs.writeFileSync(path.join(temporaryRoot, 'cua_sandbox', '__init__.py'), '', { mode: 0o600 });
     fs.writeFileSync(path.join(fakeCuaSandboxRuntime, '__init__.py'), '', { mode: 0o600 });
     fs.writeFileSync(path.join(fakeCuaSandboxRuntime, 'docker.py'), `
 def _has_docker():
@@ -22,11 +21,16 @@ def _has_docker():
 
 def _docker_bin():
     return "untrusted-docker"
+
+class DockerRuntime:
+    def __init__(self, **_kwargs):
+        pass
 `, { mode: 0o600 });
     fs.writeFileSync(fakeCua, `
 from dataclasses import dataclass
 import os
 from cua_sandbox.runtime import docker as runtime_docker
+from cua_sandbox.runtime.docker import DockerRuntime
 
 @dataclass(frozen=True)
 class Image:
@@ -42,10 +46,6 @@ class Image:
 
     def run(self, *_args):
         return self
-
-class DockerRuntime:
-    def __init__(self, **_kwargs):
-        pass
 
 class _Sandbox:
     def __init__(self, name):
@@ -124,8 +124,9 @@ exit 0
 
 test('Cua file writes split generated images below the host argument limit', () => {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'artigen-cua-write-test-'));
-  const fakeCua = path.join(temporaryRoot, 'cua.py');
+  const fakeCua = path.join(temporaryRoot, 'cua_sandbox', '__init__.py');
   try {
+    fs.mkdirSync(path.dirname(fakeCua), { recursive: true });
     fs.writeFileSync(fakeCua, `
 class _Result:
     stdout = ""
