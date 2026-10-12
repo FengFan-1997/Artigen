@@ -2,19 +2,19 @@
 
 ## 2026-10-12 DEV 发布与主要工作流状态
 
-- PR #236 的完整 required CI run `38227438432` 全部通过（Core、RustFS S3 集成、Agent Harness、chaos、浏览器 E2E、Release gate 与 Vercel Preview），随后合入 `dev`，merge SHA 为 `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`。Render DEV 已开始构建该 SHA；合并后首次 `/api/meta` 仍返回旧 SHA `ba96b521f43e7edc3bd0d1995d56ef84e9578e6b`，本次尚未验证新部署完成。
-- 此次只读核验时 DEV 与 Production 的 `/healthz`、`/readyz` 都已返回成功，`/readyz.ok=true`；DEV 当前元数据显示 generation、fileUpload、artifactDownload 可用。Production `/api/meta.gitSha` 为 `47cc56b1e6f94713119e806220ac598c79362435`。Readiness 仅证明依赖检查，不代表任务已经可以执行。
-- DEV 与 Production 的 `/api/agent/status` 均为 `workerOnline=false`、模型、browser、egress、desktop relay 未就绪、`queueDepth=0`、Runtime V2=false。Agent 主工作流当前不能据此算作端到端可用；Production 未修改。
-- PR #237 的登录 OTP Turnstile fallback 仍未合并。提交 `bb71bd570861e721f232bca6b8ee065f5f439d8c` 的 CI 已从 Quay 切到固定 RustFS 镜像，Harness 与 chaos 通过；Core 在旧 `dev` 基线上因 S3 单文件预签名 PUT 收到 HTTP 400 而失败。根因是该测试基线没有 PR #236 的上传兼容修复；当前本地分支已合并最新 `origin/dev`，包含该已验收修复，需以新 SHA 的 required CI 重新验证。
-- 本轮未调用真实 OTP、Provider、生成任务、支付或 Production 写操作。真实 Agent 流程仍待 DEV Worker 恢复后验收。
+- PR #236 的完整 required CI run `38227438432` 全部通过，随后合入 `dev`，merge SHA 为 `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`。Render DEV 的 `/api/meta.gitSha` 已精确返回该 SHA；`/readyz` 为 HTTP 200 且全部必需检查通过，generation、fileUpload 和 artifactDownload 已配置启用。
+- Production 只读探针 `/api/meta` 与 `/readyz` 均为 HTTP 200，当前 SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`，数据库迁移为 `029_secure_console_test_sessions`；没有部署或修改 Production。
+- DEV 与 Production 的 `/api/agent/status` 均为 `workerOnline=false`、`queueDepth=0`，DEV 的模型、browser、egress、desktop relay 未就绪；Runtime V2 关闭。API readiness 通过不代表 Agent 任务可执行，主工作流尚未端到端验收。
+- PR #237 仍是登录 OTP Turnstile fallback 候选，head 为 merge commit `00debd1178de4571fa723bf34d0ba3f3d5ef6530`，已包含 #236 的已验收 S3 上传修复。最新 CI run `38229190909` 中 RustFS Agent Harness 与 chaos 作业成功、Vercel Preview 完成；Core quality gate 与浏览器 E2E 矩阵尚在运行，Release branch policy 按该 `dev` PR 条件跳过。此前旧基线 S3 PUT HTTP 400 的失败由缺失 #236 修复导致，不代表当前候选的最新 CI 结果。
+- 本轮未调用真实 OTP、Provider、生成任务或支付，也未修改 Production。Agent 真实流程待 Worker 在目标 DEV 环境恢复并通过状态检查后验收。
 
-## 2026-10-08 邮箱验证码登录的 Turnstile 备用通道（PR #237，未部署）
+## 2026-10-08 邮箱验证码登录的 Turnstile 备用通道（PR #237，候选待验收）
 
 - 登录与邀请注册验证码流程在 Turnstile 控件下提供“验证不可用？直接发送验证码”备用按钮。用户主动选择后，前端发送 `turnstileFallback=true`；服务端只在 `login` 用途、请求未携带 Turnstile token 且 `AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED` 未关闭时接受。提供有效 token 时仍执行正常 Turnstile 校验；密码重置不支持此备用通道。
 - 备用通道不替代自动化滥用防护。生产投递仍通过 OTP 数据库配额、目标邮箱冷却、IP / 全局日配额与请求速率限制；已有邀请注册限制不变。部署模板将 fallback 默认设为启用，可用变量值 `false` 紧急关闭。
 - 为修复 GitHub Actions 拉取 Quay MinIO 镜像时的 `unauthorized`，本 PR 的三个隔离 S3 CI job 也统一到固定 digest 的 RustFS 1.0.0 fixture，使用其 `/health` 探针和兼容的测试凭据。此项只改变 GitHub Actions 临时测试环境，不改变 DEV / Production 的对象存储服务或凭据。
 - 本地 `pnpm check:core` 通过：前端 235 项、后端 703 passed / 101 skipped、邮件服务 7 项；认证 OTP / Render 配置定向 Node 测试 32/32，登录 API / Turnstile 单测 10/10，Chromium 认证 E2E 标准场景 4/4，加上带测试 Key 的 Turnstile fallback 两个入口 2/2。测试浏览器阻断了 Cloudflare 调用并 mock 邮件 API，没有发出真实验证码。
-- PR [#237](https://github.com/FengFan-1997/Artigen/pull/237) 已创建并以 `dev` 为目标。本地提交 SHA `913ff54cf565bb9e7bba104fa63a77202876de34` 尚未合入 `dev`，故没有 DEV / Production 部署。GitHub Actions run [37733404827](https://github.com/FengFan-1997/Artigen/actions/runs/37733404827) 的全部桌面、移动和平板 E2E 均通过，Vercel Preview 部署完成；Core quality gate、Agent Harness 与 chaos job 在应用测试前启动固定 MinIO 镜像时因 `quay.io` 返回 `unauthorized: access to the requested resource is not authorized` 失败，Release gate 因依赖检查失败。故 required CI 未通过，PR 仍被阻止合并。无数据库迁移、账号 / Secret 改动或真实邮件发送；解决 CI 镜像拉取问题并通过门禁后，先完成 DEV smoke，再按 `用途-日期 → dev → main` 流程发布生产。
+- PR [#237](https://github.com/FengFan-1997/Artigen/pull/237) 以 `dev` 为目标，尚未合入或部署。最初的 Quay fixture 拉取问题已通过固定 RustFS fixture 解决；旧基线另一次 S3 PUT HTTP 400 是因为分支未包含 #236 上传修复。当前 head 已合入 `dev` 最新 SHA `98158dfb487e7fafa706f88a41c9cc3ca7954aaa`；最新 required CI 仍在运行，精确结果见本节顶部的 run `38229190909`。无数据库迁移、账号 / Secret 改动或真实邮件发送；门禁通过后先完成 DEV OTP smoke，再按 `用途-日期 → dev → main` 流程发布生产。
 
 ## 2026-10-08 恢复 Artigen DEV 主工作流
 
