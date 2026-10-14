@@ -158,6 +158,13 @@ const installSharedApi = async (
   } = {}
 ) => {
   let quoteRequestCount = 0;
+  // Advanced-control cases exercise an explicitly expanded Inspector. The
+  // default collapsed zero state is covered in agent-workspace-polish.spec.ts.
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('artigen-workspace-preferences')) {
+      localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 2, rightCollapsed: false, theme: 'dark' }));
+    }
+  });
   await page.route('**/api/auth/session', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -376,7 +383,7 @@ test('every visible workspace chrome control performs its advertised action', as
   await expandLeft.click();
   await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-collapsed/);
 
-  await page.getByRole('link', { name: /点数：/ }).click();
+  await page.getByRole('link', { name: /^可用点数:/ }).click();
   await expect(page).toHaveURL('/artigen/usage');
   await page.goBack();
   await expect(page).toHaveURL('/artigen/agent');
@@ -738,7 +745,8 @@ test('run detail keeps real plan, verified files, budget and two-click parent ca
   await expect(page.locator('#workspace-panel-files')).toContainText('artigen-design-audit.pdf');
   await expect(page.locator('#workspace-panel-files')).toContainText('passed');
   await page.getByRole('tab', { name: '环境' }).click();
-  await expect(page.getByRole('link', { name: /点数.*12\.5 \/ 50/ })).toBeVisible();
+  await expect(page.locator('.workspace-topbar .task-cost')).toHaveText('已用 12.5 / 50 点');
+  await expect(page.getByRole('link', { name: '点数与用量', exact: true })).toBeVisible();
 
   const stop = page.getByRole('button', { name: '停止' });
   await stop.click();

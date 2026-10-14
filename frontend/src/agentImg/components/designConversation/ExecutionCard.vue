@@ -66,19 +66,24 @@
         <div v-for="approval in pendingApprovals" :key="approval.approvalId" class="approval-card">
           <span class="approval-kicker">{{ approval.riskLevel === 'blocked' ? (zh ? '需要接管' : 'Takeover required') : (zh ? '外部写操作' : 'External write') }}</span>
           <h4>{{ approval.changeSummary || actionLabel(approval.actionType) }}</h4>
-          <p>{{ approval.impactSummary }}</p>
+          <dl class="approval-evidence">
+            <div v-if="approval.evidenceSummary"><dt>{{ zh ? '依据' : 'Evidence' }}</dt><dd>{{ approval.evidenceSummary }}</dd></div>
+            <div v-if="approval.impactSummary"><dt>{{ zh ? '影响' : 'Impact' }}</dt><dd>{{ approval.impactSummary }}</dd></div>
+            <div v-if="approval.rollbackSummary"><dt>{{ zh ? '撤销' : 'Rollback' }}</dt><dd>{{ approval.rollbackSummary }}</dd></div>
+          </dl>
           <small>{{ approval.recipient }}</small>
           <p v-if="canAuthorizeSession(approval)" class="authorization-scope">
             {{ authorizationScope(approval) }}
           </p>
           <div v-if="approval.riskLevel !== 'blocked'" class="approval-actions">
-            <button type="button" @click="emit('approve', approval)">{{ zh ? '仅批准这一次' : 'Approve once' }}</button>
-            <button v-if="canAuthorizeSession(approval)" class="session" type="button" @click="emit('authorize', approval)">{{ authorizationButtonLabel(approval) }}</button>
-            <button class="deny" type="button" @click="emit('deny', approval)">{{ zh ? '拒绝' : 'Deny' }}</button>
+            <button type="button" :disabled="busy" @click="emit('approve', approval)">{{ zh ? '仅批准这一次' : 'Approve once' }}</button>
+            <button v-if="canAuthorizeSession(approval)" class="session" type="button" :disabled="busy" @click="emit('authorize', approval)">{{ authorizationButtonLabel(approval) }}</button>
+            <button class="deny" type="button" :disabled="busy" @click="emit('deny', approval)">{{ zh ? '拒绝' : 'Deny' }}</button>
           </div>
           <router-link v-else :to="`/artigen/agent/runs/${run?.runId}`">{{ zh ? '打开安全接管' : 'Open secure takeover' }}</router-link>
         </div>
       </div>
+      <p v-if="expiredApprovals.length" class="approval-expired" role="status">{{ zh ? '有审批已过期，不能再批准；请刷新任务查看最新状态。' : 'An approval expired and can no longer be granted. Refresh for the current status.' }}</p>
     </div>
 
     <footer>
@@ -101,6 +106,7 @@
 import { computed } from 'vue';
 import WorkspaceIcon from '../workspace/WorkspaceIcon.vue';
 import type { DesignExecution } from '../../services/designConversations';
+import { useAgentApprovals } from '../../composables/useAgentApprovals';
 import { agentAssetUrl, type AgentApproval, type AgentRun } from '../../services/agentRuns';
 import { taskAssetUrl, type ServerToolTask } from '../../services/toolTasks';
 
@@ -147,12 +153,11 @@ const statusLabel = computed(() => {
   return labels[displayStatus.value]?.[props.zh ? 0 : 1] || displayStatus.value;
 });
 const progressPercent = computed(() => {
-  const terminal: Record<string, number> = { succeeded: 100, success: 100, failed: 100, cancelled: 100 };
-  if (terminal[displayStatus.value] !== undefined) return terminal[displayStatus.value];
-  if (props.run?.progress.maxSteps) return Math.min(94, Math.max(8, props.run.progress.stepCount / props.run.progress.maxSteps * 100));
-  return ({ waiting_upload: 8, waiting_budget: 8, queued: 18, provisioning: 28, running: 62, verifying: 88, waiting_authorization: 70 } as Record<string, number>)[displayStatus.value] || 12;
+  if (['succeeded', 'success'].includes(displayStatus.value)) return 100;
+  const plan = props.run?.progress.plan || [];
+  return plan.length ? plan.filter((step) => step.status === 'completed').length / plan.length * 100 : 0;
 });
-const pendingApprovals = computed(() => props.run?.approvals?.filter((item) => item.status === 'pending') || []);
+const { pendingApprovals, expiredApprovals } = useAgentApprovals(() => props.run?.approvals || []);
 const canStart = computed(() => !props.execution.toolTaskId && !props.execution.agentRunId && props.execution.status === 'queued' && props.execution.routeKind !== 'reply');
 const canCancel = computed(() => Boolean(
   !['succeeded', 'success', 'failed', 'cancelled'].includes(displayStatus.value) &&
@@ -246,27 +251,33 @@ const authorizationButtonLabel = (approval: AgentApproval) => props.zh
 .execution-card > header > div:nth-child(2) { min-width: 0; }
 .executor-icon { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; color: var(--acid-text); background: var(--surface-raised); }
 .executor-icon svg { width: 16px; height: 16px; }
-header p { margin: 0 0 1px; color: var(--muted); font-size: 11px; font-weight: 620; }
+header p { margin: 0 0 1px; color: var(--muted); font-size: 12px; font-weight: 620; }
 header h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 660; }
-.status-chip { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; margin-left: auto; padding: 5px 3px; border: 0; border-radius: 0; color: var(--muted); font-size: 11px; font-weight: 620; white-space: nowrap; background: transparent; }
+.status-chip { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; margin-left: auto; padding: 5px 3px; border: 0; border-radius: 0; color: var(--muted); font-size: 12px; font-weight: 620; white-space: nowrap; background: transparent; }
 .status-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .status-running .status-chip i,.status-queued .status-chip i,.status-provisioning .status-chip i { background: var(--acid); }
 .status-failed .status-chip i { background: var(--danger); }.status-waiting_budget .status-chip i,.status-waiting_authorization .status-chip i { background: var(--warning); }.status-succeeded .status-chip i,.status-success .status-chip i { background: var(--success); }
 .execution-body { padding: 6px 14px 12px; }
 .execution-meta { display: flex; flex-wrap: wrap; gap: 12px; min-height: 20px; }
 .execution-meta:empty { display: none; }
-.execution-meta span { display: flex; min-width: 0; gap: 5px; overflow-wrap: anywhere; border: 0; color: var(--muted); font-size: 11px; background: transparent; }.execution-meta b { flex: 0 0 auto; color: var(--text); }
+.execution-meta span { display: flex; min-width: 0; gap: 5px; overflow-wrap: anywhere; border: 0; color: var(--muted); font-size: 12px; background: transparent; }.execution-meta b { flex: 0 0 auto; color: var(--text); }
 .local-note,.upload-note,.budget-block { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 11px 12px; border: 0; border-radius: 9px; background: var(--surface-raised); }
-.local-note,.upload-note { flex-wrap: wrap; }.local-note b,.upload-note b { font-size: 12px; }.local-note span,.upload-note span { color: var(--muted); font-size: 11px; }
+.local-note,.upload-note { flex-wrap: wrap; }.local-note b,.upload-note b { font-size: 12px; }.local-note span,.upload-note span { color: var(--muted); font-size: 12px; }
 .upload-note { background: color-mix(in srgb,var(--acid) 5%,var(--surface-raised)); }
-.budget-block { justify-content: space-between; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--warning); }.budget-block div { display: grid; min-width: 0; gap: 3px; }.budget-block b { font-size: 12px; }.budget-block span { overflow-wrap: anywhere; color: var(--muted); font-size: 11px; }.budget-block a { flex: 0 0 auto; color: var(--text); font-size: 12px; font-weight: 720; }
-.failure-block { display: grid; gap: 5px; margin-top: 12px; padding: 11px 12px; border: 0; border-radius: 9px; background: color-mix(in srgb,var(--danger) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--danger); }.failure-block b { color: var(--danger); font-size: 12px; }.failure-block span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.budget-block { justify-content: space-between; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--warning); }.budget-block div { display: grid; min-width: 0; gap: 3px; }.budget-block b { font-size: 12px; }.budget-block span { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }.budget-block a { flex: 0 0 auto; color: var(--text); font-size: 12px; font-weight: 720; }
+.failure-block { display: grid; gap: 5px; margin-top: 12px; padding: 11px 12px; border: 0; border-radius: 9px; background: color-mix(in srgb,var(--danger) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--danger); }.failure-block b { color: var(--danger); font-size: 12px; }.failure-block span { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .deliverables { margin-top: 14px; }.deliverables > p { margin: 0 0 8px; font-size: 12px; font-weight: 660; }
-.deliverables > a { display: inline-flex; align-items: center; gap: 10px; min-width: 180px; max-width: 300px; margin: 0 8px 8px 0; padding: 8px; border: 0; border-radius: 9px; color: var(--text); text-decoration: none; background: var(--surface-raised); }.deliverables > a:hover { background: var(--surface-hover,var(--surface)); }.deliverables img { width: 64px; height: 56px; border-radius: 7px; object-fit: cover; }.deliverables span { display: grid; gap: 3px; min-width: 0; font-size: 11px; }.deliverables b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.deliverables small { color: var(--success); }
-.approval-list { display: grid; gap: 10px; margin-top: 14px; }.approval-card { min-width: 0; padding: 13px 14px; border: 0; border-radius: 10px; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--warning); }.approval-kicker { color: var(--warning); font-size: 11px; font-weight: 720; }.approval-card h4 { margin: 5px 0; overflow-wrap: anywhere; }.approval-card p { margin: 0 0 6px; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.5; }.approval-card small { display: block; overflow-wrap: anywhere; color: var(--muted); }.approval-card .authorization-scope { margin-top: 10px; padding: 9px; border: 0; border-radius: 8px; color: var(--text); background: color-mix(in srgb,var(--surface) 70%,transparent); }.approval-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }.approval-actions button,.approval-card a { min-height: 40px; padding: 8px 10px; border: 0; border-radius: 8px; color: var(--acid-ink); font-size: 11px; text-decoration: none; background: var(--acid); cursor: pointer; }.approval-actions .session { color: var(--text); background: var(--surface); }.approval-actions .deny { color: var(--danger); background: transparent; }
-.execution-card > footer { padding: 0 14px 13px; }.progress-track { height: 2px; overflow: hidden; border-radius: 2px; background: var(--surface-raised); }.progress-track span { display: block; height: 100%; background: var(--acid); transform-origin: left center; transition: transform 220ms cubic-bezier(.23,1,.32,1); }.footer-actions { display: flex; align-items: center; gap: 8px; padding-top: 10px; }.footer-actions > span { margin-right: auto; color: var(--muted); font-size: 11px; }.footer-actions button,.footer-actions a { padding: 8px 9px; border: 0; border-radius: 8px; color: var(--text); font-size: 11px; text-decoration: none; background: transparent; cursor: pointer; }.footer-actions button:hover,.footer-actions a:hover { background: var(--surface-raised); }.footer-actions .primary { color: var(--acid-ink); font-weight: 720; background: var(--acid); }.footer-actions .cancel { color: var(--danger); }
-.footer-actions button:focus-visible,.footer-actions a:focus-visible,.approval-actions button:focus-visible,.approval-card a:focus-visible,.deliverables a:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.deliverables > a { display: inline-flex; align-items: center; gap: 10px; min-width: 180px; max-width: 300px; margin: 0 8px 8px 0; padding: 8px; border: 0; border-radius: 9px; color: var(--text); text-decoration: none; background: var(--surface-raised); }.deliverables > a:hover { background: var(--surface-hover,var(--surface)); }.deliverables img { width: 64px; height: 56px; border-radius: 7px; object-fit: cover; }.deliverables span { display: grid; gap: 3px; min-width: 0; font-size: 12px; }.deliverables b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.deliverables small { color: var(--success); }
+.approval-list { display: grid; gap: 10px; margin-top: 14px; }.approval-card { min-width: 0; padding: 13px 14px; border: 0; border-radius: 10px; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--warning); }.approval-kicker { color: var(--warning); font-size: 12px; font-weight: 720; }.approval-card h4 { margin: 5px 0; overflow-wrap: anywhere; }.approval-card p { margin: 0 0 6px; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.5; }.approval-card small { display: block; overflow-wrap: anywhere; color: var(--muted); }.approval-card .authorization-scope { margin-top: 10px; padding: 9px; border: 0; border-radius: 8px; color: var(--text); background: color-mix(in srgb,var(--surface) 70%,transparent); }.approval-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }.approval-actions button,.approval-card a { min-height: 40px; padding: 8px 10px; border: 0; border-radius: 8px; color: var(--acid-ink); font-size: 12px; text-decoration: none; background: var(--acid); cursor: pointer; }.approval-actions .session { color: var(--text); background: var(--surface); }.approval-actions .deny { color: var(--danger); background: transparent; }
+.execution-card > footer { padding: 0 14px 13px; }.progress-track { height: 2px; overflow: hidden; border-radius: 2px; background: var(--surface-raised); }.progress-track span { display: block; height: 100%; background: var(--acid); transform-origin: left center; transition: transform 220ms cubic-bezier(.23,1,.32,1); }.footer-actions { display: flex; align-items: center; gap: 8px; padding-top: 10px; }.footer-actions > span { margin-right: auto; color: var(--muted); font-size: 12px; }.footer-actions button,.footer-actions a { padding: 8px 9px; border: 0; border-radius: 8px; color: var(--text); font-size: 12px; text-decoration: none; background: transparent; cursor: pointer; }.footer-actions button:hover,.footer-actions a:hover { background: var(--surface-raised); }.footer-actions .primary { color: var(--acid-ink); font-weight: 720; background: var(--acid); }.footer-actions .cancel { color: var(--danger); }
+.footer-actions button:focus-visible,.footer-actions a:focus-visible,.approval-actions button:focus-visible,.approval-card a:focus-visible,.deliverables a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .footer-actions button:active,.approval-actions button:active { transform: scale(.97); }
+.approval-evidence { display: grid; gap: 8px; margin: 10px 0; }
+.approval-evidence div { display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 8px; }
+.approval-evidence dt { color: var(--muted); font-size: 12px; }
+.approval-evidence dd { margin: 0; color: var(--text); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.approval-expired { color: var(--warning); font-size: 13px; line-height: 1.6; }
+.status-failed .progress-track span,.status-cancelled .progress-track span { background: var(--danger); }
 @media (max-width: 799px) {
   .execution-card > header { align-items: flex-start; padding: 12px; }.execution-body { padding: 6px 12px 12px; }.status-chip { max-width: 112px; overflow: hidden; text-overflow: ellipsis; }.execution-meta { gap: 8px 12px; }.budget-block { align-items: flex-start; flex-wrap: wrap; }.approval-actions { display: grid; grid-template-columns: 1fr; }.approval-actions button { min-height: 44px; font-size: 12px; line-height: 1.35; }.footer-actions { flex-wrap: wrap; }.footer-actions > span { width: 100%; }.footer-actions button,.footer-actions a { min-height: 44px; flex: 1; text-align: center; }.deliverables > a { max-width: 100%; width: 100%; }
 }

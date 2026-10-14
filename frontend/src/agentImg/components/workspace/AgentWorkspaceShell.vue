@@ -45,14 +45,13 @@
       <button class="new-task" type="button" @click="$emit('new-task')">
         <WorkspaceIcon name="plus" />
         <span>{{ zh ? '新任务' : 'New task' }}</span>
-        <kbd>⌘N</kbd>
+        <kbd>{{ shortcutModifier }}N</kbd>
       </button>
 
       <label class="history-search">
         <WorkspaceIcon name="search" />
         <span class="sr-only">{{ zh ? '搜索任务' : 'Search tasks' }}</span>
         <input v-model="search" name="workspace-search" type="search" autocomplete="off" :placeholder="zh ? '搜索任务' : 'Search tasks'" @input="$emit('search', search)" />
-        <kbd>⌘K</kbd>
       </label>
 
       <div class="history-slot">
@@ -75,12 +74,12 @@
       </nav>
 
       <footer class="workspace-account">
-        <router-link to="/artigen/usage" class="account-action" :aria-label="zh ? `点数：${creditLabel}` : `Credits: ${creditLabel}`">
+        <router-link to="/artigen/usage" class="account-action" :aria-label="`${creditCaption}${creditLabel ? ': ' + creditLabel : ''}`">
           <span class="account-icon" aria-hidden="true">
             <WorkspaceIcon name="spark" :size="16" />
           </span>
-          <span class="account-label">{{ zh ? '点数' : 'Credits' }}</span>
-          <b class="account-value">{{ creditLabel }}</b>
+          <span class="account-label">{{ creditCaption }}</span>
+          <b v-if="creditLabel" class="account-value">{{ creditLabel }}</b>
         </router-link>
         <button type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme">
           <span class="account-icon" aria-hidden="true">
@@ -137,9 +136,12 @@
               </span>
             </div>
           </slot>
+          <div v-if="statusTone !== 'ready' || taskCostLabel" class="task-meta">
+            <span class="runtime-pill" :class="statusTone"><i aria-hidden="true"></i>{{ statusLabel }}</span>
+            <span v-if="taskCostLabel" class="task-cost">{{ taskCostLabel }}</span>
+          </div>
         </div>
         <div class="topbar-actions">
-          <span v-if="statusTone !== 'ready'" class="runtime-pill" :class="statusTone"><i></i>{{ statusLabel }}</span>
           <slot name="topbar-actions" />
           <button ref="rightDrawerButton" class="icon-control inspector-toggle" type="button" :aria-label="zh ? '打开检查器' : 'Open inspector'" @click="toggleRight">
             <WorkspaceIcon name="panel-right" :size="18" />
@@ -218,8 +220,9 @@
       <section ref="commandPanel" class="command-palette" role="dialog" aria-modal="true" :aria-label="zh ? '命令面板' : 'Command palette'">
         <label>
           <WorkspaceIcon name="search" :size="18" />
-          <input ref="commandInput" v-model="commandQuery" name="workspace-command" type="search" autocomplete="off" :placeholder="zh ? '搜索页面或动作…' : 'Search pages or actions…'" />
-          <kbd>Esc</kbd>
+          <span class="sr-only">{{ zh ? '搜索页面或动作' : 'Search pages or actions' }}</span>
+          <input ref="commandInput" v-model="commandQuery" name="workspace-command" type="search" autocomplete="off" :aria-label="zh ? '搜索页面或动作' : 'Search pages or actions'" :placeholder="zh ? '搜索页面或动作…' : 'Search pages or actions…'" />
+          <kbd aria-hidden="true">Esc</kbd>
         </label>
         <div>
           <button v-for="command in filteredCommands" :key="command.id" type="button" @click="runCommand(command)">
@@ -256,6 +259,9 @@ const props = withDefaults(defineProps<{
   statusLabel?: string;
   statusTone?: 'ready' | 'busy' | 'warning' | 'offline';
   creditLabel?: string;
+  taskCostLabel?: string;
+  creditCaption?: string;
+  defaultInspectorCollapsed?: boolean;
   inspectorSubtitle?: string;
   defaultInspectorTab?: InspectorTab;
   badges?: Partial<Record<InspectorTab, number>>;
@@ -266,7 +272,9 @@ const props = withDefaults(defineProps<{
   subtitle: '',
   statusLabel: 'Ready',
   statusTone: 'ready',
-  creditLabel: '—',
+  creditLabel: '',
+  taskCostLabel: '',
+  defaultInspectorCollapsed: false,
   inspectorSubtitle: '',
   defaultInspectorTab: 'environment',
   badges: () => ({}),
@@ -290,7 +298,8 @@ const commandPanel = ref<HTMLElement | null>(null);
 const commandInput = ref<HTMLInputElement | null>(null);
 const search = ref('');
 const leftCollapsed = ref(false);
-const rightCollapsed = ref(false);
+const rightCollapsed = ref(props.defaultInspectorCollapsed);
+let rightPreferenceSet = false;
 const leftDrawerOpen = ref(false);
 const rightDrawerOpen = ref(false);
 const leftWidth = ref(272);
@@ -301,6 +310,8 @@ const systemDark = ref(true);
 const commandOpen = ref(false);
 const commandQuery = ref('');
 const overlayLayout = ref(false);
+const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
+const creditCaption = computed(() => props.creditCaption || (props.zh ? '点数与用量' : 'Credits & usage'));
 let resizeTarget: ResizeTarget | null = null;
 let media: MediaQueryList | null = null;
 let layoutMedia: MediaQueryList | null = null;
@@ -327,7 +338,7 @@ const themeLabel = computed(() => {
   return labels[theme.value];
 });
 const commands = computed(() => [
-  { id: 'new', label: props.zh ? '新任务' : 'New task', hint: props.zh ? '开始一个新的设计任务' : 'Start a new design task', shortcut: '⌘N', action: () => emit('new-task') },
+  { id: 'new', label: props.zh ? '新任务' : 'New task', hint: props.zh ? '开始一个新的设计任务' : 'Start a new design task', shortcut: `${shortcutModifier}N`, action: () => emit('new-task') },
   { id: 'create', label: props.zh ? '设计 Agent' : 'Design Agent', hint: '/artigen/create', shortcut: '', action: () => router.push('/artigen/create') },
   { id: 'agent', label: props.zh ? '电脑 Agent' : 'Computer Agent', hint: '/artigen/agent', shortcut: '', action: () => router.push('/artigen/agent') },
   { id: 'images', label: props.zh ? '高级生图' : 'Image studio', hint: '/artigen/ai', shortcut: '', action: () => router.push('/artigen/ai') },
@@ -349,14 +360,14 @@ const emptyInspectorLabel = (id: InspectorTab) => ({
 }[id]);
 
 const persistPreferences = () => {
-  localStorage.setItem('artigen-workspace-preferences', JSON.stringify({
+  try { localStorage.setItem('artigen-workspace-preferences', JSON.stringify({
     version: 2,
     theme: theme.value,
     leftWidth: leftWidth.value,
     rightWidth: rightWidth.value,
     leftCollapsed: leftCollapsed.value,
-    rightCollapsed: rightCollapsed.value
-  }));
+    rightCollapsed: rightPreferenceSet ? rightCollapsed.value : undefined
+  })); } catch { /* Layout remains usable without browser storage. */ }
 };
 const toggleLeft = () => { leftCollapsed.value = !leftCollapsed.value; persistPreferences(); };
 const isOverlayLayout = () => overlayLayout.value;
@@ -376,7 +387,7 @@ const closeLeftDrawer = (restore = false) => {
 };
 const closeRight = (restore = false) => {
   if (isOverlayLayout()) rightDrawerOpen.value = false;
-  else { rightCollapsed.value = true; persistPreferences(); }
+  else { rightPreferenceSet = true; rightCollapsed.value = true; persistPreferences(); }
   if (restore) void nextTick(() => rightDrawerButton.value?.focus());
 };
 const toggleRight = async () => {
@@ -390,6 +401,7 @@ const toggleRight = async () => {
     return;
   }
   rightCollapsed.value = !rightCollapsed.value;
+  rightPreferenceSet = true;
   persistPreferences();
 };
 const closeDrawers = () => { leftDrawerOpen.value = false; rightDrawerOpen.value = false; };
@@ -458,7 +470,8 @@ const closeCommandPalette = () => {
 const runCommand = (command: { action: () => void }) => { closeCommandPalette(); command.action(); };
 const trapFocus = (panel: HTMLElement | null, event: KeyboardEvent) => {
   if (event.key !== 'Tab' || !panel) return;
-  const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input:not([disabled]),[tabindex]:not([tabindex="-1"])')).filter((item) => item.offsetParent !== null);
+  const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button,a[href],input:not([type="hidden"]),select,textarea,summary,[tabindex]'))
+    .filter((item) => item.tabIndex >= 0 && !item.matches(':disabled') && item.offsetParent !== null && !item.closest('[inert]'));
   if (!focusable.length) return;
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
@@ -486,7 +499,10 @@ onMounted(() => {
     if (stored.version === 2 && Number(stored.leftWidth)) leftWidth.value = Math.min(340, Math.max(216, Number(stored.leftWidth)));
     if (stored.version === 2 && Number(stored.rightWidth)) rightWidth.value = Math.min(480, Math.max(320, Number(stored.rightWidth)));
     leftCollapsed.value = stored.leftCollapsed === true;
-    rightCollapsed.value = stored.rightCollapsed === true;
+    if (typeof stored.rightCollapsed === 'boolean') {
+      rightPreferenceSet = true;
+      rightCollapsed.value = stored.rightCollapsed;
+    }
   } catch {}
   media = window.matchMedia('(prefers-color-scheme: dark)');
   const syncTheme = () => { systemDark.value = media?.matches ?? true; };
@@ -510,6 +526,9 @@ onMounted(() => {
 });
 
 watch(() => props.defaultInspectorTab, (value) => { activeTab.value = value; });
+watch(() => props.defaultInspectorCollapsed, (value) => {
+  if (!rightPreferenceSet) rightCollapsed.value = value;
+});
 onBeforeUnmount(() => {
   endResize();
   window.removeEventListener('keydown', onShellKeydown);
@@ -527,16 +546,19 @@ onBeforeUnmount(() => {
   --border: #3a3f38;
   --text: #f3f4ef;
   --muted: #a1a79b;
-  --muted-2: #858c80;
+  --muted-2: #a1a79b;
   --acid: #c8ff3d;
   --acid-text: #c8ff3d;
   --acid-ink: #11140c;
+  --focus: #c8ff3d;
   --danger: #ff6b62;
   --warning: #f1bd4f;
   --success: #69d59a;
   --font-meta: 12px;
   --font-control: 13px;
   --font-body: 15px;
+  --conversation-max: 760px;
+  --conversation-gutter: 28px;
   --left-live: var(--workspace-left-width);
   --right-live: var(--workspace-right-width);
   display: grid;
@@ -563,6 +585,10 @@ onBeforeUnmount(() => {
   --muted-2: #566052;
   --acid-ink: #171a11;
   --acid-text: #426400;
+  --focus: #426400;
+  --danger: #a82d25;
+  --warning: #775100;
+  --success: #247344;
   color: #171a16;
   color-scheme: light;
 }
@@ -573,8 +599,7 @@ onBeforeUnmount(() => {
 .agent-workspace-shell :deep(*),.agent-workspace-shell :deep(*::before),.agent-workspace-shell :deep(*::after) { box-sizing: border-box; }
 button,input { font: inherit; }
 button { color: inherit; }
-.agent-workspace-shell button:focus { outline: none; }
-.agent-workspace-shell :where(button,a,summary):focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.agent-workspace-shell :deep(:where(button,a,summary,input,textarea,select):focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
 .agent-workspace-shell :where(button,a,summary,label) { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 input,textarea { caret-color: var(--acid); }
 .agent-workspace-shell ::selection { color: var(--acid-ink); background: color-mix(in srgb,var(--acid) 78%,transparent); }
@@ -591,7 +616,7 @@ svg { display: block; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-w
 .icon-control { display: inline-grid; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; transition: color 150ms ease,background-color 150ms ease,transform 120ms cubic-bezier(.23,1,.32,1); }
 .icon-control:hover { color: var(--text); background: var(--surface-hover); }
 .icon-control:active { transform: scale(.96); }
-.icon-control:focus-visible,.new-task:focus-visible,.history-search:focus-within,.workspace-nav a:focus-visible,.workspace-account :is(button,.account-action):focus-visible,.inspector-tabs button:focus-visible,.command-palette button:focus-visible { outline: 2px solid var(--acid); outline-offset: 1px; }
+.icon-control:focus-visible,.new-task:focus-visible,.history-search:focus-within,.workspace-nav a:focus-visible,.workspace-account :is(button,.account-action):focus-visible,.inspector-tabs button:focus-visible,.command-palette button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .icon-control svg { width: 18px; height: 18px; }
 .new-task { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; min-height: 42px; margin: 2px 12px 8px; padding: 0 11px; border: 0; border-radius: 10px; color: var(--text); background: var(--surface-raised); cursor: pointer; transition: background-color 150ms ease,transform 120ms cubic-bezier(.23,1,.32,1); }
 .new-task:hover { background: var(--surface-hover); }
@@ -623,7 +648,7 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .panel-resizer { position: fixed; top: 0; bottom: 0; z-index: 45; width: 8px; cursor: col-resize; }
 .panel-resizer::after { position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; content: ""; transition: background 150ms ease; }
 .panel-resizer:hover::after { background: var(--acid); }
-.panel-resizer:focus-visible { outline: 2px solid var(--acid); outline-offset: -1px; }
+.panel-resizer:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
 .panel-resizer:focus-visible::after { width: 2px; background: var(--acid); }
 .left-resizer { left: calc(var(--left-live) - 4px); }
 .right-resizer { right: calc(var(--right-live) - 4px); }
@@ -631,13 +656,15 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .workspace-main { position: relative; display: flex; flex-direction: column; background: var(--bg); }
 .workspace-topbar { display: flex; flex: 0 0 auto; align-items: center; gap: 14px; min-height: 64px; padding: 10px 20px 10px 24px; overflow: hidden; background: var(--bg); }
 .topbar-heading-slot { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 3px; }
+.task-cost { color: var(--muted); font-size: var(--font-meta); line-height: 1.5; font-variant-numeric: tabular-nums; }
 .task-heading { display: flex; min-width: 0; align-items: center; gap: 10px; }
 .task-heading-icon { display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; color: var(--muted); }
 .task-heading-copy { display: grid; min-width: 0; gap: 2px; }
 .task-heading strong { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .task-heading small { overflow: hidden; color: var(--muted); font-size: var(--font-meta); text-overflow: ellipsis; white-space: nowrap; }
 .topbar-actions,.mobile-panel-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
-.runtime-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 5px; border: 0; border-radius: 6px; color: var(--muted); font-size: var(--font-meta); font-weight: 620; white-space: nowrap; background: transparent; }
+.runtime-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 18px; padding: 0; color: var(--muted); font-size: var(--font-meta); font-weight: 620; white-space: nowrap; }
 .runtime-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .runtime-pill.ready i { background: var(--success); }.runtime-pill.busy i { background: var(--acid); }.runtime-pill.warning i { background: var(--warning); }.runtime-pill.offline i { background: var(--danger); }
 .main-slot { flex: 1; min-height: 0; overflow: hidden; }
@@ -661,7 +688,7 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .command-layer { position: fixed; inset: 0; z-index: 400; display: grid; padding-top: 15vh; place-items: start center; background: rgb(0 0 0 / 42%); backdrop-filter: blur(3px); }
 .command-palette { width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
 .command-palette > label { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 13px; }
-.command-palette > label:focus-within { outline: 2px solid var(--acid); outline-offset: -2px; }
+.command-palette > label:focus-within { outline: 2px solid var(--focus); outline-offset: -2px; }
 .command-palette > label svg { width: 18px; height: 18px; color: var(--muted); }.command-palette input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 13px; background: transparent; }
 .command-palette > div { max-height: 320px; overflow: auto; padding: 6px; }
 .command-palette button { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; }
@@ -680,13 +707,11 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
   .left-collapsed .workspace-brand { justify-content: space-between; padding: 10px 14px 8px 16px; }.left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a { justify-content: flex-start; padding-inline: 10px; }.left-collapsed .workspace-account :is(button,.account-action) { grid-template-columns: 20px minmax(0,1fr) auto; justify-content: stretch; padding-inline: 10px; }
 }
 @media (max-width: 799px) {
-  .task-heading { justify-content: center; text-align: center; }
+  .agent-workspace-shell { --conversation-gutter: 16px; }
+  .task-heading { justify-content: flex-start; text-align: left; }
   .task-heading-icon { display: none; }
-  .workspace-topbar { min-height: 52px; gap: 4px; padding-inline: max(8px,env(safe-area-inset-left)) max(8px,env(safe-area-inset-right)); }.runtime-pill { display: none; }.inspector-toggle,.icon-control { min-width: 44px; min-height: 44px; }.workspace-brand { min-height: 56px; padding-top: max(8px,env(safe-area-inset-top)); }.new-task,.history-search,.workspace-nav a,.workspace-account :is(button,.account-action) { min-height: 44px; }.workspace-account { padding-bottom: max(8px,env(safe-area-inset-bottom)); }
+  .workspace-topbar { min-height: 68px; gap: 4px; padding-inline: max(8px,env(safe-area-inset-left)) max(8px,env(safe-area-inset-right)); }.task-meta { gap: 2px 8px; }.inspector-toggle,.icon-control { min-width: 44px; min-height: 44px; }.workspace-brand { min-height: 56px; padding-top: max(8px,env(safe-area-inset-top)); }.new-task,.history-search,.workspace-nav a,.workspace-account :is(button,.account-action) { min-height: 44px; }.workspace-account { padding-bottom: max(8px,env(safe-area-inset-bottom)); }.history-search input,.command-palette input { font-size: 16px; }
   .workspace-right { width: 100vw; border-radius: 0; }.inspector-tabs { min-height: 58px; }.inspector-tabs button { min-height: 56px; font-size: 12px; }
-}
-@media (max-width: 399px) {
-  .task-heading span,.topbar-heading-slot :deep(small) { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }
@@ -695,4 +720,7 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 
 <style>
 body.workspace-resizing { cursor: col-resize !important; user-select: none !important; }
+@media (min-width: 1440px) {
+  body:has(.dev-environment-badge) .agent-workspace-shell.right-collapsed .topbar-actions { padding-right: 50px; }
+}
 </style>

@@ -118,7 +118,7 @@ const run = {
     impactSummary: '这会改变 brand.example 上的公开内容。',
     rollbackSummary: '可在站点后台恢复上一版本。',
     status: 'pending',
-    expiresAt: '2026-09-14T09:00:00.000Z',
+    expiresAt: '2099-09-14T09:00:00.000Z',
     decidedAt: null,
     createdAt: now
   }],
@@ -344,7 +344,7 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
       actionType: 'publish',
       status: activeAuthorization ? 'active' : 'revoked',
       lastUsedAt: null,
-      expiresAt: '2026-09-14T09:00:00.000Z',
+      expiresAt: '2099-09-14T09:00:00.000Z',
       createdAt: now
     };
     return route.fulfill({

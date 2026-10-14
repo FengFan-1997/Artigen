@@ -12,6 +12,7 @@ export function useAgentImgAuth() {
 
   const syncAuth = () => {
     authUserId.value = getCurrentUserId();
+    authTick.value += 1;
   };
 
   const isAuthed = computed(() => {

@@ -260,3 +260,19 @@ latest main → hotfix/* → PR to main → main → dev 同步 PR
 
 ### 2026-09-14 migration 028 deployment compatibility
 Migration 028 now explicitly drops legacy `expires_at` NOT NULL constraints before moving design conversation and message expiry to `NULL`, allowing existing DEV/production schemas to adopt permanent history safely during startup migration.
+
+## 2026-10-14：Agent 工作区前三批本地候选（未发布）
+
+本轮完成状态与恢复、会话生命周期、主视觉与无障碍三批。阶段为本地候选，尚未 push、创建 PR 或部署；不能视作 DEV/Production 当前状态。
+
+- Run 首次读取的加载/错误独立展示；503 可重读，401/404 有准确入口，历史读取失败不挡当前任务。完成进度来自已保存 plan；失败/取消保留成果，结算/退还/释放采用实际 budget 字段，不从错误码推测。手机持续显示任务名、状态和当前费用。
+- Design 对选择、刷新、发送、SSE 与创建执行使用身份/revision 检查，保留执行原始关联；工具 success 终态、切换/卸载清理轮询，最终刷新失败不重新挂计时器。自动启动意图能跨普通并发刷新保留且只启动一次；旧 Run 回执不覆盖更新终态。阅读旧内容时保留位置并提供回到底部入口。
+- 文本草稿按账号/任务保存在本机，最多 20,000 字符。guest 登录保持当前非空草稿，账号/任务切换恢复各自草稿；成功回执只清匹配的原稿。文件重载后重新选择，文件与凭据不进入该存储。
+- 起点问题/输入/建议成组，未使用 Inspector 默认收起，用户明确偏好优先。共用 760px 阅读轴、正确历史日期、12px 元信息、手机 16px 输入/44px 点击区；浅色语义/焦点独立，焦点采用完整内侧描边。native summary/select/textarea、权限标签、命令搜索和 DEV 标识碰撞完成回归。
+- 审批展示依据、影响、撤销；真实 expiresAt 到期自动失效，点击时重查，到期/提交中不能重复批准或接管。服务端继续决定权限、执行和结算；没有新增后端状态或第二套业务真相。
+
+验证：前端 228/228 单元、联合系统 Chrome E2E 78/78、追加 Run 输入锁定/重载草稿 1/1；type-check、production build、lint、docs/workspace 与 diff 检查通过。7 个 Vue detector primary 0；10 个 neutral shadow/scrim advisory 经核对，不计作产品问题。实际主题 token 的焦点及语义对比度通过；11 组本机实际渲染对照无 pageerror/整页横向溢出，使用合成 API 数据。
+
+验证基于当前工作树并保留原有未提交内容，尚未在清洁 dev checkout/CI 中验证。没有新增依赖、环境变量或迁移；用户原有未提交内容保留。本轮回退使用隔离的本地提交，不改变数据库/平台。旧两份审查记录只规范审查员名称，解决文档路径检查误判，没有弱化门禁。
+
+第 4–7 批共享 Run Composer/附件、调用分组、成果后续任务与真实 DEV 发布尚未实施。没有重新验证真实 Worker/模型/存储/结算或 Production；backend 全量与完整跨浏览器测试不属于此次前端候选验证。

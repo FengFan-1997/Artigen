@@ -1,4 +1,4 @@
-Method: dual-agent (A: /root/design_review · B: /root/detector_browser)
+Method: dual-agent (A: design_review · B: detector_browser)
 
 # Artigen 主工作流 UI 大审查
 

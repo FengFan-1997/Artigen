@@ -103,7 +103,7 @@ watch(() => props.draft, async () => {
 
 <style scoped>
 .composer-box { width: 100%; min-width: 0; padding: 15px 16px 12px; border: 0; border-radius: 20px; color: var(--text); background: var(--surface); box-shadow: 0 18px 54px rgb(0 0 0 / 24%); transition: box-shadow 180ms cubic-bezier(.23,1,.32,1),background-color 180ms ease; }
-.composer-box:focus-within { background: var(--surface-raised); box-shadow: 0 22px 62px rgb(0 0 0 / 30%), 0 0 0 2px color-mix(in srgb,var(--acid) 72%,transparent); }
+.composer-box:focus-within { background: var(--surface-raised); box-shadow: 0 22px 62px rgb(0 0 0 / 30%), inset 0 0 0 2px var(--focus); }
 textarea { display: block; width: 100%; min-height: 78px; max-height: 180px; box-sizing: border-box; padding: 5px 6px 10px; resize: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 16px; line-height: 1.58; background: transparent; }
 textarea::placeholder { color: var(--muted); }
 .compact textarea { min-height: 64px; }
@@ -120,7 +120,7 @@ textarea::placeholder { color: var(--muted); }
 .send { display: grid; place-items: center; width: 42px; height: 42px; margin-left: auto; padding: 0; border: 0; border-radius: 999px; color: var(--acid-ink); background: var(--acid); cursor: pointer; line-height: 1; transition: transform 120ms cubic-bezier(.23,1,.32,1),opacity 120ms ease,background-color 150ms ease; }
 .send:active:not(:disabled) { transform: scale(.96); }
 .send:disabled { color: var(--muted); background: var(--surface-raised); cursor: not-allowed; opacity: .58; }
-.attach:focus-visible,.send:focus-visible,.attachment-list button:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.attach:focus-visible,.send:focus-visible,.attachment-list button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 @media (max-width: 799px) {
   .composer-box { padding: 13px 12px 10px; border-radius: 18px; }
   textarea,.compact textarea { min-height: 68px; }

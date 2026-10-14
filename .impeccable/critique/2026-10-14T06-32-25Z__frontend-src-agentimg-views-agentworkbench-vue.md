@@ -8,7 +8,7 @@ p1_count: 1
 timestamp: 2026-10-14T06-32-25Z
 slug: frontend-src-agentimg-views-agentworkbench-vue
 ---
-Method: dual-agent (A: /root/design_review · B: /root/detector_browser)
+Method: dual-agent (A: design_review · B: detector_browser)
 
 # Artigen 主创作链路 Critique
 
