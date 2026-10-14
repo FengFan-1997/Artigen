@@ -638,8 +638,19 @@ textarea { resize: vertical; }
 .asset-preview img { width: 100%; height: 100%; object-fit: cover; }
 .asset-slot strong,.asset-slot small { display: block; }
 .asset-slot small { min-height: 34px; margin: 5px 0 12px; color: #808a82; line-height: 1.4; }
-.upload-button { display: block; padding: 8px; border: 1px solid #3c463d; border-radius: 9px; text-align: center; cursor: pointer; }
-.upload-button input { display: none; }
+.upload-button { position: relative; display: block; padding: 8px; border: 1px solid #3c463d; border-radius: 9px; text-align: center; cursor: pointer; }
+.upload-button:focus-within { outline: 2px solid #c8ff3d; outline-offset: 2px; }
+.upload-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .version-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .version-card { overflow: hidden; border: 1px solid #2b322c; border-radius: 16px; background: #090c0a; }
 .version-card.selected { border-color: #ccff00; box-shadow: 0 0 0 2px rgba(204,255,0,.12); }
