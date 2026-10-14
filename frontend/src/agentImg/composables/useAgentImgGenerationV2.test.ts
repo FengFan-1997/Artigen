@@ -49,6 +49,7 @@ vi.mock('../services/toolTasks', () => ({
 import { useAgentImgGenerationV2 } from './useAgentImgGenerationV2';
 
 const assetId = '22222222-2222-4222-8222-222222222222';
+const projectId = '99999999-9999-4999-8999-999999999999';
 
 const task = (status: string, extra: Record<string, unknown> = {}) => ({
   taskId: '11111111-1111-4111-8111-111111111111',
@@ -70,6 +71,7 @@ const task = (status: string, extra: Record<string, unknown> = {}) => ({
 
 const createDeps = (deep = false) => {
   const history = ref<any[]>([]);
+  const onProjectGenerationComplete = vi.fn();
   const flow = {
     userInput: ref('Create a premium serum campaign'),
     deepMode: ref(deep),
@@ -87,6 +89,7 @@ const createDeps = (deep = false) => {
   return {
     history,
     flow,
+    onProjectGenerationComplete,
     deps: {
       auth: { ensureAuthed: () => true, isAuthed: ref(true) },
       credits: { refreshCredits: vi.fn(async () => {}) },
@@ -115,9 +118,14 @@ const createDeps = (deep = false) => {
       config: {
         profileId: ref('standard-v1'),
         aspectRatio: ref('4:5'),
-        profileAvailable: ref(true)
+        profileAvailable: ref(true),
+        projectId: ref('')
       },
-      ui: { scrollChatToBottom: vi.fn(), showTopTip: vi.fn() }
+      ui: {
+        scrollChatToBottom: vi.fn(),
+        showTopTip: vi.fn(),
+        onProjectGenerationComplete
+      }
     }
   };
 };
@@ -177,6 +185,21 @@ describe('AI design unified task controller', () => {
     expect(workspaceDb.clear).toHaveBeenCalled();
   });
 
+  it('returns to the originating project after its generated version is saved', async () => {
+    const { deps, history, onProjectGenerationComplete } = createDeps(false);
+    deps.config.projectId.value = projectId;
+    const controller = useAgentImgGenerationV2(deps as any);
+
+    await controller.prepareSubmission();
+    await controller.confirmQuote();
+
+    expect(taskApi.create).toHaveBeenCalledWith(expect.objectContaining({ projectId }));
+    expect(history.value[0]).toMatchObject({ status: 'success', image: `/api/assets/${assetId}` });
+    expect(onProjectGenerationComplete).toHaveBeenCalledTimes(1);
+    expect(onProjectGenerationComplete).toHaveBeenCalledWith(projectId);
+    expect(workspaceDb.clear).toHaveBeenCalled();
+  });
+
   it('quotes directions separately at five credits and maps four returned directions', async () => {
     taskApi.quote.mockResolvedValueOnce({
       quoteId: 'quote-directions',
@@ -207,7 +230,7 @@ describe('AI design unified task controller', () => {
         refundedCredits: 0
       }
     }));
-    const { deps, flow } = createDeps(true);
+    const { deps, flow, onProjectGenerationComplete } = createDeps(true);
     const controller = useAgentImgGenerationV2(deps as any);
 
     await controller.prepareSubmission();
@@ -222,6 +245,7 @@ describe('AI design unified task controller', () => {
     }));
     expect(flow.options.value).toHaveLength(4);
     expect(flow.selectedOptionId.value).toBe('d1');
+    expect(onProjectGenerationComplete).not.toHaveBeenCalled();
   });
 
   it('forces a ten-credit generation quote for variation while deep mode has no active directions', async () => {
@@ -289,7 +313,8 @@ describe('AI design unified task controller', () => {
         refundedCredits: 10
       }
     }));
-    const { deps, history } = createDeps(false);
+    const { deps, history, onProjectGenerationComplete } = createDeps(false);
+    deps.config.projectId.value = projectId;
     const controller = useAgentImgGenerationV2(deps as any);
 
     await controller.prepareSubmission();
@@ -297,5 +322,6 @@ describe('AI design unified task controller', () => {
 
     expect(history.value[0]).toMatchObject({ status: 'failed', errorCode: 'PROVIDER_TIMEOUT' });
     expect(deps.credits.refreshCredits).toHaveBeenCalledTimes(1);
+    expect(onProjectGenerationComplete).not.toHaveBeenCalled();
   });
 });

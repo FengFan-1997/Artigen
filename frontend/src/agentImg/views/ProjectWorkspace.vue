@@ -594,6 +594,14 @@ const exportVersion = async (
 
 onMounted(async () => {
   await loadProject();
+  if (project.value && route.query.generated === '1') {
+    notice.value = zh.value
+      ? '生成完成，已保存到当前项目；最新版本位于版本画廊顶部。'
+      : 'Generation complete. The new version is saved at the top of this project gallery.';
+    const query = { ...route.query };
+    delete query.generated;
+    await router.replace({ path: route.path, query });
+  }
   trackEvent('project_workspace_view', { projectId: projectId.value });
 });
 </script>
