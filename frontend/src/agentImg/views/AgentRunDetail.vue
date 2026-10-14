@@ -262,7 +262,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import RFB from '@novnc/novnc/lib/rfb';
 import { useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
@@ -317,7 +317,8 @@ let closeStream: (() => void) | null = null;
 let pollTimer: number | null = null;
 let eventRefreshTimer: number | null = null;
 let stopArmTimer: number | null = null;
-let loadInFlight: Promise<void> | null = null;
+let loadInFlight: { runId: string; promise: Promise<void> } | null = null;
+let loadRevision = 0;
 let desktopClient: RFB | null = null;
 const eventIds = new Set<string>();
 
@@ -483,44 +484,66 @@ const errorText = (error: unknown) => {
   );
 };
 
-const load = () => {
-  if (loadInFlight) return loadInFlight;
-  loadInFlight = (async () => {
+const load = (targetRunId = runId.value) => {
+  if (loadInFlight?.runId === targetRunId) return loadInFlight.promise;
+  const revision = ++loadRevision;
+  const request: { runId: string; promise: Promise<void> } = {
+    runId: targetRunId,
+    promise: Promise.resolve()
+  };
+  loadInFlight = request;
+  request.promise = (async () => {
     try {
-      run.value = await getAgentRun(runId.value);
-      runs.value = await listAgentRuns();
+      const [loadedRun, loadedRuns] = await Promise.all([
+        getAgentRun(targetRunId),
+        listAgentRuns()
+      ]);
+      if (revision !== loadRevision || targetRunId !== runId.value) return;
+      run.value = loadedRun;
+      runs.value = loadedRuns;
     } catch (error) {
-      notice.value = errorText(error || 'AGENT_RUN_LOAD_FAILED');
+      if (targetRunId === runId.value) {
+        notice.value = errorText(error || 'AGENT_RUN_LOAD_FAILED');
+      }
     } finally {
-      loadInFlight = null;
+      if (loadInFlight === request) loadInFlight = null;
     }
   })();
-  return loadInFlight;
+  return request.promise;
 };
 
 const cancelChild = async (subagentId: string) => {
+  const targetRunId = runId.value;
   subagentBusyId.value = subagentId;
   try {
-    await cancelAgentSubagent(runId.value, subagentId);
+    await cancelAgentSubagent(targetRunId, subagentId);
+    if (targetRunId !== runId.value) return;
     notice.value = '';
-    await load();
+    await load(targetRunId);
   } catch (error) {
-    notice.value = errorText(error || 'AGENT_SUBAGENT_CANCEL_FAILED');
+    if (targetRunId === runId.value) {
+      notice.value = errorText(error || 'AGENT_SUBAGENT_CANCEL_FAILED');
+    }
   } finally {
-    subagentBusyId.value = '';
+    if (targetRunId === runId.value) subagentBusyId.value = '';
   }
 };
 
 const control = async (action: 'pause' | 'resume' | 'cancel') => {
+  const targetRunId = runId.value;
   controlBusy.value = true;
   try {
-    run.value = await controlAgentRun(runId.value, action);
+    const updatedRun = await controlAgentRun(targetRunId, action);
+    if (targetRunId !== runId.value) return;
+    run.value = updatedRun;
     notice.value = '';
-    await load();
+    await load(targetRunId);
   } catch (error) {
-    notice.value = errorText(error || 'AGENT_CONTROL_FAILED');
+    if (targetRunId === runId.value) {
+      notice.value = errorText(error || 'AGENT_CONTROL_FAILED');
+    }
   } finally {
-    controlBusy.value = false;
+    if (targetRunId === runId.value) controlBusy.value = false;
   }
 };
 
@@ -545,15 +568,20 @@ const requestCancel = async () => {
 
 const sendInput = async () => {
   if (!message.value) return;
+  const targetRunId = runId.value;
+  const submittedMessage = message.value;
   sending.value = true;
   try {
-    await submitAgentInput(runId.value, { message: message.value });
+    await submitAgentInput(targetRunId, { message: submittedMessage });
+    if (targetRunId !== runId.value) return;
     message.value = '';
-    await load();
+    await load(targetRunId);
   } catch (error) {
-    notice.value = errorText(error || 'AGENT_INPUT_FAILED');
+    if (targetRunId === runId.value) {
+      notice.value = errorText(error || 'AGENT_INPUT_FAILED');
+    }
   } finally {
-    sending.value = false;
+    if (targetRunId === runId.value) sending.value = false;
   }
 };
 
@@ -563,22 +591,25 @@ const submitClarification = async (answer: string) => {
 };
 
 const decide = async (approvalId: string, decision: 'approved' | 'denied') => {
+  const targetRunId = runId.value;
+  const decisionReason = approvalReasons.value[approvalId]?.trim();
   approvalBusyId.value = approvalId;
   try {
-    await submitAgentInput(runId.value, {
+    await submitAgentInput(targetRunId, {
       approvalId,
       decision,
-      decisionReason: decision === 'denied'
-        ? approvalReasons.value[approvalId]?.trim()
-        : undefined
+      decisionReason: decision === 'denied' ? decisionReason : undefined
     });
+    if (targetRunId !== runId.value) return;
     delete approvalReasons.value[approvalId];
     notice.value = '';
-    await load();
+    await load(targetRunId);
   } catch (error) {
-    notice.value = errorText(error || 'AGENT_APPROVAL_FAILED');
+    if (targetRunId === runId.value) {
+      notice.value = errorText(error || 'AGENT_APPROVAL_FAILED');
+    }
   } finally {
-    approvalBusyId.value = '';
+    if (targetRunId === runId.value) approvalBusyId.value = '';
   }
 };
 
@@ -592,6 +623,7 @@ const disconnectDesktop = () => {
 
 const beginTakeover = async (approvalId?: string) => {
   if (!run.value?.sandbox.takeoverAvailable) return;
+  const targetRunId = runId.value;
   const target = approvalId || pendingApprovals.value.find(
     (approval) => approval.riskLevel === 'blocked'
   )?.approvalId;
@@ -599,10 +631,12 @@ const beginTakeover = async (approvalId?: string) => {
   approvalBusyId.value = target;
   try {
     disconnectDesktop();
-    const ticket = await createAgentDesktopTicket(runId.value, target);
+    const ticket = await createAgentDesktopTicket(targetRunId, target);
+    if (targetRunId !== runId.value) return;
     activeTakeoverApprovalId.value = target;
     takingOver.value = true;
     await nextTick();
+    if (targetRunId !== runId.value) return;
     if (!desktopScreen.value) throw new Error('AGENT_DESKTOP_CONNECTION_FAILED');
     const client = new RFB(desktopScreen.value, ticket.websocketUrl, {
       shared: true,
@@ -614,13 +648,13 @@ const beginTakeover = async (approvalId?: string) => {
     client.viewOnly = false;
     client.addEventListener('connect', () => client.focus(), { once: true });
     client.addEventListener('securityfailure', () => {
-      if (desktopClient === client) {
+      if (desktopClient === client && targetRunId === runId.value) {
         disconnectDesktop();
         notice.value = errorText('AGENT_DESKTOP_CONNECTION_FAILED');
       }
     }, { once: true });
     client.addEventListener('disconnect', () => {
-      if (desktopClient === client) {
+      if (desktopClient === client && targetRunId === runId.value) {
         desktopClient = null;
         takingOver.value = false;
         notice.value = errorText('AGENT_DESKTOP_CONNECTION_FAILED');
@@ -628,47 +662,59 @@ const beginTakeover = async (approvalId?: string) => {
     }, { once: true });
     notice.value = '';
   } catch (error) {
-    disconnectDesktop();
-    activeTakeoverApprovalId.value = '';
-    notice.value = errorText(error || 'AGENT_DESKTOP_CONNECTION_FAILED');
+    if (targetRunId === runId.value) {
+      disconnectDesktop();
+      activeTakeoverApprovalId.value = '';
+      notice.value = errorText(error || 'AGENT_DESKTOP_CONNECTION_FAILED');
+    }
   } finally {
-    approvalBusyId.value = '';
+    if (targetRunId === runId.value) approvalBusyId.value = '';
   }
 };
 
 const finishTakeover = async () => {
+  const targetRunId = runId.value;
+  const takeoverApprovalId = activeTakeoverApprovalId.value;
   sending.value = true;
   try {
-    if (!activeTakeoverApprovalId.value) {
+    if (!takeoverApprovalId) {
       throw new Error('AGENT_TAKEOVER_APPROVAL_REQUIRED');
     }
-    await submitAgentInput(runId.value, {
+    await submitAgentInput(targetRunId, {
       takeoverEnded: true,
-      takeoverApprovalId: activeTakeoverApprovalId.value
+      takeoverApprovalId
     });
+    if (targetRunId !== runId.value) return;
     disconnectDesktop();
     activeTakeoverApprovalId.value = '';
-    await load();
+    await load(targetRunId);
   } catch (error) {
-    notice.value = errorText(error || 'AGENT_TAKEOVER_END_FAILED');
+    if (targetRunId === runId.value) {
+      notice.value = errorText(error || 'AGENT_TAKEOVER_END_FAILED');
+    }
   } finally {
-    sending.value = false;
+    if (targetRunId === runId.value) sending.value = false;
   }
 };
 
 const previewWebsite = async (artifact: AgentArtifact, event?: MouseEvent) => {
+  const targetRunId = runId.value;
   previewReturnFocus = event?.currentTarget instanceof HTMLElement
     ? event.currentTarget
     : document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
   try {
-    previewHtml.value = await loadAgentWebsitePreview(artifact);
+    const html = await loadAgentWebsitePreview(artifact);
+    if (targetRunId !== runId.value) return;
+    previewHtml.value = html;
     previewName.value = artifact.filename;
     await nextTick();
     previewCloseButton.value?.focus({ preventScroll: true });
   } catch (error) {
-    notice.value = errorText(error || 'AGENT_WEBSITE_PREVIEW_FAILED');
+    if (targetRunId === runId.value) {
+      notice.value = errorText(error || 'AGENT_WEBSITE_PREVIEW_FAILED');
+    }
   }
 };
 const closePreview = () => {
@@ -706,6 +752,7 @@ const onPreviewWindowKeydown = (event: KeyboardEvent) => {
 };
 
 const onEvent = (event: AgentEvent) => {
+  if (event.runId !== runId.value) return;
   if (!eventIds.has(event.eventId)) {
     eventIds.add(event.eventId);
     events.value.push(event);
@@ -718,6 +765,41 @@ const onEvent = (event: AgentEvent) => {
     }, 250);
   }
 };
+
+watch(runId, (nextRunId, previousRunId) => {
+  if (!nextRunId || nextRunId === previousRunId) return;
+  closeStream?.();
+  closeStream = null;
+  disconnectDesktop();
+  activeTakeoverApprovalId.value = '';
+  previewHtml.value = '';
+  previewName.value = '';
+  previewReturnFocus = null;
+  eventIds.clear();
+  events.value = [];
+  run.value = null;
+  notice.value = '';
+  message.value = '';
+  approvalReasons.value = {};
+  approvalBusyId.value = '';
+  subagentBusyId.value = '';
+  controlBusy.value = false;
+  sending.value = false;
+  stopArmed.value = false;
+  if (eventRefreshTimer !== null) {
+    window.clearTimeout(eventRefreshTimer);
+    eventRefreshTimer = null;
+  }
+  if (stopArmTimer !== null) {
+    window.clearTimeout(stopArmTimer);
+    stopArmTimer = null;
+  }
+  void load(nextRunId).then(() => {
+    if (nextRunId === runId.value) {
+      closeStream = openAgentEventStream(nextRunId, { onEvent });
+    }
+  });
+}, { flush: 'sync' });
 
 const statusLabel = (status: AgentRunStatus) => {
   const labels: Record<AgentRunStatus, [string, string]> = {
@@ -851,8 +933,11 @@ const fileCode = (mime: string) => {
 };
 onMounted(async () => {
   window.addEventListener('keydown', onPreviewWindowKeydown);
-  await load();
-  closeStream = openAgentEventStream(runId.value, { onEvent });
+  const initialRunId = runId.value;
+  await load(initialRunId);
+  if (initialRunId === runId.value) {
+    closeStream = openAgentEventStream(initialRunId, { onEvent });
+  }
   pollTimer = window.setInterval(() => void load(), 5000);
 });
 onBeforeUnmount(() => {

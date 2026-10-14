@@ -652,6 +652,79 @@ test('run detail exposes parent plus three isolated subagents and cancels one wi
   await expect(page.locator('.runtime-pill')).toContainText('执行中');
 });
 
+test('switching run history replaces the run, event stream and audit timeline', async ({ page }) => {
+  const secondRunId = '51111111-1111-4111-8111-111111111112';
+  const secondRun = {
+    ...structuredClone(baseRun),
+    runId: secondRunId,
+    objective: '第二个任务：整理品牌素材与交付记录。',
+    objectivePreview: '第二条历史任务',
+    artifacts: [],
+    subagents: []
+  } as typeof baseRun;
+  const runs = [baseRun, secondRun];
+  const openedStreams: string[] = [];
+  const deliveredEvents = new Set<string>();
+
+  await page.route('**/api/auth/session', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, userId: 'agent-e2e', csrfToken: 'csrf-e2e' })
+  }));
+  await page.route('**/api/collection/event', (route) => route.fulfill({
+    status: 202,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true })
+  }));
+  await page.route('**/api/agent-runs', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, runs })
+  }));
+  for (const run of runs) {
+    await page.route(`**/api/agent-runs/${run.runId}`, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, run })
+    }));
+  }
+  await page.route('**/api/agent-runs/*/events', async (route) => {
+    const segments = new URL(route.request().url()).pathname.split('/');
+    const streamRunId = segments.at(-2) || '';
+    openedStreams.push(streamRunId);
+    if (deliveredEvents.has(streamRunId)) return route.abort();
+    deliveredEvents.add(streamRunId);
+    const event = {
+      eventId: streamRunId === runId ? '900' : '901',
+      runId: streamRunId,
+      subagentId: null,
+      type: 'run.input_received',
+      phase: 'running',
+      summary: streamRunId === runId ? '第一条任务的专属事件' : '第二条任务的专属事件',
+      data: {},
+      createdAt: now
+    };
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: `id: ${event.eventId}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+    });
+  });
+
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`/artigen/agent/runs/${runId}`);
+  await expect(page.locator('.user-message')).toContainText(baseRun.objective);
+  await expect(page.locator('.event-message')).toContainText('第一条任务的专属事件');
+
+  await page.locator('.history-run').filter({ hasText: '第二条历史任务' }).click();
+
+  await expect(page).toHaveURL(`/artigen/agent/runs/${secondRunId}`);
+  await expect(page.locator('.user-message')).toContainText(secondRun.objective);
+  await expect(page.locator('.event-message')).toContainText('第二条任务的专属事件');
+  await expect(page.locator('.event-message')).not.toContainText('第一条任务的专属事件');
+  await expect.poll(() => openedStreams.includes(secondRunId)).toBe(true);
+});
+
 test('run detail keeps real plan, verified files, budget and two-click parent cancellation in one shell', async ({ page }) => {
   let cancelRequests = 0;
   await installRunApi(page, { onCancelRun: () => { cancelRequests += 1; } });
