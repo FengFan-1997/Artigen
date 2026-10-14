@@ -59,7 +59,7 @@
             </button>
             <div v-if="showEventStream" id="run-event-stream" class="event-stream">
               <article v-for="event in recentEvents" :key="`stream-${event.eventId}`">
-                <i :class="eventTone(event)"></i><time>{{ formatTime(event.createdAt) }}</time><span>{{ event.summary }}</span>
+                <i :class="eventTone(event)"></i><time>{{ formatTime(event.createdAt) }}</time><span>{{ eventSummary(event) }}</span>
               </article>
             </div>
           </div>
@@ -122,7 +122,7 @@
               <span>{{ event.subagentId ? (zh ? '子 Agent' : 'Subagent') : event.type.startsWith('run.input') ? (zh ? '你' : 'You') : 'Artigen Agent' }}</span>
               <time>{{ formatTime(event.createdAt) }}</time>
             </header>
-            <p>{{ event.summary }}</p>
+            <p>{{ eventSummary(event) }}</p>
           </div>
         </article>
 
@@ -191,7 +191,7 @@
         <div>
           <article v-for="event in events" :key="`audit-${event.eventId}`">
             <time>{{ formatTime(event.createdAt) }}</time>
-            <span><b>{{ eventLabel(event.type) }}</b><small>{{ event.summary }}</small></span>
+            <span><b>{{ eventLabel(event.type) }}</b><small>{{ eventSummary(event) }}</small></span>
           </article>
         </div>
       </TechnicalDetails>
@@ -354,6 +354,11 @@ const conversationEvents = computed(() =>
     event.type.includes('input') ||
     event.type.includes('takeover') ||
     event.type === 'approval.decided' ||
+    event.type.startsWith('tool.call.') ||
+    event.type === 'plan.compiled' ||
+    event.type === 'context.compacted' ||
+    event.type.startsWith('verification.') ||
+    event.type.startsWith('budget.') ||
     event.type === 'run.failed' ||
     event.type === 'run.succeeded'
   )
@@ -380,7 +385,16 @@ const phaseStages = computed(() => {
   const index = status === 'queued' || status === 'provisioning' ? 1 : status === 'running' || status === 'waiting_user' || status === 'paused' ? 2 : status === 'verifying' ? 3 : ['succeeded', 'failed', 'cancelled'].includes(status) ? 4 : 0;
   return labels.map(([id, label], itemIndex) => ({ id, label, active: itemIndex === index && !terminal.value, done: itemIndex < index || status === 'succeeded' }));
 });
-const eventTone = (event: AgentEvent) => event.type.includes('failed') ? 'failed' : event.type.includes('waiting') || event.type.includes('approval') ? 'waiting' : event.type.includes('succeeded') || event.type.includes('completed') ? 'done' : 'active';
+const eventTone = (event: AgentEvent) => {
+  if (event.type === 'tool.call.completed') return event.data?.ok === true ? 'done' : 'failed';
+  return event.type.includes('failed')
+    ? 'failed'
+    : event.type.includes('waiting') || event.type.includes('approval')
+      ? 'waiting'
+      : event.type.includes('succeeded') || event.type.includes('completed')
+        ? 'done'
+        : 'active';
+};
 const activeSubagents = computed(() => (run.value?.subagents || []).filter((child) => ['queued', 'running'].includes(child.status)).length);
 const filteredRuns = (search: string) => {
   const query = search.trim().toLocaleLowerCase();
@@ -783,6 +797,8 @@ const eventLabel = (type: string) => {
     'subagent.cancelled': ['子 Agent 已取消', 'Subagent cancelled'],
     'plan.compiled': ['计划已编译', 'Plan compiled'],
     'context.compacted': ['上下文已压缩', 'Context compacted'],
+    'tool.call.started': ['工具调用', 'Tool call'],
+    'tool.call.completed': ['工具结果', 'Tool result'],
     'verification.started': ['语义核对开始', 'Semantic verification started'],
     'verification.repair_requested': ['需要定向返修', 'Targeted repair requested'],
     'verification.passed': ['语义核对通过', 'Semantic verification passed'],
@@ -791,6 +807,30 @@ const eventLabel = (type: string) => {
     'budget.lockdown': ['仅保留验证与交付', 'Verification and delivery only']
   };
   return labels[type]?.[zh.value ? 0 : 1] || type.replace(/\./g, ' / ').toUpperCase();
+};
+const eventSummary = (event: AgentEvent) => {
+  if (event.type !== 'tool.call.started' && event.type !== 'tool.call.completed') {
+    return event.summary;
+  }
+  const toolLabels: Record<string, [string, string]> = {
+    update_plan: ['制定执行计划', 'update the execution plan'],
+    delegate_tasks: ['委派子任务', 'delegate subtasks'],
+    browser_dom: ['操作网页', 'interact with a webpage'],
+    generate_image: ['生成图片', 'generate an image'],
+    connector_request: ['连接外部服务', 'use an external service'],
+    sandbox_shell: ['执行离线命令', 'run an offline command'],
+    declare_artifact: ['登记交付文件', 'register a deliverable'],
+    request_user_approval: ['请求你的审批', 'request your approval']
+  };
+  const toolName = String(event.data?.toolName || '').trim();
+  const tool = toolLabels[toolName]?.[zh.value ? 0 : 1] || toolName || (zh.value ? '工具' : 'tool');
+  if (event.type === 'tool.call.started') {
+    return zh.value ? `正在调用：${tool}` : `Calling: ${tool}`;
+  }
+  const succeeded = event.data?.ok === true;
+  return zh.value
+    ? `${succeeded ? '调用成功' : '调用失败'}：${tool}`
+    : `${succeeded ? 'Completed' : 'Failed'}: ${tool}`;
 };
 const formatTime = (value: string) => new Intl.DateTimeFormat(
   zh.value ? 'zh-CN' : 'en-US',

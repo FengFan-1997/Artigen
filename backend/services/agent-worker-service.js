@@ -1591,6 +1591,14 @@ const createAgentWorkerService = ({
                 return runService.appendStep({ ...runLease, subagentId, ...step });
               },
               toolCall: async (call) => {
+                await runService.appendRuntimeEvent({
+                  ...runLease,
+                  subagentId,
+                  type: 'tool.call.started',
+                  phase: 'running',
+                  summary: '子 Agent 正在调用工具',
+                  data: { callId: call.callId, toolName: call.toolName }
+                });
                 testController?.trace?.toolCall({
                   ...call,
                   role: 'subagent',
@@ -1598,6 +1606,18 @@ const createAgentWorkerService = ({
                 });
               },
               toolObservation: async (observation) => {
+                await runService.appendRuntimeEvent({
+                  ...runLease,
+                  subagentId,
+                  type: 'tool.call.completed',
+                  phase: 'running',
+                  summary: '子 Agent 工具调用已结束',
+                  data: {
+                    callId: observation.callId,
+                    toolName: observation.toolName,
+                    ok: observation.ok
+                  }
+                });
                 testController?.trace?.toolObservation({
                   ...observation,
                   role: 'subagent',
@@ -2034,12 +2054,30 @@ const createAgentWorkerService = ({
             return runService.appendStep({ ...runLease, ...step });
           },
           toolCall: async (call) => {
+            await runService.appendRuntimeEvent({
+              ...runLease,
+              type: 'tool.call.started',
+              phase: 'running',
+              summary: 'Agent 正在调用工具',
+              data: { callId: call.callId, toolName: call.toolName }
+            });
             testController?.trace?.toolCall({
               ...call,
               role: 'parent'
             });
           },
           toolObservation: async (observation) => {
+            await runService.appendRuntimeEvent({
+              ...runLease,
+              type: 'tool.call.completed',
+              phase: 'running',
+              summary: 'Agent 工具调用已结束',
+              data: {
+                callId: observation.callId,
+                toolName: observation.toolName,
+                ok: observation.ok
+              }
+            });
             testController?.trace?.toolObservation({
               ...observation,
               role: 'parent'

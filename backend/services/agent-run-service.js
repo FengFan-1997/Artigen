@@ -3422,6 +3422,7 @@ const createAgentRunService = ({
 
   const appendRuntimeEvent = async ({
     runId,
+    subagentId = null,
     workerId,
     leaseEpoch,
     type,
@@ -3439,10 +3440,25 @@ const createAgentRunService = ({
       [runId, workerId, Number(leaseEpoch || 0)]
     );
     if (!lease.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    if (subagentId) {
+      const subagent = await client.query(
+        'SELECT 1 FROM agent_subagents WHERE id=$1 AND run_id=$2',
+        [subagentId, runId]
+      );
+      if (!subagent.rowCount) throw new ApiError(404, 'AGENT_SUBAGENT_NOT_FOUND');
+    }
     const sanitizedData = sanitizeLogValue(data);
     let eventData = sanitizedData && typeof sanitizedData === 'object' && !Array.isArray(sanitizedData)
       ? sanitizedData
       : {};
+    if (eventType === 'tool.call.started' || eventType === 'tool.call.completed') {
+      const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+      eventData = {
+        callId: sanitizeText(source.callId, 120),
+        toolName: sanitizeText(source.toolName, 80),
+        ...(eventType === 'tool.call.completed' ? { ok: source.ok === true } : {})
+      };
+    }
     if (eventType === 'run.ready_to_finalize') {
       const existingBoundary = await client.query(
         `SELECT * FROM agent_events
@@ -3463,6 +3479,7 @@ const createAgentRunService = ({
     }
     return insertEvent(client, {
       runId,
+      subagentId,
       type: eventType,
       phase: phase ? sanitizeText(phase, 80) : null,
       summary: sanitizeText(summary, 500),
