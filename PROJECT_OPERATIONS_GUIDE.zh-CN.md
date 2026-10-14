@@ -150,6 +150,8 @@ PR 必须准确填写：
 
 CI 会检查 Handoff 二选一。声明“已更新”时 diff 必须包含 `PROJECT_HANDOFF.zh-CN.md`；声明“不需要”时必须填写具体理由。外部贡献者不需要提交本机 `HANDOFF.local.md`。
 
+Vercel Preview 是 PR 检查的一部分。状态失败时先用该检查提供的命令读取对应部署日志；如果 `vercel inspect` 报 CLI token 无效，这只说明当前本机 CLI 不能读取日志，不能据此判断项目构建根因或账号不可用。恢复 CLI 登录后再检查，不要因此轮换项目 Secret 或更改部署配置；必需的 Vercel 检查仍失败时不要合并 PR。
+
 ## 7. DEV 发布与 smoke
 
 DEV 服务跟踪 `dev`。合并后等待部署完成，再使用受保护访问方式核验：
