@@ -48,6 +48,9 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('文件已保存');
   expect(workspace.saves).toHaveLength(1);
+  await expect(
+    page.getByRole('combobox', { name: '查看文件版本' }).getByRole('option', { name: 'v2', exact: true })
+  ).toHaveCount(1);
   workspace.conflict = true;
   await editor.fill('# 保留冲突草稿');
   await page.getByRole('button', { name: '保存', exact: true }).click();

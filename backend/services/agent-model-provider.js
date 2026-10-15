@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const { ApiError } = require('../lib/api-error');
 const { getAgentConfig } = require('./agent-config');
 const { TEXT_MODEL } = require('../lib/agent-models');
-const { requiredDeliverablesSatisfied } = require('./agent-artifact-service');
+const { requiredDeliverablesSatisfied, inferRequiredTextFilenames } = require('./agent-artifact-service');
 const {
   actionFingerprint,
   assertLoopBudget,
@@ -1696,6 +1696,7 @@ class OllamaAgentModelProvider {
     objective,
     capabilities,
     deliverables = [],
+    requiredArtifactFilenames = null,
     toolProfile = 'parent',
     resumeState = null,
     runtimeContext = null,
@@ -1704,6 +1705,9 @@ class OllamaAgentModelProvider {
     signal = null,
     callbacks
   }) {
+    const requiredFilenames = toolProfile === 'parent'
+      ? (Array.isArray(requiredArtifactFilenames) ? requiredArtifactFilenames : inferRequiredTextFilenames(objective))
+      : [];
     const runtimeV2 = runtimeContext?.runtimeVersion === 2;
     const durableVersions = runtimeV2 ? new Set([3, CHECKPOINT_VERSION]) : new Set([2]);
     const durable = (
@@ -1748,7 +1752,9 @@ class OllamaAgentModelProvider {
         })
       : null;
     const progressInstructions = '\nSpeak to the user in the same language as their request. Alongside tool calls, give brief public progress updates about what you are doing, what you observed and what comes next. Do not expose private reasoning, credentials, raw tool arguments or unverified success. Keep each update within 500 characters. Tool purposes and plan explanations should use the user language too.';
-    const instructions = (prompt?.instructions || buildInstructions({ capabilities, maxSteps, toolProfile })) + progressInstructions;
+    const instructions = (prompt?.instructions || buildInstructions({ capabilities, maxSteps, toolProfile })) + progressInstructions + (requiredFilenames.length
+      ? `\nEvery required text output must be declared and verified separately: ${JSON.stringify(requiredFilenames)}.`
+      : '');
     const delegationRequired = toolProfile === 'parent' &&
       capabilities?.subagents === true &&
       explicitlyRequiresSubagentDelegation(objective);
@@ -2889,7 +2895,7 @@ class OllamaAgentModelProvider {
       if (
         runtimeV2 &&
         toolProfile === 'parent' &&
-        requiredDeliverables.length === 0 &&
+        requiredDeliverables.length === 0 && requiredFilenames.length === 0 &&
         pendingVerifierResult &&
         text
       ) {
@@ -2951,9 +2957,9 @@ class OllamaAgentModelProvider {
       }
       const artifactsReady = (
         toolProfile === 'parent' &&
-        requiredDeliverables.length > 0 &&
+        (requiredDeliverables.length > 0 || requiredFilenames.length > 0) &&
         (!delegationRequired || delegationCompleted) &&
-        requiredDeliverablesSatisfied(declaredArtifacts, requiredDeliverables)
+        requiredDeliverablesSatisfied(declaredArtifacts, requiredDeliverables, requiredFilenames)
       );
       if (
         runtimeV2 &&
@@ -3367,7 +3373,7 @@ class OllamaAgentModelProvider {
         }
         if (
           runtimeV2 &&
-          requiredDeliverables.length === 0 &&
+          requiredDeliverables.length === 0 && requiredFilenames.length === 0 &&
           !semanticVerificationPassed
         ) {
           const recoveredVerification = Boolean(pendingVerifierResult);
@@ -3429,9 +3435,9 @@ class OllamaAgentModelProvider {
         }
         if (
           toolProfile === 'parent' &&
-          requiredDeliverables.length > 0 &&
+          (requiredDeliverables.length > 0 || requiredFilenames.length > 0) &&
           (
-            !requiredDeliverablesSatisfied(declaredArtifacts, requiredDeliverables) ||
+            !requiredDeliverablesSatisfied(declaredArtifacts, requiredDeliverables, requiredFilenames) ||
             semanticRepairRequired
           )
         ) {
@@ -3450,6 +3456,7 @@ class OllamaAgentModelProvider {
               ? 'The verifier repair is still unresolved. Modify and verify only the affected file, then declare the repaired file before answering.'
               : [
                   `Required deliverables are still incomplete: ${requiredDeliverables.join(', ')}.`,
+                  `Every named text output must be registered: ${JSON.stringify(requiredFilenames)}.`,
                   'Do not announce completion or delegate again.',
                   'Merge the existing child outputs when present, create and verify every required file,',
                   'then call declare_artifact for each required source and preview artifact.'
@@ -3459,7 +3466,7 @@ class OllamaAgentModelProvider {
           continue;
         }
         readyToFinalize = runtimeV2 ? {
-          kind: requiredDeliverables.length ? 'artifacts' : 'text',
+          kind: (requiredDeliverables.length || requiredFilenames.length) ? 'artifacts' : 'text',
           responseId: String(response.id || `${this.providerName}:${turns}`),
           text,
           finalTextSha256: crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
