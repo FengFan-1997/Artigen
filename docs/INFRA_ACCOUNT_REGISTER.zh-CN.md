@@ -32,7 +32,7 @@
 
 ### 2026-10-15 DEV 工作空间发布与 Worker 接管
 
-PR #245工作空间与PR #246真实执行修复均通过完整Quality Gate和Release gate并合入dev；Render DEV当前已部署merge SHA `9be6a830a03f2e23d723837575bedec4281bbc2f`，唯一DEV Worker对齐同一提交，迁移032生效，健康与依赖探针均HTTP200。现有邮箱 OTP 完成实际发送和登录，不改变账号或 SMTP 凭据。
+PR #245工作空间、PR #246首次执行及PR #247命名文件交付完整性修复均通过完整Quality Gate和Release gate并合入dev。最近一次执行代码核验提交为 `6774e72e37434bef0e09f139253f4f9c0f4ca160`：Render DEV与唯一DEV Worker精确对齐，迁移032生效，健康与依赖探针均HTTP200。后续文档提交不改变这份执行证据；当前部署版本以实际meta及启动项为准。现有邮箱 OTP 完成实际发送和登录，不改变账号或 SMTP 凭据。
 
 DEV Worker 迁到持久目录内按已验证 SHA 固定的独立 checkout，复用已存在的 Node 依赖和 Python/CUA 环境，保留旧 checkout 与私有启动项回滚副本。DEV LaunchAgent 仍 `RunAtLoad=false`、`KeepAlive=false`，按需启动；凭据继续使用 DEV 专属 Keychain，没有新增权限、供应商、Secret 或生产变更。接管时不得把这些依赖目标当临时测试目录删除。
 

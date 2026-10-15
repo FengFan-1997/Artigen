@@ -143,10 +143,10 @@
 
         <div v-if="terminal && artifacts.length" class="delivery-summary">
           <header><span>{{ run.status === 'succeeded' ? (zh ? '交付完成' : 'Delivery complete') : (zh ? '已保留的成果' : 'Saved partial results') }}</span><b>{{ artifacts.length }}</b></header>
-          <a v-for="artifact in artifacts" :key="`center-${artifact.artifactId}`" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
+          <a v-for="artifact in artifacts" :key="`center-${artifact.artifactId}`" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer" @click="openDeliveredFile(artifact, $event)">
             <span>{{ fileCode(artifact.mimeType) }}</span>
             <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · {{ artifact.verificationStatus }}</small></div>
-            <WorkspaceIcon name="download" />
+            <WorkspaceIcon name="file" />
           </a>
         </div>
       </div>
@@ -266,10 +266,10 @@
         <section class="inspector-card">
           <header><span>{{ zh ? '已验证交付' : 'Verified delivery' }}</span><b>{{ artifacts.length }}</b></header>
           <div v-if="artifacts.length" class="file-list">
-            <a v-for="artifact in artifacts" :key="artifact.artifactId" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
+            <a v-for="artifact in artifacts" :key="artifact.artifactId" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer" @click="openDeliveredFile(artifact, $event)">
               <span>{{ fileCode(artifact.mimeType) }}</span>
               <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em :class="artifact.verificationStatus">{{ artifact.verificationStatus }}</em></div>
-              <WorkspaceIcon name="download" />
+              <WorkspaceIcon name="file" />
             </a>
           </div>
           <div v-else class="inspector-empty">{{ zh ? '文件通过验证后才会显示。' : 'Files appear only after verification.' }}</div>
@@ -300,7 +300,7 @@ import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import RunConversationStream from '../components/workspace/RunConversationStream.vue';
-import type { WorkspaceFile } from '../services/workspaceFiles';
+import { openWorkspaceFile, type WorkspaceFile } from '../services/workspaceFiles';
 import { agentEventSummary, isAgentActivity } from '../utils/agentActivity';
 import {
   agentAssetUrl,
@@ -332,6 +332,14 @@ const runs = ref<AgentRun[]>([]);
 const activity = useAgentActivity();
 const events = computed(() => activity.records[runId.value] || []);
 const conversationFiles = computed<WorkspaceFile[]>(() => artifacts.value.filter(a => a.assetId && a.url).map(a => ({ id: 'artifact:' + a.artifactId, path: a.filename, assetId: a.assetId!, revision: a.version, mimeType: a.mimeType, byteSize: a.byteSize, sha256: a.sha256 || '', url: a.url!, originArtifactId: a.artifactId })));
+
+function openDeliveredFile(artifact: AgentArtifact, event: MouseEvent) {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const file = conversationFiles.value.find(item => item.originArtifactId === artifact.artifactId);
+  if (!file) return;
+  event.preventDefault();
+  openWorkspaceFile(file);
+}
 
 const scrollArea = ref<HTMLElement | null>(null);
 const nearBottom = ref(true);
@@ -1048,7 +1056,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .conversation-workspace { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.conversation-scroll { flex: 1; min-height: 0; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto; padding: 28px 0 40px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
+.conversation-scroll { flex: 1; min-height: 0; width: min(calc(var(--conversation-max) + 24px), calc(100% - var(--conversation-gutter) * 2 + 24px)); margin: 0 auto; padding: 28px 12px 40px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--scrollbar-thumb) transparent; }
 .run-progress-panel { margin-bottom: 26px; padding: 0; border: 0; border-radius: 14px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
 .run-progress-header { display: flex; min-height: 48px; align-items: center; padding: 12px 14px; list-style: none; cursor: pointer; justify-content: space-between; gap: 12px; }
 .run-progress-header div { display: grid; gap: 4px; }
@@ -1228,7 +1236,7 @@ onBeforeUnmount(() => {
 .draft-restored { width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 8px; color: var(--muted); font-size: 12px; }
 .run-notice,.run-composer,.draft-restored { flex: 0 0 auto; }
 @media (max-width: 800px) {
-  .conversation-scroll, .run-notice, .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
+  .run-notice, .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
   .conversation-scroll { padding-top: 24px; }
   .user-message { max-width: 88%; }
   .approval-card > input { min-height: 44px; font-size: 16px; }

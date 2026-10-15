@@ -119,12 +119,12 @@ watch([() => props.draft, () => props.compact], async () => {
 </script>
 
 <style scoped>
-.composer-box { width: 100%; min-width: 0; padding: 15px 16px 12px; border: 0; border-radius: 20px; color: var(--text); background: var(--surface); box-shadow: 0 18px 54px rgb(0 0 0 / 24%); transition: box-shadow 180ms cubic-bezier(.23,1,.32,1),background-color 180ms ease; }
-.composer-box:focus-within { background: var(--surface-raised); box-shadow: 0 22px 62px rgb(0 0 0 / 30%), inset 0 0 0 2px var(--focus); }
+.composer-box { width: 100%; min-width: 0; padding: 15px 16px 12px; border: 1px solid var(--control-border); border-radius: 20px; color: var(--text); background: var(--surface); box-shadow: none; transition: background-color 180ms ease; }
+.composer-box:focus-within { background: var(--surface-raised); outline: 2px solid var(--focus); outline-offset: 1px; }
 textarea { display: block; width: 100%; min-height: 78px; max-height: min(180px, 24dvh); box-sizing: border-box; padding: 5px 6px 10px; resize: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 16px; line-height: 1.58; background: transparent; }
 textarea::placeholder { color: var(--muted); }
 .compact textarea { min-height: 64px; }
-.attachment-list { max-height: min(160px, 24dvh); overflow-y:auto; overscroll-behavior:contain; scrollbar-color:var(--border) transparent; display: flex; flex-wrap: wrap; gap: 7px; padding: 5px 6px 11px; }
+.attachment-list { max-height: min(160px, 24dvh); overflow-y:auto; overscroll-behavior:contain; scrollbar-color:var(--scrollbar-thumb) transparent; display: flex; flex-wrap: wrap; gap: 7px; padding: 5px 6px 11px; }
 .attachment-list > span { flex-shrink:1; display: inline-flex; min-width: 0; align-items: center; gap: 7px; max-width: 100%; padding: 7px 9px; border: 0; border-radius: 9px; font-size: 12px; background: var(--surface-hover); }
 .attachment-list b { min-width:0; flex:1; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-list small { color: var(--muted); white-space: nowrap; }

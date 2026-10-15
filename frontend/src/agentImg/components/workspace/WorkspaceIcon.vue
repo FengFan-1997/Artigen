@@ -18,7 +18,9 @@
     <template v-else-if="name === 'moon'"><path d="M19.5 15.2A8 8 0 0 1 8.8 4.5 8 8 0 1 0 19.5 15.2Z"/></template>
     <template v-else-if="name === 'sun'"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/></template>
     <template v-else-if="name === 'monitor'"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></template>
-    <template v-else-if="name === 'settings'"><circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2-.7-.7-1.7.9-1.9-2.1-2.1-1.9.9-1.7-.7-.7-2h-3l-.7 2-1.7.7-1.9-.9-2.1 2.1.9 1.9-.7 1.7-2 .7v3l2 .7.7 1.7-.9 1.9 2.1 2.1 1.9-.9 1.7.7.7 2h3l.7-2 1.7-.7 1.9.9 2.1-2.1-.9-1.9.7-1.7z"/></template>
+    <template v-else-if="name === 'settings'"><path d="M4 7h5M13 7h7M4 17h9M17 17h3"/><circle cx="11" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></template>
+    <template v-else-if="name === 'chat'"><path d="M20 11.5a7.8 7.8 0 0 1-.8 3.5A8 8 0 0 1 12 19a7.8 7.8 0 0 1-3.5-.8L4 20l1.8-4.5A7.8 7.8 0 0 1 5 12a8 8 0 0 1 4-7.2 7.8 7.8 0 0 1 3.5-.8h.5a8 8 0 0 1 7 7v.5Z"/></template>
+    <template v-else-if="name === 'changes'"><path d="M4 5h6M4 9h6M14 15h6M14 19h6M7 14v6M4 17h6M14 7h6"/></template>
     <template v-else-if="name === 'terminal'"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="m7 10 2 2-2 2M12 15h5"/></template>
     <template v-else-if="name === 'list'"><path d="M6 6h13M6 12h13M6 18h9M3 6h.01M3 12h.01M3 18h.01"/></template>
     <template v-else-if="name === 'subagents'"><circle cx="12" cy="7" r="3"/><circle cx="6" cy="17" r="2.5"/><circle cx="18" cy="17" r="2.5"/><path d="M12 10v3M7.8 14.8 10 12.5M16.2 14.8 14 12.5"/></template>
@@ -46,7 +48,7 @@ type WorkspaceIconName =
   | 'image' | 'spark' | 'moon' | 'sun' | 'monitor' | 'settings' | 'terminal' | 'list'
   | 'subagents' | 'agent' | 'file' | 'attachment' | 'send' | 'refresh' | 'arrow-right'
   | 'chevron-right' | 'chevron-down' | 'trash' | 'download' | 'play' | 'stop' | 'pause'
-  | 'paper-plane' | 'git';
+  | 'paper-plane' | 'git' | 'chat' | 'changes';
 
 withDefaults(defineProps<{
   name: WorkspaceIconName;
@@ -62,7 +64,7 @@ withDefaults(defineProps<{
   flex: 0 0 auto;
   width: var(--workspace-icon-size);
   height: var(--workspace-icon-size);
-  overflow: visible;
+  overflow: hidden;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.75;

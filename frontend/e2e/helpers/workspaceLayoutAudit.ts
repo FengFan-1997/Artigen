@@ -14,6 +14,12 @@ export const installDevEnvironmentBadge = async (page: Page) => page.evaluate(()
 });
 
 export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptions = {}) => {
+  // Measure painted layout: ResizeObserver delivers native scrollbar changes
+  // before paint, and Vue applies the measured composer inset in its next tick.
+  // A visibility assertion alone can resolve before either callback has run.
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
   const report = await page.locator('.agent-workspace-shell').evaluate((root, mobile) => {
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     const visibleRegion = (element: Element) => {
@@ -292,8 +298,11 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
         const widthCoverage = rect.width > 0 ? visibleWidth / rect.width : 0;
         const heightCoverage = rect.height > 0 ? visibleHeight / rect.height : 0;
         const viewportCoverage = widthCoverage * heightCoverage;
-        const insetX = Math.min(8, visibleWidth / 3);
-        const insetY = Math.min(8, visibleHeight / 3);
+        // WebKit rounds hit-test coordinates to CSS pixels. Keep samples at
+        // least one pixel inside a clipped edge (or centered in a <2px sliver),
+        // so an adjacent dock is not mistaken for an overlay on the control.
+        const insetX = Math.min(8, Math.max(1, visibleWidth / 3), visibleWidth / 2);
+        const insetY = Math.min(8, Math.max(1, visibleHeight / 3), visibleHeight / 2);
         const points = [
           [visibleRect.left + visibleWidth / 2, visibleRect.top + visibleHeight / 2],
           [visibleRect.left + insetX, visibleRect.top + visibleHeight / 2],
@@ -341,6 +350,11 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
       offCenterIconButtons,
       iconLabelMisalignment,
       contentAxisDrift,
+      scrollbarInsets: Array.from(root.querySelectorAll<HTMLElement>('.message-scroll,.conversation-scroll')).map((scroller) => ({
+        offsetWidth: scroller.offsetWidth,
+        clientWidth: scroller.clientWidth,
+        composerPadding: getComputedStyle(root.querySelector('.docked-composer,.conversation-dock') || scroller).paddingInlineEnd
+      })),
       resizableTextareas,
       paddedIconActions,
       undersizedTouchTargets,

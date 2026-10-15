@@ -906,7 +906,7 @@ test('failure copy does not infer refunds or released credits from an error code
   ).toHaveText('0 点');
   await expect(page.locator('.run-notice')).toHaveCount(0);
 });
-test('light-theme input focus uses a visible inset ring on Create and Run', async ({ page }) => {
+test('light-theme input focus remains visible on Create and Run', async ({ page }) => {
   await setup(page);
   await page.addInitScript(() =>
     localStorage.setItem(
@@ -920,7 +920,9 @@ test('light-theme input focus uses a visible inset ring on Create and Run', asyn
   ]) {
     await page.goto(url!);
     await page.getByRole('textbox', { name: name! }).focus();
-    await expect(page.locator(selector!)).toHaveCSS('box-shadow', /rgb\(66, 100, 0\).*inset/);
+    await expect(page.locator(selector!)).toHaveCSS('outline-color', 'rgb(66, 100, 0)');
+    await expect(page.locator(selector!)).toHaveCSS('outline-width', '2px');
+    await expect(page.locator(selector!)).toHaveCSS('outline-style', 'solid');
   }
 });
 test('rapid run approval sends once and locks conflicting actions until acknowledgement', async ({
