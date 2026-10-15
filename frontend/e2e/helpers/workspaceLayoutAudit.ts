@@ -14,6 +14,12 @@ export const installDevEnvironmentBadge = async (page: Page) => page.evaluate(()
 });
 
 export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptions = {}) => {
+  // Measure painted layout: ResizeObserver delivers native scrollbar changes
+  // before paint, and Vue applies the measured composer inset in its next tick.
+  // A visibility assertion alone can resolve before either callback has run.
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
   const report = await page.locator('.agent-workspace-shell').evaluate((root, mobile) => {
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     const visibleRegion = (element: Element) => {
@@ -344,6 +350,11 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
       offCenterIconButtons,
       iconLabelMisalignment,
       contentAxisDrift,
+      scrollbarInsets: Array.from(root.querySelectorAll<HTMLElement>('.message-scroll,.conversation-scroll')).map((scroller) => ({
+        offsetWidth: scroller.offsetWidth,
+        clientWidth: scroller.clientWidth,
+        composerPadding: getComputedStyle(root.querySelector('.docked-composer,.conversation-dock') || scroller).paddingInlineEnd
+      })),
       resizableTextareas,
       paddedIconActions,
       undersizedTouchTargets,

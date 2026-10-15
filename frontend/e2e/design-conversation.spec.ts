@@ -959,3 +959,32 @@ test('main composer steers the existing run and preserves rejected updates', asy
   expect(newPlanningRequests).toBe(0);
   expect(accepted).toHaveLength(1);
 });
+
+
+test('composer tracks a real reserved scrollbar gutter and its removal', async ({ page }) => {
+  await installExistingConversation(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`/artigen/create?c=${conversationId}`);
+  await expect(page.locator('.execution-card')).toBeVisible();
+  await page.addStyleTag({ content: '.message-scroll { overflow-y: scroll !important; scrollbar-gutter: stable !important; }' });
+  const insets = () => page.locator('.message-scroll').evaluate((scroller) => {
+    const dock = document.querySelector('.docked-composer')!;
+    return {
+      actual: scroller.getBoundingClientRect().width - scroller.clientWidth,
+      applied: parseFloat(getComputedStyle(dock).paddingInlineEnd) - parseFloat(getComputedStyle(scroller).paddingInlineEnd)
+    };
+  });
+  const measured = (await insets()).actual;
+  test.info().annotations.push({ type: 'native-scrollbar-gutter', description: `${measured}px; overlay scrollbars may reserve zero` });
+  await expect.poll(async () => {
+    const value = await insets();
+    return Math.abs(value.actual - value.applied);
+  }).toBeLessThanOrEqual(1);
+  await expectWorkspaceGeometry(page);
+  // Hiding the native gutter keeps scrolling enabled and exercises the same
+  // ResizeObserver path when the scroller's content width grows again.
+  await page.addStyleTag({ content: '.message-scroll { scrollbar-width: none !important; scrollbar-gutter: auto !important; }' });
+  await expect.poll(async () => (await insets()).actual).toBe(0);
+  await expect.poll(async () => (await insets()).applied).toBe(0);
+  await expectWorkspaceGeometry(page);
+});
