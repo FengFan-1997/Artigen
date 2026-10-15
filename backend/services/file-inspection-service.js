@@ -84,6 +84,9 @@ const assertDetectedMime = ({ detectedMime, declaredMime, allowedMimeTypes }) =>
 
 const inspectBuffer = async (input = {}) => {
   const buffer = input.buffer;
+  if (Buffer.isBuffer(buffer) && !buffer.length && input.allowEmptyText === true && normalizeMime(input.declaredMime) === 'text/plain' && input.allowedMimeTypes?.includes('text/plain')) {
+    return { byteSize: 0, mimeType: 'text/plain', sha256: crypto.createHash('sha256').update(buffer).digest(), width: null, height: null };
+  }
   if (!Buffer.isBuffer(buffer) || !buffer.length) {
     throw new ApiError(400, 'EMPTY_FILE', { field: 'files' });
   }

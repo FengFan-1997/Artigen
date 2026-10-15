@@ -240,6 +240,7 @@ const installAgentRoutes = (app, deps = {}) => {
       assetIds: body.assetIds,
       sourceArtifactIds: body.sourceArtifactIds,
       sourceConversationId: body.sourceConversationId,
+      fileEditTargets: body.fileEditTargets,
       maxCredits: body.maxCredits,
       capabilities: body.capabilities,
       deliverables: body.deliverables,
@@ -282,6 +283,12 @@ const installAgentRoutes = (app, deps = {}) => {
     });
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({ ok: true, events });
+  }));
+
+  app.get('/api/agent-runs/:runId/activity', readLimiter, asyncRoute(async (req, res) => {
+    const auth = requireAuthenticatedUser(req);
+    const events = await requireService().listEvents({userId: auth.dbUserId || auth.userId, runId: req.params.runId, after: req.query?.after, limit: 250});
+    res.json({ok:true, events});
   }));
 
   app.get('/api/agent-runs/:runId/events', readLimiter, asyncRoute(async (req, res) => {

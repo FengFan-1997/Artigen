@@ -1168,6 +1168,12 @@ const {
           ? `/artigen/projects/${activeProjectId.value}`
           : route.fullPath;
         void router.push({ path: '/artigen/market', query: { returnTo } });
+      },
+      onProjectGenerationComplete: (projectId) => {
+        void router.push({
+          path: `/artigen/projects/${encodeURIComponent(projectId)}`,
+          query: { generated: '1' }
+        });
       }
     }
   },

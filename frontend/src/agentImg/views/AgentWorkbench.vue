@@ -6,6 +6,9 @@
     :status-label="workspaceStatus.label"
     :status-tone="workspaceStatus.tone"
     :credit-label="quoteIsCurrent && quote ? `${quote.freeCreditsRemaining} ${zh ? '点可用' : 'available'}` : '—'"
+    :credit-caption="zh ? '可用点数' : 'Available credits'"
+    :task-cost-label="quoteIsCurrent && quote ? `${zh ? '预算上限' : 'Budget limit'} ${form.maxCredits} ${zh ? '点' : 'credits'}` : ''"
+    :default-inspector-collapsed="!hasConversation"
     default-inspector-tab="environment"
     :live-announcement="notice"
     @new-task="resetRunDraft"
@@ -37,11 +40,6 @@
       <div class="conversation-scroll" aria-live="polite">
         <div v-if="!hasConversation" class="conversation-empty">
           <h1>{{ zh ? '今天要一起完成什么？' : 'What should we finish together?' }}</h1>
-          <div class="prompt-suggestions" :aria-label="zh ? '任务建议' : 'Task suggestions'">
-            <button v-for="(preset, index) in presets" :key="preset" type="button" @click="applyPreset(index)">
-              <span>{{ suggestionLabels[index] }}</span>
-            </button>
-          </div>
         </div>
 
         <div v-else class="conversation-thread">
@@ -63,6 +61,13 @@
               <template v-else-if="quoteIsCurrent && quote">
                 <strong>{{ quoteCanStart ? (zh ? '真实报价已准备好' : 'Live quote is ready') : (zh ? '当前无法启动' : 'Cannot start yet') }}</strong>
                 <p>{{ quoteCanStart ? (zh ? '确认后开始执行。' : 'Confirm to start.') : quoteBlockerText }}</p>
+                <section class="quote-scope" :aria-label="zh ? '本次执行范围' : 'Scope of this run'">
+                  <b>{{ zh ? '本次执行范围' : 'Scope of this run' }}</b>
+                  <p>{{ scopeReceipt }}</p>
+                  <p v-if="form.capabilities.browser">{{ zh ? '允许访问：' : 'Allowed sites: ' }}{{ browserConfig().allowedOrigins?.join(' · ') || '—' }}</p>
+                  <p v-if="selectedFiles.length">{{ zh ? '参考文件：' : 'References: ' }}{{ selectedFiles.map(file => file.name).join(' · ') }}</p>
+                  <button type="button" :disabled="busy" @click="editQuotedRequest">{{ zh ? '修改要求与附件' : 'Edit request and references' }}</button>
+                </section>
                 <dl class="quote-summary">
                   <div><dt>{{ zh ? '预计' : 'Estimate' }}</dt><dd>{{ quote.estimatedCredits.minimum }}–{{ quote.estimatedCredits.maximum }} {{ zh ? '点' : 'cr' }}</dd></div>
                   <div><dt>{{ zh ? '冻结' : 'Hold' }}</dt><dd>{{ quote.requiredPaidHold }} {{ zh ? '点' : 'cr' }}</dd></div>
@@ -87,9 +92,12 @@
       <div class="conversation-dock">
         <div class="objective-composer">
           <ComposerBox
+            ref="objectiveComposer"
             :draft="form.objective"
             :attachments="composerAttachments"
             :busy="busy"
+            :busy-label="uploadingAssets ? (zh ? `正在上传 ${selectedFiles.length} 个参考文件…` : `Uploading ${selectedFiles.length} references…`) : creating ? (zh ? '正在启动任务…' : 'Starting task…') : (zh ? '正在获取报价…' : 'Getting quote…')"
+            :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
             :placeholder="zh ? '描述目标、受众、交付物或参考方向…' : 'Describe the goal, audience, deliverables, or references…'"
             :attach-label="zh ? '添加参考' : 'Add reference'"
             :attachment-count-label="zh ? '个文件' : 'files'"
@@ -104,6 +112,10 @@
             @attach="openFilePicker"
             @remove-attachment="removeSelectedFile"
           />
+        </div>
+        <p v-if="draftRestored" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿；如需参考文件，请重新选择。' : 'Your local draft was restored. Choose any reference files again.' }}</p>
+        <div v-if="!hasConversation" class="prompt-suggestions" :aria-label="zh ? '任务建议' : 'Task suggestions'">
+          <button v-for="(preset, index) in presets" :key="preset" type="button" @click="applyPreset(index)"><span>{{ suggestionLabels[index] }}</span></button>
         </div>
       </div>
     </section>
@@ -148,10 +160,12 @@
             </div>
           </section>
           <section v-if="form.capabilities.browser" class="inspector-card browser-scope runtime-settings">
-            <header><span>{{ zh ? '浏览器范围' : 'Browser scope' }}</span></header>
-            <input v-model.trim="form.browserOrigins" name="allowed-origins" type="text" autocomplete="off" spellcheck="false" :placeholder="zh ? '例如 https://example.com…' : 'For example, https://example.com…'" />
+            <label for="agent-allowed-origins">{{ zh ? '允许访问的站点' : 'Allowed sites' }}</label>
+            <input id="agent-allowed-origins" v-model.trim="form.browserOrigins" name="allowed-origins" type="text" autocomplete="off" spellcheck="false" aria-describedby="agent-origin-help" :placeholder="zh ? '例如 https://example.com' : 'For example, https://example.com'" />
+            <small id="agent-origin-help">{{ zh ? '填写完整 HTTPS 站点，不含路径；多个站点用逗号分隔。' : 'Use HTTPS origins without paths. Separate sites with commas.' }}</small>
             <label><input v-model="form.persistSession" name="persist-browser-session" type="checkbox" />{{ zh ? '加密保存会话 30 天' : 'Encrypt session for 30 days' }}</label>
-            <select v-if="browserProfiles.length" v-model="form.profileId" name="browser-profile" @change="selectBrowserProfile">
+            <label v-if="browserProfiles.length" for="agent-browser-profile">{{ zh ? '恢复已保存的会话' : 'Restore saved session' }}</label>
+            <select v-if="browserProfiles.length" id="agent-browser-profile" v-model="form.profileId" name="browser-profile" @change="selectBrowserProfile">
               <option value="">{{ zh ? '不恢复已保存会话' : 'No saved session' }}</option>
               <option v-for="profile in browserProfiles" :key="profile.profileId" :value="profile.profileId">{{ profile.label }} · {{ profile.siteOrigin }}</option>
             </select>
@@ -236,14 +250,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
+import { getCurrentUserId } from '@/login/session';
+import { useWorkspaceDraft } from '../composables/useWorkspaceDraft';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
 import {
   createAgentRun,
   getAgentServiceStatus,
@@ -260,6 +277,7 @@ import {
 } from '../services/agentRuns';
 
 const router = useRouter();
+const route = useRoute();
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 const zh = computed(() => currentLang.value === 'zh');
@@ -271,12 +289,22 @@ const loadingRuns = ref(false);
 const quoting = ref(false);
 const creating = ref(false);
 const selectedFiles = ref<File[]>([]);
+const objectiveComposer = ref<InstanceType<typeof ComposerBox> | null>(null);
+const uploadingAssets = ref(false);
+let uploadedReferences: { owner: string; files: File[]; assetIds: string[] } | null = null;
+let pendingCreation: { owner: string; key: string; idempotencyKey: string } | null = null;
 const fileInput = ref<HTMLInputElement | null>(null);
 const browserProfiles = ref<AgentBrowserProfile[]>([]);
 const submittedObjective = ref('');
 const notice = ref('');
 const noticeIsError = ref(false);
 let statusTimer: ReturnType<typeof setInterval> | null = null;
+let disposed = false;
+let workspaceOwner = getCurrentUserId();
+let workspaceRevision = 0;
+const isCurrentWorkspace = (owner: string, revision: number) => (
+  !disposed && owner === getCurrentUserId() && revision === workspaceRevision
+);
 const busy = computed(() => quoting.value || creating.value);
 const hasConversation = computed(() => Boolean(
   submittedObjective.value || quoting.value || quote.value || notice.value
@@ -307,9 +335,10 @@ const form = reactive({
     image: false
   } as Record<string, boolean>
 });
+const { restored: draftRestored, discardSaved } = useWorkspaceDraft({ owner: getCurrentUserId, task: () => 'agent:new', draft: toRef(form, 'objective') });
 
 const composerAttachments = computed(() => selectedFiles.value.map((file) => ({
-  clientId: `${file.name}:${file.size}:${file.lastModified}`,
+  clientId: referenceFileKey(file),
   name: file.name,
   mimeType: file.type || 'application/octet-stream',
   byteSize: file.size
@@ -415,7 +444,19 @@ const quoteRequest = () => ({
   deliverables: selectedDeliverables(),
   browserConfig: browserConfig()
 });
-const currentQuoteKey = computed(() => JSON.stringify(quoteRequest()));
+const currentQuoteKey = computed(() => JSON.stringify({ request: quoteRequest(), references: selectedFiles.value.map(referenceFileKey) }));
+const scopeReceipt = computed(() => [
+  ...deliverableOptions.value.filter(item => form.deliverables[item.id]).map(item => item.code),
+  ...capabilityOptions.value.filter(item => form.capabilities[item.id]).map(item => item.label)
+].join(' · '));
+const editQuotedRequest = () => {
+  if (busy.value) return;
+  quote.value = null;
+  quotedRequestKey.value = '';
+  noticeIsError.value = false;
+  notice.value = zh.value ? '正在修改要求。修改后重新发送以核对范围和报价。' : 'Edit the request, then send again to review its scope and quote.';
+  objectiveComposer.value?.focus();
+};
 const quoteIsCurrent = computed(() => (
   Boolean(quote.value) && quotedRequestKey.value === currentQuoteKey.value
 ));
@@ -532,6 +573,8 @@ const errorText = (error: unknown) => {
 
 const getQuote = async () => {
   if (quoteLocked) return null;
+  const owner = getCurrentUserId();
+  const revision = workspaceRevision;
   quoteLocked = true;
   quoting.value = true;
   notice.value = '';
@@ -542,18 +585,24 @@ const getQuote = async () => {
   try {
     validateBrowserForm();
     const request = quoteRequest();
-    const requestKey = JSON.stringify(request);
-    quote.value = await quoteAgentRun(request);
+    const requestKey = currentQuoteKey.value;
+    const result = await quoteAgentRun(request);
+    if (!isCurrentWorkspace(owner, revision)) return null;
+    quote.value = result;
     quotedRequestKey.value = requestKey;
     noticeIsError.value = false;
     return quote.value;
   } catch (error) {
-    notice.value = errorText(error);
-    noticeIsError.value = true;
+    if (isCurrentWorkspace(owner, revision)) {
+      notice.value = errorText(error);
+      noticeIsError.value = true;
+    }
     return null;
   } finally {
-    quoting.value = false;
-    quoteLocked = false;
+    if (isCurrentWorkspace(owner, revision)) {
+      quoting.value = false;
+      quoteLocked = false;
+    }
   }
 };
 
@@ -567,6 +616,9 @@ const sendObjective = async () => {
 
 const startRun = async () => {
   if (createLocked || quoteLocked) return;
+  const owner = getCurrentUserId();
+  const revision = workspaceRevision;
+  const submittedDraft = form.objective;
   createLocked = true;
   try {
     if (!quoteIsCurrent.value) {
@@ -589,67 +641,104 @@ const startRun = async () => {
       throw new Error('API_ERROR_500');
     }
     const confirmed = quoteRequest();
-    const assetIds = await uploadAgentAssets(selectedFiles.value);
+    const references = [...selectedFiles.value];
+    const cached = uploadedReferences?.owner === owner && uploadedReferences.files.length === references.length && uploadedReferences.files.every((file, index) => file === references[index]);
+    uploadingAssets.value = !cached && references.length > 0;
+    const assetIds = cached ? uploadedReferences!.assetIds : await uploadAgentAssets(references);
+    if (!isCurrentWorkspace(owner, revision)) return;
+    uploadedReferences = { owner, files: references, assetIds };
+    uploadingAssets.value = false;
+    const creationKey = JSON.stringify({ confirmed, assetIds });
+    if (pendingCreation?.owner !== owner || pendingCreation.key !== creationKey) {
+      pendingCreation = { owner, key: creationKey, idempotencyKey: crypto.randomUUID() };
+    }
     const run = await createAgentRun({
       objective: confirmed.objective,
+      projectId: String(route.query.projectId || '') || null,
       assetIds,
       maxCredits: confirmed.maxCredits,
       capabilities: confirmed.capabilities,
       deliverables: confirmed.deliverables,
-      browserConfig: confirmed.browserConfig
+      browserConfig: confirmed.browserConfig,
+      idempotencyKey: pendingCreation.idempotencyKey
     });
+    discardSaved(owner, 'agent:new', submittedDraft);
+    if (!isCurrentWorkspace(owner, revision)) return;
+    if (form.objective === submittedDraft) form.objective = '';
     await router.push(`/artigen/agent/runs/${run.runId}`);
   } catch (error) {
-    notice.value = errorText(error);
-    noticeIsError.value = true;
+    if (isCurrentWorkspace(owner, revision)) {
+      notice.value = uploadingAssets.value
+        ? (zh.value ? '参考文件上传失败，已保留你的选择，任务尚未创建。请重试。' : 'Reference upload failed. Your selection is kept and no run was created. Try again.')
+        : errorText(error);
+      noticeIsError.value = true;
+    }
   } finally {
-    creating.value = false;
-    createLocked = false;
+    if (isCurrentWorkspace(owner, revision)) {
+      creating.value = false;
+      uploadingAssets.value = false;
+      createLocked = false;
+    }
   }
 };
 
 const selectFiles = (event: Event) => {
   const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []).slice(0, 10);
-  if (files.some((file) => file.size > 40 * 1024 * 1024)) {
-    notice.value = zh.value ? '单个文件不能超过 40 MiB。' : 'Each file must be 40 MiB or smaller.';
+  const files = Array.from(input.files || []);
+  input.value = '';
+  if (busy.value) return;
+  const selection = mergeReferenceFiles(selectedFiles.value, files, { maxFileBytes: 40 * 1024 * 1024 });
+  if (selection.error) {
+    notice.value = selection.error === 'too-large'
+      ? (zh.value ? '单个文件不能超过 40 MiB。原有选择已保留。' : 'Each file must be 40 MiB or smaller. Your existing selection is kept.')
+      : (zh.value ? '最多添加 10 个参考文件。请先移除部分文件再添加。' : 'Add up to 10 reference files. Remove a file before adding more.');
     noticeIsError.value = true;
-    input.value = '';
     return;
   }
-  selectedFiles.value = files;
-  input.value = '';
+  selectedFiles.value = selection.files;
 };
 const openFilePicker = () => fileInput.value?.click();
 const removeSelectedFile = (clientId: string) => {
-  selectedFiles.value = selectedFiles.value.filter((file) => `${file.name}:${file.size}:${file.lastModified}` !== clientId);
+  if (busy.value) return;
+  selectedFiles.value = selectedFiles.value.filter((file) => referenceFileKey(file) !== clientId);
 };
 
 const loadRuns = async () => {
+  const owner = getCurrentUserId();
+  const revision = workspaceRevision;
   loadingRuns.value = true;
   try {
-    runs.value = await listAgentRuns();
+    const result = await listAgentRuns();
+    if (isCurrentWorkspace(owner, revision)) runs.value = result;
   } catch (error) {
-    notice.value = errorText(error);
-    noticeIsError.value = true;
+    if (isCurrentWorkspace(owner, revision)) {
+      notice.value = errorText(error);
+      noticeIsError.value = true;
+    }
   } finally {
-    loadingRuns.value = false;
+    if (isCurrentWorkspace(owner, revision)) loadingRuns.value = false;
   }
 };
 
 const loadServiceStatus = async () => {
+  const owner = getCurrentUserId();
+  const revision = workspaceRevision;
   try {
-    serviceStatus.value = await getAgentServiceStatus();
+    const result = await getAgentServiceStatus();
+    if (isCurrentWorkspace(owner, revision)) serviceStatus.value = result;
   } catch {
-    serviceStatus.value = null;
+    if (isCurrentWorkspace(owner, revision)) serviceStatus.value = null;
   }
 };
 
 const loadBrowserProfiles = async () => {
+  const owner = getCurrentUserId();
+  const revision = workspaceRevision;
   try {
-    browserProfiles.value = await listAgentBrowserProfiles();
+    const result = await listAgentBrowserProfiles();
+    if (isCurrentWorkspace(owner, revision)) browserProfiles.value = result;
   } catch {
-    browserProfiles.value = [];
+    if (isCurrentWorkspace(owner, revision)) browserProfiles.value = [];
   }
 };
 
@@ -661,13 +750,18 @@ const selectBrowserProfile = () => {
 
 const revokeSelectedProfile = async () => {
   if (!form.profileId) return;
+  const owner = getCurrentUserId();
+  const revision = workspaceRevision;
   try {
     await revokeAgentBrowserProfile(form.profileId);
+    if (!isCurrentWorkspace(owner, revision)) return;
     form.profileId = '';
     await loadBrowserProfiles();
   } catch (error) {
-    notice.value = errorText(error);
-    noticeIsError.value = true;
+    if (isCurrentWorkspace(owner, revision)) {
+      notice.value = errorText(error);
+      noticeIsError.value = true;
+    }
   }
 };
 
@@ -691,50 +785,81 @@ const formatDate = (value: string) => new Intl.DateTimeFormat(
   { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
 ).format(new Date(value));
 
+const handleAuthChanged = () => {
+  const owner = getCurrentUserId();
+  if (owner === workspaceOwner) return;
+  workspaceOwner = owner;
+  workspaceRevision += 1;
+  runs.value = [];
+  browserProfiles.value = [];
+  selectedFiles.value = [];
+  uploadingAssets.value = false;
+  uploadedReferences = null;
+  pendingCreation = null;
+  submittedObjective.value = '';
+  quote.value = null;
+  quotedRequestKey.value = '';
+  notice.value = '';
+  noticeIsError.value = false;
+  quoting.value = creating.value = quoteLocked = createLocked = false;
+  form.profileId = '';
+  form.browserOrigins = '';
+  form.persistSession = false;
+  void loadRuns();
+  void loadBrowserProfiles();
+  void loadServiceStatus();
+};
+
 onMounted(() => {
+  window.addEventListener('app-auth-changed', handleAuthChanged);
   void loadRuns();
   void loadServiceStatus();
   void loadBrowserProfiles();
   statusTimer = setInterval(() => void loadServiceStatus(), 15_000);
 });
 onBeforeUnmount(() => {
+  disposed = true;
+  window.removeEventListener('app-auth-changed', handleAuthChanged);
   if (statusTimer) clearInterval(statusTimer);
 });
 </script>
 
 <style scoped>
-.agent-conversation { --conversation-max: 820px; --conversation-gutter: 28px; display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.agent-conversation { display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.agent-conversation:not(.active) { grid-template-columns:minmax(0,1fr); grid-template-rows: auto auto; align-content: safe center; padding-block: 48px; overflow-y: auto; }
+.agent-conversation:not(.active) .conversation-scroll { overflow: visible; }
 .conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
-.conversation-empty { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); min-height: 100%; margin: 0 auto; padding: clamp(52px, 10vh, 104px) 0 48px; align-content: center; justify-items: start; }
+.conversation-empty { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 0 0 10px; justify-items: start; }
 .conversation-empty h1 { margin: 0; color: var(--text); font-size: clamp(28px, 3vw, 36px); font-weight: 680; line-height: 1.18; letter-spacing: -.035em; text-wrap: balance; }
-.prompt-suggestions { display: grid; width: min(100%, 620px); gap: 2px; margin-top: 20px; }
+.prompt-suggestions { display: grid; width: min(var(--conversation-max), 100%); gap: 4px; margin: 20px auto 0; }
 .prompt-suggestions button { display: block; width: 100%; min-height: 42px; padding: 9px 10px; color: var(--muted); border: 0; border-radius: 10px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease, transform 120ms cubic-bezier(.23,1,.32,1); }
 .prompt-suggestions button:hover { color: var(--text); background: var(--surface-hover); }
 .prompt-suggestions button:active { transform: scale(.995); }
-.prompt-suggestions button:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.prompt-suggestions button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .prompt-suggestions span { font-size: 14px; }
 .conversation-thread { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 36px 0 64px; gap: 28px; }
 .conversation-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; align-items: start; }
-.message-avatar { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; color: var(--muted); font-size: 11px; font-weight: 700; background: var(--surface); }
+.message-avatar { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; color: var(--muted); font-size: 12px; font-weight: 700; background: var(--surface); }
 .agent-avatar { color: var(--acid-ink); background: var(--acid); }
 .conversation-message p { margin: 0; color: var(--text); font-size: 15px; line-height: 1.72; overflow-wrap: anywhere; }
 .user-message > div:last-child { padding-top: 3px; }
-.user-message span { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
+.user-message span { display: block; margin-top: 7px; color: var(--muted); font-size: 12px; }
 .assistant-content { display: grid; justify-items: start; gap: 10px; padding-top: 3px; }
 .assistant-content > strong { color: var(--text); font-size: 15px; font-weight: 680; }
 .assistant-content > p { color: var(--muted); }
 .quote-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; margin: 2px 0 0; overflow: hidden; border: 0; border-radius: 10px; background: var(--surface); }
 .quote-summary div { display: grid; gap: 4px; padding: 10px 11px; background: transparent; }
-.quote-summary dt { color: var(--muted); font-size: 11px; }
+.quote-summary dt { color: var(--muted); font-size: 12px; }
 .quote-summary dd { margin: 0; color: var(--text); font: 680 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .conversation-dock { position: relative; z-index: 2; width: 100%; padding: 16px var(--conversation-gutter) max(16px, env(safe-area-inset-bottom)); background: var(--bg); }
-.objective-composer { width: min(var(--conversation-max), 100%); margin: 0 auto; }
+.objective-composer { min-width:0; width: min(var(--conversation-max), 100%); margin: 0 auto; }
+.draft-restored { width: min(var(--conversation-max),100%); margin: 8px auto 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.5; }
 .objective-composer :deep(.composer-box) { color: var(--text); background: var(--surface); }
 .run-action { min-height: 38px; padding: 0 13px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .run-action { display: inline-flex; align-items: center; gap: 7px; color: #0e100f; border: 0; background: var(--acid); }
 .run-action:disabled { opacity: .45; cursor: not-allowed; }
 .run-action:active { transform: scale(.98); }
-.run-action:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.run-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .workspace-notice { width: 100%; margin: 2px 0 0; padding: 9px 10px 9px 13px; color: var(--acid-text); border: 0; border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); box-shadow: inset 3px 0 var(--acid); font-size: 12px; }
 .workspace-notice.error { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); box-shadow: inset 3px 0 var(--danger); }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
@@ -742,7 +867,7 @@ onBeforeUnmount(() => {
 .history-label { display: flex; align-items: center; justify-content: space-between; padding: 6px 9px 9px; color: var(--muted); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
 .history-label button { display: grid; width: 28px; height: 28px; place-items: center; color: var(--muted); border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
 .history-label button:hover { color: var(--text); background: var(--surface-raised); }
-.history-label button:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.history-label button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .history-run { display: grid; grid-template-columns: 8px 1fr; gap: 8px; align-items: start; padding: 9px 8px; color: inherit; border-radius: 8px; text-decoration: none; }
 .history-run:hover, .history-run.router-link-active { background: var(--surface-raised); }
 .history-run i { width: 6px; height: 6px; margin-top: 5px; border-radius: 999px; background: var(--muted); }
@@ -777,9 +902,9 @@ onBeforeUnmount(() => {
 .browser-scope { display: grid; gap: 8px; }
 .browser-scope header { margin-bottom: 2px; }
 .browser-scope > input, .browser-scope select { min-height: 38px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 12px; }
-.browser-scope > input:focus-visible, .browser-scope select:focus-visible, .budget-range:focus-visible, .option-grid input:focus-visible, .capability-list input:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.browser-scope > input:focus-visible, .browser-scope select:focus-visible, .budget-range:focus-visible, .option-grid input:focus-visible, .capability-list input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .browser-scope > label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 12px; }
-.text-danger { justify-self: start; min-height: 36px; color: var(--danger); border: 0; background: transparent; font-size: 11px; }
+.text-danger { justify-self: start; min-height: 36px; color: var(--danger); border: 0; background: transparent; font-size: 12px; }
 .budget-range { width: 100%; }
 .execution-spine { position: relative; display: grid; gap: 0; }
 .execution-spine::before { position: absolute; top: 16px; bottom: 16px; left: 8px; width: 1px; content: ''; background: var(--border); }
@@ -802,9 +927,13 @@ onBeforeUnmount(() => {
 .file-list b { overflow: hidden; color: var(--text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .visually-hidden { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
+.browser-scope > label { color: var(--text); font-size: 13px; line-height: 1.5; }
+.option-grid label,.capability-list label { align-items: center; min-height: 44px; }
+.budget-range { height: 44px; margin: 0; }
 @media (max-width: 800px) {
-  .agent-conversation { --conversation-gutter: 14px; }
-  .conversation-empty { padding-block: 28px; }
+  .agent-conversation:not(.active) { align-content: start; padding-block: 32px 24px; }
+  .browser-scope > input,.browser-scope select { min-height: 44px; font-size: 16px; }
+  .conversation-empty { padding-bottom: 8px; }
   .conversation-empty h1 { font-size: 26px; }
   .conversation-empty > p, .conversation-message p { font-size: 14px; }
   .prompt-suggestions button { min-height: 44px; }
@@ -817,6 +946,7 @@ onBeforeUnmount(() => {
   .option-grid { grid-template-columns: 1fr; }
 }
 @media (max-height: 620px) {
+  .agent-conversation:not(.active) { padding-block: 8px; }
   .conversation-empty { align-content: start; padding-block: 24px; }
   .prompt-suggestions { gap: 5px; }
   .prompt-suggestions button { min-height: 44px; }
@@ -831,4 +961,11 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .prompt-suggestions button, .objective-composer { transition: none; }
 }
+
+.quote-scope { display: grid; gap: 7px; margin: 3px 0 9px; }
+.quote-scope > b { color: var(--text); font-size: 13px; font-weight: 600; }
+.quote-scope p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.quote-scope button { justify-self: start; min-height: 36px; padding: 7px 10px; color: var(--text); border: 0; border-radius: 8px; background: var(--surface-raised); font-size: 13px; cursor: pointer; }
+.quote-scope button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (max-width: 799px) { .quote-scope button { min-height: 44px; } }
 </style>

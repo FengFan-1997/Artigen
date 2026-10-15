@@ -656,6 +656,7 @@ const storeAsset = async (input = {}) => {
   if (Buffer.isBuffer(input.buffer)) {
     inspected = await fileInspection.inspectBuffer({
       buffer: input.buffer,
+      allowEmptyText: input.allowEmptyText === true,
       declaredMime: input.declaredMime,
       maxBytes,
       maxPixels: input.maxPixels,
@@ -920,6 +921,8 @@ const requestAssetDeletion = async ({ assetId, ownerUserId, pool = getPool() }) 
       WHERE id=$1
         AND owner_user_id=$2
         AND gc_state='active'
+        AND NOT EXISTS(SELECT 1 FROM workspace_file_versions WHERE asset_id=assets.id)
+        AND NOT EXISTS(SELECT 1 FROM project_asset_links WHERE asset_id=assets.id)
       RETURNING id`,
     [assetId, ownerUserId]
   );
@@ -942,7 +945,9 @@ const assertAssetNotInUse = async ({ assetId, ownerUserId, pool = getPool() }) =
            JOIN tool_tasks task ON task.id=link.task_id
           WHERE link.asset_id=asset.id
             AND task.status IN ('queued','running')
-       ) AS live_task
+       ) AS live_task,
+       EXISTS(SELECT 1 FROM workspace_file_versions WHERE asset_id=asset.id) AS workspace_reference,
+       EXISTS(SELECT 1 FROM project_asset_links WHERE asset_id=asset.id) AS project_reference
       FROM assets asset
      WHERE asset.id=$1
        AND asset.owner_user_id=$2
@@ -950,7 +955,7 @@ const assertAssetNotInUse = async ({ assetId, ownerUserId, pool = getPool() }) =
     [assetId, ownerUserId]
   );
   if (!state.rowCount) throw new ApiError(404, 'ASSET_NOT_FOUND');
-  if (state.rows[0].live_transfer || state.rows[0].live_task) {
+  if (state.rows[0].live_transfer || state.rows[0].live_task || state.rows[0].workspace_reference || state.rows[0].project_reference) {
     throw new ApiError(409, 'ASSET_IN_USE', { retryable: true });
   }
   return true;
@@ -1008,6 +1013,8 @@ const claimExpiredAssets = async (input = {}) => {
              AND gc_lease_until <= now()
            )
          )
+         AND NOT EXISTS(SELECT 1 FROM workspace_file_versions WHERE asset_id=assets.id)
+         AND NOT EXISTS(SELECT 1 FROM project_asset_links WHERE asset_id=assets.id)
          AND ($3::uuid IS NULL OR id=$3::uuid)
          ORDER BY COALESCE(expires_at, gc_lease_until), id
          FOR UPDATE SKIP LOCKED
@@ -1100,10 +1107,16 @@ const deleteClaimedAsset = async (input = {}) => {
            FROM tool_task_assets AS link
            JOIN tool_tasks AS task ON task.id=link.task_id
            WHERE link.asset_id=$1 AND task.status IN ('queued','running')
-         ) AS live_task`,
+         ) AS live_task,
+         EXISTS(SELECT 1 FROM workspace_file_versions WHERE asset_id=$1) AS workspace_reference,
+         EXISTS(SELECT 1 FROM project_asset_links WHERE asset_id=$1) AS project_reference`,
       [row.id]
     );
     const reference = references.rows[0] || {};
+    if (reference.workspace_reference || reference.project_reference) {
+      await client.query("UPDATE assets SET gc_state='active',gc_lease_until=NULL,expires_at=NULL,delete_requested_at=NULL,retention_class='project-owned',last_gc_error='ASSET_STILL_REFERENCED' WHERE id=$1", [row.id]);
+      return { status: 'retained' };
+    }
     if (reference.live_transfer || reference.live_task) {
       await client.query(
         `UPDATE assets SET

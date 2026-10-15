@@ -88,6 +88,7 @@ export type GenerationV2Deps = {
     scrollChatToBottom: () => void;
     showTopTip: (message: string) => void;
     onInsufficientCredits?: () => void;
+    onProjectGenerationComplete?: (projectId: string) => void;
   };
 };
 
@@ -244,7 +245,7 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
   const handleTerminalTask = async (
     task: ServerToolTask,
     pending: PendingGenerationSubmission
-  ) => {
+  ): Promise<string | null> => {
     if (task.status !== 'success') {
       const code = task.error?.code || (task.status === 'cancelled' ? 'TASK_CANCELLED' : 'TOOL_TASK_FAILED');
       failHistory(pending, new ToolTaskClientError(code));
@@ -255,14 +256,14 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
         retryable: Boolean(task.error?.retryable)
       });
       await deps.credits.refreshCredits().catch(() => {});
-      return;
+      return null;
     }
 
     if (pending.operation === 'directions') {
       const directions = normalizeGenerationDirections((task.result?.data as any)?.directions);
       if (directions.length !== 4) {
         failHistory(pending, new ToolTaskClientError('OUTPUT_INVALID'));
-        return;
+        return null;
       }
       applyDirections(directions);
       lastUserText.value = pending.userText;
@@ -272,7 +273,7 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
       const assetId = String(asset?.assetId || '').trim();
       if (!assetId) {
         failHistory(pending, new ToolTaskClientError('OUTPUT_INVALID'));
-        return;
+        return null;
       }
       ensureHistoryItem(pending);
       deps.history.setHistoryItemStatus(pending.historyId, {
@@ -301,6 +302,9 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
       refundedCredits: Number(task.receipt?.refundedCredits || 0)
     });
     await deps.credits.refreshCredits().catch(() => {});
+    return pending.operation === 'generate'
+      ? String(pending.projectId || '').trim() || null
+      : null;
   };
 
   const executeSubmission = async (pending: PendingGenerationSubmission, recovering = false) => {
@@ -357,9 +361,12 @@ export function useAgentImgGenerationV2(deps: GenerationV2Deps) {
         });
       }
       if (revision !== runRevision || controller.signal.aborted) return;
-      await handleTerminalTask(task, pending);
+      const completedProjectId = await handleTerminalTask(task, pending);
       await clearPendingGeneration();
       pendingUserText.value = '';
+      if (completedProjectId) {
+        deps.ui.onProjectGenerationComplete?.(completedProjectId);
+      }
     } catch (error: any) {
       if (revision !== runRevision) return;
       if (controller.signal.aborted) return;
