@@ -1,6 +1,7 @@
 import { authFetch } from '@/login/authFetch';
 import { buildApiUrl } from '@/utils/api';
 import { TEXT_MODEL, IMAGE_MODEL } from '../constants/models';
+import type { WorkspaceFileRef } from './workspaceFiles';
 import type { AgentQuote } from './agentRuns';
 
 export type DesignRouteKind = 'reply' | 'local_tool' | 'tool_task' | 'agent_run';
@@ -17,6 +18,7 @@ export type DesignExecutionStatus =
   | 'cancelled';
 
 export type DesignAttachmentManifest = {
+  fileRef?: WorkspaceFileRef;
   clientId: string;
   name: string;
   mimeType: string;
@@ -214,11 +216,11 @@ export const getDesignAssistantStatus = async () => {
   return result.status;
 };
 
-export const createDesignConversation = async (projectId?: string | null) => {
+export const createDesignConversation = async (projectId?: string | null, sourceRunId?: string | null) => {
   const result = await requestJson<{ conversation: DesignConversation }>('/api/design-conversations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(projectId ? { projectId } : {})
+    body: JSON.stringify({ ...(projectId ? { projectId } : {}), ...(sourceRunId ? { sourceRunId } : {}) })
   });
   return result.conversation;
 };

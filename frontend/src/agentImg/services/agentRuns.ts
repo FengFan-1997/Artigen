@@ -394,6 +394,7 @@ export const createAgentPlan = async (input: {
 });
 
 export const createAgentRun = async (input: {
+  fileEditTargets?: Array<{assetId:string;source:string;id:string;name:string;sha256:string}>;
   objective: string;
   assetIds?: string[];
   planToken?: string;
@@ -458,6 +459,11 @@ export const getAgentRun = async (runId: string) => {
     buildApiUrl(`/api/agent-runs/${encodeURIComponent(runId)}`)
   );
   return result.run;
+};
+
+export const getAgentActivity = async (runId: string, after = '0') => {
+ const result = await requestJson<{events:AgentEvent[]}>(buildApiUrl(`/api/agent-runs/${encodeURIComponent(runId)}/activity?after=${encodeURIComponent(after)}`));
+ return result.events;
 };
 
 export const controlAgentRun = async (
@@ -541,6 +547,7 @@ export const openAgentEventStream = (
     'context.compacted',
     'tool.call.started',
     'tool.call.completed',
+    'message.created',
     'verification.started',
     'verification.repair_requested',
     'verification.passed',
