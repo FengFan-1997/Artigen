@@ -37,7 +37,7 @@
     </template>
 
     <section class="agent-conversation" :class="{ active: hasConversation }">
-      <div class="conversation-scroll" aria-live="polite">
+      <div ref="conversationScroll" class="conversation-scroll" aria-live="polite">
         <div v-if="!hasConversation" class="conversation-empty">
           <h1>{{ zh ? '今天要一起完成什么？' : 'What should we finish together?' }}</h1>
         </div>
@@ -89,7 +89,7 @@
         </div>
       </div>
 
-      <div class="conversation-dock">
+      <div class="conversation-dock" :style="{ paddingInlineEnd: `calc(var(--conversation-gutter) + ${scrollbarGutter}px)` }">
         <div class="objective-composer">
           <ComposerBox
             ref="objectiveComposer"
@@ -250,6 +250,7 @@
 </template>
 
 <script setup lang="ts">
+import { useScrollbarGutter } from '../composables/useScrollbarGutter';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
@@ -309,6 +310,8 @@ const busy = computed(() => quoting.value || creating.value);
 const hasConversation = computed(() => Boolean(
   submittedObjective.value || quoting.value || quote.value || notice.value
 ));
+const conversationScroll = ref<HTMLElement | null>(null);
+const scrollbarGutter = useScrollbarGutter(conversationScroll);
 const form = reactive({
   objective: '',
   maxCredits: 50,

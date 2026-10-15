@@ -484,7 +484,9 @@ for (const listState of ['ready', 'slow', 'failed'] as const)
       route.fulfill({ json: { ok: true, file, text: file.text } })
     );
     await page.goto(runPath);
-    await resources(page);
+    await expect(page.locator('.workspace-topbar')).toBeVisible();
+    // Open from the conversation itself. A mobile resource drawer would cover
+    // this link; the delivery action must open that drawer after selection.
     const tabsBefore = page.context().pages().length;
     await page.locator('.delivery-summary a').click();
     await expect(page.locator('.document-preview')).toContainText('品牌网站审查');

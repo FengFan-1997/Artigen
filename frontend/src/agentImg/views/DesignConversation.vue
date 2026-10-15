@@ -198,7 +198,7 @@
         </article>
       </div>
 
-      <div class="docked-composer">
+      <div class="docked-composer" :style="{ paddingInlineEnd: `calc(var(--conversation-gutter) + ${scrollbarGutter}px)` }">
         <div v-if="selectedSourceArtifacts.length" class="selected-source-artifacts">
           <span class="source-context-label">{{ zh ? '本轮会参考上一轮文件' : 'Using files from an earlier run' }}</span>
           <span v-for="artifact in selectedSourceArtifacts" :key="artifact.artifactId" class="source-context-chip">
@@ -361,6 +361,7 @@
 </template>
 
 <script setup lang="ts">
+import { useScrollbarGutter } from '../composables/useScrollbarGutter';
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
@@ -464,6 +465,7 @@ const retryingPlanningMessageId = ref('');
 const workspaceSearch = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
 const scrollArea = ref<HTMLElement | null>(null);
+const scrollbarGutter = useScrollbarGutter(scrollArea);
 const nearBottom = ref(true);
 const hasUnreadUpdates = ref(false);
 const scrollPositions = new Map<string, number>();

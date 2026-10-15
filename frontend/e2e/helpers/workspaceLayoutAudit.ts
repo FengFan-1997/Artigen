@@ -292,8 +292,11 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
         const widthCoverage = rect.width > 0 ? visibleWidth / rect.width : 0;
         const heightCoverage = rect.height > 0 ? visibleHeight / rect.height : 0;
         const viewportCoverage = widthCoverage * heightCoverage;
-        const insetX = Math.min(8, visibleWidth / 3);
-        const insetY = Math.min(8, visibleHeight / 3);
+        // WebKit rounds hit-test coordinates to CSS pixels. Keep samples at
+        // least one pixel inside a clipped edge (or centered in a <2px sliver),
+        // so an adjacent dock is not mistaken for an overlay on the control.
+        const insetX = Math.min(8, Math.max(1, visibleWidth / 3), visibleWidth / 2);
+        const insetY = Math.min(8, Math.max(1, visibleHeight / 3), visibleHeight / 2);
         const points = [
           [visibleRect.left + visibleWidth / 2, visibleRect.top + visibleHeight / 2],
           [visibleRect.left + insetX, visibleRect.top + visibleHeight / 2],

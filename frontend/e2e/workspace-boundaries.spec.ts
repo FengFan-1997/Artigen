@@ -62,6 +62,10 @@ async function fixture(page: Page, theme: string) {
   await page.setViewportSize({ width: 1920, height: 900 });
   await page.goto(`/artigen/agent?projectId=${projectA}`);
   await expect(page.locator('.resource-tree')).toBeVisible();
+  // Wait for the real theme transition before measuring its final contrast.
+  await expect(page.locator('.composer-box')).toHaveCSS(
+    'background-color', theme === 'dark' ? 'rgb(35, 38, 34)' : 'rgb(255, 255, 255)'
+  );
 }
 
 for (const theme of ['light', 'dark']) {
