@@ -221,3 +221,22 @@ test('offline status remains visible instead of being hidden with the ready stat
   await page.goto('/artigen/agent');
   await expect(page.locator('.task-meta')).toContainText('Worker 离线');
 });
+
+test('collapsed desktop panels occupy zero width including their functional borders', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1920, height: 960 });
+  await chromeFixture(page);
+  await page.goto('/artigen/agent');
+  const width = (selector: string) =>
+    page.locator(selector).evaluate((el) => el.getBoundingClientRect().width);
+  await expect.poll(() => width('.workspace-right')).toBe(0);
+  await page.getByRole('button', { name: '折叠左栏', exact: true }).click();
+  await expect.poll(() => width('.workspace-left')).toBe(0);
+  await page.getByRole('button', { name: '展开左栏', exact: true }).click();
+  await expect.poll(() => width('.workspace-left')).toBeGreaterThan(216);
+  await page.getByRole('button', { name: '打开检查器', exact: true }).click();
+  await expect.poll(() => width('.workspace-right')).toBeGreaterThan(400);
+  await page.getByRole('button', { name: '关闭资源区', exact: true }).click();
+  await expect.poll(() => width('.workspace-right')).toBe(0);
+});

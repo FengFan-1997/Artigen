@@ -671,6 +671,7 @@ onBeforeUnmount(() => {
 .agent-workspace-shell[data-theme="light"] .brand-lockup { color: #171a16; }
 .agent-workspace-shell.left-collapsed { --left-live: 0px; }
 .left-collapsed .workspace-left { visibility: hidden; }
+@media (min-width:1440px) { .left-collapsed .workspace-left { border-right-width:0; }.right-collapsed .workspace-right { border-left-width:0; } }
 .agent-workspace-shell.right-collapsed { --right-live: 0px; }
 *,*::before,*::after { box-sizing: border-box; }
 .agent-workspace-shell :deep(*),.agent-workspace-shell :deep(*::before),.agent-workspace-shell :deep(*::after) { box-sizing: border-box; }
