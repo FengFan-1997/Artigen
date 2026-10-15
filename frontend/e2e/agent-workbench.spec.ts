@@ -163,7 +163,7 @@ const installSharedApi = async (
   // default collapsed zero state is covered in agent-workspace-polish.spec.ts.
   await page.addInitScript(() => {
     if (!localStorage.getItem('artigen-workspace-preferences')) {
-      localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 3, rightCollapsed: false, resourceMode:'task', theme: 'dark' }));
+      localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 4, inspectorVisibility: { compose: false, task: false }, resourceMode:'task', theme: 'dark' }));
     }
   });
   await page.route('**/api/auth/session', (route) => route.fulfill({
@@ -635,7 +635,8 @@ test('image and subagent controls fail closed when production flags are unavaila
   await expect(imageCapability.locator('input')).toBeDisabled();
   const subagentCapability = page.locator('.capability-list label').filter({ hasText: '并行处理' });
   await expect(subagentCapability.locator('input')).toBeDisabled();
-  await expect(page.locator('.runtime-pill')).toContainText('单 Agent 就绪');
+  await expect(page.locator('.runtime-pill.warning')).toHaveCount(0);
+  await expect(page.locator('.task-meta')).toHaveCount(0);
 });
 
 test('run detail exposes parent plus three isolated subagents and cancels one without stopping the parent', async ({ page, browserName }) => {

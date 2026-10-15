@@ -114,8 +114,8 @@
           />
         </div>
         <p v-if="draftRestored" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿；如需参考文件，请重新选择。' : 'Your local draft was restored. Choose any reference files again.' }}</p>
-        <div v-if="!hasConversation" class="prompt-suggestions" :aria-label="zh ? '任务建议' : 'Task suggestions'">
-          <button v-for="(preset, index) in presets" :key="preset" type="button" @click="applyPreset(index)"><span>{{ suggestionLabels[index] }}</span></button>
+        <div v-if="!hasConversation && !form.objective.trim() && !selectedFiles.length" class="prompt-suggestions" :aria-label="zh ? '任务建议' : 'Task suggestions'">
+          <button v-for="(preset, index) in presets" :key="preset" type="button" @click="applyPreset(index)"><WorkspaceIcon :name="suggestionIcons[index]" :size="16" /><span>{{ suggestionLabels[index] }}</span></button>
         </div>
       </div>
     </section>
@@ -256,10 +256,10 @@ import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import { getCurrentUserId } from '@/login/session';
 import { useWorkspaceDraft } from '../composables/useWorkspaceDraft';
+import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
-import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
 import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
 import {
   createAgentRun,
@@ -498,7 +498,7 @@ const workspaceStatus = computed<{ label: string; tone: 'ready' | 'busy' | 'warn
     return { label: creating.value ? (zh.value ? '正在启动' : 'Starting') : (zh.value ? '正在报价' : 'Quoting'), tone: 'busy' };
   }
   if (!serviceStatus.value?.subagentsEnabled) {
-    return { label: zh.value ? '单 Agent 就绪' : 'Single Agent ready', tone: 'warning' };
+    return { label: zh.value ? '单 Agent 就绪' : 'Single Agent ready', tone: 'ready' };
   }
   return { label: zh.value ? 'Agent 就绪' : 'Agent ready', tone: 'ready' };
 });
@@ -521,6 +521,7 @@ const filteredRuns = (search: string) => {
   if (!query) return runs.value;
   return runs.value.filter((run) => `${run.objectivePreview || ''} ${run.status}`.toLocaleLowerCase().includes(query));
 };
+const suggestionIcons = ['search', 'file', 'image'] as const;
 const presets = computed(() => zh.value
   ? [
       '研究三个直接竞品。把品牌定位、视觉系统和产品体验分别委派给三个子 Agent，最后交付带来源的 Markdown 与 PDF 提案。',
@@ -831,12 +832,12 @@ onBeforeUnmount(() => {
 .conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
 .conversation-empty { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 0 0 10px; justify-items: start; }
 .conversation-empty h1 { margin: 0; color: var(--text); font-size: clamp(28px, 3vw, 36px); font-weight: 680; line-height: 1.18; letter-spacing: -.035em; text-wrap: balance; }
-.prompt-suggestions { display: grid; width: min(var(--conversation-max), 100%); gap: 4px; margin: 20px auto 0; }
-.prompt-suggestions button { display: block; width: 100%; min-height: 42px; padding: 9px 10px; color: var(--muted); border: 0; border-radius: 10px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease, transform 120ms cubic-bezier(.23,1,.32,1); }
+.prompt-suggestions { display: flex; flex-wrap: wrap; width: min(var(--conversation-max), 100%); gap: 8px; margin: 16px auto 0; }
+.prompt-suggestions button { display: inline-flex; align-items:center; gap:8px; max-width:100%; min-height: 36px; padding: 7px 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease, transform 120ms cubic-bezier(.23,1,.32,1); }
 .prompt-suggestions button:hover { color: var(--text); background: var(--surface-hover); }
 .prompt-suggestions button:active { transform: scale(.995); }
 .prompt-suggestions button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.prompt-suggestions span { font-size: 14px; }
+.prompt-suggestions span { font-size: 13px; line-height:20px; }
 .conversation-thread { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 36px 0 64px; gap: 28px; }
 .conversation-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; align-items: start; }
 .message-avatar { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; color: var(--muted); font-size: 12px; font-weight: 700; background: var(--surface); }

@@ -22,16 +22,16 @@
     <a class="skip-link" href="#artigen-workspace-main">{{ zh ? '跳到主要内容' : 'Skip to main content' }}</a>
 
     <nav class="workspace-rail" :inert="commandOpen || leftDrawerOpen || rightDrawerOpen ? true : undefined" :aria-label="zh ? '功能切换' : 'App navigation'">
-      <router-link class="rail-brand" to="/artigen/create" aria-label="Artigen">A</router-link>
-      <button type="button" :aria-label="leftCollapsed && !overlayLayout ? (zh ? '展开左栏' : 'Expand left panel') : (zh ? '项目与会话' : 'Projects and chats')" :aria-expanded="!leftCollapsed" aria-controls="workspace-history-panel" @click="openLeftDrawer"><WorkspaceIcon name="panel-left" :size="20" /></button>
-      <router-link to="/artigen/create" :aria-label="zh ? '会话' : 'Chat'"><WorkspaceIcon name="agent" :size="20" /></router-link>
-      <router-link to="/artigen/projects" :aria-label="zh ? '项目' : 'Projects'"><WorkspaceIcon name="folder" :size="20" /></router-link>
-      <router-link to="/artigen/tools" :aria-label="zh ? '工具' : 'Tools'"><WorkspaceIcon name="tools" :size="20" /></router-link>
-      <router-link to="/artigen/ai" :aria-label="zh ? '高级生图' : 'Image studio'"><WorkspaceIcon name="image" :size="20" /></router-link>
-      <button type="button" aria-label="GitHub" @click="openResources('github')"><WorkspaceIcon name="git" :size="20" /></button>
+      <router-link class="rail-brand" to="/artigen/create" aria-label="Artigen" title="Artigen">A</router-link>
+      <button type="button" :title="zh ? '项目与会话' : 'Projects and chats'" :aria-label="leftCollapsed && !overlayLayout ? (zh ? '展开左栏' : 'Expand left panel') : (zh ? '项目与会话' : 'Projects and chats')" :aria-expanded="!leftCollapsed" aria-controls="workspace-history-panel" @click="openLeftDrawer"><WorkspaceIcon name="panel-left" :size="20" /></button>
+      <router-link class="rail-chat" :class="{ 'rail-active': route.path.startsWith('/artigen/agent') }" to="/artigen/create" :aria-current="route.path.startsWith('/artigen/agent') ? 'location' : undefined" :title="zh ? '会话' : 'Chat'" :aria-label="zh ? '会话' : 'Chat'"><WorkspaceIcon name="chat" :size="20" /></router-link>
+      <router-link to="/artigen/projects" :title="zh ? '项目' : 'Projects'" :aria-label="zh ? '项目' : 'Projects'"><WorkspaceIcon name="folder" :size="20" /></router-link>
+      <router-link to="/artigen/tools" :title="zh ? '工具' : 'Tools'" :aria-label="zh ? '工具' : 'Tools'"><WorkspaceIcon name="tools" :size="20" /></router-link>
+      <router-link to="/artigen/ai" :title="zh ? '高级生图' : 'Image studio'" :aria-label="zh ? '高级生图' : 'Image studio'"><WorkspaceIcon name="image" :size="20" /></router-link>
+      <button type="button" title="GitHub" aria-label="GitHub" :aria-pressed="resourceMode === 'github' && (overlayLayout ? rightDrawerOpen : !rightCollapsed)" @click="openResources('github')"><WorkspaceIcon name="git" :size="20" /></button>
       <span class="rail-spacer"></span>
-      <button type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon name="moon" :size="20" /></button>
-      <router-link to="/login/account" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="20" /></router-link>
+      <button type="button" :title="themeLabel" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon :name="themeIcon" :size="20" /></button>
+      <router-link to="/login/account" :title="zh ? '账户设置' : 'Account settings'" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="20" /></router-link>
     </nav>
 
     <aside
@@ -126,9 +126,10 @@
             <span v-if="taskCostLabel" class="task-cost">{{ taskCostLabel }}</span>
           </div>
         </div>
+        <span v-if="isDevEnvironment" class="workspace-environment" :aria-label="zh ? 'DEV 测试环境' : 'DEV test environment'">DEV</span>
         <div class="topbar-actions">
           <slot name="topbar-actions" />
-          <button ref="rightDrawerButton" class="icon-control inspector-toggle" type="button" :aria-label="zh ? '打开检查器' : 'Open inspector'" @click="toggleRight">
+          <button ref="rightDrawerButton" class="icon-control inspector-toggle" type="button" :aria-label="zh ? '打开检查器' : 'Open inspector'" :aria-expanded="overlayLayout ? rightDrawerOpen : !rightCollapsed" aria-controls="workspace-inspector-panel" @click="toggleRight">
             <WorkspaceIcon name="panel-right" :size="18" />
           </button>
         </div>
@@ -158,10 +159,12 @@
       :inert="commandOpen || leftDrawerOpen || (overlayLayout && !rightDrawerOpen) ? true : undefined"
     >
       <nav class="resource-tabs" :aria-label="zh ? '资源面板' : 'Resources'">
-        <button v-for="item in resourceModes" :key="item.id" type="button" :aria-pressed="resourceMode === item.id" @click="resourceMode = item.id">{{ item.label }}</button>
-        <button type="button" :aria-label="zh ? '关闭资源区' : 'Close resources'" @click="closeRight(true)"><WorkspaceIcon name="close" /></button>
+        <button v-for="item in resourceModes" :key="item.id" class="resource-mode" type="button" :aria-pressed="resourceMode === item.id" @click="resourceMode = item.id"><WorkspaceIcon :name="item.icon" :size="16" /><span>{{ item.label }}</span></button>
+        <span class="resource-tabs-spacer" />
+        <button v-if="resourceMode === 'files' || resourceMode === 'changes'" ref="directoryToggle" class="resource-icon-control tree-toggle" type="button" :aria-label="resourceWorkspace?.treeVisible ? (zh ? '隐藏目录树' : 'Hide file tree') : (zh ? '显示目录树' : 'Show file tree')" :aria-pressed="resourceWorkspace?.treeVisible" @click="resourceWorkspace?.toggleTree()"><WorkspaceIcon name="panel-right" :size="18" /></button>
+        <button class="resource-icon-control" type="button" :aria-label="zh ? '关闭资源区' : 'Close resources'" @click="closeRight(true)"><WorkspaceIcon name="close" :size="18" /></button>
       </nav>
-      <ResourceWorkspace v-show="resourceMode !== 'task'" :mode="resourceMode" :project-id="projectId || String(route.query.projectId || '')" :artifacts="artifacts" :zh="zh" @changes="resourceMode = 'changes'" />
+      <ResourceWorkspace ref="resourceWorkspace" v-show="resourceMode !== 'task'" :mode="resourceMode" :project-id="projectId || String(route.query.projectId || '')" :artifacts="artifacts" :zh="zh" @changes="resourceMode = 'changes'" @focus-directory="directoryToggle?.focus({ preventScroll: true })" />
       <div v-show="resourceMode === 'task'" class="task-inspector">
       <header class="inspector-head">
         <div>
@@ -289,9 +292,12 @@ const emit = defineEmits<{
 
 const router = useRouter();
 const route = useRoute();
+const isDevEnvironment = ['dev', 'development'].includes(String(import.meta.env.VITE_APP_ENV || '').toLowerCase());
+const resourceWorkspace = ref<InstanceType<typeof ResourceWorkspace> | null>(null);
+const directoryToggle = ref<HTMLButtonElement | null>(null);
 const viewportWidth = ref(window.innerWidth);
 const resourceMode = ref<'files' | 'changes' | 'github' | 'task'>('files');
-const resourceModes = computed(() => [ { id: 'files' as const, label: props.zh ? '文件' : 'Files' }, { id: 'changes' as const, label: props.zh ? '变更' : 'Changes' }, { id: 'github' as const, label: 'GitHub' }, { id: 'task' as const, label: props.zh ? '任务' : 'Task' } ]);
+const resourceModes = computed(() => [ { id: 'files' as const, icon: 'file' as const, label: props.zh ? '文件' : 'Files' }, { id: 'changes' as const, icon: 'changes' as const, label: props.zh ? '变更' : 'Changes' }, { id: 'github' as const, icon: 'git' as const, label: 'GitHub' }, { id: 'task' as const, icon: 'list' as const, label: props.zh ? '任务' : 'Task' } ]);
 const openResources = async (mode: typeof resourceMode.value) => {
   resourceMode.value = mode;
   if (isOverlayLayout()) {
@@ -315,6 +321,8 @@ const search = ref('');
 const leftCollapsed = ref(false);
 const rightCollapsed = ref(props.defaultInspectorCollapsed);
 let rightPreferenceSet = false;
+const inspectorVisibility: Partial<Record<'compose' | 'task', boolean>> = {};
+const inspectorScope = () => props.defaultInspectorCollapsed ? 'compose' : 'task';
 const leftDrawerOpen = ref(false);
 const rightDrawerOpen = ref(false);
 const leftWidth = ref(280);
@@ -352,6 +360,7 @@ const tabs = computed(() => [
 const resolvedTheme = computed(() => theme.value === 'system'
   ? (systemDark.value ? 'dark' : 'light')
   : theme.value);
+const themeIcon = computed(() => theme.value === 'system' ? 'monitor' : resolvedTheme.value === 'light' ? 'sun' : 'moon');
 const visibleRightWidth = computed(() => Math.min(rightWidth.value, Math.max(480, viewportWidth.value - 56 - (leftCollapsed.value ? 0 : leftWidth.value) - 480)));
 const workspaceStyle = computed(() => ({
   '--workspace-left-width': `${leftWidth.value}px`,
@@ -386,14 +395,15 @@ const emptyInspectorLabel = (id: InspectorTab) => ({
 }[id]);
 
 const persistPreferences = () => {
+  if (rightPreferenceSet) inspectorVisibility[inspectorScope()] = rightCollapsed.value;
   try { localStorage.setItem('artigen-workspace-preferences', JSON.stringify({
-    version: 3,
+    version: 4,
     theme: theme.value,
     leftWidth: leftWidth.value,
     rightWidth: rightWidth.value,
     leftCollapsed: leftCollapsed.value,
     resourceMode: resourceMode.value,
-    rightCollapsed: rightPreferenceSet ? rightCollapsed.value : undefined
+    inspectorVisibility
   })); } catch { /* Layout remains usable without browser storage. */ }
 };
 const toggleLeft = () => { leftCollapsed.value = !leftCollapsed.value; persistPreferences(); };
@@ -537,12 +547,18 @@ onMounted(() => {
     const stored = JSON.parse(localStorage.getItem('artigen-workspace-preferences') || '{}');
     if (['files','changes','github','task'].includes(stored.resourceMode)) resourceMode.value = stored.resourceMode;
     if (['dark', 'light', 'system'].includes(stored.theme)) theme.value = stored.theme;
-    if ([2,3].includes(stored.version) && Number(stored.leftWidth)) leftWidth.value = Math.min(340, Math.max(216, Number(stored.leftWidth)));
-    if (stored.version === 3 && Number(stored.rightWidth)) rightWidth.value = Math.max(480, Number(stored.rightWidth));
+    if ([2,3,4].includes(stored.version) && Number(stored.leftWidth)) leftWidth.value = Math.min(340, Math.max(216, Number(stored.leftWidth)));
+    if ([3,4].includes(stored.version) && Number(stored.rightWidth)) rightWidth.value = Math.max(480, Number(stored.rightWidth));
     leftCollapsed.value = stored.leftCollapsed === true;
-    if (typeof stored.rightCollapsed === 'boolean') {
+    // Legacy visibility belonged to active tasks. It must not open a new, empty composer.
+    for (const scope of ['compose', 'task'] as const) {
+      const preference = stored.version === 4 ? stored.inspectorVisibility?.[scope] : scope === 'task' ? stored.rightCollapsed : undefined;
+      if (typeof preference === 'boolean') inspectorVisibility[scope] = preference;
+    }
+    const preference = inspectorVisibility[inspectorScope()];
+    if (typeof preference === 'boolean') {
       rightPreferenceSet = true;
-      rightCollapsed.value = stored.rightCollapsed;
+      rightCollapsed.value = preference;
     }
   } catch {}
   media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -573,7 +589,9 @@ onMounted(() => {
 watch(resourceMode, persistPreferences);
 watch(() => props.defaultInspectorTab, (value) => { activeTab.value = value; resourceMode.value = 'task'; });
 watch(() => props.defaultInspectorCollapsed, (value) => {
-  if (!rightPreferenceSet) rightCollapsed.value = value;
+  const preference = inspectorVisibility[inspectorScope()];
+  rightPreferenceSet = typeof preference === 'boolean';
+  rightCollapsed.value = preference ?? value;
 });
 onBeforeUnmount(() => {
   endResize();
@@ -601,6 +619,7 @@ onBeforeUnmount(() => {
   --danger: #ff6b62;
   --warning: #f1bd4f;
   --success: #69d59a;
+  --workspace-header-height: 56px;
   --font-meta: 12px;
   --font-control: 13px;
   --font-body: 15px;
@@ -648,6 +667,8 @@ onBeforeUnmount(() => {
 button,input { font: inherit; }
 button { color: inherit; }
 .agent-workspace-shell :deep(:where(button,a,summary,input,textarea,select):focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.agent-workspace-shell :deep(:where(button,a,summary):focus:not(:focus-visible)) { outline: none; }
+.agent-workspace-shell :deep(.composer-box textarea:focus-visible) { outline: none; }
 .agent-workspace-shell :where(button,a,summary,label) { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 input,textarea { caret-color: var(--acid); }
 .agent-workspace-shell ::selection { color: var(--acid-ink); background: color-mix(in srgb,var(--acid) 78%,transparent); }
@@ -657,9 +678,10 @@ svg { display: block; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-w
 .workspace-left,.workspace-right,.workspace-main { min-width: 0; min-height: 0; }
 .workspace-left,.workspace-right { overscroll-behavior: contain; }
 .workspace-left { z-index: 40; display: flex; flex-direction: column; overflow: hidden; background: var(--sidebar); }
-.workspace-brand { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 64px; padding: 10px 14px 8px 16px; }
+.workspace-brand { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; height: var(--workspace-header-height); min-height: var(--workspace-header-height); padding: 6px 12px 6px 16px; }
 .brand-lockup { display: flex; align-items: center; gap: 11px; min-width: 0; min-height: 44px; padding: 6px 0; color: inherit; font-size: 16px; font-weight: 700; text-decoration: none; letter-spacing: -.015em; }
 .brand-glyph { display: grid; flex: 0 0 auto; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; font-weight: 760; background: var(--surface-raised); }
+@media (min-width:1440px) { .brand-glyph { display:none; } }
 .brand-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-control { display: inline-grid; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; transition: color 150ms ease,background-color 150ms ease,transform 120ms cubic-bezier(.23,1,.32,1); }
 .icon-control:hover { color: var(--text); background: var(--surface-hover); }
@@ -702,21 +724,21 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .right-resizer { right: calc(var(--right-live) - 4px); }
 .left-collapsed .left-resizer,.right-collapsed .right-resizer { display: none; }
 .workspace-main { position: relative; display: flex; flex-direction: column; background: var(--bg); }
-.workspace-topbar { display: flex; flex: 0 0 auto; align-items: center; gap: 14px; min-height: 64px; padding: 10px 20px 10px 24px; overflow: hidden; background: var(--bg); }
+.workspace-topbar { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: var(--workspace-header-height); padding: 6px 12px 6px 20px; overflow: hidden; background: var(--bg); }
 .topbar-heading-slot { flex: 1 1 auto; min-width: 0; overflow: hidden; }
-.task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 3px; }
+.task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; margin-top: 0; }
 .task-cost { color: var(--muted); font-size: var(--font-meta); line-height: 1.5; font-variant-numeric: tabular-nums; }
 .task-heading { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.task-heading-icon { display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; color: var(--muted); }
+.task-heading-icon { display: grid; flex: 0 0 auto; width: 20px; height: 20px; place-items: center; color: var(--muted); }
 .task-heading-copy { display: grid; min-width: 0; gap: 2px; }
-.task-heading strong { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.task-heading strong { overflow: hidden; font-size: 14px; line-height: 20px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .task-heading small { overflow: hidden; color: var(--muted); font-size: var(--font-meta); text-overflow: ellipsis; white-space: nowrap; }
 .topbar-actions,.mobile-panel-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
 .runtime-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 18px; padding: 0; color: var(--muted); font-size: var(--font-meta); font-weight: 620; white-space: nowrap; }
 .runtime-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .runtime-pill.ready i { background: var(--success); }.runtime-pill.busy i { background: var(--acid); }.runtime-pill.warning i { background: var(--warning); }.runtime-pill.offline i { background: var(--danger); }
 .main-slot { flex: 1; min-height: 0; overflow: hidden; }
-.workspace-right { z-index: 40; display: flex; flex-direction: column; height: 100%; margin: 0; overflow: hidden; border-radius: 0; background: var(--bg); }
+.workspace-right { border-left: 1px solid var(--border); z-index: 40; display: flex; flex-direction: column; height: 100%; margin: 0; overflow: hidden; border-radius: 0; background: var(--bg); }
 .right-collapsed .workspace-right { visibility: hidden; }
 .inspector-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 58px; padding: 10px 12px 8px 18px; }
 .inspector-head > div { display: grid; min-width: 0; gap: 2px; }
@@ -773,17 +795,26 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
   * { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }
 }
 
-.workspace-rail { min-height:0; overflow-y:auto; display:flex; flex-direction:column; align-items:center; gap:9px; padding:12px 5px; background:var(--surface); }
-.workspace-rail > a,.workspace-rail > button { display:grid; flex:none; place-items:center; width:44px; height:44px; border:0; border-radius:9px; color:var(--muted); background:transparent; text-decoration:none; cursor:pointer; }
-.workspace-rail > a:hover,.workspace-rail > button:hover { background:var(--surface-hover); color:var(--text); }.workspace-rail .rail-brand { color:var(--text); font-weight:750; background:var(--surface-raised); }.rail-spacer { flex:1; }
-.resource-tabs { display:flex; align-items:center; min-height:48px; gap:4px; padding:5px 8px; border-bottom:1px solid var(--border); }.resource-tabs > button { flex:1; min-height:36px; padding:5px 8px; border:0; border-radius:7px; background:transparent; color:var(--muted); font:inherit; font-size:13px; cursor:pointer; }.resource-tabs > button[aria-pressed="true"] { background:var(--surface-raised); color:var(--text); }.resource-tabs > button:last-child { display:grid; flex:none; place-items:center; width:36px; padding:0; }
+/* One icon grid and one header baseline across all three workspace regions. */
+.workspace-rail { min-height:0; overflow-y:auto; display:flex; flex-direction:column; align-items:center; gap:4px; padding:6px; background:var(--sidebar); scrollbar-width:thin; scrollbar-color:var(--border) transparent; }
+.workspace-rail > a,.workspace-rail > button { display:grid; flex:none; place-items:center; width:44px; height:44px; padding:0; border:0; border-radius:8px; color:var(--muted); background:transparent; text-decoration:none; cursor:pointer; transition:background-color 150ms ease,color 150ms ease; }
+.workspace-rail > a:hover,.workspace-rail > button:hover { background:var(--surface-hover); color:var(--text); }
+.workspace-rail > a:not(.rail-brand).router-link-active,.workspace-rail > .rail-active,.workspace-rail > button[aria-pressed="true"] { color:var(--text); background:var(--surface-hover); }
+.workspace-rail > :is(a,button):active { background:var(--surface-raised); }
+.workspace-rail .rail-brand { margin-bottom:8px; color:var(--text); font-size:17px; font-weight:750; }
+.rail-spacer { flex:1; min-height:12px; }
+.workspace-environment { flex:none; padding:2px 5px; border-radius:4px; color:var(--muted); background:var(--surface-raised); font-size:10px; line-height:16px; font-weight:650; letter-spacing:.04em; }
+.resource-tabs { display:flex; flex:none; align-items:center; height:var(--workspace-header-height); min-height:var(--workspace-header-height); gap:2px; padding:0 8px; border-bottom:1px solid var(--border); }
+.resource-tabs > button { display:inline-flex; flex:none; align-items:center; justify-content:center; gap:6px; height:36px; padding:0 10px; border:0; border-radius:7px; background:transparent; color:var(--muted); font:inherit; font-size:13px; cursor:pointer; transition:background-color 150ms ease,color 150ms ease; }
+.resource-tabs > button:hover { color:var(--text); background:var(--surface-hover); }
+.resource-tabs > button[aria-pressed="true"] { color:var(--text); background:var(--surface-raised); }
+.resource-tabs > button:active { background:var(--surface-hover); }
+.resource-tabs-spacer { flex:1; min-width:0; }
+.resource-tabs > .resource-icon-control { width:32px; padding:0; }
 .task-inspector { display:flex; flex:1; flex-direction:column; min-height:0; }.workspace-nav { display:none; }
-@media(max-width:799px) { .resource-tabs > button { min-height:44px; }.resource-tabs > button:last-child { width:44px; } }
+@media(max-width:799px) { .resource-tabs { padding-inline:4px; gap:0; }.resource-tabs > button { min-width:44px; min-height:44px; padding-inline:8px; }.resource-tabs > .resource-icon-control { width:44px; padding:0; }.resource-mode svg { display:none; } }
 </style>
 
 <style>
 body.workspace-resizing { cursor: col-resize !important; user-select: none !important; }
-@media (min-width: 1440px) {
-  body:has(.dev-environment-badge) .agent-workspace-shell.right-collapsed .topbar-actions { padding-right: 50px; }
-}
 </style>

@@ -209,3 +209,13 @@ Don't:
 - GitHub列表和记录详情互相切换，返回恢复原记录焦点；刷新使旧请求失效时，当前请求仍必须释放busy状态。
 - 命令面板按可用高度滚动；嵌套控件已处理的键盘事件不能再触发Shell，编辑器搜索的第一次Escape仅关闭搜索。
 - 触屏规则按pointer:coarse生效，包含平板而不限手机宽度；紧凑子组件不得覆盖44px最小触控尺寸。
+
+
+## Workspace chrome refinement
+
+- Desktop brand, conversation and resource navigation share a 56px header baseline. The 56px feature rail uses centered 20px SVGs in 44px hit areas, compact 4px gaps and explicit current-location/pressed states. The appearance glyph reflects light, dark or system mode. Desktop does not repeat the brand monogram in the adjacent project header.
+- Resource modes use icon-and-label tabs at their natural width; the directory toggle and close action stay anchored on the right. With no open documents there is no empty file-tab row. Closing the last document restores focus to the directory toggle in the shared header.
+- DEV identification belongs inside the conversation header. The global floating DEV badge is hidden only while a workspace shell is present; it must not cover resource actions or require guessed padding offsets.
+- Compose and active-task inspector visibility have independent version-4 preferences. Version-2/3 visibility migrates only to active tasks: a prior open task inspector does not force an empty resource panel into a new request. An explicit compose preference is restored, including when switching between those contexts.
+- A healthy single Agent is a ready state, not a warning. Genuine offline, model mismatch, running, approval and cost states remain visible. Empty-state suggestions are compact icon actions and disappear once a goal or references have been supplied.
+- The shared Composer uses a restrained neutral shadow (black at 6% opacity) and one 2px theme-colored container focus outline. Its textarea does not add a second outline. Pointer clicks on workspace controls do not inherit the global browser-blue focus ring; keyboard focus retains the semantic theme outline.

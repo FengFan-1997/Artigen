@@ -139,10 +139,10 @@ export const installAgentInputFixture = async (
       localStorage.setItem(
         'artigen-workspace-preferences',
         JSON.stringify({
-          version: 2,
+          version: 4,
           theme,
           ...(inspector ? {resourceMode:'task'} : {}),
-          ...(inspector === undefined ? {} : { rightCollapsed: !inspector })
+          ...(inspector === undefined ? {} : { inspectorVisibility: { compose: !inspector, task: !inspector } })
         })
       );
       const sources: Array<EventTarget & { url: string; closed: boolean }> = [];

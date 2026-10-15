@@ -11,7 +11,7 @@
       :zh="zh"
     />
     <template v-else>
-      <div class="file-tabs-bar">
+      <div v-if="documents.length" class="file-tabs-bar">
         <div
           ref="fileTabs"
           class="file-tabs"
@@ -46,22 +46,6 @@
             </button>
           </div>
         </div>
-        <button
-          class="tree-toggle"
-          :aria-label="
-            treeVisible
-              ? zh
-                ? '隐藏目录树'
-                : 'Hide file tree'
-              : zh
-                ? '显示目录树'
-                : 'Show file tree'
-          "
-          :aria-pressed="treeVisible"
-          @click="toggleTree"
-        >
-          <WorkspaceIcon name="panel-right" />
-        </button>
       </div>
       <p v-if="notice" class="resource-notice" role="status">{{ notice }}</p>
       <div class="file-body">
@@ -283,13 +267,13 @@
                   : 'Choose a project file or connect a local folder.'
               }}
             </p>
-            <button v-if="!treeVisible" @click="toggleTree">
+            <div class="resource-empty-actions"><button v-if="!treeVisible" @click="toggleTree">
               {{ zh ? '显示目录' : 'Show files' }}</button
             ><button v-if="projectId" @click="newTextFile">
               {{ zh ? '新建文本文件' : 'New text file' }}</button
             ><button v-if="supportsLocalDirectories()" @click="connectFolder">
               {{ zh ? '连接本机文件夹' : 'Connect local folder' }}
-            </button>
+            </button></div>
           </div>
         </section>
         <aside
@@ -430,7 +414,7 @@ const props = withDefaults(
   }>(),
   { projectId: '' }
 );
-const emit = defineEmits<{ changes: [] }>();
+const emit = defineEmits<{ changes: []; 'focus-directory': [] }>();
 type Document = {
   key: string;
   generation: number;
@@ -908,9 +892,10 @@ async function closeDocument(doc: Document) {
   if (activeKey.value === doc.key) activeKey.value = documents.value.at(-1)?.key || '';
   if (focused) {
     await nextTick();
-    const target = selectedTab() || resourceRoot.value?.querySelector<HTMLElement>('.tree-toggle');
+    const target = selectedTab();
     target?.focus({ preventScroll: true });
     target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (!target) emit('focus-directory');
   }
 }
 async function newTextFile() {
@@ -1229,6 +1214,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload);
   document.removeEventListener('visibilitychange', flushOnHide);
 });
+defineExpose({ toggleTree, treeVisible });
 </script>
 <style scoped>
 .resource-workspace {
@@ -1291,20 +1277,6 @@ onBeforeUnmount(() => {
 }
 .file-tab > button:last-child {
   padding: 7px;
-}
-.tree-toggle {
-  display: grid;
-  place-items: center;
-  flex: none;
-  margin-left: auto;
-  width: 36px;
-  min-height: 36px;
-  margin: 3px 5px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
 }
 .file-body {
   display: flex;
@@ -1456,6 +1428,7 @@ button:disabled {
   color: var(--text);
   margin: 0;
 }
+.resource-empty-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px; }
 .resource-empty p {
   font-size: 13px;
   line-height: 1.7;
@@ -1636,7 +1609,6 @@ button:disabled {
     padding: 16px;
   }
   .file-tab > button,
-  .tree-toggle,
   .viewer-actions button,
   .file-status button,
   .tree-section-heading button,
