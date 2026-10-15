@@ -563,6 +563,7 @@ const {
   canonicalSourceUrl,
   createAgentArtifactService,
   inferRequiredDeliverables,
+  inferRequiredTextFilenames,
   requiredDeliverablesSatisfied,
   verificationCommand
 } = require('../services/agent-artifact-service');
@@ -7548,4 +7549,102 @@ test('Cloudflare direct first shell publishes a stable plan before dispatch', as
   assert.equal(result.text, 'Offline utilities checked.');
   assert.equal(shellCalls, 1);
   assert.equal(plan.length, 2);
+});
+
+test('parent keeps tools available until both explicitly named text outputs are verified', async () => {
+  const call = (name, args, id) => ({
+    id: `multi-file-${id}`,
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: `call-${id}`, type: 'function', function: { name, arguments: JSON.stringify(args) }
+    }] } }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const declare = (filename) => ({ path: `/tmp/artigen-workspace/${filename}`,
+    filename, role: 'editable', mimeType: 'text/plain', sources: [] });
+  const responses = [
+    call('sandbox_shell', { script: 'printf menu > /tmp/artigen-workspace/menu.csv', purpose: 'Create both files' }, 'write'),
+    call('declare_artifact', declare('menu.csv'), 'menu'),
+    call('declare_artifact', declare('launch-notes.md'), 'notes'),
+    { id: 'multi-file-final', choices: [{ message: { role: 'assistant', content: 'Both files are ready.' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
+  ];
+  const declared = [];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: { AGENT_MODEL_PROVIDER: 'siliconflow', AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key', AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0' },
+    fetchImpl: async () => new Response(JSON.stringify(responses.shift()), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  const objective = '请读取附件 brand-brief.txt，在隔离工作区创建并交付 menu.csv 和 launch-notes.md。不要生成图片。';
+  const result = await provider.execute({
+    objective, capabilities: { files: true, shell: true },
+    deliverables: inferRequiredDeliverables(objective), maxSteps: 12,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async () => ({ success: true, returnCode: 0, stdout: '', stderr: '' }),
+      declareArtifact: async (args) => {
+        declared.push(args.filename);
+        return { artifactId: 'artifact-' + args.filename, role: args.role,
+          filename: args.filename, mimeType: args.mimeType, verificationStatus: 'passed' };
+      },
+      saveModelState: async () => {}, clearModelState: async () => {}, recordUsage: async () => {}
+    }
+  });
+  assert.deepEqual(declared, ['menu.csv', 'launch-notes.md']);
+  assert.equal(result.text, 'Both files are ready.');
+});
+
+test('explicit text output filenames exclude input references and negated requests', () => {
+  const cases = [
+    ['请读取附件 brand-brief.txt，在隔离工作区创建并交付 menu.csv 和 launch-notes.md。不要生成图片。', ['menu.csv', 'launch-notes.md']],
+    ['Create menu.csv, launch-notes.md using input.txt.', ['menu.csv', 'launch-notes.md']],
+    ['Read brief.txt then create notes.md from input.csv.', ['notes.md']],
+    ['Do not create unused.txt; create notes.md.', ['notes.md']],
+    ['不要创建 a.txt；请交付 b.md。', ['b.md']],
+    ['读取 input.txt，不创建 output.csv。', []],
+    ['文件 old.md 已经存在，只解释内容。', []],
+    ['Create `品牌提案.md` and "menu.csv".', ['品牌提案.md', 'menu.csv']],
+    ['Create notes.md using https://example.invalid/input.csv.', ['notes.md']],
+    ['Create config.txt.backup.', []],
+    ['Create a.txt and b.md and do not create unused.csv.', ['a.txt', 'b.md']],
+    ['Create from.md.', ['from.md']],
+    ['Create a.txt, not b.md.', ['a.txt']],
+    ['Create instructions.md containing the example filename example.txt.', ['instructions.md']],
+    ['创建 菜单.csv 和 发布说明.md。', ['菜单.csv', '发布说明.md']],
+    ['创建并交付菜单.csv和发布说明.md。', ['菜单.csv', '发布说明.md']],
+    ['创建 说明.md，内容包含示例 example.txt。', ['说明.md']],
+    ['创建 a.txt，别生成 b.md。', ['a.txt']],
+    ['创建 a.txt，不必生成 b.md。', ['a.txt']]
+  ];
+  for (const [objective, expected] of cases) assert.deepEqual(inferRequiredTextFilenames(objective), expected, objective);
+  const verified = { filename: 'menu.csv', role: 'editable', mime_type: 'text/plain', verification_status: 'passed' };
+  assert.equal(requiredDeliverablesSatisfied([verified], ['text_file'], ['menu.csv', 'launch-notes.md']), false);
+  assert.equal(requiredDeliverablesSatisfied([verified, { ...verified, filename: 'launch-notes.md' }], ['text_file'], ['menu.csv', 'launch-notes.md']), true);
+  assert.equal(requiredDeliverablesSatisfied([verified, { ...verified, filename: 'launch-notes.md', verification_status: 'failed' }], ['text_file'], ['menu.csv', 'launch-notes.md']), false);
+});
+
+test('finalization rejects an omitted named text file before settlement', async () => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const workerId = 'worker-named-file-test';
+  const query = async (sql) => {
+    if (/SELECT \* FROM agent_runs WHERE id=\$1 FOR UPDATE/.test(sql)) return { rows: [{
+      id: runId, status: 'verifying', worker_id: workerId, lease_epoch: 1,
+      lease_expires_at: new Date(Date.now() + 60000), max_credits: 10, step_count: 3, replan_count: 0
+    }], rowCount: 1 };
+    if (/FROM agent_artifacts WHERE run_id/.test(sql)) return { rows: [{
+      filename: 'menu.csv', role: 'editable', mime_type: 'text/plain', verification_status: 'passed', sources: []
+    }], rowCount: 1 };
+    if (/FROM agent_steps WHERE run_id/.test(sql)) return { rows: [
+      { sequence: 1, role: 'planner', status: 'succeeded', tool_name: 'update_plan' },
+      { sequence: 2, role: 'executor', status: 'succeeded', tool_name: 'sandbox_shell' },
+      { sequence: 3, role: 'verifier', status: 'succeeded', tool_name: 'declare_artifact' }
+    ], rowCount: 3 };
+    if (/agent_budget_holds|UPDATE agent_runs/.test(sql)) assert.fail('Missing files must be rejected before settlement or success');
+    return { rows: [], rowCount: 0 };
+  };
+  const service = createAgentRunService({ pool: { connect: async () => ({ query, release() {} }) },
+    env: { AGENT_FEATURE_ENABLED: '1', AGENT_PAYLOAD_ENCRYPTION_KEY: encryptionEnv.AGENT_PAYLOAD_ENCRYPTION_KEY } });
+  await assert.rejects(service.finishRun({ runId, workerId, leaseEpoch: 1, actualCredits: 2,
+    checklist: { requiredArtifactCount: 1, requiredDeliverables: ['text_file'], requiredArtifactFilenames: ['menu.csv', 'launch-notes.md'] }
+  }), { code: 'AGENT_VERIFICATION_INCOMPLETE' });
 });

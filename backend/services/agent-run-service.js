@@ -4166,7 +4166,7 @@ const createAgentRunService = ({
       throw new ApiError(409, 'AGENT_NOT_VERIFYING');
     }
     const artifacts = await client.query(
-      `SELECT role,mime_type,verification_status,sources
+      `SELECT role,mime_type,verification_status,sources,filename
          FROM agent_artifacts WHERE run_id=$1`,
       [runId]
     );
@@ -4225,7 +4225,8 @@ const createAgentRunService = ({
       : [];
     const deliverablesComplete = requiredDeliverablesSatisfied(
       artifacts.rows,
-      requiredDeliverables
+      requiredDeliverables,
+      requirements.requiredArtifactFilenames
     );
     // A missing preset (for example CSV/TXT) does not make a file run text-only.
     const textOnly = Number(run.rows[0].runtime_version || 1) === 2 &&

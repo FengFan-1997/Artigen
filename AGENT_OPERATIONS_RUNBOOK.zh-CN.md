@@ -275,6 +275,8 @@ pnpm eval:agent:live:finalize
 
 DEV runner 会隔离用户 `~/.docker/cli-plugins`，不应为此删除或移动用户 Docker 插件。若 Docker daemon 在终端可用而 LaunchAgent 仍报 `AGENT_DOCKER_UNAVAILABLE`，确认当前 DEV runner 已包含临时 `DOCKER_CONFIG` 探针与传给 CUA bridge 的配置；修复前不要重复启动 Worker。
 
+切换DEV不可变checkout时，先确认无活动任务和未过期租约，再停止唯一启动项。`bootout`后旧服务可能仍在退出，不能把紧接着的`bootstrap`失败误判为数据库或代码故障；核对目标服务已卸载、plist有效后重新注册。注册失败保留原启动项副本并恢复，实际状态接口确认新Worker就绪之前不得创建验收任务。
+
 ### 出口代理退出
 
 保留容器事件和有界错误，停止真实 campaign；检查 client/upstream socket、CUA 网络和 restricted-v1 探针。不要临时改为 DIRECT 或全局代理绕过。

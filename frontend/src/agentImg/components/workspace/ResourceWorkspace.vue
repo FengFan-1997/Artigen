@@ -1156,7 +1156,7 @@ watch(
   () => props.artifacts.map((a) => a.artifactId).join(','),
   () => void refreshFiles()
 );
-watch(activeKey, async () => {
+watch([activeKey, () => active.value?.file.id, () => active.value?.file.revision], async () => {
   proposal.value = null;
   versions.value = [];
   zoom.value = 1;

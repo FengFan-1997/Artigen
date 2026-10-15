@@ -6,6 +6,7 @@ const { getAgentConfig } = require('./agent-config');
 const {
   createAgentArtifactService,
   inferRequiredDeliverables,
+  inferRequiredTextFilenames,
   quoteShell
 } = require('./agent-artifact-service');
 const {
@@ -883,6 +884,11 @@ const createAgentWorkerService = ({
           objectivePayload.deliverables.length
         ? objectivePayload.deliverables
         : inferRequiredDeliverables(objectivePayload.objective);
+      // Selected-file edits use server-assigned candidate names; explicit new
+      // deliverables still need the ordinary filename completion contract.
+      const editTargetNames = new Set((objectivePayload.fileEditTargets || []).map((target) => target.name));
+      const requiredArtifactFilenames = inferRequiredTextFilenames(objectivePayload.objective)
+        .filter((filename) => !editTargetNames.has(filename));
       const userInputs = context.payloads
         .filter((payload) => payload.kind === 'user_input')
         .map((payload) => payload.value)
@@ -1897,6 +1903,7 @@ const createAgentWorkerService = ({
           });
         },
         work: () => model.execute({
+        requiredArtifactFilenames,
         objective: runtimeObjective,
         capabilities: context.run.capabilities,
         deliverables: requiredDeliverables,
@@ -3267,12 +3274,14 @@ const createAgentWorkerService = ({
         checklist: {
           requiredArtifactCount: Math.max(
             runtimeV2 ? 0 : 1,
+            requiredArtifactFilenames.length,
             requiredDeliverables.reduce(
               (total, type) => total + minimumArtifactCounts[type],
               0
             )
           ),
           requiredDeliverables,
+          requiredArtifactFilenames,
           artifactCount: artifacts.length,
           allArtifactsPassed: requiredDeliverables.length === 0 || (
             artifacts.length > 0 && artifacts.every((artifact) => artifact.verificationStatus === 'passed')
