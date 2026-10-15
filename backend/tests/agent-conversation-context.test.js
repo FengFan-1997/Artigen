@@ -56,7 +56,7 @@ test('worker only reads context with the current lease', async () => {
 });
 
 test('model receives mid-run updates once, persists them for resume and publishes only public content', async () => {
-  const requests = [], commentary = [], applied = [], states = [];
+  const requests = [], commentary = [], publicMessages = [], applied = [], states = [];
   let planRan = false;
   const replies = [
     { content: '我先整理菜单，再检查价格。', reasoning_content: 'PRIVATE REASONING', tool_calls: [{ id: 'call-plan', type: 'function', function: { name: 'update_plan', arguments: JSON.stringify({ explanation: '整理菜单', steps: [{ label: '准备', status: 'in_progress' }, { label: '检查', status: 'pending' }] }) } }] },
@@ -74,6 +74,7 @@ test('model receives mid-run updates once, persists them for resume and publishe
     readUserInputs: async () => planRan ? [{ id: payloadId, message }] : [],
     inputApplied: async (id) => applied.push(id),
     onCommentary: async (update) => commentary.push(update),
+    publicMessage: async (update) => publicMessages.push(update),
     saveModelState: async (state) => states.push(structuredClone(state)),
     clearModelState: async () => {}, recordUsage: async () => {}
   };
@@ -83,6 +84,9 @@ test('model receives mid-run updates once, persists them for resume and publishe
   assert.deepEqual(applied, [payloadId]);
   assert.equal(commentary[0].text, '我先整理菜单，再检查价格。');
   assert.ok(!JSON.stringify(commentary).includes('PRIVATE REASONING'));
+  assert.deepEqual(publicMessages.map(message => message.text), ['我先整理菜单，再检查价格。', '已按补充要求整理。']);
+  assert.equal(new Set(publicMessages.map(message => message.sourceKey)).size, 2);
+  assert.ok(!JSON.stringify(publicMessages).includes('PRIVATE REASONING'));
   const resume = states.findLast((state) => state.appliedInputIds?.includes(payloadId));
   assert.ok(resume);
   const resumedUpdates = [];

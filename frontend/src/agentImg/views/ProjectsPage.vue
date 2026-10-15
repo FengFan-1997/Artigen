@@ -78,11 +78,25 @@
           <span>{{ zh ? '项目同步、生成报价和长期资产保存需要登录。' : 'Sign in to sync projects, quote generations, and retain assets.' }}</span>
           <button class="project-secondary-action" type="button" @click="requestLogin">{{ zh ? '登录查看项目' : 'Sign in to view projects' }}</button>
         </div>
+        <div v-else-if="loadError && !projects.length" class="empty-state" role="alert">
+          <strong>{{ loadNeedsLogin ? (zh ? '登录状态已失效' : 'Your session expired') : (zh ? '项目加载失败' : 'Could not load projects') }}</strong>
+          <span>{{ loadError }}</span>
+          <button class="project-secondary-action" type="button" @click="loadNeedsLogin ? requestLogin() : loadProjects()">
+            {{ loadNeedsLogin ? (zh ? '重新登录' : 'Sign in again') : (zh ? '重试' : 'Retry') }}
+          </button>
+        </div>
         <div v-else-if="!projects.length" class="empty-state">
           <strong>{{ zh ? '还没有项目' : 'No projects yet' }}</strong>
           <span>{{ zh ? '从一张商品图和一段需求开始。' : 'Start with one product image and a brief.' }}</span>
         </div>
         <div v-else class="project-grid">
+          <div v-if="loadError" class="empty-state project-load-error" role="alert">
+            <strong>{{ zh ? '项目列表更新失败' : 'Project list could not be refreshed' }}</strong>
+            <span>{{ loadError }}</span>
+            <button class="project-secondary-action" type="button" @click="loadNeedsLogin ? requestLogin() : loadProjects()">
+              {{ loadNeedsLogin ? (zh ? '重新登录' : 'Sign in again') : (zh ? '重试' : 'Retry') }}
+            </button>
+          </div>
           <article v-for="project in projects" :key="project.projectId" class="project-card">
             <router-link v-if="project.status !== 'trashed'" :to="`/artigen/projects/${project.projectId}`" class="cover">
               <img v-if="project.coverUrl" :src="assetUrl(project.coverUrl)" alt="" />
@@ -161,6 +175,8 @@ const composerOpen = ref(false);
 const creating = ref(false);
 const loading = ref(false);
 const statusText = ref('');
+const loadError = ref('');
+const loadNeedsLogin = ref(false);
 const projects = ref<CreativeProject[]>([]);
 const showTrashed = ref(false);
 const draft = reactive({
@@ -203,15 +219,18 @@ const openComposer = () => {
 const loadProjects = async () => {
   if (!isAuthed.value) return;
   loading.value = true;
+  loadError.value = '';
+  loadNeedsLogin.value = false;
   try {
     const all = await listCreativeProjects(showTrashed.value);
     projects.value = all.filter((project) => showTrashed.value
       ? project.status === 'trashed'
       : project.status !== 'trashed');
   } catch (error: any) {
-    statusText.value = String(error?.code || '') === 'LOGIN_REQUIRED'
-      ? (zh.value ? '请先登录' : 'Please sign in')
-      : (zh.value ? '项目加载失败，请稍后重试' : 'Could not load projects. Try again.');
+    loadNeedsLogin.value = String(error?.code || '') === 'LOGIN_REQUIRED';
+    loadError.value = loadNeedsLogin.value
+      ? (zh.value ? '登录已过期，请重新登录后查看项目。' : 'Your session expired. Sign in again to view projects.')
+      : (zh.value ? '请检查网络后重试；项目数据没有被删除。' : 'Check your connection and retry. Your projects have not been deleted.');
   } finally {
     loading.value = false;
   }
@@ -374,6 +393,7 @@ textarea { resize: vertical; }
 .composer-actions { display: flex; justify-content: flex-end; align-items: center; gap: 18px; margin-top: 22px; }
 .project-status { flex: 1; color: #f4c766; font-size: 13px; }
 .project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.project-load-error { grid-column: 1 / -1; padding: 20px; }
 .project-card { overflow: hidden; border: 1px solid #293029; border-radius: 18px; background: #0b0e0c; }
 .cover { display: grid; place-items: center; aspect-ratio: 4 / 3; overflow: hidden; background: #181f19; color: #ccff00; font-size: 56px; font-weight: 900; text-decoration: none; }
 .cover img { width: 100%; height: 100%; object-fit: cover; }

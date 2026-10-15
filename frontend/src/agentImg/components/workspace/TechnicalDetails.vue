@@ -51,7 +51,7 @@ const syncOpen = (event: Event) => {
 
 .technical-details summary::-webkit-details-marker { display: none; }
 .technical-details summary:hover { color: var(--text); }
-.technical-details summary:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.technical-details summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .technical-details summary :deep(.workspace-icon) {
   transition: transform 160ms cubic-bezier(.23, 1, .32, 1);
 }

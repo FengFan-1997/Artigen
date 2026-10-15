@@ -1,3 +1,4 @@
+const { normalizeFileEditTargets, validateFileEditTargets } = require('./workspace-file-context');
 const crypto = require('crypto');
 const { ApiError } = require('../lib/api-error');
 const { resolveUserId } = require('./billing-service');
@@ -1381,6 +1382,7 @@ const createAgentRunService = ({
     assetIds,
     sourceArtifactIds,
     sourceConversationId,
+    fileEditTargets,
     maxCredits,
     capabilities,
     browserConfig,
@@ -1432,6 +1434,7 @@ const createAgentRunService = ({
     ) {
       throw new ApiError(400, 'AGENT_SOURCE_ARTIFACTS_INVALID', { field: 'sourceConversationId' });
     }
+    const normalizedFileEditTargets = normalizeFileEditTargets(fileEditTargets, normalizedAssetIds);
     const normalizedDeliverables = normalizeDeliverables(deliverables);
     if (
       normalizedDeliverables.length === 0 &&
@@ -1504,6 +1507,7 @@ const createAgentRunService = ({
         assetIds: normalizedAssetIds,
         sourceArtifactIds: normalizedSourceArtifactIds,
         sourceConversationId: normalizedSourceConversationId,
+        ...(normalizedFileEditTargets.length ? { fileEditTargets: normalizedFileEditTargets } : {}),
         maxCredits: budget,
         capabilities: normalizedCapabilities,
         deliverables: normalizedDeliverables,
@@ -1596,6 +1600,7 @@ const createAgentRunService = ({
           replayed: true
         };
       }
+      await validateFileEditTargets(client, dbUserId, normalizedFileEditTargets, projectId);
       if (
         normalizedDeliverables.length === 0 &&
         explicitlyRequestsNoArtifact(normalizedObjective) &&
@@ -1729,6 +1734,7 @@ const createAgentRunService = ({
           objective: normalizedObjective,
           assetIds: inputAssetIds,
           sourceArtifactIds: normalizedSourceArtifactIds,
+          fileEditTargets: normalizedFileEditTargets,
           deliverables: normalizedDeliverables,
           taskSpec: normalizedTaskSpec,
           createdBy: 'user'
@@ -3560,8 +3566,30 @@ const createAgentRunService = ({
     }
   );
 
+  const writePublicMessage = async (client, { runId, text, sourceKey, kind = 'commentary' }) => {
+    // Callers provide only the provider's public content field; reasoning fields are never passed.
+    // Quoted XML/HTML tag names are legitimate document content, not a privacy classifier.
+    const body = String(text || '').trim();
+    if (!body || body.length > 128000 || Buffer.byteLength(body) > 512 * 1024) { if(kind==='final')throw new ApiError(502,'AGENT_PUBLIC_MESSAGE_INVALID'); return null; }
+    const payloadId = crypto.randomUUID();
+    const encrypted = encryptAgentPayload({ runId, payloadId, kind: 'public_message', value: { text: body, kind }, env });
+    const result = await client.query(`INSERT INTO agent_run_payloads
+      (id,run_id,kind,algorithm,key_version,iv,auth_tag,ciphertext,expires_at,message_key)
+      SELECT $1,id,'public_message',$3,$4,$5,$6,$7,expires_at,$8 FROM agent_runs WHERE id=$2
+      ON CONFLICT (run_id,message_key) WHERE message_key IS NOT NULL DO NOTHING RETURNING id`,
+      [payloadId, runId, encrypted.algorithm, encrypted.keyVersion, encrypted.iv, encrypted.authTag, encrypted.ciphertext, String(sourceKey).slice(0,160)]);
+    if (!result.rowCount) return null;
+    return insertEvent(client, { runId, type: 'message.created', summary: kind === 'final' ? '最终回复已保存' : 'Agent 更新了进展', data: { messageId: payloadId, kind } });
+  };
+  const appendPublicMessage = async ({ runId, workerId, leaseEpoch, text, sourceKey }) => withTransaction(pool, async (client) => {
+    const lease = await client.query("SELECT 1 FROM agent_runs WHERE id=$1 AND worker_id=$2 AND lease_epoch=$3 AND lease_expires_at>clock_timestamp() AND status IN ('running','verifying') FOR UPDATE", [runId, workerId, Number(leaseEpoch || 0)]);
+    if (!lease.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    return writePublicMessage(client, { runId, text, sourceKey });
+  });
+
   const appendRuntimeEvent = async ({
     runId,
+    subagentId = null,
     workerId,
     leaseEpoch,
     type,
@@ -3586,10 +3614,25 @@ const createAgentRunService = ({
       );
       if (existing.rowCount) return publicEvent(existing.rows[0]);
     }
+    if (subagentId) {
+      const subagent = await client.query(
+        'SELECT 1 FROM agent_subagents WHERE id=$1 AND run_id=$2',
+        [subagentId, runId]
+      );
+      if (!subagent.rowCount) throw new ApiError(404, 'AGENT_SUBAGENT_NOT_FOUND');
+    }
     const sanitizedData = sanitizeLogValue(data);
     let eventData = sanitizedData && typeof sanitizedData === 'object' && !Array.isArray(sanitizedData)
       ? sanitizedData
       : {};
+    if (eventType === 'tool.call.started' || eventType === 'tool.call.completed') {
+      const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+      eventData = {
+        callId: sanitizeText(source.callId, 120),
+        toolName: sanitizeText(source.toolName, 80),
+        ...(eventType === 'tool.call.completed' ? { ok: source.ok === true } : {})
+      };
+    }
     if (eventType === 'run.ready_to_finalize') {
       if (Array.isArray(data.appliedInputIds)) {
         const inputs = await client.query(
@@ -3624,6 +3667,7 @@ const createAgentRunService = ({
     }
     return insertEvent(client, {
       runId,
+      subagentId,
       type: eventType,
       phase: phase ? sanitizeText(phase, 80) : null,
       summary: sanitizeText(summary, 500),
@@ -4111,6 +4155,7 @@ const createAgentRunService = ({
     workerId,
     leaseEpoch,
     actualCredits,
+    finalText,
     checklist
   }) => {
     const finished = await withTransaction(pool, async (client) => {
@@ -4285,6 +4330,10 @@ const createAgentRunService = ({
         WHERE run_id=$1 AND state='received'`,
       [runId]
     );
+    if (finalText !== undefined) {
+      if(finalTextHash && crypto.createHash('sha256').update(String(finalText)).digest('hex') !== finalTextHash)throw new ApiError(502,'AGENT_FINAL_TEXT_HASH_MISMATCH');
+      await writePublicMessage(client, { runId, text: finalText, sourceKey: 'final', kind: 'final' });
+    }
     await revokeDesktopTickets(client, runId);
     await insertEvent(client, {
       runId,
@@ -5138,6 +5187,7 @@ const createAgentRunService = ({
     appendStep,
     appendRuntimeEvent,
     readUserInputs,
+    appendPublicMessage,
     assertWorkerLeaseActive,
     cancelRun,
     cancelSubagent,

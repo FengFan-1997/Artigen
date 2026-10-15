@@ -49,7 +49,8 @@ const createAgentConnectorService = ({
     provider,
     method = 'GET',
     path,
-    body = null
+    body = null,
+    responseMode = 'audit'
   }) => {
     if (!PROVIDER_BASES[provider]) throw new ApiError(404, 'AGENT_INTEGRATION_UNSUPPORTED');
     const verb = String(method || 'GET').trim().toUpperCase();
@@ -107,7 +108,7 @@ const createAgentConnectorService = ({
     return {
       status: response.status,
       sourceUrl,
-      data: sanitizeLogValue(payload),
+      data: responseMode === 'bounded-read' && verb === 'GET' ? payload : sanitizeLogValue(payload),
       untrusted: true,
       injectionSuspected: inspection.injectionSuspected,
       injectionSignals: inspection.injectionSignals,
@@ -115,7 +116,8 @@ const createAgentConnectorService = ({
     };
   };
 
-  return { request };
+  const requestReadOnly = (input) => request({ ...input, method: 'GET', responseMode: 'bounded-read', body: null });
+  return { request, requestReadOnly };
 };
 
 module.exports = {

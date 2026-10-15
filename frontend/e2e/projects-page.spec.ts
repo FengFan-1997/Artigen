@@ -184,6 +184,97 @@ test('authenticated project actions refresh, trash, restore and create exactly o
   await page.getByRole('button', { name: '进入项目工作台' }).dblclick({ delay: 10 });
   await expect.poll(() => createRequests).toBe(1);
   await expect(page).toHaveURL(`/artigen/projects/${projectId}`);
+
+  const uploadInput = page.locator('.upload-button input[type="file"]').first();
+  await uploadInput.focus();
+  await expect(uploadInput).toBeFocused();
+  await expect(page.locator('.upload-button').first()).toHaveCSS('outline-style', 'solid');
+});
+
+test('project list errors are distinct from an empty project list and can be retried', async ({ page }) => {
+  let listRequests = 0;
+  await page.addInitScript(() => {
+    localStorage.setItem('app_user_id', 'project-e2e-user');
+    localStorage.setItem('agent_user_id', 'project-e2e-user');
+  });
+  await page.route('**/api/auth/session', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, userId: 'project-e2e-user', csrfToken: 'csrf-e2e' })
+  }));
+  await page.route('**/api/auth/google/config', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ clientId: '' })
+  }));
+  await page.route('**/api/collection/event', (route) => route.fulfill({ status: 202, body: '{}' }));
+  await page.route('**/api/projects**', (route) => {
+    if (route.request().method() === 'GET') {
+      listRequests += 1;
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: false, error: 'API_UNAVAILABLE' })
+      });
+    }
+    return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ ok: false }) });
+  });
+
+  await page.goto('/artigen/projects');
+  await expect(page.getByRole('alert')).toContainText('项目加载失败');
+  await expect(page.getByText('还没有项目')).toHaveCount(0);
+  await page.getByRole('button', { name: '重试' }).click();
+  await expect.poll(() => listRequests).toBe(2);
+  await expect(page.getByRole('alert')).toContainText('项目加载失败');
+});
+
+test('a completed generation returns to the project and confirms the saved version', async ({ page }) => {
+  const generatedVersion = {
+    versionId: '88888888-8888-4888-8888-888888888888',
+    projectId,
+    parentVersionId: null,
+    taskId: '77777777-7777-4777-8777-777777777777',
+    status: 'success',
+    profileId: 'standard-v1',
+    aspectRatio: '1:1',
+    seed: 42,
+    quotedCredits: 10,
+    favorite: false,
+    outputAssetId: '66666666-6666-4666-8666-666666666666',
+    outputUrl: null,
+    prompt: '生成完成后保存在当前项目',
+    createdAt: '2026-10-14T06:00:00.000Z',
+    updatedAt: '2026-10-14T06:00:00.000Z'
+  };
+  await page.addInitScript(() => {
+    localStorage.setItem('app_user_id', 'project-e2e-user');
+    localStorage.setItem('agent_user_id', 'project-e2e-user');
+  });
+  await page.route('**/api/auth/session', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, userId: 'project-e2e-user', csrfToken: 'csrf-e2e' })
+  }));
+  await page.route('**/api/auth/google/config', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ clientId: '' })
+  }));
+  await page.route('**/api/collection/event', (route) => route.fulfill({ status: 202, body: '{}' }));
+  await page.route(`**/api/projects/${projectId}`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ok: true,
+      project: { ...project, versionCount: 3, versions: [generatedVersion] }
+    })
+  }));
+
+  await page.goto(`/artigen/projects/${projectId}?generated=1`);
+
+  await expect(page.getByRole('status')).toContainText('生成完成');
+  await expect(page.getByText(generatedVersion.prompt)).toBeVisible();
+  await expect(page).toHaveURL(`/artigen/projects/${projectId}`);
 });
 
 test('project page controls stay reachable at responsive boundary widths', async ({ page }) => {

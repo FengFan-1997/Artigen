@@ -3105,6 +3105,7 @@ class OllamaAgentModelProvider {
           instructions: prompt.instructions + progressInstructions,
           taskSpec,
           workingState,
+          fileEditContext: runtimeContext.fileEditContext || null,
           messages,
           tools: ollamaFileTools(capabilities, toolProfile, allowedToolNames),
           contextTokens: this.config.modelContextTokens
@@ -3326,6 +3327,12 @@ class OllamaAgentModelProvider {
         });
       }
       if (calls.length) assistant.tool_calls = calls;
+      if (assistant.content.trim()) await callbacks.publicMessage?.({
+        text: assistant.content.trim(),
+        sourceKey: `turn:${turns}:` + crypto.createHash('sha256').update(JSON.stringify([
+          String(response.id || ''), turns, semanticVerificationAttempts, assistant.content
+        ])).digest('hex')
+      });
       messages.push(assistant);
       pendingModelResponse = null;
       text = assistantText || text;
@@ -3404,7 +3411,7 @@ class OllamaAgentModelProvider {
               }
             });
           } else {
-            semanticRepairRequired = true;
+              semanticRepairRequired = true;
             messages.push({
               role: 'user',
               content: [

@@ -157,7 +157,15 @@ const installSharedApi = async (
     quoteRequirements?: Record<string, boolean>;
   } = {}
 ) => {
+  await page.route('**/api/workspace/navigation', route => route.fulfill({contentType:'application/json',body:'{\"ok\":true,\"projects\":[],\"sessions\":[],\"nextCursor\":null}'}));
   let quoteRequestCount = 0;
+  // Advanced-control cases exercise an explicitly expanded Inspector. The
+  // default collapsed zero state is covered in agent-workspace-polish.spec.ts.
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('artigen-workspace-preferences')) {
+      localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 3, rightCollapsed: false, resourceMode:'task', theme: 'dark' }));
+    }
+  });
   await page.route('**/api/auth/session', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -343,7 +351,7 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
     const style = getComputedStyle(element);
     return { borderRadius: style.borderRadius, marginTop: style.marginTop, marginRight: style.marginRight };
   });
-  expect(inspectorSurface).toEqual({ borderRadius: '18px', marginTop: '12px', marginRight: '12px' });
+  expect(inspectorSurface).toEqual({ borderRadius: '0px', marginTop: '0px', marginRight: '0px' });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
     await page.screenshot({ path: '.impeccable/review/agent-workbench-1440-dark.png', fullPage: true });
@@ -377,7 +385,7 @@ test('every visible workspace chrome control performs its advertised action', as
   await expandLeft.click();
   await expect(page.locator('.agent-workspace-shell')).not.toHaveClass(/left-collapsed/);
 
-  await page.getByRole('link', { name: /点数：/ }).click();
+  await page.getByRole('link', { name: /^可用点数:/ }).click();
   await expect(page).toHaveURL('/artigen/usage');
   await page.goBack();
   await expect(page).toHaveURL('/artigen/agent');
@@ -445,9 +453,9 @@ test('desktop panel separators expose values and support arrows plus Home and En
   const right = page.getByRole('separator', { name: '调整右栏宽度' });
   await right.focus();
   await page.keyboard.press('End');
-  await expect(right).toHaveAttribute('aria-valuenow', '480');
+  await expect(right).toHaveAttribute('aria-valuenow', '680');
   await page.keyboard.press('ArrowRight');
-  await expect(right).toHaveAttribute('aria-valuenow', '472');
+  await expect(right).toHaveAttribute('aria-valuenow', '672');
 });
 
 test('image delivery auto-grants Kolors, preserves Cloudflare text and subagent locks, and starts only after a current quote', async ({ page }) => {
@@ -637,6 +645,7 @@ test('run detail exposes parent plus three isolated subagents and cancels one wi
   await page.goto(`/artigen/agent/runs/${runId}`);
 
   await expect(page.locator('.user-message')).toContainText(baseRun.objective);
+  await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: '子 Agent' }).click();
   await expect(page.locator('.parent-agent-card')).toContainText('父 Agent');
   await expect(page.locator('.subagent-card')).toHaveCount(3);
@@ -653,20 +662,97 @@ test('run detail exposes parent plus three isolated subagents and cancels one wi
   await expect(page.locator('.runtime-pill')).toContainText('执行中');
 });
 
+test('switching run history replaces the run, event stream and audit timeline', async ({ page }) => {
+  const secondRunId = '51111111-1111-4111-8111-111111111112';
+  const secondRun = {
+    ...structuredClone(baseRun),
+    runId: secondRunId,
+    objective: '第二个任务：整理品牌素材与交付记录。',
+    objectivePreview: '第二条历史任务',
+    artifacts: [],
+    subagents: []
+  } as typeof baseRun;
+  const runs = [baseRun, secondRun];
+  const openedStreams: string[] = [];
+  const deliveredEvents = new Set<string>();
+
+  await page.route('**/api/auth/session', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, userId: 'agent-e2e', csrfToken: 'csrf-e2e' })
+  }));
+  await page.route('**/api/collection/event', (route) => route.fulfill({
+    status: 202,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true })
+  }));
+  await page.route('**/api/agent-runs', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, runs })
+  }));
+  for (const run of runs) {
+    await page.route(`**/api/agent-runs/${run.runId}`, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, run })
+    }));
+  }
+  await page.route('**/api/agent-runs/*/events', async (route) => {
+    const segments = new URL(route.request().url()).pathname.split('/');
+    const streamRunId = segments.at(-2) || '';
+    openedStreams.push(streamRunId);
+    if (deliveredEvents.has(streamRunId)) return route.abort();
+    deliveredEvents.add(streamRunId);
+    const event = {
+      eventId: streamRunId === runId ? '900' : '901',
+      runId: streamRunId,
+      subagentId: null,
+      type: 'context.compacted',
+      phase: 'running',
+      summary: streamRunId === runId ? '第一条任务的专属事件' : '第二条任务的专属事件',
+      data: {},
+      createdAt: now
+    };
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: `id: ${event.eventId}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+    });
+  });
+
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`/artigen/agent/runs/${runId}`);
+  await expect(page.locator('.user-message')).toContainText(baseRun.objective);
+  await expect(page.locator('.context-update')).toContainText('第一条任务的专属事件');
+
+  await page.locator('.history-run').filter({ hasText: '第二条历史任务' }).click();
+
+  await expect(page).toHaveURL(`/artigen/agent/runs/${secondRunId}`);
+  await expect(page.locator('.user-message')).toContainText(secondRun.objective);
+  await expect(page.locator('.context-update')).toContainText('第二条任务的专属事件');
+  await expect(page.locator('.context-update')).not.toContainText('第一条任务的专属事件');
+  await expect.poll(() => openedStreams.includes(secondRunId)).toBe(true);
+});
+
 test('run detail keeps real plan, verified files, budget and two-click parent cancellation in one shell', async ({ page }) => {
   let cancelRequests = 0;
   await installRunApi(page, { onCancelRun: () => { cancelRequests += 1; } });
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto(`/artigen/agent/runs/${runId}`);
 
+  await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: '计划' }).click();
   await expect(page.locator('#workspace-panel-plan')).toContainText('建立三路独立分析上下文');
   await expect(page.locator('#workspace-panel-plan')).toContainText('汇总品牌、视觉与体验结论');
+  await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: /文件/ }).click();
   await expect(page.locator('#workspace-panel-files')).toContainText('artigen-design-audit.pdf');
   await expect(page.locator('#workspace-panel-files')).toContainText('passed');
+  await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: '环境' }).click();
-  await expect(page.getByRole('link', { name: /点数.*12\.5 \/ 50/ })).toBeVisible();
+  await expect(page.locator('.workspace-topbar .task-cost')).toHaveText('已用 12.5 / 50 点');
+  await expect(page.getByRole('link', { name: '点数与用量', exact: true })).toBeVisible();
 
   const stop = page.getByRole('button', { name: '停止' });
   await stop.click();
@@ -799,7 +885,7 @@ test('run detail keeps chrome, composer and inspector aligned across extreme vie
     await page.setViewportSize(viewport);
     await page.goto(`/artigen/agent/runs/${runId}`);
     await installDevEnvironmentBadge(page);
-    await expect(page.locator('.message-composer')).toBeVisible();
+    await expect(page.locator('.run-composer .composer-box')).toBeVisible();
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
       await page.screenshot({
@@ -809,7 +895,8 @@ test('run detail keeps chrome, composer and inspector aligned across extreme vie
     }
     if (viewport.width < 1200) {
       await page.getByRole('button', { name: '打开检查器' }).click();
-      await page.getByRole('tab', { name: '子 Agent' }).click();
+      await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
+  await page.getByRole('tab', { name: '子 Agent' }).click();
       await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
       if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
         await page.screenshot({

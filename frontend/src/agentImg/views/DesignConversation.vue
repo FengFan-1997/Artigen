@@ -1,35 +1,39 @@
 <template>
   <AgentWorkspaceShell
+    :project-id="conversation?.projectId || String(route.query.projectId || '')"
+    :artifacts="activeRun?.artifacts || []"
     :zh="zh"
-    :title="conversation?.title || (zh ? '设计 Agent' : 'Design Agent')"
+    :title="conversation?.title || selectedConversationTitle"
     :subtitle="conversation ? executorSummary : ''"
     :status-label="runtimeLabel"
     :status-tone="workspaceStatusTone"
-    :credit-label="zh ? '自动上限 ' + (status?.autoCreditCap ?? 50) + ' 点' : 'Auto cap ' + (status?.autoCreditCap ?? 50)"
+    :task-cost-label="currentCostLabel"
+    :default-inspector-collapsed="!hasConversation"
     :badges="inspectorBadges"
     :live-announcement="notice"
     @new-task="newConversation"
     @search="workspaceSearch = $event"
   >
     <template #history>
-      <div class="history-group">
-        <p>{{ zh ? '今天' : 'Today' }}</p>
+      <div v-for="group in conversationGroups" :key="group.label" class="history-group">
+        <p>{{ group.label }}</p>
         <button
-          v-for="item in visibleConversations"
+          v-for="item in group.items"
           :key="item.conversationId"
           class="history-item"
-          :class="{ active: item.conversationId === conversation?.conversationId }"
+          :class="{ active: item.conversationId === selectedConversationId }"
+          :aria-current="item.conversationId === selectedConversationId ? 'true' : undefined"
           type="button"
           @click="openConversation(item.conversationId)"
         >
           <span class="history-state" :class="{ running: conversationIsRunning(item.conversationId) }"></span>
           <span><b>{{ item.title }}</b><small>{{ formatRelative(item.updatedAt) }}</small></span>
         </button>
+      </div>
         <div v-if="!visibleConversations.length" class="history-empty">
           <WorkspaceIcon name="file" />
           <span>{{ zh ? '任务会保存在这里' : 'Your tasks will appear here' }}</span>
         </div>
-      </div>
     </template>
 
     <template #topbar>
@@ -38,8 +42,8 @@
           <WorkspaceIcon :name="latestExecution?.routeKind === 'agent_run' ? 'agent' : 'folder'" :size="18" />
         </span>
         <div>
-          <strong>{{ conversation?.title || (zh ? '新的设计任务' : 'New design task') }}</strong>
-          <small v-if="latestExecution || activeRun">{{ executorSummary }} · {{ currentCostLabel }}</small>
+          <strong>{{ conversation?.title || selectedConversationTitle }}</strong>
+          <small v-if="!planning && (latestExecution || activeRun)">{{ executorSummary }}</small>
         </div>
       </div>
     </template>
@@ -51,7 +55,15 @@
       </button>
     </template>
 
-    <section v-if="!hasConversation" class="workspace-zero">
+    <section v-if="loadingConversation || conversationLoadError" class="conversation-load-state" :aria-busy="loadingConversation">
+      <h1>{{ loadingConversation ? (zh ? '正在读取对话…' : 'Loading conversation…') : (zh ? '对话暂时无法打开' : 'Conversation could not open') }}</h1>
+      <p v-if="conversationLoadError" role="alert">{{ conversationLoadError }}</p>
+      <div v-if="conversationLoadError" class="conversation-load-actions">
+        <button type="button" @click="openConversation(selectedConversationId)">{{ zh ? '重新读取' : 'Retry loading' }}</button>
+        <button type="button" @click="newConversation">{{ zh ? '开始新任务' : 'Start a new task' }}</button>
+      </div>
+    </section>
+    <section v-else-if="!hasConversation" class="workspace-zero">
       <div class="zero-copy">
         <h1>{{ zh ? '你想完成什么？' : 'What should we make?' }}</h1>
       </div>
@@ -63,6 +75,8 @@
         :draft="draft"
         :attachments="selectedAttachments"
         :busy="sending"
+        :busy-label="zh ? '正在发送…你可以继续编辑下一条。' : 'Sending… You can draft the next message.'"
+        :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
         :placeholder="zh ? '描述一个设计、图片、调研或多文件交付任务…' : 'Describe a design, image, research, or multi-file task…'"
         :attach-label="zh ? '添加文件' : 'Add files'"
         :attachment-count-label="zh ? '个文件' : 'files'"
@@ -75,6 +89,7 @@
         @attach="openFilePicker()"
         @remove-attachment="removeAttachment"
       />
+      <p v-if="draftRestored" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿；如需参考文件，请重新选择。' : 'Your local draft was restored. Choose any reference files again.' }}</p>
       <div class="suggestion-grid">
         <header>
           <span>{{ zh ? '试试这些' : 'Try one of these' }}</span>
@@ -89,7 +104,7 @@
     </section>
 
     <section v-else class="workspace-chat">
-      <div ref="scrollArea" class="message-scroll">
+      <div ref="scrollArea" class="message-scroll" @scroll="onConversationScroll">
         <p v-if="statusUnavailable" class="service-unavailable-note chat-service-note" role="status">
           <i aria-hidden="true"></i>
           <span>{{ zh ? '服务暂时不可用。已有内容不会丢失，请稍后重试。' : 'The service is temporarily unavailable. Your existing work is safe—please try again later.' }}</span>
@@ -109,7 +124,7 @@
           <article class="message" :class="message.role">
             <div v-if="message.role === 'assistant'" class="assistant-mark" aria-hidden="true">A</div>
             <div class="message-body">
-              <p>{{ message.text }}</p>
+              <WorkspaceMarkdown :text="message.text" />
               <small
                 v-if="message.role === 'user' && ['queued', 'running'].includes(message.planningStatus || '')"
                 class="planning-state"
@@ -152,16 +167,12 @@
             </div>
           </article>
 
+          <template v-for="execution in executionsForMessage(message.messageId)" :key="execution.executionId">
           <ExecutionCard
-            v-for="execution in executionsForMessage(message.messageId)"
-            :key="execution.executionId"
             :execution="execution"
             :task="execution.toolTaskId ? toolTasks[execution.toolTaskId] : undefined"
             :run="execution.agentRunId ? agentRuns[execution.agentRunId] : undefined"
-            :events="activity.records[execution.agentRunId || ''] || []"
-            :history-loading="activity.loading[execution.agentRunId || '']"
-            :history-error="activity.errors[execution.agentRunId || '']"
-            :busy="startingExecutions.has(execution.executionId)"
+            :busy="startingExecutions.has(execution.executionId) || decidingExecutions.has(execution.executionId)"
             :zh="zh"
             @start="startExecution(execution)"
             @attach="openFilePicker(execution.executionId)"
@@ -174,6 +185,8 @@
             @deny="denyAgentAction(execution, $event)"
             @continue-from-artifact="selectSourceArtifact"
           />
+          <RunConversationStream v-if="execution.agentRunId" :run-id="execution.agentRunId" :events="runEvents[execution.agentRunId] || []" :files="runFiles(execution.agentRunId)" :zh="zh" :terminal="['succeeded','failed','cancelled'].includes(agentRuns[execution.agentRunId]?.status || '')" :subagents="[]" @layout-change="scrollToBottom()" />
+          </template>
         </template>
 
         <article v-if="planning" class="message assistant planning-message" aria-live="polite">
@@ -194,10 +207,14 @@
             <button type="button" :aria-label="zh ? `移除 ${artifact.filename}` : `Remove ${artifact.filename}`" @click="removeSourceArtifact(artifact.artifactId)">×</button>
           </span>
         </div>
+        <button v-if="hasUnreadUpdates" class="new-updates" type="button" @click="scrollToBottom(true)">{{ zh ? '有新内容 · 回到底部' : 'New updates · Jump to latest' }}</button>
+        <p v-if="draftRestored" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿；如需参考文件，请重新选择。' : 'Your local draft was restored. Choose any reference files again.' }}</p>
         <ComposerBox
           :draft="draft"
           :attachments="selectedAttachments"
           :busy="sending"
+          :busy-label="zh ? '正在发送…你可以继续编辑下一条。' : 'Sending… You can draft the next message.'"
+          :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
           :placeholder="openAgentRuns.length ? (zh ? '补充当前任务的要求…' : 'Add instructions to the current task…') : (zh ? '继续对话，或提出一个新的设计任务…' : 'Continue, or describe a new design task…')"
           :attach-label="zh ? '添加文件' : 'Add files'"
           :attachment-count-label="zh ? '个文件' : 'files'"
@@ -344,16 +361,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+const WorkspaceMarkdown = defineAsyncComponent(() => import('../components/workspace/WorkspaceMarkdown.vue'));
+import { takeWorkspaceAttachment, type WorkspaceAttachment } from '../services/workspaceAttachmentTransfer';
+import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
+import RunConversationStream from '../components/workspace/RunConversationStream.vue';
+import type { WorkspaceFile } from '../services/workspaceFiles';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import ExecutionCard from '../components/designConversation/ExecutionCard.vue';
 import { useLanguageStore } from '@/stores/language';
 import { useAgentImgAuth } from '../composables/useAgentImgAuth';
+import { useWorkspaceDraft } from '../composables/useWorkspaceDraft';
+import { approvalIsAvailable } from '../composables/useAgentApprovals';
 import {
   attachDesignExecutionTarget,
   cancelDesignExecution,
@@ -401,7 +425,6 @@ import {
   createToolTask,
   getToolTask,
   quoteToolTask,
-  waitForToolTask,
   type ServerToolTask
 } from '../services/toolTasks';
 import { useAgentActivity } from '../composables/useAgentActivity';
@@ -417,7 +440,7 @@ const router = useRouter();
 const route = useRoute();
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
-const { isAuthed, ensureAuthed, syncAuth } = useAgentImgAuth();
+const { isAuthed, ensureAuthed, syncAuth, authUserId } = useAgentImgAuth();
 const zh = computed(() => currentLang.value === 'zh');
 
 const status = ref<DesignAssistantStatus | null>(null);
@@ -427,6 +450,11 @@ const conversation = ref<DesignConversation | null>(null);
 const authorizations = ref<DesignSessionAuthorization[]>([]);
 const projectSnapshot = ref<CreativeProject | null>(null);
 const draft = ref('');
+const selectedConversationId = ref(String(route.query.c || '').trim());
+const loadingConversation = ref(Boolean(selectedConversationId.value));
+const conversationLoadError = ref('');
+const conversationDraftTask = () => selectedConversationId.value ? `conversation:${selectedConversationId.value}` : `conversation:new:${String(route.query.projectId || '')}:${String(route.query.sourceRun || '')}`;
+const { restored: draftRestored, discardSaved } = useWorkspaceDraft({ owner: () => authUserId.value, task: conversationDraftTask, draft });
 const selectedAttachments = ref<SelectedAttachment[]>([]);
 const selectedSourceArtifacts = ref<DesignSourceArtifact[]>([]);
 const notice = ref('');
@@ -436,6 +464,11 @@ const retryingPlanningMessageId = ref('');
 const workspaceSearch = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
 const scrollArea = ref<HTMLElement | null>(null);
+const nearBottom = ref(true);
+const hasUnreadUpdates = ref(false);
+const scrollPositions = new Map<string, number>();
+let conversationRevision = 0;
+let disposed = false;
 const attachmentTarget = ref('');
 const suggestionOffset = ref(0);
 const localFiles = new Map<string, File>();
@@ -443,15 +476,22 @@ const executionFileIds = reactive<Record<string, string[]>>({});
 const toolTasks = reactive<Record<string, ServerToolTask>>({});
 const activity = useAgentActivity();
 const agentRuns = reactive<Record<string, AgentRun>>({});
+const runEvents = activity.records;
+const runFiles = (id: string): WorkspaceFile[] => (agentRuns[id]?.artifacts || []).filter(a => a.url && a.assetId && a.verificationStatus === 'passed').map(a => ({id:'artifact:'+a.artifactId,path:a.filename,revision:0,assetId:a.assetId!,mimeType:a.mimeType,byteSize:a.byteSize,sha256:a.sha256||'',url:a.url!,originArtifactId:a.artifactId}));
+
 const startingExecutions = reactive(new Set<string>());
+const decidingExecutions = reactive(new Set<string>());
 const executionStreams = new Map<string, () => void>();
 const toolTaskTimers = new Map<string, number>();
+const runReadRevisions = new Map<string, number>();
 let closeConversationStream: null | (() => void) = null;
 let refreshTimer: number | null = null;
 let activityPollTimer: number | null = null;
 const scheduledAutoStarts = new Set<string>();
 const handledMemoryCandidates = reactive(new Set<string>());
 const LAST_CONVERSATION_KEY = 'artigen:last-design-conversation';
+const lastConversationKey = () => `${LAST_CONVERSATION_KEY}:${encodeURIComponent(authUserId.value)}`;
+let visibilityCleanup: (() => void) | null = null;
 
 const suggestionsZh = [
   '为一款柚子气泡水生成夏日主视觉',
@@ -480,6 +520,23 @@ const visibleConversations = computed(() => {
     ? conversations.value.filter((item) => item.title.toLowerCase().includes(query))
     : conversations.value;
 });
+const selectedConversationTitle = computed(() => conversations.value.find((item) => item.conversationId === selectedConversationId.value)?.title || (zh.value ? '新的设计任务' : 'New design task'));
+const conversationGroups = computed(() => {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+  const week = new Date(today); week.setDate(today.getDate() - 7);
+  const groups = [
+    { label: zh.value ? '今天' : 'Today', items: [] as DesignConversation[] },
+    { label: zh.value ? '昨天' : 'Yesterday', items: [] as DesignConversation[] },
+    { label: zh.value ? '过去七天' : 'Past seven days', items: [] as DesignConversation[] },
+    { label: zh.value ? '更早' : 'Earlier', items: [] as DesignConversation[] }
+  ];
+  for (const item of [...visibleConversations.value].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))) {
+    const time = Date.parse(item.updatedAt);
+    groups[time >= today.getTime() ? 0 : time >= yesterday.getTime() ? 1 : time >= week.getTime() ? 2 : 3].items.push(item);
+  }
+  return groups.filter((group) => group.items.length);
+});
 const latestExecution = computed(() => conversation.value?.executions?.at(-1) || null);
 const activeRun = computed(() => {
   const runs = conversation.value?.executions
@@ -491,15 +548,25 @@ const openAgentRuns = computed(() => (conversation.value?.executions || [])
   .map((execution) => execution.agentRunId ? agentRuns[execution.agentRunId] : null)
   .filter((run): run is AgentRun => Boolean(run && !['succeeded', 'failed', 'cancelled'].includes(run.status))));
 const pendingRunInput = ref<{ runId: string; text: string; inputId: string } | null>(null);
+const currentExecutionRun = computed(() => latestExecution.value?.agentRunId ? agentRuns[latestExecution.value.agentRunId] || null : null);
+const currentExecutionTask = computed(() => latestExecution.value?.toolTaskId ? toolTasks[latestExecution.value.toolTaskId] || null : null);
 const workspaceStatusTone = computed<'ready' | 'busy' | 'warning' | 'offline'>(() => {
+  if (conversationLoadError.value) return 'offline';
+  if (loadingConversation.value || planning.value) return 'busy';
+  const state = currentExecutionRun.value?.status || currentExecutionTask.value?.status || latestExecution.value?.status;
+  if (state && ['failed', 'cancelled'].includes(state)) return 'offline';
+  if (state && ['queued', 'provisioning', 'running', 'verifying', 'planning'].includes(state)) return 'busy';
+  if (state && ['waiting_user', 'paused', 'waiting_budget', 'waiting_upload', 'waiting_authorization', 'waiting_clarification'].includes(state)) return 'warning';
   if (!status.value?.enabled || !status.value?.plannerReady) return 'offline';
-  if (planning.value || ['queued', 'provisioning', 'running', 'verifying'].includes(activeRun.value?.status || '')) return 'busy';
-  if (activeRun.value?.status === 'waiting_user') return 'warning';
   return 'ready';
 });
-const currentCostLabel = computed(() => activeRun.value
-  ? `${activeRun.value.budget.used.toFixed(1)} / ${activeRun.value.budget.maximum} cr`
-  : (zh.value ? '未创建付费任务' : 'No paid run'));
+const currentCostLabel = computed(() => !planning.value && currentExecutionRun.value
+  ? `${zh.value ? '已用' : 'Used'} ${currentExecutionRun.value.budget.used.toFixed(1)} / ${currentExecutionRun.value.budget.maximum} ${zh.value ? '点' : 'credits'}`
+  : !planning.value && currentExecutionTask.value && ['success', 'failed', 'cancelled'].includes(currentExecutionTask.value.status)
+    ? `${zh.value ? '已结算' : 'Charged'} ${currentExecutionTask.value.receipt.chargedCredits} / ${latestExecution.value?.maxCredits} ${zh.value ? '点上限' : 'credit limit'}`
+  : !planning.value && latestExecution.value?.quotedCredits != null
+    ? `${zh.value ? '报价' : 'Quote'} ${latestExecution.value.quotedCredits} / ${latestExecution.value.maxCredits} ${zh.value ? '点上限' : 'credit limit'}`
+    : `${zh.value ? '自动预算上限' : 'Automatic budget limit'} ${status.value?.autoCreditCap ?? 50} ${zh.value ? '点' : 'credits'}`);
 const inspectorBadges = computed(() => ({
   subagents: activeRun.value?.subagents?.filter((item) => ['queued', 'running'].includes(item.status)).length || 0,
   computer: activeRun.value?.approvals?.filter((item) => item.status === 'pending').length || 0,
@@ -521,6 +588,19 @@ const planProgressLabel = computed(() => {
   return `${complete}/${activePlan.value.length || 0}`;
 });
 const runtimeLabel = computed(() => {
+  if (loadingConversation.value) return zh.value ? '正在读取对话' : 'Loading conversation';
+  if (conversationLoadError.value) return zh.value ? '读取失败' : 'Could not load';
+  if (planning.value) return zh.value ? '正在整理你的要求' : 'Preparing your request';
+  if (currentExecutionRun.value) return runStatusLabel(currentExecutionRun.value.status);
+  if (currentExecutionTask.value) return runStatusLabel(currentExecutionTask.value.status === 'success' ? 'succeeded' : currentExecutionTask.value.status);
+  if (latestExecution.value) {
+    const labels: Record<string, [string, string]> = {
+      queued: ['排队中', 'Queued'], running: ['执行中', 'Running'], succeeded: ['已完成', 'Completed'], failed: ['失败', 'Failed'], cancelled: ['已取消', 'Cancelled'],
+      planning: ['规划中', 'Planning'], waiting_budget: ['等待确认预算', 'Review budget'], waiting_upload: ['等待附件', 'Needs files'],
+      waiting_authorization: ['等待你确认', 'Needs approval'], waiting_clarification: ['等待你补充', 'Needs details']
+    };
+    return labels[latestExecution.value.status]?.[zh.value ? 0 : 1] || latestExecution.value.status;
+  }
   if (statusUnavailable.value) return zh.value ? '服务暂不可用' : 'Service unavailable';
   if (!status.value) return zh.value ? '正在检查执行器' : 'Checking executors';
   if (!status.value.enabled) return zh.value ? '对话入口尚未开放' : 'Conversation entry is closed';
@@ -624,181 +704,232 @@ const errorText = (error: unknown) => {
   return labels[code]?.[zh.value ? 0 : 1] || (zh.value ? `暂时无法继续：${code}` : `Unable to continue: ${code}`);
 };
 
-const scrollToBottom = async () => {
+const isCurrentConversation = (id: string, revision: number) =>
+  !disposed && revision === conversationRevision && id === selectedConversationId.value;
+
+const onConversationScroll = () => {
+  const area = scrollArea.value;
+  if (!area) return;
+  nearBottom.value = area.scrollHeight - area.scrollTop - area.clientHeight < 96;
+  if (selectedConversationId.value) scrollPositions.set(selectedConversationId.value, area.scrollTop);
+  if (nearBottom.value) hasUnreadUpdates.value = false;
+};
+const scrollToBottom = async (force = false) => {
+  if (!force && !nearBottom.value) { hasUnreadUpdates.value = true; return; }
+  const id = selectedConversationId.value;
+  const revision = conversationRevision;
   await nextTick();
+  if (!isCurrentConversation(id, revision)) return;
   scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: 'auto' });
+  nearBottom.value = true;
+  hasUnreadUpdates.value = false;
+};
+
+const stopConversationMonitoring = () => {
+  closeConversationStream?.();
+  closeConversationStream = null;
+  executionStreams.forEach((close) => close());
+  executionStreams.clear();
+  toolTaskTimers.forEach((timer) => window.clearTimeout(timer));
+  toolTaskTimers.clear();
+  if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+  refreshTimer = null;
+  scheduledAutoStarts.clear();
+};
+const beginConversationSelection = (id: string) => {
+  if (scrollArea.value && selectedConversationId.value) scrollPositions.set(selectedConversationId.value, scrollArea.value.scrollTop);
+  conversationRevision += 1;
+  stopConversationMonitoring();
+  selectedConversationId.value = id;
+  conversation.value = null;
+  projectSnapshot.value = null;
+  authorizations.value = [];
+  selectedAttachments.value = [];
+  selectedSourceArtifacts.value = [];
+  pendingRunInput.value = null;
+  activity.clear();
+  notice.value = '';
+  sending.value = false;
+  planning.value = false;
+  nearBottom.value = true;
+  hasUnreadUpdates.value = false;
+  return conversationRevision;
 };
 
 const scheduleRefresh = (autoStartExecutionId?: string) => {
   if (autoStartExecutionId) scheduledAutoStarts.add(autoStartExecutionId);
   if (refreshTimer !== null) return;
+  const id = selectedConversationId.value;
+  const revision = conversationRevision;
   refreshTimer = window.setTimeout(() => {
     refreshTimer = null;
+    if (!isCurrentConversation(id, revision)) return;
     const executionIds = [...scheduledAutoStarts];
-    scheduledAutoStarts.clear();
-    void refreshConversation(executionIds);
+    void refreshConversation(executionIds).catch(() => {});
   }, 180);
 };
 
-const connectConversationStream = (conversationId: string) => {
+const connectConversationStream = (id: string, revision = conversationRevision) => {
   closeConversationStream?.();
-  closeConversationStream = openDesignEventStream(conversationId, {
+  closeConversationStream = openDesignEventStream(id, {
     onEvent: (event) => {
-      if (['execution.ready', 'clarification.required', 'planning.failed'].includes(event.type)) {
-        planning.value = false;
-      }
-      const autoStartExecutionId = event.type === 'execution.ready' && typeof event.data.executionId === 'string'
-        ? event.data.executionId
-        : undefined;
-      scheduleRefresh(autoStartExecutionId);
+      if (!isCurrentConversation(id, revision) || event.conversationId !== id) return;
+      if (['execution.ready', 'clarification.required', 'planning.failed'].includes(event.type)) planning.value = false;
+      scheduleRefresh(event.type === 'execution.ready' && typeof event.data.executionId === 'string' ? event.data.executionId : undefined);
     }
   });
 };
 
-const runLoads = new Map<string, Promise<void>>();
-const loadRun = (runId: string): Promise<void> => {
-  const existing = runLoads.get(runId);
-  if (existing) return existing;
-  const pending = (async () => {
-    const previous = agentRuns[runId];
-    const run = await getAgentRun(runId);
-    if (disposed) return;
-    agentRuns[runId] = run;
-    await activity.refresh(runId);
-    const previousPending = previous?.approvals?.filter((item) => item.status === 'pending').length || 0;
-    const nextPending = run.approvals?.filter((item) => item.status === 'pending').length || 0;
-    const becameTerminal = previous && previous.status !== run.status && ['succeeded', 'failed', 'cancelled'].includes(run.status);
-    if (!previous || nextPending > previousPending || becameTerminal) await scrollToBottom();
-    if (!['succeeded', 'failed', 'cancelled'].includes(run.status)) return;
-    executionStreams.get(runId)?.();
-    executionStreams.delete(runId);
-  })().finally(() => runLoads.delete(runId));
-  runLoads.set(runId, pending);
-  return pending;
+const loadRun = async (runId: string, id = selectedConversationId.value, revision = conversationRevision) => {
+  const previous = agentRuns[runId];
+  const requestRevision = (runReadRevisions.get(runId) || 0) + 1;
+  runReadRevisions.set(runId, requestRevision);
+  const loaded = await getAgentRun(runId);
+  if (!isCurrentConversation(id, revision) || requestRevision !== runReadRevisions.get(runId)) return;
+  agentRuns[runId] = loaded;
+  await activity.refresh(runId);
+  if (!isCurrentConversation(id, revision) || requestRevision !== runReadRevisions.get(runId)) return;
+  const becameTerminal = previous && previous.status !== loaded.status && ['succeeded', 'failed', 'cancelled'].includes(loaded.status);
+  const nextPending = loaded.approvals?.filter((item) => approvalIsAvailable(item)).length || 0;
+  const previousPending = previous?.approvals?.filter((item) => approvalIsAvailable(item)).length || 0;
+  if (!previous || nextPending > previousPending || becameTerminal) await scrollToBottom();
+  if (!['succeeded', 'failed', 'cancelled'].includes(loaded.status)) return;
+  executionStreams.get(runId)?.();
+  executionStreams.delete(runId);
 };
 
-const monitorRun = (runId: string) => {
-  if (executionStreams.has(runId)) return;
-  if (agentRuns[runId] && ['succeeded', 'failed', 'cancelled'].includes(agentRuns[runId].status)) {
-    void activity.refresh(runId);
-    return;
-  }
+const monitorRun = (runId: string, id = selectedConversationId.value, revision = conversationRevision) => {
+  if (executionStreams.has(runId) || !isCurrentConversation(id, revision)) return;
+  if (['succeeded', 'failed', 'cancelled'].includes(agentRuns[runId]?.status || '')) { if (!runEvents[runId]) void loadRun(runId, id, revision).catch(() => {}); return; }
   const close = openAgentEventStream(runId, {
-    onEvent: (event) => {
-      activity.receive(event);
-      void loadRun(runId).then(() => scheduleRefresh()).catch(() => {});
+    onEvent: () => {
+      if (!isCurrentConversation(id, revision)) return;
+      void loadRun(runId, id, revision).then(() => {
+        if (isCurrentConversation(id, revision)) scheduleRefresh();
+      }).catch(() => {});
     }
   });
   executionStreams.set(runId, close);
-  void loadRun(runId).catch(() => {});
+  void loadRun(runId, id, revision).catch(() => {});
 };
 
-const monitorToolTask = (taskId: string) => {
-  if (toolTaskTimers.has(taskId)) return;
+const monitorToolTask = (taskId: string, id = selectedConversationId.value, revision = conversationRevision) => {
+  if (toolTaskTimers.has(taskId) || !isCurrentConversation(id, revision)) return;
+  if (['success', 'failed', 'cancelled'].includes(toolTasks[taskId]?.status || '')) return;
+  // Reserve before the first async read, so repeated hydration cannot start a
+  // second polling chain for the same task.
+  toolTaskTimers.set(taskId, 0);
   const poll = async () => {
     try {
       const task = await getToolTask(taskId);
+      if (!isCurrentConversation(id, revision)) return;
       toolTasks[taskId] = task;
-      if (['succeeded', 'failed', 'cancelled'].includes(task.status)) {
+      if (['success', 'failed', 'cancelled'].includes(task.status)) {
         toolTaskTimers.delete(taskId);
-        await refreshConversation();
+        // A failed conversation refresh must not restart a terminal task poll.
+        await refreshConversation().catch(() => {});
         return;
       }
-    } catch {}
-    const timer = window.setTimeout(() => {
-      toolTaskTimers.delete(taskId);
-      void poll();
-    }, document.visibilityState === 'visible' ? 1500 : 5000);
-    toolTaskTimers.set(taskId, timer);
+    } catch { /* A transient read error can be retried while this task is selected. */ }
+    if (!isCurrentConversation(id, revision)) return;
+    toolTaskTimers.set(taskId, window.setTimeout(() => {
+      if (isCurrentConversation(id, revision)) void poll();
+    }, document.visibilityState === 'visible' ? 1500 : 5000));
   };
   void poll();
 };
 
-const hydrateExecutionTargets = async (executions: DesignExecution[]) => {
+const hydrateExecutionTargets = (executions: DesignExecution[], id = selectedConversationId.value, revision = conversationRevision) => {
+  if (!isCurrentConversation(id, revision)) return;
   for (const execution of executions) {
-    if (execution.toolTaskId && !toolTasks[execution.toolTaskId]) {
-      void getToolTask(execution.toolTaskId)
-        .then((task) => { toolTasks[task.taskId] = task; monitorToolTask(task.taskId); })
-        .catch(() => {});
-    } else if (execution.toolTaskId) {
-      monitorToolTask(execution.toolTaskId);
-    }
-    if (execution.agentRunId) monitorRun(execution.agentRunId);
+    if (execution.toolTaskId) monitorToolTask(execution.toolTaskId, id, revision);
+    if (execution.agentRunId) monitorRun(execution.agentRunId, id, revision);
   }
 };
 
-const syncConversationProject = async (projectId: string | null | undefined) => {
-  if (!projectId) {
-    projectSnapshot.value = null;
-    return;
-  }
+const syncConversationProject = async (projectId: string | null | undefined, id = selectedConversationId.value, revision = conversationRevision) => {
+  if (!projectId) { if (isCurrentConversation(id, revision)) projectSnapshot.value = null; return; }
   if (projectSnapshot.value?.projectId === projectId) return;
-  projectSnapshot.value = await getCreativeProject(projectId).catch(() => null);
+  const project = await getCreativeProject(projectId).catch(() => null);
+  if (isCurrentConversation(id, revision)) projectSnapshot.value = project;
 };
 
+let conversationRefreshRevision = 0;
 const refreshConversation = async (autoStartExecutionIds: string[] = []) => {
-  const id = conversation.value?.conversationId;
-  if (!id) return;
+  const id = selectedConversationId.value;
+  const revision = conversationRevision;
+  if (!id || conversation.value?.conversationId !== id) return;
+  autoStartExecutionIds.forEach((executionId) => scheduledAutoStarts.add(executionId));
+  const requestRevision = ++conversationRefreshRevision;
   const fresh = await getDesignConversation(id);
+  if (!isCurrentConversation(id, revision) || requestRevision !== conversationRefreshRevision) return;
+  const previous = conversation.value;
+  const changed = JSON.stringify(previous?.messages) !== JSON.stringify(fresh.messages) || JSON.stringify(previous?.executions) !== JSON.stringify(fresh.executions);
   conversation.value = fresh;
-  await syncConversationProject(fresh.projectId);
-  await hydrateExecutionTargets(fresh.executions || []);
-  if (autoStartExecutionIds.length) {
-    const allowed = new Set(autoStartExecutionIds);
-    for (const execution of fresh.executions || []) {
-      if (
-        allowed.has(execution.executionId) &&
-        !execution.toolTaskId &&
-        !execution.agentRunId &&
-        ['queued', 'waiting_upload'].includes(execution.status)
-      ) {
-        void startExecution(execution);
-      }
-    }
+  await syncConversationProject(fresh.projectId, id, revision);
+  if (!isCurrentConversation(id, revision)) return;
+  hydrateExecutionTargets(fresh.executions || [], id, revision);
+  const allowed = new Set(scheduledAutoStarts);
+  for (const execution of fresh.executions || []) {
+    if (!allowed.has(execution.executionId)) continue;
+    scheduledAutoStarts.delete(execution.executionId);
+    if (!execution.toolTaskId && !execution.agentRunId && ['queued', 'waiting_upload'].includes(execution.status)) void startExecution(execution);
   }
-  await scrollToBottom();
+  if (changed) await scrollToBottom();
 };
 
 const refreshConversationList = async () => {
   if (!isAuthed.value) return;
-  conversations.value = await listDesignConversations();
+  const owner = authUserId.value;
+  const list = await listDesignConversations();
+  if (!disposed && owner === authUserId.value && isAuthed.value) conversations.value = list;
 };
 
-let conversationSelectionVersion = 0;
-const openConversation = async (conversationId: string, canApply: () => boolean = () => true) => {
-  const normalizedId = String(conversationId || '').trim();
-  if (!normalizedId) return;
-  const selectionVersion = ++conversationSelectionVersion;
-  const fresh = await getDesignConversation(normalizedId);
-  if (disposed || selectionVersion !== conversationSelectionVersion || !canApply()) return;
-  if (conversation.value?.conversationId !== normalizedId) selectedSourceArtifacts.value = [];
-  conversation.value = fresh;
-  try { window.localStorage.setItem(LAST_CONVERSATION_KEY, normalizedId); } catch {}
-  await syncConversationProject(conversation.value.projectId);
-  authorizations.value = await listDesignSessionAuthorizations(normalizedId).catch(() => []);
-  if (disposed || selectionVersion !== conversationSelectionVersion) return;
-  connectConversationStream(normalizedId);
-  await router.replace({ path: '/artigen/create', query: { c: normalizedId } });
-  await hydrateExecutionTargets(conversation.value.executions || []);
-  await scrollToBottom();
+const openConversation = async (conversationId: string) => {
+  const id = String(conversationId || '').trim();
+  if (!id) return;
+  const revision = beginConversationSelection(id);
+  loadingConversation.value = true;
+  conversationLoadError.value = '';
+  try {
+    const loaded = await getDesignConversation(id);
+    if (!isCurrentConversation(id, revision)) return;
+    conversation.value = loaded;
+    try { window.localStorage.setItem(lastConversationKey(), id); } catch {}
+    await syncConversationProject(loaded.projectId, id, revision);
+    const grants = await listDesignSessionAuthorizations(id).catch(() => []);
+    if (!isCurrentConversation(id, revision)) return;
+    authorizations.value = grants;
+    connectConversationStream(id, revision);
+    await router.replace({ path: '/artigen/create', query: { c: id, ...(conversation.value?.projectId ? { projectId: conversation.value.projectId } : {}) } });
+    if (!isCurrentConversation(id, revision)) return;
+    loadingConversation.value = false;
+    hydrateExecutionTargets(loaded.executions || [], id, revision);
+    await nextTick();
+    if (!isCurrentConversation(id, revision)) return;
+    const previousPosition = scrollPositions.get(id);
+    if (previousPosition !== undefined && scrollArea.value) { scrollArea.value.scrollTop = previousPosition; onConversationScroll(); }
+    else await scrollToBottom(true);
+  } catch (error) {
+    if (isCurrentConversation(id, revision)) conversationLoadError.value = errorText(error);
+  } finally {
+    if (isCurrentConversation(id, revision)) loadingConversation.value = false;
+  }
 };
 
 const newConversation = async () => {
-  conversationSelectionVersion += 1;
-  closeConversationStream?.();
-  closeConversationStream = null;
-  conversation.value = null;
-  projectSnapshot.value = null;
-  authorizations.value = [];
-  draft.value = '';
-  selectedAttachments.value = [];
-  selectedSourceArtifacts.value = [];
-  try { window.localStorage.removeItem(LAST_CONVERSATION_KEY); } catch {}
-  await router.replace('/artigen/create');
+  const wasNew = !selectedConversationId.value;
+  beginConversationSelection('');
+  loadingConversation.value = false;
+  conversationLoadError.value = '';
+  if (wasNew) draft.value = '';
+  try { window.localStorage.setItem(lastConversationKey(), 'new'); } catch {}
+  await router.replace({ path: '/artigen/create', query: route.query.projectId ? { projectId: String(route.query.projectId) } : {} });
 };
 
 const removeCurrentConversation = async () => {
   const id = conversation.value?.conversationId;
+  const revision = conversationRevision;
   if (!id) return;
   const confirmed = window.confirm(zh.value
     ? '删除这个设计会话？消息、执行记录和短期附件关联将一起删除。'
@@ -807,9 +938,9 @@ const removeCurrentConversation = async () => {
   try {
     await deleteDesignConversation(id);
     await refreshConversationList();
-    await newConversation();
+    if (isCurrentConversation(id, revision)) await newConversation();
   } catch (error) {
-    notice.value = errorText(error);
+    if (isCurrentConversation(id, revision)) notice.value = errorText(error);
   }
 };
 
@@ -828,9 +959,19 @@ const openFilePicker = (executionId = '') => {
 };
 const onFilesSelected = (event: Event) => {
   const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []).slice(0, 10);
+  const incoming = Array.from(input.files || []);
   input.value = '';
-  const added = files.map((file) => ({
+  if (sending.value) return;
+  const previous = attachmentTarget.value ? [] : selectedAttachments.value.map(item => item.file);
+  // The design entry also routes to local browser tools; keep their existing
+  // size policy. Cloud executors still enforce their own upload limits.
+  const selection = mergeReferenceFiles(previous, incoming);
+  if (selection.error) {
+    notice.value = zh.value ? '最多添加 10 个文件。原有选择已保留，请先移除部分文件。' : 'Choose up to 10 files. Your selection is kept; remove a file before adding more.';
+    return;
+  }
+  const existing = new Map(selectedAttachments.value.map(item => [referenceFileKey(item.file), item]));
+  const added = selection.files.map((file) => existing.get(referenceFileKey(file)) || ({
     clientId: crypto.randomUUID(),
     name: file.name,
     mimeType: file.type || 'application/octet-stream',
@@ -846,14 +987,33 @@ const onFilesSelected = (event: Event) => {
     if (execution) void startExecution(execution);
     return;
   }
-  selectedAttachments.value = [...selectedAttachments.value, ...added].slice(0, 10);
+  selectedAttachments.value = added;
 };
 
+const acceptWorkspaceAttachment = (attachment: WorkspaceAttachment) => {
+  if (attachment.owner !== authUserId.value || attachment.project !== (conversation.value?.projectId || String(route.query.projectId || ''))) return false;
+  if (sending.value || selectedAttachments.value.length >= 10) { notice.value = zh.value ? '请等待发送完成，或先移除一些附件。' : 'Wait for sending or remove a reference first.'; return false; }
+  const existing = selectedAttachments.value.find(item => item.fileRef?.id === attachment.reference.id && item.fileRef?.sha256 === attachment.reference.sha256);
+  if (!existing) selectedAttachments.value.push({ clientId: crypto.randomUUID(), name: attachment.file.name, byteSize: attachment.file.size, mimeType: attachment.file.type || 'text/plain', file: attachment.file, fileRef: attachment.reference });
+  if (!draft.value.trim()) draft.value = zh.value ? `请根据我的要求修改 ${attachment.file.name}，保留原文件并交付可比较的新版本。` : `Update ${attachment.file.name} and deliver a comparable new version.`;
+  return true;
+};
+const onWorkspaceAttachment = (event: Event) => {
+  const attachment = (event as CustomEvent<WorkspaceAttachment>).detail;
+  attachment.accepted = acceptWorkspaceAttachment(attachment);
+};
 const submitAuthenticated = async () => {
-  const text = draft.value.trim();
-  if (!text || sending.value) return;
+  const submittedDraft = draft.value;
+  const text = submittedDraft.trim();
+  if (!text || sending.value || loadingConversation.value) return;
+  const revision = conversationRevision;
+  const owner = authUserId.value;
+  const originalDraftTask = conversationDraftTask();
+  let id = selectedConversationId.value;
+  const attachments = [...selectedAttachments.value];
   sending.value = true;
   notice.value = '';
+  conversationRefreshRevision += 1;
   try {
     // Resolve still-loading runs before deciding whether this is steering or a new request.
     await Promise.all((conversation.value?.executions || [])
@@ -874,43 +1034,46 @@ const submitAuthenticated = async () => {
         pendingRunInput.value = { runId: target.runId, text, inputId: crypto.randomUUID() };
       }
       await submitAgentInput(target.runId, { message: text, inputId: pendingRunInput.value.inputId });
+      if (!isCurrentConversation(id, revision) || owner !== authUserId.value) return;
       pendingRunInput.value = null;
-      if (draft.value.trim() === text) draft.value = '';
+      discardSaved(owner, originalDraftTask, submittedDraft);
+      if (draft.value === submittedDraft) draft.value = '';
       await loadRun(target.runId);
       await scrollToBottom();
       return;
     }
-    let active = conversation.value;
-    if (!active) {
-      active = await createDesignConversation();
-      conversation.value = { ...active, messages: [], executions: [] };
-      connectConversationStream(active.conversationId);
-      await router.replace({ path: '/artigen/create', query: { c: active.conversationId } });
+    if (!conversation.value) {
+      const created = await createDesignConversation(String(route.query.projectId || '') || null, String(route.query.sourceRun || '') || null);
+      if (!isCurrentConversation(id, revision)) return;
+      const currentDraft = draft.value;
+      id = created.conversationId;
+      selectedConversationId.value = id;
+      draft.value = currentDraft;
+      conversation.value = { ...created, messages: [], executions: [] };
+      connectConversationStream(id, revision);
+      await router.replace({ path: '/artigen/create', query: { c: id, ...(conversation.value?.projectId ? { projectId: conversation.value.projectId } : {}) } });
+      if (!isCurrentConversation(id, revision)) return;
     }
-    const manifest = selectedAttachments.value.map(({ file: _file, ...item }) => item);
-    for (const item of selectedAttachments.value) localFiles.set(item.clientId, item.file);
-    // The durable completion event can arrive before the POST response.
+    const manifest = attachments.map(({ file: _file, ...item }) => item);
+    for (const item of attachments) localFiles.set(item.clientId, item.file);
     planning.value = true;
-    const message = await sendDesignMessage(
-      active.conversationId,
-      text,
-      manifest,
-      selectedSourceArtifacts.value.map((artifact) => artifact.artifactId)
-    );
-    if (conversation.value?.conversationId === active.conversationId &&
-        !conversation.value.messages.some((item) => item.messageId === message.messageId)) {
-      conversation.value.messages = [...conversation.value.messages, message];
-    }
-    draft.value = '';
-    selectedAttachments.value = [];
+    const sourceArtifactIds = selectedSourceArtifacts.value.map(artifact => artifact.artifactId);
+    const sent = await sendDesignMessage(id, text, manifest, sourceArtifactIds);
+    discardSaved(owner, `conversation:${id}`, submittedDraft);
+    discardSaved(owner, originalDraftTask, submittedDraft);
+    if (!isCurrentConversation(id, revision)) return;
+    if (conversation.value) conversation.value.messages = [...(conversation.value.messages || []), sent];
+    if (draft.value === submittedDraft) draft.value = '';
     selectedSourceArtifacts.value = [];
+    const sentFileIds = new Set(attachments.map((item) => item.clientId));
+    selectedAttachments.value = selectedAttachments.value.filter((item) => !sentFileIds.has(item.clientId));
+    window.dispatchEvent(new Event('workspace:navigation-changed'));
     await refreshConversationList();
-    await scrollToBottom();
+    if (isCurrentConversation(id, revision)) await scrollToBottom(true);
   } catch (error) {
-    planning.value = false;
-    notice.value = errorText(error);
+    if (isCurrentConversation(id, revision)) { planning.value = false; notice.value = errorText(error); }
   } finally {
-    sending.value = false;
+    if (isCurrentConversation(id, revision)) sending.value = false;
   }
 };
 
@@ -929,7 +1092,7 @@ const removeSourceArtifact = (artifactId: string) => {
 };
 
 const submitMessage = () => {
-  if (!draft.value.trim()) return;
+  if (!draft.value.trim() || loadingConversation.value || conversationLoadError.value) return;
   if (!ensureAuthed(submitAuthenticated)) return;
   void submitAuthenticated();
 };
@@ -990,7 +1153,8 @@ const executionInputFiles = (execution: DesignExecution) => {
 };
 
 const ensureUploadedAssets = async (execution: DesignExecution) => {
-  if (!conversation.value) return [];
+  const active = conversation.value;
+  if (!active || active.conversationId !== execution.conversationId) return [];
   const selectedClientIds = executionFileIds[execution.executionId];
   const clientIds = selectedClientIds?.length
     ? selectedClientIds
@@ -998,7 +1162,7 @@ const ensureUploadedAssets = async (execution: DesignExecution) => {
   if (execution.plan.uploadRequired && !clientIds.length) {
     throw Object.assign(new Error('DESIGN_ATTACHMENTS_REQUIRED'), { code: 'DESIGN_ATTACHMENTS_REQUIRED' });
   }
-  const uploads: DesignExecutionAssetLink[] = conversation.value.uploads || [];
+  const uploads: DesignExecutionAssetLink[] = active.uploads || [];
   return prepareDesignExecutionAssetIds({
     clientIds,
     uploads,
@@ -1013,91 +1177,66 @@ const ensureUploadedAssets = async (execution: DesignExecution) => {
   });
 };
 
-const runToolExecution = async (execution: DesignExecution, assetIds: string[]) => {
-  if (!execution.toolId || !execution.operation || !conversation.value) return;
-  const quote = await quoteToolTask({
-    toolId: execution.toolId,
-    operation: execution.operation,
-    options: execution.plan.options || {}
-  });
-  const checked = await recordDesignToolQuote(
-    conversation.value.conversationId,
-    execution.executionId,
-    quote.quoteId
-  );
-  if (checked.status === 'waiting_budget') {
-    await refreshConversation();
-    return;
-  }
+const runToolExecution = async (execution: DesignExecution, assetIds: string[], revision: number) => {
+  const id = execution.conversationId;
+  if (!execution.toolId || !execution.operation || !isCurrentConversation(id, revision)) return;
+  const quote = await quoteToolTask({ toolId: execution.toolId, operation: execution.operation, options: execution.plan.options || {} });
+  if (!isCurrentConversation(id, revision)) return;
+  const checked = await recordDesignToolQuote(id, execution.executionId, quote.quoteId);
+  if (!isCurrentConversation(id, revision)) return;
+  if (checked.status === 'waiting_budget') { await refreshConversation(); return; }
   const task = await createToolTask({
-    toolId: execution.toolId,
-    operation: execution.operation,
-    options: execution.plan.options || {},
-    quoteId: quote.quoteId,
-    inputAssets: assetIds,
-    idempotencyKey: `design:${execution.executionId}`
+    toolId: execution.toolId, operation: execution.operation,
+    options: execution.plan.options || {}, quoteId: quote.quoteId,
+    inputAssets: assetIds, idempotencyKey: `design:${execution.executionId}`
   });
+  // Once a task was created, attach it to its original execution even if the
+  // viewer changed tasks. Never bind its result to the newly selected session.
+  await attachDesignExecutionTarget(id, execution.executionId, { toolTaskId: task.taskId });
+  if (!isCurrentConversation(id, revision)) return;
   toolTasks[task.taskId] = task;
-  await attachDesignExecutionTarget(
-    conversation.value.conversationId,
-    execution.executionId,
-    { toolTaskId: task.taskId }
-  );
-  void waitForToolTask(task, { timeoutMs: 5 * 60_000 })
-    .then((finalTask) => {
-      toolTasks[finalTask.taskId] = finalTask;
-      return refreshConversation();
-    })
-    .catch((error) => { notice.value = errorText(error); });
+  monitorToolTask(task.taskId, id, revision);
 };
 
-const runAgentExecution = async (execution: DesignExecution, assetIds: string[]) => {
-  if (!conversation.value) return;
-  const quoted = await quoteDesignAgentExecution(
-    conversation.value.conversationId,
-    execution.executionId
-  );
-  if (!quoted.quote.canStart || quoted.execution.status === 'waiting_budget') {
-    await refreshConversation();
-    return;
-  }
+const runAgentExecution = async (execution: DesignExecution, assetIds: string[], revision: number) => {
+  const id = execution.conversationId;
+  if (!isCurrentConversation(id, revision)) return;
+  const projectId = conversation.value?.projectId || null;
+  const quoted = await quoteDesignAgentExecution(id, execution.executionId);
+  if (!isCurrentConversation(id, revision)) return;
+  if (!quoted.quote.canStart || quoted.execution.status === 'waiting_budget') { await refreshConversation(); return; }
   const plan = execution.plan;
-  const run = await createAgentRun({
-    objective: String(plan.objective || ''),
-    assetIds,
+  const created = await createAgentRun({
+    fileEditTargets: (execution.plan.attachmentClientIds || []).flatMap(clientId => { const manifest = conversation.value?.messages.flatMap(m => m.attachments || []).find(a => a.clientId === clientId); const upload = conversation.value?.uploads?.find(a => a.clientId === clientId); return manifest?.fileRef && /^text\//.test(manifest.mimeType) && manifest.byteSize <= 1024 * 1024 && upload ? [{ ...manifest.fileRef, assetId: upload.assetId }] : []; }),
     sourceArtifactIds: plan.sourceArtifactIds || [],
-    sourceConversationId: plan.sourceArtifactIds?.length ? conversation.value.conversationId : undefined,
-    maxCredits: execution.maxCredits,
+    sourceConversationId: plan.sourceArtifactIds?.length ? id : undefined,
+    objective: String(plan.objective || ''), assetIds, maxCredits: execution.maxCredits,
     capabilities: plan.capabilities || { files: true, shell: true },
-    deliverables: plan.deliverables || [],
-    taskSpec: plan.taskSpec || null,
+    deliverables: plan.deliverables || [], taskSpec: plan.taskSpec || null,
     browserConfig: plan.browserConfig || { allowedOrigins: [], persistSession: false },
-    projectId: conversation.value.projectId || null,
-    idempotencyKey: `design:${execution.executionId}`
+    projectId, idempotencyKey: `design:${execution.executionId}`
   });
-  agentRuns[run.runId] = run;
-  await attachDesignExecutionTarget(
-    conversation.value.conversationId,
-    execution.executionId,
-    { agentRunId: run.runId }
-  );
-  monitorRun(run.runId);
+  await attachDesignExecutionTarget(id, execution.executionId, { agentRunId: created.runId });
+  if (!isCurrentConversation(id, revision)) return;
+  agentRuns[created.runId] = created;
+  monitorRun(created.runId, id, revision);
 };
 
 const startExecution = async (execution: DesignExecution) => {
-  if (startingExecutions.has(execution.executionId)) return;
+  const id = execution.conversationId;
+  const revision = conversationRevision;
+  if (!isCurrentConversation(id, revision) || startingExecutions.has(execution.executionId)) return;
   if (execution.routeKind === 'reply' || execution.routeKind === 'local_tool') return;
   if (execution.toolTaskId || execution.agentRunId || execution.status === 'waiting_budget') return;
   startingExecutions.add(execution.executionId);
   try {
     const assetIds = await ensureUploadedAssets(execution);
-    if (execution.routeKind === 'tool_task') await runToolExecution(execution, assetIds);
-    if (execution.routeKind === 'agent_run') await runAgentExecution(execution, assetIds);
-    await refreshConversation();
+    if (!isCurrentConversation(id, revision)) return;
+    if (execution.routeKind === 'tool_task') await runToolExecution(execution, assetIds, revision);
+    if (execution.routeKind === 'agent_run') await runAgentExecution(execution, assetIds, revision);
+    if (isCurrentConversation(id, revision)) await refreshConversation();
   } catch (error) {
-    if (String((error as { code?: string })?.code || '') !== 'DESIGN_ATTACHMENTS_REQUIRED') {
-      notice.value = errorText(error);
-    }
+    if (isCurrentConversation(id, revision) && String((error as { code?: string })?.code || '') !== 'DESIGN_ATTACHMENTS_REQUIRED') notice.value = errorText(error);
   } finally {
     startingExecutions.delete(execution.executionId);
   }
@@ -1118,28 +1257,37 @@ const openLocalTool = async (execution: DesignExecution) => {
 
 const increaseBudget = async (execution: DesignExecution) => {
   if (!conversation.value) return;
+  const id = selectedConversationId.value;
+  const revision = conversationRevision;
   const minimum = Math.max(execution.quotedCredits || 0, execution.maxCredits + 10);
   try {
     await increaseDesignExecutionBudget(
-      conversation.value.conversationId,
+      id,
       execution.executionId,
       Math.min(500, minimum)
     );
+    if (!isCurrentConversation(id, revision)) return;
     await refreshConversation();
+    if (!isCurrentConversation(id, revision)) return;
     notice.value = zh.value
       ? `本次上限已提高到 ${Math.min(500, minimum)} 点；请确认新上限后再启动。`
       : `This execution cap is now ${Math.min(500, minimum)} credits. Review it before starting.`;
   } catch (error) {
+    if (!isCurrentConversation(id, revision)) return;
     notice.value = errorText(error);
   }
 };
 
 const cancelExecution = async (execution: DesignExecution) => {
   if (!conversation.value) return;
+  const id = selectedConversationId.value;
+  const revision = conversationRevision;
   try {
-    await cancelDesignExecution(conversation.value.conversationId, execution.executionId);
+    await cancelDesignExecution(id, execution.executionId);
+    if (!isCurrentConversation(id, revision)) return;
     await refreshConversation();
   } catch (error) {
+    if (!isCurrentConversation(id, revision)) return;
     notice.value = errorText(error);
   }
 };
@@ -1155,7 +1303,7 @@ const prepareRetry = (execution: DesignExecution) => {
   notice.value = zh.value
     ? '原要求已放回输入框；检查失败原因并修改后重新发送。'
     : 'The original request is back in the composer. Adjust it using the failure reason, then send again.';
-  void scrollToBottom();
+  void scrollToBottom(true);
 };
 
 const approveAgentAction = async (
@@ -1164,39 +1312,60 @@ const approveAgentAction = async (
   authorizeSession: boolean
 ) => {
   if (!conversation.value || !execution.agentRunId) return;
+  const id = selectedConversationId.value;
+  const revision = conversationRevision;
+  if (!approvalIsAvailable(approval)) { notice.value = zh.value ? '审批已过期，请刷新任务。' : 'This approval expired. Refresh the task.'; return; }
+  if (decidingExecutions.has(execution.executionId)) return;
+  decidingExecutions.add(execution.executionId);
   try {
     await submitAgentInput(execution.agentRunId, {
       approvalId: approval.approvalId,
       decision: 'approved'
     });
+    if (!isCurrentConversation(id, revision)) return;
     if (authorizeSession) {
       const origin = new URL(approval.recipient).origin;
       await grantDesignSessionAuthorization(
-        conversation.value.conversationId,
+        id,
         origin,
         approval.actionType
       );
-      authorizations.value = await listDesignSessionAuthorizations(conversation.value.conversationId);
+      const grants = await listDesignSessionAuthorizations(id);
+      if (isCurrentConversation(id, revision)) authorizations.value = grants;
     }
-    await loadRun(execution.agentRunId);
+    if (!isCurrentConversation(id, revision)) return;
+    await loadRun(execution.agentRunId, id, revision);
+    if (!isCurrentConversation(id, revision)) return;
     await refreshConversation();
   } catch (error) {
+    if (!isCurrentConversation(id, revision)) return;
     notice.value = errorText(error);
+  } finally {
+    decidingExecutions.delete(execution.executionId);
   }
 };
 
 const revokeAuthorization = async (authorizationId: string) => {
   if (!conversation.value) return;
+  const id = selectedConversationId.value;
+  const revision = conversationRevision;
   try {
-    await revokeDesignSessionAuthorization(conversation.value.conversationId, authorizationId);
-    authorizations.value = await listDesignSessionAuthorizations(conversation.value.conversationId);
+    await revokeDesignSessionAuthorization(id, authorizationId);
+    const grants = await listDesignSessionAuthorizations(id);
+    if (isCurrentConversation(id, revision)) authorizations.value = grants;
   } catch (error) {
+    if (!isCurrentConversation(id, revision)) return;
     notice.value = errorText(error);
   }
 };
 
 const denyAgentAction = async (execution: DesignExecution, approval: AgentApproval) => {
   if (!conversation.value || !execution.agentRunId) return;
+  const id = selectedConversationId.value;
+  const revision = conversationRevision;
+  if (!approvalIsAvailable(approval)) { notice.value = zh.value ? '审批已过期，请刷新任务。' : 'This approval expired. Refresh the task.'; return; }
+  if (decidingExecutions.has(execution.executionId)) return;
+  decidingExecutions.add(execution.executionId);
   try {
     await submitAgentInput(execution.agentRunId, {
       approvalId: approval.approvalId,
@@ -1205,21 +1374,30 @@ const denyAgentAction = async (execution: DesignExecution, approval: AgentApprov
         ? '用户在设计会话中拒绝了此操作。'
         : 'Denied from the design conversation.'
     });
-    await loadRun(execution.agentRunId);
+    if (!isCurrentConversation(id, revision)) return;
+    await loadRun(execution.agentRunId, id, revision);
+    if (!isCurrentConversation(id, revision)) return;
     await refreshConversation();
   } catch (error) {
+    if (!isCurrentConversation(id, revision)) return;
     notice.value = errorText(error);
+  } finally {
+    decidingExecutions.delete(execution.executionId);
   }
 };
 
 const cancelSubagentRun = async (subagentId: string) => {
+  const id = selectedConversationId.value;
+  const revision = conversationRevision;
   const run = activeRun.value;
   if (!run) return;
   try {
     await cancelAgentSubagent(run.runId, subagentId);
-    await loadRun(run.runId);
+    await loadRun(run.runId, id, revision);
+    if (!isCurrentConversation(id, revision)) return;
     notice.value = zh.value ? '子 Agent 已取消，父任务会继续。' : 'Subagent cancelled; the parent run will continue.';
   } catch (error) {
+    if (!isCurrentConversation(id, revision)) return;
     notice.value = errorText(error);
   }
 };
@@ -1291,6 +1469,8 @@ const saveMemoryCandidate = async (
   index: number,
   candidate: MemoryCandidate
 ) => {
+  const id = selectedConversationId.value;
+  const revision = conversationRevision;
   const projectId = conversation.value?.projectId;
   if (!projectId) return;
   try {
@@ -1301,6 +1481,7 @@ const saveMemoryCandidate = async (
           revision: project.revision,
           designMemory: mergeMemoryCandidate(project.designMemory, candidate)
         });
+        if (!isCurrentConversation(id, revision)) return;
         projectSnapshot.value = project;
         handledMemoryCandidates.add(memoryCandidateKey(messageId, index));
         notice.value = zh.value ? '已保存到项目记忆。' : 'Saved to project memory.';
@@ -1313,7 +1494,7 @@ const saveMemoryCandidate = async (
       }
     }
   } catch (error) {
-    notice.value = errorText(error);
+    if (isCurrentConversation(id, revision)) notice.value = errorText(error);
   }
 };
 
@@ -1321,42 +1502,29 @@ const executionsForMessage = (messageId: string) => (
   conversation.value?.executions?.filter((item) => item.sourceMessageId === messageId) || []
 );
 
-let disposed = false;
-let restoringConversation: Promise<void> | null = null;
-
-const restoreAuthenticatedConversation = () => {
+const handleAuthChanged = () => {
+  const previousOwner = authUserId.value;
   syncAuth();
-  if (!isAuthed.value || disposed) return Promise.resolve();
-  if (restoringConversation) return restoringConversation;
-  restoringConversation = (async () => {
-    await refreshConversationList().catch(() => {});
-    // Login can finish after mount. Restore once, without replacing an active
-    // conversation or a draft that is currently being submitted after login.
-    if (disposed || !isAuthed.value || conversation.value || sending.value) return;
-    const requested = String(route.query.c || '').trim() || (() => {
-      try { return String(window.localStorage.getItem(LAST_CONVERSATION_KEY) || '').trim(); } catch { return ''; }
-    })();
-    if (requested) {
-      try {
-        await openConversation(requested, () => !conversation.value && !sending.value && isAuthed.value);
-      } catch (error) {
-        // A temporary read failure must not erase the requested conversation URL.
-        if (!disposed) notice.value = errorText(error);
-      }
-    }
-  })().finally(() => { restoringConversation = null; });
-  return restoringConversation;
-};
-
-const handleAuthChanged = () => { void restoreAuthenticatedConversation(); };
-const onVisible = () => {
-  if (document.visibilityState === 'visible' && conversation.value) {
-    void refreshConversation().catch(() => {});
-    void refreshConversationList().catch(() => {});
+  if (previousOwner !== authUserId.value || !isAuthed.value) {
+    const requested = isAuthed.value ? String(route.query.c || '').trim() : '';
+    beginConversationSelection(requested);
+    loadingConversation.value = Boolean(requested);
+    conversationLoadError.value = '';
+    conversations.value = [];
+    localFiles.clear();
+    Object.keys(toolTasks).forEach((key) => delete toolTasks[key]);
+    Object.keys(agentRuns).forEach((key) => delete agentRuns[key]);
+    Object.keys(runEvents).forEach((key) => delete runEvents[key]);
+    if (requested) void openConversation(requested);
   }
+  if (isAuthed.value) void refreshConversationList().catch(() => {});
 };
 
 onMounted(async () => {
+  window.addEventListener('workspace:attach-file', onWorkspaceAttachment);
+  const pending = takeWorkspaceAttachment(authUserId.value, String(route.query.projectId || ''));
+  const explicitNew = Boolean(pending || route.query.projectId || route.query.sourceRun);
+
   activityPollTimer = window.setInterval(() => {
     if (document.visibilityState !== 'visible') return;
     for (const execution of conversation.value?.executions || []) {
@@ -1367,7 +1535,6 @@ onMounted(async () => {
     }
   }, 5000);
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
-  document.addEventListener('visibilitychange', onVisible);
   try {
     status.value = await getDesignAssistantStatus();
     statusUnavailable.value = false;
@@ -1375,36 +1542,70 @@ onMounted(async () => {
     status.value = null;
     statusUnavailable.value = true;
   }
-  await restoreAuthenticatedConversation();
+  if (disposed) return;
+  syncAuth();
+  if (!isAuthed.value) {
+    loadingConversation.value = false;
+    if (selectedConversationId.value) conversationLoadError.value = errorText({ code: 'LOGIN_REQUIRED' });
+    return;
+  }
+  const initialRevision = conversationRevision;
+  await refreshConversationList().catch(() => {});
+  if (disposed || initialRevision !== conversationRevision) return;
+  const requested = String(route.query.c || '').trim() || (explicitNew ? '' : (() => {
+    try {
+      const scoped = window.localStorage.getItem(lastConversationKey());
+      if (scoped !== null) return scoped;
+      const legacy = window.localStorage.getItem(LAST_CONVERSATION_KEY) || '';
+      return conversations.value.some((item) => item.conversationId === legacy) ? legacy : '';
+    } catch { return ''; }
+  })());
+  if (requested && requested !== 'new') await openConversation(requested);
+  if (pending && !disposed) acceptWorkspaceAttachment(pending);
+  if (disposed) return;
+  const onVisible = () => {
+    if (document.visibilityState === 'visible' && conversation.value) {
+      void refreshConversation().catch(() => {});
+      void refreshConversationList().catch(() => {});
+    }
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  visibilityCleanup = () => document.removeEventListener('visibilitychange', onVisible);
 });
 
-watch(() => conversation.value?.messages?.length, () => void scrollToBottom());
+watch(() => String(route.query.projectId || ''), (value, previous) => {
+  if (value === previous || route.query.c || disposed) return;
+  beginConversationSelection('');
+  const pending = takeWorkspaceAttachment(authUserId.value, value);
+  if (pending) acceptWorkspaceAttachment(pending);
+});
+
+watch(() => String(route.query.c || '').trim(), (id, previous) => {
+  if (disposed || id === selectedConversationId.value) return;
+  if (id) void openConversation(id);
+  else if (previous) void newConversation();
+});
 
 onBeforeUnmount(() => {
+  window.removeEventListener('workspace:attach-file', onWorkspaceAttachment);
   disposed = true;
   if (activityPollTimer !== null) window.clearInterval(activityPollTimer);
-  document.removeEventListener('visibilitychange', onVisible);
+  conversationRevision += 1;
   window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);
-  closeConversationStream?.();
-  executionStreams.forEach((close) => close());
-  executionStreams.clear();
-  toolTaskTimers.forEach((timer) => window.clearTimeout(timer));
-  toolTaskTimers.clear();
-  if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+  stopConversationMonitoring();
+  visibilityCleanup?.();
   try {
-    if (conversation.value?.conversationId) {
-      window.localStorage.setItem(LAST_CONVERSATION_KEY, conversation.value.conversationId);
+    if (isAuthed.value && conversation.value?.conversationId === selectedConversationId.value) {
+      window.localStorage.setItem(lastConversationKey(), selectedConversationId.value);
     }
   } catch {}
 });
 </script>
 
 <style scoped>
-.workspace-zero,.workspace-chat {
-  --conversation-max: 820px;
-}
+
 .history-group { display: grid; gap: 4px; }
-.history-group > p { margin: 8px 8px 5px; color: var(--muted-2); font-size: 11px; font-weight: 680; letter-spacing: .05em; text-transform: uppercase; }
+.history-group > p { margin: 8px 8px 5px; color: var(--muted-2); font-size: 12px; font-weight: 680; letter-spacing: .05em; text-transform: uppercase; }
 .history-item { display: grid; grid-template-columns: 8px minmax(0,1fr); width: 100%; align-items: start; gap: 9px; min-height: 46px; padding: 8px 9px; border: 0; border-radius: 9px; color: var(--muted); text-align: left; background: transparent; cursor: pointer; }
 .history-item:hover { color: var(--text); background: var(--surface-raised); }
 .history-item.active { color: var(--text); background: var(--surface-hover); }
@@ -1422,11 +1623,11 @@ onBeforeUnmount(() => {
 .conversation-heading small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-icon { position: relative; display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; color: var(--muted); }
 .conversation-icon.agent_run::after,.conversation-icon.tool_task::after { position: absolute; right: 0; bottom: 1px; width: 6px; height: 6px; border-radius: 50%; background: var(--acid); content: ""; box-shadow: 0 0 0 2px var(--bg); }
-.quiet-action { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 8px; border: 0; border-radius: 8px; color: var(--muted); font-size: 11px; background: transparent; cursor: pointer; }
+.quiet-action { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 8px; border: 0; border-radius: 8px; color: var(--muted); font-size: 12px; background: transparent; cursor: pointer; }
 .quiet-action:hover { color: var(--danger); background: var(--surface-hover); }
 .quiet-action svg { width: 14px; height: 14px; }
 
-.workspace-zero { display: grid; width: min(var(--conversation-max),calc(100% - 56px)); height: 100%; min-height: 0; margin: 0 auto; padding: clamp(64px,10vh,118px) 0 48px; overflow-y: auto; overscroll-behavior: contain; align-content: center; scrollbar-color: var(--border) transparent; }
+.workspace-zero { display: grid; grid-template-columns:minmax(0,1fr); width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; min-height: 0; margin: 0 auto; padding: clamp(64px,10vh,118px) 0 48px; overflow-y: auto; overscroll-behavior: contain; align-content: safe center; scrollbar-color: var(--border) transparent; }
 .zero-copy { margin: 0 0 20px; }
 .zero-copy:has(+ .service-unavailable-note) { margin-bottom: 10px; }
 .zero-copy h1 { margin: 0; font-size: clamp(30px,3vw,38px); font-weight: 680; letter-spacing: -.04em; line-height: 1.12; text-wrap: balance; }
@@ -1451,11 +1652,11 @@ onBeforeUnmount(() => {
 .suggestion-grid > button:active { transform: scale(.995); }
 .suggestion-grid > button b { font-size: 14px; font-weight: 540; line-height: 1.5; }
 
-.workspace-chat { --conversation-gutter: clamp(24px,5vw,72px); position: relative; display: grid; grid-template-rows: minmax(0,1fr) auto; height: 100%; min-height: 0; }
-.message-scroll { min-height: 0; overflow-y: auto; padding: 46px var(--conversation-gutter) 40px; scrollbar-color: var(--border) transparent; scroll-padding-bottom: 40px; }
+.workspace-chat { position: relative; display: grid; grid-template-rows: minmax(0,1fr) auto; height: 100%; min-height: 0; }
+.message-scroll { min-height: 0; overflow-y: auto; padding: 32px var(--conversation-gutter) 32px; overflow-anchor: none; scrollbar-color: var(--border) transparent; scroll-padding-bottom: 40px; }
 .chat-service-note { margin-bottom: 24px; }
 .authorization-strip { display: grid; width: min(var(--conversation-max),100%); gap: 8px; margin: 0 auto 24px; padding: 12px 12px 12px 15px; border: 0; border-radius: 10px; background: color-mix(in srgb,var(--warning) 8%,var(--surface)); box-shadow: inset 3px 0 var(--warning); }
-.authorization-strip header,.authorization-strip article { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }.authorization-strip header span { font-size: 12px; font-weight: 680; }.authorization-strip small { color: var(--muted); font-size: 11px; }.authorization-strip article { padding-top: 8px; }.authorization-strip article > span { display: grid; min-width: 0; gap: 2px; overflow-wrap: anywhere; }.authorization-strip article b { font-size: 12px; }.authorization-strip button { flex: 0 0 auto; min-height: 32px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--danger); font-size: 11px; background: var(--surface-hover); cursor: pointer; }
+.authorization-strip header,.authorization-strip article { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }.authorization-strip header span { font-size: 12px; font-weight: 680; }.authorization-strip small { color: var(--muted); font-size: 12px; }.authorization-strip article { padding-top: 8px; }.authorization-strip article > span { display: grid; min-width: 0; gap: 2px; overflow-wrap: anywhere; }.authorization-strip article b { font-size: 12px; }.authorization-strip button { flex: 0 0 auto; min-height: 32px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--danger); font-size: 12px; background: var(--surface-hover); cursor: pointer; }
 .message { display: flex; width: min(var(--conversation-max),100%); gap: 12px; margin: 0 auto 24px; }
 .message.user { justify-content: flex-end; }
 .assistant-mark { display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 9px; color: var(--text); font-size: 12px; font-weight: 700; background: var(--surface-raised); }
@@ -1465,22 +1666,21 @@ onBeforeUnmount(() => {
 .planning-state { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
 .planning-retry { min-height: 32px; margin-top: 9px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--acid-text); font-size: 11px; background: color-mix(in srgb,var(--acid) 10%,var(--surface)); cursor: pointer; }
 .planning-retry:disabled { opacity: .6; cursor: wait; }
-.message-files { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }.message-files span { display: inline-flex; max-width: 100%; min-width: 0; align-items: center; gap: 5px; padding: 5px 7px; overflow-wrap: anywhere; border: 0; border-radius: 7px; color: var(--muted); font-size: 11px; background: var(--surface-hover); }.message-files svg { flex: 0 0 auto; width: 12px; }
-.source-message-files span { color: var(--acid-text); background: color-mix(in srgb,var(--acid) 10%,var(--surface-hover)); }
-.clarification { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }.clarification button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 8px; color: var(--text); font-size: 11px; background: var(--surface-hover); cursor: pointer; }.clarification button:hover { color: var(--acid-text); }.clarification .recommended { color: var(--acid-ink); background: var(--acid); }
+.message-files { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }.message-files span { display: inline-flex; max-width: 100%; min-width: 0; align-items: center; gap: 5px; padding: 5px 7px; overflow-wrap: anywhere; border: 0; border-radius: 7px; color: var(--muted); font-size: 12px; background: var(--surface-hover); }.message-files svg { flex: 0 0 auto; width: 12px; }
+.clarification { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }.clarification button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 8px; color: var(--text); font-size: 12px; background: var(--surface-hover); cursor: pointer; }.clarification button:hover { color: var(--acid-text); }.clarification .recommended { color: var(--acid-ink); background: var(--acid); }
 .memory-suggestions { display: grid; gap: 6px; margin-top: 12px; }
 .memory-suggestions article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border-radius: 9px; background: var(--surface-raised); }
 .memory-suggestions article > span { display: grid; min-width: 0; gap: 2px; }
-.memory-suggestions small { color: var(--muted); font-size: 11px; }
+.memory-suggestions small { color: var(--muted); font-size: 12px; }
 .memory-suggestions b { overflow-wrap: anywhere; font-size: 12px; font-weight: 580; }
 .memory-suggestions article > div { display: flex; flex: 0 0 auto; gap: 4px; }
-.memory-suggestions button { min-height: 32px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--muted); font-size: 11px; background: transparent; cursor: pointer; }
+.memory-suggestions button { min-height: 32px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--muted); font-size: 12px; background: transparent; cursor: pointer; }
 .memory-suggestions .save-memory { color: var(--acid-ink); background: var(--acid); }
 .planning-message { color: var(--muted); }.planning-line { display: flex; gap: 3px; margin-bottom: 6px; }.planning-line span { width: 5px; height: 5px; border-radius: 50%; background: var(--acid); animation: thinking 800ms ease-in-out infinite alternate; }.planning-line span:nth-child(2) { animation-delay: 120ms; }.planning-line span:nth-child(3) { animation-delay: 240ms; }
 @keyframes thinking { to { opacity: .25; transform: translateY(-2px); } }
 .docked-composer { position: relative; z-index: 12; padding: 18px var(--conversation-gutter) 16px; background: var(--bg); }
 .docked-composer :deep(.composer-box) { max-width: var(--conversation-max); margin: 0 auto; }
-.docked-composer > p { max-width: var(--conversation-max); margin: 6px auto 0; color: var(--muted-2); font-size: 11px; text-align: center; }
+.docked-composer > p { max-width: var(--conversation-max); margin: 6px auto 0; color: var(--muted-2); font-size: 12px; text-align: center; }
 .selected-source-artifacts { display: flex; width: min(var(--conversation-max),100%); flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 auto 8px; }
 .source-context-label { width: 100%; color: var(--muted); font-size: 11px; }
 .source-context-chip { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: 6px; padding: 5px 7px 5px 9px; border-radius: 7px; color: var(--acid-text); background: color-mix(in srgb,var(--acid) 10%,var(--surface)); }
@@ -1510,7 +1710,7 @@ onBeforeUnmount(() => {
 .inspector-section { overflow: hidden; border: 0; border-radius: 10px; background: transparent; }
 .inspector-section > header,.execution-spine > header,.subagent-panel > header,.file-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 9px; min-height: 38px; padding: 0 11px; border: 0; color: var(--muted); font-size: 13px; }
 .inspector-section > header b,.execution-spine > header b,.subagent-panel > header b,.file-panel > header b { font-size: 12px; font-weight: 620; }.inspector-section > header .verified { color: var(--success); }
-.inspector-section dl,.technical-list { display: grid; margin: 0; }.inspector-section dl > div,.technical-list > div { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,auto); gap: 8px; padding: 8px 11px; }.inspector-section dt,.technical-list dt { color: var(--muted); font-size: 11px; }.inspector-section dd,.technical-list dd { max-width: 190px; overflow: hidden; margin: 0; font-size: 11px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }.inspector-section ul { display: grid; gap: 5px; margin: 0; padding: 9px 11px 11px; overflow-wrap: anywhere; color: var(--muted); font-size: 11px; list-style: none; }
+.inspector-section dl,.technical-list { display: grid; margin: 0; }.inspector-section dl > div,.technical-list > div { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,auto); gap: 8px; padding: 8px 11px; }.inspector-section dt,.technical-list dt { color: var(--muted); font-size: 12px; }.inspector-section dd,.technical-list dd { max-width: 190px; overflow: hidden; margin: 0; font-size: 12px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }.inspector-section ul { display: grid; gap: 5px; margin: 0; padding: 9px 11px 11px; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; list-style: none; }
 .inspector-section dt,.technical-list dt,.inspector-section dd,.technical-list dd,.inspector-section ul { font-size: 12px; }
 .technical-copy { margin: 0; padding: 2px 4px 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 
@@ -1527,23 +1727,31 @@ onBeforeUnmount(() => {
 .subagent-card { position: relative; display: grid; grid-template-columns: 24px minmax(0,1fr) auto; align-items: start; gap: 8px; padding: 10px; border: 0; }
 .subagent-card.parent { background: color-mix(in srgb,var(--acid) 4%,var(--surface)); }.subagent-card > div { display: grid; min-width: 0; gap: 3px; }.subagent-card b { overflow-wrap: anywhere; font-size: 12px; }.subagent-card small { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.45; }.subagent-card p { display: -webkit-box; overflow: hidden; margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .agent-node { display: grid; width: 22px; height: 22px; place-items: center; border: 0; border-radius: 7px; background: var(--surface-raised); }.agent-node i { width: 6px; height: 6px; border-radius: 50%; background: var(--acid); }
-.subagent-card em { padding: 3px 5px; border: 0; border-radius: 5px; color: var(--muted); font-size: 11px; font-style: normal; white-space: nowrap; }.subagent-card em.running,.subagent-card em.queued { color: var(--acid-text); background: color-mix(in srgb,var(--acid) 8%,transparent); }.subagent-card em.succeeded { color: var(--success); }.subagent-card em.failed { color: var(--danger); }
-.subagent-card button { grid-column: 2/-1; justify-self: start; min-height: 30px; padding: 0 8px; border: 0; border-radius: 7px; color: var(--danger); font-size: 11px; background: var(--surface-hover); cursor: pointer; }
+.subagent-card em { padding: 3px 5px; border: 0; border-radius: 5px; color: var(--muted); font-size: 12px; font-style: normal; white-space: nowrap; }.subagent-card em.running,.subagent-card em.queued { color: var(--acid-text); background: color-mix(in srgb,var(--acid) 8%,transparent); }.subagent-card em.succeeded { color: var(--success); }.subagent-card em.failed { color: var(--danger); }
+.subagent-card button { grid-column: 2/-1; justify-self: start; min-height: 30px; padding: 0 8px; border: 0; border-radius: 7px; color: var(--danger); font-size: 12px; background: var(--surface-hover); cursor: pointer; }
 
-.computer-screen { overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); aspect-ratio: 16/10; }.computer-screen.active { border-color: color-mix(in srgb,var(--acid) 34%,var(--border)); }.screen-bar { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border-bottom: 1px solid var(--border); background: var(--surface-raised); }.screen-bar i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }.computer-screen > div { display: grid; height: calc(100% - 22px); place-content: center; place-items: center; gap: 5px; color: var(--muted); text-align: center; }.computer-screen > div svg { width: 20px; height: 20px; }.computer-screen > div b { font-size: 11px; }.computer-screen > div small { color: var(--muted-2); font-size: 11px; }
+.computer-screen { overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); aspect-ratio: 16/10; }.computer-screen.active { border-color: color-mix(in srgb,var(--acid) 34%,var(--border)); }.screen-bar { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border-bottom: 1px solid var(--border); background: var(--surface-raised); }.screen-bar i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }.computer-screen > div { display: grid; height: calc(100% - 22px); place-content: center; place-items: center; gap: 5px; color: var(--muted); text-align: center; }.computer-screen > div svg { width: 20px; height: 20px; }.computer-screen > div b { font-size: 12px; }.computer-screen > div small { color: var(--muted-2); font-size: 12px; }
 
 .file-panel > a { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 9px 10px; border: 0; color: var(--text); text-decoration: none; }.file-panel > a:hover { background: var(--surface-raised); }.file-icon { display: grid; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: var(--surface-raised); }.file-icon svg { width: 16px; height: 16px; }.file-panel > a > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }.file-panel > a b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.file-panel > a small { color: var(--muted); font-size: 12px; }.file-panel em { font-size: 12px; font-style: normal; }.file-panel em.passed { color: var(--success); }.file-panel em.failed { color: var(--danger); }
 .inspector-inline-empty { padding: 18px 12px; color: var(--muted); font-size: 12px; line-height: 1.55; text-align: center; }
 
-.workspace-notice { position: fixed; top: 68px; right: 20px; z-index: 300; display: flex; align-items: center; gap: 12px; max-width: 420px; padding: 10px 11px; border: 0; border-radius: 9px; color: var(--text); font-size: 11px; background: var(--surface); box-shadow: 0 18px 50px rgb(0 0 0 / 30%); }.workspace-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }.workspace-notice button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }.workspace-notice svg { width: 14px; height: 14px; }
+.workspace-notice { position: fixed; top: 68px; right: 20px; z-index: 300; display: flex; align-items: center; gap: 12px; max-width: 420px; padding: 10px 11px; border: 0; border-radius: 9px; color: var(--text); font-size: 12px; background: var(--surface); box-shadow: 0 18px 50px rgb(0 0 0 / 30%); }.workspace-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }.workspace-notice button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }.workspace-notice svg { width: 14px; height: 14px; }
 .visually-hidden { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
+.conversation-load-state { display: grid; width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; margin: 0 auto; align-content: center; justify-items: start; gap: 14px; }
+.conversation-load-state h1 { margin: 0; color: var(--text); font-size: 24px; }
+.conversation-load-state p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
+.conversation-load-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.conversation-load-actions button,.new-updates { min-height: 44px; padding: 10px 14px; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; background: var(--surface-raised); cursor: pointer; }
+.new-updates { display: block; margin: 0 auto 10px; color: var(--acid-text); }
+.draft-restored,.docked-composer > .draft-restored { max-width: var(--conversation-max); margin: 8px auto; color: var(--muted); font-size: 12px; line-height: 1.5; text-align: left; }
 @media (max-width: 799px) {
-  .workspace-chat { --conversation-gutter: 12px; }
+
   .history-item { min-height: 44px; }
   .quiet-action { min-width: 44px; min-height: 44px; justify-content: center; }
   .quiet-action span { display: none; }
-  .workspace-zero { width: min(100% - 24px,680px); padding: 34px 0 24px; align-content: start; }
+  .conversation-icon { display: none; }
+  .workspace-zero { width: min(100% - var(--conversation-gutter) * 2,var(--conversation-max)); padding: 34px 0 24px; align-content: start; }
   .zero-copy { margin-top: 10px; }.zero-copy h1 { font-size: 27px; }
   .suggestion-grid { grid-template-columns: 1fr; margin-top: 18px; }.suggestion-grid > button { min-height: 52px; }
   .suggestion-grid header button,.authorization-strip button,.clarification button,.memory-suggestions button,.subagent-card button,.workspace-notice button { min-width: 44px; min-height: 44px; }

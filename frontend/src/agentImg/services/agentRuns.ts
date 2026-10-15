@@ -395,6 +395,7 @@ export const createAgentPlan = async (input: {
 });
 
 export const createAgentRun = async (input: {
+  fileEditTargets?: Array<{assetId:string;source:string;id:string;name:string;sha256:string}>;
   objective: string;
   assetIds?: string[];
   sourceArtifactIds?: string[];
@@ -463,6 +464,11 @@ export const getAgentRun = async (runId: string) => {
   return result.run;
 };
 
+export const getAgentActivity = async (runId: string, after = '0') => {
+ const result = await requestJson<{events:AgentEvent[]}>(buildApiUrl(`/api/agent-runs/${encodeURIComponent(runId)}/activity?after=${encodeURIComponent(after)}`));
+ return result.events;
+};
+
 export const controlAgentRun = async (
   runId: string,
   action: 'pause' | 'resume' | 'cancel'
@@ -490,7 +496,7 @@ export const submitAgentInput = async (
     buildApiUrl(`/api/agent-runs/${encodeURIComponent(runId)}/input`),
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(input.inputId ? { 'Idempotency-Key': input.inputId } : {}) },
       body: JSON.stringify(input)
     }
   );
@@ -554,6 +560,17 @@ export const openAgentEventStream = (
     'run.resumed',
     'run.recovered',
     'run.verifying',
+    'plan.compiled',
+    'context.compacted',
+    'tool.call.started',
+    'tool.call.completed',
+    'message.created',
+    'verification.started',
+    'verification.repair_requested',
+    'verification.passed',
+    'verification.failed',
+    'budget.warning',
+    'budget.lockdown',
     'run.succeeded',
     'run.failed',
     'run.cancelled',

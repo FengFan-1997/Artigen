@@ -848,6 +848,78 @@ const encryptionEnv = {
   AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'42'.repeat(32)}`
 };
 
+test('tool lifecycle events retain safe names and outcomes without arguments or outputs', async () => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const subagentId = '22222222-2222-4222-8222-222222222222';
+  const inserted = [];
+  const client = {
+    release() {},
+    async query(sql, params = []) {
+      if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [], rowCount: 0 };
+      if (sql.includes('SELECT 1 FROM agent_runs')) return { rows: [{}], rowCount: 1 };
+      if (sql.includes('SELECT 1 FROM agent_subagents')) return { rows: [{}], rowCount: 1 };
+      if (sql.includes('INSERT INTO agent_events')) {
+        const row = {
+          id: inserted.length + 1,
+          run_id: params[0],
+          event_type: params[1],
+          phase: params[2],
+          summary: params[3],
+          data: JSON.parse(params[4]),
+          subagent_id: params[5],
+          created_at: '2026-10-14T00:00:00.000Z'
+        };
+        inserted.push(row);
+        return { rows: [row], rowCount: 1 };
+      }
+      if (sql.includes('pg_notify')) return { rows: [], rowCount: 1 };
+      throw new Error(`Unexpected query: ${sql}`);
+    }
+  };
+  const service = createAgentRunService({
+    pool: { connect: async () => client },
+    env: encryptionEnv
+  });
+
+  await service.appendRuntimeEvent({
+    runId,
+    subagentId,
+    workerId: 'worker-test',
+    leaseEpoch: 1,
+    type: 'tool.call.started',
+    phase: 'running',
+    summary: 'Subagent calling tool',
+    data: {
+      callId: 'call-1',
+      toolName: 'sandbox_shell',
+      arguments: { command: 'cat private.txt', apiKey: 'do-not-store' }
+    }
+  });
+  await service.appendRuntimeEvent({
+    runId,
+    subagentId,
+    workerId: 'worker-test',
+    leaseEpoch: 1,
+    type: 'tool.call.completed',
+    phase: 'running',
+    summary: 'Subagent tool finished',
+    data: {
+      callId: 'call-1',
+      toolName: 'sandbox_shell',
+      ok: false,
+      output: 'private file content'
+    }
+  });
+
+  assert.deepEqual(inserted.map((event) => event.data), [
+    { callId: 'call-1', toolName: 'sandbox_shell' },
+    { callId: 'call-1', toolName: 'sandbox_shell', ok: false }
+  ]);
+  assert.deepEqual(inserted.map((event) => event.subagent_id), [subagentId, subagentId]);
+  assert.equal(JSON.stringify(inserted).includes('do-not-store'), false);
+  assert.equal(JSON.stringify(inserted).includes('private file content'), false);
+});
+
 test('agent payloads use run, row and kind-bound AES-256-GCM', () => {
   const input = {
     runId: '11111111-1111-4111-8111-111111111111',
@@ -3893,6 +3965,7 @@ test('parent cannot finish before every required report artifact is declared', a
     }
   ];
   const requests = [];
+  const publicMessages = [];
   const savedStates = [];
   let artifactCount = 0;
   const provider = new SiliconFlowAgentModelProvider({
@@ -3916,6 +3989,7 @@ test('parent cannot finish before every required report artifact is declared', a
     deliverables: ['report'],
     maxSteps: 20,
     callbacks: {
+      publicMessage: async (message) => publicMessages.push(message),
       updatePlan: async ({ steps }) => ({ accepted: true, steps }),
       shell: async () => ({ success: true, returnCode: 0, stdout: '', stderr: '' }),
       declareArtifact: async () => {
@@ -3930,6 +4004,8 @@ test('parent cannot finish before every required report artifact is declared', a
       recordUsage: async () => {}
     }
   });
+  assert.ok(publicMessages.some(message => message.text === 'The report is complete.'), 'persist a no-tool public turn before delivery nudge');
+  assert.equal(new Set(publicMessages.map(message => message.sourceKey)).size, publicMessages.length);
   assert.equal(requests.length, 7);
   assert.equal(artifactCount, 2);
   assert.equal(result.text, 'Both verified files are ready.');

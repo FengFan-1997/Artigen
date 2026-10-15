@@ -23,6 +23,7 @@
     <template v-else-if="name === 'list'"><path d="M6 6h13M6 12h13M6 18h9M3 6h.01M3 12h.01M3 18h.01"/></template>
     <template v-else-if="name === 'subagents'"><circle cx="12" cy="7" r="3"/><circle cx="6" cy="17" r="2.5"/><circle cx="18" cy="17" r="2.5"/><path d="M12 10v3M7.8 14.8 10 12.5M16.2 14.8 14 12.5"/></template>
     <template v-else-if="name === 'agent'"><path d="M8 4h8l3 4v8l-3 4H8l-3-4V8zM9 10h.01M15 10h.01M9 15h6"/></template>
+    <template v-else-if="name === 'git'"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M6 7v10M18 7v3a5 5 0 0 1-5 5H6"/></template>
     <template v-else-if="name === 'file'"><path d="M5 3.5h9l5 5v12H5zM14 3.5v5h5M8 13h8M8 17h6"/></template>
     <template v-else-if="name === 'attachment'"><path d="M8 12.5 14.5 6a3 3 0 0 1 4.2 4.2L10 19a5 5 0 0 1-7-7l9-9"/></template>
     <template v-else-if="name === 'send'"><path d="m5 12 7-7 7 7M12 5v14"/></template>
@@ -45,7 +46,7 @@ type WorkspaceIconName =
   | 'image' | 'spark' | 'moon' | 'sun' | 'monitor' | 'settings' | 'terminal' | 'list'
   | 'subagents' | 'agent' | 'file' | 'attachment' | 'send' | 'refresh' | 'arrow-right'
   | 'chevron-right' | 'chevron-down' | 'trash' | 'download' | 'play' | 'stop' | 'pause'
-  | 'paper-plane';
+  | 'paper-plane' | 'git';
 
 withDefaults(defineProps<{
   name: WorkspaceIconName;
