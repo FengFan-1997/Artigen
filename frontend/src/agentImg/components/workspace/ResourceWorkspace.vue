@@ -1227,6 +1227,7 @@ defineExpose({ toggleTree, treeVisible });
   overflow: hidden;
 }
 .file-tabs-bar {
+  border-bottom: 1px solid var(--border);
   display: flex;
   flex: none;
   min-width: 0;
@@ -1293,6 +1294,7 @@ defineExpose({ toggleTree, treeVisible });
   overflow: hidden;
 }
 .resource-tree {
+  border-left: 1px solid var(--border);
   width: 224px;
   flex: none;
   overflow: auto;
@@ -1364,6 +1366,7 @@ defineExpose({ toggleTree, treeVisible });
   white-space: nowrap;
 }
 .file-toolbar {
+  border-bottom: 1px solid var(--border);
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -1587,6 +1590,7 @@ button:disabled {
   display: none;
 }
 .compact-tree:not(.tree-hidden) .resource-tree {
+  border-left: 0;
   width: 100%;
   flex: 1;
 }

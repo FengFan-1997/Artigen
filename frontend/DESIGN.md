@@ -5,13 +5,13 @@ colors:
   dark-background: "#111311"
   dark-sidebar: "#1B1E1B"
   dark-surface: "#232622"
-  dark-border: "#3A3F38"
+  dark-border: "#7B8375"
   dark-text: "#F3F4EF"
   muted: "#A1A79B"
   light-background: "#F4F5F1"
   light-sidebar: "#E9ECE6"
   light-surface: "#FFFFFF"
-  light-border: "#D8DDD3"
+  light-border: "#78816F"
   light-text: "#171A16"
   execution: "#C8FF3D"
   danger: "#FF6B62"
@@ -45,7 +45,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - Sidebar `#1B1E1B`
 - Surface `#232622`
 - Raised surface `#2A2E29`
-- Border `#3A3F38`
+- Border `#7B8375`
 - Text `#F3F4EF`
 - Muted `#A1A79B`
 
@@ -55,7 +55,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - Sidebar `#E9ECE6`
 - Surface `#FFFFFF`
 - Raised surface `#F0F2ED`
-- Border `#CFD5CA`
+- Border `#78816F`
 - Text `#171A16`
 - Muted `#5B6557`
 
@@ -81,7 +81,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - 面板宽度、折叠和主题偏好只保存在本机，不写入服务端。
 - 空任务默认收起 Inspector，开始对话后按任务展示；用户明确选择的折叠偏好优先。
 - 顶栏固定承载标题、必要状态、唯一费用位置和控制；不常驻展示模型副标题或 Runtime 胶囊。
-- 区域以相邻背景色区分；资源面板利用完整列宽，不保留旧版悬浮边距和大圆角。8px拖拽命中区在悬停、拖拽或键盘聚焦时明确显示；取消指针或窗口失焦后必须结束拖动。
+- 区域以相邻背景色区分；资源面板利用完整列宽，不保留旧版悬浮边距和大圆角。功能栏、项目栏、资源区、目录和顶栏使用持久1px功能性边界；8px拖拽命中区在悬停、拖拽或键盘聚焦时增强显示；取消指针或窗口失焦后必须结束拖动。
 - 中间输入框在零状态和运行状态中保持同一个心智位置：先表达目标，发送后停靠到底部继续对话。
 - 底部 Composer 是三条路由共享的稳定工具台：20px 左右圆角、两行信息层级、圆形发送动作；不能让 Create、Computer Agent 与 Run Detail 各自漂移成不同组件语言。
 
@@ -196,7 +196,7 @@ Don't:
 - 不恢复明亮营销 Hero 或赛博朋克表单后台。
 - 不复制 Codex 的商标、资产、文案或像素级组件。
 - 不让酸性绿成为大面积装饰背景。
-- 不用层层卡片、永久分隔线、模型口号或 `LOCAL FIRST` 标签制造技术感。
+- 不用层层卡片、装饰性分隔线、模型口号或 `LOCAL FIRST` 标签制造技术感。
 - 不把快速工作流伪装成 Computer Agent，也不把视觉占位符称为子 Agent。
 - 不在移动端隐藏费用、安全边界、审批后果或验证状态。
 
@@ -218,4 +218,11 @@ Don't:
 - DEV identification belongs inside the conversation header. The global floating DEV badge is hidden only while a workspace shell is present; it must not cover resource actions or require guessed padding offsets.
 - Compose and active-task inspector visibility have independent version-4 preferences. Version-2/3 visibility migrates only to active tasks: a prior open task inspector does not force an empty resource panel into a new request. An explicit compose preference is restored, including when switching between those contexts.
 - A healthy single Agent is a ready state, not a warning. Genuine offline, model mismatch, running, approval and cost states remain visible. Empty-state suggestions are compact icon actions and disappear once a goal or references have been supplied.
-- The shared Composer uses a restrained neutral shadow (black at 6% opacity) and one 2px theme-colored container focus outline. Its textarea does not add a second outline. Pointer clicks on workspace controls do not inherit the global browser-blue focus ring; keyboard focus retains the semantic theme outline.
+- The shared Composer uses a visible 1px functional border without a shadow and one 2px theme-colored container focus outline. Its textarea does not add a second outline. Pointer clicks on workspace controls do not inherit the global browser-blue focus ring; keyboard focus retains the semantic theme outline.
+
+### Functional boundaries across themes
+
+- Functional separators and existing control borders use the opaque shared border token: dark `#7B8375`, light `#78816F`. Against the workspace surfaces, including hover surfaces, contrast stays at least 3:1. Decorative card outlines are still unnecessary.
+- Rail, project pane, resource pane, main/resource headers, expanded file tree, document tabs/toolbar/status remain distinguishable before hover. A compact full-width tree omits its redundant inner vertical border.
+- Search and the shared Composer have visible boundaries in the idle state. Composer uses a border without a shadow and retains the separate theme focus outline.
+- Resizer hover/active/focus use the theme focus color, including darker green in light mode; highlighter green on a light background is not a visible drag indicator. No separator depends on pointer hover alone.
