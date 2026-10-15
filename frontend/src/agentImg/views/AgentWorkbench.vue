@@ -946,6 +946,7 @@ onBeforeUnmount(() => {
   .option-grid { grid-template-columns: 1fr; }
 }
 @media (max-height: 620px) {
+  .agent-conversation:not(.active) { padding-block: 8px; }
   .conversation-empty { align-content: start; padding-block: 24px; }
   .prompt-suggestions { gap: 5px; }
   .prompt-suggestions button { min-height: 44px; }

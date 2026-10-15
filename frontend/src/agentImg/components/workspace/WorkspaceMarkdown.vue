@@ -103,9 +103,9 @@ const openResource = (event: MouseEvent) => {
   font-size: 13px;
 }
 .workspace-markdown :deep(:is(td, th)) {
-  min-width:10ch;
-  overflow-wrap:normal;
-  word-break:normal;
+  min-width: max(10ch, 96px);
+  overflow-wrap: normal;
+  word-break: normal;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   text-align: left;

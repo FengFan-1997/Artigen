@@ -67,7 +67,7 @@
         <input v-model="search" name="workspace-search" type="search" autocomplete="off" :placeholder="zh ? '搜索任务' : 'Search tasks'" @input="$emit('search', search)" />
       </label>
 
-      <div class="history-slot">
+      <div class="history-slot" @click="onHistoryClick">
         <ProjectNavigation :zh="zh" :search="search" @navigate="closeLeftDrawer"><slot name="history" :search="search" /></ProjectNavigation>
       </div>
 
@@ -432,6 +432,10 @@ const toggleRight = async () => {
   rightCollapsed.value = !rightCollapsed.value;
   rightPreferenceSet = true;
   persistPreferences();
+};
+// Legacy navigation remains available while the projection endpoint is loading/unavailable.
+const onHistoryClick = (event: MouseEvent) => {
+  if ((event.target as Element).closest('.history-item')) closeLeftDrawer();
 };
 const closeDrawers = () => { if (leftDrawerOpen.value) closeLeftDrawer(true); else closeRight(true); };
 const cycleTheme = () => {

@@ -198,13 +198,16 @@ const setup = async (
   });
 };
 const select = async (page: Page, id: string) => {
-  const box = await page
+  const panel = page.locator('#workspace-history-panel');
+  if ((page.viewportSize()?.width || 1440) < 1440 && !(await panel.isVisible())) {
+    await page.getByRole('button', { name: '打开历史', exact: true }).click();
+  }
+  await page
     .locator('.history-item')
     .filter({ hasText: id === a ? '任务 A' : '任务 B' })
-    .boundingBox();
-  expect(box).not.toBeNull();
-  await page.mouse.click(box!.x + 40, box!.y + 15);
+    .click();
 };
+
 const installEventSources = async (page: Page) =>
   page.addInitScript(() => {
     const sources: Array<EventTarget & { url: string; closed: boolean }> = [];
@@ -492,7 +495,10 @@ test('mobile inspector reaches summary and correctly labels scope and profile', 
   await page.goto('/artigen/agent');
   const opener = page.getByRole('button', { name: '打开检查器', exact: true });
   await opener.click();
-  await page.getByRole('navigation',{name:'资源面板'}).getByRole('button',{name:'任务',exact:true}).click();
+  await page
+    .getByRole('navigation', { name: '资源面板' })
+    .getByRole('button', { name: '任务', exact: true })
+    .click();
   await page.getByText('运行设置', { exact: true }).click();
   await page.getByLabel('网页操作 Beta', { exact: true }).check();
   await expect(page.getByRole('textbox', { name: '允许访问的站点', exact: true })).toBeVisible();
@@ -501,7 +507,11 @@ test('mobile inspector reaches summary and correctly labels scope and profile', 
   await page.keyboard.press('Tab');
   await expect(page.locator('summary').filter({ hasText: '技术详情' })).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('navigation',{name:'资源面板'}).getByRole('button',{name:'文件',exact:true})).toBeFocused();
+  await expect(
+    page
+      .getByRole('navigation', { name: '资源面板' })
+      .getByRole('button', { name: '文件', exact: true })
+  ).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(opener).toBeFocused();
 });

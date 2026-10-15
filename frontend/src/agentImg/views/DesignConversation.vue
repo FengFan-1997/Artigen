@@ -911,7 +911,10 @@ const openConversation = async (conversationId: string) => {
     if (previousPosition !== undefined && scrollArea.value) { scrollArea.value.scrollTop = previousPosition; onConversationScroll(); }
     else await scrollToBottom(true);
   } catch (error) {
-    if (isCurrentConversation(id, revision)) conversationLoadError.value = errorText(error);
+    if (isCurrentConversation(id, revision)) {
+      conversationLoadError.value = errorText(error);
+      notice.value = conversationLoadError.value;
+    }
   } finally {
     if (isCurrentConversation(id, revision)) loadingConversation.value = false;
   }
@@ -1062,7 +1065,9 @@ const submitAuthenticated = async () => {
     discardSaved(owner, `conversation:${id}`, submittedDraft);
     discardSaved(owner, originalDraftTask, submittedDraft);
     if (!isCurrentConversation(id, revision)) return;
-    if (conversation.value) conversation.value.messages = [...(conversation.value.messages || []), sent];
+    if (conversation.value && !conversation.value.messages.some((message) => message.messageId === sent.messageId)) {
+      conversation.value.messages = [...conversation.value.messages, sent];
+    }
     if (draft.value === submittedDraft) draft.value = '';
     selectedSourceArtifacts.value = [];
     const sentFileIds = new Set(attachments.map((item) => item.clientId));
@@ -1502,6 +1507,36 @@ const executionsForMessage = (messageId: string) => (
   conversation.value?.executions?.filter((item) => item.sourceMessageId === messageId) || []
 );
 
+let restoringConversation: { owner: string; revision: number; promise: Promise<void> } | null = null;
+const restoreAuthenticatedConversation = () => {
+  syncAuth();
+  if (disposed || !isAuthed.value) return Promise.resolve();
+  const owner = authUserId.value;
+  const revision = conversationRevision;
+  if (restoringConversation?.owner === owner && restoringConversation.revision === revision) {
+    return restoringConversation.promise;
+  }
+  const pending = (async () => {
+    await refreshConversationList().catch(() => {});
+    if (disposed || owner !== authUserId.value || !isAuthed.value || revision !== conversationRevision || conversation.value || sending.value) return;
+    if (!route.query.c && !selectedConversationId.value && (draft.value.trim() || selectedAttachments.value.length || selectedSourceArtifacts.value.length)) return;
+    const requested = String(route.query.c || '').trim() || ((route.query.projectId || route.query.sourceRun) ? '' : (() => {
+      try {
+        const scoped = window.localStorage.getItem(lastConversationKey());
+        if (scoped !== null) return scoped;
+        const legacy = window.localStorage.getItem(LAST_CONVERSATION_KEY) || '';
+        return conversations.value.some((item) => item.conversationId === legacy) ? legacy : '';
+      } catch { return ''; }
+    })());
+    if (requested && requested !== 'new') await openConversation(requested);
+  })();
+  restoringConversation = { owner, revision, promise: pending };
+  void pending.finally(() => {
+    if (restoringConversation?.promise === pending) restoringConversation = null;
+  });
+  return pending;
+};
+
 const handleAuthChanged = () => {
   const previousOwner = authUserId.value;
   syncAuth();
@@ -1515,9 +1550,8 @@ const handleAuthChanged = () => {
     Object.keys(toolTasks).forEach((key) => delete toolTasks[key]);
     Object.keys(agentRuns).forEach((key) => delete agentRuns[key]);
     Object.keys(runEvents).forEach((key) => delete runEvents[key]);
-    if (requested) void openConversation(requested);
   }
-  if (isAuthed.value) void refreshConversationList().catch(() => {});
+  void restoreAuthenticatedConversation();
 };
 
 onMounted(async () => {
@@ -1549,18 +1583,8 @@ onMounted(async () => {
     if (selectedConversationId.value) conversationLoadError.value = errorText({ code: 'LOGIN_REQUIRED' });
     return;
   }
-  const initialRevision = conversationRevision;
-  await refreshConversationList().catch(() => {});
-  if (disposed || initialRevision !== conversationRevision) return;
-  const requested = String(route.query.c || '').trim() || (explicitNew ? '' : (() => {
-    try {
-      const scoped = window.localStorage.getItem(lastConversationKey());
-      if (scoped !== null) return scoped;
-      const legacy = window.localStorage.getItem(LAST_CONVERSATION_KEY) || '';
-      return conversations.value.some((item) => item.conversationId === legacy) ? legacy : '';
-    } catch { return ''; }
-  })());
-  if (requested && requested !== 'new') await openConversation(requested);
+  if (!explicitNew || route.query.c) await restoreAuthenticatedConversation();
+  else await refreshConversationList().catch(() => {});
   if (pending && !disposed) acceptWorkspaceAttachment(pending);
   if (disposed) return;
   const onVisible = () => {

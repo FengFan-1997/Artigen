@@ -230,7 +230,13 @@ test('twenty correlated calls become twenty records, not forty chat messages, wh
   await expect(page.locator('.tool-call').first().locator('.call-event')).toHaveCount(2);
   await expect(page.locator('.tool-call').first()).toContainText('fixture-call-0');
   await expect(page.locator('.context-update')).toHaveCount(2);
-  await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
+  if (!(await page.getByRole('navigation', { name: '资源面板' }).isVisible())) {
+    await page.getByRole('button', { name: '打开检查器', exact: true }).click();
+  }
+  await page
+    .getByRole('navigation', { name: '资源面板' })
+    .getByRole('button', { name: '任务', exact: true })
+    .click();
   await page.getByRole('tab', { name: /计划/ }).click();
   await page
     .locator('summary')
@@ -360,7 +366,13 @@ test('mobile approval and child controls retain their 44px targets after replaci
   expect(box!.width).toBeGreaterThanOrEqual(44);
   expect(box!.height).toBeGreaterThanOrEqual(44);
   await page.getByRole('button', { name: '打开检查器', exact: true }).click();
-  await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
+  if (!(await page.getByRole('navigation', { name: '资源面板' }).isVisible())) {
+    await page.getByRole('button', { name: '打开检查器', exact: true }).click();
+  }
+  await page
+    .getByRole('navigation', { name: '资源面板' })
+    .getByRole('button', { name: '任务', exact: true })
+    .click();
   await page.getByRole('tab', { name: /子 Agent/ }).click();
   const cancel = page.getByRole('button', { name: '取消这个子 Agent', exact: true });
   const childBox = await cancel.boundingBox();

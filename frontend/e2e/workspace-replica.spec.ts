@@ -31,7 +31,13 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(runPath);
+  if ((page.viewportSize()?.width || 1440) < 1440) {
+    await page.getByRole('button', { name: '打开历史', exact: true }).click();
+  }
   await expect(page.getByText('夏日视觉', { exact: true })).toBeVisible();
+  if ((page.viewportSize()?.width || 1440) < 1440) {
+    await page.getByRole('button', { name: '关闭历史', exact: true }).click();
+  }
   await expect(page.locator('.run-conversation-stream')).toContainText('本轮重点');
   await openBrief(page);
   await expect(page.locator('.document-preview')).toContainText('品牌网站审查');
