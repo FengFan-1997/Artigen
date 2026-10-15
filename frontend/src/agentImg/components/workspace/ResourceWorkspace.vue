@@ -50,7 +50,7 @@
       <p v-if="notice" class="resource-notice" role="status">{{ notice }}</p>
       <div class="file-body">
         <section class="file-viewer">
-          <div v-if="active" class="file-toolbar">
+          <div v-if="active && mode !== 'changes'" class="file-toolbar">
             <span class="breadcrumb" :title="active.file.path"
               >{{ active.source === 'local' ? (zh ? '本机' : 'Local') : zh ? '项目' : 'Project' }} /
               {{ active.file.path }}</span
@@ -89,55 +89,79 @@
           </div>
           <div v-if="mode === 'changes'" class="changes-panel">
             <template v-if="active?.text !== undefined"
-              ><header>
-                <b>{{ filename(active.file.path) }}</b
-                ><span class="added">+{{ statistics.added }}</span
-                ><span class="removed">−{{ statistics.removed }}</span>
+              ><header class="review-toolbar">
+                <div class="review-heading">
+                  <WorkspaceIcon name="changes" :size="16" /><b :title="active.file.path">{{
+                    filename(active.file.path)
+                  }}</b
+                  ><span class="added">+{{ statistics.added }}</span
+                  ><span class="removed">−{{ statistics.removed }}</span>
+                </div>
+                <div class="change-actions">
+                  <details
+                    v-if="candidateFiles.length"
+                    class="compare-source"
+                    @keydown.esc="closeSourcePicker"
+                  >
+                    <summary>
+                      {{ zh ? '比较来源' : 'Compare source'
+                      }}<WorkspaceIcon name="chevron-down" :size="14" />
+                    </summary>
+                    <div class="source-options">
+                      <label
+                        >{{ zh ? '选择 Agent 候选文件' : 'Choose an Agent candidate'
+                        }}<select
+                          :value="proposal?.candidateId || ''"
+                          @change="changeComparisonSource"
+                        >
+                          <option value="">{{ zh ? '当前编辑' : 'Current edits' }}</option>
+                          <option v-for="file in candidateFiles" :key="file.id" :value="file.id">
+                            {{ file.path }}
+                          </option>
+                        </select></label
+                      >
+                    </div>
+                  </details>
+                  <button
+                    v-if="proposal"
+                    class="review-primary"
+                    :disabled="saving"
+                    @click="applyProposal"
+                  >
+                    {{
+                      proposal.candidateId.startsWith('version:')
+                        ? zh
+                          ? '恢复此版本'
+                          : 'Restore this version'
+                        : zh
+                          ? '应用到当前文件'
+                          : 'Apply to current file'
+                    }}
+                  </button>
+                  <button v-if="active.undo !== undefined" :disabled="saving" @click="undoApply">
+                    {{ zh ? '撤销最近一次应用' : 'Undo last application' }}
+                  </button>
+                  <button
+                    v-if="!proposal && dirty(active)"
+                    class="review-primary"
+                    :disabled="saving"
+                    @click="save(active)"
+                  >
+                    {{ zh ? '保存当前修改' : 'Save changes' }}
+                  </button>
+                </div>
               </header>
-              <p>
+              <p v-if="proposal" class="review-notice">
                 {{
-                  proposal
-                    ? proposal.candidateId.startsWith('version:')
-                      ? zh
-                        ? '历史版本与当前已保存内容的差异；恢复会保存为新版本。'
-                        : 'Historical version compared with the saved file; restoring creates a new version.'
-                      : zh
-                        ? 'Agent 候选修改，尚未写入文件。'
-                        : 'Agent proposal; not yet applied.'
+                  proposal.candidateId.startsWith('version:')
+                    ? zh
+                      ? '历史版本与当前已保存内容的差异；恢复会保存为新版本。'
+                      : 'Historical version compared with the saved file; restoring creates a new version.'
                     : zh
-                      ? '当前编辑与打开时版本的差异。'
-                      : 'Current edits compared with the opened version.'
+                      ? 'Agent 候选修改，尚未写入文件。'
+                      : 'Agent proposal; not yet applied.'
                 }}
               </p>
-              <label v-if="candidateFiles.length"
-                >{{ zh ? '选择 Agent 候选文件' : 'Choose an Agent candidate'
-                }}<select
-                  :value="proposal?.candidateId || ''"
-                  @change="chooseProposal(($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="">{{ zh ? '当前编辑' : 'Current edits' }}</option>
-                  <option v-for="file in candidateFiles" :key="file.id" :value="file.id">
-                    {{ file.path }}
-                  </option>
-                </select></label
-              >
-              <div class="change-actions">
-                <button v-if="proposal" :disabled="saving" @click="applyProposal">
-                  {{
-                    proposal.candidateId.startsWith('version:')
-                      ? zh
-                        ? '恢复此版本'
-                        : 'Restore this version'
-                      : zh
-                        ? '应用到当前文件'
-                        : 'Apply to current file'
-                  }}</button
-                ><button v-if="active.undo !== undefined" :disabled="saving" @click="undoApply">
-                  {{ zh ? '撤销最近一次应用' : 'Undo last application' }}</button
-                ><button v-if="!proposal && dirty(active)" :disabled="saving" @click="save(active)">
-                  {{ zh ? '保存当前修改' : 'Save changes' }}
-                </button>
-              </div>
               <WorkspaceEditor
                 :key="active.key + ':diff:' + String(proposal?.candidateId || '')"
                 :model-value="proposal?.text ?? active.text"
@@ -145,9 +169,33 @@
                 :path="active.file.path"
                 :readonly="true"
                 :label="zh ? '文件差异' : 'File differences'"
-                :original-label="zh ? (proposal ? '当前已保存版本' : '打开时版本') : (proposal ? 'Saved version' : 'Opened version')"
-                :modified-label="zh ? (proposal ? (proposal.candidateId.startsWith('version:') ? '历史版本' : 'Agent 候选') : '当前编辑') : (proposal ? (proposal.candidateId.startsWith('version:') ? 'Historical version' : 'Agent proposal') : 'Current edits')"
-                :no-changes-label="zh ? '内容一致，没有需要审阅的差异。' : 'These versions are identical. No changes to review.'"
+                :original-label="
+                  zh
+                    ? proposal
+                      ? '当前已保存版本'
+                      : '打开时版本'
+                    : proposal
+                      ? 'Saved version'
+                      : 'Opened version'
+                "
+                :modified-label="
+                  zh
+                    ? proposal
+                      ? proposal.candidateId.startsWith('version:')
+                        ? '历史版本'
+                        : 'Agent 候选'
+                      : '当前编辑'
+                    : proposal
+                      ? proposal.candidateId.startsWith('version:')
+                        ? 'Historical version'
+                        : 'Agent proposal'
+                      : 'Current edits'
+                "
+                :no-changes-label="
+                  zh
+                    ? '内容一致，没有需要审阅的差异。'
+                    : 'These versions are identical. No changes to review.'
+                "
               />
             </template>
             <div v-else class="resource-empty">
@@ -270,13 +318,15 @@
                   : 'Choose a project file or connect a local folder.'
               }}
             </p>
-            <div class="resource-empty-actions"><button v-if="!treeVisible" @click="toggleTree">
-              {{ zh ? '显示目录' : 'Show files' }}</button
-            ><button v-if="projectId" @click="newTextFile">
-              {{ zh ? '新建文本文件' : 'New text file' }}</button
-            ><button v-if="supportsLocalDirectories()" @click="connectFolder">
-              {{ zh ? '连接本机文件夹' : 'Connect local folder' }}
-            </button></div>
+            <div class="resource-empty-actions">
+              <button v-if="!treeVisible" @click="toggleTree">
+                {{ zh ? '显示目录' : 'Show files' }}</button
+              ><button v-if="projectId" @click="newTextFile">
+                {{ zh ? '新建文本文件' : 'New text file' }}</button
+              ><button v-if="supportsLocalDirectories()" @click="connectFolder">
+                {{ zh ? '连接本机文件夹' : 'Connect local folder' }}
+              </button>
+            </div>
           </div>
         </section>
         <aside
@@ -454,6 +504,18 @@ const treeVisible = ref(true);
 const zoom = ref(1);
 const versions = ref<Array<{ revision: number; createdAt: string; sha256: string }>>([]);
 const proposal = ref<{ text: string; candidateId: string; baseHash: string } | null>(null);
+function closeSourcePicker(event: Event) {
+  const picker = (event.target as HTMLElement).closest('details.compare-source');
+  if (picker instanceof HTMLDetailsElement && picker.open) {
+    event.stopPropagation();
+    picker.open = false;
+    picker.querySelector('summary')?.focus();
+  }
+}
+function changeComparisonSource(event: Event) {
+  void chooseProposal((event.target as HTMLSelectElement).value);
+  closeSourcePicker(event);
+}
 const statistics = ref({ added: 0, removed: 0 });
 let revision = 0;
 let openRevision = 0;
@@ -1411,8 +1473,15 @@ defineExpose({ toggleTree, treeVisible });
   font-size: 12px;
   cursor: pointer;
 }
+.viewer-actions button[aria-pressed] {
+  min-width: 42px;
+  border: 1px solid transparent;
+  background: var(--editor-gutter);
+}
 .viewer-actions button[aria-pressed='true'] {
-  background: var(--surface-hover);
+  background: var(--editor-surface);
+  border-color: var(--border);
+  font-weight: 600;
 }
 button:disabled {
   opacity: 0.45;
@@ -1436,7 +1505,13 @@ button:disabled {
   color: var(--text);
   margin: 0;
 }
-.resource-empty-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px; }
+.resource-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
 .resource-empty p {
   font-size: 13px;
   line-height: 1.7;
@@ -1542,51 +1617,156 @@ button:disabled {
   min-height: 0;
   flex-direction: column;
 }
-.changes-panel > header {
-  flex: none;
+.review-toolbar {
+  position: relative;
   display: flex;
+  flex: none;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px 4px;
+  justify-content: space-between;
+  gap: 8px 12px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.review-heading {
+  display: flex;
+  flex: 1 1 130px;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
 }
-.changes-panel > header > b {
+.review-heading > svg {
+  flex: none;
+  color: var(--muted);
+}
+.review-heading > b {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
+  font-weight: 600;
+}
+.review-heading > span {
+  flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.change-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+}
+.change-actions > button {
+  min-height: 32px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.change-actions > button.review-primary {
+  color: var(--acid-ink);
+  background: var(--acid);
+  border-color: transparent;
+  font-weight: 600;
+}
+.compare-source {
+  position: relative;
+  flex: none;
+}
+.compare-source > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  list-style: none;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.compare-source > summary::-webkit-details-marker {
+  display: none;
+}
+.compare-source > summary:hover,
+.compare-source[open] > summary {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.compare-source[open] > summary svg {
+  transform: rotate(180deg);
+}
+.source-options {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(300px, calc(100vw - 48px));
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--editor-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+.source-options label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.source-options select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px;
+  color: var(--text);
+  background: var(--editor-surface);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  font: inherit;
 }
 .changes-panel > p {
-  font-size: 12px;
-  color: var(--muted);
+  flex: none;
   margin: 0;
-  padding: 4px 16px 12px;
-}
-.changes-panel > label {
-  display: grid;
-  gap: 6px;
-  padding: 10px 16px;
+  padding: 8px 12px;
+  color: var(--muted);
   font-size: 12px;
-}
-.changes-panel select {
-  min-width: 0;
-  width: 100%;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  padding: 7px;
-  border-radius: 6px;
-  max-width: 100%;
+  line-height: 1.6;
+  background: var(--editor-gutter);
 }
 .changes-panel > .workspace-code-editor {
   flex: 1 0 180px;
 }
-.change-actions {
-  flex-wrap: wrap;
-  display: flex;
-  gap: 8px;
-  padding: 8px 16px;
+@media (max-width: 799px), (pointer: coarse) {
+  .compare-source > summary,
+  .source-options select,
+  .change-actions > button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .review-toolbar {
+    padding: 6px 10px;
+  }
+  .review-heading {
+    flex-basis: 100%;
+  }
+  .change-actions {
+    margin-left: auto;
+  }
+  .compare-source {
+    position: static;
+  }
+  .source-options {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
 }
 .added {
   color: var(--success);

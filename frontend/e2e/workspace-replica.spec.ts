@@ -49,7 +49,9 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   await expect(page.getByRole('status')).toContainText('文件已保存');
   expect(workspace.saves).toHaveLength(1);
   await expect(
-    page.getByRole('combobox', { name: '查看文件版本' }).getByRole('option', { name: 'v2', exact: true })
+    page
+      .getByRole('combobox', { name: '查看文件版本' })
+      .getByRole('option', { name: 'v2', exact: true })
   ).toHaveCount(1);
   workspace.conflict = true;
   await editor.fill('# 保留冲突草稿');
@@ -59,6 +61,7 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   workspace.conflict = false;
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await resources(page, '变更');
+  await page.getByText('比较来源', { exact: true }).click();
   await page.getByLabel('选择 Agent 候选文件').selectOption('66666666-6666-4666-8666-666666666666');
   await expect(page.locator('.workspace-code-editor')).toBeVisible();
   await expect(page.locator('.cm-changedLine,.cm-deletedChunk').first()).toBeVisible();
@@ -174,11 +177,12 @@ test('capture actual before and after application surfaces', async ({ browser })
             await page.getByRole('button', { name: '源码', exact: true }).click();
           if (scene === 'diff') {
             await resources(page, '变更');
+            await page.getByText('比较来源', { exact: true }).click();
             await page
               .getByLabel('选择 Agent 候选文件')
               .selectOption('66666666-6666-4666-8666-666666666666');
             await expect(page.locator('.workspace-code-editor')).toBeVisible();
-  await expect(page.locator('.cm-changedLine,.cm-deletedChunk').first()).toBeVisible();
+            await expect(page.locator('.cm-changedLine,.cm-deletedChunk').first()).toBeVisible();
           }
           if (scene === 'tabs') {
             const show = page.getByRole('button', { name: '显示目录树' });
@@ -262,8 +266,9 @@ test('a stale candidate cannot be applied to a different file', async ({ page })
   await page.goto(runPath);
   await openBrief(page);
   await resources(page, '变更');
+  await page.getByText('比较来源', { exact: true }).click();
   await page.getByLabel('选择 Agent 候选文件').selectOption('66666666-6666-4666-8666-666666666666');
-  await expect(page.getByRole('status')).toContainText('候选基于另一个文件或旧版本');
+  await expect(page.locator('.resource-notice[role="status"]')).toContainText('候选基于另一个文件或旧版本');
   await expect(page.getByRole('button', { name: '应用到当前文件' })).toHaveCount(0);
   expect(workspace.saves).toHaveLength(0);
 });
