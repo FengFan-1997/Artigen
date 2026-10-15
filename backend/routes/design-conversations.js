@@ -118,7 +118,8 @@ const installDesignConversationRoutes = (app, deps = {}) => {
   app.post('/api/design-conversations', writeLimiter, asyncRoute(async (req, res) => {
     const conversation = await requireService().createConversation({
       userId: authIdentity(req),
-      projectId: req.body?.projectId || null
+      projectId: req.body?.projectId || null,
+      sourceRunId: req.body?.sourceRunId || null
     });
     res.status(201).json({ ok: true, conversation });
   }));

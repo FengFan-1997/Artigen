@@ -1,3 +1,4 @@
+const { resolveEditTarget } = require('./workspace-file-context');
 const crypto = require('crypto');
 const { ApiError } = require('../lib/api-error');
 const assets = require('./asset-storage');
@@ -1142,6 +1143,7 @@ const createAgentWorkerService = ({
         userInputs.length
           ? `Subsequent user messages and decisions: ${JSON.stringify(userInputs)}`
           : '',
+        objectivePayload.fileEditTargets?.length ? `User-selected edit targets (id, original name, base hash, input asset): ${JSON.stringify(objectivePayload.fileEditTargets)}. Preserve originals. For each edited text file, write the full UTF-8 replacement and declare it as text/plain with its exact server-assigned candidateFilename; that filename binds it to the selected base file. The UI requires confirmation before any local write.` : '',
         inputAssetPaths.length
           ? `User-provided files are available at: ${inputAssetPaths.join(', ')}`
           : ''
@@ -1892,6 +1894,7 @@ const createAgentWorkerService = ({
         resumeState: modelResumeState,
         runtimeContext: {
           runtimeVersion: runtimeV2 ? 2 : 1,
+          fileEditContext: objectivePayload.fileEditTargets?.length ? { targets: objectivePayload.fileEditTargets, inputPaths: inputAssetPaths } : null,
           pricingSnapshot,
           ...(runtimeV2 ? {
             runId,
@@ -2053,6 +2056,7 @@ const createAgentWorkerService = ({
             await pauseIfRequested();
             return runService.appendStep({ ...runLease, ...step });
           },
+          publicMessage: async (message) => runService.appendPublicMessage?.({ ...runLease, ...message }),
           toolCall: async (call) => {
             await runService.appendRuntimeEvent({
               ...runLease,
@@ -3033,6 +3037,7 @@ const createAgentWorkerService = ({
               run: context.run,
               sandboxName,
               declaration,
+              editTarget: resolveEditTarget(declaration, objectivePayload.fileEditTargets || []),
               workerLease: runLease
             });
             if (!artifact.alreadyRegistered) {
@@ -3211,6 +3216,7 @@ const createAgentWorkerService = ({
       await runService.finishRun({
         ...runLease,
         actualCredits: finalCosts.model + finalCosts.generation + finalCosts.sandbox,
+        finalText: execution.text,
         checklist: {
           requiredArtifactCount: Math.max(
             0,

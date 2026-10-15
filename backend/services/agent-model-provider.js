@@ -3065,6 +3065,7 @@ class OllamaAgentModelProvider {
           instructions: prompt.instructions,
           taskSpec,
           workingState,
+          fileEditContext: runtimeContext.fileEditContext || null,
           messages,
           tools: ollamaFileTools(capabilities, toolProfile, allowedToolNames),
           contextTokens: this.config.modelContextTokens
@@ -3279,6 +3280,7 @@ class OllamaAgentModelProvider {
         }
       }
       if (calls.length) assistant.tool_calls = calls;
+      if (calls.length && assistant.content.trim()) await callbacks.publicMessage?.({ text: assistant.content.trim(), sourceKey: `turn:${turns}` });
       messages.push(assistant);
       pendingModelResponse = null;
       text = assistantText || text;

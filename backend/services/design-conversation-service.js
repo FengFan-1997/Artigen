@@ -174,7 +174,9 @@ const normalizeAttachmentManifest = (value) => {
         field: `attachments.${index}`
       });
     }
-    return { clientId, name, mimeType, byteSize };
+    const fileRef = entry?.fileRef;
+    if(fileRef && (!['local','cloud','artifact'].includes(fileRef.source) || !/^[a-f0-9]{64}$/.test(fileRef.sha256) || typeof fileRef.id !== 'string' || fileRef.id.length>500))throw new ApiError(400,'DESIGN_FILE_REFERENCE_INVALID');
+    return { clientId, name, mimeType, byteSize, ...(fileRef ? {fileRef:{source:fileRef.source,id:fileRef.id,name,projectId:String(fileRef.projectId||'').slice(0,100),sha256:fileRef.sha256}} : {}) };
   });
 };
 
@@ -186,6 +188,7 @@ const titleFromText = (value) => {
 const publicConversation = (row) => ({
   conversationId: row.id,
   projectId: row.project_id || null,
+  sourceRunId: row.source_run_id || null,
   title: row.title,
   status: row.status,
   autoCreditCap: Number(row.auto_credit_cap || 50),
@@ -914,7 +917,7 @@ const createDesignConversationService = ({
     return inserted.rows[0];
   };
 
-  const createConversation = async ({ userId, projectId = null }) => {
+  const createConversation = async ({ userId, projectId = null, sourceRunId = null }) => {
     requireEnabled();
     return transaction(pool, async (client) => {
       const dbUserId = await resolveUserId(client, userId);
@@ -926,14 +929,16 @@ const createDesignConversationService = ({
         );
         if (!project.rowCount) throw new ApiError(404, 'PROJECT_NOT_FOUND');
       }
+      if (sourceRunId && !UUID_RE.test(sourceRunId)) throw new ApiError(400, 'DESIGN_SOURCE_RUN_INVALID');
+      if (sourceRunId) { const source = await client.query('SELECT 1 FROM agent_runs WHERE id=$1 AND user_id=$2 AND project_id IS NOT DISTINCT FROM $3::uuid', [sourceRunId, dbUserId, projectId]); if(!source.rowCount)throw new ApiError(404,'AGENT_RUN_NOT_FOUND'); }
       const inserted = await client.query(
         `INSERT INTO design_conversations
-          (user_id,project_id,auto_credit_cap,expires_at)
+          (user_id,project_id,auto_credit_cap,expires_at,source_run_id)
          VALUES ($1,$2,$3,CASE WHEN $4::integer<=0 THEN NULL
-           ELSE clock_timestamp()+($4::text || ' days')::interval END)
+           ELSE clock_timestamp()+($4::text || ' days')::interval END,$5)
          RETURNING *`,
         [dbUserId, projectId || null, config.autoCreditCap,
-          config.retentionDays > 0 ? config.retentionDays : null]
+          config.retentionDays > 0 ? config.retentionDays : null, sourceRunId]
       );
       await insertEvent(client, {
         conversationId: inserted.rows[0].id,

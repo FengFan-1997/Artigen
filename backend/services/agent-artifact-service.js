@@ -27,7 +27,7 @@ const MIME_EXTENSIONS = Object.freeze({
   'image/jpeg': ['.jpg', '.jpeg'],
   'image/webp': ['.webp'],
   'text/markdown': ['.md', '.markdown'],
-  'text/plain': ['.txt', '.md', '.csv']
+  'text/plain': ['.txt', '.md', '.csv', '.js', '.jsx', '.ts', '.tsx', '.css', '.json', '.html', '.htm', '.py', '.yaml', '.yml', '.toml']
 });
 
 const quoteShell = (value) => `'${String(value || '').replace(/'/g, `'\\''`)}'`;
@@ -340,7 +340,7 @@ const createAgentArtifactService = ({
 } = {}) => {
   if (!pool || !sandbox || !runService) throw new TypeError('AGENT_ARTIFACT_DEPENDENCY_REQUIRED');
 
-  const ingest = async ({ run, sandboxName, declaration, workerLease = null }) => {
+  const ingest = async ({ run, sandboxName, declaration, editTarget = null, workerLease = null }) => {
     const normalized = assertArtifactDeclaration(declaration);
     if (workerLease) await runService.assertWorkerLeaseActive(workerLease);
     if (normalized.sources.length) {
@@ -404,6 +404,7 @@ const createAgentArtifactService = ({
       sha256,
       verificationStatus: 'passed',
       verification: {
+        ...(editTarget ? { editTarget } : {}),
         opened: true,
         rendered: ['pdf', 'xlsx', 'pptx', 'docx'].includes(MIME_KINDS[normalized.mimeType]),
         malwareScan: 'passed',

@@ -238,6 +238,7 @@ const installAgentRoutes = (app, deps = {}) => {
       userId: auth.dbUserId || auth.userId,
       objective: body.objective,
       assetIds: body.assetIds,
+      fileEditTargets: body.fileEditTargets,
       maxCredits: body.maxCredits,
       capabilities: body.capabilities,
       deliverables: body.deliverables,
@@ -268,6 +269,12 @@ const installAgentRoutes = (app, deps = {}) => {
       runId: req.params.runId
     });
     res.json({ ok: true, run });
+  }));
+
+  app.get('/api/agent-runs/:runId/activity', readLimiter, asyncRoute(async (req, res) => {
+    const auth = requireAuthenticatedUser(req);
+    const events = await requireService().listEvents({userId: auth.dbUserId || auth.userId, runId: req.params.runId, after: req.query?.after, limit: 250});
+    res.json({ok:true, events});
   }));
 
   app.get('/api/agent-runs/:runId/events', readLimiter, asyncRoute(async (req, res) => {
