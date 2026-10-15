@@ -21,3 +21,6 @@ related_targets: []
 - Copy filter: do not surface ready-state runtime labels, smart-routing implementation copy, or “no paid task created” messages unless they change what the user should do. Cost, approval consequences, blockers, failure recovery, and verification remain explicit.
 - Memorable moment: after the first message, the brief field becomes a substantial bottom tool surface while the request opens into a calm, readable document flow; the plan and operational trace stay anchored in the floating Inspector instead of becoming chat noise.
 - Unresolved decisions: none for the initial implementation.
+
+- Composer contract: one shared component for Create, Agent and Run; Enter sends, Shift+Enter adds a line, and IME confirmation does not send. In-flight acknowledgements preserve a newer draft. Initial references append with metadata deduplication and explicit limit errors; runtime inputs remain text-only under the current API.
+- Activity disclosure: one compact expandable process group in the conversation, correlated using persisted callId/runId/subagentId. Call receipts expose public identity, status, timing and event numbers; the inspector retains the complete audit. Private arguments and outputs are never rendered. Background events preserve the reading position.

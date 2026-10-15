@@ -475,6 +475,7 @@ export const submitAgentInput = async (
   runId: string,
   input: {
     message?: string;
+    inputId?: string;
     approvalId?: string;
     decision?: 'approved' | 'denied';
     decisionReason?: string;
@@ -486,7 +487,7 @@ export const submitAgentInput = async (
     buildApiUrl(`/api/agent-runs/${encodeURIComponent(runId)}/input`),
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(input.inputId ? { 'Idempotency-Key': input.inputId } : {}) },
       body: JSON.stringify(input)
     }
   );

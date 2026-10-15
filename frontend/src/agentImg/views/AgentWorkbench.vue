@@ -61,6 +61,13 @@
               <template v-else-if="quoteIsCurrent && quote">
                 <strong>{{ quoteCanStart ? (zh ? '真实报价已准备好' : 'Live quote is ready') : (zh ? '当前无法启动' : 'Cannot start yet') }}</strong>
                 <p>{{ quoteCanStart ? (zh ? '确认后开始执行。' : 'Confirm to start.') : quoteBlockerText }}</p>
+                <section class="quote-scope" :aria-label="zh ? '本次执行范围' : 'Scope of this run'">
+                  <b>{{ zh ? '本次执行范围' : 'Scope of this run' }}</b>
+                  <p>{{ scopeReceipt }}</p>
+                  <p v-if="form.capabilities.browser">{{ zh ? '允许访问：' : 'Allowed sites: ' }}{{ browserConfig().allowedOrigins?.join(' · ') || '—' }}</p>
+                  <p v-if="selectedFiles.length">{{ zh ? '参考文件：' : 'References: ' }}{{ selectedFiles.map(file => file.name).join(' · ') }}</p>
+                  <button type="button" :disabled="busy" @click="editQuotedRequest">{{ zh ? '修改要求与附件' : 'Edit request and references' }}</button>
+                </section>
                 <dl class="quote-summary">
                   <div><dt>{{ zh ? '预计' : 'Estimate' }}</dt><dd>{{ quote.estimatedCredits.minimum }}–{{ quote.estimatedCredits.maximum }} {{ zh ? '点' : 'cr' }}</dd></div>
                   <div><dt>{{ zh ? '冻结' : 'Hold' }}</dt><dd>{{ quote.requiredPaidHold }} {{ zh ? '点' : 'cr' }}</dd></div>
@@ -85,9 +92,12 @@
       <div class="conversation-dock">
         <div class="objective-composer">
           <ComposerBox
+            ref="objectiveComposer"
             :draft="form.objective"
             :attachments="composerAttachments"
             :busy="busy"
+            :busy-label="uploadingAssets ? (zh ? `正在上传 ${selectedFiles.length} 个参考文件…` : `Uploading ${selectedFiles.length} references…`) : creating ? (zh ? '正在启动任务…' : 'Starting task…') : (zh ? '正在获取报价…' : 'Getting quote…')"
+            :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
             :placeholder="zh ? '描述目标、受众、交付物或参考方向…' : 'Describe the goal, audience, deliverables, or references…'"
             :attach-label="zh ? '添加参考' : 'Add reference'"
             :attachment-count-label="zh ? '个文件' : 'files'"
@@ -250,6 +260,7 @@ import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
 import {
   createAgentRun,
   getAgentServiceStatus,
@@ -277,6 +288,10 @@ const loadingRuns = ref(false);
 const quoting = ref(false);
 const creating = ref(false);
 const selectedFiles = ref<File[]>([]);
+const objectiveComposer = ref<InstanceType<typeof ComposerBox> | null>(null);
+const uploadingAssets = ref(false);
+let uploadedReferences: { owner: string; files: File[]; assetIds: string[] } | null = null;
+let pendingCreation: { owner: string; key: string; idempotencyKey: string } | null = null;
 const fileInput = ref<HTMLInputElement | null>(null);
 const browserProfiles = ref<AgentBrowserProfile[]>([]);
 const submittedObjective = ref('');
@@ -322,7 +337,7 @@ const form = reactive({
 const { restored: draftRestored, discardSaved } = useWorkspaceDraft({ owner: getCurrentUserId, task: () => 'agent:new', draft: toRef(form, 'objective') });
 
 const composerAttachments = computed(() => selectedFiles.value.map((file) => ({
-  clientId: `${file.name}:${file.size}:${file.lastModified}`,
+  clientId: referenceFileKey(file),
   name: file.name,
   mimeType: file.type || 'application/octet-stream',
   byteSize: file.size
@@ -428,7 +443,19 @@ const quoteRequest = () => ({
   deliverables: selectedDeliverables(),
   browserConfig: browserConfig()
 });
-const currentQuoteKey = computed(() => JSON.stringify(quoteRequest()));
+const currentQuoteKey = computed(() => JSON.stringify({ request: quoteRequest(), references: selectedFiles.value.map(referenceFileKey) }));
+const scopeReceipt = computed(() => [
+  ...deliverableOptions.value.filter(item => form.deliverables[item.id]).map(item => item.code),
+  ...capabilityOptions.value.filter(item => form.capabilities[item.id]).map(item => item.label)
+].join(' · '));
+const editQuotedRequest = () => {
+  if (busy.value) return;
+  quote.value = null;
+  quotedRequestKey.value = '';
+  noticeIsError.value = false;
+  notice.value = zh.value ? '正在修改要求。修改后重新发送以核对范围和报价。' : 'Edit the request, then send again to review its scope and quote.';
+  objectiveComposer.value?.focus();
+};
 const quoteIsCurrent = computed(() => (
   Boolean(quote.value) && quotedRequestKey.value === currentQuoteKey.value
 ));
@@ -557,7 +584,7 @@ const getQuote = async () => {
   try {
     validateBrowserForm();
     const request = quoteRequest();
-    const requestKey = JSON.stringify(request);
+    const requestKey = currentQuoteKey.value;
     const result = await quoteAgentRun(request);
     if (!isCurrentWorkspace(owner, revision)) return null;
     quote.value = result;
@@ -613,15 +640,25 @@ const startRun = async () => {
       throw new Error('API_ERROR_500');
     }
     const confirmed = quoteRequest();
-    const assetIds = await uploadAgentAssets(selectedFiles.value);
+    const references = [...selectedFiles.value];
+    const cached = uploadedReferences?.owner === owner && uploadedReferences.files.length === references.length && uploadedReferences.files.every((file, index) => file === references[index]);
+    uploadingAssets.value = !cached && references.length > 0;
+    const assetIds = cached ? uploadedReferences!.assetIds : await uploadAgentAssets(references);
     if (!isCurrentWorkspace(owner, revision)) return;
+    uploadedReferences = { owner, files: references, assetIds };
+    uploadingAssets.value = false;
+    const creationKey = JSON.stringify({ confirmed, assetIds });
+    if (pendingCreation?.owner !== owner || pendingCreation.key !== creationKey) {
+      pendingCreation = { owner, key: creationKey, idempotencyKey: crypto.randomUUID() };
+    }
     const run = await createAgentRun({
       objective: confirmed.objective,
       assetIds,
       maxCredits: confirmed.maxCredits,
       capabilities: confirmed.capabilities,
       deliverables: confirmed.deliverables,
-      browserConfig: confirmed.browserConfig
+      browserConfig: confirmed.browserConfig,
+      idempotencyKey: pendingCreation.idempotencyKey
     });
     discardSaved(owner, 'agent:new', submittedDraft);
     if (!isCurrentWorkspace(owner, revision)) return;
@@ -629,12 +666,15 @@ const startRun = async () => {
     await router.push(`/artigen/agent/runs/${run.runId}`);
   } catch (error) {
     if (isCurrentWorkspace(owner, revision)) {
-      notice.value = errorText(error);
+      notice.value = uploadingAssets.value
+        ? (zh.value ? '参考文件上传失败，已保留你的选择，任务尚未创建。请重试。' : 'Reference upload failed. Your selection is kept and no run was created. Try again.')
+        : errorText(error);
       noticeIsError.value = true;
     }
   } finally {
     if (isCurrentWorkspace(owner, revision)) {
       creating.value = false;
+      uploadingAssets.value = false;
       createLocked = false;
     }
   }
@@ -642,19 +682,23 @@ const startRun = async () => {
 
 const selectFiles = (event: Event) => {
   const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []).slice(0, 10);
-  if (files.some((file) => file.size > 40 * 1024 * 1024)) {
-    notice.value = zh.value ? '单个文件不能超过 40 MiB。' : 'Each file must be 40 MiB or smaller.';
+  const files = Array.from(input.files || []);
+  input.value = '';
+  if (busy.value) return;
+  const selection = mergeReferenceFiles(selectedFiles.value, files, { maxFileBytes: 40 * 1024 * 1024 });
+  if (selection.error) {
+    notice.value = selection.error === 'too-large'
+      ? (zh.value ? '单个文件不能超过 40 MiB。原有选择已保留。' : 'Each file must be 40 MiB or smaller. Your existing selection is kept.')
+      : (zh.value ? '最多添加 10 个参考文件。请先移除部分文件再添加。' : 'Add up to 10 reference files. Remove a file before adding more.');
     noticeIsError.value = true;
-    input.value = '';
     return;
   }
-  selectedFiles.value = files;
-  input.value = '';
+  selectedFiles.value = selection.files;
 };
 const openFilePicker = () => fileInput.value?.click();
 const removeSelectedFile = (clientId: string) => {
-  selectedFiles.value = selectedFiles.value.filter((file) => `${file.name}:${file.size}:${file.lastModified}` !== clientId);
+  if (busy.value) return;
+  selectedFiles.value = selectedFiles.value.filter((file) => referenceFileKey(file) !== clientId);
 };
 
 const loadRuns = async () => {
@@ -747,6 +791,9 @@ const handleAuthChanged = () => {
   runs.value = [];
   browserProfiles.value = [];
   selectedFiles.value = [];
+  uploadingAssets.value = false;
+  uploadedReferences = null;
+  pendingCreation = null;
   submittedObjective.value = '';
   quote.value = null;
   quotedRequestKey.value = '';
@@ -911,4 +958,11 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .prompt-suggestions button, .objective-composer { transition: none; }
 }
+
+.quote-scope { display: grid; gap: 7px; margin: 3px 0 9px; }
+.quote-scope > b { color: var(--text); font-size: 13px; font-weight: 600; }
+.quote-scope p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.quote-scope button { justify-self: start; min-height: 36px; padding: 7px 10px; color: var(--text); border: 0; border-radius: 8px; background: var(--surface-raised); font-size: 13px; cursor: pointer; }
+.quote-scope button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (max-width: 799px) { .quote-scope button { min-height: 44px; } }
 </style>

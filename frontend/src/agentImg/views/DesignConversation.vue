@@ -73,6 +73,8 @@
         :draft="draft"
         :attachments="selectedAttachments"
         :busy="sending"
+        :busy-label="zh ? '正在发送…你可以继续编辑下一条。' : 'Sending… You can draft the next message.'"
+        :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
         :placeholder="zh ? '描述一个设计、图片、调研或多文件交付任务…' : 'Describe a design, image, research, or multi-file task…'"
         :attach-label="zh ? '添加文件' : 'Add files'"
         :attachment-count-label="zh ? '个文件' : 'files'"
@@ -179,6 +181,8 @@
           :draft="draft"
           :attachments="selectedAttachments"
           :busy="sending"
+          :busy-label="zh ? '正在发送…你可以继续编辑下一条。' : 'Sending… You can draft the next message.'"
+          :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
           :placeholder="zh ? '继续对话，或提出一个新的设计任务…' : 'Continue, or describe a new design task…'"
           :attach-label="zh ? '添加文件' : 'Add files'"
           :attachment-count-label="zh ? '个文件' : 'files'"
@@ -328,6 +332,7 @@ import { storeToRefs } from 'pinia';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import ExecutionCard from '../components/designConversation/ExecutionCard.vue';
 import { useLanguageStore } from '@/stores/language';
@@ -885,9 +890,19 @@ const openFilePicker = (executionId = '') => {
 };
 const onFilesSelected = (event: Event) => {
   const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []).slice(0, 10);
+  const incoming = Array.from(input.files || []);
   input.value = '';
-  const added = files.map((file) => ({
+  if (sending.value) return;
+  const previous = attachmentTarget.value ? [] : selectedAttachments.value.map(item => item.file);
+  // The design entry also routes to local browser tools; keep their existing
+  // size policy. Cloud executors still enforce their own upload limits.
+  const selection = mergeReferenceFiles(previous, incoming);
+  if (selection.error) {
+    notice.value = zh.value ? '最多添加 10 个文件。原有选择已保留，请先移除部分文件。' : 'Choose up to 10 files. Your selection is kept; remove a file before adding more.';
+    return;
+  }
+  const existing = new Map(selectedAttachments.value.map(item => [referenceFileKey(item.file), item]));
+  const added = selection.files.map((file) => existing.get(referenceFileKey(file)) || ({
     clientId: crypto.randomUUID(),
     name: file.name,
     mimeType: file.type || 'application/octet-stream',
@@ -903,7 +918,7 @@ const onFilesSelected = (event: Event) => {
     if (execution) void startExecution(execution);
     return;
   }
-  selectedAttachments.value = [...selectedAttachments.value, ...added].slice(0, 10);
+  selectedAttachments.value = added;
 };
 
 const submitAuthenticated = async () => {

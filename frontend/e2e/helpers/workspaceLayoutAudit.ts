@@ -126,7 +126,7 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
       '.objective-composer',
       '.docked-composer',
       '.docked-composer .composer-box',
-      '.message-composer',
+      '.run-composer',
       '.workspace-zero',
       '.inspector-head',
       '.inspector-tabs',
@@ -174,7 +174,7 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
       : [];
 
     const main = root.querySelector('.workspace-main');
-    const dock = root.querySelector('.conversation-dock,.docked-composer,.message-composer');
+    const dock = root.querySelector('.conversation-dock,.docked-composer,.run-composer');
     const dockOutsideMain = visible(main) && visible(dock)
       ? box(dock).left < box(main).left - 0.75 || box(dock).right > box(main).right + 0.75
       : false;
@@ -247,7 +247,7 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
       .filter((textarea) => getComputedStyle(textarea).resize !== 'none')
       .map((textarea) => textarea.name || textarea.className || 'textarea');
 
-    const paddedIconActions = Array.from(root.querySelectorAll<HTMLElement>('.send,.send-action,.message-composer button[type="submit"]'))
+    const paddedIconActions = Array.from(root.querySelectorAll<HTMLElement>('.send,.send-action'))
       .filter(visible)
       .flatMap((button) => {
         const style = getComputedStyle(button);

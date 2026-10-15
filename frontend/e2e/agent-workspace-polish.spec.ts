@@ -905,7 +905,7 @@ test('light-theme input focus uses a visible inset ring on Create and Run', asyn
   );
   for (const [url, name, selector] of [
     ['/artigen/create', '设计需求', '.composer-box'],
-    [`/artigen/agent/runs/${runId}`, '补充要求', '.message-composer']
+    [`/artigen/agent/runs/${runId}`, '补充要求', '.composer-box']
   ]) {
     await page.goto(url!);
     await page.getByRole('textbox', { name: name! }).focus();
@@ -950,7 +950,7 @@ test('rapid run approval sends once and locks conflicting actions until acknowle
   await expect(page.getByRole('button', { name: '仅批准这一次', exact: true })).toHaveCount(0);
   expect(decisions).toBe(1);
 });
-test('Run input locks during submission and restores a later unsent draft after reload', async ({
+test('Run input preserves a draft edited during submission and restores it after reload', async ({
   page
 }) => {
   let submissions = 0;
@@ -969,10 +969,10 @@ test('Run input locks during submission and restores a later unsent draft after 
   await input.fill('已经发出的补充要求');
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect.poll(() => submissions).toBe(1);
-  await expect(input).toBeDisabled();
   await expect(input).toBeEnabled();
-  await expect(input).toHaveValue('');
   await input.fill('尚未发送的下一条要求');
+  await expect(page.getByRole('button', { name: '发送', exact: true })).toBeEnabled();
+  await expect(input).toHaveValue('尚未发送的下一条要求');
   await page.reload();
   await expect(input).toHaveValue('尚未发送的下一条要求');
   expect(submissions).toBe(1);

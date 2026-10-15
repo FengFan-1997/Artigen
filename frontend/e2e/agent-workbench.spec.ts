@@ -879,7 +879,7 @@ test('run detail keeps chrome, composer and inspector aligned across extreme vie
     await page.setViewportSize(viewport);
     await page.goto(`/artigen/agent/runs/${runId}`);
     await installDevEnvironmentBadge(page);
-    await expect(page.locator('.message-composer')).toBeVisible();
+    await expect(page.locator('.run-composer .composer-box')).toBeVisible();
     await expectWorkspaceGeometry(page, { mobile: viewport.width < 800 });
     if (process.env.ARTIGEN_CAPTURE_LAYOUT) {
       await page.screenshot({

@@ -57,7 +57,7 @@
       <template v-else><h1>{{ zh ? '正在读取任务…' : 'Loading this task…' }}</h1><p role="status">{{ zh ? '读取完成后会显示已有进度和成果。' : 'Your saved progress and results will appear here.' }}</p></template>
     </section>
     <section v-else class="conversation-workspace">
-      <div class="conversation-scroll">
+      <div ref="scrollArea" class="conversation-scroll" @scroll="onConversationScroll">
         <details class="run-progress-panel">
           <summary class="run-progress-header">
             <strong>{{ currentAction }}</strong>
@@ -66,16 +66,6 @@
           </summary>
           <div v-if="phaseStages.length" class="phase-track">
             <span v-for="stage in phaseStages" :key="stage.id" :class="{ active: stage.active, done: stage.done }"><i></i>{{ stage.label }}</span>
-          </div>
-          <div class="recent-actions">
-            <button type="button" :aria-expanded="showEventStream" aria-controls="run-event-stream" @click="showEventStream = !showEventStream">
-              <span>{{ zh ? '最近动作' : 'Recent actions' }}</span><small>{{ recentEvents.length }} {{ zh ? '条' : 'events' }}</small><span class="event-chevron" aria-hidden="true">{{ showEventStream ? '⌃' : '⌄' }}</span>
-            </button>
-            <div v-if="showEventStream" id="run-event-stream" class="event-stream">
-              <article v-for="event in recentEvents" :key="`stream-${event.eventId}`">
-                <i :class="eventTone(event)"></i><time>{{ formatTime(event.createdAt) }}</time><span>{{ eventSummary(event) }}</span>
-              </article>
-            </div>
           </div>
         </details>
         <section v-if="run.progress.clarificationRequired && run.progress.clarification" class="clarification-card" aria-live="assertive">
@@ -136,6 +126,8 @@
           </footer>
         </article>
 
+        <AgentActivity :events="events" :zh="zh" :terminal="terminal" :subagents="run.subagents" @layout-change="onConversationScroll" />
+
         <article v-for="event in conversationEvents" :key="event.eventId" class="message event-message" :class="{ child: event.subagentId }">
           <span class="agent-avatar" aria-hidden="true">{{ event.subagentId ? 'S' : 'A' }}</span>
           <div>
@@ -159,18 +151,26 @@
 
       <p v-if="loadError || notice" class="run-notice" :role="loadError ? 'alert' : 'status'" aria-live="polite">{{ loadError || notice }}</p>
       <p v-if="draftRestored && !terminal" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿。' : 'Your local draft was restored.' }}</p>
-      <form class="message-composer" @submit.prevent="sendInput">
-        <label>
-          <span class="sr-only">{{ zh ? '补充要求' : 'Additional instructions' }}</span>
-        <textarea v-model.trim="message" name="agent-run-input" rows="2" autocomplete="off" :disabled="terminal || sending" :placeholder="terminal ? (zh ? '运行已结束' : 'Run completed') : (zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the Agent…')" />
-        </label>
-        <footer>
-          <span>{{ zh ? '外部写操作会先请求审批' : 'External writes require approval' }}</span>
-          <button type="submit" :disabled="!message || terminal || sending" :aria-label="run.progress.clarificationRequired ? (zh ? '回复并继续' : 'Reply and continue') : (zh ? '发送' : 'Send')">
-            <WorkspaceIcon name="send" :size="18" />
-          </button>
-        </footer>
-      </form>
+      <div class="run-composer">
+        <button v-if="hasUnreadUpdates" class="run-new-updates" type="button" @click="scrollToLatest(true)">{{ zh ? '有新内容 · 回到底部' : 'New updates · Jump to latest' }}</button>
+        <ComposerBox
+          :draft="message"
+          :attachments="[]"
+          :allow-attachments="false"
+          :busy="sending"
+          :disabled="terminal"
+          :placeholder="terminal ? (zh ? '运行已结束' : 'Run completed') : (zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the Agent…')"
+          :request-label="zh ? '补充要求' : 'Additional instructions'"
+          :send-label="run.progress.clarificationRequired ? (zh ? '回复并继续' : 'Reply and continue') : (zh ? '发送' : 'Send')"
+          :busy-label="zh ? '正在发送…你可以继续编辑下一条。' : 'Sending… You can draft the next message.'"
+          :help-text="terminal ? '' : (zh ? '可补充文字；新文件需在新任务中添加。' : 'Add text here; attach new files when starting a new task.')"
+          :keyboard-hint="terminal ? '' : (zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line')"
+          input-name="agent-run-input"
+          compact
+          @update:draft="message = $event"
+          @submit="sendInput"
+        />
+      </div>
     </section>
 
     <template #environment>
@@ -295,6 +295,9 @@ import { approvalIsAvailable, useAgentApprovals } from '../composables/useAgentA
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import ComposerBox from '../components/designConversation/ComposerBox.vue';
+import AgentActivity from '../components/workspace/AgentActivity.vue';
+import { agentEventSummary, isAgentActivity } from '../utils/agentActivity';
 import {
   agentAssetUrl,
   cancelAgentSubagent,
@@ -321,11 +324,14 @@ const run = ref<AgentRun | null>(null);
 const loadingRun = ref(true);
 const loadError = ref('');
 const loadErrorKind = ref<'auth' | 'not-found' | 'unavailable' | null>(null);
-const showEventStream = ref(false);
 const runs = ref<AgentRun[]>([]);
 const events = ref<AgentEvent[]>([]);
+const scrollArea = ref<HTMLElement | null>(null);
+const nearBottom = ref(true);
+const hasUnreadUpdates = ref(false);
 const message = ref('');
-const { restored: draftRestored } = useWorkspaceDraft({ owner: getCurrentUserId, task: () => `run:${runId.value}`, draft: message });
+const { restored: draftRestored, discardSaved } = useWorkspaceDraft({ owner: getCurrentUserId, task: () => `run:${runId.value}`, draft: message });
+let pendingInput: { runId: string; owner: string; message: string; inputId: string } | null = null;
 const notice = ref('');
 const controlBusy = ref(false);
 const sending = ref(false);
@@ -376,20 +382,14 @@ const takeoverRequired = computed(() =>
   pendingApprovals.value.some((approval) => approval.riskLevel === 'blocked')
 );
 const conversationEvents = computed(() =>
-  events.value.filter((event) =>
+  events.value.filter((event) => !isAgentActivity(event) && (
     event.type.includes('input') ||
     event.type.includes('takeover') ||
-    event.type === 'approval.decided' ||
-    event.type.startsWith('tool.call.') ||
-    event.type === 'plan.compiled' ||
-    event.type === 'context.compacted' ||
-    event.type.startsWith('verification.') ||
-    event.type.startsWith('budget.') ||
+    event.type.startsWith('approval.') ||
     event.type === 'run.failed' ||
     event.type === 'run.succeeded'
-  )
+  ))
 );
-const recentEvents = computed(() => events.value.slice(-8).reverse());
 const currentAction = computed(() => {
   if (run.value?.progress.clarificationRequired) return zh.value ? '等待你的补充' : 'Waiting for your input';
   if (run.value?.status === 'queued') return zh.value ? '等待执行容量' : 'Waiting for capacity';
@@ -400,7 +400,8 @@ const currentAction = computed(() => {
   if (run.value?.status === 'cancelled') return zh.value ? '任务已停止' : 'Run stopped';
   if (run.value?.status === 'paused') return zh.value ? '任务已暂停' : 'Run paused';
   if (run.value?.status === 'waiting_user') return zh.value ? '等待你的确认' : 'Waiting for your decision';
-  return recentEvents.value[0]?.summary || (zh.value ? 'Agent 正在执行' : 'Agent is working');
+  const latest = events.value.at(-1);
+  return latest ? agentEventSummary(latest, zh.value) : (zh.value ? 'Agent 正在执行' : 'Agent is working');
 });
 const phaseStages = computed(() => {
   return (run.value?.progress.plan || []).map((step, index) => ({
@@ -419,16 +420,6 @@ const runSummary = computed(() => {
     : (zh.value ? '正在等待你的确认；请查看需要处理的事项。' : 'Your decision is needed. Review the pending action.');
   return run.value?.progress.plan?.length ? (zh.value ? '正在执行已保存的计划。展开当前动作或检查器可查看记录。' : 'Working through the saved plan. Expand the current action or inspector to review the record.') : currentAction.value;
 });
-const eventTone = (event: AgentEvent) => {
-  if (event.type === 'tool.call.completed') return event.data?.ok === true ? 'done' : 'failed';
-  return event.type.includes('failed')
-    ? 'failed'
-    : event.type.includes('waiting') || event.type.includes('approval')
-      ? 'waiting'
-      : event.type.includes('succeeded') || event.type.includes('completed')
-        ? 'done'
-        : 'active';
-};
 const activeSubagents = computed(() => (run.value?.subagents || []).filter((child) => ['queued', 'running'].includes(child.status)).length);
 const filteredRuns = (search: string) => {
   const query = search.trim().toLocaleLowerCase();
@@ -612,17 +603,26 @@ const requestCancel = async () => {
 };
 
 const sendInput = async () => {
-  if (!message.value) return;
+  if (!message.value.trim() || sending.value || terminal.value || !run.value) return;
   const targetRunId = runId.value;
-  const submittedMessage = message.value;
+  const owner = getCurrentUserId();
+  const submittedDraft = message.value;
+  const submittedMessage = submittedDraft.trim();
+  const request = pendingInput?.runId === targetRunId && pendingInput.owner === owner && pendingInput.message === submittedMessage
+    ? pendingInput : { runId: targetRunId, owner, message: submittedMessage, inputId: crypto.randomUUID() };
+  pendingInput = request;
   sending.value = true;
+  notice.value = '';
   try {
-    await submitAgentInput(targetRunId, { message: submittedMessage });
-    if (targetRunId !== runId.value) return;
-    message.value = '';
+    await submitAgentInput(targetRunId, { message: submittedMessage, inputId: request.inputId });
+    discardSaved(owner, `run:${targetRunId}`, submittedDraft);
+    if (targetRunId !== runId.value || owner !== getCurrentUserId()) return;
+    if (pendingInput === request) pendingInput = null;
+    if (message.value === submittedDraft) message.value = '';
     await load(targetRunId);
+    await scrollToLatest();
   } catch (error) {
-    if (targetRunId === runId.value) {
+    if (targetRunId === runId.value && owner === getCurrentUserId()) {
       notice.value = errorText(error || 'AGENT_INPUT_FAILED');
     }
   } finally {
@@ -821,6 +821,27 @@ const onEvent = (event: AgentEvent) => {
   }
 };
 
+const onConversationScroll = () => {
+  const area = scrollArea.value;
+  if (!area) return;
+  nearBottom.value = area.scrollHeight - area.scrollTop - area.clientHeight < 96;
+  if (nearBottom.value) hasUnreadUpdates.value = false;
+};
+const scrollToLatest = async (force = false) => {
+  if (!force && !nearBottom.value) { hasUnreadUpdates.value = true; return; }
+  const id = runId.value;
+  const owner = getCurrentUserId();
+  await nextTick();
+  if (disposed || id !== runId.value || owner !== getCurrentUserId()) return;
+  if (!force && !nearBottom.value) { hasUnreadUpdates.value = true; return; }
+  scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: 'auto' });
+  nearBottom.value = true;
+  hasUnreadUpdates.value = false;
+};
+watch(() => events.value.length, (next, previous) => {
+  if (next > previous) void scrollToLatest();
+});
+
 watch(runId, (nextRunId, previousRunId) => {
   if (!nextRunId || nextRunId === previousRunId) return;
   closeStream?.();
@@ -832,6 +853,8 @@ watch(runId, (nextRunId, previousRunId) => {
   previewReturnFocus = null;
   eventIds.clear();
   events.value = [];
+  nearBottom.value = true;
+  hasUnreadUpdates.value = false;
   run.value = null;
   loadError.value = '';
   loadErrorKind.value = null;
@@ -841,6 +864,7 @@ watch(runId, (nextRunId, previousRunId) => {
   subagentBusyId.value = '';
   controlBusy.value = false;
   sending.value = false;
+  pendingInput = null;
   stopArmed.value = false;
   if (eventRefreshTimer !== null) {
     window.clearTimeout(eventRefreshTimer);
@@ -946,30 +970,7 @@ const eventLabel = (type: string) => {
   };
   return labels[type]?.[zh.value ? 0 : 1] || type.replace(/\./g, ' / ').toUpperCase();
 };
-const eventSummary = (event: AgentEvent) => {
-  if (event.type !== 'tool.call.started' && event.type !== 'tool.call.completed') {
-    return event.summary;
-  }
-  const toolLabels: Record<string, [string, string]> = {
-    update_plan: ['制定执行计划', 'update the execution plan'],
-    delegate_tasks: ['委派子任务', 'delegate subtasks'],
-    browser_dom: ['操作网页', 'interact with a webpage'],
-    generate_image: ['生成图片', 'generate an image'],
-    connector_request: ['连接外部服务', 'use an external service'],
-    sandbox_shell: ['执行离线命令', 'run an offline command'],
-    declare_artifact: ['登记交付文件', 'register a deliverable'],
-    request_user_approval: ['请求你的审批', 'request your approval']
-  };
-  const toolName = String(event.data?.toolName || '').trim();
-  const tool = toolLabels[toolName]?.[zh.value ? 0 : 1] || toolName || (zh.value ? '工具' : 'tool');
-  if (event.type === 'tool.call.started') {
-    return zh.value ? `正在调用：${tool}` : `Calling: ${tool}`;
-  }
-  const succeeded = event.data?.ok === true;
-  return zh.value
-    ? `${succeeded ? '调用成功' : '调用失败'}：${tool}`
-    : `${succeeded ? 'Completed' : 'Failed'}: ${tool}`;
-};
+const eventSummary = (event: AgentEvent) => agentEventSummary(event, zh.value);
 const formatTime = (value: string) => new Intl.DateTimeFormat(
   zh.value ? 'zh-CN' : 'en-US',
   { hour: '2-digit', minute: '2-digit', second: '2-digit' }
@@ -1030,18 +1031,6 @@ onBeforeUnmount(() => {
 .phase-track span.active { color: var(--text); }
 .phase-track span.active i { background: var(--acid); box-shadow: 0 0 12px color-mix(in srgb, var(--acid) 44%, transparent); animation: progress-flow 1.6s ease-in-out infinite; }
 .phase-track span.done i { background: var(--success); }
-.recent-actions { padding: 0 14px 14px; }
-.recent-actions > button { display: flex; width: 100%; min-height: 34px; align-items: center; gap: 7px; padding: 8px 0 0; color: var(--text); border: 0; background: transparent; font-size: 12px; font-weight: 680; cursor: pointer; }
-.recent-actions > button small { margin-left: auto; color: var(--muted); font-size: 12px; font-weight: 500; }
-.event-chevron { margin-left: 2px; color: var(--muted); font-size: 14px; line-height: 1; }
-.event-stream { display: grid; gap: 8px; max-height: 190px; margin-top: 10px; overflow: auto; }
-.event-stream article { display: grid; grid-template-columns: 6px 54px 1fr; gap: 8px; align-items: baseline; }
-.event-stream article > i { width: 6px; height: 6px; border-radius: 50%; background: var(--acid); }
-.event-stream article > i.done { background: var(--success); }
-.event-stream article > i.waiting { background: var(--warning); }
-.event-stream article > i.failed { background: var(--danger); }
-.event-stream time { color: var(--muted-2); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.event-stream article > span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .clarification-card { display: grid; gap: 10px; margin: 0 0 26px; padding: 16px; border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
 .clarification-card h2 { margin: 0; color: var(--text); font-size: 15px; line-height: 1.45; }
 .quick-answers { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -1090,15 +1079,6 @@ onBeforeUnmount(() => {
 .delivery-summary a small { color: var(--muted); font-size: 12px; }
 .delivery-summary svg { width: 16px; height: 16px; }
 .run-notice { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 10px; padding: 10px 12px; color: var(--danger); border: 0; border-radius: 9px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); font-size: 12px; }
-.message-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto max(20px,env(safe-area-inset-bottom)); overflow: hidden; border: 0; border-radius: 20px; background: var(--surface); box-shadow: 0 18px 54px rgb(0 0 0 / 24%); transition: box-shadow 180ms cubic-bezier(.23,1,.32,1),background-color 180ms ease; }
-.message-composer:focus-within { background: var(--surface-raised); box-shadow: 0 22px 62px rgb(0 0 0 / 30%),inset 0 0 0 2px var(--focus); }
-.message-composer textarea { display: block; width: 100%; min-height: 72px; resize: none; box-sizing: border-box; padding: 16px 17px 7px; color: var(--text); border: 0; outline: 0; background: transparent; font-family: inherit; font-size: 15px; line-height: 1.58; }
-.message-composer footer { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px 10px 17px; }
-.message-composer footer span { color: var(--muted-2); font-size: 12px; }
-.message-composer button { display: grid; width: 42px; height: 42px; padding: 0; place-items: center; color: var(--acid-ink); border: 0; border-radius: 999px; background: var(--acid); transition: transform 120ms cubic-bezier(.23,1,.32,1),opacity 120ms ease; }
-.message-composer button:active:not(:disabled) { transform: scale(.96); }
-.message-composer button:disabled { opacity: .4; }
-.message-composer svg { width: 18px; height: 18px; }
 .run-controls svg, .file-list svg { width: 16px; height: 16px; }
 .preview-modal svg { width: 18px; height: 18px; }
 .run-controls { display: flex; gap: 5px; }
@@ -1216,21 +1196,17 @@ onBeforeUnmount(() => {
 .settlement-summary dd { margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 .approval-expired { color: var(--warning); font-size: 13px; line-height: 1.6; }
 .draft-restored { width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 8px; color: var(--muted); font-size: 12px; }
-.run-notice,.message-composer,.draft-restored { flex: 0 0 auto; }
+.run-notice,.run-composer,.draft-restored { flex: 0 0 auto; }
 @media (max-width: 800px) {
-  .conversation-scroll, .run-notice, .message-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
+  .conversation-scroll, .run-notice, .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
   .conversation-scroll { padding-top: 24px; }
   .user-message { max-width: 88%; }
-  .message-composer { margin-bottom: max(10px,env(safe-area-inset-bottom)); }
-  .message-composer textarea { min-height: 74px; font-size: 16px; }
   .approval-card > input { min-height: 44px; font-size: 16px; }
-  .message-composer button, .approval-card button, .computer-panel > button, .preview-control, .subagent-card button, .quick-answers button, .preview-modal header button { min-width: 44px; min-height: 44px; }
   .retry-required { align-items: stretch; flex-direction: column; }
   .retry-required button { min-height: 44px; }
   .run-controls button { width: 44px; padding: 0; justify-content: center; font-size: 0; }
   .run-controls svg { width: 18px; }
   .run-controls button span { display: none; }
-  .recent-actions > button { min-height: 44px; }
   .preview-modal { inset: 0; border: 0; border-radius: 0; }
 }
 @media (max-width: 960px) {
@@ -1240,5 +1216,13 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }
   .phase-track span.active i { animation: none; }
+}
+
+.run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto max(20px,env(safe-area-inset-bottom)); }
+.run-new-updates { display: block; min-height: 44px; margin: 0 auto 10px; padding: 9px 14px; color: var(--acid-text); border: 0; border-radius: 9px; font-size: 13px; background: var(--surface-raised); cursor: pointer; }
+.run-new-updates:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (max-width: 799px) {
+  .run-composer { margin-bottom: max(10px,env(safe-area-inset-bottom)); }
+  .approval-card button, .computer-panel > button, .preview-control, .subagent-card button, .quick-answers button, .preview-modal header button { min-width: 44px; min-height: 44px; }
 }
 </style>
