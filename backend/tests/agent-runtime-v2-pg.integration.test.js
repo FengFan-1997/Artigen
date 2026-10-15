@@ -171,7 +171,7 @@ test('PostgreSQL persists server-owned V1/V2 canary assignment across idempotent
   });
   const request = (userId, key) => ({
     userId,
-    objective: '仅用文字给出三条设计建议，不创建文件。',
+    objective: '把三条设计建议保存为 UTF-8 文本文件。',
     assetIds: [],
     maxCredits: 10,
     capabilities: { files: true, shell: true },

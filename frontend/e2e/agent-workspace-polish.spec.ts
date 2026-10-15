@@ -492,6 +492,7 @@ test('mobile inspector reaches summary and correctly labels scope and profile', 
   await page.goto('/artigen/agent');
   const opener = page.getByRole('button', { name: '打开检查器', exact: true });
   await opener.click();
+  await page.getByRole('navigation',{name:'资源面板'}).getByRole('button',{name:'任务',exact:true}).click();
   await page.getByText('运行设置', { exact: true }).click();
   await page.getByLabel('网页操作 Beta', { exact: true }).check();
   await expect(page.getByRole('textbox', { name: '允许访问的站点', exact: true })).toBeVisible();
@@ -500,7 +501,7 @@ test('mobile inspector reaches summary and correctly labels scope and profile', 
   await page.keyboard.press('Tab');
   await expect(page.locator('summary').filter({ hasText: '技术详情' })).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: '关闭检查器' })).toBeFocused();
+  await expect(page.getByRole('navigation',{name:'资源面板'}).getByRole('button',{name:'文件',exact:true})).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(opener).toBeFocused();
 });
