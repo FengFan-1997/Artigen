@@ -251,7 +251,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import { getCurrentUserId } from '@/login/session';
@@ -277,6 +277,7 @@ import {
 } from '../services/agentRuns';
 
 const router = useRouter();
+const route = useRoute();
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 const zh = computed(() => currentLang.value === 'zh');
@@ -653,6 +654,7 @@ const startRun = async () => {
     }
     const run = await createAgentRun({
       objective: confirmed.objective,
+      projectId: String(route.query.projectId || '') || null,
       assetIds,
       maxCredits: confirmed.maxCredits,
       capabilities: confirmed.capabilities,

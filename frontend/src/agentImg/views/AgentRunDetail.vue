@@ -1,5 +1,7 @@
 <template>
   <AgentWorkspaceShell
+    :project-id="run?.projectId"
+    :artifacts="artifacts"
     :zh="zh"
     :title="run?.objectivePreview || (zh ? 'Agent 运行' : 'Agent run')"
     subtitle=""
@@ -126,9 +128,9 @@
           </footer>
         </article>
 
-        <AgentActivity :events="events" :zh="zh" :terminal="terminal" :subagents="run.subagents" @layout-change="onConversationScroll" />
+        <RunConversationStream :run-id="runId" :events="events" :files="conversationFiles" :zh="zh" :terminal="terminal" :subagents="run.subagents" @layout-change="scrollToLatest()" />
 
-        <article v-for="event in conversationEvents" :key="event.eventId" class="message event-message" :class="{ child: event.subagentId }">
+        <article v-for="event in conversationEvents.filter(event => event.type !== 'message.created' && !event.type.startsWith('run.input'))" :key="event.eventId" class="message event-message" :class="{ child: event.subagentId }">
           <span class="agent-avatar" aria-hidden="true">{{ event.subagentId ? 'S' : 'A' }}</span>
           <div>
             <header>
@@ -296,7 +298,8 @@ import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
-import AgentActivity from '../components/workspace/AgentActivity.vue';
+import RunConversationStream from '../components/workspace/RunConversationStream.vue';
+import type { WorkspaceFile } from '../services/workspaceFiles';
 import { agentEventSummary, isAgentActivity } from '../utils/agentActivity';
 import {
   agentAssetUrl,
@@ -326,6 +329,8 @@ const loadError = ref('');
 const loadErrorKind = ref<'auth' | 'not-found' | 'unavailable' | null>(null);
 const runs = ref<AgentRun[]>([]);
 const events = ref<AgentEvent[]>([]);
+const conversationFiles = computed<WorkspaceFile[]>(() => artifacts.value.filter(a => a.assetId && a.url).map(a => ({ id: 'artifact:' + a.artifactId, path: a.filename, assetId: a.assetId!, revision: a.version, mimeType: a.mimeType, byteSize: a.byteSize, sha256: a.sha256 || '', url: a.url!, originArtifactId: a.artifactId })));
+
 const scrollArea = ref<HTMLElement | null>(null);
 const nearBottom = ref(true);
 const hasUnreadUpdates = ref(false);
@@ -842,8 +847,9 @@ watch(() => events.value.length, (next, previous) => {
   if (next > previous) void scrollToLatest();
 });
 
-watch(runId, (nextRunId, previousRunId) => {
-  if (!nextRunId || nextRunId === previousRunId) return;
+const resetSelectedRun = () => {
+  const nextRunId = runId.value;
+  loadRevision++;
   closeStream?.();
   closeStream = null;
   disconnectDesktop();
@@ -879,7 +885,8 @@ watch(runId, (nextRunId, previousRunId) => {
       closeStream = openAgentEventStream(nextRunId, { onEvent });
     }
   });
-}, { flush: 'sync' });
+};
+watch(runId, resetSelectedRun, { flush: 'sync' });
 
 const statusLabel = (status: AgentRunStatus) => {
   const labels: Record<AgentRunStatus, [string, string]> = {
@@ -994,6 +1001,7 @@ const fileCode = (mime: string) => {
 };
 onMounted(async () => {
   window.addEventListener('keydown', onPreviewWindowKeydown);
+  window.addEventListener('app-auth-changed', resetSelectedRun);
   const initialRunId = runId.value;
   await load(initialRunId);
   if (!disposed && initialRunId === runId.value) {
@@ -1008,6 +1016,7 @@ onBeforeUnmount(() => {
   disposed = true;
   loadRevision += 1;
   window.removeEventListener('keydown', onPreviewWindowKeydown);
+  window.removeEventListener('app-auth-changed', resetSelectedRun);
   disconnectDesktop();
   closeStream?.();
   if (pollTimer !== null) window.clearInterval(pollTimer);

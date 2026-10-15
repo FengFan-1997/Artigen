@@ -1,5 +1,7 @@
 <template>
   <AgentWorkspaceShell
+    :project-id="conversation?.projectId || String(route.query.projectId || '')"
+    :artifacts="activeRun?.artifacts || []"
     :zh="zh"
     :title="conversation?.title || selectedConversationTitle"
     :subtitle="conversation ? executorSummary : ''"
@@ -122,7 +124,7 @@
           <article class="message" :class="message.role">
             <div v-if="message.role === 'assistant'" class="assistant-mark" aria-hidden="true">A</div>
             <div class="message-body">
-              <p>{{ message.text }}</p>
+              <WorkspaceMarkdown :text="message.text" />
               <div v-if="message.attachments.length" class="message-files">
                 <span v-for="file in message.attachments" :key="file.clientId">
                   <WorkspaceIcon name="file" :size="14" />
@@ -145,9 +147,8 @@
             </div>
           </article>
 
+          <template v-for="execution in executionsForMessage(message.messageId)" :key="execution.executionId">
           <ExecutionCard
-            v-for="execution in executionsForMessage(message.messageId)"
-            :key="execution.executionId"
             :execution="execution"
             :task="execution.toolTaskId ? toolTasks[execution.toolTaskId] : undefined"
             :run="execution.agentRunId ? agentRuns[execution.agentRunId] : undefined"
@@ -163,6 +164,8 @@
             @authorize="approveAgentAction(execution, $event, true)"
             @deny="denyAgentAction(execution, $event)"
           />
+          <RunConversationStream v-if="execution.agentRunId" :run-id="execution.agentRunId" :events="runEvents[execution.agentRunId] || []" :files="runFiles(execution.agentRunId)" :zh="zh" :terminal="['succeeded','failed','cancelled'].includes(agentRuns[execution.agentRunId]?.status || '')" :subagents="[]" @layout-change="scrollToBottom()" />
+          </template>
         </template>
 
         <article v-if="planning" class="message assistant planning-message" aria-live="polite">
@@ -326,13 +329,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+const WorkspaceMarkdown = defineAsyncComponent(() => import('../components/workspace/WorkspaceMarkdown.vue'));
+import { takeWorkspaceAttachment, type WorkspaceAttachment } from '../services/workspaceAttachmentTransfer';
 import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
+import RunConversationStream from '../components/workspace/RunConversationStream.vue';
+import type { WorkspaceFile } from '../services/workspaceFiles';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import ExecutionCard from '../components/designConversation/ExecutionCard.vue';
 import { useLanguageStore } from '@/stores/language';
@@ -373,6 +380,8 @@ import {
   createAgentRun,
   cancelAgentSubagent,
   getAgentRun,
+  getAgentActivity,
+  type AgentEvent,
   openAgentEventStream,
   submitAgentInput,
   type AgentApproval,
@@ -407,7 +416,8 @@ const draft = ref('');
 const selectedConversationId = ref(String(route.query.c || '').trim());
 const loadingConversation = ref(Boolean(selectedConversationId.value));
 const conversationLoadError = ref('');
-const { restored: draftRestored, discardSaved } = useWorkspaceDraft({ owner: () => authUserId.value, task: () => `conversation:${selectedConversationId.value || 'new'}`, draft });
+const conversationDraftTask = () => selectedConversationId.value ? `conversation:${selectedConversationId.value}` : `conversation:new:${String(route.query.projectId || '')}:${String(route.query.sourceRun || '')}`;
+const { restored: draftRestored, discardSaved } = useWorkspaceDraft({ owner: () => authUserId.value, task: conversationDraftTask, draft });
 const selectedAttachments = ref<SelectedAttachment[]>([]);
 const notice = ref('');
 const sending = ref(false);
@@ -426,6 +436,9 @@ const localFiles = new Map<string, File>();
 const executionFileIds = reactive<Record<string, string[]>>({});
 const toolTasks = reactive<Record<string, ServerToolTask>>({});
 const agentRuns = reactive<Record<string, AgentRun>>({});
+const runEvents = reactive<Record<string, AgentEvent[]>>({});
+const runFiles = (id: string): WorkspaceFile[] => (agentRuns[id]?.artifacts || []).filter(a => a.url && a.assetId && a.verificationStatus === 'passed').map(a => ({id:'artifact:'+a.artifactId,path:a.filename,revision:0,assetId:a.assetId!,mimeType:a.mimeType,byteSize:a.byteSize,sha256:a.sha256||'',url:a.url!,originArtifactId:a.artifactId}));
+
 const startingExecutions = reactive(new Set<string>());
 const decidingExecutions = reactive(new Set<string>());
 const executionStreams = new Map<string, () => void>();
@@ -720,6 +733,18 @@ const loadRun = async (runId: string, id = selectedConversationId.value, revisio
   const loaded = await getAgentRun(runId);
   if (!isCurrentConversation(id, revision) || requestRevision !== runReadRevisions.get(runId)) return;
   agentRuns[runId] = loaded;
+  const previousEvents = runEvents[runId] || [];
+  let cursor = previousEvents.at(-1)?.eventId || '0';
+  const page: AgentEvent[] = [];
+  while (true) {
+    const batch = await getAgentActivity(runId, cursor).catch(() => []);
+    if (!isCurrentConversation(id, revision) || requestRevision !== runReadRevisions.get(runId)) return;
+    page.push(...batch);
+    const next = batch.at(-1)?.eventId;
+    if (batch.length < 250 || !next || next === cursor) break;
+    cursor = next;
+  }
+  runEvents[runId] = [...new Map([...previousEvents, ...page].map(event => [event.eventId,event])).values()];
   const becameTerminal = previous && previous.status !== loaded.status && ['succeeded', 'failed', 'cancelled'].includes(loaded.status);
   const nextPending = loaded.approvals?.filter((item) => approvalIsAvailable(item)).length || 0;
   const previousPending = previous?.approvals?.filter((item) => approvalIsAvailable(item)).length || 0;
@@ -731,7 +756,7 @@ const loadRun = async (runId: string, id = selectedConversationId.value, revisio
 
 const monitorRun = (runId: string, id = selectedConversationId.value, revision = conversationRevision) => {
   if (executionStreams.has(runId) || !isCurrentConversation(id, revision)) return;
-  if (['succeeded', 'failed', 'cancelled'].includes(agentRuns[runId]?.status || '')) return;
+  if (['succeeded', 'failed', 'cancelled'].includes(agentRuns[runId]?.status || '')) { if (!runEvents[runId]) void loadRun(runId, id, revision).catch(() => {}); return; }
   const close = openAgentEventStream(runId, {
     onEvent: () => {
       if (!isCurrentConversation(id, revision)) return;
@@ -832,7 +857,7 @@ const openConversation = async (conversationId: string) => {
     if (!isCurrentConversation(id, revision)) return;
     authorizations.value = grants;
     connectConversationStream(id, revision);
-    await router.replace({ path: '/artigen/create', query: { c: id } });
+    await router.replace({ path: '/artigen/create', query: { c: id, ...(conversation.value?.projectId ? { projectId: conversation.value.projectId } : {}) } });
     if (!isCurrentConversation(id, revision)) return;
     loadingConversation.value = false;
     hydrateExecutionTargets(loaded.executions || [], id, revision);
@@ -855,7 +880,7 @@ const newConversation = async () => {
   conversationLoadError.value = '';
   if (wasNew) draft.value = '';
   try { window.localStorage.setItem(lastConversationKey(), 'new'); } catch {}
-  await router.replace('/artigen/create');
+  await router.replace({ path: '/artigen/create', query: route.query.projectId ? { projectId: String(route.query.projectId) } : {} });
 };
 
 const removeCurrentConversation = async () => {
@@ -921,13 +946,25 @@ const onFilesSelected = (event: Event) => {
   selectedAttachments.value = added;
 };
 
+const acceptWorkspaceAttachment = (attachment: WorkspaceAttachment) => {
+  if (attachment.owner !== authUserId.value || attachment.project !== (conversation.value?.projectId || String(route.query.projectId || ''))) return false;
+  if (sending.value || selectedAttachments.value.length >= 10) { notice.value = zh.value ? '请等待发送完成，或先移除一些附件。' : 'Wait for sending or remove a reference first.'; return false; }
+  const existing = selectedAttachments.value.find(item => item.fileRef?.id === attachment.reference.id && item.fileRef?.sha256 === attachment.reference.sha256);
+  if (!existing) selectedAttachments.value.push({ clientId: crypto.randomUUID(), name: attachment.file.name, byteSize: attachment.file.size, mimeType: attachment.file.type || 'text/plain', file: attachment.file, fileRef: attachment.reference });
+  if (!draft.value.trim()) draft.value = zh.value ? `请根据我的要求修改 ${attachment.file.name}，保留原文件并交付可比较的新版本。` : `Update ${attachment.file.name} and deliver a comparable new version.`;
+  return true;
+};
+const onWorkspaceAttachment = (event: Event) => {
+  const attachment = (event as CustomEvent<WorkspaceAttachment>).detail;
+  attachment.accepted = acceptWorkspaceAttachment(attachment);
+};
 const submitAuthenticated = async () => {
   const submittedDraft = draft.value;
   const text = submittedDraft.trim();
   if (!text || sending.value || loadingConversation.value) return;
   const revision = conversationRevision;
   const owner = authUserId.value;
-  const originalDraftTask = `conversation:${selectedConversationId.value || 'new'}`;
+  const originalDraftTask = conversationDraftTask();
   let id = selectedConversationId.value;
   const attachments = [...selectedAttachments.value];
   sending.value = true;
@@ -935,7 +972,7 @@ const submitAuthenticated = async () => {
   conversationRefreshRevision += 1;
   try {
     if (!conversation.value) {
-      const created = await createDesignConversation();
+      const created = await createDesignConversation(String(route.query.projectId || '') || null, String(route.query.sourceRun || '') || null);
       if (!isCurrentConversation(id, revision)) return;
       const currentDraft = draft.value;
       id = created.conversationId;
@@ -943,7 +980,7 @@ const submitAuthenticated = async () => {
       draft.value = currentDraft;
       conversation.value = { ...created, messages: [], executions: [] };
       connectConversationStream(id, revision);
-      await router.replace({ path: '/artigen/create', query: { c: id } });
+      await router.replace({ path: '/artigen/create', query: { c: id, ...(conversation.value?.projectId ? { projectId: conversation.value.projectId } : {}) } });
       if (!isCurrentConversation(id, revision)) return;
     }
     const manifest = attachments.map(({ file: _file, ...item }) => item);
@@ -957,6 +994,7 @@ const submitAuthenticated = async () => {
     const sentFileIds = new Set(attachments.map((item) => item.clientId));
     selectedAttachments.value = selectedAttachments.value.filter((item) => !sentFileIds.has(item.clientId));
     planning.value = true;
+    window.dispatchEvent(new Event('workspace:navigation-changed'));
     await refreshConversationList();
     if (isCurrentConversation(id, revision)) await scrollToBottom(true);
   } catch (error) {
@@ -989,13 +1027,17 @@ const executionInputFiles = (execution: DesignExecution) => {
 const ensureUploadedAssets = async (execution: DesignExecution) => {
   const active = conversation.value;
   if (!active || active.conversationId !== execution.conversationId) return [];
+  const selectionRevision = conversationRevision;
+  const selectionOwner = authUserId.value;
   const expected = executionInputFiles(execution);
   if (execution.plan.uploadRequired && !expected.length) throw Object.assign(new Error('DESIGN_ATTACHMENTS_REQUIRED'), { code: 'DESIGN_ATTACHMENTS_REQUIRED' });
   const existing = new Map((active.uploads || []).map((item) => [item.clientId, item.assetId]));
   const missing = expected.filter((item) => !existing.has(item.clientId));
   if (missing.length) {
     const uploaded = await uploadDesignAttachments(active.conversationId, missing);
+    if (!isCurrentConversation(active.conversationId, selectionRevision) || selectionOwner !== authUserId.value) return [];
     uploaded.forEach((item) => existing.set(item.clientId, item.assetId));
+    if (conversation.value?.conversationId === active.conversationId) conversation.value.uploads = [...new Map([...(conversation.value.uploads || []), ...uploaded.map(item => ({...item, createdAt: new Date().toISOString()}))].map(item => [item.clientId, item])).values()];
   }
   return expected.map((item) => existing.get(item.clientId)).filter((value): value is string => Boolean(value));
 };
@@ -1030,6 +1072,7 @@ const runAgentExecution = async (execution: DesignExecution, assetIds: string[],
   if (!quoted.quote.canStart || quoted.execution.status === 'waiting_budget') { await refreshConversation(); return; }
   const plan = execution.plan;
   const created = await createAgentRun({
+    fileEditTargets: (execution.plan.attachmentClientIds || []).flatMap(clientId => { const manifest = conversation.value?.messages.flatMap(m => m.attachments || []).find(a => a.clientId === clientId); const upload = conversation.value?.uploads?.find(a => a.clientId === clientId); return manifest?.fileRef && /^text\//.test(manifest.mimeType) && manifest.byteSize <= 1024 * 1024 && upload ? [{ ...manifest.fileRef, assetId: upload.assetId }] : []; }),
     objective: String(plan.objective || ''), assetIds, maxCredits: execution.maxCredits,
     capabilities: plan.capabilities || { files: true, shell: true },
     deliverables: plan.deliverables || [], taskSpec: plan.taskSpec || null,
@@ -1334,12 +1377,16 @@ const handleAuthChanged = () => {
     localFiles.clear();
     Object.keys(toolTasks).forEach((key) => delete toolTasks[key]);
     Object.keys(agentRuns).forEach((key) => delete agentRuns[key]);
+    Object.keys(runEvents).forEach((key) => delete runEvents[key]);
     if (requested) void openConversation(requested);
   }
   if (isAuthed.value) void refreshConversationList().catch(() => {});
 };
 
 onMounted(async () => {
+  window.addEventListener('workspace:attach-file', onWorkspaceAttachment);
+  const pending = takeWorkspaceAttachment(authUserId.value, String(route.query.projectId || ''));
+  const explicitNew = Boolean(pending || route.query.projectId || route.query.sourceRun);
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
   try {
     status.value = await getDesignAssistantStatus();
@@ -1358,15 +1405,16 @@ onMounted(async () => {
   const initialRevision = conversationRevision;
   await refreshConversationList().catch(() => {});
   if (disposed || initialRevision !== conversationRevision) return;
-  const requested = String(route.query.c || '').trim() || (() => {
+  const requested = String(route.query.c || '').trim() || (explicitNew ? '' : (() => {
     try {
       const scoped = window.localStorage.getItem(lastConversationKey());
       if (scoped !== null) return scoped;
       const legacy = window.localStorage.getItem(LAST_CONVERSATION_KEY) || '';
       return conversations.value.some((item) => item.conversationId === legacy) ? legacy : '';
     } catch { return ''; }
-  })();
+  })());
   if (requested && requested !== 'new') await openConversation(requested);
+  if (pending && !disposed) acceptWorkspaceAttachment(pending);
   if (disposed) return;
   const onVisible = () => {
     if (document.visibilityState === 'visible' && conversation.value) {
@@ -1378,6 +1426,13 @@ onMounted(async () => {
   visibilityCleanup = () => document.removeEventListener('visibilitychange', onVisible);
 });
 
+watch(() => String(route.query.projectId || ''), (value, previous) => {
+  if (value === previous || route.query.c || disposed) return;
+  beginConversationSelection('');
+  const pending = takeWorkspaceAttachment(authUserId.value, value);
+  if (pending) acceptWorkspaceAttachment(pending);
+});
+
 watch(() => String(route.query.c || '').trim(), (id, previous) => {
   if (disposed || id === selectedConversationId.value) return;
   if (id) void openConversation(id);
@@ -1385,6 +1440,7 @@ watch(() => String(route.query.c || '').trim(), (id, previous) => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('workspace:attach-file', onWorkspaceAttachment);
   disposed = true;
   conversationRevision += 1;
   window.removeEventListener('app-auth-changed', handleAuthChanged as EventListener);

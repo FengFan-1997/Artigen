@@ -21,6 +21,19 @@
     -->
     <a class="skip-link" href="#artigen-workspace-main">{{ zh ? '跳到主要内容' : 'Skip to main content' }}</a>
 
+    <nav class="workspace-rail" :inert="commandOpen || leftDrawerOpen || rightDrawerOpen ? true : undefined" :aria-label="zh ? '功能切换' : 'App navigation'">
+      <router-link class="rail-brand" to="/artigen/create" aria-label="Artigen">A</router-link>
+      <button type="button" :aria-label="leftCollapsed && !overlayLayout ? (zh ? '展开左栏' : 'Expand left panel') : (zh ? '项目与会话' : 'Projects and chats')" :aria-expanded="!leftCollapsed" aria-controls="workspace-history-panel" @click="openLeftDrawer"><WorkspaceIcon name="panel-left" :size="20" /></button>
+      <router-link to="/artigen/create" :aria-label="zh ? '会话' : 'Chat'"><WorkspaceIcon name="agent" :size="20" /></router-link>
+      <router-link to="/artigen/projects" :aria-label="zh ? '项目' : 'Projects'"><WorkspaceIcon name="folder" :size="20" /></router-link>
+      <router-link to="/artigen/tools" :aria-label="zh ? '工具' : 'Tools'"><WorkspaceIcon name="tools" :size="20" /></router-link>
+      <router-link to="/artigen/ai" :aria-label="zh ? '高级生图' : 'Image studio'"><WorkspaceIcon name="image" :size="20" /></router-link>
+      <button type="button" aria-label="GitHub" @click="openResources('github')"><WorkspaceIcon name="git" :size="20" /></button>
+      <span class="rail-spacer"></span>
+      <button type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon name="moon" :size="20" /></button>
+      <router-link to="/login/account" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="20" /></router-link>
+    </nav>
+
     <aside
       id="workspace-history-panel"
       ref="leftPanel"
@@ -55,23 +68,8 @@
       </label>
 
       <div class="history-slot">
-        <slot name="history" :search="search" />
+        <ProjectNavigation :zh="zh" :search="search" @navigate="closeLeftDrawer"><slot name="history" :search="search" /></ProjectNavigation>
       </div>
-
-      <nav class="workspace-nav" :aria-label="zh ? '工作台导航' : 'Workspace navigation'">
-        <router-link to="/artigen/projects">
-          <WorkspaceIcon name="folder" />
-          <span>{{ zh ? '项目' : 'Projects' }}</span>
-        </router-link>
-        <router-link to="/artigen/tools">
-          <WorkspaceIcon name="tools" />
-          <span>{{ zh ? '工具' : 'Tools' }}</span>
-        </router-link>
-        <router-link to="/artigen/ai">
-          <WorkspaceIcon name="image" />
-          <span>{{ zh ? '高级生图' : 'Image studio' }}</span>
-        </router-link>
-      </nav>
 
       <footer class="workspace-account">
         <router-link to="/artigen/usage" class="account-action" :aria-label="`${creditCaption}${creditLabel ? ': ' + creditLabel : ''}`">
@@ -81,21 +79,8 @@
           <span class="account-label">{{ creditCaption }}</span>
           <b v-if="creditLabel" class="account-value">{{ creditLabel }}</b>
         </router-link>
-        <button type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme">
-          <span class="account-icon" aria-hidden="true">
-            <WorkspaceIcon v-if="theme === 'dark'" name="moon" :size="16" />
-            <WorkspaceIcon v-else-if="theme === 'light'" name="sun" :size="16" />
-            <WorkspaceIcon v-else name="monitor" :size="16" />
-          </span>
-          <span class="account-label">{{ zh ? '外观' : 'Appearance' }}</span>
-          <b class="account-value">{{ themeLabel }}</b>
-        </button>
-        <router-link to="/login/account" class="account-action" :aria-label="zh ? '账户设置' : 'Account settings'">
-          <span class="account-icon" aria-hidden="true">
-            <WorkspaceIcon name="settings" :size="16" />
-          </span>
-          <span class="account-label">{{ zh ? '设置' : 'Settings' }}</span>
-        </router-link>
+        <button class="mobile-only" type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon name="moon" :size="16"/><span>{{ zh ? '外观' : 'Appearance' }}</span><small>{{ themeLabel }}</small></button>
+        <router-link class="mobile-only account-action" to="/login/account" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="16"/><span>{{ zh ? '设置' : 'Settings' }}</span></router-link>
       </footer>
     </aside>
 
@@ -157,8 +142,8 @@
       tabindex="0"
       aria-orientation="vertical"
       aria-controls="workspace-inspector-panel"
-      aria-valuemin="320"
-      aria-valuemax="480"
+      aria-valuemin="480"
+      :aria-valuemax="Math.max(480, viewportWidth - 56 - (leftCollapsed ? 0 : leftWidth) - 480)"
       :aria-valuenow="rightWidth"
       :aria-label="zh ? '调整右栏宽度' : 'Resize inspector'"
       @pointerdown="beginResize('right', $event)"
@@ -172,6 +157,12 @@
       :aria-hidden="overlayLayout && !rightDrawerOpen ? 'true' : undefined"
       :inert="commandOpen || leftDrawerOpen || (overlayLayout && !rightDrawerOpen) ? true : undefined"
     >
+      <nav class="resource-tabs" :aria-label="zh ? '资源面板' : 'Resources'">
+        <button v-for="item in resourceModes" :key="item.id" type="button" :aria-pressed="resourceMode === item.id" @click="resourceMode = item.id">{{ item.label }}</button>
+        <button type="button" :aria-label="zh ? '关闭资源区' : 'Close resources'" @click="closeRight(true)"><WorkspaceIcon name="close" /></button>
+      </nav>
+      <ResourceWorkspace v-show="resourceMode !== 'task'" :mode="resourceMode" :project-id="projectId || String(route.query.projectId || '')" :artifacts="artifacts" :zh="zh" @changes="resourceMode = 'changes'" />
+      <div v-show="resourceMode === 'task'" class="task-inspector">
       <header class="inspector-head">
         <div>
           <span>{{ zh ? '任务上下文' : 'Task context' }}</span>
@@ -212,6 +203,7 @@
           <div class="empty-panel"><span></span><b>{{ emptyInspectorLabel(tab.id) }}</b><small>{{ zh ? '运行后会在这里持续更新。' : 'This panel updates while the task runs.' }}</small></div>
         </slot>
       </section>
+      </div>
     </aside>
 
     <div class="aria-updates sr-only" aria-live="polite">{{ liveAnnouncement }}</div>
@@ -237,7 +229,10 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
+import ProjectNavigation from './ProjectNavigation.vue';
+import ResourceWorkspace from './ResourceWorkspace.vue';
+import type { AgentArtifact } from '../../services/agentRuns';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 
 type InspectorTab = 'environment' | 'plan' | 'subagents' | 'computer' | 'files';
@@ -253,6 +248,8 @@ const tabIcons = {
 } as const;
 
 const props = withDefaults(defineProps<{
+  projectId?: string | null;
+  artifacts?: AgentArtifact[];
   zh?: boolean;
   title?: string;
   subtitle?: string;
@@ -267,6 +264,8 @@ const props = withDefaults(defineProps<{
   badges?: Partial<Record<InspectorTab, number>>;
   liveAnnouncement?: string;
 }>(), {
+  artifacts: () => [],
+  projectId: null,
   zh: true,
   title: 'Artigen Design Agent',
   subtitle: '',
@@ -289,6 +288,13 @@ const emit = defineEmits<{
 }>();
 
 const router = useRouter();
+const route = useRoute();
+const viewportWidth = ref(window.innerWidth);
+const resourceMode = ref<'files' | 'changes' | 'github' | 'task'>('files');
+const resourceModes = computed(() => [ { id: 'files' as const, label: props.zh ? '文件' : 'Files' }, { id: 'changes' as const, label: props.zh ? '变更' : 'Changes' }, { id: 'github' as const, label: 'GitHub' }, { id: 'task' as const, label: props.zh ? '任务' : 'Task' } ]);
+const openResources = async (mode: typeof resourceMode.value) => { resourceMode.value = mode; if (isOverlayLayout()) { leftDrawerOpen.value = false; rightDrawerOpen.value = true; } else { rightPreferenceSet = true; rightCollapsed.value = false; persistPreferences(); } await nextTick(); };
+const openFileEvent = () => { void openResources('files'); };
+
 const root = ref<HTMLElement | null>(null);
 const leftPanel = ref<HTMLElement | null>(null);
 const rightPanel = ref<HTMLElement | null>(null);
@@ -302,8 +308,8 @@ const rightCollapsed = ref(props.defaultInspectorCollapsed);
 let rightPreferenceSet = false;
 const leftDrawerOpen = ref(false);
 const rightDrawerOpen = ref(false);
-const leftWidth = ref(272);
-const rightWidth = ref(380);
+const leftWidth = ref(280);
+const rightWidth = ref(Math.max(480, window.innerWidth * .52));
 const activeTab = ref<InspectorTab>(props.defaultInspectorTab);
 const theme = ref<ThemeMode>('dark');
 const systemDark = ref(true);
@@ -329,7 +335,7 @@ const resolvedTheme = computed(() => theme.value === 'system'
   : theme.value);
 const workspaceStyle = computed(() => ({
   '--workspace-left-width': `${leftWidth.value}px`,
-  '--workspace-right-width': `${rightWidth.value}px`
+  '--workspace-right-width': `${Math.min(rightWidth.value, Math.max(480, viewportWidth.value - 56 - (leftCollapsed.value ? 0 : leftWidth.value) - 480))}px`
 }));
 const themeLabel = computed(() => {
   const labels = props.zh
@@ -361,11 +367,12 @@ const emptyInspectorLabel = (id: InspectorTab) => ({
 
 const persistPreferences = () => {
   try { localStorage.setItem('artigen-workspace-preferences', JSON.stringify({
-    version: 2,
+    version: 3,
     theme: theme.value,
     leftWidth: leftWidth.value,
     rightWidth: rightWidth.value,
     leftCollapsed: leftCollapsed.value,
+    resourceMode: resourceMode.value,
     rightCollapsed: rightPreferenceSet ? rightCollapsed.value : undefined
   })); } catch { /* Layout remains usable without browser storage. */ }
 };
@@ -418,14 +425,14 @@ const beginResize = (target: ResizeTarget, event: PointerEvent) => {
   window.addEventListener('pointerup', endResize, { once: true });
 };
 const onResize = (event: PointerEvent) => {
-  if (resizeTarget === 'left') leftWidth.value = Math.min(340, Math.max(216, event.clientX));
-  if (resizeTarget === 'right') rightWidth.value = Math.min(480, Math.max(320, window.innerWidth - event.clientX));
+  if (resizeTarget === 'left') leftWidth.value = Math.min(340, Math.max(216, event.clientX - 56));
+  if (resizeTarget === 'right') rightWidth.value = Math.min(Math.max(480, innerWidth - 56 - (leftCollapsed.value ? 0 : leftWidth.value) - 480), Math.max(480, window.innerWidth - event.clientX));
 };
 const onResizerKeydown = (target: ResizeTarget, event: KeyboardEvent) => {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
   event.preventDefault();
-  const minimum = target === 'left' ? 216 : 320;
-  const maximum = target === 'left' ? 340 : 480;
+  const minimum = target === 'left' ? 216 : 480;
+  const maximum = target === 'left' ? 340 : Math.max(480, innerWidth - 56 - (leftCollapsed.value ? 0 : leftWidth.value) - 480);
   const width = target === 'left' ? leftWidth : rightWidth;
   if (event.key === 'Home') width.value = minimum;
   else if (event.key === 'End') width.value = maximum;
@@ -495,9 +502,10 @@ const onShellKeydown = (event: KeyboardEvent) => {
 onMounted(() => {
   try {
     const stored = JSON.parse(localStorage.getItem('artigen-workspace-preferences') || '{}');
+    if (['files','changes','github','task'].includes(stored.resourceMode)) resourceMode.value = stored.resourceMode;
     if (['dark', 'light', 'system'].includes(stored.theme)) theme.value = stored.theme;
-    if (stored.version === 2 && Number(stored.leftWidth)) leftWidth.value = Math.min(340, Math.max(216, Number(stored.leftWidth)));
-    if (stored.version === 2 && Number(stored.rightWidth)) rightWidth.value = Math.min(480, Math.max(320, Number(stored.rightWidth)));
+    if ([2,3].includes(stored.version) && Number(stored.leftWidth)) leftWidth.value = Math.min(340, Math.max(216, Number(stored.leftWidth)));
+    if (stored.version === 3 && Number(stored.rightWidth)) rightWidth.value = Math.max(480, Number(stored.rightWidth));
     leftCollapsed.value = stored.leftCollapsed === true;
     if (typeof stored.rightCollapsed === 'boolean') {
       rightPreferenceSet = true;
@@ -508,8 +516,9 @@ onMounted(() => {
   const syncTheme = () => { systemDark.value = media?.matches ?? true; };
   syncTheme();
   media.addEventListener('change', syncTheme);
-  layoutMedia = window.matchMedia('(max-width: 1199px)');
+  layoutMedia = window.matchMedia('(max-width: 1439px)');
   const syncLayout = () => {
+    viewportWidth.value = window.innerWidth;
     overlayLayout.value = layoutMedia?.matches ?? false;
     if (!overlayLayout.value) {
       leftDrawerOpen.value = false;
@@ -518,20 +527,25 @@ onMounted(() => {
   };
   syncLayout();
   layoutMedia.addEventListener('change', syncLayout);
+  window.addEventListener('resize', syncLayout);
   (root.value as HTMLElement & { __mediaCleanup?: () => void }).__mediaCleanup = () => {
     media?.removeEventListener('change', syncTheme);
     layoutMedia?.removeEventListener('change', syncLayout);
+    window.removeEventListener('resize', syncLayout);
   };
   window.addEventListener('keydown', onShellKeydown);
+  window.addEventListener('workspace:open-file', openFileEvent);
 });
 
-watch(() => props.defaultInspectorTab, (value) => { activeTab.value = value; });
+watch(resourceMode, persistPreferences);
+watch(() => props.defaultInspectorTab, (value) => { activeTab.value = value; resourceMode.value = 'task'; });
 watch(() => props.defaultInspectorCollapsed, (value) => {
   if (!rightPreferenceSet) rightCollapsed.value = value;
 });
 onBeforeUnmount(() => {
   endResize();
   window.removeEventListener('keydown', onShellKeydown);
+  window.removeEventListener('workspace:open-file', openFileEvent);
   (root.value as (HTMLElement & { __mediaCleanup?: () => void }) | null)?.__mediaCleanup?.();
 });
 </script>
@@ -562,7 +576,7 @@ onBeforeUnmount(() => {
   --left-live: var(--workspace-left-width);
   --right-live: var(--workspace-right-width);
   display: grid;
-  grid-template-columns: var(--left-live) minmax(0, 1fr) var(--right-live);
+  grid-template-columns: 56px var(--left-live) minmax(0, 1fr) var(--right-live);
   width: 100%;
   min-width: 0;
   height: 100dvh;
@@ -593,7 +607,8 @@ onBeforeUnmount(() => {
   color-scheme: light;
 }
 .agent-workspace-shell[data-theme="light"] .brand-lockup { color: #171a16; }
-.agent-workspace-shell.left-collapsed { --left-live: 64px; }
+.agent-workspace-shell.left-collapsed { --left-live: 0px; }
+.left-collapsed .workspace-left { visibility: hidden; }
 .agent-workspace-shell.right-collapsed { --right-live: 0px; }
 *,*::before,*::after { box-sizing: border-box; }
 .agent-workspace-shell :deep(*),.agent-workspace-shell :deep(*::before),.agent-workspace-shell :deep(*::after) { box-sizing: border-box; }
@@ -650,7 +665,7 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .panel-resizer:hover::after { background: var(--acid); }
 .panel-resizer:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
 .panel-resizer:focus-visible::after { width: 2px; background: var(--acid); }
-.left-resizer { left: calc(var(--left-live) - 4px); }
+.left-resizer { left: calc(56px + var(--left-live) - 4px); }
 .right-resizer { right: calc(var(--right-live) - 4px); }
 .left-collapsed .left-resizer,.right-collapsed .right-resizer { display: none; }
 .workspace-main { position: relative; display: flex; flex-direction: column; background: var(--bg); }
@@ -668,7 +683,7 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .runtime-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .runtime-pill.ready i { background: var(--success); }.runtime-pill.busy i { background: var(--acid); }.runtime-pill.warning i { background: var(--warning); }.runtime-pill.offline i { background: var(--danger); }
 .main-slot { flex: 1; min-height: 0; overflow: hidden; }
-.workspace-right { z-index: 40; display: flex; flex-direction: column; height: calc(100% - 24px); margin: 12px 12px 12px 0; overflow: hidden; border-radius: 18px; background: var(--surface); box-shadow: 0 18px 52px rgb(0 0 0 / 22%); }
+.workspace-right { z-index: 40; display: flex; flex-direction: column; height: 100%; margin: 0; overflow: hidden; border-radius: 0; background: var(--bg); }
 .right-collapsed .workspace-right { visibility: hidden; }
 .inspector-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 58px; padding: 10px 12px 8px 18px; }
 .inspector-head > div { display: grid; min-width: 0; gap: 2px; }
@@ -693,21 +708,22 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .command-palette > div { max-height: 320px; overflow: auto; padding: 6px; }
 .command-palette button { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; }
 .command-palette button:hover { background: var(--surface-raised); }.command-palette button > span { display: grid; gap: 2px; }.command-palette b { font-size: var(--font-control); }.command-palette small { color: var(--muted); font-size: var(--font-meta); }
-.mobile-only,.mobile-panel-controls { display: none; }
+.mobile-only,.mobile-panel-controls,.workspace-account .mobile-only { display: none; }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; clip-path: inset(50%); }
-@media (max-width: 1199px) {
-  .agent-workspace-shell,.agent-workspace-shell.left-collapsed,.agent-workspace-shell.right-collapsed { --left-live: 0px; --right-live: 0px; grid-template-columns: minmax(0,1fr); }
+@media (max-width: 1439px) {
+  .agent-workspace-shell,.agent-workspace-shell.left-collapsed,.agent-workspace-shell.right-collapsed { --left-live: 0px; --right-live: 0px; grid-template-columns: 56px minmax(0,1fr); }
   .workspace-left,.workspace-right { position: fixed; top: 0; bottom: 0; height: auto; margin: 0; visibility: hidden; pointer-events: none; transition: transform 190ms cubic-bezier(.23,1,.32,1); }
   .workspace-left { left: 0; width: min(320px,86vw); transform: translateX(-103%); box-shadow: 24px 0 64px rgb(0 0 0 / 35%); }
-  .workspace-right { right: 0; width: min(420px,92vw); border-radius: 18px 0 0 18px; transform: translateX(103%); box-shadow: -24px 0 64px rgb(0 0 0 / 35%); }
+  .workspace-right { right: 0; width: min(760px,calc(100vw - 56px)); border-radius: 18px 0 0 18px; transform: translateX(103%); box-shadow: -24px 0 64px rgb(0 0 0 / 35%); }
   .left-drawer-open .workspace-left,.right-drawer-open .workspace-right { visibility: visible; pointer-events: auto; transform: translateX(0); transition-delay: 0s; }
   .drawer-scrim { position: fixed; inset: 0; z-index: 30; display: block; border: 0; background: rgb(0 0 0 / 44%); }
-  .desktop-only { display: none !important; }.mobile-only,.mobile-panel-controls { display: flex; }
+  .desktop-only { display: none !important; }.mobile-only,.mobile-panel-controls { display: flex; }.workspace-account .mobile-only { display:grid; }
   .left-collapsed .brand-word,.left-collapsed .workspace-brand .icon-control,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account .account-label,.left-collapsed .workspace-account .account-value { display: initial; }
   .left-collapsed .workspace-brand { justify-content: space-between; padding: 10px 14px 8px 16px; }.left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a { justify-content: flex-start; padding-inline: 10px; }.left-collapsed .workspace-account :is(button,.account-action) { grid-template-columns: 20px minmax(0,1fr) auto; justify-content: stretch; padding-inline: 10px; }
 }
 @media (max-width: 799px) {
-  .agent-workspace-shell { --conversation-gutter: 16px; }
+  .agent-workspace-shell,.agent-workspace-shell.left-collapsed,.agent-workspace-shell.right-collapsed { --conversation-gutter: 16px; grid-template-columns: minmax(0,1fr); }
+  .agent-workspace-shell .workspace-rail { display:none; }
   .task-heading { justify-content: flex-start; text-align: left; }
   .task-heading-icon { display: none; }
   .workspace-topbar { min-height: 68px; gap: 4px; padding-inline: max(8px,env(safe-area-inset-left)) max(8px,env(safe-area-inset-right)); }.task-meta { gap: 2px 8px; }.inspector-toggle,.icon-control { min-width: 44px; min-height: 44px; }.workspace-brand { min-height: 56px; padding-top: max(8px,env(safe-area-inset-top)); }.new-task,.history-search,.workspace-nav a,.workspace-account :is(button,.account-action) { min-height: 44px; }.workspace-account { padding-bottom: max(8px,env(safe-area-inset-bottom)); }.history-search input,.command-palette input { font-size: 16px; }
@@ -716,6 +732,13 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }
 }
+
+.workspace-rail { min-height:0; overflow-y:auto; display:flex; flex-direction:column; align-items:center; gap:9px; padding:12px 5px; background:var(--surface); }
+.workspace-rail > a,.workspace-rail > button { display:grid; flex:none; place-items:center; width:44px; height:44px; border:0; border-radius:9px; color:var(--muted); background:transparent; text-decoration:none; cursor:pointer; }
+.workspace-rail > a:hover,.workspace-rail > button:hover { background:var(--surface-hover); color:var(--text); }.workspace-rail .rail-brand { color:var(--text); font-weight:750; background:var(--surface-raised); }.rail-spacer { flex:1; }
+.resource-tabs { display:flex; align-items:center; min-height:48px; gap:4px; padding:5px 8px; border-bottom:1px solid var(--border); }.resource-tabs > button { flex:1; min-height:36px; padding:5px 8px; border:0; border-radius:7px; background:transparent; color:var(--muted); font:inherit; font-size:13px; cursor:pointer; }.resource-tabs > button[aria-pressed="true"] { background:var(--surface-raised); color:var(--text); }.resource-tabs > button:last-child { display:grid; flex:none; place-items:center; width:36px; padding:0; }
+.task-inspector { display:flex; flex:1; flex-direction:column; min-height:0; }.workspace-nav { display:none; }
+@media(max-width:799px) { .resource-tabs > button { min-height:44px; }.resource-tabs > button:last-child { width:44px; } }
 </style>
 
 <style>
