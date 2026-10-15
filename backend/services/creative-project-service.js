@@ -477,7 +477,7 @@ const createCreativeProjectService = ({ pool = getPool(), env = process.env } = 
     );
     if (!deleted.rowCount) throw new ApiError(404, 'PROJECT_ASSET_NOT_FOUND');
     const refs = await client.query(
-      'SELECT 1 FROM project_asset_links WHERE asset_id=$1 LIMIT 1',
+      'SELECT 1 FROM project_asset_links WHERE asset_id=$1 UNION ALL SELECT 1 FROM workspace_file_versions WHERE asset_id=$1 LIMIT 1',
       [normalizedAssetId]
     );
     if (!refs.rowCount) {
@@ -791,7 +791,7 @@ const sweepTrashedProjects = async ({ pool = getPool(), limit = 50 } = {}) => {
     let purged = 0;
     for (const candidate of candidates.rows) {
       const assets = await client.query(
-        'SELECT DISTINCT asset_id FROM project_asset_links WHERE project_id=$1',
+        'SELECT DISTINCT asset_id FROM project_asset_links WHERE project_id=$1 UNION SELECT v.asset_id FROM workspace_file_versions v JOIN workspace_files f ON f.id=v.file_id WHERE f.project_id=$1',
         [candidate.id]
       );
       await client.query(
@@ -815,7 +815,7 @@ const sweepTrashedProjects = async ({ pool = getPool(), limit = 50 } = {}) => {
            WHERE asset.id=$1
              AND NOT EXISTS (
                SELECT 1 FROM project_asset_links link WHERE link.asset_id=asset.id
-             )`,
+             ) AND NOT EXISTS(SELECT 1 FROM workspace_file_versions v WHERE v.asset_id=asset.id)`,
           [row.asset_id]
         );
       }

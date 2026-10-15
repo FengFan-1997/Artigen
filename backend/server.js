@@ -40,6 +40,7 @@ const { installAdminRoutes } = require("./routes/admin");
 const { installConvertRoutes, isConvertJsonRequest } = require("./routes/convert");
 const { installToolTaskRoutes } = require("./routes/tool-tasks");
 const { installPaymentRoutes } = require("./routes/payments");
+const { installWorkspaceRoutes } = require("./routes/workspace");
 const { installProjectRoutes } = require("./routes/projects");
 const { installAgentRoutes } = require("./routes/agent-runs");
 const {
@@ -341,11 +342,15 @@ const JSON_BODY_LIMIT =
   String(process.env.JSON_BODY_LIMIT || (isProd ? "1mb" : "25mb")).trim() ||
   (isProd ? "1mb" : "25mb");
 const defaultJsonParser = express.json({ limit: JSON_BODY_LIMIT });
+// A 1 MiB UTF-8 file can expand sixfold when JSON-escaped. Only editor saves
+// receive this parser; the service still enforces the decoded 1 MiB limit.
+const workspaceFileJsonParser = express.json({ limit: "7mb" });
 app.use((req, res, next) => {
   // The explicit-consent Word conversion route has a bounded, rate-limited
   // parser sized for base64 overhead. All other JSON stays on the tight global
   // production limit.
   if (isConvertJsonRequest(req)) return next();
+  if (["POST", "PUT"].includes(req.method) && /^\/api\/workspace\/projects\/[^/]+\/files(?:\/[^/]+)?$/.test(req.path)) return workspaceFileJsonParser(req, res, next);
   return defaultJsonParser(req, res, next);
 });
 app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
@@ -749,6 +754,8 @@ installToolTaskRoutes(app, {
   callSiliconFlowChat: scheduledSiliconFlowChat,
   callCloudflareChat: resolvedCloudflareChat,
 });
+
+installWorkspaceRoutes(app, { env: resolvedProviderEnv, rateLimit });
 
 installProjectRoutes(app, {
   rateLimit,

@@ -289,3 +289,14 @@ Migration 028 now explicitly drops legacy `expires_at` NOT NULL constraints befo
 验证：前端单元 244/244；五份相关系统 Chrome E2E 联合 99/99（含新增 20 项输入/附件/调用场景）；type-check、lint 与 production build 通过。独立代码复核无未解决 Critical/Important；5 个 Vue detector primary 0，3 个既有中性阴影 advisory 保留，未新增忽略规则。10 组同视口/主题/合成 API 数据的真实 Vue 前后截图，无页面错误或整页横向溢出。
 
 这是本地候选的验证，保留了用户原有工作树改动；没有 push、PR、合并或部署，也没有重新验证真实 Worker、模型、对象存储、结算、跨浏览器或 Production。构建仍有既有 empty echarts/large chunk 提示。第 6–7 批成果后续工作流、电脑连接及真实发布尚未完成。
+
+
+## 2026-10-15：Agent 工作空间复刻（本地候选，未发布）
+
+按依赖形成五个本地提交；未 push、PR、合并或部署。用户原有工作树保留，不代表清洁 CI 或线上验收。
+
+### 工作空间数据基础
+
+导航投影沿用项目、设计会话及独立 Run，执行关联不重复展示；所有权校验约束改名和归属调整。迁移032增加公开消息键、项目文件、不可变版本与仓库绑定。文件沿用现有资产，保存验证基础版本和哈希，冲突409；原资产/历史版本不复制、不被常规GC误删。空文本只在显式编辑器路径接受。
+
+GitHub 项目绑定复用既有 OAuth；仓库请求固定 GET，保留分页和文件patch，不产生提交、推送、PR或合并。OAuth 尚未在本机配置，真实授权仓库未验收。应用回退保留数据，032拒绝破坏性down。
