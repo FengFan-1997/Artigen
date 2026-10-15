@@ -113,9 +113,13 @@
               <p>
                 {{
                   proposal
-                    ? zh
-                      ? 'Agent 候选修改，尚未写入文件。'
-                      : 'Agent proposal; not yet applied.'
+                    ? proposal.candidateId.startsWith('version:')
+                      ? zh
+                        ? '历史版本与当前已保存内容的差异；恢复会保存为新版本。'
+                        : 'Historical version compared with the saved file; restoring creates a new version.'
+                      : zh
+                        ? 'Agent 候选修改，尚未写入文件。'
+                        : 'Agent proposal; not yet applied.'
                     : zh
                       ? '当前编辑与打开时版本的差异。'
                       : 'Current edits compared with the opened version.'
@@ -135,7 +139,15 @@
               >
               <div class="change-actions">
                 <button v-if="proposal" :disabled="saving" @click="applyProposal">
-                  {{ zh ? '应用到当前文件' : 'Apply to current file' }}</button
+                  {{
+                    proposal.candidateId.startsWith('version:')
+                      ? zh
+                        ? '恢复此版本'
+                        : 'Restore this version'
+                      : zh
+                        ? '应用到当前文件'
+                        : 'Apply to current file'
+                  }}</button
                 ><button v-if="active.undo !== undefined" :disabled="saving" @click="undoApply">
                   {{ zh ? '撤销最近一次应用' : 'Undo last application' }}</button
                 ><button v-if="!proposal && dirty(active)" :disabled="saving" @click="save(active)">
