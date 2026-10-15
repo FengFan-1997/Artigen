@@ -829,7 +829,7 @@ onBeforeUnmount(() => {
 .agent-conversation { display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .agent-conversation:not(.active) { grid-template-columns:minmax(0,1fr); grid-template-rows: auto auto; align-content: safe center; padding-block: 48px; overflow-y: auto; }
 .agent-conversation:not(.active) .conversation-scroll { overflow: visible; }
-.conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
+.conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--scrollbar-thumb) transparent; }
 .conversation-empty { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 0 0 10px; justify-items: start; }
 .conversation-empty h1 { margin: 0; color: var(--text); font-size: clamp(28px, 3vw, 36px); font-weight: 680; line-height: 1.18; letter-spacing: -.035em; text-wrap: balance; }
 .prompt-suggestions { display: flex; flex-wrap: wrap; width: min(var(--conversation-max), 100%); gap: 8px; margin: 16px auto 0; }

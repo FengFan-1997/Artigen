@@ -60,7 +60,8 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await resources(page, '变更');
   await page.getByLabel('选择 Agent 候选文件').selectOption('66666666-6666-4666-8666-666666666666');
-  await expect(page.locator('.cm-mergeView')).toBeVisible();
+  await expect(page.locator('.workspace-code-editor')).toBeVisible();
+  await expect(page.locator('.cm-changedLine,.cm-deletedChunk').first()).toBeVisible();
   await page.getByRole('button', { name: '应用到当前文件', exact: true }).click();
   await expect(page.getByRole('button', { name: '撤销最近一次应用' })).toBeVisible();
   await page.getByRole('button', { name: '撤销最近一次应用' }).click();
@@ -176,7 +177,8 @@ test('capture actual before and after application surfaces', async ({ browser })
             await page
               .getByLabel('选择 Agent 候选文件')
               .selectOption('66666666-6666-4666-8666-666666666666');
-            await expect(page.locator('.cm-mergeView')).toBeVisible();
+            await expect(page.locator('.workspace-code-editor')).toBeVisible();
+  await expect(page.locator('.cm-changedLine,.cm-deletedChunk').first()).toBeVisible();
           }
           if (scene === 'tabs') {
             const show = page.getByRole('button', { name: '显示目录树' });

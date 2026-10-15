@@ -145,6 +145,9 @@
                 :path="active.file.path"
                 :readonly="true"
                 :label="zh ? '文件差异' : 'File differences'"
+                :original-label="zh ? (proposal ? '当前已保存版本' : '打开时版本') : (proposal ? 'Saved version' : 'Opened version')"
+                :modified-label="zh ? (proposal ? (proposal.candidateId.startsWith('version:') ? '历史版本' : 'Agent 候选') : '当前编辑') : (proposal ? (proposal.candidateId.startsWith('version:') ? 'Historical version' : 'Agent proposal') : 'Current edits')"
+                :no-changes-label="zh ? '内容一致，没有需要审阅的差异。' : 'These versions are identical. No changes to review.'"
               />
             </template>
             <div v-else class="resource-empty">
@@ -1241,19 +1244,21 @@ defineExpose({ toggleTree, treeVisible });
   flex: 1;
   min-width: 0;
   background: var(--sidebar);
-  padding: 3px 5px;
-  gap: 3px;
+  padding: 0 8px;
+  gap: 0;
 }
 .file-tab {
   display: flex;
   flex: none;
   max-width: 230px;
   align-items: center;
-  border-radius: 7px;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
   background: transparent;
 }
 .file-tab.active {
-  background: var(--surface-hover);
+  border-bottom-color: var(--muted);
+  background: var(--editor-surface);
 }
 .file-tab > button {
   display: flex;
@@ -1294,20 +1299,20 @@ defineExpose({ toggleTree, treeVisible });
   overflow: hidden;
 }
 .resource-tree {
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--panel-border);
   width: 224px;
   flex: none;
   overflow: auto;
   padding: 8px;
   background: var(--sidebar);
-  scrollbar-color: var(--border) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 .file-search {
   display: flex;
   gap: 6px;
   align-items: center;
   padding: 7px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 7px;
 }
 .file-search input {
@@ -1515,10 +1520,11 @@ button:disabled {
   padding: 5px;
 }
 .resource-notice {
+  border-bottom: 1px solid var(--border);
   flex: none;
   margin: 0;
-  padding: 10px 12px;
-  background: var(--surface);
+  padding: 6px 12px;
+  background: var(--surface-raised);
   font-size: 12px;
   line-height: 1.6;
   color: var(--muted);
@@ -1537,10 +1543,11 @@ button:disabled {
   flex-direction: column;
 }
 .changes-panel > header {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 16px;
+  padding: 12px 16px 4px;
   font-size: 13px;
 }
 .changes-panel > header > b {
@@ -1553,7 +1560,8 @@ button:disabled {
 .changes-panel > p {
   font-size: 12px;
   color: var(--muted);
-  padding: 0 16px;
+  margin: 0;
+  padding: 4px 16px 12px;
 }
 .changes-panel > label {
   display: grid;

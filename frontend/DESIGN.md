@@ -5,13 +5,17 @@ colors:
   dark-background: "#111311"
   dark-sidebar: "#1B1E1B"
   dark-surface: "#232622"
-  dark-border: "#7B8375"
+  dark-border: "#3B4139"
+  dark-control-border: "#7B8375"
+  dark-panel-border: "#596151"
   dark-text: "#F3F4EF"
   muted: "#A1A79B"
   light-background: "#F4F5F1"
   light-sidebar: "#E9ECE6"
   light-surface: "#FFFFFF"
-  light-border: "#78816F"
+  light-border: "#D6DCD0"
+  light-control-border: "#78816F"
+  light-panel-border: "#A1AB95"
   light-text: "#171A16"
   execution: "#C8FF3D"
   danger: "#FF6B62"
@@ -45,7 +49,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - Sidebar `#1B1E1B`
 - Surface `#232622`
 - Raised surface `#2A2E29`
-- Border `#7B8375`
+- Hairline `#3B4139`, panel divider `#596151`, control outline `#7B8375`
 - Text `#F3F4EF`
 - Muted `#A1A79B`
 
@@ -55,7 +59,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - Sidebar `#E9ECE6`
 - Surface `#FFFFFF`
 - Raised surface `#F0F2ED`
-- Border `#78816F`
+- Hairline `#D6DCD0`, panel divider `#A1AB95`, control outline `#78816F`
 - Text `#171A16`
 - Muted `#5B6557`
 
@@ -81,7 +85,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - 面板宽度、折叠和主题偏好只保存在本机，不写入服务端。
 - 空任务默认收起 Inspector，开始对话后按任务展示；用户明确选择的折叠偏好优先。
 - 顶栏固定承载标题、必要状态、唯一费用位置和控制；不常驻展示模型副标题或 Runtime 胶囊。
-- 区域以相邻背景色区分；资源面板利用完整列宽，不保留旧版悬浮边距和大圆角。功能栏、项目栏、资源区、目录和顶栏使用持久1px功能性边界；8px拖拽命中区在悬停、拖拽或键盘聚焦时增强显示；取消指针或窗口失焦后必须结束拖动。
+- 区域以相邻背景色区分；资源面板利用完整列宽，不保留旧版悬浮边距和大圆角。功能栏与项目树共用导航表面；会话、资源与目录以表面层次及适量1px边界区分，内部顶栏仅保留必要的细线；8px拖拽命中区在悬停、拖拽或键盘聚焦时增强显示；取消指针或窗口失焦后必须结束拖动。
 - 中间输入框在零状态和运行状态中保持同一个心智位置：先表达目标，发送后停靠到底部继续对话。
 - 底部 Composer 是三条路由共享的稳定工具台：20px 左右圆角、两行信息层级、圆形发送动作；不能让 Create、Computer Agent 与 Run Detail 各自漂移成不同组件语言。
 
@@ -220,9 +224,12 @@ Don't:
 - A healthy single Agent is a ready state, not a warning. Genuine offline, model mismatch, running, approval and cost states remain visible. Empty-state suggestions are compact icon actions and disappear once a goal or references have been supplied.
 - The shared Composer uses a visible 1px functional border without a shadow and one 2px theme-colored container focus outline. Its textarea does not add a second outline. Pointer clicks on workspace controls do not inherit the global browser-blue focus ring; keyboard focus retains the semantic theme outline.
 
-### Functional boundaries across themes
+### Functional boundaries and review surfaces
 
-- Functional separators and existing control borders use the opaque shared border token: dark `#7B8375`, light `#78816F`. Against the workspace surfaces, including hover surfaces, contrast stays at least 3:1. Decorative card outlines are still unnecessary.
-- Rail, project pane, resource pane, main/resource headers, expanded file tree, document tabs/toolbar/status remain distinguishable before hover. A compact full-width tree omits its redundant inner vertical border.
-- Search and the shared Composer have visible boundaries in the idle state. Composer uses a border without a shadow and retains the separate theme focus outline.
-- Resizer hover/active/focus use the theme focus color, including darker green in light mode; highlighter green on a light background is not a visible drag indicator. No separator depends on pointer hover alone.
+- Keep the navigation rail and project tree on one shared surface. Use distinct conversation and editor surfaces, one medium panel divider and quiet internal hairlines instead of making every line equally strong. The main header is not boxed.
+- Input outlines, scrollbar thumbs, resize grips and focus indicators stay independently readable (at least 3:1 against their relevant surfaces). This requirement is not applied indiscriminately to decorative dividers. The default shared border token is a hairline; control-border and panel-border have specific, separate roles.
+- Scrollbars use their own theme token, a native 12px WebKit track with a padded rounded thumb and the native standard-color fallback in other engines. Run conversation content keeps 12px clearance from the scrollbar without changing its reading width.
+- The file editor has a distinct code surface, line-number gutter, quiet active line and a precise selected-file indicator. Save/error notices stay compact and retain their status text.
+- Diff headings identify actual source versions: opened/current edits, saved/Agent candidate, or saved/history. Only changed lines and gutter markers get semantic red/green; never tint whole versions as if all text changed. Identical content displays an explicit no-changes state.
+- Comparison areas under 720px use CodeMirror's readonly unified view with merge controls disabled; wider areas use named side-by-side views. Resizing a readonly comparison may rebuild its view, but never rebuild a normal editor just because its width changed. Existing draft, conflict and explicit apply/save rules remain authoritative.
+- Reference rationale: [Linear UI redesign](https://linear.app/now/how-we-redesigned-the-linear-ui) (surface hierarchy, density and alignment); [VS Code theme roles](https://code.visualstudio.com/api/references/theme-color) (separate editor groups, gutters, scrollbar and diff colors); [VS Code automatic diff layouts](https://code.visualstudio.com/docs/sourcecontrol/staging-commits#choose-a-diff-layout) (adapt comparison to available width). Codex screenshots supplied by the user remain the visual reference for the workspace arrangement. This is an Artigen adaptation, not a claim to reproduce another product exactly.

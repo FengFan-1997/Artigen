@@ -1048,7 +1048,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .conversation-workspace { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.conversation-scroll { flex: 1; min-height: 0; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto; padding: 28px 0 40px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
+.conversation-scroll { flex: 1; min-height: 0; width: min(calc(var(--conversation-max) + 24px), calc(100% - var(--conversation-gutter) * 2 + 24px)); margin: 0 auto; padding: 28px 12px 40px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--scrollbar-thumb) transparent; }
 .run-progress-panel { margin-bottom: 26px; padding: 0; border: 0; border-radius: 14px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
 .run-progress-header { display: flex; min-height: 48px; align-items: center; padding: 12px 14px; list-style: none; cursor: pointer; justify-content: space-between; gap: 12px; }
 .run-progress-header div { display: grid; gap: 4px; }
@@ -1228,7 +1228,7 @@ onBeforeUnmount(() => {
 .draft-restored { width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 8px; color: var(--muted); font-size: 12px; }
 .run-notice,.run-composer,.draft-restored { flex: 0 0 auto; }
 @media (max-width: 800px) {
-  .conversation-scroll, .run-notice, .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
+  .run-notice, .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
   .conversation-scroll { padding-top: 24px; }
   .user-message { max-width: 88%; }
   .approval-card > input { min-height: 44px; font-size: 16px; }
