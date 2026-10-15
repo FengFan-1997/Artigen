@@ -570,30 +570,32 @@ const errorText = (error: unknown) => {
     : 'Could not finish. Check access or network and retry.';
 };
 const staticHtml = staticFileHtml;
+const generatedFiles = computed<WorkspaceFile[]>(() =>
+  props.artifacts
+    .filter((a) => a.assetId && a.url && a.verificationStatus === 'passed')
+    .map((a) => ({
+      id: 'artifact:' + a.artifactId,
+      path: a.filename,
+      revision: a.version,
+      assetId: a.assetId!,
+      mimeType: a.mimeType,
+      byteSize: a.byteSize,
+      sha256: a.sha256 || '',
+      url: a.url!,
+      originArtifactId: a.artifactId,
+      verificationStatus: a.verificationStatus,
+      editTarget: a.verification?.editTarget as WorkspaceFile['editTarget']
+    }))
+);
 async function refreshFiles() {
   const ticket = revision;
   const current = scope();
   try {
     const remote = project.value ? (await listWorkspaceFiles(project.value)).files : [];
     if (ticket !== revision || scope() !== current) return;
-    const generated = props.artifacts
-      .filter((a) => a.assetId && a.url && a.verificationStatus === 'passed')
-      .map((a) => ({
-        id: 'artifact:' + a.artifactId,
-        path: a.filename,
-        revision: a.version,
-        assetId: a.assetId!,
-        mimeType: a.mimeType,
-        byteSize: a.byteSize,
-        sha256: a.sha256 || '',
-        url: a.url!,
-        originArtifactId: a.artifactId,
-        verificationStatus: a.verificationStatus,
-        editTarget: a.verification?.editTarget as WorkspaceFile['editTarget']
-      }));
     files.value = [
       ...remote,
-      ...generated.filter((a) => !remote.some((f) => f.assetId === a.assetId))
+      ...generatedFiles.value.filter((a) => !remote.some((f) => f.assetId === a.assetId))
     ];
   } catch (error) {
     if (ticket === revision) notice.value = errorText(error);
@@ -1175,7 +1177,10 @@ const onOpenFile = (event: Event) => {
   const detail = (event as CustomEvent<WorkspaceFile>).detail;
   const found =
     files.value.find((f) => f.id === detail?.id) ||
-    (detail?.assetId ? files.value.find((f) => f.assetId === detail.assetId) : undefined);
+    (detail?.assetId ? files.value.find((f) => f.assetId === detail.assetId) : undefined) ||
+    generatedFiles.value.find(
+      (f) => f.id === detail?.id || (detail?.assetId && f.assetId === detail.assetId)
+    );
   if (found) void openFile(found);
 };
 const authChanged = () => {

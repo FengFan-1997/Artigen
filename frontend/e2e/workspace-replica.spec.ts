@@ -268,7 +268,9 @@ test('a stale candidate cannot be applied to a different file', async ({ page })
   await resources(page, '变更');
   await page.getByText('比较来源', { exact: true }).click();
   await page.getByLabel('选择 Agent 候选文件').selectOption('66666666-6666-4666-8666-666666666666');
-  await expect(page.locator('.resource-notice[role="status"]')).toContainText('候选基于另一个文件或旧版本');
+  await expect(page.locator('.resource-notice[role="status"]')).toContainText(
+    '候选基于另一个文件或旧版本'
+  );
   await expect(page.getByRole('button', { name: '应用到当前文件' })).toHaveCount(0);
   expect(workspace.saves).toHaveLength(0);
 });
@@ -443,3 +445,50 @@ test('the final answer replaces an identical last public commentary without hidi
     page.locator('.run-conversation-stream').getByText('公开回合最终正文', { exact: true })
   ).toHaveCount(1);
 });
+
+for (const listState of ['ready', 'slow', 'failed'] as const)
+  test(`verified delivery opens UTF-8 preview with ${listState} project listing`, async ({
+    page
+  }) => {
+    const { state, workspace } = await installWorkspaceFixture(page);
+    const file = workspace.files[0];
+    if (listState !== 'ready')
+      await page.route(`**/api/workspace/projects/${projectA}/files`, async (route) => {
+        if (listState === 'failed')
+          return route.fulfill({ status: 503, json: { ok: false, error: 'TEMPORARY' } });
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        return route.fallback();
+      });
+    state.run.status = 'succeeded';
+    state.run.artifacts = [
+      {
+        artifactId: 'abababab-abab-4bab-8bab-abababababab',
+        assetId: file.assetId,
+        parentArtifactId: null,
+        role: 'data',
+        filename: 'brief.md',
+        mimeType: file.mimeType,
+        byteSize: file.byteSize,
+        sha256: file.sha256,
+        version: 1,
+        verificationStatus: 'passed',
+        verification: {},
+        sources: [],
+        costCredits: 0,
+        url: file.url,
+        expiresAt: '2099-10-15T03:00:00Z',
+        createdAt: '2026-10-15T03:00:00Z'
+      }
+    ];
+    await page.route(`**/api/workspace/projects/${projectA}/files/artifact%3A*/content`, (route) =>
+      route.fulfill({ json: { ok: true, file, text: file.text } })
+    );
+    await page.goto(runPath);
+    await resources(page);
+    const tabsBefore = page.context().pages().length;
+    await page.locator('.delivery-summary a').click();
+    await expect(page.locator('.document-preview')).toContainText('品牌网站审查');
+    await expect(page.getByRole('tab', { name: 'brief.md', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '下载 brief.md', exact: true })).toBeVisible();
+    expect(page.context().pages()).toHaveLength(tabsBefore);
+  });
