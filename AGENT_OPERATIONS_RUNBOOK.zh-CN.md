@@ -143,6 +143,12 @@ pnpm --filter backend install:agent-worker:production-mac
 4. 严格 TLS 数据库连接通过后，核对活动 Run、租约和预算状态，先前台验证，再启动唯一的 DEV Worker。以 `/api/agent/status` 的新心跳和对应能力检查为准，不能用加载 plist 成功替代验收。
 5. 回滚前先停止并核验新进程，再恢复私有 plist 副本。若旧目录仍不存在，恢复副本只能回退配置，不能恢复服务，保持停机并修正目录后再启动。
 
+### 工作空间版本切换
+
+工作空间迁移032增加公开消息与项目文件版本；先确认API部署完成及数据库迁移就绪，再启动同一已验证dev提交的唯一Worker。仅目录存在或LaunchAgent已加载不能证明API、Worker版本一致；同时核对API元信息、Worker checkout和启动路径，以及状态接口的新心跳。
+
+持久Worker可以复用已有Node依赖和Python虚拟环境以减少本机占用，但必须保留符号链接的实际目标。清理临时验收worktree前确认启动项及依赖不指向它；旧持久checkout和私有plist回滚副本保留。DEV维持按需启动，Mac重启或Docker退出后需要重新验证并启动；不要据Web页面可访问推断Worker在线。
+
 ### 数据库连接的分层检查
 
 控制台能打开、API 能连数据库、Mac Worker 能连数据库是不同证据。依次核验目标环境身份、域名解析、TCP、严格 TLS / CA、只读 PostgreSQL 查询和 Worker 心跳。TCP 超时尚未进入密码验证，不应因此重置账号或关闭证书校验。

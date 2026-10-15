@@ -7493,3 +7493,59 @@ test('connector routing allowlists provider paths and never exposes OAuth creden
   assert.equal(JSON.stringify(result).includes('server-only-token'), false);
   assert.equal(requestInit.headers.Authorization, 'Bearer server-only-token');
 });
+
+test('Cloudflare direct first shell publishes a stable plan before dispatch', async () => {
+  const accountId = 'c'.repeat(32);
+  const responses = [{
+    id: 'cf-direct-shell',
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'cf-call-direct-shell', type: 'function', function: {
+        name: 'sandbox_shell',
+        arguments: JSON.stringify({ script: 'printf ready', purpose: 'Inspect offline utilities' })
+      } }]
+    } }], usage: { prompt_tokens: 50, completion_tokens: 10 }
+  }, {
+    id: 'cf-direct-final',
+    choices: [{ message: { role: 'assistant', content: 'Offline utilities checked.' } }],
+    usage: { prompt_tokens: 60, completion_tokens: 5 }
+  }];
+  const provider = new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare', CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async () => new Response(JSON.stringify(responses.shift()), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  let plan;
+  let shellCalls = 0;
+  const result = await provider.execute({
+    objective: 'Inspect available offline utilities.',
+    capabilities: { files: true, shell: true }, maxSteps: 4,
+    callbacks: {
+      updatePlan: async ({ steps }) => {
+        // Match the real Worker's stable-ID contract, rather than accepting any array.
+        if (steps.length < 2 || steps.some(step => !step.id || !step.label)) {
+          throw new ApiError(400, 'AGENT_PLAN_INVALID');
+        }
+        assert.equal(new Set(steps.map(step => step.id)).size, steps.length);
+        plan = steps;
+        return { accepted: true, steps };
+      },
+      shell: async () => {
+        assert.ok(plan, 'plan must be persisted before the shell effect');
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: 'ready', stderr: '' };
+      },
+      saveModelState: async () => {}, clearModelState: async () => {}, recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Offline utilities checked.');
+  assert.equal(shellCalls, 1);
+  assert.equal(plan.length, 2);
+});
