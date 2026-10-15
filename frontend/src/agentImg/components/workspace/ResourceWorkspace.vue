@@ -11,26 +11,40 @@
       :zh="zh"
     />
     <template v-else>
-      <div class="file-tabs" role="tablist" :aria-label="zh ? '已打开文件' : 'Open files'">
+      <div class="file-tabs-bar">
         <div
-          v-for="doc in documents"
-          :key="doc.key"
-          class="file-tab"
-          :class="{ active: activeKey === doc.key }"
+          ref="fileTabs"
+          class="file-tabs"
+          role="tablist"
+          :aria-label="zh ? '已打开文件' : 'Open files'"
         >
-          <button role="tab" :aria-selected="activeKey === doc.key" @click="activeKey = doc.key">
-            <WorkspaceIcon
-              :name="doc.file.mimeType.startsWith('image/') ? 'image' : 'file'"
-              :size="14"
-            /><span>{{ filename(doc.file.path) }}{{ dirty(doc) ? ' •' : '' }}</span></button
-          ><button
-            :aria-label="
-              zh ? `关闭 ${filename(doc.file.path)}` : `Close ${filename(doc.file.path)}`
-            "
-            @click="closeDocument(doc)"
+          <div
+            v-for="doc in documents"
+            :key="doc.key"
+            class="file-tab"
+            :data-document-key="doc.key"
+            :class="{ active: activeKey === doc.key }"
           >
-            <WorkspaceIcon name="close" :size="14" />
-          </button>
+            <button
+              role="tab"
+              :aria-selected="activeKey === doc.key"
+              :tabindex="activeKey === doc.key ? 0 : -1"
+              @click="activeKey = doc.key"
+              @keydown="onFileTabKeydown(doc, $event)"
+            >
+              <WorkspaceIcon
+                :name="doc.file.mimeType.startsWith('image/') ? 'image' : 'file'"
+                :size="14"
+              /><span>{{ filename(doc.file.path) }}{{ dirty(doc) ? ' •' : '' }}</span></button
+            ><button
+              :aria-label="
+                zh ? `关闭 ${filename(doc.file.path)}` : `Close ${filename(doc.file.path)}`
+              "
+              @click="closeDocument(doc)"
+            >
+              <WorkspaceIcon name="close" :size="14" />
+            </button>
+          </div>
         </div>
         <button
           class="tree-toggle"
@@ -76,7 +90,15 @@
                 @click="save(active)"
               >
                 {{ saving ? (zh ? '保存中…' : 'Saving…') : zh ? '保存' : 'Save' }}</button
-              ><button v-if="active.blob" @click="download(active)">
+              ><button
+                v-if="active.blob"
+                :aria-label="
+                  zh
+                    ? `下载 ${filename(active.file.path)}`
+                    : `Download ${filename(active.file.path)}`
+                "
+                @click="download(active)"
+              >
                 <WorkspaceIcon name="download" />
               </button>
             </div>
@@ -335,7 +357,8 @@ import {
   onBeforeUnmount,
   onMounted,
   ref,
-  watch
+  watch,
+  nextTick
 } from 'vue';
 import {
   isNavigationFailure,
@@ -863,10 +886,20 @@ async function save(doc: Document, replacement?: string) {
 async function closeDocument(doc: Document) {
   if (dirty(doc) && !confirm(props.zh ? '丢弃此文件未保存的修改？' : 'Discard unsaved changes?'))
     return;
+  const ticket = revision;
+  const focused =
+    document.activeElement?.closest<HTMLElement>('.file-tab')?.dataset.documentKey === doc.key;
   disposeDocument(doc);
   await clearEditorDraft(doc.owner, doc.scope + keyForDraft(doc));
+  if (ticket !== revision || disposed) return;
   documents.value = documents.value.filter((d) => d.key !== doc.key);
   if (activeKey.value === doc.key) activeKey.value = documents.value.at(-1)?.key || '';
+  if (focused) {
+    await nextTick();
+    const target = selectedTab() || resourceRoot.value?.querySelector<HTMLElement>('.tree-toggle');
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
 }
 async function newTextFile() {
   const path = prompt(
@@ -1045,6 +1078,31 @@ async function compareVersion(number: number) {
     if (ticket === revision) notice.value = errorText(error);
   }
 }
+const fileTabs = ref<HTMLElement | null>(null);
+const selectedTab = () =>
+  fileTabs.value?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+watch([activeKey, () => props.mode], async () => {
+  await nextTick();
+  selectedTab()?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+});
+async function onFileTabKeydown(doc: Document, event: KeyboardEvent) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Delete'].includes(event.key)) return;
+  event.preventDefault();
+  if (event.key === 'Delete') await closeDocument(doc);
+  else {
+    const index = documents.value.findIndex((item) => item.key === doc.key);
+    const last = documents.value.length - 1;
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? last
+          : (index + (event.key === 'ArrowRight' ? 1 : -1) + last + 1) % (last + 1);
+    activeKey.value = documents.value[next].key;
+  }
+  await nextTick();
+  selectedTab()?.focus({ preventScroll: true });
+}
 function toggleTree() {
   treeVisible.value = !treeVisible.value;
   try {
@@ -1053,7 +1111,9 @@ function toggleTree() {
 }
 const onOpenFile = (event: Event) => {
   const detail = (event as CustomEvent<WorkspaceFile>).detail;
-  const found = files.value.find((f) => f.id === detail?.id || f.assetId === detail?.assetId);
+  const found =
+    files.value.find((f) => f.id === detail?.id) ||
+    (detail?.assetId ? files.value.find((f) => f.assetId === detail.assetId) : undefined);
   if (found) void openFile(found);
 };
 const authChanged = () => {
@@ -1168,11 +1228,19 @@ onBeforeUnmount(() => {
   min-width: 0;
   overflow: hidden;
 }
+.file-tabs-bar {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  align-items: stretch;
+  background: var(--sidebar);
+}
 .file-tabs {
   display: flex;
   min-height: 44px;
   overflow: auto;
-  flex: none;
+  flex: 1;
+  min-width: 0;
   background: var(--sidebar);
   padding: 3px 5px;
   gap: 3px;
@@ -1219,6 +1287,7 @@ onBeforeUnmount(() => {
   margin-left: auto;
   width: 36px;
   min-height: 36px;
+  margin: 3px 5px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -1358,10 +1427,11 @@ button:disabled {
   cursor: not-allowed;
 }
 .resource-empty {
+  overflow: auto;
   display: flex;
   flex: 1;
   flex-direction: column;
-  justify-content: center;
+  justify-content: safe center;
   align-items: center;
   gap: 12px;
   padding: 24px;
@@ -1433,6 +1503,7 @@ button:disabled {
   margin: auto;
 }
 .file-status {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1470,6 +1541,8 @@ button:disabled {
   color: var(--muted);
 }
 .changes-panel {
+  overflow: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -1483,6 +1556,10 @@ button:disabled {
   font-size: 13px;
 }
 .changes-panel > header > b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   flex: 1;
 }
 .changes-panel > p {
@@ -1497,6 +1574,8 @@ button:disabled {
   font-size: 12px;
 }
 .changes-panel select {
+  min-width: 0;
+  width: 100%;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
@@ -1504,7 +1583,11 @@ button:disabled {
   border-radius: 6px;
   max-width: 100%;
 }
+.changes-panel > .workspace-code-editor {
+  flex: 1 0 180px;
+}
 .change-actions {
+  flex-wrap: wrap;
   display: flex;
   gap: 8px;
   padding: 8px 16px;
@@ -1533,7 +1616,7 @@ button:disabled {
     flex-wrap: wrap;
   }
 }
-@media (max-width: 799px) {
+@media (max-width: 799px), (pointer: coarse) {
   .resource-tree {
     width: 175px;
   }
@@ -1546,7 +1629,9 @@ button:disabled {
   .file-status button,
   .tree-section-heading button,
   .image-viewer button,
-  .local-root button {
+  .local-root button,
+  .file-status select,
+  .file-search {
     min-width: 44px;
     min-height: 44px;
   }

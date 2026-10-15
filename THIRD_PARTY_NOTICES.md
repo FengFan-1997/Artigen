@@ -13,6 +13,8 @@ License identifiers come from the installed package metadata and upstream projec
 | `@codemirror/lang-javascript` | MIT | <https://github.com/codemirror/lang-javascript> |
 | `@codemirror/lang-json` | MIT | <https://github.com/codemirror/lang-json> |
 | `@codemirror/lang-markdown` | MIT | <https://code.haverbeke.berlin/codemirror/lang-markdown> |
+| `@codemirror/language` | MIT | <https://github.com/codemirror/language> |
+| `@lezer/highlight` | MIT | <https://github.com/lezer-parser/highlight> |
 | `@codemirror/merge` | MIT | <https://code.haverbeke.berlin/codemirror/merge> |
 | `@codemirror/state` | MIT | <https://code.haverbeke.berlin/codemirror/state> |
 | `@codemirror/view` | MIT | <https://code.haverbeke.berlin/codemirror/view> |

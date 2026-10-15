@@ -826,7 +826,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .agent-conversation { display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
-.agent-conversation:not(.active) { grid-template-rows: auto auto; align-content: center; padding-block: 48px; overflow-y: auto; }
+.agent-conversation:not(.active) { grid-template-columns:minmax(0,1fr); grid-template-rows: auto auto; align-content: safe center; padding-block: 48px; overflow-y: auto; }
 .agent-conversation:not(.active) .conversation-scroll { overflow: visible; }
 .conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
 .conversation-empty { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 0 0 10px; justify-items: start; }
@@ -852,7 +852,7 @@ onBeforeUnmount(() => {
 .quote-summary dt { color: var(--muted); font-size: 12px; }
 .quote-summary dd { margin: 0; color: var(--text); font: 680 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .conversation-dock { position: relative; z-index: 2; width: 100%; padding: 16px var(--conversation-gutter) max(16px, env(safe-area-inset-bottom)); background: var(--bg); }
-.objective-composer { width: min(var(--conversation-max), 100%); margin: 0 auto; }
+.objective-composer { min-width:0; width: min(var(--conversation-max), 100%); margin: 0 auto; }
 .draft-restored { width: min(var(--conversation-max),100%); margin: 8px auto 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.5; }
 .objective-composer :deep(.composer-box) { color: var(--text); background: var(--surface); }
 .run-action { min-height: 38px; padding: 0 13px; border-radius: 8px; font-size: 12px; font-weight: 700; }

@@ -103,7 +103,7 @@ async function choose(node: TreeNode) {
   font-size: 12px;
   color: var(--danger);
 }
-@media (max-width: 799px) {
+@media (max-width: 799px), (pointer: coarse) {
   .file-tree button {
     min-height: 44px;
   }

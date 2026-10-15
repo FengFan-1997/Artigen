@@ -6,6 +6,25 @@
         ><WorkspaceIcon name="plus"
       /></router-link>
     </div>
+    <form v-if="editing" ref="sessionEditor" class="session-editor" @submit.prevent="save">
+      <label
+        >{{ zh ? '会话名称' : 'Chat title' }}<input v-model="title" required maxlength="160"
+      /></label>
+      <label
+        >{{ zh ? '所属项目' : 'Project'
+        }}<select v-model="projectChoice">
+          <option value="">{{ zh ? '未归类' : 'Ungrouped' }}</option>
+          <option v-for="p in projects" :key="p.projectId" :value="p.projectId">
+            {{ p.title }}
+          </option>
+        </select></label
+      >
+      <div>
+        <button type="button" :disabled="saving" @click="editing = null">
+          {{ zh ? '取消' : 'Cancel' }}</button
+        ><button :disabled="saving">{{ zh ? '保存' : 'Save' }}</button>
+      </div>
+    </form>
     <p v-if="error" role="status">
       {{ zh ? '项目目录暂时无法读取。' : 'Could not load projects.' }}
       <button @click="load(false)">{{ zh ? '重试' : 'Retry' }}</button>
@@ -81,29 +100,10 @@
       {{ zh ? '加载更多会话' : 'Load more chats' }}
     </button>
     <slot v-if="error || (!loading && !sessions.length && !projects.length)" />
-    <form v-if="editing" class="session-editor" @submit.prevent="save">
-      <label
-        >{{ zh ? '会话名称' : 'Chat title' }}<input v-model="title" required maxlength="160"
-      /></label>
-      <label
-        >{{ zh ? '所属项目' : 'Project'
-        }}<select v-model="projectChoice">
-          <option value="">{{ zh ? '未归类' : 'Ungrouped' }}</option>
-          <option v-for="p in projects" :key="p.projectId" :value="p.projectId">
-            {{ p.title }}
-          </option>
-        </select></label
-      >
-      <div>
-        <button type="button" :disabled="saving" @click="editing = null">
-          {{ zh ? '取消' : 'Cancel' }}</button
-        ><button :disabled="saving">{{ zh ? '保存' : 'Save' }}</button>
-      </div>
-    </form>
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 import {
@@ -122,6 +122,14 @@ const error = ref('');
 const loading = ref(false);
 const collapsed = ref(new Set<string>());
 const editing = ref<WorkspaceSession | null>(null);
+const sessionEditor = ref<HTMLFormElement | null>(null);
+watch(editing, async (value) => {
+  if (!value) return;
+  await nextTick();
+  const input = sessionEditor.value?.querySelector('input');
+  input?.focus({ preventScroll: true });
+  input?.scrollIntoView({ block: 'nearest' });
+});
 const title = ref('');
 const projectChoice = ref('');
 const saving = ref(false);
@@ -355,10 +363,16 @@ button {
   font-size: 12px;
   padding: 8px;
 }
-@media (max-width: 799px) {
+@media (max-width: 799px), (pointer: coarse) {
   button,
-  a {
+  a,
+  input,
+  select {
     min-height: 44px;
+  }
+  input,
+  select {
+    font-size: 16px;
   }
   .navigation-caption a,
   .project-heading > button:last-child {

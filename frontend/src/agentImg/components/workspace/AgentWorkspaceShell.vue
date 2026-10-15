@@ -144,7 +144,7 @@
       aria-controls="workspace-inspector-panel"
       aria-valuemin="480"
       :aria-valuemax="Math.max(480, viewportWidth - 56 - (leftCollapsed ? 0 : leftWidth) - 480)"
-      :aria-valuenow="rightWidth"
+      :aria-valuenow="visibleRightWidth"
       :aria-label="zh ? '调整右栏宽度' : 'Resize inspector'"
       @pointerdown="beginResize('right', $event)"
       @keydown="onResizerKeydown('right', $event)"
@@ -292,7 +292,16 @@ const route = useRoute();
 const viewportWidth = ref(window.innerWidth);
 const resourceMode = ref<'files' | 'changes' | 'github' | 'task'>('files');
 const resourceModes = computed(() => [ { id: 'files' as const, label: props.zh ? '文件' : 'Files' }, { id: 'changes' as const, label: props.zh ? '变更' : 'Changes' }, { id: 'github' as const, label: 'GitHub' }, { id: 'task' as const, label: props.zh ? '任务' : 'Task' } ]);
-const openResources = async (mode: typeof resourceMode.value) => { resourceMode.value = mode; if (isOverlayLayout()) { leftDrawerOpen.value = false; rightDrawerOpen.value = true; } else { rightPreferenceSet = true; rightCollapsed.value = false; persistPreferences(); } await nextTick(); };
+const openResources = async (mode: typeof resourceMode.value) => {
+  resourceMode.value = mode;
+  if (isOverlayLayout()) {
+    rememberDrawerFocus();
+    leftDrawerOpen.value = false;
+    rightDrawerOpen.value = true;
+    await nextTick();
+    rightPanel.value?.querySelector<HTMLElement>('button')?.focus();
+  } else { rightPreferenceSet = true; rightCollapsed.value = false; persistPreferences(); }
+};
 const openFileEvent = () => { void openResources('files'); };
 
 const root = ref<HTMLElement | null>(null);
@@ -322,6 +331,16 @@ let resizeTarget: ResizeTarget | null = null;
 let media: MediaQueryList | null = null;
 let layoutMedia: MediaQueryList | null = null;
 let commandReturnFocus: HTMLElement | null = null;
+let drawerReturnFocus: HTMLElement | null = null;
+const rememberDrawerFocus = () => {
+  if (!leftDrawerOpen.value && !rightDrawerOpen.value && document.activeElement instanceof HTMLElement)
+    drawerReturnFocus = document.activeElement;
+};
+const restoreDrawerFocus = (fallback: HTMLElement | null) => {
+  const target = drawerReturnFocus?.isConnected ? drawerReturnFocus : fallback;
+  drawerReturnFocus = null;
+  void nextTick(() => target?.focus({ preventScroll: true }));
+};
 
 const tabs = computed(() => [
   { id: 'environment' as const, label: props.zh ? '环境' : 'Environment' },
@@ -333,9 +352,10 @@ const tabs = computed(() => [
 const resolvedTheme = computed(() => theme.value === 'system'
   ? (systemDark.value ? 'dark' : 'light')
   : theme.value);
+const visibleRightWidth = computed(() => Math.min(rightWidth.value, Math.max(480, viewportWidth.value - 56 - (leftCollapsed.value ? 0 : leftWidth.value) - 480)));
 const workspaceStyle = computed(() => ({
   '--workspace-left-width': `${leftWidth.value}px`,
-  '--workspace-right-width': `${Math.min(rightWidth.value, Math.max(480, viewportWidth.value - 56 - (leftCollapsed.value ? 0 : leftWidth.value) - 480))}px`
+  '--workspace-right-width': `${visibleRightWidth.value}px`
 }));
 const themeLabel = computed(() => {
   const labels = props.zh
@@ -380,6 +400,7 @@ const toggleLeft = () => { leftCollapsed.value = !leftCollapsed.value; persistPr
 const isOverlayLayout = () => overlayLayout.value;
 const openLeftDrawer = async () => {
   if (!isOverlayLayout()) return toggleLeft();
+  rememberDrawerFocus();
   leftDrawerOpen.value = true;
   rightDrawerOpen.value = false;
   await nextTick();
@@ -389,16 +410,17 @@ const closeLeftDrawer = (restore = false) => {
   leftDrawerOpen.value = false;
   if (restore) {
     const target = leftDrawerButton.value || root.value?.querySelector<HTMLButtonElement>('.mobile-panel-controls button');
-    void nextTick(() => target?.focus({ preventScroll: true }));
+    restoreDrawerFocus(target || null);
   }
 };
 const closeRight = (restore = false) => {
   if (isOverlayLayout()) rightDrawerOpen.value = false;
   else { rightPreferenceSet = true; rightCollapsed.value = true; persistPreferences(); }
-  if (restore) void nextTick(() => rightDrawerButton.value?.focus());
+  if (restore) restoreDrawerFocus(rightDrawerButton.value);
 };
 const toggleRight = async () => {
   if (isOverlayLayout()) {
+    rememberDrawerFocus();
     rightDrawerOpen.value = !rightDrawerOpen.value;
     leftDrawerOpen.value = false;
     if (rightDrawerOpen.value) {
@@ -411,7 +433,7 @@ const toggleRight = async () => {
   rightPreferenceSet = true;
   persistPreferences();
 };
-const closeDrawers = () => { leftDrawerOpen.value = false; rightDrawerOpen.value = false; };
+const closeDrawers = () => { if (leftDrawerOpen.value) closeLeftDrawer(true); else closeRight(true); };
 const cycleTheme = () => {
   const order: ThemeMode[] = ['dark', 'light', 'system'];
   theme.value = order[(order.indexOf(theme.value) + 1) % order.length];
@@ -423,6 +445,8 @@ const beginResize = (target: ResizeTarget, event: PointerEvent) => {
   document.body.classList.add('workspace-resizing');
   window.addEventListener('pointermove', onResize);
   window.addEventListener('pointerup', endResize, { once: true });
+  window.addEventListener('pointercancel', endResize, { once: true });
+  window.addEventListener('blur', endResize, { once: true });
 };
 const onResize = (event: PointerEvent) => {
   if (resizeTarget === 'left') leftWidth.value = Math.min(340, Math.max(216, event.clientX - 56));
@@ -448,6 +472,9 @@ const endResize = () => {
   resizeTarget = null;
   document.body.classList.remove('workspace-resizing');
   window.removeEventListener('pointermove', onResize);
+  window.removeEventListener('pointerup', endResize);
+  window.removeEventListener('pointercancel', endResize);
+  window.removeEventListener('blur', endResize);
   persistPreferences();
 };
 const onTabKeydown = (id: InspectorTab, event: KeyboardEvent) => {
@@ -486,6 +513,8 @@ const trapFocus = (panel: HTMLElement | null, event: KeyboardEvent) => {
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
 };
 const onShellKeydown = (event: KeyboardEvent) => {
+  // Nested widgets (for example editor search) own the first Escape.
+  if (event.defaultPrevented) return;
   const commandKey = event.metaKey || event.ctrlKey;
   if (commandKey && event.key.toLowerCase() === 'k') { event.preventDefault(); void openCommandPalette(); return; }
   if (commandKey && event.key.toLowerCase() === 'n') { event.preventDefault(); emit('new-task'); return; }
@@ -660,7 +689,7 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .left-collapsed .workspace-brand .icon-control { width: 30px; height: 30px; }
 .left-collapsed .new-task,.left-collapsed .history-search,.left-collapsed .workspace-nav a,.left-collapsed .workspace-account :is(button,.account-action) { justify-content: center; padding-inline: 0; }
 .left-collapsed .workspace-account :is(button,.account-action) { grid-template-columns: 20px; }
-.panel-resizer { position: fixed; top: 0; bottom: 0; z-index: 45; width: 8px; cursor: col-resize; }
+.panel-resizer { position: fixed; top: 0; bottom: 0; z-index: 45; width: 8px; cursor: col-resize; touch-action:none; }
 .panel-resizer::after { position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; content: ""; transition: background 150ms ease; }
 .panel-resizer:hover::after { background: var(--acid); }
 .panel-resizer:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
@@ -701,11 +730,11 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .empty-panel b { font-size: var(--font-control); font-weight: 620; }.empty-panel small { max-width: 190px; color: var(--muted-2); font-size: var(--font-meta); line-height: 1.5; }
 .drawer-scrim { display: none; }
 .command-layer { position: fixed; inset: 0; z-index: 400; display: grid; padding-top: 15vh; place-items: start center; background: rgb(0 0 0 / 42%); backdrop-filter: blur(3px); }
-.command-palette { width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
-.command-palette > label { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 13px; }
+.command-palette { display:flex; flex-direction:column; max-height:calc(85dvh - 16px); width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
+.command-palette > label { flex:none; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 13px; }
 .command-palette > label:focus-within { outline: 2px solid var(--focus); outline-offset: -2px; }
 .command-palette > label svg { width: 18px; height: 18px; color: var(--muted); }.command-palette input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 13px; background: transparent; }
-.command-palette > div { max-height: 320px; overflow: auto; padding: 6px; }
+.command-palette > div { min-height:0; max-height: 320px; overflow: auto; padding: 6px; }
 .command-palette button { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; }
 .command-palette button:hover { background: var(--surface-raised); }.command-palette button > span { display: grid; gap: 2px; }.command-palette b { font-size: var(--font-control); }.command-palette small { color: var(--muted); font-size: var(--font-meta); }
 .mobile-only,.mobile-panel-controls,.workspace-account .mobile-only { display: none; }
@@ -728,6 +757,13 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
   .task-heading-icon { display: none; }
   .workspace-topbar { min-height: 68px; gap: 4px; padding-inline: max(8px,env(safe-area-inset-left)) max(8px,env(safe-area-inset-right)); }.task-meta { gap: 2px 8px; }.inspector-toggle,.icon-control { min-width: 44px; min-height: 44px; }.workspace-brand { min-height: 56px; padding-top: max(8px,env(safe-area-inset-top)); }.new-task,.history-search,.workspace-nav a,.workspace-account :is(button,.account-action) { min-height: 44px; }.workspace-account { padding-bottom: max(8px,env(safe-area-inset-bottom)); }.history-search input,.command-palette input { font-size: 16px; }
   .workspace-right { width: 100vw; border-radius: 0; }.inspector-tabs { min-height: 58px; }.inspector-tabs button { min-height: 56px; font-size: 12px; }
+}
+@media (pointer: coarse) {
+  /* This touch contract must win over compact controls in nested route components. */
+  .agent-workspace-shell :deep(button), .agent-workspace-shell :deep(select) { min-height:44px !important; min-width:44px !important; }
+  .workspace-account .account-action { min-height:44px; }
+  .agent-workspace-shell :deep(input:not([type="checkbox"]):not([type="radio"]):not([type="range"])) { min-height:44px; font-size:16px; }
+  .agent-workspace-shell :deep(label:has(input[type="checkbox"])) { min-height:44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }

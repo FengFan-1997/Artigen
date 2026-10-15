@@ -1479,7 +1479,7 @@ onBeforeUnmount(() => {
 .quiet-action:hover { color: var(--danger); background: var(--surface-hover); }
 .quiet-action svg { width: 14px; height: 14px; }
 
-.workspace-zero { display: grid; width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; min-height: 0; margin: 0 auto; padding: clamp(64px,10vh,118px) 0 48px; overflow-y: auto; overscroll-behavior: contain; align-content: center; scrollbar-color: var(--border) transparent; }
+.workspace-zero { display: grid; grid-template-columns:minmax(0,1fr); width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; min-height: 0; margin: 0 auto; padding: clamp(64px,10vh,118px) 0 48px; overflow-y: auto; overscroll-behavior: contain; align-content: safe center; scrollbar-color: var(--border) transparent; }
 .zero-copy { margin: 0 0 20px; }
 .zero-copy:has(+ .service-unavailable-note) { margin-bottom: 10px; }
 .zero-copy h1 { margin: 0; font-size: clamp(30px,3vw,38px); font-weight: 680; letter-spacing: -.04em; line-height: 1.12; text-wrap: balance; }

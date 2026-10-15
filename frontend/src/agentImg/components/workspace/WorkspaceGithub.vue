@@ -34,38 +34,38 @@
           <b>{{ repository.owner }}/{{ repository.repository }}</b
           ><button :disabled="busy" @click="unlink">{{ zh ? '解除关联' : 'Unlink' }}</button>
         </div>
-        <nav>
-          <button :aria-pressed="kind === 'pulls'" @click="select('pulls')">Pull requests</button
-          ><button :aria-pressed="kind === 'commits'" @click="select('commits')">
-            {{ zh ? '提交' : 'Commits' }}
+        <div v-if="!selected" ref="recordList" class="github-records">
+          <nav>
+            <button :aria-pressed="kind === 'pulls'" @click="select('pulls')">Pull requests</button
+            ><button :aria-pressed="kind === 'commits'" @click="select('commits')">
+              {{ zh ? '提交' : 'Commits' }}
+            </button>
+          </nav>
+          <p v-if="busy" role="status">{{ zh ? '正在读取…' : 'Loading…' }}</p>
+          <p v-else-if="!items.length">{{ zh ? '暂无记录' : 'No records' }}</p>
+          <button
+            v-for="item in items"
+            :key="item.sha || item.number"
+            class="git-record"
+            :data-record-key="item.sha || item.number"
+            @click="inspect(item)"
+          >
+            <WorkspaceIcon name="git" /><span
+              ><b>{{ item.title }}</b
+              ><small
+                >{{
+                  item.number ? '#' + item.number + ' · ' + item.state : item.sha?.slice(0, 8)
+                }}
+                · {{ item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : '' }}</small
+              ></span
+            ></button
+          ><button v-if="hasMore" :disabled="busy" @click="load(true)">
+            {{ zh ? '加载更多' : 'Load more' }}
           </button>
-        </nav>
-        <p v-if="busy" role="status">{{ zh ? '正在读取…' : 'Loading…' }}</p>
-        <p v-else-if="!items.length">{{ zh ? '暂无记录' : 'No records' }}</p>
-        <button
-          v-for="item in items"
-          :key="item.sha || item.number"
-          class="git-record"
-          @click="inspect(item)"
-        >
-          <WorkspaceIcon name="git" /><span
-            ><b>{{ item.title }}</b
-            ><small
-              >{{ item.number ? '#' + item.number + ' · ' + item.state : item.sha?.slice(0, 8) }} ·
-              {{ item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : '' }}</small
-            ></span
-          ></button
-        ><button v-if="hasMore" :disabled="busy" @click="load(true)">
-          {{ zh ? '加载更多' : 'Load more' }}
-        </button>
+        </div>
         <section v-if="selected">
           <header>
-            <button
-              @click="
-                selected = null;
-                patches = [];
-              "
-            >
+            <button ref="backButton" @click="returnToRecords">
               {{ zh ? '返回记录' : 'Back' }}</button
             ><a
               v-if="safeGithubUrl(selected.url)"
@@ -94,7 +94,7 @@
   </section>
 </template>
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 import { workspaceRequest } from '../../services/workspace';
@@ -118,6 +118,18 @@ const kind = ref<'pulls' | 'commits'>('pulls');
 const items = ref<RecordItem[]>([]);
 const selected = ref<RecordItem | null>(null);
 const patches = ref<Patch[]>([]);
+const backButton = ref<HTMLButtonElement | null>(null);
+const recordList = ref<HTMLElement | null>(null);
+async function returnToRecords() {
+  const item = selected.value;
+  selected.value = null;
+  patches.value = [];
+  await nextTick();
+  if (item)
+    Array.from(recordList.value?.querySelectorAll<HTMLElement>('.git-record') || [])
+      .find((node) => node.dataset.recordKey === String(item.sha || item.number))
+      ?.focus();
+}
 const hasMore = ref(false);
 const patchMore = ref(false);
 let page = 1;
@@ -151,7 +163,11 @@ async function refresh() {
   selected.value = null;
   patches.value = [];
   notice.value = '';
-  if (!props.projectId) return;
+  if (!props.projectId) {
+    busy.value = false;
+    return;
+  }
+  busy.value = true;
   try {
     const data = await workspaceRequest<{ repository: typeof repository.value }>(endpoint());
     if (ticket !== revision) return;
@@ -159,6 +175,8 @@ async function refresh() {
     if (data.repository) await load(false);
   } catch (e) {
     if (ticket === revision) notice.value = errorText(e);
+  } finally {
+    if (ticket === revision) busy.value = false;
   }
 }
 async function connect() {
@@ -241,6 +259,7 @@ const inspect = (item: RecordItem) => {
   selected.value = item;
   patches.value = [];
   void loadPatch(false);
+  void nextTick(() => backButton.value?.focus());
 };
 async function loadPatch(append = false) {
   if (!selected.value) return;
@@ -347,6 +366,8 @@ nav button[aria-pressed='true'] {
   background: transparent !important;
 }
 .git-record span {
+  min-width: 0;
+  overflow-wrap: anywhere;
   display: grid;
   gap: 4px;
 }
@@ -381,7 +402,11 @@ pre {
 .removed {
   color: var(--danger);
 }
-@media (max-width: 799px) {
+@media (max-width: 799px), (pointer: coarse) {
+  input {
+    min-height: 44px;
+    font-size: 16px;
+  }
   button {
     min-height: 44px;
   }

@@ -5,6 +5,8 @@ import { basicSetup } from 'codemirror';
 import { EditorView, keymap } from '@codemirror/view';
 import { EditorState, type Extension } from '@codemirror/state';
 import { MergeView } from '@codemirror/merge';
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
 const props = withDefaults(
   defineProps<{
     modelValue: string;
@@ -58,10 +60,36 @@ async function mountEditor() {
       backgroundColor: 'var(--surface-hover)'
     },
     '.cm-cursor': { borderLeftColor: 'var(--focus)' },
-    '.cm-panels': { backgroundColor: 'var(--surface)', color: 'var(--text)' }
+    '.cm-panels': { backgroundColor: 'var(--surface)', color: 'var(--text)' },
+    '.cm-search input,.cm-search button': {
+      backgroundColor: 'var(--bg)',
+      color: 'var(--text)',
+      borderColor: 'var(--border)'
+    },
+    '.cm-matchingBracket': {
+      backgroundColor: 'var(--surface-hover)',
+      color: 'var(--text)',
+      outline: '1px solid var(--focus)'
+    }
   });
   const extensions = [
     basicSetup,
+    syntaxHighlighting(
+      HighlightStyle.define([
+        { tag: [tags.keyword, tags.operator, tags.heading], color: 'var(--acid-text)' },
+        { tag: [tags.string, tags.regexp, tags.attributeValue], color: 'var(--success)' },
+        {
+          tag: [tags.number, tags.bool, tags.null, tags.atom, tags.typeName],
+          color: 'var(--warning)'
+        },
+        { tag: [tags.comment, tags.meta], color: 'var(--muted)' },
+        {
+          tag: [tags.propertyName, tags.variableName, tags.attributeName, tags.tagName],
+          color: 'var(--text)'
+        },
+        { tag: [tags.link, tags.url], color: 'var(--acid-text)', textDecoration: 'underline' }
+      ])
+    ),
     ...language,
     theme,
     EditorView.contentAttributes.of({ 'aria-label': props.label }),
@@ -150,5 +178,17 @@ onBeforeUnmount(() => {
 }
 .workspace-code-editor :deep(.cm-insertedChunk) {
   background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .workspace-code-editor :deep(.cm-search input:not([type='checkbox'])),
+  .workspace-code-editor :deep(.cm-search button) {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .workspace-code-editor :deep(.cm-search label) {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
 }
 </style>

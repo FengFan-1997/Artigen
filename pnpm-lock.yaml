@@ -120,6 +120,9 @@ importers:
       '@codemirror/lang-markdown':
         specifier: ^6.5.2
         version: 6.5.2
+      '@codemirror/language':
+        specifier: 6.13.1
+        version: 6.13.1
       '@codemirror/merge':
         specifier: ^6.12.2
         version: 6.12.2
@@ -141,6 +144,9 @@ importers:
       '@jsquash/webp':
         specifier: ^1.5.0
         version: 1.5.0
+      '@lezer/highlight':
+        specifier: 1.2.5
+        version: 1.2.5
       '@novnc/novnc':
         specifier: 1.5.0
         version: 1.5.0
