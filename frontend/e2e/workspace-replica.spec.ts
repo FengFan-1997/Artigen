@@ -61,6 +61,13 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   await page.getByRole('button', { name: '应用到当前文件', exact: true }).click();
   await expect(page.getByRole('button', { name: '撤销最近一次应用' })).toBeVisible();
   await page.getByRole('button', { name: '撤销最近一次应用' }).click();
+  await resources(page, '文件');
+  await page.getByRole('combobox', { name: '查看文件版本' }).selectOption('1');
+  await expect(
+    page.getByText('历史版本与当前已保存内容的差异；恢复会保存为新版本。', { exact: true })
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '恢复此版本', exact: true })).toBeVisible();
+  await expect(page.getByText('Agent 候选修改，尚未写入文件。', { exact: true })).toHaveCount(0);
   await resources(page, 'GitHub');
   await page.getByRole('button', { name: /完善首页按钮/ }).click();
   await page.getByText('src/Home.vue', { exact: false }).click();

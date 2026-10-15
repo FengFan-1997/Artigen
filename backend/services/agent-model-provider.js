@@ -2122,8 +2122,8 @@ class OllamaAgentModelProvider {
         await callbacks.updatePlan({
           explanation: '模型直接开始执行，系统已根据首个操作补全执行计划。',
           steps: [
-            { label: firstAction || '执行首个任务操作', status: 'in_progress' },
-            { label: '验证并登记最终交付物', status: 'pending' }
+            { id: 'initial-action', label: firstAction || '执行首个任务操作', status: 'in_progress' },
+            { id: 'verify-deliverables', label: '验证并登记最终交付物', status: 'pending' }
           ]
         });
         planPublished = true;
