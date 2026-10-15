@@ -981,9 +981,13 @@ test('composer tracks a real reserved scrollbar gutter and its removal', async (
     return Math.abs(value.actual - value.applied);
   }).toBeLessThanOrEqual(1);
   await expectWorkspaceGeometry(page);
-  // Hiding the native gutter keeps scrolling enabled and exercises the same
-  // ResizeObserver path when the scroller's content width grows again.
-  await page.addStyleTag({ content: '.message-scroll { scrollbar-width: none !important; scrollbar-gutter: auto !important; }' });
+  // A taller window makes the actual content fit, so the native gutter
+  // disappears without assuming support for scrollbar-width:none in WebKit.
+  await page.addStyleTag({ content: '.message-scroll { overflow-y: auto !important; scrollbar-gutter: auto !important; }' });
+  await page.setViewportSize({ width: 1440, height: 2400 });
+  await expect.poll(() => page.locator('.message-scroll').evaluate(
+    (scroller) => scroller.scrollHeight <= scroller.clientHeight
+  )).toBe(true);
   await expect.poll(async () => (await insets()).actual).toBe(0);
   await expect.poll(async () => (await insets()).applied).toBe(0);
   await expectWorkspaceGeometry(page);
