@@ -73,4 +73,4 @@ Docker 启动后已验证既有固定镜像、Python 依赖与受限出口；严
 
 PR #248完整门禁通过后进入dev，Render DEV实际meta与平台live deployment均为 `0c7ba13b53ab12e5b218f3ed8993e1025927b582`；readyz全部命名依赖通过，迁移032保持就绪。唯一DEV Mac Worker固定同一SHA，复用既有依赖与Python环境，重启后新在线心跳及模型、浏览器、出口、桌面中继均ready。切换前严格TLS只读检查无活动任务和有效租约；旧持久checkout与私有启动项副本继续用于回滚。
 
-认证方式、Keychain存放机制、账号归属、权限、Secret、供应商与Free方案均未变，LaunchAgent仍按需启动。Chrome退出重开后本次测试会话失效，当前真实账号验收等待重新登录；这不等于账号或SMTP凭据失效，也不把旧任务成功记成新SHA任务验收通过。新的OTP与真实任务结果待独立证据补齐。
+认证方式、Keychain存放机制、账号归属、权限、Secret、供应商与Free方案均未变，LaunchAgent仍按需启动。Chrome退出重开后本次测试会话失效，当前真实账号验收等待重新登录；这不等于账号或SMTP凭据失效，也不把旧任务成功记成新SHA任务验收通过。2026-10-16已通过原有OTP流程重新登录DEV；认证方式、权限和Cookie策略未改变。本轮编辑器候选的新SHA任务验收仍需在发布后独立补齐。

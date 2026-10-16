@@ -164,7 +164,7 @@
         <button v-if="resourceMode === 'files' || resourceMode === 'changes'" ref="directoryToggle" class="resource-icon-control tree-toggle" type="button" :aria-label="resourceWorkspace?.treeVisible ? (zh ? '隐藏目录树' : 'Hide file tree') : (zh ? '显示目录树' : 'Show file tree')" :aria-pressed="resourceWorkspace?.treeVisible" @click="resourceWorkspace?.toggleTree()"><WorkspaceIcon name="panel-right" :size="18" /></button>
         <button class="resource-icon-control" type="button" :aria-label="zh ? '关闭资源区' : 'Close resources'" @click="closeRight(true)"><WorkspaceIcon name="close" :size="18" /></button>
       </nav>
-      <ResourceWorkspace ref="resourceWorkspace" v-show="resourceMode !== 'task'" :mode="resourceMode" :project-id="projectId || String(route.query.projectId || '')" :artifacts="artifacts" :zh="zh" @changes="resourceMode = 'changes'" @focus-directory="directoryToggle?.focus({ preventScroll: true })" />
+      <ResourceWorkspace :theme="resolvedTheme" ref="resourceWorkspace" v-show="resourceMode !== 'task'" :mode="resourceMode" :project-id="projectId || String(route.query.projectId || '')" :artifacts="artifacts" :zh="zh" @changes="resourceMode = 'changes'" @focus-directory="directoryToggle?.focus({ preventScroll: true })" />
       <div v-show="resourceMode === 'task'" class="task-inspector">
       <header class="inspector-head">
         <div>

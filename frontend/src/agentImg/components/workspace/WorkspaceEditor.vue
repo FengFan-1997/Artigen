@@ -1,6 +1,11 @@
 <template>
   <div
     class="workspace-code-editor"
+    :style="{
+      '--code-background': palette.background,
+      '--code-foreground': palette.foreground,
+      '--code-gutter-foreground': palette.gutterForeground
+    }"
     :aria-label="label"
     :data-comparison-layout="
       compareTo === undefined
@@ -26,16 +31,21 @@
 </template>
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
-import { basicSetup } from 'codemirror';
+import { basicSetup } from '@uiw/codemirror-extensions-basic-setup';
 import { EditorView, keymap } from '@codemirror/view';
-import { EditorState, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { MergeView, unifiedMergeView } from '@codemirror/merge';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-import { tags } from '@lezer/highlight';
+import {
+  vscodeDark,
+  vscodeLight,
+  defaultSettingsVscodeDark,
+  defaultSettingsVscodeLight
+} from '@uiw/codemirror-theme-vscode';
 const props = withDefaults(
   defineProps<{
     modelValue: string;
     path: string;
+    theme: 'light' | 'dark';
     readonly?: boolean;
     compareTo?: string;
     label?: string;
@@ -53,6 +63,11 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ 'update:modelValue': [value: string]; save: [] }>();
 const host = ref<HTMLElement | null>(null);
+const themeSlot = new Compartment();
+const selectedTheme = () => (props.theme === 'light' ? vscodeLight : vscodeDark);
+const palette = computed(() =>
+  props.theme === 'light' ? defaultSettingsVscodeLight : defaultSettingsVscodeDark
+);
 const identical = computed(
   () => props.compareTo !== undefined && props.compareTo === props.modelValue
 );
@@ -90,57 +105,18 @@ async function mountEditor() {
   merge = null;
   host.value.replaceChildren();
   if (identical.value) return;
-  const theme = EditorView.theme({
-    '&': {
-      height: '100%',
-      backgroundColor: 'var(--editor-surface)',
-      color: 'var(--text)',
-      fontSize: '13px'
-    },
-    '.cm-scroller': { overflow: 'auto', fontFamily: 'ui-monospace,SFMono-Regular,monospace' },
-    '.cm-content': { caretColor: 'var(--focus)', padding: '16px 0' },
-    '.cm-gutters': {
-      backgroundColor: 'var(--editor-gutter)',
-      color: 'var(--muted)',
-      borderRight: '1px solid var(--border)'
-    },
-    '.cm-activeLine,.cm-activeLineGutter': { backgroundColor: 'var(--surface)' },
-    '&.cm-focused .cm-selectionBackground,.cm-selectionBackground': {
-      backgroundColor: 'var(--surface-hover)'
-    },
-    '.cm-cursor': { borderLeftColor: 'var(--focus)' },
-    '.cm-panels': { backgroundColor: 'var(--surface)', color: 'var(--text)' },
-    '.cm-search input,.cm-search button': {
-      backgroundColor: 'var(--bg)',
-      color: 'var(--text)',
-      borderColor: 'var(--border)'
-    },
-    '.cm-matchingBracket': {
-      backgroundColor: 'var(--surface-hover)',
-      color: 'var(--text)',
-      outline: '1px solid var(--focus)'
-    }
+  // Upstream owns all editor colors. This extension only adapts geometry.
+  const geometry = EditorView.theme({
+    '&': { height: '100%', fontSize: '13px' },
+    '.cm-scroller': { overflow: 'auto', lineHeight: '1.65' },
+    '.cm-content': { padding: '12px 0' }
   });
   const extensions = [
-    basicSetup,
-    syntaxHighlighting(
-      HighlightStyle.define([
-        { tag: [tags.keyword, tags.operator, tags.heading], color: 'var(--acid-text)' },
-        { tag: [tags.string, tags.regexp, tags.attributeValue], color: 'var(--success)' },
-        {
-          tag: [tags.number, tags.bool, tags.null, tags.atom, tags.typeName],
-          color: 'var(--warning)'
-        },
-        { tag: [tags.comment, tags.meta], color: 'var(--muted)' },
-        {
-          tag: [tags.propertyName, tags.variableName, tags.attributeName, tags.tagName],
-          color: 'var(--text)'
-        },
-        { tag: [tags.link, tags.url], color: 'var(--acid-text)', textDecoration: 'underline' }
-      ])
-    ),
+    // Keep upstream syntax colors readable on their original background (also on the active line).
+    basicSetup({ highlightActiveLine: false, crosshairCursor: true }),
     ...language,
-    theme,
+    themeSlot.of(selectedTheme()),
+    geometry,
     EditorView.contentAttributes.of({ 'aria-label': props.label }),
     keymap.of([
       {
@@ -168,6 +144,8 @@ async function mountEditor() {
           unifiedMergeView({
             original: props.compareTo,
             mergeControls: false,
+            // Deleted widgets cache syntax classes from their original state across theme changes.
+            syntaxHighlightDeletions: false,
             highlightChanges: true,
             gutter: true
           })
@@ -197,6 +175,13 @@ async function mountEditor() {
       })
     });
 }
+watch(
+  () => props.theme,
+  () => {
+    const views = merge ? [merge.a, merge.b] : editor ? [editor] : [];
+    for (const view of views) view.dispatch({ effects: themeSlot.reconfigure(selectedTheme()) });
+  }
+);
 watch(
   () => props.modelValue,
   (value) => {
@@ -245,7 +230,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  background: var(--editor-surface);
+  background: var(--code-background);
 }
 .editor-host {
   flex: 1;
@@ -258,8 +243,8 @@ onBeforeUnmount(() => {
   flex: none;
   grid-template-columns: 1fr 1fr;
   border-bottom: 1px solid var(--border);
-  background: var(--editor-gutter);
-  color: var(--muted);
+  background: var(--code-background);
+  color: var(--code-gutter-foreground);
   font-size: 12px;
 }
 .diff-labels span {
@@ -288,7 +273,7 @@ onBeforeUnmount(() => {
   min-height: 140px;
   padding: 24px;
   place-content: center;
-  color: var(--muted);
+  color: var(--code-foreground);
   text-align: center;
   font-size: 13px;
 }
@@ -305,22 +290,12 @@ onBeforeUnmount(() => {
 .workspace-code-editor :deep(.cm-mergeViewEditor + .cm-mergeViewEditor) {
   border-left: 1px solid var(--panel-border);
 }
-.workspace-code-editor :deep(.cm-merge-a .cm-changedLine) {
-  background: color-mix(in srgb, var(--danger) 11%, var(--editor-surface));
-}
-.workspace-code-editor :deep(.cm-merge-b .cm-changedLine),
-.workspace-code-editor :deep(.cm-inlineChangedLine) {
-  background: color-mix(in srgb, var(--success) 11%, var(--editor-surface));
-}
-.workspace-code-editor :deep(.cm-merge-a .cm-changedLineGutter),
-.workspace-code-editor :deep(.cm-deletedLineGutter) {
-  background: var(--danger);
-}
-.workspace-code-editor :deep(.cm-merge-b .cm-changedLineGutter) {
-  background: var(--success);
-}
+/* Keep upstream token contrast: changed lines retain the library's gutter and text marks,
+   without a second translucent fill behind syntax (dark comments otherwise fall below 4.5:1). */
+.workspace-code-editor :deep(.cm-changedLine),
+.workspace-code-editor :deep(.cm-inlineChangedLine),
 .workspace-code-editor :deep(.cm-deletedChunk) {
-  background: color-mix(in srgb, var(--danger) 11%, var(--editor-surface));
+  background-color: transparent;
 }
 @media (max-width: 799px), (pointer: coarse) {
   .workspace-code-editor :deep(.cm-search input:not([type='checkbox'])),

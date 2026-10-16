@@ -1,3 +1,4 @@
+import { editorTokenContrast } from './helpers/editorContrast';
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -416,39 +417,7 @@ test('editor syntax contrasts in both themes and wide tables retain readable cel
       file
     );
     await expect(page.getByRole('textbox', { name: '文件编辑器' })).toBeVisible();
-    const colors = await page.locator('.cm-content').evaluate((e) => {
-      const lum = (rgb: string) => {
-        const [r, g, b] = rgb
-          .match(/[\d.]+/g)!
-          .slice(0, 3)
-          .map(Number)
-          .map((v) => {
-            v /= 255;
-            return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-          });
-        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      };
-      return Array.from(e.querySelectorAll('span'))
-        .filter((s) => s.textContent?.trim())
-        .map((s) => {
-          let p: Element | null = s;
-          let bg = '';
-          while (p) {
-            bg = getComputedStyle(p).backgroundColor;
-            if (bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') break;
-            p = p.parentElement;
-          }
-          const fg = getComputedStyle(s).color;
-          const a = lum(fg),
-            b = lum(bg);
-          return {
-            text: s.textContent,
-            color: fg,
-            background: bg,
-            ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
-          };
-        });
-    });
+    const colors = await page.locator('.cm-content').evaluate(editorTokenContrast);
     findings.push({ theme, colors });
     if (output)
       await page.screenshot({

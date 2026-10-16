@@ -163,6 +163,7 @@
                 }}
               </p>
               <WorkspaceEditor
+                :theme="theme"
                 :key="active.key + ':diff:' + String(proposal?.candidateId || '')"
                 :model-value="proposal?.text ?? active.text"
                 :compare-to="active.baseline"
@@ -219,6 +220,7 @@
               <button @click="reloadDocument(active)">{{ zh ? '重试' : 'Retry' }}</button>
             </div>
             <WorkspaceEditor
+              :theme="theme"
               v-else-if="active.text !== undefined && active.view === 'source'"
               :key="active.key"
               :model-value="active.text"
@@ -464,6 +466,7 @@ const props = withDefaults(
     projectId?: string | null;
     artifacts: AgentArtifact[];
     zh: boolean;
+    theme: 'light' | 'dark';
   }>(),
   { projectId: '' }
 );
