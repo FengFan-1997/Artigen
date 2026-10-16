@@ -135,6 +135,8 @@ export const installAgentInputFixture = async (
   await page.clock.setFixedTime(new Date('2026-10-15T07:00:00.000Z'));
   await page.addInitScript(
     ({ theme, inspector }) => {
+      // Authentication/layout belong to the app, never its opaque preview frames.
+      if (window !== window.top) return;
       localStorage.setItem('app_user_id', 'input-fixture');
       localStorage.setItem(
         'artigen-workspace-preferences',

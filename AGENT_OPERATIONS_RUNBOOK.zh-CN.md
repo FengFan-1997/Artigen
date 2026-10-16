@@ -271,6 +271,12 @@ pnpm eval:agent:live:finalize
 
 ## 15. 故障处理
 
+### 2026-10-15 Agent 界面批次接管核验
+
+PR #248经完整门禁后部署DEV；Render meta与唯一Mac Worker的不可变checkout均核对为 `0c7ba13b53ab12e5b218f3ed8993e1025927b582`。切换前确认无活动任务/有效租约，保留旧checkout与私有启动项，按需策略不变。重启后核对新PID、晚于重启的唯一在线心跳及模型/浏览器/出口/桌面中继ready；不能仅凭旧心跳或启动项已加载宣布接管成功。
+
+本机Docker退出后已恢复，独立引擎探测通过；未修改Docker配置或发起镜像拉取。执行前同时核对当前引擎可达，不能仅依赖先前广播的能力。此处是运行条件证据；浏览器重开后的重新登录、真实新任务与文件操作仍需单独验收，不能用健康探针替代。Production未变。
+
 ### Worker 离线
 
 检查 macOS 登录、Docker、LaunchAgent、工作目录、依赖、数据库、S3 和 Provider。不要启动第二个同 ID Worker或手工重派 Run。
