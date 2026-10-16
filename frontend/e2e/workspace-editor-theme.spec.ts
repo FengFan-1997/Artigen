@@ -24,6 +24,18 @@ const examples = {
   css: '/* Shared workspace surfaces */\n.workspace {\n  display: grid;\n  grid-template-columns: 280px minmax(0, 1fr);\n  color: #e8e8e8;\n  gap: 16px;\n}\n'
 };
 
+// Playwright ControlOrMeta follows the runner OS, but an emulated iPad uses Apple's
+// editor keymap even on Linux. Drive the platform that the page actually exposes.
+async function editorShortcut(page: Page, key: string) {
+  const apple = await page.evaluate(
+    () =>
+      /Mac/.test(navigator.platform) ||
+      (/Apple Computer/.test(navigator.vendor) &&
+        (/Mobile\/\w+/.test(navigator.userAgent) || navigator.maxTouchPoints > 2))
+  );
+  return `${apple ? 'Meta' : 'Control'}+${key}`;
+}
+
 async function openEditor(
   page: Page,
   theme: string,
@@ -60,7 +72,7 @@ async function openEditor(
 }
 async function diff(page: Page) {
   const content = page.getByRole('textbox', { name: '文件编辑器' });
-  await content.press('ControlOrMeta+End');
+  await content.press(await editorShortcut(page, 'End'));
   await page.keyboard.insertText('\n// 新增：保存上下文，并保留原有文件。\n');
   await page
     .getByRole('navigation', { name: '资源面板' })
@@ -104,7 +116,9 @@ test('capture paired upstream theme surfaces', async ({ browser }) => {
       await diff(page);
     }
     if (mode === 'search')
-      await page.getByRole('textbox', { name: '文件编辑器' }).press('ControlOrMeta+f');
+      await page
+        .getByRole('textbox', { name: '文件编辑器' })
+        .press(await editorShortcut(page, 'f'));
     await page.mouse.move(0, 0);
     await page.evaluate(
       () =>
@@ -143,14 +157,14 @@ test('upstream theme follows shell without replacing the editable view or undo h
   const content = page.getByRole('textbox', { name: '文件编辑器' });
   const original = await content.textContent();
   const identity = await content.elementHandle();
-  await content.press('ControlOrMeta+End');
+  await content.press(await editorShortcut(page, 'End'));
   await page.keyboard.insertText('\n编辑器状态保护');
   await cycleTheme(page);
   await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'light');
   await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   expect(await content.evaluate((node, before) => node === before, identity)).toBe(true);
   await expect(content).toContainText('编辑器状态保护');
-  await content.press('ControlOrMeta+z');
+  await content.press(await editorShortcut(page, 'z'));
   await expect(content).toHaveText(original!);
   await page.emulateMedia({ colorScheme: 'dark' });
   await cycleTheme(page); // light → system
@@ -169,7 +183,7 @@ test('theme changes preserve selection and scrolling in a large editable file', 
     ) + 'END_OF_DOC';
   await openEditor(page, 'dark', 'ts', text);
   const content = page.getByRole('textbox', { name: '文件编辑器' });
-  await content.press('ControlOrMeta+End');
+  await content.press(await editorShortcut(page, 'End'));
   for (let i = 0; i < 'END_OF_DOC'.length; i++) await content.press('Shift+ArrowLeft');
   await expect
     .poll(() => page.evaluate(() => window.getSelection()?.toString()))
@@ -187,7 +201,7 @@ test('theme changes preserve selection and scrolling in a large editable file', 
   await page.keyboard.insertText('// selection preserved');
   await expect(content).toContainText('// selection preserved');
   await expect(content).not.toContainText('END_OF_DOC');
-  await content.press('ControlOrMeta+z');
+  await content.press(await editorShortcut(page, 'z'));
   await expect(content).toContainText('END_OF_DOC');
 });
 
@@ -223,6 +237,8 @@ test('readonly split and inline reviews both react to upstream dark and light th
     .click(); // light → system
   await page.getByRole('button', { name: '关闭历史', exact: true }).click();
   await page.getByRole('button', { name: '打开检查器', exact: true }).click();
+  // Finish a real paint before sampling either direction of a media-driven theme change.
+  await page.screenshot();
   await expect(root.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(30, 30, 30)');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'light');
@@ -244,7 +260,7 @@ test('upstream search, replace, undo, save and conflict protection remain usable
   await page.setViewportSize({ width: 1920, height: 960 });
   const fixture = await openEditor(page, 'light', 'ts');
   const content = page.getByRole('textbox', { name: '文件编辑器' });
-  await content.press('ControlOrMeta+f');
+  await content.press(await editorShortcut(page, 'f'));
   const search = page.locator('.cm-search');
   await expect(search).toBeVisible();
   await search.locator('input[name=search]').fill('预算不足');
@@ -252,17 +268,17 @@ test('upstream search, replace, undo, save and conflict protection remain usable
   await search.getByRole('button', { name: 'replace all', exact: true }).click();
   await search.locator('input[name=search]').press('Escape');
   await expect(content).toContainText('请补充预算');
-  await content.press('ControlOrMeta+z');
+  await content.press(await editorShortcut(page, 'z'));
   await expect(content).toContainText('预算不足');
-  await content.press('ControlOrMeta+Shift+z');
+  await content.press(await editorShortcut(page, 'Shift+z'));
   await expect(content).toContainText('请补充预算');
-  await content.press('ControlOrMeta+s');
+  await content.press(await editorShortcut(page, 's'));
   await expect.poll(() => fixture.workspace.saves.length).toBe(1);
   await expect(page.locator('.file-status')).toContainText('v2');
   fixture.workspace.conflict = true;
-  await content.press('ControlOrMeta+End');
+  await content.press(await editorShortcut(page, 'End'));
   await page.keyboard.insertText('\n// keep this draft on conflict');
-  await content.press('ControlOrMeta+s');
+  await content.press(await editorShortcut(page, 's'));
   await expect(page.locator('.resource-notice')).toContainText('文件已在其他位置修改');
   await expect(content).toContainText('keep this draft on conflict');
   expect(fixture.workspace.files[0].text).not.toContain('keep this draft on conflict');
@@ -309,7 +325,7 @@ test('inline deleted text remains legible after changing the editor theme', asyn
   await page.setViewportSize({ width: 1024, height: 768 });
   await openEditor(page, 'dark', 'ts', '// remove this comment\nconst keep = "value";\n');
   const content = page.getByRole('textbox', { name: '文件编辑器' });
-  await content.press('ControlOrMeta+a');
+  await content.press(await editorShortcut(page, 'a'));
   await page.keyboard.insertText('const keep = "value";\n');
   await page
     .getByRole('navigation', { name: '资源面板' })
