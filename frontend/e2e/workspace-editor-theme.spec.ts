@@ -277,7 +277,9 @@ test('readonly split and inline reviews use the upstream GitHub diff theme in bo
   await page.getByRole('button', { name: '打开检查器', exact: true }).click();
   await expect(root).toHaveAttribute('data-comparison-layout', 'inline');
   await expect(view).toHaveAttribute('data-theme', 'light');
-  await expect(root.locator('.diff-line-content').first()).toBeVisible();
+  // git-diff-view renders both layout variants; the inactive split pane stays in
+  // the DOM for responsive resizing, so assert against the currently visible row.
+  await expect(root.locator('.diff-line-content:visible').first()).toBeVisible();
   await expect(root.locator('[contenteditable=true]')).toHaveCount(0);
   await expect(root).toContainText('新增：保存上下文');
   // Close the resource drawer to reach appearance controls without bypassing its focus trap.
