@@ -639,4 +639,4 @@ PR #248已通过完整Core、8个浏览器分片、Harness/chaos、Release gate�
 
 保留 CodeMirror 6 的普通编辑、搜索/替换、撤销、保存、409 冲突保护与草稿恢复；明暗模式仍来自工作区主题状态，Compartment 切换不会重建编辑器。差异视图只读，实际文件应用仍需明确操作。新增依赖、MIT 许可和设计约束同步到锁文件、`THIRD_PARTY_NOTICES.md` 与 `frontend/DESIGN.md`。差异代码仅在打开资源面板后异步加载；本地完整构建的差异异步块 gzip 约331 KiB，首屏 JavaScript 为88.6 KiB gzip，低于250 KiB预算。
 
-本地 `pnpm check:core` 通过：前端268项、后端715项通过/102项环境条件跳过、邮件7项通过，包含lint、类型检查、构建、文档及首屏JS预算（88.6 KiB gzip，门槛250 KiB）。Chrome定向浏览器回归22项通过、3项采图跳过；12组前后图均来自实际Vue页面与合成业务API fixture，另有12张细节截图。截图未使用真实模型、GitHub账号或DEV数据。当前状态是本地候选，尚未创建PR、合并或部署；DEV仍以实时 `/api/meta` 与平台deployment为准，Production保持不变。发布后应另外核验DEV SHA、差异只读与编辑保存，并复跑真实Agent主流程；回退只撤销前端提交，不删除既有文件版本数据。
+本地 `pnpm check:core` 通过：前端268项、后端715项通过/102项环境条件跳过、邮件7项通过，包含lint、类型检查、构建、文档及首屏JS预算（88.6 KiB gzip，门槛250 KiB）。Chrome定向浏览器回归22项通过、3项采图跳过；12组前后图均来自实际Vue页面与合成业务API fixture，另有12张细节截图。截图未使用真实模型、GitHub账号或DEV数据。当前候选已提交至PR #250并等待完整CI；尚未合并或部署。合并后以实时 `/api/meta` 与平台deployment核验DEV提交SHA，再验收差异只读、文件编辑保存及真实Agent主流程；Production保持不变。回退只撤销前端提交，不删除既有文件版本数据。
