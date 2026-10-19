@@ -427,7 +427,10 @@ test('editor syntax contrasts in both themes and wide tables retain readable cel
       });
     if (phase !== 'before') {
       expect(colors.length).toBeGreaterThan(2);
-      expect(colors.every((c) => c.ratio >= 4.5)).toBe(true);
+      expect(
+        colors.filter((color) => color.ratio < 4.5),
+        `${theme} upstream syntax tokens below 4.5: ${JSON.stringify(colors.filter((color) => color.ratio < 4.5))}`
+      ).toEqual([]);
     }
     const table = page.locator('.timeline-message table').last();
     if (phase !== 'before')

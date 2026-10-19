@@ -162,13 +162,12 @@
                       : 'Agent proposal; not yet applied.'
                 }}
               </p>
-              <WorkspaceEditor
+              <WorkspaceDiff
                 :theme="theme"
                 :key="active.key + ':diff:' + String(proposal?.candidateId || '')"
-                :model-value="proposal?.text ?? active.text"
-                :compare-to="active.baseline"
+                :original-value="active.baseline"
+                :modified-value="proposal?.text ?? active.text"
                 :path="active.file.path"
-                :readonly="true"
                 :label="zh ? '文件差异' : 'File differences'"
                 :original-label="
                   zh
@@ -459,6 +458,7 @@ import {
 } from '../../services/workspaceAttachmentTransfer';
 import { cloudTree, readLocalDirectory, type TreeNode } from '../../services/workspaceTree';
 const WorkspaceEditor = defineAsyncComponent(() => import('./WorkspaceEditor.vue'));
+const WorkspaceDiff = defineAsyncComponent(() => import('./WorkspaceDiff.vue'));
 const WorkspacePdf = defineAsyncComponent(() => import('./WorkspacePdf.vue'));
 const props = withDefaults(
   defineProps<{
