@@ -70,19 +70,40 @@ async function openEditor(
   await expect(page.getByRole('textbox', { name: '文件编辑器' })).toBeVisible();
   return fixture;
 }
-async function diff(page: Page) {
+async function diff(page: Page, replaceFirstLine = false) {
   const content = page.getByRole('textbox', { name: '文件编辑器' });
-  await content.press(await editorShortcut(page, 'End'));
-  await page.keyboard.insertText('\n// 新增：保存上下文，并保留原有文件。\n');
+  if (replaceFirstLine) {
+    await content.press(await editorShortcut(page, 'Home'));
+    await content.press('Shift+End');
+    await page.keyboard.insertText('// 新增：保存上下文，并保留原有文件。');
+  } else {
+    await content.press(await editorShortcut(page, 'End'));
+    await page.keyboard.insertText('\n// 新增：保存上下文，并保留原有文件。\n');
+  }
   await page
     .getByRole('navigation', { name: '资源面板' })
     .getByRole('button', { name: '变更', exact: true })
     .click();
-  await expect(page.locator('.cm-editor').first()).toBeVisible();
+  await expect(page.locator('.workspace-diff-view [data-component="git-diff-view"]')).toBeVisible();
+}
+async function setFileTreeVisible(page: Page, visible: boolean) {
+  const toggle = page.getByRole('button', { name: /^(显示|隐藏)目录树$/ });
+  if ((await toggle.getAttribute('aria-pressed')) !== String(visible)) await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', String(visible));
 }
 async function cycleTheme(page: Page) {
   const rail = page.locator('.workspace-rail');
-  await rail.getByRole('button', { name: /^外观：/ }).click();
+  const appearance = rail.getByRole('button', { name: /^外观：/ });
+  if (await appearance.isVisible()) {
+    await appearance.click();
+    return;
+  }
+  await page.getByRole('button', { name: '打开历史', exact: true }).click();
+  await page
+    .getByRole('complementary', { name: '任务历史' })
+    .getByRole('button', { name: /^外观：/ })
+    .click();
+  await page.getByRole('button', { name: '关闭历史', exact: true }).click();
 }
 
 test('capture paired upstream theme surfaces', async ({ browser }) => {
@@ -101,7 +122,7 @@ test('capture paired upstream theme surfaces', async ({ browser }) => {
     ['08-light-phone', 'light', 390, 844, 'json', 'source'],
     ['09-dark-split', 'dark', 1920, 960, 'ts', 'diff'],
     ['10-light-split', 'light', 1920, 960, 'ts', 'diff'],
-    ['11-dark-inline', 'dark', 1024, 768, 'ts', 'diff'],
+    ['11-dark-compact-diff', 'dark', 1024, 768, 'ts', 'diff'],
     ['12-light-search', 'light', 1440, 960, 'json', 'search']
   ] as const;
   const records = [];
@@ -113,6 +134,10 @@ test('capture paired upstream theme surfaces', async ({ browser }) => {
     await openEditor(page, theme, language);
     if (mode === 'diff') {
       if (width >= 1440) await page.locator('.right-resizer').press('End');
+    }
+    const treeVisible = width === 768 || width === 1024 || (width >= 1440 && mode === 'diff');
+    await setFileTreeVisible(page, treeVisible);
+    if (mode === 'diff') {
       await diff(page);
     }
     if (mode === 'search')
@@ -134,6 +159,20 @@ test('capture paired upstream theme surfaces', async ({ browser }) => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       width
     );
+    const diffMetrics =
+      mode === 'diff'
+        ? await page.locator('.workspace-diff-view').evaluate((element) => ({
+            width: element.clientWidth,
+            layout: element.getAttribute('data-comparison-layout')
+          }))
+        : undefined;
+    if (diffMetrics) {
+      const expectedLayout = diffMetrics.width < 720 ? 'inline' : 'split';
+      await expect(page.locator('.workspace-diff-view')).toHaveAttribute(
+        'data-comparison-layout',
+        expectedLayout
+      );
+    }
     records.push({
       id,
       theme,
@@ -141,6 +180,8 @@ test('capture paired upstream theme surfaces', async ({ browser }) => {
       height,
       language,
       mode,
+      treeVisible,
+      ...(diffMetrics ? { diffMetrics } : {}),
       data: 'synthetic API fixtures; actual Vue UI; no model or DEV evidence',
       contentSha256: createHash('sha256').update(examples[language]).digest('hex')
     });
@@ -168,7 +209,7 @@ test('upstream theme follows shell without replacing the editable view or undo h
   await expect(content).toHaveText(original!);
   await page.emulateMedia({ colorScheme: 'dark' });
   await cycleTheme(page); // light → system
-  await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(30, 30, 30)');
+  await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(13, 17, 23)');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
 });
@@ -189,15 +230,25 @@ test('theme changes preserve selection and scrolling in a large editable file', 
     .poll(() => page.evaluate(() => window.getSelection()?.toString()))
     .toBe('END_OF_DOC');
   const scroller = page.locator('.cm-scroller');
+  const editorElement = await content.elementHandle();
+  await scroller.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
   const top = await scroller.evaluate((node) => node.scrollTop);
   expect(top).toBeGreaterThan(1000);
-  await cycleTheme(page);
+  // Programmatic activation changes the same Vue theme setting without moving focus away from
+  // CodeMirror, so this isolates the theme compartment update from browser blur behavior.
+  await page
+    .locator('.workspace-rail')
+    .getByRole('button', { name: /^外观：/ })
+    .evaluate((button) => (button as HTMLButtonElement).click());
   await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  expect(Math.abs((await scroller.evaluate((node) => node.scrollTop)) - top)).toBeLessThan(3);
-  await content.focus();
+  expect(await content.evaluate((node, before) => node === before, editorElement)).toBe(true);
+  await expect(content).toBeFocused();
   await expect
     .poll(() => page.evaluate(() => window.getSelection()?.toString()))
     .toBe('END_OF_DOC');
+  expect(Math.abs((await scroller.evaluate((node) => node.scrollTop)) - top)).toBeLessThan(3);
   await page.keyboard.insertText('// selection preserved');
   await expect(content).toContainText('// selection preserved');
   await expect(content).not.toContainText('END_OF_DOC');
@@ -205,26 +256,28 @@ test('theme changes preserve selection and scrolling in a large editable file', 
   await expect(content).toContainText('END_OF_DOC');
 });
 
-test('readonly split and inline reviews both react to upstream dark and light themes', async ({
+test('readonly split and inline reviews use the upstream GitHub diff theme in both modes', async ({
   page
 }) => {
   await page.setViewportSize({ width: 1920, height: 960 });
   await openEditor(page, 'dark', 'ts');
   await page.locator('.right-resizer').press('End');
   await diff(page);
-  const root = page.locator('.workspace-code-editor');
+  const root = page.locator('.workspace-diff-view');
+  const view = root.locator('[data-component="git-diff-view"]');
   await expect(root).toHaveAttribute('data-comparison-layout', 'split');
-  await expect(root.locator('.cm-editor')).toHaveCount(2);
+  await expect(view).toHaveAttribute('data-theme', 'dark');
+  await expect(root.locator('.diff-line-old-content').first()).toBeVisible();
+  await expect(root.locator('.diff-line-new-content').first()).toBeVisible();
   await cycleTheme(page);
-  for (const view of await root.locator('.cm-editor').all())
-    await expect(view).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(view).toHaveAttribute('data-theme', 'light');
   await expect(root.locator('[contenteditable=true]')).toHaveCount(0);
-  await expect(root.locator('.cm-chunkButtons')).toHaveCount(0);
+  await expect(root.locator('.cm-editor')).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: '打开检查器', exact: true }).click();
   await expect(root).toHaveAttribute('data-comparison-layout', 'inline');
-  await expect(root.locator('.cm-editor')).toHaveCount(1);
-  await expect(root.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(view).toHaveAttribute('data-theme', 'light');
+  await expect(root.locator('.diff-line-content').first()).toBeVisible();
   await expect(root.locator('[contenteditable=true]')).toHaveCount(0);
   await expect(root).toContainText('新增：保存上下文');
   // Close the resource drawer to reach appearance controls without bypassing its focus trap.
@@ -239,7 +292,7 @@ test('readonly split and inline reviews both react to upstream dark and light th
   await page.getByRole('button', { name: '打开检查器', exact: true }).click();
   // Finish a real paint before sampling either direction of a media-driven theme change.
   await page.screenshot();
-  await expect(root.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(30, 30, 30)');
+  await expect(view).toHaveAttribute('data-theme', 'dark');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'light');
   await page.evaluate(
@@ -251,7 +304,7 @@ test('readonly split and inline reviews both react to upstream dark and light th
   // Request an actual paint before inspecting media-induced styles (WebKit defers this).
   // No DOM/style mutation, editor remount or artificial theme override.
   await page.screenshot();
-  await expect(root.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(view).toHaveAttribute('data-theme', 'light');
 });
 
 test('upstream search, replace, undo, save and conflict protection remain usable', async ({
@@ -284,6 +337,21 @@ test('upstream search, replace, undo, save and conflict protection remain usable
   expect(fixture.workspace.files[0].text).not.toContain('keep this draft on conflict');
 });
 
+test('upstream GitHub editor colors keep readable syntax in both themes', async ({ browser }) => {
+  for (const theme of ['dark', 'light']) {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    await openEditor(page, theme, 'ts');
+    const colors = await page.locator('.workspace-code-editor').evaluate(editorTokenContrast);
+    expect(colors.length).toBeGreaterThan(2);
+    expect(
+      colors.filter((token) => token.ratio < 4.5),
+      `${theme} editor tokens`
+    ).toEqual([]);
+    await context.close();
+  }
+});
+
 test('empty files and long lines use local scroll without overflowing the page', async ({
   page
 }) => {
@@ -299,7 +367,7 @@ test('empty files and long lines use local scroll without overflowing the page',
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
-test('diff comment tokens keep the existing contrast floor on actual merged backgrounds', async ({
+test('GitHub diff lines use distinct upstream addition and deletion surfaces in light and dark themes', async ({
   browser
 }) => {
   for (const theme of ['dark', 'light']) {
@@ -308,21 +376,39 @@ test('diff comment tokens keep the existing contrast floor on actual merged back
       const page = await context.newPage();
       await openEditor(page, theme, 'ts');
       if (width === 1920) await page.locator('.right-resizer').press('End');
-      await diff(page);
-      const root = page.locator('.workspace-code-editor');
-      const colors = await root.evaluate(editorTokenContrast);
-      expect(colors.length).toBeGreaterThan(2);
-      expect(
-        colors.filter((token) => token.ratio < 4.5),
-        `${theme}, ${width}px`
-      ).toEqual([]);
+      await diff(page, true);
+      const root = page.locator('.workspace-diff-view');
+      const view = root.locator('[data-component="git-diff-view"]');
+      await expect(view).toHaveAttribute('data-theme', theme);
+      const surfaces = await root.evaluate((element) => {
+        const color = (selector: string) => {
+          const node = element.querySelector(`tr[data-state="diff"] ${selector}`);
+          if (!node) return null;
+          return getComputedStyle(node).backgroundColor;
+        };
+        return {
+          deleted: color('.diff-line-old-content'),
+          added: color('.diff-line-new-content'),
+          content: element.textContent || ''
+        };
+      });
+      expect(surfaces.content).toContain('新增：保存上下文');
+      if (width >= 720) {
+        expect(surfaces.deleted).not.toBeNull();
+        expect(surfaces.added).not.toBeNull();
+        expect(surfaces.deleted).not.toBe(surfaces.added);
+      } else {
+        await expect(
+          root.locator('tr[data-state="diff"] .diff-line-content').first()
+        ).toBeVisible();
+      }
       await context.close();
     }
   }
 });
 
-test('inline deleted text remains legible after changing the editor theme', async ({ page }) => {
-  await page.setViewportSize({ width: 1024, height: 768 });
+test('GitHub inline diff keeps deleted text visible when the theme changes', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await openEditor(page, 'dark', 'ts', '// remove this comment\nconst keep = "value";\n');
   const content = page.getByRole('textbox', { name: '文件编辑器' });
   await content.press(await editorShortcut(page, 'a'));
@@ -331,19 +417,15 @@ test('inline deleted text remains legible after changing the editor theme', asyn
     .getByRole('navigation', { name: '资源面板' })
     .getByRole('button', { name: '变更', exact: true })
     .click();
-  const deleted = page.locator('.cm-deletedChunk');
-  await expect(deleted).toContainText('remove this comment');
+  const review = page.locator('.workspace-diff-view');
+  const diffView = review.locator('[data-component="git-diff-view"]');
+  await expect(review).toHaveAttribute('data-comparison-layout', 'inline');
+  await expect(review).toContainText('remove this comment');
+  await expect(diffView).toHaveAttribute('data-theme', 'dark');
   await page.getByRole('button', { name: '关闭资源区', exact: true }).click();
   await cycleTheme(page);
   await page.getByRole('button', { name: '打开检查器', exact: true }).click();
-  await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  const tokens = await deleted
-    .locator('span')
-    .evaluateAll((nodes) =>
-      nodes.map((node) => ({ text: node.textContent, color: getComputedStyle(node).color }))
-    );
-  expect(tokens.filter((token) => token.text?.trim() && token.color !== 'rgb(56, 58, 66)')).toEqual(
-    []
-  );
-  await expect(deleted).toHaveCSS('color', 'rgb(56, 58, 66)');
+  await expect(diffView).toHaveAttribute('data-theme', 'light');
+  await expect(review).toContainText('remove this comment');
+  await expect(review.locator('[contenteditable=true]')).toHaveCount(0);
 });

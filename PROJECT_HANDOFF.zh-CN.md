@@ -632,3 +632,11 @@ PR #248已通过完整Core、8个浏览器分片、Harness/chaos、Release gate�
 使用同版本上游可配置basicSetup，关闭活动行正文底色并明确保留原十字光标默认行为。上游活动行和差异行半透明底色会使深色注释低于现有4.5:1标准，故差异只保留库自带gutter和文本改动标记，不再叠加整行底色，不自制替代配色。行内删除块使用库公开syntaxHighlightDeletions:false选项继承当前前景，避免库缓存旧主题高亮；新增删除行主题切换回归已先复现旧高亮残留。移除不再直接引用的codemirror包装、language与highlight直接依赖；必要解析依赖仍由上游持有，锁文件和MIT许可清单同步。对比度采样合成真实透明背景，门槛未降低；预览iframe不再运行测试用主页面认证初始化。
 
 候选pnpm check:core通过：前端268项、后端715通过/102条件跳过、邮件7项，lint、类型、构建、文档及首屏JS88.5KiB gzip通过。Chrome工作空间定向38项通过/4采图跳过，最终编辑器/对比度/截图9项通过；WebKit桌面/平板编辑器14项通过/2采图跳过，相关工作空间既有10项通过。大文件选区及系统媒体主题测试等待真实原生选区/已绘制画面后测量，不改主题或DOM作假；删除块残留与差异低对比回归均先复现再通过。首次完整CI的Linux WebKit暴露iPad仿真与runner操作系统快捷键不一致：新编辑器测试现按页面公开平台选择Meta/Control，不修改navigator或应用快捷键；媒体主题两个方向均完成实际绘制后测量，门槛不降。真实DEV已重新登录并留存旧SHA基线；新SHA发布及真实任务尚未完成。图册为同内容、尺寸、主题的12组前后真实Vue截图，业务API为合成数据；真实账号与平台证据另记。Production、供应商、模型、Free、支付及账号权限不变，回退本轮前端提交不删除文件版本数据。
+
+## 2026-10-19 Agent 编辑器与差异区改用上游 GitHub 实现（DEV 发布候选）
+
+根据用户反馈，先前 CodeMirror 编辑器仍保留自制主题和差异呈现，与成熟代码审阅产品的视觉差距明显。本候选将编辑器主题切换到 MIT 许可的 `@uiw/codemirror-theme-github@4.25.12`，使用 GitHub Light/Dark 上游主题；本地只保留尺寸、字体和滚动几何，不再覆盖语法、行号、光标、选区或背景颜色。只读差异区改由 `@git-diff-view/vue@0.1.8` 与 `@git-diff-view/file@0.1.8` 提供 GitHub 风格 split/unified 视图，并按实际面板宽度在720px以下切为 unified。实现复用[GitHub CodeMirror 主题](https://github.com/uiwjs/react-codemirror/tree/master/themes/github)与[git-diff-view](https://github.com/MrWangJustToDo/git-diff-view)；Artigen 保留自己的品牌导航、保存、候选应用与撤销入口。
+
+保留 CodeMirror 6 的普通编辑、搜索/替换、撤销、保存、409 冲突保护与草稿恢复；明暗模式仍来自工作区主题状态，Compartment 切换不会重建编辑器。差异视图只读，实际文件应用仍需明确操作。新增依赖、MIT 许可和设计约束同步到锁文件、`THIRD_PARTY_NOTICES.md` 与 `frontend/DESIGN.md`。差异代码仅在打开资源面板后异步加载；本地完整构建的差异异步块 gzip 约331 KiB，首屏 JavaScript 为88.6 KiB gzip，低于250 KiB预算。
+
+本地 `pnpm check:core` 通过：前端268项、后端715项通过/102项环境条件跳过、邮件7项通过，包含lint、类型检查、构建、文档及首屏JS预算（88.6 KiB gzip，门槛250 KiB）。Chrome定向浏览器回归22项通过、3项采图跳过；12组前后图均来自实际Vue页面与合成业务API fixture，另有12张细节截图。截图未使用真实模型、GitHub账号或DEV数据。当前状态是本地候选，尚未创建PR、合并或部署；DEV仍以实时 `/api/meta` 与平台deployment为准，Production保持不变。发布后应另外核验DEV SHA、差异只读与编辑保存，并复跑真实Agent主流程；回退只撤销前端提交，不删除既有文件版本数据。

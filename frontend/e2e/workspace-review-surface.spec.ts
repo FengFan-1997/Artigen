@@ -113,12 +113,18 @@ test('real differences have named versions and identical content is not painted 
   await change(page);
   await expect(page.locator('.diff-labels')).toContainText('打开时版本');
   await expect(page.locator('.diff-labels')).toContainText('当前编辑');
-  await expect(page.locator('.workspace-code-editor')).toHaveAttribute(
+  await expect(page.locator('.workspace-diff-view')).toHaveAttribute(
     'data-comparison-layout',
     'split'
   );
-  await expect(page.locator('.cm-mergeView .cm-editor')).toHaveCount(2);
-  await expect(page.locator('.cm-changedLine').first()).toBeVisible();
+  await expect(
+    page.locator('.diff-tailwindcss-wrapper[data-component="git-diff-view"]')
+  ).toHaveCount(1);
+  await expect(
+    page.locator('.diff-line-content,.diff-line-new-content,.diff-line-old-content').first()
+  ).toBeVisible();
+  await expect(page.locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(page.locator('.cm-mergeView')).toHaveCount(0);
   await resourceMode(page, '文件');
   await expect(page.locator('.workspace-code-editor .cm-content')).toContainText('新增结论');
 });
@@ -130,10 +136,10 @@ test('narrow reviews use one readable inline document and resizing keeps the dra
   await fixture(page, 'dark');
   await source(page);
   await change(page);
-  const review = page.locator('.workspace-code-editor');
+  const review = page.locator('.workspace-diff-view');
   await expect(review).toHaveAttribute('data-comparison-layout', 'inline');
-  await expect(review.locator('.cm-editor')).toHaveCount(1);
-  await expect(review.locator('.cm-chunkButtons')).toHaveCount(0);
+  await expect(review.locator('[data-component="git-diff-view"]')).toHaveCount(1);
+  await expect(review.locator('[contenteditable="true"]')).toHaveCount(0);
   await expect(review).toContainText('新增结论');
   await page.getByText('比较来源', { exact: true }).click();
   const popup = await page.locator('.source-options').boundingBox();
@@ -148,7 +154,8 @@ test('narrow reviews use one readable inline document and resizing keeps the dra
   await resourceMode(page, '变更');
   await page.locator('.right-resizer').press('End');
   await expect(review).toHaveAttribute('data-comparison-layout', 'split');
-  await expect(review.locator('.cm-editor')).toHaveCount(2);
+  await expect(review.locator('[data-component="git-diff-view"]')).toHaveCount(1);
+  await expect(review.locator('[contenteditable="true"]')).toHaveCount(0);
   await expect(review).toContainText('新增结论');
   await resourceMode(page, '文件');
   await expect(page.locator('.workspace-code-editor .cm-content')).toContainText('新增结论');

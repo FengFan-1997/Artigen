@@ -8,6 +8,8 @@ License identifiers come from the installed package metadata and upstream projec
 
 | Package | License | Source |
 | --- | --- | --- |
+| `@git-diff-view/file` | MIT | <https://github.com/MrWangJustToDo/git-diff-view> |
+| `@git-diff-view/vue` | MIT | <https://github.com/MrWangJustToDo/git-diff-view> |
 | `@codemirror/lang-css` | MIT | <https://github.com/codemirror/lang-css> |
 | `@codemirror/lang-html` | MIT | <https://code.haverbeke.berlin/codemirror/lang-html> |
 | `@codemirror/lang-javascript` | MIT | <https://github.com/codemirror/lang-javascript> |
@@ -17,7 +19,7 @@ License identifiers come from the installed package metadata and upstream projec
 | `@codemirror/state` | MIT | <https://code.haverbeke.berlin/codemirror/state> |
 | `@codemirror/view` | MIT | <https://code.haverbeke.berlin/codemirror/view> |
 | `@uiw/codemirror-extensions-basic-setup` | MIT | <https://github.com/uiwjs/react-codemirror/tree/master/extensions/basic-setup> |
-| `@uiw/codemirror-theme-vscode` | MIT | <https://github.com/uiwjs/react-codemirror/tree/master/themes/vscode> |
+| `@uiw/codemirror-theme-github` | MIT | <https://github.com/uiwjs/react-codemirror/tree/master/themes/github> |
 | `dompurify` | (MPL-2.0 OR Apache-2.0) | <https://github.com/cure53/DOMPurify> |
 | `markdown-it` | MIT | <https://github.com/markdown-it/markdown-it> |
 | `@ant-design/icons-vue` | MIT | <https://github.com/ant-design/ant-design-icons> |
