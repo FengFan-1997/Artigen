@@ -633,10 +633,14 @@ PR #248已通过完整Core、8个浏览器分片、Harness/chaos、Release gate�
 
 候选pnpm check:core通过：前端268项、后端715通过/102条件跳过、邮件7项，lint、类型、构建、文档及首屏JS88.5KiB gzip通过。Chrome工作空间定向38项通过/4采图跳过，最终编辑器/对比度/截图9项通过；WebKit桌面/平板编辑器14项通过/2采图跳过，相关工作空间既有10项通过。大文件选区及系统媒体主题测试等待真实原生选区/已绘制画面后测量，不改主题或DOM作假；删除块残留与差异低对比回归均先复现再通过。首次完整CI的Linux WebKit暴露iPad仿真与runner操作系统快捷键不一致：新编辑器测试现按页面公开平台选择Meta/Control，不修改navigator或应用快捷键；媒体主题两个方向均完成实际绘制后测量，门槛不降。真实DEV已重新登录并留存旧SHA基线；新SHA发布及真实任务尚未完成。图册为同内容、尺寸、主题的12组前后真实Vue截图，业务API为合成数据；真实账号与平台证据另记。Production、供应商、模型、Free、支付及账号权限不变，回退本轮前端提交不删除文件版本数据。
 
-## 2026-10-19 Agent 编辑器主题与差异区采用成熟上游实现（DEV 发布候选）
+## 2026-10-19 Agent 编辑器成熟上游主题与差异视图（PR #250，DEV 已部署）
 
-根据用户反馈，先前 CodeMirror 编辑器仍保留自制主题和差异呈现，与成熟代码审阅产品的视觉差距明显。本候选将编辑器主题改为 MIT 许可的 `@uiw/codemirror-theme-vscode@4.25.12`，使用 VS Code Light/Dark 上游主题；本地只保留尺寸、字体和滚动几何，不再覆盖语法、行号、光标、选区或背景颜色。原 GitHub Light 调色板中一个橙色语法 token 在白底对比度仅 3.49:1，不能满足现有 4.5:1 检查，因此编辑器改用对比度通过的 VS Code 上游主题。只读差异区仍由 `@git-diff-view/vue@0.1.8` 与 `@git-diff-view/file@0.1.8` 提供 GitHub 风格 split/unified 视图，并按实际面板宽度在720px以下切为 unified。实现复用[VS Code CodeMirror 主题](https://github.com/uiwjs/react-codemirror/tree/master/themes/vscode)与[git-diff-view](https://github.com/MrWangJustToDo/git-diff-view)；Artigen 保留自己的品牌导航、保存、候选应用与撤销入口。
+PR #250 以 CodeMirror 上游 VS Code Light/Dark 主题和 `@git-diff-view/vue@0.1.8` / `@git-diff-view/file@0.1.8` 替换手写差异呈现。保留 CodeMirror 6 编辑、搜索/替换、撤销、保存、409冲突保护与草稿恢复；主题来自工作区状态，Compartment 切换保留内容、撤销记录、选择和滚动。差异区只读，720px以上采用 GitHub split，窄面板采用 unified；候选文件仍需Artigen明确应用操作。
 
-保留 CodeMirror 6 的普通编辑、搜索/替换、撤销、保存、409 冲突保护与草稿恢复；明暗模式仍来自工作区主题状态，Compartment 切换不会重建编辑器。差异视图只读，实际文件应用仍需明确操作。新增依赖、MIT 许可和设计约束同步到锁文件、`THIRD_PARTY_NOTICES.md` 与 `frontend/DESIGN.md`。差异代码仅在打开资源面板后异步加载；本地完整构建的差异异步块 gzip 约331 KiB，首屏 JavaScript 为88.6 KiB gzip，低于250 KiB预算。
+PR #250 完整质量门禁通过并合入 `dev`，Render DEV 已部署合并提交 `ef00bbfac78aa0b424b702ccb9918ec822e78fdd`；`/api/meta` SHA 精确匹配，`/healthz`、`/readyz` 返回200。Production未变。本地前后对照图册覆盖12组主题、语言和尺寸；数据来自真实Vue界面与合成业务API fixture，不代表真实DEV或模型执行。
 
-VS Code 主题切换后的本地 `pnpm --filter personal lint`、`pnpm --filter personal build`（包含 Vue 类型检查）均通过。使用电脑已有 Chrome stable 跑了3项定向 E2E：主题切换保留编辑状态、split/inline 只读差异可见、语法对比度不低于4.5:1，全部通过。12 组改后截图已按最终 VS Code 主题重拍；Firefox/WebKit/移动端矩阵由 PR CI 验证。上一候选的完整 CI 已通过 Core、Harness、chaos 和 Vercel，但发现一个断言误选响应式隐藏差异行，以及 GitHub Light 橙色 token 对比度不足。本轮已让紧凑视图先隐藏目录树再检查差异，采用通过现有对比度门槛的 VS Code 上游编辑器主题，不降低检查标准。最终候选的完整 CI 仍待运行。12 组前后截图均来自实际 Vue 页面与合成业务 API fixture，另有12张细节截图；没有使用真实模型、GitHub 账号或 DEV 数据。当前候选已提交至PR #250；CI通过后再合并部署到 DEV，并以实时 `/api/meta` 与平台 deployment 核验提交 SHA，再验收差异只读、文件编辑保存及真实 Agent 主流程；Production保持不变。回退只撤销前端提交，不删除既有文件版本数据。
+### GitHub 原生配色跟进（本地候选，尚未部署）
+
+用户认为 VS Code 上游主题与参考页面仍不够接近。跟进候选将编辑器替换为 MIT 许可的 `@uiw/codemirror-theme-github@4.25.12` GitHub Light/Dark 调色板；唯一例外是将Light模式 `atom` / `bool` 标记使用GitHub Primer官方 `fgColor-attention`（`#9a6700`，白底4.87:1），替代上游橙色`#e36209`（白底3.49:1），维持现有4.5:1代码文本验收线。其余语法、背景、行号、光标及选区仍由上游主题管理；差异继续直接复用GitHub风格的`@git-diff-view`，不新写差异引擎。
+
+候选已通过本地lint、类型检查和Chrome stable定向编辑器回归：桌面与390px手机各8项通过、各1项明确采图跳过，涵盖主题/撤销状态保留、长文件滚动和选择、搜索/替换/保存/冲突、只读split/unified、语法对比度及删除块主题切换。完整构建、截图重拍、PR质量门禁、DEV部署与真实Agent流程仍待完成。候选只涉及前端依赖、编辑器组件和设计/许可/Handoff文档，不增加后端、数据库、账号或平台配置；Production保持不变。

@@ -15,12 +15,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { basicSetup } from '@uiw/codemirror-extensions-basic-setup';
 import { EditorView, keymap } from '@codemirror/view';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
+import { tags as t } from '@lezer/highlight';
 import {
-  vscodeDark,
-  vscodeLight,
-  defaultSettingsVscodeDark,
-  defaultSettingsVscodeLight
-} from '@uiw/codemirror-theme-vscode';
+  defaultSettingsGithubDark,
+  defaultSettingsGithubLight,
+  githubDark,
+  githubLightInit
+} from '@uiw/codemirror-theme-github';
 
 const props = withDefaults(
   defineProps<{
@@ -35,9 +36,14 @@ const props = withDefaults(
 const emit = defineEmits<{ 'update:modelValue': [value: string]; save: [] }>();
 const host = ref<HTMLElement | null>(null);
 const themeSlot = new Compartment();
-const selectedTheme = () => (props.theme === 'light' ? vscodeLight : vscodeDark);
+// Keep the upstream GitHub Light palette while using Primer's attention foreground for the
+// orange literal/bool token, whose upstream #e36209 is only 3.49:1 on white.
+const githubLight = githubLightInit({
+  styles: [{ tag: [t.atom, t.bool, t.special(t.variableName)], color: '#9a6700' }]
+});
+const selectedTheme = () => (props.theme === 'light' ? githubLight : githubDark);
 const palette = computed(() =>
-  props.theme === 'light' ? defaultSettingsVscodeLight : defaultSettingsVscodeDark
+  props.theme === 'light' ? defaultSettingsGithubLight : defaultSettingsGithubDark
 );
 let editor: EditorView | null = null;
 let revision = 0;
@@ -69,7 +75,7 @@ async function mountEditor() {
   editor = null;
   host.value.replaceChildren();
 
-  // The upstream VS Code theme owns editor colors; local styles only adapt geometry.
+  // The upstream GitHub theme owns editor colors; local styles only adapt geometry.
   const geometry = EditorView.theme({
     '&': { height: '100%', fontSize: '13px' },
     '.cm-scroller': { overflow: 'auto', lineHeight: '1.65' },
