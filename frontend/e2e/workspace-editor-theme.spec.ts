@@ -1,4 +1,4 @@
-import { editorTokenContrast } from './helpers/editorContrast';
+import { editorTokenContrast, unreadableEditorTokens } from './helpers/editorContrast';
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -209,7 +209,7 @@ test('upstream theme follows shell without replacing the editable view or undo h
   await expect(content).toHaveText(original!);
   await page.emulateMedia({ colorScheme: 'dark' });
   await cycleTheme(page); // light → system
-  await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(13, 17, 23)');
+  await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(30, 30, 30)');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
 });
@@ -348,15 +348,16 @@ test('upstream search, replace, undo, save and conflict protection remain usable
   expect(fixture.workspace.files[0].text).not.toContain('keep this draft on conflict');
 });
 
-test('upstream GitHub editor colors keep readable syntax in both themes', async ({ browser }) => {
+test('upstream VS Code editor colors keep readable syntax and active-line context', async ({ browser }) => {
   for (const theme of ['dark', 'light']) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
     await openEditor(page, theme, 'ts');
+    await expect(page.locator('.cm-activeLine')).toBeVisible();
     const colors = await page.locator('.workspace-code-editor').evaluate(editorTokenContrast);
     expect(colors.length).toBeGreaterThan(2);
     expect(
-      colors.filter((token) => token.ratio < 4.5),
+      unreadableEditorTokens(colors),
       `${theme} editor tokens`
     ).toEqual([]);
     await context.close();

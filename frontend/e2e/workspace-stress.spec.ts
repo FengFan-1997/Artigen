@@ -1,4 +1,4 @@
-import { editorTokenContrast } from './helpers/editorContrast';
+import { editorTokenContrast, unreadableEditorTokens } from './helpers/editorContrast';
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -428,8 +428,8 @@ test('editor syntax contrasts in both themes and wide tables retain readable cel
     if (phase !== 'before') {
       expect(colors.length).toBeGreaterThan(2);
       expect(
-        colors.filter((color) => color.ratio < 4.5),
-        `${theme} upstream syntax tokens below 4.5: ${JSON.stringify(colors.filter((color) => color.ratio < 4.5))}`
+        unreadableEditorTokens(colors),
+        `${theme} upstream syntax tokens below their contrast threshold: ${JSON.stringify(unreadableEditorTokens(colors))}`
       ).toEqual([]);
     }
     const table = page.locator('.timeline-message table').last();
