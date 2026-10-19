@@ -16,11 +16,11 @@ import { basicSetup } from '@uiw/codemirror-extensions-basic-setup';
 import { EditorView, keymap } from '@codemirror/view';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import {
-  githubDark,
-  githubLight,
-  defaultSettingsGithubDark,
-  defaultSettingsGithubLight
-} from '@uiw/codemirror-theme-github';
+  vscodeDark,
+  vscodeLight,
+  defaultSettingsVscodeDark,
+  defaultSettingsVscodeLight
+} from '@uiw/codemirror-theme-vscode';
 
 const props = withDefaults(
   defineProps<{
@@ -35,9 +35,9 @@ const props = withDefaults(
 const emit = defineEmits<{ 'update:modelValue': [value: string]; save: [] }>();
 const host = ref<HTMLElement | null>(null);
 const themeSlot = new Compartment();
-const selectedTheme = () => (props.theme === 'light' ? githubLight : githubDark);
+const selectedTheme = () => (props.theme === 'light' ? vscodeLight : vscodeDark);
 const palette = computed(() =>
-  props.theme === 'light' ? defaultSettingsGithubLight : defaultSettingsGithubDark
+  props.theme === 'light' ? defaultSettingsVscodeLight : defaultSettingsVscodeDark
 );
 let editor: EditorView | null = null;
 let revision = 0;
@@ -69,7 +69,7 @@ async function mountEditor() {
   editor = null;
   host.value.replaceChildren();
 
-  // The upstream GitHub theme owns editor colors; local styles only adapt geometry.
+  // The upstream VS Code theme owns editor colors; local styles only adapt geometry.
   const geometry = EditorView.theme({
     '&': { height: '100%', fontSize: '13px' },
     '.cm-scroller': { overflow: 'auto', lineHeight: '1.65' },

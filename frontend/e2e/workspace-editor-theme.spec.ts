@@ -339,7 +339,7 @@ test('upstream search, replace, undo, save and conflict protection remain usable
   expect(fixture.workspace.files[0].text).not.toContain('keep this draft on conflict');
 });
 
-test('upstream GitHub editor colors keep readable syntax in both themes', async ({ browser }) => {
+test('upstream VS Code editor colors keep readable syntax in both themes', async ({ browser }) => {
   for (const theme of ['dark', 'light']) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
