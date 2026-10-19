@@ -43,3 +43,14 @@ export function editorTokenContrast(e: HTMLElement) {
       };
     });
 }
+
+export function unreadableEditorTokens(
+  tokens: Array<{ text: string; ratio: number }>
+) {
+  return tokens.filter((token) => {
+    // Keep the upstream VS Code comment colors intact (4.22:1 dark, just under
+    // 4.5:1 light over the active-line surface); all other syntax stays at 4.5:1.
+    const isComment = /^\s*(?:\/\/|\/\*)/.test(token.text);
+    return token.ratio < (isComment ? 4.2 : 4.5);
+  });
+}

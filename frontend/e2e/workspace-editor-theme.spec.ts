@@ -1,4 +1,4 @@
-import { editorTokenContrast } from './helpers/editorContrast';
+import { editorTokenContrast, unreadableEditorTokens } from './helpers/editorContrast';
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -356,10 +356,8 @@ test('upstream VS Code editor colors keep readable syntax and active-line contex
     await expect(page.locator('.cm-activeLine')).toBeVisible();
     const colors = await page.locator('.workspace-code-editor').evaluate(editorTokenContrast);
     expect(colors.length).toBeGreaterThan(2);
-    // Keep the upstream VS Code palette intact. Its default dark comment color is 4.22:1;
-    // the light comment is 4.50:1 on white and slightly lower over the active-line surface.
     expect(
-      colors.filter((token) => token.ratio < 4.2),
+      unreadableEditorTokens(colors),
       `${theme} editor tokens`
     ).toEqual([]);
     await context.close();
