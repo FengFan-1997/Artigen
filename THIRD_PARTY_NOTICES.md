@@ -20,7 +20,7 @@ License identifiers come from the installed package metadata and upstream projec
 | `@codemirror/view` | MIT | <https://code.haverbeke.berlin/codemirror/view> |
 | `@lezer/highlight` | MIT | <https://github.com/lezer-parser/highlight> |
 | `@uiw/codemirror-extensions-basic-setup` | MIT | <https://github.com/uiwjs/react-codemirror/tree/master/extensions/basic-setup> |
-| `@uiw/codemirror-theme-github` | MIT | <https://github.com/uiwjs/react-codemirror/tree/master/themes/github> |
+| `@uiw/codemirror-theme-vscode` | MIT | <https://github.com/uiwjs/react-codemirror/tree/master/themes/vscode> |
 | `dompurify` | (MPL-2.0 OR Apache-2.0) | <https://github.com/cure53/DOMPurify> |
 | `markdown-it` | MIT | <https://github.com/markdown-it/markdown-it> |
 | `@ant-design/icons-vue` | MIT | <https://github.com/ant-design/ant-design-icons> |

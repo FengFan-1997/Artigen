@@ -639,8 +639,14 @@ PR #250 以 CodeMirror 上游 VS Code Light/Dark 主题和 `@git-diff-view/vue@0
 
 PR #250 完整质量门禁通过并合入 `dev`，Render DEV 已部署合并提交 `ef00bbfac78aa0b424b702ccb9918ec822e78fdd`；`/api/meta` SHA 精确匹配，`/healthz`、`/readyz` 返回200。Production未变。本地前后对照图册覆盖12组主题、语言和尺寸；数据来自真实Vue界面与合成业务API fixture，不代表真实DEV或模型执行。
 
-### GitHub 原生配色跟进（本地候选，尚未部署）
+### GitHub 原生编辑器配色跟进（PR #251，DEV 已部署）
 
-用户认为 VS Code 上游主题与参考页面仍不够接近。跟进候选将编辑器替换为 MIT 许可的 `@uiw/codemirror-theme-github@4.25.12` GitHub Light/Dark 调色板；唯一例外是将Light模式 `atom` / `bool` 标记使用GitHub Primer官方 `fgColor-attention`（`#9a6700`，白底4.87:1），替代上游橙色`#e36209`（白底3.49:1），维持现有4.5:1代码文本验收线。其余语法、背景、行号、光标及选区仍由上游主题管理；差异继续直接复用GitHub风格的`@git-diff-view`，不新写差异引擎。
+为复用成熟编辑器样式，PR #251 将 CodeMirror 编辑器主题切换为 MIT 许可的 `@uiw/codemirror-theme-github@4.25.12` GitHub Light/Dark 调色板；差异视图继续使用 MIT 许可的 `@git-diff-view/vue@0.1.8` / `@git-diff-view/file@0.1.8`，没有新增自制差异引擎。GitHub Light 上游橙色 `#e36209` 在白底对比度为 3.49:1；仅将 Light 模式 `atom` / `bool` 标记改用 GitHub Primer `fgColor-attention` `#9a6700`（4.87:1），满足现有 4.5:1 代码文字验收线。其余语法色、背景、行号、光标和选区由上游主题管理。明暗模式仍经 CodeMirror Compartment 切换，保留编辑状态。
 
-候选已通过本地lint、类型检查和Chrome stable定向编辑器回归：桌面与390px手机各8项通过、各1项明确采图跳过，涵盖主题/撤销状态保留、长文件滚动和选择、搜索/替换/保存/冲突、只读split/unified、语法对比度及删除块主题切换。完整构建、截图重拍、PR质量门禁、DEV部署与真实Agent流程仍待完成。候选只涉及前端依赖、编辑器组件和设计/许可/Handoff文档，不增加后端、数据库、账号或平台配置；Production保持不变。
+PR #251 的 Core、跨浏览器 E2E、Agent Harness、chaos、Vercel 与 Release gate 均通过并合入 `dev`。Render DEV `/api/meta` 返回 `appEnv=dev`、Git SHA `c9a10bf6890ff414c7806301a209aeff2a30a326`；`/healthz` 与 `/readyz` 均为 HTTP 200，数据库迁移032、数据库、存储、Provider 检查通过。生产未变。DEV `/api/agent/status` 的 Worker、模型、浏览器、出口和桌面中继当前均离线，队列为0；本轮未执行或声称通过真实模型任务。截图图册为本地真实 Vue 页面与合成业务 API fixture，不是 DEV 数据或真实模型证据。
+
+### VS Code 原生编辑器主题跟进（当前分支，待合并）
+
+用户反馈 GitHub 调色板只让编辑器颜色轻微变化。本次将编辑器切换为 MIT 许可的 `@uiw/codemirror-theme-vscode@4.25.12` 完整 Light/Dark 主题，启用上游当前行及 gutter 高亮，并取消非标准十字光标；不再自制语法、选区、光标或行号颜色。差异区继续使用已有的 MIT `@git-diff-view/vue` GitHub split/unified 组件，移动端与文件写回流程保持原实现。该候选尚未合并或部署；此刻 DEV 仍为上一段记录的 PR #251 SHA，真实 Agent Worker 仍离线，Production 未变。
+
+本地验证：前端 lint、type-check、build、268 项单测、88.5 KiB 首屏 JS gzip 预算、文档和 workspace 检查通过；Chrome 桌面编辑器回归8项通过，1项截图用例在独立采图运行通过。另有12组截图覆盖两种主题、JSON/TypeScript/Markdown/HTML/CSS、390–1920px视口和split/inline差异。截图为真实 Vue 页面加合成 API fixture，不代表线上业务数据或真实模型任务。2026-10-19重新读取 DEV `/api/meta` SHA 仍为 `c9a10bf6890ff414c7806301a209aeff2a30a326`，`/healthz`、`/readyz` HTTP 200；Agent 页面显示 DEV Worker 离线，因此未运行真实 Agent 任务。本 PR 不改账号、平台配置、后端、数据库或线上功能开关；Production 未变。
