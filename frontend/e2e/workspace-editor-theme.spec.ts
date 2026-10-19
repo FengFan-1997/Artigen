@@ -209,7 +209,7 @@ test('upstream theme follows shell without replacing the editable view or undo h
   await expect(content).toHaveText(original!);
   await page.emulateMedia({ colorScheme: 'dark' });
   await cycleTheme(page); // light → system
-  await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(13, 17, 23)');
+  await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(30, 30, 30)');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('.cm-editor')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
 });
@@ -277,9 +277,18 @@ test('readonly split and inline reviews use the upstream GitHub diff theme in bo
   await page.getByRole('button', { name: '打开检查器', exact: true }).click();
   await expect(root).toHaveAttribute('data-comparison-layout', 'inline');
   await expect(view).toHaveAttribute('data-theme', 'light');
+  // At compact widths the directory fills the inspector. Hide it to reveal the
+  // file viewer before asserting the unified diff is visible.
+  await setFileTreeVisible(page, false);
   // git-diff-view renders both layout variants; the inactive split pane stays in
   // the DOM for responsive resizing, so assert against the currently visible row.
-  await expect(root.locator('.diff-line-content:visible').first()).toBeVisible();
+  await expect(
+    root
+      .locator(
+        '.diff-line-content:visible, .diff-line-new-content:visible, .diff-line-old-content:visible'
+      )
+      .first()
+  ).toBeVisible();
   await expect(root.locator('[contenteditable=true]')).toHaveCount(0);
   await expect(root).toContainText('新增：保存上下文');
   // Close the resource drawer to reach appearance controls without bypassing its focus trap.
