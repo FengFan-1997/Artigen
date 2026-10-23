@@ -115,7 +115,10 @@
         </div>
         <p v-if="draftRestored" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿；如需参考文件，请重新选择。' : 'Your local draft was restored. Choose any reference files again.' }}</p>
         <div v-if="!hasConversation" class="prompt-suggestions" :aria-label="zh ? '任务建议' : 'Task suggestions'">
-          <button v-for="(preset, index) in presets" :key="preset" type="button" @click="applyPreset(index)"><span>{{ suggestionLabels[index] }}</span></button>
+          <button v-for="(preset, index) in presets" :key="preset" type="button" @click="applyPreset(index)">
+            <span>{{ suggestionLabels[index] }}</span>
+            <WorkspaceIcon class="prompt-suggestion-arrow" name="arrow-right" />
+          </button>
         </div>
       </div>
     </section>
@@ -250,7 +253,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
@@ -535,8 +538,10 @@ const presets = computed(() => zh.value
 const suggestionLabels = computed(() => zh.value
   ? ['研究竞品并交付提案', '整理资料并生成多格式文件', '生成可评审的图片设计稿']
   : ['Research competitors and deliver a proposal', 'Turn references into editable files', 'Create a review-ready image design']);
-const applyPreset = (index: number) => {
+const applyPreset = async (index: number) => {
   form.objective = presets.value[index] || '';
+  await nextTick();
+  objectiveComposer.value?.focusAtEnd();
 };
 const resetRunDraft = () => {
   form.objective = '';
@@ -832,11 +837,13 @@ onBeforeUnmount(() => {
 .conversation-empty { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 0 0 10px; justify-items: start; }
 .conversation-empty h1 { margin: 0; color: var(--text); font-size: clamp(28px, 3vw, 36px); font-weight: 680; line-height: 1.18; letter-spacing: -.035em; text-wrap: balance; }
 .prompt-suggestions { display: grid; width: min(var(--conversation-max), 100%); gap: 4px; margin: 20px auto 0; }
-.prompt-suggestions button { display: block; width: 100%; min-height: 42px; padding: 9px 10px; color: var(--muted); border: 0; border-radius: 10px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease, transform 120ms cubic-bezier(.23,1,.32,1); }
+.prompt-suggestions button { display: grid; grid-template-columns: minmax(0, 1fr) 16px; gap: 12px; align-items: center; width: 100%; min-height: 42px; padding: 9px 10px; color: var(--muted); border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease, transform 120ms cubic-bezier(.23,1,.32,1); }
 .prompt-suggestions button:hover { color: var(--text); background: var(--surface-hover); }
 .prompt-suggestions button:active { transform: scale(.995); }
 .prompt-suggestions button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .prompt-suggestions span { font-size: 14px; }
+.prompt-suggestion-arrow { justify-self: end; color: var(--acid-text); opacity: 0; transform: translateX(-3px); transition: opacity 140ms ease, transform 180ms cubic-bezier(.23,1,.32,1); }
+.prompt-suggestions button:hover .prompt-suggestion-arrow, .prompt-suggestions button:focus .prompt-suggestion-arrow { opacity: 1; transform: translateX(0); }
 .conversation-thread { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 36px 0 64px; gap: 28px; }
 .conversation-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; align-items: start; }
 .message-avatar { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; color: var(--muted); font-size: 12px; font-weight: 700; background: var(--surface); }
@@ -945,6 +952,10 @@ onBeforeUnmount(() => {
   .history-label button { width: 44px; height: 44px; }
   .option-grid { grid-template-columns: 1fr; }
 }
+@media (pointer: coarse) {
+  .prompt-suggestions button { min-height: 44px; }
+  .prompt-suggestion-arrow { opacity: 1; transform: none; }
+}
 @media (max-height: 620px) {
   .conversation-empty { align-content: start; padding-block: 24px; }
   .prompt-suggestions { gap: 5px; }
@@ -959,6 +970,7 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .prompt-suggestions button, .objective-composer { transition: none; }
+  .prompt-suggestion-arrow { transition: none; transform: none; }
 }
 
 .quote-scope { display: grid; gap: 7px; margin: 3px 0 9px; }

@@ -357,6 +357,31 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
   }
 });
 
+test('task suggestions disclose their action and focus the editable objective', async ({ page }) => {
+  await installSharedApi(page);
+  await page.goto('/artigen/agent');
+
+  const suggestion = page.getByRole('button', { name: '整理资料并生成多格式文件', exact: true });
+  const arrow = suggestion.locator('.prompt-suggestion-arrow');
+  const objective = page.getByRole('textbox', { name: '任务目标' });
+  const preset = '整理我提供的资料，制定一套完整设计方案，并交付可编辑报告、数据表和演示文稿。';
+  const coarsePointer = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
+
+  if (coarsePointer) {
+    await expect(arrow).toHaveCSS('opacity', '1');
+  } else {
+    await expect(arrow).toHaveCSS('opacity', '0');
+    await suggestion.focus();
+    await expect(arrow).toHaveCSS('opacity', '1');
+  }
+
+  await suggestion.click();
+  await expect(objective).toHaveValue(preset);
+  await expect(objective).toBeFocused();
+  await expect(objective).toHaveCSS('outline-style', 'none');
+  await expect.poll(() => objective.evaluate((element) => (element as HTMLTextAreaElement).selectionStart)).toBe(preset.length);
+});
+
 test('every visible workspace chrome control performs its advertised action', async ({ page }) => {
   let runListRequests = 0;
   await installSharedApi(page);

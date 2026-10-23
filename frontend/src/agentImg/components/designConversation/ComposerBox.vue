@@ -108,7 +108,14 @@ const formatBytes = (bytes: number) => bytes < 1024 * 1024
   ? `${Math.max(1, Math.round(bytes / 1024))} KB`
   : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-defineExpose({ focus: () => textarea.value?.focus() });
+const focusAtEnd = () => {
+  const element = textarea.value;
+  if (!element) return;
+  element.focus();
+  element.setSelectionRange(element.value.length, element.value.length);
+};
+
+defineExpose({ focus: () => textarea.value?.focus(), focusAtEnd });
 watch([() => props.draft, () => props.compact], async () => {
   await nextTick();
   const element = textarea.value;
@@ -122,6 +129,7 @@ watch([() => props.draft, () => props.compact], async () => {
 .composer-box { width: 100%; min-width: 0; padding: 15px 16px 12px; border: 0; border-radius: 20px; color: var(--text); background: var(--surface); box-shadow: 0 18px 54px rgb(0 0 0 / 24%); transition: box-shadow 180ms cubic-bezier(.23,1,.32,1),background-color 180ms ease; }
 .composer-box:focus-within { background: var(--surface-raised); box-shadow: 0 22px 62px rgb(0 0 0 / 30%), inset 0 0 0 2px var(--focus); }
 textarea { display: block; width: 100%; min-height: 78px; max-height: min(180px, 24dvh); box-sizing: border-box; padding: 5px 6px 10px; resize: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 16px; line-height: 1.58; background: transparent; }
+.composer-box textarea:focus-visible { outline: 0; }
 textarea::placeholder { color: var(--muted); }
 .compact textarea { min-height: 64px; }
 .attachment-list { max-height: min(160px, 24dvh); overflow-y:auto; overscroll-behavior:contain; scrollbar-color:var(--border) transparent; display: flex; flex-wrap: wrap; gap: 7px; padding: 5px 6px 11px; }
