@@ -89,6 +89,33 @@ test('file tree separates folder disclosure from its icon and marks the active f
   expect(activeIconColor).not.toBe(folderIconColor);
 });
 
+test('selected project history item is visible and announced in light desktop and dark mobile history', async ({
+  browser
+}) => {
+  for (const [theme, viewport] of [
+    ['light', { width: 1440, height: 960 }],
+    ['dark', { width: 390, height: 844 }]
+  ] as const) {
+    const context = await browser.newContext({ viewport });
+    const page = await context.newPage();
+    await installWorkspaceFixture(page, theme);
+    await page.goto(runPath);
+    if (viewport.width < 800) await page.getByRole('button', { name: '打开历史' }).click();
+
+    const row = page.locator('.project-navigation .session-row.selected');
+    const link = row.getByRole('link', { name: '整理网站审查报告' });
+    await expect(link).toHaveAttribute('aria-current', 'page');
+    await expect(link).toHaveAttribute('title', '整理网站审查报告');
+    expect(await link.evaluate((element) => getComputedStyle(element).fontWeight)).toBe('560');
+    const [rowBackground, panelBackground] = await Promise.all([
+      row.evaluate((element) => getComputedStyle(element).backgroundColor),
+      page.locator('.workspace-left').evaluate((element) => getComputedStyle(element).backgroundColor)
+    ]);
+    expect(rowBackground).not.toBe(panelBackground);
+    await context.close();
+  }
+});
+
 test('Markdown table headings stay distinct in dark desktop and light mobile workspaces', async ({
   browser
 }) => {

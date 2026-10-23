@@ -53,7 +53,11 @@
           class="session-row"
           :class="{ selected: selected(item) }"
         >
-          <router-link :to="link(item)" @click="$emit('navigate')"
+          <router-link
+            :to="link(item)"
+            :aria-current="selected(item) ? 'page' : undefined"
+            :title="item.title"
+            @click="$emit('navigate')"
             ><i :class="{ running: active(item.status) }"></i
             ><span>{{ item.title }}</span></router-link
           ><button
@@ -82,7 +86,11 @@
       class="session-row"
       :class="{ selected: selected(item) }"
     >
-      <router-link :to="link(item)" @click="$emit('navigate')"
+      <router-link
+        :to="link(item)"
+        :aria-current="selected(item) ? 'page' : undefined"
+        :title="item.title"
+        @click="$emit('navigate')"
         ><i :class="{ running: active(item.status) }"></i><span>{{ item.title }}</span></router-link
       ><button
         v-if="item.kind === 'conversation'"
@@ -287,7 +295,11 @@ button {
   min-width: 0;
 }
 .session-row.selected {
-  background: var(--surface-hover);
+  background: var(--surface-selected);
+}
+.session-row.selected a {
+  color: var(--text);
+  font-weight: 560;
 }
 .session-row a {
   display: flex;
