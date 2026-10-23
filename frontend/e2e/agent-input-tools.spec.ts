@@ -286,6 +286,62 @@ test('background activity preserves a reading position and provides an explicit 
     .toBeLessThan(10);
 });
 
+test('a long current action stays on one line without hiding the step count or disclosure icon', async ({
+  page
+}) => {
+  const fixture = await installAgentInputFixture(page);
+  const longAction =
+    '正在核验当前项目中的多个交付文件、编码格式、内容完整性以及每一个可下载结果是否都与原始任务要求保持一致';
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/artigen/agent/runs/${inputRunId}`);
+  await fixture.emit([
+    {
+      ...activityEvents(1)[0]!,
+      eventId: 'long-action-summary',
+      type: 'verification.started',
+      summary: longAction,
+      data: {}
+    }
+  ]);
+
+  const summary = page.locator('.run-progress-header');
+  const action = summary.locator('strong');
+  await expect(action).toHaveText(longAction);
+  await expect(action).toHaveAttribute('title', longAction);
+  await expect(summary).toContainText('24 / 120 步');
+  await expect(summary.locator('svg')).toBeVisible();
+  for (const width of [360, 390, 768, 1024, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 844 });
+    const geometry = await summary.evaluate((element) => {
+      const rect = (selector: string) => {
+        const box = element.querySelector(selector)!.getBoundingClientRect();
+        return { x: box.x, right: box.right, height: box.height };
+      };
+      const title = element.querySelector('strong')!;
+      const summaryRect = element.getBoundingClientRect();
+      return {
+        width: summaryRect.width,
+        right: summaryRect.right,
+        height: summaryRect.height,
+        title: rect('strong'),
+        counter: rect(':scope > span'),
+        icon: rect(':scope > svg'),
+        titleOverflows: title.scrollWidth > title.clientWidth,
+        pageWidth: document.documentElement.scrollWidth
+      };
+    });
+    expect(geometry.height).toBeLessThan(64);
+    expect(geometry.title.height).toBeLessThan(24);
+    expect(geometry.title.right).toBeLessThan(geometry.counter.x);
+    expect(geometry.counter.right).toBeLessThan(geometry.icon.x);
+    expect(geometry.icon.right).toBeLessThanOrEqual(geometry.right);
+    expect(geometry.pageWidth).toBe(width);
+    if (width <= 390) expect(geometry.titleOverflows).toBe(true);
+  }
+  await page.locator('.agent-activity > summary').click();
+  await expect(page.locator('.agent-activity')).toContainText(longAction);
+});
+
 for (const width of [390, 768, 1440]) {
   test(`${width}px: shared composer and expanded activity retain visible controls`, async ({
     page

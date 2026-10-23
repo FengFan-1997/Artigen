@@ -62,7 +62,7 @@
       <div ref="scrollArea" class="conversation-scroll" @scroll="onConversationScroll">
         <details class="run-progress-panel">
           <summary class="run-progress-header">
-            <strong>{{ currentAction }}</strong>
+            <strong :title="currentAction">{{ currentAction }}</strong>
             <span>{{ run.progress.stepCount }} / {{ run.progress.maxSteps }} {{ zh ? '步' : 'steps' }}</span>
             <WorkspaceIcon name="list" :size="16" />
           </summary>
@@ -1032,7 +1032,7 @@ onBeforeUnmount(() => {
 .run-progress-header { display: flex; min-height: 48px; align-items: center; padding: 12px 14px; list-style: none; cursor: pointer; justify-content: space-between; gap: 12px; }
 .run-progress-header div { display: grid; gap: 4px; }
 .progress-kicker { color: var(--acid-text); font-size: 12px; font-weight: 760; letter-spacing: .06em; text-transform: uppercase; }
-.run-progress-header strong { color: var(--text); font-size: 14px; }
+.run-progress-header strong { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .run-progress-header > span { color: var(--muted); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .phase-track { display: grid; gap: 12px; padding: 6px 14px 14px; }
 .phase-track span { display: grid; grid-template-columns: 6px 1fr; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
